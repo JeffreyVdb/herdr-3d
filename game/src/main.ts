@@ -33,10 +33,10 @@ export interface H3DDebug {
     building: string | null;
     /** M3c: sitting at your desk in the corner office. */
     seated: boolean;
-    /** M3c: up on the mezzanine (look-at reaches ~20 m, cards read as nearer). */
+    /** M3c: up on the mezzanine (look-at reaches the whole floor, cards read as nearer, all of them show). */
     overlook: boolean;
   };
-  /** What the centre of the screen picks in first person (within 3 m; ~20 m up on the mezzanine), else null. */
+  /** What the centre of the screen picks in first person (within 3 m; the whole floor up on the mezzanine), else null. */
   lookAt(): LookAt | null;
   /** M3c: sits you at your desk (as E on it does); false unless you stand in your corner office. */
   sit(): boolean;

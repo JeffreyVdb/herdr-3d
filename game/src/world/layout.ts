@@ -245,6 +245,14 @@ export function outlineOf(deskCounts: readonly number[]): Outline {
   return { width, depth };
 }
 
+/**
+ * #20: look-at reach while you are up on the mezzanine, looking down over the floor:
+ * the room's diagonal, so every desk of the floor is in reach wherever you stand up there.
+ */
+export function overlookReach(L: Pick<FloorLayout, 'width' | 'depth' | 'height'>): number {
+  return Math.hypot(L.width, L.depth, L.height);
+}
+
 /** Windows and the fire-escape door of an outline: the same on every floor that shares it. */
 export function openingsFor(width: number, depth: number): Opening[] {
   const out: Opening[] = [];

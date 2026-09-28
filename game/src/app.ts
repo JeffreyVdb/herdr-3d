@@ -5,7 +5,7 @@ import { bridgeUrl, takeToken } from './net/endpoint';
 import type { CommandArgs, CommandName, WorldEvent } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
-import { OfficeView, OVERLOOK_REACH, REACH, type Target } from './render/office';
+import { OfficeView, REACH, type Target } from './render/office';
 import { OutsideView } from './render/outside';
 import { BUILDING_TINTS, LOT_TINT } from './render/palette';
 import { WalkView } from './render/walk';
@@ -15,7 +15,7 @@ import { Panels } from './ui/panels';
 import { RADIUS, Walker } from './input/walk';
 import { blocked, blocked3, groundAt, type WalkWorld } from './world/collide';
 import { buildingPlan, floorY, loadedFloor, placeAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
-import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, type Opening, type Outline } from './world/layout';
+import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, overlookReach, type Opening, type Outline } from './world/layout';
 import type { Display } from './world/derive';
 import { WorldStore, type Change, type Counts, type FloorView } from './world/store';
 
@@ -1048,7 +1048,7 @@ export class App {
     const area = this.place.area;
     if (area === 'floor' && this.office) {
       // Your desk only from inside your office, standing (E sits you down).
-      return this.office.pick([o.x, o.y, o.z], [this.ray.x, this.ray.y, this.ray.z], this.overlooking ? OVERLOOK_REACH : REACH, this.inOffice() && !this.walker.sitting);
+      return this.office.pick([o.x, o.y, o.z], [this.ray.x, this.ray.y, this.ray.z], this.overlooking ? overlookReach(this.office.layout) : REACH, this.inOffice() && !this.walker.sitting);
     }
     const lobby = this.walk.outside?.lobby;
     if (area === 'lobby' && lobby) {
@@ -1077,7 +1077,7 @@ export class App {
 
   // ---- the corner office (#20) -------------------------------------------------------
 
-  /** Up on the mezzanine or high on its stair: look-at reaches ~20 m, cards read as nearer. */
+  /** Up on the mezzanine or high on its stair: look-at reaches the whole floor, cards read as nearer. */
   get overlooking(): boolean {
     return this.mode === 'floor' && this.place.area === 'floor' && this.loaded !== null && !!this.office && this.walker.y - floorY(this.loaded) > 1.5;
   }

@@ -22,8 +22,6 @@ export type Target =
 export const SEAT_Y = 0.45;
 export const CARD_Y = 1.62;
 export const REACH = 3;
-/** #20: look-at reach while you are up on the mezzanine, looking down over the floor. */
-export const OVERLOOK_REACH = 20;
 /** #20: cards are measured from the mezzanine as though you stood this much nearer (distance x this). */
 export const OVERLOOK_CARD_SCALE = 0.45;
 

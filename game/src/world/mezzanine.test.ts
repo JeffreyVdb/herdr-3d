@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_H, blocked, blocked3, groundAt, moveWalker, pickNearest, STEP_UP, type V3p, type WalkWorld } from './collide';
+import { BODY_H, blocked, blocked3, groundAt, moveWalker, pickNearest, STEP_UP, type V3, type V3p, type WalkWorld } from './collide';
 import { buildingPlan, floorY, loadedFloor, placeAt, walkWorld } from './building';
-import { EYE_HEIGHT, floorLayout, GLASS_H, MEZZ_Y, outlineOf, POST_W, slotBoxes, slotRect, type Box3, type FloorLayout, type Rect } from './layout';
+import { EYE_HEIGHT, floorLayout, GLASS_H, MEZZ_Y, outlineOf, overlookReach, POST_W, slotBoxes, slotRect, type Box3, type FloorLayout, type Rect } from './layout';
 import { walkOutRoute } from './route';
 
 const R = 0.28;
@@ -211,13 +211,13 @@ describe('walking the mezzanine', () => {
       return t > 0 && t < len;
     });
     expect(glassHit || m.glass.some((g) => (g.min[2] - eye[2]) / dir[2] > 0)).toBe(true);
-    // ...and picks the worker, 3 m reach is not enough, 20 m is.
+    // ...and picks the worker, 3 m reach is not enough, the overlook's is.
     expect(len).toBeGreaterThan(3);
-    expect(pickNearest(eye, dir, targets, 20, blockers)?.value).toBe(s.index);
+    expect(pickNearest(eye, dir, targets, overlookReach(L), blockers)?.value).toBe(s.index);
     expect(pickNearest(eye, dir, targets, 3, blockers)).toBeNull();
     // Looking straight down through the slab picks nothing under it.
     const under = L.slots.find((q) => overlaps(slotRect(q), m.rect));
-    if (under) expect(pickNearest([under.seat.x, MEZZ_Y + EYE_HEIGHT, under.seat.z], [0, -1, 0], targets, 20, blockers)).toBeNull();
+    if (under) expect(pickNearest([under.seat.x, MEZZ_Y + EYE_HEIGHT, under.seat.z], [0, -1, 0], targets, overlookReach(L), blockers)).toBeNull();
   });
 
   it('sitting faces the floor, out over the glass, from close enough to see down past the edge', () => {
@@ -229,6 +229,59 @@ describe('walking the mezzanine', () => {
     const edge = Math.min(Math.abs((m.rect.x0 - m.sit.x) / f.x), Math.abs((m.rect.z1 - m.sit.z) / f.z));
     const hidden = (edge * (MEZZ_Y + 1.2)) / 1.2 - edge;
     expect(hidden).toBeLessThan(3.5);
+  });
+});
+
+describe('overlook reach (#20): every desk of the floor from up on the mezzanine', () => {
+  const SIT_DROP = 0.36; // input/walk.ts: the seated eye sits this much lower
+  // Where on a slot you might aim: the worker's head and chest, the desk top, the "+".
+  const aims = (b: ReturnType<typeof slotBoxes>, worker: boolean): V3p[] => {
+    const top = (q: Box3, dy: number): V3p => ({ x: (q.min[0] + q.max[0]) / 2, y: q.max[1] - dy, z: (q.min[2] + q.max[2]) / 2 });
+    return worker ? [top(b.seat, 0.05), top(b.seat, 0.5), top(b.desk, 0.02)] : [top(b.plus, 0.05), top(b.desk, 0.02)];
+  };
+
+  for (const n of [20, 62, 96]) {
+    const L = floorLayout(n);
+    const m = L.mezzanine;
+    const reach = overlookReach(L);
+    const blockers = [...L.walls, m.slab];
+    const poses: Array<[string, V3]> = [
+      ['the west glass', [m.rect.x0 + 0.5, MEZZ_Y + EYE_HEIGHT, (m.rect.z0 + m.rect.z1) / 2]],
+      ['the south glass', [(m.rect.x0 + m.rect.x1) / 2, MEZZ_Y + EYE_HEIGHT, m.rect.z1 - 0.5]],
+      ['your seat', [m.sit.x, MEZZ_Y + EYE_HEIGHT - SIT_DROP, m.sit.z]],
+    ];
+    for (const worker of [true, false]) {
+      const targets = L.slots.map((s) => {
+        const b = slotBoxes(s);
+        return { boxes: worker ? [b.seat, b.desk] : [b.desk, b.plus], value: s.index };
+      });
+      for (const [where, eye] of poses) {
+        it(`${n} desks, ${worker ? 'workers' : 'empty desks'}, from ${where}`, () => {
+          const picks = (s: (typeof L.slots)[number], block: readonly Box3[]) =>
+            aims(slotBoxes(s), worker).some((a) => {
+              const to = [a.x - eye[0], a.y - eye[1], a.z - eye[2]];
+              const len = Math.hypot(...to);
+              return pickNearest(eye, to.map((v) => v / len) as [number, number, number], targets, reach, block)?.value === s.index;
+            });
+          const shown = L.slots.filter((s) => picks(s, blockers));
+          // Only the mezzanine's own floor hides a desk (the pod tucked under it): never the distance.
+          const hidden = L.slots.filter((s) => !shown.includes(s));
+          expect(hidden.filter((s) => !picks(s, L.walls)).map((s) => s.index)).toEqual([]);
+          expect(hidden.every((s) => s.seat.x > m.rect.x0 - 4 && s.seat.z < m.rect.z1 + 4)).toBe(true);
+          expect(shown.length).toBeGreaterThanOrEqual(L.slots.length - 8);
+          // Big floors have desks past the old fixed 20 m, and they are picked.
+          const far = Math.max(...shown.map((s) => Math.hypot(s.seat.x - eye[0], 1 - eye[1], s.seat.z - eye[2])));
+          if (n >= 62) expect(far).toBeGreaterThan(20);
+        });
+      }
+    }
+  }
+
+  it('reaches the far corner of every supported floor', () => {
+    for (const n of COUNTS) {
+      const L = floorLayout(n);
+      expect(overlookReach(L)).toBeGreaterThanOrEqual(Math.hypot(L.width, L.depth));
+    }
   });
 });
 
