@@ -344,3 +344,45 @@ elevator rows with state, transition, counts, current, wake/sleep and resume; bu
 statuses one per row, and whether the repo is the suggestion / the status field the default; any
 confirmation; the status line), `sent()` (commands sent, with their results), `floorPoint(session)` (a floor's screen
 point in the city, to click its building), `connection()` → `{phase, epoch}`.
+
+### Audio and voice lines
+
+The game's only sound so far is the lobby receptionist (`src/reception/`), played by a small Web Audio module
+(`src/audio/`): positional (the voice comes from the desk), clips fetched and decoded the first time they play, the
+AudioContext created on the first click, key or pointer lock (Chrome's autoplay rule), and a no-op without Web Audio
+(headless tests). The top bar's mute toggle and volume slider are remembered per browser (`localStorage`
+`h3d.audio`); muted, the speech bubbles still show. `src/reception/lines.ts` holds the rules (time-of-day welcome on the
+local clock, the elevator line, goodbye, a nudge whose audio stays generic while the bubble lists the waiting floors,
+the quiet-building line, the desk line; no variant twice in a row; a 2-minute cooldown each for greetings and goodbyes,
+never for the desk), covered by vitest.
+
+The lines are data: `game/voices/receptionist.json` (`id`, `kind`, `text`; a leading MiMo style tag such as
+`(Happy)` is allowed and never shown in the bubble) plus the voice settings. The clips are committed
+(`game/public/voices/receptionist/<id>.mp3`), so the game never calls a TTS service. Regenerate them with Xiaomi
+MiMo-V2.5-TTS:
+
+```sh
+pnpm -C game voices --dry-run   # what would be generated; reads no key, calls nothing
+pnpm -C game voices             # generate the lines that are new or changed
+pnpm -C game voices --check     # exit 1 on a missing, orphan, stale or broken clip (no calls)
+node game/tools/voices.ts design --takes 4 --out <dir>   # voice-design takes of the reference script
+node game/tools/voices.ts info  # duration, bitrate and size per clip
+```
+
+- **Key:** read at run time from `/tmp/xiaomi`, only when a call is about to be made; sent only in the `api-key`
+  header, never logged, written or passed to a child process. Never copy it anywhere. Run the generator in its own
+  herdr workspace (not a coding agent's), and check with `git grep -F -f /tmp/xiaomi` there so a match is never
+  printed where an agent reads it.
+- **Voice:** designed once with `mimo-v2.5-tts-voicedesign` from the manifest's description (an original friendly,
+  upbeat receptionist), the chosen take committed as `game/voices/receptionist-reference.mp3`, then every line spoken
+  with `mimo-v2.5-tts-voiceclone` from that clip, so the receptionist always sounds the same. `voice.use: "builtin"`
+  switches every line to one built-in voice (`voice.builtin.voice`, e.g. `Mia`) on `mimo-v2.5-tts` instead. Only ever
+  clone the designed reference: the voice (like the art, `docs/decisions.md`) must not imitate the Minions or other
+  Illumination characters, or any real person.
+- **Idempotent:** `game/voices/receptionist.lock.json` stores a hash per line of its text, the performance direction,
+  the model and the voice (the reference clip's hash, or the built-in name). An unchanged line is not regenerated;
+  editing a line regenerates only it, a new reference take or direction regenerates all, and a removed line's clip is
+  deleted. The lock's `ms` per clip also times the bubbles. vitest fails when the manifest, the lock and the clips
+  disagree.
+- **Size:** keep the clips under about 1 MB in total (the vitest check enforces 1 MiB). MiMo returns MP3 at ~56 kb/s,
+  24 kHz, which the generator keeps as is: 27 lines are ~800 KB. Add variants sparingly, and keep lines short.
