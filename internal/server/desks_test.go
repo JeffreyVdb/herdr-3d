@@ -157,6 +157,67 @@ func TestNamesUniqueOnABigFloor(t *testing.T) {
 	}
 }
 
+// A worker's name is its own for as long as its identity lives: a newcomer
+// never gets the name of a worker that left and may come back, even when
+// that leaves only suffixed names, and a bridge restart changes nothing.
+func TestReturningWorkerKeepsItsName(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "world.db")
+	b := startBridge(t, db, server.Options{})
+	var obs []world.WorkerObs
+	for i := range len(world.Names) {
+		obs = append(obs, agent(fmt.Sprintf("w%03d", i), "idle"))
+	}
+	b.floor("s", true, obs...)
+	w := b.world(hasWorkers("s", len(obs)))
+	names := map[string]string{} // agent session → name
+	for _, wk := range workersOf(w, "s") {
+		names[wk.AgentSession] = wk.Name
+	}
+	if len(names) != len(world.Names) {
+		t.Fatalf("the floor should hold every base name once: %v", names)
+	}
+	with := func(ws ...world.WorkerObs) []world.WorkerObs {
+		return append(append([]world.WorkerObs{}, obs[1:]...), ws...)
+	}
+	// A back from a closed workspace: new workspace id, same agent session.
+	back := worker("ra", "CODE|w000", "sess-w000", "idle")
+	check := func(w proto.World, want map[string]string) {
+		t.Helper()
+		seen := map[string]bool{}
+		for _, wk := range workersOf(w, "s") {
+			if seen[wk.Name] {
+				t.Errorf("name %q handed out twice", wk.Name)
+			}
+			seen[wk.Name] = true
+			if n, ok := want[wk.AgentSession]; ok && wk.Name != n {
+				t.Errorf("%s: name %q, want %q", wk.AgentSession, wk.Name, n)
+			}
+		}
+	}
+
+	// A's workspace closes and newcomer B joins while it is away.
+	b.floor("s", true, with()...)
+	b.floor("s", true, with(agent("b", "idle"))...)
+	w = b.world(func(w proto.World) bool { s := workersOf(w, "s"); _, a := s["w000"]; _, nb := s["b"]; return nb && !a })
+	names["sess-b"] = workersOf(w, "s")["b"].Name
+	if names["sess-b"] == names["sess-w000"] {
+		t.Fatalf("newcomer b got %q, the name of a worker that may come back", names["sess-b"])
+	}
+	b.floor("s", true, with(agent("b", "idle"), back)...)
+	check(b.world(hasWorkers("s", len(obs)+1)), names)
+
+	// Again across a bridge restart: A leaves, C joins, the bridge
+	// restarts, and A returns.
+	b.floor("s", true, with(agent("b", "idle"))...)
+	b.floor("s", true, with(agent("b", "idle"), agent("c", "idle"))...)
+	w = b.world(func(w proto.World) bool { s := workersOf(w, "s"); _, a := s["ra"]; _, c := s["c"]; return c && !a })
+	names["sess-c"] = workersOf(w, "s")["c"].Name
+	b.stop()
+	b2 := startBridge(t, db, server.Options{})
+	b2.floor("s", true, with(agent("b", "idle"), agent("c", "idle"), back)...)
+	check(b2.world(hasWorkers("s", len(obs)+2)), names)
+}
+
 func TestStatusSinceSurvivesRestartWhenUnchanged(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "world.db")
 	clk := newClock(1_000)

@@ -24,8 +24,9 @@ The game does not dial the socket itself. `h3d-helper` forwards it over SSH and 
 proxies it to the bridge's `/ws` unchanged (see CONTRIBUTING "Helper"). The helper answers `403` without upgrading
 unless all three hold:
 
-- `Host` is `127.0.0.1:<port>` or `localhost:<port>`;
-- `Origin` is `http://127.0.0.1:<port>` or `http://localhost:<port>`;
+- `Host` is `127.0.0.1:<port>` or `localhost:<port>` (or `<ip>:<port>` when `--listen` is another literal loopback
+  IP, e.g. `[::1]:<port>`);
+- `Origin` is `http://127.0.0.1:<port>` or `http://localhost:<port>` (or `http://<ip>:<port>` likewise);
 - `token` is the token of this helper run. The helper makes a random one at every start and opens the game at
   `http://127.0.0.1:<port>/#token=<token>`; the game keeps it in `sessionStorage` (`h3d.token`) and strips it from the
   URL.
@@ -156,9 +157,12 @@ takes the **lowest free** index, in sidebar order. A desk is freed when its work
 asleep floor keep their desks.
 
 Each worker also gets a **name** from a built-in list of original names ("Nibble", "Pixel", "Mochi", …), stored with
-the worker, and kept as long as it keeps its desk. Names are unique among the floor's current workers: past the end of
-the list they get a suffix (`"Pixel 2"`). A worker that comes back to a floor where someone else now has its name gets
-a new one.
+the worker and never changed: it comes back with the worker after a restart or when its workspace reopens. Names are
+unique among the floor's workers. A newcomer never gets the name of a worker the floor ever had, since that worker may
+come back, so past the end of the list (sooner on a floor with much churn) names get a suffix (`"Pixel 2"`). The one
+exception is two workers of a floor stored with the same name, which only a database from an earlier development build
+or a failed database read or write can cause: while both are on the floor, one keeps it (a worker that already had a
+desk before a newcomer, then sidebar order) and the other gets a new name, which it then keeps.
 
 `status_since` is stored with the status it belongs to. After a bridge restart a worker whose status is unchanged
 keeps its `status_since` (idle ages don't reset); one whose status changed while the bridge was down starts at the

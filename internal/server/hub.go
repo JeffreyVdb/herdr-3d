@@ -518,7 +518,16 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		}
 		metas[i] = nextMeta(base, w, now)
 	}
-	nameWorkers(ids, metas, desks)
+	// Any stored worker of the floor may come back (its marker or agent
+	// session reconciles it even after its workspace closed), so its name
+	// stays out of reach of newcomers.
+	reserved := map[string]bool{}
+	for _, r := range records {
+		if r.Name != "" {
+			reserved[r.Name] = true
+		}
+	}
+	nameWorkers(ids, metas, desks, reserved)
 
 	used := map[int]bool{}
 	for _, d := range desks {
@@ -593,10 +602,12 @@ func nextMeta(m workerMeta, w world.WorkerObs, now int64) workerMeta {
 	return m
 }
 
-// nameWorkers makes every worker's name unique on its floor. Seated workers
-// keep theirs; a worker joining the floor keeps its stored name unless a
-// worker on the floor already has it; the rest get a new one.
-func nameWorkers(ids []string, metas []workerMeta, desks map[string]int) {
+// nameWorkers makes every worker's name unique on its floor. Workers keep
+// the name they have; the rest get one that is neither on the floor nor
+// reserved. Newcomers never get a stored name, so two workers of a floor
+// only share one after a database error or in a database written before
+// that rule: then seated workers keep it first.
+func nameWorkers(ids []string, metas []workerMeta, desks map[string]int, reserved map[string]bool) {
 	taken := map[string]bool{}
 	for _, seatedPass := range []bool{true, false} {
 		for i, id := range ids {
@@ -609,6 +620,9 @@ func nameWorkers(ids []string, metas []workerMeta, desks map[string]int) {
 				metas[i].name = ""
 			}
 		}
+	}
+	for n := range reserved {
+		taken[n] = true
 	}
 	for i, id := range ids {
 		if metas[i].name == "" {
