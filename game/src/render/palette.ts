@@ -21,6 +21,9 @@ export const STATUS_CSS: Record<Display, string> = Object.fromEntries(
   Object.entries(STATUS_COLOR).map(([k, v]) => [k, `#${v.toString(16).padStart(6, '0')}`]),
 ) as Record<Display, string>;
 
+/** The same hues deepened where they carry white text (card tape, the blocked card): >= 4.5:1. Keep in sync with hud.css. */
+export const STATUS_CHIP_CSS: Record<Display, string> = { ...STATUS_CSS, done: '#0b8454', needs_you: '#d8302c', idle: '#6b7388' };
+
 /** Body tints for workers: a sunny, varied crew. */
 export const BODY_TINTS = [0xffd84a, 0xffc98f, 0xa6e3c4, 0xcdb6ff, 0xa9d6ff, 0xfff0a0, 0xffb3c1];
 

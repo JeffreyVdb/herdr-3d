@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { attribute, texture, uv, vec2 } from 'three/tsl';
 import { CHIP_TEXT } from '../../world/derive';
-import { STATUS_CSS } from '../palette';
+import { STATUS_CHIP_CSS } from '../palette';
 import { CARD_RANGE, selectCards, type CardRange } from './select';
 import { sameCard, type CardData, type Viewport } from './types';
 
@@ -21,7 +21,7 @@ export function drawCard(g: CanvasRenderingContext2D, x: number, y: number, c: C
   const red = c.display === 'needs_you';
   const asleep = c.display === 'asleep';
   const ink = red ? '#ffffff' : '#1c2540';
-  const bg = red ? STATUS_CSS.needs_you : asleep ? '#e6e8f4' : '#ffffff';
+  const bg = red ? STATUS_CHIP_CSS.needs_you : asleep ? '#e6e8f4' : '#ffffff';
   const bx = x + 6;
   const by = y + 6;
   const bw = CELL_W - 12;
@@ -45,9 +45,9 @@ export function drawCard(g: CanvasRenderingContext2D, x: number, y: number, c: C
   const tx = bx + bw - 18 - tw;
   g.translate(tx + tw / 2, by + 34);
   g.rotate(-0.03);
-  g.fillStyle = red ? '#ffffff' : STATUS_CSS[c.display];
+  g.fillStyle = red ? '#ffffff' : STATUS_CHIP_CSS[c.display];
   g.fillRect(-tw / 2, -17, tw, 34);
-  g.fillStyle = red ? STATUS_CSS.needs_you : '#ffffff';
+  g.fillStyle = red ? STATUS_CHIP_CSS.needs_you : '#ffffff';
   g.textBaseline = 'middle';
   g.textAlign = 'center';
   g.fillText(chip, 0, 1);
