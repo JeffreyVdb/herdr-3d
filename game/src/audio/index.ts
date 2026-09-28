@@ -11,8 +11,12 @@ import type * as THREE from 'three/webgpu';
 export interface GameAudio {
   /** Make / resume the AudioContext (call it from a user gesture); the first click / pointer-lock / key does this by itself. */
   unlock(): Promise<void>;
-  /** Lazily load + decode (off the frame path) and play a clip positioned at a world point. */
-  playAt(clip: string, pos: { x: number; y: number; z: number }): void;
+  /**
+   * Lazily load + decode (off the frame path) and play a clip positioned at a
+   * world point. The handle says when it actually starts and ends (a cold
+   * clip starts only once it has loaded); callers that don't care ignore it.
+   */
+  playAt(clip: string, pos: { x: number; y: number; z: number }): Playback;
   /** Called once per frame with the camera (listener position + orientation). */
   setListener(camera: THREE.Camera): void;
   muted: boolean; // persisted per browser
@@ -31,6 +35,19 @@ export interface GameAudio {
   /** Mute, volume or state changed; returns the unsubscribe. */
   onChange(fn: () => void): () => void;
 }
+
+/** One `playAt`: when the clip really sounds, and when it's over. */
+export interface Playback {
+  /** True once the clip starts sounding; false when it never will (muted, locked, stopped or cancelled first, failed to load). */
+  readonly started: Promise<boolean>;
+  /** Settles when the clip has played out, was stopped or cancelled, or never started. */
+  readonly ended: Promise<void>;
+  /** Drops the clip while it loads, stops it while it plays. */
+  cancel(): void;
+}
+
+/** The handle of a clip that won't sound. */
+const SILENT: Playback = { started: Promise.resolve(false), ended: Promise.resolve(), cancel: () => undefined };
 
 /** Everything the module touches in the browser, so tests can fake it. */
 export interface AudioDeps {
@@ -88,6 +105,8 @@ const setParam = (p: AudioParam | undefined, v: number) => {
 interface Voice {
   src: AudioBufferSourceNode;
   panner: PannerNode;
+  /** Settles its Playback (whether or not the browser still fires `ended`, e.g. in a suspended context). */
+  done: () => void;
 }
 
 class WebGameAudio implements GameAudio {
@@ -269,20 +288,49 @@ class WebGameAudio implements GameAudio {
     return this.decoded.get(clip)?.duration ?? null;
   }
 
-  playAt(clip: string, pos: { x: number; y: number; z: number }): void {
-    if (this.disposed || this.prefs.muted || !this.available) return;
+  playAt(clip: string, pos: { x: number; y: number; z: number }): Playback {
+    if (this.disposed || this.prefs.muted || !this.available) return SILENT;
     const gen = this.gen;
     const at = { x: pos.x, y: pos.y, z: pos.z };
+    let voice: Voice | null = null;
+    let over = false;
+    let started!: (ok: boolean) => void;
+    let ended!: () => void;
+    const pb: Playback = {
+      started: new Promise((r) => (started = r)),
+      ended: new Promise((r) => (ended = r)),
+      cancel: () => (voice ? this.silence(voice) : finish()),
+    };
+    // Settles both (a no-op once they have): nothing sounds after this.
+    function finish() {
+      over = true;
+      started(false);
+      ended();
+    }
     void this.buffer(clip).then((buf) => {
       const ctx = this.ctx;
       const master = this.master;
-      // Stopped, muted or disposed while it loaded, or still locked: a late line would sound out of place.
-      if (!buf || !ctx || !master || gen !== this.gen || this.disposed || this.prefs.muted || ctx.state !== 'running') return;
-      this.start(ctx, master, buf, at);
+      // Stopped, muted, cancelled or disposed while it loaded, or still locked: a late line would sound out of place.
+      if (over || !buf || !ctx || !master || gen !== this.gen || this.disposed || this.prefs.muted || ctx.state !== 'running') {
+        finish();
+        return;
+      }
+      voice = this.start(ctx, master, buf, at, finish);
+      started(true);
     });
+    return pb;
   }
 
-  private start(ctx: AudioContext, master: GainNode, buf: AudioBuffer, at: { x: number; y: number; z: number }): void {
+  private silence(v: Voice): void {
+    try {
+      v.src.stop();
+    } catch {
+      // Already ended.
+    }
+    v.done();
+  }
+
+  private start(ctx: AudioContext, master: GainNode, buf: AudioBuffer, at: { x: number; y: number; z: number }, onEnded: () => void): Voice {
     const panner = ctx.createPanner();
     panner.panningModel = 'HRTF';
     panner.distanceModel = 'inverse';
@@ -297,16 +345,18 @@ class WebGameAudio implements GameAudio {
     src.buffer = buf;
     src.connect(panner);
     panner.connect(master);
-    const v: Voice = { src, panner };
+    const v: Voice = { src, panner, done: onEnded };
     this.voices.add(v);
     src.onended = () => {
       this.voices.delete(v);
       src.disconnect();
       panner.disconnect();
+      onEnded();
     };
     this.lastListener.fill(Number.NaN);
     if (this.camera) this.setListener(this.camera);
     src.start();
+    return v;
   }
 
   setListener(camera: THREE.Camera): void {
@@ -356,13 +406,7 @@ class WebGameAudio implements GameAudio {
 
   stop(): void {
     this.gen++;
-    for (const v of this.voices) {
-      try {
-        v.src.stop();
-      } catch {
-        // Already ended.
-      }
-    }
+    for (const v of this.voices) this.silence(v);
   }
 
   dispose(): void {
