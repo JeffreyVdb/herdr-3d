@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/codex"
+	"github.com/JeffreyVdb/herdr-3d/internal/gitremote"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
@@ -35,6 +37,10 @@ const (
 	EnvResnapshot = "HERDR_WORLD_RESNAPSHOT"
 	EnvMaxDesks   = "HERDR_WORLD_MAX_DESKS"
 	EnvNameHold   = "HERDR_WORLD_NAME_HOLD"
+	EnvSystemdRun = "HERDR_WORLD_SYSTEMD_RUN"
+	EnvWakeTime   = "HERDR_WORLD_WAKE_TIMEOUT"
+	EnvResumeTime = "HERDR_WORLD_RESUME_TIMEOUT"
+	EnvCodex      = "HERDR_WORLD_CODEX_SESSIONS"
 	EnvLogLevel   = "HERDR_WORLD_LOG_LEVEL"
 	EnvLogFormat  = "HERDR_WORLD_LOG_FORMAT"
 )
@@ -171,15 +177,27 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	if err != nil {
 		return err
 	}
+	wakeTimeout, err := envDuration(EnvWakeTime, server.DefaultWakeTimeout)
+	if err != nil {
+		return err
+	}
+	resumeTimeout, err := envDuration(EnvResumeTime, server.DefaultResumeTimeout)
+	if err != nil {
+		return err
+	}
 	fs := newFlagSet(name, "serve", stderr)
 	socket := fs.String("socket", envOr(EnvSocket, DefaultSocket()), "unix socket to serve on ($"+EnvSocket+")")
 	db := fs.String("db", envOr(EnvDB, DefaultDB()), "SQLite database ($"+EnvDB+")")
-	herdrBin := fs.String("herdr", envOr(EnvHerdr, "herdr"), "herdr executable, for `session list` ($"+EnvHerdr+")")
+	herdrBin := fs.String("herdr", envOr(EnvHerdr, "herdr"), "herdr executable ($"+EnvHerdr+")")
+	systemdRun := fs.String("systemd-run", envOr(EnvSystemdRun, "systemd-run"), "systemd-run executable, to wake floors ($"+EnvSystemdRun+")")
+	codexSessions := fs.String("codex-sessions", envOr(EnvCodex, codex.DefaultSessionsDir()), "Codex rollout directory, for the sleep backfill ($"+EnvCodex+")")
 	sessions := fs.String("sessions", os.Getenv(EnvSessions), "only watch sessions whose name matches this regexp ($"+EnvSessions+")")
 	fs.DurationVar(&poll, "poll", poll, "session discovery interval ($"+EnvPoll+")")
 	fs.DurationVar(&resnap, "resnapshot", resnap, "safety re-snapshot interval per session ($"+EnvResnapshot+")")
 	fs.IntVar(&maxDesks, "max-desks", maxDesks, "most desks a floor renders beyond its occupied ones ($"+EnvMaxDesks+")")
 	fs.DurationVar(&nameHold, "name-hold", nameHold, "how long a worker's name stays held after it leaves its floor ($"+EnvNameHold+")")
+	fs.DurationVar(&wakeTimeout, "wake-timeout", wakeTimeout, "how long a woken server has to answer ping ($"+EnvWakeTime+")")
+	fs.DurationVar(&resumeTimeout, "resume-timeout", resumeTimeout, "how long a wake waits for the agents, before and after the fallback ($"+EnvResumeTime+")")
 	level := fs.String("log-level", envOr(EnvLogLevel, "info"), "debug, info, warn or error ($"+EnvLogLevel+")")
 	format := fs.String("log-format", envOr(EnvLogFormat, "text"), "text or json ($"+EnvLogFormat+")")
 	showVersion := fs.Bool("version", false, "print version and exit")
@@ -199,6 +217,9 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	if nameHold <= 0 {
 		return fmt.Errorf("-name-hold must be positive, got %s", nameHold)
 	}
+	if wakeTimeout <= 0 || resumeTimeout <= 0 {
+		return fmt.Errorf("-wake-timeout and -resume-timeout must be positive, got %s and %s", wakeTimeout, resumeTimeout)
+	}
 	log, err := newLogger(stderr, *level, *format)
 	if err != nil {
 		return err
@@ -212,6 +233,9 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	return Serve(ctx, ServeConfig{
 		Socket: *socket, DB: *db, Herdr: &herdr.Client{Bin: *herdrBin}, Only: only,
 		Poll: poll, Resnapshot: resnap, MaxDesks: maxDesks, NameHold: nameHold, Log: log, Name: name,
+		Control:     &herdr.Control{Herdr: *herdrBin, SystemdRun: *systemdRun, Only: only},
+		WakeTimeout: wakeTimeout, ResumeTimeout: resumeTimeout, CodexSessions: *codexSessions,
+		RepoOf: (&gitremote.Resolver{}).Repo,
 	})
 }
 
@@ -228,6 +252,19 @@ type ServeConfig struct {
 	NameHold   time.Duration // default server.DefaultNameHold
 	Log        *slog.Logger
 	Name       string
+	// Control is the write path that wakes floors and puts them to sleep
+	// (nil: floor.wake and floor.sleep fail). Pings go through Herdr.
+	Control *herdr.Control
+	// WakeTimeout and ResumeTimeout: see server.Options (0: defaults).
+	WakeTimeout, ResumeTimeout time.Duration
+	// ResumePoll and ResumeSettle: see server.Options (0: defaults).
+	ResumePoll, ResumeSettle time.Duration
+	// CodexSessions is the Codex rollout directory for the sleep backfill
+	// ("": no backfill).
+	CodexSessions string
+	// RepoOf finds a directory's GitHub repo for the floor suggestion (nil:
+	// no suggestions).
+	RepoOf func(ctx context.Context, dir string) string
 	// Ready, if set, is called once the socket is listening.
 	Ready func()
 }
@@ -241,8 +278,16 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer st.Close()
-	hub, err := server.NewHub(ctx, st, server.Options{Ring: cfg.Ring, MaxDesks: cfg.MaxDesks, NameHold: cfg.NameHold,
-		Server: Banner(cfg.Name), Log: log})
+	opts := server.Options{Ring: cfg.Ring, MaxDesks: cfg.MaxDesks, NameHold: cfg.NameHold,
+		Server: Banner(cfg.Name), Log: log, Sessions: cfg.Only, RepoOf: cfg.RepoOf,
+		WakeTimeout: cfg.WakeTimeout, ResumeTimeout: cfg.ResumeTimeout, ResumePoll: cfg.ResumePoll, ResumeSettle: cfg.ResumeSettle}
+	if cfg.Control != nil {
+		opts.Herdr = floorHerdr{Control: cfg.Control, read: cfg.Herdr}
+	}
+	if dir := cfg.CodexSessions; dir != "" {
+		opts.CodexSession = func(cwd string, skip func(string) bool) (string, error) { return codex.FindSession(dir, cwd, skip) }
+	}
+	hub, err := server.NewHub(ctx, st, opts)
 	if err != nil {
 		return err
 	}
@@ -270,6 +315,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	run("watch", func() error {
 		return watch.Run(ctx, watch.Config{
 			Herdr: cfg.Herdr, Out: hub.Updates(), Only: cfg.Only, Poll: cfg.Poll, Resnapshot: cfg.Resnapshot, Log: log,
+			Rescan: hub.Rescans(),
 		})
 	})
 	run("server", func() error { return server.NewServer(hub, log).Serve(ctx, ln) })
@@ -281,6 +327,17 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	wg.Wait()
 	close(errs)
 	return errors.Join(slicesOf(errs)...)
+}
+
+// floorHerdr is server.FloorHerdr: the write path plus read-only pings.
+type floorHerdr struct {
+	*herdr.Control
+	read watch.Herdr
+}
+
+func (f floorHerdr) Ping(ctx context.Context, socket string) error {
+	_, err := f.read.Ping(ctx, socket)
+	return err
 }
 
 func slicesOf(ch <-chan error) []error {
@@ -354,11 +411,13 @@ func dumpMain(ctx context.Context, name string, args []string, stdout, stderr io
 func cmdMain(ctx context.Context, name string, args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet(name, "cmd", stderr)
 	socket := fs.String("socket", envOr(EnvSocket, DefaultSocket()), "bridge socket ($"+EnvSocket+")")
-	timeout := fs.Duration("timeout", 10*time.Second, "give up after this long")
+	timeout := fs.Duration("timeout", time.Minute, "give up after this long (a floor.wake can take ~30 s)")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: %s cmd [flags] TYPE [ARGS-JSON]\n\ncommands: %s\n\nexamples:\n", name, strings.Join(proto.Commands, ", "))
 		fmt.Fprintf(stderr, "  %s cmd building.create '{\"name\":\"Work\"}'\n", name)
-		fmt.Fprintf(stderr, "  %s cmd floor.assign '{\"session\":\"herdr-3d\",\"building\":\"b_…\",\"index\":0}'\n\nflags:\n", name)
+		fmt.Fprintf(stderr, "  %s cmd floor.assign '{\"session\":\"herdr-3d\",\"building\":\"b_…\",\"index\":0}'\n", name)
+		fmt.Fprintf(stderr, "  %s cmd floor.settings.set '{\"session\":\"herdr-3d\",\"repo\":\"JeffreyVdb/herdr-3d\"}'\n", name)
+		fmt.Fprintf(stderr, "  %s cmd floor.sleep '{\"session\":\"h3d-scratch\"}'\n\nflags:\n", name)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {

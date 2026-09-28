@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -214,9 +215,16 @@ func (h *Hub) resolveWait(op *floorOp, id, how string) {
 	if w.fallback {
 		w.state = proto.ResumeFallback
 	}
-	w.note = how
+	w.note = joinNote(w.note, how)
 	h.setResume(id, w.state)
 	op.signal()
+}
+
+func joinNote(a, b string) string {
+	if a == "" {
+		return b
+	}
+	return a + "; " + b
 }
 
 // pendingWait is a copy of a pending resumeWait for the op goroutine.
@@ -423,8 +431,8 @@ func (h *Hub) fallback(ctx context.Context, op *floorOp, p pendingWait) {
 		}
 	}
 	_ = h.doWait(ctx, func() {
-		if w := op.waits[p.id]; w != nil && w.state == proto.ResumePending {
-			w.note = note
+		if w := op.waits[p.id]; w != nil {
+			w.note = joinNote(w.note, note)
 		}
 	})
 }
@@ -441,9 +449,10 @@ type backfill struct {
 
 // sleepReport is the audit-log result of a floor.sleep.
 type sleepReport struct {
-	Backfills  []backfill `json:"backfills"`
-	Stop       string     `json:"stop,omitempty"`
-	SeenAsleep bool       `json:"seen_asleep"`
+	Backfills []backfill `json:"backfills"`
+	// Stop is herdr's `session stop` output (JSON when it is JSON).
+	Stop       any  `json:"stop,omitempty"`
+	SeenAsleep bool `json:"seen_asleep"`
 }
 
 // runSleep backfills Codex session ids, stops the session the way herdr
@@ -469,7 +478,11 @@ func (h *Hub) runSleep(ctx context.Context, op *floorOp, backfills []backfill, k
 		report.Backfills = append(report.Backfills, b)
 	}
 	out, err := h.opts.Herdr.StopSession(ctx, op.session)
-	report.Stop = out
+	if json.Valid([]byte(out)) {
+		report.Stop = json.RawMessage(out)
+	} else if out != "" {
+		report.Stop = out
+	}
 	if err != nil {
 		h.finishOp(ctx, op, fmt.Errorf("%w: %v", errSleepFailed, err), report)
 		return
