@@ -479,6 +479,51 @@ test('floor settings: one status per row, from the keyboard; commas survive; unt
   clean();
 });
 
+test('floor settings: twin statuses that differ by a space stay apart when one is removed or moved', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m3', '', SIM);
+  // Valid on the bridge, and they look the same in their inputs.
+  const open = async () => {
+    await page.evaluate(
+      (building) =>
+        window.__h3d.inject({
+          t: 'floor.upsert',
+          seq: 0,
+          floor: {
+            session: 'herdr-3d',
+            state: 'running',
+            default: true,
+            building,
+            index: 0,
+            desks: 20,
+            settings: { repo: 'JeffreyVdb/herdr-3d', status_field: { name: 'Status', options: [' Done', 'Done'] } },
+          },
+        }),
+      WORK,
+    );
+    await page.evaluate(() => window.__h3d.openSettings('herdr-3d'));
+    await expect(page.getByRole('textbox', { name: 'Status 1 of 2' })).toHaveValue(' Done');
+  };
+  const saved = async () => {
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText('Saved the status field.');
+    return (await sent(page)).at(-1)?.args;
+  };
+
+  // Remove the first twin: the second stays.
+  await open();
+  await press(page, 'odel:0');
+  expect(await saved()).toEqual({ session: 'herdr-3d', status_field: { name: 'Status', options: ['Done'] } });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog.panel')).toBeHidden();
+
+  // Swap them: the new order is sent.
+  await open();
+  await press(page, 'oup:1');
+  expect(await saved()).toEqual({ session: 'herdr-3d', status_field: { name: 'Status', options: ['Done', ' Done'] } });
+  clean();
+});
+
 test('a live update keeps keyboard focus on the panel header (Close, Back)', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page, 'demo-m3', '', SIM);

@@ -1,16 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import type { FloorSettings } from '../net/protocol';
-import { DEFAULT_STATUS_FIELD, effortsFor, formFrom, parseForm, settingsPatch, type SettingsForm } from './settings';
+import { DEFAULT_STATUS_FIELD, effortsFor, formFrom, parseForm, settingsPatch, type SettingsForm, type StatusRow } from './settings';
 import { DEFAULT_HIRE_OPTIONS } from './store';
 
 const H = DEFAULT_HIRE_OPTIONS;
+
+/** Status rows typed into the panel. */
+const typed = (...texts: string[]): StatusRow[] => texts.map((text) => ({ text, stored: null }));
+/** Status rows opened on stored labels. */
+const opened = (...labels: string[]): StatusRow[] => labels.map((l) => ({ text: l, stored: l }));
+/** A form as its text inputs hold it: an input drops line breaks. */
+const inInputs = (f: SettingsForm): SettingsForm => ({ ...f, statusOptions: f.statusOptions.map((r) => ({ ...r, text: r.text.replace(/[\r\n]/g, '') })) });
 
 const blank = (over: Partial<SettingsForm> = {}): SettingsForm => ({
   repo: '',
   projectOwner: '',
   projectNumber: '',
   statusName: 'Status',
-  statusOptions: ['Todo', 'Doing', 'QA', 'Done'],
+  statusOptions: typed('Todo', 'Doing', 'QA', 'Done'),
   defaultCwd: '',
   harness: '',
   model: '',
@@ -59,7 +66,7 @@ describe('formFrom', () => {
       projectOwner: 'JeffreyVdb',
       projectNumber: '3',
       statusName: 'State',
-      statusOptions: ['Open', 'Review, QA', 'Closed'],
+      statusOptions: opened('Open', 'Review, QA', 'Closed'),
       defaultCwd: '/srv/x',
       harness: 'codex',
       model: 'gpt-6-sol',
@@ -71,7 +78,7 @@ describe('formFrom', () => {
 
   it('a stored status field without a project is shown as stored', () => {
     const f = formFrom({ status_field: { name: 'Workflow', options: ['Todo', 'Done'] } }, {});
-    expect(f.form).toMatchObject({ projectOwner: '', projectNumber: '', statusName: 'Workflow', statusOptions: ['Todo', 'Done'] });
+    expect(f.form).toMatchObject({ projectOwner: '', projectNumber: '', statusName: 'Workflow', statusOptions: opened('Todo', 'Done') });
     expect(f.statusDefault).toBe(false);
   });
 });
@@ -109,36 +116,46 @@ describe('parseForm', () => {
 
   it('reads the status field with or without a project, one status per row, commas and all', () => {
     expect(parseForm(blank(), H).value.status_field).toEqual({ name: 'Status', options: ['Todo', 'Doing', 'QA', 'Done'] });
-    expect(parseForm(blank({ statusOptions: ['Review, QA', 'Done'] }), H).value.status_field).toEqual({ name: 'Status', options: ['Review, QA', 'Done'] });
+    expect(parseForm(blank({ statusOptions: typed('Review, QA', 'Done') }), H).value.status_field).toEqual({ name: 'Status', options: ['Review, QA', 'Done'] });
     // Blank rows (a status added and left empty) do not count; new labels are trimmed.
-    expect(parseForm(blank({ statusName: ' Stage ', statusOptions: ['', ' Todo ', '  ', 'Done'] }), H).value.status_field).toEqual({ name: 'Stage', options: ['Todo', 'Done'] });
-    expect(parseForm(blank({ projectOwner: 'o', projectNumber: '1', statusOptions: ['A'] }), H).value.status_field).toEqual({ name: 'Status', options: ['A'] });
+    expect(parseForm(blank({ statusName: ' Stage ', statusOptions: typed('', ' Todo ', '  ', 'Done') }), H).value.status_field).toEqual({ name: 'Stage', options: ['Todo', 'Done'] });
+    expect(parseForm(blank({ projectOwner: 'o', projectNumber: '1', statusOptions: typed('A') }), H).value.status_field).toEqual({ name: 'Status', options: ['A'] });
   });
 
   it('validates the status field like the bridge, pointing at the row to fix', () => {
     expect(parseForm(blank({ statusName: ' ' }), H)).toMatchObject({ errors: { statusName: expect.stringMatching(/Name/) }, value: { status_field: null } });
     expect(parseForm(blank({ statusName: 'é'.repeat(33) }), H).errors.statusName).toMatch(/64/); // 66 bytes
-    expect(parseForm(blank({ statusOptions: ['', ' '] }), H)).toMatchObject({ errors: { statusOptions: expect.stringMatching(/at least one/) }, badOption: null });
-    expect(parseForm(blank({ statusOptions: ['Todo', '', 'Todo'] }), H)).toMatchObject({ errors: { statusOptions: expect.stringMatching(/Todo.*twice/) }, badOption: 2 });
-    expect(parseForm(blank({ statusOptions: ['Todo', ' Todo '] }), H)).toMatchObject({ errors: { statusOptions: expect.stringMatching(/twice/) }, badOption: 1 });
+    expect(parseForm(blank({ statusOptions: typed('', ' ') }), H)).toMatchObject({ errors: { statusOptions: expect.stringMatching(/at least one/) }, badOption: null });
+    expect(parseForm(blank({ statusOptions: typed('Todo', '', 'Todo') }), H)).toMatchObject({ errors: { statusOptions: expect.stringMatching(/Todo.*twice/) }, badOption: 2 });
+    expect(parseForm(blank({ statusOptions: typed('Todo', ' Todo ') }), H)).toMatchObject({ errors: { statusOptions: expect.stringMatching(/twice/) }, badOption: 1 });
     const many = Array.from({ length: 21 }, (_, i) => `s${i}`);
-    expect(parseForm(blank({ statusOptions: many }), H)).toMatchObject({ errors: { statusOptions: expect.stringMatching(/20/) }, badOption: 20 });
-    expect(parseForm(blank({ statusOptions: ['ok', 'x'.repeat(65)] }), H)).toMatchObject({ errors: { statusOptions: expect.stringMatching(/64/) }, badOption: 1 });
+    expect(parseForm(blank({ statusOptions: typed(...many) }), H)).toMatchObject({ errors: { statusOptions: expect.stringMatching(/20/) }, badOption: 20 });
+    expect(parseForm(blank({ statusOptions: typed('ok', 'x'.repeat(65)) }), H)).toMatchObject({ errors: { statusOptions: expect.stringMatching(/64/) }, badOption: 1 });
     // An empty name and no statuses: no status field, not an error.
-    expect(parseForm(blank({ statusName: '', statusOptions: ['', ''] }), H)).toMatchObject({ value: { status_field: null }, errors: {} });
+    expect(parseForm(blank({ statusName: '', statusOptions: typed('', '') }), H)).toMatchObject({ value: { status_field: null }, errors: {} });
   });
 
-  it('keeps stored labels exactly while their rows show them unchanged', () => {
+  it('sends a stored label back exactly while its row shows it as opened, wherever the row moves', () => {
     // Valid on the bridge (it only rejects blank labels): spaces around a label, twins
     // that differ by a space, a line break (a text input shows it without the break).
     const stored: FloorSettings = { status_field: { name: ' Stage ', options: [' Done', 'Done', 'a\nb', '🚀 Ship it, now'] } };
-    const shown = [' Done', 'Done', 'ab', '🚀 Ship it, now'];
-    const p = parseForm(blank({ statusName: ' Stage ', statusOptions: shown }), H, stored);
-    expect(p.errors).toEqual({});
-    expect(p.value.status_field).toEqual(stored.status_field);
-    // Moved rows keep their labels too; an edited row is read as typed (trimmed).
-    const moved = parseForm(blank({ statusName: 'Stage', statusOptions: ['ab', 'Done', ' Done', ' Launch '] }), H, stored);
-    expect(moved.value.status_field).toEqual({ name: ' Stage ', options: ['a\nb', ' Done', 'Done', 'Launch'] });
+    const f = inInputs(formFrom(stored, {}).form);
+    expect(parseForm(f, H, stored)).toMatchObject({ value: { status_field: stored.status_field }, errors: {} });
+    // Moved rows keep their labels; edited and added rows are read as typed (trimmed).
+    const [spaced, done, ab, ship] = f.statusOptions as [StatusRow, StatusRow, StatusRow, StatusRow];
+    f.statusOptions = [ab, done, spaced, { ...ship, text: ' Shipped ' }, ...typed(' Launch ')];
+    expect(parseForm(f, H, stored).value.status_field).toEqual({ name: ' Stage ', options: ['a\nb', 'Done', ' Done', 'Shipped', 'Launch'] });
+  });
+
+  it('reads any edit as typed, spaces too: an edited status or name is trimmed', () => {
+    const stored: FloorSettings = { status_field: { name: ' Stage ', options: [' Done', 'Done'] } };
+    const f = formFrom(stored, {}).form;
+    f.statusName = ' Stage';
+    f.statusOptions[1]!.text = 'Done ';
+    expect(parseForm(f, H, stored)).toMatchObject({ value: { status_field: { name: 'Stage', options: [' Done', 'Done'] } }, errors: {} });
+    // Taking the space off the first twin makes it the second: caught on its row.
+    f.statusOptions[0]!.text = 'Done';
+    expect(parseForm(f, H, stored)).toMatchObject({ errors: { statusOptions: expect.stringMatching(/Done.*twice/) }, badOption: 1 });
   });
 
   it('wants an absolute default cwd', () => {
@@ -164,7 +181,7 @@ describe('parseForm', () => {
 describe('settingsPatch', () => {
   it('sends nothing when nothing changed', () => {
     const stored: FloorSettings = { repo: 'o/r', project: { owner: 'o', number: 1 }, status_field: { name: 'Status', options: ['Todo', 'Done'] } };
-    expect(save(stored, { repo: 'o/r', projectOwner: 'o', projectNumber: '1', statusOptions: ['Todo', 'Done'] })).toEqual({});
+    expect(save(stored, { repo: 'o/r', projectOwner: 'o', projectNumber: '1', statusOptions: typed('Todo', 'Done') })).toEqual({});
     expect(edit(stored, () => {})).toEqual({});
     expect(save({}, {})).toEqual({});
     expect(edit({}, () => {})).toEqual({});
@@ -192,7 +209,16 @@ describe('settingsPatch', () => {
     expect(edit(full, (f) => (f.defaultCwd = '/srv'))).toEqual({ default_cwd: '/srv' });
     const odd: FloorSettings = { status_field: { name: ' Stage ', options: [' Done', 'Done', 'a\nb'] } };
     // What the inputs show: a text input drops the line break.
-    expect(edit(odd, (f) => (f.statusOptions = f.statusOptions.map((o) => o.replace(/[\r\n]/g, ''))))).toEqual({});
+    expect(edit(odd, (f) => (f.statusOptions = inInputs(f).statusOptions))).toEqual({});
+  });
+
+  it('removing or moving a status acts on the row chosen, even twins that differ by a space', () => {
+    // The review's cases: two stored labels that look the same in their inputs.
+    const stored: FloorSettings = { status_field: { name: 'Status', options: [' Done', 'Done'] } };
+    expect(edit(stored, (f) => f.statusOptions.splice(0, 1))).toEqual({ status_field: { name: 'Status', options: ['Done'] } });
+    expect(edit(stored, (f) => f.statusOptions.splice(1, 1))).toEqual({ status_field: { name: 'Status', options: [' Done'] } });
+    expect(edit(stored, (f) => f.statusOptions.reverse())).toEqual({ status_field: { name: 'Status', options: ['Done', ' Done'] } });
+    expect(edit(stored, () => {})).toEqual({});
   });
 
   it('keeps a stored status field when there is no project; only emptying it clears it', () => {
@@ -210,11 +236,11 @@ describe('settingsPatch', () => {
 
   it('the pre-filled default status field is not stored until it is changed', () => {
     expect(save({}, { projectOwner: 'o', projectNumber: '2' })).toEqual({ project: { owner: 'o', number: 2 } });
-    expect(edit({}, (f) => f.statusOptions.push('Blocked'))).toEqual({ status_field: { name: 'Status', options: ['Todo', 'Doing', 'QA', 'Done', 'Blocked'] } });
+    expect(edit({}, (f) => f.statusOptions.push(...typed('Blocked')))).toEqual({ status_field: { name: 'Status', options: ['Todo', 'Doing', 'QA', 'Done', 'Blocked'] } });
     expect(edit({}, (f) => (f.statusName = 'Stage'))).toEqual({ status_field: { name: 'Stage', options: DEFAULT_STATUS_FIELD.options } });
     // A stored field set back to the defaults is stored as such.
     const stored: FloorSettings = { status_field: { name: 'Status', options: ['Todo'] } };
-    expect(edit(stored, (f) => (f.statusOptions = [...DEFAULT_STATUS_FIELD.options]))).toEqual({ status_field: DEFAULT_STATUS_FIELD });
+    expect(edit(stored, (f) => (f.statusOptions = typed(...DEFAULT_STATUS_FIELD.options)))).toEqual({ status_field: DEFAULT_STATUS_FIELD });
   });
 
   it('a reordered status list is a change', () => {
@@ -224,7 +250,7 @@ describe('settingsPatch', () => {
 
   it('compares stored objects whatever their key order', () => {
     const stored = JSON.parse('{"project":{"number":2,"owner":"o"},"status_field":{"options":["A"],"name":"S"}}') as FloorSettings;
-    expect(save(stored, { projectOwner: 'o', projectNumber: '2', statusName: 'S', statusOptions: ['A'] })).toEqual({});
+    expect(save(stored, { projectOwner: 'o', projectNumber: '2', statusName: 'S', statusOptions: typed('A') })).toEqual({});
   });
 });
 

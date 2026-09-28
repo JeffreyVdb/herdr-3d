@@ -1,7 +1,7 @@
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, CommandName } from '../net/protocol';
 import { buildingOrder, floorMove } from '../world/arrange';
-import { DEFAULT_STATUS_FIELD, effortsFor, formFrom, parseForm, settingsPatch, type FieldKey, type SettingsForm } from '../world/settings';
+import { DEFAULT_STATUS_FIELD, effortsFor, formFrom, parseForm, settingsPatch, type FieldKey, type SettingsForm, type StatusRow } from '../world/settings';
 import type { FloorView, WorldStore } from '../world/store';
 import { h, icon, ICON, replaceKeepingFocus, type Child } from './dom';
 import { failureText } from './messages';
@@ -46,8 +46,11 @@ export interface ElevatorRow {
 export type PanelSummary = (
   | { kind: 'elevator'; building: string | null; title: string; rows: ElevatorRow[] }
   | { kind: 'buildings'; buildings: Array<{ id: string; name: string; floors: string[] }>; lot: string[] }
-  | { kind: 'settings'; session: string; form: SettingsForm; repoSuggested: boolean; statusDefault: boolean }
+  | { kind: 'settings'; session: string; form: ShownForm; repoSuggested: boolean; statusDefault: boolean }
 ) & { status: string; confirm: { title: string; body: string } | null };
+
+/** The settings form as its inputs show it: each status by its text. */
+type ShownForm = Omit<SettingsForm, 'statusOptions'> & { statusOptions: string[] };
 
 const LOT = 'Unassigned lot';
 
@@ -857,7 +860,7 @@ export class Panels {
     const syncDefault = () => {
       const d = DEFAULT_STATUS_FIELD;
       const v = statuses.values();
-      const isDefault = init.statusDefault && statusName.value === d.name && v.length === d.options.length && v.every((o, i) => o === d.options[i]);
+      const isDefault = init.statusDefault && statusName.value === d.name && v.length === d.options.length && v.every((o, i) => o.text === d.options[i]);
       defaultTape.hidden = !isDefault;
       hints.set('statusOptions', statusHint(isDefault));
       if (!statusMsg.classList.contains('field-error')) statusMsg.textContent = statusHint(isDefault);
@@ -1015,14 +1018,16 @@ export class Panels {
   /**
    * The status list: one input per status, in board order, with buttons to
    * move and remove each and to add one. A row per label keeps any label
-   * intact (commas and all); rows persist, so typing and focus survive a move.
+   * intact (commas and all); rows persist, so typing, focus and the stored
+   * label a row was opened with survive a move.
    */
   private statusEditor(
-    initial: string[],
+    initial: StatusRow[],
     hintId: string,
     changed: () => void,
-  ): { el: HTMLElement; values(): string[]; flag(row: number | null): void; focus(row: number | null): void } {
+  ): { el: HTMLElement; values(): StatusRow[]; flag(row: number | null): void; focus(row: number | null): void } {
     interface Row {
+      stored: string | null;
       li: HTMLLIElement;
       num: HTMLElement;
       input: HTMLInputElement;
@@ -1071,10 +1076,11 @@ export class Panels {
       // Moving a node drops its focus: put it back.
       if (a instanceof HTMLElement && a !== document.activeElement && a.isConnected) a.focus();
     };
-    const make = (text: string): Row => {
+    const make = ({ text, stored }: StatusRow): Row => {
       const id = seq++;
       const input = h('input', { 'data-key': `opt:${id}`, name: 'statusOptions', value: text, autocomplete: 'off', spellcheck: 'false', 'aria-describedby': hintId });
       const r: Row = {
+        stored,
         li: h('li', { class: 'opt' }),
         num: h('span', { class: 'opt-num', 'aria-hidden': 'true' }),
         input,
@@ -1104,7 +1110,7 @@ export class Panels {
     };
     add.addEventListener('click', () => {
       if (add.getAttribute('aria-disabled') === 'true') return;
-      const r = make('');
+      const r = make({ text: '', stored: null });
       rows.push(r);
       layout();
       r.input.focus();
@@ -1114,7 +1120,7 @@ export class Panels {
     layout();
     return {
       el: h('div', { class: 'opts-editor' }, list, add),
-      values: () => rows.map((r) => r.input.value),
+      values: () => rows.map((r) => ({ text: r.input.value, stored: r.stored })),
       flag: (row) => rows.forEach((r, i) => r.input.setAttribute('aria-invalid', i === row ? 'true' : 'false')),
       focus: (row) => (rows[row ?? 0]?.input ?? add).focus(),
     };
@@ -1179,10 +1185,11 @@ export class Panels {
       };
     }
     const sf = this.settingsForm;
+    const form = sf ? sf.read() : formFrom({}, {}).form;
     return {
       kind: 'settings',
       session: v.session,
-      form: sf ? sf.read() : formFrom({}, {}).form,
+      form: { ...form, statusOptions: form.statusOptions.map((r) => r.text) },
       repoSuggested: sf?.repoSuggested ?? false,
       statusDefault: sf?.statusDefault ?? false,
       ...base,

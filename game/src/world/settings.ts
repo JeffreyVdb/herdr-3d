@@ -7,6 +7,17 @@
 
 import type { FloorSettings, FloorSuggested, GithubProject, Hire, HireOptions, SettingsPatch, StatusField } from '../net/protocol';
 
+/**
+ * A status row: the text in its input, and the stored label the row was
+ * opened with (null for a row added in the panel or a pre-filled default).
+ * The row keeps that label wherever it moves, so twins that look the same in
+ * their inputs stay apart.
+ */
+export interface StatusRow {
+  text: string;
+  stored: string | null;
+}
+
 /** The panel's inputs, as typed. */
 export interface SettingsForm {
   repo: string;
@@ -14,7 +25,7 @@ export interface SettingsForm {
   projectNumber: string;
   statusName: string;
   /** One status per row, in board order; blank rows do not count. */
-  statusOptions: string[];
+  statusOptions: StatusRow[];
   defaultCwd: string;
   /** '' = no default hire. */
   harness: string;
@@ -50,7 +61,8 @@ export function formFrom(
   settings: FloorSettings,
   suggested: FloorSuggested,
 ): { form: SettingsForm; repoSuggested: boolean; statusDefault: boolean; cwdPlaceholder: string } {
-  const status = settings.status_field ?? DEFAULT_STATUS_FIELD;
+  const stored = settings.status_field;
+  const status = stored ?? DEFAULT_STATUS_FIELD;
   const hire = settings.default_hire;
   return {
     form: {
@@ -58,7 +70,7 @@ export function formFrom(
       projectOwner: settings.project?.owner ?? '',
       projectNumber: settings.project ? String(settings.project.number) : '',
       statusName: status.name,
-      statusOptions: [...status.options],
+      statusOptions: status.options.map((o) => ({ text: o, stored: stored ? o : null })),
       defaultCwd: settings.default_cwd ?? '',
       harness: hire?.harness ?? '',
       model: hire?.model ?? '',
@@ -85,15 +97,18 @@ export function effortsFor(o: HireOptions, harness: string, model: string): stri
   return [...h.efforts, ...(h.extra_efforts?.[model] ?? []).filter((e) => !h.efforts.includes(e))];
 }
 
-/** A label as a text input shows it: without line breaks, trimmed. */
-const shown = (s: string) => s.replace(/[\r\n]/g, '').trim();
+/** A label as a text input shows it: without line breaks. */
+const shown = (s: string) => s.replace(/[\r\n]/g, '');
+
+/** The stored label while its input still shows it as opened; else the text as typed, trimmed. */
+const kept = (text: string, stored: string | null | undefined) => (stored != null && shown(text) === shown(stored) ? stored : text.trim());
 
 /**
  * Validates the form like the bridge does; `errors` is keyed by input and
- * `badOption` is the status row to fix. A status label whose row still shows
- * a stored label comes back exactly as stored (the bridge accepts spaces
- * around a label, commas, even line breaks), so saving never rewrites
- * statuses nobody touched; edited labels are trimmed.
+ * `badOption` is the status row to fix. A status row (or the field name) still
+ * showing the stored label it was opened with comes back exactly as stored
+ * (the bridge accepts spaces around a label, commas, even line breaks), so
+ * saving never rewrites statuses nobody touched; any edit is read trimmed.
  */
 export function parseForm(
   f: SettingsForm,
@@ -122,18 +137,11 @@ export function parseForm(
   }
 
   // The status field: an empty name and no statuses = none.
-  const rows = f.statusOptions.map((o, i) => ({ text: o.trim(), i })).filter((r) => r.text);
-  if (f.statusName.trim() || rows.length) {
-    const was = stored.status_field;
-    const name = was && shown(was.name) === f.statusName.trim() ? was.name : f.statusName.trim();
+  const picked = f.statusOptions.flatMap((r, i) => (r.text.trim() ? [{ i, label: kept(r.text, r.stored) }] : []));
+  if (f.statusName.trim() || picked.length) {
+    const name = kept(f.statusName, stored.status_field?.name);
     if (!name) errors.statusName = 'Name the status field, e.g. Status.';
     else if (bytes(name) > MAX_TEXT) errors.statusName = `Keep the field name within ${MAX_TEXT} bytes.`;
-    // Each stored label backs at most one row (twins that differ by a space stay two).
-    const free = [...(was?.options ?? [])];
-    const picked = rows.map((r) => {
-      const k = free.findIndex((o) => shown(o) === r.text);
-      return { i: r.i, label: (k < 0 ? undefined : free.splice(k, 1)[0]) ?? r.text };
-    });
     const options = picked.map((p) => p.label);
     const seen = new Set<string>();
     const twice = picked.find((p) => (seen.has(p.label) ? true : (seen.add(p.label), false)));
