@@ -17,9 +17,13 @@ export function watchErrors(page: Page): () => void {
   return () => expect(errors).toEqual([]);
 }
 
-/** Opens the built game on the WebGL2 backend against a recorded fixture, waits for the first world frame. */
-export async function openGame(page: Page, fixture = 'demo', extra = ''): Promise<void> {
-  const ws = encodeURIComponent(`/fixture/${fixture}?play=none`);
+/**
+ * Opens the built game on the WebGL2 backend against a recorded fixture, waits
+ * for the first world frame. `wsQuery` goes to the fixture server (e.g.
+ * `sim=1` to simulate commands).
+ */
+export async function openGame(page: Page, fixture = 'demo', extra = '', wsQuery = 'play=none'): Promise<void> {
+  const ws = encodeURIComponent(`/fixture/${fixture}?${wsQuery}`);
   await page.goto(`/?backend=webgl2&ws=${ws}${extra}`);
   await page.waitForFunction(() => window.__h3d?.error || (window.__h3d?.ready && window.__h3d.frames >= 3), undefined, {
     timeout: 60_000,
