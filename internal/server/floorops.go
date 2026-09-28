@@ -238,13 +238,14 @@ type pendingWait struct {
 }
 
 func (h *Hub) pendingWaits(ctx context.Context, op *floorOp) []pendingWait {
-	var out []pendingWait
-	_ = h.doWait(ctx, func() {
+	out, _ := query(ctx, h, func() []pendingWait {
+		var out []pendingWait
 		for _, id := range h.floorOrder(op) {
 			if w := op.waits[id]; w != nil && w.state == proto.ResumePending {
 				out = append(out, pendingWait{id: id, pane: w.pane, harness: w.harness, agentSession: w.agentSession})
 			}
 		}
+		return out
 	})
 	return out
 }
@@ -277,19 +278,30 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-// doWait runs fn on the hub goroutine and waits for it.
+// doWait runs fn on the hub goroutine and waits for it. When ctx ends
+// first, fn may still run after doWait returns, so fn must only touch hub
+// state; results come back through query.
 func (h *Hub) doWait(ctx context.Context, fn func()) error {
-	done := make(chan struct{})
-	if err := h.do(ctx, func(context.Context) { fn(); close(done) }); err != nil {
-		return err
+	_, err := query(ctx, h, func() struct{} { fn(); return struct{}{} })
+	return err
+}
+
+// query runs fn on the hub goroutine and returns its result. The result
+// only crosses over through the channel, so a wait that ends early never
+// reads what fn is still writing.
+func query[T any](ctx context.Context, h *Hub, fn func() T) (T, error) {
+	var zero T
+	res := make(chan T, 1)
+	if err := h.do(ctx, func(context.Context) { res <- fn() }); err != nil {
+		return zero, err
 	}
 	select {
-	case <-done:
-		return nil
+	case v := <-res:
+		return v, nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return zero, ctx.Err()
 	case <-h.done:
-		return errHubStopped
+		return zero, errHubStopped
 	}
 }
 
@@ -521,9 +533,7 @@ func (h *Hub) runSleep(ctx context.Context, op *floorOp, backfills []backfill, k
 func (h *Hub) awaitFlag(ctx context.Context, op *floorOp, timeout time.Duration, flag func() bool) bool {
 	deadline := time.After(timeout)
 	for {
-		ok := false
-		_ = h.doWait(ctx, func() { ok = flag() })
-		if ok {
+		if ok, _ := query(ctx, h, flag); ok {
 			return true
 		}
 		select {
