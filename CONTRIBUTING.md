@@ -63,7 +63,7 @@ bin/herdr-world cmd --socket "$sock" floor.assign '{"session":"herdr-3d","buildi
 | `--sessions` | `HERDR_WORLD_SESSIONS` | all; a regexp limits which sessions are watched |
 | `--poll`, `--resnapshot` | `HERDR_WORLD_POLL`, `HERDR_WORLD_RESNAPSHOT` | `2s`, `30s` |
 | `--max-desks` | `HERDR_WORLD_MAX_DESKS` | `96`: cap on the desks a floor renders beyond its occupied ones (`floor.desks`) |
-| `--name-hold` | `HERDR_WORLD_NAME_HOLD` | `168h` (7 days): how long a worker that left keeps its name reserved on its floor (`worker.name`) |
+| `--name-hold` | `HERDR_WORLD_NAME_HOLD` | `168h` (7 days): how long a worker's name stays held after the bridge sees it leave its floor; then a newcomer may take it (`worker.name`) |
 | `--log-level`, `--log-format` | `HERDR_WORLD_LOG_LEVEL`, `HERDR_WORLD_LOG_FORMAT` | `info`, `text` (or `json`) |
 
 Install as a user service:

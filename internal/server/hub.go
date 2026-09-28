@@ -28,7 +28,7 @@ type Options struct {
 	Ring     int           // events kept for since_seq replay (default 4096)
 	Queue    int           // per-client send queue, in messages (default 1024)
 	MaxDesks int           // cap on the desks a floor renders beyond its occupied ones (default DefaultMaxDesks)
-	NameHold time.Duration // how long a worker that left keeps its name reserved on its floor (default DefaultNameHold)
+	NameHold time.Duration // how long a name stays held for a worker that left its floor, from when it left (default DefaultNameHold)
 	Server   string        // version banner sent in welcome
 	Log      *slog.Logger
 	Now      func() time.Time // bridge clock for status_since and the name hold (default time.Now)
@@ -39,10 +39,6 @@ const DefaultMaxDesks = 96
 
 // DefaultNameHold is the default Options.NameHold.
 const DefaultNameHold = 7 * 24 * time.Hour
-
-// seenEvery is how often the last-seen time of a worker that stays on its
-// floor is refreshed; leaving records it exactly.
-const seenEvery = time.Hour
 
 // minDesks is the fewest desks a floor renders; spareDesks how many free
 // desks it keeps beyond its workers (within MaxDesks).
@@ -71,9 +67,10 @@ type Hub struct {
 	buildings map[string]store.Building
 	assign    map[string]store.Assignment // by session
 	floors    map[string]*floorState
-	workers   map[string]*proto.Worker  // by worker id
-	saved     map[string]savedWorker    // what the store last got, by worker id
-	desks     map[string]map[string]int // floor → worker id → desk index (mirrors desk_assignment)
+	workers   map[string]*proto.Worker        // by worker id
+	saved     map[string]savedWorker          // what the store last got, by worker id
+	desks     map[string]map[string]int       // floor → worker id → desk index (mirrors desk_assignment)
+	names     map[string]map[string]nameClaim // floor → name → claim (mirrors worker_name)
 
 	viewBuildings map[string]proto.Building
 	viewFloors    map[string]proto.Floor
@@ -92,16 +89,21 @@ type savedWorker struct {
 	workspaceID, label string
 	fps                map[store.Fingerprint]bool
 	meta               workerMeta
-	seen               time.Time // last-seen time last stored
 }
 
-// workerMeta is what the bridge keeps about a worker beyond what herdr
-// currently shows: its name, the last known harness, model and effort, and
-// since when (unix ms) it has had its status.
+// workerMeta is what the bridge keeps with a worker beyond what herdr
+// currently shows: the last known harness, model and effort, and since
+// when (unix ms) it has had its status.
 type workerMeta struct {
-	name, harness, model, effort string
-	status                       string
-	statusSince                  int64
+	harness, model, effort string
+	status                 string
+	statusSince            int64
+}
+
+// nameClaim is who owns a name on a floor.
+type nameClaim struct {
+	owner    string    // worker id
+	released time.Time // when the owner was seen leaving the floor; zero while it is on it
 }
 
 // Client is one connected protocol client, as seen by the hub.
@@ -156,6 +158,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		workers:       map[string]*proto.Worker{},
 		saved:         map[string]savedWorker{},
 		desks:         map[string]map[string]int{},
+		names:         map[string]map[string]nameClaim{},
 		viewBuildings: map[string]proto.Building{},
 		viewFloors:    map[string]proto.Floor{},
 	}
@@ -168,6 +171,13 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	}
 	for _, d := range desks {
 		h.floorDesks(d.Floor)[d.WorkerID] = d.Index
+	}
+	names, err := st.Names(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range names {
+		h.floorNames(c.Floor)[c.Name] = nameClaim{owner: c.WorkerID, released: c.Released}
 	}
 	for _, b := range h.buildingViews() {
 		h.viewBuildings[b.ID] = b
@@ -417,13 +427,11 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 	if f == nil || u.Gen < f.gen {
 		return
 	}
-	at := h.opts.Now()
 	for _, id := range f.order {
 		w := h.workers[id]
 		delete(h.workers, id)
 		delete(h.saved, id)
 		if w != nil {
-			h.touch(context.Background(), id, at)
 			h.emit(proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: w.Session, WorkspaceID: w.WorkspaceID})
 		}
 	}
@@ -432,6 +440,8 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 	if err := h.st.FreeFloorDesks(context.Background(), u.Session); err != nil {
 		h.log.Error("freeing desks failed", "session", u.Session, "err", err)
 	}
+	// Names stay held for the hold, should the session come back.
+	h.releaseNames(context.Background(), u.Session, nil, h.opts.Now())
 	h.log.Info("floor removed", "session", u.Session)
 	h.syncLayout()
 }
@@ -500,7 +510,6 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		if w == nil {
 			continue
 		}
-		h.touch(ctx, id, at)
 		if closing && !obsWS[w.WorkspaceID] {
 			if err := h.st.CloseWorker(ctx, id); err != nil {
 				h.log.Error("recording closed worker failed", "worker", id, "err", err)
@@ -508,6 +517,9 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		}
 		evs = append(evs, proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: session, WorkspaceID: w.WorkspaceID})
 	}
+	// Before anyone is named: whoever left (seen now, or while the bridge
+	// was down) holds its name from now on.
+	h.releaseNames(ctx, session, present, at)
 	// Desks are held by the floor's current workers only: this frees the
 	// desks of removed workers and of stored ones that did not come back.
 	desks := h.floorDesks(session)
@@ -530,21 +542,11 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		if prev := h.workers[id]; prev != nil {
 			base = metaOf(prev)
 		} else if r, ok := records[id]; ok {
-			base = workerMeta{name: r.Name, harness: r.Harness, model: r.Model, effort: r.Effort, status: r.Status, statusSince: r.StatusSince}
+			base = workerMeta{harness: r.Harness, model: r.Model, effort: r.Effort, status: r.Status, statusSince: r.StatusSince}
 		}
 		metas[i] = nextMeta(base, w, now)
 	}
-	// A stored worker of the floor may come back (its marker or agent
-	// session reconciles it even after its workspace closed), so its name
-	// stays out of reach of newcomers for the name hold after it was last
-	// seen.
-	reserved := map[string]bool{}
-	for _, r := range records {
-		if r.Name != "" && at.Sub(r.LastSeen) < h.opts.NameHold {
-			reserved[r.Name] = true
-		}
-	}
-	nameWorkers(ids, metas, desks, reserved)
+	names, claimed := h.nameWorkers(session, ids, at)
 
 	used := map[int]bool{}
 	for _, d := range desks {
@@ -554,7 +556,12 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 	for i, w := range obs {
 		id := ids[i]
 		order = append(order, id)
-		h.persist(ctx, id, session, w, metas[i], at)
+		h.persist(ctx, id, session, w, metas[i])
+		if claimed[i] {
+			if err := h.st.ClaimName(ctx, session, names[i], id); err != nil {
+				h.log.Error("saving worker name failed", "worker", id, "name", names[i], "err", err)
+			}
+		}
 		desk, seated := desks[id]
 		if !seated {
 			for used[desk] {
@@ -566,7 +573,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 				h.log.Error("saving desk failed", "worker", id, "desk", desk, "err", err)
 			}
 		}
-		next := workerView(id, session, w, metas[i], desk)
+		next := workerView(id, session, w, metas[i], names[i], desk)
 		prev := h.workers[id]
 		h.workers[id] = next
 		switch {
@@ -596,8 +603,18 @@ func (h *Hub) floorDesks(session string) map[string]int {
 	return m
 }
 
+// floorNames returns a floor's name claims, creating them.
+func (h *Hub) floorNames(session string) map[string]nameClaim {
+	m := h.names[session]
+	if m == nil {
+		m = map[string]nameClaim{}
+		h.names[session] = m
+	}
+	return m
+}
+
 func metaOf(w *proto.Worker) workerMeta {
-	return workerMeta{name: w.Name, harness: w.Harness, model: w.Model, effort: w.Effort, status: w.Status, statusSince: w.StatusSince}
+	return workerMeta{harness: w.Harness, model: w.Model, effort: w.Effort, status: w.Status, statusSince: w.StatusSince}
 }
 
 // nextMeta folds an observation into what the bridge knows about a worker:
@@ -619,35 +636,66 @@ func nextMeta(m workerMeta, w world.WorkerObs, now int64) workerMeta {
 	return m
 }
 
-// nameWorkers makes every worker's name unique on its floor. Workers keep
-// the name they have; the rest get one that is neither on the floor nor
-// reserved. Two workers of a floor share a name only when one returns
-// after its name hold ran out and a newcomer took it (or after a database
-// error, or with a database written before names were reserved): then
-// seated workers keep it first.
-func nameWorkers(ids []string, metas []workerMeta, desks map[string]int, reserved map[string]bool) {
-	taken := map[string]bool{}
-	for _, seatedPass := range []bool{true, false} {
-		for i, id := range ids {
-			if _, seated := desks[id]; seated != seatedPass {
-				continue
-			}
-			if n := metas[i].name; n != "" && !taken[n] {
-				taken[n] = true
-			} else {
-				metas[i].name = ""
-			}
+// releaseNames records that the owners of a floor's names who are not
+// among present left it at at: each name stays held for the name hold from
+// then. A worker that left while the bridge was down is recorded at the
+// first observation after, so its hold starts late, never early.
+func (h *Hub) releaseNames(ctx context.Context, session string, present map[string]bool, at time.Time) {
+	claims := h.names[session]
+	for name, c := range claims {
+		if !c.released.IsZero() || present[c.owner] {
+			continue
+		}
+		c.released = at
+		claims[name] = c
+		if err := h.st.ReleaseName(ctx, c.owner, at); err != nil {
+			h.log.Error("releasing worker name failed", "worker", c.owner, "name", name, "err", err)
 		}
 	}
-	for n := range reserved {
-		taken[n] = true
+}
+
+// nameWorkers returns the names of a floor's workers (all present, after
+// releaseNames) and which of their claims changed and must be stored. A
+// worker keeps the name it owns on the floor. One that owns none (new, or
+// back after its hold ran out and a newcomer took its name) gets a name
+// that no worker on the floor owns and no worker that left less than the
+// hold ago still holds. Taking a name whose hold ran out takes it from its
+// owner, who gets a new name if it ever comes back. So names are unique on
+// a floor, and a worker that returns within its hold always has its name.
+func (h *Hub) nameWorkers(session string, ids []string, at time.Time) (names []string, claimed []bool) {
+	claims := h.floorNames(session)
+	owned := make(map[string]string, len(claims)) // worker id → name
+	for name, c := range claims {
+		owned[c.owner] = name
+	}
+	names, claimed = make([]string, len(ids)), make([]bool, len(ids))
+	for i, id := range ids {
+		name, ok := owned[id]
+		if !ok {
+			continue
+		}
+		names[i] = name
+		if !claims[name].released.IsZero() { // back on the floor
+			claims[name] = nameClaim{owner: id}
+			claimed[i] = true
+		}
+	}
+	held := map[string]bool{}
+	for name, c := range claims {
+		if c.released.IsZero() || at.Sub(c.released) < h.opts.NameHold {
+			held[name] = true
+		}
 	}
 	for i, id := range ids {
-		if metas[i].name == "" {
-			metas[i].name = world.PickName(id, taken)
-			taken[metas[i].name] = true
+		if names[i] != "" {
+			continue
 		}
+		names[i] = world.PickName(id, held)
+		held[names[i]] = true
+		claims[names[i]] = nameClaim{owner: id}
+		claimed[i] = true
 	}
+	return names, claimed
 }
 
 // sameExceptStatus reports whether only the status (and its age) and the
@@ -660,10 +708,9 @@ func sameExceptStatus(a, b *proto.Worker) bool {
 	return reflect.DeepEqual(x, y)
 }
 
-// persist writes a worker's identity, fingerprints, meta and last-seen
-// time when they changed; a status change alone and the periodic last-seen
-// refresh are cheaper updates.
-func (h *Hub) persist(ctx context.Context, id, session string, w world.WorkerObs, m workerMeta, at time.Time) {
+// persist writes a worker's identity, fingerprints and meta when they
+// changed; a status change alone is a cheaper update.
+func (h *Hub) persist(ctx context.Context, id, session string, w world.WorkerObs, m workerMeta) {
 	fps := fingerprints(w)
 	prev, ok := h.saved[id]
 	if ok && prev.workspaceID == w.WorkspaceID && prev.label == w.Label && sameIdentityMeta(prev.meta, m) {
@@ -683,15 +730,11 @@ func (h *Hub) persist(ctx context.Context, id, session string, w world.WorkerObs
 				prev.meta = m
 				h.saved[id] = prev
 			}
-			if at.Sub(prev.seen) >= seenEvery && h.touch(ctx, id, at) {
-				prev.seen = at
-				h.saved[id] = prev
-			}
 			return
 		}
 	}
 	rec := store.Worker{ID: id, Session: session, WorkspaceID: w.WorkspaceID, Label: w.Label, Fingerprints: fps,
-		Name: m.name, Status: m.status, StatusSince: m.statusSince, Harness: m.harness, Model: m.model, Effort: m.effort, LastSeen: at}
+		Status: m.status, StatusSince: m.statusSince, Harness: m.harness, Model: m.model, Effort: m.effort}
 	if err := h.st.SaveWorker(ctx, rec); err != nil {
 		h.log.Error("saving worker failed", "worker", id, "err", err)
 		return
@@ -700,17 +743,7 @@ func (h *Hub) persist(ctx context.Context, id, session string, w world.WorkerObs
 	for _, fp := range fps {
 		set[fp] = true
 	}
-	h.saved[id] = savedWorker{workspaceID: w.WorkspaceID, label: w.Label, fps: set, meta: m, seen: at}
-}
-
-// touch records when a worker was last seen on its floor, reporting
-// whether that worked.
-func (h *Hub) touch(ctx context.Context, id string, at time.Time) bool {
-	if err := h.st.TouchWorker(ctx, id, at); err != nil {
-		h.log.Error("saving worker last seen failed", "worker", id, "err", err)
-		return false
-	}
-	return true
+	h.saved[id] = savedWorker{workspaceID: w.WorkspaceID, label: w.Label, fps: set, meta: m}
 }
 
 func sameIdentityMeta(a, b workerMeta) bool {
@@ -751,13 +784,13 @@ func candidates(recs []store.Worker) []world.Candidate {
 	return out
 }
 
-func workerView(id, session string, w world.WorkerObs, m workerMeta, desk int) *proto.Worker {
+func workerView(id, session string, w world.WorkerObs, m workerMeta, name string, desk int) *proto.Worker {
 	return &proto.Worker{
 		ID: id, Session: session, WorkspaceID: w.WorkspaceID, Label: w.Label, Cwd: w.Cwd,
 		PaneID: w.PaneID, PaneLabel: w.PaneLabel, AgentKind: w.AgentKind, AgentName: w.AgentName,
 		AgentSession: w.AgentSession, Status: w.Status, Title: w.Title, Tokens: w.Tokens,
 		Worktree: w.Worktree, Role: w.Role, Run: w.Run,
-		Name: m.name, DeskIndex: desk, Harness: m.harness, Model: m.model, Effort: m.effort, StatusSince: m.statusSince,
+		Name: name, DeskIndex: desk, Harness: m.harness, Model: m.model, Effort: m.effort, StatusSince: m.statusSince,
 	}
 }
 

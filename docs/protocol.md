@@ -156,17 +156,18 @@ takes the **lowest free** index, in sidebar order. A desk is freed when its work
 (`worker.removed`: workspace closed, identity lost, session deleted), and the next newcomer reuses it. Workers of an
 asleep floor keep their desks.
 
-Each worker also gets a **name** from a built-in list of original names ("Nibble", "Pixel", "Mochi", …), stored with
-the worker, which comes back with it after a restart or when its workspace reopens. Names are unique among the floor's
-workers; past the end of the list they get a suffix (`"Pixel 2"`). A worker that leaves keeps its name reserved for
-`--name-hold` (default 7 days) after the bridge last saw it on the floor (recorded when it leaves, and refreshed at
-most hourly while the bridge observes it there): no newcomer gets it meanwhile, so a worker that returns within the
-hold always has its name.
-After that the name is free again. A worker returning later keeps its name if nobody on the floor has it, and
-otherwise gets a new one: that is the one intended name change. Besides it, only a database from an earlier
-development build or a failed database read or write can leave two workers of a floor with the same stored name;
-while both are on the floor, one keeps it (a worker that already had a desk before a newcomer, then sidebar order) and
-the other gets a new name, which it then keeps.
+Each worker also gets a **name** from a built-in list of original names ("Nibble", "Pixel", "Mochi", …). Names are
+unique among the floor's workers; past the end of the list they get a suffix (`"Pixel 2"`). A name belongs to one
+worker of its floor at a time (SQLite `worker_name`), and comes back with it after a restart or when its workspace
+reopens. When the bridge sees the worker leave the floor (`worker.removed`: workspace closed, identity lost, session
+deleted), the name stays **held** for `--name-hold` (default 7 days) from that moment: no newcomer gets it, so a
+worker that returns within the hold always has its name. A worker that leaves while the bridge is down is seen leaving
+when the bridge next observes its floor, so the hold starts late, never early.
+
+After the hold a newcomer may take the name. The worker that left then no longer owns it and gets a new name if it
+ever comes back: that is the one intended name change. A worker returning after its hold whose name nobody took keeps
+it. Besides that, only a failed database write (after the next bridge restart) or, once, a name that an earlier
+development build stored twice on a floor (the most recently seen worker keeps it) can change a worker's name.
 
 `status_since` is stored with the status it belongs to. After a bridge restart a worker whose status is unchanged
 keeps its `status_since` (idle ages don't reset); one whose status changed while the bridge was down starts at the

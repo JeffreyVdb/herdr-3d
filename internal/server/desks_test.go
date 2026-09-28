@@ -22,8 +22,9 @@ func newClock(ms int64) *clock {
 	return c
 }
 
-func (c *clock) now() time.Time { return time.UnixMilli(c.ms.Load()) }
-func (c *clock) set(ms int64)   { c.ms.Store(ms) }
+func (c *clock) now() time.Time          { return time.UnixMilli(c.ms.Load()) }
+func (c *clock) set(ms int64)            { c.ms.Store(ms) }
+func (c *clock) advance(d time.Duration) { c.ms.Add(d.Milliseconds()) }
 
 // world waits until a fresh snapshot satisfies ok and returns it.
 func (b *bridge) world(ok func(proto.World) bool) proto.World {
@@ -159,8 +160,8 @@ func TestNamesUniqueOnABigFloor(t *testing.T) {
 
 // A worker that left keeps its name while it may come back: within the
 // name hold a newcomer never gets it, even when that leaves only suffixed
-// names, and a bridge restart changes nothing. Past the hold the name is
-// free again, and the worker keeps it only if nobody took it.
+// names, and a bridge restart changes nothing. Past the hold a newcomer may
+// take it, and the worker then comes back under a new name.
 func TestReturningWorkerKeepsItsName(t *testing.T) {
 	const day = int64(24 * time.Hour / time.Millisecond)
 	db := filepath.Join(t.TempDir(), "world.db")
@@ -248,19 +249,17 @@ func TestReturningWorkerKeepsItsName(t *testing.T) {
 	}
 }
 
-// The name hold counts from when a worker was last on its floor, not from
-// when it joined: leaving records that time, and a worker that stays has it
-// refreshed, so a bridge that stops without seeing it leave still knows.
-func TestNameHoldCountsFromLastSeen(t *testing.T) {
-	const day = int64(24 * time.Hour / time.Millisecond)
+// The name hold counts from when the bridge saw the worker leave, however
+// long it was there before. A worker that leaves while the bridge is down
+// is seen leaving when it restarts, so a long downtime never shortens the
+// hold. A worker back after its hold keeps its name if nobody took it.
+func TestNameHoldCountsFromDeparture(t *testing.T) {
+	const day = 24 * time.Hour
 	db := filepath.Join(t.TempDir(), "world.db")
 	clk := newClock(1_790_000_000_000)
-	opts := server.Options{Now: clk.now, NameHold: 7 * 24 * time.Hour}
+	opts := server.Options{Now: clk.now, NameHold: 7 * day}
 	b := startBridge(t, db, opts)
-	var obs []world.WorkerObs
-	for i := range len(world.Names) {
-		obs = append(obs, agent(fmt.Sprintf("w%03d", i), "idle"))
-	}
+	obs := fullFloor()
 	b.floor("s", true, obs...)
 	w := b.world(hasWorkers("s", len(obs)))
 	nameA, nameX := workersOf(w, "s")["w000"].Name, workersOf(w, "s")["w001"].Name
@@ -270,33 +269,38 @@ func TestNameHoldCountsFromLastSeen(t *testing.T) {
 		w := b.world(func(w proto.World) bool { _, ok := workersOf(w, "s")[ws]; return ok })
 		return workersOf(w, "s")[ws].Name
 	}
+	backA := worker("ra", "CODE|w000", "sess-w000", "idle")
+	backX := worker("rx", "CODE|w001", "sess-w001", "idle")
 
 	// A stays ten days, leaves, and newcomer B joins a day later; then A
 	// comes back.
-	clk.set(clk.ms.Load() + 10*day)
+	clk.advance(10 * day)
 	b.floor("s", true, obs[1:]...)
-	b.world(func(w proto.World) bool { _, a := workersOf(w, "s")["w000"]; return !a })
-	clk.set(clk.ms.Load() + day)
-	rest := append(append([]world.WorkerObs{}, obs[1:]...), agent("b", "idle"))
+	b.world(hasWorkers("s", len(obs)-1))
+	clk.advance(day)
+	rest := floorWith(obs[1:], agent("b", "idle"))
 	if n := newName(b, "b", rest...); n == nameA {
 		t.Fatalf("b got %q from A, which left a day ago", n)
 	}
-	if n := newName(b, "ra", append(rest, worker("ra", "CODE|w000", "sess-w000", "idle"))...); n != nameA {
+	if n := newName(b, "ra", floorWith(rest, backA)...); n != nameA {
 		t.Fatalf("A came back as %q, want %q", n, nameA)
 	}
 
-	// Nine days on, X is still there (b turns busy, so the observation is
-	// visibly applied); the bridge stops, X is gone when it restarts a day
-	// later, and newcomer C joins: X was there a day ago.
-	clk.set(clk.ms.Load() + 9*day)
-	rest = append(rest[:len(rest)-1], agent("b", "working"), worker("ra", "CODE|w000", "sess-w000", "idle"))
-	b.floor("s", true, rest...)
-	b.world(func(w proto.World) bool { return workersOf(w, "s")["b"].Status == "working" })
+	// X is there when the bridge stops, and gone when it restarts ten days
+	// later (longer than the hold): the hold starts at the restart, so
+	// newcomer C does not get X's name, the only free base name.
+	rest = floorWith(obs[2:], agent("b", "idle"), backA)
 	b.stop()
-	clk.set(clk.ms.Load() + day)
+	clk.advance(10 * day)
 	b = startBridge(t, db, opts)
-	if n := newName(b, "c", append(append([]world.WorkerObs{}, rest[1:]...), agent("c", "idle"))...); n == nameX {
-		t.Fatalf("c got %q from X, which was there a day ago", n)
+	if n := newName(b, "c", floorWith(rest, agent("c", "idle"))...); n == nameX {
+		t.Fatalf("c got %q from X, which the bridge saw leave just now", n)
+	}
+	// Eight days on, nobody took it: X comes back with it.
+	clk.advance(8 * day)
+	rest = floorWith(rest, agent("c", "idle"))
+	if n := newName(b, "rx", floorWith(rest, backX)...); n != nameX {
+		t.Fatalf("X came back after its hold as %q; nobody took %q", n, nameX)
 	}
 }
 

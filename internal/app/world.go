@@ -179,7 +179,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	fs.DurationVar(&poll, "poll", poll, "session discovery interval ($"+EnvPoll+")")
 	fs.DurationVar(&resnap, "resnapshot", resnap, "safety re-snapshot interval per session ($"+EnvResnapshot+")")
 	fs.IntVar(&maxDesks, "max-desks", maxDesks, "most desks a floor renders beyond its occupied ones ($"+EnvMaxDesks+")")
-	fs.DurationVar(&nameHold, "name-hold", nameHold, "how long a worker that left keeps its name reserved on its floor ($"+EnvNameHold+")")
+	fs.DurationVar(&nameHold, "name-hold", nameHold, "how long a worker's name stays held after it leaves its floor ($"+EnvNameHold+")")
 	level := fs.String("log-level", envOr(EnvLogLevel, "info"), "debug, info, warn or error ($"+EnvLogLevel+")")
 	format := fs.String("log-format", envOr(EnvLogFormat, "text"), "text or json ($"+EnvLogFormat+")")
 	showVersion := fs.Bool("version", false, "print version and exit")
