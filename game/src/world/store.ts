@@ -351,6 +351,11 @@ export class WorldStore {
     };
   }
 
+  /** Buildings in city order (`sort`, then name). */
+  sortedBuildings(): Building[] {
+    return [...this.buildings.values()].sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
+  }
+
   /** A building's floors top to bottom, or (null) the unassigned lot's by name. */
   stack(building: string | null): FloorView[] {
     if (building === null) return this.lot();
@@ -373,8 +378,7 @@ export class WorldStore {
   /** Buildings in `sort` order, then the unassigned lot (if any floors are in it). */
   city(): BuildingView[] {
     const out: BuildingView[] = [];
-    const bs = [...this.buildings.values()].sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
-    for (const b of bs) {
+    for (const b of this.sortedBuildings()) {
       const floors = this.buildingFloors(b, b.id)
         .reverse()
         .map((s) => this.floorView(s))

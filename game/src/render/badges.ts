@@ -15,6 +15,8 @@ export interface BadgeData {
   asleep: boolean;
   counts: Counts;
   hover: boolean;
+  /** M3: a wake/sleep in progress replaces the counts. */
+  transition?: 'waking' | 'sleeping' | null;
 }
 
 const same = (a: BadgeData | undefined, b: BadgeData) =>
@@ -22,6 +24,7 @@ const same = (a: BadgeData | undefined, b: BadgeData) =>
   a.session === b.session &&
   a.asleep === b.asleep &&
   a.hover === b.hover &&
+  (a.transition ?? null) === (b.transition ?? null) &&
   a.counts.working === b.counts.working &&
   a.counts.needsYou === b.counts.needsYou &&
   a.counts.idle === b.counts.idle &&
@@ -34,7 +37,9 @@ function drawBadge(g: CanvasRenderingContext2D, x: number, y: number, b: BadgeDa
   g.font = `800 42px ${FONT}`;
   const nameW = Math.min(g.measureText(b.session).width, 300);
   g.font = `700 38px ${FONT}`;
-  const items: Array<[string, string]> = b.asleep
+  const items: Array<[string, string]> = b.transition
+    ? [[b.transition === 'waking' ? '#ffc233' : STATUS_CSS.asleep, b.transition === 'waking' ? 'waking up…' : 'going to sleep…']]
+    : b.asleep
     ? [[STATUS_CSS.asleep, `asleep · ${b.counts.total}`]]
     : [
         [STATUS_CSS.working, String(b.counts.working)],
