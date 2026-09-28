@@ -132,6 +132,18 @@ var migrations = []string{
 		effort       TEXT NOT NULL,
 		updated_at   TEXT NOT NULL
 	);`,
+	// 6: the branches the bridge made for worktree hires, by worker, with
+	// the commit each was made from: send home deletes only a branch
+	// recorded here for that worker. No foreign key: the row is written
+	// before herdr's workspace is seen (and the worker row exists).
+	`CREATE TABLE hire_branch (
+		worker_uuid  TEXT PRIMARY KEY,
+		session_name TEXT NOT NULL,
+		repo_root    TEXT NOT NULL,
+		branch       TEXT NOT NULL,
+		base_sha     TEXT NOT NULL,
+		created_at   TEXT NOT NULL
+	);`,
 }
 
 // Fingerprint kinds.

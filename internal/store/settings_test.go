@@ -158,3 +158,32 @@ func TestLastHireAndHiredAt(t *testing.T) {
 		t.Fatalf("workers = %+v, %v", ws, err)
 	}
 }
+
+func TestHireBranches(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "w.db")
+	st := open(t, path)
+	b := store.HireBranch{WorkerID: "a58752ea-6511-4318-be9a-59e41c09d7c5", Session: "s", RepoRoot: "/home/u/repo",
+		Branch: "h3d/mochi-a58752", BaseSHA: "8739ddc5f3e1d0c4b2a8e7f6d5c4b3a2918e7d6c"}
+	if err := st.RecordHireBranch(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordHireBranch(ctx, store.HireBranch{WorkerID: "x", Branch: "h3d/x"}); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("partial record: %v", err)
+	}
+	st.Close()
+
+	st = open(t, path)
+	if got, ok, err := st.HireBranchOf(ctx, b.WorkerID); err != nil || !ok || got != b {
+		t.Fatalf("HireBranchOf = %+v %v %v", got, ok, err)
+	}
+	if _, ok, err := st.HireBranchOf(ctx, "someone-else"); err != nil || ok {
+		t.Fatalf("unrecorded worker: %v %v", ok, err)
+	}
+	if err := st.ForgetHireBranch(ctx, b.WorkerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := st.HireBranchOf(ctx, b.WorkerID); err != nil || ok {
+		t.Fatalf("after forget: %v %v", ok, err)
+	}
+}

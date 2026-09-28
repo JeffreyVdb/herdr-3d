@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -129,5 +130,44 @@ func (s *Store) SetLastHire(ctx context.Context, session string, h Hire) error {
 		ON CONFLICT(session_name) DO UPDATE SET harness = excluded.harness, model = excluded.model,
 			effort = excluded.effort, updated_at = excluded.updated_at`,
 		session, h.Harness, h.Model, h.Effort, s.ts())
+	return err
+}
+
+// HireBranch is a branch the bridge made for a worktree hire.
+type HireBranch struct {
+	WorkerID string
+	Session  string
+	RepoRoot string // the repository's main checkout
+	Branch   string
+	BaseSHA  string // the commit it was made from
+}
+
+// RecordHireBranch records the branch the bridge made for a worker.
+func (s *Store) RecordHireBranch(ctx context.Context, b HireBranch) error {
+	if b.WorkerID == "" || b.Session == "" || b.RepoRoot == "" || b.Branch == "" || b.BaseSHA == "" {
+		return fmt.Errorf("%w: worker, session, repo root, branch and base are required", ErrInvalid)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO hire_branch (worker_uuid, session_name, repo_root, branch, base_sha, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)`, b.WorkerID, b.Session, b.RepoRoot, b.Branch, b.BaseSHA, s.ts())
+	return err
+}
+
+// HireBranchOf returns the branch the bridge made for a worker, if any.
+func (s *Store) HireBranchOf(ctx context.Context, workerID string) (HireBranch, bool, error) {
+	b := HireBranch{WorkerID: workerID}
+	err := s.db.QueryRowContext(ctx, `SELECT session_name, repo_root, branch, base_sha FROM hire_branch WHERE worker_uuid = ?`,
+		workerID).Scan(&b.Session, &b.RepoRoot, &b.Branch, &b.BaseSHA)
+	if errors.Is(err, sql.ErrNoRows) {
+		return HireBranch{}, false, nil
+	}
+	if err != nil {
+		return HireBranch{}, false, err
+	}
+	return b, true, nil
+}
+
+// ForgetHireBranch drops a worker's branch record (the branch is gone).
+func (s *Store) ForgetHireBranch(ctx context.Context, workerID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM hire_branch WHERE worker_uuid = ?`, workerID)
 	return err
 }
