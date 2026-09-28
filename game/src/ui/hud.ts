@@ -184,7 +184,9 @@ export class Hud {
 
   /** The look-at prompt bar. */
   setTarget(t: Target | null, w: WorkerView | null): void {
-    const key = t ? `${t.kind}:${t.id}:${w ? `${w.display}:${taskLine(w.worker)}:${w.worker.model ?? ''}` : ''}` : '';
+    // Everything the prompt shows for a worker, so a harness/effort-only upsert redraws it too.
+    const shown = w ? [w.name, w.display, taskLine(w.worker), modelLabel(w.harness, w.worker.model, w.worker.effort)] : [];
+    const key = t ? JSON.stringify([t.kind, t.id, ...shown]) : '';
     if (key === this.promptKey) return;
     this.promptKey = key;
     this.reticle.classList.toggle('is-target', !!t);

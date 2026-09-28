@@ -11,11 +11,10 @@ import { frames, openGame, shot, watchErrors } from './game';
  * The fixture's recorded events, in order: Nibble working → done, Tater
  * blocked → working, Gumdrop hired at desk 6, herdr-3d grows to 21 desks, …
  */
-const EVENTS = readFileSync(resolve(import.meta.dirname, '../fixtures/demo.jsonl'), 'utf8')
+const [SNAPSHOT, ...EVENTS] = readFileSync(resolve(import.meta.dirname, '../fixtures/demo.jsonl'), 'utf8')
   .split('\n')
   .filter((l) => l.trim())
-  .slice(1)
-  .map((l) => JSON.parse(l) as { t: string; id?: string; worker?: { name: string } });
+  .map((l) => JSON.parse(l) as { t: string; seq: number; id?: string; world?: { workers: Array<{ name?: string }> } });
 const [NIBBLE_DONE, TATER_WORKING, GUMDROP_HIRED, DESKS_21] = EVENTS;
 
 type Layout = NonNullable<ReturnType<Window['__h3d']['layout']>>;
@@ -265,6 +264,10 @@ test('look-at HUD picks the right thing along a scripted camera path', async ({ 
   await frames(page);
   await expect(page.locator('.prompt')).toHaveAttribute('aria-label', 'Mochi · working · Wire the look-at HUD to the prompt bar · claude opus-5-5 high');
   await expect(page.locator('.prompt .key[aria-disabled="true"]')).toHaveText(['ELaptop', 'CChanges', 'PPrompt', 'HHandoff', 'XSend home']);
+  // An upsert that only changes the effort still redraws the prompt.
+  const mochiWorker = SNAPSHOT?.world?.workers.find((w) => w.name === 'Mochi');
+  await page.evaluate((w) => window.__h3d.inject({ t: 'worker.upsert', seq: 5000, worker: { ...w, effort: 'low' } } as never), mochiWorker);
+  await expect(page.locator('.prompt')).toHaveAttribute('aria-label', 'Mochi · working · Wire the look-at HUD to the prompt bar · claude opus-5-5 low');
   await page.evaluate((p) => window.__h3d.setPose(p), path[6]?.pose ?? l.spawn);
   await frames(page);
   await expect(page.locator('.prompt')).toHaveAttribute('aria-label', 'Desk 6 · E Hire');
