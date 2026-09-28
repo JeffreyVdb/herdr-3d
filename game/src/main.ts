@@ -50,8 +50,8 @@ export interface H3DDebug {
   enterLobby(building?: string | null): Promise<void>;
   /** M3b: the walk-out route (M4) from a desk of a floor, as waypoints. */
   route(session: string, desk: number): Waypoint[];
-  /** M3b: the receptionist's state (clips said, cooldown), null until the receptionist module is in. */
-  reception(): unknown;
+  /** M3b: the receptionist's state: what it said (and when), the clip ids played, the cooldown ends, the bubble text. */
+  reception(): ReturnType<import('./reception').Reception['debug']> | null;
   /** M3b: reception events the game detected (front door in / out, elevator arrival, E at the desk). */
   receptionEvents(): Array<{ ev: string; at: number; building: string | null }>;
   enterFloor(session: string, pose?: Pose): Promise<void>;
@@ -146,7 +146,7 @@ const h3d: H3DDebug = {
     const storey = w ? w.floors.indexOf(s) : -1;
     return L && plan && storey >= 0 ? walkOutRoute(L, plan, storey, desk) : [];
   },
-  reception: () => app?.reception?.debug() ?? null,
+  reception: () => app?.reception.debug() ?? null,
   receptionEvents: () => structuredClone(app?.receptionEvents ?? []),
   enterFloor: async (s, pose) => {
     await app?.enterFloor(s, pose ? { transition: false, pose } : { transition: false });

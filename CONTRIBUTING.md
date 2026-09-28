@@ -230,10 +230,13 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   keeps it in `sessionStorage` as `h3d.token` and strips it from the URL), `?ws=<url>` to point elsewhere.
 - `src/world` — the world store (snapshot + events, fallbacks for an older bridge without `name`, `desk_index`,
   `harness`, `model`, `effort`, `status_since`, `floor.desks`, and M3's `transition`, `settings`, `suggested`,
-  `resume`, `hire_options`), the deterministic office layout for a desk count, walking collision and ray picking,
-  floor-settings validation and diffing (`settings.ts`) and building/floor reordering (`arrange.ts`). Pure logic,
-  covered by vitest.
-- `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy.
+  `resume`, `hire_options`), the deterministic office layout for a desk count in its building's outline, the building
+  around the floors (`building.ts`: storeys, the lobby, the fire escape, the street), height-aware walking collision
+  and ray picking, the M4 walk-out route (`route.ts`), floor-settings validation and diffing (`settings.ts`) and
+  building/floor reordering (`arrange.ts`). Pure logic, covered by vitest.
+- `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy;
+  M3b: the walk scene (`walk.ts`), the building and street from outside (`outside.ts`, baked into one mesh by
+  `bake.ts`) and the lobby (`lobby.ts`).
   Cards and city badges are canvas atlases drawn as one instanced quad batch each (a cell per worker / floor, redrawn
   only when it changes). A DOM layer was benchmarked on the Mac and lost: moving DOM elements over the canvas cost
   2.6–4.3 ms of main thread per frame for 24 cards and ~8 ms for 30 city badges, against 0.5 ms for the atlas. The DOM
@@ -242,7 +245,8 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   confirmations; modal `<dialog>`s that re-render live and keep focus). `src/input` — first-person walking.
 - `fixtures/` — recorded bridge streams (`herdr-world dump` format): `demo` (2 buildings, 3 floors, 40 workers; an M2
   bridge), `demo-m3` (the same city as an M3 bridge sends it: settings, suggestions, hire options, a floor in the
-  unassigned lot; no events), `perf-floor60`, `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
+  unassigned lot; no events), `demo-m3b` (demo-m3 with all three floors in Work: herdr-3d on top, depot-manager asleep
+  in the middle, pastry at the bottom), `perf-floor60`, `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
 - `tools/` — fixture server (read-only by default; with `sim=1` it simulates the bridge's commands in memory,
   `fixture-sim.ts`), dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
 
@@ -285,7 +289,15 @@ default hire (harness → model → effort from the bridge's `hire_options`); va
 only the keys that changed (`null` clears; statuses nobody touched are never re-sent). On an
 older bridge a command it does not know shows why and its button stays disabled after that.
 Keyboard: in the city, Tab reaches the floor list (Enter goes inside), then the building list (Enter opens that
-building's elevator panel, the lot's too). On a floor, Shift+Tab moves focus to the top
+building's elevator panel, the lot's too).
+Outside (M3b): every floor has a door at the south end of its west wall; it slides open as you walk up to it, onto the
+fire escape. Walk down (or up) the flights to another floor's landing and in through its door: that floor gets the
+interior (as elevator travel would), the top bar shows it while you stand on its landing. The last flight comes down
+to the sidewalk by the lobby's front. The street is bounded (bollards along the curb, a fence on the fire-escape side,
+hedges behind): about 6–8 m round the building. Through the lobby's glass doors on the south side: the reception desk
+(look at it and press **E** for the floor directory, the elevator panel), a bench, the elevator. The elevator panel
+has a **Lobby** stop under the floors, from anywhere; **L** opens it from the street and the fire escape too. The
+floor plan (Tab) is for office floors only. On a floor, Shift+Tab moves focus to the top
 bar (City, Issues, PRs, Elevator, battery saver); Tab / Shift+Tab then move between its buttons as usual and Enter
 presses one. **L** opens the elevator directly and ← → turn, so travel, wake / sleep and floor settings need no mouse.
 Tab toggles the plan only while nothing but the scene has focus; clicking the scene gives it focus back. Panels
@@ -303,7 +315,13 @@ make shot                     # Playwright WebGL2: game/test-results/{shot,m2-ci
                               # wake-progress,topbar-elevator}.png, buildings from the keyboard, elevator via E
                               # (turning with the arrows), L, the top bar and a city click, keyboard-only travel /
                               # wake / sleep / settings, the status rows, header focus across live updates,
-                              # sleep/wake, a failed wake, and an older read-only bridge
+                              # sleep/wake, a failed wake, and an older read-only bridge; M3b on demo-m3b
+                              # (m3b.spec.ts): walked with held keys out of the top floor, down the fire escape,
+                              # in and out of the asleep middle floor, to the street (blocked at the curb and the
+                              # fence) and back in at the bottom floor; in through the lobby's front door (the
+                              # greeting once, not again inside the cooldown), E at the desk, the Lobby stop both
+                              # ways; m3b-{window-bottom,window-top,fire-escape,facade,fire-escape-street,lobby,
+                              # lobby-greeting}.png
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
 pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
@@ -331,7 +349,9 @@ removed; after a hard kill, check `herdr session list` and `systemctl --user lis
 127.0.0.1:P:127.0.0.1:P devmac`, so the Mac page is on its own loopback (a secure context: WebGPU).
 It pipes `tools/mac-runner.mjs` into `/opt/homebrew/bin/node` in `~/h3d-tools` (playwright-core, headless Chrome at
 3024×1890) and runs `window.__h3d.bench()` — the engine-bench method: serialized update + render + GPU wait,
-pipelined throughput, GPU timestamps, and rAF frames that include DOM layout.
+pipelined throughput, GPU timestamps, and rAF frames that include DOM layout. M3b jobs bench the outside of the
+8-floor tower in `perf-city240`: `street8` (the facade from the sidewalk), `escape8` (the top landing, looking down),
+`window8` (out of a top-floor window), and `floor60-street`; `bench()` reports the `area` it ran in.
 
 `window.__h3d` (tests, perf): `backend`, `frames`, `error`, `ready`, `view()`, `lookAt()` → `{kind, id, name?, label?}`
 or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
@@ -343,7 +363,17 @@ id, null for the lot, nothing for the current floor's), `openBuildings()`, `open
 elevator rows with state, transition, counts, current, wake/sleep and resume; buildings; the settings form, its
 statuses one per row, and whether the repo is the suggestion / the status field the default; any
 confirmation; the status line), `sent()` (commands sent, with their results), `floorPoint(session)` (a floor's screen
-point in the city, to click its building), `connection()` → `{phase, epoch}`.
+point in the city, to click its building), `connection()` → `{phase, epoch}`. M3b: `pose()` adds `y` (feet above the
+street: the street and the lobby floor are 0, floor k is `(k + 1) × storey` up), `area` (`floor` | `lobby` |
+`fire-escape` | `street`), `storey` (the floor you are on, or the landing's floor on the fire escape) and `floor` (its
+session); `setPose({x, z, y?, yaw, pitch})` with `y` places you on any floor, landing, the street or in the lobby
+(without it you stay at your level); `view()` adds `area` and `building` (and `floor` is the floor with an interior:
+the one you are on, or outside the one you last left; null in the lobby); `layout(session)` is in its building's
+outline; `building()` (the plan you walk around in: outline, `storey`, fire escape, lobby, fence, road), `where()`
+(building id, name, floors ground first, the floor with an interior), `enterLobby(building?)`, `route(session, desk)`
+(the M4 walk-out waypoints), `reception()` (the receptionist's `said`, `clips`, `cooldownUntil`, `goodbyeUntil`,
+`bubble`) and `receptionEvents()` (front door in / out, elevator arrival, E at the desk, as the game detected them);
+`panel()` of the elevator adds `lobby: {current}`.
 
 ### Audio and voice lines
 

@@ -9,11 +9,12 @@ import { OfficeView, REACH, type Target } from './render/office';
 import { OutsideView } from './render/outside';
 import { BUILDING_TINTS, LOT_TINT } from './render/palette';
 import { WalkView } from './render/walk';
+import { createGameAudio, createReception, receptionContext, type GameAudio, type Reception, type ReceptionEvent } from './reception';
 import { Hud, type PlanLabel } from './ui/hud';
 import { Panels } from './ui/panels';
 import { RADIUS, Walker } from './input/walk';
 import { blocked, blocked3, groundAt, type WalkWorld } from './world/collide';
-import { buildingPlan, floorY, placeAt, storeyAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
+import { buildingPlan, floorY, placeAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
 import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, type Opening, type Outline } from './world/layout';
 import type { Display } from './world/derive';
 import { WorldStore, type Change, type Counts, type FloorView } from './world/store';
@@ -55,22 +56,6 @@ interface BuildingCtx {
   shape: string;
 }
 
-// ---- receptionist seam (src/reception, coder B) --------------------------------
-// A local, type-only copy of the contract until the real module is merged.
-type ReceptionEvent = 'arrive-street' | 'arrive-elevator' | 'leave-front' | 'interact';
-interface ReceptionContext {
-  now: Date;
-  building: { id: string | null; name: string };
-  floors: Array<{ session: string; name: string; state: 'running' | 'asleep'; needsYou: number }>;
-}
-interface ReceptionSeam {
-  readonly object: THREE.Object3D;
-  handle(ev: ReceptionEvent, ctx: ReceptionContext): unknown[];
-  update(dt: number, camera: THREE.Camera): void;
-  debug(): unknown;
-  dispose(): void;
-}
-
 const CLIENT = 'herdr-3d-game/0.2';
 
 /** Everything between the renderer and the bridge: views, input, HUD, frame pacing. */
@@ -91,7 +76,8 @@ export class App {
   place: Place = { area: 'floor', storey: null };
   /** Reception events the app detected, in order (test hook), and the receptionist once coder B's module is in. */
   readonly receptionEvents: Array<{ ev: ReceptionEvent; at: number; building: string | null }> = [];
-  reception: ReceptionSeam | null = null;
+  readonly audio: GameAudio;
+  readonly reception: Reception;
   /** Worker id → status on screen as of the last rendered frame, and when it got there. */
   readonly rendered = new Map<string, { status: Display; at: number }>();
   frames = 0;
@@ -136,6 +122,10 @@ export class App {
     this.batterySaver = o.params.get('battery') === '1';
     this.hud = new Hud(o.host);
     this.hud.setBattery(this.batterySaver);
+    // Sound (the first click, key or pointer lock unlocks it) and the receptionist in every lobby.
+    this.audio = createGameAudio();
+    this.hud.mountAudio(this.audio);
+    this.reception = createReception({ audio: this.audio, overlay: this.hud.root, shadows: this.shadows });
     this.city = new CityView(
       this.hud.floorList,
       this.shadows,
@@ -476,7 +466,7 @@ export class App {
     if (!o || !prev || prev.shape !== ctx.shape) {
       this.dropOutside();
       o = new OutsideView(ctx.plan, ctx.openings, { name: ctx.name, tint: ctx.tint, floors: ctx.floors.map((f) => ({ session: f.session, asleep: f.asleep })) });
-      o.lobby.setReceptionist(this.reception?.object ?? null);
+      o.lobby.setReceptionist(this.reception.object);
       this.walk.setOutside(o);
       o.setLoaded(this.loaded);
       this.walk.setOffice(this.office, this.loaded === null ? 0 : floorY(this.loaded));
@@ -623,16 +613,7 @@ export class App {
     const ctx = this.building;
     if (!ctx) return;
     this.receptionEvents.push({ ev, at: Date.now(), building: ctx.id });
-    this.reception?.handle(ev, this.receptionContext(ctx));
-  }
-
-  private receptionContext(ctx: BuildingCtx): ReceptionContext {
-    const floors = ctx.floors.map((f) => this.store.floorView(f.session) ?? f).reverse();
-    return {
-      now: new Date(),
-      building: { id: ctx.id, name: ctx.name },
-      floors: floors.map((f) => ({ session: f.session, name: f.session, state: f.asleep ? 'asleep' : 'running', needsYou: f.counts.needsYou })),
-    };
+    this.reception.handle(ev, receptionContext(this.store, ctx.id, new Date()));
   }
 
   /** Fire-escape door of the floor with an interior: open while you are near it. */
@@ -932,7 +913,9 @@ export class App {
       const moved = this.cameraMoved;
       if (this.planOpen) this.fitPlan();
       if (this.office?.root.visible) this.office.frame(t, this.planOpen ? this.planCam : this.fpCam, this.fpCam, this.vp, moved);
-      if (area === 'lobby' || area === 'street') this.reception?.update(dt, this.fpCam);
+      // The receptionist looks at you and places the bubble while the lobby can be seen (hud.css hides it elsewhere).
+      if (area === 'lobby' || area === 'street') this.reception.update(dt, this.fpCam);
+      this.audio.setListener(this.fpCam);
       this.updateLookAt();
       if (this.planOpen && (moved || this.planDirty)) this.layoutPlanLabels();
     } else {

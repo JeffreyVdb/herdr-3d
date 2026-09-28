@@ -103,6 +103,13 @@ body {
   font-size: 12.5px;
   white-space: nowrap;
 }
+/* The receptionist's bubble belongs to the lobby: shown there and from the street, never over a floor or the city. */
+.hud[data-mode='city'] .rx-bubble,
+.hud[data-area='floor'] .rx-bubble,
+.hud[data-area='fire-escape'] .rx-bubble {
+  visibility: hidden;
+}
+
 /* Outside a floor (lobby, street, fire escape): where you are, in the sun colour. */
 .where {
   display: inline-flex;

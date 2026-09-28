@@ -182,6 +182,18 @@ test('lobby: in from the sidewalk through the front door, the reception desk, th
   // Walking in from the street is what the receptionist greets; the lobby needs no floor interior.
   expect((await page.evaluate(() => window.__h3d.receptionEvents())).map((r) => r.ev)).toEqual(['arrive-street']);
   expect(await page.evaluate(() => window.__h3d.view())).toMatchObject({ area: 'lobby', floor: null });
+  // The greeting: a welcome by time of day, then (3 people upstairs need you) a nudge whose bubble names the floor.
+  const rx = () => page.evaluate(() => window.__h3d.reception());
+  let r = await rx();
+  const welcome = r?.said[0];
+  expect(welcome?.kind).toMatch(/^welcome-(morning|afternoon|evening|night)$/);
+  expect(r?.said.map((l) => l.kind)).toEqual([welcome?.kind, 'nudge']);
+  expect(r?.said[1]?.bubble).toContain('herdr-3d');
+  expect(r?.clips[0]).toBe(welcome?.id);
+  expect(r?.bubble).toBe(welcome?.bubble);
+  await expect(page.locator('.rx-bubble-card')).toBeVisible();
+  await expect(page.locator('.rx-bubble-card')).toContainText(welcome?.bubble ?? '???');
+  await shot(page, 'm3b-lobby-greeting');
   // Facing the desk: E opens the floor directory (the elevator panel), with the Lobby stop lit.
   expect(await page.evaluate(() => window.__h3d.lookAt())).toMatchObject({ kind: 'prop', id: 'reception' });
   await page.keyboard.press('e');
@@ -194,6 +206,7 @@ test('lobby: in from the sidewalk through the front door, the reception desk, th
     ['pastry', false],
   ]);
   expect((await page.evaluate(() => window.__h3d.receptionEvents())).map((r) => r.ev)).toEqual(['arrive-street', 'interact']);
+  expect((await rx())?.said.at(-1)?.kind).toBe('interact');
   await page.keyboard.press('Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.panel())).toBeNull();
 
@@ -203,6 +216,10 @@ test('lobby: in from the sidewalk through the front door, the reception desk, th
   p = await walkTo(page, fx, b.depth - 2.4, 'back in');
   expect(p.area).toBe('lobby');
   expect((await page.evaluate(() => window.__h3d.receptionEvents())).map((r) => r.ev)).toEqual(['arrive-street', 'interact', 'leave-front', 'arrive-street']);
+  // A goodbye on the way out, and no second welcome inside the two-minute cooldown.
+  r = await rx();
+  expect(r?.said.map((l) => l.kind)).toEqual([welcome?.kind, 'nudge', 'interact', 'goodbye']);
+  expect(r?.cooldownUntil).toBeGreaterThan(Date.now() + 60_000);
 
   // The Lobby stop: up to the top floor from the panel, and back down.
   await page.keyboard.press('l');
@@ -223,6 +240,8 @@ test('lobby: in from the sidewalk through the front door, the reception desk, th
   expect(p).toMatchObject({ area: 'lobby', y: 0 });
   expect(p.z).toBeCloseTo(b.depth - 1.3, 3);
   expect((await page.evaluate(() => window.__h3d.receptionEvents())).map((r) => r.ev).at(-1)).toBe('arrive-elevator');
+  // The elevator greeting shares the welcome's cooldown: still nothing new.
+  expect((await rx())?.said.map((l) => l.kind)).toEqual([welcome?.kind, 'nudge', 'interact', 'goodbye']);
   // From the lobby, the panel still lists the building's floors; the city pick still goes to a floor.
   await page.keyboard.press('l');
   await expect.poll(() => page.evaluate(() => window.__h3d.panel())).toMatchObject({ kind: 'elevator', lobby: { current: true } });
@@ -243,13 +262,19 @@ test('screenshots: out of the windows, the fire escape, the facade, the lobby', 
     await frames(page, 8);
     await shot(page, name);
   };
-  await at('m3b-window-bottom', { x: 3.3, z: b.depth - 0.95, yaw: Math.PI + 0.2, pitch: -0.5 });
+  // Out of a south window, over the sill: the street a storey down, and three.
+  const L = await page.evaluate(() => window.__h3d.layout('pastry'));
+  const win = L?.openings.find((o) => o.wall === 'south' && o.kind === 'window');
+  if (!win) throw new Error('no south window');
+  const wx = (win.u0 + win.u1) / 2;
+  await at('m3b-window-bottom', { x: wx, z: b.depth - 0.85, yaw: Math.PI - 0.15, pitch: -0.5 });
   await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
   await frames(page, 3);
-  await at('m3b-window-top', { x: 3.3, z: b.depth - 0.95, yaw: Math.PI + 0.2, pitch: -0.5 });
+  await at('m3b-window-top', { x: wx, z: b.depth - 0.45, yaw: Math.PI - 0.15, pitch: -0.78 });
   await at('m3b-fire-escape', { x: (e.inner.x0 + e.inner.x1) / 2, z: e.landing.z1 - 0.4, y: floorY(b, 2), yaw: 0.35, pitch: -0.5 });
-  await at('m3b-facade', { x: b.width / 2 - 1, z: b.depth + 5.8, y: 0, yaw: 0.5, pitch: 0.32 });
+  await at('m3b-facade', { x: b.width / 2 - 5.5, z: b.depth + 6, y: 0, yaw: 0.32, pitch: 0.42 });
   await at('m3b-fire-escape-street', { x: -7.2, z: b.depth + 5.6, y: 0, yaw: -0.35, pitch: 0.38 });
   await at('m3b-lobby', { x: b.lobby.front.x0 + 0.4, z: b.depth - 1.1, y: 0, yaw: -0.12, pitch: -0.05 });
+  expect(await page.evaluate(() => window.__h3d.lookAt())).toBeNull();
   clean();
 });
