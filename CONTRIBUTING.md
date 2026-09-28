@@ -268,21 +268,28 @@ Controls: in the city, drag to orbit, scroll to zoom, click a building to focus 
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings
 panel: create, rename, delete (confirmed: it names the building and how many floors go back to the lot), move buildings
 and floors up / down, and move a floor to another building (on top) or to the unassigned lot. Changes save at once;
-Esc closes a panel (and cancels a rename first). On a floor, click for mouse look (Pointer Lock), WASD / arrows to walk, Shift to run, Esc releases the mouse,
+Esc closes a panel (and cancels a rename first). On a floor, click for mouse look (Pointer Lock), WASD / ↑ ↓ to walk,
+← → to turn on the spot (A / D strafe), Shift to run, Esc releases the mouse,
 Tab toggles the floor plan (click the plan to walk there; it is also the fallback when pointer lock is refused),
 Backspace or the City button goes back, B toggles battery saver (60 Hz moving / 30 Hz idle instead of 120 / 60).
-Look at the elevator (south wall, behind you on arrival) and press **E** for the elevator panel: the building's floors
+Look at the elevator (south wall, behind you on arrival) and press **E**, or press **L** / the top bar's Elevator
+button from anywhere on the floor, for the elevator panel: the building's floors
 top to bottom (the lot's floors by name), lit where you are, with running / asleep, working / needs you / idle (asleep:
 the worker count), **Wake floor** / **Sleep floor** (confirmed: it names the floor and who is working or waiting), wake
 and sleep progress with each agent's resume, and **Settings** per floor. Pick a floor (click, or ↑ / ↓ and Enter) to
 ride the doors there. Floor settings: linked repo (the bridge's suggestion is pre-filled and marked until saved),
-GitHub Project owner + number and its status field, default folder and default hire (harness → model → effort from the
-bridge's `hire_options`); validated like the bridge, and Save sends only the keys that changed (`null` clears). On an
+GitHub Project owner + number, the status field (its name and one row per status, in board order: add, move up / down,
+remove; any label round-trips, commas included; it needs no project; the default Status / Todo, Doing, QA, Done is
+marked as such and only stored once changed; emptying the name and every status clears it), default folder and
+default hire (harness → model → effort from the bridge's `hire_options`); validated like the bridge, and Save sends
+only the keys that changed (`null` clears; statuses nobody touched are never re-sent). On an
 older bridge a command it does not know shows why and its button stays disabled after that.
 Keyboard: in the city, Tab reaches the floor list (Enter goes inside), then the building list (Enter opens that
 building's elevator panel, the lot's too). On a floor, Shift+Tab moves focus to the top
-bar (City, Issues, PRs, battery saver); Tab / Shift+Tab then move between its buttons as usual and Enter presses one.
-Tab toggles the plan only while nothing but the scene has focus; clicking the scene gives it focus back.
+bar (City, Issues, PRs, Elevator, battery saver); Tab / Shift+Tab then move between its buttons as usual and Enter
+presses one. **L** opens the elevator directly and ← → turn, so travel, wake / sleep and floor settings need no mouse.
+Tab toggles the plan only while nothing but the scene has focus; clicking the scene gives it focus back. Panels
+re-render live and keep focus, the header's Back / Close included.
 
 Tests:
 
@@ -292,9 +299,11 @@ make test lint                # vitest + tsc (protocol client and requests, stor
 make shot                     # Playwright WebGL2: game/test-results/{shot,m2-city,m2-floor-plan,m2-desk-row}.png,
                               # scripted look-at path, floor entry, keyboard focus, live plan labels, events
                               # during the elevator ride, held keys across floors, small-window plan; M3 on the
-                              # simulating fixture server: m3-{buildings,elevator,settings,sleep-confirm,
-                              # wake-progress}.png, buildings from the keyboard, elevator via E and via a city
-                              # click, settings, sleep/wake, a failed wake, and an older read-only bridge
+                              # simulating fixture server: m3-{buildings,elevator,settings,statuses,sleep-confirm,
+                              # wake-progress,topbar-elevator}.png, buildings from the keyboard, elevator via E
+                              # (turning with the arrows), L, the top bar and a city click, keyboard-only travel /
+                              # wake / sleep / settings, the status rows, header focus across live updates,
+                              # sleep/wake, a failed wake, and an older read-only bridge
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
 pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
@@ -313,7 +322,8 @@ plain-shell workspaces (no coding agents) and the proxy to `$XDG_RUNTIME_DIR/h3d
 (`e2e-live/m3.spec.ts`) runs its own private bridge on it (db `/tmp/h3d-m3game/world.db`, `--sessions
 '^h3d-m3game-…$'`) so it can restart it. It creates a building and moves the floor into it from the UI, restarts the
 bridge and checks both are still there, then sleeps the floor and wakes it from the elevator panel and checks every
-worker kept its desk, and saves floor settings from the panel and checks the restarted bridge still has them. On a
+worker kept its desk, and saves floor settings from the panel (a status with a comma among them) and checks the
+restarted bridge still has them and that saving one other key sends only that key. On a
 bridge without `floor.wake` / `floor.settings.set` (it answers `unknown_command`) those tests are skipped and say so. Afterwards the session is stopped and deleted and the `herdr-s-h3d-m3game-…` unit a wake started is
 removed; after a hard kill, check `herdr session list` and `systemctl --user list-units 'herdr-s-h3d-*'`.
 
@@ -330,6 +340,7 @@ sent, `bridgeName`/`bridgeDesk`, null from an older bridge), `layout(session)`, 
 `pose()`, `plan(open)`, `focusBuilding(i)`, `cards()`, `badgePoint(session)`, `bench(opts)`. M3: `view().asleep`
 (the office's lights are off), `world()[].building` (its name, null in the lot), `openElevator(building?)` (a building
 id, null for the lot, nothing for the current floor's), `openBuildings()`, `openSettings(session)`, `panel()` (what the open panel shows:
-elevator rows with state, transition, counts, current, wake/sleep and resume; buildings; the settings form; any
+elevator rows with state, transition, counts, current, wake/sleep and resume; buildings; the settings form, its
+statuses one per row, and whether the repo is the suggestion / the status field the default; any
 confirmation; the status line), `sent()` (commands sent, with their results), `floorPoint(session)` (a floor's screen
 point in the city, to click its building), `connection()` → `{phase, epoch}`.

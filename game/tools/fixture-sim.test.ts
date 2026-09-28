@@ -114,11 +114,20 @@ describe('SimWorld floor settings', () => {
     });
   });
 
+  it('stores a status field on its own, labels as sent (commas, spaces)', () => {
+    const r = rig();
+    const status_field = { name: ' Stage ', options: ['Review, QA', ' Done'] };
+    expect(r.cmd('floor.settings.set', { session: 'herdr-3d', status_field }).got().at(-1)).toMatchObject({ t: 'ack' });
+    expect(r.store.floorView('herdr-3d')?.settings).toEqual({ status_field });
+  });
+
   it.each([
     [{ repo: 'nope' }],
     [{ project: { owner: 'o', number: 0 } }],
     [{ status_field: { name: 'S', options: ['a', 'a'] } }],
     [{ status_field: { name: 'S', options: [] } }],
+    [{ status_field: { name: 'S', options: ['a', '  '] } }],
+    [{ status_field: { name: ' ', options: ['a'] } }],
     [{ default_cwd: 'relative/path' }],
     [{ default_cwd: '/home/missing' }],
     [{ default_hire: { harness: 'codex', model: 'gpt-6-luna', effort: 'ultra' } }],

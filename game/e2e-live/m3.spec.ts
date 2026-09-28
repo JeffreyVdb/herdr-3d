@@ -163,6 +163,9 @@ test('floor settings saved from the panel are stored by the bridge and survive a
   await page.locator('#set-harness').selectOption('claude');
   await page.locator('#set-model').selectOption('claude-opus-5-5');
   await page.locator('#set-effort').selectOption('high');
+  // A status with a comma in it: one row per status, so the bridge stores it whole.
+  await page.locator('dialog.panel [data-key="opt-add"]').click();
+  await page.keyboard.type('Review, QA');
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText('Saved the repo, project, status field, default folder, default hire.');
   const want = {
@@ -170,7 +173,7 @@ test('floor settings saved from the panel are stored by the bridge and survive a
     projectOwner: 'JeffreyVdb',
     projectNumber: '3',
     statusName: 'Status',
-    statusOptions: 'Todo, Doing, QA, Done',
+    statusOptions: ['Todo', 'Doing', 'QA', 'Done', 'Review, QA'],
     defaultCwd: cwd,
     harness: 'claude',
     model: 'claude-opus-5-5',
@@ -187,5 +190,12 @@ test('floor settings saved from the panel are stored by the bridge and survive a
   // Opened again after the restart, the form shows what the bridge stored.
   await page.evaluate((s) => window.__h3d.openSettings(s), session);
   const p = await page.evaluate(() => window.__h3d.panel());
-  expect(p).toMatchObject({ kind: 'settings', session, repoSuggested: false, form: want });
+  expect(p).toMatchObject({ kind: 'settings', session, repoSuggested: false, statusDefault: false, form: want });
+  // Saving one other key sends only that key: the stored statuses are not re-sent.
+  await page.locator('#set-effort').selectOption('low');
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText('Saved the default hire.');
+  const last = await page.evaluate(() => window.__h3d.sent().at(-1));
+  expect(last).toMatchObject({ t: 'floor.settings.set', args: { session, default_hire: { harness: 'claude', model: 'claude-opus-5-5', effort: 'low' } }, result: { ok: true } });
+  expect(Object.keys((last?.args ?? {}) as object).sort()).toEqual(['default_hire', 'session']);
 });
