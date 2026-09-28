@@ -253,7 +253,8 @@ and the last `seq` you applied:
 
 `req_id` (a non-empty string of the client's choosing) is required. Each command is answered with exactly one `ack` or
 `error` carrying the same `req_id`. The events a command causes are sent **before** its `ack`, so when the ack arrives
-the client's world already reflects it. Every command, accepted or not, is written to the audit log.
+the client's world already reflects it. Every command, accepted or not, is written to the audit log, a known `t`
+without `req_id` too (an unknown `t` is not a command and is not logged).
 `args` must not contain unknown fields.
 
 | `t` | `args` | `ack.data` | events |
