@@ -96,6 +96,8 @@ export class SimWorld {
   private readonly leaving = new Set<string>();
   /** M4: the last harness/model/effort hired per floor. */
   private readonly lastHire = new Map<string, Hire>();
+  /** M4: the branch the bridge recorded making for a worker (`hire_branch`), by worker id. */
+  private readonly hireBranch = new Map<string, string>();
   private readonly caps: Record<string, { soft: number; hard: number }>;
   private readonly now: () => number;
   private readonly setT: (fn: () => void, ms: number) => unknown;
@@ -111,6 +113,8 @@ export class SimWorld {
     this.hireSent = w.hire_options !== undefined;
     this.stepMs = o.stepMs ?? 600;
     this.fail = o.fail;
+    // The fixture's h3d/… branches stand for earlier hires by the bridge (it recorded them); any other branch is the user's.
+    for (const x of this.workers) if (x.branch?.startsWith('h3d/') && x.worktree?.linked) this.hireBranch.set(x.id, x.branch);
     this.caps = o.caps ?? {};
     this.now = o.now ?? (() => Date.now());
     this.setT = o.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
@@ -655,6 +659,7 @@ export class SimWorld {
       () => {
         this.hiring.delete(held);
         this.workers.push(w);
+        if (branch) this.hireBranch.set(id, branch);
         this.resize(send, f);
         this.upsertWorker(send, w);
         // herdr opens the repo's main checkout too when the floor has no workspace in it: one more (not hired) worker.
@@ -737,6 +742,8 @@ export class SimWorld {
       dirty: t.dirty,
       unpushed: t.unpushed,
       can_delete: linked && clean,
+      // Only a branch the bridge made for this worker, still checked out (and clean, all pushed).
+      can_delete_branch: linked && clean && !!w.branch && this.hireBranch.get(w.id) === w.branch,
       can_fire: open.length === 0,
     };
     if (open.length) out.fire_blocked = `it is ${wt?.repo_name ?? 'the repo'}’s main checkout and ${open.length} of its worktrees are still open here (${open.map((x) => x.name).join(', ')}): send them home first`;
@@ -757,8 +764,9 @@ export class SimWorld {
     const p = this.firePrepare({ id: w.id });
     if (choice !== 'keep') {
       if (!w.worktree?.linked) throw bad('worktree: the worker is not in a linked worktree');
-      if (choice === 'delete_branch' && !w.branch?.startsWith('h3d/')) throw bad('worktree: delete_branch only deletes h3d/ branches');
+      if (choice === 'delete_branch' && !this.hireBranch.has(w.id)) throw bad('worktree: delete_branch needs a branch herdr-world made for this worker');
       if (!p.can_delete) throw new CmdError('not_clean', `not_clean: ${String(p.reason)}`);
+      if (choice === 'delete_branch' && !p.can_delete_branch) throw new CmdError('not_clean', `not_clean: ${w.name ?? w.id} is no longer on ${String(this.hireBranch.get(w.id))}`);
     }
     if (p.can_fire === false) throw new CmdError('fire_failed', `fire_failed: ${String(p.fire_blocked)}`);
     if (this.fail === 'fire_failed') {
@@ -774,6 +782,7 @@ export class SimWorld {
         const i = this.workers.indexOf(w);
         if (i < 0) return fail(new CmdError('unknown_worker', `unknown worker: "${w.id}"`));
         this.workers.splice(i, 1);
+        this.hireBranch.delete(w.id);
         this.emit(send, { t: 'worker.removed', id: w.id, session: w.session, workspace_id: w.workspace_id, reason: 'sent_home' });
         if (f) this.resize(send, f);
         ack({ worktree: choice === 'keep' ? 'kept' : choice === 'delete' ? 'deleted' : 'deleted_branch', released: true });

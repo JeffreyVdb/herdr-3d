@@ -215,7 +215,7 @@ export class SendHomeDialog {
 
       if (o.offered) {
         const set = h('fieldset', { class: 'dd-choices' }, h('legend', {}, 'The worktree'));
-        for (const c of CHOICES) {
+        for (const c of CHOICES.filter((x) => o.choices.includes(x.v))) {
           const on = o.enabled[c.v];
           const input = h('input', { type: 'radio', name: 'home-worktree', value: c.v, id: `home-${c.v}`, 'data-key': `wt:${c.v}`, 'aria-describedby': `home-${c.v}-hint` });
           input.checked = this.choice === c.v;
@@ -235,6 +235,7 @@ export class SendHomeDialog {
             ),
           );
         }
+        if (o.branchNote) set.append(h('p', { class: 'field-hint', 'data-key': 'branch-note' }, o.branchNote));
         nodes.push(set);
         if (o.warning) nodes.push(h('div', { class: 'dd-callout', 'data-level': 'warn', role: 'note' }, h('p', {}, o.warning)));
       }

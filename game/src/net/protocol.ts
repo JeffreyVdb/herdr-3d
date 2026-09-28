@@ -297,6 +297,11 @@ export interface FirePrepare {
   /** Commits not on any remote. */
   unpushed: number;
   can_delete: boolean;
+  /**
+   * `can_delete`, and the branch is one the bridge made for this worker, still checked out and all on a remote:
+   * only then may `worker.fire` use `delete_branch` (absent, from an older bridge: false).
+   */
+  can_delete_branch?: boolean;
   /** Why the worktree cannot be deleted. */
   reason?: string;
   /** False when herdr would refuse to close the workspace (a main checkout whose worktrees are still open). */

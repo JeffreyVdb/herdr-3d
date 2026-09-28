@@ -216,8 +216,12 @@ export function hireArgs(session: string, desk: number, f: HireForm, git: HireGi
 export interface FireOptions {
   /** Only a worker in a linked worktree of its own has worktree choices. */
   offered: boolean;
+  /** The choices listed: "delete the worktree and the branch" only when the bridge may delete the branch. */
+  choices: FireWorktree[];
   enabled: Record<FireWorktree, boolean>;
   warning: string | null;
+  /** Why the branch stays although the worktree may go, null otherwise. */
+  branchNote: string | null;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -239,12 +243,16 @@ export function fireBlocked(p: FirePrepare): string | null {
 export function fireOptions(p: FirePrepare): FireOptions {
   const offered = !!p.worktree?.linked;
   const del = offered && p.can_delete;
+  // The bridge only deletes a branch it made for this worker (and only once it is all pushed).
+  const delBranch = del && p.can_delete_branch === true;
   let warning: string | null = null;
   if (offered && !p.can_delete) {
     const left = leftovers(p);
     warning = `Deleting is off: ${p.reason ?? left ?? 'the bridge cannot tell whether the work is safe'}. The worktree stays; commit and push first to delete it.`;
   }
-  return { offered, enabled: { keep: true, delete: del, delete_branch: del }, warning };
+  const choices: FireWorktree[] = !offered ? [] : delBranch ? ['keep', 'delete', 'delete_branch'] : ['keep', 'delete'];
+  const branchNote = del && !delBranch && p.branch ? `The branch ${p.branch} stays either way: herdr-world only deletes a branch it made for this worker.` : null;
+  return { offered, choices, enabled: { keep: true, delete: del, delete_branch: delBranch }, warning, branchNote };
 }
 
 /** `worker.fire` args: the worktree choice only for a worktree worker, and never a disabled one. */

@@ -298,9 +298,12 @@ describe('SimWorld hire and send home (M4)', () => {
     expect(dirty).toMatchObject({ name: 'Jellybean', branch: 'h3d/brioche-levain', worktree: { path: '/home/dev/pastry-wt/brioche', linked: true }, unpushed: 2, can_delete: false });
     expect(dirty.dirty).toHaveLength(3);
     expect(dirty.reason).toBe('the worktree has uncommitted changes and 2 commits are not on any remote');
+    expect(dirty.can_delete_branch).toBe(false);
     const clean = data(r.cmd('worker.fire.prepare', { id: byLabel(r, 'timers').id }).got()[0]);
-    expect(clean).toMatchObject({ name: 'Marble', dirty: [], unpushed: 0, can_delete: true });
+    expect(clean).toMatchObject({ name: 'Marble', dirty: [], unpushed: 0, can_delete: true, can_delete_branch: true });
     expect(clean.reason).toBeUndefined();
+    // Clean, but on a branch of the user's own: the worktree may go, the branch may not.
+    expect(data(r.cmd('worker.fire.prepare', { id: byLabel(r, 'bridge-ws').id }).got()[0])).toMatchObject({ name: 'Noodle', branch: 'dev/bridge-ws', can_delete: true, can_delete_branch: false });
     const main = data(r.cmd('worker.fire.prepare', { id: byLabel(r, 'docs').id }).got()[0]);
     expect(main).toMatchObject({ worktree: { path: '/home/dev/devel/herdr-3d', linked: false }, can_delete: false });
     expect(data(r.cmd('worker.fire.prepare', { id: byLabel(r, 'pantry').id }).got()[0])).toMatchObject({ worktree: null, can_delete: false, can_fire: true });
@@ -332,6 +335,24 @@ describe('SimWorld hire and send home (M4)', () => {
     const k = r.cmd('worker.fire', { id: sour.id });
     r.tick();
     expect(data(r.reply(k.req_id))).toEqual({ worktree: 'kept', released: true });
+  });
+
+  it('deletes only a branch it made for the worker (can_delete_branch)', () => {
+    const r = m4();
+    const noodle = byLabel(r, 'bridge-ws');
+    expect(r.cmd('worker.fire', { id: noodle.id, worktree: 'delete_branch' }).got()[0]).toMatchObject({ code: 'bad_request', message: expect.stringMatching(/branch herdr-world made/) });
+    expect(r.store.workers.has(noodle.id)).toBe(true);
+    const k = r.cmd('worker.fire', { id: noodle.id, worktree: 'delete' });
+    r.tick();
+    expect(data(r.reply(k.req_id))).toEqual({ worktree: 'deleted', released: true });
+    // A worktree hire records its branch: that one may go with it.
+    const c = r.cmd('worker.hire', { session: 'pastry', desk_index: 15, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', worktree: true });
+    r.tick();
+    const id = data(r.reply(c.req_id)).id as string;
+    expect(data(r.cmd('worker.fire.prepare', { id }).got()[0])).toMatchObject({ branch: expect.stringMatching(/^h3d\//), worktree: { linked: true }, can_delete: true, can_delete_branch: true });
+    const d = r.cmd('worker.fire', { id, worktree: 'delete_branch' });
+    r.tick();
+    expect(data(r.reply(d.req_id))).toEqual({ worktree: 'deleted_branch', released: true });
   });
 
   it('scripts failures: hire_failed, fire_failed, fetch_failed', () => {

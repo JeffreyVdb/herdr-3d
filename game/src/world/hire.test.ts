@@ -185,17 +185,30 @@ describe('send home', () => {
     dirty: [],
     unpushed: 0,
     can_delete: true,
+    can_delete_branch: true,
     ...over,
   });
-  it('offers delete for a clean linked worktree', () => {
-    expect(fireOptions(fp())).toEqual({ offered: true, enabled: { keep: true, delete: true, delete_branch: true }, warning: null });
+  it('offers delete for a clean linked worktree, and the branch too when the bridge made it', () => {
+    expect(fireOptions(fp())).toEqual({ offered: true, choices: ['keep', 'delete', 'delete_branch'], enabled: { keep: true, delete: true, delete_branch: true }, warning: null, branchNote: null });
     expect(fireArgs('id1', fp(), 'delete_branch')).toEqual({ id: 'id1', worktree: 'delete_branch' });
   });
+  it('a clean worktree on a branch the bridge did not make: delete the worktree only, the branch stays', () => {
+    for (const p of [fp({ branch: 'dev/bridge-ws', can_delete_branch: false }), (({ can_delete_branch: _, ...older }) => older)(fp({ branch: 'dev/bridge-ws' }))]) {
+      const o = fireOptions(p);
+      expect(o).toMatchObject({ offered: true, choices: ['keep', 'delete'], enabled: { keep: true, delete: true, delete_branch: false }, warning: null });
+      expect(o.branchNote).toBe('The branch dev/bridge-ws stays either way: herdr-world only deletes a branch it made for this worker.');
+      // Never sent, even if asked.
+      expect(fireArgs('id1', p, 'delete_branch')).toEqual({ id: 'id1' });
+      expect(fireArgs('id1', p, 'delete')).toEqual({ id: 'id1', worktree: 'delete' });
+    }
+  });
   it('disables delete and warns for a dirty or unpushed one', () => {
-    const dirty = fp({ dirty: [' M src/app.ts', '?? notes.md', ' D old.ts'], unpushed: 2, can_delete: false });
+    const dirty = fp({ dirty: [' M src/app.ts', '?? notes.md', ' D old.ts'], unpushed: 2, can_delete: false, can_delete_branch: false });
     expect(leftovers(dirty)).toBe('3 uncommitted changes and 2 commits not on any remote');
     const o = fireOptions(dirty);
     expect(o.enabled).toEqual({ keep: true, delete: false, delete_branch: false });
+    expect(o.choices).toEqual(['keep', 'delete']);
+    expect(o.branchNote).toBeNull();
     expect(o.warning).toBe('Deleting is off: 3 uncommitted changes and 2 commits not on any remote. The worktree stays; commit and push first to delete it.');
     expect(fireOptions({ ...dirty, reason: 'the branch is not pushed' }).warning).toMatch(/^Deleting is off: the branch is not pushed\./);
     // A disabled choice is never sent.
@@ -209,7 +222,7 @@ describe('send home', () => {
     expect(fireBlocked(fp({ can_fire: false }))).toBe('herdr would refuse to close its workspace');
   });
   it('has no worktree choices without a linked worktree', () => {
-    expect(fireOptions(fp({ worktree: null, can_delete: false }))).toEqual({ offered: false, enabled: { keep: true, delete: false, delete_branch: false }, warning: null });
+    expect(fireOptions(fp({ worktree: null, can_delete: false, can_delete_branch: false }))).toEqual({ offered: false, choices: [], enabled: { keep: true, delete: false, delete_branch: false }, warning: null, branchNote: null });
     expect(fireOptions(fp({ worktree: { path: '/repo', linked: false }, can_delete: false })).offered).toBe(false);
     expect(fireArgs('id1', fp({ worktree: null }), 'keep')).toEqual({ id: 'id1' });
   });

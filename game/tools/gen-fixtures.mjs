@@ -269,7 +269,8 @@ function demoM4() {
   const herdr = '/home/dev/devel/herdr-3d';
   linked('CODE|m2-go|3|r1', herdr, 'm2-go', 'h3d/pixel-m2-go');
   linked('CODE|m2-game|3|r1', herdr, 'm2-game', 'h3d/mochi-m2-game');
-  linked('bridge-ws', herdr, 'bridge-ws', 'h3d/bridge-ws');
+  // A branch of the user's own (the bridge did not make it): send-home keeps it.
+  linked('bridge-ws', herdr, 'bridge-ws', 'dev/bridge-ws');
   linked('fixtures', herdr, 'fixtures', 'h3d/waffle-fixtures');
   const pastry = '/home/dev/pastry';
   linked('brioche', pastry, 'brioche', 'h3d/brioche-levain');
