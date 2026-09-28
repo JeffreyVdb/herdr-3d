@@ -241,12 +241,11 @@ function demoM3b() {
   const w = snap.world;
   const work = w.buildings.find((b) => b.name === 'Work');
   const home = w.buildings.find((b) => b.name === 'Personal');
+  // Top to bottom, like the bridge: `floors` lists them in `index` order, index 0 on top.
   work.floors = ['herdr-3d', 'depot-manager', 'pastry'];
   home.floors = [];
   const floor = (s) => w.floors.find((f) => f.session === s);
-  Object.assign(floor('herdr-3d'), { index: 2 });
-  Object.assign(floor('depot-manager'), { index: 1 });
-  Object.assign(floor('pastry'), { building: work.id, index: 0 });
+  work.floors.forEach((s, index) => Object.assign(floor(s), { building: work.id, index }));
   return [snap];
 }
 

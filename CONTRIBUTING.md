@@ -247,6 +247,8 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   bridge), `demo-m3` (the same city as an M3 bridge sends it: settings, suggestions, hire options, a floor in the
   unassigned lot; no events), `demo-m3b` (demo-m3 with all three floors in Work: herdr-3d on top, depot-manager asleep
   in the middle, pastry at the bottom), `perf-floor60`, `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
+  Like the bridge, a building lists its floors top to bottom, which is `index` order (index 0 on top); vitest fails
+  a fixture where the two disagree, since the simulator (`sim=1`) rebuilds the list from `index`.
 - `tools/` — fixture server (read-only by default; with `sim=1` it simulates the bridge's commands in memory,
   `fixture-sim.ts`), dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
 

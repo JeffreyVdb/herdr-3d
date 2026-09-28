@@ -1,12 +1,13 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { WorldStore } from '../src/world/store';
-import type { Snapshot, WorldEvent } from '../src/net/protocol';
-import { loadFixture, startFixtureServer } from './fixture-server';
+import type { Building, Floor, Snapshot, WorldEvent } from '../src/net/protocol';
+import { FIXTURES_DIR, loadFixture, startFixtureServer } from './fixture-server';
+import { SimWorld } from './fixture-sim';
 
 // No TCP port: the server listens on a unix socket in a temp dir.
 let dir: string;
@@ -101,6 +102,49 @@ describe('demo fixture', () => {
     const city = s240.city();
     expect(city.map((b) => b.floors.length)).toEqual([8, 6, 7, 4, 5]);
     expect(city.flatMap((b) => b.floors).reduce((n, f) => n + f.counts.total, 0)).toBe(240);
+  });
+});
+
+// Like the bridge, a building lists its floors top to bottom, which is `index` order (index 0 on top). The sim (sim=1)
+// rebuilds that list from `index`, so a fixture where the two disagree turns its building upside down with sim=1.
+describe('every fixture', () => {
+  const names = readdirSync(FIXTURES_DIR)
+    .filter((f) => f.endsWith('.jsonl'))
+    .map((f) => f.slice(0, -'.jsonl'.length));
+
+  it('finds them all', () => {
+    expect(names).toEqual(expect.arrayContaining(['demo', 'demo-m3', 'demo-m3b', 'perf-floor60', 'perf-city240']));
+  });
+
+  it.each(names)('%s: every building lists its floors in index order, and the sim builds the same one', (name) => {
+    const { snapshot, events } = loadFixture(name);
+    const w = (snapshot as unknown as Snapshot).world;
+    const floors = new Map<string, Floor>(w.floors.map((f) => [f.session, f]));
+    const buildings = new Map<string, Building>(w.buildings.map((b) => [b.id, b]));
+    const check = (when: string) => {
+      for (const b of buildings.values()) {
+        const mine = [...floors.values()].filter((f) => f.building === b.id).sort((x, y) => (x.index ?? 0) - (y.index ?? 0));
+        expect(b.floors, `${name} ${when}: ${b.name}'s floors vs their index`).toEqual(mine.map((f) => f.session));
+        expect(new Set(mine.map((f) => f.index)).size, `${name} ${when}: two floors of ${b.name} at one index`).toBe(mine.length);
+      }
+    };
+    check('snapshot');
+    expect(w.floors.map((f) => f.session), `${name}: world.floors follows the buildings, then the lot`).toEqual([
+      ...w.buildings.flatMap((b) => b.floors),
+      ...w.unassigned,
+    ]);
+    // The same floor numbers straight off the fixture and through the sim.
+    const levels = (snap: unknown) => {
+      const store = new WorldStore(0);
+      store.applySnapshot(snap as Snapshot);
+      return w.floors.map((f) => [f.session, store.level(f.session)]);
+    };
+    expect(levels(new SimWorld(snapshot as never).snapshot()), `${name}: floor numbers with sim=1`).toEqual(levels(snapshot));
+    for (const e of events as unknown as WorldEvent[]) {
+      if (e.t === 'floor.upsert') floors.set(e.floor.session, e.floor);
+      if (e.t === 'building.upsert') buildings.set(e.building.id, e.building);
+    }
+    check('after its events');
   });
 });
 
