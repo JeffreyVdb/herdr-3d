@@ -28,6 +28,8 @@ export interface H3DDebug {
    */
   world(): Array<{
     session: string;
+    /** M3: the building's name, null in the lot. */
+    building: string | null;
     asleep: boolean;
     desks: number;
     workers: Array<{ id: string; name: string; label: string; desk: number; status: string; bridgeName: string | null; bridgeDesk: number | null }>;
@@ -57,6 +59,8 @@ export interface H3DDebug {
   sent(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
   /** M3: screen point of a floor itself in the city (to click its building). */
   floorPoint(session: string): { x: number; y: number } | null;
+  /** M3: connection phase and the bridge epoch (changes when the bridge restarts). */
+  connection(): { phase: string; epoch: string | null };
 }
 
 declare global {
@@ -90,6 +94,7 @@ const h3d: H3DDebug = {
           .flatMap((b) => b.floors)
           .map((f) => ({
             session: f.session,
+            building: f.building?.name ?? null,
             asleep: f.asleep,
             desks: f.desks,
             workers: f.workers.map((w) => ({
@@ -123,6 +128,7 @@ const h3d: H3DDebug = {
   panel: () => app?.panels.summary() ?? null,
   sent: () => structuredClone(app?.sent ?? []),
   floorPoint: (s) => app?.floorPoint(s) ?? null,
+  connection: () => ({ phase: app?.conn.phase ?? 'stopped', epoch: app?.client.resume.epoch ?? null }),
   bench: async (o) => {
     if (!app || !renderer) throw new Error('not started');
     return runBench(app, renderer, o);

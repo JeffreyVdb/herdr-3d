@@ -118,7 +118,7 @@ async function main(): Promise<number> {
   const pane = created.result.root_pane.pane_id;
   log(`workspace ${created.result.workspace.workspace_id}, pane ${pane}`);
 
-  const pw = spawn('pnpm', ['exec', 'playwright', 'test', '-c', 'playwright.live.config.ts'], {
+  const pw = spawn('pnpm', ['exec', 'playwright', 'test', '-c', 'playwright.live.config.ts', 'e2e-live/latency.spec.ts'], {
     cwd: GAME,
     stdio: 'inherit',
     env: {
