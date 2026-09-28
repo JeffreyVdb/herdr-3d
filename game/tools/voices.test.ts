@@ -192,6 +192,13 @@ describe('the voice generator', () => {
 
     const empty = fakeApi([() => Response.json({ choices: [{ finish_reason: 'content_filter', message: {} }] })]);
     await expect(run({ root, fetch: empty.fetch, readKey, log, retryDelayMs: 1 })).rejects.toThrow(/no complete audio/);
+
+    // A fetch that rejects with something other than an Error: still an Error, still without the key.
+    const odd = (async () => Promise.reject(`socket closed, api-key: ${KEY}`)) as typeof fetch;
+    const e2 = await run({ root, fetch: odd, readKey, log, retries: 1, retryDelayMs: 1 }).catch((e: unknown) => e);
+    expect(e2).toBeInstanceOf(Error);
+    expect((e2 as Error).message).toContain('socket closed');
+    expect((e2 as Error).message).not.toContain(KEY);
   });
 
   it('refuses to clone without a reference clip', async () => {

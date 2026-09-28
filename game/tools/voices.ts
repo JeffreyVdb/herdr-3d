@@ -291,7 +291,7 @@ async function synthesize(body: TtsRequest, key: string, o: Required<Pick<RunOpt
     } catch (e) {
       const status = e instanceof ApiError ? e.status : -1;
       const retry = status === 429 || status >= 500 || status === -1;
-      if (!retry || attempt >= o.retries) throw e instanceof Error ? new Error(redact(e.message)) : e;
+      if (!retry || attempt >= o.retries) throw new Error(redact(e instanceof Error ? e.message : String(e)));
       await sleep(o.retryDelayMs * 2 ** attempt);
     }
   }
