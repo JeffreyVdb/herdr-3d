@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "lines": {
+    "welcome-morning-1": {
+      "hash": "ff93def7b05653269687fc825d9b1f635adb6529fa9057c744530618f53f74b0",
+      "bytes": 34128,
+      "ms": 4728
+    },
+    "welcome-morning-2": {
+      "hash": "4194940617631989246b4c3fc16c89c0582aee6a13edcc19c2773a088f7e25ef",
+      "bytes": 42552,
+      "ms": 5832
+    },
+    "welcome-morning-3": {
+      "hash": "66dcafd5cdecd29cae6e770963ef73b0365406385b34399140f32d2e6db8935c",
+      "bytes": 35088,
+      "ms": 4872
+    },
+    "welcome-afternoon-1": {
+      "hash": "244c898cfbfbcaebfd7226f5559465cdc4ea73ba4ccc981523b84ffef59e710b",
+      "bytes": 31680,
+      "ms": 4248
+    },
+    "welcome-afternoon-2": {
+      "hash": "bea38a56844ec00330a945e029d4e1288f22708c916da6cbff2ac50fb7ef2edd",
+      "bytes": 30600,
+      "ms": 4248
+    },
+    "welcome-afternoon-3": {
+      "hash": "1a880fe8a81fa129e81e9344dafb35c5f70e42c9ee7e96b67a9ae974d8d42ac0",
+      "bytes": 30888,
+      "ms": 4560
+    },
+    "welcome-evening-1": {
+      "hash": "0a6776522470bba939e0339e688c20180861f37832f07bacaa3061e6783595b9",
+      "bytes": 28872,
+      "ms": 4392
+    },
+    "welcome-evening-2": {
+      "hash": "c81842aa12357a822480c81cbdd9a1395b698cb3741aebd1adb8194d53bc296f",
+      "bytes": 29496,
+      "ms": 4080
+    },
+    "welcome-evening-3": {
+      "hash": "b0d3de7afe1c3ee63dcc76cffb93193211846a1e7f6dad3fb61f5f24b2563fe5",
+      "bytes": 34032,
+      "ms": 4728
+    },
+    "welcome-night-1": {
+      "hash": "c6837fd187eb663a2da8bf268176b0dd9e9b0cf9d646d1637ee50677c08dcb69",
+      "bytes": 26064,
+      "ms": 3432
+    },
+    "welcome-night-2": {
+      "hash": "cc9fb073c93131c78b80898fc7c9126ca12f28b1f70c0925ec57d80b90034147",
+      "bytes": 36528,
+      "ms": 5208
+    },
+    "welcome-night-3": {
+      "hash": "a1f44a5e47714c8e6070ae1448589a0095fcf52cf1a81de5700d89c55070b319",
+      "bytes": 37608,
+      "ms": 5208
+    },
+    "elevator-1": {
+      "hash": "fde5af54d3d05d9469048f01b9aec75faf9c7be9742c51e052bbcffada1e3d3d",
+      "bytes": 12960,
+      "ms": 1848
+    },
+    "elevator-2": {
+      "hash": "0fe06faae46e3db5cec0159ac21c62e3a87c51487ff1e292124fc56ecd432b45",
+      "bytes": 15288,
+      "ms": 2328
+    },
+    "elevator-3": {
+      "hash": "fd115003c874019806285d6c82e4895c4e02fcafb8ab70409726555e8ff83a53",
+      "bytes": 19944,
+      "ms": 3120
+    },
+    "goodbye-1": {
+      "hash": "91e72acea6b06d52e8f18ece84f871a65d66a075d6cb505cf5394b6817087a1b",
+      "bytes": 17928,
+      "ms": 2640
+    },
+    "goodbye-2": {
+      "hash": "76368d898d406f31123e21ac2a56a45e421eb99c89c5e0b4042e76bcb6a08839",
+      "bytes": 24912,
+      "ms": 3432
+    },
+    "goodbye-3": {
+      "hash": "38e12d5d3be2baa066fc1d16e4c3c582ab554023d46d6032e5f4084ca7b238b7",
+      "bytes": 13296,
+      "ms": 2160
+    },
+    "nudge-1": {
+      "hash": "19320b4956a24777d918d902082eea7ed2cf56ec50a297c3b32a8926a20c1e6b",
+      "bytes": 25440,
+      "ms": 3600
+    },
+    "nudge-2": {
+      "hash": "ef3ce11d9105fc2850a18cc738a071403b905fb737de28d3a26dddb234218e07",
+      "bytes": 31272,
+      "ms": 4248
+    },
+    "nudge-3": {
+      "hash": "a3cf62b0247c2caef91be2d3cd9e23b0c950fd157c7f41bb0a8c604a3f58bd4b",
+      "bytes": 33192,
+      "ms": 4728
+    },
+    "quiet-1": {
+      "hash": "c2160b2c173c8e7192d89b90095dfd50da86b5a6e27533b72d9402098175f495",
+      "bytes": 40320,
+      "ms": 5832
+    },
+    "quiet-2": {
+      "hash": "fe54f9c6ce946cf5c5a5a81bbd60bdd6ed95291f9871d4d1eb66363985a2080a",
+      "bytes": 44760,
+      "ms": 6792
+    },
+    "quiet-3": {
+      "hash": "75dc7500ba9a9df12ee0928e75259be9477875718f8402def543b1f33a40c138",
+      "bytes": 52320,
+      "ms": 7272
+    },
+    "interact-1": {
+      "hash": "76e3a24f78fa95df55eea2dfa5796b9265e10132d264179c04d6d4034011b72e",
+      "bytes": 25920,
+      "ms": 3600
+    },
+    "interact-2": {
+      "hash": "cb8ba4ca34f3e88a48adca037dfe657bc34e6d1edb828d3fbc9678eff46db9ed",
+      "bytes": 29520,
+      "ms": 4248
+    },
+    "interact-3": {
+      "hash": "adb587c061cc3a8e1d441e5c06ee24ce4e7c7f502ccb62f3650a2d10aba92f5e",
+      "bytes": 30672,
+      "ms": 4248
+    }
+  }
+}
