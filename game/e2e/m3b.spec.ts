@@ -190,7 +190,8 @@ test('lobby: in from the sidewalk through the front door, the reception desk, th
   expect(r?.said.map((l) => l.kind)).toEqual([welcome?.kind, 'nudge']);
   expect(r?.said[1]?.bubble).toContain('herdr-3d');
   expect(r?.clips[0]).toBe(welcome?.id);
-  expect(r?.bubble).toBe(welcome?.bubble);
+  // With sound on, the bubble comes up when the clip starts (after its load), not inside the event.
+  await expect.poll(async () => (await rx())?.bubble, { timeout: 5_000 }).toBe(welcome?.bubble);
   await expect(page.locator('.rx-bubble-card')).toBeVisible();
   await expect(page.locator('.rx-bubble-card')).toContainText(welcome?.bubble ?? '???');
   await shot(page, 'm3b-lobby-greeting');
