@@ -66,6 +66,8 @@ export function failureText(t: CommandName, code: string, message: string, ctx: 
       return `${ctx.desk !== undefined ? `Desk ${ctx.desk}` : 'That desk'} is taken or gone${why ? ` (${why})` : ''}. Pick another free desk.`;
     case 'capacity':
       return `Over the hard cap: ${why || 'there are already as many workers as allowed'}. Send someone home first.`;
+    case 'fetch_failed':
+      return `git fetch origin failed${why ? ` (${why.replace(/^fetch_failed:\s*/, '')})` : ''}, so no worktree was made and nobody was hired. Fetch again, or hire without a worktree.`;
     case 'hire_failed':
       return `The hire did not go through: ${why || 'herdr-world gave no reason'}.`;
     case 'unknown_worker':

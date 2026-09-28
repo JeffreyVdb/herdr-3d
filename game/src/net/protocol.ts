@@ -255,6 +255,7 @@ export interface HireGit {
   base_sha: string;
   /** Unix ms, the base commit's time. */
   base_time: number;
+  /** False when `git fetch origin` failed: a worktree hire is then refused (`fetch_failed`), a plain one is not. */
   fetched: boolean;
   fetch_error?: string;
 }
@@ -277,8 +278,6 @@ export interface HireAck {
   workspace_id: string;
   branch?: string;
   base_sha?: string;
-  /** The worktree hire's `git fetch origin` failed (not fatal: the last fetched base was used). */
-  fetch_error?: string;
   /** `approved`: the bridge answered the agent's trust dialog; `none`: none showed; `avoided` is reserved. */
   trust: 'none' | 'avoided' | 'approved';
   /** Whether the first task was sent (absent without one). */

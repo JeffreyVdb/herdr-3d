@@ -30,6 +30,10 @@ describe('failureText', () => {
     expect(failureText('worker.hire', 'capacity', 'pastry has 32 workers (hard cap 32)')).toBe('Over the hard cap: pastry has 32 workers (hard cap 32). Send someone home first.');
     expect(failureText('hire.prepare', 'invalid_state', 'asleep', { floor: 'depot-manager' })).toBe('depot-manager is asleep. Wake it from the elevator (L) first.');
     expect(failureText('worker.hire', 'hire_failed', 'agent start: timeout')).toBe('The hire did not go through: agent start: timeout.');
+    expect(failureText('worker.hire', 'fetch_failed', 'fetch_failed: git fetch origin in /r: ssh: Could not resolve hostname github.com')).toBe(
+      'git fetch origin failed (git fetch origin in /r: ssh: Could not resolve hostname github.com), so no worktree was made and nobody was hired. Fetch again, or hire without a worktree.',
+    );
+    expect(failureText('worker.hire', 'fetch_failed', '')).toBe('git fetch origin failed, so no worktree was made and nobody was hired. Fetch again, or hire without a worktree.');
     expect(failureText('worker.fire', 'not_clean', '2 uncommitted changes')).toBe('The worktree was kept: 2 uncommitted changes.');
     expect(failureText('worker.fire', 'busy', '', { worker: 'Pixel' })).toBe('Pixel is still being hired or already on the way out.');
     expect(failureText('worker.fire.prepare', 'unknown_worker', '', { worker: 'Pixel' })).toBe('Pixel is no longer on the floor.');

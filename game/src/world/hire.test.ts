@@ -19,6 +19,7 @@ import {
   Reservations,
   resolveChoice,
   taskKey,
+  worktreeUsable,
 } from './hire';
 import { DEFAULT_HIRE_OPTIONS, type FloorView } from './store';
 
@@ -88,10 +89,20 @@ describe('worktree base', () => {
     expect(ageText(NOW - 3 * 86400_000, NOW)).toBe('3 d old');
     expect(ageText(NOW + 5000, NOW)).toBe('just now');
   });
-  it('flags a failed or skipped fetch', () => {
+  it('a failed fetch turns the worktree off, with the reason', () => {
     expect(fetchNote(git)).toBeNull();
-    expect(fetchNote({ ...git, fetched: false })).toEqual({ text: 'Not fetched just now: the base is what was fetched last.', error: false });
-    expect(fetchNote({ ...git, fetched: false, fetch_error: 'Could not resolve host: github.com' })?.error).toBe(true);
+    expect(worktreeUsable(git)).toBe(true);
+    expect(worktreeUsable(null)).toBe(false);
+    const failed = { ...git, fetched: false, fetch_error: 'Could not resolve host: github.com' };
+    expect(worktreeUsable(failed)).toBe(false);
+    expect(fetchNote(failed)).toEqual({ text: 'git fetch origin failed: Could not resolve host: github.com. A worktree needs a fresh origin/main: fetch again, or hire without one.', error: true });
+    expect(fetchNote({ ...git, fetched: false })?.text).toBe('git fetch origin failed. A worktree needs a fresh origin/main: fetch again, or hire without one.');
+    // The form starts without a worktree, and even a form that asks for one does not send it.
+    expect(formFromPrepare(prep({ git: failed }), H).worktree).toBe(false);
+    expect(formFromPrepare(prep({ git }), H).worktree).toBe(true);
+    const f = { ...formFromPrepare(prep({ git }), H), worktree: true };
+    expect(hireArgs('s', 0, f, failed).worktree).toBe(false);
+    expect(hireArgs('s', 0, f, git).worktree).toBe(true);
   });
 });
 

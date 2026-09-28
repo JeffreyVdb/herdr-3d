@@ -365,9 +365,25 @@ describe('SimWorld hire and send home (M4)', () => {
     f.tick();
     expect(d.got()).toEqual([expect.objectContaining({ t: 'error', code: 'fire_failed' })]);
     expect(f.store.workers.has(byLabel(f, 'timers').id)).toBe(true);
+  });
+
+  it('fetch_failed: origin stays unreachable; a worktree hire is refused and creates nothing, a plain hire goes through', () => {
     const g = m4('fetch_failed');
-    expect(data(g.cmd('hire.prepare', { session: 'pastry' }).got()[0]).git).toMatchObject({ fetched: false });
-    expect(data(g.cmd('hire.prepare', { session: 'pastry' }).got()[0]).git).toMatchObject({ fetched: true });
+    for (let i = 0; i < 2; i++) expect(data(g.cmd('hire.prepare', { session: 'pastry' }).got()[0]).git).toMatchObject({ fetched: false, fetch_error: expect.stringMatching(/github/) });
+    const before = g.store.workers.size;
+    const c = g.cmd('worker.hire', { session: 'pastry', desk_index: 14, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', worktree: true });
+    g.tick();
+    expect(c.got()).toEqual([expect.objectContaining({ t: 'error', code: 'fetch_failed', message: expect.stringMatching(/^fetch_failed: git fetch origin in \/home\/dev\/pastry: ssh: /) })]);
+    expect(g.store.workers.size).toBe(before);
+    // The desk was never held: the same desk hires without a worktree.
+    const d = g.cmd('worker.hire', { session: 'pastry', desk_index: 14, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', worktree: false });
+    g.tick();
+    expect(d.got().map((m) => m.t)).toEqual(['floor.upsert', 'worker.upsert', 'ack']);
+    // An `offline` folder fails the same way, without simfail.
+    const r = m4();
+    const e = r.cmd('worker.hire', { session: 'pastry', desk_index: 15, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', cwd: '/home/dev/offline-repo', worktree: true });
+    r.tick();
+    expect(e.got()).toEqual([expect.objectContaining({ t: 'error', code: 'fetch_failed' })]);
   });
 
   it('names the hire after a free generated-name label; a worktree of a repo with no open main checkout brings it along', () => {

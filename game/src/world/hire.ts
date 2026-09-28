@@ -97,11 +97,20 @@ export function baseText(g: HireGit, now: number): string {
   return `origin/${g.default_branch} @ ${g.base_sha.slice(0, 7)}, ${ageText(g.base_time, now)}`;
 }
 
-/** The note under the worktree base: fresh, stale or the fetch error. */
+/**
+ * Whether a worktree hire can be offered: the folder is a repo and origin was
+ * just fetched. A worktree branches from a freshly fetched origin/<default>,
+ * never from a stale one (the bridge refuses it with `fetch_failed`).
+ */
+export function worktreeUsable(g: HireGit | null): boolean {
+  return !!g && g.fetched;
+}
+
+/** Why the worktree is off after a failed fetch (null: origin is fresh). */
 export function fetchNote(g: HireGit): { text: string; error: boolean } | null {
-  if (g.fetch_error) return { text: `git fetch origin failed: ${g.fetch_error}. The base is what was fetched last.`, error: true };
-  if (!g.fetched) return { text: 'Not fetched just now: the base is what was fetched last.', error: false };
-  return null;
+  if (g.fetched) return null;
+  const why = g.fetch_error ? `: ${g.fetch_error}` : '';
+  return { text: `git fetch origin failed${why}. A worktree needs a fresh origin/${g.default_branch || 'main'}: fetch again, or hire without one.`, error: true };
 }
 
 /** The desks of a floor nobody sits at, lowest first. */
@@ -181,7 +190,7 @@ export function formFromPrepare(p: HirePrepare, options: HireOptions): HireForm 
     effort: c?.effort ?? '',
     label: p.label,
     cwd: p.cwd,
-    worktree: p.git !== null,
+    worktree: worktreeUsable(p.git),
   };
 }
 
@@ -200,14 +209,14 @@ export function hireBlocker(f: HireForm, options: HireOptions, cap: CapacityView
   return null;
 }
 
-/** `worker.hire` args: the label and cwd only when set, the worktree only when the cwd is a repo, the prompt only when there is one. */
+/** `worker.hire` args: the label and cwd only when set, the worktree only when the cwd is a repo (and never after a failed fetch), the prompt only when there is one. */
 export function hireArgs(session: string, desk: number, f: HireForm, git: HireGit | null): CommandArgs['worker.hire'] {
   const a: CommandArgs['worker.hire'] = { session, desk_index: desk, harness: f.harness, model: f.model, effort: f.effort };
   const label = f.label.trim();
   if (label) a.label = label;
   const cwd = f.cwd.trim();
   if (cwd) a.cwd = cwd;
-  if (git) a.worktree = f.worktree;
+  if (git) a.worktree = f.worktree && worktreeUsable(git);
   if (f.prompt.trim()) a.prompt = f.prompt;
   return a;
 }

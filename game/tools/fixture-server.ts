@@ -16,7 +16,8 @@
 // one recorded event every 2.5 s after the snapshot); `sim=1` simulates
 // commands, `simms=<ms>` sets the time between wake/sleep steps (default 600)
 // and `simfail=wake_failed|sleep_failed` makes the next wake/sleep fail (M4:
-// `hire_failed|fire_failed|fetch_failed` the next hire / send-home / fetch);
+// `hire_failed|fire_failed` the next hire / send-home; `fetch_failed` makes
+// origin unreachable for the run: no fetch works, worktree hires are refused);
 // `simcap=<session>:<soft>:<hard>[,…]` sets floors' worker caps.
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';

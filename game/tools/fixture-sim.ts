@@ -21,7 +21,8 @@ export interface SimOptions {
   stepMs?: number;
   /**
    * `wake_failed` / `sleep_failed`: the next wake / sleep fails after its transition;
-   * M4: `hire_failed` / `fire_failed` the next hire / send-home, `fetch_failed` the next prepare's `git fetch`.
+   * M4: `hire_failed` / `fire_failed` the next hire / send-home; `fetch_failed`: origin is unreachable for the
+   * whole run (every prepare reports the failed `git fetch`, every worktree hire is refused with `fetch_failed`).
    */
   fail?: string | undefined;
   /** M4: per-floor caps `{session: {soft, hard}}` (default 24 / 32); the host's are 60 / 80. */
@@ -98,6 +99,8 @@ export class SimWorld {
   private readonly lastHire = new Map<string, Hire>();
   /** M4: the branch the bridge recorded making for a worker (`hire_branch`), by worker id. */
   private readonly hireBranch = new Map<string, string>();
+  /** M4 `simfail=fetch_failed`: `git fetch origin` fails in every repo. */
+  private readonly originDown: boolean;
   private readonly caps: Record<string, { soft: number; hard: number }>;
   private readonly now: () => number;
   private readonly setT: (fn: () => void, ms: number) => unknown;
@@ -112,7 +115,8 @@ export class SimWorld {
     this.hire = w.hire_options ?? SIM_HIRE_OPTIONS;
     this.hireSent = w.hire_options !== undefined;
     this.stepMs = o.stepMs ?? 600;
-    this.fail = o.fail;
+    this.originDown = o.fail === 'fetch_failed';
+    this.fail = this.originDown ? undefined : o.fail;
     // The fixture's h3d/… branches stand for earlier hires by the bridge (it recorded them); any other branch is the user's.
     for (const x of this.workers) if (x.branch?.startsWith('h3d/') && x.worktree?.linked) this.hireBranch.set(x.id, x.branch);
     this.caps = o.caps ?? {};
@@ -482,7 +486,8 @@ export class SimWorld {
   //
   // Rules of the simulation: a cwd is a git repo unless it has `/scratch` in
   // it (its repo root: the path before `-wt/…`); `offline` in it (or
-  // `simfail=fetch_failed`) makes the fetch fail. A worker that is `working`
+  // `simfail=fetch_failed`) makes every fetch fail: prepare says so, a
+  // worktree hire is refused (`fetch_failed`). A worker that is `working`
   // has uncommitted changes and 2 unpushed commits, a `blocked` one 1
   // unpushed commit, everyone else is clean. Caps: `caps`, else 24 / 32 per
   // floor, 60 / 80 for the host (running floors' workers).
@@ -526,9 +531,8 @@ export class SimWorld {
       base_time: this.now() - (3 * 60 + 12) * 60_000,
       fetched: true,
     };
-    const failed = fetch && (cwd.includes('offline') || this.fail === 'fetch_failed');
+    const failed = fetch && (cwd.includes('offline') || this.originDown);
     if (failed) {
-      if (this.fail === 'fetch_failed') this.fail = undefined;
       g.fetched = false;
       g.fetch_error = 'ssh: Could not resolve hostname github.com (simulated)';
     }
@@ -599,7 +603,8 @@ export class SimWorld {
     if (a.worktree !== undefined && typeof a.worktree !== 'boolean') throw bad('worktree must be a bool');
     const cwd = (a.cwd as string | undefined) ?? this.defaultCwd(f);
     if (!cwd.startsWith('/')) throw bad('cwd must be an absolute path');
-    const git = this.git(cwd, false);
+    // A worktree hire fetches origin first: its branch must start from a fresh origin/<default>.
+    const git = this.git(cwd, a.worktree === true);
     if (a.worktree === true && !git) throw bad(`worktree: ${cwd} is not a git repository`);
     if (desk >= (f.desks ?? 0) || this.hiring.has(`${f.session}:${desk}`) || this.workers.some((w) => w.session === f.session && w.desk_index === desk)) {
       throw new CmdError('desk_taken', `desk_taken: desk ${desk} of ${f.session} is ${desk >= (f.desks ?? 0) ? 'out of range' : 'occupied'}`);
@@ -608,6 +613,11 @@ export class SimWorld {
     if (cap.count >= cap.hard) throw new CmdError('capacity', `capacity: ${f.session} has ${cap.count} workers (hard cap ${cap.hard})`);
     const host = this.hostCap();
     if (host.count >= host.hard) throw new CmdError('capacity', `capacity: the host has ${host.count} workers (hard cap ${host.hard})`);
+    // Like the bridge, after the accept: nothing is made.
+    if (a.worktree === true && git && !git.fetched) {
+      this.later([() => fail(new CmdError('fetch_failed', `fetch_failed: git fetch origin in ${String(git.repo_root)}: ${String(git.fetch_error)}`))]);
+      return;
+    }
     if (this.fail === 'hire_failed') {
       this.fail = undefined;
       this.later([() => fail(new CmdError('hire_failed', 'hire_failed: herdr agent start: claude exited during startup (simulated)'))]);

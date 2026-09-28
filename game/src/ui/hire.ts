@@ -12,6 +12,7 @@ import {
   modelsFor,
   resolveChoice,
   taskKey,
+  worktreeUsable,
   type CapacityView,
   type HireForm,
 } from '../world/hire';
@@ -53,8 +54,10 @@ export interface HireSummary {
   title: string;
   state: HireState;
   form: HireForm;
-  /** The worktree option as shown (null: hidden, the folder is no git repo). */
-  git: { base: string; note: string | null; noteError: boolean } | null;
+  /** The worktree option as shown (null: hidden, the folder is no git repo); `usable` false after a failed fetch. */
+  git: { base: string; usable: boolean; note: string | null; noteError: boolean } | null;
+  /** "Fetch again" is on its way. */
+  refetching: boolean;
   choiceNote: string | null;
   capacity: CapacityView | null;
   /** Why Hire is off, null when it can be pressed. */
@@ -89,7 +92,9 @@ export class HireDialog {
   private readonly statusEl = h('p', { class: 'dd-status', role: 'status' });
   private readonly alertEl = h('p', { class: 'dd-status dd-status--error', role: 'alert' });
   private readonly actions = h('div', { class: 'dd-actions' });
-  private readonly foot = h('footer', { class: 'dd-foot' }, this.statusEl, this.alertEl, this.actions);
+  /** What must be seen before pressing Hire (a failed fetch, the caps, a taken desk): by the buttons, never scrolled away. */
+  private readonly notices = h('div', { class: 'dd-notices' });
+  private readonly foot = h('footer', { class: 'dd-foot' }, this.notices, this.statusEl, this.alertEl, this.actions);
   private session = '';
   private desk = 0;
   private state: HireState = 'preparing';
@@ -103,6 +108,7 @@ export class HireDialog {
   private gen = 0;
   private hireBtn: HTMLButtonElement | null = null;
   private renderedKey = '';
+  private refetching = false;
 
   constructor(
     parent: HTMLElement,
@@ -153,6 +159,7 @@ export class HireDialog {
     this.f = { prompt: '', harness: '', model: '', effort: '', label: '', cwd: '', worktree: false };
     this.state = 'preparing';
     this.renderedKey = '';
+    this.refetching = false;
     this.setStatus('Checking the floor, the folder and origin…');
     this.render();
     if (!this.dialog.open) this.dialog.showModal();
@@ -175,7 +182,8 @@ export class HireDialog {
     const args: CommandArgs['hire.prepare'] = { session: this.session };
     if (cwd) args.cwd = cwd;
     const r = await this.host.send('hire.prepare', args);
-    if (gen !== this.gen || !this.dialog.open) return;
+    // A hire sent meanwhile: its form stays as sent.
+    if (gen !== this.gen || !this.dialog.open || this.state === 'hiring') return;
     if (!r.ok) {
       // A folder that did not check out keeps the rest of the form.
       if (this.prep && cwd) {
@@ -192,12 +200,10 @@ export class HireDialog {
     const p = r.data as HirePrepare;
     const options = this.host.store.hireOptions;
     if (this.prep && cwd) {
-      // Same form, new folder: its git base, and the checkbox follows whether it is a repo.
-      const wasRepo = this.prep.git !== null;
-      this.prep = { ...this.prep, cwd: p.cwd, git: p.git, capacity: p.capacity };
+      // Same form, new folder (or origin fetched again): its git base, and the checkbox follows whether a worktree can be made.
+      this.adoptGit(p.git);
+      this.prep = { ...this.prep, cwd: p.cwd, capacity: p.capacity };
       this.f.cwd = p.cwd;
-      if (!p.git) this.f.worktree = false;
-      else if (!wasRepo) this.f.worktree = true;
     } else {
       this.prep = p;
       const prompt = this.f.prompt;
@@ -207,6 +213,29 @@ export class HireDialog {
     this.state = 'ready';
     this.setStatus('');
     this.render();
+  }
+
+  /** A new git answer: no worktree after a failed fetch; ticked again once it can be made again. */
+  private adoptGit(g: HireGit | null): void {
+    const was = this.prep ? worktreeUsable(this.prep.git) : false;
+    if (this.prep) this.prep = { ...this.prep, git: g };
+    if (!worktreeUsable(g)) this.f.worktree = false;
+    else if (!was) this.f.worktree = true;
+  }
+
+  /** "Fetch again": `hire.prepare` for the same folder, keeping the form. */
+  private async refetch(): Promise<void> {
+    if (this.state !== 'ready' || !this.prep || this.refetching) return;
+    this.refetching = true;
+    this.setStatus('Fetching origin again…');
+    this.render();
+    await this.prepare(this.prep.cwd);
+    if (!this.refetching) return;
+    this.refetching = false;
+    if (this.dialog.open) {
+      this.render();
+      this.dialog.querySelector<HTMLElement>(worktreeUsable(this.prep?.git ?? null) ? '#hire-worktree' : '[data-key="refetch"]')?.focus();
+    }
   }
 
   /** The world changed: the desk may have been taken, the floor gone or asleep. */
@@ -262,7 +291,7 @@ export class HireDialog {
   private gitView(g: HireGit | null): HireSummary['git'] {
     if (!g) return null;
     const n = fetchNote(g);
-    return { base: baseText(g, this.host.now()), note: n?.text ?? null, noteError: n?.error ?? false };
+    return { base: baseText(g, this.host.now()), usable: worktreeUsable(g), note: n?.text ?? null, noteError: n?.error ?? false };
   }
 
   private noteNow(): string | null {
@@ -277,7 +306,7 @@ export class HireDialog {
     const fv = this.host.store.floorView(this.session);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const taken = this.takenBy();
-    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText]);
+    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching]);
     // Typing (task, label, folder) only needs the button; everything else re-renders.
     if (key === this.renderedKey) {
       this.renderActions();
@@ -303,7 +332,7 @@ export class HireDialog {
       'data-key': 'task',
       rows: 3,
       spellcheck: 'true',
-      placeholder: 'What should they start on? Leave it empty to prompt them later (P).',
+      placeholder: 'What should they start on?',
       'aria-describedby': 'hire-task-hint',
     });
     task.value = this.f.prompt;
@@ -328,6 +357,7 @@ export class HireDialog {
     );
 
     const nodes: Node[] = [taskField];
+    const notices: Node[] = [];
 
     if (this.prep) {
       const note = this.noteNow();
@@ -374,33 +404,44 @@ export class HireDialog {
 
       const g = this.gitView(this.prep.git);
       if (g) {
-        const box = h('input', { type: 'checkbox', id: 'hire-worktree', 'data-key': 'worktree', 'aria-describedby': 'hire-worktree-base' });
-        box.checked = this.f.worktree;
+        const on = this.f.worktree && g.usable;
+        const box = h('input', { type: 'checkbox', id: 'hire-worktree', 'data-key': 'worktree', 'aria-describedby': g.usable ? 'hire-worktree-base' : 'hire-worktree-base hire-fetch' });
+        box.checked = on;
+        // No worktree from a stale origin: off until a fetch goes through.
+        box.disabled = !g.usable;
         box.addEventListener('change', () => {
           this.f.worktree = box.checked;
           this.render();
         });
         const wt = h(
           'div',
-          { class: 'dd-worktree', 'data-on': this.f.worktree ? 'true' : 'false' },
+          { class: 'dd-worktree', 'data-on': on ? 'true' : 'false', 'data-off': g.usable ? null : 'true' },
           h('label', { class: 'dd-check', for: 'hire-worktree' }, box, h('span', { class: 'dd-check-box', 'aria-hidden': 'true' }), h('span', {}, 'Work in its own git worktree & branch')),
           h(
             'p',
             { class: 'dd-base', id: 'hire-worktree-base' },
-            this.f.worktree ? 'A new h3d/… branch from ' : 'Would branch from ',
+            !g.usable ? 'Off: origin could not be fetched. Last fetched ' : on ? 'A new h3d/… branch from ' : 'Would branch from ',
             h('code', {}, g.base),
           ),
-          g.note ? h('p', { class: `dd-base-note${g.noteError ? ' dd-base-note--error' : ''}` }, g.note) : null,
         );
         nodes.push(wt);
+        if (g.note)
+          notices.push(
+            h(
+              'div',
+              { class: 'dd-callout dd-callout--error dd-fetch', id: 'hire-fetch', role: 'alert' },
+              h('p', {}, g.note),
+              h('button', { class: 'btn btn--sm', 'data-key': 'refetch', disabled: this.refetching || this.state !== 'ready', onclick: () => void this.refetch() }, this.refetching ? 'Fetching…' : 'Fetch again'),
+            ),
+          );
       }
-      nodes.push(this.capacityBlock());
+      notices.push(this.capacityBlock());
     } else {
       nodes.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')));
     }
     if (taken && ready) {
       const alt = taken.next;
-      nodes.push(
+      notices.unshift(
         h(
           'div',
           { class: 'dd-callout dd-callout--error', role: 'alert' },
@@ -410,7 +451,8 @@ export class HireDialog {
       );
     }
     this.form.replaceChildren(...nodes);
-    for (const el of this.form.querySelectorAll<HTMLInputElement>('input, textarea')) if (busy && el.id !== 'hire-task') el.disabled = true;
+    this.notices.replaceChildren(...notices);
+    for (const el of this.form.querySelectorAll<HTMLInputElement>('input, textarea')) if ((busy || this.refetching) && el.id !== 'hire-task') el.disabled = true;
     this.renderActions();
     if (focusKey) {
       const back = this.dialog.querySelector<HTMLElement>(`[data-key="${CSS.escape(focusKey)}"]`) ?? this.dialog.querySelector<HTMLElement>(`#${CSS.escape(focusKey)}`);
@@ -499,7 +541,6 @@ export class HireDialog {
       const branch = ack?.branch ? ` on ${ack.branch}` : '';
       const extra = [
         ack?.prompted === false ? `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself.` : '',
-        ack?.fetch_error ? `git fetch failed (${ack.fetch_error}), so the branch starts from the last fetched origin.` : '',
       ].filter(Boolean);
       if (still) this.close();
       this.host.toast([`Hired ${name} at Desk ${(w?.desk ?? desk) + 1}${branch}. Here they come.`, ...extra].join(' '), extra.length ? 'error' : 'info');
@@ -512,16 +553,19 @@ export class HireDialog {
     }
     this.setStatus(msg, true);
     this.render();
-    if (r.code === 'capacity') void this.recheckCapacity();
+    if (r.code === 'capacity' || r.code === 'fetch_failed') void this.recheck();
   }
 
-  /** After a capacity refusal: the caps as they are now. */
-  private async recheckCapacity(): Promise<void> {
+  /** After a capacity or fetch refusal: the caps and origin as they are now (the refusal stays in the status). */
+  private async recheck(): Promise<void> {
+    const gen = this.gen;
     const args: CommandArgs['hire.prepare'] = { session: this.session };
     if (this.prep?.cwd) args.cwd = this.prep.cwd;
     const r = await this.host.send('hire.prepare', args);
-    if (!r.ok || !this.prep || !this.dialog.open) return;
-    this.prep = { ...this.prep, capacity: (r.data as HirePrepare).capacity };
+    if (!r.ok || !this.prep || !this.dialog.open || gen !== this.gen || this.state !== 'ready') return;
+    const p = r.data as HirePrepare;
+    this.adoptGit(p.git);
+    this.prep = { ...this.prep, capacity: p.capacity };
     this.render();
   }
 
@@ -537,6 +581,7 @@ export class HireDialog {
       state: this.state,
       form: { ...this.f },
       git: this.prep ? this.gitView(this.prep.git) : null,
+      refetching: this.refetching,
       choiceNote: this.noteNow(),
       capacity: this.capacity(),
       blocker: this.blocker(),
