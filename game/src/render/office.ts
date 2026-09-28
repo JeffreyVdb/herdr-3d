@@ -26,6 +26,17 @@ export interface OfficeOptions {
   outline?: Outline;
 }
 
+/**
+ * M4: a desk shown other than the world says while someone packs up at it
+ * (`busy`: chair out, laptop open, the worker drawn by the walk animation) or
+ * walks in to it / has just left it (`empty`: chair in, no laptop, no "+").
+ */
+export interface AwaySeat {
+  show: 'busy' | 'empty';
+  display: Display;
+  cue: number;
+}
+
 /** Glass seen from inside: a light tint over the street. */
 export const GLASS_IN = { color: 0x9fd3f0, opacity: 0.16 };
 
@@ -73,6 +84,8 @@ export class OfficeView {
   private obstacleCache: Rect[] | null = null;
   private targetCache: Array<Pickable<Target>> | null = null;
   private cardCam: THREE.PerspectiveCamera | null = null;
+  /** M4: desks someone is walking in to or packing up at (see `setAway`). */
+  private readonly away = new Map<number, AwaySeat>();
 
   constructor(view: FloorView, o: OfficeOptions) {
     this.session = view.session;
@@ -269,12 +282,39 @@ export class OfficeView {
     this.setSeat(v.desk, v);
   }
 
+  /** M4: shows a desk as `a` says instead of as the world does (null: as the world does again). */
+  setAway(desk: number, a: AwaySeat | null): void {
+    const cur = this.away.get(desk) ?? null;
+    if (cur === a || (cur && a && cur.show === a.show && cur.display === a.display && cur.cue === a.cue)) return;
+    if (!this.layout.slots[desk]) return;
+    if (a) this.away.set(desk, a);
+    else this.away.delete(desk);
+    this.setSeat(desk, this.seats[desk] ?? null);
+  }
+
+  /** M4: desks shown away from what the world says (test hook). */
+  awayDesks(): Map<number, AwaySeat['show']> {
+    return new Map([...this.away].map(([d, a]) => [d, a.show]));
+  }
+
   private setSeat(i: number, v: WorkerView | null): void {
     const s = this.layout.slots[i];
     if (!s) return;
     this.seats[i] = v;
     this.obstacleCache = this.targetCache = null;
     const mem = v ? memberOf(v) : null;
+    const away = this.away.get(i);
+    if (away) {
+      // Someone is walking in or packing up: the animation draws them, the desk waits without its "+".
+      const busy = away.show === 'busy';
+      this.desks.set(i, { x: s.seat.x, y: 0, z: s.seat.z, yaw: s.yaw, scale: 1, display: busy ? away.display : null, cueColor: away.cue, plus: false });
+      this.crowd.set(i, null);
+      this.anchors[i] = null;
+      this.cards.setCard(i, null);
+      if (v) this.applied.set(v.worker.id, v.display);
+      this.cardsDirty = true;
+      return;
+    }
     this.desks.set(i, { x: s.seat.x, y: 0, z: s.seat.z, yaw: s.yaw, scale: 1, display: mem?.display ?? null, cueColor: mem?.cue.color ?? 0xffffff });
     if (v && mem) {
       this.crowd.set(i, { x: s.seat.x, y: SEAT_Y, z: s.seat.z, yaw: s.yaw, scale: 1, ...mem });
@@ -306,7 +346,7 @@ export class OfficeView {
       const out = [...this.layout.colliders];
       this.seats.forEach((v, i) => {
         const s = this.layout.slots[i];
-        if (v && s) out.push(seatRect(s));
+        if ((v || this.away.get(i)?.show === 'busy') && s) out.push(seatRect(s));
       });
       this.obstacleCache = out;
     }
@@ -321,7 +361,8 @@ export class OfficeView {
         const b = slotBoxes(s);
         const v = this.seats[i];
         if (v) targets.push({ boxes: [b.seat, b.desk], value: { kind: 'worker', id: v.worker.id, name: v.name, label: v.worker.label, desk: i } });
-        else targets.push({ boxes: [b.desk, b.plus], value: { kind: 'desk', id: `desk-${i}`, desk: i, label: `Desk ${i + 1}` } });
+        // A desk someone is packing up at, or walking in to, is not free to hire at.
+        else if (!this.away.has(i)) targets.push({ boxes: [b.desk, b.plus], value: { kind: 'desk', id: `desk-${i}`, desk: i, label: `Desk ${i + 1}` } });
       });
       this.targetCache = targets;
     }

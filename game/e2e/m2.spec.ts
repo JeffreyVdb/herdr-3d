@@ -312,7 +312,9 @@ test('look-at HUD picks the right thing along a scripted camera path', async ({ 
   await page.evaluate((p) => window.__h3d.setPose(p), path[3]?.pose ?? l.spawn);
   await frames(page);
   await expect(page.locator('.prompt')).toHaveAttribute('aria-label', 'Mochi · working · Wire the look-at HUD to the prompt bar · claude opus-5-5 high');
-  await expect(page.locator('.prompt .key[aria-disabled="true"]')).toHaveText(['ELaptop', 'CChanges', 'PPrompt', 'HHandoff', 'XSend home']);
+  await expect(page.locator('.prompt .key[aria-disabled="true"]')).toHaveText(['ELaptop', 'CChanges', 'PPrompt', 'HHandoff']);
+  // M4: X sends the worker home.
+  await expect(page.locator('.prompt .key:not([aria-disabled])')).toHaveText(['XSend home']);
   // An upsert that only changes the effort still redraws the prompt.
   const mochiWorker = SNAPSHOT?.world?.workers.find((w) => w.name === 'Mochi');
   await page.evaluate((w) => window.__h3d.inject({ t: 'worker.upsert', seq: 5000, worker: { ...w, effort: 'low' } } as never), mochiWorker);

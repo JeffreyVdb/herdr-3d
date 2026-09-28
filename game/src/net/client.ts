@@ -115,6 +115,12 @@ export const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
 export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'floor.wake': 60_000,
   'floor.sleep': 30_000,
+  // M4: prepare runs `git fetch`; a hire creates a worktree, starts the agent and waits out its trust dialog;
+  // a send-home waits for the agent to exit.
+  'hire.prepare': 30_000,
+  'worker.hire': 90_000,
+  'worker.fire.prepare': 20_000,
+  'worker.fire': 45_000,
 };
 
 interface Pending {

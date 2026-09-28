@@ -5,18 +5,24 @@ import { bridgeUrl, takeToken } from './net/endpoint';
 import type { CommandArgs, CommandName, WorldEvent } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
-import { OfficeView, REACH, type Target } from './render/office';
+import { Arrivals, type ArrivalSpec } from './render/arrivals';
+import { memberOf, OfficeView, REACH, type Target } from './render/office';
 import { OutsideView } from './render/outside';
 import { BUILDING_TINTS, LOT_TINT } from './render/palette';
 import { WalkView } from './render/walk';
 import { createGameAudio, createReception, receptionContext, type GameAudio, type Reception, type ReceptionEvent } from './reception';
 import { Hud, type PlanLabel } from './ui/hud';
+import { HireDialog } from './ui/hire';
 import { Panels } from './ui/panels';
+import { SendHomeDialog } from './ui/sendHome';
 import { RADIUS, Walker } from './input/walk';
 import { blocked, blocked3, groundAt, type WalkWorld } from './world/collide';
 import { buildingPlan, floorY, placeAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
 import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, type Opening, type Outline } from './world/layout';
+import { walkInRoute, type ArrivalKind } from './world/arrival';
 import type { Display } from './world/derive';
+import { firstFreeDesk, isFreshHire, Reservations } from './world/hire';
+import { walkOutRoute } from './world/route';
 import { WorldStore, type Change, type Counts, type FloorView } from './world/store';
 
 export interface AppOptions {
@@ -65,6 +71,12 @@ export class App {
   readonly city: CityView;
   readonly client: BridgeClient;
   readonly panels: Panels;
+  /** M4: the hire and send-home dialogs, and the workers walking in and out. */
+  readonly hire: HireDialog;
+  readonly sendHome: SendHomeDialog;
+  readonly arrivals: Arrivals;
+  /** M4: hires on their way: their desks' "+" is hidden until the worker walks in. */
+  private readonly reserved = new Reservations();
   /** Commands sent to the bridge, in order (test hook). */
   readonly sent: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
   /** Commands the bridge answered `unknown_command` for: an older bridge. */
@@ -173,7 +185,7 @@ export class App {
       socket: (u) => new WebSocket(u) as unknown as SocketLike,
       handlers: {
         onSnapshot: (s) => this.applyChange(this.store.applySnapshot(s)),
-        onEvent: (e) => this.applyChange(this.store.applyEvent(e)),
+        onEvent: (e) => this.onWorldEvent(e),
         onState: (s) => {
           this.conn = s;
           this.hud.setConn(s, this.fixture, Date.now());
@@ -199,7 +211,20 @@ export class App {
       toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 6500 : 3600, kind),
     });
 
+    const dialogHost = {
+      store: this.store,
+      send: <T extends CommandName>(t: T, args: CommandArgs[T]) => this.send(t, args),
+      unsupported: (t: CommandName) => this.unsupported.has(t),
+      toast: (m: string, kind: 'info' | 'error') => this.hud.toast(m, kind === 'error' ? 6500 : 3600, kind),
+      now: () => Date.now(),
+    };
+    this.hire = new HireDialog(o.host, { ...dialogHost, reserve: (s, d) => this.reserve(s, d), held: (s) => this.heldDesks(s) });
+    this.sendHome = new SendHomeDialog(o.host, dialogHost);
+    this.arrivals = new Arrivals(this.shadows);
+    this.walk.scene.add(this.arrivals.group);
+
     this.hud.on('city', () => void this.leaveFloor());
+    this.hud.on('hire', () => this.openHire());
     this.hud.on('buildings', () => this.openBuildings());
     this.hud.on('elevator', () => !this.transitioning && this.openElevator());
     this.hud.on('battery', () => this.toggleBattery());
@@ -254,6 +279,153 @@ export class App {
     this.updateNotice();
     if (this.mode === 'floor') this.updateHint();
     this.panels.refresh();
+    this.hire.refresh();
+    this.sendHome.refresh();
+  }
+
+  // ---- M4: hire, send home, walking in and out ------------------------------------
+
+  /**
+   * A world event, with what M4 plays for it: a fresh hire's first upsert
+   * walks it in, a `sent_home` removal walks it out (captured before the
+   * store forgets the worker). Workers you cannot see resolve at once.
+   */
+  private onWorldEvent(e: WorldEvent): void {
+    let after: (() => void) | null = null;
+    if (e.t === 'worker.upsert' && !this.store.workers.has(e.worker.id) && isFreshHire(e.worker.hired_at, Date.now())) {
+      const id = e.worker.id;
+      after = () => this.startArrival('in', id);
+    } else if (e.t === 'worker.removed' && e.reason === 'sent_home' && this.store.workers.has(e.id)) {
+      const spec = this.arrivalSpec('out', e.id);
+      const v = this.store.workerView(e.id);
+      this.arrivals.cancel(e.id);
+      if (spec) this.beginArrival(spec);
+      else if (v) this.arrivals.skip({ id: e.id, kind: 'out', session: v.worker.session, desk: v.desk });
+    } else if (e.t === 'worker.removed' || e.t === 'floor.removed') {
+      // Gone some other way: a walk-in stops where it is.
+      if (e.t === 'worker.removed') this.arrivals.cancel(e.id);
+    } else if (e.t === 'worker.upsert' && this.arrivals.has(e.worker.id)) {
+      const old = this.store.workers.get(e.worker.id);
+      if (old && (old.session !== e.worker.session || old.desk_index !== e.worker.desk_index)) this.arrivals.cancel(e.worker.id);
+    }
+    this.applyChange(this.store.applyEvent(e));
+    after?.();
+  }
+
+  /** What a walk needs: the worker's look, desk and route in the building you are in (null: not visible from here). */
+  private arrivalSpec(kind: ArrivalKind, id: string): ArrivalSpec | null {
+    const v = this.store.workerView(id);
+    const ctx = this.building;
+    if (!v || this.mode !== 'floor' || !ctx) return null;
+    const session = v.worker.session;
+    const storey = ctx.floors.findIndex((f) => f.session === session);
+    if (storey < 0) return null;
+    const L = this.office?.session === session ? this.office.layout : this.layoutOf(session);
+    const slot = L?.slots[v.desk];
+    if (!L || !slot) return null;
+    const route = kind === 'out' ? walkOutRoute(L, ctx.plan, storey, v.desk) : walkInRoute(L, ctx.plan, storey, v.desk);
+    const m = memberOf(v);
+    return { id, kind, session, desk: v.desk, name: v.name, route, seatYaw: slot.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase };
+  }
+
+  private startArrival(kind: ArrivalKind, id: string): void {
+    const spec = this.arrivalSpec(kind, id);
+    if (spec) this.beginArrival(spec);
+    else {
+      const v = this.store.workerView(id);
+      if (v) this.arrivals.skip({ id, kind, session: v.worker.session, desk: v.desk });
+    }
+  }
+
+  private beginArrival(spec: ArrivalSpec): void {
+    if (!this.arrivals.start(spec, performance.now() / 1000)) return;
+    // The desk changes at once (no "+" flash before the next frame).
+    if (this.office?.session === spec.session) this.office.setAway(spec.desk, { show: spec.kind === 'out' ? 'busy' : 'empty', display: spec.display, cue: spec.cue.color });
+    this.activity(true);
+  }
+
+  /** A hire is on its way to `desk`; the returned function ends this hire's hold (its ack came). */
+  private reserve(session: string, desk: number): () => void {
+    const release = this.reserved.add(session, desk);
+    this.applyReserve();
+    return () => {
+      // Another hire still holding the desk, or a walk on it, keeps it as it is.
+      if (!release() || this.office?.session !== session) return;
+      const walking = this.arrivals.info(performance.now() / 1000).some((a) => a.session === session && a.desk === desk);
+      if (!walking) this.office.setAway(desk, null);
+    };
+  }
+
+  private applyReserve(): void {
+    const o = this.office;
+    if (!o) return;
+    for (const r of this.reserved.all()) if (o.session === r.session && !o.seat(r.desk)) o.setAway(r.desk, { show: 'empty', display: 'idle', cue: 0xffffff });
+  }
+
+  /** Desks of a floor that are not free for another hire: a hire or a walk is on its way there. */
+  heldDesks(session: string): Set<number> {
+    const out = this.reserved.desks(session);
+    for (const a of this.arrivals.info(performance.now() / 1000)) if (a.session === session) out.add(a.desk);
+    return out;
+  }
+
+  /** The hire dialog for a desk of the floor you are on; no desk: the first free one (the top bar's Hire). */
+  openHire(desk?: number): void {
+    const s = this.hereSession();
+    const fv = s ? this.store.floorView(s) : null;
+    if (!s || !fv) {
+      this.hud.toast('Walk onto an office floor to hire someone there.', 2400);
+      return;
+    }
+    if (fv.asleep || fv.transition) {
+      this.hud.toast(`${s} is ${fv.transition === 'waking' ? 'waking up' : fv.transition === 'sleeping' ? 'going to sleep' : 'asleep'}. Wake it from the elevator (L) to hire.`, 3200);
+      return;
+    }
+    const held = this.heldDesks(s);
+    const d = desk ?? firstFreeDesk(fv, held);
+    if (d === null) {
+      this.hud.toast(`No free desk on ${s} right now.`, 2400);
+      return;
+    }
+    if (held.has(d) && !fv.seats[d]) {
+      this.hud.toast(`Someone is already on the way to Desk ${d + 1}.`, 2000);
+      return;
+    }
+    const seat = fv.seats[d];
+    if (seat) {
+      this.hud.toast(`${seat.name} sits at Desk ${d + 1}.`, 2000);
+      return;
+    }
+    this.walker.release();
+    this.walker.stop();
+    this.panels.close();
+    this.hire.open(s, d);
+  }
+
+  /** The send-home dialog for a worker. */
+  openSendHome(id: string): void {
+    if (!this.store.workerView(id)) return;
+    this.walker.release();
+    this.walker.stop();
+    this.panels.close();
+    this.sendHome.open(id);
+  }
+
+  /** M4 dialogs are open (keys go to them). */
+  get dialogOpen(): boolean {
+    return this.hire.isOpen || this.sendHome.isOpen;
+  }
+
+  /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
+  deskStates(): Array<{ desk: number; worker: string | null; plus: boolean; away: 'busy' | 'empty' | null }> {
+    const o = this.office;
+    if (!o) return [];
+    const away = o.awayDesks();
+    return Array.from({ length: o.desksCount }, (_, i) => {
+      const w = o.seat(i);
+      const a = away.get(i) ?? null;
+      return { desk: i, worker: w?.worker.id ?? null, plus: !w && !a, away: a };
+    });
   }
 
   // ---- commands and panels ------------------------------------------------------
@@ -419,6 +591,7 @@ export class App {
       this.walker.stop();
       this.unloadFloor();
       this.dropOutside();
+      this.arrivals.clear();
       this.building = null;
       this.mode = 'city';
       this.setPlan(false);
@@ -461,6 +634,8 @@ export class App {
   /** Switches to a building (or a new shape of it): rebuilds the outside only when its shape changed. */
   private setBuilding(ctx: BuildingCtx): void {
     const prev = this.building;
+    // Walks belong to their building: in another one they are over.
+    if (prev && prev.id !== ctx.id) this.arrivals.clear();
     this.building = ctx;
     let o = this.walk.outside;
     if (!o || !prev || prev.shape !== ctx.shape) {
@@ -751,8 +926,8 @@ export class App {
       if (this.walker.key(e, false) && this.mode === 'floor') e.preventDefault();
       return;
     }
-    // Open dialogs (sheet, panels, confirmations) handle their own keys.
-    if (this.hud.sheetOpen || this.panels.open) return;
+    // Open dialogs (sheet, panels, confirmations, hire / send home) handle their own keys.
+    if (this.hud.sheetOpen || this.panels.open || this.dialogOpen) return;
     const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     if (typing) return;
     this.activity(true);
@@ -780,6 +955,14 @@ export class App {
       e.preventDefault();
       this.receptionEvent('interact');
       this.openElevator();
+    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'desk') {
+      // M4: E on an empty desk's "+" hires someone there.
+      e.preventDefault();
+      this.openHire(this.target.desk);
+    } else if (e.code === 'KeyX' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !e.altKey && !this.planOpen && this.target?.kind === 'worker') {
+      // M4: X looking at a worker: send it home.
+      e.preventDefault();
+      this.openSendHome(this.target.id);
     } else if (e.code === 'KeyL' && this.mode === 'floor' && !this.transitioning && !e.metaKey && !e.ctrlKey && !e.altKey) {
       // The elevator from anywhere on the floor (the top bar has it too).
       e.preventDefault();
@@ -889,7 +1072,7 @@ export class App {
 
   /** Animation-loop callback: frame pacing, then update + render. */
   tick(now: number): void {
-    const active = this.walker.moving || this.tween !== null || this.transitioning;
+    const active = this.walker.moving || this.tween !== null || this.transitioning || this.arrivals.count > 0;
     const hz = targetHz({ hidden: document.hidden, batterySaver: this.batterySaver, sinceActivity: active ? 0 : now - this.lastActivity });
     if (!shouldRender(now, this.lastRender, hz)) return;
     const dt = Math.min(0.1, this.lastRender === -Infinity ? 1 / 60 : (now - this.lastRender) / 1000);
@@ -910,6 +1093,7 @@ export class App {
       const area = this.place.area;
       this.walk.setDim(!!this.office?.isAsleep && (area === 'floor' || area === 'fire-escape'));
       this.walker.applyTo(this.fpCam, this.walk.base);
+      this.stepArrivals(t);
       const moved = this.cameraMoved;
       if (this.planOpen) this.fitPlan();
       if (this.office?.root.visible) this.office.frame(t, this.planOpen ? this.planCam : this.fpCam, this.fpCam, this.vp, moved);
@@ -931,6 +1115,14 @@ export class App {
       this.city.frame(t, this.cityCam);
     }
     this.cameraMoved = false;
+  }
+
+  /** Walkers in and out, and what their desks show meanwhile. */
+  private stepArrivals(t: number): void {
+    this.arrivals.group.position.y = -this.walk.base;
+    const o = this.office;
+    for (const d of this.arrivals.update(performance.now() / 1000, t)) if (o?.session === d.session) o.setAway(d.desk, d.away);
+    this.applyReserve();
   }
 
   render(): void {
@@ -1021,7 +1213,7 @@ export class App {
 
   /** Applies a protocol event as if the bridge had sent it. */
   inject(e: WorldEvent): void {
-    this.applyChange(this.store.applyEvent(e));
+    this.onWorldEvent(e);
   }
 
   lookAt(): LookAt | null {

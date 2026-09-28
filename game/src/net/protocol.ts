@@ -119,6 +119,10 @@ export interface Worker {
   status_since?: number;
   /** M3: resume progress during and after a wake. */
   resume?: ResumeState;
+  /** M4: unix ms (bridge clock) when the bridge hired this worker. */
+  hired_at?: number;
+  /** M4: the checkout's current branch, for a worker in a linked worktree (when known). */
+  branch?: string;
 }
 
 export interface World {
@@ -197,6 +201,8 @@ export interface WorkerRemoved {
   id: string;
   session: string;
   workspace_id: string;
+  /** M4: `sent_home` when the removal comes from `worker.fire`. */
+  reason?: string;
 }
 
 export type WorldEvent =
@@ -230,7 +236,90 @@ export interface SettingsPatch {
   default_hire?: Hire | null;
 }
 
-/** Commands and their args (docs/protocol.md "Commands", M3 additions). */
+/** M4: `hire.prepare` ack: what the hire dialog offers for a floor (and a cwd). */
+export interface HirePrepare {
+  cwd: string;
+  /** The preselected harness/model/effort; null or absent when `choice_source` is `none`. */
+  choice?: Hire | null;
+  choice_source: 'floor_default' | 'last' | 'none';
+  /** The next generated name: the default label. */
+  label: string;
+  git: HireGit | null;
+  capacity: HireCapacity;
+}
+
+export interface HireGit {
+  repo_root: string;
+  default_branch: string;
+  /** `origin/<default_branch>` as fetched (or last fetched). */
+  base_sha: string;
+  /** Unix ms, the base commit's time. */
+  base_time: number;
+  /** False when `git fetch origin` failed: a worktree hire is then refused (`fetch_failed`), a plain one is not. */
+  fetched: boolean;
+  fetch_error?: string;
+}
+
+export interface Cap {
+  count: number;
+  soft: number;
+  hard: number;
+}
+
+export interface HireCapacity {
+  floor: Cap;
+  host: Cap;
+  load?: { load1: number; cpus: number; mem_used_pct: number };
+}
+
+/** M4: `worker.hire` ack. */
+export interface HireAck {
+  id: string;
+  workspace_id: string;
+  branch?: string;
+  base_sha?: string;
+  /** `approved`: the bridge answered the agent's trust dialog; `none`: none showed; `avoided` is reserved. */
+  trust: 'none' | 'avoided' | 'approved';
+  /** Whether the first task was sent (absent without one). */
+  prompted?: boolean;
+  prompt_error?: string;
+}
+
+/** M4: `worker.fire.prepare` ack: what the send-home dialog shows. */
+export interface FirePrepare {
+  name: string;
+  label: string;
+  branch?: string;
+  worktree: { path: string; linked: boolean } | null;
+  /** `git status --porcelain` lines (capped). */
+  dirty: string[];
+  /** Commits not on any remote. */
+  unpushed: number;
+  can_delete: boolean;
+  /**
+   * `can_delete`, and the branch is one the bridge made for this worker, still checked out and all on a remote:
+   * only then may `worker.fire` use `delete_branch` (absent, from an older bridge: false).
+   */
+  can_delete_branch?: boolean;
+  /** Why the worktree cannot be deleted. */
+  reason?: string;
+  /** False when herdr would refuse to close the workspace (a main checkout whose worktrees are still open). */
+  can_fire?: boolean;
+  fire_blocked?: string;
+}
+
+export type FireWorktree = 'keep' | 'delete' | 'delete_branch';
+
+/** M4: `worker.fire` ack. */
+export interface FireAck {
+  worktree: 'kept' | 'deleted' | 'deleted_branch';
+  /** Whether the agent left by itself after /exit (/quit); false: it took Ctrl-C. */
+  released?: boolean;
+  /** e.g. the tree became dirty during the exit, so the worktree was kept. */
+  note?: string;
+}
+
+/** Commands and their args (docs/protocol.md "Commands", M3 and M4 additions). */
 export interface CommandArgs {
   'building.create': { name: string };
   'building.rename': { id: string; name: string };
@@ -240,6 +329,22 @@ export interface CommandArgs {
   'floor.wake': { session: string };
   'floor.sleep': { session: string };
   'floor.settings.set': { session: string } & SettingsPatch;
+  /** M4 */
+  'hire.prepare': { session: string; cwd?: string };
+  'worker.hire': {
+    session: string;
+    desk_index: number;
+    harness: string;
+    model: string;
+    effort: string;
+    label?: string;
+    cwd?: string;
+    worktree?: boolean;
+    prompt?: string;
+  };
+  'worker.fire.prepare': { id: string };
+  /** `handoff` (M9) and `stop_services` (#14) are reserved, not sent yet. */
+  'worker.fire': { id: string; worktree?: FireWorktree };
 }
 
 export type CommandName = keyof CommandArgs;
