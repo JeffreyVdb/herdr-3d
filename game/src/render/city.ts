@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rayBox } from '../world/collide';
 import type { Display } from '../world/derive';
-import { floorLayout, ROOM_HEIGHT, type Box3, type FloorLayout } from '../world/layout';
+import { floorLayout, outlineOf, ROOM_HEIGHT, type Box3, type FloorLayout } from '../world/layout';
 import type { BuildingView, FloorView, WorkerView } from '../world/store';
 import { FONT } from './cards/atlasCards';
 import { BadgeLayer } from './badges';
@@ -100,12 +100,13 @@ export class CityView {
   /** Rebuilds everything from the store's city (on structural changes). */
   build(city: BuildingView[]): void {
     this.clear();
-    // Footprints first: a building is as big as its biggest floor.
+    // Footprints first: every floor of a building shares its outline (its biggest floor), as walked.
     let x = 0;
     const plans = city.map((b, bi) => {
-      const layouts = b.floors.map((f) => floorLayout(f.desks));
-      const w = Math.max(18, ...layouts.map((l) => l.width)) * S;
-      const d = Math.max(14, ...layouts.map((l) => l.depth)) * S;
+      const outline = outlineOf(b.floors.map((f) => f.desks));
+      const layouts = b.floors.map((f) => floorLayout(f.desks, outline));
+      const w = outline.width * S;
+      const d = outline.depth * S;
       const plan = { b, bi, layouts, x0: x, w, d };
       x += w + GAP;
       return plan;

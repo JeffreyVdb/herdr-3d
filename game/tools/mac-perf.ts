@@ -43,6 +43,11 @@ const jobs = [
   { name: 'floor60-2', path: `/?${fx('perf-floor60')}&ts`, floor: 'perf-floor', pose: 'overview', bench: BENCH },
   { name: 'city240-2', path: `/?${fx('perf-city240')}&ts`, bench: BENCH, settle: 2500 },
   { name: 'city240-3', path: `/?${fx('perf-city240')}&ts`, bench: BENCH, settle: 2500 },
+  // M3b: the outside of an 8-floor tower (facade, fire escape, street, neighbours).
+  { name: 'street8', path: `/?${fx('perf-city240')}&ts`, floor: 'tower-a-8', pose: 'street', bench: BENCH, shot: true, settle: 2500 },
+  { name: 'escape8', path: `/?${fx('perf-city240')}&ts`, floor: 'tower-a-8', pose: 'landing', bench: BENCH, shot: true, settle: 2500 },
+  { name: 'window8', path: `/?${fx('perf-city240')}&ts`, floor: 'tower-a-8', pose: 'window', bench: BENCH, shot: true, settle: 2500 },
+  { name: 'floor60-street', path: `/?${fx('perf-floor60')}&ts`, floor: 'perf-floor', pose: 'street', bench: BENCH, settle: 2500 },
   { name: 'demo-city', path: `/?${fx('demo')}`, shot: true, settle: 2500 },
   { name: 'demo-desk-row', path: `/?${fx('demo')}`, floor: 'herdr-3d', pose: 'row', shot: true },
   // Diagnostics (select with H3D_PERF_JOBS=a,b,…).

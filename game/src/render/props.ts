@@ -6,7 +6,7 @@ import { OFFICE } from './palette';
 
 /** Static placeholder props (boards, lounge, cabinet, …): a few meshes per floor, textures drawn once. */
 
-function canvasTexture(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
+export function canvasTexture(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
@@ -69,7 +69,7 @@ function boardTexture(title: string, note: string, tint: string): THREE.CanvasTe
   });
 }
 
-function signTexture(text: string, sub: string, bg: string, fg: string, w = 512, h = 192): THREE.CanvasTexture {
+export function signTexture(text: string, sub: string, bg: string, fg: string, w = 512, h = 192): THREE.CanvasTexture {
   return canvasTexture(w, h, (g) => {
     g.fillStyle = bg;
     g.fillRect(0, 0, w, h);
@@ -89,6 +89,30 @@ function faceTexture(mesh: THREE.Mesh, tex: THREE.Texture, base: number): void {
   const plain = toon(base);
   const front = new THREE.MeshToonMaterial({ color: 0xffffff, map: tex });
   mesh.material = [plain, plain, plain, plain, front, plain];
+}
+
+/** Elevator doors on a south wall (frame, steel doors, the floor panel above): a lobby has one too. */
+export function elevatorMeshes(box: Box3, label: string, sub: string): { group: THREE.Group; texture: THREE.Texture } {
+  const group = new THREE.Group();
+  const [x0, , z0] = box.min;
+  const [x1, y1] = [box.max[0], box.max[1]];
+  const cx = (x0 + x1) / 2;
+  const frame = mergeGeometries([
+    new THREE.BoxGeometry(x1 - x0 + 0.3, 0.2, 0.14).translate(cx, y1 + 0.1, z0 + 0.02),
+    new THREE.BoxGeometry(0.16, y1, 0.14).translate(x0 - 0.07, y1 / 2, z0 + 0.02),
+    new THREE.BoxGeometry(0.16, y1, 0.14).translate(x1 + 0.07, y1 / 2, z0 + 0.02),
+  ]);
+  group.add(new THREE.Mesh(frame, toon(0x5d6679)));
+  const doors = mergeGeometries([
+    new THREE.BoxGeometry((x1 - x0) / 2 - 0.01, y1, 0.06).translate(cx - (x1 - x0) / 4, y1 / 2, z0 + 0.04),
+    new THREE.BoxGeometry((x1 - x0) / 2 - 0.01, y1, 0.06).translate(cx + (x1 - x0) / 4, y1 / 2, z0 + 0.04),
+  ]);
+  group.add(new THREE.Mesh(doors, new THREE.MeshStandardMaterial({ color: OFFICE.steel, metalness: 0.6, roughness: 0.35 })));
+  const texture = signTexture(label, sub, '#101626', '#ffc233', 512, 170);
+  const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.3).rotateY(Math.PI), new THREE.MeshBasicMaterial({ map: texture }));
+  panel.position.set(cx, y1 + 0.42, z0 - 0.01);
+  group.add(panel);
+  return { group, texture };
 }
 
 export interface PropMeshes {
@@ -272,26 +296,12 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
 
   const lift = byId.get('elevator');
   if (lift) {
-    const [x0, , z0] = lift.box.min;
-    const [x1, y1] = [lift.box.max[0], lift.box.max[1]];
-    const cx = (x0 + x1) / 2;
-    const frame = mergeGeometries([
-      new THREE.BoxGeometry(x1 - x0 + 0.3, 0.2, 0.14).translate(cx, y1 + 0.1, z0 + 0.02),
-      new THREE.BoxGeometry(0.16, y1, 0.14).translate(x0 - 0.07, y1 / 2, z0 + 0.02),
-      new THREE.BoxGeometry(0.16, y1, 0.14).translate(x1 + 0.07, y1 / 2, z0 + 0.02),
-    ]);
-    add(new THREE.Mesh(frame, toon(0x5d6679)));
-    const doors = mergeGeometries([
-      new THREE.BoxGeometry((x1 - x0) / 2 - 0.01, y1, 0.06).translate(cx - (x1 - x0) / 4, y1 / 2, z0 + 0.04),
-      new THREE.BoxGeometry((x1 - x0) / 2 - 0.01, y1, 0.06).translate(cx + (x1 - x0) / 4, y1 / 2, z0 + 0.04),
-    ]);
-    add(new THREE.Mesh(doors, new THREE.MeshStandardMaterial({ color: OFFICE.steel, metalness: 0.6, roughness: 0.35 })));
-    const panel = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.9, 0.3).rotateY(Math.PI),
-      new THREE.MeshBasicMaterial({ map: tex(signTexture(floorLabel, 'elevator · press E', '#101626', '#ffc233', 512, 170)) }),
-    );
-    panel.position.set(cx, y1 + 0.42, z0 - 0.01);
-    group.add(panel);
+    const e = elevatorMeshes(lift.box, floorLabel, 'elevator · press E');
+    textures.push(e.texture);
+    e.group.traverse((o) => {
+      if (o instanceof THREE.Mesh && !(o.material instanceof THREE.MeshBasicMaterial)) o.castShadow = o.receiveShadow = true;
+    });
+    group.add(e.group);
   }
 
   // Plants in the corners of the desk area.

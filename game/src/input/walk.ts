@@ -1,13 +1,15 @@
 import type * as THREE from 'three/webgpu';
-import { moveWithCollision } from '../world/collide';
-import { EYE_HEIGHT, type Rect } from '../world/layout';
+import { moveWalker, type WalkWorld } from '../world/collide';
+import { EYE_HEIGHT } from '../world/layout';
 
 const WALK = 2.3; // m/s
 const RUN = 4.6;
 const LOOK = 0.0022; // rad per mouse count
 const TURN = 2; // rad/s with the arrow keys
-const RADIUS = 0.28;
+export const RADIUS = 0.28;
 export const PITCH_LIMIT = 1.35;
+/** Eye height follows the feet up and down stairs with this rate (1/s): smooth, not a pop per step. */
+const EYE_EASE = 14;
 
 const MOVE_KEYS: Record<string, [number, number]> = {
   KeyW: [0, 1],
@@ -26,11 +28,17 @@ const TURN_KEYS: Record<string, number> = {
 
 /**
  * First-person walking: WASD / up-down arrows, left-right arrows to turn,
- * Shift to run, Pointer Lock mouse look, AABB collision. yaw 0 looks north (-z).
+ * Shift to run, Pointer Lock mouse look, height-aware AABB collision (floors,
+ * landings, stair treads, the sidewalk). yaw 0 looks north (-z). `y` is the
+ * feet above the street; the eye eases after it on stairs.
  */
 export class Walker {
   x = 0;
   z = 0;
+  /** Feet height, absolute (the street is 0). */
+  y = 0;
+  /** Eased feet height the camera follows. */
+  eye = 0;
   yaw = 0;
   pitch = 0;
   locked = false;
@@ -113,15 +121,17 @@ export class Walker {
     if (document.pointerLockElement === this.dom) document.exitPointerLock();
   }
 
-  place(x: number, z: number, yaw: number, pitch = 0): void {
+  place(x: number, z: number, yaw: number, pitch = 0, y = this.y): void {
     this.x = x;
     this.z = z;
+    this.y = this.eye = y;
     this.yaw = yaw;
     this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
   }
 
-  /** Advances by `dt` seconds; true if the walker moved or turned. */
-  step(dt: number, obstacles: readonly Rect[]): boolean {
+  /** Advances by `dt` seconds; true if the walker moved, turned or its eye is still easing. */
+  step(dt: number, world: WalkWorld): boolean {
+    const easing = this.easeEye(dt);
     let f = 0;
     let r = 0;
     let turn = 0;
@@ -134,7 +144,7 @@ export class Walker {
       turn += TURN_KEYS[k] ?? 0;
     }
     if (turn) this.yaw += turn * TURN * dt;
-    if (!f && !r) return turn !== 0;
+    if (!f && !r) return turn !== 0 || easing;
     const len = Math.hypot(f, r);
     const d = (this.run ? RUN : WALK) * dt;
     const sy = Math.sin(this.yaw);
@@ -142,15 +152,25 @@ export class Walker {
     // forward = (-sin, -cos), right = (cos, -sin)
     const dx = ((-sy * f + cy * r) / len) * d;
     const dz = ((-cy * f - sy * r) / len) * d;
-    const p = moveWithCollision({ x: this.x, z: this.z }, { x: dx, z: dz }, RADIUS, obstacles);
+    const p = moveWalker({ x: this.x, y: this.y, z: this.z }, { x: dx, z: dz }, RADIUS, world);
     const moved = p.x !== this.x || p.z !== this.z;
     this.x = p.x;
     this.z = p.z;
-    return moved || turn !== 0;
+    this.y = p.y;
+    return moved || turn !== 0 || easing;
   }
 
-  applyTo(camera: THREE.PerspectiveCamera): void {
-    camera.position.set(this.x, EYE_HEIGHT, this.z);
+  private easeEye(dt: number): boolean {
+    const d = this.y - this.eye;
+    if (d === 0) return false;
+    // Exponential smoothing; a big jump (a teleport) snaps.
+    this.eye = Math.abs(d) < 1e-3 || Math.abs(d) > 1.2 ? this.y : this.eye + d * (1 - Math.exp(-EYE_EASE * dt));
+    return true;
+  }
+
+  /** Camera at eye height; `base` is the height the scene is shifted down by (the floor with an interior). */
+  applyTo(camera: THREE.PerspectiveCamera, base = 0): void {
+    camera.position.set(this.x, this.eye - base + EYE_HEIGHT, this.z);
     camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
     camera.updateMatrixWorld();
   }

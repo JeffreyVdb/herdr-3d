@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blocked, moveWithCollision, pickNearest, rayBox } from './collide';
 import { assignDesks, deskCountFallback, displayStatus, modelCue, modelLabel, taskLine } from './derive';
-import { EYE_HEIGHT, floorLayout, podGrid, seatRect, slotBoxes, type Rect } from './layout';
+import { EYE_HEIGHT, floorLayout, outlineOf, podGrid, seatRect, slotBoxes, wallPieces, type Rect } from './layout';
 
 describe('deskCountFallback', () => {
   it.each([
@@ -153,6 +153,8 @@ describe('floorLayout', () => {
     while (q.length) {
       const [i, j] = q.pop() as [number, number];
       if (seen.has(key(i, j))) continue;
+      // The fire-escape doorway is open: stay inside the room.
+      if (i * step < 0 || i * step > l.width || j * step < 0 || j * step > l.depth) continue;
       if (blocked({ x: i * step, z: j * step }, r, l.colliders)) continue;
       seen.add(key(i, j));
       q.push([i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]);
@@ -163,6 +165,91 @@ describe('floorLayout', () => {
       const near = [-2, -1, 0, 1, 2].some((a) => [-2, -1, 0, 1, 2].some((b) => seen.has(key(i + a, j + b))));
       expect(near, `seat ${s.index}`).toBe(true);
     }
+  });
+});
+
+describe('building outline', () => {
+  const counts = [6, 10, 20, 41, 62];
+  const outline = outlineOf(counts);
+  const floors = counts.map((n) => floorLayout(n, outline));
+
+  it('is the biggest floor in each direction, and every floor shares it', () => {
+    expect(outline.width).toBe(Math.max(...counts.map((n) => floorLayout(n).width)));
+    expect(outline.depth).toBe(Math.max(...counts.map((n) => floorLayout(n).depth)));
+    for (const l of floors) expect([l.width, l.depth]).toEqual([outline.width, outline.depth]);
+    expect(outlineOf([])).toEqual({ width: 18, depth: 14 });
+  });
+
+  it('keeps the desk grid centred and the lounge and cabinet against the walls', () => {
+    for (const l of floors) {
+      const xs = l.slots.flatMap((s) => [s.desk.x - 0.7, s.desk.x + 0.7]);
+      // Pod centres (a pod's desks meet back to back), a pod 3.7 m deep with its chairs.
+      const zs = l.slots.flatMap((s) => {
+        const cz = s.desk.z + (s.yaw === 0 ? 0.35 : -0.35);
+        return [cz - 1.85, cz + 1.85];
+      });
+      const a = l.deskArea;
+      expect((Math.min(...xs) + Math.max(...xs)) / 2).toBeCloseTo((a.x0 + a.x1) / 2, 6);
+      expect((Math.min(...zs) + Math.max(...zs)) / 2).toBeCloseTo((a.z0 + a.z1) / 2, 6);
+      const lounge = l.props.find((p) => p.id === 'lounge');
+      const filing = l.props.find((p) => p.id === 'filing');
+      expect(lounge?.box.min[0]).toBeLessThan(1);
+      expect(lounge?.box.min[2]).toBeLessThan(1);
+      expect(filing?.box.max[0]).toBeCloseTo(l.width - 0.3, 6);
+      expect(filing?.box.min[2]).toBeLessThan(1);
+    }
+  });
+
+  it('lines the windows and the fire-escape door up from floor to floor', () => {
+    const [first] = floors;
+    for (const l of floors) {
+      expect(l.openings).toEqual(first?.openings);
+      expect(l.fireDoor).toEqual(first?.fireDoor);
+    }
+    const door = first?.openings.find((o) => o.kind === 'door');
+    expect(door).toMatchObject({ wall: 'west' });
+    expect(door?.u0).toBeCloseTo(outline.depth - 2.8, 6);
+    expect(door?.u1).toBeCloseTo(outline.depth - 1.6, 6);
+    // Clear of the board wall (it ends west at x >= 3) and south of the coffee counter.
+    expect(first?.walls[4]?.min[0]).toBeGreaterThanOrEqual(3);
+    expect(door?.u0).toBeGreaterThan(first?.walls[4]?.max[2] ?? 0);
+  });
+
+  it('grows every floor when one floor outgrows the outline', () => {
+    const before = outlineOf([6, 20]);
+    const after = outlineOf([6, 20, 96]);
+    expect(after.width).toBeGreaterThan(before.width);
+    expect(after.depth).toBeGreaterThan(before.depth);
+    for (const n of [6, 20, 96]) expect(floorLayout(n, after)).toMatchObject({ width: after.width, depth: after.depth });
+    expect(floorLayout(6, after).fireDoor.z0).toBeCloseTo(after.depth - 2.8, 6);
+  });
+
+  it('keeps every seat reachable and the doorway free on a floor bigger than its desks need', () => {
+    const l = floorLayout(6, outlineOf([96]));
+    const mid = (l.fireDoor.z0 + l.fireDoor.z1) / 2;
+    expect(blocked({ x: -0.1, z: mid }, 0.28, l.colliders)).toBe(false);
+    expect(blocked({ x: -0.1, z: l.fireDoor.z0 - 0.4 }, 0.28, l.colliders)).toBe(true);
+    for (const s of l.slots) expect(blocked(s.seat, 0.28, l.colliders)).toBe(false);
+  });
+});
+
+describe('wallPieces', () => {
+  it('cuts a wall around its window and door, keeping the rest', () => {
+    const wall = { min: [0, 0, -0.2] as [number, number, number], max: [10, 3, 0] as [number, number, number] };
+    const pieces = wallPieces(wall, 0, [
+      { u0: 6, u1: 7.2, y0: 0, y1: 2.3 },
+      { u0: 2, u1: 4, y0: 0.9, y1: 2.4 },
+    ]);
+    const vol = (b: { min: number[]; max: number[] }) => (b.max[0]! - b.min[0]!) * (b.max[1]! - b.min[1]!) * (b.max[2]! - b.min[2]!);
+    const total = pieces.reduce((n, b) => n + vol(b), 0);
+    expect(total).toBeCloseTo(0.2 * (30 - 2 * 1.5 - 1.2 * 2.3), 6);
+    // Nothing is left in either hole.
+    const inside = (x: number, y: number) => pieces.some((b) => x > b.min[0]! && x < b.max[0]! && y > b.min[1]! && y < b.max[1]!);
+    expect(inside(3, 1.5)).toBe(false);
+    expect(inside(6.6, 1)).toBe(false);
+    expect(inside(3, 0.5)).toBe(true);
+    expect(inside(6.6, 2.8)).toBe(true);
+    expect(inside(5, 1.5)).toBe(true);
   });
 });
 
