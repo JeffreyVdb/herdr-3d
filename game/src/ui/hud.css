@@ -103,6 +103,21 @@ body {
   font-size: 12.5px;
   white-space: nowrap;
 }
+/* Outside a floor (lobby, street, fire escape): where you are, in the sun colour. */
+.where {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--sun);
+  font-weight: 700;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+}
+.where svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.4;
+  flex: none;
+}
 .topbar-counts {
   display: flex;
   gap: 14px;

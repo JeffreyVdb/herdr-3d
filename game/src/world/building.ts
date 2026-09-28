@@ -10,7 +10,7 @@
  */
 
 import type { Solid, Support, WalkWorld } from './collide';
-import { DESK_H, ROOM_HEIGHT, WALL_T, type Box3, type Outline, type Rect, type Vec2 } from './layout';
+import { ROOM_HEIGHT, WALL_T, type Box3, type Outline, type Rect, type Vec2 } from './layout';
 
 /** The floor slab between storeys. */
 export const SLAB = 0.3;
@@ -81,6 +81,8 @@ export interface LobbyLayout {
   /** Reception desk (counter) and where the receptionist stands behind it, facing the door (+z). */
   desk: Rect;
   receptionist: Vec2;
+  /** The feature wall behind the receptionist (the building's name is on it). */
+  backWall: Rect;
   bench: Rect;
   plants: Vec2[];
   /** Elevator doors on the south wall (as on every floor). */
@@ -99,6 +101,8 @@ export interface BuildingPlan {
   width: number;
   depth: number;
   floors: number;
+  /** Floor to floor (STOREY), for clients that place things by storey. */
+  storey: number;
   /** Top of the roof slab. */
   roofY: number;
   escape: FireEscape;
@@ -158,6 +162,7 @@ export function lobbyLayout(width: number, depth: number): LobbyLayout {
   const front = { x0: r3(fx - 0.9), x1: r3(fx + 0.9), height: 2.4 };
   const desk: Rect = { x0: r3(fx - 1.6), z0: r3(depth - 5.6), x1: r3(fx + 1.6), z1: r3(depth - 4.8) };
   const receptionist = { x: fx, z: r3(depth - 6.15) };
+  const backWall: Rect = { x0: r3(desk.x0 - 0.5), z0: r3(receptionist.z - 0.95), x1: r3(desk.x1 + 0.5), z1: r3(receptionist.z - 0.8) };
   const bench: Rect = { x0: r3(width / 2 + 3.2), z0: r3(depth - 1.15), x1: r3(width / 2 + 5.6), z1: r3(depth - 0.6) };
   const plants: Vec2[] = [
     { x: 0.7, z: 0.7 },
@@ -176,6 +181,7 @@ export function lobbyLayout(width: number, depth: number): LobbyLayout {
     { x0: -FACE, z0: depth, x1: front.x0, z1: depth + FACE }, // south, west of the door
     { x0: front.x1, z0: depth, x1: width + FACE, z1: depth + FACE }, // south, east of the door
     desk,
+    backWall,
     { x0: receptionist.x - 0.35, z0: receptionist.z - 0.35, x1: receptionist.x + 0.35, z1: receptionist.z + 0.35 },
     bench,
     ...plantRects,
@@ -190,13 +196,15 @@ export function lobbyLayout(width: number, depth: number): LobbyLayout {
     front,
     desk,
     receptionist,
+    backWall,
     bench,
     plants,
     elevator,
     spawn: { x: r3(width / 2), z: r3(depth - 1.3), yaw: 0 },
     colliders,
     walls,
-    deskBox: box(desk.x0, 0, desk.z0, desk.x1, DESK_H + 0.5, desk.z1),
+    // The counter and the air over it, where you talk to the receptionist.
+    deskBox: box(desk.x0, 0, desk.z0, desk.x1, 1.9, desk.z1),
   };
 }
 
@@ -264,7 +272,7 @@ export function buildingPlan(outline: Outline, floors: number, door: { z0: numbe
   for (const l of lamps) solids.push(solid(l.x - 0.14, l.z - 0.14, l.x + 0.14, l.z + 0.14, 0, 4));
   for (const t of trees) solids.push(solid(t.x - 0.22, t.z - 0.22, t.x + 0.22, t.z + 0.22, 0, 3));
 
-  return { width: W, depth: D, floors: n, roofY, escape, lobby, shaft, yard, fence, road, lamps, trees, supports, solids };
+  return { width: W, depth: D, floors: n, storey: STOREY, roofY, escape, lobby, shaft, yard, fence, road, lamps, trees, supports, solids };
 }
 
 /** The storey you are on for a feet height (-1: the lobby). */

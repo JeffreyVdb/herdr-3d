@@ -306,3 +306,31 @@ export function slotBoxes(s: DeskSlot): { desk: Box3; seat: Box3; plus: Box3 } {
 export function seatRect(s: DeskSlot): Rect {
   return { x0: s.seat.x - 0.3, z0: s.seat.z - 0.3, x1: s.seat.x + 0.3, z1: s.seat.z + 0.3 };
 }
+
+/**
+ * A wall box cut around its openings (`u` along axis 0 = x or 2 = z, as in
+ * `Opening`): the pieces left standing, left to right, sill and lintel pieces
+ * under and over each hole.
+ */
+export function wallPieces(b: Box3, axis: 0 | 2, holes: ReadonlyArray<{ u0: number; u1: number; y0: number; y1: number }>): Box3[] {
+  const out: Box3[] = [];
+  const piece = (u0: number, u1: number, y0: number, y1: number) => {
+    if (u1 - u0 < 1e-6 || y1 - y0 < 1e-6) return;
+    const min: [number, number, number] = [b.min[0], y0, b.min[2]];
+    const max: [number, number, number] = [b.max[0], y1, b.max[2]];
+    min[axis] = u0;
+    max[axis] = u1;
+    out.push({ min, max });
+  };
+  let u = b.min[axis];
+  const y0 = b.min[1];
+  const y1 = b.max[1];
+  for (const h of [...holes].sort((a, c) => a.u0 - c.u0)) {
+    piece(u, h.u0, y0, y1);
+    piece(h.u0, h.u1, y0, Math.max(y0, h.y0));
+    piece(h.u0, h.u1, Math.min(y1, h.y1), y1);
+    u = h.u1;
+  }
+  piece(u, b.max[axis], y0, y1);
+  return out;
+}

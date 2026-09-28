@@ -7,7 +7,9 @@ import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
 import { runBench, type BenchOptions, type BenchResult } from './bench';
 import type { CommandName, WorldEvent } from './net/protocol';
 import type { PanelSummary } from './ui/panels';
-import { floorLayout } from './world/layout';
+import type { Area, BuildingPlan } from './world/building';
+import type { floorLayout } from './world/layout';
+import { walkOutRoute, type Waypoint } from './world/route';
 
 /** Debug/test hook, read by the Playwright tests and the Mac perf run. */
 export interface H3DDebug {
@@ -16,8 +18,12 @@ export interface H3DDebug {
   error: string | null;
   /** True once a world snapshot has been rendered. */
   ready: boolean;
-  /** `busy` while the elevator-door transition runs; `asleep`: the office's lights are off (null in the city). */
-  view(): { mode: 'city' | 'floor'; floor: string | null; plan: boolean; busy: boolean; asleep: boolean | null };
+  /**
+   * `busy` while the elevator-door transition runs; `asleep`: the office's lights are off (null in the city).
+   * `floor` is the floor with an interior (the one you are on, or outside the one you last left; null in the
+   * lobby); M3b: `area` where you are walking, `building` its name.
+   */
+  view(): { mode: 'city' | 'floor'; floor: string | null; plan: boolean; busy: boolean; asleep: boolean | null; area: Area | null; building: string | null };
   /** What the centre of the screen picks in first person (within 3 m), else null. */
   lookAt(): LookAt | null;
   /** Status shown on screen for a worker, and when (unix ms) it got there. */
@@ -34,14 +40,28 @@ export interface H3DDebug {
     desks: number;
     workers: Array<{ id: string; name: string; label: string; desk: number; status: string; bridgeName: string | null; bridgeDesk: number | null }>;
   }>;
-  /** The office layout of a floor (for scripted camera paths). */
+  /** The office layout of a floor, in its building's outline (for scripted camera paths). */
   layout(session: string): ReturnType<typeof floorLayout> | null;
+  /** M3b: the building you walk around in (fire escape, lobby, street), null in the city. */
+  building(): BuildingPlan | null;
+  /** M3b: the building's id (null: the lot), name, floors ground first, and the floor with an interior. */
+  where(): { building: string | null; name: string; floors: string[]; loaded: string | null } | null;
+  /** M3b: rides the elevator to a building's lobby (null: the lot); no argument: the current building's. */
+  enterLobby(building?: string | null): Promise<void>;
+  /** M3b: the walk-out route (M4) from a desk of a floor, as waypoints. */
+  route(session: string, desk: number): Waypoint[];
+  /** M3b: the receptionist's state (clips said, cooldown), null until the receptionist module is in. */
+  reception(): unknown;
+  /** M3b: reception events the game detected (front door in / out, elevator arrival, E at the desk). */
+  receptionEvents(): Array<{ ev: string; at: number; building: string | null }>;
   enterFloor(session: string, pose?: Pose): Promise<void>;
   /** Applies a protocol event as if the bridge had sent it (drives live updates deterministically). */
   inject(e: WorldEvent): void;
   leaveFloor(): Promise<void>;
+  /** `y` (feet above the street) places you on any floor, landing, the street or in the lobby. */
   setPose(p: Pose): void;
-  pose(): Pose | null;
+  /** M3b: with `y` (feet above the street), `area` and `storey` (the floor, or the landing's floor). */
+  pose(): (Pose & { eye: number; y: number; area: Area; storey: number | null; floor: string | null }) | null;
   plan(open: boolean): void;
   focusBuilding(i: number | null): void;
   /** Speech-bubble cards on screen and what they say. */
@@ -86,6 +106,8 @@ const h3d: H3DDebug = {
     plan: app?.plan ?? false,
     busy: app?.busy ?? false,
     asleep: app?.officeAsleep ?? null,
+    area: app?.mode === 'floor' ? app.place.area : null,
+    building: app?.where?.name ?? null,
   }),
   lookAt: () => app?.lookAt() ?? null,
   status: (id) => app?.rendered.get(id) ?? null,
@@ -110,10 +132,22 @@ const h3d: H3DDebug = {
             })),
           }))
       : [],
-  layout: (s) => {
-    const f = app?.store.floorView(s);
-    return f ? floorLayout(f.desks) : null;
+  layout: (s) => app?.layoutOf(s) ?? null,
+  building: () => app?.plan3 ?? null,
+  where: () => app?.where ?? null,
+  enterLobby: async (b) => {
+    if (!app) return;
+    await app.enterLobby(b === undefined ? (app.where?.building ?? null) : b, { transition: false });
   },
+  route: (s, desk) => {
+    const L = app?.layoutOf(s);
+    const w = app?.where;
+    const plan = app?.plan3;
+    const storey = w ? w.floors.indexOf(s) : -1;
+    return L && plan && storey >= 0 ? walkOutRoute(L, plan, storey, desk) : [];
+  },
+  reception: () => app?.reception?.debug() ?? null,
+  receptionEvents: () => structuredClone(app?.receptionEvents ?? []),
   enterFloor: async (s, pose) => {
     await app?.enterFloor(s, pose ? { transition: false, pose } : { transition: false });
   },
