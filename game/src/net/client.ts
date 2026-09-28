@@ -1,10 +1,13 @@
 import {
   PROTO,
+  isAck,
   isError,
   isSnapshot,
   isWelcome,
   isWorldEvent,
   parseMessage,
+  type CommandArgs,
+  type CommandName,
   type Hello,
   type Snapshot,
   type Welcome,
@@ -95,6 +98,30 @@ export interface ClientOptions {
 
 const FATAL_CODES = new Set(['unsupported_proto']);
 
+/** The answer to a command: its ack, or an error (from the bridge, or `offline` / `timeout` / `disconnected`). */
+export type CommandResult = { ok: true; data: unknown } | { ok: false; code: string; message: string };
+
+export interface RequestOptions {
+  timeoutMs?: number;
+}
+
+export const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
+
+/**
+ * Commands whose ack can take long. `floor.wake` is acked once every worker
+ * resumed or fell back (~20 s worst case); progress shows through events
+ * (`transition`, `resume`) meanwhile, so the wait here is generous.
+ */
+export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
+  'floor.wake': 60_000,
+  'floor.sleep': 30_000,
+};
+
+interface Pending {
+  resolve(r: CommandResult): void;
+  timer: unknown;
+}
+
 /**
  * Protocol v1 client: hello → welcome → snapshot | replay → events, with
  * reconnect (exponential backoff) that resumes from `since_seq` + `epoch`.
@@ -108,6 +135,8 @@ export class BridgeClient {
   /** Between a `welcome` with resume=snapshot and the snapshot itself. */
   private awaitingSnapshot = false;
   private welcomed = false;
+  private reqSeq = 0;
+  private readonly pending = new Map<string, Pending>();
   private readonly timers: Timers;
   private readonly now: () => number;
 
@@ -132,6 +161,45 @@ export class BridgeClient {
     if (s) {
       s.onclose = s.onmessage = s.onerror = s.onopen = null;
       s.close(1000, 'client stop');
+    }
+    this.failPending();
+  }
+
+  /**
+   * Sends a command and resolves with its `ack` or `error` (matched by
+   * `req_id`). Never rejects. The events the command caused are applied
+   * before this resolves (the bridge sends them before the ack).
+   */
+  request<T extends CommandName>(t: T, args: CommandArgs[T], o: RequestOptions = {}): Promise<CommandResult> {
+    const s = this.sock;
+    if (!s || this.state.phase !== 'live') {
+      return Promise.resolve({ ok: false, code: 'offline', message: 'not connected to herdr-world' });
+    }
+    const reqId = `g${++this.reqSeq}`;
+    const ms = o.timeoutMs ?? COMMAND_TIMEOUT_MS[t] ?? DEFAULT_COMMAND_TIMEOUT_MS;
+    return new Promise((resolve) => {
+      const timer = this.timers.setTimeout(() => {
+        this.pending.delete(reqId);
+        resolve({ ok: false, code: 'timeout', message: `herdr-world did not answer ${t} within ${Math.round(ms / 1000)} s` });
+      }, ms);
+      this.pending.set(reqId, { resolve, timer });
+      s.send(JSON.stringify({ t, req_id: reqId, args }));
+    });
+  }
+
+  private settle(reqId: string, r: CommandResult): boolean {
+    const p = this.pending.get(reqId);
+    if (!p) return false;
+    this.pending.delete(reqId);
+    this.timers.clearTimeout(p.timer);
+    p.resolve(r);
+    return true;
+  }
+
+  /** The socket is gone: no answer will come for what is in flight. */
+  private failPending(): void {
+    for (const id of [...this.pending.keys()]) {
+      this.settle(id, { ok: false, code: 'disconnected', message: 'the connection to herdr-world dropped before it answered; the command may still have run' });
     }
   }
 
@@ -167,6 +235,7 @@ export class BridgeClient {
     s.onclose = (ev) => {
       if (this.sock !== s) return;
       this.sock = null;
+      this.failPending();
       if (this.state.phase === 'failed' || this.state.phase === 'stopped') return;
       this.scheduleReconnect(ev.reason || `closed (${ev.code})`);
     };
@@ -191,6 +260,7 @@ export class BridgeClient {
       s.onclose = s.onmessage = s.onerror = s.onopen = null;
       s.close(1000, reason);
     }
+    this.failPending();
     this.attempt = 0;
     this.connect();
   }
@@ -212,12 +282,21 @@ export class BridgeClient {
       }
       return;
     }
+    if (isAck(m)) {
+      this.settle(m.req_id, { ok: true, data: m.data });
+      return;
+    }
+    if (isError(m) && m.req_id) {
+      this.settle(m.req_id, { ok: false, code: m.code, message: m.message ?? '' });
+      return;
+    }
     if (isError(m) && !m.req_id && FATAL_CODES.has(m.code)) {
       this.clearTimer();
       this.setState({ phase: 'failed', reason: `${m.code}: ${m.message}` });
       const s = this.sock;
       this.sock = null;
       s?.close(1000, m.code);
+      this.failPending();
       return;
     }
     if (!this.welcomed) return;

@@ -1,8 +1,8 @@
 /**
  * herdr-world protocol v1 (docs/protocol.md), as the game consumes it.
  *
- * Fields marked "M2" are additive and may be missing when talking to an older
- * bridge; the world store supplies fallbacks for every one of them.
+ * Fields marked "M2" / "M3" are additive and may be missing when talking to an
+ * older bridge; the world store supplies fallbacks for every one of them.
  * Unknown fields and unknown message types are ignored.
  */
 
@@ -27,7 +27,59 @@ export interface Floor {
   error?: string;
   /** M2: desks the floor renders. */
   desks?: number;
+  /** M3: a wake or sleep is in progress. */
+  transition?: FloorTransition;
+  /** M3: stored floor settings, only the keys that are set. */
+  settings?: FloorSettings;
+  /** M3: bridge-derived defaults (effective value = `settings.X ?? suggested.X`). */
+  suggested?: FloorSuggested;
 }
+
+export type FloorTransition = 'waking' | 'sleeping';
+
+export interface GithubProject {
+  owner: string;
+  number: number;
+}
+
+export interface StatusField {
+  name: string;
+  options: string[];
+}
+
+export interface Hire {
+  harness: string;
+  model: string;
+  effort: string;
+}
+
+export interface FloorSettings {
+  /** `owner/repo` on GitHub. */
+  repo?: string;
+  project?: GithubProject;
+  status_field?: StatusField;
+  /** Absolute directory on the bridge host. */
+  default_cwd?: string;
+  default_hire?: Hire;
+}
+
+export interface FloorSuggested {
+  repo?: string;
+  default_cwd?: string;
+}
+
+export interface HarnessOptions {
+  models: string[];
+  efforts: string[];
+  /** Extra efforts only some models take (codex: `ultra` for sol/astra). */
+  extra_efforts?: Record<string, string[]>;
+}
+
+/** M3: models and efforts `default_hire` may use, per harness. */
+export type HireOptions = Record<string, HarnessOptions>;
+
+/** M3: a worker's resume after a wake. */
+export type ResumeState = 'pending' | 'confirmed' | 'fallback' | 'failed';
 
 export interface Worktree {
   repo_root: string;
@@ -65,6 +117,8 @@ export interface Worker {
   effort?: string;
   /** M2: unix ms (bridge clock) when `status` last changed. */
   status_since?: number;
+  /** M3: resume progress during and after a wake. */
+  resume?: ResumeState;
 }
 
 export interface World {
@@ -72,6 +126,8 @@ export interface World {
   unassigned: string[];
   floors: Floor[];
   workers: Worker[];
+  /** M3 */
+  hire_options?: HireOptions;
 }
 
 export interface Hello {
@@ -159,13 +215,48 @@ export interface ErrorMessage {
   message: string;
 }
 
+export interface Ack {
+  t: 'ack';
+  req_id: string;
+  data?: unknown;
+}
+
+/** `floor.settings.set` args: absent = unchanged, null = clear, value = set. */
+export interface SettingsPatch {
+  repo?: string | null;
+  project?: GithubProject | null;
+  status_field?: StatusField | null;
+  default_cwd?: string | null;
+  default_hire?: Hire | null;
+}
+
+/** Commands and their args (docs/protocol.md "Commands", M3 additions). */
+export interface CommandArgs {
+  'building.create': { name: string };
+  'building.rename': { id: string; name: string };
+  'building.delete': { id: string };
+  'building.reorder': { ids: string[] };
+  'floor.assign': { session: string; building: string | null; index?: number };
+  'floor.wake': { session: string };
+  'floor.sleep': { session: string };
+  'floor.settings.set': { session: string } & SettingsPatch;
+}
+
+export type CommandName = keyof CommandArgs;
+
+export interface Command<T extends CommandName = CommandName> {
+  t: T;
+  req_id: string;
+  args: CommandArgs[T];
+}
+
 /** Any other object with a string `t` (acks, future event types). */
 export interface OtherMessage {
   t: string;
   seq?: number;
 }
 
-export type ServerMessage = Welcome | Snapshot | WorldEvent | ErrorMessage | OtherMessage;
+export type ServerMessage = Welcome | Snapshot | WorldEvent | ErrorMessage | Ack | OtherMessage;
 
 const EVENT_TYPES = new Set([
   'building.upsert',
@@ -228,6 +319,11 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
       return isStr(o.id);
   }
   return false;
+}
+
+export function isAck(m: ServerMessage): m is Ack {
+  const o = m as unknown as Obj;
+  return m.t === 'ack' && isStr(o.req_id);
 }
 
 export function isError(m: ServerMessage): m is ErrorMessage {
