@@ -51,7 +51,7 @@ func TestReconcileIgnoresBareWorkspaceID(t *testing.T) {
 func TestReconcileStrongBeforeWeak(t *testing.T) {
 	cands := []world.Candidate{{ID: "x", WorkspaceID: "w1", AgentSessions: []string{"s"}, LabelCwds: []string{world.LabelCwdKey("same", "/p")}}}
 	obs := []world.WorkerObs{
-		{WorkspaceID: "w1", Label: "same", IdentityCwd: "/p"}, // weak evidence for x, same wsid even
+		{WorkspaceID: "w1", Label: "same", IdentityCwd: "/p"},  // weak evidence for x, same wsid even
 		{WorkspaceID: "w2", Label: "other", AgentSession: "s"}, // strong evidence for x
 	}
 	got := world.Reconcile(obs, cands, nil)
