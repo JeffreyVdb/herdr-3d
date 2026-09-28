@@ -125,8 +125,7 @@ const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const solid = (x0: number, z0: number, x1: number, z1: number, y0: number, y1: number): Solid => ({ x0, z0, x1, z1, y0, y1 });
 const box = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): Box3 => ({ min: [x0, y0, z0], max: [x1, y1, z1] });
 
-export function fireEscape(width: number, depth: number, floors: number, door: { z0: number; z1: number; height: number }): FireEscape {
-  void width;
+export function fireEscape(depth: number, floors: number, door: { z0: number; z1: number; height: number }): FireEscape {
   const x1 = -FACE;
   const inner = { x0: r3(x1 - LANE), x1 };
   const rail = { x0: r3(inner.x0 - RAIL_GAP), x1: inner.x0 };
@@ -219,7 +218,7 @@ export function buildingPlan(outline: Outline, floors: number, door: { z0: numbe
   const W = outline.width;
   const D = outline.depth;
   const n = Math.max(1, floors);
-  const escape = fireEscape(W, D, n, door);
+  const escape = fireEscape(D, n, door);
   const lobby = lobbyLayout(W, D);
   const shaft: Rect = { x0: r3(W / 2 - 1.4), z0: D, x1: r3(W / 2 + 1.4), z1: r3(D + FACE + 2.05) };
   const fence = { west: -YARD_W, north: -YARD_N, east: r3(W + YARD_E), curb: r3(D + SIDEWALK) };

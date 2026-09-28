@@ -98,6 +98,8 @@ export interface FloorLayout {
   fireDoor: { z0: number; z1: number; height: number };
   /** Where the desk grid is centred (between the lounge, the east strip, the north strip and the board wall). */
   deskArea: Rect;
+  /** Footprint of the board partition (the last of `walls`): the floor's lobby is south of it. */
+  boardWall: Rect;
   /** 2D obstacles for walking (walls with the fire-escape doorway open, desks, solid props). */
   colliders: Rect[];
   /** Arrival point and yaw (0 = facing north, -z). */
@@ -236,12 +238,13 @@ export function floorLayout(deskCount: number, outline?: Outline): FloorLayout {
   const bz = depth - BOARD_WALL_Z;
   const boardLen = Math.min(12, width - 6);
   const bx0 = width / 2 - boardLen / 2;
+  const boardWall = box(bx0, 0, bz - 0.1, bx0 + boardLen, 2.5, bz + 0.1);
   const walls: Box3[] = [
     box(-T, 0, -T, width + T, H, 0), // north
     box(-T, 0, depth, width + T, H, depth + T), // south
     box(-T, 0, 0, 0, H, depth), // west
     box(width, 0, 0, width + T, H, depth), // east
-    box(bx0, 0, bz - 0.1, bx0 + boardLen, 2.5, bz + 0.1), // board partition
+    boardWall, // board partition
   ];
   const openings = openingsFor(width, depth);
   const door = openings.find((o) => o.kind === 'door') as Opening;
@@ -286,6 +289,7 @@ export function floorLayout(deskCount: number, outline?: Outline): FloorLayout {
     openings,
     fireDoor: { z0: door.u0, z1: door.u1, height: DOOR_H },
     deskArea,
+    boardWall: rectOf(boardWall),
     colliders,
     spawn: { x: r3(width / 2), z: r3(depth - 1.3), yaw: 0 },
     lights,

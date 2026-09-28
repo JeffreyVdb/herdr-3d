@@ -33,7 +33,7 @@ export function walkOutRoute(layout: FloorLayout, plan: BuildingPlan, storey: nu
   // The corridor between the lounge and the desk grid, then the open strip north of the board wall.
   const corridor = (layout.rug.x1 + layout.deskArea.x0) / 2;
   const strip = D - 5;
-  const west = Math.max(0.9, (layout.walls[4]?.min[0] ?? 3) / 2);
+  const west = Math.max(0.9, layout.boardWall.x0 / 2);
   const dz = (e.door.z0 + e.door.z1) / 2;
   at(slot.seat.x, slot.seat.z, fy);
   at(slot.seat.x, aisle, fy);
