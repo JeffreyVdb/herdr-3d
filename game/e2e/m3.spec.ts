@@ -397,6 +397,39 @@ test('floor settings: one status per row, from the keyboard; commas survive; unt
   clean();
 });
 
+test('a live update keeps keyboard focus on the panel header (Close, Back)', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m3', '', SIM);
+  const rename = (name: string) =>
+    page.evaluate(
+      ([id, n]) => window.__h3d.inject({ t: 'building.upsert', seq: 0, building: { id, name: n, sort: 0, floors: ['herdr-3d', 'depot-manager'] } }),
+      [WORK, name] as const,
+    );
+  await page.evaluate((b) => window.__h3d.openElevator(b), WORK);
+  await page.locator('dialog.panel .panel-close').focus();
+  await rename('Work HQ');
+  await expect(page.locator('dialog.panel h2')).toHaveText('Work HQ');
+  await expect(page.locator('dialog.panel .panel-close')).toBeFocused();
+
+  await page.getByRole('button', { name: 'Settings for herdr-3d' }).click();
+  await page.getByRole('button', { name: 'Back to the elevator' }).focus();
+  await rename('Work');
+  await expect(page.locator('#panel-sub')).toHaveText('herdr-3d · Floor 2 of Work');
+  await expect(page.getByRole('button', { name: 'Back to the elevator' })).toBeFocused();
+  await page.locator('dialog.panel .panel-close').focus();
+  await rename('Work HQ');
+  await expect(page.locator('#panel-sub')).toHaveText('herdr-3d · Floor 2 of Work HQ');
+  await expect(page.locator('dialog.panel .panel-close')).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('m');
+  await page.locator('dialog.panel .panel-close').focus();
+  await rename('Work');
+  await expect(page.locator('dialog.panel .dir-bname').first()).toHaveText('Work');
+  await expect(page.locator('dialog.panel .panel-close')).toBeFocused();
+  clean();
+});
+
 test('sleep asks first; the floor falls asleep and wakes up live around you, workers at their desks', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page, 'demo-m3', '', 'play=none&sim=1&simms=350');

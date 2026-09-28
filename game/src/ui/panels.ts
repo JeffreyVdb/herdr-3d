@@ -185,13 +185,19 @@ export class Panels {
   }
 
   private headFor(title: string, sub: string, lead: Child, back: View | null): Node[] {
-    const close = h('button', { class: 'btn btn--icon panel-close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close));
+    const close = h('button', { class: 'btn btn--icon panel-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close));
     const nodes: Node[] = [];
     if (back) {
       nodes.push(
         h(
           'button',
-          { class: 'btn btn--icon panel-back', 'aria-label': back.kind === 'elevator' ? 'Back to the elevator' : 'Back', title: 'Back', onclick: () => this.show(back) },
+          {
+            class: 'btn btn--icon panel-back',
+            'data-key': 'back',
+            'aria-label': back.kind === 'elevator' ? 'Back to the elevator' : 'Back',
+            title: 'Back',
+            onclick: () => this.show(back),
+          },
           icon(ICON.back),
         ),
       );
@@ -261,7 +267,7 @@ export class Panels {
       floors.length === 0
         ? 'No floors here yet'
         : `${plural(floors.length, 'floor')} · ${hereView ? `you are on ${hereView.level ? `floor ${hereView.level.number}` : hereView.session}` : building === null ? 'sessions in no building' : 'top floor first'}`;
-    this.head.replaceChildren(...this.headFor(this.elevatorTitle(building), sub, display, null));
+    replaceKeepingFocus(this.head, this.headFor(this.elevatorTitle(building), sub, display, null));
 
     if (!floors.length) {
       replaceKeepingFocus(this.body, [h('p', { class: 'panel-empty' }, building === null ? 'Every floor is in a building.' : 'Move floors here from the Buildings panel.')]);
@@ -455,8 +461,9 @@ export class Panels {
     if (key === this.renderKey) return;
     this.renderKey = key;
     const floors = bs.reduce((n, b) => n + store.stack(b.id).length, 0) + lot.length;
-    this.head.replaceChildren(
-      ...this.headFor('Buildings', `${plural(bs.length, 'building')} · ${plural(floors, 'floor')} · changes save at once`, h('div', { class: 'lift-display', 'aria-hidden': 'true' }, icon(ICON.building)), null),
+    replaceKeepingFocus(
+      this.head,
+      this.headFor('Buildings', `${plural(bs.length, 'building')} · ${plural(floors, 'floor')} · changes save at once`, h('div', { class: 'lift-display', 'aria-hidden': 'true' }, icon(ICON.building)), null),
     );
     if (!this.list || !this.body.contains(this.list)) {
       this.list = h('div', { class: 'dir' });
@@ -792,9 +799,7 @@ export class Panels {
       return;
     }
     const where = f.level ? `Floor ${f.level.number} of ${f.building?.name ?? ''}` : LOT;
-    this.head.replaceChildren(
-      ...this.headFor('Floor settings', `${f.session} · ${where}`, h('div', { class: 'lift-display', 'aria-hidden': 'true' }, icon(ICON.gear)), v.from),
-    );
+    replaceKeepingFocus(this.head, this.headFor('Floor settings', `${f.session} · ${where}`, h('div', { class: 'lift-display', 'aria-hidden': 'true' }, icon(ICON.gear)), v.from));
     if (!first && this.settingsForm?.session === v.session) return;
     this.settingsForm = this.buildSettings(f);
     this.body.replaceChildren(this.settingsForm.el);
