@@ -5,10 +5,11 @@
 - `cmd/herdr-world` — server-side bridge daemon (Go).
 - `cmd/h3d-helper` — Mac-side helper (Go, cross-compiled for `darwin/arm64`).
 - `internal/` — shared Go packages. Bridge: `herdr` (the only door to herdr: the read-only client and the allowlisted
-  control surface for wake/sleep), `watch` (session discovery and per-session watchers), `world` (floors/workers from
-  snapshots and `session.json`, identity matching, worker names), `store` (SQLite), `server` (hub + WebSocket, wake/sleep,
-  floor settings), `proto` (protocol v1 types and client), `gitremote` (GitHub origin of a directory, for the repo
-  suggestion), `codex` (Codex session ids from rollout files, for the sleep backfill). Helper: `helper` (ssh tunnel
+  control surface for wake/sleep and hire/send home), `watch` (session discovery and per-session watchers), `world`
+  (floors/workers from snapshots and `session.json`, identity matching, worker names), `store` (SQLite), `server` (hub +
+  WebSocket, wake/sleep, floor settings, hire/send home), `proto` (protocol v1 types and client), `gitremote` (GitHub
+  origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires and send-homes), `codex`
+  (Codex session ids from rollout files, for the sleep backfill). Helper: `helper` (ssh tunnel
   supervisor, game server, `/ws` proxy). `app` holds both command lines.
 - `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).
 - `game/` — the game: Vite + strict TypeScript + three.js (`three/webgpu`), pnpm.
@@ -45,17 +46,38 @@ parts:
 
 - **Reads** (`herdr.Client`): the socket methods `ping`, `session.snapshot` and `events.subscribe`, plus `herdr session
   list --json`. `TestReadOnlyAllowlist` is the tripwire.
-- **Writes, for `floor.wake` / `floor.sleep` only** (`herdr.Control`): exactly six command shapes (`controlShapes`):
-  `systemd-run --user --unit=herdr-s-<name> … /bin/fish -l -c "exec herdr --session '<name>' server"`, `herdr session
-  stop <name> --json`, `herdr --session <name> pane run <pane> "claude --resume <id>"` / `"codex resume <id>"`, `herdr
-  --session <name> pane report-agent-session <pane> --source herdr:codex --agent codex --agent-session-id <id>`, and
-  the read-only `herdr --session <name> pane process-info --pane <pane>`. Session names, pane ids and agent session ids
-  are validated, every argument is its own argv element, sessions outside `--sessions` are refused, and commands run
-  with the `HERDR_*`/`CLAUDE*` variables stripped. `TestControlAllowlist` pins the set and the argv; widening either
-  needs review.
+- **Writes** (`herdr.Control`), for `floor.wake` / `floor.sleep` and `worker.hire` / `worker.fire` only: exactly the
+  command shapes in `controlShapes`.
+  - Wake and sleep: `systemd-run --user --unit=herdr-s-<name> … /bin/fish -l -c "exec herdr --session '<name>'
+    server"`, `herdr session stop <name> --json`, `herdr --session <name> pane run <pane> "claude --resume <id>"` /
+    `"codex resume <id>"`, `herdr --session <name> pane report-agent-session <pane> --source herdr:codex --agent codex
+    --agent-session-id <id>`, and the read-only `herdr --session <name> pane process-info --pane <pane>`.
+  - Hire: `workspace create --cwd <dir> --label <label> --no-focus`, `worktree create --cwd <dir> --branch h3d/<…>
+    --base origin/<…> --label <label> --no-focus`, `pane rename <pane> h3d-<hex>` (the marker), `agent start <name>
+    --kind claude --pane <pane> --timeout 30000 -- --model <m> --effort <e> --permission-mode bypassPermissions --name
+    <label>` / `--kind codex … -- -m <m> -c model_reasoning_effort=<e> --dangerously-bypass-approvals-and-sandbox`, the
+    read-only `pane read <pane> --source visible` (trust dialog), `pane send-keys <pane> down|enter|ctrl+c`, `agent
+    prompt <pane> <text> --wait --until working --until blocked --timeout 8000`.
+  - Send home: `pane send-text <pane> /exit` / `/quit`, `workspace close <ws>`, `worktree remove --workspace <ws>`
+    (never `--force`, never `--group`).
+
+  Every variable is validated (session names, pane/workspace ids, agent session ids, absolute clean directories,
+  labels without control characters or a leading `-`, `h3d/…` branches, `origin/…` bases, `h3d-<hex>` markers, models
+  and efforts, prompts not starting with `--`), every argument is its own argv element, sessions outside `--sessions`
+  are refused, and commands run with the `HERDR_*`/`CLAUDE*` variables stripped. `TestControlAllowlist` pins the set,
+  the argv and the exported methods; widening any needs review.
+- **git** (`gitops.Git`, hires and send-homes only): exactly ten shapes (`shapes`, pinned by `TestGitAllowlist`):
+  `git -C <dir>` `rev-parse --show-toplevel`, `fetch --quiet origin`, `symbolic-ref --quiet --short
+  refs/remotes/origin/HEAD`, `log -1 --format=%H %ct origin/<…> --`, `status --porcelain`, `symbolic-ref --quiet --short
+  HEAD`, `rev-list --count HEAD --not --remotes`, `rev-list --count refs/heads/h3d/<…> --not --remotes`, `rev-parse
+  --verify --quiet refs/heads/h3d/<…>`, and `branch -D h3d/<…>`. A branch is deleted only when the bridge recorded
+  making it for that worker (SQLite `hire_branch`, with its base commit; the name alone proves nothing) and either
+  still points at that base (a hire's rollback, clean tree) or has all its commits on a remote (send home, the
+  checkout still on it). Same clean environment, plus `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`.
 
 Everything else the bridge changes is its own SQLite database. How a wake and a sleep go, and what they log:
-[`docs/protocol.md` "Wake and sleep"](docs/protocol.md#wake-and-sleep).
+[`docs/protocol.md` "Wake and sleep"](docs/protocol.md#wake-and-sleep); hiring and sending home:
+[`docs/protocol.md` "Hire and send home"](docs/protocol.md#hire-and-send-home).
 
 Run a private instance next to (or instead of) the real one; `dump` and `cmd` take the same `--socket`:
 
@@ -70,7 +92,8 @@ bin/herdr-world cmd --socket "$sock" floor.assign '{"session":"herdr-3d","buildi
 bin/herdr-world cmd --socket "$sock" floor.settings.set '{"session":"herdr-3d","repo":"JeffreyVdb/herdr-3d"}'
 ```
 
-A private bridge acts on real sessions as soon as it is sent `floor.sleep` or `floor.wake`. Always start it with a
+A private bridge acts on real sessions as soon as it is sent `floor.sleep`, `floor.wake`, `worker.hire` or
+`worker.fire`. Always start it with a
 `--sessions` that matches only your throwaway sessions (e.g. `'^h3d-mytask-'`), so it cannot even see the sessions
 everyone works in. To try wake and sleep safely:
 
@@ -91,19 +114,40 @@ Real agents in such a session must be cheap: `claude --model claude-haiku-4-5-20
 gpt-6-luna -c model_reasoning_effort=low`, one short turn. Never sleep or wake a session you did not create, and never
 `systemctl stop` a `herdr-s-*` unit that `herdr session stop` can stop (it loses the agents' resume link).
 
+To try hiring and sending home, in such a throwaway session (the real `hire_options` have no Claude model cheap enough
+for trying things: use Codex `gpt-6-luna` / `low`, and give a Claude worker no prompt, so it is never asked
+anything):
+
+```sh
+repo=/tmp/h3d-mytask/repo; git init -q --bare /tmp/h3d-mytask/origin.git && git clone -q /tmp/h3d-mytask/origin.git $repo
+git -C $repo commit -q --allow-empty -m init && git -C $repo push -q origin HEAD:main && git -C $repo remote set-head origin main
+bin/herdr-world cmd --socket "$sock" hire.prepare "{\"session\":\"$s\",\"cwd\":\"$repo\"}"
+bin/herdr-world cmd --socket "$sock" worker.hire "{\"session\":\"$s\",\"desk_index\":2,\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"cwd\":\"$repo\",\"worktree\":true,\"prompt\":\"Reply with exactly the word: pong\"}"
+bin/herdr-world cmd --socket "$sock" worker.fire.prepare '{"id":"<id from the ack>"}'
+bin/herdr-world cmd --socket "$sock" worker.fire '{"id":"<id>","worktree":"delete_branch"}'   # only when clean and pushed
+sqlite3 /tmp/h3d-mytask/world.db 'select cmd, ok, error, result from audit_log'
+```
+
+herdr puts worktrees in `~/.herdr/worktrees/<repo name>/`: give a throwaway repository a unique name and remove that
+directory when done. Answering a trust dialog is remembered by the agent (`~/.claude.json`, `~/.codex/config.toml`) for
+that directory.
+
 | flag | env | default |
 |---|---|---|
 | `--socket` | `HERDR_WORLD_SOCKET` | `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` |
 | `--db` (serve) | `HERDR_WORLD_DB` | `$XDG_STATE_HOME/herdr-world/world.db`, else `~/.local/state/herdr-world/world.db` |
 | `--herdr` | `HERDR_WORLD_HERDR` | `herdr` on `PATH` (a woken server runs `herdr` from the login shell's `PATH`) |
 | `--systemd-run` | `HERDR_WORLD_SYSTEMD_RUN` | `systemd-run` on `PATH`: starts woken sessions |
-| `--sessions` | `HERDR_WORLD_SESSIONS` | all; a regexp limits which sessions are watched, and the only ones commands may wake, sleep or configure |
+| `--sessions` | `HERDR_WORLD_SESSIONS` | all; a regexp limits which sessions are watched, and the only ones commands may wake, sleep, configure, hire into or send workers home from |
 | `--poll`, `--resnapshot` | `HERDR_WORLD_POLL`, `HERDR_WORLD_RESNAPSHOT` | `2s`, `30s` |
 | `--max-desks` | `HERDR_WORLD_MAX_DESKS` | `96`: cap on the desks a floor renders beyond its occupied ones (`floor.desks`) |
 | `--name-hold` | `HERDR_WORLD_NAME_HOLD` | `168h` (7 days): how long a worker's name stays held after the bridge sees it leave its floor; then a newcomer may take it (`worker.name`) |
 | `--wake-timeout` | `HERDR_WORLD_WAKE_TIMEOUT` | `10s`: how long a woken server has to start, answer `ping` and be seen running (else `wake_failed`) |
 | `--resume-timeout` | `HERDR_WORLD_RESUME_TIMEOUT` | `10s`: how long a wake waits for the agents before the fallback, and again for the fallback and its result (a wake acks within about `--wake-timeout` + 2 × this) |
 | `--codex-sessions` | `HERDR_WORLD_CODEX_SESSIONS` | `$CODEX_HOME/sessions`, else `~/.codex/sessions`: Codex rollouts, for the sleep backfill |
+| `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
+| `--warn-workers`, `--max-workers` | `HERDR_WORLD_WARN_WORKERS`, `HERDR_WORLD_MAX_WORKERS` | `48`, `96`: the same for all watched running floors together |
+| `--git` | `HERDR_WORLD_GIT` | `git` on `PATH`: worktree hires, send-home checks and the repo suggestion |
 | `--log-level`, `--log-format` | `HERDR_WORLD_LOG_LEVEL`, `HERDR_WORLD_LOG_FORMAT` | `info`, `text` (or `json`) |
 
 Install as a user service:
@@ -118,7 +162,8 @@ journalctl --user -u herdr-world -f
 ### Integration test
 
 `go test ./...` never touches herdr or systemd (fake socket server + recorded fixtures; `herdr.Control` gets a fake
-`Runner` that plays herdr and systemd-run). `make integration` runs, with build tag `integration`, against the
+`Runner` that plays herdr and systemd-run; hires and send-homes run against an in-memory herdr floor and git). Only
+`internal/gitops` runs the real `git`, on repositories in a temp dir. `make integration` runs, with build tag `integration`, against the
 installed herdr:
 
 - `TestIntegrationThrowawaySession`: starts a headless server for a fresh session `h3d-it-<random>`, creates
@@ -129,7 +174,16 @@ installed herdr:
   transient unit `herdr-s-h3d-it-…` runs the server, and that server has none of the test's `CLAUDE*`/`HERDR_*`
   variables.
 
-Both always name the `h3d-it-…` session explicitly, and the bridge under test watches only that session. They strip
+- `TestIntegrationHireAndSendHome`: hires a Codex worker (`gpt-6-luna`, `low`) into a worktree of a local repository
+  whose bare "origin" got a commit the local clone lacks, and checks the worktree has it; hires a Claude worker
+  (`claude-haiku-4-5-20251001`, `low`, allowed by a test-only `ServeConfig.HireOptions`) into a fresh directory; both
+  with a one-line prompt and through their trust dialogs. Then checks desks, markers, native args, the remembered
+  choice, the capacity guard, and sends both home: a dirty and an unpushed worktree are refused a delete, a pushed one
+  goes with its branch, the agents exit gracefully and the audit log has every step. It removes
+  `~/.herdr/worktrees/h3d-it-repo-<random>` afterwards. The agents remember the trust of the test's temporary
+  directories.
+
+All of them always name the `h3d-it-…` session explicitly, and the bridge under test watches only that session. They strip
 `HERDR_*`/`CLAUDE*` pane variables from herdr's environment and in `t.Cleanup`, also on failure, stop the session with
 `herdr session stop`, wait for the `herdr-s-h3d-it-…` unit to be collected (stopping it only as a last resort) and
 delete the session. They never touch any other session, so they are safe to run from inside a herdr pane. If a run is

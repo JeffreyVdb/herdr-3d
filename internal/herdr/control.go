@@ -12,16 +12,20 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
-// Control is the bridge's only write path to herdr, for waking and putting
-// floors to sleep. It is as narrow as Client is read-only: it runs exactly
-// the commands in controlShapes, with every variable part validated and
-// passed as its own argv element (no shell, except the one fish -c line
-// that systemd-run starts, whose only variable is a validated session
-// name in single quotes). It never closes, creates, renames or focuses
-// anything, never types into a pane except to resume an agent, and never
-// uses systemctl.
+// Control is the bridge's only write path to herdr: waking and putting
+// floors to sleep, hiring workers and sending them home. It is as narrow
+// as Client is read-only: it runs exactly the commands in controlShapes,
+// with every variable part validated and passed as its own argv element
+// (no shell, except the one fish -c line that systemd-run starts, whose
+// only variable is a validated session name in single quotes). It creates
+// and closes only single workspaces (never a group), renames only a hired
+// worker's root pane (its identity marker), types into a pane only a
+// resume command, a hire's first prompt, the agents' exit commands and a
+// fixed set of keys, never focuses anything and never uses systemctl.
 type Control struct {
 	// Herdr is the herdr executable (default "herdr").
 	Herdr string
@@ -55,6 +59,21 @@ const (
 	opResumeCodex  = "resume-codex"
 	opReportCodex  = "report-codex-session"
 	opProcessInfo  = "process-info"
+
+	opWorkspaceCreate = "workspace-create"
+	opWorktreeCreate  = "worktree-create"
+	opMarkPane        = "mark-pane"
+	opStartClaude     = "start-claude"
+	opStartCodex      = "start-codex"
+	opReadPane        = "read-pane"
+	opKeyDown         = "key-down"
+	opKeyEnter        = "key-enter"
+	opKeyCtrlC        = "key-ctrl-c"
+	opPrompt          = "prompt"
+	opExitClaude      = "exit-claude"
+	opExitCodex       = "exit-codex"
+	opWorkspaceClose  = "workspace-close"
+	opWorktreeRemove  = "worktree-remove"
 )
 
 // controlShapes is the complete set of commands Control may run, as argv
@@ -77,12 +96,51 @@ var controlShapes = map[string][]string{
 		"--source", "herdr:codex", "--agent", "codex", "--agent-session-id", "{id}"},
 	// Read only: what runs in a pane (is the agent up? is it at a shell?).
 	opProcessInfo: {"{herdr}", "--session", "{session}", "pane", "process-info", "--pane", "{pane}"},
+
+	// Hire: a workspace, or a worktree branched from a fetched remote base.
+	opWorkspaceCreate: {"{herdr}", "--session", "{session}", "workspace", "create", "--cwd", "{dir}",
+		"--label", "{label}", "--no-focus"},
+	opWorktreeCreate: {"{herdr}", "--session", "{session}", "worktree", "create", "--cwd", "{dir}",
+		"--branch", "{branch}", "--base", "{base}", "--label", "{label}", "--no-focus"},
+	// Hire: the identity marker on the new root pane.
+	opMarkPane: {"{herdr}", "--session", "{session}", "pane", "rename", "{pane}", "{marker}"},
+	// Hire: herdr types the agent into the pane's shell (fish wrappers apply).
+	opStartClaude: {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "claude",
+		"--pane", "{pane}", "--timeout", "30000", "--",
+		"--model", "{model}", "--effort", "{effort}", "--permission-mode", "bypassPermissions", "--name", "{label}"},
+	opStartCodex: {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "codex",
+		"--pane", "{pane}", "--timeout", "30000", "--",
+		"-m", "{model}", "-c", "model_reasoning_effort={effort}", "--dangerously-bypass-approvals-and-sandbox"},
+	// Read only: the screen, to recognise an agent's trust dialog.
+	opReadPane: {"{herdr}", "--session", "{session}", "pane", "read", "{pane}", "--source", "visible"},
+	// Answering the trust dialog; Ctrl-C when an agent does not exit.
+	opKeyDown:  {"{herdr}", "--session", "{session}", "pane", "send-keys", "{pane}", "down"},
+	opKeyEnter: {"{herdr}", "--session", "{session}", "pane", "send-keys", "{pane}", "enter"},
+	opKeyCtrlC: {"{herdr}", "--session", "{session}", "pane", "send-keys", "{pane}", "ctrl+c"},
+	// Hire: the optional first task, confirmed by the agent starting to work
+	// (else agent_prompt_stalled after 5 s).
+	opPrompt: {"{herdr}", "--session", "{session}", "agent", "prompt", "{pane}", "{text}",
+		"--wait", "--until", "working", "--until", "blocked", "--timeout", "8000"},
+	// Send home: the agents' own exit commands (then Enter).
+	opExitClaude: {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "/exit"},
+	opExitCodex:  {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "/quit"},
+	// Send home: close the one workspace, or remove its worktree (which
+	// closes it; git refuses a dirty tree, and --force is never passed).
+	opWorkspaceClose: {"{herdr}", "--session", "{session}", "workspace", "close", "{workspace}"},
+	opWorktreeRemove: {"{herdr}", "--session", "{session}", "worktree", "remove", "--workspace", "{workspace}"},
 }
 
 var (
 	sessionNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	paneIDRe      = regexp.MustCompile(`^[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$`)
 	agentIDRe     = regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`)
+	workspaceIDRe = regexp.MustCompile(`^[A-Za-z0-9]{1,32}$`)
+	branchRe      = regexp.MustCompile(`^h3d/[a-z0-9]+(-[a-z0-9]+)*$`)
+	baseRe        = regexp.MustCompile(`^origin/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$`)
+	markerRe      = regexp.MustCompile(`^h3d-[0-9a-f]{6,32}$`)
+	agentNameRe   = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+	modelRe       = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,63}$`)
+	effortRe      = regexp.MustCompile(`^[a-z]{1,16}$`)
 	placeholderRe = regexp.MustCompile(`\{[a-z-]+\}`)
 )
 
@@ -103,6 +161,70 @@ func ValidAgentSessionID(id string) bool { return agentIDRe.MatchString(id) && i
 func validHome(dir string) bool {
 	return filepath.IsAbs(dir) && filepath.Clean(dir) == dir && !strings.ContainsAny(dir, "\x00\n\r")
 }
+
+// ValidDir reports whether dir may be passed as a working directory: an
+// absolute, clean path without NUL or line breaks.
+func ValidDir(dir string) bool { return validHome(dir) }
+
+// MaxLabel bounds a hired worker's label (workspace label, Claude --name).
+const MaxLabel = 64
+
+// ValidLabel reports whether label may label a hired workspace: 1-64
+// bytes of UTF-8 without control characters, not starting with "-" (a
+// flag to herdr or to the agent's CLI).
+func ValidLabel(label string) bool {
+	if label == "" || len(label) > MaxLabel || !utf8.ValidString(label) || label[0] == '-' ||
+		strings.TrimSpace(label) == "" {
+		return false
+	}
+	for _, r := range label {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// MaxPrompt bounds a hire's first prompt.
+const MaxPrompt = 32 << 10
+
+// ValidPrompt reports whether text may be sent as a prompt: 1-32 KiB of
+// UTF-8 without NUL, not starting with "--" (herdr's CLI would read it as
+// one of its flags).
+func ValidPrompt(text string) bool {
+	return strings.TrimSpace(text) != "" && len(text) <= MaxPrompt && utf8.ValidString(text) &&
+		!strings.ContainsRune(text, 0) && !strings.HasPrefix(text, "--")
+}
+
+// ValidBranch reports whether name is a branch the bridge makes for a
+// worktree hire: h3d/ and lower-case words joined by "-".
+func ValidBranch(name string) bool { return branchRe.MatchString(name) && len(name) <= 100 }
+
+// ValidBase reports whether ref is a remote-tracking base "origin/<branch>"
+// (no "..", no ".lock" component).
+func ValidBase(ref string) bool {
+	if !baseRe.MatchString(ref) || len(ref) > 200 || strings.Contains(ref, "..") {
+		return false
+	}
+	for _, part := range strings.Split(ref, "/") {
+		if strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidMarker reports whether label is an identity marker h3d-<hex>.
+func ValidMarker(label string) bool { return markerRe.MatchString(label) }
+
+// ValidAgentName reports whether name may name a hired agent in herdr.
+func ValidAgentName(name string) bool { return agentNameRe.MatchString(name) && len(name) <= 64 }
+
+func validModel(m string) bool  { return modelRe.MatchString(m) }
+func validEffort(e string) bool { return effortRe.MatchString(e) }
+
+// ValidWorkspaceID reports whether id looks like a herdr workspace id ("w1").
+func ValidWorkspaceID(id string) bool { return workspaceIDRe.MatchString(id) }
 
 // Resumable harnesses and their resume shapes.
 var resumeOps = map[string]string{"claude": opResumeClaude, "codex": opResumeCodex}
@@ -214,10 +336,20 @@ func (p *ProcessInfo) Runs(harness, agentSession string) bool {
 
 // placeholders validate the variable parts of controlShapes.
 var placeholders = map[string]func(string) bool{
-	"session": ValidSessionName,
-	"pane":    ValidPaneID,
-	"id":      ValidAgentSessionID,
-	"home":    validHome,
+	"session":   ValidSessionName,
+	"pane":      ValidPaneID,
+	"id":        ValidAgentSessionID,
+	"home":      validHome,
+	"dir":       ValidDir,
+	"label":     ValidLabel,
+	"branch":    ValidBranch,
+	"base":      ValidBase,
+	"marker":    ValidMarker,
+	"agent":     ValidAgentName,
+	"model":     validModel,
+	"effort":    validEffort,
+	"text":      ValidPrompt,
+	"workspace": ValidWorkspaceID,
 }
 
 // run is the single choke point for control commands: it expands the
@@ -261,8 +393,11 @@ func (c *Control) run(ctx context.Context, op string, vars map[string]string) ([
 	timeout := c.Timeout
 	if timeout <= 0 {
 		timeout = 15 * time.Second
-		if op == opStop {
+		switch op {
+		case opStop:
 			timeout = 45 * time.Second
+		case opStartClaude, opStartCodex, opWorktreeCreate, opWorktreeRemove:
+			timeout = 40 * time.Second // agent start waits up to 30 s itself
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -273,11 +408,21 @@ func (c *Control) run(ctx context.Context, op string, vars map[string]string) ([
 	}
 	stdout, stderr, err := runner(ctx, argv)
 	if err != nil {
+		what := "herdr control " + op
+		// herdr reports server errors as JSON {"error":{…}}, on stderr.
+		for _, out := range [][]byte{stderr, stdout} {
+			var resp struct {
+				Error *APIError `json:"error"`
+			}
+			if json.Unmarshal(bytes.TrimSpace(out), &resp) == nil && resp.Error != nil {
+				return stdout, fmt.Errorf("%s: %w", what, resp.Error)
+			}
+		}
 		msg := strings.TrimSpace(string(stderr))
 		if msg == "" {
 			msg = strings.TrimSpace(string(stdout))
 		}
-		return stdout, fmt.Errorf("%s: %w: %.500s", strings.Join(argv[:min(len(argv), 3)], " "), err, msg)
+		return stdout, fmt.Errorf("%s: %w: %.500s", what, err, msg)
 	}
 	return stdout, nil
 }

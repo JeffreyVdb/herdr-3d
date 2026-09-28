@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
@@ -61,8 +62,38 @@ type Options struct {
 	// RepoOf returns the GitHub owner/repo of a directory, or "" (nil: no
 	// repo suggestions). It runs off the hub goroutine.
 	RepoOf func(ctx context.Context, dir string) string
-	// StatDir checks a default_cwd setting (default: an existing directory).
+	// StatDir checks a default_cwd setting and a hire's cwd (default: an
+	// existing directory).
 	StatDir func(dir string) error
+
+	// Hire hires workers and sends them home (nil: worker.hire and
+	// worker.fire fail with internal).
+	Hire HireHerdr
+	// Git reads git state for hires and send-homes and runs their few git
+	// commands (nil: no git info, no worktree hires or deletes).
+	Git Git
+	// Caps are the worker caps (zero: DefaultCaps).
+	Caps Caps
+	// HireOptions, if set, replaces what can be hired (tests: cheap models).
+	HireOptions *proto.HireOptions
+	// Load reads the host load for hire.prepare (nil: none).
+	Load func() *proto.HostLoad
+	// HomeDir is a hire's cwd when neither it nor the floor names one
+	// (default: the user's home directory).
+	HomeDir string
+	// BranchOf reads the branch checked out at a linked worktree (default
+	// gitops.HeadBranch).
+	BranchOf func(checkout string) string
+	// TrustTimeout bounds answering an agent's trust dialog, and retrying
+	// the first prompt (default DefaultTrustTimeout); SeenTimeout how long a
+	// hire or send-home waits for the bridge to see the workspace appear or
+	// go (default DefaultSeenTimeout); ExitTimeout how long an agent has to
+	// exit when sent home (default DefaultExitTimeout).
+	TrustTimeout, SeenTimeout, ExitTimeout time.Duration
+	// HirePoll is how often a hire or send-home looks at a pane, and
+	// ExitPause the pause between Codex's /quit and Enter (defaults 250 ms,
+	// 400 ms).
+	HirePoll, ExitPause time.Duration
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -107,6 +138,8 @@ type Hub struct {
 	viewFloors    map[string]proto.Floor
 
 	settings map[string]store.FloorSettings // by session (mirrors floor_repo)
+	lastHire map[string]store.Hire          // by session (mirrors floor_hire_last)
+	branches map[string]branchRead          // checkout path → its branch, read recently
 	resume   map[string]string              // worker id → resume state, during and after a wake
 	rescan   chan struct{}                  // asks the watcher to look at sessions now
 	suggest  chan suggestJob                // repo lookups for the suggester
@@ -122,9 +155,12 @@ type floorState struct {
 	byWS    map[string]string // workspace id → worker id
 	order   []string          // worker ids in herdr's sidebar order
 
-	op        *floorOp          // wake or sleep in progress
-	origins   map[string]string // cwd → GitHub repo, from the suggester
-	askedCwds []string          // cwds of the last repo lookup
+	op        *floorOp           // wake or sleep in progress
+	hires     map[string]*hireOp // hires in flight, by worker id
+	fires     map[string]*fireOp // send-homes in flight, by worker id
+	last      []world.WorkerObs  // the workers last observed (a hire re-applies them)
+	origins   map[string]string  // cwd → GitHub repo, from the suggester
+	askedCwds []string           // cwds of the last repo lookup
 	askedAt   time.Time
 	suggested *proto.Suggested
 }
@@ -142,6 +178,13 @@ type workerMeta struct {
 	harness, model, effort string
 	status                 string
 	statusSince            int64
+	hiredAt                int64
+}
+
+// branchRead is a linked worktree's branch as read at.
+type branchRead struct {
+	branch string
+	at     time.Time
 }
 
 // nameClaim is who owns a name on a floor.
@@ -204,6 +247,30 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if opts.StatDir == nil {
 		opts.StatDir = isDir
 	}
+	if opts.Caps == (Caps{}) {
+		opts.Caps = DefaultCaps
+	}
+	if opts.HomeDir == "" {
+		opts.HomeDir = homeDir()
+	}
+	if opts.BranchOf == nil {
+		opts.BranchOf = gitops.HeadBranch
+	}
+	if opts.TrustTimeout <= 0 {
+		opts.TrustTimeout = DefaultTrustTimeout
+	}
+	if opts.SeenTimeout <= 0 {
+		opts.SeenTimeout = DefaultSeenTimeout
+	}
+	if opts.ExitTimeout <= 0 {
+		opts.ExitTimeout = DefaultExitTimeout
+	}
+	if opts.HirePoll <= 0 {
+		opts.HirePoll = defaultHirePoll
+	}
+	if opts.ExitPause <= 0 {
+		opts.ExitPause = defaultExitPause
+	}
 	var epoch [8]byte
 	_, _ = rand.Read(epoch[:])
 	h := &Hub{
@@ -224,6 +291,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		viewBuildings: map[string]proto.Building{},
 		viewFloors:    map[string]proto.Floor{},
 		resume:        map[string]string{},
+		branches:      map[string]branchRead{},
 		rescan:        make(chan struct{}, 1),
 		suggest:       make(chan suggestJob, 256),
 	}
@@ -232,6 +300,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	}
 	var err error
 	if h.settings, err = st.FloorSettings(ctx); err != nil {
+		return nil, err
+	}
+	if h.lastHire, err = st.LastHires(ctx); err != nil {
 		return nil, err
 	}
 	desks, err := st.Desks(ctx)
@@ -349,10 +420,23 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			h.reply(c, cmd, nil, errNoReqID)
 			return
 		}
-		if cmd.T == proto.CmdFloorWake || cmd.T == proto.CmdFloorSleep {
-			// Accepted: the audit row is written now and completed, and the
-			// reply sent, when the operation ends.
-			if err := h.startFloorOp(ctx, c, cmd); err != nil {
+		var start func(context.Context, *Client, proto.Command) error
+		switch cmd.T {
+		case proto.CmdFloorWake, proto.CmdFloorSleep:
+			start = h.startFloorOp
+		case proto.CmdWorkerHire:
+			start = h.startHire
+		case proto.CmdWorkerFire:
+			start = h.startFire
+		case proto.CmdHirePrepare:
+			start = h.startHirePrepare
+		case proto.CmdFirePrepare:
+			start = h.startFirePrepare
+		}
+		if start != nil {
+			// Accepted: the audit row is written (or begun) and the reply
+			// sent when the slow part is done.
+			if err := start(ctx, c, cmd); err != nil {
 				h.audit(ctx, c, cmd, err)
 				h.reply(c, cmd, nil, err)
 			}
@@ -389,7 +473,10 @@ var (
 
 func errorCode(err error) string {
 	var bad *badArgsError
+	var fetch *fetchFailedError
 	switch {
+	case errors.As(err, &fetch):
+		return proto.ErrFetchFailed
 	case errors.As(err, &bad), errors.Is(err, store.ErrInvalid), errors.Is(err, errNoReqID):
 		return proto.ErrBadRequest
 	case errors.Is(err, store.ErrNotFound):
@@ -408,6 +495,18 @@ func errorCode(err error) string {
 		return proto.ErrWakeFailed
 	case errors.Is(err, errSleepFailed):
 		return proto.ErrSleepFailed
+	case errors.Is(err, errUnknownWorker):
+		return proto.ErrUnknownWorker
+	case errors.Is(err, errDeskTaken):
+		return proto.ErrDeskTaken
+	case errors.Is(err, errCapacity):
+		return proto.ErrCapacity
+	case errors.Is(err, errNotClean):
+		return proto.ErrNotClean
+	case errors.Is(err, errHireFailed):
+		return proto.ErrHireFailed
+	case errors.Is(err, errFireFailed):
+		return proto.ErrFireFailed
 	}
 	return proto.ErrInternal
 }
@@ -555,6 +654,7 @@ func (h *Hub) applyFloor(ctx context.Context, u world.FloorObs) {
 	}
 	var evs []proto.Event
 	if !u.KeepWorkers {
+		f.last = u.Workers
 		evs = h.syncWorkers(ctx, u.Session, f, u.Workers, fresh, closing)
 		h.refreshSuggested(u.Session, f)
 		h.askOrigins(u.Session, f)
@@ -590,6 +690,20 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 	h.syncLayout()
 }
 
+// resync re-applies a running floor's last observation, e.g. once a hire
+// knows its workspace.
+func (h *Hub) resync(ctx context.Context, session string) {
+	f := h.floors[session]
+	if f == nil || !f.running {
+		return
+	}
+	evs := h.syncWorkers(ctx, session, f, f.last, false, false)
+	h.syncLayout()
+	for _, ev := range evs {
+		h.emit(ev)
+	}
+}
+
 // syncWorkers assigns identities, desks and names to the observed workers
 // of a floor and returns the worker events of the diff (the caller emits
 // them after the floor's own events).
@@ -599,6 +713,24 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		for _, w := range obs {
 			if id, ok := f.byWS[w.WorkspaceID]; ok {
 				assigned[w.WorkspaceID] = id
+			}
+		}
+	}
+	// A hired workspace is its hire's worker, whatever else matched it.
+	creating := false
+	for _, op := range f.hires {
+		if op.workspaceID == "" {
+			creating = true
+			continue
+		}
+		for ws, id := range assigned {
+			if id == op.id && ws != op.workspaceID {
+				delete(assigned, ws)
+			}
+		}
+		for _, w := range obs {
+			if w.WorkspaceID == op.workspaceID {
+				assigned[w.WorkspaceID] = op.id
 			}
 		}
 	}
@@ -621,11 +753,20 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		for _, r := range recs {
 			records[r.ID] = r
 		}
+		for _, op := range f.hires {
+			taken[op.id] = true // a hire's identity is only its own workspace
+		}
 		matches := world.Reconcile(unresolved, candidates(recs), taken)
 		for _, w := range unresolved {
 			if m, ok := matches[w.WorkspaceID]; ok {
 				assigned[w.WorkspaceID] = m.ID
 				h.log.Debug("worker reconciled", "session", session, "workspace", w.WorkspaceID, "worker", m.ID, "by", m.How)
+				continue
+			}
+			if creating {
+				// Possibly the workspace a hire is creating: wait until the
+				// hire knows its id (it re-applies this observation).
+				h.log.Debug("new workspace deferred while a hire creates one", "session", session, "workspace", w.WorkspaceID)
 				continue
 			}
 			id := uuid.NewString()
@@ -634,6 +775,15 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		}
 	}
 
+	if creating {
+		kept := make([]world.WorkerObs, 0, len(obs))
+		for _, w := range obs {
+			if _, ok := assigned[w.WorkspaceID]; ok {
+				kept = append(kept, w)
+			}
+		}
+		obs = kept
+	}
 	present := map[string]bool{}
 	for _, id := range assigned {
 		present[id] = true
@@ -659,7 +809,13 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 				h.log.Error("recording closed worker failed", "worker", id, "err", err)
 			}
 		}
-		evs = append(evs, proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: session, WorkspaceID: w.WorkspaceID})
+		ev := proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: session, WorkspaceID: w.WorkspaceID}
+		if op := f.fires[id]; op != nil && !obsWS[op.workspaceID] {
+			ev.Reason = proto.RemovedSentHome
+			op.removed = true
+			op.signal()
+		}
+		evs = append(evs, ev)
 	}
 	// Before anyone is named: whoever left (seen now, or while the bridge
 	// was down) holds its name from now on.
@@ -685,16 +841,27 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		var base workerMeta
 		if prev := h.workers[id]; prev != nil {
 			base = metaOf(prev)
+		} else if op := f.hires[id]; op != nil {
+			base = workerMeta{harness: op.harness, model: op.model, effort: op.effort, hiredAt: op.hiredAt}
 		} else if r, ok := records[id]; ok {
-			base = workerMeta{harness: r.Harness, model: r.Model, effort: r.Effort, status: r.Status, statusSince: r.StatusSince}
+			base = workerMeta{harness: r.Harness, model: r.Model, effort: r.Effort, status: r.Status, statusSince: r.StatusSince,
+				hiredAt: r.HiredAt}
 		}
 		metas[i] = nextMeta(base, w, now)
 	}
 	names, claimed := h.nameWorkers(session, ids, at)
+	for i, id := range ids {
+		if op := f.hires[id]; op != nil && !op.seen {
+			claimed[i] = true // its name was only reserved in memory
+		}
+	}
 
 	used := map[int]bool{}
 	for _, d := range desks {
 		used[d] = true
+	}
+	for _, op := range f.hires {
+		used[op.desk] = true // reserved
 	}
 	order := make([]string, 0, len(obs))
 	for i, w := range obs {
@@ -707,6 +874,13 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			}
 		}
 		desk, seated := desks[id]
+		if op := f.hires[id]; !seated && op != nil {
+			desk, seated = op.desk, true
+			desks[id] = desk
+			if err := h.st.AssignDesk(ctx, session, desk, id); err != nil {
+				h.log.Error("saving desk failed", "worker", id, "desk", desk, "err", err)
+			}
+		}
 		if !seated {
 			for used[desk] {
 				desk++
@@ -718,6 +892,13 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			}
 		}
 		next := workerView(id, session, w, metas[i], names[i], desk, h.resume[id])
+		if w.Worktree != nil && w.Worktree.Linked && w.Worktree.CheckoutPath != "" {
+			next.Branch = h.branchOf(w.Worktree.CheckoutPath, at)
+		}
+		if op := f.hires[id]; op != nil && !op.seen {
+			op.seen = true
+			op.signal()
+		}
 		prev := h.workers[id]
 		h.workers[id] = next
 		switch {
@@ -758,7 +939,23 @@ func (h *Hub) floorNames(session string) map[string]nameClaim {
 }
 
 func metaOf(w *proto.Worker) workerMeta {
-	return workerMeta{harness: w.Harness, model: w.Model, effort: w.Effort, status: w.Status, statusSince: w.StatusSince}
+	return workerMeta{harness: w.Harness, model: w.Model, effort: w.Effort, status: w.Status, statusSince: w.StatusSince,
+		hiredAt: w.HiredAt}
+}
+
+// branchTTL is how long a linked worktree's branch, read from its files,
+// is reused.
+const branchTTL = 15 * time.Second
+
+// branchOf returns the branch checked out at a linked worktree, read at
+// most every branchTTL.
+func (h *Hub) branchOf(checkout string, at time.Time) string {
+	if r, ok := h.branches[checkout]; ok && at.Sub(r.at) < branchTTL && !at.Before(r.at) {
+		return r.branch
+	}
+	b := h.opts.BranchOf(checkout)
+	h.branches[checkout] = branchRead{branch: b, at: at}
+	return b
 }
 
 // nextMeta folds an observation into what the bridge knows about a worker:
@@ -878,7 +1075,7 @@ func (h *Hub) persist(ctx context.Context, id, session string, w world.WorkerObs
 		}
 	}
 	rec := store.Worker{ID: id, Session: session, WorkspaceID: w.WorkspaceID, Label: w.Label, Fingerprints: fps,
-		Status: m.status, StatusSince: m.statusSince, Harness: m.harness, Model: m.model, Effort: m.effort}
+		Status: m.status, StatusSince: m.statusSince, Harness: m.harness, Model: m.model, Effort: m.effort, HiredAt: m.hiredAt}
 	if err := h.st.SaveWorker(ctx, rec); err != nil {
 		h.log.Error("saving worker failed", "worker", id, "err", err)
 		return
@@ -935,7 +1132,7 @@ func workerView(id, session string, w world.WorkerObs, m workerMeta, name string
 		AgentSession: w.AgentSession, Status: w.Status, Title: w.Title, Tokens: w.Tokens,
 		Worktree: w.Worktree, Role: w.Role, Run: w.Run,
 		Name: name, DeskIndex: desk, Harness: m.harness, Model: m.model, Effort: m.effort, StatusSince: m.statusSince,
-		Resume: resume,
+		Resume: resume, HiredAt: m.hiredAt,
 	}
 }
 
@@ -1055,7 +1252,7 @@ func (h *Hub) syncLayout() {
 // snapshot renders the world: buildings in order with their floors in
 // order, then the unassigned lot by name.
 func (h *Hub) snapshot() proto.Snapshot {
-	hire := HireOptions()
+	hire := h.hireOptions()
 	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
 		HireOptions: &hire}
 	placed := map[string]bool{}

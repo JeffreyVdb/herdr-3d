@@ -55,6 +55,15 @@ func TestWorldVersionAndUsage(t *testing.T) {
 	if code := World("herdr-world", []string{"serve", "-name-hold", "0s"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "name-hold") {
 		t.Fatalf("-name-hold 0s: code %d, err %q", code, errOut.String())
 	}
+	errOut.Reset()
+	if code := World("herdr-world", []string{"serve", "-warn-workers", "10", "-max-workers", "5"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "worker caps") {
+		t.Fatalf("-warn-workers above -max-workers: code %d, err %q", code, errOut.String())
+	}
+	errOut.Reset()
+	t.Setenv(EnvFloorMax, "0")
+	if code := World("herdr-world", []string{"serve"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "worker caps") {
+		t.Fatalf("%s=0: code %d, err %q", EnvFloorMax, code, errOut.String())
+	}
 	if code := World("herdr-world", []string{"serve", "-wake-timeout", "0s"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "wake-timeout") {
 		t.Fatalf("-wake-timeout 0s: code %d, err %q", code, errOut.String())
 	}

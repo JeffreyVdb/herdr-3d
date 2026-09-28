@@ -121,6 +121,29 @@ var migrations = []string{
 	ALTER TABLE audit_log ADD COLUMN result TEXT;
 	ALTER TABLE audit_log ADD COLUMN done_at TEXT;
 	UPDATE audit_log SET done_at = ts;`,
+	// 5: hiring (M4). hired_at (unix ms, 0 = not hired by the bridge) and
+	// the last harness/model/effort hired on each floor, the hire dialog's
+	// remembered choice.
+	`ALTER TABLE worker ADD COLUMN hired_at INTEGER NOT NULL DEFAULT 0;
+	CREATE TABLE floor_hire_last (
+		session_name TEXT PRIMARY KEY,
+		harness      TEXT NOT NULL,
+		model        TEXT NOT NULL,
+		effort       TEXT NOT NULL,
+		updated_at   TEXT NOT NULL
+	);`,
+	// 6: the branches the bridge made for worktree hires, by worker, with
+	// the commit each was made from: send home deletes only a branch
+	// recorded here for that worker. No foreign key: the row is written
+	// before herdr's workspace is seen (and the worker row exists).
+	`CREATE TABLE hire_branch (
+		worker_uuid  TEXT PRIMARY KEY,
+		session_name TEXT NOT NULL,
+		repo_root    TEXT NOT NULL,
+		branch       TEXT NOT NULL,
+		base_sha     TEXT NOT NULL,
+		created_at   TEXT NOT NULL
+	);`,
 }
 
 // Fingerprint kinds.
@@ -171,6 +194,9 @@ type Worker struct {
 	Harness     string
 	Model       string
 	Effort      string
+	// HiredAt is when the bridge hired the worker (unix ms), 0 if it did
+	// not. Once set it is kept.
+	HiredAt int64
 }
 
 // Desk is one desk slot on a floor, held by a worker.
@@ -593,7 +619,7 @@ func (s *Store) AuditLog(ctx context.Context) ([]AuditEntry, error) {
 // fingerprints: the identity candidates for reconciliation.
 func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT w.id, w.workspace_id, w.label, w.closed_at IS NOT NULL,
-			w.status, w.status_since, w.harness, w.model, w.effort, f.kind, f.value
+			w.status, w.status_since, w.harness, w.model, w.effort, w.hired_at, f.kind, f.value
 		FROM worker w LEFT JOIN worker_fingerprint f ON f.worker_id = w.id
 		WHERE w.session_name = ? ORDER BY w.last_seen_at DESC, w.id, f.kind, f.value`, session)
 	if err != nil {
@@ -606,7 +632,7 @@ func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, e
 		var w Worker
 		var kind, value sql.NullString
 		if err := rows.Scan(&w.ID, &w.WorkspaceID, &w.Label, &w.Closed,
-			&w.Status, &w.StatusSince, &w.Harness, &w.Model, &w.Effort, &kind, &value); err != nil {
+			&w.Status, &w.StatusSince, &w.Harness, &w.Model, &w.Effort, &w.HiredAt, &kind, &value); err != nil {
 			return nil, err
 		}
 		i, ok := idx[w.ID]
@@ -629,13 +655,14 @@ func (s *Store) SaveWorker(ctx context.Context, w Worker) error {
 	now := s.ts()
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO worker (id, session_name, workspace_id, label, created_at, last_seen_at,
-				status, status_since, harness, model, effort)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				status, status_since, harness, model, effort, hired_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET session_name = excluded.session_name, workspace_id = excluded.workspace_id,
 				label = excluded.label, last_seen_at = excluded.last_seen_at, closed_at = NULL,
 				status = excluded.status, status_since = excluded.status_since,
-				harness = excluded.harness, model = excluded.model, effort = excluded.effort`,
-			w.ID, w.Session, w.WorkspaceID, w.Label, now, now, w.Status, w.StatusSince, w.Harness, w.Model, w.Effort)
+				harness = excluded.harness, model = excluded.model, effort = excluded.effort,
+				hired_at = CASE WHEN excluded.hired_at > 0 THEN excluded.hired_at ELSE worker.hired_at END`,
+			w.ID, w.Session, w.WorkspaceID, w.Label, now, now, w.Status, w.StatusSince, w.Harness, w.Model, w.Effort, w.HiredAt)
 		if err != nil {
 			return err
 		}

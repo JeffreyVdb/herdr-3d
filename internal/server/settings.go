@@ -41,20 +41,28 @@ func HireOptions() proto.HireOptions {
 }
 
 func validHire(h proto.Hire) error {
+	if err := validHireIn(hireOptions, h); err != nil {
+		return fmt.Errorf("default_hire.%w", err)
+	}
+	return nil
+}
+
+// validHireIn checks a harness/model/effort against hire options.
+func validHireIn(all proto.HireOptions, h proto.Hire) error {
 	var opts proto.HarnessOptions
 	switch h.Harness {
 	case "claude":
-		opts = hireOptions.Claude
+		opts = all.Claude
 	case "codex":
-		opts = hireOptions.Codex
+		opts = all.Codex
 	default:
-		return fmt.Errorf("default_hire.harness must be claude or codex, got %q", h.Harness)
+		return fmt.Errorf("harness must be claude or codex, got %q", h.Harness)
 	}
 	if !slices.Contains(opts.Models, h.Model) {
-		return fmt.Errorf("default_hire.model %q is not a %s model (%s)", h.Model, h.Harness, strings.Join(opts.Models, ", "))
+		return fmt.Errorf("model %q is not a %s model (%s)", h.Model, h.Harness, strings.Join(opts.Models, ", "))
 	}
 	if !slices.Contains(opts.Efforts, h.Effort) && !slices.Contains(opts.ExtraEfforts[h.Model], h.Effort) {
-		return fmt.Errorf("default_hire.effort %q is not an effort of %s", h.Effort, h.Model)
+		return fmt.Errorf("effort %q is not an effort of %s", h.Effort, h.Model)
 	}
 	return nil
 }
