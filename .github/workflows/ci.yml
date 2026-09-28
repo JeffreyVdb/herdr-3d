@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: make go-lint
+      - run: make go-test
+      - run: make go-build helper-darwin
+
+  game:
+    runs-on: ubuntu-24.04
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v7
+      # pnpm version comes from game/package.json "packageManager".
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: game/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: game/.nvmrc
+          cache: pnpm
+          cache-dependency-path: game/pnpm-lock.yaml
+      - run: make game-lint
+      - run: make game-test

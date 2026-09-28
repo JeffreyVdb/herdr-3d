@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>herdr-3d</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #9fd6ff; }
+      canvas { display: block; }
+      #debug {
+        position: fixed; top: 8px; left: 8px; padding: 4px 8px;
+        font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #fff; background: rgb(0 0 0 / 55%); border-radius: 4px;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="debug">backend: …</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
