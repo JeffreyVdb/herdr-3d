@@ -1,8 +1,7 @@
 // Package store is herdr-world's own SQLite database (pure Go, no cgo):
-// buildings, which building each floor (session) is in, bridge-owned worker
-// identities with their fingerprints, names and desks, and an audit log of
-// commands. It is the only state the bridge writes; herdr itself is never
-// modified.
+// buildings, which building each floor (session) is in, floor settings,
+// bridge-owned worker identities with their fingerprints, names and desks,
+// and an audit log of commands.
 package store
 
 import (
@@ -102,6 +101,26 @@ var migrations = []string{
 			SELECT o.id FROM worker o WHERE o.session_name = w.session_name AND o.name = w.name
 			ORDER BY o.last_seen_at DESC, o.id LIMIT 1);
 	ALTER TABLE worker DROP COLUMN name;`,
+	// 4: floor settings (floor_repo, NULL = unset; kept for sessions that
+	// are gone) and the outcome of long commands in the audit log: a row
+	// is written when a wake or sleep starts (done_at NULL) and completed
+	// with its result (JSON) when it ends.
+	`CREATE TABLE floor_repo (
+		session_name   TEXT PRIMARY KEY,
+		repo           TEXT,
+		project_owner  TEXT,
+		project_number INTEGER CHECK (project_number IS NULL OR project_number >= 1),
+		status_field   TEXT,
+		status_options TEXT,
+		default_cwd    TEXT,
+		hire_harness   TEXT,
+		hire_model     TEXT,
+		hire_effort    TEXT,
+		updated_at     TEXT NOT NULL
+	);
+	ALTER TABLE audit_log ADD COLUMN result TEXT;
+	ALTER TABLE audit_log ADD COLUMN done_at TEXT;
+	UPDATE audit_log SET done_at = ts;`,
 }
 
 // Fingerprint kinds.
@@ -491,18 +510,53 @@ func mustAffect(res sql.Result, id string) error {
 	return nil
 }
 
-// Audit records one command and its outcome.
+// Audit records one command that is done: accepted or rejected.
 func (s *Store) Audit(ctx context.Context, client, cmd string, args json.RawMessage, cmdErr error) error {
-	if len(args) == 0 {
-		args = json.RawMessage("{}")
-	}
-	var errText any
-	if cmdErr != nil {
-		errText = cmdErr.Error()
-	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_log (ts, client, cmd, args, ok, error) VALUES (?, ?, ?, ?, ?, ?)`,
-		s.ts(), client, cmd, string(args), cmdErr == nil, errText)
+	now := s.ts()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_log (ts, client, cmd, args, ok, error, done_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		now, client, cmd, auditArgs(args), cmdErr == nil, errText(cmdErr), now)
 	return err
+}
+
+// AuditBegin records a long command that was accepted and is starting; it
+// stays in progress (not done, not ok) until AuditEnd. It returns the row.
+func (s *Store) AuditBegin(ctx context.Context, client, cmd string, args json.RawMessage) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO audit_log (ts, client, cmd, args, ok) VALUES (?, ?, ?, ?, 0)`,
+		s.ts(), client, cmd, auditArgs(args))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// AuditEnd completes a row from AuditBegin with the command's outcome and
+// result (stored as JSON; nil for none).
+func (s *Store) AuditEnd(ctx context.Context, id int64, cmdErr error, result any) error {
+	var text any
+	if result != nil {
+		b, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		text = string(b)
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE audit_log SET ok = ?, error = ?, result = ?, done_at = ? WHERE id = ?`,
+		cmdErr == nil, errText(cmdErr), text, s.ts(), id)
+	return err
+}
+
+func auditArgs(args json.RawMessage) string {
+	if len(args) == 0 {
+		return "{}"
+	}
+	return string(args)
+}
+
+func errText(err error) any {
+	if err == nil {
+		return nil
+	}
+	return err.Error()
 }
 
 // AuditEntry is one audit_log row.
@@ -510,11 +564,16 @@ type AuditEntry struct {
 	Client, Cmd, Args string
 	OK                bool
 	Error             string
+	// Result is the JSON outcome of a long command ("" for none); Done is
+	// false while it is still running (or the bridge stopped during it).
+	Result string
+	Done   bool
 }
 
 // AuditLog returns the audit log, oldest first.
 func (s *Store) AuditLog(ctx context.Context) ([]AuditEntry, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT client, cmd, args, ok, COALESCE(error, '') FROM audit_log ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT client, cmd, args, ok, COALESCE(error, ''), COALESCE(result, ''), done_at IS NOT NULL
+		FROM audit_log ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -522,7 +581,7 @@ func (s *Store) AuditLog(ctx context.Context) ([]AuditEntry, error) {
 	var out []AuditEntry
 	for rows.Next() {
 		var e AuditEntry
-		if err := rows.Scan(&e.Client, &e.Cmd, &e.Args, &e.OK, &e.Error); err != nil {
+		if err := rows.Scan(&e.Client, &e.Cmd, &e.Args, &e.OK, &e.Error, &e.Result, &e.Done); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
