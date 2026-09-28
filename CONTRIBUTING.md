@@ -364,7 +364,8 @@ MiMo-V2.5-TTS:
 ```sh
 pnpm -C game voices --dry-run   # what would be generated; reads no key, calls nothing
 pnpm -C game voices             # generate the lines that are new or changed
-pnpm -C game voices --check     # exit 1 on a missing, orphan, stale or broken clip (no calls)
+pnpm -C game voices --check     # exit 1 on a missing, orphan, stale, broken or changed clip (no calls)
+pnpm -C game voices --relock    # after editing a clip by hand: re-record its sha256/size/length (no key, no calls)
 node game/tools/voices.ts design --takes 4 --out <dir>   # voice-design takes of the reference script
 node game/tools/voices.ts info  # duration, bitrate and size per clip
 ```
@@ -379,10 +380,14 @@ node game/tools/voices.ts info  # duration, bitrate and size per clip
   switches every line to one built-in voice (`voice.builtin.voice`, e.g. `Mia`) on `mimo-v2.5-tts` instead. Only ever
   clone the designed reference: the voice (like the art, `docs/decisions.md`) must not imitate the Minions or other
   Illumination characters, or any real person.
-- **Idempotent:** `game/voices/receptionist.lock.json` stores a hash per line of its text, the performance direction,
-  the model and the voice (the reference clip's hash, or the built-in name). An unchanged line is not regenerated;
-  editing a line regenerates only it, a new reference take or direction regenerates all, and a removed line's clip is
-  deleted. The lock's `ms` per clip also times the bubbles. vitest fails when the manifest, the lock and the clips
-  disagree.
+- **Idempotent:** `game/voices/receptionist.lock.json` stores per line a `hash` of its text, the performance
+  direction, the model and the voice (the reference clip's hash, or the built-in name), and the `sha256`, `bytes` and
+  `ms` of the clip it made. An unchanged line is not regenerated; editing a line regenerates only it, a new reference
+  take or direction regenerates all, and a removed line's clip is deleted. The lock's `ms` per clip also times the
+  bubbles. vitest (`tools/voices.test.ts`, the same audit as `--check`) fails when the manifest, the lock and the
+  clips disagree: a line without a clip, a clip without a line, a line changed since its clip was made, a clip that
+  isn't MP3, or a clip whose sha256, size or length isn't the lock's (swapped or edited). Edited a clip on purpose
+  (trimmed its silence, say)? `--relock` records it; it keeps each line's `hash`, so it never makes a stale line
+  current.
 - **Size:** keep the clips under about 1 MB in total (the vitest check enforces 1 MiB). MiMo returns MP3 at ~56 kb/s,
   24 kHz, which the generator keeps as is: 27 lines are ~800 KB. Add variants sparingly, and keep lines short.

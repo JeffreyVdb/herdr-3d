@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LINE_KINDS } from '../src/reception/lines';
-import { audit, ENDPOINT, GAME_DIR, mp3Info, paths, run, type Lock } from './voices';
+import { audit, ENDPOINT, GAME_DIR, mp3Info, paths, relock, run, type Lock } from './voices';
 
 /** `n` silent-ish MPEG-1 Layer III frames: 64 kb/s, 44.1 kHz, mono, 208 bytes each. */
 function mp3(n: number, fill = 0): Uint8Array {
@@ -56,6 +57,8 @@ function writeManifest(over: { use?: 'clone' | 'builtin'; direction?: string; li
 }
 
 const lock = () => JSON.parse(readFileSync(join(root, 'voices', 'receptionist.lock.json'), 'utf8')) as Lock;
+const sha256 = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex');
+const clip = (id: string) => join(paths(root).clips, `${id}.mp3`);
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'h3d-voices-'));
@@ -98,8 +101,8 @@ describe('the voice generator', () => {
     }
     expect(api.calls.map((c) => c.body.messages[1]?.content).sort()).toEqual(LINES.map((l) => l.text).sort());
     for (const l of LINES) {
-      expect(mp3Info(readFileSync(join(paths(root).clips, `${l.id}.mp3`)))?.frames).toBe(40);
-      expect(lock().lines[l.id]).toMatchObject({ bytes: 40 * 208, ms: Math.round(((40 * 1152) / 44100) * 1000) });
+      expect(mp3Info(readFileSync(clip(l.id)))?.frames).toBe(40);
+      expect(lock().lines[l.id]).toMatchObject({ sha256: sha256(clip(l.id)), bytes: 40 * 208, ms: Math.round(((40 * 1152) / 44100) * 1000) });
     }
     expect(keyReads).toBe(1);
     expect(logs.join('\n')).not.toContain(KEY);
@@ -201,22 +204,53 @@ describe('the voice generator', () => {
 describe('audit', () => {
   it('finds missing, orphan, stale and broken clips', async () => {
     await run({ root, fetch: fakeApi().fetch, readKey, log });
-    expect(audit(root)).toMatchObject({ missing: [], orphans: [], stale: [], broken: [] });
+    expect(audit(root)).toMatchObject({ missing: [], orphans: [], stale: [], broken: [], mismatched: [] });
     rmSync(join(paths(root).clips, 'nudge-1.mp3'));
     writeFileSync(join(paths(root).clips, 'old-line.mp3'), mp3(10));
     writeFileSync(join(paths(root).clips, 'quiet-1.mp3'), 'not audio');
     writeManifest({ lines: LINES.map((l) => (l.id === 'goodbye-1' ? { ...l, text: 'Changed!' } : l)) });
     expect(audit(root)).toMatchObject({ missing: ['nudge-1'], orphans: ['old-line.mp3'], stale: ['goodbye-1'], broken: ['quiet-1'] });
   });
+
+  it('finds a clip swapped for another, edited, or a lock edited by hand', async () => {
+    await run({ root, fetch: fakeApi().fetch, readKey, log });
+    // Same size and length (every fake clip is 40 frames), different bytes: only the sha256 tells.
+    copyFileSync(clip('goodbye-1'), clip('quiet-1'));
+    expect(audit(root)).toMatchObject({ missing: [], orphans: [], stale: [], broken: [], mismatched: ['quiet-1'] });
+    // A shorter take (trimmed, say).
+    writeFileSync(clip('nudge-1'), mp3(30, 3));
+    expect(audit(root).mismatched).toEqual(['nudge-1', 'quiet-1']);
+    // The bubble timing comes from the lock's ms: a hand-edited one is caught too.
+    const l = lock();
+    const e = l.lines['elevator-1'];
+    if (!e) throw new Error('no lock entry');
+    l.lines['elevator-1'] = { ...e, ms: e.ms + 500 };
+    writeFileSync(join(root, 'voices', 'receptionist.lock.json'), JSON.stringify(l));
+    expect(audit(root).mismatched).toEqual(['elevator-1', 'nudge-1', 'quiet-1']);
+  });
+
+  it('--relock accepts the clips as they are, without a key or a call, and keeps stale lines stale', async () => {
+    await run({ root, fetch: fakeApi().fetch, readKey, log });
+    keyReads = 0;
+    writeFileSync(clip('nudge-1'), mp3(30, 3));
+    writeManifest({ lines: LINES.map((l) => (l.id === 'goodbye-1' ? { ...l, text: 'Changed!' } : l)) });
+    expect(relock({ root, log })).toEqual(['nudge-1']);
+    expect(keyReads).toBe(0);
+    expect(lock().lines['nudge-1']).toMatchObject({ sha256: sha256(clip('nudge-1')), bytes: 30 * 208, ms: Math.round(((30 * 1152) / 44100) * 1000) });
+    expect(audit(root)).toMatchObject({ missing: [], orphans: [], stale: ['goodbye-1'], broken: [], mismatched: [] });
+    // Nothing to do the second time.
+    expect(relock({ root, log })).toEqual([]);
+  });
 });
 
 describe('the committed voice clips', () => {
-  it('match the manifest: a clip per line, no orphans, none stale, all MP3, under ~1 MB', () => {
+  it('match the manifest and the lock: a clip per line, no orphans, none stale or changed, all MP3, under ~1 MB', () => {
     const a = audit(GAME_DIR);
     expect(a.missing, 'lines without a clip: run `pnpm -C game voices`').toEqual([]);
     expect(a.orphans, 'clips without a line').toEqual([]);
     expect(a.stale, 'clips older than their line or voice settings').toEqual([]);
     expect(a.broken, 'clips that are not MP3').toEqual([]);
+    expect(a.mismatched, 'clips that differ from the lock: restore them from git, or `pnpm -C game voices --relock` after editing one on purpose').toEqual([]);
     expect(a.bytes).toBeLessThan(1024 * 1024);
   });
 });
