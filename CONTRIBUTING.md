@@ -354,7 +354,10 @@ AudioContext created on the first click, key or pointer lock (Chrome's autoplay 
 `h3d.audio`); muted, the speech bubbles still show. `src/reception/lines.ts` holds the rules (time-of-day welcome on the
 local clock, the elevator line, goodbye, a nudge whose audio stays generic while the bubble lists the waiting floors,
 the quiet-building line, the desk line; no variant twice in a row; a 2-minute cooldown each for greetings and goodbyes,
-never for the desk), covered by vitest.
+never for the desk), covered by vitest. `src/reception/sequence.ts` says the lines of one event one after the other on
+the audio that actually plays (`playAt` returns a handle that resolves when the clip starts and ends): a bubble shows
+with its clip, the next line waits for that clip to end, a clip that takes over 1.5 s to load is dropped rather than
+played late, and muted or without sound the lines are timed by the lock's clip lengths.
 
 The lines are data: `game/voices/receptionist.json` (`id`, `kind`, `text`; a leading MiMo style tag such as
 `(Happy)` is allowed and never shown in the bubble) plus the voice settings. The clips are committed
