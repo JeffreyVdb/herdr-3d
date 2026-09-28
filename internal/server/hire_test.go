@@ -600,7 +600,7 @@ func TestHireWorkspaceSeenBeforeCreateReturns(t *testing.T) {
 }
 
 func TestHireAnswersTrustDialogs(t *testing.T) {
-	claudeTrust := "❯ claude --model x\n Accessing workspace:\n\n /home/u/re\n po\n\n Quick safety check: Is this a project you created or one you trust?\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel"
+	claudeTrust := "❯ claude --model x\n Accessing workspace:\n\n /home/u/repo\n\n Quick safety check: Is this a project you created or one you trust?\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel"
 	codexTrust := "  Folder access\n  /home/u/repo\n  Trust this folder? Codex can read, edit, and run files here.\n› 1. Trust and continue\n  2. Quit"
 	for _, tc := range []struct {
 		name, harness, model, screen string
@@ -613,6 +613,8 @@ func TestHireAnswersTrustDialogs(t *testing.T) {
 			[]string{"down", "enter"}, proto.TrustApproved},
 		{"codex idle on its dialog", "codex", "gpt-6-luna", codexTrust, nil, []string{"enter"}, proto.TrustApproved},
 		{"another directory", "codex", "gpt-6-luna", strings.ReplaceAll(codexTrust, "/home/u/repo", "/etc"), nil, nil, proto.TrustNone},
+		{"a sibling directory", "claude", "claude-opus-5-5", strings.ReplaceAll(claudeTrust, "/home/u/repo", "/home/u/repo-other"),
+			nil, nil, proto.TrustNone},
 		{"no dialog", "claude", "claude-opus-5-5", "❯ Try \"write a test\"", nil, nil, proto.TrustNone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

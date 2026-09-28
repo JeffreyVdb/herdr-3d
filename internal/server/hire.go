@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -585,8 +587,7 @@ var (
 
 // trustDialog reports which agent's trust dialog screen shows for dir.
 func trustDialog(screen, dir string) string {
-	flat := strings.Join(strings.Fields(screen), "")
-	if !strings.Contains(flat, strings.Join(strings.Fields(dir), "")) {
+	if !showsPath(screen, dir) {
 		return ""
 	}
 	has := func(needles []string) bool {
@@ -604,6 +605,58 @@ func trustDialog(screen, dir string) string {
 		return "codex"
 	}
 	return ""
+}
+
+// showsPath reports whether screen shows the path dir whole, not as part
+// of a longer path (/tmp/repo is not in /tmp/repo-other or /x/tmp/repo).
+// Lines the agent hard-wrapped are joined first: a line is taken to wrap
+// when it reaches (about) the width of the screen's longest line and the
+// next one is not blank. Checked live on herdr 0.9.0: Claude and Codex
+// both break a long path one column short of the pane width and indent
+// the rest. In the joined text dir must follow the start, whitespace or a
+// quote and be followed by the end, whitespace or a quote. A screen it
+// cannot read that way (a path wrapped at a space, say) does not match:
+// the dialog is then left for the player.
+func showsPath(screen, dir string) bool {
+	lines := strings.Split(strings.ReplaceAll(screen, "\r", ""), "\n")
+	width := 0
+	for i, l := range lines {
+		lines[i] = strings.TrimRight(l, " \t")
+		width = max(width, utf8.RuneCountInString(lines[i]))
+	}
+	var joined strings.Builder
+	for i, l := range lines {
+		if i > 0 && !wraps(lines[i-1], l, width) {
+			joined.WriteByte('\n')
+			joined.WriteString(l)
+		} else {
+			joined.WriteString(strings.TrimLeft(l, " \t"))
+		}
+	}
+	text := joined.String()
+	for off := 0; ; {
+		i := strings.Index(text[off:], dir)
+		if i < 0 {
+			return false
+		}
+		i += off
+		if pathEdge(utf8.DecodeLastRuneInString(text[:i])) && pathEdge(utf8.DecodeRuneInString(text[i+len(dir):])) {
+			return true
+		}
+		off = i + 1
+	}
+}
+
+// wraps reports whether line, on a screen width wide, runs on into next.
+func wraps(line, next string, width int) bool {
+	return width > 2 && utf8.RuneCountInString(line) >= width-2 && strings.TrimSpace(next) != ""
+}
+
+// pathEdge reports whether the rune r (size bytes) may border a path
+// shown whole: none (size 0: the start or end of the text), whitespace or
+// a quote.
+func pathEdge(r rune, size int) bool {
+	return size == 0 || unicode.IsSpace(r) || strings.ContainsRune("\"'`‘’“”", r)
 }
 
 // answerTrust answers the agent's trust dialog for dir, the directory the
