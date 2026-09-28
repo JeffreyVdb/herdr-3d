@@ -5,6 +5,11 @@
  * spans [0, width] × [0, depth]. You arrive from the elevator in the middle of
  * the south wall, facing north at the board wall; desk pods fill the middle,
  * the lounge takes the north-west corner and the filing cabinet the north-east.
+ *
+ * Every floor of a building shares one outline (`outlineOf`): the room is at
+ * least that big, the desk grid stays centred in it, and the windows and the
+ * fire-escape door (west wall, south end) depend on the outline alone, so
+ * they line up from floor to floor.
  */
 
 export interface Rect {
@@ -58,6 +63,26 @@ export interface Prop {
   solid: boolean;
 }
 
+export type Side = 'north' | 'south' | 'east' | 'west';
+
+/**
+ * A hole in an outer wall: `u0`..`u1` along the wall (x on the north and south
+ * walls, z on the east and west ones), `y0`..`y1` above the floor.
+ */
+export interface Opening {
+  wall: Side;
+  kind: 'window' | 'door';
+  u0: number;
+  u1: number;
+  y0: number;
+  y1: number;
+}
+
+export interface Outline {
+  width: number;
+  depth: number;
+}
+
 export interface FloorLayout {
   desks: number;
   width: number;
@@ -65,9 +90,15 @@ export interface FloorLayout {
   height: number;
   slots: DeskSlot[];
   props: Prop[];
-  /** Walls and the board partition, for rendering. */
+  /** Walls (north, south, west, east, whole) and the board partition, for rendering and line of sight. */
   walls: Box3[];
-  /** 2D obstacles for walking (walls, desks, solid props). */
+  /** Windows and the fire-escape door, the same on every floor of an outline. */
+  openings: Opening[];
+  /** The fire-escape door in the west wall (z range). */
+  fireDoor: { z0: number; z1: number; height: number };
+  /** Where the desk grid is centred (between the lounge, the east strip, the north strip and the board wall). */
+  deskArea: Rect;
+  /** 2D obstacles for walking (walls with the fire-escape doorway open, desks, solid props). */
   colliders: Rect[];
   /** Arrival point and yaw (0 = facing north, -z). */
   spawn: { x: number; z: number; yaw: number };
@@ -100,6 +131,12 @@ const MARGIN = 1;
 const MIN_W = 18;
 const MIN_D = 14;
 const BOARD_WALL_Z = 4.3; // distance of the board partition from the south wall
+/** Fire-escape door: 1.2 m wide, its south jamb this far from the south wall. */
+export const FIRE_DOOR_W = 1.2;
+const FIRE_DOOR_S = 1.6;
+export const DOOR_H = 2.3;
+const SILL = 0.9;
+const HEAD = 2.45;
 
 const box = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): Box3 => ({
   min: [x0, y0, z0],
@@ -115,16 +152,61 @@ export function podGrid(desks: number): { pods: number; cols: number; rows: numb
   return { pods, cols, rows: Math.ceil(pods / cols) };
 }
 
-export function floorLayout(deskCount: number): FloorLayout {
-  const desks = Math.max(0, Math.floor(deskCount));
+/** Room size a desk count needs on its own. */
+function naturalSize(desks: number): Outline & { gridW: number; gridD: number; cols: number } {
   const { cols, rows } = podGrid(desks);
   const gridW = cols * PITCH_X - AISLE_X;
   const gridD = rows * PITCH_Z - AISLE_Z;
-  const width = r3(Math.max(MIN_W, LOUNGE_W + MARGIN + gridW + MARGIN + EAST_W));
-  const depth = r3(Math.max(MIN_D, NORTH_D + MARGIN + gridD + LOBBY_D));
-  // Centre the grid in the space between the lounge and the east strip.
-  const x0 = LOUNGE_W + MARGIN + (width - (LOUNGE_W + MARGIN + gridW + MARGIN + EAST_W)) / 2;
-  const z0 = NORTH_D + MARGIN;
+  return {
+    width: r3(Math.max(MIN_W, LOUNGE_W + MARGIN + gridW + MARGIN + EAST_W)),
+    depth: r3(Math.max(MIN_D, NORTH_D + MARGIN + gridD + LOBBY_D)),
+    gridW,
+    gridD,
+    cols,
+  };
+}
+
+/** A building's outline: big enough for its biggest floor in each direction (the unassigned lot too). */
+export function outlineOf(deskCounts: readonly number[]): Outline {
+  let width = MIN_W;
+  let depth = MIN_D;
+  for (const n of deskCounts) {
+    const s = naturalSize(Math.max(0, Math.floor(n)));
+    width = Math.max(width, s.width);
+    depth = Math.max(depth, s.depth);
+  }
+  return { width, depth };
+}
+
+/** Windows and the fire-escape door of an outline: the same on every floor that shares it. */
+export function openingsFor(width: number, depth: number): Opening[] {
+  const out: Opening[] = [];
+  const win = (wall: Side, c: number, w: number) => out.push({ wall, kind: 'window', u0: r3(c - w / 2), u1: r3(c + w / 2), y0: SILL, y1: HEAD });
+  // North: over the lounge sofa.
+  win('north', 2.8, 3.6);
+  // East: along the wall, clear of the filing cabinet.
+  for (let z = 3.6; z + 1.1 < depth - 0.9; z += 3.2) win('east', z, 2.2);
+  // South, either side of the elevator (and clear of the drop zone on its east).
+  for (let x = 2.2; x + 1.1 < width / 2 - 1.9; x += 3.2) win('south', x, 2.2);
+  for (let x = width - 2.2; x - 1.1 > width / 2 + 4.1; x -= 3.2) win('south', x, 2.2);
+  // West: onto the fire escape, between the coffee counter and the door.
+  for (let z = depth - FIRE_DOOR_S - FIRE_DOOR_W - 1.9; z - 1.1 > 5.2; z -= 3.2) win('west', z, 2.2);
+  const dz1 = depth - FIRE_DOOR_S;
+  out.push({ wall: 'west', kind: 'door', u0: r3(dz1 - FIRE_DOOR_W), u1: r3(dz1), y0: 0, y1: DOOR_H });
+  return out;
+}
+
+export function floorLayout(deskCount: number, outline?: Outline): FloorLayout {
+  const desks = Math.max(0, Math.floor(deskCount));
+  const nat = naturalSize(desks);
+  const { cols, gridW, gridD } = nat;
+  const width = r3(Math.max(nat.width, outline?.width ?? 0));
+  const depth = r3(Math.max(nat.depth, outline?.depth ?? 0));
+  // Centre the grid between the lounge and the east strip, and between the
+  // north strip and the lobby in front of the board wall.
+  const deskArea: Rect = { x0: LOUNGE_W + MARGIN, z0: NORTH_D + MARGIN, x1: r3(width - MARGIN - EAST_W), z1: r3(depth - LOBBY_D) };
+  const x0 = deskArea.x0 + (deskArea.x1 - deskArea.x0 - gridW) / 2;
+  const z0 = deskArea.z0 + (deskArea.z1 - deskArea.z0 - gridD) / 2;
   const H = ROOM_HEIGHT;
 
   const slots: DeskSlot[] = [];
@@ -161,7 +243,14 @@ export function floorLayout(deskCount: number): FloorLayout {
     box(width, 0, 0, width + T, H, depth), // east
     box(bx0, 0, bz - 0.1, bx0 + boardLen, 2.5, bz + 0.1), // board partition
   ];
-  colliders.push(...walls.map(rectOf));
+  const openings = openingsFor(width, depth);
+  const door = openings.find((o) => o.kind === 'door') as Opening;
+  // The west wall walks as two pieces either side of the fire-escape doorway.
+  colliders.push(
+    ...walls.filter((_, i) => i !== 2).map(rectOf),
+    { x0: -T, z0: 0, x1: 0, z1: door.u0 },
+    { x0: -T, z0: door.u1, x1: 0, z1: depth },
+  );
 
   const boardW = (boardLen - 0.8) / 3;
   const board = (i: number) => box(bx0 + 0.2 + i * (boardW + 0.2), 0.8, bz + 0.1, bx0 + 0.2 + i * (boardW + 0.2) + boardW, 2.3, bz + 0.16);
@@ -194,6 +283,9 @@ export function floorLayout(deskCount: number): FloorLayout {
     slots,
     props,
     walls,
+    openings,
+    fireDoor: { z0: door.u0, z1: door.u1, height: DOOR_H },
+    deskArea,
     colliders,
     spawn: { x: r3(width / 2), z: r3(depth - 1.3), yaw: 0 },
     lights,
