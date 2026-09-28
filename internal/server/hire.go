@@ -112,10 +112,11 @@ func (op *hireOp) signal() {
 	}
 }
 
-// fireOp is a worker.fire in flight.
+// fireOp is a worker.fire in flight. For delete_branch, branch and
+// repoRoot are the branch the bridge recorded making for the worker.
 type fireOp struct {
-	id, session, workspaceID, pane string
-	harness, choice                string
+	id, name, session, workspaceID string
+	pane, harness, choice          string
 	checkout, repoRoot, branch     string
 	client                         *Client
 	cmd                            proto.Command
@@ -1085,8 +1086,18 @@ func (h *Hub) startFirePrepare(ctx context.Context, c *Client, cmd proto.Command
 	}
 	linked := w.Worktree != nil && w.Worktree.Linked
 	dir := checkoutOf(w)
+	made, recorded, err := h.st.HireBranchOf(ctx, w.ID)
+	if err != nil {
+		return err
+	}
 	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
 		t := h.readTree(ctx, dir)
+		if linked && t.err == nil && t.top != "" {
+			// The branch as it is now, not as last displayed.
+			if b, err := h.opts.Git.CurrentBranch(ctx, t.top); err == nil {
+				res.Branch = b
+			}
+		}
 		switch {
 		case t.err != nil:
 			res.Reason = "reading the git state failed: " + t.err.Error()
@@ -1103,6 +1114,7 @@ func (h *Hub) startFirePrepare(ctx context.Context, c *Client, cmd proto.Command
 				res.Reason = why
 			default:
 				res.CanDelete = true
+				res.CanDeleteBranch = recorded && h.branchDeletable(ctx, made, t.top) == ""
 			}
 		}
 		return res, nil
@@ -1135,7 +1147,7 @@ func (h *Hub) startFire(ctx context.Context, c *Client, cmd proto.Command) error
 	if h.opts.Hire == nil {
 		return errors.New("sending workers home is not configured")
 	}
-	op := &fireOp{id: w.ID, session: w.Session, workspaceID: w.WorkspaceID, pane: w.PaneID, choice: a.Worktree,
+	op := &fireOp{id: w.ID, name: w.Name, session: w.Session, workspaceID: w.WorkspaceID, pane: w.PaneID, choice: a.Worktree,
 		checkout: checkoutOf(w), client: c, cmd: cmd, notify: make(chan struct{}, 1)}
 	op.harness = w.AgentKind
 	if op.harness == "" {
@@ -1148,13 +1160,18 @@ func (h *Hub) startFire(ctx context.Context, c *Client, cmd proto.Command) error
 		case h.opts.Git == nil:
 			return errors.New("deleting worktrees is not configured")
 		}
-		op.repoRoot = w.Worktree.RepoRoot
 	}
 	if a.Worktree == proto.FireDeleteBranch {
-		if !herdr.ValidBranch(w.Branch) || !herdr.ValidDir(op.repoRoot) {
-			return bad("branch %q was not made by the bridge (h3d/…): delete the worktree only", w.Branch)
+		// Only the branch the bridge recorded making for this worker; its
+		// name alone proves nothing.
+		made, ok, err := h.st.HireBranchOf(ctx, w.ID)
+		if err != nil {
+			return err
 		}
-		op.branch = w.Branch
+		if !ok || !herdr.ValidBranch(made.Branch) || !herdr.ValidDir(made.RepoRoot) {
+			return bad("the bridge made no branch for %s: delete the worktree only", w.Name)
+		}
+		op.branch, op.repoRoot = made.Branch, made.RepoRoot
 	}
 	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, cmd.Args)
 	if err != nil {
@@ -1190,9 +1207,10 @@ func (r *fireReport) step(format string, args ...any) {
 	r.Steps = append(r.Steps, fmt.Sprintf(format, args...))
 }
 
-// runFire checks the tree (for a delete), exits the agent gracefully,
-// closes the workspace or removes its worktree, waits for the worker to
-// be gone and deletes the branch when asked.
+// runFire checks the tree (for a delete), exits the agent gracefully and,
+// once it is gone, closes the workspace or removes its worktree, waits for
+// the worker to be gone and deletes the branch when asked. An agent that
+// does not exit is left as it is: nothing is closed.
 func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 	defer h.wg.Done()
 	hh := h.opts.Hire
@@ -1200,32 +1218,38 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 	res := proto.FireResult{Worktree: proto.WorktreeKept}
 	remove := op.choice != proto.FireKeep
 	if remove {
-		t := h.readTree(ctx, op.checkout)
-		rep.Dirty, rep.Unpushed = t.dirty, t.unpushed
+		why, err := h.fireCheck(ctx, op, rep)
 		switch {
-		case t.err != nil:
-			h.finishFire(ctx, op, nil, fmt.Errorf("%w: reading the git state: %v", errFireFailed, t.err), rep)
+		case err != nil:
+			h.finishFire(ctx, op, nil, fmt.Errorf("%w: %v", errFireFailed, err), rep)
 			return
-		case t.top == "":
-			h.finishFire(ctx, op, nil, fmt.Errorf("%w: %s is not a git work tree", errFireFailed, op.checkout), rep)
-			return
-		case t.problems() != "":
-			h.finishFire(ctx, op, nil, fmt.Errorf("%w: %s: the worktree is kept", errNotClean, t.problems()), rep)
+		case why != "":
+			h.finishFire(ctx, op, nil, fmt.Errorf("%w: %s: the worktree is kept", errNotClean, why), rep)
 			return
 		}
 		rep.step("tree clean and pushed")
 	}
 
-	res.Released = h.exitAgent(ctx, op, rep)
+	exit := h.exitAgent(ctx, op, rep)
+	res.Released = exit == exitedByItself
 	rep.Released = res.Released
+	switch exit {
+	case exitStuck:
+		h.finishFire(ctx, op, nil, fmt.Errorf("%w: %s's agent is still running (%s, then Ctrl-C twice): nothing was closed or removed",
+			errFireFailed, op.name, rep.Exit), rep)
+		return
+	case exitUnknown:
+		h.finishFire(ctx, op, nil, fmt.Errorf("%w: cannot tell whether %s's agent is still running (%s): nothing was closed or removed",
+			errFireFailed, op.name, rep.Exit), rep)
+		return
+	}
 
 	if remove {
-		if t := h.readTree(ctx, op.checkout); t.err != nil || t.problems() != "" {
-			remove = false
-			why := t.problems()
-			if t.err != nil {
-				why = t.err.Error()
+		if why, err := h.fireCheck(ctx, op, rep); err != nil || why != "" {
+			if err != nil {
+				why = err.Error()
 			}
+			remove = false
 			res.Note = "the tree changed while the agent exited (" + why + "): the worktree is kept"
 			rep.step("%s", res.Note)
 		}
@@ -1253,15 +1277,71 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 		return
 	}
 	if remove && op.choice == proto.FireDeleteBranch {
-		if err := h.opts.Git.DeleteBranch(ctx, op.repoRoot, op.branch); err != nil {
+		// The checkout is gone; the branch's commits are checked once more.
+		switch n, err := h.opts.Git.BranchUnpushed(ctx, op.repoRoot, op.branch); {
+		case err != nil:
 			res.Note = "the branch was kept: " + err.Error()
-		} else {
-			res.Worktree = proto.WorktreeDelBranch
+		case n > 0:
+			res.Note = "the branch was kept: " + plural(n, "commit") + " not on any remote"
+		default:
+			if err := h.opts.Git.DeleteBranch(ctx, op.repoRoot, op.branch); err != nil {
+				res.Note = "the branch was kept: " + err.Error()
+			} else {
+				res.Worktree = proto.WorktreeDelBranch
+				h.forgetBranch(ctx, op.id)
+			}
 		}
 		rep.step("git branch -D %s: %s", op.branch, orOK(res.Note))
 	}
 	rep.Worktree = res.Worktree
 	h.finishFire(ctx, op, &res, nil, rep)
+}
+
+// fireCheck says why a worker's worktree may not be deleted now: its tree
+// is dirty or has commits on no remote, or (delete_branch) the checkout
+// is no longer on the branch the bridge made or that branch has commits
+// on no remote. err: the state could not be read.
+func (h *Hub) fireCheck(ctx context.Context, op *fireOp, rep *fireReport) (why string, err error) {
+	t := h.readTree(ctx, op.checkout)
+	rep.Dirty, rep.Unpushed = t.dirty, t.unpushed
+	switch {
+	case t.err != nil:
+		return "", fmt.Errorf("reading the git state: %v", t.err)
+	case t.top == "":
+		return "", fmt.Errorf("%s is not a git work tree", op.checkout)
+	case t.problems() != "":
+		return t.problems(), nil
+	case op.branch == "":
+		return "", nil
+	}
+	return h.branchDeletable(ctx, store.HireBranch{RepoRoot: op.repoRoot, Branch: op.branch}, t.top), nil
+}
+
+// branchDeletable says why the branch the bridge made may not be deleted
+// with the worktree at checkout: the checkout is on another branch now
+// (read afresh, not the displayed one), or the branch has commits on no
+// remote. "" when it may.
+func (h *Hub) branchDeletable(ctx context.Context, made store.HireBranch, checkout string) string {
+	git := h.opts.Git
+	cur, err := git.CurrentBranch(ctx, checkout)
+	if err != nil {
+		return "reading the checkout's branch failed: " + err.Error()
+	}
+	if cur != made.Branch {
+		now := "a detached HEAD"
+		if cur != "" {
+			now = "branch " + cur
+		}
+		return fmt.Sprintf("the checkout is on %s, not %s (the branch the bridge made)", now, made.Branch)
+	}
+	n, err := git.BranchUnpushed(ctx, made.RepoRoot, made.Branch)
+	switch {
+	case err != nil:
+		return "counting the commits of " + made.Branch + " failed: " + err.Error()
+	case n > 0:
+		return plural(n, "commit") + " of " + made.Branch + " not on any remote"
+	}
+	return ""
 }
 
 func orOK(note string) string {
@@ -1271,26 +1351,59 @@ func orOK(note string) string {
 	return note
 }
 
+// How a send home's agent went (exitAgent).
+type exitResult int
+
+const (
+	exitedByItself   exitResult = iota // it exited gracefully, or none ran
+	exitedAfterCtrlC                   // it left after Ctrl-C
+	exitStuck                          // it is still running
+	exitUnknown                        // its pane's processes cannot be read
+)
+
 // exitAgent exits the pane's agent the way a person would (claude /exit,
 // codex /quit, then Enter) and waits for the pane to be back at its shell;
-// Ctrl-C twice when it is not. It reports whether the agent left by
-// itself, or there was none.
-func (h *Hub) exitAgent(ctx context.Context, op *fireOp, rep *fireReport) bool {
+// Ctrl-C twice when it is not (or the agent has no graceful exit).
+func (h *Hub) exitAgent(ctx context.Context, op *fireOp, rep *fireReport) exitResult {
 	hh := h.opts.Hire
 	if op.pane == "" || !herdr.ValidPaneID(op.pane) {
 		rep.Exit = "no pane"
-		return true
+		return exitedByItself
 	}
 	info, err := h.paneProcesses(ctx, op.session, op.pane)
 	switch {
 	case err != nil:
-		rep.Exit = "no exit: " + err.Error()
-		return false
+		rep.Exit = "reading the pane's processes failed: " + err.Error()
+		return exitUnknown
 	case info.AtShell():
 		rep.Exit = "no agent running"
-		return true
-	case !herdr.CanStart(op.harness):
-		rep.Exit = fmt.Sprintf("no exit: cannot exit %q", op.harness)
+		return exitedByItself
+	}
+	start := time.Now()
+	if h.exitGracefully(ctx, op, rep) {
+		return exitedByItself
+	}
+	for range 2 {
+		if err := hh.SendKey(ctx, op.session, op.pane, herdr.KeyCtrlC); err != nil {
+			rep.step("Ctrl-C failed: %v", err)
+			break
+		}
+		if h.waitShell(ctx, op, time.Now().Add(h.opts.ExitTimeout/4)) {
+			rep.step("agent exited after Ctrl-C")
+			return exitedAfterCtrlC
+		}
+	}
+	rep.step("agent still running after %s: nothing closed", time.Since(start).Round(time.Millisecond))
+	return exitStuck
+}
+
+// exitGracefully types the agent's exit command and presses Enter (again,
+// up to 3 times, while it is not gone), waiting up to ExitTimeout for the
+// pane to be back at its shell.
+func (h *Hub) exitGracefully(ctx context.Context, op *fireOp, rep *fireReport) bool {
+	hh := h.opts.Hire
+	if !herdr.CanStart(op.harness) {
+		rep.Exit = fmt.Sprintf("no graceful exit for %q", op.harness)
 		return false
 	}
 	if err := hh.TypeExit(ctx, op.session, op.pane, op.harness); err != nil {
@@ -1319,25 +1432,13 @@ func (h *Hub) exitAgent(ctx context.Context, op *fireOp, rep *fireReport) bool {
 			return true
 		}
 		if !time.Now().Before(deadline) || ctx.Err() != nil {
-			break
+			return false
 		}
 		if err := hh.SendKey(ctx, op.session, op.pane, herdr.KeyEnter); err != nil {
 			rep.step("pressing Enter again failed: %v", err)
-			break
-		}
-	}
-	for range 2 {
-		if err := hh.SendKey(ctx, op.session, op.pane, herdr.KeyCtrlC); err != nil {
-			rep.step("Ctrl-C failed: %v", err)
-			break
-		}
-		if h.waitShell(ctx, op, time.Now().Add(h.opts.ExitTimeout/4)) {
-			rep.step("agent exited after Ctrl-C")
 			return false
 		}
 	}
-	rep.step("agent still running after %s: closing anyway", time.Since(start).Round(time.Millisecond))
-	return false
 }
 
 // waitShell polls the pane until its shell is in the foreground again.

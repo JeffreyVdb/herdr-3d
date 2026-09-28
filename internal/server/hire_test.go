@@ -16,6 +16,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
+	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
 
@@ -887,9 +888,29 @@ func TestFirePrepare(t *testing.T) {
 		res.Reason != "2 uncommitted changes, 2 commits not on any remote" {
 		t.Fatalf("dirty prepare = %s", m.raw)
 	}
+	// Clean, but the bridge made no branch for w3 (whatever its name):
+	// only the worktree may go.
 	_, m = hb.c.command(proto.CmdFirePrepare, "f2", proto.WorkerArgs{ID: ws["w3"].ID})
-	if res := ackData[proto.FirePrepareResult](t, m); !res.CanDelete || res.Reason != "" || len(res.Dirty) != 0 {
+	if res := ackData[proto.FirePrepareResult](t, m); !res.CanDelete || res.CanDeleteBranch || res.Reason != "" || len(res.Dirty) != 0 {
 		t.Fatalf("clean prepare = %s", m.raw)
+	}
+	ctx := context.Background()
+	if err := hb.st.RecordHireBranch(ctx, store.HireBranch{WorkerID: ws["w3"].ID, Session: "s", RepoRoot: "/home/u/repo",
+		Branch: "h3d/mochi-d4e5f6", BaseSHA: g.sha}); err != nil {
+		t.Fatal(err)
+	}
+	_, m = hb.c.command(proto.CmdFirePrepare, "f2b", proto.WorkerArgs{ID: ws["w3"].ID})
+	if res := ackData[proto.FirePrepareResult](t, m); !res.CanDelete || !res.CanDeleteBranch {
+		t.Fatalf("clean prepare of a recorded branch = %s", m.raw)
+	}
+	// The checkout moved to another branch: shown as it is now, and the
+	// recorded one is not offered.
+	g.mu.Lock()
+	g.current[wt3] = "feature/y"
+	g.mu.Unlock()
+	_, m = hb.c.command(proto.CmdFirePrepare, "f2c", proto.WorkerArgs{ID: ws["w3"].ID})
+	if res := ackData[proto.FirePrepareResult](t, m); res.Branch != "feature/y" || !res.CanDelete || res.CanDeleteBranch {
+		t.Fatalf("prepare after a branch switch = %s", m.raw)
 	}
 	// The main checkout cannot go while its worktrees are open (herdr only
 	// closes the group).
@@ -947,12 +968,35 @@ func TestSendHomeAgentThatDoesNotExit(t *testing.T) {
 	hb.fl.setProcs("w1:p1", running("codex", ""))
 	id := workersOf(hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 1 }), "s")["w1"].ID
 	_, m := hb.c.command(proto.CmdWorkerFire, "fire", proto.WorkerFireArgs{ID: id})
+	if e := errorOf(m); e.Code != proto.ErrFireFailed || !strings.Contains(e.Message, "still running") ||
+		!strings.Contains(e.Message, "nothing was closed") {
+		t.Fatalf("reply = %s", m.raw)
+	}
+	// Enter once, three more times while it does not go, then Ctrl-C
+	// twice; nothing is closed.
+	if calls := hb.fl.Calls(); !slices.Equal(calls, []string{"exit w1:p1", "key w1:p1 enter", "key w1:p1 enter",
+		"key w1:p1 enter", "key w1:p1 enter", "key w1:p1 ctrl+c", "key w1:p1 ctrl+c"}) {
+		t.Fatalf("herdr calls = %q", calls)
+	}
+	if row := auditRow(t, hb.bridge, proto.CmdWorkerFire); row.OK || !row.Done || !strings.Contains(row.Error, "still running") ||
+		!strings.Contains(row.Result, `"released":false`) {
+		t.Fatalf("audit = %+v", row)
+	}
+	// Still there, and may be sent home again: Ctrl-C takes this time. It
+	// did not leave by itself, but it left: the workspace closes.
+	if w := workersOf(hb.world(func(proto.World) bool { return true }), "s")["w1"]; w.ID != id {
+		t.Fatalf("worker gone: %+v", w)
+	}
+	hb.fl.onKey = func(pane string, key herdr.Key) {
+		if key == herdr.KeyCtrlC {
+			hb.fl.setProcs(pane, atShell())
+		}
+	}
+	_, m = hb.c.command(proto.CmdWorkerFire, "again", proto.WorkerFireArgs{ID: id})
 	if res := ackData[proto.FireResult](t, m); res.Released {
 		t.Fatalf("ack = %s", m.raw)
 	}
-	// Enter once, three more times while it does not go, then Ctrl-C twice.
-	if calls := hb.fl.Calls(); !slices.Equal(calls, []string{"exit w1:p1", "key w1:p1 enter", "key w1:p1 enter",
-		"key w1:p1 enter", "key w1:p1 enter", "key w1:p1 ctrl+c", "key w1:p1 ctrl+c", "close w1"}) {
+	if calls := hb.fl.Calls(); calls[len(calls)-1] != "close w1" {
 		t.Fatalf("herdr calls = %q", calls)
 	}
 }
@@ -964,20 +1008,36 @@ func withKind(w world.WorkerObs, kind string) world.WorkerObs {
 
 func TestSendHomeWorktree(t *testing.T) {
 	hb := startHireBridge(t, nil, linkedWorker("w1", "h3d/pixel-a1b2c3"), linkedWorker("w2", "h3d/mochi-d4e5f6"),
-		withKind(linkedWorker("w3", "feature/x"), "claude"))
-	wt1, wt2, wt3 := "/home/u/.herdr/worktrees/repo/h3d-pixel-a1b2c3", "/home/u/.herdr/worktrees/repo/h3d-mochi-d4e5f6",
-		"/home/u/.herdr/worktrees/repo/feature-x"
+		withKind(linkedWorker("w3", "feature/x"), "claude"), linkedWorker("w4", "h3d/tofu-0f0f0f"),
+		linkedWorker("w5", "h3d/miso-123456"))
+	wt := func(branch string) string {
+		return "/home/u/.herdr/worktrees/repo/" + strings.ReplaceAll(branch, "/", "-")
+	}
+	wt1, wt2, wt3, wt4, wt5 := wt("h3d/pixel-a1b2c3"), wt("h3d/mochi-d4e5f6"), wt("feature/x"), wt("h3d/tofu-0f0f0f"),
+		wt("h3d/miso-123456")
 	g := hb.git
-	g.repos[wt1], g.repos[wt2], g.repos[wt3] = wt1, wt2, wt3
+	for i, p := range []string{wt1, wt2, wt3, wt4, wt5} {
+		g.repos[p] = p
+		hb.fl.setProcs(fmt.Sprintf("w%d:p1", i+1), atShell())
+	}
 	g.unpushed[wt1] = 1
-	ws := workersOf(hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 3 }), "s")
+	ws := workersOf(hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 5 }), "s")
+	// The bridge made the branches of w2 and w5 (and w1's), not w4's
+	// h3d/… one.
+	ctx := context.Background()
+	for w, b := range map[string]string{"w1": "h3d/pixel-a1b2c3", "w2": "h3d/mochi-d4e5f6", "w5": "h3d/miso-123456"} {
+		if err := hb.st.RecordHireBranch(ctx, store.HireBranch{WorkerID: ws[w].ID, Session: "s", RepoRoot: "/home/u/repo",
+			Branch: b, BaseSHA: g.sha}); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// Dirty or unpushed: refused, nothing happens.
 	hb.c.mustError(proto.CmdWorkerFire, proto.WorkerFireArgs{ID: ws["w1"].ID, Worktree: "delete"}, proto.ErrNotClean)
 	if calls := hb.fl.Calls(); len(calls) != 0 {
 		t.Fatalf("not_clean ran herdr: %q", calls)
 	}
-	// Clean: the worktree and its branch go.
+	// Clean: the worktree and its branch go, and so does the record.
 	_, m := hb.c.command(proto.CmdWorkerFire, "f", proto.WorkerFireArgs{ID: ws["w2"].ID, Worktree: "delete_branch"})
 	if res := ackData[proto.FireResult](t, m); res.Worktree != proto.WorktreeDelBranch {
 		t.Fatalf("ack = %s", m.raw)
@@ -988,8 +1048,41 @@ func TestSendHomeWorktree(t *testing.T) {
 	if gc := g.Calls(); !slices.Contains(gc, "branch -D /home/u/repo h3d/mochi-d4e5f6") {
 		t.Fatalf("git calls = %q", gc)
 	}
-	// Only branches the bridge made are deleted.
-	hb.c.mustError(proto.CmdWorkerFire, proto.WorkerFireArgs{ID: ws["w3"].ID, Worktree: "delete_branch"}, proto.ErrBadRequest)
+	if _, ok, err := hb.st.HireBranchOf(ctx, ws["w2"].ID); err != nil || ok {
+		t.Fatalf("record after delete: %v %v", ok, err)
+	}
+	// Only branches the bridge recorded making for that worker are
+	// deleted: not feature/x, and not an h3d/… branch made elsewhere.
+	for _, w := range []string{"w3", "w4"} {
+		hb.c.mustError(proto.CmdWorkerFire, proto.WorkerFireArgs{ID: ws[w].ID, Worktree: "delete_branch"}, proto.ErrBadRequest)
+	}
+	// The checkout switched away from the recorded branch since it was
+	// shown: refused, nothing happens.
+	g.mu.Lock()
+	g.current[wt5] = "main"
+	g.mu.Unlock()
+	before := len(hb.fl.Calls())
+	_, m = hb.c.command(proto.CmdWorkerFire, "sw", proto.WorkerFireArgs{ID: ws["w5"].ID, Worktree: "delete_branch"})
+	if e := errorOf(m); e.Code != proto.ErrNotClean || !strings.Contains(e.Message, "on branch main, not h3d/miso-123456") {
+		t.Fatalf("switched branch: %s", m.raw)
+	}
+	// Back on it, but the branch has commits on no remote (HEAD's are
+	// pushed): refused too.
+	g.mu.Lock()
+	delete(g.current, wt5)
+	g.ahead["h3d/miso-123456"] = 2
+	g.mu.Unlock()
+	_, m = hb.c.command(proto.CmdWorkerFire, "ahead", proto.WorkerFireArgs{ID: ws["w5"].ID, Worktree: "delete_branch"})
+	if e := errorOf(m); e.Code != proto.ErrNotClean || !strings.Contains(e.Message, "2 commits of h3d/miso-123456 not on any remote") {
+		t.Fatalf("unpushed branch: %s", m.raw)
+	}
+	if calls := hb.fl.Calls(); len(calls) != before {
+		t.Fatalf("refused send homes ran herdr: %q", calls[before:])
+	}
+	if gc := g.Calls(); slices.Contains(gc, "branch -D /home/u/repo h3d/miso-123456") ||
+		slices.Contains(gc, "branch -D /home/u/repo h3d/tofu-0f0f0f") {
+		t.Fatalf("git calls = %q", gc)
+	}
 	// Keep is always possible, dirty or not.
 	_, m = hb.c.command(proto.CmdWorkerFire, "k", proto.WorkerFireArgs{ID: ws["w1"].ID, Worktree: "keep"})
 	if res := ackData[proto.FireResult](t, m); res.Worktree != proto.WorktreeKept {

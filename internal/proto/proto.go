@@ -468,16 +468,19 @@ type WorkerArgs struct {
 // FirePrepareResult is the ack data of worker.fire.prepare: what the
 // send-home dialog shows.
 type FirePrepareResult struct {
-	Name        string        `json:"name"`
-	Label       string        `json:"label"`
-	Branch      string        `json:"branch,omitempty"`
-	Worktree    *FireWorktree `json:"worktree"`
-	Dirty       []string      `json:"dirty"`
-	Unpushed    int           `json:"unpushed"`
-	CanDelete   bool          `json:"can_delete"`
-	Reason      string        `json:"reason,omitempty"`
-	CanFire     bool          `json:"can_fire"`
-	FireBlocked string        `json:"fire_blocked,omitempty"`
+	Name      string        `json:"name"`
+	Label     string        `json:"label"`
+	Branch    string        `json:"branch,omitempty"`
+	Worktree  *FireWorktree `json:"worktree"`
+	Dirty     []string      `json:"dirty"`
+	Unpushed  int           `json:"unpushed"`
+	CanDelete bool          `json:"can_delete"`
+	// CanDeleteBranch: CanDelete, and the checkout is on the branch the
+	// bridge made for this worker, whose commits are all on a remote.
+	CanDeleteBranch bool   `json:"can_delete_branch"`
+	Reason          string `json:"reason,omitempty"`
+	CanFire         bool   `json:"can_fire"`
+	FireBlocked     string `json:"fire_blocked,omitempty"`
 }
 
 // FireWorktree is the git checkout a worker works in.

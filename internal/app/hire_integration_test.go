@@ -313,7 +313,7 @@ func TestIntegrationHireAndSendHome(t *testing.T) {
 	}
 	var fp proto.FirePrepareResult
 	b.ack(proto.CmdFirePrepare, proto.WorkerArgs{ID: hired.ID}, 30*time.Second, &fp)
-	if fp.CanDelete || !slices.Contains(fp.Dirty, "?? notes.txt") || fp.Branch != hired.Branch || fp.Worktree == nil {
+	if fp.CanDelete || fp.CanDeleteBranch || !slices.Contains(fp.Dirty, "?? notes.txt") || fp.Branch != hired.Branch || fp.Worktree == nil {
 		t.Fatalf("dirty fire.prepare = %+v", fp)
 	}
 	b.refuse(proto.CmdWorkerFire, proto.WorkerFireArgs{ID: hired.ID, Worktree: proto.FireDelete}, proto.ErrNotClean)
@@ -331,9 +331,18 @@ func TestIntegrationHireAndSendHome(t *testing.T) {
 	// Pushed: it can go, with its branch.
 	gitIn(t, checkout, "push", "-q", "origin", hired.Branch)
 	b.ack(proto.CmdFirePrepare, proto.WorkerArgs{ID: hired.ID}, 30*time.Second, &fp)
-	if !fp.CanDelete {
+	if !fp.CanDelete || !fp.CanDeleteBranch {
 		t.Fatalf("clean fire.prepare = %+v", fp)
 	}
+	// Not while the checkout is on another branch (read now, not the one
+	// last shown): the worktree may go, the bridge's branch is not offered.
+	gitIn(t, checkout, "switch", "-q", "-c", "h3d-it-side")
+	b.ack(proto.CmdFirePrepare, proto.WorkerArgs{ID: hired.ID}, 30*time.Second, &fp)
+	if !fp.CanDelete || fp.CanDeleteBranch || fp.Branch != "h3d-it-side" {
+		t.Fatalf("switched fire.prepare = %+v", fp)
+	}
+	b.refuse(proto.CmdWorkerFire, proto.WorkerFireArgs{ID: hired.ID, Worktree: proto.FireDeleteBranch}, proto.ErrNotClean)
+	gitIn(t, checkout, "switch", "-q", hired.Branch)
 	var fired proto.FireResult
 	evs = b.ack(proto.CmdWorkerFire, proto.WorkerFireArgs{ID: hired.ID, Worktree: proto.FireDeleteBranch}, 60*time.Second, &fired)
 	if fired.Worktree != proto.WorktreeDelBranch || !fired.Released {
@@ -457,7 +466,7 @@ func TestIntegrationHireAndSendHome(t *testing.T) {
 			}
 		}
 	}
-	want := []string{"worker.hire true", "worker.fire false", "worker.fire false", "worker.fire true", "worker.hire true",
+	want := []string{"worker.hire true", "worker.fire false", "worker.fire false", "worker.fire false", "worker.fire true", "worker.hire true",
 		"worker.hire false", "worker.fire true"}
 	if !slices.Equal(rows, want) {
 		t.Fatalf("audit rows = %q, want %q", rows, want)
