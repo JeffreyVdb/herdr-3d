@@ -696,6 +696,56 @@ func TestHireRollsBack(t *testing.T) {
 	hb.c.mustAck(proto.CmdWorkerHire, hireArgs(0))
 }
 
+// herdr opens the repository's main checkout with the first worktree of
+// it on a floor: that is one more worker, and counts against the caps.
+func TestHireCountsTheMainCheckout(t *testing.T) {
+	caps := func(hard int) func(*server.Options) {
+		return func(o *server.Options) {
+			o.Caps = server.Caps{FloorSoft: 1, FloorHard: hard, HostSoft: 1, HostHard: 50}
+		}
+	}
+	// Hard cap 1, an empty floor: a plain hire fits, a worktree hire not.
+	hb := startHireBridge(t, caps(1))
+	hb.git.repos["/home/u/repo"] = "/home/u/repo"
+	a := hireArgs(0)
+	a.Cwd, a.Worktree = "/home/u/repo", true
+	_, m := hb.c.command(proto.CmdWorkerHire, "wt", a)
+	if e := errorOf(m); e.Code != proto.ErrCapacity || !strings.Contains(e.Message, "main checkout") {
+		t.Fatalf("worktree hire at hard cap 1: %s", m.raw)
+	}
+	if calls := hb.fl.Calls(); len(calls) != 0 {
+		t.Fatalf("refused hire ran herdr: %q", calls)
+	}
+	a.Worktree = false
+	hb.c.mustAck(proto.CmdWorkerHire, a)
+
+	// The main checkout already open: only the worktree counts.
+	main := claudeW("w1", "")
+	main.Cwd = "/home/u/repo"
+	main.Worktree = &world.Worktree{RepoRoot: "/home/u/repo", RepoName: "repo", CheckoutPath: "/home/u/repo"}
+	hb = startHireBridge(t, caps(2), main)
+	hb.git.repos["/home/u/repo/sub"] = "/home/u/repo"
+	a = hireArgs(1)
+	a.Cwd, a.Worktree = "/home/u/repo/sub", true
+	hb.c.mustAck(proto.CmdWorkerHire, a)
+
+	// Inside an open main checkout's directory, but its own repository
+	// (found once git runs): refused then, before herdr makes anything.
+	outer := claudeW("w1", "")
+	outer.Cwd = "/home/u"
+	outer.Worktree = &world.Worktree{RepoRoot: "/home/u", RepoName: "u", CheckoutPath: "/home/u"}
+	hb = startHireBridge(t, caps(2), outer)
+	hb.git.repos["/home/u/nested"] = "/home/u/nested"
+	a.Cwd = "/home/u/nested"
+	_, m = hb.c.command(proto.CmdWorkerHire, "nested", a)
+	if e := errorOf(m); e.Code != proto.ErrCapacity || !strings.Contains(e.Message, "main checkout") {
+		t.Fatalf("nested repository at hard cap 2: %s", m.raw)
+	}
+	if calls := hb.fl.Calls(); len(calls) != 0 {
+		t.Fatalf("refused hire ran herdr: %q", calls)
+	}
+}
+
 func TestHirePromptRetriesUntilReady(t *testing.T) {
 	hb := startHireBridge(t, nil)
 	notReady := &herdr.APIError{Code: "agent_not_ready", Message: "starting"}

@@ -84,9 +84,11 @@ func bad(format string, args ...any) error { return &badArgsError{fmt.Errorf(for
 // hireOp is a worker.hire in flight. Its desk is reserved and its worker
 // id minted from the start; workspaceID and pane are set (on the hub
 // goroutine) once herdr made the workspace, and seen once the hub saw it.
+// extra is 1 while the hire may also open its repository's main checkout
+// (a worktree hire when none is open on the floor): it counts too.
 type hireOp struct {
 	id, session                string
-	desk                       int
+	desk, extra                int
 	name, label, marker, agent string
 	harness, model, effort     string
 	cwd, prompt, branch        string
@@ -194,7 +196,7 @@ func (h *Hub) counts(session string) (floor, host int) {
 		n := len(f.order)
 		for _, op := range f.hires {
 			if !op.seen {
-				n++
+				n += 1 + op.extra
 			}
 		}
 		host += n
@@ -370,13 +372,14 @@ func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error
 			return fmt.Errorf("%w: desk %d is being hired into", errDeskTaken, desk)
 		}
 	}
-	floorN, hostN := h.counts(a.Session)
-	caps := h.opts.Caps
-	switch {
-	case floorN+1 > caps.FloorHard:
-		return fmt.Errorf("%w: the floor has %d workers, the most is %d (--max-workers-per-floor)", errCapacity, floorN, caps.FloorHard)
-	case hostN+1 > caps.HostHard:
-		return fmt.Errorf("%w: the host has %d workers, the most is %d (--max-workers)", errCapacity, hostN, caps.HostHard)
+	// A worktree hire opens the main checkout too when it is not open on
+	// the floor; runHire checks again once it knows the repository.
+	extra := 0
+	if a.Worktree && !h.mainCheckoutOpen(f, cwd, false) {
+		extra = 1
+	}
+	if err := h.checkCaps(a.Session, 1+extra, extra > 0); err != nil {
+		return err
 	}
 	if h.opts.Hire == nil {
 		return errors.New("hiring is not configured")
@@ -388,7 +391,7 @@ func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error
 	if held[name] || !world.IsName(name) {
 		name = world.PickName(id, held)
 	}
-	op := &hireOp{id: id, session: a.Session, desk: desk, name: name, label: a.Label, marker: "h3d-" + hex[:12],
+	op := &hireOp{id: id, session: a.Session, desk: desk, extra: extra, name: name, label: a.Label, marker: "h3d-" + hex[:12],
 		agent: slug(name) + "-" + hex[:6], harness: a.Harness, model: a.Model, effort: a.Effort, cwd: cwd,
 		prompt: a.Prompt, worktree: a.Worktree, hiredAt: at.UnixMilli(), client: c, cmd: cmd,
 		notify: make(chan struct{}, 1)}
@@ -410,6 +413,43 @@ func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error
 	h.wg.Add(1)
 	go h.runHire(ctx, op)
 	return nil
+}
+
+// checkCaps refuses a hire that would put the floor or the host above its
+// hard cap with need more workers (hires in flight already count).
+// withMain: need includes the repository's main checkout.
+func (h *Hub) checkCaps(session string, need int, withMain bool) error {
+	floorN, hostN := h.counts(session)
+	caps := h.opts.Caps
+	also := ""
+	if withMain {
+		also = "; a worktree hire also opens the repository's main checkout, which is not open on the floor"
+	}
+	switch {
+	case floorN+need > caps.FloorHard:
+		return fmt.Errorf("%w: the floor has %d workers, the most is %d (--max-workers-per-floor)%s", errCapacity, floorN,
+			caps.FloorHard, also)
+	case hostN+need > caps.HostHard:
+		return fmt.Errorf("%w: the host has %d workers, the most is %d (--max-workers)%s", errCapacity, hostN, caps.HostHard, also)
+	}
+	return nil
+}
+
+// mainCheckoutOpen reports whether a workspace in the main checkout of
+// the repository at dir is open on the floor: one whose repository root
+// is dir (exact), or contains dir.
+func (h *Hub) mainCheckoutOpen(f *floorState, dir string, exact bool) bool {
+	for _, id := range f.order {
+		w := h.workers[id]
+		if w == nil || w.Worktree == nil || w.Worktree.Linked || w.Worktree.RepoRoot == "" {
+			continue
+		}
+		root := w.Worktree.RepoRoot
+		if dir == root || (!exact && strings.HasPrefix(dir, strings.TrimSuffix(root, "/")+"/")) {
+			return true
+		}
+	}
+	return false
 }
 
 // hireReport is the audit-log result of a worker.hire.
@@ -471,6 +511,22 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 			return
 		}
 		rep.RepoRoot = repo
+		// Now that the repository is known: does herdr open its main
+		// checkout too?
+		var capErr error
+		if err := h.doWait(ctx, func() {
+			op.extra = 0
+			if f := h.floors[op.session]; f != nil && !h.mainCheckoutOpen(f, repo, true) {
+				op.extra = 1
+			}
+			capErr = h.checkCaps(op.session, 0, op.extra > 0)
+		}); err != nil {
+			return
+		}
+		if capErr != nil {
+			fail(capErr)
+			return
+		}
 		fetched := true
 		if err := git.Fetch(ctx, repo); err != nil {
 			fetched, rep.FetchError, res.FetchError = false, err.Error(), err.Error()
