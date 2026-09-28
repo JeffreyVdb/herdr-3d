@@ -10,17 +10,17 @@
  */
 
 import type { Solid, Support, WalkWorld } from './collide';
-import { ROOM_HEIGHT, WALL_T, type Box3, type Outline, type Rect, type Vec2 } from './layout';
+import { ROOM_HEIGHT, WALL_T, type Box3, type FloorLayout, type Mezzanine, type Outline, type Rect, type Vec2 } from './layout';
 
 /** The floor slab between storeys. */
 export const SLAB = 0.3;
-/** Floor to floor. The corner office (#20) raises it: keep it one constant. */
+/** Floor to floor: the tall room of the corner office (#20) plus the slab. */
 export const STOREY = ROOM_HEIGHT + SLAB;
 /** The facade skin outside the office walls: the outer faces sit FACE outside the room. */
 export const SKIN = 0.05;
 export const FACE = WALL_T + SKIN;
-/** Fire-escape stairs: 9 risers a flight, two flights a storey, 0.28 m treads. */
-export const RISERS = 9;
+/** Fire-escape stairs: two flights a storey with a half landing between, risers of at most ~0.19 m, 0.28 m treads. */
+export const RISERS = Math.ceil(STOREY / 2 / 0.19);
 export const RISE = STOREY / (2 * RISERS);
 export const TREAD = 0.28;
 export const LANE = 1.2;
@@ -297,6 +297,13 @@ export interface Loaded {
   /** The floor with an interior: its storey, walking obstacles (office coordinates) and room size. */
   storey: number;
   colliders: readonly Rect[];
+  /** Its corner office (#20): what stands on it and climbs to it. Obstacles under it stop at its slab. */
+  mezzanine?: Mezzanine;
+}
+
+/** The loaded floor as walked: its layout's obstacles (or `colliders`, e.g. with occupied seats) and its mezzanine. */
+export function loadedFloor(layout: FloorLayout, storey: number, colliders: readonly Rect[] = layout.colliders): Loaded {
+  return { storey, colliders, mezzanine: layout.mezzanine };
 }
 
 /**
@@ -314,7 +321,14 @@ export function walkWorld(plan: BuildingPlan, loaded: Loaded | null): WalkWorld 
     const y = floorY(s);
     if (loaded && loaded.storey === s) {
       supports.push({ x0: 0, z0: 0, x1: W, z1: D, y });
-      for (const r of loaded.colliders) solids.push(solid(r.x0, r.z0, r.x1, r.z1, y, y + ROOM_HEIGHT));
+      // Desks, props and seats under the mezzanine stop at its slab: you walk over them up there.
+      const m = loaded.mezzanine;
+      const under = (r: Rect) => !!m && r.x0 < m.rect.x1 && r.x1 > m.rect.x0 && r.z0 < m.rect.z1 && r.z1 > m.rect.z0;
+      for (const r of loaded.colliders) solids.push(solid(r.x0, r.z0, r.x1, r.z1, y, y + (under(r) && m ? m.under : ROOM_HEIGHT)));
+      if (m) {
+        for (const p of m.supports) supports.push({ ...p, y: y + p.y });
+        for (const b of m.solids) solids.push({ ...b, y0: y + b.y0, y1: y + b.y1 });
+      }
       // The facade skin outside the office's own walls.
       solids.push(solid(-FACE, 0, -WALL_T, plan.escape.door.z0, y, y + ROOM_HEIGHT));
       solids.push(solid(-FACE, plan.escape.door.z1, -WALL_T, D, y, y + ROOM_HEIGHT));

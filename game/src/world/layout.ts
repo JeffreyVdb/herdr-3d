@@ -1,3 +1,5 @@
+import type { Solid, Support } from './collide';
+
 /**
  * Procedural office floor layout, a pure function of the desk count.
  *
@@ -10,6 +12,9 @@
  * least that big, the desk grid stays centred in it, and the windows and the
  * fire-escape door (west wall, south end) depend on the outline alone, so
  * they line up from floor to floor.
+ *
+ * The room is tall (#20): a mezzanine in the north-east corner carries your
+ * corner office over the filing cabinet, with an open stair up the east wall.
  */
 
 export interface Rect {
@@ -108,9 +113,49 @@ export interface FloorLayout {
   lights: Vec2[];
   /** The lounge rug. */
   rug: Rect;
+  /** The corner office on its mezzanine (#20). */
+  mezzanine: Mezzanine;
 }
 
-export const ROOM_HEIGHT = 3;
+/** A stair tread: its footprint and the height of its top. */
+export interface Step {
+  rect: Rect;
+  y: number;
+}
+
+/**
+ * The mezzanine in the north-east corner and the glass office on it, in the
+ * floor's own coordinates (y above this floor). Its floor blocks nothing
+ * below it; its posts and the stair do (`solids`), and its glass walls block
+ * walking on top but not look-at.
+ */
+export interface Mezzanine {
+  /** Footprint: the office on top. */
+  rect: Rect;
+  /** Top of its floor, and the underside of its slab (the headroom below). */
+  y: number;
+  under: number;
+  /** Post centres (square posts POST_W wide), clear of desks and aisles. */
+  posts: Vec2[];
+  /** The open stair up the east wall: x range, top (at the office door) and bottom z, treads bottom to top. */
+  stair: { x0: number; x1: number; top: number; bottom: number; rise: number; treads: Step[] };
+  /** Glass walls on the open sides (south, west), from the mezzanine floor up GLASS_H. */
+  glass: Box3[];
+  /** The glass door in the south wall, at the head of the stair: x range. */
+  door: { x0: number; x1: number; z: number; height: number };
+  /** Your desk: the seat (floor under the chair), the desk centre, and the desk-art yaw (the sitter faces its desk). */
+  desk: { seat: Vec2; desk: Vec2; yaw: number };
+  /** Sitting at your desk: where the walker goes and which way it looks (at the floor, over the glass). */
+  sit: { x: number; z: number; yaw: number; pitch: number };
+  /** The slab: blocks look-at from above and below (glass does not). */
+  slab: Box3;
+  /** Walking: the mezzanine floor and the treads (supports), posts, stair side, glass and desk (solids). */
+  supports: Support[];
+  solids: Solid[];
+}
+
+/** Floor to ceiling: tall enough for the mezzanine with standing room on it and under it (#20). */
+export const ROOM_HEIGHT = 6.5;
 export const WALL_T = 0.2;
 export const DESK_W = 1.4;
 export const DESK_D = 0.7;
@@ -137,8 +182,26 @@ const BOARD_WALL_Z = 4.3; // distance of the board partition from the south wall
 export const FIRE_DOOR_W = 1.2;
 const FIRE_DOOR_S = 1.6;
 export const DOOR_H = 2.3;
-const SILL = 0.9;
-const HEAD = 2.45;
+/** Windows run the full height of the room, so the outside shows from the mezzanine too. */
+export const SILL = 0.6;
+export const HEAD = ROOM_HEIGHT - 0.55;
+
+/** The mezzanine: about 7 x 5 m in the north-east corner, its floor at 3 m on a 0.25 m slab. */
+export const MEZZ_W = 7;
+export const MEZZ_D = 5;
+export const MEZZ_Y = 3;
+export const MEZZ_SLAB = 0.25;
+/** Glass walls: this tall above the mezzanine floor. */
+export const GLASS_H = 2.6;
+export const POST_W = 0.24;
+/** The stair: this wide along the east wall, 17 risers up to the mezzanine, 0.28 m treads. */
+export const STAIR_W = 1.2;
+export const STAIR_RISERS = 17;
+export const STAIR_TREAD = 0.28;
+const STAIR_GAP = 0.05; // stair to the east wall
+const STAIR_RAIL = 0.07;
+/** Room kept round a post: to desks and chairs, props and the stair. */
+const POST_CLEAR = 0.5;
 
 const box = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): Box3 => ({
   min: [x0, y0, z0],
@@ -184,8 +247,9 @@ export function outlineOf(deskCounts: readonly number[]): Outline {
 export function openingsFor(width: number, depth: number): Opening[] {
   const out: Opening[] = [];
   const win = (wall: Side, c: number, w: number) => out.push({ wall, kind: 'window', u0: r3(c - w / 2), u1: r3(c + w / 2), y0: SILL, y1: HEAD });
-  // North: over the lounge sofa.
+  // North: over the lounge sofa, and high up in the corner office on the mezzanine.
   win('north', 2.8, 3.6);
+  out.push({ wall: 'north', kind: 'window', u0: r3(width - 4.6), u1: r3(width - 2.4), y0: MEZZ_Y + 0.6, y1: HEAD });
   // East: along the wall, clear of the filing cabinet.
   for (let z = 3.6; z + 1.1 < depth - 0.9; z += 3.2) win('east', z, 2.2);
   // South, either side of the elevator (and clear of the drop zone on its east).
@@ -294,6 +358,122 @@ export function floorLayout(deskCount: number, outline?: Outline): FloorLayout {
     spawn: { x: r3(width / 2), z: r3(depth - 1.3), yaw: 0 },
     lights,
     rug: { x0: 0.4, z0: 0.3, x1: 5.2, z1: 3.3 },
+    mezzanine: mezzanineFor(width, depth, slots, props, deskArea, {
+      x0,
+      x1: x0 + gridW,
+      rows: desks ? Array.from({ length: Math.ceil(Math.ceil(desks / 4) / cols) }, (_, r) => ({ z0: z0 + r * PITCH_Z, z1: z0 + r * PITCH_Z + POD_D })) : [],
+    }),
+  };
+}
+
+const overlapsRect = (a: Rect, b: Rect) => a.x0 < b.x1 && a.x1 > b.x0 && a.z0 < b.z1 && a.z1 > b.z0;
+const grow = (r: Rect, d: number): Rect => ({ x0: r.x0 - d, z0: r.z0 - d, x1: r.x1 + d, z1: r.z1 + d });
+
+/** Footprint of a desk slot: the desk and its chair (pulled out, a worker in it). */
+export function slotRect(s: DeskSlot): Rect {
+  return {
+    x0: s.desk.x - DESK_W / 2,
+    x1: s.desk.x + DESK_W / 2,
+    z0: Math.min(s.desk.z - DESK_D / 2, s.seat.z - 0.3),
+    z1: Math.max(s.desk.z + DESK_D / 2, s.seat.z + 0.3),
+  };
+}
+
+/**
+ * The corner office: the mezzanine over the north-east corner, the open stair
+ * up the east wall from the south to its door, the glass walls, your desk.
+ * Posts go where the floor below is free: at the open corner when that is
+ * clear of desks, chairs and the aisles people walk (a pod row's x-aisles
+ * are fine, the z-aisles in front of the chairs are not); otherwise one along
+ * each open edge, and the edge beams carry the corner.
+ */
+function mezzanineFor(
+  width: number,
+  depth: number,
+  slots: readonly DeskSlot[],
+  props: readonly Prop[],
+  deskArea: Rect,
+  grid: { x0: number; x1: number; rows: Array<{ z0: number; z1: number }> },
+): Mezzanine {
+  const rect: Rect = { x0: r3(width - MEZZ_W), z0: 0, x1: width, z1: MEZZ_D };
+  const y = MEZZ_Y;
+  const under = r3(MEZZ_Y - MEZZ_SLAB);
+  const rise = MEZZ_Y / STAIR_RISERS;
+  const sx1 = r3(width - STAIR_GAP);
+  const sx0 = r3(sx1 - STAIR_W);
+  const n = STAIR_RISERS - 1;
+  const bottom = r3(rect.z1 + n * STAIR_TREAD);
+  const treads: Step[] = [];
+  for (let j = 1; j <= n; j++) {
+    treads.push({ rect: { x0: sx0, x1: sx1, z0: r3(rect.z1 + (n - j) * STAIR_TREAD), z1: r3(rect.z1 + (n - j + 1) * STAIR_TREAD) }, y: r3(j * rise) });
+  }
+  const stairRect: Rect = { x0: sx0 - STAIR_RAIL, z0: rect.z1, x1: sx1, z1: bottom };
+
+  // Posts: free of desks and chairs, props and the stair, and out of the z-aisles in front of the chairs.
+  const avoid: Rect[] = [...slots.map(slotRect), ...props.map((p) => ({ x0: p.box.min[0], z0: p.box.min[2], x1: p.box.max[0], z1: p.box.max[2] })), stairRect];
+  const h = POST_W / 2;
+  const top = grid.rows[0]?.z0 ?? Infinity;
+  const free = (p: Vec2) => {
+    const r = { x0: p.x - h, z0: p.z - h, x1: p.x + h, z1: p.z + h };
+    if (avoid.some((a) => overlapsRect(grow(r, POST_CLEAR), a))) return false;
+    if (grid.rows.length && p.x > grid.x0 - POST_CLEAR - h && p.x < grid.x1 + POST_CLEAR + h) {
+      // In the grid's x span: inside a pod row (so in an x-aisle), or well north of the first row's chairs.
+      return p.z < top - 0.9 || grid.rows.some((row) => p.z > row.z0 + 0.15 && p.z < row.z1 - 0.15);
+    }
+    return true;
+  };
+  const inset = 0.15;
+  const corner = { x: r3(rect.x0 + inset), z: r3(rect.z1 - inset) };
+  const posts: Vec2[] = [];
+  if (free(corner)) posts.push(corner);
+  else {
+    for (let x = corner.x + 0.05; x < sx0 - 0.3; x += 0.05)
+      if (free({ x, z: corner.z })) {
+        posts.push({ x: r3(x), z: corner.z });
+        break;
+      }
+    for (let z = corner.z - 0.05; z > 0.3; z -= 0.05)
+      if (free({ x: corner.x, z })) {
+        posts.push({ x: corner.x, z: r3(z) });
+        break;
+      }
+  }
+
+  // Glass on the open sides; the door at the head of the stair.
+  const gy1 = y + GLASS_H;
+  const glass: Box3[] = [box(rect.x0, y, rect.z1 - 0.05, sx0 - STAIR_RAIL, gy1, rect.z1), box(rect.x0, y, rect.z0, rect.x0 + 0.05, gy1, rect.z1 - 0.05)];
+  const door = { x0: sx0, x1: sx1, z: rect.z1, height: DOOR_H };
+
+  // Your desk faces west, its back to the east wall: sitting, you look out over the floor.
+  const seat = { x: r3(width - 0.95), z: 1.7 };
+  const deskC = { x: r3(seat.x - SEAT_OFFSET), z: seat.z };
+  const deskR: Rect = { x0: deskC.x - DESK_D / 2, z0: deskC.z - DESK_W / 2, x1: deskC.x + DESK_D / 2, z1: deskC.z + DESK_W / 2 };
+  const look = { x: (deskArea.x0 + deskArea.x1) / 2 - seat.x, z: (deskArea.z0 + deskArea.z1) / 2 - seat.z };
+  const sit = { x: seat.x, z: seat.z, yaw: r3(Math.atan2(-look.x, -look.z)), pitch: -0.42 };
+
+  const supports: Support[] = [{ ...rect, y }, ...treads.map((t) => ({ ...t.rect, y: t.y }))];
+  const solid = (r: Rect, y0: number, y1: number): Solid => ({ x0: r.x0, z0: r.z0, x1: r.x1, z1: r.z1, y0, y1 });
+  const solids: Solid[] = [
+    ...posts.map((p) => solid({ x0: p.x - h, z0: p.z - h, x1: p.x + h, z1: p.z + h }, 0, under)),
+    // The stair's open side (stringer and railing), and the low part underneath it you'd walk your head into.
+    solid({ x0: sx0 - STAIR_RAIL, z0: rect.z1, x1: sx0, z1: bottom }, 0, y + 1),
+    solid({ x0: sx0, z0: rect.z1, x1: sx1, z1: bottom - STAIR_TREAD }, 0, 0.5),
+    ...glass.map((g) => solid({ x0: g.min[0], z0: g.min[2], x1: g.max[0], z1: g.max[2] }, y, gy1)),
+    solid(deskR, y, y + 1.1),
+  ];
+  return {
+    rect,
+    y,
+    under,
+    posts,
+    stair: { x0: sx0, x1: sx1, top: rect.z1, bottom, rise: r3(rise), treads },
+    glass,
+    door,
+    desk: { seat, desk: deskC, yaw: -Math.PI / 2 },
+    sit,
+    slab: box(rect.x0, under, rect.z0, rect.x1, y, rect.z1),
+    supports,
+    solids,
   };
 }
 

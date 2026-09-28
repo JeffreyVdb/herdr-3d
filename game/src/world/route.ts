@@ -7,7 +7,7 @@
  */
 
 import { groundAt } from './collide';
-import { floorY, RISE, RISERS, TREAD, walkWorld, type BuildingPlan } from './building';
+import { floorY, loadedFloor, RISE, RISERS, TREAD, walkWorld, type BuildingPlan } from './building';
 import { type FloorLayout } from './layout';
 
 export interface Waypoint {
@@ -64,6 +64,6 @@ export function walkOutRoute(layout: FloorLayout, plan: BuildingPlan, storey: nu
   at(plan.fence.east - 1.5, front, 0);
 
   // Snap every waypoint to the ground actually there (the treads' exact heights).
-  const world = walkWorld(plan, { storey, colliders: layout.colliders });
+  const world = walkWorld(plan, loadedFloor(layout, storey));
   return pts.map(([x, y, z]) => ({ x, y: groundAt(world.supports, x, z, y + 0.05) ?? y, z }));
 }
