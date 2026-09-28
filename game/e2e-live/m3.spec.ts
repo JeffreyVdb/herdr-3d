@@ -142,3 +142,50 @@ test('sleep puts the workers to sleep at their desks, wake brings them back to t
   expect(await page.evaluate(() => window.__h3d.view())).toMatchObject({ floor: session, asleep: false });
   await expect.poll(() => seats(page), { timeout: 15_000 }).toEqual(seated);
 });
+
+test('floor settings saved from the panel are stored by the bridge and survive a restart', async ({ page }) => {
+  // An empty patch changes nothing: ack on an M3 bridge, unknown_command before.
+  const probe = await command('floor.settings.set', { session });
+  if (probe.code === 'unknown_command') {
+    const why = `this bridge has no floor.settings.set yet (${probe.message ?? ''})`;
+    console.log(`live-m3: SKIP settings: ${why}`);
+    test.skip(true, why);
+  }
+  expect(probe).toMatchObject({ t: 'ack' });
+
+  await open(page);
+  const cwd = env('H3D_LIVE_CWD');
+  await page.evaluate((s) => window.__h3d.openSettings(s), session);
+  await page.locator('#set-repo').fill('JeffreyVdb/herdr-3d');
+  await page.locator('#set-projectOwner').fill('JeffreyVdb');
+  await page.locator('#set-projectNumber').fill('3');
+  await page.locator('#set-defaultCwd').fill(cwd);
+  await page.locator('#set-harness').selectOption('claude');
+  await page.locator('#set-model').selectOption('claude-opus-5-5');
+  await page.locator('#set-effort').selectOption('high');
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText('Saved the repo, project, status field, default folder, default hire.');
+  const want = {
+    repo: 'JeffreyVdb/herdr-3d',
+    projectOwner: 'JeffreyVdb',
+    projectNumber: '3',
+    statusName: 'Status',
+    statusOptions: 'Todo, Doing, QA, Done',
+    defaultCwd: cwd,
+    harness: 'claude',
+    model: 'claude-opus-5-5',
+    effort: 'high',
+  };
+  await page.keyboard.press('Escape');
+
+  const before = await page.evaluate(() => window.__h3d.connection().epoch);
+  await bridge.restart();
+  await page.waitForFunction((e) => {
+    const c = window.__h3d.connection();
+    return c.phase === 'live' && c.epoch !== null && c.epoch !== e;
+  }, before, { timeout: 30_000 });
+  // Opened again after the restart, the form shows what the bridge stored.
+  await page.evaluate((s) => window.__h3d.openSettings(s), session);
+  const p = await page.evaluate(() => window.__h3d.panel());
+  expect(p).toMatchObject({ kind: 'settings', session, repoSuggested: false, form: want });
+});

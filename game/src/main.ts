@@ -53,6 +53,8 @@ export interface H3DDebug {
   openElevator(building?: string | null): void;
   /** M3: opens the buildings panel. */
   openBuildings(): void;
+  /** M3: opens a floor's settings panel. */
+  openSettings(session: string): void;
   /** M3: what the open panel shows, null when none is open. */
   panel(): PanelSummary | null;
   /** M3: commands sent to the bridge so far, with their result once answered. */
@@ -125,6 +127,7 @@ const h3d: H3DDebug = {
   badgePoint: (s) => app?.badgePoint(s) ?? null,
   openElevator: (b) => (b === undefined ? app?.openElevator() : app?.openElevator(b)),
   openBuildings: () => app?.openBuildings(),
+  openSettings: (s) => app?.panels.openSettings(s),
   panel: () => app?.panels.summary() ?? null,
   sent: () => structuredClone(app?.sent ?? []),
   floorPoint: (s) => app?.floorPoint(s) ?? null,

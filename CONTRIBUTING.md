@@ -263,8 +263,8 @@ plain-shell workspaces (no coding agents) and the proxy to `$XDG_RUNTIME_DIR/h3d
 (`e2e-live/m3.spec.ts`) runs its own private bridge on it (db `/tmp/h3d-m3game/world.db`, `--sessions
 '^h3d-m3game-…$'`) so it can restart it. It creates a building and moves the floor into it from the UI, restarts the
 bridge and checks both are still there, then sleeps the floor and wakes it from the elevator panel and checks every
-worker kept its desk. On a bridge without `floor.wake` (it answers `unknown_command`) the sleep/wake test is skipped
-and says so. Afterwards the session is stopped and deleted and the `herdr-s-h3d-m3game-…` unit a wake started is
+worker kept its desk, and saves floor settings from the panel and checks the restarted bridge still has them. On a
+bridge without `floor.wake` / `floor.settings.set` (it answers `unknown_command`) those tests are skipped and say so. Afterwards the session is stopped and deleted and the `herdr-s-h3d-m3game-…` unit a wake started is
 removed; after a hard kill, check `herdr session list` and `systemctl --user list-units 'herdr-s-h3d-*'`.
 
 `perf:mac` serves `game/dist` on a leased port P and opens `ssh -o ControlMaster=no -o ControlPath=none -N -R
@@ -279,7 +279,7 @@ sent, `bridgeName`/`bridgeDesk`, null from an older bridge), `layout(session)`, 
 `leaveFloor()`, `inject(event)` (applies a protocol event as if the bridge sent it), `setPose({x, z, yaw, pitch})`,
 `pose()`, `plan(open)`, `focusBuilding(i)`, `cards()`, `badgePoint(session)`, `bench(opts)`. M3: `view().asleep`
 (the office's lights are off), `world()[].building` (its name, null in the lot), `openElevator(building?)` (a building
-id, null for the lot, nothing for the current floor's), `openBuildings()`, `panel()` (what the open panel shows:
+id, null for the lot, nothing for the current floor's), `openBuildings()`, `openSettings(session)`, `panel()` (what the open panel shows:
 elevator rows with state, transition, counts, current, wake/sleep and resume; buildings; the settings form; any
 confirmation; the status line), `sent()` (commands sent, with their results), `floorPoint(session)` (a floor's screen
 point in the city, to click its building), `connection()` → `{phase, epoch}`.

@@ -118,6 +118,7 @@ async function main(): Promise<number> {
       H3D_LIVE_BRIDGE_BIN: bin,
       H3D_LIVE_SOCKET: sock,
       H3D_LIVE_DB: join(dbDir, 'world.db'),
+      H3D_LIVE_CWD: work,
       H3D_LIVE_OUT: OUT,
     },
   });
