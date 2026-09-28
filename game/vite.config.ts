@@ -1,5 +1,5 @@
 import { defineConfig, type Plugin } from 'vitest/config';
-import { fixtureUpgradeHandler } from './tools/fixture-server';
+import { fixtureUpgradeHandler } from './tools/fixture-server.ts';
 
 /**
  * Serves the recorded bridge streams in fixtures/ at `/fixture/<name>` on the

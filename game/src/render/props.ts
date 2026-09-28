@@ -1,0 +1,331 @@
+import * as THREE from 'three/webgpu';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import type { Box3, Prop } from '../world/layout';
+import { FONT } from './cards/atlasCards';
+import { OFFICE } from './palette';
+
+/** Static placeholder props (boards, lounge, cabinet, …): a few meshes per floor, textures drawn once. */
+
+function canvasTexture(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d');
+  if (g) draw(g);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+const toon = (color: number, extra: Partial<THREE.MeshToonMaterialParameters> = {}) => new THREE.MeshToonMaterial({ color, ...extra });
+
+function boxAt(b: Box3, mat: THREE.Material): THREE.Mesh {
+  const size = [0, 1, 2].map((i) => (b.max[i] as number) - (b.min[i] as number)) as [number, number, number];
+  const m = new THREE.Mesh(new THREE.BoxGeometry(...size), mat);
+  m.position.set((b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2);
+  return m;
+}
+
+/** A cork board with a title and placeholder sticky notes. */
+function boardTexture(title: string, note: string, tint: string): THREE.CanvasTexture {
+  return canvasTexture(1024, 512, (g) => {
+    g.fillStyle = '#c99d6b';
+    g.fillRect(0, 0, 1024, 512);
+    for (let i = 0; i < 900; i++) {
+      g.fillStyle = i % 2 ? 'rgba(90,55,20,0.10)' : 'rgba(255,240,210,0.10)';
+      g.fillRect((i * 97) % 1024, (i * 53) % 512, 3, 3);
+    }
+    g.fillStyle = '#1c2540';
+    g.fillRect(0, 0, 1024, 96);
+    g.fillStyle = '#ffffff';
+    g.font = `800 58px ${FONT}`;
+    g.textBaseline = 'middle';
+    g.fillText(title, 36, 50);
+    g.font = `600 30px ${FONT}`;
+    g.textAlign = 'right';
+    g.fillStyle = 'rgba(255,255,255,0.7)';
+    g.fillText(note, 990, 52);
+    g.textAlign = 'left';
+    const notes = [tint, '#ffe27a', '#a9e7ff', '#ffd0e0', '#c8f5b5', '#ffe27a'];
+    for (let i = 0; i < 6; i++) {
+      const x = 50 + (i % 3) * 320 + ((i * 37) % 30);
+      const y = 130 + Math.floor(i / 3) * 185 + ((i * 23) % 20);
+      g.save();
+      g.translate(x + 120, y + 75);
+      g.rotate((((i * 7) % 5) - 2) * 0.03);
+      g.fillStyle = 'rgba(0,0,0,0.18)';
+      g.fillRect(-116, -66, 240, 150);
+      g.fillStyle = notes[i] ?? '#ffe27a';
+      g.fillRect(-120, -75, 240, 150);
+      g.fillStyle = 'rgba(28,37,64,0.35)';
+      for (let l = 0; l < 3; l++) g.fillRect(-95, -40 + l * 32, 150 + ((i + l) % 3) * 20, 10);
+      g.fillStyle = '#e8413a';
+      g.beginPath();
+      g.arc(0, -64, 9, 0, Math.PI * 2);
+      g.fill();
+      g.restore();
+    }
+  });
+}
+
+function signTexture(text: string, sub: string, bg: string, fg: string, w = 512, h = 192): THREE.CanvasTexture {
+  return canvasTexture(w, h, (g) => {
+    g.fillStyle = bg;
+    g.fillRect(0, 0, w, h);
+    g.fillStyle = fg;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.font = `800 ${Math.round(h * 0.34)}px ${FONT}`;
+    g.fillText(text, w / 2, h * 0.42);
+    g.font = `600 ${Math.round(h * 0.16)}px ${FONT}`;
+    g.globalAlpha = 0.75;
+    g.fillText(sub, w / 2, h * 0.76);
+  });
+}
+
+function faceTexture(mesh: THREE.Mesh, tex: THREE.Texture, base: number): void {
+  // Box face order: +x, -x, +y, -y, +z, -z. Front (+z) carries the texture.
+  const plain = toon(base);
+  const front = new THREE.MeshToonMaterial({ color: 0xffffff, map: tex });
+  mesh.material = [plain, plain, plain, plain, front, plain];
+}
+
+export interface PropMeshes {
+  group: THREE.Group;
+  dispose(): void;
+}
+
+export function buildProps(props: readonly Prop[], layout: { width: number; depth: number; rug: { x0: number; z0: number; x1: number; z1: number } }, floorLabel: string): PropMeshes {
+  const group = new THREE.Group();
+  group.name = 'props';
+  const textures: THREE.Texture[] = [];
+  const tex = <T extends THREE.Texture>(t: T) => (textures.push(t), t);
+  const byId = new Map(props.map((p) => [p.id, p]));
+  const add = (m: THREE.Object3D) => {
+    m.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        o.castShadow = true;
+        o.receiveShadow = true;
+      }
+    });
+    group.add(m);
+    return m;
+  };
+
+  const boards: Array<[Prop['id'], string, string, string]> = [
+    ['board.issues', 'Issues', 'arrives in M7', '#ffb38a'],
+    ['board.prs', 'Pull requests', 'arrives in M7', '#b9a5ff'],
+    ['board.services', 'Services', 'arrives in M12', '#8fe0c0'],
+  ];
+  for (const [id, title, note, tint] of boards) {
+    const p = byId.get(id);
+    if (!p) continue;
+    const m = boxAt(p.box, toon(0x7a5230));
+    faceTexture(m, tex(boardTexture(title, note, tint)), 0x7a5230);
+    add(m);
+  }
+
+  const wb = byId.get('whiteboard');
+  if (wb) {
+    const m = boxAt({ min: [wb.box.min[0], wb.box.min[1], wb.box.min[2]], max: [wb.box.max[0], wb.box.max[1], wb.box.max[2]] }, toon(0xffffff));
+    faceTexture(
+      m,
+      tex(
+        canvasTexture(1024, 420, (g) => {
+          g.fillStyle = '#fbfcff';
+          g.fillRect(0, 0, 1024, 420);
+          g.strokeStyle = '#2f6bf0';
+          g.lineWidth = 7;
+          g.lineCap = 'round';
+          g.beginPath();
+          g.arc(200, 210, 80, 0, Math.PI * 2);
+          g.moveTo(280, 210);
+          g.bezierCurveTo(420, 120, 520, 320, 660, 200);
+          g.stroke();
+          g.strokeStyle = '#e8413a';
+          g.strokeRect(690, 130, 220, 150);
+          g.fillStyle = '#1c2540';
+          g.font = `700 44px ${FONT}`;
+          g.fillText('Whiteboard', 36, 58);
+          g.font = `500 28px ${FONT}`;
+          g.fillStyle = '#7a8398';
+          g.fillText('arrives in M13', 36, 390);
+        }),
+      ),
+      0xdfe4ee,
+    );
+    add(m);
+  }
+
+  const tv = byId.get('tv');
+  if (tv) {
+    const m = boxAt(tv.box, toon(0x1b1f2b));
+    faceTexture(m, tex(signTexture('Screen share', 'arrives in M13', '#101626', '#9fd6ff', 768, 432)), 0x1b1f2b);
+    add(m);
+  }
+
+  const filing = byId.get('filing');
+  if (filing) {
+    const m = boxAt(filing.box, toon(0x9aa4b5));
+    m.rotation.y = 0;
+    const t = tex(
+      canvasTexture(256, 512, (g) => {
+        g.fillStyle = '#a7b0c0';
+        g.fillRect(0, 0, 256, 512);
+        for (let i = 0; i < 3; i++) {
+          g.fillStyle = '#8f99ab';
+          g.fillRect(14, 16 + i * 166, 228, 150);
+          g.fillStyle = '#e9edf4';
+          g.fillRect(98, 60 + i * 166, 60, 14);
+          g.fillStyle = '#ffffff';
+          g.fillRect(90, 100 + i * 166, 76, 30);
+        }
+      }),
+    );
+    // The cabinet stands against the east wall and faces west (-x).
+    const plain = toon(0x9aa4b5);
+    m.material = [plain, new THREE.MeshToonMaterial({ color: 0xffffff, map: t }), plain, plain, plain, plain];
+    add(m);
+  }
+
+  const lounge = byId.get('lounge');
+  if (lounge) {
+    const sofa = toon(OFFICE.sofa);
+    const [x0, , z0] = lounge.box.min;
+    const [x1, , z1] = lounge.box.max;
+    const cx = (x0 + x1) / 2;
+    const geo = mergeGeometries([
+      new THREE.BoxGeometry(x1 - x0, 0.42, z1 - z0).translate(cx, 0.21, (z0 + z1) / 2),
+      new THREE.BoxGeometry(x1 - x0, 0.45, 0.22).translate(cx, 0.62, z0 + 0.11),
+      new THREE.BoxGeometry(0.22, 0.3, z1 - z0).translate(x0 + 0.11, 0.55, (z0 + z1) / 2),
+      new THREE.BoxGeometry(0.22, 0.3, z1 - z0).translate(x1 - 0.11, 0.55, (z0 + z1) / 2),
+    ]);
+    add(new THREE.Mesh(geo, sofa));
+    const cushions = new THREE.Mesh(
+      mergeGeometries([0, 1, 2].map((i) => new THREE.BoxGeometry((x1 - x0 - 0.5) / 3 - 0.04, 0.1, z1 - z0 - 0.3).translate(x0 + 0.25 + ((x1 - x0 - 0.5) / 3) * (i + 0.5), 0.47, (z0 + z1) / 2 + 0.08))),
+      toon(0x27a3a3),
+    );
+    add(cushions);
+    const table = mergeGeometries([
+      new THREE.BoxGeometry(1.4, 0.05, 0.7).translate(2.2, 0.42, 2.45),
+      ...[
+        [1.6, 2.2],
+        [2.8, 2.2],
+        [1.6, 2.7],
+        [2.8, 2.7],
+      ].map(([x, z]) => new THREE.CylinderGeometry(0.03, 0.03, 0.4, 6).translate(x as number, 0.2, z as number)),
+    ]);
+    add(new THREE.Mesh(table, toon(OFFICE.wood)));
+    const counter = mergeGeometries([new THREE.BoxGeometry(0.6, 0.9, 1.4).translate(0.32, 0.45, 4.1)]);
+    add(new THREE.Mesh(counter, toon(OFFICE.wood)));
+    const machine = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.42, 0.34).translate(0.3, 1.11, 4.1), toon(0x2a3143));
+    add(machine);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6).translate(0.49, 1.2, 4.1), new THREE.MeshBasicMaterial({ color: 0xff5a4d }));
+    add(lamp);
+    const mugs = new THREE.Mesh(
+      mergeGeometries([0, 1, 2].map((i) => new THREE.CylinderGeometry(0.04, 0.036, 0.09, 10).translate(0.3, 0.945, 3.6 + i * 0.1))),
+      toon(0xffffff),
+    );
+    add(mugs);
+  }
+  const rug = new THREE.Mesh(
+    new THREE.PlaneGeometry(layout.rug.x1 - layout.rug.x0, layout.rug.z1 - layout.rug.z0).rotateX(-Math.PI / 2),
+    toon(OFFICE.rug),
+  );
+  rug.position.set((layout.rug.x0 + layout.rug.x1) / 2, 0.004, (layout.rug.z0 + layout.rug.z1) / 2);
+  rug.receiveShadow = true;
+  group.add(rug);
+
+  const drop = byId.get('dropzone');
+  if (drop) {
+    const [x0, , z0] = drop.box.min;
+    const [x1, y1, z1] = drop.box.max;
+    const cx = (x0 + x1) / 2;
+    const cz = (z0 + z1) / 2;
+    add(
+      new THREE.Mesh(
+        mergeGeometries([
+          new THREE.BoxGeometry(x1 - x0, 0.05, z1 - z0).translate(cx, y1 - 0.2, cz),
+          new THREE.BoxGeometry(0.06, y1 - 0.2, 0.06).translate(x0 + 0.08, (y1 - 0.2) / 2, cz),
+          new THREE.BoxGeometry(0.06, y1 - 0.2, 0.06).translate(x1 - 0.08, (y1 - 0.2) / 2, cz),
+        ]),
+        toon(OFFICE.deskLeg),
+      ),
+    );
+    const tray = mergeGeometries([
+      new THREE.BoxGeometry(0.7, 0.02, 0.45).translate(cx, y1 - 0.16, cz),
+      new THREE.BoxGeometry(0.7, 0.08, 0.02).translate(cx, y1 - 0.12, cz - 0.22),
+      new THREE.BoxGeometry(0.7, 0.08, 0.02).translate(cx, y1 - 0.12, cz + 0.22),
+      new THREE.BoxGeometry(0.02, 0.08, 0.45).translate(cx - 0.35, y1 - 0.12, cz),
+      new THREE.BoxGeometry(0.02, 0.08, 0.45).translate(cx + 0.35, y1 - 0.12, cz),
+    ]);
+    add(new THREE.Mesh(tray, toon(0x2fc46a)));
+    const sign = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.9, 0.34),
+      new THREE.MeshBasicMaterial({ map: tex(signTexture('DROP ZONE', 'inbox · arrives in M11', '#1c2540', '#ffffff')), side: THREE.DoubleSide }),
+    );
+    sign.position.set(cx, y1 + 0.24, cz);
+    sign.rotation.y = Math.PI; // faces into the room
+    group.add(sign);
+  }
+
+  const lift = byId.get('elevator');
+  if (lift) {
+    const [x0, , z0] = lift.box.min;
+    const [x1, y1] = [lift.box.max[0], lift.box.max[1]];
+    const cx = (x0 + x1) / 2;
+    const frame = mergeGeometries([
+      new THREE.BoxGeometry(x1 - x0 + 0.3, 0.2, 0.14).translate(cx, y1 + 0.1, z0 + 0.02),
+      new THREE.BoxGeometry(0.16, y1, 0.14).translate(x0 - 0.07, y1 / 2, z0 + 0.02),
+      new THREE.BoxGeometry(0.16, y1, 0.14).translate(x1 + 0.07, y1 / 2, z0 + 0.02),
+    ]);
+    add(new THREE.Mesh(frame, toon(0x5d6679)));
+    const doors = mergeGeometries([
+      new THREE.BoxGeometry((x1 - x0) / 2 - 0.01, y1, 0.06).translate(cx - (x1 - x0) / 4, y1 / 2, z0 + 0.04),
+      new THREE.BoxGeometry((x1 - x0) / 2 - 0.01, y1, 0.06).translate(cx + (x1 - x0) / 4, y1 / 2, z0 + 0.04),
+    ]);
+    add(new THREE.Mesh(doors, new THREE.MeshStandardMaterial({ color: OFFICE.steel, metalness: 0.6, roughness: 0.35 })));
+    const panel = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.9, 0.3).rotateY(Math.PI),
+      new THREE.MeshBasicMaterial({ map: tex(signTexture(floorLabel, 'elevator · M3', '#101626', '#ffc233', 512, 170)) }),
+    );
+    panel.position.set(cx, y1 + 0.42, z0 - 0.01);
+    group.add(panel);
+  }
+
+  // Plants in the corners of the desk area.
+  const plant = mergeGeometries([new THREE.CylinderGeometry(0.2, 0.16, 0.36, 10).translate(0, 0.18, 0)]);
+  const leaves = mergeGeometries([
+    new THREE.SphereGeometry(0.34, 10, 8).translate(0, 0.72, 0),
+    new THREE.SphereGeometry(0.24, 10, 8).translate(0.14, 1.02, 0.05),
+  ]);
+  const spots = [
+    [layout.width - 1.8, 0.6],
+    [6.4, layout.depth - 0.7],
+    [layout.width - 0.6, layout.depth - 0.7],
+    [0.6, layout.depth - 0.7],
+  ];
+  const pots = new THREE.InstancedMesh(plant, toon(OFFICE.pot), spots.length);
+  const greens = new THREE.InstancedMesh(leaves, toon(OFFICE.plant), spots.length);
+  spots.forEach(([x, z], i) => {
+    const m = new THREE.Matrix4().makeTranslation(x as number, 0, z as number);
+    pots.setMatrixAt(i, m);
+    greens.setMatrixAt(i, m);
+  });
+  add(pots);
+  add(greens);
+
+  return {
+    group,
+    dispose() {
+      group.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          for (const m of Array.isArray(o.material) ? o.material : [o.material]) (m as THREE.Material).dispose();
+        }
+      });
+      for (const t of textures) t.dispose();
+    },
+  };
+}
