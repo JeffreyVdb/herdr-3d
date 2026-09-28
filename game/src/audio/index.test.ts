@@ -1,6 +1,6 @@
 import type * as THREE from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
-import { AUDIO_PREFS_KEY, createGameAudio, type AudioDeps } from './index';
+import { AUDIO_PREFS_KEY, createGameAudio, type AudioDeps, type Playback } from './index';
 
 /** Just enough of an AudioContext to watch what the module does with it. */
 class FakeParam {
@@ -128,6 +128,22 @@ function setup(over: Partial<AudioDeps> & { made?: FakeContext[] } = {}) {
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
+
+/** Clip loads the test resolves by hand, in any order. */
+function heldLoads() {
+  const held = new Map<string, () => void>();
+  const load = (url: string) => new Promise<ArrayBuffer>((r) => held.set(url, () => r(new ArrayBuffer(2500))));
+  const release = (clip: string) => held.get(`/voices/${clip}.mp3`)?.();
+  return { load, release };
+}
+
+/** What a Playback has reported so far. */
+function watch(pb: Playback) {
+  const w = { started: null as boolean | null, ended: false };
+  void pb.started.then((ok) => (w.started = ok));
+  void pb.ended.then(() => (w.ended = true));
+  return w;
+}
 
 /** A camera at (x, y, z) looking down -Z, as a world matrix. */
 const camera = (x: number, y: number, z: number) =>
@@ -327,6 +343,92 @@ describe('game audio', () => {
     audio.playAt('receptionist/a', { x: 0, y: 0, z: 0 });
     await flush();
     expect(ctx.sources).toHaveLength(1);
+  });
+
+  it('playAt reports when the clip really starts (after its load) and when it ends', async () => {
+    const loads = heldLoads();
+    const { audio, made } = setup({ load: loads.load });
+    await audio.unlock();
+    const ctx = made[0];
+    if (!ctx) throw new Error('no context');
+    const a = watch(audio.playAt('receptionist/a', { x: 0, y: 0, z: 0 }));
+    const b = watch(audio.playAt('receptionist/b', { x: 0, y: 0, z: 0 }));
+    await flush();
+    expect(a).toEqual({ started: null, ended: false });
+    // Out of order: b's load comes back first, so b sounds first (the caller sequences lines, see reception/sequence.ts).
+    loads.release('receptionist/b');
+    await flush();
+    expect(b).toEqual({ started: true, ended: false });
+    expect(a.started).toBeNull();
+    loads.release('receptionist/a');
+    await flush();
+    expect(a).toEqual({ started: true, ended: false });
+    expect(ctx.sources).toHaveLength(2);
+    ctx.sources[1]?.onended?.();
+    await flush();
+    expect(a.ended).toBe(true);
+    expect(b.ended).toBe(false);
+  });
+
+  it('a cancelled clip never starts, even when its load comes back later; cancel() stops one playing', async () => {
+    const loads = heldLoads();
+    const { audio, made } = setup({ load: loads.load });
+    await audio.unlock();
+    const ctx = made[0];
+    if (!ctx) throw new Error('no context');
+    const pa = audio.playAt('receptionist/a', { x: 0, y: 0, z: 0 });
+    const a = watch(pa);
+    pa.cancel();
+    await flush();
+    expect(a).toEqual({ started: false, ended: true });
+    loads.release('receptionist/a');
+    await flush();
+    expect(ctx.sources).toHaveLength(0);
+
+    const pb = audio.playAt('receptionist/b', { x: 0, y: 0, z: 0 });
+    const b = watch(pb);
+    loads.release('receptionist/b');
+    await flush();
+    expect(b).toEqual({ started: true, ended: false });
+    pb.cancel();
+    await flush();
+    expect(ctx.sources[0]?.stopped).toBe(1);
+    expect(b.ended).toBe(true);
+  });
+
+  it('stop() settles clips still loading and playing, even without an ended event', async () => {
+    const loads = heldLoads();
+    const { audio, made } = setup({ load: loads.load });
+    await audio.unlock();
+    const ctx = made[0];
+    if (!ctx) throw new Error('no context');
+    const a = watch(audio.playAt('receptionist/a', { x: 0, y: 0, z: 0 }));
+    loads.release('receptionist/a');
+    await flush();
+    const b = watch(audio.playAt('receptionist/b', { x: 0, y: 0, z: 0 }));
+    // A suspended context doesn't fire `ended` for a stopped source.
+    const src = ctx.sources[0];
+    if (!src) throw new Error('no source');
+    src.stop = () => {
+      src.stopped++;
+    };
+    audio.stop();
+    loads.release('receptionist/b');
+    await flush();
+    expect(a).toEqual({ started: true, ended: true });
+    expect(b).toEqual({ started: false, ended: true });
+    expect(ctx.sources).toHaveLength(1);
+  });
+
+  it('muted, locked or without Web Audio: the handle says at once that nothing will sound', async () => {
+    const none = watch(createGameAudio({ context: null, storage: null, events: null }).playAt('receptionist/a', { x: 0, y: 0, z: 0 }));
+    const idle = setup();
+    const locked = watch(idle.audio.playAt('receptionist/a', { x: 0, y: 0, z: 0 }));
+    const muted = setup();
+    muted.audio.muted = true;
+    const m = watch(muted.audio.playAt('receptionist/a', { x: 0, y: 0, z: 0 }));
+    await flush();
+    for (const w of [none, locked, m]) expect(w).toEqual({ started: false, ended: true });
   });
 
   it('a clip that fails to load stays silent', async () => {
