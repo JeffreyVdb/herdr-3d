@@ -37,8 +37,10 @@ export interface DialogHost {
 }
 
 export interface HireHost extends DialogHost {
-  /** The desk a hire is on its way to (its "+" goes), or null when none is. */
-  reserve(session: string, desk: number | null): void;
+  /** A hire is on its way to `desk` (its "+" goes); the returned function ends this hire's hold only. */
+  reserve(session: string, desk: number): () => void;
+  /** Desks of a floor a hire (or a walk) is already on its way to: not free for this one. */
+  held(session: string): ReadonlySet<number>;
 }
 
 export type HireState = 'preparing' | 'ready' | 'hiring' | 'failed';
@@ -109,10 +111,9 @@ export class HireDialog {
     this.alertEl.hidden = true;
     this.statusEl.hidden = true;
     this.dialog.append(this.head, this.form, this.foot);
+    // A late answer (a prepare, or a hire sent before Esc) is for a dialog that is gone: it never touches the next one.
     this.dialog.addEventListener('close', () => {
-      if (this.dialog.open) return;
-      if (this.state !== 'hiring') this.host.reserve(this.session, null);
-      this.gen++;
+      if (!this.dialog.open) this.gen++;
     });
     this.dialog.addEventListener('cancel', () => {
       // Esc while the hire is on its way: the hire still happens; the dialog just goes.
@@ -225,12 +226,14 @@ export class HireDialog {
     this.render();
   }
 
-  /** Someone else sat down at this desk meanwhile: the desk to offer instead. */
-  private takenBy(): { name: string; next: number | null } | null {
+  /** Someone else sat down at this desk meanwhile, or another hire is on its way there: why, and the desk to offer instead. */
+  private takenBy(): { why: string; next: number | null } | null {
     const fv = this.host.store.floorView(this.session);
-    const seat = fv?.seats[this.desk];
-    if (!fv || !seat) return null;
-    return { name: seat.name, next: firstFreeDesk(fv) };
+    if (!fv || this.state === 'hiring') return null;
+    const held = this.host.held(this.session);
+    const seat = fv.seats[this.desk];
+    const why = seat ? `${seat.name} just sat down at Desk ${this.desk + 1}.` : held.has(this.desk) ? `Another hire is already on its way to Desk ${this.desk + 1}.` : null;
+    return why ? { why, next: firstFreeDesk(fv, held) } : null;
   }
 
   private setStatus(msg: string, error = false): void {
@@ -251,7 +254,7 @@ export class HireDialog {
     if (this.state === 'failed') return this.statusText || 'herdr-world could not prepare the hire.';
     if (this.state === 'hiring') return 'The hire is on its way.';
     const taken = this.takenBy();
-    if (taken) return `${taken.name} just sat down at Desk ${this.desk + 1}.`;
+    if (taken) return taken.why;
     if (this.host.unsupported('worker.hire')) return failureText('worker.hire', 'unknown_command', '');
     return hireBlocker(this.f, this.host.store.hireOptions, this.capacity());
   }
@@ -401,7 +404,7 @@ export class HireDialog {
         h(
           'div',
           { class: 'dd-callout dd-callout--error', role: 'alert' },
-          h('p', {}, `${taken.name} just sat down at Desk ${this.desk + 1}.`),
+          h('p', {}, taken.why),
           alt !== null ? h('button', { class: 'btn btn--sm', 'data-key': 'other-desk', onclick: () => this.moveTo(alt) }, `Hire at Desk ${alt + 1} instead`) : h('p', {}, 'No other desk is free on this floor.'),
         ),
       );
@@ -479,15 +482,16 @@ export class HireDialog {
     const args = hireArgs(session, desk, this.f, this.prep.git);
     const who = args.label ?? this.prep.label;
     this.state = 'hiring';
-    this.host.reserve(session, desk);
+    const release = this.host.reserve(session, desk);
     const steps = [args.worktree ? 'creating the worktree' : null, `starting ${args.harness}`, args.prompt ? 'handing over the first task' : null].filter(Boolean);
     this.setStatus(`Hiring ${who}: ${steps.join(', ')}…`);
     this.render();
     const gen = this.gen;
     const r = await this.host.send('worker.hire', args);
+    release();
+    // Esc'd meanwhile (and maybe another hire opened): only a toast, this dialog is someone else's now.
     const still = this.dialog.open && gen === this.gen;
-    this.state = 'ready';
-    this.host.reserve(session, null);
+    if (still) this.state = 'ready';
     if (r.ok) {
       const ack = r.data as HireAck | undefined;
       const w = ack?.id ? this.host.store.workerView(ack.id) : null;
@@ -497,7 +501,7 @@ export class HireDialog {
         ack?.prompted === false ? `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself.` : '',
         ack?.fetch_error ? `git fetch failed (${ack.fetch_error}), so the branch starts from the last fetched origin.` : '',
       ].filter(Boolean);
-      this.close();
+      if (still) this.close();
       this.host.toast([`Hired ${name} at Desk ${(w?.desk ?? desk) + 1}${branch}. Here they come.`, ...extra].join(' '), extra.length ? 'error' : 'info');
       return;
     }

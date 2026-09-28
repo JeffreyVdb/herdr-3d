@@ -16,6 +16,7 @@ import {
   hireBlocker,
   isFreshHire,
   leftovers,
+  Reservations,
   resolveChoice,
   taskKey,
 } from './hire';
@@ -127,6 +128,40 @@ describe('hire form', () => {
     expect(firstFreeDesk(v)).toBe(1);
     expect(firstFreeDesk(v, new Set([1, 3]))).toBe(4);
     expect(firstFreeDesk(v, new Set([1, 3, 4]))).toBeNull();
+  });
+});
+
+describe('hires on their way (reservations)', () => {
+  it('each hire holds its own desk; an older ack lets go of its own hold only', () => {
+    const r = new Reservations();
+    // Hire A to desk 4 is sent, the dialog is Esc'd; hire B picks the first free desk that nobody holds.
+    const releaseA = r.add('pastry', 4);
+    const v = { seats: [{ name: 'x' }, null, { name: 'y' }, { name: 'z' }, null, null, null] } as unknown as FloorView;
+    expect(firstFreeDesk(v, r.desks('pastry'))).toBe(1);
+    const releaseB = r.add('pastry', 1);
+    expect(firstFreeDesk(v, r.desks('pastry'))).toBe(5);
+    expect(r.desks('pastry')).toEqual(new Set([1, 4]));
+    // A's ack: A's desk is free of holds, B's is still held.
+    expect(releaseA()).toBe(true);
+    expect(r.has('pastry', 4)).toBe(false);
+    expect(r.has('pastry', 1)).toBe(true);
+    // Releasing twice does nothing.
+    expect(releaseA()).toBe(false);
+    expect(r.has('pastry', 1)).toBe(true);
+    expect(releaseB()).toBe(true);
+    expect(r.all()).toEqual([]);
+  });
+
+  it('two holds on one desk (a retry after desk_taken): the desk stays held until both let go; floors are separate', () => {
+    const r = new Reservations();
+    const a = r.add('pastry', 2);
+    const b = r.add('pastry', 2);
+    r.add('scratchpad', 2);
+    expect(a()).toBe(false);
+    expect(r.has('pastry', 2)).toBe(true);
+    expect(b()).toBe(true);
+    expect(r.desks('pastry')).toEqual(new Set());
+    expect(r.desks('scratchpad')).toEqual(new Set([2]));
   });
 });
 

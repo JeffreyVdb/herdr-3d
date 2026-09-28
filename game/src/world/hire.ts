@@ -118,6 +118,40 @@ export function firstFreeDesk(v: FloorView, taken: ReadonlySet<number> = new Set
   return freeDesks(v).find((d) => !taken.has(d)) ?? null;
 }
 
+/**
+ * Hires on their way, one entry per `worker.hire` in flight (Esc closes the
+ * dialog, not the hire, so another can start meanwhile). Each hire holds its
+ * desk and only its own `release` lets go of it: an older hire's ack never
+ * frees a newer hire's desk, and no hire picks a desk another one holds.
+ */
+export class Reservations {
+  private readonly held = new Map<number, { session: string; desk: number }>();
+  private next = 0;
+
+  /** Holds `desk` of `session`; the returned function lets go of this hold only (true: the desk is no longer held by anyone). */
+  add(session: string, desk: number): () => boolean {
+    const id = ++this.next;
+    this.held.set(id, { session, desk });
+    return () => this.held.delete(id) && !this.has(session, desk);
+  }
+
+  has(session: string, desk: number): boolean {
+    for (const r of this.held.values()) if (r.session === session && r.desk === desk) return true;
+    return false;
+  }
+
+  /** Desks of a floor some hire holds. */
+  desks(session: string): Set<number> {
+    const out = new Set<number>();
+    for (const r of this.held.values()) if (r.session === session) out.add(r.desk);
+    return out;
+  }
+
+  all(): Array<{ session: string; desk: number }> {
+    return [...this.held.values()];
+  }
+}
+
 /** What a key in the first-task textarea does: Enter sends, Shift+Enter is a new line, anything else types. */
 export function taskKey(e: { key: string; shiftKey: boolean; isComposing?: boolean; altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }): 'send' | 'newline' | null {
   if (e.key !== 'Enter' || e.isComposing) return null;

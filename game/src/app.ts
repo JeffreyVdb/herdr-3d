@@ -21,7 +21,7 @@ import { buildingPlan, floorY, placeAt, walkWorld, type Area, type BuildingPlan,
 import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, type Opening, type Outline } from './world/layout';
 import { walkInRoute, type ArrivalKind } from './world/arrival';
 import type { Display } from './world/derive';
-import { firstFreeDesk, isFreshHire } from './world/hire';
+import { firstFreeDesk, isFreshHire, Reservations } from './world/hire';
 import { walkOutRoute } from './world/route';
 import { WorldStore, type Change, type Counts, type FloorView } from './world/store';
 
@@ -75,8 +75,8 @@ export class App {
   readonly hire: HireDialog;
   readonly sendHome: SendHomeDialog;
   readonly arrivals: Arrivals;
-  /** M4: a hire on its way to this desk: its "+" is hidden until the worker walks in. */
-  private reserved: { session: string; desk: number } | null = null;
+  /** M4: hires on their way: their desks' "+" is hidden until the worker walks in. */
+  private readonly reserved = new Reservations();
   /** Commands sent to the bridge, in order (test hook). */
   readonly sent: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
   /** Commands the bridge answered `unknown_command` for: an older bridge. */
@@ -218,7 +218,7 @@ export class App {
       toast: (m: string, kind: 'info' | 'error') => this.hud.toast(m, kind === 'error' ? 6500 : 3600, kind),
       now: () => Date.now(),
     };
-    this.hire = new HireDialog(o.host, { ...dialogHost, reserve: (s, d) => this.reserve(s, d) });
+    this.hire = new HireDialog(o.host, { ...dialogHost, reserve: (s, d) => this.reserve(s, d), held: (s) => this.heldDesks(s) });
     this.sendHome = new SendHomeDialog(o.host, dialogHost);
     this.arrivals = new Arrivals(this.shadows);
     this.walk.scene.add(this.arrivals.group);
@@ -344,20 +344,29 @@ export class App {
     this.activity(true);
   }
 
-  /** The dialog's hire is on its way to `desk` (null: no longer). */
-  private reserve(session: string, desk: number | null): void {
-    const prev = this.reserved;
-    this.reserved = desk === null ? null : { session, desk };
-    if (prev && this.office?.session === prev.session && !(desk === prev.desk && session === prev.session)) {
-      const walking = this.arrivals.info(performance.now() / 1000).some((a) => a.session === prev.session && a.desk === prev.desk);
-      if (!walking) this.office.setAway(prev.desk, null);
-    }
+  /** A hire is on its way to `desk`; the returned function ends this hire's hold (its ack came). */
+  private reserve(session: string, desk: number): () => void {
+    const release = this.reserved.add(session, desk);
     this.applyReserve();
+    return () => {
+      // Another hire still holding the desk, or a walk on it, keeps it as it is.
+      if (!release() || this.office?.session !== session) return;
+      const walking = this.arrivals.info(performance.now() / 1000).some((a) => a.session === session && a.desk === desk);
+      if (!walking) this.office.setAway(desk, null);
+    };
   }
 
   private applyReserve(): void {
-    const r = this.reserved;
-    if (r && this.office?.session === r.session && !this.office.seat(r.desk)) this.office.setAway(r.desk, { show: 'empty', display: 'idle', cue: 0xffffff });
+    const o = this.office;
+    if (!o) return;
+    for (const r of this.reserved.all()) if (o.session === r.session && !o.seat(r.desk)) o.setAway(r.desk, { show: 'empty', display: 'idle', cue: 0xffffff });
+  }
+
+  /** Desks of a floor that are not free for another hire: a hire or a walk is on its way there. */
+  heldDesks(session: string): Set<number> {
+    const out = this.reserved.desks(session);
+    for (const a of this.arrivals.info(performance.now() / 1000)) if (a.session === session) out.add(a.desk);
+    return out;
   }
 
   /** The hire dialog for a desk of the floor you are on; no desk: the first free one (the top bar's Hire). */
@@ -372,10 +381,14 @@ export class App {
       this.hud.toast(`${s} is ${fv.transition === 'waking' ? 'waking up' : fv.transition === 'sleeping' ? 'going to sleep' : 'asleep'}. Wake it from the elevator (L) to hire.`, 3200);
       return;
     }
-    const busy = new Set(this.arrivals.info(performance.now() / 1000).filter((a) => a.session === s).map((a) => a.desk));
-    const d = desk ?? firstFreeDesk(fv, busy);
+    const held = this.heldDesks(s);
+    const d = desk ?? firstFreeDesk(fv, held);
     if (d === null) {
       this.hud.toast(`No free desk on ${s} right now.`, 2400);
+      return;
+    }
+    if (held.has(d) && !fv.seats[d]) {
+      this.hud.toast(`Someone is already on the way to Desk ${d + 1}.`, 2000);
       return;
     }
     const seat = fv.seats[d];
