@@ -28,7 +28,7 @@ importers:
         specifier: 0.186.0
         version: 0.186.0
       '@types/ws':
-        specifier: ^8.18.1
+        specifier: 8.18.1
         version: 8.18.1
       pngjs:
         specifier: 7.0.0
