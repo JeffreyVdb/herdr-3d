@@ -59,3 +59,12 @@ func TestPickName(t *testing.T) {
 		t.Fatalf("exhausted list should suffix \" 2\", then \" 3\": %v", taken)
 	}
 }
+
+func TestIsName(t *testing.T) {
+	for name, want := range map[string]bool{"Pixel": true, "Pixel 2": true, "Pixel 12": true, "Pixel 1": false,
+		"Pixel 02": false, "Pixel x": false, "pixel": false, "CODE|x": false, "": false, "Pixel  2": false} {
+		if got := IsName(name); got != want {
+			t.Errorf("IsName(%q) = %v", name, got)
+		}
+	}
+}

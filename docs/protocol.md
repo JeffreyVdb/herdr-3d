@@ -530,7 +530,7 @@ cleanup choice and what happened to the worktree and branch.
 ### Errors
 
 ```json
-{"t":"error","req_id":"9","code":"unknown_command","message":"unknown command \"worker.hire\""}
+{"t":"error","req_id":"9","code":"unknown_command","message":"unknown command \"worker.prompt\""}
 ```
 
 | code | meaning |

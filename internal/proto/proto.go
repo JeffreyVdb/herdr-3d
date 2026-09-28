@@ -34,6 +34,10 @@ const (
 	CmdFloorWake       = "floor.wake"
 	CmdFloorSleep      = "floor.sleep"
 	CmdFloorSettings   = "floor.settings.set"
+	CmdHirePrepare     = "hire.prepare"
+	CmdWorkerHire      = "worker.hire"
+	CmdFirePrepare     = "worker.fire.prepare"
+	CmdWorkerFire      = "worker.fire"
 )
 
 // Welcome resume modes.
@@ -55,7 +59,40 @@ const (
 	ErrInvalidState     = "invalid_state" // waking a running floor, sleeping an asleep one
 	ErrWakeFailed       = "wake_failed"   // the server did not start or answer ping in time
 	ErrSleepFailed      = "sleep_failed"  // herdr session stop failed
+	ErrUnknownWorker    = "unknown_worker"
+	ErrDeskTaken        = "desk_taken" // worker.hire at a held, reserved or out-of-range desk
+	ErrCapacity         = "capacity"   // worker.hire above a hard worker cap
+	ErrNotClean         = "not_clean"  // worker.fire deleting a dirty or unpushed worktree
+	ErrHireFailed       = "hire_failed"
+	ErrFireFailed       = "fire_failed"
 	ErrInternal         = "internal"
+)
+
+// RemovedSentHome is worker.removed's reason when worker.fire removed it.
+const RemovedSentHome = "sent_home"
+
+// Where hire.prepare's choice comes from.
+const (
+	ChoiceFloorDefault = "floor_default"
+	ChoiceLast         = "last"
+	ChoiceNone         = "none"
+)
+
+// How a hire dealt with the agent's trust dialog (HireResult.Trust).
+const (
+	TrustNone     = "none"     // no dialog showed
+	TrustAvoided  = "avoided"  // reserved
+	TrustApproved = "approved" // the bridge answered it for the hire's directory
+)
+
+// worker.fire worktree choices, and what happened (FireResult.Worktree).
+const (
+	FireKeep          = "keep"
+	FireDelete        = "delete"
+	FireDeleteBranch  = "delete_branch"
+	WorktreeKept      = "kept"
+	WorktreeDeleted   = "deleted"
+	WorktreeDelBranch = "deleted_branch"
 )
 
 // Floor transitions (Floor.Transition).
@@ -76,7 +113,7 @@ const (
 
 // Commands lists every command a client may send.
 var Commands = []string{CmdBuildingCreate, CmdBuildingRename, CmdBuildingDelete, CmdBuildingReorder, CmdFloorAssign,
-	CmdFloorWake, CmdFloorSleep, CmdFloorSettings}
+	CmdFloorWake, CmdFloorSleep, CmdFloorSettings, CmdHirePrepare, CmdWorkerHire, CmdFirePrepare, CmdWorkerFire}
 
 // Envelope is the part every message shares.
 type Envelope struct {
@@ -240,6 +277,10 @@ type Worker struct {
 	// Resume is set during and after a wake for workers that can resume
 	// (pending, confirmed, fallback, failed); cleared on the next sleep.
 	Resume string `json:"resume,omitempty"`
+	// HiredAt is when the bridge hired this worker, unix milliseconds.
+	HiredAt int64 `json:"hired_at,omitempty"`
+	// Branch is the checked-out branch of a worker in a linked worktree.
+	Branch string `json:"branch,omitempty"`
 }
 
 // Worktree is a worker's git worktree provenance.
@@ -257,7 +298,7 @@ type Worktree struct {
 //	floor.upsert     floor
 //	floor.removed    session
 //	worker.upsert    worker
-//	worker.removed   id, session, workspace_id
+//	worker.removed   id, session, workspace_id, reason
 //	worker.status    id, session, workspace_id, status, prev_status, status_since, title
 type Event struct {
 	T           string    `json:"t"`
@@ -273,6 +314,9 @@ type Event struct {
 	StatusSince int64     `json:"status_since,omitempty"`
 	// Title is set (possibly to "") on worker.status only.
 	Title *string `json:"title,omitempty"`
+	// Reason is set on worker.removed when worker.fire removed it
+	// (RemovedSentHome).
+	Reason string `json:"reason,omitempty"`
 }
 
 // Command is a client request. Args depend on T (see the *Args types).
@@ -338,6 +382,123 @@ type FloorSettingsArgs struct {
 	StatusField Optional[StatusField] `json:"status_field,omitzero"`
 	DefaultCwd  Optional[string]      `json:"default_cwd,omitzero"`
 	DefaultHire Optional[Hire]        `json:"default_hire,omitzero"`
+}
+
+// HirePrepareArgs are the args of hire.prepare.
+type HirePrepareArgs struct {
+	Session string `json:"session"`
+	Cwd     string `json:"cwd,omitempty"`
+}
+
+// HirePrepareResult is the ack data of hire.prepare: what the hire dialog
+// shows.
+type HirePrepareResult struct {
+	Cwd          string   `json:"cwd"`
+	Choice       *Hire    `json:"choice"`
+	ChoiceSource string   `json:"choice_source"`
+	Label        string   `json:"label"`
+	Git          *HireGit `json:"git"`
+	Capacity     Capacity `json:"capacity"`
+}
+
+// HireGit is the git state of a hire's cwd: the base a worktree hire
+// branches from (origin/<default branch>, after a fetch).
+type HireGit struct {
+	RepoRoot      string `json:"repo_root"`
+	DefaultBranch string `json:"default_branch"`
+	BaseSHA       string `json:"base_sha"`
+	BaseTime      int64  `json:"base_time"` // unix ms, commit time
+	Fetched       bool   `json:"fetched"`
+	FetchError    string `json:"fetch_error,omitempty"`
+}
+
+// Capacity is the worker count and caps of a floor and of the host.
+type Capacity struct {
+	Floor CapacityCount `json:"floor"`
+	Host  CapacityCount `json:"host"`
+	Load  *HostLoad     `json:"load,omitempty"`
+}
+
+// CapacityCount is a worker count with its soft (warn) and hard (refuse)
+// caps.
+type CapacityCount struct {
+	Count int `json:"count"`
+	Soft  int `json:"soft"`
+	Hard  int `json:"hard"`
+}
+
+// HostLoad is the bridge host's load.
+type HostLoad struct {
+	Load1      float64 `json:"load1"`
+	CPUs       int     `json:"cpus"`
+	MemUsedPct float64 `json:"mem_used_pct"`
+}
+
+// WorkerHireArgs are the args of worker.hire. DeskIndex is required.
+type WorkerHireArgs struct {
+	Session   string `json:"session"`
+	DeskIndex *int   `json:"desk_index"`
+	Harness   string `json:"harness"`
+	Model     string `json:"model"`
+	Effort    string `json:"effort"`
+	Label     string `json:"label,omitempty"`
+	Cwd       string `json:"cwd,omitempty"`
+	Worktree  bool   `json:"worktree,omitempty"`
+	Prompt    string `json:"prompt,omitempty"`
+}
+
+// HireResult is the ack data of worker.hire.
+type HireResult struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+	Branch      string `json:"branch,omitempty"`
+	BaseSHA     string `json:"base_sha,omitempty"`
+	FetchError  string `json:"fetch_error,omitempty"`
+	Trust       string `json:"trust"`
+	// Prompted is set when a prompt was asked for: whether it was sent.
+	Prompted    *bool  `json:"prompted,omitempty"`
+	PromptError string `json:"prompt_error,omitempty"`
+}
+
+// WorkerArgs are the args of worker.fire.prepare.
+type WorkerArgs struct {
+	ID string `json:"id"`
+}
+
+// FirePrepareResult is the ack data of worker.fire.prepare: what the
+// send-home dialog shows.
+type FirePrepareResult struct {
+	Name        string        `json:"name"`
+	Label       string        `json:"label"`
+	Branch      string        `json:"branch,omitempty"`
+	Worktree    *FireWorktree `json:"worktree"`
+	Dirty       []string      `json:"dirty"`
+	Unpushed    int           `json:"unpushed"`
+	CanDelete   bool          `json:"can_delete"`
+	Reason      string        `json:"reason,omitempty"`
+	CanFire     bool          `json:"can_fire"`
+	FireBlocked string        `json:"fire_blocked,omitempty"`
+}
+
+// FireWorktree is the git checkout a worker works in.
+type FireWorktree struct {
+	Path   string `json:"path"`
+	Linked bool   `json:"linked"`
+}
+
+// WorkerFireArgs are the args of worker.fire. Worktree is FireKeep
+// (default), FireDelete or FireDeleteBranch.
+type WorkerFireArgs struct {
+	ID       string `json:"id"`
+	Worktree string `json:"worktree,omitempty"`
+}
+
+// FireResult is the ack data of worker.fire.
+type FireResult struct {
+	Worktree string `json:"worktree"`
+	// Released: the agent exited by itself (or there was none).
+	Released bool   `json:"released"`
+	Note     string `json:"note,omitempty"`
 }
 
 // Optional is a value that can be absent (Set false), null (Set, Value

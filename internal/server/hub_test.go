@@ -192,7 +192,7 @@ func TestCommands(t *testing.T) {
 
 	// Unknown commands and malformed messages are rejected, and the
 	// connection stays usable.
-	c.mustError("worker.hire", map[string]any{"floor": "s1"}, proto.ErrUnknownCommand)
+	c.mustError("worker.prompt", map[string]any{"id": "x"}, proto.ErrUnknownCommand)
 	c.mustError("herdr.workspace.close", nil, proto.ErrUnknownCommand)
 	c.send(map[string]any{"t": proto.CmdBuildingCreate, "args": map[string]any{"name": "NoReq"}})
 	if m := c.next(); m.env.T != proto.TError || !strings.Contains(string(m.raw), proto.ErrBadRequest) {
@@ -233,15 +233,15 @@ func TestCommandWithoutReqIDIsAudited(t *testing.T) {
 		`{"t":"floor.wake","args":{"session":"s"}}`,
 		`{"t":"floor.settings.set","args":{"session":"s","repo":"o/r"}}`,
 		`{"t":"building.create","req_id":"","args":{"name":"NoReq"}}`,
-		`{"t":"worker.hire","args":{}}`,
+		`{"t":"worker.prompt","args":{}}`,
 	}
 	for _, raw := range sent {
 		c.send(json.RawMessage(raw))
 		m := c.next()
 		e := errorOf(m)
 		want := proto.Error{T: proto.TError, Code: proto.ErrBadRequest, Message: "commands need a req_id"}
-		if strings.Contains(raw, "worker.hire") {
-			want = proto.Error{T: proto.TError, Code: proto.ErrUnknownCommand, Message: `unknown command "worker.hire"`}
+		if strings.Contains(raw, "worker.prompt") {
+			want = proto.Error{T: proto.TError, Code: proto.ErrUnknownCommand, Message: `unknown command "worker.prompt"`}
 		}
 		if e != want {
 			t.Fatalf("%s: reply %s, want %+v", raw, m.raw, want)
