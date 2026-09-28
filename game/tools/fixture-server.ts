@@ -1,6 +1,9 @@
 // Plays a recorded bridge stream (game/fixtures/<name>.jsonl) over protocol
 // v1, so the game can run without a bridge: hello → welcome → world.snapshot →
-// the recorded events. Read-only: commands are answered with an error.
+// the recorded events. Read-only by default: commands are answered with an
+// error. With the simulation on (`sim=1`, or `--simulate` standalone) it
+// answers the bridge's commands from an in-memory world instead
+// (tools/fixture-sim.ts) and does not play the recorded events.
 //
 // Used two ways:
 // - inside Vite (dev and preview) at `/fixture/<name>`, see vite.config.ts:
@@ -10,19 +13,22 @@
 //   then `?ws=ws://127.0.0.1:<port>/fixture/demo` (or `/ws` for the default fixture).
 //
 // Query parameters on the WebSocket URL: `play=none|all|<ms>` (default 2500:
-// one recorded event every 2.5 s after the snapshot).
+// one recorded event every 2.5 s after the snapshot); `sim=1` simulates
+// commands, `simms=<ms>` sets the time between wake/sleep steps (default 600)
+// and `simfail=wake_failed|sleep_failed` makes the next wake/sleep fail.
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { SimWorld, type SimOptions } from './fixture-sim.ts';
 
 export const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 const NAME = /^[a-z0-9][a-z0-9-]*$/;
 
 interface Recorded {
-  snapshot: { t: string; seq: number };
+  snapshot: { t: string; seq: number; world: Record<string, unknown> };
   events: Array<{ t: string; seq: number }>;
 }
 
@@ -31,7 +37,7 @@ export function loadFixture(name: string, dir = FIXTURES_DIR): Recorded {
   const lines = readFileSync(join(dir, `${name}.jsonl`), 'utf8')
     .split('\n')
     .filter((l) => l.trim())
-    .map((l) => JSON.parse(l) as { t: string; seq: number });
+    .map((l) => JSON.parse(l) as { t: string; seq: number; world: Record<string, unknown> });
   const [snapshot, ...events] = lines;
   if (!snapshot || snapshot.t !== 'world.snapshot') throw new Error(`${name}: first line must be a world.snapshot`);
   return { snapshot, events };
@@ -41,14 +47,20 @@ export interface FixtureOptions {
   dir?: string;
   /** Fixture served on `/ws`. */
   defaultFixture?: string;
+  /** Simulate commands on every connection, as if each had `sim=1`. */
+  simulate?: boolean;
   log?: (msg: string) => void;
 }
 
-function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string): void {
+function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: SimOptions | null): void {
   const send = (m: unknown) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(m));
   let greeted = false;
   const timers: ReturnType<typeof setTimeout>[] = [];
-  ws.on('close', () => timers.forEach(clearTimeout));
+  const world = sim ? new SimWorld(rec.snapshot, sim) : null;
+  ws.on('close', () => {
+    timers.forEach(clearTimeout);
+    world?.dispose();
+  });
   ws.on('message', (data) => {
     let m: { t?: unknown; proto?: unknown; req_id?: unknown };
     try {
@@ -69,6 +81,11 @@ function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string): void {
         return;
       }
       greeted = true;
+      if (world) {
+        send({ t: 'welcome', proto: 1, server_seq: world.seq, epoch, resume: 'snapshot', server: 'h3d-fixture-server (simulating)' });
+        send(world.snapshot());
+        return;
+      }
       send({ t: 'welcome', proto: 1, server_seq: rec.snapshot.seq, epoch, resume: 'snapshot', server: 'h3d-fixture-server' });
       send(rec.snapshot);
       if (mode === 'all') rec.events.forEach(send);
@@ -76,6 +93,10 @@ function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string): void {
         const every = Math.max(50, Number(mode) || 2500);
         rec.events.forEach((e, i) => timers.push(setTimeout(() => send(e), every * (i + 1))));
       }
+      return;
+    }
+    if (world) {
+      world.handle(m as Record<string, unknown>, send);
       return;
     }
     if (typeof m.req_id === 'string') {
@@ -105,9 +126,12 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
       return true;
     }
     const mode = url.searchParams.get('play') ?? '2500';
+    const q = url.searchParams;
+    const sim: SimOptions | null =
+      o.simulate || q.get('sim') === '1' ? { stepMs: Math.max(20, Number(q.get('simms')) || 600), ...(q.get('simfail') ? { fail: q.get('simfail') as string } : {}) } : null;
     wss.handleUpgrade(req, socket, head, (ws) => {
-      o.log?.(`fixture ${name}: client connected (play=${mode})`);
-      play(ws, rec, mode, epoch);
+      o.log?.(`fixture ${name}: client connected (${sim ? `simulating, step ${sim.stepMs} ms` : `play=${mode}`})`);
+      play(ws, rec, mode, epoch, sim);
     });
     return true;
   };
@@ -137,10 +161,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   };
   const port = Number(opt('--port') ?? process.env.PORTLEASE_FIXTURE_PORT);
   if (!Number.isInteger(port) || port <= 0) {
-    console.error('usage: fixture-server.ts --port <port> [--fixture demo]  (or PORTLEASE_FIXTURE_PORT)');
+    console.error('usage: fixture-server.ts --port <port> [--fixture demo] [--simulate]  (or PORTLEASE_FIXTURE_PORT)');
     process.exit(2);
   }
   const defaultFixture = opt('--fixture') ?? 'demo';
-  await startFixtureServer(port, { defaultFixture, log: (m) => console.log(m) });
-  console.log(`fixture server on ws://127.0.0.1:${port}/ws (${defaultFixture}) and /fixture/<name>`);
+  const simulate = args.includes('--simulate');
+  await startFixtureServer(port, { defaultFixture, simulate, log: (m) => console.log(m) });
+  console.log(`fixture server on ws://127.0.0.1:${port}/ws (${defaultFixture}) and /fixture/<name>${simulate ? ', simulating commands' : ''}`);
 }

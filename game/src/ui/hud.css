@@ -469,7 +469,8 @@ body {
   word-break: break-all;
 }
 
-.sheet {
+.sheet,
+.confirm {
   width: min(520px, calc(100vw - 32px));
   padding: 0;
   border: 0;
@@ -479,19 +480,22 @@ body {
   box-shadow: var(--shadow);
   font-family: var(--font);
 }
-.sheet::backdrop {
+.sheet::backdrop,
+.confirm::backdrop {
   background: rgb(18 24 44 / 45%);
 }
 .sheet-body {
   padding: 18px 20px 16px;
 }
-.sheet h2 {
+.sheet h2,
+.confirm h2 {
   margin: 0 0 8px;
   font-size: 20px;
   font-weight: 800;
   font-variation-settings: 'CASL' 1, 'MONO' 0;
 }
-.sheet p {
+.sheet p,
+.confirm p {
   margin: 0 0 14px;
   color: var(--text-on-ink-2);
   max-width: 60ch;
@@ -518,6 +522,10 @@ body {
 .toast[hidden] {
   display: block;
   opacity: 0;
+}
+.toast[data-kind='error'] {
+  background: var(--needs_you-chip);
+  color: #fff;
 }
 
 .doors {
@@ -604,7 +612,17 @@ body {
   gap: 6px;
   pointer-events: auto;
 }
-.floor-list button {
+.building-list {
+  position: absolute;
+  left: 12px;
+  bottom: 88px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: auto;
+}
+.floor-list button,
+.building-list button {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -614,7 +632,8 @@ body {
   border: 0;
   padding: 0;
 }
-.floor-list button:focus-visible {
+.floor-list button:focus-visible,
+.building-list button:focus-visible {
   position: static;
   width: auto;
   height: auto;
