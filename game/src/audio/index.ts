@@ -9,7 +9,7 @@ import type * as THREE from 'three/webgpu';
  * pressed a key. Without Web Audio (headless tests) every call is a no-op.
  */
 export interface GameAudio {
-  /** Resume the AudioContext; the first click / pointer-lock / key does this by itself. */
+  /** Make / resume the AudioContext (call it from a user gesture); the first click / pointer-lock / key does this by itself. */
   unlock(): Promise<void>;
   /** Lazily load + decode (off the frame path) and play a clip positioned at a world point. */
   playAt(clip: string, pos: { x: number; y: number; z: number }): void;
@@ -110,7 +110,27 @@ class WebGameAudio implements GameAudio {
   private camera: THREE.Camera | null = null;
   private readonly lastListener = new Float64Array(9).fill(Number.NaN);
   private disposed = false;
-  private readonly onGesture = () => void this.unlock();
+  private creating = false;
+  /**
+   * Making the first AudioContext costs ~35 ms of main thread (Chromium), too
+   * much inside a key or click handler at 120 Hz: after the first gesture the
+   * page has sticky activation, so it is made at the next idle moment instead.
+   * Later gestures resume it synchronously (cheap), which Safari needs.
+   */
+  private readonly onGesture = () => {
+    if (this.ctx || this.failed) {
+      void this.unlock();
+      return;
+    }
+    if (this.creating) return;
+    this.creating = true;
+    const run = () => {
+      this.creating = false;
+      void this.unlock();
+    };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 400 });
+    else setTimeout(run, 0);
+  };
 
   constructor(d: AudioDeps) {
     this.makeContext = d.context === undefined ? defaultContext() : d.context;

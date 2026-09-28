@@ -149,7 +149,7 @@ describe('game audio', () => {
     expect(createGameAudio({ storage: null }).available).toBe(false);
   });
 
-  it('makes the context on the first gesture, not before, and stops listening once running', async () => {
+  it('makes the context after the first gesture, not before, and stops listening once running', async () => {
     const { audio, made, events, loads } = setup();
     expect(audio.state).toBe('idle');
     audio.playAt('receptionist/a', { x: 0, y: 0, z: 0 });
@@ -157,6 +157,9 @@ describe('game audio', () => {
     expect(made).toHaveLength(0);
     expect(loads).toEqual([]); // nothing loads before a gesture: it couldn't play anyway
     events.dispatchEvent(new Event('pointerdown'));
+    // Not inside the handler (it costs a few frames): right after it.
+    expect(made).toHaveLength(0);
+    events.dispatchEvent(new Event('keydown'));
     await flush();
     expect(made).toHaveLength(1);
     expect(made[0]?.resumes).toBe(1);
