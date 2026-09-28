@@ -17,7 +17,8 @@
     "fixtures": "node tools/gen-fixtures.mjs",
     "fixtures:check": "node tools/gen-fixtures.mjs --check",
     "fixture-server": "portlease run --project herdr-3d --worktree .. --name fixture --service game-fixture -- sh -c 'exec node tools/fixture-server.ts --port \"$PORTLEASE_FIXTURE_PORT\"'",
-    "test:live": "pnpm build && portlease run --project herdr-3d --worktree .. --name preview --name proxy --service game-live -- node tools/live-latency.ts"
+    "test:live": "pnpm build && portlease run --project herdr-3d --worktree .. --name preview --name proxy --service game-live -- node tools/live-latency.ts",
+    "perf:mac": "pnpm build && portlease run --project herdr-3d --worktree .. --name preview --service game-perf -- node tools/mac-perf.ts"
   },
   "dependencies": {
     "@fontsource-variable/recursive": "5.3.0",
