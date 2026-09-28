@@ -140,9 +140,9 @@ test('from the glass, look-at reaches a worker at a desk below; the plan shows t
   await aim(page, target.s.seat.x, fy + 0.9, target.s.seat.z);
   if (Math.hypot(target.s.seat.x - at.x, target.s.seat.z - at.z) > 3.5) expect((await page.evaluate(() => window.__h3d.lookAt()))?.id).not.toBe(target.w.id);
 
-  // The mezzanine seen from the floor: from the south-west, looking up at it.
-  await page.evaluate(([q, y]) => window.__h3d.setPose({ x: q.x, z: q.z, y, yaw: 0, pitch: 0 }), [{ x: m.rect.x0 - 3.2, z: m.rect.z1 + 5.5 }, fy] as const);
-  await aim(page, m.rect.x0 + 3.2, fy + 2.6, m.rect.z0 + 1.6);
+  // The mezzanine seen from the floor: from the aisle in front of the board wall, looking up at it.
+  await page.evaluate(([q, y]) => window.__h3d.setPose({ x: q.x, z: q.z, y, yaw: 0, pitch: 0 }), [{ x: m.rect.x0 - 1.2, z: L.boardWall.z0 - 0.8 }, fy] as const);
+  await aim(page, m.rect.x0 + 3.4, fy + 3.2, m.rect.z0 + 2);
   await frames(page, 4);
   await shot(page, 'm3c-mezzanine');
 
