@@ -12,6 +12,7 @@ import {
   TAKE_LAPTOP_AT,
   WALK_SPEED,
   cumulative,
+  deskOwners,
   poseAt,
   sampleRoute,
   timeline,
@@ -131,5 +132,32 @@ describe('timeline', () => {
     const done = poseAt(inn, inn.total);
     expect(done).toMatchObject({ phase: 'done', seated: true, desk: 'free' });
     expect(done.y).toBeCloseTo(floorY(storey) + SEAT_LIFT, 3);
+  });
+});
+
+describe('desk owners while walks overlap', () => {
+  const away = (session: string, desk: number, show: 'busy' | 'empty' | null, who: string) => ({ session, desk, show, who });
+
+  it('the newest walk on a desk owns it: a walk-in behind a walk-out keeps the desk empty', () => {
+    // Pip was sent home from desk 5 and is past the "+" point (null: as the world says, where the new
+    // hire already sits); Gumdrop was hired to desk 5 after and is still walking in.
+    const walkOut = poseAt(timeline('out', walkOutRoute(floors[0]!, plan, 0, 5), 0), PACK_S + STAND_S + (PLUS_BACK_AFTER_M + 1) / WALK_SPEED);
+    expect(walkOut.desk).toBe('free');
+    const got = deskOwners([], [away('f', 5, null, 'pip-out'), away('f', 5, 'empty', 'gumdrop-in')]);
+    expect(got).toEqual([away('f', 5, 'empty', 'gumdrop-in')]);
+  });
+
+  it('a walk that just ended does not override a walk still running on its desk', () => {
+    expect(deskOwners([away('f', 5, null, 'pip-out ended')], [away('f', 5, 'empty', 'gumdrop-in')])).toEqual([away('f', 5, 'empty', 'gumdrop-in')]);
+  });
+
+  it('keeps one entry per desk and per floor; ended walks alone hand the desk back', () => {
+    const got = deskOwners([away('f', 2, null, 'a ended'), away('g', 5, null, 'b ended')], [away('f', 5, 'busy', 'c'), away('f', 5, 'empty', 'd'), away('g', 1, 'empty', 'e')]);
+    expect(got).toEqual([away('f', 2, null, 'a ended'), away('g', 5, null, 'b ended'), away('f', 5, 'empty', 'd'), away('g', 1, 'empty', 'e')]);
+  });
+
+  it('start order decides, not the kind of walk', () => {
+    // Start order matters, not the kind: a walk-out that started after a walk-in owns the desk.
+    expect(deskOwners([], [away('f', 3, 'empty', 'in first'), away('f', 3, 'busy', 'out later')])).toEqual([away('f', 3, 'busy', 'out later')]);
   });
 });

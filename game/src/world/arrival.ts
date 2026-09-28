@@ -270,3 +270,17 @@ export function poseAt(tl: Timeline, t: number): ArrivalPose {
   }
   return base;
 }
+
+/**
+ * What each desk shows while walks run: one entry per desk. `ended` (walks
+ * that just finished or were cancelled: the desk as the world says) come
+ * first, then `walking` in the order the walks started, oldest first. The
+ * newest walk on a desk owns it: a new hire walking in to the desk a worker
+ * sent home is still walking out of keeps its desk empty, never the older
+ * walk's "as the world says" (which would seat the new hire mid-walk).
+ */
+export function deskOwners<T extends { session: string; desk: number }>(ended: readonly T[], walking: readonly T[]): T[] {
+  const by = new Map<string, T>();
+  for (const d of [...ended, ...walking]) by.set(`${d.session}\u0000${d.desk}`, d);
+  return [...by.values()];
+}
