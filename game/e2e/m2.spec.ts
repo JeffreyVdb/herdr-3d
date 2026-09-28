@@ -142,6 +142,30 @@ test('the open floor plan follows live status and seat changes while nothing mov
   clean();
 });
 
+test('events during the elevator ride reach the office that opens after it', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page);
+  const nibble = NIBBLE_DONE?.id;
+  await page.evaluate(
+    ([done, hire]) => {
+      // The floor list enters through the elevator doors; the bridge speaks while they are shut.
+      document.querySelector<HTMLButtonElement>('.floor-list button[data-session="herdr-3d"]')?.click();
+      if (!window.__h3d.view().busy) throw new Error('no door transition');
+      window.__h3d.inject(done as never);
+      window.__h3d.inject(hire as never);
+    },
+    [NIBBLE_DONE, GUMDROP_HIRED],
+  );
+  await page.waitForFunction(() => window.__h3d.view().mode === 'floor' && !window.__h3d.view().busy);
+  await frames(page);
+  expect(await page.evaluate((id) => window.__h3d.status(id ?? '')?.status, nibble)).toBe('done');
+  await page.evaluate(() => window.__h3d.plan(true));
+  await expect(planDot(page, 'Nibble')).toHaveAttribute('style', /var\(--done\)/);
+  await expect(page.locator('.plan-label--desk')).toHaveText(['+ 13']);
+  await expect(planDot(page, 'Gumdrop')).toHaveCount(1);
+  clean();
+});
+
 test('first person: a desk row with workers, cards with task text, a free desk', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page);

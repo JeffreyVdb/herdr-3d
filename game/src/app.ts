@@ -233,8 +233,15 @@ export class App {
     const fv = this.store.floorView(session);
     if (!fv || this.transitioning) return;
     const swap = () => {
+      // Read the floor again: events keep arriving while the doors close, and
+      // until the office exists nothing else applies them to it.
+      const now = this.store.floorView(session);
+      if (!now) {
+        this.hud.toast(`${session} is gone.`);
+        return;
+      }
       this.office?.dispose();
-      this.office = new OfficeView(fv, { shadows: this.shadows });
+      this.office = new OfficeView(now, { shadows: this.shadows });
       this.mode = 'floor';
       this.hud.setMode('floor');
       this.city.setVisible(false);
