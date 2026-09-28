@@ -41,11 +41,12 @@ type Options struct {
 	// Sessions, if set, is the only set of sessions floor commands may act
 	// on (the watcher's --sessions filter, checked again here).
 	Sessions *regexp.Regexp
-	// WakeTimeout bounds waiting for a started server to answer ping
-	// (default DefaultWakeTimeout).
+	// WakeTimeout bounds starting a woken server, its answering ping and
+	// its floor being seen running, together (default DefaultWakeTimeout).
 	WakeTimeout time.Duration
-	// ResumeTimeout is how long a wake waits for the agents, before and
-	// again after the fallback (default DefaultResumeTimeout).
+	// ResumeTimeout is how long a wake waits for the agents before the
+	// fallback, and again for the fallback and its result; each bounds
+	// every herdr call in it (default DefaultResumeTimeout).
 	ResumeTimeout time.Duration
 	// SleepTimeout bounds waiting for a stopped floor to be seen asleep
 	// (default DefaultSleepTimeout).

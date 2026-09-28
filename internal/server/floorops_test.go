@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -317,6 +318,7 @@ func TestWakeFallback(t *testing.T) {
 		t.Fatalf("ack = %s", m.raw)
 	}
 	calls := fh.Calls()
+	slices.Sort(calls[1:]) // the fallbacks run side by side
 	if !slices.Equal(calls, []string{"start s", "resume s w1:p1 claude 8cb4e8a5-0000", "resume s w2:p1 codex 01a0e795-0000"}) {
 		t.Fatalf("herdr calls = %v", calls)
 	}
@@ -649,4 +651,92 @@ func TestSleepFailsWhenTheFloorIsNotSeenAsleep(t *testing.T) {
 	}
 	fh.onStop = func() { b.floorAt("s", false, nil) }
 	c.mustAck(proto.CmdFloorSleep, proto.FloorArgs{Session: "s"})
+}
+
+// runnerHerdr is the real herdr.Control over a fake Runner, with a ping
+// that answers once the server is started.
+type runnerHerdr struct {
+	*herdr.Control
+	up atomic.Bool
+}
+
+func (r *runnerHerdr) Ping(context.Context, string) error {
+	if !r.up.Load() {
+		return errors.New("connection refused")
+	}
+	return nil
+}
+
+// Each resume phase has one deadline, however many panes there are and
+// however long herdr takes to say what runs in them: panes are watched
+// side by side, and a stalled one holds up neither the others nor the ack.
+func TestWakeBoundedWhenProcessInfoStalls(t *testing.T) {
+	var workers []world.WorkerObs
+	for i := 1; i <= 12; i++ {
+		ws := fmt.Sprintf("w%d", i)
+		workers = append(workers, claudeW(ws, "sess-"+ws))
+	}
+	var (
+		b      *bridge
+		mu     sync.Mutex
+		ran    []string
+		w12Out = `{"result":{"process_info":{"pane_id":"w12:p1","shell_pid":100,"foreground_process_group_id":100,
+			"foreground_processes":[{"pid":100,"name":"fish"}]}}}`
+	)
+	rh := &runnerHerdr{}
+	rh.Control = &herdr.Control{Home: "/home/u", Run: func(ctx context.Context, argv []string) ([]byte, []byte, error) {
+		switch {
+		case argv[0] == "systemd-run":
+			rh.up.Store(true)
+			b.floorAt("s", true, workers)
+			return nil, nil, nil
+		case argv[4] == "process-info" && argv[len(argv)-1] != "w12:p1":
+			<-ctx.Done() // a stalled herdr: only the caller's deadline ends it
+			return nil, nil, ctx.Err()
+		case argv[4] == "process-info":
+			mu.Lock()
+			defer mu.Unlock()
+			return []byte(w12Out), nil, nil
+		case argv[4] == "run":
+			mu.Lock()
+			defer mu.Unlock()
+			ran = append(ran, strings.Join(argv, " "))
+			w12Out = `{"result":{"process_info":{"pane_id":"w12:p1","shell_pid":100,"foreground_process_group_id":200,
+				"foreground_processes":[{"pid":200,"name":"claude","cmdline":"claude --resume sess-w12"}]}}}`
+			return []byte(`{"result":{"type":"ok"}}`), nil, nil
+		}
+		return nil, nil, fmt.Errorf("unexpected %q", argv)
+	}}
+	opts := fastOps(nil)
+	opts.Herdr = rh
+	b = startBridge(t, "", opts)
+	b.floorAt("s", false, workers)
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+
+	start := time.Now()
+	_, m := c.command(proto.CmdFloorWake, "w", proto.FloorArgs{Session: "s"})
+	took := time.Since(start)
+	res := ackData[proto.WakeResult](t, m)
+	if bound := opts.WakeTimeout + 2*opts.ResumeTimeout + time.Second; took > bound {
+		t.Errorf("the ack took %v, bound %v", took, bound)
+	}
+	for i, w := range res.Workers {
+		want := proto.ResumeFailed
+		if i == 11 {
+			want = proto.ResumeFallback
+		}
+		if w.Resume != want {
+			t.Errorf("worker %d resume = %q, want %q (ack %s)", i+1, w.Resume, want, m.raw)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(ran, []string{"herdr --session s pane run w12:p1 claude --resume sess-w12"}) {
+		t.Errorf("pane run = %q", ran)
+	}
+	log, _ := b.st.AuditLog(context.Background())
+	if len(log) != 1 || !log[0].OK || !log[0].Done || !strings.Contains(log[0].Result, "no fallback: herdr --session s: context deadline exceeded") {
+		t.Fatalf("audit = %+v", log)
+	}
 }

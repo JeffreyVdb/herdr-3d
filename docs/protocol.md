@@ -342,22 +342,23 @@ A floor wakes and sleeps through herdr itself. The bridge acts only on sessions 
    "exec herdr --session '<name>' server"`: a supervised headless server with the user's login environment (their fish
    wrappers and API keys, none of the bridge's `CLAUDE*`/`HERDR_*` variables). It fails (`wake_failed`) if the unit
    cannot start, e.g. a `herdr-s-<name>` unit still exists.
-2. `ping` on the session's socket, backing off up to 1 s, for `--wake-timeout` (10 s): no answer is `wake_failed` (the
-   message says why). The workers' `resume` is then cleared again; the floor stays asleep.
-3. The bridge follows the session at once (no 2 s poll) and waits (up to `--wake-timeout`) until it sees it running;
-   a floor not seen running in time is `wake_failed` too. herdr resumes every pane that had an `agent_session` by
-   itself (`claude --resume <id>` / `codex resume <id>`).
+2. `ping` on the session's socket, backing off up to 1 s: no answer is `wake_failed` (the message says why). The
+   workers' `resume` is then cleared again; the floor stays asleep.
+3. The bridge follows the session at once (no 2 s poll) and waits until it sees it running; a floor not seen running in
+   time is `wake_failed` too. Steps 1–3 together have `--wake-timeout` (10 s). herdr resumes every pane that had an
+   `agent_session` by itself (`claude --resume <id>` / `codex resume <id>`).
 4. Each such worker is `pending` until its agent is back: herdr reports `pane.agent_detected` naming the agent for its
    pane, or `herdr pane process-info` shows the agent (`claude` / `codex`, or its session id) in the pane's foreground
    for 1.5 s in a row. herdr 0.9 restores a pane's agent before the agent runs and sends no detection for a resume, so
    the process is the usual evidence. It then turns `confirmed`.
 5. After `--resume-timeout` (10 s), each worker still pending whose pane is back at its shell prompt (the shell is the
    foreground process group) gets its resume command typed in once: `herdr pane run <pane> "claude --resume <id>"` or
-   `"codex resume <id>"`. A pane running something else is left alone. The bridge waits `--resume-timeout` again:
-   workers whose agent then comes back are `fallback` (or `confirmed`, when herdr's own resume was just slow), the
-   rest `failed`.
-6. The transition ends and the ack lists every worker. Worst case the ack takes about 30 s: show progress from
-   `transition` and `resume`, not from the ack.
+   `"codex resume <id>"`. A pane running something else is left alone. The fallback and the wait after it share one
+   more `--resume-timeout`: workers whose agent then comes back are `fallback` (or `confirmed`, when herdr's own
+   resume was just slow), the rest `failed`.
+6. The transition ends and the ack lists every worker. Each phase's deadline bounds every herdr call in it, and the
+   panes are watched side by side, so worst case the ack takes about `--wake-timeout` + 2 × `--resume-timeout` (30 s),
+   however many workers the floor has: show progress from `transition` and `resume`, not from the ack.
 
 **Sleep** (the floor must be running, else `invalid_state`):
 
