@@ -68,7 +68,18 @@ describe('LineBook', () => {
   it('follows the welcome with a nudge when a floor needs you, with live details in the bubble only', () => {
     const said = new LineBook(LINES, () => 0).handle('arrive-street', ctx(at(9), [floor('herdr-3d', 'running', 2), floor('pastry', 'running', 1), floor('lab', 'asleep')]));
     expect(said.map((s) => s.kind)).toEqual(['welcome-morning', 'nudge']);
-    expect(said[1]).toMatchObject({ id: 'nudge-a', text: 'nudge a!', bubble: 'Waiting on you: 2 on herdr-3d and 1 on pastry.' });
+    expect(said[1]).toEqual({
+      kind: 'nudge',
+      id: 'nudge-a',
+      text: 'nudge a!',
+      bubble: 'Waiting on you: 2 on herdr-3d and 1 on pastry.',
+      waiting: [
+        { name: 'herdr-3d', count: 2 },
+        { name: 'pastry', count: 1 },
+      ],
+      more: 0,
+    });
+    expect(said[0]).not.toHaveProperty('waiting');
   });
 
   it('says the building is quiet (instead of a nudge) when every floor is asleep', () => {

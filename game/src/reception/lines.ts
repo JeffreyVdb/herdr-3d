@@ -46,6 +46,9 @@ export interface Said {
   id: string; // manifest id == clip file stem
   text: string; // what the voice says
   bubble: string; // what the speech bubble shows (nudge: live floor names + counts)
+  /** Nudge: the floors listed in the bubble, and how many more are waiting. */
+  waiting?: Array<{ name: string; count: number }>;
+  more?: number;
 }
 
 /** One manifest entry. `text` may carry MiMo style tags: `(Happy) Hi!`. */
@@ -99,17 +102,22 @@ export function parseLines(raw: unknown): VoiceLine[] {
   return out;
 }
 
+/** Floors with workers that need you, the first `max` of them, and how many more. */
+export function waitingFloors(floors: ReceptionContext['floors'], max = 3): { waiting: Array<{ name: string; count: number }>; more: number } {
+  const all = floors.filter((f) => f.needsYou > 0);
+  return { waiting: all.slice(0, max).map((f) => ({ name: f.name, count: f.needsYou })), more: Math.max(0, all.length - max) };
+}
+
 /** The nudge bubble: who is waiting, per floor (`Waiting on you: 2 on herdr-3d, 1 on pastry.`). */
 export function nudgeBubble(floors: ReceptionContext['floors'], max = 3): string {
-  const waiting = floors.filter((f) => f.needsYou > 0);
-  const shown = waiting.slice(0, max).map((f) => `${f.needsYou} on ${f.name}`);
-  const more = waiting.length - shown.length;
+  const { waiting, more } = waitingFloors(floors, max);
+  const shown = waiting.map((w) => `${w.count} on ${w.name}`);
   if (more > 0) shown.push(`${more} more ${more === 1 ? 'floor' : 'floors'}`);
   const list = shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}` : (shown[0] ?? '');
   return `Waiting on you: ${list}.`;
 }
 
-type Group = 'greeting' | 'goodbye';
+export type Group = 'greeting' | 'goodbye';
 
 const GROUP: Record<ReceptionEvent, Group | null> = {
   'arrive-street': 'greeting',
@@ -137,6 +145,11 @@ export class LineBook {
     for (const l of lines) this.byKind.set(l.kind, [...(this.byKind.get(l.kind) ?? []), l]);
   }
 
+  /** When the group's cooldown ends / ended (ms on the context clock), null before its first line. */
+  cooldownEnd(group: Group): number | null {
+    return this.until.get(group) ?? null;
+  }
+
   /** When the group's cooldown ends (ms on the context clock), null when it isn't running. */
   cooldownUntil(group: Group, now: number): number | null {
     const u = this.until.get(group);
@@ -148,14 +161,14 @@ export class LineBook {
     const group = GROUP[ev];
     if (group && this.cooldownUntil(group, now) !== null) return [];
     const out: Said[] = [];
-    const say = (kind: LineKind, bubble?: string) => {
+    const say = (kind: LineKind, extra?: Pick<Said, 'bubble' | 'waiting' | 'more'>) => {
       const l = this.pick(kind);
-      if (l) out.push({ kind, id: l.id, text: plainText(l.text), bubble: bubble ?? plainText(l.text) });
+      if (l) out.push({ kind, id: l.id, text: plainText(l.text), bubble: plainText(l.text), ...extra });
     };
     switch (ev) {
       case 'arrive-street': {
         say(`welcome-${timeOfDay(ctx.now)}`);
-        if (ctx.floors.some((f) => f.needsYou > 0)) say('nudge', nudgeBubble(ctx.floors));
+        if (ctx.floors.some((f) => f.needsYou > 0)) say('nudge', { bubble: nudgeBubble(ctx.floors), ...waitingFloors(ctx.floors) });
         else if (ctx.floors.every((f) => f.state === 'asleep')) say('quiet');
         break;
       }
