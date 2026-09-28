@@ -1,0 +1,173 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#bfe3ff;overflow:hidden}</style></head><body>
+<script type="importmap">{"imports":{"three":"/three/build/three.webgpu.js","three/webgpu":"/three/build/three.webgpu.js","three/addons/":"/three/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three/webgpu';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+const P = new URLSearchParams(location.search);
+const BACKEND = P.get('backend') || 'webgpu';          // webgpu | webgl
+const KIND = P.get('kind') || 'rigid';                  // rigid (instanced) | rigidmesh | skinned | none
+const PER_FLOOR = +(P.get('per') || 8);
+const SHADOWS = P.get('shadows') !== '0';
+const W = +(P.get('w') || 1512), H = +(P.get('h') || 945), DPR = +(P.get('dpr') || 2);
+const FRAMES = P.has('soak') ? 5 : +(P.get('frames') || 300), WARM = +(P.get('warm') || 60);
+const FLOORS = [8, 6, 7, 4, 5];                         // 30 floors, 5 buildings
+const log = (...a) => { (window.__log ||= []).push(a.join(' ')); };
+window.onerror = (m) => log('ERR', m);
+try {
+const r = new THREE.WebGPURenderer({ antialias: true, forceWebGL: BACKEND === 'webgl', trackTimestamp: P.has('ts') });
+r.setPixelRatio(DPR); r.setSize(W, H); document.body.appendChild(r.domElement);
+await r.init();
+r.shadowMap.enabled = SHADOWS; r.shadowMap.type = THREE.PCFShadowMap;
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0xbfe3ff);
+const cam = new THREE.PerspectiveCamera(40, W / H, 0.5, 400);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x88aa66, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(30, 60, 20); sun.castShadow = SHADOWS;
+Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 1, far: 150 }); sun.shadow.mapSize.set(2048, 2048);
+scene.add(sun, sun.target);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshToonMaterial({ color: 0x8fd18f }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+
+// ---- buildings: open-front cutaway floors (instanced slabs + walls) ----
+const FW = 8, FD = 6, FH = 1.6;
+const seats = []; // world transforms for desks/workers
+const slabGeo = new THREE.BoxGeometry(FW, 0.15, FD), wallGeo = new THREE.BoxGeometry(FW, FH, 0.12), sideGeo = new THREE.BoxGeometry(0.12, FH, FD);
+const nF = FLOORS.reduce((a, b) => a + b, 0);
+const pastel = [0xffb3ba, 0xffdfba, 0xfff5ba, 0xbaffc9, 0xbae1ff, 0xd9baff];
+const mk = (g, n, color) => { const m = new THREE.InstancedMesh(g, new THREE.MeshToonMaterial({ color }), n); m.castShadow = m.receiveShadow = true; scene.add(m); return m; };
+const slabs = mk(slabGeo, nF, 0xffffff), backs = mk(wallGeo, nF, 0xffffff), sidesL = mk(sideGeo, nF, 0xffffff), sidesR = mk(sideGeo, nF, 0xffffff);
+const m4 = new THREE.Matrix4(), col = new THREE.Color();
+let fi = 0;
+FLOORS.forEach((n, b) => {
+  const bx = (b - 2) * 13, bz = (b % 2) * -8;
+  for (let f = 0; f < n; f++, fi++) {
+    const y = f * FH;
+    col.set(pastel[(b + f) % pastel.length]);
+    slabs.setMatrixAt(fi, m4.makeTranslation(bx, y + 0.075, bz)); slabs.setColorAt(fi, col);
+    backs.setMatrixAt(fi, m4.makeTranslation(bx, y + FH / 2, bz - FD / 2)); backs.setColorAt(fi, col);
+    sidesL.setMatrixAt(fi, m4.makeTranslation(bx - FW / 2, y + FH / 2, bz)); sidesL.setColorAt(fi, col);
+    sidesR.setMatrixAt(fi, m4.makeTranslation(bx + FW / 2, y + FH / 2, bz)); sidesR.setColorAt(fi, col);
+    for (let s = 0; s < PER_FLOOR; s++) {
+      const cols = Math.ceil(PER_FLOOR / 2), row = s % 2, c = Math.floor(s / 2);
+      seats.push({ x: bx - FW / 2 + (c + 0.5) * FW / cols, y: y + 0.15, z: bz - 1.6 + row * 2.2, phase: Math.random() * 10 });
+    }
+  }
+});
+const loader = new GLTFLoader();
+const load = (u) => new Promise((res, rej) => loader.load(u, res, undefined, rej));
+
+// ---- desks / chairs / laptops: Kenney Furniture Kit, instanced per sub-mesh ----
+async function instFurniture(url, scale, off) {
+  const g = await load(url); g.scene.updateMatrixWorld(true);
+  g.scene.traverse((o) => { if (!o.isMesh) return;
+    const im = new THREE.InstancedMesh(o.geometry, o.material, seats.length); im.castShadow = im.receiveShadow = true;
+    seats.forEach((s, i) => { m4.makeTranslation(s.x + off[0], s.y + off[1], s.z + off[2]).multiply(new THREE.Matrix4().makeScale(scale, scale, scale)).multiply(o.matrixWorld); im.setMatrixAt(i, m4); });
+    scene.add(im); });
+}
+await instFurniture('/assets/desk.glb', 1.3, [-0.5, 0, -0.35]);
+await instFurniture('/assets/laptop.glb', 1.3, [-0.1, 0.98, -0.2]);
+await instFurniture('/assets/chairDesk.glb', 1.3, [-0.2, 0, 0.3]);
+
+// ---- workers ----
+const update = []; // per-frame update fns
+if (KIND === 'skinned') {
+  const names = ['male-a', 'male-b', 'male-c', 'female-a', 'female-b', 'female-c'];
+  const srcs = await Promise.all(names.map((n) => load(`/assets/character-${n}.glb`)));
+  const mixers = [];
+  seats.forEach((s, i) => {
+    const src = srcs[i % srcs.length]; const o = SkeletonUtils.clone(src.scene);
+    o.position.set(s.x, s.y + 0.1, s.z + 0.6); o.rotation.y = Math.PI; o.scale.setScalar(0.9);
+    o.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.frustumCulled = false; } });
+    scene.add(o);
+    const mx = new THREE.AnimationMixer(o);
+    const clip = src.animations.find((a) => a.name === (i % 3 ? 'interact-right' : 'sit')) || src.animations[0];
+    mx.clipAction(clip).play(); mx.setTime(s.phase); mixers.push(mx);
+  });
+  update.push((dt) => { for (const m of mixers) m.update(dt); });
+} else if (KIND === 'rigid' || KIND === 'rigidmesh') {
+  // Original round goggle-worker: capsule body, overalls, one/two goggles, tiny arms/legs. No skinning.
+  const toon = (c) => new THREE.MeshToonMaterial({ color: c });
+  const parts = [
+    { g: new THREE.CapsuleGeometry(0.28, 0.35, 6, 14), m: toon(0xffffff), local: [0, 0.62, 0], colors: [0xffd84a, 0x9ee6c8, 0xc9b3ff, 0xffb38a] }, // body (tinted per worker)
+    { g: new THREE.CylinderGeometry(0.29, 0.3, 0.3, 16), m: toon(0x3d6fd6), local: [0, 0.42, 0] },               // overalls
+    { g: new THREE.TorusGeometry(0.285, 0.035, 6, 20), m: toon(0x333333), local: [0, 0.78, 0], rot: [Math.PI / 2, 0, 0] }, // goggle strap
+    { g: new THREE.CylinderGeometry(0.11, 0.11, 0.08, 14), m: toon(0xb8c2cc), local: [0, 0.78, 0.27], rot: [Math.PI / 2, 0, 0] }, // goggle rim
+    { g: new THREE.SphereGeometry(0.085, 12, 8), m: toon(0xffffff), local: [0, 0.78, 0.29] },                     // eye
+    { g: new THREE.SphereGeometry(0.035, 8, 6), m: toon(0x3a2a1a), local: [0, 0.78, 0.365], look: true },         // pupil
+    { g: new THREE.CapsuleGeometry(0.045, 0.2, 4, 8), m: toon(0xffd84a), local: [-0.3, 0.58, 0.08], arm: -1, tint: true }, // arm L
+    { g: new THREE.CapsuleGeometry(0.045, 0.2, 4, 8), m: toon(0xffd84a), local: [0.3, 0.58, 0.08], arm: 1, tint: true },   // arm R
+    { g: new THREE.CapsuleGeometry(0.06, 0.12, 4, 8), m: toon(0x3d6fd6), local: [-0.12, 0.2, 0.1], leg: -1 },     // leg L
+    { g: new THREE.CapsuleGeometry(0.06, 0.12, 4, 8), m: toon(0x3d6fd6), local: [0.12, 0.2, 0.1], leg: 1 },       // leg R
+  ];
+  const N = seats.length, base = new THREE.Object3D(), part = new THREE.Object3D(), mm = new THREE.Matrix4();
+  const tints = parts[0].colors.map((c) => new THREE.Color(c));
+  const inst = parts.map((p) => {
+    if (KIND === 'rigid') { const im = new THREE.InstancedMesh(p.g, p.m, N); im.castShadow = true; im.frustumCulled = false;
+      if (p.colors || p.tint) { for (let i = 0; i < N; i++) im.setColorAt(i, tints[i % tints.length]); if (p.tint) p.m.color.set(0xffffff); }
+      scene.add(im); return im; }
+    return seats.map((s, i) => { const mat = (p.colors || p.tint) ? toon(tints[i % tints.length]) : p.m; const me = new THREE.Mesh(p.g, mat); me.castShadow = true; me.matrixAutoUpdate = false; scene.add(me); return me; });
+  });
+  let t = 0;
+  update.push((dt) => {
+    t += dt;
+    for (let i = 0; i < N; i++) {
+      const s = seats[i], ph = t * 6 + s.phase;
+      base.position.set(s.x - 0.2, s.y + 0.1 + Math.abs(Math.sin(ph * 0.5)) * 0.03, s.z + 0.35); base.rotation.set(0, Math.PI + Math.sin(ph * 0.13) * 0.15, Math.sin(ph * 0.25) * 0.04); base.updateMatrix();
+      for (let k = 0; k < parts.length; k++) {
+        const p = parts[k]; part.position.set(p.local[0], p.local[1], p.local[2]); part.rotation.set(...(p.rot || [0, 0, 0]));
+        if (p.arm) { part.rotation.x = -1.2 + Math.sin(ph * 2 + p.arm) * 0.25; part.position.z += 0.08; }       // typing
+        if (p.leg) part.rotation.x = -1.4 + Math.sin(ph * 0.7 + p.leg) * 0.1;                                  // dangling legs
+        if (p.look) part.position.x += Math.sin(ph * 0.31) * 0.03;
+        part.updateMatrix(); mm.multiplyMatrices(base.matrix, part.matrix);
+        if (KIND === 'rigid') inst[k].setMatrixAt(i, mm); else inst[k][i].matrix.copy(mm);
+      }
+    }
+    if (KIND === 'rigid') for (const im of inst) im.instanceMatrix.needsUpdate = true;
+  });
+}
+
+// ---- camera: slow orbit over whole city (worst case: everything visible) ----
+let ct = 0; const camTarget = new THREE.Vector3(0, 4, -3);
+update.push((dt) => { ct += dt; const a = 0.6 + Math.sin(ct * 0.2) * 0.3; if (P.get('cam') === 'close') { const s0 = seats[seats.length - 8]; cam.position.set(s0.x + 3, s0.y + 2.2, s0.z + 6); cam.lookAt(s0.x + 3, s0.y + 0.4, s0.z); } else { cam.position.set(Math.sin(a) * 55, 26, Math.cos(a) * 55); cam.lookAt(camTarget); } });
+
+const backendName = r.backend.isWebGPUBackend ? 'webgpu' : 'webgl2';
+const gl = r.backend.gl;
+const sync = backendName === 'webgpu' ? () => r.backend.device.queue.onSubmittedWorkDone()
+  : (() => { const px = new Uint8Array(4); return async () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); })();
+const dt = 1 / 60;
+const stats = (a) => { const s = [...a].sort((x, y) => x - y); return { med: +s[Math.floor(s.length / 2)].toFixed(2), p95: +s[Math.floor(s.length * 0.95)].toFixed(2), mean: +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(2) }; };
+for (let i = 0; i < WARM; i++) { for (const u of update) u(dt); r.render(scene, cam); await sync(); }
+window.__ready = true;
+const adInfo = navigator.gpu ? await navigator.gpu.requestAdapter().then(a => a ? `${a.info.vendor}/${a.info.architecture}` : 'none') : 'no navigator.gpu';
+if (P.has('dbg')) { const rows=[]; scene.traverse(o=>{ if(!o.isMesh) return; const g=o.geometry; const t=(g.index?g.index.count:g.attributes.position.count)/3; rows.push([o.name||o.type, t, o.isInstancedMesh?o.count:1, t*(o.isInstancedMesh?o.count:1)]); }); rows.sort((a,b)=>b[3]-a[3]); log('meshes', rows.length, JSON.stringify(rows.slice(0,8))); r.info.reset(); r.render(scene,cam); log('single render tris', r.info.render.triangles, 'draws', r.info.render.drawCalls, 'autoReset', r.info.autoReset); }
+// A) serialized: update + render + wait for GPU each frame (latency incl. GPU)
+const tot = [], upd = [], sub = [];
+for (let i = 0; i < FRAMES; i++) {
+  const t0 = performance.now(); for (const u of update) u(dt); const t1 = performance.now(); r.render(scene, cam); const t2 = performance.now(); await sync(); const t3 = performance.now();
+  tot.push(t3 - t0); upd.push(t1 - t0); sub.push(t2 - t1);
+}
+// B) pipelined: no per-frame wait (sync every 4 frames), throughput
+const tp0 = performance.now();
+for (let i = 0; i < FRAMES; i++) { for (const u of update) u(dt); r.render(scene, cam); if (i % 4 === 3) await sync(); }
+await sync(); const pipelined = (performance.now() - tp0) / FRAMES;
+r.info.reset(); r.render(scene, cam); await sync(); const info = { ...r.info.render };
+let gpuTs = null;
+if (P.has('ts')) { const g = []; for (let i = 0; i < 60; i++) { for (const u of update) u(dt); r.render(scene, cam); await sync(); const v = await r.resolveTimestampsAsync('render'); if (typeof v === 'number') g.push(v); }
+  gpuTs = g.length ? stats(g) : 'unavailable'; }
+window.__result = { backend: backendName, kind: KIND, workers: KIND === 'none' ? 0 : seats.length, floors: nF, shadows: SHADOWS, px: `${W * DPR}x${H * DPR}`,
+  frameMs: stats(tot), updateMs: stats(upd), submitMs: stats(sub), pipelinedMs: +pipelined.toFixed(2),
+  drawCalls: info.drawCalls ?? info.calls, gpuTimestampMs: gpuTs, secure: isSecureContext, hasGPU: !!navigator.gpu, adapter: r.backend.isWebGPUBackend ? adInfo : (gl.getParameter(gl.getExtension('WEBGL_debug_renderer_info')?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER)), triangles: info.triangles, ua: navigator.userAgent.replace(/.*\) /, '') };
+// C) optional rAF cadence probe (only meaningful in a visible window)
+if (P.has('raf')) { const ts = []; await new Promise((res) => { const f = (t) => { ts.push(t); for (const u of update) u(dt); r.render(scene, cam); ts.length < 241 ? requestAnimationFrame(f) : res(); }; requestAnimationFrame(f); });
+  const d = ts.slice(1).map((t, i) => t - ts[i]); window.__result.rafIntervalMs = stats(d); }
+if (P.has('soak')) { const until = performance.now() + (+P.get('soak')) * 1000; let n = 0; const ts = [];
+  await new Promise((res) => { const f = (t) => { ts.push(t); n++; for (const u of update) u(dt); r.render(scene, cam); performance.now() < until ? requestAnimationFrame(f) : res(); }; requestAnimationFrame(f); });
+  window.__result.soakFrames = n; window.__result.soakFps = +(n / (+P.get('soak'))).toFixed(1); }
+if (P.has('shot')) { for (const u of update) u(dt); r.render(scene, cam); await sync(); }
+if (P.has('readback')) { const rw = W, rh = H; const rt = new THREE.RenderTarget(rw, rh, { samples: 1, colorSpace: THREE.SRGBColorSpace }); r.setRenderTarget(rt); r.render(scene, cam); r.setRenderTarget(null);
+  const px = await r.readRenderTargetPixelsAsync(rt, 0, 0, rw, rh); const c = document.createElement('canvas'); c.width = rw; c.height = rh; const x = c.getContext('2d'); const id = x.createImageData(rw, rh);
+  const flip = !r.backend.isWebGPUBackend; const stride = px.length / rh; for (let y = 0; y < rh; y++) { const sy = flip ? rh - 1 - y : y; id.data.set(px.subarray(sy * stride, sy * stride + rw * 4), y * rw * 4); }
+  x.putImageData(id, 0, 0); window.__png = c.toDataURL('image/png'); }
+window.__done = true;
+} catch (e) { log('EXC', e && (e.stack || e.message || e)); window.__result = { error: String(e && (e.message || e)) }; window.__done = true; }
+</script></body></html>

@@ -1,0 +1,22 @@
+# herdr-3d engine stress benchmark (throwaway research harness, not game code)
+
+- `index.html`: three.js r186 stress scene. 5 buildings, 30 open-front floors, 8 desks/floor (Kenney Furniture Kit, instanced), and 240 workers.
+  - Query params:
+    - `backend=webgpu|webgl`
+    - `kind=rigid|rigidmesh|skinned|none`
+    - `per=<workers per floor>`
+    - `shadows=0`
+    - `w,h,dpr`
+    - `ts` (GPU timestamp queries)
+    - `raf` (rAF cadence probe)
+    - `soak=<s>` (rAF loop for N s)
+    - `cam=close`
+    - `shot`
+  - Expects `/three` (npm three@0.186.1 package dir) and `/assets` (Kenney Mini Characters `character-*.glb` + `Textures/colormap.png`, Furniture Kit `desk.glb`, `chairDesk.glb`, `laptop.glb`, all CC0) next to it. Neither is committed.
+- `serve.mjs`: static server bound to 127.0.0.1.
+- `run.mjs`: Playwright-core driver.
+  - `BASE=` points it at an existing server, e.g. through an `ssh -L` forward.
+  - `HEADED=1` runs a visible window.
+- `wkbench.swift`: the same pages in the system WKWebView (Tauri's engine). `UNLOCK120=1` flips the private `PreferPageRenderingUpdatesNear60FPSEnabled` feature off.
+- `soak.sh`: runs a command and samples `top -stats pid,command,cpu,power` (no sudo).
+- `results/*.jsonl`: raw results from the M2 Max run on 2026-09-28.
