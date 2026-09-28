@@ -154,6 +154,7 @@ describe('SimWorld wake and sleep', () => {
     expect(r.store.floorView('pastry')).toMatchObject({ transition: 'waking', asleep: true });
     expect(r.cmd('floor.wake', { session: 'pastry' }).got()[0]).toMatchObject({ code: 'busy' });
     expect(r.cmd('floor.settings.set', { session: 'pastry', repo: null }).got()[0]).toMatchObject({ code: 'busy' });
+    expect(r.cmd('floor.assign', { session: 'pastry', building: null }).got()[0]).toMatchObject({ code: 'busy' });
     r.tick();
     const v = r.store.floorView('pastry');
     expect(v).toMatchObject({ transition: 'waking', asleep: false });

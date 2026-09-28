@@ -255,6 +255,7 @@ export class SimWorld {
     if (to !== null && typeof to !== 'string') throw bad('building must be a string or null');
     if (a.index !== undefined && (typeof a.index !== 'number' || !Number.isInteger(a.index))) throw bad('index must be an int');
     if (to !== null) this.building(to);
+    if (f.transition) throw new CmdError('busy', `busy: ${f.session} is ${f.transition}`);
     const from = f.building;
     const before = new Map([...this.floors.values()].map((x) => [x.session, `${x.building}:${x.index}`]));
     const reindex = (id: string, list: string[]) =>
