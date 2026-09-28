@@ -3,21 +3,30 @@
 // fixture's snapshot and answers like herdr-world would: building.create /
 // rename / delete / reorder, floor.assign, floor.settings.set, and
 // floor.wake / floor.sleep with a scripted transition (transition → state →
-// per-worker resume → done, one step every `stepMs`). Events go out before
-// the ack, with consecutive seqs. Nothing touches herdr or a database.
+// per-worker resume → done, one step every `stepMs`). M4: hire.prepare,
+// worker.hire, worker.fire.prepare and worker.fire (see "M4" below for the
+// rules: which cwds are git repos, who has a dirty tree, the caps). Events go
+// out before the ack, with consecutive seqs. Nothing touches herdr or a
+// database.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
-import type { Building, Floor, FloorSettings, HireOptions, Worker } from '../src/net/protocol.ts';
+import type { Building, Cap, Floor, FloorSettings, Hire, HireOptions, Worker } from '../src/net/protocol.ts';
 
 type Msg = Record<string, unknown>;
 type Send = (m: Msg) => void;
 type Obj = Record<string, unknown>;
 
 export interface SimOptions {
-  /** Time between the scripted steps of a wake or sleep. */
+  /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
   stepMs?: number;
-  /** `wake_failed` / `sleep_failed`: the next wake / sleep fails after its transition. */
+  /**
+   * `wake_failed` / `sleep_failed`: the next wake / sleep fails after its transition;
+   * M4: `hire_failed` / `fire_failed` the next hire / send-home, `fetch_failed` the next prepare's `git fetch`.
+   */
   fail?: string | undefined;
+  /** M4: per-floor caps `{session: {soft, hard}}` (default 24 / 32); the host's are 60 / 80. */
+  caps?: Record<string, { soft: number; hard: number }>;
+  now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
 }
@@ -31,6 +40,14 @@ export const SIM_HIRE_OPTIONS: HireOptions = {
     extra_efforts: { 'gpt-6-sol': ['ultra'], 'gpt-6-astra': ['ultra'] },
   },
 };
+
+/** M4: the caps a floor has unless `caps` says otherwise, and the host's. */
+export const SIM_FLOOR_CAP = { soft: 24, hard: 32 };
+export const SIM_HOST_CAP = { soft: 60, hard: 80 };
+/** Names for new hires (the bridge's list starts like this). */
+const SIM_NAMES = ['Gumdrop', 'Hopper', 'Inky', 'Jumble', 'Kazoo', 'Lentil', 'Mango', 'Nimbus', 'Orzo', 'Pompom', 'Quokka', 'Rumble', 'Sesame', 'Truffle', 'Udon', 'Vroom', 'Wasabi'];
+/** What `git status --porcelain` says for a worker that is mid-task. */
+const SIM_DIRTY = [' M game/src/app.ts', ' M game/src/ui/hud.ts', '?? notes/todo.md'];
 
 class CmdError extends Error {
   code: string;
@@ -73,6 +90,10 @@ export class SimWorld {
   private readonly stepMs: number;
   private fail: string | undefined;
   private nextId = 0;
+  /** M4: the last harness/model/effort hired per floor. */
+  private readonly lastHire = new Map<string, Hire>();
+  private readonly caps: Record<string, { soft: number; hard: number }>;
+  private readonly now: () => number;
   private readonly setT: (fn: () => void, ms: number) => unknown;
   private readonly clearT: (h: unknown) => void;
 
@@ -86,6 +107,8 @@ export class SimWorld {
     this.hireSent = w.hire_options !== undefined;
     this.stepMs = o.stepMs ?? 600;
     this.fail = o.fail;
+    this.caps = o.caps ?? {};
+    this.now = o.now ?? (() => Date.now());
     this.setT = o.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearT = o.clearTimeout ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
   }
@@ -174,6 +197,14 @@ export class SimWorld {
           return this.wake(a, send, ack, fail);
         case 'floor.sleep':
           return this.sleep(a, send, ack, fail);
+        case 'hire.prepare':
+          return ack(this.hirePrepare(a));
+        case 'worker.hire':
+          return this.hireWorker(a, send, ack, fail);
+        case 'worker.fire.prepare':
+          return ack(this.firePrepare(a));
+        case 'worker.fire':
+          return this.fireWorker(a, send, ack, fail);
       }
       throw new CmdError('unknown_command', `unknown command: "${String(m.t)}"`);
     } catch (e) {
@@ -435,6 +466,265 @@ export class SimWorld {
           this.upsertWorker(send, w);
         }
         ack();
+      },
+    ]);
+  }
+
+  // ---- M4: hire and send home ------------------------------------------------
+  //
+  // Rules of the simulation: a cwd is a git repo unless it has `/scratch` in
+  // it (its repo root: the path before `-wt/…`); `offline` in it (or
+  // `simfail=fetch_failed`) makes the fetch fail. A worker that is `working`
+  // has uncommitted changes and 2 unpushed commits, a `blocked` one 1
+  // unpushed commit, everyone else is clean. Caps: `caps`, else 24 / 32 per
+  // floor, 60 / 80 for the host (running floors' workers).
+
+  private floorCap(f: Floor): Cap {
+    const c = this.caps[f.session] ?? SIM_FLOOR_CAP;
+    return { count: this.workers.filter((w) => w.session === f.session).length, soft: c.soft, hard: c.hard };
+  }
+
+  private hostCap(): Cap {
+    const running = new Set([...this.floors.values()].filter((f) => f.state === 'running').map((f) => f.session));
+    return { count: this.workers.filter((w) => running.has(w.session)).length, ...SIM_HOST_CAP };
+  }
+
+  private runningFloor(a: Obj): Floor {
+    const f = this.floor(a);
+    if (f.state !== 'running') throw new CmdError('asleep', `asleep: ${f.session} is asleep; wake it first`);
+    if (f.transition) throw new CmdError('busy', `busy: ${f.session} is ${f.transition}`);
+    return f;
+  }
+
+  private defaultCwd(f: Floor): string {
+    return f.settings?.default_cwd ?? f.suggested?.default_cwd ?? this.rootOf(this.workers.find((w) => w.session === f.session && w.cwd)) ?? '/home/dev';
+  }
+
+  /** A worker's repo root checkout (its cwd outside a worktree). */
+  private rootOf(w: Worker | undefined): string | undefined {
+    return w?.worktree?.repo_root ?? w?.cwd;
+  }
+
+  private git(cwd: string, fetch: boolean): Obj | null {
+    if (cwd.includes('/scratch')) return null;
+    const root = cwd.replace(/-wt\/[^/]+$/, '');
+    let h = 0;
+    for (const c of root) h = (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0;
+    const g: Obj = {
+      repo_root: root,
+      default_branch: 'main',
+      base_sha: (h.toString(16).padStart(8, '0') + 'c0ffee1d15ea5e0b5e55ed0ddba11cafe0').slice(0, 40),
+      base_time: this.now() - (3 * 60 + 12) * 60_000,
+      fetched: true,
+    };
+    const failed = fetch && (cwd.includes('offline') || this.fail === 'fetch_failed');
+    if (failed) {
+      if (this.fail === 'fetch_failed') this.fail = undefined;
+      g.fetched = false;
+      g.fetch_error = 'ssh: Could not resolve hostname github.com (simulated)';
+    }
+    return g;
+  }
+
+  private nextName(session: string): string {
+    const taken = new Set(this.workers.filter((w) => w.session === session).map((w) => w.name));
+    for (let k = 1; ; k++) {
+      for (const n of SIM_NAMES) {
+        const name = k === 1 ? n : `${n} ${k}`;
+        if (!taken.has(name)) return name;
+      }
+    }
+  }
+
+  private choice(f: Floor): { choice: Hire | null; choice_source: string } {
+    const d = f.settings?.default_hire;
+    if (d) return { choice: d, choice_source: 'floor_default' };
+    const last = this.lastHire.get(f.session);
+    return last ? { choice: last, choice_source: 'last' } : { choice: null, choice_source: 'none' };
+  }
+
+  private hirePrepare(a: Obj): Obj {
+    onlyKeys(a, ['session', 'cwd']);
+    const f = this.runningFloor(a);
+    if (a.cwd !== undefined && (typeof a.cwd !== 'string' || !a.cwd.startsWith('/'))) throw bad('cwd must be an absolute path');
+    const cwd = (a.cwd as string | undefined) ?? this.defaultCwd(f);
+    return {
+      cwd,
+      ...this.choice(f),
+      label: this.nextName(f.session),
+      git: this.git(cwd, true),
+      capacity: { floor: this.floorCap(f), host: this.hostCap(), load: { load1: 2.36, cpus: 16, mem_used_pct: 41.4 } },
+    };
+  }
+
+  /** Desks the bridge renders for a floor: `max(highest + 1, min(96, max(6, workers + 2)))`. */
+  private desksFor(session: string): number {
+    const ws = this.workers.filter((w) => w.session === session);
+    const top = Math.max(-1, ...ws.map((w) => w.desk_index ?? -1));
+    return Math.max(top + 1, Math.min(96, Math.max(6, ws.length + 2)));
+  }
+
+  /** The floor's desks after a hire or a send-home; a floor.upsert when that changes them. */
+  private resize(send: Send, f: Floor): void {
+    const next = this.desksFor(f.session);
+    if (next === f.desks) return;
+    f.desks = next;
+    this.floorEvent(send, f);
+  }
+
+  private hireWorker(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void {
+    onlyKeys(a, ['session', 'desk_index', 'harness', 'model', 'effort', 'label', 'cwd', 'worktree', 'prompt']);
+    const f = this.runningFloor(a);
+    const desk = a.desk_index;
+    if (typeof desk !== 'number' || !Number.isInteger(desk) || desk < 0) throw bad('desk_index must be an int >= 0');
+    const harness = str(a, 'harness');
+    const model = str(a, 'model');
+    const effort = str(a, 'effort');
+    const o = this.hire[harness];
+    if (!o) throw bad(`unknown harness ${harness}`);
+    if (!o.models.includes(model)) throw bad(`${harness} has no model ${model}`);
+    if (![...o.efforts, ...(o.extra_efforts?.[model] ?? [])].includes(effort)) throw bad(`${model} has no effort ${effort}`);
+    for (const k of ['label', 'cwd', 'prompt']) if (a[k] !== undefined && typeof a[k] !== 'string') throw bad(`${k} must be a string`);
+    if (a.worktree !== undefined && typeof a.worktree !== 'boolean') throw bad('worktree must be a bool');
+    const cwd = (a.cwd as string | undefined) ?? this.defaultCwd(f);
+    if (!cwd.startsWith('/')) throw bad('cwd must be an absolute path');
+    const git = this.git(cwd, false);
+    if (a.worktree === true && !git) throw bad(`worktree: ${cwd} is not a git repository`);
+    if (desk >= (f.desks ?? 0) || this.workers.some((w) => w.session === f.session && w.desk_index === desk)) {
+      throw new CmdError('desk_taken', `desk_taken: desk ${desk} of ${f.session} is ${desk >= (f.desks ?? 0) ? 'out of range' : 'occupied'}`);
+    }
+    const cap = this.floorCap(f);
+    if (cap.count >= cap.hard) throw new CmdError('capacity', `capacity: ${f.session} has ${cap.count} workers (hard cap ${cap.hard})`);
+    const host = this.hostCap();
+    if (host.count >= host.hard) throw new CmdError('capacity', `capacity: the host has ${host.count} workers (hard cap ${host.hard})`);
+    if (this.fail === 'hire_failed') {
+      this.fail = undefined;
+      this.later([() => fail(new CmdError('hire_failed', 'hire_failed: herdr agent start: claude exited during startup (simulated)'))]);
+      return;
+    }
+    const name = this.nextName(f.session);
+    const label = (a.label as string | undefined)?.trim() || name;
+    const n = ++this.nextId;
+    const id = `5173a4e0-0000-4000-a000-${n.toString(16).padStart(12, '0')}`;
+    const ws = `wh${n.toString(36)}`;
+    const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'worker';
+    const branch = a.worktree === true ? `h3d/${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${slug}` : undefined;
+    const root = git ? (git.repo_root as string) : undefined;
+    const checkout = branch && root ? `${root}-wt/${branch.slice(4)}` : cwd;
+    const now = this.now();
+    const w: Worker = {
+      id,
+      session: f.session,
+      workspace_id: ws,
+      label,
+      cwd: checkout,
+      pane_id: `${ws}:p1`,
+      pane_label: `h3d-${id.slice(-8)}`,
+      agent_kind: harness,
+      status: 'idle',
+      name,
+      desk_index: desk,
+      harness,
+      model,
+      effort,
+      status_since: now,
+      hired_at: now,
+    };
+    if (branch && root) {
+      w.branch = branch;
+      w.worktree = { repo_root: root, repo_name: root.split('/').pop() ?? root, checkout_path: checkout, linked: true };
+    } else if (root) {
+      w.worktree = { repo_root: root, repo_name: root.split('/').pop() ?? root, checkout_path: cwd, linked: false };
+    }
+    const prompt = typeof a.prompt === 'string' ? a.prompt.trim() : '';
+    this.lastHire.set(f.session, { harness, model, effort });
+    // Worktree, agent start and trust take a step; then the first task starts it working.
+    this.later([
+      () => {
+        this.workers.push(w);
+        this.resize(send, f);
+        this.upsertWorker(send, w);
+        const data: Obj = { id, workspace_id: ws, trust: 'avoided' };
+        if (branch) {
+          data.branch = branch;
+          data.base_sha = git?.base_sha;
+        }
+        ack(data);
+      },
+      ...(prompt
+        ? [
+            () => {
+              if (!this.workers.includes(w)) return;
+              const prev = w.status;
+              w.status = 'working';
+              w.title = prompt.split('\n')[0]?.slice(0, 80) ?? '';
+              w.status_since = this.now();
+              this.emit(send, { t: 'worker.status', id, session: w.session, workspace_id: ws, status: 'working', prev_status: prev, status_since: w.status_since, title: w.title });
+            },
+          ]
+        : []),
+    ]);
+  }
+
+  private worker(a: Obj): Worker {
+    const id = str(a, 'id');
+    const w = this.workers.find((x) => x.id === id);
+    if (!w) throw new CmdError('unknown_worker', `unknown worker: "${id}"`);
+    return w;
+  }
+
+  private tree(w: Worker): { dirty: string[]; unpushed: number } {
+    if (w.status === 'working') return { dirty: SIM_DIRTY, unpushed: 2 };
+    if (w.status === 'blocked') return { dirty: [], unpushed: 1 };
+    return { dirty: [], unpushed: 0 };
+  }
+
+  private firePrepare(a: Obj): Obj {
+    onlyKeys(a, ['id']);
+    const w = this.worker(a);
+    const t = this.tree(w);
+    const wt = w.worktree;
+    const linked = !!wt?.linked;
+    const clean = !t.dirty.length && !t.unpushed;
+    const out: Obj = {
+      name: w.name ?? w.label,
+      label: w.label,
+      worktree: wt ? { path: wt.checkout_path, linked } : null,
+      dirty: t.dirty,
+      unpushed: t.unpushed,
+      can_delete: linked && clean,
+    };
+    if (w.branch) out.branch = w.branch;
+    if (!linked) out.reason = wt ? 'it works in the repo’s main checkout, not a worktree of its own' : 'it is not in a git worktree';
+    else if (!clean) out.reason = [t.dirty.length ? 'the worktree has uncommitted changes' : '', t.unpushed ? `${t.unpushed} ${t.unpushed === 1 ? 'commit is' : 'commits are'} not on any remote` : ''].filter(Boolean).join(' and ');
+    return out;
+  }
+
+  private fireWorker(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void {
+    onlyKeys(a, ['id', 'worktree']);
+    const w = this.worker(a);
+    const choice = a.worktree ?? 'keep';
+    if (choice !== 'keep' && choice !== 'delete' && choice !== 'delete_branch') throw bad('worktree must be keep, delete or delete_branch');
+    const f = this.floors.get(w.session);
+    if (f?.transition) throw new CmdError('busy', `busy: ${f.session} is ${f.transition}`);
+    if (choice !== 'keep') {
+      const p = this.firePrepare({ id: w.id });
+      if (!p.can_delete) throw new CmdError('not_clean', `not_clean: ${String(p.reason)}`);
+    }
+    if (this.fail === 'fire_failed') {
+      this.fail = undefined;
+      this.later([() => fail(new CmdError('fire_failed', 'fire_failed: the agent did not exit after /exit within 10s (simulated)'))]);
+      return;
+    }
+    // /exit, the agent released, workspace close (and worktree remove): one step.
+    this.later([
+      () => {
+        const i = this.workers.indexOf(w);
+        if (i < 0) return fail(new CmdError('unknown_worker', `unknown worker: "${w.id}"`));
+        this.workers.splice(i, 1);
+        if (f) this.resize(send, f);
+        this.emit(send, { t: 'worker.removed', id: w.id, session: w.session, workspace_id: w.workspace_id, reason: 'sent_home' });
+        ack({ worktree: choice === 'keep' ? 'kept' : choice === 'delete' ? 'deleted' : 'deleted_branch' });
       },
     ]);
   }
