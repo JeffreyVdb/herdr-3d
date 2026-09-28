@@ -66,11 +66,14 @@ parts:
   and efforts, prompts not starting with `--`), every argument is its own argv element, sessions outside `--sessions`
   are refused, and commands run with the `HERDR_*`/`CLAUDE*` variables stripped. `TestControlAllowlist` pins the set,
   the argv and the exported methods; widening any needs review.
-- **git** (`gitops.Git`, hires and send-homes only): exactly eight shapes (`shapes`, pinned by `TestGitAllowlist`):
+- **git** (`gitops.Git`, hires and send-homes only): exactly ten shapes (`shapes`, pinned by `TestGitAllowlist`):
   `git -C <dir>` `rev-parse --show-toplevel`, `fetch --quiet origin`, `symbolic-ref --quiet --short
   refs/remotes/origin/HEAD`, `log -1 --format=%H %ct origin/<…> --`, `status --porcelain`, `symbolic-ref --quiet --short
-  HEAD`, `rev-list --count HEAD --not --remotes`, and `branch -D h3d/<…>` (only a branch the bridge made, after its
-  commits were seen on a remote). Same clean environment, plus `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`.
+  HEAD`, `rev-list --count HEAD --not --remotes`, `rev-list --count refs/heads/h3d/<…> --not --remotes`, `rev-parse
+  --verify --quiet refs/heads/h3d/<…>`, and `branch -D h3d/<…>`. A branch is deleted only when the bridge recorded
+  making it for that worker (SQLite `hire_branch`, with its base commit; the name alone proves nothing) and either
+  still points at that base (a hire's rollback, clean tree) or has all its commits on a remote (send home, the
+  checkout still on it). Same clean environment, plus `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`.
 
 Everything else the bridge changes is its own SQLite database. How a wake and a sleep go, and what they log:
 [`docs/protocol.md` "Wake and sleep"](docs/protocol.md#wake-and-sleep); hiring and sending home:

@@ -414,7 +414,7 @@ remote-tracking refs) and is audited like any command.
 | `choice`, `choice_source` | the harness/model/effort to pre-select: the floor's `default_hire` (`"floor_default"`), else the last choice hired on this floor (`"last"`, stored per floor in SQLite, table `floor_hire_last`), else `null` (`"none"`). A remembered choice no longer in `hire_options` is skipped. |
 | `label` | the next generated worker name (a name no worker of the floor owns or holds): the default label, and the new worker's name when the hire keeps it |
 | `git` | `null` when `cwd` is not in a git work tree. Else `repo_root` (the work tree's top level), `default_branch` (from `origin/HEAD`, else `main` / `master` when `origin/<that>` exists; `""` when unknown), `base_sha` and `base_time` (unix ms, commit time) of `origin/<default_branch>` **after** `git fetch origin`, `fetched` and, when the fetch failed (no `origin`, offline, …, bounded at 20 s), `fetch_error`. A failed fetch is not an error: the base is then the last fetched one. |
-| `capacity` | workers on this floor (`floor.count`, hires in flight included) and on every running floor the bridge watches (`host.count`), with the configured caps (`--warn-workers-per-floor` / `--max-workers-per-floor`, `--warn-workers` / `--max-workers`). A hire that would reach above `hard` is refused (`capacity`); above `soft` the dialog should warn. `load` is the host's 1-minute load average, CPU count and memory in use (`/proc`); absent when unreadable. |
+| `capacity` | workers on this floor (`floor.count`, hires in flight included; a worktree hire as two while herdr may open its repository's main checkout too) and on every running floor the bridge watches (`host.count`), with the configured caps (`--warn-workers-per-floor` / `--max-workers-per-floor`, `--warn-workers` / `--max-workers`). A hire that would reach above `hard` is refused (`capacity`); above `soft` the dialog should warn. `load` is the host's 1-minute load average, CPU count and memory in use (`/proc`); absent when unreadable. |
 
 **`worker.hire`** hires a worker at a free desk:
 
@@ -444,14 +444,20 @@ remote-tracking refs) and is audited like any command.
 | `handoff`, `stop_services` | reserved (M9, #14); refused like any unknown field |
 
 Capacity: a hire that would put the floor above `--max-workers-per-floor` or the host above `--max-workers` is
-`capacity` (the `message` says which). Then, in order (each step bounded; the whole hire usually takes 4–10 s):
+`capacity` (the `message` says which). A worktree hire counts as **two** workers when no workspace of the
+repository's main checkout is open on the floor, because herdr then opens one too (step 1). That is checked when the
+hire is accepted (the main checkout counts as open when `cwd` is inside the `worktree.repo_root` of an open,
+non-linked worker) and again once git named the repository, before herdr makes anything; a `capacity` then comes
+after the accept, like the `bad_request` for a missing default branch. Then, in order (each step bounded; the whole hire usually takes 4–10 s):
 
 1. **Worktree hires**: `git fetch origin` in the repository (a failure is reported as the ack's `fetch_error`, not fatal),
    then `herdr worktree create --cwd <repo_root> --branch h3d/<name>-<id6> --base origin/<default> --label <label>
    --no-focus`. `<name>` is the worker's name lower-cased with every run of other characters as `-`, `<id6>` the first 6
    hex of its id. The base is always the freshly fetched `origin/<default>`, **never the local `HEAD`** (a stale local
    `HEAD` makes every new branch revert what was merged since; agent-office #119). herdr puts the checkout at
-   `~/.herdr/worktrees/<repo>/<branch with / as ->`. When no workspace of the repository's main checkout is open on the
+   `~/.herdr/worktrees/<repo>/<branch with / as ->`. The branch is recorded in SQLite (table `hire_branch`: worker id,
+   repository, branch, the base commit it was made from): only a branch recorded for a worker is ever deleted, by that
+   worker's send home or by its hire's rollback. When no workspace of the repository's main checkout is open on the
    floor, herdr opens one too (its worktree group needs it): it shows up as one more worker, in the main checkout, at the
    lowest free desk. Plain hires: `herdr workspace create --cwd <cwd> --label <label> --no-focus`.
 2. The new workspace is bound to the worker id minted for this hire, so it appears at `desk_index` with its name,
@@ -465,9 +471,13 @@ Capacity: a hire that would put the floor above `--max-workers-per-floor` or the
    to them. Claude's dialog is `blocked` for herdr (`agent start` fails with `agent_not_ready`); Codex's is not detected
    at all (herdr reports it `idle`). `herdr worktree create --trust-repository` does **not** help: it is herdr's own git
    trust, not the agents'. So the bridge reads the pane's screen (`herdr pane read --source visible`) and, when it shows
-   the agent's trust question for the hire's directory, answers it the way a person would: Claude `Down` + `Enter`
+   the agent's trust question naming the hire's directory as a whole path, answers it the way a person would: Claude `Down` + `Enter`
    ("Yes, I trust this folder"), Codex `Enter` ("1. Trust and continue"). The user chose that directory in the hire
-   dialog, which is the consent. `trust` in the ack is `approved` when it did, `none` when no dialog showed.
+   dialog, which is the consent. "As a whole path": lines the agent hard-wrapped are joined first (a line that
+   reaches about the screen's width runs on into the next; both agents break a long path one column short of the pane
+   width and indent the rest), and the directory must then start after the line start, whitespace or a quote and end
+   before the line end, whitespace or a quote: `/tmp/repo` does not match a dialog for `/tmp/repo-other`,
+   `/tmp/repo/sub` or `/x/tmp/repo`. A screen that cannot be read that way is left for the player. `trust` in the ack is `approved` when it did, `none` when no dialog showed.
    (`avoided` is reserved for a later way of avoiding it.) Any other `blocked` state is left for the player.
 5. The optional `prompt`: `herdr agent prompt <pane> <prompt> --wait --until working --until blocked --timeout 8000`,
    retried while herdr says the agent is not ready. An agent just past its trust dialog can take the text but drop the
@@ -476,26 +486,33 @@ Capacity: a hire that would put the floor above `--max-workers-per-floor` or the
 6. The choice is remembered for the floor, the audit row completed, and the ack sent (after the worker's
    `worker.upsert`).
 
-A hire that fails after its workspace exists is rolled back: its workspace is closed (worktree hires: `herdr worktree
-remove`, then `git branch -D` of the new, commit-less branch), and the error is `hire_failed` with what went wrong.
+A hire that fails after its workspace exists is rolled back, and the error is `hire_failed` with what went wrong.
+Plain hires: `herdr workspace close`. Worktree hires lose nothing: the checkout is removed (`herdr worktree remove`)
+only when `git status --porcelain` there is clean, else only the workspace is closed and checkout and branch are kept;
+the branch is deleted (`git branch -D`) only when it still points at the base commit it was made from (`git rev-parse
+--verify --quiet refs/heads/<branch>`), else it is kept. Whatever is kept is named in the error message (`…; rolling
+back, the branch h3d/… is kept (it has commits since …)`) and in the audit row's `rollback`.
 
 **`worker.fire.prepare`** fills the send-home dialog. It only reads (`git status --porcelain`, `git rev-list --count HEAD
---not --remotes`, in the worker's checkout: `worktree.checkout_path`, else its `cwd`):
+--not --remotes`, `git symbolic-ref --quiet --short HEAD` in the worker's checkout: `worktree.checkout_path`, else its
+`cwd`; `git rev-list --count refs/heads/<branch> --not --remotes` for the branch the bridge made):
 
 ```json
 {"t":"worker.fire.prepare","req_id":"40","args":{"id":"a58752ea-6511-4318-be9a-59e41c09d7c5"}}
 {"t":"ack","req_id":"40","data":{"name":"Mochi","label":"Mochi","branch":"h3d/mochi-a58752",
   "worktree":{"path":"/home/dev/.herdr/worktrees/herdr-3d/h3d-mochi-a58752","linked":true},
-  "dirty":[" M internal/server/hub.go","?? notes.txt"],"unpushed":2,"can_delete":false,
+  "dirty":[" M internal/server/hub.go","?? notes.txt"],"unpushed":2,"can_delete":false,"can_delete_branch":false,
   "reason":"2 uncommitted changes, 2 commits not on any remote","can_fire":true}}
 ```
 
 | field | |
 |---|---|
+| `branch` | the branch checked out in the worker's linked worktree, read now (not the `worker.branch` last shown, which may be up to 15 s old); absent on a detached HEAD |
 | `worktree` | `{"path", "linked"}` of the worker's git checkout, `null` when its directory is not in a git work tree |
 | `dirty` | `git status --porcelain` lines (at most 50) |
 | `unpushed` | commits reachable from `HEAD` that are on no remote-tracking branch |
 | `can_delete` | the worker is in a linked worktree, the tree is clean and nothing is unpushed. Only then may `worker.fire` delete the worktree. |
+| `can_delete_branch` | `can_delete`, and the bridge recorded making a branch for this worker (`hire_branch`), the checkout is on that branch now, and every commit of that branch is on a remote. Only then may `worker.fire` use `delete_branch`: offer "delete worktree + branch" only when this is `true`. |
 | `reason` | why `can_delete` is false |
 | `can_fire`, `fire_blocked` | `false` (and why) when herdr would refuse to close the workspace: a repository's main checkout whose linked worktree workspaces are still open on the floor (herdr's `workspace_group_close_required`; send those home first). The bridge never closes a group. |
 
@@ -509,16 +526,25 @@ remove`, then `git branch -D` of the new, commit-less branch), and the error is 
 
 1. `worktree` `delete` / `delete_branch` need a worker in a linked worktree (else `bad_request`) and a clean, fully
    pushed tree, checked again now (else `not_clean`, and nothing happens). `delete_branch` also needs a branch the
-   bridge made (`h3d/…`).
+   bridge recorded making for this worker (`hire_branch`; an `h3d/…` name alone is not enough, else `bad_request`),
+   the checkout still on that branch (read now), and every commit of that branch on a remote (`git rev-list --count
+   refs/heads/<branch> --not --remotes`); else `not_clean`, and nothing happens.
 2. Graceful exit, when the pane runs the agent: Claude `herdr pane send-text <pane> /exit` + `Enter`, Codex `/quit`, a
    short pause (its command popup takes the first Enter otherwise), `Enter`. The bridge waits up to 8 s for the pane to
    be back at its shell (`herdr pane process-info`), pressing `Enter` again up to 3 times on the way (an agent still
-   starting up drops it), then tries `Ctrl-C` twice; `released` says whether the agent left by itself. A graceful exit ends the agent's resume link, which is what sending home means (never used for sleep).
+   starting up drops it), then tries `Ctrl-C` twice (an agent the bridge has no exit command for gets only the
+   `Ctrl-C`s); `released` says whether the agent left by itself. **The workspace is closed only once the agent is
+   gone**: if it is still running after all that, or its pane's processes cannot be read, nothing is closed or
+   removed and the answer is `fire_failed` (the message says the agent is still running; audited with the keys
+   sent). The worker stays; send it home again, or deal with it in herdr. A graceful exit ends the agent's resume
+   link, which is what sending home means (never used for sleep).
 3. `herdr workspace close <workspace>`, or for a deleted worktree `herdr worktree remove --workspace <workspace>`
-   (it closes the workspace; never `--force`). If the tree became dirty during the exit, it is kept and `note` says so.
+   (it closes the workspace; never `--force`). If the tree became dirty, or (`delete_branch`) the checkout left the
+   branch or the branch got unpushed commits during the exit, the worktree is kept and `note` says so.
 4. `worker.removed` with `reason: "sent_home"`, once the bridge sees the workspace gone (up to 5 s); the desk is free
-   again and the name held as for any worker that leaves. For `delete_branch`, then `git branch -D h3d/…` in the main
-   checkout (safe: every commit is on a remote).
+   again and the name held as for any worker that leaves. For `delete_branch`, then — its commits counted once
+   more — `git branch -D <recorded branch>` in the main checkout (safe: every commit is on a remote), and its
+   `hire_branch` record is dropped. If the count is not 0 the branch is kept and `note` says so.
 5. The audit row is completed with each step (exit keys, released or not, the git state, the cleanup choice and
    outcome) and the ack sent. A failure is `fire_failed` with what went wrong.
 
@@ -548,8 +574,8 @@ cleanup choice and what happened to the worktree and branch.
 | `invalid_state` | `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`; the message says which |
-| `not_clean` | `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits |
-| `hire_failed`, `fire_failed` | herdr or git failed during a hire / send-home; the message says which step and why |
+| `not_clean` | `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |
+| `hire_failed`, `fire_failed` | herdr or git failed during a hire / send-home; the message says which step and why. `fire_failed` also when the agent did not exit (still running, or its processes could not be read): then nothing was closed or removed. `hire_failed` names what its rollback kept. |
 | `wake_failed` | the server did not start, did not answer `ping` or was not seen running within `--wake-timeout`; the message says why |
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
 | `hello_required`, `unsupported_proto` | handshake failures; the connection is then closed with status 1008 |

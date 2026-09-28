@@ -74,7 +74,9 @@ MacBook (M2 Max)                                   devbox (Linux)
   agent-office #119) → the workspace is bound to that id (so it sits at the chosen desk) → pane-label marker
   `h3d-<12 hex>` → `agent start <name>-<id6> --kind claude|codex --pane … -- <args>` through the shell pane (fish
   wrappers apply) → answer the trust dialog → optional first prompt. Capacity caps per floor and host (soft: warn,
-  hard: refuse).
+  hard: refuse); a worktree hire counts two when herdr will open the repository's main checkout too. The branch is
+  recorded as the bridge's for that worker (SQLite `hire_branch`, with its base commit). A failed hire rolls back:
+  the workspace closes; the checkout goes only if clean, the branch only if still at its base.
   - claude: `--model claude-opus-5-5|claude-fable-5-1 --effort low|medium|high|xhigh|max --permission-mode bypassPermissions --name <label>`
   - codex: `-m gpt-6-sol|gpt-6-luna|gpt-6-astra -c model_reasoning_effort=low…max (+ultra sol/astra) --dangerously-bypass-approvals-and-sandbox`
   - Native args are not persisted by herdr → bridge stores harness/model/effort, `hired_at`, the desk, and the last
@@ -82,12 +84,15 @@ MacBook (M2 Max)                                   devbox (Linux)
   - Trust dialog (verified live, herdr 0.9.0): both agents ask about a folder they have not seen, and a fresh worktree
     always is one. Claude's dialog makes `agent start` fail with `agent_not_ready` (`blocked`); Codex's is not detected
     (herdr says `idle`). `herdr worktree create --trust-repository` is herdr's own git trust and does not help. The
-    bridge reads the screen and answers the dialog only for the hired directory (Claude Down + Enter, Codex Enter).
+    bridge reads the screen and answers the dialog only when it names the hired directory as a whole path (not a
+    sibling or parent; long paths are unwrapped first) — Claude Down + Enter, Codex Enter.
     Right after that, Claude drops an Enter for a few seconds: the prompt and `/exit` press Enter again.
 - **Fire (gentle)** ("Send home", M4, built): git state first (`status --porcelain`, `rev-list --count HEAD --not
   --remotes`; a worktree is deleted only when clean and pushed) → claude `/exit` (~1.3 s) / codex `/quit` + pause +
-  Enter (~0.5 s) → confirm the agent released (pane back at its shell; Enter again, then Ctrl-C) → `workspace close`
-  (or `worktree remove`, + `git branch -D h3d/…`) → `worker.removed` with `reason: "sent_home"`. Never for sleep: a
+  Enter (~0.5 s) → confirm the agent released (pane back at its shell; Enter again, then Ctrl-C; still running →
+  `fire_failed`, nothing closed) → `workspace close` (or `worktree remove`, + `git branch -D` of the branch recorded
+  for that worker, only while the checkout is on it and its commits are on a remote) → `worker.removed` with
+  `reason: "sent_home"`. Never for sleep: a
   graceful exit drops `agent_session` so it can't resume. herdr closes a main checkout with open linked worktrees only
   as a group; the bridge refuses that instead.
 - **Identity**: bridge-owned worker UUID; reconcile after restarts via persisted pane-label marker (written by the bridge
