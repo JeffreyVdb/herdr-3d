@@ -204,15 +204,19 @@ type fakeGit struct {
 	mu       sync.Mutex
 	calls    []string
 	repos    map[string]string   // dir → top level
-	dirty    map[string][]string // top → porcelain lines
+	dirty    map[string][]string // top ("*": any) → porcelain lines
 	unpushed map[string]int
+	current  map[string]string // checkout → branch, else as named by its path
+	ahead    map[string]int    // branch → commits on no remote
+	tips     map[string]string // branch ("*": any) → commit, else sha
 	fetchErr error
 	def      string
 	sha      string
 }
 
 func newFakeGit() *fakeGit {
-	return &fakeGit{repos: map[string]string{}, dirty: map[string][]string{}, unpushed: map[string]int{}, def: "main",
+	return &fakeGit{repos: map[string]string{}, dirty: map[string][]string{}, unpushed: map[string]int{},
+		current: map[string]string{}, ahead: map[string]int{}, tips: map[string]string{}, def: "main",
 		sha: "8739ddc5f3e1d0c4b2a8e7f6d5c4b3a2918e7d6c"}
 }
 
@@ -252,13 +256,44 @@ func (g *fakeGit) Commit(_ context.Context, dir, ref string) (string, time.Time,
 func (g *fakeGit) Status(_ context.Context, dir string) ([]string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return slices.Clone(g.dirty[dir]), nil
+	if d, ok := g.dirty[dir]; ok {
+		return slices.Clone(d), nil
+	}
+	return slices.Clone(g.dirty["*"]), nil
 }
 
 func (g *fakeGit) Unpushed(_ context.Context, dir string) (int, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.unpushed[dir], nil
+}
+
+func (g *fakeGit) CurrentBranch(_ context.Context, dir string) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if b, ok := g.current[dir]; ok {
+		return b, nil
+	}
+	_, b, _ := strings.Cut(dir, "/repo/")
+	return strings.Replace(b, "h3d-", "h3d/", 1), nil
+}
+
+func (g *fakeGit) BranchUnpushed(_ context.Context, dir, branch string) (int, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.ahead[branch], nil
+}
+
+func (g *fakeGit) BranchTip(_ context.Context, dir, branch string) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if tip, ok := g.tips[branch]; ok {
+		return tip, nil
+	}
+	if tip, ok := g.tips["*"]; ok {
+		return tip, nil
+	}
+	return g.sha, nil
 }
 
 func (g *fakeGit) DeleteBranch(_ context.Context, dir, branch string) error {
@@ -694,6 +729,67 @@ func TestHireRollsBack(t *testing.T) {
 	// The desk is free again.
 	hb.fl.markErr = nil
 	hb.c.mustAck(proto.CmdWorkerHire, hireArgs(0))
+}
+
+// A failed worktree hire removes its checkout only when the tree is
+// clean, and deletes its branch only while it still points at its base.
+func TestHireRollsBackAWorktree(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		dirty         []string
+		tip           string
+		herdr         string // the rollback's herdr call
+		deleted       bool
+		kept          string // in the error
+		stillRecorded bool
+	}{
+		{"fresh", nil, "", "remove-worktree w1", true, "", false},
+		{"dirty", []string{"?? notes.txt"}, "", "close w1", false, "are kept (1 uncommitted change)", true},
+		{"with commits", nil, "0123456789abcdef0123456789abcdef01234567", "remove-worktree w1", false,
+			"is kept (it has commits since 8739ddc5f3e1: now at 0123456789ab)", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hb := startHireBridge(t, nil)
+			hb.git.repos["/home/u/repo"] = "/home/u/repo"
+			if tc.dirty != nil {
+				hb.git.dirty["*"] = tc.dirty
+			}
+			if tc.tip != "" {
+				hb.git.tips["*"] = tc.tip
+			}
+			hb.fl.markErr = errors.New("pane not found")
+			a := hireArgs(0)
+			a.Cwd, a.Worktree = "/home/u/repo", true
+			_, m := hb.c.command(proto.CmdWorkerHire, "h", a)
+			e := errorOf(m)
+			if e.Code != proto.ErrHireFailed || (tc.kept == "") != !strings.Contains(e.Message, "kept") ||
+				!strings.Contains(e.Message, tc.kept) {
+				t.Fatalf("reply = %s", m.raw)
+			}
+			calls := hb.fl.Calls()
+			if !slices.Contains(calls, tc.herdr) || len(slices.DeleteFunc(slices.Clone(calls), func(c string) bool {
+				return strings.HasPrefix(c, "remove-worktree") || strings.HasPrefix(c, "close")
+			})) != len(calls)-1 {
+				t.Fatalf("herdr calls = %q", calls)
+			}
+			deleted := slices.ContainsFunc(hb.git.Calls(), func(c string) bool { return strings.HasPrefix(c, "branch -D") })
+			if deleted != tc.deleted {
+				t.Fatalf("git calls = %q", hb.git.Calls())
+			}
+			row := auditRow(t, hb.bridge, proto.CmdWorkerHire)
+			if row.OK || !strings.Contains(row.Result, `"rollback"`) || !strings.Contains(row.Result, tc.kept) {
+				t.Fatalf("audit = %+v", row)
+			}
+			// The record goes with the branch.
+			var id string
+			if _, rest, ok := strings.Cut(row.Result, `"worker":"`); ok {
+				id, _, _ = strings.Cut(rest, `"`)
+			}
+			if _, ok, err := hb.st.HireBranchOf(context.Background(), id); err != nil || ok != tc.stillRecorded {
+				t.Fatalf("branch record of %q: %v %v", id, ok, err)
+			}
+		})
+	}
 }
 
 // herdr opens the repository's main checkout with the first worktree of

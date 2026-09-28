@@ -47,6 +47,9 @@ type Git interface {
 	Commit(ctx context.Context, dir, ref string) (string, time.Time, error)
 	Status(ctx context.Context, dir string) ([]string, error)
 	Unpushed(ctx context.Context, dir string) (int, error)
+	CurrentBranch(ctx context.Context, dir string) (string, error)
+	BranchUnpushed(ctx context.Context, dir, branch string) (int, error)
+	BranchTip(ctx context.Context, dir, branch string) (string, error)
 	DeleteBranch(ctx context.Context, dir, branch string) error
 }
 
@@ -495,7 +498,9 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	var repo string
 	fail := func(err error) {
 		if created.WorkspaceID != "" {
-			h.rollbackHire(ctx, op, created, repo, rep)
+			if kept := h.rollbackHire(ctx, op, created, repo, rep); kept != "" {
+				err = fmt.Errorf("%w; rolling back, %s", err, kept)
+			}
 		}
 		h.finishHire(ctx, op, nil, err, rep)
 	}
@@ -554,6 +559,17 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 		}
 		res.Branch = op.branch
 		rep.step("herdr worktree create %s from %s (%s)", op.branch, base, sha)
+		// Recorded as the bridge's, for this worker: only such a branch is
+		// ever deleted (send home's delete_branch, or a rollback).
+		rec := store.HireBranch{WorkerID: op.id, Session: op.session, RepoRoot: repo, Branch: op.branch, BaseSHA: sha}
+		var recErr error
+		if err := h.doWait(ctx, func() { recErr = h.st.RecordHireBranch(ctx, rec) }); err != nil {
+			return
+		}
+		if recErr != nil {
+			h.log.Error("recording the hire's branch failed", "worker", op.id, "branch", op.branch, "err", recErr)
+			rep.step("recording the branch failed (send home will not delete it): %v", recErr)
+		}
 	} else {
 		var err error
 		if created, err = hh.CreateWorkspace(ctx, op.session, op.cwd, op.label); err != nil {
@@ -820,28 +836,75 @@ func (h *Hub) pressUntilWorking(ctx context.Context, op *hireOp, pane string, st
 	return 3, stalled
 }
 
-// rollbackHire closes a failed hire's workspace; a worktree's checkout and
-// its fresh, commit-less branch go too.
-func (h *Hub) rollbackHire(ctx context.Context, op *hireOp, created herdr.Created, repo string, rep *hireReport) {
-	hh := h.opts.Hire
-	if op.worktree {
-		if err := hh.RemoveWorktree(ctx, op.session, created.WorkspaceID); err != nil {
-			rep.Rollback = append(rep.Rollback, "herdr worktree remove failed: "+err.Error())
-			return
-		}
-		rep.Rollback = append(rep.Rollback, "herdr worktree remove")
-		if err := h.opts.Git.DeleteBranch(ctx, repo, op.branch); err != nil {
-			rep.Rollback = append(rep.Rollback, "git branch -D failed: "+err.Error())
+// rollbackHire closes a failed hire's workspace. A worktree's checkout
+// goes too only when its tree is clean, and its fresh branch only when it
+// still points at the commit it was made from (nothing of the agent's is
+// on it); what is kept, and why, is returned for the error.
+func (h *Hub) rollbackHire(ctx context.Context, op *hireOp, created herdr.Created, repo string, rep *hireReport) (kept string) {
+	hh, git := h.opts.Hire, h.opts.Git
+	note := func(s string) { rep.Rollback = append(rep.Rollback, s) }
+	closeWorkspace := func() {
+		if err := hh.CloseWorkspace(ctx, op.session, created.WorkspaceID); err != nil {
+			note("herdr workspace close failed: " + err.Error())
 		} else {
-			rep.Rollback = append(rep.Rollback, "git branch -D "+op.branch)
+			note("herdr workspace close")
 		}
-		return
 	}
-	if err := hh.CloseWorkspace(ctx, op.session, created.WorkspaceID); err != nil {
-		rep.Rollback = append(rep.Rollback, "herdr workspace close failed: "+err.Error())
-	} else {
-		rep.Rollback = append(rep.Rollback, "herdr workspace close")
+	if !op.worktree {
+		closeWorkspace()
+		return ""
 	}
+	checkout := created.CheckoutPath
+	var why string
+	if checkout == "" || !herdr.ValidDir(checkout) {
+		why = "its checkout is unknown"
+	} else if dirty, err := git.Status(ctx, checkout); err != nil {
+		why = "reading its git status failed: " + err.Error()
+	} else if len(dirty) > 0 {
+		why = plural(len(dirty), "uncommitted change")
+	}
+	if why != "" {
+		closeWorkspace()
+		kept = fmt.Sprintf("the worktree %s and branch %s are kept (%s)", checkout, op.branch, why)
+		note(kept)
+		return kept
+	}
+	if err := hh.RemoveWorktree(ctx, op.session, created.WorkspaceID); err != nil {
+		note("herdr worktree remove failed: " + err.Error())
+		kept = fmt.Sprintf("the worktree %s and branch %s are kept (herdr worktree remove failed)", checkout, op.branch)
+		note(kept)
+		return kept
+	}
+	note("herdr worktree remove")
+	switch tip, err := git.BranchTip(ctx, repo, op.branch); {
+	case err != nil:
+		why = "reading where it points failed: " + err.Error()
+	case tip != rep.BaseSHA:
+		why = fmt.Sprintf("it has commits since %.12s: now at %.12s", rep.BaseSHA, tip)
+	}
+	if why == "" {
+		if err := git.DeleteBranch(ctx, repo, op.branch); err != nil {
+			why = "git branch -D failed: " + err.Error()
+		}
+	}
+	if why != "" {
+		kept = fmt.Sprintf("the branch %s is kept (%s)", op.branch, why)
+		note(kept)
+		return kept
+	}
+	note("git branch -D " + op.branch)
+	h.forgetBranch(ctx, op.id)
+	return ""
+}
+
+// forgetBranch drops the record of the branch the bridge made for a
+// worker, once the branch is gone.
+func (h *Hub) forgetBranch(ctx context.Context, id string) {
+	_ = h.doWait(ctx, func() {
+		if err := h.st.ForgetHireBranch(ctx, id); err != nil {
+			h.log.Error("forgetting the hire's branch failed", "worker", id, "err", err)
+		}
+	})
 }
 
 // finishHire ends a hire on the hub goroutine: the reservation ends, the
