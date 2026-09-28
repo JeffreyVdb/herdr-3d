@@ -382,7 +382,7 @@ func (h *Hub) awaitResumes(ctx context.Context, op *floorOp, timeout time.Durati
 			return
 		}
 		for _, p := range pending {
-			info, err := h.opts.Herdr.PaneProcesses(ctx, op.session, p.pane)
+			info, err := h.paneProcesses(ctx, op.session, p.pane)
 			if err != nil || !info.Runs(p.harness, p.agentSession) {
 				delete(seen, p.id)
 				continue
@@ -406,11 +406,21 @@ func (h *Hub) awaitResumes(ctx context.Context, op *floorOp, timeout time.Durati
 	}
 }
 
+// paneProcesses asks herdr what runs in a pane, bounded so that a hung
+// herdr cannot hold a wake past its deadlines.
+func (h *Hub) paneProcesses(ctx context.Context, session, pane string) (*herdr.ProcessInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, paneProcessesTimeout)
+	defer cancel()
+	return h.opts.Herdr.PaneProcesses(ctx, session, pane)
+}
+
+const paneProcessesTimeout = 2 * time.Second
+
 // fallback re-launches a pending worker's agent with its resume command,
 // only when its pane is back at the shell prompt.
 func (h *Hub) fallback(ctx context.Context, op *floorOp, p pendingWait) {
 	note := ""
-	info, err := h.opts.Herdr.PaneProcesses(ctx, op.session, p.pane)
+	info, err := h.paneProcesses(ctx, op.session, p.pane)
 	switch {
 	case err != nil:
 		note = "no fallback: " + err.Error()
