@@ -87,10 +87,14 @@ describe('mezzanine layout', () => {
     for (const s of L.slots) for (const b of Object.values(slotBoxes(s))) expect(overlaps3(b, m.slab)).toBe(false);
     for (const p of L.props) expect(overlaps3(p.box, m.slab), p.id).toBe(false);
     expect(overlaps3(L.walls[4]!, m.slab)).toBe(false);
-    // Your desk is in the office.
-    expect(m.desk.desk.x).toBeGreaterThan(m.rect.x0 + 1);
-    expect(m.desk.seat.x).toBeLessThan(m.rect.x1 - 0.5);
-    expect(m.desk.seat.z).toBeLessThan(m.rect.z1 - 1);
+    // Your desk is in the office, its chair right at the glass.
+    for (const p of [m.desk.desk, m.desk.seat]) {
+      expect(p.x).toBeGreaterThan(m.rect.x0 + 0.5);
+      expect(p.x).toBeLessThan(m.rect.x1 - 0.5);
+      expect(p.z).toBeGreaterThan(m.rect.z0 + 0.5);
+      expect(p.z).toBeLessThan(m.rect.z1 - 0.5);
+    }
+    expect(Math.min(m.desk.seat.x - m.rect.x0, m.rect.z1 - m.desk.seat.z)).toBeLessThan(1);
   });
 
   it('the stair: a riser under a step up, treads meeting the mezzanine at the top', () => {
@@ -162,7 +166,8 @@ describe('walking the mezzanine', () => {
       { x: sx, z: L.depth - 2.6 },
       { x: sx, z: m.stair.bottom + 0.4 },
       { x: sx, z: m.rect.z1 - 0.6 },
-      { x: m.desk.seat.x, z: m.desk.seat.z + 0.9 },
+      { x: m.rect.x0 + 1, z: m.desk.desk.z - 1.1 },
+      { x: m.desk.seat.x, z: m.desk.seat.z - 0.6 },
     ];
     for (const leg of legs) {
       p = walk(world, p, leg);
@@ -170,6 +175,7 @@ describe('walking the mezzanine', () => {
     }
     expect(p.y).toBeCloseTo(y + MEZZ_Y, 6);
     // And back down again.
+    p = walk(world, p, { x: m.rect.x0 + 1, z: m.desk.desk.z - 1.1 });
     p = walk(world, p, { x: sx, z: m.rect.z1 - 0.6 });
     p = walk(world, p, { x: sx, z: m.stair.bottom + 0.5 });
     expect(p.y).toBeCloseTo(y, 6);
@@ -214,11 +220,15 @@ describe('walking the mezzanine', () => {
     if (under) expect(pickNearest([under.seat.x, MEZZ_Y + EYE_HEIGHT, under.seat.z], [0, -1, 0], targets, 20, blockers)).toBeNull();
   });
 
-  it('sitting faces the floor, out over the glass', () => {
+  it('sitting faces the floor, out over the glass, from close enough to see down past the edge', () => {
     const f = { x: -Math.sin(m.sit.yaw), z: -Math.cos(m.sit.yaw) };
     const c = { x: (L.deskArea.x0 + L.deskArea.x1) / 2 - m.sit.x, z: (L.deskArea.z0 + L.deskArea.z1) / 2 - m.sit.z };
     expect((f.x * c.x + f.z * c.z) / Math.hypot(c.x, c.z)).toBeGreaterThan(0.99);
     expect(m.sit.pitch).toBeLessThan(0);
+    // Seated eye (~1.2 m up) over the mezzanine's edge: the floor shows from a few metres past it.
+    const edge = Math.min(Math.abs((m.rect.x0 - m.sit.x) / f.x), Math.abs((m.rect.z1 - m.sit.z) / f.z));
+    const hidden = (edge * (MEZZ_Y + 1.2)) / 1.2 - edge;
+    expect(hidden).toBeLessThan(3.5);
   });
 });
 

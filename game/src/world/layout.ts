@@ -143,8 +143,10 @@ export interface Mezzanine {
   glass: Box3[];
   /** The glass door in the south wall, at the head of the stair: x range. */
   door: { x0: number; x1: number; z: number; height: number };
-  /** Your desk: the seat (floor under the chair), the desk centre, and the desk-art yaw (the sitter faces its desk). */
+  /** Your desk: the seat (floor under the chair), the desk centre (its long side runs north-south), and the desk-art yaw. */
   desk: { seat: Vec2; desk: Vec2; yaw: number };
+  /** A potted plant in the office's back corner. */
+  plant: Vec2;
   /** Sitting at your desk: where the walker goes and which way it looks (at the floor, over the glass). */
   sit: { x: number; z: number; yaw: number; pitch: number };
   /** The slab: blocks look-at from above and below (glass does not). */
@@ -444,12 +446,16 @@ function mezzanineFor(
   const glass: Box3[] = [box(rect.x0, y, rect.z1 - 0.05, sx0 - STAIR_RAIL, gy1, rect.z1), box(rect.x0, y, rect.z0, rect.x0 + 0.05, gy1, rect.z1 - 0.05)];
   const door = { x0: sx0, x1: sx1, z: rect.z1, height: DOOR_H };
 
-  // Your desk faces west, its back to the east wall: sitting, you look out over the floor.
-  const seat = { x: r3(width - 0.95), z: 1.7 };
-  const deskC = { x: r3(seat.x - SEAT_OFFSET), z: seat.z };
+  // Your desk stands by the west glass, facing into the office (your back to the glass, as a
+  // corner office has it). Sitting down swivels the chair round: you look out over the floor from
+  // right at the glass, where the mezzanine's edge hides the least of it.
+  const seat = { x: r3(rect.x0 + 0.65), z: r3(rect.z1 - 2.1) };
+  const deskC = { x: r3(seat.x + SEAT_OFFSET), z: seat.z };
   const deskR: Rect = { x0: deskC.x - DESK_D / 2, z0: deskC.z - DESK_W / 2, x1: deskC.x + DESK_D / 2, z1: deskC.z + DESK_W / 2 };
   const look = { x: (deskArea.x0 + deskArea.x1) / 2 - seat.x, z: (deskArea.z0 + deskArea.z1) / 2 - seat.z };
-  const sit = { x: seat.x, z: seat.z, yaw: r3(Math.atan2(-look.x, -look.z)), pitch: -0.42 };
+  const sit = { x: seat.x, z: seat.z, yaw: r3(Math.atan2(-look.x, -look.z)), pitch: -0.45 };
+
+  const plant = { x: r3(rect.x0 + 0.5), z: 0.5 };
 
   const supports: Support[] = [{ ...rect, y }, ...treads.map((t) => ({ ...t.rect, y: t.y }))];
   const solid = (r: Rect, y0: number, y1: number): Solid => ({ x0: r.x0, z0: r.z0, x1: r.x1, z1: r.z1, y0, y1 });
@@ -460,6 +466,7 @@ function mezzanineFor(
     solid({ x0: sx0, z0: rect.z1, x1: sx1, z1: bottom - STAIR_TREAD }, 0, 0.5),
     ...glass.map((g) => solid({ x0: g.min[0], z0: g.min[2], x1: g.max[0], z1: g.max[2] }, y, gy1)),
     solid(deskR, y, y + 1.1),
+    solid({ x0: plant.x - 0.25, z0: plant.z - 0.25, x1: plant.x + 0.25, z1: plant.z + 0.25 }, y, y + 1.2),
   ];
   return {
     rect,
@@ -469,7 +476,8 @@ function mezzanineFor(
     stair: { x0: sx0, x1: sx1, top: rect.z1, bottom, rise: r3(rise), treads },
     glass,
     door,
-    desk: { seat, desk: deskC, yaw: -Math.PI / 2 },
+    desk: { seat, desk: deskC, yaw: Math.PI / 2 },
+    plant,
     sit,
     slab: box(rect.x0, under, rect.z0, rect.x1, y, rect.z1),
     supports,

@@ -5,7 +5,7 @@ import { bridgeUrl, takeToken } from './net/endpoint';
 import type { CommandArgs, CommandName, WorldEvent } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
-import { OfficeView, REACH, type Target } from './render/office';
+import { OfficeView, OVERLOOK_REACH, REACH, type Target } from './render/office';
 import { OutsideView } from './render/outside';
 import { BUILDING_TINTS, LOT_TINT } from './render/palette';
 import { WalkView } from './render/walk';
@@ -14,7 +14,7 @@ import { Hud, type PlanLabel } from './ui/hud';
 import { Panels } from './ui/panels';
 import { RADIUS, Walker } from './input/walk';
 import { blocked, blocked3, groundAt, type WalkWorld } from './world/collide';
-import { buildingPlan, floorY, placeAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
+import { buildingPlan, floorY, loadedFloor, placeAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
 import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, type Opening, type Outline } from './world/layout';
 import type { Display } from './world/derive';
 import { WorldStore, type Change, type Counts, type FloorView } from './world/store';
@@ -28,6 +28,7 @@ export interface AppOptions {
 export interface LookAt {
   kind: Target['kind'];
   id: string;
+  /** A worker's name; for your own desk (#20), the name on its plate. */
   name?: string;
   label?: string;
 }
@@ -84,6 +85,8 @@ export class App {
   batterySaver = false;
   conn: ConnState = { phase: 'stopped' };
   readonly url: string;
+  /** #20: the name on your desk's name plate (`?me=`; the bridge sends no user name yet). */
+  readonly owner: string;
 
   private readonly r: THREE.WebGPURenderer;
   private readonly cityCam: THREE.PerspectiveCamera;
@@ -97,6 +100,7 @@ export class App {
   private loaded: number | null = null;
   private worldCache: { key: unknown[]; world: WalkWorld } | null = null;
   private fireDoor = 0;
+  private mezzDoor = 0;
   private readonly shadows: boolean;
   private planOpen = false;
   private lastActivity = 0;
@@ -119,6 +123,7 @@ export class App {
   constructor(o: AppOptions) {
     this.r = o.renderer;
     this.shadows = o.params.get('shadows') !== '0';
+    this.owner = (o.params.get('me') ?? '').trim().slice(0, 40) || 'You';
     this.batterySaver = o.params.get('battery') === '1';
     this.hud = new Hud(o.host);
     this.hud.setBattery(this.batterySaver);
@@ -491,8 +496,9 @@ export class App {
     const fv = view ?? (f ? this.store.floorView(f.session) : null);
     if (!ctx || !fv) return;
     const old = this.office;
-    this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline });
+    this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner });
     this.loaded = storey;
+    this.mezzDoor = 0;
     this.fireDoor = 0;
     this.walk.setOffice(this.office, floorY(storey));
     this.walk.outside?.setLoaded(storey);
@@ -554,10 +560,11 @@ export class App {
     const fv = this.store.floorView(this.office.session);
     if (!fv) return;
     const old = this.office;
-    this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline });
+    this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner });
     this.walk.setOffice(this.office, floorY(this.loaded));
     old.dispose();
     this.office.setDoor(this.fireDoor);
+    this.office.setMezzDoor(this.mezzDoor);
     this.office.setPlan(this.planOpen);
     this.worldCache = null;
     this.planCam.userData.fit = false;
@@ -572,7 +579,7 @@ export class App {
     const key: unknown[] = [ctx.plan, this.loaded, obstacles];
     const c = this.worldCache;
     if (!c || key.some((k, i) => k !== c.key[i])) {
-      const loaded = this.loaded !== null && obstacles ? { storey: this.loaded, colliders: obstacles } : null;
+      const loaded = this.loaded !== null && obstacles && this.office ? loadedFloor(this.office.layout, this.loaded, obstacles) : null;
       this.worldCache = { key, world: walkWorld(ctx.plan, loaded) };
     }
     return (this.worldCache as { world: WalkWorld }).world;
@@ -629,6 +636,18 @@ export class App {
         const k = 1 - Math.exp(-dt * 9);
         this.fireDoor = Math.abs(want - this.fireDoor) < 0.01 ? want : this.fireDoor + (want - this.fireDoor) * k;
         o.setDoor(this.fireDoor);
+        this.cameraMoved = true;
+      }
+      // The corner office's glass door: open while you are at the head of the stair or just inside.
+      const m = o.layout.mezzanine;
+      const dx = (m.door.x0 + m.door.x1) / 2;
+      const up = this.walker.y - floorY(this.loaded);
+      const atDoor = up > m.y - 1.2 && up < m.y + 0.5 && Math.hypot(this.walker.x - dx, this.walker.z - m.door.z) < 1.9;
+      const mWant = atDoor ? 1 : 0;
+      if (this.mezzDoor !== mWant) {
+        const k = 1 - Math.exp(-dt * 9);
+        this.mezzDoor = Math.abs(mWant - this.mezzDoor) < 0.01 ? mWant : this.mezzDoor + (mWant - this.mezzDoor) * k;
+        o.setMezzDoor(this.mezzDoor);
         this.cameraMoved = true;
       }
     }
@@ -715,7 +734,8 @@ export class App {
     }
     const fv = this.office ? this.store.floorView(this.office.session) : null;
     const asleep = fv?.asleep && !fv.transition ? 'This floor is asleep: the elevator (<strong>L</strong>) wakes it · ' : '';
-    if (this.planOpen) this.hud.setHint('<strong>Click</strong> the floor to walk there · WASD walks · <strong>L</strong> elevator · <strong>Tab</strong> back to first person');
+    if (this.walker.sitting && !this.planOpen) this.hud.setHint(this.walker.locked ? 'At your desk · <strong>WASD</strong> gets up' : `At your desk · ${look}<strong>WASD</strong> or <strong>Esc</strong> gets up`);
+    else if (this.planOpen) this.hud.setHint('<strong>Click</strong> the floor to walk there · WASD walks · <strong>L</strong> elevator · <strong>Tab</strong> back to first person');
     else if (this.walker.locked) this.hud.setHint(null);
     else if (asleep) this.hud.setHint(`${asleep}<strong>Click</strong> to look around · WASD walks · <strong>← →</strong> turn`);
     else if (!this.walker.lockAvailable) this.hud.setHint('WASD walks · <strong>← →</strong> turn · <strong>L</strong> elevator · <strong>Tab</strong> floor plan (mouse look is unavailable here)');
@@ -775,6 +795,11 @@ export class App {
     } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'elevator') {
       e.preventDefault();
       this.openElevator();
+    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'own-desk') {
+      e.preventDefault();
+      this.sit();
+    } else if (e.code === 'Escape' && this.mode === 'floor' && this.walker.sitting) {
+      this.standUp();
     } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && this.target?.kind === 'prop' && this.target.id === 'reception') {
       // The receptionist answers, and the elevator panel is the building's floor directory.
       e.preventDefault();
@@ -847,12 +872,13 @@ export class App {
     const rect = this.r.domElement.getBoundingClientRect();
     const p = new THREE.Vector3(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1, 0).unproject(this.planCam);
     const L = this.office.layout;
-    if (p.x < 0 || p.z < 0 || p.x > L.width || p.z > L.depth || blocked({ x: p.x, z: p.z }, 0.28, this.office.obstacles())) {
+    const fy = floorY(this.loaded ?? 0);
+    if (p.x < 0 || p.z < 0 || p.x > L.width || p.z > L.depth || blocked({ x: p.x, z: p.z }, 0.28, this.office.obstacles()) || blocked3({ x: p.x, y: fy, z: p.z }, RADIUS, this.walkWorldNow())) {
       this.hud.toast('Something is in the way there.', 1600);
       return;
     }
     // Face the clicked point's nearest desk row: keep it simple, face north.
-    this.walker.place(p.x, p.z, this.walker.yaw, this.walker.pitch, floorY(this.loaded ?? 0));
+    this.walker.place(p.x, p.z, this.walker.yaw, this.walker.pitch, fy);
     this.cameraMoved = true;
     this.activity(true);
   }
@@ -902,10 +928,14 @@ export class App {
   step(dt: number, t: number): void {
     this.lastT = t;
     if (this.mode === 'floor' && this.building) {
+      const wasSitting = this.walker.sitting;
       if (this.walker.step(dt, this.walkWorldNow())) {
         this.cameraMoved = true;
         this.updatePlace(true);
       }
+      if (wasSitting !== this.walker.sitting) this.updateHint();
+      // Up on the mezzanine (or near the top of its stair): look-at reaches down over the floor, cards read as nearer.
+      this.office?.setOverlook(this.overlooking);
       this.animateDoors(dt);
       const area = this.place.area;
       this.walk.setDim(!!this.office?.isAsleep && (area === 'floor' || area === 'fire-escape'));
@@ -988,6 +1018,11 @@ export class App {
       if (v) labels.push({ ...toScreen(s.seat.x, 1.2, s.seat.z), text: v.name, kind: 'worker', display: v.display });
       else labels.push({ ...toScreen(s.desk.x, 0.8, s.desk.z), text: `+ ${i + 1}`, kind: 'desk' });
     });
+    // #20: the corner office on its mezzanine, its stair, your desk.
+    const m = o.layout.mezzanine;
+    labels.push({ ...toScreen((m.rect.x0 + m.rect.x1) / 2 + 1.2, m.y, m.rect.z1 - 0.8), text: 'Corner office (mezzanine)', kind: 'prop' });
+    labels.push({ ...toScreen((m.stair.x0 + m.stair.x1) / 2, 1.5, (m.stair.top + m.stair.bottom) / 2), text: 'Stair', kind: 'prop' });
+    labels.push({ ...toScreen(m.desk.desk.x, m.y + 0.8, m.desk.desk.z - 1.2), text: 'Your desk', kind: 'prop' });
     const me = toScreen(this.walker.x, 0, this.walker.z);
     // Everything the labels show, so a status or seat change redraws them too.
     const key = JSON.stringify([labels.map((l) => [l.kind, l.text, l.display ?? '', l.x | 0, l.y | 0]), me.x | 0, me.y | 0, this.walker.yaw.toFixed(2)]);
@@ -1008,7 +1043,11 @@ export class App {
     this.fpCam.getWorldDirection(this.ray);
     const o = this.fpCam.position;
     const area = this.place.area;
-    if (area === 'floor' && this.office) return this.office.pick([o.x, o.y, o.z], [this.ray.x, this.ray.y, this.ray.z], REACH);
+    if (area === 'floor' && this.office) {
+      const t = this.office.pick([o.x, o.y, o.z], [this.ray.x, this.ray.y, this.ray.z], this.overlooking ? OVERLOOK_REACH : REACH);
+      // Your desk only from inside your office, standing (E sits you down).
+      return t?.kind === 'own-desk' && (!this.inOffice() || this.walker.sitting) ? null : t;
+    }
     const lobby = this.walk.outside?.lobby;
     if (area === 'lobby' && lobby) {
       const t = lobby.pick([o.x, o.y + this.walk.base, o.z], [this.ray.x, this.ray.y, this.ray.z], REACH);
@@ -1030,8 +1069,49 @@ export class App {
     const t = this.computeLookAt();
     if (!t) return null;
     const out: LookAt = { kind: t.kind, id: t.id, label: t.label };
-    if (t.kind === 'worker') out.name = t.name;
+    if (t.kind === 'worker' || t.kind === 'own-desk') out.name = t.name;
     return out;
+  }
+
+  // ---- the corner office (#20) -------------------------------------------------------
+
+  /** Up on the mezzanine or high on its stair: look-at reaches ~20 m, cards read as nearer. */
+  get overlooking(): boolean {
+    return this.mode === 'floor' && this.place.area === 'floor' && this.loaded !== null && !!this.office && this.walker.y - floorY(this.loaded) > 1.5;
+  }
+
+  /** Inside the glass office on the mezzanine. */
+  private inOffice(): boolean {
+    const o = this.office;
+    if (!o || this.loaded === null || this.place.area !== 'floor') return false;
+    const m = o.layout.mezzanine;
+    const w = this.walker;
+    return w.y - floorY(this.loaded) > m.y - 0.1 && w.x > m.rect.x0 && w.x < m.rect.x1 && w.z > m.rect.z0 && w.z < m.rect.z1;
+  }
+
+  get seated(): boolean {
+    return this.walker.sitting;
+  }
+
+  /** Sits you at your desk, facing the floor over the glass; false when you are not in your office. */
+  sit(): boolean {
+    const o = this.office;
+    if (!o || this.loaded === null || !this.inOffice()) return false;
+    const m = o.layout.mezzanine;
+    this.walker.place(m.sit.x, m.sit.z, m.sit.yaw, m.sit.pitch, floorY(this.loaded) + m.y);
+    this.walker.sit();
+    this.cameraMoved = true;
+    this.statusDirty = true;
+    this.updateHint();
+    this.activity(true);
+    return true;
+  }
+
+  standUp(): void {
+    if (!this.walker.sitting) return;
+    this.walker.stand();
+    this.updateHint();
+    this.activity(true);
   }
 
   /** Places the walker: `y` (feet, absolute) puts you on any floor, the fire escape, the street or in the lobby; without it you stay at your level. */
@@ -1051,7 +1131,7 @@ export class App {
     this.activity(true);
   }
 
-  pose(): Pose & { eye: number; y: number; area: Area; storey: number | null; floor: string | null } {
+  pose(): Pose & { eye: number; y: number; area: Area; storey: number | null; floor: string | null; seated: boolean } {
     const s = this.place.storey;
     return {
       x: this.walker.x,
@@ -1063,6 +1143,7 @@ export class App {
       area: this.place.area,
       storey: s,
       floor: s !== null ? (this.building?.floors[s]?.session ?? null) : null,
+      seated: this.walker.sitting,
     };
   }
 

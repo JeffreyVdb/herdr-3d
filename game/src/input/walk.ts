@@ -10,6 +10,9 @@ export const RADIUS = 0.28;
 export const PITCH_LIMIT = 1.35;
 /** Eye height follows the feet up and down stairs with this rate (1/s): smooth, not a pop per step. */
 const EYE_EASE = 14;
+/** #20: sitting at your desk lowers the eye this much, eased at this rate (1/s). */
+export const SIT_DROP = 0.36;
+const SIT_EASE = 12;
 
 const MOVE_KEYS: Record<string, [number, number]> = {
   KeyW: [0, 1],
@@ -42,6 +45,10 @@ export class Walker {
   yaw = 0;
   pitch = 0;
   locked = false;
+  /** #20: sitting at your desk; walking (WASD) stands you up. */
+  sitting = false;
+  /** 0 standing .. 1 seated, eased. */
+  private seatK = 0;
   /** False once the browser refused pointer lock (e.g. headless). */
   lockAvailable = true;
   private readonly keys = new Set<string>();
@@ -93,6 +100,21 @@ export class Walker {
     return this.keys.size > 0;
   }
 
+  /** A walking key is held (turning alone is not walking). */
+  get walking(): boolean {
+    for (const k of this.keys) if (k in MOVE_KEYS) return true;
+    return false;
+  }
+
+  /** Sits down where the walker stands (the app places it at the chair first). */
+  sit(): void {
+    this.sitting = true;
+  }
+
+  stand(): void {
+    this.sitting = false;
+  }
+
   /** Forgets held keys (leaving the floor, a hidden tab): nothing keeps walking. */
   stop(): void {
     this.keys.clear();
@@ -125,13 +147,21 @@ export class Walker {
     this.x = x;
     this.z = z;
     this.y = this.eye = y;
+    this.sitting = false;
+    this.seatK = 0;
     this.yaw = yaw;
     this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
   }
 
   /** Advances by `dt` seconds; true if the walker moved, turned or its eye is still easing. */
   step(dt: number, world: WalkWorld): boolean {
-    const easing = this.easeEye(dt);
+    let easing = this.easeEye(dt);
+    const want = this.sitting ? 1 : 0;
+    if (this.seatK !== want) {
+      const d = want - this.seatK;
+      this.seatK = Math.abs(d) < 1e-3 ? want : this.seatK + d * (1 - Math.exp(-SIT_EASE * dt));
+      easing = true;
+    }
     let f = 0;
     let r = 0;
     let turn = 0;
@@ -145,6 +175,8 @@ export class Walker {
     }
     if (turn) this.yaw += turn * TURN * dt;
     if (!f && !r) return turn !== 0 || easing;
+    // Walking gets you up from your desk.
+    this.sitting = false;
     const len = Math.hypot(f, r);
     const d = (this.run ? RUN : WALK) * dt;
     const sy = Math.sin(this.yaw);
@@ -170,7 +202,7 @@ export class Walker {
 
   /** Camera at eye height; `base` is the height the scene is shifted down by (the floor with an interior). */
   applyTo(camera: THREE.PerspectiveCamera, base = 0): void {
-    camera.position.set(this.x, this.eye - base + EYE_HEIGHT, this.z);
+    camera.position.set(this.x, this.eye - base + EYE_HEIGHT - SIT_DROP * this.seatK, this.z);
     camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
     camera.updateMatrixWorld();
   }
