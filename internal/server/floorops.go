@@ -133,6 +133,9 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 	if err := h.notBusy(a.Session, f); err != nil {
 		return err
 	}
+	if len(f.hires) > 0 || len(f.fires) > 0 {
+		return fmt.Errorf("%w: floor %q is hiring or sending a worker home", errBusy, a.Session)
+	}
 	wake := cmd.T == proto.CmdFloorWake
 	switch {
 	case wake && f.running:

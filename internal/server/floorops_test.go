@@ -736,7 +736,7 @@ func TestWakeBoundedWhenProcessInfoStalls(t *testing.T) {
 		t.Errorf("pane run = %q", ran)
 	}
 	log, _ := b.st.AuditLog(context.Background())
-	if len(log) != 1 || !log[0].OK || !log[0].Done || !strings.Contains(log[0].Result, "no fallback: herdr --session s: context deadline exceeded") {
+	if len(log) != 1 || !log[0].OK || !log[0].Done || !strings.Contains(log[0].Result, "no fallback: herdr control process-info: context deadline exceeded") {
 		t.Fatalf("audit = %+v", log)
 	}
 }

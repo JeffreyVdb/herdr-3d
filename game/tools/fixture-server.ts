@@ -15,7 +15,10 @@
 // Query parameters on the WebSocket URL: `play=none|all|<ms>` (default 2500:
 // one recorded event every 2.5 s after the snapshot); `sim=1` simulates
 // commands, `simms=<ms>` sets the time between wake/sleep steps (default 600)
-// and `simfail=wake_failed|sleep_failed` makes the next wake/sleep fail.
+// and `simfail=wake_failed|sleep_failed` makes the next wake/sleep fail (M4:
+// `hire_failed|fire_failed` the next hire / send-home; `fetch_failed` makes
+// origin unreachable for the run: no fetch works, worktree hires are refused);
+// `simcap=<session>:<soft>:<hard>[,…]` sets floors' worker caps.
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -107,6 +110,18 @@ function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: Si
   });
 }
 
+/** `simcap=scratchpad:3:4,pastry:10:12` → per-floor caps (bad entries are skipped). */
+export function parseCaps(v: string): Record<string, { soft: number; hard: number }> {
+  const out: Record<string, { soft: number; hard: number }> = {};
+  for (const part of v.split(',')) {
+    const [session, soft, hard] = part.split(':');
+    const s = Number(soft);
+    const h = Number(hard);
+    if (session && Number.isInteger(s) && Number.isInteger(h) && s >= 0 && h >= s) out[session] = { soft: s, hard: h };
+  }
+  return out;
+}
+
 /** An `upgrade` listener serving `/fixture/<name>` (and `/ws`); returns false for other paths. */
 export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
   const wss = new WebSocketServer({ noServer: true });
@@ -128,7 +143,13 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
     const mode = url.searchParams.get('play') ?? '2500';
     const q = url.searchParams;
     const sim: SimOptions | null =
-      o.simulate || q.get('sim') === '1' ? { stepMs: Math.max(20, Number(q.get('simms')) || 600), ...(q.get('simfail') ? { fail: q.get('simfail') as string } : {}) } : null;
+      o.simulate || q.get('sim') === '1'
+        ? {
+            stepMs: Math.max(20, Number(q.get('simms')) || 600),
+            ...(q.get('simfail') ? { fail: q.get('simfail') as string } : {}),
+            ...(q.get('simcap') ? { caps: parseCaps(q.get('simcap') as string) } : {}),
+          }
+        : null;
     wss.handleUpgrade(req, socket, head, (ws) => {
       o.log?.(`fixture ${name}: client connected (${sim ? `simulating, step ${sim.stepMs} ms` : `play=${mode}`})`);
       play(ws, rec, mode, epoch, sim);

@@ -1,12 +1,16 @@
 import '@fontsource-variable/recursive/full.css';
 import './ui/hud.css';
 import './ui/panels.css';
+import './ui/hire.css';
 import * as THREE from 'three/webgpu';
 import { App, type LookAt, type Pose } from './app';
 import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
 import { runBench, type BenchOptions, type BenchResult } from './bench';
 import type { CommandName, WorldEvent } from './net/protocol';
+import type { ArrivalInfo } from './render/arrivals';
+import type { HireSummary } from './ui/hire';
 import type { PanelSummary } from './ui/panels';
+import type { SendHomeSummary } from './ui/sendHome';
 import type { Area, BuildingPlan } from './world/building';
 import type { floorLayout } from './world/layout';
 import { walkOutRoute, type Waypoint } from './world/route';
@@ -97,6 +101,20 @@ export interface H3DDebug {
   floorPoint(session: string): { x: number; y: number } | null;
   /** M3: connection phase and the bridge epoch (changes when the bridge restarts). */
   connection(): { phase: string; epoch: string | null };
+  /** M4: opens the hire dialog for a desk (0-based) of the floor you are on; no desk: the first free one (the top bar's Hire). */
+  openHire(desk?: number): void;
+  /** M4: opens the send-home dialog for a worker. */
+  openSendHome(workerId: string): void;
+  /** M4: what the open hire / send-home dialog shows, null when neither is open. */
+  dialog(): HireSummary | SendHomeSummary | null;
+  /** M4: workers walking in or out right now (phase, position, how far along, what their desk shows). */
+  arrivals(): ArrivalInfo[];
+  /** M4: walks that ended: `played` false when nobody could see it (it resolved at once). */
+  arrivalLog(): Array<{ id: string; kind: 'in' | 'out'; played: boolean; session: string; desk: number }>;
+  /** M4: plays walks `k` times as fast (tests). */
+  arrivalRate(k: number): void;
+  /** M4: the desks of the floor with an interior: who sits there, whether its "+" shows, what a walk holds it as. */
+  desks(): Array<{ desk: number; worker: string | null; plus: boolean; away: 'busy' | 'empty' | null }>;
 }
 
 declare global {
@@ -183,6 +201,13 @@ const h3d: H3DDebug = {
   sent: () => structuredClone(app?.sent ?? []),
   floorPoint: (s) => app?.floorPoint(s) ?? null,
   connection: () => ({ phase: app?.conn.phase ?? 'stopped', epoch: app?.client.resume.epoch ?? null }),
+  openHire: (desk) => app?.openHire(desk),
+  openSendHome: (id) => app?.openSendHome(id),
+  dialog: () => app?.hire.summary() ?? app?.sendHome.summary() ?? null,
+  arrivals: () => app?.arrivals.info(performance.now() / 1000) ?? [],
+  arrivalLog: () => structuredClone(app?.arrivals.log ?? []),
+  arrivalRate: (k) => app?.arrivals.setRate(k, performance.now() / 1000),
+  desks: () => app?.deskStates() ?? [],
   bench: async (o) => {
     if (!app || !renderer) throw new Error('not started');
     return runBench(app, renderer, o);

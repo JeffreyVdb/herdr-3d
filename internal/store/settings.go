@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -94,3 +95,79 @@ func (s *Store) SetFloorSettings(ctx context.Context, session string, f FloorSet
 
 // null stores "" as NULL.
 func null(v string) sql.NullString { return sql.NullString{String: v, Valid: v != ""} }
+
+// Hire is a harness, model and effort.
+type Hire struct {
+	Harness, Model, Effort string
+}
+
+// LastHires returns the last choice hired on each floor, by session.
+func (s *Store) LastHires(ctx context.Context) (map[string]Hire, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT session_name, harness, model, effort FROM floor_hire_last ORDER BY session_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]Hire{}
+	for rows.Next() {
+		var session string
+		var h Hire
+		if err := rows.Scan(&session, &h.Harness, &h.Model, &h.Effort); err != nil {
+			return nil, err
+		}
+		out[session] = h
+	}
+	return out, rows.Err()
+}
+
+// SetLastHire remembers the choice last hired on a floor.
+func (s *Store) SetLastHire(ctx context.Context, session string, h Hire) error {
+	if session == "" || h.Harness == "" || h.Model == "" || h.Effort == "" {
+		return fmt.Errorf("%w: session, harness, model and effort are required", ErrInvalid)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO floor_hire_last (session_name, harness, model, effort, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(session_name) DO UPDATE SET harness = excluded.harness, model = excluded.model,
+			effort = excluded.effort, updated_at = excluded.updated_at`,
+		session, h.Harness, h.Model, h.Effort, s.ts())
+	return err
+}
+
+// HireBranch is a branch the bridge made for a worktree hire.
+type HireBranch struct {
+	WorkerID string
+	Session  string
+	RepoRoot string // the repository's main checkout
+	Branch   string
+	BaseSHA  string // the commit it was made from
+}
+
+// RecordHireBranch records the branch the bridge made for a worker.
+func (s *Store) RecordHireBranch(ctx context.Context, b HireBranch) error {
+	if b.WorkerID == "" || b.Session == "" || b.RepoRoot == "" || b.Branch == "" || b.BaseSHA == "" {
+		return fmt.Errorf("%w: worker, session, repo root, branch and base are required", ErrInvalid)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO hire_branch (worker_uuid, session_name, repo_root, branch, base_sha, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)`, b.WorkerID, b.Session, b.RepoRoot, b.Branch, b.BaseSHA, s.ts())
+	return err
+}
+
+// HireBranchOf returns the branch the bridge made for a worker, if any.
+func (s *Store) HireBranchOf(ctx context.Context, workerID string) (HireBranch, bool, error) {
+	b := HireBranch{WorkerID: workerID}
+	err := s.db.QueryRowContext(ctx, `SELECT session_name, repo_root, branch, base_sha FROM hire_branch WHERE worker_uuid = ?`,
+		workerID).Scan(&b.Session, &b.RepoRoot, &b.Branch, &b.BaseSHA)
+	if errors.Is(err, sql.ErrNoRows) {
+		return HireBranch{}, false, nil
+	}
+	if err != nil {
+		return HireBranch{}, false, err
+	}
+	return b, true, nil
+}
+
+// ForgetHireBranch drops a worker's branch record (the branch is gone).
+func (s *Store) ForgetHireBranch(ctx context.Context, workerID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM hire_branch WHERE worker_uuid = ?`, workerID)
+	return err
+}

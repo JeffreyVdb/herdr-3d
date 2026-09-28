@@ -2,7 +2,9 @@ package world
 
 import (
 	"hash/fnv"
+	"slices"
 	"strconv"
+	"strings"
 )
 
 // Names are the display names the bridge hands out to workers: original,
@@ -44,4 +46,20 @@ func PickName(id string, taken map[string]bool) string {
 			}
 		}
 	}
+}
+
+// IsName reports whether name is one PickName hands out: an entry of
+// Names, or one with a " <n>" suffix (n ≥ 2).
+func IsName(name string) bool {
+	base, suffix := name, ""
+	if i := strings.LastIndexByte(name, ' '); i > 0 {
+		base, suffix = name[:i], name[i+1:]
+	}
+	if suffix != "" {
+		n, err := strconv.Atoi(suffix)
+		if err != nil || n < 2 || strconv.Itoa(n) != suffix {
+			return false
+		}
+	}
+	return slices.Contains(Names, base)
 }
