@@ -1,0 +1,137 @@
+// Package world turns what herdr shows (live snapshots, stopped sessions'
+// session.json) into floor and worker observations, and decides which
+// bridge-owned worker identity each observed workspace is.
+package world
+
+import (
+	"regexp"
+	"strings"
+	"sync/atomic"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+)
+
+// Floor states.
+const (
+	Running = "running"
+	Asleep  = "asleep"
+)
+
+// Update is what watchers send to the hub: FloorObs or FloorGone.
+type Update interface{ isUpdate() }
+
+// FloorObs is a complete observation of one herdr session.
+type FloorObs struct {
+	Session string
+	Default bool
+	Running bool
+	// Gen orders observations of one session: the hub ignores an
+	// observation older than the last one it applied. All observations from
+	// one source instance (a watcher connection, one asleep read) share it.
+	Gen uint64
+	// Fresh means the source cannot vouch that nothing was missed since the
+	// previous observation (bridge start, reconnect after EOF, a session that
+	// ran unseen), so worker identities are reconciled from scratch.
+	Fresh bool
+	// KeepWorkers updates only the floor state and error; workers stay as
+	// they are (used when a running session cannot be snapshotted).
+	KeepWorkers bool
+	// Err is shown on the floor, e.g. an unreadable session.json.
+	Err     string
+	Workers []WorkerObs
+}
+
+// FloorGone means the session no longer exists in herdr.
+type FloorGone struct {
+	Session string
+	Gen     uint64
+}
+
+func (FloorObs) isUpdate()  {}
+func (FloorGone) isUpdate() {}
+
+var gen atomic.Uint64
+
+// NextGen returns a new, increasing observation generation.
+func NextGen() uint64 { return gen.Add(1) }
+
+// WorkerObs is one workspace as observed, before identity is assigned.
+type WorkerObs struct {
+	WorkspaceID string
+	Label       string
+	// Cwd is the primary pane's working directory (display).
+	Cwd string
+	// IdentityCwd is the workspace's identity directory, used for weak
+	// identity matching: session.json identity_cwd when asleep, the
+	// worktree checkout (else the primary pane cwd) when running.
+	IdentityCwd  string
+	PaneID       string // primary pane: the first agent pane, else the first pane
+	PaneLabel    string
+	AgentKind    string
+	AgentName    string
+	AgentSession string // native agent session id (agent_session.value)
+	Status       string // herdr agent status of the primary pane
+	Title        string
+	Tokens       map[string]string // h3d_* workspace tokens only
+	Worktree     *Worktree
+	Markers      []string // pane labels of the form h3d-<hex>
+	Role         string
+	Run          string
+}
+
+// Worktree is a workspace's git worktree provenance.
+type Worktree = proto.Worktree
+
+// Agent statuses herdr reports.
+const (
+	StatusUnknown = "unknown"
+)
+
+var (
+	labelRole = regexp.MustCompile(`^(ORCH|CODE|REVIEW|UX|GROUND)\|(.*)$`)
+	markerRe  = regexp.MustCompile(`^h3d-([0-9a-f]{6,32})$`)
+)
+
+// TokenPrefix marks write-code / herdr-3d workspace tokens.
+const TokenPrefix = "h3d_"
+
+// RoleRun derives a worker's role and run from its h3d_* tokens, falling
+// back to the write-code label convention `ROLE|descr|…`. From a label the
+// run is the descriptor segment (e.g. `bridge-ro` of `CODE|bridge-ro|2|r1`).
+func RoleRun(label string, tokens map[string]string) (role, run string) {
+	role, run = tokens["h3d_role"], tokens["h3d_run"]
+	if m := labelRole.FindStringSubmatch(label); m != nil {
+		if role == "" {
+			role = strings.ToLower(m[1])
+		}
+		if run == "" {
+			descr, _, _ := strings.Cut(m[2], "|")
+			run = descr
+		}
+	}
+	return role, run
+}
+
+// IsMarker reports whether a pane label is an identity marker h3d-<hex>.
+func IsMarker(label string) bool { return markerRe.MatchString(label) }
+
+// markerHex returns the hex part of a marker label.
+func markerHex(label string) string {
+	if m := markerRe.FindStringSubmatch(label); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+func h3dTokens(tokens map[string]string) map[string]string {
+	var out map[string]string
+	for k, v := range tokens {
+		if strings.HasPrefix(k, TokenPrefix) {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[k] = v
+		}
+	}
+	return out
+}
