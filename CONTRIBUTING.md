@@ -260,10 +260,11 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   Like the bridge, a building lists its floors top to bottom, which is `index` order (index 0 on top); vitest fails
   a fixture where the two disagree, since the simulator (`sim=1`) rebuilds the list from `index`.
 - `tools/` — fixture server (read-only by default; with `sim=1` it simulates the bridge's commands in memory,
-  `fixture-sim.ts`, M4's four included: a cwd is a git repo unless it has `/scratch` in it, `offline` in it fails the
-  fetch; a `working` worker has uncommitted changes and 2 unpushed commits, a `blocked` one 1 unpushed commit; caps
+  `fixture-sim.ts`, M4's four included: a cwd is a git repo unless it has `/scratch` in it, `offline` in it fails every
+  fetch (prepare reports it, a worktree hire is refused with `fetch_failed`); a `working` worker has uncommitted changes and 2 unpushed commits, a `blocked` one 1 unpushed commit; caps
   24 / 32 per floor and 60 / 80 for the host unless `simcap` says otherwise; hires are acked one step later with the
-  worker walking in, a first task sets it working the step after; branches are `h3d/<name>-<id6>`), dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
+  worker walking in, a first task sets it working the step after; branches are `h3d/<name>-<id6>`; `delete_branch` only for
+  a branch the simulator made or a fixture `h3d/…` one, like the bridge's recorded branches), dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
 
 Run it:
 
@@ -278,7 +279,7 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 
 | query param | effect |
 |---|---|
-| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed\|fetch_failed` fails the next one; `simcap=<session>:<soft>:<hard>[,…]` caps floors) |
+| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors) |
 | `backend=webgl2` | force WebGL2 |
 | `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |
 | `ts` | GPU timestamp queries (for `bench`) |
@@ -312,13 +313,17 @@ bridge first (`hire.prepare`), then offers: an optional first task (**Enter** hi
 harness → model → effort as chips (Tab into a group, ← → pick; the floor's default hire or the last hire on the floor
 is preselected and marked so), the label (the next generated name), the folder (the floor's default; changing it
 checks the new folder again), **Work in its own git worktree & branch** (on by default, only when the folder is a git
-repo) with the base `origin/<default> @ <sha>, <age>` and any fetch error, and the floor's and host's caps with the
-host load: a warning above the soft cap, Hire refused at the hard cap. Hire hides the desk's "+" at once; the new
+repo) with the base `origin/<default> @ <sha>, <age>`, and the floor's and host's caps with the host load: a warning
+above the soft cap, Hire refused at the hard cap. When `git fetch origin` failed the worktree option is off (a worktree
+never branches from a stale origin; the bridge would refuse it with `fetch_failed`), the error sits above the buttons
+with **Fetch again**, and hiring without a worktree still works. Warnings sit by the buttons, so they are in view
+without scrolling. Hire hides the desk's "+" at once (each hire in flight holds its own desk, so Esc and another hire
+meanwhile is fine: the top bar skips desks a hire is on its way to); the new
 worker walks in from the street, up the fire escape to its desk, carrying its box with the laptop on top, and sits
 down. Look at a worker and press **X** to send it home: its branch and folder, what is left on the desk (uncommitted
 changes, commits not on any remote) and, for a worker in a linked worktree of its own, keep / delete the worktree /
 delete the worktree and branch (delete only when the bridge says the tree is clean and pushed, else a warning says
-why); a main checkout whose worktrees are still open cannot go yet. Focus starts on "keep", where Enter sends it home;
+why; the branch too only when the bridge made it for this worker, `can_delete_branch`); a main checkout whose worktrees are still open cannot go yet. Focus starts on "keep", where Enter sends it home;
 with a delete picked only the button confirms. The worker packs a cardboard box, takes the laptop, walks out down the
 fire escape and away along the sidewalk, and the desk gets its "+" back. Walks play for floors of the building you are
 in (the interior only for the floor you are on); anywhere else they resolve at once. Esc closes either dialog, and
@@ -362,9 +367,12 @@ make shot                     # Playwright WebGL2: game/test-results/{shot,m2-ci
                               # warning), a clean one sent home with worktree + branch deleted (packing, the box,
                               # the laptop, down the stairs, the "+" back); the top bar's Hire (first free desk);
                               # a worker without a worktree, a blocked main checkout; capacity warn / refuse at
-                              # 1024×640; walks you cannot see; a read-only bridge; m4-{hire-dialog,
-                              # send-home-dirty,send-home-clean,walk-in,walk-out-pack,walk-out,
-                              # hire-capacity-warn,hire-capacity-full}.png
+                              # 1024×640; two hires at once (Esc on a pending one), each on its own desk; a failed
+                              # fetch at 1024×640 (worktree off, Fetch again, a plain hire); a clean worktree on
+                              # the user's own branch (delete the worktree only); walks you cannot see; a
+                              # read-only bridge; m4-{hire-dialog,send-home-dirty,send-home-clean,walk-in,
+                              # walk-out-pack,walk-out,hire-capacity-warn,hire-capacity-full,
+                              # hire-fetch-failed}.png
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
 pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
