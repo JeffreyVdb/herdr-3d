@@ -10,7 +10,7 @@ import { INK } from '../render/palette';
  * a headset with a boom mic whose tip lights while it talks.
  *
  * Parts are merged by what moves together and coloured per vertex, so the
- * whole character is seven draws. Origin at the feet, facing +z, 1 unit = 1 m.
+ * whole character is eight draws. Origin at the feet, facing +z, 1 unit = 1 m.
  */
 
 export const COLORS = {
