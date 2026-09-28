@@ -230,6 +230,25 @@ function demoM3() {
   return [snap];
 }
 
+// ---- demo-m3b: three floors in one building ------------------------------------
+// The M3 city with every floor in Work: herdr-3d on top (running), depot-manager
+// in the middle (asleep), pastry at the bottom (running); Personal is empty and
+// scratchpad stays in the lot. Walks the fire escape past all three.
+
+function demoM3b() {
+  const [base] = demoM3();
+  const snap = structuredClone(base);
+  const w = snap.world;
+  const work = w.buildings.find((b) => b.name === 'Work');
+  const home = w.buildings.find((b) => b.name === 'Personal');
+  // Top to bottom, like the bridge: `floors` lists them in `index` order, index 0 on top.
+  work.floors = ['herdr-3d', 'depot-manager', 'pastry'];
+  home.floors = [];
+  const floor = (s) => w.floors.find((f) => f.session === s);
+  work.floors.forEach((s, index) => Object.assign(floor(s), { building: work.id, index }));
+  return [snap];
+}
+
 // ---- perf: one floor with 60 workers ------------------------------------------
 
 const STATES = ['working', 'working', 'working', 'working', 'idle', 'done', 'blocked', 'working', 'idle', 'working'];
@@ -289,7 +308,7 @@ function perfCity240() {
   return [{ t: 'world.snapshot', seq: 1, world: { buildings, unassigned: [], floors, workers } }];
 }
 
-const FIXTURES = { demo, 'demo-m3': demoM3, 'perf-floor60': perfFloor60, 'perf-city240': perfCity240 };
+const FIXTURES = { demo, 'demo-m3': demoM3, 'demo-m3b': demoM3b, 'perf-floor60': perfFloor60, 'perf-city240': perfCity240 };
 
 const check = process.argv.includes('--check');
 let stale = false;

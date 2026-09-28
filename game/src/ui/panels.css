@@ -334,6 +334,16 @@
   display: flex;
   gap: 6px;
 }
+/* The Lobby stop: under the floors, past a rule, like the ground floor button on a real panel. */
+.lift-row--lobby {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+.lift-lobby-note {
+  font-size: 12.5px;
+  color: var(--text-on-ink-2);
+}
 .lift-name > .tape {
   align-self: flex-start;
 }

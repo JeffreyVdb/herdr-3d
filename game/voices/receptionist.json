@@ -1,0 +1,42 @@
+{
+  "voice": {
+    "use": "clone",
+    "direction": "A friendly, upbeat receptionist at the front desk of a small, cheerful office, talking to someone they like. Bright and warm, relaxed natural pace, a smile in the voice.",
+    "design": {
+      "model": "mimo-v2.5-tts-voicedesign",
+      "description": "An original receptionist voice: a woman in her early thirties with a bright, warm mid-range tone and a light, smiling texture. Upbeat and welcoming but never syrupy, in clear, neutral English at a relaxed, natural pace, like someone who enjoys greeting people at the front desk of a small, cheerful office.",
+      "text": "(Happy) Good morning, and welcome in! I'm at the front desk all day, so if you need a floor, a coffee tip, or just a friendly hello, I'm right here. Have a lovely day upstairs!"
+    },
+    "clone": { "model": "mimo-v2.5-tts-voiceclone", "reference": "receptionist-reference.mp3" },
+    "builtin": { "model": "mimo-v2.5-tts", "voice": "Mia" }
+  },
+  "lines": [
+    { "id": "welcome-morning-1", "kind": "welcome-morning", "text": "(Happy) Good morning! Welcome in. The coffee's fresh." },
+    { "id": "welcome-morning-2", "kind": "welcome-morning", "text": "Morning! Lovely to see you. Everyone's just getting going." },
+    { "id": "welcome-morning-3", "kind": "welcome-morning", "text": "(Lively) Oh, good morning! Early start today? I like it." },
+    { "id": "welcome-afternoon-1", "kind": "welcome-afternoon", "text": "Good afternoon! Welcome back. Hope lunch was a good one." },
+    { "id": "welcome-afternoon-2", "kind": "welcome-afternoon", "text": "(Happy) Afternoon! Come on in, the building's buzzing." },
+    { "id": "welcome-afternoon-3", "kind": "welcome-afternoon", "text": "Hi there, good afternoon! Nice to have you in." },
+    { "id": "welcome-evening-1", "kind": "welcome-evening", "text": "Good evening! Working late? I'll keep the lights on." },
+    { "id": "welcome-evening-2", "kind": "welcome-evening", "text": "(Calm) Evening! Welcome in. It's nice and cosy tonight." },
+    { "id": "welcome-evening-3", "kind": "welcome-evening", "text": "Oh, good evening! Always nice to see a friendly face." },
+    { "id": "welcome-night-1", "kind": "welcome-night", "text": "(Playful) Oh! Hello, night owl. Welcome in." },
+    { "id": "welcome-night-2", "kind": "welcome-night", "text": "Burning the midnight oil? Come on in, I won't tell." },
+    { "id": "welcome-night-3", "kind": "welcome-night", "text": "(Calm) Good evening... or is it good morning already? Welcome in." },
+    { "id": "elevator-1", "kind": "elevator", "text": "Welcome down!" },
+    { "id": "elevator-2", "kind": "elevator", "text": "(Happy) Oh, hi again!" },
+    { "id": "elevator-3", "kind": "elevator", "text": "Back on the ground floor!" },
+    { "id": "goodbye-1", "kind": "goodbye", "text": "Bye for now! See you soon." },
+    { "id": "goodbye-2", "kind": "goodbye", "text": "(Happy) Have a great one! Come back anytime." },
+    { "id": "goodbye-3", "kind": "goodbye", "text": "Take care out there!" },
+    { "id": "nudge-1", "kind": "nudge", "text": "A few people upstairs are waiting on you." },
+    { "id": "nudge-2", "kind": "nudge", "text": "Just so you know, some folks upstairs are waiting on you." },
+    { "id": "nudge-3", "kind": "nudge", "text": "(Lively) Heads up! A few people upstairs could use you." },
+    { "id": "quiet-1", "kind": "quiet", "text": "It's nice and quiet today. Everyone upstairs is fast asleep." },
+    { "id": "quiet-2", "kind": "quiet", "text": "(Calm) Shh... the whole building's taking a nap." },
+    { "id": "quiet-3", "kind": "quiet", "text": "All quiet upstairs. Every floor is having a little rest." },
+    { "id": "interact-1", "kind": "interact", "text": "Where to? Here's the floor directory." },
+    { "id": "interact-2", "kind": "interact", "text": "(Happy) Happy to help! Pick a floor and I'll send you up." },
+    { "id": "interact-3", "kind": "interact", "text": "Here you go, the whole building at a glance." }
+  ]
+}

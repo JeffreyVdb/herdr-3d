@@ -6,13 +6,18 @@ import type { CommandArgs, CommandName, WorldEvent } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { OfficeView, REACH, type Target } from './render/office';
+import { OutsideView } from './render/outside';
+import { BUILDING_TINTS, LOT_TINT } from './render/palette';
+import { WalkView } from './render/walk';
+import { createGameAudio, createReception, receptionContext, type GameAudio, type Reception, type ReceptionEvent } from './reception';
 import { Hud, type PlanLabel } from './ui/hud';
 import { Panels } from './ui/panels';
-import { Walker } from './input/walk';
-import { blocked } from './world/collide';
-import { EYE_HEIGHT } from './world/layout';
+import { RADIUS, Walker } from './input/walk';
+import { blocked, blocked3, groundAt, type WalkWorld } from './world/collide';
+import { buildingPlan, floorY, placeAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
+import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, type Opening, type Outline } from './world/layout';
 import type { Display } from './world/derive';
-import { WorldStore, type Change, type Counts } from './world/store';
+import { WorldStore, type Change, type Counts, type FloorView } from './world/store';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
@@ -32,9 +37,24 @@ export interface Pose {
   z: number;
   yaw: number;
   pitch?: number;
+  /** Feet above the street (absolute). Left out: stay at the current level. */
+  y?: number;
 }
 
 type Mode = 'city' | 'floor';
+
+/** The building you walk around in: its floors (ground first), outline, plan and look. */
+interface BuildingCtx {
+  id: string | null;
+  name: string;
+  tint: number;
+  floors: FloorView[];
+  outline: Outline;
+  openings: Opening[];
+  plan: BuildingPlan;
+  /** Changes when the outside has to be rebuilt (floors, their order, size, name, colour). */
+  shape: string;
+}
 
 const CLIENT = 'herdr-3d-game/0.2';
 
@@ -50,7 +70,14 @@ export class App {
   /** Commands the bridge answered `unknown_command` for: an older bridge. */
   private readonly unsupported = new Set<CommandName>();
   mode: Mode = 'city';
+  /** The floor with an interior: the one you are on, or (outside) the one you last left; null in the lobby. */
   office: OfficeView | null = null;
+  /** Where you are in the building (walk mode). */
+  place: Place = { area: 'floor', storey: null };
+  /** Reception events the app detected, in order (test hook), and the receptionist once coder B's module is in. */
+  readonly receptionEvents: Array<{ ev: ReceptionEvent; at: number; building: string | null }> = [];
+  readonly audio: GameAudio;
+  readonly reception: Reception;
   /** Worker id → status on screen as of the last rendered frame, and when it got there. */
   readonly rendered = new Map<string, { status: Display; at: number }>();
   frames = 0;
@@ -64,6 +91,12 @@ export class App {
   private readonly planCam: THREE.OrthographicCamera;
   private readonly controls: OrbitControls;
   private readonly walker: Walker;
+  private readonly walk: WalkView;
+  private building: BuildingCtx | null = null;
+  /** Storey of the floor with an interior (null: none, e.g. in the lobby). */
+  private loaded: number | null = null;
+  private worldCache: { key: unknown[]; world: WalkWorld } | null = null;
+  private fireDoor = 0;
   private readonly shadows: boolean;
   private planOpen = false;
   private lastActivity = 0;
@@ -89,6 +122,10 @@ export class App {
     this.batterySaver = o.params.get('battery') === '1';
     this.hud = new Hud(o.host);
     this.hud.setBattery(this.batterySaver);
+    // Sound (the first click, key or pointer lock unlocks it) and the receptionist in every lobby.
+    this.audio = createGameAudio();
+    this.hud.mountAudio(this.audio);
+    this.reception = createReception({ audio: this.audio, overlay: this.hud.root, shadows: this.shadows });
     this.city = new CityView(
       this.hud.floorList,
       this.shadows,
@@ -99,7 +136,8 @@ export class App {
     this.city.badges = o.params.get('badges') !== '0';
 
     this.cityCam = new THREE.PerspectiveCamera(42, 1, 0.1, 600);
-    this.fpCam = new THREE.PerspectiveCamera(70, 1, 0.05, 200);
+    this.fpCam = new THREE.PerspectiveCamera(70, 1, 0.05, 320);
+    this.walk = new WalkView(this.shadows);
     this.planCam = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
     this.controls = new OrbitControls(this.cityCam, this.r.domElement);
     this.controls.enableDamping = true;
@@ -146,12 +184,17 @@ export class App {
 
     this.panels = new Panels(o.host, {
       store: this.store,
-      here: () => (this.mode === 'floor' && this.office ? this.office.session : null),
+      here: () => this.hereSession(),
+      inLobby: () => this.mode === 'floor' && this.place.area === 'lobby',
       send: (t, args) => this.send(t, args),
       unsupported: (t) => this.unsupported.has(t),
       travel: (s) => {
         this.panels.close();
         void this.enterFloor(s);
+      },
+      travelLobby: (b) => {
+        this.panels.close();
+        void this.enterLobby(b);
       },
       toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 6500 : 3600, kind),
     });
@@ -194,15 +237,7 @@ export class App {
       const firstWorld = this.city.isEmpty;
       this.city.build(this.store.city());
       if (firstWorld) this.frameCity(false);
-      if (this.mode === 'floor' && this.office) {
-        const fv = this.store.floorView(this.office.session);
-        if (!fv) {
-          this.hud.toast(`${this.office.session} is gone.`);
-          void this.leaveFloor();
-        } else if (!this.office.apply(fv)) {
-          this.rebuildOffice();
-        }
-      }
+      if (this.mode === 'floor') this.syncWalk();
     } else {
       for (const id of c.workers) {
         const v = this.store.workerView(id);
@@ -233,10 +268,9 @@ export class App {
     return r;
   }
 
-  /** The elevator panel of a building (null: the unassigned lot); on a floor, of its own building. */
+  /** The elevator panel of a building (null: the unassigned lot); walking around, of the building you are in. */
   openElevator(building?: string | null): void {
-    const here = this.mode === 'floor' && this.office ? this.office.session : null;
-    const b = building !== undefined ? building : here ? this.panels.buildingOf(here) : null;
+    const b = building !== undefined ? building : this.mode === 'floor' && this.building ? this.building.id : null;
     this.walker.release();
     this.walker.stop();
     this.panels.openElevator(b);
@@ -249,9 +283,25 @@ export class App {
   }
 
   private refreshTopbar(): void {
-    if (this.mode === 'floor' && this.office) {
-      const fv = this.store.floorView(this.office.session);
-      if (fv) this.hud.setFloor(fv);
+    if (this.mode === 'floor') {
+      // On a floor, or its landing: that floor. In the lobby, on the street or the stairs: the building.
+      const ctx = this.building;
+      const p = this.place;
+      const s = p.storey !== null ? ctx?.floors[p.storey]?.session : undefined;
+      const fv = s ? this.store.floorView(s) : null;
+      if (fv) this.hud.setFloor(fv, p.area === 'fire-escape' ? 'fire-escape' : 'floor');
+      else if (ctx) {
+        const total = zero();
+        for (const f of ctx.floors) {
+          const v = this.store.floorView(f.session);
+          if (!v || v.asleep) continue;
+          total.working += v.counts.working;
+          total.needsYou += v.counts.needsYou;
+          total.idle += v.counts.idle;
+          total.total += v.counts.total;
+        }
+        this.hud.setBuilding(ctx.name, p.area, ctx.floors.length, total);
+      }
       return;
     }
     const city = this.store.city();
@@ -291,44 +341,85 @@ export class App {
       // Read the floor again: events keep arriving while the doors close, and
       // until the office exists nothing else applies them to it.
       const now = this.store.floorView(session);
-      if (!now) {
+      const ctx = now ? this.buildingFor(session) : null;
+      if (!now || !ctx) {
         this.hud.toast(`${session} is gone.`);
         return;
       }
       this.walker.stop();
-      this.office?.dispose();
-      this.office = new OfficeView(now, { shadows: this.shadows });
-      this.mode = 'floor';
-      this.hud.setMode('floor');
-      this.city.setVisible(false);
-      const L = this.office.layout;
+      this.setBuilding(ctx);
+      const storey = ctx.floors.findIndex((f) => f.session === session);
+      this.loadFloor(storey, now);
+      this.enterWalk();
+      const L = (this.office as OfficeView).layout;
       const p = opts.pose ?? { x: L.spawn.x, z: L.spawn.z, yaw: L.spawn.yaw, pitch: -0.05 };
-      this.walker.place(p.x, p.z, p.yaw, p.pitch ?? 0);
-      this.planCam.userData.fit = false;
-      this.setPlan(false);
-      this.refreshTopbar();
-      this.statusDirty = true;
-      this.cameraMoved = true;
-      this.updateHint();
+      this.walker.place(p.x, p.z, p.yaw, p.pitch ?? 0, p.y ?? floorY(storey));
+      this.afterPlace();
     };
+    await this.ride(fv.level ? `${fv.level.number}` : fv.session, swap, opts.transition);
+  }
+
+  /** The elevator to a building's lobby (null: the unassigned lot's). */
+  async enterLobby(building: string | null, opts: { transition?: boolean } = {}): Promise<void> {
+    if (this.transitioning || !this.buildingById(building)) return;
+    const swap = () => {
+      const ctx = this.buildingById(building);
+      if (!ctx) {
+        this.hud.toast('That building is gone.');
+        return;
+      }
+      this.walker.stop();
+      this.setBuilding(ctx);
+      this.unloadFloor();
+      this.enterWalk();
+      const s = ctx.plan.lobby.spawn;
+      this.walker.place(s.x, s.z, s.yaw, -0.05, 0);
+      this.afterPlace();
+      this.receptionEvent('arrive-elevator');
+    };
+    await this.ride('L', swap, opts.transition);
+  }
+
+  /** Elevator doors close, `swap` runs, doors open (or at once, for tests and reduced motion). */
+  private async ride(label: string, swap: () => void, transition = true): Promise<void> {
     this.transitioning = true;
     try {
-      if (opts.transition === false || reducedMotionTest()) swap();
-      else await this.hud.doorsTransition(fv.level ? `${fv.level.number}` : fv.session, swap);
+      if (transition === false || reducedMotionTest()) swap();
+      else await this.hud.doorsTransition(label, swap);
     } finally {
       this.transitioning = false;
       this.activity(true);
     }
   }
 
+  private enterWalk(): void {
+    this.mode = 'floor';
+    this.hud.setMode('floor');
+    this.city.setVisible(false);
+    this.planCam.userData.fit = false;
+    this.setPlan(false);
+  }
+
+  /** After a teleport (arrival, setPose): where you are, and everything that shows it. */
+  private afterPlace(): void {
+    this.place = { area: 'floor', storey: null };
+    this.updatePlace(false, true);
+    this.walker.applyTo(this.fpCam, this.walk.base);
+    this.refreshTopbar();
+    this.statusDirty = true;
+    this.cameraMoved = true;
+    this.updateHint();
+  }
+
   async leaveFloor(): Promise<void> {
     if (this.mode !== 'floor' || this.transitioning) return;
-    const session = this.office?.session ?? null;
+    const session = this.office?.session ?? this.building?.floors[0]?.session ?? null;
     const swap = () => {
       this.walker.release();
       this.walker.stop();
-      this.office?.dispose();
-      this.office = null;
+      this.unloadFloor();
+      this.dropOutside();
+      this.building = null;
       this.mode = 'city';
       this.setPlan(false);
       this.hud.setMode('city');
@@ -341,30 +432,207 @@ export class App {
       this.updateHint();
       this.updateNotice();
     };
-    this.transitioning = true;
-    try {
-      if (reducedMotionTest()) swap();
-      else await this.hud.doorsTransition('CITY', swap);
-    } finally {
-      this.transitioning = false;
-      this.activity(true);
+    await this.ride('CITY', swap);
+  }
+
+  // ---- the building around you -------------------------------------------------------
+
+  /** The building a floor is in (the unassigned lot's floors make one too). */
+  private buildingFor(session: string): BuildingCtx | null {
+    return this.store.floors.has(session) ? this.buildingById(this.panels.buildingOf(session)) : null;
+  }
+
+  private buildingById(id: string | null): BuildingCtx | null {
+    const store = this.store;
+    if (id !== null && !store.buildings.has(id)) return null;
+    const floors = id === null ? store.stack(null) : store.stack(id).reverse();
+    if (!floors.length) return null;
+    // The city view's colour for it, so the facade matches the dollhouse.
+    const bi = store.city().findIndex((b) => (b.building?.id ?? null) === id);
+    const tint = id === null ? LOT_TINT : (BUILDING_TINTS[Math.max(0, bi) % BUILDING_TINTS.length] ?? 0xffb8b0);
+    const outline = outlineOf(floors.map((f) => f.desks));
+    const openings = openingsFor(outline.width, outline.depth);
+    const door = openings.find((o) => o.kind === 'door') as Opening;
+    const plan = buildingPlan(outline, floors.length, { z0: door.u0, z1: door.u1, height: door.y1 });
+    const name = id === null ? 'Unassigned lot' : (store.buildings.get(id)?.name ?? 'Building');
+    return { id, name, tint, floors, outline, openings, plan, shape: JSON.stringify([id, name, tint, outline, floors.map((f) => f.session)]) };
+  }
+
+  /** Switches to a building (or a new shape of it): rebuilds the outside only when its shape changed. */
+  private setBuilding(ctx: BuildingCtx): void {
+    const prev = this.building;
+    this.building = ctx;
+    let o = this.walk.outside;
+    if (!o || !prev || prev.shape !== ctx.shape) {
+      this.dropOutside();
+      o = new OutsideView(ctx.plan, ctx.openings, { name: ctx.name, tint: ctx.tint, floors: ctx.floors.map((f) => ({ session: f.session, asleep: f.asleep })) });
+      o.lobby.setReceptionist(this.reception.object);
+      this.walk.setOutside(o);
+      o.setLoaded(this.loaded);
+      this.walk.setOffice(this.office, this.loaded === null ? 0 : floorY(this.loaded));
     }
+    o.setFloors(ctx.floors.map((f) => f.asleep));
+    this.worldCache = null;
+  }
+
+  private dropOutside(): void {
+    const o = this.walk.outside;
+    if (!o) return;
+    // The receptionist is not ours to dispose.
+    o.lobby.slot.clear();
+    this.walk.setOutside(null);
+    o.dispose();
+  }
+
+  /** Gives floor `storey` of the current building its interior (the one you are on or about to enter). */
+  private loadFloor(storey: number, view?: FloorView): void {
+    const ctx = this.building;
+    const f = ctx?.floors[storey];
+    const fv = view ?? (f ? this.store.floorView(f.session) : null);
+    if (!ctx || !fv) return;
+    const old = this.office;
+    this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline });
+    this.loaded = storey;
+    this.fireDoor = 0;
+    this.walk.setOffice(this.office, floorY(storey));
+    this.walk.outside?.setLoaded(storey);
+    old?.dispose();
+    this.office.setPlan(this.planOpen);
+    this.worldCache = null;
+    this.planCam.userData.fit = false;
+    this.statusDirty = true;
+    this.cameraMoved = true;
+  }
+
+  private unloadFloor(): void {
+    if (!this.office) return;
+    this.office.dispose();
+    this.office = null;
+    this.loaded = null;
+    this.walk.setOffice(null, 0);
+    this.walk.outside?.setLoaded(null);
+    this.worldCache = null;
+    this.statusDirty = true;
+  }
+
+  /** The world changed while walking: follow the building (floors moved, added, resized, asleep). */
+  private syncWalk(): void {
+    const session = this.office?.session ?? null;
+    const ctx = session ? this.buildingFor(session) : this.building ? this.buildingById(this.building.id) : null;
+    const fv = session ? this.store.floorView(session) : null;
+    if (!ctx || (session && !fv)) {
+      this.hud.toast(`${session ?? this.building?.name ?? 'That building'} is gone.`);
+      void this.leaveFloor();
+      return;
+    }
+    const was = this.loaded;
+    this.setBuilding(ctx);
+    if (this.office && fv) {
+      const storey = ctx.floors.findIndex((f) => f.session === fv.session);
+      if (storey !== was && was !== null) {
+        // The floor moved in its building: inside it, you move with it.
+        if (this.place.area === 'floor') this.walker.place(this.walker.x, this.walker.z, this.walker.yaw, this.walker.pitch, floorY(storey));
+        this.loaded = storey;
+        this.walk.setOffice(this.office, floorY(storey));
+        this.walk.outside?.setLoaded(storey);
+      }
+      if (!this.office.apply(fv, ctx.outline)) this.rebuildOffice();
+    }
+    // Anything moved under you (the fire escape changed shape, the room shrank): back to safety.
+    if (blocked3(this.walker, RADIUS, this.walkWorldNow())) {
+      const L = this.office?.layout;
+      if (L && this.loaded !== null) this.walker.place(L.spawn.x, L.spawn.z, L.spawn.yaw, 0, floorY(this.loaded));
+      else this.walker.place(ctx.plan.lobby.spawn.x, ctx.plan.lobby.spawn.z, 0, 0, 0);
+    }
+    this.updatePlace(false, true);
+    this.cameraMoved = true;
   }
 
   private rebuildOffice(): void {
-    if (!this.office) return;
+    const ctx = this.building;
+    if (!this.office || this.loaded === null || !ctx) return;
     const fv = this.store.floorView(this.office.session);
     if (!fv) return;
-    const pose = { x: this.walker.x, z: this.walker.z, yaw: this.walker.yaw, pitch: this.walker.pitch };
-    this.office.dispose();
-    this.office = new OfficeView(fv, { shadows: this.shadows });
-    const L = this.office.layout;
-    if (blocked(pose, 0.28, this.office.obstacles()) || pose.x > L.width || pose.z > L.depth) {
-      this.walker.place(L.spawn.x, L.spawn.z, L.spawn.yaw);
-    }
+    const old = this.office;
+    this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline });
+    this.walk.setOffice(this.office, floorY(this.loaded));
+    old.dispose();
+    this.office.setDoor(this.fireDoor);
     this.office.setPlan(this.planOpen);
+    this.worldCache = null;
     this.planCam.userData.fit = false;
     this.cameraMoved = true;
+  }
+
+  /** What the walker touches now (rebuilt when the floor with an interior or its seats change). */
+  private walkWorldNow(): WalkWorld {
+    const ctx = this.building;
+    if (!ctx) return { supports: [], solids: [] };
+    const obstacles = this.office?.obstacles() ?? null;
+    const key: unknown[] = [ctx.plan, this.loaded, obstacles];
+    const c = this.worldCache;
+    if (!c || key.some((k, i) => k !== c.key[i])) {
+      const loaded = this.loaded !== null && obstacles ? { storey: this.loaded, colliders: obstacles } : null;
+      this.worldCache = { key, world: walkWorld(ctx.plan, loaded) };
+    }
+    return (this.worldCache as { world: WalkWorld }).world;
+  }
+
+  /**
+   * Where the walker is now, and what follows from it: a landing gives its
+   * floor the interior (its door opens onto it), the lobby needs none;
+   * crossing the lobby's front door is what the receptionist hears about.
+   */
+  private updatePlace(walked: boolean, force = false): void {
+    const ctx = this.building;
+    if (!ctx) return;
+    const prev = this.place;
+    const next = placeAt(this.walker, ctx.plan);
+    if (next.area === 'fire-escape' && next.storey !== null && next.storey !== this.loaded) this.loadFloor(next.storey);
+    if (next.area === 'floor' && next.storey !== null && next.storey !== this.loaded) this.loadFloor(next.storey);
+    if (next.area === 'lobby' && this.office) this.unloadFloor();
+    if (this.office) this.office.root.visible = next.area === 'floor' || next.area === 'fire-escape';
+    if (!force && next.area === prev.area && next.storey === prev.storey) return;
+    this.place = next;
+    if (walked && prev.area === 'street' && next.area === 'lobby') this.receptionEvent('arrive-street');
+    if (walked && prev.area === 'lobby' && next.area === 'street') this.receptionEvent('leave-front');
+    if (next.area !== 'floor' && this.planOpen) this.setPlan(false);
+    this.hud.setArea(next.area);
+    this.refreshTopbar();
+    this.updateHint();
+    this.panels.refresh();
+    this.statusDirty = true;
+  }
+
+  /** The session of the floor you are on (inside it), else null. */
+  private hereSession(): string | null {
+    return this.mode === 'floor' && this.place.area === 'floor' && this.office ? this.office.session : null;
+  }
+
+  private receptionEvent(ev: ReceptionEvent): void {
+    const ctx = this.building;
+    if (!ctx) return;
+    this.receptionEvents.push({ ev, at: Date.now(), building: ctx.id });
+    this.reception.handle(ev, receptionContext(this.store, ctx.id, new Date()));
+  }
+
+  /** Fire-escape door of the floor with an interior: open while you are near it. */
+  private animateDoors(dt: number): void {
+    const o = this.office;
+    const ctx = this.building;
+    if (o && ctx && this.loaded !== null) {
+      const e = ctx.plan.escape;
+      const dz = (e.door.z0 + e.door.z1) / 2;
+      const near = Math.abs(this.walker.y - floorY(this.loaded)) < 1 && Math.hypot(this.walker.x, this.walker.z - dz) < 2.4;
+      const want = near ? 1 : 0;
+      if (this.fireDoor !== want) {
+        const k = 1 - Math.exp(-dt * 9);
+        this.fireDoor = Math.abs(want - this.fireDoor) < 0.01 ? want : this.fireDoor + (want - this.fireDoor) * k;
+        o.setDoor(this.fireDoor);
+        this.cameraMoved = true;
+      }
+    }
+    if (this.walk.outside?.lobby.update(dt, this.walker)) this.cameraMoved = true;
   }
 
   /** City camera: frame everything, or one building. */
@@ -392,9 +660,10 @@ export class App {
   }
 
   setPlan(open: boolean): void {
-    if (this.mode !== 'floor' || !this.office) open = false;
+    if (this.mode !== 'floor' || !this.office || this.place.area !== 'floor') open = false;
     this.planOpen = open;
     this.office?.setPlan(open);
+    this.walk.setPlan(open);
     this.hud.setPlan(open, this.office?.session ?? '');
     if (open) this.walker.release();
     this.planLabelsKey = '';
@@ -428,6 +697,20 @@ export class App {
   private updateHint(): void {
     if (this.mode === 'city') {
       this.hud.setHint(this.city.isEmpty ? null : 'Drag to orbit · Scroll to zoom · <strong>Click a floor</strong> to go inside');
+      return;
+    }
+    const area = this.place.area;
+    const look = this.walker.locked ? '' : this.walker.lockAvailable ? '<strong>Click</strong> to look around · ' : '';
+    if (area === 'lobby') {
+      this.hud.setHint(this.walker.locked ? null : `${look}WASD walks · <strong>E</strong> at the desk: the floor directory · <strong>L</strong> elevator · the glass doors lead outside`);
+      return;
+    }
+    if (area === 'street') {
+      this.hud.setHint(this.walker.locked ? null : `${look}WASD walks · the glass doors lead into the lobby, the fire escape up the side · <strong>L</strong> elevator`);
+      return;
+    }
+    if (area === 'fire-escape') {
+      this.hud.setHint(this.walker.locked ? null : `${look}WASD walks · a floor's door opens as you walk up to it · <strong>L</strong> elevator`);
       return;
     }
     const fv = this.office ? this.store.floorView(this.office.session) : null;
@@ -483,13 +766,19 @@ export class App {
       // another modifier, Tab moves focus as usual.
       if (e.altKey || e.ctrlKey || e.metaKey || !this.sceneFocused()) return;
       e.preventDefault();
-      if (!e.shiftKey) this.setPlan(!this.planOpen);
+      if (!e.shiftKey && this.place.area !== 'floor') this.hud.toast('The floor plan is for office floors.', 1800);
+      else if (!e.shiftKey) this.setPlan(!this.planOpen);
       else {
         this.walker.release();
         this.hud.focusTopbar();
       }
     } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'elevator') {
       e.preventDefault();
+      this.openElevator();
+    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && this.target?.kind === 'prop' && this.target.id === 'reception') {
+      // The receptionist answers, and the elevator panel is the building's floor directory.
+      e.preventDefault();
+      this.receptionEvent('interact');
       this.openElevator();
     } else if (e.code === 'KeyL' && this.mode === 'floor' && !this.transitioning && !e.metaKey && !e.ctrlKey && !e.altKey) {
       // The elevator from anywhere on the floor (the top bar has it too).
@@ -563,7 +852,7 @@ export class App {
       return;
     }
     // Face the clicked point's nearest desk row: keep it simple, face north.
-    this.walker.place(p.x, p.z, this.walker.yaw, this.walker.pitch);
+    this.walker.place(p.x, p.z, this.walker.yaw, this.walker.pitch, floorY(this.loaded ?? 0));
     this.cameraMoved = true;
     this.activity(true);
   }
@@ -612,12 +901,21 @@ export class App {
   /** One update at `dt` seconds of game time `t`. Also used by the benchmark. */
   step(dt: number, t: number): void {
     this.lastT = t;
-    if (this.mode === 'floor' && this.office) {
-      if (this.walker.step(dt, this.office.obstacles())) this.cameraMoved = true;
-      this.walker.applyTo(this.fpCam);
+    if (this.mode === 'floor' && this.building) {
+      if (this.walker.step(dt, this.walkWorldNow())) {
+        this.cameraMoved = true;
+        this.updatePlace(true);
+      }
+      this.animateDoors(dt);
+      const area = this.place.area;
+      this.walk.setDim(!!this.office?.isAsleep && (area === 'floor' || area === 'fire-escape'));
+      this.walker.applyTo(this.fpCam, this.walk.base);
       const moved = this.cameraMoved;
       if (this.planOpen) this.fitPlan();
-      this.office.frame(t, this.planOpen ? this.planCam : this.fpCam, this.fpCam, this.vp, moved);
+      if (this.office?.root.visible) this.office.frame(t, this.planOpen ? this.planCam : this.fpCam, this.fpCam, this.vp, moved);
+      // The receptionist looks at you and places the bubble while the lobby can be seen (hud.css hides it elsewhere).
+      if (area === 'lobby' || area === 'street') this.reception.update(dt, this.fpCam);
+      this.audio.setListener(this.fpCam);
       this.updateLookAt();
       if (this.planOpen && (moved || this.planDirty)) this.layoutPlanLabels();
     } else {
@@ -636,7 +934,7 @@ export class App {
   }
 
   render(): void {
-    if (this.mode === 'floor' && this.office) this.r.render(this.office.scene, this.planOpen ? this.planCam : this.fpCam);
+    if (this.mode === 'floor') this.r.render(this.walk.scene, this.planOpen ? this.planCam : this.fpCam);
     else this.r.render(this.city.scene, this.cityCam);
     this.frames++;
     if (this.statusDirty) {
@@ -707,10 +1005,16 @@ export class App {
   }
 
   private computeLookAt(): Target | null {
-    if (!this.office) return null;
     this.fpCam.getWorldDirection(this.ray);
     const o = this.fpCam.position;
-    return this.office.pick([o.x, o.y, o.z], [this.ray.x, this.ray.y, this.ray.z], REACH);
+    const area = this.place.area;
+    if (area === 'floor' && this.office) return this.office.pick([o.x, o.y, o.z], [this.ray.x, this.ray.y, this.ray.z], REACH);
+    const lobby = this.walk.outside?.lobby;
+    if (area === 'lobby' && lobby) {
+      const t = lobby.pick([o.x, o.y + this.walk.base, o.z], [this.ray.x, this.ray.y, this.ray.z], REACH);
+      return t ? LOBBY_TARGETS[t] : null;
+    }
+    return null;
   }
 
   // ---- test hooks --------------------------------------------------------------
@@ -722,7 +1026,7 @@ export class App {
 
   lookAt(): LookAt | null {
     if (this.mode !== 'floor') return null;
-    this.walker.applyTo(this.fpCam);
+    this.walker.applyTo(this.fpCam, this.walk.base);
     const t = this.computeLookAt();
     if (!t) return null;
     const out: LookAt = { kind: t.kind, id: t.id, label: t.label };
@@ -730,15 +1034,54 @@ export class App {
     return out;
   }
 
+  /** Places the walker: `y` (feet, absolute) puts you on any floor, the fire escape, the street or in the lobby; without it you stay at your level. */
   setPose(p: Pose): void {
-    this.walker.place(p.x, p.z, p.yaw, p.pitch ?? 0);
-    this.walker.applyTo(this.fpCam);
+    let y = p.y;
+    if (y === undefined) y = this.building ? (groundAt(this.walkWorldNow().supports, p.x, p.z, this.walker.y + 0.05) ?? this.walker.y) : this.walker.y;
+    const ctx = this.building;
+    if (ctx) {
+      // Onto another floor: it gets the interior first, so its walls and desks are there.
+      const next = placeAt({ x: p.x, y, z: p.z }, ctx.plan);
+      if ((next.area === 'floor' || next.area === 'fire-escape') && next.storey !== null && next.storey !== this.loaded) this.loadFloor(next.storey);
+    }
+    this.walker.place(p.x, p.z, p.yaw, p.pitch ?? 0, y);
+    this.updatePlace(false);
+    this.walker.applyTo(this.fpCam, this.walk.base);
     this.cameraMoved = true;
     this.activity(true);
   }
 
-  pose(): Pose & { eye: number } {
-    return { x: this.walker.x, z: this.walker.z, yaw: this.walker.yaw, pitch: this.walker.pitch, eye: EYE_HEIGHT };
+  pose(): Pose & { eye: number; y: number; area: Area; storey: number | null; floor: string | null } {
+    const s = this.place.storey;
+    return {
+      x: this.walker.x,
+      z: this.walker.z,
+      yaw: this.walker.yaw,
+      pitch: this.walker.pitch,
+      eye: EYE_HEIGHT,
+      y: this.walker.y,
+      area: this.place.area,
+      storey: s,
+      floor: s !== null ? (this.building?.floors[s]?.session ?? null) : null,
+    };
+  }
+
+  /** The building you walk around in (test hook). */
+  get where(): { building: string | null; name: string; floors: string[]; loaded: string | null } | null {
+    const b = this.building;
+    return this.mode === 'floor' && b ? { building: b.id, name: b.name, floors: b.floors.map((f) => f.session), loaded: this.office?.session ?? null } : null;
+  }
+
+  /** The layout of a floor as walked: in its building's outline. */
+  layoutOf(session: string): OfficeView['layout'] | null {
+    const f = this.store.floorView(session);
+    const ctx = f ? this.buildingFor(session) : null;
+    return f ? floorLayoutIn(f.desks, ctx?.outline) : null;
+  }
+
+  /** The building plan you walk around in (test hook: the fire escape, the lobby, the street). */
+  get plan3(): BuildingPlan | null {
+    return this.mode === 'floor' ? (this.building?.plan ?? null) : null;
   }
 
   get cameraCity(): THREE.PerspectiveCamera {
@@ -768,6 +1111,11 @@ export class App {
     return this.mode === 'city' ? this.city.badgePoint(this.cityCam, session, this.vp) : null;
   }
 }
+
+const LOBBY_TARGETS: Record<'reception' | 'elevator', Target> = {
+  reception: { kind: 'prop', id: 'reception', label: 'Reception', milestone: 'M3b' },
+  elevator: { kind: 'prop', id: 'elevator', label: 'Elevator', milestone: 'M3' },
+};
 
 function zero(): Counts {
   return { working: 0, needsYou: 0, idle: 0, done: 0, total: 0 };

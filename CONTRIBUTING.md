@@ -230,10 +230,13 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   keeps it in `sessionStorage` as `h3d.token` and strips it from the URL), `?ws=<url>` to point elsewhere.
 - `src/world` — the world store (snapshot + events, fallbacks for an older bridge without `name`, `desk_index`,
   `harness`, `model`, `effort`, `status_since`, `floor.desks`, and M3's `transition`, `settings`, `suggested`,
-  `resume`, `hire_options`), the deterministic office layout for a desk count, walking collision and ray picking,
-  floor-settings validation and diffing (`settings.ts`) and building/floor reordering (`arrange.ts`). Pure logic,
-  covered by vitest.
-- `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy.
+  `resume`, `hire_options`), the deterministic office layout for a desk count in its building's outline, the building
+  around the floors (`building.ts`: storeys, the lobby, the fire escape, the street), height-aware walking collision
+  and ray picking, the M4 walk-out route (`route.ts`), floor-settings validation and diffing (`settings.ts`) and
+  building/floor reordering (`arrange.ts`). Pure logic, covered by vitest.
+- `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy;
+  M3b: the walk scene (`walk.ts`), the building and street from outside (`outside.ts`, baked into one mesh by
+  `bake.ts`) and the lobby (`lobby.ts`).
   Cards and city badges are canvas atlases drawn as one instanced quad batch each (a cell per worker / floor, redrawn
   only when it changes). A DOM layer was benchmarked on the Mac and lost: moving DOM elements over the canvas cost
   2.6–4.3 ms of main thread per frame for 24 cards and ~8 ms for 30 city badges, against 0.5 ms for the atlas. The DOM
@@ -242,7 +245,10 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   confirmations; modal `<dialog>`s that re-render live and keep focus). `src/input` — first-person walking.
 - `fixtures/` — recorded bridge streams (`herdr-world dump` format): `demo` (2 buildings, 3 floors, 40 workers; an M2
   bridge), `demo-m3` (the same city as an M3 bridge sends it: settings, suggestions, hire options, a floor in the
-  unassigned lot; no events), `perf-floor60`, `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
+  unassigned lot; no events), `demo-m3b` (demo-m3 with all three floors in Work: herdr-3d on top, depot-manager asleep
+  in the middle, pastry at the bottom), `perf-floor60`, `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
+  Like the bridge, a building lists its floors top to bottom, which is `index` order (index 0 on top); vitest fails
+  a fixture where the two disagree, since the simulator (`sim=1`) rebuilds the list from `index`.
 - `tools/` — fixture server (read-only by default; with `sim=1` it simulates the bridge's commands in memory,
   `fixture-sim.ts`), dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
 
@@ -285,7 +291,15 @@ default hire (harness → model → effort from the bridge's `hire_options`); va
 only the keys that changed (`null` clears; statuses nobody touched are never re-sent). On an
 older bridge a command it does not know shows why and its button stays disabled after that.
 Keyboard: in the city, Tab reaches the floor list (Enter goes inside), then the building list (Enter opens that
-building's elevator panel, the lot's too). On a floor, Shift+Tab moves focus to the top
+building's elevator panel, the lot's too).
+Outside (M3b): every floor has a door at the south end of its west wall; it slides open as you walk up to it, onto the
+fire escape. Walk down (or up) the flights to another floor's landing and in through its door: that floor gets the
+interior (as elevator travel would), the top bar shows it while you stand on its landing. The last flight comes down
+to the sidewalk by the lobby's front. The street is bounded (bollards along the curb, a fence on the fire-escape side,
+hedges behind): about 6–8 m round the building. Through the lobby's glass doors on the south side: the reception desk
+(look at it and press **E** for the floor directory, the elevator panel), a bench, the elevator. The elevator panel
+has a **Lobby** stop under the floors, from anywhere; **L** opens it from the street and the fire escape too. The
+floor plan (Tab) is for office floors only. On a floor, Shift+Tab moves focus to the top
 bar (City, Issues, PRs, Elevator, battery saver); Tab / Shift+Tab then move between its buttons as usual and Enter
 presses one. **L** opens the elevator directly and ← → turn, so travel, wake / sleep and floor settings need no mouse.
 Tab toggles the plan only while nothing but the scene has focus; clicking the scene gives it focus back. Panels
@@ -303,7 +317,14 @@ make shot                     # Playwright WebGL2: game/test-results/{shot,m2-ci
                               # wake-progress,topbar-elevator}.png, buildings from the keyboard, elevator via E
                               # (turning with the arrows), L, the top bar and a city click, keyboard-only travel /
                               # wake / sleep / settings, the status rows, header focus across live updates,
-                              # sleep/wake, a failed wake, and an older read-only bridge
+                              # sleep/wake, a failed wake, and an older read-only bridge; M3b on demo-m3b
+                              # (m3b.spec.ts): walked with held keys out of the top floor, down the fire escape,
+                              # in and out of the asleep middle floor, to the street (blocked at the curb and the
+                              # fence) and back in at the bottom floor; in through the lobby's front door (the
+                              # greeting once, not again inside the cooldown), E at the desk, the Lobby stop both
+                              # ways; the same floor numbers with sim=1, and the top bar at 1024 wide (the counts
+                              # drop their words, the name stays whole); m3b-{window-bottom,window-top,
+                              # fire-escape,facade,fire-escape-street,lobby,lobby-greeting}.png
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
 pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
@@ -331,7 +352,9 @@ removed; after a hard kill, check `herdr session list` and `systemctl --user lis
 127.0.0.1:P:127.0.0.1:P devmac`, so the Mac page is on its own loopback (a secure context: WebGPU).
 It pipes `tools/mac-runner.mjs` into `/opt/homebrew/bin/node` in `~/h3d-tools` (playwright-core, headless Chrome at
 3024×1890) and runs `window.__h3d.bench()` — the engine-bench method: serialized update + render + GPU wait,
-pipelined throughput, GPU timestamps, and rAF frames that include DOM layout.
+pipelined throughput, GPU timestamps, and rAF frames that include DOM layout. M3b jobs bench the outside of the
+8-floor tower in `perf-city240`: `street8` (the facade from the sidewalk), `escape8` (the top landing, looking down),
+`window8` (out of a top-floor window), and `floor60-street`; `bench()` reports the `area` it ran in.
 
 `window.__h3d` (tests, perf): `backend`, `frames`, `error`, `ready`, `view()`, `lookAt()` → `{kind, id, name?, label?}`
 or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
@@ -343,4 +366,64 @@ id, null for the lot, nothing for the current floor's), `openBuildings()`, `open
 elevator rows with state, transition, counts, current, wake/sleep and resume; buildings; the settings form, its
 statuses one per row, and whether the repo is the suggestion / the status field the default; any
 confirmation; the status line), `sent()` (commands sent, with their results), `floorPoint(session)` (a floor's screen
-point in the city, to click its building), `connection()` → `{phase, epoch}`.
+point in the city, to click its building), `connection()` → `{phase, epoch}`. M3b: `pose()` adds `y` (feet above the
+street: the street and the lobby floor are 0, floor k is `(k + 1) × storey` up), `area` (`floor` | `lobby` |
+`fire-escape` | `street`), `storey` (the floor you are on, or the landing's floor on the fire escape) and `floor` (its
+session); `setPose({x, z, y?, yaw, pitch})` with `y` places you on any floor, landing, the street or in the lobby
+(without it you stay at your level); `view()` adds `area` and `building` (and `floor` is the floor with an interior:
+the one you are on, or outside the one you last left; null in the lobby); `layout(session)` is in its building's
+outline; `building()` (the plan you walk around in: outline, `storey`, fire escape, lobby, fence, road), `where()`
+(building id, name, floors ground first, the floor with an interior), `enterLobby(building?)`, `route(session, desk)`
+(the M4 walk-out waypoints), `reception()` (the receptionist's `said`, `clips`, `cooldownUntil`, `goodbyeUntil`,
+`bubble`) and `receptionEvents()` (front door in / out, elevator arrival, E at the desk, as the game detected them);
+`panel()` of the elevator adds `lobby: {current}`.
+
+### Audio and voice lines
+
+The game's only sound so far is the lobby receptionist (`src/reception/`), played by a small Web Audio module
+(`src/audio/`): positional (the voice comes from the desk), clips fetched and decoded the first time they play, the
+AudioContext created on the first click, key or pointer lock (Chrome's autoplay rule), and a no-op without Web Audio
+(headless tests). The top bar's mute toggle and volume slider are remembered per browser (`localStorage`
+`h3d.audio`); muted, the speech bubbles still show. `src/reception/lines.ts` holds the rules (time-of-day welcome on the
+local clock, the elevator line, goodbye, a nudge whose audio stays generic while the bubble lists the waiting floors,
+the quiet-building line, the desk line; no variant twice in a row; a 2-minute cooldown each for greetings and goodbyes,
+never for the desk), covered by vitest. `src/reception/sequence.ts` says the lines of one event one after the other on
+the audio that actually plays (`playAt` returns a handle that resolves when the clip starts and ends): a bubble shows
+with its clip, the next line waits for that clip to end, a clip that takes over 1.5 s to load is dropped rather than
+played late, and muted or without sound the lines are timed by the lock's clip lengths.
+
+The lines are data: `game/voices/receptionist.json` (`id`, `kind`, `text`; a leading MiMo style tag such as
+`(Happy)` is allowed and never shown in the bubble) plus the voice settings. The clips are committed
+(`game/public/voices/receptionist/<id>.mp3`), so the game never calls a TTS service. Regenerate them with Xiaomi
+MiMo-V2.5-TTS:
+
+```sh
+pnpm -C game voices --dry-run   # what would be generated; reads no key, calls nothing
+pnpm -C game voices             # generate the lines that are new or changed
+pnpm -C game voices --check     # exit 1 on a missing, orphan, stale, broken or changed clip (no calls)
+pnpm -C game voices --relock    # after editing a clip by hand: re-record its sha256/size/length (no key, no calls)
+node game/tools/voices.ts design --takes 4 --out <dir>   # voice-design takes of the reference script
+node game/tools/voices.ts info  # duration, bitrate and size per clip
+```
+
+- **Key:** read at run time from `/tmp/xiaomi`, only when a call is about to be made; sent only in the `api-key`
+  header, never logged, written or passed to a child process. Never copy it anywhere. Run the generator in its own
+  herdr workspace (not a coding agent's), and check with `git grep -F -f /tmp/xiaomi` there so a match is never
+  printed where an agent reads it.
+- **Voice:** designed once with `mimo-v2.5-tts-voicedesign` from the manifest's description (an original friendly,
+  upbeat receptionist), the chosen take committed as `game/voices/receptionist-reference.mp3`, then every line spoken
+  with `mimo-v2.5-tts-voiceclone` from that clip, so the receptionist always sounds the same. `voice.use: "builtin"`
+  switches every line to one built-in voice (`voice.builtin.voice`, e.g. `Mia`) on `mimo-v2.5-tts` instead. Only ever
+  clone the designed reference: the voice (like the art, `docs/decisions.md`) must not imitate the Minions or other
+  Illumination characters, or any real person.
+- **Idempotent:** `game/voices/receptionist.lock.json` stores per line a `hash` of its text, the performance
+  direction, the model and the voice (the reference clip's hash, or the built-in name), and the `sha256`, `bytes` and
+  `ms` of the clip it made. An unchanged line is not regenerated; editing a line regenerates only it, a new reference
+  take or direction regenerates all, and a removed line's clip is deleted. The lock's `ms` per clip also times the
+  bubbles. vitest (`tools/voices.test.ts`, the same audit as `--check`) fails when the manifest, the lock and the
+  clips disagree: a line without a clip, a clip without a line, a line changed since its clip was made, a clip that
+  isn't MP3, or a clip whose sha256, size or length isn't the lock's (swapped or edited). Edited a clip on purpose
+  (trimmed its silence, say)? `--relock` records it; it keeps each line's `hash`, so it never makes a stale line
+  current.
+- **Size:** keep the clips under about 1 MB in total (the vitest check enforces 1 MiB). MiMo returns MP3 at ~56 kb/s,
+  24 kHz, which the generator keeps as is: 27 lines are ~800 KB. Add variants sparingly, and keep lines short.

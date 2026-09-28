@@ -26,6 +26,8 @@ export interface Stats {
 export interface BenchResult {
   backend: string;
   view: string;
+  /** M3b: where the camera stood (floor, lobby, fire-escape, street), null in the city. */
+  area: string | null;
   workers: number;
   px: string;
   frameMs: Stats;
@@ -81,7 +83,7 @@ export async function runBench(app: App, r: THREE.WebGPURenderer, o: BenchOption
   const move = () => {
     ct += dt;
     if (!sway) return;
-    if (base) app.setPose({ x: base.x, z: base.z, yaw: base.yaw + Math.sin(ct * 0.8) * 0.22, pitch: base.pitch ?? 0 });
+    if (base) app.setPose({ x: base.x, z: base.z, y: base.y, yaw: base.yaw + Math.sin(ct * 0.8) * 0.22, pitch: base.pitch ?? 0 });
     else {
       const a = az0 + Math.sin(ct * 0.2) * 0.3;
       cam.position.set(target.x + Math.sin(a) * radius, cam.position.y, target.z + Math.cos(a) * radius);
@@ -177,6 +179,7 @@ export async function runBench(app: App, r: THREE.WebGPURenderer, o: BenchOption
   return {
     backend: name,
     view: app.mode === 'floor' ? `floor:${app.office?.session ?? ''}` : 'city',
+    area: app.mode === 'floor' ? app.place.area : null,
     workers,
     px: `${size.x}x${size.y}`,
     frameMs: stats(tot),

@@ -2,8 +2,11 @@ import type { ConnState } from '../net/client';
 import { modelLabel, STATUS_WORD, taskLine, type Display } from '../world/derive';
 import type { Counts, FloorView, WorkerView } from '../world/store';
 import type { Target } from '../render/office';
+import type { Area } from '../world/building';
 import { CHIP_TEXT } from '../world/derive';
 import { ICON as DOM_ICON } from './dom';
+import { mountAudioControls } from './audioControls';
+import type { GameAudio } from '../audio';
 
 /** Authored 24×24 stroke icons, one weight. */
 const ICON = {
@@ -13,6 +16,16 @@ const ICON = {
   leaf: '<path d="M5 19c0-8 5-13 14-14 0 9-5 14-13 14"/><path d="M5 19 13 11"/>',
   building: DOM_ICON.building,
   lift: DOM_ICON.lift,
+  stairs: '<path d="M4 19h4.5v-4.5H13V10h4.5V5.5H20"/>',
+  door: '<path d="M6.5 20V5.2c0-.7.5-1.2 1.2-1.2h8.6c.7 0 1.2.5 1.2 1.2V20M4 20h16"/><circle cx="14.4" cy="12.4" r="1.1" fill="currentColor" stroke="none"/>',
+  street: '<path d="M5 20 9.5 4M19 20 14.5 4M12 5.5v2M12 10.5v2.5M12 16.5v3"/>',
+};
+
+/** Where you are outside a floor: the words and glyph in the top bar. */
+const WHERE: Record<Exclude<Area, 'floor'>, { label: string; icon: string }> = {
+  lobby: { label: 'Lobby', icon: ICON.door },
+  street: { label: 'Outside', icon: ICON.street },
+  'fire-escape': { label: 'Fire escape', icon: ICON.stairs },
 };
 const svg = (paths: string) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
@@ -149,6 +162,11 @@ export class Hud {
     }
   }
 
+  /** M3b: the sound control (mute + volume) in the top bar, before the battery toggle. */
+  mountAudio(audio: GameAudio): { dispose(): void } {
+    return mountAudioControls(this.battery.parentElement ?? this.root, audio, this.battery);
+  }
+
   setBattery(on: boolean): void {
     this.battery.setAttribute('aria-pressed', String(on));
   }
@@ -179,26 +197,56 @@ export class Hud {
   }
 
   private setCounts(c: Counts, asleep = false): void {
-    if (asleep) {
-      this.counts.innerHTML = `<span class="count count--asleep"><i></i><b>${c.total}</b><span>asleep</span></span>`;
-      return;
-    }
-    const item = (cls: string, n: number, label: string) => `<span class="count count--${cls}"><i></i><b>${n}</b><span>${label}</span></span>`;
-    this.counts.innerHTML = item('working', c.working, 'working') + item('needs_you', c.needsYou, 'needs you') + item('idle', c.idle, 'idle');
+    // The words go when the bar is short (hud.css); the title keeps them on hover.
+    const item = (cls: string, n: number, label: string) =>
+      `<span class="count count--${cls}" title="${n} ${label}"><i></i><b>${n}</b><span>${label}</span></span>`;
+    this.counts.dataset.n = asleep ? '1' : '3';
+    this.counts.innerHTML = asleep
+      ? item('asleep', c.total, 'asleep')
+      : item('working', c.working, 'working') + item('needs_you', c.needsYou, 'needs you') + item('idle', c.idle, 'idle');
   }
 
   setCity(buildings: number, floors: number, c: Counts): void {
     this.name.textContent = 'City';
-    this.sub.textContent = `${buildings} ${buildings === 1 ? 'building' : 'buildings'} · ${floors} ${floors === 1 ? 'floor' : 'floors'}`;
+    this.setSub(null, `${buildings} ${buildings === 1 ? 'building' : 'buildings'} · ${floors} ${floors === 1 ? 'floor' : 'floors'}`);
     this.setCounts(c);
   }
 
-  setFloor(v: FloorView): void {
+  /** A floor: the one you are on, or (`fire-escape`) the one whose landing you stand on. */
+  setFloor(v: FloorView, at: 'floor' | 'fire-escape' = 'floor'): void {
     this.name.textContent = v.session;
     const where = v.level ? `Floor ${v.level.number} of ${v.level.count} · ${v.building?.name ?? ''}` : 'Unassigned lot';
     const state = v.transition === 'waking' ? ' · waking up…' : v.transition === 'sleeping' ? ' · going to sleep…' : v.asleep ? ' · asleep' : '';
-    this.sub.textContent = where + state;
+    this.setSub(at === 'fire-escape' ? 'fire-escape' : null, where + state);
     this.setCounts(v.counts, v.asleep);
+  }
+
+  /** In the lobby, on the street or on the stairs between landings: the building. */
+  setBuilding(name: string, area: Area, floors: number, c: Counts): void {
+    this.name.textContent = name;
+    this.setSub(area === 'floor' ? null : area, `${floors} ${floors === 1 ? 'floor' : 'floors'}`);
+    this.setCounts(c);
+  }
+
+  private setSub(area: Exclude<Area, 'floor'> | null, text: string): void {
+    const key = `${area ?? ''}|${text}`;
+    if (this.sub.dataset.key === key) return;
+    this.sub.dataset.key = key;
+    if (!area) {
+      this.sub.textContent = text;
+      return;
+    }
+    const w = WHERE[area];
+    const tag = el('span', `where where--${area}`, `${svg(w.icon)}<span></span>`);
+    (tag.lastChild as HTMLElement).textContent = w.label;
+    this.sub.replaceChildren(tag, document.createTextNode(` · ${text}`));
+  }
+
+  /** Walking around: Issues and PRs belong to a floor, so they show only on one. */
+  setArea(area: Area): void {
+    this.root.dataset.area = area;
+    const onFloor = area === 'floor';
+    this.issues.hidden = this.prs.hidden = this.mode === 'city' || !onFloor;
   }
 
   /** The look-at prompt bar. */
@@ -238,6 +286,12 @@ export class Hud {
       line.append(text('prompt-name', t.label), text('prompt-task', 'Empty desk'));
       keys.append(disabled('E', 'Hire', 'Hiring arrives in M4'));
       this.prompt.setAttribute('aria-label', `${t.label} · E Hire`);
+    } else if (t.kind === 'prop' && t.id === 'reception') {
+      line.append(text('prompt-name', 'Reception'), text('prompt-task', 'Ask where everyone is: the floor directory'));
+      const k = el('span', 'key');
+      k.append(el('kbd', '', 'E'), document.createTextNode('Directory'));
+      keys.append(k);
+      this.prompt.setAttribute('aria-label', 'Reception · E Directory');
     } else if (t.kind === 'prop' && t.id === 'elevator') {
       line.append(text('prompt-name', 'Elevator'), text('prompt-task', 'Ride to another floor, wake one up or put it to sleep'));
       const k = el('span', 'key');

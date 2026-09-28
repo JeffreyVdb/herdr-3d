@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "lines": {
+    "welcome-morning-1": {
+      "hash": "ff93def7b05653269687fc825d9b1f635adb6529fa9057c744530618f53f74b0",
+      "sha256": "dfd6c8d05efb44af0d55d742551cc4842716008e27e39139b6ce1d0b185d2fa6",
+      "bytes": 34128,
+      "ms": 4728
+    },
+    "welcome-morning-2": {
+      "hash": "4194940617631989246b4c3fc16c89c0582aee6a13edcc19c2773a088f7e25ef",
+      "sha256": "3104cf7eaaf0274f265c4279e037d46bf89f2e5a0ec406dc21dbd2bc6219045a",
+      "bytes": 42552,
+      "ms": 5832
+    },
+    "welcome-morning-3": {
+      "hash": "66dcafd5cdecd29cae6e770963ef73b0365406385b34399140f32d2e6db8935c",
+      "sha256": "f75cd01fd23394a647f10508c914f99633a131df84826b2cfd96676aa9ab7010",
+      "bytes": 35088,
+      "ms": 4872
+    },
+    "welcome-afternoon-1": {
+      "hash": "244c898cfbfbcaebfd7226f5559465cdc4ea73ba4ccc981523b84ffef59e710b",
+      "sha256": "a9e084f816ee447ba20f59564daed7c6bfe518581d526bcb1d0af6cee3740a4f",
+      "bytes": 31680,
+      "ms": 4248
+    },
+    "welcome-afternoon-2": {
+      "hash": "bea38a56844ec00330a945e029d4e1288f22708c916da6cbff2ac50fb7ef2edd",
+      "sha256": "6f83f04cb3d2ee2f6b98e3968731fd79e561df3c440626bc85d42870df2367d7",
+      "bytes": 30600,
+      "ms": 4248
+    },
+    "welcome-afternoon-3": {
+      "hash": "1a880fe8a81fa129e81e9344dafb35c5f70e42c9ee7e96b67a9ae974d8d42ac0",
+      "sha256": "378916e7f8377d036a5fbfab9176cbab88267471c5a04fbafcb0fce632fb0d23",
+      "bytes": 30888,
+      "ms": 4560
+    },
+    "welcome-evening-1": {
+      "hash": "0a6776522470bba939e0339e688c20180861f37832f07bacaa3061e6783595b9",
+      "sha256": "bb8ebd41819e224ea123bbd47fabf6c7bc67cb3e3e0ef6f52ea30b855f1371f2",
+      "bytes": 28872,
+      "ms": 4392
+    },
+    "welcome-evening-2": {
+      "hash": "c81842aa12357a822480c81cbdd9a1395b698cb3741aebd1adb8194d53bc296f",
+      "sha256": "6f07640e0e9c61b579d2005e69d53e0c64eba8d44d7ff755de9f35d02cae8395",
+      "bytes": 29496,
+      "ms": 4080
+    },
+    "welcome-evening-3": {
+      "hash": "b0d3de7afe1c3ee63dcc76cffb93193211846a1e7f6dad3fb61f5f24b2563fe5",
+      "sha256": "665e231122aed03d3d5b2f54153834e31b0290a67244a880f4b94e3727279d49",
+      "bytes": 34032,
+      "ms": 4728
+    },
+    "welcome-night-1": {
+      "hash": "c6837fd187eb663a2da8bf268176b0dd9e9b0cf9d646d1637ee50677c08dcb69",
+      "sha256": "67aec34aa3e974935805eff010cb1947bb5cc6fe5b9b2541d353c7548b342c6f",
+      "bytes": 26064,
+      "ms": 3432
+    },
+    "welcome-night-2": {
+      "hash": "cc9fb073c93131c78b80898fc7c9126ca12f28b1f70c0925ec57d80b90034147",
+      "sha256": "19e06c237748b45133f1bdeb3ca8a49569580b341cd526dce1e37a350ef7c47c",
+      "bytes": 36528,
+      "ms": 5208
+    },
+    "welcome-night-3": {
+      "hash": "a1f44a5e47714c8e6070ae1448589a0095fcf52cf1a81de5700d89c55070b319",
+      "sha256": "6e9eb5b5b0be2a63c71ddc1d6875dbd6b29d7b0d4ff8f39f9ac68df08281f8aa",
+      "bytes": 37608,
+      "ms": 5208
+    },
+    "elevator-1": {
+      "hash": "fde5af54d3d05d9469048f01b9aec75faf9c7be9742c51e052bbcffada1e3d3d",
+      "sha256": "4845a4e3d1bd30fac6c46ff785ad313aff23a13f193ea1974817d52d00fa7e71",
+      "bytes": 12960,
+      "ms": 1848
+    },
+    "elevator-2": {
+      "hash": "0fe06faae46e3db5cec0159ac21c62e3a87c51487ff1e292124fc56ecd432b45",
+      "sha256": "b9706bd4dba22bd5ad552fee29dc3ae7c94e87bc6eb11c5cfc6d51b63b9d798b",
+      "bytes": 15288,
+      "ms": 2328
+    },
+    "elevator-3": {
+      "hash": "fd115003c874019806285d6c82e4895c4e02fcafb8ab70409726555e8ff83a53",
+      "sha256": "13d130785e4dac2516349f575336a9a2405b7d2ad88695b627f8cc02c226f0b5",
+      "bytes": 19944,
+      "ms": 3120
+    },
+    "goodbye-1": {
+      "hash": "91e72acea6b06d52e8f18ece84f871a65d66a075d6cb505cf5394b6817087a1b",
+      "sha256": "ba25bfef3fe56b005a65282cef3b649e0904d4290c2fa3c46e9da9e928739615",
+      "bytes": 17928,
+      "ms": 2640
+    },
+    "goodbye-2": {
+      "hash": "76368d898d406f31123e21ac2a56a45e421eb99c89c5e0b4042e76bcb6a08839",
+      "sha256": "0ccc6de71d8ccf601c028be93c6a20aa81cc633ced5add83039f0423966865fd",
+      "bytes": 24912,
+      "ms": 3432
+    },
+    "goodbye-3": {
+      "hash": "38e12d5d3be2baa066fc1d16e4c3c582ab554023d46d6032e5f4084ca7b238b7",
+      "sha256": "5c92e87267e2cf0ed53a0e1e00393d9de5b08217c97e3879d8ab19eb1d7ed8b3",
+      "bytes": 13296,
+      "ms": 2160
+    },
+    "nudge-1": {
+      "hash": "19320b4956a24777d918d902082eea7ed2cf56ec50a297c3b32a8926a20c1e6b",
+      "sha256": "4353e9c6b61339bba1703bf5a77dac6fee32e6603cf7657ce4ff211230bc2b16",
+      "bytes": 25440,
+      "ms": 3600
+    },
+    "nudge-2": {
+      "hash": "ef3ce11d9105fc2850a18cc738a071403b905fb737de28d3a26dddb234218e07",
+      "sha256": "36a61eaaae21e470eaabb702ed8571cc78971fc59ed2e72e4eaad4d170a6dc33",
+      "bytes": 31272,
+      "ms": 4248
+    },
+    "nudge-3": {
+      "hash": "a3cf62b0247c2caef91be2d3cd9e23b0c950fd157c7f41bb0a8c604a3f58bd4b",
+      "sha256": "40dd8e16799f2e0e5b2da4ca7e245f6138c001523644a015046662d54d2916f1",
+      "bytes": 33192,
+      "ms": 4728
+    },
+    "quiet-1": {
+      "hash": "c2160b2c173c8e7192d89b90095dfd50da86b5a6e27533b72d9402098175f495",
+      "sha256": "34e6bcc449a45a9e79e171300258f1b5e8cc57152229343149e954d0665d5074",
+      "bytes": 40320,
+      "ms": 5832
+    },
+    "quiet-2": {
+      "hash": "fe54f9c6ce946cf5c5a5a81bbd60bdd6ed95291f9871d4d1eb66363985a2080a",
+      "sha256": "1fbd7d9084b7954baef7cc425fb2c0524632e3527c66a70e99fabb2f4461af9e",
+      "bytes": 44760,
+      "ms": 6792
+    },
+    "quiet-3": {
+      "hash": "75dc7500ba9a9df12ee0928e75259be9477875718f8402def543b1f33a40c138",
+      "sha256": "da8150e1ad23f3a281ee77276ef356330552d6b8d20a28234acb2dd514d3cf0b",
+      "bytes": 52320,
+      "ms": 7272
+    },
+    "interact-1": {
+      "hash": "76e3a24f78fa95df55eea2dfa5796b9265e10132d264179c04d6d4034011b72e",
+      "sha256": "435fe375fe4b6c89346906a4d6ae10db495b52fb662e99df6596181a20c8ae97",
+      "bytes": 25920,
+      "ms": 3600
+    },
+    "interact-2": {
+      "hash": "cb8ba4ca34f3e88a48adca037dfe657bc34e6d1edb828d3fbc9678eff46db9ed",
+      "sha256": "f46dbd62bd5ea089d351176604584bfdf83da15248dc72912ba67cabf51951a9",
+      "bytes": 29520,
+      "ms": 4248
+    },
+    "interact-3": {
+      "hash": "adb587c061cc3a8e1d441e5c06ee24ce4e7c7f502ccb62f3650a2d10aba92f5e",
+      "sha256": "7f90ec90d0f0d51f1cf61be72bb3a3225203ee6d0dd4f698a969c4c694d4f17c",
+      "bytes": 30672,
+      "ms": 4248
+    }
+  }
+}

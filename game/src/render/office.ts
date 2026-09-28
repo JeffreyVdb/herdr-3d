@@ -2,14 +2,14 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { pickNearest, rayBox, type Pickable, type V3 } from '../world/collide';
 import { hash32, modelCue, taskLine, type Display } from '../world/derive';
-import { floorLayout, seatRect, slotBoxes, type Box3, type FloorLayout, type Rect } from '../world/layout';
+import { floorLayout, seatRect, slotBoxes, wallPieces, type Box3, type FloorLayout, type Opening, type Outline, type Rect } from '../world/layout';
 import type { FloorView, WorkerView } from '../world/store';
 import { AtlasCards } from './cards/atlasCards';
 import type { CardData } from './cards/types';
 import { Crowd } from './crowd';
 import { DeskSet } from './desks';
 import { BODY_TINTS, OFFICE } from './palette';
-import { buildProps, type PropMeshes } from './props';
+import { buildProps, signTexture, type PropMeshes } from './props';
 
 export type Target =
   | { kind: 'worker'; id: string; name: string; label: string; desk: number }
@@ -22,7 +22,12 @@ export const REACH = 3;
 
 export interface OfficeOptions {
   shadows: boolean;
+  /** The building's outline: every floor of a building is this big (see `outlineOf`). */
+  outline?: Outline;
 }
+
+/** Glass seen from inside: a light tint over the street. */
+export const GLASS_IN = { color: 0x9fd3f0, opacity: 0.16 };
 
 /** Visual state for a worker (shared by the office and the city). */
 export function memberOf(v: WorkerView) {
@@ -35,9 +40,14 @@ export function memberOf(v: WorkerView) {
   };
 }
 
-/** One office floor in first person: static room + instanced desks/workers + cards. */
+/**
+ * One office floor in first person: static room + instanced desks/workers +
+ * cards, under `root` at the floor's own origin (the walk scene lights it and
+ * places the building around it). Windows are holes with glass you see out
+ * of; the fire-escape door in the west wall slides open (`setDoor`).
+ */
 export class OfficeView {
-  readonly scene = new THREE.Scene();
+  readonly root = new THREE.Group();
   readonly layout: FloorLayout;
   readonly session: string;
   readonly cards: AtlasCards;
@@ -50,10 +60,11 @@ export class OfficeView {
   private readonly anchors: Array<THREE.Vector3 | null>;
   private readonly static: THREE.Object3D[] = [];
   private readonly ceiling: THREE.Group;
-  private readonly hemi: THREE.HemisphereLight;
-  private readonly sun: THREE.DirectionalLight;
   private readonly glow: THREE.MeshBasicMaterial[] = [];
-  private readonly windows: THREE.MeshBasicMaterial;
+  private readonly door: THREE.Mesh;
+  private readonly doorClosedZ: number;
+  private doorOpen = 0;
+  private readonly outlineKey: string;
   private readonly propTargets: Array<Pickable<Target>>;
   private readonly blockers: Box3[];
   private asleep = false;
@@ -65,22 +76,11 @@ export class OfficeView {
 
   constructor(view: FloorView, o: OfficeOptions) {
     this.session = view.session;
-    const L = (this.layout = floorLayout(view.desks));
+    const L = (this.layout = floorLayout(view.desks, o.outline));
+    this.outlineKey = outlineKey(o.outline);
     this.seats = Array.from({ length: L.desks }, () => null);
     this.anchors = Array.from({ length: L.desks }, () => null);
-    this.scene.background = new THREE.Color(0xdfe9f7);
-
-    // Light: soft sky fill + a sun through the east windows for shadows.
-    this.hemi = new THREE.HemisphereLight(0xffffff, 0xcdb58c, 1.5);
-    this.sun = new THREE.DirectionalLight(0xfff3dc, 1.9);
-    this.sun.position.set(L.width * 0.8, 9, L.depth * 0.35);
-    this.sun.target.position.set(L.width / 2, 0, L.depth / 2);
-    this.sun.castShadow = o.shadows;
-    this.sun.shadow.mapSize.set(2048, 2048);
-    const half = Math.max(L.width, L.depth) * 0.62;
-    Object.assign(this.sun.shadow.camera, { left: -half, right: half, top: half, bottom: -half, near: 0.5, far: 40 });
-    this.sun.shadow.bias = -0.0006;
-    this.scene.add(this.hemi, this.sun, this.sun.target);
+    this.root.name = `office:${view.session}`;
 
     // Floor: office carpet, a lighter lobby south of the board wall.
     const boardZ = L.walls[4]?.min[2] ?? L.depth - 4.3;
@@ -100,7 +100,18 @@ export class OfficeView {
         (b.min[1] + b.max[1]) / 2,
         (b.min[2] + b.max[2]) / 2,
       );
-    const walls = new THREE.Mesh(mergeGeometries(L.walls.slice(0, 4).map(boxGeo)), new THREE.MeshToonMaterial({ color: OFFICE.wall }));
+    // Outer walls cut around the windows and the fire-escape door.
+    const sides: Array<[Opening['wall'], 0 | 2]> = [
+      ['north', 0],
+      ['south', 0],
+      ['west', 2],
+      ['east', 2],
+    ];
+    const pieces = sides.flatMap(([side, axis], i) => {
+      const b = L.walls[i] as Box3;
+      return wallPieces(b, axis, L.openings.filter((w) => w.wall === side));
+    });
+    const walls = new THREE.Mesh(mergeGeometries(pieces.map(boxGeo)), new THREE.MeshToonMaterial({ color: OFFICE.wall }));
     walls.receiveShadow = true;
     const partition = L.walls[4];
     const board = partition ? new THREE.Mesh(boxGeo(partition), new THREE.MeshToonMaterial({ color: OFFICE.boardWall })) : null;
@@ -109,24 +120,61 @@ export class OfficeView {
       this.addStatic(board);
     }
     // Skirting in the partition colour ties the room together.
-    const skirting = new THREE.Mesh(
-      mergeGeometries([
-        new THREE.BoxGeometry(L.width, 0.12, 0.03).translate(L.width / 2, 0.06, 0.015),
-        new THREE.BoxGeometry(0.03, 0.12, L.depth).translate(L.width - 0.015, 0.06, L.depth / 2),
-        new THREE.BoxGeometry(0.03, 0.12, L.depth).translate(0.015, 0.06, L.depth / 2),
-        new THREE.BoxGeometry(L.width, 0.12, 0.03).translate(L.width / 2, 0.06, L.depth - 0.015),
-      ]),
-      new THREE.MeshToonMaterial({ color: OFFICE.boardWall }),
-    );
+    const door = L.fireDoor;
+    const trim: THREE.BufferGeometry[] = [
+      new THREE.BoxGeometry(L.width, 0.12, 0.03).translate(L.width / 2, 0.06, 0.015),
+      new THREE.BoxGeometry(0.03, 0.12, L.depth).translate(L.width - 0.015, 0.06, L.depth / 2),
+      new THREE.BoxGeometry(0.03, 0.12, door.z0).translate(0.015, 0.06, door.z0 / 2),
+      new THREE.BoxGeometry(0.03, 0.12, L.depth - door.z1).translate(0.015, 0.06, (door.z1 + L.depth) / 2),
+      new THREE.BoxGeometry(L.width, 0.12, 0.03).translate(L.width / 2, 0.06, L.depth - 0.015),
+    ];
+    // Window frames and sills (navy, like the skirting), and the glass you see out through.
+    const glass: THREE.BufferGeometry[] = [];
+    for (const w of L.openings) {
+      const { along, inset, turn } = wallFrame(w.wall, L);
+      const u = (w.u0 + w.u1) / 2;
+      const len = w.u1 - w.u0;
+      const place = (g: THREE.BufferGeometry, du: number, y: number, d: number) => {
+        g.rotateY(turn);
+        const [x, z] = along === 'x' ? [u + du, inset(d)] : [inset(d), u + du];
+        return g.translate(x, y, z);
+      };
+      if (w.kind === 'door') {
+        trim.push(place(new THREE.BoxGeometry(len + 0.16, 0.08, 0.05), 0, w.y1 + 0.04, 0.02));
+        for (const k of [-1, 1]) trim.push(place(new THREE.BoxGeometry(0.08, w.y1, 0.05), (k * (len + 0.08)) / 2, w.y1 / 2, 0.02));
+        continue;
+      }
+      const h = w.y1 - w.y0;
+      trim.push(place(new THREE.BoxGeometry(len + 0.1, 0.05, 0.16), 0, w.y0 + 0.025, 0.06));
+      trim.push(place(new THREE.BoxGeometry(len, 0.05, 0.05), 0, w.y1 - 0.025, 0.1));
+      for (const k of [-1, 1]) trim.push(place(new THREE.BoxGeometry(0.05, h, 0.05), (k * (len - 0.05)) / 2, (w.y0 + w.y1) / 2, 0.1));
+      if (len > 2) trim.push(place(new THREE.BoxGeometry(0.04, h, 0.04), 0, (w.y0 + w.y1) / 2, 0.1));
+      glass.push(place(new THREE.PlaneGeometry(len, h), 0, (w.y0 + w.y1) / 2, 0.1));
+    }
+    const skirting = new THREE.Mesh(mergeGeometries(trim), new THREE.MeshToonMaterial({ color: OFFICE.boardWall }));
     this.addStatic(walls, skirting);
+    const pane = new THREE.Mesh(
+      mergeGeometries(glass),
+      new THREE.MeshBasicNodeMaterial({ color: GLASS_IN.color, transparent: true, opacity: GLASS_IN.opacity, depthWrite: false }),
+    );
+    pane.name = 'office.glass';
+    this.addStatic(pane);
 
-    // Windows on the east wall and above the lounge.
-    this.windows = new THREE.MeshBasicMaterial({ color: 0xbfe6ff });
-    const panes: THREE.BufferGeometry[] = [];
-    for (let z = 3; z < L.depth - 5; z += 3.2) panes.push(new THREE.PlaneGeometry(2.2, 1.5).rotateY(-Math.PI / 2).translate(L.width - 0.012, 1.75, z + 1.1));
-    panes.push(new THREE.PlaneGeometry(3.6, 1.2).translate(2.8, 1.95, 0.012));
-    const win = new THREE.Mesh(mergeGeometries(panes), this.windows);
-    this.addStatic(win);
+    // The fire-escape door: it slides south into the wall when you walk up to it.
+    const leaf = mergeGeometries([
+      new THREE.BoxGeometry(0.05, door.height, door.z1 - door.z0).translate(0, door.height / 2, 0),
+    ]);
+    this.door = new THREE.Mesh(leaf, new THREE.MeshToonMaterial({ color: OFFICE.boardWall }));
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.06, (door.z1 - door.z0) * 0.7).translate(0.05, 1.05, 0), new THREE.MeshToonMaterial({ color: 0xffc233 }));
+    this.door.add(bar);
+    this.doorClosedZ = (door.z0 + door.z1) / 2;
+    this.door.position.set(-0.11, 0, this.doorClosedZ);
+    this.door.castShadow = true;
+    this.addStatic(this.door);
+    const exitTex = signTexture('Fire escape', 'walk up to the door', '#1c2540', '#ffc233', 512, 160);
+    const exit = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.28).rotateY(Math.PI / 2), new THREE.MeshBasicMaterial({ map: exitTex }));
+    exit.position.set(0.02, door.height + 0.3, this.doorClosedZ);
+    this.addStatic(exit);
 
     // Ceiling with light panels (hidden in the floor plan).
     this.ceiling = new THREE.Group();
@@ -139,14 +187,14 @@ export class OfficeView {
       panelMat,
     );
     this.ceiling.add(ceil, panels);
-    this.scene.add(this.ceiling);
+    this.root.add(this.ceiling);
 
     this.props = buildProps(L.props, L, view.level ? `${view.level.number}` : '·');
-    this.scene.add(this.props.group);
+    this.root.add(this.props.group);
 
     this.desks = new DeskSet(L.desks, o.shadows, true);
     this.crowd = new Crowd(L.desks, o.shadows);
-    this.scene.add(this.desks.group, this.crowd.group);
+    this.root.add(this.desks.group, this.crowd.group);
 
     const weight = (slot: number) => (this.seats[slot]?.display === 'needs_you' ? 0.7 : 1);
     // A card behind a wall (from the camera) is not shown.
@@ -161,7 +209,7 @@ export class OfficeView {
       });
     };
     this.cards = new AtlasCards(L.desks, undefined, weight, occluded);
-    this.scene.add(this.cards.object);
+    this.root.add(this.cards.object);
 
     this.propTargets = L.props.map((p) => ({
       boxes: [p.box],
@@ -170,14 +218,27 @@ export class OfficeView {
     this.blockers = L.walls;
 
     for (let i = 0; i < L.desks; i++) this.setSeat(i, null);
-    this.apply(view);
+    this.apply(view, o.outline);
   }
 
   private addStatic(...objs: THREE.Object3D[]): void {
     for (const o of objs) {
       this.static.push(o);
-      this.scene.add(o);
+      this.root.add(o);
     }
+  }
+
+  /** Fire-escape door: 0 shut, 1 open (slid into the wall); eased by the caller. */
+  setDoor(open: number): void {
+    const k = Math.max(0, Math.min(1, open));
+    if (k === this.doorOpen) return;
+    this.doorOpen = k;
+    const d = this.layout.fireDoor;
+    this.door.position.z = this.doorClosedZ + k * (d.z1 - d.z0 + 0.05);
+  }
+
+  get door01(): number {
+    return this.doorOpen;
   }
 
   get isAsleep(): boolean {
@@ -188,9 +249,9 @@ export class OfficeView {
     return this.layout.desks;
   }
 
-  /** Applies a floor view with the same desk count; false means rebuild. */
-  apply(view: FloorView): boolean {
-    if (view.desks !== this.layout.desks) return false;
+  /** Applies a floor view with the same desk count and outline; false means rebuild. */
+  apply(view: FloorView, outline?: Outline): boolean {
+    if (view.desks !== this.layout.desks || outlineKey(outline) !== this.outlineKey) return false;
     this.setAsleep(view.asleep);
     const seen = new Set<string>();
     for (let i = 0; i < view.seats.length; i++) {
@@ -228,15 +289,10 @@ export class OfficeView {
     this.cardsDirty = true;
   }
 
+  /** Lights off on an asleep floor: the ceiling panels here, the room light in the walk scene. */
   private setAsleep(asleep: boolean): void {
     this.asleep = asleep;
-    this.hemi.intensity = asleep ? 0.5 : 1.5;
-    this.hemi.color.set(asleep ? 0x8f9bd6 : 0xffffff);
-    this.sun.intensity = asleep ? 0.35 : 1.9;
-    this.sun.color.set(asleep ? 0x9fb0ff : 0xfff3dc);
     for (const m of this.glow) m.color.set(asleep ? 0x3a3f58 : 0xfff6dd);
-    this.windows.color.set(asleep ? 0x1d2447 : 0xbfe6ff);
-    (this.scene.background as THREE.Color).set(asleep ? 0x1d2447 : 0xdfe9f7);
   }
 
   setPlan(on: boolean): void {
@@ -298,12 +354,37 @@ export class OfficeView {
     this.crowd.dispose();
     this.desks.dispose();
     this.props.dispose();
-    this.scene.traverse((o) => {
+    this.root.removeFromParent();
+    this.root.traverse((o) => {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose();
-        for (const m of Array.isArray(o.material) ? o.material : [o.material]) (m as THREE.Material).dispose();
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+          (m as THREE.MeshBasicMaterial).map?.dispose();
+          (m as THREE.Material).dispose();
+        }
       }
     });
-    this.sun.shadow.map?.dispose();
+  }
+}
+
+function outlineKey(o: Outline | undefined): string {
+  return o ? `${o.width}x${o.depth}` : '';
+}
+
+/**
+ * Where an opening's frame goes on its wall: `u` runs along x or z, and
+ * `inset(d)` is the coordinate `d` metres into the wall from its room face;
+ * `turn` rotates a +z-facing plane to face into the room.
+ */
+function wallFrame(side: Opening['wall'], L: { width: number; depth: number }): { along: 'x' | 'z'; inset: (d: number) => number; turn: number } {
+  switch (side) {
+    case 'north':
+      return { along: 'x', inset: (d) => -d, turn: 0 };
+    case 'south':
+      return { along: 'x', inset: (d) => L.depth + d, turn: Math.PI };
+    case 'west':
+      return { along: 'z', inset: (d) => -d, turn: Math.PI / 2 };
+    case 'east':
+      return { along: 'z', inset: (d) => L.width + d, turn: -Math.PI / 2 };
   }
 }

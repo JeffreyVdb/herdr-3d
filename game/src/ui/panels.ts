@@ -16,13 +16,17 @@ import { failureText } from './messages';
 
 export interface PanelHost {
   readonly store: WorldStore;
-  /** The floor the player is on, null in the city. */
+  /** The floor the player is on, null in the city (and in the lobby, on the street, on the fire escape). */
   here(): string | null;
+  /** The player is in a lobby (of the building the panel shows). */
+  inLobby(): boolean;
   send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** The bridge answered `unknown_command` for it before. */
   unsupported(t: CommandName): boolean;
   /** Close the panels and ride the elevator to a floor. */
   travel(session: string): void;
+  /** Close the panels and ride the elevator down to a building's lobby (null: the unassigned lot's). */
+  travelLobby(building: string | null): void;
   /** HUD toast, for results that arrive after the panel closed. */
   toast(msg: string, kind: 'info' | 'error'): void;
 }
@@ -44,7 +48,7 @@ export interface ElevatorRow {
 
 /** What the open panel shows (test hook `window.__h3d.panel()`). */
 export type PanelSummary = (
-  | { kind: 'elevator'; building: string | null; title: string; rows: ElevatorRow[] }
+  | { kind: 'elevator'; building: string | null; title: string; rows: ElevatorRow[]; lobby: { current: boolean } | null }
   | { kind: 'buildings'; buildings: Array<{ id: string; name: string; floors: string[] }>; lot: string[] }
   | { kind: 'settings'; session: string; form: ShownForm; repoSuggested: boolean; statusDefault: boolean }
 ) & { status: string; confirm: { title: string; body: string } | null };
@@ -256,6 +260,7 @@ export class Panels {
       floors.map((f) => [f.session, f.level?.number, f.asleep, f.transition, f.counts, f.workers.map((w) => [w.name, w.worker.resume ?? ''])]),
       this.host.unsupported('floor.wake'),
       this.host.unsupported('floor.sleep'),
+      this.host.inLobby(),
     ]);
     if (key === this.renderKey) return;
     this.renderKey = key;
@@ -269,7 +274,7 @@ export class Panels {
     const sub =
       floors.length === 0
         ? 'No floors here yet'
-        : `${plural(floors.length, 'floor')} · ${hereView ? `you are on ${hereView.level ? `floor ${hereView.level.number}` : hereView.session}` : building === null ? 'sessions in no building' : 'top floor first'}`;
+        : `${plural(floors.length, 'floor')} · ${hereView ? `you are on ${hereView.level ? `floor ${hereView.level.number}` : hereView.session}` : this.host.inLobby() ? 'you are in the lobby' : building === null ? 'sessions in no building' : 'top floor first'}`;
     replaceKeepingFocus(this.head, this.headFor(this.elevatorTitle(building), sub, display, null));
 
     if (!floors.length) {
@@ -278,7 +283,31 @@ export class Panels {
     }
     const list = h('ol', { class: 'lift-floors', 'aria-label': 'Floors, top to bottom' });
     for (const f of floors) list.append(this.elevatorRow(f, f.session === here));
+    list.append(this.lobbyRow(building, this.host.inLobby()));
     replaceKeepingFocus(this.body, [list]);
+  }
+
+  /** The Lobby stop under the floors: reception, and the front door onto the street. */
+  private lobbyRow(building: string | null, current: boolean): HTMLElement {
+    const go = h(
+      'button',
+      {
+        class: 'lift-go',
+        'data-key': 'go:lobby',
+        'aria-label': `Lobby: reception and the front door. ${current ? 'You are here.' : 'Go there.'}`,
+        'aria-current': current ? 'location' : null,
+        onclick: () => (current ? this.close() : this.host.travelLobby(building)),
+        onkeydown: (e: Event) => this.rowKeys(e as KeyboardEvent),
+      },
+      h('span', { class: 'lift-num lift-num--lobby' }, 'L'),
+      h(
+        'span',
+        { class: 'lift-name' },
+        h('span', { class: 'lift-title' }, h('span', { class: 'lift-session' }, 'Lobby'), current ? h('span', { class: 'lift-here' }, 'You are here') : null),
+        h('span', { class: 'lift-lobby-note' }, 'Reception · the front door onto the street'),
+      ),
+    );
+    return h('li', { class: 'lift-row lift-row--lobby', 'data-lobby': 'true' }, go);
   }
 
   private elevatorRow(f: FloorView, current: boolean): HTMLElement {
@@ -1175,7 +1204,10 @@ export class Panels {
     const confirm = this.confirmState ? { title: this.confirmState.title, body: this.confirmState.body() } : null;
     const base = { status: this.statusText, confirm };
     const store = this.host.store;
-    if (v.kind === 'elevator') return { kind: 'elevator', building: v.building, title: this.elevatorTitle(v.building), rows: this.rows(v.building), ...base };
+    if (v.kind === 'elevator') {
+      const rows = this.rows(v.building);
+      return { kind: 'elevator', building: v.building, title: this.elevatorTitle(v.building), rows, lobby: rows.length ? { current: this.host.inLobby() } : null, ...base };
+    }
     if (v.kind === 'buildings') {
       return {
         kind: 'buildings',
