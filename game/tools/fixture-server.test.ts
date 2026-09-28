@@ -113,7 +113,7 @@ describe('every fixture', () => {
     .map((f) => f.slice(0, -'.jsonl'.length));
 
   it('finds them all', () => {
-    expect(names).toEqual(expect.arrayContaining(['demo', 'demo-m3', 'demo-m3b', 'perf-floor60', 'perf-city240']));
+    expect(names).toEqual(expect.arrayContaining(['demo', 'demo-m3', 'demo-m3b', 'perf-floor60', 'perf-floor96', 'perf-city240']));
   });
 
   it.each(names)('%s: every building lists its floors in index order, and the sim builds the same one', (name) => {

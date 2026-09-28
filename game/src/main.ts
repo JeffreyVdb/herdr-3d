@@ -27,9 +27,23 @@ export interface H3DDebug {
    * `floor` is the floor with an interior (the one you are on, or outside the one you last left; null in the
    * lobby); M3b: `area` where you are walking, `building` its name.
    */
-  view(): { mode: 'city' | 'floor'; floor: string | null; plan: boolean; busy: boolean; asleep: boolean | null; area: Area | null; building: string | null };
-  /** What the centre of the screen picks in first person (within 3 m), else null. */
+  view(): {
+    mode: 'city' | 'floor';
+    floor: string | null;
+    plan: boolean;
+    busy: boolean;
+    asleep: boolean | null;
+    area: Area | null;
+    building: string | null;
+    /** M3c: sitting at your desk in the corner office. */
+    seated: boolean;
+    /** M3c: up on the mezzanine (look-at reaches the whole floor, cards read as nearer, all of them show). */
+    overlook: boolean;
+  };
+  /** What the centre of the screen picks in first person (within 3 m; the whole floor up on the mezzanine), else null. */
   lookAt(): LookAt | null;
+  /** M3c: sits you at your desk (as E on it does); false unless you stand in your corner office. */
+  sit(): boolean;
   /** Status shown on screen for a worker, and when (unix ms) it got there. */
   status(workerId: string): { status: string; at: number } | null;
   /**
@@ -65,7 +79,7 @@ export interface H3DDebug {
   /** `y` (feet above the street) places you on any floor, landing, the street or in the lobby. */
   setPose(p: Pose): void;
   /** M3b: with `y` (feet above the street), `area` and `storey` (the floor, or the landing's floor). */
-  pose(): (Pose & { eye: number; y: number; area: Area; storey: number | null; floor: string | null }) | null;
+  pose(): (Pose & { eye: number; y: number; area: Area; storey: number | null; floor: string | null; seated: boolean }) | null;
   plan(open: boolean): void;
   focusBuilding(i: number | null): void;
   /** Speech-bubble cards on screen and what they say. */
@@ -126,7 +140,10 @@ const h3d: H3DDebug = {
     asleep: app?.officeAsleep ?? null,
     area: app?.mode === 'floor' ? app.place.area : null,
     building: app?.where?.name ?? null,
+    seated: app?.seated ?? false,
+    overlook: app?.overlooking ?? false,
   }),
+  sit: () => app?.sit() ?? false,
   lookAt: () => app?.lookAt() ?? null,
   status: (id) => app?.rendered.get(id) ?? null,
   world: () =>

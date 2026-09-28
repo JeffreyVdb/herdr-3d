@@ -37,7 +37,8 @@ const SCREEN: Record<Display, number> = {
 const HINGE_Z = SEAT_OFFSET - 0.02;
 const LID_TILT = 0.28;
 
-function geometries(): Record<Key, THREE.BufferGeometry> {
+/** The desk art in slot space (shared with your own desk on the mezzanine). */
+export function deskGeometries(): Record<Key, THREE.BufferGeometry> {
   const legH = DESK_H - 0.045;
   const lid = new THREE.BoxGeometry(0.34, 0.23, 0.012).translate(0, 0.115, 0);
   return {
@@ -89,7 +90,7 @@ export class DeskSet {
     shadows: boolean,
     readonly withPlus: boolean,
   ) {
-    const geo = geometries();
+    const geo = deskGeometries();
     const mats: Record<Key, THREE.Material> = {
       top: new THREE.MeshToonMaterial({ color: OFFICE.deskTop }),
       legs: new THREE.MeshToonMaterial({ color: OFFICE.deskLeg }),

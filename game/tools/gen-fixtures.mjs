@@ -317,6 +317,27 @@ function perfFloor60() {
   ];
 }
 
+// ---- perf: the corner office's worst case (#20): 96 desks, everyone needs you ---
+// From your desk up on the mezzanine every one of these cards shows (no cap there).
+
+function perfFloor96() {
+  const r = rng(96);
+  const b = 'b_perf00000096';
+  const workers = floorOf(r, 'perf-floor96', 96, 0).map((w) => ({ ...w, status: 'blocked' }));
+  return [
+    {
+      t: 'world.snapshot',
+      seq: 1,
+      world: {
+        buildings: [{ id: b, name: 'Perf 96', sort: 0, floors: ['perf-floor96'] }],
+        unassigned: [],
+        floors: [{ session: 'perf-floor96', state: 'running', building: b, index: 0, desks: 96 }],
+        workers,
+      },
+    },
+  ];
+}
+
 // ---- perf: the engine-bench city, 5 buildings / 30 floors / 240 workers -------
 
 function perfCity240() {
@@ -339,7 +360,7 @@ function perfCity240() {
   return [{ t: 'world.snapshot', seq: 1, world: { buildings, unassigned: [], floors, workers } }];
 }
 
-const FIXTURES = { demo, 'demo-m3': demoM3, 'demo-m3b': demoM3b, 'demo-m4': demoM4, 'perf-floor60': perfFloor60, 'perf-city240': perfCity240 };
+const FIXTURES = { demo, 'demo-m3': demoM3, 'demo-m3b': demoM3b, 'demo-m4': demoM4, 'perf-floor60': perfFloor60, 'perf-floor96': perfFloor96, 'perf-city240': perfCity240 };
 
 const check = process.argv.includes('--check');
 let stale = false;
