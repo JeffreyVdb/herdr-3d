@@ -1,4 +1,6 @@
-// Command herdr-world is the server-side bridge daemon (scaffold only).
+// Command herdr-world is the server-side bridge daemon: it watches every
+// herdr session (read-only) and serves the world over a private unix-socket
+// WebSocket. See docs/protocol.md.
 package main
 
 import (
@@ -8,5 +10,5 @@ import (
 )
 
 func main() {
-	os.Exit(app.Main("herdr-world", os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(app.World("herdr-world", os.Args[1:], os.Stdout, os.Stderr))
 }

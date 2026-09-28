@@ -1,0 +1,535 @@
+// Package store is herdr-world's own SQLite database (pure Go, no cgo):
+// buildings, which building each floor (session) is in, bridge-owned worker
+// identities with their fingerprints, and an audit log of commands. It is the
+// only state the bridge writes; herdr itself is never modified.
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	_ "modernc.org/sqlite" // registers the "sqlite" driver
+)
+
+// Sentinel errors for command validation.
+var (
+	ErrNotFound  = errors.New("not found")
+	ErrNameTaken = errors.New("name already used")
+	ErrInvalid   = errors.New("invalid argument")
+)
+
+// MaxNameLen bounds building names.
+const MaxNameLen = 64
+
+// migrations are applied in order; PRAGMA user_version is the count applied.
+var migrations = []string{
+	`CREATE TABLE building (
+		id         TEXT PRIMARY KEY,
+		name       TEXT NOT NULL,
+		sort       INTEGER NOT NULL,
+		created_at TEXT NOT NULL
+	);
+	CREATE TABLE floor_assignment (
+		session_name TEXT PRIMARY KEY,
+		building_id  TEXT NOT NULL REFERENCES building(id) ON DELETE CASCADE,
+		floor_index  INTEGER NOT NULL
+	);
+	CREATE INDEX floor_assignment_building ON floor_assignment(building_id, floor_index);
+	CREATE TABLE worker (
+		id           TEXT PRIMARY KEY,
+		session_name TEXT NOT NULL,
+		workspace_id TEXT NOT NULL,
+		label        TEXT NOT NULL,
+		created_at   TEXT NOT NULL,
+		last_seen_at TEXT NOT NULL,
+		closed_at    TEXT
+	);
+	CREATE INDEX worker_session ON worker(session_name);
+	CREATE TABLE worker_fingerprint (
+		worker_id    TEXT NOT NULL REFERENCES worker(id) ON DELETE CASCADE,
+		kind         TEXT NOT NULL,
+		value        TEXT NOT NULL,
+		last_seen_at TEXT NOT NULL,
+		PRIMARY KEY (worker_id, kind, value)
+	);
+	CREATE INDEX worker_fingerprint_lookup ON worker_fingerprint(kind, value);
+	CREATE TABLE audit_log (
+		id     INTEGER PRIMARY KEY AUTOINCREMENT,
+		ts     TEXT NOT NULL,
+		client TEXT NOT NULL,
+		cmd    TEXT NOT NULL,
+		args   TEXT NOT NULL,
+		ok     INTEGER NOT NULL,
+		error  TEXT
+	);`,
+}
+
+// Fingerprint kinds.
+const (
+	FPMarker       = "marker"
+	FPAgentSession = "agent_session"
+	FPLabelCwd     = "label_cwd"
+)
+
+// Store is an open database.
+type Store struct {
+	db  *sql.DB
+	now func() time.Time
+}
+
+// Building is a stored building.
+type Building struct {
+	ID   string
+	Name string
+	Sort int
+}
+
+// Assignment places a session on a floor of a building.
+type Assignment struct {
+	Session    string
+	BuildingID string
+	Index      int
+}
+
+// Fingerprint is one piece of identity evidence for a worker.
+type Fingerprint struct {
+	Kind  string
+	Value string
+}
+
+// Worker is a stored worker identity.
+type Worker struct {
+	ID           string
+	Session      string
+	WorkspaceID  string
+	Label        string
+	Closed       bool
+	Fingerprints []Fingerprint
+}
+
+// Open opens (creating if needed) the database at path and migrates it.
+// The parent directory is created 0700.
+func Open(ctx context.Context, path string) (*Store, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	q := url.Values{}
+	q.Add("_pragma", "foreign_keys(1)")
+	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", "journal_mode(WAL)")
+	q.Add("_pragma", "synchronous(NORMAL)")
+	db, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
+	if err != nil {
+		return nil, err
+	}
+	// One writer (the hub); a single connection also keeps pragmas uniform.
+	db.SetMaxOpenConns(1)
+	s := &Store{db: db, now: time.Now}
+	if err := s.migrate(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate %s: %w", path, err)
+	}
+	_ = os.Chmod(path, 0o600)
+	return s, nil
+}
+
+// Close closes the database.
+func (s *Store) Close() error { return s.db.Close() }
+
+func (s *Store) migrate(ctx context.Context) error {
+	var v int
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&v); err != nil {
+		return err
+	}
+	if v > len(migrations) {
+		return fmt.Errorf("database schema version %d is newer than this binary (%d)", v, len(migrations))
+	}
+	for i := v; i < len(migrations); i++ {
+		err := s.tx(ctx, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, migrations[i]); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", i+1))
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("migration %d: %w", i+1, err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) tx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ts() string { return s.now().UTC().Format(time.RFC3339Nano) }
+
+// Buildings returns every building in sort order.
+func (s *Store) Buildings(ctx context.Context) ([]Building, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, sort FROM building ORDER BY sort, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Building
+	for rows.Next() {
+		var b Building
+		if err := rows.Scan(&b.ID, &b.Name, &b.Sort); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// Assignments returns every floor assignment, by building and floor index.
+func (s *Store) Assignments(ctx context.Context) ([]Assignment, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT session_name, building_id, floor_index FROM floor_assignment ORDER BY building_id, floor_index`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Assignment
+	for rows.Next() {
+		var a Assignment
+		if err := rows.Scan(&a.Session, &a.BuildingID, &a.Index); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// CleanName trims and validates a building name.
+func CleanName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > MaxNameLen {
+		return "", fmt.Errorf("%w: building name must be 1-%d bytes", ErrInvalid, MaxNameLen)
+	}
+	return name, nil
+}
+
+func nameTaken(ctx context.Context, tx *sql.Tx, name, exceptID string) error {
+	var n int
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM building WHERE lower(name) = lower(?) AND id != ?`, name, exceptID).Scan(&n)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("%w: %q", ErrNameTaken, name)
+	}
+	return nil
+}
+
+// CreateBuilding adds a building at the end of the sort order.
+func (s *Store) CreateBuilding(ctx context.Context, id, name string) (Building, error) {
+	name, err := CleanName(name)
+	if err != nil {
+		return Building{}, err
+	}
+	b := Building{ID: id, Name: name}
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		if err := nameTaken(ctx, tx, name, ""); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort) + 1, 0) FROM building`).Scan(&b.Sort); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO building (id, name, sort, created_at) VALUES (?, ?, ?, ?)`, b.ID, b.Name, b.Sort, s.ts())
+		return err
+	})
+	return b, err
+}
+
+// RenameBuilding renames a building.
+func (s *Store) RenameBuilding(ctx context.Context, id, name string) error {
+	name, err := CleanName(name)
+	if err != nil {
+		return err
+	}
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		if err := nameTaken(ctx, tx, name, id); err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, `UPDATE building SET name = ? WHERE id = ?`, name, id)
+		if err != nil {
+			return err
+		}
+		return mustAffect(res, id)
+	})
+}
+
+// DeleteBuilding deletes a building; its floors return to the unassigned lot.
+func (s *Store) DeleteBuilding(ctx context.Context, id string) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `DELETE FROM building WHERE id = ?`, id)
+		if err != nil {
+			return err
+		}
+		if err := mustAffect(res, id); err != nil {
+			return err
+		}
+		return renumberBuildings(ctx, tx)
+	})
+}
+
+// ReorderBuildings sets the sort order; ids must list every building once.
+func (s *Store) ReorderBuildings(ctx context.Context, ids []string) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM building`).Scan(&n); err != nil {
+			return err
+		}
+		seen := map[string]bool{}
+		for _, id := range ids {
+			seen[id] = true
+		}
+		if len(ids) != n || len(seen) != n {
+			return fmt.Errorf("%w: ids must list each of the %d buildings exactly once", ErrInvalid, n)
+		}
+		for i, id := range ids {
+			res, err := tx.ExecContext(ctx, `UPDATE building SET sort = ? WHERE id = ?`, i, id)
+			if err != nil {
+				return err
+			}
+			if err := mustAffect(res, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func renumberBuildings(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM building ORDER BY sort, id`)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	for i, id := range ids {
+		if _, err := tx.ExecContext(ctx, `UPDATE building SET sort = ? WHERE id = ?`, i, id); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// AssignFloor moves session into building at index (clamped; negative
+// appends), shifting the other floors; buildingID "" unassigns it. Floor
+// indexes stay dense (0..n-1) in every building touched.
+func (s *Store) AssignFloor(ctx context.Context, session, buildingID string, index int) error {
+	if session == "" {
+		return fmt.Errorf("%w: session is required", ErrInvalid)
+	}
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		var old string
+		err := tx.QueryRowContext(ctx, `SELECT building_id FROM floor_assignment WHERE session_name = ?`, session).Scan(&old)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if buildingID != "" {
+			var n int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM building WHERE id = ?`, buildingID).Scan(&n); err != nil {
+				return err
+			}
+			if n == 0 {
+				return fmt.Errorf("%w: building %q", ErrNotFound, buildingID)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM floor_assignment WHERE session_name = ?`, session); err != nil {
+			return err
+		}
+		if old != "" && old != buildingID {
+			if err := writeFloors(ctx, tx, old, nil); err != nil {
+				return err
+			}
+		}
+		if buildingID == "" {
+			return nil
+		}
+		floors, err := buildingFloors(ctx, tx, buildingID)
+		if err != nil {
+			return err
+		}
+		if index < 0 || index > len(floors) {
+			index = len(floors)
+		}
+		floors = append(floors[:index], append([]string{session}, floors[index:]...)...)
+		return writeFloors(ctx, tx, buildingID, floors)
+	})
+}
+
+func buildingFloors(ctx context.Context, tx *sql.Tx, buildingID string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT session_name FROM floor_assignment WHERE building_id = ? ORDER BY floor_index, session_name`, buildingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
+}
+
+// writeFloors rewrites a building's floors densely; nil re-reads them.
+func writeFloors(ctx context.Context, tx *sql.Tx, buildingID string, floors []string) error {
+	if floors == nil {
+		var err error
+		if floors, err = buildingFloors(ctx, tx, buildingID); err != nil {
+			return err
+		}
+	}
+	for i, name := range floors {
+		_, err := tx.ExecContext(ctx, `INSERT INTO floor_assignment (session_name, building_id, floor_index) VALUES (?, ?, ?)
+			ON CONFLICT(session_name) DO UPDATE SET building_id = excluded.building_id, floor_index = excluded.floor_index`,
+			name, buildingID, i)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func mustAffect(res sql.Result, id string) error {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: building %q", ErrNotFound, id)
+	}
+	return nil
+}
+
+// Audit records one command and its outcome.
+func (s *Store) Audit(ctx context.Context, client, cmd string, args json.RawMessage, cmdErr error) error {
+	if len(args) == 0 {
+		args = json.RawMessage("{}")
+	}
+	var errText any
+	if cmdErr != nil {
+		errText = cmdErr.Error()
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_log (ts, client, cmd, args, ok, error) VALUES (?, ?, ?, ?, ?, ?)`,
+		s.ts(), client, cmd, string(args), cmdErr == nil, errText)
+	return err
+}
+
+// AuditEntry is one audit_log row.
+type AuditEntry struct {
+	Client, Cmd, Args string
+	OK                bool
+	Error             string
+}
+
+// AuditLog returns the audit log, oldest first.
+func (s *Store) AuditLog(ctx context.Context) ([]AuditEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT client, cmd, args, ok, COALESCE(error, '') FROM audit_log ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.Client, &e.Cmd, &e.Args, &e.OK, &e.Error); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// SessionWorkers returns every stored worker of a session with its
+// fingerprints: the identity candidates for reconciliation.
+func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT w.id, w.workspace_id, w.label, w.closed_at IS NOT NULL, f.kind, f.value
+		FROM worker w LEFT JOIN worker_fingerprint f ON f.worker_id = w.id
+		WHERE w.session_name = ? ORDER BY w.last_seen_at DESC, w.id, f.kind, f.value`, session)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Worker
+	idx := map[string]int{}
+	for rows.Next() {
+		var w Worker
+		var kind, value sql.NullString
+		if err := rows.Scan(&w.ID, &w.WorkspaceID, &w.Label, &w.Closed, &kind, &value); err != nil {
+			return nil, err
+		}
+		i, ok := idx[w.ID]
+		if !ok {
+			w.Session = session
+			i = len(out)
+			idx[w.ID] = i
+			out = append(out, w)
+		}
+		if kind.Valid {
+			out[i].Fingerprints = append(out[i].Fingerprints, Fingerprint{kind.String, value.String})
+		}
+	}
+	return out, rows.Err()
+}
+
+// SaveWorker upserts a worker (reopening it if it was closed) and adds its
+// current fingerprints; older fingerprints are kept as further evidence.
+func (s *Store) SaveWorker(ctx context.Context, w Worker) error {
+	now := s.ts()
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO worker (id, session_name, workspace_id, label, created_at, last_seen_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET session_name = excluded.session_name, workspace_id = excluded.workspace_id,
+				label = excluded.label, last_seen_at = excluded.last_seen_at, closed_at = NULL`,
+			w.ID, w.Session, w.WorkspaceID, w.Label, now, now)
+		if err != nil {
+			return err
+		}
+		for _, fp := range w.Fingerprints {
+			_, err := tx.ExecContext(ctx, `INSERT INTO worker_fingerprint (worker_id, kind, value, last_seen_at) VALUES (?, ?, ?, ?)
+				ON CONFLICT(worker_id, kind, value) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
+				w.ID, fp.Kind, fp.Value, now)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// CloseWorker records that the bridge saw a worker's workspace close.
+func (s *Store) CloseWorker(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE worker SET closed_at = ? WHERE id = ?`, s.ts(), id)
+	return err
+}
