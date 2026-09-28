@@ -301,6 +301,10 @@ func TestWakeFallback(t *testing.T) {
 		fh.setProcs("w1:p1", atShell()) // herdr's own resume did not stick
 		fh.setProcs("w2:p1", atShell())
 		b.floorAt("s", true, sleeping)
+		// herdr reports the agent gone (no agent), and a different agent:
+		// neither is w1's claude.
+		b.publish(world.AgentDetected{Session: "s", WorkspaceID: "w1", PaneID: "w1:p1"})
+		b.publish(world.AgentDetected{Session: "s", WorkspaceID: "w2", PaneID: "w2:p1", Agent: "claude"})
 	}
 	fh.onResume = func(pane string) {
 		if pane == "w1:p1" {

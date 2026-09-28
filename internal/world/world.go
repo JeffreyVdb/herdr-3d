@@ -51,7 +51,9 @@ type FloorGone struct {
 }
 
 // AgentDetected is herdr's pane_agent_detected event of a running
-// session: an agent was detected in a pane, or released it.
+// session: an agent was detected in a pane (Agent set), or it went away
+// (Agent empty: herdr 0.9 sends that when a detected agent process
+// exits) or released the pane.
 type AgentDetected struct {
 	Session     string
 	WorkspaceID string

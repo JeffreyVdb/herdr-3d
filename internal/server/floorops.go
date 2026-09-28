@@ -191,16 +191,19 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 	return nil
 }
 
-// agentDetected resolves a waking worker whose pane herdr reports an
-// agent in.
+// agentDetected resolves a waking worker whose pane herdr reports its
+// agent in. An event without an agent (herdr sends one when the agent
+// process goes away) or with a release is no detection.
 func (h *Hub) agentDetected(u world.AgentDetected) {
+	h.log.Debug("agent detected", "session", u.Session, "pane", u.PaneID, "agent", u.Agent, "released", u.Released)
 	f := h.floors[u.Session]
-	if f == nil || f.op == nil || f.op.kind != proto.TransitionWaking || u.Released {
+	if f == nil || f.op == nil || f.op.kind != proto.TransitionWaking || u.Released || u.Agent == "" {
 		return
 	}
 	for id, w := range f.op.waits {
 		cur := h.workers[id]
-		if w.state == proto.ResumePending && (w.pane == u.PaneID || (cur != nil && cur.PaneID == u.PaneID)) {
+		if w.state == proto.ResumePending && (w.harness == "" || w.harness == u.Agent) &&
+			(w.pane == u.PaneID || (cur != nil && cur.PaneID == u.PaneID)) {
 			h.resolveWait(f.op, id, "pane.agent_detected")
 		}
 	}
