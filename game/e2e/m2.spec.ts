@@ -142,6 +142,10 @@ test('floor plan (Tab): desks, free desks with +, labelled placeholders', async 
     'Lounge',
     'Drop Zone inbox',
     'Elevator',
+    // M3c: the corner office on its mezzanine.
+    'Corner office (mezzanine)',
+    'Stair',
+    'Your desk',
   ]);
   await shot(page, 'm2-floor-plan');
   clean();

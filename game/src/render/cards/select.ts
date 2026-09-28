@@ -22,6 +22,15 @@ export interface CardRange {
 }
 
 export const CARD_RANGE: CardRange = { near: 7, far: 16, cap: 24 };
+/** #20: up on the mezzanine the whole floor's cards show (the atlas has an instance per desk). */
+export const OVERLOOK_CARD_RANGE: CardRange = { ...CARD_RANGE, cap: Infinity };
+/** #20: cards are measured from the mezzanine as though you stood this much nearer (distance x this). */
+export const OVERLOOK_CARD_SCALE = 0.45;
+
+/** Distance weight of a desk's card: nearer for "needs you"; from the mezzanine, everything reads as nearer (#20). */
+export function cardWeight(needsYou: boolean, overlook: boolean): number {
+  return (needsYou ? 0.7 : 1) * (overlook ? OVERLOOK_CARD_SCALE : 1);
+}
 
 /**
  * Picks cards for anchors in front of the camera (within ~70° of `fwd`),

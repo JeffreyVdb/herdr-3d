@@ -266,13 +266,16 @@ func (s *Server) handle(conn net.Conn) {
 				c.types[sb.Type] = true
 			}
 		}
+		// Register before replying: the client returns from Subscribe on the
+		// reply, so an event pushed right after must find this stream. Holding
+		// c.mu keeps any such push behind the reply on the wire.
 		c.mu.Lock()
-		reply(map[string]any{"type": "subscription_started"})
-		c.mu.Unlock()
 		s.mu.Lock()
 		s.subs[c] = struct{}{}
 		s.notify()
 		s.mu.Unlock()
+		reply(map[string]any{"type": "subscription_started"})
+		c.mu.Unlock()
 		// Like herdr, ignore anything else the client sends; the stream
 		// ends when either side closes.
 		_, _ = r.ReadBytes(0)

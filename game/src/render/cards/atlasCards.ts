@@ -99,7 +99,7 @@ export class AtlasCards {
 
   constructor(
     readonly slots: number,
-    private readonly range: CardRange = CARD_RANGE,
+    private range: CardRange = CARD_RANGE,
     private readonly weight: (slot: number) => number = () => 1,
     private readonly occluded: (slot: number, dist: number) => boolean = () => false,
   ) {
@@ -115,8 +115,10 @@ export class AtlasCards {
     this.tex.anisotropy = 4;
 
     const geo = new THREE.PlaneGeometry(1, CELL_H / CELL_W).translate(0, CELL_H / CELL_W / 2, 0);
-    this.cell = new THREE.InstancedBufferAttribute(new Float32Array(range.cap * 4), 4);
-    this.alpha = new THREE.InstancedBufferAttribute(new Float32Array(range.cap), 1);
+    // An instance per desk: whatever the range's cap, every card of the floor can show at once.
+    const instances = Math.max(1, slots);
+    this.cell = new THREE.InstancedBufferAttribute(new Float32Array(instances * 4), 4);
+    this.alpha = new THREE.InstancedBufferAttribute(new Float32Array(instances), 1);
     this.cell.setUsage(THREE.DynamicDrawUsage);
     this.alpha.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('aCell', this.cell);
@@ -126,7 +128,7 @@ export class AtlasCards {
     const t = texture(this.tex, vec2(cell.x.add(uv().x.mul(cell.z)), cell.y.add(uv().y.mul(cell.w))));
     mat.colorNode = t.rgb;
     mat.opacityNode = t.a.mul(attribute('aAlpha', 'float'));
-    this.object = new THREE.InstancedMesh(geo, mat, range.cap);
+    this.object = new THREE.InstancedMesh(geo, mat, instances);
     this.object.name = 'cards.atlas';
     this.object.count = 0;
     this.object.frustumCulled = false;
@@ -140,6 +142,13 @@ export class AtlasCards {
     if (sameCard(prev, card)) return;
     if (card) this.cards.set(slot, card);
     else this.cards.delete(slot);
+    this.dirty = true;
+  }
+
+  /** Swaps the range (e.g. uncapped from the mezzanine, #20). */
+  setRange(range: CardRange): void {
+    if (range === this.range) return;
+    this.range = range;
     this.dirty = true;
   }
 

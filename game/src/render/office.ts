@@ -2,19 +2,23 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { pickNearest, rayBox, type Pickable, type V3 } from '../world/collide';
 import { hash32, modelCue, taskLine, type Display } from '../world/derive';
-import { floorLayout, seatRect, slotBoxes, wallPieces, type Box3, type FloorLayout, type Opening, type Outline, type Rect } from '../world/layout';
+import { DESK_H, floorLayout, MEZZ_Y, seatRect, slotBoxes, wallPieces, type Box3, type FloorLayout, type Opening, type Outline, type Rect } from '../world/layout';
 import type { FloorView, WorkerView } from '../world/store';
 import { AtlasCards } from './cards/atlasCards';
+import { CARD_RANGE, cardWeight, OVERLOOK_CARD_RANGE } from './cards/select';
 import type { CardData } from './cards/types';
 import { Crowd } from './crowd';
 import { DeskSet } from './desks';
+import { MezzanineView } from './mezzanine';
 import { BODY_TINTS, OFFICE } from './palette';
 import { buildProps, signTexture, type PropMeshes } from './props';
 
 export type Target =
   | { kind: 'worker'; id: string; name: string; label: string; desk: number }
   | { kind: 'desk'; id: string; desk: number; label: string }
-  | { kind: 'board' | 'prop'; id: string; label: string; milestone: string };
+  | { kind: 'board' | 'prop'; id: string; label: string; milestone: string }
+  /** #20: your own desk in the corner office (never a worker desk slot: E sits you down). */
+  | { kind: 'own-desk'; id: 'own-desk'; label: string; name: string };
 
 export const SEAT_Y = 0.45;
 export const CARD_Y = 1.62;
@@ -24,6 +28,8 @@ export interface OfficeOptions {
   shadows: boolean;
   /** The building's outline: every floor of a building is this big (see `outlineOf`). */
   outline?: Outline;
+  /** #20: the name on your desk's name plate. */
+  owner?: string;
 }
 
 /** Glass seen from inside: a light tint over the street. */
@@ -67,11 +73,15 @@ export class OfficeView {
   private readonly outlineKey: string;
   private readonly propTargets: Array<Pickable<Target>>;
   private readonly blockers: Box3[];
+  private readonly mezz: MezzanineView;
+  private readonly ownDesk: Pickable<Target>;
+  private overlook = false;
   private asleep = false;
   private cardsDirty = true;
   /** Walking obstacles and pick targets, until a seat changes. */
   private obstacleCache: Rect[] | null = null;
   private targetCache: Array<Pickable<Target>> | null = null;
+  private targetOwnCache: Array<Pickable<Target>> | null = null;
   private cardCam: THREE.PerspectiveCamera | null = null;
 
   constructor(view: FloorView, o: OfficeOptions) {
@@ -149,14 +159,18 @@ export class OfficeView {
       trim.push(place(new THREE.BoxGeometry(len, 0.05, 0.05), 0, w.y1 - 0.025, 0.1));
       for (const k of [-1, 1]) trim.push(place(new THREE.BoxGeometry(0.05, h, 0.05), (k * (len - 0.05)) / 2, (w.y0 + w.y1) / 2, 0.1));
       if (len > 2) trim.push(place(new THREE.BoxGeometry(0.04, h, 0.04), 0, (w.y0 + w.y1) / 2, 0.1));
+      // Tall windows: a transom at the mezzanine's floor level.
+      if (w.y0 < MEZZ_Y - 0.5 && w.y1 > MEZZ_Y + 0.5) trim.push(place(new THREE.BoxGeometry(len, 0.06, 0.06), 0, MEZZ_Y, 0.1));
       glass.push(place(new THREE.PlaneGeometry(len, h), 0, (w.y0 + w.y1) / 2, 0.1));
     }
     const skirting = new THREE.Mesh(mergeGeometries(trim), new THREE.MeshToonMaterial({ color: OFFICE.boardWall }));
     this.addStatic(walls, skirting);
-    const pane = new THREE.Mesh(
-      mergeGeometries(glass),
-      new THREE.MeshBasicNodeMaterial({ color: GLASS_IN.color, transparent: true, opacity: GLASS_IN.opacity, depthWrite: false }),
-    );
+    // One glass material: the windows, the corner office's walls and its door.
+    const glassMat = new THREE.MeshBasicNodeMaterial({ color: GLASS_IN.color, transparent: true, opacity: GLASS_IN.opacity, depthWrite: false });
+    this.mezz = new MezzanineView(L.mezzanine, o.owner ?? 'You', glassMat, o.shadows);
+    this.addStatic(this.mezz.group);
+    const pane = new THREE.Mesh(mergeGeometries([...glass, ...this.mezz.glass]), glassMat);
+    for (const g of [...glass, ...this.mezz.glass]) g.dispose();
     pane.name = 'office.glass';
     this.addStatic(pane);
 
@@ -196,7 +210,7 @@ export class OfficeView {
     this.crowd = new Crowd(L.desks, o.shadows);
     this.root.add(this.desks.group, this.crowd.group);
 
-    const weight = (slot: number) => (this.seats[slot]?.display === 'needs_you' ? 0.7 : 1);
+    const weight = (slot: number) => cardWeight(this.seats[slot]?.display === 'needs_you', this.overlook);
     // A card behind a wall (from the camera) is not shown.
     const occluded = (slot: number, dist: number) => {
       const a = this.anchors[slot];
@@ -215,7 +229,16 @@ export class OfficeView {
       boxes: [p.box],
       value: { kind: p.id.startsWith('board.') ? 'board' : 'prop', id: p.id, label: p.label, milestone: p.milestone } as Target,
     }));
-    this.blockers = L.walls;
+    // Walls and the mezzanine's slab stop look-at; its glass does not.
+    this.blockers = [...L.walls, L.mezzanine.slab];
+    const md = L.mezzanine.desk;
+    const my = L.mezzanine.y;
+    const box = (cx: number, cz: number, hx: number, hz: number, y0: number, y1: number): Box3 => ({ min: [cx - hx, y0, cz - hz], max: [cx + hx, y1, cz + hz] });
+    this.ownDesk = {
+      // The desk (turned: its long side runs north-south) with the monitor, and the chair.
+      boxes: [box(md.desk.x, md.desk.z, 0.35, 0.7, my, my + DESK_H + 0.6), box(md.seat.x, md.seat.z, 0.3, 0.3, my + 0.3, my + 1.2)],
+      value: { kind: 'own-desk', id: 'own-desk', label: 'Your desk', name: o.owner ?? 'You' },
+    };
 
     for (let i = 0; i < L.desks; i++) this.setSeat(i, null);
     this.apply(view, o.outline);
@@ -273,7 +296,7 @@ export class OfficeView {
     const s = this.layout.slots[i];
     if (!s) return;
     this.seats[i] = v;
-    this.obstacleCache = this.targetCache = null;
+    this.obstacleCache = this.targetCache = this.targetOwnCache = null;
     const mem = v ? memberOf(v) : null;
     this.desks.set(i, { x: s.seat.x, y: 0, z: s.seat.z, yaw: s.yaw, scale: 1, display: mem?.display ?? null, cueColor: mem?.cue.color ?? 0xffffff });
     if (v && mem) {
@@ -298,6 +321,28 @@ export class OfficeView {
   setPlan(on: boolean): void {
     this.ceiling.visible = !on;
     this.cards.setVisible(!on);
+    this.mezz.setPlan(on);
+  }
+
+  /** #20: up on the mezzanine, cards are measured as though you were nearer, and all of them can show. */
+  setOverlook(on: boolean): void {
+    if (on === this.overlook) return;
+    this.overlook = on;
+    this.cards.setRange(on ? OVERLOOK_CARD_RANGE : CARD_RANGE);
+    this.cardsDirty = true;
+  }
+
+  get overlooking(): boolean {
+    return this.overlook;
+  }
+
+  /** #20: the corner office's glass door: 0 shut, 1 open. */
+  setMezzDoor(open: number): void {
+    this.mezz.setDoor(open);
+  }
+
+  get mezzDoor01(): number {
+    return this.mezz.door01;
   }
 
   /** Walking obstacles: the layout plus occupied seats. */
@@ -313,8 +358,8 @@ export class OfficeView {
     return this.obstacleCache;
   }
 
-  /** What the centre of the screen looks at, within reach. */
-  pick(origin: V3, dir: V3, reach = REACH): Target | null {
+  /** What the centre of the screen looks at, within reach; `ownDesk: false` leaves your desk out (#20). */
+  pick(origin: V3, dir: V3, reach = REACH, ownDesk = true): Target | null {
     if (!this.targetCache) {
       const targets: Array<Pickable<Target>> = [...this.propTargets];
       this.layout.slots.forEach((s, i) => {
@@ -325,7 +370,8 @@ export class OfficeView {
       });
       this.targetCache = targets;
     }
-    return pickNearest(origin, dir, this.targetCache, reach, this.blockers)?.value ?? null;
+    this.targetOwnCache ??= [...this.targetCache, this.ownDesk];
+    return pickNearest(origin, dir, ownDesk ? this.targetOwnCache : this.targetCache, reach, this.blockers)?.value ?? null;
   }
 
   /** Cards on screen with what they say (tests). */
@@ -351,6 +397,7 @@ export class OfficeView {
 
   dispose(): void {
     this.cards.dispose();
+    this.mezz.dispose();
     this.crowd.dispose();
     this.desks.dispose();
     this.props.dispose();

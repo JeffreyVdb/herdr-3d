@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { blocked3, BODY_H, groundAt, MAX_DROP, moveWalker, STEP_UP, type V3p, type WalkWorld } from './collide';
-import { buildingPlan, FACE, floorY, placeAt, RISE, RISERS, STOREY, walkWorld, type BuildingPlan } from './building';
+import { buildingPlan, FACE, floorY, loadedFloor, placeAt, RISE, RISERS, STOREY, walkWorld, type BuildingPlan } from './building';
 import { floorLayout, outlineOf, seatRect, type FloorLayout } from './layout';
 import { walkOutRoute } from './route';
 
@@ -14,8 +14,7 @@ const xo = (e.outer.x0 + e.outer.x1) / 2;
 const dz = (e.door.z0 + e.door.z1) / 2;
 const R = 0.28;
 
-const world = (storey: number | null): WalkWorld =>
-  walkWorld(plan, storey === null ? null : { storey, colliders: floors[storey]!.colliders });
+const world = (storey: number | null): WalkWorld => walkWorld(plan, storey === null ? null : loadedFloor(floors[storey]!, storey));
 
 /** Walks in a straight line in small steps; returns where it ends up. */
 function walk(w: WalkWorld, from: V3p, to: { x: number; z: number }, stepLen = 0.04): V3p {
@@ -35,11 +34,14 @@ function walk(w: WalkWorld, from: V3p, to: { x: number; z: number }, stepLen = 0
 
 describe('storeys', () => {
   it('stacks the lobby at street level and each floor a storey up', () => {
-    expect(STOREY).toBeCloseTo(3.3, 6);
+    // The tall room of the corner office (#20): 6.5 m floor to ceiling plus the slab.
+    expect(STOREY).toBeCloseTo(6.8, 6);
     expect(floorY(-1)).toBe(0);
     expect(floorY(0)).toBeCloseTo(STOREY, 6);
     expect(floorY(2)).toBeCloseTo(3 * STOREY, 6);
     expect(RISE * 2 * RISERS).toBeCloseTo(STOREY, 6);
+    // Still a comfortable stair: a half landing between floors, risers under 0.19 m.
+    expect(RISE).toBeLessThanOrEqual(0.19);
   });
 });
 
@@ -194,7 +196,7 @@ describe('walking the fire escape', () => {
 describe('walk-out route (M4)', () => {
   it.each([0, 1, 2])('from any desk on floor %i: out the door, down the escape, away along the sidewalk', (storey) => {
     const L = floors[storey]!;
-    const w = walkWorld(plan, { storey, colliders: L.colliders });
+    const w = walkWorld(plan, loadedFloor(L, storey));
     for (const desk of [0, Math.floor(L.desks / 2), L.desks - 1]) {
       const route = walkOutRoute(L, plan, storey, desk);
       const seat = L.slots[desk]!;

@@ -298,6 +298,13 @@ export class Hud {
       k.append(el('kbd', '', 'E'), document.createTextNode('Elevator'));
       keys.append(k);
       this.prompt.setAttribute('aria-label', 'Elevator · E Elevator');
+    } else if (t.kind === 'own-desk') {
+      // #20: your desk in the corner office.
+      line.append(text('prompt-name', t.label), text('prompt-task', `${t.name === 'You' ? 'Yours' : t.name} · look out over the whole floor`));
+      const k = el('span', 'key');
+      k.append(el('kbd', '', 'E'), document.createTextNode('Sit'));
+      keys.append(k);
+      this.prompt.setAttribute('aria-label', `${t.label} · E Sit`);
     } else if (t.kind === 'board' || t.kind === 'prop') {
       line.append(text('prompt-name', t.label), text('prompt-task', `Placeholder until ${t.milestone}`));
       keys.append(disabled('E', 'Open', `Arrives in ${t.milestone}`));

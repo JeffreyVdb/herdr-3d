@@ -8,6 +8,7 @@ import { FONT } from './cards/atlasCards';
 import { BadgeLayer } from './badges';
 import { Crowd } from './crowd';
 import { DeskSet } from './desks';
+import { MEZZ_COLORS } from './mezzanine';
 import { memberOf, SEAT_Y } from './office';
 import { BUILDING_TINTS, GRASS, LOT_TINT, OFFICE, ROAD } from './palette';
 
@@ -21,8 +22,8 @@ import { BUILDING_TINTS, GRASS, LOT_TINT, OFFICE, ROAD } from './palette';
 
 export const CITY_SCALE = 0.22;
 const S = CITY_SCALE;
-// Dollhouse ceilings: taller than to scale, so a low camera sees to the back wall.
-const FH = ROOM_HEIGHT * S * 2 + 0.08;
+// Dollhouse ceilings to scale: the rooms are tall (#20), so a low camera still sees to the back wall.
+const FH = ROOM_HEIGHT * S + 0.08;
 const GAP = 3.2;
 const SLAB = 0.07;
 
@@ -47,7 +48,7 @@ export interface BuildingFrame {
   name: string;
 }
 
-type Part = 'slab' | 'wallN' | 'wallW' | 'kneeS' | 'kneeE' | 'pillar' | 'strip' | 'band' | 'rug';
+type Part = 'slab' | 'wallN' | 'wallW' | 'kneeS' | 'kneeE' | 'pillar' | 'strip' | 'band' | 'rug' | 'mezz';
 
 const color = new THREE.Color();
 
@@ -207,6 +208,7 @@ export class CityView {
       strip: mk('strip', basic(), false),
       band: mk('band', basic(), false, new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0)),
       rug: mk('rug', new THREE.MeshToonMaterial({ color: OFFICE.rug }), false, new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2)),
+      mezz: mk('mezz', toon(), true),
     };
   }
 
@@ -233,6 +235,9 @@ export class CityView {
     this.setPart('strip', i, x0 + w / 2, y0 + FH - SLAB - 0.03, z0 + d / 2, w * 0.7, 0.025, 0.08, asleep ? 0x2b2f45 : 0xfff2c4);
     this.setPart('band', i, x0 + w / 2, y0 + FH * 0.38, z0 + 0.085, w * 0.86, FH * 0.36, 1, asleep ? 0x1d2447 : 0xcfeaff);
     const L = f.layout;
+    // The corner office's mezzanine (#20), a warm oak deck in the north-east corner.
+    const M = L.mezzanine;
+    this.setPart('mezz', i, f.origin.x + ((M.rect.x0 + M.rect.x1) / 2) * S, y0 + M.under * S, f.origin.z + ((M.rect.z0 + M.rect.z1) / 2) * S, (M.rect.x1 - M.rect.x0) * S, (M.y - M.under) * S * 1.6, (M.rect.z1 - M.rect.z0) * S, asleep ? 0x6a5a4a : MEZZ_COLORS.oak);
     this.setPart('rug', i, f.origin.x + ((L.rug.x0 + L.rug.x1) / 2) * S, y0 + 0.005, f.origin.z + ((L.rug.z0 + L.rug.z1) / 2) * S, (L.rug.x1 - L.rug.x0) * S, 1, (L.rug.z1 - L.rug.z0) * S);
   }
 
