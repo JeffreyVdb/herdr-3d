@@ -14,7 +14,7 @@ export interface H3DDebug {
   /** True once a world snapshot has been rendered. */
   ready: boolean;
   /** `busy` while the elevator-door transition runs. */
-  view(): { mode: 'city' | 'floor'; floor: string | null; plan: boolean; cards: 'css' | 'atlas'; busy: boolean };
+  view(): { mode: 'city' | 'floor'; floor: string | null; plan: boolean; busy: boolean };
   /** What the centre of the screen picks in first person (within 3 m), else null. */
   lookAt(): LookAt | null;
   /** Status shown on screen for a worker, and when (unix ms) it got there. */
@@ -29,7 +29,10 @@ export interface H3DDebug {
   pose(): Pose | null;
   plan(open: boolean): void;
   focusBuilding(i: number | null): void;
-  cardsShown(): number[];
+  /** Speech-bubble cards on screen and what they say. */
+  cards(): Array<{ desk: number; name: string; display: string; task: string }>;
+  /** Screen point of a floor's badge in the city (to click it). */
+  badgePoint(session: string): { x: number; y: number } | null;
   bench(o?: BenchOptions): Promise<BenchResult>;
 }
 
@@ -48,7 +51,7 @@ const h3d: H3DDebug = {
   frames: 0,
   error: null,
   ready: false,
-  view: () => ({ mode: app?.mode ?? 'city', floor: app?.office?.session ?? null, plan: app?.plan ?? false, cards: app?.cards ?? 'css', busy: app?.busy ?? false }),
+  view: () => ({ mode: app?.mode ?? 'city', floor: app?.office?.session ?? null, plan: app?.plan ?? false, busy: app?.busy ?? false }),
   lookAt: () => app?.lookAt() ?? null,
   status: (id) => app?.rendered.get(id) ?? null,
   world: () =>
@@ -75,7 +78,8 @@ const h3d: H3DDebug = {
   pose: () => (app?.mode === 'floor' ? app.pose() : null),
   plan: (open) => app?.setPlan(open),
   focusBuilding: (i) => app?.focusBuilding(i, false),
-  cardsShown: () => app?.office?.cards.shown() ?? [],
+  cards: () => app?.office?.shownCards() ?? [],
+  badgePoint: (s) => app?.badgePoint(s) ?? null,
   bench: async (o) => {
     if (!app || !renderer) throw new Error('not started');
     return runBench(app, renderer, o);

@@ -57,7 +57,6 @@ export class App {
   private readonly planCam: THREE.OrthographicCamera;
   private readonly controls: OrbitControls;
   private readonly walker: Walker;
-  private readonly cardKind: 'css' | 'atlas';
   private readonly shadows: boolean;
   private planOpen = false;
   private lastActivity = 0;
@@ -77,12 +76,12 @@ export class App {
 
   constructor(o: AppOptions) {
     this.r = o.renderer;
-    this.cardKind = o.params.get('cards') === 'atlas' ? 'atlas' : 'css';
     this.shadows = o.params.get('shadows') !== '0';
     this.batterySaver = o.params.get('battery') === '1';
     this.hud = new Hud(o.host);
     this.hud.setBattery(this.batterySaver);
-    this.city = new CityView(this.hud.badgesLayer, this.shadows, (s) => void this.enterFloor(s));
+    this.city = new CityView(this.hud.floorList, this.shadows, (s) => void this.enterFloor(s));
+    this.city.badges = o.params.get('badges') !== '0';
 
     this.cityCam = new THREE.PerspectiveCamera(42, 1, 0.1, 600);
     this.fpCam = new THREE.PerspectiveCamera(70, 1, 0.05, 200);
@@ -231,7 +230,7 @@ export class App {
     if (!fv || this.transitioning) return;
     const swap = () => {
       this.office?.dispose();
-      this.office = new OfficeView(fv, { shadows: this.shadows, cards: this.cardKind, cardsParent: this.hud.cardsLayer });
+      this.office = new OfficeView(fv, { shadows: this.shadows });
       this.mode = 'floor';
       this.hud.setMode('floor');
       this.city.setVisible(false);
@@ -290,7 +289,7 @@ export class App {
     if (!fv) return;
     const pose = { x: this.walker.x, z: this.walker.z, yaw: this.walker.yaw, pitch: this.walker.pitch };
     this.office.dispose();
-    this.office = new OfficeView(fv, { shadows: this.shadows, cards: this.cardKind, cardsParent: this.hud.cardsLayer });
+    this.office = new OfficeView(fv, { shadows: this.shadows });
     const L = this.office.layout;
     if (blocked(pose, 0.28, this.office.obstacles()) || pose.x > L.width || pose.z > L.depth) {
       this.walker.place(L.spawn.x, L.spawn.z, L.spawn.yaw);
@@ -377,7 +376,7 @@ export class App {
     window.addEventListener('keyup', (e) => this.onKey(e, false));
     canvas.addEventListener('pointerdown', (e) => (this.down = { x: e.clientX, y: e.clientY }));
     canvas.addEventListener('pointermove', (e) => {
-      if (this.mode === 'city' && !this.down) this.city.setHover(this.cityRayFloor(e));
+      if (this.mode === 'city' && !this.down) this.city.setHover(this.cityPick(e));
     });
     canvas.addEventListener('pointerup', (e) => {
       const d = this.down;
@@ -422,8 +421,20 @@ export class App {
     return this.city.pickFloor(rc.ray.origin, rc.ray.direction);
   }
 
+  /** Floor under the pointer in the city: its badge, else the floor itself. */
+  private cityPick(e: { clientX: number; clientY: number }): string | null {
+    const rect = this.r.domElement.getBoundingClientRect();
+    return this.city.pickBadge(this.cityCam, e.clientX - rect.left, e.clientY - rect.top, this.vp) ?? this.cityRayFloor(e);
+  }
+
   private onClick(e: PointerEvent): void {
     if (this.mode === 'city') {
+      const rect = this.r.domElement.getBoundingClientRect();
+      const badge = this.city.pickBadge(this.cityCam, e.clientX - rect.left, e.clientY - rect.top, this.vp);
+      if (badge) {
+        void this.enterFloor(badge);
+        return;
+      }
       const s = this.cityRayFloor(e);
       if (!s) return;
       const b = this.city.buildingOf(s);
@@ -510,7 +521,7 @@ export class App {
         this.cameraMoved = true;
       }
       this.controls.update();
-      this.city.frame(t, this.cityCam, this.vp, this.cameraMoved);
+      this.city.frame(t, this.cityCam);
     }
     this.cameraMoved = false;
   }
@@ -626,8 +637,9 @@ export class App {
     return this.lastT;
   }
 
-  get cards(): 'css' | 'atlas' {
-    return this.cardKind;
+  /** Screen point (CSS px) of a floor's badge in the city view. */
+  badgePoint(session: string): { x: number; y: number } | null {
+    return this.mode === 'city' ? this.city.badgePoint(this.cityCam, session, this.vp) : null;
   }
 }
 

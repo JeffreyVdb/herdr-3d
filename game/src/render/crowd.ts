@@ -57,9 +57,11 @@ const EYE_Y = 0.6;
 
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 
-function geometries(): Record<PartKey, THREE.BufferGeometry> {
-  const arm = new THREE.CapsuleGeometry(0.048, 0.2, 4, 8).translate(0, -0.15, 0);
-  const leg = new THREE.CapsuleGeometry(0.062, 0.1, 4, 8).translate(0, -0.1, 0);
+/** `low` is for the city, where a worker is a few pixels tall. */
+function geometries(low: boolean): Record<PartKey, THREE.BufferGeometry> {
+  const n = (hi: number, lo: number) => (low ? lo : hi);
+  const arm = new THREE.CapsuleGeometry(0.048, 0.2, n(4, 2), n(8, 5)).translate(0, -0.15, 0);
+  const leg = new THREE.CapsuleGeometry(0.062, 0.1, n(4, 2), n(8, 5)).translate(0, -0.1, 0);
   const goggles = (g: () => THREE.BufferGeometry, z: number, rotX: boolean) =>
     mergeGeometries(
       [-1, 1].map((s) => {
@@ -69,13 +71,13 @@ function geometries(): Record<PartKey, THREE.BufferGeometry> {
       }),
     );
   const beanie = mergeGeometries([
-    new THREE.SphereGeometry(0.215, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2).translate(0, 0.74, 0),
-    new THREE.CylinderGeometry(0.222, 0.222, 0.06, 16).translate(0, 0.745, 0),
-    new THREE.SphereGeometry(0.055, 10, 6).translate(0, 0.97, 0),
+    new THREE.SphereGeometry(0.215, n(16, 9), n(8, 3), 0, Math.PI * 2, 0, Math.PI / 2).translate(0, 0.74, 0),
+    new THREE.CylinderGeometry(0.222, 0.222, 0.06, n(16, 9)).translate(0, 0.745, 0),
+    new THREE.SphereGeometry(0.055, n(10, 5), n(6, 3)).translate(0, 0.97, 0),
   ]);
   const cap = mergeGeometries([
-    new THREE.SphereGeometry(0.222, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2).translate(0, 0.73, 0),
-    new THREE.CylinderGeometry(0.15, 0.15, 0.02, 16, 1).scale(1, 1, 0.8).translate(0, 0.74, 0.2),
+    new THREE.SphereGeometry(0.222, n(16, 9), n(8, 3), 0, Math.PI * 2, 0, Math.PI / 2).translate(0, 0.73, 0),
+    new THREE.CylinderGeometry(0.15, 0.15, 0.02, n(16, 8), 1).scale(1, 1, 0.8).translate(0, 0.74, 0.2),
   ]);
   const exclaim = mergeGeometries([
     new THREE.BoxGeometry(0.06, 0.2, 0.06).translate(0, 0.14, 0),
@@ -88,20 +90,20 @@ function geometries(): Record<PartKey, THREE.BufferGeometry> {
     bar(0.16).rotateZ(-Math.PI / 4.3).translate(0, 0, 0),
   ]);
   return {
-    body: new THREE.CapsuleGeometry(0.255, 0.34, 6, 16).translate(0, 0.43, 0),
-    pants: new THREE.CylinderGeometry(0.262, 0.27, 0.22, 16).translate(0, 0.13, 0),
-    strap: new THREE.TorusGeometry(0.258, 0.026, 6, 24).rotateX(Math.PI / 2).translate(0, EYE_Y, 0),
-    rims: goggles(() => new THREE.CylinderGeometry(0.078, 0.078, 0.07, 14), 0.22, true),
-    lenses: goggles(() => new THREE.SphereGeometry(0.062, 12, 8), 0.245, false),
-    pupils: goggles(() => new THREE.SphereGeometry(0.026, 8, 6), 0.3, false),
-    mouth: new THREE.TorusGeometry(0.045, 0.011, 5, 12, Math.PI).rotateZ(Math.PI).translate(0, 0.47, 0.25),
+    body: new THREE.CapsuleGeometry(0.255, 0.34, n(6, 3), n(16, 10)).translate(0, 0.43, 0),
+    pants: new THREE.CylinderGeometry(0.262, 0.27, 0.22, n(16, 10)).translate(0, 0.13, 0),
+    strap: new THREE.TorusGeometry(0.258, 0.026, n(6, 3), n(24, 10)).rotateX(Math.PI / 2).translate(0, EYE_Y, 0),
+    rims: goggles(() => new THREE.CylinderGeometry(0.078, 0.078, 0.07, n(14, 7)), 0.22, true),
+    lenses: goggles(() => new THREE.SphereGeometry(0.062, n(12, 6), n(8, 4)), 0.245, false),
+    pupils: goggles(() => new THREE.SphereGeometry(0.026, n(8, 4), n(6, 3)), 0.3, false),
+    mouth: new THREE.TorusGeometry(0.045, 0.011, n(5, 3), n(12, 5), Math.PI).rotateZ(Math.PI).translate(0, 0.47, 0.25),
     armL: arm,
     armR: arm.clone(),
     legL: leg,
     legR: leg.clone(),
     beanie,
     cap,
-    mug: new THREE.CylinderGeometry(0.042, 0.038, 0.09, 12),
+    mug: new THREE.CylinderGeometry(0.042, 0.038, 0.09, n(12, 6)),
     exclaim,
     zzz,
   };
@@ -143,8 +145,9 @@ export class Crowd {
   constructor(
     readonly capacity: number,
     shadows: boolean,
+    low = false,
   ) {
-    const geo = geometries();
+    const geo = geometries(low);
     this.parts = (Object.keys(geo) as PartKey[]).map((key) => {
       const per = key === 'zzz' ? 2 : 1;
       const tinted = TINTED.includes(key) || CUED.includes(key);

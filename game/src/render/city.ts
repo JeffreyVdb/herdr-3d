@@ -5,6 +5,7 @@ import type { Display } from '../world/derive';
 import { floorLayout, ROOM_HEIGHT, type Box3, type FloorLayout } from '../world/layout';
 import type { BuildingView, FloorView, WorkerView } from '../world/store';
 import { FONT } from './cards/atlasCards';
+import { BadgeLayer } from './badges';
 import { Crowd } from './crowd';
 import { DeskSet } from './desks';
 import { memberOf, SEAT_Y } from './office';
@@ -14,7 +15,8 @@ import { BUILDING_TINTS, GRASS, LOT_TINT, OFFICE, ROAD } from './palette';
  * The city: every building as a dollhouse of open-front floors (north and
  * west walls, knee walls to the south and east), each floor a scaled-down
  * copy of its office with the same desks and workers. Lights on for running
- * floors, dark with zZz for asleep ones, and a count badge per floor.
+ * floors, dark with zZz for asleep ones, and a count badge per floor (in the
+ * scene, see badges.ts) plus a static, accessible floor list in the DOM.
  */
 
 export const CITY_SCALE = 0.22;
@@ -33,7 +35,9 @@ interface FloorSlot {
   box: Box3;
   origin: THREE.Vector3;
   deskBase: number;
-  badge: HTMLButtonElement;
+  /** Entry in the accessible floor list. */
+  button: HTMLButtonElement;
+  index: number;
   anchor: THREE.Vector3;
 }
 
@@ -65,6 +69,7 @@ export class CityView {
   private crowd: Crowd | null = null;
   private desks: DeskSet | null = null;
   private parts: Record<Part, THREE.InstancedMesh> | null = null;
+  private badgeLayer: BadgeLayer | null = null;
   private dynamic = new THREE.Group();
   private readonly sun: THREE.DirectionalLight;
   private hover: string | null = null;
@@ -108,9 +113,11 @@ export class CityView {
     for (const p of plans) for (const l of p.layouts) deskTotal += l.desks;
     const floorsTotal = plans.reduce((n, p) => n + p.layouts.length, 0);
     this.desks = new DeskSet(Math.max(1, deskTotal), this.shadows, false);
-    this.crowd = new Crowd(Math.max(1, deskTotal), this.shadows);
+    this.crowd = new Crowd(Math.max(1, deskTotal), this.shadows, true);
     this.parts = this.makeParts(Math.max(1, floorsTotal));
-    this.dynamic.add(this.desks.group, this.crowd.group, ...Object.values(this.parts));
+    this.badgeLayer = new BadgeLayer(Math.max(1, floorsTotal), FH * 0.62);
+    this.badgeLayer.object.visible = this.badges;
+    this.dynamic.add(this.desks.group, this.crowd.group, ...Object.values(this.parts), this.badgeLayer.object);
 
     let deskBase = 0;
     let fi = 0;
@@ -125,7 +132,7 @@ export class CityView {
         const box: Box3 = { min: [bx0, oy, bz0], max: [bx0 + p.w, oy + FH, bz0 + p.d] };
         // Floor content is centred in the footprint.
         const origin = new THREE.Vector3(bx0 + (p.w - layout.width * S) / 2, oy + SLAB / 2, bz0 + (p.d - layout.depth * S) / 2);
-        const badge = this.makeBadge(view);
+        const button = this.makeButton(view);
         const slot: FloorSlot = {
           session: view.session,
           building: p.bi,
@@ -134,13 +141,15 @@ export class CityView {
           box,
           origin,
           deskBase,
-          badge,
+          button,
+          index: fi,
           anchor: new THREE.Vector3(bx0 + p.w + 0.12, oy + FH * 0.45, bz0 + p.d),
         };
         this.floors.push(slot);
         this.bySession.set(view.session, slot);
         this.placeFloor(fi, slot, tint);
         this.fillFloor(slot);
+        this.paintBadge(slot);
         deskBase += layout.desks;
         fi++;
       });
@@ -238,41 +247,28 @@ export class CityView {
     } else this.crowd.set(g, null);
   }
 
-  private makeBadge(view: FloorView): HTMLButtonElement {
+  private makeButton(view: FloorView): HTMLButtonElement {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'badge';
     b.dataset.session = view.session;
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.onEnter(view.session);
-    });
-    b.addEventListener('pointerenter', () => this.setHover(view.session));
-    b.addEventListener('pointerleave', () => this.setHover(null));
-    this.fillBadge(b, view);
+    b.addEventListener('click', () => this.onEnter(view.session));
+    b.addEventListener('focus', () => this.setHover(view.session));
+    b.addEventListener('blur', () => this.setHover(null));
+    this.label(b, view);
     this.badgeParent.appendChild(b);
     return b;
   }
 
-  private fillBadge(b: HTMLButtonElement, v: FloorView): void {
-    b.dataset.state = v.asleep ? 'asleep' : 'running';
+  private label(b: HTMLButtonElement, v: FloorView): void {
     const c = v.counts;
-    b.replaceChildren();
-    const name = document.createElement('span');
-    name.className = 'badge-name';
-    name.textContent = v.session;
-    b.append(name);
-    const counts = document.createElement('span');
-    counts.className = 'badge-counts';
-    if (v.asleep) {
-      counts.innerHTML = `<span class="count count--asleep"><i></i>asleep · ${c.total}</span>`;
-      b.setAttribute('aria-label', `${v.session}: asleep, ${c.total} workers. Enter floor`);
-    } else {
-      const item = (cls: string, n: number, label: string) => `<span class="count count--${cls}" title="${label}"><i></i>${n}</span>`;
-      counts.innerHTML = item('working', c.working, 'working') + item('needs_you', c.needsYou, 'needs you') + item('idle', c.idle, 'idle');
-      b.setAttribute('aria-label', `${v.session}: ${c.working} working, ${c.needsYou} need you, ${c.idle} idle. Enter floor`);
-    }
-    b.append(counts);
+    b.dataset.state = v.asleep ? 'asleep' : 'running';
+    b.textContent = v.asleep
+      ? `${v.session}: asleep, ${c.total} workers. Enter floor`
+      : `${v.session}: ${c.working} working, ${c.needsYou} need you, ${c.idle} idle. Enter floor`;
+  }
+
+  private paintBadge(f: FloorSlot): void {
+    this.badgeLayer?.set(f.index, f.anchor, { session: f.session, asleep: f.view.asleep, counts: f.view.counts, hover: this.hover === f.session });
   }
 
   /** A floor's counts or a worker changed without structure changes. */
@@ -280,7 +276,8 @@ export class CityView {
     const f = this.bySession.get(v.session);
     if (!f) return;
     f.view = v;
-    this.fillBadge(f.badge, v);
+    this.label(f.button, v);
+    this.paintBadge(f);
   }
 
   updateWorker(v: WorkerView): void {
@@ -356,7 +353,8 @@ export class CityView {
   }
 
   private clear(): void {
-    for (const f of this.floors) f.badge.remove();
+    for (const f of this.floors) f.button.remove();
+    this.badgeLayer = null;
     this.floors = [];
     this.bySession.clear();
     this.workerSlot.clear();
@@ -409,9 +407,11 @@ export class CityView {
 
   setHover(session: string | null): void {
     if (this.hover === session) return;
-    if (this.hover) this.bySession.get(this.hover)?.badge.classList.remove('is-hover');
+    const prev = this.hover ? this.bySession.get(this.hover) : undefined;
     this.hover = session;
-    if (session) this.bySession.get(session)?.badge.classList.add('is-hover');
+    if (prev) this.paintBadge(prev);
+    const next = session ? this.bySession.get(session) : undefined;
+    if (next) this.paintBadge(next);
   }
 
   get hovered(): string | null {
@@ -419,31 +419,27 @@ export class CityView {
   }
 
   setVisible(v: boolean): void {
-    for (const f of this.floors) f.badge.hidden = !v;
+    this.badgeParent.hidden = !v;
   }
 
-  frame(t: number, camera: THREE.PerspectiveCamera, vp: { width: number; height: number }, moved: boolean): void {
+  /** Floor badges on/off (`?badges=0`, for perf comparisons). */
+  badges = true;
+
+  frame(t: number, camera: THREE.PerspectiveCamera): void {
     this.crowd?.update(t);
     this.desks?.update(t, null);
-    if (!moved) return;
-    // Project, then keep a building's badges from overlapping (top floor first).
-    const placed = this.floors.map((f) => {
-      this.v.copy(f.anchor).project(camera);
-      return { f, on: this.v.z < 1 && Math.abs(this.v.x) < 1.1 && Math.abs(this.v.y) < 1.1, x: ((this.v.x + 1) / 2) * vp.width, y: ((1 - this.v.y) / 2) * vp.height };
-    });
-    const byBuilding = new Map<number, typeof placed>();
-    for (const p of placed) byBuilding.set(p.f.building, [...(byBuilding.get(p.f.building) ?? []), p]);
-    for (const list of byBuilding.values()) {
-      list.sort((a, b) => a.y - b.y);
-      for (let i = 1; i < list.length; i++) {
-        const prev = list[i - 1];
-        const cur = list[i];
-        if (prev && cur && cur.y < prev.y + 32) cur.y = prev.y + 32;
-      }
-    }
-    for (const p of placed) {
-      p.f.badge.style.visibility = p.on ? 'visible' : 'hidden';
-      if (p.on) p.f.badge.style.transform = `translate3d(${p.x.toFixed(1)}px,${p.y.toFixed(1)}px,0) translate(0,-50%)`;
-    }
+    if (this.badges) this.badgeLayer?.update(camera);
+  }
+
+  /** Floor whose badge is under a screen point (CSS px). */
+  pickBadge(camera: THREE.PerspectiveCamera, x: number, y: number, vp: { width: number; height: number }): string | null {
+    if (!this.badges || !this.badgeLayer) return null;
+    const i = this.badgeLayer.hit(camera, x, y, vp);
+    return i === null ? null : (this.floors[i]?.session ?? null);
+  }
+
+  badgePoint(camera: THREE.PerspectiveCamera, session: string, vp: { width: number; height: number }): { x: number; y: number } | null {
+    const f = this.bySession.get(session);
+    return f && this.badgeLayer ? this.badgeLayer.center(camera, f.index, vp) : null;
   }
 }

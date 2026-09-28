@@ -26,12 +26,14 @@ test('city view: buildings, floors stacked, a badge per floor', async ({ page })
   const clean = watchErrors(page);
   await openGame(page);
   await expect(page.locator('.topbar-sub')).toHaveText('2 buildings · 3 floors');
-  const badges = page.locator('.badge');
-  await expect(badges).toHaveCount(3);
-  const herdr = page.locator('.badge[data-session="herdr-3d"]');
+  // Badges are drawn in the scene; the floor list mirrors them for keyboards and screen readers.
+  const floors = page.locator('.floor-list button');
+  await expect(floors).toHaveCount(3);
+  const herdr = page.locator('.floor-list button[data-session="herdr-3d"]');
   await expect(herdr).toHaveAttribute('data-state', 'running');
-  await expect(herdr).toHaveAttribute('aria-label', 'herdr-3d: 9 working, 3 need you, 6 idle. Enter floor');
-  await expect(page.locator('.badge[data-session="depot-manager"]')).toHaveAttribute('data-state', 'asleep');
+  await expect(herdr).toHaveText('herdr-3d: 9 working, 3 need you, 6 idle. Enter floor');
+  await expect(page.locator('.floor-list button[data-session="depot-manager"]')).toHaveText('depot-manager: asleep, 8 workers. Enter floor');
+  for (const s of ['herdr-3d', 'depot-manager', 'pastry']) expect(await page.evaluate((x) => window.__h3d.badgePoint(x), s), s).not.toBeNull();
   await shot(page, 'm2-city');
   clean();
 });
@@ -39,7 +41,10 @@ test('city view: buildings, floors stacked, a badge per floor', async ({ page })
 test('picking a floor badge enters the floor in first person, at the entrance facing the board wall', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page);
-  await page.locator('.badge[data-session="herdr-3d"]').click();
+  await frames(page);
+  const badge = await page.evaluate(() => window.__h3d.badgePoint('herdr-3d'));
+  if (!badge) throw new Error('no badge on screen');
+  await page.mouse.click(badge.x, badge.y);
   await page.waitForFunction(() => window.__h3d.view().mode === 'floor' && !window.__h3d.view().busy);
   await expect(page.locator('.topbar-name')).toHaveText('herdr-3d');
   await expect(page.locator('.topbar-sub')).toHaveText('Floor 2 of 2 · Work');
@@ -55,6 +60,12 @@ test('picking a floor badge enters the floor in first person, at the entrance fa
   expect(await page.evaluate(() => window.__h3d.view().plan)).toBe(false);
   await page.keyboard.press('Backspace');
   await page.waitForFunction(() => window.__h3d.view().mode === 'city' && !window.__h3d.view().busy);
+
+  // Keyboard: the floor list enters a floor too.
+  await page.locator('.floor-list button[data-session="pastry"]').focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__h3d.view().floor === 'pastry' && !window.__h3d.view().busy);
+  await expect(page.locator('.topbar-sub')).toHaveText('Floor 1 of 1 · Personal');
   clean();
 });
 
@@ -98,12 +109,11 @@ test('first person: a desk row with workers, cards with task text, a free desk',
   if (!s) throw new Error('slot 6');
   await page.evaluate((p) => window.__h3d.setPose(p), { x: s.seat.x + 1.2, z: s.seat.z + 2.6, yaw: 0.35, pitch: -0.12 });
   await frames(page, 4);
-  expect((await page.evaluate(() => window.__h3d.cardsShown())).length).toBeGreaterThan(3);
-  const cards = page.locator('.card:not([hidden])');
-  await expect(cards.filter({ hasText: 'Replay buffer handles since_seq edge cases' })).toHaveCount(1);
-  await expect(cards.filter({ hasText: 'Noodle' }).locator('.tape')).toHaveText('DONE');
-  // A "needs you" card turns red.
-  await expect(page.locator('.card[data-display="needs_you"]:not([hidden])').first()).toBeVisible();
+  const cards = await page.evaluate(() => window.__h3d.cards());
+  expect(cards.length).toBeGreaterThan(3);
+  expect(cards).toContainEqual(expect.objectContaining({ name: 'Noodle', display: 'done', task: 'Replay buffer handles since_seq edge cases' }));
+  // A "needs you" card (drawn red) is among them.
+  expect(cards.some((c) => c.display === 'needs_you')).toBe(true);
   await shot(page, 'm2-desk-row');
   clean();
 });

@@ -5,8 +5,7 @@ import { hash32, modelCue, taskLine, type Display } from '../world/derive';
 import { floorLayout, seatRect, slotBoxes, type Box3, type FloorLayout, type Rect } from '../world/layout';
 import type { FloorView, WorkerView } from '../world/store';
 import { AtlasCards } from './cards/atlasCards';
-import { CssCards } from './cards/cssCards';
-import type { CardLayer } from './cards/types';
+import type { CardData } from './cards/types';
 import { Crowd } from './crowd';
 import { DeskSet } from './desks';
 import { BODY_TINTS, OFFICE } from './palette';
@@ -23,8 +22,6 @@ export const REACH = 3;
 
 export interface OfficeOptions {
   shadows: boolean;
-  cards: 'css' | 'atlas';
-  cardsParent: HTMLElement;
 }
 
 /** Visual state for a worker (shared by the office and the city). */
@@ -43,7 +40,7 @@ export class OfficeView {
   readonly scene = new THREE.Scene();
   readonly layout: FloorLayout;
   readonly session: string;
-  readonly cards: CardLayer;
+  readonly cards: AtlasCards;
   /** Worker id → status as last applied to the scene. */
   readonly applied = new Map<string, Display>();
   private readonly crowd: Crowd;
@@ -160,8 +157,8 @@ export class OfficeView {
         return t !== null && t < dist - 0.05;
       });
     };
-    this.cards = o.cards === 'atlas' ? new AtlasCards(L.desks, undefined, weight, occluded) : new CssCards(o.cardsParent, undefined, weight, occluded);
-    if (this.cards.object) this.scene.add(this.cards.object);
+    this.cards = new AtlasCards(L.desks, undefined, weight, occluded);
+    this.scene.add(this.cards.object);
 
     this.propTargets = L.props.map((p) => ({
       boxes: [p.box],
@@ -259,6 +256,14 @@ export class OfficeView {
       else targets.push({ boxes: [b.desk, b.plus], value: { kind: 'desk', id: `desk-${i}`, desk: i, label: `Desk ${i + 1}` } });
     });
     return pickNearest(origin, dir, targets, reach, this.blockers)?.value ?? null;
+  }
+
+  /** Cards on screen with what they say (tests). */
+  shownCards(): Array<CardData & { desk: number }> {
+    return this.cards.shown().flatMap((desk) => {
+      const c = this.cards.card(desk);
+      return c ? [{ desk, ...c }] : [];
+    });
   }
 
   seat(i: number): WorkerView | null {

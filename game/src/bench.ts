@@ -26,7 +26,6 @@ export interface Stats {
 export interface BenchResult {
   backend: string;
   view: string;
-  cards: string;
   workers: number;
   px: string;
   frameMs: Stats;
@@ -178,7 +177,6 @@ export async function runBench(app: App, r: THREE.WebGPURenderer, o: BenchOption
   return {
     backend: name,
     view: app.mode === 'floor' ? `floor:${app.office?.session ?? ''}` : 'city',
-    cards: app.cards,
     workers,
     px: `${size.x}x${size.y}`,
     frameMs: stats(tot),

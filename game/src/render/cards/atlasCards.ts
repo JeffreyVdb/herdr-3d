@@ -3,18 +3,18 @@ import { attribute, texture, uv, vec2 } from 'three/tsl';
 import { CHIP_TEXT } from '../../world/derive';
 import { STATUS_CSS } from '../palette';
 import { CARD_RANGE, selectCards, type CardRange } from './select';
-import { sameCard, type CardData, type CardLayer, type Viewport } from './types';
+import { sameCard, type CardData, type Viewport } from './types';
 
 const CELL_W = 512;
 const CELL_H = 152;
 const COLS = 4;
-/** CSS width of a card at scale 1, matching the DOM variant. */
+/** On-screen width of a card at scale 1 (CSS px). */
 const CARD_CSS_W = 256;
 export const FONT = '"Recursive Variable", system-ui, sans-serif';
 
 /**
  * Draws one card into a 2D context at (x, y), cell-sized. Shared by the atlas
- * layer and its tests; mirrors the DOM card in hud.css.
+ * layer.
  */
 export function drawCard(g: CanvasRenderingContext2D, x: number, y: number, c: CardData): void {
   g.clearRect(x, y, CELL_W, CELL_H);
@@ -77,12 +77,11 @@ function ellipsize(g: CanvasRenderingContext2D, s: string, w: number): string {
 }
 
 /**
- * Cards drawn into one canvas atlas (a cell per desk, redrawn only when that
+ * Speech-bubble cards drawn into one canvas atlas (a cell per desk, redrawn only when that
  * worker's card changes) and rendered as a single instanced quad batch facing
  * the camera, always on top.
  */
-export class AtlasCards implements CardLayer {
-  readonly kind = 'atlas' as const;
+export class AtlasCards {
   readonly object: THREE.InstancedMesh;
   private readonly canvas: HTMLCanvasElement;
   private readonly g: CanvasRenderingContext2D;
@@ -149,8 +148,13 @@ export class AtlasCards implements CardLayer {
     this.dirty = true;
   }
 
+  /** Desk slots currently showing a card. */
   shown(): number[] {
     return [...this.showing];
+  }
+
+  card(slot: number): CardData | null {
+    return this.cards.get(slot) ?? null;
   }
 
   private cellXY(slot: number): [number, number] {
@@ -181,8 +185,9 @@ export class AtlasCards implements CardLayer {
       const a = anchors[c.index];
       if (!a) return;
       const scale = Math.max(0.62, Math.min(1, 4.2 / Math.max(0.1, c.dist)));
-      const d = this.v.copy(a).sub(camera.position).length();
-      // World width that matches the DOM card's on-screen width.
+      // View depth, not distance: a camera-facing quad's screen size follows depth.
+      const d = Math.max(0.1, this.v.copy(a).sub(camera.position).dot(this.fwd));
+      // World width for a card CARD_CSS_W px wide on screen (at scale 1).
       const w = (CARD_CSS_W * scale * 2 * d * tanHalf) / Math.max(1, vp.height);
       this.m.compose(a, camera.quaternion, this.s.set(w, w, w));
       this.object.setMatrixAt(k, this.m);

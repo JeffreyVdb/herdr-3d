@@ -42,8 +42,8 @@ export interface PlanLabel {
 /** All DOM UI over the canvas. Pure presentation: the app feeds it state. */
 export class Hud {
   readonly root: HTMLDivElement;
-  readonly cardsLayer: HTMLDivElement;
-  readonly badgesLayer: HTMLDivElement;
+  /** Static, screen-reader and keyboard list of floors (the badges are drawn in the scene). */
+  readonly floorList: HTMLElement;
   private readonly name = el('div', 'topbar-name');
   private readonly sub = el('div', 'topbar-sub');
   private readonly counts = el('div', 'topbar-counts');
@@ -70,8 +70,8 @@ export class Hud {
 
   constructor(parent: HTMLElement) {
     this.root = el('div', 'hud');
-    this.badgesLayer = el('div', 'badges');
-    this.cardsLayer = el('div', 'cards-host');
+    this.floorList = el('nav', 'floor-list');
+    this.floorList.setAttribute('aria-label', 'Floors');
     const bar = el('header', 'topbar');
     const place = el('div', 'topbar-place');
     const title = el('div', 'topbar-title');
@@ -105,7 +105,7 @@ export class Hud {
     this.dialog.addEventListener('click', (e) => {
       if (e.target === this.dialog) this.dialog.close();
     });
-    this.root.append(this.badgesLayer, this.cardsLayer, this.plan, bar, this.reticle, this.prompt, this.hint, this.notice, this.toastEl, this.doors);
+    this.root.append(this.floorList, this.plan, bar, this.reticle, this.prompt, this.hint, this.notice, this.toastEl, this.doors);
     parent.append(this.root, this.dialog);
     this.setMode('city');
   }
@@ -124,8 +124,7 @@ export class Hud {
     this.back.hidden = mode === 'city';
     this.issues.hidden = this.prs.hidden = mode === 'city';
     this.reticle.hidden = mode === 'city';
-    this.badgesLayer.hidden = mode !== 'city';
-    this.cardsLayer.hidden = mode !== 'floor';
+    this.floorList.hidden = mode !== 'city';
     if (mode === 'city') {
       this.setTarget(null, null);
       this.setPlan(false, '');
