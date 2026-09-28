@@ -69,7 +69,7 @@ MacBook (M2 Max)                                   devbox (Linux)
   detection naming the agent; a detection without an agent means it exited. Codex may need `pane report-agent-session`
   to backfill its id. Sleep = `herdr session stop`. Details: `protocol.md` "Wake and sleep".
 - **Hire** (M4, built; details in `protocol.md` "Hire and send home"): the desk is reserved and the worker id minted
-  first; `workspace create --cwd … --label … --no-focus`, or for a worktree `git fetch origin` then `herdr worktree
+  first; `workspace create --cwd … --label … --no-focus`, or for a worktree `git fetch origin` (a failed fetch refuses the hire: `fetch_failed`) then `herdr worktree
   create --cwd <repo> --branch h3d/<name>-<id6> --base origin/<default> --label … --no-focus` (never the local HEAD,
   agent-office #119) → the workspace is bound to that id (so it sits at the chosen desk) → pane-label marker
   `h3d-<12 hex>` → `agent start <name>-<id6> --kind claude|codex --pane … -- <args>` through the shell pane (fish

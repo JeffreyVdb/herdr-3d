@@ -84,6 +84,13 @@ var (
 
 func bad(format string, args ...any) error { return &badArgsError{fmt.Errorf(format, args...)} }
 
+// fetchFailedError is a worktree hire's failed `git fetch origin`; its
+// message is git's.
+type fetchFailedError struct{ err error }
+
+func (e *fetchFailedError) Error() string { return e.err.Error() }
+func (e *fetchFailedError) Unwrap() error { return e.err }
+
 // hireOp is a worker.hire in flight. Its desk is reserved and its worker
 // id minted from the start; workspaceID and pane are set (on the hub
 // goroutine) once herdr made the workspace, and seen once the hub saw it.
@@ -533,13 +540,18 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 			fail(capErr)
 			return
 		}
+		// Only a freshly fetched base: the last fetched one may lack what
+		// was merged since, and every branch from it would revert that
+		// (agent-office #119).
 		fetched := true
 		if err := git.Fetch(ctx, repo); err != nil {
-			fetched, rep.FetchError, res.FetchError = false, err.Error(), err.Error()
+			fetched, rep.FetchError = false, err.Error()
+			rep.Fetched = &fetched
 			rep.step("git fetch origin failed: %v", err)
-		} else {
-			rep.step("git fetch origin")
+			fail(&fetchFailedError{err})
+			return
 		}
+		rep.step("git fetch origin")
 		rep.Fetched = &fetched
 		def := git.DefaultBranch(ctx, repo)
 		if def == "" {

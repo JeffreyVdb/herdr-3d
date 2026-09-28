@@ -473,7 +473,10 @@ var (
 
 func errorCode(err error) string {
 	var bad *badArgsError
+	var fetch *fetchFailedError
 	switch {
+	case errors.As(err, &fetch):
+		return proto.ErrFetchFailed
 	case errors.As(err, &bad), errors.Is(err, store.ErrInvalid), errors.Is(err, errNoReqID):
 		return proto.ErrBadRequest
 	case errors.Is(err, store.ErrNotFound):

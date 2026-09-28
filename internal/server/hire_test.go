@@ -701,8 +701,28 @@ func TestHireIntoWorktree(t *testing.T) {
 		t.Fatalf("worker = %+v", w)
 	}
 
+	// The fetch fails: refused with git's error, nothing made; the stale
+	// origin/main is never used. A plain hire does not fetch.
+	hb.git.fetchErr = errors.New("git fetch: fatal: unable to access origin: Could not resolve host")
+	before := len(hb.fl.Calls())
+	a.DeskIndex = ptr(2)
+	_, m = hb.c.command(proto.CmdWorkerHire, "stale", a)
+	if e := errorOf(m); e.Code != proto.ErrFetchFailed || e.Message != hb.git.fetchErr.Error() {
+		t.Fatalf("fetch failure: %s", m.raw)
+	}
+	if calls := hb.fl.Calls(); len(calls) != before {
+		t.Fatalf("a hire without a fresh base ran herdr: %q", calls[before:])
+	}
+	if row := auditRow(t, hb.bridge, proto.CmdWorkerHire); row.OK || !strings.Contains(row.Result, `"fetched":false`) {
+		t.Fatalf("audit = %+v", row)
+	}
+	plain := a
+	plain.Worktree = false
+	hb.c.mustAck(proto.CmdWorkerHire, plain)
+	hb.git.fetchErr = nil
+
 	// Outside a repository, or without a default branch: refused.
-	a.Cwd, a.DeskIndex = "/tmp", ptr(2)
+	a.Cwd, a.DeskIndex = "/tmp", ptr(3)
 	hb.c.mustError(proto.CmdWorkerHire, a, proto.ErrBadRequest)
 	hb.git.def = ""
 	a.Cwd = "/home/u/repo/sub"

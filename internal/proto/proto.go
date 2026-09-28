@@ -65,6 +65,7 @@ const (
 	ErrNotClean         = "not_clean"  // worker.fire deleting a dirty or unpushed worktree
 	ErrHireFailed       = "hire_failed"
 	ErrFireFailed       = "fire_failed"
+	ErrFetchFailed      = "fetch_failed" // worker.hire into a worktree whose git fetch origin failed
 	ErrInternal         = "internal"
 )
 
@@ -453,8 +454,10 @@ type HireResult struct {
 	WorkspaceID string `json:"workspace_id"`
 	Branch      string `json:"branch,omitempty"`
 	BaseSHA     string `json:"base_sha,omitempty"`
-	FetchError  string `json:"fetch_error,omitempty"`
-	Trust       string `json:"trust"`
+	// FetchError is reserved: a worktree hire whose fetch fails is
+	// refused (ErrFetchFailed) instead.
+	FetchError string `json:"fetch_error,omitempty"`
+	Trust      string `json:"trust"`
 	// Prompted is set when a prompt was asked for: whether it was sent.
 	Prompted    *bool  `json:"prompted,omitempty"`
 	PromptError string `json:"prompt_error,omitempty"`
