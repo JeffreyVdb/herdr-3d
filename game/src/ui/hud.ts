@@ -4,6 +4,8 @@ import type { Counts, FloorView, WorkerView } from '../world/store';
 import type { Target } from '../render/office';
 import { CHIP_TEXT } from '../world/derive';
 import { ICON as DOM_ICON } from './dom';
+import { mountAudioControls } from './audioControls';
+import type { GameAudio } from '../audio';
 
 /** Authored 24×24 stroke icons, one weight. */
 const ICON = {
@@ -147,6 +149,11 @@ export class Hud {
       this.setTarget(null, null);
       this.setPlan(false, '');
     }
+  }
+
+  /** M3b: the sound control (mute + volume) in the top bar, before the battery toggle. */
+  mountAudio(audio: GameAudio): { dispose(): void } {
+    return mountAudioControls(this.battery.parentElement ?? this.root, audio, this.battery);
   }
 
   setBattery(on: boolean): void {

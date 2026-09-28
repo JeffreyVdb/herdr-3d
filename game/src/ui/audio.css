@@ -1,0 +1,103 @@
+/* The top bar's sound control: one pill, the mute toggle and a volume slider. */
+.audio-ctl {
+  --fill: 80%;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 34px;
+  padding-right: 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  transition: border-color 160ms var(--ease);
+}
+.audio-ctl:hover {
+  border-color: rgb(255 255 255 / 26%);
+}
+.audio-ctl .audio-mute {
+  height: 32px;
+  width: 32px;
+  border: 0;
+  border-radius: 9px;
+}
+/* Pressed = muted: a quiet state, not the green "on" of the other toggles. */
+.audio-ctl .audio-mute[aria-pressed='true'] {
+  background: transparent;
+  color: var(--text-on-ink-2);
+}
+.audio-ctl .audio-mute[aria-pressed='true']:hover {
+  background: rgb(255 255 255 / 8%);
+}
+.audio-ctl .audio-mute:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.audio-vol {
+  width: 76px;
+  height: 20px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.audio-vol:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+.audio-vol::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--text-on-ink) var(--fill), rgb(255 255 255 / 18%) var(--fill));
+}
+.audio-vol::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--text-on-ink) var(--fill), rgb(255 255 255 / 18%) var(--fill));
+}
+.audio-vol::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--paper);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 35%);
+  transition: transform 160ms var(--ease);
+  appearance: none;
+  -webkit-appearance: none;
+}
+.audio-vol::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--paper);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 35%);
+}
+.audio-vol:hover::-webkit-slider-thumb,
+.audio-vol:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+.audio-vol:focus-visible {
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.audio-ctl[data-muted='true'] .audio-vol::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, var(--text-on-ink-2) var(--fill), rgb(255 255 255 / 12%) var(--fill));
+}
+.audio-ctl[data-muted='true'] .audio-vol::-moz-range-track {
+  background: linear-gradient(to right, var(--text-on-ink-2) var(--fill), rgb(255 255 255 / 12%) var(--fill));
+}
+
+@media (max-width: 760px) {
+  .audio-vol {
+    width: 56px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .audio-vol::-webkit-slider-thumb {
+    transition: none;
+  }
+}
