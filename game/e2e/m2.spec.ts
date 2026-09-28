@@ -225,6 +225,21 @@ test('a movement key held when leaving the floor does not keep walking', async (
   clean();
 });
 
+test('small window: the plan legend keeps its words and clears the wrapped top bar', async ({ page }) => {
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 640, height: 600 });
+  await openGame(page);
+  await enter(page);
+  await page.evaluate(() => window.__h3d.plan(true));
+  await frames(page);
+  await expect(page.locator('.plan-legend')).toContainText(['working', 'needs you', 'done', 'idle', 'free desk'].join(''));
+  for (const word of await page.locator('.plan-legend span span').all()) await expect(word).toBeVisible();
+  const bar = await page.locator('.topbar').boundingBox();
+  const card = await page.locator('.plan-card').boundingBox();
+  expect(bar && card && card.y >= bar.y + bar.height, 'plan card below the top bar').toBe(true);
+  clean();
+});
+
 test('first person: a desk row with workers, cards with task text, a free desk', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page);

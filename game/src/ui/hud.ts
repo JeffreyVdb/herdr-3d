@@ -86,6 +86,7 @@ export class Hud {
     this.back.title = 'Back to the city (Backspace)';
     actions.append(this.issues, this.prs, this.battery, this.conn);
     bar.append(place, this.counts, actions);
+    new ResizeObserver(() => this.root.style.setProperty('--topbar-bottom', `${bar.getBoundingClientRect().bottom.toFixed(1)}px`)).observe(bar);
     for (const [b, a] of [
       [this.back, 'city'],
       [this.issues, 'issues'],
