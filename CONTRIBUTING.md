@@ -174,53 +174,79 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
 `game/` is Vite + strict TypeScript + three.js r186 (`three/webgpu`, WebGL2 fallback). Layout:
 
 - `src/net` — protocol v1 client (hello → welcome → snapshot | replay → events, reconnect with backoff from
-  `since_seq` + `epoch`) and the endpoint: same-origin `/ws?token=…` (the helper opens `/#token=<token>`; the game
+  `since_seq` + `epoch`; commands through `request(t, args)`, matched to their `ack` / `error` by `req_id`, with a
+  per-command timeout: 10 s, `floor.sleep` 30 s, `floor.wake` 60 s since its ack waits for every agent; a drop fails
+  what is in flight) and the endpoint: same-origin `/ws?token=…` (the helper opens `/#token=<token>`; the game
   keeps it in `sessionStorage` as `h3d.token` and strips it from the URL), `?ws=<url>` to point elsewhere.
 - `src/world` — the world store (snapshot + events, fallbacks for an older bridge without `name`, `desk_index`,
-  `harness`, `model`, `effort`, `status_since`, `floor.desks`), the deterministic office layout for a desk count,
-  walking collision and ray picking. Pure logic, covered by vitest.
+  `harness`, `model`, `effort`, `status_since`, `floor.desks`, and M3's `transition`, `settings`, `suggested`,
+  `resume`, `hire_options`), the deterministic office layout for a desk count, walking collision and ray picking,
+  floor-settings validation and diffing (`settings.ts`) and building/floor reordering (`arrange.ts`). Pure logic,
+  covered by vitest.
 - `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy.
   Cards and city badges are canvas atlases drawn as one instanced quad batch each (a cell per worker / floor, redrawn
   only when it changes). A DOM layer was benchmarked on the Mac and lost: moving DOM elements over the canvas cost
   2.6–4.3 ms of main thread per frame for 24 cards and ~8 ms for 30 city badges, against 0.5 ms for the atlas. The DOM
   keeps a static floor list for keyboards and screen readers.
-- `src/ui` — the HUD (DOM over the canvas). `src/input` — first-person walking.
-- `fixtures/` — recorded bridge streams (`herdr-world dump` format): `demo` (2 buildings, 3 floors, 40 workers),
-  `perf-floor60`, `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
-- `tools/` — fixture server, dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
+- `src/ui` — the HUD (DOM over the canvas) and the M3 panels (`panels.ts`: elevator, buildings, floor settings,
+  confirmations; modal `<dialog>`s that re-render live and keep focus). `src/input` — first-person walking.
+- `fixtures/` — recorded bridge streams (`herdr-world dump` format): `demo` (2 buildings, 3 floors, 40 workers; an M2
+  bridge), `demo-m3` (the same city as an M3 bridge sends it: settings, suggestions, hire options, a floor in the
+  unassigned lot; no events), `perf-floor60`, `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
+- `tools/` — fixture server (read-only by default; with `sim=1` it simulates the bridge's commands in memory,
+  `fixture-sim.ts`), dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
 
 Run it:
 
 ```sh
 make dev   # then open http://127.0.0.1:<port>/?ws=/fixture/demo   (Vite serves fixtures at /fixture/<name>)
+           # M3 panels without a bridge: ?ws=%2Ffixture%2Fdemo-m3%3Fsim%3D1   (the ws value URL-encoded)
 pnpm -C game fixture-server   # standalone fixture server on a leased port: ?ws=ws://127.0.0.1:<port>/ws
+pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering commands on every connection
 # against a private bridge: node game/tools/ws-unix-proxy.ts --port <leased> --socket <bridge.sock>, then ?ws=ws://127.0.0.1:<leased>/ws
 ```
 
 | query param | effect |
 |---|---|
-| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>` |
+| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep steps, default 600; `simfail=wake_failed\|sleep_failed` fails the next one) |
 | `backend=webgl2` | force WebGL2 |
 | `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |
 | `ts` | GPU timestamp queries (for `bench`) |
 | `shadows=0`, `badges=0`, `battery=1` | no shadows; no city badges (perf comparisons); start in battery saver |
 
-Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and a floor (or its badge) to go
-inside. On a floor, click for mouse look (Pointer Lock), WASD / arrows to walk, Shift to run, Esc releases the mouse,
+Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
+floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings
+panel: create, rename, delete (confirmed: it names the building and how many floors go back to the lot), move buildings
+and floors up / down, and move a floor to another building (on top) or to the unassigned lot. Changes save at once;
+Esc closes a panel (and cancels a rename first). On a floor, click for mouse look (Pointer Lock), WASD / arrows to walk, Shift to run, Esc releases the mouse,
 Tab toggles the floor plan (click the plan to walk there; it is also the fallback when pointer lock is refused),
 Backspace or the City button goes back, B toggles battery saver (60 Hz moving / 30 Hz idle instead of 120 / 60).
-Keyboard: in the city, Tab reaches the floor list (Enter goes inside). On a floor, Shift+Tab moves focus to the top
+Look at the elevator (south wall, behind you on arrival) and press **E** for the elevator panel: the building's floors
+top to bottom (the lot's floors by name), lit where you are, with running / asleep, working / needs you / idle (asleep:
+the worker count), **Wake floor** / **Sleep floor** (confirmed: it names the floor and who is working or waiting), wake
+and sleep progress with each agent's resume, and **Settings** per floor. Pick a floor (click, or ↑ / ↓ and Enter) to
+ride the doors there. Floor settings: linked repo (the bridge's suggestion is pre-filled and marked until saved),
+GitHub Project owner + number and its status field, default folder and default hire (harness → model → effort from the
+bridge's `hire_options`); validated like the bridge, and Save sends only the keys that changed (`null` clears). On an
+older bridge a command it does not know shows why and its button stays disabled after that.
+Keyboard: in the city, Tab reaches the floor list (Enter goes inside), then the building list (Enter opens that
+building's elevator panel, the lot's too). On a floor, Shift+Tab moves focus to the top
 bar (City, Issues, PRs, battery saver); Tab / Shift+Tab then move between its buttons as usual and Enter presses one.
 Tab toggles the plan only while nothing but the scene has focus; clicking the scene gives it focus back.
 
 Tests:
 
 ```sh
-make test lint                # vitest + tsc (protocol client, store, layout, collision, cards, frame policy, fixtures)
+make test lint                # vitest + tsc (protocol client and requests, store, layout, collision, cards, frame
+                              # policy, fixtures, settings validation/diffing, reordering, the command simulation)
 make shot                     # Playwright WebGL2: game/test-results/{shot,m2-city,m2-floor-plan,m2-desk-row}.png,
                               # scripted look-at path, floor entry, keyboard focus, live plan labels, events
-                              # during the elevator ride, held keys across floors, small-window plan
+                              # during the elevator ride, held keys across floors, small-window plan; M3 on the
+                              # simulating fixture server: m3-{buildings,elevator,settings,sleep-confirm,
+                              # wake-progress}.png, buildings from the keyboard, elevator via E and via a city
+                              # click, settings, sleep/wake, a failed wake, and an older read-only bridge
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
+pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
 ```
 
@@ -232,6 +258,15 @@ and the WebSocket → unix-socket proxy on a leased 127.0.0.1 port. The spec fli
 to the label, desk to the lowest free local slot) and the M2 bridge (its own `name` and `desk_index`). The session is stopped and deleted
 afterwards; after a hard kill, check `herdr session list` for a leftover `h3d-m2game-*` session.
 
+`test:live:m3` builds the bridge the same way (or `H3D_LIVE_BRIDGE=<path>`), starts `h3d-m3game-<random>` with two
+plain-shell workspaces (no coding agents) and the proxy to `$XDG_RUNTIME_DIR/h3d-m3game/bridge.sock`; the spec
+(`e2e-live/m3.spec.ts`) runs its own private bridge on it (db `/tmp/h3d-m3game/world.db`, `--sessions
+'^h3d-m3game-…$'`) so it can restart it. It creates a building and moves the floor into it from the UI, restarts the
+bridge and checks both are still there, then sleeps the floor and wakes it from the elevator panel and checks every
+worker kept its desk. On a bridge without `floor.wake` (it answers `unknown_command`) the sleep/wake test is skipped
+and says so. Afterwards the session is stopped and deleted and the `herdr-s-h3d-m3game-…` unit a wake started is
+removed; after a hard kill, check `herdr session list` and `systemctl --user list-units 'herdr-s-h3d-*'`.
+
 `perf:mac` serves `game/dist` on a leased port P and opens `ssh -o ControlMaster=no -o ControlPath=none -N -R
 127.0.0.1:P:127.0.0.1:P devmac`, so the Mac page is on its own loopback (a secure context: WebGPU).
 It pipes `tools/mac-runner.mjs` into `/opt/homebrew/bin/node` in `~/h3d-tools` (playwright-core, headless Chrome at
@@ -242,4 +277,9 @@ pipelined throughput, GPU timestamps, and rAF frames that include DOM layout.
 or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
 sent, `bridgeName`/`bridgeDesk`, null from an older bridge), `layout(session)`, `enterFloor(session, pose?)`,
 `leaveFloor()`, `inject(event)` (applies a protocol event as if the bridge sent it), `setPose({x, z, yaw, pitch})`,
-`pose()`, `plan(open)`, `focusBuilding(i)`, `cards()`, `badgePoint(session)`, `bench(opts)`.
+`pose()`, `plan(open)`, `focusBuilding(i)`, `cards()`, `badgePoint(session)`, `bench(opts)`. M3: `view().asleep`
+(the office's lights are off), `world()[].building` (its name, null in the lot), `openElevator(building?)` (a building
+id, null for the lot, nothing for the current floor's), `openBuildings()`, `panel()` (what the open panel shows:
+elevator rows with state, transition, counts, current, wake/sleep and resume; buildings; the settings form; any
+confirmation; the status line), `sent()` (commands sent, with their results), `floorPoint(session)` (a floor's screen
+point in the city, to click its building), `connection()` → `{phase, epoch}`.

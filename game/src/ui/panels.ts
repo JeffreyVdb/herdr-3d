@@ -357,7 +357,7 @@ export class Panels {
         h(
           'div',
           { class: 'lift-bar', role: 'progressbar', 'aria-label': `Agents resumed on ${f.session}`, 'aria-valuemin': 0, 'aria-valuemax': r.total, 'aria-valuenow': done },
-          h('i', { style: `width:${((done / r.total) * 100).toFixed(1)}%` }),
+          h('i', { style: `transform:scaleX(${(done / r.total).toFixed(3)})` }),
         ),
       );
       // During the wake, every agent; afterwards only the ones that need a look.

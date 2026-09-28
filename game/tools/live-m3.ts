@@ -78,6 +78,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
 
 async function main(): Promise<number> {
   mkdirSync(OUT, { recursive: true });
+  rmSync(join(OUT, 'bridge.log'), { force: true });
   work = mkdtempSync(join(tmpdir(), PREFIX));
 
   let bin = process.env.H3D_LIVE_BRIDGE;
