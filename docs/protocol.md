@@ -451,8 +451,9 @@ Capacity: a hire that would put the floor above `--max-workers-per-floor` or the
    --no-focus`. `<name>` is the worker's name lower-cased with every run of other characters as `-`, `<id6>` the first 6
    hex of its id. The base is always the freshly fetched `origin/<default>`, **never the local `HEAD`** (a stale local
    `HEAD` makes every new branch revert what was merged since; agent-office #119). herdr puts the checkout at
-   `~/.herdr/worktrees/<repo>/<branch with / as ->`. Plain hires: `herdr workspace create --cwd <cwd> --label <label>
-   --no-focus`.
+   `~/.herdr/worktrees/<repo>/<branch with / as ->`. When no workspace of the repository's main checkout is open on the
+   floor, herdr opens one too (its worktree group needs it): it shows up as one more worker, in the main checkout, at the
+   lowest free desk. Plain hires: `herdr workspace create --cwd <cwd> --label <label> --no-focus`.
 2. The new workspace is bound to the worker id minted for this hire, so it appears at `desk_index` with its name,
    `hired_at`, `harness`, `model` and `effort` (`worker.upsert`). Its root pane gets the identity marker
    `herdr pane rename <pane> h3d-<12 hex>`.
@@ -468,8 +469,10 @@ Capacity: a hire that would put the floor above `--max-workers-per-floor` or the
    ("Yes, I trust this folder"), Codex `Enter` ("1. Trust and continue"). The user chose that directory in the hire
    dialog, which is the consent. `trust` in the ack is `approved` when it did, `none` when no dialog showed.
    (`avoided` is reserved for a later way of avoiding it.) Any other `blocked` state is left for the player.
-5. The optional `prompt`: `herdr agent prompt <pane> <prompt>` once the agent is ready. A prompt that fails does not
-   undo the hire: the ack has `prompted: false` and `prompt_error`.
+5. The optional `prompt`: `herdr agent prompt <pane> <prompt> --wait --until working --until blocked --timeout 8000`,
+   retried while herdr says the agent is not ready. An agent just past its trust dialog can take the text but drop the
+   Enter (herdr: `agent_prompt_stalled`); the bridge then presses `Enter` (up to 3 times) until the worker is working.
+   A prompt that fails does not undo the hire: the ack has `prompted: false` and `prompt_error`.
 6. The choice is remembered for the floor, the audit row completed, and the ack sent (after the worker's
    `worker.upsert`).
 
@@ -509,8 +512,8 @@ remove`, then `git branch -D` of the new, commit-less branch), and the error is 
    bridge made (`h3d/…`).
 2. Graceful exit, when the pane runs the agent: Claude `herdr pane send-text <pane> /exit` + `Enter`, Codex `/quit`, a
    short pause (its command popup takes the first Enter otherwise), `Enter`. The bridge waits up to 8 s for the pane to
-   be back at its shell (`herdr pane process-info`), then tries `Ctrl-C` twice; `released` says whether the agent left
-   by itself. A graceful exit ends the agent's resume link, which is what sending home means (never used for sleep).
+   be back at its shell (`herdr pane process-info`), pressing `Enter` again up to 3 times on the way (an agent still
+   starting up drops it), then tries `Ctrl-C` twice; `released` says whether the agent left by itself. A graceful exit ends the agent's resume link, which is what sending home means (never used for sleep).
 3. `herdr workspace close <workspace>`, or for a deleted worktree `herdr worktree remove --workspace <workspace>`
    (it closes the workspace; never `--force`). If the tree became dirty during the exit, it is kept and `note` says so.
 4. `worker.removed` with `reason: "sent_home"`, once the bridge sees the workspace gone (up to 5 s); the desk is free
