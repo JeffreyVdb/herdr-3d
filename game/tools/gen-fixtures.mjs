@@ -193,6 +193,43 @@ function demo() {
   return [snapshot, ...events];
 }
 
+// ---- demo-m3: the demo city as an M3 bridge sends it ---------------------------
+// Floor settings and suggestions, hire options, and a floor in the unassigned
+// lot. For the simulating fixture server (`?sim=1`), so no recorded events.
+
+function demoM3() {
+  const [base] = demo();
+  const snap = structuredClone(base);
+  const r = rng(33);
+  const w = snap.world;
+  w.hire_options = {
+    claude: { models: ['claude-opus-5-5', 'claude-fable-5-1'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+    codex: {
+      models: ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra'],
+      efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      extra_efforts: { 'gpt-6-sol': ['ultra'], 'gpt-6-astra': ['ultra'] },
+    },
+  };
+  const floor = (s) => w.floors.find((f) => f.session === s);
+  floor('herdr-3d').suggested = { repo: 'JeffreyVdb/herdr-3d', default_cwd: '/home/dev/devel/herdr-3d' };
+  Object.assign(floor('depot-manager'), {
+    settings: { repo: 'fomra/depot-manager', default_hire: { harness: 'claude', model: 'claude-opus-5-5', effort: 'high' } },
+    suggested: { repo: 'fomra/depot-manager', default_cwd: '/home/dev/devel/fomra/depot-manager' },
+  });
+  const cwd = '/home/dev/scratch';
+  const lot = [
+    ['notes', 'idle', '', undefined, 'Hopper'],
+    ['spike-webgpu', 'working', 'Try the TSL outline pass', MODELS[0], 'Inky'],
+    ['changelog', 'done', 'Changelog for v0.3.0 drafted', MODELS[4], 'Jumble'],
+  ];
+  lot.forEach(([label, status, title, model, name], i) =>
+    w.workers.push(worker({ r, session: 'scratchpad', i, name, desk: i, status, title, label, model, cwd })),
+  );
+  w.unassigned = ['scratchpad'];
+  w.floors.push({ session: 'scratchpad', state: 'running', building: null, index: null, desks: 6 });
+  return [snap];
+}
+
 // ---- perf: one floor with 60 workers ------------------------------------------
 
 const STATES = ['working', 'working', 'working', 'working', 'idle', 'done', 'blocked', 'working', 'idle', 'working'];
@@ -252,7 +289,7 @@ function perfCity240() {
   return [{ t: 'world.snapshot', seq: 1, world: { buildings, unassigned: [], floors, workers } }];
 }
 
-const FIXTURES = { demo, 'perf-floor60': perfFloor60, 'perf-city240': perfCity240 };
+const FIXTURES = { demo, 'demo-m3': demoM3, 'perf-floor60': perfFloor60, 'perf-city240': perfCity240 };
 
 const check = process.argv.includes('--check');
 let stale = false;
