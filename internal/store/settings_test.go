@@ -124,3 +124,37 @@ func TestMigratesVersion3Forward(t *testing.T) {
 		t.Fatalf("floor_repo rows = %d, %v", n, err)
 	}
 }
+
+func TestLastHireAndHiredAt(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "w.db")
+	st := open(t, path)
+	if err := st.SetLastHire(ctx, "s", store.Hire{Harness: "claude", Model: "claude-opus-5-5", Effort: "low"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetLastHire(ctx, "s", store.Hire{Harness: "codex", Model: "gpt-6-sol", Effort: "ultra"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetLastHire(ctx, "s", store.Hire{Harness: "codex"}); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("partial hire: %v", err)
+	}
+	w := store.Worker{ID: "a58752ea-6511-4318-be9a-59e41c09d7c5", Session: "s", WorkspaceID: "w1", Label: "Mochi", HiredAt: 1790601900000}
+	if err := st.SaveWorker(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	w.HiredAt = 0 // a later save without it keeps it
+	w.Label = "Mochi 2"
+	if err := st.SaveWorker(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	st = open(t, path)
+	last, err := st.LastHires(ctx)
+	if err != nil || !reflect.DeepEqual(last, map[string]store.Hire{"s": {Harness: "codex", Model: "gpt-6-sol", Effort: "ultra"}}) {
+		t.Fatalf("last = %+v, %v", last, err)
+	}
+	ws, err := st.SessionWorkers(ctx, "s")
+	if err != nil || len(ws) != 1 || ws[0].HiredAt != 1790601900000 || ws[0].Label != "Mochi 2" {
+		t.Fatalf("workers = %+v, %v", ws, err)
+	}
+}

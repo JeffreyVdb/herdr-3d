@@ -94,3 +94,40 @@ func (s *Store) SetFloorSettings(ctx context.Context, session string, f FloorSet
 
 // null stores "" as NULL.
 func null(v string) sql.NullString { return sql.NullString{String: v, Valid: v != ""} }
+
+// Hire is a harness, model and effort.
+type Hire struct {
+	Harness, Model, Effort string
+}
+
+// LastHires returns the last choice hired on each floor, by session.
+func (s *Store) LastHires(ctx context.Context) (map[string]Hire, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT session_name, harness, model, effort FROM floor_hire_last ORDER BY session_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]Hire{}
+	for rows.Next() {
+		var session string
+		var h Hire
+		if err := rows.Scan(&session, &h.Harness, &h.Model, &h.Effort); err != nil {
+			return nil, err
+		}
+		out[session] = h
+	}
+	return out, rows.Err()
+}
+
+// SetLastHire remembers the choice last hired on a floor.
+func (s *Store) SetLastHire(ctx context.Context, session string, h Hire) error {
+	if session == "" || h.Harness == "" || h.Model == "" || h.Effort == "" {
+		return fmt.Errorf("%w: session, harness, model and effort are required", ErrInvalid)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO floor_hire_last (session_name, harness, model, effort, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(session_name) DO UPDATE SET harness = excluded.harness, model = excluded.model,
+			effort = excluded.effort, updated_at = excluded.updated_at`,
+		session, h.Harness, h.Model, h.Effort, s.ts())
+	return err
+}
