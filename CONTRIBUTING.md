@@ -225,38 +225,52 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
 
 - `src/net` — protocol v1 client (hello → welcome → snapshot | replay → events, reconnect with backoff from
   `since_seq` + `epoch`; commands through `request(t, args)`, matched to their `ack` / `error` by `req_id`, with a
-  per-command timeout: 10 s, `floor.sleep` 30 s, `floor.wake` 60 s since its ack waits for every agent; a drop fails
-  what is in flight) and the endpoint: same-origin `/ws?token=…` (the helper opens `/#token=<token>`; the game
+  per-command timeout: 10 s, `floor.sleep` 30 s, `floor.wake` 60 s since its ack waits for every agent; M4:
+  `hire.prepare` 30 s, `worker.hire` 90 s, `worker.fire.prepare` 20 s, `worker.fire` 45 s; a drop fails what is in
+  flight) and the endpoint: same-origin `/ws?token=…` (the helper opens `/#token=<token>`; the game
   keeps it in `sessionStorage` as `h3d.token` and strips it from the URL), `?ws=<url>` to point elsewhere.
 - `src/world` — the world store (snapshot + events, fallbacks for an older bridge without `name`, `desk_index`,
   `harness`, `model`, `effort`, `status_since`, `floor.desks`, and M3's `transition`, `settings`, `suggested`,
   `resume`, `hire_options`), the deterministic office layout for a desk count in its building's outline, the building
   around the floors (`building.ts`: storeys, the lobby, the fire escape, the street), height-aware walking collision
-  and ray picking, the M4 walk-out route (`route.ts`), floor-settings validation and diffing (`settings.ts`) and
-  building/floor reordering (`arrange.ts`). Pure logic, covered by vitest.
+  and ray picking, the M4 walk-out route (`route.ts`), floor-settings validation and diffing (`settings.ts`),
+  building/floor reordering (`arrange.ts`); M4: the hire / send-home dialogs' state (`hire.ts`: the preselected
+  choice, capacity states, the base's age, which send-home options are enabled, the first task's keys, the command
+  args) and the walk-in / walk-out timeline (`arrival.ts`: the walk-in is `walkOutRoute` reversed; heights come from
+  its waypoints). Pure logic, covered by vitest.
 - `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy;
   M3b: the walk scene (`walk.ts`), the building and street from outside (`outside.ts`, baked into one mesh by
-  `bake.ts`) and the lobby (`lobby.ts`).
+  `bake.ts`) and the lobby (`lobby.ts`). M4: `arrivals.ts` draws the walks (standing workers, the cardboard box with
+  a mug, a plant and a photo, the closed laptop); the office shows a desk someone packs up at or walks in to without
+  its "+" (`OfficeView.setAway`).
   Cards and city badges are canvas atlases drawn as one instanced quad batch each (a cell per worker / floor, redrawn
   only when it changes). A DOM layer was benchmarked on the Mac and lost: moving DOM elements over the canvas cost
   2.6–4.3 ms of main thread per frame for 24 cards and ~8 ms for 30 city badges, against 0.5 ms for the atlas. The DOM
   keeps a static floor list for keyboards and screen readers.
 - `src/ui` — the HUD (DOM over the canvas) and the M3 panels (`panels.ts`: elevator, buildings, floor settings,
-  confirmations; modal `<dialog>`s that re-render live and keep focus). `src/input` — first-person walking.
+  confirmations; modal `<dialog>`s that re-render live and keep focus); M4: the hire dialog (`hire.ts`) and the
+  send-home dialog (`sendHome.ts`), styled in `hire.css`. Hidden, named hooks wait for later tickets:
+  `renderPlanLimits(harness)` (#12), `renderHandoff` (M9) and `renderServices` (#14), each returning null for now.
+  `src/input` — first-person walking.
 - `fixtures/` — recorded bridge streams (`herdr-world dump` format): `demo` (2 buildings, 3 floors, 40 workers; an M2
   bridge), `demo-m3` (the same city as an M3 bridge sends it: settings, suggestions, hire options, a floor in the
   unassigned lot; no events), `demo-m3b` (demo-m3 with all three floors in Work: herdr-3d on top, depot-manager asleep
-  in the middle, pastry at the bottom), `perf-floor60`, `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
+  in the middle, pastry at the bottom), `demo-m4` (demo-m3b with linked git worktrees and branches on some workers of
+  herdr-3d and pastry, and herdr-3d's docs worker in the repo's main checkout), `perf-floor60`, `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
   Like the bridge, a building lists its floors top to bottom, which is `index` order (index 0 on top); vitest fails
   a fixture where the two disagree, since the simulator (`sim=1`) rebuilds the list from `index`.
 - `tools/` — fixture server (read-only by default; with `sim=1` it simulates the bridge's commands in memory,
-  `fixture-sim.ts`), dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
+  `fixture-sim.ts`, M4's four included: a cwd is a git repo unless it has `/scratch` in it, `offline` in it fails the
+  fetch; a `working` worker has uncommitted changes and 2 unpushed commits, a `blocked` one 1 unpushed commit; caps
+  24 / 32 per floor and 60 / 80 for the host unless `simcap` says otherwise; hires are acked one step later with the
+  worker walking in, a first task sets it working the step after; branches are `h3d/<name>-<id6>`), dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
 
 Run it:
 
 ```sh
 make dev   # then open http://127.0.0.1:<port>/?ws=/fixture/demo   (Vite serves fixtures at /fixture/<name>)
            # M3 panels without a bridge: ?ws=%2Ffixture%2Fdemo-m3%3Fsim%3D1   (the ws value URL-encoded)
+           # M4 hire / send home: ?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simcap%3Dscratchpad%3A3%3A4
 pnpm -C game fixture-server   # standalone fixture server on a leased port: ?ws=ws://127.0.0.1:<port>/ws
 pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering commands on every connection
 # against a private bridge: node game/tools/ws-unix-proxy.ts --port <leased> --socket <bridge.sock>, then ?ws=ws://127.0.0.1:<leased>/ws
@@ -264,7 +278,7 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 
 | query param | effect |
 |---|---|
-| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep steps, default 600; `simfail=wake_failed\|sleep_failed` fails the next one) |
+| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed\|fetch_failed` fails the next one; `simcap=<session>:<soft>:<hard>[,…]` caps floors) |
 | `backend=webgl2` | force WebGL2 |
 | `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |
 | `ts` | GPU timestamp queries (for `bench`) |
@@ -292,6 +306,23 @@ only the keys that changed (`null` clears; statuses nobody touched are never re-
 older bridge a command it does not know shows why and its button stays disabled after that.
 Keyboard: in the city, Tab reaches the floor list (Enter goes inside), then the building list (Enter opens that
 building's elevator panel, the lot's too).
+Hire and send home (M4): look at an empty desk's green "+" and press **E** ("Hire a worker at Desk 11"), or press the
+top bar's **Hire** (on an office floor; Shift+Tab, then Tab past Elevator) for the first free desk. The dialog asks the
+bridge first (`hire.prepare`), then offers: an optional first task (**Enter** hires, **Shift+Enter** adds a line),
+harness → model → effort as chips (Tab into a group, ← → pick; the floor's default hire or the last hire on the floor
+is preselected and marked so), the label (the next generated name), the folder (the floor's default; changing it
+checks the new folder again), **Work in its own git worktree & branch** (on by default, only when the folder is a git
+repo) with the base `origin/<default> @ <sha>, <age>` and any fetch error, and the floor's and host's caps with the
+host load: a warning above the soft cap, Hire refused at the hard cap. Hire hides the desk's "+" at once; the new
+worker walks in from the street, up the fire escape to its desk, carrying its box with the laptop on top, and sits
+down. Look at a worker and press **X** to send it home: its branch and folder, what is left on the desk (uncommitted
+changes, commits not on any remote) and, for a worker in a linked worktree of its own, keep / delete the worktree /
+delete the worktree and branch (delete only when the bridge says the tree is clean and pushed, else a warning says
+why); a main checkout whose worktrees are still open cannot go yet. Focus starts on "keep", where Enter sends it home;
+with a delete picked only the button confirms. The worker packs a cardboard box, takes the laptop, walks out down the
+fire escape and away along the sidewalk, and the desk gets its "+" back. Walks play for floors of the building you are
+in (the interior only for the floor you are on); anywhere else they resolve at once. Esc closes either dialog, and
+the pointer lock is released while one is open.
 Outside (M3b): every floor has a door at the south end of its west wall; it slides open as you walk up to it, onto the
 fire escape. Walk down (or up) the flights to another floor's landing and in through its door: that floor gets the
 interior (as elevator travel would), the top bar shows it while you stand on its landing. The last flight comes down
@@ -324,7 +355,16 @@ make shot                     # Playwright WebGL2: game/test-results/{shot,m2-ci
                               # greeting once, not again inside the cooldown), E at the desk, the Lobby stop both
                               # ways; the same floor numbers with sim=1, and the top bar at 1024 wide (the counts
                               # drop their words, the name stays whole); m3b-{window-bottom,window-top,
-                              # fire-escape,facade,fire-escape-street,lobby,lobby-greeting}.png
+                              # fire-escape,facade,fire-escape-street,lobby,lobby-greeting}.png; M4 on demo-m4 with
+                              # sim=1 (m4.spec.ts): E at a desk's "+", the dialog from the keyboard (task keys,
+                              # chips, Tab order), hire → the walk-in on the reversed route → seated at that desk;
+                              # the last choice preselected next time; X on a dirty worker (delete off, the
+                              # warning), a clean one sent home with worktree + branch deleted (packing, the box,
+                              # the laptop, down the stairs, the "+" back); the top bar's Hire (first free desk);
+                              # a worker without a worktree, a blocked main checkout; capacity warn / refuse at
+                              # 1024×640; walks you cannot see; a read-only bridge; m4-{hire-dialog,
+                              # send-home-dirty,send-home-clean,walk-in,walk-out-pack,walk-out,
+                              # hire-capacity-warn,hire-capacity-full}.png
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
 pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
@@ -376,7 +416,14 @@ outline; `building()` (the plan you walk around in: outline, `storey`, fire esca
 (building id, name, floors ground first, the floor with an interior), `enterLobby(building?)`, `route(session, desk)`
 (the M4 walk-out waypoints), `reception()` (the receptionist's `said`, `clips`, `cooldownUntil`, `goodbyeUntil`,
 `bubble`) and `receptionEvents()` (front door in / out, elevator arrival, E at the desk, as the game detected them);
-`panel()` of the elevator adds `lobby: {current}`.
+`panel()` of the elevator adds `lobby: {current}`. M4: `openHire(desk?)` (a desk, 0-based, of the floor you are on;
+none: the first free one, like the top bar's Hire), `openSendHome(workerId)`, `dialog()` (what the open hire or
+send-home dialog shows: its state, the form, the git base, the preselection's note, the capacity view and why Hire is
+off; or the fire prepare, which worktree options are enabled, the warning, whether it is blocked, the choice; with the
+status line), `arrivals()` (walkers now: kind, desk, phase, position, distance walked of the route's length, what their
+desk shows, box / laptop / items), `arrivalLog()` (finished walks, `played: false` for ones nobody could see),
+`arrivalRate(k)` (plays walks k times as fast, from where they are), `desks()` (the floor with an interior: who sits at
+each desk, whether its "+" shows, what a walk holds it as).
 
 ### Audio and voice lines
 
