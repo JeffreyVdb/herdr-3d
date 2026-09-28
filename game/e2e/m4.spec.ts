@@ -214,6 +214,7 @@ test('X on a worker with unsaved work: delete is off, with the warning; Esc send
   await expect(page.locator('dialog.desk-dlg--home h2')).toHaveText('Send Jellybean home');
   expect(d.prep).toMatchObject({ branch: 'h3d/brioche-levain', worktree: { path: '/home/dev/pastry-wt/brioche', linked: true }, unpushed: 2, can_delete: false });
   expect(d.options?.enabled).toEqual({ keep: true, delete: false, delete_branch: false });
+  expect(d.options?.choices).toEqual(['keep', 'delete']);
   expect(d.choice).toBe('keep');
   await expect(page.locator('.dd-porcelain li')).toHaveText([' M game/src/app.ts', ' M game/src/ui/hud.ts', '?? notes/todo.md']);
   await expect(page.locator('.dd-desk')).toContainText('2 commits not on any remote');
@@ -221,7 +222,8 @@ test('X on a worker with unsaved work: delete is off, with the warning; Esc send
     'Deleting is off: the worktree has uncommitted changes and 2 commits are not on any remote. The worktree stays; commit and push first to delete it.',
   );
   await expect(page.locator('#home-delete')).toBeDisabled();
-  await expect(page.locator('#home-delete_branch')).toBeDisabled();
+  // Deleting the branch is not offered at all (the bridge says it cannot now).
+  await expect(page.locator('#home-delete_branch')).toHaveCount(0);
   // Keyboard lands on the (safe) keep choice; the arrows cannot reach the disabled ones.
   expect(await focusedKey(page)).toBe('wt:keep');
   await page.keyboard.press('ArrowDown');
@@ -246,7 +248,7 @@ test('send home a clean worker: delete worktree + branch, it packs a box, takes 
   const id = (await page.evaluate(() => window.__h3d.lookAt()))?.id as string;
   await page.keyboard.press('x');
   let d = await homeDialog(page);
-  expect(d.options).toEqual({ offered: true, enabled: { keep: true, delete: true, delete_branch: true }, warning: null });
+  expect(d.options).toEqual({ offered: true, choices: ['keep', 'delete', 'delete_branch'], enabled: { keep: true, delete: true, delete_branch: true }, warning: null, branchNote: null });
   await expect(page.locator('.dd-desk .tape')).toHaveText('All pushed');
   // Pick "delete the worktree and the branch": Enter on it does not send (only the button does).
   expect(await focusedKey(page)).toBe('wt:keep');
@@ -342,7 +344,7 @@ test('the top bar’s Hire opens the first free desk; a worker with no worktree 
   const nacho = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === 'pastry')?.workers.find((w) => w.name === 'Nacho');
   await page.evaluate((id) => window.__h3d.openSendHome(id), nacho?.id as string);
   let h = await homeDialog(page);
-  expect(h.options).toEqual({ offered: false, enabled: { keep: true, delete: false, delete_branch: false }, warning: null });
+  expect(h.options).toEqual({ offered: false, choices: [], enabled: { keep: true, delete: false, delete_branch: false }, warning: null, branchNote: null });
   expect(h.blocked).toBeNull();
   await expect(page.locator('.dd-choices')).toHaveCount(0);
   await expect(page.locator('.dd-facts')).toContainText('not a git worktree');
@@ -401,6 +403,120 @@ test('capacity: a warning above the soft cap, a refusal at the hard cap; no work
   expect((await sent(page)).filter((c) => c.t === 'worker.hire')).toHaveLength(1);
   await shot(page, 'm4-hire-capacity-full');
   await page.keyboard.press('Escape');
+  clean();
+});
+
+test('two hires at once: Esc on a pending hire, then another; each keeps its own desk and its own dialog', async ({ page }) => {
+  test.setTimeout(90_000);
+  const clean = watchErrors(page);
+  // Slow steps: the first hire is still on its way while the second dialog is open.
+  await openGame(page, 'demo-m4', '', 'play=none&sim=1&simms=2500');
+  await enter(page, 'pastry');
+  const hireButton = page.locator('.btn--hire');
+  await hireButton.click();
+  let d = await hireDialog(page);
+  expect(d.desk).toBe(14);
+  await page.locator('#hire-task').focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await dialog(page))?.state).toBe('hiring');
+  // Esc: the dialog goes, the hire does not.
+  await page.keyboard.press('Escape');
+  await expect.poll(() => dialog(page)).toBeNull();
+  await expect(page.locator('.toast')).toHaveText('The hire is still on its way; the worker walks in when it is done.');
+  expect((await desks(page))[14]).toMatchObject({ plus: false, away: 'empty' });
+  // The top bar's Hire skips the desk the first hire holds.
+  await hireButton.click();
+  d = await hireDialog(page);
+  expect(d).toMatchObject({ desk: 15, state: 'ready', blocker: null });
+  // The first hire's ack: its worker walks in to desk 14, and this dialog stays as it is.
+  await walker(page, (a) => a.kind === 'in' && a.desk === 14, 'the first hire walks in', 15_000);
+  await expect(page.locator('.toast')).toHaveText(/^Hired Gumdrop at Desk 15 /);
+  d = await hireDialog(page);
+  expect(d).toMatchObject({ desk: 15, state: 'ready', blocker: null, status: '' });
+  expect((await desks(page))[14]).toMatchObject({ plus: false, away: 'empty' });
+  expect((await desks(page))[15]).toMatchObject({ plus: true, away: null });
+  // The second hire, then a third dialog while it is on its way: the first free desk is past both.
+  await page.locator('#hire-task').focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await dialog(page))?.state).toBe('hiring');
+  expect((await desks(page))[15]).toMatchObject({ plus: false, away: 'empty' });
+  await page.keyboard.press('Escape');
+  await expect.poll(() => dialog(page)).toBeNull();
+  await page.evaluate(() => window.__h3d.openHire());
+  d = await hireDialog(page);
+  expect(d.desk).toBe(16);
+  // E on the desk the second hire holds: no "+" there to hire at.
+  await page.keyboard.press('Escape');
+  await faceDesk(page, 'pastry', 15);
+  expect((await page.evaluate(() => window.__h3d.lookAt()))?.id).not.toBe('desk-15');
+  await page.keyboard.press('e');
+  await frames(page, 2);
+  expect(await dialog(page)).toBeNull();
+  await walker(page, (a) => a.kind === 'in' && a.desk === 15, 'the second hire walks in', 15_000);
+  const hires = (await sent(page)).filter((c) => c.t === 'worker.hire');
+  expect(hires.map((c) => (c.args as { desk_index: number }).desk_index)).toEqual([14, 15]);
+  expect(hires.map((c) => c.result?.ok)).toEqual([true, true]);
+  clean();
+});
+
+test('a failed git fetch: no worktree from a stale origin, the error and Fetch again by the buttons; a plain hire still goes (1024×640)', async ({ page }) => {
+  test.setTimeout(90_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 1024, height: 640 });
+  await openGame(page, 'demo-m4', '', `${SIM}&simfail=fetch_failed`);
+  await enter(page, 'herdr-3d');
+  await page.evaluate(() => window.__h3d.openHire());
+  let d = await hireDialog(page);
+  expect(d.form).toMatchObject({ cwd: '/home/dev/devel/herdr-3d', worktree: false });
+  expect(d.git).toMatchObject({ usable: false, noteError: true, note: 'git fetch origin failed: ssh: Could not resolve hostname github.com (simulated). A worktree needs a fresh origin/main: fetch again, or hire without one.' });
+  const box = page.locator('#hire-worktree');
+  await expect(box).toBeDisabled();
+  await expect(box).not.toBeChecked();
+  await expect(page.locator('.dd-base')).toContainText('Off: origin could not be fetched. Last fetched origin/main @');
+  // In view without scrolling: the error, Fetch again, the caps and Hire.
+  const fetchNote = page.locator('dialog.desk-dlg--hire #hire-fetch');
+  await expect(fetchNote).toBeInViewport({ ratio: 1 });
+  await expect(fetchNote).toHaveAttribute('role', 'alert');
+  await expect(page.locator('dialog.desk-dlg--hire .dd-capacity')).toBeInViewport({ ratio: 1 });
+  await expect(page.locator('dialog.desk-dlg--hire [data-key="hire"]')).toBeInViewport({ ratio: 1 });
+  expect(await page.locator('dialog.desk-dlg--hire .dd-body').evaluate((b) => b.scrollTop)).toBe(0);
+  await shot(page, 'm4-hire-fetch-failed');
+  // Fetch again: hire.prepare once more for the same folder (origin is still down here); the form stays.
+  await page.locator('#hire-task').fill('Tidy the fixtures');
+  await page.locator('[data-key="refetch"]').click();
+  await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'hire.prepare').length).toBe(2);
+  expect((await sent(page)).filter((c) => c.t === 'hire.prepare').map((c) => c.args)).toEqual([{ session: 'herdr-3d' }, { session: 'herdr-3d', cwd: '/home/dev/devel/herdr-3d' }]);
+  await expect.poll(async () => ((await dialog(page)) as Hire).refetching).toBe(false);
+  d = (await dialog(page)) as Hire;
+  expect(d).toMatchObject({ state: 'ready', blocker: null, form: { prompt: 'Tidy the fixtures', worktree: false }, git: { usable: false } });
+  await expect(box).toBeDisabled();
+  // Hire without a worktree.
+  await page.locator('dialog.desk-dlg--hire [data-key="hire"]').click();
+  await expect.poll(() => dialog(page)).toBeNull();
+  const hire = (await sent(page)).filter((c) => c.t === 'worker.hire');
+  expect(hire.map((c) => c.args)).toEqual([
+    { session: 'herdr-3d', desk_index: 5, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', label: 'Gumdrop', cwd: '/home/dev/devel/herdr-3d', worktree: false, prompt: 'Tidy the fixtures' },
+  ]);
+  await expect(page.locator('.toast')).toHaveText('Hired Gumdrop at Desk 6. Here they come.');
+  clean();
+});
+
+test('a clean worktree on a branch of the user’s own: delete the worktree only, the branch stays', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m4', '', SIM);
+  await enter(page, 'herdr-3d');
+  const noodle = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === 'herdr-3d')?.workers.find((w) => w.name === 'Noodle');
+  await page.evaluate((id) => window.__h3d.openSendHome(id), noodle?.id as string);
+  const h = await homeDialog(page);
+  expect(h.prep).toMatchObject({ branch: 'dev/bridge-ws', can_delete: true, can_delete_branch: false });
+  expect(h.options).toMatchObject({ offered: true, choices: ['keep', 'delete'], enabled: { keep: true, delete: true, delete_branch: false } });
+  await expect(page.locator('dialog.desk-dlg--home .dd-choice')).toHaveCount(2);
+  await expect(page.locator('#home-delete_branch')).toHaveCount(0);
+  await expect(page.locator('[data-key="branch-note"]')).toHaveText('The branch dev/bridge-ws stays either way: herdr-world only deletes a branch it made for this worker.');
+  await page.locator('label[for="home-delete"]').click();
+  await page.locator('dialog.desk-dlg--home [data-key="send"]').click();
+  await expect.poll(() => dialog(page)).toBeNull();
+  expect((await sent(page)).filter((c) => c.t === 'worker.fire').map((c) => c.args)).toEqual([{ id: noodle?.id, worktree: 'delete' }]);
   clean();
 });
 
