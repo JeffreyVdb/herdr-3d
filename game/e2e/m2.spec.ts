@@ -1,9 +1,22 @@
 import { expect, test, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { frames, openGame, shot, watchErrors } from './game';
 
 // The demo fixture (fixtures/demo.jsonl): Work = herdr-3d (floor 2, running,
 // 18 workers on 20 desks, desks 6 and 13 free) + depot-manager (floor 1,
 // asleep); Personal = pastry.
+
+/**
+ * The fixture's recorded events, in order: Nibble working → done, Tater
+ * blocked → working, Gumdrop hired at desk 6, herdr-3d grows to 21 desks, …
+ */
+const EVENTS = readFileSync(resolve(import.meta.dirname, '../fixtures/demo.jsonl'), 'utf8')
+  .split('\n')
+  .filter((l) => l.trim())
+  .slice(1)
+  .map((l) => JSON.parse(l) as { t: string; id?: string; worker?: { name: string } });
+const [NIBBLE_DONE, TATER_WORKING, GUMDROP_HIRED, DESKS_21] = EVENTS;
 
 type Layout = NonNullable<ReturnType<Window['__h3d']['layout']>>;
 
@@ -101,6 +114,34 @@ test('floor plan (Tab): desks, free desks with +, labelled placeholders', async 
   clean();
 });
 
+/** The status dot of a worker's floor-plan label (its CSS colour variable). */
+const planDot = (page: Page, name: string) => page.locator('.plan-label--worker').filter({ hasText: new RegExp(`^${name}$`) }).locator('i');
+
+test('the open floor plan follows live status and seat changes while nothing moves', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page);
+  await enter(page);
+  await page.evaluate(() => window.__h3d.plan(true));
+  await frames(page);
+  await expect(planDot(page, 'Nibble')).toHaveAttribute('style', /var\(--working\)/);
+  await expect(planDot(page, 'Tater')).toHaveAttribute('style', /var\(--needs_you\)/);
+  const pose = await page.evaluate(() => window.__h3d.pose());
+
+  await page.evaluate((e) => window.__h3d.inject(e as never), NIBBLE_DONE);
+  await expect(planDot(page, 'Nibble')).toHaveAttribute('style', /var\(--done\)/);
+  await page.evaluate((e) => window.__h3d.inject(e as never), TATER_WORKING);
+  await expect(planDot(page, 'Tater')).toHaveAttribute('style', /var\(--working\)/);
+  // A new hire takes free desk 6 in place (same desk count)…
+  await page.evaluate((e) => window.__h3d.inject(e as never), GUMDROP_HIRED);
+  await expect(page.locator('.plan-label--desk')).toHaveText(['+ 13']);
+  await expect(planDot(page, 'Gumdrop')).toHaveAttribute('style', /var\(--working\)/);
+  // …and a bigger floor rebuilds the office with one more free desk.
+  await page.evaluate((e) => window.__h3d.inject(e as never), DESKS_21);
+  await expect(page.locator('.plan-label--desk')).toHaveText(['+ 13', '+ 21']);
+  expect(await page.evaluate(() => window.__h3d.pose())).toEqual(pose);
+  clean();
+});
+
 test('first person: a desk row with workers, cards with task text, a free desk', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page);
@@ -184,11 +225,12 @@ test('a status event from the fixture stream reaches the rendered state', async 
   const clean = watchErrors(page);
   // Events every 400 ms after the snapshot: first, Nibble goes working → done.
   const ws = encodeURIComponent('/fixture/demo?play=400');
-  await page.goto(`/?backend=webgl2&ws=${ws}`);
+  await page.goto(`/?backend=webgl2&ws=${ws}&floor=herdr-3d&plan=1`);
   await page.waitForFunction(() => window.__h3d?.ready, undefined, { timeout: 60_000 });
   const nibble = await page.evaluate(() => window.__h3d.world().flatMap((f) => f.workers).find((w) => w.name === 'Nibble')?.id);
   if (!nibble) throw new Error('Nibble missing');
   await page.waitForFunction((id) => window.__h3d.status(id)?.status === 'done', nibble, { timeout: 10_000 });
+  await expect(planDot(page, 'Nibble')).toHaveAttribute('style', /var\(--done\)/);
   // The new hire takes the lowest free desk (6) and the floor grows to 21 desks.
   await page.waitForFunction(
     () => window.__h3d.world().find((f) => f.session === 'herdr-3d')?.workers.some((w) => w.name === 'Gumdrop' && w.desk === 5),

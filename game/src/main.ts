@@ -4,6 +4,7 @@ import * as THREE from 'three/webgpu';
 import { App, type LookAt, type Pose } from './app';
 import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
 import { runBench, type BenchOptions, type BenchResult } from './bench';
+import type { WorldEvent } from './net/protocol';
 import { floorLayout } from './world/layout';
 
 /** Debug/test hook, read by the Playwright tests and the Mac perf run. */
@@ -24,6 +25,8 @@ export interface H3DDebug {
   /** The office layout of a floor (for scripted camera paths). */
   layout(session: string): ReturnType<typeof floorLayout> | null;
   enterFloor(session: string, pose?: Pose): Promise<void>;
+  /** Applies a protocol event as if the bridge had sent it (drives live updates deterministically). */
+  inject(e: WorldEvent): void;
   leaveFloor(): Promise<void>;
   setPose(p: Pose): void;
   pose(): Pose | null;
@@ -74,6 +77,7 @@ const h3d: H3DDebug = {
     await app?.enterFloor(s, pose ? { transition: false, pose } : { transition: false });
   },
   leaveFloor: async () => app?.leaveFloor(),
+  inject: (e) => app?.inject(e),
   setPose: (p) => app?.setPose(p),
   pose: () => (app?.mode === 'floor' ? app.pose() : null),
   plan: (open) => app?.setPlan(open),

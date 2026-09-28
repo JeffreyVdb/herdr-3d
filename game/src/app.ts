@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BridgeClient, type ConnState, type SocketLike } from './net/client';
 import { bridgeUrl, takeToken } from './net/endpoint';
+import type { WorldEvent } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { OfficeView, REACH, type Target } from './render/office';
@@ -73,6 +74,8 @@ export class App {
   private readonly ray = new THREE.Vector3();
   private down: { x: number; y: number } | null = null;
   private planLabelsKey = '';
+  /** World data behind the plan labels changed (status, names, seats). */
+  private planDirty = false;
 
   constructor(o: AppOptions) {
     this.r = o.renderer;
@@ -159,6 +162,7 @@ export class App {
 
   private applyChange(c: Change): void {
     this.statusDirty = true;
+    this.planDirty = true;
     this.activity(false);
     if (c.structure) {
       const firstWorld = this.city.isEmpty;
@@ -510,7 +514,7 @@ export class App {
       if (this.planOpen) this.fitPlan();
       this.office.frame(t, this.planOpen ? this.planCam : this.fpCam, this.fpCam, this.vp, moved);
       this.updateLookAt();
-      if (this.planOpen && moved) this.layoutPlanLabels();
+      if (this.planOpen && (moved || this.planDirty)) this.layoutPlanLabels();
     } else {
       if (this.tween) {
         const k = Math.min(1, (performance.now() - this.tween.t0) / this.tween.ms);
@@ -566,6 +570,7 @@ export class App {
   private layoutPlanLabels(): void {
     const o = this.office;
     if (!o) return;
+    this.planDirty = false;
     const toScreen = (x: number, y: number, z: number) => {
       const v = new THREE.Vector3(x, y, z).project(this.planCam);
       return { x: ((v.x + 1) / 2) * this.vp.width, y: ((1 - v.y) / 2) * this.vp.height };
@@ -581,7 +586,8 @@ export class App {
       else labels.push({ ...toScreen(s.desk.x, 0.8, s.desk.z), text: `+ ${i + 1}`, kind: 'desk' });
     });
     const me = toScreen(this.walker.x, 0, this.walker.z);
-    const key = JSON.stringify([labels.length, me.x | 0, me.y | 0, this.walker.yaw.toFixed(2), o.applied.size, this.frames > 0]);
+    // Everything the labels show, so a status or seat change redraws them too.
+    const key = JSON.stringify([labels.map((l) => [l.kind, l.text, l.display ?? '', l.x | 0, l.y | 0]), me.x | 0, me.y | 0, this.walker.yaw.toFixed(2)]);
     if (key === this.planLabelsKey) return;
     this.planLabelsKey = key;
     this.hud.setPlanLabels(labels, { ...me, angle: -this.walker.yaw });
@@ -603,6 +609,11 @@ export class App {
   }
 
   // ---- test hooks --------------------------------------------------------------
+
+  /** Applies a protocol event as if the bridge had sent it. */
+  inject(e: WorldEvent): void {
+    this.applyChange(this.store.applyEvent(e));
+  }
 
   lookAt(): LookAt | null {
     if (this.mode !== 'floor') return null;
