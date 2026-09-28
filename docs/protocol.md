@@ -344,8 +344,9 @@ A floor wakes and sleeps through herdr itself. The bridge acts only on sessions 
    cannot start, e.g. a `herdr-s-<name>` unit still exists.
 2. `ping` on the session's socket, backing off up to 1 s, for `--wake-timeout` (10 s): no answer is `wake_failed` (the
    message says why). The workers' `resume` is then cleared again; the floor stays asleep.
-3. The bridge follows the session at once (no 2 s poll) and waits (up to `--wake-timeout`) until it sees it running.
-   herdr resumes every pane that had an `agent_session` by itself (`claude --resume <id>` / `codex resume <id>`).
+3. The bridge follows the session at once (no 2 s poll) and waits (up to `--wake-timeout`) until it sees it running;
+   a floor not seen running in time is `wake_failed` too. herdr resumes every pane that had an `agent_session` by
+   itself (`claude --resume <id>` / `codex resume <id>`).
 4. Each such worker is `pending` until its agent is back: herdr reports `pane.agent_detected` naming the agent for its
    pane, or `herdr pane process-info` shows the agent (`claude` / `codex`, or its session id) in the pane's foreground
    for 1.5 s in a row. herdr 0.9 restores a pane's agent before the agent runs and sends no detection for a resume, so
@@ -368,7 +369,7 @@ A floor wakes and sleeps through herdr itself. The bridge acts only on sessions 
    `agent_session`. A failure is `sleep_failed` (the floor stays running). The bridge never `/exit`s agents and never
    uses `systemctl stop`: both lose the resume link.
 3. The ack follows once the floor is seen asleep (its workers from `session.json`, at the same desks with the same
-   names; up to 15 s).
+   names; up to 15 s). A floor not seen asleep in time is `sleep_failed`.
 
 Workers keep their ids, desks and names through a sleep and a wake (the identity rules of [Worker](#worker-a-herdr-workspace)).
 
@@ -393,8 +394,8 @@ output and whether the floor was seen asleep. Rejected commands are logged like 
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `busy` | a floor command while that floor's wake or sleep is in progress |
 | `invalid_state` | `floor.wake` on a running floor, `floor.sleep` on an asleep one |
-| `wake_failed` | the server did not start or did not answer `ping` within `--wake-timeout`; the message says why |
-| `sleep_failed` | `herdr session stop` failed; the message has herdr's error |
+| `wake_failed` | the server did not start, did not answer `ping` or was not seen running within `--wake-timeout`; the message says why |
+| `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
 | `hello_required`, `unsupported_proto` | handshake failures; the connection is then closed with status 1008 |
 | `internal` | the bridge failed (database error, or waking and sleeping is not configured); safe to retry |
 

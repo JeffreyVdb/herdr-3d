@@ -594,3 +594,59 @@ func TestWakeWithoutAgentsAcksOnceRunning(t *testing.T) {
 		t.Fatalf("final floor = %+v (events %+v)", f, evs)
 	}
 }
+
+// A server that answers ping but that the watcher never sees running is no
+// wake: the command fails, the transition ends and the audit row says so.
+func TestWakeFailsWhenTheFloorIsNotSeenRunning(t *testing.T) {
+	fh := newFakeHerdr()
+	b := startBridge(t, "", fastOps(fh))
+	b.floorAt("s", false, []world.WorkerObs{claudeW("w1", "sess-1")})
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	fh.onStart = func() {
+		fh.setUp("sock-s", true) // up, but session listing never shows it running
+		fh.setProcs("w1:p1", running("claude", "sess-1"))
+	}
+	evs, m := c.command(proto.CmdFloorWake, "w", proto.FloorArgs{Session: "s"})
+	if e := errorOf(m); e.Code != proto.ErrWakeFailed || !strings.Contains(e.Message, "not seen running") {
+		t.Fatalf("reply = %s", m.raw)
+	}
+	if got := resumes(evs); !slices.Equal(got, []string{"w1=pending", "w1="}) {
+		t.Errorf("resume events = %v", got)
+	}
+	if f := lastFloor(t, evs); f.Transition != "" || f.State != "asleep" {
+		t.Errorf("final floor = %+v", f)
+	}
+	log, _ := b.st.AuditLog(context.Background())
+	if len(log) != 1 || log[0].OK || !log[0].Done || !strings.Contains(log[0].Error, "not seen running") {
+		t.Fatalf("audit = %+v", log)
+	}
+	// The floor is not busy any more.
+	fh.onStart = func() { b.floorAt("s", true, nil) }
+	c.mustAck(proto.CmdFloorWake, proto.FloorArgs{Session: "s"})
+}
+
+// A stop that herdr accepts but that the watcher never sees is no sleep.
+func TestSleepFailsWhenTheFloorIsNotSeenAsleep(t *testing.T) {
+	fh := newFakeHerdr()
+	opts := fastOps(fh)
+	opts.SleepTimeout = 300 * time.Millisecond
+	b := startBridge(t, "", opts)
+	b.floorAt("s", true, []world.WorkerObs{claudeW("w1", "sess-1")})
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	evs, m := c.command(proto.CmdFloorSleep, "zz", proto.FloorArgs{Session: "s"})
+	if e := errorOf(m); e.Code != proto.ErrSleepFailed || !strings.Contains(e.Message, "not seen asleep") {
+		t.Fatalf("reply = %s", m.raw)
+	}
+	if f := lastFloor(t, evs); f.Transition != "" || f.State != "running" {
+		t.Errorf("final floor = %+v", f)
+	}
+	log, _ := b.st.AuditLog(context.Background())
+	if len(log) != 1 || log[0].OK || !log[0].Done || !strings.Contains(log[0].Error, "not seen asleep") ||
+		!strings.Contains(log[0].Result, `"seen_asleep":false`) || !strings.Contains(log[0].Result, `"stopped":true`) {
+		t.Fatalf("audit = %+v", log)
+	}
+	fh.onStop = func() { b.floorAt("s", false, nil) }
+	c.mustAck(proto.CmdFloorSleep, proto.FloorArgs{Session: "s"})
+}

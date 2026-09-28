@@ -318,9 +318,10 @@ type workerReport struct {
 	Note   string `json:"note,omitempty"`
 }
 
-// runWake starts the session's server, waits for it to answer, then for
-// each expected agent (herdr resumes them itself; a pane that is back at
-// its shell gets the resume command once) and acks with the outcome.
+// runWake starts the session's server, waits for it to answer and for its
+// floor to be seen running (else wake_failed), then for each expected
+// agent (herdr resumes them itself; a pane that is back at its shell gets
+// the resume command once) and acks with the outcome.
 func (h *Hub) runWake(ctx context.Context, op *floorOp, socket string) {
 	defer h.wg.Done()
 	start := time.Now()
@@ -336,7 +337,9 @@ func (h *Hub) runWake(ctx context.Context, op *floorOp, socket string) {
 	report.PingAfterMs = time.Since(start).Milliseconds()
 	h.requestRescan() // follow the floor now, not at the next poll
 	if !h.awaitFlag(ctx, op, h.opts.WakeTimeout, func() bool { return op.running }) {
-		h.log.Warn("woken floor not seen running in time", "session", op.session, "timeout", h.opts.WakeTimeout)
+		h.finishOp(ctx, op, fmt.Errorf("%w: the %s server answers ping, but its floor was not seen running within %s",
+			errWakeFailed, op.session, h.opts.WakeTimeout), report)
+		return
 	}
 
 	h.awaitResumes(ctx, op, h.opts.ResumeTimeout)
@@ -487,7 +490,7 @@ type sleepReport struct {
 
 // runSleep backfills Codex session ids, stops the session the way herdr
 // does (agents keep their resume link) and acks once the floor is seen
-// asleep.
+// asleep; a floor not seen asleep in time is sleep_failed.
 func (h *Hub) runSleep(ctx context.Context, op *floorOp, backfills []backfill, known map[string]bool) {
 	defer h.wg.Done()
 	report := &sleepReport{Backfills: []backfill{}}
@@ -523,7 +526,9 @@ func (h *Hub) runSleep(ctx context.Context, op *floorOp, backfills []backfill, k
 		return
 	}
 	if !report.SeenAsleep {
-		h.log.Warn("stopped floor not seen asleep in time", "session", op.session, "timeout", h.opts.SleepTimeout)
+		h.finishOp(ctx, op, fmt.Errorf("%w: herdr stopped %s, but its floor was not seen asleep within %s",
+			errSleepFailed, op.session, h.opts.SleepTimeout), report)
+		return
 	}
 	h.finishOp(ctx, op, nil, report)
 }
