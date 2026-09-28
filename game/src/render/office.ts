@@ -58,6 +58,9 @@ export class OfficeView {
   private readonly blockers: Box3[];
   private asleep = false;
   private cardsDirty = true;
+  /** Walking obstacles and pick targets, until a seat changes. */
+  private obstacleCache: Rect[] | null = null;
+  private targetCache: Array<Pickable<Target>> | null = null;
   private cardCam: THREE.PerspectiveCamera | null = null;
 
   constructor(view: FloorView, o: OfficeOptions) {
@@ -205,6 +208,7 @@ export class OfficeView {
     const s = this.layout.slots[i];
     if (!s) return;
     this.seats[i] = v;
+    this.obstacleCache = this.targetCache = null;
     const mem = v ? memberOf(v) : null;
     this.desks.set(i, { x: s.seat.x, y: 0, z: s.seat.z, yaw: s.yaw, scale: 1, display: mem?.display ?? null, cueColor: mem?.cue.color ?? 0xffffff });
     if (v && mem) {
@@ -237,25 +241,31 @@ export class OfficeView {
   }
 
   /** Walking obstacles: the layout plus occupied seats. */
-  obstacles(): Rect[] {
-    const out = [...this.layout.colliders];
-    this.seats.forEach((v, i) => {
-      const s = this.layout.slots[i];
-      if (v && s) out.push(seatRect(s));
-    });
-    return out;
+  obstacles(): readonly Rect[] {
+    if (!this.obstacleCache) {
+      const out = [...this.layout.colliders];
+      this.seats.forEach((v, i) => {
+        const s = this.layout.slots[i];
+        if (v && s) out.push(seatRect(s));
+      });
+      this.obstacleCache = out;
+    }
+    return this.obstacleCache;
   }
 
   /** What the centre of the screen looks at, within reach. */
   pick(origin: V3, dir: V3, reach = REACH): Target | null {
-    const targets: Array<Pickable<Target>> = [...this.propTargets];
-    this.layout.slots.forEach((s, i) => {
-      const b = slotBoxes(s);
-      const v = this.seats[i];
-      if (v) targets.push({ boxes: [b.seat, b.desk], value: { kind: 'worker', id: v.worker.id, name: v.name, label: v.worker.label, desk: i } });
-      else targets.push({ boxes: [b.desk, b.plus], value: { kind: 'desk', id: `desk-${i}`, desk: i, label: `Desk ${i + 1}` } });
-    });
-    return pickNearest(origin, dir, targets, reach, this.blockers)?.value ?? null;
+    if (!this.targetCache) {
+      const targets: Array<Pickable<Target>> = [...this.propTargets];
+      this.layout.slots.forEach((s, i) => {
+        const b = slotBoxes(s);
+        const v = this.seats[i];
+        if (v) targets.push({ boxes: [b.seat, b.desk], value: { kind: 'worker', id: v.worker.id, name: v.name, label: v.worker.label, desk: i } });
+        else targets.push({ boxes: [b.desk, b.plus], value: { kind: 'desk', id: `desk-${i}`, desk: i, label: `Desk ${i + 1}` } });
+      });
+      this.targetCache = targets;
+    }
+    return pickNearest(origin, dir, this.targetCache, reach, this.blockers)?.value ?? null;
   }
 
   /** Cards on screen with what they say (tests). */
