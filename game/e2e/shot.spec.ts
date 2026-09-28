@@ -37,7 +37,9 @@ test('placeholder scene renders with WebGL2', async ({ page }) => {
   mkdirSync(dirname(SHOT), { recursive: true });
   writeFileSync(SHOT, png);
 
-  const stats = pixelStats(PNG.sync.read(png).data);
+  // Judge blankness on the canvas alone: the overlay by itself must not pass.
+  const bare = await page.screenshot({ style: '#debug { visibility: hidden; }' });
+  const stats = pixelStats(PNG.sync.read(bare).data);
   console.log(`shot: ${SHOT} backend=${backend} gl=${glRenderer} ${JSON.stringify(stats)}`);
   expect(stats.variance, 'screenshot looks blank').toBeGreaterThan(100);
   expect(stats.distinctColors, 'screenshot looks flat').toBeGreaterThan(50);
