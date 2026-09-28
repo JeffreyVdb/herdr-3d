@@ -136,6 +136,10 @@ type Worker struct {
 	Harness     string
 	Model       string
 	Effort      string
+	// LastSeen is when the bridge last saw the worker on its floor. The
+	// hub sets it from its own clock; zero means now when saving and
+	// unknown when read back unparsable.
+	LastSeen time.Time
 }
 
 // Desk is one desk slot on a floor, held by a worker.
@@ -209,7 +213,9 @@ func (s *Store) tx(ctx context.Context, fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-func (s *Store) ts() string { return s.now().UTC().Format(time.RFC3339Nano) }
+func (s *Store) ts() string { return stamp(s.now()) }
+
+func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
 
 // Buildings returns every building in sort order.
 func (s *Store) Buildings(ctx context.Context) ([]Building, error) {
@@ -505,7 +511,7 @@ func (s *Store) AuditLog(ctx context.Context) ([]AuditEntry, error) {
 // fingerprints: the identity candidates for reconciliation.
 func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT w.id, w.workspace_id, w.label, w.closed_at IS NOT NULL,
-			w.name, w.status, w.status_since, w.harness, w.model, w.effort, f.kind, f.value
+			w.name, w.status, w.status_since, w.harness, w.model, w.effort, w.last_seen_at, f.kind, f.value
 		FROM worker w LEFT JOIN worker_fingerprint f ON f.worker_id = w.id
 		WHERE w.session_name = ? ORDER BY w.last_seen_at DESC, w.id, f.kind, f.value`, session)
 	if err != nil {
@@ -516,14 +522,16 @@ func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, e
 	idx := map[string]int{}
 	for rows.Next() {
 		var w Worker
+		var seen string
 		var kind, value sql.NullString
 		if err := rows.Scan(&w.ID, &w.WorkspaceID, &w.Label, &w.Closed,
-			&w.Name, &w.Status, &w.StatusSince, &w.Harness, &w.Model, &w.Effort, &kind, &value); err != nil {
+			&w.Name, &w.Status, &w.StatusSince, &w.Harness, &w.Model, &w.Effort, &seen, &kind, &value); err != nil {
 			return nil, err
 		}
 		i, ok := idx[w.ID]
 		if !ok {
 			w.Session = session
+			w.LastSeen, _ = time.Parse(time.RFC3339Nano, seen)
 			i = len(out)
 			idx[w.ID] = i
 			out = append(out, w)
@@ -539,6 +547,9 @@ func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, e
 // current fingerprints; older fingerprints are kept as further evidence.
 func (s *Store) SaveWorker(ctx context.Context, w Worker) error {
 	now := s.ts()
+	if !w.LastSeen.IsZero() {
+		now = stamp(w.LastSeen)
+	}
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO worker (id, session_name, workspace_id, label, created_at, last_seen_at,
 				name, status, status_since, harness, model, effort)
@@ -566,6 +577,12 @@ func (s *Store) SaveWorker(ctx context.Context, w Worker) error {
 // CloseWorker records that the bridge saw a worker's workspace close.
 func (s *Store) CloseWorker(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE worker SET closed_at = ? WHERE id = ?`, s.ts(), id)
+	return err
+}
+
+// TouchWorker records when the bridge last saw a worker.
+func (s *Store) TouchWorker(ctx context.Context, id string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE worker SET last_seen_at = ? WHERE id = ?`, stamp(at), id)
 	return err
 }
 

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
@@ -216,6 +217,21 @@ func TestWorkers(t *testing.T) {
 	ws, _ = st.SessionWorkers(ctx, "s")
 	if ws[0].Closed {
 		t.Fatal("saving a worker should reopen it")
+	}
+	// last seen is the caller's time; TouchWorker moves it.
+	seen := time.UnixMilli(1_790_000_000_123)
+	w.LastSeen = seen
+	if err := st.SaveWorker(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if ws, _ = st.SessionWorkers(ctx, "s"); !ws[0].LastSeen.Equal(seen) {
+		t.Fatalf("last seen %v, want %v", ws[0].LastSeen, seen)
+	}
+	if err := st.TouchWorker(ctx, "u1", seen.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if ws, _ = st.SessionWorkers(ctx, "s"); !ws[0].LastSeen.Equal(seen.Add(time.Hour)) {
+		t.Fatalf("touched: last seen %v, want %v", ws[0].LastSeen, seen.Add(time.Hour))
 	}
 }
 

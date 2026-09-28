@@ -157,12 +157,16 @@ takes the **lowest free** index, in sidebar order. A desk is freed when its work
 asleep floor keep their desks.
 
 Each worker also gets a **name** from a built-in list of original names ("Nibble", "Pixel", "Mochi", …), stored with
-the worker and never changed: it comes back with the worker after a restart or when its workspace reopens. Names are
-unique among the floor's workers. A newcomer never gets the name of a worker the floor ever had, since that worker may
-come back, so past the end of the list (sooner on a floor with much churn) names get a suffix (`"Pixel 2"`). The one
-exception is two workers of a floor stored with the same name, which only a database from an earlier development build
-or a failed database read or write can cause: while both are on the floor, one keeps it (a worker that already had a
-desk before a newcomer, then sidebar order) and the other gets a new name, which it then keeps.
+the worker, which comes back with it after a restart or when its workspace reopens. Names are unique among the floor's
+workers; past the end of the list they get a suffix (`"Pixel 2"`). A worker that leaves keeps its name reserved for
+`--name-hold` (default 7 days) after the bridge last saw it on the floor (recorded when it leaves, and refreshed at
+most hourly while the bridge observes it there): no newcomer gets it meanwhile, so a worker that returns within the
+hold always has its name.
+After that the name is free again. A worker returning later keeps its name if nobody on the floor has it, and
+otherwise gets a new one: that is the one intended name change. Besides it, only a database from an earlier
+development build or a failed database read or write can leave two workers of a floor with the same stored name;
+while both are on the floor, one keeps it (a worker that already had a desk before a newcomer, then sidebar order) and
+the other gets a new name, which it then keeps.
 
 `status_since` is stored with the status it belongs to. After a bridge restart a worker whose status is unchanged
 keeps its `status_since` (idle ages don't reset); one whose status changed while the bridge was down starts at the
