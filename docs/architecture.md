@@ -64,8 +64,10 @@ MacBook (M2 Max)                                   devbox (Linux)
 - **Stopped sessions**: parse `session.json` (guard `version==3`, tolerate unknown fields) for the sleeping floor.
 - **Wake a floor**: `systemd-run --user --unit=herdr-s-<name> --collect -p KillMode=process /bin/fish -l -c 'exec herdr --session <name> server'`
   (login env → API-key wrappers, no CLAUDE* leakage). Agents auto-resumed in tests without a client attached; still
-  confirm each via `pane.agent_detected`, with a fallback. Codex may need `pane report-agent-session` to backfill its id.
-  Sleep = `herdr session stop`.
+  confirm each, with a fallback. herdr 0.9 restores a pane's agent before it runs and sends no `pane.agent_detected` for
+  a resume (M3, verified live), so the bridge confirms by the pane's foreground process (`pane process-info`) or a
+  detection naming the agent; a detection without an agent means it exited. Codex may need `pane report-agent-session`
+  to backfill its id. Sleep = `herdr session stop`. Details: `protocol.md` "Wake and sleep".
 - **Hire**: `workspace create --cwd … --label … --no-focus` → `agent start <name> --kind claude|codex --pane … -- <args>`
   → handle trust-dialog `blocked` → optional first prompt. Always launch through a shell pane so fish wrappers apply.
   - claude: `--model claude-opus-5-5|claude-fable-5-1 --effort low|medium|high|xhigh|max --permission-mode bypassPermissions --name <label>`

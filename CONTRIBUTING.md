@@ -4,9 +4,11 @@
 
 - `cmd/herdr-world` — server-side bridge daemon (Go).
 - `cmd/h3d-helper` — Mac-side helper (Go, cross-compiled for `darwin/arm64`).
-- `internal/` — shared Go packages. Bridge: `herdr` (the only herdr client, read-only), `watch` (session discovery and
-  per-session watchers), `world` (floors/workers from snapshots and `session.json`, identity matching, worker names),
-  `store` (SQLite), `server` (hub + WebSocket), `proto` (protocol v1 types and client). Helper: `helper` (ssh tunnel
+- `internal/` — shared Go packages. Bridge: `herdr` (the only door to herdr: the read-only client and the allowlisted
+  control surface for wake/sleep), `watch` (session discovery and per-session watchers), `world` (floors/workers from
+  snapshots and `session.json`, identity matching, worker names), `store` (SQLite), `server` (hub + WebSocket, wake/sleep,
+  floor settings), `proto` (protocol v1 types and client), `gitremote` (GitHub origin of a directory, for the repo
+  suggestion), `codex` (Codex session ids from rollout files, for the sleep backfill). Helper: `helper` (ssh tunnel
   supervisor, game server, `/ws` proxy). `app` holds both command lines.
 - `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).
 - `game/` — the game: Vite + strict TypeScript + three.js (`three/webgpu`), pnpm.
@@ -20,7 +22,7 @@ Go 1.27 (see `go.mod`), Node 24.18 (`game/.nvmrc`), pnpm 11.7 (`packageManager` 
 
 ```sh
 make build test lint   # Go binaries -> bin/, game bundle -> game/dist/, go test + vitest, vet/gofmt/tsc
-make integration       # bridge against a real herdr in a throwaway session (see below)
+make integration       # bridge against a real herdr (and systemd-run) in throwaway sessions (see below)
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
 make dev               # Vite dev server on a portlease-leased port, 127.0.0.1 only
 make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check)
@@ -38,10 +40,22 @@ make shot              # headless WebGL2 screenshot -> game/test-results/shot.pn
 
 ## Bridge (`herdr-world`)
 
-Protocol: [`docs/protocol.md`](docs/protocol.md). The bridge only **reads** herdr: every herdr call goes through
-`internal/herdr`, whose socket methods are allowlisted to `ping`, `session.snapshot` and `events.subscribe` (plus
-`herdr session list --json`). `TestReadOnlyAllowlist` is the tripwire; widening it needs review. Its own state is the
-SQLite database.
+Protocol: [`docs/protocol.md`](docs/protocol.md). Every herdr call goes through `internal/herdr`, in two allowlisted
+parts:
+
+- **Reads** (`herdr.Client`): the socket methods `ping`, `session.snapshot` and `events.subscribe`, plus `herdr session
+  list --json`. `TestReadOnlyAllowlist` is the tripwire.
+- **Writes, for `floor.wake` / `floor.sleep` only** (`herdr.Control`): exactly six command shapes (`controlShapes`):
+  `systemd-run --user --unit=herdr-s-<name> … /bin/fish -l -c "exec herdr --session '<name>' server"`, `herdr session
+  stop <name> --json`, `herdr --session <name> pane run <pane> "claude --resume <id>"` / `"codex resume <id>"`, `herdr
+  --session <name> pane report-agent-session <pane> --source herdr:codex --agent codex --agent-session-id <id>`, and
+  the read-only `herdr --session <name> pane process-info --pane <pane>`. Session names, pane ids and agent session ids
+  are validated, every argument is its own argv element, sessions outside `--sessions` are refused, and commands run
+  with the `HERDR_*`/`CLAUDE*` variables stripped. `TestControlAllowlist` pins the set and the argv; widening either
+  needs review.
+
+Everything else the bridge changes is its own SQLite database. How a wake and a sleep go, and what they log:
+[`docs/protocol.md` "Wake and sleep"](docs/protocol.md#wake-and-sleep).
 
 Run a private instance next to (or instead of) the real one; `dump` and `cmd` take the same `--socket`:
 
@@ -53,17 +67,43 @@ bin/herdr-world dump --socket "$sock"            # snapshot, then events as JSON
 bin/herdr-world dump --socket "$sock" --once | jq '.world.floors'
 bin/herdr-world cmd --socket "$sock" building.create '{"name":"Work"}'
 bin/herdr-world cmd --socket "$sock" floor.assign '{"session":"herdr-3d","building":"b_…"}'
+bin/herdr-world cmd --socket "$sock" floor.settings.set '{"session":"herdr-3d","repo":"JeffreyVdb/herdr-3d"}'
 ```
+
+A private bridge acts on real sessions as soon as it is sent `floor.sleep` or `floor.wake`. Always start it with a
+`--sessions` that matches only your throwaway sessions (e.g. `'^h3d-mytask-'`), so it cannot even see the sessions
+everyone works in. To try wake and sleep safely:
+
+```sh
+s=h3d-mytask-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')
+systemd-run --user --unit=herdr-s-$s --collect -p KillMode=process --working-directory=$HOME \
+  /bin/fish -l -c "exec herdr --session '$s' server"            # the bridge's own start command
+env -u HERDR_ENV -u HERDR_SESSION -u HERDR_SOCKET_PATH herdr --session $s workspace create --cwd /tmp --label demo --no-focus
+bin/herdr-world --socket "$sock" --db /tmp/h3d-mytask/world.db --sessions '^h3d-mytask-' &
+bin/herdr-world cmd --socket "$sock" floor.sleep "{\"session\":\"$s\"}"   # herdr session stop
+bin/herdr-world cmd --socket "$sock" floor.wake  "{\"session\":\"$s\"}"   # systemd-run, resume checks
+sqlite3 /tmp/h3d-mytask/world.db 'select cmd, ok, error, result from audit_log'
+bin/herdr-world cmd --socket "$sock" floor.sleep "{\"session\":\"$s\"}" && herdr session delete $s
+systemctl --user list-units --all 'herdr-s-*'                     # the unit is gone (--collect)
+```
+
+Real agents in such a session must be cheap: `claude --model claude-haiku-4-5-20251001 --effort low`, `codex -m
+gpt-6-luna -c model_reasoning_effort=low`, one short turn. Never sleep or wake a session you did not create, and never
+`systemctl stop` a `herdr-s-*` unit that `herdr session stop` can stop (it loses the agents' resume link).
 
 | flag | env | default |
 |---|---|---|
 | `--socket` | `HERDR_WORLD_SOCKET` | `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` |
 | `--db` (serve) | `HERDR_WORLD_DB` | `$XDG_STATE_HOME/herdr-world/world.db`, else `~/.local/state/herdr-world/world.db` |
-| `--herdr` | `HERDR_WORLD_HERDR` | `herdr` on `PATH` |
-| `--sessions` | `HERDR_WORLD_SESSIONS` | all; a regexp limits which sessions are watched |
+| `--herdr` | `HERDR_WORLD_HERDR` | `herdr` on `PATH` (a woken server runs `herdr` from the login shell's `PATH`) |
+| `--systemd-run` | `HERDR_WORLD_SYSTEMD_RUN` | `systemd-run` on `PATH`: starts woken sessions |
+| `--sessions` | `HERDR_WORLD_SESSIONS` | all; a regexp limits which sessions are watched, and the only ones commands may wake, sleep or configure |
 | `--poll`, `--resnapshot` | `HERDR_WORLD_POLL`, `HERDR_WORLD_RESNAPSHOT` | `2s`, `30s` |
 | `--max-desks` | `HERDR_WORLD_MAX_DESKS` | `96`: cap on the desks a floor renders beyond its occupied ones (`floor.desks`) |
 | `--name-hold` | `HERDR_WORLD_NAME_HOLD` | `168h` (7 days): how long a worker's name stays held after the bridge sees it leave its floor; then a newcomer may take it (`worker.name`) |
+| `--wake-timeout` | `HERDR_WORLD_WAKE_TIMEOUT` | `10s`: how long a woken server has to answer `ping` (else `wake_failed`) and to be seen running |
+| `--resume-timeout` | `HERDR_WORLD_RESUME_TIMEOUT` | `10s`: how long a wake waits for the agents, before the fallback and again after it |
+| `--codex-sessions` | `HERDR_WORLD_CODEX_SESSIONS` | `$CODEX_HOME/sessions`, else `~/.codex/sessions`: Codex rollouts, for the sleep backfill |
 | `--log-level`, `--log-format` | `HERDR_WORLD_LOG_LEVEL`, `HERDR_WORLD_LOG_FORMAT` | `info`, `text` (or `json`) |
 
 Install as a user service:
@@ -77,14 +117,24 @@ journalctl --user -u herdr-world -f
 
 ### Integration test
 
-`go test ./...` never touches herdr (fake socket server + recorded fixtures). `make integration` runs
-`TestIntegrationThrowawaySession` (build tag `integration`) against the installed herdr: it starts a headless server for
-a fresh session `h3d-it-<random>`, creates workspaces, reports a custom agent's states through `herdr pane report-agent`
-(no real coding agent), closes a workspace, stops the session, and asserts the bridge's events. It always passes
-`--session h3d-it-…` explicitly, strips `HERDR_*`/`CLAUDE*` pane variables from herdr's environment, and stops and deletes
-the session in `t.Cleanup`, also on failure. It never touches any other session, so it is safe to run from inside a
-herdr pane. If a run is killed hard, check `herdr session list` for a leftover `h3d-it-*` session and
-`herdr session stop`/`delete` it.
+`go test ./...` never touches herdr or systemd (fake socket server + recorded fixtures; `herdr.Control` gets a fake
+`Runner` that plays herdr and systemd-run). `make integration` runs, with build tag `integration`, against the
+installed herdr:
+
+- `TestIntegrationThrowawaySession`: starts a headless server for a fresh session `h3d-it-<random>`, creates
+  workspaces, reports a custom agent's states through `herdr pane report-agent` (no real coding agent), closes a
+  workspace, stops the session, and asserts the bridge's events.
+- `TestIntegrationSleepWake`: puts a throwaway floor with two workspaces to sleep with `floor.sleep`, wakes it with
+  `floor.wake` through the real `systemd-run` path, and checks the workers keep their ids, desks and names, the
+  transient unit `herdr-s-h3d-it-…` runs the server, and that server has none of the test's `CLAUDE*`/`HERDR_*`
+  variables.
+
+Both always name the `h3d-it-…` session explicitly, and the bridge under test watches only that session. They strip
+`HERDR_*`/`CLAUDE*` pane variables from herdr's environment and in `t.Cleanup`, also on failure, stop the session with
+`herdr session stop`, wait for the `herdr-s-h3d-it-…` unit to be collected (stopping it only as a last resort) and
+delete the session. They never touch any other session, so they are safe to run from inside a herdr pane. If a run is
+killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herdr session stop`/`delete` it) and
+`systemctl --user list-units --all 'herdr-s-h3d-it-*'`.
 
 ## Helper (`h3d-helper`, Mac)
 
