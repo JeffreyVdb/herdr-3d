@@ -127,12 +127,13 @@ export class LineBook {
   private readonly byKind = new Map<LineKind, VoiceLine[]>();
   private readonly last = new Map<LineKind, string>();
   private readonly until = new Map<Group, number>();
+  private readonly rng: () => number;
+  private readonly cooldownMs: number;
 
-  constructor(
-    lines: readonly VoiceLine[],
-    private readonly rng: () => number = Math.random,
-    private readonly cooldownMs = COOLDOWN_MS,
-  ) {
+  // No parameter properties: tools/voices.ts loads this file with Node's type stripping.
+  constructor(lines: readonly VoiceLine[], rng: () => number = Math.random, cooldownMs = COOLDOWN_MS) {
+    this.rng = rng;
+    this.cooldownMs = cooldownMs;
     for (const l of lines) this.byKind.set(l.kind, [...(this.byKind.get(l.kind) ?? []), l]);
   }
 
