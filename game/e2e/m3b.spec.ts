@@ -250,6 +250,32 @@ test('lobby: in from the sidewalk through the front door, the reception desk, th
   clean();
 });
 
+test('top bar: same floor numbers with sim=1; at 1024 wide the counts drop their words and the name stays whole', async ({ page }) => {
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 1024, height: 640 });
+  await openGame(page, 'demo-m3b', '', 'sim=1');
+  const bar = () =>
+    page.evaluate(() => {
+      const name = document.querySelector('.topbar-name') as HTMLElement;
+      const counts = [...document.querySelectorAll<HTMLElement>('.topbar-counts .count')];
+      return {
+        cut: name.scrollWidth > name.clientWidth,
+        words: counts.map((c) => (c.lastElementChild as HTMLElement).getBoundingClientRect().width > 2),
+        titles: counts.map((c) => c.title),
+      };
+    });
+  for (const [floor, sub] of [['pastry', 'Floor 1 of 3 · Work'], ['herdr-3d', 'Floor 3 of 3 · Work']] as const) {
+    await page.evaluate((s) => window.__h3d.enterFloor(s), floor);
+    await frames(page, 2);
+    expect(await topbar(page)).toEqual({ name: floor, sub });
+  }
+  expect(await bar()).toEqual({ cut: false, words: [false, false, false], titles: ['9 working', '3 needs you', '6 idle'] });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await frames(page, 2);
+  expect(await bar()).toMatchObject({ cut: false, words: [true, true, true] });
+  clean();
+});
+
 test('screenshots: out of the windows, the fire escape, the facade, the lobby', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);

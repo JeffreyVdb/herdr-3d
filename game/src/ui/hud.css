@@ -125,11 +125,47 @@ body {
   stroke-width: 2.4;
   flex: none;
 }
+/*
+ * The name comes first: the counts get only the room the name and the buttons leave (as a size container their
+ * own width never pushes on the name), and drop their words when that room is short. The auto margin keeps
+ * them at the right and never goes negative, so a count that still doesn't fit is cut at the buttons' side.
+ */
 .topbar-counts {
+  flex: 1 1 0;
   display: flex;
   gap: 14px;
-  margin-left: auto;
+  overflow: hidden;
+  container-type: inline-size;
   font-variant-numeric: tabular-nums;
+}
+.topbar-counts > :first-child {
+  margin-left: auto;
+}
+/* Room for the counts without words (two-digit numbers), however long the name. */
+.topbar-counts[data-n='3'] {
+  min-width: 130px;
+}
+.topbar-counts[data-n='1'] {
+  min-width: 36px;
+}
+/* With their words the three counts take up to ~310 px (three-digit numbers), the asleep one ~85 px. */
+@container (max-width: 312px) {
+  .topbar-counts[data-n='3'] .count > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+@container (max-width: 90px) {
+  .topbar-counts[data-n='1'] .count > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
 }
 .topbar-actions {
   display: flex;
@@ -612,7 +648,9 @@ body {
   }
   .topbar-counts {
     order: 3;
-    width: 100%;
+    flex: 0 0 100%;
+  }
+  .topbar-counts > :first-child {
     margin-left: 0;
   }
   .topbar-counts .count span {

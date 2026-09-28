@@ -322,8 +322,9 @@ make shot                     # Playwright WebGL2: game/test-results/{shot,m2-ci
                               # in and out of the asleep middle floor, to the street (blocked at the curb and the
                               # fence) and back in at the bottom floor; in through the lobby's front door (the
                               # greeting once, not again inside the cooldown), E at the desk, the Lobby stop both
-                              # ways; m3b-{window-bottom,window-top,fire-escape,facade,fire-escape-street,lobby,
-                              # lobby-greeting}.png
+                              # ways; the same floor numbers with sim=1, and the top bar at 1024 wide (the counts
+                              # drop their words, the name stays whole); m3b-{window-bottom,window-top,
+                              # fire-escape,facade,fire-escape-street,lobby,lobby-greeting}.png
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
 pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/

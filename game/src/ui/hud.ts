@@ -197,12 +197,13 @@ export class Hud {
   }
 
   private setCounts(c: Counts, asleep = false): void {
-    if (asleep) {
-      this.counts.innerHTML = `<span class="count count--asleep"><i></i><b>${c.total}</b><span>asleep</span></span>`;
-      return;
-    }
-    const item = (cls: string, n: number, label: string) => `<span class="count count--${cls}"><i></i><b>${n}</b><span>${label}</span></span>`;
-    this.counts.innerHTML = item('working', c.working, 'working') + item('needs_you', c.needsYou, 'needs you') + item('idle', c.idle, 'idle');
+    // The words go when the bar is short (hud.css); the title keeps them on hover.
+    const item = (cls: string, n: number, label: string) =>
+      `<span class="count count--${cls}" title="${n} ${label}"><i></i><b>${n}</b><span>${label}</span></span>`;
+    this.counts.dataset.n = asleep ? '1' : '3';
+    this.counts.innerHTML = asleep
+      ? item('asleep', c.total, 'asleep')
+      : item('working', c.working, 'working') + item('needs_you', c.needsYou, 'needs you') + item('idle', c.idle, 'idle');
   }
 
   setCity(buildings: number, floors: number, c: Counts): void {
