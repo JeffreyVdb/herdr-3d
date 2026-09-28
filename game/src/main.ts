@@ -20,8 +20,16 @@ export interface H3DDebug {
   lookAt(): LookAt | null;
   /** Status shown on screen for a worker, and when (unix ms) it got there. */
   status(workerId: string): { status: string; at: number } | null;
-  /** Workers per floor as the store sees them. */
-  world(): Array<{ session: string; asleep: boolean; desks: number; workers: Array<{ id: string; name: string; label: string; desk: number; status: string }> }>;
+  /**
+   * Workers per floor as the store sees them: `name`/`desk` as shown, and
+   * what the bridge sent for them (null from a bridge without those fields).
+   */
+  world(): Array<{
+    session: string;
+    asleep: boolean;
+    desks: number;
+    workers: Array<{ id: string; name: string; label: string; desk: number; status: string; bridgeName: string | null; bridgeDesk: number | null }>;
+  }>;
   /** The office layout of a floor (for scripted camera paths). */
   layout(session: string): ReturnType<typeof floorLayout> | null;
   enterFloor(session: string, pose?: Pose): Promise<void>;
@@ -66,7 +74,15 @@ const h3d: H3DDebug = {
             session: f.session,
             asleep: f.asleep,
             desks: f.desks,
-            workers: f.workers.map((w) => ({ id: w.worker.id, name: w.name, label: w.worker.label, desk: w.desk, status: w.worker.status })),
+            workers: f.workers.map((w) => ({
+              id: w.worker.id,
+              name: w.name,
+              label: w.worker.label,
+              desk: w.desk,
+              status: w.worker.status,
+              bridgeName: w.worker.name ?? null,
+              bridgeDesk: w.worker.desk_index ?? null,
+            })),
           }))
       : [],
   layout: (s) => {

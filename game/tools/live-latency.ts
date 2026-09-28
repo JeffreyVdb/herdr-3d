@@ -3,7 +3,8 @@
 //
 //   pnpm test:live
 //
-// It builds the bridge from this worktree (bin/herdr-world), starts a
+// It builds the bridge from this worktree (bin/herdr-world; H3D_LIVE_BRIDGE=<path>
+// uses a prebuilt one instead, e.g. another branch's bridge), starts a
 // throwaway herdr session h3d-m2game-<random>, a private bridge watching only
 // that session (socket $XDG_RUNTIME_DIR/h3d-m2game/bridge.sock, db
 // /tmp/h3d-m2game/world.db), the dev WS→unix proxy on a leased port, and then
@@ -79,8 +80,13 @@ async function main(): Promise<number> {
   mkdirSync(OUT, { recursive: true });
   const work = mkdtempSync(join(tmpdir(), 'h3d-m2game-'));
 
-  log('building bin/herdr-world from this worktree');
-  execFileSync('go', ['build', '-o', join(ROOT, 'bin', 'herdr-world'), './cmd/herdr-world'], { cwd: ROOT, stdio: 'inherit' });
+  let bin = process.env.H3D_LIVE_BRIDGE;
+  if (bin) log(`using the prebuilt bridge ${bin}`);
+  else {
+    bin = join(ROOT, 'bin', 'herdr-world');
+    log('building bin/herdr-world from this worktree');
+    execFileSync('go', ['build', '-o', bin, './cmd/herdr-world'], { cwd: ROOT, stdio: 'inherit' });
+  }
 
   session = new Throwaway();
   await session.start(work, join(OUT, 'herdr-server.log'));
@@ -91,7 +97,7 @@ async function main(): Promise<number> {
   rmSync(join(dbDir, 'world.db'), { force: true });
   const bridgeLog = openSync(join(OUT, 'bridge.log'), 'w');
   const bridge = spawn(
-    join(ROOT, 'bin', 'herdr-world'),
+    bin,
     ['--socket', sock, '--db', join(dbDir, 'world.db'), '--sessions', `^${session.name}$`, '--log-level', 'debug'],
     { env: cleanEnv(), stdio: ['ignore', bridgeLog, bridgeLog] },
   );

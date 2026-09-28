@@ -3,8 +3,9 @@ import { writeFileSync } from 'node:fs';
 import { runScoped } from '../tools/herdr-throwaway.ts';
 
 // Run through tools/live-latency.ts, which owns the throwaway herdr session,
-// the private bridge (main's M1 bridge: no name/desk_index/…, so the game's
-// fallbacks are exercised too) and the WS proxy.
+// the private bridge and the WS proxy. The bridge is whatever this worktree
+// builds: an M1 bridge (no name/desk_index, so the game's fallbacks show) or
+// the M2 bridge (its own names and desks); both must pass.
 const env = (k: string) => {
   const v = process.env[k];
   if (!v) throw new Error(`${k} unset: run via \`pnpm test:live\``);
@@ -27,8 +28,14 @@ test('a herdr status change reaches the rendered state within 1 s', async ({ pag
   );
   const workerId = (await id.jsonValue()) as string;
   const seen = await page.evaluate((s) => window.__h3d.world().find((f) => f.session === s), session);
-  // Old bridge: the name falls back to the label, the desk to the lowest free slot, 6 desks.
-  expect(seen?.workers[0]).toMatchObject({ name: label, desk: 0 });
+  const w = seen?.workers.find((x) => x.id === workerId);
+  if (!w) throw new Error('worker vanished');
+  // Contract: the bridge's name, else the label; its desk_index, else the
+  // lowest free local slot (0, the only worker); one worker → 6 desks either way.
+  console.log(`live: bridge sent name=${JSON.stringify(w.bridgeName)} desk_index=${JSON.stringify(w.bridgeDesk)}`);
+  if (w.bridgeName !== null) expect(w.bridgeName).not.toBe('');
+  expect(w.name).toBe(w.bridgeName ?? label);
+  expect(w.desk).toBe(w.bridgeDesk ?? 0);
   expect(seen?.desks).toBe(6);
   await page.evaluate((s) => window.__h3d.enterFloor(s), session);
   // Let the new floor compile its shaders and settle before timing anything.
