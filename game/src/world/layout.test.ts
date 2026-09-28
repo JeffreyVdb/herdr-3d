@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blocked, moveWithCollision, pickNearest, rayBox } from './collide';
 import { assignDesks, deskCountFallback, displayStatus, modelCue, modelLabel, taskLine } from './derive';
-import { EYE_HEIGHT, floorLayout, outlineOf, podGrid, seatRect, slotBoxes, type Rect } from './layout';
+import { EYE_HEIGHT, floorLayout, outlineOf, podGrid, seatRect, slotBoxes, wallPieces, type Rect } from './layout';
 
 describe('deskCountFallback', () => {
   it.each([
@@ -230,6 +230,26 @@ describe('building outline', () => {
     expect(blocked({ x: -0.1, z: mid }, 0.28, l.colliders)).toBe(false);
     expect(blocked({ x: -0.1, z: l.fireDoor.z0 - 0.4 }, 0.28, l.colliders)).toBe(true);
     for (const s of l.slots) expect(blocked(s.seat, 0.28, l.colliders)).toBe(false);
+  });
+});
+
+describe('wallPieces', () => {
+  it('cuts a wall around its window and door, keeping the rest', () => {
+    const wall = { min: [0, 0, -0.2] as [number, number, number], max: [10, 3, 0] as [number, number, number] };
+    const pieces = wallPieces(wall, 0, [
+      { u0: 6, u1: 7.2, y0: 0, y1: 2.3 },
+      { u0: 2, u1: 4, y0: 0.9, y1: 2.4 },
+    ]);
+    const vol = (b: { min: number[]; max: number[] }) => (b.max[0]! - b.min[0]!) * (b.max[1]! - b.min[1]!) * (b.max[2]! - b.min[2]!);
+    const total = pieces.reduce((n, b) => n + vol(b), 0);
+    expect(total).toBeCloseTo(0.2 * (30 - 2 * 1.5 - 1.2 * 2.3), 6);
+    // Nothing is left in either hole.
+    const inside = (x: number, y: number) => pieces.some((b) => x > b.min[0]! && x < b.max[0]! && y > b.min[1]! && y < b.max[1]!);
+    expect(inside(3, 1.5)).toBe(false);
+    expect(inside(6.6, 1)).toBe(false);
+    expect(inside(3, 0.5)).toBe(true);
+    expect(inside(6.6, 2.8)).toBe(true);
+    expect(inside(5, 1.5)).toBe(true);
   });
 });
 
