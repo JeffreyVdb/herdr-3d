@@ -240,6 +240,7 @@ export class App {
         this.hud.toast(`${session} is gone.`);
         return;
       }
+      this.walker.stop();
       this.office?.dispose();
       this.office = new OfficeView(now, { shadows: this.shadows });
       this.mode = 'floor';
@@ -270,6 +271,7 @@ export class App {
     const session = this.office?.session ?? null;
     const swap = () => {
       this.walker.release();
+      this.walker.stop();
       this.office?.dispose();
       this.office = null;
       this.mode = 'city';
@@ -362,6 +364,7 @@ export class App {
 
   private openBoard(which: string): void {
     this.walker.release();
+    this.walker.stop();
     const floor = this.office?.session ?? 'this floor';
     this.hud.sheet(`${which} · ${floor}`, `This overlay arrives in M7. It will list ${which === 'Issues' ? 'the open GitHub issues' : 'the open pull requests'} for ${floor}, so you can read them without walking to the board.`);
   }
@@ -400,15 +403,20 @@ export class App {
   }
 
   private onKey(e: KeyboardEvent, down: boolean): void {
+    // A release always reaches the walker, whatever the view, focus or open
+    // sheet: a key let go anywhere else must not stay held.
+    if (!down) {
+      if (this.walker.key(e, false) && this.mode === 'floor') e.preventDefault();
+      return;
+    }
     if (this.hud.sheetOpen) return;
     const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     if (typing) return;
     this.activity(true);
-    if (this.mode === 'floor' && this.walker.key(e, down)) {
+    if (this.mode === 'floor' && this.walker.key(e, true)) {
       e.preventDefault();
       return;
     }
-    if (!down) return;
     if (e.code === 'Tab' && this.mode === 'floor') {
       e.preventDefault();
       this.setPlan(!this.planOpen);
@@ -475,6 +483,7 @@ export class App {
     if (document.hidden) {
       void this.r.setAnimationLoop(null);
       this.walker.release();
+      this.walker.stop();
     } else {
       this.resume();
     }

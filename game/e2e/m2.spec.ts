@@ -166,6 +166,32 @@ test('events during the elevator ride reach the office that opens after it', asy
   clean();
 });
 
+test('a movement key held when leaving the floor does not keep walking', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page);
+  const still = async () => {
+    const p = await page.evaluate(() => window.__h3d.pose());
+    await frames(page, 10);
+    expect(await page.evaluate(() => window.__h3d.pose())).toEqual(p);
+  };
+  // Pressed on the floor, released in the city.
+  await enter(page);
+  await page.keyboard.down('KeyW');
+  await frames(page, 2);
+  await page.evaluate(() => window.__h3d.leaveFloor());
+  await page.keyboard.up('KeyW');
+  await enter(page);
+  await still();
+  // Still held after coming back: leaving forgot it.
+  await page.keyboard.down('ArrowUp');
+  await frames(page, 2);
+  await page.evaluate(() => window.__h3d.leaveFloor());
+  await enter(page);
+  await still();
+  await page.keyboard.up('ArrowUp');
+  clean();
+});
+
 test('first person: a desk row with workers, cards with task text, a free desk', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page);

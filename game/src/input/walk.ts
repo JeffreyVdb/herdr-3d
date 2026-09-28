@@ -60,7 +60,7 @@ export class Walker {
       },
       sig,
     );
-    window.addEventListener('blur', () => this.keys.clear(), sig);
+    window.addEventListener('blur', () => this.stop(), sig);
   }
 
   /** Feed key events (the app routes them; returns true when consumed). */
@@ -78,6 +78,12 @@ export class Walker {
 
   get moving(): boolean {
     return this.keys.size > 0;
+  }
+
+  /** Forgets held keys (leaving the floor, a hidden tab): nothing keeps walking. */
+  stop(): void {
+    this.keys.clear();
+    this.run = false;
   }
 
   requestLock(): void {
