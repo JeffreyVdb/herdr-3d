@@ -1,0 +1,34 @@
+# herdr-world: the herdr-3d bridge. Watches every herdr session read-only and
+# serves the world over $XDG_RUNTIME_DIR/herdr-world/bridge.sock (0600, no TCP).
+#
+# Install (see CONTRIBUTING.md):
+#   make go-build
+#   install -Dm755 bin/herdr-world ~/.local/bin/herdr-world
+#   install -Dm644 deploy/herdr-world.service ~/.config/systemd/user/herdr-world.service
+#   systemctl --user daemon-reload && systemctl --user enable --now herdr-world
+# Logs: journalctl --user -u herdr-world -f
+# Override settings with `systemctl --user edit herdr-world` (HERDR_WORLD_* variables).
+
+[Unit]
+Description=herdr-world bridge for herdr-3d
+Documentation=https://github.com/JeffreyVdb/herdr-3d/blob/main/docs/protocol.md
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/herdr-world serve
+# The user manager's PATH may not include ~/.local/bin, where herdr lives.
+Environment=HERDR_WORLD_HERDR=%h/.local/bin/herdr
+Environment=HERDR_WORLD_LOG_LEVEL=info
+# Socket dir and database dir, both private. The bridge also creates and
+# checks them itself; the database is $XDG_STATE_HOME/herdr-world/world.db.
+RuntimeDirectory=herdr-world
+RuntimeDirectoryMode=0700
+StateDirectory=herdr-world
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=default.target
