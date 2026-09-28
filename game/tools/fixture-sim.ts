@@ -609,8 +609,11 @@ export class SimWorld {
       this.later([() => fail(new CmdError('hire_failed', 'hire_failed: herdr agent start: claude exited during startup (simulated)'))]);
       return;
     }
-    const name = this.nextName(f.session);
-    const label = (a.label as string | undefined)?.trim() || name;
+    // The name is the label when that is a free generated name, else the next one (like the bridge).
+    const want = (a.label as string | undefined)?.trim() ?? '';
+    const named = SIM_NAMES.includes(want) && !this.workers.some((x) => x.session === f.session && x.name === want);
+    const name = named ? want : this.nextName(f.session);
+    const label = want || name;
     const n = ++this.nextId;
     const id = `${(0x5173a4 + n).toString(16)}e0-0000-4000-a000-${n.toString(16).padStart(12, '0')}`;
     const ws = `wh${n.toString(36)}`;
@@ -654,6 +657,8 @@ export class SimWorld {
         this.workers.push(w);
         this.resize(send, f);
         this.upsertWorker(send, w);
+        // herdr opens the repo's main checkout too when the floor has no workspace in it: one more (not hired) worker.
+        if (branch && root && !this.workers.some((x) => x.session === f.session && x.cwd === root)) this.mainCheckout(send, f, root);
         const data: Obj = { id, workspace_id: ws, trust: 'approved' };
         if (prompt) data.prompted = true;
         if (branch) {
@@ -675,6 +680,32 @@ export class SimWorld {
           ]
         : []),
     ]);
+  }
+
+  /** The workspace herdr opens for a worktree group's main checkout: a plain worker at the lowest free desk, no `hired_at`. */
+  private mainCheckout(send: Send, f: Floor, root: string): void {
+    const taken = new Set(this.workers.filter((x) => x.session === f.session).map((x) => x.desk_index));
+    let desk = 0;
+    while (taken.has(desk) || this.hiring.has(`${f.session}:${desk}`)) desk++;
+    const n = ++this.nextId;
+    const ws = `wm${n.toString(36)}`;
+    const repo = root.split('/').pop() ?? root;
+    const w: Worker = {
+      id: `${(0x5173a4 + n).toString(16)}e0-0000-4000-b000-${n.toString(16).padStart(12, '0')}`,
+      session: f.session,
+      workspace_id: ws,
+      label: repo,
+      cwd: root,
+      pane_id: `${ws}:p1`,
+      status: 'unknown',
+      name: this.nextName(f.session),
+      desk_index: desk,
+      status_since: this.now(),
+      worktree: { repo_root: root, repo_name: repo, checkout_path: root, linked: false },
+    };
+    this.workers.push(w);
+    this.resize(send, f);
+    this.upsertWorker(send, w);
   }
 
   private worker(a: Obj): Worker {

@@ -349,6 +349,24 @@ describe('SimWorld hire and send home (M4)', () => {
     expect(data(g.cmd('hire.prepare', { session: 'pastry' }).got()[0]).git).toMatchObject({ fetched: true });
   });
 
+  it('names the hire after a free generated-name label; a worktree of a repo with no open main checkout brings it along', () => {
+    const r = m4();
+    const c = r.cmd('worker.hire', { session: 'pastry', desk_index: 15, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', label: 'Mango', cwd: '/home/dev/devel/grill', worktree: true });
+    r.tick();
+    const got = c.got();
+    expect(got.map((m) => m.t)).toEqual(['floor.upsert', 'worker.upsert', 'floor.upsert', 'worker.upsert', 'ack']);
+    const hired = (got[1] as { worker: Record<string, unknown> }).worker;
+    const main = (got[3] as { worker: Record<string, unknown> }).worker;
+    expect(hired).toMatchObject({ name: 'Mango', label: 'Mango', desk_index: 15, hired_at: NOW });
+    // The main checkout: the lowest free desk (14), a generated name, no hired_at (no walk-in).
+    expect(main).toMatchObject({ desk_index: 14, name: 'Gumdrop', cwd: '/home/dev/devel/grill', worktree: { linked: false } });
+    expect(main.hired_at).toBeUndefined();
+    // A label that is no generated name keeps the next name.
+    const d = r.cmd('worker.hire', { session: 'scratchpad', desk_index: 3, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', label: 'notes 2' });
+    r.tick();
+    expect((d.got().find((m) => m.t === 'worker.upsert') as { worker: Record<string, unknown> }).worker).toMatchObject({ name: 'Gumdrop', label: 'notes 2' });
+  });
+
   it('reads caps from the query', () => {
     expect(parseCaps('scratchpad:3:4,pastry:10:12,bad:5:1,x')).toEqual({ scratchpad: { soft: 3, hard: 4 }, pastry: { soft: 10, hard: 12 } });
   });
