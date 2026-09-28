@@ -248,7 +248,8 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
 - `fixtures/` — recorded bridge streams (`herdr-world dump` format): `demo` (2 buildings, 3 floors, 40 workers; an M2
   bridge), `demo-m3` (the same city as an M3 bridge sends it: settings, suggestions, hire options, a floor in the
   unassigned lot; no events), `demo-m3b` (demo-m3 with all three floors in Work: herdr-3d on top, depot-manager asleep
-  in the middle, pastry at the bottom), `perf-floor60`, `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
+  in the middle, pastry at the bottom), `perf-floor60`, `perf-floor96` (96 desks, every worker needs you: the corner
+  office's worst case), `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
   Like the bridge, a building lists its floors top to bottom, which is `index` order (index 0 on top); vitest fails
   a fixture where the two disagree, since the simulator (`sim=1`) rebuilds the list from `index`.
 - `tools/` — fixture server (read-only by default; with `sim=1` it simulates the bridge's commands in memory,
@@ -370,7 +371,8 @@ It pipes `tools/mac-runner.mjs` into `/opt/homebrew/bin/node` in `~/h3d-tools` (
 pipelined throughput, GPU timestamps, and rAF frames that include DOM layout. M3b jobs bench the outside of the
 8-floor tower in `perf-city240`: `street8` (the facade from the sidewalk), `escape8` (the top landing, looking down),
 `window8` (out of a top-floor window), and `floor60-street`; `bench()` reports the `area` it ran in. M3c jobs:
-`floor60-mezz` (at the corner office's glass, looking down over 60 workers) and `floor60-desk` (seated at your desk).
+`floor60-mezz` (at the corner office's glass, looking down over 60 workers), `floor60-desk` (seated at your desk) and
+`floor96-desk` (seated over 96 workers who all need you: every card shows).
 
 `window.__h3d` (tests, perf): `backend`, `frames`, `error`, `ready`, `view()`, `lookAt()` → `{kind, id, name?, label?}`
 or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
