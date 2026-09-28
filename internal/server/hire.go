@@ -888,7 +888,7 @@ func (h *Hub) startFirePrepare(ctx context.Context, c *Client, cmd proto.Command
 			res.Reason = "not in a git work tree"
 		default:
 			res.Worktree = &proto.FireWorktree{Path: t.top, Linked: linked}
-			res.Dirty = t.dirty[:min(len(t.dirty), maxDirtyLines)]
+			res.Dirty = append(res.Dirty, t.dirty[:min(len(t.dirty), maxDirtyLines)]...)
 			res.Unpushed = t.unpushed
 			switch why := t.problems(); {
 			case !linked:
