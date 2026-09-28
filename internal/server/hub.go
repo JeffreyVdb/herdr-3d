@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"reflect"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -24,11 +25,23 @@ var ErrSlowConsumer = errors.New("slow consumer")
 
 // Options configure a Hub.
 type Options struct {
-	Ring   int    // events kept for since_seq replay (default 4096)
-	Queue  int    // per-client send queue, in messages (default 1024)
-	Server string // version banner sent in welcome
-	Log    *slog.Logger
+	Ring     int    // events kept for since_seq replay (default 4096)
+	Queue    int    // per-client send queue, in messages (default 1024)
+	MaxDesks int    // cap on the desks a floor renders beyond its occupied ones (default DefaultMaxDesks)
+	Server   string // version banner sent in welcome
+	Log      *slog.Logger
+	Now      func() time.Time // bridge clock for status_since (default time.Now)
 }
+
+// DefaultMaxDesks is the default Options.MaxDesks.
+const DefaultMaxDesks = 96
+
+// minDesks is the fewest desks a floor renders; spareDesks how many free
+// desks it keeps beyond its workers (within MaxDesks).
+const (
+	minDesks   = 6
+	spareDesks = 2
+)
 
 // Hub owns the world model. A single goroutine (Run) applies watcher
 // observations and client commands, persists through the store, assigns
@@ -50,8 +63,9 @@ type Hub struct {
 	buildings map[string]store.Building
 	assign    map[string]store.Assignment // by session
 	floors    map[string]*floorState
-	workers   map[string]*proto.Worker // by worker id
-	saved     map[string]savedWorker   // what the store last got, by worker id
+	workers   map[string]*proto.Worker  // by worker id
+	saved     map[string]savedWorker    // what the store last got, by worker id
+	desks     map[string]map[string]int // floor → worker id → desk index (mirrors desk_assignment)
 
 	viewBuildings map[string]proto.Building
 	viewFloors    map[string]proto.Floor
@@ -69,6 +83,16 @@ type floorState struct {
 type savedWorker struct {
 	workspaceID, label string
 	fps                map[store.Fingerprint]bool
+	meta               workerMeta
+}
+
+// workerMeta is what the bridge keeps about a worker beyond what herdr
+// currently shows: its name, the last known harness, model and effort, and
+// since when (unix ms) it has had its status.
+type workerMeta struct {
+	name, harness, model, effort string
+	status                       string
+	statusSince                  int64
 }
 
 // Client is one connected protocol client, as seen by the hub.
@@ -98,6 +122,12 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if opts.Log == nil {
 		opts.Log = slog.Default()
 	}
+	if opts.MaxDesks <= 0 {
+		opts.MaxDesks = DefaultMaxDesks
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
 	var epoch [8]byte
 	_, _ = rand.Read(epoch[:])
 	h := &Hub{
@@ -113,11 +143,19 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		floors:        map[string]*floorState{},
 		workers:       map[string]*proto.Worker{},
 		saved:         map[string]savedWorker{},
+		desks:         map[string]map[string]int{},
 		viewBuildings: map[string]proto.Building{},
 		viewFloors:    map[string]proto.Floor{},
 	}
 	if err := h.reload(ctx); err != nil {
 		return nil, err
+	}
+	desks, err := st.Desks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range desks {
+		h.floorDesks(d.Floor)[d.WorkerID] = d.Index
 	}
 	for _, b := range h.buildingViews() {
 		h.viewBuildings[b.ID] = b
@@ -351,9 +389,14 @@ func (h *Hub) applyFloor(ctx context.Context, u world.FloorObs) {
 		h.log.Info("floor state changed", "session", u.Session, "running", u.Running)
 	}
 	f.gen, f.running, f.def, f.err = u.Gen, u.Running, u.Default, u.Err
-	h.syncLayout()
+	var evs []proto.Event
 	if !u.KeepWorkers {
-		h.syncWorkers(ctx, u.Session, f, u.Workers, fresh, closing)
+		evs = h.syncWorkers(ctx, u.Session, f, u.Workers, fresh, closing)
+	}
+	// The floor (state, desks) goes first, then its workers.
+	h.syncLayout()
+	for _, ev := range evs {
+		h.emit(ev)
 	}
 }
 
@@ -371,12 +414,18 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 		}
 	}
 	delete(h.floors, u.Session)
+	delete(h.desks, u.Session)
+	if err := h.st.FreeFloorDesks(context.Background(), u.Session); err != nil {
+		h.log.Error("freeing desks failed", "session", u.Session, "err", err)
+	}
 	h.log.Info("floor removed", "session", u.Session)
 	h.syncLayout()
 }
 
-// syncWorkers assigns identities to observed workers and emits the diff.
-func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, obs []world.WorkerObs, fresh, closing bool) {
+// syncWorkers assigns identities, desks and names to the observed workers
+// of a floor and returns the worker events of the diff (the caller emits
+// them after the floor's own events).
+func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, obs []world.WorkerObs, fresh, closing bool) []proto.Event {
 	assigned := map[string]string{} // workspace id → worker id
 	if !fresh {
 		for _, w := range obs {
@@ -391,6 +440,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			unresolved = append(unresolved, w)
 		}
 	}
+	records := map[string]store.Worker{} // stored state of reconciled workers
 	if len(unresolved) > 0 {
 		taken := map[string]bool{}
 		for _, id := range assigned {
@@ -399,6 +449,9 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		recs, err := h.st.SessionWorkers(ctx, session)
 		if err != nil {
 			h.log.Error("loading worker identities failed", "session", session, "err", err)
+		}
+		for _, r := range recs {
+			records[r.ID] = r
 		}
 		matches := world.Reconcile(unresolved, candidates(recs), taken)
 		for _, w := range unresolved {
@@ -421,6 +474,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 	for _, w := range obs {
 		obsWS[w.WorkspaceID] = true
 	}
+	var evs []proto.Event
 	for _, id := range f.order {
 		if present[id] {
 			continue
@@ -436,43 +490,150 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 				h.log.Error("recording closed worker failed", "worker", id, "err", err)
 			}
 		}
-		h.emit(proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: session, WorkspaceID: w.WorkspaceID})
+		evs = append(evs, proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: session, WorkspaceID: w.WorkspaceID})
+	}
+	// Desks are held by the floor's current workers only: this frees the
+	// desks of removed workers and of stored ones that did not come back.
+	desks := h.floorDesks(session)
+	for id := range desks {
+		if !present[id] {
+			delete(desks, id)
+			if err := h.st.FreeDesk(ctx, id); err != nil {
+				h.log.Error("freeing desk failed", "worker", id, "err", err)
+			}
+		}
 	}
 
-	order := make([]string, 0, len(obs))
-	for _, w := range obs {
+	now := h.opts.Now().UnixMilli()
+	ids := make([]string, len(obs))
+	metas := make([]workerMeta, len(obs))
+	for i, w := range obs {
 		id := assigned[w.WorkspaceID]
+		ids[i] = id
+		var base workerMeta
+		if prev := h.workers[id]; prev != nil {
+			base = metaOf(prev)
+		} else if r, ok := records[id]; ok {
+			base = workerMeta{name: r.Name, harness: r.Harness, model: r.Model, effort: r.Effort, status: r.Status, statusSince: r.StatusSince}
+		}
+		metas[i] = nextMeta(base, w, now)
+	}
+	nameWorkers(ids, metas, desks)
+
+	used := map[int]bool{}
+	for _, d := range desks {
+		used[d] = true
+	}
+	order := make([]string, 0, len(obs))
+	for i, w := range obs {
+		id := ids[i]
 		order = append(order, id)
-		h.persist(ctx, id, session, w)
-		next := workerView(id, session, w)
+		h.persist(ctx, id, session, w, metas[i])
+		desk, seated := desks[id]
+		if !seated {
+			for used[desk] {
+				desk++
+			}
+			used[desk] = true
+			desks[id] = desk
+			if err := h.st.AssignDesk(ctx, session, desk, id); err != nil {
+				h.log.Error("saving desk failed", "worker", id, "desk", desk, "err", err)
+			}
+		}
+		next := workerView(id, session, w, metas[i], desk)
 		prev := h.workers[id]
 		h.workers[id] = next
 		switch {
 		case prev == nil:
-			h.emit(proto.Event{T: proto.EvWorkerUpsert, Worker: next})
+			evs = append(evs, proto.Event{T: proto.EvWorkerUpsert, Worker: next})
 		case reflect.DeepEqual(prev, next):
-		case prev.Status != next.Status && sameExceptStatus(prev, next):
-			h.emit(proto.Event{T: proto.EvWorkerStatus, ID: id, Session: session, WorkspaceID: next.WorkspaceID,
-				Status: next.Status, PrevStatus: prev.Status})
+		case sameExceptStatus(prev, next):
+			title := next.Title
+			evs = append(evs, proto.Event{T: proto.EvWorkerStatus, ID: id, Session: session, WorkspaceID: next.WorkspaceID,
+				Status: next.Status, PrevStatus: prev.Status, StatusSince: next.StatusSince, Title: &title})
 		default:
-			h.emit(proto.Event{T: proto.EvWorkerUpsert, Worker: next})
+			evs = append(evs, proto.Event{T: proto.EvWorkerUpsert, Worker: next})
 		}
 	}
 	f.byWS = assigned
 	f.order = order
+	return evs
 }
 
+// floorDesks returns a floor's desk map, creating it.
+func (h *Hub) floorDesks(session string) map[string]int {
+	m := h.desks[session]
+	if m == nil {
+		m = map[string]int{}
+		h.desks[session] = m
+	}
+	return m
+}
+
+func metaOf(w *proto.Worker) workerMeta {
+	return workerMeta{name: w.Name, harness: w.Harness, model: w.Model, effort: w.Effort, status: w.Status, statusSince: w.StatusSince}
+}
+
+// nextMeta folds an observation into what the bridge knows about a worker:
+// harness, model and effort are remembered once seen (herdr drops tokens on
+// a restart), and status_since only moves when the status changes.
+func nextMeta(m workerMeta, w world.WorkerObs, now int64) workerMeta {
+	if w.Harness != "" {
+		m.harness = w.Harness
+	}
+	if w.Model != "" {
+		m.model = w.Model
+	}
+	if w.Effort != "" {
+		m.effort = w.Effort
+	}
+	if m.status != w.Status || m.statusSince == 0 {
+		m.status, m.statusSince = w.Status, now
+	}
+	return m
+}
+
+// nameWorkers makes every worker's name unique on its floor. Seated workers
+// keep theirs; a worker joining the floor keeps its stored name unless a
+// worker on the floor already has it; the rest get a new one.
+func nameWorkers(ids []string, metas []workerMeta, desks map[string]int) {
+	taken := map[string]bool{}
+	for _, seatedPass := range []bool{true, false} {
+		for i, id := range ids {
+			if _, seated := desks[id]; seated != seatedPass {
+				continue
+			}
+			if n := metas[i].name; n != "" && !taken[n] {
+				taken[n] = true
+			} else {
+				metas[i].name = ""
+			}
+		}
+	}
+	for i, id := range ids {
+		if metas[i].name == "" {
+			metas[i].name = world.PickName(id, taken)
+			taken[metas[i].name] = true
+		}
+	}
+}
+
+// sameExceptStatus reports whether only the status (and its age) and the
+// title differ: that is a worker.status event, anything else an upsert.
 func sameExceptStatus(a, b *proto.Worker) bool {
 	x, y := *a, *b
 	x.Status, y.Status = "", ""
+	x.StatusSince, y.StatusSince = 0, 0
+	x.Title, y.Title = "", ""
 	return reflect.DeepEqual(x, y)
 }
 
-// persist writes a worker's identity and fingerprints when they changed.
-func (h *Hub) persist(ctx context.Context, id, session string, w world.WorkerObs) {
+// persist writes a worker's identity, fingerprints and meta when they
+// changed; a status change alone is a cheaper update.
+func (h *Hub) persist(ctx context.Context, id, session string, w world.WorkerObs, m workerMeta) {
 	fps := fingerprints(w)
 	prev, ok := h.saved[id]
-	if ok && prev.workspaceID == w.WorkspaceID && prev.label == w.Label {
+	if ok && prev.workspaceID == w.WorkspaceID && prev.label == w.Label && sameIdentityMeta(prev.meta, m) {
 		changed := false
 		for _, fp := range fps {
 			if !prev.fps[fp] {
@@ -481,10 +642,19 @@ func (h *Hub) persist(ctx context.Context, id, session string, w world.WorkerObs
 			}
 		}
 		if !changed {
+			if prev.meta != m {
+				if err := h.st.SetWorkerStatus(ctx, id, m.status, m.statusSince); err != nil {
+					h.log.Error("saving worker status failed", "worker", id, "err", err)
+					return
+				}
+				prev.meta = m
+				h.saved[id] = prev
+			}
 			return
 		}
 	}
-	rec := store.Worker{ID: id, Session: session, WorkspaceID: w.WorkspaceID, Label: w.Label, Fingerprints: fps}
+	rec := store.Worker{ID: id, Session: session, WorkspaceID: w.WorkspaceID, Label: w.Label, Fingerprints: fps,
+		Name: m.name, Status: m.status, StatusSince: m.statusSince, Harness: m.harness, Model: m.model, Effort: m.effort}
 	if err := h.st.SaveWorker(ctx, rec); err != nil {
 		h.log.Error("saving worker failed", "worker", id, "err", err)
 		return
@@ -493,7 +663,12 @@ func (h *Hub) persist(ctx context.Context, id, session string, w world.WorkerObs
 	for _, fp := range fps {
 		set[fp] = true
 	}
-	h.saved[id] = savedWorker{workspaceID: w.WorkspaceID, label: w.Label, fps: set}
+	h.saved[id] = savedWorker{workspaceID: w.WorkspaceID, label: w.Label, fps: set, meta: m}
+}
+
+func sameIdentityMeta(a, b workerMeta) bool {
+	a.status, a.statusSince, b.status, b.statusSince = "", 0, "", 0
+	return a == b
 }
 
 func fingerprints(w world.WorkerObs) []store.Fingerprint {
@@ -529,12 +704,13 @@ func candidates(recs []store.Worker) []world.Candidate {
 	return out
 }
 
-func workerView(id, session string, w world.WorkerObs) *proto.Worker {
+func workerView(id, session string, w world.WorkerObs, m workerMeta, desk int) *proto.Worker {
 	return &proto.Worker{
 		ID: id, Session: session, WorkspaceID: w.WorkspaceID, Label: w.Label, Cwd: w.Cwd,
 		PaneID: w.PaneID, PaneLabel: w.PaneLabel, AgentKind: w.AgentKind, AgentName: w.AgentName,
 		AgentSession: w.AgentSession, Status: w.Status, Title: w.Title, Tokens: w.Tokens,
 		Worktree: w.Worktree, Role: w.Role, Run: w.Run,
+		Name: m.name, DeskIndex: desk, Harness: m.harness, Model: m.model, Effort: m.effort, StatusSince: m.statusSince,
 	}
 }
 
@@ -570,7 +746,7 @@ func (h *Hub) buildingViews() []proto.Building {
 }
 
 func (h *Hub) floorView(session string, f *floorState) proto.Floor {
-	v := proto.Floor{Session: session, State: world.Asleep, Default: f.def, Error: f.err}
+	v := proto.Floor{Session: session, State: world.Asleep, Default: f.def, Error: f.err, Desks: h.deskCount(session, f)}
 	if f.running {
 		v.State = world.Running
 	}
@@ -581,6 +757,18 @@ func (h *Hub) floorView(session string, f *floorState) proto.Floor {
 		}
 	}
 	return v
+}
+
+// deskCount is how many desks a floor renders: every occupied desk, and
+// otherwise its workers plus spares (at least minDesks), capped at MaxDesks.
+func (h *Hub) deskCount(session string, f *floorState) int {
+	highest := -1
+	for _, id := range f.order {
+		if d, ok := h.desks[session][id]; ok && d > highest {
+			highest = d
+		}
+	}
+	return max(highest+1, min(h.opts.MaxDesks, max(minDesks, len(f.order)+spareDesks)))
 }
 
 // syncLayout emits building and floor events for whatever changed since the

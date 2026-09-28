@@ -1,7 +1,8 @@
 // Package store is herdr-world's own SQLite database (pure Go, no cgo):
 // buildings, which building each floor (session) is in, bridge-owned worker
-// identities with their fingerprints, and an audit log of commands. It is the
-// only state the bridge writes; herdr itself is never modified.
+// identities with their fingerprints, names and desks, and an audit log of
+// commands. It is the only state the bridge writes; herdr itself is never
+// modified.
 package store
 
 import (
@@ -70,6 +71,20 @@ var migrations = []string{
 		ok     INTEGER NOT NULL,
 		error  TEXT
 	);`,
+	// 2: desks, names, status age and harness/model/effort (protocol v1
+	// additions). status is the status status_since belongs to.
+	`ALTER TABLE worker ADD COLUMN name TEXT NOT NULL DEFAULT '';
+	ALTER TABLE worker ADD COLUMN status TEXT NOT NULL DEFAULT '';
+	ALTER TABLE worker ADD COLUMN status_since INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE worker ADD COLUMN harness TEXT NOT NULL DEFAULT '';
+	ALTER TABLE worker ADD COLUMN model TEXT NOT NULL DEFAULT '';
+	ALTER TABLE worker ADD COLUMN effort TEXT NOT NULL DEFAULT '';
+	CREATE TABLE desk_assignment (
+		floor       TEXT NOT NULL,
+		desk_index  INTEGER NOT NULL CHECK (desk_index >= 0),
+		worker_uuid TEXT NOT NULL UNIQUE REFERENCES worker(id) ON DELETE CASCADE,
+		PRIMARY KEY (floor, desk_index)
+	);`,
 }
 
 // Fingerprint kinds.
@@ -113,6 +128,21 @@ type Worker struct {
 	Label        string
 	Closed       bool
 	Fingerprints []Fingerprint
+	Name         string
+	// Status is the last status seen and StatusSince (unix ms) when it
+	// began; 0 means unknown.
+	Status      string
+	StatusSince int64
+	Harness     string
+	Model       string
+	Effort      string
+}
+
+// Desk is one desk slot on a floor, held by a worker.
+type Desk struct {
+	Floor    string
+	Index    int
+	WorkerID string
 }
 
 // Open opens (creating if needed) the database at path and migrates it.
@@ -474,7 +504,8 @@ func (s *Store) AuditLog(ctx context.Context) ([]AuditEntry, error) {
 // SessionWorkers returns every stored worker of a session with its
 // fingerprints: the identity candidates for reconciliation.
 func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT w.id, w.workspace_id, w.label, w.closed_at IS NOT NULL, f.kind, f.value
+	rows, err := s.db.QueryContext(ctx, `SELECT w.id, w.workspace_id, w.label, w.closed_at IS NOT NULL,
+			w.name, w.status, w.status_since, w.harness, w.model, w.effort, f.kind, f.value
 		FROM worker w LEFT JOIN worker_fingerprint f ON f.worker_id = w.id
 		WHERE w.session_name = ? ORDER BY w.last_seen_at DESC, w.id, f.kind, f.value`, session)
 	if err != nil {
@@ -486,7 +517,8 @@ func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, e
 	for rows.Next() {
 		var w Worker
 		var kind, value sql.NullString
-		if err := rows.Scan(&w.ID, &w.WorkspaceID, &w.Label, &w.Closed, &kind, &value); err != nil {
+		if err := rows.Scan(&w.ID, &w.WorkspaceID, &w.Label, &w.Closed,
+			&w.Name, &w.Status, &w.StatusSince, &w.Harness, &w.Model, &w.Effort, &kind, &value); err != nil {
 			return nil, err
 		}
 		i, ok := idx[w.ID]
@@ -508,11 +540,14 @@ func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, e
 func (s *Store) SaveWorker(ctx context.Context, w Worker) error {
 	now := s.ts()
 	return s.tx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO worker (id, session_name, workspace_id, label, created_at, last_seen_at)
-			VALUES (?, ?, ?, ?, ?, ?)
+		_, err := tx.ExecContext(ctx, `INSERT INTO worker (id, session_name, workspace_id, label, created_at, last_seen_at,
+				name, status, status_since, harness, model, effort)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET session_name = excluded.session_name, workspace_id = excluded.workspace_id,
-				label = excluded.label, last_seen_at = excluded.last_seen_at, closed_at = NULL`,
-			w.ID, w.Session, w.WorkspaceID, w.Label, now, now)
+				label = excluded.label, last_seen_at = excluded.last_seen_at, closed_at = NULL,
+				name = excluded.name, status = excluded.status, status_since = excluded.status_since,
+				harness = excluded.harness, model = excluded.model, effort = excluded.effort`,
+			w.ID, w.Session, w.WorkspaceID, w.Label, now, now, w.Name, w.Status, w.StatusSince, w.Harness, w.Model, w.Effort)
 		if err != nil {
 			return err
 		}
@@ -531,5 +566,54 @@ func (s *Store) SaveWorker(ctx context.Context, w Worker) error {
 // CloseWorker records that the bridge saw a worker's workspace close.
 func (s *Store) CloseWorker(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE worker SET closed_at = ? WHERE id = ?`, s.ts(), id)
+	return err
+}
+
+// SetWorkerStatus records a worker's status and since when it has it (unix
+// ms): the hot path, cheaper than SaveWorker.
+func (s *Store) SetWorkerStatus(ctx context.Context, id, status string, since int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE worker SET status = ?, status_since = ? WHERE id = ?`, status, since, id)
+	return err
+}
+
+// Desks returns every desk assignment, by floor and index.
+func (s *Store) Desks(ctx context.Context) ([]Desk, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT floor, desk_index, worker_uuid FROM desk_assignment ORDER BY floor, desk_index`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Desk
+	for rows.Next() {
+		var d Desk
+		if err := rows.Scan(&d.Floor, &d.Index, &d.WorkerID); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// AssignDesk gives a stored worker desk index on floor, moving it off any
+// desk it had. The desk must be free.
+func (s *Store) AssignDesk(ctx context.Context, floor string, index int, workerID string) error {
+	if index < 0 {
+		return fmt.Errorf("%w: desk index %d", ErrInvalid, index)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO desk_assignment (floor, desk_index, worker_uuid) VALUES (?, ?, ?)
+		ON CONFLICT(worker_uuid) DO UPDATE SET floor = excluded.floor, desk_index = excluded.desk_index`,
+		floor, index, workerID)
+	return err
+}
+
+// FreeDesk frees whatever desk a worker holds.
+func (s *Store) FreeDesk(ctx context.Context, workerID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM desk_assignment WHERE worker_uuid = ?`, workerID)
+	return err
+}
+
+// FreeFloorDesks frees every desk of a floor.
+func (s *Store) FreeFloorDesks(ctx context.Context, floor string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM desk_assignment WHERE floor = ?`, floor)
 	return err
 }

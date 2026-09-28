@@ -114,6 +114,9 @@ type Floor struct {
 	Building *string `json:"building"` // null: in the unassigned lot
 	Index    *int    `json:"index"`    // position in the building; null when unassigned
 	Error    string  `json:"error,omitempty"`
+	// Desks is how many desks the floor renders:
+	// max(highest desk_index+1, min(max desks, max(6, workers+2))).
+	Desks int `json:"desks"`
 }
 
 // Worker is one herdr workspace, keyed by a bridge-owned id.
@@ -134,6 +137,20 @@ type Worker struct {
 	Worktree     *Worktree         `json:"worktree,omitempty"`
 	Role         string            `json:"role,omitempty"`
 	Run          string            `json:"run,omitempty"`
+	// Name is a display name, unique among the workers of its floor; it
+	// never changes while the worker keeps its desk.
+	Name string `json:"name"`
+	// DeskIndex is the worker's persistent desk slot on its floor.
+	DeskIndex int `json:"desk_index"`
+	// Harness, Model and Effort come from the h3d_harness / h3d_model /
+	// h3d_effort tokens (harness falls back to agent_kind claude|codex) and
+	// are remembered after the tokens are gone.
+	Harness string `json:"harness,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
+	// StatusSince is when Status last changed, unix milliseconds (bridge
+	// clock).
+	StatusSince int64 `json:"status_since"`
 }
 
 // Worktree is a worker's git worktree provenance.
@@ -152,7 +169,7 @@ type Worktree struct {
 //	floor.removed    session
 //	worker.upsert    worker
 //	worker.removed   id, session, workspace_id
-//	worker.status    id, session, workspace_id, status, prev_status
+//	worker.status    id, session, workspace_id, status, prev_status, status_since, title
 type Event struct {
 	T           string    `json:"t"`
 	Seq         uint64    `json:"seq"`
@@ -164,6 +181,9 @@ type Event struct {
 	WorkspaceID string    `json:"workspace_id,omitempty"`
 	Status      string    `json:"status,omitempty"`
 	PrevStatus  string    `json:"prev_status,omitempty"`
+	StatusSince int64     `json:"status_since,omitempty"`
+	// Title is set (possibly to "") on worker.status only.
+	Title *string `json:"title,omitempty"`
 }
 
 // Command is a client request. Args depend on T (see the *Args types).

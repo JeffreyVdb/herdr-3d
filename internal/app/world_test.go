@@ -48,6 +48,14 @@ func TestWorldVersionAndUsage(t *testing.T) {
 	if code := World("herdr-world", []string{"serve", "-nope"}, &out, &errOut); code != 2 {
 		t.Fatalf("bad flag: code %d", code)
 	}
+	errOut.Reset()
+	if code := World("herdr-world", []string{"serve", "-max-desks", "0"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "max-desks") {
+		t.Fatalf("-max-desks 0: code %d, err %q", code, errOut.String())
+	}
+	t.Setenv(EnvMaxDesks, "lots")
+	if code := World("herdr-world", []string{"serve"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), EnvMaxDesks) {
+		t.Fatalf("bad %s: code %d, err %q", EnvMaxDesks, code, errOut.String())
+	}
 }
 
 // running is a bridge started with Serve against a fake herdr.

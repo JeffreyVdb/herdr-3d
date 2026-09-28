@@ -77,6 +77,11 @@ type WorkerObs struct {
 	Markers      []string // pane labels of the form h3d-<hex>
 	Role         string
 	Run          string
+	// Harness, Model and Effort as far as this observation shows them
+	// (see HarnessOf); empty when unknown.
+	Harness string
+	Model   string
+	Effort  string
 }
 
 // Worktree is a workspace's git worktree provenance.
@@ -110,6 +115,23 @@ func RoleRun(label string, tokens map[string]string) (role, run string) {
 		}
 	}
 	return role, run
+}
+
+// Harnesses the bridge recognises from a pane's agent kind.
+const (
+	HarnessClaude = "claude"
+	HarnessCodex  = "codex"
+)
+
+// HarnessOf returns the harness, model and effort a workspace shows: the
+// h3d_harness / h3d_model / h3d_effort tokens, the harness falling back to
+// the agent kind when that is claude or codex.
+func HarnessOf(tokens map[string]string, agentKind string) (harness, model, effort string) {
+	harness, model, effort = tokens["h3d_harness"], tokens["h3d_model"], tokens["h3d_effort"]
+	if harness == "" && (agentKind == HarnessClaude || agentKind == HarnessCodex) {
+		harness = agentKind
+	}
+	return harness, model, effort
 }
 
 // IsMarker reports whether a pane label is an identity marker h3d-<hex>.
