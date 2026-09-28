@@ -153,3 +153,49 @@ test('from the glass, look-at reaches a worker at a desk below; the plan shows t
   await shot(page, 'm3c-plan');
   clean();
 });
+
+test('a 96-desk floor that all needs you: from up there the far desks answer and every card shows', async ({ page }) => {
+  const clean = watchErrors(page);
+  const F = 'perf-floor96';
+  await openGame(page, F);
+  await page.evaluate((s) => window.__h3d.enterFloor(s), F);
+  await frames(page, 3);
+  const L = (await page.evaluate((s) => window.__h3d.layout(s), F))!;
+  const b = (await page.evaluate(() => window.__h3d.building()))!;
+  const where = (await page.evaluate(() => window.__h3d.where()))!;
+  const fy = (where.floors.indexOf(F) + 1) * b.storey;
+  const m = L.mezzanine;
+  const workers = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === F)!.workers;
+  expect(workers).toHaveLength(96);
+
+  // At the west glass: the farthest worker of the floor, well past 20 m, answers look-at.
+  const at = { x: m.rect.x0 + 0.45, z: (m.rect.z0 + m.rect.z1) / 2 };
+  await page.evaluate(([q, y]) => window.__h3d.setPose({ x: q.x, z: q.z, y, yaw: Math.PI / 2, pitch: -0.3 }), [at, fy + m.y] as const);
+  await frames(page, 2);
+  expect(await view(page)).toMatchObject({ overlook: true, area: 'floor' });
+  const far = workers
+    .map((w) => ({ w, s: L.slots[w.desk]! }))
+    .sort((p, q) => Math.hypot(q.s.seat.x - at.x, q.s.seat.z - at.z) - Math.hypot(p.s.seat.x - at.x, p.s.seat.z - at.z))[0]!;
+  expect(Math.hypot(far.s.seat.x - at.x, fy + 1 - (fy + m.y + 1.55), far.s.seat.z - at.z)).toBeGreaterThan(20);
+  await aim(page, far.s.seat.x, fy + 1.3, far.s.seat.z);
+  expect(await page.evaluate(() => window.__h3d.lookAt())).toMatchObject({ kind: 'worker', id: far.w.id });
+
+  // Seated at your desk: every "needs you" card in front of you shows, far more than the floor's 24.
+  await page.evaluate(([q, y]) => window.__h3d.setPose({ x: q.sit.x, z: q.sit.z, y, yaw: q.sit.yaw, pitch: q.sit.pitch }), [m, fy + m.y] as const);
+  expect(await page.evaluate(() => window.__h3d.sit())).toBe(true);
+  await frames(page, 6);
+  const up = await page.evaluate(() => window.__h3d.cards());
+  console.log(`m3c: ${up.length} cards of ${workers.length} workers needing you, from your desk`);
+  expect(up.length).toBeGreaterThanOrEqual(90);
+  expect(up.every((c) => c.display === 'needs_you')).toBe(true);
+  await shot(page, 'm3c-desk-96');
+
+  // Back down on the floor the cap stays.
+  await page.keyboard.press('Escape');
+  const row = L.slots.reduce((p, s) => Math.max(p, s.seat.z), 0) + 1.1;
+  await page.evaluate(([x, z, y]) => window.__h3d.setPose({ x, z, y, yaw: 0, pitch: -0.2 }), [L.width / 2, row, fy] as const);
+  await frames(page, 6);
+  expect(await view(page)).toMatchObject({ overlook: false });
+  expect((await page.evaluate(() => window.__h3d.cards())).length).toBeLessThanOrEqual(24);
+  clean();
+});
