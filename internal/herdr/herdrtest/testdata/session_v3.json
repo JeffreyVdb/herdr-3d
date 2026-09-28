@@ -1,0 +1,19 @@
+{"version":3,
+ "workspaces":[
+  {"id":"w1","custom_name":"ORCH|slackpriv","identity_cwd":"/home/u","public_pane_numbers":{"1":1},"next_public_pane_number":2,"public_tab_numbers":[1],"next_public_tab_number":2,
+   "tabs":[{"custom_name":null,"layout":{"Pane":1},"panes":{"1":{"cwd":"/home/u","agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"51b5e2e7-8d46-414e-9aa4-1b11c44a84d2"}}},"zoomed":false,"focused":1,"root_pane":1}],
+   "active_tab":0,"worktree_space":null},
+  {"id":"w1Q","custom_name":"CODE|learnpref|100|r1","identity_cwd":"/home/u/.herdr/worktrees/gcr/feat-100","public_pane_numbers":{"2":1,"7":2},"next_public_pane_number":3,"public_tab_numbers":[1],"next_public_tab_number":2,
+   "tabs":[{"custom_name":null,"layout":{"Split":{"direction":"Vertical","ratio":0.5,"first":{"Pane":2},"second":{"Pane":7}}},
+            "panes":{"2":{"cwd":"/home/u/.herdr/worktrees/gcr/feat-100"},
+                     "7":{"cwd":"/home/u/.herdr/worktrees/gcr/feat-100","label":"h3d-7f3a9c","agent_name":"code_learnpref_100_r1","managed_agent_kind":"claude","agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"3a7b87bd-b68e-4e7b-95d7-6f8384da8e6d"}}},
+            "zoomed":false,"focused":7,"root_pane":2}],
+   "active_tab":0,
+   "worktree_space":{"key":"/home/u/devel/gcr/.git","label":"gcr","repo_root":"/home/u/devel/gcr","checkout_path":"/home/u/.herdr/worktrees/gcr/feat-100","is_linked_worktree":true}},
+  {"id":"w2","custom_name":null,"identity_cwd":"/home/u/pastry","public_pane_numbers":{"2":1},"next_public_pane_number":9,"public_tab_numbers":[1],"next_public_tab_number":6,
+   "tabs":[{"custom_name":null,"layout":{"Pane":2},"panes":{"2":{"cwd":"/home/u/pastry"}},"zoomed":false,"focused":2,"root_pane":2}],"active_tab":0},
+  {"id":"w3","custom_name":null,"identity_cwd":"/home/u/devel/gcr","public_pane_numbers":{"1":1},"public_tab_numbers":[1],
+   "tabs":[{"panes":{"1":{"cwd":"/home/u/devel/gcr"}},"root_pane":1}],
+   "worktree_space":{"key":"/home/u/devel/gcr/.git","label":"gcr","repo_root":"/home/u/devel/gcr","checkout_path":"/home/u/devel/gcr","is_linked_worktree":false}}
+ ],
+ "active":0,"selected":0,"sidebar_width":26,"sidebar_section_split":0.5,"collapsed_space_keys":[]}

@@ -1,0 +1,9 @@
+{"data":{"type":"workspace_created","workspace":{"active_tab_id":"w1:t1","agent_status":"unknown","focused":true,"label":"CODE|probe|2|r1","number":1,"pane_count":1,"tab_count":1,"workspace_id":"w1"}},"event":"workspace_created"}
+{"data":{"tab":{"agent_status":"unknown","focused":true,"label":"1","number":1,"pane_count":1,"tab_id":"w1:t1","workspace_id":"w1"},"type":"tab_created"},"event":"tab_created"}
+{"data":{"pane":{"agent_status":"unknown","cwd":"/home/u/probe","focused":true,"foreground_cwd":"/home/u/probe","pane_id":"w1:p1","revision":0,"scroll":{"max_offset_from_bottom":0,"offset_from_bottom":0,"viewport_rows":40},"tab_id":"w1:t1","terminal_id":"term_65c89bb64ff431","workspace_id":"w1"},"type":"pane_created"},"event":"pane_created"}
+{"data":{"agent":"h3dprobe","pane_id":"w1:p1","type":"pane_agent_detected","workspace_id":"w1"},"event":"pane_agent_detected"}
+{"data":{"agent":"h3dprobe","agent_status":"working","pane_id":"w1:p1","workspace_id":"w1"},"event":"pane.agent_status_changed"}
+{"data":{"agent":"h3dprobe","agent_status":"idle","pane_id":"w1:p1","workspace_id":"w1"},"event":"pane.agent_status_changed"}
+{"data":{"agent":"h3dprobe","agent_status":"unknown","pane_id":"w1:p1","workspace_id":"w1"},"event":"pane.agent_status_changed"}
+{"data":{"agent":"h3dprobe","final_status":"unknown","pane_id":"w1:p1","released":true,"type":"pane_agent_detected","workspace_id":"w1"},"event":"pane_agent_detected"}
+{"data":{"type":"workspace_closed","workspace_id":"w1"},"event":"workspace_closed"}

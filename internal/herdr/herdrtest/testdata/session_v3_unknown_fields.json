@@ -1,0 +1,8 @@
+{"version":3,"written_by":"herdr 0.9.9","future_top":{"a":[1,2,3]},
+ "workspaces":[
+  {"id":"w7","custom_name":"GROUND|herdr","identity_cwd":"/home/u/devel/herdr-3d","public_pane_numbers":{"4":1},"future_ws":true,"groups":["x"],
+   "tabs":[{"custom_name":"main","root_pane":4,"sticky":{"deep":{"deeper":null}},
+            "panes":{"4":{"cwd":"/home/u/devel/herdr-3d","agent_name":"r-herdr","managed_agent_kind":"codex","launch_argv":["codex","resume"],"color":"teal",
+                          "agent_session":{"source":"herdr:codex","agent":"codex","kind":"id","value":"01a0663b-61cd-73a0-a3a0-034ca9fc6c48","extra":1}}}}]}
+ ],
+ "active":0}

@@ -1,0 +1,21 @@
+{"id":"h3d-2","result":{"type":"session_snapshot","snapshot":{"version":"0.9.0","protocol":22,
+"workspaces":[
+ {"workspace_id":"w1","number":1,"label":"ORCH|bridge-ro","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"w1:t1","agent_status":"idle","tokens":{"h3d_run":"20260928-1344-bridge-ro","h3d_role":"orch","h3d_pass":"1","h3d_phase":"review"},"worktree":{"repo_key":"/home/u/devel/herdr-3d/.git","repo_name":"herdr-3d","repo_root":"/home/u/devel/herdr-3d","checkout_path":"/home/u/devel/herdr-3d","is_linked_worktree":false}},
+ {"workspace_id":"w3","number":2,"label":"research","focused":false,"pane_count":2,"tab_count":1,"active_tab_id":"w3:t1","agent_status":"blocked"},
+ {"workspace_id":"w4","number":3,"label":"notes","focused":false,"pane_count":1,"tab_count":1,"active_tab_id":"w4:t1","agent_status":"unknown"},
+ {"workspace_id":"w5","number":4,"label":"UX|lobby","focused":false,"pane_count":1,"tab_count":1,"active_tab_id":"w5:t1","agent_status":"working"}
+],
+"tabs":[],
+"panes":[
+ {"pane_id":"w1:p1","terminal_id":"term_65c883cf8f5e31","workspace_id":"w1","tab_id":"w1:t1","focused":true,"cwd":"/home/u/devel/herdr-3d","agent":"claude","terminal_title_stripped":"Claude Code","agent_status":"idle","agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"c6f58eef-ca04-4fe4-a564-3b15f8311bf3"},"revision":11},
+ {"pane_id":"w3:p1","terminal_id":"term_65c8a0000000a1","workspace_id":"w3","tab_id":"w3:t1","focused":false,"cwd":"/home/u/research","agent":null,"agent_status":"unknown","revision":0},
+ {"pane_id":"w3:p2","terminal_id":"term_65c8a0000000a2","workspace_id":"w3","tab_id":"w3:t1","focused":false,"cwd":"/home/u/research/sub","agent":"codex","agent_status":"blocked","agent_session":{"source":"herdr:codex","agent":"codex","kind":"id","value":"01a0a46a-6ecd-7373-ae4d-730f4ed1e9f3"},"revision":2},
+ {"pane_id":"w4:p1","terminal_id":"term_65c8a0000000b1","workspace_id":"w4","tab_id":"w4:t1","focused":false,"cwd":"/home/u/notes","agent_status":"unknown","revision":0},
+ {"pane_id":"w5:p1","terminal_id":"term_65c8a0000000c1","workspace_id":"w5","tab_id":"w5:t1","focused":false,"cwd":"/home/u/devel/game","agent":"claude","terminal_title_stripped":"Lobby layout","agent_status":"working","agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"9b41d1e3-a95c-4148-b64e-dc008350a14b"},"revision":3}
+],
+"layouts":[],
+"agents":[
+ {"terminal_id":"term_65c883cf8f5e31","agent":"claude","terminal_title_stripped":"Claude Code","agent_status":"idle","agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"c6f58eef-ca04-4fe4-a564-3b15f8311bf3"},"workspace_id":"w1","tab_id":"w1:t1","pane_id":"w1:p1","focused":true,"revision":11},
+ {"terminal_id":"term_65c8a0000000a2","name":"rx","agent":"codex","agent_status":"blocked","agent_session":{"source":"herdr:codex","agent":"codex","kind":"id","value":"01a0a46a-6ecd-7373-ae4d-730f4ed1e9f3"},"workspace_id":"w3","tab_id":"w3:t1","pane_id":"w3:p2","focused":false,"revision":2},
+ {"terminal_id":"term_65c8a0000000c1","name":"lobby","agent":"claude","terminal_title_stripped":"Lobby layout","agent_status":"working","agent_session":{"source":"herdr:claude","agent":"claude","kind":"id","value":"9b41d1e3-a95c-4148-b64e-dc008350a14b"},"workspace_id":"w5","tab_id":"w5:t1","pane_id":"w5:p1","focused":false,"revision":3}
+]}}}
