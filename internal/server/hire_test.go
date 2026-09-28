@@ -39,6 +39,7 @@ type fakeFloor struct {
 	publishEarly bool          // publish a new workspace before CreateWorkspace returns
 	createGate   chan struct{} // CreateWorkspace waits for it when set
 	exitWorks    bool          // TypeExit + Enter bring the pane back to its shell
+	onKey        func(pane string, key herdr.Key)
 }
 
 func newFakeFloor(b *bridge, session string, fh *fakeHerdr, workers ...world.WorkerObs) *fakeFloor {
@@ -151,8 +152,11 @@ func (f *fakeFloor) SendKey(_ context.Context, session, pane string, key herdr.K
 	if key == herdr.KeyEnter && len(f.screens[pane]) > 0 {
 		f.screens[pane] = []string{"❯ "}
 	}
-	exitWorks := f.exitWorks
+	exitWorks, onKey := f.exitWorks, f.onKey
 	f.mu.Unlock()
+	if onKey != nil {
+		onKey(pane, key)
+	}
 	if key == herdr.KeyEnter && exitWorks && slices.Contains(f.Calls(), "exit "+pane) {
 		f.setProcs(pane, atShell())
 	}
@@ -490,7 +494,7 @@ func TestHireAtDesk(t *testing.T) {
 	}
 	row := auditRow(t, hb.bridge, proto.CmdWorkerHire)
 	if !row.OK || !row.Done || !strings.Contains(row.Result, `"desk":3`) || !strings.Contains(row.Result, marker) ||
-		!strings.Contains(row.Result, `"prompt":"sent"`) {
+		!strings.Contains(row.Result, `"prompt":"sent (try 1)"`) {
 		t.Fatalf("audit = %+v", row)
 	}
 
@@ -798,8 +802,9 @@ func TestSendHomeAgentThatDoesNotExit(t *testing.T) {
 	if res := ackData[proto.FireResult](t, m); res.Released {
 		t.Fatalf("ack = %s", m.raw)
 	}
-	if calls := hb.fl.Calls(); !slices.Equal(calls, []string{"exit w1:p1", "key w1:p1 enter", "key w1:p1 ctrl+c",
-		"key w1:p1 ctrl+c", "close w1"}) {
+	// Enter once, three more times while it does not go, then Ctrl-C twice.
+	if calls := hb.fl.Calls(); !slices.Equal(calls, []string{"exit w1:p1", "key w1:p1 enter", "key w1:p1 enter",
+		"key w1:p1 enter", "key w1:p1 enter", "key w1:p1 ctrl+c", "key w1:p1 ctrl+c", "close w1"}) {
 		t.Fatalf("herdr calls = %q", calls)
 	}
 }
@@ -889,5 +894,40 @@ func TestHiredWorkerSurvivesRestarts(t *testing.T) {
 	if after.ID != res.ID || after.DeskIndex != 4 || after.Name != before.Name || after.HiredAt != before.HiredAt ||
 		after.Model != "gpt-6-astra" || after.Effort != "ultra" || after.Harness != "codex" {
 		t.Fatalf("after restart %+v, before %+v", after, before)
+	}
+}
+
+// Claude just past its trust dialog takes the prompt's text but drops the
+// Enter: herdr reports agent_prompt_stalled, the bridge presses Enter
+// until the worker works.
+func TestHirePromptStalled(t *testing.T) {
+	hb := startHireBridge(t, nil)
+	hb.fl.promptErrs = []error{&herdr.APIError{Code: "agent_prompt_stalled", Message: "no working state within 5000 ms"}}
+	enters := 0
+	hb.fl.onKey = func(pane string, key herdr.Key) {
+		if key != herdr.KeyEnter {
+			return
+		}
+		if enters++; enters == 2 { // the second Enter takes
+			hb.fl.update(wsOf(pane), func(w *world.WorkerObs) { w.Status = "working" })
+		}
+	}
+	a := hireArgs(0)
+	a.Prompt = "hi"
+	_, m := hb.c.command(proto.CmdWorkerHire, "h", a)
+	if res := ackData[proto.HireResult](t, m); res.Prompted == nil || !*res.Prompted {
+		t.Fatalf("ack = %s", m.raw)
+	}
+	if calls := hb.fl.Calls(); !slices.Equal(calls[len(calls)-3:], []string{`prompt w1:p1 "hi"`, "key w1:p1 enter", "key w1:p1 enter"}) {
+		t.Fatalf("herdr calls = %q", calls)
+	}
+
+	// Never works: not prompted, with herdr's error.
+	hb.fl.onKey = nil
+	hb.fl.promptErrs = []error{&herdr.APIError{Code: "agent_prompt_stalled", Message: "no working state within 5000 ms"}}
+	a.DeskIndex = ptr(1)
+	_, m = hb.c.command(proto.CmdWorkerHire, "h2", a)
+	if res := ackData[proto.HireResult](t, m); res.Prompted == nil || *res.Prompted || !strings.Contains(res.PromptError, "agent_prompt_stalled") {
+		t.Fatalf("ack = %s", m.raw)
 	}
 }

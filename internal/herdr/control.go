@@ -117,8 +117,10 @@ var controlShapes = map[string][]string{
 	opKeyDown:  {"{herdr}", "--session", "{session}", "pane", "send-keys", "{pane}", "down"},
 	opKeyEnter: {"{herdr}", "--session", "{session}", "pane", "send-keys", "{pane}", "enter"},
 	opKeyCtrlC: {"{herdr}", "--session", "{session}", "pane", "send-keys", "{pane}", "ctrl+c"},
-	// Hire: the optional first task.
-	opPrompt: {"{herdr}", "--session", "{session}", "agent", "prompt", "{pane}", "{text}"},
+	// Hire: the optional first task, confirmed by the agent starting to work
+	// (else agent_prompt_stalled after 5 s).
+	opPrompt: {"{herdr}", "--session", "{session}", "agent", "prompt", "{pane}", "{text}",
+		"--wait", "--until", "working", "--until", "blocked", "--timeout", "8000"},
 	// Send home: the agents' own exit commands (then Enter).
 	opExitClaude: {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "/exit"},
 	opExitCodex:  {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "/quit"},

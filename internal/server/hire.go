@@ -549,12 +549,12 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	}
 
 	if op.prompt != "" {
-		sent, perr := h.sendPrompt(ctx, op, created.PaneID)
+		sent, how, perr := h.sendPrompt(ctx, op, created.PaneID)
 		res.Prompted = &sent
 		if perr != nil {
 			res.PromptError, rep.Prompt = perr.Error(), "failed: "+perr.Error()
 		} else {
-			rep.Prompt = "sent"
+			rep.Prompt = how
 		}
 	}
 	choice := store.Hire{Harness: op.harness, Model: op.model, Effort: op.effort}
@@ -660,21 +660,55 @@ func (h *Hub) answerTrust(ctx context.Context, op *hireOp, pane, dir string) (tr
 }
 
 // sendPrompt sends the hire's first prompt once the agent takes it,
-// retrying while herdr says the agent is not ready yet.
-func (h *Hub) sendPrompt(ctx context.Context, op *hireOp, pane string) (bool, error) {
+// retrying while herdr says the agent is not ready yet. An agent still
+// starting up (just past its trust dialog) can take the text but drop the
+// Enter (herdr: agent_prompt_stalled): Enter is pressed again until the
+// worker is seen working.
+func (h *Hub) sendPrompt(ctx context.Context, op *hireOp, pane string) (sent bool, how string, err error) {
 	deadline := time.Now().Add(h.opts.TrustTimeout)
-	for {
+	for tries := 1; ; tries++ {
 		err := h.opts.Hire.Prompt(ctx, op.session, pane, op.prompt)
 		if err == nil {
-			return true, nil
+			return true, fmt.Sprintf("sent (try %d)", tries), nil
 		}
 		var api *herdr.APIError
+		if errors.As(err, &api) && api.Code == "agent_prompt_stalled" {
+			n, err := h.pressUntilWorking(ctx, op, pane, err)
+			return err == nil, fmt.Sprintf("sent, stalled, then %d× Enter", n), err
+		}
 		if !errors.As(err, &api) || !slices.Contains([]string{"agent_not_ready", "agent_not_found", "agent_blocked"}, api.Code) ||
 			time.Now().After(deadline) || ctx.Err() != nil {
-			return false, err
+			return false, "", err
 		}
 		sleepCtx(ctx, 4*h.opts.HirePoll)
 	}
+}
+
+// pressUntilWorking presses Enter (at most 3 times) until the hired
+// worker's status moves to working, blocked or done.
+func (h *Hub) pressUntilWorking(ctx context.Context, op *hireOp, pane string, stalled error) (int, error) {
+	status := func() string {
+		s, _ := query(ctx, h, func() string {
+			if w := h.workers[op.id]; w != nil {
+				return w.Status
+			}
+			return ""
+		})
+		return s
+	}
+	for n := 1; n <= 3; n++ {
+		if err := h.opts.Hire.SendKey(ctx, op.session, pane, herdr.KeyEnter); err != nil {
+			return n, err
+		}
+		for end := time.Now().Add(h.opts.TrustTimeout / 5); time.Now().Before(end) && ctx.Err() == nil; {
+			switch status() {
+			case "working", "blocked", "done":
+				return n, nil
+			}
+			sleepCtx(ctx, h.opts.HirePoll)
+		}
+	}
+	return 3, stalled
 }
 
 // rollbackHire closes a failed hire's workspace; a worktree's checkout and
@@ -1100,9 +1134,25 @@ func (h *Hub) exitAgent(ctx context.Context, op *fireOp, rep *fireReport) bool {
 	}
 	rep.Exit = map[string]string{"claude": "/exit", "codex": "/quit"}[op.harness] + " + Enter"
 	start := time.Now()
-	if h.waitShell(ctx, op, time.Now().Add(h.opts.ExitTimeout)) {
-		rep.step("agent exited after %s", time.Since(start).Round(time.Millisecond))
-		return true
+	deadline := start.Add(h.opts.ExitTimeout)
+	// An agent still starting up (e.g. just past its trust dialog) can drop
+	// the first Enter: press it again a few times while it is not gone.
+	for presses := 1; ; presses++ {
+		next := time.Now().Add(h.opts.ExitTimeout / 5)
+		if presses > 3 || next.After(deadline) {
+			next = deadline
+		}
+		if h.waitShell(ctx, op, next) {
+			rep.step("agent exited after %s (%d× Enter)", time.Since(start).Round(time.Millisecond), presses)
+			return true
+		}
+		if !time.Now().Before(deadline) || ctx.Err() != nil {
+			break
+		}
+		if err := hh.SendKey(ctx, op.session, op.pane, herdr.KeyEnter); err != nil {
+			rep.step("pressing Enter again failed: %v", err)
+			break
+		}
 	}
 	for range 2 {
 		if err := hh.SendKey(ctx, op.session, op.pane, herdr.KeyCtrlC); err != nil {
