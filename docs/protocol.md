@@ -17,6 +17,23 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
 - The bridge only ever *reads* herdr (`ping`, `session.snapshot`, `events.subscribe`, `herdr session list`). The only
   state that commands change is the bridge's own SQLite database.
 
+### Through `h3d-helper` (the Mac)
+
+The game does not dial the socket itself. `h3d-helper` forwards it over SSH and serves the game on
+`http://127.0.0.1:7777`; the game opens `ws://${location.host}/ws?token=<token>` on that same origin and the helper
+proxies it to the bridge's `/ws` unchanged (see CONTRIBUTING "Helper"). The helper answers `403` without upgrading
+unless all three hold:
+
+- `Host` is `127.0.0.1:<port>` or `localhost:<port>` (or `<ip>:<port>` when `--listen` is another literal loopback
+  IP, e.g. `[::1]:<port>`);
+- `Origin` is `http://127.0.0.1:<port>` or `http://localhost:<port>` (or `http://<ip>:<port>` likewise);
+- `token` is the token of this helper run. The helper makes a random one at every start and opens the game at
+  `http://127.0.0.1:<port>/#token=<token>`; the game keeps it in `sessionStorage` (`h3d.token`) and strips it from the
+  URL.
+
+A `502` means the tunnel is down; the helper's own `GET /healthz` reports the tunnel state
+(`{"tunnel":{"state":"up|connecting|degraded|backoff",…}}`, `503` unless `up`).
+
 ## Handshake
 
 The first client message must be `hello`. Anything else gets an `error` with code `hello_required` and the connection
@@ -49,19 +66,23 @@ is closed (status 1008). A `proto` other than `1` gets `unsupported_proto` and i
   ],
   "unassigned":["pastry","herdr-3d"],
   "floors":[
-    {"session":"code-review","state":"running","building":"b_3f09a1c2d4e5","index":0},
-    {"session":"depot-manager","state":"asleep","building":"b_3f09a1c2d4e5","index":1},
-    {"session":"pastry","state":"asleep","building":null,"index":null},
-    {"session":"herdr-3d","state":"running","building":null,"index":null}
+    {"session":"code-review","state":"running","building":"b_3f09a1c2d4e5","index":0,"desks":16},
+    {"session":"depot-manager","state":"asleep","building":"b_3f09a1c2d4e5","index":1,"desks":9},
+    {"session":"pastry","state":"asleep","building":null,"index":null,"desks":6},
+    {"session":"herdr-3d","state":"running","building":null,"index":null,"desks":6}
   ],
   "workers":[
-    {"id":"6db1905e-9e85-42f4-911c-b05e31b84c68","session":"herdr-3d","workspace_id":"w1","label":"ORCH|bridge-ro",
-     "cwd":"/home/dev/devel/herdr-3d","pane_id":"w1:p1","agent_kind":"claude",
-     "agent_session":"c6f58eef-ca04-4fe4-a564-3b15f8311bf3","status":"working","title":"Claude Code",
-     "tokens":{"h3d_role":"orch","h3d_run":"20260928-1344-bridge-ro","h3d_phase":"coding","h3d_pass":"0"},
+    {"id":"6db1905e-9e85-42f4-911c-b05e31b84c68","session":"herdr-3d","workspace_id":"w1","label":"CODE|m2-go|3|r1",
+     "cwd":"/home/dev/devel/herdr-3d-wt/m2-go","pane_id":"w1:p1","agent_kind":"claude",
+     "agent_session":"c6f58eef-ca04-4fe4-a564-3b15f8311bf3","status":"working",
+     "title":"M2: Go helper tunnel and bridge additions",
+     "tokens":{"h3d_role":"code","h3d_run":"20260928-1455-m2-city","h3d_harness":"claude",
+               "h3d_model":"claude-opus-5-5","h3d_effort":"xhigh"},
      "worktree":{"repo_root":"/home/dev/devel/herdr-3d","repo_name":"herdr-3d",
-                 "checkout_path":"/home/dev/devel/herdr-3d","linked":false},
-     "role":"orch","run":"20260928-1344-bridge-ro"}
+                 "checkout_path":"/home/dev/devel/herdr-3d-wt/m2-go","linked":true},
+     "role":"code","run":"20260928-1455-m2-city",
+     "name":"Flicker","desk_index":1,"harness":"claude","model":"claude-opus-5-5","effort":"xhigh",
+     "status_since":1790601900984}
   ]
 }}
 ```
@@ -91,6 +112,7 @@ lot), and `workers` follows the floors, each floor's workers in herdr's sidebar 
 | `building` | string \| null | building id, `null` = in the unassigned lot |
 | `index` | int \| null | floor position within the building, `null` when unassigned. Positions also count assigned sessions that currently do not exist, so there can be gaps: order by `index`. |
 | `error` | string, optional | why the floor cannot be read: e.g. `unsupported session.json version 4`, or `herdr: …` for a running session that answers ping but cannot be snapshotted (its workers are kept as last seen) |
+| `desks` | int | desks the floor renders: `max(highest desk_index + 1, min(cap, max(6, workers + 2)))`, `cap` = `--max-desks` (default 96). So there are always spare desks to hire into, and every worker has a desk even past the cap. |
 
 An asleep floor's workers come from herdr's saved `session.json` (format version 3 only; any other version leaves the
 floor with no workers and an `error`).
@@ -109,14 +131,47 @@ floor with no workers and an `error`).
 | `agent_name` | string, optional | herdr agent name |
 | `agent_session` | string, optional | native agent session id; present on sleeping workers that can resume |
 | `status` | string | herdr agent status of the primary pane: `idle` \| `working` \| `blocked` \| `done` \| `unknown` (`done` = idle, not yet seen). Workers on an asleep floor are `unknown`. |
-| `title` | string, optional | terminal title (Claude Code sets it to the current task) |
+| `status_since` | int | when `status` last changed, unix **milliseconds** on the bridge's clock (herdr has no timestamp). See [Desks and names](#desks-and-names) for restarts. |
+| `title` | string, optional | terminal title, herdr's `terminal_title_stripped` (Claude Code keeps it set to the current task) |
 | `tokens` | object, optional | the workspace's `h3d_*` metadata tokens (live only; herdr does not persist tokens) |
 | `worktree` | object, optional | `repo_root`, `repo_name`, `checkout_path`, `linked` |
 | `role`, `run` | string, optional | write-code role and run: from the `h3d_role` / `h3d_run` tokens, else from a label `ROLE\|descr\|…` with ROLE one of `ORCH`, `CODE`, `REVIEW`, `UX`, `GROUND` (role lower-cased, run = `descr`) |
+| `name` | string | display name, unique among the floor's workers (see below) |
+| `desk_index` | int ≥ 0 | the worker's desk on its floor (see below) |
+| `harness` | string, optional | `claude`, `codex`, …: the `h3d_harness` token, else `agent_kind` when that is `claude` or `codex` |
+| `model`, `effort` | string, optional | the `h3d_model` / `h3d_effort` tokens (e.g. `claude-opus-5-5` / `xhigh`, `gpt-6-sol` / `high`) |
+
+`harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
+none, so the bridge keeps the last known value until a new one shows up. They are absent when never known.
 
 **Identity.** When a workspace appears (bridge start, herdr restart, reconnect), the bridge matches it to a stored worker
 by, in order: a pane-label marker `h3d-<short uuid>`; the native `agent_session` id; label + identity directory (only for
 workers it has not seen closing). Otherwise it is a new worker. The bridge never writes markers or tokens to herdr.
+
+### Desks and names
+
+Each worker holds a **desk** on its floor: `desk_index` is stored in SQLite (`desk_assignment`) under the worker's id,
+so it survives bridge and herdr restarts whenever the identity reconciles to the same worker. A worker new to its floor
+takes the **lowest free** index, in sidebar order. A desk is freed when its worker leaves the floor
+(`worker.removed`: workspace closed, identity lost, session deleted), and the next newcomer reuses it. Workers of an
+asleep floor keep their desks.
+
+Each worker also gets a **name** from a built-in list of original names ("Nibble", "Pixel", "Mochi", …). Names are
+unique among the floor's workers; past the end of the list they get a suffix (`"Pixel 2"`). A name belongs to one
+worker of its floor at a time (SQLite `worker_name`), and comes back with it after a restart or when its workspace
+reopens. When the bridge sees the worker leave the floor (`worker.removed`: workspace closed, identity lost, session
+deleted), the name stays **held** for `--name-hold` (default 7 days) from that moment: no newcomer gets it, so a
+worker that returns within the hold always has its name. A worker that leaves while the bridge is down is seen leaving
+when the bridge next observes its floor, so the hold starts late, never early.
+
+After the hold a newcomer may take the name. The worker that left then no longer owns it and gets a new name if it
+ever comes back: that is the one intended name change. A worker returning after its hold whose name nobody took keeps
+it. Besides that, only a failed database write (after the next bridge restart) or, once, a name that an earlier
+development build stored twice on a floor (the most recently seen worker keeps it) can change a worker's name.
+
+`status_since` is stored with the status it belongs to. After a bridge restart a worker whose status is unchanged
+keeps its `status_since` (idle ages don't reset); one whose status changed while the bridge was down starts at the
+time the bridge sees it.
 
 ## Events
 
@@ -129,22 +184,24 @@ and remember the last `seq` applied.
 | `building.removed` | `id` | a building was deleted (its floors got `floor.upsert` with `building: null` first) |
 | `floor.upsert` | `floor` | a session appeared, started, stopped, was (re)assigned, or its `error` changed |
 | `floor.removed` | `session` | the session was deleted in herdr (its workers get `worker.removed` first) |
-| `worker.upsert` | `worker` | a worker appeared, or anything but its status changed (full object) |
-| `worker.status` | `id`, `session`, `workspace_id`, `status`, `prev_status` | only the status changed (the hot path) |
+| `worker.upsert` | `worker` | a worker appeared, or anything besides `status`/`title` changed (full object) |
+| `worker.status` | `id`, `session`, `workspace_id`, `status`, `prev_status`, `status_since`, `title` | only `status` and/or `title` changed (the hot path). `title` is always present, `""` when cleared; on a title-only change `prev_status` equals `status` and `status_since` does not move. |
 | `worker.removed` | `id`, `session`, `workspace_id` | the workspace closed, the session was deleted, or the identity changed |
 
 ```json
-{"t":"floor.upsert","seq":1043,"floor":{"session":"herdr-3d","state":"asleep","building":null,"index":null}}
-{"t":"worker.upsert","seq":1044,"worker":{"id":"a58752ea-6511-4318-be9a-59e41c09d7c5","session":"herdr-3d","workspace_id":"wE","label":"CODE|lobby|7|r1","pane_id":"wE:p1","status":"unknown","role":"code","run":"lobby"}}
-{"t":"worker.status","seq":1045,"id":"a58752ea-6511-4318-be9a-59e41c09d7c5","session":"herdr-3d","workspace_id":"wE","status":"working","prev_status":"unknown"}
-{"t":"worker.removed","seq":1046,"id":"a58752ea-6511-4318-be9a-59e41c09d7c5","session":"herdr-3d","workspace_id":"wE"}
-{"t":"building.upsert","seq":1047,"building":{"id":"b_3f09a1c2d4e5","name":"Work","sort":0,"floors":["code-review"]}}
-{"t":"building.removed","seq":1048,"id":"b_77aa01b2c3d4"}
-{"t":"floor.removed","seq":1049,"session":"pastry"}
+{"t":"floor.upsert","seq":1043,"floor":{"session":"herdr-3d","state":"running","building":null,"index":null,"desks":7}}
+{"t":"worker.upsert","seq":1044,"worker":{"id":"a58752ea-6511-4318-be9a-59e41c09d7c5","session":"herdr-3d","workspace_id":"wE","label":"CODE|lobby|7|r1","pane_id":"wE:p1","status":"unknown","role":"code","run":"lobby","name":"Mochi","desk_index":4,"status_since":1790601900972}}
+{"t":"worker.status","seq":1045,"id":"a58752ea-6511-4318-be9a-59e41c09d7c5","session":"herdr-3d","workspace_id":"wE","status":"working","prev_status":"unknown","status_since":1790601903410,"title":"Reading hub.go"}
+{"t":"worker.status","seq":1046,"id":"a58752ea-6511-4318-be9a-59e41c09d7c5","session":"herdr-3d","workspace_id":"wE","status":"working","prev_status":"working","status_since":1790601903410,"title":"Writing tests"}
+{"t":"worker.removed","seq":1047,"id":"a58752ea-6511-4318-be9a-59e41c09d7c5","session":"herdr-3d","workspace_id":"wE"}
+{"t":"building.upsert","seq":1048,"building":{"id":"b_3f09a1c2d4e5","name":"Work","sort":0,"floors":["code-review"]}}
+{"t":"building.removed","seq":1049,"id":"b_77aa01b2c3d4"}
+{"t":"floor.removed","seq":1050,"session":"pastry"}
 ```
 
-A status change can also arrive inside a `worker.upsert` (when something else changed at the same time), so take
-`status` from both. Latency: status and lifecycle changes normally show up well under a second; sessions starting or
+A status or title change can also arrive inside a `worker.upsert` (when something else changed at the same time), so
+take `status`, `status_since` and `title` from both. When one observation changes a floor and its workers, the
+`floor.upsert` (e.g. a new `desks`) comes first, then the worker events. Latency: status and lifecycle changes normally show up well under a second; sessions starting or
 stopping within ~2 s (a stopping session is noticed as soon as its event stream ends). The bridge re-reads every running
 session every 30 s as a safety net.
 
@@ -154,7 +211,7 @@ The bridge keeps the last 4096 events in memory. To resume after a disconnect, s
 and the last `seq` you applied:
 
 ```json
-{"t":"hello","proto":1,"client":"herdr-3d-mac/0.1","since_seq":1046,"epoch":"0fc8ba663c9c83d9"}
+{"t":"hello","proto":1,"client":"herdr-3d-mac/0.1","since_seq":1047,"epoch":"0fc8ba663c9c83d9"}
 ```
 
 - If `epoch` matches and every event after `since_seq` is still buffered, `welcome.resume` is `replay` and exactly the
@@ -165,10 +222,10 @@ and the last `seq` you applied:
   and rebuild from it.
 
 ```json
-{"t":"welcome","proto":1,"server_seq":1049,"epoch":"0fc8ba663c9c83d9","resume":"replay","server":"herdr-world v0.2.0"}
-{"t":"building.upsert","seq":1047,"building":{"id":"b_3f09a1c2d4e5","name":"Work","sort":0,"floors":["code-review"]}}
-{"t":"building.removed","seq":1048,"id":"b_77aa01b2c3d4"}
-{"t":"floor.removed","seq":1049,"session":"pastry"}
+{"t":"welcome","proto":1,"server_seq":1050,"epoch":"0fc8ba663c9c83d9","resume":"replay","server":"herdr-world v0.2.0"}
+{"t":"building.upsert","seq":1048,"building":{"id":"b_3f09a1c2d4e5","name":"Work","sort":0,"floors":["code-review"]}}
+{"t":"building.removed","seq":1049,"id":"b_77aa01b2c3d4"}
+{"t":"floor.removed","seq":1050,"session":"pastry"}
 ```
 
 ## Commands
@@ -192,8 +249,8 @@ the client's world already reflects it. Every building/floor command, accepted o
 
 ```json
 {"t":"floor.assign","req_id":"8","args":{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}}
-{"t":"floor.upsert","seq":1050,"floor":{"session":"code-review","state":"running","building":"b_3f09a1c2d4e5","index":0}}
-{"t":"building.upsert","seq":1051,"building":{"id":"b_3f09a1c2d4e5","name":"Work","sort":0,"floors":["code-review"]}}
+{"t":"floor.upsert","seq":1051,"floor":{"session":"code-review","state":"running","building":"b_3f09a1c2d4e5","index":0,"desks":16}}
+{"t":"building.upsert","seq":1052,"building":{"id":"b_3f09a1c2d4e5","name":"Work","sort":0,"floors":["code-review"]}}
 {"t":"ack","req_id":"8"}
 ```
 
@@ -236,7 +293,7 @@ meaning of a field needs a new version.
 ```sh
 herdr-world dump                  # snapshot, then events as JSON lines until Ctrl-C
 herdr-world dump --once | jq .    # snapshot only
-herdr-world dump --once --since 1046 --epoch 0fc8ba663c9c83d9   # replay instead of a snapshot
+herdr-world dump --once --since 1047 --epoch 0fc8ba663c9c83d9   # replay instead of a snapshot
 herdr-world cmd building.create '{"name":"Work"}'
 herdr-world cmd floor.assign '{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}'
 ```

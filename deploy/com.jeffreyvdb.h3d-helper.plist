@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  h3d-helper as a user LaunchAgent on the Mac (see CONTRIBUTING.md "Helper").
+  launchd does not expand ~ or $HOME: install with
+    sed "s|@HOME@|$HOME|g" deploy/com.jeffreyvdb.h3d-helper.plist > ~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist
+  Flags can go into ProgramArguments, or H3D_HELPER_* into EnvironmentVariables.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.jeffreyvdb.h3d-helper</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@HOME@/.local/bin/h3d-helper</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- Restart it whenever it exits; it restarts its own ssh tunnel. -->
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<!-- It sits between the game window and the bridge: no background throttling. -->
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>@HOME@/Library/Logs/h3d-helper.log</string>
+	<key>StandardErrorPath</key>
+	<string>@HOME@/Library/Logs/h3d-helper.log</string>
+</dict>
+</plist>

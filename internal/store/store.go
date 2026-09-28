@@ -1,7 +1,8 @@
 // Package store is herdr-world's own SQLite database (pure Go, no cgo):
 // buildings, which building each floor (session) is in, bridge-owned worker
-// identities with their fingerprints, and an audit log of commands. It is the
-// only state the bridge writes; herdr itself is never modified.
+// identities with their fingerprints, names and desks, and an audit log of
+// commands. It is the only state the bridge writes; herdr itself is never
+// modified.
 package store
 
 import (
@@ -70,6 +71,37 @@ var migrations = []string{
 		ok     INTEGER NOT NULL,
 		error  TEXT
 	);`,
+	// 2: desks, names, status age and harness/model/effort (protocol v1
+	// additions). status is the status status_since belongs to.
+	`ALTER TABLE worker ADD COLUMN name TEXT NOT NULL DEFAULT '';
+	ALTER TABLE worker ADD COLUMN status TEXT NOT NULL DEFAULT '';
+	ALTER TABLE worker ADD COLUMN status_since INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE worker ADD COLUMN harness TEXT NOT NULL DEFAULT '';
+	ALTER TABLE worker ADD COLUMN model TEXT NOT NULL DEFAULT '';
+	ALTER TABLE worker ADD COLUMN effort TEXT NOT NULL DEFAULT '';
+	CREATE TABLE desk_assignment (
+		floor       TEXT NOT NULL,
+		desk_index  INTEGER NOT NULL CHECK (desk_index >= 0),
+		worker_uuid TEXT NOT NULL UNIQUE REFERENCES worker(id) ON DELETE CASCADE,
+		PRIMARY KEY (floor, desk_index)
+	);`,
+	// 3: names move to worker_name, where a name has one owner per floor
+	// and stays held from when the owner left (released_at) for the name
+	// hold. Names already stored go to their most recently seen worker,
+	// held (released_at NULL): the hub releases the ones whose owner is not
+	// on the floor when it next observes it.
+	`CREATE TABLE worker_name (
+		floor       TEXT NOT NULL,
+		name        TEXT NOT NULL CHECK (name <> ''),
+		worker_uuid TEXT NOT NULL UNIQUE REFERENCES worker(id) ON DELETE CASCADE,
+		released_at TEXT,
+		PRIMARY KEY (floor, name)
+	);
+	INSERT INTO worker_name (floor, name, worker_uuid)
+		SELECT w.session_name, w.name, w.id FROM worker w WHERE w.name <> '' AND w.id = (
+			SELECT o.id FROM worker o WHERE o.session_name = w.session_name AND o.name = w.name
+			ORDER BY o.last_seen_at DESC, o.id LIMIT 1);
+	ALTER TABLE worker DROP COLUMN name;`,
 }
 
 // Fingerprint kinds.
@@ -113,6 +145,31 @@ type Worker struct {
 	Label        string
 	Closed       bool
 	Fingerprints []Fingerprint
+	// Status is the last status seen and StatusSince (unix ms) when it
+	// began; 0 means unknown.
+	Status      string
+	StatusSince int64
+	Harness     string
+	Model       string
+	Effort      string
+}
+
+// Desk is one desk slot on a floor, held by a worker.
+type Desk struct {
+	Floor    string
+	Index    int
+	WorkerID string
+}
+
+// NameClaim is a worker's name on a floor. A name has at most one owner
+// per floor and a worker owns at most one name.
+type NameClaim struct {
+	Floor    string
+	Name     string
+	WorkerID string
+	// Released is when the bridge saw the owner leave the floor; zero
+	// while the owner is on it.
+	Released time.Time
 }
 
 // Open opens (creating if needed) the database at path and migrates it.
@@ -179,7 +236,9 @@ func (s *Store) tx(ctx context.Context, fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-func (s *Store) ts() string { return s.now().UTC().Format(time.RFC3339Nano) }
+func (s *Store) ts() string { return stamp(s.now()) }
+
+func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
 
 // Buildings returns every building in sort order.
 func (s *Store) Buildings(ctx context.Context) ([]Building, error) {
@@ -474,7 +533,8 @@ func (s *Store) AuditLog(ctx context.Context) ([]AuditEntry, error) {
 // SessionWorkers returns every stored worker of a session with its
 // fingerprints: the identity candidates for reconciliation.
 func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT w.id, w.workspace_id, w.label, w.closed_at IS NOT NULL, f.kind, f.value
+	rows, err := s.db.QueryContext(ctx, `SELECT w.id, w.workspace_id, w.label, w.closed_at IS NOT NULL,
+			w.status, w.status_since, w.harness, w.model, w.effort, f.kind, f.value
 		FROM worker w LEFT JOIN worker_fingerprint f ON f.worker_id = w.id
 		WHERE w.session_name = ? ORDER BY w.last_seen_at DESC, w.id, f.kind, f.value`, session)
 	if err != nil {
@@ -486,7 +546,8 @@ func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, e
 	for rows.Next() {
 		var w Worker
 		var kind, value sql.NullString
-		if err := rows.Scan(&w.ID, &w.WorkspaceID, &w.Label, &w.Closed, &kind, &value); err != nil {
+		if err := rows.Scan(&w.ID, &w.WorkspaceID, &w.Label, &w.Closed,
+			&w.Status, &w.StatusSince, &w.Harness, &w.Model, &w.Effort, &kind, &value); err != nil {
 			return nil, err
 		}
 		i, ok := idx[w.ID]
@@ -508,11 +569,14 @@ func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, e
 func (s *Store) SaveWorker(ctx context.Context, w Worker) error {
 	now := s.ts()
 	return s.tx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO worker (id, session_name, workspace_id, label, created_at, last_seen_at)
-			VALUES (?, ?, ?, ?, ?, ?)
+		_, err := tx.ExecContext(ctx, `INSERT INTO worker (id, session_name, workspace_id, label, created_at, last_seen_at,
+				status, status_since, harness, model, effort)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET session_name = excluded.session_name, workspace_id = excluded.workspace_id,
-				label = excluded.label, last_seen_at = excluded.last_seen_at, closed_at = NULL`,
-			w.ID, w.Session, w.WorkspaceID, w.Label, now, now)
+				label = excluded.label, last_seen_at = excluded.last_seen_at, closed_at = NULL,
+				status = excluded.status, status_since = excluded.status_since,
+				harness = excluded.harness, model = excluded.model, effort = excluded.effort`,
+			w.ID, w.Session, w.WorkspaceID, w.Label, now, now, w.Status, w.StatusSince, w.Harness, w.Model, w.Effort)
 		if err != nil {
 			return err
 		}
@@ -531,5 +595,104 @@ func (s *Store) SaveWorker(ctx context.Context, w Worker) error {
 // CloseWorker records that the bridge saw a worker's workspace close.
 func (s *Store) CloseWorker(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE worker SET closed_at = ? WHERE id = ?`, s.ts(), id)
+	return err
+}
+
+// SetWorkerStatus records a worker's status and since when it has it (unix
+// ms): the hot path, cheaper than SaveWorker.
+func (s *Store) SetWorkerStatus(ctx context.Context, id, status string, since int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE worker SET status = ?, status_since = ? WHERE id = ?`, status, since, id)
+	return err
+}
+
+// Desks returns every desk assignment, by floor and index.
+func (s *Store) Desks(ctx context.Context) ([]Desk, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT floor, desk_index, worker_uuid FROM desk_assignment ORDER BY floor, desk_index`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Desk
+	for rows.Next() {
+		var d Desk
+		if err := rows.Scan(&d.Floor, &d.Index, &d.WorkerID); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// AssignDesk gives a stored worker desk index on floor, moving it off any
+// desk it had. The desk must be free.
+func (s *Store) AssignDesk(ctx context.Context, floor string, index int, workerID string) error {
+	if index < 0 {
+		return fmt.Errorf("%w: desk index %d", ErrInvalid, index)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO desk_assignment (floor, desk_index, worker_uuid) VALUES (?, ?, ?)
+		ON CONFLICT(worker_uuid) DO UPDATE SET floor = excluded.floor, desk_index = excluded.desk_index`,
+		floor, index, workerID)
+	return err
+}
+
+// FreeDesk frees whatever desk a worker holds.
+func (s *Store) FreeDesk(ctx context.Context, workerID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM desk_assignment WHERE worker_uuid = ?`, workerID)
+	return err
+}
+
+// FreeFloorDesks frees every desk of a floor.
+func (s *Store) FreeFloorDesks(ctx context.Context, floor string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM desk_assignment WHERE floor = ?`, floor)
+	return err
+}
+
+// Names returns every name claim, by floor and name. A released_at that
+// does not parse reads as released long ago.
+func (s *Store) Names(ctx context.Context) ([]NameClaim, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT floor, name, worker_uuid, released_at FROM worker_name ORDER BY floor, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NameClaim
+	for rows.Next() {
+		var c NameClaim
+		var released sql.NullString
+		if err := rows.Scan(&c.Floor, &c.Name, &c.WorkerID, &released); err != nil {
+			return nil, err
+		}
+		if released.Valid {
+			if c.Released, err = time.Parse(time.RFC3339Nano, released.String); err != nil {
+				c.Released = time.Unix(0, 0)
+			}
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ClaimName gives a stored worker a name on floor, held (not released):
+// it takes the name from any previous owner and drops any other name the
+// worker had.
+func (s *Store) ClaimName(ctx context.Context, floor, name, workerID string) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM worker_name WHERE worker_uuid = ? AND NOT (floor = ? AND name = ?)`,
+			workerID, floor, name)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO worker_name (floor, name, worker_uuid) VALUES (?, ?, ?)
+			ON CONFLICT(floor, name) DO UPDATE SET worker_uuid = excluded.worker_uuid, released_at = NULL`,
+			floor, name, workerID)
+		return err
+	})
+}
+
+// ReleaseName records when the bridge saw a worker leave the floor of the
+// name it owns. An earlier release time is kept.
+func (s *Store) ReleaseName(ctx context.Context, workerID string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE worker_name SET released_at = ? WHERE worker_uuid = ? AND released_at IS NULL`,
+		stamp(at), workerID)
 	return err
 }

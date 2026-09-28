@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
@@ -251,5 +252,223 @@ func TestRefusesNewerSchema(t *testing.T) {
 	db.Close()
 	if _, err := store.Open(context.Background(), path); err == nil {
 		t.Fatal("opened a database from the future")
+	}
+}
+
+func TestMigratesVersion1Forward(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "w.db")
+	// A database as the M1 bridge left it.
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		store.Migrations[0],
+		"PRAGMA user_version = 1",
+		`INSERT INTO worker (id, session_name, workspace_id, label, created_at, last_seen_at) VALUES ('u1', 's', 'w1', 'CODE|x', 't', 't')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	st := open(t, path)
+	ws, err := st.SessionWorkers(ctx, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 1 || ws[0].Label != "CODE|x" || ws[0].StatusSince != 0 || ws[0].Model != "" {
+		t.Fatalf("migrated workers = %+v", ws)
+	}
+	if err := st.AssignDesk(ctx, "s", 0, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if ds, err := st.Desks(ctx); err != nil || len(ds) != 1 || ds[0] != (store.Desk{Floor: "s", Index: 0, WorkerID: "u1"}) {
+		t.Fatalf("desks = %+v, %v", ds, err)
+	}
+	if ns, err := st.Names(ctx); err != nil || len(ns) != 0 {
+		t.Fatalf("names = %+v, %v", ns, err)
+	}
+	if err := st.ClaimName(ctx, "s", "Pixel", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if ns, err := st.Names(ctx); err != nil || len(ns) != 1 || ns[0] != (store.NameClaim{Floor: "s", Name: "Pixel", WorkerID: "u1"}) {
+		t.Fatalf("names = %+v, %v", ns, err)
+	}
+}
+
+// A database as the bridge left it before names had owners (schema 2):
+// each stored name goes to its most recently seen worker, held.
+func TestMigratesVersion2Forward(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "w.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		store.Migrations[0],
+		store.Migrations[1],
+		"PRAGMA user_version = 2",
+		`INSERT INTO worker (id, session_name, workspace_id, label, created_at, last_seen_at, name, status, status_since) VALUES
+			('u1', 's', 'w1', 'a', 't', '2026-09-01T10:00:00Z', 'Pixel', 'idle', 1000),
+			('u2', 's', 'w2', 'b', 't', '2026-09-02T10:00:00Z', 'Pixel', 'idle', 1000),
+			('u3', 's', 'w3', 'c', 't', '2026-09-01T10:00:00Z', 'Mochi', 'working', 2000),
+			('u4', 's', 'w4', 'd', 't', '2026-09-01T10:00:00Z', '', 'idle', 1000),
+			('u5', 't', 'w1', 'e', 't', '2026-09-01T10:00:00Z', 'Pixel', 'idle', 1000)`,
+		`INSERT INTO desk_assignment (floor, desk_index, worker_uuid) VALUES ('s', 0, 'u3')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	st := open(t, path)
+	ns, err := st.Names(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []store.NameClaim{{Floor: "s", Name: "Mochi", WorkerID: "u3"}, {Floor: "s", Name: "Pixel", WorkerID: "u2"}, {Floor: "t", Name: "Pixel", WorkerID: "u5"}}
+	if !slices.Equal(ns, want) {
+		t.Fatalf("names = %+v, want %+v", ns, want)
+	}
+	ws, err := st.SessionWorkers(ctx, "s")
+	if err != nil || len(ws) != 4 {
+		t.Fatalf("workers = %+v, %v", ws, err)
+	}
+	for _, w := range ws {
+		if w.ID == "u3" && (w.Status != "working" || w.StatusSince != 2000) {
+			t.Fatalf("u3 = %+v", w)
+		}
+	}
+	if ds, err := st.Desks(ctx); err != nil || len(ds) != 1 || ds[0].WorkerID != "u3" {
+		t.Fatalf("desks = %+v, %v", ds, err)
+	}
+	if err := st.SaveWorker(ctx, store.Worker{ID: "u4", Session: "s", WorkspaceID: "w4", Label: "d"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNameClaims(t *testing.T) {
+	ctx := context.Background()
+	st := open(t, filepath.Join(t.TempDir(), "w.db"))
+	for _, w := range []store.Worker{{ID: "u1", Session: "s"}, {ID: "u2", Session: "s"}, {ID: "u3", Session: "t"}} {
+		if err := st.SaveWorker(ctx, w); err != nil {
+			t.Fatal(err)
+		}
+	}
+	names := func() []store.NameClaim {
+		t.Helper()
+		ns, err := st.Names(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ns
+	}
+	claim := func(floor, name, id string) {
+		t.Helper()
+		if err := st.ClaimName(ctx, floor, name, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claim("s", "Pixel", "u1")
+	claim("s", "Mochi", "u2")
+	claim("t", "Pixel", "u3") // names are per floor
+	left := time.UnixMilli(1_790_000_000_123)
+	if err := st.ReleaseName(ctx, "u1", left); err != nil {
+		t.Fatal(err)
+	}
+	// A later release keeps the first one: the hold counts from leaving.
+	if err := st.ReleaseName(ctx, "u1", left.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if ns := names(); !slices.Equal(ns, []store.NameClaim{{"s", "Mochi", "u2", time.Time{}}, {"s", "Pixel", "u1", ns[1].Released}, {"t", "Pixel", "u3", time.Time{}}}) ||
+		!ns[1].Released.Equal(left) {
+		t.Fatalf("after release = %+v", ns)
+	}
+	// Claiming again holds it again.
+	claim("s", "Pixel", "u1")
+	if ns := names(); !ns[1].Released.IsZero() {
+		t.Fatalf("reclaimed = %+v", ns[1])
+	}
+	// Taking a name moves it to the new owner, which drops any other name.
+	claim("s", "Pixel", "u2")
+	if ns := names(); !slices.Equal(ns, []store.NameClaim{{"s", "Pixel", "u2", time.Time{}}, {"t", "Pixel", "u3", time.Time{}}}) {
+		t.Fatalf("after transfer = %+v", ns)
+	}
+	// Only stored workers own names.
+	if err := st.ClaimName(ctx, "s", "Tofu", "nobody"); err == nil {
+		t.Fatal("claimed a name for a worker that is not stored")
+	}
+	if err := st.ClaimName(ctx, "s", "", "u1"); err == nil {
+		t.Fatal("claimed an empty name")
+	}
+}
+
+func TestWorkerStateAndDesks(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "w.db")
+	st := open(t, path)
+	w := store.Worker{ID: "u1", Session: "s", WorkspaceID: "w1", Label: "a", Status: "idle", StatusSince: 1000,
+		Harness: "claude", Model: "claude-opus-5-5", Effort: "high"}
+	for _, x := range []store.Worker{w, {ID: "u2", Session: "s", WorkspaceID: "w2", Label: "b"}, {ID: "u3", Session: "t", WorkspaceID: "w1", Label: "c"}} {
+		if err := st.SaveWorker(ctx, x); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.SetWorkerStatus(ctx, "u1", "working", 2000); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []store.Desk{{"s", 0, "u1"}, {"s", 1, "u2"}, {"t", 0, "u3"}} {
+		if err := st.AssignDesk(ctx, d.Floor, d.Index, d.WorkerID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A taken desk cannot be handed out twice, and indexes are >= 0.
+	if err := st.AssignDesk(ctx, "s", 1, "u1"); err == nil {
+		t.Fatal("two workers on one desk")
+	}
+	if err := st.AssignDesk(ctx, "s", -1, "u1"); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("negative desk: %v", err)
+	}
+	// Moving a worker frees its old desk.
+	if err := st.AssignDesk(ctx, "s", 4, "u2"); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	st = open(t, path)
+	ws, err := st.SessionWorkers(ctx, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]store.Worker{}
+	for _, x := range ws {
+		got[x.ID] = x
+	}
+	want := w
+	want.Status, want.StatusSince = "working", 2000
+	if g := got["u1"]; g.Status != want.Status || g.StatusSince != want.StatusSince ||
+		g.Harness != want.Harness || g.Model != want.Model || g.Effort != want.Effort {
+		t.Fatalf("u1 = %+v, want %+v", g, want)
+	}
+	ds, err := st.Desks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(ds, []store.Desk{{"s", 0, "u1"}, {"s", 4, "u2"}, {"t", 0, "u3"}}) {
+		t.Fatalf("desks = %+v", ds)
+	}
+	if err := st.FreeDesk(ctx, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FreeFloorDesks(ctx, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if ds, _ := st.Desks(ctx); !slices.Equal(ds, []store.Desk{{"s", 4, "u2"}}) {
+		t.Fatalf("desks after free = %+v", ds)
 	}
 }

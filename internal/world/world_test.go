@@ -44,7 +44,7 @@ func TestFromSnapshot(t *testing.T) {
 		Status: "working", Title: "Claude Code",
 		Tokens:   map[string]string{"h3d_run": "20260928-1344-bridge-ro", "h3d_role": "orch", "h3d_pass": "0", "h3d_phase": "coding"},
 		Worktree: &world.Worktree{RepoRoot: "/home/u/devel/herdr-3d", RepoName: "herdr-3d", CheckoutPath: "/home/u/devel/herdr-3d"},
-		Role:     "orch", Run: "20260928-1344-bridge-ro",
+		Role:     "orch", Run: "20260928-1344-bridge-ro", Harness: "claude",
 	}
 	if !reflect.DeepEqual(orch, want) {
 		t.Fatalf("w1 =\n%+v\nwant\n%+v", orch, want)
@@ -62,13 +62,32 @@ func TestFromSnapshot(t *testing.T) {
 	// Two panes, the agent in the second: the agent pane represents the worker.
 	research := m["w3"]
 	if research.PaneID != "w3:p2" || research.AgentKind != "codex" || research.Status != "blocked" ||
-		research.AgentName != "rx" || research.Cwd != "/home/u/research/sub" || research.Role != "" {
+		research.AgentName != "rx" || research.Cwd != "/home/u/research/sub" || research.Role != "" || research.Harness != "codex" {
 		t.Fatalf("w3 = %+v", research)
 	}
 
 	notes := m["w4"]
-	if notes.PaneID != "w4:p1" || notes.Status != "unknown" || notes.AgentKind != "" || notes.Tokens != nil {
+	if notes.PaneID != "w4:p1" || notes.Status != "unknown" || notes.AgentKind != "" || notes.Tokens != nil || notes.Harness != "" {
 		t.Fatalf("w4 = %+v", notes)
+	}
+}
+
+func TestHarnessOf(t *testing.T) {
+	for _, tc := range []struct {
+		tokens                 map[string]string
+		kind                   string
+		harness, model, effort string
+	}{
+		{nil, "", "", "", ""},
+		{nil, "claude", "claude", "", ""},
+		{nil, "h3dprobe", "", "", ""},
+		{map[string]string{"h3d_harness": "codex", "h3d_model": "gpt-6-sol", "h3d_effort": "high"}, "claude", "codex", "gpt-6-sol", "high"},
+		{map[string]string{"h3d_model": "claude-opus-5-5"}, "claude", "claude", "claude-opus-5-5", ""},
+	} {
+		h, m, e := world.HarnessOf(tc.tokens, tc.kind)
+		if h != tc.harness || m != tc.model || e != tc.effort {
+			t.Errorf("HarnessOf(%v, %q) = %q %q %q, want %q %q %q", tc.tokens, tc.kind, h, m, e, tc.harness, tc.model, tc.effort)
+		}
 	}
 }
 
@@ -102,7 +121,8 @@ func TestFromSessionFile(t *testing.T) {
 		t.Fatalf("workers = %d", len(m))
 	}
 	if w := m["w1"]; w.Label != "ORCH|slackpriv" || w.PaneID != "w1:p1" || w.AgentKind != "claude" ||
-		w.AgentSession != "51b5e2e7-8d46-414e-9aa4-1b11c44a84d2" || w.Status != "unknown" || w.Role != "orch" || w.Run != "slackpriv" {
+		w.AgentSession != "51b5e2e7-8d46-414e-9aa4-1b11c44a84d2" || w.Status != "unknown" || w.Role != "orch" || w.Run != "slackpriv" ||
+		w.Harness != "claude" {
 		t.Fatalf("w1 = %+v", w)
 	}
 	// The agent sits in internal pane 7 = public p2, not the root pane.

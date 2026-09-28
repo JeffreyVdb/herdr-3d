@@ -33,6 +33,8 @@ const (
 	EnvSessions   = "HERDR_WORLD_SESSIONS"
 	EnvPoll       = "HERDR_WORLD_POLL"
 	EnvResnapshot = "HERDR_WORLD_RESNAPSHOT"
+	EnvMaxDesks   = "HERDR_WORLD_MAX_DESKS"
+	EnvNameHold   = "HERDR_WORLD_NAME_HOLD"
 	EnvLogLevel   = "HERDR_WORLD_LOG_LEVEL"
 	EnvLogFormat  = "HERDR_WORLD_LOG_FORMAT"
 )
@@ -127,6 +129,18 @@ func envDuration(key string, def time.Duration) (time.Duration, error) {
 	return d, nil
 }
 
+func envInt(key string, def int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return n, nil
+}
+
 func newFlagSet(name, sub string, stderr io.Writer) *flag.FlagSet {
 	fs := flag.NewFlagSet(name+" "+sub, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -149,6 +163,14 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	if err != nil {
 		return err
 	}
+	maxDesks, err := envInt(EnvMaxDesks, server.DefaultMaxDesks)
+	if err != nil {
+		return err
+	}
+	nameHold, err := envDuration(EnvNameHold, server.DefaultNameHold)
+	if err != nil {
+		return err
+	}
 	fs := newFlagSet(name, "serve", stderr)
 	socket := fs.String("socket", envOr(EnvSocket, DefaultSocket()), "unix socket to serve on ($"+EnvSocket+")")
 	db := fs.String("db", envOr(EnvDB, DefaultDB()), "SQLite database ($"+EnvDB+")")
@@ -156,6 +178,8 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	sessions := fs.String("sessions", os.Getenv(EnvSessions), "only watch sessions whose name matches this regexp ($"+EnvSessions+")")
 	fs.DurationVar(&poll, "poll", poll, "session discovery interval ($"+EnvPoll+")")
 	fs.DurationVar(&resnap, "resnapshot", resnap, "safety re-snapshot interval per session ($"+EnvResnapshot+")")
+	fs.IntVar(&maxDesks, "max-desks", maxDesks, "most desks a floor renders beyond its occupied ones ($"+EnvMaxDesks+")")
+	fs.DurationVar(&nameHold, "name-hold", nameHold, "how long a worker's name stays held after it leaves its floor ($"+EnvNameHold+")")
 	level := fs.String("log-level", envOr(EnvLogLevel, "info"), "debug, info, warn or error ($"+EnvLogLevel+")")
 	format := fs.String("log-format", envOr(EnvLogFormat, "text"), "text or json ($"+EnvLogFormat+")")
 	showVersion := fs.Bool("version", false, "print version and exit")
@@ -169,6 +193,12 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	if fs.NArg() > 0 {
 		return fmt.Errorf("serve takes no arguments, got %q", fs.Args())
 	}
+	if maxDesks < 1 {
+		return fmt.Errorf("-max-desks must be at least 1, got %d", maxDesks)
+	}
+	if nameHold <= 0 {
+		return fmt.Errorf("-name-hold must be positive, got %s", nameHold)
+	}
 	log, err := newLogger(stderr, *level, *format)
 	if err != nil {
 		return err
@@ -181,7 +211,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	}
 	return Serve(ctx, ServeConfig{
 		Socket: *socket, DB: *db, Herdr: &herdr.Client{Bin: *herdrBin}, Only: only,
-		Poll: poll, Resnapshot: resnap, Log: log, Name: name,
+		Poll: poll, Resnapshot: resnap, MaxDesks: maxDesks, NameHold: nameHold, Log: log, Name: name,
 	})
 }
 
@@ -194,6 +224,8 @@ type ServeConfig struct {
 	Poll       time.Duration
 	Resnapshot time.Duration
 	Ring       int
+	MaxDesks   int           // default server.DefaultMaxDesks
+	NameHold   time.Duration // default server.DefaultNameHold
 	Log        *slog.Logger
 	Name       string
 	// Ready, if set, is called once the socket is listening.
@@ -209,7 +241,8 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer st.Close()
-	hub, err := server.NewHub(ctx, st, server.Options{Ring: cfg.Ring, Server: Banner(cfg.Name), Log: log})
+	hub, err := server.NewHub(ctx, st, server.Options{Ring: cfg.Ring, MaxDesks: cfg.MaxDesks, NameHold: cfg.NameHold,
+		Server: Banner(cfg.Name), Log: log})
 	if err != nil {
 		return err
 	}

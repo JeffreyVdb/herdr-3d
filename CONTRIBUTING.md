@@ -5,9 +5,10 @@
 - `cmd/herdr-world` — server-side bridge daemon (Go).
 - `cmd/h3d-helper` — Mac-side helper (Go, cross-compiled for `darwin/arm64`).
 - `internal/` — shared Go packages. Bridge: `herdr` (the only herdr client, read-only), `watch` (session discovery and
-  per-session watchers), `world` (floors/workers from snapshots and `session.json`, identity matching), `store` (SQLite),
-  `server` (hub + WebSocket), `proto` (protocol v1 types and client), `app` (CLI).
-- `deploy/` — `herdr-world.service` (systemd `--user`).
+  per-session watchers), `world` (floors/workers from snapshots and `session.json`, identity matching, worker names),
+  `store` (SQLite), `server` (hub + WebSocket), `proto` (protocol v1 types and client). Helper: `helper` (ssh tunnel
+  supervisor, game server, `/ws` proxy). `app` holds both command lines.
+- `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).
 - `game/` — the game: Vite + strict TypeScript + three.js (`three/webgpu`), pnpm.
 
 ## Toolchain
@@ -32,6 +33,8 @@ make shot              # headless WebGL2 screenshot -> game/test-results/shot.pn
 - Never hardcode ports. Use `portlease run` / `portlease reserve`, and bind `127.0.0.1` only. Other agents run in
   parallel worktrees on the same host.
 - CI (`.github/workflows/ci.yml`) runs go vet/gofmt/test, the darwin cross-build, tsc and vitest. No Playwright in CI.
+- `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
+  in-process bridge.
 
 ## Bridge (`herdr-world`)
 
@@ -59,6 +62,8 @@ bin/herdr-world cmd --socket "$sock" floor.assign '{"session":"herdr-3d","buildi
 | `--herdr` | `HERDR_WORLD_HERDR` | `herdr` on `PATH` |
 | `--sessions` | `HERDR_WORLD_SESSIONS` | all; a regexp limits which sessions are watched |
 | `--poll`, `--resnapshot` | `HERDR_WORLD_POLL`, `HERDR_WORLD_RESNAPSHOT` | `2s`, `30s` |
+| `--max-desks` | `HERDR_WORLD_MAX_DESKS` | `96`: cap on the desks a floor renders beyond its occupied ones (`floor.desks`) |
+| `--name-hold` | `HERDR_WORLD_NAME_HOLD` | `168h` (7 days): how long a worker's name stays held after the bridge sees it leave its floor; then a newcomer may take it (`worker.name`) |
 | `--log-level`, `--log-format` | `HERDR_WORLD_LOG_LEVEL`, `HERDR_WORLD_LOG_FORMAT` | `info`, `text` (or `json`) |
 
 Install as a user service:
@@ -81,6 +86,72 @@ the session in `t.Cleanup`, also on failure. It never touches any other session,
 herdr pane. If a run is killed hard, check `herdr session list` for a leftover `h3d-it-*` session and
 `herdr session stop`/`delete` it.
 
+## Helper (`h3d-helper`, Mac)
+
+`h3d-helper` is what makes the game playable on the Mac:
+
+- it owns `ssh -N -o ControlMaster=no -o ControlPath=none -o ExitOnForwardFailure=yes … -L <local.sock>:<bridge.sock>
+  dev@devbox`, restarts it with exponential backoff (0.5 s doubling to 30 s, ±20 % jitter, back to 0.5 s after
+  30 s up) and checks the bridge's `/healthz` through it every 5 s (3 failures in a row restart ssh). On exit it kills
+  ssh's process group and removes the local socket;
+- it serves the game on `http://127.0.0.1:7777` (loopback only; a secure context, so WebGPU works) from a built
+  `game/dist`, or proxies a Vite dev server with `-dev-upstream`;
+- it proxies `GET /ws` to the bridge, after checking Host, Origin and a per-start token (`docs/protocol.md`
+  "Through h3d-helper");
+- it opens a Chrome `--app` window on `http://127.0.0.1:7777/#token=…` with its own profile (`-no-open` skips that).
+  The token changes at every start: after a restart, use the new window.
+
+It needs non-interactive SSH from the Mac to the host (`BatchMode=yes`: a key in the agent/keychain, host key known).
+State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not answering through the tunnel`,
+`tunnel down, restarting … retry_in=…`. `curl http://127.0.0.1:7777/healthz` shows the tunnel state.
+
+| flag | env | default |
+|---|---|---|
+| `--host` | `H3D_HELPER_HOST` | `dev@devbox` |
+| `--remote-socket` | `H3D_HELPER_REMOTE_SOCKET` | `/run/user/1000/herdr-world/bridge.sock` (the bridge's default) |
+| `--local-socket` | `H3D_HELPER_LOCAL_SOCKET` | `~/Library/Caches/h3d-helper/bridge.sock` |
+| `--listen` | `H3D_HELPER_LISTEN` | `127.0.0.1:7777`; anything but a loopback IP is refused |
+| `--bundle` | `H3D_HELPER_BUNDLE` | `~/Library/Application Support/h3d-helper/dist` |
+| `--dev-upstream` | `H3D_HELPER_DEV_UPSTREAM` | off; e.g. `http://127.0.0.1:5173` |
+| `--no-open` | `H3D_HELPER_NO_OPEN` | `false` |
+| `--chrome`, `--chrome-profile` | `H3D_HELPER_CHROME`, `H3D_HELPER_CHROME_PROFILE` | `Google Chrome`, `~/Library/Application Support/h3d-helper/chrome` |
+| `--ssh` | `H3D_HELPER_SSH` | `ssh` on `PATH` |
+| `--log-level`, `--log-format` | `H3D_HELPER_LOG_LEVEL`, `H3D_HELPER_LOG_FORMAT` | `info`, `text` (or `json`) |
+
+Install as a launchd user agent, from the server (always `-o ControlMaster=no -o ControlPath=none`, see the rule below):
+
+```sh
+make helper-darwin game-build
+mac=devmac; ssh="ssh -o ControlMaster=no -o ControlPath=none"
+$ssh $mac 'mkdir -p ~/.local/bin ~/Library/LaunchAgents "Library/Application Support/h3d-helper" && rm -rf "Library/Application Support/h3d-helper/dist"'
+scp -o ControlMaster=no -o ControlPath=none bin/darwin-arm64/h3d-helper $mac:.local/bin/h3d-helper
+tar -C game -cf - dist | $ssh $mac 'tar -C "Library/Application Support/h3d-helper" -xf -'
+$ssh $mac 'sed "s|@HOME@|$HOME|g" > Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist' < deploy/com.jeffreyvdb.h3d-helper.plist
+$ssh $mac 'launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist'
+```
+
+Then on the Mac: `tail -f ~/Library/Logs/h3d-helper.log`. After an update, copy the binary/bundle again and
+`launchctl kickstart -k gui/$(id -u)/com.jeffreyvdb.h3d-helper`. Uninstall:
+
+```sh
+launchctl bootout gui/$(id -u)/com.jeffreyvdb.h3d-helper
+rm ~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist ~/.local/bin/h3d-helper
+rm -rf ~/Library/Application\ Support/h3d-helper ~/Library/Caches/h3d-helper
+```
+
+Development: forward a Vite dev server (`make dev` on the server) to the Mac and point a helper at it (stop the agent
+first, or give it another `-listen` port); HMR goes through the helper too:
+
+```sh
+ssh -o ControlMaster=no -o ControlPath=none -N -L 5173:127.0.0.1:<leased dev port> dev@devbox &
+~/.local/bin/h3d-helper -dev-upstream http://127.0.0.1:5173
+```
+
+Agents test it without launchd and without a window: copy the binary and a `game/dist` to a temp dir such as
+`~/h3d-tools/helper-<task>/`, run `./h3d-helper -no-open -remote-socket <private bridge socket> -bundle <dir>/dist
+-local-socket <dir>/bridge.sock` (it logs the game URL with its token), drive headless Chrome from `~/h3d-tools`
+(`playwright-core`), and stop it with SIGTERM when done. Mac port 7777 is the helper's; others use their own.
+
 ## Rule: never serve the game to the Mac over plain `http://<tailnet-host>`
 
 WebGPU only exists in a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Secure_Contexts).
@@ -97,3 +168,78 @@ ssh -o ControlMaster=no -o ControlPath=none -N -L <port>:127.0.0.1:<port> dev@de
 
 `ControlMaster=no` matters: a tunnel that becomes the shared ControlMaster takes everyone's multiplexed SSH sessions
 down with it when it is killed (`docs/architecture.md` §2, §7). Check the debug overlay says `backend: webgpu`.
+
+## Game
+
+`game/` is Vite + strict TypeScript + three.js r186 (`three/webgpu`, WebGL2 fallback). Layout:
+
+- `src/net` — protocol v1 client (hello → welcome → snapshot | replay → events, reconnect with backoff from
+  `since_seq` + `epoch`) and the endpoint: same-origin `/ws?token=…` (the helper opens `/#token=<token>`; the game
+  keeps it in `sessionStorage` as `h3d.token` and strips it from the URL), `?ws=<url>` to point elsewhere.
+- `src/world` — the world store (snapshot + events, fallbacks for an older bridge without `name`, `desk_index`,
+  `harness`, `model`, `effort`, `status_since`, `floor.desks`), the deterministic office layout for a desk count,
+  walking collision and ray picking. Pure logic, covered by vitest.
+- `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy.
+  Cards and city badges are canvas atlases drawn as one instanced quad batch each (a cell per worker / floor, redrawn
+  only when it changes). A DOM layer was benchmarked on the Mac and lost: moving DOM elements over the canvas cost
+  2.6–4.3 ms of main thread per frame for 24 cards and ~8 ms for 30 city badges, against 0.5 ms for the atlas. The DOM
+  keeps a static floor list for keyboards and screen readers.
+- `src/ui` — the HUD (DOM over the canvas). `src/input` — first-person walking.
+- `fixtures/` — recorded bridge streams (`herdr-world dump` format): `demo` (2 buildings, 3 floors, 40 workers),
+  `perf-floor60`, `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
+- `tools/` — fixture server, dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
+
+Run it:
+
+```sh
+make dev   # then open http://127.0.0.1:<port>/?ws=/fixture/demo   (Vite serves fixtures at /fixture/<name>)
+pnpm -C game fixture-server   # standalone fixture server on a leased port: ?ws=ws://127.0.0.1:<port>/ws
+# against a private bridge: node game/tools/ws-unix-proxy.ts --port <leased> --socket <bridge.sock>, then ?ws=ws://127.0.0.1:<leased>/ws
+```
+
+| query param | effect |
+|---|---|
+| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>` |
+| `backend=webgl2` | force WebGL2 |
+| `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |
+| `ts` | GPU timestamp queries (for `bench`) |
+| `shadows=0`, `badges=0`, `battery=1` | no shadows; no city badges (perf comparisons); start in battery saver |
+
+Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and a floor (or its badge) to go
+inside. On a floor, click for mouse look (Pointer Lock), WASD / arrows to walk, Shift to run, Esc releases the mouse,
+Tab toggles the floor plan (click the plan to walk there; it is also the fallback when pointer lock is refused),
+Backspace or the City button goes back, B toggles battery saver (60 Hz moving / 30 Hz idle instead of 120 / 60).
+Keyboard: in the city, Tab reaches the floor list (Enter goes inside). On a floor, Shift+Tab moves focus to the top
+bar (City, Issues, PRs, battery saver); Tab / Shift+Tab then move between its buttons as usual and Enter presses one.
+Tab toggles the plan only while nothing but the scene has focus; clicking the scene gives it focus back.
+
+Tests:
+
+```sh
+make test lint                # vitest + tsc (protocol client, store, layout, collision, cards, frame policy, fixtures)
+make shot                     # Playwright WebGL2: game/test-results/{shot,m2-city,m2-floor-plan,m2-desk-row}.png,
+                              # scripted look-at path, floor entry, keyboard focus, live plan labels, events
+                              # during the elevator ride, held keys across floors, small-window plan
+pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
+pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
+```
+
+`test:live` builds `bin/herdr-world` from the worktree (or runs `H3D_LIVE_BRIDGE=<path>`, e.g. another branch's
+bridge built elsewhere), starts `herdr --session h3d-m2game-<random> server` (with
+`HERDR_*`/`CLAUDE*` stripped), a private bridge on `$XDG_RUNTIME_DIR/h3d-m2game/bridge.sock` watching only that session,
+and the WebSocket → unix-socket proxy on a leased 127.0.0.1 port. The spec flips a custom agent's state with
+`herdr pane report-agent` and asserts each change is on screen within 1 s. It accepts an M1 bridge (name falls back
+to the label, desk to the lowest free local slot) and the M2 bridge (its own `name` and `desk_index`). The session is stopped and deleted
+afterwards; after a hard kill, check `herdr session list` for a leftover `h3d-m2game-*` session.
+
+`perf:mac` serves `game/dist` on a leased port P and opens `ssh -o ControlMaster=no -o ControlPath=none -N -R
+127.0.0.1:P:127.0.0.1:P devmac`, so the Mac page is on its own loopback (a secure context: WebGPU).
+It pipes `tools/mac-runner.mjs` into `/opt/homebrew/bin/node` in `~/h3d-tools` (playwright-core, headless Chrome at
+3024×1890) and runs `window.__h3d.bench()` — the engine-bench method: serialized update + render + GPU wait,
+pipelined throughput, GPU timestamps, and rAF frames that include DOM layout.
+
+`window.__h3d` (tests, perf): `backend`, `frames`, `error`, `ready`, `view()`, `lookAt()` → `{kind, id, name?, label?}`
+or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
+sent, `bridgeName`/`bridgeDesk`, null from an older bridge), `layout(session)`, `enterFloor(session, pose?)`,
+`leaveFloor()`, `inject(event)` (applies a protocol event as if the bridge sent it), `setPose({x, z, yaw, pitch})`,
+`pose()`, `plan(open)`, `focusBuilding(i)`, `cards()`, `badgePoint(session)`, `bench(opts)`.
