@@ -249,6 +249,37 @@ function demoM3b() {
   return [snap];
 }
 
+// ---- demo-m4: demo-m3b with git worktrees ------------------------------------
+// For hire / send home on the simulating fixture server (`?sim=1`): some
+// workers work in linked worktrees of their own (with a branch), one in the
+// repo's main checkout. The simulator's rules make a `working` worker's tree
+// dirty (uncommitted changes, unpushed commits) and everyone else clean.
+
+function demoM4() {
+  const [base] = demoM3b();
+  const snap = structuredClone(base);
+  const w = snap.world;
+  const linked = (label, repo, dir, branch) => {
+    const x = w.workers.find((v) => v.label === label);
+    const checkout = `${repo}-wt/${dir}`;
+    x.cwd = checkout;
+    x.worktree = { repo_root: repo, repo_name: repo.split('/').pop(), checkout_path: checkout, linked: true };
+    x.branch = branch;
+  };
+  const herdr = '/home/dev/devel/herdr-3d';
+  linked('CODE|m2-go|3|r1', herdr, 'm2-go', 'h3d/pixel-m2-go');
+  linked('CODE|m2-game|3|r1', herdr, 'm2-game', 'h3d/mochi-m2-game');
+  // A branch of the user's own (the bridge did not make it): send-home keeps it.
+  linked('bridge-ws', herdr, 'bridge-ws', 'dev/bridge-ws');
+  linked('fixtures', herdr, 'fixtures', 'h3d/waffle-fixtures');
+  const pastry = '/home/dev/pastry';
+  linked('brioche', pastry, 'brioche', 'h3d/brioche-levain');
+  linked('timers', pastry, 'timers', 'h3d/timers-notify');
+  const docs = w.workers.find((v) => v.label === 'docs');
+  docs.worktree = { repo_root: herdr, repo_name: 'herdr-3d', checkout_path: herdr, linked: false };
+  return [snap];
+}
+
 // ---- perf: one floor with 60 workers ------------------------------------------
 
 const STATES = ['working', 'working', 'working', 'working', 'idle', 'done', 'blocked', 'working', 'idle', 'working'];
@@ -329,7 +360,7 @@ function perfCity240() {
   return [{ t: 'world.snapshot', seq: 1, world: { buildings, unassigned: [], floors, workers } }];
 }
 
-const FIXTURES = { demo, 'demo-m3': demoM3, 'demo-m3b': demoM3b, 'perf-floor60': perfFloor60, 'perf-floor96': perfFloor96, 'perf-city240': perfCity240 };
+const FIXTURES = { demo, 'demo-m3': demoM3, 'demo-m3b': demoM3b, 'demo-m4': demoM4, 'perf-floor60': perfFloor60, 'perf-floor96': perfFloor96, 'perf-city240': perfCity240 };
 
 const check = process.argv.includes('--check');
 let stale = false;

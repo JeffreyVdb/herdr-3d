@@ -124,3 +124,66 @@ func TestMigratesVersion3Forward(t *testing.T) {
 		t.Fatalf("floor_repo rows = %d, %v", n, err)
 	}
 }
+
+func TestLastHireAndHiredAt(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "w.db")
+	st := open(t, path)
+	if err := st.SetLastHire(ctx, "s", store.Hire{Harness: "claude", Model: "claude-opus-5-5", Effort: "low"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetLastHire(ctx, "s", store.Hire{Harness: "codex", Model: "gpt-6-sol", Effort: "ultra"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetLastHire(ctx, "s", store.Hire{Harness: "codex"}); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("partial hire: %v", err)
+	}
+	w := store.Worker{ID: "a58752ea-6511-4318-be9a-59e41c09d7c5", Session: "s", WorkspaceID: "w1", Label: "Mochi", HiredAt: 1790601900000}
+	if err := st.SaveWorker(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	w.HiredAt = 0 // a later save without it keeps it
+	w.Label = "Mochi 2"
+	if err := st.SaveWorker(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	st = open(t, path)
+	last, err := st.LastHires(ctx)
+	if err != nil || !reflect.DeepEqual(last, map[string]store.Hire{"s": {Harness: "codex", Model: "gpt-6-sol", Effort: "ultra"}}) {
+		t.Fatalf("last = %+v, %v", last, err)
+	}
+	ws, err := st.SessionWorkers(ctx, "s")
+	if err != nil || len(ws) != 1 || ws[0].HiredAt != 1790601900000 || ws[0].Label != "Mochi 2" {
+		t.Fatalf("workers = %+v, %v", ws, err)
+	}
+}
+
+func TestHireBranches(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "w.db")
+	st := open(t, path)
+	b := store.HireBranch{WorkerID: "a58752ea-6511-4318-be9a-59e41c09d7c5", Session: "s", RepoRoot: "/home/u/repo",
+		Branch: "h3d/mochi-a58752", BaseSHA: "8739ddc5f3e1d0c4b2a8e7f6d5c4b3a2918e7d6c"}
+	if err := st.RecordHireBranch(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordHireBranch(ctx, store.HireBranch{WorkerID: "x", Branch: "h3d/x"}); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("partial record: %v", err)
+	}
+	st.Close()
+
+	st = open(t, path)
+	if got, ok, err := st.HireBranchOf(ctx, b.WorkerID); err != nil || !ok || got != b {
+		t.Fatalf("HireBranchOf = %+v %v %v", got, ok, err)
+	}
+	if _, ok, err := st.HireBranchOf(ctx, "someone-else"); err != nil || ok {
+		t.Fatalf("unrecorded worker: %v %v", ok, err)
+	}
+	if err := st.ForgetHireBranch(ctx, b.WorkerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := st.HireBranchOf(ctx, b.WorkerID); err != nil || ok {
+		t.Fatalf("after forget: %v %v", ok, err)
+	}
+}

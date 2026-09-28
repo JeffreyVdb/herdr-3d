@@ -23,6 +23,10 @@ export interface Member {
   display: Display;
   /** 0..2π, desynchronises animation between workers. */
   phase: number;
+  /** M4: standing, legs swinging with this stride phase (radians; constant = standing still). Absent: seated. */
+  stride?: number;
+  /** M4: both arms forward, holding a box. */
+  carry?: boolean;
 }
 
 type PartKey =
@@ -277,6 +281,17 @@ export class Crowd {
       }
     }
 
+    if (m.carry) {
+      lean = 0;
+      armL = armR = -1.3;
+      armLz = 0.1;
+      armRz = -0.1;
+      wave = 0;
+      mug = false;
+    }
+    const walking = m.stride !== undefined;
+    if (walking) bob = Math.abs(Math.sin(m.stride ?? 0)) * 0.03;
+
     // Upper body pivots at the seat.
     this.body.multiplyMatrices(this.base, this.rot(lean, 0, 0, 0, bob, 0));
     this.put('body', i, this.body, null);
@@ -301,9 +316,16 @@ export class Crowd {
       this.put('mug', i, this.body, this.tmp2);
     } else this.hide('mug', i);
 
-    const legSwing = m.display === 'asleep' ? 0 : Math.sin(t * 2.2 + ph) * 0.12;
-    this.put('legL', i, this.base, this.rot(-1.35 + legSwing, 0, 0.05, -HIP.x, HIP.y, HIP.z));
-    this.put('legR', i, this.base, this.rot(-1.35 - legSwing, 0, -0.05, HIP.x, HIP.y, HIP.z));
+    if (walking) {
+      // Standing: legs straight down from the hips, swinging with the stride.
+      const swing = Math.sin(m.stride ?? 0) * 0.55;
+      this.put('legL', i, this.base, this.rot(swing, 0, 0.03, -HIP.x, HIP.y, 0));
+      this.put('legR', i, this.base, this.rot(-swing, 0, -0.03, HIP.x, HIP.y, 0));
+    } else {
+      const legSwing = m.display === 'asleep' ? 0 : Math.sin(t * 2.2 + ph) * 0.12;
+      this.put('legL', i, this.base, this.rot(-1.35 + legSwing, 0, 0.05, -HIP.x, HIP.y, HIP.z));
+      this.put('legR', i, this.base, this.rot(-1.35 - legSwing, 0, -0.05, HIP.x, HIP.y, HIP.z));
+    }
 
     if (m.display === 'done') {
       const b = Math.abs(Math.sin(t * 3 + ph)) * 0.06;

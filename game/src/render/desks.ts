@@ -20,6 +20,8 @@ export interface DeskState {
   /** null = empty desk. */
   display: Display | null;
   cueColor: number;
+  /** M4: false hides an empty desk's "+" (someone is walking in to it, or just packed up). */
+  plus?: boolean;
 }
 
 type Key = 'top' | 'legs' | 'base' | 'lid' | 'screen' | 'sticker' | 'chair' | 'chairBase' | 'plus';
@@ -139,7 +141,7 @@ export class DeskSet {
         M.screen.setColorAt(i, this.c.set(SCREEN[d.display]));
         M.sticker.setColorAt(i, this.c.set(d.cueColor));
       }
-      if (d.display) M.plus.setMatrixAt(i, ZERO);
+      if (d.display || d.plus === false) M.plus.setMatrixAt(i, ZERO);
     }
     for (const mesh of Object.values(this.meshes)) {
       mesh.instanceMatrix.needsUpdate = true;
@@ -164,7 +166,7 @@ export class DeskSet {
         const f = 0.82 + 0.18 * Math.abs(Math.sin(t * 9.1 + i * 1.7) * Math.sin(t * 3.3 + i));
         M.screen.setColorAt(i, this.c.set(SCREEN.working).multiplyScalar(f));
         colors = true;
-      } else if (!d.display && this.withPlus) {
+      } else if (!d.display && this.withPlus && d.plus !== false) {
         // Desk centre in world space, then the "+" above it.
         const cx = d.x + Math.sin(d.yaw) * SEAT_OFFSET * d.scale;
         const cz = d.z + Math.cos(d.yaw) * SEAT_OFFSET * d.scale;

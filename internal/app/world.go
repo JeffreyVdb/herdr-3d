@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
+	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitremote"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -41,6 +42,11 @@ const (
 	EnvWakeTime   = "HERDR_WORLD_WAKE_TIMEOUT"
 	EnvResumeTime = "HERDR_WORLD_RESUME_TIMEOUT"
 	EnvCodex      = "HERDR_WORLD_CODEX_SESSIONS"
+	EnvGit        = "HERDR_WORLD_GIT"
+	EnvFloorWarn  = "HERDR_WORLD_WARN_WORKERS_PER_FLOOR"
+	EnvFloorMax   = "HERDR_WORLD_MAX_WORKERS_PER_FLOOR"
+	EnvHostWarn   = "HERDR_WORLD_WARN_WORKERS"
+	EnvHostMax    = "HERDR_WORLD_MAX_WORKERS"
 	EnvLogLevel   = "HERDR_WORLD_LOG_LEVEL"
 	EnvLogFormat  = "HERDR_WORLD_LOG_FORMAT"
 )
@@ -185,11 +191,21 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	if err != nil {
 		return err
 	}
+	caps := server.DefaultCaps
+	for _, c := range []struct {
+		env string
+		v   *int
+	}{{EnvFloorWarn, &caps.FloorSoft}, {EnvFloorMax, &caps.FloorHard}, {EnvHostWarn, &caps.HostSoft}, {EnvHostMax, &caps.HostHard}} {
+		if *c.v, err = envInt(c.env, *c.v); err != nil {
+			return err
+		}
+	}
 	fs := newFlagSet(name, "serve", stderr)
 	socket := fs.String("socket", envOr(EnvSocket, DefaultSocket()), "unix socket to serve on ($"+EnvSocket+")")
 	db := fs.String("db", envOr(EnvDB, DefaultDB()), "SQLite database ($"+EnvDB+")")
 	herdrBin := fs.String("herdr", envOr(EnvHerdr, "herdr"), "herdr executable ($"+EnvHerdr+")")
 	systemdRun := fs.String("systemd-run", envOr(EnvSystemdRun, "systemd-run"), "systemd-run executable, to wake floors ($"+EnvSystemdRun+")")
+	gitBin := fs.String("git", envOr(EnvGit, "git"), "git executable, for worktree hires and send-home checks ($"+EnvGit+")")
 	codexSessions := fs.String("codex-sessions", envOr(EnvCodex, codex.DefaultSessionsDir()), "Codex rollout directory, for the sleep backfill ($"+EnvCodex+")")
 	sessions := fs.String("sessions", os.Getenv(EnvSessions), "only watch sessions whose name matches this regexp ($"+EnvSessions+")")
 	fs.DurationVar(&poll, "poll", poll, "session discovery interval ($"+EnvPoll+")")
@@ -198,6 +214,10 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	fs.DurationVar(&nameHold, "name-hold", nameHold, "how long a worker's name stays held after it leaves its floor ($"+EnvNameHold+")")
 	fs.DurationVar(&wakeTimeout, "wake-timeout", wakeTimeout, "how long a woken server has to start, answer ping and be seen running ($"+EnvWakeTime+")")
 	fs.DurationVar(&resumeTimeout, "resume-timeout", resumeTimeout, "how long a wake waits for the agents, before the fallback and again for it ($"+EnvResumeTime+")")
+	fs.IntVar(&caps.FloorSoft, "warn-workers-per-floor", caps.FloorSoft, "workers on a floor above which the hire dialog warns ($"+EnvFloorWarn+")")
+	fs.IntVar(&caps.FloorHard, "max-workers-per-floor", caps.FloorHard, "most workers a floor may be hired up to ($"+EnvFloorMax+")")
+	fs.IntVar(&caps.HostSoft, "warn-workers", caps.HostSoft, "workers on the host above which the hire dialog warns ($"+EnvHostWarn+")")
+	fs.IntVar(&caps.HostHard, "max-workers", caps.HostHard, "most workers the host may be hired up to ($"+EnvHostMax+")")
 	level := fs.String("log-level", envOr(EnvLogLevel, "info"), "debug, info, warn or error ($"+EnvLogLevel+")")
 	format := fs.String("log-format", envOr(EnvLogFormat, "text"), "text or json ($"+EnvLogFormat+")")
 	showVersion := fs.Bool("version", false, "print version and exit")
@@ -220,6 +240,11 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	if wakeTimeout <= 0 || resumeTimeout <= 0 {
 		return fmt.Errorf("-wake-timeout and -resume-timeout must be positive, got %s and %s", wakeTimeout, resumeTimeout)
 	}
+	if caps.FloorHard < 1 || caps.HostHard < 1 || caps.FloorSoft < 0 || caps.HostSoft < 0 ||
+		caps.FloorSoft > caps.FloorHard || caps.HostSoft > caps.HostHard {
+		return fmt.Errorf("worker caps: want 0 <= warn <= max and max >= 1, got per floor %d/%d, host %d/%d",
+			caps.FloorSoft, caps.FloorHard, caps.HostSoft, caps.HostHard)
+	}
 	log, err := newLogger(stderr, *level, *format)
 	if err != nil {
 		return err
@@ -235,7 +260,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		Poll: poll, Resnapshot: resnap, MaxDesks: maxDesks, NameHold: nameHold, Log: log, Name: name,
 		Control:     &herdr.Control{Herdr: *herdrBin, SystemdRun: *systemdRun, Only: only},
 		WakeTimeout: wakeTimeout, ResumeTimeout: resumeTimeout, CodexSessions: *codexSessions,
-		RepoOf: (&gitremote.Resolver{}).Repo,
+		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
 	})
 }
 
@@ -252,9 +277,19 @@ type ServeConfig struct {
 	NameHold   time.Duration // default server.DefaultNameHold
 	Log        *slog.Logger
 	Name       string
-	// Control is the write path that wakes floors and puts them to sleep
-	// (nil: floor.wake and floor.sleep fail). Pings go through Herdr.
+	// Control is the write path that wakes floors and puts them to sleep,
+	// hires workers and sends them home (nil: those commands fail). Pings
+	// go through Herdr.
 	Control *herdr.Control
+	// Git runs the git commands of hires and send-homes (nil: no git info,
+	// no worktree hires or deletes).
+	Git *gitops.Git
+	// Caps are the worker caps (zero: server.DefaultCaps).
+	Caps server.Caps
+	// HireOptions, if set, replaces what can be hired (tests only).
+	HireOptions *proto.HireOptions
+	// TrustTimeout, SeenTimeout and ExitTimeout: see server.Options.
+	TrustTimeout, SeenTimeout, ExitTimeout time.Duration
 	// WakeTimeout and ResumeTimeout: see server.Options (0: defaults).
 	WakeTimeout, ResumeTimeout time.Duration
 	// ResumePoll and ResumeSettle: see server.Options (0: defaults).
@@ -283,7 +318,13 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		WakeTimeout: cfg.WakeTimeout, ResumeTimeout: cfg.ResumeTimeout, ResumePoll: cfg.ResumePoll, ResumeSettle: cfg.ResumeSettle}
 	if cfg.Control != nil {
 		opts.Herdr = floorHerdr{Control: cfg.Control, read: cfg.Herdr}
+		opts.Hire = cfg.Control
 	}
+	if cfg.Git != nil {
+		opts.Git = cfg.Git
+	}
+	opts.Caps, opts.HireOptions, opts.Load = cfg.Caps, cfg.HireOptions, server.HostLoad
+	opts.TrustTimeout, opts.SeenTimeout, opts.ExitTimeout = cfg.TrustTimeout, cfg.SeenTimeout, cfg.ExitTimeout
 	if dir := cfg.CodexSessions; dir != "" {
 		opts.CodexSession = func(cwd string, skip func(string) bool) (string, error) { return codex.FindSession(dir, cwd, skip) }
 	}
@@ -417,7 +458,9 @@ func cmdMain(ctx context.Context, name string, args []string, stdout, stderr io.
 		fmt.Fprintf(stderr, "  %s cmd building.create '{\"name\":\"Work\"}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd floor.assign '{\"session\":\"herdr-3d\",\"building\":\"b_…\",\"index\":0}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd floor.settings.set '{\"session\":\"herdr-3d\",\"repo\":\"JeffreyVdb/herdr-3d\"}'\n", name)
-		fmt.Fprintf(stderr, "  %s cmd floor.sleep '{\"session\":\"h3d-scratch\"}'\n\nflags:\n", name)
+		fmt.Fprintf(stderr, "  %s cmd floor.sleep '{\"session\":\"h3d-scratch\"}'\n", name)
+		fmt.Fprintf(stderr, "  %s cmd worker.hire '{\"session\":\"h3d-scratch\",\"desk_index\":0,\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\"}'\n", name)
+		fmt.Fprintf(stderr, "  %s cmd worker.fire '{\"id\":\"…\",\"worktree\":\"keep\"}'\n\nflags:\n", name)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
