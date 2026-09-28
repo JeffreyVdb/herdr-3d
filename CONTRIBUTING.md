@@ -312,9 +312,10 @@ half landing). In the north-east corner, over the filing cabinet, a mezzanine (~
 headroom under it) carries a glass office; an open stair climbs the east wall from the south to its glass door, which
 slides open as you come up. Its floor blocks nothing below; its posts, the stair and the glass do. Look at your desk
 (the one with the name plate) and press **E** to sit: you turn to face the floor over the glass; **Esc** or walking
-(WASD) gets you up. Up there look-at reaches ~20 m (the glass does not stop it, the mezzanine's floor does), so
-pointing at a worker or an empty desk below shows it in the HUD, and cards are measured as though you stood nearer
-(the whole floor's show). The floor plan shows the mezzanine's outline, the stair and your desk.
+(WASD) gets you up. Up there look-at reaches across the whole room (`overlookReach`, its diagonal; the glass does not
+stop it, the mezzanine's floor does), so pointing at any worker or empty desk below shows it in the HUD, and cards are
+measured as though you stood nearer, with no cap on how many show (on the floor it stays 24), so the whole floor's
+show. The floor plan shows the mezzanine's outline, the stair and your desk.
 
 Tests:
 
@@ -393,7 +394,7 @@ outline; `building()` (the plan you walk around in: outline, `storey`, fire esca
 `bubble`) and `receptionEvents()` (front door in / out, elevator arrival, E at the desk, as the game detected them);
 `panel()` of the elevator adds `lobby: {current}`. M3c: `layout(session).mezzanine` (the corner office: `rect`, `y`,
 `under`, `posts`, `stair` with its treads, `glass`, `door`, `desk`, `sit`, `slab`), `view()` adds `seated` and
-`overlook` (up on the mezzanine: 20 m look-at, nearer cards), `pose()` adds `seated`, `sit()` (sits you at your desk as
+`overlook` (up on the mezzanine: whole-floor look-at, nearer and uncapped cards), `pose()` adds `seated`, `sit()` (sits you at your desk as
 E does; false unless you stand in your office), and `lookAt()` returns `{kind: 'own-desk', id: 'own-desk', name}` for
 your desk (never a worker desk slot, so M4's E-on-"+" hire does not collide with it). `route(session, desk)` walks
 the taller storeys past the mezzanine's posts and stair.

@@ -5,6 +5,7 @@ import { hash32, modelCue, taskLine, type Display } from '../world/derive';
 import { DESK_H, floorLayout, MEZZ_Y, seatRect, slotBoxes, wallPieces, type Box3, type FloorLayout, type Opening, type Outline, type Rect } from '../world/layout';
 import type { FloorView, WorkerView } from '../world/store';
 import { AtlasCards } from './cards/atlasCards';
+import { CARD_RANGE, cardWeight, OVERLOOK_CARD_RANGE } from './cards/select';
 import type { CardData } from './cards/types';
 import { Crowd } from './crowd';
 import { DeskSet } from './desks';
@@ -22,8 +23,6 @@ export type Target =
 export const SEAT_Y = 0.45;
 export const CARD_Y = 1.62;
 export const REACH = 3;
-/** #20: cards are measured from the mezzanine as though you stood this much nearer (distance x this). */
-export const OVERLOOK_CARD_SCALE = 0.45;
 
 export interface OfficeOptions {
   shadows: boolean;
@@ -211,8 +210,7 @@ export class OfficeView {
     this.crowd = new Crowd(L.desks, o.shadows);
     this.root.add(this.desks.group, this.crowd.group);
 
-    // Nearer for "needs you"; from the mezzanine, everything reads as nearer (#20).
-    const weight = (slot: number) => (this.seats[slot]?.display === 'needs_you' ? 0.7 : 1) * (this.overlook ? OVERLOOK_CARD_SCALE : 1);
+    const weight = (slot: number) => cardWeight(this.seats[slot]?.display === 'needs_you', this.overlook);
     // A card behind a wall (from the camera) is not shown.
     const occluded = (slot: number, dist: number) => {
       const a = this.anchors[slot];
@@ -326,10 +324,11 @@ export class OfficeView {
     this.mezz.setPlan(on);
   }
 
-  /** #20: up on the mezzanine, cards are measured as though you were nearer. */
+  /** #20: up on the mezzanine, cards are measured as though you were nearer, and all of them can show. */
   setOverlook(on: boolean): void {
     if (on === this.overlook) return;
     this.overlook = on;
+    this.cards.setRange(on ? OVERLOOK_CARD_RANGE : CARD_RANGE);
     this.cardsDirty = true;
   }
 
