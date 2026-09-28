@@ -198,9 +198,7 @@ func (s *Server) readLoop(ctx context.Context, ws *websocket.Conn, c *Client) {
 		case !slices.Contains(proto.Commands, cmd.T):
 			s.log.Info("unknown command rejected", "client", c.name, "cmd", cmd.T)
 			s.replyErr(c, cmd.ReqID, proto.ErrUnknownCommand, "unknown command "+`"`+cmd.T+`"`)
-		case cmd.ReqID == "":
-			s.replyErr(c, "", proto.ErrBadRequest, "commands need a req_id")
-		default:
+		default: // the hub audits it, also when it has no req_id
 			if err := s.hub.Command(ctx, c, cmd); err != nil {
 				return
 			}

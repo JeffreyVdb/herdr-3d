@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
@@ -238,13 +239,14 @@ type pendingWait struct {
 }
 
 func (h *Hub) pendingWaits(ctx context.Context, op *floorOp) []pendingWait {
-	var out []pendingWait
-	_ = h.doWait(ctx, func() {
+	out, _ := query(ctx, h, func() []pendingWait {
+		var out []pendingWait
 		for _, id := range h.floorOrder(op) {
 			if w := op.waits[id]; w != nil && w.state == proto.ResumePending {
 				out = append(out, pendingWait{id: id, pane: w.pane, harness: w.harness, agentSession: w.agentSession})
 			}
 		}
+		return out
 	})
 	return out
 }
@@ -277,19 +279,30 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-// doWait runs fn on the hub goroutine and waits for it.
+// doWait runs fn on the hub goroutine and waits for it. When ctx ends
+// first, fn may still run after doWait returns, so fn must only touch hub
+// state; results come back through query.
 func (h *Hub) doWait(ctx context.Context, fn func()) error {
-	done := make(chan struct{})
-	if err := h.do(ctx, func(context.Context) { fn(); close(done) }); err != nil {
-		return err
+	_, err := query(ctx, h, func() struct{} { fn(); return struct{}{} })
+	return err
+}
+
+// query runs fn on the hub goroutine and returns its result. The result
+// only crosses over through the channel, so a wait that ends early never
+// reads what fn is still writing.
+func query[T any](ctx context.Context, h *Hub, fn func() T) (T, error) {
+	var zero T
+	res := make(chan T, 1)
+	if err := h.do(ctx, func(context.Context) { res <- fn() }); err != nil {
+		return zero, err
 	}
 	select {
-	case <-done:
-		return nil
+	case v := <-res:
+		return v, nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return zero, ctx.Err()
 	case <-h.done:
-		return errHubStopped
+		return zero, errHubStopped
 	}
 }
 
@@ -306,48 +319,49 @@ type workerReport struct {
 	Note   string `json:"note,omitempty"`
 }
 
-// runWake starts the session's server, waits for it to answer, then for
-// each expected agent (herdr resumes them itself; a pane that is back at
-// its shell gets the resume command once) and acks with the outcome.
+// runWake starts the session's server, waits for it to answer and for its
+// floor to be seen running (else wake_failed), then for each expected
+// agent (herdr resumes them itself; a pane that is back at its shell gets
+// the resume command once) and acks with the outcome. Each phase has one
+// deadline, so the ack comes within about WakeTimeout + 2 × ResumeTimeout
+// however many workers there are and however slowly herdr answers.
 func (h *Hub) runWake(ctx context.Context, op *floorOp, socket string) {
 	defer h.wg.Done()
 	start := time.Now()
 	report := &wakeReport{}
-	if err := h.opts.Herdr.StartSession(ctx, op.session); err != nil {
+	up := start.Add(h.opts.WakeTimeout)
+	sctx, cancel := context.WithDeadline(ctx, up)
+	err := h.opts.Herdr.StartSession(sctx, op.session)
+	cancel()
+	if err != nil {
 		h.finishOp(ctx, op, fmt.Errorf("%w: starting the server: %v", errWakeFailed, err), report)
 		return
 	}
-	if err := h.waitPing(ctx, op.session, socket); err != nil {
+	if err := h.waitPing(ctx, op.session, socket, up); err != nil {
 		h.finishOp(ctx, op, err, report)
 		return
 	}
 	report.PingAfterMs = time.Since(start).Milliseconds()
 	h.requestRescan() // follow the floor now, not at the next poll
-	if !h.awaitFlag(ctx, op, h.opts.WakeTimeout, func() bool { return op.running }) {
-		h.log.Warn("woken floor not seen running in time", "session", op.session, "timeout", h.opts.WakeTimeout)
+	if !h.awaitFlag(ctx, op, up, func() bool { return op.running }) {
+		h.finishOp(ctx, op, fmt.Errorf("%w: the %s server answers ping, but its floor was not seen running within %s",
+			errWakeFailed, op.session, h.opts.WakeTimeout), report)
+		return
 	}
-
-	h.awaitResumes(ctx, op, h.opts.ResumeTimeout)
-	pending := h.pendingWaits(ctx, op)
-	for _, p := range pending {
-		h.fallback(ctx, op, p)
-	}
-	if len(pending) > 0 {
-		h.awaitResumes(ctx, op, h.opts.ResumeTimeout)
-	}
+	h.resumePhase(ctx, op, nil)
+	h.resumePhase(ctx, op, h.fallback)
 	h.finishOp(ctx, op, nil, report)
 }
 
 // waitPing polls the started server's socket until it answers, backing
-// off up to a second, for at most WakeTimeout.
-func (h *Hub) waitPing(ctx context.Context, session, socket string) error {
+// off up to a second, until deadline.
+func (h *Hub) waitPing(ctx context.Context, session, socket string, deadline time.Time) error {
 	if socket == "" {
 		return fmt.Errorf("%w: no socket known for %q", errWakeFailed, session)
 	}
-	deadline := time.Now().Add(h.opts.WakeTimeout)
 	backoff := 50 * time.Millisecond
 	for {
-		pctx, cancel := context.WithTimeout(ctx, min(time.Second, h.opts.WakeTimeout))
+		pctx, cancel := context.WithTimeout(ctx, min(time.Second, time.Until(deadline)))
 		err := h.opts.Herdr.Ping(pctx, socket)
 		cancel()
 		if err == nil {
@@ -368,46 +382,70 @@ func (h *Hub) waitPing(ctx context.Context, session, socket string) error {
 	}
 }
 
-// awaitResumes waits up to timeout for the pending workers' agents: herdr
-// reports pane.agent_detected (resolved on the hub goroutine), or the
-// pane's foreground process is the agent and still is ResumeSettle later
-// (herdr 0.9 restores a pane's agent before the agent runs and reports no
-// detection for a resume, so the process is the real evidence).
-func (h *Hub) awaitResumes(ctx context.Context, op *floorOp, timeout time.Duration) {
-	deadline := time.After(timeout)
-	seen := map[string]time.Time{}
-	for {
-		pending := h.pendingWaits(ctx, op)
-		if len(pending) == 0 || ctx.Err() != nil {
-			return
+// resumePhase gives the pending workers ResumeTimeout to get their agents
+// back, after prepare (the fallback), when set. Each worker's pane is
+// watched on its own and every herdr call is bounded by the phase's
+// deadline, so a stalled pane holds up neither the others nor the phase.
+// It ends early once no worker is pending, also when pane.agent_detected
+// (resolved on the hub goroutine) was the evidence.
+func (h *Hub) resumePhase(ctx context.Context, op *floorOp, prepare func(ctx, phase context.Context, op *floorOp, p pendingWait)) {
+	phase, cancel := context.WithTimeout(ctx, h.opts.ResumeTimeout)
+	defer cancel()
+	var wg sync.WaitGroup
+	for _, p := range h.pendingWaits(phase, op) {
+		wg.Go(func() {
+			if prepare != nil {
+				prepare(ctx, phase, op, p)
+			}
+			h.watchResume(phase, op, p)
+		})
+	}
+	for phase.Err() == nil && len(h.pendingWaits(phase, op)) > 0 {
+		select {
+		case <-phase.Done():
+		case <-op.notify:
 		}
-		for _, p := range pending {
-			info, err := h.paneProcesses(ctx, op.session, p.pane)
-			if err != nil || !info.Runs(p.harness, p.agentSession) {
-				delete(seen, p.id)
-				continue
-			}
-			first, ok := seen[p.id]
-			switch {
-			case !ok:
-				seen[p.id] = time.Now()
-			case time.Since(first) >= h.opts.ResumeSettle:
-				_ = h.doWait(ctx, func() { h.resolveWait(op, p.id, "agent process running") })
-			}
+	}
+	cancel()
+	wg.Wait()
+}
+
+// watchResume confirms a pending worker once the pane's foreground process
+// is its agent and still is ResumeSettle later (herdr 0.9 restores a
+// pane's agent before the agent runs and reports no detection for a
+// resume, so the process is the real evidence). It returns when the
+// worker is no longer pending or ctx ends.
+func (h *Hub) watchResume(ctx context.Context, op *floorOp, p pendingWait) {
+	var since time.Time // the agent has been in the foreground since
+	for h.isPending(ctx, op, p.id) {
+		info, err := h.paneProcesses(ctx, op.session, p.pane)
+		switch {
+		case err != nil || !info.Runs(p.harness, p.agentSession):
+			since = time.Time{}
+		case since.IsZero():
+			since = time.Now()
+		case time.Since(since) >= h.opts.ResumeSettle:
+			_ = h.doWait(ctx, func() { h.resolveWait(op, p.id, "agent process running") })
+			return
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-deadline:
-			return
-		case <-op.notify:
 		case <-time.After(h.opts.ResumePoll):
 		}
 	}
 }
 
-// paneProcesses asks herdr what runs in a pane, bounded so that a hung
-// herdr cannot hold a wake past its deadlines.
+func (h *Hub) isPending(ctx context.Context, op *floorOp, id string) bool {
+	pending, _ := query(ctx, h, func() bool {
+		w := op.waits[id]
+		return w != nil && w.state == proto.ResumePending
+	})
+	return pending
+}
+
+// paneProcesses asks herdr what runs in a pane, for at most
+// paneProcessesTimeout and never past ctx (a phase's deadline).
 func (h *Hub) paneProcesses(ctx context.Context, session, pane string) (*herdr.ProcessInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, paneProcessesTimeout)
 	defer cancel()
@@ -417,10 +455,11 @@ func (h *Hub) paneProcesses(ctx context.Context, session, pane string) (*herdr.P
 const paneProcessesTimeout = 2 * time.Second
 
 // fallback re-launches a pending worker's agent with its resume command,
-// only when its pane is back at the shell prompt.
-func (h *Hub) fallback(ctx context.Context, op *floorOp, p pendingWait) {
+// only when its pane is back at the shell prompt. herdr calls end with
+// phase; ctx is for the bookkeeping on the hub goroutine.
+func (h *Hub) fallback(ctx, phase context.Context, op *floorOp, p pendingWait) {
 	note := ""
-	info, err := h.paneProcesses(ctx, op.session, p.pane)
+	info, err := h.paneProcesses(phase, op.session, p.pane)
 	switch {
 	case err != nil:
 		note = "no fallback: " + err.Error()
@@ -436,7 +475,7 @@ func (h *Hub) fallback(ctx context.Context, op *floorOp, p pendingWait) {
 				w.fallback = true
 			}
 		})
-		if err := h.opts.Herdr.ResumeAgent(ctx, op.session, p.pane, p.harness, p.agentSession); err != nil {
+		if err := h.opts.Herdr.ResumeAgent(phase, op.session, p.pane, p.harness, p.agentSession); err != nil {
 			note = "fallback failed: " + err.Error()
 			_ = h.doWait(ctx, func() {
 				if w := op.waits[p.id]; w != nil {
@@ -475,7 +514,7 @@ type sleepReport struct {
 
 // runSleep backfills Codex session ids, stops the session the way herdr
 // does (agents keep their resume link) and acks once the floor is seen
-// asleep.
+// asleep; a floor not seen asleep in time is sleep_failed.
 func (h *Hub) runSleep(ctx context.Context, op *floorOp, backfills []backfill, known map[string]bool) {
 	defer h.wg.Done()
 	report := &sleepReport{Backfills: []backfill{}}
@@ -506,30 +545,31 @@ func (h *Hub) runSleep(ctx context.Context, op *floorOp, backfills []backfill, k
 		return
 	}
 	h.requestRescan()
-	report.SeenAsleep = h.awaitFlag(ctx, op, h.opts.SleepTimeout, func() bool { return op.asleep })
+	report.SeenAsleep = h.awaitFlag(ctx, op, time.Now().Add(h.opts.SleepTimeout), func() bool { return op.asleep })
 	if ctx.Err() != nil {
 		return
 	}
 	if !report.SeenAsleep {
-		h.log.Warn("stopped floor not seen asleep in time", "session", op.session, "timeout", h.opts.SleepTimeout)
+		h.finishOp(ctx, op, fmt.Errorf("%w: herdr stopped %s, but its floor was not seen asleep within %s",
+			errSleepFailed, op.session, h.opts.SleepTimeout), report)
+		return
 	}
 	h.finishOp(ctx, op, nil, report)
 }
 
-// awaitFlag waits up to timeout until flag (read on the hub goroutine)
-// holds.
-func (h *Hub) awaitFlag(ctx context.Context, op *floorOp, timeout time.Duration, flag func() bool) bool {
-	deadline := time.After(timeout)
+// awaitFlag waits until deadline for flag (read on the hub goroutine) to
+// hold.
+func (h *Hub) awaitFlag(ctx context.Context, op *floorOp, deadline time.Time, flag func() bool) bool {
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
 	for {
-		ok := false
-		_ = h.doWait(ctx, func() { ok = flag() })
-		if ok {
+		if ok, _ := query(ctx, h, flag); ok {
 			return true
 		}
 		select {
 		case <-ctx.Done():
 			return false
-		case <-deadline:
+		case <-timer.C:
 			return false
 		case <-op.notify:
 		}
