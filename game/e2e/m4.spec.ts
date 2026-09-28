@@ -156,7 +156,7 @@ test('E on an empty desk: the hire dialog from the keyboard, then the worker wal
   // The "+" goes as the hire starts, and stays gone while the worker walks in.
   expect((await desks(page))[14]).toMatchObject({ plus: false, away: 'empty' });
   await expect.poll(() => dialog(page)).toBeNull();
-  await expect(page.locator('.toast')).toHaveText('Hired Gumdrop at Desk 15 on h3d/gumdrop-gumdrop. Here they come.');
+  await expect(page.locator('.toast')).toHaveText(/^Hired Gumdrop at Desk 15 on h3d\/gumdrop-[0-9a-f]{6}\. Here they come\.$/);
   const w = await walker(page, (a) => a.kind === 'in' && a.desk === 14, 'Gumdrop walks in');
   expect(w).toMatchObject({ session: 'pastry', name: 'Gumdrop', desk_show: 'empty', box: 'carried', laptop: 'carried' });
   // From the street (the reversed walk-out route).
@@ -337,15 +337,30 @@ test('the top bar’s Hire opens the first free desk; a worker with no worktree 
   expect((await desks(page))[5]).toMatchObject({ plus: true });
   await page.keyboard.press('Escape');
   await expect.poll(() => dialog(page)).toBeNull();
-  // Pebble works in the repo's main checkout: nothing to keep or delete.
-  const pebble = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === 'herdr-3d')?.workers.find((w) => w.name === 'Pebble');
-  await page.evaluate((id) => window.__h3d.openSendHome(id), pebble?.id as string);
-  const h = await homeDialog(page);
+  // Nacho has no git checkout of its own: nothing to keep or delete; Enter sends it home.
+  await enter(page, 'pastry');
+  const nacho = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === 'pastry')?.workers.find((w) => w.name === 'Nacho');
+  await page.evaluate((id) => window.__h3d.openSendHome(id), nacho?.id as string);
+  let h = await homeDialog(page);
   expect(h.options).toEqual({ offered: false, enabled: { keep: true, delete: false, delete_branch: false }, warning: null });
+  expect(h.blocked).toBeNull();
   await expect(page.locator('.dd-choices')).toHaveCount(0);
-  await expect(page.locator('.dd-facts')).toContainText('/home/dev/devel/herdr-3d');
+  await expect(page.locator('.dd-facts')).toContainText('not a git worktree');
   expect(await focusedKey(page)).toBe('send');
   await page.keyboard.press('Escape');
+  await expect.poll(() => dialog(page)).toBeNull();
+  // Pebble works in herdr-3d's main checkout while four of its worktrees are open: herdr would not close it.
+  await enter(page, 'herdr-3d');
+  const pebble = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === 'herdr-3d')?.workers.find((w) => w.name === 'Pebble');
+  await page.evaluate((id) => window.__h3d.openSendHome(id), pebble?.id as string);
+  h = await homeDialog(page);
+  expect(h.options?.offered).toBe(false);
+  expect(h.blocked).toMatch(/main checkout and 4 of its worktrees are still open here/);
+  await expect(page.locator('dialog.desk-dlg--home .dd-callout--error')).toContainText('Pebble can’t go home yet');
+  await expect(page.locator('dialog.desk-dlg--home [data-key="send"]')).toHaveAttribute('aria-disabled', 'true');
+  expect(await focusedKey(page)).toBe('cancel');
+  await page.keyboard.press('Escape');
+  expect((await sent(page)).filter((c) => c.t === 'worker.fire')).toEqual([]);
   clean();
 });
 
@@ -389,7 +404,7 @@ test('capacity: a warning above the soft cap, a refusal at the hard cap; no work
   clean();
 });
 
-test('walks you cannot see resolve at once; an older bridge says it cannot hire yet', async ({ page }) => {
+test('walks you cannot see resolve at once; only a fresh hire walks in', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page, 'demo-m4', '', SIM);
   await enter(page, 'pastry');

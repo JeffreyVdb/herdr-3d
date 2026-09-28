@@ -277,7 +277,13 @@ export interface HireAck {
   workspace_id: string;
   branch?: string;
   base_sha?: string;
+  /** The worktree hire's `git fetch origin` failed (not fatal: the last fetched base was used). */
+  fetch_error?: string;
+  /** `approved`: the bridge answered the agent's trust dialog; `none`: none showed; `avoided` is reserved. */
   trust: 'none' | 'avoided' | 'approved';
+  /** Whether the first task was sent (absent without one). */
+  prompted?: boolean;
+  prompt_error?: string;
 }
 
 /** M4: `worker.fire.prepare` ack: what the send-home dialog shows. */
@@ -293,6 +299,9 @@ export interface FirePrepare {
   can_delete: boolean;
   /** Why the worktree cannot be deleted. */
   reason?: string;
+  /** False when herdr would refuse to close the workspace (a main checkout whose worktrees are still open). */
+  can_fire?: boolean;
+  fire_blocked?: string;
 }
 
 export type FireWorktree = 'keep' | 'delete' | 'delete_branch';
@@ -300,6 +309,10 @@ export type FireWorktree = 'keep' | 'delete' | 'delete_branch';
 /** M4: `worker.fire` ack. */
 export interface FireAck {
   worktree: 'kept' | 'deleted' | 'deleted_branch';
+  /** Whether the agent left by itself after /exit (/quit); false: it took Ctrl-C. */
+  released?: boolean;
+  /** e.g. the tree became dirty during the exit, so the worktree was kept. */
+  note?: string;
 }
 
 /** Commands and their args (docs/protocol.md "Commands", M3 and M4 additions). */

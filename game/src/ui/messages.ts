@@ -41,10 +41,12 @@ export function failureText(t: CommandName, code: string, message: string, ctx: 
     case 'unknown_command':
       return `This herdr-world can’t ${DOES[t]} yet${why && !why.startsWith('unknown command') ? ` (${why})` : ''}. Update the bridge to use it.`;
     case 'busy':
+      if (t === 'worker.fire' || t === 'worker.fire.prepare') return `${ctx.worker ?? 'This worker'} is still being hired or already on the way out.`;
       return `${floor} is already waking up or going to sleep. Try again once it is done.`;
     case 'invalid_state':
       if (t === 'floor.wake') return `${floor} is already awake.`;
       if (t === 'floor.sleep') return `${floor} is already asleep.`;
+      if (t === 'hire.prepare' || t === 'worker.hire' || t === 'worker.fire.prepare' || t === 'worker.fire') return `${floor} is asleep. Wake it from the elevator (L) first.`;
       return `herdr-world refused it: ${why}`;
     case 'wake_failed':
       return `${floor} did not wake up: ${why || 'its server did not answer'}.`;
@@ -60,8 +62,6 @@ export function failureText(t: CommandName, code: string, message: string, ctx: 
       return `herdr-world refused it: ${why}`;
     case 'internal':
       return `herdr-world failed: ${why}. Safe to retry.`;
-    case 'asleep':
-      return `${floor} is asleep. Wake it from the elevator (L) first.`;
     case 'desk_taken':
       return `${ctx.desk !== undefined ? `Desk ${ctx.desk}` : 'That desk'} is taken or gone${why ? ` (${why})` : ''}. Pick another free desk.`;
     case 'capacity':

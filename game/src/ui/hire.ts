@@ -493,8 +493,12 @@ export class HireDialog {
       const w = ack?.id ? this.host.store.workerView(ack.id) : null;
       const name = w?.name ?? who;
       const branch = ack?.branch ? ` on ${ack.branch}` : '';
+      const extra = [
+        ack?.prompted === false ? `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself.` : '',
+        ack?.fetch_error ? `git fetch failed (${ack.fetch_error}), so the branch starts from the last fetched origin.` : '',
+      ].filter(Boolean);
       this.close();
-      this.host.toast(`Hired ${name} at Desk ${(w?.desk ?? desk) + 1}${branch}. Here they come.`, 'info');
+      this.host.toast([`Hired ${name} at Desk ${(w?.desk ?? desk) + 1}${branch}. Here they come.`, ...extra].join(' '), extra.length ? 'error' : 'info');
       return;
     }
     const msg = failureText('worker.hire', r.code, r.message, { floor: session, desk: desk + 1 });

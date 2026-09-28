@@ -24,4 +24,16 @@ describe('failureText', () => {
     expect(failureText('building.rename', 'offline', '')).toMatch(/nothing was sent/);
     expect(failureText('building.rename', 'weird', 'boom')).toBe('weird: boom');
   });
+
+  it('explains the M4 hire and send-home refusals', () => {
+    expect(failureText('worker.hire', 'desk_taken', 'desk 4 is occupied', { desk: 5 })).toBe('Desk 5 is taken or gone (desk 4 is occupied). Pick another free desk.');
+    expect(failureText('worker.hire', 'capacity', 'pastry has 32 workers (hard cap 32)')).toBe('Over the hard cap: pastry has 32 workers (hard cap 32). Send someone home first.');
+    expect(failureText('hire.prepare', 'invalid_state', 'asleep', { floor: 'depot-manager' })).toBe('depot-manager is asleep. Wake it from the elevator (L) first.');
+    expect(failureText('worker.hire', 'hire_failed', 'agent start: timeout')).toBe('The hire did not go through: agent start: timeout.');
+    expect(failureText('worker.fire', 'not_clean', '2 uncommitted changes')).toBe('The worktree was kept: 2 uncommitted changes.');
+    expect(failureText('worker.fire', 'busy', '', { worker: 'Pixel' })).toBe('Pixel is still being hired or already on the way out.');
+    expect(failureText('worker.fire.prepare', 'unknown_worker', '', { worker: 'Pixel' })).toBe('Pixel is no longer on the floor.');
+    expect(failureText('worker.fire', 'fire_failed', 'no exit', { worker: 'Pixel' })).toBe('Pixel could not be sent home: no exit.');
+    expect(failureText('worker.hire', 'unknown_command', 'unknown command')).toBe('This herdr-world can’t hire workers yet. Update the bridge to use it.');
+  });
 });

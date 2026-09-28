@@ -159,7 +159,10 @@ export function hireBlocker(f: HireForm, options: HireOptions, cap: CapacityView
   if (!effortsFor(options, f.harness, f.model).includes(f.effort)) return 'Choose an effort.';
   const cwd = f.cwd.trim();
   if (cwd && !cwd.startsWith('/')) return 'The folder must be an absolute path.';
-  if (f.label.trim().length > 64) return 'The label is at most 64 characters.';
+  const label = f.label.trim();
+  if (new TextEncoder().encode(label).length > 64) return 'The label is at most 64 bytes.';
+  if (label.startsWith('-')) return 'The label can’t start with “-”.';
+  if (f.prompt.trim().startsWith('--')) return 'The first task can’t start with “--” (herdr would read it as a flag).';
   return null;
 }
 
@@ -191,6 +194,12 @@ export function leftovers(p: FirePrepare): string | null {
   if (p.dirty.length) parts.push(plural(p.dirty.length, 'uncommitted change'));
   if (p.unpushed > 0) parts.push(`${plural(p.unpushed, 'commit')} not on any remote`);
   return parts.length ? parts.join(' and ') : null;
+}
+
+/** Why the worker cannot be sent home at all (herdr would refuse to close its workspace), else null. */
+export function fireBlocked(p: FirePrepare): string | null {
+  if (p.can_fire !== false) return null;
+  return p.fire_blocked ?? 'herdr would refuse to close its workspace';
 }
 
 export function fireOptions(p: FirePrepare): FireOptions {

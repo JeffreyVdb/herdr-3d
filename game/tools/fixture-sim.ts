@@ -90,6 +90,10 @@ export class SimWorld {
   private readonly stepMs: number;
   private fail: string | undefined;
   private nextId = 0;
+  /** M4: desks a hire in flight reserved, per floor (`session:desk`). */
+  private readonly hiring = new Set<string>();
+  /** M4: workers being sent home right now. */
+  private readonly leaving = new Set<string>();
   /** M4: the last harness/model/effort hired per floor. */
   private readonly lastHire = new Map<string, Hire>();
   private readonly caps: Record<string, { soft: number; hard: number }>;
@@ -481,17 +485,18 @@ export class SimWorld {
 
   private floorCap(f: Floor): Cap {
     const c = this.caps[f.session] ?? SIM_FLOOR_CAP;
-    return { count: this.workers.filter((w) => w.session === f.session).length, soft: c.soft, hard: c.hard };
+    const inFlight = [...this.hiring].filter((k) => k.startsWith(`${f.session}:`)).length;
+    return { count: this.workers.filter((w) => w.session === f.session).length + inFlight, soft: c.soft, hard: c.hard };
   }
 
   private hostCap(): Cap {
     const running = new Set([...this.floors.values()].filter((f) => f.state === 'running').map((f) => f.session));
-    return { count: this.workers.filter((w) => running.has(w.session)).length, ...SIM_HOST_CAP };
+    return { count: this.workers.filter((w) => running.has(w.session)).length + this.hiring.size, ...SIM_HOST_CAP };
   }
 
   private runningFloor(a: Obj): Floor {
     const f = this.floor(a);
-    if (f.state !== 'running') throw new CmdError('asleep', `asleep: ${f.session} is asleep; wake it first`);
+    if (f.state !== 'running') throw new CmdError('invalid_state', `invalid state: ${f.session} is asleep`);
     if (f.transition) throw new CmdError('busy', `busy: ${f.session} is ${f.transition}`);
     return f;
   }
@@ -585,12 +590,14 @@ export class SimWorld {
     if (!o.models.includes(model)) throw bad(`${harness} has no model ${model}`);
     if (![...o.efforts, ...(o.extra_efforts?.[model] ?? [])].includes(effort)) throw bad(`${model} has no effort ${effort}`);
     for (const k of ['label', 'cwd', 'prompt']) if (a[k] !== undefined && typeof a[k] !== 'string') throw bad(`${k} must be a string`);
+    if (typeof a.label === 'string' && (!a.label.trim() || bytes(a.label) > 64 || a.label.startsWith('-'))) throw bad('label must be 1-64 bytes, not starting with -');
+    if (typeof a.prompt === 'string' && a.prompt.startsWith('--')) throw bad('prompt must not start with --');
     if (a.worktree !== undefined && typeof a.worktree !== 'boolean') throw bad('worktree must be a bool');
     const cwd = (a.cwd as string | undefined) ?? this.defaultCwd(f);
     if (!cwd.startsWith('/')) throw bad('cwd must be an absolute path');
     const git = this.git(cwd, false);
     if (a.worktree === true && !git) throw bad(`worktree: ${cwd} is not a git repository`);
-    if (desk >= (f.desks ?? 0) || this.workers.some((w) => w.session === f.session && w.desk_index === desk)) {
+    if (desk >= (f.desks ?? 0) || this.hiring.has(`${f.session}:${desk}`) || this.workers.some((w) => w.session === f.session && w.desk_index === desk)) {
       throw new CmdError('desk_taken', `desk_taken: desk ${desk} of ${f.session} is ${desk >= (f.desks ?? 0) ? 'out of range' : 'occupied'}`);
     }
     const cap = this.floorCap(f);
@@ -605,10 +612,10 @@ export class SimWorld {
     const name = this.nextName(f.session);
     const label = (a.label as string | undefined)?.trim() || name;
     const n = ++this.nextId;
-    const id = `5173a4e0-0000-4000-a000-${n.toString(16).padStart(12, '0')}`;
+    const id = `${(0x5173a4 + n).toString(16)}e0-0000-4000-a000-${n.toString(16).padStart(12, '0')}`;
     const ws = `wh${n.toString(36)}`;
-    const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'worker';
-    const branch = a.worktree === true ? `h3d/${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${slug}` : undefined;
+    // Like the bridge: h3d/<name>-<first 6 hex of the id>.
+    const branch = a.worktree === true ? `h3d/${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${id.replace(/-/g, '').slice(0, 6)}` : undefined;
     const root = git ? (git.repo_root as string) : undefined;
     const checkout = branch && root ? `${root}-wt/${branch.slice(4)}` : cwd;
     const now = this.now();
@@ -638,13 +645,17 @@ export class SimWorld {
     }
     const prompt = typeof a.prompt === 'string' ? a.prompt.trim() : '';
     this.lastHire.set(f.session, { harness, model, effort });
+    const held = `${f.session}:${desk}`;
+    this.hiring.add(held);
     // Worktree, agent start and trust take a step; then the first task starts it working.
     this.later([
       () => {
+        this.hiring.delete(held);
         this.workers.push(w);
         this.resize(send, f);
         this.upsertWorker(send, w);
-        const data: Obj = { id, workspace_id: ws, trust: 'avoided' };
+        const data: Obj = { id, workspace_id: ws, trust: 'approved' };
+        if (prompt) data.prompted = true;
         if (branch) {
           data.branch = branch;
           data.base_sha = git?.base_sha;
@@ -686,6 +697,8 @@ export class SimWorld {
     const wt = w.worktree;
     const linked = !!wt?.linked;
     const clean = !t.dirty.length && !t.unpushed;
+    // herdr will not close a repo's main checkout while its linked worktrees are open on the floor.
+    const open = wt && !linked ? this.workers.filter((x) => x !== w && x.session === w.session && x.worktree?.linked && x.worktree.repo_root === wt.repo_root) : [];
     const out: Obj = {
       name: w.name ?? w.label,
       label: w.label,
@@ -693,7 +706,9 @@ export class SimWorld {
       dirty: t.dirty,
       unpushed: t.unpushed,
       can_delete: linked && clean,
+      can_fire: open.length === 0,
     };
+    if (open.length) out.fire_blocked = `it is ${wt?.repo_name ?? 'the repo'}’s main checkout and ${open.length} of its worktrees are still open here (${open.map((x) => x.name).join(', ')}): send them home first`;
     if (w.branch) out.branch = w.branch;
     if (!linked) out.reason = wt ? 'it works in the repo’s main checkout, not a worktree of its own' : 'it is not in a git worktree';
     else if (!clean) out.reason = [t.dirty.length ? 'the worktree has uncommitted changes' : '', t.unpushed ? `${t.unpushed} ${t.unpushed === 1 ? 'commit is' : 'commits are'} not on any remote` : ''].filter(Boolean).join(' and ');
@@ -707,24 +722,30 @@ export class SimWorld {
     if (choice !== 'keep' && choice !== 'delete' && choice !== 'delete_branch') throw bad('worktree must be keep, delete or delete_branch');
     const f = this.floors.get(w.session);
     if (f?.transition) throw new CmdError('busy', `busy: ${f.session} is ${f.transition}`);
+    if (this.leaving.has(w.id)) throw new CmdError('busy', `busy: ${w.name ?? w.id} is already being sent home`);
+    const p = this.firePrepare({ id: w.id });
     if (choice !== 'keep') {
-      const p = this.firePrepare({ id: w.id });
+      if (!w.worktree?.linked) throw bad('worktree: the worker is not in a linked worktree');
+      if (choice === 'delete_branch' && !w.branch?.startsWith('h3d/')) throw bad('worktree: delete_branch only deletes h3d/ branches');
       if (!p.can_delete) throw new CmdError('not_clean', `not_clean: ${String(p.reason)}`);
     }
+    if (p.can_fire === false) throw new CmdError('fire_failed', `fire_failed: ${String(p.fire_blocked)}`);
     if (this.fail === 'fire_failed') {
       this.fail = undefined;
       this.later([() => fail(new CmdError('fire_failed', 'fire_failed: the agent did not exit after /exit within 10s (simulated)'))]);
       return;
     }
-    // /exit, the agent released, workspace close (and worktree remove): one step.
+    // /exit, the agent released, workspace close (and worktree remove): one step. The desk count follows the removal.
+    this.leaving.add(w.id);
     this.later([
       () => {
+        this.leaving.delete(w.id);
         const i = this.workers.indexOf(w);
         if (i < 0) return fail(new CmdError('unknown_worker', `unknown worker: "${w.id}"`));
         this.workers.splice(i, 1);
-        if (f) this.resize(send, f);
         this.emit(send, { t: 'worker.removed', id: w.id, session: w.session, workspace_id: w.workspace_id, reason: 'sent_home' });
-        ack({ worktree: choice === 'keep' ? 'kept' : choice === 'delete' ? 'deleted' : 'deleted_branch' });
+        if (f) this.resize(send, f);
+        ack({ worktree: choice === 'keep' ? 'kept' : choice === 'delete' ? 'deleted' : 'deleted_branch', released: true });
       },
     ]);
   }

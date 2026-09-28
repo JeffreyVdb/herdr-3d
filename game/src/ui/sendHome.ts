@@ -1,5 +1,5 @@
 import type { FireAck, FirePrepare, FireWorktree } from '../net/protocol';
-import { fireArgs, fireOptions, leftovers, type FireOptions } from '../world/hire';
+import { fireArgs, fireBlocked, fireOptions, leftovers, type FireOptions } from '../world/hire';
 import { h, icon, ICON } from './dom';
 import type { DialogHost } from './hire';
 import { failureText } from './messages';
@@ -23,6 +23,8 @@ export interface SendHomeSummary {
   state: SendHomeState;
   prep: FirePrepare | null;
   options: FireOptions | null;
+  /** Why it cannot be sent home at all (herdr would not close its workspace), null when it can. */
+  blocked: string | null;
   choice: FireWorktree;
   status: string;
   error: boolean;
@@ -145,7 +147,9 @@ export class SendHomeDialog {
     this.setStatus('');
     this.render();
     // Keyboard: on the keep choice (Enter sends home, safely), else on Send home itself.
-    const first = this.form.querySelector<HTMLElement>('input[name="home-worktree"]:checked') ?? this.actions.querySelector<HTMLElement>('[data-key="send"]');
+    const first = fireBlocked(this.prep)
+      ? this.actions.querySelector<HTMLElement>('[data-key="cancel"]')
+      : (this.form.querySelector<HTMLElement>('input[name="home-worktree"]:checked') ?? this.actions.querySelector<HTMLElement>('[data-key="send"]'));
     first?.focus();
   }
 
@@ -234,6 +238,8 @@ export class SendHomeDialog {
         nodes.push(set);
         if (o.warning) nodes.push(h('div', { class: 'dd-callout', 'data-level': 'warn', role: 'note' }, h('p', {}, o.warning)));
       }
+      const blocked = fireBlocked(p);
+      if (blocked) nodes.push(h('div', { class: 'dd-callout dd-callout--error', role: 'alert' }, h('p', {}, `${this.name} can’t go home yet: ${blocked}.`)));
       // Hooks for the later tickets (hidden until they fill them).
       for (const [hook, el] of [
         ['handoff', renderHandoff(p)],
@@ -253,7 +259,16 @@ export class SendHomeDialog {
     const ready = this.state === 'ready' && !!this.prep;
     const deleting = this.choice !== 'keep';
     const text = this.state === 'sending' ? 'Sending home…' : deleting ? `Send ${this.name} home and delete` : `Send ${this.name} home`;
-    const why = !ready ? (this.state === 'sending' ? 'On the way out.' : 'Waiting for herdr-world…') : this.host.unsupported('worker.fire') ? failureText('worker.fire', 'unknown_command', '') : null;
+    const blocked = this.prep ? fireBlocked(this.prep) : null;
+    const why = !ready
+      ? this.state === 'sending'
+        ? 'On the way out.'
+        : 'Waiting for herdr-world…'
+      : this.host.unsupported('worker.fire')
+        ? failureText('worker.fire', 'unknown_command', '')
+        : blocked
+          ? `${this.name} can’t go home yet: ${blocked}.`
+          : null;
     const had = document.activeElement instanceof HTMLElement && this.actions.contains(document.activeElement) ? document.activeElement.dataset.key : null;
     const cancel = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, 'Cancel');
     const retry = this.state === 'failed' && !this.host.unsupported('worker.fire.prepare') ? h('button', { class: 'btn', 'data-key': 'retry', onclick: () => this.retry() }, 'Try again') : null;
@@ -276,6 +291,11 @@ export class SendHomeDialog {
       this.setStatus(failureText('worker.fire', 'unknown_command', ''), true);
       return;
     }
+    const blocked = fireBlocked(p);
+    if (blocked) {
+      this.setStatus(`${this.name} can’t go home yet: ${blocked}.`, true);
+      return;
+    }
     const args = fireArgs(this.id, p, this.choice);
     const name = this.name;
     this.state = 'sending';
@@ -286,10 +306,13 @@ export class SendHomeDialog {
     const still = this.dialog.open && gen === this.gen;
     this.state = 'ready';
     if (r.ok) {
-      const wt = (r.data as FireAck | undefined)?.worktree;
+      const ack = r.data as FireAck | undefined;
+      const wt = ack?.worktree;
       const what = wt === 'deleted' ? ' Its worktree is deleted; the branch stays.' : wt === 'deleted_branch' ? ' Its worktree and branch are deleted.' : p.worktree?.linked ? ' Its worktree is kept.' : '';
+      const how = ack?.released === false ? ` ${this.host.store.workerView(this.id)?.harness ?? 'The agent'} did not exit by itself and was stopped.` : '';
+      const note = ack?.note ? ` ${ack.note.charAt(0).toUpperCase()}${ack.note.slice(1)}${/[.!?]$/.test(ack.note) ? '' : '.'}` : '';
       this.close();
-      this.host.toast(`Sent ${name} home.${what}`, 'info');
+      this.host.toast(`Sent ${name} home.${what}${how}${note}`, 'info');
       return;
     }
     const msg = failureText('worker.fire', r.code, r.message, { worker: name, floor: this.session });
@@ -317,6 +340,7 @@ export class SendHomeDialog {
       state: this.state,
       prep: this.prep ? structuredClone(this.prep) : null,
       options: this.prep ? fireOptions(this.prep) : null,
+      blocked: this.prep ? fireBlocked(this.prep) : null,
       choice: this.choice,
       status: this.statusText,
       error: this.statusError,

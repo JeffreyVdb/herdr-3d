@@ -8,6 +8,7 @@ import {
   choiceNote,
   fetchNote,
   fireArgs,
+  fireBlocked,
   fireOptions,
   firstFreeDesk,
   formFromPrepare,
@@ -106,6 +107,11 @@ describe('hire form', () => {
     expect(hireBlocker({ ...f, model: 'gpt-6-luna' }, H, cap)).toBe('Choose an effort.');
     expect(hireBlocker({ ...f, cwd: 'relative/dir' }, H, cap)).toMatch(/absolute/);
     expect(hireBlocker({ ...f, cwd: '' }, H, cap)).toBeNull();
+    // The bridge's label and prompt rules.
+    expect(hireBlocker({ ...f, label: '-rm' }, H, cap)).toMatch(/can’t start with “-”/);
+    expect(hireBlocker({ ...f, label: 'é'.repeat(33) }, H, cap)).toMatch(/64 bytes/);
+    expect(hireBlocker({ ...f, prompt: '--help me' }, H, cap)).toMatch(/“--”/);
+    expect(hireBlocker({ ...f, prompt: 'Fix --flag parsing' }, H, cap)).toBeNull();
   });
   it('sends only what is set', () => {
     const f = formFromPrepare(prep(), H);
@@ -160,6 +166,12 @@ describe('send home', () => {
     // A disabled choice is never sent.
     expect(fireArgs('id1', dirty, 'delete')).toEqual({ id: 'id1' });
     expect(leftovers(fp({ unpushed: 1 }))).toBe('1 commit not on any remote');
+  });
+  it('knows when herdr would not close the workspace at all', () => {
+    expect(fireBlocked(fp())).toBeNull();
+    expect(fireBlocked(fp({ can_fire: true }))).toBeNull();
+    expect(fireBlocked(fp({ can_fire: false, fire_blocked: 'send its worktrees home first' }))).toBe('send its worktrees home first');
+    expect(fireBlocked(fp({ can_fire: false }))).toBe('herdr would refuse to close its workspace');
   });
   it('has no worktree choices without a linked worktree', () => {
     expect(fireOptions(fp({ worktree: null, can_delete: false }))).toEqual({ offered: false, enabled: { keep: true, delete: false, delete_branch: false }, warning: null });

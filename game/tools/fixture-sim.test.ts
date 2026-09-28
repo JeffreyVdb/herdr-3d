@@ -234,7 +234,7 @@ describe('SimWorld hire and send home (M4)', () => {
     expect(p.capacity).toMatchObject({ floor: { count: 14, soft: 24, hard: 32 }, host: { soft: 60, hard: 80 } });
     // The floor default wins; a scratch folder is no repo; `offline` fails the fetch.
     expect(data(r.cmd('hire.prepare', { session: 'depot-manager' }).got()[0])).toBeUndefined();
-    expect(r.cmd('hire.prepare', { session: 'depot-manager' }).got()[0]).toMatchObject({ t: 'error', code: 'asleep' });
+    expect(r.cmd('hire.prepare', { session: 'depot-manager' }).got()[0]).toMatchObject({ t: 'error', code: 'invalid_state' });
     const s = data(r.cmd('hire.prepare', { session: 'scratchpad' }).got()[0]);
     expect(s).toMatchObject({ cwd: '/home/dev/scratch', git: null, capacity: { floor: { count: 3, soft: 3, hard: 4 } } });
     expect(data(r.cmd('hire.prepare', { session: 'pastry', cwd: '/home/dev/offline-repo' }).got()[0]).git).toMatchObject({ fetched: false, fetch_error: expect.stringMatching(/github/) });
@@ -252,9 +252,11 @@ describe('SimWorld hire and send home (M4)', () => {
     expect(got.map((m) => m.t)).toEqual(['floor.upsert', 'worker.upsert', 'ack']);
     expect(r.store.floorView('pastry')?.desks).toBe(17);
     const w = (got[1] as { worker: Record<string, unknown> }).worker;
-    expect(w).toMatchObject({ session: 'pastry', desk_index: 14, name: 'Gumdrop', label: 'Rye starter', harness: 'codex', model: 'gpt-6-sol', effort: 'ultra', hired_at: NOW, branch: 'h3d/gumdrop-rye-starter' });
-    expect(w.worktree).toEqual({ repo_root: '/home/dev/pastry', repo_name: 'pastry', checkout_path: '/home/dev/pastry-wt/gumdrop-rye-starter', linked: true });
-    expect(data(got[2])).toMatchObject({ id: w.id, branch: 'h3d/gumdrop-rye-starter', trust: 'avoided' });
+    // Like the bridge: h3d/<name>-<first 6 hex of the id>.
+    const branch = `h3d/gumdrop-${(w.id as string).replace(/-/g, '').slice(0, 6)}`;
+    expect(w).toMatchObject({ session: 'pastry', desk_index: 14, name: 'Gumdrop', label: 'Rye starter', harness: 'codex', model: 'gpt-6-sol', effort: 'ultra', hired_at: NOW, branch });
+    expect(w.worktree).toEqual({ repo_root: '/home/dev/pastry', repo_name: 'pastry', checkout_path: `/home/dev/pastry-wt/${branch.slice(4)}`, linked: true });
+    expect(data(got[2])).toMatchObject({ id: w.id, branch, trust: 'approved', prompted: true });
     expect(r.store.floorView('pastry')?.seats[14]?.name).toBe('Gumdrop');
     r.tick();
     expect(r.store.workers.get(w.id as string)).toMatchObject({ status: 'working', title: 'Feed the starter' });
@@ -270,10 +272,16 @@ describe('SimWorld hire and send home (M4)', () => {
     expect(hire({ desk_index: 3, effort: 'ultra' }).got()[0]).toMatchObject({ code: 'bad_request' });
     expect(hire({ desk_index: 3, worktree: true }).got()[0]).toMatchObject({ code: 'bad_request', message: expect.stringMatching(/not a git repository/) });
     expect(hire({ desk_index: 3, colour: 'red' }).got()[0]).toMatchObject({ code: 'bad_request' });
+    expect(hire({ desk_index: 3, label: '-x' }).got()[0]).toMatchObject({ code: 'bad_request' });
+    expect(hire({ desk_index: 3, prompt: '--help' }).got()[0]).toMatchObject({ code: 'bad_request' });
     const ok = hire({ desk_index: 5 });
+    // The desk is held from the moment the hire is accepted.
+    expect(hire({ desk_index: 5 }).got()[0]).toMatchObject({ code: 'desk_taken' });
+    // The hire in flight counts against the cap already.
+    expect(hire({ desk_index: 4 }).got()[0]).toMatchObject({ code: 'capacity' });
     r.tick();
     // 4 workers, the highest at desk 5: max(6, min(96, max(6, 6))) = 6 desks, no floor event; the next one is refused.
-    expect(ok.got().map((m) => m.t)).toEqual(['worker.upsert', 'ack']);
+    expect(ok.got().filter((m) => m.t !== 'error').map((m) => m.t)).toEqual(['worker.upsert', 'ack']);
     expect(hire({ desk_index: 3 }).got()[0]).toMatchObject({ code: 'capacity', message: expect.stringMatching(/hard cap 4/) });
     // Growing: pastry has 14 workers on 16 desks; hiring at 15 and 14 makes it 16 on 18.
     r.cmd('worker.hire', { session: 'pastry', desk_index: 15, harness: 'claude', model: 'claude-opus-5-5', effort: 'high' });
@@ -295,7 +303,10 @@ describe('SimWorld hire and send home (M4)', () => {
     expect(clean.reason).toBeUndefined();
     const main = data(r.cmd('worker.fire.prepare', { id: byLabel(r, 'docs').id }).got()[0]);
     expect(main).toMatchObject({ worktree: { path: '/home/dev/devel/herdr-3d', linked: false }, can_delete: false });
-    expect(data(r.cmd('worker.fire.prepare', { id: byLabel(r, 'pantry').id }).got()[0])).toMatchObject({ worktree: null, can_delete: false });
+    expect(data(r.cmd('worker.fire.prepare', { id: byLabel(r, 'pantry').id }).got()[0])).toMatchObject({ worktree: null, can_delete: false, can_fire: true });
+    // The main checkout cannot go while its worktrees are open on the floor.
+    expect(main).toMatchObject({ can_fire: false, fire_blocked: expect.stringMatching(/main checkout and 4 of its worktrees are still open here \(Pixel, Mochi, Noodle, Waffle\)/) });
+    expect(r.cmd('worker.fire', { id: byLabel(r, 'docs').id }).got()[0]).toMatchObject({ code: 'fire_failed' });
     expect(r.cmd('worker.fire.prepare', { id: 'nope' }).got()[0]).toMatchObject({ code: 'unknown_worker' });
   });
 
@@ -305,19 +316,22 @@ describe('SimWorld hire and send home (M4)', () => {
     expect(r.cmd('worker.fire', { id: sour.id, worktree: 'delete' }).got()[0]).toMatchObject({ code: 'not_clean' });
     expect(r.cmd('worker.fire', { id: sour.id, worktree: 'burn' }).got()[0]).toMatchObject({ code: 'bad_request' });
     expect(r.cmd('worker.fire', { id: sour.id, handoff: true }).got()[0]).toMatchObject({ code: 'bad_request' });
+    expect(r.cmd('worker.fire', { id: byLabel(r, 'pantry').id, worktree: 'delete' }).got()[0]).toMatchObject({ code: 'bad_request' });
     const timers = byLabel(r, 'timers');
     const c = r.cmd('worker.fire', { id: timers.id, worktree: 'delete_branch' });
+    // Once on the way out, a second send-home is busy.
+    expect(r.cmd('worker.fire', { id: timers.id }).got()[0]).toMatchObject({ code: 'busy' });
     r.tick();
-    expect(c.got()).toEqual([
+    expect(c.got().filter((m) => m.t !== 'error')).toEqual([
+      expect.objectContaining({ t: 'worker.removed', id: timers.id, session: 'pastry', reason: 'sent_home' }),
       // 13 workers, the highest at desk 13: 15 desks.
       expect.objectContaining({ t: 'floor.upsert', floor: expect.objectContaining({ session: 'pastry', desks: 15 }) }),
-      expect.objectContaining({ t: 'worker.removed', id: timers.id, session: 'pastry', reason: 'sent_home' }),
-      { t: 'ack', req_id: c.req_id, data: { worktree: 'deleted_branch' } },
+      { t: 'ack', req_id: c.req_id, data: { worktree: 'deleted_branch', released: true } },
     ]);
     expect(r.store.workers.has(timers.id)).toBe(false);
     const k = r.cmd('worker.fire', { id: sour.id });
     r.tick();
-    expect(data(r.reply(k.req_id))).toEqual({ worktree: 'kept' });
+    expect(data(r.reply(k.req_id))).toEqual({ worktree: 'kept', released: true });
   });
 
   it('scripts failures: hire_failed, fire_failed, fetch_failed', () => {
