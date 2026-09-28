@@ -1044,9 +1044,8 @@ export class App {
     const o = this.fpCam.position;
     const area = this.place.area;
     if (area === 'floor' && this.office) {
-      const t = this.office.pick([o.x, o.y, o.z], [this.ray.x, this.ray.y, this.ray.z], this.overlooking ? OVERLOOK_REACH : REACH);
       // Your desk only from inside your office, standing (E sits you down).
-      return t?.kind === 'own-desk' && (!this.inOffice() || this.walker.sitting) ? null : t;
+      return this.office.pick([o.x, o.y, o.z], [this.ray.x, this.ray.y, this.ray.z], this.overlooking ? OVERLOOK_REACH : REACH, this.inOffice() && !this.walker.sitting);
     }
     const lobby = this.walk.outside?.lobby;
     if (area === 'lobby' && lobby) {

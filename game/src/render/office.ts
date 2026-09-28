@@ -84,6 +84,7 @@ export class OfficeView {
   /** Walking obstacles and pick targets, until a seat changes. */
   private obstacleCache: Rect[] | null = null;
   private targetCache: Array<Pickable<Target>> | null = null;
+  private targetOwnCache: Array<Pickable<Target>> | null = null;
   private cardCam: THREE.PerspectiveCamera | null = null;
 
   constructor(view: FloorView, o: OfficeOptions) {
@@ -299,7 +300,7 @@ export class OfficeView {
     const s = this.layout.slots[i];
     if (!s) return;
     this.seats[i] = v;
-    this.obstacleCache = this.targetCache = null;
+    this.obstacleCache = this.targetCache = this.targetOwnCache = null;
     const mem = v ? memberOf(v) : null;
     this.desks.set(i, { x: s.seat.x, y: 0, z: s.seat.z, yaw: s.yaw, scale: 1, display: mem?.display ?? null, cueColor: mem?.cue.color ?? 0xffffff });
     if (v && mem) {
@@ -360,10 +361,10 @@ export class OfficeView {
     return this.obstacleCache;
   }
 
-  /** What the centre of the screen looks at, within reach. */
-  pick(origin: V3, dir: V3, reach = REACH): Target | null {
+  /** What the centre of the screen looks at, within reach; `ownDesk: false` leaves your desk out (#20). */
+  pick(origin: V3, dir: V3, reach = REACH, ownDesk = true): Target | null {
     if (!this.targetCache) {
-      const targets: Array<Pickable<Target>> = [...this.propTargets, this.ownDesk];
+      const targets: Array<Pickable<Target>> = [...this.propTargets];
       this.layout.slots.forEach((s, i) => {
         const b = slotBoxes(s);
         const v = this.seats[i];
@@ -372,7 +373,8 @@ export class OfficeView {
       });
       this.targetCache = targets;
     }
-    return pickNearest(origin, dir, this.targetCache, reach, this.blockers)?.value ?? null;
+    this.targetOwnCache ??= [...this.targetCache, this.ownDesk];
+    return pickNearest(origin, dir, ownDesk ? this.targetOwnCache : this.targetCache, reach, this.blockers)?.value ?? null;
   }
 
   /** Cards on screen with what they say (tests). */

@@ -231,12 +231,14 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
 - `src/world` — the world store (snapshot + events, fallbacks for an older bridge without `name`, `desk_index`,
   `harness`, `model`, `effort`, `status_since`, `floor.desks`, and M3's `transition`, `settings`, `suggested`,
   `resume`, `hire_options`), the deterministic office layout for a desk count in its building's outline, the building
-  around the floors (`building.ts`: storeys, the lobby, the fire escape, the street), height-aware walking collision
+  around the floors (`building.ts`: storeys, the lobby, the fire escape, the street), M3c's corner office on its
+  mezzanine (`FloorLayout.mezzanine`: posts, stair, glass, your desk, its walking supports and solids), height-aware walking collision
   and ray picking, the M4 walk-out route (`route.ts`), floor-settings validation and diffing (`settings.ts`) and
   building/floor reordering (`arrange.ts`). Pure logic, covered by vitest.
 - `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy;
   M3b: the walk scene (`walk.ts`), the building and street from outside (`outside.ts`, baked into one mesh by
-  `bake.ts`) and the lobby (`lobby.ts`).
+  `bake.ts`) and the lobby (`lobby.ts`). M3c: the corner office (`mezzanine.ts`: two merged vertex-coloured toon
+  meshes, its glass merged into the office's window glass, one material).
   Cards and city badges are canvas atlases drawn as one instanced quad batch each (a cell per worker / floor, redrawn
   only when it changes). A DOM layer was benchmarked on the Mac and lost: moving DOM elements over the canvas cost
   2.6–4.3 ms of main thread per frame for 24 cards and ~8 ms for 30 city badges, against 0.5 ms for the atlas. The DOM
@@ -269,6 +271,7 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 | `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |
 | `ts` | GPU timestamp queries (for `bench`) |
 | `shadows=0`, `badges=0`, `battery=1` | no shadows; no city badges (perf comparisons); start in battery saver |
+| `me=<name>` | M3c: the name on your desk's name plate and the office glass (default "You": the bridge sends no user name yet) |
 
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings
@@ -304,6 +307,14 @@ bar (City, Issues, PRs, Elevator, battery saver); Tab / Shift+Tab then move betw
 presses one. **L** opens the elevator directly and ← → turn, so travel, wake / sleep and floor settings need no mouse.
 Tab toggles the plan only while nothing but the scene has focus; clicking the scene gives it focus back. Panels
 re-render live and keep focus, the header's Back / Close included.
+Corner office (M3c): every floor is 6.5 m tall (a storey is 6.8 m; the fire escape has 18 risers a flight and still a
+half landing). In the north-east corner, over the filing cabinet, a mezzanine (~7 × 5 m, its floor at 3 m, 2.75 m
+headroom under it) carries a glass office; an open stair climbs the east wall from the south to its glass door, which
+slides open as you come up. Its floor blocks nothing below; its posts, the stair and the glass do. Look at your desk
+(the one with the name plate) and press **E** to sit: you turn to face the floor over the glass; **Esc** or walking
+(WASD) gets you up. Up there look-at reaches ~20 m (the glass does not stop it, the mezzanine's floor does), so
+pointing at a worker or an empty desk below shows it in the HUD, and cards are measured as though you stood nearer
+(the whole floor's show). The floor plan shows the mezzanine's outline, the stair and your desk.
 
 Tests:
 
@@ -324,7 +335,10 @@ make shot                     # Playwright WebGL2: game/test-results/{shot,m2-ci
                               # greeting once, not again inside the cooldown), E at the desk, the Lobby stop both
                               # ways; the same floor numbers with sim=1, and the top bar at 1024 wide (the counts
                               # drop their words, the name stays whole); m3b-{window-bottom,window-top,
-                              # fire-escape,facade,fire-escape-street,lobby,lobby-greeting}.png
+                              # fire-escape,facade,fire-escape-street,lobby,lobby-greeting}.png; M3c on demo-m3b
+                              # (m3c.spec.ts): walked with held keys from the elevator up the stair into the
+                              # corner office, E at your desk, Esc and walking to get up; from the glass,
+                              # lookAt() picks a worker below; the plan's labels; m3c-{mezzanine,desk-view,plan}.png
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
 pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
@@ -354,7 +368,8 @@ It pipes `tools/mac-runner.mjs` into `/opt/homebrew/bin/node` in `~/h3d-tools` (
 3024×1890) and runs `window.__h3d.bench()` — the engine-bench method: serialized update + render + GPU wait,
 pipelined throughput, GPU timestamps, and rAF frames that include DOM layout. M3b jobs bench the outside of the
 8-floor tower in `perf-city240`: `street8` (the facade from the sidewalk), `escape8` (the top landing, looking down),
-`window8` (out of a top-floor window), and `floor60-street`; `bench()` reports the `area` it ran in.
+`window8` (out of a top-floor window), and `floor60-street`; `bench()` reports the `area` it ran in. M3c jobs:
+`floor60-mezz` (at the corner office's glass, looking down over 60 workers) and `floor60-desk` (seated at your desk).
 
 `window.__h3d` (tests, perf): `backend`, `frames`, `error`, `ready`, `view()`, `lookAt()` → `{kind, id, name?, label?}`
 or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
@@ -376,7 +391,12 @@ outline; `building()` (the plan you walk around in: outline, `storey`, fire esca
 (building id, name, floors ground first, the floor with an interior), `enterLobby(building?)`, `route(session, desk)`
 (the M4 walk-out waypoints), `reception()` (the receptionist's `said`, `clips`, `cooldownUntil`, `goodbyeUntil`,
 `bubble`) and `receptionEvents()` (front door in / out, elevator arrival, E at the desk, as the game detected them);
-`panel()` of the elevator adds `lobby: {current}`.
+`panel()` of the elevator adds `lobby: {current}`. M3c: `layout(session).mezzanine` (the corner office: `rect`, `y`,
+`under`, `posts`, `stair` with its treads, `glass`, `door`, `desk`, `sit`, `slab`), `view()` adds `seated` and
+`overlook` (up on the mezzanine: 20 m look-at, nearer cards), `pose()` adds `seated`, `sit()` (sits you at your desk as
+E does; false unless you stand in your office), and `lookAt()` returns `{kind: 'own-desk', id: 'own-desk', name}` for
+your desk (never a worker desk slot, so M4's E-on-"+" hire does not collide with it). `route(session, desk)` walks
+the taller storeys past the mezzanine's posts and stair.
 
 ### Audio and voice lines
 

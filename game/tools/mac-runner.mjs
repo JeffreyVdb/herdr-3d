@@ -3,6 +3,7 @@
 // JSON line per job on stdout (bench result, optional base64 PNG).
 //   argv[2]: base64 JSON { base, jobs: [{ name, path, floor?, pose?, bench?, shot?, settle? }] }
 //   pose: overview | row (on the floor) | street | landing | window (M3b: outside, the top landing, a south window)
+//         mezz | desk (M3c: at the corner office's glass on the mezzanine, seated at your desk)
 const cfg = JSON.parse(Buffer.from(process.argv[2] ?? '', 'base64').toString('utf8'));
 const { chromium } = await import('playwright-core');
 const exe = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -34,6 +35,17 @@ try {
               // Lobby side of the desk grid, looking north over every pod row.
               const z = Math.max(...L.slots.map((s) => s.seat.z)) + 1.1;
               window.__h3d.setPose({ x: L.width / 2 + 0.3, z, yaw: 0, pitch: -0.2 });
+            } else if (kind === 'mezz' || kind === 'desk') {
+              // M3c: up on the mezzanine, at the west glass or at your desk, looking down over the floor.
+              const B = window.__h3d.building();
+              const w = window.__h3d.where();
+              if (!B || !w) return;
+              const m = L.mezzanine;
+              const y = (w.floors.indexOf(floor) + 1) * B.storey + m.y;
+              if (kind === 'desk') {
+                window.__h3d.setPose({ x: m.sit.x, z: m.sit.z, y, yaw: m.sit.yaw, pitch: m.sit.pitch });
+                window.__h3d.sit();
+              } else window.__h3d.setPose({ x: m.rect.x0 + 0.45, z: m.rect.z1 - 1.2, y, yaw: m.sit.yaw, pitch: -0.4 });
             } else if (kind === 'row') {
               const s = L.slots[6];
               window.__h3d.setPose({ x: s.seat.x + 1.2, z: s.seat.z + 2.6, yaw: 0.35, pitch: -0.12 });

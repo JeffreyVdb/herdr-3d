@@ -47,6 +47,9 @@ const jobs = [
   { name: 'street8', path: `/?${fx('perf-city240')}&ts`, floor: 'tower-a-8', pose: 'street', bench: BENCH, shot: true, settle: 2500 },
   { name: 'escape8', path: `/?${fx('perf-city240')}&ts`, floor: 'tower-a-8', pose: 'landing', bench: BENCH, shot: true, settle: 2500 },
   { name: 'window8', path: `/?${fx('perf-city240')}&ts`, floor: 'tower-a-8', pose: 'window', bench: BENCH, shot: true, settle: 2500 },
+  // M3c: the tall room from the mezzanine, at the glass and seated at your desk.
+  { name: 'floor60-mezz', path: `/?${fx('perf-floor60')}&ts`, floor: 'perf-floor', pose: 'mezz', bench: BENCH, shot: true },
+  { name: 'floor60-desk', path: `/?${fx('perf-floor60')}&ts`, floor: 'perf-floor', pose: 'desk', bench: BENCH, shot: true },
   { name: 'floor60-street', path: `/?${fx('perf-floor60')}&ts`, floor: 'perf-floor', pose: 'street', bench: BENCH, settle: 2500 },
   { name: 'demo-city', path: `/?${fx('demo')}`, shot: true, settle: 2500 },
   { name: 'demo-desk-row', path: `/?${fx('demo')}`, floor: 'herdr-3d', pose: 'row', shot: true },
