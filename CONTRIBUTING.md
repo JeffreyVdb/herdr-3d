@@ -5,9 +5,10 @@
 - `cmd/herdr-world` — server-side bridge daemon (Go).
 - `cmd/h3d-helper` — Mac-side helper (Go, cross-compiled for `darwin/arm64`).
 - `internal/` — shared Go packages. Bridge: `herdr` (the only herdr client, read-only), `watch` (session discovery and
-  per-session watchers), `world` (floors/workers from snapshots and `session.json`, identity matching), `store` (SQLite),
-  `server` (hub + WebSocket), `proto` (protocol v1 types and client), `app` (CLI).
-- `deploy/` — `herdr-world.service` (systemd `--user`).
+  per-session watchers), `world` (floors/workers from snapshots and `session.json`, identity matching, worker names),
+  `store` (SQLite), `server` (hub + WebSocket), `proto` (protocol v1 types and client). Helper: `helper` (ssh tunnel
+  supervisor, game server, `/ws` proxy). `app` holds both command lines.
+- `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).
 - `game/` — the game: Vite + strict TypeScript + three.js (`three/webgpu`), pnpm.
 
 ## Toolchain
@@ -32,6 +33,8 @@ make shot              # headless WebGL2 screenshot -> game/test-results/shot.pn
 - Never hardcode ports. Use `portlease run` / `portlease reserve`, and bind `127.0.0.1` only. Other agents run in
   parallel worktrees on the same host.
 - CI (`.github/workflows/ci.yml`) runs go vet/gofmt/test, the darwin cross-build, tsc and vitest. No Playwright in CI.
+- `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
+  in-process bridge.
 
 ## Bridge (`herdr-world`)
 
@@ -59,6 +62,7 @@ bin/herdr-world cmd --socket "$sock" floor.assign '{"session":"herdr-3d","buildi
 | `--herdr` | `HERDR_WORLD_HERDR` | `herdr` on `PATH` |
 | `--sessions` | `HERDR_WORLD_SESSIONS` | all; a regexp limits which sessions are watched |
 | `--poll`, `--resnapshot` | `HERDR_WORLD_POLL`, `HERDR_WORLD_RESNAPSHOT` | `2s`, `30s` |
+| `--max-desks` | `HERDR_WORLD_MAX_DESKS` | `96`: cap on the desks a floor renders beyond its occupied ones (`floor.desks`) |
 | `--log-level`, `--log-format` | `HERDR_WORLD_LOG_LEVEL`, `HERDR_WORLD_LOG_FORMAT` | `info`, `text` (or `json`) |
 
 Install as a user service:
@@ -80,6 +84,72 @@ a fresh session `h3d-it-<random>`, creates workspaces, reports a custom agent's 
 the session in `t.Cleanup`, also on failure. It never touches any other session, so it is safe to run from inside a
 herdr pane. If a run is killed hard, check `herdr session list` for a leftover `h3d-it-*` session and
 `herdr session stop`/`delete` it.
+
+## Helper (`h3d-helper`, Mac)
+
+`h3d-helper` is what makes the game playable on the Mac:
+
+- it owns `ssh -N -o ControlMaster=no -o ControlPath=none -o ExitOnForwardFailure=yes … -L <local.sock>:<bridge.sock>
+  dev@devbox`, restarts it with exponential backoff (0.5 s doubling to 30 s, ±20 % jitter, back to 0.5 s after
+  30 s up) and checks the bridge's `/healthz` through it every 5 s (3 failures in a row restart ssh). On exit it kills
+  ssh's process group and removes the local socket;
+- it serves the game on `http://127.0.0.1:7777` (loopback only; a secure context, so WebGPU works) from a built
+  `game/dist`, or proxies a Vite dev server with `-dev-upstream`;
+- it proxies `GET /ws` to the bridge, after checking Host, Origin and a per-start token (`docs/protocol.md`
+  "Through h3d-helper");
+- it opens a Chrome `--app` window on `http://127.0.0.1:7777/#token=…` with its own profile (`-no-open` skips that).
+  The token changes at every start: after a restart, use the new window.
+
+It needs non-interactive SSH from the Mac to the host (`BatchMode=yes`: a key in the agent/keychain, host key known).
+State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not answering through the tunnel`,
+`tunnel down, restarting … retry_in=…`. `curl http://127.0.0.1:7777/healthz` shows the tunnel state.
+
+| flag | env | default |
+|---|---|---|
+| `--host` | `H3D_HELPER_HOST` | `dev@devbox` |
+| `--remote-socket` | `H3D_HELPER_REMOTE_SOCKET` | `/run/user/1000/herdr-world/bridge.sock` (the bridge's default) |
+| `--local-socket` | `H3D_HELPER_LOCAL_SOCKET` | `~/Library/Caches/h3d-helper/bridge.sock` |
+| `--listen` | `H3D_HELPER_LISTEN` | `127.0.0.1:7777`; anything but a loopback IP is refused |
+| `--bundle` | `H3D_HELPER_BUNDLE` | `~/Library/Application Support/h3d-helper/dist` |
+| `--dev-upstream` | `H3D_HELPER_DEV_UPSTREAM` | off; e.g. `http://127.0.0.1:5173` |
+| `--no-open` | `H3D_HELPER_NO_OPEN` | `false` |
+| `--chrome`, `--chrome-profile` | `H3D_HELPER_CHROME`, `H3D_HELPER_CHROME_PROFILE` | `Google Chrome`, `~/Library/Application Support/h3d-helper/chrome` |
+| `--ssh` | `H3D_HELPER_SSH` | `ssh` on `PATH` |
+| `--log-level`, `--log-format` | `H3D_HELPER_LOG_LEVEL`, `H3D_HELPER_LOG_FORMAT` | `info`, `text` (or `json`) |
+
+Install as a launchd user agent, from the server (always `-o ControlMaster=no -o ControlPath=none`, see the rule below):
+
+```sh
+make helper-darwin game-build
+mac=devmac; ssh="ssh -o ControlMaster=no -o ControlPath=none"
+$ssh $mac 'mkdir -p ~/.local/bin ~/Library/LaunchAgents "Library/Application Support/h3d-helper" && rm -rf "Library/Application Support/h3d-helper/dist"'
+scp -o ControlMaster=no -o ControlPath=none bin/darwin-arm64/h3d-helper $mac:.local/bin/h3d-helper
+tar -C game -cf - dist | $ssh $mac 'tar -C "Library/Application Support/h3d-helper" -xf -'
+$ssh $mac 'sed "s|@HOME@|$HOME|g" > Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist' < deploy/com.jeffreyvdb.h3d-helper.plist
+$ssh $mac 'launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist'
+```
+
+Then on the Mac: `tail -f ~/Library/Logs/h3d-helper.log`. After an update, copy the binary/bundle again and
+`launchctl kickstart -k gui/$(id -u)/com.jeffreyvdb.h3d-helper`. Uninstall:
+
+```sh
+launchctl bootout gui/$(id -u)/com.jeffreyvdb.h3d-helper
+rm ~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist ~/.local/bin/h3d-helper
+rm -rf ~/Library/Application\ Support/h3d-helper ~/Library/Caches/h3d-helper
+```
+
+Development: forward a Vite dev server (`make dev` on the server) to the Mac and point a helper at it (stop the agent
+first, or give it another `-listen` port); HMR goes through the helper too:
+
+```sh
+ssh -o ControlMaster=no -o ControlPath=none -N -L 5173:127.0.0.1:<leased dev port> dev@devbox &
+~/.local/bin/h3d-helper -dev-upstream http://127.0.0.1:5173
+```
+
+Agents test it without launchd and without a window: copy the binary and a `game/dist` to a temp dir such as
+`~/h3d-tools/helper-<task>/`, run `./h3d-helper -no-open -remote-socket <private bridge socket> -bundle <dir>/dist
+-local-socket <dir>/bridge.sock` (it logs the game URL with its token), drive headless Chrome from `~/h3d-tools`
+(`playwright-core`), and stop it with SIGTERM when done. Mac port 7777 is the helper's; others use their own.
 
 ## Rule: never serve the game to the Mac over plain `http://<tailnet-host>`
 
