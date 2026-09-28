@@ -1,0 +1,631 @@
+/*
+ * HUD: office signage over a lab world. Solid navy panels (no glass), the
+ * Recursive family throughout (its casual axis for names, mono for data),
+ * and one signature: status chips as label-maker tape.
+ */
+:root {
+  --ink: #1c2540;
+  --ink-2: #2a355a;
+  --ink-soft: #5b6685;
+  --paper: #ffffff;
+  --line: rgb(255 255 255 / 14%);
+  --text-on-ink: #eef2fb;
+  --text-on-ink-2: #b9c3dc;
+  --sun: #ffc233;
+  --plus: #2fc46a;
+  --working: #2f6bf0;
+  --done: #12a26a;
+  --needs_you: #e8413a;
+  --idle: #7a8398;
+  --asleep: #5a5fa8;
+  /* The same hues deepened for white text (tape chips): >= 4.5:1. Dots and glow keep the bright ones. */
+  --done-chip: #0b8454;
+  --needs_you-chip: #d8302c;
+  --idle-chip: #6b7388;
+  --radius: 14px;
+  --shadow: 0 10px 28px rgb(18 24 44 / 28%), 0 2px 6px rgb(18 24 44 / 18%);
+  --font: 'Recursive Variable', system-ui, sans-serif;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  color-scheme: light;
+}
+
+html,
+body {
+  font-family: var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--sun);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+}
+
+.hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  color: var(--text-on-ink);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.hud button {
+  font: inherit;
+  color: inherit;
+}
+
+/* ---- top bar -------------------------------------------------------------- */
+
+.topbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 8px 10px 8px 12px;
+  background: var(--ink);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+  min-height: 52px;
+  box-sizing: border-box;
+}
+.topbar-place {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.topbar-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.topbar-name {
+  font-size: 19px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.topbar-sub {
+  color: var(--text-on-ink-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.topbar-counts {
+  display: flex;
+  gap: 14px;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.count i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--c, var(--idle));
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 12%);
+}
+.count b {
+  font-weight: 800;
+  font-size: 15px;
+}
+.count span {
+  color: var(--text-on-ink-2);
+}
+.count--working { --c: var(--working); }
+.count--needs_you { --c: var(--needs_you); }
+.count--idle { --c: var(--idle); }
+.count--done { --c: var(--done); }
+.count--asleep { --c: var(--asleep); }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 160ms var(--ease), border-color 160ms var(--ease);
+  white-space: nowrap;
+}
+.btn:hover {
+  background: rgb(255 255 255 / 8%);
+  border-color: rgb(255 255 255 / 26%);
+}
+.btn:active {
+  background: rgb(255 255 255 / 14%);
+}
+.btn[aria-pressed='true'] {
+  background: var(--plus);
+  border-color: var(--plus);
+  color: var(--ink);
+}
+.btn svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+}
+.btn--icon {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+.btn--back {
+  padding-left: 8px;
+}
+
+.conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px 0 8px;
+  height: 26px;
+  border-radius: 13px;
+  background: var(--ink-2);
+  color: var(--text-on-ink-2);
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.conn i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--idle);
+}
+.conn[data-phase='live'] i { background: var(--plus); }
+.conn[data-phase='connecting'] i,
+.conn[data-phase='waiting'] i { background: var(--sun); }
+.conn[data-phase='failed'] i { background: var(--needs_you); }
+
+/* ---- label-maker tape (status chip) ---------------------------------------- */
+
+.tape {
+  display: inline-block;
+  padding: 2px 7px 1px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--c, var(--idle-chip));
+  border-radius: 2px;
+  transform: rotate(-1.5deg);
+  text-shadow: 0 1px 0 rgb(0 0 0 / 28%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 30%),
+    inset 0 -1px 0 rgb(0 0 0 / 18%),
+    0 1px 1px rgb(0 0 0 / 18%);
+  white-space: nowrap;
+}
+.tape--working { --c: var(--working); }
+.tape--done { --c: var(--done-chip); }
+.tape--needs_you { --c: var(--needs_you-chip); }
+.tape--idle { --c: var(--idle-chip); }
+.tape--asleep { --c: var(--asleep); }
+
+/* ---- centre reticle, prompt bar --------------------------------------------- */
+
+.reticle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  border: 2px solid rgb(255 255 255 / 90%);
+  box-shadow: 0 0 0 1px rgb(28 37 64 / 55%);
+  transition: transform 160ms var(--ease), background 160ms var(--ease);
+}
+.reticle.is-target {
+  transform: scale(1.6);
+  background: var(--sun);
+  border-color: var(--sun);
+}
+
+.prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  width: min(780px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 11px 14px 10px;
+  background: var(--ink);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  transition: opacity 160ms var(--ease), transform 200ms var(--ease);
+}
+.prompt[hidden] {
+  display: block;
+  opacity: 0;
+  transform: translate(-50%, 8px);
+}
+.prompt-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.prompt-name {
+  font-size: 18px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+}
+.prompt-sep {
+  color: var(--text-on-ink-2);
+}
+.prompt-task {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-on-ink);
+}
+.prompt-model {
+  flex: none;
+  font-size: 12px;
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  color: var(--text-on-ink-2);
+}
+.prompt-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-on-ink);
+}
+.key kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: var(--ink-2);
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-bottom-width: 2px;
+  font: 700 11px/1 var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+}
+.key[aria-disabled='true'] {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.hint {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  text-align: center;
+  white-space: nowrap;
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+  padding: 8px 14px;
+  background: rgb(28 37 64 / 92%);
+  border-radius: 12px;
+  font-size: 12.5px;
+  box-shadow: var(--shadow);
+}
+.hint strong {
+  font-weight: 800;
+  color: var(--sun);
+}
+.prompt:not([hidden]) ~ .hint {
+  bottom: 118px;
+}
+
+/* ---- floor plan ------------------------------------------------------------- */
+
+.plan {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  cursor: crosshair;
+}
+.plan-card {
+  position: absolute;
+  left: 12px;
+  /* Under the top bar, which wraps to two rows on narrow windows (set by the HUD). */
+  top: calc(var(--topbar-bottom, 70px) + 6px);
+  width: 240px;
+  padding: 12px 14px;
+  background: var(--ink);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  cursor: default;
+}
+.plan-card h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+}
+.plan-card p {
+  margin: 4px 0 10px;
+  color: var(--text-on-ink-2);
+  font-size: 12.5px;
+}
+.plan-legend {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.plan-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--text-on-ink);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 2px 6px rgb(18 24 44 / 30%);
+  pointer-events: none;
+}
+.plan-label--worker {
+  background: var(--paper);
+  color: var(--ink);
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  transform: translate(-50%, -135%);
+}
+.plan-label--worker i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c, var(--idle));
+}
+.plan-label--desk {
+  background: var(--plus);
+  color: var(--ink);
+}
+.plan-you {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  pointer-events: none;
+}
+
+/* ---- centre states, dialogs, toasts, transition ----------------------------- */
+
+.notice {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 20px 22px;
+  background: var(--ink);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+}
+.notice h2 {
+  margin: 0 0 6px;
+  font-size: 19px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+}
+.notice p {
+  margin: 0;
+  color: var(--text-on-ink-2);
+}
+.notice code {
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-size: 12.5px;
+  color: var(--text-on-ink);
+  word-break: break-all;
+}
+
+.sheet {
+  width: min(520px, calc(100vw - 32px));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--ink);
+  color: var(--text-on-ink);
+  box-shadow: var(--shadow);
+  font-family: var(--font);
+}
+.sheet::backdrop {
+  background: rgb(18 24 44 / 45%);
+}
+.sheet-body {
+  padding: 18px 20px 16px;
+}
+.sheet h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+}
+.sheet p {
+  margin: 0 0 14px;
+  color: var(--text-on-ink-2);
+  max-width: 60ch;
+}
+.sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.toast {
+  position: absolute;
+  left: 50%;
+  top: 76px;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--sun);
+  color: var(--ink);
+  font-weight: 700;
+  box-shadow: var(--shadow);
+  transition: opacity 200ms var(--ease);
+}
+.toast[hidden] {
+  display: block;
+  opacity: 0;
+}
+
+.doors {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  pointer-events: none;
+  z-index: 50;
+}
+.door {
+  flex: 1;
+  background:
+    linear-gradient(90deg, rgb(255 255 255 / 0%) 0 96%, rgb(0 0 0 / 22%) 96% 100%),
+    #b4bcc8;
+  transform: translateX(-101%);
+  transition: transform 260ms var(--ease);
+}
+.door + .door {
+  background:
+    linear-gradient(90deg, rgb(255 255 255 / 30%) 0 4%, rgb(255 255 255 / 0%) 4% 100%),
+    #aab3c1;
+  transform: translateX(101%);
+}
+.doors.is-closed .door {
+  transform: translateX(0);
+}
+.doors-label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: #101626;
+  color: var(--sun);
+  font: 800 22px/1 var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  letter-spacing: 0.08em;
+  opacity: 0;
+  transition: opacity 140ms linear;
+}
+.doors.is-closed .doors-label {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .door,
+  .door + .door {
+    transform: none;
+    opacity: 0;
+    transition: opacity 180ms linear;
+  }
+  .doors.is-closed .door {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+  .topbar-counts {
+    order: 3;
+    width: 100%;
+    margin-left: 0;
+  }
+  .topbar-counts .count span {
+    display: none;
+  }
+  .prompt-model {
+    display: none;
+  }
+}
+
+/* ---- floor list (keyboard / screen reader; badges are drawn in the scene) --- */
+
+.floor-list {
+  position: absolute;
+  left: 12px;
+  bottom: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: auto;
+}
+.floor-list button {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+  padding: 0;
+}
+.floor-list button:focus-visible {
+  position: static;
+  width: auto;
+  height: auto;
+  clip-path: none;
+  padding: 6px 12px;
+  border-radius: 9px;
+  background: var(--ink);
+  box-shadow: 0 0 0 3px var(--sun), var(--shadow);
+  cursor: pointer;
+}
+/* Author display rules above would otherwise beat the hidden attribute. */
+.hud [hidden]:not(.prompt):not(.toast) {
+  display: none !important;
+}

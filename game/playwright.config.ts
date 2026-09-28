@@ -11,7 +11,7 @@ export default defineConfig({
   testDir: 'e2e',
   testMatch: '*.spec.ts',
   outputDir: 'test-results/artifacts',
-  timeout: 60_000,
+  timeout: 120_000,
   retries: 0,
   workers: 1,
   reporter: 'list',

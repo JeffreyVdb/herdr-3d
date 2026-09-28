@@ -13,9 +13,15 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "shot": "playwright test"
+    "shot": "playwright test",
+    "fixtures": "node tools/gen-fixtures.mjs",
+    "fixtures:check": "node tools/gen-fixtures.mjs --check",
+    "fixture-server": "portlease run --project herdr-3d --worktree .. --name fixture --service game-fixture -- sh -c 'exec node tools/fixture-server.ts --port \"$PORTLEASE_FIXTURE_PORT\"'",
+    "test:live": "pnpm build && portlease run --project herdr-3d --worktree .. --name preview --name proxy --service game-live -- node tools/live-latency.ts",
+    "perf:mac": "pnpm build && portlease run --project herdr-3d --worktree .. --name preview --service game-perf -- node tools/mac-perf.ts"
   },
   "dependencies": {
+    "@fontsource-variable/recursive": "5.3.0",
     "three": "0.186.1"
   },
   "devDependencies": {
@@ -23,9 +29,11 @@
     "@types/node": "24.19.0",
     "@types/pngjs": "6.0.5",
     "@types/three": "0.186.0",
+    "@types/ws": "8.18.1",
     "pngjs": "7.0.0",
     "typescript": "7.0.2",
     "vite": "8.3.1",
-    "vitest": "5.0.2"
+    "vitest": "5.0.2",
+    "ws": "8.22.0"
   }
 }
