@@ -158,6 +158,7 @@ export class App {
 
     this.hud.on('city', () => void this.leaveFloor());
     this.hud.on('buildings', () => this.openBuildings());
+    this.hud.on('elevator', () => !this.transitioning && this.openElevator());
     this.hud.on('battery', () => this.toggleBattery());
     this.hud.on('issues', () => this.openBoard('Issues'));
     this.hud.on('prs', () => this.openBoard('Pull requests'));
@@ -430,12 +431,12 @@ export class App {
       return;
     }
     const fv = this.office ? this.store.floorView(this.office.session) : null;
-    const asleep = fv?.asleep && !fv.transition ? 'This floor is asleep: <strong>E</strong> at the elevator wakes it · ' : '';
-    if (this.planOpen) this.hud.setHint('<strong>Click</strong> the floor to walk there · WASD walks · <strong>Tab</strong> back to first person');
+    const asleep = fv?.asleep && !fv.transition ? 'This floor is asleep: the elevator (<strong>L</strong>) wakes it · ' : '';
+    if (this.planOpen) this.hud.setHint('<strong>Click</strong> the floor to walk there · WASD walks · <strong>L</strong> elevator · <strong>Tab</strong> back to first person');
     else if (this.walker.locked) this.hud.setHint(null);
-    else if (asleep) this.hud.setHint(`${asleep}<strong>Click</strong> to look around · WASD walks`);
-    else if (!this.walker.lockAvailable) this.hud.setHint('WASD walks · Shift runs · <strong>Tab</strong> floor plan (mouse look is unavailable here)');
-    else this.hud.setHint('<strong>Click</strong> to look around · WASD walks · Shift runs · <strong>Tab</strong> floor plan · Esc releases the mouse');
+    else if (asleep) this.hud.setHint(`${asleep}<strong>Click</strong> to look around · WASD walks · <strong>← →</strong> turn`);
+    else if (!this.walker.lockAvailable) this.hud.setHint('WASD walks · <strong>← →</strong> turn · <strong>L</strong> elevator · <strong>Tab</strong> floor plan (mouse look is unavailable here)');
+    else this.hud.setHint('<strong>Click</strong> to look around · WASD walks · <strong>← →</strong> turn · <strong>L</strong> elevator · <strong>Tab</strong> floor plan · Esc releases the mouse');
   }
 
   // ---- input -------------------------------------------------------------------
@@ -488,6 +489,10 @@ export class App {
         this.hud.focusTopbar();
       }
     } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'elevator') {
+      e.preventDefault();
+      this.openElevator();
+    } else if (e.code === 'KeyL' && this.mode === 'floor' && !this.transitioning && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      // The elevator from anywhere on the floor (the top bar has it too).
       e.preventDefault();
       this.openElevator();
     } else if (e.code === 'KeyM' && this.mode === 'city' && !e.metaKey && !e.ctrlKey && !e.altKey) {

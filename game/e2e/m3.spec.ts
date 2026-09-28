@@ -42,12 +42,16 @@ async function enter(page: Page, session: string): Promise<void> {
   await frames(page);
 }
 
-/** Stands at the arrival point facing the elevator (south wall). */
-async function faceElevator(page: Page, session: string): Promise<void> {
-  const l = await page.evaluate((s) => window.__h3d.layout(s), session);
-  if (!l) throw new Error(`no layout for ${session}`);
-  await page.evaluate((p) => window.__h3d.setPose(p), { x: l.spawn.x, z: l.spawn.z, yaw: Math.PI, pitch: 0 });
+/** Turns on the spot with the left arrow until the elevator (behind the arrival point) is in sight. */
+async function faceElevator(page: Page): Promise<void> {
+  await page.keyboard.down('ArrowLeft');
+  try {
+    await expect.poll(() => page.evaluate(() => window.__h3d.lookAt()?.id), { message: 'turned to the elevator', timeout: 10_000, intervals: [40] }).toBe('elevator');
+  } finally {
+    await page.keyboard.up('ArrowLeft');
+  }
   await frames(page);
+  expect(await page.evaluate(() => window.__h3d.lookAt())).toMatchObject({ kind: 'prop', id: 'elevator' });
 }
 
 /** What has keyboard focus: its label or text, BODY for none. */
@@ -154,8 +158,7 @@ test('elevator: E at the elevator lists the building’s floors with state and c
   const clean = watchErrors(page);
   await openGame(page, 'demo-m3', '', SIM);
   await enter(page, 'herdr-3d');
-  await faceElevator(page, 'herdr-3d');
-  expect(await page.evaluate(() => window.__h3d.lookAt())).toMatchObject({ kind: 'prop', id: 'elevator' });
+  await faceElevator(page);
   await expect(page.locator('.prompt')).toHaveAttribute('aria-label', 'Elevator · E Elevator');
   await expect(page.locator('.prompt .key').first()).not.toHaveAttribute('aria-disabled', 'true');
 
@@ -212,7 +215,7 @@ test('elevator: E at the elevator lists the building’s floors with state and c
   await expect(page.locator('.hint')).toContainText('This floor is asleep');
 
   // And back up from floor 1's own elevator.
-  await faceElevator(page, 'depot-manager');
+  await faceElevator(page);
   await page.keyboard.press('KeyE');
   await expect(page.locator('.lift-go[aria-current="location"]')).toContainText('depot-manager');
   await page.locator('.lift-row[data-session="herdr-3d"] .lift-go').click();
@@ -328,6 +331,85 @@ test('floor settings: the suggestion is marked until saved, validation like the 
   // Back to the elevator it came from.
   await page.getByRole('button', { name: 'Back to the elevator' }).click();
   await expect(page.locator('dialog.panel h2')).toHaveText('Work');
+  clean();
+});
+
+test('keyboard only on a floor: the top bar, L and the arrow keys reach the elevator; travel, wake, sleep and settings from it', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m3', '', SIM);
+  // City: Tab along the floor list to herdr-3d, Enter goes inside.
+  const on = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.session ?? '');
+  for (let i = 0; i < 20 && (await on()) !== 'herdr-3d'; i++) await page.keyboard.press('Tab');
+  expect(await on()).toBe('herdr-3d');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__h3d.view().floor === 'herdr-3d' && !window.__h3d.view().busy);
+  // Arrival faces away from the elevator: E alone does nothing.
+  expect(await page.evaluate(() => window.__h3d.lookAt()?.id)).not.toBe('elevator');
+  await page.keyboard.press('KeyE');
+  expect(await panel(page)).toBeNull();
+
+  // 1. The top bar: Shift+Tab, then Tab along to Elevator.
+  expect(await focused(page)).toBe('BODY');
+  await page.keyboard.press('Shift+Tab');
+  expect(await focused(page)).toBe('City');
+  for (const want of ['Issues', 'PRs', 'Elevator']) {
+    await page.keyboard.press('Tab');
+    expect(await focused(page)).toBe(want);
+  }
+  await expect(page.locator('.hint')).toContainText('L elevator');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('dialog.panel h2')).toHaveText('Work');
+  await expect(page.locator('.lift-go[aria-current="location"]')).toBeFocused();
+  // Down a floor and ride there.
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__h3d.view().floor === 'depot-manager' && !window.__h3d.view().busy);
+  await expect(page.locator('.hint')).toContainText('This floor is asleep: the elevator (L) wakes it');
+
+  // 2. L from anywhere on the floor: wake it, put it back to sleep, open its settings.
+  await page.keyboard.press('KeyL');
+  const here = page.locator('.lift-go[aria-current="location"]');
+  await expect(here).toContainText('depot-manager');
+  await expect(here).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Wake floor depot-manager' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await until(page, (p) => p.kind === 'elevator' && p.rows[1]?.state === 'running' && p.rows[1].transition === null, 'depot-manager awake');
+  expect(await page.evaluate(() => window.__h3d.view().asleep)).toBe(false);
+  await expect(page.getByRole('button', { name: 'Sleep floor depot-manager' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  const confirm = page.locator('dialog.confirm');
+  await expect(confirm.getByRole('button', { name: 'Keep running' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Enter');
+  await until(page, (p) => p.kind === 'elevator' && p.rows[1]?.state === 'asleep' && p.rows[1].transition === null, 'depot-manager asleep again');
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Settings for depot-manager' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#panel-sub')).toHaveText('depot-manager · Floor 1 of Work');
+  await expect(page.locator('#set-repo')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog.panel')).toBeHidden();
+  expect((await sent(page)).map((c) => [c.t, c.result?.ok])).toEqual([
+    ['floor.wake', true],
+    ['floor.sleep', true],
+  ]);
+
+  // Closed, the panel hands focus back to the top bar's Elevator.
+  expect(await focused(page)).toBe('Elevator');
+  await shot(page, 'm3-topbar-elevator');
+
+  // 3. The arrow keys turn on the spot: face the elevator, E opens it.
+  const before = await page.evaluate(() => window.__h3d.pose());
+  await faceElevator(page);
+  const after = await page.evaluate(() => window.__h3d.pose());
+  expect(after).toMatchObject({ x: before?.x, z: before?.z });
+  expect(Math.abs((after?.yaw ?? 0) - (before?.yaw ?? 0))).toBeGreaterThan(1.5);
+  await expect(page.locator('.prompt')).toHaveAttribute('aria-label', 'Elevator · E Elevator');
+  await page.keyboard.press('KeyE');
+  await expect(page.locator('.lift-go[aria-current="location"]')).toContainText('depot-manager');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog.panel')).toBeHidden();
   clean();
 });
 
