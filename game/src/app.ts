@@ -101,6 +101,8 @@ export class App {
   private worldCache: { key: unknown[]; world: WalkWorld } | null = null;
   private fireDoor = 0;
   private mezzDoor = 0;
+  /** Whether the hint on screen is the seated one. */
+  private hintSitting = false;
   private readonly shadows: boolean;
   private planOpen = false;
   private lastActivity = 0;
@@ -714,6 +716,7 @@ export class App {
   }
 
   private updateHint(): void {
+    this.hintSitting = this.walker.sitting;
     if (this.mode === 'city') {
       this.hud.setHint(this.city.isEmpty ? null : 'Drag to orbit · Scroll to zoom · <strong>Click a floor</strong> to go inside');
       return;
@@ -928,12 +931,12 @@ export class App {
   step(dt: number, t: number): void {
     this.lastT = t;
     if (this.mode === 'floor' && this.building) {
-      const wasSitting = this.walker.sitting;
       if (this.walker.step(dt, this.walkWorldNow())) {
         this.cameraMoved = true;
         this.updatePlace(true);
       }
-      if (wasSitting !== this.walker.sitting) this.updateHint();
+      // Sat down or got up (walking, Esc, a teleport): the hint follows.
+      if (this.hintSitting !== this.walker.sitting) this.updateHint();
       // Up on the mezzanine (or near the top of its stair): look-at reaches down over the floor, cards read as nearer.
       this.office?.setOverlook(this.overlooking);
       this.animateDoors(dt);
