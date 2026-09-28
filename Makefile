@@ -13,7 +13,7 @@ export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD := 1
 # Ports are leased from portlease, never hardcoded. Servers bind 127.0.0.1 only.
 PORTLEASE := portlease run --project herdr-3d --worktree "$(CURDIR)"
 
-.PHONY: build go-build game-build test go-test game-test lint go-lint game-lint \
+.PHONY: build go-build game-build test go-test game-test integration lint go-lint game-lint \
 	helper-darwin dev shot deps clean
 
 ## build: Go binaries (bin/) + game bundle (game/dist/)
@@ -34,11 +34,16 @@ go-test:
 game-test: deps
 	$(PNPM) test
 
+## integration: bridge against a real herdr, in a throwaway session it creates and deletes (h3d-it-*)
+integration:
+	go test -tags integration -count=1 -run Integration -v ./internal/app/
+
 ## lint: go vet, gofmt, tsc --noEmit
 lint: go-lint game-lint
 
 go-lint:
 	go vet ./...
+	go vet -tags integration ./...
 	@unformatted="$$(go list -f '{{.Dir}}' ./... | xargs gofmt -l)"; \
 	if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
 
