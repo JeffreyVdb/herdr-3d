@@ -530,9 +530,15 @@ func (h *Hub) applyFloor(ctx context.Context, u world.FloorObs) {
 			delete(h.resume, id)
 		}
 	}
-	if op := f.op; op != nil && op.kind == proto.TransitionSleeping && !u.Running {
-		op.asleep = true // the asleep floor goes out without its transition
-		op.signal()
+	if op := f.op; op != nil {
+		switch {
+		case op.kind == proto.TransitionSleeping && !u.Running:
+			op.asleep = true // the asleep floor goes out without its transition
+			op.signal()
+		case op.kind == proto.TransitionWaking && u.Running:
+			op.running = true
+			op.signal()
+		}
 	}
 	f.gen, f.running, f.def, f.err = u.Gen, u.Running, u.Default, u.Err
 	if u.Socket != "" {

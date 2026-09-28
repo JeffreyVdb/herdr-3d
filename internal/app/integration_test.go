@@ -344,3 +344,159 @@ func (w testWriter) Write(p []byte) (int, error) {
 	w.t.Log(strings.TrimRight(string(p), "\n"))
 	return len(p), nil
 }
+
+// TestIntegrationSleepWake puts a throwaway floor to sleep through the
+// bridge (`herdr session stop`) and wakes it through the bridge's real
+// systemd-run path (transient unit herdr-s-<name>): the workers keep their
+// ids, desks and names both ways. Cleanup stops the session herdr's way,
+// waits for the unit to go (stopping it as a last resort; it is ours) and
+// deletes the session, also on failure.
+func TestIntegrationSleepWake(t *testing.T) {
+	if _, err := exec.LookPath("systemd-run"); err != nil {
+		t.Skip("systemd-run is not installed")
+	}
+	s := startThrowaway(t)
+	unit := "herdr-s-" + s.name + ".service"
+	t.Cleanup(func() {
+		stop := exec.Command(s.bin, "session", "stop", s.name, "--json")
+		stop.Env = s.env
+		_ = stop.Run()
+		for deadline := time.Now().Add(10 * time.Second); unitActive(unit) && time.Now().Before(deadline); {
+			time.Sleep(100 * time.Millisecond)
+		}
+		if unitActive(unit) {
+			t.Errorf("%s still active after herdr session stop; stopping the unit", unit)
+			_ = exec.Command("systemctl", "--user", "stop", unit).Run()
+		}
+		_ = exec.Command("systemctl", "--user", "reset-failed", unit).Run()
+		// --collect: the unit goes away once it is inactive.
+		for deadline := time.Now().Add(10 * time.Second); unitLoaded(unit) && time.Now().Before(deadline); {
+			time.Sleep(100 * time.Millisecond)
+		}
+		if unitLoaded(unit) {
+			t.Errorf("transient unit %s is still loaded", unit)
+		}
+	})
+	cwd := t.TempDir()
+	for _, label := range []string{"CODE|it-sleep|1|r1", "notes"} {
+		s.run("--session", s.name, "workspace", "create", "--cwd", cwd, "--label", label, "--no-focus")
+	}
+
+	sockDir, err := os.MkdirTemp("", "h3d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	sock := filepath.Join(sockDir, "herdr-world", "bridge.sock")
+	only := regexp.MustCompile("^" + regexp.QuoteMeta(s.name) + "$")
+	ctx, cancel := context.WithCancel(context.Background())
+	ready, served := make(chan struct{}), make(chan error, 1)
+	go func() {
+		served <- Serve(ctx, ServeConfig{
+			Socket: sock, DB: filepath.Join(t.TempDir(), "world.db"), Herdr: &herdr.Client{Bin: s.bin}, Only: only,
+			Log:  slog.New(slog.NewTextHandler(testWriter{t}, &slog.HandlerOptions{Level: slog.LevelDebug})),
+			Name: "herdr-world", Ready: func() { close(ready) },
+			Control: &herdr.Control{Herdr: s.bin, Only: only},
+		})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-served; err != nil {
+			t.Errorf("Serve: %v", err)
+		}
+	})
+	<-ready
+
+	world := func(ok func(proto.World) bool) proto.World {
+		t.Helper()
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			var out strings.Builder
+			dctx, dcancel := context.WithTimeout(ctx, 10*time.Second)
+			err := dumpMain(dctx, "herdr-world", []string{"-socket", sock, "-once"}, &out, io.Discard)
+			dcancel()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var snap proto.Snapshot
+			if err := json.Unmarshal([]byte(out.String()), &snap); err != nil {
+				t.Fatal(err)
+			}
+			if ok(snap.World) {
+				return snap.World
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("world never got there: %s", out.String())
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	state := func(want string, workers int) func(proto.World) bool {
+		return func(w proto.World) bool {
+			return len(w.Floors) == 1 && w.Floors[0].State == want && w.Floors[0].Transition == "" && len(w.Workers) == workers
+		}
+	}
+	command := func(typ string) proto.Ack {
+		t.Helper()
+		var out strings.Builder
+		cctx, ccancel := context.WithTimeout(ctx, time.Minute)
+		defer ccancel()
+		if err := cmdMain(cctx, "herdr-world", []string{"-socket", sock, typ, `{"session":"` + s.name + `"}`}, &out, io.Discard); err != nil {
+			t.Fatalf("%s: %v: %s", typ, err, out.String())
+		}
+		var ack proto.Ack
+		if err := json.Unmarshal([]byte(out.String()), &ack); err != nil {
+			t.Fatal(err)
+		}
+		return ack
+	}
+	before := world(state("running", 2)).Workers
+
+	command(proto.CmdFloorSleep)
+	asleep := world(state("asleep", 2)).Workers
+	sameDesks(t, "asleep", before, asleep)
+	if unitActive(unit) {
+		t.Fatalf("%s active before the wake", unit)
+	}
+
+	ack := command(proto.CmdFloorWake)
+	// The ack comes after the floor is seen running.
+	if w := world(func(proto.World) bool { return true }); w.Floors[0].State != "running" || w.Floors[0].Transition != "" {
+		t.Errorf("floor right after the wake ack = %+v", w.Floors[0])
+	}
+	if !unitActive(unit) {
+		t.Fatalf("no transient unit %s after the wake", unit)
+	}
+	raw, _ := json.Marshal(ack.Data)
+	if want := `{"workers":[{"id":"` + before[0].ID + `","resume":"none"},{"id":"` + before[1].ID + `","resume":"none"}]}`; string(raw) != want {
+		t.Errorf("wake ack = %s, want %s", raw, want)
+	}
+	sameDesks(t, "awake", before, world(state("running", 2)).Workers)
+	// The woken server runs in the unit with a login environment, not ours.
+	out, err := exec.Command("systemctl", "--user", "show", "-p", "MainPID", "--value", unit).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	environ, err := os.ReadFile("/proc/" + strings.TrimSpace(string(out)) + "/environ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range strings.Split(string(environ), "\x00") {
+		if strings.HasPrefix(kv, "CLAUDE") || strings.HasPrefix(kv, "HERDR_SOCKET_PATH=") {
+			t.Errorf("woken server has %s", kv)
+		}
+	}
+}
+
+// unitLoaded reports whether systemd still knows a user unit.
+func unitLoaded(unit string) bool {
+	out, _ := exec.Command("systemctl", "--user", "show", "-p", "LoadState", "--value", unit).Output()
+	return strings.TrimSpace(string(out)) != "not-found"
+}
+
+// unitActive reports whether a systemd user unit is active (or starting).
+func unitActive(unit string) bool {
+	out, _ := exec.Command("systemctl", "--user", "show", "-p", "ActiveState", "--value", unit).Output()
+	st := strings.TrimSpace(string(out))
+	return st == "active" || st == "activating" || st == "deactivating" || st == "reloading"
+}

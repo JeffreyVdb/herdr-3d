@@ -56,6 +56,8 @@ type floorOp struct {
 	waits map[string]*resumeWait
 	// asleep: a sleep has seen the floor asleep; its transition is over.
 	asleep bool
+	// running: a wake has seen the floor running.
+	running bool
 }
 
 // resumeWait is one worker a wake expects to resume.
@@ -318,6 +320,9 @@ func (h *Hub) runWake(ctx context.Context, op *floorOp, socket string) {
 	}
 	report.PingAfterMs = time.Since(start).Milliseconds()
 	h.requestRescan() // follow the floor now, not at the next poll
+	if !h.awaitFlag(ctx, op, h.opts.WakeTimeout, func() bool { return op.running }) {
+		h.log.Warn("woken floor not seen running in time", "session", op.session, "timeout", h.opts.WakeTimeout)
+	}
 
 	h.awaitResumes(ctx, op, h.opts.ResumeTimeout)
 	pending := h.pendingWaits(ctx, op)
@@ -488,25 +493,34 @@ func (h *Hub) runSleep(ctx context.Context, op *floorOp, backfills []backfill, k
 		return
 	}
 	h.requestRescan()
-	deadline := time.After(h.opts.SleepTimeout)
-wait:
+	report.SeenAsleep = h.awaitFlag(ctx, op, h.opts.SleepTimeout, func() bool { return op.asleep })
+	if ctx.Err() != nil {
+		return
+	}
+	if !report.SeenAsleep {
+		h.log.Warn("stopped floor not seen asleep in time", "session", op.session, "timeout", h.opts.SleepTimeout)
+	}
+	h.finishOp(ctx, op, nil, report)
+}
+
+// awaitFlag waits up to timeout until flag (read on the hub goroutine)
+// holds.
+func (h *Hub) awaitFlag(ctx context.Context, op *floorOp, timeout time.Duration, flag func() bool) bool {
+	deadline := time.After(timeout)
 	for {
-		asleep := false
-		_ = h.doWait(ctx, func() { asleep = op.asleep })
-		if asleep {
-			report.SeenAsleep = true
-			break
+		ok := false
+		_ = h.doWait(ctx, func() { ok = flag() })
+		if ok {
+			return true
 		}
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case <-deadline:
-			h.log.Warn("stopped floor not seen asleep in time", "session", op.session, "timeout", h.opts.SleepTimeout)
-			break wait
+			return false
 		case <-op.notify:
 		}
 	}
-	h.finishOp(ctx, op, nil, report)
 }
 
 func (h *Hub) codexSession(cwd string, known map[string]bool) (string, error) {

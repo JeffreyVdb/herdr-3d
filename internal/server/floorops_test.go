@@ -566,3 +566,27 @@ func TestSleepWakeCycleKeepsDesksAndNames(t *testing.T) {
 		check(fmt.Sprintf("awake %d", round), workersOf(b.world(func(w proto.World) bool { return floorOf(w, "s").State == "running" }), "s"))
 	}
 }
+
+// Without resumable workers the ack still waits for the floor to run.
+func TestWakeWithoutAgentsAcksOnceRunning(t *testing.T) {
+	fh := newFakeHerdr()
+	b := startBridge(t, "", fastOps(fh))
+	plain := []world.WorkerObs{worker("w1", "notes", "", "unknown")}
+	b.floorAt("s", false, plain)
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	fh.onStart = func() {
+		fh.setUp("sock-s", true)
+		go func() {
+			time.Sleep(100 * time.Millisecond) // the watcher is slower than ping
+			b.floorAt("s", true, plain)
+		}()
+	}
+	evs, m := c.command(proto.CmdFloorWake, "w", proto.FloorArgs{Session: "s"})
+	if res := ackData[proto.WakeResult](t, m); len(res.Workers) != 1 || res.Workers[0].Resume != proto.ResumeNone {
+		t.Fatalf("ack = %s", m.raw)
+	}
+	if f := lastFloor(t, evs); f.State != "running" || f.Transition != "" {
+		t.Fatalf("final floor = %+v (events %+v)", f, evs)
+	}
+}
