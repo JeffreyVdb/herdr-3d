@@ -5,6 +5,9 @@ import type { CommandName } from '../net/protocol';
 export interface FailureContext {
   /** The floor (session) the command was about. */
   floor?: string;
+  /** M4: the desk (as shown, 1-based) or the worker the command was about. */
+  desk?: number;
+  worker?: string;
   /** The building name the command was about, or the new name. */
   name?: string;
 }
@@ -19,6 +22,10 @@ const DOES: Record<CommandName, string> = {
   'floor.wake': 'wake floors',
   'floor.sleep': 'put floors to sleep',
   'floor.settings.set': 'store floor settings',
+  'hire.prepare': 'hire workers',
+  'worker.hire': 'hire workers',
+  'worker.fire.prepare': 'send workers home',
+  'worker.fire': 'send workers home',
 };
 
 export function failureText(t: CommandName, code: string, message: string, ctx: FailureContext = {}): string {
@@ -53,6 +60,20 @@ export function failureText(t: CommandName, code: string, message: string, ctx: 
       return `herdr-world refused it: ${why}`;
     case 'internal':
       return `herdr-world failed: ${why}. Safe to retry.`;
+    case 'asleep':
+      return `${floor} is asleep. Wake it from the elevator (L) first.`;
+    case 'desk_taken':
+      return `${ctx.desk !== undefined ? `Desk ${ctx.desk}` : 'That desk'} is taken or gone${why ? ` (${why})` : ''}. Pick another free desk.`;
+    case 'capacity':
+      return `Over the hard cap: ${why || 'there are already as many workers as allowed'}. Send someone home first.`;
+    case 'hire_failed':
+      return `The hire did not go through: ${why || 'herdr-world gave no reason'}.`;
+    case 'unknown_worker':
+      return `${ctx.worker ?? 'That worker'} is no longer on the floor.`;
+    case 'not_clean':
+      return `The worktree was kept: ${why || 'it has uncommitted changes or unpushed commits'}.`;
+    case 'fire_failed':
+      return `${ctx.worker ?? 'The worker'} could not be sent home: ${why || 'herdr-world gave no reason'}.`;
   }
   return `${code}: ${why}`;
 }
