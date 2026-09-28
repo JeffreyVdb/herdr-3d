@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Floor, Snapshot, Worker } from '../net/protocol';
-import { WorldStore } from './store';
+import { DEFAULT_HIRE_OPTIONS, WorldStore } from './store';
 
 const floor = (session: string, over: Partial<Floor> = {}): Floor => ({
   session,
@@ -217,5 +217,100 @@ describe('WorldStore events', () => {
     s.applyEvent({ t: 'floor.upsert', seq: 14, floor: floor('bottom', { building: null, index: null }) });
     s.applyEvent({ t: 'building.removed', seq: 15, id: 'b1' });
     expect(s.city().map((b) => b.building)).toEqual([null]);
+  });
+});
+
+describe('WorldStore M3 fields', () => {
+  it('falls back for an older bridge: no transition, empty settings and suggestion, built-in hire options', () => {
+    const s = new WorldStore();
+    s.applySnapshot(snap());
+    const v = s.floorView('top');
+    expect(v).toMatchObject({ transition: null, settings: {}, suggested: {}, resume: null });
+    expect(s.hireOptions).toEqual(DEFAULT_HIRE_OPTIONS);
+    expect(s.hireOptions.codex?.extra_efforts).toEqual({ 'gpt-6-sol': ['ultra'], 'gpt-6-astra': ['ultra'] });
+  });
+
+  it('takes transition, settings, suggested and hire_options from the bridge', () => {
+    const s = new WorldStore();
+    const hire_options = { claude: { models: ['claude-opus-5-5'], efforts: ['high'] } };
+    s.applySnapshot(
+      snap({
+        hire_options,
+        floors: [
+          floor('top', {
+            transition: 'waking',
+            settings: { repo: 'JeffreyVdb/herdr-3d', project: { owner: 'JeffreyVdb', number: 3 } },
+            suggested: { repo: 'JeffreyVdb/herdr-3d', default_cwd: '/home/dev/devel/herdr-3d' },
+          }),
+        ],
+      }),
+    );
+    expect(s.floorView('top')).toMatchObject({
+      transition: 'waking',
+      settings: { repo: 'JeffreyVdb/herdr-3d', project: { owner: 'JeffreyVdb', number: 3 } },
+      suggested: { default_cwd: '/home/dev/devel/herdr-3d' },
+    });
+    expect(s.hireOptions).toEqual(hire_options);
+  });
+
+  it('ignores a transition or hire_options it does not understand', () => {
+    const s = new WorldStore();
+    s.applySnapshot(snap({ hire_options: { claude: { models: 'nope' } } as never, floors: [floor('top', { transition: 'melting' as never })] }));
+    expect(s.floorView('top')?.transition).toBeNull();
+    expect(s.hireOptions).toEqual(DEFAULT_HIRE_OPTIONS);
+  });
+
+  it('flips asleep ↔ running on a live floor.upsert, keeping every worker at its desk', () => {
+    const s = new WorldStore();
+    s.applySnapshot(
+      snap({
+        floors: [floor('top', { desks: 6 })],
+        workers: [worker('a', 'top', { desk_index: 3, status: 'working' }), worker('b', 'top', { status: 'blocked' })],
+      }),
+    );
+    const desks = () => s.floorView('top')?.workers.map((w) => [w.worker.id, w.desk, w.display]);
+    expect(desks()).toEqual([
+      ['b', 0, 'needs_you'],
+      ['a', 3, 'working'],
+    ]);
+    s.applyEvent({ t: 'floor.upsert', seq: 11, floor: floor('top', { desks: 6, transition: 'sleeping' }) });
+    expect(s.floorView('top')).toMatchObject({ asleep: false, transition: 'sleeping' });
+    s.applyEvent({ t: 'floor.upsert', seq: 12, floor: floor('top', { desks: 6, state: 'asleep' }) });
+    expect(s.floorView('top')).toMatchObject({ asleep: true, transition: null });
+    expect(desks()).toEqual([
+      ['b', 0, 'asleep'],
+      ['a', 3, 'asleep'],
+    ]);
+    s.applyEvent({ t: 'floor.upsert', seq: 13, floor: floor('top', { desks: 6, state: 'running' }) });
+    expect(desks()).toEqual([
+      ['b', 0, 'needs_you'],
+      ['a', 3, 'working'],
+    ]);
+  });
+
+  it('counts resume progress over the workers that report one', () => {
+    const s = new WorldStore();
+    s.applySnapshot(
+      snap({
+        floors: [floor('top', { transition: 'waking' })],
+        workers: [
+          worker('a', 'top', { resume: 'pending' }),
+          worker('b', 'top', { resume: 'confirmed' }),
+          worker('c', 'top', { resume: 'fallback' }),
+          worker('d', 'top'),
+        ],
+      }),
+    );
+    expect(s.floorView('top')?.resume).toEqual({ pending: 1, confirmed: 1, fallback: 1, failed: 0, total: 3 });
+    s.applyEvent({ t: 'worker.upsert', seq: 11, worker: worker('a', 'top', { resume: 'failed' }) });
+    expect(s.floorView('top')?.resume).toMatchObject({ pending: 0, failed: 1 });
+  });
+
+  it('lists a building’s floors top to bottom, and the lot by name', () => {
+    const s = new WorldStore();
+    s.applySnapshot(snap({ floors: [floor('top'), floor('bottom', { index: 1 }), floor('lot', { building: null, index: null }), floor('alpha', { building: null, index: null })] }));
+    expect(s.stack('b1').map((f) => f.session)).toEqual(['top', 'bottom']);
+    expect(s.stack(null).map((f) => f.session)).toEqual(['alpha', 'lot']);
+    expect(s.stack('nope')).toEqual([]);
   });
 });

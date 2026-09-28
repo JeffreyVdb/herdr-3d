@@ -3,6 +3,7 @@ import { modelLabel, STATUS_WORD, taskLine, type Display } from '../world/derive
 import type { Counts, FloorView, WorkerView } from '../world/store';
 import type { Target } from '../render/office';
 import { CHIP_TEXT } from '../world/derive';
+import { ICON as DOM_ICON } from './dom';
 
 /** Authored 24×24 stroke icons, one weight. */
 const ICON = {
@@ -10,6 +11,8 @@ const ICON = {
   issues: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/>',
   prs: '<circle cx="7" cy="6" r="2.2"/><circle cx="7" cy="18" r="2.2"/><circle cx="17" cy="18" r="2.2"/><path d="M7 8.2v7.6M17 15.8V10a3 3 0 0 0-3-3h-3.5M12.5 5 10.5 7l2 2"/>',
   leaf: '<path d="M5 19c0-8 5-13 14-14 0 9-5 14-13 14"/><path d="M5 19 13 11"/>',
+  building: DOM_ICON.building,
+  lift: DOM_ICON.lift,
 };
 const svg = (paths: string) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
@@ -29,7 +32,7 @@ const KEYS: Array<[string, string]> = [
   ['X', 'Send home'],
 ];
 
-export type HudAction = 'city' | 'issues' | 'prs' | 'battery';
+export type HudAction = 'city' | 'issues' | 'prs' | 'battery' | 'buildings' | 'elevator';
 
 export interface PlanLabel {
   x: number;
@@ -44,6 +47,8 @@ export class Hud {
   readonly root: HTMLDivElement;
   /** Static, screen-reader and keyboard list of floors (the badges are drawn in the scene). */
   readonly floorList: HTMLElement;
+  /** Same for buildings: each opens its elevator panel (M3). */
+  readonly buildingList: HTMLElement;
   private readonly name = el('div', 'topbar-name');
   private readonly sub = el('div', 'topbar-sub');
   private readonly counts = el('div', 'topbar-counts');
@@ -51,6 +56,9 @@ export class Hud {
   private readonly issues = el('button', 'btn', `${svg(ICON.issues)}<span>Issues</span>`);
   private readonly prs = el('button', 'btn', `${svg(ICON.prs)}<span>PRs</span>`);
   private readonly battery = el('button', 'btn btn--icon', svg(ICON.leaf));
+  private readonly buildings = el('button', 'btn', `${svg(ICON.building)}<span>Buildings</span>`);
+  /** On a floor: its building's elevator panel, for keyboards and when the elevator is out of sight. */
+  private readonly elevator = el('button', 'btn', `${svg(ICON.lift)}<span>Elevator</span>`);
   private readonly conn = el('span', 'conn', '<i></i><span></span>');
   private readonly reticle = el('div', 'reticle');
   private readonly prompt = el('div', 'prompt');
@@ -72,6 +80,8 @@ export class Hud {
     this.root = el('div', 'hud');
     this.floorList = el('nav', 'floor-list');
     this.floorList.setAttribute('aria-label', 'Floors');
+    this.buildingList = el('nav', 'building-list');
+    this.buildingList.setAttribute('aria-label', 'Buildings');
     const bar = el('header', 'topbar');
     const place = el('div', 'topbar-place');
     const title = el('div', 'topbar-title');
@@ -84,7 +94,9 @@ export class Hud {
     this.issues.title = 'Issues board overlay (arrives in M7)';
     this.prs.title = 'Pull requests overlay (arrives in M7)';
     this.back.title = 'Back to the city (Backspace)';
-    actions.append(this.issues, this.prs, this.battery, this.conn);
+    this.buildings.title = 'Buildings: create, rename and arrange buildings and floors (M)';
+    this.elevator.title = 'Elevator: ride to another floor, wake or sleep floors, floor settings (L)';
+    actions.append(this.buildings, this.issues, this.prs, this.elevator, this.battery, this.conn);
     bar.append(place, this.counts, actions);
     new ResizeObserver(() => this.root.style.setProperty('--topbar-bottom', `${bar.getBoundingClientRect().bottom.toFixed(1)}px`)).observe(bar);
     for (const [b, a] of [
@@ -92,6 +104,8 @@ export class Hud {
       [this.issues, 'issues'],
       [this.prs, 'prs'],
       [this.battery, 'battery'],
+      [this.buildings, 'buildings'],
+      [this.elevator, 'elevator'],
     ] as const) {
       b.type = 'button';
       b.addEventListener('click', () => this.emit(a));
@@ -103,10 +117,11 @@ export class Hud {
     this.notice.hidden = true;
     this.toastEl.hidden = true;
     this.toastEl.setAttribute('role', 'status');
+    this.toastEl.setAttribute('aria-live', 'polite');
     this.dialog.addEventListener('click', (e) => {
       if (e.target === this.dialog) this.dialog.close();
     });
-    this.root.append(this.floorList, this.plan, bar, this.reticle, this.prompt, this.hint, this.notice, this.toastEl, this.doors);
+    this.root.append(this.floorList, this.buildingList, this.plan, bar, this.reticle, this.prompt, this.hint, this.notice, this.toastEl, this.doors);
     parent.append(this.root, this.dialog);
     this.setMode('city');
   }
@@ -124,8 +139,10 @@ export class Hud {
     this.root.dataset.mode = mode;
     this.back.hidden = mode === 'city';
     this.issues.hidden = this.prs.hidden = mode === 'city';
+    this.buildings.hidden = mode !== 'city';
+    this.elevator.hidden = mode === 'city';
     this.reticle.hidden = mode === 'city';
-    this.floorList.hidden = mode !== 'city';
+    this.floorList.hidden = this.buildingList.hidden = mode !== 'city';
     if (mode === 'city') {
       this.setTarget(null, null);
       this.setPlan(false, '');
@@ -179,7 +196,8 @@ export class Hud {
   setFloor(v: FloorView): void {
     this.name.textContent = v.session;
     const where = v.level ? `Floor ${v.level.number} of ${v.level.count} · ${v.building?.name ?? ''}` : 'Unassigned lot';
-    this.sub.textContent = v.asleep ? `${where} · asleep` : where;
+    const state = v.transition === 'waking' ? ' · waking up…' : v.transition === 'sleeping' ? ' · going to sleep…' : v.asleep ? ' · asleep' : '';
+    this.sub.textContent = where + state;
     this.setCounts(v.counts, v.asleep);
   }
 
@@ -220,6 +238,12 @@ export class Hud {
       line.append(text('prompt-name', t.label), text('prompt-task', 'Empty desk'));
       keys.append(disabled('E', 'Hire', 'Hiring arrives in M4'));
       this.prompt.setAttribute('aria-label', `${t.label} · E Hire`);
+    } else if (t.kind === 'prop' && t.id === 'elevator') {
+      line.append(text('prompt-name', 'Elevator'), text('prompt-task', 'Ride to another floor, wake one up or put it to sleep'));
+      const k = el('span', 'key');
+      k.append(el('kbd', '', 'E'), document.createTextNode('Elevator'));
+      keys.append(k);
+      this.prompt.setAttribute('aria-label', 'Elevator · E Elevator');
     } else if (t.kind === 'board' || t.kind === 'prop') {
       line.append(text('prompt-name', t.label), text('prompt-task', `Placeholder until ${t.milestone}`));
       keys.append(disabled('E', 'Open', `Arrives in ${t.milestone}`));
@@ -249,7 +273,7 @@ export class Hud {
 
   /** Keyboard route into the top bar: focuses its first visible control. */
   focusTopbar(): void {
-    const first = [this.back, this.issues, this.prs, this.battery].find((b) => !b.hidden);
+    const first = [this.back, this.buildings, this.issues, this.prs, this.elevator, this.battery].find((b) => !b.hidden);
     first?.focus();
   }
 
@@ -284,8 +308,9 @@ export class Hud {
     this.notice.replaceChildren(h, p);
   }
 
-  toast(msg: string, ms = 3200): void {
+  toast(msg: string, ms = 3200, kind: 'info' | 'error' = 'info'): void {
     this.toastEl.textContent = msg;
+    this.toastEl.dataset.kind = kind;
     this.toastEl.hidden = false;
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => (this.toastEl.hidden = true), ms);

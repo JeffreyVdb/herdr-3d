@@ -1,4 +1,14 @@
-import type { Building, Floor, Snapshot, Worker, WorldEvent } from '../net/protocol';
+import type {
+  Building,
+  Floor,
+  FloorSettings,
+  FloorSuggested,
+  FloorTransition,
+  HireOptions,
+  Snapshot,
+  Worker,
+  WorldEvent,
+} from '../net/protocol';
 import {
   assignDesks,
   deskCountFallback,
@@ -27,9 +37,26 @@ export interface Counts {
   total: number;
 }
 
+/** Workers of a floor by `resume` state (only those that report one). */
+export interface ResumeCounts {
+  pending: number;
+  confirmed: number;
+  fallback: number;
+  failed: number;
+  total: number;
+}
+
 export interface FloorView {
   session: string;
   floor: Floor;
+  /** M3: a wake/sleep in progress, null otherwise (and from an older bridge). */
+  transition: FloorTransition | null;
+  /** M3: stored settings ({} from an older bridge). */
+  settings: FloorSettings;
+  /** M3: bridge suggestions ({} from an older bridge). */
+  suggested: FloorSuggested;
+  /** M3: resume progress after a wake, null when no worker reports one. */
+  resume: ResumeCounts | null;
   building: Building | null;
   /** 1-based from the ground and the number of floors, null in the unassigned lot. */
   level: { number: number; count: number } | null;
@@ -59,6 +86,36 @@ export interface Change {
 
 const emptyChange = (): Change => ({ structure: false, sessions: new Set(), workers: new Set() });
 
+/** `world.hire_options` of an older bridge: the lists in the M3 contract. */
+export const DEFAULT_HIRE_OPTIONS: HireOptions = {
+  claude: { models: ['claude-opus-5-5', 'claude-fable-5-1'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+  codex: {
+    models: ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra'],
+    efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    extra_efforts: { 'gpt-6-sol': ['ultra'], 'gpt-6-astra': ['ultra'] },
+  },
+};
+
+const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+
+/** The bridge's hire options when they have the expected shape, else the built-in ones. */
+function hireOptionsOf(v: unknown): HireOptions {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return DEFAULT_HIRE_OPTIONS;
+  const entries = Object.entries(v as Record<string, unknown>);
+  if (!entries.length) return DEFAULT_HIRE_OPTIONS;
+  for (const [, h] of entries) {
+    const o = h as Record<string, unknown> | null;
+    if (typeof o !== 'object' || o === null || !strings(o.models) || !strings(o.efforts)) return DEFAULT_HIRE_OPTIONS;
+    if (o.extra_efforts !== undefined && (typeof o.extra_efforts !== 'object' || o.extra_efforts === null || !Object.values(o.extra_efforts).every(strings))) {
+      return DEFAULT_HIRE_OPTIONS;
+    }
+  }
+  return v as HireOptions;
+}
+
+const transitionOf = (v: unknown): FloorTransition | null => (v === 'waking' || v === 'sleeping' ? v : null);
+const objectOf = <T extends object>(v: unknown): T => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as T) : ({} as T));
+
 /**
  * The client's copy of the bridge world: applies snapshots and events, and
  * fills in everything an older bridge does not send (names, desks, desk count,
@@ -73,6 +130,8 @@ export class WorldStore {
   snapshots = 0;
   /** Bumped on every structural change. */
   structureVersion = 0;
+  /** Models and efforts a default hire may use (M3), else the built-in lists. */
+  hireOptions: HireOptions = DEFAULT_HIRE_OPTIONS;
   private readonly localDesks = new Map<string, number>();
   private readonly since = new Map<string, number>();
   private readonly deskCache = new Map<string, Map<string, number>>();
@@ -96,6 +155,7 @@ export class WorldStore {
       this.since.set(w.id, w.status_since ?? keep ?? (this.snapshots === 0 ? this.loadedAt : now));
     }
     for (const id of [...this.localDesks.keys()]) if (!this.workers.has(id)) this.localDesks.delete(id);
+    this.hireOptions = hireOptionsOf(s.world.hire_options);
     this.seq = s.seq;
     this.snapshots++;
     this.structureVersion++;
@@ -259,7 +319,14 @@ export class WorldStore {
     for (const v of workers) seats[v.desk] = v;
     workers.sort((a, b) => a.desk - b.desk);
     const counts: Counts = { working: 0, needsYou: 0, idle: 0, done: 0, total: workers.length };
+    let resume: ResumeCounts | null = null;
     for (const v of workers) {
+      const r = v.worker.resume;
+      if (r === 'pending' || r === 'confirmed' || r === 'fallback' || r === 'failed') {
+        resume ??= { pending: 0, confirmed: 0, fallback: 0, failed: 0, total: 0 };
+        resume[r]++;
+        resume.total++;
+      }
       if (v.display === 'working') counts.working++;
       else if (v.display === 'needs_you') counts.needsYou++;
       else if (v.display === 'done') {
@@ -270,6 +337,10 @@ export class WorldStore {
     return {
       session,
       floor,
+      transition: transitionOf(floor.transition),
+      settings: objectOf<FloorSettings>(floor.settings),
+      suggested: objectOf<FloorSuggested>(floor.suggested),
+      resume,
       building: floor.building === null ? null : (this.buildings.get(floor.building) ?? null),
       level: this.level(session),
       asleep,
@@ -280,23 +351,41 @@ export class WorldStore {
     };
   }
 
+  /** Buildings in city order (`sort`, then name). */
+  sortedBuildings(): Building[] {
+    return [...this.buildings.values()].sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
+  }
+
+  /** A building's floors top to bottom, or (null) the unassigned lot's by name. */
+  stack(building: string | null): FloorView[] {
+    if (building === null) return this.lot();
+    const b = this.buildings.get(building);
+    if (!b) return [];
+    return this.buildingFloors(b, building)
+      .map((s) => this.floorView(s))
+      .filter((v): v is FloorView => v !== null);
+  }
+
+  private lot(): FloorView[] {
+    return [...this.floors.values()]
+      .filter((f) => f.building === null || !this.buildings.has(f.building))
+      .map((f) => f.session)
+      .sort()
+      .map((s) => this.floorView(s))
+      .filter((v): v is FloorView => v !== null);
+  }
+
   /** Buildings in `sort` order, then the unassigned lot (if any floors are in it). */
   city(): BuildingView[] {
     const out: BuildingView[] = [];
-    const bs = [...this.buildings.values()].sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
-    for (const b of bs) {
+    for (const b of this.sortedBuildings()) {
       const floors = this.buildingFloors(b, b.id)
         .reverse()
         .map((s) => this.floorView(s))
         .filter((v): v is FloorView => v !== null);
       out.push({ building: b, floors });
     }
-    const lot = [...this.floors.values()]
-      .filter((f) => f.building === null || !this.buildings.has(f.building))
-      .map((f) => f.session)
-      .sort()
-      .map((s) => this.floorView(s))
-      .filter((v): v is FloorView => v !== null);
+    const lot = this.lot();
     if (lot.length) out.push({ building: null, floors: lot });
     return out;
   }

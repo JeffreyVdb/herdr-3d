@@ -86,6 +86,7 @@ func (w *watcher) follow(ctx context.Context, fresh bool) error {
 		}
 		ok := send(ctx, w.cfg.Out, world.FloorObs{
 			Session: w.info.Name, Default: w.info.Default, Running: true, Gen: gen, Fresh: fresh, Workers: obs,
+			Socket: w.info.SocketPath,
 		})
 		fresh, last = false, obs
 		return ok
@@ -150,6 +151,9 @@ func (w *watcher) follow(ctx context.Context, fresh bool) error {
 			return err
 		case ev := <-life.events:
 			w.log.Debug("herdr event", "event", ev.Event)
+			if ev.Event == herdr.EventAgentDetected && !w.agentDetected(ctx, ev) {
+				return ctx.Err()
+			}
 			if pending == nil {
 				pending = time.After(debounce)
 			}
@@ -187,6 +191,23 @@ func (w *watcher) follow(ctx context.Context, fresh bool) error {
 	}
 }
 
+// agentDetected forwards a pane_agent_detected event to the hub (a wake
+// waits for them). It reports false when ctx ended.
+func (w *watcher) agentDetected(ctx context.Context, ev herdr.Event) bool {
+	var d herdr.AgentDetected
+	if err := json.Unmarshal(ev.Data, &d); err != nil || d.PaneID == "" {
+		w.log.Warn("bad pane_agent_detected event", "err", err)
+		return true
+	}
+	agent := ""
+	if d.Agent != nil {
+		agent = *d.Agent
+	}
+	return send(ctx, w.cfg.Out, world.AgentDetected{
+		Session: w.info.Name, WorkspaceID: d.WorkspaceID, PaneID: d.PaneID, Agent: agent, Released: d.Released,
+	})
+}
+
 func (w *watcher) snapshot(ctx context.Context) (*herdr.Snapshot, error) {
 	sctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -201,7 +222,7 @@ func (w *watcher) degraded(ctx context.Context, gen uint64, fresh bool, err erro
 	w.log.Warn("session answers ping but cannot be followed", "err", err)
 	send(ctx, w.cfg.Out, world.FloorObs{
 		Session: w.info.Name, Default: w.info.Default, Running: true, Gen: gen, Fresh: fresh,
-		KeepWorkers: true, Err: "herdr: " + err.Error(),
+		KeepWorkers: true, Err: "herdr: " + err.Error(), Socket: w.info.SocketPath,
 	})
 }
 

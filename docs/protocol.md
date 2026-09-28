@@ -14,8 +14,11 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
   ```
 - Text frames, one JSON object per frame. Every object has a string field `t`, its type. Client messages are limited to
   64 KiB.
-- The bridge only ever *reads* herdr (`ping`, `session.snapshot`, `events.subscribe`, `herdr session list`). The only
-  state that commands change is the bridge's own SQLite database.
+- The bridge reads herdr (`ping`, `session.snapshot`, `events.subscribe`, `herdr session list`). Its only writes to
+  herdr are `floor.wake` and `floor.sleep` (see [Wake and sleep](#wake-and-sleep)), through a narrow allowlist of six
+  commands: start a session with `systemd-run`, `herdr session stop`, `herdr pane run` of an agent's resume command,
+  `herdr pane report-agent-session` for Codex, and the read-only `herdr pane process-info`. Every other command only
+  changes the bridge's own SQLite database.
 
 ### Through `h3d-helper` (the Mac)
 
@@ -69,7 +72,10 @@ is closed (status 1008). A `proto` other than `1` gets `unsupported_proto` and i
     {"session":"code-review","state":"running","building":"b_3f09a1c2d4e5","index":0,"desks":16},
     {"session":"depot-manager","state":"asleep","building":"b_3f09a1c2d4e5","index":1,"desks":9},
     {"session":"pastry","state":"asleep","building":null,"index":null,"desks":6},
-    {"session":"herdr-3d","state":"running","building":null,"index":null,"desks":6}
+    {"session":"herdr-3d","state":"running","building":null,"index":null,"desks":6,
+     "settings":{"repo":"JeffreyVdb/herdr-3d","project":{"owner":"JeffreyVdb","number":1},
+                 "status_field":{"name":"Status","options":["Todo","Doing","QA","Done"]}},
+     "suggested":{"repo":"JeffreyVdb/herdr-3d","default_cwd":"/home/dev/devel/herdr-3d"}}
   ],
   "workers":[
     {"id":"6db1905e-9e85-42f4-911c-b05e31b84c68","session":"herdr-3d","workspace_id":"w1","label":"CODE|m2-go|3|r1",
@@ -83,11 +89,18 @@ is closed (status 1008). A `proto` other than `1` gets `unsupported_proto` and i
      "role":"code","run":"20260928-1455-m2-city",
      "name":"Flicker","desk_index":1,"harness":"claude","model":"claude-opus-5-5","effort":"xhigh",
      "status_since":1790601900984}
-  ]
+  ],
+  "hire_options":{
+    "claude":{"models":["claude-opus-5-5","claude-fable-5-1"],"efforts":["low","medium","high","xhigh","max"]},
+    "codex":{"models":["gpt-6-sol","gpt-6-luna","gpt-6-astra"],"efforts":["low","medium","high","xhigh","max"],
+             "extra_efforts":{"gpt-6-sol":["ultra"],"gpt-6-astra":["ultra"]}}}
 }}
 ```
 
 `seq` is the seq of the last event the snapshot includes: apply live events with a higher `seq` on top of it.
+
+`hire_options` lists what can be hired: models and efforts per harness, `extra_efforts` being efforts only some models
+take. `floor.settings.set` validates `default_hire` against it; clients should read it rather than hardcode the lists.
 
 Order is meaningful: `buildings` are in `sort` order and each lists its floors top to bottom (`index` order);
 `unassigned` is the lot of sessions that are in no building, by name. `floors` follows the same order (buildings, then the
@@ -113,6 +126,9 @@ lot), and `workers` follows the floors, each floor's workers in herdr's sidebar 
 | `index` | int \| null | floor position within the building, `null` when unassigned. Positions also count assigned sessions that currently do not exist, so there can be gaps: order by `index`. |
 | `error` | string, optional | why the floor cannot be read: e.g. `unsupported session.json version 4`, or `herdr: …` for a running session that answers ping but cannot be snapshotted (its workers are kept as last seen) |
 | `desks` | int | desks the floor renders: `max(highest desk_index + 1, min(cap, max(6, workers + 2)))`, `cap` = `--max-desks` (default 96). So there are always spare desks to hire into, and every worker has a desk even past the cap. |
+| `transition` | `waking` \| `sleeping`, optional | a `floor.wake` / `floor.sleep` is in progress (see [Wake and sleep](#wake-and-sleep)) |
+| `settings` | object, optional | the floor's stored settings, only the keys that are set: `repo`, `project`, `status_field`, `default_cwd`, `default_hire` (shapes as in [`floor.settings.set`](#floor-settings)) |
+| `suggested` | object, optional | bridge-derived defaults: `repo` and `default_cwd` (see [Floor settings](#floor-settings)). What a client shows for a setting is `settings.X ?? suggested.X`. |
 
 An asleep floor's workers come from herdr's saved `session.json` (format version 3 only; any other version leaves the
 floor with no workers and an `error`).
@@ -140,6 +156,7 @@ floor with no workers and an `error`).
 | `desk_index` | int ≥ 0 | the worker's desk on its floor (see below) |
 | `harness` | string, optional | `claude`, `codex`, …: the `h3d_harness` token, else `agent_kind` when that is `claude` or `codex` |
 | `model`, `effort` | string, optional | the `h3d_model` / `h3d_effort` tokens (e.g. `claude-opus-5-5` / `xhigh`, `gpt-6-sol` / `high`) |
+| `resume` | `pending` \| `confirmed` \| `fallback` \| `failed`, optional | only during and after a wake, for workers with an `agent_session`: how their agent came back (see [Wake and sleep](#wake-and-sleep)). Cleared by the next sleep and by a bridge restart. |
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
 none, so the bridge keeps the last known value until a new one shows up. They are absent when never known.
@@ -182,9 +199,9 @@ and remember the last `seq` applied.
 |---|---|---|
 | `building.upsert` | `building` | a building was created, renamed, reordered, or its floor list changed |
 | `building.removed` | `id` | a building was deleted (its floors got `floor.upsert` with `building: null` first) |
-| `floor.upsert` | `floor` | a session appeared, started, stopped, was (re)assigned, or its `error` changed |
+| `floor.upsert` | `floor` | a session appeared, started, stopped, was (re)assigned, or its `error`, `transition`, `settings` or `suggested` changed |
 | `floor.removed` | `session` | the session was deleted in herdr (its workers get `worker.removed` first) |
-| `worker.upsert` | `worker` | a worker appeared, or anything besides `status`/`title` changed (full object) |
+| `worker.upsert` | `worker` | a worker appeared, or anything besides `status`/`title` changed, e.g. its `resume` (full object) |
 | `worker.status` | `id`, `session`, `workspace_id`, `status`, `prev_status`, `status_since`, `title` | only `status` and/or `title` changed (the hot path). `title` is always present, `""` when cleared; on a title-only change `prev_status` equals `status` and `status_since` does not move. |
 | `worker.removed` | `id`, `session`, `workspace_id` | the workspace closed, the session was deleted, or the identity changed |
 
@@ -236,7 +253,8 @@ and the last `seq` you applied:
 
 `req_id` (a non-empty string of the client's choosing) is required. Each command is answered with exactly one `ack` or
 `error` carrying the same `req_id`. The events a command causes are sent **before** its `ack`, so when the ack arrives
-the client's world already reflects it. Every building/floor command, accepted or not, is written to the audit log.
+the client's world already reflects it. Every command, accepted or not, is written to the audit log, a known `t`
+without `req_id` too (an unknown `t` is not a command and is not logged).
 `args` must not contain unknown fields.
 
 | `t` | `args` | `ack.data` | events |
@@ -246,6 +264,9 @@ the client's world already reflects it. Every building/floor command, accepted o
 | `building.delete` | `{"id": string}` | — | `floor.upsert` for each of its floors (now unassigned), `building.upsert` for buildings whose `sort` shifted, then `building.removed` |
 | `building.reorder` | `{"ids": [string…]}`: every building id exactly once, in the new order | — | `building.upsert` for each moved building |
 | `floor.assign` | `{"session": string, "building": string \| null, "index"?: int}`: `null` moves the floor to the unassigned lot; `index` inserts at that position (clamped), omitted appends | — | `floor.upsert` for every floor whose position changed, `building.upsert` for the buildings involved |
+| `floor.settings.set` | `{"session": string, "repo"?, "project"?, "status_field"?, "default_cwd"?, "default_hire"?}`: an absent key stays as it is, `null` clears it, a value sets it (see [Floor settings](#floor-settings)) | — | `floor.upsert` carrying the new `settings` (and `suggested`, when the chosen repo changes it); none when nothing changed |
+| `floor.wake` | `{"session": string}` | `{"workers": [{"id", "resume"}]}`: every worker of the floor in sidebar order, `resume` one of `confirmed`, `fallback`, `failed`, or `none` (no `agent_session`: nothing to resume) | `floor.upsert` with `transition: "waking"`, `worker.upsert` (`resume: "pending"`) for each resumable worker, then the floor running and its workers as the watcher sees them, `worker.upsert` as each `resume` settles, and a final `floor.upsert` without `transition` |
+| `floor.sleep` | `{"session": string}` | — | `floor.upsert` with `transition: "sleeping"` (and `worker.upsert` for workers whose `resume` is cleared), then `floor.upsert` with `state: "asleep"` and no `transition`, then the asleep workers |
 
 ```json
 {"t":"floor.assign","req_id":"8","args":{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}}
@@ -254,9 +275,110 @@ the client's world already reflects it. Every building/floor command, accepted o
 {"t":"ack","req_id":"8"}
 ```
 
-Buildings, their order and floor assignments are stored in SQLite (`$XDG_STATE_HOME/herdr-world/world.db`) and survive
-bridge restarts. Assignments are kept for sessions that are currently gone, so a re-created session returns to its
-floor.
+Buildings, their order, floor assignments and floor settings are stored in SQLite
+(`$XDG_STATE_HOME/herdr-world/world.db`) and survive bridge restarts. Assignments and settings are kept for sessions
+that are currently gone, so a re-created session returns to its floor with its settings.
+
+Floor commands (`floor.assign`, `floor.settings.set`, `floor.wake`, `floor.sleep`) on a floor whose wake or sleep is in
+progress answer `busy`. They only act on sessions the bridge watches (`--sessions`); any other name, known to herdr or
+not, is `unknown_session`.
+
+### Floor settings
+
+```json
+{"t":"floor.settings.set","req_id":"12","args":{"session":"herdr-3d","repo":"JeffreyVdb/herdr-3d",
+  "project":{"owner":"JeffreyVdb","number":1},"status_field":{"name":"Status","options":["Todo","Doing","QA","Done"]},
+  "default_cwd":null,"default_hire":{"harness":"claude","model":"claude-opus-5-5","effort":"medium"}}}
+{"t":"floor.upsert","seq":1060,"floor":{"session":"herdr-3d","state":"running","building":null,"index":null,"desks":6,
+  "settings":{"repo":"JeffreyVdb/herdr-3d","project":{"owner":"JeffreyVdb","number":1},
+              "status_field":{"name":"Status","options":["Todo","Doing","QA","Done"]},
+              "default_hire":{"harness":"claude","model":"claude-opus-5-5","effort":"medium"}},
+  "suggested":{"repo":"JeffreyVdb/herdr-3d","default_cwd":"/home/dev/devel/herdr-3d"}}}
+{"t":"ack","req_id":"12"}
+```
+
+| key | value (`null` clears) | rule, else `bad_request` |
+|---|---|---|
+| `repo` | `"owner/repo"` | a GitHub name: owner `[A-Za-z0-9-]{1,39}`, repo `[A-Za-z0-9._-]{1,100}` |
+| `project` | `{"owner": string, "number": int}` | a GitHub Project (v2): owner as above, number ≥ 1 |
+| `status_field` | `{"name": string, "options": [string…]}` | name 1–64 bytes; 1–20 options, each 1–64 bytes, unique (not blank). A client may pre-fill `{"name":"Status","options":["Todo","Doing","QA","Done"]}`. Stored for the issue boards (M7). |
+| `default_cwd` | absolute path | an existing directory on the bridge host; stored cleaned (no trailing `/`) |
+| `default_hire` | `{"harness", "model", "effort"}` | one of `hire_options`: a model of that harness, an effort of it or an `extra_efforts` entry of that model (`ultra` only for `gpt-6-sol` / `gpt-6-astra`) |
+
+Objects must not have other keys. Settings live in SQLite `floor_repo`.
+
+`suggested` is computed by the bridge, never stored:
+
+- `repo`: the most common GitHub `owner/repo` among the origins (`git -C <cwd> remote get-url origin`) of the floor's
+  workers' `cwd` (asleep floors: the cwds in `session.json`); ties go to the one that comes first in sidebar order. ssh
+  (`git@github.com:o/r(.git)`, `ssh://git@github.com/o/r`) and https (`https://github.com/o/r(.git)`) remotes count;
+  others are ignored. Lookups run in the background, are cached per directory for 5 minutes and repeated when the
+  floor's cwds change, so `suggested` can arrive in a later `floor.upsert`.
+- `default_cwd`: the `worktree.repo_root` (the root checkout, not a linked worktree) of the first worker whose origin is
+  the effective repo (`settings.repo`, else `suggested.repo`).
+
+Either is absent when there is nothing to suggest.
+
+### Wake and sleep
+
+A floor wakes and sleeps through herdr itself. The bridge acts only on sessions it watches, with validated names
+(`[A-Za-z0-9._-]{1,64}`, no leading `-`), and passes every argument as its own argv element. An abbreviated wake
+(`…` stands for the usual fields):
+
+```json
+{"t":"floor.wake","req_id":"20","args":{"session":"h3d-scratch"}}
+{"t":"floor.upsert","seq":1100,"floor":{"session":"h3d-scratch","state":"asleep","building":null,"index":null,"desks":6,"transition":"waking"}}
+{"t":"worker.upsert","seq":1101,"worker":{"id":"4de7…","name":"Jingle","desk_index":0,"agent_session":"03d8…","status":"unknown","resume":"pending",…}}
+{"t":"floor.upsert","seq":1102,"floor":{"session":"h3d-scratch","state":"running",…,"transition":"waking"}}
+{"t":"worker.status","seq":1103,…}
+{"t":"worker.upsert","seq":1104,"worker":{"id":"4de7…",…,"resume":"confirmed"}}
+{"t":"floor.upsert","seq":1105,"floor":{"session":"h3d-scratch","state":"running",…}}
+{"t":"ack","req_id":"20","data":{"workers":[{"id":"4de7…","resume":"confirmed"},{"id":"5863…","resume":"none"}]}}
+```
+
+**Wake** (the floor must be asleep, else `invalid_state`):
+
+1. `systemd-run --user --unit=herdr-s-<name> --collect -p KillMode=process --working-directory=$HOME /bin/fish -l -c
+   "exec herdr --session '<name>' server"`: a supervised headless server with the user's login environment (their fish
+   wrappers and API keys, none of the bridge's `CLAUDE*`/`HERDR_*` variables). It fails (`wake_failed`) if the unit
+   cannot start, e.g. a `herdr-s-<name>` unit still exists.
+2. `ping` on the session's socket, backing off up to 1 s: no answer is `wake_failed` (the message says why). The
+   workers' `resume` is then cleared again; the floor stays asleep.
+3. The bridge follows the session at once (no 2 s poll) and waits until it sees it running; a floor not seen running in
+   time is `wake_failed` too. Steps 1–3 together have `--wake-timeout` (10 s). herdr resumes every pane that had an
+   `agent_session` by itself (`claude --resume <id>` / `codex resume <id>`).
+4. Each such worker is `pending` until its agent is back: herdr reports `pane.agent_detected` naming the agent for its
+   pane, or `herdr pane process-info` shows the agent (`claude` / `codex`, or its session id) in the pane's foreground
+   for 1.5 s in a row. herdr 0.9 restores a pane's agent before the agent runs and sends no detection for a resume, so
+   the process is the usual evidence. It then turns `confirmed`.
+5. After `--resume-timeout` (10 s), each worker still pending whose pane is back at its shell prompt (the shell is the
+   foreground process group) gets its resume command typed in once: `herdr pane run <pane> "claude --resume <id>"` or
+   `"codex resume <id>"`. A pane running something else is left alone. The fallback and the wait after it share one
+   more `--resume-timeout`: workers whose agent then comes back are `fallback` (or `confirmed`, when herdr's own
+   resume was just slow), the rest `failed`.
+6. The transition ends and the ack lists every worker. Each phase's deadline bounds every herdr call in it, and the
+   panes are watched side by side, so worst case the ack takes about `--wake-timeout` + 2 × `--resume-timeout` (30 s),
+   however many workers the floor has: show progress from `transition` and `resume`, not from the ack.
+
+**Sleep** (the floor must be running, else `invalid_state`):
+
+1. Each Codex worker without an `agent_session` is backfilled, so it can resume: the id comes from the newest
+   `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (`$CODEX_HOME`, `--codex-sessions`) whose `session_meta` cwd is the
+   pane's cwd and that no other worker of the floor uses, reported with `herdr pane report-agent-session <pane>
+   --source herdr:codex --agent codex --agent-session-id <id>`. No such rollout: skipped.
+2. `herdr session stop <name> --json`: herdr saves the session, ends the panes' processes and keeps each pane's
+   `agent_session`. A failure is `sleep_failed` (the floor stays running). The bridge never `/exit`s agents and never
+   uses `systemctl stop`: both lose the resume link.
+3. The ack follows once the floor is seen asleep (its workers from `session.json`, at the same desks with the same
+   names; up to 15 s). A floor not seen asleep in time is `sleep_failed`.
+
+Workers keep their ids, desks and names through a sleep and a wake (the identity rules of [Worker](#worker-a-herdr-workspace)).
+
+**Audit log.** Each wake and sleep writes its `audit_log` row when it starts (not done yet) and completes it with the
+outcome and a JSON `result`: for a wake the time until `ping` answered and, per worker, its pane, final `resume` and
+what happened (`agent process running`, `pane.agent_detected`, `fallback: ran the resume command`, `no fallback: the
+pane is not at its shell prompt`, …); for a sleep each backfill (`agent_session`, `skipped` or `error`), herdr's `stop`
+output and whether the floor was seen asleep. Rejected commands are logged like any other.
 
 ### Errors
 
@@ -270,9 +392,13 @@ floor.
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
 | `not_found` | no building with that id |
 | `name_taken` | another building already has that name (ignoring case) |
-| `unknown_session` | `floor.assign` for a session the bridge does not know |
+| `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
+| `busy` | a floor command while that floor's wake or sleep is in progress |
+| `invalid_state` | `floor.wake` on a running floor, `floor.sleep` on an asleep one |
+| `wake_failed` | the server did not start, did not answer `ping` or was not seen running within `--wake-timeout`; the message says why |
+| `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
 | `hello_required`, `unsupported_proto` | handshake failures; the connection is then closed with status 1008 |
-| `internal` | the bridge failed (database error); safe to retry |
+| `internal` | the bridge failed (database error, or waking and sleeping is not configured); safe to retry |
 
 Errors not tied to a command have no `req_id`.
 
@@ -296,7 +422,10 @@ herdr-world dump --once | jq .    # snapshot only
 herdr-world dump --once --since 1047 --epoch 0fc8ba663c9c83d9   # replay instead of a snapshot
 herdr-world cmd building.create '{"name":"Work"}'
 herdr-world cmd floor.assign '{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}'
+herdr-world cmd floor.settings.set '{"session":"herdr-3d","repo":"JeffreyVdb/herdr-3d","default_cwd":null}'
+herdr-world cmd floor.sleep '{"session":"h3d-scratch"}'
+herdr-world cmd floor.wake '{"session":"h3d-scratch"}'
 ```
 
-`dump` prints the `welcome` line on stderr. `cmd` prints the `ack` or `error` and exits 1 on error. All three take
-`--socket`.
+`dump` prints the `welcome` line on stderr. `cmd` prints the `ack` or `error` and exits 1 on error; it waits up to
+`--timeout` (1 min) for a reply. All three take `--socket`.

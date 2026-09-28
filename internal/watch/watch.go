@@ -41,7 +41,10 @@ type Config struct {
 	Resnapshot time.Duration
 	// ProbeTimeout bounds one liveness ping (default 500 ms).
 	ProbeTimeout time.Duration
-	Log          *slog.Logger
+	// Rescan, if set, makes discovery look at sessions right away (e.g. a
+	// session the hub just started) instead of at the next poll.
+	Rescan <-chan struct{}
+	Log    *slog.Logger
 }
 
 func (c *Config) defaults() {
@@ -88,6 +91,7 @@ func Run(ctx context.Context, cfg Config) error {
 			return nil
 		case <-t.C:
 		case <-d.kick:
+		case <-cfg.Rescan:
 		}
 	}
 }
@@ -220,6 +224,7 @@ func (d *discovery) publishAsleep(ctx context.Context, s *session) {
 	obs := world.FloorObs{
 		Session: s.info.Name,
 		Default: s.info.Default,
+		Socket:  s.info.SocketPath,
 		Gen:     world.NextGen(),
 		// Going to sleep from a watched run is continuous (the file is the
 		// state herdr saved on the way down); session.json changing while

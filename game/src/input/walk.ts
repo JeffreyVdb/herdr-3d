@@ -5,6 +5,7 @@ import { EYE_HEIGHT, type Rect } from '../world/layout';
 const WALK = 2.3; // m/s
 const RUN = 4.6;
 const LOOK = 0.0022; // rad per mouse count
+const TURN = 2; // rad/s with the arrow keys
 const RADIUS = 0.28;
 export const PITCH_LIMIT = 1.35;
 
@@ -14,14 +15,18 @@ const MOVE_KEYS: Record<string, [number, number]> = {
   KeyS: [0, -1],
   ArrowDown: [0, -1],
   KeyA: [-1, 0],
-  ArrowLeft: [-1, 0],
   KeyD: [1, 0],
-  ArrowRight: [1, 0],
+};
+
+/** Left / right arrows turn (A / D strafe), so a keyboard alone can look around. */
+const TURN_KEYS: Record<string, number> = {
+  ArrowLeft: 1,
+  ArrowRight: -1,
 };
 
 /**
- * First-person walking: WASD / arrows, Shift to run, Pointer Lock mouse look,
- * AABB collision. yaw 0 looks north (-z).
+ * First-person walking: WASD / up-down arrows, left-right arrows to turn,
+ * Shift to run, Pointer Lock mouse look, AABB collision. yaw 0 looks north (-z).
  */
 export class Walker {
   x = 0;
@@ -69,7 +74,7 @@ export class Walker {
       this.run = down;
       return false;
     }
-    if (!(e.code in MOVE_KEYS)) return false;
+    if (!(e.code in MOVE_KEYS) && !(e.code in TURN_KEYS)) return false;
     if (down) this.keys.add(e.code);
     else this.keys.delete(e.code);
     this.onActivity();
@@ -115,18 +120,21 @@ export class Walker {
     this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
   }
 
-  /** Advances by `dt` seconds; true if the walker moved. */
+  /** Advances by `dt` seconds; true if the walker moved or turned. */
   step(dt: number, obstacles: readonly Rect[]): boolean {
     let f = 0;
     let r = 0;
+    let turn = 0;
     for (const k of this.keys) {
       const m = MOVE_KEYS[k];
       if (m) {
         r += m[0];
         f += m[1];
       }
+      turn += TURN_KEYS[k] ?? 0;
     }
-    if (!f && !r) return false;
+    if (turn) this.yaw += turn * TURN * dt;
+    if (!f && !r) return turn !== 0;
     const len = Math.hypot(f, r);
     const d = (this.run ? RUN : WALK) * dt;
     const sy = Math.sin(this.yaw);
@@ -138,7 +146,7 @@ export class Walker {
     const moved = p.x !== this.x || p.z !== this.z;
     this.x = p.x;
     this.z = p.z;
-    return moved;
+    return moved || turn !== 0;
   }
 
   applyTo(camera: THREE.PerspectiveCamera): void {

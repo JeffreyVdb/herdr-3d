@@ -2,7 +2,9 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -213,8 +215,60 @@ func TestCommands(t *testing.T) {
 		}
 		cmds = append(cmds, e.Cmd)
 	}
-	if len(log) != 13 || log[0].Cmd != proto.CmdBuildingCreate || !log[0].OK || log[1].OK {
+	if len(log) != 14 || log[0].Cmd != proto.CmdBuildingCreate || !log[0].OK || log[1].OK ||
+		log[12].Cmd != proto.CmdBuildingCreate || log[12].Error != "commands need a req_id" {
 		t.Fatalf("audit log = %v", cmds)
+	}
+}
+
+// A known command without req_id is rejected like before, and audited
+// like every other rejection; an unknown one is not a command.
+func TestCommandWithoutReqIDIsAudited(t *testing.T) {
+	b := startBridge(t, "", server.Options{})
+	b.floor("s", true)
+	c := b.connect(proto.Hello{Client: "no-req"})
+	c.snapshot()
+	sent := []string{
+		`{"t":"floor.sleep","args":{"session":"s"}}`,
+		`{"t":"floor.wake","args":{"session":"s"}}`,
+		`{"t":"floor.settings.set","args":{"session":"s","repo":"o/r"}}`,
+		`{"t":"building.create","req_id":"","args":{"name":"NoReq"}}`,
+		`{"t":"worker.hire","args":{}}`,
+	}
+	for _, raw := range sent {
+		c.send(json.RawMessage(raw))
+		m := c.next()
+		e := errorOf(m)
+		want := proto.Error{T: proto.TError, Code: proto.ErrBadRequest, Message: "commands need a req_id"}
+		if strings.Contains(raw, "worker.hire") {
+			want = proto.Error{T: proto.TError, Code: proto.ErrUnknownCommand, Message: `unknown command "worker.hire"`}
+		}
+		if e != want {
+			t.Fatalf("%s: reply %s, want %+v", raw, m.raw, want)
+		}
+	}
+	createBuilding(c, "Still works")
+
+	log, err := b.st.AuditLog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []string
+	for _, e := range log {
+		rows = append(rows, fmt.Sprintf("%s %s ok=%v done=%v %s %s", e.Client, e.Cmd, e.OK, e.Done, e.Error, e.Args))
+	}
+	want := []string{
+		`no-req floor.sleep ok=false done=true commands need a req_id {"session":"s"}`,
+		`no-req floor.wake ok=false done=true commands need a req_id {"session":"s"}`,
+		`no-req floor.settings.set ok=false done=true commands need a req_id {"session":"s","repo":"o/r"}`,
+		`no-req building.create ok=false done=true commands need a req_id {"name":"NoReq"}`,
+		`no-req building.create ok=true done=true  {"name":"Still works"}`,
+	}
+	if !slices.Equal(rows, want) {
+		t.Fatalf("audit =\n%s\nwant\n%s", strings.Join(rows, "\n"), strings.Join(want, "\n"))
+	}
+	if all, err := b.st.FloorSettings(context.Background()); err != nil || len(all) != 0 {
+		t.Fatalf("a command without req_id was applied: %+v %v", all, err)
 	}
 }
 

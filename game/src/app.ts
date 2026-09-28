@@ -1,12 +1,13 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { BridgeClient, type ConnState, type SocketLike } from './net/client';
+import { BridgeClient, type CommandResult, type ConnState, type SocketLike } from './net/client';
 import { bridgeUrl, takeToken } from './net/endpoint';
-import type { WorldEvent } from './net/protocol';
+import type { CommandArgs, CommandName, WorldEvent } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { OfficeView, REACH, type Target } from './render/office';
 import { Hud, type PlanLabel } from './ui/hud';
+import { Panels } from './ui/panels';
 import { Walker } from './input/walk';
 import { blocked } from './world/collide';
 import { EYE_HEIGHT } from './world/layout';
@@ -43,6 +44,11 @@ export class App {
   readonly hud: Hud;
   readonly city: CityView;
   readonly client: BridgeClient;
+  readonly panels: Panels;
+  /** Commands sent to the bridge, in order (test hook). */
+  readonly sent: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
+  /** Commands the bridge answered `unknown_command` for: an older bridge. */
+  private readonly unsupported = new Set<CommandName>();
   mode: Mode = 'city';
   office: OfficeView | null = null;
   /** Worker id → status on screen as of the last rendered frame, and when it got there. */
@@ -83,7 +89,13 @@ export class App {
     this.batterySaver = o.params.get('battery') === '1';
     this.hud = new Hud(o.host);
     this.hud.setBattery(this.batterySaver);
-    this.city = new CityView(this.hud.floorList, this.shadows, (s) => void this.enterFloor(s));
+    this.city = new CityView(
+      this.hud.floorList,
+      this.shadows,
+      (s) => void this.enterFloor(s),
+      this.hud.buildingList,
+      (b) => this.openElevator(b),
+    );
     this.city.badges = o.params.get('badges') !== '0';
 
     this.cityCam = new THREE.PerspectiveCamera(42, 1, 0.1, 600);
@@ -132,7 +144,21 @@ export class App {
       },
     });
 
+    this.panels = new Panels(o.host, {
+      store: this.store,
+      here: () => (this.mode === 'floor' && this.office ? this.office.session : null),
+      send: (t, args) => this.send(t, args),
+      unsupported: (t) => this.unsupported.has(t),
+      travel: (s) => {
+        this.panels.close();
+        void this.enterFloor(s);
+      },
+      toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 6500 : 3600, kind),
+    });
+
     this.hud.on('city', () => void this.leaveFloor());
+    this.hud.on('buildings', () => this.openBuildings());
+    this.hud.on('elevator', () => !this.transitioning && this.openElevator());
     this.hud.on('battery', () => this.toggleBattery());
     this.hud.on('issues', () => this.openBoard('Issues'));
     this.hud.on('prs', () => this.openBoard('Pull requests'));
@@ -191,6 +217,35 @@ export class App {
     }
     this.refreshTopbar();
     this.updateNotice();
+    if (this.mode === 'floor') this.updateHint();
+    this.panels.refresh();
+  }
+
+  // ---- commands and panels ------------------------------------------------------
+
+  /** Sends a command; remembers commands an older bridge does not know. */
+  async send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult> {
+    const entry: (typeof this.sent)[number] = { t, args };
+    this.sent.push(entry);
+    const r = await this.client.request(t, args);
+    entry.result = r;
+    if (!r.ok && r.code === 'unknown_command') this.unsupported.add(t);
+    return r;
+  }
+
+  /** The elevator panel of a building (null: the unassigned lot); on a floor, of its own building. */
+  openElevator(building?: string | null): void {
+    const here = this.mode === 'floor' && this.office ? this.office.session : null;
+    const b = building !== undefined ? building : here ? this.panels.buildingOf(here) : null;
+    this.walker.release();
+    this.walker.stop();
+    this.panels.openElevator(b);
+  }
+
+  openBuildings(): void {
+    this.walker.release();
+    this.walker.stop();
+    this.panels.openBuildings();
   }
 
   private refreshTopbar(): void {
@@ -365,6 +420,7 @@ export class App {
   private openBoard(which: string): void {
     this.walker.release();
     this.walker.stop();
+    this.panels.close();
     const floor = this.office?.session ?? 'this floor';
     this.hud.sheet(`${which} · ${floor}`, `This overlay arrives in M7. It will list ${which === 'Issues' ? 'the open GitHub issues' : 'the open pull requests'} for ${floor}, so you can read them without walking to the board.`);
   }
@@ -374,10 +430,13 @@ export class App {
       this.hud.setHint(this.city.isEmpty ? null : 'Drag to orbit · Scroll to zoom · <strong>Click a floor</strong> to go inside');
       return;
     }
-    if (this.planOpen) this.hud.setHint('<strong>Click</strong> the floor to walk there · WASD walks · <strong>Tab</strong> back to first person');
+    const fv = this.office ? this.store.floorView(this.office.session) : null;
+    const asleep = fv?.asleep && !fv.transition ? 'This floor is asleep: the elevator (<strong>L</strong>) wakes it · ' : '';
+    if (this.planOpen) this.hud.setHint('<strong>Click</strong> the floor to walk there · WASD walks · <strong>L</strong> elevator · <strong>Tab</strong> back to first person');
     else if (this.walker.locked) this.hud.setHint(null);
-    else if (!this.walker.lockAvailable) this.hud.setHint('WASD walks · Shift runs · <strong>Tab</strong> floor plan (mouse look is unavailable here)');
-    else this.hud.setHint('<strong>Click</strong> to look around · WASD walks · Shift runs · <strong>Tab</strong> floor plan · Esc releases the mouse');
+    else if (asleep) this.hud.setHint(`${asleep}<strong>Click</strong> to look around · WASD walks · <strong>← →</strong> turn`);
+    else if (!this.walker.lockAvailable) this.hud.setHint('WASD walks · <strong>← →</strong> turn · <strong>L</strong> elevator · <strong>Tab</strong> floor plan (mouse look is unavailable here)');
+    else this.hud.setHint('<strong>Click</strong> to look around · WASD walks · <strong>← →</strong> turn · <strong>L</strong> elevator · <strong>Tab</strong> floor plan · Esc releases the mouse');
   }
 
   // ---- input -------------------------------------------------------------------
@@ -409,7 +468,8 @@ export class App {
       if (this.walker.key(e, false) && this.mode === 'floor') e.preventDefault();
       return;
     }
-    if (this.hud.sheetOpen) return;
+    // Open dialogs (sheet, panels, confirmations) handle their own keys.
+    if (this.hud.sheetOpen || this.panels.open) return;
     const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     if (typing) return;
     this.activity(true);
@@ -428,6 +488,16 @@ export class App {
         this.walker.release();
         this.hud.focusTopbar();
       }
+    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'elevator') {
+      e.preventDefault();
+      this.openElevator();
+    } else if (e.code === 'KeyL' && this.mode === 'floor' && !this.transitioning && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      // The elevator from anywhere on the floor (the top bar has it too).
+      e.preventDefault();
+      this.openElevator();
+    } else if (e.code === 'KeyM' && this.mode === 'city' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      this.openBuildings();
     } else if (e.code === 'KeyB' && !e.metaKey && !e.ctrlKey) {
       this.toggleBattery();
     } else if (e.code === 'Backspace' && this.mode === 'floor') {
@@ -471,8 +541,13 @@ export class App {
       const s = this.cityRayFloor(e);
       if (!s) return;
       const b = this.city.buildingOf(s);
-      if (b !== null && this.focus !== b) this.focusBuilding(b);
-      else void this.enterFloor(s);
+      // First click on a building: focus it and open its elevator panel; on
+      // the focused building, a click on a floor goes straight inside.
+      if (b !== null && this.focus !== b) {
+        this.focusBuilding(b);
+        const id = this.city.buildingId(b);
+        if (id !== undefined) this.openElevator(id);
+      } else void this.enterFloor(s);
       return;
     }
     if (!this.planOpen) this.walker.requestLock();
@@ -676,6 +751,16 @@ export class App {
 
   get time(): number {
     return this.lastT;
+  }
+
+  /** Screen point (CSS px) of a floor itself in the city view (to click its building). */
+  floorPoint(session: string): { x: number; y: number } | null {
+    return this.mode === 'city' ? this.city.floorPoint(this.cityCam, session, this.vp) : null;
+  }
+
+  /** Lights of the office on screen: off on an asleep floor. */
+  get officeAsleep(): boolean | null {
+    return this.office?.isAsleep ?? null;
   }
 
   /** Screen point (CSS px) of a floor's badge in the city view. */

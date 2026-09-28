@@ -1,0 +1,81 @@
+package codex
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func rollout(t *testing.T, root, day, stamp, id, cwd string) {
+	t.Helper()
+	dir := filepath.Join(root, filepath.FromSlash(day))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"timestamp":"x","type":"session_meta","payload":{"id":"` + id + `","cwd":"` + cwd +
+		`","base_instructions":{"text":"` + strings.Repeat("x", 100<<10) + `"}}}` + "\n" +
+		`{"type":"turn_context","payload":{"cwd":"/elsewhere"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "rollout-"+stamp+"-"+id+".jsonl"), []byte(meta), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFindSession(t *testing.T) {
+	root := t.TempDir()
+	rollout(t, root, "2026/09/27", "2026-09-27T23-00-00", "01a0-old", "/home/u/repo")
+	rollout(t, root, "2026/09/28", "2026-09-28T10-00-00", "01a0-morning", "/home/u/repo")
+	rollout(t, root, "2026/09/28", "2026-09-28T12-00-00", "01a0-noon", "/home/u/other")
+	rollout(t, root, "2026/09/28", "2026-09-28T09-00-00", "01a0-early", "/home/u/repo/")
+	// Not rollouts, or not parseable.
+	if err := os.WriteFile(filepath.Join(root, "2026", "09", "28", "notes.txt"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "2026", "09", "28", "rollout-2026-09-28T23-59-59-bad.jsonl"), []byte("garbage\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rollout(t, root, "2026/09/28", "2026-09-28T23-00-00", "bad id!", "/home/u/repo")
+
+	for _, tc := range []struct {
+		cwd  string
+		skip []string
+		want string
+	}{
+		{"/home/u/repo", nil, "01a0-morning"},
+		{"/home/u/repo/", nil, "01a0-morning"},
+		{"/home/u/repo", []string{"01a0-morning"}, "01a0-early"},
+		{"/home/u/repo", []string{"01a0-morning", "01a0-early"}, "01a0-old"},
+		{"/home/u/repo", []string{"01a0-morning", "01a0-early", "01a0-old"}, ""},
+		{"/home/u/other", nil, "01a0-noon"},
+		{"/home/u/none", nil, ""},
+		{"", nil, ""},
+	} {
+		skip := func(id string) bool {
+			for _, s := range tc.skip {
+				if s == id {
+					return true
+				}
+			}
+			return false
+		}
+		got, err := FindSession(root, tc.cwd, skip)
+		if err != nil || got != tc.want {
+			t.Errorf("FindSession(%q, skip %v) = %q, %v; want %q", tc.cwd, tc.skip, got, err, tc.want)
+		}
+	}
+	if got, err := FindSession(filepath.Join(root, "missing"), "/home/u/repo", nil); got != "" || err != nil {
+		t.Errorf("missing root: %q, %v", got, err)
+	}
+}
+
+func TestDefaultSessionsDir(t *testing.T) {
+	t.Setenv("CODEX_HOME", "/opt/codex")
+	if got := DefaultSessionsDir(); got != "/opt/codex/sessions" {
+		t.Errorf("with CODEX_HOME: %q", got)
+	}
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("HOME", "/home/u")
+	if got := DefaultSessionsDir(); got != "/home/u/.codex/sessions" {
+		t.Errorf("default: %q", got)
+	}
+}

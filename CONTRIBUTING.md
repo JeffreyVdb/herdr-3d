@@ -4,9 +4,11 @@
 
 - `cmd/herdr-world` — server-side bridge daemon (Go).
 - `cmd/h3d-helper` — Mac-side helper (Go, cross-compiled for `darwin/arm64`).
-- `internal/` — shared Go packages. Bridge: `herdr` (the only herdr client, read-only), `watch` (session discovery and
-  per-session watchers), `world` (floors/workers from snapshots and `session.json`, identity matching, worker names),
-  `store` (SQLite), `server` (hub + WebSocket), `proto` (protocol v1 types and client). Helper: `helper` (ssh tunnel
+- `internal/` — shared Go packages. Bridge: `herdr` (the only door to herdr: the read-only client and the allowlisted
+  control surface for wake/sleep), `watch` (session discovery and per-session watchers), `world` (floors/workers from
+  snapshots and `session.json`, identity matching, worker names), `store` (SQLite), `server` (hub + WebSocket, wake/sleep,
+  floor settings), `proto` (protocol v1 types and client), `gitremote` (GitHub origin of a directory, for the repo
+  suggestion), `codex` (Codex session ids from rollout files, for the sleep backfill). Helper: `helper` (ssh tunnel
   supervisor, game server, `/ws` proxy). `app` holds both command lines.
 - `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).
 - `game/` — the game: Vite + strict TypeScript + three.js (`three/webgpu`), pnpm.
@@ -20,7 +22,7 @@ Go 1.27 (see `go.mod`), Node 24.18 (`game/.nvmrc`), pnpm 11.7 (`packageManager` 
 
 ```sh
 make build test lint   # Go binaries -> bin/, game bundle -> game/dist/, go test + vitest, vet/gofmt/tsc
-make integration       # bridge against a real herdr in a throwaway session (see below)
+make integration       # bridge against a real herdr (and systemd-run) in throwaway sessions (see below)
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
 make dev               # Vite dev server on a portlease-leased port, 127.0.0.1 only
 make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check)
@@ -38,10 +40,22 @@ make shot              # headless WebGL2 screenshot -> game/test-results/shot.pn
 
 ## Bridge (`herdr-world`)
 
-Protocol: [`docs/protocol.md`](docs/protocol.md). The bridge only **reads** herdr: every herdr call goes through
-`internal/herdr`, whose socket methods are allowlisted to `ping`, `session.snapshot` and `events.subscribe` (plus
-`herdr session list --json`). `TestReadOnlyAllowlist` is the tripwire; widening it needs review. Its own state is the
-SQLite database.
+Protocol: [`docs/protocol.md`](docs/protocol.md). Every herdr call goes through `internal/herdr`, in two allowlisted
+parts:
+
+- **Reads** (`herdr.Client`): the socket methods `ping`, `session.snapshot` and `events.subscribe`, plus `herdr session
+  list --json`. `TestReadOnlyAllowlist` is the tripwire.
+- **Writes, for `floor.wake` / `floor.sleep` only** (`herdr.Control`): exactly six command shapes (`controlShapes`):
+  `systemd-run --user --unit=herdr-s-<name> … /bin/fish -l -c "exec herdr --session '<name>' server"`, `herdr session
+  stop <name> --json`, `herdr --session <name> pane run <pane> "claude --resume <id>"` / `"codex resume <id>"`, `herdr
+  --session <name> pane report-agent-session <pane> --source herdr:codex --agent codex --agent-session-id <id>`, and
+  the read-only `herdr --session <name> pane process-info --pane <pane>`. Session names, pane ids and agent session ids
+  are validated, every argument is its own argv element, sessions outside `--sessions` are refused, and commands run
+  with the `HERDR_*`/`CLAUDE*` variables stripped. `TestControlAllowlist` pins the set and the argv; widening either
+  needs review.
+
+Everything else the bridge changes is its own SQLite database. How a wake and a sleep go, and what they log:
+[`docs/protocol.md` "Wake and sleep"](docs/protocol.md#wake-and-sleep).
 
 Run a private instance next to (or instead of) the real one; `dump` and `cmd` take the same `--socket`:
 
@@ -53,17 +67,43 @@ bin/herdr-world dump --socket "$sock"            # snapshot, then events as JSON
 bin/herdr-world dump --socket "$sock" --once | jq '.world.floors'
 bin/herdr-world cmd --socket "$sock" building.create '{"name":"Work"}'
 bin/herdr-world cmd --socket "$sock" floor.assign '{"session":"herdr-3d","building":"b_…"}'
+bin/herdr-world cmd --socket "$sock" floor.settings.set '{"session":"herdr-3d","repo":"JeffreyVdb/herdr-3d"}'
 ```
+
+A private bridge acts on real sessions as soon as it is sent `floor.sleep` or `floor.wake`. Always start it with a
+`--sessions` that matches only your throwaway sessions (e.g. `'^h3d-mytask-'`), so it cannot even see the sessions
+everyone works in. To try wake and sleep safely:
+
+```sh
+s=h3d-mytask-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')
+systemd-run --user --unit=herdr-s-$s --collect -p KillMode=process --working-directory=$HOME \
+  /bin/fish -l -c "exec herdr --session '$s' server"            # the bridge's own start command
+env -u HERDR_ENV -u HERDR_SESSION -u HERDR_SOCKET_PATH herdr --session $s workspace create --cwd /tmp --label demo --no-focus
+bin/herdr-world --socket "$sock" --db /tmp/h3d-mytask/world.db --sessions '^h3d-mytask-' &
+bin/herdr-world cmd --socket "$sock" floor.sleep "{\"session\":\"$s\"}"   # herdr session stop
+bin/herdr-world cmd --socket "$sock" floor.wake  "{\"session\":\"$s\"}"   # systemd-run, resume checks
+sqlite3 /tmp/h3d-mytask/world.db 'select cmd, ok, error, result from audit_log'
+bin/herdr-world cmd --socket "$sock" floor.sleep "{\"session\":\"$s\"}" && herdr session delete $s
+systemctl --user list-units --all 'herdr-s-*'                     # the unit is gone (--collect)
+```
+
+Real agents in such a session must be cheap: `claude --model claude-haiku-4-5-20251001 --effort low`, `codex -m
+gpt-6-luna -c model_reasoning_effort=low`, one short turn. Never sleep or wake a session you did not create, and never
+`systemctl stop` a `herdr-s-*` unit that `herdr session stop` can stop (it loses the agents' resume link).
 
 | flag | env | default |
 |---|---|---|
 | `--socket` | `HERDR_WORLD_SOCKET` | `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` |
 | `--db` (serve) | `HERDR_WORLD_DB` | `$XDG_STATE_HOME/herdr-world/world.db`, else `~/.local/state/herdr-world/world.db` |
-| `--herdr` | `HERDR_WORLD_HERDR` | `herdr` on `PATH` |
-| `--sessions` | `HERDR_WORLD_SESSIONS` | all; a regexp limits which sessions are watched |
+| `--herdr` | `HERDR_WORLD_HERDR` | `herdr` on `PATH` (a woken server runs `herdr` from the login shell's `PATH`) |
+| `--systemd-run` | `HERDR_WORLD_SYSTEMD_RUN` | `systemd-run` on `PATH`: starts woken sessions |
+| `--sessions` | `HERDR_WORLD_SESSIONS` | all; a regexp limits which sessions are watched, and the only ones commands may wake, sleep or configure |
 | `--poll`, `--resnapshot` | `HERDR_WORLD_POLL`, `HERDR_WORLD_RESNAPSHOT` | `2s`, `30s` |
 | `--max-desks` | `HERDR_WORLD_MAX_DESKS` | `96`: cap on the desks a floor renders beyond its occupied ones (`floor.desks`) |
 | `--name-hold` | `HERDR_WORLD_NAME_HOLD` | `168h` (7 days): how long a worker's name stays held after the bridge sees it leave its floor; then a newcomer may take it (`worker.name`) |
+| `--wake-timeout` | `HERDR_WORLD_WAKE_TIMEOUT` | `10s`: how long a woken server has to start, answer `ping` and be seen running (else `wake_failed`) |
+| `--resume-timeout` | `HERDR_WORLD_RESUME_TIMEOUT` | `10s`: how long a wake waits for the agents before the fallback, and again for the fallback and its result (a wake acks within about `--wake-timeout` + 2 × this) |
+| `--codex-sessions` | `HERDR_WORLD_CODEX_SESSIONS` | `$CODEX_HOME/sessions`, else `~/.codex/sessions`: Codex rollouts, for the sleep backfill |
 | `--log-level`, `--log-format` | `HERDR_WORLD_LOG_LEVEL`, `HERDR_WORLD_LOG_FORMAT` | `info`, `text` (or `json`) |
 
 Install as a user service:
@@ -77,14 +117,24 @@ journalctl --user -u herdr-world -f
 
 ### Integration test
 
-`go test ./...` never touches herdr (fake socket server + recorded fixtures). `make integration` runs
-`TestIntegrationThrowawaySession` (build tag `integration`) against the installed herdr: it starts a headless server for
-a fresh session `h3d-it-<random>`, creates workspaces, reports a custom agent's states through `herdr pane report-agent`
-(no real coding agent), closes a workspace, stops the session, and asserts the bridge's events. It always passes
-`--session h3d-it-…` explicitly, strips `HERDR_*`/`CLAUDE*` pane variables from herdr's environment, and stops and deletes
-the session in `t.Cleanup`, also on failure. It never touches any other session, so it is safe to run from inside a
-herdr pane. If a run is killed hard, check `herdr session list` for a leftover `h3d-it-*` session and
-`herdr session stop`/`delete` it.
+`go test ./...` never touches herdr or systemd (fake socket server + recorded fixtures; `herdr.Control` gets a fake
+`Runner` that plays herdr and systemd-run). `make integration` runs, with build tag `integration`, against the
+installed herdr:
+
+- `TestIntegrationThrowawaySession`: starts a headless server for a fresh session `h3d-it-<random>`, creates
+  workspaces, reports a custom agent's states through `herdr pane report-agent` (no real coding agent), closes a
+  workspace, stops the session, and asserts the bridge's events.
+- `TestIntegrationSleepWake`: puts a throwaway floor with two workspaces to sleep with `floor.sleep`, wakes it with
+  `floor.wake` through the real `systemd-run` path, and checks the workers keep their ids, desks and names, the
+  transient unit `herdr-s-h3d-it-…` runs the server, and that server has none of the test's `CLAUDE*`/`HERDR_*`
+  variables.
+
+Both always name the `h3d-it-…` session explicitly, and the bridge under test watches only that session. They strip
+`HERDR_*`/`CLAUDE*` pane variables from herdr's environment and in `t.Cleanup`, also on failure, stop the session with
+`herdr session stop`, wait for the `herdr-s-h3d-it-…` unit to be collected (stopping it only as a last resort) and
+delete the session. They never touch any other session, so they are safe to run from inside a herdr pane. If a run is
+killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herdr session stop`/`delete` it) and
+`systemctl --user list-units --all 'herdr-s-h3d-it-*'`.
 
 ## Helper (`h3d-helper`, Mac)
 
@@ -174,53 +224,88 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
 `game/` is Vite + strict TypeScript + three.js r186 (`three/webgpu`, WebGL2 fallback). Layout:
 
 - `src/net` — protocol v1 client (hello → welcome → snapshot | replay → events, reconnect with backoff from
-  `since_seq` + `epoch`) and the endpoint: same-origin `/ws?token=…` (the helper opens `/#token=<token>`; the game
+  `since_seq` + `epoch`; commands through `request(t, args)`, matched to their `ack` / `error` by `req_id`, with a
+  per-command timeout: 10 s, `floor.sleep` 30 s, `floor.wake` 60 s since its ack waits for every agent; a drop fails
+  what is in flight) and the endpoint: same-origin `/ws?token=…` (the helper opens `/#token=<token>`; the game
   keeps it in `sessionStorage` as `h3d.token` and strips it from the URL), `?ws=<url>` to point elsewhere.
 - `src/world` — the world store (snapshot + events, fallbacks for an older bridge without `name`, `desk_index`,
-  `harness`, `model`, `effort`, `status_since`, `floor.desks`), the deterministic office layout for a desk count,
-  walking collision and ray picking. Pure logic, covered by vitest.
+  `harness`, `model`, `effort`, `status_since`, `floor.desks`, and M3's `transition`, `settings`, `suggested`,
+  `resume`, `hire_options`), the deterministic office layout for a desk count, walking collision and ray picking,
+  floor-settings validation and diffing (`settings.ts`) and building/floor reordering (`arrange.ts`). Pure logic,
+  covered by vitest.
 - `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy.
   Cards and city badges are canvas atlases drawn as one instanced quad batch each (a cell per worker / floor, redrawn
   only when it changes). A DOM layer was benchmarked on the Mac and lost: moving DOM elements over the canvas cost
   2.6–4.3 ms of main thread per frame for 24 cards and ~8 ms for 30 city badges, against 0.5 ms for the atlas. The DOM
   keeps a static floor list for keyboards and screen readers.
-- `src/ui` — the HUD (DOM over the canvas). `src/input` — first-person walking.
-- `fixtures/` — recorded bridge streams (`herdr-world dump` format): `demo` (2 buildings, 3 floors, 40 workers),
-  `perf-floor60`, `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
-- `tools/` — fixture server, dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
+- `src/ui` — the HUD (DOM over the canvas) and the M3 panels (`panels.ts`: elevator, buildings, floor settings,
+  confirmations; modal `<dialog>`s that re-render live and keep focus). `src/input` — first-person walking.
+- `fixtures/` — recorded bridge streams (`herdr-world dump` format): `demo` (2 buildings, 3 floors, 40 workers; an M2
+  bridge), `demo-m3` (the same city as an M3 bridge sends it: settings, suggestions, hire options, a floor in the
+  unassigned lot; no events), `perf-floor60`, `perf-city240`. `pnpm fixtures` regenerates them, `pnpm fixtures:check` flags stale files.
+- `tools/` — fixture server (read-only by default; with `sim=1` it simulates the bridge's commands in memory,
+  `fixture-sim.ts`), dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
 
 Run it:
 
 ```sh
 make dev   # then open http://127.0.0.1:<port>/?ws=/fixture/demo   (Vite serves fixtures at /fixture/<name>)
+           # M3 panels without a bridge: ?ws=%2Ffixture%2Fdemo-m3%3Fsim%3D1   (the ws value URL-encoded)
 pnpm -C game fixture-server   # standalone fixture server on a leased port: ?ws=ws://127.0.0.1:<port>/ws
+pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering commands on every connection
 # against a private bridge: node game/tools/ws-unix-proxy.ts --port <leased> --socket <bridge.sock>, then ?ws=ws://127.0.0.1:<leased>/ws
 ```
 
 | query param | effect |
 |---|---|
-| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>` |
+| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep steps, default 600; `simfail=wake_failed\|sleep_failed` fails the next one) |
 | `backend=webgl2` | force WebGL2 |
 | `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |
 | `ts` | GPU timestamp queries (for `bench`) |
 | `shadows=0`, `badges=0`, `battery=1` | no shadows; no city badges (perf comparisons); start in battery saver |
 
-Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and a floor (or its badge) to go
-inside. On a floor, click for mouse look (Pointer Lock), WASD / arrows to walk, Shift to run, Esc releases the mouse,
+Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
+floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings
+panel: create, rename, delete (confirmed: it names the building and how many floors go back to the lot), move buildings
+and floors up / down, and move a floor to another building (on top) or to the unassigned lot. Changes save at once;
+Esc closes a panel (and cancels a rename first). On a floor, click for mouse look (Pointer Lock), WASD / ↑ ↓ to walk,
+← → to turn on the spot (A / D strafe), Shift to run, Esc releases the mouse,
 Tab toggles the floor plan (click the plan to walk there; it is also the fallback when pointer lock is refused),
 Backspace or the City button goes back, B toggles battery saver (60 Hz moving / 30 Hz idle instead of 120 / 60).
-Keyboard: in the city, Tab reaches the floor list (Enter goes inside). On a floor, Shift+Tab moves focus to the top
-bar (City, Issues, PRs, battery saver); Tab / Shift+Tab then move between its buttons as usual and Enter presses one.
-Tab toggles the plan only while nothing but the scene has focus; clicking the scene gives it focus back.
+Look at the elevator (south wall, behind you on arrival) and press **E**, or press **L** / the top bar's Elevator
+button from anywhere on the floor, for the elevator panel: the building's floors
+top to bottom (the lot's floors by name), lit where you are, with running / asleep, working / needs you / idle (asleep:
+the worker count), **Wake floor** / **Sleep floor** (confirmed: it names the floor and who is working or waiting), wake
+and sleep progress with each agent's resume, and **Settings** per floor. Pick a floor (click, or ↑ / ↓ and Enter) to
+ride the doors there. Floor settings: linked repo (the bridge's suggestion is pre-filled and marked until saved),
+GitHub Project owner + number, the status field (its name and one row per status, in board order: add, move up / down,
+remove; any label round-trips, commas included; it needs no project; the default Status / Todo, Doing, QA, Done is
+marked as such and only stored once changed; emptying the name and every status clears it), default folder and
+default hire (harness → model → effort from the bridge's `hire_options`); validated like the bridge, and Save sends
+only the keys that changed (`null` clears; statuses nobody touched are never re-sent). On an
+older bridge a command it does not know shows why and its button stays disabled after that.
+Keyboard: in the city, Tab reaches the floor list (Enter goes inside), then the building list (Enter opens that
+building's elevator panel, the lot's too). On a floor, Shift+Tab moves focus to the top
+bar (City, Issues, PRs, Elevator, battery saver); Tab / Shift+Tab then move between its buttons as usual and Enter
+presses one. **L** opens the elevator directly and ← → turn, so travel, wake / sleep and floor settings need no mouse.
+Tab toggles the plan only while nothing but the scene has focus; clicking the scene gives it focus back. Panels
+re-render live and keep focus, the header's Back / Close included.
 
 Tests:
 
 ```sh
-make test lint                # vitest + tsc (protocol client, store, layout, collision, cards, frame policy, fixtures)
+make test lint                # vitest + tsc (protocol client and requests, store, layout, collision, cards, frame
+                              # policy, fixtures, settings validation/diffing, reordering, the command simulation)
 make shot                     # Playwright WebGL2: game/test-results/{shot,m2-city,m2-floor-plan,m2-desk-row}.png,
                               # scripted look-at path, floor entry, keyboard focus, live plan labels, events
-                              # during the elevator ride, held keys across floors, small-window plan
+                              # during the elevator ride, held keys across floors, small-window plan; M3 on the
+                              # simulating fixture server: m3-{buildings,elevator,settings,statuses,sleep-confirm,
+                              # wake-progress,topbar-elevator}.png, buildings from the keyboard, elevator via E
+                              # (turning with the arrows), L, the top bar and a city click, keyboard-only travel /
+                              # wake / sleep / settings, the status rows, header focus across live updates,
+                              # sleep/wake, a failed wake, and an older read-only bridge
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
+pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
 ```
 
@@ -232,6 +317,16 @@ and the WebSocket → unix-socket proxy on a leased 127.0.0.1 port. The spec fli
 to the label, desk to the lowest free local slot) and the M2 bridge (its own `name` and `desk_index`). The session is stopped and deleted
 afterwards; after a hard kill, check `herdr session list` for a leftover `h3d-m2game-*` session.
 
+`test:live:m3` builds the bridge the same way (or `H3D_LIVE_BRIDGE=<path>`), starts `h3d-m3game-<random>` with two
+plain-shell workspaces (no coding agents) and the proxy to `$XDG_RUNTIME_DIR/h3d-m3game/bridge.sock`; the spec
+(`e2e-live/m3.spec.ts`) runs its own private bridge on it (db `/tmp/h3d-m3game/world.db`, `--sessions
+'^h3d-m3game-…$'`) so it can restart it. It creates a building and moves the floor into it from the UI, restarts the
+bridge and checks both are still there, then sleeps the floor and wakes it from the elevator panel and checks every
+worker kept its desk, and saves floor settings from the panel (a status with a comma among them) and checks the
+restarted bridge still has them and that saving one other key sends only that key. On a
+bridge without `floor.wake` / `floor.settings.set` (it answers `unknown_command`) those tests are skipped and say so. Afterwards the session is stopped and deleted and the `herdr-s-h3d-m3game-…` unit a wake started is
+removed; after a hard kill, check `herdr session list` and `systemctl --user list-units 'herdr-s-h3d-*'`.
+
 `perf:mac` serves `game/dist` on a leased port P and opens `ssh -o ControlMaster=no -o ControlPath=none -N -R
 127.0.0.1:P:127.0.0.1:P devmac`, so the Mac page is on its own loopback (a secure context: WebGPU).
 It pipes `tools/mac-runner.mjs` into `/opt/homebrew/bin/node` in `~/h3d-tools` (playwright-core, headless Chrome at
@@ -242,4 +337,10 @@ pipelined throughput, GPU timestamps, and rAF frames that include DOM layout.
 or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
 sent, `bridgeName`/`bridgeDesk`, null from an older bridge), `layout(session)`, `enterFloor(session, pose?)`,
 `leaveFloor()`, `inject(event)` (applies a protocol event as if the bridge sent it), `setPose({x, z, yaw, pitch})`,
-`pose()`, `plan(open)`, `focusBuilding(i)`, `cards()`, `badgePoint(session)`, `bench(opts)`.
+`pose()`, `plan(open)`, `focusBuilding(i)`, `cards()`, `badgePoint(session)`, `bench(opts)`. M3: `view().asleep`
+(the office's lights are off), `world()[].building` (its name, null in the lot), `openElevator(building?)` (a building
+id, null for the lot, nothing for the current floor's), `openBuildings()`, `openSettings(session)`, `panel()` (what the open panel shows:
+elevator rows with state, transition, counts, current, wake/sleep and resume; buildings; the settings form, its
+statuses one per row, and whether the repo is the suggestion / the status field the default; any
+confirmation; the status line), `sent()` (commands sent, with their results), `floorPoint(session)` (a floor's screen
+point in the city, to click its building), `connection()` → `{phase, epoch}`.

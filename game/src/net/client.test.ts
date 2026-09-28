@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BridgeClient,
+  DEFAULT_COMMAND_TIMEOUT_MS,
   backoffDelay,
   eventDecision,
   helloFor,
@@ -257,5 +258,95 @@ describe('BridgeClient', () => {
     h.client.stop();
     expect(h.timers.queue).toHaveLength(0);
     expect(h.client.state).toEqual({ phase: 'stopped' });
+  });
+});
+
+describe('BridgeClient.request', () => {
+  const live = () => {
+    const h = harness();
+    h.client.start();
+    const s = h.last();
+    s.open();
+    s.recv({ t: 'welcome', proto: 1, server_seq: 5, epoch: 'E', resume: 'snapshot' });
+    s.recv(snapshot(5));
+    return { ...h, s };
+  };
+
+  it('sends the command with a fresh req_id and resolves with the ack data', async () => {
+    const h = live();
+    const p = h.client.request('building.create', { name: 'Work' });
+    const sent = h.s.sent.at(-1) as { t: string; req_id: string; args: unknown };
+    expect(sent).toMatchObject({ t: 'building.create', args: { name: 'Work' } });
+    expect(sent.req_id).toBeTruthy();
+    const q = h.client.request('building.create', { name: 'Home' });
+    const second = h.s.sent.at(-1) as { req_id: string };
+    expect(second.req_id).not.toBe(sent.req_id);
+    h.s.recv({ t: 'ack', req_id: second.req_id });
+    h.s.recv({ t: 'ack', req_id: sent.req_id, data: { id: 'b_1' } });
+    expect(await p).toEqual({ ok: true, data: { id: 'b_1' } });
+    expect(await q).toEqual({ ok: true, data: undefined });
+  });
+
+  it('applies the events a command causes before its promise resolves', async () => {
+    const h = live();
+    const p = h.client.request('floor.assign', { session: 's', building: null });
+    const { req_id } = h.s.sent.at(-1) as { req_id: string };
+    h.s.recv(status(6));
+    h.s.recv({ t: 'ack', req_id });
+    await p;
+    expect(h.got).toEqual(['snap@5', 'worker.status@6']);
+  });
+
+  it('resolves an error reply as a failure with its code, and keeps the connection', async () => {
+    const h = live();
+    const p = h.client.request('floor.wake', { session: 's' });
+    const { req_id } = h.s.sent.at(-1) as { req_id: string };
+    h.s.recv({ t: 'error', req_id, code: 'unknown_command', message: 'unknown command "floor.wake"' });
+    expect(await p).toEqual({ ok: false, code: 'unknown_command', message: 'unknown command "floor.wake"' });
+    expect(h.client.state.phase).toBe('live');
+    expect(h.s.closed).toBeNull();
+  });
+
+  it('fails at once when not connected', async () => {
+    const h = harness();
+    h.client.start();
+    expect(await h.client.request('building.delete', { id: 'b' })).toMatchObject({ ok: false, code: 'offline' });
+    expect(h.last().sent).toEqual([]);
+  });
+
+  it('times out per command: a slow floor.wake ack is not a failure at the default timeout', async () => {
+    const h = live();
+    const wake = h.client.request('floor.wake', { session: 's' });
+    const create = h.client.request('building.create', { name: 'x' });
+    const timeouts = h.timers.queue.map((t) => t.ms).sort((a, b) => a - b);
+    expect(timeouts[0]).toBe(DEFAULT_COMMAND_TIMEOUT_MS);
+    expect(timeouts[1]).toBeGreaterThanOrEqual(45_000); // wake answers after every worker resumed (~20 s)
+    // The short one fires first; the wake is still pending and gets its late ack.
+    h.timers.queue.sort((a, b) => a.ms - b.ms);
+    h.timers.fire();
+    expect(await create).toMatchObject({ ok: false, code: 'timeout' });
+    const { req_id } = h.s.sent.find((m) => (m as { t: string }).t === 'floor.wake') as { req_id: string };
+    h.s.recv({ t: 'ack', req_id, data: { workers: [] } });
+    expect(await wake).toEqual({ ok: true, data: { workers: [] } });
+    expect(h.timers.queue).toHaveLength(0);
+  });
+
+  it('ignores an ack that arrives after its timeout', async () => {
+    const h = live();
+    const p = h.client.request('building.rename', { id: 'b', name: 'n' }, { timeoutMs: 100 });
+    const { req_id } = h.s.sent.at(-1) as { req_id: string };
+    h.timers.fire();
+    expect(await p).toMatchObject({ ok: false, code: 'timeout' });
+    h.s.recv({ t: 'ack', req_id });
+    h.s.recv(status(6));
+    expect(h.got).toEqual(['snap@5', 'worker.status@6']);
+  });
+
+  it('fails pending commands when the connection drops (they may still have run)', async () => {
+    const h = live();
+    const p = h.client.request('floor.sleep', { session: 's' });
+    h.s.drop(1001, 'going away');
+    expect(await p).toMatchObject({ ok: false, code: 'disconnected' });
+    expect(h.timers.queue.map((t) => t.ms)).toEqual([500]); // only the reconnect timer is left
   });
 });

@@ -290,3 +290,52 @@ func TestWatchDegraded(t *testing.T) {
 		t.Fatalf("recovered = %+v", f)
 	}
 }
+
+// TestWatchRescanAndAgentDetected: a rescan request looks at sessions right
+// away (a woken session is followed without waiting for the poll), and
+// herdr's pane_agent_detected reaches the hub as its own update.
+func TestWatchRescanAndAgentDetected(t *testing.T) {
+	root := shortDir(t)
+	s := session(t, root, "s", "session_v3.json")
+	lister := herdrtest.NewLister()
+	lister.Set(s)
+	out := make(chan world.Update, 1024)
+	rescan := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = watch.Run(ctx, watch.Config{
+			Herdr: lister, Out: out, Rescan: rescan, Poll: time.Hour, Resnapshot: time.Hour,
+			ProbeTimeout: 200 * time.Millisecond, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		})
+	}()
+	t.Cleanup(func() { cancel(); <-done })
+	rec := &recorder{t: t, out: out}
+	asleep := rec.floor("s", "asleep", func(f world.FloorObs) bool { return !f.Running })
+	if asleep.Socket != s.SocketPath {
+		t.Fatalf("asleep socket = %q, want %q", asleep.Socket, s.SocketPath)
+	}
+
+	srv := herdrtest.Start(t, s.SessionDir)
+	srv.SetSnapshot(herdrtest.SnapshotFixture(t, "snapshot.json"))
+	woke := time.Now()
+	rescan <- struct{}{}
+	f := rec.floor("s", "running after the rescan", func(f world.FloorObs) bool { return f.Running })
+	if took := time.Since(woke); took > time.Second || f.Socket != s.SocketPath {
+		t.Fatalf("running after %v: %+v", took, f)
+	}
+
+	srv.WaitStreams(t, 2)
+	srv.PushLifecycle("pane_agent_detected", map[string]any{"type": "pane_agent_detected", "pane_id": "w1:p1", "workspace_id": "w1", "agent": "claude"})
+	srv.PushLifecycle("pane_agent_detected", map[string]any{"type": "pane_agent_detected", "pane_id": "w3:p1", "workspace_id": "w3", "agent": "codex", "released": true, "final_status": "idle"})
+	isDetected := func(pane string) func(world.Update) bool {
+		return func(u world.Update) bool { d, ok := u.(world.AgentDetected); return ok && d.PaneID == pane }
+	}
+	if d := rec.wait("claude detected", isDetected("w1:p1")).(world.AgentDetected); d != (world.AgentDetected{Session: "s", WorkspaceID: "w1", PaneID: "w1:p1", Agent: "claude"}) {
+		t.Fatalf("detected = %+v", d)
+	}
+	if d := rec.wait("codex released", isDetected("w3:p1")).(world.AgentDetected); !d.Released || d.Agent != "codex" {
+		t.Fatalf("released = %+v", d)
+	}
+}

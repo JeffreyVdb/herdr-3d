@@ -180,6 +180,10 @@ export class OfficeView {
     }
   }
 
+  get isAsleep(): boolean {
+    return this.asleep;
+  }
+
   get desksCount(): number {
     return this.layout.desks;
   }

@@ -10,7 +10,8 @@ import (
 )
 
 // TestReadOnlyAllowlist is a tripwire: widening what the bridge may ask
-// herdr must be a deliberate, reviewed change to this test.
+// herdr must be a deliberate, reviewed change to this test. Client stays
+// read-only; the write path is Control (TestControlAllowlist).
 func TestReadOnlyAllowlist(t *testing.T) {
 	got := slices.Sorted(maps.Keys(readOnlyMethods))
 	if want := []string{"events.subscribe", "ping", "session.snapshot"}; !slices.Equal(got, want) {

@@ -288,7 +288,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
     add(new THREE.Mesh(doors, new THREE.MeshStandardMaterial({ color: OFFICE.steel, metalness: 0.6, roughness: 0.35 })));
     const panel = new THREE.Mesh(
       new THREE.PlaneGeometry(0.9, 0.3).rotateY(Math.PI),
-      new THREE.MeshBasicMaterial({ map: tex(signTexture(floorLabel, 'elevator · M3', '#101626', '#ffc233', 512, 170)) }),
+      new THREE.MeshBasicMaterial({ map: tex(signTexture(floorLabel, 'elevator · press E', '#101626', '#ffc233', 512, 170)) }),
     );
     panel.position.set(cx, y1 + 0.42, z0 - 0.01);
     group.add(panel);

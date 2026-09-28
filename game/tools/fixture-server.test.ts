@@ -37,6 +37,27 @@ function session(path: string, hello: object, want: number): Promise<Array<Recor
   });
 }
 
+/** Sends `msgs` after the hello and collects `want` messages. */
+function converse(path: string, msgs: object[], want: number): Promise<Array<Record<string, unknown>>> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws+unix://${join(dir, 'fx.sock')}:${path}`);
+    const got: Array<Record<string, unknown>> = [];
+    ws.on('open', () => {
+      ws.send(JSON.stringify({ t: 'hello', proto: 1, client: 'test' }));
+      for (const m of msgs) ws.send(JSON.stringify(m));
+    });
+    ws.on('message', (d) => {
+      got.push(JSON.parse(String(d)) as Record<string, unknown>);
+      if (got.length === want) {
+        ws.close();
+        resolve(got);
+      }
+    });
+    ws.on('close', () => resolve(got));
+    ws.on('error', reject);
+  });
+}
+
 describe('demo fixture', () => {
   it('is 2 buildings, 3 floors and ~40 workers in mixed states, with the M2 fields', () => {
     const { snapshot, events } = loadFixture('demo');
@@ -60,6 +81,15 @@ describe('demo fixture', () => {
     for (const f of floors) expect(f.seats.some((s) => s === null)).toBe(true);
     for (const e of events) store.applyEvent(e as unknown as WorldEvent);
     expect(store.seq).toBe(events.at(-1)?.seq);
+  });
+
+  it('demo-m3 adds the M3 fields and a floor in the unassigned lot', () => {
+    const store = new WorldStore(0);
+    store.applySnapshot(loadFixture('demo-m3').snapshot as unknown as Snapshot);
+    expect(store.stack(null).map((f) => [f.session, f.counts.total])).toEqual([['scratchpad', 3]]);
+    expect(store.floorView('herdr-3d')).toMatchObject({ settings: {}, suggested: { repo: 'JeffreyVdb/herdr-3d' } });
+    expect(store.floorView('depot-manager')?.settings.repo).toBe('fomra/depot-manager');
+    expect(store.hireOptions.codex?.extra_efforts).toEqual({ 'gpt-6-sol': ['ultra'], 'gpt-6-astra': ['ultra'] });
   });
 
   it('perf fixtures have 60 workers on a floor and 240 across the city', () => {
@@ -93,6 +123,18 @@ describe('fixture server', () => {
     expect(a[0]).toMatchObject({ t: 'error', code: 'hello_required' });
     const b = await session('/fixture/demo', { t: 'hello', proto: 2 }, 1);
     expect(b[0]).toMatchObject({ t: 'error', code: 'unsupported_proto' });
+  });
+
+  it('is read-only by default: commands get unknown_command', async () => {
+    const got = await converse('/fixture/demo?play=none', [{ t: 'building.create', req_id: '1', args: { name: 'Lab' } }], 3);
+    expect(got[2]).toEqual({ t: 'error', req_id: '1', code: 'unknown_command', message: 'the fixture server is read-only' });
+  });
+
+  it('simulates commands with sim=1: events, then the ack', async () => {
+    const got = await converse('/fixture/demo?sim=1', [{ t: 'building.create', req_id: '1', args: { name: 'Lab' } }], 4);
+    expect(got.map((m) => m.t)).toEqual(['welcome', 'world.snapshot', 'building.upsert', 'ack']);
+    expect(got[2]).toMatchObject({ seq: 1043, building: { name: 'Lab', floors: [] } });
+    expect(got[3]).toMatchObject({ req_id: '1', data: { id: expect.stringMatching(/^b_/) } });
   });
 
   it('refuses unknown fixtures and path tricks', async () => {

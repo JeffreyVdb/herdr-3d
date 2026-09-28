@@ -1,8 +1,18 @@
-// Package herdr is the bridge's only door to herdr, and it is read-only by
-// construction: the socket methods and CLI subcommands it may use are
-// allowlisted below (readOnlyMethods, listArgs), and every call goes through
-// that check. Nothing in this package creates, closes, renames, focuses,
-// starts, stops or labels anything in herdr.
+// Package herdr is the bridge's only door to herdr. It has two parts, each
+// allowlisted at a single choke point:
+//
+//   - Client reads: the socket methods it may call are readOnlyMethods
+//     (ping, session.snapshot, events.subscribe) and its one CLI call is
+//     `herdr session list --json` (TestReadOnlyAllowlist).
+//   - Control is the narrow write path for waking and sleeping floors:
+//     exactly the commands in controlShapes (start a session with
+//     systemd-run, `session stop`, `pane run` of an agent's resume command,
+//     `pane report-agent-session` for Codex, and the read-only
+//     `pane process-info`), with validated arguments passed as argv
+//     (TestControlAllowlist).
+//
+// Nothing in this package creates, closes, renames, focuses or labels
+// anything in herdr.
 //
 // Wire format (herdr 0.9, protocol 22): newline-delimited JSON on a per-session
 // unix socket, `{"id","method","params"}` → `{"id","result"}` or

@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"regexp"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +34,35 @@ type Options struct {
 	Server   string        // version banner sent in welcome
 	Log      *slog.Logger
 	Now      func() time.Time // bridge clock for status_since and the name hold (default time.Now)
+
+	// Herdr wakes floors and puts them to sleep (nil: floor.wake and
+	// floor.sleep fail with internal).
+	Herdr FloorHerdr
+	// Sessions, if set, is the only set of sessions floor commands may act
+	// on (the watcher's --sessions filter, checked again here).
+	Sessions *regexp.Regexp
+	// WakeTimeout bounds starting a woken server, its answering ping and
+	// its floor being seen running, together (default DefaultWakeTimeout).
+	WakeTimeout time.Duration
+	// ResumeTimeout is how long a wake waits for the agents before the
+	// fallback, and again for the fallback and its result; each bounds
+	// every herdr call in it (default DefaultResumeTimeout).
+	ResumeTimeout time.Duration
+	// SleepTimeout bounds waiting for a stopped floor to be seen asleep
+	// (default DefaultSleepTimeout).
+	SleepTimeout time.Duration
+	// ResumePoll is how often a wake looks at the panes' processes, and
+	// ResumeSettle how long an agent process must keep running to count as
+	// resumed (defaults 500 ms, 1.5 s).
+	ResumePoll, ResumeSettle time.Duration
+	// CodexSession finds the Codex session id of a cwd for the sleep
+	// backfill, skipping ids already in use (nil: no backfill).
+	CodexSession func(cwd string, skip func(id string) bool) (string, error)
+	// RepoOf returns the GitHub owner/repo of a directory, or "" (nil: no
+	// repo suggestions). It runs off the hub goroutine.
+	RepoOf func(ctx context.Context, dir string) string
+	// StatDir checks a default_cwd setting (default: an existing directory).
+	StatDir func(dir string) error
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -74,6 +105,12 @@ type Hub struct {
 
 	viewBuildings map[string]proto.Building
 	viewFloors    map[string]proto.Floor
+
+	settings map[string]store.FloorSettings // by session (mirrors floor_repo)
+	resume   map[string]string              // worker id → resume state, during and after a wake
+	rescan   chan struct{}                  // asks the watcher to look at sessions now
+	suggest  chan suggestJob                // repo lookups for the suggester
+	wg       sync.WaitGroup                 // floor operations and the suggester
 }
 
 type floorState struct {
@@ -81,8 +118,15 @@ type floorState struct {
 	def     bool
 	err     string
 	gen     uint64
+	socket  string
 	byWS    map[string]string // workspace id → worker id
 	order   []string          // worker ids in herdr's sidebar order
+
+	op        *floorOp          // wake or sleep in progress
+	origins   map[string]string // cwd → GitHub repo, from the suggester
+	askedCwds []string          // cwds of the last repo lookup
+	askedAt   time.Time
+	suggested *proto.Suggested
 }
 
 type savedWorker struct {
@@ -142,6 +186,24 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if opts.NameHold <= 0 {
 		opts.NameHold = DefaultNameHold
 	}
+	if opts.WakeTimeout <= 0 {
+		opts.WakeTimeout = DefaultWakeTimeout
+	}
+	if opts.ResumeTimeout <= 0 {
+		opts.ResumeTimeout = DefaultResumeTimeout
+	}
+	if opts.SleepTimeout <= 0 {
+		opts.SleepTimeout = DefaultSleepTimeout
+	}
+	if opts.ResumePoll <= 0 {
+		opts.ResumePoll = defaultResumePoll
+	}
+	if opts.ResumeSettle <= 0 {
+		opts.ResumeSettle = defaultResumeSettle
+	}
+	if opts.StatDir == nil {
+		opts.StatDir = isDir
+	}
 	var epoch [8]byte
 	_, _ = rand.Read(epoch[:])
 	h := &Hub{
@@ -161,8 +223,15 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		names:         map[string]map[string]nameClaim{},
 		viewBuildings: map[string]proto.Building{},
 		viewFloors:    map[string]proto.Floor{},
+		resume:        map[string]string{},
+		rescan:        make(chan struct{}, 1),
+		suggest:       make(chan suggestJob, 256),
 	}
 	if err := h.reload(ctx); err != nil {
+		return nil, err
+	}
+	var err error
+	if h.settings, err = st.FloorSettings(ctx); err != nil {
 		return nil, err
 	}
 	desks, err := st.Desks(ctx)
@@ -191,9 +260,19 @@ func (h *Hub) Epoch() string { return h.epoch }
 // Updates is where watchers send observations.
 func (h *Hub) Updates() chan<- world.Update { return h.updates }
 
-// Run processes updates and client operations until ctx is done.
+// Rescans signals when the watcher should look at sessions right away
+// (watch.Config.Rescan).
+func (h *Hub) Rescans() <-chan struct{} { return h.rescan }
+
+// Run processes updates and client operations until ctx is done. Floor
+// operations still running end with ctx before it returns.
 func (h *Hub) Run(ctx context.Context) error {
 	defer close(h.done)
+	defer h.wg.Wait()
+	if h.opts.RepoOf != nil {
+		h.wg.Add(1)
+		go h.suggester(ctx)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -204,6 +283,8 @@ func (h *Hub) Run(ctx context.Context) error {
 				h.applyFloor(ctx, u)
 			case world.FloorGone:
 				h.removeFloor(u)
+			case world.AgentDetected:
+				h.agentDetected(u)
 			}
 		case op := <-h.ops:
 			op(ctx)
@@ -257,33 +338,59 @@ func (h *Hub) Leave(c *Client) {
 }
 
 // Command runs one client command; its ack or error is queued to c after
-// the events it caused.
+// the events it caused. Accepted or rejected, it is audited.
 func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 	return h.do(ctx, func(ctx context.Context) {
 		if _, ok := h.clients[c]; !ok {
 			return
 		}
-		data, err := h.command(ctx, cmd)
-		if aerr := h.st.Audit(ctx, c.name, cmd.T, cmd.Args, err); aerr != nil {
-			h.log.Error("audit log write failed", "err", aerr)
-		}
-		if err != nil {
-			code := errorCode(err)
-			h.log.Info("command rejected", "client", c.name, "cmd", cmd.T, "req_id", cmd.ReqID, "code", code, "err", err)
-			h.deliver(c, mustJSON(proto.Error{T: proto.TError, ReqID: cmd.ReqID, Code: code, Message: err.Error()}))
+		if cmd.ReqID == "" {
+			h.audit(ctx, c, cmd, errNoReqID)
+			h.reply(c, cmd, nil, errNoReqID)
 			return
 		}
-		h.log.Info("command applied", "client", c.name, "cmd", cmd.T, "req_id", cmd.ReqID)
-		h.deliver(c, mustJSON(proto.Ack{T: proto.TAck, ReqID: cmd.ReqID, Data: data}))
+		if cmd.T == proto.CmdFloorWake || cmd.T == proto.CmdFloorSleep {
+			// Accepted: the audit row is written now and completed, and the
+			// reply sent, when the operation ends.
+			if err := h.startFloorOp(ctx, c, cmd); err != nil {
+				h.audit(ctx, c, cmd, err)
+				h.reply(c, cmd, nil, err)
+			}
+			return
+		}
+		data, err := h.command(ctx, cmd)
+		h.audit(ctx, c, cmd, err)
+		h.reply(c, cmd, data, err)
 	})
 }
 
-var errUnknownSession = errors.New("unknown session")
+func (h *Hub) audit(ctx context.Context, c *Client, cmd proto.Command, err error) {
+	if aerr := h.st.Audit(ctx, c.name, cmd.T, cmd.Args, err); aerr != nil {
+		h.log.Error("audit log write failed", "err", aerr)
+	}
+}
+
+// reply sends a command's ack or error to c, if it is still connected.
+func (h *Hub) reply(c *Client, cmd proto.Command, data any, err error) {
+	if err != nil {
+		code := errorCode(err)
+		h.log.Info("command rejected", "client", c.name, "cmd", cmd.T, "req_id", cmd.ReqID, "code", code, "err", err)
+		h.deliver(c, mustJSON(proto.Error{T: proto.TError, ReqID: cmd.ReqID, Code: code, Message: err.Error()}))
+		return
+	}
+	h.log.Info("command applied", "client", c.name, "cmd", cmd.T, "req_id", cmd.ReqID)
+	h.deliver(c, mustJSON(proto.Ack{T: proto.TAck, ReqID: cmd.ReqID, Data: data}))
+}
+
+var (
+	errUnknownSession = errors.New("unknown session")
+	errNoReqID        = errors.New("commands need a req_id")
+)
 
 func errorCode(err error) string {
 	var bad *badArgsError
 	switch {
-	case errors.As(err, &bad), errors.Is(err, store.ErrInvalid):
+	case errors.As(err, &bad), errors.Is(err, store.ErrInvalid), errors.Is(err, errNoReqID):
 		return proto.ErrBadRequest
 	case errors.Is(err, store.ErrNotFound):
 		return proto.ErrNotFound
@@ -293,6 +400,14 @@ func errorCode(err error) string {
 		return proto.ErrUnknownSession
 	case errors.Is(err, errUnknownCommand):
 		return proto.ErrUnknownCommand
+	case errors.Is(err, errBusy):
+		return proto.ErrBusy
+	case errors.Is(err, errInvalidState):
+		return proto.ErrInvalidState
+	case errors.Is(err, errWakeFailed):
+		return proto.ErrWakeFailed
+	case errors.Is(err, errSleepFailed):
+		return proto.ErrSleepFailed
 	}
 	return proto.ErrInternal
 }
@@ -345,8 +460,11 @@ func (h *Hub) command(ctx context.Context, cmd proto.Command) (any, error) {
 	case proto.CmdFloorAssign:
 		var a proto.FloorAssignArgs
 		if err = decodeArgs(cmd.Args, &a); err == nil {
-			if _, known := h.floors[a.Session]; !known {
-				err = fmt.Errorf("%w: %q", errUnknownSession, a.Session)
+			var f *floorState
+			if f, err = h.floorFor(a.Session); err != nil {
+				break
+			}
+			if err = h.notBusy(a.Session, f); err != nil {
 				break
 			}
 			building, index := "", -1
@@ -357,6 +475,11 @@ func (h *Hub) command(ctx context.Context, cmd proto.Command) (any, error) {
 				index = *a.Index
 			}
 			err = h.st.AssignFloor(ctx, a.Session, building, index)
+		}
+	case proto.CmdFloorSettings:
+		var a proto.FloorSettingsArgs
+		if err = decodeArgs(cmd.Args, &a); err == nil {
+			err = h.setSettings(ctx, a)
 		}
 	default:
 		err = fmt.Errorf("%w: %q", errUnknownCommand, cmd.T)
@@ -410,10 +533,31 @@ func (h *Hub) applyFloor(ctx context.Context, u world.FloorObs) {
 	if f.running != u.Running && !isNew {
 		h.log.Info("floor state changed", "session", u.Session, "running", u.Running)
 	}
+	if f.running && !u.Running {
+		// Resume states end with the next sleep.
+		for _, id := range f.order {
+			delete(h.resume, id)
+		}
+	}
+	if op := f.op; op != nil {
+		switch {
+		case op.kind == proto.TransitionSleeping && !u.Running:
+			op.asleep = true // the asleep floor goes out without its transition
+			op.signal()
+		case op.kind == proto.TransitionWaking && u.Running:
+			op.running = true
+			op.signal()
+		}
+	}
 	f.gen, f.running, f.def, f.err = u.Gen, u.Running, u.Default, u.Err
+	if u.Socket != "" {
+		f.socket = u.Socket
+	}
 	var evs []proto.Event
 	if !u.KeepWorkers {
 		evs = h.syncWorkers(ctx, u.Session, f, u.Workers, fresh, closing)
+		h.refreshSuggested(u.Session, f)
+		h.askOrigins(u.Session, f)
 	}
 	// The floor (state, desks) goes first, then its workers.
 	h.syncLayout()
@@ -573,7 +717,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 				h.log.Error("saving desk failed", "worker", id, "desk", desk, "err", err)
 			}
 		}
-		next := workerView(id, session, w, metas[i], names[i], desk)
+		next := workerView(id, session, w, metas[i], names[i], desk, h.resume[id])
 		prev := h.workers[id]
 		h.workers[id] = next
 		switch {
@@ -784,13 +928,14 @@ func candidates(recs []store.Worker) []world.Candidate {
 	return out
 }
 
-func workerView(id, session string, w world.WorkerObs, m workerMeta, name string, desk int) *proto.Worker {
+func workerView(id, session string, w world.WorkerObs, m workerMeta, name string, desk int, resume string) *proto.Worker {
 	return &proto.Worker{
 		ID: id, Session: session, WorkspaceID: w.WorkspaceID, Label: w.Label, Cwd: w.Cwd,
 		PaneID: w.PaneID, PaneLabel: w.PaneLabel, AgentKind: w.AgentKind, AgentName: w.AgentName,
 		AgentSession: w.AgentSession, Status: w.Status, Title: w.Title, Tokens: w.Tokens,
 		Worktree: w.Worktree, Role: w.Role, Run: w.Run,
 		Name: name, DeskIndex: desk, Harness: m.harness, Model: m.model, Effort: m.effort, StatusSince: m.statusSince,
+		Resume: resume,
 	}
 }
 
@@ -826,9 +971,17 @@ func (h *Hub) buildingViews() []proto.Building {
 }
 
 func (h *Hub) floorView(session string, f *floorState) proto.Floor {
-	v := proto.Floor{Session: session, State: world.Asleep, Default: f.def, Error: f.err, Desks: h.deskCount(session, f)}
+	v := proto.Floor{Session: session, State: world.Asleep, Default: f.def, Error: f.err, Desks: h.deskCount(session, f),
+		Settings: settingsView(h.settings[session])}
 	if f.running {
 		v.State = world.Running
+	}
+	if f.op != nil && !f.op.asleep {
+		v.Transition = f.op.kind
+	}
+	if f.suggested != nil {
+		s := *f.suggested
+		v.Suggested = &s
 	}
 	if a, ok := h.assign[session]; ok {
 		if _, ok := h.buildings[a.BuildingID]; ok {
@@ -902,7 +1055,9 @@ func (h *Hub) syncLayout() {
 // snapshot renders the world: buildings in order with their floors in
 // order, then the unassigned lot by name.
 func (h *Hub) snapshot() proto.Snapshot {
-	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{}}
+	hire := HireOptions()
+	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
+		HireOptions: &hire}
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

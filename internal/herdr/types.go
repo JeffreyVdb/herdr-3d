@@ -106,6 +106,18 @@ type StatusChanged struct {
 // EventStatusChanged is the per-pane status event name.
 const EventStatusChanged = "pane.agent_status_changed"
 
+// EventAgentDetected is the lifecycle event of an agent being detected in,
+// or released from, a pane.
+const EventAgentDetected = "pane_agent_detected"
+
+// AgentDetected is the data of a `pane_agent_detected` event.
+type AgentDetected struct {
+	PaneID      string  `json:"pane_id"`
+	WorkspaceID string  `json:"workspace_id"`
+	Agent       *string `json:"agent,omitempty"`
+	Released    bool    `json:"released,omitempty"`
+}
+
 // LifecycleSubscriptions are the lifecycle events that can change which
 // workers exist or what they look like. Any of them triggers a re-snapshot.
 var LifecycleSubscriptions = []Subscription{

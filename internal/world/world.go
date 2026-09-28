@@ -17,7 +17,8 @@ const (
 	Asleep  = "asleep"
 )
 
-// Update is what watchers send to the hub: FloorObs or FloorGone.
+// Update is what watchers send to the hub: FloorObs, FloorGone or
+// AgentDetected.
 type Update interface{ isUpdate() }
 
 // FloorObs is a complete observation of one herdr session.
@@ -39,6 +40,8 @@ type FloorObs struct {
 	// Err is shown on the floor, e.g. an unreadable session.json.
 	Err     string
 	Workers []WorkerObs
+	// Socket is the session's herdr socket path.
+	Socket string
 }
 
 // FloorGone means the session no longer exists in herdr.
@@ -47,8 +50,21 @@ type FloorGone struct {
 	Gen     uint64
 }
 
-func (FloorObs) isUpdate()  {}
-func (FloorGone) isUpdate() {}
+// AgentDetected is herdr's pane_agent_detected event of a running
+// session: an agent was detected in a pane (Agent set), or it went away
+// (Agent empty: herdr 0.9 sends that when a detected agent process
+// exits) or released the pane.
+type AgentDetected struct {
+	Session     string
+	WorkspaceID string
+	PaneID      string
+	Agent       string
+	Released    bool
+}
+
+func (FloorObs) isUpdate()      {}
+func (FloorGone) isUpdate()     {}
+func (AgentDetected) isUpdate() {}
 
 var gen atomic.Uint64
 

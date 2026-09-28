@@ -75,11 +75,17 @@ export class CityView {
   private hover: string | null = null;
   private readonly v = new THREE.Vector3();
   private readonly workerSlot = new Map<string, number>();
+  /** Accessible building entries (M3): each opens the building's elevator panel. */
+  private buildingButtons: HTMLButtonElement[] = [];
+  /** Building id per city building index, null for the lot. */
+  private buildingIds: Array<string | null> = [];
 
   constructor(
     private readonly badgeParent: HTMLElement,
     private readonly shadows: boolean,
     private readonly onEnter: (session: string) => void,
+    private readonly buildingParent: HTMLElement | null = null,
+    private readonly onBuilding: (building: string | null) => void = () => {},
   ) {
     this.scene.background = new THREE.Color(0x9fd6ff);
     this.scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x7ba36a, 1.35));
@@ -153,6 +159,7 @@ export class CityView {
         deskBase += layout.desks;
         fi++;
       });
+      this.addBuildingButton(p.b);
       const h = Math.max(1, p.b.floors.length) * FH;
       this.addRoof(bx0, bz0, p.w, p.d, h, p.b.building?.name ?? 'Unassigned', tint);
       this.buildings.push({
@@ -247,6 +254,25 @@ export class CityView {
     } else this.crowd.set(g, null);
   }
 
+  private addBuildingButton(b: BuildingView): void {
+    const id = b.building?.id ?? null;
+    this.buildingIds.push(id);
+    if (!this.buildingParent) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.building = id ?? 'lot';
+    const n = b.floors.length;
+    btn.textContent = `${b.building?.name ?? 'Unassigned lot'}: ${n} ${n === 1 ? 'floor' : 'floors'}. Open the elevator`;
+    btn.addEventListener('click', () => this.onBuilding(id));
+    this.buildingParent.appendChild(btn);
+    this.buildingButtons.push(btn);
+  }
+
+  /** Building id (null: the lot) of the city building at index `i`. */
+  buildingId(i: number): string | null | undefined {
+    return this.buildingIds[i];
+  }
+
   private makeButton(view: FloorView): HTMLButtonElement {
     const b = document.createElement('button');
     b.type = 'button';
@@ -262,13 +288,14 @@ export class CityView {
   private label(b: HTMLButtonElement, v: FloorView): void {
     const c = v.counts;
     b.dataset.state = v.asleep ? 'asleep' : 'running';
+    const doing = v.transition === 'waking' ? 'waking up, ' : v.transition === 'sleeping' ? 'going to sleep, ' : '';
     b.textContent = v.asleep
-      ? `${v.session}: asleep, ${c.total} workers. Enter floor`
-      : `${v.session}: ${c.working} working, ${c.needsYou} need you, ${c.idle} idle. Enter floor`;
+      ? `${v.session}: ${doing}asleep, ${c.total} workers. Enter floor`
+      : `${v.session}: ${doing}${c.working} working, ${c.needsYou} need you, ${c.idle} idle. Enter floor`;
   }
 
   private paintBadge(f: FloorSlot): void {
-    this.badgeLayer?.set(f.index, f.anchor, { session: f.session, asleep: f.view.asleep, counts: f.view.counts, hover: this.hover === f.session });
+    this.badgeLayer?.set(f.index, f.anchor, { session: f.session, asleep: f.view.asleep, counts: f.view.counts, hover: this.hover === f.session, transition: f.view.transition });
   }
 
   /** A floor's counts or a worker changed without structure changes. */
@@ -354,6 +381,9 @@ export class CityView {
 
   private clear(): void {
     for (const f of this.floors) f.button.remove();
+    for (const b of this.buildingButtons) b.remove();
+    this.buildingButtons = [];
+    this.buildingIds = [];
     this.badgeLayer = null;
     this.floors = [];
     this.bySession.clear();
@@ -420,6 +450,19 @@ export class CityView {
 
   setVisible(v: boolean): void {
     this.badgeParent.hidden = !v;
+    if (this.buildingParent) this.buildingParent.hidden = !v;
+  }
+
+  /** Screen point (CSS px) of the middle of a floor's box, null when off screen. */
+  floorPoint(camera: THREE.PerspectiveCamera, session: string, vp: { width: number; height: number }): { x: number; y: number } | null {
+    const f = this.bySession.get(session);
+    if (!f) return null;
+    const [x0, y0, z0] = f.box.min;
+    const [x1, y1, z1] = f.box.max;
+    // Towards the open front, at desk height: where a click lands on the floor.
+    const p = this.v.set((x0 + x1) / 2, y0 + (y1 - y0) * 0.3, z0 + (z1 - z0) * 0.7).project(camera);
+    if (p.z > 1 || Math.abs(p.x) > 1 || Math.abs(p.y) > 1) return null;
+    return { x: ((p.x + 1) / 2) * vp.width, y: ((1 - p.y) / 2) * vp.height };
   }
 
   /** Floor badges on/off (`?badges=0`, for perf comparisons). */

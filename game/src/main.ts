@@ -1,10 +1,12 @@
 import '@fontsource-variable/recursive/full.css';
 import './ui/hud.css';
+import './ui/panels.css';
 import * as THREE from 'three/webgpu';
 import { App, type LookAt, type Pose } from './app';
 import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
 import { runBench, type BenchOptions, type BenchResult } from './bench';
-import type { WorldEvent } from './net/protocol';
+import type { CommandName, WorldEvent } from './net/protocol';
+import type { PanelSummary } from './ui/panels';
 import { floorLayout } from './world/layout';
 
 /** Debug/test hook, read by the Playwright tests and the Mac perf run. */
@@ -14,8 +16,8 @@ export interface H3DDebug {
   error: string | null;
   /** True once a world snapshot has been rendered. */
   ready: boolean;
-  /** `busy` while the elevator-door transition runs. */
-  view(): { mode: 'city' | 'floor'; floor: string | null; plan: boolean; busy: boolean };
+  /** `busy` while the elevator-door transition runs; `asleep`: the office's lights are off (null in the city). */
+  view(): { mode: 'city' | 'floor'; floor: string | null; plan: boolean; busy: boolean; asleep: boolean | null };
   /** What the centre of the screen picks in first person (within 3 m), else null. */
   lookAt(): LookAt | null;
   /** Status shown on screen for a worker, and when (unix ms) it got there. */
@@ -26,6 +28,8 @@ export interface H3DDebug {
    */
   world(): Array<{
     session: string;
+    /** M3: the building's name, null in the lot. */
+    building: string | null;
     asleep: boolean;
     desks: number;
     workers: Array<{ id: string; name: string; label: string; desk: number; status: string; bridgeName: string | null; bridgeDesk: number | null }>;
@@ -45,6 +49,20 @@ export interface H3DDebug {
   /** Screen point of a floor's badge in the city (to click it). */
   badgePoint(session: string): { x: number; y: number } | null;
   bench(o?: BenchOptions): Promise<BenchResult>;
+  /** M3: opens the elevator panel of a building id (null: the lot); no argument: the current floor's building. */
+  openElevator(building?: string | null): void;
+  /** M3: opens the buildings panel. */
+  openBuildings(): void;
+  /** M3: opens a floor's settings panel. */
+  openSettings(session: string): void;
+  /** M3: what the open panel shows, null when none is open. */
+  panel(): PanelSummary | null;
+  /** M3: commands sent to the bridge so far, with their result once answered. */
+  sent(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
+  /** M3: screen point of a floor itself in the city (to click its building). */
+  floorPoint(session: string): { x: number; y: number } | null;
+  /** M3: connection phase and the bridge epoch (changes when the bridge restarts). */
+  connection(): { phase: string; epoch: string | null };
 }
 
 declare global {
@@ -62,7 +80,13 @@ const h3d: H3DDebug = {
   frames: 0,
   error: null,
   ready: false,
-  view: () => ({ mode: app?.mode ?? 'city', floor: app?.office?.session ?? null, plan: app?.plan ?? false, busy: app?.busy ?? false }),
+  view: () => ({
+    mode: app?.mode ?? 'city',
+    floor: app?.office?.session ?? null,
+    plan: app?.plan ?? false,
+    busy: app?.busy ?? false,
+    asleep: app?.officeAsleep ?? null,
+  }),
   lookAt: () => app?.lookAt() ?? null,
   status: (id) => app?.rendered.get(id) ?? null,
   world: () =>
@@ -72,6 +96,7 @@ const h3d: H3DDebug = {
           .flatMap((b) => b.floors)
           .map((f) => ({
             session: f.session,
+            building: f.building?.name ?? null,
             asleep: f.asleep,
             desks: f.desks,
             workers: f.workers.map((w) => ({
@@ -100,6 +125,13 @@ const h3d: H3DDebug = {
   focusBuilding: (i) => app?.focusBuilding(i, false),
   cards: () => app?.office?.shownCards() ?? [],
   badgePoint: (s) => app?.badgePoint(s) ?? null,
+  openElevator: (b) => (b === undefined ? app?.openElevator() : app?.openElevator(b)),
+  openBuildings: () => app?.openBuildings(),
+  openSettings: (s) => app?.panels.openSettings(s),
+  panel: () => app?.panels.summary() ?? null,
+  sent: () => structuredClone(app?.sent ?? []),
+  floorPoint: (s) => app?.floorPoint(s) ?? null,
+  connection: () => ({ phase: app?.conn.phase ?? 'stopped', epoch: app?.client.resume.epoch ?? null }),
   bench: async (o) => {
     if (!app || !renderer) throw new Error('not started');
     return runBench(app, renderer, o);
