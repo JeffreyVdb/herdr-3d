@@ -1,0 +1,588 @@
+/*
+ * M4 desk dialogs: hiring at a desk and sending a worker home. The same
+ * navy signage as the M3 panels; two objects from the office itself head
+ * them — the green "+" plate that floats over a free desk, and the kraft
+ * cardboard box a worker leaves with — and choices print as label-maker
+ * tape (blank tape until picked).
+ */
+
+.desk-dlg {
+  --kraft: #c9935a;
+  --kraft-ink: #3b2a17;
+  --well: #121a31;
+  width: min(580px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--ink);
+  color: var(--text-on-ink);
+  box-shadow: var(--shadow);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.4;
+  color-scheme: dark;
+  overflow: hidden;
+}
+.desk-dlg[open] {
+  display: flex;
+  flex-direction: column;
+}
+.desk-dlg::backdrop {
+  background: rgb(18 24 44 / 45%);
+}
+.desk-dlg button,
+.desk-dlg input,
+.desk-dlg textarea {
+  font: inherit;
+  color: inherit;
+}
+.desk-dlg [hidden] {
+  display: none !important;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .desk-dlg[open] {
+    animation: panel-in 240ms var(--ease);
+  }
+}
+
+/* ---- header ---------------------------------------------------------------- */
+
+.dd-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 14px 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.dd-titles {
+  flex: 1;
+  min-width: 0;
+}
+.dd-titles h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dd-titles p {
+  margin: 2px 0 0;
+  color: var(--text-on-ink-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The desk's nameplate: the office's floating green "+" and the desk number. */
+.dd-plate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: none;
+  min-width: 58px;
+  height: 44px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border-radius: 10px;
+}
+.dd-plate--desk {
+  background: #101626;
+  box-shadow: inset 0 2px 7px rgb(0 0 0 / 60%), 0 1px 0 rgb(255 255 255 / 8%);
+  color: var(--plus);
+}
+.dd-plate--desk svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 3.2;
+  filter: drop-shadow(0 0 6px rgb(47 196 106 / 55%));
+}
+.dd-plate--desk b {
+  font: 800 22px/1 var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-on-ink);
+}
+/* The cardboard box they leave with: kraft, a strip of parcel tape. */
+.dd-plate--box {
+  min-width: 48px;
+  background:
+    linear-gradient(180deg, transparent 0 46%, rgb(168 116 64 / 70%) 46% 58%, transparent 58%),
+    var(--kraft);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 30%), inset 0 -2px 0 rgb(0 0 0 / 16%), 0 2px 5px rgb(0 0 0 / 30%);
+  color: var(--kraft-ink);
+}
+.dd-plate--box svg {
+  width: 26px;
+  height: 26px;
+  stroke-width: 1.8;
+}
+
+/* ---- body ------------------------------------------------------------------ */
+
+.dd-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 16px;
+  padding: 14px 16px 16px;
+  scrollbar-width: thin;
+  scrollbar-color: #3a466e transparent;
+}
+.dd-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.dd-field label,
+.dd-pick legend,
+.dd-choices legend,
+.dd-desk h3 {
+  margin: 0 0 6px;
+  padding: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-on-ink-2);
+}
+.dd-optional {
+  font-weight: 500;
+  font-style: italic;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+}
+.desk-dlg input:not([type]),
+.desk-dlg input[type='text'],
+.desk-dlg textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 9px;
+  background: var(--well);
+  caret-color: var(--sun);
+}
+.desk-dlg input:not([type]) {
+  height: 36px;
+}
+.desk-dlg textarea {
+  min-height: 70px;
+  max-height: 180px;
+  padding: 8px 10px;
+  resize: vertical;
+  line-height: 1.45;
+}
+.desk-dlg input::placeholder,
+.desk-dlg textarea::placeholder {
+  color: #8f9abb;
+}
+.desk-dlg input:not([type]):hover,
+.desk-dlg textarea:hover {
+  border-color: rgb(255 255 255 / 30%);
+}
+.desk-dlg input:focus-visible,
+.desk-dlg textarea:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 1px;
+}
+.desk-dlg input:disabled,
+.desk-dlg textarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.desk-dlg .field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-on-ink-2);
+}
+.desk-dlg kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  background: var(--ink-2);
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-bottom-width: 2px;
+  font: 700 10.5px/1 var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  color: var(--text-on-ink);
+}
+.desk-dlg code {
+  font-family: var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.dd-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  gap: 12px;
+}
+
+/* ---- harness / model / effort: blank tape until printed ------------------------- */
+
+.dd-agent {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgb(255 255 255 / 4%);
+}
+.dd-pick {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+.dd-pick legend {
+  float: left;
+  margin: 6px 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.dd-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.dd-chip {
+  display: inline-flex;
+  cursor: pointer;
+}
+.dd-chip span {
+  display: inline-block;
+  padding: 5px 9px 4px;
+  border: 1px dashed rgb(255 255 255 / 30%);
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  letter-spacing: 0.02em;
+  color: var(--text-on-ink-2);
+  transition: background 140ms var(--ease), color 140ms var(--ease), transform 180ms var(--ease), border-color 140ms var(--ease);
+}
+.dd-chip:hover span {
+  border-style: solid;
+  color: var(--text-on-ink);
+}
+/* Picked: printed onto sun-yellow tape, stuck on a little crooked. */
+.dd-chip input:checked + span {
+  border: 1px solid transparent;
+  background: var(--sun);
+  color: var(--ink);
+  transform: rotate(-1.5deg);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 45%),
+    inset 0 -1px 0 rgb(0 0 0 / 18%),
+    0 1px 2px rgb(0 0 0 / 30%);
+}
+.dd-chip input:focus-visible + span {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+}
+.dd-chip input:checked:focus-visible + span {
+  outline-color: #fff;
+}
+.dd-chip input:disabled + span {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.tape--note,
+.tape--cap-warn {
+  --c: var(--sun);
+  color: var(--ink);
+  text-shadow: none;
+}
+.tape--cap-full {
+  --c: var(--needs_you-chip);
+}
+.tape--note {
+  font-size: 9.5px;
+  padding: 2px 5px 1px;
+}
+
+/* ---- worktree ------------------------------------------------------------------ */
+
+.dd-worktree {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+}
+.dd-worktree[data-on='true'] {
+  border-color: rgb(47 196 106 / 50%);
+  background: rgb(47 196 106 / 8%);
+}
+.dd-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dd-check input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.dd-check-box {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  border: 2px solid rgb(255 255 255 / 45%);
+  border-radius: 5px;
+  background: var(--well);
+}
+.dd-check input:checked + .dd-check-box {
+  border-color: var(--plus);
+  background: var(--plus);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231c2540' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5.5 12.5 4.5 4.5 8.5-9.5'/%3E%3C/svg%3E");
+  background-size: 16px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.dd-check input:focus-visible + .dd-check-box {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+}
+.dd-base {
+  margin: 6px 0 0 30px;
+  font-size: 12.5px;
+  color: var(--text-on-ink-2);
+}
+.dd-base code {
+  color: var(--text-on-ink);
+}
+.dd-base-note {
+  margin: 4px 0 0 30px;
+  font-size: 12px;
+  color: var(--text-on-ink-2);
+}
+.dd-base-note--error {
+  color: #ffb4ae;
+  font-weight: 700;
+}
+
+/* ---- capacity, callouts ----------------------------------------------------------- */
+
+.dd-capacity {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-on-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.dd-callout {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgb(255 194 51 / 45%);
+  background: rgb(255 194 51 / 10%);
+}
+.dd-callout p {
+  margin: 0;
+  color: var(--text-on-ink);
+}
+.dd-callout p + p,
+.dd-callout p + .btn {
+  margin-top: 6px;
+}
+.dd-callout[data-level='full'],
+.dd-callout--error {
+  border-color: rgb(255 123 115 / 60%);
+  background: rgb(216 48 44 / 18%);
+}
+.dd-capacity-facts {
+  font-size: 12px;
+  color: var(--text-on-ink-2) !important;
+}
+
+/* ---- send home: what is on the desk ------------------------------------------------ */
+
+.dd-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 14px;
+  margin: 0;
+}
+.dd-facts dt {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-on-ink-2);
+}
+.dd-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+.dd-desk h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dd-desk p {
+  margin: 0 0 6px;
+}
+.dd-porcelain {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--well);
+  display: grid;
+  gap: 2px;
+}
+.dd-porcelain code {
+  white-space: pre;
+  font-size: 12px;
+  color: #ffd9a8;
+}
+.dd-choices {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 4px;
+}
+.dd-choice {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.dd-choice:hover {
+  background: rgb(255 255 255 / 5%);
+}
+.dd-choice input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.dd-radio {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  box-sizing: border-box;
+  border: 2px solid rgb(255 255 255 / 45%);
+  border-radius: 50%;
+  background: var(--well);
+}
+.dd-choice input:checked + .dd-radio {
+  border-color: var(--sun);
+  background: radial-gradient(circle, var(--sun) 0 4px, var(--well) 4.5px);
+}
+.dd-choice input:focus-visible + .dd-radio {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+}
+.dd-choice-text {
+  display: grid;
+  gap: 1px;
+}
+.dd-choice-text .field-hint {
+  margin: 0;
+}
+.dd-choice[data-disabled='true'] {
+  cursor: not-allowed;
+}
+.dd-choice[data-disabled='true'] .dd-radio,
+.dd-choice[data-disabled='true'] .dd-choice-text {
+  opacity: 0.45;
+}
+.dd-choice[data-disabled='true']:hover {
+  background: transparent;
+}
+
+/* ---- waiting for the bridge ------------------------------------------------------ */
+
+.dd-skeleton {
+  display: grid;
+  gap: 10px;
+}
+.dd-skeleton i {
+  display: block;
+  height: 34px;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 6%);
+}
+.dd-skeleton i:nth-child(2) {
+  width: 72%;
+}
+.dd-skeleton i:nth-child(3) {
+  width: 48%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .dd-skeleton i {
+    animation: dd-breathe 1.4s ease-in-out infinite alternate;
+  }
+  @keyframes dd-breathe {
+    to {
+      background: rgb(255 255 255 / 11%);
+    }
+  }
+}
+
+/* ---- footer: status, then the actions --------------------------------------------- */
+
+.dd-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+.dd-status {
+  flex: 1 1 220px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-on-ink-2);
+}
+.dd-status--error {
+  color: #ffb4ae;
+  font-weight: 700;
+}
+.dd-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.desk-dlg .btn--primary,
+.desk-dlg .btn--danger {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 560px) {
+  .dd-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dd-pick {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dd-pick legend {
+    flex-direction: row;
+    margin-top: 0;
+  }
+}

@@ -1,0 +1,539 @@
+import type { CommandResult } from '../net/client';
+import type { CommandArgs, CommandName, HireAck, HireGit, HirePrepare } from '../net/protocol';
+import {
+  baseText,
+  capacityView,
+  choiceNote,
+  fetchNote,
+  firstFreeDesk,
+  formFromPrepare,
+  hireArgs,
+  hireBlocker,
+  modelsFor,
+  resolveChoice,
+  taskKey,
+  type CapacityView,
+  type HireForm,
+} from '../world/hire';
+import { effortsFor } from '../world/settings';
+import type { WorldStore } from '../world/store';
+import { h, icon, ICON } from './dom';
+import { failureText } from './messages';
+
+/**
+ * The hire dialog (M4): E on an empty desk's "+", or the top bar's Hire for
+ * the first free desk. It asks the bridge (`hire.prepare`) for the defaults —
+ * the preselected harness / model / effort, the next name, the folder, the
+ * git base and the caps — and sends `worker.hire`. The desk plate in the
+ * header is the green "+" floating over the desk in the office.
+ */
+
+export interface DialogHost {
+  readonly store: WorldStore;
+  send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
+  unsupported(t: CommandName): boolean;
+  toast(msg: string, kind: 'info' | 'error'): void;
+  now(): number;
+}
+
+export interface HireHost extends DialogHost {
+  /** The desk a hire is on its way to (its "+" goes), or null when none is. */
+  reserve(session: string, desk: number | null): void;
+}
+
+export type HireState = 'preparing' | 'ready' | 'hiring' | 'failed';
+
+/** What the hire dialog shows (test hook). */
+export interface HireSummary {
+  kind: 'hire';
+  session: string;
+  desk: number;
+  title: string;
+  state: HireState;
+  form: HireForm;
+  /** The worktree option as shown (null: hidden, the folder is no git repo). */
+  git: { base: string; note: string | null; noteError: boolean } | null;
+  choiceNote: string | null;
+  capacity: CapacityView | null;
+  /** Why Hire is off, null when it can be pressed. */
+  blocker: string | null;
+  status: string;
+  error: boolean;
+}
+
+/** Room for the chosen harness's plan limits (M10, #12): nothing yet. */
+export function renderPlanLimits(_harness: string): HTMLElement | null {
+  return null;
+}
+
+const DESK_PLUS = '<path d="M12 5v14M5 12h14"/>';
+
+/** A group of radio chips: label-maker tape for the chosen one, blank tape for the rest. */
+function chips(name: string, legend: string, values: string[], value: string, onPick: (v: string) => void, note: HTMLElement | null = null): HTMLFieldSetElement {
+  const row = h('div', { class: 'dd-chips' });
+  for (const v of values) {
+    const input = h('input', { type: 'radio', name, value: v, class: 'visually-hidden', 'data-key': `${name}:${v}` });
+    input.checked = v === value;
+    input.addEventListener('change', () => input.checked && onPick(v));
+    row.append(h('label', { class: 'dd-chip' }, input, h('span', {}, v)));
+  }
+  return h('fieldset', { class: 'dd-pick', 'data-pick': name }, h('legend', {}, legend, note), row);
+}
+
+export class HireDialog {
+  private readonly dialog = h('dialog', { class: 'desk-dlg desk-dlg--hire', 'aria-labelledby': 'hire-title', 'aria-describedby': 'hire-sub' });
+  private readonly head = h('header', { class: 'dd-head' });
+  private readonly form = h('form', { class: 'dd-body', id: 'hire-form', novalidate: true });
+  private readonly statusEl = h('p', { class: 'dd-status', role: 'status' });
+  private readonly alertEl = h('p', { class: 'dd-status dd-status--error', role: 'alert' });
+  private readonly actions = h('div', { class: 'dd-actions' });
+  private readonly foot = h('footer', { class: 'dd-foot' }, this.statusEl, this.alertEl, this.actions);
+  private session = '';
+  private desk = 0;
+  private state: HireState = 'preparing';
+  private prep: HirePrepare | null = null;
+  private f: HireForm = { prompt: '', harness: '', model: '', effort: '', label: '', cwd: '', worktree: false };
+  /** The choice as prepared: the note ("Floor default") shows while the form still has it. */
+  private prepared: { harness: string; model: string; effort: string } | null = null;
+  private statusText = '';
+  private statusError = false;
+  /** Bumped on every open / prepare, so a late answer for an older one is dropped. */
+  private gen = 0;
+  private hireBtn: HTMLButtonElement | null = null;
+  private renderedKey = '';
+
+  constructor(
+    parent: HTMLElement,
+    private readonly host: HireHost,
+  ) {
+    this.alertEl.hidden = true;
+    this.statusEl.hidden = true;
+    this.dialog.append(this.head, this.form, this.foot);
+    this.dialog.addEventListener('close', () => {
+      if (this.dialog.open) return;
+      if (this.state !== 'hiring') this.host.reserve(this.session, null);
+      this.gen++;
+    });
+    this.dialog.addEventListener('cancel', () => {
+      // Esc while the hire is on its way: the hire still happens; the dialog just goes.
+      if (this.state === 'hiring') this.host.toast('The hire is still on its way; the worker walks in when it is done.', 'info');
+    });
+    this.dialog.addEventListener('click', (e) => {
+      if (e.target === this.dialog) this.close();
+    });
+    // Enter in the label or folder submits (Hire is the form's default button); a new folder is checked first.
+    this.form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const cwd = this.f.cwd.trim();
+      if (this.state === 'ready' && this.prep && cwd && cwd.startsWith('/') && cwd !== this.prep.cwd) {
+        this.setStatus('Checking the folder…');
+        void this.prepare(cwd);
+        return;
+      }
+      void this.hire();
+    });
+    parent.append(this.dialog);
+  }
+
+  get isOpen(): boolean {
+    return this.dialog.open;
+  }
+
+  close(): void {
+    if (this.dialog.open) this.dialog.close();
+  }
+
+  /** Opens the dialog for a desk of a floor and asks the bridge for the defaults. */
+  open(session: string, desk: number): void {
+    this.session = session;
+    this.desk = desk;
+    this.prep = null;
+    this.prepared = null;
+    this.f = { prompt: '', harness: '', model: '', effort: '', label: '', cwd: '', worktree: false };
+    this.state = 'preparing';
+    this.renderedKey = '';
+    this.setStatus('Checking the floor, the folder and origin…');
+    this.render();
+    if (!this.dialog.open) this.dialog.showModal();
+    this.form.querySelector<HTMLElement>('#hire-task')?.focus();
+    void this.prepare();
+  }
+
+  private title(): string {
+    return `Hire a worker at Desk ${this.desk + 1}`;
+  }
+
+  private async prepare(cwd?: string): Promise<void> {
+    const gen = ++this.gen;
+    if (this.host.unsupported('hire.prepare')) {
+      this.state = 'failed';
+      this.setStatus(failureText('hire.prepare', 'unknown_command', ''), true);
+      this.render();
+      return;
+    }
+    const args: CommandArgs['hire.prepare'] = { session: this.session };
+    if (cwd) args.cwd = cwd;
+    const r = await this.host.send('hire.prepare', args);
+    if (gen !== this.gen || !this.dialog.open) return;
+    if (!r.ok) {
+      // A folder that did not check out keeps the rest of the form.
+      if (this.prep && cwd) {
+        this.state = 'ready';
+        this.setStatus(failureText('hire.prepare', r.code, r.message, { floor: this.session }), true);
+        this.render();
+        return;
+      }
+      this.state = 'failed';
+      this.setStatus(failureText('hire.prepare', r.code, r.message, { floor: this.session }), true);
+      this.render();
+      return;
+    }
+    const p = r.data as HirePrepare;
+    const options = this.host.store.hireOptions;
+    if (this.prep && cwd) {
+      // Same form, new folder: its git base, and the checkbox follows whether it is a repo.
+      const wasRepo = this.prep.git !== null;
+      this.prep = { ...this.prep, cwd: p.cwd, git: p.git, capacity: p.capacity };
+      this.f.cwd = p.cwd;
+      if (!p.git) this.f.worktree = false;
+      else if (!wasRepo) this.f.worktree = true;
+    } else {
+      this.prep = p;
+      const prompt = this.f.prompt;
+      this.f = { ...formFromPrepare(p, options), prompt };
+      this.prepared = resolveChoice(options, p.choice ?? null);
+    }
+    this.state = 'ready';
+    this.setStatus('');
+    this.render();
+  }
+
+  /** The world changed: the desk may have been taken, the floor gone or asleep. */
+  refresh(): void {
+    if (!this.dialog.open || this.state === 'hiring') return;
+    const fv = this.host.store.floorView(this.session);
+    if (!fv) {
+      this.close();
+      this.host.toast(`${this.session} is gone.`, 'info');
+      return;
+    }
+    if (fv.asleep) {
+      this.close();
+      this.host.toast(`${this.session} went to sleep; wake it to hire.`, 'info');
+      return;
+    }
+    this.render();
+  }
+
+  /** Someone else sat down at this desk meanwhile: the desk to offer instead. */
+  private takenBy(): { name: string; next: number | null } | null {
+    const fv = this.host.store.floorView(this.session);
+    const seat = fv?.seats[this.desk];
+    if (!fv || !seat) return null;
+    return { name: seat.name, next: firstFreeDesk(fv) };
+  }
+
+  private setStatus(msg: string, error = false): void {
+    this.statusText = msg;
+    this.statusError = error;
+    this.alertEl.hidden = !error || !msg;
+    this.statusEl.hidden = error || !msg;
+    (error ? this.alertEl : this.statusEl).textContent = msg;
+    (error ? this.statusEl : this.alertEl).textContent = '';
+  }
+
+  private capacity(): CapacityView | null {
+    return this.prep ? capacityView(this.prep.capacity, this.session) : null;
+  }
+
+  private blocker(): string | null {
+    if (this.state === 'preparing') return 'Waiting for herdr-world…';
+    if (this.state === 'failed') return this.statusText || 'herdr-world could not prepare the hire.';
+    if (this.state === 'hiring') return 'The hire is on its way.';
+    const taken = this.takenBy();
+    if (taken) return `${taken.name} just sat down at Desk ${this.desk + 1}.`;
+    if (this.host.unsupported('worker.hire')) return failureText('worker.hire', 'unknown_command', '');
+    return hireBlocker(this.f, this.host.store.hireOptions, this.capacity());
+  }
+
+  private gitView(g: HireGit | null): HireSummary['git'] {
+    if (!g) return null;
+    const n = fetchNote(g);
+    return { base: baseText(g, this.host.now()), note: n?.text ?? null, noteError: n?.error ?? false };
+  }
+
+  private noteNow(): string | null {
+    const p = this.prepared;
+    const same = !!p && p.harness === this.f.harness && p.model === this.f.model && p.effort === this.f.effort;
+    return this.prep ? choiceNote(this.prep.choice_source, same) : null;
+  }
+
+  // ---- rendering ---------------------------------------------------------------
+
+  private render(): void {
+    const fv = this.host.store.floorView(this.session);
+    const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
+    const taken = this.takenBy();
+    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText]);
+    // Typing (task, label, folder) only needs the button; everything else re-renders.
+    if (key === this.renderedKey) {
+      this.renderActions();
+      return;
+    }
+    this.renderedKey = key;
+    const a = document.activeElement;
+    const focusKey = a instanceof HTMLElement && this.dialog.contains(a) ? (a.dataset.key ?? a.id) : null;
+
+    this.head.replaceChildren(
+      h('div', { class: 'dd-plate dd-plate--desk', 'aria-hidden': 'true' }, icon(DESK_PLUS), h('b', {}, String(this.desk + 1))),
+      h('div', { class: 'dd-titles' }, h('h2', { id: 'hire-title' }, this.title()), h('p', { id: 'hire-sub' }, `${this.session} · ${where}`)),
+      h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
+    );
+
+    const ready = this.state === 'ready';
+    const busy = this.state === 'hiring' || this.state === 'preparing';
+    const options = this.host.store.hireOptions;
+
+    // First task: Enter hires, Shift+Enter is a new line.
+    const task = h('textarea', {
+      id: 'hire-task',
+      'data-key': 'task',
+      rows: 3,
+      spellcheck: 'true',
+      placeholder: 'What should they start on? Leave it empty to prompt them later (P).',
+      'aria-describedby': 'hire-task-hint',
+    });
+    task.value = this.f.prompt;
+    task.disabled = this.state === 'hiring';
+    task.addEventListener('input', () => {
+      this.f.prompt = task.value;
+      this.renderActions();
+    });
+    task.addEventListener('keydown', (e) => {
+      const k = taskKey(e);
+      if (k === 'send') {
+        e.preventDefault();
+        void this.hire();
+      }
+    });
+    const taskField = h(
+      'div',
+      { class: 'dd-field dd-task' },
+      h('label', { for: 'hire-task' }, 'First task ', h('span', { class: 'dd-optional' }, 'optional')),
+      task,
+      h('p', { class: 'field-hint', id: 'hire-task-hint' }, h('kbd', {}, 'Enter'), ' hires · ', h('kbd', {}, 'Shift'), '+', h('kbd', {}, 'Enter'), ' adds a line'),
+    );
+
+    const nodes: Node[] = [taskField];
+
+    if (this.prep) {
+      const note = this.noteNow();
+      const noteTape = note ? h('span', { class: 'tape tape--note', title: note === 'Floor default' ? 'The floor’s default hire (floor settings)' : 'What was hired on this floor last time' }, note) : null;
+      const agent = h(
+        'div',
+        { class: 'dd-agent' },
+        chips('harness', 'Harness', Object.keys(options), this.f.harness, (v) => this.pick({ harness: v }), noteTape),
+        chips('model', 'Model', modelsFor(options, this.f.harness), this.f.model, (v) => this.pick({ model: v })),
+        chips('effort', 'Effort', effortsFor(options, this.f.harness, this.f.model), this.f.effort, (v) => this.pick({ effort: v })),
+      );
+      const limits = renderPlanLimits(this.f.harness);
+      const slot = h('div', { class: 'dd-plan-limits', 'data-hook': 'plan-limits' });
+      if (limits) slot.append(limits);
+      else slot.hidden = true;
+
+      const label = h('input', { id: 'hire-label', 'data-key': 'label', autocomplete: 'off', spellcheck: 'false', maxlength: 64, placeholder: this.prep.label });
+      label.value = this.f.label;
+      label.addEventListener('input', () => {
+        this.f.label = label.value;
+        this.renderActions();
+      });
+      const cwd = h('input', { id: 'hire-cwd', 'data-key': 'cwd', autocomplete: 'off', spellcheck: 'false', placeholder: '/home/…', 'aria-describedby': 'hire-cwd-hint' });
+      cwd.value = this.f.cwd;
+      cwd.addEventListener('input', () => {
+        this.f.cwd = cwd.value;
+        this.renderActions();
+      });
+      // A new folder: check again whether it is a repo, and its base.
+      cwd.addEventListener('change', () => {
+        const v = cwd.value.trim();
+        if (v && v.startsWith('/') && v !== this.prep?.cwd) {
+          this.setStatus('Checking the folder…');
+          void this.prepare(v);
+        }
+      });
+      const ids = h(
+        'div',
+        { class: 'dd-grid' },
+        h('div', { class: 'dd-field' }, h('label', { for: 'hire-label' }, 'Label'), label, h('p', { class: 'field-hint' }, 'Its workspace label in herdr.')),
+        h('div', { class: 'dd-field' }, h('label', { for: 'hire-cwd' }, 'Folder'), cwd, h('p', { class: 'field-hint', id: 'hire-cwd-hint' }, 'Where the agent starts, on the server.')),
+      );
+      nodes.push(agent, slot, ids);
+
+      const g = this.gitView(this.prep.git);
+      if (g) {
+        const box = h('input', { type: 'checkbox', id: 'hire-worktree', 'data-key': 'worktree', 'aria-describedby': 'hire-worktree-base' });
+        box.checked = this.f.worktree;
+        box.addEventListener('change', () => {
+          this.f.worktree = box.checked;
+          this.render();
+        });
+        const wt = h(
+          'div',
+          { class: 'dd-worktree', 'data-on': this.f.worktree ? 'true' : 'false' },
+          h('label', { class: 'dd-check', for: 'hire-worktree' }, box, h('span', { class: 'dd-check-box', 'aria-hidden': 'true' }), h('span', {}, 'Work in its own git worktree & branch')),
+          h(
+            'p',
+            { class: 'dd-base', id: 'hire-worktree-base' },
+            this.f.worktree ? 'A new h3d/… branch from ' : 'Would branch from ',
+            h('code', {}, g.base),
+          ),
+          g.note ? h('p', { class: `dd-base-note${g.noteError ? ' dd-base-note--error' : ''}` }, g.note) : null,
+        );
+        nodes.push(wt);
+      }
+      nodes.push(this.capacityBlock());
+    } else {
+      nodes.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')));
+    }
+    if (taken && ready) {
+      const alt = taken.next;
+      nodes.push(
+        h(
+          'div',
+          { class: 'dd-callout dd-callout--error', role: 'alert' },
+          h('p', {}, `${taken.name} just sat down at Desk ${this.desk + 1}.`),
+          alt !== null ? h('button', { class: 'btn btn--sm', 'data-key': 'other-desk', onclick: () => this.moveTo(alt) }, `Hire at Desk ${alt + 1} instead`) : h('p', {}, 'No other desk is free on this floor.'),
+        ),
+      );
+    }
+    this.form.replaceChildren(...nodes);
+    for (const el of this.form.querySelectorAll<HTMLInputElement>('input, textarea')) if (busy && el.id !== 'hire-task') el.disabled = true;
+    this.renderActions();
+    if (focusKey) {
+      const back = this.dialog.querySelector<HTMLElement>(`[data-key="${CSS.escape(focusKey)}"]`) ?? this.dialog.querySelector<HTMLElement>(`#${CSS.escape(focusKey)}`);
+      back?.focus();
+      // A chip group re-rendered on another pick: focus its checked chip.
+      if (!back && focusKey.includes(':')) this.form.querySelector<HTMLElement>(`[data-pick="${focusKey.split(':')[0]}"] input:checked`)?.focus();
+    }
+  }
+
+  private capacityBlock(): HTMLElement {
+    const c = this.capacity() as CapacityView;
+    const p = this.prep as HirePrepare;
+    const facts = `${this.session}: ${p.capacity.floor.count} of ${p.capacity.floor.soft} · host: ${p.capacity.host.count} of ${p.capacity.host.soft}${c.load ? ` · ${c.load}` : ''}`;
+    if (c.level === 'ok') return h('p', { class: 'dd-capacity', 'data-level': 'ok' }, facts);
+    const tape = c.level === 'full' ? 'At the hard cap' : 'Over the soft cap';
+    return h(
+      'div',
+      { class: 'dd-capacity dd-callout', 'data-level': c.level, role: c.level === 'full' ? 'alert' : null },
+      h('p', {}, h('span', { class: `tape tape--cap-${c.level}` }, tape), ' ', c.lines.join(' ')),
+      h('p', { class: 'dd-capacity-facts' }, facts),
+    );
+  }
+
+  private renderActions(): void {
+    const blocker = this.blocker();
+    const label = this.f.label.trim() || this.prep?.label || '';
+    const cancel = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, this.state === 'hiring' ? 'Close' : 'Cancel');
+    const text = this.state === 'hiring' ? 'Hiring…' : label ? `Hire ${label}` : 'Hire';
+    const hire = h('button', { class: 'btn btn--primary', type: 'submit', form: 'hire-form', 'data-key': 'hire', 'aria-disabled': blocker ? 'true' : null, title: blocker }, text);
+    const had = document.activeElement === this.hireBtn;
+    this.hireBtn = hire;
+    const retry = this.state === 'failed' && !this.host.unsupported('hire.prepare') ? h('button', { class: 'btn', 'data-key': 'retry', onclick: () => this.retry() }, 'Try again') : null;
+    this.actions.replaceChildren(...[retry, cancel, hire].filter((x): x is HTMLButtonElement => !!x));
+    if (had) hire.focus();
+  }
+
+  private retry(): void {
+    this.state = 'preparing';
+    this.setStatus('Checking the floor, the folder and origin…');
+    this.render();
+    void this.prepare();
+  }
+
+  private pick(p: Partial<Pick<HireForm, 'harness' | 'model' | 'effort'>>): void {
+    const options = this.host.store.hireOptions;
+    const next = resolveChoice(options, { harness: p.harness ?? this.f.harness, model: p.model ?? this.f.model, effort: p.effort ?? this.f.effort });
+    if (!next) return;
+    this.f = { ...this.f, ...next };
+    this.render();
+  }
+
+  private moveTo(desk: number): void {
+    this.desk = desk;
+    this.setStatus('');
+    this.render();
+    this.form.querySelector<HTMLElement>('#hire-task')?.focus();
+  }
+
+  private async hire(): Promise<void> {
+    if (this.state !== 'ready' || !this.prep) return;
+    const blocker = this.blocker();
+    if (blocker) {
+      this.setStatus(blocker, true);
+      this.renderActions();
+      return;
+    }
+    const session = this.session;
+    const desk = this.desk;
+    const args = hireArgs(session, desk, this.f, this.prep.git);
+    const who = args.label ?? this.prep.label;
+    this.state = 'hiring';
+    this.host.reserve(session, desk);
+    const steps = [args.worktree ? 'creating the worktree' : null, `starting ${args.harness}`, args.prompt ? 'handing over the first task' : null].filter(Boolean);
+    this.setStatus(`Hiring ${who}: ${steps.join(', ')}…`);
+    this.render();
+    const gen = this.gen;
+    const r = await this.host.send('worker.hire', args);
+    const still = this.dialog.open && gen === this.gen;
+    this.state = 'ready';
+    this.host.reserve(session, null);
+    if (r.ok) {
+      const ack = r.data as HireAck | undefined;
+      const w = ack?.id ? this.host.store.workerView(ack.id) : null;
+      const name = w?.name ?? who;
+      const branch = ack?.branch ? ` on ${ack.branch}` : '';
+      this.close();
+      this.host.toast(`Hired ${name} at Desk ${(w?.desk ?? desk) + 1}${branch}. Here they come.`, 'info');
+      return;
+    }
+    const msg = failureText('worker.hire', r.code, r.message, { floor: session, desk: desk + 1 });
+    if (!still) {
+      this.host.toast(msg, 'error');
+      return;
+    }
+    this.setStatus(msg, true);
+    this.render();
+    if (r.code === 'capacity') void this.recheckCapacity();
+  }
+
+  /** After a capacity refusal: the caps as they are now. */
+  private async recheckCapacity(): Promise<void> {
+    const args: CommandArgs['hire.prepare'] = { session: this.session };
+    if (this.prep?.cwd) args.cwd = this.prep.cwd;
+    const r = await this.host.send('hire.prepare', args);
+    if (!r.ok || !this.prep || !this.dialog.open) return;
+    this.prep = { ...this.prep, capacity: (r.data as HirePrepare).capacity };
+    this.render();
+  }
+
+  // ---- test hook -----------------------------------------------------------------
+
+  summary(): HireSummary | null {
+    if (!this.dialog.open) return null;
+    return {
+      kind: 'hire',
+      session: this.session,
+      desk: this.desk,
+      title: this.title(),
+      state: this.state,
+      form: { ...this.f },
+      git: this.prep ? this.gitView(this.prep.git) : null,
+      choiceNote: this.noteNow(),
+      capacity: this.capacity(),
+      blocker: this.blocker(),
+      status: this.statusText,
+      error: this.statusError,
+    };
+  }
+}

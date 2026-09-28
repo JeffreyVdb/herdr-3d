@@ -19,6 +19,7 @@ const ICON = {
   stairs: '<path d="M4 19h4.5v-4.5H13V10h4.5V5.5H20"/>',
   door: '<path d="M6.5 20V5.2c0-.7.5-1.2 1.2-1.2h8.6c.7 0 1.2.5 1.2 1.2V20M4 20h16"/><circle cx="14.4" cy="12.4" r="1.1" fill="currentColor" stroke="none"/>',
   street: '<path d="M5 20 9.5 4M19 20 14.5 4M12 5.5v2M12 10.5v2.5M12 16.5v3"/>',
+  hire: '<circle cx="9.5" cy="8" r="3.2"/><path d="M3.8 19.5c.6-3.4 2.8-5.3 5.7-5.3 1.4 0 2.6.4 3.6 1.2"/><path d="M18 13.5v6M15 16.5h6"/>',
 };
 
 /** Where you are outside a floor: the words and glyph in the top bar. */
@@ -37,15 +38,16 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', html = ''):
   return e;
 }
 
-const KEYS: Array<[string, string]> = [
-  ['E', 'Laptop'],
-  ['C', 'Changes'],
-  ['P', 'Prompt'],
-  ['H', 'Handoff'],
-  ['X', 'Send home'],
+/** Keys on a worker; `live` ones work (M4: X sends it home), the rest arrive later. */
+const KEYS: Array<[string, string, boolean]> = [
+  ['E', 'Laptop', false],
+  ['C', 'Changes', false],
+  ['P', 'Prompt', false],
+  ['H', 'Handoff', false],
+  ['X', 'Send home', true],
 ];
 
-export type HudAction = 'city' | 'issues' | 'prs' | 'battery' | 'buildings' | 'elevator';
+export type HudAction = 'city' | 'issues' | 'prs' | 'battery' | 'buildings' | 'elevator' | 'hire';
 
 export interface PlanLabel {
   x: number;
@@ -72,6 +74,8 @@ export class Hud {
   private readonly buildings = el('button', 'btn', `${svg(ICON.building)}<span>Buildings</span>`);
   /** On a floor: its building's elevator panel, for keyboards and when the elevator is out of sight. */
   private readonly elevator = el('button', 'btn', `${svg(ICON.lift)}<span>Elevator</span>`);
+  /** M4: on a floor, hire at its first free desk. */
+  private readonly hire = el('button', 'btn btn--hire', `${svg(ICON.hire)}<span>Hire</span>`);
   private readonly conn = el('span', 'conn', '<i></i><span></span>');
   private readonly reticle = el('div', 'reticle');
   private readonly prompt = el('div', 'prompt');
@@ -109,7 +113,8 @@ export class Hud {
     this.back.title = 'Back to the city (Backspace)';
     this.buildings.title = 'Buildings: create, rename and arrange buildings and floors (M)';
     this.elevator.title = 'Elevator: ride to another floor, wake or sleep floors, floor settings (L)';
-    actions.append(this.buildings, this.issues, this.prs, this.elevator, this.battery, this.conn);
+    this.hire.title = 'Hire a worker at the first free desk on this floor (or look at a desk’s + and press E)';
+    actions.append(this.buildings, this.issues, this.prs, this.elevator, this.hire, this.battery, this.conn);
     bar.append(place, this.counts, actions);
     new ResizeObserver(() => this.root.style.setProperty('--topbar-bottom', `${bar.getBoundingClientRect().bottom.toFixed(1)}px`)).observe(bar);
     for (const [b, a] of [
@@ -119,6 +124,7 @@ export class Hud {
       [this.battery, 'battery'],
       [this.buildings, 'buildings'],
       [this.elevator, 'elevator'],
+      [this.hire, 'hire'],
     ] as const) {
       b.type = 'button';
       b.addEventListener('click', () => this.emit(a));
@@ -154,6 +160,7 @@ export class Hud {
     this.issues.hidden = this.prs.hidden = mode === 'city';
     this.buildings.hidden = mode !== 'city';
     this.elevator.hidden = mode === 'city';
+    this.hire.hidden = mode === 'city' || this.root.dataset.area !== 'floor';
     this.reticle.hidden = mode === 'city';
     this.floorList.hidden = this.buildingList.hidden = mode !== 'city';
     if (mode === 'city') {
@@ -246,7 +253,7 @@ export class Hud {
   setArea(area: Area): void {
     this.root.dataset.area = area;
     const onFloor = area === 'floor';
-    this.issues.hidden = this.prs.hidden = this.mode === 'city' || !onFloor;
+    this.issues.hidden = this.prs.hidden = this.hire.hidden = this.mode === 'city' || !onFloor;
   }
 
   /** The look-at prompt bar. */
@@ -280,11 +287,21 @@ export class Hud {
       line.append(text('prompt-name', w.name), tape, text('prompt-task', taskLine(w.worker)));
       const model = modelLabel(w.harness, w.worker.model, w.worker.effort);
       if (model) line.append(text('prompt-model', model));
-      for (const [k, label] of KEYS) keys.append(disabled(k, label, 'Not wired up yet'));
+      for (const [k, label, live] of KEYS) {
+        if (!live) {
+          keys.append(disabled(k, label, 'Not wired up yet'));
+          continue;
+        }
+        const s = el('span', 'key');
+        s.append(el('kbd', '', k), document.createTextNode(label));
+        keys.append(s);
+      }
       this.prompt.setAttribute('aria-label', `${w.name} · ${STATUS_WORD[w.display]} · ${taskLine(w.worker)}${model ? ` · ${model}` : ''}`);
     } else if (t.kind === 'desk') {
       line.append(text('prompt-name', t.label), text('prompt-task', 'Empty desk'));
-      keys.append(disabled('E', 'Hire', 'Hiring arrives in M4'));
+      const k = el('span', 'key');
+      k.append(el('kbd', '', 'E'), document.createTextNode('Hire'));
+      keys.append(k);
       this.prompt.setAttribute('aria-label', `${t.label} · E Hire`);
     } else if (t.kind === 'prop' && t.id === 'reception') {
       line.append(text('prompt-name', 'Reception'), text('prompt-task', 'Ask where everyone is: the floor directory'));
@@ -327,7 +344,7 @@ export class Hud {
 
   /** Keyboard route into the top bar: focuses its first visible control. */
   focusTopbar(): void {
-    const first = [this.back, this.buildings, this.issues, this.prs, this.elevator, this.battery].find((b) => !b.hidden);
+    const first = [this.back, this.buildings, this.issues, this.prs, this.elevator, this.hire, this.battery].find((b) => !b.hidden);
     first?.focus();
   }
 
