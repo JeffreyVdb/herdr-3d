@@ -1,7 +1,8 @@
 /**
  * Floor settings (M3): the settings panel's form, its validation (the rules of
  * `floor.settings.set`) and the patch it sends: only changed keys, `null` to
- * clear. Pure, so it is covered by vitest.
+ * clear. Every key stands alone (the status field needs no project). Pure, so
+ * it is covered by vitest.
  */
 
 import type { FloorSettings, FloorSuggested, GithubProject, Hire, HireOptions, SettingsPatch, StatusField } from '../net/protocol';
@@ -12,8 +13,8 @@ export interface SettingsForm {
   projectOwner: string;
   projectNumber: string;
   statusName: string;
-  /** Comma separated. */
-  statusOptions: string;
+  /** One status per row, in board order; blank rows do not count. */
+  statusOptions: string[];
   defaultCwd: string;
   /** '' = no default hire. */
   harness: string;
@@ -41,8 +42,14 @@ const MAX_OPTIONS = 20;
 
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 
-/** The form for stored settings; the repo falls back to the bridge's suggestion. */
-export function formFrom(settings: FloorSettings, suggested: FloorSuggested): { form: SettingsForm; repoSuggested: boolean; cwdPlaceholder: string } {
+/**
+ * The form for stored settings: the repo falls back to the bridge's
+ * suggestion, the status field to the default (what a floor without one uses).
+ */
+export function formFrom(
+  settings: FloorSettings,
+  suggested: FloorSuggested,
+): { form: SettingsForm; repoSuggested: boolean; statusDefault: boolean; cwdPlaceholder: string } {
   const status = settings.status_field ?? DEFAULT_STATUS_FIELD;
   const hire = settings.default_hire;
   return {
@@ -51,13 +58,14 @@ export function formFrom(settings: FloorSettings, suggested: FloorSuggested): { 
       projectOwner: settings.project?.owner ?? '',
       projectNumber: settings.project ? String(settings.project.number) : '',
       statusName: status.name,
-      statusOptions: status.options.join(', '),
+      statusOptions: [...status.options],
       defaultCwd: settings.default_cwd ?? '',
       harness: hire?.harness ?? '',
       model: hire?.model ?? '',
       effort: hire?.effort ?? '',
     },
     repoSuggested: !settings.repo && !!suggested.repo,
+    statusDefault: !settings.status_field,
     cwdPlaceholder: suggested.default_cwd ?? '',
   };
 }
@@ -77,10 +85,24 @@ export function effortsFor(o: HireOptions, harness: string, model: string): stri
   return [...h.efforts, ...(h.extra_efforts?.[model] ?? []).filter((e) => !h.efforts.includes(e))];
 }
 
-/** Validates the form like the bridge does; `errors` is keyed by input. */
-export function parseForm(f: SettingsForm, hire: HireOptions): { value: SettingsValue; errors: Partial<Record<FieldKey, string>> } {
+/** A label as a text input shows it: without line breaks, trimmed. */
+const shown = (s: string) => s.replace(/[\r\n]/g, '').trim();
+
+/**
+ * Validates the form like the bridge does; `errors` is keyed by input and
+ * `badOption` is the status row to fix. A status label whose row still shows
+ * a stored label comes back exactly as stored (the bridge accepts spaces
+ * around a label, commas, even line breaks), so saving never rewrites
+ * statuses nobody touched; edited labels are trimmed.
+ */
+export function parseForm(
+  f: SettingsForm,
+  hire: HireOptions,
+  stored: FloorSettings = {},
+): { value: SettingsValue; errors: Partial<Record<FieldKey, string>>; badOption: number | null } {
   const errors: Partial<Record<FieldKey, string>> = {};
   const value: SettingsValue = { repo: null, project: null, status_field: null, default_cwd: null, default_hire: null };
+  let badOption: number | null = null;
 
   if (f.repo.trim()) {
     const r = normalizeRepo(f.repo);
@@ -99,22 +121,30 @@ export function parseForm(f: SettingsForm, hire: HireOptions): { value: Settings
     if (!errors.projectOwner && !errors.projectNumber) value.project = { owner, number: n };
   }
 
-  // The status field belongs to the project: none without one.
-  if (owner || num) {
-    const name = f.statusName.trim();
+  // The status field: an empty name and no statuses = none.
+  const rows = f.statusOptions.map((o, i) => ({ text: o.trim(), i })).filter((r) => r.text);
+  if (f.statusName.trim() || rows.length) {
+    const was = stored.status_field;
+    const name = was && shown(was.name) === f.statusName.trim() ? was.name : f.statusName.trim();
     if (!name) errors.statusName = 'Name the status field, e.g. Status.';
     else if (bytes(name) > MAX_TEXT) errors.statusName = `Keep the field name within ${MAX_TEXT} bytes.`;
-    const options = f.statusOptions
-      .split(',')
-      .map((o) => o.trim())
-      .filter(Boolean);
+    // Each stored label backs at most one row (twins that differ by a space stay two).
+    const free = [...(was?.options ?? [])];
+    const picked = rows.map((r) => {
+      const k = free.findIndex((o) => shown(o) === r.text);
+      return { i: r.i, label: (k < 0 ? undefined : free.splice(k, 1)[0]) ?? r.text };
+    });
+    const options = picked.map((p) => p.label);
     const seen = new Set<string>();
-    const twice = options.find((o) => (seen.has(o) ? true : (seen.add(o), false)));
-    if (!options.length) errors.statusOptions = 'List at least one status, separated by commas.';
-    else if (options.length > MAX_OPTIONS) errors.statusOptions = `Use at most ${MAX_OPTIONS} statuses.`;
-    else if (options.some((o) => bytes(o) > MAX_TEXT)) errors.statusOptions = `Keep each status within ${MAX_TEXT} bytes.`;
-    else if (twice !== undefined) errors.statusOptions = `“${twice}” is listed twice.`;
-    if (value.project && !errors.statusName && !errors.statusOptions) value.status_field = { name, options };
+    const twice = picked.find((p) => (seen.has(p.label) ? true : (seen.add(p.label), false)));
+    const long = picked.find((p) => bytes(p.label) > MAX_TEXT);
+    const over = picked[MAX_OPTIONS];
+    if (!options.length) errors.statusOptions = 'Add at least one status. To remove the status field, empty its name too.';
+    else if (over) errors.statusOptions = `Use at most ${MAX_OPTIONS} statuses.`;
+    else if (long) errors.statusOptions = `Keep each status within ${MAX_TEXT} bytes.`;
+    else if (twice) errors.statusOptions = `“${twice.label}” is listed twice.`;
+    badOption = (over ?? long ?? twice)?.i ?? null;
+    if (!errors.statusName && !errors.statusOptions) value.status_field = { name, options };
   }
 
   const cwd = f.defaultCwd.trim();
@@ -134,7 +164,7 @@ export function parseForm(f: SettingsForm, hire: HireOptions): { value: Settings
       if (!errors.model && !errors.effort) value.default_hire = { harness: f.harness, model: f.model, effort: f.effort };
     }
   }
-  return { value, errors };
+  return { value, errors, badOption };
 }
 
 function same(a: unknown, b: unknown): boolean {
@@ -152,11 +182,18 @@ function same(a: unknown, b: unknown): boolean {
 
 const KEYS = ['repo', 'project', 'status_field', 'default_cwd', 'default_hire'] as const;
 
-/** `floor.settings.set` args (minus `session`): the keys that differ from what is stored. */
+/**
+ * `floor.settings.set` args (minus `session`): the keys that differ from what
+ * is stored. The pre-filled default status field is what a floor without one
+ * uses already, so it is only sent once it differs from the default.
+ */
 export function settingsPatch(stored: FloorSettings, want: SettingsValue): SettingsPatch {
   const patch: Record<string, unknown> = {};
   for (const k of KEYS) {
-    if (!same(stored[k] ?? null, want[k])) patch[k] = want[k];
+    const have = stored[k] ?? null;
+    if (same(have, want[k])) continue;
+    if (k === 'status_field' && have === null && same(want[k], DEFAULT_STATUS_FIELD)) continue;
+    patch[k] = want[k];
   }
   return patch as SettingsPatch;
 }

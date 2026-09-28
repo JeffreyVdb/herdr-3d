@@ -50,6 +50,13 @@ async function faceElevator(page: Page, session: string): Promise<void> {
   await frames(page);
 }
 
+/** What has keyboard focus: its label or text, BODY for none. */
+const focused = (page: Page) =>
+  page.evaluate(() => {
+    const a = document.activeElement;
+    return !a || a === document.body ? 'BODY' : (a.getAttribute('aria-label') ?? a.textContent?.trim() ?? '');
+  });
+
 const desks = (page: Page, session: string) =>
   page.evaluate((s) => window.__h3d.world().find((f) => f.session === s)?.workers.map((w) => [w.id, w.desk, w.name]), session);
 
@@ -260,12 +267,13 @@ test('floor settings: the suggestion is marked until saved, validation like the 
   await expect(page.locator('label[for="set-repo"] .tape--suggested')).toHaveText('Suggested');
   await expect(page.locator('#set-repo-hint')).toHaveText('Suggested from the workers’ git remotes. Save to keep it.');
   await expect(page.locator('#set-defaultCwd')).toHaveAttribute('placeholder', '/home/dev/devel/herdr-3d');
-  await expect(page.locator('#set-statusName')).toBeDisabled();
-  expect((await summary(page, 'settings')).form).toMatchObject({ statusName: 'Status', statusOptions: 'Todo, Doing, QA, Done' });
+  // The status field needs no project; the pre-filled defaults are marked as such.
+  await expect(page.locator('#set-statusName')).toBeEnabled();
+  await expect(page.locator('label[for="set-statusName"] .tape--default')).toHaveText('Default');
+  expect(await summary(page, 'settings')).toMatchObject({ statusDefault: true, form: { statusName: 'Status', statusOptions: ['Todo', 'Doing', 'QA', 'Done'] } });
 
   // Invalid input is caught in the panel, nothing is sent.
   await page.locator('#set-projectOwner').fill('JeffreyVdb');
-  await expect(page.locator('#set-statusName')).toBeEnabled();
   await page.locator('#set-projectNumber').fill('three');
   await page.locator('#set-harness').selectOption('claude');
   await page.getByRole('button', { name: 'Save settings' }).click();
@@ -282,7 +290,8 @@ test('floor settings: the suggestion is marked until saved, validation like the 
   await page.locator('#set-effort').selectOption('xhigh');
   await shot(page, 'm3-settings');
   await page.getByRole('button', { name: 'Save settings' }).click();
-  await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText('Saved the repo, project, status field, default hire.');
+  // The untouched default status field is what a floor without one uses: not sent.
+  await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText('Saved the repo, project, default hire.');
   const set = (await sent(page)).filter((c) => c.t === 'floor.settings.set');
   expect(set).toEqual([
     {
@@ -291,7 +300,6 @@ test('floor settings: the suggestion is marked until saved, validation like the 
         session: 'herdr-3d',
         repo: 'JeffreyVdb/herdr-3d',
         project: { owner: 'JeffreyVdb', number: 3 },
-        status_field: { name: 'Status', options: ['Todo', 'Doing', 'QA', 'Done'] },
         default_hire: { harness: 'claude', model: 'claude-opus-5-5', effort: 'xhigh' },
       },
       result: { ok: true, data: undefined },
@@ -320,6 +328,72 @@ test('floor settings: the suggestion is marked until saved, validation like the 
   // Back to the elevator it came from.
   await page.getByRole('button', { name: 'Back to the elevator' }).click();
   await expect(page.locator('dialog.panel h2')).toHaveText('Work');
+  clean();
+});
+
+test('floor settings: one status per row, from the keyboard; commas survive; untouched statuses are never re-sent', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m3', '', SIM);
+  await page.evaluate(() => window.__h3d.openSettings('herdr-3d'));
+  const statuses = async () => (await summary(page, 'settings')).form.statusOptions;
+  const saved = async (msg: string) => {
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText(msg);
+    return (await sent(page)).at(-1)?.args;
+  };
+
+  // Add a status with a comma in it: the new row takes focus.
+  await press(page, 'opt-add');
+  await expect(page.getByRole('textbox', { name: 'Status 5 of 5' })).toBeFocused();
+  await page.keyboard.type('Review, QA');
+  // Move it up twice (focus stays on the arrow), remove QA (focus goes to the next row).
+  await page.keyboard.press('Tab');
+  expect(await focused(page)).toBe('Move “Review, QA” up');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  expect(await focused(page)).toBe('Move “Review, QA” up');
+  expect(await statuses()).toEqual(['Todo', 'Doing', 'Review, QA', 'QA', 'Done']);
+  await page.getByRole('button', { name: 'Remove “QA”', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  expect(await statuses()).toEqual(['Todo', 'Doing', 'Review, QA', 'Done']);
+  await expect(page.getByRole('textbox', { name: 'Status 4 of 4' })).toBeFocused();
+  await expect(page.getByRole('textbox', { name: 'Status 4 of 4' })).toHaveValue('Done');
+  // No longer the defaults: the mark goes.
+  await expect(page.locator('label[for="set-statusName"] .tape--default')).toBeHidden();
+  await expect(page.locator('#set-statusOptions-hint')).toHaveText('In board order. Remove them all and empty the name to go back to the defaults.');
+  await shot(page, 'm3-statuses');
+  expect(await saved('Saved the repo, status field.')).toEqual({
+    session: 'herdr-3d',
+    repo: 'JeffreyVdb/herdr-3d',
+    status_field: { name: 'Status', options: ['Todo', 'Doing', 'Review, QA', 'Done'] },
+  });
+
+  // Stored now, with no project: saving something else leaves the statuses alone.
+  expect(await summary(page, 'settings')).toMatchObject({ statusDefault: false, form: { projectOwner: '', statusOptions: ['Todo', 'Doing', 'Review, QA', 'Done'] } });
+  await page.locator('#set-defaultCwd').fill('/srv/herdr-3d');
+  expect(await saved('Saved the default folder.')).toEqual({ session: 'herdr-3d', default_cwd: '/srv/herdr-3d' });
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText('Nothing changed, so nothing was saved.');
+
+  // A duplicate is caught on its own row, nothing is sent.
+  const before = (await sent(page)).length;
+  await press(page, 'opt-add');
+  await page.keyboard.type('Todo');
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  const dup = page.getByRole('textbox', { name: 'Status 5 of 5' });
+  await expect(dup).toBeFocused();
+  await expect(dup).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.locator('#set-statusOptions-hint')).toHaveText('“Todo” is listed twice.');
+  expect((await sent(page)).length).toBe(before);
+  await page.getByRole('button', { name: 'Remove “Todo”', exact: true }).last().click();
+  await expect(page.locator('#set-statusOptions-hint')).not.toHaveClass(/field-error/);
+
+  // Emptying the name and every status clears the field: the defaults are back.
+  await page.locator('#set-statusName').fill('');
+  for (let n = 4; n > 0; n--) await page.getByRole('button', { name: /^Remove / }).first().click();
+  await expect(page.locator('.opts .dir-empty')).toHaveText('No statuses.');
+  expect(await saved('Saved the status field.')).toEqual({ session: 'herdr-3d', status_field: null });
+  expect(await summary(page, 'settings')).toMatchObject({ statusDefault: true, form: { statusName: 'Status', statusOptions: ['Todo', 'Doing', 'QA', 'Done'] } });
   clean();
 });
 

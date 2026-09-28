@@ -294,15 +294,15 @@ export class SimWorld {
     }
     const sf = a.status_field;
     if (sf !== undefined && sf !== null) {
+      // Like the bridge's validLabel: not blank, at most 64 bytes, stored as sent.
+      const label = (s: unknown) => typeof s === 'string' && s.trim() !== '' && bytes(s) <= 64;
       const ok =
         isObj(sf) &&
-        typeof sf.name === 'string' &&
-        bytes(sf.name) >= 1 &&
-        bytes(sf.name) <= 64 &&
+        label(sf.name) &&
         Array.isArray(sf.options) &&
         sf.options.length >= 1 &&
         sf.options.length <= 20 &&
-        sf.options.every((o) => typeof o === 'string' && bytes(o) >= 1 && bytes(o) <= 64) &&
+        sf.options.every(label) &&
         new Set(sf.options).size === sf.options.length;
       if (!ok) throw bad('status_field must be {name, options: 1-20 unique names}');
     }

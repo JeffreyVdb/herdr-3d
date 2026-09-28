@@ -1,7 +1,7 @@
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, CommandName } from '../net/protocol';
 import { buildingOrder, floorMove } from '../world/arrange';
-import { effortsFor, formFrom, parseForm, settingsPatch, type FieldKey, type SettingsForm } from '../world/settings';
+import { DEFAULT_STATUS_FIELD, effortsFor, formFrom, parseForm, settingsPatch, type FieldKey, type SettingsForm } from '../world/settings';
 import type { FloorView, WorldStore } from '../world/store';
 import { h, icon, ICON, replaceKeepingFocus, type Child } from './dom';
 import { failureText } from './messages';
@@ -46,7 +46,7 @@ export interface ElevatorRow {
 export type PanelSummary = (
   | { kind: 'elevator'; building: string | null; title: string; rows: ElevatorRow[] }
   | { kind: 'buildings'; buildings: Array<{ id: string; name: string; floors: string[] }>; lot: string[] }
-  | { kind: 'settings'; session: string; form: SettingsForm; repoSuggested: boolean }
+  | { kind: 'settings'; session: string; form: SettingsForm; repoSuggested: boolean; statusDefault: boolean }
 ) & { status: string; confirm: { title: string; body: string } | null };
 
 const LOT = 'Unassigned lot';
@@ -85,7 +85,7 @@ export class Panels {
   private renaming: { id: string; value: string; error: string } | null = null;
   private moving: string | null = null;
   private list: HTMLElement | null = null;
-  private settingsForm: { el: HTMLFormElement; read(): SettingsForm; show(errors: Partial<Record<FieldKey, string>>): void; session: string; repoSuggested: boolean } | null = null;
+  private settingsForm: { el: HTMLFormElement; read(): SettingsForm; session: string; repoSuggested: boolean; statusDefault: boolean } | null = null;
   private confirmState: { title: string; body: () => string; resolve(ok: boolean): void } | null = null;
   private statusText = '';
 
@@ -839,21 +839,33 @@ export class Panels {
 
     const owner = text(init.form.projectOwner, { placeholder: init.form.repo.split('/')[0] || 'owner' });
     const number = text(init.form.projectNumber, { inputmode: 'numeric', placeholder: 'e.g. 3' });
-    const statusName = text(init.form.statusName, { placeholder: 'Status' });
-    const statusOptions = text(init.form.statusOptions, { placeholder: 'Todo, Doing, QA, Done' });
+    // The status field stands alone (no project needed); the defaults are marked until changed.
+    const statusName = text(init.form.statusName, { placeholder: DEFAULT_STATUS_FIELD.name });
+    const defaultTape = h('span', { class: 'tape tape--default', title: 'The boards use these until you change them' }, 'Default');
+    const statusHint = (isDefault: boolean) =>
+      isDefault ? 'The defaults: the boards use these until you change them.' : 'In board order. Remove them all and empty the name to go back to the defaults.';
+    const statusMsg = h('p', { class: 'field-hint', id: 'set-statusOptions-hint' }, statusHint(init.statusDefault));
+    const statuses = this.statusEditor(init.form.statusOptions, statusMsg.id, () => {
+      syncDefault();
+      clearError('statusOptions');
+    });
+    const syncDefault = () => {
+      const d = DEFAULT_STATUS_FIELD;
+      const v = statuses.values();
+      const isDefault = init.statusDefault && statusName.value === d.name && v.length === d.options.length && v.every((o, i) => o === d.options[i]);
+      defaultTape.hidden = !isDefault;
+      hints.set('statusOptions', statusHint(isDefault));
+      if (!statusMsg.classList.contains('field-error')) statusMsg.textContent = statusHint(isDefault);
+    };
+    statusName.addEventListener('input', syncDefault);
     const statusGroup = h(
       'div',
       { class: 'field-grid field-grid--status' },
-      field('statusName', 'Status field', statusName, ''),
-      field('statusOptions', 'Statuses', statusOptions, 'In board order, separated by commas.'),
+      field('statusName', ['Status field', init.statusDefault ? defaultTape : null], statusName, ''),
+      h('div', { class: 'field', role: 'group', 'aria-labelledby': 'set-statusOptions-label' }, h('p', { class: 'field-label', id: 'set-statusOptions-label' }, 'Statuses'), statuses.el, statusMsg),
     );
-    const syncProject = () => {
-      const on = !!(owner.value.trim() || number.value.trim());
-      statusName.disabled = statusOptions.disabled = !on;
-      statusGroup.classList.toggle('is-off', !on);
-    };
-    owner.addEventListener('input', syncProject);
-    number.addEventListener('input', syncProject);
+    errs.set('statusOptions', statusMsg);
+    hints.set('statusOptions', statusHint(init.statusDefault));
 
     const cwd = text(init.form.defaultCwd, { placeholder: init.cwdPlaceholder || '/home/…' });
     const cwdHint = init.cwdPlaceholder ? `Empty uses the repo’s root checkout, ${init.cwdPlaceholder}.` : 'An absolute path on the server. Empty: the workers’ own folders.';
@@ -905,20 +917,19 @@ export class Panels {
       ),
       h('div', { class: 'settings-actions' }, cancel, save),
     );
-    syncProject();
 
     const read = (): SettingsForm => ({
       repo: repo.value,
       projectOwner: owner.value,
       projectNumber: number.value,
       statusName: statusName.value,
-      statusOptions: statusOptions.value,
+      statusOptions: statuses.values(),
       defaultCwd: cwd.value,
       harness: harness.value,
       model: model.value,
       effort: effort.value,
     });
-    const show = (errors: Partial<Record<FieldKey, string>>) => {
+    const show = (errors: Partial<Record<FieldKey, string>>, badOption: number | null = null) => {
       for (const [k, el] of errs) {
         const e = errors[k];
         const input = inputs.get(k);
@@ -930,15 +941,21 @@ export class Panels {
           else input.removeAttribute('aria-describedby');
         }
       }
+      statuses.flag(errors.statusOptions ? badOption : null);
     };
-    // Editing a flagged field clears its message; the last one clears the banner.
-    form.addEventListener('input', (e) => {
-      const k = (e.target as HTMLElement).getAttribute('name') as FieldKey | null;
-      if (!k || inputs.get(k)?.getAttribute('aria-invalid') !== 'true') return;
+    // Editing a flagged field clears its message (any status edit clears the
+    // statuses'); the last one clears the banner.
+    const clearError = (k: FieldKey) => {
+      if (!errs.get(k)?.classList.contains('field-error')) return;
       const still: Partial<Record<FieldKey, string>> = {};
       for (const [key, el] of errs) if (key !== k && el.classList.contains('field-error')) still[key] = el.textContent ?? '';
       show(still);
       if (!Object.keys(still).length) this.setStatus('');
+    };
+    form.addEventListener('input', (e) => {
+      const t = e.target as HTMLElement;
+      const k = t.getAttribute('name') as FieldKey | null;
+      if (k && (k === 'statusOptions' || t.getAttribute('aria-invalid') === 'true')) clearError(k);
     });
     form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -948,11 +965,12 @@ export class Panels {
       }
       const cur = this.host.store.floorView(session);
       if (!cur) return;
-      const p = parseForm(read(), hire);
-      show(p.errors);
+      const p = parseForm(read(), hire, cur.settings);
+      show(p.errors, p.badOption);
       const bad = (Object.keys(p.errors) as FieldKey[])[0];
       if (bad) {
-        inputs.get(bad)?.focus();
+        if (bad === 'statusOptions') statuses.focus(p.badOption);
+        else inputs.get(bad)?.focus();
         this.setStatus('Fix the highlighted field to save.', 'error');
         return;
       }
@@ -986,7 +1004,115 @@ export class Panels {
         this.setStatus(`Saved the ${Object.keys(patch).map((k) => names[k] ?? k).join(', ')}.`);
       });
     });
-    return { el: form, read, show, session, repoSuggested: init.repoSuggested };
+    return { el: form, read, session, repoSuggested: init.repoSuggested, statusDefault: init.statusDefault };
+  }
+
+  /**
+   * The status list: one input per status, in board order, with buttons to
+   * move and remove each and to add one. A row per label keeps any label
+   * intact (commas and all); rows persist, so typing and focus survive a move.
+   */
+  private statusEditor(
+    initial: string[],
+    hintId: string,
+    changed: () => void,
+  ): { el: HTMLElement; values(): string[]; flag(row: number | null): void; focus(row: number | null): void } {
+    interface Row {
+      li: HTMLLIElement;
+      num: HTMLElement;
+      input: HTMLInputElement;
+      up: HTMLButtonElement;
+      down: HTMLButtonElement;
+      del: HTMLButtonElement;
+    }
+    let seq = 0;
+    const rows: Row[] = [];
+    const list = h('ol', { class: 'opts', 'aria-labelledby': 'set-statusOptions-label' });
+    const empty = h('li', { class: 'dir-empty' }, 'No statuses.');
+    // aria-disabled, not disabled: a button that reaches the end keeps focus.
+    const tool = (paths: string, key: string, fn: () => void, extra = '') => {
+      const b = h('button', { class: `btn btn--icon btn--sm${extra}`, 'data-key': key }, icon(paths));
+      b.addEventListener('click', () => b.getAttribute('aria-disabled') !== 'true' && fn());
+      return b;
+    };
+    const add = h('button', { class: 'btn btn--sm opts-add', 'data-key': 'opt-add' }, icon(ICON.plus), h('span', {}, 'Add status'));
+    const off = (b: HTMLElement, yes: boolean) => {
+      if (yes) b.setAttribute('aria-disabled', 'true');
+      else b.removeAttribute('aria-disabled');
+    };
+    const names = (r: Row, i: number) => {
+      const what = r.input.value.trim() ? `“${r.input.value.trim()}”` : `status ${i + 1}`;
+      r.input.setAttribute('aria-label', `Status ${i + 1} of ${rows.length}`);
+      for (const [b, label] of [
+        [r.up, `Move ${what} up`],
+        [r.down, `Move ${what} down`],
+        [r.del, `Remove ${what}`],
+      ] as const) {
+        b.setAttribute('aria-label', label);
+        b.title = label;
+      }
+    };
+    const layout = () => {
+      const a = document.activeElement;
+      list.replaceChildren(...(rows.length ? rows.map((r) => r.li) : [empty]));
+      rows.forEach((r, i) => {
+        r.num.textContent = String(i + 1);
+        names(r, i);
+        off(r.up, i === 0);
+        off(r.down, i === rows.length - 1);
+      });
+      off(add, rows.length >= 20);
+      add.title = rows.length >= 20 ? 'At most 20 statuses' : 'Add a status at the end';
+      // Moving a node drops its focus: put it back.
+      if (a instanceof HTMLElement && a !== document.activeElement && a.isConnected) a.focus();
+    };
+    const make = (text: string): Row => {
+      const id = seq++;
+      const input = h('input', { 'data-key': `opt:${id}`, name: 'statusOptions', value: text, autocomplete: 'off', spellcheck: 'false', 'aria-describedby': hintId });
+      const r: Row = {
+        li: h('li', { class: 'opt' }),
+        num: h('span', { class: 'opt-num', 'aria-hidden': 'true' }),
+        input,
+        up: tool(ICON.up, `oup:${id}`, () => move(r, -1)),
+        down: tool(ICON.down, `odown:${id}`, () => move(r, 1)),
+        del: tool(ICON.trash, `odel:${id}`, () => remove(r), ' btn--danger-quiet'),
+      };
+      input.addEventListener('input', () => names(r, rows.indexOf(r)));
+      r.li.append(r.num, input, h('div', { class: 'dir-tools' }, r.up, r.down, r.del));
+      return r;
+    };
+    const move = (r: Row, dir: -1 | 1) => {
+      const i = rows.indexOf(r);
+      const other = rows[i + dir];
+      if (!other) return;
+      rows[i + dir] = r;
+      rows[i] = other;
+      layout();
+      changed();
+    };
+    const remove = (r: Row) => {
+      const i = rows.indexOf(r);
+      rows.splice(i, 1);
+      layout();
+      (rows[i]?.input ?? rows[i - 1]?.input ?? add).focus();
+      changed();
+    };
+    add.addEventListener('click', () => {
+      if (add.getAttribute('aria-disabled') === 'true') return;
+      const r = make('');
+      rows.push(r);
+      layout();
+      r.input.focus();
+      changed();
+    });
+    for (const t of initial) rows.push(make(t));
+    layout();
+    return {
+      el: h('div', { class: 'opts-editor' }, list, add),
+      values: () => rows.map((r) => r.input.value),
+      flag: (row) => rows.forEach((r, i) => r.input.setAttribute('aria-invalid', i === row ? 'true' : 'false')),
+      focus: (row) => (rows[row ?? 0]?.input ?? add).focus(),
+    };
   }
 
   // ---- confirmation --------------------------------------------------------------
@@ -1048,6 +1174,13 @@ export class Panels {
       };
     }
     const sf = this.settingsForm;
-    return { kind: 'settings', session: v.session, form: sf ? sf.read() : formFrom({}, {}).form, repoSuggested: sf?.repoSuggested ?? false, ...base };
+    return {
+      kind: 'settings',
+      session: v.session,
+      form: sf ? sf.read() : formFrom({}, {}).form,
+      repoSuggested: sf?.repoSuggested ?? false,
+      statusDefault: sf?.statusDefault ?? false,
+      ...base,
+    };
   }
 }
