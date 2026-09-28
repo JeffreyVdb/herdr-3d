@@ -138,21 +138,27 @@ Controls: in the city, drag to orbit, scroll to zoom, click a building to focus 
 inside. On a floor, click for mouse look (Pointer Lock), WASD / arrows to walk, Shift to run, Esc releases the mouse,
 Tab toggles the floor plan (click the plan to walk there; it is also the fallback when pointer lock is refused),
 Backspace or the City button goes back, B toggles battery saver (60 Hz moving / 30 Hz idle instead of 120 / 60).
+Keyboard: in the city, Tab reaches the floor list (Enter goes inside). On a floor, Shift+Tab moves focus to the top
+bar (City, Issues, PRs, battery saver); Tab / Shift+Tab then move between its buttons as usual and Enter presses one.
+Tab toggles the plan only while nothing but the scene has focus; clicking the scene gives it focus back.
 
 Tests:
 
 ```sh
 make test lint                # vitest + tsc (protocol client, store, layout, collision, cards, frame policy, fixtures)
 make shot                     # Playwright WebGL2: game/test-results/{shot,m2-city,m2-floor-plan,m2-desk-row}.png,
-                              # scripted look-at path, floor entry, fixture status event
+                              # scripted look-at path, floor entry, keyboard focus, live plan labels, events
+                              # during the elevator ride, held keys across floors, small-window plan
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
 ```
 
-`test:live` builds `bin/herdr-world` from the worktree, starts `herdr --session h3d-m2game-<random> server` (with
+`test:live` builds `bin/herdr-world` from the worktree (or runs `H3D_LIVE_BRIDGE=<path>`, e.g. another branch's
+bridge built elsewhere), starts `herdr --session h3d-m2game-<random> server` (with
 `HERDR_*`/`CLAUDE*` stripped), a private bridge on `$XDG_RUNTIME_DIR/h3d-m2game/bridge.sock` watching only that session,
 and the WebSocket → unix-socket proxy on a leased 127.0.0.1 port. The spec flips a custom agent's state with
-`herdr pane report-agent` and asserts each change is on screen within 1 s. The session is stopped and deleted
+`herdr pane report-agent` and asserts each change is on screen within 1 s. It accepts an M1 bridge (name falls back
+to the label, desk to the lowest free local slot) and the M2 bridge (its own `name` and `desk_index`). The session is stopped and deleted
 afterwards; after a hard kill, check `herdr session list` for a leftover `h3d-m2game-*` session.
 
 `perf:mac` serves `game/dist` on a leased port P and opens `ssh -o ControlMaster=no -o ControlPath=none -N -R
@@ -162,6 +168,7 @@ It pipes `tools/mac-runner.mjs` into `/opt/homebrew/bin/node` in `~/h3d-tools` (
 pipelined throughput, GPU timestamps, and rAF frames that include DOM layout.
 
 `window.__h3d` (tests, perf): `backend`, `frames`, `error`, `ready`, `view()`, `lookAt()` → `{kind, id, name?, label?}`
-or null, `status(workerId)` → `{status, at}` as last rendered, `world()`, `layout(session)`, `enterFloor(session,
-pose?)`, `leaveFloor()`, `setPose({x, z, yaw, pitch})`, `pose()`, `plan(open)`, `focusBuilding(i)`, `cardsShown()`,
-`bench(opts)`.
+or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
+sent, `bridgeName`/`bridgeDesk`, null from an older bridge), `layout(session)`, `enterFloor(session, pose?)`,
+`leaveFloor()`, `inject(event)` (applies a protocol event as if the bridge sent it), `setPose({x, z, yaw, pitch})`,
+`pose()`, `plan(open)`, `focusBuilding(i)`, `cards()`, `badgePoint(session)`, `bench(opts)`.
