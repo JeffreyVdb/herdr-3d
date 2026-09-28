@@ -15,14 +15,16 @@ import (
 // TestGitAllowlist is the tripwire for the git commands the bridge runs.
 func TestGitAllowlist(t *testing.T) {
 	want := map[string][]string{
-		"toplevel":      {"{git}", "-C", "{dir}", "rev-parse", "--show-toplevel"},
-		"fetch":         {"{git}", "-C", "{dir}", "fetch", "--quiet", "origin"},
-		"origin-head":   {"{git}", "-C", "{dir}", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"},
-		"commit":        {"{git}", "-C", "{dir}", "log", "-1", "--format=%H %ct", "{ref}", "--"},
-		"status":        {"{git}", "-C", "{dir}", "status", "--porcelain"},
-		"branch":        {"{git}", "-C", "{dir}", "symbolic-ref", "--quiet", "--short", "HEAD"},
-		"unpushed":      {"{git}", "-C", "{dir}", "rev-list", "--count", "HEAD", "--not", "--remotes"},
-		"delete-branch": {"{git}", "-C", "{dir}", "branch", "-D", "{branch}"},
+		"toplevel":        {"{git}", "-C", "{dir}", "rev-parse", "--show-toplevel"},
+		"fetch":           {"{git}", "-C", "{dir}", "fetch", "--quiet", "origin"},
+		"origin-head":     {"{git}", "-C", "{dir}", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"},
+		"commit":          {"{git}", "-C", "{dir}", "log", "-1", "--format=%H %ct", "{ref}", "--"},
+		"status":          {"{git}", "-C", "{dir}", "status", "--porcelain"},
+		"branch":          {"{git}", "-C", "{dir}", "symbolic-ref", "--quiet", "--short", "HEAD"},
+		"unpushed":        {"{git}", "-C", "{dir}", "rev-list", "--count", "HEAD", "--not", "--remotes"},
+		"branch-unpushed": {"{git}", "-C", "{dir}", "rev-list", "--count", "refs/heads/{branch}", "--not", "--remotes"},
+		"branch-tip":      {"{git}", "-C", "{dir}", "rev-parse", "--verify", "--quiet", "refs/heads/{branch}"},
+		"delete-branch":   {"{git}", "-C", "{dir}", "branch", "-D", "{branch}"},
 	}
 	if !reflect.DeepEqual(shapes, want) {
 		t.Fatalf("shapes = %q", shapes)
@@ -32,7 +34,8 @@ func TestGitAllowlist(t *testing.T) {
 	for i := range typ.NumMethod() {
 		methods = append(methods, typ.Method(i).Name)
 	}
-	if w := []string{"Commit", "CurrentBranch", "DefaultBranch", "DeleteBranch", "Fetch", "Status", "TopLevel", "Unpushed"}; !slices.Equal(methods, w) {
+	if w := []string{"BranchTip", "BranchUnpushed", "Commit", "CurrentBranch", "DefaultBranch", "DeleteBranch", "Fetch",
+		"Status", "TopLevel", "Unpushed"}; !slices.Equal(methods, w) {
 		t.Fatalf("Git methods = %v, want %v", methods, w)
 	}
 
@@ -46,6 +49,8 @@ func TestGitAllowlist(t *testing.T) {
 		"ref option":        func() error { _, _, err := g.Commit(ctx, "/r", "--all"); return err },
 		"foreign branch":    func() error { return g.DeleteBranch(ctx, "/r", "main") },
 		"branch with flags": func() error { return g.DeleteBranch(ctx, "/r", "h3d/x -f") },
+		"foreign ahead":     func() error { _, err := g.BranchUnpushed(ctx, "/r", "main"); return err },
+		"foreign tip":       func() error { _, err := g.BranchTip(ctx, "/r", "--all"); return err },
 	} {
 		if err := call(); !errors.Is(err, ErrNotAllowed) {
 			t.Errorf("%s: err = %v, want ErrNotAllowed", name, err)
@@ -139,6 +144,10 @@ func TestGitOnARepository(t *testing.T) {
 	if n, err := g.Unpushed(ctx, wt); err != nil || n != 0 {
 		t.Fatalf("Unpushed on the base = %d, %v", n, err)
 	}
+	base := git(t, work, "rev-parse", "origin/trunk")
+	if tip, err := g.BranchTip(ctx, work, "h3d/mochi-a1b2c3"); err != nil || tip != base {
+		t.Fatalf("BranchTip = %q, %v, want %s", tip, err, base)
+	}
 	if err := os.WriteFile(filepath.Join(wt, "notes.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -150,9 +159,24 @@ func TestGitOnARepository(t *testing.T) {
 	if n, err := g.Unpushed(ctx, wt); err != nil || n != 1 {
 		t.Fatalf("Unpushed = %d, %v", n, err)
 	}
+	if tip, err := g.BranchTip(ctx, work, "h3d/mochi-a1b2c3"); err != nil || tip == base {
+		t.Fatalf("BranchTip after a commit = %q, %v", tip, err)
+	}
+	// The branch's own commits count, whatever the checkout has out.
+	git(t, wt, "checkout", "-q", "--detach", "origin/trunk")
+	if n, err := g.BranchUnpushed(ctx, work, "h3d/mochi-a1b2c3"); err != nil || n != 1 {
+		t.Fatalf("BranchUnpushed = %d, %v", n, err)
+	}
+	if n, err := g.Unpushed(ctx, wt); err != nil || n != 0 {
+		t.Fatalf("Unpushed of a detached base = %d, %v", n, err)
+	}
+	git(t, wt, "checkout", "-q", "h3d/mochi-a1b2c3")
 	git(t, wt, "push", "-q", "origin", "h3d/mochi-a1b2c3")
 	if n, err := g.Unpushed(ctx, wt); err != nil || n != 0 {
 		t.Fatalf("Unpushed after push = %d, %v", n, err)
+	}
+	if n, err := g.BranchUnpushed(ctx, work, "h3d/mochi-a1b2c3"); err != nil || n != 0 {
+		t.Fatalf("BranchUnpushed after push = %d, %v", n, err)
 	}
 	git(t, wt, "checkout", "-q", "--detach")
 	if b, err := g.CurrentBranch(ctx, wt); err != nil || b != "" || HeadBranch(wt) != "" {

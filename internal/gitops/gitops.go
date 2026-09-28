@@ -3,7 +3,8 @@
 // herdr.Control it runs exactly the commands in shapes, with validated
 // variables, each its own argv element (no shell), in a clean
 // environment. Only DeleteBranch changes a repository, and only a branch
-// the bridge made (h3d/…); Fetch only updates remote-tracking refs.
+// the bridge made (h3d/…, and recorded as made for that worker by the
+// caller); Fetch only updates remote-tracking refs.
 package gitops
 
 import (
@@ -54,6 +55,8 @@ const (
 	opStatus       = "status"
 	opBranch       = "branch"
 	opUnpushed     = "unpushed"
+	opBranchAhead  = "branch-unpushed"
+	opBranchTip    = "branch-tip"
 	opDeleteBranch = "delete-branch"
 )
 
@@ -68,6 +71,9 @@ var shapes = map[string][]string{
 	opStatus:     {"{git}", "-C", "{dir}", "status", "--porcelain"},
 	opBranch:     {"{git}", "-C", "{dir}", "symbolic-ref", "--quiet", "--short", "HEAD"},
 	opUnpushed:   {"{git}", "-C", "{dir}", "rev-list", "--count", "HEAD", "--not", "--remotes"},
+	// The same for a branch the bridge made, and where it points.
+	opBranchAhead: {"{git}", "-C", "{dir}", "rev-list", "--count", "refs/heads/{branch}", "--not", "--remotes"},
+	opBranchTip:   {"{git}", "-C", "{dir}", "rev-parse", "--verify", "--quiet", "refs/heads/{branch}"},
 	// Only a branch the bridge made, after its commits were seen pushed.
 	opDeleteBranch: {"{git}", "-C", "{dir}", "branch", "-D", "{branch}"},
 }
@@ -247,6 +253,33 @@ func (g *Git) Unpushed(ctx context.Context, dir string) (int, error) {
 		return 0, fmt.Errorf("git rev-list --count: unexpected %q", out)
 	}
 	return n, nil
+}
+
+// BranchUnpushed counts the commits reachable from branch (one the bridge
+// made) that are on no remote-tracking branch.
+func (g *Git) BranchUnpushed(ctx context.Context, dir, branch string) (int, error) {
+	out, err := g.run(ctx, opBranchAhead, map[string]string{"dir": dir, "branch": branch})
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("git rev-list --count: unexpected %q", out)
+	}
+	return n, nil
+}
+
+// BranchTip returns the commit branch (one the bridge made) points at.
+func (g *Git) BranchTip(ctx context.Context, dir, branch string) (string, error) {
+	out, err := g.run(ctx, opBranchTip, map[string]string{"dir": dir, "branch": branch})
+	if err != nil {
+		return "", err
+	}
+	sha := strings.TrimSpace(string(out))
+	if len(sha) < 40 {
+		return "", fmt.Errorf("git rev-parse %s: unexpected %q", branch, out)
+	}
+	return sha, nil
 }
 
 // DeleteBranch deletes a branch the bridge made (h3d/…) in the repository
