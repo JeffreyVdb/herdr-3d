@@ -81,6 +81,40 @@ test('picking a floor badge enters the floor in first person, at the entrance fa
   clean();
 });
 
+test('keyboard on a floor: Shift+Tab reaches the top bar, Tab there moves focus, Issues opens', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page);
+  await page.locator('.floor-list button[data-session="herdr-3d"]').focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__h3d.view().floor === 'herdr-3d' && !window.__h3d.view().busy);
+  const focused = () =>
+    page.evaluate(() => {
+      const a = document.activeElement;
+      return !a || a === document.body ? 'BODY' : (a.getAttribute('aria-label') ?? a.textContent?.trim());
+    });
+  const plan = () => page.evaluate(() => window.__h3d.view().plan);
+  expect(await focused()).toBe('BODY');
+  await page.keyboard.press('Shift+Tab');
+  expect(await focused()).toBe('City');
+  // Inside the top bar Tab / Shift+Tab traverse it natively and leave the plan alone.
+  await page.keyboard.press('Tab');
+  expect(await focused()).toBe('Issues');
+  await page.keyboard.press('Tab');
+  expect(await focused()).toBe('PRs');
+  await page.keyboard.press('Shift+Tab');
+  expect(await focused()).toBe('Issues');
+  expect(await plan()).toBe(false);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('dialog.sheet h2')).toHaveText('Issues · herdr-3d');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog.sheet')).toBeHidden();
+  // Back on the scene, plain Tab toggles the plan again.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('Tab');
+  expect(await plan()).toBe(true);
+  clean();
+});
+
 test('without pointer lock, clicking into the floor falls back to the floor plan', async ({ page }) => {
   await openGame(page);
   await enter(page);

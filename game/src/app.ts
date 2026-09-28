@@ -418,8 +418,16 @@ export class App {
       return;
     }
     if (e.code === 'Tab' && this.mode === 'floor') {
+      // From the scene: Tab toggles the plan, Shift+Tab moves focus into the
+      // top bar (City, Issues, PRs, …). From a focused HUD control, or with
+      // another modifier, Tab moves focus as usual.
+      if (e.altKey || e.ctrlKey || e.metaKey || !this.sceneFocused()) return;
       e.preventDefault();
-      this.setPlan(!this.planOpen);
+      if (!e.shiftKey) this.setPlan(!this.planOpen);
+      else {
+        this.walker.release();
+        this.hud.focusTopbar();
+      }
     } else if (e.code === 'KeyB' && !e.metaKey && !e.ctrlKey) {
       this.toggleBattery();
     } else if (e.code === 'Backspace' && this.mode === 'floor') {
@@ -430,6 +438,12 @@ export class App {
     } else if (e.code === 'Escape' && this.mode === 'city' && this.focus !== null) {
       this.focusBuilding(null);
     }
+  }
+
+  /** Nothing but the scene has keyboard focus (no HUD control). */
+  private sceneFocused(): boolean {
+    const a = document.activeElement;
+    return !a || a === document.body || a === this.r.domElement;
   }
 
   private cityRayFloor(e: { clientX: number; clientY: number }): string | null {

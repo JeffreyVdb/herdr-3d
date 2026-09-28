@@ -241,9 +241,15 @@ export class Hud {
     const legend = (['working', 'needs_you', 'done', 'idle'] as const)
       .map((d) => `<span class="count count--${d}"><i></i><span style="color:inherit">${STATUS_WORD[d]}</span></span>`)
       .join('');
-    this.planCard.innerHTML = `<h2></h2><p>Click the floor to walk there. <b>Tab</b> closes the plan.</p><div class="plan-legend">${legend}<span class="count"><i style="background:var(--plus)"></i><span style="color:inherit">free desk</span></span></div>`;
+    this.planCard.innerHTML = `<h2></h2><p>Click the floor to walk there. <b>Tab</b> closes the plan. <b>Shift+Tab</b> reaches the top bar.</p><div class="plan-legend">${legend}<span class="count"><i style="background:var(--plus)"></i><span style="color:inherit">free desk</span></span></div>`;
     const h = this.planCard.querySelector('h2');
     if (h) h.textContent = `Floor plan · ${title}`;
+  }
+
+  /** Keyboard route into the top bar: focuses its first visible control. */
+  focusTopbar(): void {
+    const first = [this.back, this.issues, this.prs, this.battery].find((b) => !b.hidden);
+    first?.focus();
   }
 
   get planElement(): HTMLDivElement {
