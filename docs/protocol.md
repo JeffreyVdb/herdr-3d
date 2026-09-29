@@ -33,9 +33,12 @@ unless all three hold:
 - `Host` is `127.0.0.1:<port>` or `localhost:<port>` (or `<ip>:<port>` when `--listen` is another literal loopback
   IP, e.g. `[::1]:<port>`);
 - `Origin` is `http://127.0.0.1:<port>` or `http://localhost:<port>` (or `http://<ip>:<port>` likewise);
-- `token` is the token of this helper run. The helper makes a random one at every start and opens the game at
-  `http://127.0.0.1:<port>/#token=<token>`; the game keeps it in `sessionStorage` (`h3d.token`) and strips it from the
-  URL.
+- `token` is the helper's token. The helper makes a random one the first time and keeps it in a 0600 file
+  (`~/Library/Application Support/h3d-helper/token`, `--token-file`), so it survives restarts and updates; delete the
+  file to rotate it. The helper opens the game at `http://127.0.0.1:<port>/#token=<token>` (`h3d-helper -print-url`
+  prints it); the game keeps it in `localStorage` (`h3d.token`), which is what lets the installed app start from the
+  Dock without that URL, and strips it from the address bar. Same trust as the file: anything that can read the user's
+  files or that origin's storage can drive the bridge, which is already a shell as that user.
 
 A `502` means the tunnel is down; the helper's own `GET /healthz` reports the tunnel state
 (`{"tunnel":{"state":"up|connecting|degraded|backoff",…}}`, `503` unless `up`).

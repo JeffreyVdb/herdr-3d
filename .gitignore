@@ -8,3 +8,6 @@ bin/
 .DS_Store
 test-results/
 playwright-report/
+internal/webdist/game/*
+!internal/webdist/game/.gitkeep
+bin/release/

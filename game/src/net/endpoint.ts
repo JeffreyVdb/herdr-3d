@@ -2,7 +2,8 @@
  * Where the game's WebSocket goes, and the helper token it carries.
  *
  * The Mac helper opens `http://127.0.0.1:7777/#token=<token>`. The game moves
- * the token into sessionStorage (`h3d.token`), strips it from the URL, and
+ * the token into localStorage (`h3d.token`; the installed app reuses it and
+ * the helper keeps its token across restarts), strips it from the URL, and
  * sends it as `?token=` on the same-origin `/ws`. `?ws=<url>` overrides the
  * endpoint for fixture servers and dev proxies.
  */

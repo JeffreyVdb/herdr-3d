@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -282,4 +283,35 @@ func TestListenLoopbackOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	ln.Close()
+}
+
+// TestEmbeddedBundle serves the game from an fs.FS (the copy embedded in the
+// binary) the same way as from a directory.
+func TestEmbeddedBundle(t *testing.T) {
+	s := NewServer(ServerConfig{Port: testPort, ListenHost: "127.0.0.1", Token: testToken,
+		Bridge: &socketBridge{state: StateConnecting}, Log: quietLog(),
+		BundleFS: fstest.MapFS{
+			"index.html":           {Data: []byte("<!doctype html><title>h3d</title>")},
+			"assets/index-abc1.js": {Data: []byte("console.log('h3d')")},
+		}})
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	const host = "127.0.0.1:7777"
+
+	for _, tc := range []struct {
+		path, ctype, cache, body string
+	}{
+		{"/", "text/html; charset=utf-8", "no-cache", "<title>h3d</title>"},
+		{"/city/floor/2", "text/html; charset=utf-8", "no-cache", "<title>h3d</title>"},
+		{"/assets/index-abc1.js", "text/javascript; charset=utf-8", "immutable", "console.log"},
+	} {
+		resp, body := get(t, ts, "GET", host, tc.path)
+		if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != tc.ctype ||
+			!strings.Contains(resp.Header.Get("Cache-Control"), tc.cache) || !strings.Contains(body, tc.body) {
+			t.Errorf("%s: %d %q %q %q", tc.path, resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Cache-Control"), body)
+		}
+	}
+	if resp, _ := get(t, ts, "GET", host, "/missing.png"); resp.StatusCode != 404 {
+		t.Errorf("/missing.png: %d, want 404", resp.StatusCode)
+	}
 }

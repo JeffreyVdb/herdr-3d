@@ -219,7 +219,7 @@ export class App {
     );
 
     this.fixture = /\/fixture\//.test(o.params.get('ws') ?? '');
-    const token = takeToken(window.location, safeSession(), (u) => history.replaceState(null, '', u));
+    const token = takeToken(window.location, safeStorage(), (u) => history.replaceState(null, '', u));
     this.url = bridgeUrl(window.location, token);
     this.client = new BridgeClient({
       url: this.url,
@@ -1774,9 +1774,10 @@ function zero(): Counts {
   return { working: 0, needsYou: 0, idle: 0, done: 0, total: 0 };
 }
 
-function safeSession(): Storage | null {
+/** Durable, so an installed app can start without the #token= URL; the helper's token survives its restarts. */
+function safeStorage(): Storage | null {
   try {
-    return window.sessionStorage;
+    return window.localStorage;
   } catch {
     return null;
   }

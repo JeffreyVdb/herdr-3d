@@ -46,8 +46,11 @@ type ServerConfig struct {
 	// Bundle is a built game (game/dist). Dev, if set, is a Vite dev server
 	// that gets every request except /ws and /healthz instead.
 	Bundle string
-	Dev    *url.URL
-	Log    *slog.Logger
+	// BundleFS, if set, is used instead of the Bundle directory (the game
+	// embedded in the binary).
+	BundleFS fs.FS
+	Dev      *url.URL
+	Log      *slog.Logger
 }
 
 // Server is the helper's HTTP front: the game, /ws to the bridge, /healthz.
@@ -166,31 +169,35 @@ func (s *Server) devProxy() http.Handler {
 // contentTypes covers what a game bundle ships that Go's built-in table
 // may not know (or may map differently per OS).
 var contentTypes = map[string]string{
-	".html":  "text/html; charset=utf-8",
-	".js":    "text/javascript; charset=utf-8",
-	".mjs":   "text/javascript; charset=utf-8",
-	".css":   "text/css; charset=utf-8",
-	".json":  "application/json",
-	".map":   "application/json",
-	".wasm":  "application/wasm",
-	".svg":   "image/svg+xml",
-	".png":   "image/png",
-	".jpg":   "image/jpeg",
-	".webp":  "image/webp",
-	".ktx2":  "image/ktx2",
-	".glb":   "model/gltf-binary",
-	".gltf":  "model/gltf+json",
-	".bin":   "application/octet-stream",
-	".woff2": "font/woff2",
-	".ico":   "image/x-icon",
-	".txt":   "text/plain; charset=utf-8",
+	".html":        "text/html; charset=utf-8",
+	".js":          "text/javascript; charset=utf-8",
+	".mjs":         "text/javascript; charset=utf-8",
+	".css":         "text/css; charset=utf-8",
+	".json":        "application/json",
+	".webmanifest": "application/manifest+json",
+	".map":         "application/json",
+	".wasm":        "application/wasm",
+	".svg":         "image/svg+xml",
+	".png":         "image/png",
+	".jpg":         "image/jpeg",
+	".webp":        "image/webp",
+	".ktx2":        "image/ktx2",
+	".glb":         "model/gltf-binary",
+	".gltf":        "model/gltf+json",
+	".bin":         "application/octet-stream",
+	".woff2":       "font/woff2",
+	".ico":         "image/x-icon",
+	".txt":         "text/plain; charset=utf-8",
 }
 
 // bundle serves the built game. Unknown extensionless paths get index.html
 // (single-page app); Vite's hashed /assets/ are cached for good, the rest
 // is revalidated.
 func (s *Server) bundle() http.Handler {
-	root := http.Dir(s.cfg.Bundle)
+	var root http.FileSystem = http.Dir(s.cfg.Bundle)
+	if s.cfg.BundleFS != nil {
+		root = http.FS(s.cfg.BundleFS)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
@@ -227,7 +234,7 @@ func (s *Server) bundle() http.Handler {
 }
 
 // openFile opens a regular file under root, or returns nil.
-func openFile(root http.Dir, name string) (http.File, fs.FileInfo) {
+func openFile(root http.FileSystem, name string) (http.File, fs.FileInfo) {
 	f, err := root.Open(name)
 	if err != nil {
 		return nil, nil
@@ -245,7 +252,7 @@ func CheckBundle(dir string) error {
 	fi, err := os.Stat(filepath.Join(dir, "index.html"))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("no game bundle at %s (index.html missing): build it with `make game-build` and copy game/dist there, or pass -bundle / -dev-upstream", dir)
+			return fmt.Errorf("no game bundle at %s (index.html missing): use a release build of h3d-helper (it embeds the game), or build one with `make embed-game helper-darwin`, or pass -bundle / -dev-upstream", dir)
 		}
 		return err
 	}

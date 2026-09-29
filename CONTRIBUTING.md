@@ -267,12 +267,14 @@ killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herd
   dev@devbox`, restarts it with exponential backoff (0.5 s doubling to 30 s, ±20 % jitter, back to 0.5 s after
   30 s up) and checks the bridge's `/healthz` through it every 5 s (3 failures in a row restart ssh). On exit it kills
   ssh's process group and removes the local socket;
-- it serves the game on `http://127.0.0.1:7777` (loopback only; a secure context, so WebGPU works) from a built
-  `game/dist`, or proxies a Vite dev server with `-dev-upstream`;
-- it proxies `GET /ws` to the bridge, after checking Host, Origin and a per-start token (`docs/protocol.md`
+- it serves the game on `http://127.0.0.1:7777` (loopback only; a secure context, so WebGPU works) from the game
+  embedded in its binary (release builds; `make embed-game`), from a `game/dist` copy with `-bundle`, or proxies a Vite
+  dev server with `-dev-upstream`;
+- it proxies `GET /ws` to the bridge, after checking Host, Origin and the helper token (`docs/protocol.md`
   "Through h3d-helper");
-- it opens a Chrome `--app` window on `http://127.0.0.1:7777/#token=…` with its own profile (`-no-open` skips that).
-  The token changes at every start: after a restart, use the new window.
+- it opens a Chrome `--app` window on `http://127.0.0.1:7777/#token=…` with its own profile (`-no-open` skips that; it also skips it when the game is installed as a Chrome app, see
+  `docs/releasing.md`).
+  The token is kept in a file and survives restarts, so an open game window reconnects by itself.
 
 It needs non-interactive SSH from the Mac to the host (`BatchMode=yes`: a key in the agent/keychain, host key known).
 State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not answering through the tunnel`,
@@ -284,26 +286,18 @@ State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not an
 | `--remote-socket` | `H3D_HELPER_REMOTE_SOCKET` | `/run/user/1000/herdr-world/bridge.sock` (the bridge's default) |
 | `--local-socket` | `H3D_HELPER_LOCAL_SOCKET` | `~/Library/Caches/h3d-helper/bridge.sock` |
 | `--listen` | `H3D_HELPER_LISTEN` | `127.0.0.1:7777`; anything but a loopback IP is refused |
-| `--bundle` | `H3D_HELPER_BUNDLE` | `~/Library/Application Support/h3d-helper/dist` |
+| `--bundle` | `H3D_HELPER_BUNDLE` | the game embedded in the binary; else `~/Library/Application Support/h3d-helper/dist` |
+| `--token-file` | `H3D_HELPER_TOKEN_FILE` | `~/Library/Application Support/h3d-helper/token` (0600, created on first start) |
+| `--print-url` | | print the game URL with the token and exit |
 | `--dev-upstream` | `H3D_HELPER_DEV_UPSTREAM` | off; e.g. `http://127.0.0.1:5173` |
 | `--no-open` | `H3D_HELPER_NO_OPEN` | `false` |
 | `--chrome`, `--chrome-profile` | `H3D_HELPER_CHROME`, `H3D_HELPER_CHROME_PROFILE` | `Google Chrome`, `~/Library/Application Support/h3d-helper/chrome` |
 | `--ssh` | `H3D_HELPER_SSH` | `ssh` on `PATH` |
 | `--log-level`, `--log-format` | `H3D_HELPER_LOG_LEVEL`, `H3D_HELPER_LOG_FORMAT` | `info`, `text` (or `json`) |
 
-Install as a launchd user agent, from the server (always `-o ControlMaster=no -o ControlPath=none`, see the rule below):
-
-```sh
-make helper-darwin game-build
-mac=devmac; ssh="ssh -o ControlMaster=no -o ControlPath=none"
-$ssh $mac 'mkdir -p ~/.local/bin ~/Library/LaunchAgents "Library/Application Support/h3d-helper" && rm -rf "Library/Application Support/h3d-helper/dist"'
-scp -o ControlMaster=no -o ControlPath=none bin/darwin-arm64/h3d-helper $mac:.local/bin/h3d-helper
-tar -C game -cf - dist | $ssh $mac 'tar -C "Library/Application Support/h3d-helper" -xf -'
-$ssh $mac 'sed "s|@HOME@|$HOME|g" > Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist' < deploy/com.jeffreyvdb.h3d-helper.plist
-$ssh $mac 'launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist'
-```
-
-Then on the Mac: `tail -f ~/Library/Logs/h3d-helper.log`. After an update, copy the binary/bundle again and
+Installing and updating are one command, `deploy/h3d-update`, from a GitHub release: see
+[`docs/releasing.md`](docs/releasing.md) (first install, updating, rolling back, installing the game as a Dock app).
+It installs the launchd agent's binary at `~/.local/bin/h3d-helper` and restarts the agent with
 `launchctl kickstart -k gui/$(id -u)/com.jeffreyvdb.h3d-helper`. Uninstall:
 
 ```sh
@@ -351,7 +345,7 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   per-command timeout: 10 s, `floor.sleep` 30 s, `floor.wake` 60 s since its ack waits for every agent; M4:
   `hire.prepare` 30 s, `worker.hire` 90 s, `worker.fire.prepare` 20 s, `worker.fire` 45 s; M6: `run.prepare` 30 s,
   `run.start` 90 s; a drop fails what is in flight) and the endpoint: same-origin `/ws?token=…` (the helper opens `/#token=<token>`; the game
-  keeps it in `sessionStorage` as `h3d.token` and strips it from the URL), `?ws=<url>` to point elsewhere.
+  keeps it in `localStorage` as `h3d.token` and strips it from the URL), `?ws=<url>` to point elsewhere.
 - `src/world` — the world store (snapshot + events, fallbacks for an older bridge without `name`, `desk_index`,
   `harness`, `model`, `effort`, `status_since`, `floor.desks`, and M3's `transition`, `settings`, `suggested`,
   `resume`, `hire_options`), the deterministic office layout for a desk count in its building's outline, the building
