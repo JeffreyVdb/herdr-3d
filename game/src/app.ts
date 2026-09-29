@@ -24,6 +24,15 @@ import type { Display } from './world/derive';
 import { firstFreeDesk, isFreshHire, Reservations } from './world/hire';
 import { walkOutRoute } from './world/route';
 import { WorldStore, type Change, type Counts, type FloorView } from './world/store';
+// M5 panels: P prompt, C changes, N next, 1–9 / 0 quick replies.
+import { ChangesPanel } from './ui/changes';
+import { failureText as commandFailure } from './ui/messages';
+import { PromptOverlay } from './ui/prompt';
+import { answerable, answerArgs, answerKeys, digitPick, pickLabel, questionLine, type Pick as AnswerPick } from './world/answer';
+import { faceSpots, needQueue, nextNeed, type NeedItem } from './world/next';
+import { promptBlocker } from './world/prompt';
+import type { AnswerAck, Question } from './net/protocol';
+import type { WorkerView } from './world/store';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
@@ -99,6 +108,14 @@ export class App {
   readonly url: string;
   /** #20: the name on your desk's name plate (`?me=`; the bridge sends no user name yet). */
   readonly owner: string;
+  /** M5: P, the prompt overlay; C, the Changes side panel. */
+  readonly prompt: PromptOverlay;
+  readonly changes: ChangesPanel;
+  /** M5: the worker N went to last (the next N goes on from there), and one it rides the elevator to. */
+  private lastNeed: string | null = null;
+  private pendingNeed: NeedItem | null = null;
+  /** M5: workers with an answer on its way. */
+  private readonly answering = new Set<string>();
 
   private readonly r: THREE.WebGPURenderer;
   private readonly cityCam: THREE.PerspectiveCamera;
@@ -209,7 +226,7 @@ export class App {
       unsupported: (t) => this.unsupported.has(t),
       travel: (s) => {
         this.panels.close();
-        void this.enterFloor(s);
+        void this.enterFloor(s).then(() => this.afterTravel(s));
       },
       travelLobby: (b) => {
         this.panels.close();
@@ -229,6 +246,9 @@ export class App {
     this.sendHome = new SendHomeDialog(o.host, dialogHost);
     this.arrivals = new Arrivals(this.shadows);
     this.walk.scene.add(this.arrivals.group);
+    // M5 panels: the Changes panel sits in the HUD, under the top bar, and leaves the floor in view.
+    this.prompt = new PromptOverlay(o.host, dialogHost);
+    this.changes = new ChangesPanel(this.hud.root, { ...dialogHost, blur: () => (document.activeElement as HTMLElement | null)?.blur?.() });
 
     this.hud.on('city', () => void this.leaveFloor());
     this.hud.on('hire', () => this.openHire());
@@ -285,6 +305,8 @@ export class App {
     this.refreshTopbar();
     this.updateNotice();
     if (this.mode === 'floor') this.updateHint();
+    this.prompt.refresh();
+    this.changes.refresh();
     this.panels.refresh();
     this.hire.refresh();
     this.sendHome.refresh();
@@ -420,7 +442,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.sendHome.isOpen;
+    return this.hire.isOpen || this.sendHome.isOpen || this.prompt.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -953,6 +975,8 @@ export class App {
     if (this.hud.sheetOpen || this.panels.open || this.dialogOpen) return;
     const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     if (typing) return;
+    // M5: keys in the Changes panel are its own.
+    if (this.changes.owns(e.target)) return;
     this.activity(true);
     if (this.mode === 'floor' && this.walker.key(e, true)) {
       e.preventDefault();
@@ -991,6 +1015,22 @@ export class App {
       // M4: X looking at a worker: send it home.
       e.preventDefault();
       this.openSendHome(this.target.id);
+    } else if (e.code === 'KeyP' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !e.altKey && !this.planOpen && this.target?.kind === 'worker') {
+      // M5: P looking at a worker: the prompt overlay.
+      e.preventDefault();
+      this.openPrompt(this.target.id);
+    } else if (e.code === 'KeyC' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !e.altKey && (this.target?.kind === 'worker' || this.changes.isOpen)) {
+      // M5: C looking at a worker: its Changes panel (again: closes it).
+      e.preventDefault();
+      this.toggleChanges(this.target?.kind === 'worker' ? this.target.id : null);
+    } else if (e.code === 'KeyN' && !this.transitioning && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      // M5: N, the next worker who needs you.
+      e.preventDefault();
+      this.goNextNeed();
+    } else if (/^(Digit|Numpad)\d$/.test(e.code) && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !this.planOpen && this.target?.kind === 'worker') {
+      // M5: 1–9 answer the looked-at worker's question with that choice, 0 denies (Esc).
+      e.preventDefault();
+      this.answerKey(this.target.id, Number(e.code.slice(-1)));
     } else if (e.code === 'KeyL' && this.mode === 'floor' && !this.transitioning && !e.metaKey && !e.ctrlKey && !e.altKey) {
       // The elevator from anywhere on the floor (the top bar has it too).
       e.preventDefault();
@@ -1230,6 +1270,7 @@ export class App {
     const t = this.computeLookAt();
     this.target = t;
     const w = t?.kind === 'worker' ? this.store.workerView(t.id) : null;
+    this.lookAtM5(this.planOpen ? null : w);
     // The plan has its own labels; the prompt bar belongs to first person.
     this.hud.setTarget(this.planOpen ? null : t, w);
   }
@@ -1248,6 +1289,189 @@ export class App {
       return t ? LOBBY_TARGETS[t] : null;
     }
     return null;
+  }
+
+  // ---- M5 panels: prompt, changes, quick replies, the next who needs you ----------------
+
+  /** The looked-at worker's card shows its usage; P and C say why when they can't be used on it. */
+  private lookAtM5(w: WorkerView | null): void {
+    this.office?.setFocus(w?.worker.id ?? null);
+    if (!w) return;
+    // Every frame: only the floor's state, not a whole floor view.
+    const fl = this.store.floors.get(w.worker.session);
+    const f = fl ? { asleep: fl.state === 'asleep', transition: fl.transition ?? null } : null;
+    const p = promptBlocker(w, f, this.unsupported.has('worker.prompt'));
+    this.hud.setKeyState('P', p ? { live: false, why: p } : { live: true });
+    const c = this.changesBlocker(w, f);
+    this.hud.setKeyState('C', c ? { live: false, why: c } : { live: true });
+    this.hud.setKeyState('answer', this.unsupported.has('worker.answer') ? { live: false, why: 'This herdr-world can’t answer questions yet. Update the bridge to use it.' } : null);
+  }
+
+  private changesBlocker(w: WorkerView, f: Pick<FloorView, 'asleep' | 'transition'> | null): string | null {
+    if (this.unsupported.has('worker.changes')) return 'This herdr-world can’t show changes yet. Update the bridge to use it.';
+    if (f?.asleep || f?.transition) return `${w.worker.session} is ${f.transition === 'waking' ? 'waking up' : f.transition === 'sleeping' ? 'going to sleep' : 'asleep'}: wake it from the elevator (L) first.`;
+    if (!w.worker.cwd) return `${w.name} has no folder to look at.`;
+    return null;
+  }
+
+  /** P: the prompt overlay for a worker (a toast says why when it can't take one). */
+  openPrompt(id: string): void {
+    const v = this.store.workerView(id);
+    if (!v) return;
+    const why = promptBlocker(v, this.store.floorView(v.worker.session), this.unsupported.has('worker.prompt'));
+    if (why) {
+      this.hud.toast(why, 3600);
+      return;
+    }
+    this.walker.release();
+    this.walker.stop();
+    this.panels.close();
+    this.prompt.open(id);
+  }
+
+  /** C: opens a worker's Changes panel; on the worker it shows (or none), closes it. */
+  toggleChanges(id: string | null): void {
+    if (this.changes.isOpen && (id === null || id === this.changes.worker)) {
+      this.changes.close();
+      return;
+    }
+    const v = id ? this.store.workerView(id) : null;
+    if (!v) return;
+    const why = this.changesBlocker(v, this.store.floorView(v.worker.session));
+    if (why) {
+      this.hud.toast(why, 3600);
+      return;
+    }
+    this.walker.release();
+    this.walker.stop();
+    this.changes.open(v.worker.id);
+  }
+
+  /** A digit on a blocked worker: that choice of its question; 0 is Deny. */
+  private answerKey(id: string, digit: number): void {
+    const v = this.store.workerView(id);
+    if (!v) return;
+    const q = v.display === 'needs_you' ? answerable(v.worker.question) : null;
+    if (!q) {
+      this.hud.toast(v.display === 'needs_you' ? `${v.name} needs you, but no menu was read off its screen: sit at its laptop (E) or prompt it (P).` : `${v.name} isn’t asking anything right now.`, 3000);
+      return;
+    }
+    const pick = digit === 0 ? answerKeys(q).deny : digitPick(q, digit);
+    if (!pick) {
+      const n = q.choices.length;
+      this.hud.toast(n ? `${v.name}’s question has ${n === 1 ? 'one choice: 1' : `choices 1–${n}`}; 0 denies.` : `${v.name}’s question has no numbered choices: 0 dismisses it, P answers in words.`, 3000);
+      return;
+    }
+    void this.answer(id, pick);
+  }
+
+  /** Answers a blocked worker's question (`worker.answer` with its hash); the result as a toast. */
+  async answer(id: string, pick: AnswerPick): Promise<void> {
+    const v = this.store.workerView(id);
+    const q: Question | null = v?.display === 'needs_you' ? answerable(v.worker.question) : null;
+    if (!v || !q) return;
+    if (this.unsupported.has('worker.answer')) {
+      this.hud.toast('This herdr-world can’t answer questions yet. Update the bridge to use it.', 4000, 'error');
+      return;
+    }
+    if (this.answering.has(id)) {
+      this.hud.toast(`Still answering ${v.name}…`, 1600);
+      return;
+    }
+    const label = pickLabel(q, pick);
+    this.answering.add(id);
+    this.hud.toast(`Answering ${v.name}: ${label}…`, 2400);
+    const r = await this.send('worker.answer', answerArgs(id, q, pick));
+    this.answering.delete(id);
+    const name = this.store.workerView(id)?.name ?? v.name;
+    if (r.ok) {
+      const ack = (r.data ?? {}) as Partial<AnswerAck>;
+      if (ack.resolved === false) this.hud.toast(`Sent “${label}” to ${name}, but it is still waiting: look at its laptop (E).`, 4200);
+      else this.hud.toast(`Answered ${name}: ${label}.`, 2600);
+      return;
+    }
+    if (r.code === 'stale') {
+      const now = this.store.workerView(id);
+      const cur = now?.display === 'needs_you' ? answerable(now.worker.question) : null;
+      this.hud.toast(cur ? `${name}’s question changed: now “${questionLine(cur)}”. Look at its card and answer again.` : `${name}’s question is gone: it is ${now ? now.display.replace('_', ' ') : 'no longer on the floor'}.`, 5200, 'error');
+      return;
+    }
+    if (r.code === 'invalid_state') {
+      this.hud.toast(`${name} isn’t waiting for an answer any more.`, 3200);
+      return;
+    }
+    this.hud.toast(r.code === 'unknown_command' ? 'This herdr-world can’t answer questions yet. Update the bridge to use it.' : commandFailure('worker.answer', r.code, r.message, { worker: name }), 5200, 'error');
+  }
+
+  /** Who needs you, in the order N visits them (blocked, then done; your building first). */
+  needs(): NeedItem[] {
+    const here = this.mode === 'floor' ? (this.building?.id ?? null) : undefined;
+    const all = this.store.city().flatMap((b) =>
+      b.floors.flatMap((f) =>
+        f.workers.map((w) => ({ id: w.worker.id, session: f.session, building: b.building?.id ?? null, display: w.display, since: w.since, desk: w.desk, name: w.name })),
+      ),
+    );
+    return needQueue(all, here);
+  }
+
+  /**
+   * N: the next worker who needs you. On this floor you are put facing it;
+   * on another the elevator opens with that floor picked (you ride there, and
+   * arrive facing it). Returns who it is (null: nobody needs you).
+   */
+  goNextNeed(): NeedItem | null {
+    const item = nextNeed(this.needs(), this.lastNeed);
+    if (!item) {
+      this.lastNeed = null;
+      this.hud.toast('Nobody needs you right now.', 2200);
+      return null;
+    }
+    this.lastNeed = item.id;
+    const v = this.store.workerView(item.id);
+    const what = item.reason === 'blocked' ? 'needs you' : 'is done';
+    const q = v && item.reason === 'blocked' ? answerable(v.worker.question) : null;
+    const about = q ? `: “${questionLine(q)}”` : v ? `: ${v.worker.title?.trim() || v.worker.label}` : '';
+    if (this.mode === 'floor' && this.place.area === 'floor' && this.office?.session === item.session) {
+      this.pendingNeed = null;
+      this.faceWorker(item.id);
+      this.hud.toast(`${item.name} ${what}${about} · N: the next one`, 3600);
+      return item;
+    }
+    // Another floor: the elevator, that floor picked (no teleporting between floors).
+    this.pendingNeed = item;
+    const level = this.store.floorView(item.session)?.level;
+    const where = level ? `floor ${level.number} (${item.session})` : item.session;
+    this.walker.release();
+    this.walker.stop();
+    this.panels.openElevator(this.panels.buildingOf(item.session), { session: item.session, note: `${item.name} ${what} on ${where}${about}. Enter rides there.` });
+    return item;
+  }
+
+  /** Arrived by elevator: N's worker on this floor gets faced. */
+  private afterTravel(session: string): void {
+    const p = this.pendingNeed;
+    if (!p || p.session !== session) return;
+    this.pendingNeed = null;
+    if (this.office?.session === session) this.faceWorker(p.id);
+  }
+
+  /** Stands you facing a worker of the floor you are on (behind its chair, else beside it, else across the desk). */
+  faceWorker(id: string): boolean {
+    const v = this.store.workerView(id);
+    const o = this.office;
+    if (!v || !o || o.session !== v.worker.session || this.loaded === null) return false;
+    const slot = o.layout.slots[v.desk];
+    if (!slot) return false;
+    if (this.walker.sitting) this.walker.stand();
+    const y = floorY(this.loaded);
+    const spots = faceSpots(slot.seat, slot.yaw).filter((p) => !blocked({ x: p.x, z: p.z }, RADIUS, o.obstacles()) && !blocked3({ x: p.x, y, z: p.z }, RADIUS, this.walkWorldNow()));
+    for (const p of spots) {
+      this.setPose({ ...p, y });
+      if (this.lookAt()?.id === id) return true;
+    }
+    const first = spots[0];
+    if (first) this.setPose({ ...first, y });
+    return false;
   }
 
   // ---- test hooks --------------------------------------------------------------

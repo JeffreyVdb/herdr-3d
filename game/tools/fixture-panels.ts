@@ -17,7 +17,7 @@
 //   repo" rule); a `working` worker has a staged, two unstaged and an
 //   untracked file on top of its 2 unpushed commits, a `blocked` one its 1
 //   unpushed commit, a `done` one pushed commits, anyone else a clean tree; a
-//   worker whose label starts with `perf` has a ~1.9 MiB diff (profile
+//   worker whose label starts with `perf` has a ~1.6 MiB diff (profile
 //   traces), cut at 256 KiB. `simfail=changes_failed` fails the next one.
 // - worker.usage: every `usageMs` (default 5000, 0: off) each working agent
 //   with usage uses more tokens.
