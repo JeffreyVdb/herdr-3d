@@ -285,6 +285,9 @@ type Worker struct {
 	// M5 usage: Usage is the agent session's token usage and cost estimate
 	// (absent without an agent_session, or before the bridge read it).
 	Usage *Usage `json:"usage,omitempty"`
+	// M5 term: Question is what a blocked worker's screen asks, while it
+	// is blocked and the bridge could read it.
+	Question *Question `json:"question,omitempty"`
 }
 
 // Worktree is a worker's git worktree provenance.

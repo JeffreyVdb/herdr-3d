@@ -25,6 +25,45 @@ type Snapshot struct {
 	Workspaces []WorkspaceInfo `json:"workspaces"`
 	Panes      []PaneInfo      `json:"panes"`
 	Agents     []AgentInfo     `json:"agents"`
+	// M5 term: where each tab's panes are, in cells.
+	Layouts []LayoutInfo `json:"layouts"`
+}
+
+// M5 term
+
+// LayoutInfo is one tab's layout (the schema's TabLayout): its panes'
+// rectangles, in terminal cells.
+type LayoutInfo struct {
+	WorkspaceID string       `json:"workspace_id"`
+	TabID       string       `json:"tab_id"`
+	Panes       []LayoutPane `json:"panes"`
+}
+
+// LayoutPane is one pane of a layout.
+type LayoutPane struct {
+	PaneID string `json:"pane_id"`
+	Rect   Rect   `json:"rect"`
+}
+
+// Rect is a rectangle in terminal cells.
+type Rect struct {
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+// PaneSize is a pane's size in cells as the snapshot's layouts give it
+// (the size its attached clients last gave it), if it is there.
+func (s *Snapshot) PaneSize(pane string) (cols, rows int, ok bool) {
+	for _, l := range s.Layouts {
+		for _, p := range l.Panes {
+			if p.PaneID == pane && p.Rect.Width > 0 && p.Rect.Height > 0 {
+				return p.Rect.Width, p.Rect.Height, true
+			}
+		}
+	}
+	return 0, 0, false
 }
 
 // WorkspaceInfo mirrors the schema's WorkspaceInfo.

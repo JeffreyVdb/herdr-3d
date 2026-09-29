@@ -55,6 +55,12 @@ const (
 	EnvPricing        = "HERDR_WORLD_PRICING"
 )
 
+// M5 term: the laptops' caps.
+const (
+	EnvMaxWatches   = "HERDR_WORLD_MAX_WATCHES"
+	EnvMaxObservers = "HERDR_WORLD_MAX_OBSERVERS"
+)
+
 const worldUsage = `usage:
   %[1]s [serve] [flags]          run the bridge (default)
   %[1]s dump [flags]             print the world snapshot, then events, as JSON lines
@@ -204,6 +210,15 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 			return err
 		}
 	}
+	// M5 term
+	maxWatches, err := envInt(EnvMaxWatches, server.DefaultMaxWatches)
+	if err != nil {
+		return err
+	}
+	maxObservers, err := envInt(EnvMaxObservers, server.DefaultMaxObservers)
+	if err != nil {
+		return err
+	}
 	fs := newFlagSet(name, "serve", stderr)
 	socket := fs.String("socket", envOr(EnvSocket, DefaultSocket()), "unix socket to serve on ($"+EnvSocket+")")
 	db := fs.String("db", envOr(EnvDB, DefaultDB()), "SQLite database ($"+EnvDB+")")
@@ -224,6 +239,8 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	fs.IntVar(&caps.FloorHard, "max-workers-per-floor", caps.FloorHard, "most workers a floor may be hired up to ($"+EnvFloorMax+")")
 	fs.IntVar(&caps.HostSoft, "warn-workers", caps.HostSoft, "workers on the host above which the hire dialog warns ($"+EnvHostWarn+")")
 	fs.IntVar(&caps.HostHard, "max-workers", caps.HostHard, "most workers the host may be hired up to ($"+EnvHostMax+")")
+	fs.IntVar(&maxWatches, "max-watches", maxWatches, "most laptop screens one connection may watch ($"+EnvMaxWatches+")")
+	fs.IntVar(&maxObservers, "max-observers", maxObservers, "most laptop screens watched at once, host-wide ($"+EnvMaxObservers+")")
 	level := fs.String("log-level", envOr(EnvLogLevel, "info"), "debug, info, warn or error ($"+EnvLogLevel+")")
 	format := fs.String("log-format", envOr(EnvLogFormat, "text"), "text or json ($"+EnvLogFormat+")")
 	showVersion := fs.Bool("version", false, "print version and exit")
@@ -251,6 +268,9 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		return fmt.Errorf("worker caps: want 0 <= warn <= max and max >= 1, got per floor %d/%d, host %d/%d",
 			caps.FloorSoft, caps.FloorHard, caps.HostSoft, caps.HostHard)
 	}
+	if maxWatches < 1 || maxObservers < 1 {
+		return fmt.Errorf("-max-watches and -max-observers must be at least 1, got %d and %d", maxWatches, maxObservers)
+	}
 	log, err := newLogger(stderr, *level, *format)
 	if err != nil {
 		return err
@@ -274,6 +294,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		WakeTimeout: wakeTimeout, ResumeTimeout: resumeTimeout, CodexSessions: *codexSessions,
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
 		ClaudeProjects: *claudeProjects, Pricing: pricing,
+		MaxWatches: maxWatches, MaxObservers: maxObservers,
 	})
 }
 
@@ -320,6 +341,10 @@ type ServeConfig struct {
 	Pricing        *usage.Pricing
 	// Ready, if set, is called once the socket is listening.
 	Ready func()
+
+	// M5 term: MaxWatches and MaxObservers cap the laptop screens (0:
+	// server.DefaultMaxWatches, server.DefaultMaxObservers).
+	MaxWatches, MaxObservers int
 }
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
@@ -337,7 +362,9 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	if cfg.Control != nil {
 		opts.Herdr = floorHerdr{Control: cfg.Control, read: cfg.Herdr}
 		opts.Hire = cfg.Control
+		opts.Term = cfg.Control // M5 term
 	}
+	opts.MaxWatches, opts.MaxObservers, opts.PaneSize = cfg.MaxWatches, cfg.MaxObservers, paneSize(cfg.Herdr) // M5 term
 	if cfg.Git != nil {
 		opts.Git = cfg.Git
 		opts.Changes = cfg.Git // M5 usage
@@ -402,6 +429,23 @@ type floorHerdr struct {
 func (f floorHerdr) Ping(ctx context.Context, socket string) error {
 	_, err := f.read.Ping(ctx, socket)
 	return err
+}
+
+// paneSize reads a pane's size from its session's layout (read only:
+// session.snapshot), the laptop observer's default size.
+func paneSize(read watch.Herdr) func(ctx context.Context, socket, pane string) (int, int, bool) {
+	return func(ctx context.Context, socket, pane string) (int, int, bool) {
+		if read == nil || socket == "" {
+			return 0, 0, false
+		}
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		snap, err := read.Snapshot(ctx, socket)
+		if err != nil {
+			return 0, 0, false
+		}
+		return snap.PaneSize(pane)
+	}
 }
 
 func slicesOf(ch <-chan error) []error {

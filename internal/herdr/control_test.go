@@ -47,6 +47,16 @@ func TestControlAllowlist(t *testing.T) {
 		"exit-codex":      {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "/quit"},
 		"workspace-close": {"{herdr}", "--session", "{session}", "workspace", "close", "{workspace}"},
 		"worktree-remove": {"{herdr}", "--session", "{session}", "worktree", "remove", "--workspace", "{workspace}"},
+
+		// M5 term
+		"observe": {"{herdr}", "--session", "{session}", "terminal", "session", "observe", "{pane}",
+			"--cols", "{cols}", "--rows", "{rows}"},
+		"send-keys":     {"{herdr}", "--session", "{session}", "pane", "send-keys", "{pane}", "{keys}"},
+		"send-text":     {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "{input}"},
+		"send-sequence": {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "{seq}"},
+		"prompt-wait": {"{herdr}", "--session", "{session}", "agent", "prompt", "{pane}", "{message}",
+			"--wait", "--until", "working", "--until", "blocked", "--timeout", "8000"},
+		"prompt-queued": {"{herdr}", "--session", "{session}", "agent", "prompt", "{pane}", "{message}"},
 	}
 	if !reflect.DeepEqual(controlShapes, want) {
 		t.Fatalf("controlShapes = %q", controlShapes)
@@ -57,9 +67,9 @@ func TestControlAllowlist(t *testing.T) {
 	for i := range typ.NumMethod() {
 		methods = append(methods, typ.Method(i).Name)
 	}
-	if w := []string{"CloseWorkspace", "CreateWorkspace", "CreateWorktree", "MarkPane", "PaneProcesses", "Prompt",
-		"ReadPane", "RemoveWorktree", "ReportCodexSession", "ResumeAgent", "SendKey", "StartAgent", "StartSession",
-		"StopSession", "TypeExit"}; !slices.Equal(methods, w) {
+	if w := []string{"CloseWorkspace", "CreateWorkspace", "CreateWorktree", "MarkPane", "Observe", "PaneProcesses", "Prompt",
+		"QueuePrompt", "ReadPane", "RemoveWorktree", "ReportCodexSession", "ResumeAgent", "SendKey", "SendKeys",
+		"SendSequence", "SendText", "StartAgent", "StartSession", "StopSession", "SubmitPrompt", "TypeExit"}; !slices.Equal(methods, w) {
 		t.Fatalf("Control methods = %v, want %v", methods, w)
 	}
 
@@ -71,6 +81,10 @@ func TestControlAllowlist(t *testing.T) {
 				return []byte(`{"result":{"workspace":{"workspace_id":"w7"},"root_pane":{"pane_id":"w7:p1"}}}`), nil, nil
 			}
 			return []byte(`{"result":{"process_info":{"pane_id":"w1:p2"}}}`), nil, nil
+		},
+		Stream: func(argv []string) (Proc, error) {
+			got = append(got, argv)
+			return fakeProc{strings.NewReader("")}, nil
 		}}
 	ctx := context.Background()
 	id := "01a0663b-61cd-73a0-a3a0-034ca9fc6c48"
@@ -105,6 +119,17 @@ func TestControlAllowlist(t *testing.T) {
 	must(c.TypeExit(ctx, "h3d-it-1", "w7:p1", "codex"))
 	must(c.CloseWorkspace(ctx, "h3d-it-1", "w7"))
 	must(c.RemoveWorktree(ctx, "h3d-it-1", "w7"))
+	// M5 term
+	obs, err := c.Observe(ctx, "h3d-it-1", "w7:p1", 120, 40)
+	must(err)
+	must(obs.Close())
+	must(c.SendKeys(ctx, "h3d-it-1", "w7:p1", "ctrl+c", "up", "enter"))
+	must(c.SendKeys(ctx, "h3d-it-1", "w7:p1", "2"))
+	must(c.SendText(ctx, "h3d-it-1", "w7:p1", "--help; rm -rf ~ $(id) ✓"))
+	must(c.SendSequence(ctx, "h3d-it-1", "w7:p1", "delete"))
+	must(c.SendSequence(ctx, "h3d-it-1", "w7:p1", "home"))
+	must(c.SubmitPrompt(ctx, "h3d-it-1", "w7:p1", "--wait fix it\nplease"))
+	must(c.QueuePrompt(ctx, "h3d-it-1", "w7:p1", "then run the tests"))
 	wantArgv := [][]string{
 		{"/usr/bin/systemd-run", "--user", "--unit=herdr-s-h3d-it-1", "--collect", "-p", "KillMode=process",
 			"--working-directory=/home/u", "/bin/fish", "-l", "-c", "exec herdr --session 'h3d-it-1' server"},
@@ -134,6 +159,15 @@ func TestControlAllowlist(t *testing.T) {
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-text", "w7:p1", "/quit"},
 		{"/opt/herdr", "--session", "h3d-it-1", "workspace", "close", "w7"},
 		{"/opt/herdr", "--session", "h3d-it-1", "worktree", "remove", "--workspace", "w7"},
+		{"/opt/herdr", "--session", "h3d-it-1", "terminal", "session", "observe", "w7:p1", "--cols", "120", "--rows", "40"},
+		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-keys", "w7:p1", "ctrl+c", "up", "enter"},
+		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-keys", "w7:p1", "2"},
+		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-text", "w7:p1", "--help; rm -rf ~ $(id) ✓"},
+		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-text", "w7:p1", "\x1b[3~"},
+		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-text", "w7:p1", "\x1b[H"},
+		{"/opt/herdr", "--session", "h3d-it-1", "agent", "prompt", "w7:p1", "--wait fix it\nplease",
+			"--wait", "--until", "working", "--until", "blocked", "--timeout", "8000"},
+		{"/opt/herdr", "--session", "h3d-it-1", "agent", "prompt", "w7:p1", "then run the tests"},
 	}
 	if !reflect.DeepEqual(got, wantArgv) {
 		t.Fatalf("argv =\n%q\nwant\n%q", got, wantArgv)
