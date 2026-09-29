@@ -65,7 +65,9 @@ type screenQuestion struct {
 // Code and Codex under herdr 0.9.0 (testdata/screens): a menu is numbered
 // choices (1…k) or a cursor line and its siblings above key hints, near
 // the bottom of the screen; the question is the line above it that asks.
-func parseQuestion(screen string) screenQuestion {
+// since is when the worker turned blocked (its status_since): it goes into
+// the hash, so each time it is blocked again asks a new question.
+func parseQuestion(screen string, since int64) screenQuestion {
 	lines := strings.Split(strings.ReplaceAll(screen, "\r", ""), "\n")
 	for i, l := range lines {
 		lines[i] = strings.TrimRightFunc(l, unicode.IsSpace)
@@ -78,6 +80,7 @@ func parseQuestion(screen string) screenQuestion {
 	}
 	sq := screenQuestion{q: proto.Question{Kind: proto.QuestionOther, Excerpt: excerpt(lines, nonEmpty), Choices: []proto.Choice{}}}
 	first := -1 // line of the first choice
+	var about []string
 	if choices, sel, at, ok := numberedMenu(lines, nonEmpty); ok {
 		sq.q.Choices, sq.q.Selected, first, sq.numbered = choices, sel, at, true
 	} else if choices, sel, at, ok := cursorMenu(lines, nonEmpty); ok {
@@ -94,11 +97,13 @@ func parseQuestion(screen string) screenQuestion {
 	default:
 		sq.q.Kind = proto.QuestionChoice
 	}
-	if first < 0 && len(nonEmpty) > 0 {
+	if first >= 0 {
+		about = menuContext(lines, first)
+	} else if len(nonEmpty) > 0 {
 		first = nonEmpty[len(nonEmpty)-1] + 1 // no menu: the question is among the last lines
 	}
 	sq.q.Text = questionText(lines, first)
-	sq.q.Hash = questionHash(sq.q)
+	sq.q.Hash = questionHash(sq.q, about, since)
 	return sq
 }
 
@@ -251,6 +256,26 @@ func questionText(lines []string, first int) string {
 	return ""
 }
 
+// menuContext is what a menu is about: the non-empty lines above its first
+// choice (line first) up to the dialog's top, a solid rule, within
+// questionReach lines, nearest first, trimmed: the command, the file or
+// the edit an approval is for ("Bash command", "touch notes.txt"). A
+// dashed rule (╌) separates parts of one dialog (a file's content) and is
+// kept.
+func menuContext(lines []string, first int) []string {
+	var out []string
+	for i := first - 1; i >= 0 && first-i <= questionReach; i-- {
+		t := strings.TrimSpace(lines[i])
+		if isRule(t) && !strings.ContainsAny(t, "╌╍┄┅┈┉") {
+			break
+		}
+		if t != "" {
+			out = append(out, clip(t))
+		}
+	}
+	return out
+}
+
 // isRule reports whether t is a horizontal rule: box drawing only.
 func isRule(t string) bool {
 	if utf8.RuneCountInString(t) < 8 {
@@ -282,12 +307,19 @@ func clip(s string) string {
 }
 
 // questionHash identifies a question for worker.answer: 16 hex over its
-// kind, text and choices (not the cursor, not the excerpt).
-func questionHash(q proto.Question) string {
+// kind, text and choices, what its menu is about (menuContext) and when the
+// worker turned blocked (not the cursor, not the rest of the excerpt). So
+// an answer is for this operation in this blocked spell only: approving
+// "touch a" never approves the "rm -rf b" asked next, even when the
+// question and its choices read the same.
+func questionHash(q proto.Question, about []string, since int64) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00%s\x00", q.Kind, q.Text)
+	fmt.Fprintf(h, "%s\x00%s\x00%d\x00", q.Kind, q.Text, since)
 	for _, c := range q.Choices {
 		fmt.Fprintf(h, "%d\x1f%s\x00", c.N, c.Label)
+	}
+	for _, l := range about {
+		fmt.Fprintf(h, "%s\x1e", l)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
@@ -357,18 +389,20 @@ func (h *Hub) askQuestions(ctx context.Context) {
 func (h *Hub) questionLoop(ctx context.Context, id, session, pane string) {
 	defer h.wg.Done()
 	for {
-		var q *proto.Question
-		if screen, err := h.opts.Term.ReadPane(ctx, session, pane); err == nil {
-			sq := parseQuestion(screen)
-			q = &sq.q
-		} else if ctx.Err() == nil {
-			h.log.Debug("reading a blocked worker's screen failed", "worker", id, "err", err)
+		screen, readErr := h.opts.Term.ReadPane(ctx, session, pane)
+		if readErr != nil && ctx.Err() == nil {
+			h.log.Debug("reading a blocked worker's screen failed", "worker", id, "err", readErr)
 		}
 		more, err := query(ctx, h, func() bool {
 			w := h.workers[id]
 			if w == nil || w.Status != statusBlocked || w.Session != session || w.PaneID != pane {
 				delete(h.asking, id)
 				return false
+			}
+			var q *proto.Question
+			if readErr == nil {
+				sq := parseQuestion(screen, w.StatusSince)
+				q = &sq.q
 			}
 			h.setQuestion(id, pane, q)
 			return true
@@ -434,12 +468,13 @@ func (h *Hub) answer(ctx context.Context, a proto.WorkerAnswerArgs, session, pan
 	if err != nil {
 		return nil, fmt.Errorf("%w: reading the screen failed: %v", errInputFailed, err)
 	}
-	sq := parseQuestion(screen)
+	var sq screenQuestion
 	blocked, err := query(ctx, h, func() bool {
 		w := h.workers[a.ID]
 		if w == nil || w.Status != statusBlocked || w.PaneID != pane {
 			return false
 		}
+		sq = parseQuestion(screen, w.StatusSince)
 		h.setQuestion(a.ID, pane, &sq.q) // what it asks now
 		return true
 	})

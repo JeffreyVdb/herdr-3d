@@ -683,7 +683,7 @@ heuristic, tested on screens captured from Claude Code 2.1 and Codex 0.158 (`int
 | `excerpt` | the screen's last ≤ 8 non-empty lines, trimmed, each ≤ 200 characters |
 | `choices` | the menu, top to bottom, `n` from 1: the digits shown (`❯ 1. Yes  2. …  3. No`), or for a menu without digits (Claude's trust dialog) the cursor line and the lines aligned with it; `[]` without a menu |
 | `selected` | the choice the cursor (`❯` / `›`) is on, when seen |
-| `hash` | 16 hex over `kind`, `text` and `choices` (not the cursor, not the excerpt): which question an answer is for |
+| `hash` | 16 hex over `kind`, `text`, `choices`, the lines above the menu (what it is about: up to the dialog's top rule, at most 12 lines, e.g. `Bash command` / `touch notes.txt`) and the worker's `status_since` (when it turned `blocked`); not the cursor, not the rest of the excerpt. It is which question an answer is for: an approval never approves another command, file or folder asked with the same words, nor anything asked after the worker was blocked again, even on the same screen. |
 
 What herdr 0.9.0 reports, and what picks a choice (checked live):
 

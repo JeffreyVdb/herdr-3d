@@ -340,6 +340,53 @@ func TestQuestionsAndAnswers(t *testing.T) {
 	c.mustError(proto.CmdWorkerAnswer, proto.WorkerAnswerArgs{ID: id, Hash: q.Hash, Choice: 1}, proto.ErrInputFailed)
 }
 
+// An answer is for the permission it was given for: once that one is
+// resolved elsewhere (another client, the raw terminal) and the worker is
+// blocked again, the old hash is stale, whether the new prompt is for
+// another command with the same question and choices or even reads the
+// same.
+func TestAnAnswerIsForItsOwnPermission(t *testing.T) {
+	tb := startTermBridge(t, func(o *server.Options) { o.AnswerTimeout = time.Millisecond }, agentW("w1", "claude", "working"))
+	c := tb.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	first := readScreen(t, "claude-permission-bash")
+	block := func(screen string) *proto.Question {
+		t.Helper()
+		tb.term.setScreen("w1:p1", screen)
+		tb.setStatus("w1", "blocked")
+		return upsertFor(c, id, func(w *proto.Worker) bool { return w.Question != nil }).Question
+	}
+	blockOn := func(screen string) *proto.Question {
+		t.Helper()
+		tb.setStatus("w1", "working")
+		upsertFor(c, id, func(w *proto.Worker) bool { return w.Status == "working" && w.Question == nil })
+		time.Sleep(2 * time.Millisecond) // status_since is in ms: a new one
+		return block(screen)
+	}
+	q := block(first)
+
+	other := blockOn(strings.ReplaceAll(first, "touch h3d-perm-probe.txt", "rm -rf important-project"))
+	if other.Hash == q.Hash || other.Text != q.Text {
+		t.Fatalf("another command: %+v, first %+v", other, q)
+	}
+	c.mustError(proto.CmdWorkerAnswer, proto.WorkerAnswerArgs{ID: id, Hash: q.Hash, Choice: 1}, proto.ErrStale)
+
+	again := blockOn(first)
+	if again.Hash == q.Hash {
+		t.Fatalf("blocked again on the same screen: the same hash %s", q.Hash)
+	}
+	c.mustError(proto.CmdWorkerAnswer, proto.WorkerAnswerArgs{ID: id, Hash: q.Hash, Choice: 1}, proto.ErrStale)
+	c.mustError(proto.CmdWorkerAnswer, proto.WorkerAnswerArgs{ID: id, Hash: other.Hash, Choice: 1}, proto.ErrStale)
+	if calls := tb.term.Calls(); len(calls) != 0 {
+		t.Fatalf("typed: %q", calls)
+	}
+	// The current hash still answers.
+	c.mustAck(proto.CmdWorkerAnswer, proto.WorkerAnswerArgs{ID: id, Hash: again.Hash, Choice: 1})
+	if calls := tb.term.Calls(); !slices.Equal(calls, []string{"keys w1:p1 1"}) {
+		t.Fatalf("calls = %q", calls)
+	}
+}
+
 // Without a laptop herdr the commands fail and no screen is read.
 func TestLaptopsNotConfigured(t *testing.T) {
 	b := startBridge(t, "", server.Options{})

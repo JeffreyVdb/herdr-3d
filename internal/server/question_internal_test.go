@@ -66,7 +66,7 @@ func TestParseQuestionOnCapturedScreens(t *testing.T) {
 			map[int][]string{1: {"enter"}, 2: {"down", "enter"}}, "enter continue · esc quit"},
 	} {
 		t.Run(tc.screen, func(t *testing.T) {
-			sq := parseQuestion(screen(t, tc.screen))
+			sq := parseQuestion(screen(t, tc.screen), 1)
 			q := sq.q
 			var labels []string
 			for i, c := range q.Choices {
@@ -102,22 +102,47 @@ func TestParseQuestionOnCapturedScreens(t *testing.T) {
 
 func TestParseQuestionEdges(t *testing.T) {
 	perm := screen(t, "claude-permission-bash")
-	base := parseQuestion(perm).q
+	base := parseQuestion(perm, 1).q
 
 	// The cursor moving, or the lines above changing, is the same question.
 	moved := strings.Replace(strings.Replace(perm, " ❯ 1. Yes", "   1. Yes", 1), "   2. Yes,", " ❯ 2. Yes,", 1)
-	if q := parseQuestion(moved).q; q.Hash != base.Hash || q.Selected != 2 {
+	if q := parseQuestion(moved, 1).q; q.Hash != base.Hash || q.Selected != 2 {
 		t.Errorf("cursor on 2: %+v", q)
 	}
-	if q := parseQuestion("● Reading 3 files…\n" + perm).q; q.Hash != base.Hash {
+	if q := parseQuestion("● Reading 3 files…\n" + perm, 1).q; q.Hash != base.Hash {
 		t.Errorf("more history: hash %s, want %s", q.Hash, base.Hash)
 	}
 	// Another question or other choices are another hash.
-	if q := parseQuestion(strings.Replace(perm, "proceed?", "delete it?", 1)).q; q.Hash == base.Hash {
+	if q := parseQuestion(strings.Replace(perm, "proceed?", "delete it?", 1), 1).q; q.Hash == base.Hash {
 		t.Error("another question, same hash")
 	}
-	if q := parseQuestion(strings.Replace(perm, "3. No", "3. No, stop", 1)).q; q.Hash == base.Hash {
+	if q := parseQuestion(strings.Replace(perm, "3. No", "3. No, stop", 1), 1).q; q.Hash == base.Hash {
 		t.Error("another choice, same hash")
+	}
+	// The same question and choices about another command, or asked in
+	// another blocked spell, are another hash too: an approval of one
+	// never approves the other.
+	if q := parseQuestion(strings.ReplaceAll(perm, "touch h3d-perm-probe.txt", "rm -rf important-project"), 1).q; q.Hash == base.Hash ||
+		q.Text != base.Text || !reflect.DeepEqual(q.Choices, base.Choices) {
+		t.Errorf("another command: %+v", q)
+	}
+	if q := parseQuestion(perm, 2).q; q.Hash == base.Hash {
+		t.Error("blocked again, same hash")
+	}
+	for name, tc := range map[string]struct {
+		screen, old, new string
+	}{
+		"another file's content": {"claude-permission-write", "  1 hello", "  1 goodbye"},
+		"another codex command":  {"codex-approval", "  $ touch h3d-codex-probe.txt", "  $ rm -rf ~"},
+		"another trust folder":   {"claude-trust", " /tmp/h3d-m5term/claude-a2be86\n", " /home/someone/secrets\n"},
+	} {
+		s := screen(t, tc.screen)
+		if !strings.Contains(s, tc.old) {
+			t.Fatalf("%s: %q not on the screen", name, tc.old)
+		}
+		if a, b := parseQuestion(s, 1).q, parseQuestion(strings.Replace(s, tc.old, tc.new, 1), 1).q; a.Hash == b.Hash {
+			t.Errorf("%s: same hash %s", name, a.Hash)
+		}
 	}
 
 	for name, s := range map[string]string{
@@ -130,20 +155,20 @@ func TestParseQuestionEdges(t *testing.T) {
 		"an echoed prompt that wrapped":      "❯ Use the AskUserQuestion tool to ask me one question with two options, Tea and\n  Coffee.\n",
 		"empty":                              "",
 	} {
-		q := parseQuestion(s).q
+		q := parseQuestion(s, 1).q
 		if q.Kind != proto.QuestionOther || len(q.Choices) != 0 || q.Selected != 0 || q.Choices == nil {
 			t.Errorf("%s: %+v", name, q)
 		}
 	}
 	// Blocked without a menu: the text is the asking line near the bottom.
-	if q := parseQuestion("● Should I also update the docs?\n\n✻ Waiting").q; q.Kind != proto.QuestionOther ||
+	if q := parseQuestion("● Should I also update the docs?\n\n✻ Waiting", 1).q; q.Kind != proto.QuestionOther ||
 		q.Text != "● Should I also update the docs?" || !reflect.DeepEqual(q.Excerpt, []string{"● Should I also update the docs?", "✻ Waiting"}) {
 		t.Errorf("no menu: %+v", q)
 	}
 	// Long lines are clipped, and only the last lines are kept.
 	long := strings.Repeat("x", 300)
 	many := strings.Repeat("line\n", 20) + long + "\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n"
-	q := parseQuestion(many).q
+	q := parseQuestion(many, 1).q
 	if len(q.Excerpt) != maxExcerptLines || len([]rune(q.Excerpt[4])) != maxExcerptRunes || q.Kind != proto.QuestionPermission {
 		t.Errorf("excerpt = %q (%s)", q.Excerpt, q.Kind)
 	}
