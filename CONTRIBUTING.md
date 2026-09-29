@@ -268,7 +268,14 @@ killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herd
 - it proxies `GET /ws` to the bridge, after checking Host, Origin and a per-start token (`docs/protocol.md`
   "Through h3d-helper");
 - it opens a Chrome `--app` window on `http://127.0.0.1:7777/#token=…` with its own profile (`-no-open` skips that).
-  The token changes at every start: after a restart, use the new window.
+  The token changes at every start: after a restart, use the new window;
+- (M7) `POST /api/open {"url": "https://github.com/…"}` opens a page in the Mac's default browser (`open <url>`), for
+  the game's "Open in GitHub" buttons and the links in issue bodies. Same Host and Origin checks as `/ws`, the token in
+  the `X-H3D-Token` header (never in a URL), `Content-Type: application/json`, a body of at most 4 KiB; only `https://`
+  URLs on a listed host (`internal/helper.DefaultOpenHosts`: `github.com`; a provider added later adds its host there),
+  no credentials or port, no control characters. `204` on success, `400` for a refused URL, `403` for a failed check,
+  `502` when `open` failed; `go test ./internal/helper` covers it with a fake opener. A page not served by the helper
+  (Vite on the server) has no endpoint, and the game opens a new window instead.
 
 It needs non-interactive SSH from the Mac to the host (`BatchMode=yes`: a key in the agent/keychain, host key known).
 State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not answering through the tunnel`,
@@ -479,6 +486,19 @@ after its first frame. E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1%26simms%3D300%26
 M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
 `simfail=no_m6` plays a bridge without them. E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simms%3D300`.
 
+M7 on the simulating server (`tools/fixture-boards.ts`, rules at its top): the boards of the floor you are on, from its
+effective repo (`settings.repo ?? suggested.repo`; none: `board.watch` answers `enabled: false`). `JeffreyVdb/lab` and
+`JeffreyVdb/herdr-3d` have a project (Todo / Doing / QA / Done), `JeffreyVdb/bench` (the `perf-boards` fixture) 100 issues
+and 20 pull requests, any other repo no project (Open / Closed, no `set_status`). lab issue #7 has a markdown body full of
+script, handlers, `javascript:` links, svg, an iframe, a form and a tracking pixel: the sanitiser's fixture. Writes queue a
+poll of the floor, as the bridge does. `sim.boards` (the simulator's own command, `simBoards(args)` in the hooks) merges a
+PR (`{merge: id}`: gone from the open list, announced by the next poll, its issues closed and in Done), makes the next polls
+fail (`{fail: "message"}`, or `head_moved` to make a merge answer `stale`; `{fail: null}` clears it), sets the rate limit
+(`{rate: {remaining, reset_at}}`) or the paging flag (`{truncated: true}`), moves a card (`{card: {id, column}}`) or polls
+(`{poll: true}`). `simfail=no_m7` plays a bridge before M7 (every board command `unknown_command`). `open=none` in the page
+URL makes "Open in …" record the page instead of opening a window. E.g.
+`?ws=%2Ffixture%2Fdemo-m6%3Fsim%3D1%26simms%3D150&floor=lab`.
+
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings
 panel: create, rename, delete (confirmed: it names the building and how many floors go back to the lot), move buildings
@@ -654,6 +674,12 @@ make shot                     # Playwright WebGL2: game/test-results/{shot,m2-ci
                               # the elevator and from the city; usage on the bar, the card and the top bar, flagged,
                               # updated by worker.usage; m5-{prompt,prompt-queued,changes,changes-truncated,
                               # quick-reply,usage,next-elevator}.png
+                              # M7 on demo-m6 with sim=1 (m7-boards.spec.ts, m7-actions.spec.ts, m7-perf.spec.ts): the
+                              # corkboard and PR board (columns, paper, pins, holders, CI, verdict stamps), E and the
+                              # top bar opening the overlays, no-project / no-repo / older-bridge floors, the watch
+                              # (one floor, again after a reconnect), diff animations, the sanitised markdown, Hand to
+                              # a worker and the peel-off, Ask, Close, Move, comment, Merge and its double confirmation,
+                              # the gong, Open PR for a plain worker, 100 issues + 20 PRs; m7-*.png
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
 pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
 pnpm -C game test:live:m5     # opt-in: the M5 laptops and panels against a real bridge and Claude (see below)
@@ -764,6 +790,17 @@ M6 crew: `crew()` (the floor with an interior: per crew member its `desk`, `role
 `display` and the crew `parts` drawn at its desk; `shown`: the crew parts drawn at all), `simCrew(args)` (one
 `sim.crew` step of the simulator's scripted freelancer). `cards()` entries add `tag`, `stamp` and `crew` (the
 looked-at crew member's lines); `arrivals()` add `carry` (box | briefcase), `briefcase` and `wave`.
+
+M7 boards: `boards()` (what the wall shows for the floor with an interior: `issues` / `prs` notes with their `id`, pose,
+atlas `cell` and `face` (key, title, paper, pin, holder, done / CI, review, closes, stamp), `flights` in the air and
+`flightLog` of those that landed, `gongRings`, `issuesWrites` / `prsWrites` (buffer writes: a quiet poll adds none),
+`batches` (two instanced draws, however many notes), `office` (a counter: a board update must not build another floor),
+`watched` and `off`), `board()` (the open overlay: its columns with the keys of their cards, the freshness notice, and
+the open item modal with its visible `actions`, open confirmation, comments and body text), `openBoard(which)`,
+`openBoardItem(which, id)`, `injectBoard(message)`, `boardLog()` (the `board.watch` / `unwatch` / `refresh` the game sent
+by itself; `sent()` leaves them out), `opened()` (pages the game asked to open, and `via` `helper` or `window`),
+`simBoards(args)`. `dialog()` also returns the Open PR dialog (`kind: 'open-pr'`), and a start-run dialog started from a
+card has `ticket.kind === 'work_item'`.
 
 ### Audio and voice lines
 

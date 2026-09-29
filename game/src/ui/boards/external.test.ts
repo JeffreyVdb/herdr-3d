@@ -24,12 +24,27 @@ describe('openExternal', () => {
     expect(JSON.parse(String(calls[0]?.init.body))).toEqual({ url: 'https://github.com/a/b/issues/1' });
   });
 
-  it('opens a window when there is no helper, or it refuses the host', async () => {
+  it('opens a window when the helper refuses the host or is gone', async () => {
     for (const fetch of [async () => ({ status: 404 }), async () => ({ status: 400 }), async () => Promise.reject(new Error('down'))]) {
       const opened: string[] = [];
-      expect(await openExternal('https://docs.example/x', { token: null, fetch, open: (u) => opened.push(u) })).toBe('window');
+      expect(await openExternal('https://docs.example/x', { token: 'tok', fetch, open: (u) => opened.push(u) })).toBe('window');
       expect(opened).toEqual(['https://docs.example/x']);
     }
+  });
+
+  it('does not even ask when the page has no helper token (not served by the helper)', async () => {
+    const asked: string[] = [];
+    const opened: string[] = [];
+    expect(await openExternal('https://github.com/a/b', { token: null, fetch: async (u) => (asked.push(u), { status: 204 }), open: (u) => opened.push(u) })).toBe('window');
+    expect(asked).toEqual([]);
+    expect(opened).toEqual(['https://github.com/a/b']);
+  });
+
+  it('opens plain http in a window, never through the helper', async () => {
+    const asked: string[] = [];
+    const opened: string[] = [];
+    expect(await openExternal('http://x.example/', { token: 'tok', fetch: async (u) => (asked.push(u), { status: 204 }), open: (u) => opened.push(u) })).toBe('window');
+    expect(asked).toEqual([]);
   });
 
   it('refuses what is not a web url', async () => {

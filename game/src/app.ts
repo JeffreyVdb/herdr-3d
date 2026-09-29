@@ -43,6 +43,8 @@ import { crewRole, isFreelancer } from './world/crew';
 import { askPrompt, BoardBook, nearestDesk, reviewPrompt } from './world/boards';
 import { BoardsPanel, type BoardOff, type BoardState } from './ui/boards/panel';
 import { openExternal } from './ui/boards/external';
+import { OpenPrDialog } from './ui/boards/openPr';
+import { can } from './world/boards';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
@@ -138,6 +140,8 @@ export class App {
   /** M7: the boards' state (last messages per floor), their overlay and item modals. */
   readonly boardBook = new BoardBook();
   readonly boardsPanel: BoardsPanel;
+  /** M7: "Open PR" for a plain worker, from its Changes panel. */
+  readonly openPr: OpenPrDialog;
   /** M7: the `board.watch` / `unwatch` / `refresh` the game sends by itself, the last 400 (test hook; not in `sent`). */
   readonly boardLog: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
   /** M7: pages the game asked to open, and how (test hook). */
@@ -330,7 +334,16 @@ export class App {
     );
     // M5: the Changes panel sits in the HUD, under the top bar, and leaves the floor in view.
     this.prompt = new PromptOverlay(o.host, dialogHost);
-    this.changes = new ChangesPanel(this.hud.root, { ...dialogHost, blur: () => (document.activeElement as HTMLElement | null)?.blur?.() });
+    this.openPr = new OpenPrDialog(o.host, {
+      ...dialogHost,
+      providerName: (session) => this.boardBook.get(session).prs?.provider_name ?? this.boardBook.get(session).issues?.provider_name ?? 'the provider',
+      external: (url) => this.external(url),
+    });
+    this.changes = new ChangesPanel(this.hud.root, {
+      ...dialogHost,
+      blur: () => (document.activeElement as HTMLElement | null)?.blur?.(),
+      openPr: { available: (id) => this.canOpenPr(id), open: (id) => this.openPrFor(id) },
+    });
 
     this.hud.on('city', () => void this.leaveFloor());
     this.hud.on('hire', () => this.openHire());
@@ -536,7 +549,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen;
+    return this.hire.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -597,6 +610,8 @@ export class App {
     this.panels.close();
     const opts: StartRunOptions & { desk: number } = { session: s, desk: d };
     if (o.issue !== undefined) opts.issue = o.issue;
+    // M7: "Hand to a worker" starts on a card of the board.
+    if (o.workItem) opts.workItem = o.workItem;
     this.startRun.open(opts);
   }
 
@@ -1217,6 +1232,23 @@ export class App {
     });
   }
 
+  /**
+   * "Open PR" shows for a plain worker (no run role) on the floor whose PR board says it can open one from a branch.
+   * The bridge decides again (branch, checkout, origin): this only keeps the button where it can work.
+   */
+  private canOpenPr(id: string): boolean {
+    const v = this.store.workerView(id);
+    if (!v || crewRole(v.worker) !== null || this.unsupported.has('worker.open_pr')) return false;
+    return can(this.boardBook.get(v.worker.session).prs, null, 'open_from_branch');
+  }
+
+  private openPrFor(id: string): void {
+    if (!this.canOpenPr(id)) return;
+    this.walker.release();
+    this.walker.stop();
+    this.openPr.open(id);
+  }
+
   /** "Ask a worker…": the hire dialog at the nearest free desk with a first prompt to look into it. */
   private askAbout(session: string, card: IssueCard): void {
     const desk = this.nearestFreeDesk(session);
@@ -1246,10 +1278,15 @@ export class App {
   }
 
   /** Everything the boards show on the wall (test hook). */
-  boardsInfo(): (ReturnType<OfficeView['boards']['info']> & { session: string; watched: string | null; off: string | null; batches: number }) | null {
+  boardsInfo(): (ReturnType<OfficeView['boards']['info']> & { session: string; watched: string | null; off: string | null; batches: number; office: number }) | null {
     const o = this.office;
     if (!o) return null;
-    return { session: o.session, watched: this.watched, off: this.boardOff(o.session)?.text ?? null, ...o.boards.info(performance.now()), batches: o.boards.noteBatches };
+    return { session: o.session, watched: this.watched, off: this.boardOff(o.session)?.text ?? null, ...o.boards.info(performance.now()), batches: o.boards.noteBatches, office: o.serial };
+  }
+
+  /** Applies a board message as if the bridge had sent it (test hook). */
+  injectBoard(m: BoardMessage): void {
+    this.onBoard(m);
   }
 
   private updateHint(): void {

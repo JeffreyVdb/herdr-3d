@@ -70,7 +70,11 @@ export class ChangesPanel {
 
   constructor(
     parent: HTMLElement,
-    private readonly host: DialogHost & { /** Focus back to the game (the panel closed). */ blur(): void },
+    private readonly host: DialogHost & {
+      /** Focus back to the game (the panel closed). */ blur(): void;
+      /** M7: "Open PR" for a plain worker: whether it shows for a worker, and what it does. */
+      openPr?: { available(workerId: string): boolean; open(workerId: string): void };
+    },
   ) {
     this.statusEl.hidden = true;
     this.dialog.append(this.head, this.body, this.statusEl);
@@ -169,7 +173,8 @@ export class ChangesPanel {
   private renderHead(): void {
     const v = this.host.store.workerView(this.id);
     const cwd = this.data?.cwd ?? v?.worker.cwd ?? '';
-    const key = JSON.stringify([this.name, cwd, v?.display ?? null, this.state]);
+    const canPr = !!v && !!this.host.openPr?.available(this.id);
+    const key = JSON.stringify([this.name, cwd, v?.display ?? null, this.state, canPr]);
     if (key === this.headKey) return;
     this.headKey = key;
     const had = document.activeElement instanceof HTMLElement && this.head.contains(document.activeElement) ? document.activeElement.dataset.key : null;
@@ -178,6 +183,8 @@ export class ChangesPanel {
       h('div', { class: 'cp-titles' }, h('h2', { id: 'cp-title' }, `Changes · ${this.name}`), h('p', { id: 'cp-sub', title: cwd }, h('span', { dir: 'ltr' }, cwd || 'no folder'))),
     ];
     if (v) nodes.push(h('span', { class: `tape tape--${v.display}` }, CHIP_TEXT[v.display]));
+    // M7: a plain worker's branch can become a pull request.
+    if (canPr) nodes.push(h('button', { class: 'btn btn--sm', 'data-key': 'open-pr', title: 'Push this branch and open a pull request for it', onclick: () => this.host.openPr?.open(this.id) }, 'Open PR…'));
     nodes.push(
       h(
         'button',

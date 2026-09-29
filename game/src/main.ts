@@ -7,7 +7,7 @@ import * as THREE from 'three/webgpu';
 import { App, type LookAt, type Pose } from './app';
 import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
 import { runBench, type BenchOptions, type BenchResult } from './bench';
-import type { CommandName, WorldEvent } from './net/protocol';
+import type { BoardMessage, CommandName, WorldEvent } from './net/protocol';
 import type { ArrivalInfo } from './render/arrivals';
 import type { CrewInfo } from './render/office';
 import type { HireSummary } from './ui/hire';
@@ -20,6 +20,7 @@ import type { PresetsSummary } from './ui/presets';
 import type { StartRunOptions, StartRunSummary } from './ui/startRun';
 // M7: boards
 import type { BoardSummary } from './ui/boards/panel';
+import type { OpenPrSummary } from './ui/boards/openPr';
 import type { NeedItem } from './world/next';
 import type { Area, BuildingPlan } from './world/building';
 import type { floorLayout } from './world/layout';
@@ -134,7 +135,7 @@ export interface H3DDebug {
   /** M4: opens the send-home dialog for a worker. */
   openSendHome(workerId: string): void;
   /** M4: what the open hire / send-home dialog shows, null when neither is open; M6: the presets panel (on top), else the start-run dialog first. */
-  dialog(): HireSummary | SendHomeSummary | StartRunSummary | PresetsSummary | null;
+  dialog(): HireSummary | SendHomeSummary | StartRunSummary | PresetsSummary | OpenPrSummary | null;
   /** M6: the start-run dialog for a floor (default: yours) and desk (default: its first free one), as the top bar's Run and M7 open it. */
   openStartRun(o?: Partial<StartRunOptions>): void;
   /** M6: the team presets panel. */
@@ -164,6 +165,8 @@ export interface H3DDebug {
   board(): BoardSummary | null;
   /** M7: what the boards on the wall show: notes (with their atlas cell and pose), flights, gong rings, buffer writes. */
   boards(): ReturnType<import('./app').App['boardsInfo']>;
+  /** M7: applies a board message as if the bridge had sent it. */
+  injectBoard(m: BoardMessage): void;
   /** M7: the overlay for the floor you are on, as the top bar's Issues / PRs (and E on a board) open it. */
   openBoard(which: 'issues' | 'prs'): void;
   /** M7: the overlay with an item's modal open (an opaque id). */
@@ -279,7 +282,7 @@ const h3d: H3DDebug = {
   connection: () => ({ phase: app?.conn.phase ?? 'stopped', epoch: app?.client.resume.epoch ?? null }),
   openHire: (desk) => app?.openHire(desk),
   openSendHome: (id) => app?.openSendHome(id),
-  dialog: () => app?.presetsPanel.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.sendHome.summary() ?? null,
+  dialog: () => app?.presetsPanel.summary() ?? app?.openPr.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.sendHome.summary() ?? null,
   openStartRun: (o) => app?.openStartRun(o),
   openPresets: () => app?.openPresets(),
   arrivals: () => app?.arrivals.info(performance.now() / 1000) ?? [],
@@ -299,6 +302,7 @@ const h3d: H3DDebug = {
   },
   board: () => app?.boardsPanel.summary() ?? null,
   boards: () => app?.boardsInfo() ?? null,
+  injectBoard: (m) => app?.injectBoard(m),
   openBoard: (w) => app?.openBoard(w),
   openBoardItem: (w, id) => {
     const s = app?.hereSession();

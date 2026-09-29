@@ -40,6 +40,14 @@ unless all three hold:
 A `502` means the tunnel is down; the helper's own `GET /healthz` reports the tunnel state
 (`{"tunnel":{"state":"up|connecting|degraded|backoff",…}}`, `503` unless `up`).
 
+The helper also answers one request of its own, for the game's "Open in <provider>" buttons and the links in issue
+bodies (M7): `POST /api/open` with `{"url":"https://github.com/…"}` opens that page in the Mac's default browser
+(`open <url>`). It needs the same `Host` and `Origin`, the token in an `X-H3D-Token` header (never in a URL) and
+`Content-Type: application/json`, and accepts only an `https://` URL on a host of its allowlist (`github.com`; every
+provider the bridge learns adds its own host), without credentials or a port. `204` opened; `400` a refused URL;
+`403` a failed check; `502` the Mac's `open` failed. A game not served by the helper has no such endpoint (it has no
+token either) and opens a new window itself.
+
 ## Handshake
 
 The first client message must be `hello`. Anything else gets an `error` with code `hello_required` and the connection

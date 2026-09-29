@@ -97,8 +97,12 @@ export function turnTowards(slot: { seat: { x: number; z: number }; yaw: number 
  * places the building around it). Windows are holes with glass you see out
  * of; the fire-escape door in the west wall slides open (`setDoor`).
  */
+let officeSerial = 0;
+
 export class OfficeView {
   readonly root = new THREE.Group();
+  /** Counts the offices built (test hook: a board update must not build another). */
+  readonly serial = ++officeSerial;
   readonly layout: FloorLayout;
   readonly session: string;
   readonly cards: AtlasCards;

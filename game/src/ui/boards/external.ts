@@ -1,8 +1,9 @@
 /**
  * M7: opens a provider's page (an issue, a pull request) in the user's browser. Served by the Mac helper, the game
  * asks it to (`POST /api/open`, same origin, its token in `X-H3D-Token`): the helper opens https URLs of the providers
- * it knows in the default browser, not in this app window. Served by anything else (Vite on the server, a fixture
- * page) there is no such endpoint, and the game opens a new window itself.
+ * it knows in the default browser, not in this app window. The helper opens the game with its token, so a page with
+ * none (Vite on the server, a fixture page) is not served by it: there is no such endpoint to ask, and the game opens
+ * a new window itself.
  */
 
 export type OpenVia = 'helper' | 'window' | 'refused';
@@ -26,11 +27,11 @@ export function openable(url: string): boolean {
 export async function openExternal(url: string, d: OpenDeps): Promise<OpenVia> {
   if (!openable(url)) return 'refused';
   const doFetch = d.fetch ?? ((u, init) => fetch(u, init));
-  if (url.startsWith('https://')) {
+  if (d.token && url.startsWith('https://')) {
     try {
       const r = await doFetch('/api/open', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', ...(d.token ? { 'x-h3d-token': d.token } : {}) },
+        headers: { 'content-type': 'application/json', 'x-h3d-token': d.token },
         body: JSON.stringify({ url }),
       });
       if (r.status === 204) return 'helper';

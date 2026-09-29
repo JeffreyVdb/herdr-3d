@@ -141,6 +141,8 @@ export class BoardsPanel {
       if (back?.isConnected) back.focus();
     });
     this.item.addEventListener('close', () => {
+      // The event is queued: an item opened again meanwhile is not the one that closed.
+      if (this.item.open) return;
       this.itemId = null;
       this.gen++;
       this.busy = null;
@@ -556,7 +558,7 @@ export class BoardsPanel {
         actions.push(h('span', { class: 'bd-move' }, sel, btn('move', 'Move', () => void this.move(card), {})));
       }
     }
-    if (open && can(board, card, 'close')) actions.push(btn('close', 'Close issue…', () => ((this.closing = this.closing ? null : 'completed'), this.renderItem()), { cls: 'btn--quiet' }));
+    if (open && can(board, card, 'close')) actions.push(btn('close-issue', 'Close issue…', () => ((this.closing = this.closing ? null : 'completed'), this.renderItem()), { cls: 'btn--quiet' }));
     if (card.url) actions.push(btn('open', `Open in ${name}`, () => this.host.external(card.url as string), { cls: 'btn--quiet' }));
     if (this.closing) notices.unshift(this.closeConfirm(card));
     this.itemFoot.replaceChildren(h('div', { class: 'bd-notices' }, ...notices), h('div', { class: 'dd-actions bd-actions' }, ...actions));

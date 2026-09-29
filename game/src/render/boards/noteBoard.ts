@@ -59,8 +59,9 @@ const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 
 const poseOf = (p: Placement): Pose => ({ x: p.x, y: p.y, w: p.w, h: p.h, rot: p.rot, scale: 1, alpha: 1 });
 
-/** A note as the test hook sees it. */
+/** A note as the test hook sees it (`face`: what its cell shows). */
 export interface NoteInfo {
+  face: unknown;
   id: string;
   x: number;
   y: number;
@@ -309,7 +310,7 @@ export class NoteBoard<F> {
 
   /** The notes on the board (test hook). */
   info(): NoteInfo[] {
-    return [...this.notes.values()].map((n) => ({ id: n.id, x: n.now.x, y: n.now.y, w: n.now.w, h: n.now.h, cell: n.cell, alpha: n.now.alpha, leaving: n.leaving }));
+    return [...this.notes.values()].map((n) => ({ face: n.face as unknown, id: n.id, x: n.now.x, y: n.now.y, w: n.now.w, h: n.now.h, cell: n.cell, alpha: n.now.alpha, leaving: n.leaving }));
   }
 
   dispose(): void {

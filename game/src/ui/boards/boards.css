@@ -109,6 +109,11 @@
   font-style: italic;
 }
 
+.desk-dlg .bd-card,
+.desk-dlg .bd-pr {
+  /* hire.css makes every dialog button inherit the dialog's light text: paper takes ink. */
+  color: var(--ink);
+}
 .bd-card {
   position: relative;
   display: flex;
