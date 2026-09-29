@@ -20,6 +20,10 @@ describe('promptBlocker', () => {
     expect(promptBlocker(view(), floor({ transition: 'waking' }), false)).toMatch(/waking up/);
     expect(promptBlocker(view(), floor(), true)).toBe('This herdr-world can’t send prompts yet. Update the bridge to use it.');
     expect(promptBlocker(null, null, false)).toMatch(/no longer/);
+    // Blocked: the bridge answers invalid_state; answer the question instead.
+    const q = { kind: 'permission', text: 'Proceed?', excerpt: [], choices: [{ n: 1, label: 'Yes' }, { n: 2, label: 'No' }], hash: 'abcdabcdabcdabcd' };
+    expect(promptBlocker(view({ status: 'blocked', question: q }, 'needs_you'), floor(), false)).toBe('Nibble is waiting for an answer first: pick one on its card (1–2, 0 denies).');
+    expect(promptBlocker(view({ status: 'blocked' }, 'needs_you'), floor(), false)).toBe('Nibble is waiting on its screen: answer there (sit at its laptop, E), or 0 dismisses it.');
   });
 });
 

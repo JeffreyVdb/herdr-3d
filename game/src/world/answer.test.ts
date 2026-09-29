@@ -23,6 +23,25 @@ describe('answering a question', () => {
     expect(answerArgs('w1', permission, k.deny)).toEqual({ id: 'w1', hash: '9f2c01ab77d3e410', choice: 3 });
   });
 
+  it("approves Claude's trust dialog with the choice that trusts, not its first ('No, exit')", () => {
+    const trust: Question = {
+      kind: 'trust',
+      text: 'Quick safety check: Is this a project you created or one you trust?',
+      excerpt: [],
+      choices: [
+        { n: 1, label: 'No, exit' },
+        { n: 2, label: 'Yes, I trust this folder' },
+      ],
+      selected: 1,
+      hash: '1111111111111111',
+    };
+    expect(answerKeys(trust)).toEqual({ approve: { n: 2, label: 'Yes, I trust this folder' }, deny: { choice: 1 }, denyChoice: { n: 1, label: 'No, exit' } });
+    const codex: Question = { ...trust, kind: 'permission', choices: [{ n: 1, label: 'Yes, proceed (y)' }, { n: 2, label: 'Yes, and don’t ask again (p)' }, { n: 3, label: 'No, and tell Codex what to do differently (esc)' }] };
+    expect(answerKeys(codex)).toMatchObject({ approve: { n: 1 }, deny: { choice: 3 } });
+    // Only a "no": nothing to approve with.
+    expect(answerKeys({ ...trust, choices: [{ n: 1, label: 'No, exit' }, { n: 2, label: 'Later' }] }).approve).toBeNull();
+  });
+
   it('denies with a cancel when no choice says no', () => {
     const q: Question = { ...permission, kind: 'choice', choices: [{ n: 1, label: 'Work' }, { n: 2, label: 'Personal' }] };
     expect(answerKeys(q)).toMatchObject({ approve: { n: 1 }, deny: { cancel: true }, denyChoice: null });
@@ -40,7 +59,9 @@ describe('answering a question', () => {
 
   it('reads the question line, else the excerpt', () => {
     expect(questionLine(permission)).toBe('Do you want to make this edit to hub.go?');
-    expect(questionLine({ ...permission, text: '  ', excerpt: ['Allow?', '  ', 'Esc to cancel'] })).toBe('Esc to cancel');
+    expect(questionLine({ ...permission, text: '  ', excerpt: ['Allow?', '  ', 'Esc to cancel'] })).toBe('Allow?');
+    expect(questionLine({ ...permission, text: '', excerpt: ['Should I regenerate every fixture, or only demo-m5?', '❯'] })).toBe('Should I regenerate every fixture, or only demo-m5?');
+    expect(questionLine({ ...permission, text: '', excerpt: ['Working on it', '> '] })).toBe('Working on it');
     expect(questionLine({ ...permission, text: '', excerpt: [] })).toBe('');
   });
 

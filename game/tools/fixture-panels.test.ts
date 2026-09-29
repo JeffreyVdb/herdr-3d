@@ -77,6 +77,7 @@ describe('SimWorld worker.prompt (M5)', () => {
     const r = rig();
     expect(r.cmd('worker.prompt', { id: r.byName('Sprout').id, text: 'ls' }).got()[0]).toMatchObject({ code: 'invalid_state', message: expect.stringContaining('plain shell') });
     expect(r.cmd('worker.prompt', { id: r.byName('Muffin').id, text: 'hi' }).got()[0]).toMatchObject({ code: 'invalid_state' });
+    expect(r.cmd('worker.prompt', { id: r.byName('Tofu').id, text: 'yes' }).got()[0]).toMatchObject({ code: 'invalid_state', message: expect.stringContaining('blocked') });
     expect(r.cmd('worker.prompt', { id: r.byName('Pebble').id, text: '' }).got()[0]).toMatchObject({ code: 'bad_request' });
     expect(r.cmd('worker.prompt', { id: r.byName('Pebble').id, text: 'x'.repeat(16 * 1024 + 1) }).got()[0]).toMatchObject({ code: 'bad_request' });
     expect(r.cmd('worker.prompt', { id: 'nope', text: 'x' }).got()[0]).toMatchObject({ code: 'unknown_worker' });
@@ -109,12 +110,22 @@ describe('SimWorld worker.answer (M5)', () => {
   it('a "No" choice or a cancel leaves it idle', () => {
     const r = rig();
     const s = r.byName('Sprocket');
-    r.cmd('worker.answer', { id: s.id, hash: s.question?.hash, choice: 2 });
+    const c = r.cmd('worker.answer', { id: s.id, hash: s.question?.hash, choice: 3 });
+    expect(r.reply(c.req_id)).toMatchObject({ data: { sent: ['3'], resolved: true } });
     expect(r.byName('Sprocket').status).toBe('idle');
+    const t = r.byName('Waffle');
+    const d = r.cmd('worker.answer', { id: t.id, hash: t.question?.hash, cancel: true });
+    expect(r.reply(d.req_id)).toMatchObject({ data: { sent: ['esc'], resolved: true } });
+    expect(r.byName('Waffle').status).toBe('idle');
+  });
+
+  it("answers Claude's trust dialog with arrows from the cursor, like the bridge", () => {
+    const r = rig();
     const t = r.byName('Tater');
-    const c = r.cmd('worker.answer', { id: t.id, hash: t.question?.hash, cancel: true });
-    expect(r.reply(c.req_id)).toMatchObject({ data: { sent: ['esc'], resolved: true } });
-    expect(r.byName('Tater').status).toBe('idle');
+    expect(t.question?.choices.map((c) => c.label)).toEqual(['No, exit', 'Yes, I trust this folder']);
+    const c = r.cmd('worker.answer', { id: t.id, hash: t.question?.hash, choice: 2 });
+    expect(r.reply(c.req_id)).toMatchObject({ data: { sent: ['down', 'enter'], resolved: true } });
+    expect(r.byName('Tater').status).toBe('working');
   });
 
   it('a wrong hash is stale, after the current question went out; other errors like the bridge', () => {

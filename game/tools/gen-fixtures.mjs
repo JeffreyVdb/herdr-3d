@@ -282,11 +282,14 @@ function demoM4() {
 
 // ---- demo-m5: demo-m4 with questions and usage --------------------------------
 // For the M5 panels on the simulating fixture server (`?sim=1`): the blocked
-// workers carry the question the bridge read off their screen (a Claude Code
-// permission menu, a Codex numbered question, a Codex trust dialog, and a
-// question without a menu), and most agents report usage (one priced as an
-// unknown model, one with no model seen yet). N visits them oldest first:
-// Tater (herdr-3d), Quibble (pastry), Tofu, Sprocket; then the done ones.
+// workers carry the question the bridge read off their screen, in the forms
+// of the real captures (internal/server/testdata/screens): Claude Code's
+// trust dialog (no digits, "No, exit" first), its AskUserQuestion menu and a
+// Bash permission menu, a Codex approval, and a question without a menu
+// (Codex's own trust dialog never shows as blocked, so it is not here). Most
+// agents report usage (one priced as an unknown model, one with no model seen
+// yet). N visits them oldest first: Tater (herdr-3d), Quibble (pastry), Tofu,
+// Sprocket, Waffle; then the done ones.
 
 /** 16 hex chars over kind + text + choices, standing in for the bridge's hash. */
 function qhash(kind, text, choices) {
@@ -313,39 +316,61 @@ function demoM5() {
   const w = snap.world;
   const r = rng(55);
   const byName = (n) => w.workers.find((x) => x.name === n);
-  const ask = (name, title, q) => Object.assign(byName(name), { title, question: q });
-  ask('Tater', 'Tag v0.3.0 and push?', question('other', 'Tag v0.3.0 and push it to origin?', [], [
-    'Release notes are in CHANGELOG.md (12 entries since v0.2.0).',
-    'Tag v0.3.0 and push it to origin?',
-    '> ',
-  ]));
+  const ask = (name, title, q) => Object.assign(byName(name), { status: 'blocked', title, question: q });
+  ask('Tater', 'Claude Code', question('trust', 'Quick safety check: Is this a project you created or one you trust?', ['No, exit', 'Yes, I trust this folder'], [
+    'Accessing workspace:',
+    '/home/dev/devel/herdr-3d-wt/release',
+    'Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source',
+    'Claude Code’ll be able to read, edit, and execute files here.',
+    '❯ No, exit',
+    'Yes, I trust this folder',
+    'Enter to confirm · Esc to cancel',
+  ], 1));
+  // A Claude worker in pastry (was Codex): its AskUserQuestion menu.
+  Object.assign(byName('Quibble'), { agent_kind: 'claude', harness: 'claude', model: 'claude-opus-5-5', effort: 'high' });
   ask('Quibble', 'Which unit system for the label?', question('choice', 'Which unit system should the nutrition label use?', [
-    'Metric (g, ml)', 'US customary (oz, cups)', 'Both, metric first',
+    'Metric (g, ml)', 'US customary (oz, cups)', 'Both, metric first', 'Type something.', 'Chat about this',
   ], [
+    '☐ Units',
     'Which unit system should the nutrition label use?',
-    '› 1. Metric (g, ml)',
+    '❯ 1. Metric (g, ml)',
     '  2. US customary (oz, cups)',
     '  3. Both, metric first',
+    '  4. Type something.',
+    '  5. Chat about this',
+    'Enter to select · ↑/↓ to navigate · Esc to cancel',
   ], 1));
   ask('Tofu', 'Push the M3 plan branch?', question('permission', 'Do you want to proceed?', [
-    'Yes', "Yes, and don't ask again for git push commands in /home/dev/devel/herdr-3d", 'No, and tell Claude what to do differently (esc)',
+    'Yes', "Yes, and don't ask again for git push commands in /home/dev/devel/herdr-3d", 'No',
   ], [
     'Bash command',
-    '  git push origin h3d/tofu-m3-plan',
-    '  Push the plan branch for review',
+    'git push origin h3d/tofu-m3-plan',
+    'Push the plan branch for review',
     'Do you want to proceed?',
     '❯ 1. Yes',
-    "  2. Yes, and don't ask again for git push commands in /home/dev/devel/herdr-3d",
-    '  3. No, and tell Claude what to do differently (esc)',
+    "2. Yes, and don't ask again for git push commands in /home/dev/devel/herdr-3d",
+    '3. No',
+    'Esc to cancel · Tab to amend',
   ], 1));
-  ask('Sprocket', 'Trust this folder?', question('trust', 'Do you trust the contents of this directory?', ['Yes, continue', 'No, quit'], [
-    '> You are in /home/dev/devel/herdr-3d',
-    'Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection.',
-    '› 1. Yes, continue',
-    '  2. No, quit',
+  ask('Sprocket', 'Allow `go test ./internal/store`?', question('permission', 'Would you like to run the following command?', [
+    'Yes, proceed (y)', "Yes, and don't ask again for commands that start with `go test` (p)", 'No, and tell Codex what to do differently (esc)',
+  ], [
+    'Would you like to run the following command?',
+    'Reason: May I run the store tests outside the read-only sandbox?',
+    '$ go test ./internal/store',
+    '› 1. Yes, proceed (y)',
+    "2. Yes, and don't ask again for commands that start with `go test` (p)",
+    '3. No, and tell Codex what to do differently (esc)',
+    'Press enter to confirm or esc to cancel',
   ], 1));
+  // Blocked with no menu on screen: the question is in its words, in the excerpt.
+  ask('Waffle', 'Regenerating the fixtures', question('other', '', [], [
+    'I can regenerate every fixture, or only the new demo-m5 one.',
+    'Should I regenerate every fixture, or only demo-m5?',
+    '❯',
+  ]));
   for (const x of w.workers) {
-    // Plain shells have no agent session to count; two never ran a turn yet.
+    // Plain shells have no agent session to count; one never ran a turn yet (below).
     if (!x.agent_kind || x.name === 'Waffle') continue;
     if (x.name === 'Zippy') {
       x.usage = { tokens: 0, input: 0, output: 0, cache_write: 0, cache_read: 0, cost_usd_est: 0, priced: 'none', context_pct: null, updated_at: T0 };
@@ -371,6 +396,8 @@ function demoM5() {
       updated_at: T0 - Math.floor(r() * 600_000),
     };
   }
+  // Fixed numbers (not from the generator's random stream, so the others stay put).
+  byName('Waffle').usage = { tokens: 21_400, input: 900, output: 4100, cache_write: 14_000, cache_read: 210_000, cost_usd_est: 0.2511, priced: 'known', model: 'claude-opus-5-5', context_pct: 7.3, context_window: 200_000, updated_at: T0 };
   return [snap];
 }
 

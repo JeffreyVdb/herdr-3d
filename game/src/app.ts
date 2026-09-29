@@ -1353,13 +1353,13 @@ export class App {
     if (!v) return;
     const q = v.display === 'needs_you' ? answerable(v.worker.question) : null;
     if (!q) {
-      this.hud.toast(v.display === 'needs_you' ? `${v.name} needs you, but no menu was read off its screen: sit at its laptop (E) or prompt it (P).` : `${v.name} isn’t asking anything right now.`, 3000);
+      this.hud.toast(v.display === 'needs_you' ? `${v.name} needs you, but its screen showed no question to answer from here: sit at its laptop (E).` : `${v.name} isn’t asking anything right now.`, 3000);
       return;
     }
     const pick = digit === 0 ? answerKeys(q).deny : digitPick(q, digit);
     if (!pick) {
       const n = q.choices.length;
-      this.hud.toast(n ? `${v.name}’s question has ${n === 1 ? 'one choice: 1' : `choices 1–${n}`}; 0 denies.` : `${v.name}’s question has no numbered choices: 0 dismisses it, P answers in words.`, 3000);
+      this.hud.toast(n ? `${v.name}’s question has ${n === 1 ? 'one choice: 1' : `choices 1–${n}`}; 0 denies.` : `${v.name}’s question has no numbered choices: 0 dismisses it (Esc); to answer in words, sit at its laptop (E).`, 3000);
       return;
     }
     void this.answer(id, pick);

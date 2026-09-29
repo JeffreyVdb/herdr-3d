@@ -2,16 +2,18 @@
 // `worker.changes`, and periodic `worker.usage`, for the fixture server's
 // `sim=1` (tools/fixture-sim.ts hands these commands over). Rules:
 //
-// - worker.prompt: an idle / done / blocked agent starts `working` one step
-//   later (the ack follows), then is `done` three steps after that; a
-//   `working` one gets the ack at once with `queued: true` and takes the
-//   prompt when its turn ends. A plain shell (no `agent_kind`) or an asleep
-//   floor is `invalid_state`. `simfail=prompt_failed` fails the next prompt
+// - worker.prompt: an idle / done agent starts `working` one step later (the
+//   ack follows), then is `done` three steps after that; a `working` one gets
+//   the ack at once with `queued: true` and takes the prompt when its turn
+//   ends. A `blocked` one (answer its question first), a plain shell (no
+//   `agent_kind`) or an asleep floor is `invalid_state`. `simfail=prompt_failed` fails the next prompt
 //   (`prompt_failed`), `simfail=prompt_retried` acks it `retried: true`.
 // - worker.answer: needs the question's hash (else `stale`, after a
 //   worker.upsert with the current question, as the bridge re-reads the
 //   screen); a "No" choice or a cancel leaves the agent `idle`, any other
-//   choice sets it `working` and `done` three steps later.
+//   choice sets it `working` and `done` three steps later. The keys sent are
+//   the digit, or for a trust dialog (no digits) arrows from the cursor and
+//   Enter, like the bridge.
 //   `simfail=answer_unresolved`: the next answer is acked `resolved: false`.
 // - worker.changes: a cwd with `/scratch` in it is `not_a_repo` (M4's "no git
 //   repo" rule); a `working` worker has a staged, two unstaged and an
@@ -119,6 +121,7 @@ export class PanelsSim {
     if (typeof text !== 'string') throw this.bad('text must be a string');
     const w = this.worker(a);
     if (!w.agent_kind) throw this.h.error('invalid_state', `invalid state: ${w.name ?? w.id} is a plain shell (use worker.keys)`);
+    if (w.status === 'blocked') throw this.h.error('invalid_state', `invalid state: ${w.name ?? w.id} is blocked (answer its question with worker.answer)`);
     if (!text || bytes(text) > 16 * 1024 || text.includes('\0')) throw this.bad('text must be 1 byte to 16 KiB, without NUL');
     if (this.h.takeFail('prompt_failed')) {
       this.h.after(this.h.stepMs, () => fail(this.h.error('prompt_failed', `prompt_failed: ${w.name ?? 'the agent'} did not start working, even after one more Enter (simulated)`)));
@@ -158,7 +161,7 @@ export class PanelsSim {
     }
     const choice = hasChoice ? q.choices.find((c) => c.n === a.choice) : undefined;
     if (hasChoice && !choice) throw this.bad(`choice ${String(a.choice)} is not one of the question's`);
-    const sent = choice ? [String(choice.n)] : ['esc'];
+    const sent = !choice ? ['esc'] : q.kind === 'trust' ? [...arrows(q.selected ?? 1, choice.n), 'enter'] : [String(choice.n)];
     if (this.h.takeFail('answer_unresolved')) {
       ack({ sent, resolved: false });
       return;
@@ -221,6 +224,9 @@ export class PanelsSim {
 }
 
 const firstLine = (s: string) => s.split('\n')[0]?.trim().slice(0, 80) ?? '';
+
+/** Arrow keys from the menu's cursor to choice `n`. */
+const arrows = (from: number, n: number) => Array.from({ length: Math.abs(n - from) }, () => (n > from ? 'down' : 'up'));
 
 // ---- canned git ---------------------------------------------------------------------
 

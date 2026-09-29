@@ -1,9 +1,10 @@
 /**
  * M5: the P prompt overlay's rules: who can be prompted (an agent on an
- * awake floor, on a bridge that knows `worker.prompt`) and what text goes
- * (1 byte to 16 KiB, no NUL). Pure.
+ * awake floor that is not waiting on a question, on a bridge that knows
+ * `worker.prompt`) and what text goes (1 byte to 16 KiB, no NUL). Pure.
  */
 
+import { answerable } from './answer';
 import type { FloorView, WorkerView } from './store';
 
 export const PROMPT_MAX_BYTES = 16 * 1024;
@@ -16,6 +17,13 @@ export function promptBlocker(v: WorkerView | null, floor: Pick<FloorView, 'asle
   if (floor?.transition === 'sleeping') return `${v.worker.session} is going to sleep.`;
   if (floor?.asleep) return `${v.worker.session} is asleep. Wake it from the elevator (L) to prompt ${v.name}.`;
   if (!v.worker.agent_kind && !v.harness) return `${v.name} is a plain shell, not a coding agent: sit at its laptop (E) to type there.`;
+  // The bridge refuses a prompt while the agent waits on its screen (invalid_state): the question comes first.
+  if (v.display === 'needs_you') {
+    const n = answerable(v.worker.question)?.choices.length ?? 0;
+    return n
+      ? `${v.name} is waiting for an answer first: pick one on its card (${n === 1 ? '1' : `1–${Math.min(n, 9)}`}, 0 denies).`
+      : `${v.name} is waiting on its screen: answer there (sit at its laptop, E), or 0 dismisses it.`;
+  }
   return null;
 }
 
