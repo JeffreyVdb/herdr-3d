@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { attribute, texture, uv, vec2 } from 'three/tsl';
 import type { DeskSlot } from '../world/layout';
-import { screenGeometry } from './desks';
+import { glassGeometry, screenGeometry } from './desks';
 
 /**
  * A frozen screen's cell in the atlas (the monitor's terminal area, M6b: its
@@ -29,6 +29,10 @@ const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 export class ScreenMeshes {
   readonly group = new THREE.Group();
   private readonly geo: THREE.BufferGeometry;
+  /** The screen you sit at: the whole glass, the status bar under it. */
+  private readonly fullGeo: THREE.BufferGeometry;
+  /** Desks whose live screen covers the whole glass (the one you sit at). */
+  private full: number | null = null;
   private readonly frozenGeo: THREE.BufferGeometry;
   private readonly live = new Map<number, THREE.Mesh>();
   private readonly frozenMesh: THREE.InstancedMesh;
@@ -49,6 +53,7 @@ export class ScreenMeshes {
   constructor(private readonly slots: readonly DeskSlot[]) {
     this.group.name = 'screens';
     this.geo = screenGeometry(0.0015);
+    this.fullGeo = glassGeometry(0.0015);
     this.frozenGeo = screenGeometry(0.001);
     this.canvas = document.createElement('canvas');
     this.canvas.width = CELL_W * COLS;
@@ -100,13 +105,23 @@ export class ScreenMeshes {
       }
       return;
     }
-    const mesh = new THREE.Mesh(this.geo, new THREE.MeshBasicMaterial({ map: tex }));
+    const mesh = new THREE.Mesh(this.full === desk ? this.fullGeo : this.geo, new THREE.MeshBasicMaterial({ map: tex }));
     mesh.name = `screens.live.${desk}`;
     mesh.matrixAutoUpdate = false;
     mesh.matrix.copy(this.slotMatrix(desk, new THREE.Matrix4()));
     mesh.frustumCulled = false;
     this.group.add(mesh);
     this.live.set(desk, mesh);
+  }
+
+  /** The desk whose live screen covers the whole glass, status bar included (sitting at it); null: none. */
+  setFull(desk: number | null): void {
+    if (desk === this.full) return;
+    const was = this.full === null ? undefined : this.live.get(this.full);
+    if (was) was.geometry = this.geo;
+    this.full = desk;
+    const now = desk === null ? undefined : this.live.get(desk);
+    if (now) now.geometry = this.fullGeo;
   }
 
   /** The live plane of a desk (test hook). */
@@ -191,6 +206,7 @@ export class ScreenMeshes {
     this.group.removeFromParent();
     for (const d of [...this.live.keys()]) this.setLive(d, null);
     this.geo.dispose();
+    this.fullGeo.dispose();
     this.frozenGeo.dispose();
     (this.frozenMesh.material as THREE.Material).dispose();
     this.frozenMesh.dispose();

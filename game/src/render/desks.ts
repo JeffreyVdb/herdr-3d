@@ -348,6 +348,12 @@ export function screenGeometry(lift = 0): THREE.BufferGeometry {
   return new THREE.PlaneGeometry(f.width, f.height).rotateY(Math.PI).rotateX(MONITOR.tilt).translate(f.center.x, f.center.y, f.center.z);
 }
 
+/** The whole glass, status bar and terminal area: what the screen you sit at covers (a hair in front of `screenGeometry`'s). */
+export function glassGeometry(lift = 0): THREE.BufferGeometry {
+  const f = monitorFrame(lift);
+  return new THREE.PlaneGeometry(f.width, f.glass.height).rotateY(Math.PI).rotateX(MONITOR.tilt).translate(f.glass.center.x, f.glass.center.y, f.glass.center.z);
+}
+
 /** M6b: the status bar across the top of the glass. */
 function bandGeometry(): THREE.BufferGeometry {
   const f = monitorFrame(0.0004);
@@ -359,6 +365,13 @@ export function screenFrame(): { width: number; height: number; center: THREE.Ve
   const f = monitorFrame();
   const v = (p: { x: number; y: number; z: number }) => new THREE.Vector3(p.x, p.y, p.z);
   return { width: f.width, height: f.height, center: v(f.center), normal: v(f.normal), up: v(f.up) };
+}
+
+/** The whole glass (bar included) in slot space: the screen you sit at fills it. */
+export function glassFrame(): { width: number; height: number; center: THREE.Vector3; normal: THREE.Vector3; up: THREE.Vector3 } {
+  const f = monitorFrame();
+  const v = (p: { x: number; y: number; z: number }) => new THREE.Vector3(p.x, p.y, p.z);
+  return { width: f.width, height: f.glass.height, center: v(f.glass.center), normal: v(f.normal), up: v(f.up) };
 }
 
 /** The desk and chair art in slot space (shared with your own desk on the mezzanine). */

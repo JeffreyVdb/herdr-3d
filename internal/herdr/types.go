@@ -53,17 +53,47 @@ type Rect struct {
 	Height int `json:"height"`
 }
 
-// PaneSize is a pane's size in cells as the snapshot's layouts give it
-// (the size its attached clients last gave it), if it is there.
+// headlessCols / headlessRows are herdr's size for a pane no client has laid
+// out (its layout then says 120 × 40 whatever the pane really is).
+const headlessCols, headlessRows = 120, 40
+
+// wideRatio is columns per row of a full-screen terminal window (cells are
+// about twice as tall as wide, windows 16:9-ish): a guess for a pane's width
+// when only its height is known.
+const wideRatio = 2.8
+
+// PaneSize is a pane's size in cells, if it is there. The layout's rectangle
+// is the size its attached clients last gave it, but a pane nobody laid out
+// gets herdr's headless 120 × 40 while the pane itself (`scroll.viewport_rows`)
+// is as tall as its terminal really is; an observer smaller than the pane
+// cuts off its bottom rows, where an agent's prompt is. So the taller of the
+// two is the height, and when the layout was stale the width is a guess from it.
 func (s *Snapshot) PaneSize(pane string) (cols, rows int, ok bool) {
 	for _, l := range s.Layouts {
 		for _, p := range l.Panes {
 			if p.PaneID == pane && p.Rect.Width > 0 && p.Rect.Height > 0 {
-				return p.Rect.Width, p.Rect.Height, true
+				cols, rows = p.Rect.Width, p.Rect.Height
+				if v := s.viewportRows(pane); v > rows {
+					rows = v
+					if cols == headlessCols && p.Rect.Height == headlessRows {
+						cols = max(cols, int(float64(rows)*wideRatio))
+					}
+				}
+				return cols, rows, true
 			}
 		}
 	}
 	return 0, 0, false
+}
+
+// viewportRows is a pane's real height from its scroll state, 0 if unknown.
+func (s *Snapshot) viewportRows(pane string) int {
+	for _, p := range s.Panes {
+		if p.PaneID == pane && p.Scroll != nil {
+			return p.Scroll.ViewportRows
+		}
+	}
+	return 0
 }
 
 // WorkspaceInfo mirrors the schema's WorkspaceInfo.
@@ -97,6 +127,13 @@ type PaneInfo struct {
 	AgentStatus           string        `json:"agent_status"`
 	AgentSession          *AgentSession `json:"agent_session,omitempty"`
 	TerminalTitleStripped *string       `json:"terminal_title_stripped,omitempty"`
+	// M5 term: the pane's real screen height (the layout's can be herdr's headless default).
+	Scroll *PaneScroll `json:"scroll,omitempty"`
+}
+
+// PaneScroll is the part of a pane's scroll state the bridge reads.
+type PaneScroll struct {
+	ViewportRows int `json:"viewport_rows"`
 }
 
 // AgentInfo mirrors the schema's AgentInfo.

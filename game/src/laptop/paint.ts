@@ -204,7 +204,7 @@ function styleOf(c: IBufferCell, t: ScreenTheme, out: Style): void {
 export const PAD = 0.025;
 
 /** Cell width / height the grid keeps: a monospace cell, squeezed or stretched no further. */
-export const CELL_ASPECT = { min: 0.42, max: 0.62 };
+export const CELL_ASPECT = { min: 0.42, max: 0.7 };
 
 /**
  * The cell grid inside the padding: cell size and origin. The pane's own size decides cols × rows (the observer
