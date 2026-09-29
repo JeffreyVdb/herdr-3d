@@ -72,6 +72,12 @@ type Options struct {
 	// Git reads git state for hires and send-homes and runs their few git
 	// commands (nil: no git info, no worktree hires or deletes).
 	Git Git
+
+	// M5 usage. Changes reads a worker's git changes for worker.changes
+	// (nil: it fails with internal). Usage, if set, reads the workers'
+	// agent transcripts for their usage (nil: no usage).
+	Changes ChangesGit
+	Usage   *UsageConfig
 	// Caps are the worker caps (zero: DefaultCaps).
 	Caps Caps
 	// HireOptions, if set, replaces what can be hired (tests: cheap models).
@@ -144,6 +150,8 @@ type Hub struct {
 	rescan   chan struct{}                  // asks the watcher to look at sessions now
 	suggest  chan suggestJob                // repo lookups for the suggester
 	wg       sync.WaitGroup                 // floor operations and the suggester
+
+	usage map[string]*proto.Usage // M5 usage: by worker id, as last published
 }
 
 type floorState struct {
@@ -294,6 +302,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		branches:      map[string]branchRead{},
 		rescan:        make(chan struct{}, 1),
 		suggest:       make(chan suggestJob, 256),
+		usage:         map[string]*proto.Usage{},
 	}
 	if err := h.reload(ctx); err != nil {
 		return nil, err
@@ -343,6 +352,10 @@ func (h *Hub) Run(ctx context.Context) error {
 	if h.opts.RepoOf != nil {
 		h.wg.Add(1)
 		go h.suggester(ctx)
+	}
+	if h.opts.Usage != nil { // M5 usage
+		h.wg.Add(1)
+		go h.trackUsage(ctx)
 	}
 	for {
 		select {
@@ -432,6 +445,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startHirePrepare
 		case proto.CmdFirePrepare:
 			start = h.startFirePrepare
+		case proto.CmdWorkerChanges: // M5 usage
+			start = h.startChanges
 		}
 		if start != nil {
 			// Accepted: the audit row is written (or begun) and the reply
@@ -474,7 +489,10 @@ var (
 func errorCode(err error) string {
 	var bad *badArgsError
 	var fetch *fetchFailedError
+	var coded *codedError // M5 usage
 	switch {
+	case errors.As(err, &coded):
+		return coded.code
 	case errors.As(err, &fetch):
 		return proto.ErrFetchFailed
 	case errors.As(err, &bad), errors.Is(err, store.ErrInvalid), errors.Is(err, errNoReqID):
@@ -895,6 +913,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		if w.Worktree != nil && w.Worktree.Linked && w.Worktree.CheckoutPath != "" {
 			next.Branch = h.branchOf(w.Worktree.CheckoutPath, at)
 		}
+		next.Usage = h.usage[id] // M5 usage
 		if op := f.hires[id]; op != nil && !op.seen {
 			op.seen = true
 			op.signal()

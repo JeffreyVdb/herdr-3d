@@ -81,6 +81,18 @@ func TestWorldVersionAndUsage(t *testing.T) {
 	if code := World("herdr-world", []string{"serve"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), EnvMaxDesks) {
 		t.Fatalf("bad %s: code %d, err %q", EnvMaxDesks, code, errOut.String())
 	}
+	t.Setenv(EnvMaxDesks, "")
+	t.Setenv(EnvFloorMax, "")
+	// M5 usage: a pricing file that does not parse stops the bridge.
+	bad := filepath.Join(t.TempDir(), "pricing.json")
+	if err := os.WriteFile(bad, []byte(`{"models":{"x":{"input":-1}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	errOut.Reset()
+	t.Setenv(EnvPricing, bad)
+	if code := World("herdr-world", []string{"serve"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "-pricing") {
+		t.Fatalf("bad %s: code %d, err %q", EnvPricing, code, errOut.String())
+	}
 }
 
 // running is a bridge started with Serve against a fake herdr.

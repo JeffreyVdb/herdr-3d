@@ -25,6 +25,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
+	"github.com/JeffreyVdb/herdr-3d/internal/usage"
 	"github.com/JeffreyVdb/herdr-3d/internal/watch"
 )
 
@@ -49,6 +50,9 @@ const (
 	EnvHostMax    = "HERDR_WORLD_MAX_WORKERS"
 	EnvLogLevel   = "HERDR_WORLD_LOG_LEVEL"
 	EnvLogFormat  = "HERDR_WORLD_LOG_FORMAT"
+	// M5 usage.
+	EnvClaudeProjects = "HERDR_WORLD_CLAUDE_PROJECTS"
+	EnvPricing        = "HERDR_WORLD_PRICING"
 )
 
 const worldUsage = `usage:
@@ -206,7 +210,9 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	herdrBin := fs.String("herdr", envOr(EnvHerdr, "herdr"), "herdr executable ($"+EnvHerdr+")")
 	systemdRun := fs.String("systemd-run", envOr(EnvSystemdRun, "systemd-run"), "systemd-run executable, to wake floors ($"+EnvSystemdRun+")")
 	gitBin := fs.String("git", envOr(EnvGit, "git"), "git executable, for worktree hires and send-home checks ($"+EnvGit+")")
-	codexSessions := fs.String("codex-sessions", envOr(EnvCodex, codex.DefaultSessionsDir()), "Codex rollout directory, for the sleep backfill ($"+EnvCodex+")")
+	codexSessions := fs.String("codex-sessions", envOr(EnvCodex, codex.DefaultSessionsDir()), "Codex rollout directory, for the sleep backfill and usage ($"+EnvCodex+")")
+	claudeProjects := fs.String("claude-projects", envOr(EnvClaudeProjects, usage.DefaultClaudeProjects()), "Claude Code transcript directory, for usage ($"+EnvClaudeProjects+")")
+	pricingFile := fs.String("pricing", os.Getenv(EnvPricing), "JSON file of model prices merged over the built-in table ($"+EnvPricing+")")
 	sessions := fs.String("sessions", os.Getenv(EnvSessions), "only watch sessions whose name matches this regexp ($"+EnvSessions+")")
 	fs.DurationVar(&poll, "poll", poll, "session discovery interval ($"+EnvPoll+")")
 	fs.DurationVar(&resnap, "resnapshot", resnap, "safety re-snapshot interval per session ($"+EnvResnapshot+")")
@@ -249,6 +255,12 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	if err != nil {
 		return err
 	}
+	pricing := usage.DefaultPricing()
+	if *pricingFile != "" {
+		if pricing, err = usage.LoadPricing(*pricingFile); err != nil {
+			return fmt.Errorf("-pricing: %w", err)
+		}
+	}
 	var only *regexp.Regexp
 	if *sessions != "" {
 		if only, err = regexp.Compile(*sessions); err != nil {
@@ -261,6 +273,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		Control:     &herdr.Control{Herdr: *herdrBin, SystemdRun: *systemdRun, Only: only},
 		WakeTimeout: wakeTimeout, ResumeTimeout: resumeTimeout, CodexSessions: *codexSessions,
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
+		ClaudeProjects: *claudeProjects, Pricing: pricing,
 	})
 }
 
@@ -300,6 +313,11 @@ type ServeConfig struct {
 	// RepoOf finds a directory's GitHub repo for the floor suggestion (nil:
 	// no suggestions).
 	RepoOf func(ctx context.Context, dir string) string
+	// M5 usage: ClaudeProjects is the Claude Code transcript directory; with
+	// CodexSessions, where workers' usage is read from ("" and "": no
+	// usage). Pricing prices it (nil: the built-in table).
+	ClaudeProjects string
+	Pricing        *usage.Pricing
 	// Ready, if set, is called once the socket is listening.
 	Ready func()
 }
@@ -322,6 +340,11 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	}
 	if cfg.Git != nil {
 		opts.Git = cfg.Git
+		opts.Changes = cfg.Git // M5 usage
+	}
+	if cfg.ClaudeProjects != "" || cfg.CodexSessions != "" { // M5 usage
+		opts.Usage = &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: cfg.ClaudeProjects, CodexSessions: cfg.CodexSessions},
+			Pricing: cfg.Pricing}
 	}
 	opts.Caps, opts.HireOptions, opts.Load = cfg.Caps, cfg.HireOptions, server.HostLoad
 	opts.TrustTimeout, opts.SeenTimeout, opts.ExitTimeout = cfg.TrustTimeout, cfg.SeenTimeout, cfg.ExitTimeout
