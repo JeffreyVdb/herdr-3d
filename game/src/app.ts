@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BridgeClient, type CommandResult, type ConnState, type SocketLike } from './net/client';
 import { bridgeUrl, takeToken } from './net/endpoint';
-import type { CommandArgs, CommandName, WorldEvent } from './net/protocol';
+import type { AnswerAck, CommandArgs, CommandName, Question, WorldEvent } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalSpec } from './render/arrivals';
@@ -25,16 +25,14 @@ import { walkInRoute, type ArrivalKind } from './world/arrival';
 import type { Display } from './world/derive';
 import { firstFreeDesk, isFreshHire, Reservations } from './world/hire';
 import { walkOutRoute } from './world/route';
-import { WorldStore, type Change, type Counts, type FloorView } from './world/store';
-// M5 panels: P prompt, C changes, N next, 1–9 / 0 quick replies.
+import { WorldStore, type Change, type Counts, type FloorView, type WorkerView } from './world/store';
+// M5: P prompt, C changes, N next, 1–9 / 0 quick replies.
 import { ChangesPanel } from './ui/changes';
 import { failureText as commandFailure } from './ui/messages';
 import { PromptOverlay } from './ui/prompt';
 import { answerable, answerArgs, answerKeys, digitPick, pickLabel, questionLine, type Pick as AnswerPick } from './world/answer';
 import { faceSpots, needQueue, nextNeed, type NeedItem } from './world/next';
 import { promptBlocker } from './world/prompt';
-import type { AnswerAck, Question } from './net/protocol';
-import type { WorkerView } from './world/store';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
@@ -110,10 +108,10 @@ export class App {
   readonly url: string;
   /** #20: the name on your desk's name plate (`?me=`; the bridge sends no user name yet). */
   readonly owner: string;
-  /** M5 screen: live laptop screens, sitting at a worker's laptop, and the bar while you do. */
+  /** M5: live laptop screens, sitting at a worker's laptop, and the bar while you do. */
   readonly laptops: Laptops;
   readonly seatBar: SeatBar;
-  /** M5 screen: the `terminal.watch` / `unwatch` the game sends by itself, the last 400 (test hook; not in `sent`). */
+  /** M5: the `terminal.watch` / `unwatch` the game sends by itself, the last 400 (test hook; not in `sent`). */
   readonly watchLog: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
   /** M5: P, the prompt overlay; C, the Changes side panel. */
   readonly prompt: PromptOverlay;
@@ -220,7 +218,7 @@ export class App {
         onConn: (m) => this.laptops.onConn(m),
         onState: (s) => {
           this.conn = s;
-          // M5 screen: a dropped connection took every watch with it; the next live one watches again.
+          // M5: a dropped connection took every watch with it; the next live one watches again.
           this.laptops.setConnected(s.phase === 'live');
           this.hud.setConn(s, this.fixture, Date.now());
           this.updateNotice();
@@ -262,8 +260,6 @@ export class App {
         store: this.store,
         send: (t, args) => this.send(t, args),
         watch: (t, args) => this.sendWatch(t, args),
-        // `worker.prompt` is declared by the M5 panels' protocol block; paste only needs to send it.
-        sendPrompt: (id, text) => this.send('worker.prompt' as CommandName, { id, text } as never),
         unsupported: (t) => this.unsupported.has(t),
         toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 5200 : 3200, kind),
         seat: this.seatBar,
@@ -271,7 +267,7 @@ export class App {
       },
       o.params,
     );
-    // M5 panels: the Changes panel sits in the HUD, under the top bar, and leaves the floor in view.
+    // M5: the Changes panel sits in the HUD, under the top bar, and leaves the floor in view.
     this.prompt = new PromptOverlay(o.host, dialogHost);
     this.changes = new ChangesPanel(this.hud.root, { ...dialogHost, blur: () => (document.activeElement as HTMLElement | null)?.blur?.() });
 
@@ -998,7 +994,7 @@ export class App {
     }
     // Open dialogs (sheet, panels, confirmations, hire / send home) handle their own keys.
     if (this.hud.sheetOpen || this.panels.open || this.dialogOpen) return;
-    // M5 screen: at a worker's laptop every key goes to its terminal (Esc gets you up).
+    // M5: at a worker's laptop every key goes to its terminal (Esc gets you up).
     if (this.laptops.key(e)) return;
     const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     if (typing) return;
@@ -1121,7 +1117,7 @@ export class App {
       } else void this.enterFloor(s);
       return;
     }
-    // M5 screen: seated, a click keeps the keyboard on the laptop (no mouse look).
+    // M5: seated, a click keeps the keyboard on the laptop (no mouse look).
     if (this.laptops.seated) return this.seatBar.focus();
     if (!this.planOpen) this.walker.requestLock();
   }
@@ -1220,7 +1216,7 @@ export class App {
       this.controls.update();
       this.city.frame(t, this.cityCam);
     }
-    // M5 screen: live laptop screens, and the camera at the laptop you sit at.
+    // M5: live laptop screens, and the camera at the laptop you sit at.
     const onFloor = this.mode === 'floor' && (this.place.area === 'floor' || this.place.area === 'fire-escape');
     const blocked = this.planOpen || this.panels.open || this.dialogOpen || this.hud.sheetOpen || this.transitioning;
     this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
@@ -1308,7 +1304,7 @@ export class App {
     const t = this.computeLookAt();
     this.target = t;
     const w = t?.kind === 'worker' ? this.store.workerView(t.id) : null;
-    // M5 screen: E sits at the worker's laptop, or says why it cannot.
+    // M5: E sits at the worker's laptop, or says why it cannot.
     const why = w ? this.laptops.whyNot(w.worker.id, this.office) : null;
     this.hud.setKeyState('E', w ? (why ? { live: false, why } : { live: true }) : null);
     this.lookAtM5(this.planOpen ? null : w);
@@ -1332,7 +1328,7 @@ export class App {
     return null;
   }
 
-  // ---- M5 panels: prompt, changes, quick replies, the next who needs you ----------------
+  // ---- M5: prompt, changes, quick replies, the next who needs you ----------------
 
   /** The looked-at worker's card shows its usage; P and C say why when they can't be used on it. */
   private lookAtM5(w: WorkerView | null): void {
@@ -1573,7 +1569,7 @@ export class App {
     this.activity(true);
   }
 
-  // ---- M5 screen: sitting at a worker's laptop ----------------------------------------
+  // ---- M5: sitting at a worker's laptop ----------------------------------------
 
   /** A watch the game makes by itself: like `send`, logged in `watchLog` instead of `sent`. */
   private async sendWatch<T extends 'terminal.watch' | 'terminal.unwatch'>(t: T, args: CommandArgs[T]): Promise<CommandResult> {

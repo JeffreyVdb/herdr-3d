@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BridgeClient, type SocketLike } from './client';
 import type { ConnMessage } from './protocol';
 
-// M5 screen: terminal.frame / terminal.closed carry no seq; they reach onConn and never touch the event sequence.
+// M5: terminal.frame / terminal.closed carry no seq; they reach onConn and never touch the event sequence.
 
 class Sock implements SocketLike {
   sent: Array<{ t: string }> = [];

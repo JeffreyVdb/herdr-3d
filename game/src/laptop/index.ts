@@ -21,8 +21,6 @@ export interface LaptopHost {
   send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** The watches the game makes by itself (kept out of the log of what you did). */
   watch<T extends 'terminal.watch' | 'terminal.unwatch'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
-  /** `worker.prompt` belongs to the M5 panels' protocol block; paste sends it by name. */
-  sendPrompt(id: string, text: string): Promise<CommandResult>;
   unsupported(t: CommandName): boolean;
   toast(msg: string, kind: 'info' | 'error'): void;
   /** The seat bar (ui/seat.ts). */
@@ -263,7 +261,7 @@ export class Laptops {
     this.input = new InputQueue(
       {
         keys: (input) => this.host.send('worker.keys', { id, input }),
-        prompt: (text) => this.host.sendPrompt(id, text),
+        prompt: (text) => this.host.send('worker.prompt', { id, text }),
         done: (kind, r) => this.inputDone(id, kind, r),
       },
       () => !this.host.store.workers.get(id)?.agent_kind,

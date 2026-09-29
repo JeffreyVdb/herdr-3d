@@ -90,21 +90,21 @@ export interface H3DDebug {
   cards(): Array<{ desk: number; name: string; display: string; task: string; ask?: { text: string; choices: Array<{ n: number; label: string }>; selected?: number | undefined } | null; usage?: string | null; tall: boolean }>;
   /** Screen point of a floor's badge in the city (to click it). */
   badgePoint(session: string): { x: number; y: number } | null;
-  /** M5 screen: per worker of the floor you are on, what its laptop shows (live / pending / frozen / glow / dark) and its watch fps. */
+  /** M5: per worker of the floor you are on, what its laptop shows (live / pending / frozen / glow / dark) and its watch fps. */
   screens(): Array<{ id: string; desk: number; state: string; fps: number | null }>;
-  /** M5 screen: the worker whose laptop you sit at, or null. */
+  /** M5: the worker whose laptop you sit at, or null. */
   seated(): string | null;
-  /** M5 screen: sits you at a worker's laptop as E does (false, with a toast, when you cannot). */
+  /** M5: sits you at a worker's laptop as E does (false, with a toast, when you cannot). */
   sitAt(workerId: string): boolean;
-  /** M5 screen: a live laptop's screen text from its xterm buffer, one string per row (null when not live). */
+  /** M5: a live laptop's screen text from its xterm buffer, one string per row (null when not live). */
   screenText(workerId: string): string[] | null;
-  /** M5 screen: the seat bar (shown, its tape, its note, ok / busy / error / offline). */
+  /** M5: the seat bar (shown, its tape, its note, ok / busy / error / offline). */
   seat(): { shown: boolean; tape: string; note: string; state: string };
-  /** M5 screen: this connection's watches as the game counts them, and as the simulator (`sim=1`) does. */
+  /** M5: this connection's watches as the game counts them, and as the simulator (`sim=1`) does. */
   watches(): Promise<{ game: number; sim: number | null }>;
-  /** M5 screen: drops the connection and connects again (the bridge forgets every watch; the game re-watches). */
+  /** M5: drops the connection and connects again (the bridge forgets every watch; the game re-watches). */
   reconnect(): void;
-  /** M5 screen: the `terminal.watch` / `unwatch` the game sent by itself (the last 400; `sent()` leaves them out). */
+  /** M5: the `terminal.watch` / `unwatch` the game sent by itself (the last 400; `sent()` leaves them out). */
   watchLog(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
   bench(o?: BenchOptions): Promise<BenchResult>;
   /** M3: opens the elevator panel of a building id (null: the lot); no argument: the current floor's building. */

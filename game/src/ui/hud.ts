@@ -283,7 +283,7 @@ export class Hud {
   setTarget(t: Target | null, w: WorkerView | null): void {
     // Everything the prompt shows for a worker, so a harness/effort-only upsert redraws it too.
     const shown = w ? [w.name, w.display, taskLine(w.worker), modelLabel(w.harness, w.worker.model, w.worker.effort)] : [];
-    // M5 panels: the usage and the question on the bar.
+    // M5: the usage and the question on the bar.
     if (w) shown.push(...promptBarKey(w));
     const key = t ? JSON.stringify([t.kind, t.id, ...shown]) : '';
     if (key === this.promptKey) return;
@@ -312,7 +312,7 @@ export class Hud {
       line.append(text('prompt-name', w.name), tape, text('prompt-task', taskLine(w.worker)));
       const model = modelLabel(w.harness, w.worker.model, w.worker.effort);
       if (model) line.append(text('prompt-model', model));
-      // M5 panels
+      // M5
       const usage = usageChip(w);
       if (usage) line.append(usage);
       for (const [k, label, live] of KEYS) {
@@ -326,7 +326,7 @@ export class Hud {
         keys.append(s);
       }
       this.prompt.setAttribute('aria-label', `${w.name} · ${STATUS_WORD[w.display]} · ${taskLine(w.worker)}${model ? ` · ${model}` : ''}`);
-      // M5 panels: Approve / Deny lead for a blocked worker's question.
+      // M5: Approve / Deny lead for a blocked worker's question.
       keys.prepend(...answerKeyEls(w, this.keyStates.get('answer')));
       const extra = promptBarAria(w);
       if (extra) this.prompt.setAttribute('aria-label', `${this.prompt.getAttribute('aria-label') ?? ''} · ${extra}`);

@@ -16,7 +16,7 @@ import { screensOf } from './fixture-screen.ts';
 type Msg = Record<string, unknown>;
 type Send = (m: Msg) => void;
 type Obj = Record<string, unknown>;
-// M5 panels: prompt, answer, changes and usage.
+// M5: prompt, answer, changes and usage.
 import { PanelsSim } from './fixture-panels.ts';
 
 export interface SimOptions {
@@ -30,7 +30,7 @@ export interface SimOptions {
   fail?: string | undefined;
   /** M4: per-floor caps `{session: {soft, hard}}` (default 24 / 32); the host's are 60 / 80. */
   caps?: Record<string, { soft: number; hard: number }>;
-  /** M5 panels: how often working agents' usage goes out as `worker.usage` (ms; 0: never; default 5000). */
+  /** M5: how often working agents' usage goes out as `worker.usage` (ms; 0: never; default 5000). */
   usageMs?: number;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
@@ -198,7 +198,7 @@ export class SimWorld {
     try {
       const a = m.args === undefined || m.args === null ? {} : m.args;
       if (!isObj(a)) throw bad('args must be an object');
-      // M5 screen: laptop screens and seated input (tools/fixture-screen.ts); world events close the watches they end.
+      // M5: laptop screens and seated input (tools/fixture-screen.ts); world events close the watches they end.
       const screens = screensOf(this, () => ({
         worker: (id: string) => this.workers.find((w) => w.id === id),
         floor: (s: string) => this.floors.get(s),
@@ -244,7 +244,7 @@ export class SimWorld {
           return ack(this.firePrepare(a));
         case 'worker.fire':
           return this.fireWorker(a, send, ack, fail);
-        // M5 panels (tools/fixture-panels.ts)
+        // M5 (tools/fixture-panels.ts)
         case 'worker.prompt':
           return this.panels.prompt(a, send, ack, fail);
         case 'worker.answer':
@@ -516,7 +516,7 @@ export class SimWorld {
     ]);
   }
 
-  // ---- M5 panels: prompt, answer, changes, usage (tools/fixture-panels.ts) ------
+  // ---- M5: prompt, answer, changes, usage (tools/fixture-panels.ts) ------
 
   private panelsSim: PanelsSim | null = null;
   private usageMs = 5000;

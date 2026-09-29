@@ -14,7 +14,7 @@ export interface FailureContext {
 
 /** What each command does, for "This herdr-world can't … yet". */
 const DOES: Record<CommandName, string> = {
-  // M5 screen
+  // M5
   'terminal.watch': 'show laptop screens',
   'terminal.unwatch': 'show laptop screens',
   'worker.keys': 'type on a worker’s laptop',
@@ -30,7 +30,7 @@ const DOES: Record<CommandName, string> = {
   'worker.hire': 'hire workers',
   'worker.fire.prepare': 'send workers home',
   'worker.fire': 'send workers home',
-  // M5 panels
+  // M5
   'worker.prompt': 'send prompts',
   'worker.answer': 'answer questions',
   'worker.changes': 'show changes',
@@ -84,7 +84,7 @@ export function failureText(t: CommandName, code: string, message: string, ctx: 
       return `The worktree was kept: ${why || 'it has uncommitted changes or unpushed commits'}.`;
     case 'fire_failed':
       return `${ctx.worker ?? 'The worker'} could not be sent home: ${why || 'herdr-world gave no reason'}.`;
-    // M5 panels
+    // M5
     case 'prompt_failed':
       return `The prompt did not reach ${ctx.worker ?? 'the worker'}: ${why.replace(/^prompt_failed:\s*/, '') || 'the agent did not start'}. Your text is still here: try again, or sit at its laptop (E).`;
     case 'stale':

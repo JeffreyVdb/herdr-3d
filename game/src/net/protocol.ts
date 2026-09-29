@@ -123,6 +123,10 @@ export interface Worker {
   hired_at?: number;
   /** M4: the checkout's current branch, for a worker in a linked worktree (when known). */
   branch?: string;
+  /** M5: the question of a blocked worker. */
+  question?: Question;
+  /** M5: its agent session's token usage and cost estimate. */
+  usage?: Usage;
 }
 
 export interface World {
@@ -320,7 +324,7 @@ export interface FireAck {
   note?: string;
 }
 
-/** Commands and their args (docs/protocol.md "Commands", M3 and M4 additions). */
+/** Commands and their args (docs/protocol.md "Commands", M3, M4 and M5 additions). */
 export interface CommandArgs {
   'building.create': { name: string };
   'building.rename': { id: string; name: string };
@@ -346,9 +350,18 @@ export interface CommandArgs {
   'worker.fire.prepare': { id: string };
   /** `handoff` (M9) and `stop_services` (#14) are reserved, not sent yet. */
   'worker.fire': { id: string; worktree?: FireWorktree };
+  /** M5 */
+  'worker.prompt': { id: string; text: string };
+  /** Exactly one of `choice` or `cancel`. */
+  'worker.answer': { id: string; hash: string; choice?: number; cancel?: boolean };
+  'worker.changes': { id: string };
+  'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number };
+  'terminal.unwatch': { id: string };
+  'worker.keys': { id: string; input: KeyItem[] };
 }
 
-// M5 panels: the prompt overlay, quick replies, the Changes panel and usage (docs/protocol.md "Laptops").
+// M5: blocked workers' questions, usage, and the acks of the prompt, answer and Changes commands (docs/protocol.md
+// "Laptops: screens, input, changes and usage").
 
 /** M5: a blocked worker's question, read from its screen (present only while it is `blocked`). */
 export interface QuestionChoice {
@@ -388,13 +401,6 @@ export interface Usage {
   context_pct?: number | null;
   context_window?: number;
   updated_at?: number;
-}
-
-export interface Worker {
-  /** M5: the question of a blocked worker. */
-  question?: Question;
-  /** M5 */
-  usage?: Usage;
 }
 
 /** M5: usage changed (at most every 5 s per worker). */
@@ -452,13 +458,6 @@ export interface Changes {
   truncated: boolean;
   /** Files whose diff was left out (the cap). */
   omitted: string[];
-}
-
-export interface CommandArgs {
-  'worker.prompt': { id: string; text: string };
-  /** Exactly one of `choice` or `cancel`. */
-  'worker.answer': { id: string; hash: string; choice?: number; cancel?: boolean };
-  'worker.changes': { id: string };
 }
 
 export type CommandName = keyof CommandArgs;
@@ -553,18 +552,12 @@ export function isError(m: ServerMessage): m is ErrorMessage {
   return m.t === 'error' && isStr(o.code);
 }
 
-// M5 screen: laptop screens (`terminal.watch` / `terminal.unwatch`, the connection-scoped `terminal.frame` /
+// M5: laptop screens (`terminal.watch` / `terminal.unwatch`, the connection-scoped `terminal.frame` /
 // `terminal.closed`) and seated input (`worker.keys`). No `seq`: frames are sent only to the watching connection
 // and never replayed; the client re-watches after a reconnect.
 
 /** One `worker.keys` item: literal text (no control characters) or one allowlisted herdr key name. */
 export type KeyItem = { text: string } | { key: string };
-
-export interface CommandArgs {
-  'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number };
-  'terminal.unwatch': { id: string };
-  'worker.keys': { id: string; input: KeyItem[] };
-}
 
 /** `terminal.watch` ack. */
 export interface WatchAck {
