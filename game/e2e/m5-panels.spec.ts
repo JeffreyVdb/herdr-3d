@@ -241,6 +241,8 @@ test('a blocked worker’s card shows its numbered choices; 1–3 answer it from
     display: 'needs_you',
     ask: {
       text: 'Do you want to proceed?',
+      // What you approve: the command, from the lines above the menu.
+      about: ['git push origin h3d/tofu-m3-plan', 'Push the plan branch for review'],
       choices: [
         { n: 1, label: 'Yes' },
         { n: 2, label: "Yes, and don't ask again for git push commands in /home/dev/devel/herdr-3d" },
@@ -280,7 +282,12 @@ test('a blocked worker’s card shows its numbered choices; 1–3 answer it from
 
   // No menu on screen: the card quotes the question from the screen; a digit says so, 0 dismisses (Esc).
   const waffle = await face(page, 'Waffle');
-  expect((await cardOf(page, 'Waffle'))?.ask).toEqual({ text: 'Should I regenerate every fixture, or only demo-m5?', choices: [], selected: undefined });
+  expect((await cardOf(page, 'Waffle'))?.ask).toEqual({
+    text: 'Should I regenerate every fixture, or only demo-m5?',
+    about: ['I can regenerate every fixture, or only the new demo-m5 one.'],
+    choices: [],
+    selected: undefined,
+  });
   await expect(page.locator('.prompt .key--answer')).toHaveText(['0Deny']);
   await page.keyboard.press('4');
   await expect(toast(page)).toHaveText('Waffle’s question has no numbered choices: 0 dismisses it (Esc); to answer in words, sit at its laptop (E).');

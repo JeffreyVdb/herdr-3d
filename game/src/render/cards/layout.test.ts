@@ -81,6 +81,59 @@ describe('card text layout', () => {
   });
 });
 
+describe('what a question is about', () => {
+  // Tofu in demo-m5: a Claude Bash permission.
+  const tofu: CardData = {
+    name: 'Tofu',
+    display: 'needs_you',
+    task: 'M3 plan',
+    ask: {
+      text: 'Do you want to proceed?',
+      about: ['git push origin h3d/tofu-m3-plan', 'Push the plan branch for review'],
+      choices: [
+        { n: 1, label: 'Yes' },
+        { n: 2, label: "Yes, and don't ask again for git push commands in /home/dev/devel/herdr-3d" },
+        { n: 3, label: 'No' },
+      ],
+      selected: 1,
+    },
+  };
+
+  it('shows the command above the question and all its choices', () => {
+    const L = cardLayout(tofu, measure);
+    expect(L.rows.map((r) => r.kind)).toEqual(['about', 'about', 'question', 'choice', 'choice', 'choice']);
+    expect(L.rows.filter((r) => r.kind === 'about').map((r) => r.text)).toEqual(['git push origin h3d/tofu-m3-plan', 'Push the plan branch for review']);
+    const ys = L.rows.map((r) => r.y);
+    expect([...ys].sort((a, b) => a - b)).toEqual(ys);
+    expect(L.height).toBeLessThanOrEqual(TALL_H);
+    expect(Math.max(...ys)).toBeLessThan(L.bubble);
+    // With the usage line too.
+    const U = cardLayout({ ...tofu, usage: '≈$0.09 · 37k tokens · ctx 4%' }, measure);
+    expect(U.rows.map((r) => r.kind)).toEqual(['about', 'about', 'question', 'choice', 'choice', 'choice', 'usage']);
+    expect(U.height).toBeLessThanOrEqual(TALL_H);
+  });
+
+  it('cuts a long command to the card, and keeps it when the card is full', () => {
+    const long = 'x'.repeat(300);
+    const choices = Array.from({ length: 9 }, (_, i) => ({ n: i + 1, label: 'y'.repeat(80) }));
+    const L = cardLayout({ ...tofu, ask: { text: 'q '.repeat(200), about: [long, long], choices, selected: 1 }, usage: 'z'.repeat(200) }, measure);
+    const about = L.rows.filter((r) => r.kind === 'about');
+    expect(about.length).toBeGreaterThanOrEqual(1);
+    expect(about[0]?.text.endsWith('…')).toBe(true);
+    expect(measure('600 20px x', about[0]?.text ?? '')).toBeLessThanOrEqual(512 - 12 - 48);
+    expect(L.rows.filter((r) => r.kind === 'question').length).toBeGreaterThanOrEqual(1);
+    expect(L.rows.filter((r) => r.kind === 'choice').length).toBeGreaterThanOrEqual(1);
+    expect(L.height).toBeLessThanOrEqual(TALL_H);
+    expect(Math.max(...L.rows.map((r) => r.y))).toBeLessThan(L.bubble + 6 - 14);
+  });
+
+  it('falls back to a compact card with the command first, and redraws when it changes', () => {
+    expect(compactOf(tofu).task).toBe('git push origin h3d/tofu-m3-plan · Do you want to proceed?');
+    expect(sameCard(tofu, structuredClone(tofu))).toBe(true);
+    expect(sameCard(tofu, { ...tofu, ask: { ...tofu.ask!, about: ['rm -rf important-project'] } })).toBe(false);
+  });
+});
+
 describe('which cards are tall', () => {
   it('a question or a usage line makes a card tall; compact falls back to the question line', () => {
     expect(isTall(blocked)).toBe(true);

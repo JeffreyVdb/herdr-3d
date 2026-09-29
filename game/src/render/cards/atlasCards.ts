@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import { attribute, texture, uv, vec2 } from 'three/tsl';
 import { CHIP_TEXT } from '../../world/derive';
 import { STATUS_CHIP_CSS } from '../palette';
-import { CELL_H, CELL_W, CHOICE_FONT, cardLayout, compactOf, FONT, isTall, KEY_FONT, KEY_W, NAME_FONT, QUESTION_FONT, TALL_H, TASK_FONT, USAGE_FONT, type CardLayout } from './layout';
+import { ABOUT_FONT, CELL_H, CELL_W, CHOICE_FONT, cardLayout, compactOf, FONT, isTall, KEY_FONT, KEY_W, NAME_FONT, QUESTION_FONT, TALL_H, TASK_FONT, USAGE_FONT, type CardLayout } from './layout';
 import { CARD_RANGE, selectCards, type CardRange } from './select';
 import { sameCard, type CardData, type Viewport } from './types';
 
@@ -90,6 +90,16 @@ export function drawTallCard(g: CanvasRenderingContext2D, x: number, y: number, 
   g.fillStyle = ink;
   g.font = NAME_FONT;
   g.fillText(ellipsize(g, c.name, tx - bx - 36), bx + 24, by + 46);
+  // What the question is about, as terminal text on a dark plate: the operation you approve.
+  const about = L.rows.filter((r) => r.kind === 'about');
+  if (about.length) {
+    const top = y + (about[0] as (typeof about)[number]).y - 25;
+    const bottom = y + (about.at(-1) as (typeof about)[number]).y + 10;
+    g.beginPath();
+    g.roundRect(bx + 24, top, CELL_W - 12 - 48, bottom - top, 8);
+    g.fillStyle = red ? 'rgba(40,4,4,0.34)' : 'rgba(28,37,64,0.09)';
+    g.fill();
+  }
   for (const r of L.rows) {
     const rx = x + r.x;
     const ry = y + r.y;
@@ -97,6 +107,10 @@ export function drawTallCard(g: CanvasRenderingContext2D, x: number, y: number, 
     g.fillStyle = ink;
     if (r.kind === 'question') {
       g.font = QUESTION_FONT;
+      g.fillText(r.text, rx, ry);
+    } else if (r.kind === 'about') {
+      g.font = ABOUT_FONT;
+      g.globalAlpha = red ? 0.96 : 0.86;
       g.fillText(r.text, rx, ry);
     } else if (r.kind === 'task') {
       g.font = TASK_FONT;

@@ -347,10 +347,10 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   only when it changes). A DOM layer was benchmarked on the Mac and lost: moving DOM elements over the canvas cost
   2.6–4.3 ms of main thread per frame for 24 cards and ~8 ms for 30 city badges, against 0.5 ms for the atlas. The DOM
   keeps a static floor list for keyboards and screen readers. M5: a blocked worker's card is tall
-  (`cards/layout.ts`: its question with the numbered choices as key caps; the looked-at worker's usage line): the
-  nearest tall cards get one of 8 tall cells of a second small atlas, drawn as a second instanced batch
-  (`cards/atlasCards.ts`; the per-desk atlas stays as it was; a tall card without a free cell shows compact with its
-  question as the task line). The laptop screens are `screens.ts` (below).
+  (`cards/layout.ts`: what its question is about, the question with the numbered choices as key caps; the looked-at
+  worker's usage line): the nearest tall cards get one of 8 tall cells of a second small atlas, drawn as a second
+  instanced batch (`cards/atlasCards.ts`; the per-desk atlas stays as it was; a tall card without a free cell shows
+  compact with what its question is about and the question as the task line). The laptop screens are `screens.ts` (below).
 - `src/laptop` — M5 laptop screens and sitting at a worker's laptop: `watches.ts` keeps the connection's
   `terminal.watch`es in step with what the game wants (a full frame first, a gap re-watches, `unknown_command` turns
   screens off with the reason), `terminal.ts` is one xterm.js 6 terminal per live screen (never opened: only its VT
@@ -513,7 +513,8 @@ refuses a prompt then), an asleep floor, or a bridge without `worker.prompt`. **
 the right (C again, or Esc, closes it): branch, upstream with ahead / behind, the base, `N files changed · +a −d`, the
 files (staged, unstaged, untracked, committed; +/−) and the selected file's diff; ↑ ↓ Home End pick a file, Enter or →
 reads its diff, ← goes back to the list, **R** refreshes; keys typed in it never reach the game, and the scene stays
-walkable. A blocked worker's card shows its question and numbered choices; looking at it, **1**–**9** answer with that
+walkable. A blocked worker's card shows what its question is about (the command, file or folder above the menu on
+its screen, as terminal text), the question and its numbered choices; looking at it, **1**–**9** answer with that
 choice and **0** denies (Esc on its screen); the look-at bar leads with Approve (the choice that says Yes / Trust /
 Allow / Proceed, else the first: Claude's trust dialog lists "No, exit" first) and Deny (the menu's "No" choice, else
 0); a stale question says what it is now. **N** goes to the next worker who needs you (blocked, oldest first, then

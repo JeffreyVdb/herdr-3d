@@ -12,6 +12,8 @@ export interface CardData {
 
 export interface CardAsk {
   text: string;
+  /** What it is about: the command, file or folder the question is for (`questionAbout`), ≤ 2 lines. */
+  about?: string[];
   choices: Array<{ n: number; label: string }>;
   selected?: number | undefined;
 }
@@ -27,6 +29,7 @@ const sameAsk = (a: CardAsk | null | undefined, b: CardAsk | null | undefined) =
   (!!a &&
     !!b &&
     a.text === b.text &&
+    (a.about ?? []).join('\n') === (b.about ?? []).join('\n') &&
     a.selected === b.selected &&
     a.choices.length === b.choices.length &&
     a.choices.every((c, i) => c.n === b.choices[i]?.n && c.label === b.choices[i]?.label));

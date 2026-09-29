@@ -5,6 +5,7 @@
  * tests); `atlasCards.ts` draws what this returns.
  */
 
+import { MONO } from '../../laptop/paint';
 import type { CardData } from './types';
 
 export const CELL_W = 512;
@@ -18,6 +19,8 @@ export const QUESTION_FONT = `650 25px ${FONT}`;
 export const CHOICE_FONT = `600 23px ${FONT}`;
 export const KEY_FONT = `800 21px ${FONT}`;
 export const USAGE_FONT = `600 21px ${FONT}`;
+/** What a question is about (a command, a path): terminal text. */
+export const ABOUT_FONT = `600 20px ${MONO}`;
 /** Choices a card lists; the rest are named in a "+2 more" row. */
 export const MAX_CHOICES = 4;
 
@@ -25,7 +28,7 @@ export const MAX_CHOICES = 4;
 export type Measure = (font: string, text: string) => number;
 
 export interface CardRow {
-  kind: 'task' | 'question' | 'choice' | 'more' | 'usage';
+  kind: 'task' | 'about' | 'question' | 'choice' | 'more' | 'usage';
   text: string;
   /** Baseline, from the cell's top. */
   y: number;
@@ -50,10 +53,11 @@ export function isTall(c: CardData): boolean {
   return !!(c.ask && (c.ask.text || c.ask.choices.length)) || !!c.usage;
 }
 
-/** The compact card a tall one falls back to when no tall cell is free: its question as the task line. */
+/** The compact card a tall one falls back to when no tall cell is free: what it is about and its question as the task line. */
 export function compactOf(c: CardData): CardData {
   if (!c.ask?.text) return c;
-  return { name: c.name, display: c.display, task: c.ask.text };
+  const about = c.ask.about?.[0];
+  return { name: c.name, display: c.display, task: about ? `${about} · ${c.ask.text}` : c.ask.text };
 }
 
 const PAD = 6;
@@ -62,6 +66,8 @@ const TEXT_W = CELL_W - 2 * PAD - 2 * INSET;
 const TAIL = 28;
 /** A choice's key cap. */
 export const KEY_W = 30;
+/** The about lines sit on a plate, this far in. */
+export const ABOUT_PAD = 10;
 
 /** Cuts `s` to fit `w` with an ellipsis. */
 export function ellipsizeWith(measure: Measure, font: string, s: string, w: number): string {
@@ -100,8 +106,12 @@ export function wrap(measure: Measure, font: string, s: string, w: number, max: 
 
 /**
  * Rows of a tall card, top to bottom: the name line (drawn with the status
- * tape, not a row), then the question (≤ 2 lines) and its numbered choices
- * for a blocked worker, else the task; last the usage line when set.
+ * tape, not a row), then for a blocked worker what its question is about
+ * (≤ 2 lines, a command or a path: the operation you approve), the question
+ * (≤ 2 lines) and its numbered choices, else the task; last the usage line
+ * when set. What does not fit goes in this order: choices past two (named
+ * in a "+n more" row), the question's second line, the about's second line,
+ * the second choice.
  */
 export function cardLayout(c: CardData, measure: Measure): CardLayout {
   const x = PAD + INSET;
@@ -109,15 +119,20 @@ export function cardLayout(c: CardData, measure: Measure): CardLayout {
   const maxBubble = TALL_H - PAD - TAIL;
   const ask = c.ask && (c.ask.text || c.ask.choices.length) ? c.ask : null;
   const usage = c.usage ? ellipsizeWith(measure, USAGE_FONT, c.usage, TEXT_W) : '';
-  const build = (shownChoices: number): { rows: CardRow[]; y: number } => {
+  const build = (shownChoices: number, questionLines: number, aboutLines: number): { rows: CardRow[]; y: number } => {
     const rows: CardRow[] = [];
     let y = top;
     if (ask) {
-      const q = wrap(measure, QUESTION_FONT, ask.text, TEXT_W, 2);
-      for (const line of q) {
-        y += rows.length ? 30 : 42;
+      const about = (ask.about ?? []).slice(0, aboutLines);
+      about.forEach((line, k) => {
+        y += k === 0 ? 36 : 26;
+        rows.push({ kind: 'about', text: ellipsizeWith(measure, ABOUT_FONT, line, TEXT_W - 2 * ABOUT_PAD), y, x: x + ABOUT_PAD });
+      });
+      const q = wrap(measure, QUESTION_FONT, ask.text, TEXT_W, questionLines);
+      q.forEach((line, k) => {
+        y += k ? 30 : 42;
         rows.push({ kind: 'question', text: line, y, x });
-      }
+      });
       const labelX = x + KEY_W + 14;
       ask.choices.slice(0, shownChoices).forEach((ch, k) => {
         y += k === 0 ? (q.length ? 46 : 50) : 38;
@@ -138,10 +153,17 @@ export function cardLayout(c: CardData, measure: Measure): CardLayout {
     }
     return { rows, y };
   };
-  // As many choices as fit (up to MAX_CHOICES), the rest named in a "more" row.
-  let n = Math.min(MAX_CHOICES, ask?.choices.length ?? 0);
-  let r = build(n);
-  while (n > 1 && r.y + 20 - PAD > maxBubble) r = build(--n);
+  // As many choices as fit (up to MAX_CHOICES), the rest named in a "more" row; then fewer lines.
+  const n = Math.min(MAX_CHOICES, ask?.choices.length ?? 0);
+  const tries: Array<[number, number, number]> = [];
+  for (let k = n; k >= Math.min(2, n); k--) tries.push([k, 2, 2]);
+  const two = Math.min(2, n);
+  tries.push([two, 1, 2], [two, 1, 1], [Math.min(1, n), 1, 1]);
+  let r = build(...(tries[0] as [number, number, number]));
+  for (const t of tries) {
+    r = build(...t);
+    if (r.y + 20 - PAD <= maxBubble) break;
+  }
   const bubble = Math.min(maxBubble, Math.max(CELL_H - PAD - TAIL, r.y + 20 - PAD));
   return { height: PAD + bubble + TAIL, bubble, rows: r.rows };
 }

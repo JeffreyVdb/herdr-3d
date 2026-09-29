@@ -52,6 +52,33 @@ export function questionLine(q: Question): string {
   return [...ex].reverse().find((l) => l.includes('?')) ?? ex[ex.length - 1] ?? '';
 }
 
+/** Lines that are the menu's frame, not what it is about: key hints, rules, headers ending in a colon, no words. */
+const isFrame = (l: string) =>
+  /esc to cancel|enter to (confirm|select)|to navigate|enter continue|press enter/i.test(l) || /^[\s\u2500-\u257f=-]+$/.test(l) || /:\s*$/.test(l) || !/[\p{L}\p{N}]/u.test(l);
+/** A line that names something: a command (`$ …`) or a path / file. */
+const isConcrete = (l: string) => /^\$\s/.test(l) || /[\\/]/.test(l) || /\.[a-z0-9]{1,6}\b/i.test(l);
+const choiceText = (l: string) => l.replace(/^[❯›>]\s*/, '').replace(/^\d[.)]\s+/, '');
+
+/**
+ * What the question is about, from its excerpt: at most `max` of the lines
+ * above its menu other than the question itself (the command, file or
+ * folder an approval is for: `git push origin main`, `$ go test ./…`, a
+ * trust dialog's folder), the ones naming a command or a path first. [] when
+ * the excerpt has nothing more.
+ */
+export function questionAbout(q: Question, max = 2): string[] {
+  // A box's sides and corners are not text: "│ internal/server/hub.go │".
+  const ex = Array.isArray(q.excerpt) ? q.excerpt.map((l) => String(l).replace(/^[\s\u2500-\u257f]+|[\s\u2500-\u257f]+$/g, '')).filter(Boolean) : [];
+  const first = choicesOf(q)[0];
+  let menu = first ? ex.findIndex((l) => choiceText(l) === first.label.trim()) : -1;
+  if (menu < 0) menu = ex.length;
+  const asked = questionLine(q);
+  const lines = ex.slice(0, menu).filter((l) => !(asked && (l === asked || l.startsWith(asked))) && !isFrame(l));
+  const concrete = lines.filter(isConcrete);
+  const rest = lines.filter((l) => !isConcrete(l)).reverse(); // the nearest the menu first
+  return [...concrete, ...rest].slice(0, max);
+}
+
 /** `worker.answer` args for a digit key (null when the question has no such choice). */
 export function digitPick(q: Question, digit: number): Pick | null {
   return choicesOf(q).some((c) => c.n === digit) ? { choice: digit } : null;
