@@ -529,6 +529,60 @@ test('over a board a click on the tab or Shift+L peeks the panel above it withou
   clean();
 });
 
+test('a peek ends when the dialog that owned it closes, even if the board under it stays open', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 1200, height: 860 }); // no gutter: the plate is away over the board
+  await openIssues(page);
+  await expect(limits(page)).toHaveAttribute('data-dock', 'away');
+  const board = page.locator('dialog.desk-dlg--board');
+  const item = page.locator('dialog.desk-dlg--item');
+  const openItem = async () => {
+    await board.locator('.bd-card', { hasText: '#7' }).first().click();
+    await expect(item).toBeVisible();
+  };
+
+  // Peek over the item modal, then close only the item: the board is still open but the peek is over.
+  await openItem();
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  expect((await widget(page))!.open).toBe(true);
+  await page.keyboard.press('Escape'); // closes the item only
+  await expect(item).toBeHidden();
+  await expect(board).toBeVisible();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await expect(limits(page)).toHaveAttribute('data-dock', 'away');
+  expect((await widget(page))!.open).toBe(false);
+  await expect(page.locator('.lm-panel')).toBeHidden();
+  expect(await savedOpen(page)).toBeNull(); // the saved state never moved
+  expect(await page.evaluate(() => !!document.activeElement?.closest('.limits'))).toBe(false); // no focus taken
+  // Nothing of the board is under the plate: its Close button is reachable and the first cards are clear.
+  const hud = await limits(page).boundingBox();
+  if (hud) {
+    expect(apart(hud, (await board.locator('[data-key="close"]').boundingBox())!)).toBe(true);
+    for (const card of await board.locator('.bd-col-cards > :first-child').all()) expect(apart(hud, (await card.boundingBox())!)).toBe(true);
+  }
+  expect(await reachable(page, 'dialog.desk-dlg--board [data-key="close"]')).toBe(true);
+
+  // The mirror: a peek started over the board ends when an item opens on top of it (the plate docks for the item).
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  await page.evaluate(() => window.__h3d.openBoardItem('issues', 'JeffreyVdb/lab#7'));
+  await expect(item).toBeVisible();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await expect(limits(page)).toHaveAttribute('data-dock', 'away');
+  await page.keyboard.press('Escape');
+  await expect(item).toBeHidden();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await expect(limits(page)).toHaveAttribute('data-dock', 'away');
+  await page.keyboard.press('Escape');
+  await expect(board).toBeHidden();
+  await expect(limits(page)).toHaveAttribute('data-dock', '');
+  await expect(page.locator('.lm-strip')).toBeVisible();
+  expect(await savedOpen(page)).toBeNull();
+  clean();
+});
+
 test('a board wider than the room beside it folds the widget away; Shift+L still peeks; it comes back on close', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);

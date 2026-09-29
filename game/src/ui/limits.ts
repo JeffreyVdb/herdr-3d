@@ -18,7 +18,7 @@ import './limits.css';
  * gutter right of the dialog for it, else away completely, like the narrow-viewport fold. Either way it
  * stays reachable: a click on the tab or Shift+L "peeks" the plate over the dialog (expanded, whatever the
  * saved state), and clicking the plate's header, Shift+L again, a click outside it, or closing the dialog
- * ends the peek. A peek never touches the saved prefs, so when the dialog closes the plate is what it was.
+ * it was started over (or opening another one on top of it) ends the peek. A peek never touches the saved prefs, so when the dialog closes the plate is what it was.
  */
 
 /** Below this width a dialog or the Changes panel spans the screen (limits.css follows the same line). */
@@ -100,6 +100,8 @@ export class LimitsWidget {
   private readonly tabBar = h('span', { class: 'lm-tab-bar', 'aria-hidden': 'true' }, h('i'));
   /** Temporary: the plate opened over a screen dialog. Not a pref; it ends with the dialog. */
   private peek = false;
+  /** The topmost screen dialog when the peek started: the peek lasts while it is still the topmost one. */
+  private peekOwner: Element | null = null;
   private readonly lines = h('div', { class: 'lm-lines' });
   private readonly panel = h('div', { class: 'lm-panel', id: 'lm-panel', role: 'region', 'aria-label': 'Plan limits' });
   /** The part of the panel that scrolls on a short viewport; the action row under it never does. */
@@ -177,11 +179,16 @@ export class LimitsWidget {
    * and goes home when the last one closes.
    */
   private place(): void {
-    const dialogs = document.querySelectorAll(SCREEN);
-    const into = (!this.root.hidden && !this.folded && dialogs[dialogs.length - 1]) || this.home;
+    const into = (!this.root.hidden && !this.folded && this.topScreen()) || this.home;
     if (this.root.parentElement === into) return;
     into.append(this.root); // leaving the document hides the popover
     this.raise();
+  }
+
+  /** The topmost open screen dialog (the last in the document, where a later one opens). */
+  private topScreen(): Element | null {
+    const dialogs = document.querySelectorAll(SCREEN);
+    return dialogs[dialogs.length - 1] ?? null;
   }
 
   /** A screen-filling dialog is open (and the plate is on screen at all). */
@@ -209,6 +216,7 @@ export class LimitsWidget {
     if (on === this.peek || !this.screenOpen()) return;
     const had = this.root.contains(document.activeElement);
     this.peek = on;
+    this.peekOwner = on ? this.topScreen() : null;
     this.watchOutside(on);
     this.key = '';
     this.update();
@@ -282,8 +290,10 @@ export class LimitsWidget {
     this.root.hidden = this.prefs.hidden || !this.book.known;
     const folded = this.folded;
     const screen = this.screenOpen();
-    if (this.peek && !screen) {
-      this.peek = false; // the dialog is gone (or the meter hidden): back to the saved state
+    if (this.peek && (!screen || this.topScreen() !== this.peekOwner)) {
+      // The dialog it was over is gone (or another opened on top of it, or the meter was hidden): back to the docked/saved state.
+      this.peek = false;
+      this.peekOwner = null;
       this.watchOutside(false);
     }
     const open = !this.root.hidden && !folded && (screen ? this.peek : this.prefs.open);
