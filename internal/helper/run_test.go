@@ -2,6 +2,7 @@ package helper
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/version"
 )
 
 // TestRunEndToEnd is the whole helper against a real bridge: a fake ssh
@@ -57,7 +60,17 @@ func TestRunEndToEnd(t *testing.T) {
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("healthz: %v %v", resp, err)
 	}
+	var health struct {
+		Version string
+		Tunnel  Status
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		t.Fatalf("healthz body: %v", err)
+	}
 	resp.Body.Close()
+	if health.Version != version.Version || health.Tunnel.Bridge != version.Version {
+		t.Errorf("healthz versions: helper %q, bridge %q, want both %q", health.Version, health.Tunnel.Bridge, version.Version)
+	}
 
 	wctx, wcancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer wcancel()

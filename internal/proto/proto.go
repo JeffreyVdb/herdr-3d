@@ -10,6 +10,10 @@ import (
 // Version is the protocol version this package speaks.
 const Version = 1
 
+// VersionHeader carries the bridge's build version on GET /healthz. The body
+// stays "ok" so a helper from an older release still reads it as healthy.
+const VersionHeader = "X-H3D-Version"
+
 // Message types.
 const (
 	THello    = "hello"

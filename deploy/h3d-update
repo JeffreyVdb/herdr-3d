@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+# h3d-update: install a herdr-3d release. Run it on the bridge host.
+#
+#   h3d-update              latest release
+#   h3d-update v0.2.0       that release
+#   h3d-update --check      show installed and latest versions, change nothing
+#   h3d-update --rollback   put the previous bridge and helper back
+#   h3d-update --music DIR  rsync the radio's tracks (DIR = game/public/music) to the Mac
+#
+# It downloads the release with `gh`, verifies SHA256SUMS, then updates the
+# bridge first (database backup, restart, wait for the new version on
+# /healthz) and the Mac helper second (scp, launchctl kickstart, wait for its
+# /healthz). If the new bridge does not come up it restores the old one and
+# stops before touching the Mac. The radio's audio is not part of a release
+# (about 100 MB, fetched with `pnpm -C game music`); --music copies it to the
+# folder the helper serves under /music/. See docs/releasing.md.
+#
+# Install once:  install -Dm755 deploy/h3d-update ~/.local/bin/h3d-update
+#
+# Environment (defaults suit devbox + the MacBook):
+#   H3D_REPO      GitHub repo with the releases        JeffreyVdb/herdr-3d
+#   H3D_MAC       ssh destination of the Mac           devmac
+#   H3D_BIN       install dir for herdr-world          ~/.local/bin
+#   H3D_MAC_BIN   install dir for h3d-helper, relative to the Mac's $HOME   .local/bin
+#   H3D_DB        the bridge database                  $XDG_STATE_HOME/herdr-world/world.db
+#   H3D_SOCK      the bridge socket                    $XDG_RUNTIME_DIR/herdr-world/bridge.sock
+#   H3D_UNIT      the bridge's systemd user unit       herdr-world
+#   H3D_MUSIC_SRC the tracks to sync with --music      (none)
+#   H3D_MAC_MUSIC where they go, relative to the Mac's $HOME   Library/Caches/h3d-helper/music
+#   H3D_WAIT      seconds to wait for a restart        30
+set -euo pipefail
+
+REPO=${H3D_REPO:-JeffreyVdb/herdr-3d}
+MAC=${H3D_MAC:-devmac}
+BIN=${H3D_BIN:-$HOME/.local/bin}
+MAC_BIN=${H3D_MAC_BIN:-.local/bin}
+DB=${H3D_DB:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-world/world.db}
+SOCK=${H3D_SOCK:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/herdr-world/bridge.sock}
+UNIT=${H3D_UNIT:-herdr-world}
+WAIT=${H3D_WAIT:-30}
+MAC_MUSIC=${H3D_MAC_MUSIC:-Library/Caches/h3d-helper/music}
+MUSIC_SRC=${H3D_MUSIC_SRC:-}
+MAC_LABEL=com.jeffreyvdb.h3d-helper
+MAC_PORT=7777
+# Never become (or use) a shared ControlMaster: docs/architecture.md section 7.
+SSH_OPTS=(-o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=10)
+
+mode=update
+tag=
+do_bridge=1
+do_mac=1
+force=0
+backup=1
+
+say() { printf '%s\n' "$*" >&2; }
+die() { say "h3d-update: $*"; exit 1; }
+
+usage() {
+  sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2
+}
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --check) mode=check ;;
+    --rollback) mode=rollback ;;
+    --music)
+      mode=music
+      if [ $# -gt 1 ] && [[ $2 != -* ]]; then MUSIC_SRC=$2; shift; fi ;;
+    --force) force=1 ;;
+    --no-mac) do_mac=0 ;;
+    --no-bridge) do_bridge=0 ;;
+    --no-backup) backup=0 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) usage; die "unknown option $1" ;;
+    v*) tag=$1 ;;
+    *) usage; die "unexpected argument $1 (a release tag looks like v0.2.0)" ;;
+  esac
+  shift
+done
+
+# --- probes ----------------------------------------------------------------
+
+# The bridge's version from /healthz's X-H3D-Version header; empty when it
+# is down or too old to send one.
+bridge_version() {
+  curl -sS --max-time 3 --unix-socket "$SOCK" -D - -o /dev/null http://herdr-world/healthz 2>/dev/null |
+    tr -d '\r' | awk -F': ' 'tolower($1) == "x-h3d-version" { print $2 }' || true
+}
+
+bridge_up() { curl -fsS --max-time 3 --unix-socket "$SOCK" -o /dev/null http://herdr-world/healthz 2>/dev/null; }
+
+# Wait for the bridge to answer; with a version, for that version.
+wait_bridge() {
+  local want=${1:-} i
+  for ((i = 0; i < WAIT; i++)); do
+    if [ -n "$want" ]; then
+      [ "$(bridge_version)" = "$want" ] && return 0
+    else
+      bridge_up && return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+# The command is meant to expand here, on the client side.
+# shellcheck disable=SC2029
+mac() { ssh "${SSH_OPTS[@]}" "$MAC" "$@"; }
+
+# The helper's version from its /healthz JSON ("version"); empty if it is down.
+mac_version() {
+  mac "curl -sS --max-time 3 http://127.0.0.1:$MAC_PORT/healthz" 2>/dev/null |
+    sed -n 's/.*"version":"\([^"]*\)".*/\1/p' || true
+}
+
+wait_mac() {
+  local want=$1 i
+  for ((i = 0; i < WAIT; i++)); do
+    [ "$(mac_version)" = "$want" ] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+latest_tag() { gh release view --repo "$REPO" --json tagName --jq .tagName; }
+
+# --- check -----------------------------------------------------------------
+
+if [ "$mode" = check ]; then
+  latest=$(latest_tag 2>/dev/null || echo "?")
+  say "latest release   ${latest}"
+  say "bridge  (here)   $(bridge_version | grep . || echo 'not running, or too old to report')"
+  if [ "$do_mac" = 1 ]; then
+    say "helper  (Mac)    $(mac_version | grep . || echo 'not reachable, or too old to report')"
+  fi
+  exit 0
+fi
+
+# --- music -----------------------------------------------------------------
+
+if [ "$mode" = music ]; then
+  [ -n "$MUSIC_SRC" ] || die "--music needs the tracks folder: h3d-update --music ~/path/to/game/public/music (or H3D_MUSIC_SRC)"
+  [ -d "$MUSIC_SRC" ] || die "$MUSIC_SRC is not a directory (run \`pnpm -C game music\` first)"
+  # --delete makes the Mac copy match, so refuse a folder that would just empty it.
+  find "$MUSIC_SRC" -name '*.ogg' -print -quit | grep -q . || die "no .ogg files under $MUSIC_SRC: not syncing"
+  command -v rsync >/dev/null || die "rsync not found"
+  mac "mkdir -p '$MAC_MUSIC'"
+  rsync -a --delete -e "ssh ${SSH_OPTS[*]}" "${MUSIC_SRC%/}/" "$MAC:$MAC_MUSIC/"
+  say "music synced to $MAC:$MAC_MUSIC ($(find "$MUSIC_SRC" -name '*.ogg' | wc -l) tracks); the helper serves it live"
+  exit 0
+fi
+
+command -v systemctl >/dev/null || die "systemctl not found: run this on the bridge host"
+command -v curl >/dev/null || die "curl not found"
+
+lockdir=$(dirname "$DB")
+mkdir -p "$lockdir"
+exec 9>"$lockdir/.h3d-update.lock"
+flock -n 9 || die "another h3d-update is running"
+
+# --- rollback --------------------------------------------------------------
+
+restore_db() {
+  if [ -f "$DB.bak" ]; then
+    # Nothing may hold the database open while it is replaced; the caller restarts the unit.
+    systemctl --user stop "$UNIT" || true
+    say "restoring the database from $DB.bak (writes since the backup are lost)"
+    cp -f "$DB.bak" "$DB"
+    rm -f "$DB-wal" "$DB-shm"
+  fi
+}
+
+# Swap FILE and FILE.prev.
+swap_prev() {
+  local f=$1
+  [ -e "$f.prev" ] || return 1
+  mv -f "$f" "$f.rolledback" 2>/dev/null || true
+  mv -f "$f.prev" "$f"
+}
+
+rollback_bridge() {
+  swap_prev "$BIN/herdr-world" || die "no $BIN/herdr-world.prev to roll back to"
+  systemctl --user restart "$UNIT"
+  if ! wait_bridge; then
+    say "the previous bridge did not start (a newer database schema?)"
+    restore_db
+    systemctl --user restart "$UNIT"
+    wait_bridge || die "the previous bridge still does not start: journalctl --user -u $UNIT"
+  fi
+  say "bridge rolled back to $(bridge_version | grep . || echo 'a version that does not report one')"
+}
+
+rollback_mac() {
+  mac "set -e; cd $MAC_BIN; [ -e h3d-helper.prev ] || { echo 'no h3d-helper.prev' >&2; exit 1; }
+       mv -f h3d-helper h3d-helper.rolledback 2>/dev/null || true; mv -f h3d-helper.prev h3d-helper
+       launchctl kickstart -k gui/\$(id -u)/$MAC_LABEL"
+  say "helper rolled back; it opens a new game window"
+}
+
+if [ "$mode" = rollback ]; then
+  [ "$do_bridge" = 1 ] && rollback_bridge
+  [ "$do_mac" = 1 ] && rollback_mac
+  exit 0
+fi
+
+# --- update ----------------------------------------------------------------
+
+command -v gh >/dev/null || die "gh not found (needed to download the release)"
+[ -n "$tag" ] || tag=$(latest_tag) || die "cannot find a full (non-prerelease) release of $REPO; pass a tag such as v0.1.0-rc.1, or check gh auth status"
+echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' || die "'$tag' is not a release tag like v0.2.0"
+
+old_bridge=$(bridge_version | grep . || echo unknown)
+if [ "$force" = 0 ]; then
+  todo=0
+  { [ "$do_bridge" = 1 ] && [ "$old_bridge" != "$tag" ]; } && todo=1
+  { [ "$do_mac" = 1 ] && [ "$(mac_version | grep . || echo unknown)" != "$tag" ]; } && todo=1
+  if [ "$todo" = 0 ]; then
+    say "already at $tag: nothing to do"
+    exit 0
+  fi
+fi
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+say "downloading $tag"
+gh release download "$tag" --repo "$REPO" --dir "$tmp" \
+  --pattern herdr-world-linux-amd64 --pattern h3d-helper-darwin-arm64 --pattern SHA256SUMS
+(cd "$tmp" && sha256sum -c --quiet SHA256SUMS) || die "checksum mismatch: nothing was installed"
+
+old_mac=unknown
+mac_changed=0
+
+update_bridge() {
+  if [ "$force" = 0 ] && [ "$old_bridge" = "$tag" ]; then
+    say "bridge is already $tag"
+    return 0
+  fi
+  if [ "$backup" = 1 ] && [ -f "$DB" ]; then
+    command -v sqlite3 >/dev/null || die "sqlite3 not found for the database backup (install it, or pass --no-backup)"
+    rm -f "$DB.bak"
+    (umask 077 && sqlite3 "$DB" ".backup '$DB.bak'")
+    say "database backed up to $DB.bak"
+  fi
+  mkdir -p "$BIN"
+  install -m755 "$tmp/herdr-world-linux-amd64" "$BIN/herdr-world.new"
+  [ -e "$BIN/herdr-world" ] && mv -f "$BIN/herdr-world" "$BIN/herdr-world.prev"
+  mv -f "$BIN/herdr-world.new" "$BIN/herdr-world"
+  systemctl --user restart "$UNIT"
+  if ! wait_bridge "$tag"; then
+    say "the new bridge did not report $tag within ${WAIT}s: restoring the previous one"
+    if [ -e "$BIN/herdr-world.prev" ]; then
+      mv -f "$BIN/herdr-world" "$BIN/herdr-world.failed"
+      mv -f "$BIN/herdr-world.prev" "$BIN/herdr-world"
+      restore_db
+      systemctl --user restart "$UNIT" || true
+      wait_bridge || say "the old bridge is not answering either: journalctl --user -u $UNIT"
+    fi
+    die "bridge update to $tag failed; the Mac was not touched"
+  fi
+  say "bridge  $old_bridge -> $tag"
+}
+
+update_mac() {
+  old_mac=$(mac_version | grep . || echo unknown)
+  if [ "$force" = 0 ] && [ "$old_mac" = "$tag" ]; then
+    say "helper is already $tag"
+    return 0
+  fi
+  scp "${SSH_OPTS[@]}" -q "$tmp/h3d-helper-darwin-arm64" "$MAC:$MAC_BIN/h3d-helper.new"
+  mac "set -e; cd $MAC_BIN; chmod 755 h3d-helper.new
+       [ -e h3d-helper ] && mv -f h3d-helper h3d-helper.prev
+       mv -f h3d-helper.new h3d-helper
+       launchctl kickstart -k gui/\$(id -u)/$MAC_LABEL"
+  if ! wait_mac "$tag"; then
+    say "the new helper did not report $tag within ${WAIT}s: restoring the previous one"
+    rollback_mac || true
+    die "helper update to $tag failed (the bridge is already $tag; that pairing works, see docs/releasing.md)"
+  fi
+  say "helper  $old_mac -> $tag"
+  mac_changed=1
+}
+
+[ "$do_bridge" = 1 ] && update_bridge
+[ "$do_mac" = 1 ] && update_mac
+say "done: $tag."
+if [ "$mac_changed" = 1 ]; then say "The helper restarted: its game window reconnects, or reopen the game app."; fi

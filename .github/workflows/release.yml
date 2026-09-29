@@ -1,0 +1,79 @@
+name: release
+
+# Push a tag `vX.Y.Z` (or `vX.Y.Z-rc.1` for a prerelease) from main to publish
+# a release: the bridge for Linux, the Mac helper with the game embedded, and
+# SHA256SUMS. `deploy/h3d-update` on the server installs it. docs/releasing.md.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build the release for"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - name: Tag must be vX.Y.Z[-suffix] and on main
+        run: |
+          echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' \
+            || { echo "::error::tag '$TAG' is not vMAJOR.MINOR.PATCH[-suffix]"; exit 1; }
+          git merge-base --is-ancestor HEAD origin/main \
+            || { echo "::error::$TAG is not on main"; exit 1; }
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: game/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: game/.nvmrc
+          cache: pnpm
+          cache-dependency-path: game/pnpm-lock.yaml
+
+      # The same checks as ci.yml: a release never ships what CI would reject.
+      - run: make lint
+      - run: make test
+
+      - name: Build assets
+        run: make release-assets VERSION="$TAG"
+
+      - name: Built versions are the tag
+        run: |
+          ./bin/release/herdr-world-linux-amd64 --version | grep -qx "herdr-world $TAG" \
+            || { echo "::error::bridge binary does not report $TAG"; exit 1; }
+          cd bin/release && sha256sum -c SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=(--verify-tag --generate-notes --title "$TAG")
+          case "$TAG" in *-*) flags+=(--prerelease) ;; esac
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" bin/release/* --clobber
+          else
+            # A draft until every asset is up, so "latest" never points at a partial release.
+            gh release create "$TAG" bin/release/* "${flags[@]}" --draft
+            gh release edit "$TAG" --draft=false
+          fi

@@ -8,7 +8,7 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
 - A unix socket at `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` (`--socket` / `HERDR_WORLD_SOCKET` to override). The
   directory is `0700`, the socket `0600`: access is "can act as this unix user", which for the Mac means "has SSH access"
   (`ssh -N -L <local.sock>:<bridge.sock>`). Nothing listens on TCP.
-- HTTP/1.1 on that socket: `GET /ws` upgrades to the WebSocket, `GET /healthz` answers `ok`.
+- HTTP/1.1 on that socket: `GET /ws` upgrades to the WebSocket, `GET /healthz` answers `ok` and carries the bridge's build version in the `X-H3D-Version` header (the body stays `ok`: a helper from an older release checks it exactly). `welcome.server` is the same build as a banner, `herdr-world <version>`.
   ```sh
   curl --unix-socket "$XDG_RUNTIME_DIR/herdr-world/bridge.sock" http://herdr-world/healthz
   ```
@@ -33,9 +33,12 @@ unless all three hold:
 - `Host` is `127.0.0.1:<port>` or `localhost:<port>` (or `<ip>:<port>` when `--listen` is another literal loopback
   IP, e.g. `[::1]:<port>`);
 - `Origin` is `http://127.0.0.1:<port>` or `http://localhost:<port>` (or `http://<ip>:<port>` likewise);
-- `token` is the token of this helper run. The helper makes a random one at every start and opens the game at
-  `http://127.0.0.1:<port>/#token=<token>`; the game keeps it in `sessionStorage` (`h3d.token`) and strips it from the
-  URL.
+- `token` is the helper's token. The helper makes a random one the first time and keeps it in a 0600 file
+  (`~/Library/Application Support/h3d-helper/token`, `--token-file`), so it survives restarts and updates; delete the
+  file to rotate it. The helper opens the game at `http://127.0.0.1:<port>/#token=<token>` (`h3d-helper -print-url`
+  prints it); the game keeps it in `localStorage` (`h3d.token`), which is what lets the installed app start from the
+  Dock without that URL, and strips it from the address bar. Same trust as the file: anything that can read the user's
+  files or that origin's storage can drive the bridge, which is already a shell as that user.
 
 A `502` means the tunnel is down; the helper's own `GET /healthz` reports the tunnel state
 (`{"tunnel":{"state":"up|connecting|degraded|backoff",…}}`, `503` unless `up`).
