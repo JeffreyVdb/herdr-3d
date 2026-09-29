@@ -203,7 +203,7 @@ function demoM3() {
   const r = rng(33);
   const w = snap.world;
   w.hire_options = {
-    claude: { models: ['claude-opus-5-5', 'claude-fable-5-1'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+    claude: { models: ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
     codex: {
       models: ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra'],
       efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
