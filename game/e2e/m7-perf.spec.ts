@@ -16,9 +16,10 @@ async function run(page: Page, fail: string): Promise<{ bench: Awaited<ReturnTyp
   await openGame(page, 'perf-boards', '&open=none', fail ? `${SIM}&simfail=${fail}` : SIM);
   await enter(page, 'perf-floor');
   if (!fail) await expect.poll(async () => ((await wall(page))?.issues.length ?? 0) + ((await wall(page))?.prs.length ?? 0), { timeout: 15_000 }).toBeGreaterThan(20);
-  await faceBoard(page, 'perf-floor', 'issues', 5, 0.02);
+  await faceBoard(page, 'perf-floor', 'issues', 3, 0.02);
   await frames(page, 30);
   const w = await wall(page);
+  expect((await page.evaluate(() => window.__h3d.pose()))?.area, 'on the floor, facing the boards').toBe('floor');
   const bench = await page.evaluate(() => window.__h3d.bench({ frames: 200, warm: 60 }));
   return { bench, wall: w };
 }

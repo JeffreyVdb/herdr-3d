@@ -55,9 +55,9 @@ try {
               const near = f?.workers.map((w) => ({ w, s: L.slots[w.desk] })).filter((x) => x.s).sort((a, b) => b.s.seat.z - a.s.seat.z)[0];
               if (near) window.__h3d.sitAt(near.w.id);
             } else if (kind === 'boards') {
-              // M7: five metres from the issues board, level with it: the corkboard and half the PR board in view.
+              // M7: three metres from the issues board (the room is 4.1 m deep there), level with it: the corkboard and half the PR board in view.
               const b = L.props.find((p) => p.id === 'board.issues');
-              if (b) window.__h3d.setPose({ x: (b.box.min[0] + b.box.max[0]) / 2 + 1.2, z: b.box.max[2] + 5, yaw: 0, pitch: 0.02 });
+              if (b) window.__h3d.setPose({ x: (b.box.min[0] + b.box.max[0]) / 2 + 1.2, z: b.box.max[2] + 3, yaw: 0, pitch: 0.02 });
             } else if (kind === 'row') {
               const s = L.slots[6];
               window.__h3d.setPose({ x: s.seat.x + 1.2, z: s.seat.z + 2.6, yaw: 0.35, pitch: -0.12 });
