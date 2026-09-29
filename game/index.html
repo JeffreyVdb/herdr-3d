@@ -13,9 +13,18 @@
         color: #fff; background: rgb(28 37 64 / 70%); border-radius: 4px;
         pointer-events: none;
       }
+      #versions {
+        position: fixed; bottom: 32px; left: 8px; padding: 3px 7px; z-index: 20;
+        font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #fff; background: rgb(28 37 64 / 70%); border-radius: 4px;
+        pointer-events: none;
+      }
+      #versions:empty { display: none; }
+      #versions.warn { background: #b45309; }
     </style>
   </head>
   <body>
+    <div id="versions"></div>
     <div id="debug">backend: …</div>
     <script type="module" src="/src/main.ts"></script>
   </body>

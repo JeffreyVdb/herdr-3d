@@ -8,7 +8,7 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
 - A unix socket at `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` (`--socket` / `HERDR_WORLD_SOCKET` to override). The
   directory is `0700`, the socket `0600`: access is "can act as this unix user", which for the Mac means "has SSH access"
   (`ssh -N -L <local.sock>:<bridge.sock>`). Nothing listens on TCP.
-- HTTP/1.1 on that socket: `GET /ws` upgrades to the WebSocket, `GET /healthz` answers `ok`.
+- HTTP/1.1 on that socket: `GET /ws` upgrades to the WebSocket, `GET /healthz` answers `ok` and carries the bridge's build version in the `X-H3D-Version` header (the body stays `ok`: a helper from an older release checks it exactly). `welcome.server` is the same build as a banner, `herdr-world <version>`.
   ```sh
   curl --unix-socket "$XDG_RUNTIME_DIR/herdr-world/bridge.sock" http://herdr-world/healthz
   ```

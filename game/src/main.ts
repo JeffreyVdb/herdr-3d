@@ -19,6 +19,7 @@ import type { PromptSummary } from './ui/prompt';
 import type { PresetsSummary } from './ui/presets';
 import type { StartRunOptions, StartRunSummary } from './ui/startRun';
 import type { NeedItem } from './world/next';
+import { loadHelperVersion, VersionBadge } from './version';
 import type { Area, BuildingPlan } from './world/building';
 import type { floorLayout } from './world/layout';
 import { walkOutRoute, type Waypoint } from './world/route';
@@ -315,7 +316,9 @@ async function start(): Promise<void> {
     new Promise((res) => setTimeout(res, 1500)),
   ]);
 
-  app = new App({ renderer: r, host: document.body, params });
+  const badge = new VersionBadge(document.getElementById('versions'));
+  void loadHelperVersion().then((v) => badge.setHelper(v));
+  app = new App({ renderer: r, host: document.body, params, onBridgeVersion: (v) => badge.setBridge(v) });
   const a = app;
   const origRender = a.render.bind(a);
   a.render = () => {

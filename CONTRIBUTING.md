@@ -276,7 +276,7 @@ killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herd
 
 It needs non-interactive SSH from the Mac to the host (`BatchMode=yes`: a key in the agent/keychain, host key known).
 State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not answering through the tunnel`,
-`tunnel down, restarting … retry_in=…`. `curl http://127.0.0.1:7777/healthz` shows the tunnel state.
+`tunnel down, restarting … retry_in=…`. `curl http://127.0.0.1:7777/healthz` shows the tunnel state and both versions (`version` is the helper's, `tunnel.bridge` the bridge's); the helper logs a warning when they differ. The game shows `game … · helper … · bridge …` above the backend line, in amber when they differ.
 
 | flag | env | default |
 |---|---|---|

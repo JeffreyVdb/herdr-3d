@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/version"
 )
 
 // Bridge is the far end of the tunnel, as the server sees it.
@@ -143,7 +145,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	if st.State != StateUp {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"tunnel": st})
+	_ = json.NewEncoder(w).Encode(map[string]any{"version": version.Version, "tunnel": st})
 }
 
 // devProxy hands requests to a Vite dev server (HMR WebSocket included),

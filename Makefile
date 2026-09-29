@@ -23,7 +23,7 @@ go-build:
 	$(GOBUILD) -o bin/ ./cmd/...
 
 game-build: deps
-	$(PNPM) build
+	H3D_VERSION="$(VERSION)" $(PNPM) build
 
 ## test: go test + vitest
 test: go-test game-test

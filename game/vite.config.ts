@@ -23,6 +23,8 @@ function fixtures(): Plugin {
 // via portlease by the Makefile; never hardcode one here.
 export default defineConfig({
   plugins: [fixtures()],
+  // The Makefile passes `git describe`; the badge above the debug overlay shows it (src/version.ts).
+  define: { __H3D_VERSION__: JSON.stringify(process.env.H3D_VERSION ?? 'dev') },
   server: { host: '127.0.0.1', strictPort: true },
   preview: { host: '127.0.0.1', strictPort: true },
   // three/webgpu alone is ~1 MB minified; one chunk is fine for now.
