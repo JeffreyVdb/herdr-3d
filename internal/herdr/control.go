@@ -17,15 +17,17 @@ import (
 )
 
 // Control is the bridge's only write path to herdr: waking and putting
-// floors to sleep, hiring workers and sending them home. It is as narrow
+// floors to sleep, hiring workers and sending them home, and (M5) the
+// laptops: watching a pane's screen and typing into it. It is as narrow
 // as Client is read-only: it runs exactly the commands in controlShapes,
 // with every variable part validated and passed as its own argv element
 // (no shell, except the one fish -c line that systemd-run starts, whose
 // only variable is a validated session name in single quotes). It creates
 // and closes only single workspaces (never a group), renames only a hired
 // worker's root pane (its identity marker), types into a pane only a
-// resume command, a hire's first prompt, the agents' exit commands and a
-// fixed set of keys, never focuses anything and never uses systemctl.
+// resume command, a hire's first prompt, the agents' exit commands, a
+// fixed set of keys and (M5) what the player types or prompts at a laptop,
+// never focuses anything and never uses systemctl.
 type Control struct {
 	// Herdr is the herdr executable (default "herdr").
 	Herdr string
@@ -42,6 +44,11 @@ type Control struct {
 	// Run executes argv (default: exec with CleanEnv(os.Environ()), output
 	// capped at 1 MiB per stream). Tests inject a fake.
 	Run Runner
+
+	// M5 term: Stream starts a long-running command (Observe) and returns
+	// its stdout (default: exec in its own process group with
+	// CleanEnv(os.Environ())). Tests inject a fake.
+	Stream Streamer
 }
 
 // Runner runs one command and returns its stdout and stderr.
@@ -74,6 +81,16 @@ const (
 	opExitCodex       = "exit-codex"
 	opWorkspaceClose  = "workspace-close"
 	opWorktreeRemove  = "worktree-remove"
+)
+
+// M5 term: control operations of the laptops.
+const (
+	opObserve      = "observe"
+	opSendKeys     = "send-keys"
+	opSendText     = "send-text"
+	opSendSequence = "send-sequence"
+	opPromptWait   = "prompt-wait"
+	opPromptQueued = "prompt-queued"
 )
 
 // controlShapes is the complete set of commands Control may run, as argv
@@ -128,6 +145,22 @@ var controlShapes = map[string][]string{
 	// closes it; git refuses a dirty tree, and --force is never passed).
 	opWorkspaceClose: {"{herdr}", "--session", "{session}", "workspace", "close", "{workspace}"},
 	opWorktreeRemove: {"{herdr}", "--session", "{session}", "worktree", "remove", "--workspace", "{workspace}"},
+
+	// M5 term. Read only, long-running: a pane's screen as NDJSON frames (a
+	// full frame, then diffs; read-only, no input, resize or takeover).
+	opObserve: {"{herdr}", "--session", "{session}", "terminal", "session", "observe", "{pane}",
+		"--cols", "{cols}", "--rows", "{rows}"},
+	// Laptop input: herdr key names ({keys} is one argv element per key),
+	// literal text without control characters, and the fixed xterm
+	// sequence of a key herdr 0.9.0 has no name for (delete, home, …).
+	opSendKeys:     {"{herdr}", "--session", "{session}", "pane", "send-keys", "{pane}", "{keys}"},
+	opSendText:     {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "{input}"},
+	opSendSequence: {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "{seq}"},
+	// worker.prompt: confirmed by the agent starting to work (else
+	// agent_prompt_stalled after 5 s), or queued for an agent at work.
+	opPromptWait: {"{herdr}", "--session", "{session}", "agent", "prompt", "{pane}", "{message}",
+		"--wait", "--until", "working", "--until", "blocked", "--timeout", "8000"},
+	opPromptQueued: {"{herdr}", "--session", "{session}", "agent", "prompt", "{pane}", "{message}"},
 }
 
 var (
@@ -350,45 +383,27 @@ var placeholders = map[string]func(string) bool{
 	"effort":    validEffort,
 	"text":      ValidPrompt,
 	"workspace": ValidWorkspaceID,
+
+	// M5 term
+	"cols":    validCols,
+	"rows":    validRows,
+	"keys":    validKeyList,
+	"input":   ValidInputText,
+	"seq":     validSequence,
+	"message": ValidMessage,
 }
+
+// secretPlaceholders are what a person typed: a refused value is never
+// quoted in an error (errors reach the log and the audit log).
+var secretPlaceholders = map[string]bool{"text": true, "input": true, "message": true}
 
 // run is the single choke point for control commands: it expands the
 // shape of op with vars after validating each one (and the session
 // against Only), then runs it.
 func (c *Control) run(ctx context.Context, op string, vars map[string]string) ([]byte, error) {
-	shape, ok := controlShapes[op]
-	if !ok {
-		return nil, fmt.Errorf("%w: unknown operation %q", ErrNotAllowed, op)
-	}
-	for name, v := range vars {
-		valid, known := placeholders[name]
-		if !known || !valid(v) {
-			return nil, fmt.Errorf("%w: invalid %s %q", ErrNotAllowed, name, v)
-		}
-	}
-	if s := vars["session"]; c.Only != nil && !c.Only.MatchString(s) {
-		return nil, fmt.Errorf("%w: session %q is not watched", ErrNotAllowed, s)
-	}
-	argv := make([]string, len(shape))
-	var missing error
-	for i, tmpl := range shape {
-		argv[i] = placeholderRe.ReplaceAllStringFunc(tmpl, func(ph string) string {
-			switch name := ph[1 : len(ph)-1]; name {
-			case "herdr":
-				return c.bin(c.Herdr, "herdr")
-			case "systemd-run":
-				return c.bin(c.SystemdRun, "systemd-run")
-			default:
-				v, ok := vars[name]
-				if !ok {
-					missing = fmt.Errorf("%w: %s needs %s", ErrNotAllowed, op, name)
-				}
-				return v
-			}
-		})
-	}
-	if missing != nil {
-		return nil, missing
+	argv, err := c.argv(op, vars)
+	if err != nil {
+		return nil, err
 	}
 	timeout := c.Timeout
 	if timeout <= 0 {
@@ -425,6 +440,58 @@ func (c *Control) run(ctx context.Context, op string, vars map[string]string) ([
 		return stdout, fmt.Errorf("%s: %w: %.500s", what, err, msg)
 	}
 	return stdout, nil
+}
+
+// argv expands the shape of op with vars after validating each one (and
+// the session against Only). The element "{keys}" alone becomes one
+// element per key.
+func (c *Control) argv(op string, vars map[string]string) ([]string, error) {
+	shape, ok := controlShapes[op]
+	if !ok {
+		return nil, fmt.Errorf("%w: unknown operation %q", ErrNotAllowed, op)
+	}
+	for name, v := range vars {
+		valid, known := placeholders[name]
+		if !known || !valid(v) {
+			if secretPlaceholders[name] {
+				return nil, fmt.Errorf("%w: invalid %s (%d bytes)", ErrNotAllowed, name, len(v))
+			}
+			return nil, fmt.Errorf("%w: invalid %s %q", ErrNotAllowed, name, v)
+		}
+	}
+	if s := vars["session"]; c.Only != nil && !c.Only.MatchString(s) {
+		return nil, fmt.Errorf("%w: session %q is not watched", ErrNotAllowed, s)
+	}
+	argv := make([]string, 0, len(shape))
+	var missing error
+	for _, tmpl := range shape {
+		if tmpl == "{keys}" {
+			keys, ok := vars["keys"]
+			if !ok {
+				return nil, fmt.Errorf("%w: %s needs keys", ErrNotAllowed, op)
+			}
+			argv = append(argv, strings.Fields(keys)...)
+			continue
+		}
+		argv = append(argv, placeholderRe.ReplaceAllStringFunc(tmpl, func(ph string) string {
+			switch name := ph[1 : len(ph)-1]; name {
+			case "herdr":
+				return c.bin(c.Herdr, "herdr")
+			case "systemd-run":
+				return c.bin(c.SystemdRun, "systemd-run")
+			default:
+				v, ok := vars[name]
+				if !ok {
+					missing = fmt.Errorf("%w: %s needs %s", ErrNotAllowed, op, name)
+				}
+				return v
+			}
+		}))
+	}
+	if missing != nil {
+		return nil, missing
+	}
+	return argv, nil
 }
 
 func (c *Control) bin(configured, def string) string {
