@@ -1,0 +1,6 @@
+{"verdict":"CHANGES_REQUIRED","input_required":null,"issues_found":[
+ {"id":"R3-1","priority":"BLOCKER","explanation":"The lease is never released when the dialog is cancelled.","evidence":"src/ports.ts:44","impact":"Ports leak until the TTL runs out."},
+ {"id":"R3-2","priority":"BLOCKER","explanation":"The fallback loop can pick a port another process just bound.","evidence":"src/ports.ts:51","impact":"The demo server fails to start about one run in twenty."},
+ {"id":"R3-3","priority":"medium","explanation":"The 30 s lease timeout is not configurable.","evidence":"src/ports.ts:12","impact":"Slow machines wait too long."},
+ {"id":"R3-4","priority":"medium","explanation":"No test for the cancelled dialog.","evidence":"test/ports.test.ts","impact":"R3-1 can come back."},
+ {"id":"R3-5","priority":"nit","explanation":"Typo in a log line.","evidence":"src/ports.ts:60","impact":"None."}]}

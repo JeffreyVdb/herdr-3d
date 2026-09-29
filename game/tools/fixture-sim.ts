@@ -18,6 +18,8 @@ type Send = (m: Msg) => void;
 type Obj = Record<string, unknown>;
 // M5: prompt, answer, changes and usage.
 import { PanelsSim } from './fixture-panels.ts';
+// M6 crew: a scripted freelancer (`sim.crew`, `simcrew=<ms>`).
+import { CrewSim } from './fixture-crew.ts';
 
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
@@ -32,6 +34,8 @@ export interface SimOptions {
   caps?: Record<string, { soft: number; hard: number }>;
   /** M5: how often working agents' usage goes out as `worker.usage` (ms; 0: never; default 5000). */
   usageMs?: number;
+  /** M6: plays the scripted freelancer's lifecycle by itself, a step every `crewMs` (0 / absent: only on `sim.crew`). */
+  crewMs?: number;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -129,6 +133,7 @@ export class SimWorld {
     this.setT = o.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearT = o.clearTimeout ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
     if (o.usageMs !== undefined) this.usageMs = o.usageMs;
+    if (o.crewMs !== undefined) this.crewMs = o.crewMs;
   }
 
   dispose(): void {
@@ -251,6 +256,9 @@ export class SimWorld {
           return this.panels.answer(a, send, ack);
         case 'worker.changes':
           return this.panels.changes(a, ack, fail);
+        // M6 crew (tools/fixture-crew.ts): the simulator's own, not a bridge command.
+        case 'sim.crew':
+          return ack(this.crew.handle(a, send));
       }
       throw new CmdError('unknown_command', `unknown command: "${String(m.t)}"`);
     } catch (e) {
@@ -549,6 +557,30 @@ export class SimWorld {
   start(send: Send, o: { usageMs?: number } = {}): void {
     this.usageMs = o.usageMs ?? this.usageMs;
     this.panels.start(send, this.usageMs);
+    this.crew.start(send, this.crewMs);
+  }
+
+  // ---- M6 crew: the scripted freelancer (tools/fixture-crew.ts) ------------
+
+  private crewSim: CrewSim | null = null;
+  private crewMs = 0;
+
+  private get crew(): CrewSim {
+    this.crewSim ??= new CrewSim({
+      workers: this.workers,
+      floors: this.floors,
+      emit: (send, m) => this.emit(send, m),
+      after: (ms, fn) => {
+        const h = this.setT(() => {
+          this.timers.delete(h);
+          fn();
+        }, ms);
+        this.timers.add(h);
+      },
+      now: () => this.now(),
+      error: (code, message) => new CmdError(code, message),
+    });
+    return this.crewSim;
   }
 
   // ---- M4: hire and send home ------------------------------------------------
