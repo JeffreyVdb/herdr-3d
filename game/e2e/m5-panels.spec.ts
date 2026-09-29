@@ -433,8 +433,9 @@ test('N visits who needs you in order, across floors: blocked oldest first, then
   await page.keyboard.press('n');
   await expect.poll(async () => (await panel(page)) as { kind: string; pick?: string } | null).toMatchObject({ kind: 'elevator', pick: 'pastry' });
   expect(((await panel(page)) as { status: string }).status).toBe('Quibble needs you on floor 1 (pastry): “Which unit system should the nutrition label use?”. Enter rides there.');
-  expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.key)).toBe('go:pastry');
   await expect(page.locator('.lift-row[data-session="pastry"] .lift-need')).toHaveText('Next up');
+  await shot(page, 'm5-next-elevator');
+  expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.key)).toBe('go:pastry');
   await page.keyboard.press('Enter');
   await expect.poll(() => page.evaluate(() => window.__h3d.view().floor), { timeout: 10_000 }).toBe('pastry');
   await expect.poll(look, { timeout: 10_000 }).toBe('Quibble');
