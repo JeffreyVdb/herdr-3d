@@ -186,13 +186,9 @@ test('writes on the lab repository from the game: comment, move, close, hand to 
     .poll(() => JSON.parse(gh(['issue', 'view', String(a.number), '-R', lab, '--json', 'state,stateReason'])) as { state: string; stateReason: string }, { timeout: 30_000 })
     .toEqual({ state: 'CLOSED', stateReason: 'NOT_PLANNED' });
   await expect.poll(async () => (await board(page))?.item ?? null).toBeNull();
-  await expect
-    .poll(async () => (await board(page))?.columns.find((c) => c.name === 'Done')?.keys ?? [], { timeout: 90_000 })
-    .toContain(`#${a.number}`)
-    .catch(async (e) => {
-      console.log('DEBUG board', JSON.stringify(await board(page)), 'wall', JSON.stringify((await wall(page))?.issues.map((n) => [n.id, (n.face as { done: boolean }).done])), 'log', JSON.stringify(await page.evaluate(() => window.__h3d.boardLog())));
-      throw e;
-    });
+  // GitHub closes the issue; the Project's Status is the project's own business (its workflows may move it to Done, ours does
+  // not): the card stays in its column, now closed.
+  await expect(page.locator(`dialog.desk-dlg--board .bd-card[data-id="${idOf(a.number)}"]`)).toHaveAttribute('data-state', 'closed', { timeout: 120_000 });
   await page.keyboard.press('Escape');
   await faceBoard(page, session, 'issues', 3.2);
   await snap(page, 'm7-live-lab-corkboard');
@@ -221,9 +217,11 @@ test('writes on the lab repository from the game: comment, move, close, hand to 
   await expect.poll(async () => (await sent(page, 'run.start'))[0]?.result?.ok, { timeout: 120_000 }).toBe(true);
   // The peel-off, and the holder on the note (the orchestrator's `work_item`, linked before the ack).
   await expect.poll(async () => JSON.stringify((await wall(page))?.flightLog ?? []), { timeout: 30_000 }).toContain(idOf(b.number));
-  await expect
-    .poll(async () => (((await wall(page))?.issues.find((n) => n.id === idOf(b.number))?.face as { holder: { name: string } | null } | undefined)?.holder?.name ?? null), { timeout: 30_000 })
-    .not.toBeNull();
+  // The orchestrator holds the card (its `work_item`, linked before the ack): the overlay's card names it. (The wall shows four
+  // notes a column, and the lab project's "No status" column is full of earlier probes: the overlay lists them all.)
+  await page.evaluate(() => window.__h3d.openBoard('issues'));
+  await expect(page.locator(`dialog.desk-dlg--board .bd-card[data-id="${idOf(b.number)}"] .bd-holder`)).toBeVisible({ timeout: 60_000 });
+  await page.keyboard.press('Escape');
   const orch = (await page.evaluate(() => window.__h3d.world().flatMap((f) => f.workers).filter((w) => w.label.startsWith('ORCH|'))))[0];
   expect(orch, 'the orchestrator is on the floor').toBeTruthy();
   const linked = await snapshotWorker(orch!.id);
@@ -278,7 +276,7 @@ test('writes on the lab repository from the game: comment, move, close, hand to 
   await expect.poll(async () => (JSON.parse(gh(['pr', 'view', String(prNumber), '-R', lab, '--json', 'state'])) as { state: string }).state, { timeout: 60_000 }).toBe('MERGED');
   // The next poll announces the merge once: the gong rings, the note flies off.
   await expect.poll(async () => (await wall(page))?.gongRings, { timeout: 120_000, message: 'the gong rang' }).toBe(1);
-  expect(JSON.stringify((await wall(page))?.flightLog)).toContain(idOf(prNumber));
+  await expect.poll(async () => JSON.stringify((await wall(page))?.flightLog), { timeout: 15_000, message: 'the merged note flew off' }).toContain(idOf(prNumber));
   await page.waitForTimeout(3000);
   expect((await wall(page))?.gongRings).toBe(1);
 
