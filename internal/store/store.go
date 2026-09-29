@@ -159,6 +159,8 @@ var migrations = []string{
 	// M7 boards: each floor's last good boards, the open pull requests at the
 	// last good poll, the merges announced, and a hire's base branch.
 	migrationBoards,
+	// M3d building logos: the normalised PNG per building.
+	migrationLogo,
 }
 
 // Fingerprint kinds.
@@ -179,6 +181,9 @@ type Building struct {
 	ID   string
 	Name string
 	Sort int
+	// Logo is the hash of the building's logo ("" without one). Buildings
+	// fills it in; the bytes are read with LogoOf.
+	Logo string
 }
 
 // Assignment places a session on a floor of a building.
@@ -302,7 +307,8 @@ func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
 
 // Buildings returns every building in sort order.
 func (s *Store) Buildings(ctx context.Context) ([]Building, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, sort FROM building ORDER BY sort, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT b.id, b.name, b.sort, COALESCE(l.hash, '') FROM building b
+		LEFT JOIN building_logo l ON l.building_id = b.id ORDER BY b.sort, b.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +316,7 @@ func (s *Store) Buildings(ctx context.Context) ([]Building, error) {
 	var out []Building
 	for rows.Next() {
 		var b Building
-		if err := rows.Scan(&b.ID, &b.Name, &b.Sort); err != nil {
+		if err := rows.Scan(&b.ID, &b.Name, &b.Sort, &b.Logo); err != nil {
 			return nil, err
 		}
 		out = append(out, b)
@@ -407,6 +413,13 @@ func (s *Store) DeleteBuilding(ctx context.Context, id string) error {
 		}
 		return renumberBuildings(ctx, tx)
 	})
+}
+
+// HasBuilding reports whether a building exists.
+func (s *Store) HasBuilding(ctx context.Context, id string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM building WHERE id = ?`, id).Scan(&n)
+	return n > 0, err
 }
 
 // ReorderBuildings sets the sort order; ids must list every building once.

@@ -1356,7 +1356,7 @@ func workerView(id, session string, w world.WorkerObs, m workerMeta, name string
 func (h *Hub) buildingViews() []proto.Building {
 	bs := make([]proto.Building, 0, len(h.buildings))
 	for _, b := range h.buildings {
-		bs = append(bs, proto.Building{ID: b.ID, Name: b.Name, Sort: b.Sort, Floors: []string{}})
+		bs = append(bs, proto.Building{ID: b.ID, Name: b.Name, Sort: b.Sort, Floors: []string{}, Logo: b.Logo})
 	}
 	sort.Slice(bs, func(i, j int) bool {
 		if bs[i].Sort != bs[j].Sort {

@@ -70,7 +70,12 @@ const (
 	ErrHireFailed       = "hire_failed"
 	ErrFireFailed       = "fire_failed"
 	ErrFetchFailed      = "fetch_failed" // worker.hire into a worktree whose git fetch origin failed
-	ErrInternal         = "internal"
+	// M3d logos (the /logo HTTP routes; not WebSocket commands).
+	ErrLogoTooLarge    = "logo_too_large"   // over 1 MiB, or over the pixel budget
+	ErrLogoUnsupported = "logo_unsupported" // not PNG, WebP or a plain SVG; animated; an SVG feature that is not rendered
+	ErrLogoInvalid     = "logo_invalid"     // cannot be decoded
+	ErrLogoBusy        = "logo_busy"        // the conversion found no free slot, or ran too long
+	ErrInternal        = "internal"
 )
 
 // RemovedSentHome is worker.removed's reason when worker.fire removed it.
@@ -196,6 +201,9 @@ type Building struct {
 	Name   string   `json:"name"`
 	Sort   int      `json:"sort"`
 	Floors []string `json:"floors"`
+	// M3d logo: the hash (sha256, hex) of the building's logo PNG; absent
+	// without one. The image itself is GET /logo/{id}, never in an event.
+	Logo string `json:"logo,omitempty"`
 }
 
 // Floor is one herdr session.
