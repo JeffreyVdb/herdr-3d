@@ -77,7 +77,7 @@ MacBook (M2 Max)                                   devbox (Linux)
   hard: refuse); a worktree hire counts two when herdr will open the repository's main checkout too. The branch is
   recorded as the bridge's for that worker (SQLite `hire_branch`, with its base commit). A failed hire rolls back:
   the workspace closes; the checkout goes only if clean, the branch only if still at its base.
-  - claude: `--model claude-opus-5-5|claude-fable-5-1 --effort low|medium|high|xhigh|max --permission-mode bypassPermissions --name <label>`
+  - claude: `--model claude-opus-5-5|claude-fable-5-1|claude-sonnet-5-5 --effort low|medium|high|xhigh|max --permission-mode bypassPermissions --name <label>`
   - codex: `-m gpt-6-sol|gpt-6-luna|gpt-6-astra -c model_reasoning_effort=low…max (+ultra sol/astra) --dangerously-bypass-approvals-and-sandbox`
   - Native args are not persisted by herdr → bridge stores harness/model/effort, `hired_at`, the desk, and the last
     choice per floor (the dialog's default when the floor has no `default_hire`).

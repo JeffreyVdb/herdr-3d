@@ -97,7 +97,7 @@ is closed (status 1008). A `proto` other than `1` gets `unsupported_proto` and i
      "status_since":1790601900984}
   ],
   "hire_options":{
-    "claude":{"models":["claude-opus-5-5","claude-fable-5-1"],"efforts":["low","medium","high","xhigh","max"]},
+    "claude":{"models":["claude-opus-5-5","claude-fable-5-1","claude-sonnet-5-5"],"efforts":["low","medium","high","xhigh","max"]},
     "codex":{"models":["gpt-6-sol","gpt-6-luna","gpt-6-astra"],"efforts":["low","medium","high","xhigh","max"],
              "extra_efforts":{"gpt-6-sol":["ultra"],"gpt-6-astra":["ultra"]}}},
   "presets":[
