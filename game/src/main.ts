@@ -9,6 +9,7 @@ import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
 import { runBench, type BenchOptions, type BenchResult } from './bench';
 import type { CommandName, WorldEvent } from './net/protocol';
 import type { ArrivalInfo } from './render/arrivals';
+import type { CrewInfo } from './render/office';
 import type { HireSummary } from './ui/hire';
 import type { PanelSummary } from './ui/panels';
 import type { SendHomeSummary } from './ui/sendHome';
@@ -146,6 +147,10 @@ export interface H3DDebug {
   openChanges(workerId: string): void;
   /** M5: stands you facing a worker of the floor you are on, as N does; false when look-at does not pick it from there. */
   face(workerId: string): boolean;
+  /** M6: the crew of the floor with an interior (role, lifecycle, stamp, the crew parts drawn at its desk) and the crew parts drawn at all. */
+  crew(): { members: CrewInfo[]; shown: string[] };
+  /** M6: the scripted freelancer of the fixture simulator (`sim=1`): one `sim.crew` step. */
+  simCrew(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
 }
 
 declare global {
@@ -260,6 +265,13 @@ const h3d: H3DDebug = {
   needs: () => app?.needs() ?? [],
   openPrompt: (id) => app?.openPrompt(id),
   face: (id) => app?.faceWorker(id) ?? false,
+  crew: () => app?.office?.crewInfo() ?? { members: [], shown: [] },
+  simCrew: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    // `sim.crew` is the fixture simulator's, not a bridge command.
+    const r = await app.client.request('sim.crew' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
   openChanges: (id) => {
     if (app?.changes.worker !== id) app?.toggleChanges(id);
   },

@@ -23,6 +23,20 @@ export type Target =
   /** #20: your own desk in the corner office (never a worker desk slot: E sits you down). */
   | { kind: 'own-desk'; id: 'own-desk'; label: string; name: string };
 
+/** M6: a crew member as the office draws it (test hook). */
+export interface CrewInfo {
+  id: string;
+  name: string;
+  desk: number;
+  role: string;
+  life: string | null;
+  overCap: boolean;
+  stamp: string | null;
+  run: string | null;
+  display: Display;
+  parts: string[];
+}
+
 export const SEAT_Y = 0.45;
 export const CARD_Y = 1.62;
 export const REACH = 3;
@@ -493,6 +507,16 @@ export class OfficeView {
       const c = this.cards.card(desk);
       return c ? [{ desk, ...c, tall: tall.has(desk) }] : [];
     });
+  }
+
+  /** M6: the crew members seated here with what is drawn at their desks, and the crew parts drawn at all (test hook). */
+  crewInfo(): { members: CrewInfo[]; shown: string[] } {
+    const members = this.seats.flatMap((v, i) =>
+      v?.crew
+        ? [{ id: v.worker.id, name: v.name, desk: i, role: v.crew.role, life: v.crew.life, overCap: v.crew.overCap, stamp: v.crew.stamp?.text ?? null, run: v.crew.run, display: v.display, parts: this.crowd.crewAt(i) }]
+        : [],
+    );
+    return { members, shown: this.crowd.crewShown() };
   }
 
   seat(i: number): WorkerView | null {

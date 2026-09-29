@@ -83,6 +83,14 @@ describe('crew cards (M6)', () => {
     expect(plain.crew).toBeUndefined();
   });
 
+  it('a freelancer without a terminal title says what it is doing, not its label', () => {
+    expect(cardOf(viewOf([w({ label: 'GROUND|lobby-a11y', role: 'ground' })], 'x')).task).toBe('Reading the brief');
+    expect(cardOf(viewOf([w({ label: 'CODE|lobby-sign|4|r1', status: 'unknown' })], 'x')).task).toBe('Just arrived: unpacking');
+    expect(cardOf(viewOf([w({ label: 'CODE|x|r1', title: 'Wire the lobby' })], 'x')).task).toBe('Wire the lobby');
+    // An orchestrator keeps its label.
+    expect(cardOf(viewOf([w({ label: 'ORCH|lobby', role: 'orch' })], 'x')).task).toBe('ORCH|lobby');
+  });
+
   it('stamp inks differ per verdict', () => {
     expect(new Set(Object.values(STAMP_INK)).size).toBe(3);
   });

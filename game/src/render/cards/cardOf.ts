@@ -24,6 +24,6 @@ export function cardOf(v: WorkerView, focus = false): CardData {
     const u = usageText(v.worker.usage).line;
     if (u) card.usage = u;
   }
-  if (v.crew) withCrew(card, v.crew, focus);
+  if (v.crew) withCrew(card, v.crew, focus, !!v.worker.title?.trim());
   return card;
 }

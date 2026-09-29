@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Snapshot, Worker, WorkerReport } from '../net/protocol';
 import { CrewMemory, crewRole, crewView, inputRequired, lifecycle, overCap, passWords, phaseWords, runColor, RUN_COLORS, stampOf } from './crew';
 import { needQueue } from './next';
+import { promptBlocker } from './prompt';
 import { WorldStore } from './store';
 
 /** A worker; a key set to undefined is left out. */
@@ -200,6 +201,15 @@ describe('WorldStore crews (M6)', () => {
     expect(s.workerView('o1')?.display).toBe('needs_you');
     s.applyEvent({ t: 'worker.upsert', seq: 12, worker: worker({ ...orch, pass: 2, phase: 'fixing', over_cap: undefined, status: 'working' }) });
     expect(s.workerView('o1')?.display).toBe('working');
+  });
+
+  it('an over-cap orchestrator can be prompted: that is how you answer it', () => {
+    const s = new WorldStore(0);
+    s.applySnapshot(snap([orch]));
+    expect(promptBlocker(s.workerView('o1'), s.floorView('lab'), false)).toBeNull();
+    // A freelancer whose agent shows a question on its screen still needs the answer first.
+    s.applyEvent({ t: 'worker.upsert', seq: 11, worker: worker({ id: 'f', status: 'blocked', desk_index: 1 }) });
+    expect(promptBlocker(s.workerView('f'), s.floorView('lab'), false)).toMatch(/waiting on its screen/);
   });
 
   it('an asleep floor shows asleep, over the cap or not', () => {

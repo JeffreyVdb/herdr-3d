@@ -60,9 +60,14 @@ const LIFE_WORDS: Record<NonNullable<CrewView['life']>, string> = {
   idle: 'Waiting for its next step',
 };
 
-/** Adds the crew parts to a card (`focus`: you look at it). */
-export function withCrew(card: CardData, c: CrewView, focus: boolean): CardData {
+/**
+ * Adds the crew parts to a card (`focus`: you look at it). A freelancer
+ * whose terminal has no title yet says what it is doing instead of its
+ * label (the tag already says its role and round).
+ */
+export function withCrew(card: CardData, c: CrewView, focus: boolean, titled = true): CardData {
   card.tag = crewTag(c);
+  if (!titled && c.freelancer) card.task = LIFE_WORDS[c.life ?? 'idle'];
   if (c.stamp) card.stamp = { tone: c.stamp.tone, text: c.stamp.text };
   if (!card.ask) {
     const ask = crewAsk(c);

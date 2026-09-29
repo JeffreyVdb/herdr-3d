@@ -210,6 +210,21 @@ export class Crowd {
     this.crewParts = crewParts as Record<CrewPartKey, CrewPart>;
   }
 
+  /** M6: the crew parts drawn for member `i` (test hook). */
+  crewAt(i: number): CrewPartKey[] {
+    const out: CrewPartKey[] = [];
+    for (const [key, p] of Object.entries(this.crewParts) as Array<[CrewPartKey, CrewPart]>) {
+      for (let k = 0; k < p.per; k++) {
+        p.mesh.getMatrixAt(i * p.per + k, this.tmp3);
+        if (Math.abs(this.tmp3.determinant()) > 1e-9) {
+          out.push(key);
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
   /** M6: crew parts drawn right now (test hook / frame budget). */
   crewShown(): CrewPartKey[] {
     return (Object.keys(this.crewParts) as CrewPartKey[]).filter((k) => this.crewParts[k].mesh.visible);
@@ -516,7 +531,7 @@ export class Crowd {
       this.tmp2.compose(this.v.set(-0.42, FLOOR_Y + 0.29, 0.08), this.q, this.s.set(1, 1, 1));
       this.crewPut('briefcase', i, this.base, this.tmp2);
     } else this.crewHide('briefcase', i);
-    // Over the cap: sweat runs down its brow, a red alarm clock rings over its head.
+    // Over the cap: sweat runs down its brow, a red alarm clock rings over its desk.
     if (c?.overCap && m.display !== 'asleep') {
       for (let k = 0; k < 2; k++) {
         const u = (t * 0.8 + ph / 6.283 + k * 0.5) % 1;
@@ -527,7 +542,8 @@ export class Crowd {
       const ring = Math.sin(t * 38) * 0.12;
       const hop = Math.abs(Math.sin(t * 19)) * 0.025;
       this.q.setFromEuler(this.e.set(0, Math.sin(t * 0.9 + ph) * 0.5, ring));
-      this.tmp2.compose(this.v.set(0, 1.32 + hop, 0), this.q, this.s.set(1, 1, 1));
+      // Beside its head over the desk's corner (the card sits right over its head).
+      this.tmp2.compose(this.v.set(-0.46, 0.98 + hop, 0.32), this.q, this.s.set(1, 1, 1));
       this.crewPut('clock', i, this.base, this.tmp2);
       // The hands spin: the clock is past time.
       this.tmp.makeRotationZ(-t * 4);

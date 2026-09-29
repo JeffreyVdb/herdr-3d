@@ -8,7 +8,7 @@ import { ICON as DOM_ICON } from './dom';
 import { mountAudioControls } from './audioControls';
 import { answerKeyEls, promptBarAria, promptBarKey, usageChip } from './promptBar';
 // M6 crew: role, run, issue and report on the bar.
-import { crewAria, crewBarKey, crewLine } from './crewBar';
+import { crewBarKey, crewLine } from './crewBar';
 import { usageTotal, type UsageTotal } from '../world/usage';
 import type { GameAudio } from '../audio';
 
@@ -333,8 +333,6 @@ export class Hud {
       keys.prepend(...answerKeyEls(w, this.keyStates.get('answer')));
       const extra = promptBarAria(w);
       if (extra) this.prompt.setAttribute('aria-label', `${this.prompt.getAttribute('aria-label') ?? ''} · ${extra}`);
-      const crew = crewAria(w);
-      if (crew) this.prompt.setAttribute('aria-label', `${this.prompt.getAttribute('aria-label') ?? ''} · ${crew}`);
     } else if (t.kind === 'desk') {
       line.append(text('prompt-name', t.label), text('prompt-task', 'Empty desk'));
       const k = el('span', 'key');
