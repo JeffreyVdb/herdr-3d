@@ -21,6 +21,8 @@ type Config struct {
 	Bundle string // built game directory (ignored when Dev is set)
 	// BundleFS, if set, is served instead of Bundle: the game embedded in the binary.
 	BundleFS fs.FS
+	// MusicDir holds the radio tracks served under /music/ (see ServerConfig).
+	MusicDir string
 	Dev      *url.URL // Vite dev server to proxy instead of serving Bundle/BundleFS
 	// Open, if set, opens the game URL (with its token) once serving.
 	Open  func(ctx context.Context, url string) error
@@ -62,7 +64,7 @@ func Run(ctx context.Context, cfg Config) error {
 	cfg.Tunnel.Log = log
 	srv := NewServer(ServerConfig{
 		Port: addr.Port, ListenHost: addr.IP.String(), Token: token, Bridge: cfg.Tunnel,
-		Bundle: cfg.Bundle, BundleFS: cfg.BundleFS, Dev: cfg.Dev, Log: log,
+		Bundle: cfg.Bundle, BundleFS: cfg.BundleFS, MusicDir: cfg.MusicDir, Dev: cfg.Dev, Log: log,
 	})
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 

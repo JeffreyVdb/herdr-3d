@@ -5,12 +5,15 @@
 #   h3d-update v0.2.0       that release
 #   h3d-update --check      show installed and latest versions, change nothing
 #   h3d-update --rollback   put the previous bridge and helper back
+#   h3d-update --music DIR  rsync the radio's tracks (DIR = game/public/music) to the Mac
 #
 # It downloads the release with `gh`, verifies SHA256SUMS, then updates the
 # bridge first (database backup, restart, wait for the new version on
 # /healthz) and the Mac helper second (scp, launchctl kickstart, wait for its
 # /healthz). If the new bridge does not come up it restores the old one and
-# stops before touching the Mac. See docs/releasing.md.
+# stops before touching the Mac. The radio's audio is not part of a release
+# (about 100 MB, fetched with `pnpm -C game music`); --music copies it to the
+# folder the helper serves under /music/. See docs/releasing.md.
 #
 # Install once:  install -Dm755 deploy/h3d-update ~/.local/bin/h3d-update
 #
@@ -22,6 +25,8 @@
 #   H3D_DB        the bridge database                  $XDG_STATE_HOME/herdr-world/world.db
 #   H3D_SOCK      the bridge socket                    $XDG_RUNTIME_DIR/herdr-world/bridge.sock
 #   H3D_UNIT      the bridge's systemd user unit       herdr-world
+#   H3D_MUSIC_SRC the tracks to sync with --music      (none)
+#   H3D_MAC_MUSIC where they go, relative to the Mac's $HOME   Library/Caches/h3d-helper/music
 #   H3D_WAIT      seconds to wait for a restart        30
 set -euo pipefail
 
@@ -33,6 +38,8 @@ DB=${H3D_DB:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-world/world.db}
 SOCK=${H3D_SOCK:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/herdr-world/bridge.sock}
 UNIT=${H3D_UNIT:-herdr-world}
 WAIT=${H3D_WAIT:-30}
+MAC_MUSIC=${H3D_MAC_MUSIC:-Library/Caches/h3d-helper/music}
+MUSIC_SRC=${H3D_MUSIC_SRC:-}
 MAC_LABEL=com.jeffreyvdb.h3d-helper
 MAC_PORT=7777
 # Never become (or use) a shared ControlMaster: docs/architecture.md section 7.
@@ -56,6 +63,9 @@ while [ $# -gt 0 ]; do
   case $1 in
     --check) mode=check ;;
     --rollback) mode=rollback ;;
+    --music)
+      mode=music
+      if [ $# -gt 1 ] && [[ $2 != -* ]]; then MUSIC_SRC=$2; shift; fi ;;
     --force) force=1 ;;
     --no-mac) do_mac=0 ;;
     --no-bridge) do_bridge=0 ;;
@@ -123,6 +133,20 @@ if [ "$mode" = check ]; then
   if [ "$do_mac" = 1 ]; then
     say "helper  (Mac)    $(mac_version | grep . || echo 'not reachable, or too old to report')"
   fi
+  exit 0
+fi
+
+# --- music -----------------------------------------------------------------
+
+if [ "$mode" = music ]; then
+  [ -n "$MUSIC_SRC" ] || die "--music needs the tracks folder: h3d-update --music ~/path/to/game/public/music (or H3D_MUSIC_SRC)"
+  [ -d "$MUSIC_SRC" ] || die "$MUSIC_SRC is not a directory (run \`pnpm -C game music\` first)"
+  # --delete makes the Mac copy match, so refuse a folder that would just empty it.
+  find "$MUSIC_SRC" -name '*.ogg' -print -quit | grep -q . || die "no .ogg files under $MUSIC_SRC: not syncing"
+  command -v rsync >/dev/null || die "rsync not found"
+  mac "mkdir -p '$MAC_MUSIC'"
+  rsync -a --delete -e "ssh ${SSH_OPTS[*]}" "${MUSIC_SRC%/}/" "$MAC:$MAC_MUSIC/"
+  say "music synced to $MAC:$MAC_MUSIC ($(find "$MUSIC_SRC" -name '*.ogg' | wc -l) tracks); the helper serves it live"
   exit 0
 fi
 

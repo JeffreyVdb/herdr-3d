@@ -288,6 +288,7 @@ State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not an
 | `--listen` | `H3D_HELPER_LISTEN` | `127.0.0.1:7777`; anything but a loopback IP is refused |
 | `--bundle` | `H3D_HELPER_BUNDLE` | the game embedded in the binary; else `~/Library/Application Support/h3d-helper/dist` |
 | `--token-file` | `H3D_HELPER_TOKEN_FILE` | `~/Library/Application Support/h3d-helper/token` (0600, created on first start) |
+| `--music-dir` | `H3D_HELPER_MUSIC_DIR` | `~/Library/Caches/h3d-helper/music`: radio tracks served under `/music/` (`music/<genre>/<id>.ogg`); absent is fine, the radio is silent |
 | `--print-url` | | print the game URL with the token and exit |
 | `--dev-upstream` | `H3D_HELPER_DEV_UPSTREAM` | off; e.g. `http://127.0.0.1:5173` |
 | `--no-open` | `H3D_HELPER_NO_OPEN` | `false` |

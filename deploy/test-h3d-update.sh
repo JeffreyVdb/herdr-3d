@@ -62,6 +62,13 @@ cat >"$T/bin/scp" <<'F'
 while [ $# -gt 0 ]; do case "$1" in -o) shift 2 ;; -q) shift ;; *) break ;; esac; done
 cp "$1" "$T/machome/${2#*:}"
 F
+cat >"$T/bin/rsync" <<'F'
+#!/usr/bin/env bash
+# rsync -a --delete -e SSH SRC/ HOST:DEST/  ->  make DEST match SRC.
+src=${*: -2:1}; dst="$T/machome/${*: -1}"; dst=${dst#*:}
+dst="$T/machome/${dst#"$T/machome/"}"
+rm -rf "${dst:?}"/* ; mkdir -p "$dst"; cp -a "$src". "$dst"
+F
 chmod +x "$T"/bin/*
 export T PATH="$T/bin:$PATH"
 export H3D_BIN="$T/host/bin" H3D_DB="$T/host/state/world.db" H3D_SOCK="$T/sock" H3D_WAIT=2 H3D_MAC=fake-mac
@@ -104,5 +111,13 @@ expect "and leaves the old bridge and helper" "v0.1.0/v0.1.0" "$(versions)"
 run v0.4.0
 expect "a bad checksum installs nothing" "1/v0.1.0/v0.1.0" "$rc/$(versions)"
 run --no-mac v0.2.0; expect "--no-mac leaves the helper, exits 0" "0/v0.2.0/v0.1.0" "$rc/$(versions)"
+
+mkdir -p "$T/music/house" && echo a >"$T/music/house/a.ogg" && echo b >"$T/music/house/b.ogg"
+run --music "$T/music"; expect "--music copies the tracks" "0/2" "$rc/$(find "$T/machome/Library/Caches/h3d-helper/music" -name '*.ogg' | wc -l)"
+expect "--music leaves the release alone" "v0.2.0/v0.1.0" "$(versions)"
+rm "$T/music/house/b.ogg"; run --music "$T/music"
+expect "--music removes tracks that are gone" "1" "$(find "$T/machome/Library/Caches/h3d-helper/music" -name '*.ogg' | wc -l)"
+mkdir -p "$T/empty"; run --music "$T/empty"
+expect "--music refuses a folder with no tracks" "1/1" "$rc/$(find "$T/machome/Library/Caches/h3d-helper/music" -name '*.ogg' | wc -l)"
 
 if [ "$fails" = 0 ]; then echo "all passed"; else echo "$fails failed"; cat "$T/out"; exit 1; fi

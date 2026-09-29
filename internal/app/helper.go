@@ -30,6 +30,7 @@ const (
 	EnvHelperChrome        = "H3D_HELPER_CHROME"
 	EnvHelperChromeProfile = "H3D_HELPER_CHROME_PROFILE"
 	EnvHelperTokenFile     = "H3D_HELPER_TOKEN_FILE"
+	EnvHelperMusicDir      = "H3D_HELPER_MUSIC_DIR"
 	EnvHelperSSH           = "H3D_HELPER_SSH"
 	EnvHelperLogLevel      = "H3D_HELPER_LOG_LEVEL"
 	EnvHelperLogFormat     = "H3D_HELPER_LOG_FORMAT"
@@ -63,6 +64,10 @@ func DefaultBundle() string { return filepath.Join(helperDir(os.UserConfigDir, "
 
 // DefaultTokenFile is where the helper keeps its token between runs.
 func DefaultTokenFile() string { return filepath.Join(helperDir(os.UserConfigDir, ".config"), "token") }
+
+// DefaultMusicDir is where the radio's tracks live on the Mac (h3d-update --music
+// fills it). No space in the path, so rsync can name it.
+func DefaultMusicDir() string { return filepath.Join(helperDir(os.UserCacheDir, ".cache"), "music") }
 
 // GameAppName is the installed Chrome web app's name (manifest.webmanifest).
 const GameAppName = "herdr-3d"
@@ -121,6 +126,7 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 	level := fs.String("log-level", envOr(EnvHelperLogLevel, "info"), "debug, info, warn or error ($"+EnvHelperLogLevel+")")
 	format := fs.String("log-format", envOr(EnvHelperLogFormat, "text"), "text or json ($"+EnvHelperLogFormat+")")
 	tokenFile := fs.String("token-file", envOr(EnvHelperTokenFile, DefaultTokenFile()), "where the helper token is kept between runs; delete it to rotate ($"+EnvHelperTokenFile+")")
+	musicDir := fs.String("music-dir", envOr(EnvHelperMusicDir, DefaultMusicDir()), "radio tracks served under /music/ (music/<genre>/<id>.ogg); missing is fine, the radio is then silent ($"+EnvHelperMusicDir+")")
 	printURL := fs.Bool("print-url", false, "print the game URL with the token and exit (open it once in Chrome to install the app)")
 	showVersion := fs.Bool("version", false, "print version and exit")
 	if err := fs.Parse(args); err != nil {
@@ -146,10 +152,11 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 		return nil
 	}
 	cfg := helper.Config{
-		Token:  token,
-		Listen: *listen,
-		Tunnel: &helper.Tunnel{SSH: *sshBin, Host: *host, Remote: *remote, Local: *local},
-		Log:    log,
+		Token:    token,
+		MusicDir: *musicDir,
+		Listen:   *listen,
+		Tunnel:   &helper.Tunnel{SSH: *sshBin, Host: *host, Remote: *remote, Local: *local},
+		Log:      log,
 	}
 	if *dev != "" {
 		u, err := url.Parse(*dev)
@@ -187,6 +194,9 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 		} else {
 			cfg.Open = func(ctx context.Context, u string) error { return helper.OpenChrome(ctx, *chrome, u, *profile) }
 		}
+	}
+	if _, err := os.Stat(*musicDir); err != nil {
+		log.Info("no music folder: the radio is silent (h3d-update --music fills it)", "dir", *musicDir)
 	}
 	log.Info("h3d-helper starting", "version", Banner(name))
 	return helper.Run(ctx, cfg)

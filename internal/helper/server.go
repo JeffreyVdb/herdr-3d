@@ -49,6 +49,9 @@ type ServerConfig struct {
 	// BundleFS, if set, is used instead of the Bundle directory (the game
 	// embedded in the binary).
 	BundleFS fs.FS
+	// MusicDir, if set, holds the radio's tracks (music/<genre>/<id>.ogg). A file
+	// there is served for GET /music/...; anything else falls through to the game.
+	MusicDir string
 	Dev      *url.URL
 	Log      *slog.Logger
 }
@@ -85,11 +88,16 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.Handle("GET /ws", s.checkWS(s.bridgeProxy()))
+	var site http.Handler
 	if s.cfg.Dev != nil {
-		mux.Handle("/", s.devProxy())
+		site = s.devProxy()
 	} else {
-		mux.Handle("/", s.bundle())
+		site = s.bundle()
 	}
+	if s.cfg.MusicDir != "" {
+		mux.Handle("GET /music/", s.music(site))
+	}
+	mux.Handle("/", site)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.hosts[r.Host] {
 			s.forbid(w, r, "host not allowed")
@@ -175,6 +183,8 @@ var contentTypes = map[string]string{
 	".css":         "text/css; charset=utf-8",
 	".json":        "application/json",
 	".webmanifest": "application/manifest+json",
+	".ogg":         "audio/ogg",
+	".opus":        "audio/ogg",
 	".map":         "application/json",
 	".wasm":        "application/wasm",
 	".svg":         "image/svg+xml",
@@ -229,6 +239,30 @@ func (s *Server) bundle() http.Handler {
 		} else {
 			h.Set("Cache-Control", "no-cache")
 		}
+		http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
+	})
+}
+
+// music serves the radio's tracks from MusicDir, which is kept outside the
+// game (about 100 MB, never in a release). Range requests work, so the
+// player can stream and seek. A path with no such file goes to next: the
+// game's own copy in dev builds, else a 404.
+func (s *Server) music(next http.Handler) http.Handler {
+	root := http.Dir(s.cfg.MusicDir)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := path.Clean("/" + strings.TrimPrefix(r.URL.Path, "/music/"))
+		f, fi := openFile(root, p)
+		if f == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		defer f.Close()
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		if ct, ok := contentTypes[strings.ToLower(path.Ext(p))]; ok {
+			h.Set("Content-Type", ct)
+		}
+		h.Set("Cache-Control", "no-cache") // revalidate: a re-fetched track keeps its name
 		http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
 	})
 }

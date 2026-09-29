@@ -53,8 +53,24 @@ Agents keep running through a bridge restart: herdr sessions are started with `s
 between hires and send-homes; an in-flight one rolls back.
 
 `h3d-update --check` prints the latest release and what is installed. `--no-mac` / `--no-bridge` do half;
-`--force` reinstalls the same version; `--no-backup` skips the database copy. Settings are `H3D_*` variables at the top
+`--force` reinstalls the same version; `--music DIR` syncs the radio's tracks and nothing else; `--no-backup` skips the database copy. Settings are `H3D_*` variables at the top
 of the script.
+
+## The radio's music
+
+The tracks are about 100 MB and not committed, so a release does not carry them (the manifest and credits are in the
+game; the audio is not). The helper serves `~/Library/Caches/h3d-helper/music/` under `/music/`, and a file there wins over
+anything embedded. Without it the radio is silent and nothing else changes.
+
+Fetch the tracks once where the repo is checked out (`pnpm -C game music`, see CONTRIBUTING "Audio"), then copy them to the
+Mac:
+
+```sh
+h3d-update --music ~/devel/herdr-3d/game/public/music   # rsync --delete over ssh; the helper serves it live
+```
+
+`H3D_MUSIC_SRC` sets the folder once. The copy is a cache: it needs redoing only when tracks are added or replaced, not
+on every release, and no helper restart.
 
 ## Rolling back
 
