@@ -220,6 +220,19 @@ func TestChangesMatchGit(t *testing.T) {
 	if w := []string{"ahead.txt", "bin.dat", "f.txt", "new.txt", "staged.txt", "notes.txt"}; !slices.Equal(order, w) {
 		t.Errorf("files = %q, want %q", order, w)
 	}
+
+	// A linked worktree of it, as a worktree hire makes one.
+	wt := filepath.Join(filepath.Dir(work), "wt")
+	git(t, work, "worktree", "add", "-q", "-b", "h3d/mochi-a1b2c3", wt, "origin/main")
+	write(t, filepath.Join(wt, "f.txt"), "one\ntwo\nthree\nfour\n")
+	res, err = (&Git{}).Changes(context.Background(), wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Branch == nil || *res.Branch != "h3d/mochi-a1b2c3" || res.Base == nil || res.Base.SHA != mb || len(res.Files) != 1 ||
+		res.Files[0] != (proto.ChangedFile{Path: "f.txt", Index: ".", Worktree: "M", Insertions: 1}) || res.Diff != gitRaw(t, wt, "diff", mb) {
+		t.Errorf("linked worktree: %+v", res)
+	}
 }
 
 // A diff over 256 KiB keeps whole files that fit, in files order, and

@@ -51,7 +51,7 @@ func TestWorkerUsage(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	appendLine(t, path, line("m3", 4000))
 	ev = c.until(proto.EvWorkerUsage)
-	if since := time.Since(first); since < throttle-20*time.Millisecond {
+	if since := time.Since(first); since < throttle/2 { // exactly: TestUsageThrottle
 		t.Errorf("second event %s after the first, throttle %s", since, throttle)
 	}
 	if ev.Usage.Input != 7000 {

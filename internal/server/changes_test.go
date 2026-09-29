@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -64,12 +65,15 @@ func TestWorkerChanges(t *testing.T) {
 	slow.Cwd = "/home/u/slow"
 	noCwd := worker("w6", "nocwd", "", "idle")
 	noCwd.Cwd = ""
+	c := b.connect(proto.Hello{})
+	c.snapshot()
 	b.floor("s1", true, worker("w1", "a", "", "idle"), worker("w2", "b", "", "idle"), worker("w3", "c", "", "idle"), slow, noCwd)
 	b.floor("s2", false, worker("w4", "d", "", "unknown"))
-	c := b.connect(proto.Hello{})
 	ids := map[string]string{}
-	for _, w := range c.snapshot().World.Workers {
-		ids[w.WorkspaceID] = w.ID
+	for len(ids) < 6 {
+		if ev := c.event(); ev.T == proto.EvWorkerUpsert {
+			ids[ev.Worker.WorkspaceID] = ev.Worker.ID
+		}
 	}
 
 	_, m := c.command(proto.CmdWorkerChanges, "c1", proto.WorkerArgs{ID: ids["w1"]})
@@ -115,10 +119,21 @@ func TestWorkerChanges(t *testing.T) {
 		t.Errorf("dirs = %q", dirs)
 	}
 
+	// A hung git, through the real runner: cut at the deadline.
+	hung := func(ctx context.Context, _ []string) ([]byte, []byte, error) {
+		<-ctx.Done()
+		return nil, nil, ctx.Err()
+	}
+	b3 := startBridge(t, "", server.Options{Changes: &gitops.Git{Run: hung, ChangesTimeout: 50 * time.Millisecond}})
+	c3 := b3.connect(proto.Hello{})
+	c3.snapshot()
+	b3.floor("s1", true, worker("w1", "a", "", "idle"))
+	c3.mustError(proto.CmdWorkerChanges, proto.WorkerArgs{ID: c3.until(proto.EvWorkerUpsert).Worker.ID}, proto.ErrChangesFailed)
+
 	// Not configured: internal.
 	b2 := startBridge(t, "", server.Options{})
-	b2.floor("s1", true, worker("w1", "a", "", "idle"))
 	c2 := b2.connect(proto.Hello{})
-	id := c2.snapshot().World.Workers[0].ID
-	c2.mustError(proto.CmdWorkerChanges, proto.WorkerArgs{ID: id}, proto.ErrInternal)
+	c2.snapshot()
+	b2.floor("s1", true, worker("w1", "a", "", "idle"))
+	c2.mustError(proto.CmdWorkerChanges, proto.WorkerArgs{ID: c2.until(proto.EvWorkerUpsert).Worker.ID}, proto.ErrInternal)
 }
