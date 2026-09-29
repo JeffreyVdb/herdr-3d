@@ -139,6 +139,8 @@ export class BoardsPanel {
       const back = this.returnTo;
       this.returnTo = null;
       if (back?.isConnected) back.focus();
+      // Nothing to go back to: focus must not stay on a card of the dialog that just closed (the scene takes the keys).
+      else if (document.activeElement instanceof HTMLElement && this.dialog.contains(document.activeElement)) document.activeElement.blur();
     });
     this.item.addEventListener('close', () => {
       // The event is queued: an item opened again meanwhile is not the one that closed.
