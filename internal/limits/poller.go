@@ -81,7 +81,11 @@ func (c *Config) timing() timing { return timing{Timeout: c.Timeout, Grace: c.Gr
 type providerState struct {
 	next     time.Time
 	failures int
-	last     *proto.Limits // the last fresh reading
+	// again is a manual refresh asked for after the read in flight began
+	// (step clears it as a read starts): that read may predate the request,
+	// so when it ends the provider is due at once instead of at next.
+	again bool
+	last  *proto.Limits // the last fresh reading
 }
 
 // Poller reads the Claude and Codex limits while somebody looks.
@@ -139,7 +143,7 @@ func (p *Poller) Refresh() (queued bool) {
 	}
 	p.lastManual = now
 	for _, st := range p.state {
-		st.next = time.Time{}
+		st.next, st.again = time.Time{}, true
 	}
 	select {
 	case p.kick <- struct{}{}:
@@ -156,6 +160,7 @@ func (p *Poller) step(ctx context.Context, now time.Time) []proto.Limits {
 	for _, name := range providers {
 		if st := p.state[name]; !now.Before(st.next) {
 			st.next = now.Add(p.cfg.Timeout + p.cfg.Grace + time.Second) // not due again while this read runs
+			st.again = false
 			due = append(due, name)
 		}
 	}
@@ -192,6 +197,11 @@ func (p *Poller) read(ctx context.Context, name string, now time.Time) proto.Lim
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	st := p.state[name]
+	defer func() { // a refresh that came in while the probe ran wants a read that began after it
+		if st.again {
+			st.next = time.Time{}
+		}
+	}()
 	l.Provider = name
 	if l.Windows == nil {
 		l.Windows = []proto.LimitWindow{}
@@ -208,7 +218,7 @@ func (p *Poller) read(ctx context.Context, name string, now time.Time) proto.Lim
 		return l
 	case errors.Is(err, errNotInstalled):
 		st.failures, st.next = 0, now.Add(p.cfg.NoPlanRetry)
-		return p.failed(name, proto.LimitsNotInstalled, now, false)
+		return p.failed(name, proto.LimitsNotInstalled, now, name == proto.LimitsCodex) // the rollouts may still say something
 	}
 	code := proto.LimitsFailed
 	if errors.Is(err, errTimeout) {

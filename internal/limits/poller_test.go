@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -145,6 +146,16 @@ func TestNoPlanAndNotInstalled(t *testing.T) {
 	}
 }
 
+// A Codex CLI that is not installed on the bridge's PATH can still have left rollouts: they are shown, as of their time.
+func TestCodexNotInstalledStillUsesTranscript(t *testing.T) {
+	c, _ := newCfg(t, nil)
+	c.CodexSessions = "testdata/codex-sessions"
+	l := New(c).read(context.Background(), proto.LimitsCodex, t0) // no codex script: the CLI is not there
+	if l.Error != proto.LimitsNotInstalled || l.Source != proto.LimitsTranscript || !l.Stale || len(l.Windows) == 0 {
+		t.Fatalf("got %+v", l)
+	}
+}
+
 func TestTimeoutReading(t *testing.T) {
 	c, r := newCfg(t, nil)
 	r.scripts = map[string]script{"claude": func(p *fakeProc) { p.hang() }}
@@ -229,6 +240,61 @@ func TestRefreshAtMostEvery20Seconds(t *testing.T) {
 	now = now.Add(time.Second)
 	if !p.Refresh() {
 		t.Fatal("refresh after 20 s refused")
+	}
+}
+
+// A refresh that is acknowledged while a probe is running is not lost: once
+// that probe is done, both providers are read again (the reading in flight
+// may be older than the request).
+func TestRefreshDuringProbeReadsAgain(t *testing.T) {
+	started := make(chan string, 8)
+	release := make(chan struct{})
+	var mu sync.Mutex
+	calls := map[string]int{}
+	c, _ := newCfg(t, nil)
+	c.Runner = runnerFunc(func(cmd Cmd) (Process, error) {
+		mu.Lock()
+		calls[cmd.Path]++
+		first := calls[cmd.Path] == 1
+		mu.Unlock()
+		if first { // the first probe of each provider waits for the test
+			started <- cmd.Path
+			<-release
+		}
+		if cmd.Path == "codex" {
+			return newRunner(map[string]script{"codex": codexAnswers(t, fixture(t, "codex_primary.json"))}).Start(cmd)
+		}
+		return newRunner(map[string]script{"claude": claudeAnswers(t, "claude_team.jsonl")}).Start(cmd)
+	})
+	now := t0
+	c.Now = func() time.Time { return now }
+	p := New(c)
+	ctx := context.Background()
+	stepped := make(chan []proto.Limits)
+	go func() { stepped <- p.step(ctx, now) }()
+	<-started
+	<-started // both probes are running
+	if !p.Refresh() {
+		t.Fatal("refresh during the probes was not queued")
+	}
+	<-p.kick
+	close(release)
+	if got := <-stepped; len(got) != 2 {
+		t.Fatalf("first step read %d providers", len(got))
+	}
+	now = now.Add(time.Second) // far from the 2 min interval
+	got := p.step(ctx, now)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 || calls["claude"] != 2 || calls["codex"] != 2 {
+		t.Fatalf("after the refresh: %d readings, probes %v; want a fresh read of both", len(got), calls)
+	}
+	// It is used up: the next step, a second later, reads nothing.
+	mu.Unlock()
+	got = p.step(ctx, now.Add(time.Second))
+	mu.Lock()
+	if len(got) != 0 {
+		t.Fatalf("%d providers read again with nothing asked for", len(got))
 	}
 }
 

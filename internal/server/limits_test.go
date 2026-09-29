@@ -76,8 +76,12 @@ func TestLimitsUpdatesAndSnapshot(t *testing.T) {
 		t.Fatalf("%d probes with no client connected", n)
 	}
 	c := b.connect(proto.Hello{})
-	if snap := c.snapshot(); snap.World.Limits == nil || len(snap.World.Limits) != 0 {
-		t.Fatalf("first snapshot limits = %#v, want []", snap.World.Limits)
+	first := c.snapshot()
+	if first.World.Limits == nil || len(first.World.Limits) != 0 {
+		t.Fatalf("first snapshot limits = %#v, want []", first.World.Limits)
+	}
+	if raw, _ := json.Marshal(first.World); !strings.Contains(string(raw), `"limits":[]`) {
+		t.Errorf("an enabled bridge without a reading yet must say limits:[] on the wire: %s", raw)
 	}
 	got := map[string]proto.Event{}
 	for len(got) < 2 {
@@ -145,6 +149,18 @@ func TestLimitsRefresh(t *testing.T) {
 func TestLimitsRefreshUnsupportedWithoutPoller(t *testing.T) {
 	b := startBridge(t, "", server.Options{})
 	c := b.connect(proto.Hello{})
-	c.snapshot()
+	// --no-limits: the snapshot leaves `limits` out (a bridge that reads them says `[]` before its first reading).
+	snap := c.snapshot()
+	raw, _ := json.Marshal(snap.World)
+	var world map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &world); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := world["limits"]; ok || snap.World.Limits != nil {
+		t.Fatalf("snapshot of a bridge without limits has limits = %s", v)
+	}
+	if _, ok := world["presets"]; !ok {
+		t.Fatal("marshalled world lost presets: the test reads the wrong shape")
+	}
 	c.mustError(proto.CmdLimitsRefresh, nil, proto.ErrUnsupported)
 }

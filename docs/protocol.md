@@ -132,7 +132,9 @@ is closed (status 1008). A `proto` other than `1` gets `unsupported_proto` and i
 take. `floor.settings.set` validates `default_hire` against it; clients should read it rather than hardcode the lists.
 
 `limits` (M10) is the latest reading of each provider's plan limits, Claude first (see [Plan limits](#plan-limits));
-`[]` before the first reading.
+`[]` before the first reading. A bridge that does not read limits (`--no-limits`) leaves the key out, as a bridge from
+before M10 does: a client shows no limits widget without it (and none inline in the hire and start-run dialogs), and
+"Plan limits · reading…" only while the key is there and `[]`.
 
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
@@ -977,7 +979,10 @@ Unknown keys of the CLIs are ignored; the fields above are only ever added to.
   reads both at once, at most once every 20 s (else `{"queued": false}`); after 3 failures in a row a provider is read
   every 10 minutes; one with no plan, or whose CLI is missing, every 30 minutes. `--claude` / `HERDR_WORLD_CLAUDE`,
   `--codex` / `HERDR_WORLD_CODEX` name the executables (the systemd user manager's `PATH` may lack `~/.local/bin`);
-  `--no-limits` turns it off (`limits.refresh` is then `unsupported`).
+  `--no-limits` turns it off: `limits.refresh` is `unsupported` and the snapshot has no `limits` key (there is a `limits`
+  key, `[]` at first, exactly when the bridge reads limits). A refresh acknowledged while a read is running is not lost:
+  when that read ends, both providers are read again at once (the read that was running may predate the request).
+  A Codex CLI that is missing still falls back to the rollouts, when there are any.
 
 ### Laptops: screens, input, changes and usage
 

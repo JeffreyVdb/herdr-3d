@@ -170,8 +170,9 @@ type World struct {
 	// M6 launch: Presets are the team presets, by name ignoring case.
 	Presets []Preset `json:"presets"`
 	// M10 limits: the latest reading of each provider (Claude, Codex) the
-	// bridge has; [] before its first.
-	Limits []Limits `json:"limits"`
+	// bridge has; [] before its first. nil (the key is left out) when the
+	// bridge does not read limits (--no-limits): the client shows no widget.
+	Limits []Limits `json:"limits,omitzero"`
 }
 
 // HireOptions lists what can be hired, per harness.

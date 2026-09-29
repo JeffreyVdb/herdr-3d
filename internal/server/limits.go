@@ -26,8 +26,12 @@ func (h *Hub) setLimits(l proto.Limits) {
 	h.emit(proto.Event{T: proto.EvLimitsUpdate, Limits: &l})
 }
 
-// limitsViews are the latest readings, Claude first.
+// limitsViews are the latest readings, Claude first: [] before the first,
+// nil (left out of the snapshot) when the bridge does not read limits.
 func (h *Hub) limitsViews() []proto.Limits {
+	if h.limitsPoller == nil {
+		return nil
+	}
 	out := []proto.Limits{}
 	for _, p := range []string{proto.LimitsClaude, proto.LimitsCodex} {
 		if l, ok := h.limits[p]; ok {
