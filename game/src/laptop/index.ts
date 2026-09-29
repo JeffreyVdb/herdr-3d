@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, CommandName, ConnMessage, KeyItem } from '../net/protocol';
-import { screenFrame } from '../render/desks';
+import { glassFrame, screenFrame } from '../render/desks';
 import type { OfficeView } from '../render/office';
 import { ScreenMeshes } from '../render/screens';
 import { failureText } from '../ui/messages';
@@ -82,6 +82,8 @@ const glideMs = () => (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)
 const PLAN_MS = 250;
 
 const SCREEN = screenFrame();
+/** The screen you sit at covers the whole glass, the status bar's strip too: the terminal gets all of it. */
+const GLASS = glassFrame();
 const viewKey = (cam: THREE.PerspectiveCamera) => `${cam.aspect.toFixed(4)}:${window.innerHeight}`;
 const smooth = (k: number) => k * k * (3 - 2 * k);
 
@@ -283,13 +285,14 @@ export class Laptops {
     this.leaving = null;
     office.setLean(v.desk);
     office.setAtLaptop(true);
-    // The seated screen: the whole terminal, sized to the view, sharp from up close (the monitor's shape, at most 2400 wide).
-    const aspect = SCREEN.width / SCREEN.height;
+    // The seated screen: the whole terminal over the whole glass, sized to the view, sharp from up close (the monitor's shape, at most 2400 wide).
+    const aspect = GLASS.width / GLASS.height;
     const h = Math.round(Math.min(1400, 2400 / aspect, Math.max(560, window.innerHeight * Math.min(2, window.devicePixelRatio || 1) * 0.9)));
     this.seatedSize = { width: Math.round(h * aspect), height: h };
     const term = this.terms.get(id);
     term?.setSize(this.seatedSize.width, this.seatedSize.height);
     term?.setGlance(false);
+    this.meshes?.setFull(v.desk);
     this.input = this.lanes.sit(id);
     this.host.seat.show(v.name, this.mac);
     this.host.seat.status('ok', null);
@@ -318,6 +321,7 @@ export class Laptops {
     const term = this.terms.get(s.id);
     term?.setSize(LIVE_SIZE.width, LIVE_SIZE.height);
     term?.setGlance(true);
+    this.meshes?.setFull(null);
     this.host.seat.hide();
     this.leaving = snap ? null : { t0: performance.now(), from: { pos: this.camPos.clone(), quat: this.camQuat.clone() } };
     if (why) this.host.toast(why, 'error');
@@ -328,9 +332,9 @@ export class Laptops {
   private seatPose(office: OfficeView, desk: number, camera: THREE.PerspectiveCamera): { pos: THREE.Vector3; quat: THREE.Quaternion } {
     const meshes = this.meshes as ScreenMeshes;
     const M = this.m.multiplyMatrices(office.root.matrixWorld, meshes.slotMatrix(desk, new THREE.Matrix4()));
-    const center = SCREEN.center.clone().applyMatrix4(M);
-    const normal = SCREEN.normal.clone().transformDirection(M);
-    const up = SCREEN.up.clone().transformDirection(M);
+    const center = GLASS.center.clone().applyMatrix4(M);
+    const normal = GLASS.normal.clone().transformDirection(M);
+    const up = GLASS.up.clone().transformDirection(M);
     const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
     const tanH = tanV * camera.aspect;
     // The screen fills the height between the top bar and the seat bar (or ~94 % of the width on a
@@ -341,7 +345,7 @@ export class Laptops {
     const bottom = Math.min(H * 0.35, ins.bottom + 10);
     const fill = (H - top - bottom) / H;
     const mid = 1 - (2 * (top + (H - top - bottom) / 2)) / H;
-    const d = Math.max(SCREEN.height / fill / (2 * tanV), SCREEN.width / 0.94 / (2 * tanH));
+    const d = Math.max(GLASS.height / fill / (2 * tanV), GLASS.width / 0.94 / (2 * tanH));
     const pos = center.clone().addScaledVector(normal, d).addScaledVector(up, -mid * d * tanV);
     const quat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(pos, pos.clone().sub(normal), up));
     return { pos, quat };

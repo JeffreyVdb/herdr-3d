@@ -254,9 +254,10 @@ export const inside = (a: Rect, b: Rect) => a.x0 >= b.x0 && a.x1 <= b.x1 && a.z0
 /**
  * The monitor's terminal area in slot space: its size, centre, the normal
  * (towards the chair) and up; `lift` moves it off the glass along the normal.
- * The status bar is the strip above it (`band`).
+ * The status bar is the strip above it (`band`); `glass` is the whole panel,
+ * bar and terminal area together (what a screen you sit at fills).
  */
-export function monitorFrame(lift = 0): { width: number; height: number; center: V3; normal: V3; up: V3; band: { height: number; center: V3 } } {
+export function monitorFrame(lift = 0): { width: number; height: number; center: V3; normal: V3; up: V3; band: { height: number; center: V3 }; glass: { height: number; center: V3 } } {
   const M = MONITOR;
   const c = Math.cos(M.tilt);
   const s = Math.sin(M.tilt);
@@ -272,5 +273,6 @@ export function monitorFrame(lift = 0): { width: number; height: number; center:
     normal,
     up,
     band: { height: M.bandH, center: at(M.glassH / 2 - M.bandH / 2) },
+    glass: { height: M.glassH, center: at(0) },
   };
 }
