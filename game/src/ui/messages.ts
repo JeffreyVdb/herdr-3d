@@ -26,6 +26,10 @@ const DOES: Record<CommandName, string> = {
   'worker.hire': 'hire workers',
   'worker.fire.prepare': 'send workers home',
   'worker.fire': 'send workers home',
+  // M5 panels
+  'worker.prompt': 'send prompts',
+  'worker.answer': 'answer questions',
+  'worker.changes': 'show changes',
 };
 
 export function failureText(t: CommandName, code: string, message: string, ctx: FailureContext = {}): string {
@@ -76,6 +80,17 @@ export function failureText(t: CommandName, code: string, message: string, ctx: 
       return `The worktree was kept: ${why || 'it has uncommitted changes or unpushed commits'}.`;
     case 'fire_failed':
       return `${ctx.worker ?? 'The worker'} could not be sent home: ${why || 'herdr-world gave no reason'}.`;
+    // M5 panels
+    case 'prompt_failed':
+      return `The prompt did not reach ${ctx.worker ?? 'the worker'}: ${why.replace(/^prompt_failed:\s*/, '') || 'the agent did not start'}. Your text is still here: try again, or sit at its laptop (E).`;
+    case 'stale':
+      return `${ctx.worker ?? 'The worker'}’s question changed before the answer arrived. The card shows the current one.`;
+    case 'input_failed':
+      return `herdr could not type into ${ctx.worker ?? 'the worker'}’s pane${why ? `: ${why.replace(/^input_failed:\s*/, '')}` : ''}.`;
+    case 'not_a_repo':
+      return `${ctx.worker ?? 'This worker'}’s folder is not a git repository, so there are no changes to show.`;
+    case 'changes_failed':
+      return `git did not answer in time${why ? ` (${why.replace(/^changes_failed:\s*/, '')})` : ''}. Refresh to try again.`;
   }
   return `${code}: ${why}`;
 }
