@@ -166,6 +166,8 @@ export class Crowd {
   private readonly crewParts: Record<CrewPartKey, CrewPart>;
   private readonly armLM = new THREE.Matrix4();
   private readonly armRM = new THREE.Matrix4();
+  /** M6: members with crew parts drawn (the others skip them every frame). */
+  private readonly crewOn: boolean[];
   private readonly tmp3 = new THREE.Matrix4();
 
   constructor(
@@ -208,6 +210,7 @@ export class Crowd {
       crewParts[d.key] = { mesh, per: d.per, used: false };
     }
     this.crewParts = crewParts as Record<CrewPartKey, CrewPart>;
+    this.crewOn = Array.from({ length: capacity }, () => false);
   }
 
   /** M6: the crew parts drawn for member `i` (test hook). */
@@ -240,6 +243,7 @@ export class Crowd {
     if (!m) {
       for (const p of this.parts) for (let k = 0; k < p.per; k++) p.mesh.setMatrixAt(i * p.per + k, ZERO);
       for (const p of Object.values(this.crewParts)) for (let k = 0; k < p.per; k++) p.mesh.setMatrixAt(i * p.per + k, ZERO);
+      this.crewOn[i] = false;
       this.flag(true, false);
       return;
     }
@@ -479,6 +483,10 @@ export class Crowd {
   /** M6: what a crew member wears, has on its desk and holds (see crewLook.ts). */
   private poseCrew(i: number, m: Member, t: number, life: CrewLook['life'], armLM: THREE.Matrix4, armRM: THREE.Matrix4): void {
     const c = m.crew;
+    // Not a crew member and nothing of it drawn: nothing to do (most workers, every frame).
+    const any = !!c || !!m.briefcase;
+    if (!any && !this.crewOn[i]) return;
+    this.crewOn[i] = any;
     const seated = m.stride === undefined;
     const ph = m.phase;
     const worn = c ? WORN[c.role] : null;
