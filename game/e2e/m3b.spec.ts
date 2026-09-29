@@ -269,7 +269,7 @@ test('top bar: same floor numbers with sim=1; at 1024 wide the counts drop their
     await frames(page, 2);
     expect(await topbar(page)).toEqual({ name: floor, sub });
   }
-  expect(await bar()).toEqual({ cut: false, words: [false, false, false], titles: ['9 working', '3 needs you', '6 idle'] });
+  expect(await bar()).toEqual({ cut: false, words: [false, false, false], titles: ['9 working', '3 need you · N: go to the next (then 2 done)', '6 idle'] });
   await page.setViewportSize({ width: 1280, height: 720 });
   await frames(page, 2);
   expect(await bar()).toMatchObject({ cut: false, words: [true, true, true] });
