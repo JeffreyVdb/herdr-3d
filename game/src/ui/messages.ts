@@ -14,6 +14,10 @@ export interface FailureContext {
 
 /** What each command does, for "This herdr-world can't … yet". */
 const DOES: Record<CommandName, string> = {
+  // M5 screen
+  'terminal.watch': 'show laptop screens',
+  'terminal.unwatch': 'show laptop screens',
+  'worker.keys': 'type on a worker’s laptop',
   'building.create': 'create buildings',
   'building.rename': 'rename buildings',
   'building.delete': 'delete buildings',

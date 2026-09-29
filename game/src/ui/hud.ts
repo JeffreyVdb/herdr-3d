@@ -92,6 +92,8 @@ export class Hud {
   private listeners = new Map<HudAction, Array<() => void>>();
   private promptKey = '';
   private mode: 'city' | 'floor' = 'city';
+  /** M5: worker keys shown other than KEYS says (live, or disabled and why); see setKeyState. */
+  private readonly keyStates = new Map<string, { live: boolean; why?: string }>();
 
   constructor(parent: HTMLElement) {
     this.root = el('div', 'hud');
@@ -288,8 +290,9 @@ export class Hud {
       const model = modelLabel(w.harness, w.worker.model, w.worker.effort);
       if (model) line.append(text('prompt-model', model));
       for (const [k, label, live] of KEYS) {
-        if (!live) {
-          keys.append(disabled(k, label, 'Not wired up yet'));
+        const st = this.keyStates.get(k) ?? { live, why: 'Not wired up yet' };
+        if (!st.live) {
+          keys.append(disabled(k, label, st.why ?? 'Not available'));
           continue;
         }
         const s = el('span', 'key');
@@ -425,5 +428,14 @@ export class Hud {
     await new Promise((r) => setTimeout(r, 140));
     this.doors.classList.remove('is-closed');
     await new Promise((r) => setTimeout(r, 280));
+  }
+
+  /** M5: overrides a worker key's state from KEYS (null: as KEYS says); the prompt redraws on the next setTarget. */
+  setKeyState(key: string, state: { live: boolean; why?: string } | null): void {
+    const cur = this.keyStates.get(key);
+    if (state ? cur?.live === state.live && cur.why === state.why : !cur) return;
+    if (state) this.keyStates.set(key, state);
+    else this.keyStates.delete(key);
+    this.promptKey = '';
   }
 }

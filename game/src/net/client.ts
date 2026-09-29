@@ -5,9 +5,12 @@ import {
   isSnapshot,
   isWelcome,
   isWorldEvent,
+  isTerminalClosed,
+  isTerminalFrame,
   parseMessage,
   type CommandArgs,
   type CommandName,
+  type ConnMessage,
   type Hello,
   type Snapshot,
   type Welcome,
@@ -83,6 +86,8 @@ export interface ClientHandlers {
   onEvent(e: WorldEvent): void;
   onState?(s: ConnState): void;
   onWelcome?(w: Welcome): void;
+  /** M5: connection-scoped messages (no seq): laptop screen frames and closes. */
+  onConn?(m: ConnMessage): void;
 }
 
 export interface ClientOptions {
@@ -329,6 +334,11 @@ export class BridgeClient {
           if (isWorldEvent(m)) this.o.handlers.onEvent(m);
           return;
       }
+    }
+    // M5: laptop screens of this connection's watches (no seq, never replayed).
+    if (isTerminalFrame(m) || isTerminalClosed(m)) {
+      this.o.handlers.onConn?.(m);
+      return;
     }
     // Everything else (acks, unknown types) is ignored.
   }
