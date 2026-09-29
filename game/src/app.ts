@@ -16,6 +16,8 @@ import { HireDialog } from './ui/hire';
 import { Panels } from './ui/panels';
 import { SendHomeDialog } from './ui/sendHome';
 import { RADIUS, Walker } from './input/walk';
+import { Laptops } from './laptop';
+import { SeatBar } from './ui/seat';
 import { blocked, blocked3, groundAt, type WalkWorld } from './world/collide';
 import { buildingPlan, floorY, loadedFloor, placeAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
 import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, overlookReach, type Opening, type Outline } from './world/layout';
@@ -99,6 +101,11 @@ export class App {
   readonly url: string;
   /** #20: the name on your desk's name plate (`?me=`; the bridge sends no user name yet). */
   readonly owner: string;
+  /** M5 screen: live laptop screens, sitting at a worker's laptop, and the bar while you do. */
+  readonly laptops: Laptops;
+  readonly seatBar: SeatBar;
+  /** M5 screen: the `terminal.watch` / `unwatch` the game sends by itself, the last 400 (test hook; not in `sent`). */
+  readonly watchLog: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
 
   private readonly r: THREE.WebGPURenderer;
   private readonly cityCam: THREE.PerspectiveCamera;
@@ -193,8 +200,11 @@ export class App {
       handlers: {
         onSnapshot: (s) => this.applyChange(this.store.applySnapshot(s)),
         onEvent: (e) => this.onWorldEvent(e),
+        onConn: (m) => this.laptops.onConn(m),
         onState: (s) => {
           this.conn = s;
+          // M5 screen: a dropped connection took every watch with it; the next live one watches again.
+          this.laptops.setConnected(s.phase === 'live');
           this.hud.setConn(s, this.fixture, Date.now());
           this.updateNotice();
         },
@@ -229,6 +239,21 @@ export class App {
     this.sendHome = new SendHomeDialog(o.host, dialogHost);
     this.arrivals = new Arrivals(this.shadows);
     this.walk.scene.add(this.arrivals.group);
+    this.seatBar = new SeatBar(this.hud.root, { text: (t) => this.laptops.typeText(t), paste: (t) => this.laptops.paste(t), stand: () => this.laptops.stand() });
+    this.laptops = new Laptops(
+      {
+        store: this.store,
+        send: (t, args) => this.send(t, args),
+        watch: (t, args) => this.sendWatch(t, args),
+        // `worker.prompt` is declared by the M5 panels' protocol block; paste only needs to send it.
+        sendPrompt: (id, text) => this.send('worker.prompt' as CommandName, { id, text } as never),
+        unsupported: (t) => this.unsupported.has(t),
+        toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 5200 : 3200, kind),
+        seat: this.seatBar,
+        insets: () => ({ top: parseFloat(this.hud.root.style.getPropertyValue('--topbar-bottom')) || 70, bottom: this.seatBar.el.getBoundingClientRect().height + 18 }),
+      },
+      o.params,
+    );
 
     this.hud.on('city', () => void this.leaveFloor());
     this.hud.on('hire', () => this.openHire());
@@ -951,6 +976,8 @@ export class App {
     }
     // Open dialogs (sheet, panels, confirmations, hire / send home) handle their own keys.
     if (this.hud.sheetOpen || this.panels.open || this.dialogOpen) return;
+    // M5 screen: at a worker's laptop every key goes to its terminal (Esc gets you up).
+    if (this.laptops.key(e)) return;
     const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     if (typing) return;
     this.activity(true);
@@ -987,6 +1014,10 @@ export class App {
       // M4: E on an empty desk's "+" hires someone there.
       e.preventDefault();
       this.openHire(this.target.desk);
+    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'worker') {
+      // M5: E looking at a worker: sit at its laptop.
+      e.preventDefault();
+      this.sitAt(this.target.id);
     } else if (e.code === 'KeyX' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !e.altKey && !this.planOpen && this.target?.kind === 'worker') {
       // M4: X looking at a worker: send it home.
       e.preventDefault();
@@ -1050,6 +1081,8 @@ export class App {
       } else void this.enterFloor(s);
       return;
     }
+    // M5 screen: seated, a click keeps the keyboard on the laptop (no mouse look).
+    if (this.laptops.seated) return this.seatBar.focus();
     if (!this.planOpen) this.walker.requestLock();
   }
 
@@ -1147,6 +1180,11 @@ export class App {
       this.controls.update();
       this.city.frame(t, this.cityCam);
     }
+    // M5 screen: live laptop screens, and the camera at the laptop you sit at.
+    const onFloor = this.mode === 'floor' && (this.place.area === 'floor' || this.place.area === 'fire-escape');
+    const blocked = this.planOpen || this.panels.open || this.dialogOpen || this.hud.sheetOpen || this.transitioning;
+    this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
+    if (this.laptops.animating) this.activity(true);
     this.cameraMoved = false;
   }
 
@@ -1230,6 +1268,9 @@ export class App {
     const t = this.computeLookAt();
     this.target = t;
     const w = t?.kind === 'worker' ? this.store.workerView(t.id) : null;
+    // M5 screen: E sits at the worker's laptop, or says why it cannot.
+    const why = w ? this.laptops.whyNot(w.worker.id, this.office) : null;
+    this.hud.setKeyState('E', w ? (why ? { live: false, why } : { live: true }) : null);
     // The plan has its own labels; the prompt bar belongs to first person.
     this.hud.setTarget(this.planOpen ? null : t, w);
   }
@@ -1306,6 +1347,35 @@ export class App {
     this.walker.stand();
     this.updateHint();
     this.activity(true);
+  }
+
+  // ---- M5 screen: sitting at a worker's laptop ----------------------------------------
+
+  /** A watch the game makes by itself: like `send`, logged in `watchLog` instead of `sent`. */
+  private async sendWatch<T extends 'terminal.watch' | 'terminal.unwatch'>(t: T, args: CommandArgs[T]): Promise<CommandResult> {
+    const entry: (typeof this.watchLog)[number] = { t, args };
+    this.watchLog.push(entry);
+    if (this.watchLog.length > 400) this.watchLog.shift();
+    const r = await this.client.request(t, args);
+    entry.result = r;
+    if (!r.ok && r.code === 'unknown_command') this.unsupported.add(t);
+    return r;
+  }
+
+  /** E on a worker: sits you at its laptop; false (and a toast saying why) when you cannot. */
+  sitAt(id: string): boolean {
+    if (this.mode !== 'floor' || this.place.area !== 'floor' || this.transitioning) return false;
+    const why = this.laptops.whyNot(id, this.office);
+    if (why) {
+      this.hud.toast(why, 3000);
+      return false;
+    }
+    this.walker.release();
+    this.walker.stop();
+    this.walker.stand();
+    this.laptops.sit(id, this.office, this.fpCam, this.walker);
+    this.activity(true);
+    return true;
   }
 
   /** Places the walker: `y` (feet, absolute) puts you on any floor, the fire escape, the street or in the lobby; without it you stay at your level. */

@@ -1,0 +1,148 @@
+/*
+ * M5: sitting at a worker's laptop. The laptop fills the view; this bar sits
+ * under it on the HUD's navy, with whose terminal it is on sun-yellow
+ * label-maker tape (the status chips' material) stuck to the bar.
+ */
+
+.seat {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  width: min(780px, calc(100vw - 32px));
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'line stand'
+    'keys keys';
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 12px 10px 14px;
+  background: var(--ink);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.seat-line {
+  grid-area: line;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.seat-tape {
+  flex: none;
+  padding: 3px 9px 2px;
+  font-size: 12px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 0.6, 'MONO' 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: var(--sun);
+  border-radius: 2px;
+  transform: rotate(-1.5deg);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 45%),
+    inset 0 -1px 0 rgb(0 0 0 / 14%),
+    0 1px 2px rgb(0 0 0 / 30%);
+  white-space: nowrap;
+}
+.seat-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-on-ink-2);
+  transition: color 160ms var(--ease);
+}
+.seat[data-state='error'] .seat-note {
+  color: #ffb3ad;
+}
+.seat[data-state='error'] .seat-note::before,
+.seat[data-state='offline'] .seat-note::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: var(--needs_you);
+}
+.seat[data-state='offline'] .seat-note::before {
+  background: var(--idle);
+}
+.seat-stand {
+  grid-area: stand;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px 5px 6px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 9px;
+  background: var(--ink-2);
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 140ms var(--ease);
+}
+.seat-stand:hover {
+  background: #34416c;
+}
+.seat-stand kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: var(--ink);
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-bottom-width: 2px;
+  font: 700 11px/1 var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+}
+.seat-keys {
+  grid-area: keys;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.seat-keys .key kbd + kbd {
+  margin-left: -2px;
+}
+.seat-aside {
+  color: var(--text-on-ink-2);
+}
+/* Keeps the keyboard focus (IME, paste) without being seen. */
+.seat-input {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+  pointer-events: none;
+}
+
+/* Sitting: the laptop is the view; no reticle, look-at bar or walking hint. */
+.hud[data-seated] .reticle,
+.hud[data-seated] .prompt,
+.hud[data-seated] .hint {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .seat-aside {
+    display: none;
+  }
+}

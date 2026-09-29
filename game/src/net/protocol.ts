@@ -435,3 +435,58 @@ export function isError(m: ServerMessage): m is ErrorMessage {
   const o = m as unknown as Obj;
   return m.t === 'error' && isStr(o.code);
 }
+
+// M5 screen: laptop screens (`terminal.watch` / `terminal.unwatch`, the connection-scoped `terminal.frame` /
+// `terminal.closed`) and seated input (`worker.keys`). No `seq`: frames are sent only to the watching connection
+// and never replayed; the client re-watches after a reconnect.
+
+/** One `worker.keys` item: literal text (no control characters) or one allowlisted herdr key name. */
+export type KeyItem = { text: string } | { key: string };
+
+export interface CommandArgs {
+  'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number };
+  'terminal.unwatch': { id: string };
+  'worker.keys': { id: string; input: KeyItem[] };
+}
+
+/** `terminal.watch` ack. */
+export interface WatchAck {
+  pane: string;
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalFrame {
+  t: 'terminal.frame';
+  id: string;
+  pane: string;
+  /** Counts frames per watch from 1; a re-watch starts again at a `full` frame. */
+  n: number;
+  /** true: reset the screen, then apply `data`; false: apply `data` on top (diffs compose by concatenation). */
+  full: boolean;
+  cols: number;
+  rows: number;
+  /** Base64 ANSI bytes. */
+  data: string;
+}
+
+export type ClosedReason = 'worker_removed' | 'asleep' | 'pane_changed' | 'observer_failed';
+
+export interface TerminalClosed {
+  t: 'terminal.closed';
+  id: string;
+  reason: ClosedReason | string;
+}
+
+/** Connection-scoped messages (no `seq`): screens of watched laptops. */
+export type ConnMessage = TerminalFrame | TerminalClosed;
+
+export function isTerminalFrame(m: ServerMessage): m is TerminalFrame {
+  const o = m as unknown as Obj;
+  return m.t === 'terminal.frame' && isStr(o.id) && isInt(o.n) && typeof o.full === 'boolean' && isInt(o.cols) && isInt(o.rows) && isStr(o.data);
+}
+
+export function isTerminalClosed(m: ServerMessage): m is TerminalClosed {
+  const o = m as unknown as Obj;
+  return m.t === 'terminal.closed' && isStr(o.id) && isStr(o.reason);
+}

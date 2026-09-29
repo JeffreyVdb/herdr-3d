@@ -11,6 +11,7 @@
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { Building, Cap, Floor, FloorSettings, Hire, HireOptions, Worker } from '../src/net/protocol.ts';
+import { screensOf } from './fixture-screen.ts';
 
 type Msg = Record<string, unknown>;
 type Send = (m: Msg) => void;
@@ -192,6 +193,27 @@ export class SimWorld {
     try {
       const a = m.args === undefined || m.args === null ? {} : m.args;
       if (!isObj(a)) throw bad('args must be an object');
+      // M5 screen: laptop screens and seated input (tools/fixture-screen.ts); world events close the watches they end.
+      const screens = screensOf(this, () => ({
+        worker: (id: string) => this.workers.find((w) => w.id === id),
+        floor: (s: string) => this.floors.get(s),
+        later: (fn: () => void, ms: number) => {
+          const h = this.setT(() => {
+            this.timers.delete(h);
+            fn();
+          }, ms);
+          this.timers.add(h);
+          return h;
+        },
+        cancel: (h: unknown) => {
+          this.clearT(h);
+          this.timers.delete(h);
+        },
+        now: () => this.now(),
+        failNext: (code: string) => this.fail === code && ((this.fail = undefined), true),
+      }));
+      send = screens.tap(send);
+      if (screens.handle(m.t, a, send, ack, (code, message) => send({ t: 'error', req_id: reqId, code, message }))) return;
       switch (m.t) {
         case 'building.create':
           return ack(this.create(a, send));

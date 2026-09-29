@@ -37,6 +37,26 @@ const SCREEN: Record<Display, number> = {
 const HINGE_Z = SEAT_OFFSET - 0.02;
 const LID_TILT = 0.28;
 
+/**
+ * M5: the laptop screen in slot space, a plane on the open lid facing the
+ * chair; `lift` raises it off the lid along its normal (a live screen's
+ * texture sits a hair in front of the flat glow).
+ */
+export function screenGeometry(lift = 0): THREE.BufferGeometry {
+  return new THREE.PlaneGeometry(0.31, 0.2)
+    .rotateY(Math.PI)
+    .translate(0, 0.118, -0.0065 - lift)
+    .rotateX(LID_TILT)
+    .translate(0, DESK_H + 0.018, HINGE_Z);
+}
+
+/** M5: the screen's size, centre, normal (towards the chair) and up, in slot space. */
+export function screenFrame(): { width: number; height: number; center: THREE.Vector3; normal: THREE.Vector3; up: THREE.Vector3 } {
+  const tilt = new THREE.Matrix4().makeRotationX(LID_TILT);
+  const center = new THREE.Vector3(0, 0.118, -0.0065).applyMatrix4(tilt).add(new THREE.Vector3(0, DESK_H + 0.018, HINGE_Z));
+  return { width: 0.31, height: 0.2, center, normal: new THREE.Vector3(0, 0, -1).applyMatrix4(tilt), up: new THREE.Vector3(0, 1, 0).applyMatrix4(tilt) };
+}
+
 /** The desk art in slot space (shared with your own desk on the mezzanine). */
 export function deskGeometries(): Record<Key, THREE.BufferGeometry> {
   const legH = DESK_H - 0.045;
@@ -50,11 +70,7 @@ export function deskGeometries(): Record<Key, THREE.BufferGeometry> {
     ]),
     base: new THREE.BoxGeometry(0.34, 0.018, 0.24).translate(0, DESK_H + 0.009, HINGE_Z - 0.12),
     lid: lid.clone().rotateX(LID_TILT).translate(0, DESK_H + 0.018, HINGE_Z),
-    screen: new THREE.PlaneGeometry(0.31, 0.2)
-      .rotateY(Math.PI)
-      .translate(0, 0.118, -0.0065)
-      .rotateX(LID_TILT)
-      .translate(0, DESK_H + 0.018, HINGE_Z),
+    screen: screenGeometry(),
     sticker: new THREE.CylinderGeometry(0.038, 0.038, 0.004, 14)
       .rotateX(Math.PI / 2)
       .translate(0.06, 0.13, 0.008)
