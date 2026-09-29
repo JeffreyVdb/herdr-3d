@@ -351,6 +351,27 @@ test('a merge rings the gong once and flies the note off; the replay on watch ne
   clean();
 });
 
+test('two merges in one poll ring the gong twice, one ring each', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', EXTRA, SIM);
+  await enter(page, 'herdr-3d');
+  await expect.poll(async () => (await wall(page))?.prs.length).toBe(4);
+  await faceBoard(page, 'herdr-3d', 'prs');
+  expect((await wall(page))?.gongRings).toBe(0);
+  const msg = { t: 'board.prs', session: 'herdr-3d', provider: 'github', provider_name: 'GitHub', fetched_at: 9, prs: [], merged: [
+    { id: `${HERDR}#32`, key: '#32', title: 'x', merged_at: 1 },
+    { id: `${HERDR}#33`, key: '#33', title: 'y', merged_at: 2 },
+  ] };
+  await page.evaluate((m) => window.__h3d.injectBoard(m as never), msg);
+  await expect.poll(async () => (await wall(page))?.gongRings, { timeout: 10_000 }).toBe(2);
+  // The same message again announces nothing new.
+  await page.evaluate((m) => window.__h3d.injectBoard(m as never), msg);
+  await frames(page, 30);
+  expect((await wall(page))?.gongRings).toBe(2);
+  clean();
+});
+
 test('Open PR for a plain worker: prepare, edit, confirm, push and open; freelancers do not get it', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);

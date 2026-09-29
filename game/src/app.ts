@@ -85,6 +85,8 @@ interface BuildingCtx {
 }
 
 const CLIENT = 'herdr-3d-game/0.2';
+/** Gap between the gong rings of several PRs merged in one poll. */
+const GONG_GAP_MS = 450;
 
 /** Everything between the renderer and the bridge: views, input, HUD, frame pacing. */
 export class App {
@@ -1097,18 +1099,25 @@ export class App {
     this.pushBoards();
   }
 
-  /** Merged PRs (never the initial replay): their notes fly off the board and the gong rings once. */
+  /** Merged PRs (never the initial replay): each note flies off the board and the gong rings once per PR, a beat apart. */
   private merged(list: MergedPullRequest[]): void {
     const o = this.office;
     if (!o) return;
     const now = performance.now();
     for (const p of list) o.boards.flyOff(p.id, now);
-    o.boards.gong?.ring(now);
-    const at = o.boards.gongAt();
-    if (at) {
-      o.root.updateMatrixWorld(true);
-      this.audio.playAt('gong.wav', o.root.localToWorld(at));
-    }
+    list.forEach((_, i) => {
+      const ring = (): void => {
+        if (this.office !== o) return;
+        o.boards.gong?.ring(performance.now());
+        const at = o.boards.gongAt();
+        if (at) {
+          o.root.updateMatrixWorld(true);
+          this.audio.playAt('gong.wav', o.root.localToWorld(at));
+        }
+      };
+      if (i === 0) ring();
+      else window.setTimeout(ring, i * GONG_GAP_MS);
+    });
     this.activity(false);
   }
 
@@ -1191,7 +1200,10 @@ export class App {
 
   /** Opens a provider's page in the user's browser (the Mac helper does it), else in a new window. */
   external(url: string): void {
-    void openExternal(url, this.noOpen ? { token: this.token, open: () => undefined } : { token: this.token }).then((via) => this.opened.push({ url, via }));
+    void openExternal(url, this.noOpen ? { token: this.token, open: () => undefined } : { token: this.token }).then((via) => {
+      this.opened.push({ url, via });
+      if (via === 'refused') this.hud.toast("That link can't be opened from here.", 3200, 'error');
+    });
   }
 
   /** The free desk nearest to you on a floor (not the first one), else null. */
