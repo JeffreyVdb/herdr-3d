@@ -6,6 +6,8 @@ import type { Area } from '../world/building';
 import { CHIP_TEXT } from '../world/derive';
 import { ICON as DOM_ICON } from './dom';
 import { mountAudioControls } from './audioControls';
+import { answerKeyEls, promptBarAria, promptBarKey, usageChip } from './promptBar';
+import { usageTotal, type UsageTotal } from '../world/usage';
 import type { GameAudio } from '../audio';
 
 /** Authored 24×24 stroke icons, one weight. */
@@ -38,11 +40,11 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', html = ''):
   return e;
 }
 
-/** Keys on a worker; `live` ones work (M4: X sends it home), the rest arrive later. */
+/** Keys on a worker; `live` ones work (M4: X sends it home; M5: C changes, P prompt), the rest arrive later. */
 const KEYS: Array<[string, string, boolean]> = [
   ['E', 'Laptop', false],
-  ['C', 'Changes', false],
-  ['P', 'Prompt', false],
+  ['C', 'Changes', true],
+  ['P', 'Prompt', true],
   ['H', 'Handoff', false],
   ['X', 'Send home', true],
 ];
@@ -67,6 +69,8 @@ export class Hud {
   private readonly name = el('div', 'topbar-name');
   private readonly sub = el('div', 'topbar-sub');
   private readonly counts = el('div', 'topbar-counts');
+  /** M5: the floor's usage estimate (`≈$1.23`, `*` when an unknown model is in it). */
+  private readonly usageEl = el('span', 'topbar-usage');
   private readonly back = el('button', 'btn btn--back', `${svg(ICON.back)}<span>City</span>`);
   private readonly issues = el('button', 'btn', `${svg(ICON.issues)}<span>Issues</span>`);
   private readonly prs = el('button', 'btn', `${svg(ICON.prs)}<span>PRs</span>`);
@@ -118,6 +122,8 @@ export class Hud {
     this.hire.title = 'Hire a worker at the first free desk on this floor (or look at a desk’s + and press E)';
     actions.append(this.buildings, this.issues, this.prs, this.elevator, this.hire, this.battery, this.conn);
     bar.append(place, this.counts, actions);
+    this.counts.after(this.usageEl);
+    this.usageEl.hidden = true;
     new ResizeObserver(() => this.root.style.setProperty('--topbar-bottom', `${bar.getBoundingClientRect().bottom.toFixed(1)}px`)).observe(bar);
     for (const [b, a] of [
       [this.back, 'city'],
@@ -207,18 +213,22 @@ export class Hud {
 
   private setCounts(c: Counts, asleep = false): void {
     // The words go when the bar is short (hud.css); the title keeps them on hover.
-    const item = (cls: string, n: number, label: string) =>
-      `<span class="count count--${cls}" title="${n} ${label}"><i></i><b>${n}</b><span>${label}</span></span>`;
+    const item = (cls: string, n: number, label: string, hint = '') =>
+      `<span class="count count--${cls}" title="${n} ${label}${hint}"><i></i><b>${n}</b><span>${label}</span></span>`;
     this.counts.dataset.n = asleep ? '1' : '3';
+    // M5: N goes to the next one who needs you (the blocked, then the done).
+    const need = c.needsYou === 1 ? 'needs you' : 'need you';
+    const next = c.needsYou + c.done > 0 ? ` · N: go to the next${c.done ? ` (then ${c.done} done)` : ''}` : '';
     this.counts.innerHTML = asleep
       ? item('asleep', c.total, 'asleep')
-      : item('working', c.working, 'working') + item('needs_you', c.needsYou, 'needs you') + item('idle', c.idle, 'idle');
+      : item('working', c.working, 'working') + item('needs_you', c.needsYou, need, next) + (next ? '<kbd class="topbar-key" title="N: go to the next who needs you">N</kbd>' : '') + item('idle', c.idle, 'idle');
   }
 
   setCity(buildings: number, floors: number, c: Counts): void {
     this.name.textContent = 'City';
     this.setSub(null, `${buildings} ${buildings === 1 ? 'building' : 'buildings'} · ${floors} ${floors === 1 ? 'floor' : 'floors'}`);
     this.setCounts(c);
+    this.setUsageTotal(null);
   }
 
   /** A floor: the one you are on, or (`fire-escape`) the one whose landing you stand on. */
@@ -228,6 +238,7 @@ export class Hud {
     const state = v.transition === 'waking' ? ' · waking up…' : v.transition === 'sleeping' ? ' · going to sleep…' : v.asleep ? ' · asleep' : '';
     this.setSub(at === 'fire-escape' ? 'fire-escape' : null, where + state);
     this.setCounts(v.counts, v.asleep);
+    this.setUsageTotal(usageTotal(v.workers.map((x) => x.worker.usage)));
   }
 
   /** In the lobby, on the street or on the stairs between landings: the building. */
@@ -235,6 +246,16 @@ export class Hud {
     this.name.textContent = name;
     this.setSub(area === 'floor' ? null : area, `${floors} ${floors === 1 ? 'floor' : 'floors'}`);
     this.setCounts(c);
+    this.setUsageTotal(null);
+  }
+
+  /** M5: the floor's usage estimate in the top bar; null hides it (the city, a lobby, nothing priced). */
+  private setUsageTotal(t: UsageTotal | null): void {
+    const text = t?.text ?? '';
+    this.usageEl.hidden = !text;
+    if (this.usageEl.textContent !== text) this.usageEl.textContent = text;
+    this.usageEl.title = t?.title ?? '';
+    this.usageEl.classList.toggle('topbar-usage--flagged', !!t?.flagged);
   }
 
   private setSub(area: Exclude<Area, 'floor'> | null, text: string): void {
@@ -262,6 +283,8 @@ export class Hud {
   setTarget(t: Target | null, w: WorkerView | null): void {
     // Everything the prompt shows for a worker, so a harness/effort-only upsert redraws it too.
     const shown = w ? [w.name, w.display, taskLine(w.worker), modelLabel(w.harness, w.worker.model, w.worker.effort)] : [];
+    // M5 panels: the usage and the question on the bar.
+    if (w) shown.push(...promptBarKey(w));
     const key = t ? JSON.stringify([t.kind, t.id, ...shown]) : '';
     if (key === this.promptKey) return;
     this.promptKey = key;
@@ -289,6 +312,9 @@ export class Hud {
       line.append(text('prompt-name', w.name), tape, text('prompt-task', taskLine(w.worker)));
       const model = modelLabel(w.harness, w.worker.model, w.worker.effort);
       if (model) line.append(text('prompt-model', model));
+      // M5 panels
+      const usage = usageChip(w);
+      if (usage) line.append(usage);
       for (const [k, label, live] of KEYS) {
         const st = this.keyStates.get(k) ?? { live, why: 'Not wired up yet' };
         if (!st.live) {
@@ -300,6 +326,10 @@ export class Hud {
         keys.append(s);
       }
       this.prompt.setAttribute('aria-label', `${w.name} · ${STATUS_WORD[w.display]} · ${taskLine(w.worker)}${model ? ` · ${model}` : ''}`);
+      // M5 panels: Approve / Deny lead for a blocked worker's question.
+      keys.prepend(...answerKeyEls(w, this.keyStates.get('answer')));
+      const extra = promptBarAria(w);
+      if (extra) this.prompt.setAttribute('aria-label', `${this.prompt.getAttribute('aria-label') ?? ''} · ${extra}`);
     } else if (t.kind === 'desk') {
       line.append(text('prompt-name', t.label), text('prompt-task', 'Empty desk'));
       const k = el('span', 'key');

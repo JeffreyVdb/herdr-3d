@@ -237,6 +237,15 @@ export class WorldStore {
         c.sessions.add(old.session);
         break;
       }
+      // M5 panels: usage and cost changed; the rest of the worker stays.
+      case 'worker.usage': {
+        const old = this.workers.get(e.id);
+        if (!old) break;
+        this.workers.set(e.id, { ...old, usage: e.usage });
+        c.workers.add(e.id);
+        c.sessions.add(old.session);
+        break;
+      }
     }
     if (c.structure) this.structureVersion++;
     return c;
