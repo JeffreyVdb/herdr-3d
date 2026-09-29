@@ -282,6 +282,9 @@ type Worker struct {
 	HiredAt int64 `json:"hired_at,omitempty"`
 	// Branch is the checked-out branch of a worker in a linked worktree.
 	Branch string `json:"branch,omitempty"`
+	// M5 term: Question is what a blocked worker's screen asks, while it
+	// is blocked and the bridge could read it.
+	Question *Question `json:"question,omitempty"`
 }
 
 // Worktree is a worker's git worktree provenance.
