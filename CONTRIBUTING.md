@@ -586,15 +586,17 @@ pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the M
 
 `test:live` builds `bin/herdr-world` from the worktree (or runs `H3D_LIVE_BRIDGE=<path>`, e.g. another branch's
 bridge built elsewhere), starts `herdr --session h3d-m2game-<random> server` (with
-`HERDR_*`/`CLAUDE*` stripped), a private bridge on `$XDG_RUNTIME_DIR/h3d-m2game/bridge.sock` watching only that session,
+`HERDR_*`/`CLAUDE*` stripped), a private bridge on `$XDG_RUNTIME_DIR/h3d-m2game/<run>/bridge.sock` (db
+`/tmp/h3d-m2game/<run>/world.db`; every live check keeps its socket and db in a directory of its run's own, and removes
+only that) watching only that session,
 and the WebSocket → unix-socket proxy on a leased 127.0.0.1 port. The spec flips a custom agent's state with
 `herdr pane report-agent` and asserts each change is on screen within 1 s. It accepts an M1 bridge (name falls back
 to the label, desk to the lowest free local slot) and the M2 bridge (its own `name` and `desk_index`). The session is stopped and deleted
 afterwards; after a hard kill, check `herdr session list` for a leftover `h3d-m2game-*` session.
 
 `test:live:m3` builds the bridge the same way (or `H3D_LIVE_BRIDGE=<path>`), starts `h3d-m3game-<random>` with two
-plain-shell workspaces (no coding agents) and the proxy to `$XDG_RUNTIME_DIR/h3d-m3game/bridge.sock`; the spec
-(`e2e-live/m3.spec.ts`) runs its own private bridge on it (db `/tmp/h3d-m3game/world.db`, `--sessions
+plain-shell workspaces (no coding agents) and the proxy to `$XDG_RUNTIME_DIR/h3d-m3game/<run>/bridge.sock`; the spec
+(`e2e-live/m3.spec.ts`) runs its own private bridge on it (db `/tmp/h3d-m3game/<run>/world.db`, `--sessions
 '^h3d-m3game-…$'`) so it can restart it. It creates a building and moves the floor into it from the UI, restarts the
 bridge and checks both are still there, then sleeps the floor and wakes it from the elevator panel and checks every
 worker kept its desk, and saves floor settings from the panel (a status with a comma among them) and checks the
@@ -606,7 +608,8 @@ removed; after a hard kill, check `herdr session list` and `systemctl --user lis
 plain shell in a temporary git repository (a commit not pushed to its local bare `origin`, a staged, a modified, a
 deleted and an untracked file) and two cheap Claude agents (`claude-haiku-4-5-20251001`, `low`, `--permission-mode
 default`) in new folders, so both stop at their trust dialogs; then a private bridge on
-`$XDG_RUNTIME_DIR/h3d-m5integ/bridge.sock` (db `/tmp/h3d-m5integ/world.db`) watching only that session, and the proxy.
+`$XDG_RUNTIME_DIR/h3d-m5integ/<run>/bridge.sock` (db `/tmp/h3d-m5integ/<run>/world.db`; `<run>` is the run's own, so
+runs in parallel worktrees keep apart, and each removes only its own) watching only that session, and the proxy.
 `e2e-live/m5.spec.ts` drives the real game UI against it, in order: the three laptops live (the real screens in the
 xterm buffers, one `terminal session observe` each); E at the shell's laptop, typed text echoing there, Esc back to the
 same pose, and after 20 sit / stand cycles no watch in the game and no observer process (`/proc`); the first agent's

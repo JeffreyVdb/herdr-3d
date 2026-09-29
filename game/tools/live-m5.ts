@@ -10,16 +10,19 @@
 // local bare `origin`), and two cheap Claude agents (haiku, low effort,
 // `--permission-mode default`) in fresh folders, so each stops at its trust
 // dialog. Then a private bridge watching only that session (socket
-// $XDG_RUNTIME_DIR/h3d-m5integ/bridge.sock, db /tmp/h3d-m5integ/world.db), the
-// WebSocket → unix-socket proxy on a leased port, and e2e-live/m5.spec.ts
+// $XDG_RUNTIME_DIR/h3d-m5integ/<run>/bridge.sock, db
+// /tmp/h3d-m5integ/<run>/world.db: <run> is this run's own, so runs in other
+// worktrees never share them), the WebSocket → unix-socket proxy on a leased
+// port, and e2e-live/m5.spec.ts
 // against the built game. Everything is stopped and the session deleted
 // afterwards, also on failure or Ctrl-C.
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bridgeHealthy } from './live-bridge.ts';
+import { makeRunPaths, removeRunPaths, runPaths, type RunPaths } from './live-paths.ts';
 import { Throwaway, cleanEnv, startScoped } from './herdr-throwaway.ts';
 import { startProxy } from './ws-unix-proxy.ts';
 
@@ -41,15 +44,13 @@ if (!existsSync(runtime)) {
   console.error(`no runtime dir (${runtime}); set XDG_RUNTIME_DIR`);
   process.exit(2);
 }
-const sockDir = join(runtime, 'h3d-m5integ');
-const sock = join(sockDir, 'bridge.sock');
-const dbDir = '/tmp/h3d-m5integ';
-
 const log = (m: string) => console.log(`live-m5: ${m}`);
 const procs: ChildProcess[] = [];
 let session: Throwaway | null = null;
 let closeProxy: (() => void) | null = null;
 let work: string | null = null;
+/** This run's bridge socket and database (made once `work` names the run). */
+let paths: RunPaths | null = null;
 let cleaned = false;
 
 async function cleanup(): Promise<void> {
@@ -63,7 +64,7 @@ async function cleanup(): Promise<void> {
     for (const p of problems) console.error(`live-m5 cleanup: ${p}`);
     log(`deleted throwaway session ${session.name}`);
   }
-  rmSync(sockDir, { recursive: true, force: true });
+  if (paths) removeRunPaths(paths);
   if (work) rmSync(work, { recursive: true, force: true });
 }
 
@@ -114,6 +115,9 @@ interface Created {
 async function main(): Promise<number> {
   mkdirSync(OUT, { recursive: true });
   work = mkdtempSync(join(tmpdir(), PREFIX));
+  const run = runPaths('h3d-m5integ', basename(work), runtime);
+  paths = run;
+  const sock = run.sock;
 
   let bin = process.env.H3D_LIVE_BRIDGE;
   if (bin) log(`using the prebuilt bridge ${bin}`);
@@ -132,12 +136,9 @@ async function main(): Promise<number> {
   await s.start(work, join(OUT, 'herdr-server.log'));
   log(`throwaway session ${s.name} is up`);
 
-  rmSync(sockDir, { recursive: true, force: true });
-  mkdirSync(sockDir, { recursive: true, mode: 0o700 });
-  mkdirSync(dbDir, { recursive: true });
-  rmSync(join(dbDir, 'world.db'), { force: true });
+  makeRunPaths(run);
   const bridgeLog = openSync(join(OUT, 'bridge.log'), 'w');
-  const bridge = spawn(bin, ['--socket', sock, '--db', join(dbDir, 'world.db'), '--sessions', `^${s.name}$`, '--log-level', 'debug'], {
+  const bridge = spawn(bin, ['--socket', sock, '--db', run.db, '--sessions', `^${s.name}$`, '--log-level', 'debug'], {
     env: cleanEnv(),
     stdio: ['ignore', bridgeLog, bridgeLog],
   });
