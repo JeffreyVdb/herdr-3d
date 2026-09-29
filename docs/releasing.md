@@ -40,7 +40,7 @@ h3d-update        # installs both from the latest release and starts them
 
 ## Updating
 
-`h3d-update [vX.Y.Z]` (latest by default):
+`h3d-update [vX.Y.Z]` (the newest full release by default; GitHub's "latest" skips prereleases, so name an `-rc` tag):
 
 1. downloads the release with `gh` and verifies `SHA256SUMS`;
 2. bridge: backs up `world.db` to `world.db.bak` (`sqlite3 .backup`), keeps the old binary as `herdr-world.prev`,

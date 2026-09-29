@@ -2,6 +2,7 @@ name: ci
 
 on:
   push:
+    branches: ["**"] # tags are built by release.yml
   workflow_dispatch:
 
 permissions:

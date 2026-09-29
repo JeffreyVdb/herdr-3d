@@ -73,5 +73,7 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" bin/release/* --clobber
           else
-            gh release create "$TAG" bin/release/* "${flags[@]}"
+            # A draft until every asset is up, so "latest" never points at a partial release.
+            gh release create "$TAG" bin/release/* "${flags[@]}" --draft
+            gh release edit "$TAG" --draft=false
           fi

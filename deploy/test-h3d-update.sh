@@ -95,7 +95,7 @@ run;               expect "update to latest (v0.2.0)" "v0.2.0/v0.2.0" "$(version
 expect "previous bridge kept" "yes" "$([ -e "$H3D_BIN/herdr-world.prev" ] && echo yes || echo no)"
 expect "previous helper kept" "yes" "$([ -e "$T/machome/.local/bin/h3d-helper.prev" ] && echo yes || echo no)"
 expect "database backed up" "1" "$(sqlite3 "$H3D_DB.bak" 'select count(*) from t')"
-run;               expect "same version is a no-op" "0" "$(grep -c -e '->' "$T/out" || true)"
+run;               expect "same version is a no-op: no download, no restart note" "0/1" "$(grep -c -e '->\|downloading\|restarted' "$T/out" || true)/$(grep -c 'nothing to do' "$T/out" || true)"
 run --check;       expect "--check changes nothing" "v0.2.0/v0.2.0" "$(versions)"
 run --rollback;    expect "rollback" "v0.1.0/v0.1.0" "$(versions)"
 run v0.3.0-rc.1

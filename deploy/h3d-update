@@ -138,6 +138,8 @@ flock -n 9 || die "another h3d-update is running"
 
 restore_db() {
   if [ -f "$DB.bak" ]; then
+    # Nothing may hold the database open while it is replaced; the caller restarts the unit.
+    systemctl --user stop "$UNIT" || true
     say "restoring the database from $DB.bak (writes since the backup are lost)"
     cp -f "$DB.bak" "$DB"
     rm -f "$DB-wal" "$DB-shm"
@@ -180,8 +182,19 @@ fi
 # --- update ----------------------------------------------------------------
 
 command -v gh >/dev/null || die "gh not found (needed to download the release)"
-[ -n "$tag" ] || tag=$(latest_tag) || die "cannot find the latest release of $REPO (gh auth status?)"
+[ -n "$tag" ] || tag=$(latest_tag) || die "cannot find a full (non-prerelease) release of $REPO; pass a tag such as v0.1.0-rc.1, or check gh auth status"
 echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' || die "'$tag' is not a release tag like v0.2.0"
+
+old_bridge=$(bridge_version | grep . || echo unknown)
+if [ "$force" = 0 ]; then
+  todo=0
+  { [ "$do_bridge" = 1 ] && [ "$old_bridge" != "$tag" ]; } && todo=1
+  { [ "$do_mac" = 1 ] && [ "$(mac_version | grep . || echo unknown)" != "$tag" ]; } && todo=1
+  if [ "$todo" = 0 ]; then
+    say "already at $tag: nothing to do"
+    exit 0
+  fi
+fi
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -191,8 +204,8 @@ gh release download "$tag" --repo "$REPO" --dir "$tmp" \
   --pattern herdr-world-linux-amd64 --pattern h3d-helper-darwin-arm64 --pattern SHA256SUMS
 (cd "$tmp" && sha256sum -c --quiet SHA256SUMS) || die "checksum mismatch: nothing was installed"
 
-old_bridge=$(bridge_version | grep . || echo unknown)
 old_mac=unknown
+mac_changed=0
 
 update_bridge() {
   if [ "$force" = 0 ] && [ "$old_bridge" = "$tag" ]; then
@@ -202,7 +215,7 @@ update_bridge() {
   if [ "$backup" = 1 ] && [ -f "$DB" ]; then
     command -v sqlite3 >/dev/null || die "sqlite3 not found for the database backup (install it, or pass --no-backup)"
     rm -f "$DB.bak"
-    sqlite3 "$DB" ".backup '$DB.bak'"
+    (umask 077 && sqlite3 "$DB" ".backup '$DB.bak'")
     say "database backed up to $DB.bak"
   fi
   mkdir -p "$BIN"
@@ -241,9 +254,10 @@ update_mac() {
     die "helper update to $tag failed (the bridge is already $tag; that pairing works, see docs/releasing.md)"
   fi
   say "helper  $old_mac -> $tag"
+  mac_changed=1
 }
 
 [ "$do_bridge" = 1 ] && update_bridge
 [ "$do_mac" = 1 ] && update_mac
 say "done: $tag."
-if [ "$do_mac" = 1 ]; then say "The helper restarted: its game window reconnects, or reopen the game app."; fi
+if [ "$mac_changed" = 1 ]; then say "The helper restarted: its game window reconnects, or reopen the game app."; fi
