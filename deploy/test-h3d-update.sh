@@ -55,7 +55,11 @@ cat >"$T/bin/ssh" <<'F'
 #!/usr/bin/env bash
 while [ "$1" = -o ]; do shift 2; done
 shift # host
-cd "$T/machome" && HOME="$T/machome" bash -c "$1"
+# Like a real ssh: the command goes through the remote login shell, which is
+# fish on the MacBook. Use fish here when it is installed so POSIX-only
+# commands that only work under bash are caught.
+sh=bash; command -v fish >/dev/null && sh=fish
+cd "$T/machome" && HOME="$T/machome" "$sh" -c "$*"
 F
 cat >"$T/bin/scp" <<'F'
 #!/usr/bin/env bash
@@ -99,6 +103,7 @@ echo v0.2.0 >"$T/state/latest"
 run v0.1.0;        expect "fresh install of v0.1.0" "v0.1.0/v0.1.0" "$(versions)"
 expect "no .prev on a fresh install" "no" "$([ -e "$H3D_BIN/herdr-world.prev" ] && echo yes || echo no)"
 run;               expect "update to latest (v0.2.0)" "v0.2.0/v0.2.0" "$(versions)"
+expect "the Mac side runs under sh, not the login shell (fish)" "0" "$(grep -c -e 'requires an argument' -e 'Standard input' "$T/out" || true)"
 expect "previous bridge kept" "yes" "$([ -e "$H3D_BIN/herdr-world.prev" ] && echo yes || echo no)"
 expect "previous helper kept" "yes" "$([ -e "$T/machome/.local/bin/h3d-helper.prev" ] && echo yes || echo no)"
 expect "database backed up" "1" "$(sqlite3 "$H3D_DB.bak" 'select count(*) from t')"
