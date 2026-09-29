@@ -14,13 +14,14 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
   ```
 - Text frames, one JSON object per frame. Every object has a string field `t`, its type. Client messages are limited to
   64 KiB.
-- The bridge reads herdr (`ping`, `session.snapshot`, `events.subscribe`, `herdr session list`). Its only writes to
-  herdr are `floor.wake` / `floor.sleep` (see [Wake and sleep](#wake-and-sleep)) and `worker.hire` / `worker.fire`
-  (see [Hire and send home](#hire-and-send-home)), through a narrow allowlist of `herdr` / `systemd-run` command
-  shapes (CONTRIBUTING "Bridge" lists them), plus a few typed `git` commands for hiring into a worktree and checking a
-  tree before sending its worker home. Every other command only changes the bridge's own SQLite database.
-- M5: the laptops watch a pane's screen with the read-only `herdr terminal session observe`, and type into a pane only
-  for `worker.keys`, `worker.prompt` and `worker.answer` (see [Laptops](#laptops-screens-input-changes-and-usage)).
+- The bridge reads herdr (`ping`, `session.snapshot`, `events.subscribe`, `herdr session list`, and for the laptop
+  screens the read-only `herdr terminal session observe`). Its only writes to herdr are `floor.wake` / `floor.sleep`
+  (see [Wake and sleep](#wake-and-sleep)), `worker.hire` / `worker.fire` (see [Hire and send
+  home](#hire-and-send-home)) and typing into a pane for `worker.keys`, `worker.prompt` and `worker.answer` (see
+  [Laptops](#laptops-screens-input-changes-and-usage)), through a narrow allowlist of `herdr` / `systemd-run` command
+  shapes (CONTRIBUTING "Bridge" lists them), plus a few typed `git` commands for hiring into a worktree, checking a
+  tree before sending its worker home and reading a worker's changes. Every other command only changes the bridge's
+  own SQLite database.
 
 ### Through `h3d-helper` (the Mac)
 
@@ -161,8 +162,8 @@ floor with no workers and an `error`).
 | `resume` | `pending` \| `confirmed` \| `fallback` \| `failed`, optional | only during and after a wake, for workers with an `agent_session`: how their agent came back (see [Wake and sleep](#wake-and-sleep)). Cleared by the next sleep and by a bridge restart. |
 | `hired_at` | int, optional | unix ms when the bridge hired this worker (`worker.hire`; stored). A client that first sees a worker with a recent `hired_at` (the game: under ~15 s) plays its walk-in. |
 | `branch` | string, optional | the checked-out branch of a worker in a linked worktree (`worktree.linked`), when known (read from the checkout's git `HEAD`; absent on a detached `HEAD`) |
-| `usage` | object, optional | M5: its agent session's token counts and cost estimate (see [Usage and cost](#usage-and-cost)); absent without an `agent_session` (a running Codex excepted), or until the bridge found its transcript |
-| `question` | object, optional | M5: what the screen of a `blocked` worker asks, while it is blocked (see [Blocked workers](#blocked-workers-question-quick-reply-approve--deny)) |
+| `usage` | object, optional | its agent session's token counts and cost estimate (see [Usage and cost](#usage-and-cost)); absent without an `agent_session` (a running Codex excepted), or until the bridge found its transcript |
+| `question` | object, optional | what the screen of a `blocked` worker asks, while it is blocked (see [Blocked workers](#blocked-workers-question-quick-reply-approve--deny)) |
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
 none, so the bridge keeps the last known value until a new one shows up. They are absent when never known.
@@ -212,7 +213,7 @@ and remember the last `seq` applied.
 | `worker.upsert` | `worker` | a worker appeared, or anything besides `status`/`title` changed, e.g. its `resume` (full object) |
 | `worker.status` | `id`, `session`, `workspace_id`, `status`, `prev_status`, `status_since`, `title` | only `status` and/or `title` changed (the hot path). `title` is always present, `""` when cleared; on a title-only change `prev_status` equals `status` and `status_since` does not move. |
 | `worker.removed` | `id`, `session`, `workspace_id`, `reason`? | the workspace closed, the session was deleted, or the identity changed. `reason` is `"sent_home"` when the removal comes from `worker.fire` (the game plays the walk-out); absent otherwise. |
-| `worker.usage` | `id`, `session`, `usage` | M5: the worker's `usage` changed; at most once per 5 s per worker (see [Usage and cost](#usage-and-cost)) |
+| `worker.usage` | `id`, `session`, `usage` | the worker's `usage` changed; at most once per 5 s per worker (see [Usage and cost](#usage-and-cost)) |
 
 ```json
 {"t":"floor.upsert","seq":1043,"floor":{"session":"herdr-3d","state":"running","building":null,"index":null,"desks":7}}
@@ -225,7 +226,7 @@ and remember the last `seq` applied.
 {"t":"floor.removed","seq":1050,"session":"pastry"}
 ```
 
-`terminal.frame` and `terminal.closed` (M5, [Laptop screens](#laptop-screens)) are not events: they go only to the
+`terminal.frame` and `terminal.closed` ([Laptop screens](#laptop-screens)) are not events: they go only to the
 connection that watches, have no `seq`, are not in the replay ring and are never replayed.
 
 A status or title change can also arrive inside a `worker.upsert` (when something else changed at the same time), so
@@ -283,7 +284,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.hire` | `{"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?}` | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent) |
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
-| `worker.changes` | `{"id": string}` | M5: the worker's git changes, `{"cwd", "branch", "head", "upstream", "ahead", "behind", "base", "files", "stat", "diff", "diff_bytes", "truncated", "omitted"}` (see [Changes](#changes)) | — |
+| `worker.changes` | `{"id": string}` | the worker's git changes, `{"cwd", "branch", "head", "upstream", "ahead", "behind", "base", "files", "stat", "diff", "diff_bytes", "truncated", "omitted"}` (see [Changes](#changes)) | — |
 | `terminal.watch` | `{"id": string, "fps"?: 1–30, "cols"?: 40–300, "rows"?: 10–100}` | `{"pane", "cols", "rows"}` | `terminal.frame`s to this connection only (see [Laptop screens](#laptop-screens)) |
 | `terminal.unwatch` | `{"id": string}` | — | — |
 | `worker.keys` | `{"id": string, "input": [{"text": string} \| {"key": string}…]}` | — | — (see [Input](#input)) |
@@ -882,10 +883,10 @@ bridge at start:
 | `input_failed` | `worker.keys` / `worker.answer`: herdr refused the keys or text, the screen could not be read, or 32 commands already wait for that worker; the message says why |
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
 | `stale` | `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked |
+| `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
+| `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
 | `hello_required`, `unsupported_proto` | handshake failures; the connection is then closed with status 1008 |
 | `internal` | the bridge failed (database error, or waking, sleeping, hiring and firing is not configured); safe to retry |
-| `changes_failed` | M5: `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
-| `not_a_repo` | M5: `worker.changes` for a worker whose directory is not in a git work tree |
 
 Errors not tied to a command have no `req_id`.
 
