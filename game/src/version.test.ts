@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bannerVersion, loadHelperVersion, summarize } from './version';
+import { BuildInfo, bannerVersion, loadHelperVersion, summarize } from './version';
 
 describe('bannerVersion', () => {
   it.each([
@@ -55,5 +55,23 @@ describe('loadHelperVersion', () => {
         throw new Error('offline');
       }) as unknown as typeof fetch),
     ).toBeNull();
+  });
+});
+
+describe('BuildInfo', () => {
+  it('summarizes what has arrived and tells listeners about each change', () => {
+    const info = new BuildInfo('v2');
+    let calls = 0;
+    const off = info.onChange(() => calls++);
+    expect(info.summary().text).toBe('game v2');
+    info.setHelper('v2');
+    info.setBridge('v1');
+    info.setBackend('webgpu');
+    expect(calls).toBe(3);
+    expect(info.backend).toBe('webgpu');
+    expect(info.summary()).toEqual({ text: 'game v2 · helper v2 · bridge v1 · versions differ', mismatch: true });
+    off();
+    info.setBridge('v2');
+    expect(calls).toBe(3);
   });
 });

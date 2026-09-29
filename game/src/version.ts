@@ -48,32 +48,41 @@ export async function loadHelperVersion(fetchFn: typeof fetch = fetch): Promise<
   }
 }
 
-/** The small line above the debug overlay. Empty (and hidden by CSS) until it has something to say. */
-export class VersionBadge {
-  private helper: string | null = null;
-  private bridge: string | null = null;
+/** What this session knows about its own build, for the About dialog: the versions as they arrive, and the renderer backend. */
+export class BuildInfo {
+  helper: string | null = null;
+  bridge: string | null = null;
+  backend: string | null = null;
+  private readonly listeners = new Set<() => void>();
 
-  constructor(
-    private readonly el: HTMLElement | null,
-    private readonly game: string = GAME_VERSION,
-  ) {
-    this.render();
-  }
+  constructor(readonly game: string = GAME_VERSION) {}
 
   setHelper(v: string | null): void {
     this.helper = v;
-    this.render();
+    this.emit();
   }
 
   setBridge(v: string | null): void {
     this.bridge = v;
-    this.render();
+    this.emit();
   }
 
-  private render(): void {
-    if (!this.el) return;
-    const s = summarize({ game: this.game, helper: this.helper, bridge: this.bridge });
-    this.el.textContent = s.text;
-    this.el.classList.toggle('warn', s.mismatch);
+  setBackend(v: string | null): void {
+    this.backend = v;
+    this.emit();
+  }
+
+  summary(): Summary {
+    return summarize({ game: this.game, helper: this.helper, bridge: this.bridge });
+  }
+
+  /** Calls `fn` on every change; returns the unsubscribe. */
+  onChange(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  private emit(): void {
+    for (const fn of this.listeners) fn();
   }
 }

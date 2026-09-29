@@ -40,12 +40,14 @@ import { PresetsPanel } from './ui/presets';
 import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/startRun';
 // M6 crew: freelancers drop in (M6b) and walk out with their briefcase.
 import { crewRole, isFreelancer } from './world/crew';
-import { bannerVersion } from './version';
+import { bannerVersion, type BuildInfo } from './version';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
   host: HTMLElement;
   params: URLSearchParams;
+  /** The build info the About panel shows. */
+  buildInfo?: BuildInfo;
   /** The bridge's build version, from each welcome (null when it does not say). */
   onBridgeVersion?: (version: string | null) => void;
 }
@@ -182,6 +184,7 @@ export class App {
     // Sound (the first click, key or pointer lock unlocks it) and the receptionist in every lobby.
     this.audio = createGameAudio();
     this.hud.mountAudio(this.audio);
+    if (o.buildInfo) this.hud.mountAbout(o.buildInfo);
     this.reception = createReception({ audio: this.audio, overlay: this.hud.root, shadows: this.shadows });
     this.radio = new RadioLink({ music: this.audio.music, toast: (m, ms, soft) => this.hud.toast(m, ms, 'info', soft), hudRadio: (n) => this.hud.setRadio(n) });
     this.city = new CityView(
