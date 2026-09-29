@@ -69,6 +69,7 @@ func FromSnapshot(snap *herdr.Snapshot) []WorkerObs {
 			w.IdentityCwd = w.Worktree.CheckoutPath
 		}
 		w.Role, w.Run = RoleRun(w.Label, ws.Tokens)
+		w.RunInfo = RunOf(w.Label, ws.Tokens) // M6 runs
 		w.Harness, w.Model, w.Effort = HarnessOf(ws.Tokens, w.AgentKind)
 		out = append(out, w)
 	}
@@ -175,6 +176,7 @@ func FromSessionFile(sf *herdr.SessionFile) []WorkerObs {
 			}
 		}
 		w.Role, w.Run = RoleRun(w.Label, nil)
+		w.RunInfo = RunOf(w.Label, nil) // M6 runs
 		w.Harness, _, _ = HarnessOf(nil, w.AgentKind)
 		out = append(out, w)
 	}

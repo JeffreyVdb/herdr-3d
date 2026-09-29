@@ -68,6 +68,7 @@ func (h *Hub) suggester(ctx context.Context) {
 				f.origins = origins
 				h.refreshSuggested(job.session, f)
 				h.syncLayout()
+				h.relink() // M6 runs: the floor's repo may have changed
 			})
 		}
 	}

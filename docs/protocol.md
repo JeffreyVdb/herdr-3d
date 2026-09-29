@@ -176,6 +176,13 @@ floor with no workers and an `error`).
 | `branch` | string, optional | the checked-out branch of a worker in a linked worktree (`worktree.linked`), when known (read from the checkout's git `HEAD`; absent on a detached `HEAD`) |
 | `usage` | object, optional | its agent session's token counts and cost estimate (see [Usage and cost](#usage-and-cost)); absent without an `agent_session` (a running Codex excepted), or until the bridge found its transcript |
 | `question` | object, optional | what the screen of a `blocked` worker asks, while it is blocked (see [Blocked workers](#blocked-workers-question-quick-reply-approve--deny)) |
+| `round` | int ≥ 1, optional | write-code round: the `h3d_round` token, else the label's trailing `\|r<N>` (see [Runs and freelancers](#runs-and-freelancers)) |
+| `ticket` | string ≤ 32 bytes, optional | the `h3d_ticket` token, else the label's ticket field (`CODE\|descr\|<ticket>\|r<N>`, likewise `REVIEW` and `UX`) |
+| `issue` | object, optional | `{"repo":"owner/name","number":7}`: the GitHub issue of the worker's run, when a repo is known |
+| `orch_id` | string, optional | freelancers: the worker id of their orchestrator |
+| `phase`, `pass` | string, int ≥ 0, optional | orchestrators: the `h3d_phase` / `h3d_pass` tokens (`research\|coding\|review\|fixing\|waiting_user\|pr\|done`, others passed through, ≤ 32 bytes), remembered like `harness` |
+| `over_cap` | bool, optional | orchestrators: `true` past write-code's review-pass cap (`pass > 3`, or `pass == 3` and `phase == "waiting_user"`); absent when false |
+| `report` | object, optional | freelancers: their write-code report (see [Runs and freelancers](#runs-and-freelancers)) |
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
 none, so the bridge keeps the last known value until a new one shows up. They are absent when never known.
@@ -210,6 +217,57 @@ development build stored twice on a floor (the most recently seen worker keeps i
 `status_since` is stored with the status it belongs to. After a bridge restart a worker whose status is unchanged
 keeps its `status_since` (idle ages don't reset); one whose status changed while the bridge was down starts at the
 time the bridge sees it.
+
+A write-code freelancer sits next to its orchestrator instead: see [Runs and freelancers](#runs-and-freelancers).
+
+### Runs and freelancers
+
+A write-code run is an orchestrator (`role: "orch"`, an employee) and its **freelancers** (`code`, `review`, `ux`,
+`ground`), each in its own workspace. The skill tags every workspace with `h3d_*` tokens (`herdr workspace
+report-metadata`); runs started without them are read from the labels (`ORCH|descr`, `CODE|descr|<ticket>|r<N>`,
+`REVIEW|…`, `UX|…`, `GROUND|topic`), where the run is the label's `descr`.
+
+- **Orchestrator** (`orch_id`): a freelancer's orchestrator has the same `run`, on the freelancer's floor if there is
+  one there, else on another floor. With none, a freelancer whose run comes from its label (no `h3d_run` token) belongs
+  to the only orchestrator of its floor, if there is exactly one.
+- **Issue** (`issue`): the floor's repo is its `settings.repo`, else `suggested.repo`. A freelancer's issue is its own
+  numeric `ticket` (`7`, `#7`) in its floor's repo, else its orchestrator's. An orchestrator's is the one the game
+  started it with (`run.start`), else its own numeric `ticket`, else the most common numeric ticket of its
+  freelancers (ties: the lowest) in its floor's repo. Without a repo there is no issue; a ticket like `m6` gives none.
+- **Phase and pass**: an orchestrator's `phase` and `pass` are remembered (SQLite `worker_run`) when herdr drops the
+  tokens, until new values show up; `over_cap` follows from them.
+- **Desks**: desks come in pods of 4 (`desk_index / 4`). A freelancer new to a floor whose orchestrator is on that
+  floor takes the free desk nearest the orchestrator's: the same pod first, then the other pods by their distance, then
+  the lower index; the floor grows its desks when it needs to. A newcomer that took the lowest free desk because its
+  link was not known yet (the tokens arrive just after `workspace create`) moves **once**, within 10 s of taking it,
+  when that puts it nearer (an ordinary `worker.upsert` with the new `desk_index`). Hired workers keep the desk they were
+  hired at; everyone else takes the lowest free desk as before.
+
+**Reports.** A freelancer with an `h3d_run` and an `h3d_report` token has a `report`: the file
+`<runs-dir>/<h3d_run>/<h3d_report>` (bridge flag `--runs-dir`, default `~/.local/state/write-code/runs`). The bridge
+stats the report of every live freelancer about once a second and reads it only when its size or mtime changed; a
+change is one `worker.upsert`. A new `h3d_report` value (the fresh path after `input_required`) starts over at
+`pending`.
+
+```json
+{"state":"pending"}
+{"state":"ready","at":1790650000000,"verdict":"CHANGES_REQUIRED","blockers":2,"issues":5,"summary":"…"}
+{"state":"ready","at":1790650000000,"input_required":"Which port should the demo use?"}
+{"state":"invalid","at":1790650000000,"error":"not a JSON object"}
+```
+
+| field | |
+|---|---|
+| `state` | `pending` (no file yet), `ready`, `invalid` |
+| `at` | unix ms, the file's mtime (absent for a bad name) |
+| `verdict` | reviewers (`review`, `ux`) only: `PASS` \| `CHANGES_REQUIRED` \| `INCOMPLETE`; any other value, or none without `input_required`, is `invalid` |
+| `blockers`, `issues` | reviewers: how many `issues_found` have `priority == "BLOCKER"`, and how many there are |
+| `input_required` | what the worker needs to go on, cut to 500 bytes (UTF-8 safe); absent when null or empty |
+| `summary` | coders and researchers: their `summary`, cut to 300 bytes |
+| `error` | why a report is `invalid`: a run id or report name not matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$`, not a regular file (a symlink is not followed), over 256 KiB, not a JSON object, a bad verdict |
+
+The game derives a freelancer's lifecycle from these (hired, onboarding, working, blocked on `status: blocked` or a
+`report.input_required`, reporting on a `ready` report, leaving on `worker.removed`); nothing else goes on the wire.
 
 ## Events
 

@@ -10,7 +10,8 @@
   WebSocket, wake/sleep, floor settings, hire/send home, M6 team presets and `run.start`), `proto` (protocol v1 types and client), `gitremote` (GitHub
   origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires, send-homes and the Changes
   panel), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
-  usage and cost from their transcripts, read incrementally, and the pricing table). Helper: `helper` (ssh tunnel
+  usage and cost from their transcripts, read incrementally, and the pricing table), `runs` (M6: write-code runs, the
+  freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it). Helper: `helper` (ssh tunnel
   supervisor, game server, `/ws` proxy). `app` holds both command lines.
 - `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).
 - `game/` — the game: Vite + strict TypeScript + three.js (`three/webgpu`), pnpm.
@@ -174,6 +175,7 @@ that directory.
 | `--resume-timeout` | `HERDR_WORLD_RESUME_TIMEOUT` | `10s`: how long a wake waits for the agents before the fallback, and again for the fallback and its result (a wake acks within about `--wake-timeout` + 2 × this) |
 | `--codex-sessions` | `HERDR_WORLD_CODEX_SESSIONS` | `$CODEX_HOME/sessions`, else `~/.codex/sessions`: Codex rollouts, for the sleep backfill and usage |
 | `--claude-projects` | `HERDR_WORLD_CLAUDE_PROJECTS` | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`: Claude Code transcripts, for usage (M5) |
+| `--runs-dir` | `H3D_RUNS_DIR` | `$XDG_STATE_HOME/write-code/runs`, else `~/.local/state/write-code/runs`: write-code's run directories, for the freelancers' reports (M6, [`docs/protocol.md` "Runs and freelancers"](docs/protocol.md#runs-and-freelancers)); read only |
 | `--pricing` | `HERDR_WORLD_PRICING` | none: a JSON file of model prices merged over the built-in table (`internal/usage/pricing.json`; format in [`docs/protocol.md` "Usage and cost"](docs/protocol.md#usage-and-cost)) |
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
 | `--warn-workers`, `--max-workers` | `HERDR_WORLD_WARN_WORKERS`, `HERDR_WORLD_MAX_WORKERS` | `48`, `96`: the same for all watched running floors together |
@@ -197,8 +199,9 @@ journalctl --user -u herdr-world -f
 `Runner` that plays herdr and systemd-run; hires and send-homes run against an in-memory herdr floor and git). Only
 `internal/gitops` runs the real `git`, on repositories in a temp dir (M5: `worker.changes` is checked against `git
 status` and `git diff --stat` there, byte for byte against `git diff`). `internal/usage` reads synthetic transcripts
-(`testdata/`, no real content) and temp files. `make integration` runs, with build tag `integration`, against the
-installed herdr:
+(`testdata/`, no real content) and temp files; `internal/runs` and the M6 hub tests read temp run directories and a
+synthetic over-cap run (`internal/runs/testdata/overcap`, mirrored by the game's fixture sim). `make integration` runs,
+with build tag `integration`, against the installed herdr:
 
 - `TestIntegrationThrowawaySession`: starts a headless server for a fresh session `h3d-it-<random>`, creates
   workspaces, reports a custom agent's states through `herdr pane report-agent` (no real coding agent), closes a
@@ -233,6 +236,11 @@ installed herdr:
   answers: each must reply with it, so the prompt arrived intact as one prompt. Checks the desk, label, ack, `run_launch`
   and `last_preset`, and that `herdr workspace report-metadata … --token h3d_run=…` fills `run_launch.run_id`. About
   30 s, one short turn each.
+- `TestIntegrationRuns` (M6): a write-code run without agents: plain workspaces, an `ORCH|…`, a coder and a reviewer
+  created and tagged with `workspace report-metadata` the way the skill does it, and a label-only coder; reports
+  published by rename into a temporary `--runs-dir`. It checks the links, the issue from the floor's repo, the desks
+  next to the orchestrator, the report states (pending, ready with verdict and counts, pending again for a new
+  `h3d_report`, invalid) and `over_cap`.
 
 The screens the question parser is tested on (`internal/server/testdata/screens`) were captured the same way, from
 throwaway sessions (`herdr pane read <pane> --source visible`): Claude's trust dialog, its Bash and Write permission

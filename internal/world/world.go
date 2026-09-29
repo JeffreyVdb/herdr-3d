@@ -98,6 +98,8 @@ type WorkerObs struct {
 	Harness string
 	Model   string
 	Effort  string
+	// M6 runs: RunInfo is the rest of its write-code run details.
+	RunInfo Run
 }
 
 // Worktree is a workspace's git worktree provenance.

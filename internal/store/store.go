@@ -148,6 +148,14 @@ var migrations = []string{
 	// team" (deleting it does not bring it back), the preset of each
 	// floor's last run.start, and the runs started from the game.
 	migrationLaunch,
+	// M6 runs: an orchestrator's last known write-code phase and pass
+	// (pass NULL = unknown), remembered when herdr drops the tokens.
+	`CREATE TABLE worker_run (
+		worker_uuid TEXT PRIMARY KEY REFERENCES worker(id) ON DELETE CASCADE,
+		phase       TEXT NOT NULL,
+		pass        INTEGER CHECK (pass IS NULL OR pass >= 0),
+		updated_at  TEXT NOT NULL
+	);`,
 }
 
 // Fingerprint kinds.
