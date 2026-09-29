@@ -66,8 +66,9 @@ export class PromptOverlay {
   private result: PromptResult | null = null;
   private statusText = '';
   private statusError = false;
-  /** Unsent text per worker, kept when the overlay closes. */
+  /** Unsent text per worker, kept when the overlay closes, and how often it was edited (a send clears only its own). */
   private readonly drafts = new Map<string, string>();
+  private readonly edits = new Map<string, number>();
   private gen = 0;
   private headKey = '';
 
@@ -78,6 +79,7 @@ export class PromptOverlay {
     this.alertEl.hidden = this.statusEl.hidden = true;
     this.textEl.addEventListener('input', () => {
       this.drafts.set(this.id, this.textEl.value);
+      this.edits.set(this.id, (this.edits.get(this.id) ?? 0) + 1);
       // Writing the next one: the last result steps back (and the "Will queue" chip is up again while it works).
       if (this.state === 'sent' || this.state === 'failed') {
         this.state = 'ready';
@@ -110,6 +112,10 @@ export class PromptOverlay {
       void this.send();
     });
     this.dialog.append(this.head, this.form, h('footer', { class: 'dd-foot' }, this.chip, this.statusEl, this.alertEl, this.actions));
+    // Closing makes a send still on its way answer in a toast (and keep a newer draft). Esc and close() count at
+    // once: the 'close' event comes a task later, when P may have opened the overlay again, so it counts, and
+    // lets go of the focus, only while the overlay is still shut.
+    this.dialog.addEventListener('cancel', () => this.gen++);
     this.dialog.addEventListener('close', () => {
       if (!this.dialog.open) this.gen++;
     });
@@ -118,7 +124,9 @@ export class PromptOverlay {
       if (this.dialog.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
     };
     this.dialog.addEventListener('cancel', letGo);
-    this.dialog.addEventListener('close', letGo);
+    this.dialog.addEventListener('close', () => {
+      if (!this.dialog.open) letGo();
+    });
     this.dialog.addEventListener('click', (e) => {
       if (e.target === this.dialog) this.close();
     });
@@ -137,6 +145,7 @@ export class PromptOverlay {
   close(): void {
     if (!this.dialog.open) return;
     if (this.dialog.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
+    this.gen++;
     this.dialog.close();
   }
 
@@ -250,6 +259,7 @@ export class PromptOverlay {
     const id = this.id;
     const name = this.name;
     const gen = this.gen;
+    const edit = this.edits.get(id) ?? 0;
     this.state = 'sending';
     this.result = null;
     this.setStatus(`Sending to ${name}…`);
@@ -259,7 +269,8 @@ export class PromptOverlay {
     if (r.ok) {
       const ack = (r.data ?? {}) as Partial<PromptAck>;
       const result = { queued: ack.queued === true, retried: ack.retried === true };
-      this.drafts.delete(id);
+      // Sent: its draft goes, unless you wrote another one meanwhile (closed and opened the overlay again).
+      if ((this.edits.get(id) ?? 0) === edit) this.drafts.delete(id);
       const msg = result.queued
         ? `Queued: ${name} takes it after the current turn.`
         : result.retried

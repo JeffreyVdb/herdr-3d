@@ -118,6 +118,36 @@ test('P prompts the looked-at worker: sent, then it works and is done; queued wh
   clean();
 });
 
+for (const pause of [0, 300]) {
+  test(`a draft written while the last prompt is on its way survives that prompt’s success (reopened after ${pause} ms)`, async ({ page }) => {
+    const clean = watchErrors(page);
+    // A slow simulator: the prompt to idle Pebble is acked a step (1.5 s) later.
+    await openGame(page, 'demo-m5', '', 'play=none&sim=1&simms=1500&simusage=0');
+    await enter(page, 'herdr-3d');
+    const pebble = await face(page, 'Pebble');
+    await page.keyboard.press('p');
+    await promptPanel(page, 'ready');
+    await page.keyboard.type('First submitted prompt');
+    await page.keyboard.press('Enter');
+    await promptPanel(page, 'sending');
+    await page.keyboard.press('Escape');
+    await expect.poll(() => panel(page)).toBeNull();
+    await page.waitForTimeout(pause);
+    await page.keyboard.press('p');
+    await promptPanel(page, 'ready');
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('Second unsent draft must survive');
+    await page.keyboard.press('Escape');
+    await expect.poll(() => panel(page)).toBeNull();
+    await expect(toast(page)).toContainText('Sent: Pebble is on it.', { timeout: 10_000 });
+    expect((await sent(page)).filter((c) => c.t === 'worker.prompt').map((c) => c.args)).toEqual([{ id: pebble, text: 'First submitted prompt' }]);
+    await page.keyboard.press('p');
+    expect((await promptPanel(page)).text).toBe('Second unsent draft must survive');
+    await page.keyboard.press('Escape');
+    clean();
+  });
+}
+
 test('P says why not: a plain shell, a worker waiting on a question, an asleep floor; a failed prompt keeps the text and shows the reason', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page, 'demo-m5', '', `${SIM}&simfail=prompt_failed`);
