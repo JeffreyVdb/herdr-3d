@@ -14,6 +14,8 @@ import { DeskSet } from './desks';
 import { MezzanineView } from './mezzanine';
 import { BODY_TINTS, OFFICE } from './palette';
 import { buildProps, signTexture, type PropMeshes } from './props';
+// M7: the corkboard, the pull request board and the merge gong.
+import { BoardsView } from './boards/boards';
 // M6: write-code crews.
 import { crewLookOf, type CrewLook } from './crewLook';
 
@@ -105,8 +107,12 @@ export function turnTowards(slot: { seat: { x: number; z: number }; yaw: number 
  * places the building around it). Windows are holes with glass you see out
  * of; the fire-escape door in the west wall slides open (`setDoor`).
  */
+let officeSerial = 0;
+
 export class OfficeView {
   readonly root = new THREE.Group();
+  /** Counts the offices built (test hook: a board update must not build another). */
+  readonly serial = ++officeSerial;
   readonly layout: FloorLayout;
   readonly session: string;
   readonly cards: AtlasCards;
@@ -115,6 +121,8 @@ export class OfficeView {
   private readonly crowd: Crowd;
   private readonly desks: DeskSet;
   private readonly props: PropMeshes;
+  /** M7: the boards on the board wall (notes, flights, gong). */
+  readonly boards: BoardsView;
   private readonly seats: Array<WorkerView | null>;
   private readonly anchors: Array<THREE.Vector3 | null>;
   private readonly static: THREE.Object3D[] = [];
@@ -129,6 +137,8 @@ export class OfficeView {
   private readonly mezz: MezzanineView;
   private readonly ownDesk: Pickable<Target>;
   private overlook = false;
+  /** M7: notes, flights or the gong moved on the last frame (the game keeps its frame rate up meanwhile). */
+  boardsBusy = false;
   private asleep = false;
   private cardsDirty = true;
   /** Walking obstacles and pick targets, until a seat changes. */
@@ -270,6 +280,8 @@ export class OfficeView {
 
     this.props = buildProps(L.props, L, view.level ? `${view.level.number}` : '·');
     this.root.add(this.props.group);
+    this.boards = new BoardsView(L.props, L.height, (id, tex) => this.props.swapBoard(id, tex));
+    this.root.add(this.boards.group);
 
     this.kits = L.slots.map((s) => deskKit(s));
     this.desks = new DeskSet(L.desks, o.shadows, { plus: true, kits: this.kits });
@@ -592,6 +604,7 @@ export class OfficeView {
   frame(t: number, camera: THREE.PerspectiveCamera | THREE.OrthographicCamera, cardCam: THREE.PerspectiveCamera, vp: { width: number; height: number }, moved: boolean): void {
     this.crowd.update(t);
     this.desks.update(t, camera);
+    this.boardsBusy = this.boards.frame(performance.now());
     this.cardCam = cardCam;
     this.cards.update(cardCam, this.anchors, vp, moved || this.cardsDirty);
     this.cardsDirty = false;
@@ -602,6 +615,7 @@ export class OfficeView {
     this.mezz.dispose();
     this.crowd.dispose();
     this.desks.dispose();
+    this.boards.dispose();
     this.props.dispose();
     this.root.removeFromParent();
     this.root.traverse((o) => {

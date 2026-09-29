@@ -1,0 +1,1 @@
+mutation CloseIssue($issueId:ID!, $reason:IssueClosedStateReason!) { closeIssue(input:{issueId:$issueId,stateReason:$reason}) { issue { id number state stateReason closedAt } } }

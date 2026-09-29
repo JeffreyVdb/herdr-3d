@@ -588,7 +588,7 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 		rep.step("herdr worktree create %s from %s (%s)", op.branch, base, sha)
 		// Recorded as the bridge's, for this worker: only such a branch is
 		// ever deleted (send home's delete_branch, or a rollback).
-		rec := store.HireBranch{WorkerID: op.id, Session: op.session, RepoRoot: repo, Branch: op.branch, BaseSHA: sha}
+		rec := store.HireBranch{WorkerID: op.id, Session: op.session, RepoRoot: repo, Branch: op.branch, BaseSHA: sha, Base: def}
 		var recErr error
 		if err := h.doWait(ctx, func() { recErr = h.st.RecordHireBranch(ctx, rec) }); err != nil {
 			return

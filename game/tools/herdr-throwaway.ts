@@ -8,8 +8,8 @@ import { openSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 
 export const PREFIX = 'h3d-m2game-';
-/** Name prefixes this helper may create and touch (M2 latency, M3 floors, M5 recorded laptop screens, M5 live). */
-export const PREFIXES = [PREFIX, 'h3d-m3game-', 'h3d-m5screen-', 'h3d-m5integ-'];
+/** Name prefixes this helper may create and touch (M2 latency, M3 floors, M5 recorded laptop screens, M5 live, M7 boards). */
+export const PREFIXES = [PREFIX, 'h3d-m3game-', 'h3d-m5screen-', 'h3d-m5integ-', 'h3d-m7game-'];
 const ours = (name: string) => PREFIXES.some((p) => name.startsWith(p)) && /^[A-Za-z0-9._-]{1,64}$/.test(name);
 
 /** process.env without HERDR_* and CLAUDE* (they retarget herdr at the caller's own pane). */

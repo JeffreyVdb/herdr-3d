@@ -41,3 +41,24 @@ describe('failureText', () => {
     expect(failureText('worker.hire', 'unknown_command', 'unknown command')).toBe('This herdr-world can’t hire workers yet. Update the bridge to use it.');
   });
 });
+
+describe('failureText: boards (M7)', () => {
+  it('says an older bridge can’t show boards', () => {
+    expect(failureText('board.watch', 'unknown_command', 'unknown command "board.watch"')).toBe('This herdr-world can’t show the issues and pull request boards yet. Update the bridge to use it.');
+  });
+
+  it('names the item and the provider, never an id', () => {
+    expect(failureText('pr.merge', 'checks_not_green', 'checks are failure', { item: '#31', provider: 'GitHub' })).toBe('#31’s checks are not passing (checks are failure). Wait for them, or merge anyway.');
+    expect(failureText('pr.merge', 'not_mergeable', 'the pull request has merge conflicts', { item: '#31' })).toBe('#31 is not mergeable (the pull request has merge conflicts).');
+    expect(failureText('pr.merge', 'stale', '', { item: '#31' })).toMatch(/^#31 changed while you decided/);
+    expect(failureText('issue.close', 'not_found', 'x', { item: '#9' })).toMatch(/^#9 is not on the board any more/);
+    expect(failureText('issue.close', 'provider_failed', 'GitHub auth', { provider: 'GitHub' })).toBe('GitHub refused or failed: GitHub auth. Nothing was changed as far as herdr-world knows; try again.');
+    expect(failureText('issue.comment', 'rate_limited', '', { provider: 'GitHub' })).toMatch(/^GitHub is rate limiting/);
+    expect(failureText('issue.set_status', 'unsupported', 'no project', { provider: 'GitHub' })).toBe('GitHub can’t do that here (no project).');
+    expect(failureText('issue.close', 'confirmation_required', '')).toMatch(/wanted a confirmation/);
+  });
+
+  it('still calls a missing building a building', () => {
+    expect(failureText('building.rename', 'not_found', '')).toBe('That building no longer exists.');
+  });
+});

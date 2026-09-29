@@ -22,6 +22,8 @@ import { PanelsSim } from './fixture-panels.ts';
 import { StartSim } from './fixture-start.ts';
 // M6 crew: a scripted freelancer (`sim.crew`, `simcrew=<ms>`).
 import { CrewSim } from './fixture-crew.ts';
+// M7: the issues and pull request boards (`board.watch`, `sim.boards`, `simfail=no_m7`).
+import { BoardSim } from './fixture-boards.ts';
 
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
@@ -145,12 +147,35 @@ export class SimWorld {
         prepare: (session) => this.hirePrepare({ session }),
         hireWorker: (a, send, ack, fail) => this.hireWorker(a, send, ack, fail),
         error: (code, message) => new CmdError(code, message),
+        workItem: (session, wi) => this.boards.resolveWorkItem(session, wi),
       },
       o.fail !== 'no_m6',
       (snapshot.world as { presets?: unknown }).presets,
     );
     if (o.crewMs !== undefined) this.crewMs = o.crewMs;
+    this.boards = new BoardSim(
+      {
+        floors: this.floors,
+        workers: this.workers,
+        now: this.now,
+        later: (fn, ms) => {
+          const h = this.setT(() => {
+            this.timers.delete(h);
+            fn();
+          }, ms);
+          this.timers.add(h);
+          return h;
+        },
+        error: (code, message) => new CmdError(code, message),
+        hireBranch: (id) => this.hireBranch.get(id),
+        dirty: (w) => this.tree(w).dirty.length > 0,
+      },
+      o.fail !== 'no_m7',
+    );
   }
+
+  /** M7: boards, work items and opening a PR (tools/fixture-boards.ts). */
+  private readonly boards: BoardSim;
 
   /** M6 start: presets and runs (tools/fixture-start.ts). */
   private readonly start6: StartSim;
@@ -188,6 +213,7 @@ export class SimWorld {
     const world: Obj = { buildings, unassigned, floors, workers };
     if (this.hireSent) world.hire_options = this.hire;
     this.start6.decorate(world);
+    this.boards.decorate(world as { workers?: Worker[] });
     return { t: 'world.snapshot', seq: this.seq, world: structuredClone(world) };
   }
 
@@ -245,6 +271,7 @@ export class SimWorld {
       send = screens.tap(send);
       if (screens.handle(m.t, a, send, ack, (code, message) => send({ t: 'error', req_id: reqId, code, message }))) return;
       if (this.start6.handle(m.t, a, send, ack, fail)) return;
+      if (this.boards.handle(m.t, a, send, ack, fail)) return;
       switch (m.t) {
         case 'building.create':
           return ack(this.create(a, send));

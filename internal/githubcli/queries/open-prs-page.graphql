@@ -1,0 +1,16 @@
+query OpenPRsPage($owner:String!, $repo:String!, $after:String!) {
+  repository(owner:$owner, name:$repo) {
+    openPRs: pullRequests(first:100, after:$after, states:OPEN, orderBy:{field:UPDATED_AT,direction:DESC}) {
+      totalCount pageInfo { hasNextPage endCursor }
+      nodes { ...PRCard }
+    }
+  }
+  rateLimit { cost limit remaining resetAt }
+}
+fragment PRCard on PullRequest {
+  id number title url state isDraft headRefName baseRefName
+  author { login avatarUrl } createdAt updatedAt mergedAt
+  mergeable reviewDecision additions deletions changedFiles
+  closingIssuesReferences(first:100) { pageInfo { hasNextPage endCursor } nodes { number repository { nameWithOwner } } }
+  commits(last:1) { nodes { commit { oid statusCheckRollup { state contexts(first:100) { pageInfo { hasNextPage endCursor } nodes { ... on CheckRun { name status conclusion detailsUrl } ... on StatusContext { context state targetUrl } } } } } } }
+}

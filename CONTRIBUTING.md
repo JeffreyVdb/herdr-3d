@@ -11,7 +11,11 @@
   origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires, send-homes and the Changes
   panel), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
   usage and cost from their transcripts, read incrementally, and the pricing table), `runs` (M6: write-code runs, the
-  freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it). Helper: `helper` (ssh tunnel
+  freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it); M7 boards:
+  `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
+  interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
+  repository and project, the writes) and `githubcli` (the typed `gh` runner). `server`, `store` and `proto` never import
+  `github` or `githubcli` (`TestBoardLayerIsProviderNeutral`): `app` wires the provider in. Helper: `helper` (ssh tunnel
   supervisor, game server, `/ws` proxy). `app` holds both command lines.
 - `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).
 - `game/` — the game: Vite + strict TypeScript + three.js (`three/webgpu`), pnpm.
@@ -80,18 +84,30 @@ parts:
   and efforts, prompts not starting with `--`), every argument is its own argv element, sessions outside `--sessions`
   are refused, and commands run with the `HERDR_*`/`CLAUDE*` variables stripped. `TestControlAllowlist` pins the set,
   the argv and the exported methods; widening any needs review.
-- **git** (`gitops.Git`, hires, send-homes and `worker.changes` only): exactly thirteen shapes (`shapes`, pinned by
-  `TestGitAllowlist`):
+- **git** (`gitops.Git`, hires, send-homes, `worker.changes` and, M7, `worker.open_pr`): exactly sixteen shapes (`shapes`,
+  pinned by `TestGitAllowlist`):
   `git -C <dir>` `rev-parse --show-toplevel`, `fetch --quiet origin`, `symbolic-ref --quiet --short
   refs/remotes/origin/HEAD`, `log -1 --format=%H %ct origin/<…> --`, `status --porcelain`, `symbolic-ref --quiet --short
   HEAD`, `rev-list --count HEAD --not --remotes`, `rev-list --count refs/heads/h3d/<…> --not --remotes`, `rev-parse
   --verify --quiet refs/heads/h3d/<…>`, `branch -D h3d/<…>`, and for the Changes panel (M5, read-only) `status
   --porcelain=v2 --branch -z --untracked-files=all`, `merge-base HEAD origin/<…>` and `diff --numstat --patch -z
-  --find-renames --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ <commit id | HEAD> --`. A
+  --find-renames --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ <commit id | HEAD> --`, and for
+  opening a pull request (M7) `push -u origin refs/heads/h3d/<…>:refs/heads/h3d/<…>` (the branch name is validated
+  and is only ever the one the bridge recorded for that worker; the one shape that writes outside the checkout),
+  `rev-list --count HEAD --not origin/<…>` and `log --format=%s -n 20 HEAD --not origin/<…> --`. A
   branch is deleted only when the bridge recorded
   making it for that worker (SQLite `hire_branch`, with its base commit; the name alone proves nothing) and either
   still points at that base (a hire's rollback, clean tree) or has all its commits on a remote (send home, the
   checkout still on it). Same clean environment, plus `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`.
+
+- **gh** (`githubcli.Client`, M7 boards): exactly one shape, `gh api graphql --method POST --input -`, with the request
+  as JSON on stdin: `{"query": <one of the embedded documents in internal/githubcli/queries>, "variables": {…}}`.
+  Never a query, a field or an argument from a client. `gh` keeps its own authentication (the bridge stores no
+  token); the environment is the bridge's minus `HERDR_*` / `CLAUDE*`, plus `GH_PROMPT_DISABLED=1 NO_COLOR=1
+  GH_NO_UPDATE_NOTIFIER=1`; 20 s per call, output capped at 8 MiB; GraphQL `errors` are read also when `gh` exits 0;
+  401 / exit 4 is `provider_failed` "GitHub auth", a rate limit is `rate_limited`. `TestGitHubAllowlist` pins the argv,
+  the set of documents and which of them write (six mutations: addComment, addProjectV2ItemById,
+  updateProjectV2ItemFieldValue, closeIssue, mergePullRequest, createPullRequest).
 
 Everything else the bridge changes is its own SQLite database. How a wake and a sleep go, and what they log:
 [`docs/protocol.md` "Wake and sleep"](docs/protocol.md#wake-and-sleep); hiring and sending home:
@@ -161,6 +177,26 @@ bin/herdr-world cmd --socket "$sock" run.start "{\"session\":\"$s\",\"desk_index
 sqlite3 /tmp/h3d-mytask/world.db 'select id, run_id, repo, issue_number, preset_name from run_launch'
 ```
 
+To try the boards (M7), link a floor to a repository and, for Status columns, a Projects v2 project (both settings the
+bridge already had), and watch it. **Read** a real repository freely, but **write only to a throwaway one**
+(`JeffreyVdb/h3d-lab`, project 3): a comment, a status change, a close, a merge or a push on a real repository is real.
+`dump --board` prints the messages of a watch, `cmd` sends the commands:
+
+```sh
+bin/herdr-world cmd --socket "$sock" floor.settings.set "{\"session\":\"$s\",\"repo\":\"JeffreyVdb/herdr-3d\",\"project\":{\"owner\":\"JeffreyVdb\",\"number\":2}}"
+bin/herdr-world dump --socket "$sock" --board $s --once | jq -c 'select(.t == "board.issues" and .fetched_at > 0) | {columns: [.columns[].name], cards: [.cards[] | {key, column, state}]}'
+gh project item-list 2 --owner JeffreyVdb --format json | jq '.items[] | {n: .content.number, status}'   # the same, from gh
+# on the lab repo (link it first: repo JeffreyVdb/h3d-lab, project {JeffreyVdb, 3}):
+bin/herdr-world cmd --socket "$sock" issue.comment "{\"session\":\"$s\",\"id\":\"JeffreyVdb/h3d-lab#3\",\"body\":\"hello\"}"
+bin/herdr-world cmd --socket "$sock" issue.close "{\"session\":\"$s\",\"id\":\"JeffreyVdb/h3d-lab#3\",\"reason\":\"completed\",\"confirm\":true}"
+bin/herdr-world cmd --socket "$sock" worker.open_pr.prepare '{"id":"<a plain worktree hire on the lab repo>"}'
+bin/herdr-world cmd --socket "$sock" pr.merge "{\"session\":\"$s\",\"id\":\"JeffreyVdb/h3d-lab#5\",\"method\":\"squash\",\"confirm\":true}"
+sqlite3 /tmp/h3d-mytask/world.db 'select cmd, ok, error, args, result from audit_log where cmd like "issue.%" or cmd like "pr.%" or cmd like "worker.open_pr%"'
+```
+
+`go test -tags live ./internal/github -run TestLiveBoard -v` reads a repository through the real `gh` (default
+`JeffreyVdb/herdr-3d` and its project 2; `H3D_LIVE_REPO`, `H3D_LIVE_PROJECT=owner/number`) and writes nothing.
+
 herdr puts worktrees in `~/.herdr/worktrees/<repo name>/`: give a throwaway repository a unique name and remove that
 directory when done. Answering a trust dialog is remembered by the agent (`~/.claude.json`, `~/.codex/config.toml`) for
 that directory.
@@ -184,6 +220,7 @@ that directory.
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
 | `--warn-workers`, `--max-workers` | `HERDR_WORLD_WARN_WORKERS`, `HERDR_WORLD_MAX_WORKERS` | `48`, `96`: the same for all watched running floors together |
 | `--git` | `HERDR_WORLD_GIT` | `git` on `PATH`: worktree hires, send-home checks and the repo suggestion |
+| `--gh` | `HERDR_WORLD_GH` | `gh` on `PATH`: the issue and pull request boards (M7); without it boards say `gh not found` |
 | `--max-watches` | `HERDR_WORLD_MAX_WATCHES` | `6`: laptop screens (`terminal.watch`) one connection may watch at once (`capacity` above) |
 | `--max-observers` | `HERDR_WORLD_MAX_OBSERVERS` | `16`: laptop screens watched at once over all connections, one `terminal session observe` each |
 | `--log-level`, `--log-format` | `HERDR_WORLD_LOG_LEVEL`, `HERDR_WORLD_LOG_FORMAT` | `info`, `text` (or `json`) |
@@ -206,7 +243,9 @@ status` and `git diff --stat` there, byte for byte against `git diff`). `interna
 (`testdata/`, no real content) and temp files; `internal/runs` and the M6 hub tests read temp run directories and a
 synthetic over-cap run (`game/fixtures/runs/20260928-1400-overcap`, the very run the game's `demo-m6` floor is built
 from: `TestOverCapFixture` reads it in place). `make integration` runs,
-with build tag `integration`, against the installed herdr:
+with build tag `integration`, against the installed herdr (the board code is tested without GitHub: the `internal/github`
+and board tests run a fake `gh` over recorded GraphQL fixtures in `internal/github/testdata`, and the server tests fake
+both providers):
 
 - `TestIntegrationThrowawaySession`: starts a headless server for a fresh session `h3d-it-<random>`, creates
   workspaces, reports a custom agent's states through `herdr pane report-agent` (no real coding agent), closes a
@@ -275,6 +314,14 @@ killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herd
 - it opens a Chrome `--app` window on `http://127.0.0.1:7777/#token=…` with its own profile (`-no-open` skips that; it also skips it when the game is installed as a Chrome app, see
   `docs/releasing.md`).
   The token is kept in a file and survives restarts, so an open game window reconnects by itself.
+- (M7) `POST /api/open {"url": "https://github.com/…"}` opens a page in the Mac's default browser (`open <url>`), for
+  the game's "Open in GitHub" buttons and the links in issue bodies. Same Host and Origin checks as `/ws`, the token in
+  the `X-H3D-Token` header (never in a URL), `Content-Type: application/json`, a body of at most 4 KiB; only `https://`
+  URLs on a listed host (`internal/helper.DefaultOpenHosts`: `github.com`; a provider added later adds its host there),
+  no credentials or port, no control characters. `204` on success, `400` for a refused URL, `403` for a failed check,
+  `502` when `open` failed; `go test ./internal/helper` covers it with a fake opener. A page not served by the helper
+  (Vite on the server) has no endpoint, and the game opens a new window instead (`https://` only); a page the helper
+  serves never falls back to a window: a URL it refuses gets a notice and is not opened.
 
 It needs non-interactive SSH from the Mac to the host (`BatchMode=yes`: a key in the agent/keychain, host key known).
 State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not answering through the tunnel`,
@@ -488,6 +535,19 @@ after its first frame. E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1%26simms%3D300%26
 M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
 `simfail=no_m6` plays a bridge without them. E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simms%3D300`.
 
+M7 on the simulating server (`tools/fixture-boards.ts`, rules at its top): the boards of the floor you are on, from its
+effective repo (`settings.repo ?? suggested.repo`; none: `board.watch` answers `enabled: false`). `JeffreyVdb/lab` and
+`JeffreyVdb/herdr-3d` have a project (Todo / Doing / QA / Done), `JeffreyVdb/bench` (the `perf-boards` fixture) 100 issues
+and 20 pull requests, any other repo no project (Open / Closed, no `set_status`). lab issue #7 has a markdown body full of
+script, handlers, `javascript:` links, svg, an iframe, a form and a tracking pixel: the sanitiser's fixture. Writes queue a
+poll of the floor, as the bridge does. `sim.boards` (the simulator's own command, `simBoards(args)` in the hooks) merges a
+PR (`{merge: id}`: gone from the open list, announced by the next poll, its issues closed and in Done), makes the next polls
+fail (`{fail: "message"}`, or `head_moved` to make a merge answer `stale`; `{fail: null}` clears it), sets the rate limit
+(`{rate: {remaining, reset_at}}`) or the paging flag (`{truncated: true}`), moves a card (`{card: {id, column}}`) or polls
+(`{poll: true}`). `simfail=no_m7` plays a bridge before M7 (every board command `unknown_command`). `open=none` in the page
+URL makes "Open in …" record the page instead of opening a window. E.g.
+`?ws=%2Ffixture%2Fdemo-m6%3Fsim%3D1%26simms%3D150&floor=lab`.
+
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings
 panel: create, rename, delete (confirmed: it names the building and how many floors go back to the lot), move buildings
@@ -685,6 +745,12 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # tracks): look-at bar, E through Off / genres, R, the now-playing toast, fade in
                               # the lobby and back, a missing file, the music popover (slider / mute), the Music credits panel;
                               # m15-{radio,radio-hint,radio-toast,audio-controls,credits}.png
+                              # M7 on demo-m6 with sim=1 (m7-boards.spec.ts, m7-actions.spec.ts, m7-perf.spec.ts): the
+                              # corkboard and PR board (columns, paper, pins, holders, CI, verdict stamps), E and the
+                              # top bar opening the overlays, no-project / no-repo / older-bridge floors, the watch
+                              # (one floor, again after a reconnect), diff animations, the sanitised markdown, Hand to
+                              # a worker and the peel-off, Ask, Close, Move, comment, Merge and its double confirmation,
+                              # the gong, Open PR for a plain worker, 100 issues + 20 PRs; m7-*.png
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
 pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
 pnpm -C game test:live:m5     # opt-in: the M5 laptops and panels against a real bridge and Claude (see below)
@@ -807,6 +873,16 @@ M15 radio: `radio()` → `{genre, trackId, playing, volume, muted}` (`genre` is 
 sounds on the floor that has the radio, and false when it is off, muted, faded out (lobby, street, fire escape, city) or not
 unlocked yet), `radioEvents()` (what the radio did, in order: `genre`, `select`, `start`, `skip`, `fade` in / out,
 `unavailable`, each with `at`, and the genre / track / detail).
+M7 boards: `boards()` (what the wall shows for the floor with an interior: `issues` / `prs` notes with their `id`, pose,
+atlas `cell` and `face` (key, title, paper, pin, holder, done / CI, review, closes, stamp), `flights` in the air and
+`flightLog` of those that landed, `gongRings`, `issuesWrites` / `prsWrites` (buffer writes: a quiet poll adds none),
+`batches` (two instanced draws, however many notes), `office` (a counter: a board update must not build another floor),
+`watched` and `off`), `board()` (the open overlay: its columns with the keys of their cards, the freshness notice, and
+the open item modal with its visible `actions`, open confirmation, comments and body text), `openBoard(which)`,
+`openBoardItem(which, id)`, `injectBoard(message)`, `boardLog()` (the `board.watch` / `unwatch` / `refresh` the game sent
+by itself; `sent()` leaves them out), `opened()` (pages the game asked to open, and `via` `helper` or `window`),
+`simBoards(args)`. `dialog()` also returns the Open PR dialog (`kind: 'open-pr'`), and a start-run dialog started from a
+card has `ticket.kind === 'work_item'`.
 
 ### Audio and voice lines
 

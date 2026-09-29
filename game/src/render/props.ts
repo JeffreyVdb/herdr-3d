@@ -118,6 +118,8 @@ export function elevatorMeshes(box: Box3, label: string, sub: string): { group: 
 
 export interface PropMeshes {
   group: THREE.Group;
+  /** M7: puts another texture on the front of a board (its cork, drawn by the board's notes). */
+  swapBoard(id: 'board.issues' | 'board.prs', tex: THREE.Texture): void;
   /** M15: the radio on the lounge counter (null when the layout has none). */
   radio: RadioMesh | null;
   dispose(): void;
@@ -141,16 +143,18 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
   };
 
   const boards: Array<[Prop['id'], string, string, string]> = [
-    ['board.issues', 'Issues', 'arrives in M7', '#ffb38a'],
-    ['board.prs', 'Pull requests', 'arrives in M7', '#b9a5ff'],
+    ['board.issues', 'Issues', 'connecting…', '#ffb38a'],
+    ['board.prs', 'Pull requests', 'connecting…', '#b9a5ff'],
     ['board.services', 'Services', 'arrives in M12', '#8fe0c0'],
   ];
+  const boardMeshes = new Map<string, THREE.Mesh>();
   for (const [id, title, note, tint] of boards) {
     const p = byId.get(id);
     if (!p) continue;
     const m = boxAt(p.box, toon(0x7a5230));
     faceTexture(m, tex(boardTexture(title, note, tint)), 0x7a5230);
     add(m);
+    boardMeshes.set(id, m);
   }
 
   const wb = byId.get('whiteboard');
@@ -334,6 +338,20 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
 
   return {
     group,
+    swapBoard(id, t) {
+      const m = boardMeshes.get(id);
+      const mats = m?.material;
+      if (!Array.isArray(mats)) return;
+      const front = mats[4];
+      if (front instanceof THREE.MeshToonMaterial) {
+        front.map = t;
+        // Readable in the room's light: the board's own print glows a little.
+        front.emissive.set(0xffffff);
+        front.emissiveMap = t;
+        front.emissiveIntensity = 0.3;
+        front.needsUpdate = true;
+      }
+    },
     radio,
     dispose() {
       group.traverse((o) => {

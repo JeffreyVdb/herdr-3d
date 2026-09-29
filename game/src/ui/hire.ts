@@ -48,6 +48,12 @@ export interface HireHost extends DialogHost {
   orchestrate?: { off(): string | null; open(session: string, desk: number): void };
 }
 
+/** M7: what "Ask a worker…" and "Review with a worker" start the dialog with. */
+export interface HirePrefill {
+  prompt?: string;
+  choice?: { harness: string; model: string; effort: string };
+}
+
 export type HireState = 'preparing' | 'ready' | 'hiring' | 'failed';
 
 /** What the hire dialog shows (test hook). */
@@ -103,6 +109,7 @@ export class HireDialog {
   private readonly foot = h('footer', { class: 'dd-foot' }, this.notices, this.statusEl, this.alertEl, this.actions);
   private session = '';
   private desk = 0;
+  private prefill: HirePrefill = {};
   private state: HireState = 'preparing';
   private prep: HirePrepare | null = null;
   private f: HireForm = { prompt: '', harness: '', model: '', effort: '', label: '', cwd: '', worktree: false };
@@ -161,13 +168,17 @@ export class HireDialog {
     this.dialog.querySelector<HTMLElement>('[data-key="tab:worker"]')?.focus();
   }
 
-  /** Opens the dialog for a desk of a floor and asks the bridge for the defaults. */
-  open(session: string, desk: number): void {
+  /**
+   * Opens the dialog for a desk of a floor and asks the bridge for the defaults. M7: `prefill` starts the form with a
+   * first task ("Ask a worker…", "Review with a worker") and, for the review, the reviewer's harness / model / effort.
+   */
+  open(session: string, desk: number, prefill: HirePrefill = {}): void {
     this.session = session;
     this.desk = desk;
     this.prep = null;
     this.prepared = null;
-    this.f = { prompt: '', harness: '', model: '', effort: '', label: '', cwd: '', worktree: false };
+    this.prefill = prefill;
+    this.f = { prompt: prefill.prompt ?? '', harness: '', model: '', effort: '', label: '', cwd: '', worktree: false };
     this.state = 'preparing';
     this.renderedKey = '';
     this.refetching = false;
@@ -220,6 +231,12 @@ export class HireDialog {
       const prompt = this.f.prompt;
       this.f = { ...formFromPrepare(p, options), prompt };
       this.prepared = resolveChoice(options, p.choice ?? null);
+      // A reviewer's model wins over the floor's default (and is no longer "the floor default").
+      const want = this.prefill.choice ? resolveChoice(options, this.prefill.choice) : null;
+      if (want) {
+        Object.assign(this.f, want);
+        this.prepared = null;
+      }
     }
     this.state = 'ready';
     this.setStatus('');

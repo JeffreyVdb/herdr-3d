@@ -8,7 +8,7 @@ import { App, type LookAt, type Pose } from './app';
 import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
 import { runBench, type BenchOptions, type BenchResult } from './bench';
 import type { ScreenMeshInfo } from './laptop';
-import type { CommandName, WorldEvent } from './net/protocol';
+import type { BoardMessage, CommandName, WorldEvent } from './net/protocol';
 import type { ArrivalInfo } from './render/arrivals';
 import type { CrewInfo } from './render/office';
 import type { HireSummary } from './ui/hire';
@@ -19,6 +19,9 @@ import type { PromptSummary } from './ui/prompt';
 // M6 start
 import type { PresetsSummary } from './ui/presets';
 import type { StartRunOptions, StartRunSummary } from './ui/startRun';
+// M7: boards
+import type { BoardSummary } from './ui/boards/panel';
+import type { OpenPrSummary } from './ui/boards/openPr';
 import type { NeedItem } from './world/next';
 import { BuildInfo, loadHelperVersion } from './version';
 import type { Area, BuildingPlan } from './world/building';
@@ -138,7 +141,7 @@ export interface H3DDebug {
   /** M4: opens the send-home dialog for a worker. */
   openSendHome(workerId: string): void;
   /** M4: what the open hire / send-home dialog shows, null when neither is open; M6: the presets panel (on top), else the start-run dialog first. */
-  dialog(): HireSummary | SendHomeSummary | StartRunSummary | PresetsSummary | null;
+  dialog(): HireSummary | SendHomeSummary | StartRunSummary | PresetsSummary | OpenPrSummary | null;
   /** M6: the start-run dialog for a floor (default: yours) and desk (default: its first free one), as the top bar's Run and M7 open it. */
   openStartRun(o?: Partial<StartRunOptions>): void;
   /** M6: the team presets panel. */
@@ -168,6 +171,22 @@ export interface H3DDebug {
   crew(): { members: CrewInfo[]; shown: string[] };
   /** M6: the scripted freelancer of the fixture simulator (`sim=1`): one `sim.crew` step. */
   simCrew(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** M7: the open Issues / Pull requests overlay (and its item modal), null when none is open. */
+  board(): BoardSummary | null;
+  /** M7: what the boards on the wall show: notes (with their atlas cell and pose), flights, gong rings, buffer writes. */
+  boards(): ReturnType<import('./app').App['boardsInfo']>;
+  /** M7: applies a board message as if the bridge had sent it. */
+  injectBoard(m: BoardMessage): void;
+  /** M7: the overlay for the floor you are on, as the top bar's Issues / PRs (and E on a board) open it. */
+  openBoard(which: 'issues' | 'prs'): void;
+  /** M7: the overlay with an item's modal open (an opaque id). */
+  openBoardItem(which: 'issues' | 'prs', id: string): void;
+  /** M7: the `board.watch` / `unwatch` / `refresh` the game sent by itself (`sent()` leaves them out). */
+  boardLog(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
+  /** M7: pages the game asked to open, and how (`helper`: the Mac helper's endpoint took it, `window`: a new window). */
+  opened(): Array<{ url: string; via: string }>;
+  /** M7: the fixture simulator's `sim.boards` (merge a PR, make polls fail, …). */
+  simBoards(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
 }
 
 declare global {
@@ -276,7 +295,7 @@ const h3d: H3DDebug = {
   connection: () => ({ phase: app?.conn.phase ?? 'stopped', epoch: app?.client.resume.epoch ?? null }),
   openHire: (desk) => app?.openHire(desk),
   openSendHome: (id) => app?.openSendHome(id),
-  dialog: () => app?.presetsPanel.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.sendHome.summary() ?? null,
+  dialog: () => app?.presetsPanel.summary() ?? app?.openPr.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.sendHome.summary() ?? null,
   openStartRun: (o) => app?.openStartRun(o),
   openPresets: () => app?.openPresets(),
   arrivals: () => app?.arrivals.info(performance.now() / 1000) ?? [],
@@ -298,6 +317,22 @@ const h3d: H3DDebug = {
     if (!app) return { ok: false, code: 'not_started' };
     // `sim.crew` is the fixture simulator's, not a bridge command.
     const r = await app.client.request('sim.crew' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  board: () => app?.boardsPanel.summary() ?? null,
+  boards: () => app?.boardsInfo() ?? null,
+  injectBoard: (m) => app?.injectBoard(m),
+  openBoard: (w) => app?.openBoard(w),
+  openBoardItem: (w, id) => {
+    const s = app?.hereSession();
+    if (s) app?.boardsPanel.openItem(w, s, id);
+  },
+  boardLog: () => structuredClone(app?.boardLog ?? []),
+  opened: () => structuredClone(app?.opened ?? []),
+  simBoards: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    // `sim.boards` is the fixture simulator's, not a bridge command.
+    const r = await app.client.request('sim.boards' as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
   openChanges: (id) => {

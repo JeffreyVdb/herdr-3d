@@ -10,6 +10,10 @@ export interface FailureContext {
   worker?: string;
   /** The building name the command was about, or the new name. */
   name?: string;
+  /** M7: the issue or pull request the command was about, as people name it (`#9`). */
+  item?: string | undefined;
+  /** M7: what the provider is called (`GitHub`). */
+  provider?: string | undefined;
 }
 
 /** What each command does, for "This herdr-world can't … yet". */
@@ -40,6 +44,19 @@ const DOES: Record<CommandName, string> = {
   'preset.delete': 'keep team presets',
   'run.prepare': 'start runs',
   'run.start': 'start runs',
+  // M7
+  'board.watch': 'show the issues and pull request boards',
+  'board.unwatch': 'show the issues and pull request boards',
+  'board.refresh': 'show the issues and pull request boards',
+  'issue.get': 'read issues',
+  'issue.comment': 'comment on issues',
+  'issue.close': 'close issues',
+  'issue.set_status': 'move issues between columns',
+  'pr.get': 'read pull requests',
+  'pr.comment': 'comment on pull requests',
+  'pr.merge': 'merge pull requests',
+  'worker.open_pr.prepare': 'open pull requests for workers',
+  'worker.open_pr': 'open pull requests for workers',
 };
 
 export function failureText(t: CommandName, code: string, message: string, ctx: FailureContext = {}): string {
@@ -69,6 +86,7 @@ export function failureText(t: CommandName, code: string, message: string, ctx: 
     case 'name_taken':
       return `Another building is already called “${ctx.name ?? ''}”. Pick another name.`;
     case 'not_found':
+      if (isBoardCommand(t)) return `${ctx.item ?? 'That item'} is not on the board any more. The board shows what is there now.`;
       return 'That building no longer exists.';
     case 'unknown_session':
       return `herdr-world does not know ${ctx.floor ?? 'that floor'}: it was deleted, or this bridge does not watch it.`;
@@ -94,6 +112,7 @@ export function failureText(t: CommandName, code: string, message: string, ctx: 
     case 'prompt_failed':
       return `The prompt did not reach ${ctx.worker ?? 'the worker'}: ${why.replace(/^prompt_failed:\s*/, '') || 'the agent did not start'}. Your text is still here: try again, or sit at its laptop (E).`;
     case 'stale':
+      if (t === 'pr.merge') return `${ctx.item ?? 'The pull request'} changed while you decided (a new commit arrived). Read it again before you merge.`;
       return `${ctx.worker ?? 'The worker'}’s question changed before the answer arrived. The card shows the current one.`;
     case 'input_failed':
       return `herdr could not type into ${ctx.worker ?? 'the worker'}’s pane${why ? `: ${why.replace(/^input_failed:\s*/, '')}` : ''}.`;
@@ -101,6 +120,21 @@ export function failureText(t: CommandName, code: string, message: string, ctx: 
       return `${ctx.worker ?? 'This worker'}’s folder is not a git repository, so there are no changes to show.`;
     case 'changes_failed':
       return `git did not answer in time${why ? ` (${why.replace(/^changes_failed:\s*/, '')})` : ''}. Refresh to try again.`;
+    // M7: boards
+    case 'confirmation_required':
+      return `herdr-world wanted a confirmation for that and did not get one${why ? ` (${why})` : ''}.`;
+    case 'unsupported':
+      return `${ctx.provider ?? 'This provider'} can’t do that here${why ? ` (${why})` : ''}.`;
+    case 'provider_failed':
+      return `${ctx.provider ?? 'The provider'} refused or failed${why ? `: ${why}` : ''}. Nothing was changed as far as herdr-world knows; try again.`;
+    case 'rate_limited':
+      return `${ctx.provider ?? 'The provider'} is rate limiting herdr-world${why ? ` (${why})` : ''}. Try again after the reset time on the board.`;
+    case 'checks_not_green':
+      return `${ctx.item ?? 'The pull request'}’s checks are not passing${why ? ` (${why})` : ''}. Wait for them, or merge anyway.`;
+    case 'not_mergeable':
+      return `${ctx.item ?? 'The pull request'} is not mergeable${why ? ` (${why})` : ''}.`;
   }
   return `${code}: ${why}`;
 }
+
+const isBoardCommand = (t: CommandName): boolean => t.startsWith('issue.') || t.startsWith('pr.') || t.startsWith('worker.open_pr') || t.startsWith('board.');

@@ -217,6 +217,22 @@ var (
 	issueURLRe = regexp.MustCompile(`^https://github\.com/([^/\s]+/[^/\s]+)/issues/([0-9]+)/?$`)
 )
 
+// runTicketOf is a run's ticket from its issue, text or work_item (nil when
+// none is given). A work_item on a floor with no polled board also returns
+// a check to run off the hub goroutine before the ticket is used (see
+// workItemTicket); verified says it has been run.
+func (h *Hub) runTicketOf(session string, f *floorState, issue json.RawMessage, text string, item *proto.WorkItemRef,
+	verified bool) (*proto.RunTicket, func(context.Context) error, error) {
+	if item != nil { // M7 boards: a card of the floor's issue provider
+		if (len(issue) > 0 && string(issue) != "null") || text != "" {
+			return nil, nil, bad("give one of an issue, a text and a work_item")
+		}
+		return h.workItemTicket(session, item, verified)
+	}
+	t, err := h.runTicket(session, f, issue, text)
+	return t, nil, err
+}
+
 // runTicket reads a run's ticket from its issue or text (nil when neither
 // is given). An issue number takes the floor's effective repo.
 func (h *Hub) runTicket(session string, f *floorState, issue json.RawMessage, text string) (*proto.RunTicket, error) {
@@ -322,7 +338,7 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 	if err != nil {
 		return err
 	}
-	ticket, err := h.runTicket(a.Session, f, a.Issue, a.Text)
+	ticket, check, err := h.runTicketOf(a.Session, f, a.Issue, a.Text, a.WorkItem, false)
 	if err != nil {
 		return err
 	}
@@ -357,6 +373,11 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 		}
 	}
 	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
+		if check != nil {
+			if err := check(ctx); err != nil {
+				return nil, err
+			}
+		}
 		res.Git = h.gitInfo(ctx, cwd)
 		if h.opts.Load != nil {
 			res.Capacity.Load = h.opts.Load()
@@ -374,13 +395,39 @@ func (h *Hub) startRunStart(ctx context.Context, c *Client, cmd proto.Command) e
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	return h.runStart(ctx, c, cmd, a, false)
+}
+
+// runStart is startRunStart after the args are read. A work_item that the
+// floor's provider must vouch for (no board polled yet) is checked off the
+// hub goroutine, then the start goes on from here with verified set.
+func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a proto.RunStartArgs, verified bool) error {
 	f, err := h.hireFloor(a.Session)
 	if err != nil {
 		return err
 	}
-	ticket, err := h.runTicket(a.Session, f, a.Issue, a.Text)
+	ticket, check, err := h.runTicketOf(a.Session, f, a.Issue, a.Text, a.WorkItem, verified)
 	if err != nil {
 		return err
+	}
+	if check != nil {
+		h.wg.Add(1)
+		go func() {
+			defer h.wg.Done()
+			err := check(ctx)
+			if derr := h.doWait(ctx, func() {
+				if err == nil {
+					err = h.runStart(ctx, c, cmd, a, true)
+				}
+				if err != nil {
+					h.audit(ctx, c, cmd, err)
+					h.reply(c, cmd, nil, err)
+				}
+			}); derr != nil {
+				h.log.Warn("command abandoned", "cmd", cmd.T, "err", derr)
+			}
+		}()
+		return nil
 	}
 	if ticket == nil {
 		return bad("an issue or a text is required")
@@ -424,6 +471,12 @@ func (h *Hub) startRunStart(ctx context.Context, c *Client, cmd proto.Command) e
 		} else {
 			h.runPending[res.ID] = true
 			h.fillRunIDs(ctx)
+			// The first observation of the orchestrator may have missed the
+			// record (it is written after the hire): forget that miss and link
+			// now, so its issue and work item are on the wire before this ack
+			// instead of tens of seconds later.
+			delete(h.runs.launches, res.ID)
+			h.relink()
 		}
 		if _, ok := h.presets[p.ID]; ok { // not deleted meanwhile
 			if err := h.st.SetLastPreset(ctx, a.Session, p.ID); err != nil {

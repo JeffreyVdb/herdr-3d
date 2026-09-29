@@ -347,6 +347,12 @@ test('keyboard only on a floor: the top bar, L and the arrow keys reach the elev
   expect(await page.evaluate(() => window.__h3d.lookAt()?.id)).not.toBe('elevator');
   await page.keyboard.press('KeyE');
   expect(await panel(page)).toBeNull();
+  // (M7: arriving, you face the PR board, and E on a board opens its overlay: Esc puts you back on the scene.)
+  if (await page.evaluate(() => window.__h3d.board() !== null)) {
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.evaluate(() => window.__h3d.board())).toBeNull();
+    await page.waitForFunction(() => document.activeElement === document.body);
+  }
 
   // 1. The top bar: Shift+Tab, then Tab along to Elevator.
   expect(await focused(page)).toBe('BODY');

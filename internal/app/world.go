@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
+	"github.com/JeffreyVdb/herdr-3d/internal/githubcli"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitremote"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
@@ -44,6 +45,7 @@ const (
 	EnvResumeTime = "HERDR_WORLD_RESUME_TIMEOUT"
 	EnvCodex      = "HERDR_WORLD_CODEX_SESSIONS"
 	EnvGit        = "HERDR_WORLD_GIT"
+	EnvGH         = "HERDR_WORLD_GH" // M7 boards
 	EnvFloorWarn  = "HERDR_WORLD_WARN_WORKERS_PER_FLOOR"
 	EnvFloorMax   = "HERDR_WORLD_MAX_WORKERS_PER_FLOOR"
 	EnvHostWarn   = "HERDR_WORLD_WARN_WORKERS"
@@ -238,6 +240,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	herdrBin := fs.String("herdr", envOr(EnvHerdr, "herdr"), "herdr executable ($"+EnvHerdr+")")
 	systemdRun := fs.String("systemd-run", envOr(EnvSystemdRun, "systemd-run"), "systemd-run executable, to wake floors ($"+EnvSystemdRun+")")
 	gitBin := fs.String("git", envOr(EnvGit, "git"), "git executable, for worktree hires and send-home checks ($"+EnvGit+")")
+	ghBin := fs.String("gh", envOr(EnvGH, "gh"), "gh executable, for the issue and pull request boards ($"+EnvGH+")") // M7 boards
 	codexSessions := fs.String("codex-sessions", envOr(EnvCodex, codex.DefaultSessionsDir()), "Codex rollout directory, for the sleep backfill and usage ($"+EnvCodex+")")
 	claudeProjects := fs.String("claude-projects", envOr(EnvClaudeProjects, usage.DefaultClaudeProjects()), "Claude Code transcript directory, for usage ($"+EnvClaudeProjects+")")
 	runsDir := fs.String("runs-dir", envOr(EnvRunsDir, DefaultRunsDir()), "write-code runs directory, for the freelancers' reports ($"+EnvRunsDir+")") // M6 runs
@@ -309,7 +312,8 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
 		ClaudeProjects: *claudeProjects, Pricing: pricing,
 		MaxWatches: maxWatches, MaxObservers: maxObservers,
-		RunsDir: *runsDir, // M6 runs
+		RunsDir: *runsDir,                                     // M6 runs
+		Boards:  GitHubBoards(&githubcli.Client{Bin: *ghBin}), // M7 boards
 	})
 }
 
@@ -366,6 +370,12 @@ type ServeConfig struct {
 	// (0: server.DefaultReportPoll).
 	RunsDir    string
 	ReportPoll time.Duration
+
+	// M7 boards: Boards finds the issue tracker and code host of a floor's
+	// link (nil: no boards). The poll timings are server.Options' (0:
+	// defaults).
+	Boards                                                    server.BoardFactory
+	BoardWatchPoll, BoardIdlePoll, BoardRefreshMin, BoardTick time.Duration
 }
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
@@ -389,12 +399,16 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	if cfg.Git != nil {
 		opts.Git = cfg.Git
 		opts.Changes = cfg.Git // M5 usage
+		opts.PRGit = cfg.Git   // M7 boards
 	}
 	if cfg.ClaudeProjects != "" || cfg.CodexSessions != "" { // M5 usage
 		opts.Usage = &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: cfg.ClaudeProjects, CodexSessions: cfg.CodexSessions},
 			Pricing: cfg.Pricing}
 	}
 	opts.RunsDir, opts.ReportPoll = cfg.RunsDir, cfg.ReportPoll // M6 runs
+	opts.Boards = cfg.Boards                                    // M7 boards
+	opts.BoardWatchPoll, opts.BoardIdlePoll, opts.BoardRefreshMin, opts.BoardTick =
+		cfg.BoardWatchPoll, cfg.BoardIdlePoll, cfg.BoardRefreshMin, cfg.BoardTick
 	opts.Caps, opts.HireOptions, opts.Load = cfg.Caps, cfg.HireOptions, server.HostLoad
 	opts.TrustTimeout, opts.SeenTimeout, opts.ExitTimeout = cfg.TrustTimeout, cfg.SeenTimeout, cfg.ExitTimeout
 	if dir := cfg.CodexSessions; dir != "" {
@@ -499,6 +513,7 @@ func dumpMain(ctx context.Context, name string, args []string, stdout, stderr io
 	once := fs.Bool("once", false, "exit after the snapshot (or the replay)")
 	since := fs.Int64("since", -1, "replay events after this seq instead of taking a snapshot (needs -epoch)")
 	epoch := fs.String("epoch", "", "bridge epoch the -since seq belongs to (from a previous welcome)")
+	board := fs.String("board", "", "watch this floor's issue and pull request boards too (board.watch): with -once, stop at the first fetched pair")
 	if err := fs.Parse(args); err != nil {
 		return usageError(err)
 	}
@@ -517,9 +532,16 @@ func dumpMain(ctx context.Context, name string, args []string, stdout, stderr io
 		return err
 	}
 	fmt.Fprintf(stderr, "welcome: epoch=%s server_seq=%d resume=%s\n", welcome.Epoch, welcome.ServerSeq, welcome.Resume)
-	if *once && welcome.Resume == proto.ResumeReplay && hello.SinceSeq != nil && *hello.SinceSeq == welcome.ServerSeq {
+	if *once && *board == "" && welcome.Resume == proto.ResumeReplay && hello.SinceSeq != nil && *hello.SinceSeq == welcome.ServerSeq {
 		return nil
 	}
+	if *board != "" { // M7 boards
+		watch := proto.Command{T: proto.CmdBoardWatch, ReqID: "dump-board", Args: mustMarshal(proto.BoardArgs{Session: *board})}
+		if err := conn.Send(ctx, watch); err != nil {
+			return err
+		}
+	}
+	fetched := map[string]bool{}
 	for {
 		env, msg, err := conn.Read(ctx)
 		if err != nil {
@@ -530,6 +552,20 @@ func dumpMain(ctx context.Context, name string, args []string, stdout, stderr io
 		}
 		if _, err := fmt.Fprintf(stdout, "%s\n", msg); err != nil {
 			return err
+		}
+		if *board != "" && *once {
+			var b struct {
+				FetchedAt int64 `json:"fetched_at"`
+			}
+			if (env.T == proto.TBoardIssues || env.T == proto.TBoardPRs) && json.Unmarshal(msg, &b) == nil && b.FetchedAt > 0 {
+				fetched[env.T] = true
+			}
+			if env.T == proto.TError || (env.T == proto.TAck && strings.Contains(string(msg), `"enabled":false`)) ||
+				(fetched[proto.TBoardIssues] && fetched[proto.TBoardPRs]) {
+				_ = conn.Close()
+				return nil
+			}
+			continue
 		}
 		if *once && (env.T == proto.TSnapshot || (welcome.Resume == proto.ResumeReplay && env.Seq >= welcome.ServerSeq)) {
 			_ = conn.Close()
@@ -549,7 +585,8 @@ func cmdMain(ctx context.Context, name string, args []string, stdout, stderr io.
 		fmt.Fprintf(stderr, "  %s cmd floor.settings.set '{\"session\":\"herdr-3d\",\"repo\":\"JeffreyVdb/herdr-3d\"}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd floor.sleep '{\"session\":\"h3d-scratch\"}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd worker.hire '{\"session\":\"h3d-scratch\",\"desk_index\":0,\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\"}'\n", name)
-		fmt.Fprintf(stderr, "  %s cmd worker.fire '{\"id\":\"…\",\"worktree\":\"keep\"}'\n\nflags:\n", name)
+		fmt.Fprintf(stderr, "  %s cmd worker.fire '{\"id\":\"…\",\"worktree\":\"keep\"}'\n", name)
+		fmt.Fprintf(stderr, "  %s cmd issue.comment '{\"session\":\"h3d-scratch\",\"id\":\"JeffreyVdb/h3d-lab#3\",\"body\":\"hi\"}'\n\nflags:\n", name)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -604,4 +641,12 @@ func dial(ctx context.Context, socket string) (*proto.Conn, error) {
 		return nil, fmt.Errorf("is herdr-world running? %w", err)
 	}
 	return conn, nil
+}
+
+func mustMarshal(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }

@@ -1,0 +1,144 @@
+{
+ "data": {
+  "repository": {
+   "pullRequest": {
+    "id": "PR_33",
+    "number": 33,
+    "title": "Failing checks",
+    "url": "https://github.com/JeffreyVdb/herdr-3d/pull/33",
+    "state": "OPEN",
+    "isDraft": false,
+    "headRefName": "feat/fail",
+    "baseRefName": "main",
+    "author": {
+     "login": "dev",
+     "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+    },
+    "createdAt": "2026-09-28T08:00:00Z",
+    "updatedAt": "2026-09-29T09:50:00Z",
+    "mergedAt": null,
+    "mergeable": "MERGEABLE",
+    "reviewDecision": "CHANGES_REQUESTED",
+    "additions": 120,
+    "deletions": 8,
+    "changedFiles": 4,
+    "closingIssuesReferences": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+     },
+     "nodes": [
+      {
+       "number": 1,
+       "repository": {
+        "nameWithOwner": "JeffreyVdb/h3d-lab"
+       }
+      }
+     ]
+    },
+    "commits": {
+     "nodes": [
+      {
+       "commit": {
+        "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "statusCheckRollup": {
+         "state": "FAILURE",
+         "contexts": {
+          "pageInfo": {
+           "hasNextPage": false,
+           "endCursor": null
+          },
+          "nodes": [
+           {
+            "name": "test",
+            "status": "COMPLETED",
+            "conclusion": "FAILURE",
+            "detailsUrl": "https://ci.example/test"
+           },
+           {
+            "name": "lint",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "detailsUrl": "https://ci.example/lint"
+           },
+           {
+            "name": "docs",
+            "status": "COMPLETED",
+            "conclusion": "NEUTRAL",
+            "detailsUrl": "https://ci.example/docs"
+           },
+           {
+            "name": "e2e",
+            "status": "IN_PROGRESS",
+            "conclusion": null,
+            "detailsUrl": "https://ci.example/e2e"
+           },
+           {
+            "context": "ci/legacy",
+            "state": "SUCCESS",
+            "targetUrl": "https://ci.example/legacy"
+           }
+          ]
+         }
+        }
+       }
+      }
+     ]
+    },
+    "body": "Closes #1\n",
+    "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "files": {
+     "totalCount": 3,
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+     },
+     "nodes": [
+      {
+       "path": "main.go",
+       "additions": 12,
+       "deletions": 3,
+       "changeType": "MODIFIED"
+      },
+      {
+       "path": "new.go",
+       "additions": 40,
+       "deletions": 0,
+       "changeType": "ADDED"
+      },
+      {
+       "path": "old.go",
+       "additions": 0,
+       "deletions": 9,
+       "changeType": "DELETED"
+      }
+     ]
+    },
+    "comments": {
+     "totalCount": 1,
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+     },
+     "nodes": [
+      {
+       "id": "IC_9",
+       "body": "lgtm?",
+       "author": {
+        "login": "rev",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+       },
+       "createdAt": "2026-09-29T09:55:00Z"
+      }
+     ]
+    }
+   }
+  },
+  "rateLimit": {
+   "cost": 1,
+   "limit": 5000,
+   "remaining": 4410,
+   "resetAt": "2026-09-29T13:00:00Z"
+  }
+ }
+}

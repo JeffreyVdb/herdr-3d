@@ -1,0 +1,20 @@
+query StatusTarget($owner:String!, $repo:String!, $number:Int!, $projectOwner:String!, $projectNumber:Int!) {
+  repository(owner:$owner,name:$repo) {
+    issue(number:$number) {
+      id number
+      projectItems(first:100) { pageInfo { hasNextPage endCursor } nodes { id project { id number } } }
+    }
+  }
+  repositoryOwner(login:$projectOwner) {
+    __typename
+    ... on User { projectV2(number:$projectNumber) { ...ProjectBoard } }
+    ... on Organization { projectV2(number:$projectNumber) { ...ProjectBoard } }
+  }
+}
+fragment ProjectBoard on ProjectV2 {
+  id number title
+  fields(first:100) {
+    pageInfo { hasNextPage endCursor }
+    nodes { ... on ProjectV2SingleSelectField { id name options { id name } } }
+  }
+}

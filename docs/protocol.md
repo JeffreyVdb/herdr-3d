@@ -13,7 +13,7 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
   curl --unix-socket "$XDG_RUNTIME_DIR/herdr-world/bridge.sock" http://herdr-world/healthz
   ```
 - Text frames, one JSON object per frame. Every object has a string field `t`, its type. Client messages are limited to
-  64 KiB.
+  256 KiB (M7: a comment body is up to 64 KiB of text, escaped).
 - The bridge reads herdr (`ping`, `session.snapshot`, `events.subscribe`, `herdr session list`, and for the laptop
   screens the read-only `herdr terminal session observe`). Its only writes to herdr are `floor.wake` / `floor.sleep`
   (see [Wake and sleep](#wake-and-sleep)), `worker.hire` / `worker.fire` (see [Hire and send
@@ -42,6 +42,15 @@ unless all three hold:
 
 A `502` means the tunnel is down; the helper's own `GET /healthz` reports the tunnel state
 (`{"tunnel":{"state":"up|connecting|degraded|backoff",…}}`, `503` unless `up`).
+
+The helper also answers one request of its own, for the game's "Open in <provider>" buttons and the links in issue
+bodies (M7): `POST /api/open` with `{"url":"https://github.com/…"}` opens that page in the Mac's default browser
+(`open <url>`). It needs the same `Host` and `Origin`, the token in an `X-H3D-Token` header (never in a URL) and
+`Content-Type: application/json`, and accepts only an `https://` URL on a host of its allowlist (`github.com`; every
+provider the bridge learns adds its own host), without credentials or a port. `204` opened; `400` a refused URL;
+`403` a failed check; `502` the Mac's `open` failed. A game not served by the helper has no such endpoint (it has no
+token either) and opens a new window itself (`https://` only); a game the helper serves opens nothing the helper
+refuses and says so.
 
 ## Handshake
 
@@ -182,6 +191,7 @@ floor with no workers and an `error`).
 | `round` | int ≥ 1, optional | write-code round: the `h3d_round` token, else the label's trailing `\|r<N>` (see [Runs and freelancers](#runs-and-freelancers)) |
 | `ticket` | string ≤ 32 bytes, optional | the `h3d_ticket` token, else the label's ticket field (`CODE\|descr\|<ticket>\|r<N>`, likewise `REVIEW` and `UX`) |
 | `issue` | object, optional | `{"repo":"owner/name","number":7}`: the GitHub issue of the worker's run, when a repo is known |
+| `work_item` | object, optional | `{"provider":"github","id":"JeffreyVdb/herdr-3d#7"}`: `issue` in the neutral form, present whenever `issue` is and the floor has a board provider (see [Boards](#boards-issues-and-pull-requests)). The `id` is a board card's `id`. |
 | `orch_id` | string, optional | freelancers: the worker id of their orchestrator |
 | `phase`, `pass` | string, int ≥ 0, optional | orchestrators: the `h3d_phase` / `h3d_pass` tokens (`research\|coding\|review\|fixing\|waiting_user\|pr\|done`, others passed through, ≤ 32 bytes), remembered like `harness` |
 | `over_cap` | bool, optional | orchestrators: `true` past write-code's review-pass cap (`pass > 3`, or `pass == 3` and `phase == "waiting_user"`); absent when false |
@@ -237,6 +247,7 @@ report-metadata`); runs started without them are read from the labels (`ORCH|des
   numeric `ticket` (`7`, `#7`) in its floor's repo, else its orchestrator's. An orchestrator's is the one the game
   started it with (`run.start`), else its own numeric `ticket`, else the most common numeric ticket of its
   freelancers (ties: the lowest) in its floor's repo. Without a repo there is no issue; a ticket like `m6` gives none.
+  The orchestrator's issue is on the wire (`worker.upsert` with `issue` and `work_item`) **before** `run.start`'s ack.
 - **Phase and pass**: an orchestrator's `phase` and `pass` are remembered (SQLite `worker_run`) when herdr drops the
   tokens, until new values show up; `over_cap` follows from them.
 - **Desks**: desks come in pods of 4 (`desk_index / 4`). A freelancer new to a floor whose orchestrator is on that
@@ -368,8 +379,20 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `preset.create` | `{"name": string, "roles": {…}}` | `{"id": string}` | `preset.upsert` (see [Team presets and starting a run](#team-presets-and-starting-a-run)) |
 | `preset.update` | `{"id": string, "name"?: string, "roles"?: {…}}` (`roles` replaces all five) | — | `preset.upsert`; none when nothing changed |
 | `preset.delete` | `{"id": string}` | — | `preset.removed`, then `floor.upsert` for the floors whose `last_preset` it was |
-| `run.prepare` | `{"session", "issue"? \| "text"?, "preset"?, "orch"?, "extra"?}` | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
-| `run.start` | `{"session", "desk_index", "issue" \| "text", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then `floor.upsert` with `last_preset` |
+| `run.prepare` | `{"session", "issue"? \| "text"? \| "work_item"?, "preset"?, "orch"?, "extra"?}` | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
+| `run.start` | `{"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
+| `board.watch` | `{"session"}` | `{"enabled": bool, "reason"?}`, then `board.issues` and `board.prs` to this connection (see [Boards](#boards-issues-and-pull-requests)) | — |
+| `board.unwatch` | `{"session"}` | — | — |
+| `board.refresh` | `{"session"}` | `{"queued": bool}` | the boards of the poll, to the watchers |
+| `issue.get` | `{"session", "id"}` | `{"card", "body", "author", "created_at", "comments", "comments_truncated"}` | — |
+| `issue.comment` | `{"session", "id", "body"}` | `{"comment"}` | boards after the refresh |
+| `issue.close` | `{"session", "id", "reason", "confirm": true}` | — | boards after the refresh |
+| `issue.set_status` | `{"session", "id", "column"}` | — | boards after the refresh |
+| `pr.get` | `{"session", "id"}` | `{"pr", "body", "author", "created_at", "files", "files_truncated", "checks", "comments", "comments_truncated"}` | — |
+| `pr.comment` | `{"session", "id", "body"}` | `{"comment"}` | boards after the refresh |
+| `pr.merge` | `{"session", "id", "method", "confirm": true, "override"?, "confirm_override"?}` | `{"merged": true}` | boards after the refresh |
+| `worker.open_pr.prepare` | `{"id"}` (worker id) | `{"can_open", "reason"?, "branch", "base", "ahead", "dirty", "existing"?, "title", "body"}` | — |
+| `worker.open_pr` | `{"id", "title", "body", "confirm": true}` | `{"pr": {"id", "key", "url"}, "pushed", "existed"}` | boards after the refresh |
 
 ```json
 {"t":"floor.assign","req_id":"8","args":{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}}
@@ -405,7 +428,7 @@ not, is `unknown_session`.
 |---|---|---|
 | `repo` | `"owner/repo"` | a GitHub name: owner `[A-Za-z0-9-]{1,39}`, repo `[A-Za-z0-9._-]{1,100}` |
 | `project` | `{"owner": string, "number": int}` | a GitHub Project (v2): owner as above, number ≥ 1 |
-| `status_field` | `{"name": string, "options": [string…]}` | name 1–64 bytes; 1–20 options, each 1–64 bytes, unique (not blank). A client may pre-fill `{"name":"Status","options":["Todo","Doing","QA","Done"]}`. Stored for the issue boards (M7). |
+| `status_field` | `{"name": string, "options": [string…]}` | name 1–64 bytes; 1–20 options, each 1–64 bytes, unique (not blank). A client may pre-fill `{"name":"Status","options":["Todo","Doing","QA","Done"]}`. The issue board (M7) uses only the `name`, as the project field its columns come from (default `Status`); the columns are that field's live options, not these. |
 | `default_cwd` | absolute path | an existing directory on the bridge host; stored cleaned (no trailing `/`) |
 | `default_hire` | `{"harness", "model", "effort"}` | one of `hire_options`: a model of that harness, an effort of it or an `extra_efforts` entry of that model (`ultra` only for `gpt-6-sol` / `gpt-6-astra`) |
 
@@ -695,7 +718,7 @@ high, researchers codex sol low; the orchestrator claude opus medium), once: del
 |---|---|
 | `session` | a running, watched floor (as `hire.prepare`) |
 | `issue` | an int ≥ 1, or a string `"3"`, `"#3"` or `https://github.com/<owner>/<repo>/issues/<n>`. A number is an issue of the floor's effective repo (`settings.repo ?? suggested.repo`; none: `bad_request` "the floor has no linked repo"); a URL names its own. |
-| `text` | free text instead of an issue: 1–4096 bytes once trimmed, may span lines. At most one of `issue` / `text`; with neither, `prompt` and `label` are `""` and `ticket` is `null` (the dialog is not ready yet). |
+| `text` | free text instead of an issue: 1–4096 bytes once trimmed, may span lines. At most one of `issue` / `text` / `work_item` (a board card's `{provider, id}`, see [Boards](#boards-issues-and-pull-requests): it gives the same ticket as its issue URL); with neither, `prompt` and `label` are `""` and `ticket` is `null` (the dialog is not ready yet). |
 | `preset` | a preset id (`not_found`); default: the floor's `last_preset`, else the preset named "Build team" (ignoring case), else the first by name; `""` when there is no preset (then no `prompt` either) |
 | `orch` | `{"harness", "model", "effort"}` of `hire_options`; default: the preset's `orch` |
 | `extra` | extra instructions for the prompt, at most 8192 bytes |
@@ -744,7 +767,7 @@ left out too. (A pure function, `server.RunPrompt`.)
 | arg | rule, else `bad_request` |
 |---|---|
 | `session`, `desk_index` | as `worker.hire` (`unknown_session`, `invalid_state`, `busy`, `desk_taken`, `capacity` likewise) |
-| `issue` / `text` | exactly one, as in `run.prepare` |
+| `issue` / `text` / `work_item` | exactly one, as in `run.prepare` |
 | `orch` | required, `{"harness", "model", "effort"}` of `hire_options` |
 | `preset` | required, an existing preset id (else `not_found`) |
 | `extra` | optional, at most 8192 bytes |
@@ -759,11 +782,141 @@ succeeds the bridge records the launch (SQLite `run_launch`: launch id, session,
 text, the orchestrator's worker id, the preset's id and name) and remembers the preset as the floor's `last_preset`
 (`floor.upsert`), then acks: `worker.hire`'s ack plus `launch_id` (`l_<16 hex>`) and `prompt` (what was sent; see
 `prompted` / `prompt_error` for whether it was). A failed hire records nothing. The launch's `run_id` is filled with the
-first `h3d_run` token the orchestrator shows (write-code tags its workspace with it when it starts). The bridge never
-touches GitHub: the skill itself moves the ticket.
+first `h3d_run` token the orchestrator shows (write-code tags its workspace with it when it starts). `run.start` writes nothing to
+the issue provider: the skill itself moves the ticket.
 
 **Audit log.** `preset.*` and `run.prepare` get one row each; `run.start` gets a row when it starts, completed like a
 `worker.hire`'s with its result, which also has the `launch` id.
+
+### Boards: issues and pull requests
+
+Every floor with an effective repo (`settings.repo ?? suggested.repo`) has two boards: its **issues**, as a Kanban of
+status columns, and its **pull requests**. They come from a provider behind two neutral interfaces (the bridge's
+`internal/tracker` for issues, `internal/codehost` for pull requests): **GitHub** (Issues, with Projects v2 for the
+columns) is the one implemented. Nothing on the wire is GitHub's: items are addressed by an opaque `id`, scoped by the
+`provider` (clients never parse an id, they show its `key`, `"#9"`); status columns have opaque ids; no GraphQL node ids,
+project, field or option ids, head commits or `repo` / `number` pairs appear in the board messages and commands. What a
+provider cannot do is a **capability** flag, on the board and on a card, and the bridge refuses the action (`unsupported`)
+whatever a client sends. Another provider (files in the repository, Monday.com) adds its own settings key and needs no wire
+change. The floor settings are unchanged: the GitHub provider reads `repo`, `project` (its Status field's options are the
+columns, live) and the `name` of `status_field` (default `Status`).
+
+Against a bridge from before M7 the commands answer `unknown_command`.
+
+**Messages.** `board.issues` and `board.prs` are connection-scoped like `terminal.frame`: **no `seq`**, not in the replay
+ring, not in `world.snapshot`, never counted as events. A connection that sent `board.watch` for a floor gets them: right
+after the ack from the cache (`initial: true`; nothing cached yet: `columns: []`, `cards: []`, `fetched_at: 0`, and a poll
+starts), then after every poll or failed poll (`initial: false`). Always both, the issues first, from the same poll. A
+connection watches one floor at a time; a new `board.watch` replaces the old one, and a reconnect sends it again.
+
+```json
+{"t":"board.issues","session":"herdr-3d","provider":"github","provider_name":"GitHub","initial":false,
+ "fetched_at":1790670000000,"stale":false,"truncated":false,"rate":{"remaining":4870,"reset_at":1790673600000},
+ "capabilities":{"comment":true,"close":true,"set_status":true},
+ "columns":[{"id":"49294ed0","name":"Todo","done":false},{"id":"ae6334b4","name":"Doing","done":false},
+            {"id":"64e1b0ac","name":"QA","done":false},{"id":"ccf5765b","name":"Done","done":true}],
+ "cards":[{"id":"JeffreyVdb/herdr-3d#9","key":"#9","title":"M7: Issues Kanban + Pull Requests board (GitHub)",
+           "state":"open","column":"ae6334b4","url":"https://github.com/JeffreyVdb/herdr-3d/issues/9",
+           "labels":[{"name":"bridge","color":"#1d76db"}],"priority":"high",
+           "assignees":[{"name":"JeffreyVdb","avatar_url":"https://…"}],"author":"JeffreyVdb",
+           "updated_at":1790670000000,"closed_at":null}]}
+{"t":"board.prs","session":"herdr-3d","provider":"github","provider_name":"GitHub","initial":false,
+ "fetched_at":1790670000000,"stale":false,"truncated":false,"rate":{"remaining":4870,"reset_at":1790673600000},
+ "capabilities":{"comment":true,"merge":true,"open_from_branch":true},
+ "prs":[{"id":"JeffreyVdb/herdr-3d#31","key":"#31","title":"…","state":"open","draft":false,
+         "url":"https://github.com/JeffreyVdb/herdr-3d/pull/31","head_branch":"feat/7-m6","base_branch":"main",
+         "author":"JeffreyVdb","checks":"success","review":"approved","mergeable":"mergeable",
+         "closes":["JeffreyVdb/herdr-3d#7"],"additions":1200,"deletions":80,"changed_files":40,"updated_at":1790670000000}],
+ "merged":[{"id":"JeffreyVdb/herdr-3d#30","key":"#30","title":"…","merged_at":1790669990000,"closes":["JeffreyVdb/herdr-3d#6"]}]}
+```
+
+| field | |
+|---|---|
+| `session` | the floor |
+| `provider`, `provider_name` | the adapter's id and display name (the game says "Open in GitHub") |
+| `initial` | `true`: the replay of the cache on `board.watch`; **never ring the gong for it** |
+| `fetched_at` | unix ms of the data's poll; `0`: nothing fetched yet |
+| `stale`, `error` | the last poll failed: this is the previous good data again (never emptied), with a short `error` (never a token). A failed poll is never a merge. |
+| `truncated` | the provider hit its paging limit (500 open issues or pull requests, or a nested list past 100): the board is incomplete |
+| `rate` | optional, `{remaining, reset_at}` (unix ms) of the provider's rate limit, to show "rate limit: next refresh 14:05" |
+| `capabilities` | the board's; a card may carry its own `capabilities` that replace them (a closed issue: `close: false`) |
+| `columns` | in order. GitHub project: the Status field's options as they are now, `done: true` for the option named "Done" (ignoring case). No project: `open`, and `closed` (done). Issues with no status in the project go to a leading `{"id":"","name":"No status"}` column that is there only when it has cards. |
+| card `state` | `open` \| `closed`; the cards are the open issues and the ones closed in the last 7 days (exact cut-off) of this repo |
+| card `column` | a column `id` |
+| card `labels` | `{name, color: "#rrggbb"}`, in the provider's order, priority labels included |
+| card `priority` | optional `urgent` \| `high` \| `medium` \| `low` from the labels (ignoring case): `p0`, `critical`, `urgent` → urgent; `p1`, `high`; `p2`, `medium`; `p3`, `p4`, `low`; also as `priority: x`, `priority/x`, `priority-x`; the most urgent one wins |
+| card `closed_at`, `updated_at` | unix ms, `closed_at` null while open |
+| PR `checks` | `success` \| `failure` \| `pending` \| `none` (no checks at all is `none`, never green) |
+| PR `review` | `approved` \| `changes_requested` \| `review_required` \| `none` |
+| PR `mergeable` | `mergeable` \| `conflicting` \| `unknown` |
+| PR `closes` | ids of the issues it closes, in the issue id format (other repositories' issues too) |
+| `merged` | the pull requests that were **open at the previous good poll and are merged now**, announced exactly once ever (SQLite, so across restarts too), never on `initial: true`; `[]` otherwise. The game rings the gong for each. |
+
+**Polling.** A floor is polled every **60 s while at least one connection watches it**, every **10 min** otherwise (asleep
+floors too). Floors linking the same repository and project share one fetch. `board.refresh` polls now, joins a poll in
+flight, and starts at most one poll per 10 s per floor (else `queued: false` and the cache is sent to the caller again,
+`initial: true`). After a successful write (`issue.comment`, `issue.close`, `issue.set_status`, `pr.comment`, `pr.merge`,
+`worker.open_pr`) the bridge queues a refresh of that floor; the boards follow the ack. The cache is in SQLite
+(`board_cache`, the open pull requests of the last good poll in `board_open_pr`, announced merges in
+`board_merge_announced`): `board.watch` answers at once from it, also right after a restart.
+
+**Rate limit.** Every poll reads the provider's rate (GitHub: `rateLimit { cost remaining resetAt }`, about 12 points a
+poll). Below what one more round of every board-enabled repository plus a reserve of 100 needs, only floors somebody
+watches are polled; below 50 left, or after a rate-limit error, nothing is until `reset_at`; a secondary limit that names no
+reset waits 60 s, then twice as long each time, up to 10 min. The messages carry `rate` and, after a failed poll, `stale`.
+
+**Commands.** All of them are audited like the others; comment and pull request **bodies are never logged** (the row
+keeps the target `id` and the byte counts). `session` is the floor. Bodies are 1–65 536 bytes of UTF-8 (a pull request's
+body may be empty), titles 1–256 bytes, no control characters but `\n` and `\t` in a body; ids at most 200 bytes. A write
+on a floor with no board (no repo, no provider) is `unsupported`.
+
+| `t` | args | `ack.data` |
+|---|---|---|
+| `board.watch` | `{session}` | `{"enabled": bool, "reason"?}`: `enabled: false` with a `reason` (`"no repo linked"`, `"boards are not configured"`) and no messages; else the two messages follow |
+| `board.unwatch` | `{session}` | — |
+| `board.refresh` | `{session}` | `{"queued": bool}`; `unsupported` on a floor with no board |
+| `issue.get` | `{session, id}` | `{"card", "body": markdown, "author": {name, avatar_url}, "created_at", "comments": [{id, author, body, created_at}], "comments_truncated"}`: the first 100 comments; the body is raw markdown, **the client sanitises** |
+| `issue.comment` | `{session, id, body}` | `{"comment": {id, author, body, created_at}}` |
+| `issue.close` | `{session, id, reason: "completed" \| "not_planned" \| "duplicate", confirm: true}` | — |
+| `issue.set_status` | `{session, id, column}` (an issue not in the project is added to it first) | — |
+| `pr.get` | `{session, id}` | `{"pr", "body", "author", "created_at", "files": [{path, additions, deletions, change}], "files_truncated", "checks": [{name, state: success \| failure \| pending \| neutral \| skipped, url}], "comments", "comments_truncated"}` |
+| `pr.comment` | `{session, id, body}` | `{"comment"}` |
+| `pr.merge` | `{session, id, method: "merge" \| "squash" \| "rebase", confirm: true, override?, confirm_override?}` | `{"merged": true}` |
+| `worker.open_pr.prepare` | `{id}` (worker id) | `{"can_open", "reason"?, "branch", "base", "ahead", "dirty", "existing"?: {id, key, url}, "title", "body"}`: the title is the latest commit's subject, the body the list of the commits' subjects |
+| `worker.open_pr` | `{id, title, body, confirm: true}` | `{"pr": {id, key, url}, "pushed": bool, "existed": bool}` |
+
+- **`confirm: true` is required** on `issue.close`, `pr.merge` and `worker.open_pr` (missing or false:
+  `confirmation_required`, nothing happens). The game asks the user first; the flag makes a stray client call safe.
+- **`pr.merge`** reads the pull request fresh right before merging and refuses with `checks_not_green` when its `checks`
+  are not `success` and with `not_mergeable` when it is not `mergeable`, **unless** `override: true` **and**
+  `confirm_override: true` (the game asks a second time; the audit row records the override and what the normal rule
+  said). A `conflicting` pull request, or one that is no longer open, is never merged. The merge names the head it read: a
+  head that moved meanwhile is `stale`.
+- **`worker.open_pr`**: only a live **plain** worker (no `role`) whose checkout is on the `h3d/…` branch the bridge recorded
+  making for it (SQLite `hire_branch`, which now also has the base branch it was made from), on a floor with a board, in a
+  repository whose `origin` is the floor's repo. A dirty tree, no commits on top of `origin/<base>`, another branch or
+  another origin: `invalid_state` (`worker.open_pr.prepare` answers `can_open: false` with the `reason` instead). It
+  pushes the branch (`git push -u origin refs/heads/<branch>:refs/heads/<branch>`, the one git write), then opens the pull
+  request against the hire's base branch, or returns the open one for that head (`existed: true`); a failed second step
+  says the branch was pushed, and asking again is safe.
+- **Run tickets**: `run.prepare` and `run.start` accept `work_item: {provider, id}` (a card's) as a third, exclusive
+  alternative to `issue` and `text`. The bridge resolves it through the floor's issue provider (GitHub: to the M6 issue
+  path, the URL in the prompt) and stores the launch as M6 does. A provider other than the floor's, an id that is not an
+  item of the floor's board (not on the last board, once one was read): `not_found`.
+- **Errors** (also in [Errors](#errors)): `confirmation_required`, `unsupported`, `provider_failed`, `rate_limited`,
+  `checks_not_green`, `not_mergeable`, and `not_found` (an id that is not on this floor's provider), `stale`,
+  `bad_request`, `unknown_session`, `unknown_worker`, `invalid_state`, `busy`.
+
+**Audit log.** Each board command gets a row; the slow ones (everything that calls the provider) are begun when they start
+and completed with a result: `issue.comment` / `pr.comment` the target id, the byte count and the comment id, `issue.close`
+the reason, `issue.set_status` the column, `pr.merge` the method, the checks and mergeability it read, `override` and `gate`
+when the override was needed, and `merged`, `worker.open_pr` the worker, the branch, the base, `pushed`, `pr` and
+`existed`.
+
+The bridge runs `gh` (flag `--gh`, env `HERDR_WORLD_GH`, default `gh` on `PATH`; its own login, no token stored) through
+one typed shape, `gh api graphql --method POST --input -`, with a fixed set of embedded documents (never a query from a
+client), 20 s per call, in a clean environment. Without `gh` the boards say `gh not found` and the write commands answer
+`provider_failed`.
 
 ### Laptops: screens, input, changes and usage
 
@@ -1065,12 +1218,12 @@ bridge at start:
 |---|---|
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
-| `not_found` | no building with that id; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`) |
+| `not_found` | no building with that id; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
 | `name_taken` | another building, or another team preset, already has that name (ignoring case) |
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
 | `busy` | a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home |
-| `invalid_state` | `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell or a blocked worker, `worker.answer` to a worker not blocked |
+| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell or a blocked worker, `worker.answer` to a worker not blocked |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`; the message says which |
 | `not_clean` | `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |
@@ -1080,9 +1233,14 @@ bridge at start:
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
 | `input_failed` | `worker.keys` / `worker.answer`: herdr refused the keys or text, the screen could not be read, or 32 commands already wait for that worker; the message says why |
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
-| `stale` | `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked |
+| `stale` | `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `pr.merge` whose head moved since it was read |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
+| `confirmation_required` | `issue.close`, `pr.merge` or `worker.open_pr` without `confirm: true` (see [Boards](#boards-issues-and-pull-requests)) |
+| `unsupported` | the floor has no board (no repo linked, no provider), or the provider or the card cannot do it (a capability is off); `worker.open_pr*` on a floor that cannot open pull requests |
+| `provider_failed` | the provider call failed (`gh` missing, not logged in, the network, GitHub's refusal, a failed `git push`); the message is short and never has a token |
+| `rate_limited` | the provider's rate limit |
+| `checks_not_green`, `not_mergeable` | `pr.merge` of a pull request whose checks are not green, or that is not mergeable (also a conflicting one, always); an override is `override` and `confirm_override` together |
 | `hello_required`, `unsupported_proto` | handshake failures; the connection is then closed with status 1008 |
 | `internal` | the bridge failed (database error, or waking, sleeping, hiring and firing is not configured); safe to retry |
 
@@ -1107,6 +1265,8 @@ meaning of a field needs a new version.
 herdr-world dump                  # snapshot, then events as JSON lines until Ctrl-C
 herdr-world dump --once | jq .    # snapshot only
 herdr-world dump --once --since 1047 --epoch 0fc8ba663c9c83d9   # replay instead of a snapshot
+herdr-world dump --board herdr-3d           # also board.watch a floor: its board.issues / board.prs as JSON lines
+herdr-world dump --board herdr-3d --once    # …until the first fetched pair
 herdr-world cmd building.create '{"name":"Work"}'
 herdr-world cmd floor.assign '{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}'
 herdr-world cmd floor.settings.set '{"session":"herdr-3d","repo":"JeffreyVdb/herdr-3d","default_cwd":null}'
@@ -1121,6 +1281,8 @@ herdr-world cmd worker.prompt '{"id":"a58752ea-…","text":"Run the tests."}'
 herdr-world cmd worker.answer '{"id":"a58752ea-…","hash":"cdecbf4fcde864bc","choice":1}'
 herdr-world cmd preset.create '{"name":"Cheap","roles":{"orch":{"harness":"codex","model":"gpt-6-luna","effort":"low"},…}}'
 herdr-world cmd run.prepare '{"session":"h3d-scratch","issue":"#3"}' | jq -r .data.prompt
+herdr-world cmd issue.comment '{"session":"h3d-scratch","id":"JeffreyVdb/h3d-lab#3","body":"hello"}'
+herdr-world cmd pr.merge '{"session":"h3d-scratch","id":"JeffreyVdb/h3d-lab#4","method":"squash","confirm":true}'
 herdr-world cmd run.start '{"session":"h3d-scratch","desk_index":1,"issue":3,"preset":"p_…","orch":{"harness":"codex","model":"gpt-6-luna","effort":"low"},"prompt":"Reply with OK."}'
 ```
 

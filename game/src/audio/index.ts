@@ -170,7 +170,8 @@ class WebGameAudio implements GameAudio {
     this.load = d.load ?? (async (url) => (await fetch(url)).arrayBuffer());
     this.storage = d.storage === undefined ? defaultStorage() : d.storage;
     this.events = d.events === undefined ? (typeof window === 'undefined' ? null : window) : d.events;
-    this.url = d.url ?? ((clip) => `${import.meta.env.BASE_URL}voices/${clip}.mp3`);
+    // A clip name with an extension is a file as it is (`gong.wav`); without, an MP3.
+    this.url = d.url ?? ((clip) => `${import.meta.env.BASE_URL}voices/${/\.[a-z0-9]{2,4}$/i.test(clip) ? clip : `${clip}.mp3`}`);
     this.prefs = readPrefs(this.storage);
     this.music = new MusicPlayer(
       {

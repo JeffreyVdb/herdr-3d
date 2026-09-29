@@ -20,8 +20,23 @@ export const TICKET_TEXT_MAX = 4096;
 /** At most this many bytes of extra instructions. */
 export const EXTRA_MAX = 8192;
 
+/** M7: a card of the floor's issue board, as the dialog names it. */
+export interface WorkItemRef {
+  provider: string;
+  id: string;
+  /** `#9`. */
+  key: string;
+  title: string;
+  /** Where the provider shows it; absent when it has no page. */
+  url?: string | undefined;
+  /** What the provider is called, for the dialog's copy. */
+  provider_name?: string | undefined;
+}
+
 export type TicketInput =
   | { kind: 'empty' }
+  /** M7: "Hand to a worker": the run starts on this card of the issue board (`work_item`), whatever the provider. */
+  | { kind: 'work_item'; item: WorkItemRef; why: null }
   /** `repo` null: a bare number on a floor with no linked repo (`why` says so). */
   | { kind: 'issue'; number: number; repo: string | null; url: string | null; from: 'number' | 'url'; arg: number | string; why: string | null }
   | { kind: 'text'; text: string; why: string | null };
@@ -58,7 +73,8 @@ export function parseTicket(input: string, repo: string | null | undefined): Tic
 }
 
 /** The ticket's args (`issue` or `text`, or neither while there is none or it cannot be sent). */
-export function ticketArgs(t: TicketInput): { issue?: number | string; text?: string } {
+export function ticketArgs(t: TicketInput): { issue?: number | string; text?: string; work_item?: { provider: string; id: string } } {
+  if (t.kind === 'work_item') return { work_item: { provider: t.item.provider, id: t.item.id } };
   if (t.kind === 'issue' && !t.why) return { issue: t.arg };
   if (t.kind === 'text' && !t.why) return { text: t.text };
   return {};
@@ -67,6 +83,7 @@ export function ticketArgs(t: TicketInput): { issue?: number | string; text?: st
 /** What the dialog says it read, e.g. "Issue #3 · JeffreyVdb/lab". */
 export function ticketLine(t: TicketInput): string {
   if (t.kind === 'empty') return 'An issue number, an issue URL, or what to build in your own words.';
+  if (t.kind === 'work_item') return `${t.item.key} · ${t.item.title}`;
   if (t.kind === 'issue') return t.repo ? `Issue #${t.number} · ${t.repo}` : `Issue #${t.number}`;
   const words = t.text.split(/\s+/).filter(Boolean).length;
   return `Free text · ${words} ${words === 1 ? 'word' : 'words'}`;
@@ -124,6 +141,8 @@ export interface RunForm {
   worktree: boolean;
   /** '' = the generated label (`run.prepare`'s). */
   label: string;
+  /** M7: the card the run starts on (the ticket input then shows it instead of a text box). */
+  workItem: WorkItemRef | null;
 }
 
 /** `run.prepare` args for the form as it is. */

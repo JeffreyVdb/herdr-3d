@@ -41,6 +41,7 @@ type fakeFloor struct {
 	createGate   chan struct{} // CreateWorkspace waits for it when set
 	exitWorks    bool          // TypeExit + Enter bring the pane back to its shell
 	onKey        func(pane string, key herdr.Key)
+	decorate     func(w *world.WorkerObs) // sets what the watcher derives (role, run) of a new workspace
 }
 
 func newFakeFloor(b *bridge, session string, fh *fakeHerdr, workers ...world.WorkerObs) *fakeFloor {
@@ -65,6 +66,9 @@ func (f *fakeFloor) create(dir, label string, wt *world.Worktree) herdr.Created 
 	f.next++
 	w := world.WorkerObs{WorkspaceID: ws, Label: label, Cwd: dir, IdentityCwd: dir, PaneID: ws + ":p1", Status: "unknown",
 		Worktree: wt}
+	if f.decorate != nil {
+		f.decorate(&w)
+	}
 	f.workers = append(f.workers, w)
 	f.mu.Unlock()
 	f.setProcs(ws+":p1", atShell())
@@ -313,6 +317,13 @@ type hireBridge struct {
 
 func startHireBridge(t *testing.T, tweak func(*server.Options), workers ...world.WorkerObs) *hireBridge {
 	t.Helper()
+	return startHireBridgeAt(t, "", tweak, workers...)
+}
+
+// startHireBridgeAt is startHireBridge on the database at db ("": a new one),
+// for a test that restarts the bridge.
+func startHireBridgeAt(t *testing.T, db string, tweak func(*server.Options), workers ...world.WorkerObs) *hireBridge {
+	t.Helper()
 	fh := newFakeHerdr()
 	git := newFakeGit()
 	opts := fastOps(fh)
@@ -326,7 +337,10 @@ func startHireBridge(t *testing.T, tweak func(*server.Options), workers ...world
 		_, b, _ := strings.Cut(checkout, "/repo/")
 		return strings.Replace(b, "h3d-", "h3d/", 1)
 	}
-	hb := &hireBridge{git: git, db: filepath.Join(t.TempDir(), "world.db")}
+	hb := &hireBridge{git: git, db: db}
+	if hb.db == "" {
+		hb.db = filepath.Join(t.TempDir(), "world.db")
+	}
 	// The floor needs the bridge, the bridge needs the floor as Options.Hire.
 	var fl *fakeFloor
 	opts.Hire = hireProxy{get: func() *fakeFloor { return fl }}

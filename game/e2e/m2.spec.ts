@@ -83,7 +83,8 @@ test('picking a floor badge enters the floor in first person, at the entrance fa
 
 test('keyboard on a floor: Shift+Tab reaches the top bar, Tab there moves focus, Issues opens', async ({ page }) => {
   const clean = watchErrors(page);
-  await openGame(page);
+  // The simulator answers the boards (M7): this floor has no repo, so its Issues overlay says so.
+  await openGame(page, 'demo', '', 'play=none&sim=1');
   await page.locator('.floor-list button[data-session="herdr-3d"]').focus();
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.__h3d.view().floor === 'herdr-3d' && !window.__h3d.view().busy);
@@ -105,9 +106,9 @@ test('keyboard on a floor: Shift+Tab reaches the top bar, Tab there moves focus,
   expect(await focused()).toBe('Issues');
   expect(await plan()).toBe(false);
   await page.keyboard.press('Enter');
-  await expect(page.locator('dialog.sheet h2')).toHaveText('Issues · herdr-3d');
+  await expect(page.locator('dialog.desk-dlg--board h2')).toHaveText('Issues · herdr-3d');
   await page.keyboard.press('Escape');
-  await expect(page.locator('dialog.sheet')).toBeHidden();
+  await expect(page.locator('dialog.desk-dlg--board')).toBeHidden();
   // Back on the scene, plain Tab toggles the plan again.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.keyboard.press('Tab');

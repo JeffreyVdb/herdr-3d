@@ -131,6 +131,20 @@ type Options struct {
 	// RunLaunch finds the issue of an orchestrator the game started, from
 	// its run_launch record (default: the store's).
 	RunLaunch func(ctx context.Context, workerID string) (proto.IssueRef, bool)
+
+	// M7 boards.
+	// Boards finds the issue tracker and the code host of a floor's link
+	// (nil: no boards). The server never imports a provider.
+	Boards BoardFactory
+	// PRGit is the git of worker.open_pr: reads and the push (nil:
+	// worker.open_pr.prepare and worker.open_pr fail with unsupported).
+	PRGit PRGit
+	// BoardWatchPoll and BoardIdlePoll are how often a floor is polled with
+	// and without a watcher, BoardRefreshMin the shortest time between the
+	// polls board.refresh starts on one floor, BoardTick how often the
+	// poller looks for a floor that is due (defaults DefaultBoardWatchPoll,
+	// DefaultBoardIdlePoll, DefaultBoardRefreshMin, DefaultBoardTick).
+	BoardWatchPoll, BoardIdlePoll, BoardRefreshMin, BoardTick time.Duration
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -194,6 +208,8 @@ type Hub struct {
 	runPending map[string]bool         // orchestrators of launches whose run id is not known yet
 
 	runs runsState // M6 runs
+
+	boards boardsState // M7 boards
 }
 
 type floorState struct {
@@ -325,8 +341,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if opts.ExitPause <= 0 {
 		opts.ExitPause = defaultExitPause
 	}
-	termDefaults(&opts) // M5 term
-	runsDefaults(&opts) // M6 runs
+	termDefaults(&opts)  // M5 term
+	runsDefaults(&opts)  // M6 runs
+	boardDefaults(&opts) // M7 boards
 	var epoch [8]byte
 	_, _ = rand.Read(epoch[:])
 	h := &Hub{
@@ -368,6 +385,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		return nil, err
 	}
 	if err := h.loadLaunch(ctx); err != nil { // M6 launch
+		return nil, err
+	}
+	if err := h.initBoards(ctx); err != nil { // M7 boards
 		return nil, err
 	}
 	desks, err := st.Desks(ctx)
@@ -417,10 +437,18 @@ func (h *Hub) Run(ctx context.Context) error {
 		h.wg.Add(1)
 		go h.trackReports(ctx)
 	}
+	var boardC <-chan time.Time // M7 boards
+	if h.opts.Boards != nil {
+		t := time.NewTicker(h.opts.BoardTick)
+		defer t.Stop()
+		boardC = t.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-boardC:
+			h.boardTick(ctx)
 		case u := <-h.updates:
 			switch u := u.(type) {
 			case world.FloorObs:
@@ -480,7 +508,8 @@ func (h *Hub) Join(ctx context.Context, c *Client, hello proto.Hello) error {
 func (h *Hub) Leave(c *Client) {
 	_ = h.do(context.Background(), func(context.Context) {
 		delete(h.clients, c)
-		h.dropWatches(c) // M5 term
+		h.dropWatches(c)    // M5 term
+		h.dropBoardWatch(c) // M7 boards
 	})
 }
 
@@ -526,6 +555,31 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startRunPrepare
 		case proto.CmdRunStart:
 			start = h.startRunStart
+		// M7 boards
+		case proto.CmdBoardWatch:
+			start = h.startBoardWatch
+		case proto.CmdBoardUnwatch:
+			start = h.startBoardUnwatch
+		case proto.CmdBoardRefresh:
+			start = h.startBoardRefresh
+		case proto.CmdIssueGet:
+			start = h.startIssueGet
+		case proto.CmdIssueComment:
+			start = h.startIssueComment
+		case proto.CmdIssueClose:
+			start = h.startIssueClose
+		case proto.CmdIssueSetStatus:
+			start = h.startIssueSetStatus
+		case proto.CmdPRGet:
+			start = h.startPRGet
+		case proto.CmdPRComment:
+			start = h.startPRComment
+		case proto.CmdPRMerge:
+			start = h.startPRMerge
+		case proto.CmdOpenPRPrepare:
+			start = h.startOpenPRPrepare
+		case proto.CmdWorkerOpenPR:
+			start = h.startOpenPR
 		}
 		if start != nil {
 			// Accepted: the audit row is written (or begun) and the reply
@@ -572,6 +626,8 @@ func errorCode(err error) string {
 	switch {
 	case errors.As(err, &coded):
 		return coded.code
+	case boardCode(err) != "": // M7 boards
+		return boardCode(err)
 	case errors.As(err, &fetch):
 		return proto.ErrFetchFailed
 	case errors.As(err, &bad), errors.Is(err, store.ErrInvalid), errors.Is(err, errNoReqID):

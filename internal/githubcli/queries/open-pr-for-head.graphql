@@ -1,0 +1,6 @@
+query OpenPRForHead($owner:String!, $repo:String!, $head:String!) {
+  repository(owner:$owner,name:$repo) {
+    id
+    pullRequests(first:5, states:OPEN, headRefName:$head) { nodes { id number url headRefName baseRefName } }
+  }
+}

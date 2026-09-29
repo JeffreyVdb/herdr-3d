@@ -56,6 +56,9 @@ const jobs = [
   { name: 'floor60-screens', path: `/?ws=${encodeURIComponent('/fixture/perf-floor60?play=none&sim=1')}&ts&screens=4`, floor: 'perf-floor', pose: 'overview', bench: BENCH, shot: true, settle: 4000 },
   { name: 'floor60-screens0', path: `/?ws=${encodeURIComponent('/fixture/perf-floor60?play=none&sim=1')}&ts&screens=0`, floor: 'perf-floor', pose: 'overview', bench: BENCH, settle: 4000 },
   { name: 'floor60-laptop', path: `/?ws=${encodeURIComponent('/fixture/perf-floor60?play=none&sim=1')}&ts&screens=4`, floor: 'perf-floor', pose: 'laptop', bench: BENCH, shot: true, settle: 4000 },
+  // M7: the same floor with the boards holding 100 issues and 20 pull requests (the simulator), and without boards.
+  { name: 'boards100', path: `/?ws=${encodeURIComponent('/fixture/perf-boards?play=none&sim=1&simusage=0')}&ts`, floor: 'perf-floor', pose: 'boards', bench: BENCH, shot: true, settle: 4000 },
+  { name: 'boards0', path: `/?ws=${encodeURIComponent('/fixture/perf-boards?play=none&sim=1&simusage=0&simfail=no_m7')}&ts`, floor: 'perf-floor', pose: 'boards', bench: BENCH, settle: 4000 },
   { name: 'floor60-street', path: `/?${fx('perf-floor60')}&ts`, floor: 'perf-floor', pose: 'street', bench: BENCH, settle: 2500 },
   { name: 'demo-city', path: `/?${fx('demo')}`, shot: true, settle: 2500 },
   { name: 'demo-desk-row', path: `/?${fx('demo')}`, floor: 'herdr-3d', pose: 'row', shot: true },

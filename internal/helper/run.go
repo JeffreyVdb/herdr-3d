@@ -30,6 +30,10 @@ type Config struct {
 	Log   *slog.Logger
 	// Ready, if set, is called with the game URL once serving.
 	Ready func(url string)
+	// OpenURL opens a URL for POST /api/open (default SystemOpen), for the
+	// hosts of OpenHosts (default DefaultOpenHosts).
+	OpenURL   Opener
+	OpenHosts []string
 }
 
 // ListenLoopback listens on addr, which must be a loopback IP and port.
@@ -65,6 +69,7 @@ func Run(ctx context.Context, cfg Config) error {
 	srv := NewServer(ServerConfig{
 		Port: addr.Port, ListenHost: addr.IP.String(), Token: token, Bridge: cfg.Tunnel,
 		Bundle: cfg.Bundle, BundleFS: cfg.BundleFS, MusicDir: cfg.MusicDir, Dev: cfg.Dev, Log: log,
+		Open: cfg.OpenURL, OpenHosts: cfg.OpenHosts,
 	})
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 

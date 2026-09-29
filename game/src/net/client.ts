@@ -7,9 +7,11 @@ import {
   isWorldEvent,
   isTerminalClosed,
   isTerminalFrame,
+  isBoardMessage,
   parseMessage,
   type CommandArgs,
   type CommandName,
+  type BoardMessage,
   type ConnMessage,
   type Hello,
   type Snapshot,
@@ -88,6 +90,8 @@ export interface ClientHandlers {
   onWelcome?(w: Welcome): void;
   /** M5: connection-scoped messages (no seq): laptop screen frames and closes. */
   onConn?(m: ConnMessage): void;
+  /** M7: board messages (no seq, never replayed): the issues and pull requests of the floor this connection watches. */
+  onBoard?(m: BoardMessage): void;
 }
 
 export interface ClientOptions {
@@ -132,6 +136,16 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   // M6 start: a run's prepare may `git fetch` like hire.prepare; its start is a hire.
   'run.prepare': 30_000,
   'run.start': 90_000,
+  // M7: details are a provider call or two; a merge re-reads the PR first; opening a PR pushes the branch.
+  'issue.get': 20_000,
+  'pr.get': 20_000,
+  'issue.comment': 20_000,
+  'pr.comment': 20_000,
+  'issue.close': 20_000,
+  'issue.set_status': 20_000,
+  'pr.merge': 40_000,
+  'worker.open_pr.prepare': 20_000,
+  'worker.open_pr': 60_000,
 };
 
 interface Pending {
@@ -344,6 +358,11 @@ export class BridgeClient {
     // M5: laptop screens of this connection's watches (no seq, never replayed).
     if (isTerminalFrame(m) || isTerminalClosed(m)) {
       this.o.handlers.onConn?.(m);
+      return;
+    }
+    // M7: boards of the watched floor (no seq, never replayed; the game watches again after a reconnect).
+    if (isBoardMessage(m)) {
+      this.o.handlers.onBoard?.(m);
       return;
     }
     // Everything else (acks, unknown types) is ignored.
