@@ -14,6 +14,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/runs"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
+	"github.com/JeffreyVdb/herdr-3d/internal/tracker"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
 
@@ -87,6 +88,7 @@ func runMeta(m workerMeta, w world.WorkerObs) workerMeta {
 func (h *Hub) withRun(next *proto.Worker, w world.WorkerObs, m workerMeta, l runs.Link) {
 	next.Round, next.Ticket = w.RunInfo.Round, w.RunInfo.Ticket
 	next.OrchID, next.Issue = l.OrchID, l.Issue
+	next.WorkItem = h.workItemOf(next.Session, l.Issue) // M7 boards
 	if w.Role == "orch" {
 		next.Phase = m.phase
 		if m.passSet {
@@ -227,11 +229,12 @@ func (h *Hub) relink() {
 	ls := h.links(ms)
 	for _, m := range ms {
 		w, l := h.workers[m.ID], ls[m.ID]
-		if w.OrchID == l.OrchID && reflect.DeepEqual(w.Issue, l.Issue) {
+		item := h.workItemOf(w.Session, l.Issue) // M7 boards
+		if w.OrchID == l.OrchID && reflect.DeepEqual(w.Issue, l.Issue) && reflect.DeepEqual(w.WorkItem, item) {
 			continue
 		}
 		next := *w
-		next.OrchID, next.Issue = l.OrchID, l.Issue
+		next.OrchID, next.Issue, next.WorkItem = l.OrchID, l.Issue, item
 		h.workers[m.ID] = &next
 		h.emit(proto.Event{T: proto.EvWorkerUpsert, Worker: &next})
 	}
@@ -461,4 +464,26 @@ func (tr *reportTracker) poll(ws []reportWorker) []reportUpdate {
 		}
 	}
 	return ups
+}
+
+// workItemOf is a run's issue link in the neutral form: the provider of the
+// floor's issues and the item's opaque id, when that provider maps M6's
+// repo and number onto its items (M7 boards).
+func (h *Hub) workItemOf(session string, issue *proto.IssueRef) *proto.WorkItemRef {
+	if issue == nil {
+		return nil
+	}
+	bf := h.boardOf(session)
+	if bf == nil {
+		return nil
+	}
+	rl, ok := bf.set.Tracker.(tracker.RunLinker)
+	if !ok {
+		return nil
+	}
+	id, ok := rl.ItemFromRun(issue.Repo, issue.Number)
+	if !ok {
+		return nil
+	}
+	return &proto.WorkItemRef{Provider: bf.info.ID, ID: id}
 }

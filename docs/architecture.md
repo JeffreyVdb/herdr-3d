@@ -13,6 +13,7 @@ and `docs/decisions.md`. Where a verifier and a follow-up disagree, the one with
 | Worker at a desk | herdr workspace (its agent pane) | `session.snapshot` + `events.subscribe` |
 | Laptop screen | agent pane terminal | `herdr terminal session observe <pane>` (read-only ANSI frames) |
 | Freelancer | write-code worker (`GROUND/CODE/REVIEW/UX`) | `h3d_*` workspace tokens + `~/.local/state/write-code/runs/<run_id>/` |
+| Board wall (issues Kanban, pull requests) | the floor's issue tracker and code host — GitHub today (Issues, Projects v2, PRs), later files in the repo or Monday.com | the provider, through the bridge's neutral `tracker` / `codehost` interfaces; last good boards, open PRs and announced merges cached in bridge SQLite |
 
 Worker states → animation:
 
@@ -95,6 +96,20 @@ MacBook (M2 Max)                                   devbox (Linux)
   `reason: "sent_home"`. Never for sleep: a
   graceful exit drops `agent_session` so it can't resume. herdr closes a main checkout with open linked worktrees only
   as a group; the bridge refuses that instead.
+- **Boards** (M7, built; details in `protocol.md` "Boards: issues and pull requests"): a floor with an effective repo
+  has an issue board and a pull request board. The bridge talks to them only through two small neutral interfaces
+  (`internal/tracker`, `internal/codehost`; opaque item ids, provider-defined columns, capability flags, optional URL
+  and comments): the poller, the SQLite cache, the commands and the audit sit above them and never import a provider,
+  and the wire has nothing GitHub-shaped. **GitHub** is the only provider (`internal/github`, behind the typed `gh`
+  runner `internal/githubcli`: the one shape `gh api graphql --method POST --input -`, a fixed set of embedded
+  documents, `gh`'s own login, clean environment): one GraphQL feed per repository and project (open issues and the
+  ones closed in the last 7 days, the Status field's options as the columns, open PRs with checks, review and
+  mergeability, and the merge state of the PRs that were open at the last poll), about 12 points a poll. Per floor:
+  polled every 60 s while a connection watches it (`board.watch`), every 10 min otherwise; a failed poll keeps the last
+  good data and marks it stale; a merge rings once (open at one poll, merged at the next; announced merges are in
+  SQLite); a rate policy backs off before the limit. Writes (comment, close, set status, PR comment, merge, open a PR
+  for a plain worker's `h3d/…` branch after `git push`) are typed commands with confirmation, the merge gate
+  (green checks and mergeable, or a doubly confirmed override), capabilities, and audit rows without bodies.
 - **Identity**: bridge-owned worker UUID; reconcile after restarts via persisted pane-label marker (written by the bridge
   on the workers it hires) → `agent_session` id → label+cwd → else new worker. Tokens vanish on herdr restart and workspace ids can be reused: re-apply tokens only
   after reconciliation.
@@ -111,10 +126,13 @@ MacBook (M2 Max)                                   devbox (Linux)
 
 - `hello{proto, client}` → `welcome{proto, server_seq}` → `world.snapshot` (or replay since `seq` on reconnect).
 - Events: `building.*`, `floor.upsert/removed`, `worker.upsert/removed`, `worker.status`, `freelancer.report`,
-  `terminal.frame{pane, full|diff, ansi_b64}`.
+  `terminal.frame{pane, full|diff, ansi_b64}`. M7: `board.issues` / `board.prs{provider, initial, fetched_at, stale,
+  columns, cards | prs, merged}` are connection-scoped like `terminal.frame` (no `seq`, not in the replay ring or the
+  snapshot); workers carry `work_item{provider, id}` next to `issue`.
 - Commands (each with `req_id`, ack/err): `building.create/rename/delete`, `floor.assign`, `floor.wake/sleep`,
   `worker.hire{floor, harness, model, effort, label, cwd}`, `worker.fire`, `worker.prompt`, `worker.keys`,
-  `terminal.watch/unwatch`, `terminal.open` (see below).
+  `terminal.watch/unwatch`, `terminal.open` (see below). M7: `board.watch/unwatch/refresh`, `issue.get/comment/close/
+  set_status`, `pr.get/comment/merge`, `worker.open_pr.prepare/open_pr`; `run.prepare/start` take a `work_item`.
 - **Open in Ghostty (optional escape hatch, not needed to play)**: all normal interaction happens in-game —
   laptop screen = live read-only terminal via `observe`; prompts, approvals and keys via `worker.prompt` / `worker.keys`.
   herdr servers run headless on the server; nothing on the Mac needs a terminal. Only for "let me type in the raw
@@ -171,3 +189,4 @@ MacBook (M2 Max)                                   devbox (Linux)
 | 4 | Hire menu + gentle fire | e2e on throwaway session; audit log entries |
 | 5 | Laptop screens (observe) + in-game prompt/approve/keys; optional "open in Ghostty" button | manual + frame-stream tests |
 | 6 | Freelancers: write-code runs, parent links, verdict stamps, over-cap orchestrator | run a real `/write-code` on a lab repo |
+| 7 | Issues Kanban + Pull Requests board (GitHub behind neutral interfaces): board wall, merge gong, issue → worker, review with a worker, open PR | fake-runner GraphQL fixtures; private bridge against `JeffreyVdb/herdr-3d` (read) and the lab repo (writes) |

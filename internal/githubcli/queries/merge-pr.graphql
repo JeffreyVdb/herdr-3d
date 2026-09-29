@@ -1,0 +1,1 @@
+mutation MergePR($pullRequestId:ID!, $expectedHeadOid:GitObjectID!, $method:PullRequestMergeMethod!) { mergePullRequest(input:{pullRequestId:$pullRequestId,expectedHeadOid:$expectedHeadOid,mergeMethod:$method}) { pullRequest { id number state merged mergedAt mergeCommit { oid } } } }

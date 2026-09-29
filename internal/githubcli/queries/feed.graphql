@@ -1,0 +1,49 @@
+query BoardFeed($owner:String!, $repo:String!, $projectOwner:String!, $projectNumber:Int!, $statusField:String!, $closedQuery:String!, $hasProject:Boolean!, $watchedPRIds:[ID!]!) {
+  repository(owner:$owner, name:$repo) {
+    id nameWithOwner
+    openIssues: issues(first:100, states:OPEN, orderBy:{field:UPDATED_AT,direction:DESC}) {
+      totalCount pageInfo { hasNextPage endCursor }
+      nodes { ...IssueCard }
+    }
+    openPRs: pullRequests(first:100, states:OPEN, orderBy:{field:UPDATED_AT,direction:DESC}) {
+      totalCount pageInfo { hasNextPage endCursor }
+      nodes { ...PRCard }
+    }
+  }
+  recentClosedIssues: search(type:ISSUE, query:$closedQuery, first:100) {
+    issueCount pageInfo { hasNextPage endCursor }
+    nodes { ... on Issue { ...IssueCard } }
+  }
+  previouslyOpenPRs: nodes(ids:$watchedPRIds) { ... on PullRequest { id number title url state mergedAt closingIssuesReferences(first:100) { nodes { number repository { nameWithOwner } } } } }
+  repositoryOwner(login:$projectOwner) @include(if:$hasProject) {
+    __typename
+    ... on User { projectV2(number:$projectNumber) { ...ProjectBoard } }
+    ... on Organization { projectV2(number:$projectNumber) { ...ProjectBoard } }
+  }
+  rateLimit { cost limit remaining resetAt }
+}
+fragment ProjectBoard on ProjectV2 {
+  id number title
+  fields(first:100) {
+    pageInfo { hasNextPage endCursor }
+    nodes { ... on ProjectV2SingleSelectField { id name options { id name } } }
+  }
+}
+fragment IssueCard on Issue {
+  id number title state stateReason url
+  labels(first:100) { pageInfo { hasNextPage endCursor } nodes { name color } }
+  assignees(first:100) { pageInfo { hasNextPage endCursor } nodes { login avatarUrl } }
+  author { login avatarUrl }
+  createdAt updatedAt closedAt
+  projectItems(first:100) {
+    pageInfo { hasNextPage endCursor }
+    nodes { id project { id number title } fieldValueByName(name:$statusField) { ... on ProjectV2ItemFieldSingleSelectValue { name optionId } } }
+  }
+}
+fragment PRCard on PullRequest {
+  id number title url state isDraft headRefName baseRefName
+  author { login avatarUrl } createdAt updatedAt mergedAt
+  mergeable reviewDecision additions deletions changedFiles
+  closingIssuesReferences(first:100) { pageInfo { hasNextPage endCursor } nodes { number repository { nameWithOwner } } }
+  commits(last:1) { nodes { commit { oid statusCheckRollup { state contexts(first:100) { pageInfo { hasNextPage endCursor } nodes { ... on CheckRun { name status conclusion detailsUrl } ... on StatusContext { context state targetUrl } } } } } } }
+}

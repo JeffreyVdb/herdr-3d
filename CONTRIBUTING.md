@@ -11,7 +11,11 @@
   origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires, send-homes and the Changes
   panel), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
   usage and cost from their transcripts, read incrementally, and the pricing table), `runs` (M6: write-code runs, the
-  freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it). Helper: `helper` (ssh tunnel
+  freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it); M7 boards:
+  `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
+  interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
+  repository and project, the writes) and `githubcli` (the typed `gh` runner). `server`, `store` and `proto` never import
+  `github` or `githubcli` (`TestBoardLayerIsProviderNeutral`): `app` wires the provider in. Helper: `helper` (ssh tunnel
   supervisor, game server, `/ws` proxy). `app` holds both command lines.
 - `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).
 - `game/` — the game: Vite + strict TypeScript + three.js (`three/webgpu`), pnpm.
@@ -76,18 +80,30 @@ parts:
   and efforts, prompts not starting with `--`), every argument is its own argv element, sessions outside `--sessions`
   are refused, and commands run with the `HERDR_*`/`CLAUDE*` variables stripped. `TestControlAllowlist` pins the set,
   the argv and the exported methods; widening any needs review.
-- **git** (`gitops.Git`, hires, send-homes and `worker.changes` only): exactly thirteen shapes (`shapes`, pinned by
-  `TestGitAllowlist`):
+- **git** (`gitops.Git`, hires, send-homes, `worker.changes` and, M7, `worker.open_pr`): exactly sixteen shapes (`shapes`,
+  pinned by `TestGitAllowlist`):
   `git -C <dir>` `rev-parse --show-toplevel`, `fetch --quiet origin`, `symbolic-ref --quiet --short
   refs/remotes/origin/HEAD`, `log -1 --format=%H %ct origin/<…> --`, `status --porcelain`, `symbolic-ref --quiet --short
   HEAD`, `rev-list --count HEAD --not --remotes`, `rev-list --count refs/heads/h3d/<…> --not --remotes`, `rev-parse
   --verify --quiet refs/heads/h3d/<…>`, `branch -D h3d/<…>`, and for the Changes panel (M5, read-only) `status
   --porcelain=v2 --branch -z --untracked-files=all`, `merge-base HEAD origin/<…>` and `diff --numstat --patch -z
-  --find-renames --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ <commit id | HEAD> --`. A
+  --find-renames --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ <commit id | HEAD> --`, and for
+  opening a pull request (M7) `push -u origin refs/heads/h3d/<…>:refs/heads/h3d/<…>` (the branch name is validated
+  and is only ever the one the bridge recorded for that worker; the one shape that writes outside the checkout),
+  `rev-list --count HEAD --not origin/<…>` and `log --format=%s -n 20 HEAD --not origin/<…> --`. A
   branch is deleted only when the bridge recorded
   making it for that worker (SQLite `hire_branch`, with its base commit; the name alone proves nothing) and either
   still points at that base (a hire's rollback, clean tree) or has all its commits on a remote (send home, the
   checkout still on it). Same clean environment, plus `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`.
+
+- **gh** (`githubcli.Client`, M7 boards): exactly one shape, `gh api graphql --method POST --input -`, with the request
+  as JSON on stdin: `{"query": <one of the embedded documents in internal/githubcli/queries>, "variables": {…}}`.
+  Never a query, a field or an argument from a client. `gh` keeps its own authentication (the bridge stores no
+  token); the environment is the bridge's minus `HERDR_*` / `CLAUDE*`, plus `GH_PROMPT_DISABLED=1 NO_COLOR=1
+  GH_NO_UPDATE_NOTIFIER=1`; 20 s per call, output capped at 8 MiB; GraphQL `errors` are read also when `gh` exits 0;
+  401 / exit 4 is `provider_failed` "GitHub auth", a rate limit is `rate_limited`. `TestGitHubAllowlist` pins the argv,
+  the set of documents and which of them write (six mutations: addComment, addProjectV2ItemById,
+  updateProjectV2ItemFieldValue, closeIssue, mergePullRequest, createPullRequest).
 
 Everything else the bridge changes is its own SQLite database. How a wake and a sleep go, and what they log:
 [`docs/protocol.md` "Wake and sleep"](docs/protocol.md#wake-and-sleep); hiring and sending home:
@@ -157,6 +173,26 @@ bin/herdr-world cmd --socket "$sock" run.start "{\"session\":\"$s\",\"desk_index
 sqlite3 /tmp/h3d-mytask/world.db 'select id, run_id, repo, issue_number, preset_name from run_launch'
 ```
 
+To try the boards (M7), link a floor to a repository and, for Status columns, a Projects v2 project (both settings the
+bridge already had), and watch it. **Read** a real repository freely, but **write only to a throwaway one**
+(`JeffreyVdb/h3d-lab`, project 3): a comment, a status change, a close, a merge or a push on a real repository is real.
+`dump --board` prints the messages of a watch, `cmd` sends the commands:
+
+```sh
+bin/herdr-world cmd --socket "$sock" floor.settings.set "{\"session\":\"$s\",\"repo\":\"JeffreyVdb/herdr-3d\",\"project\":{\"owner\":\"JeffreyVdb\",\"number\":2}}"
+bin/herdr-world dump --socket "$sock" --board $s --once | jq -c 'select(.t == "board.issues" and .fetched_at > 0) | {columns: [.columns[].name], cards: [.cards[] | {key, column, state}]}'
+gh project item-list 2 --owner JeffreyVdb --format json | jq '.items[] | {n: .content.number, status}'   # the same, from gh
+# on the lab repo (link it first: repo JeffreyVdb/h3d-lab, project {JeffreyVdb, 3}):
+bin/herdr-world cmd --socket "$sock" issue.comment "{\"session\":\"$s\",\"id\":\"JeffreyVdb/h3d-lab#3\",\"body\":\"hello\"}"
+bin/herdr-world cmd --socket "$sock" issue.close "{\"session\":\"$s\",\"id\":\"JeffreyVdb/h3d-lab#3\",\"reason\":\"completed\",\"confirm\":true}"
+bin/herdr-world cmd --socket "$sock" worker.open_pr.prepare '{"id":"<a plain worktree hire on the lab repo>"}'
+bin/herdr-world cmd --socket "$sock" pr.merge "{\"session\":\"$s\",\"id\":\"JeffreyVdb/h3d-lab#5\",\"method\":\"squash\",\"confirm\":true}"
+sqlite3 /tmp/h3d-mytask/world.db 'select cmd, ok, error, args, result from audit_log where cmd like "issue.%" or cmd like "pr.%" or cmd like "worker.open_pr%"'
+```
+
+`go test -tags live ./internal/github -run TestLiveBoard -v` reads a repository through the real `gh` (default
+`JeffreyVdb/herdr-3d` and its project 2; `H3D_LIVE_REPO`, `H3D_LIVE_PROJECT=owner/number`) and writes nothing.
+
 herdr puts worktrees in `~/.herdr/worktrees/<repo name>/`: give a throwaway repository a unique name and remove that
 directory when done. Answering a trust dialog is remembered by the agent (`~/.claude.json`, `~/.codex/config.toml`) for
 that directory.
@@ -180,6 +216,7 @@ that directory.
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
 | `--warn-workers`, `--max-workers` | `HERDR_WORLD_WARN_WORKERS`, `HERDR_WORLD_MAX_WORKERS` | `48`, `96`: the same for all watched running floors together |
 | `--git` | `HERDR_WORLD_GIT` | `git` on `PATH`: worktree hires, send-home checks and the repo suggestion |
+| `--gh` | `HERDR_WORLD_GH` | `gh` on `PATH`: the issue and pull request boards (M7); without it boards say `gh not found` |
 | `--max-watches` | `HERDR_WORLD_MAX_WATCHES` | `6`: laptop screens (`terminal.watch`) one connection may watch at once (`capacity` above) |
 | `--max-observers` | `HERDR_WORLD_MAX_OBSERVERS` | `16`: laptop screens watched at once over all connections, one `terminal session observe` each |
 | `--log-level`, `--log-format` | `HERDR_WORLD_LOG_LEVEL`, `HERDR_WORLD_LOG_FORMAT` | `info`, `text` (or `json`) |
@@ -202,7 +239,9 @@ status` and `git diff --stat` there, byte for byte against `git diff`). `interna
 (`testdata/`, no real content) and temp files; `internal/runs` and the M6 hub tests read temp run directories and a
 synthetic over-cap run (`game/fixtures/runs/20260928-1400-overcap`, the very run the game's `demo-m6` floor is built
 from: `TestOverCapFixture` reads it in place). `make integration` runs,
-with build tag `integration`, against the installed herdr:
+with build tag `integration`, against the installed herdr (the board code is tested without GitHub: the `internal/github`
+and board tests run a fake `gh` over recorded GraphQL fixtures in `internal/github/testdata`, and the server tests fake
+both providers):
 
 - `TestIntegrationThrowawaySession`: starts a headless server for a fresh session `h3d-it-<random>`, creates
   workspaces, reports a custom agent's states through `herdr pane report-agent` (no real coding agent), closes a

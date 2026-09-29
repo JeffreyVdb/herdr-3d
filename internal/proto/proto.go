@@ -301,6 +301,9 @@ type Worker struct {
 	Ticket string `json:"ticket,omitempty"`
 	// Issue is the GitHub issue the run works on, when a repo is known.
 	Issue *IssueRef `json:"issue,omitempty"`
+	// M7 boards: WorkItem is Issue in the neutral form (the provider and the
+	// item's opaque id), present whenever Issue is.
+	WorkItem *WorkItemRef `json:"work_item,omitempty"`
 	// OrchID is a freelancer's orchestrator (a worker id).
 	OrchID string `json:"orch_id,omitempty"`
 	// Phase and Pass are an orchestrator's h3d_phase / h3d_pass tokens,

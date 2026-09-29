@@ -73,9 +73,12 @@ type RunPrepareArgs struct {
 	Session string          `json:"session"`
 	Issue   json.RawMessage `json:"issue,omitempty"`
 	Text    string          `json:"text,omitempty"`
-	Preset  string          `json:"preset,omitempty"`
-	Orch    *Hire           `json:"orch,omitempty"`
-	Extra   string          `json:"extra,omitempty"`
+	// WorkItem (M7) is a third, exclusive way to name the ticket: an item of
+	// the floor's issue provider, as a board card's id.
+	WorkItem *WorkItemRef `json:"work_item,omitempty"`
+	Preset   string       `json:"preset,omitempty"`
+	Orch     *Hire        `json:"orch,omitempty"`
+	Extra    string       `json:"extra,omitempty"`
 }
 
 // RunTicket is what a run works on: a GitHub issue, or free text.
@@ -108,6 +111,7 @@ type RunStartArgs struct {
 	DeskIndex *int            `json:"desk_index"`
 	Issue     json.RawMessage `json:"issue,omitempty"`
 	Text      string          `json:"text,omitempty"`
+	WorkItem  *WorkItemRef    `json:"work_item,omitempty"`
 	Orch      *Hire           `json:"orch"`
 	Preset    string          `json:"preset"`
 	Extra     string          `json:"extra,omitempty"`

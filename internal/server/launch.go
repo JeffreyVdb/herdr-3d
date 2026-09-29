@@ -219,8 +219,14 @@ var (
 
 // runTicket reads a run's ticket from its issue or text (nil when neither
 // is given). An issue number takes the floor's effective repo.
-func (h *Hub) runTicket(session string, f *floorState, issue json.RawMessage, text string) (*proto.RunTicket, error) {
+func (h *Hub) runTicket(session string, f *floorState, issue json.RawMessage, text string, item *proto.WorkItemRef) (*proto.RunTicket, error) {
 	hasIssue := len(issue) > 0 && string(issue) != "null"
+	if item != nil { // M7 boards: a card of the floor's issue provider
+		if hasIssue || text != "" {
+			return nil, bad("give one of an issue, a text and a work_item")
+		}
+		return h.workItemTicket(session, item)
+	}
 	if hasIssue && text != "" {
 		return nil, bad("give either an issue or a text, not both")
 	}
@@ -322,7 +328,7 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 	if err != nil {
 		return err
 	}
-	ticket, err := h.runTicket(a.Session, f, a.Issue, a.Text)
+	ticket, err := h.runTicket(a.Session, f, a.Issue, a.Text, a.WorkItem)
 	if err != nil {
 		return err
 	}
@@ -378,7 +384,7 @@ func (h *Hub) startRunStart(ctx context.Context, c *Client, cmd proto.Command) e
 	if err != nil {
 		return err
 	}
-	ticket, err := h.runTicket(a.Session, f, a.Issue, a.Text)
+	ticket, err := h.runTicket(a.Session, f, a.Issue, a.Text, a.WorkItem)
 	if err != nil {
 		return err
 	}
@@ -424,6 +430,12 @@ func (h *Hub) startRunStart(ctx context.Context, c *Client, cmd proto.Command) e
 		} else {
 			h.runPending[res.ID] = true
 			h.fillRunIDs(ctx)
+			// The first observation of the orchestrator may have missed the
+			// record (it is written after the hire): forget that miss and link
+			// now, so its issue and work item are on the wire before this ack
+			// instead of tens of seconds later.
+			delete(h.runs.launches, res.ID)
+			h.relink()
 		}
 		if _, ok := h.presets[p.ID]; ok { // not deleted meanwhile
 			if err := h.st.SetLastPreset(ctx, a.Session, p.ID); err != nil {

@@ -347,6 +347,28 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			TextBytes int    `json:"text_bytes"`
 			TextRunes int    `json:"text_runes"`
 		}{a.ID, len(a.Text), utf8.RuneCountInString(a.Text)})
+	// M7 boards: the target and the byte counts, never a body.
+	case proto.CmdIssueComment, proto.CmdPRComment:
+		var a proto.CommentArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		return mustJSON(struct {
+			Session   string `json:"session"`
+			ID        string `json:"id"`
+			BodyBytes int    `json:"body_bytes"`
+		}{a.Session, a.ID, len(a.Body)})
+	case proto.CmdWorkerOpenPR:
+		var a proto.OpenPRArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		return mustJSON(struct {
+			ID         string `json:"id"`
+			TitleBytes int    `json:"title_bytes"`
+			BodyBytes  int    `json:"body_bytes"`
+			Confirm    bool   `json:"confirm"`
+		}{a.ID, len(a.Title), len(a.Body), a.Confirm})
 	}
 	return cmd.Args
 }

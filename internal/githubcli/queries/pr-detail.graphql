@@ -1,0 +1,13 @@
+query PRDetail($owner:String!, $repo:String!, $number:Int!, $filesAfter:String, $commentsAfter:String) {
+  repository(owner:$owner,name:$repo) {
+    pullRequest(number:$number) {
+      id number title body url state isDraft headRefName baseRefName headRefOid mergeable reviewDecision
+      author { login avatarUrl } createdAt updatedAt additions deletions changedFiles
+      closingIssuesReferences(first:100) { nodes { number repository { nameWithOwner } } }
+      files(first:100,after:$filesAfter) { totalCount pageInfo { hasNextPage endCursor } nodes { path additions deletions changeType } }
+      comments(first:100,after:$commentsAfter) { totalCount pageInfo { hasNextPage endCursor } nodes { id body author { login avatarUrl } createdAt } }
+      commits(last:1) { nodes { commit { oid statusCheckRollup { state contexts(first:100) { pageInfo { hasNextPage endCursor } nodes { ... on CheckRun { name status conclusion detailsUrl } ... on StatusContext { context state targetUrl } } } } } } }
+    }
+  }
+  rateLimit { cost limit remaining resetAt }
+}

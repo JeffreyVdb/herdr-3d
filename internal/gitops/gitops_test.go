@@ -30,6 +30,10 @@ func TestGitAllowlist(t *testing.T) {
 		"merge-base": {"{git}", "-C", "{dir}", "merge-base", "HEAD", "{ref}"},
 		"diff": {"{git}", "-C", "{dir}", "diff", "--numstat", "--patch", "-z", "--find-renames", "--no-color", "--no-ext-diff",
 			"--no-textconv", "--src-prefix=a/", "--dst-prefix=b/", "{rev}", "--"},
+		// M7: opening a pull request.
+		"push":     {"{git}", "-C", "{dir}", "push", "-u", "origin", "refs/heads/{branch}:refs/heads/{branch}"},
+		"ahead-of": {"{git}", "-C", "{dir}", "rev-list", "--count", "HEAD", "--not", "{ref}"},
+		"subjects": {"{git}", "-C", "{dir}", "log", "--format=%s", "-n", "20", "HEAD", "--not", "{ref}", "--"},
 	}
 	if !reflect.DeepEqual(shapes, want) {
 		t.Fatalf("shapes = %q", shapes)
@@ -39,8 +43,8 @@ func TestGitAllowlist(t *testing.T) {
 	for i := range typ.NumMethod() {
 		methods = append(methods, typ.Method(i).Name)
 	}
-	if w := []string{"BranchTip", "BranchUnpushed", "Changes", "Commit", "CurrentBranch", "DefaultBranch", "DeleteBranch",
-		"Fetch", "Status", "TopLevel", "Unpushed"}; !slices.Equal(methods, w) {
+	if w := []string{"AheadOf", "BranchTip", "BranchUnpushed", "Changes", "Commit", "CurrentBranch", "DefaultBranch", "DeleteBranch",
+		"Fetch", "Push", "Status", "Subjects", "TopLevel", "Unpushed"}; !slices.Equal(methods, w) {
 		t.Fatalf("Git methods = %v, want %v", methods, w)
 	}
 
@@ -53,6 +57,11 @@ func TestGitAllowlist(t *testing.T) {
 		"local ref":         func() error { _, _, err := g.Commit(ctx, "/r", "HEAD"); return err },
 		"ref option":        func() error { _, _, err := g.Commit(ctx, "/r", "--all"); return err },
 		"foreign branch":    func() error { return g.DeleteBranch(ctx, "/r", "main") },
+		"push a foreign":    func() error { return g.Push(ctx, "/r", "main") },
+		"push a refspec":    func() error { return g.Push(ctx, "/r", "h3d/x:refs/heads/main") },
+		"push relative dir": func() error { return g.Push(ctx, "repo", "h3d/x") },
+		"ahead of local":    func() error { _, err := g.AheadOf(ctx, "/r", "main"); return err },
+		"subjects of range": func() error { _, err := g.Subjects(ctx, "/r", "origin/a..b"); return err },
 		"branch with flags": func() error { return g.DeleteBranch(ctx, "/r", "h3d/x -f") },
 		"foreign ahead":     func() error { _, err := g.BranchUnpushed(ctx, "/r", "main"); return err },
 		"foreign tip":       func() error { _, err := g.BranchTip(ctx, "/r", "--all"); return err },
@@ -176,6 +185,13 @@ func TestGitOnARepository(t *testing.T) {
 	if tip, err := g.BranchTip(ctx, work, "h3d/mochi-a1b2c3"); err != nil || tip == base {
 		t.Fatalf("BranchTip after a commit = %q, %v", tip, err)
 	}
+	// M7: what a pull request for it would hold, and pushing it.
+	if n, err := g.AheadOf(ctx, wt, "origin/trunk"); err != nil || n != 1 {
+		t.Fatalf("AheadOf = %d, %v", n, err)
+	}
+	if subs, err := g.Subjects(ctx, wt, "origin/trunk"); err != nil || !slices.Equal(subs, []string{"notes"}) {
+		t.Fatalf("Subjects = %q, %v", subs, err)
+	}
 	// The branch's own commits count, whatever the checkout has out.
 	git(t, wt, "checkout", "-q", "--detach", "origin/trunk")
 	if n, err := g.BranchUnpushed(ctx, work, "h3d/mochi-a1b2c3"); err != nil || n != 1 {
@@ -191,6 +207,20 @@ func TestGitOnARepository(t *testing.T) {
 	}
 	if n, err := g.BranchUnpushed(ctx, work, "h3d/mochi-a1b2c3"); err != nil || n != 0 {
 		t.Fatalf("BranchUnpushed after push = %d, %v", n, err)
+	}
+	// M7: Push sends a branch of the bridge to origin under its own name.
+	git(t, wt, "commit", "-q", "--allow-empty", "-m", "more")
+	if err := g.Push(ctx, wt, "h3d/mochi-a1b2c3"); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if out := git(t, origin, "rev-parse", "refs/heads/h3d/mochi-a1b2c3"); out != git(t, wt, "rev-parse", "HEAD") {
+		t.Fatalf("origin's branch = %s", out)
+	}
+	if up := git(t, wt, "rev-parse", "--abbrev-ref", "@{upstream}"); up != "origin/h3d/mochi-a1b2c3" {
+		t.Fatalf("upstream = %s", up)
+	}
+	if n, err := g.AheadOf(ctx, wt, "origin/h3d/mochi-a1b2c3"); err != nil || n != 0 {
+		t.Fatalf("AheadOf its own upstream = %d, %v", n, err)
 	}
 	git(t, wt, "checkout", "-q", "--detach")
 	if b, err := g.CurrentBranch(ctx, wt); err != nil || b != "" || HeadBranch(wt) != "" {
