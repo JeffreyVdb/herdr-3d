@@ -11,7 +11,8 @@
   origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires, send-homes and the Changes
   panel), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
   usage and cost from their transcripts, read incrementally, and the pricing table), `runs` (M6: write-code runs, the
-  freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it); M7 boards:
+  freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it), `limits` (M10: the Claude and
+  Codex plan limits, read by running the two CLIs as probes through a fake-able process runner); M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
   repository and project, the writes) and `githubcli` (the typed `gh` runner). `server`, `store` and `proto` never import
@@ -100,6 +101,14 @@ parts:
   still points at that base (a hire's rollback, clean tree) or has all its commits on a remote (send home, the
   checkout still on it). Same clean environment, plus `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`.
 
+- **claude / codex** (`limits`, M10, read-only, no session): exactly two probes, each a child of the bridge in a fresh
+  empty temp directory with `CLAUDECODE*` and `HERDR_*` removed from the environment, killed when it does not exit:
+  `claude -p --input-format stream-json --output-format stream-json --verbose --tools '' --setting-sources ''
+  --strict-mcp-config --disable-slash-commands --no-session-persistence` (one `get_usage` control request on stdin) and
+  `codex app-server` (JSON-RPC `initialize`, `initialized`, `account/rateLimits/read`). They start no conversation, cost
+  no tokens and write no session file; the bridge only reads Codex rollouts as a fallback. Nothing runs while no client
+  is connected. `--claude` / `--codex` name the executables, `--no-limits` turns it off (protocol: "Plan limits").
+  `make integration` runs the live check that ten probes leave no Claude project and no Codex rollout behind.
 - **gh** (`githubcli.Client`, M7 boards): exactly one shape, `gh api graphql --method POST --input -`, with the request
   as JSON on stdin: `{"query": <one of the embedded documents in internal/githubcli/queries>, "variables": {…}}`.
   Never a query, a field or an argument from a client. `gh` keeps its own authentication (the bridge stores no
@@ -531,6 +540,12 @@ M5 on the simulating server (`ws=…?sim=1…`): `simusage=<ms>` sends working a
 (default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|changes_failed` for the next prompt,
 answer or changes, `simfail=input_failed` fails the next `worker.keys`, `simfail=observer_failed` closes the next watch
 after its first frame. E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1%26simms%3D300%26simusage%3D2000`.
+
+M10 on the simulating server: the plan limits widget on any fixture. `simlimits=ok|hot|reached|old|transcript|noplan|none` picks
+the readings (`tools/fixture-limits.ts` has the rules: `hot` is red, `reached` pulses, `old` and `transcript` are dimmed
+with an "as of" time), `limits.refresh` answers `{queued}` and sends fresh readings, `simfail=no_m10` plays a bridge
+without limits (no widget). E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simlimits%3Dhot`. The widget: click it or press
+Shift+L (plain L is the elevator) for the panel; it is switched off in About, or with the panel's Hide.
 
 M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
 `simfail=no_m6` plays a bridge without them. E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simms%3D300`.

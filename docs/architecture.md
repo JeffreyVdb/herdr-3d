@@ -14,6 +14,7 @@ and `docs/decisions.md`. Where a verifier and a follow-up disagree, the one with
 | Laptop screen | agent pane terminal | `herdr terminal session observe <pane>` (read-only ANSI frames) |
 | Freelancer | write-code worker (`GROUND/CODE/REVIEW/UX`) | `h3d_*` workspace tokens + `~/.local/state/write-code/runs/<run_id>/` |
 | Board wall (issues Kanban, pull requests) | the floor's issue tracker and code host — GitHub today (Issues, Projects v2, PRs), later files in the repo or Monday.com | the provider, through the bridge's neutral `tracker` / `codehost` interfaces; last good boards, open PRs and announced merges cached in bridge SQLite |
+| Plan limits meter (top-right widget) | the Claude and Codex plan windows (5 h, week, per model) | the `claude` / `codex` CLIs, run as probes by the bridge (`internal/limits`), only while a client is connected |
 
 Worker states → animation:
 
