@@ -78,10 +78,10 @@ export class PromptOverlay {
     this.alertEl.hidden = this.statusEl.hidden = true;
     this.textEl.addEventListener('input', () => {
       this.drafts.set(this.id, this.textEl.value);
-      // Writing the next one: the last result steps back.
+      // Writing the next one: the last result steps back (and the "Will queue" chip is up again while it works).
       if (this.state === 'sent' || this.state === 'failed') {
         this.state = 'ready';
-        this.renderActions();
+        this.render();
       }
     });
     this.textEl.addEventListener('keydown', (e) => {

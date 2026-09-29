@@ -125,7 +125,8 @@ describe('SimWorld worker.answer (M5)', () => {
     expect(t.question?.choices.map((c) => c.label)).toEqual(['No, exit', 'Yes, I trust this folder']);
     const c = r.cmd('worker.answer', { id: t.id, hash: t.question?.hash, choice: 2 });
     expect(r.reply(c.req_id)).toMatchObject({ data: { sent: ['down', 'enter'], resolved: true } });
-    expect(r.byName('Tater').status).toBe('working');
+    // Trusted, Claude Code waits for its first prompt (seen live).
+    expect(r.byName('Tater').status).toBe('idle');
   });
 
   it('a wrong hash is stale, after the current question went out; other errors like the bridge', () => {

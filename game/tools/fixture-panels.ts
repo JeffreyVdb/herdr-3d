@@ -10,8 +10,9 @@
 //   (`prompt_failed`), `simfail=prompt_retried` acks it `retried: true`.
 // - worker.answer: needs the question's hash (else `stale`, after a
 //   worker.upsert with the current question, as the bridge re-reads the
-//   screen); a "No" choice or a cancel leaves the agent `idle`, any other
-//   choice sets it `working` and `done` three steps later. The keys sent are
+//   screen); a "No" choice, a cancel or trusting a folder (the agent then
+//   waits for its first prompt, as Claude Code does) leaves the agent `idle`,
+//   any other choice sets it `working` and `done` three steps later. The keys sent are
 //   the digit, or for a trust dialog (no digits) arrows from the cursor and
 //   Enter, like the bridge.
 //   `simfail=answer_unresolved`: the next answer is acked `resolved: false`.
@@ -167,7 +168,7 @@ export class PanelsSim {
       return;
     }
     const no = !choice || /^\s*no\b/i.test(choice.label);
-    if (no) this.setStatus(send, w, 'idle');
+    if (no || q.kind === 'trust') this.setStatus(send, w, 'idle');
     else this.startTurn(send, w, w.title ?? '');
     ack({ sent, resolved: true });
   }

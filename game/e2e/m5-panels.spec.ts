@@ -108,8 +108,9 @@ test('P prompts the looked-at worker: sent, then it works and is done; queued wh
   await expect(page.locator('.desk-dlg--prompt .dd-status .tape')).toHaveText('Queued');
   await shot(page, 'm5-prompt-queued');
   expect(await statusOf(page, nibble)).toBe('working');
-  // Esc closes; a draft left unsent is still there next time.
+  // Writing the next one while it still works: the chip is up again. Esc closes; a draft left unsent is still there next time.
   await page.keyboard.type('half a thought');
+  await expect(page.locator('.pr-queued')).toBeVisible();
   await page.keyboard.press('Escape');
   await page.keyboard.press('p');
   expect((await promptPanel(page)).text).toBe('half a thought');
@@ -237,7 +238,8 @@ test('a blocked worker’s card shows its numbered choices; 1–3 answer it from
   await expect(page.locator('.prompt .key--answer')).toHaveText(['2Approve', '1Deny']);
   await page.keyboard.press('2');
   await expect(toast(page)).toHaveText('Answered Tater: 2. Yes, I trust this folder.');
-  await expect.poll(() => statusOf(page, tater)).toBe('working');
+  // Trusted, it waits for its first prompt, as Claude Code does.
+  await expect.poll(() => statusOf(page, tater)).toBe('idle');
 
   // A Codex approval: 3 is its "No" (Deny); the agent is left idle.
   const sprocket = await face(page, 'Sprocket');
