@@ -402,3 +402,34 @@ func TestOpenFromBranch(t *testing.T) {
 		t.Fatalf("vars = %v", v)
 	}
 }
+
+// An issue is on the board when it is open or was closed within the window; the
+// provider answers not_found for one that is not, even before any board read.
+func TestIssueDetailOffBoard(t *testing.T) {
+	detail := func(closedAt string) string {
+		return edit(t, "issue-detail.json", func(m map[string]any) {
+			is := dig(m, "data", "repository", "issue")
+			is["state"], is["closedAt"] = "CLOSED", closedAt
+		})
+	}
+	for _, tc := range []struct {
+		name, closedAt string
+		found          bool
+	}{
+		{"closed long ago", "2026-09-10T08:00:00Z", false},
+		{"closed just outside the window", "2026-09-22T11:59:00Z", false},
+		{"closed within the window", "2026-09-27T08:00:00Z", true},
+	} {
+		reg, _ := newRegistry(t, func(doc githubcli.Doc, _ map[string]any) (string, error) {
+			if doc != githubcli.DocIssueDetail {
+				t.Errorf("unexpected %s", doc)
+			}
+			return detail(tc.closedAt), nil
+		})
+		tr, _ := reg.For(projectCfg)
+		_, err := tr.Get(context.Background(), "JeffreyVdb/herdr-3d#9")
+		if tc.found && err != nil || !tc.found && !errors.Is(err, provider.ErrNotFound) {
+			t.Errorf("%s: err = %v", tc.name, err)
+		}
+	}
+}

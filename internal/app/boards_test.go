@@ -25,6 +25,9 @@ func TestServeBoards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The fixture is dated for the day it was cut; the board runs on the real clock, so the issue it closed
+	// just inside the seven-day window is moved to just inside today's.
+	feed = []byte(strings.ReplaceAll(string(feed), "2026-09-22T12:00:01Z", time.Now().Add(-6*24*time.Hour).UTC().Format(time.RFC3339)))
 	var mu sync.Mutex
 	var mutations []map[string]any
 	gh := func(_ context.Context, argv []string, stdin []byte) ([]byte, []byte, error) {

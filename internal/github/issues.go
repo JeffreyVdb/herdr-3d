@@ -119,6 +119,10 @@ func (t *issues) Get(ctx context.Context, id string) (tracker.Detail, error) {
 	}
 	if d.Card.ID == "" {
 		d.Card, _ = t.card(&is.issueNode, pr)
+		// Off the board is not there: an issue closed before the board's window.
+		if c := d.Card; c.ClosedAt != nil && *c.ClosedAt < t.now().Add(-closedWindow).UnixMilli() {
+			return tracker.Detail{}, provider.Errorf(provider.ErrNotFound, "%s is not on the board of %s", id, t.cfg.Repo)
+		}
 		if t.hasProject() && pr == nil {
 			d.Card.Column = "" // its status is in the project: not known without a board read
 		}
