@@ -8,7 +8,8 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
 - A unix socket at `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` (`--socket` / `HERDR_WORLD_SOCKET` to override). The
   directory is `0700`, the socket `0600`: access is "can act as this unix user", which for the Mac means "has SSH access"
   (`ssh -N -L <local.sock>:<bridge.sock>`). Nothing listens on TCP.
-- HTTP/1.1 on that socket: `GET /ws` upgrades to the WebSocket, `GET /healthz` answers `ok` and carries the bridge's build version in the `X-H3D-Version` header (the body stays `ok`: a helper from an older release checks it exactly). `welcome.server` is the same build as a banner, `herdr-world <version>`.
+- HTTP/1.1 on that socket: `GET /ws` upgrades to the WebSocket, `GET|PUT|DELETE /logo/{building}` carry building logos
+  (M3d, see [Building logos](#building-logos)), `GET /healthz` answers `ok` and carries the bridge's build version in the `X-H3D-Version` header (the body stays `ok`: a helper from an older release checks it exactly). `welcome.server` is the same build as a banner, `herdr-world <version>`.
   ```sh
   curl --unix-socket "$XDG_RUNTIME_DIR/herdr-world/bridge.sock" http://herdr-world/healthz
   ```
@@ -29,7 +30,7 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
 The game does not dial the socket itself. `h3d-helper` forwards it over SSH and serves the game on
 `http://127.0.0.1:7777`; the game opens `ws://${location.host}/ws?token=<token>` on that same origin and the helper
 proxies it to the bridge's `/ws` unchanged (see CONTRIBUTING "Helper"). The helper answers `403` without upgrading
-unless all three hold:
+unless all three hold (`/logo/{building}` has its own rule for `Origin`, below):
 
 - `Host` is `127.0.0.1:<port>` or `localhost:<port>` (or `<ip>:<port>` when `--listen` is another literal loopback
   IP, e.g. `[::1]:<port>`);
@@ -40,6 +41,15 @@ unless all three hold:
   prints it); the game keeps it in `localStorage` (`h3d.token`), which is what lets the installed app start from the
   Dock without that URL, and strips it from the address bar. Same trust as the file: anything that can read the user's
   files or that origin's storage can drive the bridge, which is already a shell as that user.
+
+The helper also proxies `GET|PUT|DELETE /logo/{building}` to the bridge (M3d): it needs the right `Host`, the
+`token` (`?token=`, checked in constant time) and, for the `Origin` header, this: a browser leaves `Origin` out of a
+same-origin `GET` (an image or a `fetch` on the page's own origin), so an **absent** `Origin` passes on `GET`, while a
+**present** one must be one of the helper's own, as for `/ws`. `PUT` and `DELETE` are non-`GET` requests, which a browser
+always sends with `Origin`; it is checked when present, and a client that sends none (curl) still needs the token.
+`POST` and the other methods get `405`. The token, `Origin`, `Cookie` and `Authorization` are not forwarded (only the
+building id and `?h=`). The helper refuses an upload over 1 MiB with `413` `logo_too_large` before it reaches the tunnel,
+and cuts a streamed one off at the limit; it does not link the image code (the bridge converts).
 
 A `502` means the tunnel is down; the helper's own `GET /healthz` reports the tunnel state
 (`{"tunnel":{"state":"up|connecting|degraded|backoff",…}}`, `503` unless `up`).
@@ -154,6 +164,7 @@ lot), and `workers` follows the floors, each floor's workers in herdr's sidebar 
 | `name` | string | 1–64 bytes, unique ignoring case |
 | `sort` | int | 0-based position among buildings |
 | `floors` | string[] | known sessions in this building, in floor order (derived) |
+| `logo` | string? | M3d: the hash (lower-case hex sha256) of the building's logo PNG; absent without one. The image itself is `GET /logo/{id}`, never in an event or the snapshot. It changes when the image does, and is what a client caches the texture by. |
 
 ### Floor (a herdr session)
 
@@ -304,7 +315,7 @@ and remember the last `seq` applied.
 
 | `t` | fields | when |
 |---|---|---|
-| `building.upsert` | `building` | a building was created, renamed, reordered, or its floor list changed |
+| `building.upsert` | `building` | a building was created, renamed, reordered, its floor list changed, or (M3d) its `logo` was set, replaced or cleared |
 | `building.removed` | `id` | a building was deleted (its floors got `floor.upsert` with `building: null` first) |
 | `floor.upsert` | `floor` | a session appeared, started, stopped, was (re)assigned, or its `error`, `transition`, `settings` or `suggested` changed |
 | `floor.removed` | `session` | the session was deleted in herdr (its workers get `worker.removed` first) |
@@ -425,6 +436,61 @@ Floor commands (`floor.assign`, `floor.settings.set`, `floor.wake`, `floor.sleep
 floor whose wake or sleep is in progress answer `busy`; so do `floor.wake` / `floor.sleep` while a hire or a send-home on
 that floor is in progress. They only act on sessions the bridge watches (`--sessions`); any other name, known to herdr or
 not, is `unknown_session`.
+
+### Building logos
+
+M3d. A building can have a logo, shown on the lobby's entrance sign, on the reception wall and on a small sign in front
+of the building in the city. The bridge stores the image itself (SQLite table `building_logo`: the normalised PNG bytes,
+their hash and size; deleting the building deletes it). The building carries only the **hash** (`logo`); clients fetch the
+image over HTTP and cache it by hash. Upload, clear and fetch are HTTP on the same socket as `/ws`, not WebSocket
+commands: a WebSocket message is capped at 256 KiB and a logo may be 1 MiB.
+
+| request | |
+|---|---|
+| `PUT /logo/{building}` | The raw file as the body (any `Content-Type`: the type is decided from the bytes). Cap: **1 MiB** (`1048576` bytes), enforced with `http.MaxBytesReader`: an upload over it is refused with `413`, never truncated. Answers `200` `{"t":"ack","data":{"id","logo","w","h","bytes"}}` (`logo` is the new hash; `w`,`h` the stored size), after the bridge stored it and sent the `building.upsert`. |
+| `DELETE /logo/{building}` | Removes the logo. `200` `{"t":"ack","data":{"id"}}` also when there was none; `404` for an unknown building. The `building.upsert` (without `logo`) follows. |
+| `GET /logo/{building}[?h=<hash>]` | The stored PNG (`Content-Type: image/png`, `nosniff`, `ETag: "<hash>"`, a sandboxing `Content-Security-Policy`). `404` without a logo. With `?h=` equal to the current hash it is `Cache-Control: public, max-age=31536000, immutable`; without it, or with an older hash, `no-cache` (the bytes behind that URL can change). `If-None-Match` gets `304`. |
+
+A change goes through the hub like a command (audit log rows `building.logo.set` / `building.logo.clear`, with the hash and
+sizes but no image), so every client gets the `building.upsert` with the new `logo`, also a replay after a reconnect.
+
+**The pipeline** (`internal/logo`, pure Go, no cgo) turns the upload into one PNG with alpha, its long edge at most **1024
+px**, aspect kept:
+
+- The type comes from the bytes: the PNG signature, `RIFF….WEBP`, or an XML document whose root is `<svg>` (SVG has no
+  signature); never from a file name or the client's `Content-Type`.
+- **PNG** (`image/png`) and **WebP** (`golang.org/x/image/webp`, lossless and lossy, with alpha): the header is read
+  first (`DecodeConfig`) and an image over **8192 px a side or 16 megapixels** is refused before it is decoded. A raster is
+  downscaled with Catmull-Rom (alpha kept), never enlarged. An **animated** WebP is refused.
+- **SVG** is rasterised straight at its stored size on a transparent background, its long edge 1024 px (a vector is drawn
+  large, so a 24 × 24 icon is sharp on a 3 m sign). Only a flat subset of SVG (oksvg) is drawn, and the whole document is
+  checked first: XML directives (DOCTYPE, entities) and processing instructions other than `<?xml?>`, `<use>`, `<image>`,
+  `<text>`, `<script>`, `<foreignObject>`, `<style>`, filters, masks, nested `<svg>` roots, event handlers,
+  `href`s other than `#fragment` gradient references and `url(…)` other than `url(#fragment)`, depth over 64, more than
+  4096 elements, more than 32 attributes on one, path data over 128 KiB or 8192 path commands, a number over 1e6, scale
+  chains over 1000×, tiny dash arrays. Convert text to outlines before exporting.
+- The stored bytes are a freshly encoded PNG, so no metadata or trailing data survives; the **hash** is the sha256 of those
+  bytes (the same picture uploaded twice has the same hash, a different picture never does).
+- At most 2 conversions run at once; a request waits at most 10 s for a slot and 10 s for the result, else `503`
+  `logo_busy`. The image libraries take no context, so a conversion that overruns is abandoned (its answer is dropped),
+  not killed, and keeps its slot until it finishes; the input limits bound how long that can be. A killable worker
+  process would cut it off and was left out for its extra moving parts.
+
+Errors are the protocol's error object (`{"t":"error","code","message"}`) with an HTTP status:
+
+| status | `code` | when |
+|---|---|---|
+| `404` | `not_found` | no such building (`PUT`, `DELETE`), or no logo (`GET`) |
+| `413` | `logo_too_large` | the upload is over 1 MiB, or the image over 8192 px a side / 16 megapixels |
+| `415` | `logo_unsupported` | not PNG, WebP or SVG; an animated WebP; an SVG feature that is not drawn (the message names it) |
+| `422` | `logo_invalid` | empty, corrupt or truncated; an SVG that is not well-formed or draws nothing |
+| `503` | `logo_busy` | no conversion slot in time, or the conversion took too long; retry |
+| `500` | `internal` | the bridge failed |
+| `403` `502` | | the helper's own (token, host or origin refused; the tunnel is down) |
+
+The game shows a logo when it has one and the image can be fetched; without one, or when the fetch fails, the sign shows
+the building's name as before. It fetches each hash once and keeps one texture per hash. `GET /logo/{building}?h=<hash>`
+through the helper carries `token=` like `/ws`.
 
 ### Floor settings
 
@@ -1312,6 +1378,7 @@ bridge at start:
 | `rate_limited` | the provider's rate limit |
 | `checks_not_green`, `not_mergeable` | `pr.merge` of a pull request whose checks are not green, or that is not mergeable (also a conflicting one, always); an override is `override` and `confirm_override` together |
 | `hello_required`, `unsupported_proto` | handshake failures; the connection is then closed with status 1008 |
+| `logo_too_large`, `logo_unsupported`, `logo_invalid`, `logo_busy` | M3d, only on the `/logo` HTTP routes (see [Building logos](#building-logos)): an upload over the size limit, of an unsupported kind, undecodable, or no conversion slot in time |
 | `internal` | the bridge failed (database error, or waking, sleeping, hiring and firing is not configured); safe to retry |
 
 Errors not tied to a command have no `req_id`.

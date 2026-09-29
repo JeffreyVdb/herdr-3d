@@ -14,6 +14,7 @@ and `docs/decisions.md`. Where a verifier and a follow-up disagree, the one with
 | Laptop screen | agent pane terminal | `herdr terminal session observe <pane>` (read-only ANSI frames) |
 | Freelancer | write-code worker (`GROUND/CODE/REVIEW/UX`) | `h3d_*` workspace tokens + `~/.local/state/write-code/runs/<run_id>/` |
 | Board wall (issues Kanban, pull requests) | the floor's issue tracker and code host — GitHub today (Issues, Projects v2, PRs), later files in the repo or Monday.com | the provider, through the bridge's neutral `tracker` / `codehost` interfaces; last good boards, open PRs and announced merges cached in bridge SQLite |
+| Building logo (entrance sign, reception wall, city sign) | an image the user picks for a building | bridge SQLite (`building_logo`: the normalised PNG); the building carries its hash |
 | Plan limits meter (top-right widget) | the Claude and Codex plan windows (5 h, week, per model) | the `claude` / `codex` CLIs, run as probes by the bridge (`internal/limits`), only while a client is connected |
 
 Worker states → animation:
@@ -111,6 +112,15 @@ MacBook (M2 Max)                                   devbox (Linux)
   SQLite); a rate policy backs off before the limit. Writes (comment, close, set status, PR comment, merge, open a PR
   for a plain worker's `h3d/…` branch after `git push`) are typed commands with confirmation, the merge gate
   (green checks and mergeable, or a doubly confirmed override), capabilities, and audit rows without bodies.
+- **Building logos** (M3d, built; details in `protocol.md` "Building logos"): a building can carry a logo, stored by the
+  bridge itself (no remote URL, so the game never loads an image from a third-party host, it works offline and through
+  the helper). Upload, clear and fetch are HTTP on the bridge socket, `PUT|DELETE|GET /logo/{building}`, not WebSocket
+  commands (a message is capped at 256 KiB, a logo may be 1 MiB); `h3d-helper` proxies them behind the same token as
+  `/ws`. `internal/logo` (pure Go: stdlib PNG, `x/image` WebP and Catmull-Rom, oksvg for a checked SVG subset) turns PNG,
+  WebP or SVG into one alpha PNG of at most 1024 px, the bridge keeps those bytes and their sha256, and the
+  `building.upsert` carries only the hash. Two conversions at a time, a wait limit, and everything checked before the
+  costly step (size, pixel budget, SVG preflight). Clients fetch by hash (`?h=`, immutable when current) and keep one
+  texture per hash.
 - **Identity**: bridge-owned worker UUID; reconcile after restarts via persisted pane-label marker (written by the bridge
   on the workers it hires) → `agent_session` id → label+cwd → else new worker. Tokens vanish on herdr restart and workspace ids can be reused: re-apply tokens only
   after reconciliation.
@@ -156,6 +166,11 @@ MacBook (M2 Max)                                   devbox (Linux)
 - **Shell**: Chrome `--app` window on the helper's localhost URL. Chrome runs 120 Hz natively (even on battery), and it is
   the same browser the test loop uses. Tauri 2 stays an option for later; WKWebView is 0–25 % slower and needs a private
   WebKit toggle for 120 Hz.
+- **Logos** (M3d): the entrance sign on the lobby canopy and the reception wall show the logo letterboxed on their own lit
+  plate (the name board is hidden, not rebuilt); the city has a small tilted sign on the pavement in front of the building,
+  its plate and logo dimmed while every floor sleeps (colours only). One mipmapped, premultiplied texture per hash in a
+  shared cache, one instanced draw for the city's plates and one quad per logo. A failed fetch leaves the name. Accent
+  colours taken from the logo for a canopy stripe were left out.
 - **Assets**: Kenney (CC0) furniture / props. Quaternius: check the license per pack (QAL 2026-08-28 on new packs), and don't
   commit QAL files.
 - **Music (M15, the lounge radio)**: real tracks by other artists, licensed per track. A track goes in only if its own
