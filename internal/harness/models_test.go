@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/execpath"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
@@ -278,10 +279,10 @@ func TestBinaryLookupForService(t *testing.T) {
 	if err := os.Symlink(bin, pathBin); err != nil {
 		t.Fatal(err)
 	}
-	if got := binaryPath("codex"); got != pathBin {
+	if got := execpath.Resolve("codex"); got != pathBin {
 		t.Fatalf("PATH precedence: %q, want %q", got, pathBin)
 	}
-	if got := binaryPath(filepath.Join(local, "codex")); got != filepath.Join(local, "codex") {
+	if got := execpath.Resolve(filepath.Join(local, "codex")); got != filepath.Join(local, "codex") {
 		t.Fatalf("explicit path: %q", got)
 	}
 }

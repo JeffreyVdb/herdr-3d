@@ -11,12 +11,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"syscall"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/execpath"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
@@ -82,26 +82,6 @@ type stream struct {
 	read  *bufio.Scanner
 }
 
-// A user systemd manager often omits ~/.local/bin from PATH, although native
-// Codex and Claude Code installs live there. Prefer PATH, then that directory.
-// Resolve relative executable paths before changing to the probe's private cwd.
-func binaryPath(bin string) string {
-	if path, err := exec.LookPath(bin); err == nil {
-		if abs, err := filepath.Abs(path); err == nil {
-			return abs
-		}
-		return path
-	}
-	if filepath.Base(bin) == bin {
-		if home, err := os.UserHomeDir(); err == nil {
-			if path, err := exec.LookPath(filepath.Join(home, ".local", "bin", bin)); err == nil {
-				return path
-			}
-		}
-	}
-	return bin
-}
-
 // probe bounds startup, output and cleanup, including subprocesses. A private
 // cwd avoids loading a random project's config or instructions. It retains the
 // same clean environment used when herdr launches a worker.
@@ -113,7 +93,7 @@ func probe(ctx context.Context, bin string, args []string, run func(*stream) (pr
 		return proto.HarnessOptions{}, err
 	}
 	defer os.RemoveAll(dir)
-	cmd := exec.CommandContext(ctx, binaryPath(bin), args...)
+	cmd := exec.CommandContext(ctx, execpath.Resolve(bin), args...)
 	cmd.Dir, cmd.Env = dir, herdr.CleanEnv(os.Environ())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
