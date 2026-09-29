@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
-import { describe, expect, it } from 'vitest';
-import { LogoCache, type DecodedLogo } from './logos';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fetchLogo, LogoCache, LogoStaleError, type DecodedLogo } from './logos';
 
 const decoded = (w = 100, h = 50): DecodedLogo => ({ image: { close() {} } as never, width: w, height: h });
 
@@ -111,5 +111,106 @@ describe('LogoCache', () => {
     d.resolve(decoded());
     expect(await late).toBeNull();
     expect(cache.size).toBe(0);
+  });
+});
+
+// The race: building A's logo was replaced (H1 -> H2) after the client read
+// A's building.upsert (H1) but before it fetched. B still advertises H1.
+describe('LogoCache and a logo that changed under a hash', () => {
+  const urlA = 'http://x/logo/A?h=H1';
+  const urlB = 'http://x/logo/B?h=H1';
+
+  it('does not cache a stale answer under the old hash, and B still gets its own image', async () => {
+    const asked: string[] = [];
+    const cache = new LogoCache(async (u, hash) => {
+      asked.push(u);
+      if (u === urlA) throw new LogoStaleError('logo 404'); // the bridge has H2 for A now
+      return { ...decoded(64, 64), hash };
+    });
+    // Both buildings ask at once: they share A's request, which comes back empty.
+    const [a, b] = await Promise.all([cache.load('H1', urlA), cache.load('H1', urlB)]);
+    expect(a).toBeNull();
+    expect(b).toBeNull();
+    expect(cache.peek('H1')).toBeNull(); // nothing filed under H1
+    expect(cache.size).toBe(0);
+    expect(cache.hasFailed('H1')).toBe(false); // not a failure of the hash
+    expect(cache.isStale(urlA)).toBe(true);
+    expect(cache.isStale(urlB)).toBe(false);
+    // A is not asked again for H1 (its next upsert carries H2) ...
+    expect(await cache.load('H1', urlA)).toBeNull();
+    expect(asked).toEqual([urlA]);
+    // ... and B's own request gets the image.
+    const e = await cache.load('H1', urlB);
+    expect(e).toMatchObject({ hash: 'H1', width: 64 });
+    expect(cache.peek('H1')).toBe(e);
+    expect(asked).toEqual([urlA, urlB]);
+    // A's new hash is fetched as usual.
+    expect(await cache.load('H2', 'http://x/logo/A?h=H2')).toMatchObject({ hash: 'H2' });
+  });
+
+  it('refuses bytes whose hash is not the one asked for', async () => {
+    let closed = 0;
+    const image = { close: () => closed++ } as never;
+    const cache = new LogoCache(async () => ({ image, width: 8, height: 8, hash: 'H2' })); // A's new image, under H1's URL
+    expect(await cache.load('H1', urlA)).toBeNull();
+    expect(closed).toBe(1);
+    expect(cache.peek('H1')).toBeNull();
+    expect(cache.peek('H2')).toBeNull(); // not filed under the hash it does have either: nobody asked for it
+    expect(cache.size).toBe(0);
+    expect(cache.isStale(urlA)).toBe(true);
+  });
+
+  it('accepts a loader that cannot tell the hash (no crypto, no ETag)', async () => {
+    const cache = new LogoCache(async () => decoded());
+    expect(await cache.load('H1', urlA)).not.toBeNull();
+  });
+
+  it('forgets a stale URL when no building has its hash any more, and on retryFailed', async () => {
+    let calls = 0;
+    const cache = new LogoCache(async () => {
+      calls++;
+      throw new LogoStaleError('logo 404');
+    });
+    await cache.load('H1', urlA);
+    cache.keep([], ['H1']);
+    expect(cache.isStale(urlA)).toBe(true);
+    cache.keep([], ['H2']); // A's upsert with H2 arrived
+    expect(cache.isStale(urlA)).toBe(false);
+    await cache.load('H1', urlA);
+    expect(cache.retryFailed()).toBe(true);
+    expect(cache.isStale(urlA)).toBe(false);
+    expect(calls).toBe(2);
+  });
+});
+
+describe('fetchLogo', () => {
+  const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
+  const sha = async (b: Uint8Array) =>
+    Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', b as BufferSource)), (x) => x.toString(16).padStart(2, '0')).join('');
+  const reply = (status: number, body: Uint8Array | null, headers: Record<string, string> = {}) =>
+    vi.stubGlobal('fetch', async () => new Response(body as BodyInit | null, { status, headers: { 'content-type': 'image/png', ...headers } }));
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('decodes the bytes when they hash to the hash asked for', async () => {
+    const bmp = { width: 5, height: 3, close() {} };
+    vi.stubGlobal('createImageBitmap', async () => bmp);
+    const h = await sha(png);
+    reply(200, png, { etag: `"${h}"` });
+    expect(await fetchLogo('http://x/logo/A?h=' + h, h)).toMatchObject({ width: 5, height: 3, hash: h });
+  });
+
+  it('treats a 404 (the logo changed) and bytes of another hash as stale, and other errors as failures', async () => {
+    const bmp = vi.fn(async () => ({ width: 1, height: 1, close() {} }));
+    vi.stubGlobal('createImageBitmap', bmp);
+    reply(404, new Uint8Array());
+    await expect(fetchLogo('u', 'H1')).rejects.toBeInstanceOf(LogoStaleError);
+    reply(200, png); // an old server: 200 with the current image for whatever ?h=
+    await expect(fetchLogo('u', 'H1')).rejects.toBeInstanceOf(LogoStaleError);
+    expect(bmp).not.toHaveBeenCalled(); // never decoded
+    reply(500, new Uint8Array());
+    const err = await fetchLogo('u', 'H1').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(LogoStaleError);
   });
 });

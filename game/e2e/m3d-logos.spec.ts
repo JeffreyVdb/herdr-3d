@@ -66,8 +66,9 @@ test('set a logo in the Buildings panel: the sign, the reception wall and the ci
   await expect(key(page, `logo-clear:${WORK}`)).toHaveCount(0);
 
   await setLogo(page, WORK);
-  await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText('Logo set for Work. It shows on the entrance sign, the reception wall and the city.');
+  await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText('Logo saved for Work.');
   await expect.poll(async () => (await logos(page)).city.length, { timeout: 15_000 }).toBe(1);
+  await expect(page.locator(`.dir-building[data-id="${WORK}"] .logo-state`)).toHaveText('Shown on the entrance sign, the reception wall and the city.');
   const { hash } = (await logos(page)).city[0] as Logos['city'][number];
   expect(hash).toMatch(/^[0-9a-f]{64}$/);
   expect((await logos(page)).city[0]).toMatchObject({ building: WORK, lit: true });
@@ -139,7 +140,7 @@ test('the city sign follows the facade: lit while a floor runs, dim once every f
   const fetchesBefore = (await logos(page)).fetches;
   await page.keyboard.press('Escape');
 
-  // Put Personal's only floor to sleep: its sign dims; Work's stays lit. Nothing is fetched or rebuilt for it.
+  // Put Personal's only floor to sleep: its sign dims; Work's stays lit. No logo is fetched again (the signs are rebuilt with the city, the textures come from the cache by hash).
   await page.evaluate((b) => window.__h3d.openElevator(b), PERSONAL);
   await page.getByRole('button', { name: 'Sleep floor pastry' }).click();
   await page.locator('dialog.confirm').getByRole('button', { name: 'Sleep floor' }).click();
@@ -170,6 +171,13 @@ test('a logo that cannot be fetched leaves the name; a reconnect tries again', a
   expect(await logos(page)).toMatchObject({ city: [], cached: 0, lobby: { canopy: { showing: 'name', hash: null }, wall: { showing: 'name', hash: null } } });
   await page.waitForTimeout(600);
   expect((await logos(page)).fetches, 'one try each, no retry storm').toBe(2);
+  // The Buildings panel does not claim the logo is shown: a visible line says it could not be loaded.
+  await page.evaluate(() => window.__h3d.openBuildings());
+  const state = page.locator(`.dir-building[data-id="${WORK}"] .logo-state`);
+  await expect(state).toHaveText('Saved, but the image could not be loaded — showing the name. It will retry on reconnect.');
+  await expect(state).toBeVisible();
+  await expect(state).toHaveClass(/logo-state--error/);
+  await page.keyboard.press('Escape');
   // Coming back after a dropped connection is a reason to try again.
   await page.evaluate(() => window.__h3d.reconnect());
   await expect.poll(async () => (await logos(page)).fetches, { timeout: 15_000 }).toBe(4);
@@ -207,7 +215,7 @@ test('refusals: the panel says what is wrong and what to do, and keeps the old l
   await expect(key(page, `logo-set:${WORK}`)).toBeFocused();
   expect((await logos(page)).city).toEqual([]);
   await setLogo(page, WORK);
-  await expect(page.locator('dialog.panel .panel-status[role="status"]')).toContainText('Logo set for Work.');
+  await expect(page.locator('dialog.panel .panel-status[role="status"]')).toContainText('Logo saved for Work.');
   await expect.poll(async () => (await logos(page)).city.length, { timeout: 15_000 }).toBe(1);
   // A refused replacement keeps what is there.
   const kept = (await logos(page)).city[0]?.hash;

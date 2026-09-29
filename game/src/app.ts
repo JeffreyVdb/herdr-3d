@@ -317,6 +317,7 @@ export class App {
       },
       toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 6500 : 3600, kind),
       logoUrl: (b, hash) => logoUrl(this.url, b, hash),
+      logoFailed: (hash) => this.logos.unavailable(hash),
       setLogo: (b, f) => this.setLogo(b, f),
       clearLogo: (b) => this.clearLogo(b),
     });
@@ -927,8 +928,9 @@ export class App {
   /**
    * Follows the buildings' logo hashes: fetches the ones not held yet (once
    * each), puts the loaded ones on the city's signs and the current
-   * building's lobby (a swap: nothing is rebuilt), and lets the cache drop the
-   * textures nobody uses. A logo that cannot be fetched leaves the name.
+   * building's lobby (a texture swap in the lobby; in the city only the signs
+   * are rebuilt, not the buildings), and lets the cache drop the textures
+   * nobody uses. A logo that cannot be fetched leaves the name.
    */
   private syncLogos(): void {
     const want = new Map<string, string>();
@@ -941,9 +943,14 @@ export class App {
       const e = this.logos.peek(hash);
       if (e) this.shownLogos.set(id, e);
       else if (this.logos.hasFailed(hash)) this.shownLogos.delete(id);
-      else {
+      else if (this.logos.isStale(logoUrl(this.url, id, hash))) {
+        // The bridge has another logo for this building already: its building.upsert (new hash) is on its way, and syncs again.
+      } else {
         // Coming in: the old logo (if any) stays until it has, so a change does not flash the name.
-        void this.logos.load(hash, logoUrl(this.url, id, hash)).then(() => this.syncLogos());
+        void this.logos.load(hash, logoUrl(this.url, id, hash)).then((e) => {
+          this.syncLogos();
+          if (!e) this.panels.refresh(); // the Buildings panel says when a saved logo could not be loaded
+        });
       }
     }
     const sig = [...this.shownLogos].map(([id, e]) => `${id}:${e.hash}`).join(',');

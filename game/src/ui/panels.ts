@@ -33,6 +33,8 @@ export interface PanelHost {
   toast(msg: string, kind: 'info' | 'error'): void;
   /** M3d: where a building's logo image is fetched from (it carries the token and the hash). */
   logoUrl(building: string, hash: string): string;
+  /** M3d: the game tried to load the logo behind this hash and could not (the signs show the name). */
+  logoFailed(hash: string): boolean;
   /** M3d: sends a logo file for a building / removes it (HTTP; the world then says the new hash). */
   setLogo(building: string, file: File): Promise<CommandResult>;
   clearLogo(building: string): Promise<CommandResult>;
@@ -64,6 +66,8 @@ export type PanelSummary = (
 type ShownForm = Omit<SettingsForm, 'statusOptions'> & { statusOptions: string[] };
 
 const LOT = 'Unassigned lot';
+const LOGO_SHOWN = 'Shown on the entrance sign, the reception wall and the city.';
+const LOGO_UNLOADED = 'Saved, but the image could not be loaded — showing the name. It will retry on reconnect.';
 
 function stateOf(v: FloorView): ElevatorRow['state'] {
   return v.asleep ? 'asleep' : 'running';
@@ -689,10 +693,18 @@ export class Panels {
     const placeholder = () => h('span', { class: 'logo-thumb-empty' }, icon(ICON.image));
     if (src) {
       const img = h('img', { src, alt: `Logo of ${name}`, decoding: 'async' });
-      img.addEventListener('error', () => holder.replaceChildren(placeholder(), h('span', { class: 'visually-hidden' }, 'The logo could not be loaded')));
+      img.addEventListener('error', () => {
+        holder.replaceChildren(placeholder(), h('span', { class: 'visually-hidden' }, 'The logo could not be loaded'));
+        if (hash && !busy && !this.logoPreview.has(id)) {
+          stateEl.textContent = LOGO_UNLOADED;
+          stateEl.classList.add('logo-state--error');
+        }
+      });
       holder.append(img);
     } else holder.append(placeholder());
-    const state = busy ?? (hash ? 'Shown on the entrance sign, the reception wall and the city.' : 'None yet: the signs show the name.');
+    const failed = !!hash && !this.logoPreview.has(id) && this.host.logoFailed(hash);
+    const state = busy ?? (failed ? LOGO_UNLOADED : hash ? LOGO_SHOWN : 'None yet: the signs show the name.');
+    const stateEl = h('p', { class: `logo-state${failed ? ' logo-state--error' : ''}` }, state);
     const disabled = !!busy;
     const set = h(
       'button',
@@ -729,7 +741,7 @@ export class Panels {
         ),
       );
     }
-    return h('div', { class: 'dir-logo', 'data-logo': hash ?? '' }, holder, h('div', { class: 'logo-text' }, h('p', { class: 'logo-title' }, 'Logo'), h('p', { class: 'logo-state' }, state), tools));
+    return h('div', { class: 'dir-logo', 'data-logo': hash ?? '' }, holder, h('div', { class: 'logo-text' }, h('p', { class: 'logo-title' }, 'Logo'), stateEl, tools));
   }
 
   private async uploadLogo(id: string, file: File): Promise<void> {
@@ -751,7 +763,7 @@ export class Panels {
     const url = this.logoPreview.get(id);
     this.logoPreview.delete(id);
     if (url) URL.revokeObjectURL(url);
-    if (r.ok) this.notify(`Logo set for ${name}. It shows on the entrance sign, the reception wall and the city.`);
+    if (r.ok) this.notify(`Logo saved for ${name}.`);
     else this.notify(failureText('logo.set', r.code, r.message, { name }), 'error');
     this.refresh();
     focusSet();
