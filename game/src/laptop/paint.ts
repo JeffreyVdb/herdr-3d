@@ -6,6 +6,14 @@ import type { IBuffer, IBufferCell } from '@xterm/xterm';
  * one fillText each, the font squeezed to the cell width so columns line up.
  * The colours are the office's: a navy screen, the HUD's hues for ANSI, and
  * the sun-yellow cursor of the HUD's focus ring.
+ *
+ * M6b: the desk monitors are read from the aisle, 3–5 m away, where a
+ * 120-column screen is a grey smudge. Standing, a monitor shows the glance
+ * view instead (`glanceView`): the last few lines that say something (no
+ * blank rows, no empty box frames, no agent footer), wrapped at 22 columns
+ * and set big and bold, every colour lifted to at least 4.5:1 against its
+ * background: at 4 m that is about as small as text reads. The screen you
+ * sit at is the whole terminal, as before.
  */
 
 export interface ScreenTheme {
@@ -50,6 +58,119 @@ export interface PaintOptions {
   /** Draw the cursor (DECTCEM: the pane shows it). */
   cursor: boolean;
   theme?: ScreenTheme;
+  /** M6b: paint the glance view (the last lines, big) instead of the whole screen. */
+  glance?: boolean;
+}
+
+/** M6b: the glance view's grid: this many columns and lines, whatever the pane's size. */
+export const GLANCE = { cols: 22, rows: 5 } as const;
+
+/** M6b: a line of the glance view: cells `c0`..`c1` (exclusive) of the screen's row `row`. */
+export interface Segment {
+  row: number;
+  c0: number;
+  c1: number;
+}
+
+/** Box drawing and block elements: a row of nothing else is a frame (an empty input box, a rule). */
+const FRAME = /^[\u2500-\u259f]$/;
+const blank = (c: string | undefined) => !c || c === ' ';
+
+/**
+ * M6b: the glance view of a screen, given each row as its cells' characters
+ * (`''` for the second half of a wide one): the rows that say something,
+ * from the leftmost column any of them starts at, word-wrapped at `cols`, the
+ * last `max` lines of that. A row says nothing when it is blank, or all frame
+ * but at most one character (an empty prompt box `│ > │`); nor do the one or
+ * two rows under an agent's input box (its footer: `? for shortcuts`, the
+ * key hints).
+ */
+export function glanceView(rows: ReadonlyArray<ReadonlyArray<string>>, cols: number = GLANCE.cols, max: number = GLANCE.rows): Segment[] {
+  const kept: Array<{ row: number; first: number; last: number }> = [];
+  let boxEnd = -1;
+  rows.forEach((cells, row) => {
+    let first = -1;
+    let last = -1;
+    let other = 0;
+    for (let x = 0; x < cells.length; x++) {
+      const c = cells[x] as string;
+      if (blank(c)) continue;
+      if (first < 0) first = x;
+      last = x;
+      if (!FRAME.test(c)) other++;
+    }
+    if (first >= 0 && other > 1) kept.push({ row, first, last });
+    else if (first >= 0 && (cells[first] === '╰' || cells[first] === '└')) boxEnd = row;
+  });
+  // The footer under the last input box.
+  if (boxEnd >= 0) {
+    const below = kept.filter((k) => k.row > boxEnd);
+    if (below.length && below.length <= 2) kept.splice(kept.length - below.length, below.length);
+  }
+  if (!kept.length) return [];
+  const lead = Math.min(...kept.map((k) => k.first));
+  const out: Segment[] = [];
+  for (const { row, first, last } of kept) {
+    const cells = rows[row] as ReadonlyArray<string>;
+    // From the common indent (a row indented half the width or more starts at its text).
+    let c = first - lead < cols / 2 ? lead : first;
+    while (c <= last) {
+      let end = c + cols;
+      if (end > last) {
+        out.push({ row, c0: c, c1: last + 1 });
+        break;
+      }
+      // Break after the last space in the second half of the line, else mid-word (never inside a wide character).
+      let brk = -1;
+      for (let k = end; k > c + cols / 2; k--) {
+        if (cells[k] === ' ') {
+          brk = k;
+          break;
+        }
+      }
+      if (brk > 0) end = brk;
+      else if (cells[end] === '') end--;
+      out.push({ row, c0: c, c1: end });
+      c = end;
+      while (c <= last && blank(cells[c])) c++;
+    }
+  }
+  return out.slice(-max);
+}
+
+/** WCAG relative luminance of a 0xRRGGBB colour. */
+function luminance(c: number): number {
+  const ch = (v: number) => {
+    const s = v / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * ch((c >> 16) & 255) + 0.7152 * ch((c >> 8) & 255) + 0.0722 * ch(c & 255);
+}
+
+export function contrast(a: number, b: number): number {
+  const la = luminance(a);
+  const lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+const lerp = (a: number, b: number, k: number) => {
+  const m = (s: number) => Math.round(((a >> s) & 255) + (((b >> s) & 255) - ((a >> s) & 255)) * k);
+  return (m(16) << 16) | (m(8) << 8) | m(0);
+};
+const lifted = new Map<number, number>();
+
+/** M6b: `fg` moved towards white (or black, on a light background) until it reads at 4.5:1 on `bg`. */
+export function readable(fg: number, bg: number, min = 4.5): number {
+  if (contrast(fg, bg) >= min) return fg;
+  const key = fg * 0x1000000 + bg;
+  const hit = lifted.get(key);
+  if (hit !== undefined) return hit;
+  const to = luminance(bg) > 0.3 ? 0x000000 : 0xffffff;
+  let c = fg;
+  for (let k = 0.15; k <= 1.001 && contrast(c, bg) < min; k += 0.15) c = lerp(fg, to, Math.min(1, k));
+  if (lifted.size > 512) lifted.clear();
+  lifted.set(key, c);
+  return c;
 }
 
 /** The subset of a 2D context the painter uses (a fake one in vitest). */
@@ -100,36 +221,66 @@ export function cellGrid(o: Pick<PaintOptions, 'cols' | 'rows' | 'width' | 'heig
   return { cw, ch, x0: pad + (w - cw * o.cols) / 2, y0: pad + (h - ch * o.rows) / 2 };
 }
 
+/** The screen's rows as their cells' characters (the glance view's input). */
+function cellRows(buf: IBuffer, rows: number, cols: number, cell: IBufferCell | undefined): { rows: string[][]; cell: IBufferCell | undefined } {
+  const out: string[][] = [];
+  let c = cell;
+  for (let y = 0; y < rows; y++) {
+    const line = buf.getLine(buf.viewportY + y);
+    const cells: string[] = [];
+    for (let x = 0; x < cols; x++) {
+      c = line?.getCell(x, c);
+      cells.push(!c ? ' ' : c.getWidth() === 0 ? '' : c.getChars() || ' ');
+    }
+    out.push(cells);
+  }
+  return { rows: out, cell: c };
+}
+
 /**
- * Paints the visible screen of `buf`. Returns the number of text runs drawn
- * (a cost measure for tests and the bench).
+ * Paints the visible screen of `buf` (M6b: or its glance view). Returns the
+ * number of text runs drawn (a cost measure for tests and the bench).
  */
 export function paintBuffer(g: Paint2D, buf: IBuffer, o: PaintOptions, cell: IBufferCell | undefined = undefined): number {
   const t = o.theme ?? SCREEN_THEME;
-  const { cw, ch, x0, y0 } = cellGrid(o);
+  let c = cell;
+  let lines: Segment[];
+  let grid: { cols: number; rows: number };
+  if (o.glance) {
+    const r = cellRows(buf, o.rows, o.cols, c);
+    c = r.cell;
+    lines = glanceView(r.rows);
+    grid = GLANCE;
+  } else {
+    lines = Array.from({ length: o.rows }, (_, row) => ({ row, c0: 0, c1: o.cols }));
+    grid = o;
+  }
+  const { cw, ch, x0, y0 } = cellGrid({ cols: grid.cols, rows: grid.rows, width: o.width, height: o.height });
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.fillStyle = hex(t.bg);
   g.fillRect(0, 0, o.width, o.height);
   const size = Math.max(4, Math.round(ch * 0.8));
-  const fonts = [0, 1, 2, 3].map((f) => `${f & ITALIC ? 'italic ' : ''}${f & BOLD ? '700 ' : '400 '}${size}px ${MONO}`);
+  // Glance: heavier strokes, so the letters survive being small on screen.
+  const w = o.glance ? ['600 ', '800 '] : ['400 ', '700 '];
+  const fonts = [0, 1, 2, 3].map((f) => `${f & ITALIC ? 'italic ' : ''}${f & BOLD ? w[1] : w[0]}${size}px ${MONO}`);
   g.font = fonts[0] as string;
   const adv = g.measureText('M').width || size * 0.6;
   const sx = cw / adv;
   g.textBaseline = 'middle';
-  const cur = { x: buf.cursorX, y: buf.cursorY, show: o.cursor && buf.viewportY === buf.baseY };
+  const cur = { x: buf.cursorX, y: buf.cursorY, show: !o.glance && o.cursor && buf.viewportY === buf.baseY };
   const s: Style = { fg: t.fg, bg: t.bg, flags: 0 };
   let runs = 0;
-  let c = cell;
-  for (let y = 0; y < o.rows; y++) {
+  for (let i = 0; i < lines.length; i++) {
+    const { row: y, c0, c1 } = lines[i] as Segment;
     const line = buf.getLine(buf.viewportY + y);
     if (!line) continue;
-    const py = y0 + y * ch;
-    let x = 0;
-    while (x < o.cols) {
+    const py = y0 + i * ch;
+    let x = c0;
+    while (x < c1) {
       c = line.getCell(x, c);
       if (!c) break;
-      const w = c.getWidth();
-      if (w === 0) {
+      const wd = c.getWidth();
+      if (wd === 0) {
         x++;
         continue;
       }
@@ -139,10 +290,10 @@ export function paintBuffer(g: Paint2D, buf: IBuffer, o: PaintOptions, cell: IBu
       const bg = s.bg;
       const flags = s.flags;
       let text = c.getChars() || ' ';
-      x += w;
+      x += wd;
       // Extend the run over single-width cells of the same style (not over the cursor, drawn on its own).
-      if (w === 1 && !(cur.show && cur.y === y && cur.x === start)) {
-        while (x < o.cols && !(cur.show && cur.y === y && cur.x === x)) {
+      if (wd === 1 && !(cur.show && cur.y === y && cur.x === start)) {
+        while (x < c1 && !(cur.show && cur.y === y && cur.x === x)) {
           const n = line.getCell(x, c);
           if (!n || n.getWidth() !== 1) break;
           styleOf(n, t, s);
@@ -151,11 +302,11 @@ export function paintBuffer(g: Paint2D, buf: IBuffer, o: PaintOptions, cell: IBu
           x++;
         }
       }
-      const px = x0 + start * cw;
-      const wpx = (x - start) * cw;
+      const px = x0 + (start - c0) * cw;
+      const wpx = (Math.min(x, c1) - start) * cw;
       const isCursor = cur.show && cur.y === y && cur.x === start;
       const cellBg = isCursor ? t.cursor : bg;
-      const cellFg = isCursor ? t.bg : fg;
+      const cellFg = isCursor ? t.bg : o.glance ? readable(fg, bg) : fg;
       if (cellBg !== t.bg) {
         g.fillStyle = hex(cellBg);
         // A hair wider so adjacent runs leave no seams.
