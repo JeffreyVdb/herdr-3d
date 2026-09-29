@@ -955,12 +955,12 @@ each (Claude, then Codex; a provider not read yet is absent):
 |---|---|
 | `provider` | `claude` or `codex` |
 | `plan` | the subscription plan (`team`, `prolite`…), `""` when unknown |
-| `windows` | the usage windows: `label` (`5h`, `week`, or a length such as `3d`), `pct` (0–100, used), `resets_at` (unix ms, `0` unknown), `window_mins`, and `model` on a per-model window (Claude's `model_scoped` weeks, or its older `seven_day_opus` / `seven_day_sonnet`; Codex's other limits from `rateLimitsByLimitId`). `[]` when there is no plan or no reading yet. |
+| `windows` | the usage windows: `label` (`5h`, `week`, or a length such as `3d`), `pct` (0–100, used), `resets_at` (unix ms, `0` unknown), `window_mins`, `reached` (a per-model window only, see below), and `model` on a per-model window (Claude's `model_scoped` weeks, or its older `seven_day_opus` / `seven_day_sonnet`; Codex's other limits from `rateLimitsByLimitId`). `[]` when there is no plan or no reading yet. |
 | `at` | when the reading was taken, unix ms (a transcript reading: when the Codex rollout recorded it) |
 | `stale` | not a fresh answer of the CLI: it comes from a transcript, or the last probe failed and this is the reading before. Clients also treat a reading older than 10 minutes as stale. |
 | `error` | why there is no fresh reading: `no_plan` (an API key, or signed out), `not_installed`, `timeout`, `failed` |
 | `source` | `probe`, or `transcript` |
-| `reached` | Codex's `rateLimitReachedType`, present while a limit is reached |
+| `reached` | Codex's `rateLimitReachedType` of the account's own limit, present while it is reached. The `rateLimitReachedType` of a model's own limit (`rateLimitsByLimitId`) is not here: it is `reached` on that limit's windows, so a client warns about it only for that model. |
 | `credits` | Codex's `{"has_credits","unlimited","balance"}` |
 
 Unknown keys of the CLIs are ignored; the fields above are only ever added to.

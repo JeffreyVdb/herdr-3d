@@ -148,6 +148,33 @@ describe('warnings for the dialogs', () => {
     expect(harnessViews(b, [{ harness: 'claude', model: 'claude-fable-5-1' }], NOW)[0]!.reached).toBe(false);
   });
 
+  it('keep a reached model limit to its own model (Codex Spark vs Sol)', () => {
+    const b = new LimitBook();
+    b.reset([
+      codex({
+        windows: [
+          { label: '5h', pct: 20, resets_at: NOW + 3600_000 },
+          { label: '5h', model: 'Spark', pct: 100, resets_at: NOW + 3600_000, reached: 'rate_limit_reached' },
+        ],
+      }),
+    ]);
+    const sol = harnessViews(b, [{ harness: 'codex', model: 'gpt-6-sol' }], NOW, 'UTC')[0]!;
+    expect(sol.models).toEqual([]);
+    expect(sol.reached).toBe(false);
+    expect(warningOf(sol)).toBe('');
+    const spark = harnessViews(b, [{ harness: 'codex', model: 'gpt-5.3-codex-spark' }], NOW, 'UTC')[0]!;
+    expect(spark.reached).toBe(true);
+    expect(warningOf(spark)).toBe('Codex has used up its 5h · Spark limit, resets 18:00.');
+    // The widget's provider-wide view still pulses.
+    expect(providerView(b.get('codex')!, NOW).reached).toBe(true);
+    // A reached flag below 100 % still pulses the widget and warns only for that model.
+    const odd = new LimitBook();
+    odd.reset([codex({ windows: [{ label: 'week', model: 'Spark', pct: 40, resets_at: 0, reached: 'x' }] })]);
+    expect(providerView(odd.get('codex')!, NOW).reached).toBe(true);
+    expect(harnessViews(odd, [{ harness: 'codex', model: 'gpt-6-sol' }], NOW)[0]!.reached).toBe(false);
+    expect(warningOf(harnessViews(odd, [{ harness: 'codex', model: 'gpt-5.3-codex-spark' }], NOW)[0]!)).toBe('Codex has reached a limit.');
+  });
+
   it('match display names with a version ("Sonnet 4.5") by their name', () => {
     const b = new LimitBook();
     b.reset([claude({ windows: [{ label: 'week', model: 'Sonnet 4.5', pct: 90, resets_at: 0 }] })]);

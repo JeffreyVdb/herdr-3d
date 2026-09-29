@@ -31,6 +31,7 @@ function windowOf(v: unknown): LimitWindow | null {
   const w: LimitWindow = { label: v.label, pct: Math.max(0, v.pct), resets_at: num(v.resets_at) };
   if (typeof v.model === 'string' && v.model) w.model = v.model;
   if (typeof v.window_mins === 'number') w.window_mins = v.window_mins;
+  if (typeof v.reached === 'string' && v.reached) w.reached = v.reached;
   return w;
 }
 
@@ -150,6 +151,8 @@ export interface WindowView {
   severity: Severity;
   /** When it resets ("Tue 23:59"), "" when unknown. */
   resets: string;
+  /** The bridge says the limit this window belongs to is reached (Codex's rateLimitReachedType of a model's own limit). */
+  reached: boolean;
 }
 
 export interface ProviderView {
@@ -161,9 +164,9 @@ export interface ProviderView {
   models: WindowView[];
   /** Older than STALE_MS, from a transcript, or the last read failed: dimmed. */
   stale: boolean;
-  /** A limit is reached (a window at 100 %, or Codex's rateLimitReachedType): pulses. */
+  /** A limit is reached (a window at 100 %, or Codex's rateLimitReachedType, wherever it comes from): pulses. */
   reached: boolean;
-  /** The bridge itself says a limit is reached (Codex's rateLimitReachedType), whichever window. */
+  /** The bridge itself says the plan's own limit is reached (Codex's rateLimitReachedType); a model's is on its windows. */
   flagged: boolean;
   /** "as of 17:01" when the reading is stale, else null. */
   asOf: string | null;
@@ -201,6 +204,7 @@ export function providerView(l: Limits, now: number, tz?: string): ProviderView 
     pctText: `${Math.round(w.pct)}%`,
     severity: severity(w.pct),
     resets: resetText(w.resets_at, now, tz),
+    reached: !!w.reached,
   });
   const all = l.windows.map(view);
   const windows = all.filter((w) => w.model === null);
@@ -216,7 +220,7 @@ export function providerView(l: Limits, now: number, tz?: string): ProviderView 
     windows,
     models,
     stale,
-    reached: !!l.reached || l.windows.some((w) => w.pct >= 100),
+    reached: !!l.reached || l.windows.some((w) => w.pct >= 100 || !!w.reached),
     flagged: !!l.reached,
     asOf: stale && l.at ? `as of ${read}` : null,
     readNote: !l.at ? '' : fromLog ? `As of ${read}, from the last Codex session log` : stale ? `Last read ${read} (${agoText(l.at, now)})` : `Read ${read} (${agoText(l.at, now)})`,
@@ -259,7 +263,7 @@ export function windowIsFor(window: WindowView, model: string): boolean {
  */
 export function scopedView(v: ProviderView, models: readonly (string | undefined)[]): ProviderView {
   const keep = models.some((m) => !m) ? v.models : v.models.filter((w) => models.some((m) => m && windowIsFor(w, m)));
-  return { ...v, models: keep, reached: v.flagged || [...v.windows, ...keep].some((w) => w.pct >= 100) };
+  return { ...v, models: keep, reached: v.flagged || [...v.windows, ...keep].some((w) => w.pct >= 100 || w.reached) };
 }
 
 /**

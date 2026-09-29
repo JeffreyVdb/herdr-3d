@@ -68,6 +68,10 @@ type LimitWindow struct {
 	// ResetsAt is when the window resets, unix ms (0: unknown).
 	ResetsAt   int64 `json:"resets_at"`
 	WindowMins int   `json:"window_mins,omitempty"`
+	// Reached is Codex's rateLimitReachedType of the model's own limit this
+	// window belongs to; absent on the plan's own windows (the reading's
+	// Reached covers those).
+	Reached string `json:"reached,omitempty"`
 }
 
 // LimitCredits are a Codex account's credits.

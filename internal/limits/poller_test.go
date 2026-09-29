@@ -2,6 +2,7 @@ package limits
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -62,6 +63,24 @@ func TestCodexRateLimitReached(t *testing.T) {
 		t.Fatal(err)
 	}
 	if l.Reached != "rate_limit_reached" || l.Windows[0].Pct != 100 {
+		t.Fatalf("got %+v", l)
+	}
+}
+
+// A model's own limit that is reached belongs to that model's windows: the
+// reading's Reached is the account's own limit.
+func TestCodexModelLimitReachedStaysOnItsWindows(t *testing.T) {
+	res := `{"rateLimits":{"limitId":"codex","primary":{"usedPercent":20,"windowDurationMins":300,"resetsAt":1790700000},"planType":"pro","rateLimitReachedType":null},` +
+		`"rateLimitsByLimitId":{"codex":{"limitId":"codex"},"codex_spark":{"limitId":"codex_spark","limitName":"Spark","primary":{"usedPercent":100,"windowDurationMins":300,"resetsAt":1790700100},"rateLimitReachedType":"rate_limit_reached"}}}`
+	l, err := parseCodexRead(json.RawMessage(res), time.Unix(1790690000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []proto.LimitWindow{
+		{Label: "5h", Pct: 20, ResetsAt: 1790700000000, WindowMins: 300},
+		{Label: "5h", Model: "Spark", Pct: 100, ResetsAt: 1790700100000, WindowMins: 300, Reached: "rate_limit_reached"},
+	}
+	if l.Reached != "" || !slices.Equal(l.Windows, want) {
 		t.Fatalf("got %+v", l)
 	}
 }

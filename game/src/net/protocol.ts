@@ -999,6 +999,8 @@ export interface LimitWindow {
   /** Unix ms; 0 when unknown. */
   resets_at: number;
   window_mins?: number;
+  /** Codex's rateLimitReachedType of the model's own limit this window belongs to. */
+  reached?: string;
 }
 
 export interface LimitCredits {
