@@ -94,7 +94,7 @@ const emptyChange = (): Change => ({ structure: false, sessions: new Set(), work
 
 /** `world.hire_options` of an older bridge: the lists in the M3 contract. */
 export const DEFAULT_HIRE_OPTIONS: HireOptions = {
-  claude: { models: ['claude-opus-5-5', 'claude-fable-5-1'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+  claude: { models: ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
   codex: {
     models: ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra'],
     efforts: ['low', 'medium', 'high', 'xhigh', 'max'],

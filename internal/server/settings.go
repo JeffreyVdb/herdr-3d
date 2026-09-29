@@ -18,7 +18,7 @@ import (
 // hireOptions is what can be hired (and chosen as a floor's default hire).
 var hireOptions = proto.HireOptions{
 	Claude: proto.HarnessOptions{
-		Models:  []string{"claude-opus-5-5", "claude-fable-5-1"},
+		Models:  []string{"claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5"},
 		Efforts: []string{"low", "medium", "high", "xhigh", "max"},
 	},
 	Codex: proto.HarnessOptions{
