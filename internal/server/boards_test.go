@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -370,6 +371,57 @@ func TestBoardMergeAcrossRestart(t *testing.T) {
 	host.set(func(f *fakeHost) { f.always = true })
 	if _, again := w.pair(); len(again.Merged) != 0 {
 		t.Fatalf("rang twice: %+v", again)
+	}
+}
+
+// A request that is open but not on the board (past the provider's paging
+// limit), or that could not be read, stays in the open set that the store
+// keeps: after a restart the poll is given all of them (also past 100), so a
+// later merge is found. The board's own requests and the kept ones are one set.
+func TestBoardKeepsWatchedAcrossRestart(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "world.db")
+	fb := newFakeBoards()
+	clk := newBoardClock()
+	start := func() *boardBridge {
+		bb := &boardBridge{fb: fb, clk: clk}
+		bb.hireBridge = startHireBridgeAt(t, db, func(o *server.Options) {
+			o.Boards = fb.factory
+			o.Now = clk.Now
+			o.BoardTick = 3 * time.Millisecond
+		})
+		return bb
+	}
+	tr, host := fb.repo("JeffreyVdb/lab")
+	listed := []string{"JeffreyVdb/lab#1", "JeffreyVdb/lab#2"}
+	want := slices.Clone(listed)
+	watch := []string{"JeffreyVdb/lab#2"} // also on the board: one entry
+	for n := 3; n < 133; n++ {
+		id := fmt.Sprintf("JeffreyVdb/lab#%d", n)
+		watch = append(watch, id)
+		want = append(want, id)
+	}
+	host.board.Requests = []codehost.Request{request(listed[0], "#1", "One", "feat/1", "success"), request(listed[1], "#2", "Two", "feat/2", "success")}
+	host.board.Watch = watch
+	bb := start()
+	bb.link("JeffreyVdb/lab")
+	bb.polled("s")
+	bb.stop()
+
+	clk.Advance(3 * time.Hour)
+	tr.set(func(f *fakeTracker) { f.gate = make(chan struct{}) }) // the poll waits for the watch
+	bb = start()
+	w := bb.watcher()
+	w.watch("s")
+	w.issues()
+	w.prs()
+	tr.set(func(f *fakeTracker) { close(f.gate); f.gate = nil })
+	w.pair()
+	prevs := host.Prevs()
+	got := slices.Clone(prevs[len(prevs)-1].OpenIDs)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("after the restart the poll was given %d ids, want %d: %v", len(got), len(want), got)
 	}
 }
 

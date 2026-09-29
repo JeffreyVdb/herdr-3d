@@ -24,7 +24,7 @@ func (h *requests) Board(ctx context.Context, prev codehost.PrevState) (codehost
 	if err != nil {
 		return codehost.Board{}, err
 	}
-	return codehost.Board{Requests: f.requests, Merged: f.merged, Truncated: f.truncated, Rate: f.rate}, nil
+	return codehost.Board{Requests: f.requests, Merged: f.merged, Watch: f.keep, Truncated: f.truncated, Rate: f.rate}, nil
 }
 
 // prNodeOf is the GraphQL node id of a pull request of this repository.

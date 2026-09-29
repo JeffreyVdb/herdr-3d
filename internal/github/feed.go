@@ -22,9 +22,10 @@ const (
 	pageLimit = 5
 	// closedWindow is how long a closed issue stays on the board.
 	closedWindow = 7 * 24 * time.Hour
-	// maxNodeLookups bounds the extra lookups (one per open request that
-	// this run has not seen) a feed makes to find merges after a restart.
-	maxNodeLookups = 40
+	// lookupBatch is how many requests one lookup call reads (GitHub's limit
+	// of nodes(ids:), and the slots of the pr-nodes document): the requests
+	// of the last poll are all checked for a merge, in as many calls as needed.
+	lookupBatch = 100
 )
 
 // feed is one poll of the repository: what both boards are made from.
@@ -33,6 +34,7 @@ type feed struct {
 	issues    tracker.Board
 	requests  []codehost.Request
 	merged    []codehost.Merged
+	keep      []string // open at the last poll, still open or unreadable, and not in requests
 	truncated bool
 	rate      *provider.Rate
 	watched   map[string]bool // request ids the merges were looked up for
@@ -217,10 +219,15 @@ func (r *rateNode) rate() *provider.Rate {
 // ids of the requests that were open at the last poll.
 func (s *source) fetchFeed(ctx context.Context, watched []string) (*feed, error) {
 	now := s.now()
-	nodeIDs, err := s.nodeIDsOf(ctx, watched)
+	prior, err := s.priorOf(ctx, watched)
 	if err != nil {
 		return nil, err
 	}
+	nodeIDs := []string{}
+	for _, p := range prior {
+		nodeIDs = append(nodeIDs, p.node)
+	}
+	first := nodeIDs[:min(len(nodeIDs), lookupBatch)] // the rest are read below
 	owner, repo := s.owner(), s.repoName()
 	projectOwner := s.cfg.ProjectOwner
 	if projectOwner == "" {
@@ -229,7 +236,7 @@ func (s *source) fetchFeed(ctx context.Context, watched []string) (*feed, error)
 	cutoff := now.Add(-closedWindow)
 	vars := map[string]any{
 		"owner": owner, "repo": repo, "projectOwner": projectOwner, "projectNumber": s.cfg.ProjectNumber,
-		"statusField": s.statusField(), "hasProject": s.hasProject(), "watchedPRIds": nodeIDs,
+		"statusField": s.statusField(), "hasProject": s.hasProject(), "watchedPRIds": first,
 		"closedQuery": fmt.Sprintf("repo:%s is:issue is:closed closed:>=%s", s.cfg.Repo, cutoff.UTC().Format("2006-01-02")),
 	}
 	resp, err := s.cli.Query(ctx, githubcli.DocFeed, vars)
@@ -309,6 +316,29 @@ func (s *source) fetchFeed(ctx context.Context, watched []string) (*feed, error)
 	}
 	f.truncated = hasNextIssues || hasNextPRs
 
+	// The issues closed in the window: the same page limit.
+	closed := d.RecentClosedIssues.Nodes
+	hasNextClosed, cursorClosed := d.RecentClosedIssues.PageInfo.HasNextPage, d.RecentClosedIssues.PageInfo.EndCursor
+	for page := 1; page < pageLimit && hasNextClosed; page++ {
+		var more struct {
+			RecentClosedIssues struct {
+				PageInfo pageInfo    `json:"pageInfo"`
+				Nodes    []issueNode `json:"nodes"`
+			} `json:"recentClosedIssues"`
+			RateLimit *rateNode `json:"rateLimit"`
+		}
+		if err := s.query(ctx, githubcli.DocClosedPage, map[string]any{"closedQuery": vars["closedQuery"], "after": cursorClosed,
+			"statusField": s.statusField()}, &more); err != nil {
+			return nil, err
+		}
+		closed = append(closed, more.RecentClosedIssues.Nodes...)
+		hasNextClosed, cursorClosed = more.RecentClosedIssues.PageInfo.HasNextPage, more.RecentClosedIssues.PageInfo.EndCursor
+		if r := more.RateLimit.rate(); r != nil {
+			f.rate = r
+		}
+	}
+	f.truncated = f.truncated || hasNextClosed
+
 	// The project and its status field: the live column list.
 	var columns []tracker.Column
 	if s.hasProject() {
@@ -366,8 +396,8 @@ func (s *source) fetchFeed(ctx context.Context, watched []string) (*feed, error)
 	for i := range issues {
 		add(&issues[i], false)
 	}
-	for i := range d.RecentClosedIssues.Nodes {
-		if n := &d.RecentClosedIssues.Nodes[i]; n.ID != "" {
+	for i := range closed {
+		if n := &closed[i]; n.ID != "" {
 			add(n, true)
 		}
 	}
@@ -393,59 +423,125 @@ func (s *source) fetchFeed(ctx context.Context, watched []string) (*feed, error)
 	f.issues.Truncated = f.truncated
 
 	// Merges: the previously open requests that are merged now. A null (the
-	// request can no longer be read) is never a merge.
-	for _, n := range d.PreviouslyOpenPRs {
-		if n == nil || n.ID == "" || n.State != "MERGED" || n.MergedAt == "" {
-			continue
+	// request can no longer be read) is never a merge, and is kept watched,
+	// like one that is still open but past the board's page limit: a poll
+	// forgets a request only when it has seen its state.
+	listed := map[string]bool{}
+	for _, r := range f.requests {
+		listed[r.ID] = true
+	}
+	nodes := d.PreviouslyOpenPRs
+	for at := len(first); at < len(nodeIDs); at += lookupBatch {
+		var more struct {
+			PreviouslyOpenPRs []*prNode `json:"previouslyOpenPRs"`
+			RateLimit         *rateNode `json:"rateLimit"`
 		}
-		id := s.itemID(s.cfg.Repo, n.Number)
-		m := codehost.Merged{ID: id, Key: fmt.Sprintf("#%d", n.Number), Title: n.Title, MergedAt: ms(n.MergedAt), Closes: []string{}}
-		for _, c := range n.Closing.Nodes {
-			m.Closes = append(m.Closes, s.itemID(c.Repository.NameWithOwner, c.Number))
+		if err := s.query(ctx, githubcli.DocPRsByNode, map[string]any{"ids": nodeIDs[at:min(at+lookupBatch, len(nodeIDs))]}, &more); err != nil {
+			return nil, err
 		}
-		f.merged = append(f.merged, m)
+		nodes = append(nodes, more.PreviouslyOpenPRs...)
+		if r := more.RateLimit.rate(); r != nil {
+			f.rate = r
+		}
+	}
+	for i, p := range prior {
+		var n *prNode
+		if i < len(nodes) {
+			n = nodes[i]
+		}
+		switch {
+		case n == nil || n.ID == "":
+			f.keep = append(f.keep, p.id)
+		case n.State == "MERGED" && n.MergedAt != "":
+			m := codehost.Merged{ID: p.id, Key: fmt.Sprintf("#%d", n.Number), Title: n.Title, MergedAt: ms(n.MergedAt), Closes: []string{}}
+			for _, c := range n.Closing.Nodes {
+				m.Closes = append(m.Closes, s.itemID(c.Repository.NameWithOwner, c.Number))
+			}
+			f.merged = append(f.merged, m)
+		case n.State == "OPEN" && !listed[p.id]:
+			f.keep = append(f.keep, p.id)
+		}
 	}
 	return f, nil
 }
 
-// nodeIDsOf maps the request ids of the last poll to their GraphQL node ids:
-// from what this run has seen, else by looking each one up (after a
-// restart). An id that cannot be found is left out: it is never a merge.
-func (s *source) nodeIDsOf(ctx context.Context, watched []string) ([]string, error) {
-	out := []string{}
-	lookups := 0
+// prior is a request of the last poll with its GraphQL node id.
+type prior struct{ id, node string }
+
+// priorOf maps the request ids of the last poll to their node ids: from
+// what this run has seen, else by looking them up (after a restart), a
+// hundred to a call. An id of another repository, or of a request that does
+// not exist, is left out.
+func (s *source) priorOf(ctx context.Context, watched []string) ([]prior, error) {
+	out := make([]prior, 0, len(watched))
+	type todo struct {
+		id string
+		n  int
+		at int // where in out
+	}
+	var lookups []todo
+	seen := map[string]bool{}
 	for _, id := range watched {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		s.mu.Lock()
 		node, ok := s.nodes[id]
 		s.mu.Unlock()
-		if !ok {
-			repo, n, valid := s.parseID(id)
-			if !valid || repo == "" || lookups >= maxNodeLookups {
-				continue
-			}
-			lookups++
-			var res struct {
-				Repository *struct {
-					PullRequest *struct {
-						ID string `json:"id"`
-					} `json:"pullRequest"`
-				} `json:"repository"`
-			}
-			if err := s.query(ctx, githubcli.DocPRNode, map[string]any{"owner": s.owner(), "repo": s.repoName(), "number": n}, &res); err != nil {
-				if isKind(err, provider.ErrNotFound) {
-					continue
-				}
-				return nil, err
-			}
-			if res.Repository == nil || res.Repository.PullRequest == nil {
-				continue
-			}
-			node = res.Repository.PullRequest.ID
-			s.remember(node, id)
+		if ok {
+			out = append(out, prior{id, node})
+			continue
 		}
-		out = append(out, node)
+		if repo, n, valid := s.parseID(id); valid && repo != "" {
+			lookups = append(lookups, todo{id, n, len(out)})
+			out = append(out, prior{id: id})
+		}
 	}
-	return out, nil
+	found := map[string]string{}
+	for at := 0; at < len(lookups); at += lookupBatch {
+		batch := lookups[at:min(at+lookupBatch, len(lookups))]
+		vars := map[string]any{"owner": s.owner(), "repo": s.repoName()}
+		for i := range lookupBatch { // unused slots repeat the last number
+			vars[fmt.Sprintf("n%d", i)] = batch[min(i, len(batch)-1)].n
+		}
+		resp, err := s.cli.Query(ctx, githubcli.DocPRNodes, vars)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range resp.Errors { // a request that does not exist is a NOT_FOUND: it is left out
+			if e.Type != "NOT_FOUND" {
+				return nil, provider.Failed("GitHub: %s", clip(e.Message))
+			}
+		}
+		var res struct {
+			Repository map[string]*struct {
+				ID string `json:"id"`
+			} `json:"repository"`
+		}
+		if err := json.Unmarshal(resp.Data, &res); err != nil {
+			return nil, provider.Failed("GitHub: unreadable answer")
+		}
+		if res.Repository == nil {
+			return nil, provider.Errorf(provider.ErrNotFound, "GitHub repository %s not found", s.cfg.Repo)
+		}
+		for i, t := range batch {
+			if pr := res.Repository[fmt.Sprintf("p%d", i)]; pr != nil && pr.ID != "" {
+				found[t.id] = pr.ID
+				s.remember(pr.ID, t.id)
+			}
+		}
+	}
+	kept := out[:0]
+	for _, p := range out {
+		if p.node == "" {
+			p.node = found[p.id]
+		}
+		if p.node != "" {
+			kept = append(kept, p)
+		}
+	}
+	return kept, nil
 }
 
 // card maps an issue to a card. trunc: one of its nested connections has

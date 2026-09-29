@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -149,4 +150,42 @@ func TestRunWorkItem(t *testing.T) {
 	// A floor with no board: nothing to resolve it.
 	bb.c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", Repo: proto.Null[string]()})
 	c.mustError(proto.CmdRunPrepare, proto.RunPrepareArgs{Session: "s", WorkItem: item}, proto.ErrNotFound)
+}
+
+// Before the floor's first board poll there is no board to look a card up
+// in: the provider is asked, and an id that is not an item of the tracker is
+// not_found for run.prepare and run.start (a known one goes through).
+func TestRunWorkItemBeforeTheFirstPoll(t *testing.T) {
+	bb := startBoardBridge(t, nil)
+	tr, _ := bb.fb.repo("JeffreyVdb/lab")
+	tr.gate = make(chan struct{}) // the first poll never ends
+	tr.missing = map[string]bool{"JeffreyVdb/lab#999999": true}
+	defer close(tr.gate)
+	bb.git.repos["/home/u/lab"] = "/home/u/lab"
+	c := bb.c
+	c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", Repo: proto.Some("JeffreyVdb/lab"), DefaultCwd: proto.Some("/home/u/lab")})
+	decorateRoles(bb)
+	preset := bb.connect(proto.Hello{}).snapshot().World.Presets[0].ID
+	absent := &proto.WorkItemRef{Provider: "fake", ID: "JeffreyVdb/lab#999999"}
+	known := &proto.WorkItemRef{Provider: "fake", ID: "JeffreyVdb/lab#9"}
+
+	c.mustError(proto.CmdRunPrepare, proto.RunPrepareArgs{Session: "s", WorkItem: absent}, proto.ErrNotFound)
+	desk := 1
+	c.mustError(proto.CmdRunStart, proto.RunStartArgs{Session: "s", DeskIndex: &desk, WorkItem: absent, Orch: &buildTeam.Orch, Preset: preset}, proto.ErrNotFound)
+	if calls := tr.Calls(); !slices.Equal(calls, []string{"get JeffreyVdb/lab#999999", "get JeffreyVdb/lab#999999"}) {
+		t.Fatalf("the provider was asked %v", calls)
+	}
+
+	_, m := c.command(proto.CmdRunPrepare, "p", proto.RunPrepareArgs{Session: "s", WorkItem: known})
+	res := ackData[proto.RunPrepareResult](t, m)
+	if res.Ticket == nil || res.Ticket.Number != 9 {
+		t.Fatalf("prepare = %+v", res)
+	}
+	desk = 2
+	_, m = c.command(proto.CmdRunStart, "rs", proto.RunStartArgs{Session: "s", DeskIndex: &desk, WorkItem: known, Orch: &buildTeam.Orch, Preset: preset})
+	start := ackData[proto.RunStartResult](t, m)
+	l, ok, err := bb.st.RunLaunchByWorker(t.Context(), start.ID)
+	if err != nil || !ok || l.Repo != "JeffreyVdb/lab" || l.IssueNumber != 9 {
+		t.Fatalf("run_launch = %+v %v %v", l, ok, err)
+	}
 }

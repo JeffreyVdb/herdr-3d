@@ -79,8 +79,13 @@ type PrevState struct {
 
 // Board is the open requests, and the transitions of the previous ones.
 type Board struct {
-	Requests  []Request
-	Merged    []Merged
+	Requests []Request
+	Merged   []Merged
+	// Watch are ids the poller keeps in the open set although they are not in
+	// Requests: requests that were open at the previous poll and still are
+	// (past the provider's paging limit), or that could not be read. A
+	// request leaves the set only when a poll has seen it closed or merged.
+	Watch     []string
 	Truncated bool
 	Rate      *provider.Rate
 }

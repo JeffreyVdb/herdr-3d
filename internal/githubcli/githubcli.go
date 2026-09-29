@@ -43,6 +43,9 @@ const (
 	DocOpenPRForHead Doc = "open-pr-for-head"
 	DocIssuesPage    Doc = "open-issues-page"
 	DocPRsPage       Doc = "open-prs-page"
+	DocClosedPage    Doc = "closed-issues-page"
+	DocPRNodes       Doc = "pr-nodes"
+	DocPRsByNode     Doc = "prs-by-node"
 
 	DocAddComment     Doc = "add-comment"
 	DocAddProjectItem Doc = "add-project-item"

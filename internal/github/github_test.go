@@ -284,6 +284,21 @@ func TestSharedFeed(t *testing.T) {
 	}
 }
 
+// prNodes answers a pr-nodes lookup: every slot's number is a request with the
+// node id PR_<number>, except the one that does not exist (null).
+func prNodes(vars map[string]any, missing int) string {
+	var slots []string
+	for i := range lookupBatch {
+		n := int(vars[fmt.Sprintf("n%d", i)].(float64))
+		if n == missing {
+			slots = append(slots, fmt.Sprintf(`"p%d":null`, i))
+		} else {
+			slots = append(slots, fmt.Sprintf(`"p%d":{"id":"PR_%d","number":%d,"state":"OPEN"}`, i, n, n))
+		}
+	}
+	return `{"data":{"repository":{` + strings.Join(slots, ",") + `}}}`
+}
+
 // A request open at the last poll and merged now is a transition; one that
 // cannot be read, or was closed, is not. After a restart (no node ids in
 // memory) the ids are looked up first.
@@ -296,12 +311,8 @@ func TestMergedBetweenPolls(t *testing.T) {
 				return fixture(t, "feed-noproject.json"), nil
 			}
 			return fixture(t, "feed-merged.json"), nil
-		case githubcli.DocPRNode:
-			n := int(vars["number"].(float64))
-			if n == 99 {
-				return `{"data":{"repository":{"pullRequest":null}}}`, nil
-			}
-			return fmt.Sprintf(`{"data":{"repository":{"pullRequest":{"id":"PR_%d","number":%d,"state":"OPEN"}}}}`, n, n), nil
+		case githubcli.DocPRNodes:
+			return prNodes(vars, 99), nil
 		}
 		t.Errorf("unexpected %s", doc)
 		return "", nil
@@ -333,7 +344,7 @@ func TestMergedBetweenPolls(t *testing.T) {
 		t.Fatalf("watched node ids = %v (known from the first poll)", ids)
 	}
 	for _, d := range gh.docs() {
-		if d == githubcli.DocPRNode {
+		if d == githubcli.DocPRNodes {
 			t.Fatal("looked up node ids that the first poll knew")
 		}
 	}
@@ -348,11 +359,14 @@ func TestMergedBetweenPolls(t *testing.T) {
 	}
 	lookups := 0
 	for _, c := range gh2.calls {
-		if c.doc == githubcli.DocPRNode {
+		if c.doc == githubcli.DocPRNodes {
 			lookups++
+			if c.vars["n0"] != 2.0 || c.vars["n1"] != 4.0 || c.vars["n2"] != 99.0 || c.vars["n3"] != 99.0 || c.vars["n99"] != 99.0 {
+				t.Fatalf("lookup slots = %v", c.vars)
+			}
 		}
 	}
-	if lookups != 3 { // #2, #4 and #99; another repo and a bad id are not looked up
+	if lookups != 1 { // #2, #4 and #99 in one call; another repo and a bad id are not looked up
 		t.Fatalf("%d lookups", lookups)
 	}
 	if ids := gh2.last(githubcli.DocFeed)["watchedPRIds"].([]any); len(ids) != 2 {
@@ -477,5 +491,192 @@ func TestRunLinker(t *testing.T) {
 		if _, _, _, ok := rl.RunFromItem(bad); ok {
 			t.Errorf("RunFromItem(%q) is ok", bad)
 		}
+	}
+}
+
+// prState is a previously open request as the lookup returns it: number
+// 7, 14, … merged, numbers over 240 still open, the rest closed unmerged.
+func prState(n int) string {
+	switch {
+	case n%7 == 0:
+		return fmt.Sprintf(`{"id":"PR_%d","number":%d,"title":"pr %d","url":"u","state":"MERGED","mergedAt":"2026-09-29T09:31:22Z","closingIssuesReferences":{"nodes":[]}}`, n, n, n)
+	case n > 240:
+		return fmt.Sprintf(`{"id":"PR_%d","number":%d,"title":"pr %d","url":"u","state":"OPEN","mergedAt":null,"closingIssuesReferences":{"nodes":[]}}`, n, n, n)
+	}
+	return fmt.Sprintf(`{"id":"PR_%d","number":%d,"title":"pr %d","url":"u","state":"CLOSED","mergedAt":null,"closingIssuesReferences":{"nodes":[]}}`, n, n, n)
+}
+
+func nodesOf(ids []any) string {
+	var out []string
+	for _, id := range ids {
+		var n int
+		fmt.Sscanf(id.(string), "PR_%d", &n)
+		out = append(out, prState(n))
+	}
+	return strings.Join(out, ",")
+}
+
+// After a restart every request that was open is checked for a merge, however
+// many there were: 250 previously open ones take three number lookups and
+// three reads by node id (the feed's own, and two more), and the ones that
+// are still open but not on the board (the board is empty here, as if past
+// its page limit) stay watched.
+func TestMergedAfterRestartPastTheLookupLimits(t *testing.T) {
+	var feed map[string]any
+	if err := json.Unmarshal([]byte(fixture(t, "feed-noproject.json")), &feed); err != nil {
+		t.Fatal(err)
+	}
+	repo := feed["data"].(map[string]any)["repository"].(map[string]any)
+	repo["openPRs"].(map[string]any)["nodes"] = []any{}
+	var numbers, reads [][]any
+	handle := func(doc githubcli.Doc, vars map[string]any) (string, error) {
+		switch doc {
+		case githubcli.DocPRNodes:
+			var seen []any
+			for i := range lookupBatch {
+				seen = append(seen, vars[fmt.Sprintf("n%d", i)])
+			}
+			numbers = append(numbers, seen)
+			return prNodes(vars, 0), nil
+		case githubcli.DocFeed:
+			ids := vars["watchedPRIds"].([]any)
+			reads = append(reads, ids)
+			feed["data"].(map[string]any)["previouslyOpenPRs"] = json.RawMessage("[" + nodesOf(ids) + "]")
+			b, _ := json.Marshal(feed)
+			return string(b), nil
+		case githubcli.DocPRsByNode:
+			ids := vars["ids"].([]any)
+			reads = append(reads, ids)
+			return `{"data":{"previouslyOpenPRs":[` + nodesOf(ids) + `]}}`, nil
+		}
+		t.Errorf("unexpected %s", doc)
+		return "", nil
+	}
+	reg, _ := newRegistry(t, handle)
+	_, host := reg.For(Config{Repo: "JeffreyVdb/h3d-lab"})
+	var open []string
+	for n := 1; n <= 250; n++ {
+		open = append(open, fmt.Sprintf("JeffreyVdb/h3d-lab#%d", n))
+	}
+	b, err := host.Board(context.Background(), codehost.PrevState{OpenIDs: open})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(numbers) != 3 || len(reads) != 3 || len(reads[0]) != 100 || len(reads[1]) != 100 || len(reads[2]) != 50 {
+		t.Fatalf("%d number lookups, %d reads", len(numbers), len(reads))
+	}
+	merged := map[string]bool{}
+	for _, m := range b.Merged {
+		merged[m.ID] = true
+	}
+	if len(b.Merged) != 250/7 || len(merged) != 250/7 || !merged["JeffreyVdb/h3d-lab#7"] || !merged["JeffreyVdb/h3d-lab#245"] {
+		t.Fatalf("%d merged: %v", len(b.Merged), b.Merged)
+	}
+	// #241..#250 are still open (two of them merged), and off the board.
+	wantWatch := 0
+	for n := 241; n <= 250; n++ {
+		if n%7 != 0 {
+			wantWatch++
+		}
+	}
+	if len(b.Watch) != wantWatch || slices.Contains(b.Watch, "JeffreyVdb/h3d-lab#245") || !slices.Contains(b.Watch, "JeffreyVdb/h3d-lab#250") {
+		t.Fatalf("watch = %v", b.Watch)
+	}
+}
+
+// A request that cannot be read (null) stays watched, and is never a merge.
+func TestUnreadableRequestStaysWatched(t *testing.T) {
+	handle := func(doc githubcli.Doc, vars map[string]any) (string, error) {
+		if doc != githubcli.DocFeed {
+			t.Errorf("unexpected %s", doc)
+			return "", nil
+		}
+		var feed map[string]any
+		if err := json.Unmarshal([]byte(fixture(t, "feed-merged.json")), &feed); err != nil {
+			t.Fatal(err)
+		}
+		feed["data"].(map[string]any)["previouslyOpenPRs"] = []any{nil, json.RawMessage(prState(7))}
+		b, _ := json.Marshal(feed)
+		return string(b), nil
+	}
+	reg, _ := newRegistry(t, handle)
+	_, host := reg.For(Config{Repo: "JeffreyVdb/h3d-lab"})
+	// Node ids known from an earlier poll of this run.
+	host.(*requests).remember("PR_3", "JeffreyVdb/h3d-lab#3")
+	host.(*requests).remember("PR_7", "JeffreyVdb/h3d-lab#7")
+	b, err := host.Board(context.Background(), codehost.PrevState{OpenIDs: []string{"JeffreyVdb/h3d-lab#3", "JeffreyVdb/h3d-lab#7"}})
+	if err != nil || len(b.Merged) != 1 || !slices.Equal(b.Watch, []string{"JeffreyVdb/h3d-lab#3"}) {
+		t.Fatalf("%+v %v", b, err)
+	}
+}
+
+// closedIssue is a closed issue node of the recent window.
+func closedIssue(n int) string {
+	return fmt.Sprintf(`{"id":"I_c%d","number":%d,"title":"closed %d","state":"CLOSED","closedAt":"2026-09-28T08:00:00Z","updatedAt":"2026-09-28T08:00:00Z",
+		"createdAt":"2026-09-01T08:00:00Z","labels":{"pageInfo":{"hasNextPage":false},"nodes":[]},"assignees":{"pageInfo":{"hasNextPage":false},"nodes":[]},
+		"projectItems":{"pageInfo":{"hasNextPage":false},"nodes":[]}}`, n, n, n)
+}
+
+// More than 100 issues closed in the window: the next pages are followed, up
+// to the page limit; past it the board says it is truncated.
+func TestRecentClosedPaging(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		lastPages int // the page number with hasNextPage false (0: never)
+		pages     int
+		cards     int
+		truncated bool
+	}{{"all followed", 3, 2, 1 + 300, false}, {"limit hit", 0, 4, 1 + 500, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var feed map[string]any
+			if err := json.Unmarshal([]byte(fixture(t, "feed-noproject.json")), &feed); err != nil {
+				t.Fatal(err)
+			}
+			page := func(p int) (string, string) {
+				var nodes []string
+				for i := range 100 {
+					nodes = append(nodes, closedIssue(1000+p*100+i))
+				}
+				next := "true"
+				if p == tc.lastPages {
+					next = "false"
+				}
+				return fmt.Sprintf(`{"issueCount":900,"pageInfo":{"hasNextPage":%s,"endCursor":"c%d"},"nodes":[%s]}`, next, p, strings.Join(nodes, ",")), next
+			}
+			first, _ := page(1)
+			feed["data"].(map[string]any)["recentClosedIssues"] = json.RawMessage(first)
+			body, _ := json.Marshal(feed)
+			pages := 0
+			handle := func(doc githubcli.Doc, vars map[string]any) (string, error) {
+				switch doc {
+				case githubcli.DocFeed:
+					return string(body), nil
+				case githubcli.DocClosedPage:
+					pages++
+					if want := fmt.Sprintf("c%d", pages); vars["after"] != want || vars["closedQuery"] == nil || vars["statusField"] == nil {
+						t.Errorf("page %d vars = %v", pages, vars)
+					}
+					p, _ := page(pages + 1)
+					return `{"data":{"recentClosedIssues":` + p + `}}`, nil
+				}
+				t.Errorf("unexpected %s", doc)
+				return "", nil
+			}
+			reg, _ := newRegistry(t, handle)
+			tr, _ := reg.For(Config{Repo: "JeffreyVdb/h3d-lab"})
+			b, err := tr.Board(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			closed := 0
+			for _, c := range b.Cards {
+				if c.State == tracker.StateClosed {
+					closed++
+				}
+			}
+			if pages != tc.pages || b.Truncated != tc.truncated || len(b.Cards) != tc.cards {
+				t.Fatalf("%d pages, %d cards (%d closed), truncated %v", pages, len(b.Cards), closed, b.Truncated)
+			}
+		})
 	}
 }
