@@ -390,7 +390,8 @@ test('keyboard only on a floor: the top bar, L and the arrow keys reach the elev
   await expect(page.locator('#set-repo')).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page.locator('dialog.panel')).toBeHidden();
-  expect((await sent(page)).map((c) => [c.t, c.result?.ok])).toEqual([
+  // The ack can land after the world event the panel waited for: poll.
+  await expect.poll(async () => (await sent(page)).map((c) => [c.t, c.result?.ok])).toEqual([
     ['floor.wake', true],
     ['floor.sleep', true],
   ]);

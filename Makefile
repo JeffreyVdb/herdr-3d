@@ -14,7 +14,7 @@ export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD := 1
 PORTLEASE := portlease run --project herdr-3d --worktree "$(CURDIR)"
 
 .PHONY: build go-build game-build test go-test game-test integration lint go-lint game-lint \
-	helper-darwin dev shot deps clean
+	helper-darwin dev shot e2e deps clean
 
 ## build: Go binaries (bin/) + game bundle (game/dist/)
 build: go-build game-build
@@ -59,10 +59,14 @@ dev: deps
 	$(PORTLEASE) --name dev --service game-dev -- \
 		sh -c 'exec $(PNPM) exec vite --host 127.0.0.1 --port "$$PORTLEASE_DEV_PORT" --strictPort'
 
-## shot: headless WebGL2 screenshot of the built game -> game/test-results/shot.png
+## shot: headless WebGL2 screenshot of the built game -> game/test-results/shot.png (e2e/shot.spec.ts only)
 shot: game-build
 	rm -f game/test-results/shot.png
-	$(PORTLEASE) --name preview --service game-shot -- $(PNPM) exec playwright test
+	$(PORTLEASE) --name preview --service game-shot -- $(PNPM) exec playwright test e2e/shot.spec.ts
+
+## e2e: the full headless Playwright suite (all e2e/*.spec.ts, H3D_WORKERS parallel workers)
+e2e: game-build
+	$(PORTLEASE) --name preview --service game-e2e -- $(PNPM) exec playwright test
 
 ## deps: install game dependencies from the lockfile
 deps: game/node_modules/.modules.yaml
