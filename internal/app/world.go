@@ -585,7 +585,8 @@ func cmdMain(ctx context.Context, name string, args []string, stdout, stderr io.
 		fmt.Fprintf(stderr, "  %s cmd floor.settings.set '{\"session\":\"herdr-3d\",\"repo\":\"JeffreyVdb/herdr-3d\"}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd floor.sleep '{\"session\":\"h3d-scratch\"}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd worker.hire '{\"session\":\"h3d-scratch\",\"desk_index\":0,\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\"}'\n", name)
-		fmt.Fprintf(stderr, "  %s cmd worker.fire '{\"id\":\"…\",\"worktree\":\"keep\"}'\n\nflags:\n", name)
+		fmt.Fprintf(stderr, "  %s cmd worker.fire '{\"id\":\"…\",\"worktree\":\"keep\"}'\n", name)
+		fmt.Fprintf(stderr, "  %s cmd issue.comment '{\"session\":\"h3d-scratch\",\"id\":\"JeffreyVdb/h3d-lab#3\",\"body\":\"hi\"}'\n\nflags:\n", name)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {

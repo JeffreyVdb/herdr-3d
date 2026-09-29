@@ -147,10 +147,7 @@ func (h *Hub) boardSource(session string) BoardSource {
 func (h *Hub) boardOf(session string) *boardFloor {
 	bf := h.boards.floors[session]
 	if h.opts.Boards == nil || h.floors[session] == nil {
-		if bf != nil {
-			delete(h.boards.floors, session)
-		}
-		return nil
+		return nil // (a floor that is gone keeps its state: it may come back)
 	}
 	src := h.boardSource(session)
 	if bf != nil && bf.src == src {
@@ -476,6 +473,14 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, res po
 	if is.Cards == nil {
 		is.Cards = []tracker.Card{}
 	}
+	for i := range is.Cards { // the wire has lists, never null
+		if is.Cards[i].Labels == nil {
+			is.Cards[i].Labels = []tracker.Label{}
+		}
+		if is.Cards[i].Assignees == nil {
+			is.Cards[i].Assignees = []provider.Person{}
+		}
+	}
 	bf.issues = &is
 	var ps *proto.BoardPRs
 	var merges []store.BoardMerge
@@ -487,6 +492,11 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, res po
 			PRs: res.prs.Requests, Merged: []codehost.Merged{}}
 		if p.PRs == nil {
 			p.PRs = []codehost.Request{}
+		}
+		for i := range p.PRs {
+			if p.PRs[i].Closes == nil {
+				p.PRs[i].Closes = []string{}
+			}
 		}
 		for _, r := range p.PRs {
 			open = append(open, r.ID)
