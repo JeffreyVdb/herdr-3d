@@ -9,6 +9,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/srwiley/oksvg"
 	"github.com/srwiley/rasterx"
@@ -35,8 +36,18 @@ const (
 	svgMaxCompiled = 1 << 18   // values in the compiled paths
 	svgMaxCoord    = 1e6       // absolute value of any coordinate, length or extent
 	svgMaxScale    = 1e3       // product of the scale factors down a branch
-	svgMaxDashWork = 2e6       // estimated dash segments of all strokes together
+	svgMaxStops    = 64        // <stop>s in one gradient: rasterx walks them for every pixel
+	svgMaxWork     = 1e8       // path values times device extent, all shapes together (see renderSVG)
 )
+
+// svgRenderBudget is how long the drawing of a document may take, checked
+// between shapes. The source numbers do not say how slow drawing is (thousands
+// of shapes over the whole canvas, wide strokes: cheap to write, slow to
+// draw, and the group and viewBox scales change every number), so the drawing
+// stops itself: a document not drawn in this time is refused. A single shape
+// is not interrupted; svgMaxWork keeps that short. A var so a test can
+// shorten it.
+var svgRenderBudget = time.Second
 
 // The SVG elements a logo may use: what oksvg draws, minus <use>, <style>,
 // <image> and <text>, which it cannot render safely or at all. Elements of
@@ -50,15 +61,17 @@ var svgElements = map[string]bool{
 
 // The attributes oksvg reads (matched exactly: oksvg lower-cases some names
 // and ignores the namespace, so anything else is dropped rather than
-// forwarded). Attributes of other namespaces, class, href and all the
-// attributes that oksvg ignores are dropped.
+// forwarded). Attributes of other namespaces, class, href, all the attributes
+// that oksvg ignores and the dash properties (stroke-dasharray,
+// stroke-dashoffset: rasterx's dashing cost depends on numbers the preflight
+// cannot bound) are dropped: strokes are always drawn solid.
 var svgAttrs = map[string]bool{
 	"id": true, "style": true, "d": true, "points": true, "viewBox": true, "x": true, "y": true,
 	"width": true, "height": true, "cx": true, "cy": true, "r": true, "rx": true, "ry": true,
 	"x1": true, "y1": true, "x2": true, "y2": true, "fx": true, "fy": true,
 	"transform": true, "gradientTransform": true, "gradientUnits": true, "spreadMethod": true,
 	"offset": true, "stop-color": true, "stop-opacity": true,
-	"fill": true, "stroke": true, "stroke-width": true, "stroke-dashoffset": true, "stroke-dasharray": true,
+	"fill": true, "stroke": true, "stroke-width": true,
 	"stroke-miterlimit": true, "stroke-linecap": true, "stroke-linejoin": true,
 	"opacity": true, "fill-opacity": true, "stroke-opacity": true,
 }
@@ -67,28 +80,14 @@ var svgAttrs = map[string]bool{
 // properties. They get the same checks as the attribute of the same name;
 // other declarations are dropped.
 var svgStyleProps = map[string]bool{
-	"fill": true, "stroke": true, "stroke-width": true, "stroke-dashoffset": true, "stroke-dasharray": true,
+	"fill": true, "stroke": true, "stroke-width": true,
 	"stroke-miterlimit": true, "stroke-linecap": true, "stroke-linejoin": true,
 	"opacity": true, "fill-opacity": true, "stroke-opacity": true, "transform": true,
-}
-
-// The elements that draw a shape (and so a dashed stroke).
-var svgShapes = map[string]bool{
-	"path": true, "rect": true, "circle": true, "ellipse": true, "line": true, "polyline": true, "polygon": true,
-}
-
-// Attributes that give a shape its extent, for the dash work estimate.
-var svgGeometry = map[string]bool{
-	"d": true, "points": true, "x": true, "y": true, "width": true, "height": true, "cx": true, "cy": true,
-	"r": true, "rx": true, "ry": true, "x1": true, "y1": true, "x2": true, "y2": true,
 }
 
 // svgState is what an open element passes down to its children.
 type svgState struct {
 	scale float64 // cumulative bound of the scale factors
-	dash  float64 // smallest non-zero stroke-dasharray entry, 0 for none
-	off   float64 // largest stroke-dashoffset
-	geom  float64 // sum of the coordinates of the element itself (not inherited)
 }
 
 // Properties whose values are lengths or coordinates: every number in them
@@ -96,7 +95,7 @@ type svgState struct {
 var svgNumeric = map[string]bool{
 	"d": true, "points": true, "viewBox": true, "x": true, "y": true, "width": true, "height": true,
 	"cx": true, "cy": true, "r": true, "rx": true, "ry": true, "x1": true, "y1": true, "x2": true, "y2": true,
-	"fx": true, "fy": true, "stroke-width": true, "stroke-dashoffset": true, "stroke-dasharray": true,
+	"fx": true, "fy": true, "stroke-width": true,
 	"stroke-miterlimit": true, "transform": true, "gradientTransform": true, "offset": true,
 }
 
@@ -131,11 +130,18 @@ func newDecoder(data []byte) *xml.Decoder {
 // sanitizeSVG reads the whole document, refuses what the policy above does
 // not allow, and returns the canonical copy that oksvg is given.
 func sanitizeSVG(data []byte) ([]byte, error) {
+	clean, _, err := sanitize(data)
+	return clean, err
+}
+
+// sanitize is sanitizeSVG that also returns the largest scale bound of any
+// element (at least 1).
+func sanitize(data []byte) ([]byte, float64, error) {
 	d := newDecoder(data)
 	var out bytes.Buffer
-	var depth, elements, pathBytes, pathOps, skip int
+	var depth, elements, pathBytes, pathOps, skip, stops int
 	roots := 0
-	var dashWork float64
+	maxScale := 1.0
 	stack := []svgState{{scale: 1}} // one per open element
 	for {
 		t, err := d.Token()
@@ -143,18 +149,18 @@ func sanitizeSVG(data []byte) ([]byte, error) {
 			break
 		}
 		if err != nil {
-			return nil, invalid("the SVG is not well-formed XML: %v", err)
+			return nil, 0, invalid("the SVG is not well-formed XML: %v", err)
 		}
 		switch v := t.(type) {
 		case xml.Directive:
-			return nil, unsupported("the SVG has an XML directive (DOCTYPE or ENTITY)")
+			return nil, 0, unsupported("the SVG has an XML directive (DOCTYPE or ENTITY)")
 		case xml.ProcInst:
 			if v.Target != "xml" {
-				return nil, unsupported("the SVG has an XML processing instruction")
+				return nil, 0, unsupported("the SVG has an XML processing instruction")
 			}
 		case xml.CharData:
 			if depth == 0 && len(bytes.TrimSpace(v)) != 0 {
-				return nil, invalid("text outside the SVG root")
+				return nil, 0, invalid("text outside the SVG root")
 			}
 		case xml.EndElement:
 			depth--
@@ -168,13 +174,13 @@ func sanitizeSVG(data []byte) ([]byte, error) {
 			depth++
 			elements++
 			if depth > svgMaxDepth {
-				return nil, unsupported("the SVG is nested over %d levels", svgMaxDepth)
+				return nil, 0, unsupported("the SVG is nested over %d levels", svgMaxDepth)
 			}
 			if elements > svgMaxElements {
-				return nil, unsupported("the SVG has over %d elements", svgMaxElements)
+				return nil, 0, unsupported("the SVG has over %d elements", svgMaxElements)
 			}
 			if len(v.Attr) > svgMaxAttrs {
-				return nil, unsupported("<%s> has over %d attributes", v.Name.Local, svgMaxAttrs)
+				return nil, 0, unsupported("<%s> has over %d attributes", v.Name.Local, svgMaxAttrs)
 			}
 			if skip > 0 { // inside a dropped foreign element
 				skip++
@@ -186,47 +192,46 @@ func sanitizeSVG(data []byte) ([]byte, error) {
 			if depth == 1 {
 				roots++
 				if roots > 1 || name != "svg" || inert {
-					return nil, unsupported("the SVG must have one <svg> root")
+					return nil, 0, unsupported("the SVG must have one <svg> root")
 				}
 			} else if inert {
 				skip = 1
 				stack = append(stack, stack[len(stack)-1])
 				continue
 			} else if name == "svg" {
-				return nil, unsupported("nested <svg> elements are not supported")
+				return nil, 0, unsupported("nested <svg> elements are not supported")
 			}
 			if !svgElements[name] {
 				switch name {
 				case "text", "tspan":
-					return nil, unsupported("<%s> is not supported: convert the text to outlines (paths) or upload a PNG", name)
+					return nil, 0, unsupported("<%s> is not supported: convert the text to outlines (paths) or upload a PNG", name)
 				default:
-					return nil, unsupported("<%s> is not supported in a logo SVG: flatten it to plain shapes and paths, or upload a PNG", name)
+					return nil, 0, unsupported("<%s> is not supported in a logo SVG: flatten it to plain shapes and paths, or upload a PNG", name)
+				}
+			}
+			switch name {
+			case "linearGradient", "radialGradient":
+				stops = 0
+			case "stop":
+				if stops++; stops > svgMaxStops {
+					return nil, 0, unsupported("a gradient has over %d stops", svgMaxStops)
 				}
 			}
 			st := stack[len(stack)-1]
-			st.geom = 0
 			attrs, err := sanitizeAttrs(name, v.Attr, &pathBytes, &pathOps, &st)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			if pathBytes > svgMaxPathData {
-				return nil, unsupported("the SVG path data is over %d KiB", svgMaxPathData>>10)
+				return nil, 0, unsupported("the SVG path data is over %d KiB", svgMaxPathData>>10)
 			}
 			if pathOps > svgMaxPathOps {
-				return nil, unsupported("the SVG has over %d path commands", svgMaxPathOps)
+				return nil, 0, unsupported("the SVG has over %d path commands", svgMaxPathOps)
 			}
 			if st.scale > svgMaxScale {
-				return nil, unsupported("the SVG scales its shapes over %gx", svgMaxScale)
+				return nil, 0, unsupported("the SVG scales its shapes over %gx", svgMaxScale)
 			}
-			if svgShapes[name] && st.dash > 0 {
-				// Dashes and the shape scale together, so the count of
-				// segments is the stroke's length (bounded by its
-				// coordinates) plus the dash offset, over the shortest dash.
-				dashWork += (8*st.geom + st.off) / st.dash
-				if dashWork > svgMaxDashWork {
-					return nil, unsupported("the SVG has too many dashes: use longer dashes or fewer dashed shapes")
-				}
-			}
+			maxScale = math.Max(maxScale, st.scale)
 			stack = append(stack, st)
 			out.WriteString("<" + name)
 			for _, a := range attrs {
@@ -238,9 +243,9 @@ func sanitizeSVG(data []byte) ([]byte, error) {
 		}
 	}
 	if roots != 1 || depth != 0 {
-		return nil, invalid("the SVG has no <svg> root")
+		return nil, 0, invalid("the SVG has no <svg> root")
 	}
-	return out.Bytes(), nil
+	return out.Bytes(), maxScale, nil
 }
 
 // sanitizeAttrs checks the attributes of one element in the SVG namespace and
@@ -342,37 +347,15 @@ func checkProp(elem, local, val string, st *svgState) error {
 	if !svgNumeric[local] {
 		return nil
 	}
-	var nums []float64
 	if err := eachNumber(val, func(f float64) error {
 		if math.IsNaN(f) || math.IsInf(f, 0) || math.Abs(f) > svgMaxCoord {
 			return unsupported("<%s> has a number out of range in %s", elem, local)
-		}
-		nums = append(nums, f)
-		if svgGeometry[local] {
-			st.geom += math.Abs(f)
 		}
 		return nil
 	}); err != nil {
 		return err
 	}
 	switch local {
-	case "stroke-dasharray":
-		if len(nums) > 16 {
-			return unsupported("<%s> has a long stroke-dasharray", elem)
-		}
-		for _, f := range nums {
-			f = math.Abs(f)
-			if f != 0 && f < 0.01 {
-				return unsupported("<%s> has a stroke-dasharray with tiny dashes", elem)
-			}
-			if f != 0 && (st.dash == 0 || f < st.dash) {
-				st.dash = f
-			}
-		}
-	case "stroke-dashoffset":
-		for _, f := range nums {
-			st.off = math.Max(st.off, math.Abs(f))
-		}
 	case "transform", "gradientTransform":
 		f, err := transformScale(val)
 		if err != nil {
@@ -483,7 +466,7 @@ func eachNumber(s string, fn func(float64) error) error {
 // renderSVG rasterises a sanitised SVG straight at its stored size (long edge
 // MaxEdge), on a transparent canvas.
 func renderSVG(data []byte) (image.Image, error) {
-	clean, err := sanitizeSVG(data)
+	clean, maxScale, err := sanitize(data)
 	if err != nil {
 		return nil, err
 	}
@@ -516,9 +499,34 @@ func renderSVG(data []byte) (image.Image, error) {
 	}
 	dst := image.NewRGBA(image.Rect(0, 0, w, h)) // zeroed: transparent
 	s := math.Min(float64(w)/vb.W, float64(h)/vb.H)
+	// The cost of a shape grows with its values (segments) and with how far
+	// they reach on the canvas, clipped or not, and the group and viewBox
+	// scales enlarge every number after the sanitiser has seen it. So bound the
+	// product, in output pixels, with the values oksvg compiled (which include
+	// what relative commands added up to), the stroke width (times the miter
+	// limit, which sets how far a join reaches) and the largest scale bound.
+	work := 0.0
+	for _, p := range icon.SVGPaths {
+		reach := 0.0
+		for _, v := range p.Path {
+			reach = math.Max(reach, math.Abs(float64(v))/64)
+		}
+		reach = (reach + p.LineWidth*math.Max(1, p.MiterLimit)) * maxScale * s
+		work += float64(len(p.Path)) * math.Max(reach, 1)
+		if work > svgMaxWork {
+			return nil, unsupported("the SVG is too complex: its shapes are too detailed for their size on the canvas")
+		}
+	}
 	ox, oy := (float64(w)-vb.W*s)/2, (float64(h)-vb.H*s)/2
 	// Not SetTarget: it translates by the unscaled viewBox origin before scaling.
 	icon.Transform = rasterx.Identity.Translate(ox, oy).Scale(s, s).Translate(-vb.X, -vb.Y)
-	icon.Draw(rasterx.NewDasher(w, h, rasterx.NewScannerGV(w, h, dst, dst.Bounds())), 1)
+	r := rasterx.NewDasher(w, h, rasterx.NewScannerGV(w, h, dst, dst.Bounds()))
+	deadline := time.Now().Add(svgRenderBudget)
+	for i, p := range icon.SVGPaths { // icon.Draw, with a clock
+		if i > 0 && time.Now().After(deadline) {
+			return nil, unsupported("the SVG takes too long to draw: use fewer or simpler shapes")
+		}
+		p.DrawTransformed(r, 1, icon.Transform)
+	}
 	return dst, nil
 }
