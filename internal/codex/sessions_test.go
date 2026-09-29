@@ -79,3 +79,29 @@ func TestDefaultSessionsDir(t *testing.T) {
 		t.Errorf("default: %q", got)
 	}
 }
+
+func TestFindRollout(t *testing.T) {
+	root := t.TempDir()
+	rollout(t, root, "2026/09/27", "2026-09-27T23-00-00", "01a0-old", "/home/u/repo")
+	rollout(t, root, "2026/09/28", "2026-09-28T10-00-00", "01a0-morning", "/home/u/repo")
+	// A name that ends in the id but whose first line is another session.
+	rollout(t, root, "2026/09/28", "2026-09-28T11-00-00", "01a0-other", "/home/u/repo")
+	if err := os.Rename(filepath.Join(root, "2026/09/28/rollout-2026-09-28T11-00-00-01a0-other.jsonl"),
+		filepath.Join(root, "2026/09/28/rollout-2026-09-28T11-00-00-01a0-old.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{
+		"01a0-morning": "2026/09/28/rollout-2026-09-28T10-00-00-01a0-morning.jsonl",
+		"01a0-old":     "2026/09/27/rollout-2026-09-27T23-00-00-01a0-old.jsonl",
+		"01a0-none":    "",
+		"../x":         "",
+	} {
+		got, err := FindRollout(root, id)
+		if want != "" {
+			want = filepath.Join(root, filepath.FromSlash(want))
+		}
+		if err != nil || got != want {
+			t.Errorf("FindRollout(%q) = %q, %v; want %q", id, got, err, want)
+		}
+	}
+}

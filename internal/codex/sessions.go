@@ -125,3 +125,37 @@ func readMeta(path string) (id, cwd string, ok bool) {
 	}
 	return meta.Payload.ID, meta.Payload.Cwd, meta.Payload.ID != "" && meta.Payload.Cwd != ""
 }
+
+// maxRolloutNames bounds how many rollout file names one FindRollout
+// looks at (it reads only the file whose name matches).
+const maxRolloutNames = 50000
+
+// FindRollout returns the rollout file of session id under root
+// (root/YYYY/MM/DD/rollout-*-<id>.jsonl, newest first), a regular file
+// whose first line's session_meta has that id; "" when there is none.
+func FindRollout(root, id string) (string, error) {
+	if !idRe.MatchString(id) {
+		return "", nil
+	}
+	suffix := "-" + id + ".jsonl"
+	scanned := 0
+	var found string
+	errStop := errors.New("stop")
+	err := walkNewest(root, 3, func(path string) error {
+		if scanned++; scanned > maxRolloutNames {
+			return errStop
+		}
+		if !strings.HasSuffix(path, suffix) {
+			return nil
+		}
+		if metaID, _, ok := readMeta(path); ok && metaID == id {
+			found = path
+			return errStop
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errStop) {
+		return "", err
+	}
+	return found, nil
+}
