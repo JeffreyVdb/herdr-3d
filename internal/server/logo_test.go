@@ -110,8 +110,9 @@ func TestLogoSetFetchClear(t *testing.T) {
 	if _, _, hd = b.logoReq("GET", id, nil, "?h="+hash); hd.Get("Cache-Control") != "public, max-age=31536000, immutable" {
 		t.Fatalf("Cache-Control with the current hash = %q", hd.Get("Cache-Control"))
 	}
-	if _, _, hd = b.logoReq("GET", id, nil, "?h=deadbeef"); hd.Get("Cache-Control") != "no-cache" {
-		t.Fatalf("Cache-Control with an old hash = %q", hd.Get("Cache-Control"))
+	// A hash that is not the current one gets no image at all (see TestLogoStaleHash).
+	if st, body, hd = b.logoReq("GET", id, nil, "?h=deadbeef"); st != 404 || logoErrCode(t, body) != proto.ErrNotFound || hd.Get("Cache-Control") != "no-store" || hd.Get("ETag") != "" {
+		t.Fatalf("GET with a stale hash: %d %s %v", st, body, hd)
 	}
 	req, _ := http.NewRequest("GET", "http://bridge/logo/"+id, nil)
 	req.Header.Set("If-None-Match", `"`+hash+`"`)
@@ -168,6 +169,44 @@ func TestLogoSetFetchClear(t *testing.T) {
 	}
 	if strings.Join(cmds, " ") != "building.logo.set building.logo.set building.logo.set building.logo.clear building.logo.clear" {
 		t.Fatalf("audit = %v", cmds)
+	}
+}
+
+// GET /logo/A?h=H1 after A was replaced must not answer with the new image:
+// the caller would cache it under H1. It gets not_found (and no image), and
+// the request without ?h= or with the new hash still works.
+func TestLogoStaleHash(t *testing.T) {
+	b := startBridge(t, "", server.Options{})
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	id := createBuilding(c, "Work")
+	put := func(col color.NRGBA) string {
+		t.Helper()
+		if st, body, _ := b.logoReq("PUT", id, bytes.NewReader(testPNG(t, 64, 64, col)), ""); st != 200 {
+			t.Fatalf("PUT: %d %s", st, body)
+		}
+		return c.until(proto.EvBuildingUpsert).Building.Logo
+	}
+	h1 := put(color.NRGBA{R: 255, A: 255})
+	if st, body, _ := b.logoReq("GET", id, nil, "?h="+h1); st != 200 || logo.Hash(body) != h1 {
+		t.Fatalf("GET with the current hash: %d", st)
+	}
+	h2 := put(color.NRGBA{B: 255, A: 255})
+	if h1 == h2 {
+		t.Fatal("the hash did not change")
+	}
+	st, body, hd := b.logoReq("GET", id, nil, "?h="+h1)
+	if st != 404 || logoErrCode(t, body) != proto.ErrNotFound || hd.Get("Content-Type") == "image/png" || hd.Get("ETag") != "" || hd.Get("Cache-Control") != "no-store" {
+		t.Fatalf("GET with the replaced hash: %d %s %v", st, body, hd)
+	}
+	if bytes.HasPrefix(body, []byte("\x89PNG")) {
+		t.Fatal("the stale request got an image")
+	}
+	if st, body, _ := b.logoReq("GET", id, nil, "?h="+h2); st != 200 || logo.Hash(body) != h2 {
+		t.Fatalf("GET with the new hash: %d", st)
+	}
+	if st, body, _ := b.logoReq("GET", id, nil, ""); st != 200 || logo.Hash(body) != h2 {
+		t.Fatalf("GET without a hash: %d", st)
 	}
 }
 

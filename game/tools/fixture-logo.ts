@@ -76,7 +76,10 @@ export function logoRoute(req: IncomingMessage, res: ServerResponse): boolean {
   if (req.method === 'GET' || req.method === 'HEAD') {
     const l = world.logoOf(id);
     if (!l || world.failure() === 'logo_missing') return fail(res, 404, 'not_found', `no logo for building "${id}"`), true;
-    const cache = url.searchParams.get('h') === l.hash ? 'public, max-age=31536000, immutable' : 'no-cache';
+    const want = url.searchParams.get('h');
+    // Like the bridge: a hash that is not the current one gets no image (the caller would cache it under the old hash).
+    if (want && want !== l.hash) return fail(res, 404, 'not_found', 'the logo has changed since that hash'), true;
+    const cache = want === l.hash ? 'public, max-age=31536000, immutable' : 'no-cache';
     res.writeHead(200, { 'content-type': l.type, 'content-length': l.bytes.length, 'cache-control': cache, etag: `"${l.hash}"`, ...CORS });
     res.end(req.method === 'HEAD' ? undefined : l.bytes);
     return true;

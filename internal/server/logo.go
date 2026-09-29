@@ -142,13 +142,22 @@ func (s *Server) getLogo(w http.ResponseWriter, r *http.Request) {
 		logoFailure(w, err)
 		return
 	}
+	// ?h= names the bytes the caller wants. If the logo has been replaced
+	// since, answer not_found instead of the new image: the caller would
+	// file it under the old hash (and share it with every building that still
+	// advertises that hash). The new hash comes with the building's next
+	// building.upsert.
+	if h := r.URL.Query().Get("h"); h != "" && h != l.Hash {
+		logoError(w, http.StatusNotFound, proto.ErrNotFound, "the logo has changed since that hash")
+		return
+	}
 	hd := w.Header()
 	hd.Set("Content-Type", "image/png")
 	hd.Set("X-Content-Type-Options", "nosniff")
 	hd.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	hd.Set("ETag", `"`+l.Hash+`"`)
 	// The hash names the bytes: a URL that carries the current hash never
-	// changes. Any other URL (no hash, or an older one) is revalidated.
+	// changes. A URL without one is revalidated.
 	if r.URL.Query().Get("h") == l.Hash {
 		hd.Set("Cache-Control", "public, max-age=31536000, immutable")
 	} else {
