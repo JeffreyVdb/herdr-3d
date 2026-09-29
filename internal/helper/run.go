@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -17,8 +18,12 @@ import (
 type Config struct {
 	Listen string // loopback ip:port for the game
 	Tunnel *Tunnel
-	Bundle string   // built game directory (ignored when Dev is set)
-	Dev    *url.URL // Vite dev server to proxy instead of serving Bundle
+	Bundle string // built game directory (ignored when Dev is set)
+	// BundleFS, if set, is served instead of Bundle: the game embedded in the binary.
+	BundleFS fs.FS
+	// MusicDir holds the radio tracks served under /music/ (see ServerConfig).
+	MusicDir string
+	Dev      *url.URL // Vite dev server to proxy instead of serving Bundle/BundleFS
 	// Open, if set, opens the game URL (with its token) once serving.
 	Open  func(ctx context.Context, url string) error
 	Token string // default NewToken()
@@ -59,7 +64,7 @@ func Run(ctx context.Context, cfg Config) error {
 	cfg.Tunnel.Log = log
 	srv := NewServer(ServerConfig{
 		Port: addr.Port, ListenHost: addr.IP.String(), Token: token, Bridge: cfg.Tunnel,
-		Bundle: cfg.Bundle, Dev: cfg.Dev, Log: log,
+		Bundle: cfg.Bundle, BundleFS: cfg.BundleFS, MusicDir: cfg.MusicDir, Dev: cfg.Dev, Log: log,
 	})
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
@@ -86,6 +91,9 @@ func Run(ctx context.Context, cfg Config) error {
 	base := "http://" + addr.String()
 	game := base + "/#token=" + token
 	src := cfg.Bundle
+	if cfg.BundleFS != nil {
+		src = "embedded"
+	}
 	if cfg.Dev != nil {
 		src = "dev " + cfg.Dev.String()
 	}

@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/version"
 )
 
 func TestBackoffDelay(t *testing.T) {
@@ -184,5 +187,35 @@ func TestTunnelRemovesStaleSocketAndRefusesOtherFiles(t *testing.T) {
 	tun := &Tunnel{Local: "/" + strings.Repeat("x", MaxSocketPath), Log: quietLog()}
 	if err := tun.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "unix sockets allow") {
 		t.Fatalf("long socket path: %v", err)
+	}
+}
+
+func TestNoteBridgeVersion(t *testing.T) {
+	var buf strings.Builder
+	tun := &Tunnel{Log: slog.New(slog.NewTextHandler(&buf, nil))}
+
+	tun.noteBridge(version.Version)
+	if got := tun.Status().Bridge; got != version.Version {
+		t.Fatalf("Bridge = %q, want %q", got, version.Version)
+	}
+	if strings.Contains(buf.String(), "WARN") {
+		t.Errorf("matching versions warned: %s", buf.String())
+	}
+
+	buf.Reset()
+	tun.noteBridge(version.Version) // unchanged: silent
+	if buf.Len() != 0 {
+		t.Errorf("repeat logged: %s", buf.String())
+	}
+
+	tun.noteBridge("v9.9.9-other")
+	if !strings.Contains(buf.String(), "versions differ") || tun.Status().Bridge != "v9.9.9-other" {
+		t.Errorf("mismatch: status %q, log %q", tun.Status().Bridge, buf.String())
+	}
+
+	buf.Reset()
+	tun.noteBridge("") // a bridge from before the header existed
+	if !strings.Contains(buf.String(), "does not report") || tun.Status().Bridge != "unknown" {
+		t.Errorf("old bridge: status %q, log %q", tun.Status().Bridge, buf.String())
 	}
 }

@@ -1,0 +1,617 @@
+{
+  "version": 1,
+  "encoder": "ffmpeg 7.0.2-static",
+  "tracks": {
+    "surf-house-island-breeze": {
+      "src": {
+        "sha256": "195a6c47e81cad1b35a9a9330fa6fc9606ffc5b5a048d459c924d8732eceb929",
+        "bytes": 7932912
+      },
+      "out": {
+        "sha256": "4dc8e3801a87e70781311c5102e34f18f42eff39619758bceb396c554f384a8c",
+        "bytes": 2555487,
+        "durationSec": 198.24,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "surf-house-endless-summer": {
+      "src": {
+        "sha256": "5526d45d00e21a278e8b488c0de666778fe8b64d8d313a54a550b98cd0ee0882",
+        "bytes": 6697843
+      },
+      "out": {
+        "sha256": "c0d42bfd5675c7a91ab037d14245daf75e57e96d9716145432f19e1e6af2b9a2",
+        "bytes": 2312889,
+        "durationSec": 167.4,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "surf-house-tropical-dream": {
+      "src": {
+        "sha256": "a880eb08343f7dc617d6fd372e8758cef2702e466bd1d1d0b454a49dc56ad51d",
+        "bytes": 10205565
+      },
+      "out": {
+        "sha256": "a0a20b4a7960ede54ca404d99f89c1071d8643db5b71313e182a0cbb513cbaa4",
+        "bytes": 3553821,
+        "durationSec": 255.06,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "surf-house-waves": {
+      "src": {
+        "sha256": "bda8ada5ac7a362b9cca4994d7a2d429a8b4e0631056ed45839b9b8f675f3d20",
+        "bytes": 7176406
+      },
+      "out": {
+        "sha256": "921ee0d02e5f55fec9cef4151ac6656d0c2aa08aa4b513ec8bf4ddbae3f54f40",
+        "bytes": 2471079,
+        "durationSec": 179.33,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "surf-house-sea-and-sun": {
+      "src": {
+        "sha256": "afcb38f91086ae2a2aaa14979f397d9fb2e68803d7b919dd1166b9ee27504c78",
+        "bytes": 9577581
+      },
+      "out": {
+        "sha256": "f8d43c5149024f472f2ce7335d65b91fac2ed34b39429efed5e5f3a5199c9fc5",
+        "bytes": 3360292,
+        "durationSec": 239.36,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "surf-house-sunny-holidays": {
+      "src": {
+        "sha256": "f9a4d1ae6b1bf2bb9e59f9e46865f43d8fb9c6732fa275750d49a4528bd7815c",
+        "bytes": 9808504
+      },
+      "out": {
+        "sha256": "80ee5033688a617748a47c8fe1cfede946beaca2aef1de0aea8c9c9e11ffa848",
+        "bytes": 3447099,
+        "durationSec": 245.13,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "surf-house-ethereal-pulse": {
+      "src": {
+        "sha256": "c7b87e10f687012c48e26c86f50013ba753735689ae36a808c9e26320d44a7a3",
+        "bytes": 7706169
+      },
+      "out": {
+        "sha256": "26d9ad1065734663275f6c1444260613d0eeb58e1bd490734a0daf69509043ff",
+        "bytes": 2546044,
+        "durationSec": 192.58,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "zimpl-memorize": {
+      "src": {
+        "sha256": "7686daeae93edaa101d029758e43b8b23aa800a830221ab56f45ee6215e0b8c8",
+        "bytes": 7847100
+      },
+      "out": {
+        "sha256": "874f3d37a9a2f453898280927f3570c9ecbb148f923f9a6f00ceffe3ddd87d27",
+        "bytes": 2615066,
+        "durationSec": 196.08,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "ashutosh-cuba": {
+      "src": {
+        "sha256": "5279f7c66fa57723fda216f3c07c02ac1c93a30e798bf4ea7f8d0014fa3686eb",
+        "bytes": 6194225
+      },
+      "out": {
+        "sha256": "69498f655398373a84944fe409b2fa917c336dfb36c728da63faf56d681f69a4",
+        "bytes": 2323640,
+        "durationSec": 154.85,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "fupi-espelhar": {
+      "src": {
+        "sha256": "d1f6efcb547b34ffe4535412a34c15a80e71aff5d402b837bb6446614694b13b",
+        "bytes": 32813100
+      },
+      "out": {
+        "sha256": "eea7b10432d948708259c02877ea44ac84dc5c9804e1fec1a695bf0805b29e36",
+        "bytes": 2447109,
+        "durationSec": 186.1,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "fupi-slampe": {
+      "src": {
+        "sha256": "8978889eb0dc94777dff28bd9ddcf0daa60007c8ecd47fbb6afd42c3b53d1f8f",
+        "bytes": 27234348
+      },
+      "out": {
+        "sha256": "2467c8a08dc7323a95bb5c12272240085d35effb8d666d0a17f486aa151d2ec9",
+        "bytes": 2187519,
+        "durationSec": 154.39,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "glitchart-funky-house": {
+      "src": {
+        "sha256": "0e64b2d60035206f55b715254b5e27e7983ee4ba943adb0e0eea8dbbde28d2f1",
+        "bytes": 62291602
+      },
+      "out": {
+        "sha256": "610dbd6742ee4e6d2c80a5cdd3f96e6bdf412fb8585ff240c26eee4aea910f43",
+        "bytes": 4744860,
+        "durationSec": 370.6,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "escp-late-night-decaf": {
+      "src": {
+        "sha256": "5bd3cea8ce9083327050ef8b6c53e5a6cf0187a72bd5998338588c07fff2c3fe",
+        "bytes": 8932879
+      },
+      "out": {
+        "sha256": "eade9292ce711cec3e63222127c14c798ac7ea85acbc46358433affa637759b2",
+        "bytes": 3150969,
+        "durationSec": 223.24,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "escp-rain-book-and-cup-of-tea": {
+      "src": {
+        "sha256": "dd8101ce439ad38978224442b4e4f9ec97c4e556ff649c258100ec5430621941",
+        "bytes": 7089679
+      },
+      "out": {
+        "sha256": "8907198985f46604a6ce9d7f085b66077d15239e517874345f9e59158fa6b22b",
+        "bytes": 2514901,
+        "durationSec": 177.16,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "escp-daydreaming": {
+      "src": {
+        "sha256": "a5aa8cda6bceab5d9bf660a0f50eed961432aa9dc8eb6c31291edadea462dc81",
+        "bytes": 10239002
+      },
+      "out": {
+        "sha256": "ed700b9b441b755c367a295843a96d0ba07de44f0369719e3b456e8e7ba82a19",
+        "bytes": 3433012,
+        "durationSec": 255.9,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "escp-nocturnal": {
+      "src": {
+        "sha256": "af6097c869bee28c42a22fa164c81eaf8853493b3c8d0e75e23452fe2943fa7b",
+        "bytes": 7909924
+      },
+      "out": {
+        "sha256": "3a08ed9ee94aa6c3331be3cd655fc3c73cc4443094d69acdd33eb071bfea3ffe",
+        "bytes": 2641637,
+        "durationSec": 197.67,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "escp-sunlit-saturdays": {
+      "src": {
+        "sha256": "30f1dafc42a5f29b9342775900140f2d9a57794e5c75a8bae9f0aeb3fdd0932f",
+        "bytes": 8515965
+      },
+      "out": {
+        "sha256": "0e74db0a34fa758d214895d81943f18081b2a4ade56c05b16696d5afffec0c63",
+        "bytes": 2851204,
+        "durationSec": 212.82,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "escp-no-rush-anywhere": {
+      "src": {
+        "sha256": "83b298a561d9052811752f9990fc86b751412bb7bacdecb777d20f1ff0604045",
+        "bytes": 7210888
+      },
+      "out": {
+        "sha256": "11bbfe89041418920d63ae734d9db6e1cc54426a56b8abb7b8fdc8ee602e9b39",
+        "bytes": 2480565,
+        "durationSec": 180.19,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "escp-nova-bossa-nova": {
+      "src": {
+        "sha256": "41c256f616632bb1c2cc3f88094ccb2a3148d67ea124cc35878b419f86888af2",
+        "bytes": 11739475
+      },
+      "out": {
+        "sha256": "03858956a6bf891c22718e1e14d5e69103d96be571ff12d4014620de07d57438",
+        "bytes": 3793412,
+        "durationSec": 293.41,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "escp-early-bird": {
+      "src": {
+        "sha256": "980ba48f2ac5b3a4d1e06ec7cdbcb658af750ec8916c7b9021eecfc9e04977c7",
+        "bytes": 8071884
+      },
+      "out": {
+        "sha256": "134b8ca0a638eb5680c2dabd6219ea56435d8b64e898f86cb787d4b2b4c76c54",
+        "bytes": 2818525,
+        "durationSec": 201.72,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "escp-komorebi": {
+      "src": {
+        "sha256": "0b8bc1001fd2211c5ff9fad777cd83a2af29c930c4a9dfe3ecf03b7db01714b0",
+        "bytes": 9086479
+      },
+      "out": {
+        "sha256": "c98b52407f49886be9a1614adf318d4c75de62e2d09690163481ffcb3528dd02",
+        "bytes": 2886901,
+        "durationSec": 227.08,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "escp-rhythm-boulevard": {
+      "src": {
+        "sha256": "e83aa590612c6a2935feb08d316252b2cd8ad7bd626f25f2f5055c890f7f074f",
+        "bytes": 7418822
+      },
+      "out": {
+        "sha256": "5ffd7c343e384665bdf1bacab2060f822dce53e0177fa6acb17d67189a70e913",
+        "bytes": 2572775,
+        "durationSec": 185.39,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "escp-after-the-rain": {
+      "src": {
+        "sha256": "f71f14f432e77beade8da0373fa3e650caa19c2b5710815cd9c6993437b27df5",
+        "bytes": 12438512
+      },
+      "out": {
+        "sha256": "380581ae979871f69e951277520dab58b4e0804fefbbc032416c7bd3b56a8387",
+        "bytes": 4239034,
+        "durationSec": 310.88,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "fsm-team-jazz-street": {
+      "src": {
+        "sha256": "9486f3091b01f169e1d9077ccf82b28367ba195f1ada8fd5ce75cd5f4eb979e1",
+        "bytes": 9391650
+      },
+      "out": {
+        "sha256": "a2e8b062634ff259ce746a3031772b6d307a0f734b7dd106103fa482474b4ba1",
+        "bytes": 2984992,
+        "durationSec": 234.8,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "karate-studios-bossa-town": {
+      "src": {
+        "sha256": "526a8407931e5c0ca314fa0ea26edd417f540c160eb93372f4b10a27bf5a70d9",
+        "bytes": 15715021
+      },
+      "out": {
+        "sha256": "5f0efac203550810572777e09df362c71a8612bf91f8c1c8ce54736fd22fbd80",
+        "bytes": 1387342,
+        "durationSec": 100.4,
+        "lufs": -15.9
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-grunge": {
+      "src": {
+        "sha256": "337a07a275cfd054abb1f6cacc0b672485793751ab4629422aa6f43685168141",
+        "bytes": 4361485
+      },
+      "out": {
+        "sha256": "491d88a148de65809d726eaec3045bea8c5e1a4ee37347117269eda9ebc3c0f2",
+        "bytes": 1296432,
+        "durationSec": 108.98,
+        "lufs": -15.9
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-jams": {
+      "src": {
+        "sha256": "442b221cbb23904515e73e014b274ebf9e8adffc800e7e645c88b5ed09131ea5",
+        "bytes": 7528525
+      },
+      "out": {
+        "sha256": "2d9f7d39b06a86ea7586a2fb0400c800bfb915d623097b26f80363ea5227aeb5",
+        "bytes": 2618938,
+        "durationSec": 188.16,
+        "lufs": -15.9
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-classic": {
+      "src": {
+        "sha256": "eb9f2e7f92278f1ee39990b4a4ecf948c9b5cee0892c57d0fac29e614717d739",
+        "bytes": 5989645
+      },
+      "out": {
+        "sha256": "9c1fdcc243270f68f30d26dff6ef9b00f30a2235545e636e2a89c3f977c53fa9",
+        "bytes": 2044282,
+        "durationSec": 149.69,
+        "lufs": -15.9
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-americana": {
+      "src": {
+        "sha256": "50ccf0afd5e1d0a5bc28505e57c20ccda5fd76ac535997b3ed497ad1983d730b",
+        "bytes": 3802765
+      },
+      "out": {
+        "sha256": "4be6a9b7cb99fc86765285925395a0c06d1eef73cd56cd2da563e8bc6b111b6d",
+        "bytes": 1198845,
+        "durationSec": 95.02,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-crooked-townie": {
+      "src": {
+        "sha256": "b1b987c958d36ebc19552d3dcfb7147420a58f2af9e2e6487d5c18a925a87428",
+        "bytes": 5498253
+      },
+      "out": {
+        "sha256": "fa4a9484a604093ea7ba74d2eb4c365aa04785d870f6c0fc56cc4b346fb4951d",
+        "bytes": 1679269,
+        "durationSec": 137.46,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "mr-smith-burning-purple": {
+      "src": {
+        "sha256": "6c8ef1572c175dd721c96942e5e3f1d2445d529120c51d7833494718200fea35",
+        "bytes": 6165987
+      },
+      "out": {
+        "sha256": "36bf869121f591096cccc7e4bfe542653ec24ef0735642a626c68a52ecbbe2cb",
+        "bytes": 2152186,
+        "durationSec": 154.09,
+        "lufs": -15.9
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "mr-smith-3djc": {
+      "src": {
+        "sha256": "6c887f2cf391629ca13df83bcaf1144d298e3af0f5487717f65ae4eefbc59a96",
+        "bytes": 4416827
+      },
+      "out": {
+        "sha256": "d0f0232b3365ac836baf745dca556eea92723f4981ea8b83bcbfa63c2ab25a77",
+        "bytes": 1571008,
+        "durationSec": 110.34,
+        "lufs": -15.9
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "mr-smith-iridium": {
+      "src": {
+        "sha256": "b2d8eb5c6e62d67896f78c1f510c88adf613fba5b330ee5f9b816fe555f1a982",
+        "bytes": 7052060
+      },
+      "out": {
+        "sha256": "ac8ae11adbc7fa9d4324794704f5cc41187ba4c357bfba3ca0bb3b3aba8c6263",
+        "bytes": 2532818,
+        "durationSec": 176.22,
+        "lufs": -15.9
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "mr-smith-stealing-time": {
+      "src": {
+        "sha256": "69468a609cc04fcfd459366ca9f5849025808871f872b43203eb91127870724e",
+        "bytes": 5597433
+      },
+      "out": {
+        "sha256": "c08c72357aa175ea15169ce478d6656c0b57770180746979f6878e149641eb9b",
+        "bytes": 2030636,
+        "durationSec": 139.8,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-funky-pop": {
+      "src": {
+        "sha256": "f4ece98b361ba68fdfa5c94c8856e639c64459f10b10c5294e523e3c00d9bbcf",
+        "bytes": 5712163
+      },
+      "out": {
+        "sha256": "09e3d6b09eb3536740dabe57bce06e0d521a2902f9430bd3e2f8cddb32d1dfcc",
+        "bytes": 1923254,
+        "durationSec": 142.75,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-back-in-the-80s": {
+      "src": {
+        "sha256": "d9ace2cffbd5fab3a5e151e578062eb3925a0e670227a534e299fe7f660fdca5",
+        "bytes": 9600205
+      },
+      "out": {
+        "sha256": "2b93076a353f056ddf86be7934959266103dd301be1f5f165e04610f7ae5d7cf",
+        "bytes": 3136055,
+        "durationSec": 239.95,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-50-over-the-speed-limit": {
+      "src": {
+        "sha256": "c00de3e6294bc7dbd484c26815dfcfe0787cb352e7129a0e84ba14941fcab37f",
+        "bytes": 5228365
+      },
+      "out": {
+        "sha256": "3a19aa6f7fd5ee46088a00d41302dfc896d7a2e4a79d9e2bd61c82c1b78db84d",
+        "bytes": 1926970,
+        "durationSec": 130.66,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-day-dreams": {
+      "src": {
+        "sha256": "345324857ee7c8ffc6ae15b8d646036f3630fbc7c4470cc633907715bfaad44f",
+        "bytes": 7901965
+      },
+      "out": {
+        "sha256": "af5fbe71d79e6248ac3ac958236aef4b96a8b23d6cf1c3f5a06a1d91298e5f63",
+        "bytes": 2687964,
+        "durationSec": 197.5,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-a-small-town-on-pluto": {
+      "src": {
+        "sha256": "1c645b9fccfcd21ae07e4db47f745bde82a819e0f6189773bf42394d7ba0a37b",
+        "bytes": 9286285
+      },
+      "out": {
+        "sha256": "ff47b77ecceb80746d4df837670dbc3a10ec352bda21526377ad9ef7da2ca8c7",
+        "bytes": 3168966,
+        "durationSec": 232.2,
+        "lufs": -15.9
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-retro-soundtrack": {
+      "src": {
+        "sha256": "b5f4aaee16d26df31fb64d19d80d98190b617a3e8bfa41c4f20a977bdbf56982",
+        "bytes": 6308365
+      },
+      "out": {
+        "sha256": "4fee122c1ed78e70afb5e33ff3470aa54b22b86d7cf8ec2fb8eee1c4ee8c80b9",
+        "bytes": 2094463,
+        "durationSec": 157.66,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-mutant-club": {
+      "src": {
+        "sha256": "385d8b71a88b933f5360ef63ed1e777ceb869e32ad6b1c6a4b784cba56a0255c",
+        "bytes": 5228365
+      },
+      "out": {
+        "sha256": "5c50171b2ca6a0440af14c75c8a0d35d62c8b6e392107444dc443eeb5e678eb0",
+        "bytes": 1769476,
+        "durationSec": 130.66,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-busking-in-the-sunlight": {
+      "src": {
+        "sha256": "a11baac282a8858cbaf74a1291b57fc83360af310763b4ed49857d5182808287",
+        "bytes": 10509325
+      },
+      "out": {
+        "sha256": "53dcf874574b7723c3987e47c82736ca7d088d049c00ff9640a29befafadc178",
+        "bytes": 2651507,
+        "durationSec": 262.68,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-hooptie-with-the-windows-down": {
+      "src": {
+        "sha256": "a66f728a0739677bd4c21b2e26b4f0c8d88c5d1192a7bc6b240c3dd02c9e4f6b",
+        "bytes": 9360205
+      },
+      "out": {
+        "sha256": "52d7940738ed74d2f42a55c8c48dcdc1af215483a52f7e1e0f7e4dc8a27cc98a",
+        "bytes": 3105040,
+        "durationSec": 233.95,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-fresh-fit": {
+      "src": {
+        "sha256": "1b403269d6e2ee561bcc2a4a8b431993bbdfb62be95f8320eff8c72f80c90a7c",
+        "bytes": 6540665
+      },
+      "out": {
+        "sha256": "1961586415b9e626df01045d943191a78f801256f4f39657a1941b584662de86",
+        "bytes": 2093853,
+        "durationSec": 163.46,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-bus-stop": {
+      "src": {
+        "sha256": "d1431cad111f7f90c9855eef1c7207e7bd18fb1772cfcf8e5833653dfa238c1c",
+        "bytes": 7853965
+      },
+      "out": {
+        "sha256": "8dd0a348f08f0296e251b8baac530b123af65eeebaabe369197fd4ce61a31aa9",
+        "bytes": 2359067,
+        "durationSec": 196.3,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-endless-grind": {
+      "src": {
+        "sha256": "61d6be06746e0d9608340872105061ba32aea9e6eaaf9277475eb80b79152664",
+        "bytes": 9442765
+      },
+      "out": {
+        "sha256": "64aec06b2f4858f944d7a35bd4e0df3572fef3d17da08b740d9ebfc0ee6d727a",
+        "bytes": 3109243,
+        "durationSec": 236.02,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    },
+    "holizna-day-trips": {
+      "src": {
+        "sha256": "df08e2678602c88d9b2fbcc939fc7cf6977722d0bf7c7c387a2fe996ae914850",
+        "bytes": 7359565
+      },
+      "out": {
+        "sha256": "ababbde6b912f6f121fe4f8357aa4a275a728d53d1c238b2d312421cea7db9b1",
+        "bytes": 2419543,
+        "durationSec": 183.94,
+        "lufs": -16
+      },
+      "settings": "0891e9c4fc072f00"
+    }
+  }
+}

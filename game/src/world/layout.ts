@@ -55,6 +55,7 @@ export type PropKind =
   | 'tv'
   | 'filing'
   | 'lounge'
+  | 'radio'
   | 'dropzone'
   | 'elevator';
 
@@ -209,6 +210,11 @@ const box = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: num
   min: [x0, y0, z0],
   max: [x1, y1, z1],
 });
+/** The lounge coffee counter (west wall): what walking collides with, and the top the radio stands on. */
+export const COUNTER_RECT: Rect = { x0: 0, z0: 3.4, x1: 0.65, z1: 4.8 };
+export const COUNTER_TOP = 0.9;
+/** The radio: 0.3 m deep, 0.34 m wide, 0.24 m tall, at the counter's north-east end beside the coffee machine. */
+const RADIO_BOX = [0.16, COUNTER_TOP, 4.4, 0.46, COUNTER_TOP + 0.24, 4.74] as const;
 const rectOf = (b: Box3): Rect => ({ x0: b.min[0], z0: b.min[2], x1: b.max[0], z1: b.max[2] });
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
@@ -340,12 +346,14 @@ export function floorLayout(deskCount: number, outline?: Outline): FloorLayout {
     { id: 'tv', label: 'Screen-share TV', milestone: 'M13', box: box(gridMid + gridW * 0.22 - 1.1, 1.0, 0, gridMid + gridW * 0.22 + 1.1, 2.25, 0.12), solid: false },
     { id: 'filing', label: 'Filing cabinet', milestone: 'M9', box: box(width - 1.0, 0, 0.6, width - 0.3, 1.3, 1.7), solid: true },
     { id: 'lounge', label: 'Lounge', milestone: 'M8', box: box(0.6, 0, 0.45, 3.8, 0.85, 1.35), solid: true },
+    // M15: the office radio, on the lounge's coffee counter (top at 0.9 m), its face toward the lounge (east). The counter is already a collider.
+    { id: 'radio', label: 'Radio', milestone: 'M15', box: box(...RADIO_BOX), solid: false },
     { id: 'dropzone', label: 'Drop Zone inbox', milestone: 'M11', box: box(width / 2 + 2.4, 0, depth - 1.5, width / 2 + 3.6, 0.95, depth - 0.8), solid: true },
     { id: 'elevator', label: 'Elevator', milestone: 'M3', box: box(width / 2 - 1.1, 0, depth - 0.12, width / 2 + 1.1, 2.4, depth), solid: false },
   ];
   // Lounge furniture beyond the sofa: coffee table and the coffee counter.
   colliders.push(...props.filter((p) => p.solid).map((p) => rectOf(p.box)));
-  colliders.push({ x0: 1.5, z0: 2.1, x1: 2.9, z1: 2.8 }, { x0: 0, z0: 3.4, x1: 0.65, z1: 4.8 });
+  colliders.push({ x0: 1.5, z0: 2.1, x1: 2.9, z1: 2.8 }, COUNTER_RECT);
 
   const lights: Vec2[] = [];
   const nx = Math.max(2, Math.round(width / 4.5));

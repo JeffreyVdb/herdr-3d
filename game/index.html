@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>herdr-3d</title>
+    <meta name="theme-color" content="#1c2540" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #9fd6ff; }
       canvas { display: block; }
@@ -13,9 +16,18 @@
         color: #fff; background: rgb(28 37 64 / 70%); border-radius: 4px;
         pointer-events: none;
       }
+      #versions {
+        position: fixed; bottom: 32px; left: 8px; padding: 3px 7px; z-index: 20;
+        font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #fff; background: rgb(28 37 64 / 70%); border-radius: 4px;
+        pointer-events: none;
+      }
+      #versions:empty { display: none; }
+      #versions.warn { background: #b45309; }
     </style>
   </head>
   <body>
+    <div id="versions"></div>
     <div id="debug">backend: …</div>
     <script type="module" src="/src/main.ts"></script>
   </body>

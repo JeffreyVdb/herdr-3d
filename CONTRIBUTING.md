@@ -267,16 +267,18 @@ killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herd
   dev@devbox`, restarts it with exponential backoff (0.5 s doubling to 30 s, ±20 % jitter, back to 0.5 s after
   30 s up) and checks the bridge's `/healthz` through it every 5 s (3 failures in a row restart ssh). On exit it kills
   ssh's process group and removes the local socket;
-- it serves the game on `http://127.0.0.1:7777` (loopback only; a secure context, so WebGPU works) from a built
-  `game/dist`, or proxies a Vite dev server with `-dev-upstream`;
-- it proxies `GET /ws` to the bridge, after checking Host, Origin and a per-start token (`docs/protocol.md`
+- it serves the game on `http://127.0.0.1:7777` (loopback only; a secure context, so WebGPU works) from the game
+  embedded in its binary (release builds; `make embed-game`), from a `game/dist` copy with `-bundle`, or proxies a Vite
+  dev server with `-dev-upstream`;
+- it proxies `GET /ws` to the bridge, after checking Host, Origin and the helper token (`docs/protocol.md`
   "Through h3d-helper");
-- it opens a Chrome `--app` window on `http://127.0.0.1:7777/#token=…` with its own profile (`-no-open` skips that).
-  The token changes at every start: after a restart, use the new window.
+- it opens a Chrome `--app` window on `http://127.0.0.1:7777/#token=…` with its own profile (`-no-open` skips that; it also skips it when the game is installed as a Chrome app, see
+  `docs/releasing.md`).
+  The token is kept in a file and survives restarts, so an open game window reconnects by itself.
 
 It needs non-interactive SSH from the Mac to the host (`BatchMode=yes`: a key in the agent/keychain, host key known).
 State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not answering through the tunnel`,
-`tunnel down, restarting … retry_in=…`. `curl http://127.0.0.1:7777/healthz` shows the tunnel state.
+`tunnel down, restarting … retry_in=…`. `curl http://127.0.0.1:7777/healthz` shows the tunnel state and both versions (`version` is the helper's, `tunnel.bridge` the bridge's); the helper logs a warning when they differ. The game shows `game … · helper … · bridge …` above the backend line, in amber when they differ.
 
 | flag | env | default |
 |---|---|---|
@@ -284,26 +286,19 @@ State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not an
 | `--remote-socket` | `H3D_HELPER_REMOTE_SOCKET` | `/run/user/1000/herdr-world/bridge.sock` (the bridge's default) |
 | `--local-socket` | `H3D_HELPER_LOCAL_SOCKET` | `~/Library/Caches/h3d-helper/bridge.sock` |
 | `--listen` | `H3D_HELPER_LISTEN` | `127.0.0.1:7777`; anything but a loopback IP is refused |
-| `--bundle` | `H3D_HELPER_BUNDLE` | `~/Library/Application Support/h3d-helper/dist` |
+| `--bundle` | `H3D_HELPER_BUNDLE` | the game embedded in the binary; else `~/Library/Application Support/h3d-helper/dist` |
+| `--token-file` | `H3D_HELPER_TOKEN_FILE` | `~/Library/Application Support/h3d-helper/token` (0600, created on first start) |
+| `--music-dir` | `H3D_HELPER_MUSIC_DIR` | `~/Library/Caches/h3d-helper/music`: radio tracks served under `/music/` (`music/<genre>/<id>.ogg`); absent is fine, the radio is silent |
+| `--print-url` | | print the game URL with the token and exit |
 | `--dev-upstream` | `H3D_HELPER_DEV_UPSTREAM` | off; e.g. `http://127.0.0.1:5173` |
 | `--no-open` | `H3D_HELPER_NO_OPEN` | `false` |
 | `--chrome`, `--chrome-profile` | `H3D_HELPER_CHROME`, `H3D_HELPER_CHROME_PROFILE` | `Google Chrome`, `~/Library/Application Support/h3d-helper/chrome` |
 | `--ssh` | `H3D_HELPER_SSH` | `ssh` on `PATH` |
 | `--log-level`, `--log-format` | `H3D_HELPER_LOG_LEVEL`, `H3D_HELPER_LOG_FORMAT` | `info`, `text` (or `json`) |
 
-Install as a launchd user agent, from the server (always `-o ControlMaster=no -o ControlPath=none`, see the rule below):
-
-```sh
-make helper-darwin game-build
-mac=devmac; ssh="ssh -o ControlMaster=no -o ControlPath=none"
-$ssh $mac 'mkdir -p ~/.local/bin ~/Library/LaunchAgents "Library/Application Support/h3d-helper" && rm -rf "Library/Application Support/h3d-helper/dist"'
-scp -o ControlMaster=no -o ControlPath=none bin/darwin-arm64/h3d-helper $mac:.local/bin/h3d-helper
-tar -C game -cf - dist | $ssh $mac 'tar -C "Library/Application Support/h3d-helper" -xf -'
-$ssh $mac 'sed "s|@HOME@|$HOME|g" > Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist' < deploy/com.jeffreyvdb.h3d-helper.plist
-$ssh $mac 'launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist'
-```
-
-Then on the Mac: `tail -f ~/Library/Logs/h3d-helper.log`. After an update, copy the binary/bundle again and
+Installing and updating are one command, `deploy/h3d-update`, from a GitHub release: see
+[`docs/releasing.md`](docs/releasing.md) (first install, updating, rolling back, installing the game as a Dock app).
+It installs the launchd agent's binary at `~/.local/bin/h3d-helper` and restarts the agent with
 `launchctl kickstart -k gui/$(id -u)/com.jeffreyvdb.h3d-helper`. Uninstall:
 
 ```sh
@@ -351,7 +346,7 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   per-command timeout: 10 s, `floor.sleep` 30 s, `floor.wake` 60 s since its ack waits for every agent; M4:
   `hire.prepare` 30 s, `worker.hire` 90 s, `worker.fire.prepare` 20 s, `worker.fire` 45 s; M6: `run.prepare` 30 s,
   `run.start` 90 s; a drop fails what is in flight) and the endpoint: same-origin `/ws?token=…` (the helper opens `/#token=<token>`; the game
-  keeps it in `sessionStorage` as `h3d.token` and strips it from the URL), `?ws=<url>` to point elsewhere.
+  keeps it in `localStorage` as `h3d.token` and strips it from the URL), `?ws=<url>` to point elsewhere.
 - `src/world` — the world store (snapshot + events, fallbacks for an older bridge without `name`, `desk_index`,
   `harness`, `model`, `effort`, `status_since`, `floor.desks`, and M3's `transition`, `settings`, `suggested`,
   `resume`, `hire_options`), the deterministic office layout for a desk count in its building's outline, the building
@@ -610,6 +605,14 @@ older bridge (no `presets` in its world, or `unknown_command`) leaves Run, the t
 Below 1440 px wide the top bar's Hire and Run show only their icons (their words stay for screen readers and in the
 tooltip), so the floor's name and the counts keep their room.
 
+The lounge radio (M15): on the coffee counter in the north-west corner (a `radio` prop). Look at it: the bar reads
+"Radio: Melodic house · E next genre · R next track". **E** goes Off → Melodic house → Soft jazz → Rock → Pop → Rap → Off
+(Off stops it), **R** skips the track; a toast names each new track (title · artist, about 3 s). The genre is the player's,
+one for every floor, saved with the sound settings (first run: Melodic house, music volume 0.4). It plays only on the floor
+itself: it fades out in 0.5 s in the lobby, on the street, on the fire escape and in the city, and back in with the same
+track. The sound control in the top bar keeps its master mute and slider (everything), and gets a Music button: its popover has
+the radio's own mute and volume and a button for the **Music credits** panel.
+
 Tests:
 
 ```sh
@@ -678,6 +681,10 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # the terminal area) and every docked laptop's sticker its worker's harness, an empty
                               # desk's furniture; at 1512×945 @2x, the Mac's pixels: m6b-{row,desk,stickers,
                               # empty-desk,drop-in,drop-land}.png
+                              # M15 radio on demo-m3b (m15-radio.spec.ts, generated tone clips instead of the real
+                              # tracks): look-at bar, E through Off / genres, R, the now-playing toast, fade in
+                              # the lobby and back, a missing file, the music popover (slider / mute), the Music credits panel;
+                              # m15-{radio,radio-hint,radio-toast,audio-controls,credits}.png
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
 pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
 pnpm -C game test:live:m5     # opt-in: the M5 laptops and panels against a real bridge and Claude (see below)
@@ -796,13 +803,18 @@ shows the terminal's `texture` and in the `glance` view, its world `center` and 
 terminal area; null when not live). `arrivals()` add `dy` (a drop-in's height over the seat); `world()` workers add
 `harness`.
 
+M15 radio: `radio()` → `{genre, trackId, playing, volume, muted}` (`genre` is a genre id or `off`; `playing` is true while a track
+sounds on the floor that has the radio, and false when it is off, muted, faded out (lobby, street, fire escape, city) or not
+unlocked yet), `radioEvents()` (what the radio did, in order: `genre`, `select`, `start`, `skip`, `fade` in / out,
+`unavailable`, each with `at`, and the genre / track / detail).
+
 ### Audio and voice lines
 
-The game's only sound so far is the lobby receptionist (`src/reception/`), played by a small Web Audio module
+The game's sound is the lobby receptionist (`src/reception/`) and, since M15, the lounge radio (below). The voice is played by a small Web Audio module
 (`src/audio/`): positional (the voice comes from the desk), clips fetched and decoded the first time they play, the
 AudioContext created on the first click, key or pointer lock (Chrome's autoplay rule), and a no-op without Web Audio
 (headless tests). The top bar's mute toggle and volume slider are remembered per browser (`localStorage`
-`h3d.audio`); muted, the speech bubbles still show. `src/reception/lines.ts` holds the rules (time-of-day welcome on the
+`h3d.audio`, `{muted, volume, music: {volume, muted, genre}}`); muted, the speech bubbles still show. `src/reception/lines.ts` holds the rules (time-of-day welcome on the
 local clock, the elevator line, goodbye, a nudge whose audio stays generic while the bubble lists the waiting floors,
 the quiet-building line, the desk line; no variant twice in a row; a 2-minute cooldown each for greetings and goodbyes,
 never for the desk), covered by vitest. `src/reception/sequence.ts` says the lines of one event one after the other on
@@ -845,3 +857,79 @@ node game/tools/voices.ts info  # duration, bitrate and size per clip
   current.
 - **Size:** keep the clips under about 1 MB in total (the vitest check enforces 1 MiB). MiMo returns MP3 at ~56 kb/s,
   24 kHz, which the generator keeps as is: 27 lines are ~800 KB. Add variants sparingly, and keep lines short.
+
+### The office radio (M15)
+
+Real tracks by other artists on a small radio in the lounge; genres, not stations. Decisions on the issue's open questions:
+the audio is git-ignored and fetched by a tool, with a release gate on claim status; one genre for the whole player, saved;
+no ducking for the receptionist (the radio only plays on floors); Off is a stop of E's cycle, and the sound control also
+has a music mute. The Web Audio graph gets a **music bus** (`src/audio/music.ts`, owned by `GameAudio` as `audio.music`):
+
+```
+deck A ─┐
+        ├─ radio panner (HRTF, at the radio prop) ─ floor fade ─ music bus (own gain, mute) ─ master ─ speakers
+deck B ─┘
+```
+
+- **Streaming.** A deck is an `HTMLAudioElement` through a `MediaElementAudioSourceNode`: nothing is decoded whole or
+  cached (a 4-minute track would be tens of MB). Two decks crossfade over 1.5 s on a genre change and into the next track
+  (which starts 1.5 s before the end). A file that is missing or not audio is skipped to the genre's next track (a `skip`
+  event; a genre with no files at all gives up after one pass instead of looping).
+- **Shuffle.** Each genre has a shuffled queue that plays every track before repeating, never opens a round with the last
+  track, and keeps its place while another genre plays: jazz → rock → jazz plays jazz's *next* track.
+- **Where and when.** `RadioLink` (`src/radio/link.ts`) tells the music where the radio prop is and whether you are on the
+  floor that has it (`place.area === 'floor'`). Off the floor the floor fade takes it out over 0.5 s and the decks pause;
+  back on, the same track resumes. `stop()` and the receptionist never touch the music bus. Nothing plays, and nothing
+  throws, without Web Audio, before the first gesture or while the browser keeps the context locked; the first gesture
+  after you are on a floor starts it. Distance model: inverse, `refDistance` 3 m, `rolloff` 0.7 (full level in the lounge,
+  about 42 % at 10 m and 23 % at 20 m).
+- **Prop.** `radio` in `world/layout.ts` (on the counter, no collider of its own), `render/radio.ts` (a retro box: speaker
+  grille, a low-res display canvas that says the genre, a LED that glows while it plays; drawn only when they change).
+  The look-at bar, E and R are in `ui/hud.ts` and `app.ts`.
+
+**Tracks.** `game/music/manifest.json` has one row per recording (`id`, `genre`, `title`, `artist`, `sourceUrl`,
+`downloadUrl`, `license`, `licenseUrl`, `attribution`, `claimStatus`, `verifiedAt`, `proof`, plus `claimUrl` / `claimProof`
+for a cleared row, and the measured `sha256`, `durationSec`, `loudnessLufs`). The licensing rule is in
+[`docs/architecture.md`](docs/architecture.md) §5; the research (sources, exact credits, what was rejected) is in issue #30.
+`tools/music.test.ts` audits it and vitest fails on: an NC / ND license, a CC BY row without its attribution (title and
+license link in it), a row without proof, a cleared row without its claim statement, a genre with fewer than 5 rows, a
+lock that disagrees with the manifest.
+
+```sh
+pnpm -C game music                # fetch + transcode what is missing (Ogg Opus 96 kb/s, two-pass loudnorm to -16 LUFS) -> game/public/music/
+pnpm -C game music --dry-run      # what would be fetched
+pnpm -C game music --check        # exit 1 unless manifest, lock, proof pages and the transcoded files agree (no network, no ffmpeg)
+pnpm -C game music --check --release   # the same, and fail while any row is claimStatus "hold"
+pnpm -C game music --proof        # archive each row's page (and its claim statement page) into game/music/proof/
+pnpm -C game music --pin --only <id>   # first fetch of a new row (or a reviewed upstream change): record sha256, length, loudness
+pnpm -C game music credits        # MUSIC_CREDITS.txt (the build writes it into dist/ itself)
+pnpm -C game music testclips      # the tiny tone clips of the Playwright spec (game/e2e/fixtures/music/)
+H3D_RELEASE=1 pnpm -C game build  # fails while any row is on hold
+```
+
+- **ffmpeg** comes from `H3D_FFMPEG`, else `ffmpeg` on `PATH`, else the pinned `ffmpeg-static` devDependency (a static build,
+  downloaded by its install script: pnpm 11 must allow it, see `game/pnpm-workspace.yaml` `allowBuilds`). The lock records
+  which ffmpeg made the files: outputs of another build are checked by shape and length, not by hash.
+- **The audio is not committed** (`game/public/music/`, `game/music/.cache/` and `game/music/incoming/` are git-ignored: about
+  117 MB for 47 tracks). A fresh checkout runs `pnpm -C game music` once (about 10 minutes, `--jobs <n>` transcodes n at once).
+  `music/.cache/` keeps the downloaded sources (about 450 MB) so a re-transcode needs no network: delete it freely. The
+  build (`vite build`) copies whatever is in `public/music/` into `dist/`.
+- **Add a track.** (1) Read its own page: the license must be CC0, CC BY or a written grant that names games; find the exact
+  credit and, for a claim status of `cleared`, the publisher's statement that it is not registered in Content ID (else
+  `hold`). (2) Add a row with `sha256: ""`, `durationSec: 0`, `loudnessLufs: 0`, a `proof` path (`music/proof/<id>.html`)
+  and, for `cleared`, `claimUrl` + `claimProof`. (3) `pnpm -C game music --proof --only <id>`, read the archived page, then
+  `pnpm -C game music --pin --only <id>`. (4) `pnpm -C game test` (the audit) and `pnpm -C game music --check`. Commit the
+  manifest, the lock and the proof; never the audio. Tobu tracks stay out until there is a signed grant that covers a paid
+  game, bundling and an in-world radio.
+- **A source that needs a sign-in** (an empty `downloadUrl`): save the file as `game/music/incoming/<id>.<ext>`; the tool
+  takes it from there and still checks it against the manifest's `sha256` (`--pin` for the first time). Free Stock Music
+  only serves its files with its own pages as the referer (the tool sends the row's `sourceUrl`); Free Music Archive's
+  `/download/` needs a sign-in, but its track pages carry the file its player streams (`data-track-info` `fileUrl`), which
+  is what the rows use.
+- **Release.** Every row must be `cleared`: the gate is `music --check --release` and `H3D_RELEASE=1` on the build. Recheck
+  each page just before a release (`--proof` archives it again; look at what changed).
+- **Playwright** (`e2e/m15-radio.spec.ts`) never plays the real tracks: it answers every `/music/<genre>/<id>.ogg` request
+  with a 90-second generated tone of that genre (`e2e/fixtures/music/`), so it needs no fetch, and checks the look-at bar, E
+  through the cycle, R, the toast, the fade in the lobby and back, a missing file, the music popover (slider, mute), and the
+  credits panel. `H3D_BENCH=1` adds the frame-time comparison, radio playing against off, on `perf-floor60`.
+

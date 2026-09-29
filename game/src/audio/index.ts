@@ -1,4 +1,7 @@
 import type * as THREE from 'three/webgpu';
+import { MusicPlayer, parseMusicPrefs, DEFAULT_MUSIC_PREFS, type Music, type MusicDeps, type MusicPrefs } from './music';
+
+export type { Music, MusicDeps, NowPlaying, RadioEvent, RadioState } from './music';
 
 /**
  * The game's sound: Web Audio, positional, one master gain. Clips are MP3s
@@ -7,6 +10,10 @@ import type * as THREE from 'three/webgpu';
  * AudioContext is created on the first user gesture (Chrome's autoplay rule),
  * so nothing plays before the player has clicked, locked the pointer or
  * pressed a key. Without Web Audio (headless tests) every call is a no-op.
+ *
+ * The office radio is a second thing in the same graph, on its own bus
+ * (`music`, src/audio/music.ts): streamed tracks, its own volume and mute, and
+ * `stop()` (the receptionist's) never touches it.
  */
 export interface GameAudio {
   /** Make / resume the AudioContext (call it from a user gesture); the first click / pointer-lock / key does this by itself. */
@@ -32,8 +39,10 @@ export interface GameAudio {
   preload(clip: string): void;
   /** Seconds, once the clip is decoded; null before (or without audio). */
   duration(clip: string): number | null;
-  /** Mute, volume or state changed; returns the unsubscribe. */
+  /** Mute, volume, music settings or state changed; returns the unsubscribe. */
   onChange(fn: () => void): () => void;
+  /** The office radio (M15): its own bus, volume, mute and genre. */
+  readonly music: Music;
 }
 
 /** One `playAt`: when the clip really sounds, and when it's over. */
@@ -60,6 +69,8 @@ export interface AudioDeps {
   events?: EventTarget | null;
   /** Clip key → URL. */
   url?: (clip: string) => string;
+  /** The radio's decks, URLs, playlists and timers. */
+  music?: MusicDeps;
 }
 
 export const AUDIO_PREFS_KEY = 'h3d.audio';
@@ -72,6 +83,7 @@ const UNLOCK_EVENTS = ['pointerdown', 'keydown', 'click', 'touchend', 'pointerlo
 interface Prefs {
   muted: boolean;
   volume: number;
+  music: MusicPrefs;
 }
 
 const clamp01 = (v: number) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : DEFAULT_VOLUME);
@@ -79,9 +91,9 @@ const clamp01 = (v: number) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v))
 function readPrefs(s: AudioDeps['storage']): Prefs {
   try {
     const p = JSON.parse(s?.getItem(AUDIO_PREFS_KEY) ?? 'null') as Partial<Prefs> | null;
-    return { muted: p?.muted === true, volume: typeof p?.volume === 'number' ? clamp01(p.volume) : DEFAULT_VOLUME };
+    return { muted: p?.muted === true, volume: typeof p?.volume === 'number' ? clamp01(p.volume) : DEFAULT_VOLUME, music: parseMusicPrefs(p?.music) };
   } catch {
-    return { muted: false, volume: DEFAULT_VOLUME };
+    return { muted: false, volume: DEFAULT_VOLUME, music: { ...DEFAULT_MUSIC_PREFS } };
   }
 }
 
@@ -124,6 +136,7 @@ class WebGameAudio implements GameAudio {
   private readonly voices = new Set<Voice>();
   private readonly listeners = new Set<() => void>();
   private prefs: Prefs;
+  readonly music: MusicPlayer;
   /** Bumped by stop(): clips that finish loading afterwards don't play. */
   private gen = 0;
   private camera: THREE.Camera | null = null;
@@ -159,6 +172,23 @@ class WebGameAudio implements GameAudio {
     this.events = d.events === undefined ? (typeof window === 'undefined' ? null : window) : d.events;
     this.url = d.url ?? ((clip) => `${import.meta.env.BASE_URL}voices/${clip}.mp3`);
     this.prefs = readPrefs(this.storage);
+    this.music = new MusicPlayer(
+      {
+        context: () => this.ctx,
+        master: () => this.master,
+        masterMuted: () => this.prefs.muted,
+        prefs: () => this.prefs.music,
+        save: (m) => {
+          this.prefs = { ...this.prefs, music: m };
+          this.save();
+        },
+        soundStarted: () => {
+          this.lastListener.fill(Number.NaN);
+          if (this.camera) this.setListener(this.camera);
+        },
+      },
+      d.music,
+    );
     if (this.available) this.armGestures();
   }
 
@@ -178,6 +208,7 @@ class WebGameAudio implements GameAudio {
     if (m) this.stop();
     this.applyGain();
     this.save();
+    this.music.sync();
   }
 
   get volume(): number {
@@ -233,10 +264,12 @@ class WebGameAudio implements GameAudio {
     this.master = this.ctx.createGain();
     this.master.gain.value = this.prefs.muted ? 0 : this.prefs.volume;
     this.master.connect(this.ctx.destination);
+    this.music.attach();
     this.ctx.addEventListener?.('statechange', () => {
       // Interrupted later (another tab, the OS): the next gesture resumes it again.
       if (this.ctx?.state === 'running') this.dropGestures();
       else if (this.ctx?.state === 'suspended' && !this.disposed) this.armGestures();
+      this.music.sync();
       this.changed();
     });
     return this.ctx;
@@ -261,6 +294,7 @@ class WebGameAudio implements GameAudio {
       }
     }
     if (ctx.state === 'running') this.dropGestures();
+    this.music.sync();
     this.changed();
   }
 
@@ -361,9 +395,9 @@ class WebGameAudio implements GameAudio {
 
   setListener(camera: THREE.Camera): void {
     this.camera = camera;
-    // Only while something plays: the listener is re-placed when a voice starts.
+    // Only while something plays: the listener is re-placed when a voice or the radio starts.
     const l = this.ctx?.listener;
-    if (!l || this.voices.size === 0) return;
+    if (!l || (this.voices.size === 0 && !this.music.audible)) return;
     const e = camera.matrixWorld.elements;
     const px = e[12] ?? 0;
     const py = e[13] ?? 0;
@@ -413,6 +447,7 @@ class WebGameAudio implements GameAudio {
     if (this.disposed) return;
     this.stop();
     this.disposed = true;
+    this.music.dispose();
     this.dropGestures();
     this.listeners.clear();
     void this.ctx?.close().catch(() => undefined);

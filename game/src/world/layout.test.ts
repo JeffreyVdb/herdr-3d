@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blocked, moveWithCollision, pickNearest, rayBox } from './collide';
 import { assignDesks, deskCountFallback, displayStatus, modelCue, modelLabel, taskLine } from './derive';
-import { EYE_HEIGHT, floorLayout, outlineOf, podGrid, seatRect, slotBoxes, wallPieces, type Rect } from './layout';
+import { COUNTER_RECT, COUNTER_TOP, EYE_HEIGHT, floorLayout, outlineOf, podGrid, seatRect, slotBoxes, wallPieces, type Rect } from './layout';
 
 describe('deskCountFallback', () => {
   it.each([
@@ -127,8 +127,39 @@ describe('floorLayout', () => {
   it('has every placeholder prop, labelled', () => {
     const ids = floorLayout(20).props.map((p) => p.id);
     expect(ids.sort()).toEqual(
-      ['board.issues', 'board.prs', 'board.services', 'dropzone', 'elevator', 'filing', 'lounge', 'tv', 'whiteboard'].sort(),
+      ['board.issues', 'board.prs', 'board.services', 'dropzone', 'elevator', 'filing', 'lounge', 'radio', 'tv', 'whiteboard'].sort(),
     );
+  });
+
+  it('puts the radio on the lounge counter, in reach from the lounge aisle, without a collider of its own', () => {
+    for (const n of [6, 20, 62]) {
+      const l = floorLayout(n);
+      const radio = l.props.find((p) => p.id === 'radio');
+      expect(radio).toMatchObject({ label: 'Radio', solid: false });
+      const b = (radio as NonNullable<typeof radio>).box;
+      // Standing on the counter top, inside the counter's footprint.
+      expect(b.min[1]).toBe(COUNTER_TOP);
+      expect(b.min[0]).toBeGreaterThanOrEqual(COUNTER_RECT.x0);
+      expect(b.max[0]).toBeLessThanOrEqual(COUNTER_RECT.x1);
+      expect(b.min[2]).toBeGreaterThanOrEqual(COUNTER_RECT.z0);
+      expect(b.max[2]).toBeLessThanOrEqual(COUNTER_RECT.z1);
+      // It is not solid, and its footprint touches no collider but the counter it stands on (nor the sofa or the coffee table).
+      const foot = { x0: b.min[0], z0: b.min[2], x1: b.max[0], z1: b.max[2] };
+      const hits = l.colliders.filter((c) => c.x0 < foot.x1 && c.x1 > foot.x0 && c.z0 < foot.z1 && c.z1 > foot.z0);
+      expect(hits).toEqual([COUNTER_RECT]);
+      // The lounge aisle (east of the counter): free to stand on, and looking west and down at the radio hits it first.
+      const stand = { x: 1.3, z: 4.55 };
+      expect(blocked(stand, 0.28, l.colliders)).toBe(false);
+      const c: [number, number, number] = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
+      const first = (from: [number, number, number]) => {
+        const d: [number, number, number] = [c[0] - from[0], c[1] - from[1], c[2] - from[2]];
+        const len = Math.hypot(...d);
+        return pickNearest(from, [d[0] / len, d[1] / len, d[2] / len], l.props.map((p) => ({ boxes: [p.box], value: p.id })), 3)?.value;
+      };
+      expect(first([stand.x, EYE_HEIGHT, stand.z])).toBe('radio');
+      // Every stand-off along the aisle in front of the counter can reach it.
+      for (const z of [3.7, 4.1, 4.5, 4.8]) expect(first([1.3, EYE_HEIGHT, z]), `from z=${z}`).toBe('radio');
+    }
   });
 
   it('spawns at the entrance, free to move, facing the board wall within reach', () => {

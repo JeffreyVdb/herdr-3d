@@ -22,6 +22,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/version"
 )
 
 // Tunnel states.
@@ -64,6 +67,9 @@ type Status struct {
 	Restarts  int       `json:"restarts"`
 	LastError string    `json:"last_error,omitempty"`
 	PID       int       `json:"pid,omitempty"` // of the running ssh
+	// Bridge is the bridge's build version from its /healthz: empty until the
+	// first check, "unknown" for a bridge too old to report one.
+	Bridge string `json:"bridge,omitempty"`
 }
 
 // Tunnel keeps `ssh -N -L Local:Remote Host` running and checks the bridge
@@ -292,7 +298,30 @@ func (t *Tunnel) check(ctx context.Context) error {
 	if resp.StatusCode != http.StatusOK || strings.TrimSpace(string(body)) != "ok" {
 		return fmt.Errorf("healthz: %s %q", resp.Status, body)
 	}
+	t.noteBridge(resp.Header.Get(proto.VersionHeader))
 	return nil
+}
+
+// noteBridge records the bridge's version and logs when it changes: a warning
+// if it is not the helper's own (the two ship in one release, so they should
+// match).
+func (t *Tunnel) noteBridge(v string) {
+	if v == "" {
+		v = "unknown"
+	}
+	t.mu.Lock()
+	changed := t.status.Bridge != v
+	t.status.Bridge = v
+	t.mu.Unlock()
+	switch {
+	case !changed:
+	case v == "unknown":
+		t.Log.Warn("bridge does not report its version (older release)", "helper", version.Version)
+	case v != version.Version:
+		t.Log.Warn("bridge and helper versions differ", "bridge", v, "helper", version.Version)
+	default:
+		t.Log.Info("bridge version", "version", v)
+	}
 }
 
 // prepareSocket makes the socket's directory (0700) and removes a leftover

@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/helper"
+	"github.com/JeffreyVdb/herdr-3d/internal/webdist"
 )
 
 // Environment variables mirroring the h3d-helper flags.
@@ -28,6 +29,8 @@ const (
 	EnvHelperNoOpen        = "H3D_HELPER_NO_OPEN"
 	EnvHelperChrome        = "H3D_HELPER_CHROME"
 	EnvHelperChromeProfile = "H3D_HELPER_CHROME_PROFILE"
+	EnvHelperTokenFile     = "H3D_HELPER_TOKEN_FILE"
+	EnvHelperMusicDir      = "H3D_HELPER_MUSIC_DIR"
 	EnvHelperSSH           = "H3D_HELPER_SSH"
 	EnvHelperLogLevel      = "H3D_HELPER_LOG_LEVEL"
 	EnvHelperLogFormat     = "H3D_HELPER_LOG_FORMAT"
@@ -58,6 +61,16 @@ func DefaultLocalSocket() string {
 
 // DefaultBundle is where an installed game bundle lives.
 func DefaultBundle() string { return filepath.Join(helperDir(os.UserConfigDir, ".config"), "dist") }
+
+// DefaultTokenFile is where the helper keeps its token between runs.
+func DefaultTokenFile() string { return filepath.Join(helperDir(os.UserConfigDir, ".config"), "token") }
+
+// DefaultMusicDir is where the radio's tracks live on the Mac (h3d-update --music
+// fills it). No space in the path, so rsync can name it.
+func DefaultMusicDir() string { return filepath.Join(helperDir(os.UserCacheDir, ".cache"), "music") }
+
+// GameAppName is the installed Chrome web app's name (manifest.webmanifest).
+const GameAppName = "herdr-3d"
 
 // DefaultChromeProfile is the Chrome profile of the game window.
 func DefaultChromeProfile() string {
@@ -104,7 +117,7 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 	remote := fs.String("remote-socket", envOr(EnvHelperRemoteSocket, DefaultRemoteSocket), "bridge socket on the host ($"+EnvHelperRemoteSocket+")")
 	local := fs.String("local-socket", envOr(EnvHelperLocalSocket, DefaultLocalSocket()), "local end of the tunnel ($"+EnvHelperLocalSocket+")")
 	listen := fs.String("listen", envOr(EnvHelperListen, DefaultHelperListen), "loopback address serving the game ($"+EnvHelperListen+")")
-	bundle := fs.String("bundle", envOr(EnvHelperBundle, DefaultBundle()), "built game directory, a copy of game/dist ($"+EnvHelperBundle+")")
+	bundle := fs.String("bundle", os.Getenv(EnvHelperBundle), "serve this built game directory (a copy of game/dist) instead of the game embedded in the binary; default: the embedded game, else "+DefaultBundle()+" ($"+EnvHelperBundle+")")
 	dev := fs.String("dev-upstream", os.Getenv(EnvHelperDevUpstream), "proxy the game from this Vite dev server instead, e.g. http://127.0.0.1:5173 ($"+EnvHelperDevUpstream+")")
 	fs.BoolVar(&noOpen, "no-open", noOpen, "do not open a Chrome window ($"+EnvHelperNoOpen+")")
 	chrome := fs.String("chrome", envOr(EnvHelperChrome, "Google Chrome"), "macOS application that opens the game window ($"+EnvHelperChrome+")")
@@ -112,6 +125,9 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 	sshBin := fs.String("ssh", envOr(EnvHelperSSH, "ssh"), "ssh executable ($"+EnvHelperSSH+")")
 	level := fs.String("log-level", envOr(EnvHelperLogLevel, "info"), "debug, info, warn or error ($"+EnvHelperLogLevel+")")
 	format := fs.String("log-format", envOr(EnvHelperLogFormat, "text"), "text or json ($"+EnvHelperLogFormat+")")
+	tokenFile := fs.String("token-file", envOr(EnvHelperTokenFile, DefaultTokenFile()), "where the helper token is kept between runs; delete it to rotate ($"+EnvHelperTokenFile+")")
+	musicDir := fs.String("music-dir", envOr(EnvHelperMusicDir, DefaultMusicDir()), "radio tracks served under /music/ (music/<genre>/<id>.ogg); missing is fine, the radio is then silent ($"+EnvHelperMusicDir+")")
+	printURL := fs.Bool("print-url", false, "print the game URL with the token and exit (open it once in Chrome to install the app)")
 	showVersion := fs.Bool("version", false, "print version and exit")
 	if err := fs.Parse(args); err != nil {
 		return usageError(err)
@@ -127,10 +143,20 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 	if err != nil {
 		return err
 	}
+	token, err := helper.LoadToken(*tokenFile)
+	if err != nil {
+		return fmt.Errorf("token file %s: %w", *tokenFile, err)
+	}
+	if *printURL {
+		fmt.Fprintf(stdout, "http://%s/#token=%s\n", *listen, token)
+		return nil
+	}
 	cfg := helper.Config{
-		Listen: *listen,
-		Tunnel: &helper.Tunnel{SSH: *sshBin, Host: *host, Remote: *remote, Local: *local},
-		Log:    log,
+		Token:    token,
+		MusicDir: *musicDir,
+		Listen:   *listen,
+		Tunnel:   &helper.Tunnel{SSH: *sshBin, Host: *host, Remote: *remote, Local: *local},
+		Log:      log,
 	}
 	if *dev != "" {
 		u, err := url.Parse(*dev)
@@ -139,16 +165,38 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 		}
 		cfg.Dev = u
 	} else {
-		if err := helper.CheckBundle(*bundle); err != nil {
-			return err
+		embedded, hasEmbedded := webdist.FS()
+		switch {
+		case *bundle != "":
+			cfg.Bundle = *bundle
+		case hasEmbedded:
+			cfg.BundleFS = embedded
+		default:
+			cfg.Bundle = DefaultBundle()
 		}
-		cfg.Bundle = *bundle
+		if cfg.BundleFS == nil {
+			if err := helper.CheckBundle(cfg.Bundle); err != nil {
+				return err
+			}
+		}
 	}
 	if !noOpen {
 		if runtime.GOOS != "darwin" {
 			return errors.New("opening the game window needs macOS; pass -no-open")
 		}
-		cfg.Open = func(ctx context.Context, u string) error { return helper.OpenChrome(ctx, *chrome, u, *profile) }
+		home, _ := os.UserHomeDir()
+		if app, ok := helper.InstalledApp(home, GameAppName); ok {
+			// The installed app starts on its own and reconnects (the token survives restarts).
+			cfg.Open = func(context.Context, string) error {
+				log.Info("game app installed: not opening a window, launch it from the Dock", "app", app)
+				return nil
+			}
+		} else {
+			cfg.Open = func(ctx context.Context, u string) error { return helper.OpenChrome(ctx, *chrome, u, *profile) }
+		}
+	}
+	if _, err := os.Stat(*musicDir); err != nil {
+		log.Info("no music folder: the radio is silent (h3d-update --music fills it)", "dir", *musicDir)
 	}
 	log.Info("h3d-helper starting", "version", Banner(name))
 	return helper.Run(ctx, cfg)

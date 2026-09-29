@@ -20,6 +20,7 @@ import type { PromptSummary } from './ui/prompt';
 import type { PresetsSummary } from './ui/presets';
 import type { StartRunOptions, StartRunSummary } from './ui/startRun';
 import type { NeedItem } from './world/next';
+import { loadHelperVersion, VersionBadge } from './version';
 import type { Area, BuildingPlan } from './world/building';
 import type { floorLayout } from './world/layout';
 import { walkOutRoute, type Waypoint } from './world/route';
@@ -81,6 +82,10 @@ export interface H3DDebug {
   reception(): ReturnType<import('./reception').Reception['debug']> | null;
   /** M3b: reception events the game detected (front door in / out, elevator arrival, E at the desk). */
   receptionEvents(): Array<{ ev: string; at: number; building: string | null }>;
+  /** M15: the office radio: its genre (`off` too), the track, whether it is sounding (on its floor, not muted, fade in), the music volume. */
+  radio(): { genre: string; trackId: string | null; playing: boolean; volume: number; muted: boolean } | null;
+  /** M15: what the radio did, in order: genre changes, tracks picked and started, skipped files, fades in and out. */
+  radioEvents(): Array<{ at: number; kind: string; genre?: string; trackId?: string; detail?: string }>;
   enterFloor(session: string, pose?: Pose): Promise<void>;
   /** Applies a protocol event as if the bridge had sent it (drives live updates deterministically). */
   inject(e: WorldEvent): void;
@@ -232,6 +237,8 @@ const h3d: H3DDebug = {
   },
   reception: () => app?.reception.debug() ?? null,
   receptionEvents: () => structuredClone(app?.receptionEvents ?? []),
+  radio: () => (app ? { ...app.radio.state } : null),
+  radioEvents: () => structuredClone([...(app?.radio.events ?? [])]),
   enterFloor: async (s, pose) => {
     await app?.enterFloor(s, pose ? { transition: false, pose } : { transition: false });
   },
@@ -327,7 +334,9 @@ async function start(): Promise<void> {
     new Promise((res) => setTimeout(res, 1500)),
   ]);
 
-  app = new App({ renderer: r, host: document.body, params });
+  const badge = new VersionBadge(document.getElementById('versions'));
+  void loadHelperVersion().then((v) => badge.setHelper(v));
+  app = new App({ renderer: r, host: document.body, params, onBridgeVersion: (v) => badge.setBridge(v) });
   const a = app;
   const origRender = a.render.bind(a);
   a.render = () => {
