@@ -94,6 +94,12 @@ func (s *Session) Poll(now time.Time) (u proto.Usage, ok bool) {
 			s.missAt = now
 			return s.usage()
 		}
+		if s.found { // found again after it went: count it all afresh
+			s.parse = newParser(s.harness)
+			for _, t := range s.subs {
+				t.restart()
+			}
+		}
 		s.main, s.found = &tail{path: path}, true
 		if s.harness == Claude {
 			s.subDir = filepath.Join(filepath.Dir(path), s.id, "subagents")

@@ -225,6 +225,17 @@ func TestTailIncremental(t *testing.T) {
 	if u := poll(t, s, t0.Add(6*time.Second)); u.Input != 12 || u.Output != 2 {
 		t.Fatalf("after replacement: %+v", u)
 	}
+	// Gone: what was counted stays; back (after MissRescan): counted afresh.
+	if err := os.Rename(path, repl); err != nil {
+		t.Fatal(err)
+	}
+	if u := poll(t, s, t0.Add(7*time.Second)); u.Input != 12 {
+		t.Fatalf("while gone: %+v", u)
+	}
+	writeFile(t, path, assistant("m7", "claude-opus-5-5", "", 3, 1, 0, 0))
+	if u := poll(t, s, t0.Add(7*time.Second+MissRescan)); u.Input != 3 || u.Output != 1 {
+		t.Fatalf("found again: %+v", u)
+	}
 }
 
 // A transcript is looked for again at most every MissRescan; a symlink is
