@@ -46,13 +46,18 @@ type ServerConfig struct {
 	Bundle string
 	Dev    *url.URL
 	Log    *slog.Logger
+	// M7: POST /api/open. Open opens an https URL of OpenHosts in the user's
+	// browser (default SystemOpen; OpenHosts default DefaultOpenHosts).
+	Open      Opener
+	OpenHosts []string
 }
 
 // Server is the helper's HTTP front: the game, /ws to the bridge, /healthz.
 type Server struct {
-	cfg     ServerConfig
-	hosts   map[string]bool
-	origins map[string]bool
+	cfg       ServerConfig
+	hosts     map[string]bool
+	origins   map[string]bool
+	openHosts map[string]bool
 }
 
 // NewServer returns a server for cfg.
@@ -60,8 +65,17 @@ func NewServer(cfg ServerConfig) *Server {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
+	if cfg.Open == nil {
+		cfg.Open = SystemOpen
+	}
+	if cfg.OpenHosts == nil {
+		cfg.OpenHosts = DefaultOpenHosts
+	}
 	port := strconv.Itoa(cfg.Port)
-	s := &Server{cfg: cfg, hosts: map[string]bool{}, origins: map[string]bool{}}
+	s := &Server{cfg: cfg, hosts: map[string]bool{}, origins: map[string]bool{}, openHosts: map[string]bool{}}
+	for _, h := range cfg.OpenHosts {
+		s.openHosts[strings.ToLower(h)] = true
+	}
 	for _, h := range []string{"127.0.0.1", "localhost", cfg.ListenHost} {
 		if h == "" {
 			continue
@@ -74,12 +88,17 @@ func NewServer(cfg ServerConfig) *Server {
 }
 
 // Handler serves everything. Every request must name the helper in its
-// Host header (no DNS rebinding); /ws also needs a same-origin Origin and
-// the token.
+// Host header (no DNS rebinding); /ws and /api/open also need a same-origin
+// Origin and the token.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.Handle("GET /ws", s.checkWS(s.bridgeProxy()))
+	mux.Handle("POST /api/open", s.open())
+	mux.HandleFunc("/api/open", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	})
 	if s.cfg.Dev != nil {
 		mux.Handle("/", s.devProxy())
 	} else {
