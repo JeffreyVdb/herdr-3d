@@ -1,0 +1,199 @@
+{
+ "data": {
+  "repository": {
+   "id": "R_kgDOUyEf8Q",
+   "nameWithOwner": "JeffreyVdb/h3d-lab",
+   "openIssues": {
+    "totalCount": 1,
+    "pageInfo": {
+     "hasNextPage": false,
+     "endCursor": null
+    },
+    "nodes": [
+     {
+      "id": "I_1",
+      "number": 1,
+      "title": "Greet by name",
+      "state": "OPEN",
+      "stateReason": null,
+      "url": "https://github.com/JeffreyVdb/h3d-lab/issues/1",
+      "labels": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": []
+      },
+      "assignees": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": []
+      },
+      "author": {
+       "login": "dev",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+      },
+      "createdAt": "2026-09-20T08:00:00Z",
+      "updatedAt": "2026-09-29T08:02:54Z",
+      "closedAt": null,
+      "projectItems": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": []
+      }
+     }
+    ]
+   },
+   "openPRs": {
+    "totalCount": 2,
+    "pageInfo": {
+     "hasNextPage": false,
+     "endCursor": null
+    },
+    "nodes": [
+     {
+      "id": "PR_2",
+      "number": 2,
+      "title": "feat: greet by name",
+      "url": "https://github.com/JeffreyVdb/h3d-lab/pull/2",
+      "state": "OPEN",
+      "isDraft": false,
+      "headRefName": "h3d/bramble-ca1d46",
+      "baseRefName": "main",
+      "author": {
+       "login": "dev",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+      },
+      "createdAt": "2026-09-28T08:00:00Z",
+      "updatedAt": "2026-09-29T08:18:02Z",
+      "mergedAt": null,
+      "mergeable": "MERGEABLE",
+      "reviewDecision": null,
+      "additions": 120,
+      "deletions": 8,
+      "changedFiles": 4,
+      "closingIssuesReferences": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": [
+        {
+         "number": 1,
+         "repository": {
+          "nameWithOwner": "JeffreyVdb/h3d-lab"
+         }
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "oid": "0000000000000000000000000000000000000002",
+          "statusCheckRollup": null
+         }
+        }
+       ]
+      }
+     },
+     {
+      "id": "PR_4",
+      "number": 4,
+      "title": "Probe PR",
+      "url": "https://github.com/JeffreyVdb/h3d-lab/pull/4",
+      "state": "OPEN",
+      "isDraft": false,
+      "headRefName": "probe-branch",
+      "baseRefName": "main",
+      "author": {
+       "login": "dev",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+      },
+      "createdAt": "2026-09-28T08:00:00Z",
+      "updatedAt": "2026-09-29T09:30:42Z",
+      "mergedAt": null,
+      "mergeable": "MERGEABLE",
+      "reviewDecision": null,
+      "additions": 120,
+      "deletions": 8,
+      "changedFiles": 4,
+      "closingIssuesReferences": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": []
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "oid": "0000000000000000000000000000000000000004",
+          "statusCheckRollup": null
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "recentClosedIssues": {
+   "issueCount": 1,
+   "pageInfo": {
+    "hasNextPage": false,
+    "endCursor": null
+   },
+   "nodes": [
+    {
+     "id": "I_3",
+     "number": 3,
+     "title": "Probe issue",
+     "state": "CLOSED",
+     "stateReason": "COMPLETED",
+     "url": "https://github.com/JeffreyVdb/h3d-lab/issues/3",
+     "labels": {
+      "pageInfo": {
+       "hasNextPage": false,
+       "endCursor": null
+      },
+      "nodes": []
+     },
+     "assignees": {
+      "pageInfo": {
+       "hasNextPage": false,
+       "endCursor": null
+      },
+      "nodes": []
+     },
+     "author": {
+      "login": "dev",
+      "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+     },
+     "createdAt": "2026-09-20T08:00:00Z",
+     "updatedAt": "2026-09-29T09:29:57Z",
+     "closedAt": "2026-09-29T09:29:57Z",
+     "projectItems": {
+      "pageInfo": {
+       "hasNextPage": false,
+       "endCursor": null
+      },
+      "nodes": []
+     }
+    }
+   ]
+  },
+  "previouslyOpenPRs": [],
+  "rateLimit": {
+   "cost": 12,
+   "limit": 5000,
+   "remaining": 4870,
+   "resetAt": "2026-09-29T13:00:00Z"
+  }
+ }
+}

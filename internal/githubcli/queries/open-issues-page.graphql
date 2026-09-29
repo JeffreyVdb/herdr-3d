@@ -1,0 +1,20 @@
+query OpenIssuesPage($owner:String!, $repo:String!, $after:String!, $statusField:String!) {
+  repository(owner:$owner, name:$repo) {
+    openIssues: issues(first:100, after:$after, states:OPEN, orderBy:{field:UPDATED_AT,direction:DESC}) {
+      totalCount pageInfo { hasNextPage endCursor }
+      nodes { ...IssueCard }
+    }
+  }
+  rateLimit { cost limit remaining resetAt }
+}
+fragment IssueCard on Issue {
+  id number title state stateReason url
+  labels(first:100) { pageInfo { hasNextPage endCursor } nodes { name color } }
+  assignees(first:100) { pageInfo { hasNextPage endCursor } nodes { login avatarUrl } }
+  author { login avatarUrl }
+  createdAt updatedAt closedAt
+  projectItems(first:100) {
+    pageInfo { hasNextPage endCursor }
+    nodes { id project { id number title } fieldValueByName(name:$statusField) { ... on ProjectV2ItemFieldSingleSelectValue { name optionId } } }
+  }
+}

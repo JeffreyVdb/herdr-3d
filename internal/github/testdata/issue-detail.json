@@ -1,0 +1,83 @@
+{
+ "data": {
+  "repository": {
+   "issue": {
+    "id": "I_9",
+    "number": 9,
+    "title": "Boards: issues kanban",
+    "state": "OPEN",
+    "stateReason": null,
+    "url": "https://github.com/JeffreyVdb/herdr-3d/issues/9",
+    "labels": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+     },
+     "nodes": [
+      {
+       "name": "bridge",
+       "color": "1d76db"
+      }
+     ]
+    },
+    "assignees": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+     },
+     "nodes": [
+      {
+       "login": "dev",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+      }
+     ]
+    },
+    "author": {
+     "login": "dev",
+     "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+    },
+    "createdAt": "2026-09-20T08:00:00Z",
+    "updatedAt": "2026-09-29T11:00:00Z",
+    "closedAt": null,
+    "projectItems": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+     },
+     "nodes": []
+    },
+    "body": "Two boards.\n\n<img src=x onerror=alert(1)>",
+    "comments": {
+     "totalCount": 2,
+     "pageInfo": {
+      "hasNextPage": true,
+      "endCursor": "Y3Vyc29y"
+     },
+     "nodes": [
+      {
+       "id": "IC_1",
+       "body": "first",
+       "author": {
+        "login": "dev",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+       },
+       "createdAt": "2026-09-29T10:00:00Z"
+      },
+      {
+       "id": "IC_2",
+       "body": "ghost",
+       "author": null,
+       "createdAt": "2026-09-29T10:05:00Z"
+      }
+     ]
+    }
+   }
+  },
+  "rateLimit": {
+   "cost": 1,
+   "limit": 5000,
+   "remaining": 4411,
+   "resetAt": "2026-09-29T13:00:00Z"
+  }
+ }
+}

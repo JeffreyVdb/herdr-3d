@@ -1,0 +1,15 @@
+query IssueDetail($owner:String!, $repo:String!, $number:Int!, $after:String) {
+  repository(owner:$owner,name:$repo) {
+    issue(number:$number) {
+      id number title state stateReason url body createdAt updatedAt closedAt
+      author { login avatarUrl }
+      labels(first:100) { nodes { name color } }
+      assignees(first:100) { nodes { login avatarUrl } }
+      comments(first:100,after:$after) {
+        totalCount pageInfo { hasNextPage endCursor }
+        nodes { id body author { login avatarUrl } createdAt }
+      }
+    }
+  }
+  rateLimit { cost limit remaining resetAt }
+}

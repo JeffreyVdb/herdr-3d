@@ -1,0 +1,664 @@
+{
+ "data": {
+  "repository": {
+   "id": "R_kgDOUv-40w",
+   "nameWithOwner": "JeffreyVdb/herdr-3d",
+   "openIssues": {
+    "totalCount": 4,
+    "pageInfo": {
+     "hasNextPage": false,
+     "endCursor": null
+    },
+    "nodes": [
+     {
+      "id": "I_9",
+      "number": 9,
+      "title": "Boards: issues kanban",
+      "state": "OPEN",
+      "stateReason": null,
+      "url": "https://github.com/JeffreyVdb/herdr-3d/issues/9",
+      "labels": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": [
+        {
+         "name": "bridge",
+         "color": "1d76db"
+        },
+        {
+         "name": "P1",
+         "color": "B60205"
+        }
+       ]
+      },
+      "assignees": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": [
+        {
+         "login": "dev",
+         "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+        }
+       ]
+      },
+      "author": {
+       "login": "dev",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+      },
+      "createdAt": "2026-09-20T08:00:00Z",
+      "updatedAt": "2026-09-29T11:00:00Z",
+      "closedAt": null,
+      "projectItems": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": [
+        {
+         "id": "PVTI_9",
+         "project": {
+          "id": "PVT_kwHOAAplCs4Bk8CS",
+          "number": 2,
+          "title": "board"
+         },
+         "fieldValueByName": {
+          "name": "Doing",
+          "optionId": "ae6334b4"
+         }
+        }
+       ]
+      }
+     },
+     {
+      "id": "I_32",
+      "number": 32,
+      "title": "Slow suite",
+      "state": "OPEN",
+      "stateReason": null,
+      "url": "https://github.com/JeffreyVdb/herdr-3d/issues/32",
+      "labels": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": [
+        {
+         "name": "game",
+         "color": "fbca04"
+        }
+       ]
+      },
+      "assignees": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": []
+      },
+      "author": {
+       "login": "dev",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+      },
+      "createdAt": "2026-09-20T08:00:00Z",
+      "updatedAt": "2026-09-29T09:19:27Z",
+      "closedAt": null,
+      "projectItems": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": []
+      }
+     },
+     {
+      "id": "I_30",
+      "number": 30,
+      "title": "Radio",
+      "state": "OPEN",
+      "stateReason": null,
+      "url": "https://github.com/JeffreyVdb/herdr-3d/issues/30",
+      "labels": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": [
+        {
+         "name": "Priority/Low",
+         "color": "0e8a16"
+        },
+        {
+         "name": "critical",
+         "color": "ff0000"
+        }
+       ]
+      },
+      "assignees": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": []
+      },
+      "author": {
+       "login": "dev",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+      },
+      "createdAt": "2026-09-20T08:00:00Z",
+      "updatedAt": "2026-09-29T08:00:00Z",
+      "closedAt": null,
+      "projectItems": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": [
+        {
+         "id": "PVTI_30",
+         "project": {
+          "id": "PVT_kwHOAAplCs4Bk8CS",
+          "number": 2,
+          "title": "board"
+         },
+         "fieldValueByName": {
+          "name": "Todo",
+          "optionId": "49294ed0"
+         }
+        }
+       ]
+      }
+     },
+     {
+      "id": "I_31",
+      "number": 31,
+      "title": "In another project",
+      "state": "OPEN",
+      "stateReason": null,
+      "url": "https://github.com/JeffreyVdb/herdr-3d/issues/31",
+      "labels": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": []
+      },
+      "assignees": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": []
+      },
+      "author": {
+       "login": "dev",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+      },
+      "createdAt": "2026-09-20T08:00:00Z",
+      "updatedAt": "2026-09-29T07:00:00Z",
+      "closedAt": null,
+      "projectItems": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": [
+        {
+         "id": "PVTI_31",
+         "project": {
+          "id": "PVT_other",
+          "number": 9,
+          "title": "board"
+         },
+         "fieldValueByName": {
+          "name": "Todo",
+          "optionId": "zzzz"
+         }
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "openPRs": {
+    "totalCount": 4,
+    "pageInfo": {
+     "hasNextPage": false,
+     "endCursor": null
+    },
+    "nodes": [
+     {
+      "id": "PR_31",
+      "number": 31,
+      "title": "M6: freelancers",
+      "url": "https://github.com/JeffreyVdb/herdr-3d/pull/31",
+      "state": "OPEN",
+      "isDraft": false,
+      "headRefName": "feat/7-m6",
+      "baseRefName": "main",
+      "author": {
+       "login": "dev",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+      },
+      "createdAt": "2026-09-28T08:00:00Z",
+      "updatedAt": "2026-09-29T10:00:00Z",
+      "mergedAt": null,
+      "mergeable": "MERGEABLE",
+      "reviewDecision": "APPROVED",
+      "additions": 120,
+      "deletions": 8,
+      "changedFiles": 4,
+      "closingIssuesReferences": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": [
+        {
+         "number": 7,
+         "repository": {
+          "nameWithOwner": "JeffreyVdb/herdr-3d"
+         }
+        },
+        {
+         "number": 3,
+         "repository": {
+          "nameWithOwner": "other-org/web"
+         }
+        }
+       ]
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "oid": "000000000000000000000000000000000000001f",
+          "statusCheckRollup": {
+           "state": "SUCCESS",
+           "contexts": {
+            "pageInfo": {
+             "hasNextPage": false,
+             "endCursor": null
+            },
+            "nodes": []
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "id": "PR_33",
+      "number": 33,
+      "title": "Failing checks",
+      "url": "https://github.com/JeffreyVdb/herdr-3d/pull/33",
+      "state": "OPEN",
+      "isDraft": false,
+      "headRefName": "feat/fail",
+      "baseRefName": "main",
+      "author": {
+       "login": "dev",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+      },
+      "createdAt": "2026-09-28T08:00:00Z",
+      "updatedAt": "2026-09-29T09:50:00Z",
+      "mergedAt": null,
+      "mergeable": "MERGEABLE",
+      "reviewDecision": "CHANGES_REQUESTED",
+      "additions": 120,
+      "deletions": 8,
+      "changedFiles": 4,
+      "closingIssuesReferences": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": []
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "oid": "0000000000000000000000000000000000000021",
+          "statusCheckRollup": {
+           "state": "FAILURE",
+           "contexts": {
+            "pageInfo": {
+             "hasNextPage": false,
+             "endCursor": null
+            },
+            "nodes": [
+             {
+              "name": "test",
+              "status": "COMPLETED",
+              "conclusion": "FAILURE",
+              "detailsUrl": "https://ci.example/test"
+             },
+             {
+              "name": "lint",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://ci.example/lint"
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      }
+     },
+     {
+      "id": "PR_34",
+      "number": 34,
+      "title": "Draft with conflicts",
+      "url": "https://github.com/JeffreyVdb/herdr-3d/pull/34",
+      "state": "OPEN",
+      "isDraft": true,
+      "headRefName": "feat/draft",
+      "baseRefName": "main",
+      "author": {
+       "login": "dev",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+      },
+      "createdAt": "2026-09-28T08:00:00Z",
+      "updatedAt": "2026-09-29T09:40:00Z",
+      "mergedAt": null,
+      "mergeable": "CONFLICTING",
+      "reviewDecision": null,
+      "additions": 120,
+      "deletions": 8,
+      "changedFiles": 4,
+      "closingIssuesReferences": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": []
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "oid": "0000000000000000000000000000000000000022",
+          "statusCheckRollup": null
+         }
+        }
+       ]
+      }
+     },
+     {
+      "id": "PR_35",
+      "number": 35,
+      "title": "Pending",
+      "url": "https://github.com/JeffreyVdb/herdr-3d/pull/35",
+      "state": "OPEN",
+      "isDraft": false,
+      "headRefName": "feat/pending",
+      "baseRefName": "main",
+      "author": {
+       "login": "dev",
+       "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+      },
+      "createdAt": "2026-09-28T08:00:00Z",
+      "updatedAt": "2026-09-29T09:30:00Z",
+      "mergedAt": null,
+      "mergeable": "UNKNOWN",
+      "reviewDecision": "REVIEW_REQUIRED",
+      "additions": 120,
+      "deletions": 8,
+      "changedFiles": 4,
+      "closingIssuesReferences": {
+       "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+       },
+       "nodes": []
+      },
+      "commits": {
+       "nodes": [
+        {
+         "commit": {
+          "oid": "0000000000000000000000000000000000000023",
+          "statusCheckRollup": {
+           "state": "PENDING",
+           "contexts": {
+            "pageInfo": {
+             "hasNextPage": false,
+             "endCursor": null
+            },
+            "nodes": []
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "recentClosedIssues": {
+   "issueCount": 3,
+   "pageInfo": {
+    "hasNextPage": false,
+    "endCursor": null
+   },
+   "nodes": [
+    {
+     "id": "I_7",
+     "number": 7,
+     "title": "M6 freelancers",
+     "state": "CLOSED",
+     "stateReason": "COMPLETED",
+     "url": "https://github.com/JeffreyVdb/herdr-3d/issues/7",
+     "labels": {
+      "pageInfo": {
+       "hasNextPage": false,
+       "endCursor": null
+      },
+      "nodes": [
+       {
+        "name": "bridge",
+        "color": "1d76db"
+       }
+      ]
+     },
+     "assignees": {
+      "pageInfo": {
+       "hasNextPage": false,
+       "endCursor": null
+      },
+      "nodes": []
+     },
+     "author": {
+      "login": "dev",
+      "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+     },
+     "createdAt": "2026-09-20T08:00:00Z",
+     "updatedAt": "2026-09-29T09:19:01Z",
+     "closedAt": "2026-09-29T09:19:01Z",
+     "projectItems": {
+      "pageInfo": {
+       "hasNextPage": false,
+       "endCursor": null
+      },
+      "nodes": [
+       {
+        "id": "PVTI_7",
+        "project": {
+         "id": "PVT_kwHOAAplCs4Bk8CS",
+         "number": 2,
+         "title": "board"
+        },
+        "fieldValueByName": {
+         "name": "Done",
+         "optionId": "ccf5765b"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "I_4",
+     "number": 4,
+     "title": "Closed a week ago",
+     "state": "CLOSED",
+     "stateReason": "COMPLETED",
+     "url": "https://github.com/JeffreyVdb/herdr-3d/issues/4",
+     "labels": {
+      "pageInfo": {
+       "hasNextPage": false,
+       "endCursor": null
+      },
+      "nodes": []
+     },
+     "assignees": {
+      "pageInfo": {
+       "hasNextPage": false,
+       "endCursor": null
+      },
+      "nodes": []
+     },
+     "author": {
+      "login": "dev",
+      "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+     },
+     "createdAt": "2026-09-20T08:00:00Z",
+     "updatedAt": "2026-09-22T09:00:00Z",
+     "closedAt": "2026-09-22T09:00:00Z",
+     "projectItems": {
+      "pageInfo": {
+       "hasNextPage": false,
+       "endCursor": null
+      },
+      "nodes": [
+       {
+        "id": "PVTI_4",
+        "project": {
+         "id": "PVT_kwHOAAplCs4Bk8CS",
+         "number": 2,
+         "title": "board"
+        },
+        "fieldValueByName": {
+         "name": "Done",
+         "optionId": "ccf5765b"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "id": "I_6",
+     "number": 6,
+     "title": "Closed at the edge",
+     "state": "CLOSED",
+     "stateReason": "NOT_PLANNED",
+     "url": "https://github.com/JeffreyVdb/herdr-3d/issues/6",
+     "labels": {
+      "pageInfo": {
+       "hasNextPage": false,
+       "endCursor": null
+      },
+      "nodes": []
+     },
+     "assignees": {
+      "pageInfo": {
+       "hasNextPage": false,
+       "endCursor": null
+      },
+      "nodes": []
+     },
+     "author": {
+      "login": "dev",
+      "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4"
+     },
+     "createdAt": "2026-09-20T08:00:00Z",
+     "updatedAt": "2026-09-22T12:00:01Z",
+     "closedAt": "2026-09-22T12:00:01Z",
+     "projectItems": {
+      "pageInfo": {
+       "hasNextPage": false,
+       "endCursor": null
+      },
+      "nodes": [
+       {
+        "id": "PVTI_6",
+        "project": {
+         "id": "PVT_kwHOAAplCs4Bk8CS",
+         "number": 2,
+         "title": "board"
+        },
+        "fieldValueByName": {
+         "name": "Done",
+         "optionId": "ccf5765b"
+        }
+       }
+      ]
+     }
+    },
+    {}
+   ]
+  },
+  "previouslyOpenPRs": [],
+  "repositoryOwner": {
+   "__typename": "User",
+   "projectV2": {
+    "id": "PVT_kwHOAAplCs4Bk8CS",
+    "number": 2,
+    "title": "herdr-3d",
+    "fields": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+     },
+     "nodes": [
+      {},
+      {
+       "id": "PVTSSF_status",
+       "name": "Status",
+       "options": [
+        {
+         "id": "49294ed0",
+         "name": "Todo"
+        },
+        {
+         "id": "ae6334b4",
+         "name": "Doing"
+        },
+        {
+         "id": "64e1b0ac",
+         "name": "QA"
+        },
+        {
+         "id": "ccf5765b",
+         "name": "Done"
+        }
+       ]
+      },
+      {
+       "id": "PVTSSF_other",
+       "name": "Size",
+       "options": [
+        {
+         "id": "s1",
+         "name": "S"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "rateLimit": {
+   "cost": 12,
+   "limit": 5000,
+   "remaining": 4870,
+   "resetAt": "2026-09-29T13:00:00Z"
+  }
+ }
+}
