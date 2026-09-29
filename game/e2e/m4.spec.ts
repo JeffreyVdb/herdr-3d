@@ -82,13 +82,30 @@ async function walker(page: Page, fn: (a: Arrival) => boolean, what: string, tim
   return hit as Arrival;
 }
 
+/** M6b: the drop-in at `desk` (it lasts under a second: caught while it plays, or from the log once it did). */
+async function arrived(page: Page, desk: number, timeout = 15_000): Promise<{ id: string; kind: string; session: string; desk: number; name?: string | undefined }> {
+  let hit: { id: string; kind: string; session: string; desk: number; name?: string | undefined } | undefined;
+  await expect
+    .poll(
+      async () => {
+        const a = (await arrivals(page)).find((x) => x.kind === 'in' && x.desk === desk);
+        const l = (await page.evaluate(() => window.__h3d.arrivalLog())).find((x) => x.kind === 'in' && x.desk === desk && x.played);
+        hit = a ?? (l ? { ...l, name: (await page.evaluate(() => window.__h3d.world())).flatMap((f) => f.workers).find((w) => w.id === l.id)?.name } : undefined);
+        return !!hit;
+      },
+      { message: `a hire drops in at desk ${desk}`, timeout, intervals: [30] },
+    )
+    .toBe(true);
+  return hit as { id: string; kind: string; session: string; desk: number; name?: string | undefined };
+}
+
 const focusedKey = (page: Page) =>
   page.evaluate(() => {
     const a = document.activeElement as HTMLElement | null;
     return !a || a === document.body ? 'BODY' : (a.dataset.key ?? a.id);
   });
 
-test('E on an empty desk: the hire dialog from the keyboard, then the worker walks in and sits down', async ({ page }) => {
+test('E on an empty desk: the hire dialog from the keyboard, then the worker drops in to its chair', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await openGame(page, 'demo-m4', '', SIM);
@@ -153,37 +170,15 @@ test('E on an empty desk: the hire dialog from the keyboard, then the worker wal
   expect(hire.map((c) => c.args)).toEqual([
     { session: 'pastry', desk_index: 14, harness: 'codex', model: 'gpt-6-sol', effort: 'xhigh', label: 'Gumdrop', cwd: '/home/dev/pastry', worktree: true, prompt: 'Label the loaves, extra seeds\nthen bake' },
   ]);
-  // The "+" goes as the hire starts, and stays gone while the worker walks in.
+  // The "+" goes as the hire starts, and stays gone until the worker is there.
   expect((await desks(page))[14]).toMatchObject({ plus: false, away: 'empty' });
   await expect.poll(() => dialog(page)).toBeNull();
   await expect(page.locator('.toast')).toHaveText(/^Hired Gumdrop at Desk 15 on h3d\/gumdrop-[0-9a-f]{6}\. Here they come\.$/);
-  const w = await walker(page, (a) => a.kind === 'in' && a.desk === 14, 'Gumdrop walks in');
-  expect(w).toMatchObject({ session: 'pastry', name: 'Gumdrop', desk_show: 'empty', box: 'carried', laptop: 'carried' });
-  // From the street (the reversed walk-out route).
-  const route = await page.evaluate(() => window.__h3d.route('pastry', 14));
-  const start = route.at(-1) as { x: number; y: number; z: number };
-  expect(w.walked).toBeLessThan(6);
-  expect(start.y).toBe(0);
-  expect((await desks(page))[14]).toMatchObject({ plus: false, away: 'empty', worker: w.id });
-
-  // Hurry, then catch it inside the office, a few metres from the desk.
-  await page.evaluate(() => window.__h3d.arrivalRate(4));
-  const inside = await walker(page, (a) => a.kind === 'in' && a.length - a.walked < 5.5 && a.phase === 'walk', 'Gumdrop in the office');
-  await page.evaluate(() => window.__h3d.arrivalRate(0.02));
-  const L = await page.evaluate(() => window.__h3d.layout('pastry'));
-  const seat = L?.slots[14]?.seat as { x: number; z: number };
-  // Ahead of it, between it and its desk, looking back at it (a little from above).
-  const dx = seat.x - inside.x;
-  const dz = seat.z - inside.z;
-  const n = Math.hypot(dx, dz) || 1;
-  const feet = inside.y - 0.15;
-  await page.evaluate(([x, z, y]) => window.__h3d.setPose({ x, z, y, yaw: 0, pitch: 0 }), [inside.x + (dx / n) * 3, inside.z + (dz / n) * 3, feet + 0.35] as const);
-  await lookTowards(page, inside.x, feet + 0.55, inside.z);
-  await frames(page, 4);
-  await shot(page, 'm4-walk-in');
-  await page.evaluate(() => window.__h3d.arrivalRate(4));
-  await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivalLog())).find((l) => l.id === w.id), { timeout: 30_000 }).toMatchObject({ kind: 'in', played: true });
-  // Sitting at its desk, with its card; the desk is the world's again.
+  // M6b: it drops in to its chair (no walk from the street), and its desk is its own from the first frame.
+  const w = await arrived(page, 14);
+  expect(w).toMatchObject({ kind: 'in', session: 'pastry', name: 'Gumdrop', desk: 14 });
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivalLog())).find((l) => l.id === w.id), { timeout: 10_000 }).toMatchObject({ kind: 'in', played: true });
+  // Sitting at its desk, with its card; the desk is the world's.
   expect((await desks(page))[14]).toEqual({ desk: 14, worker: w.id, plus: false, away: null });
   const pastry = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === 'pastry');
   expect(pastry?.workers.find((x) => x.id === w.id)).toMatchObject({ name: 'Gumdrop', desk: 14 });
@@ -269,7 +264,7 @@ test('send home a clean worker: delete worktree + branch, it packs a box, takes 
   await expect.poll(() => dialog(page)).toBeNull();
   expect((await sent(page)).filter((c) => c.t === 'worker.fire').map((c) => c.args)).toEqual([{ id, worktree: 'delete_branch' }]);
   await expect(page.locator('.toast')).toHaveText('Sent Marble home. Its worktree and branch are deleted.');
-  // Gone from the world, but packing at the desk: chair out, laptop open, no "+".
+  // Gone from the world, but packing at the desk: chair out, laptop in its dock, no "+".
   expect((await page.evaluate(() => window.__h3d.world())).find((f) => f.session === 'pastry')?.workers.some((w) => w.id === id)).toBe(false);
   const packing = await walker(page, (a) => a.id === id && a.phase === 'pack' && a.items >= 2, 'Marble packs', 10_000);
   expect(packing).toMatchObject({ kind: 'out', desk: 2, box: 'desk', laptop: 'desk', desk_show: 'busy' });
@@ -289,7 +284,10 @@ test('send home a clean worker: delete worktree + branch, it packs a box, takes 
   await page.evaluate(() => window.__h3d.arrivalRate(1.5));
   const carrying = await walker(page, (a) => a.id === id && a.phase === 'walk' && a.walked > 2.5, 'Marble walks off with the box', 15_000);
   await page.evaluate(() => window.__h3d.arrivalRate(0.02));
-  expect(carrying).toMatchObject({ box: 'carried', laptop: 'carried', items: 3, desk_show: 'free' });
+  // M6b: everything the desk had went in the box (its photos, mug, plant, notebook).
+  expect(carrying).toMatchObject({ box: 'carried', laptop: 'carried', desk_show: 'free' });
+  expect(carrying.items).toBeGreaterThanOrEqual(3);
+  expect((await page.evaluate(() => window.__h3d.deskArt(2)))?.parts).not.toHaveProperty('photo');
   // The desk follows the walk a frame later than the walker snapshot: poll, do not read once.
   await expect.poll(async () => (await desks(page))[2]).toEqual({ desk: 2, worker: null, plus: true, away: null });
   await lookTowards(page, carrying.x, carrying.y + 0.4, carrying.z);
@@ -423,18 +421,18 @@ test('two hires at once: Esc on a pending hire, then another; each keeps its own
   // Esc: the dialog goes, the hire does not.
   await page.keyboard.press('Escape');
   await expect.poll(() => dialog(page)).toBeNull();
-  await expect(page.locator('.toast')).toHaveText('The hire is still on its way; the worker walks in when it is done.');
+  await expect(page.locator('.toast')).toHaveText('The hire is still on its way; the worker shows up at the desk when it is done.');
   expect((await desks(page))[14]).toMatchObject({ plus: false, away: 'empty' });
   // The top bar's Hire skips the desk the first hire holds.
   await hireButton.click();
   d = await hireDialog(page);
   expect(d).toMatchObject({ desk: 15, state: 'ready', blocker: null });
-  // The first hire's ack: its worker walks in to desk 14, and this dialog stays as it is.
-  await walker(page, (a) => a.kind === 'in' && a.desk === 14, 'the first hire walks in', 15_000);
+  // The first hire's ack: its worker drops in at desk 14, and this dialog stays as it is.
+  const first = await arrived(page, 14);
   await expect(page.locator('.toast')).toHaveText(/^Hired Gumdrop at Desk 15 /);
   d = await hireDialog(page);
   expect(d).toMatchObject({ desk: 15, state: 'ready', blocker: null, status: '' });
-  expect((await desks(page))[14]).toMatchObject({ plus: false, away: 'empty' });
+  expect((await desks(page))[14]).toMatchObject({ worker: first.id, plus: false, away: null });
   expect((await desks(page))[15]).toMatchObject({ plus: true, away: null });
   // The second hire, then a third dialog while it is on its way: the first free desk is past both.
   await page.locator('#hire-task').focus();
@@ -453,7 +451,7 @@ test('two hires at once: Esc on a pending hire, then another; each keeps its own
   await page.keyboard.press('e');
   await frames(page, 2);
   expect(await dialog(page)).toBeNull();
-  await walker(page, (a) => a.kind === 'in' && a.desk === 15, 'the second hire walks in', 15_000);
+  await arrived(page, 15);
   const hires = (await sent(page)).filter((c) => c.t === 'worker.hire');
   expect(hires.map((c) => (c.args as { desk_index: number }).desk_index)).toEqual([14, 15]);
   expect(hires.map((c) => c.result?.ok)).toEqual([true, true]);
@@ -521,7 +519,7 @@ test('a clean worktree on a branch of the user’s own: delete the worktree only
   clean();
 });
 
-test('walks you cannot see resolve at once; only a fresh hire walks in', async ({ page }) => {
+test('walks you cannot see resolve at once; only a fresh hire drops in, on the floor you are on', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page, 'demo-m4', '', SIM);
   await enter(page, 'pastry');
@@ -531,20 +529,24 @@ test('walks you cannot see resolve at once; only a fresh hire walks in', async (
   await page.evaluate((id) => window.__h3d.inject({ t: 'worker.removed', seq: 9001, id, session: 'scratchpad', workspace_id: 'w1', reason: 'sent_home' } as never), hopper?.id as string);
   expect(await page.evaluate(() => window.__h3d.arrivalLog())).toEqual([{ id: hopper?.id, kind: 'out', played: false, session: 'scratchpad', desk: 0 }]);
   expect(await arrivals(page)).toEqual([]);
-  // A fresh hire on the top floor of this building walks in from the street; an old one (hired an hour ago) does not.
+  // M6b: a fresh hire on another floor of this building drops in where you cannot see it: at once. An old one
+  // (hired an hour ago) is no arrival at all.
   const fresh = { id: 'fresh-1', session: 'herdr-3d', workspace_id: 'wf1', label: 'fresh', status: 'idle', name: 'Kazoo', desk_index: 5, hired_at: Date.now() - 1000 };
   const stale = { ...fresh, id: 'stale-1', workspace_id: 'wf2', name: 'Lentil', desk_index: 12, hired_at: Date.now() - 3600_000 };
   await page.evaluate(([a, b]) => {
     window.__h3d.inject({ t: 'worker.upsert', seq: 9002, worker: a } as never);
     window.__h3d.inject({ t: 'worker.upsert', seq: 9003, worker: b } as never);
   }, [fresh, stale] as const);
-  expect((await arrivals(page)).map((a) => [a.id, a.kind, a.session, a.desk])).toEqual([['fresh-1', 'in', 'herdr-3d', 5]]);
-  // Its route climbs every flight to the top floor.
+  expect(await arrivals(page)).toEqual([]);
+  expect((await page.evaluate(() => window.__h3d.arrivalLog())).filter((l) => l.kind === 'in')).toEqual([{ id: 'fresh-1', kind: 'in', played: false, session: 'herdr-3d', desk: 5 }]);
+  // The walk-out route still climbs every flight to the top floor.
   const route = await page.evaluate(() => window.__h3d.route('herdr-3d', 5));
   const storey = (await page.evaluate(() => window.__h3d.building()))?.storey ?? 0;
   expect(route[0]?.y).toBeCloseTo(3 * storey, 3);
-  await page.evaluate(() => window.__h3d.arrivalRate(40));
-  await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivalLog())).find((l) => l.id === 'fresh-1')?.played, { timeout: 20_000 }).toBe(true);
+  // A fresh hire on the floor you are on plays its drop.
+  const here = { ...fresh, id: 'fresh-2', session: 'pastry', workspace_id: 'wf3', name: 'Mochi', desk_index: 15 };
+  await page.evaluate((w) => window.__h3d.inject({ t: 'worker.upsert', seq: 9004, worker: w } as never), here);
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivalLog())).find((l) => l.id === 'fresh-2')?.played, { timeout: 10_000 }).toBe(true);
   clean();
 });
 

@@ -130,7 +130,7 @@ test('E on an empty desk: Hire orchestrator from the keyboard, an issue number, 
   const ack = (run?.result as { data?: { id: string; prompt: string; launch_id: string } } | undefined)?.data;
   expect(ack?.launch_id).toMatch(/^l_[0-9a-f]{16}$/);
   expect(ack?.prompt).toBe([`/write-code ${URL7}`, '', ...TEAM, '', STATUS].join('\n'));
-  // The orchestrator walks in (the M4 walk-in) and you face its desk.
+  // The orchestrator drops in to its chair (the M6b arrival) and you face its desk.
   await page.evaluate(() => window.__h3d.arrivalRate(40));
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivalLog())).find((l) => l.id === ack?.id)?.played, { timeout: 30_000 }).toBe(true);
   await frames(page, 3);
