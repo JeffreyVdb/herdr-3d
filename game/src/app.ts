@@ -1427,6 +1427,12 @@ export class App {
       if (this.walker.key(e, false) && this.mode === 'floor') e.preventDefault();
       return;
     }
+    // M10 (#47): a screen-filling dialog hides the plan limits; Shift+L still peeks them over it (else the dialog owns the keys).
+    if (e.code === 'KeyL' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && this.limitsWidget.overScreen && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+      e.preventDefault();
+      this.limitsWidget.toggleFromKey();
+      return;
+    }
     // Open dialogs (sheet, panels, confirmations, hire / send home) handle their own keys.
     if (this.hud.sheetOpen || this.panels.open || this.dialogOpen) return;
     // M5: at a worker's laptop every key goes to its terminal (Esc gets you up).

@@ -63,6 +63,93 @@
   }
 }
 
+/*
+ * A screen-filling dialog (limits.ts SCREEN: the M3 panels, the Issues / Pull requests boards) would sit under the
+ * plate's header and first row. Where the viewport leaves a gutter right of it (JS decides: data-dock) the plate
+ * slides into a slim edge tab: the worst percentage over a severity bar, never colour alone. Where it does not,
+ * it is away, like the narrow-viewport fold. data-peek: a click on the tab or Shift+L opens the plate over the
+ * dialog for a moment (not the saved state), fading in from the edge.
+ */
+.lm-tab {
+  display: none;
+}
+.limits[data-dock='away'] {
+  display: none;
+}
+.limits[data-dock='tab'] {
+  inset: calc(var(--topbar-bottom, 64px) + 8px) 8px auto auto;
+  width: 32px;
+  max-width: none;
+  border-radius: 10px;
+  animation: lm-edge 180ms var(--ease);
+}
+.limits[data-dock='tab'][data-reached='true'] {
+  animation: lm-pulse 1.8s ease-in-out infinite, lm-edge 180ms var(--ease);
+}
+.limits[data-dock='tab'] .lm-strip,
+.limits[data-dock='tab'] .lm-panel {
+  display: none;
+}
+.limits[data-dock='tab'] .lm-tab {
+  display: flex;
+}
+.limits[data-peek='true'] {
+  animation: lm-edge 160ms var(--ease);
+}
+.limits[data-peek='true'][data-reached='true'] {
+  animation: lm-pulse 1.8s ease-in-out infinite, lm-edge 160ms var(--ease);
+}
+@keyframes lm-edge {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+}
+.lm-tab {
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 10px 0 9px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.lm-tab:hover {
+  background: rgb(255 255 255 / 8%);
+}
+.lm-tab-pct {
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.lm-tab-bar {
+  --sev: var(--lm-ok);
+  position: relative;
+  width: 6px;
+  height: 32px;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 14%);
+  overflow: hidden;
+}
+.limits[data-worst='warn'] .lm-tab-bar {
+  --sev: var(--lm-warn);
+}
+.limits[data-worst='high'] .lm-tab-bar {
+  --sev: var(--lm-high);
+}
+.lm-tab-bar i {
+  position: absolute;
+  inset: 0;
+  background: var(--sev);
+  transform: scaleY(var(--frac, 0));
+  transform-origin: bottom;
+}
+
 .lm-strip {
   flex: none;
   display: flex;
@@ -400,7 +487,11 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .limits[data-reached='true'] {
+  .limits[data-reached='true'],
+  .limits[data-dock='tab'],
+  .limits[data-dock='tab'][data-reached='true'],
+  .limits[data-peek='true'],
+  .limits[data-peek='true'][data-reached='true'] {
     animation: none;
   }
   .lm-bar i,

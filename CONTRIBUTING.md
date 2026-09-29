@@ -561,7 +561,13 @@ with an "as of" time, `model` has a per-model week at 96 %, `none` is `limits: [
 without limits (no widget). E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simlimits%3Dhot`. The widget: click it or press
 Shift+L (plain L is the elevator) for the panel (it never grows past the viewport: the providers scroll, Refresh and Hide
 stay); it is switched off in About, or with the panel's Hide. On a viewport under 760 px wide it steps out of an open
-dialog or the Changes panel and comes back, panel as it was, when they close.
+dialog or the Changes panel and comes back, panel as it was, when they close. Over a screen-filling dialog (`dialog.panel`,
+the Issues / Pull requests boards and their item modal) it steps out at any width: a slim edge tab (worst percentage and a
+severity bar) in the gutter right of the dialog, or, when the viewport leaves under 48 px there, away completely. A click on
+the tab or Shift+L then *peeks* the expanded panel above the dialog without touching the saved state (Shift+L again, the
+plate's header, a click elsewhere or closing the dialog ends the peek; a meter hidden from About stays hidden); when the
+dialog closes the plate is exactly as it was. The small centred dialogs (confirm, hire, start-run, send-home, …) keep the
+plate as it was, above them. The Changes panel still makes it step left.
 
 M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
 `simfail=no_m6` plays a bridge without them. E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simms%3D300`.

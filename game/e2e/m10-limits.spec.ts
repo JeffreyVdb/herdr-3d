@@ -76,7 +76,7 @@ test('click or Shift+L opens the panel: model weeks, credits, last read, refresh
   await expect(panel.locator('.lm-sec[data-provider="codex"] .lm-meta')).toHaveText('CreditsNone');
   await expect(panel.locator('.lm-sec[data-provider="claude"] .lm-read')).toHaveText(/^Read \d\d:\d\d \(just now\)$/);
   // Reset times are local clock times.
-  await expect(panel.locator('.lm-sec[data-provider="claude"] .lm-row').first().locator('.lm-rs')).toHaveText(/^resets \d\d:\d\d$/);
+  await expect(panel.locator('.lm-sec[data-provider="claude"] .lm-row').first().locator('.lm-rs')).toHaveText(/^resets (\w{3} )?\d\d:\d\d$/); // "Wed 00:06" when the reset falls on the next day
   await shot(page, 'm10-expanded');
 
   await page.locator('[data-key="limits-refresh"]').click();
@@ -114,7 +114,8 @@ test('it stays on a floor, while walking and over an open overlay', async ({ pag
   await page.evaluate(() => window.__h3d.openSettings('herdr-3d'));
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.panel()))?.kind).toBeTruthy();
   await expect(limits(page)).toBeVisible();
-  expect(await undimmed(page)).toBe(true); // in the top layer above the modal's backdrop
+  await expect(limits(page)).toHaveAttribute('data-dock', 'tab'); // a panel has the screen (#47): the plate is an edge tab
+  await expect.poll(() => undimmed(page), { message: 'in the top layer above the modal’s backdrop' }).toBe(true); // once its slide-in is over
   await shot(page, 'm10-overlay');
   clean();
 });
@@ -409,5 +410,226 @@ test('at 390x640 the widget does not cover the Changes panel’s Close control',
   await expect.poll(async () => (await widget(page))!.open).toBe(true);
   await expect(page.locator('.lm-panel')).toBeVisible();
   await shot(page, 'm10-narrow-changes');
+  clean();
+});
+
+// Screen-filling dialogs (#47): the Issues / Pull requests boards and the M3 panels. The plate steps out of them into an
+// edge tab (or away when the viewport leaves no gutter), Shift+L or a click on the tab peeks it, and closing the dialog
+// puts it back exactly as it was. Boards need the boards fixture (demo-m6, floor `lab`) next to the limits simulation.
+
+const BOARDS = `${SIM()}&simusage=0`;
+type Box = { x: number; y: number; width: number; height: number };
+const apart = (a: Box, b: Box) => a.x + a.width <= b.x + 0.5 || b.x + b.width <= a.x + 0.5 || a.y + a.height <= b.y + 0.5 || b.y + b.height <= a.y + 0.5;
+const dock = (page: Page) => limits(page).getAttribute('data-dock');
+const savedOpen = (page: Page) => page.evaluate(() => localStorage.getItem('h3d.limits.open'));
+
+async function openIssues(page: Page): Promise<void> {
+  await openGame(page, 'demo-m6', '&open=none', BOARDS);
+  await withReadings(page);
+  await enter(page, 'lab');
+  await page.evaluate(() => window.__h3d.openBoard('issues'));
+  await expect(page.locator('dialog.desk-dlg--board')).toBeVisible();
+  await expect(page.locator('dialog.desk-dlg--board .bd-card').first()).toBeVisible();
+}
+
+/** What a click at the middle of `sel` would reach is `sel` itself (or inside it). */
+const reachable = (page: Page, sel: string) =>
+  page.evaluate((s) => {
+    const b = document.querySelector(s)?.getBoundingClientRect();
+    if (!b) return false;
+    return !!document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2)?.closest(s);
+  }, sel);
+
+for (const expanded of [false, true]) {
+  test(`at 2000x860 an Issues board ${expanded ? 'with the panel expanded' : 'with the strip'}: the widget is an edge tab clear of the board, and comes back as it was`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width: 2000, height: 860 });
+    if (expanded) await page.addInitScript(() => localStorage.setItem('h3d.limits.open', '1'));
+    await openGame(page, 'demo-m6', '&open=none', BOARDS);
+    await withReadings(page);
+    expect((await widget(page))!.open).toBe(expanded);
+    await expect(page.locator('.lm-panel')).toBeVisible({ visible: expanded });
+    await enter(page, 'lab');
+    await page.evaluate(() => window.__h3d.openBoard('issues'));
+    await expect(page.locator('dialog.desk-dlg--board .bd-card').first()).toBeVisible();
+
+    // The plate stepped out: an edge tab, no panel, and nothing saved changed.
+    await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+    await expect(limits(page)).toBeVisible();
+    expect((await widget(page))!.open).toBe(false);
+    await expect(page.locator('.lm-panel')).toBeHidden();
+    await expect(page.locator('.lm-strip')).toBeHidden();
+    expect(await savedOpen(page)).toBe(expanded ? '1' : null);
+    await expect(page.locator('.lm-tab-pct')).toHaveText('61%'); // the worst window
+    // It covers nothing the board shows: not the dialog, its close button, nor its first row of cards.
+    const hud = (await limits(page).boundingBox())!;
+    const dlg = (await page.locator('dialog.desk-dlg--board').boundingBox())!;
+    const closeBtn = page.locator('dialog.desk-dlg--board [data-key="close"]');
+    const close = (await closeBtn.boundingBox())!;
+    expect(apart(hud, dlg), `hud ${JSON.stringify(hud)} dialog ${JSON.stringify(dlg)}`).toBe(true);
+    expect(apart(hud, close)).toBe(true);
+    for (const card of await page.locator('dialog.desk-dlg--board .bd-col-cards > :first-child').all()) expect(apart(hud, (await card.boundingBox())!)).toBe(true);
+    expect(await reachable(page, 'dialog.desk-dlg--board [data-key="close"]')).toBe(true);
+    await shot(page, `m10-board-${expanded ? 'expanded' : 'strip'}`);
+
+    // Close it with the mouse: the plate is back in the state it was.
+    await closeBtn.click();
+    await expect(page.locator('dialog.desk-dlg--board')).toBeHidden();
+    await expect(limits(page)).toHaveAttribute('data-dock', '');
+    await expect(page.locator('.lm-panel')).toBeVisible({ visible: expanded });
+    await expect(page.locator('.lm-strip')).toBeVisible();
+    expect((await widget(page))!.open).toBe(expanded);
+    expect(await savedOpen(page)).toBe(expanded ? '1' : null);
+    expect(await page.evaluate(() => !!document.activeElement?.closest('.limits'))).toBe(false); // it took no focus
+    clean();
+  });
+}
+
+test('over a board a click on the tab or Shift+L peeks the panel above it without touching the saved state', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 2000, height: 860 });
+  await openIssues(page);
+  await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+
+  await page.locator('[data-key="limits-tab"]').click(); // a click reaches it above the modal
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  expect((await widget(page))!.open).toBe(true);
+  await expect(page.locator('.lm-panel')).toBeVisible();
+  expect(await onTop(page)).toBe(true);
+  expect(await savedOpen(page)).toBeNull();
+  await shot(page, 'm10-board-peek');
+  await page.locator('.lm-strip').click(); // its header ends the peek
+  await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+  expect((await widget(page))!.open).toBe(false);
+
+  // Shift+L: the same peek, and again to end it (the board owns the other keys).
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  expect((await widget(page))!.open).toBe(true);
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+
+  // A click on the board ends it too; Esc closes the board and the peek with it.
+  await page.keyboard.press('Shift+L');
+  await expect(page.locator('.lm-panel')).toBeVisible();
+  await page.locator('dialog.desk-dlg--board .dd-titles').click();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await page.keyboard.press('Shift+L');
+  await expect(page.locator('.lm-panel')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog.desk-dlg--board')).toBeHidden();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await expect(limits(page)).toHaveAttribute('data-dock', '');
+  expect((await widget(page))!.open).toBe(false); // the saved state: the strip
+  await expect(page.locator('.lm-panel')).toBeHidden();
+  expect(await savedOpen(page)).toBeNull();
+  clean();
+});
+
+test('a peek ends when the dialog that owned it closes, even if the board under it stays open', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 1200, height: 860 }); // no gutter: the plate is away over the board
+  await openIssues(page);
+  await expect(limits(page)).toHaveAttribute('data-dock', 'away');
+  const board = page.locator('dialog.desk-dlg--board');
+  const item = page.locator('dialog.desk-dlg--item');
+  const openItem = async () => {
+    await board.locator('.bd-card', { hasText: '#7' }).first().click();
+    await expect(item).toBeVisible();
+  };
+
+  // Peek over the item modal, then close only the item: the board is still open but the peek is over.
+  await openItem();
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  expect((await widget(page))!.open).toBe(true);
+  await page.keyboard.press('Escape'); // closes the item only
+  await expect(item).toBeHidden();
+  await expect(board).toBeVisible();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await expect(limits(page)).toHaveAttribute('data-dock', 'away');
+  expect((await widget(page))!.open).toBe(false);
+  await expect(page.locator('.lm-panel')).toBeHidden();
+  expect(await savedOpen(page)).toBeNull(); // the saved state never moved
+  expect(await page.evaluate(() => !!document.activeElement?.closest('.limits'))).toBe(false); // no focus taken
+  // Nothing of the board is under the plate: its Close button is reachable and the first cards are clear.
+  const hud = await limits(page).boundingBox();
+  if (hud) {
+    expect(apart(hud, (await board.locator('[data-key="close"]').boundingBox())!)).toBe(true);
+    for (const card of await board.locator('.bd-col-cards > :first-child').all()) expect(apart(hud, (await card.boundingBox())!)).toBe(true);
+  }
+  expect(await reachable(page, 'dialog.desk-dlg--board [data-key="close"]')).toBe(true);
+
+  // The mirror: a peek started over the board ends when an item opens on top of it (the plate docks for the item).
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  await page.evaluate(() => window.__h3d.openBoardItem('issues', 'JeffreyVdb/lab#7'));
+  await expect(item).toBeVisible();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await expect(limits(page)).toHaveAttribute('data-dock', 'away');
+  await page.keyboard.press('Escape');
+  await expect(item).toBeHidden();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await expect(limits(page)).toHaveAttribute('data-dock', 'away');
+  await page.keyboard.press('Escape');
+  await expect(board).toBeHidden();
+  await expect(limits(page)).toHaveAttribute('data-dock', '');
+  await expect(page.locator('.lm-strip')).toBeVisible();
+  expect(await savedOpen(page)).toBeNull();
+  clean();
+});
+
+test('a board wider than the room beside it folds the widget away; Shift+L still peeks; it comes back on close', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 1200, height: 800 }); // the board is 1168 wide: 16 px each side, no room for the tab
+  await page.addInitScript(() => localStorage.setItem('h3d.limits.open', '1'));
+  await openIssues(page);
+  await expect(limits(page)).toHaveAttribute('data-dock', 'away');
+  await expect(limits(page)).toBeHidden();
+  expect((await widget(page))!.open).toBe(false);
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toBeVisible();
+  await expect(page.locator('.lm-panel')).toBeVisible();
+  expect(await onTop(page)).toBe(true);
+  expect(await savedOpen(page)).toBe('1');
+  // More room (a wider window): the tab takes over from the fold.
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toBeHidden();
+  await page.setViewportSize({ width: 1400, height: 800 });
+  await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog.desk-dlg--board')).toBeHidden();
+  await expect(limits(page)).toHaveAttribute('data-dock', '');
+  await expect(page.locator('.lm-panel')).toBeVisible(); // it was expanded
+  expect(await savedOpen(page)).toBe('1');
+  clean();
+});
+
+test('an M3 panel (settings) at any width also gets the edge tab; small dialogs (hire) keep the plate as it was', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m4', '', SIM());
+  await withReadings(page);
+  await enter(page, 'herdr-3d');
+  await page.evaluate(() => window.__h3d.openSettings('herdr-3d'));
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.panel()))?.kind).toBeTruthy();
+  await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+  const hud = (await limits(page).boundingBox())!;
+  expect(apart(hud, (await page.locator('dialog.panel').boundingBox())!)).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog.panel')).toBeHidden();
+  await expect(limits(page)).toHaveAttribute('data-dock', '');
+  await expect(page.locator('.lm-strip')).toBeVisible();
+
+  await page.evaluate(() => window.__h3d.openHire(5));
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind).toBe('hire');
+  await expect(limits(page)).toHaveAttribute('data-dock', ''); // today's behaviour: the plate stays, above the dialog
+  await expect(page.locator('.lm-strip')).toBeVisible();
+  expect(await undimmed(page)).toBe(true);
   clean();
 });
