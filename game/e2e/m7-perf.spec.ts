@@ -25,7 +25,8 @@ async function run(page: Page, fail: string): Promise<{ bench: Awaited<ReturnTyp
 }
 
 test('100 issue notes and 20 PR notes stay in the frame budget: two instanced draws, nothing written on a quiet frame', async ({ page, browser }) => {
-  test.setTimeout(240_000);
+  // Two 260-frame benches at 90-200 ms a frame on llvmpipe, and `make e2e` runs six specs at once on the same CPUs.
+  test.setTimeout(600_000);
   const clean = watchErrors(page);
   const on = await run(page, '');
   const w = on.wall as Wall;

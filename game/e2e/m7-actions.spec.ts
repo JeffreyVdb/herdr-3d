@@ -52,7 +52,7 @@ test('an issue’s markdown is sanitised: nothing runs, no on* or javascript: su
     await route.fulfill({ status: 204 });
   });
   // Served by the helper the page has its token (the helper opens the game with it): the game asks the helper.
-  await page.addInitScript(() => sessionStorage.setItem('h3d.token', 'tok-7'));
+  await page.addInitScript(() => localStorage.setItem('h3d.token', 'tok-7'));
   await openGame(page, 'demo-m6', EXTRA, SIM);
   await enter(page);
   await openItem(page, 'issues', `${lab}#7`);
