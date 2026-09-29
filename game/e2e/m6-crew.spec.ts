@@ -152,7 +152,7 @@ test('phase and pass: the pass board, the card tag and the look-at bar', async (
   clean();
 });
 
-test('a freelancer walks in with its briefcase, onboards, works, reports and leaves waving', async ({ page }) => {
+test('a freelancer drops in with its briefcase, onboards, works, reports and leaves waving', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page, 'demo-m6', '', SIM);
   await enter(page);
@@ -160,11 +160,8 @@ test('a freelancer walks in with its briefcase, onboards, works, reports and lea
   const hire = await page.evaluate(() => window.__h3d.simCrew({ step: 'hire' }));
   expect(hire.ok).toBe(true);
   const id = (hire.data as { id: string }).id;
-  // Walks in with the briefcase in hand, no box.
-  await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivals())).find((a) => a.id === id)?.briefcase, { timeout: 10_000 }).toBe('hand');
-  const walkIn = (await page.evaluate(() => window.__h3d.arrivals())).find((a) => a.id === id);
-  expect(walkIn).toMatchObject({ kind: 'in', carry: 'briefcase', box: 'none', laptop: 'none', desk: 13 });
-  await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivalLog())).some((l) => l.id === id && l.played), { timeout: 60_000 }).toBe(true);
+  // M6b: drops in to its chair (no walk from the street, no box), its briefcase by the chair.
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivalLog())).find((l) => l.id === id), { timeout: 10_000 }).toMatchObject({ kind: 'in', played: true, desk: 13 });
   await frames(page, 3);
   expect(await member(page, 13)).toMatchObject({ id, role: 'code', life: 'hired' });
   expect((await member(page, 13)).parts).toContain('briefcase');

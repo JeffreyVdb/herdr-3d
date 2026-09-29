@@ -2,7 +2,8 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { DESK_D, DESK_H, GLASS_H, POST_W, SEAT_OFFSET, type Mezzanine } from '../world/layout';
 import { FONT } from './cards/atlasCards';
-import { deskGeometries } from './desks';
+import { deskGeometries, keyboardPieces, monitorPieces, screenGeometry } from './desks';
+import { KEYBOARD, MONITOR } from '../world/deskKit';
 import { OFFICE } from './palette';
 import { canvasTexture } from './props';
 
@@ -183,7 +184,7 @@ export class MezzanineView {
     const th = GLASS_H - d.height - 0.15;
     this.glass.push(...pane(d.x1 - d.x0, th, new THREE.Matrix4().makeTranslation((d.x0 + d.x1) / 2, y + d.height + 0.08 + th / 2, dz)));
 
-    // Your desk: the worker desk art, a monitor instead of the laptop, a keyboard and a mug.
+    // Your desk: the worker desk art with the office's monitor and keyboard (M6b, as on every desk; nothing live), and a mug.
     const desk = new THREE.Matrix4().compose(v3(m.desk.seat.x, y, m.desk.seat.z), new THREE.Quaternion().setFromAxisAngle(v3(0, 1, 0), m.desk.yaw), v3(1, 1, 1));
     const art = deskGeometries();
     const colors: Partial<Record<keyof typeof art, number>> = { top: OFFICE.deskTop, legs: OFFICE.deskLeg, chair: OFFICE.chair, chairBase: OFFICE.chairBase };
@@ -194,15 +195,13 @@ export class MezzanineView {
     }
     const inDesk = (g: THREE.BufferGeometry, hex: number) => up.add(g, hex, desk);
     // The monitor sits at the desk's north end, turned in a little: sitting, you look past it at the floor.
-    const mz = SEAT_OFFSET + 0.12;
-    const mx = -0.36;
-    const mon = new THREE.Matrix4().makeTranslation(mx, 0, mz).multiply(new THREE.Matrix4().makeRotationY(0.35));
-    const inMon = (g: THREE.BufferGeometry, hex: number) => up.add(g, hex, desk.clone().multiply(mon));
-    inMon(new THREE.BoxGeometry(0.22, 0.015, 0.15).translate(0, DESK_H + 0.0075, 0.02), C.frame);
-    inMon(new THREE.BoxGeometry(0.04, 0.18, 0.03).translate(0, DESK_H + 0.09, 0.05), C.frame);
-    inMon(new THREE.BoxGeometry(0.56, 0.34, 0.03).translate(0, DESK_H + 0.33, 0), C.frame);
-    inMon(new THREE.PlaneGeometry(0.51, 0.29).rotateY(Math.PI).translate(0, DESK_H + 0.33, -0.016), C.screen);
-    inDesk(new THREE.BoxGeometry(0.42, 0.018, 0.14).translate(mx + 0.06, DESK_H + 0.009, SEAT_OFFSET - 0.2), 0xdfe3ea);
+    const about = (x: number, z: number, turn: number, ox: number, oz: number) =>
+      desk.clone().multiply(new THREE.Matrix4().makeTranslation(x, 0, z)).multiply(new THREE.Matrix4().makeRotationY(turn)).multiply(new THREE.Matrix4().makeTranslation(-ox, 0, -oz));
+    const mon = about(-0.3, MONITOR.z - 0.06, 0.35, 0, MONITOR.z);
+    for (const p of monitorPieces()) up.add(p.geo, p.color, mon);
+    up.add(screenGeometry(), C.screen, mon);
+    const kb = about(-0.22, SEAT_OFFSET - 0.19, 0.18, KEYBOARD.x, KEYBOARD.z);
+    for (const p of keyboardPieces()) up.add(p.geo, p.color, kb);
     inDesk(new THREE.CylinderGeometry(0.038, 0.034, 0.1, 12).translate(0.5, DESK_H + 0.05, SEAT_OFFSET - 0.14), C.rail);
     const plateX = 0.28;
     const plateZ = SEAT_OFFSET + DESK_D / 2 - 0.05;

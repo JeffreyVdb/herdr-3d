@@ -3,9 +3,14 @@ import { attribute, texture, uv, vec2 } from 'three/tsl';
 import type { DeskSlot } from '../world/layout';
 import { screenGeometry } from './desks';
 
-/** A frozen screen's cell in the atlas (the laptop's aspect), and how many the atlas keeps (least recently frozen go first). */
-const CELL_W = 192;
-const CELL_H = 124;
+/**
+ * A frozen screen's cell in the atlas (the monitor's terminal area, M6b: its
+ * glance view's 5 lines stay legible at this size), and how many the atlas
+ * keeps (least recently frozen go first): 2048 × 428, about 1.15× the M5
+ * laptops' atlas.
+ */
+const CELL_W = 256;
+const CELL_H = 107;
 const COLS = 8;
 export const FROZEN_CELLS = 32;
 /** Uploads of the frozen atlas, at most this often (a freeze is rare; walking past a row can freeze a few at once). */
@@ -14,7 +19,7 @@ const ATLAS_UPLOAD_MS = 400;
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 
 /**
- * M5: laptop screens over the desks' flat glow. A live screen is one plane
+ * M5: laptop screens over the desks' flat glow (M6b: on the desk monitors). A live screen is one plane
  * with its own canvas texture (a handful: the nearest laptops and the one
  * you sit at); every frozen screen is a cell of one canvas atlas drawn as a
  * single instanced batch (like the cards), so a floor full of once-seen
@@ -102,6 +107,11 @@ export class ScreenMeshes {
     mesh.frustumCulled = false;
     this.group.add(mesh);
     this.live.set(desk, mesh);
+  }
+
+  /** The live plane of a desk (test hook). */
+  liveMesh(desk: number): THREE.Mesh | null {
+    return this.live.get(desk) ?? null;
   }
 
   isLive(desk: number): boolean {

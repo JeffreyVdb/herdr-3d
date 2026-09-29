@@ -271,7 +271,7 @@ export function fireArgs(id: string, p: FirePrepare, choice: FireWorktree): Comm
   return { id, worktree: choice };
 }
 
-/** A worker whose first upsert carries a `hired_at` this recent walks in (bridge clock vs ours). */
+/** A worker whose first upsert carries a `hired_at` this recent drops in (M6b; bridge clock vs ours). */
 export const FRESH_HIRE_MS = 15_000;
 
 export function isFreshHire(hiredAt: number | undefined, now: number): boolean {

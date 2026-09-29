@@ -1,24 +1,33 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { attribute, mix, texture, uv, vec2 } from 'three/tsl';
 import { deskOwners, poseAt, timeline, type ArrivalKind, type ArrivalPose, type Carry, type DeskShow, type Timeline } from '../world/arrival';
 import type { CrewLook } from './crewLook';
 import type { Display, ModelCue } from '../world/derive';
-import { DESK_H, SEAT_OFFSET } from '../world/layout';
+import { deskKit, LAPTOP, PACK_BOX, STICKER_D, type DeskItem, type DeskKit, type ItemKind } from '../world/deskKit';
 import type { Waypoint } from '../world/route';
 import { Crowd } from './crowd';
-import type { AwaySeat } from './office';
-import { OFFICE } from './palette';
+import { stickerAtlas, stickerLogo, STICKER_LOGOS } from './deskArt';
+import { itemGeometry, itemMatrix, laptopGeometry, laptopMatrix, PEN_AT, penGeometry, tintMaterial } from './desks';
+import type { AwaySeat, DropPose } from './office';
 
 /**
- * M4: workers walking in (a fresh hire, carrying its box with the laptop on
- * top) and out (sent home: packs a cardboard box at the desk, takes the
- * laptop, walks the fire escape down and away along the sidewalk). The
- * timeline is `world/arrival.ts`; this draws it: a small crowd of standing
- * workers, and a box, its three keepsakes and a closed laptop per walker —
- * one InstancedMesh per prop part (instance = the walker's crowd slot), like
- * the crowd's own parts. Everything is in absolute building coordinates
- * (y = feet above the street); the app shifts `group` down by the walk
- * scene's base.
+ * M4: workers walking out (sent home: packs a cardboard box at the desk,
+ * takes the laptop, walks the fire escape down and away along the sidewalk).
+ * The timeline is `world/arrival.ts`; this draws it: a small crowd of
+ * standing workers, and a box, the desk's keepsakes and the closed laptop per
+ * walker — one InstancedMesh per prop part (instance = the walker's crowd
+ * slot), like the crowd's own parts. Everything is in absolute building
+ * coordinates (y = feet above the street); the app shifts `group` down by the
+ * walk scene's base.
+ *
+ * M6b: the box stands on the keyboard, and the packing takes the desk's own
+ * things (its photos, mug, plant, notebook and pens, `world/deskKit.ts`) one
+ * by one from where they stand, in an arc into the box, then lifts the laptop
+ * out of its dock and lays it on top. A new hire drops in instead of walking:
+ * the office draws the worker itself (it is at its desk from the first frame,
+ * `OfficeView.setDrop` only moves the figure); this adds the landing shadow on
+ * the seat and the puff of dust as it lands.
  */
 
 export interface ArrivalSpec {
@@ -27,18 +36,20 @@ export interface ArrivalSpec {
   session: string;
   desk: number;
   name: string;
-  /** The walk-out route (`out`) or walk-in route (`in`). */
+  /** The walk-out route (`out`); the seat (`in`). */
   route: Waypoint[];
   seatYaw: number;
   tint: number;
   cue: ModelCue;
-  /** The status the worker had (the laptop screen while packing). */
+  /** The status the worker had (the monitor while packing). */
   display: Display;
   phase: number;
   /** M6: a freelancer carries its briefcase (and waves goodbye) instead of the box. */
   carry?: Carry;
   /** M6: its crew look (worn by the walker). */
   crew?: CrewLook;
+  /** M6b: the harness on its laptop's sticker. */
+  harness?: string | undefined;
 }
 
 interface Active {
@@ -47,13 +58,20 @@ interface Active {
   t0: number;
   slot: number;
   last: ArrivalPose | null;
+  /** M6b: the desk's things (packing), in slot space. */
+  kit: DeskKit | null;
+  /** M6b: someone else sits at the desk now (`yieldDesk`): the walk never shows the desk again. */
+  yielded: boolean;
+  /** M6b: the things in its box when it gave the desk up (null: as the packing goes). */
+  kept: number | null;
 }
 
-/** What the arrivals ask of the office: a desk shown as `away` (null: as the world says again). */
+/** What the arrivals ask of the office: a desk shown as `away` (null: as the world says again); M6b: a worker dropping in (null: seated). */
 export interface DeskAway {
   session: string;
   desk: number;
   away: AwaySeat | null;
+  drop?: DropPose | null;
 }
 
 /** Test hook view of one walker. */
@@ -79,32 +97,42 @@ export interface ArrivalInfo {
   carry: Carry;
   briefcase: ArrivalPose['briefcase'];
   wave: boolean;
+  /** M6b: dropping in: the height over the seat. */
+  dy: number;
+  /** M6b: gave its desk up to whoever sits there now (see `Arrivals.yieldDesk`). */
+  yielded: boolean;
 }
 
 const CAPACITY = 8;
 const BOX = { w: 0.44, h: 0.28, d: 0.32 };
 /** The carried box, in worker space (origin at the seat/hips, facing +z). */
 const CARRY = new THREE.Vector3(0, 0.36, 0.34);
-/** The desk's laptop hinge sits a little towards the seat from the desk centre (desks.ts). */
-const LAPTOP_BACK = 0.14;
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+/** M6b: the dust puff: this many balls, and the landing shadow's radius. */
+const PUFFS = 10;
+const SHADOW_R = 0.3;
 
-/** The props' parts: one InstancedMesh each. `box` parts sit in the box's space, `item` ones too (keepsake `item`), `laptop` ones in the laptop's. */
-type PropKey = 'body' | 'flaps' | 'tape' | 'mug' | 'pot' | 'leaves' | 'frame' | 'lapBase' | 'lapLid' | 'sticker';
-const PROPS: Array<{ key: PropKey; on: 'box' | 'item' | 'laptop'; item?: number; at?: [number, number, number] }> = [
-  { key: 'body', on: 'box' },
-  { key: 'flaps', on: 'box' },
-  { key: 'tape', on: 'box' },
-  // The keepsakes poke out of the top: a mug, a little plant, a framed photo.
-  { key: 'mug', on: 'item', item: 0, at: [-0.12, BOX.h - 0.05, 0.04] },
-  { key: 'pot', on: 'item', item: 1, at: [0.12, BOX.h - 0.05, -0.03] },
-  { key: 'leaves', on: 'item', item: 1, at: [0.12, BOX.h - 0.05, -0.03] },
-  { key: 'frame', on: 'item', item: 2, at: [0.02, BOX.h - 0.04, -0.08] },
-  { key: 'lapBase', on: 'laptop' },
-  { key: 'lapLid', on: 'laptop' },
-  // The sticker on the lid, in the worker's model colour.
-  { key: 'sticker', on: 'laptop' },
-];
+/** The props' parts: one InstancedMesh each (`per` instances a walker). */
+type PropKey = 'body' | 'flaps' | 'tape' | 'photo' | 'mug' | 'plant' | 'notebook' | 'pens' | 'laptop' | 'sticker' | 'puff' | 'shadow';
+const PER: Record<PropKey, number> = { body: 1, flaps: 1, tape: 1, photo: 2, mug: 1, plant: 1, notebook: 1, pens: 2, laptop: 1, sticker: 1, puff: PUFFS, shadow: 1 };
+
+/** Where each keepsake goes in the box (box space: origin at its base centre), poking out of the top. */
+function inBox(item: DeskItem): THREE.Matrix4 {
+  const h = BOX.h;
+  const s = item.size;
+  const at: Record<ItemKind, [number, number, number, number]> = {
+    photo: item.n ? [-0.11, h - 0.07, -0.09, 0.1] : [0.03, h - 0.06, -0.07, -0.08],
+    mug: [-0.12, h - 0.07, 0.05, 0.4],
+    plant: [0.12, h - 0.09, 0.02, 0],
+    notebook: [0, 0.01, 0.05, 0.1],
+  };
+  const [x, y, z, yaw] = at[item.kind];
+  return new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), new THREE.Vector3(s, s, s));
+}
+
+/** The laptop lying on top of the box, lid up (laptop space → box space). */
+const LAPTOP_FLAT = new THREE.Matrix4().makeTranslation(LAPTOP.h / 2, BOX.h + 0.1, 0).multiply(new THREE.Matrix4().makeRotationZ(Math.PI / 2));
+const STICKER_AT = new THREE.Matrix4().makeTranslation(LAPTOP.t / 2 + 0.0009, LAPTOP.h * 0.56, 0.035);
 
 function boxGeometry(): { body: THREE.BufferGeometry; flaps: THREE.BufferGeometry; tape: THREE.BufferGeometry } {
   const { w, h, d } = BOX;
@@ -127,6 +155,9 @@ export class Arrivals {
   /** The props' InstancedMeshes (only shown while someone walks). */
   private readonly props = new THREE.Group();
   private readonly parts: Record<PropKey, THREE.InstancedMesh>;
+  private readonly tints: Record<'photo' | 'notebook', THREE.InstancedBufferAttribute>;
+  private readonly rim: THREE.InstancedBufferAttribute;
+  private readonly logo: THREE.InstancedBufferAttribute;
   /** Walks in the order they started, oldest first. */
   private readonly active: Active[] = [];
   private readonly free: number[] = Array.from({ length: CAPACITY }, (_, i) => CAPACITY - 1 - i);
@@ -134,18 +165,21 @@ export class Arrivals {
   readonly log: Array<{ id: string; kind: ArrivalKind; played: boolean; session: string; desk: number }> = [];
   /** Desks the office should show as the world says again (arrivals that just ended). */
   private released: DeskAway[] = [];
-  private readonly local: Partial<Record<PropKey, THREE.Matrix4>> = {};
+  private readonly slotM = new THREE.Matrix4();
   private readonly boxM = new THREE.Matrix4();
   private readonly lapM = new THREE.Matrix4();
   private readonly m = new THREE.Matrix4();
+  private readonly m2 = new THREE.Matrix4();
+  private readonly penM = new THREE.Matrix4();
   private readonly v = new THREE.Vector3();
-  private readonly w = new THREE.Vector3();
   private readonly pos = new THREE.Vector3();
   private readonly scl = new THREE.Vector3();
   private readonly q = new THREE.Quaternion();
   private readonly boxQ = new THREE.Quaternion();
   private readonly up = new THREE.Vector3(0, 1, 0);
   private readonly color = new THREE.Color();
+  private readonly a = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3() };
+  private readonly b = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3() };
   private rate = 1;
 
   constructor(shadows: boolean) {
@@ -156,38 +190,55 @@ export class Arrivals {
     const b = boxGeometry();
     const geo: Record<PropKey, THREE.BufferGeometry> = {
       ...b,
-      mug: new THREE.CylinderGeometry(0.045, 0.04, 0.1, 12).translate(0, 0.05, 0),
-      pot: new THREE.CylinderGeometry(0.05, 0.04, 0.08, 10).translate(0, 0.04, 0),
-      leaves: new THREE.IcosahedronGeometry(0.075, 0).translate(0, 0.13, 0),
-      frame: new THREE.BoxGeometry(0.14, 0.11, 0.015).rotateX(-0.25).translate(0, 0.06, 0),
-      lapBase: new THREE.BoxGeometry(0.34, 0.018, 0.24),
-      lapLid: new THREE.BoxGeometry(0.34, 0.012, 0.24).translate(0, 0.016, 0),
-      sticker: new THREE.CylinderGeometry(0.035, 0.035, 0.004, 14).translate(0.07, 0.024, 0.03),
+      photo: itemGeometry('photo'),
+      mug: itemGeometry('mug'),
+      plant: itemGeometry('plant'),
+      notebook: itemGeometry('notebook'),
+      pens: penGeometry(),
+      laptop: laptopGeometry(),
+      sticker: new THREE.CircleGeometry(STICKER_D / 2, 18).rotateY(Math.PI / 2),
+      puff: new THREE.IcosahedronGeometry(0.075, 1),
+      shadow: new THREE.CircleGeometry(SHADOW_R, 24).rotateX(-Math.PI / 2),
     };
-    const colors: Record<PropKey, number> = {
-      body: 0xc9935a,
-      flaps: 0xd9a86e,
-      tape: 0xa87440,
-      mug: 0xffffff,
-      pot: OFFICE.pot,
-      leaves: OFFICE.plant,
-      frame: 0xffc233,
-      lapBase: OFFICE.laptop,
-      lapLid: OFFICE.laptop,
-      sticker: 0xffffff,
+    this.tints = {
+      photo: new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 2 * 3), 3),
+      notebook: new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 3), 3),
+    };
+    geo.photo.setAttribute('aTint', this.tints.photo);
+    geo.notebook.setAttribute('aTint', this.tints.notebook);
+    this.rim = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 3), 3);
+    this.logo = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY), 1);
+    geo.sticker.setAttribute('aRim', this.rim);
+    geo.sticker.setAttribute('aLogo', this.logo);
+    const stickerMat = new THREE.MeshToonNodeMaterial();
+    const t = texture(stickerAtlas(), vec2(attribute('aLogo', 'float').add(uv().x).div(STICKER_LOGOS.length), uv().y));
+    stickerMat.colorNode = mix(attribute('aRim', 'vec3'), t.rgb, t.a);
+    const toon = (hex: number) => new THREE.MeshToonMaterial({ color: hex });
+    const mats: Record<PropKey, THREE.Material> = {
+      body: toon(0xc9935a),
+      flaps: toon(0xd9a86e),
+      tape: toon(0xa87440),
+      photo: tintMaterial(),
+      notebook: tintMaterial(),
+      mug: new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true }),
+      plant: new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true }),
+      pens: new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true }),
+      laptop: new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true }),
+      sticker: stickerMat,
+      puff: new THREE.MeshToonMaterial({ color: 0xf6f3ea }),
+      shadow: new THREE.MeshBasicMaterial({ color: 0x1c2540, transparent: true, opacity: 0.3, depthWrite: false }),
     };
     const parts: Partial<Record<PropKey, THREE.InstancedMesh>> = {};
-    for (const p of PROPS) {
-      const mesh = new THREE.InstancedMesh(geo[p.key], new THREE.MeshToonMaterial({ color: colors[p.key] }), CAPACITY);
-      mesh.name = `arrivals.${p.key}`;
+    for (const key of Object.keys(PER) as PropKey[]) {
+      const mesh = new THREE.InstancedMesh(geo[key], mats[key], CAPACITY * PER[key]);
+      mesh.name = `arrivals.${key}`;
       mesh.frustumCulled = false;
-      mesh.castShadow = shadows && p.key !== 'sticker';
+      mesh.castShadow = shadows && (key === 'body' || key === 'flaps' || key === 'tape');
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      for (let i = 0; i < CAPACITY; i++) mesh.setMatrixAt(i, ZERO);
-      if (p.key === 'sticker') for (let i = 0; i < CAPACITY; i++) mesh.setColorAt(i, this.color.set(0xffffff));
-      if (p.at) this.local[p.key] = new THREE.Matrix4().makeTranslation(...p.at);
+      for (let i = 0; i < mesh.count; i++) mesh.setMatrixAt(i, ZERO);
+      if (key === 'mug' || key === 'pens') for (let i = 0; i < mesh.count; i++) mesh.setColorAt(i, this.color.set(0xffffff));
       this.props.add(mesh);
-      parts[p.key] = mesh;
+      parts[key] = mesh;
     }
     this.parts = parts as Record<PropKey, THREE.InstancedMesh>;
     this.showIfWalking();
@@ -211,25 +262,66 @@ export class Arrivals {
   /** Starts a walk at time `now` (s); false when it cannot be shown (no route, too many at once). */
   start(spec: ArrivalSpec, now: number): boolean {
     this.cancel(spec.id);
+    // M6b: a new hire's desk is its own from the first frame, whatever a walk-out there still has to do (shown or not).
+    if (spec.kind === 'in') this.yieldDesk(spec.session, spec.desk, spec.id, now);
     const slot = this.free.pop();
-    if (slot === undefined || spec.route.length < 2) {
+    if (slot === undefined || spec.route.length < (spec.kind === 'in' ? 1 : 2)) {
       if (slot !== undefined) this.free.push(slot);
       this.skip(spec);
       return false;
     }
-    const tl = timeline(spec.kind, spec.route, spec.seatYaw, spec.carry ?? 'box');
-    const sticker = this.parts.sticker;
-    sticker.setColorAt(slot, this.color.set(spec.cue.color));
-    if (sticker.instanceColor) sticker.instanceColor.needsUpdate = true;
-    this.active.push({ spec, tl, t0: now, slot, last: null });
+    const carry = spec.carry ?? 'box';
+    const kit = spec.kind === 'out' && carry === 'box' ? deskKit({ index: spec.desk, yaw: spec.seatYaw }) : null;
+    const tl = timeline(spec.kind, spec.route, spec.seatYaw, carry, kit?.items.length ?? 0);
+    this.color.set(spec.cue.color);
+    this.rim.setXYZ(slot, this.color.r, this.color.g, this.color.b);
+    this.logo.setX(slot, STICKER_LOGOS.indexOf(stickerLogo(spec.harness)));
+    this.rim.needsUpdate = this.logo.needsUpdate = true;
+    kit?.items.forEach((item) => {
+      this.color.set(item.tint);
+      if (item.kind === 'photo') this.tints.photo.setXYZ(slot * 2 + item.n, this.color.r, this.color.g, this.color.b);
+      else if (item.kind === 'notebook') this.tints.notebook.setXYZ(slot, this.color.r, this.color.g, this.color.b);
+      else if (item.kind === 'mug') this.parts.mug.setColorAt(slot, this.color);
+    });
+    this.tints.photo.needsUpdate = this.tints.notebook.needsUpdate = true;
+    if (this.parts.mug.instanceColor) this.parts.mug.instanceColor.needsUpdate = true;
+    this.active.push({ spec, tl, t0: now, slot, last: null, kit, yielded: false, kept: null });
     this.showIfWalking();
     return true;
   }
 
-  /** Records an arrival nobody sees (another building, the city): it resolves at once. */
+  /** Records an arrival nobody sees (another floor, the city): it resolves at once. */
   skip(spec: Pick<ArrivalSpec, 'id' | 'kind' | 'session' | 'desk'>): void {
     this.log.push({ id: spec.id, kind: spec.kind, played: false, session: spec.session, desk: spec.desk });
     if (this.log.length > 50) this.log.shift();
+  }
+
+  /**
+   * M6b: someone else (`by`) sits at `desk` now: a new hire dropping in, or
+   * a worker the world moved there while the one sent home is still leaving
+   * (the bridge frees a desk as its worker goes). Every walk there by
+   * another worker gives the desk up for good: it never shows it `away`
+   * again, not even once the newer walk is over. A walk-out still at the
+   * desk gets up and goes at once, so it never packs the new worker's
+   * things: its box keeps what it packed so far, its laptop on top. True
+   * when a walk gave the desk up (the desk shows as the world says from the
+   * next `update`).
+   */
+  yieldDesk(session: string, desk: number, by: string, now: number): boolean {
+    let any = false;
+    for (const a of this.active) {
+      if (a.yielded || a.spec.id === by || a.spec.session !== session || a.spec.desk !== desk) continue;
+      a.yielded = true;
+      any = true;
+      if (a.spec.kind !== 'out') continue;
+      const at = (now - a.t0) * this.rate;
+      const p = poseAt(a.tl, at);
+      a.kept = p.items + (p.itemLift > 0 ? 1 : 0);
+      const walk = a.tl.stages.find((s) => s.phase === 'walk');
+      if (walk && at < walk.t0) a.t0 = now - walk.t0 / this.rate;
+    }
+    if (any) this.released.push({ session, desk, away: null, drop: null });
+    return any;
   }
 
   /** Ends a walk early (the worker is gone, or came back); its desk shows as the world says. */
@@ -249,10 +341,10 @@ export class Arrivals {
     this.active.splice(i, 1);
     this.crowd.set(a.slot, null);
     this.free.push(a.slot);
-    for (const p of PROPS) this.parts[p.key].setMatrixAt(a.slot, ZERO);
+    for (const key of Object.keys(PER) as PropKey[]) for (let k = 0; k < PER[key]; k++) this.parts[key].setMatrixAt(a.slot * PER[key] + k, ZERO);
     this.flag();
     this.showIfWalking();
-    this.released.push({ session: a.spec.session, desk: a.spec.desk, away: null });
+    this.released.push({ session: a.spec.session, desk: a.spec.desk, away: null, drop: null });
     this.log.push({ id: a.spec.id, kind: a.spec.kind, played, session: a.spec.session, desk: a.spec.desk });
     if (this.log.length > 50) this.log.shift();
   }
@@ -263,13 +355,14 @@ export class Arrivals {
   }
 
   private flag(): void {
-    for (const p of PROPS) this.parts[p.key].instanceMatrix.needsUpdate = true;
+    for (const key of Object.keys(PER) as PropKey[]) this.parts[key].instanceMatrix.needsUpdate = true;
   }
 
   /**
    * Advances every walk to time `now` (s) and draws it; returns what each
    * desk with a walk (or a walk that just ended) should show, one entry per
-   * desk: the newest walk on a desk owns it (`deskOwners`).
+   * desk: the newest walk on a desk owns it (`deskOwners`), and a walk that
+   * gave its desk up (`yieldDesk`) has no say in it any more.
    */
   update(now: number, t: number): DeskAway[] {
     for (let i = this.active.length - 1; i >= 0; i--) {
@@ -282,23 +375,66 @@ export class Arrivals {
     for (const a of this.active) {
       const p = poseAt(a.tl, (now - a.t0) * this.rate);
       a.last = p;
-      this.draw(a, p);
       const s = a.spec;
-      walking.push({ session: s.session, desk: s.desk, away: p.desk === 'free' ? null : { show: p.desk, display: s.display, cue: s.cue.color } });
+      if (s.kind === 'in') {
+        this.drawDrop(a, p);
+        if (!a.yielded) walking.push({ session: s.session, desk: s.desk, away: null, drop: { dy: p.dy, squash: p.squash } });
+        continue;
+      }
+      this.draw(a, p);
+      if (a.yielded) continue;
+      const packed = p.items + (p.itemLift > 0 ? 1 : 0);
+      walking.push({ session: s.session, desk: s.desk, away: p.desk === 'free' ? null : { show: p.desk, display: s.display, cue: s.cue.color, harness: s.harness, packed } });
     }
     if (this.active.length) this.flag();
     this.crowd.update(t);
-    return deskOwners(ended, walking);
+    const out = deskOwners(ended, walking);
+    // A drop that just ended hands its figure back to the chair even when an older walk still owns that desk.
+    for (const e of ended) {
+      const o = out.find((d) => d.session === e.session && d.desk === e.desk);
+      if (o && o.drop === undefined) o.drop = null;
+    }
+    return out;
   }
 
-  /** Where the desk's laptop sits, in absolute coordinates (y: its base). */
-  private deskPoint(a: Active, along: number, side: number, y: number, out: THREE.Vector3): THREE.Vector3 {
-    const seat = a.spec.kind === 'out' ? a.tl.route[0] : a.tl.route[a.tl.route.length - 1];
-    const yaw = a.spec.seatYaw;
-    const sx = seat?.x ?? 0;
-    const sz = seat?.z ?? 0;
-    // Forward (+z in slot space) and the desk's own x axis.
-    return out.set(sx + Math.sin(yaw) * along + Math.cos(yaw) * side, (seat?.y ?? 0) + y, sz + Math.cos(yaw) * along - Math.sin(yaw) * side);
+  /** The desk slot's transform in absolute coordinates (the seat, turned the desk's way). */
+  private slotMatrix(a: Active, out: THREE.Matrix4): THREE.Matrix4 {
+    const seat = a.tl.route[0] ?? { x: 0, y: 0, z: 0 };
+    this.q.setFromAxisAngle(this.up, a.spec.seatYaw);
+    return out.compose(this.v.set(seat.x, seat.y, seat.z), this.q, this.scl.set(1, 1, 1));
+  }
+
+  /** `from` → `to` `k` of the way, on an arc `lift` high (position, turn and size). */
+  private arc(from: THREE.Matrix4, to: THREE.Matrix4, k: number, lift: number, out: THREE.Matrix4): THREE.Matrix4 {
+    from.decompose(this.a.p, this.a.q, this.a.s);
+    to.decompose(this.b.p, this.b.q, this.b.s);
+    const e = k * k * (3 - 2 * k);
+    this.pos.lerpVectors(this.a.p, this.b.p, e);
+    this.pos.y += Math.sin(k * Math.PI) * lift;
+    return out.compose(this.pos, this.a.q.slerp(this.b.q, e), this.scl.lerpVectors(this.a.s, this.b.s, e));
+  }
+
+  /** M6b: the landing shadow on the seat while it falls, the dust puffing out round the chair as it lands. */
+  private drawDrop(a: Active, p: ArrivalPose): void {
+    const seat = a.tl.route[0] ?? { x: 0, y: 0, z: 0 };
+    const sh = this.parts.shadow;
+    if (p.shadow > 0) sh.setMatrixAt(a.slot, this.m.compose(this.v.set(seat.x, seat.y + 0.457, seat.z), this.q.identity(), this.scl.setScalar(p.shadow)));
+    else sh.setMatrixAt(a.slot, ZERO);
+    const puff = this.parts.puff;
+    for (let k = 0; k < PUFFS; k++) {
+      if (p.puff === null) {
+        puff.setMatrixAt(a.slot * PUFFS + k, ZERO);
+        continue;
+      }
+      // A ring of dust balls round the seat, billowing out and up, shrinking away.
+      const u = p.puff;
+      const ang = (k / PUFFS) * Math.PI * 2 + a.spec.phase;
+      const out = 1 - (1 - u) ** 3;
+      const r = 0.3 + 0.38 * out;
+      const size = Math.max(0.001, (1 - u) ** 1.5 * (0.9 + 0.35 * (k % 3)) + 0.25 * out * (1 - u));
+      this.v.set(seat.x + Math.cos(ang) * r, seat.y + 0.4 + out * 0.2 + (k % 2) * 0.06, seat.z + Math.sin(ang) * r);
+      puff.setMatrixAt(a.slot * PUFFS + k, this.m.compose(this.v, this.q.identity(), this.scl.setScalar(size)));
+    }
   }
 
   private draw(a: Active, p: ArrivalPose): void {
@@ -321,42 +457,50 @@ export class Arrivals {
       briefcase: p.briefcase === 'hand',
       wave: p.wave,
     });
-    const yawQ = this.q.setFromAxisAngle(this.up, p.yaw);
-    // The box: on the desk beside the laptop while packing, else carried in front.
+    const P = this.parts;
+    const slotM = this.slotMatrix(a, this.slotM);
+    // The box: on the keyboard while packing, else carried in front.
     if (p.box === 'desk') {
-      this.deskPoint(a, SEAT_OFFSET, 0.44, DESK_H, this.pos);
-      this.boxQ.setFromAxisAngle(this.up, s.seatYaw);
-      this.scl.setScalar(Math.max(0.001, p.boxScale));
+      this.boxM.multiplyMatrices(slotM, this.m.makeTranslation(PACK_BOX.x, PACK_BOX.y, PACK_BOX.z));
+      this.boxM.multiply(this.m.makeScale(Math.max(0.001, p.boxScale), Math.max(0.001, p.boxScale), Math.max(0.001, p.boxScale)));
     } else {
+      const yawQ = this.q.setFromAxisAngle(this.up, p.yaw);
       this.v.copy(CARRY).multiplyScalar(p.scale).applyQuaternion(yawQ);
       this.pos.set(p.x + this.v.x, p.y + this.v.y, p.z + this.v.z);
       this.boxQ.copy(yawQ);
-      this.scl.setScalar(Math.max(0.001, p.scale * p.boxScale));
+      this.boxM.compose(this.pos, this.boxQ, this.scl.setScalar(Math.max(0.001, p.scale)));
     }
-    this.boxM.compose(this.pos, this.boxQ, this.scl);
     const boxOn = p.box !== 'none';
-    // The laptop: the desk's own until it is taken (desks.ts draws it), then lifted onto the box and carried.
+    for (const key of ['body', 'flaps', 'tape'] as const) P[key].setMatrixAt(a.slot, boxOn ? this.boxM : ZERO);
+    // The desk's things: in the box once packed, on their way in an arc, else still on the desk (the office draws them).
+    for (const key of ['photo', 'mug', 'plant', 'notebook', 'pens'] as const) for (let k = 0; k < PER[key]; k++) P[key].setMatrixAt(a.slot * PER[key] + k, ZERO);
+    const kit = a.kit;
+    // Gave the desk up (`yieldDesk`): what it packed so far, nothing more off the new worker's desk.
+    const packed = a.kept ?? p.items;
+    if (kit && boxOn) {
+      kit.items.forEach((item, n) => {
+        const moving = a.kept === null && n === p.items && p.itemLift > 0;
+        if (n >= packed && !moving) return;
+        const box = this.m2.multiplyMatrices(this.boxM, inBox(item));
+        const m = moving ? this.arc(this.m.multiplyMatrices(slotM, itemMatrix(item)), box.clone(), p.itemLift, 0.16, this.m) : box;
+        const idx = item.kind === 'photo' ? a.slot * 2 + item.n : a.slot;
+        if (item.kind === 'notebook') {
+          P.notebook.setMatrixAt(idx, m);
+          // Each pen from the notebook's own matrix (`m` may be `m2`).
+          for (let k = 0; k < item.pens; k++) P.pens.setMatrixAt(a.slot * 2 + k, this.penM.multiplyMatrices(m, PEN_AT[k] as THREE.Matrix4));
+        } else P[item.kind].setMatrixAt(idx, m);
+      });
+    }
+    // The laptop: in its dock until it is taken (the office draws it), then lifted out and laid on the box, and carried.
     const lapOn = p.laptop === 'lift' || p.laptop === 'carried';
     if (lapOn) {
-      // On top of the box, over the keepsakes.
-      this.w.set(0, BOX.h + 0.1, 0).applyMatrix4(this.boxM);
-      if (p.laptop === 'lift') {
-        this.deskPoint(a, SEAT_OFFSET - LAPTOP_BACK, 0, DESK_H + 0.02, this.v);
-        const k = p.lift;
-        // An arc: up off the desk, over, and down onto the box.
-        this.w.lerpVectors(this.v, this.w, k);
-        this.w.y += Math.sin(k * Math.PI) * 0.18;
-      }
-      this.lapM.compose(this.w, this.boxQ, this.scl);
-    }
-    for (const part of PROPS) {
-      const mesh = this.parts[part.key];
-      if (part.on === 'laptop') mesh.setMatrixAt(a.slot, lapOn ? this.lapM : ZERO);
-      else if (!boxOn || (part.on === 'item' && (part.item ?? 0) >= p.items)) mesh.setMatrixAt(a.slot, ZERO);
-      else {
-        const local = this.local[part.key];
-        mesh.setMatrixAt(a.slot, local ? this.m.multiplyMatrices(this.boxM, local) : this.boxM);
-      }
+      const onBox = this.lapM.multiplyMatrices(this.boxM, LAPTOP_FLAT);
+      if (p.laptop === 'lift' && kit) this.arc(this.m.multiplyMatrices(slotM, laptopMatrix(kit)), onBox.clone(), p.lift, 0.2, this.lapM);
+      P.laptop.setMatrixAt(a.slot, this.lapM);
+      P.sticker.setMatrixAt(a.slot, this.m.multiplyMatrices(this.lapM, STICKER_AT));
+    } else {
+      P.laptop.setMatrixAt(a.slot, ZERO);
+      P.sticker.setMatrixAt(a.slot, ZERO);
     }
   }
 
@@ -382,10 +526,12 @@ export class Arrivals {
         desk_show: p.desk,
         box: p.box,
         laptop: p.laptop,
-        items: p.items,
+        items: a.kept ?? p.items,
         carry: a.tl.carry,
         briefcase: p.briefcase,
         wave: p.wave,
+        dy: p.dy,
+        yielded: a.yielded,
       };
     });
   }

@@ -501,12 +501,12 @@ function mezzanineFor(
   };
 }
 
-/** Pick volumes of a desk slot: the desk (with laptop) and the seated worker. */
+/** Pick volumes of a desk slot: the desk (M6b: up to the top of its monitor), the seated worker, and an empty desk's "+". */
 export function slotBoxes(s: DeskSlot): { desk: Box3; seat: Box3; plus: Box3 } {
   return {
-    desk: box(s.desk.x - DESK_W / 2, 0, s.desk.z - DESK_D / 2, s.desk.x + DESK_W / 2, DESK_H + 0.3, s.desk.z + DESK_D / 2),
+    desk: box(s.desk.x - DESK_W / 2, 0, s.desk.z - DESK_D / 2, s.desk.x + DESK_W / 2, DESK_H + 0.56, s.desk.z + DESK_D / 2),
     seat: box(s.seat.x - 0.32, 0.3, s.seat.z - 0.32, s.seat.x + 0.32, 1.4, s.seat.z + 0.32),
-    plus: box(s.desk.x - 0.25, 1.05, s.desk.z - 0.25, s.desk.x + 0.25, 1.6, s.desk.z + 0.25),
+    plus: box(s.desk.x - 0.25, 1.2, s.desk.z - 0.25, s.desk.x + 0.25, 1.75, s.desk.z + 0.25),
   };
 }
 

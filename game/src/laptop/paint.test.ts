@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Terminal } from '@xterm/xterm';
 import { describe, expect, it } from 'vitest';
-import { CELL_ASPECT, cellGrid, paintBuffer, paletteColor, SCREEN_THEME, type Paint2D } from './paint';
+import { CELL_ASPECT, cellGrid, contrast, GLANCE, glanceView, paintBuffer, paletteColor, readable, SCREEN_THEME, type Paint2D } from './paint';
 
 /** A 2D context that records what is drawn. */
 function fakeCtx() {
@@ -96,6 +96,76 @@ describe('paintBuffer', () => {
     expect(f.texts.map((x) => x.text).join('')).toContain('Retries are in');
     expect(runs).toBeGreaterThan(20);
     expect(runs).toBeLessThan(400);
+    t.dispose();
+  });
+});
+
+/** A screen given as text, one character per cell (tests). */
+const grid = (lines: string[], cols = 60) => lines.map((l) => Array.from(l.padEnd(cols, ' ')).slice(0, cols));
+const text = (rows: string[][], segs: ReturnType<typeof glanceView>) => segs.map((g) => rows[g.row]!.slice(g.c0, g.c1).join(''));
+
+describe('glance view (M6b)', () => {
+  it('keeps the rows that say something: no blank rows, no empty frames or prompt boxes', () => {
+    const rows = grid(['╭──────────╮', '│ ✻ Worker │', '╰──────────╯', '', '● Bash(pnpm test)', '  ⎿  ✓ 42 passed', '', '╭────────────╮', '│ >          │', '╰────────────╯', '  ? for shortcuts']);
+    expect(text(rows, glanceView(rows, 34))).toEqual(['│ ✻ Worker │', '● Bash(pnpm test)', '  ⎿  ✓ 42 passed']);
+    // A prompt being typed says something; what follows a box that is not at the bottom stays too.
+    const typed = grid(['● ok', '╭──────────╮', '│ > fix it │', '╰──────────╯', '  ? for shortcuts']);
+    expect(text(typed, glanceView(typed, 34))).toEqual(['● ok', '│ > fix it │']);
+    const boxed = grid(['╭────╮', '│ hi │', '╰────╯', 'one', 'two', 'three']);
+    expect(text(boxed, glanceView(boxed, 34))).toEqual(['│ hi │', 'one', 'two', 'three']);
+  });
+
+  it('word-wraps long rows at the glance width, keeping the indent, and shows the last lines', () => {
+    const rows = grid(['    ● Retries are in and the tests pass (42 passed). Anything else?', '    ok'], 80);
+    const segs = glanceView(rows, 20, 8);
+    expect(text(rows, segs).map((l) => l.trimEnd())).toEqual(['● Retries are in and', 'the tests pass (42', 'passed). Anything', 'else?', 'ok']);
+    expect(segs.every((g) => g.c1 - g.c0 <= 20)).toBe(true);
+    // The common indent goes, a deeper one stays.
+    const deeper = grid(['  a b', '      c d']);
+    expect(text(deeper, glanceView(deeper))).toEqual(['a b', '    c d']);
+    // Only the last `max` lines.
+    const many = grid(Array.from({ length: 30 }, (_, i) => `line ${i}`));
+    expect(text(many, glanceView(many, 34, 8))).toEqual(Array.from({ length: 8 }, (_, i) => `line ${22 + i}`));
+    expect(glanceView(grid(['', '   ', '──────']))).toEqual([]);
+  });
+
+  it('never splits a wide character', () => {
+    const cells = [...Array.from('x'.repeat(19)), '界', '', ...Array.from('yyyy')];
+    const segs = glanceView([cells], 20, 8);
+    expect(segs[0]).toEqual({ row: 0, c0: 0, c1: 19 });
+    expect(segs[1]).toEqual({ row: 0, c0: 19, c1: 25 });
+  });
+
+  it('lifts dim colours to 4.5:1 on their background, and leaves readable ones alone', () => {
+    const dim = SCREEN_THEME.ansi[8] as number;
+    expect(contrast(dim, SCREEN_THEME.bg)).toBeLessThan(4.5);
+    expect(contrast(readable(dim, SCREEN_THEME.bg), SCREEN_THEME.bg)).toBeGreaterThanOrEqual(4.5);
+    expect(readable(SCREEN_THEME.fg, SCREEN_THEME.bg)).toBe(SCREEN_THEME.fg);
+    expect(contrast(readable(0xaaaaaa, 0xffffff), 0xffffff)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('paints the recorded agent screen’s last lines big: the reply, no prompt box, no footer', async () => {
+    const lines = readFileSync(join(import.meta.dirname, '../../fixtures/screens/agent.jsonl'), 'utf8').trim().split('\n');
+    const meta = JSON.parse(lines[0] as string) as { cols: number; rows: number };
+    const t = new Terminal({ cols: meta.cols, rows: meta.rows, scrollback: 0 });
+    for (const l of lines.slice(1)) await write(t, Buffer.from((JSON.parse(l) as { data: string }).data, 'base64'));
+    const f = fakeCtx();
+    paintBuffer(f.g, t.buffer.active, { cols: meta.cols, rows: meta.rows, width: 768, height: 322, cursor: true, glance: true });
+    const drawn = f.texts.map((x) => x.text).join('');
+    // The last five lines: the end of the test run and the whole reply.
+    expect(drawn).toContain('(1.2s)');
+    expect(drawn).toContain('Retries are in');
+    expect(drawn).toContain('Anything');
+    expect(drawn).not.toContain('╭');
+    expect(drawn).not.toContain('shortcuts');
+    // A glance-sized font: 5 lines on the screen, against 36 for the whole one.
+    const size = (x: { font: string }) => Number(/(\d+)px/.exec(x.font)?.[1]);
+    const full = fakeCtx();
+    paintBuffer(full.g, t.buffer.active, { cols: meta.cols, rows: meta.rows, width: 768, height: 322, cursor: true });
+    expect(size(f.texts[0]!)).toBeGreaterThan(4 * size(full.texts[0]!));
+    expect(size(f.texts[0]!)).toBe(Math.round(cellGrid({ ...GLANCE, width: 768, height: 322 }).ch * 0.8));
+    // No cursor in the glance view.
+    expect(f.rects.some((r) => r.style === css(SCREEN_THEME.cursor))).toBe(false);
     t.dispose();
   });
 });

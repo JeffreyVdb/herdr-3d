@@ -120,7 +120,7 @@ export class CityView {
     let deskTotal = 0;
     for (const p of plans) for (const l of p.layouts) deskTotal += l.desks;
     const floorsTotal = plans.reduce((n, p) => n + p.layouts.length, 0);
-    this.desks = new DeskSet(Math.max(1, deskTotal), this.shadows, false);
+    this.desks = new DeskSet(Math.max(1, deskTotal), this.shadows, { plus: false });
     this.crowd = new Crowd(Math.max(1, deskTotal), this.shadows, true);
     this.parts = this.makeParts(Math.max(1, floorsTotal));
     this.badgeLayer = new BadgeLayer(Math.max(1, floorsTotal), FH * 0.62);
