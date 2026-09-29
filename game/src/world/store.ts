@@ -17,6 +17,8 @@ import {
   resolveHarness,
   type Display,
 } from './derive';
+// M6 crew: write-code roles, freelancer lifecycles, over-cap orchestrators.
+import { CrewMemory, crewView, type CrewView } from './crew';
 
 export interface WorkerView {
   worker: Worker;
@@ -26,6 +28,8 @@ export interface WorkerView {
   /** When the current status started (unix ms). */
   since: number;
   display: Display;
+  /** M6: a write-code crew member's role, lifecycle, report and run (null for everyone else). */
+  crew?: CrewView | null;
 }
 
 export interface Counts {
@@ -135,6 +139,8 @@ export class WorldStore {
   private readonly localDesks = new Map<string, number>();
   private readonly since = new Map<string, number>();
   private readonly deskCache = new Map<string, Map<string, number>>();
+  /** M6: who has worked since first seen (a freelancer's onboarding ends there). */
+  private readonly crewSeen = new CrewMemory();
 
   constructor(readonly loadedAt: number = Date.now()) {}
 
@@ -155,6 +161,7 @@ export class WorldStore {
       this.since.set(w.id, w.status_since ?? keep ?? (this.snapshots === 0 ? this.loadedAt : now));
     }
     for (const id of [...this.localDesks.keys()]) if (!this.workers.has(id)) this.localDesks.delete(id);
+    this.crewSeen.snapshot(this.workers.values());
     this.hireOptions = hireOptionsOf(s.world.hire_options);
     this.seq = s.seq;
     this.snapshots++;
@@ -198,6 +205,7 @@ export class WorldStore {
         if (!old || old.status !== w.status) this.since.set(w.id, w.status_since ?? now);
         else if (w.status_since !== undefined) this.since.set(w.id, w.status_since);
         this.workers.set(w.id, w);
+        this.crewSeen.observe(w);
         c.sessions.add(w.session);
         if (!old || old.session !== w.session || old.desk_index !== w.desk_index) {
           c.structure = true;
@@ -224,6 +232,7 @@ export class WorldStore {
           this.since.set(e.id, next.status_since);
         }
         this.workers.set(e.id, next);
+        this.crewSeen.observe(next);
         c.workers.add(e.id);
         c.sessions.add(old.session);
         break;
@@ -255,6 +264,7 @@ export class WorldStore {
     this.workers.delete(id);
     this.since.delete(id);
     this.localDesks.delete(id);
+    this.crewSeen.forget(id);
   }
 
   private desksFor(session: string): Map<string, number> {
@@ -275,13 +285,17 @@ export class WorldStore {
     if (!w) return null;
     const f = this.floors.get(w.session);
     const desk = this.desksFor(w.session).get(id) ?? 0;
+    const asleep = f?.state === 'asleep';
+    // M6: an over-cap orchestrator, or a freelancer whose report asks, needs you whatever its agent's status.
+    const crew = crewView(w, this.crewSeen.has(id));
     return {
       worker: w,
       name: displayName(w),
       desk,
       harness: resolveHarness(w),
       since: this.since.get(id) ?? this.loadedAt,
-      display: displayStatus(w.status, f?.state === 'asleep'),
+      display: crew?.needsYou && !asleep ? 'needs_you' : displayStatus(w.status, asleep),
+      crew,
     };
   }
 
