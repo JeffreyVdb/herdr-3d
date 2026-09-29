@@ -12,7 +12,8 @@ comes from a real run.
 - `20260928-1400-overcap`: the over-cap orchestrator. `h3d_pass=3`,
   `h3d_phase=waiting_user`; REVIEW r3 says `CHANGES_REQUIRED` with 2 blockers
   (5 issues), UX r3 `PASS`, CODE r3 handed in its summary. All four sit in the
-  first pod.
+  first pod. The bridge's `TestOverCapFixture` (`internal/server/runs_test.go`) reads this
+  directory in place, so bridge and game exercise the same run.
 - `20260928-1500-lobby`: every other lifecycle state (pass 1, in review): a
   researcher and a coder reporting, a reviewer `INCOMPLETE`, a UX reviewer
   blocked on `input_required`, a coder working, a researcher onboarding

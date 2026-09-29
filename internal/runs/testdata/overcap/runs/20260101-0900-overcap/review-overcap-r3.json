@@ -1,4 +1,0 @@
-{"verdict": "CHANGES_REQUIRED", "input_required": null, "issues_found": [
-  {"id": "R1", "priority": "BLOCKER", "explanation": "The counter still keeps its value after a reload.", "evidence": "counter.go:18; reload with a stored value", "impact": "Acceptance criterion 2 unmet."},
-  {"id": "R2", "priority": "low", "explanation": "A test name is vague.", "evidence": "counter_test.go:5", "impact": "none"}
-]}

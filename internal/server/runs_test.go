@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -327,55 +328,67 @@ func TestReports(t *testing.T) {
 	}
 }
 
-// The committed over-cap run (internal/runs/testdata/overcap): the ORCH at
-// pass 3 waiting for the user is over the cap, its reviewer stamped
-// CHANGES_REQUIRED.
+// The game's over-cap run (game/fixtures/runs/20260928-1400-overcap, the
+// same synthetic run its demo-m6 floor is built from): the ORCH at pass 3
+// waiting for the user is over the cap, REVIEW r3 says CHANGES_REQUIRED with
+// two blockers, UX r3 passed, CODE r3 handed in its summary.
 func TestOverCapFixture(t *testing.T) {
-	fixture := filepath.Join("..", "runs", "testdata", "overcap")
-	raw, err := os.ReadFile(filepath.Join(fixture, "workers.json"))
+	runsDir := filepath.Join("..", "..", "game", "fixtures", "runs")
+	raw, err := os.ReadFile(filepath.Join(runsDir, "20260928-1400-overcap", "workspaces.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var spec []struct {
-		WorkspaceID string            `json:"workspace_id"`
-		Label       string            `json:"label"`
-		Status      string            `json:"status"`
-		Tokens      map[string]string `json:"tokens"`
+	var spec struct {
+		Repo       string `json:"repo"`
+		Issue      int    `json:"issue"`
+		Workspaces []struct {
+			Label  string            `json:"label"`
+			Status string            `json:"status"`
+			Model  [3]string         `json:"model"`
+			Tokens map[string]string `json:"tokens"`
+		} `json:"workspaces"`
 	}
 	if err := json.Unmarshal(raw, &spec); err != nil {
 		t.Fatal(err)
 	}
 	var obs []world.WorkerObs
-	for _, s := range spec {
-		w := runWorker(s.WorkspaceID, s.Label, s.Tokens)
+	for i, s := range spec.Workspaces {
+		w := runWorker(fmt.Sprintf("w%d", i+1), s.Label, s.Tokens)
 		w.Status = s.Status
-		w.Harness, w.Model, w.Effort = world.HarnessOf(s.Tokens, "")
+		w.Harness, w.Model, w.Effort = s.Model[0], s.Model[1], s.Model[2]
 		obs = append(obs, w)
 	}
-	b := startBridge(t, "", server.Options{RunsDir: filepath.Join(fixture, "runs"), ReportPoll: 20 * time.Millisecond})
+	if len(obs) != 4 {
+		t.Fatalf("fixture has %d workspaces, want 4", len(obs))
+	}
+	b := startBridge(t, "", server.Options{RunsDir: runsDir, ReportPoll: 20 * time.Millisecond})
 	c := b.connect(proto.Hello{})
 	c.snapshot()
 	b.floor("demo", true)
-	setRepo(c, "demo", "example/lab")
+	setRepo(c, "demo", spec.Repo)
 	b.floor("demo", true, obs...)
 	ws := workersOf(b.world(func(w proto.World) bool {
-		r, r2 := workersOf(w, "demo")["w3"].Report, workersOf(w, "demo")["w2"].Report
-		return r != nil && r2 != nil && r.State == proto.ReportReady && r2.State == proto.ReportReady
+		for _, id := range []string{"w2", "w3", "w4"} {
+			if r := workersOf(w, "demo")[id].Report; r == nil || r.State != proto.ReportReady {
+				return false
+			}
+		}
+		return true
 	}), "demo")
 	o, cd, rv, ux := ws["w1"], ws["w2"], ws["w3"], ws["w4"]
-	want := proto.IssueRef{Repo: "example/lab", Number: 3}
-	if !o.OverCap || o.Phase != "waiting_user" || *o.Pass != 3 || issueOf(o) != want {
+	want := proto.IssueRef{Repo: spec.Repo, Number: spec.Issue}
+	if !o.OverCap || o.Phase != "waiting_user" || o.Pass == nil || *o.Pass != 3 || issueOf(o) != want {
 		t.Errorf("orch = %+v", o)
 	}
-	if rv.OrchID != o.ID || rv.Round != 3 || rv.Report.Verdict != proto.VerdictChangesRequired || *rv.Report.Blockers != 1 ||
-		*rv.Report.Issues != 2 || rv.OverCap || issueOf(rv) != want {
+	if rv.OrchID != o.ID || rv.Round != 3 || rv.Report.Verdict != proto.VerdictChangesRequired || *rv.Report.Blockers != 2 ||
+		*rv.Report.Issues != 5 || rv.OverCap || issueOf(rv) != want {
 		t.Errorf("reviewer = %+v report %+v", rv, rv.Report)
 	}
 	if cd.OrchID != o.ID || cd.Report.Summary == "" || cd.Model != "claude-opus-5-5" {
 		t.Errorf("coder = %+v report %+v", cd, cd.Report)
 	}
-	if ux.OrchID != o.ID || ux.Report == nil || ux.Report.State != proto.ReportPending {
-		t.Errorf("ux = %+v", ux)
+	if ux.OrchID != o.ID || ux.Report.Verdict != proto.VerdictPass {
+		t.Errorf("ux = %+v report %+v", ux, ux.Report)
 	}
 	// All four sit in the ORCH's pod.
 	for _, w := range ws {

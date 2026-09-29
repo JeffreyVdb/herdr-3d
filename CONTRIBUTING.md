@@ -200,7 +200,8 @@ journalctl --user -u herdr-world -f
 `internal/gitops` runs the real `git`, on repositories in a temp dir (M5: `worker.changes` is checked against `git
 status` and `git diff --stat` there, byte for byte against `git diff`). `internal/usage` reads synthetic transcripts
 (`testdata/`, no real content) and temp files; `internal/runs` and the M6 hub tests read temp run directories and a
-synthetic over-cap run (`internal/runs/testdata/overcap`, mirrored by the game's fixture sim). `make integration` runs,
+synthetic over-cap run (`game/fixtures/runs/20260928-1400-overcap`, the very run the game's `demo-m6` floor is built
+from: `TestOverCapFixture` reads it in place). `make integration` runs,
 with build tag `integration`, against the installed herdr:
 
 - `TestIntegrationThrowawaySession`: starts a headless server for a fresh session `h3d-it-<random>`, creates

@@ -1,1 +1,0 @@
-{"input_required": null, "summary": "Fixed R1 (the lab counter now resets on reload); head 0c0ffee, go test ./... passes.", "crucial_bits": ["counter.go:10-24 — reset path"]}
