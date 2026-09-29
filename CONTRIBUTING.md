@@ -314,7 +314,8 @@ killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herd
   URLs on a listed host (`internal/helper.DefaultOpenHosts`: `github.com`; a provider added later adds its host there),
   no credentials or port, no control characters. `204` on success, `400` for a refused URL, `403` for a failed check,
   `502` when `open` failed; `go test ./internal/helper` covers it with a fake opener. A page not served by the helper
-  (Vite on the server) has no endpoint, and the game opens a new window instead.
+  (Vite on the server) has no endpoint, and the game opens a new window instead (`https://` only); a page the helper
+  serves never falls back to a window: a URL it refuses gets a notice and is not opened.
 
 It needs non-interactive SSH from the Mac to the host (`BatchMode=yes`: a key in the agent/keychain, host key known).
 State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not answering through the tunnel`,

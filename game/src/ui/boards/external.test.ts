@@ -2,10 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { openable, openExternal } from './external';
 
 describe('openExternal', () => {
-  it('opens only absolute http(s) urls', () => {
+  it('opens only absolute https urls', () => {
     expect(openable('https://github.com/a/b')).toBe(true);
-    expect(openable('http://x.example')).toBe(true);
-    for (const u of ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,x', '/relative', 'github.com', '']) expect(openable(u), u).toBe(false);
+    for (const u of ['http://x.example', 'javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,x', '/relative', 'github.com', '']) expect(openable(u), u).toBe(false);
   });
 
   it('asks the helper first, with its token', async () => {
@@ -24,11 +23,11 @@ describe('openExternal', () => {
     expect(JSON.parse(String(calls[0]?.init.body))).toEqual({ url: 'https://github.com/a/b/issues/1' });
   });
 
-  it('opens a window when the helper refuses the host or is gone', async () => {
+  it('opens nothing when the helper serves the page and refuses the url or is gone', async () => {
     for (const fetch of [async () => ({ status: 404 }), async () => ({ status: 400 }), async () => Promise.reject(new Error('down'))]) {
       const opened: string[] = [];
-      expect(await openExternal('https://docs.example/x', { token: 'tok', fetch, open: (u) => opened.push(u) })).toBe('window');
-      expect(opened).toEqual(['https://docs.example/x']);
+      expect(await openExternal('https://evil.example/x', { token: 'tok', fetch, open: (u) => opened.push(u) })).toBe('refused');
+      expect(opened).toEqual([]);
     }
   });
 
@@ -40,11 +39,14 @@ describe('openExternal', () => {
     expect(opened).toEqual(['https://github.com/a/b']);
   });
 
-  it('opens plain http in a window, never through the helper', async () => {
+  it('never opens plain http, with or without the helper', async () => {
     const asked: string[] = [];
     const opened: string[] = [];
-    expect(await openExternal('http://x.example/', { token: 'tok', fetch: async (u) => (asked.push(u), { status: 204 }), open: (u) => opened.push(u) })).toBe('window');
+    for (const token of ['tok', null]) {
+      expect(await openExternal('http://x.example/', { token, fetch: async (u) => (asked.push(u), { status: 204 }), open: (u) => opened.push(u) })).toBe('refused');
+    }
     expect(asked).toEqual([]);
+    expect(opened).toEqual([]);
   });
 
   it('refuses what is not a web url', async () => {

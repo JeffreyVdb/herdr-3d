@@ -46,7 +46,8 @@ bodies (M7): `POST /api/open` with `{"url":"https://github.com/…"}` opens that
 `Content-Type: application/json`, and accepts only an `https://` URL on a host of its allowlist (`github.com`; every
 provider the bridge learns adds its own host), without credentials or a port. `204` opened; `400` a refused URL;
 `403` a failed check; `502` the Mac's `open` failed. A game not served by the helper has no such endpoint (it has no
-token either) and opens a new window itself.
+token either) and opens a new window itself (`https://` only); a game the helper serves opens nothing the helper
+refuses and says so.
 
 ## Handshake
 

@@ -3,7 +3,8 @@
  * asks it to (`POST /api/open`, same origin, its token in `X-H3D-Token`): the helper opens https URLs of the providers
  * it knows in the default browser, not in this app window. The helper opens the game with its token, so a page with
  * none (Vite on the server, a fixture page) is not served by it: there is no such endpoint to ask, and the game opens
- * a new window itself.
+ * a new window itself. A page the helper serves never falls back to a window: a URL the helper refuses (a host it does
+ * not know, anything but https) is not opened at all.
  */
 
 export type OpenVia = 'helper' | 'window' | 'refused';
@@ -14,11 +15,10 @@ export interface OpenDeps {
   open?: (url: string) => void;
 }
 
-/** Only absolute http(s) URLs are ever opened. */
+/** Only absolute https URLs are ever opened. */
 export function openable(url: string): boolean {
   try {
-    const u = new URL(url);
-    return u.protocol === 'https:' || u.protocol === 'http:';
+    return new URL(url).protocol === 'https:';
   } catch {
     return false;
   }
@@ -26,17 +26,17 @@ export function openable(url: string): boolean {
 
 export async function openExternal(url: string, d: OpenDeps): Promise<OpenVia> {
   if (!openable(url)) return 'refused';
-  const doFetch = d.fetch ?? ((u, init) => fetch(u, init));
-  if (d.token && url.startsWith('https://')) {
+  if (d.token) {
+    const doFetch = d.fetch ?? ((u, init) => fetch(u, init));
     try {
       const r = await doFetch('/api/open', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-h3d-token': d.token },
         body: JSON.stringify({ url }),
       });
-      if (r.status === 204) return 'helper';
+      return r.status === 204 ? 'helper' : 'refused';
     } catch {
-      // No helper behind this page: the window below.
+      return 'refused';
     }
   }
   (d.open ?? ((u) => void window.open(u, '_blank', 'noopener,noreferrer')))(url);
