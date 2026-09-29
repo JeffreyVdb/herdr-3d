@@ -10,24 +10,18 @@
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #9fd6ff; }
       canvas { display: block; }
+      /* Renderer backend, for the e2e specs and a start-up failure. Hidden otherwise: the About panel shows it. */
       #debug {
-        position: fixed; bottom: 8px; left: 8px; padding: 3px 7px; z-index: 20;
+        display: none;
+        position: fixed; bottom: 8px; left: 8px; padding: 3px 7px; z-index: 5;
         font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
         color: #fff; background: rgb(28 37 64 / 70%); border-radius: 4px;
         pointer-events: none;
       }
-      #versions {
-        position: fixed; bottom: 32px; left: 8px; padding: 3px 7px; z-index: 20;
-        font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-        color: #fff; background: rgb(28 37 64 / 70%); border-radius: 4px;
-        pointer-events: none;
-      }
-      #versions:empty { display: none; }
-      #versions.warn { background: #b45309; }
+      #debug.error { display: block; background: #b45309; }
     </style>
   </head>
   <body>
-    <div id="versions"></div>
     <div id="debug">backend: …</div>
     <script type="module" src="/src/main.ts"></script>
   </body>

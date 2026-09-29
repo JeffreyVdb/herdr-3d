@@ -6,7 +6,9 @@ import type { Area } from '../world/building';
 import { CHIP_TEXT } from '../world/derive';
 import { ICON as DOM_ICON } from './dom';
 import { mountAudioControls } from './audioControls';
+import { AboutDialog } from './about';
 import { MusicCredits } from './credits';
+import type { BuildInfo } from '../version';
 import { answerKeyEls, promptBarAria, promptBarKey, usageChip } from './promptBar';
 // M6 crew: role, run, issue and report on the bar.
 import { crewBarKey, crewLine } from './crewBar';
@@ -18,6 +20,7 @@ const ICON = {
   back: '<path d="M14.5 6 8.5 12l6 6"/>',
   issues: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/>',
   prs: '<circle cx="7" cy="6" r="2.2"/><circle cx="7" cy="18" r="2.2"/><circle cx="17" cy="18" r="2.2"/><path d="M7 8.2v7.6M17 15.8V10a3 3 0 0 0-3-3h-3.5M12.5 5 10.5 7l2 2"/>',
+  info: '<circle cx="12" cy="12" r="8"/><path d="M12 11v5.2M12 7.9v.1"/>',
   leaf: '<path d="M5 19c0-8 5-13 14-14 0 9-5 14-13 14"/><path d="M5 19 13 11"/>',
   building: DOM_ICON.building,
   lift: DOM_ICON.lift,
@@ -78,6 +81,7 @@ export class Hud {
   private readonly issues = el('button', 'btn', `${svg(ICON.issues)}<span>Issues</span>`);
   private readonly prs = el('button', 'btn', `${svg(ICON.prs)}<span>PRs</span>`);
   private readonly battery = el('button', 'btn btn--icon', svg(ICON.leaf));
+  private readonly about = el('button', 'btn btn--icon', svg(ICON.info));
   private readonly buildings = el('button', 'btn', `${svg(ICON.building)}<span>Buildings</span>`);
   /** On a floor: its building's elevator panel, for keyboards and when the elevator is out of sight. */
   private readonly elevator = el('button', 'btn', `${svg(ICON.lift)}<span>Elevator</span>`);
@@ -122,13 +126,17 @@ export class Hud {
     this.battery.title = 'Battery saver: lower frame rates (B)';
     this.battery.setAttribute('aria-pressed', 'false');
     this.battery.setAttribute('aria-label', 'Battery saver');
+    this.about.title = 'About: game, helper and bridge versions';
+    this.about.setAttribute('aria-label', 'About');
+    this.about.setAttribute('aria-haspopup', 'dialog');
+    this.about.type = 'button';
     this.issues.title = 'Issues board overlay (arrives in M7)';
     this.prs.title = 'Pull requests overlay (arrives in M7)';
     this.back.title = 'Back to the city (Backspace)';
     this.buildings.title = 'Buildings: create, rename and arrange buildings and floors (M)';
     this.elevator.title = 'Elevator: ride to another floor, wake or sleep floors, floor settings (L)';
     this.hire.title = 'Hire a worker at the first free desk on this floor (or look at a desk’s + and press E)';
-    actions.append(this.buildings, this.issues, this.prs, this.elevator, this.hire, this.battery, this.conn);
+    actions.append(this.buildings, this.issues, this.prs, this.elevator, this.hire, this.about, this.battery, this.conn);
     bar.append(place, this.counts, actions);
     this.counts.after(this.usageEl);
     this.usageEl.hidden = true;
@@ -184,6 +192,18 @@ export class Hud {
       this.setTarget(null, null);
       this.setPlan(false, '');
     }
+  }
+
+  /** The About panel (build versions), opened from the top bar's info button. */
+  mountAbout(info: BuildInfo): { dispose(): void } {
+    const about = new AboutDialog(this.root.parentElement ?? this.root, info);
+    const open = () => about.open(this.about);
+    this.about.addEventListener('click', open);
+    return {
+      dispose() {
+        about.dispose();
+      },
+    };
   }
 
   /** M3b: the sound control (mute + volume) in the top bar, before the battery toggle. */
