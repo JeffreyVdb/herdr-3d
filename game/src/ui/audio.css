@@ -34,7 +34,7 @@
 
 .audio-vol {
   --fill: 80%;
-  width: 76px;
+  width: 56px;
   height: 20px;
   margin: 0;
   background: transparent;
@@ -93,10 +93,11 @@
   background: linear-gradient(to right, var(--text-on-ink-2) var(--fill), rgb(255 255 255 / 12%) var(--fill));
 }
 
-/* The top bar keeps the floor's name whole at 1024 px: a shorter slider there. */
+/* The top bar keeps the floor's name whole at 1024 px: a shorter slider there (the About button and the Issues / PRs
+   buttons take the room the longer one had). */
 @media (max-width: 1100px) {
   .audio-vol {
-    width: 56px;
+    width: 20px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
