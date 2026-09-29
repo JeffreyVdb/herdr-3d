@@ -351,6 +351,8 @@ export class StartRunDialog {
     this.renderedKey = key;
     const a = document.activeElement;
     const focusKey = a instanceof HTMLElement && this.dialog.contains(a) ? (a.dataset.key ?? a.id) : null;
+    // A live re-render while typing keeps the caret where it was.
+    const caret = a instanceof HTMLTextAreaElement || (a instanceof HTMLInputElement && a.type !== 'checkbox' && a.type !== 'radio') ? [a.selectionStart, a.selectionEnd, a.scrollTop] : null;
 
     this.head.replaceChildren(
       h('div', { class: 'dd-plate dd-plate--desk', 'aria-hidden': 'true' }, icon(DESK_PLUS), h('b', {}, String(this.desk + 1))),
@@ -496,6 +498,10 @@ export class StartRunDialog {
     if (focusKey) {
       const back = this.dialog.querySelector<HTMLElement>(`[data-key="${CSS.escape(focusKey)}"]`) ?? this.dialog.querySelector<HTMLElement>(`#${CSS.escape(focusKey)}`);
       back?.focus();
+      if (caret && (back instanceof HTMLTextAreaElement || back instanceof HTMLInputElement)) {
+        back.setSelectionRange(caret[0] ?? null, caret[1] ?? null);
+        back.scrollTop = caret[2] ?? 0;
+      }
       if (!back && focusKey.includes(':')) this.form.querySelector<HTMLElement>(`[data-pick="${focusKey.split(':')[0]}"] input:checked`)?.focus();
     }
   }

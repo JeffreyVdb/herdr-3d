@@ -318,8 +318,8 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
 - `src/net` — protocol v1 client (hello → welcome → snapshot | replay → events, reconnect with backoff from
   `since_seq` + `epoch`; commands through `request(t, args)`, matched to their `ack` / `error` by `req_id`, with a
   per-command timeout: 10 s, `floor.sleep` 30 s, `floor.wake` 60 s since its ack waits for every agent; M4:
-  `hire.prepare` 30 s, `worker.hire` 90 s, `worker.fire.prepare` 20 s, `worker.fire` 45 s; a drop fails what is in
-  flight) and the endpoint: same-origin `/ws?token=…` (the helper opens `/#token=<token>`; the game
+  `hire.prepare` 30 s, `worker.hire` 90 s, `worker.fire.prepare` 20 s, `worker.fire` 45 s; M6: `run.prepare` 30 s,
+  `run.start` 90 s; a drop fails what is in flight) and the endpoint: same-origin `/ws?token=…` (the helper opens `/#token=<token>`; the game
   keeps it in `sessionStorage` as `h3d.token` and strips it from the URL), `?ws=<url>` to point elsewhere.
 - `src/world` — the world store (snapshot + events, fallbacks for an older bridge without `name`, `desk_index`,
   `harness`, `model`, `effort`, `status_since`, `floor.desks`, and M3's `transition`, `settings`, `suggested`,
@@ -336,7 +336,11 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   (`answer.ts`: digits → a question's choice; Approve = the choice that says Yes / Trust / Allow / Proceed, else the
   first; Deny = the "No" choice, else a cancel), the Changes panel's model (`changes.ts`: the diff split per file and
   classified per line, file states, branch / upstream / base / stat lines, the truncation notice), who can be prompted
-  (`prompt.ts`, the 16 KiB rule) and which laptops are live (`screens.ts`). Pure logic, covered by vitest.
+  (`prompt.ts`, the 16 KiB rule) and which laptops are live (`screens.ts`). M6: team presets (`presets.ts`: the
+  world's `presets` and their events, by name; `known` false from an older bridge, which sends none) and the start-run
+  dialog's state (`startRun.ts`: the one ticket input read as an issue number of the floor's repo, an issue URL or free
+  text; the prompt preview's generated / custom states; what blocks Start or a preset's Save; the args of
+  `run.prepare`, `run.start` and `preset.update`). Pure logic, covered by vitest.
 - `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy;
   M3b: the walk scene (`walk.ts`), the building and street from outside (`outside.ts`, baked into one mesh by
   `bake.ts`) and the lobby (`lobby.ts`). M3c: the corner office (`mezzanine.ts`: two merged vertex-coloured toon
@@ -367,7 +371,9 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   answers this connection's watch count.
 - `src/ui` — the HUD (DOM over the canvas) and the M3 panels (`panels.ts`: elevator, buildings, floor settings,
   confirmations; modal `<dialog>`s that re-render live and keep focus); M4: the hire dialog (`hire.ts`) and the
-  send-home dialog (`sendHome.ts`), styled in `hire.css`; M5: the prompt overlay (`prompt.ts`, P: a modal like the M4
+  send-home dialog (`sendHome.ts`), styled in `hire.css`; M6: the start-run dialog (`startRun.ts`, the empty desk's
+  "Hire orchestrator" tab from `deskTabs.ts`, the top bar's Run and Presets from `startButtons.ts`) and the team presets
+  panel (`presets.ts`), styled in `start.css`; M5: the prompt overlay (`prompt.ts`, P: a modal like the M4
   dialogs, low on the screen), the Changes panel (`changes.ts`, C: a non-modal side panel in the HUD under the top bar,
   so the floor stays in view and walkable; its diff is drawn a window of lines at a time), the look-at bar's usage and
   Approve / Deny (`promptBar.ts`), styled in `m5.css`, and the seat bar (`seat.ts`, `seat.css`). Hidden, named hooks
@@ -397,7 +403,11 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   (`invalid_state`: answer first); an answer needs the question's hash (else `stale`, after an upsert with the current
   question), and trusting a folder leaves the agent idle; `worker.changes` has staged / unstaged / untracked /
   committed files for a `working` worker, a 1.6 MiB diff cut at 256 KiB for a `perf…` label, `not_a_repo` under
-  `/scratch`; working agents send `worker.usage` every `simusage` ms), dev WebSocket → unix-socket proxy,
+  `/scratch`; working agents send `worker.usage` every `simusage` ms); M6: `fixture-start.ts`, whose rules are at its
+  top: "Build team" is seeded, presets are validated like the bridge's, `run.prepare` composes the prompt exactly like
+  its prompt builder, `run.start` is the M4 hire (the ORCH gets `role: orch` and its `run` from the label, the floor its
+  `last_preset`), and `simfail=no_m6` plays an M5 bridge (no `presets`, every M6 command `unknown_command`), dev
+  WebSocket → unix-socket proxy,
   throwaway-herdr helper, live (`live-*.ts`) and Mac perf drivers.
 
 Run it:
@@ -425,6 +435,9 @@ M5 on the simulating server (`ws=…?sim=1…`): `simusage=<ms>` sends working a
 (default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|changes_failed` for the next prompt,
 answer or changes, `simfail=input_failed` fails the next `worker.keys`, `simfail=observer_failed` closes the next watch
 after its first frame. E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1%26simms%3D300%26simusage%3D2000`.
+
+M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
+`simfail=no_m6` plays a bridge without them. E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simms%3D300`.
 
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings
@@ -523,6 +536,21 @@ another floor it opens the elevator with that floor picked (Enter rides there, a
 line and the looked-at worker's card show its usage (`≈$0.09 · 37k tokens · ctx 4%`; `≈$1.50*` with a tooltip when
 priced as an unknown model), the top bar the floor's `≈$` total and "N need you".
 
+Starting a run (M6): on an empty desk's hire dialog (E on its "+") the **Hire orchestrator** tab (Shift+Tab to the
+tabs, ← →), or the top bar's **Run** on an office floor (the first free desk; the Desk field changes it), opens the
+start-run dialog: one **Ticket** input (`7` or `#7` is an issue of the floor's linked repo, an issue URL carries its
+own, anything else is free text; the read-back under it says which), the desk, the **team preset** (the floor's last
+one, else "Build team"), the orchestrator's harness → model → effort (the preset's, until you pick one), extra
+instructions, the label, the worktree (on by default) and the **first prompt**. The prompt comes from the bridge
+(`run.prepare`) a moment after every change; typing in it makes it yours ("Edited"): later changes never overwrite it
+and a note says when the fields now make a different one, **Reset to generated** takes theirs again, and Start sends
+yours as `run.start`'s `prompt` (a generated one is left to the bridge). **Ctrl+Enter** (⌘+Enter) starts from anywhere
+in the dialog, plain Enter never does; Esc closes and focus goes back. Capacity and a failed fetch show as in the hire
+dialog. The orchestrator walks in like a hire and you are turned to face its desk. **Presets** (in the dialog, and in
+the city's top bar) lists the team presets: create, edit (the name and the five roles × harness / model / effort) and
+delete (confirmed); a taken name or a bad choice is said by the field. Esc in the editor goes back to the list. An
+older bridge (no `presets` in its world, or `unknown_command`) leaves Run, the tab and the presets off with the reason.
+
 Tests:
 
 ```sh
@@ -557,7 +585,13 @@ make shot                     # Playwright WebGL2: game/test-results/{shot,m2-ci
                               # the user's own branch (delete the worktree only); walks you cannot see; a
                               # read-only bridge; m4-{hire-dialog,send-home-dirty,send-home-clean,walk-in,
                               # walk-out-pack,walk-out,hire-capacity-warn,hire-capacity-full,
-                              # hire-fetch-failed}.png
+                              # hire-fetch-failed}.png; M6 on demo-m4 with sim=1 (m6-start.spec.ts): the
+                              # Hire orchestrator tab from the keyboard, an issue number, Ctrl+Enter, the walk-in
+                              # and facing the orchestrator; the top bar's Run (first free desk, another desk),
+                              # free text, extra instructions, Esc giving focus back, a floor without a repo; an
+                              # edited prompt through field changes, reset, sent; presets create / edit / delete
+                              # (name taken, live in the dialog, focus back); simfail=no_m6: m6-{start-run-issue,
+                              # start-run-edited,presets-list,presets-edit}.png
                               # M5 laptops on demo-m4 with sim=1 (m5-screen.spec.ts): the nearest four laptops in
                               # view live and the rest glowing, screens=0 watching nothing, walking along a pod with
                               # screens=2 (screens swap one at a time, the passed ones frozen, no churn looking left

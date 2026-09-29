@@ -197,3 +197,36 @@ describe('presets', () => {
     expect(freshName('Build team', b)).toBe('Build team 3');
   });
 });
+
+describe('the store and presets', () => {
+  it('takes presets from the snapshot and follows preset.upsert / preset.removed', async () => {
+    const { WorldStore } = await import('./store');
+    const s = new WorldStore(0);
+    s.applySnapshot({ t: 'world.snapshot', seq: 1, world: { buildings: [], unassigned: [], floors: [], workers: [], presets: [BUILD] } });
+    expect(s.presets.known).toBe(true);
+    const v = s.presets.version;
+    s.applyEvent({ t: 'preset.upsert', seq: 2, preset: { ...BUILD, id: 'p_2', name: 'Another' } });
+    expect(s.presets.list().map((p) => p.name)).toEqual(['Another', 'Build team']);
+    s.applyEvent({ t: 'preset.removed', seq: 3, id: BUILD.id });
+    expect(s.presets.list().map((p) => p.id)).toEqual(['p_2']);
+    expect(s.presets.version).toBeGreaterThan(v);
+    // An older bridge's snapshot has no presets.
+    s.applySnapshot({ t: 'world.snapshot', seq: 4, world: { buildings: [], unassigned: [], floors: [], workers: [] } });
+    expect(s.presets.known).toBe(false);
+    expect(s.presets.list()).toEqual([]);
+  });
+});
+
+describe('preset events on the wire', () => {
+  it('are world events when well formed', async () => {
+    const { isWorldEvent, parseMessage } = await import('../net/protocol');
+    const ev = (raw: unknown) => {
+      const m = parseMessage(JSON.stringify(raw));
+      return !!m && isWorldEvent(m);
+    };
+    expect(ev({ t: 'preset.upsert', seq: 5, preset: BUILD })).toBe(true);
+    expect(ev({ t: 'preset.removed', seq: 6, id: BUILD.id })).toBe(true);
+    expect(ev({ t: 'preset.upsert', seq: 7, preset: { id: 'p' } })).toBe(false);
+    expect(ev({ t: 'preset.removed', seq: 8 })).toBe(false);
+  });
+});
