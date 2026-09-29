@@ -187,6 +187,8 @@ export interface H3DDebug {
   boardLog(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
   /** M7: pages the game asked to open, and how (`helper`: the Mac helper's endpoint took it, `window`: a new window). */
   opened(): Array<{ url: string; via: string }>;
+  /** M3d: what shows the building logos: fetches made, textures held, the city's signs (building, hash, lit) and, with a lobby, whether the entrance sign and the reception wall show the logo or the name. */
+  logos(): ReturnType<import('./app').App['logoInfo']> | null;
   /** M7: the fixture simulator's `sim.boards` (merge a PR, make polls fail, …). */
   simBoards(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
 }
@@ -338,6 +340,7 @@ const h3d: H3DDebug = {
     const r = await app.client.request('sim.boards' as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
+  logos: () => app?.logoInfo() ?? null,
   openChanges: (id) => {
     if (app?.changes.worker !== id) app?.toggleChanges(id);
   },

@@ -331,3 +331,25 @@ describe('WorldStore M3 fields', () => {
     expect(s.stack('nope')).toEqual([]);
   });
 });
+
+describe('WorldStore: building logos (M3d)', () => {
+  it('keeps the logo hash of a building through snapshots and upserts, and ignores odd values', async () => {
+    const { logoHashOf } = await import('../net/protocol');
+    const s = new WorldStore(1000);
+    const hash = 'a'.repeat(64);
+    s.applySnapshot(snap({ buildings: [{ id: 'b1', name: 'Work', sort: 0, floors: ['top', 'bottom'], logo: hash }] }));
+    expect(logoHashOf(s.buildings.get('b1'))).toBe(hash);
+    // A building.upsert with a new hash replaces it and marks the structure changed (the views rebuild what they show).
+    const c = s.applyEvent({ t: 'building.upsert', seq: 11, building: { id: 'b1', name: 'Work', sort: 0, floors: ['top', 'bottom'], logo: 'b'.repeat(64) } });
+    expect(c.structure).toBe(true);
+    expect(logoHashOf(s.buildings.get('b1'))).toBe('b'.repeat(64));
+    // Cleared: the key is gone.
+    s.applyEvent({ t: 'building.upsert', seq: 12, building: { id: 'b1', name: 'Work', sort: 0, floors: ['top', 'bottom'] } });
+    expect(logoHashOf(s.buildings.get('b1'))).toBeNull();
+    // Odd values (an older or newer bridge) are no logo.
+    for (const odd of [123, '', 'not hex!', null, {}, 'ab']) {
+      s.applyEvent({ t: 'building.upsert', seq: 13, building: { id: 'b1', name: 'Work', sort: 0, floors: [], logo: odd as never } });
+      expect(logoHashOf(s.buildings.get('b1'))).toBeNull();
+    }
+  });
+});

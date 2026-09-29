@@ -30,6 +30,7 @@ import type { Duplex } from 'node:stream';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { logoRoute, registerLogoWorld } from './fixture-logo.ts';
 import { SimWorld, type SimOptions } from './fixture-sim.ts';
 
 export const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
@@ -60,13 +61,16 @@ export interface FixtureOptions {
   log?: (msg: string) => void;
 }
 
-function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: SimOptions | null): void {
+function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: SimOptions | null, logoKey: string | null): void {
   const send = (m: unknown) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(m));
   let greeted = false;
   const timers: ReturnType<typeof setTimeout>[] = [];
   const world = sim ? new SimWorld(rec.snapshot, sim) : null;
+  // M3d: /logo requests with the same `simlogo=<key>` belong to this world.
+  const unregister = world && logoKey !== null ? registerLogoWorld(logoKey, world) : null;
   ws.on('close', () => {
     timers.forEach(clearTimeout);
+    unregister?.();
     world?.dispose();
   });
   ws.on('message', (data) => {
@@ -163,7 +167,7 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {
       o.log?.(`fixture ${name}: client connected (${sim ? `simulating, step ${sim.stepMs} ms` : `play=${mode}`})`);
-      play(ws, rec, mode, epoch, sim);
+      play(ws, rec, mode, epoch, sim, q.get('simlogo'));
     });
     return true;
   };
@@ -172,8 +176,9 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
 /** Listens on 127.0.0.1:`port`, or on a unix socket path (tests). */
 export function startFixtureServer(port: number | string, o: FixtureOptions = {}): Promise<Server> {
   const handler = fixtureUpgradeHandler(o);
-  const srv = createServer((_req, res) => {
-    res.writeHead(404, { 'content-type': 'text/plain' }).end('herdr-3d fixture server: WebSocket only (/fixture/<name>, /ws)\n');
+  const srv = createServer((req, res) => {
+    if (logoRoute(req, res)) return;
+    res.writeHead(404, { 'content-type': 'text/plain' }).end('herdr-3d fixture server: WebSocket only (/fixture/<name>, /ws), and /logo/<building>\n');
   });
   srv.on('upgrade', (req, socket, head) => {
     if (!handler(req, socket, head)) socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');

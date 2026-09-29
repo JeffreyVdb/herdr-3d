@@ -2,6 +2,9 @@
 
 import type { CommandName } from '../net/protocol';
 
+/** The logo requests are HTTP, not commands, but fail with the same codes. */
+export type LogoAction = 'logo.set' | 'logo.clear';
+
 export interface FailureContext {
   /** The floor (session) the command was about. */
   floor?: string;
@@ -17,7 +20,10 @@ export interface FailureContext {
 }
 
 /** What each command does, for "This herdr-world can't … yet". */
-const DOES: Record<CommandName, string> = {
+const DOES: Record<CommandName | LogoAction, string> = {
+  // M3d
+  'logo.set': 'store building logos',
+  'logo.clear': 'store building logos',
   // M5
   'terminal.watch': 'show laptop screens',
   'terminal.unwatch': 'show laptop screens',
@@ -60,7 +66,7 @@ const DOES: Record<CommandName, string> = {
   'worker.open_pr': 'open pull requests for workers',
 };
 
-export function failureText(t: CommandName, code: string, message: string, ctx: FailureContext = {}): string {
+export function failureText(t: CommandName | LogoAction, code: string, message: string, ctx: FailureContext = {}): string {
   const floor = ctx.floor ?? 'This floor';
   const why = message.trim();
   switch (code) {
@@ -88,7 +94,21 @@ export function failureText(t: CommandName, code: string, message: string, ctx: 
       return `Another building is already called “${ctx.name ?? ''}”. Pick another name.`;
     case 'not_found':
       if (isBoardCommand(t)) return `${ctx.item ?? 'That item'} is not on the board any more. The board shows what is there now.`;
+      if (t === 'logo.set' || t === 'logo.clear') return `${ctx.name ?? 'That building'} no longer exists, so its logo was not ${t === 'logo.set' ? 'saved' : 'cleared'}.`;
       return 'That building no longer exists.';
+    // M3d: logos
+    case 'logo_too_large':
+      return `That logo is too big${why ? ` (${why.replace(/^logo too large:\s*/, '')})` : ''}. Logos can be up to 1 MB and 8192 px a side: export it smaller, or as an SVG.`;
+    case 'logo_unsupported': {
+      const reason = why.replace(/^logo unsupported:\s*/, '');
+      return `That file can’t be used as a logo${reason ? `: ${reason}` : ''}. Use a PNG, WebP or SVG drawn with plain shapes and paths (no text, images or scripts inside).`;
+    }
+    case 'logo_invalid':
+      return `The bridge could not read that image${why ? ` (${why.replace(/^logo invalid:\s*/, '')})` : ''}. Export it again, or pick another file.`;
+    case 'logo_busy':
+      return 'herdr-world is busy turning other logos into images. Try again in a moment.';
+    case 'forbidden':
+      return 'The helper refused the logo request. Reload the game from the helper’s address, then try again.';
     case 'unknown_session':
       return `herdr-world does not know ${ctx.floor ?? 'that floor'}: it was deleted, or this bridge does not watch it.`;
     case 'bad_request':
@@ -138,4 +158,4 @@ export function failureText(t: CommandName, code: string, message: string, ctx: 
   return `${code}: ${why}`;
 }
 
-const isBoardCommand = (t: CommandName): boolean => t.startsWith('issue.') || t.startsWith('pr.') || t.startsWith('worker.open_pr') || t.startsWith('board.');
+const isBoardCommand = (t: CommandName | LogoAction): boolean => t.startsWith('issue.') || t.startsWith('pr.') || t.startsWith('worker.open_pr') || t.startsWith('board.');

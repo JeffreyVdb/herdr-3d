@@ -37,6 +37,7 @@ export const ICON = {
   plus: '<path d="M12 5.5v13M5.5 12h13"/>',
   refresh: '<path d="M19 12a7 7 0 1 1-2.1-5"/><path d="M19.2 4.6v3.9h-3.9"/>',
   chevron: '<path d="M7 9.5l5 5 5-5"/>',
+  image: '<rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m5 17 4.5-4.5 3.5 3.5 2.5-2.5L19 17"/>',
 };
 
 export function icon(paths: string): SVGSVGElement {

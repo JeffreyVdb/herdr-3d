@@ -2,7 +2,9 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BridgeClient, type CommandResult, type ConnState, type SocketLike } from './net/client';
 import { bridgeUrl, takeToken } from './net/endpoint';
-import type { AnswerAck, BoardMessage, CommandArgs, CommandName, IssueCard, MergedPullRequest, PullRequest, Question, WatchBoardAck, WorldEvent } from './net/protocol';
+import { deleteLogo, logoUrl, putLogo } from './net/logo';
+import { LogoCache, type LogoEntry } from './render/logos';
+import { logoHashOf, type AnswerAck, type BoardMessage, type CommandArgs, type CommandName, type IssueCard, type MergedPullRequest, type PullRequest, type Question, type WatchBoardAck, type WorldEvent } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalSpec } from './render/arrivals';
@@ -134,6 +136,10 @@ export class App {
   batterySaver = false;
   conn: ConnState = { phase: 'stopped' };
   readonly url: string;
+  /** M3d: the building logos' textures, by hash. */
+  readonly logos = new LogoCache();
+  private logoSig = '';
+  private readonly shownLogos = new Map<string, LogoEntry>();
   /** #20: the name on your desk's name plate (`?me=`; the bridge sends no user name yet). */
   readonly owner: string;
   /** M5: live laptop screens, sitting at a worker's laptop, and the bar while you do. */
@@ -274,6 +280,7 @@ export class App {
       handlers: {
         onWelcome: (w) => o.onBridgeVersion?.(bannerVersion(w.server)),
         onSnapshot: (s) => {
+          this.logos.retryFailed(); // M3d: a reconnect may reach a logo that was not there
           this.applyChange(this.store.applySnapshot(s));
           this.yieldTakenDesks(this.store.workers.keys());
         },
@@ -308,6 +315,9 @@ export class App {
         void this.enterLobby(b);
       },
       toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 6500 : 3600, kind),
+      logoUrl: (b, hash) => logoUrl(this.url, b, hash),
+      setLogo: (b, f) => this.setLogo(b, f),
+      clearLogo: (b) => this.clearLogo(b),
     });
 
     const dialogHost = {
@@ -416,6 +426,7 @@ export class App {
       this.city.build(this.store.city());
       if (firstWorld) this.frameCity(false);
       if (this.mode === 'floor') this.syncWalk();
+      this.syncLogos();
     } else {
       for (const id of c.workers) {
         const v = this.store.workerView(id);
@@ -906,7 +917,66 @@ export class App {
       this.walk.setOffice(this.office, this.loaded === null ? 0 : floorY(this.loaded));
     }
     o.setFloors(ctx.floors.map((f) => f.asleep));
+    this.showLobbyLogo();
     this.worldCache = null;
+  }
+
+  // ---- M3d: building logos ------------------------------------------------------------
+
+  /**
+   * Follows the buildings' logo hashes: fetches the ones not held yet (once
+   * each), puts the loaded ones on the city's signs and the current
+   * building's lobby (a swap: nothing is rebuilt), and lets the cache drop the
+   * textures nobody uses. A logo that cannot be fetched leaves the name.
+   */
+  private syncLogos(): void {
+    const want = new Map<string, string>();
+    for (const b of this.store.buildings.values()) {
+      const hash = logoHashOf(b);
+      if (hash) want.set(b.id, hash);
+    }
+    for (const id of [...this.shownLogos.keys()]) if (!want.has(id)) this.shownLogos.delete(id);
+    for (const [id, hash] of want) {
+      const e = this.logos.peek(hash);
+      if (e) this.shownLogos.set(id, e);
+      else if (this.logos.hasFailed(hash)) this.shownLogos.delete(id);
+      else {
+        // Coming in: the old logo (if any) stays until it has, so a change does not flash the name.
+        void this.logos.load(hash, logoUrl(this.url, id, hash)).then(() => this.syncLogos());
+      }
+    }
+    const sig = [...this.shownLogos].map(([id, e]) => `${id}:${e.hash}`).join(',');
+    if (sig !== this.logoSig) {
+      this.logoSig = sig;
+      this.city.setLogos(this.shownLogos);
+    }
+    this.showLobbyLogo();
+    this.logos.keep([...this.shownLogos.values()].map((e) => e.hash));
+  }
+
+  private showLobbyLogo(): void {
+    const o = this.walk.outside;
+    if (o && this.building) o.lobby.setLogo(this.building.id === null ? null : (this.shownLogos.get(this.building.id) ?? null));
+  }
+
+  /** Test hook: what shows the logos now. */
+  logoInfo(): { fetches: number; cached: number; city: ReturnType<CityView['signInfo']>; lobby: { canopy: { showing: string; hash: string | null }; wall: { showing: string; hash: string | null } } | null } {
+    const l = this.walk.outside?.lobby.signs;
+    return {
+      fetches: this.logos.fetches,
+      cached: this.logos.size,
+      city: this.city.signInfo(),
+      lobby: l ? { canopy: { showing: l.canopy.showing, hash: l.canopy.hash }, wall: { showing: l.wall.showing, hash: l.wall.hash } } : null,
+    };
+  }
+
+  /** The Buildings panel's file input: sends a logo for a building. */
+  setLogo(building: string, file: File): Promise<CommandResult> {
+    return putLogo(this.url, building, file);
+  }
+
+  clearLogo(building: string): Promise<CommandResult> {
+    return deleteLogo(this.url, building);
   }
 
   private dropOutside(): void {
