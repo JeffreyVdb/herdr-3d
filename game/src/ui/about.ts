@@ -1,4 +1,5 @@
 import type { BuildInfo } from '../version';
+import type { LimitsPrefs } from './limitsPrefs';
 import './about.css';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -41,6 +42,7 @@ export class AboutDialog {
   constructor(
     parent: HTMLElement,
     private readonly info: BuildInfo,
+    private readonly limits?: LimitsPrefs,
   ) {
     const head = el('header', 'panel-head');
     const titles = el('div', 'panel-titles');
@@ -58,6 +60,7 @@ export class AboutDialog {
     const body = el('div', 'panel-body credits-body about-body');
     body.tabIndex = -1;
     body.append(this.list, this.note);
+    if (limits) body.append(this.limitsSwitch(limits));
 
     this.dialog.setAttribute('aria-labelledby', 'about-title');
     this.dialog.append(head, body);
@@ -72,6 +75,21 @@ export class AboutDialog {
     parent.append(this.dialog);
     this.off = info.onChange(() => this.render());
     this.render();
+  }
+
+  /** M10: the plan limits widget is on by default; this is where it is switched off and on. */
+  private limitsSwitch(prefs: LimitsPrefs): HTMLElement {
+    const box = el('input');
+    box.type = 'checkbox';
+    box.id = 'about-limits';
+    const sync = () => (box.checked = !prefs.hidden);
+    sync();
+    box.addEventListener('change', () => (prefs.hidden = !box.checked));
+    prefs.onChange(sync);
+    const label = el('label', 'about-switch');
+    label.htmlFor = 'about-limits';
+    label.append(box, el('span', '', 'Show plan limits (Claude and Codex) in the corner'));
+    return label;
   }
 
   get isOpen(): boolean {

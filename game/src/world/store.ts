@@ -18,6 +18,7 @@ import {
   type Display,
 } from './derive';
 // M6 start
+import { LimitBook } from './limits';
 import { PresetBook } from './presets';
 // M6 crew: write-code roles, freelancer lifecycles, over-cap orchestrators.
 import { CrewMemory, crewView, type CrewView } from './crew';
@@ -140,6 +141,8 @@ export class WorldStore {
   hireOptions: HireOptions = DEFAULT_HIRE_OPTIONS;
   /** M6 start: team presets (`known` false from an older bridge). */
   readonly presets = new PresetBook();
+  /** M10 limits: the plan limits (`known` false from an older bridge); the widget renders on `limits.version`. */
+  readonly limits = new LimitBook();
   private readonly localDesks = new Map<string, number>();
   private readonly since = new Map<string, number>();
   private readonly deskCache = new Map<string, Map<string, number>>();
@@ -168,6 +171,7 @@ export class WorldStore {
     this.crewSeen.snapshot(this.workers.values());
     this.hireOptions = hireOptionsOf(s.world.hire_options);
     this.presets.reset(s.world.presets);
+    this.limits.reset(s.world.limits);
     this.seq = s.seq;
     this.snapshots++;
     this.structureVersion++;
@@ -266,6 +270,10 @@ export class WorldStore {
         break;
       case 'preset.removed':
         this.presets.remove(e.id);
+        break;
+      // M10 limits: no part of the scene either.
+      case 'limits.update':
+        this.limits.upsert(e);
         break;
     }
     if (c.structure) this.structureVersion++;

@@ -190,3 +190,18 @@ func FindRollout(root, id string) (string, error) {
 	}
 	return found, nil
 }
+
+// NewestRollouts returns the paths of the newest rollouts under root
+// (root/YYYY/MM/DD/rollout-*.jsonl, newest first by name), at most limit.
+// It only lists directories; a missing root is no rollouts.
+func NewestRollouts(root string, limit int) []string {
+	var out []string
+	errStop := errors.New("stop")
+	_ = walkNewest(root, 3, func(path string) error {
+		if out = append(out, path); len(out) >= limit {
+			return errStop
+		}
+		return nil
+	})
+	return out
+}

@@ -1,0 +1,2 @@
+{"id":1,"result":{"userAgent":"herdr-world/0.159.0","codexHome":"/home/x/.codex"}}
+{"id":2,"error":{"code":-32603,"message":"failed to fetch codex rate limits: 401 Unauthorized"}}

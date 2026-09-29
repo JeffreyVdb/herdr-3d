@@ -45,7 +45,7 @@ sh-test:
 
 ## integration: bridge against a real herdr, in a throwaway session it creates and deletes (h3d-it-*)
 integration:
-	go test -tags integration -count=1 -run Integration -v ./internal/app/
+	go test -tags integration -count=1 -run Integration -v ./internal/app/ ./internal/limits/
 
 ## lint: go vet, gofmt, tsc --noEmit
 lint: go-lint game-lint

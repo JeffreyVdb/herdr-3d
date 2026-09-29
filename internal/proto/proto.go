@@ -169,6 +169,10 @@ type World struct {
 	HireOptions *HireOptions `json:"hire_options,omitempty"`
 	// M6 launch: Presets are the team presets, by name ignoring case.
 	Presets []Preset `json:"presets"`
+	// M10 limits: the latest reading of each provider (Claude, Codex) the
+	// bridge has; [] before its first. nil (the key is left out) when the
+	// bridge does not read limits (--no-limits): the client shows no widget.
+	Limits []Limits `json:"limits,omitzero"`
 }
 
 // HireOptions lists what can be hired, per harness.
@@ -376,6 +380,7 @@ type Worktree struct {
 //	worker.upsert    worker
 //	worker.removed   id, session, workspace_id, reason
 //	worker.status    id, session, workspace_id, status, prev_status, status_since, title
+//	limits.update    the fields of Limits
 type Event struct {
 	T           string    `json:"t"`
 	Seq         uint64    `json:"seq"`
@@ -397,6 +402,9 @@ type Event struct {
 	Usage *Usage `json:"usage,omitempty"`
 	// M6 launch: Preset is set on preset.upsert.
 	Preset *Preset `json:"preset,omitempty"`
+	// M10 limits: on limits.update the fields of Limits are flat in the
+	// event.
+	*Limits
 }
 
 // Command is a client request. Args depend on T (see the *Args types).

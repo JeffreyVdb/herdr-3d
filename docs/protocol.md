@@ -19,7 +19,8 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
   (see [Wake and sleep](#wake-and-sleep)), `worker.hire` / `worker.fire` (see [Hire and send
   home](#hire-and-send-home)) and typing into a pane for `worker.keys`, `worker.prompt` and `worker.answer` (see
   [Laptops](#laptops-screens-input-changes-and-usage)), through a narrow allowlist of `herdr` / `systemd-run` command
-  shapes (CONTRIBUTING "Bridge" lists them), plus a few typed `git` commands for hiring into a worktree, checking a
+  shapes (CONTRIBUTING "Bridge" lists them), plus (M10) two read-only probes of the `claude` and `codex` CLIs for the [plan
+  limits](#plan-limits), plus a few typed `git` commands for hiring into a worktree, checking a
   tree before sending its worker home and reading a worker's changes. Every other command only changes the bridge's
   own SQLite database.
 
@@ -109,6 +110,11 @@ is closed (status 1008). A `proto` other than `1` gets `unsupported_proto` and i
     "claude":{"models":["claude-opus-5-5","claude-fable-5-1","claude-sonnet-5-5"],"efforts":["low","medium","high","xhigh","max"]},
     "codex":{"models":["gpt-6-sol","gpt-6-luna","gpt-6-astra"],"efforts":["low","medium","high","xhigh","max"],
              "extra_efforts":{"gpt-6-sol":["ultra"],"gpt-6-astra":["ultra"]}}},
+  "limits":[
+    {"provider":"claude","plan":"team","at":1790702330276,"stale":false,"source":"probe",
+     "windows":[{"label":"5h","pct":11,"resets_at":1790711999725,"window_mins":300},
+                {"label":"week","pct":61.5,"resets_at":1790719199725,"window_mins":10080}]}
+  ],
   "presets":[
     {"id":"p_1a2b3c4d5e6f","name":"Build team","seeded":true,
      "roles":{"orch":{"harness":"claude","model":"claude-opus-5-5","effort":"medium"},
@@ -127,6 +133,11 @@ take. `floor.settings.set` validates `default_hire` against it; clients should r
 The bridge queries the installed Codex and Claude Code harnesses at startup; model order comes from each harness.
 `efforts` contains their common effort levels and `extra_efforts` preserves each model's additional levels. Either
 list may be empty. If discovery fails for one harness, only that harness uses the legacy fallback catalog.
+
+`limits` (M10) is the latest reading of each provider's plan limits, Claude first (see [Plan limits](#plan-limits));
+`[]` before the first reading. A bridge that does not read limits (`--no-limits`) leaves the key out, as a bridge from
+before M10 does: a client shows no limits widget without it (and none inline in the hire and start-run dialogs), and
+"Plan limits · reading…" only while the key is there and `[]`.
 
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
@@ -301,6 +312,7 @@ and remember the last `seq` applied.
 | `worker.status` | `id`, `session`, `workspace_id`, `status`, `prev_status`, `status_since`, `title` | only `status` and/or `title` changed (the hot path). `title` is always present, `""` when cleared; on a title-only change `prev_status` equals `status` and `status_since` does not move. |
 | `worker.removed` | `id`, `session`, `workspace_id`, `reason`? | the workspace closed, the session was deleted, or the identity changed. `reason` is `"sent_home"` when the removal comes from `worker.fire` (the game plays the walk-out); absent otherwise. |
 | `worker.usage` | `id`, `session`, `usage` | the worker's `usage` changed; at most once per 5 s per worker (see [Usage and cost](#usage-and-cost)) |
+| `limits.update` | `provider`, `plan`, `windows`, `at`, `stale`, `error`?, `source`?, `reached`?, `credits`? | a provider's plan limits were read (flat in the event, see [Plan limits](#plan-limits)); one per provider per read, about every 2 minutes while a client is connected |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
 
@@ -384,6 +396,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `preset.delete` | `{"id": string}` | — | `preset.removed`, then `floor.upsert` for the floors whose `last_preset` it was |
 | `run.prepare` | `{"session", "issue"? \| "text"? \| "work_item"?, "preset"?, "orch"?, "extra"?}` | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
 | `run.start` | `{"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
+| `limits.refresh` | `{}` | `{"queued": bool}`: `false` when the last refresh was less than 20 s ago | `limits.update` for both providers when queued (see [Plan limits](#plan-limits)) |
 | `board.watch` | `{"session"}` | `{"enabled": bool, "reason"?}`, then `board.issues` and `board.prs` to this connection (see [Boards](#boards-issues-and-pull-requests)) | — |
 | `board.unwatch` | `{"session"}` | — | — |
 | `board.refresh` | `{"session"}` | `{"queued": bool}` | the boards of the poll, to the watchers |
@@ -920,6 +933,59 @@ The bridge runs `gh` (flag `--gh`, env `HERDR_WORLD_GH`, default `gh` on `PATH`;
 one typed shape, `gh api graphql --method POST --input -`, with a fixed set of embedded documents (never a query from a
 client), 20 s per call, in a clean environment. Without `gh` the boards say `gh not found` and the write commands answer
 `provider_failed`.
+
+### Plan limits
+
+M10 (#12). The bridge reads how much of the Claude and Codex plans is used, so the game can show it always and warn
+before a hire or a run. It asks each CLI as a child of the bridge (the user's own sign-in; the bridge reads and stores
+no credentials), on a schedule, and only while a client is connected. A probe starts no conversation, costs no tokens
+and creates no session file (no new file under `~/.claude/projects`, no new Codex rollout).
+
+`limits.update` carries the fields of one provider's reading flat, and `world.snapshot`'s `limits` holds the latest of
+each (Claude, then Codex; a provider not read yet is absent):
+
+```json
+{"t":"limits.update","seq":1053,"provider":"claude","plan":"team","at":1790702330276,"stale":false,"source":"probe",
+ "windows":[{"label":"5h","pct":11,"resets_at":1790711999725,"window_mins":300},
+            {"label":"week","pct":61.5,"resets_at":1790719199725,"window_mins":10080},
+            {"label":"week","model":"Fable","pct":3,"resets_at":1790719200000,"window_mins":10080}]}
+{"t":"limits.update","seq":1054,"provider":"codex","plan":"prolite","at":1790702331876,"stale":false,"source":"probe",
+ "windows":[{"label":"week","pct":19,"resets_at":1791053830000,"window_mins":10080}],
+ "credits":{"has_credits":false,"unlimited":false,"balance":"0"}}
+```
+
+| field | meaning |
+|---|---|
+| `provider` | `claude` or `codex` |
+| `plan` | the subscription plan (`team`, `prolite`…), `""` when unknown |
+| `windows` | the usage windows: `label` (`5h`, `week`, or a length such as `3d`), `pct` (0–100, used), `resets_at` (unix ms, `0` unknown), `window_mins`, `reached` (a per-model window only, see below), and `model` on a per-model window (Claude's `model_scoped` weeks, or its older `seven_day_opus` / `seven_day_sonnet`; Codex's other limits from `rateLimitsByLimitId`). `[]` when there is no plan or no reading yet. |
+| `at` | when the reading was taken, unix ms (a transcript reading: when the Codex rollout recorded it) |
+| `stale` | not a fresh answer of the CLI: it comes from a transcript, or the last probe failed and this is the reading before. Clients also treat a reading older than 10 minutes as stale. |
+| `error` | why there is no fresh reading: `no_plan` (an API key, or signed out), `not_installed`, `timeout`, `failed` |
+| `source` | `probe`, or `transcript` |
+| `reached` | Codex's `rateLimitReachedType` of the account's own limit, present while it is reached. The `rateLimitReachedType` of a model's own limit (`rateLimitsByLimitId`) is not here: it is `reached` on that limit's windows, so a client warns about it only for that model. A model limit with no windows has nothing to carry it and is dropped. |
+| `credits` | Codex's `{"has_credits","unlimited","balance"}` |
+
+Unknown keys of the CLIs are ignored; the fields above are only ever added to.
+
+- **Claude**: `claude -p --input-format stream-json --output-format stream-json --verbose --tools '' --setting-sources ''
+  --strict-mcp-config --disable-slash-commands --no-session-persistence` in an empty temporary directory, with
+  `CLAUDECODE*` and `HERDR_*` removed from the environment. One line goes to its stdin, the `get_usage` control request;
+  the bridge reads lines until the `control_response` with `request_id` `usage`, then closes stdin. It gives up after 30 s
+  and kills the process 10 s after that (also when the process does not exit after answering).
+  `rate_limits_available: false` is `error: "no_plan"`.
+- **Codex**: `codex app-server` over stdio JSON-RPC: `initialize`, the `initialized` notification, then
+  `account/rateLimits/read`. When that fails, the fallback is the last `token_count` `rate_limits` of the newest Codex
+  rollouts (`--codex-sessions`), sent with `source: "transcript"`, `stale: true`, the time it was recorded as `at`, and
+  the probe's `error`.
+- **Schedule**: every 2 minutes while at least one client is connected (none: nothing is probed); `limits.refresh`
+  reads both at once, at most once every 20 s (else `{"queued": false}`); after 3 failures in a row a provider is read
+  every 10 minutes; one with no plan, or whose CLI is missing, every 30 minutes. `--claude` / `HERDR_WORLD_CLAUDE`,
+  `--codex` / `HERDR_WORLD_CODEX` name the executables (the systemd user manager's `PATH` may lack `~/.local/bin`);
+  `--no-limits` turns it off: `limits.refresh` is `unsupported` and the snapshot has no `limits` key (there is a `limits`
+  key, `[]` at first, exactly when the bridge reads limits). A refresh acknowledged while a read is running is not lost:
+  when that read ends, both providers are read again at once (the read that was running may predate the request).
+  A Codex CLI that is missing still falls back to the rollouts, when there are any.
 
 ### Laptops: screens, input, changes and usage
 

@@ -37,3 +37,18 @@
 .about-note[hidden] {
   display: none;
 }
+.about-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  cursor: pointer;
+}
+.about-switch input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--sun);
+}

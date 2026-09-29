@@ -23,6 +23,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitremote"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/limits"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -47,7 +48,9 @@ const (
 	EnvResumeTime = "HERDR_WORLD_RESUME_TIMEOUT"
 	EnvCodex      = "HERDR_WORLD_CODEX_SESSIONS"
 	EnvGit        = "HERDR_WORLD_GIT"
-	EnvGH         = "HERDR_WORLD_GH" // M7 boards
+	EnvGH         = "HERDR_WORLD_GH"     // M7 boards
+	EnvClaude     = "HERDR_WORLD_CLAUDE" // M10 limits
+	EnvCodexBin   = "HERDR_WORLD_CODEX"  // M10 limits
 	EnvFloorWarn  = "HERDR_WORLD_WARN_WORKERS_PER_FLOOR"
 	EnvFloorMax   = "HERDR_WORLD_MAX_WORKERS_PER_FLOOR"
 	EnvHostWarn   = "HERDR_WORLD_WARN_WORKERS"
@@ -242,7 +245,10 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	herdrBin := fs.String("herdr", envOr(EnvHerdr, "herdr"), "herdr executable ($"+EnvHerdr+")")
 	systemdRun := fs.String("systemd-run", envOr(EnvSystemdRun, "systemd-run"), "systemd-run executable, to wake floors ($"+EnvSystemdRun+")")
 	gitBin := fs.String("git", envOr(EnvGit, "git"), "git executable, for worktree hires and send-home checks ($"+EnvGit+")")
-	ghBin := fs.String("gh", envOr(EnvGH, "gh"), "gh executable, for the issue and pull request boards ($"+EnvGH+")") // M7 boards
+	ghBin := fs.String("gh", envOr(EnvGH, "gh"), "gh executable, for the issue and pull request boards ($"+EnvGH+")")           // M7 boards
+	claudeBin := fs.String("claude", envOr(EnvClaude, "claude"), "claude executable, to read the plan limits ($"+EnvClaude+")") // M10 limits
+	codexBin := fs.String("codex", envOr(EnvCodexBin, "codex"), "codex executable, to read the plan limits ($"+EnvCodexBin+")") // M10 limits
+	noLimits := fs.Bool("no-limits", false, "do not read the Claude and Codex plan limits")                                     // M10 limits
 	codexSessions := fs.String("codex-sessions", envOr(EnvCodex, codex.DefaultSessionsDir()), "Codex rollout directory, for the sleep backfill and usage ($"+EnvCodex+")")
 	claudeProjects := fs.String("claude-projects", envOr(EnvClaudeProjects, usage.DefaultClaudeProjects()), "Claude Code transcript directory, for usage ($"+EnvClaudeProjects+")")
 	codexCLI := fs.String("codex-cli", envOr(EnvCodexCLI, "codex"), "Codex binary for model discovery ($"+EnvCodexCLI+")")
@@ -308,6 +314,10 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 			return fmt.Errorf("-sessions: %w", err)
 		}
 	}
+	var lim *limits.Config
+	if !*noLimits { // M10 limits
+		lim = &limits.Config{ClaudeBin: *claudeBin, CodexBin: *codexBin, CodexSessions: *codexSessions, Log: log}
+	}
 	hireOptions := discoverHireOptions(ctx, log, *codexCLI, *claudeCLI)
 	if err := ctx.Err(); err != nil {
 		return err
@@ -322,6 +332,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		MaxWatches: maxWatches, MaxObservers: maxObservers,
 		RunsDir: *runsDir,                                     // M6 runs
 		Boards:  GitHubBoards(&githubcli.Client{Bin: *ghBin}), // M7 boards
+		Limits:  lim,                                          // M10 limits
 	})
 }
 
@@ -384,6 +395,10 @@ type ServeConfig struct {
 	// defaults).
 	Boards                                                    server.BoardFactory
 	BoardWatchPoll, BoardIdlePoll, BoardRefreshMin, BoardTick time.Duration
+
+	// M10 limits: reads the Claude and Codex plan limits while a client is
+	// connected (nil: none).
+	Limits *limits.Config
 }
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
@@ -417,6 +432,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	opts.Boards = cfg.Boards                                    // M7 boards
 	opts.BoardWatchPoll, opts.BoardIdlePoll, opts.BoardRefreshMin, opts.BoardTick =
 		cfg.BoardWatchPoll, cfg.BoardIdlePoll, cfg.BoardRefreshMin, cfg.BoardTick
+	opts.Limits = cfg.Limits // M10 limits
 	opts.Caps, opts.HireOptions, opts.Load = cfg.Caps, cfg.HireOptions, server.HostLoad
 	opts.TrustTimeout, opts.SeenTimeout, opts.ExitTimeout = cfg.TrustTimeout, cfg.SeenTimeout, cfg.ExitTimeout
 	if dir := cfg.CodexSessions; dir != "" {

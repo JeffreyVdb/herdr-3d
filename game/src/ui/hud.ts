@@ -7,6 +7,7 @@ import { CHIP_TEXT } from '../world/derive';
 import { ICON as DOM_ICON } from './dom';
 import { mountAudioControls } from './audioControls';
 import { AboutDialog } from './about';
+import type { LimitsPrefs } from './limitsPrefs';
 import { MusicCredits } from './credits';
 import type { BuildInfo } from '../version';
 import { answerKeyEls, promptBarAria, promptBarKey, usageChip } from './promptBar';
@@ -195,8 +196,8 @@ export class Hud {
   }
 
   /** The About panel (build versions), opened from the top bar's info button. */
-  mountAbout(info: BuildInfo): { dispose(): void } {
-    const about = new AboutDialog(this.root.parentElement ?? this.root, info);
+  mountAbout(info: BuildInfo, limits?: LimitsPrefs): { dispose(): void } {
+    const about = new AboutDialog(this.root.parentElement ?? this.root, info, limits);
     const open = () => about.open(this.about);
     this.about.addEventListener('click', open);
     return {

@@ -13,11 +13,13 @@ import (
 	"regexp"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
+	"github.com/JeffreyVdb/herdr-3d/internal/limits"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
@@ -145,6 +147,10 @@ type Options struct {
 	// poller looks for a floor that is due (defaults DefaultBoardWatchPoll,
 	// DefaultBoardIdlePoll, DefaultBoardRefreshMin, DefaultBoardTick).
 	BoardWatchPoll, BoardIdlePoll, BoardRefreshMin, BoardTick time.Duration
+
+	// M10 limits: reads the Claude and Codex plan limits while a client is
+	// connected (nil: none, and limits.refresh fails with unsupported).
+	Limits *limits.Config
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -210,6 +216,11 @@ type Hub struct {
 	runs runsState // M6 runs
 
 	boards boardsState // M7 boards
+
+	// M10 limits
+	limits       map[string]proto.Limits // by provider, as last published
+	limitsPoller *limits.Poller
+	nclients     atomic.Int32 // len(clients), for the poller
 }
 
 type floorState struct {
@@ -368,6 +379,8 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		rescan:        make(chan struct{}, 1),
 		suggest:       make(chan suggestJob, 256),
 		usage:         map[string]*proto.Usage{},
+		limits:        map[string]proto.Limits{},
+		limitsPoller:  newLimitsPoller(opts.Limits),
 	}
 	h.initTerm() // M5 term
 	h.initRuns() // M6 runs
@@ -437,6 +450,10 @@ func (h *Hub) Run(ctx context.Context) error {
 		h.wg.Add(1)
 		go h.trackReports(ctx)
 	}
+	if h.limitsPoller != nil { // M10 limits
+		h.wg.Add(1)
+		go h.trackLimits(ctx)
+	}
 	var boardC <-chan time.Time // M7 boards
 	if h.opts.Boards != nil {
 		t := time.NewTicker(h.opts.BoardTick)
@@ -491,6 +508,7 @@ func (h *Hub) Join(ctx context.Context, c *Client, hello proto.Hello) error {
 			}
 		}
 		h.clients[c] = struct{}{}
+		h.setClients()
 		h.deliver(c, mustJSON(proto.Welcome{
 			T: proto.TWelcome, Proto: proto.Version, ServerSeq: h.seq, Epoch: h.epoch, Resume: resume, Server: h.opts.Server,
 		}))
@@ -508,6 +526,7 @@ func (h *Hub) Join(ctx context.Context, c *Client, hello proto.Hello) error {
 func (h *Hub) Leave(c *Client) {
 	_ = h.do(context.Background(), func(context.Context) {
 		delete(h.clients, c)
+		h.setClients()
 		h.dropWatches(c)    // M5 term
 		h.dropBoardWatch(c) // M7 boards
 	})
@@ -555,6 +574,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startRunPrepare
 		case proto.CmdRunStart:
 			start = h.startRunStart
+		case proto.CmdLimitsRefresh: // M10 limits
+			start = h.startLimitsRefresh
 		// M7 boards
 		case proto.CmdBoardWatch:
 			start = h.startBoardWatch
@@ -1450,7 +1471,7 @@ func (h *Hub) syncLayout() {
 func (h *Hub) snapshot() proto.Snapshot {
 	hire := h.hireOptions()
 	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
-		HireOptions: &hire, Presets: h.presetViews()} // M6 launch: presets
+		HireOptions: &hire, Presets: h.presetViews(), Limits: h.limitsViews()} // M6 launch: presets; M10 limits
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {
@@ -1507,6 +1528,7 @@ func (h *Hub) deliver(c *Client, msg []byte) {
 	case c.send <- msg:
 	default:
 		delete(h.clients, c)
+		h.setClients()
 		h.log.Warn("dropping slow client", "client", c.name, "queue", cap(c.send))
 		c.kick(ErrSlowConsumer)
 	}

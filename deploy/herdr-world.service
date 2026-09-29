@@ -18,6 +18,9 @@ Type=simple
 ExecStart=%h/.local/bin/herdr-world serve
 # The user manager's PATH may not include ~/.local/bin, where herdr lives.
 Environment=HERDR_WORLD_HERDR=%h/.local/bin/herdr
+# The plan limits (M10) are read by running claude and codex, as this user.
+Environment=HERDR_WORLD_CLAUDE=%h/.local/bin/claude
+Environment=HERDR_WORLD_CODEX=%h/.local/bin/codex
 Environment=HERDR_WORLD_LOG_LEVEL=info
 # Socket dir and database dir, both private. The bridge also creates and
 # checks them itself; the database is $XDG_STATE_HOME/herdr-world/world.db.
