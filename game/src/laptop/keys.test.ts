@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { KeyItem } from '../net/protocol';
-import { InputQueue, KEY_NAMES, MAX_ITEMS, MAX_TEXT, mergeItems, seatedKey, takeBatch, textItems, type KeyLike } from './keys';
+import { InputLanes, InputQueue, KEY_NAMES, MAX_ITEMS, MAX_TEXT, mergeItems, seatedKey, takeBatch, textItems, type KeyLike } from './keys';
 
 const kd = (key: string, o: Partial<KeyLike> = {}): KeyLike => ({
   key,
@@ -208,5 +208,86 @@ describe('InputQueue', () => {
     await h.ok(0);
     expect(h.calls).toHaveLength(1);
     expect(h.q.pending).toBe(false);
+  });
+});
+
+describe('InputLanes', () => {
+  function lanes() {
+    const calls: Array<{ id: string; t: string; v: unknown; resolve: (r: CommandResult) => void }> = [];
+    const done: Array<[string, string, boolean]> = [];
+    const l = new InputLanes(
+      (id, settled) =>
+        new InputQueue(
+          {
+            keys: (items) => new Promise((resolve) => calls.push({ id, t: 'keys', v: items, resolve })),
+            prompt: (text) => new Promise((resolve) => calls.push({ id, t: 'prompt', v: text, resolve })),
+            done: (k, r) => {
+              done.push([id, k, r.ok]);
+              settled();
+            },
+          },
+          () => false,
+        ),
+    );
+    const answer = async (i: number, r: CommandResult = { ok: true, data: undefined }) => {
+      calls[i]?.resolve(r);
+      await Promise.resolve();
+      await Promise.resolve();
+    };
+    return { l, calls, done, answer };
+  }
+
+  it('standing up while a paste is on its way still sends what was typed after it, in order', async () => {
+    const h = lanes();
+    const q = h.l.sit('zippy');
+    q.paste('First pasted prompt');
+    q.keys([{ text: 'second input' }, { key: 'enter' }]);
+    expect(h.calls.map((c) => c.t)).toEqual(['prompt']);
+    h.l.stand();
+    expect(h.l.draining()).toEqual(['zippy']);
+    await h.answer(0);
+    expect(h.calls.map((c) => [c.id, c.t, c.v])).toEqual([
+      ['zippy', 'prompt', 'First pasted prompt'],
+      ['zippy', 'keys', [{ text: 'second input' }, { key: 'enter' }]],
+    ]);
+    await h.answer(1);
+    expect(h.l.draining()).toEqual([]);
+    expect(h.done).toEqual([
+      ['zippy', 'prompt', true],
+      ['zippy', 'keys', true],
+    ]);
+  });
+
+  it('sitting down again at that worker types behind what is still going out; another worker has its own lane', async () => {
+    const h = lanes();
+    h.l.sit('zippy').keys([{ text: 'a' }]);
+    h.l.sit('zippy').keys([{ text: 'b' }]); // (sit stands you up first)
+    expect(h.calls).toHaveLength(1);
+    h.l.stand();
+    const q = h.l.sit('zippy');
+    q.keys([{ text: 'c' }]);
+    await h.answer(0);
+    expect(h.calls.map((c) => c.v)).toEqual([[{ text: 'a' }], [{ text: 'bc' }]]);
+    h.l.sit('pebble').keys([{ text: 'p' }]);
+    expect(h.calls.map((c) => c.id)).toEqual(['zippy', 'zippy', 'pebble']);
+    expect(h.l.draining()).toEqual(['zippy']);
+    // A failure while draining is still an answer (the game shows it); the lane goes when empty.
+    await h.answer(1, { ok: false, code: 'input_failed', message: 'input_failed: no' });
+    expect(h.done.at(-1)).toEqual(['zippy', 'keys', false]);
+    expect(h.l.draining()).toEqual([]);
+  });
+
+  it('an idle lane goes as you stand; clear drops what is not sent', async () => {
+    const h = lanes();
+    h.l.sit('zippy');
+    h.l.stand();
+    expect(h.l.draining()).toEqual([]);
+    const q = h.l.sit('pebble');
+    q.keys([{ text: 'a' }]);
+    q.keys([{ text: 'b' }]);
+    h.l.clear();
+    await h.answer(0);
+    expect(h.calls).toHaveLength(1);
+    expect(h.l.draining()).toEqual([]);
   });
 });

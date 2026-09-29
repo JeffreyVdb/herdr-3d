@@ -7,7 +7,7 @@ import { ScreenMeshes } from '../render/screens';
 import { failureText } from '../ui/messages';
 import type { WorldStore } from '../world/store';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
-import { InputQueue, seatedKey, textItems } from './keys';
+import { InputLanes, InputQueue, seatedKey, textItems } from './keys';
 import { LaptopTerminal, LIVE_SIZE } from './terminal';
 import { Watches } from './watches';
 
@@ -106,6 +106,21 @@ export class Laptops {
   /** The camera gliding back after you stood up. */
   private leaving: { t0: number; from: { pos: THREE.Vector3; quat: THREE.Quaternion } } | null = null;
   private input: InputQueue | null = null;
+  /** Seated input per worker: kept after you stand up until it is sent. */
+  private readonly lanes = new InputLanes(
+    (id, settled) =>
+      new InputQueue(
+        {
+          keys: (input) => this.host.send('worker.keys', { id, input }),
+          prompt: (text) => this.host.send('worker.prompt', { id, text }),
+          done: (kind, r) => {
+            this.inputDone(id, kind, r);
+            settled();
+          },
+        },
+        () => !this.host.store.workers.get(id)?.agent_kind,
+      ),
+  );
   private lastPlan = -Infinity;
   private asleep = false;
   private connected = false;
@@ -258,14 +273,7 @@ export class Laptops {
     const h = Math.round(Math.min(1400, Math.max(560, window.innerHeight * Math.min(2, window.devicePixelRatio || 1) * 0.9)));
     this.seatedSize = { width: Math.round(h * 1.55), height: h };
     this.terms.get(id)?.setSize(this.seatedSize.width, this.seatedSize.height);
-    this.input = new InputQueue(
-      {
-        keys: (input) => this.host.send('worker.keys', { id, input }),
-        prompt: (text) => this.host.send('worker.prompt', { id, text }),
-        done: (kind, r) => this.inputDone(id, kind, r),
-      },
-      () => !this.host.store.workers.get(id)?.agent_kind,
-    );
+    this.input = this.lanes.sit(id);
     this.host.seat.show(v.name, this.mac);
     this.host.seat.status('ok', null);
     this.host.seat.focus();
@@ -277,12 +285,16 @@ export class Laptops {
     return null;
   }
 
-  /** Gets you up: the seated watch ends at once; `why` says so in a toast (a teleport snaps the camera back). */
+  /**
+   * Gets you up: the seated watch ends at once; `why` says so in a toast (a
+   * teleport snaps the camera back). What you typed that has not gone out
+   * yet still goes, in order (a failure then is a toast).
+   */
   stand(why: string | null = null, snap = false): void {
     const s = this.seat;
     if (!s) return;
     this.seat = null;
-    this.input?.clear();
+    this.lanes.stand();
     this.input = null;
     s.office.setLean(null);
     s.office.setAtLaptop(false);
@@ -317,7 +329,14 @@ export class Laptops {
   }
 
   private inputDone(id: string, kind: 'keys' | 'prompt', r: CommandResult): void {
-    if (this.seat?.id !== id) return;
+    if (this.seat?.id !== id) {
+      // Sent after you stood up: only a failure is worth a word.
+      if (r.ok) return;
+      const who = this.host.store.workerView(id)?.name ?? 'the worker';
+      const why = r.code === 'offline' || r.code === 'disconnected' ? 'not connected to herdr-world' : r.message.replace(/^(input_failed|prompt_failed|bad args|bad_request):\s*/, '') || r.code;
+      this.host.toast(kind === 'keys' ? `What you typed didn’t reach ${who}: ${why}` : `Your paste didn’t reach ${who}: ${why}`, 'error');
+      return;
+    }
     const name = this.seat.name;
     if (r.ok) {
       if (kind === 'prompt') this.host.seat.status('ok', `Pasted into ${name}’s terminal`);
@@ -544,6 +563,7 @@ export class Laptops {
 
   dispose(): void {
     this.stand(null, true);
+    this.lanes.clear();
     this.attach(null);
     for (const t of [...this.terms.values(), ...this.pool]) t.dispose();
     this.terms.clear();

@@ -500,7 +500,8 @@ laptop fills the view, at 10 fps. Everything you type goes to its terminal (lett
 Home / End / Page keys, F1–F12, Backspace, Delete, Ctrl+letter; the game's own keys too), **Cmd+V** (Ctrl+V off a Mac)
 pastes (as a prompt to an agent, typed into a plain shell), **Shift+Esc** sends Esc, **Esc** (or the seat bar's Stand
 up) gets you up; so do the elevator, another floor, a panel, the plan or a teleport, and the worker leaving or its floor
-going to sleep (a toast says why). Typing that fails shows in the seat bar. E is disabled, with the reason, on an asleep
+going to sleep (a toast says why). Typing that fails shows in the seat bar. Getting up drops nothing you typed: what is
+still on its way (behind a slow paste, say) goes on, in order, and a failure then is a toast. E is disabled, with the reason, on an asleep
 floor, for a worker without a pane, and against a bridge without `terminal.watch`.
 
 Prompts, changes and quick replies (M5): look at a worker and press **P** to prompt it: the overlay sits low so the

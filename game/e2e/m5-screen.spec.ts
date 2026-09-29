@@ -263,6 +263,41 @@ test('standing up leaves the laptop showing its last frame, not a blank one (scr
   clean();
 });
 
+test('standing up while a paste is on its way still sends what you typed after it, in order', async ({ page }) => {
+  const clean = watchErrors(page);
+  // demo-m5: Zippy (desk 18) is an idle claude; a slow simulator (1.5 s per step) holds the paste's worker.prompt.
+  await openGame(page, 'demo-m5', '&screens=0', 'play=none&sim=1&simms=1500');
+  await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
+  await frames(page, 3);
+  const L = await page.evaluate((s) => window.__h3d.layout(s), FLOOR);
+  if (!L) throw new Error('no layout');
+  const zippy = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === FLOOR)?.workers.find((w) => w.name === 'Zippy');
+  if (!zippy) throw new Error('no Zippy');
+  await faceWorker(page, L, zippy.desk);
+  await page.keyboard.press('KeyE');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(zippy.id);
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', 'First pasted prompt');
+    document.querySelector('.seat-input')?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  await page.keyboard.type('second input');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => window.__h3d.seated())).toBeNull();
+  expect(await sentOf(page, 'worker.keys')).toEqual([]); // still behind the paste
+  const typed = async () =>
+    (await sentOf(page, 'worker.keys'))
+      .flatMap((c) => (c.args as { input: Array<{ text?: string; key?: string }> }).input)
+      .map((k) => k.text ?? `<${k.key}>`)
+      .join('');
+  await expect.poll(typed, { timeout: 10_000 }).toBe('second input<enter>');
+  const order = (await page.evaluate(() => window.__h3d.sent())).map((c) => c.t).filter((t) => t === 'worker.prompt' || t === 'worker.keys');
+  expect(order[0]).toBe('worker.prompt');
+  expect(await sentOf(page, 'worker.prompt')).toEqual([expect.objectContaining({ args: { id: zippy.id, text: 'First pasted prompt' } })]);
+  clean();
+});
+
 test('20 sit / stand cycles leave no watch behind (screens=0)', async ({ page }) => {
   const clean = watchErrors(page);
   const { L, ids } = await enter(page, '&screens=0');

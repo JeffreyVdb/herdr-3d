@@ -267,3 +267,51 @@ export class InputQueue {
     });
   }
 }
+
+/**
+ * Seated input per worker. Standing up does not drop what you typed: the
+ * worker's lane keeps sending what it accepted, in order, and goes once it
+ * is empty; sitting down at that worker again types into the same lane,
+ * behind it.
+ */
+export class InputLanes {
+  private readonly lanes = new Map<string, InputQueue>();
+  private seated: string | null = null;
+
+  /** `make` builds a worker's lane; its sender calls `settled` after each answer. */
+  constructor(private readonly make: (id: string, settled: () => void) => InputQueue) {}
+
+  /** You sit at `id`: its lane (the one still sending for it, if any). */
+  sit(id: string): InputQueue {
+    this.stand();
+    this.seated = id;
+    let q = this.lanes.get(id);
+    if (!q) {
+      const lane = this.make(id, () => {
+        if (this.seated !== id && !lane.pending && this.lanes.get(id) === lane) this.lanes.delete(id);
+      });
+      q = lane;
+      this.lanes.set(id, q);
+    }
+    return q;
+  }
+
+  /** You stood up: the lane goes once it has sent what it has. */
+  stand(): void {
+    const id = this.seated;
+    this.seated = null;
+    if (id !== null && !this.lanes.get(id)?.pending) this.lanes.delete(id);
+  }
+
+  /** Workers whose lanes still send after you stood up (tests). */
+  draining(): string[] {
+    return [...this.lanes.keys()].filter((id) => id !== this.seated);
+  }
+
+  /** Drops everything not sent yet (the game goes away). */
+  clear(): void {
+    for (const q of this.lanes.values()) q.clear();
+    this.lanes.clear();
+    this.seated = null;
+  }
+}
