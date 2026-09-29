@@ -164,6 +164,7 @@ export class Arrivals {
   private readonly lapM = new THREE.Matrix4();
   private readonly m = new THREE.Matrix4();
   private readonly m2 = new THREE.Matrix4();
+  private readonly penM = new THREE.Matrix4();
   private readonly v = new THREE.Vector3();
   private readonly pos = new THREE.Vector3();
   private readonly scl = new THREE.Vector3();
@@ -445,7 +446,8 @@ export class Arrivals {
         const idx = item.kind === 'photo' ? a.slot * 2 + item.n : a.slot;
         if (item.kind === 'notebook') {
           P.notebook.setMatrixAt(idx, m);
-          for (let k = 0; k < item.pens; k++) P.pens.setMatrixAt(a.slot * 2 + k, this.m2.multiplyMatrices(m, PEN_AT[k] as THREE.Matrix4));
+          // Each pen from the notebook's own matrix (`m` may be `m2`).
+          for (let k = 0; k < item.pens; k++) P.pens.setMatrixAt(a.slot * 2 + k, this.penM.multiplyMatrices(m, PEN_AT[k] as THREE.Matrix4));
         } else P[item.kind].setMatrixAt(idx, m);
       });
     }

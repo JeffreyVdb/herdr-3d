@@ -8,6 +8,7 @@ import { deskKit } from '../world/deskKit';
 import { floorLayout, outlineOf } from '../world/layout';
 import { walkOutRoute } from '../world/route';
 import { Arrivals, type ArrivalSpec } from './arrivals';
+import { PEN_AT } from './desks';
 
 const counts = [12, 8];
 const outline = outlineOf(counts);
@@ -15,11 +16,18 @@ const floors = counts.map((n) => floorLayout(n, outline));
 const plan = buildingPlan(outline, counts.length, floors[0]!.fireDoor);
 const DESK = 5;
 
-function spec(id: string, kind: 'in' | 'out'): ArrivalSpec {
-  const slot = floors[1]!.slots[DESK]!;
-  const route = kind === 'out' ? walkOutRoute(floors[1]!, plan, 1, DESK) : [{ x: slot.seat.x, y: floorY(1), z: slot.seat.z }];
-  return { id, kind, session: 'f', desk: DESK, name: id, route, seatYaw: slot.yaw, tint: 0x88aaff, cue: { family: 'opus', color: 0xff8844, hat: 'none' }, display: 'working', phase: 0, harness: 'codex' };
+function spec(id: string, kind: 'in' | 'out', desk = DESK): ArrivalSpec {
+  const slot = floors[1]!.slots[desk]!;
+  const route = kind === 'out' ? walkOutRoute(floors[1]!, plan, 1, desk) : [{ x: slot.seat.x, y: floorY(1), z: slot.seat.z }];
+  return { id, kind, session: 'f', desk, name: id, route, seatYaw: slot.yaw, tint: 0x88aaff, cue: { family: 'opus', color: 0xff8844, hat: 'none' }, display: 'working', phase: 0, harness: 'codex' };
 }
+
+const part = (a: Arrivals, key: string) => a.group.getObjectByName(`arrivals.${key}`) as THREE.InstancedMesh;
+const matrixAt = (m: THREE.InstancedMesh, i: number) => {
+  const e = new THREE.Matrix4();
+  m.getMatrixAt(i, e);
+  return e;
+};
 
 const zero = (m: THREE.InstancedMesh, i: number) => {
   const e = new THREE.Matrix4();
@@ -51,6 +59,25 @@ describe('Arrivals', () => {
     expect(a.update(past + DROP_S + 0.01, past)).toEqual([{ session: 'f', desk: DESK, away: null, drop: null }]);
     expect(a.log.at(-1)).toMatchObject({ id: 'gumdrop', kind: 'in', played: true });
     expect(a.count).toBe(1);
+  });
+
+  it('a packed notebook takes both its pens along, each where it lies on it', () => {
+    // A desk whose notebook has two pens.
+    const desk = floors[1]!.slots.findIndex((s) => deskKit(s).items.some((i) => i.kind === 'notebook' && i.pens === 2));
+    expect(desk).toBeGreaterThanOrEqual(0);
+    const a = new Arrivals(false);
+    a.start(spec('pip', 'out', desk), 0);
+    // Everything packed, carried out.
+    const t = PACK_S + STAND_S + 1;
+    a.update(t, t);
+    expect(a.info(t)[0]).toMatchObject({ phase: 'walk', box: 'carried' });
+    const nb = matrixAt(part(a, 'notebook'), 0);
+    expect(zero(part(a, 'notebook'), 0)).toBe(false);
+    for (let k = 0; k < 2; k++) {
+      const want = nb.clone().multiply(PEN_AT[k]!);
+      const got = matrixAt(part(a, 'pens'), k);
+      got.elements.forEach((x, i) => expect(x, `pen ${k} [${i}]`).toBeCloseTo(want.elements[i]!, 4));
+    }
   });
 
   it('draws the props as one InstancedMesh per part, one instance per walker, hidden when nobody walks', () => {
