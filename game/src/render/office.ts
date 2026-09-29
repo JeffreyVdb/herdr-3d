@@ -1,10 +1,11 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { pickNearest, rayBox, type Pickable, type V3 } from '../world/collide';
-import { hash32, modelCue, taskLine, type Display } from '../world/derive';
+import { hash32, modelCue, type Display } from '../world/derive';
 import { DESK_H, floorLayout, MEZZ_Y, seatRect, slotBoxes, wallPieces, type Box3, type FloorLayout, type Opening, type Outline, type Rect } from '../world/layout';
 import type { FloorView, WorkerView } from '../world/store';
 import { AtlasCards } from './cards/atlasCards';
+import { cardOf } from './cards/cardOf';
 import { CARD_RANGE, cardWeight, OVERLOOK_CARD_RANGE } from './cards/select';
 import type { CardData } from './cards/types';
 import { Crowd } from './crowd';
@@ -96,6 +97,8 @@ export class OfficeView {
   private cardCam: THREE.PerspectiveCamera | null = null;
   /** M4: desks someone is walking in to or packing up at (see `setAway`). */
   private readonly away = new Map<number, AwaySeat>();
+  /** M5: the looked-at worker, whose card shows its usage. */
+  private focusId: string | null = null;
 
   constructor(view: FloorView, o: OfficeOptions) {
     this.session = view.session;
@@ -305,6 +308,16 @@ export class OfficeView {
     this.setSeat(v.desk, v);
   }
 
+  /** M5: the worker you look at: its card adds its usage line (null: nobody). */
+  setFocus(id: string | null): void {
+    if (id === this.focusId) return;
+    const prev = this.focusId;
+    this.focusId = id;
+    this.seats.forEach((v, i) => {
+      if (v && (v.worker.id === prev || v.worker.id === id)) this.setSeat(i, v);
+    });
+  }
+
   /** M4: shows a desk as `a` says instead of as the world does (null: as the world does again). */
   setAway(desk: number, a: AwaySeat | null): void {
     const cur = this.away.get(desk) ?? null;
@@ -342,7 +355,7 @@ export class OfficeView {
     if (v && mem) {
       this.crowd.set(i, { x: s.seat.x, y: SEAT_Y, z: s.seat.z, yaw: s.yaw, scale: 1, ...mem });
       this.anchors[i] = new THREE.Vector3(s.seat.x, CARD_Y, s.seat.z);
-      this.cards.setCard(i, { name: v.name, display: v.display, task: taskLine(v.worker) });
+      this.cards.setCard(i, cardOf(v, v.worker.id === this.focusId));
       this.applied.set(v.worker.id, v.display);
     } else {
       this.crowd.set(i, null);
@@ -415,11 +428,12 @@ export class OfficeView {
     return pickNearest(origin, dir, ownDesk ? this.targetOwnCache : this.targetCache, reach, this.blockers)?.value ?? null;
   }
 
-  /** Cards on screen with what they say (tests). */
-  shownCards(): Array<CardData & { desk: number }> {
+  /** Cards on screen with what they say (tests); M5: `tall` when drawn with the question / usage room. */
+  shownCards(): Array<CardData & { desk: number; tall: boolean }> {
+    const tall = new Set(this.cards.shownTall());
     return this.cards.shown().flatMap((desk) => {
       const c = this.cards.card(desk);
-      return c ? [{ desk, ...c }] : [];
+      return c ? [{ desk, ...c, tall: tall.has(desk) }] : [];
     });
   }
 
