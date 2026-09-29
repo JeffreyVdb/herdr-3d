@@ -52,8 +52,9 @@ type fakeTracker struct {
 	polls int
 	calls []string
 	// answers of the other calls
-	detail tracker.Detail
-	failOn map[string]error // by method name
+	detail  tracker.Detail
+	failOn  map[string]error // by method name
+	missing map[string]bool  // ids that Get does not find
 }
 
 func (f *fakeTracker) Info() tracker.Info {
@@ -107,6 +108,11 @@ func (f *fakeTracker) set(fn func(f *fakeTracker)) {
 func (f *fakeTracker) Get(_ context.Context, id string) (tracker.Detail, error) {
 	if err := f.record("get", "%s", id); err != nil {
 		return tracker.Detail{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.missing[id] {
+		return tracker.Detail{}, provider.Errorf(provider.ErrNotFound, "%s is not on %s", id, f.repo)
 	}
 	return f.detail, nil
 }

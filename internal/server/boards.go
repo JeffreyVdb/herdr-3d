@@ -501,6 +501,11 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, res po
 		for _, r := range p.PRs {
 			open = append(open, r.ID)
 		}
+		for _, id := range res.prs.Watch { // still open, or unreadable: watched on
+			if !slices.Contains(open, id) {
+				open = append(open, id)
+			}
+		}
 		// A merge rings once, ever: not the ones announced before (also across
 		// a restart), and never on the replay of the cache.
 		for _, m := range res.prs.Merged {
@@ -670,33 +675,49 @@ func (h *Hub) unwatched(session string) {
 // run.start's work_item): the floor's issue provider must be the one the
 // card names, and the card must be on its board. GitHub's item is an issue
 // of the floor's repo, so it goes the M6 issue way, its URL in the prompt.
-func (h *Hub) workItemTicket(session string, item *proto.WorkItemRef) (*proto.RunTicket, error) {
+// A floor with no polled board yet has nothing to look the card up in: the
+// returned check (nil once the board is known, or when verified) asks the
+// provider for it, and must run off the hub goroutine before the ticket is
+// used.
+func (h *Hub) workItemTicket(session string, item *proto.WorkItemRef, verified bool) (*proto.RunTicket, func(context.Context) error, error) {
 	nf := func(format string, args ...any) error {
 		return fmt.Errorf("%w: %s", store.ErrNotFound, fmt.Sprintf(format, args...))
 	}
 	bf := h.boardOf(session)
 	if bf == nil {
-		return nil, nf("work_item: the floor has no issue provider")
+		return nil, nil, nf("work_item: the floor has no issue provider")
 	}
 	if item.Provider != bf.info.ID {
-		return nil, nf("work_item: the floor's issues are not from %q", item.Provider)
+		return nil, nil, nf("work_item: the floor's issues are not from %q", item.Provider)
 	}
 	rl, ok := bf.set.Tracker.(tracker.RunLinker)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s items cannot start a run", errUnsupported, bf.info.Name)
+		return nil, nil, fmt.Errorf("%w: %s items cannot start a run", errUnsupported, bf.info.Name)
 	}
 	repo, n, url, ok := rl.RunFromItem(item.ID)
 	if !ok {
-		return nil, nf("work_item %q is not an item of this floor", item.ID)
+		return nil, nil, nf("work_item %q is not an item of this floor", item.ID)
 	}
+	ticket := &proto.RunTicket{Kind: proto.TicketIssue, Repo: repo, Number: n, URL: url}
 	if bf.issues != nil && !bf.fetchedAt.IsZero() {
-		found := false
 		for _, c := range bf.issues.Cards {
-			found = found || c.ID == item.ID
+			if c.ID == item.ID {
+				return ticket, nil, nil
+			}
 		}
-		if !found {
-			return nil, nf("work_item %q is not on the floor's board", item.ID)
-		}
+		return nil, nil, nf("work_item %q is not on the floor's board", item.ID)
 	}
-	return &proto.RunTicket{Kind: proto.TicketIssue, Repo: repo, Number: n, URL: url}, nil
+	if verified {
+		return ticket, nil, nil
+	}
+	tr, id := bf.set.Tracker, item.ID
+	return ticket, func(ctx context.Context) error {
+		if _, err := tr.Get(ctx, id); err != nil {
+			if errors.Is(err, provider.ErrNotFound) {
+				return nf("work_item %q is not an item of this floor", id)
+			}
+			return err
+		}
+		return nil
+	}, nil
 }

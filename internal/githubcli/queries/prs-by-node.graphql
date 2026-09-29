@@ -1,0 +1,4 @@
+query PRsByNode($ids:[ID!]!) {
+  previouslyOpenPRs: nodes(ids:$ids) { ... on PullRequest { id number title url state mergedAt closingIssuesReferences(first:100) { nodes { number repository { nameWithOwner } } } } }
+  rateLimit { cost limit remaining resetAt }
+}

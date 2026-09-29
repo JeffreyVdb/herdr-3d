@@ -35,8 +35,8 @@ func TestGitHubAllowlist(t *testing.T) {
 	if want := []string{"{gh}", "api", "graphql", "--method", "POST", "--input", "-"}; !slices.Equal(argv, want) {
 		t.Fatalf("argv = %q", argv)
 	}
-	want := []Doc{"add-comment", "add-project-item", "close-issue", "create-pr", "feed", "issue-detail", "issue-node", "merge-pr",
-		"open-issues-page", "open-pr-for-head", "open-prs-page", "pr-detail", "pr-node", "set-status", "status-target"}
+	want := []Doc{"add-comment", "add-project-item", "close-issue", "closed-issues-page", "create-pr", "feed", "issue-detail", "issue-node", "merge-pr",
+		"open-issues-page", "open-pr-for-head", "open-prs-page", "pr-detail", "pr-node", "pr-nodes", "prs-by-node", "set-status", "status-target"}
 	if got := Docs(); !slices.Equal(got, want) {
 		t.Fatalf("documents = %q", got)
 	}
