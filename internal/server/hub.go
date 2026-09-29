@@ -94,6 +94,27 @@ type Options struct {
 	// ExitPause the pause between Codex's /quit and Enter (defaults 250 ms,
 	// 400 ms).
 	HirePoll, ExitPause time.Duration
+
+	// M5 term: the laptops.
+	// Term watches panes and types into them (nil: the laptop commands
+	// fail with internal, no questions are read).
+	Term TermHerdr
+	// PaneSize is a pane's size in cells, the observer's default size
+	// (nil or not ok: 120 × 40).
+	PaneSize func(ctx context.Context, socket, pane string) (cols, rows int, ok bool)
+	// MaxWatches caps the watches of one connection, MaxObservers all of
+	// them (defaults DefaultMaxWatches, DefaultMaxObservers).
+	MaxWatches, MaxObservers int
+	// FirstFrame bounds a new observer's wait for its first frame, and
+	// ObserverBackoff is the first wait before restarting a failed one
+	// (defaults DefaultFirstFrame, DefaultObserverBackoff).
+	FirstFrame, ObserverBackoff time.Duration
+	// QuestionPoll is how often a blocked worker's screen is read again,
+	// AnswerTimeout how long worker.answer waits for it to leave blocked,
+	// PromptRetryWait how long worker.prompt waits after pressing Enter
+	// again (defaults DefaultQuestionPoll, DefaultAnswerTimeout,
+	// DefaultPromptRetryWait).
+	QuestionPoll, AnswerTimeout, PromptRetryWait time.Duration
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -144,6 +165,12 @@ type Hub struct {
 	rescan   chan struct{}                  // asks the watcher to look at sessions now
 	suggest  chan suggestJob                // repo lookups for the suggester
 	wg       sync.WaitGroup                 // floor operations and the suggester
+
+	// M5 term
+	term      termWatches              // laptop screens being watched
+	lanes     map[string]*inputLane    // worker id → its input commands, in order
+	questions map[string]questionState // worker id → what its blocked screen asks
+	asking    map[string]bool          // worker id → its screen reader runs
 }
 
 type floorState struct {
@@ -271,6 +298,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if opts.ExitPause <= 0 {
 		opts.ExitPause = defaultExitPause
 	}
+	termDefaults(&opts) // M5 term
 	var epoch [8]byte
 	_, _ = rand.Read(epoch[:])
 	h := &Hub{
@@ -295,6 +323,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		rescan:        make(chan struct{}, 1),
 		suggest:       make(chan suggestJob, 256),
 	}
+	h.initTerm() // M5 term
 	if err := h.reload(ctx); err != nil {
 		return nil, err
 	}
@@ -405,7 +434,10 @@ func (h *Hub) Join(ctx context.Context, c *Client, hello proto.Hello) error {
 
 // Leave unregisters c. It works after the client's own context is gone.
 func (h *Hub) Leave(c *Client) {
-	_ = h.do(context.Background(), func(context.Context) { delete(h.clients, c) })
+	_ = h.do(context.Background(), func(context.Context) {
+		delete(h.clients, c)
+		h.dropWatches(c) // M5 term
+	})
 }
 
 // Command runs one client command; its ack or error is queued to c after
@@ -432,6 +464,17 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startHirePrepare
 		case proto.CmdFirePrepare:
 			start = h.startFirePrepare
+		// M5 term
+		case proto.CmdTerminalWatch:
+			start = h.startWatch
+		case proto.CmdTerminalUnwatch:
+			start = h.startUnwatch
+		case proto.CmdWorkerKeys:
+			start = h.startKeys
+		case proto.CmdWorkerPrompt:
+			start = h.startPrompt
+		case proto.CmdWorkerAnswer:
+			start = h.startAnswer
 		}
 		if start != nil {
 			// Accepted: the audit row is written (or begun) and the reply
@@ -449,7 +492,7 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 }
 
 func (h *Hub) audit(ctx context.Context, c *Client, cmd proto.Command, err error) {
-	if aerr := h.st.Audit(ctx, c.name, cmd.T, cmd.Args, err); aerr != nil {
+	if aerr := h.st.Audit(ctx, c.name, cmd.T, auditArgs(cmd), err); aerr != nil {
 		h.log.Error("audit log write failed", "err", aerr)
 	}
 }
@@ -507,6 +550,13 @@ func errorCode(err error) string {
 		return proto.ErrHireFailed
 	case errors.Is(err, errFireFailed):
 		return proto.ErrFireFailed
+	// M5 term
+	case errors.Is(err, errInputFailed):
+		return proto.ErrInputFailed
+	case errors.Is(err, errPromptFailed):
+		return proto.ErrPromptFailed
+	case errors.Is(err, errStale):
+		return proto.ErrStale
 	}
 	return proto.ErrInternal
 }
@@ -664,6 +714,7 @@ func (h *Hub) applyFloor(ctx context.Context, u world.FloorObs) {
 	for _, ev := range evs {
 		h.emit(ev)
 	}
+	h.afterObserve(ctx) // M5 term
 }
 
 func (h *Hub) removeFloor(u world.FloorGone) {
@@ -688,6 +739,7 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 	h.releaseNames(context.Background(), u.Session, nil, h.opts.Now())
 	h.log.Info("floor removed", "session", u.Session)
 	h.syncLayout()
+	h.syncWatches() // M5 term
 }
 
 // resync re-applies a running floor's last observation, e.g. once a hire
@@ -702,6 +754,7 @@ func (h *Hub) resync(ctx context.Context, session string) {
 	for _, ev := range evs {
 		h.emit(ev)
 	}
+	h.afterObserve(ctx) // M5 term
 }
 
 // syncWorkers assigns identities, desks and names to the observed workers
@@ -895,6 +948,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		if w.Worktree != nil && w.Worktree.Linked && w.Worktree.CheckoutPath != "" {
 			next.Branch = h.branchOf(w.Worktree.CheckoutPath, at)
 		}
+		h.withQuestion(next) // M5 term
 		if op := f.hires[id]; op != nil && !op.seen {
 			op.seen = true
 			op.signal()
