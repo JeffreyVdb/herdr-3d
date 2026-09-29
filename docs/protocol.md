@@ -605,7 +605,9 @@ key names, **never the text**.
   again); that is also how to ask for a full frame. `terminal.unwatch` stops it (a no-op for a worker not watched), and
   closing the connection stops them all. After a reconnect, watch again: frames are never replayed.
 - Caps: `--max-watches` per connection (default 6), `--max-observers` for the whole bridge (default 16); above either
-  `terminal.watch` is `capacity`. Each watch has its own observer.
+  `terminal.watch` is `capacity`. Each watch has its own observer. An observer that is stopping keeps its place under
+  both caps until it has exited and been reaped: a re-watch, or a watch right after an unwatch, starts its observer (and
+  is acked) once the old one is gone, waiting up to 3 s (then `capacity`).
 - **Never block, never leak.** Each observer's output is read continuously, also while a frame is being sent. What
   is not sent yet merges into one pending frame of at most 512 KiB, the watch's only queue. Frames are only queued while the connection's send queue is at most half full, so they never push a
   connection into the `slow consumer` disconnect: when the queue is over half full or the pending frame outgrows

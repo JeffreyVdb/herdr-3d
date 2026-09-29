@@ -709,6 +709,93 @@ func TestWatchCaps(t *testing.T) {
 	}
 }
 
+// slowStopTerm is a laptop herdr whose observers take a while to stop (as
+// herdr's do: SIGTERM, SIGKILL after 1 s), counting those alive.
+type slowStopTerm struct {
+	*fakeTerm
+	stop         time.Duration
+	mu           sync.Mutex
+	alive, peak  int
+	stoppedTotal int
+}
+
+type slowStopObs struct {
+	herdr.FrameStream
+	term *slowStopTerm
+}
+
+func (s *slowStopTerm) Observe(ctx context.Context, session, pane string, cols, rows int) (herdr.FrameStream, error) {
+	o, err := s.fakeTerm.Observe(ctx, session, pane, cols, rows)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.alive++
+	s.peak = max(s.peak, s.alive)
+	s.mu.Unlock()
+	return &slowStopObs{FrameStream: o, term: s}, nil
+}
+
+func (o *slowStopObs) Close() error {
+	time.Sleep(o.term.stop)
+	err := o.FrameStream.Close()
+	o.term.mu.Lock()
+	o.term.alive--
+	o.term.stoppedTotal++
+	o.term.mu.Unlock()
+	return err
+}
+
+func (s *slowStopTerm) counts() (peak, stopped int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.peak, s.stoppedTotal
+}
+
+// An observer that is stopping still holds its slot until it is reaped: a
+// re-watch, or a watch right after an unwatch, waits for it instead of
+// running more observers than --max-observers / --max-watches.
+func TestStoppingObserversHoldTheirSlot(t *testing.T) {
+	for _, caps := range []struct {
+		name                   string
+		maxWatches, maxObsvers int
+	}{{"max-observers", 6, 1}, {"max-watches", 1, 16}} {
+		t.Run(caps.name, func(t *testing.T) {
+			var st *slowStopTerm
+			tb := startTermBridge(t, func(o *server.Options) {
+				st = &slowStopTerm{fakeTerm: o.Term.(*fakeTerm), stop: 150 * time.Millisecond}
+				o.Term, o.MaxWatches, o.MaxObservers = st, caps.maxWatches, caps.maxObsvers
+			}, shell("w1"), shell("w2"))
+			c := tb.connect(proto.Hello{})
+			snap := c.snapshot()
+			id1, id2 := idOf(t, snap, "w1"), idOf(t, snap, "w2")
+			c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id1})
+			tb.term.observer(t, 0).push(t, true, "one")
+			c.frame()
+
+			// A re-watch: the old observer stops first.
+			c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id1})
+			if _, stopped := st.counts(); stopped != 1 {
+				t.Fatalf("re-watch acked with %d observers stopped, want the old one reaped first", stopped)
+			}
+			tb.term.observer(t, 1).push(t, true, "again")
+			if f := c.frame(); !f.Full || decoded(t, f) != "again" {
+				t.Fatalf("after the re-watch: %+v", f)
+			}
+			// Unwatch, then watch another worker at once.
+			c.mustAck(proto.CmdTerminalUnwatch, proto.WorkerArgs{ID: id1})
+			c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id2})
+			tb.term.observer(t, 2).push(t, true, "two")
+			if f := c.frame(); !f.Full || decoded(t, f) != "two" {
+				t.Fatalf("after the unwatch: %+v", f)
+			}
+			if peak, _ := st.counts(); peak > 1 {
+				t.Fatalf("%d observers alive at once, the cap is 1", peak)
+			}
+		})
+	}
+}
+
 func TestWatchStartFailure(t *testing.T) {
 	tb := startTermBridge(t, nil, shell("w1"))
 	tb.term.observeFn = func(n int) error {

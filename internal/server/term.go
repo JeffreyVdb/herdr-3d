@@ -40,6 +40,9 @@ const (
 	observerRestarts = 3
 	observerWindow   = 30 * time.Second
 	headroomPoll     = 50 * time.Millisecond
+	// How long a new observer waits for the slot of one still stopping
+	// (SIGTERM, SIGKILL after 1 s, reaped) before it is capacity.
+	observerSlotWait = 3 * time.Second
 )
 
 var (
@@ -55,6 +58,13 @@ type termWatches struct {
 	mu    sync.Mutex
 	byC   map[*Client]map[string]*watch // connection → worker id → watch
 	count int
+	// Observer processes, running or stopping, host-wide and per
+	// connection: each holds its --max-observers / --max-watches slot
+	// until it is reaped, so a re-watch or a watch after an unwatch never
+	// runs more than the caps while the old one stops.
+	procs   int
+	procsOf map[*Client]int
+	freed   chan struct{} // closed (and replaced) when one is reaped
 }
 
 // watch is one connection watching one worker's pane.
@@ -121,6 +131,43 @@ func (t *termWatches) all() []*watch {
 		}
 	}
 	return out
+}
+
+// acquire takes an observer slot for a connection, waiting up to wait for
+// one to be freed (capacity then).
+func (t *termWatches) acquire(ctx context.Context, c *Client, perConn, host int, wait time.Duration) error {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	for {
+		t.mu.Lock()
+		if t.procs < host && t.procsOf[c] < perConn {
+			t.procs++
+			t.procsOf[c]++
+			t.mu.Unlock()
+			return nil
+		}
+		freed := t.freed
+		t.mu.Unlock()
+		select {
+		case <-freed:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return fmt.Errorf("%w: observers that are still stopping hold every slot (--max-observers, --max-watches)", errCapacity)
+		}
+	}
+}
+
+// release frees the slot of an observer that was reaped.
+func (t *termWatches) release(c *Client) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.procs--
+	if t.procsOf[c]--; t.procsOf[c] <= 0 {
+		delete(t.procsOf, c)
+	}
+	close(t.freed)
+	t.freed = make(chan struct{})
 }
 
 func (t *termWatches) counts(c *Client) (conn, host int) {
@@ -272,19 +319,23 @@ func (h *Hub) runWatch(hctx, ctx context.Context, w *watch, cmd proto.Command, s
 	var fails []time.Time
 	acked := false
 	for {
-		obs, err := h.opts.Term.Observe(ctx, w.session, w.pane, w.cols, w.rows)
+		obs, err := h.startObserver(ctx, w)
 		if !acked {
 			acked = true
 			if err != nil && ctx.Err() == nil {
 				h.term.remove(w)
-				h.finishWatchCmd(hctx, w, cmd, fmt.Errorf("starting the observer failed: %w", err))
+				if !errors.Is(err, errCapacity) {
+					err = fmt.Errorf("starting the observer failed: %w", err)
+				}
+				h.finishWatchCmd(hctx, w, cmd, err)
 				return
 			}
 			h.finishWatchCmd(hctx, w, cmd, nil)
 		}
 		if err == nil {
 			err = h.pump(ctx, w, obs)
-			obs.Close()
+			obs.Close() // reaped
+			h.term.release(w.c)
 		}
 		if ctx.Err() != nil || errors.Is(err, errWatchStopped) {
 			return
@@ -312,6 +363,18 @@ func (h *Hub) runWatch(hctx, ctx context.Context, w *watch, cmd proto.Command, s
 			return
 		}
 	}
+}
+
+// startObserver starts a watch's observer once it has a slot.
+func (h *Hub) startObserver(ctx context.Context, w *watch) (herdr.FrameStream, error) {
+	if err := h.term.acquire(ctx, w.c, h.opts.MaxWatches, h.opts.MaxObservers, observerSlotWait); err != nil {
+		return nil, err
+	}
+	obs, err := h.opts.Term.Observe(ctx, w.session, w.pane, w.cols, w.rows)
+	if err != nil {
+		h.term.release(w.c)
+	}
+	return obs, err
 }
 
 // finishWatchCmd audits terminal.watch and answers it.
@@ -515,6 +578,8 @@ func termDefaults(o *Options) {
 
 func (h *Hub) initTerm() {
 	h.term.byC = map[*Client]map[string]*watch{}
+	h.term.procsOf = map[*Client]int{}
+	h.term.freed = make(chan struct{})
 	h.lanes = map[string]*inputLane{}
 	h.questions = map[string]questionState{}
 	h.asking = map[string]bool{}
