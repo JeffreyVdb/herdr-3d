@@ -39,6 +39,22 @@ describe('seatedKey', () => {
     }
   });
 
+  it('sends the chords the bridge knows: Shift / Alt+Enter, Alt+Backspace, Shift / Ctrl / Alt+arrows, Cmd+← → on a Mac', () => {
+    const k = (key: string, o: Partial<KeyLike>, mac = true) => seatedKey(kd(key, o), mac).items;
+    expect(k('Enter', { shiftKey: true })).toEqual([{ key: 'shift+enter' }]);
+    expect(k('Enter', { altKey: true })).toEqual([{ key: 'alt+enter' }]);
+    expect(k('Backspace', { altKey: true })).toEqual([{ key: 'alt+backspace' }]);
+    expect(k('ArrowUp', { shiftKey: true })).toEqual([{ key: 'shift+up' }]);
+    expect(k('ArrowLeft', { ctrlKey: true }, false)).toEqual([{ key: 'ctrl+left' }]);
+    expect(k('ArrowRight', { altKey: true })).toEqual([{ key: 'alt+right' }]);
+    expect(k('ArrowLeft', { metaKey: true })).toEqual([{ key: 'home' }]);
+    expect(k('ArrowRight', { metaKey: true })).toEqual([{ key: 'end' }]);
+    // No such chord: Shift alone keeps the key, anything else is swallowed.
+    expect(k('Home', { shiftKey: true })).toEqual([{ key: 'home' }]);
+    expect(k('Enter', { ctrlKey: true })).toEqual([]);
+    expect(k('ArrowUp', { ctrlKey: true, shiftKey: true })).toEqual([]);
+  });
+
   it('Tab and Shift+Tab go to the pane, never to the browser focus', () => {
     expect(seatedKey(kd('Tab'), true)).toEqual({ items: [{ key: 'tab' }], prevent: true });
     expect(seatedKey(kd('Tab', { shiftKey: true }), false)).toEqual({ items: [{ key: 'shift+tab' }], prevent: true });
@@ -90,12 +106,12 @@ describe('seatedKey', () => {
 
   it('only ever names keys from the allowlist', () => {
     const names = new Set(KEY_NAMES);
-    const keys = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'Home', 'PageDown', 'F1', 'F12', 'a', 'z'];
+    const keys = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'PageDown', 'F1', 'F12', 'a', 'z'];
     for (const key of keys)
-      for (const shiftKey of [false, true])
-        for (const ctrlKey of [false, true]) {
-          for (const it of seatedKey(kd(key, { shiftKey, ctrlKey }), true).items) if ('key' in it) expect(names.has(it.key), it.key).toBe(true);
-        }
+      for (const m of [0, 1, 2, 3, 4, 5, 6, 7, 8]) {
+        const o = { shiftKey: !!(m & 1), ctrlKey: !!(m & 2), altKey: !!(m & 4), metaKey: m === 8 };
+        for (const mac of [true, false]) for (const it of seatedKey(kd(key, o), mac).items) if ('key' in it) expect(names.has(it.key), it.key).toBe(true);
+      }
   });
 });
 

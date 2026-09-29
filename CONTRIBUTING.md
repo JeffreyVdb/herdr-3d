@@ -303,6 +303,21 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   only when it changes). A DOM layer was benchmarked on the Mac and lost: moving DOM elements over the canvas cost
   2.6–4.3 ms of main thread per frame for 24 cards and ~8 ms for 30 city badges, against 0.5 ms for the atlas. The DOM
   keeps a static floor list for keyboards and screen readers.
+- `src/laptop` — M5 laptop screens and sitting at a worker's laptop: `watches.ts` keeps the connection's
+  `terminal.watch`es in step with what the game wants (a full frame first, a gap re-watches, `unknown_command` turns
+  screens off with the reason), `terminal.ts` is one xterm.js 6 terminal per live screen (never opened: only its VT
+  parser and buffer) painted by `paint.ts` into a canvas that is the laptop's texture, `keys.ts` maps a keydown to herdr
+  keys and orders input (one command in flight, what is typed meanwhile goes in the next `worker.keys`), `index.ts`
+  plans and ties it together. Which laptops are live is `src/world/screens.ts` (pure, vitest); the textured planes and
+  the frozen-screen atlas (one instanced batch) are `src/render/screens.ts`; the seat bar is `src/ui/seat.ts`. Recorded
+  screens for the simulator are `fixtures/screens/{agent,shell}.jsonl` (real `herdr terminal session observe` output of
+  synthetic screens, made by `node tools/record-screens.ts` in a throwaway `h3d-m5screen-*` session); `sim=1` replays
+  them for `terminal.watch` (`tools/fixture-screen.ts`: an agent's recording for a worker with an agent, the shell's
+  otherwise, each from its own point, looping; at most `fps` frames a second, diffs in between concatenated),
+  `worker.keys` echoes what was typed (the screen first jumps to the end of its recording), and watches close on
+  `worker.removed`, a floor going to sleep or a new pane; `simfail=input_failed` fails the next `worker.keys`,
+  `simfail=observer_failed` closes the next watch after its first frame; `sim.watches` (the simulator's own, not a
+  bridge command) answers this connection's watch count.
 - `src/ui` — the HUD (DOM over the canvas) and the M3 panels (`panels.ts`: elevator, buildings, floor settings,
   confirmations; modal `<dialog>`s that re-render live and keep focus); M4: the hire dialog (`hire.ts`) and the
   send-home dialog (`sendHome.ts`), styled in `hire.css`. Hidden, named hooks wait for later tickets:
@@ -339,6 +354,7 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 |---|---|
 | `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors) |
 | `backend=webgl2` | force WebGL2 |
+| `screens=<n>` | M5: how many laptops around you are live (default 4, at most 5; `0` watches none: only the laptop you sit at is watched) |
 | `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |
 | `ts` | GPU timestamp queries (for `bench`) |
 | `shadows=0`, `badges=0`, `battery=1` | no shadows; no city badges (perf comparisons); start in battery saver |
@@ -409,6 +425,17 @@ stop it, the mezzanine's floor does), so pointing at any worker or empty desk be
 measured as though you stood nearer, with no cap on how many show (on the floor it stays 24), so the whole floor's
 show. The floor plan shows the mezzanine's outline, the stair and your desk.
 
+Laptops (M5): the four nearest laptops you can see (and whose screens face you) show their worker's terminal live, at
+4 fps; a laptop keeps its last frame when it stops being live (frozen), or its status glow if it never was; asleep, they
+are dark. A nearer laptop takes over only from one out of view or clearly farther, one at a time, so walking does not
+flicker. Look at a worker and press **E** to sit at its laptop: the worker steps aside, the camera glides in and the
+laptop fills the view, at 10 fps. Everything you type goes to its terminal (letters, Enter, Tab and Shift+Tab, arrows,
+Home / End / Page keys, F1–F12, Backspace, Delete, Ctrl+letter; the game's own keys too), **Cmd+V** (Ctrl+V off a Mac)
+pastes (as a prompt to an agent, typed into a plain shell), **Shift+Esc** sends Esc, **Esc** (or the seat bar's Stand
+up) gets you up; so do the elevator, another floor, a panel, the plan or a teleport, and the worker leaving or its floor
+going to sleep (a toast says why). Typing that fails shows in the seat bar. E is disabled, with the reason, on an asleep
+floor, for a worker without a pane, and against a bridge without `terminal.watch`.
+
 Tests:
 
 ```sh
@@ -449,6 +476,15 @@ pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
 ```
 
+`make shot` also runs M5's laptop screens on demo-m4 with `sim=1` (`e2e/m5-screen.spec.ts`): the nearest four
+laptops in view live and the rest glowing, `screens=0` watching nothing, walking along a pod with `screens=2` (screens
+swap one at a time, the passed ones frozen, no churn looking left and right) and a reconnect watching again; E at a
+plain shell's laptop, typing that echoes on its screen (checked in the xterm buffer), the game's keys (W, L, B, X, Tab,
+Shift+Tab, Backspace) going to the terminal instead, Shift+Esc, a paste, Esc back to the same pose; a paste into an
+agent's laptop as `worker.prompt`, a failed key (`simfail=input_failed`) in the seat bar, the worker leaving; 20 sit /
+stand cycles with no watch left in the simulator; an older bridge and an asleep floor (E disabled and why);
+`m5-screen-{live,seated,frozen}.png`.
+
 `test:live` builds `bin/herdr-world` from the worktree (or runs `H3D_LIVE_BRIDGE=<path>`, e.g. another branch's
 bridge built elsewhere), starts `herdr --session h3d-m2game-<random> server` (with
 `HERDR_*`/`CLAUDE*` stripped), a private bridge on `$XDG_RUNTIME_DIR/h3d-m2game/bridge.sock` watching only that session,
@@ -476,6 +512,9 @@ pipelined throughput, GPU timestamps, and rAF frames that include DOM layout. M3
 `window8` (out of a top-floor window), and `floor60-street`; `bench()` reports the `area` it ran in. M3c jobs:
 `floor60-mezz` (at the corner office's glass, looking down over 60 workers), `floor60-desk` (seated at your desk) and
 `floor96-desk` (seated over 96 workers who all need you: every card shows).
+M5 jobs, on `perf-floor60` with the simulator: `floor60-screens` (the overview with four live laptop screens),
+`floor60-screens0` (the same with `screens=0`) and `floor60-laptop` (seated at a laptop). On the server,
+`H3D_BENCH=1` with the m5-screen spec runs the same comparison on WebGL2 (relative numbers only).
 
 `window.__h3d` (tests, perf): `backend`, `frames`, `error`, `ready`, `view()`, `lookAt()` → `{kind, id, name?, label?}`
 or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
@@ -510,6 +549,15 @@ status line), `arrivals()` (walkers now: kind, desk, phase, position, distance w
 desk shows, box / laptop / items), `arrivalLog()` (finished walks, `played: false` for ones nobody could see),
 `arrivalRate(k)` (plays walks k times as fast, from where they are), `desks()` (the floor with an interior: who sits at
 each desk, whether its "+" shows, what a walk holds it as).
+
+M5 screen (`window.__h3d`): `screens()` (per worker of the floor you are on: `desk`, `state` live | pending | frozen |
+glow | dark, and the `fps` it is watched at, else null), `seated()` (the worker whose laptop you sit at, or null),
+`sitAt(workerId)` (as E; false with a toast when you cannot), `screenText(workerId)` (a live laptop's screen from its
+xterm buffer, a string per row), `seat()` (the seat bar: shown, tape, note, state ok | busy | error | offline),
+`watches()` (this connection's watches as the game counts them and, with `sim=1`, as the simulator does),
+`reconnect()` (drops the connection and connects again; the game re-watches) and `watchLog()` (the last 400
+`terminal.watch` / `unwatch` the game sent by itself, with their results: `sent()` keeps to what you did, so it has
+your `worker.keys` and `worker.prompt` but not these).
 
 ### Audio and voice lines
 

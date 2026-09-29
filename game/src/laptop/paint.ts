@@ -82,12 +82,22 @@ function styleOf(c: IBufferCell, t: ScreenTheme, out: Style): void {
 /** Inner padding of the screen (a bezel's worth), as a fraction of the width. */
 export const PAD = 0.025;
 
-/** The cell grid inside the padding: cell size and origin. */
+/** Cell width / height the grid keeps: a monospace cell, squeezed or stretched no further. */
+export const CELL_ASPECT = { min: 0.42, max: 0.62 };
+
+/**
+ * The cell grid inside the padding: cell size and origin. The pane's own size decides cols × rows (the observer
+ * does not reflow), so a wide or tall pane is letterboxed on the laptop's screen rather than distorted.
+ */
 export function cellGrid(o: Pick<PaintOptions, 'cols' | 'rows' | 'width' | 'height'>): { cw: number; ch: number; x0: number; y0: number } {
   const pad = Math.round(o.width * PAD);
-  const cw = (o.width - pad * 2) / o.cols;
-  const ch = (o.height - pad * 2) / o.rows;
-  return { cw, ch, x0: pad, y0: pad };
+  const w = o.width - pad * 2;
+  const h = o.height - pad * 2;
+  let cw = w / o.cols;
+  let ch = h / o.rows;
+  if (cw / ch < CELL_ASPECT.min) ch = cw / CELL_ASPECT.min;
+  else if (cw / ch > CELL_ASPECT.max) cw = ch * CELL_ASPECT.max;
+  return { cw, ch, x0: pad + (w - cw * o.cols) / 2, y0: pad + (h - ch * o.rows) / 2 };
 }
 
 /**

@@ -19,6 +19,8 @@ export type ScreenState = 'live' | 'pending' | 'frozen' | 'glow' | 'dark';
 export interface LaptopHost {
   store: WorldStore;
   send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
+  /** The watches the game makes by itself (kept out of the log of what you did). */
+  watch<T extends 'terminal.watch' | 'terminal.unwatch'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** `worker.prompt` belongs to the M5 panels' protocol block; paste sends it by name. */
   sendPrompt(id: string, text: string): Promise<CommandResult>;
   unsupported(t: CommandName): boolean;
@@ -59,14 +61,18 @@ interface Seat {
   t0: number;
   from: { pos: THREE.Vector3; quat: THREE.Quaternion } | null;
   to: { pos: THREE.Vector3; quat: THREE.Quaternion };
+  /** The view the pose was fitted to (a resize fits it again). */
+  view: string;
 }
 
-/** Sitting down and getting up glide the camera this long (ms). */
+/** Sitting down and getting up glide the camera this long (ms); with reduced motion it cuts. */
 const GLIDE_MS = 520;
+const glideMs = () => (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : GLIDE_MS);
 /** How often the planner runs (ms). */
 const PLAN_MS = 250;
 
 const SCREEN = screenFrame();
+const viewKey = (cam: THREE.PerspectiveCamera) => `${cam.aspect.toFixed(4)}:${window.innerHeight}`;
 const smooth = (k: number) => k * k * (3 - 2 * k);
 
 function isMac(): boolean {
@@ -124,7 +130,7 @@ export class Laptops {
     this.cfg = { ...DEFAULT_SCREENS, live: screensParam(params.get('screens')) };
     this.planner = new WatchPlanner(this.cfg);
     this.watches = new Watches({
-      send: (t, args) => this.host.send(t, args),
+      send: (t, args) => this.host.watch(t, args),
       sink: { frame: (id, f) => this.onFrame(id, f), stop: (id) => this.onStop(id) },
       failed: (id, code, message) => this.onFailed(id, code, message),
       closed: (id, reason) => this.onClosed(id, reason),
@@ -214,7 +220,7 @@ export class Laptops {
   /** Gliding in or out (the frame loop keeps rendering). */
   get animating(): boolean {
     const now = performance.now();
-    return (!!this.seat && now - this.seat.t0 < GLIDE_MS) || !!this.leaving;
+    return (!!this.seat && now - this.seat.t0 < glideMs()) || !!this.leaving;
   }
 
   /** Why E cannot sit at this worker's laptop right now, or null when it can. */
@@ -245,6 +251,7 @@ export class Laptops {
       t0: performance.now(),
       from: { pos: camera.position.clone(), quat: camera.quaternion.clone() },
       to: { pos: camera.position.clone(), quat: camera.quaternion.clone() },
+      view: '',
     };
     this.leaving = null;
     office.setLean(v.desk);
@@ -266,6 +273,7 @@ export class Laptops {
     this.host.seat.focus();
     // With the seat bar up, the laptop fits between it and the top bar.
     this.seat.to = this.seatPose(office, v.desk, camera);
+    this.seat.view = viewKey(camera);
     this.lastPlan = -Infinity;
     this.syncWatches();
     return null;
@@ -416,6 +424,12 @@ export class Laptops {
           this.liveAt.set(id, desk);
         }
       }
+      // M4 walks: a desk whose laptop is packed away (or not yet unpacked) shows no screen.
+      for (const [d, show] of office.awayDesks()) {
+        if (show !== 'empty') continue;
+        meshes.unfreeze(d);
+        meshes.setLive(d, null);
+      }
       meshes.update(f.now);
     }
     this.moveCamera(f.camera, f.now);
@@ -460,8 +474,14 @@ export class Laptops {
 
   private moveCamera(cam: THREE.PerspectiveCamera, now: number): void {
     const s = this.seat;
+    if (s && s.view !== viewKey(cam)) {
+      // The window changed size: fit the laptop to the new view.
+      s.to = this.seatPose(s.office, s.desk, cam);
+      s.view = viewKey(cam);
+    }
+    const glide = glideMs();
     if (s) {
-      const k = smooth(Math.min(1, (now - s.t0) / GLIDE_MS));
+      const k = glide ? smooth(Math.min(1, (now - s.t0) / glide)) : 1;
       if (s.from && k < 1) {
         cam.position.lerpVectors(s.from.pos, s.to.pos, k);
         cam.quaternion.slerpQuaternions(s.from.quat, s.to.quat, k);
@@ -472,7 +492,7 @@ export class Laptops {
       }
       cam.updateMatrixWorld();
     } else if (this.leaving) {
-      const k = smooth(Math.min(1, (now - this.leaving.t0) / GLIDE_MS));
+      const k = glide ? smooth(Math.min(1, (now - this.leaving.t0) / glide)) : 1;
       if (k >= 1) this.leaving = null;
       else {
         // The walker's camera is where the glide ends.

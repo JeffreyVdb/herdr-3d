@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Terminal } from '@xterm/xterm';
 import { describe, expect, it } from 'vitest';
-import { cellGrid, paintBuffer, paletteColor, SCREEN_THEME, type Paint2D } from './paint';
+import { CELL_ASPECT, cellGrid, paintBuffer, paletteColor, SCREEN_THEME, type Paint2D } from './paint';
 
 /** A 2D context that records what is drawn. */
 function fakeCtx() {
@@ -37,6 +37,21 @@ describe('paletteColor', () => {
     expect(paletteColor(231)).toBe(0xffffff);
     expect(paletteColor(232)).toBe(0x080808);
     expect(paletteColor(255)).toBe(0xeeeeee);
+  });
+});
+
+describe('cellGrid', () => {
+  it('fills the screen at the usual shapes, letterboxes a wide pane and pillarboxes a tall one', () => {
+    const fill = cellGrid({ cols: 120, rows: 36, width: 480, height: 310 });
+    expect(fill.cw / fill.ch).toBeGreaterThan(CELL_ASPECT.min);
+    const wide = cellGrid({ cols: 240, rows: 40, width: 480, height: 310 });
+    expect(wide.cw / wide.ch).toBeCloseTo(CELL_ASPECT.min, 5);
+    expect(wide.y0).toBeGreaterThan(fill.y0);
+    const tall = cellGrid({ cols: 40, rows: 60, width: 480, height: 310 });
+    expect(tall.cw / tall.ch).toBeCloseTo(CELL_ASPECT.max, 5);
+    expect(tall.x0).toBeGreaterThan(fill.x0);
+    // Centred: the grid ends as far from the right edge as it starts from the left.
+    expect(tall.x0 + tall.cw * 40).toBeCloseTo(480 - tall.x0, 5);
   });
 });
 

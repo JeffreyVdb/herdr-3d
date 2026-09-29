@@ -45,10 +45,21 @@ const NAMED: Record<string, string> = {
 };
 for (let i = 1; i <= 12; i++) NAMED[`F${i}`] = `f${i}`;
 
+/** Special keys with one modifier that herdr-world takes as a chord (the bridge's key table). */
+const CHORDS: Record<string, Partial<Record<'shift' | 'ctrl' | 'alt', string>>> = {
+  Enter: { shift: 'shift+enter', alt: 'alt+enter' },
+  Backspace: { alt: 'alt+backspace' },
+  ArrowUp: { shift: 'shift+up' },
+  ArrowDown: { shift: 'shift+down' },
+  ArrowLeft: { shift: 'shift+left', ctrl: 'ctrl+left', alt: 'alt+left' },
+  ArrowRight: { shift: 'shift+right', ctrl: 'ctrl+right', alt: 'alt+right' },
+};
+
 /** Every key name the game sends (the contract's allowlist, `docs/protocol.md`). */
 export const KEY_NAMES: readonly string[] = [
   ...new Set([
     ...Object.values(NAMED),
+    ...Object.values(CHORDS).flatMap((c) => Object.values(c)),
     'esc',
     'shift+tab',
     'space',
@@ -73,11 +84,20 @@ export function seatedKey(e: KeyLike, mac: boolean): SeatKey {
   if (e.key === 'Escape') return e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey ? one('esc') : e.ctrlKey || e.metaKey || e.altKey ? none(true) : { items: [], action: 'stand', prevent: true };
   const cmd = mac ? e.metaKey : e.ctrlKey;
   if (cmd && !e.altKey && e.code === 'KeyV') return { items: [], action: 'paste', prevent: false };
-  // The Mac's Cmd shortcuts stay the browser's and the system's (copy, quit, …).
+  // Cmd+← / → are the start and end of the line, as in a Mac terminal.
+  if (mac && e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return one(e.key === 'ArrowLeft' ? 'home' : 'end');
+  // The Mac's other Cmd shortcuts stay the browser's and the system's (copy, quit, …).
   if (e.metaKey) return none(false);
   if (e.key === 'Tab') return e.shiftKey ? one('shift+tab') : one('tab');
   const named = NAMED[e.key];
-  if (named && !e.ctrlKey && !e.altKey) return one(named);
+  if (named) {
+    const mods = +e.shiftKey + +e.ctrlKey + +e.altKey;
+    if (!mods) return one(named);
+    const chord = mods === 1 ? CHORDS[e.key]?.[e.shiftKey ? 'shift' : e.ctrlKey ? 'ctrl' : 'alt'] : undefined;
+    if (chord) return one(chord);
+    // Shift with a key that has no shifted name (Shift+Home, Shift+F1): the key itself.
+    return mods === 1 && e.shiftKey ? one(named) : none(true);
+  }
   if (e.ctrlKey && !e.altKey) {
     // The letter on the key (AZERTY's A is ctrl+a); a layout without Latin letters falls back to the key's position.
     const letter = /^[a-z]$/i.test(e.key) ? e.key : /^Key([A-Z])$/.exec(e.code)?.[1];

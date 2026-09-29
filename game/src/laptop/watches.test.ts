@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { TerminalFrame } from '../net/protocol';
-import { Watches, WATCH_COLS, WATCH_ROWS } from './watches';
+import { Watches } from './watches';
 
 function harness() {
   const sent: Array<{ t: string; args: Record<string, unknown>; resolve: (r: CommandResult) => void }> = [];
@@ -33,8 +33,8 @@ describe('Watches', () => {
     const h = harness();
     h.w.sync(want(['a', 4], ['b', 4]));
     expect(h.sent.map((s) => [s.t, s.args])).toEqual([
-      ['terminal.watch', { id: 'a', fps: 4, cols: WATCH_COLS, rows: WATCH_ROWS }],
-      ['terminal.watch', { id: 'b', fps: 4, cols: WATCH_COLS, rows: WATCH_ROWS }],
+      ['terminal.watch', { id: 'a', fps: 4 }],
+      ['terminal.watch', { id: 'b', fps: 4 }],
     ]);
     h.w.sync(want(['a', 4], ['b', 4]));
     expect(h.sent).toHaveLength(2);

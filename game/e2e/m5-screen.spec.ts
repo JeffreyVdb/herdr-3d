@@ -48,7 +48,8 @@ async function faceWorker(page: Page, L: Layout, desk: number): Promise<void> {
   await look(page, s.seat.x - fx * 1.4, s.seat.z - fz * 1.4, s.seat.x, 0.95, s.seat.z);
 }
 
-const sentOf = (page: Page, t: string) => page.evaluate((tt) => window.__h3d.sent().filter((c) => c.t === tt), t);
+const sentOf = (page: Page, t: string) =>
+  page.evaluate((tt) => (tt.startsWith('terminal.') ? window.__h3d.watchLog() : window.__h3d.sent()).filter((c) => c.t === tt), t);
 
 test('the nearest four laptops you can see are live, the rest glow; screens=0 watches none', async ({ page }) => {
   const clean = watchErrors(page);
@@ -60,6 +61,8 @@ test('the nearest four laptops you can see are live, the rest glow; screens=0 wa
   expect(s.filter((x) => x.fps !== null).every((x) => x.fps === 4)).toBe(true);
   expect(s.filter((x) => x.state === 'glow').length).toBe(s.length - 4);
   expect((await page.evaluate(() => window.__h3d.watches())).sim).toBe(4);
+  // Ambient watches are the game's own: `sent()` keeps to what you did.
+  expect((await page.evaluate(() => window.__h3d.sent())).filter((c) => c.t.startsWith('terminal.'))).toEqual([]);
   // The live screens show the recording (an agent's transcript, or a shell).
   const live = s.find((x) => x.state === 'live') as Screen;
   const text = (await page.evaluate((id) => window.__h3d.screenText(id), live.id)) ?? [];

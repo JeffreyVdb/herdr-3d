@@ -104,6 +104,8 @@ export class App {
   /** M5 screen: live laptop screens, sitting at a worker's laptop, and the bar while you do. */
   readonly laptops: Laptops;
   readonly seatBar: SeatBar;
+  /** M5 screen: the `terminal.watch` / `unwatch` the game sends by itself, the last 400 (test hook; not in `sent`). */
+  readonly watchLog: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
 
   private readonly r: THREE.WebGPURenderer;
   private readonly cityCam: THREE.PerspectiveCamera;
@@ -242,6 +244,7 @@ export class App {
       {
         store: this.store,
         send: (t, args) => this.send(t, args),
+        watch: (t, args) => this.sendWatch(t, args),
         // `worker.prompt` is declared by the M5 panels' protocol block; paste only needs to send it.
         sendPrompt: (id, text) => this.send('worker.prompt' as CommandName, { id, text } as never),
         unsupported: (t) => this.unsupported.has(t),
@@ -1347,6 +1350,17 @@ export class App {
   }
 
   // ---- M5 screen: sitting at a worker's laptop ----------------------------------------
+
+  /** A watch the game makes by itself: like `send`, logged in `watchLog` instead of `sent`. */
+  private async sendWatch<T extends 'terminal.watch' | 'terminal.unwatch'>(t: T, args: CommandArgs[T]): Promise<CommandResult> {
+    const entry: (typeof this.watchLog)[number] = { t, args };
+    this.watchLog.push(entry);
+    if (this.watchLog.length > 400) this.watchLog.shift();
+    const r = await this.client.request(t, args);
+    entry.result = r;
+    if (!r.ok && r.code === 'unknown_command') this.unsupported.add(t);
+    return r;
+  }
 
   /** E on a worker: sits you at its laptop; false (and a toast saying why) when you cannot. */
   sitAt(id: string): boolean {

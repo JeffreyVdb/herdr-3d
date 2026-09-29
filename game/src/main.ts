@@ -100,6 +100,8 @@ export interface H3DDebug {
   watches(): Promise<{ game: number; sim: number | null }>;
   /** M5 screen: drops the connection and connects again (the bridge forgets every watch; the game re-watches). */
   reconnect(): void;
+  /** M5 screen: the `terminal.watch` / `unwatch` the game sent by itself (the last 400; `sent()` leaves them out). */
+  watchLog(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
   bench(o?: BenchOptions): Promise<BenchResult>;
   /** M3: opens the elevator panel of a building id (null: the lot); no argument: the current floor's building. */
   openElevator(building?: string | null): void;
@@ -223,6 +225,7 @@ const h3d: H3DDebug = {
     app?.client.stop();
     app?.client.start();
   },
+  watchLog: () => structuredClone(app?.watchLog ?? []),
   openElevator: (b) => (b === undefined ? app?.openElevator() : app?.openElevator(b)),
   openBuildings: () => app?.openBuildings(),
   openSettings: (s) => app?.panels.openSettings(s),

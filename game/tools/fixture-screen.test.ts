@@ -1,5 +1,6 @@
 import { Terminal } from '@xterm/xterm';
 import { describe, expect, it } from 'vitest';
+import { KEY_NAMES } from '../src/laptop/keys';
 import { loadFixture } from './fixture-server';
 import { loadRecording, SIM_MAX_WATCHES } from './fixture-screen';
 import { SimWorld } from './fixture-sim';
@@ -132,6 +133,11 @@ describe('SimScreens', () => {
     const again = r.frames(shell).at(-1) as { full: boolean; data: string; n: number };
     expect(again).toMatchObject({ full: true, n: 1 });
     expect((await screen([again])).join('\n')).toContain('$ ls');
+  });
+
+  it('takes every key name the game sends', () => {
+    const r = rig();
+    for (const key of KEY_NAMES) expect(r.cmd('worker.keys', { id: agent, input: [{ key }] }).reply(), key).toMatchObject({ t: 'ack' });
   });
 
   it('validates keys like the bridge', () => {

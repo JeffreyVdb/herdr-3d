@@ -55,9 +55,10 @@ export function loadRecording(name: string, dir = SCREENS_DIR): Recording {
   return rec;
 }
 
-/** The herdr key names the bridge accepts (contract §2). */
+/** The key names the bridge accepts (docs/protocol.md "Input"). */
 const KEYS = new Set([
   'enter', 'esc', 'tab', 'shift+tab', 'backspace', 'delete', 'up', 'down', 'left', 'right', 'home', 'end', 'pageup', 'pagedown', 'space',
+  'shift+up', 'shift+down', 'shift+left', 'shift+right', 'ctrl+left', 'ctrl+right', 'alt+left', 'alt+right', 'shift+enter', 'alt+enter', 'alt+backspace',
   ...Array.from({ length: 26 }, (_, i) => `ctrl+${String.fromCharCode(97 + i)}`),
   ...Array.from({ length: 12 }, (_, i) => `f${i + 1}`),
 ]);

@@ -1,10 +1,6 @@
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, TerminalClosed, TerminalFrame } from '../net/protocol';
 
-/** Observer size the game asks for: the contract's example, which the recorded fixtures use too. */
-export const WATCH_COLS = 120;
-export const WATCH_ROWS = 36;
-
 /** Where frames go: a watched worker's screen, and when it stops being live. */
 export interface ScreenSink {
   frame(id: string, f: TerminalFrame): void;
@@ -71,7 +67,9 @@ export class Watches {
   private watch(id: string, fps: number): void {
     const gen = ++this.gen;
     this.on.set(id, { fps, gen, full: false, n: 0, resyncAt: this.host.now() + RESYNC_MS });
-    void this.host.send('terminal.watch', { id, fps, cols: WATCH_COLS, rows: WATCH_ROWS }).then((r) => {
+    // No cols / rows: the bridge observes at the pane's own size (herdr's observer clips a smaller one, it does not
+    // reflow), and each frame says the size the screen is drawn at.
+    void this.host.send('terminal.watch', { id, fps }).then((r) => {
       const w = this.on.get(id);
       if (r.ok || !w || w.gen !== gen) return;
       this.on.delete(id);
