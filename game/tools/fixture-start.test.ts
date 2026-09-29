@@ -3,7 +3,7 @@ import type { Snapshot, WorldEvent } from '../src/net/protocol';
 import { WorldStore } from '../src/world/store';
 import { loadFixture } from './fixture-server';
 import { SimWorld } from './fixture-sim';
-import { composePrompt, runLabel, SIM_BUILD_TEAM } from './fixture-start';
+import { composePrompt, ISSUE_STATUS_LINE, runLabel, SIM_BUILD_TEAM } from './fixture-start';
 
 type Msg = Record<string, unknown>;
 
@@ -43,10 +43,10 @@ const TEAM = ['Team:', '- coders: claude claude-opus-5-5, effort medium', '- rev
 describe('composePrompt (contract 2.2)', () => {
   const url = 'https://github.com/JeffreyVdb/lab/issues/3';
   it('claude ORCH, issue, no extra', () => {
-    expect(composePrompt(ROLES.orch, url, ROLES)).toBe([`/write-code ${url}`, '', ...TEAM].join('\n'));
+    expect(composePrompt(ROLES.orch, url, ROLES, '', true)).toBe([`/write-code ${url}`, '', ...TEAM, '', ISSUE_STATUS_LINE].join('\n'));
   });
   it('codex ORCH, issue, extra (trimmed)', () => {
-    expect(composePrompt({ harness: 'codex', model: 'gpt-6-sol', effort: 'high' }, url, ROLES, '  Keep the diff small.\n')).toBe([`$write-code ${url}`, '', ...TEAM, '', 'Keep the diff small.'].join('\n'));
+    expect(composePrompt({ harness: 'codex', model: 'gpt-6-sol', effort: 'high' }, url, ROLES, '  Keep the diff small.\n', true)).toBe([`$write-code ${url}`, '', ...TEAM, '', ISSUE_STATUS_LINE, '', 'Keep the diff small.'].join('\n'));
   });
   it('free text spanning lines, trimmed; a blank extra leaves no block', () => {
     expect(composePrompt(ROLES.orch, '  Add a dark mode\nto settings ', ROLES, ' \n ')).toBe(['/write-code Add a dark mode\nto settings', '', ...TEAM].join('\n'));
@@ -107,7 +107,7 @@ describe('SimWorld runs (M6)', () => {
     expect(none?.git).toMatchObject({ fetched: true });
     const url = 'https://github.com/JeffreyVdb/herdr-3d/issues/7';
     expect(data(r.cmd('run.prepare', { session: 'herdr-3d', issue: '#7' }).got()[0])).toMatchObject({
-      prompt: [`/write-code ${url}`, '', ...TEAM].join('\n'),
+      prompt: [`/write-code ${url}`, '', ...TEAM, '', ISSUE_STATUS_LINE].join('\n'),
       label: 'ORCH|issue-7',
       ticket: { kind: 'issue', repo: 'JeffreyVdb/herdr-3d', number: 7, url },
     });
@@ -131,7 +131,7 @@ describe('SimWorld runs (M6)', () => {
     const got = c.got();
     const ack = data(got.find((m) => m.t === 'ack'));
     const url = 'https://github.com/JeffreyVdb/herdr-3d/issues/7';
-    expect(ack).toMatchObject({ trust: 'approved', prompted: true, launch_id: expect.stringMatching(/^l_[0-9a-f]{16}$/), prompt: [`/write-code ${url}`, '', ...TEAM].join('\n') });
+    expect(ack).toMatchObject({ trust: 'approved', prompted: true, launch_id: expect.stringMatching(/^l_[0-9a-f]{16}$/), prompt: [`/write-code ${url}`, '', ...TEAM, '', ISSUE_STATUS_LINE].join('\n') });
     const w = r.store.workers.get(ack?.id as string);
     expect(w).toMatchObject({ desk_index: 5, label: 'ORCH|issue-7', role: 'orch', run: 'issue-7', harness: 'claude', model: 'claude-opus-5-5', effort: 'medium', status: 'working' });
     expect(r.store.floors.get('herdr-3d')?.last_preset).toBe(SIM_BUILD_TEAM.id);

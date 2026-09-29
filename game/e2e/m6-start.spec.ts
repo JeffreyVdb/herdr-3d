@@ -11,6 +11,7 @@ import { frames, openGame, shot, watchErrors } from './game';
 const SIM = 'play=none&sim=1&simms=150';
 const URL7 = 'https://github.com/JeffreyVdb/herdr-3d/issues/7';
 const TEAM = ['Team:', '- coders: claude claude-opus-5-5, effort medium', '- reviewers: codex gpt-6-sol, reasoning high', '- ux reviewers: codex gpt-6-sol, reasoning high', '- researchers: codex gpt-6-sol, reasoning low'];
+const STATUS = 'Move the ticket status accordingly, pull request always means QA, merging the PR always means Done.';
 
 type Dialog = NonNullable<ReturnType<Window['__h3d']['dialog']>>;
 type Run = Extract<Dialog, { kind: 'start-run' }>;
@@ -101,8 +102,8 @@ test('E on an empty desk: Hire orchestrator from the keyboard, an issue number, 
   d = await settled(page);
   expect(d.ticket).toMatchObject({ kind: 'issue', number: 7, repo: 'JeffreyVdb/herdr-3d', url: URL7 });
   await expect(page.locator('#run-ticket-read')).toHaveText('#7 Issue #7 · JeffreyVdb/herdr-3d');
-  expect(d.preview).toMatchObject({ custom: false, text: [`/write-code ${URL7}`, '', ...TEAM].join('\n') });
-  await expect(prompt(page)).toHaveValue([`/write-code ${URL7}`, '', ...TEAM].join('\n'));
+  expect(d.preview).toMatchObject({ custom: false, text: [`/write-code ${URL7}`, '', ...TEAM, '', STATUS].join('\n') });
+  await expect(prompt(page)).toHaveValue([`/write-code ${URL7}`, '', ...TEAM, '', STATUS].join('\n'));
   await expect(page.locator('#run-label')).toHaveAttribute('placeholder', 'ORCH|issue-7');
   expect(d.blocker).toBeNull();
   // A codex orchestrator: $write-code and the effort chips of codex.
@@ -128,7 +129,7 @@ test('E on an empty desk: Hire orchestrator from the keyboard, an issue number, 
   const run = (await sent(page)).find((c) => c.t === 'run.start');
   const ack = (run?.result as { data?: { id: string; prompt: string; launch_id: string } } | undefined)?.data;
   expect(ack?.launch_id).toMatch(/^l_[0-9a-f]{16}$/);
-  expect(ack?.prompt).toBe([`/write-code ${URL7}`, '', ...TEAM].join('\n'));
+  expect(ack?.prompt).toBe([`/write-code ${URL7}`, '', ...TEAM, '', STATUS].join('\n'));
   // The orchestrator walks in (the M4 walk-in) and you face its desk.
   await page.evaluate(() => window.__h3d.arrivalRate(40));
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivalLog())).find((l) => l.id === ack?.id)?.played, { timeout: 30_000 }).toBe(true);

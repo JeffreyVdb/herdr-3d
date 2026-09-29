@@ -59,8 +59,11 @@ function roleLine(h: Hire): string {
   return `${h.harness} ${h.model}, ${h.harness === 'codex' ? 'reasoning' : 'effort'} ${h.effort}`;
 }
 
-/** The run's first prompt (contract §2.2): `ticket` is the issue URL or the free text. */
-export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRole, Hire>, extra = ''): string {
+/** Added for an issue ticket, after the team: how the issue's status follows the run. */
+export const ISSUE_STATUS_LINE = 'Move the ticket status accordingly, pull request always means QA, merging the PR always means Done.';
+
+/** The run's first prompt (contract §2.2): `ticket` is the issue URL (`isIssue`) or the free text. */
+export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRole, Hire>, extra = '', isIssue = false): string {
   const lines = [
     `${orch.harness === 'codex' ? '$' : '/'}write-code ${ticket.trim()}`,
     '',
@@ -70,6 +73,7 @@ export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRo
     `- ux reviewers: ${roleLine(roles.ux)}`,
     `- researchers: ${roleLine(roles.researcher)}`,
   ];
+  if (isIssue) lines.push('', ISSUE_STATUS_LINE);
   const x = extra.trim();
   if (x) lines.push('', x);
   return lines.join('\n');
@@ -285,7 +289,7 @@ export class StartSim {
     const extra = this.extraOf(a);
     const h = this.d.prepare(f.session);
     return {
-      prompt: t && p && orch ? composePrompt(orch, t.kind === 'issue' ? t.url : t.text, p.roles, extra) : '',
+      prompt: t && p && orch ? composePrompt(orch, t.kind === 'issue' ? t.url : t.text, p.roles, extra, t.kind === 'issue') : '',
       label: t ? runLabel(t) : '',
       ticket: t,
       preset: p?.id ?? '',
@@ -307,7 +311,7 @@ export class StartSim {
     if (a.label !== undefined && typeof a.label !== 'string') throw this.bad('label must be a string');
     if (a.prompt !== undefined && typeof a.prompt !== 'string') throw this.bad('prompt must be a string');
     // An empty prompt is none: the bridge composes it (an edited one goes through worker.hire's rules).
-    const prompt = (a.prompt as string | undefined) || composePrompt(orch, t.kind === 'issue' ? t.url : t.text, p.roles, extra);
+    const prompt = (a.prompt as string | undefined) || composePrompt(orch, t.kind === 'issue' ? t.url : t.text, p.roles, extra, t.kind === 'issue');
     const label = (a.label as string | undefined) || runLabel(t);
     const worktree = a.worktree ?? true;
     const hire: Obj = { session: f.session, desk_index: a.desk_index, harness: orch.harness, model: orch.model, effort: orch.effort, label, worktree, prompt };
