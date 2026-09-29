@@ -19,6 +19,8 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
   (see [Hire and send home](#hire-and-send-home)), through a narrow allowlist of `herdr` / `systemd-run` command
   shapes (CONTRIBUTING "Bridge" lists them), plus a few typed `git` commands for hiring into a worktree and checking a
   tree before sending its worker home. Every other command only changes the bridge's own SQLite database.
+- M5: the laptops watch a pane's screen with the read-only `herdr terminal session observe`, and type into a pane only
+  for `worker.keys`, `worker.prompt` and `worker.answer` (see [Laptops](#laptops-screens-input-changes-and-usage)).
 
 ### Through `h3d-helper` (the Mac)
 
@@ -159,6 +161,7 @@ floor with no workers and an `error`).
 | `resume` | `pending` \| `confirmed` \| `fallback` \| `failed`, optional | only during and after a wake, for workers with an `agent_session`: how their agent came back (see [Wake and sleep](#wake-and-sleep)). Cleared by the next sleep and by a bridge restart. |
 | `hired_at` | int, optional | unix ms when the bridge hired this worker (`worker.hire`; stored). A client that first sees a worker with a recent `hired_at` (the game: under ~15 s) plays its walk-in. |
 | `branch` | string, optional | the checked-out branch of a worker in a linked worktree (`worktree.linked`), when known (read from the checkout's git `HEAD`; absent on a detached `HEAD`) |
+| `question` | object, optional | M5: what the screen of a `blocked` worker asks, while it is blocked (see [Blocked workers](#blocked-workers-question-quick-reply-approve--deny)) |
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
 none, so the bridge keeps the last known value until a new one shows up. They are absent when never known.
@@ -220,6 +223,9 @@ and remember the last `seq` applied.
 {"t":"floor.removed","seq":1050,"session":"pastry"}
 ```
 
+`terminal.frame` and `terminal.closed` (M5, [Laptop screens](#laptop-screens)) are not events: they go only to the
+connection that watches, have no `seq`, are not in the replay ring and are never replayed.
+
 A status or title change can also arrive inside a `worker.upsert` (when something else changed at the same time), so
 take `status`, `status_since` and `title` from both. When one observation changes a floor and its workers, the
 `floor.upsert` (e.g. a new `desks`) comes first, then the worker events. Latency: status and lifecycle changes normally show up well under a second; sessions starting or
@@ -275,6 +281,11 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.hire` | `{"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?}` | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent) |
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
+| `terminal.watch` | `{"id": string, "fps"?: 1–30, "cols"?: 40–300, "rows"?: 10–100}` | `{"pane", "cols", "rows"}` | `terminal.frame`s to this connection only (see [Laptop screens](#laptop-screens)) |
+| `terminal.unwatch` | `{"id": string}` | — | — |
+| `worker.keys` | `{"id": string, "input": [{"text": string} \| {"key": string}…]}` | — | — (see [Input](#input)) |
+| `worker.prompt` | `{"id": string, "text": string}` | `{"queued": bool, "retried": bool}` | the worker's statuses |
+| `worker.answer` | `{"id": string, "hash": string, "choice"?: 1–9, "cancel"?: true}` | `{"sent": [string…], "resolved": bool}` | the worker's upsert without its `question` when it moves on |
 
 ```json
 {"t":"floor.assign","req_id":"8","args":{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}}
@@ -557,6 +568,146 @@ they start, completed with their outcome and a JSON `result`: for a hire the wor
 base, fetch, trust, the prompt outcome and any rollback; for a fire the git state it saw, how the agent exited, the
 cleanup choice and what happened to the worktree and branch.
 
+### Laptops: screens, input, changes and usage
+
+Every laptop command takes the bridge's worker `id`, never a pane id: the bridge uses the worker's own `pane_id`
+(its primary pane) as it is when the command runs. A worker on an asleep floor, or one without a pane, is
+`invalid_state`; an unknown id, or a worker on a floor the bridge does not watch, `unknown_worker`. Every command is
+audit-logged like the others; for `worker.keys` and `worker.prompt` the audit row keeps the lengths of the text and the
+key names, **never the text**.
+
+#### Laptop screens
+
+```json
+{"t":"terminal.watch","req_id":"50","args":{"id":"6db1905e-…","fps":4}}
+{"t":"ack","req_id":"50","data":{"pane":"w1:p1","cols":120,"rows":40}}
+{"t":"terminal.frame","id":"6db1905e-…","pane":"w1:p1","n":1,"full":true,"cols":120,"rows":40,"data":"G1s/MjAyNmgb…"}
+{"t":"terminal.frame","id":"6db1905e-…","pane":"w1:p1","n":2,"full":false,"cols":120,"rows":40,"data":"G1syOzFI…"}
+{"t":"terminal.closed","id":"6db1905e-…","reason":"worker_removed"}
+```
+
+- The bridge starts `herdr --session <s> terminal session observe <pane> --cols C --rows R` for the watch: a
+  read-only observer (it cannot type, resize, scroll or take over the pane). Its first frame is the full screen, then
+  diffs, each only when the screen changes. `data` is the frame's ANSI bytes in base64; a `full:false` frame applies on
+  top of the ones before it (a VT emulator such as xterm.js takes them in order). `n` counts the frames of this watch
+  from 1; `cols` × `rows` is the observer's size.
+- `cols` / `rows` default to **the pane's own size** (herdr's layout for it, from `session.snapshot`; 120 × 40, herdr's
+  headless size, when that is unknown). The observer does not reflow: a smaller one shows the pane's top-left part and
+  cuts off its bottom lines (where the prompt or a menu is), a larger one pads. So ask for another size only to match a
+  known one.
+- `fps` (default 4) is the most frames a second the bridge forwards. Diffs that arrive faster are concatenated in order
+  into one `full:false` frame (ANSI diffs compose); a full frame replaces whatever is pending.
+- Per connection: watching a worker again **restarts** its watch (a new observer, a fresh `full:true` frame, `n` from 1
+  again); that is also how to ask for a full frame. `terminal.unwatch` stops it (a no-op for a worker not watched), and
+  closing the connection stops them all. After a reconnect, watch again: frames are never replayed.
+- Caps: `--max-watches` per connection (default 6), `--max-observers` for the whole bridge (default 16); above either
+  `terminal.watch` is `capacity`. Each watch has its own observer.
+- **Never block, never leak.** Each observer's output is read continuously. Pending diffs merge into one frame of at
+  most 512 KiB. Frames are only queued while the connection's send queue is at most half full, so they never push a
+  connection into the `slow consumer` disconnect: when the queue is over half full or the pending frame outgrows
+  512 KiB, the bridge drops what is pending, stops the observer and, once the connection has room again, starts a new
+  one (a resync: its first frame is full). An observer that exits, or sends no first frame within 5 s (herdr 0.9.0 drops
+  no stalled observer itself), is restarted after 250 ms, 500 ms, 1 s; after a 4th failure within 30 s the watch ends
+  with `observer_failed`. Silence after the first frame is normal (frames only come on change). Stopping an observer is
+  SIGTERM to its process group, SIGKILL after 1 s, and it is always reaped (the kernel also kills it should the bridge
+  die). Nothing survives an unwatch, a closed connection or a bridge shutdown.
+
+`terminal.closed` ends a watch the client did not stop itself: `reason` is `worker_removed` (the worker is gone or was
+sent home), `asleep` (its floor went to sleep), `pane_changed` (its primary pane changed: watch again) or
+`observer_failed`. It is not sent for a `terminal.unwatch`, a re-watch or a closed connection.
+
+#### Input
+
+```json
+{"t":"worker.keys","req_id":"51","args":{"id":"6db1905e-…","input":[{"text":"ls -la"},{"key":"enter"}]}}
+{"t":"ack","req_id":"51"}
+{"t":"worker.prompt","req_id":"52","args":{"id":"6db1905e-…","text":"Run the tests and fix what fails."}}
+{"t":"ack","req_id":"52","data":{"queued":false,"retried":false}}
+```
+
+**`worker.keys`** types into the worker's pane, in order. `input` has 1–64 items, each exactly one of `{"text":
+string}` (typed literally: 1–4096 bytes of UTF-8 without control characters, which must be keys; at most 8 KiB of text
+in one command) or `{"key": string}`, one of:
+
+| keys | sent as (xterm, checked on herdr 0.9.0) |
+|---|---|
+| `enter`, `esc`, `tab`, `shift+tab`, `backspace`, `space` | `\r`, `\e`, `\t`, `\e[Z`, `\x7f`, a space |
+| `up`, `down`, `left`, `right` | `\e[A` … `\e[D` (`\eOA` … when the application asked for cursor keys mode) |
+| `shift+up`, `shift+down`, `shift+left`, `shift+right`, `ctrl+left`, `ctrl+right`, `alt+left`, `alt+right` | `\e[1;2A` …, `\e[1;5D`, `\e[1;5C`, `\e[1;3D`, `\e[1;3C` |
+| `shift+enter`, `alt+enter`, `alt+backspace` | `\e[27;2;13~`, `\e\r`, `\e\x7f` |
+| `ctrl+a` … `ctrl+z` | `\x01` … `\x1a` |
+| `f1` … `f12` | `\eOP` … `\eOS`, `\e[15~` … `\e[24~` |
+| `delete`, `home`, `end`, `pageup`, `pagedown` | `\e[3~`, `\e[H`, `\e[F`, `\e[5~`, `\e[6~`: herdr 0.9.0 has no names for these (`unsupported key`), so the bridge types these fixed sequences |
+
+Anything else (digits and letters are text) is `bad_request`. Consecutive keys go to herdr as one `pane send-keys`,
+consecutive texts as one `pane send-text` (a herdr call takes about 10 ms). Input to one worker is serialized: commands
+for the same worker (`worker.keys`, `worker.prompt`, `worker.answer`) run one after the other in the order they
+arrived, so two quick `worker.keys` never interleave; at most 32 wait per worker (then `input_failed`). herdr
+refusing is `input_failed` (the message says which step and why).
+
+**`worker.prompt`** submits a prompt to the worker's agent (`herdr agent prompt <pane> <text>`: bracketed paste, then
+Enter). `text` is 1 byte to 16 KiB of UTF-8 without NUL (herdr 0.9.0 takes a leading `--` as text, too). Only for a
+worker with an agent (`agent_kind`); a plain shell is `invalid_state` (use `worker.keys`), and so is a `blocked`
+worker (answer its question first; herdr would refuse with `agent_blocked`). The game uses it for paste too.
+
+- Worker `working`: the agent takes it for its next turn (Claude and Codex queue it). Sent without waiting; the ack
+  says `queued: true`.
+- Otherwise herdr waits (up to 8 s) until the worker is `working` or `blocked`. When the text is in the agent's input
+  but its Enter was dropped (the known paste quirk; herdr: `agent_prompt_stalled` after 5 s), the bridge presses Enter
+  **once** more and waits up to 5 s for `working` / `blocked`: `retried: true`. Still not submitted, or herdr failing
+  otherwise: `prompt_failed`.
+
+#### Blocked workers: question, quick reply, approve / deny
+
+```json
+"question":{"kind":"permission","text":"Do you want to proceed?",
+  "excerpt":["Bash command","touch notes.txt","Create empty file notes.txt","Do you want to proceed?","❯ 1. Yes",
+             "2. Yes, and always allow access to /tmp/x from this project","3. No","Esc to cancel · Tab to amend"],
+  "choices":[{"n":1,"label":"Yes"},{"n":2,"label":"Yes, and always allow access to /tmp/x from this project"},{"n":3,"label":"No"}],
+  "selected":1,"hash":"cdecbf4fcde864bc"}
+```
+
+When a worker turns `blocked`, the bridge reads its screen (`herdr pane read --source visible`), and again every 2 s
+while it stays blocked; a new question is a `worker.upsert`. `question` is on the worker in snapshots and upserts only
+while it is `blocked` and its screen could be read; the upsert of the worker leaving `blocked` has none. Detection is
+heuristic, tested on screens captured from Claude Code 2.1 and Codex 0.158 (`internal/server/testdata/screens`):
+
+| field | |
+|---|---|
+| `kind` | `trust` (the agent's trust-this-folder dialog), `permission` (a menu whose first choice starts with "Yes" and one with "No": a tool or command approval), `choice` (any other menu, e.g. Claude's AskUserQuestion), `other` (blocked, no menu recognised) |
+| `text` | the line above the menu that asks ("Do you want to proceed?", "Would you like to run the following command?"), cut after its first `?`; `""` if none |
+| `excerpt` | the screen's last ≤ 8 non-empty lines, trimmed, each ≤ 200 characters |
+| `choices` | the menu, top to bottom, `n` from 1: the digits shown (`❯ 1. Yes  2. …  3. No`), or for a menu without digits (Claude's trust dialog) the cursor line and the lines aligned with it; `[]` without a menu |
+| `selected` | the choice the cursor (`❯` / `›`) is on, when seen |
+| `hash` | 16 hex over `kind`, `text` and `choices` (not the cursor, not the excerpt): which question an answer is for |
+
+What herdr 0.9.0 reports, and what picks a choice (checked live):
+
+| screen | herdr status | picks choice n | Esc |
+|---|---|---|---|
+| Claude trust dialog (`❯ No, exit` / `Yes, I trust this folder`, no digits) | `blocked` | arrows from `selected`, Enter (a digit does nothing) | cancels |
+| Claude tool permission (`❯ 1. Yes` / `2. Yes, and …` / `3. No`) | `blocked` | the digit | rejects (then `done`) |
+| Claude AskUserQuestion (`❯ 1. Tea` …, `n. Chat about this`) | `blocked` | the digit | cancels |
+| Codex approval (`› 1. Yes, proceed (y)` / `2. …` / `3. No, and tell Codex …`) | `blocked` | the digit | "No" |
+| Codex trust dialog (`› 1. Trust and continue` / `2. Quit`) | **`idle`**: never a question | Enter / Down + Enter (a digit does nothing) | quits |
+
+Note that the first choice of Claude's trust dialog is "No, exit": to approve a `trust` question, pick the choice that
+trusts (its label starts with "Yes" or "Trust").
+
+**`worker.answer`** answers the question: exactly one of `choice` (1–9, one of the question's `choices`) or `cancel:
+true` (Esc: deny / dismiss). The worker must be `blocked` (else `invalid_state`). When its turn on the worker's input
+lane comes, the bridge reads the screen again: if the worker is no longer blocked or the question there has another
+`hash`, it is `stale` (and the question the screen shows now goes out as a `worker.upsert`). Otherwise it presses the
+keys that pick the choice on that kind of menu (above), returned in `sent`, and waits up to 3 s for the worker to leave
+`blocked`: `resolved`. A screen that cannot be read, or herdr refusing the keys, is `input_failed`.
+
+```json
+{"t":"worker.answer","req_id":"53","args":{"id":"6db1905e-…","hash":"cdecbf4fcde864bc","choice":1}}
+{"t":"ack","req_id":"53","data":{"sent":["1"],"resolved":true}}
+{"t":"worker.answer","req_id":"54","args":{"id":"6db1905e-…","hash":"210cbd9cf0ff47af","cancel":true}}
+{"t":"ack","req_id":"54","data":{"sent":["esc"],"resolved":true}}
+```
+
 ### Errors
 
 ```json
@@ -570,16 +721,19 @@ cleanup choice and what happened to the worktree and branch.
 | `not_found` | no building with that id |
 | `name_taken` | another building already has that name (ignoring case) |
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
-| `unknown_worker` | `worker.fire.prepare` / `worker.fire` for a worker id the bridge does not know (or on an unwatched floor) |
+| `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
 | `busy` | a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home |
-| `invalid_state` | `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor |
+| `invalid_state` | `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell or a blocked worker, `worker.answer` to a worker not blocked |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
-| `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`; the message says which |
+| `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`; the message says which |
 | `not_clean` | `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |
 | `fetch_failed` | `worker.hire` with `worktree: true` whose `git fetch origin` failed (no `origin`, offline, timed out after 20 s, …); the message is git's error. Nothing was made. (After the accept, like `bad_request` for a missing default branch.) |
 | `hire_failed`, `fire_failed` | herdr or git failed during a hire / send-home; the message says which step and why. `fire_failed` also when the agent did not exit (still running, or its processes could not be read): then nothing was closed or removed. `hire_failed` names what its rollback kept. |
 | `wake_failed` | the server did not start, did not answer `ping` or was not seen running within `--wake-timeout`; the message says why |
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
+| `input_failed` | `worker.keys` / `worker.answer`: herdr refused the keys or text, the screen could not be read, or 32 commands already wait for that worker; the message says why |
+| `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
+| `stale` | `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked |
 | `hello_required`, `unsupported_proto` | handshake failures; the connection is then closed with status 1008 |
 | `internal` | the bridge failed (database error, or waking, sleeping, hiring and firing is not configured); safe to retry |
 
@@ -588,8 +742,9 @@ Errors not tied to a command have no `req_id`.
 ## Flow control and closing
 
 Each client has a bounded send queue (1024 messages). The bridge never waits for a slow client: if the queue fills up,
-the client is disconnected with close status 1008, reason `slow consumer`. Reconnect with `since_seq`. On shutdown the
-bridge closes connections with status 1001 (`going away`) and removes its socket.
+the client is disconnected with close status 1008, reason `slow consumer`. Reconnect with `since_seq`. Laptop frames
+never fill it past half (they resync instead, see [Laptop screens](#laptop-screens)). On shutdown the bridge closes
+connections with status 1001 (`going away`) and removes its socket.
 
 ## Versioning
 
@@ -612,6 +767,9 @@ herdr-world cmd hire.prepare '{"session":"h3d-scratch"}'
 herdr-world cmd worker.hire '{"session":"h3d-scratch","desk_index":0,"harness":"codex","model":"gpt-6-luna","effort":"low"}'
 herdr-world cmd worker.fire.prepare '{"id":"a58752ea-…"}'
 herdr-world cmd worker.fire '{"id":"a58752ea-…","worktree":"keep"}'
+herdr-world cmd worker.keys '{"id":"a58752ea-…","input":[{"text":"git status"},{"key":"enter"}]}'
+herdr-world cmd worker.prompt '{"id":"a58752ea-…","text":"Run the tests."}'
+herdr-world cmd worker.answer '{"id":"a58752ea-…","hash":"cdecbf4fcde864bc","choice":1}'
 ```
 
 `dump` prints the `welcome` line on stderr. `cmd` prints the `ack` or `error` and exits 1 on error; it waits up to

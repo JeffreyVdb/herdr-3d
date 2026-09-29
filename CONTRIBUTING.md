@@ -5,7 +5,7 @@
 - `cmd/herdr-world` — server-side bridge daemon (Go).
 - `cmd/h3d-helper` — Mac-side helper (Go, cross-compiled for `darwin/arm64`).
 - `internal/` — shared Go packages. Bridge: `herdr` (the only door to herdr: the read-only client and the allowlisted
-  control surface for wake/sleep and hire/send home), `watch` (session discovery and per-session watchers), `world`
+  control surface for wake/sleep, hire/send home and the laptops), `watch` (session discovery and per-session watchers), `world`
   (floors/workers from snapshots and `session.json`, identity matching, worker names), `store` (SQLite), `server` (hub +
   WebSocket, wake/sleep, floor settings, hire/send home), `proto` (protocol v1 types and client), `gitremote` (GitHub
   origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires and send-homes), `codex`
@@ -46,8 +46,8 @@ parts:
 
 - **Reads** (`herdr.Client`): the socket methods `ping`, `session.snapshot` and `events.subscribe`, plus `herdr session
   list --json`. `TestReadOnlyAllowlist` is the tripwire.
-- **Writes** (`herdr.Control`), for `floor.wake` / `floor.sleep` and `worker.hire` / `worker.fire` only: exactly the
-  command shapes in `controlShapes`.
+- **Writes** (`herdr.Control`), for `floor.wake` / `floor.sleep`, `worker.hire` / `worker.fire` and the laptops (M5)
+  only: exactly the command shapes in `controlShapes`.
   - Wake and sleep: `systemd-run --user --unit=herdr-s-<name> … /bin/fish -l -c "exec herdr --session '<name>'
     server"`, `herdr session stop <name> --json`, `herdr --session <name> pane run <pane> "claude --resume <id>"` /
     `"codex resume <id>"`, `herdr --session <name> pane report-agent-session <pane> --source herdr:codex --agent codex
@@ -60,6 +60,14 @@ parts:
     prompt <pane> <text> --wait --until working --until blocked --timeout 8000`.
   - Send home: `pane send-text <pane> /exit` / `/quit`, `workspace close <ws>`, `worktree remove --workspace <ws>`
     (never `--force`, never `--group`).
+  - Laptops (M5, `terminal.watch`, `worker.keys` / `prompt` / `answer`): the read-only, long-running `terminal session
+    observe <pane> --cols <40–300> --rows <10–100>` (its own process group; SIGTERM, SIGKILL after 1 s, always reaped),
+    `pane send-keys <pane> <key>…` (only the key names in `docs/protocol.md` "Input", and the digits 1–9 of a menu),
+    `pane send-text <pane> <text>` (no control characters) and the fixed sequences of delete / home / end / pageup /
+    pagedown, `agent prompt <pane> <text>` with `--wait --until working --until blocked --timeout 8000` or without
+    (queued for an agent at work), and the hire's `pane read <pane> --source visible` (a blocked worker's question).
+    Typed text is never quoted in an error or the audit log. A herdr CLI call takes about 10 ms, so input goes through
+    the CLI (consecutive keys, and texts, batched into one call); the socket's `pane.send_input` is not used.
 
   Every variable is validated (session names, pane/workspace ids, agent session ids, absolute clean directories,
   labels without control characters or a leading `-`, `h3d/…` branches, `origin/…` bases, `h3d-<hex>` markers, models
@@ -148,6 +156,8 @@ that directory.
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
 | `--warn-workers`, `--max-workers` | `HERDR_WORLD_WARN_WORKERS`, `HERDR_WORLD_MAX_WORKERS` | `48`, `96`: the same for all watched running floors together |
 | `--git` | `HERDR_WORLD_GIT` | `git` on `PATH`: worktree hires, send-home checks and the repo suggestion |
+| `--max-watches` | `HERDR_WORLD_MAX_WATCHES` | `6`: laptop screens (`terminal.watch`) one connection may watch at once (`capacity` above) |
+| `--max-observers` | `HERDR_WORLD_MAX_OBSERVERS` | `16`: laptop screens watched at once over all connections, one `terminal session observe` each |
 | `--log-level`, `--log-format` | `HERDR_WORLD_LOG_LEVEL`, `HERDR_WORLD_LOG_FORMAT` | `info`, `text` (or `json`) |
 
 Install as a user service:
@@ -182,6 +192,20 @@ installed herdr:
   goes with its branch, the agents exit gracefully and the audit log has every step. It removes
   `~/.herdr/worktrees/h3d-it-repo-<random>` afterwards. The agents remember the trust of the test's temporary
   directories.
+
+- `TestIntegrationLaptops` (M5): a plain-shell workspace's screen through `terminal.watch` (a full frame, then diffs
+  showing what `worker.keys` typed), no `terminal session observe` process left (a `/proc` scan for the session's name,
+  unreaped ones included) after 20 watch / unwatch cycles, a connection closed mid-watch and a workspace closed while
+  watched (`terminal.closed` `worker_removed`); then a Claude (`claude-haiku-4-5-20251001`, `low`, `--permission-mode
+  default`) in a folder it has not seen: its trust dialog is a `trust` question, a wrong hash is `stale`, the "Yes, I
+  trust this folder" choice resolves it; a prompt is submitted, one sent while it works is `queued`; a Bash tool
+  permission prompt is a `permission` question that choice 1 approves (the command ran). About 30 s, a few haiku turns.
+  The agent remembers the trust of the test's temporary directory.
+
+The screens the question parser is tested on (`internal/server/testdata/screens`) were captured the same way, from
+throwaway sessions (`herdr pane read <pane> --source visible`): Claude's trust dialog, its Bash and Write permission
+prompts, an AskUserQuestion menu, Codex's approval (`-a on-request -s read-only`, a command outside the sandbox) and its
+trust dialog. Recapture them when an agent's dialogs change.
 
 All of them always name the `h3d-it-…` session explicitly, and the bridge under test watches only that session. They strip
 `HERDR_*`/`CLAUDE*` pane variables from herdr's environment and in `t.Cleanup`, also on failure, stop the session with
