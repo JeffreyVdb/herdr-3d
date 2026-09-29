@@ -468,15 +468,20 @@ px**, aspect kept:
   `<text>`, `<script>`, `<foreignObject>`, `<style>`, filters, masks, nested `<svg>` roots, event handlers,
   `href`s other than `#fragment` gradient references and `url(…)` other than `url(#fragment)`, depth over 64, more than
   4096 elements, more than 32 attributes on one, path data over 128 KiB or 8192 path commands, a number over 1e6, scale
-  chains over 1000×, tiny dash arrays, and dashed strokes whose estimated dash count (length ÷ shortest dash, plus the
-  dash offset ÷ shortest dash) is over 2 million. Convert text to outlines before exporting.
+  chains over 1000×, and gradients of more than 64 stops. Convert text to outlines before exporting. **Dashed strokes are
+  not supported**: `stroke-dasharray` and `stroke-dashoffset` (attribute or `style`) are dropped and the stroke is drawn
+  solid (rasterx's dashing cost depends on numbers, the group and viewBox scales among them, that the check cannot
+  bound). What the source cannot show about the cost of drawing is bounded when drawing: a document whose shapes are far
+  more detailed than their size on the canvas (path values × how far they reach in output pixels, stroke width and miter
+  limit included) is refused as too complex, and the drawing is abandoned, and the logo refused, if it has not finished
+  within 1 s of starting a shape (thousands of shapes over the whole canvas); one shape is never interrupted.
   The renderer never sees the upload itself, only a **canonical copy** that the check writes: elements and attributes of
   any namespace other than SVG (Inkscape, Sodipodi, RDF metadata, anything else; oksvg matches local names and would
   otherwise read `<x:rect>` or `x:width` as SVG) are dropped with their content, as are text, comments, `class`, and every
-  attribute oksvg does not read (matched by exact name, so `STROKE-DASHOFFSET` and `Style` are dropped too), and
+  attribute oksvg does not read (matched by exact name, so `STROKE-DASHOFFSET` and `Style` are dropped too, as is every dash property), and
   prefixed SVG-namespace elements are written with plain names. A `style="…"` attribute is kept, but only its
   presentation declarations (`fill`, `stroke`, `stroke-*`, `opacity`, `fill-opacity`, `stroke-opacity`, `transform`), each
-  checked exactly like the attribute of the same name (numbers, dashes, transforms, `url(#…)`); other declarations are
+  checked exactly like the attribute of the same name (numbers, transforms, `url(#…)`); other declarations are
   dropped. The same attribute given twice (also under two prefixes) is refused as `logo_invalid`.
 - The stored bytes are a freshly encoded PNG, so no metadata or trailing data survives; the **hash** is the sha256 of those
   bytes (the same picture uploaded twice has the same hash, a different picture never does).
@@ -501,7 +506,9 @@ The game shows a logo when it has one and the image can be fetched; without one,
 the building's name as before. It fetches each hash once and keeps one texture per hash, and files an image under a hash
 only if the bytes have that sha256 (checked with `crypto.subtle`, else against the `ETag`): a `404` for a `?h=` hash, or
 bytes of another hash, is a *stale* miss that is not cached and does not block another building that advertises the same
-hash (it fetches with its own URL); the building's next `building.upsert` brings the new hash. `GET /logo/{building}?h=<hash>`
+hash (it fetches with its own URL); the building's next `building.upsert` brings the new hash. A miss speaks only for
+the request that got it: when a building advertises a hash again while a request for it is still on its way (`H1`, `H2`,
+`H1`), that request's stale or failed answer is dropped and the hash is asked for again, once. `GET /logo/{building}?h=<hash>`
 through the helper carries `token=` like `/ws`.
 
 ### Floor settings

@@ -134,6 +134,12 @@ parts:
   by exact name, `style=` cut down to checked presentation properties, foreign markup and text dropped) and oksvg reads
   only that copy. A new element, attribute or style property therefore needs an entry in `svgElements`, `svgAttrs` or
   `svgStyleProps` and its checks in `checkProp`, plus a row in `TestSVGRefusals` or `TestSVGForeignMarkupIsDropped`.
+  Dashes are not supported and stay out: `stroke-dasharray`/`stroke-dashoffset` are not in `svgAttrs`, so they are dropped
+  and strokes render solid (`TestSVGDashesAreDropped`), because rasterx's dashing cost cannot be bounded from the source
+  (it quantises dashes independently of the scales that enlarge the path). The cost of drawing is bounded where it can be
+  measured: `renderSVG` refuses shapes whose compiled values × output reach exceed `svgMaxWork`, gradients are capped at
+  `svgMaxStops`, and the loop over the shapes stops after `svgRenderBudget` (`TestSVGCostBounds` times the heaviest
+  documents the limits accept: about 0.6 s at worst on a laptop).
   A `GET /logo/{id}?h=` with a hash that is not the current one is `404` (never the new image under the old hash), and
   the game's `LogoCache` never files bytes under a hash they do not have.
 
@@ -446,7 +452,7 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   (a lit plate with the logo letterboxed on it, over the name board it hides) used by `lobby.ts` for the entrance sign and
   the reception wall, and the city's signs in `city.ts` (`setLogos`; one instanced draw for the plates, a quad a logo,
   lit while a floor runs, dim when all sleep; a sleep or wake rebuilds the city, signs included, as it always did, and the
-  textures are not reloaded since they are cached by hash). `App.syncLogos` follows the buildings' `logo` hashes; a
+  textures are not reloaded since they are cached by hash). `App.syncLogos` follows the buildings' `logo` hashes (`LogoSync`, which tells the `LogoCache` when a hash changes, also back to an earlier one, so a slow stale answer cannot hide the hash advertised now); a
   texture swap in the lobby, not a rebuild of it (the hash is not in the building's `shape` key), and only the city's signs
   are rebuilt for the city. A logo that cannot be fetched leaves the name.
   The Buildings panel has the control (`panels.ts` `logoRow`).
