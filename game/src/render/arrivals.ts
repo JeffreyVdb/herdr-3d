@@ -60,6 +60,10 @@ interface Active {
   last: ArrivalPose | null;
   /** M6b: the desk's things (packing), in slot space. */
   kit: DeskKit | null;
+  /** M6b: someone else sits at the desk now (`yieldDesk`): the walk never shows the desk again. */
+  yielded: boolean;
+  /** M6b: the things in its box when it gave the desk up (null: as the packing goes). */
+  kept: number | null;
 }
 
 /** What the arrivals ask of the office: a desk shown as `away` (null: as the world says again); M6b: a worker dropping in (null: seated). */
@@ -95,6 +99,8 @@ export interface ArrivalInfo {
   wave: boolean;
   /** M6b: dropping in: the height over the seat. */
   dy: number;
+  /** M6b: gave its desk up to whoever sits there now (see `Arrivals.yieldDesk`). */
+  yielded: boolean;
 }
 
 const CAPACITY = 8;
@@ -256,6 +262,8 @@ export class Arrivals {
   /** Starts a walk at time `now` (s); false when it cannot be shown (no route, too many at once). */
   start(spec: ArrivalSpec, now: number): boolean {
     this.cancel(spec.id);
+    // M6b: a new hire's desk is its own from the first frame, whatever a walk-out there still has to do (shown or not).
+    if (spec.kind === 'in') this.yieldDesk(spec.session, spec.desk, spec.id, now);
     const slot = this.free.pop();
     if (slot === undefined || spec.route.length < (spec.kind === 'in' ? 1 : 2)) {
       if (slot !== undefined) this.free.push(slot);
@@ -277,7 +285,7 @@ export class Arrivals {
     });
     this.tints.photo.needsUpdate = this.tints.notebook.needsUpdate = true;
     if (this.parts.mug.instanceColor) this.parts.mug.instanceColor.needsUpdate = true;
-    this.active.push({ spec, tl, t0: now, slot, last: null, kit });
+    this.active.push({ spec, tl, t0: now, slot, last: null, kit, yielded: false, kept: null });
     this.showIfWalking();
     return true;
   }
@@ -286,6 +294,34 @@ export class Arrivals {
   skip(spec: Pick<ArrivalSpec, 'id' | 'kind' | 'session' | 'desk'>): void {
     this.log.push({ id: spec.id, kind: spec.kind, played: false, session: spec.session, desk: spec.desk });
     if (this.log.length > 50) this.log.shift();
+  }
+
+  /**
+   * M6b: someone else (`by`) sits at `desk` now: a new hire dropping in, or
+   * a worker the world moved there while the one sent home is still leaving
+   * (the bridge frees a desk as its worker goes). Every walk there by
+   * another worker gives the desk up for good: it never shows it `away`
+   * again, not even once the newer walk is over. A walk-out still at the
+   * desk gets up and goes at once, so it never packs the new worker's
+   * things: its box keeps what it packed so far, its laptop on top. True
+   * when a walk gave the desk up (the desk shows as the world says from the
+   * next `update`).
+   */
+  yieldDesk(session: string, desk: number, by: string, now: number): boolean {
+    let any = false;
+    for (const a of this.active) {
+      if (a.yielded || a.spec.id === by || a.spec.session !== session || a.spec.desk !== desk) continue;
+      a.yielded = true;
+      any = true;
+      if (a.spec.kind !== 'out') continue;
+      const at = (now - a.t0) * this.rate;
+      const p = poseAt(a.tl, at);
+      a.kept = p.items + (p.itemLift > 0 ? 1 : 0);
+      const walk = a.tl.stages.find((s) => s.phase === 'walk');
+      if (walk && at < walk.t0) a.t0 = now - walk.t0 / this.rate;
+    }
+    if (any) this.released.push({ session, desk, away: null, drop: null });
+    return any;
   }
 
   /** Ends a walk early (the worker is gone, or came back); its desk shows as the world says. */
@@ -325,7 +361,8 @@ export class Arrivals {
   /**
    * Advances every walk to time `now` (s) and draws it; returns what each
    * desk with a walk (or a walk that just ended) should show, one entry per
-   * desk: the newest walk on a desk owns it (`deskOwners`).
+   * desk: the newest walk on a desk owns it (`deskOwners`), and a walk that
+   * gave its desk up (`yieldDesk`) has no say in it any more.
    */
   update(now: number, t: number): DeskAway[] {
     for (let i = this.active.length - 1; i >= 0; i--) {
@@ -341,10 +378,11 @@ export class Arrivals {
       const s = a.spec;
       if (s.kind === 'in') {
         this.drawDrop(a, p);
-        walking.push({ session: s.session, desk: s.desk, away: null, drop: { dy: p.dy, squash: p.squash } });
+        if (!a.yielded) walking.push({ session: s.session, desk: s.desk, away: null, drop: { dy: p.dy, squash: p.squash } });
         continue;
       }
       this.draw(a, p);
+      if (a.yielded) continue;
       const packed = p.items + (p.itemLift > 0 ? 1 : 0);
       walking.push({ session: s.session, desk: s.desk, away: p.desk === 'free' ? null : { show: p.desk, display: s.display, cue: s.cue.color, harness: s.harness, packed } });
     }
@@ -437,10 +475,12 @@ export class Arrivals {
     // The desk's things: in the box once packed, on their way in an arc, else still on the desk (the office draws them).
     for (const key of ['photo', 'mug', 'plant', 'notebook', 'pens'] as const) for (let k = 0; k < PER[key]; k++) P[key].setMatrixAt(a.slot * PER[key] + k, ZERO);
     const kit = a.kit;
+    // Gave the desk up (`yieldDesk`): what it packed so far, nothing more off the new worker's desk.
+    const packed = a.kept ?? p.items;
     if (kit && boxOn) {
       kit.items.forEach((item, n) => {
-        const moving = n === p.items && p.itemLift > 0;
-        if (n >= p.items && !moving) return;
+        const moving = a.kept === null && n === p.items && p.itemLift > 0;
+        if (n >= packed && !moving) return;
         const box = this.m2.multiplyMatrices(this.boxM, inBox(item));
         const m = moving ? this.arc(this.m.multiplyMatrices(slotM, itemMatrix(item)), box.clone(), p.itemLift, 0.16, this.m) : box;
         const idx = item.kind === 'photo' ? a.slot * 2 + item.n : a.slot;
@@ -486,11 +526,12 @@ export class Arrivals {
         desk_show: p.desk,
         box: p.box,
         laptop: p.laptop,
-        items: p.items,
+        items: a.kept ?? p.items,
         carry: a.tl.carry,
         briefcase: p.briefcase,
         wave: p.wave,
         dy: p.dy,
+        yielded: a.yielded,
       };
     });
   }

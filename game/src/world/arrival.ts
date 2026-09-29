@@ -347,7 +347,9 @@ function boxPoseAt(tl: Timeline, t: number): ArrivalPose {
  * newest walk on a desk owns it: a walk-out that started after another walk
  * there shows its packing, and a new hire dropping in to the desk a worker
  * sent home is still leaving shows the new hire (as the world says), never
- * the older walk's empty desk.
+ * the older walk's empty desk. (The older walk gives that desk up for good,
+ * `Arrivals.yieldDesk`: it is not in `walking` any more, so it cannot take
+ * the desk back once the drop is over.)
  */
 export function deskOwners<T extends { session: string; desk: number }>(ended: readonly T[], walking: readonly T[]): T[] {
   const by = new Map<string, T>();

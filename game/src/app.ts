@@ -231,7 +231,10 @@ export class App {
       socket: (u) => new WebSocket(u) as unknown as SocketLike,
       handlers: {
         onWelcome: (w) => o.onBridgeVersion?.(bannerVersion(w.server)),
-        onSnapshot: (s) => this.applyChange(this.store.applySnapshot(s)),
+        onSnapshot: (s) => {
+          this.applyChange(this.store.applySnapshot(s));
+          this.yieldTakenDesks(this.store.workers.keys());
+        },
         onEvent: (e) => this.onWorldEvent(e),
         onConn: (m) => this.laptops.onConn(m),
         onState: (s) => {
@@ -396,7 +399,25 @@ export class App {
       if (old && (old.session !== e.worker.session || old.desk_index !== e.worker.desk_index)) this.arrivals.cancel(e.worker.id);
     }
     this.applyChange(this.store.applyEvent(e));
+    if (e.t === 'worker.upsert') this.yieldTakenDesks([e.worker.id]);
     after?.();
+  }
+
+  /**
+   * M6b: the world seats these workers where they are (a new hire, or one
+   * moved to a desk another worker sent home is still leaving: the bridge
+   * frees a desk as its worker goes). A walk-out still on such a desk gives
+   * it up for good (`Arrivals.yieldDesk`), and the desk is the new worker's
+   * at once: look-at, its card, its laptop.
+   */
+  private yieldTakenDesks(ids: Iterable<string>): void {
+    if (!this.arrivals.count) return;
+    const now = performance.now() / 1000;
+    for (const id of ids) {
+      const v = this.store.workerView(id);
+      if (!v || !this.arrivals.yieldDesk(v.worker.session, v.desk, id, now)) continue;
+      if (this.office?.session === v.worker.session) this.office.setAway(v.desk, null);
+    }
   }
 
   /**

@@ -143,6 +143,76 @@ describe('OfficeView while a worker packs up (M6b)', () => {
   });
 });
 
+describe('OfficeView: a new worker at the desk of one still packing up (M6b)', () => {
+  const samples = [10.1, 10.2, 10.5, 10.9, 10.96, 11, 11.5, 12, 13, 14, 16, 20];
+
+  function expectNewWorker(office: OfficeView, t: number, name: string): void {
+    const at = `t=${t}`;
+    expect(office.awayDesks().has(0), at).toBe(false);
+    const ray = lookAtSeat(office, 0);
+    expect(office.pick(ray.origin, ray.dir), at).toMatchObject({ kind: 'worker', id: 'new', name, desk: 0 });
+    expect(office.cards.card(0), at).toMatchObject({ name });
+    // Its own laptop in the dock, all its things on the desk: the old worker's walk-out does not touch them.
+    expect(office.deskInfo(0)!.parts.laptop, at).toBe(1);
+    expect(things(office, 0), at).toBe(office.kits[0]!.items.length);
+  }
+
+  for (const late of [false, true]) {
+    it(`a hire drops in ${late ? 'as the laptop comes out of its dock' : 'right after'}: picked, carded and set up at every frame, during and after the drop`, () => {
+      const store = world();
+      const office = new OfficeView(store.floorView('top')!, { shadows: false });
+      const arrivals = new Arrivals(false);
+      const t0 = late ? TAKE_LAPTOP_AT - 0.1 : 0;
+      sendHome(store, office, arrivals, 10 - t0);
+      const step = stepper(office, arrivals);
+      step(10.05);
+      expect(office.awayDesks().get(0)).toBe('busy');
+      // The bridge freed the desk as Pip went: the world seats Gumdrop there, who drops in.
+      store.applyEvent({ t: 'worker.upsert', seq: 11, worker: worker('new', { name: 'Gumdrop', desk_index: 0, harness: 'codex', model: 'gpt-6-sol', status: 'working', hired_at: 999 }) });
+      office.apply(store.floorView('top')!);
+      const s = office.layout.slots[0]!;
+      const v = store.workerView('new')!;
+      const m = memberOf(v);
+      const spec: ArrivalSpec = { id: 'new', kind: 'in', session: 'top', desk: 0, name: v.name, route: [{ x: s.seat.x, y: 0, z: s.seat.z }], seatYaw: s.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase, harness: 'codex' };
+      expect(arrivals.start(spec, 10.1)).toBe(true);
+      for (const t of samples) {
+        step(t);
+        expectNewWorker(office, t, 'Gumdrop');
+        expect(office.dropping(), `t=${t}`).toEqual(t < 10.1 + DROP_S ? [0] : []);
+      }
+      // Pip is long gone: nothing changes.
+      expect(arrivals.info(20).find((a) => a.id === 'old')).toBeUndefined();
+      step(60);
+      expectNewWorker(office, 60, 'Gumdrop');
+      expect(arrivals.count).toBe(0);
+      office.dispose();
+      arrivals.dispose();
+    });
+  }
+
+  it('a freelancer re-seated at the desk (no drop-in): the desk is its own at once', () => {
+    const store = world();
+    store.applyEvent({ t: 'worker.upsert', seq: 2, worker: worker('new', { name: 'Nib', desk_index: 5, status: 'working' }) });
+    const office = new OfficeView(store.floorView('top')!, { shadows: false });
+    const arrivals = new Arrivals(false);
+    sendHome(store, office, arrivals, 10);
+    const step = stepper(office, arrivals);
+    step(10.05);
+    // The world moves Nib to Pip's desk: as the app does, the walk gives the desk up and the office shows it as the world says.
+    store.applyEvent({ t: 'worker.upsert', seq: 11, worker: worker('new', { name: 'Nib', desk_index: 0, status: 'working' }) });
+    office.apply(store.floorView('top')!);
+    expect(arrivals.yieldDesk('top', 0, 'new', 10.1)).toBe(true);
+    office.setAway(0, null);
+    expectNewWorker(office, 10.1, 'Nib');
+    for (const t of samples) {
+      step(t);
+      expectNewWorker(office, t, 'Nib');
+    }
+    office.dispose();
+    arrivals.dispose();
+  });
+});
+
 describe('desk kits on the office floor (M6b)', () => {
   it('a taken desk: the laptop with its harness’s sticker, the worker’s things; an empty one: only the furniture', () => {
     const store = world();
