@@ -107,6 +107,11 @@ wait_bridge() {
 # shellcheck disable=SC2029
 mac() { ssh "${SSH_OPTS[@]}" "$MAC" "$@"; }
 
+# Run the script on stdin under sh on the Mac. ssh hands a command to the login
+# shell, which on the Mac is fish: anything that is more than one plain command
+# (set -e, $(...), ||, &&) must go through here, not through mac().
+mac_sh() { ssh "${SSH_OPTS[@]}" "$MAC" sh -s; }
+
 # The helper's version from its /healthz JSON ("version"); empty if it is down.
 mac_version() {
   mac "curl -sS --max-time 3 http://127.0.0.1:$MAC_PORT/healthz" 2>/dev/null |
@@ -191,9 +196,14 @@ rollback_bridge() {
 }
 
 rollback_mac() {
-  mac "set -e; cd $MAC_BIN; [ -e h3d-helper.prev ] || { echo 'no h3d-helper.prev' >&2; exit 1; }
-       mv -f h3d-helper h3d-helper.rolledback 2>/dev/null || true; mv -f h3d-helper.prev h3d-helper
-       launchctl kickstart -k gui/\$(id -u)/$MAC_LABEL"
+  mac_sh <<EOF
+set -e
+cd $MAC_BIN
+[ -e h3d-helper.prev ] || { echo 'no h3d-helper.prev' >&2; exit 1; }
+mv -f h3d-helper h3d-helper.rolledback 2>/dev/null || true
+mv -f h3d-helper.prev h3d-helper
+launchctl kickstart -k gui/\$(id -u)/$MAC_LABEL
+EOF
   say "helper rolled back; it opens a new game window"
 }
 
@@ -268,10 +278,14 @@ update_mac() {
     return 0
   fi
   scp "${SSH_OPTS[@]}" -q "$tmp/h3d-helper-darwin-arm64" "$MAC:$MAC_BIN/h3d-helper.new"
-  mac "set -e; cd $MAC_BIN; chmod 755 h3d-helper.new
-       [ -e h3d-helper ] && mv -f h3d-helper h3d-helper.prev
-       mv -f h3d-helper.new h3d-helper
-       launchctl kickstart -k gui/\$(id -u)/$MAC_LABEL"
+  mac_sh <<EOF
+set -e
+cd $MAC_BIN
+chmod 755 h3d-helper.new
+if [ -e h3d-helper ]; then mv -f h3d-helper h3d-helper.prev; fi
+mv -f h3d-helper.new h3d-helper
+launchctl kickstart -k gui/\$(id -u)/$MAC_LABEL
+EOF
   if ! wait_mac "$tag"; then
     say "the new helper did not report $tag within ${WAIT}s: restoring the previous one"
     rollback_mac || true

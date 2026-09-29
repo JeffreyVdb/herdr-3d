@@ -30,12 +30,18 @@ install -Dm755 deploy/h3d-update ~/.local/bin/h3d-update
 install -Dm644 deploy/herdr-world.service ~/.config/systemd/user/herdr-world.service
 systemctl --user daemon-reload && systemctl --user enable herdr-world
 
+# ssh runs commands through the Mac's login shell (fish here), so scripts go to `sh -s`.
 mac=devmac; ssh="ssh -o ControlMaster=no -o ControlPath=none"
-$ssh $mac 'mkdir -p ~/.local/bin ~/Library/LaunchAgents'
-$ssh $mac 'sed "s|@HOME@|$HOME|g" > Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist' < deploy/com.jeffreyvdb.h3d-helper.plist
-$ssh $mac 'launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist'
+$ssh $mac sh -s <<'EOF'
+mkdir -p "$HOME/.local/bin" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+EOF
+sed "s|@HOME@|/Users/dev|g" deploy/com.jeffreyvdb.h3d-helper.plist |
+  $ssh $mac 'cat > Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist'
+$ssh $mac sh -s <<'EOF'
+launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist"
+EOF
 
-h3d-update        # installs both from the latest release and starts them
+h3d-update [vX.Y.Z]   # installs both and starts them (name the tag while only -rc releases exist)
 ```
 
 ## Updating
