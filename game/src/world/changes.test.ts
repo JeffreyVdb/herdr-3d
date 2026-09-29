@@ -131,6 +131,114 @@ describe('changesView', () => {
   });
 });
 
+// As git 2.x prints it (`git diff --patch --find-renames HEAD`) after: normal.txt, "s p.txt", "tést.txt" and
+// 'q"uo te.txt' edited, f.txt (a regular file) replaced with a symlink, "old name.txt" renamed to "né name.txt"; then
+// an untracked "new file.txt" as the bridge adds it.
+const ODD_DIFF = [
+  'diff --git a/f.txt b/f.txt',
+  'deleted file mode 100644',
+  'index 53cef30..0000000',
+  '--- a/f.txt',
+  '+++ /dev/null',
+  '@@ -1 +0,0 @@',
+  '-valuable old content',
+  'diff --git a/f.txt b/f.txt',
+  'new file mode 120000',
+  'index 0000000..e9750ee',
+  '--- /dev/null',
+  '+++ b/f.txt',
+  '@@ -0,0 +1 @@',
+  '+normal.txt',
+  '\\ No newline at end of file',
+  'diff --git a/normal.txt b/normal.txt',
+  'index 7898192..422c2b7 100644',
+  '--- a/normal.txt',
+  '+++ b/normal.txt',
+  '@@ -1 +1,2 @@',
+  ' a',
+  '+b',
+  'diff --git a/old name.txt "b/n\\303\\251 name.txt"',
+  'similarity index 100%',
+  'rename from old name.txt',
+  'rename to "n\\303\\251 name.txt"',
+  'diff --git "a/q\\"uo te.txt" "b/q\\"uo te.txt"',
+  'index 7898192..422c2b7 100644',
+  '--- "a/q\\"uo te.txt"\t',
+  '+++ "b/q\\"uo te.txt"\t',
+  '@@ -1 +1,2 @@',
+  ' a',
+  '+b',
+  'diff --git a/s p.txt b/s p.txt',
+  'index 7898192..422c2b7 100644',
+  '--- a/s p.txt\t',
+  '+++ b/s p.txt\t',
+  '@@ -1 +1,2 @@',
+  ' a',
+  '+b',
+  'diff --git "a/t\\303\\251st.txt" "b/t\\303\\251st.txt"',
+  'index 7898192..422c2b7 100644',
+  '--- "a/t\\303\\251st.txt"',
+  '+++ "b/t\\303\\251st.txt"',
+  '@@ -1 +1,2 @@',
+  ' a',
+  '+b',
+  'diff --git a/new file.txt b/new file.txt',
+  'new file mode 100644',
+  '--- /dev/null',
+  '+++ b/new file.txt\t',
+  '@@ -0,0 +1 @@',
+  '+hi',
+  '',
+].join('\n');
+
+describe('file names as git prints them', () => {
+  const file = (path: string, over: Partial<Changes['files'][number]> = {}) => ({ path, index: '.', worktree: 'M', insertions: 1, deletions: 0, binary: false, ...over });
+  const view = changesView(
+    changes({
+      files: [
+        file('f.txt', { worktree: 'T', deletions: 1 }),
+        file('normal.txt'),
+        file('né name.txt', { index: 'R', worktree: '.', orig_path: 'old name.txt', insertions: 0 }),
+        file('q"uo te.txt'),
+        file('s p.txt'),
+        file('tést.txt'),
+        { path: 'new file.txt', untracked: true, insertions: 1, deletions: 0, binary: false },
+      ],
+      diff: ODD_DIFF,
+      truncated: false,
+      omitted: [],
+    }),
+  );
+  const byPath = (p: string) => view.files.find((f) => f.path === p);
+
+  it('decodes quoted names and drops the tab after a name with a space', () => {
+    expect(splitDiff(ODD_DIFF).map((d) => d.path)).toEqual(['f.txt', 'f.txt', 'normal.txt', 'né name.txt', 'q"uo te.txt', 's p.txt', 'tést.txt', 'new file.txt']);
+    for (const p of ['normal.txt', 'q"uo te.txt', 's p.txt', 'tést.txt', 'new file.txt']) {
+      const f = byPath(p);
+      expect(f && noDiffReason(f), p).toBeNull();
+      expect(f?.diff?.lines.at(-1), p).toMatch(/^\+(b|hi)$/);
+    }
+    expect(byPath('né name.txt') && noDiffReason(byPath('né name.txt')!)).toBe('Only its mode or name changed.');
+  });
+
+  it('keeps every section of a path: a type change shows the old content going and the new coming', () => {
+    const lines = byPath('f.txt')?.diff?.lines ?? [];
+    expect(lines).toContain('-valuable old content');
+    expect(lines).toContain('+normal.txt');
+    expect(lines.indexOf('-valuable old content')).toBeLessThan(lines.indexOf('+normal.txt'));
+    const d = byPath('f.txt')!.diff!;
+    expect(numberLines(d).filter(([o, n]) => o !== null || n !== null)).toEqual([
+      [1, null],
+      [null, 1],
+    ]);
+  });
+
+  it('reads the header when there are no --- / +++ lines', () => {
+    const d = splitDiff(['diff --git a/a b.bin b/a b.bin', 'index 1..2 100644', 'Binary files a/a b.bin and b/a b.bin differ', 'diff --git "a/\\303\\251.png" "b/\\303\\251.png"', 'new file mode 100644', 'Binary files /dev/null and "b/\\303\\251.png" differ'].join('\n'));
+    expect(d.map((x) => x.path)).toEqual(['a b.bin', 'é.png']);
+  });
+});
+
 describe('helpers', () => {
   it('formats sizes and splits paths', () => {
     expect([912, 18_230, 1_363_149].map(bytesText)).toEqual(['912 B', '18 KiB', '1.3 MiB']);

@@ -18,24 +18,83 @@ export interface FileDiff {
   kinds: LineKind[];
 }
 
-const HEADER = /^diff --git (?:"?a\/(.+?)"?) (?:"?b\/(.+?)"?)$/;
+const HEADER = /^diff --git a\/(.+?) b\/(.+)$/;
 
-/** The path a diff section is about: `+++ b/…` (`--- a/…` for a deletion), else the `diff --git` line's. */
+const C_ESCAPES: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 };
+
+/**
+ * A C-quoted name as git prints it (`"t\303\251st.txt"`: octal escapes are
+ * UTF-8 bytes) starting at `s[from]`, decoded, and where it ends; null if
+ * it is not one.
+ */
+function cQuoted(s: string, from: number): { value: string; end: number } | null {
+  if (s[from] !== '"') return null;
+  const bytes: number[] = [];
+  const utf8 = new TextEncoder();
+  for (let i = from + 1; i < s.length; ) {
+    const ch = s[i] ?? '';
+    if (ch === '"') return { value: new TextDecoder().decode(new Uint8Array(bytes)), end: i + 1 };
+    if (ch === '\\') {
+      const oct = /^[0-7]{1,3}/.exec(s.slice(i + 1, i + 4))?.[0];
+      const next = s[i + 1] ?? '';
+      if (oct) {
+        bytes.push(parseInt(oct, 8) & 0xff);
+        i += 1 + oct.length;
+      } else {
+        bytes.push(C_ESCAPES[next] ?? next.charCodeAt(0));
+        i += 2;
+      }
+      continue;
+    }
+    const cp = s.codePointAt(i) ?? 0;
+    bytes.push(...utf8.encode(String.fromCodePoint(cp)));
+    i += cp > 0xffff ? 2 : 1;
+  }
+  return null;
+}
+
+/**
+ * A path as a patch header has it (`--- a/…`, `rename to …`), as the
+ * bridge's `files[].path` has it: C-quoted names decoded, and the tab git
+ * puts after a name with a space dropped (a plain name has no tab: git
+ * quotes one that does). `prefix` (`a/`, `b/`) is taken off.
+ */
+export function gitPath(s: string, prefix = ''): string {
+  const q = cQuoted(s, 0);
+  const name = q ? q.value : s.split('\t')[0] ?? '';
+  return prefix && name.startsWith(prefix) ? name.slice(prefix.length) : name;
+}
+
+/** The b-side path of a `diff --git a/… b/…` line (a-side when b cannot be read). */
+function headerPath(line: string): string {
+  const rest = line.slice('diff --git '.length);
+  const a = cQuoted(rest, 0);
+  if (a) return gitPath(rest.slice(a.end + 1), 'b/');
+  const b = rest.lastIndexOf(' "b/');
+  if (b >= 0) return gitPath(rest.slice(b + 1), 'b/');
+  // Unquoted both: "a/X b/X" when unchanged; else the first " b/".
+  const half = (rest.length - 1) / 2;
+  if (Number.isInteger(half) && rest.slice(0, half) === `a/${rest.slice(half + 3)}` && rest.slice(half, half + 3) === ' b/') {
+    return rest.slice(half + 3);
+  }
+  const m = HEADER.exec(line);
+  return m?.[2] ?? m?.[1] ?? rest;
+}
+
+/** The path a diff section is about: `+++ b/…` (`--- a/…` for a deletion), a rename's or copy's new name, else the `diff --git` line's. */
 function sectionPath(lines: readonly string[], start: number, end: number): string {
   let minus = '';
   for (let i = start + 1; i < end; i++) {
     const l = lines[i] ?? '';
     if (l.startsWith('@@')) break;
-    if (l.startsWith('+++ ') && l !== '+++ /dev/null') return unquote(l.slice(4)).replace(/^b\//, '');
-    if (l.startsWith('--- ') && l !== '--- /dev/null') minus = unquote(l.slice(4)).replace(/^a\//, '');
-    if (l.startsWith('rename to ')) return l.slice('rename to '.length);
+    if (l.startsWith('+++ ') && l !== '+++ /dev/null') return gitPath(l.slice(4), 'b/');
+    if (l.startsWith('--- ') && l !== '--- /dev/null') minus = gitPath(l.slice(4), 'a/');
+    if (l.startsWith('rename to ')) return gitPath(l.slice('rename to '.length));
+    if (l.startsWith('copy to ')) return gitPath(l.slice('copy to '.length));
   }
   if (minus) return minus;
-  const m = HEADER.exec(lines[start] ?? '');
-  return m?.[2] ?? m?.[1] ?? (lines[start] ?? '').slice('diff --git '.length);
+  return headerPath(lines[start] ?? '');
 }
-
-const unquote = (s: string) => (s.length > 1 && s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s);
 
 /** Splits a unified diff (`git diff`) into its files, classifying every line. */
 export function splitDiff(diff: string): FileDiff[] {
@@ -153,7 +212,12 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 /** Everything the panel shows for an ack, the files in the bridge's order with their diffs. */
 export function changesView(c: Changes): ChangesView {
-  const sections = new Map(splitDiff(c.diff ?? '').map((d) => [d.path, d]));
+  // A path can have more than one section (a type change is a deletion and an addition): all of them, in order.
+  const sections = new Map<string, FileDiff>();
+  for (const d of splitDiff(c.diff ?? '')) {
+    const had = sections.get(d.path);
+    sections.set(d.path, had ? { path: d.path, lines: [...had.lines, ...d.lines], kinds: [...had.kinds, ...d.kinds] } : d);
+  }
   const omitted = new Set(c.omitted ?? []);
   const files = (c.files ?? []).map((f) => ({ ...f, state: fileState(f), diff: sections.get(f.path) ?? (f.orig_path ? sections.get(f.orig_path) : undefined) ?? null, omitted: omitted.has(f.path) }));
   const ahead = c.ahead ?? 0;
