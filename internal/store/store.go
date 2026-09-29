@@ -156,6 +156,9 @@ var migrations = []string{
 		pass        INTEGER CHECK (pass IS NULL OR pass >= 0),
 		updated_at  TEXT NOT NULL
 	);`,
+	// M7 boards: each floor's last good boards, the open pull requests at the
+	// last good poll, the merges announced, and a hire's base branch.
+	migrationBoards,
 }
 
 // Fingerprint kinds.

@@ -140,6 +140,7 @@ type HireBranch struct {
 	RepoRoot string // the repository's main checkout
 	Branch   string
 	BaseSHA  string // the commit it was made from
+	Base     string // the branch it was made from ("main"), "" for a record from before M7
 }
 
 // RecordHireBranch records the branch the bridge made for a worker.
@@ -147,16 +148,16 @@ func (s *Store) RecordHireBranch(ctx context.Context, b HireBranch) error {
 	if b.WorkerID == "" || b.Session == "" || b.RepoRoot == "" || b.Branch == "" || b.BaseSHA == "" {
 		return fmt.Errorf("%w: worker, session, repo root, branch and base are required", ErrInvalid)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO hire_branch (worker_uuid, session_name, repo_root, branch, base_sha, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`, b.WorkerID, b.Session, b.RepoRoot, b.Branch, b.BaseSHA, s.ts())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO hire_branch (worker_uuid, session_name, repo_root, branch, base_sha, base, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, b.WorkerID, b.Session, b.RepoRoot, b.Branch, b.BaseSHA, b.Base, s.ts())
 	return err
 }
 
 // HireBranchOf returns the branch the bridge made for a worker, if any.
 func (s *Store) HireBranchOf(ctx context.Context, workerID string) (HireBranch, bool, error) {
 	b := HireBranch{WorkerID: workerID}
-	err := s.db.QueryRowContext(ctx, `SELECT session_name, repo_root, branch, base_sha FROM hire_branch WHERE worker_uuid = ?`,
-		workerID).Scan(&b.Session, &b.RepoRoot, &b.Branch, &b.BaseSHA)
+	err := s.db.QueryRowContext(ctx, `SELECT session_name, repo_root, branch, base_sha, base FROM hire_branch WHERE worker_uuid = ?`,
+		workerID).Scan(&b.Session, &b.RepoRoot, &b.Branch, &b.BaseSHA, &b.Base)
 	if errors.Is(err, sql.ErrNoRows) {
 		return HireBranch{}, false, nil
 	}

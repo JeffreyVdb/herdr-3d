@@ -4,7 +4,8 @@
 // variables, each its own argv element (no shell), in a clean
 // environment. Only DeleteBranch changes a repository, and only a branch
 // the bridge made (h3d/…, and recorded as made for that worker by the
-// caller); Fetch only updates remote-tracking refs. Changes (the Changes
+// caller); Push (M7) sends such a branch to origin; Fetch only updates
+// remote-tracking refs. Changes (the Changes
 // panel) only reads.
 package gitops
 
@@ -74,6 +75,11 @@ const (
 	opStatusV2  = "status-v2"
 	opMergeBase = "merge-base"
 	opDiff      = "diff"
+	// Opening a pull request (M7): push a branch the bridge made, and the
+	// read-only questions that come before.
+	opPush     = "push"
+	opAheadOf  = "ahead-of"
+	opSubjects = "subjects"
 )
 
 // shapes is the complete set of git commands the bridge runs. {git} is
@@ -99,6 +105,13 @@ var shapes = map[string][]string{
 	opMergeBase: {"{git}", "-C", "{dir}", "merge-base", "HEAD", "{ref}"},
 	opDiff: {"{git}", "-C", "{dir}", "diff", "--numstat", "--patch", "-z", "--find-renames", "--no-color", "--no-ext-diff",
 		"--no-textconv", "--src-prefix=a/", "--dst-prefix=b/", "{rev}", "--"},
+	// Opening a pull request (M7). The one shape that writes outside the
+	// checkout: pushing an h3d/… branch (the caller checked the bridge made
+	// it for the worker) to its own name on origin. The others count and
+	// list the commits HEAD has on top of origin/<base>.
+	opPush:     {"{git}", "-C", "{dir}", "push", "-u", "origin", "refs/heads/{branch}:refs/heads/{branch}"},
+	opAheadOf:  {"{git}", "-C", "{dir}", "rev-list", "--count", "HEAD", "--not", "{ref}"},
+	opSubjects: {"{git}", "-C", "{dir}", "log", "--format=%s", "-n", "20", "HEAD", "--not", "{ref}", "--"},
 }
 
 var placeholders = map[string]func(string) bool{
@@ -179,8 +192,11 @@ func (g *Git) exec(ctx context.Context, op string, vars map[string]string,
 	timeout := g.Timeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second
-		if op == opFetch {
+		switch op {
+		case opFetch:
 			timeout = 20 * time.Second
+		case opPush:
+			timeout = 60 * time.Second
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -335,6 +351,43 @@ func (g *Git) BranchTip(ctx context.Context, dir, branch string) (string, error)
 		return "", fmt.Errorf("git rev-parse %s: unexpected %q", branch, out)
 	}
 	return sha, nil
+}
+
+// Push pushes branch (one the bridge made, h3d/…) of the checkout at dir to
+// the same name on origin and sets it as upstream.
+func (g *Git) Push(ctx context.Context, dir, branch string) error {
+	_, err := g.run(ctx, opPush, map[string]string{"dir": dir, "branch": branch})
+	return err
+}
+
+// AheadOf counts the commits of HEAD that origin/<base> (base is that
+// remote-tracking ref) does not have.
+func (g *Git) AheadOf(ctx context.Context, dir, base string) (int, error) {
+	out, err := g.run(ctx, opAheadOf, map[string]string{"dir": dir, "ref": base})
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("git rev-list --count: unexpected %q", out)
+	}
+	return n, nil
+}
+
+// Subjects returns the subject lines of the (at most 20) newest commits of
+// HEAD that origin/<base> does not have, newest first.
+func (g *Git) Subjects(ctx context.Context, dir, base string) ([]string, error) {
+	out, err := g.run(ctx, opSubjects, map[string]string{"dir": dir, "ref": base})
+	if err != nil {
+		return nil, err
+	}
+	var subjects []string
+	for _, l := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			subjects = append(subjects, l)
+		}
+	}
+	return subjects, nil
 }
 
 // DeleteBranch deletes a branch the bridge made (h3d/…) in the repository
