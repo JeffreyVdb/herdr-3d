@@ -450,6 +450,57 @@ func TestFreelancersSitNextToTheirOrchestrator(t *testing.T) {
 	}
 }
 
+// One observation brings a run's freelancers and its ORCH together (a
+// fresh bridge, a new floor): the ORCH is seated first and its freelancers
+// take the desks nearest to it, at once.
+func TestInitialDiscoverySeatsFreelancersNextToTheirOrchestrator(t *testing.T) {
+	plain := func(ws string) world.WorkerObs {
+		w := agent(ws, "idle")
+		w.Label, w.Role = "plain "+ws, ""
+		return w
+	}
+	fl := func(ws, role, run string) world.WorkerObs {
+		return runWorker(ws, "CODE|"+ws, runTokens(role, run))
+	}
+	t.Run("one run", func(t *testing.T) {
+		b := startBridge(t, "", server.Options{})
+		// CODE first, four plain workers, the ORCH last.
+		b.floor("s", true, fl("c", "code", "run-a"), plain("e1"), plain("e2"), plain("e3"), plain("e4"),
+			runWorker("o", "ORCH|a", runTokens("orch", "run-a")))
+		w := b.world(hasWorkers("s", 6))
+		d := desksOf(w, "s")
+		if d["o"]/4 != d["c"]/4 || d["c"] == d["o"] {
+			t.Fatalf("coder at %d, ORCH at %d: %v", d["c"], d["o"], d)
+		}
+		if ws := workersOf(w, "s"); ws["c"].OrchID != ws["o"].ID {
+			t.Fatalf("coder linked to %q, want %q", ws["c"].OrchID, ws["o"].ID)
+		}
+		seen := map[int]string{}
+		for ws, desk := range d {
+			if other, dup := seen[desk]; dup {
+				t.Fatalf("desk %d taken by %s and %s: %v", desk, other, ws, d)
+			}
+			seen[desk] = ws
+		}
+	})
+	t.Run("two runs together", func(t *testing.T) {
+		b := startBridge(t, "", server.Options{})
+		b.floor("s", true,
+			fl("a1", "code", "run-a"), fl("b1", "code", "run-b"), plain("e1"), plain("e2"),
+			fl("a2", "review", "run-a"), fl("b2", "review", "run-b"),
+			runWorker("ob", "ORCH|b", runTokens("orch", "run-b")), runWorker("oa", "ORCH|a", runTokens("orch", "run-a")),
+			plain("e3"))
+		d := desksOf(b.world(hasWorkers("s", 9)), "s")
+		// The ORCHs take the lowest free desks in the order of their first
+		// freelancer (oa 0, ob 1); the freelancers follow, nearest first:
+		// pod 0, then pod 1.
+		want := map[string]int{"oa": 0, "ob": 1, "a1": 2, "b1": 3, "a2": 4, "b2": 5, "e1": 6, "e2": 7, "e3": 8}
+		if !reflect.DeepEqual(d, want) {
+			t.Fatalf("desks %v, want %v", d, want)
+		}
+	})
+}
+
 func TestFreelancerReseatedOnceWhenItsLinkAppearsLate(t *testing.T) {
 	clk := newClock(1_000_000)
 	b := startBridge(t, "", server.Options{Now: clk.now})

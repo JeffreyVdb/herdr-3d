@@ -240,7 +240,8 @@ func (h *Hub) relink() {
 // --- desks ---
 
 // seatNearOrch seats the newcomers of a floor that belong to an
-// orchestrator on it at the free desk nearest to it, and moves, once, a
+// orchestrator on it at the free desk nearest to it (an orchestrator that
+// is new itself is seated first, at the lowest free desk), and moves, once, a
 // newcomer whose orchestrator turned up within ReseatWindow of it taking
 // a desk. Hired workers keep their hire's desk; everyone else is seated
 // later at the lowest free desk. It returns the workers whose desk must
@@ -264,6 +265,25 @@ func (h *Hub) seatNearOrch(f *floorState, desks map[string]int, obs []world.Work
 		used[op.desk] = true
 	}
 	moved := map[string]bool{}
+	// An orchestrator with no desk yet, first seen together with its
+	// freelancers, takes the lowest free desk before they are placed, so
+	// they can sit next to it in this same observation.
+	for i, id := range ids {
+		if f.hires[id] != nil || !world.Freelancer(obs[i].Role) {
+			continue
+		}
+		orch := ls[id].OrchID
+		if _, ok := desks[orch]; ok || !onFloor[orch] || f.hires[orch] != nil {
+			continue
+		}
+		d := 0
+		for used[d] {
+			d++
+		}
+		used[d] = true
+		desks[orch] = d
+		moved[orch] = true
+	}
 	for i, id := range ids {
 		if f.hires[id] != nil || !world.Freelancer(obs[i].Role) {
 			continue
