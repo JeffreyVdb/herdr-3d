@@ -247,6 +247,22 @@ test('paste into an agent’s laptop sends worker.prompt; a failed key shows in 
   clean();
 });
 
+test('standing up leaves the laptop showing its last frame, not a blank one (screens=0)', async ({ page }) => {
+  const clean = watchErrors(page);
+  const { L, ids } = await enter(page, '&screens=0');
+  const bean = ids.Bean as string;
+  const desk = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === FLOOR)?.workers.find((w) => w.id === bean)?.desk as number;
+  await faceWorker(page, L, desk);
+  await page.keyboard.press('KeyE');
+  await expect.poll(async () => (await screens(page)).find((s) => s.id === bean)?.state).toBe('live');
+  await expect.poll(async () => (await page.evaluate((id) => window.__h3d.screenText(id), bean))?.some((l) => l.trim() !== '')).toBe(true);
+  await frames(page, 3);
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => (await screens(page)).find((s) => s.id === bean)?.state).toBe('frozen');
+  expect(await page.evaluate((id) => window.__h3d.frozenInk(id), bean)).toBeGreaterThan(0.005);
+  clean();
+});
+
 test('20 sit / stand cycles leave no watch behind (screens=0)', async ({ page }) => {
   const clean = watchErrors(page);
   const { L, ids } = await enter(page, '&screens=0');

@@ -72,7 +72,11 @@ export class LaptopTerminal {
     return this.term.rows;
   }
 
-  /** Canvas size in pixels (the seated screen is bigger); repaints what it has. */
+  /**
+   * Canvas size in pixels (the seated screen is bigger). Resizing clears a
+   * canvas, so what it showed is painted again at once: a painted screen is
+   * never blank (standing up freezes it right after).
+   */
   setSize(width: number, height: number): void {
     const w = Math.round(width);
     const h = Math.round(height);
@@ -82,8 +86,8 @@ export class LaptopTerminal {
     // A resized canvas needs a new GPU texture of that size.
     this.texture.dispose();
     this.texture.image = this.canvas;
-    if (this.painted) this.dirty = true;
     this.lastDraw = -Infinity;
+    if (this.painted) this.paint(performance.now());
   }
 
   /** Applies a frame: `full` resets first; a diff for other dimensions waits for a full one (false). */
@@ -108,13 +112,17 @@ export class LaptopTerminal {
   /** Repaints when something was written and `minMs` passed since the last paint; true when it did. */
   draw(now: number, minMs: number): boolean {
     if (!this.dirty || now - this.lastDraw < minMs) return false;
+    this.paint(now);
+    return true;
+  }
+
+  private paint(now: number): void {
     this.dirty = false;
     this.lastDraw = now;
     paintBuffer(this.g, this.term.buffer.active, { cols: this.term.cols, rows: this.term.rows, width: this.canvas.width, height: this.canvas.height, cursor: !this.cursorHidden }, this.cell);
     this.texture.needsUpdate = true;
     this.painted = true;
     this.paints++;
-    return true;
   }
 
   /** The screen's text, one string per row, right-trimmed (tests). */

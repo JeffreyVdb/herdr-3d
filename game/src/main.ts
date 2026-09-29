@@ -98,6 +98,8 @@ export interface H3DDebug {
   sitAt(workerId: string): boolean;
   /** M5: a live laptop's screen text from its xterm buffer, one string per row (null when not live). */
   screenText(workerId: string): string[] | null;
+  /** M5: how much of a worker's frozen laptop screen is not black (0–1), null when it is not frozen. */
+  frozenInk(workerId: string): number | null;
   /** M5: the seat bar (shown, its tape, its note, ok / busy / error / offline). */
   seat(): { shown: boolean; tape: string; note: string; state: string };
   /** M5: this connection's watches as the game counts them, and as the simulator (`sim=1`) does. */
@@ -227,6 +229,7 @@ const h3d: H3DDebug = {
   seated: () => app?.laptops.seated ?? null,
   sitAt: (id) => app?.sitAt(id) ?? false,
   screenText: (id) => app?.laptops.text(id) ?? null,
+  frozenInk: (id) => app?.laptops.frozenInk(id) ?? null,
   seat: () => app?.seatBar.summary() ?? { shown: false, tape: '', note: '', state: '' },
   watches: async () => {
     if (!app) return { game: 0, sim: null };

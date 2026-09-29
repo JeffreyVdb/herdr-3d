@@ -666,7 +666,7 @@ each desk, whether its "+" shows, what a walk holds it as).
 M5: `screens()` (per worker of the floor you are on: `desk`, `state` live | pending | frozen | glow | dark, and the
 `fps` it is watched at, else null), `seated()` (the worker whose laptop you sit at, or null), `sitAt(workerId)` (as E;
 false with a toast when you cannot), `screenText(workerId)` (a live laptop's screen from its xterm buffer, a string per
-row), `seat()` (the seat bar: shown, tape, note, state ok | busy | error | offline), `watches()` (this connection's
+row), `frozenInk(workerId)` (the share of its frozen screen that is not black, 0–1; null when not frozen), `seat()` (the seat bar: shown, tape, note, state ok | busy | error | offline), `watches()` (this connection's
 watches as the game counts them and, with `sim=1`, as the simulator does), `reconnect()` (drops the connection and
 connects again; the game re-watches) and `watchLog()` (the last 400 `terminal.watch` / `unwatch` the game sent by
 itself, with their results: `sent()` keeps to what you did, so it has your `worker.keys` and `worker.prompt` but not

@@ -144,6 +144,16 @@ export class ScreenMeshes {
   }
 
   /** Forgets a desk's frozen screen (its worker left; a new one there starts with a glow). */
+  /** Test hook: the share (0–1) of a desk's frozen screen that is not black; null when it is not frozen. */
+  frozenInk(desk: number): number | null {
+    const cell = this.frozen.get(desk);
+    if (cell === undefined) return null;
+    const px = this.g.getImageData((cell % COLS) * CELL_W, Math.floor(cell / COLS) * CELL_H, CELL_W, CELL_H).data;
+    let ink = 0;
+    for (let i = 0; i < px.length; i += 4) if ((px[i] ?? 0) + (px[i + 1] ?? 0) + (px[i + 2] ?? 0) > 24) ink++;
+    return ink / (px.length / 4);
+  }
+
   unfreeze(desk: number): void {
     if (!this.frozen.delete(desk)) return;
     this.frozenMesh.setMatrixAt(desk, ZERO);

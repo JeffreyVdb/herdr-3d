@@ -527,6 +527,12 @@ export class Laptops {
     return out;
   }
 
+  /** How much of a worker's frozen screen is not black (0–1; null: not frozen). */
+  frozenInk(id: string): number | null {
+    const desk = this.desks.get(id);
+    return desk === undefined ? null : (this.meshes?.frozenInk(desk) ?? null);
+  }
+
   /** The text on a live laptop's screen, one string per row (null when it is not live). */
   text(id: string): string[] | null {
     return this.terms.get(id)?.lines() ?? null;
