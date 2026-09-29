@@ -178,6 +178,10 @@ type Hub struct {
 	lanes     map[string]*inputLane    // worker id → its input commands, in order
 	questions map[string]questionState // worker id → what its blocked screen asks
 	asking    map[string]bool          // worker id → its screen reader runs
+	// M6 launch
+	presets    map[string]store.Preset // by id (mirrors team_preset)
+	lastPreset map[string]string       // session → preset id (mirrors floor_preset_last)
+	runPending map[string]bool         // orchestrators of launches whose run id is not known yet
 }
 
 type floorState struct {
@@ -342,6 +346,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if h.lastHire, err = st.LastHires(ctx); err != nil {
 		return nil, err
 	}
+	if err := h.loadLaunch(ctx); err != nil { // M6 launch
+		return nil, err
+	}
 	desks, err := st.Desks(ctx)
 	if err != nil {
 		return nil, err
@@ -489,6 +496,11 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startPrompt
 		case proto.CmdWorkerAnswer:
 			start = h.startAnswer
+		// M6 launch
+		case proto.CmdRunPrepare:
+			start = h.startRunPrepare
+		case proto.CmdRunStart:
+			start = h.startRunStart
 		}
 		if start != nil {
 			// Accepted: the audit row is written (or begun) and the reply
@@ -647,6 +659,9 @@ func (h *Hub) command(ctx context.Context, cmd proto.Command) (any, error) {
 		if err = decodeArgs(cmd.Args, &a); err == nil {
 			err = h.setSettings(ctx, a)
 		}
+	// M6 launch
+	case proto.CmdPresetCreate, proto.CmdPresetUpdate, proto.CmdPresetDelete:
+		data, err = h.presetCommand(ctx, cmd)
 	default:
 		err = fmt.Errorf("%w: %q", errUnknownCommand, cmd.T)
 	}
@@ -732,6 +747,7 @@ func (h *Hub) applyFloor(ctx context.Context, u world.FloorObs) {
 		h.emit(ev)
 	}
 	h.afterObserve(ctx) // M5 term
+	h.fillRunIDs(ctx)   // M6 launch
 }
 
 func (h *Hub) removeFloor(u world.FloorGone) {
@@ -772,6 +788,7 @@ func (h *Hub) resync(ctx context.Context, session string) {
 		h.emit(ev)
 	}
 	h.afterObserve(ctx) // M5 term
+	h.fillRunIDs(ctx)   // M6 launch
 }
 
 // syncWorkers assigns identities, desks and names to the observed workers
@@ -1252,6 +1269,7 @@ func (h *Hub) floorView(session string, f *floorState) proto.Floor {
 		s := *f.suggested
 		v.Suggested = &s
 	}
+	v.LastPreset = h.lastPresetOf(session) // M6 launch
 	if a, ok := h.assign[session]; ok {
 		if _, ok := h.buildings[a.BuildingID]; ok {
 			b, i := a.BuildingID, a.Index
@@ -1326,7 +1344,7 @@ func (h *Hub) syncLayout() {
 func (h *Hub) snapshot() proto.Snapshot {
 	hire := h.hireOptions()
 	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
-		HireOptions: &hire}
+		HireOptions: &hire, Presets: h.presetViews()} // M6 launch: presets
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

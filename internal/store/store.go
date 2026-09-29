@@ -144,6 +144,10 @@ var migrations = []string{
 		base_sha     TEXT NOT NULL,
 		created_at   TEXT NOT NULL
 	);`,
+	// M6 launch: team presets (roles as JSON), seeded once with "Build
+	// team" (deleting it does not bring it back), the preset of each
+	// floor's last run.start, and the runs started from the game.
+	migrationLaunch,
 }
 
 // Fingerprint kinds.

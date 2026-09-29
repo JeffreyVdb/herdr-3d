@@ -7,7 +7,7 @@
 - `internal/` — shared Go packages. Bridge: `herdr` (the only door to herdr: the read-only client and the allowlisted
   control surface for wake/sleep, hire/send home and the laptops), `watch` (session discovery and per-session watchers), `world`
   (floors/workers from snapshots and `session.json`, identity matching, worker names), `store` (SQLite), `server` (hub +
-  WebSocket, wake/sleep, floor settings, hire/send home), `proto` (protocol v1 types and client), `gitremote` (GitHub
+  WebSocket, wake/sleep, floor settings, hire/send home, M6 team presets and `run.start`), `proto` (protocol v1 types and client), `gitremote` (GitHub
   origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires, send-homes and the Changes
   panel), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
   usage and cost from their transcripts, read incrementally, and the pricing table). Helper: `helper` (ssh tunnel
@@ -146,6 +146,16 @@ bin/herdr-world cmd --socket "$sock" worker.fire '{"id":"<id>","worktree":"delet
 sqlite3 /tmp/h3d-mytask/world.db 'select cmd, ok, error, result from audit_log'
 ```
 
+To try starting a run (M6), in the same throwaway session and repository: link the floor to a repo name (the bridge never
+calls GitHub) and send an explicit, harmless `prompt` with a cheap `orch`, so no write-code run starts:
+
+```sh
+bin/herdr-world cmd --socket "$sock" floor.settings.set "{\"session\":\"$s\",\"repo\":\"h3d/lab\",\"default_cwd\":\"$repo\"}"
+bin/herdr-world cmd --socket "$sock" run.prepare "{\"session\":\"$s\",\"issue\":3}" | jq -r .data.prompt
+bin/herdr-world cmd --socket "$sock" run.start "{\"session\":\"$s\",\"desk_index\":3,\"issue\":3,\"preset\":\"<id from run.prepare>\",\"orch\":{\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\"},\"prompt\":\"Reply with exactly the word: pong\"}"
+sqlite3 /tmp/h3d-mytask/world.db 'select id, run_id, repo, issue_number, preset_name from run_launch'
+```
+
 herdr puts worktrees in `~/.herdr/worktrees/<repo name>/`: give a throwaway repository a unique name and remove that
 directory when done. Answering a trust dialog is remembered by the agent (`~/.claude.json`, `~/.codex/config.toml`) for
 that directory.
@@ -215,6 +225,14 @@ installed herdr:
   trust this folder" choice resolves it; a prompt is submitted, one sent while it works is `queued`; a Bash tool
   permission prompt is a `permission` question that choice 1 approves (the command ran). About 30 s, a few haiku turns.
   The agent remembers the trust of the test's temporary directory.
+
+- `TestIntegrationRunStart` (M6 launch): `run.prepare` on a floor linked to a made-up repo (Build team by default), then
+  `run.start` twice into worktrees of a local repository with a bare "origin": a Claude orchestrator
+  (`claude-haiku-4-5-20251001`, `low`) on an issue and a Codex one (`gpt-6-luna`, `low`) on free text, both chosen in
+  the command over the preset's and given an explicit multi-line prompt (never `/write-code`) that only the whole text
+  answers: each must reply with it, so the prompt arrived intact as one prompt. Checks the desk, label, ack, `run_launch`
+  and `last_preset`, and that `herdr workspace report-metadata … --token h3d_run=…` fills `run_launch.run_id`. About
+  30 s, one short turn each.
 
 The screens the question parser is tested on (`internal/server/testdata/screens`) were captured the same way, from
 throwaway sessions (`herdr pane read <pane> --source visible`): Claude's trust dialog, its Bash and Write permission
