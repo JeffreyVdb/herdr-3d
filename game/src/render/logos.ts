@@ -13,6 +13,11 @@ import * as THREE from 'three/webgpu';
  * *stale* miss: it is remembered for that URL only, never cached, and never
  * blocks another building that still advertises the hash (its own URL is
  * fetched when the first one comes back empty).
+ *
+ * A miss (stale or failed) only speaks for the request that got it. When a
+ * building re-advertises a hash while a request for it is on its way (H1 -> H2
+ * -> H1), `advertised()` marks that request superseded: its miss is dropped,
+ * not remembered, and the next `load` asks again (once: that request is new).
  */
 
 export interface LogoEntry {
@@ -77,9 +82,15 @@ export const makeLogoTexture: TextureMaker = (d) => {
   return t;
 };
 
+/** A request on its way; `superseded` once its hash was advertised again after it was made. */
+interface Flight {
+  promise: Promise<LogoEntry | null>;
+  superseded: boolean;
+}
+
 export class LogoCache {
   private readonly entries = new Map<string, LogoEntry>();
-  private readonly pending = new Map<string, Promise<LogoEntry | null>>();
+  private readonly pending = new Map<string, Flight>();
   private readonly failed = new Set<string>();
   /** URL -> hash the bridge did not have there (see the class comment). */
   private readonly stale = new Map<string, string>();
@@ -123,9 +134,10 @@ export class LogoCache {
     if (have) return Promise.resolve(have);
     if (this.failed.has(hash) || this.stale.has(url)) return Promise.resolve(null);
     const inflight = this.pending.get(hash);
-    if (inflight) return inflight;
+    if (inflight) return inflight.promise;
     this.fetches++;
-    const p = this.loader(url, hash).then(
+    const flight: Flight = { promise: null as never, superseded: false };
+    flight.promise = this.loader(url, hash).then(
       (d) => {
         this.pending.delete(hash);
         if (this.disposed) {
@@ -134,7 +146,7 @@ export class LogoCache {
         }
         if (d.hash !== undefined && d.hash !== hash) {
           (d.image as { close?: () => void } | null)?.close?.();
-          this.stale.set(url, hash);
+          if (!flight.superseded) this.stale.set(url, hash);
           return null;
         }
         const entry: LogoEntry = { hash, texture: this.make(d), width: d.width, height: d.height };
@@ -143,13 +155,27 @@ export class LogoCache {
       },
       (e: unknown) => {
         this.pending.delete(hash);
+        if (flight.superseded) return null; // the building asked for this hash again since: whoever wants it asks again
         if (e instanceof LogoStaleError) this.stale.set(url, hash);
         else this.failed.add(hash);
         return null;
       },
     );
-    this.pending.set(hash, p);
-    return p;
+    this.pending.set(hash, flight);
+    return flight.promise;
+  }
+
+  /**
+   * A building's advertised logo hash changed to `hash` (also back to one it
+   * had before): what was learnt about that URL and hash while it advertised
+   * something else no longer holds, and a request for it that is still on its
+   * way was made before this and may answer for the old state.
+   */
+  advertised(url: string, hash: string): void {
+    this.stale.delete(url);
+    this.failed.delete(hash);
+    const inflight = this.pending.get(hash);
+    if (inflight) inflight.superseded = true;
   }
 
   /** Forgets failures, so the next `load` fetches again; true when there were any. */

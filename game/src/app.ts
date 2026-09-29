@@ -3,7 +3,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BridgeClient, type CommandResult, type ConnState, type SocketLike } from './net/client';
 import { bridgeUrl, takeToken } from './net/endpoint';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
-import { LogoCache, type LogoEntry } from './render/logos';
+import { LogoCache } from './render/logos';
+import { LogoSync } from './render/logoSync';
 import { logoHashOf, type AnswerAck, type BoardMessage, type CommandArgs, type CommandName, type IssueCard, type MergedPullRequest, type PullRequest, type Question, type WatchBoardAck, type WorldEvent } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
@@ -139,7 +140,14 @@ export class App {
   /** M3d: the building logos' textures, by hash. */
   readonly logos = new LogoCache();
   private logoSig = '';
-  private readonly shownLogos = new Map<string, LogoEntry>();
+  private readonly logoSync = new LogoSync(
+    this.logos,
+    (b, hash) => logoUrl(this.url, b, hash),
+    (loaded) => {
+      this.syncLogos();
+      if (!loaded) this.panels.refresh(); // the Buildings panel says when a saved logo could not be loaded
+    },
+  );
   /** #20: the name on your desk's name plate (`?me=`; the bridge sends no user name yet). */
   readonly owner: string;
   /** M5: live laptop screens, sitting at a worker's laptop, and the bar while you do. */
@@ -938,33 +946,19 @@ export class App {
       const hash = logoHashOf(b);
       if (hash) want.set(b.id, hash);
     }
-    for (const id of [...this.shownLogos.keys()]) if (!want.has(id)) this.shownLogos.delete(id);
-    for (const [id, hash] of want) {
-      const e = this.logos.peek(hash);
-      if (e) this.shownLogos.set(id, e);
-      else if (this.logos.hasFailed(hash)) this.shownLogos.delete(id);
-      else if (this.logos.isStale(logoUrl(this.url, id, hash))) {
-        // The bridge has another logo for this building already: its building.upsert (new hash) is on its way, and syncs again.
-      } else {
-        // Coming in: the old logo (if any) stays until it has, so a change does not flash the name.
-        void this.logos.load(hash, logoUrl(this.url, id, hash)).then((e) => {
-          this.syncLogos();
-          if (!e) this.panels.refresh(); // the Buildings panel says when a saved logo could not be loaded
-        });
-      }
-    }
-    const sig = [...this.shownLogos].map(([id, e]) => `${id}:${e.hash}`).join(',');
+    this.logoSync.update(want);
+    const sig = [...this.logoSync.shown].map(([id, e]) => `${id}:${e.hash}`).join(',');
     if (sig !== this.logoSig) {
       this.logoSig = sig;
-      this.city.setLogos(this.shownLogos);
+      this.city.setLogos(this.logoSync.shown);
     }
     this.showLobbyLogo();
-    this.logos.keep([...this.shownLogos.values()].map((e) => e.hash), want.values());
+    this.logoSync.prune(want);
   }
 
   private showLobbyLogo(): void {
     const o = this.walk.outside;
-    if (o && this.building) o.lobby.setLogo(this.building.id === null ? null : (this.shownLogos.get(this.building.id) ?? null));
+    if (o && this.building) o.lobby.setLogo(this.building.id === null ? null : (this.logoSync.shown.get(this.building.id) ?? null));
   }
 
   /** Test hook: what shows the logos now. */
