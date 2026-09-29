@@ -65,7 +65,7 @@ test('P prompts the looked-at worker: sent, then it works and is done; queued wh
   await openGame(page, 'demo-m5', '', SIM);
   await enter(page, 'herdr-3d');
   const pebble = await face(page, 'Pebble');
-  await expect(page.locator('.prompt .key:not([aria-disabled])')).toHaveText(['CChanges', 'PPrompt', 'XSend home']);
+  await expect(page.locator('.prompt .key:not([aria-disabled])')).toHaveText(['ELaptop', 'CChanges', 'PPrompt', 'XSend home']);
 
   await page.keyboard.press('p');
   let p = await promptPanel(page, 'ready');
