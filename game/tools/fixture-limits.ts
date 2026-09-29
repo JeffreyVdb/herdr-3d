@@ -5,7 +5,9 @@
 //   second refresh within 20 s answers `{queued: false}` and sends nothing);
 // - `simlimits=<scenario>` picks the readings: `ok` (default), `hot` (Claude week 91 %, Codex 5h 88 %: red), `reached`
 //   (Codex rateLimitReachedType set, 5h at 100 %), `old` (Claude's reading is 15 minutes old), `transcript` (Codex
-//   from a session log: stale, "as of"), `noplan` (Claude: no plan), `none` (`limits: []`, nothing read yet);
+//   from a session log: stale, "as of"), `noplan` (Claude: no plan), `none` (`limits: []`, nothing read yet), `model` (Claude week
+//   61 % but its Opus week 96 %);
+// - `simlimits=off` plays `herdr-world --no-limits`: no `limits` key in the snapshot, `limits.refresh` is `unsupported`;
 // - `simfail=no_m10` plays a bridge before M10: no `limits` in the snapshot, `limits.refresh` is `unknown_command`.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
@@ -14,7 +16,7 @@ import type { Limits } from '../src/net/protocol.ts';
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
 
-export const LIMIT_SCENARIOS = ['ok', 'hot', 'reached', 'old', 'transcript', 'noplan', 'none'] as const;
+export const LIMIT_SCENARIOS = ['ok', 'hot', 'reached', 'old', 'transcript', 'noplan', 'none', 'off', 'model'] as const;
 export type LimitScenario = (typeof LIMIT_SCENARIOS)[number];
 
 const MIN = 60_000;
@@ -48,7 +50,10 @@ export function readings(scenario: string, now: number): Limits[] {
   });
   switch (scenario) {
     case 'none':
+    case 'off':
       return [];
+    case 'model':
+      return [claude({ windows: [{ label: '5h', pct: 11, resets_at: now + 2 * HOUR, window_mins: 300 }, { label: 'week', pct: 61, resets_at: now + 2 * 24 * HOUR, window_mins: 10080 }, { label: 'week', model: 'Opus', pct: 96, resets_at: now + 2 * 24 * HOUR, window_mins: 10080 }, { label: 'week', model: 'Fable', pct: 3, resets_at: now + 2 * 24 * HOUR, window_mins: 10080 }] }), codex()];
     case 'hot':
       return [claude({}, 40, 91), codex({ windows: [{ label: '5h', pct: 88, resets_at: now + 50 * MIN, window_mins: 300 }, { label: 'week', pct: 64, resets_at: now + 3 * 24 * HOUR, window_mins: 10080 }] })];
     case 'reached':
@@ -76,11 +81,12 @@ export class LimitsSim {
   ) {}
 
   decorate(world: Obj): void {
-    if (this.on) world.limits = readings(this.scenario, this.now());
+    if (this.on && this.scenario !== 'off') world.limits = readings(this.scenario, this.now());
   }
 
   handle(t: unknown, send: Send, ack: (data?: unknown) => void): boolean {
     if (t !== 'limits.refresh') return false;
+    if (this.scenario === 'off') throw this.error('unsupported', 'unsupported: the bridge does not read limits');
     if (!this.on) throw this.error('unknown_command', 'unknown command: "limits.refresh"');
     const now = this.now();
     const queued = now - this.lastRefresh >= 20_000;

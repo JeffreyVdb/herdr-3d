@@ -482,7 +482,7 @@ export class StartRunDialog {
     // M10: the plan limits of every harness the run uses: the orchestrator's and the team preset's.
     if (this.f.orch) {
       const roles = this.preset()?.roles;
-      const inline = planLimits(this.host.store.limits, [this.f.orch.harness, ...(roles ? Object.values(roles).map((r) => r.harness) : [])], this.host.now());
+      const inline = planLimits(this.host.store.limits, [this.f.orch, ...(roles ? Object.values(roles) : [])].map((r) => ({ harness: r.harness, model: r.model })), this.host.now());
       nodes.push(h('div', { class: 'dd-plan-limits', 'data-hook': 'plan-limits' }, inline));
       if (!inline) (nodes[nodes.length - 1] as HTMLElement).hidden = true;
     }

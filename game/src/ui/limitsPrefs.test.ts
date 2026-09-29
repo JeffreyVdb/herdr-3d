@@ -25,15 +25,27 @@ describe('limits prefs', () => {
     expect([new LimitsPrefs(st).hidden, new LimitsPrefs(st).open]).toEqual([false, false]);
   });
 
-  it('work without storage: missing, or throwing on every access', () => {
+  it('work without storage: missing, or throwing on every access, the choice holds for the page', () => {
     for (const st of [null, broken()]) {
       const p = new LimitsPrefs(st);
       expect(() => {
         p.open = true;
         p.hidden = true;
       }).not.toThrow();
+      expect([p.open, p.hidden]).toEqual([true, true]);
+      p.open = false;
+      p.hidden = false;
       expect([p.open, p.hidden]).toEqual([false, false]);
     }
+  });
+
+  it('read what is stored once, then keep their own state', () => {
+    const st = memory();
+    st.setItem('h3d.limits.open', '1');
+    const p = new LimitsPrefs(st);
+    expect(p.open).toBe(true);
+    st.removeItem('h3d.limits.open'); // storage changing under it does not flip the page
+    expect(p.open).toBe(true);
   });
 
   it('tell listeners when hidden changes', () => {

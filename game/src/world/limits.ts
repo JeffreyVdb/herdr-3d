@@ -163,6 +163,8 @@ export interface ProviderView {
   stale: boolean;
   /** A limit is reached (a window at 100 %, or Codex's rateLimitReachedType): pulses. */
   reached: boolean;
+  /** The bridge itself says a limit is reached (Codex's rateLimitReachedType), whichever window. */
+  flagged: boolean;
   /** "as of 17:01" when the reading is stale, else null. */
   asOf: string | null;
   /** What the panel says about the last read: "Read 19:05 (2 min ago)", or where a stale one came from. */
@@ -215,6 +217,7 @@ export function providerView(l: Limits, now: number, tz?: string): ProviderView 
     models,
     stale,
     reached: !!l.reached || l.windows.some((w) => w.pct >= 100),
+    flagged: !!l.reached,
     asOf: stale && l.at ? `as of ${read}` : null,
     readNote: !l.at ? '' : fromLog ? `As of ${read}, from the last Codex session log` : stale ? `Last read ${read} (${agoText(l.at, now)})` : `Read ${read} (${agoText(l.at, now)})`,
     problem: l.error ? (ERRORS[l.error] ?? ERRORS.failed ?? null) : null,
@@ -229,17 +232,60 @@ export function limitsView(book: LimitBook, now: number, tz?: string): ProviderV
   return book.list().map((l) => providerView(l, now, tz));
 }
 
-/** The views of the given harnesses (the dialogs), each once, in display order; a harness with no reading is left out. */
-export function harnessViews(book: LimitBook, harnesses: readonly string[], now: number, tz?: string): ProviderView[] {
-  const want = new Set(harnesses.map(providerOf));
-  return limitsView(book, now, tz).filter((v) => want.has(v.provider));
+/** What a dialog is about: a harness and, once chosen, its model (`claude-opus-5-5`). */
+export interface LimitTarget {
+  harness: string;
+  model?: string;
 }
+
+/** Words of a model name that tell it apart ("Sonnet 4.5" → sonnet): the digits are versions, not names. */
+const nameWords = (s: string): string[] => {
+  const words = s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const named = words.filter((w) => !/^\d+$/.test(w));
+  return named.length ? named : words;
+};
+
+/** Whether a per-model window ("Opus", "Sonnet 4.5", "Spark") is the one of a model id ("claude-opus-5-5"). */
+export function windowIsFor(window: WindowView, model: string): boolean {
+  if (!window.model) return false;
+  const id = model.toLowerCase();
+  return nameWords(window.model).every((w) => id.includes(w));
+}
+
+/**
+ * The view a dialog shows for a provider: the plan's own windows plus the per-model windows of the models
+ * chosen (all of them when a choice does not name its model, since then there is no telling which counts).
+ * A model without a window of its own is left out: the plan's windows are all it has.
+ */
+export function scopedView(v: ProviderView, models: readonly (string | undefined)[]): ProviderView {
+  const keep = models.some((m) => !m) ? v.models : v.models.filter((w) => models.some((m) => m && windowIsFor(w, m)));
+  return { ...v, models: keep, reached: v.flagged || [...v.windows, ...keep].some((w) => w.pct >= 100) };
+}
+
+/**
+ * The views of the given harnesses (the dialogs), each once, in display order; a harness with no reading is left
+ * out. A plain harness name stands for "any model".
+ */
+export function harnessViews(book: LimitBook, targets: ReadonlyArray<string | LimitTarget>, now: number, tz?: string): ProviderView[] {
+  const chosen = new Map<string, Array<string | undefined>>();
+  for (const t of targets) {
+    const { harness, model } = typeof t === 'string' ? { harness: t, model: undefined } : t;
+    const p = providerOf(harness);
+    chosen.set(p, [...(chosen.get(p) ?? []), model]);
+  }
+  return limitsView(book, now, tz)
+    .filter((v) => chosen.has(v.provider))
+    .map((v) => scopedView(v, chosen.get(v.provider)!));
+}
+
+/** "5h", or "week · Fable" for a per-model window. */
+export const windowName = (w: { label: string; model: string | null }): string => (w.model ? `${w.label} · ${w.model}` : w.label);
 
 /** What a dialog warns about a provider whose plan is nearly used up ("" when there is nothing to warn about). */
 export function warningOf(v: ProviderView): string {
-  const top = [...v.windows].sort((a, b) => b.pct - a.pct)[0];
+  const top = [...v.windows, ...v.models].sort((a, b) => b.pct - a.pct)[0];
   const back = top?.resets ? `, resets ${top.resets}` : '';
-  if (v.reached) return top && top.pct >= 100 ? `${v.name} has used up its ${top.label} limit${back}.` : `${v.name} has reached a limit.`;
-  if (top && top.pct >= HIGH_PCT) return `${v.name} ${top.label} limit is at ${top.pctText}${back}.`;
+  if (v.reached) return top && top.pct >= 100 ? `${v.name} has used up its ${windowName(top)} limit${back}.` : `${v.name} has reached a limit.`;
+  if (top && top.pct >= HIGH_PCT) return `${v.name} ${windowName(top)} limit is at ${top.pctText}${back}.`;
   return '';
 }

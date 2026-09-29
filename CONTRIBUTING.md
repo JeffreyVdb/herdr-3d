@@ -541,11 +541,14 @@ M5 on the simulating server (`ws=…?sim=1…`): `simusage=<ms>` sends working a
 answer or changes, `simfail=input_failed` fails the next `worker.keys`, `simfail=observer_failed` closes the next watch
 after its first frame. E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1%26simms%3D300%26simusage%3D2000`.
 
-M10 on the simulating server: the plan limits widget on any fixture. `simlimits=ok|hot|reached|old|transcript|noplan|none` picks
+M10 on the simulating server: the plan limits widget on any fixture. `simlimits=ok|hot|reached|old|transcript|noplan|none|model|off` picks
 the readings (`tools/fixture-limits.ts` has the rules: `hot` is red, `reached` pulses, `old` and `transcript` are dimmed
-with an "as of" time), `limits.refresh` answers `{queued}` and sends fresh readings, `simfail=no_m10` plays a bridge
+with an "as of" time, `model` has a per-model week at 96 %, `none` is `limits: []` and says "reading…", `off` is
+`--no-limits`), `limits.refresh` answers `{queued}` and sends fresh readings, `simfail=no_m10` plays a bridge
 without limits (no widget). E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simlimits%3Dhot`. The widget: click it or press
-Shift+L (plain L is the elevator) for the panel; it is switched off in About, or with the panel's Hide.
+Shift+L (plain L is the elevator) for the panel (it never grows past the viewport: the providers scroll, Refresh and Hide
+stay); it is switched off in About, or with the panel's Hide. On a viewport under 760 px wide it steps out of an open
+dialog or the Changes panel and comes back, panel as it was, when they close.
 
 M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
 `simfail=no_m6` plays a bridge without them. E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simms%3D300`.

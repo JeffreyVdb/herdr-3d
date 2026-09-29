@@ -113,6 +113,47 @@ describe('warnings for the dialogs', () => {
     expect(warningOf(providerView(codex({ reached: 'x' }), NOW))).toBe('Codex has reached a limit.');
   });
 
+  it('count the chosen model’s own window: week 61 %, its week 96 %', () => {
+    const b = new LimitBook();
+    b.reset([
+      claude({
+        windows: [
+          { label: 'week', pct: 61, resets_at: 0 },
+          { label: 'week', model: 'Opus', pct: 96, resets_at: Date.UTC(2026, 9, 1, 22, 0) },
+          { label: 'week', model: 'Fable', pct: 3, resets_at: 0 },
+        ],
+      }),
+    ]);
+    const opus = harnessViews(b, [{ harness: 'claude', model: 'claude-opus-5-5' }], NOW, 'UTC')[0]!;
+    expect(opus.models.map((w) => [w.model, w.pctText])).toEqual([['Opus', '96%']]);
+    expect(warningOf(opus)).toBe('Claude week · Opus limit is at 96%, resets Thu 22:00.');
+    // Another model is not warned about Opus's window.
+    const fable = harnessViews(b, [{ harness: 'claude', model: 'claude-fable-5-1' }], NOW, 'UTC')[0]!;
+    expect(fable.models.map((w) => w.model)).toEqual(['Fable']);
+    expect(warningOf(fable)).toBe('');
+    const sonnet = harnessViews(b, [{ harness: 'claude', model: 'claude-sonnet-5-5' }], NOW, 'UTC')[0]!;
+    expect(sonnet.models).toEqual([]);
+    expect(warningOf(sonnet)).toBe('');
+    // No model to match: every model window counts. Several models (a team): the union.
+    expect(warningOf(harnessViews(b, ['claude'], NOW, 'UTC')[0]!)).toContain('96%');
+    expect(harnessViews(b, [{ harness: 'claude', model: 'claude-fable-5-1' }, { harness: 'claude', model: 'claude-opus-5-5' }], NOW)[0]!.models).toHaveLength(2);
+    expect(harnessViews(b, [{ harness: 'claude', model: '' }], NOW)[0]!.models).toHaveLength(2);
+  });
+
+  it('warn about a model window at 100 % as a used-up limit, only for that model', () => {
+    const l = claude({ windows: [{ label: 'week', pct: 20, resets_at: 0 }, { label: 'week', model: 'Opus', pct: 100, resets_at: 0 }] });
+    const b = new LimitBook();
+    b.reset([l]);
+    expect(warningOf(harnessViews(b, [{ harness: 'claude', model: 'claude-opus-5-5' }], NOW)[0]!)).toBe('Claude has used up its week · Opus limit.');
+    expect(harnessViews(b, [{ harness: 'claude', model: 'claude-fable-5-1' }], NOW)[0]!.reached).toBe(false);
+  });
+
+  it('match display names with a version ("Sonnet 4.5") by their name', () => {
+    const b = new LimitBook();
+    b.reset([claude({ windows: [{ label: 'week', model: 'Sonnet 4.5', pct: 90, resets_at: 0 }] })]);
+    expect(harnessViews(b, [{ harness: 'claude', model: 'claude-sonnet-5-5' }], NOW)[0]!.models).toHaveLength(1);
+  });
+
   it('pick the chosen harnesses’ views, each once, in display order', () => {
     expect(harnessViews(book, ['codex', 'claude', 'codex'], NOW).map((v) => v.provider)).toEqual(['claude', 'codex']);
     expect(harnessViews(book, ['claude'], NOW).map((v) => v.provider)).toEqual(['claude']);

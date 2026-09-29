@@ -18,8 +18,14 @@ function defaultStorage(): Storage | null {
 
 export class LimitsPrefs {
   private readonly listeners = new Set<() => void>();
+  /** The source of truth: storage only carries it to the next page load. */
+  private isOpen: boolean;
+  private isHidden: boolean;
 
-  constructor(private readonly storage: Storage | null = defaultStorage()) {}
+  constructor(private readonly storage: Storage | null = defaultStorage()) {
+    this.isOpen = this.read(OPEN);
+    this.isHidden = this.read(HIDDEN);
+  }
 
   private read(key: string): boolean {
     try {
@@ -34,24 +40,26 @@ export class LimitsPrefs {
       if (on) this.storage?.setItem(key, '1');
       else this.storage?.removeItem(key);
     } catch {
-      /* not remembered */
+      /* not remembered past this page */
     }
   }
 
   get open(): boolean {
-    return this.read(OPEN);
+    return this.isOpen;
   }
 
   set open(on: boolean) {
+    this.isOpen = on;
     this.write(OPEN, on);
   }
 
   /** On by default: hidden only when the user hid it. */
   get hidden(): boolean {
-    return this.read(HIDDEN);
+    return this.isHidden;
   }
 
   set hidden(on: boolean) {
+    this.isHidden = on;
     this.write(HIDDEN, on);
     for (const fn of this.listeners) fn();
   }

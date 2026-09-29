@@ -16,6 +16,11 @@
   overflow: visible;
   width: max-content;
   height: auto;
+  /* Never taller than the room under the bar: the panel's body scrolls, its action row stays. */
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - var(--topbar-bottom, 64px) - 20px);
+  max-height: calc(100dvh - var(--topbar-bottom, 64px) - 20px);
   max-width: min(560px, calc(100vw - 24px));
   background: var(--ink);
   border-radius: 12px;
@@ -42,6 +47,11 @@
   }
 }
 
+/* A dialog (or the Changes panel) has the whole screen: the plate steps out of it, and back when it closes. */
+.limits[data-folded='true'] {
+  display: none;
+}
+
 /* Reached: a red ring that breathes. */
 .limits[data-reached='true'] {
   box-shadow: var(--shadow), 0 0 0 2px var(--lm-high);
@@ -54,6 +64,7 @@
 }
 
 .lm-strip {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -177,7 +188,7 @@
 .lm-line[data-stale='true'] .lm-wins,
 .lm-line[data-stale='true'] .lm-plan,
 .lm-sec[data-stale='true'] .lm-rows {
-  opacity: 0.62;
+  opacity: 0.72; /* small grey labels stay above 4.5:1 on the plate */
 }
 
 /* The bar: a track and a fill in the severity colour (with the percentage beside it, never colour alone). */
@@ -211,13 +222,32 @@
 .lm-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 4px 12px 12px;
-  border-top: 1px solid var(--line);
+  flex: 1 1 auto;
+  min-height: 0;
   min-width: 300px;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 12px 12px;
+  overflow: hidden;
 }
 .lm-panel[hidden] {
   display: none;
+}
+/* The providers scroll when the viewport is short; Refresh and Hide (.lm-foot) stay in reach under them. */
+.lm-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 12px;
+  min-height: 0;
+  padding: 4px 12px 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 30%) transparent;
+}
+.lm-body:focus-visible {
+  outline: 2px solid var(--focus, var(--sun));
+  outline-offset: -2px;
 }
 .lm-sec {
   display: flex;
@@ -253,6 +283,9 @@
 .lm-row .lm-bar {
   width: 64px;
 }
+.lm-row .lm-rs {
+  white-space: nowrap;
+}
 .lm-rowlab {
   color: var(--text-on-ink-2);
   font-variation-settings: 'CASL' 0, 'MONO' 1;
@@ -281,9 +314,12 @@
 }
 .lm-foot {
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 8px;
-  padding-top: 2px;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--line);
 }
 .lm-foot .btn {
   height: 28px;
@@ -352,6 +388,15 @@
   }
   .lm-panel .lm-rs {
     display: inline-flex;
+  }
+}
+@media (max-width: 400px) {
+  .lm-row {
+    grid-template-columns: 6.5em 40px 4ch 1fr;
+    gap: 6px;
+  }
+  .lm-row .lm-bar {
+    width: 40px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

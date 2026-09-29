@@ -1,6 +1,7 @@
 import type { CommandResult } from '../net/client';
 import type { LimitBook, ProviderView, WindowView } from '../world/limits';
-import { harnessViews, limitsView, warningOf } from '../world/limits';
+import type { LimitTarget } from '../world/limits';
+import { harnessViews, limitsView, warningOf, windowName } from '../world/limits';
 import { h, icon, ICON } from './dom';
 import { LimitsPrefs } from './limitsPrefs';
 import './limits.css';
@@ -12,6 +13,9 @@ import './limits.css';
  * the bridge sends a reading (`limits.update`) or a reading crosses into
  * stale; `tick` is that second check and does nothing else.
  */
+
+/** Below this width a dialog or the Changes panel spans the screen (limits.css follows the same line). */
+const NARROW = '(max-width: 760px)';
 
 export interface LimitsHost {
   now(): number;
@@ -28,19 +32,17 @@ const resetIcon = () => {
   return i;
 };
 
-/** "5h" or "week · Fable". */
-const nameOf = (w: WindowView) => (w.model ? `${w.label} · ${w.model}` : w.label);
-
 /** One window as a compact inline group: label, bar, percentage, reset time. */
 function windowChip(w: WindowView): HTMLElement {
-  return h('span', { class: 'lm-win', 'data-sev': w.severity }, h('span', { class: 'lm-lab' }, w.label), bar(w), h('b', { class: 'lm-pct' }, w.pctText), w.resets ? h('span', { class: 'lm-rs' }, resetIcon(), w.resets) : null);
+  return h('span', { class: 'lm-win', 'data-sev': w.severity }, h('span', { class: 'lm-lab' }, windowName(w)), bar(w), h('b', { class: 'lm-pct' }, w.pctText), w.resets ? h('span', { class: 'lm-rs' }, resetIcon(), w.resets) : null);
 }
 
 const providerTape = (v: ProviderView) => h('span', { class: `tape lm-tape lm-tape--${v.provider}` }, v.name);
 
-/** The collapsed line of one provider. */
-function providerLine(v: ProviderView): HTMLElement {
-  const wins = v.windows.length ? v.windows.map(windowChip) : [h('span', { class: 'lm-none' }, v.problem ?? 'No reading yet')];
+/** The collapsed line of one provider; a dialog's line (`models`) adds the per-model windows that count for it. */
+function providerLine(v: ProviderView, models = false): HTMLElement {
+  const shown = models ? [...v.windows, ...v.models] : v.windows;
+  const wins = shown.length ? shown.map(windowChip) : [h('span', { class: 'lm-none' }, v.problem ?? 'No reading yet')];
   return h(
     'div',
     { class: 'lm-line', 'data-provider': v.provider, 'data-stale': v.stale ? 'true' : null, 'data-reached': v.reached ? 'true' : null },
@@ -53,7 +55,7 @@ function providerLine(v: ProviderView): HTMLElement {
 
 /** A window as a row of the expanded panel. */
 function windowRow(w: WindowView): HTMLElement {
-  return h('li', { class: 'lm-row', 'data-sev': w.severity }, h('span', { class: 'lm-rowlab' }, nameOf(w)), bar(w), h('b', { class: 'lm-pct' }, w.pctText), h('span', { class: 'lm-rs' }, w.resets ? ['resets ', w.resets].join('') : ''));
+  return h('li', { class: 'lm-row', 'data-sev': w.severity }, h('span', { class: 'lm-rowlab' }, windowName(w)), bar(w), h('b', { class: 'lm-pct' }, w.pctText), h('span', { class: 'lm-rs' }, w.resets ? ['resets ', w.resets].join('') : ''));
 }
 
 function providerSection(v: ProviderView): HTMLElement {
@@ -76,6 +78,8 @@ export class LimitsWidget {
   private readonly strip: HTMLButtonElement;
   private readonly lines = h('div', { class: 'lm-lines' });
   private readonly panel = h('div', { class: 'lm-panel', id: 'lm-panel', role: 'region', 'aria-label': 'Plan limits' });
+  /** The part of the panel that scrolls on a short viewport; the action row under it never does. */
+  private readonly body = h('div', { class: 'lm-body', tabindex: '0', role: 'group', 'aria-label': 'Plan limit details' });
   private readonly status = h('span', { class: 'lm-status', role: 'status' });
   private readonly refreshBtn = h('button', { class: 'btn btn--sm lm-refresh', 'data-key': 'limits-refresh', title: 'Read the limits now' }, icon(ICON.refresh), h('span', {}, 'Refresh'));
   private key = '';
@@ -100,6 +104,7 @@ export class LimitsWidget {
     this.panel.hidden = true;
     this.root = h('aside', { class: 'limits', 'data-hook': 'limits', popover: 'manual' }, this.strip, this.panel);
     this.foot = h('div', { class: 'lm-foot' }, this.refreshBtn, hide, this.status);
+    this.panel.append(this.body, this.foot);
     parent.append(this.root);
     this.off = this.prefs.onChange(() => this.sync());
     this.keepOnTop();
@@ -109,10 +114,22 @@ export class LimitsWidget {
 
   private readonly foot: HTMLElement;
   private watcher: MutationObserver | null = null;
+  /** Narrow viewports: a dialog or the Changes panel fills the screen, so the plate has no room beside it. */
+  private readonly narrow = typeof matchMedia === 'function' ? matchMedia(NARROW) : null;
+  private readonly onNarrow = () => this.update();
+
+  /** A dialog (modal, or the Changes panel) is open, and the viewport is too narrow to sit beside it: the plate is out of the way. */
+  private get folded(): boolean {
+    return !!this.narrow?.matches && !!document.querySelector('dialog[open]');
+  }
 
   /**
    * The widget lives in the browser's top layer (a manual popover), so a modal dialog's backdrop does not dim
-   * it; a dialog that opens later would sit above it, so opening one puts the widget back on top.
+   * it; a dialog that opens later would sit above it, so opening one puts the widget back on top. It also
+   * follows dialogs: the Changes panel takes the right column (the plate steps aside), and on a narrow
+   * viewport any open dialog has the whole screen, so the plate steps out of it (limits.css hides it) and
+   * comes back, panel as the user left it, when the dialog closes. The hire and start-run dialogs carry
+   * the limits of their harnesses inline meanwhile.
    */
   private keepOnTop(): void {
     const top = () => {
@@ -123,14 +140,14 @@ export class LimitsWidget {
         /* no popover support: it stays in the page */
       }
     };
-    if (typeof this.root.showPopover !== 'function') return;
-    top();
+    if (typeof this.root.showPopover === 'function') top();
+    this.narrow?.addEventListener('change', this.onNarrow);
     if (typeof MutationObserver === 'undefined') return;
     this.watcher = new MutationObserver((records) => {
       if (!records.some((r) => r.target instanceof HTMLDialogElement)) return;
-      // The Changes panel is not modal and takes the whole right column: the plate steps aside.
       this.root.dataset.beside = document.querySelector('dialog.changes[open]') ? 'changes' : '';
-      if (records.some((r) => r.target instanceof HTMLDialogElement && r.target.open)) top();
+      this.update();
+      if (typeof this.root.showPopover === 'function' && records.some((r) => r.target instanceof HTMLDialogElement && r.target.open)) top();
     });
     this.watcher.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open'] });
   }
@@ -145,7 +162,7 @@ export class LimitsWidget {
 
   /** Shows or hides the panel (remembered). */
   toggle(open: boolean = !this.isOpen): void {
-    if (this.root.hidden) return;
+    if (this.root.hidden || this.folded) return;
     this.prefs.open = open;
     this.sync();
     this.key = '';
@@ -154,6 +171,7 @@ export class LimitsWidget {
 
   /** Shift+L: brings a hidden widget back with its panel open, else opens or closes the panel. */
   toggleFromKey(): void {
+    if (this.folded) return; // a dialog has the screen: the plate is away, and its state is left alone
     if (this.prefs.hidden) {
       this.prefs.open = true;
       this.prefs.hidden = false;
@@ -164,7 +182,9 @@ export class LimitsWidget {
   /** Brings the widget back or takes it away (from About, or the panel's Hide). */
   private sync(): void {
     this.root.hidden = this.prefs.hidden || !this.book.known;
-    const open = this.prefs.open && !this.root.hidden;
+    const folded = this.folded;
+    const open = this.prefs.open && !this.root.hidden && !folded;
+    this.root.dataset.folded = String(folded);
     this.panel.hidden = !open;
     this.strip.setAttribute('aria-expanded', String(open));
     this.root.dataset.open = String(open);
@@ -184,6 +204,7 @@ export class LimitsWidget {
   dispose(): void {
     this.off();
     this.watcher?.disconnect();
+    this.narrow?.removeEventListener('change', this.onNarrow);
     this.root.remove();
   }
 
@@ -192,7 +213,7 @@ export class LimitsWidget {
     return {
       hidden: this.root.hidden === true,
       open: this.isOpen,
-      lines: [...this.lines.querySelectorAll<HTMLElement>('.lm-line')].map((l) => ({
+      lines: [...this.lines.querySelectorAll<HTMLElement>('.lm-line[data-provider]')].map((l) => ({
         provider: l.dataset.provider ?? '',
         stale: l.dataset.stale === 'true',
         reached: l.dataset.reached === 'true',
@@ -213,11 +234,11 @@ export class LimitsWidget {
     this.root.dataset.reached = views.some((v) => v.reached) ? 'true' : 'false';
     this.root.dataset.worst = views.reduce<string>((s, v) => (v.worstSeverity === 'high' || (v.worstSeverity === 'warn' && s === 'ok') ? v.worstSeverity : s), 'ok');
     this.strip.setAttribute('aria-label', `Plan limits. ${summary(views)}.`);
-    this.lines.replaceChildren(...(views.length ? views.map(providerLine) : [h('div', { class: 'lm-line lm-line--wait' }, h('span', { class: 'lm-none' }, 'Plan limits · reading…'))]));
+    this.lines.replaceChildren(...(views.length ? views.map((v) => providerLine(v)) : [h('div', { class: 'lm-line lm-line--wait' }, h('span', { class: 'lm-none' }, 'Plan limits · reading…'))]));
     if (!open) return;
     this.refreshBtn.disabled = this.refreshing;
     this.refreshBtn.querySelector('span')!.textContent = this.refreshing ? 'Reading…' : 'Refresh';
-    this.panel.replaceChildren(...views.map(providerSection), this.foot);
+    this.body.replaceChildren(...views.map(providerSection));
   }
 
   private async refresh(): Promise<void> {
@@ -235,18 +256,19 @@ export class LimitsWidget {
 
 /**
  * The limits of the harnesses a dialog is about (hire: one; start-run: the
- * team's), inline, with a warning above 85 %. null when the bridge sent no
+ * team's), inline, with the per-model windows of the chosen models and a
+ * warning above 85 % (model windows count too). null when the bridge sent no
  * reading for them (the dialog hides its slot).
  */
-export function planLimits(book: LimitBook, harnesses: readonly string[], now: number): HTMLElement | null {
-  const views = harnessViews(book, harnesses, now);
+export function planLimits(book: LimitBook, targets: ReadonlyArray<string | LimitTarget>, now: number): HTMLElement | null {
+  const views = harnessViews(book, targets, now);
   if (!views.length) return null;
   const warnings = views.map(warningOf).filter(Boolean);
   return h(
     'div',
     { class: 'lm-inline', 'data-hot': warnings.length ? 'true' : 'false' },
     h('p', { class: 'lm-inline-title' }, 'Plan limits'),
-    ...views.map(providerLine),
+    ...views.map((v) => providerLine(v, true)),
     ...warnings.map((w) => h('p', { class: 'lm-warn', role: 'status' }, w)),
   );
 }

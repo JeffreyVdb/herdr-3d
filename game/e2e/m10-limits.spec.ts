@@ -145,7 +145,7 @@ test('old and transcript readings are dimmed with the time they are as of', asyn
   let w = await withReadings(page);
   expect(w.lines.map((l) => l.stale)).toEqual([true, false]);
   await expect(limits(page).locator('.lm-line[data-provider="claude"] .lm-asof')).toHaveText(/^as of \d\d:\d\d$/);
-  expect(await limits(page).locator('.lm-line[data-provider="claude"] .lm-wins').evaluate((e) => getComputedStyle(e).opacity)).toBe('0.62');
+  expect(await limits(page).locator('.lm-line[data-provider="claude"] .lm-wins').evaluate((e) => getComputedStyle(e).opacity)).toBe('0.72');
   await openGame(page, 'demo-m4', '', SIM('transcript'));
   w = await withReadings(page);
   expect(w.lines.map((l) => l.stale)).toEqual([false, true]);
@@ -250,5 +250,164 @@ test('the Changes panel keeps the right column: the widget steps aside and both 
   await page.locator('.lm-strip').click(); // still clickable
   expect((await widget(page))!.open).toBe(true);
   await shot(page, 'm10-beside-changes');
+  clean();
+});
+
+test('a bridge with limits off (--no-limits) shows no widget and no inline limits; one with no reading yet says it is reading', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  // --no-limits: the snapshot has no `limits` key at all, and limits.refresh is unsupported.
+  await openGame(page, 'demo-m4', '', SIM('off'));
+  await frames(page, 3);
+  await expect(limits(page)).toBeHidden();
+  expect(await widget(page)).toMatchObject({ hidden: true, lines: [] });
+  await page.keyboard.press('Shift+L'); // nothing to open
+  await expect(limits(page)).toBeHidden();
+  await enter(page, 'herdr-3d');
+  await page.evaluate(() => window.__h3d.openHire(5));
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind === 'hire' && (await page.evaluate(() => window.__h3d.dialog()))!.state).toBe('ready');
+  await expect(page.locator('[data-hook="plan-limits"]')).toBeHidden();
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.dialog())).toBeNull();
+  await page.evaluate(() => window.__h3d.openStartRun({ session: 'herdr-3d', desk: 5 }));
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind === 'start-run' && (await page.evaluate(() => window.__h3d.dialog()))!.state).toBe('ready');
+  await expect(page.locator('dialog.desk-dlg--run [data-hook="plan-limits"]')).toBeHidden();
+
+  // A bridge that reads limits but has no reading yet (`limits: []`): the widget is there, and says so.
+  await page.evaluate(() => localStorage.clear());
+  await openGame(page, 'demo-m4', '', SIM('none'));
+  await expect(limits(page)).toBeVisible();
+  await expect(limits(page)).toContainText('Plan limits · reading…');
+  expect(await widget(page)).toMatchObject({ hidden: false, lines: [] });
+  clean();
+});
+
+test('the dialog’s limits include the chosen model’s own window and warn about it', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m4', '', SIM('model')); // Claude week 61 %, its Opus week 96 %
+  await withReadings(page);
+  await enter(page, 'herdr-3d');
+  await page.evaluate(() => window.__h3d.openHire(5));
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind === 'hire' && (await page.evaluate(() => window.__h3d.dialog()))!.state).toBe('ready');
+  const slot = page.locator('[data-hook="plan-limits"]');
+  await page.locator('[data-key="harness:claude"]').check({ force: true });
+  await page.locator('[data-key="model:claude-opus-5-5"]').check({ force: true });
+  await expect(slot.locator('.lm-line .lm-lab')).toHaveText(['5h', 'week', 'week · Opus']);
+  await expect(slot.locator('.lm-warn')).toHaveText(/^Claude week · Opus limit is at 96%, resets /);
+  // Another model: its own window (Fable, 3 %), and nothing to warn about.
+  await page.locator('[data-key="model:claude-fable-5-1"]').check({ force: true });
+  await expect(slot.locator('.lm-line .lm-lab')).toHaveText(['5h', 'week', 'week · Fable']);
+  await expect(slot.locator('.lm-warn')).toHaveCount(0);
+  clean();
+});
+
+test('the panel opens and closes when browser storage is unavailable', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await page.addInitScript(() => {
+    const boom = () => {
+      throw new Error('storage blocked');
+    };
+    for (const k of ['getItem', 'setItem', 'removeItem'] as const) Storage.prototype[k] = boom;
+  });
+  await openGame(page, 'demo-m4', '', SIM());
+  await withReadings(page);
+  await page.locator('.lm-strip').click();
+  expect((await widget(page))!.open).toBe(true);
+  await page.locator('.lm-strip').click();
+  expect((await widget(page))!.open).toBe(false);
+  await page.keyboard.press('Shift+L');
+  expect((await widget(page))!.open).toBe(true);
+  await page.locator('[data-key="limits-hide"]').click();
+  await expect(limits(page)).toBeHidden();
+  await page.keyboard.press('Shift+L'); // and back
+  await expect(limits(page)).toBeVisible();
+  clean();
+});
+
+// Narrow viewports: the open panel fits and keeps its buttons in reach, and it never sits over an open dialog.
+
+const inViewport = (b: { x: number; y: number; width: number; height: number }, vp: { width: number; height: number }) => b.x >= 0 && b.y >= 0 && b.x + b.width <= vp.width + 0.5 && b.y + b.height <= vp.height + 0.5;
+
+test('at 320x480 the open panel stays inside the viewport: its body scrolls, Refresh and Hide stay clickable', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  const vp = { width: 320, height: 480 };
+  await page.setViewportSize(vp);
+  await openGame(page, 'demo-m4', '', SIM());
+  await withReadings(page);
+  await page.locator('.lm-strip').click();
+  expect((await widget(page))!.open).toBe(true);
+  const box = (await limits(page).boundingBox())!;
+  expect(inViewport(box, vp), `panel ${JSON.stringify(box)}`).toBe(true);
+  for (const key of ['limits-refresh', 'limits-hide']) {
+    const b = (await page.locator(`[data-key="${key}"]`).boundingBox())!;
+    expect(inViewport(b, vp), `${key} ${JSON.stringify(b)}`).toBe(true);
+  }
+  const scroll = await page.locator('.lm-body').evaluate((e) => ({ scrolls: e.scrollHeight > e.clientHeight, overflowY: getComputedStyle(e).overflowY }));
+  expect(scroll).toEqual({ scrolls: true, overflowY: 'auto' });
+  await page.locator('.lm-body').evaluate((e) => (e.scrollTop = e.scrollHeight)); // the last provider is reachable too
+  await expect(page.locator('.lm-sec[data-provider="codex"] .lm-read')).toBeInViewport();
+  await shot(page, 'm10-narrow-320');
+  await page.locator('[data-key="limits-refresh"]').click();
+  await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'limits.refresh').length).toBe(1);
+  await page.locator('[data-key="limits-hide"]').click();
+  await expect(limits(page)).toBeHidden();
+  clean();
+});
+
+test('at 390x640 an open panel folds away while a dialog is open, and comes back when it closes', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  const vp = { width: 390, height: 640 };
+  await page.setViewportSize(vp);
+  await page.addInitScript(() => localStorage.setItem('h3d.limits.open', '1')); // it was left open last time
+  await openGame(page, 'demo-m4', '', SIM());
+  await withReadings(page);
+  expect((await widget(page))!.open).toBe(true);
+  await enter(page, 'herdr-3d');
+  await page.evaluate(() => window.__h3d.openHire(5));
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind === 'hire' && (await page.evaluate(() => window.__h3d.dialog()))!.state).toBe('ready');
+  // The plate steps out of the dialog: nothing of it is on screen, and the state says its panel is not open.
+  expect((await widget(page))!.open).toBe(false);
+  await expect(limits(page)).toBeHidden();
+  await expect(limits(page)).toHaveAttribute('data-folded', 'true');
+  // The dialog carries the chosen harness's limits itself, and its controls are all reachable.
+  await expect(page.locator('[data-hook="plan-limits"] .lm-line')).toHaveCount(1);
+  for (const sel of ['[data-key="task"]', '[data-key="close"]', '[data-key="hire"]']) await expect(page.locator(sel)).toBeInViewport();
+  await shot(page, 'm10-narrow-hire');
+  // Shift+L does not flip a hidden panel behind the dialog.
+  await page.keyboard.press('Shift+L');
+  expect((await widget(page))!.open).toBe(false);
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.dialog())).toBeNull();
+  await expect.poll(async () => (await widget(page))!.open).toBe(true); // restored
+  await expect(page.locator('.lm-panel')).toBeVisible();
+  await expect(limits(page)).toHaveAttribute('data-folded', 'false');
+  expect(await page.evaluate(() => localStorage.getItem('h3d.limits.open'))).toBe('1');
+  clean();
+});
+
+test('at 390x640 the widget does not cover the Changes panel’s Close control', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  const vp = { width: 390, height: 640 };
+  await page.setViewportSize(vp);
+  await page.addInitScript(() => localStorage.setItem('h3d.limits.open', '1'));
+  await openGame(page, 'demo-m4', '', SIM());
+  await withReadings(page);
+  await enter(page, 'herdr-3d');
+  const w = await page.evaluate(() => window.__h3d.world().find((f) => f.session === 'herdr-3d')?.workers.find((x) => x.status === 'working'));
+  await page.evaluate((id) => window.__h3d.openChanges(id), w!.id);
+  await expect(page.locator('dialog.changes')).toBeVisible();
+  expect((await widget(page))!.open).toBe(false);
+  await expect(limits(page)).toBeHidden(); // it does not sit over Close
+  await expect(page.locator('dialog.changes [data-key="close"]')).toBeInViewport();
+  await page.locator('dialog.changes [data-key="close"]').click(); // and it is clickable
+  await expect(page.locator('dialog.changes')).toBeHidden();
+  await expect.poll(async () => (await widget(page))!.open).toBe(true);
+  await expect(page.locator('.lm-panel')).toBeVisible();
+  await shot(page, 'm10-narrow-changes');
   clean();
 });

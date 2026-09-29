@@ -409,7 +409,7 @@ export class HireDialog {
         chips('model', 'Model', modelsFor(options, this.f.harness), this.f.model, (v) => this.pick({ model: v })),
         chips('effort', 'Effort', effortsFor(options, this.f.harness, this.f.model), this.f.effort, (v) => this.pick({ effort: v })),
       );
-      const limits = planLimits(this.host.store.limits, [this.f.harness], this.host.now());
+      const limits = planLimits(this.host.store.limits, [{ harness: this.f.harness, model: this.f.model }], this.host.now());
       const slot = h('div', { class: 'dd-plan-limits', 'data-hook': 'plan-limits' });
       if (limits) slot.append(limits);
       else slot.hidden = true;

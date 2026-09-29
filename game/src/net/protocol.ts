@@ -140,7 +140,7 @@ export interface World {
   hire_options?: HireOptions;
   /** M6 start: team presets by name (absent from an older bridge). */
   presets?: Preset[];
-  /** M10 limits: the latest reading of each provider (absent from an older bridge, `[]` before the first reading). */
+  /** M10 limits: the latest reading of each provider (absent from an older bridge or with --no-limits: no widget; `[]` before the first reading). */
   limits?: Limits[];
 }
 
