@@ -31,6 +31,8 @@ export interface StartDeps {
   /** `worker.hire` as the simulator runs it (validation throws; the ack or the failure comes later). */
   hireWorker(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void;
   error(code: string, message: string): Error;
+  /** M7: a card of the floor's board as an issue of the M6 path (null: not on the board, or no board). */
+  workItem?(session: string, wi: { provider?: unknown; id?: unknown }): { repo: string; number: number; url: string } | null;
 }
 
 const ROLES: PresetRole[] = ['orch', 'coder', 'reviewer', 'ux', 'researcher'];
@@ -234,7 +236,15 @@ export class StartSim {
     // Like the bridge: an empty text or a null issue is no ticket.
     const hasIssue = a.issue !== undefined && a.issue !== null;
     const hasText = a.text !== undefined && a.text !== '';
-    if (hasIssue && hasText) throw this.bad('give either an issue or a text, not both');
+    const hasItem = a.work_item !== undefined && a.work_item !== null;
+    if (Number(hasIssue) + Number(hasText) + Number(hasItem) > 1) throw this.bad('give either an issue, a text or a work_item, not several');
+    if (hasItem) {
+      const wi = a.work_item;
+      if (!isObj(wi) || typeof wi.provider !== 'string' || typeof wi.id !== 'string') throw this.bad('work_item must be {provider, id}');
+      const got = this.d.workItem?.(f.session, wi);
+      if (!got) throw this.d.error('not_found', `not found: work item "${wi.id}"`);
+      return { kind: 'issue', repo: got.repo, number: got.number, url: got.url };
+    }
     if (hasText) {
       if (typeof a.text !== 'string' || !a.text.trim() || bytes(a.text.trim()) > 4096) throw this.bad('text must be 1-4096 bytes of text');
       return { kind: 'text', text: a.text.trim() };
@@ -280,7 +290,7 @@ export class StartSim {
   }
 
   private prepare(a: Obj): Obj {
-    this.only(a, ['session', 'issue', 'text', 'preset', 'orch', 'extra']);
+    this.only(a, ['session', 'issue', 'text', 'work_item', 'preset', 'orch', 'extra']);
     const f = this.floorOf(a);
     const t = this.ticket(a, f, false);
     const p = a.preset === undefined || a.preset === '' ? this.defaultPreset(f) : this.preset(a.preset);
@@ -301,7 +311,7 @@ export class StartSim {
   }
 
   private start(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void {
-    this.only(a, ['session', 'desk_index', 'issue', 'text', 'orch', 'preset', 'extra', 'worktree', 'label', 'prompt']);
+    this.only(a, ['session', 'desk_index', 'issue', 'text', 'work_item', 'orch', 'preset', 'extra', 'worktree', 'label', 'prompt']);
     const f = this.floorOf(a);
     const t = this.ticket(a, f, true) as Ticket;
     const orch = this.hireOf(a.orch, 'orch');
@@ -327,7 +337,11 @@ export class StartSim {
           const x = w as Worker & { issue?: { repo: string; number: number } };
           x.role = 'orch';
           x.run = label.slice(label.indexOf('|') + 1);
-          if (t.kind === 'issue') x.issue = { repo: t.repo, number: t.number };
+          if (t.kind === 'issue') {
+            x.issue = { repo: t.repo, number: t.number };
+            // M7: the neutral form of the same link, in the same event (before the ack).
+            (x as Worker & { work_item?: { provider: string; id: string } }).work_item = { provider: 'github', id: `${t.repo}#${t.number}` };
+          }
           this.d.emit(send, { t: 'worker.upsert', worker: w });
         }
         if (this.presets.has(p.id) && f.last_preset !== p.id) {

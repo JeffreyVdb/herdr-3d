@@ -543,6 +543,18 @@ function perfFloor60() {
   ];
 }
 
+// ---- perf (M7): the busy floor linked to a repo whose simulated boards hold 100 issues and 20 pull requests ------
+// Served with `sim=1` (tools/fixture-boards.ts: `JeffreyVdb/bench`).
+
+function perfBoards() {
+  const [snap] = perfFloor60();
+  const world = snap.world;
+  const f = world.floors[0];
+  f.settings = { repo: 'JeffreyVdb/bench' };
+  f.suggested = { repo: 'JeffreyVdb/bench', default_cwd: '/srv/perf-floor' };
+  return [snap];
+}
+
 // ---- perf: the corner office's worst case (#20): 96 desks, everyone needs you ---
 // From your desk up on the mezzanine every one of these cards shows (no cap there).
 
@@ -586,7 +598,7 @@ function perfCity240() {
   return [{ t: 'world.snapshot', seq: 1, world: { buildings, unassigned: [], floors, workers } }];
 }
 
-const FIXTURES = { demo, 'demo-m3': demoM3, 'demo-m3b': demoM3b, 'demo-m4': demoM4, 'perf-floor60': perfFloor60, 'perf-floor96': perfFloor96, 'perf-city240': perfCity240 };
+const FIXTURES = { demo, 'demo-m3': demoM3, 'demo-m3b': demoM3b, 'demo-m4': demoM4, 'perf-floor60': perfFloor60, 'perf-boards': perfBoards, 'perf-floor96': perfFloor96, 'perf-city240': perfCity240 };
 // M5 panels
 FIXTURES['demo-m5'] = demoM5;
 // M6 crew

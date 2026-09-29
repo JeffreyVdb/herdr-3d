@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BridgeClient, type CommandResult, type ConnState, type SocketLike } from './net/client';
 import { bridgeUrl, takeToken } from './net/endpoint';
-import type { AnswerAck, CommandArgs, CommandName, Question, WorldEvent } from './net/protocol';
+import type { AnswerAck, BoardMessage, CommandArgs, CommandName, IssueCard, MergedPullRequest, PullRequest, Question, WatchBoardAck, WorldEvent } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalSpec } from './render/arrivals';
@@ -12,7 +12,7 @@ import { BUILDING_TINTS, LOT_TINT } from './render/palette';
 import { WalkView } from './render/walk';
 import { createGameAudio, createReception, receptionContext, type GameAudio, type Reception, type ReceptionEvent } from './reception';
 import { Hud, type PlanLabel } from './ui/hud';
-import { HireDialog } from './ui/hire';
+import { HireDialog, type HirePrefill } from './ui/hire';
 import { Panels } from './ui/panels';
 import { SendHomeDialog } from './ui/sendHome';
 import { RADIUS, Walker } from './input/walk';
@@ -23,7 +23,7 @@ import { buildingPlan, floorY, loadedFloor, placeAt, walkWorld, type Area, type 
 import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, overlookReach, type Opening, type Outline } from './world/layout';
 import { walkInRoute, type ArrivalKind } from './world/arrival';
 import type { Display } from './world/derive';
-import { firstFreeDesk, isFreshHire, Reservations } from './world/hire';
+import { firstFreeDesk, freeDesks, isFreshHire, Reservations } from './world/hire';
 import { walkOutRoute } from './world/route';
 import { WorldStore, type Change, type Counts, type FloorView, type WorkerView } from './world/store';
 // M5: P prompt, C changes, N next, 1–9 / 0 quick replies.
@@ -39,6 +39,10 @@ import { PresetsPanel } from './ui/presets';
 import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/startRun';
 // M6 crew: freelancers walk in and out with their briefcase.
 import { crewRole, isFreelancer } from './world/crew';
+// M7: the issues and pull request boards.
+import { askPrompt, BoardBook, nearestDesk, reviewPrompt } from './world/boards';
+import { BoardsPanel, type BoardOff, type BoardState } from './ui/boards/panel';
+import { openExternal } from './ui/boards/external';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
@@ -131,6 +135,19 @@ export class App {
   readonly startRun: StartRunDialog;
   readonly presetsPanel: PresetsPanel;
   private readonly m6Buttons: M6StartButtons;
+  /** M7: the boards' state (last messages per floor), their overlay and item modals. */
+  readonly boardBook = new BoardBook();
+  readonly boardsPanel: BoardsPanel;
+  /** M7: the `board.watch` / `unwatch` / `refresh` the game sends by itself, the last 400 (test hook; not in `sent`). */
+  readonly boardLog: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
+  /** M7: pages the game asked to open, and how (test hook). */
+  readonly opened: Array<{ url: string; via: string }> = [];
+  private readonly token: string | null;
+  private readonly noOpen: boolean;
+  /** The floor this connection watches for boards (null: none). */
+  private watched: string | null = null;
+  /** `board.watch` answers by floor (`enabled: false` with a reason: no repo linked). */
+  private readonly boardWatch = new Map<string, { enabled: boolean; reason?: string }>();
 
   private readonly r: THREE.WebGPURenderer;
   private readonly cityCam: THREE.PerspectiveCamera;
@@ -217,6 +234,8 @@ export class App {
 
     this.fixture = /\/fixture\//.test(o.params.get('ws') ?? '');
     const token = takeToken(window.location, safeSession(), (u) => history.replaceState(null, '', u));
+    this.token = token;
+    this.noOpen = o.params.get('open') === 'none';
     this.url = bridgeUrl(window.location, token);
     this.client = new BridgeClient({
       url: this.url,
@@ -226,8 +245,12 @@ export class App {
         onSnapshot: (s) => this.applyChange(this.store.applySnapshot(s)),
         onEvent: (e) => this.onWorldEvent(e),
         onConn: (m) => this.laptops.onConn(m),
+        onBoard: (m) => this.onBoard(m),
         onState: (s) => {
           this.conn = s;
+          // M7: a dropped connection forgot its board watch; the next live one watches again.
+          if (s.phase !== 'live') this.watched = null;
+          this.syncBoardWatch();
           // M5: a dropped connection took every watch with it; the next live one watches again.
           this.laptops.setConnected(s.phase === 'live');
           this.hud.setConn(s, this.fixture, Date.now());
@@ -271,9 +294,25 @@ export class App {
         this.hire.focusTab();
       },
       openPresets: (from) => this.presetsPanel.open(from),
-      started: (id) => this.followOrch(id),
+      started: (id, item) => {
+        this.followOrch(id);
+        // M7: "Hand to a worker": the card's note peels off the board and is carried to the orchestrator's desk.
+        if (item) this.peelNote(item.id, id);
+      },
     });
     this.sendHome = new SendHomeDialog(o.host, dialogHost);
+    this.boardsPanel = new BoardsPanel(o.host, {
+      ...dialogHost,
+      session: () => this.hereSession(),
+      state: (session) => this.boardState(session),
+      refresh: (session) => void this.sendBoard('board.refresh', { session }),
+      external: (url) => this.external(url),
+      handTo: (session, card, provider) => this.handTo(session, card, provider),
+      ask: (session, card) => this.askAbout(session, card),
+      review: (session, pr) => this.reviewPr(session, pr),
+      whyNoRun: (session) => this.whyNoRun(session),
+      whyNoHire: (session) => this.whyNoHire(session),
+    });
     this.arrivals = new Arrivals(this.shadows);
     this.walk.scene.add(this.arrivals.group);
     this.seatBar = new SeatBar(this.hud.root, { text: (t) => this.laptops.typeText(t), paste: (t) => this.laptops.paste(t), stand: () => this.laptops.stand() });
@@ -298,8 +337,8 @@ export class App {
     this.hud.on('buildings', () => this.openBuildings());
     this.hud.on('elevator', () => !this.transitioning && this.openElevator());
     this.hud.on('battery', () => this.toggleBattery());
-    this.hud.on('issues', () => this.openBoard('Issues'));
-    this.hud.on('prs', () => this.openBoard('Pull requests'));
+    this.hud.on('issues', () => this.openBoard('issues'));
+    this.hud.on('prs', () => this.openBoard('prs'));
     this.m6Buttons = m6StartButtons(this.hud, { run: () => this.openStartRun(), presets: (b) => this.openPresets(b), off: () => runUnsupported(hireHost) });
     this.bindInput();
     this.resize();
@@ -357,6 +396,8 @@ export class App {
     this.startRun.refresh();
     this.presetsPanel.refresh();
     this.m6Buttons.sync();
+    // M7: holders and verdict stamps on the boards follow the workers.
+    if (c.structure || c.workers.size) this.pushBoards();
   }
 
   // ---- M4: hire, send home, walking in and out ------------------------------------
@@ -452,7 +493,7 @@ export class App {
   }
 
   /** The hire dialog for a desk of the floor you are on; no desk: the first free one (the top bar's Hire). */
-  openHire(desk?: number): void {
+  openHire(desk?: number, prefill?: HirePrefill): void {
     const s = this.hereSession();
     const fv = s ? this.store.floorView(s) : null;
     if (!s || !fv) {
@@ -481,7 +522,7 @@ export class App {
     this.walker.release();
     this.walker.stop();
     this.panels.close();
-    this.hire.open(s, d);
+    this.hire.open(s, d, prefill);
   }
 
   /** The send-home dialog for a worker. */
@@ -495,7 +536,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen;
+    return this.hire.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -812,6 +853,8 @@ export class App {
     this.planCam.userData.fit = false;
     this.statusDirty = true;
     this.cameraMoved = true;
+    this.syncBoardWatch();
+    this.pushBoards();
   }
 
   private unloadFloor(): void {
@@ -819,6 +862,7 @@ export class App {
     this.office.dispose();
     this.office = null;
     this.loaded = null;
+    this.syncBoardWatch();
     this.walk.setOffice(null, 0);
     this.walk.outside?.setLoaded(null);
     this.worldCache = null;
@@ -873,6 +917,7 @@ export class App {
     this.worldCache = null;
     this.planCam.userData.fit = false;
     this.cameraMoved = true;
+    this.pushBoards();
   }
 
   /** What the walker touches now (rebuilt when the floor with an interior or its seats change). */
@@ -916,7 +961,7 @@ export class App {
   }
 
   /** The session of the floor you are on (inside it), else null. */
-  private hereSession(): string | null {
+  hereSession(): string | null {
     return this.mode === 'floor' && this.place.area === 'floor' && this.office ? this.office.session : null;
   }
 
@@ -1009,12 +1054,202 @@ export class App {
     this.hud.toast(this.batterySaver ? 'Battery saver on: 60 fps moving, 30 fps idle' : 'Battery saver off: 120 fps moving, 60 fps idle', 2200);
   }
 
-  private openBoard(which: string): void {
+  // ---- M7: boards ------------------------------------------------------------------------------------
+
+  /** The overlay of the floor you are on: the Issues or Pull requests list. An older bridge has none. */
+  openBoard(which: 'issues' | 'prs'): void {
+    const s = this.hereSession();
+    if (!s) {
+      this.hud.toast('Walk onto an office floor to see its boards.', 2400);
+      return;
+    }
+    if (this.unsupported.has('board.watch')) {
+      this.hud.toast('Update the bridge to use boards.', 3200);
+      return;
+    }
     this.walker.release();
     this.walker.stop();
     this.panels.close();
-    const floor = this.office?.session ?? 'this floor';
-    this.hud.sheet(`${which} · ${floor}`, `This overlay arrives in M7. It will list ${which === 'Issues' ? 'the open GitHub issues' : 'the open pull requests'} for ${floor}, so you can read them without walking to the board.`);
+    this.boardsPanel.open(which, s);
+  }
+
+  /** A board message (no seq): the floor you watch has news. */
+  private onBoard(m: BoardMessage): void {
+    const u = this.boardBook.apply(m);
+    const o = this.office;
+    if (!o || m.session !== o.session) return;
+    if (u.kind === 'prs' && u.merged.length) this.merged(u.merged);
+    this.pushBoards();
+  }
+
+  /** Merged PRs (never the initial replay): their notes fly off the board and the gong rings once. */
+  private merged(list: MergedPullRequest[]): void {
+    const o = this.office;
+    if (!o) return;
+    const now = performance.now();
+    for (const p of list) o.boards.flyOff(p.id, now);
+    o.boards.gong?.ring(now);
+    const at = o.boards.gongAt();
+    if (at) {
+      o.root.updateMatrixWorld(true);
+      this.audio.playAt('gong.wav', o.root.localToWorld(at));
+    }
+    this.activity(false);
+  }
+
+  /** Watches the floor you stand on for boards, and only that one (one per connection); nothing on the street or in the city. */
+  private syncBoardWatch(): void {
+    const want = this.office && this.conn.phase === 'live' ? this.office.session : null;
+    if (want === this.watched) return;
+    const prev = this.watched;
+    this.watched = want;
+    if (prev) {
+      this.boardBook.drop(prev);
+      this.boardWatch.delete(prev);
+      // Watching another floor replaces this watch by itself; only leaving for nowhere unwatches.
+      if (!want) void this.sendBoard('board.unwatch', { session: prev });
+    }
+    if (want && !this.unsupported.has('board.watch')) void this.watchBoard(want);
+    else this.pushBoards();
+  }
+
+  private async watchBoard(session: string): Promise<void> {
+    const r = await this.sendBoard('board.watch', { session });
+    if (this.watched !== session) return;
+    if (r.ok) {
+      const d = (r.data ?? {}) as Partial<WatchBoardAck>;
+      this.boardWatch.set(session, d.enabled === false ? { enabled: false, ...(d.reason ? { reason: d.reason } : {}) } : { enabled: true });
+    } else if (r.code !== 'unknown_command') {
+      this.boardWatch.set(session, { enabled: false, reason: commandFailure('board.watch', r.code, r.message, { floor: session }) });
+    }
+    this.pushBoards();
+  }
+
+  /** A command the game sends by itself for the boards: like `send`, logged apart from `sent`. */
+  private async sendBoard<T extends 'board.watch' | 'board.unwatch' | 'board.refresh'>(t: T, args: CommandArgs[T]): Promise<CommandResult> {
+    const entry: (typeof this.boardLog)[number] = { t, args };
+    this.boardLog.push(entry);
+    if (this.boardLog.length > 400) this.boardLog.shift();
+    const r = await this.client.request(t, args);
+    entry.result = r;
+    if (!r.ok && r.code === 'unknown_command') {
+      this.unsupported.add(t);
+      this.pushBoards();
+    }
+    return r;
+  }
+
+  private boardOff(session: string): BoardOff | null {
+    if (this.unsupported.has('board.watch')) return { text: 'Update the bridge to use boards', sub: 'This herdr-world does not know the issues and pull request boards yet.' };
+    const w = this.boardWatch.get(session);
+    if (w && !w.enabled) {
+      const why = w.reason ? `${w.reason.charAt(0).toUpperCase()}${w.reason.slice(1).replace(/\.$/, '')}.` : 'No issue provider is linked to this floor.';
+      return { text: 'No board on this floor', sub: `${why} Link a repository in the floor’s settings (elevator, then the gear).` };
+    }
+    return null;
+  }
+
+  private boardState(session: string): BoardState {
+    const b = this.boardBook.get(session);
+    return { issues: b.issues, prs: b.prs, off: this.boardOff(session) };
+  }
+
+  /** Shows what the boards say now: on the wall, on the look-at prompt, on the top bar, and in the overlay. */
+  private pushBoards(): void {
+    const o = this.office;
+    this.hud.setBoardButtons(this.unsupported.has('board.watch') ? 'Update the bridge to use boards.' : null);
+    if (o) {
+      const s = o.session;
+      const st = this.boardState(s);
+      const workers = this.store.floorView(s)?.workers ?? [];
+      const now = performance.now();
+      o.boards.setIssues({ msg: st.issues, off: st.off }, workers, now);
+      o.boards.setPrs({ msg: st.prs, issues: st.issues, off: st.off }, workers, now);
+      const info = (msg: { provider_name: string; fetched_at: number } | null, n: number) =>
+        st.off ? { task: st.off.text, live: !this.unsupported.has('board.watch'), why: st.off.sub ?? st.off.text } : msg && msg.fetched_at ? { task: `${msg.provider_name} · ${n} open`, live: true } : { task: 'Waiting for the bridge…', live: true };
+      this.hud.setBoardInfo('board.issues', info(st.issues, st.issues?.cards.filter((c) => c.state === 'open').length ?? 0));
+      this.hud.setBoardInfo('board.prs', info(st.prs, st.prs?.prs.length ?? 0));
+      this.activity(false);
+    }
+    this.boardsPanel.refresh();
+  }
+
+  /** Opens a provider's page in the user's browser (the Mac helper does it), else in a new window. */
+  external(url: string): void {
+    void openExternal(url, this.noOpen ? { token: this.token, open: () => undefined } : { token: this.token }).then((via) => this.opened.push({ url, via }));
+  }
+
+  /** The free desk nearest to you on a floor (not the first one), else null. */
+  private nearestFreeDesk(session: string): number | null {
+    const fv = this.store.floorView(session);
+    const L = this.office?.session === session ? this.office.layout : this.layoutOf(session);
+    if (!fv || !L) return null;
+    const held = this.heldDesks(session);
+    return nearestDesk(L.slots, freeDesks(fv).filter((d) => !held.has(d)), { x: this.walker.x, z: this.walker.z });
+  }
+
+  private whyFloorBusy(session: string): string | null {
+    const fv = this.store.floorView(session);
+    if (!fv) return `${session} is gone.`;
+    if (fv.asleep || fv.transition) return `${session} is ${fv.transition === 'waking' ? 'waking up' : fv.transition === 'sleeping' ? 'going to sleep' : 'asleep'}: wake it from the elevator (L) first.`;
+    if (this.nearestFreeDesk(session) === null) return `No free desk on ${session} right now.`;
+    return null;
+  }
+
+  private whyNoRun(session: string): string | null {
+    return runUnsupported({ store: this.store, unsupported: (t) => this.unsupported.has(t) }) ?? this.whyFloorBusy(session);
+  }
+
+  private whyNoHire(session: string): string | null {
+    if (this.unsupported.has('hire.prepare') || this.unsupported.has('worker.hire')) return commandFailure('worker.hire', 'unknown_command', '');
+    return this.whyFloorBusy(session);
+  }
+
+  /** "Hand to a worker": the start-run dialog with the card, the floor's last team, at the free desk nearest to you. */
+  private handTo(session: string, card: IssueCard, provider: string): void {
+    const desk = this.nearestFreeDesk(session);
+    const b = this.boardBook.get(session).issues;
+    this.boardsPanel.close();
+    this.openStartRun({
+      session,
+      ...(desk !== null ? { desk } : {}),
+      workItem: { provider: provider || (b?.provider ?? ''), id: card.id, key: card.key, title: card.title, url: card.url, provider_name: b?.provider_name },
+    });
+  }
+
+  /** "Ask a worker…": the hire dialog at the nearest free desk with a first prompt to look into it. */
+  private askAbout(session: string, card: IssueCard): void {
+    const desk = this.nearestFreeDesk(session);
+    this.boardsPanel.close();
+    this.openHire(desk ?? undefined, { prompt: askPrompt(card.key, card.url) });
+  }
+
+  /** "Review with a worker": the hire dialog with the last team's reviewer and the code-review prompt for the PR. */
+  private reviewPr(session: string, pr: PullRequest): void {
+    const desk = this.nearestFreeDesk(session);
+    const fv = this.store.floorView(session);
+    const preset = this.store.presets.defaultFor(fv?.floor.last_preset);
+    const reviewer = preset?.roles.reviewer;
+    this.boardsPanel.close();
+    this.openHire(desk ?? undefined, { prompt: reviewPrompt(reviewer?.harness ?? 'claude', { key: pr.key, ...(pr.url ? { url: pr.url } : {}) }), ...(reviewer ? { choice: reviewer } : {}) });
+  }
+
+  /** The note of a card leaves its board and is carried to an orchestrator's desk. */
+  private peelNote(cardId: string, orchId: string): void {
+    const o = this.office;
+    const v = this.store.workerView(orchId);
+    if (!o || !v || o.session !== v.worker.session) return;
+    const slot = o.layout.slots[v.desk];
+    if (!slot) return;
+    o.boards.peel(cardId, new THREE.Vector3(slot.desk.x, 1.05, slot.desk.z), performance.now());
+    this.activity(true);
+  }
+
+  /** Everything the boards show on the wall (test hook). */
+  boardsInfo(): (ReturnType<OfficeView['boards']['info']> & { session: string; watched: string | null; off: string | null; batches: number }) | null {
+    const o = this.office;
+    if (!o) return null;
+    return { session: o.session, watched: this.watched, off: this.boardOff(o.session)?.text ?? null, ...o.boards.info(performance.now()), batches: o.boards.noteBatches };
   }
 
   private updateHint(): void {
@@ -1104,6 +1339,10 @@ export class App {
     } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'elevator') {
       e.preventDefault();
       this.openElevator();
+    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'board' && (this.target.id === 'board.issues' || this.target.id === 'board.prs')) {
+      // M7: E looking at a wall board: its overlay.
+      e.preventDefault();
+      this.openBoard(this.target.id === 'board.issues' ? 'issues' : 'prs');
     } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'own-desk') {
       e.preventDefault();
       this.sit();
@@ -1254,7 +1493,7 @@ export class App {
 
   /** Animation-loop callback: frame pacing, then update + render. */
   tick(now: number): void {
-    const active = this.walker.moving || this.tween !== null || this.transitioning || this.arrivals.count > 0;
+    const active = this.walker.moving || this.tween !== null || this.transitioning || this.arrivals.count > 0 || !!this.office?.boardsBusy;
     const hz = targetHz({ hidden: document.hidden, batterySaver: this.batterySaver, sinceActivity: active ? 0 : now - this.lastActivity });
     if (!shouldRender(now, this.lastRender, hz)) return;
     const dt = Math.min(0.1, this.lastRender === -Infinity ? 1 / 60 : (now - this.lastRender) / 1000);

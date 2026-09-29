@@ -116,8 +116,8 @@ export class Hud {
     this.battery.title = 'Battery saver: lower frame rates (B)';
     this.battery.setAttribute('aria-pressed', 'false');
     this.battery.setAttribute('aria-label', 'Battery saver');
-    this.issues.title = 'Issues board overlay (arrives in M7)';
-    this.prs.title = 'Pull requests overlay (arrives in M7)';
+    this.issues.title = 'Issues: this floor’s board as a list';
+    this.prs.title = 'Pull requests: this floor’s open pull requests as a list';
     this.back.title = 'Back to the city (Backspace)';
     this.buildings.title = 'Buildings: create, rename and arrange buildings and floors (M)';
     this.elevator.title = 'Elevator: ride to another floor, wake or sleep floors, floor settings (L)';
@@ -307,7 +307,7 @@ export class Hud {
     // M5: the usage and the question on the bar.
     if (w) shown.push(...promptBarKey(w));
     if (w) shown.push(...crewBarKey(w));
-    const key = t ? JSON.stringify([t.kind, t.id, ...shown]) : '';
+    const key = t ? JSON.stringify([t.kind, t.id, ...shown, ...(t.kind === 'board' ? [this.boardInfo.get(t.id) ?? null] : [])]) : '';
     if (key === this.promptKey) return;
     this.promptKey = key;
     this.reticle.classList.toggle('is-target', !!t);
@@ -377,6 +377,18 @@ export class Hud {
       k.append(el('kbd', '', 'E'), document.createTextNode('Sit'));
       keys.append(k);
       this.prompt.setAttribute('aria-label', `${t.label} · E Sit`);
+    } else if (t.kind === 'board' && (t.id === 'board.issues' || t.id === 'board.prs')) {
+      // M7: the wall boards open their overlays.
+      const info = this.boardInfo.get(t.id);
+      const name = t.id === 'board.issues' ? 'Issues board' : 'Pull requests';
+      line.append(text('prompt-name', name), text('prompt-task', info?.task ?? 'Waiting for the bridge…'));
+      if (info && !info.live) keys.append(disabled('E', 'Open', info.why ?? 'Not available'));
+      else {
+        const k = el('span', 'key');
+        k.append(el('kbd', '', 'E'), document.createTextNode('Open'));
+        keys.append(k);
+      }
+      this.prompt.setAttribute('aria-label', `${name} · E Open`);
     } else if (t.kind === 'board' || t.kind === 'prop') {
       line.append(text('prompt-name', t.label), text('prompt-task', `Placeholder until ${t.milestone}`));
       keys.append(disabled('E', 'Open', `Arrives in ${t.milestone}`));
@@ -481,6 +493,27 @@ export class Hud {
     await new Promise((r) => setTimeout(r, 140));
     this.doors.classList.remove('is-closed');
     await new Promise((r) => setTimeout(r, 280));
+  }
+
+  /** M7: what the wall board you look at says (`task`), and whether E opens it (`live`, else `why`); null: nothing yet. */
+  private readonly boardInfo = new Map<string, { task: string; live: boolean; why?: string }>();
+
+  setBoardInfo(id: 'board.issues' | 'board.prs', info: { task: string; live: boolean; why?: string } | null): void {
+    const cur = this.boardInfo.get(id);
+    if (info ? cur?.task === info.task && cur.live === info.live && cur.why === info.why : !cur) return;
+    if (info) this.boardInfo.set(id, info);
+    else this.boardInfo.delete(id);
+    this.promptKey = '';
+  }
+
+  /** M7: the top bar's Issues / PRs buttons say why they cannot show a board (an older bridge, no repo). */
+  setBoardButtons(why: string | null): void {
+    for (const b of [this.issues, this.prs]) {
+      b.setAttribute('aria-disabled', why ? 'true' : 'false');
+      b.classList.toggle('btn--off', !!why);
+    }
+    this.issues.title = why ?? 'Issues: this floor’s board as a list';
+    this.prs.title = why ?? 'Pull requests: this floor’s open pull requests as a list';
   }
 
   /** M5: overrides a worker key's state from KEYS (null: as KEYS says); the prompt redraws on the next setTarget. */

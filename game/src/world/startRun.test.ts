@@ -31,7 +31,7 @@ const book = (...ps: Preset[]) => {
   b.reset(ps);
   return b;
 };
-const form = (over: Partial<RunForm> = {}): RunForm => ({ ticket: '3', desk: 4, preset: BUILD.id, orch: { ...opus }, extra: '', worktree: true, label: '', ...over });
+const form = (over: Partial<RunForm> = {}): RunForm => ({ ticket: '3', desk: 4, preset: BUILD.id, orch: { ...opus }, extra: '', worktree: true, label: '', workItem: null, ...over });
 
 describe('parseTicket', () => {
   it('reads a bare number or #n as an issue of the floor’s repo', () => {
@@ -228,5 +228,26 @@ describe('preset events on the wire', () => {
     expect(ev({ t: 'preset.removed', seq: 6, id: BUILD.id })).toBe(true);
     expect(ev({ t: 'preset.upsert', seq: 7, preset: { id: 'p' } })).toBe(false);
     expect(ev({ t: 'preset.removed', seq: 8 })).toBe(false);
+  });
+});
+
+// M7: "Hand to a worker" starts the run on a card of the issue board, sent as `work_item` (never parsed, never a repo/number).
+describe('a work item as the ticket', () => {
+  const item = { provider: 'github', id: 'JeffreyVdb/lab#7', key: '#7', title: 'Render markdown safely' };
+  const t = { kind: 'work_item', item, why: null } as const;
+
+  it('sends the card’s provider and opaque id and nothing else of it', () => {
+    expect(ticketArgs(t)).toEqual({ work_item: { provider: 'github', id: 'JeffreyVdb/lab#7' } });
+    expect(ticketLine(t)).toBe('#7 · Render markdown safely');
+  });
+
+  it('is a ticket for prepare and start, with no other ticket field', () => {
+    const f = form({ ticket: '', workItem: item });
+    expect(prepareArgs('lab', f, t)).toEqual({ session: 'lab', work_item: { provider: 'github', id: 'JeffreyVdb/lab#7' }, preset: BUILD.id, orch: { ...opus } });
+    expect(startBlocker(f, t, emptyPreview(), H, book(BUILD))).toBeNull();
+    const a = startArgs('lab', f, t, emptyPreview(), null, false);
+    expect(a).toMatchObject({ session: 'lab', desk_index: 4, work_item: { provider: 'github', id: 'JeffreyVdb/lab#7' } });
+    expect(a).not.toHaveProperty('issue');
+    expect(a).not.toHaveProperty('text');
   });
 });

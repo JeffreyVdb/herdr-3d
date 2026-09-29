@@ -382,6 +382,19 @@ export interface CommandArgs {
     /** The edited preview; absent: the bridge composes it. */
     prompt?: string;
   };
+  // M7: boards (docs/protocol.md "Boards: issues and pull requests").
+  'board.watch': { session: string };
+  'board.unwatch': { session: string };
+  'board.refresh': { session: string };
+  'issue.get': { session: string; id: string };
+  'issue.comment': { session: string; id: string; body: string };
+  'issue.close': { session: string; id: string; reason: CloseReason; confirm: true };
+  'issue.set_status': { session: string; id: string; column: string };
+  'pr.get': { session: string; id: string };
+  'pr.comment': { session: string; id: string; body: string };
+  'pr.merge': { session: string; id: string; method: MergeMethod; confirm: true; override?: boolean; confirm_override?: true };
+  'worker.open_pr.prepare': { id: string };
+  'worker.open_pr': { id: string; title: string; body: string; confirm: true };
 }
 
 // M5: blocked workers' questions, usage, and the acks of the prompt, answer and Changes commands (docs/protocol.md
@@ -661,10 +674,15 @@ export interface PresetRemoved {
   id: string;
 }
 
-/** Exactly one of `issue` (a number, `"#3"`, `"3"` or an issue URL) or `text`; `run.prepare` also takes neither. */
+/**
+ * Exactly one of `issue` (a number, `"#3"`, `"3"` or an issue URL), `text` or (M7) `work_item`; `run.prepare` also
+ * takes none.
+ */
 export interface RunTicketArgs {
   issue?: number | string;
   text?: string;
+  /** M7: a card of the floor's issue board, by its opaque id. */
+  work_item?: WorkItem;
 }
 
 export type RunTicket = { kind: 'issue'; repo: string; number: number; url: string } | { kind: 'text'; text: string };
@@ -737,4 +755,224 @@ export interface Worker {
   over_cap?: boolean;
   /** M6, freelancers with a report token. */
   report?: WorkerReport;
+  /** M7: the neutral form of `issue`: the board card the worker's run is about. */
+  work_item?: WorkItem;
+}
+
+// M7: boards. Items are addressed by an opaque `id` scoped by `provider`; clients never parse ids and show `key`.
+
+/** M7: `{provider, id}` of a card (the bridge's neutral form of an issue link). */
+export interface WorkItem {
+  provider: string;
+  id: string;
+}
+
+export type CloseReason = 'completed' | 'not_planned' | 'duplicate';
+export type MergeMethod = 'merge' | 'squash' | 'rebase';
+export type Priority = 'urgent' | 'high' | 'medium' | 'low';
+
+export interface BoardColumn {
+  /** Opaque; "" is the leading "No status" column. */
+  id: string;
+  name: string;
+  done?: boolean;
+}
+
+export interface BoardLabel {
+  name: string;
+  /** `#rrggbb`. */
+  color: string;
+}
+
+export interface BoardPerson {
+  name: string;
+  avatar_url?: string;
+}
+
+/** Board-level capabilities; a card or PR may override some of them. */
+export interface BoardCaps {
+  comment?: boolean;
+  close?: boolean;
+  set_status?: boolean;
+  merge?: boolean;
+  open_from_branch?: boolean;
+}
+
+export interface IssueCard {
+  id: string;
+  /** Shown to people: `#9`. */
+  key: string;
+  title: string;
+  state: 'open' | 'closed';
+  /** A column id. */
+  column: string;
+  /** Absent when the provider has no page for it. */
+  url?: string;
+  labels: BoardLabel[];
+  priority?: Priority;
+  assignees: BoardPerson[];
+  author?: string;
+  updated_at: number | null;
+  closed_at: number | null;
+  capabilities?: BoardCaps;
+}
+
+export interface BoardRate {
+  remaining: number;
+  reset_at: number;
+}
+
+/** Fields both board messages carry. */
+export interface BoardBase {
+  session: string;
+  provider: string;
+  /** "GitHub": the game says "Open in GitHub". */
+  provider_name: string;
+  /** true: the cache replayed on `board.watch`; never ring the gong for it. */
+  initial: boolean;
+  /** Unix ms of the data's poll; 0: nothing fetched yet. */
+  fetched_at: number;
+  stale?: boolean;
+  error?: string;
+  truncated?: boolean;
+  rate?: BoardRate;
+  capabilities?: BoardCaps;
+}
+
+/** Connection-scoped (no `seq`). */
+export interface BoardIssues extends BoardBase {
+  t: 'board.issues';
+  columns: BoardColumn[];
+  cards: IssueCard[];
+}
+
+export type Checks = 'success' | 'failure' | 'pending' | 'none';
+export type ReviewState = 'approved' | 'changes_requested' | 'review_required' | 'none';
+export type Mergeable = 'mergeable' | 'conflicting' | 'unknown';
+
+export interface PullRequest {
+  id: string;
+  key: string;
+  title: string;
+  state: 'open';
+  draft?: boolean;
+  url?: string;
+  head_branch: string;
+  base_branch?: string;
+  author?: string;
+  checks: Checks;
+  review: ReviewState;
+  mergeable: Mergeable;
+  /** Ids of the issues it closes (other repos' included). */
+  closes: string[];
+  additions?: number;
+  deletions?: number;
+  changed_files?: number;
+  updated_at?: number | null;
+  capabilities?: BoardCaps;
+}
+
+export interface MergedPullRequest {
+  id: string;
+  key: string;
+  title: string;
+  merged_at: number;
+  closes?: string[];
+}
+
+export interface BoardPrs extends BoardBase {
+  t: 'board.prs';
+  prs: PullRequest[];
+  merged: MergedPullRequest[];
+}
+
+export type BoardMessage = BoardIssues | BoardPrs;
+
+export interface BoardComment {
+  id: string;
+  author: BoardPerson;
+  body: string;
+  created_at: number;
+}
+
+/** `issue.get` ack. */
+export interface IssueDetail {
+  card: IssueCard;
+  /** Raw markdown: the game sanitises. */
+  body: string;
+  author: BoardPerson;
+  created_at: number;
+  comments: BoardComment[];
+  comments_truncated?: boolean;
+}
+
+export interface PrFile {
+  path: string;
+  additions: number;
+  deletions: number;
+  change: string;
+}
+
+export interface PrCheck {
+  name: string;
+  state: 'success' | 'failure' | 'pending' | 'neutral' | 'skipped';
+  url?: string;
+}
+
+/** `pr.get` ack. */
+export interface PrDetail {
+  pr: PullRequest;
+  body: string;
+  author: BoardPerson;
+  created_at: number;
+  files: PrFile[];
+  files_truncated?: boolean;
+  checks: PrCheck[];
+  comments: BoardComment[];
+  comments_truncated?: boolean;
+}
+
+export interface CommentAck {
+  comment: BoardComment;
+}
+
+/** `worker.open_pr.prepare` ack. */
+export interface OpenPrPrepare {
+  can_open: boolean;
+  reason?: string;
+  branch?: string;
+  base?: string;
+  ahead?: number;
+  dirty?: boolean;
+  existing?: { id: string; key: string; url?: string };
+  title?: string;
+  body?: string;
+}
+
+/** `worker.open_pr` ack. */
+export interface OpenPrAck {
+  pr: { id: string; key: string; url?: string };
+  pushed: boolean;
+  existed: boolean;
+}
+
+/** `board.watch` ack. */
+export interface WatchBoardAck {
+  enabled: boolean;
+  reason?: string;
+}
+
+export function isBoardIssues(m: ServerMessage): m is BoardIssues {
+  const o = m as unknown as Obj;
+  return m.t === 'board.issues' && isStr(o.session) && Array.isArray(o.columns) && Array.isArray(o.cards);
+}
+
+export function isBoardPrs(m: ServerMessage): m is BoardPrs {
+  const o = m as unknown as Obj;
+  return m.t === 'board.prs' && isStr(o.session) && Array.isArray(o.prs);
+}
+
+/** The connection-scoped board messages (no `seq`, never replayed): see docs/protocol.md "Boards". */
+export function isBoardMessage(m: ServerMessage): m is BoardMessage {
+  return isBoardIssues(m) || isBoardPrs(m);
 }

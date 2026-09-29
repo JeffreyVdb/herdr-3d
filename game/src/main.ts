@@ -18,6 +18,8 @@ import type { PromptSummary } from './ui/prompt';
 // M6 start
 import type { PresetsSummary } from './ui/presets';
 import type { StartRunOptions, StartRunSummary } from './ui/startRun';
+// M7: boards
+import type { BoardSummary } from './ui/boards/panel';
 import type { NeedItem } from './world/next';
 import type { Area, BuildingPlan } from './world/building';
 import type { floorLayout } from './world/layout';
@@ -158,6 +160,20 @@ export interface H3DDebug {
   crew(): { members: CrewInfo[]; shown: string[] };
   /** M6: the scripted freelancer of the fixture simulator (`sim=1`): one `sim.crew` step. */
   simCrew(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** M7: the open Issues / Pull requests overlay (and its item modal), null when none is open. */
+  board(): BoardSummary | null;
+  /** M7: what the boards on the wall show: notes (with their atlas cell and pose), flights, gong rings, buffer writes. */
+  boards(): ReturnType<import('./app').App['boardsInfo']>;
+  /** M7: the overlay for the floor you are on, as the top bar's Issues / PRs (and E on a board) open it. */
+  openBoard(which: 'issues' | 'prs'): void;
+  /** M7: the overlay with an item's modal open (an opaque id). */
+  openBoardItem(which: 'issues' | 'prs', id: string): void;
+  /** M7: the `board.watch` / `unwatch` / `refresh` the game sent by itself (`sent()` leaves them out). */
+  boardLog(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
+  /** M7: pages the game asked to open, and how (`helper`: the Mac helper's endpoint took it, `window`: a new window). */
+  opened(): Array<{ url: string; via: string }>;
+  /** M7: the fixture simulator's `sim.boards` (merge a PR, make polls fail, …). */
+  simBoards(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
 }
 
 declare global {
@@ -279,6 +295,21 @@ const h3d: H3DDebug = {
     if (!app) return { ok: false, code: 'not_started' };
     // `sim.crew` is the fixture simulator's, not a bridge command.
     const r = await app.client.request('sim.crew' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  board: () => app?.boardsPanel.summary() ?? null,
+  boards: () => app?.boardsInfo() ?? null,
+  openBoard: (w) => app?.openBoard(w),
+  openBoardItem: (w, id) => {
+    const s = app?.hereSession();
+    if (s) app?.boardsPanel.openItem(w, s, id);
+  },
+  boardLog: () => structuredClone(app?.boardLog ?? []),
+  opened: () => structuredClone(app?.opened ?? []),
+  simBoards: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    // `sim.boards` is the fixture simulator's, not a bridge command.
+    const r = await app.client.request('sim.boards' as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
   openChanges: (id) => {

@@ -15,6 +15,7 @@ import {
   type Preview,
   type RunForm,
   type TicketInput,
+  type WorkItemRef,
 } from '../world/startRun';
 import { h, icon, ICON } from './dom';
 import './start.css';
@@ -36,14 +37,16 @@ export interface StartRunHost extends HireHost {
   hireAt(session: string, desk: number): void;
   /** The presets panel, over this dialog (focus comes back to `from`). */
   openPresets(from: HTMLElement | null): void;
-  /** The run started: the view follows the new orchestrator. */
-  started(workerId: string): void;
+  /** The run started: the view follows the new orchestrator. M7: `workItem` when it started on a board card. */
+  started(workerId: string, workItem?: { provider: string; id: string }): void;
 }
 
 export interface StartRunOptions {
   session: string;
   /** M7: an issue to start on (a number of the floor's repo, `#n`, or an issue URL). */
   issue?: number | string;
+  /** M7: "Hand to a worker": a card of the issue board to start on (the ticket is this card, sent as `work_item`). */
+  workItem?: WorkItemRef;
   /** A desk of the floor; absent: the first free one. */
   desk?: number;
 }
@@ -174,6 +177,7 @@ export class StartRunDialog {
     this.f = blankForm();
     this.f.desk = o.desk;
     if (o.issue !== undefined) this.f.ticket = typeof o.issue === 'number' ? `#${o.issue}` : o.issue;
+    this.f.workItem = o.workItem ?? null;
     this.preview = emptyPreview();
     this.orchTouched = false;
     this.ticketError = null;
@@ -195,6 +199,7 @@ export class StartRunDialog {
   }
 
   private ticket(): TicketInput {
+    if (this.f.workItem) return { kind: 'work_item', item: this.f.workItem, why: null };
     return parseTicket(this.f.ticket, this.repo());
   }
 
@@ -343,7 +348,7 @@ export class StartRunDialog {
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const book = this.host.store.presets;
     const free = fv ? freeDesks(fv).filter((d) => d === this.f.desk || !this.host.held(this.session).has(d)) : [];
-    const key = JSON.stringify([this.session, this.f.desk, this.state, this.prep && { ...this.prep, prompt: '', label: '' }, this.f.preset, this.f.orch, this.f.worktree, where, this.takenBy(), this.statusText, book.version, free, this.ticketError !== null]);
+    const key = JSON.stringify([this.session, this.f.desk, this.state, this.f.workItem?.id ?? null, this.prep && { ...this.prep, prompt: '', label: '' }, this.f.preset, this.f.orch, this.f.worktree, where, this.takenBy(), this.statusText, book.version, free, this.ticketError !== null]);
     if (key === this.renderedKey) {
       this.renderLive();
       return;
@@ -507,6 +512,22 @@ export class StartRunDialog {
   }
 
   private ticketField(): HTMLElement {
+    const item = this.f.workItem;
+    if (item) {
+      // M7: the ticket is a card of the board: named, not typed.
+      return h(
+        'div',
+        { class: 'dd-field dd-task dd-workitem' },
+        h('span', { class: 'dd-label' }, 'Work item'),
+        h('p', { class: 'dd-ticket', id: 'run-ticket-read', 'aria-live': 'polite' }),
+        h(
+          'p',
+          { class: 'field-hint', id: 'run-ticket-hint' },
+          `A card of the ${item.provider_name ?? 'issue'} board. `,
+          h('button', { class: 'btn btn--sm', 'data-key': 'other-ticket', onclick: () => this.dropWorkItem() }, 'Use another ticket'),
+        ),
+      );
+    }
     const ta = h('textarea', {
       id: 'run-ticket',
       'data-key': 'ticket',
@@ -556,7 +577,7 @@ export class StartRunDialog {
     if (read) {
       const why = t.kind === 'empty' ? null : (this.ticketError ?? t.why);
       read.replaceChildren(
-        t.kind === 'empty' ? '' : h('span', { class: `tape tape--ticket tape--${t.kind}` }, t.kind === 'issue' ? `#${t.number}` : 'Text'),
+        t.kind === 'empty' ? '' : h('span', { class: `tape tape--ticket tape--${t.kind}` }, t.kind === 'issue' ? `#${t.number}` : t.kind === 'work_item' ? t.item.key : 'Text'),
         ' ',
         ticketLine(t),
       );
@@ -632,6 +653,16 @@ export class StartRunDialog {
     void this.prepare();
   }
 
+  /** M7: back to a typed ticket (the card is not the ticket any more). */
+  private dropWorkItem(): void {
+    this.f.workItem = null;
+    this.f.ticket = '';
+    this.ticketError = null;
+    this.render();
+    this.schedule();
+    this.dialog.querySelector<HTMLElement>('#run-ticket')?.focus();
+  }
+
   private moveTo(desk: number): void {
     this.f.desk = desk;
     this.desk = desk;
@@ -696,11 +727,11 @@ export class StartRunDialog {
       const ack = r.data as RunStartAck | undefined;
       const w = ack?.id ? this.host.store.workerView(ack.id) : null;
       const name = w?.name ?? who;
-      const on = t.kind === 'issue' ? ` on #${t.number}` : '';
+      const on = t.kind === 'issue' ? ` on #${t.number}` : t.kind === 'work_item' ? ` on ${t.item.key}` : '';
       const extra = ack?.prompted === false ? ` The prompt was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P).` : '';
       if (still) this.close();
       this.host.toast(`Started a run${on}: ${name} takes Desk ${(w?.desk ?? desk) + 1}. Here they come.${extra}`, extra ? 'error' : 'info');
-      if (ack?.id) this.host.started(ack.id);
+      if (ack?.id) this.host.started(ack.id, t.kind === 'work_item' ? { provider: t.item.provider, id: t.item.id } : undefined);
       return;
     }
     const msg = r.code === 'not_found' ? 'That team preset was deleted meanwhile: pick another one.' : failureText('run.start', r.code, r.message, { floor: session, desk: desk + 1 }).replace('hire without a worktree', 'start without one');
@@ -741,5 +772,5 @@ export class StartRunDialog {
 }
 
 function blankForm(): RunForm {
-  return { ticket: '', desk: 0, preset: '', orch: null, extra: '', worktree: true, label: '' };
+  return { ticket: '', desk: 0, preset: '', orch: null, extra: '', worktree: true, label: '', workItem: null };
 }
