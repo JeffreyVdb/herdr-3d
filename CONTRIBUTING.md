@@ -324,6 +324,28 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   worker walking in, a first task sets it working the step after; branches are `h3d/<name>-<id6>`; `delete_branch` only for
   a branch the simulator made or a fixture `h3d/…` one, like the bridge's recorded branches), dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
 
+-  M5 panels (game): `src/world` — `usage.ts` (the `≈$0.09 · 37k tokens · ctx 4%` line, only the known parts, a `*`
+  for a cost priced as an unknown model, never a bare `$`; the floor total), `next.ts` (N's queue: blocked before
+  done, the building you are in first, oldest `status_since` first, and where to stand facing a worker), `answer.ts`
+  (digits → a question's choice; Approve = the choice that says Yes / Trust / Allow / Proceed, else the first; Deny =
+  the "No" choice, else a cancel), `changes.ts` (the Changes panel's model: the diff split per file and classified per
+  line, file states, branch / upstream / base / stat lines, the truncation notice) and `prompt.ts` (who can be
+  prompted, the 16 KiB rule); `src/render/cards` — `layout.ts` lays out a tall card (a blocked worker's question with
+  its numbered choices as key caps, the looked-at worker's usage line) and `atlasCards.ts` gives the nearest tall
+  cards one of 8 tall cells of a second small atlas, drawn as a second instanced batch (the per-desk atlas stays as it
+  was; a tall card without a free cell shows compact with its question as the task line); `src/ui` — `prompt.ts` (P, a
+  modal like the M4 dialogs, low on the screen), `changes.ts` (C, a non-modal side panel in the HUD under the top bar:
+  the floor stays in view and walkable; its diff is drawn a window of lines at a time), `promptBar.ts` (usage and
+  Approve / Deny on the look-at bar), `m5.css`. `fixtures/demo-m5` is demo-m4 with a `question` on each blocked
+  worker, shaped like the bridge's captured screens (Claude Code's trust dialog with "No, exit" first, its
+  AskUserQuestion menu and a Bash permission, a Codex approval, one without a menu) and `usage` on most agents (one
+  priced as an unknown model, one with no model yet). `tools/fixture-panels.ts` is the simulator's M5 part (its rules
+  are at its top): a prompt starts an idle agent working a step later and done three steps after, a working one queues
+  it, a blocked one refuses it (`invalid_state`: answer first); an answer needs the question's hash (else `stale`,
+  after an upsert with the current question); `worker.changes` has staged / unstaged / untracked / committed files for
+  a `working` worker, a 1.6 MiB diff cut at 256 KiB for a `perf…` label, `not_a_repo` under `/scratch`; working agents
+  send `worker.usage` every `simusage` ms.
+
 Run it:
 
 ```sh
@@ -343,6 +365,10 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 | `ts` | GPU timestamp queries (for `bench`) |
 | `shadows=0`, `badges=0`, `battery=1` | no shadows; no city badges (perf comparisons); start in battery saver |
 | `me=<name>` | M3c: the name on your desk's name plate and the office glass (default "You": the bridge sends no user name yet) |
+
+M5 panels on the simulating server (`ws=…?sim=1…`): `simusage=<ms>` sends working agents' `worker.usage` that often
+(default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|changes_failed` for the next prompt,
+answer or changes. E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1%26simms%3D300%26simusage%3D2000`.
 
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings
@@ -387,6 +413,25 @@ with a delete picked only the button confirms. The worker packs a cardboard box,
 fire escape and away along the sidewalk, and the desk gets its "+" back. Walks play for floors of the building you are
 in (the interior only for the floor you are on); anywhere else they resolve at once. Esc closes either dialog, and
 the pointer lock is released while one is open.
+
+M5 panels: look at a worker and press **P** to prompt it: the overlay sits low so the worker stays in view; **Enter**
+sends, **Shift+Enter** adds a line, **Esc** closes (an unsent draft is kept per worker). It shows Sending, then Sent
+(or Queued: a working worker's agent takes it on its next turn, and a "Will queue" chip says so before you send), or
+why it failed, with the text kept; the header's status tape follows the worker live. P is off, with the reason on the
+key, for a plain shell, a worker waiting on a question (answer it first: the bridge refuses a prompt then), an asleep
+floor, or a bridge without `worker.prompt`. **C** opens the worker's Changes panel on the right (C again, or Esc,
+closes it): branch, upstream with ahead / behind, the base, `N files changed · +a −d`, the files (staged, unstaged,
+untracked, committed; +/−) and the selected file's diff; ↑ ↓ Home End pick a file, Enter or → reads its diff, ← goes
+back to the list, **R** refreshes; keys typed in it never reach the game, and the scene stays walkable. A blocked
+worker's card shows its question and numbered choices; looking at it, **1**–**9** answer with that choice and **0**
+denies (Esc on its screen); the look-at bar leads with Approve (the choice that says Yes / Trust / Allow / Proceed,
+else the first: Claude's trust dialog lists "No, exit" first) and Deny (the menu's "No" choice, else 0); a stale
+question says what it is now. **N** goes to the next worker who needs you (blocked, oldest first, then done), in your
+building first, cycling on repeated N: on the floor you are on it puts you facing the worker; for another floor it
+opens the elevator with that floor picked (Enter rides there, and you arrive facing it). The look-at line and the
+looked-at worker's card show its usage (`≈$0.09 · 37k tokens · ctx 4%`; `≈$1.50*` with a tooltip when priced as an
+unknown model), the top bar the floor's `≈$` total and "N need you".
+
 Outside (M3b): every floor has a door at the south end of its west wall; it slides open as you walk up to it, onto the
 fire escape. Walk down (or up) the flights to another floor's landing and in through its door: that floor gets the
 interior (as elevator travel would), the top bar shows it while you stand on its landing. The last flight comes down
@@ -444,6 +489,16 @@ make shot                     # Playwright WebGL2: game/test-results/{shot,m2-ci
                               # read-only bridge; m4-{hire-dialog,send-home-dirty,send-home-clean,walk-in,
                               # walk-out-pack,walk-out,hire-capacity-warn,hire-capacity-full,
                               # hire-fetch-failed}.png
+                              # M5 panels on demo-m5 with sim=1 (m5-panels.spec.ts): P to an idle worker (sent, working,
+                              # done on screen) and to a working one (queued), a draft kept, the plain-shell / asleep /
+                              # failed-prompt reasons; a bridge without the M5 commands; 1 / 2 / 3 / 0 on a Claude
+                              # permission, Claude's trust dialog (Approve is its choice 2), a Codex approval and a
+                              # question without a menu, and a stale hash; the Changes panel from the keyboard (staged /
+                              # unstaged / untracked / committed, the diff, refresh keeps the file) and on a cut 256 KiB
+                              # diff (the notice, a window of lines, `not_a_repo`); N across floors through the elevator
+                              # and from the city; usage on the bar, the card and the top bar, flagged, updated by
+                              # `worker.usage`;
+                              # `m5-{prompt,prompt-queued,changes,changes-truncated,quick-reply,usage}.png`.
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
 pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
@@ -509,7 +564,14 @@ off; or the fire prepare, which worktree options are enabled, the warning, wheth
 status line), `arrivals()` (walkers now: kind, desk, phase, position, distance walked of the route's length, what their
 desk shows, box / laptop / items), `arrivalLog()` (finished walks, `played: false` for ones nobody could see),
 `arrivalRate(k)` (plays walks k times as fast, from where they are), `desks()` (the floor with an interior: who sits at
-each desk, whether its "+" shows, what a walk holds it as).
+each desk, whether its "+" shows, what a walk holds it as). M5 panels: `panel()` also returns the prompt overlay
+(`kind: 'prompt'`: the worker, its status, `state` ready / sending / sent / failed, the text, `queued`, the ack's
+`result`, `blocker`, `status`) or else the Changes panel (`kind: 'changes'`: `state`, error `code`, branch, upstream,
+base, stat, truncation notice, the files with their chips and counts, the selected file's diff: `lines`, the lines
+drawn now, why there is none); the elevator's adds `pick` (the floor N preselected). `cards()` entries add `ask` (a
+question: text, choices, selected), `usage` (the looked-at worker's line) and `tall`. `needs()` (who needs you in N's
+order), `nextNeed()` (presses N: who it went to), `openPrompt(id)`, `openChanges(id)`, `face(id)` (stands you facing a
+worker of your floor, as N does; true when look-at picks it).
 
 ### Audio and voice lines
 
