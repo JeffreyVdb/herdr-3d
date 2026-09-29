@@ -11,6 +11,7 @@
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { Building, Cap, Floor, FloorSettings, Hire, HireOptions, Worker } from '../src/net/protocol.ts';
+import { PanelsSim } from './fixture-panels.ts';
 
 type Msg = Record<string, unknown>;
 type Send = (m: Msg) => void;
@@ -27,6 +28,8 @@ export interface SimOptions {
   fail?: string | undefined;
   /** M4: per-floor caps `{session: {soft, hard}}` (default 24 / 32); the host's are 60 / 80. */
   caps?: Record<string, { soft: number; hard: number }>;
+  /** M5 panels: how often working agents' usage goes out as `worker.usage` (ms; 0: never; default 5000). */
+  usageMs?: number;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -123,6 +126,7 @@ export class SimWorld {
     this.now = o.now ?? (() => Date.now());
     this.setT = o.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearT = o.clearTimeout ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+    if (o.usageMs !== undefined) this.usageMs = o.usageMs;
   }
 
   dispose(): void {
@@ -217,6 +221,13 @@ export class SimWorld {
           return ack(this.firePrepare(a));
         case 'worker.fire':
           return this.fireWorker(a, send, ack, fail);
+        // M5 panels (tools/fixture-panels.ts)
+        case 'worker.prompt':
+          return this.panels.prompt(a, send, ack, fail);
+        case 'worker.answer':
+          return this.panels.answer(a, send, ack);
+        case 'worker.changes':
+          return this.panels.changes(a, ack, fail);
       }
       throw new CmdError('unknown_command', `unknown command: "${String(m.t)}"`);
     } catch (e) {
@@ -480,6 +491,41 @@ export class SimWorld {
         ack();
       },
     ]);
+  }
+
+  // ---- M5 panels: prompt, answer, changes, usage (tools/fixture-panels.ts) ------
+
+  private panelsSim: PanelsSim | null = null;
+  private usageMs = 5000;
+
+  private get panels(): PanelsSim {
+    this.panelsSim ??= new PanelsSim({
+      workers: this.workers,
+      floors: this.floors,
+      stepMs: this.stepMs,
+      emit: (send, m) => this.emit(send, m),
+      after: (ms, fn) => {
+        const h = this.setT(() => {
+          this.timers.delete(h);
+          fn();
+        }, ms);
+        this.timers.add(h);
+      },
+      now: () => this.now(),
+      takeFail: (code) => {
+        if (this.fail !== code) return false;
+        this.fail = undefined;
+        return true;
+      },
+      error: (code, message) => new CmdError(code, message),
+    });
+    return this.panelsSim;
+  }
+
+  /** After the snapshot went out: the periodic `worker.usage` of working agents (`usageMs`). */
+  start(send: Send, o: { usageMs?: number } = {}): void {
+    this.usageMs = o.usageMs ?? this.usageMs;
+    this.panels.start(send, this.usageMs);
   }
 
   // ---- M4: hire and send home ------------------------------------------------

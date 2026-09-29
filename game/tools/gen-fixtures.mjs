@@ -280,6 +280,100 @@ function demoM4() {
   return [snap];
 }
 
+// ---- demo-m5: demo-m4 with questions and usage --------------------------------
+// For the M5 panels on the simulating fixture server (`?sim=1`): the blocked
+// workers carry the question the bridge read off their screen (a Claude Code
+// permission menu, a Codex numbered question, a Codex trust dialog, and a
+// question without a menu), and most agents report usage (one priced as an
+// unknown model, one with no model seen yet). N visits them oldest first:
+// Tater (herdr-3d), Quibble (pastry), Tofu, Sprocket; then the done ones.
+
+/** 16 hex chars over kind + text + choices, standing in for the bridge's hash. */
+function qhash(kind, text, choices) {
+  let h = 2166136261;
+  let out = '';
+  for (let k = 0; out.length < 16; k++) {
+    for (const c of `${kind}|${text}|${choices.join('|')}#${k}`) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0;
+    out += h.toString(16).padStart(8, '0');
+  }
+  return out.slice(0, 16);
+}
+
+function question(kind, text, choices, excerpt, selected) {
+  const q = { kind, text, excerpt, choices: choices.map((label, i) => ({ n: i + 1, label })), hash: qhash(kind, text, choices) };
+  if (selected) q.selected = selected;
+  return q;
+}
+
+const WINDOW = { claude: 200_000, codex: 272_000 };
+
+function demoM5() {
+  const [base] = demoM4();
+  const snap = structuredClone(base);
+  const w = snap.world;
+  const r = rng(55);
+  const byName = (n) => w.workers.find((x) => x.name === n);
+  const ask = (name, title, q) => Object.assign(byName(name), { title, question: q });
+  ask('Tater', 'Tag v0.3.0 and push?', question('other', 'Tag v0.3.0 and push it to origin?', [], [
+    'Release notes are in CHANGELOG.md (12 entries since v0.2.0).',
+    'Tag v0.3.0 and push it to origin?',
+    '> ',
+  ]));
+  ask('Quibble', 'Which unit system for the label?', question('choice', 'Which unit system should the nutrition label use?', [
+    'Metric (g, ml)', 'US customary (oz, cups)', 'Both, metric first',
+  ], [
+    'Which unit system should the nutrition label use?',
+    '› 1. Metric (g, ml)',
+    '  2. US customary (oz, cups)',
+    '  3. Both, metric first',
+  ], 1));
+  ask('Tofu', 'Push the M3 plan branch?', question('permission', 'Do you want to proceed?', [
+    'Yes', "Yes, and don't ask again for git push commands in /home/dev/devel/herdr-3d", 'No, and tell Claude what to do differently (esc)',
+  ], [
+    'Bash command',
+    '  git push origin h3d/tofu-m3-plan',
+    '  Push the plan branch for review',
+    'Do you want to proceed?',
+    '❯ 1. Yes',
+    "  2. Yes, and don't ask again for git push commands in /home/dev/devel/herdr-3d",
+    '  3. No, and tell Claude what to do differently (esc)',
+  ], 1));
+  ask('Sprocket', 'Trust this folder?', question('trust', 'Do you trust the contents of this directory?', ['Yes, continue', 'No, quit'], [
+    '> You are in /home/dev/devel/herdr-3d',
+    'Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection.',
+    '› 1. Yes, continue',
+    '  2. No, quit',
+  ], 1));
+  for (const x of w.workers) {
+    // Plain shells have no agent session to count; two never ran a turn yet.
+    if (!x.agent_kind || x.name === 'Waffle') continue;
+    if (x.name === 'Zippy') {
+      x.usage = { tokens: 0, input: 0, output: 0, cache_write: 0, cache_read: 0, cost_usd_est: 0, priced: 'none', context_pct: null, updated_at: T0 };
+      continue;
+    }
+    const tokens = 4000 + Math.floor(r() * 380_000);
+    const out = Math.floor(tokens * (0.18 + r() * 0.1));
+    const unknown = x.name === 'Ravioli';
+    const model = unknown ? 'claude-preview-2026-09' : (x.model ?? (x.harness === 'codex' ? 'gpt-6-sol' : 'claude-opus-5-5'));
+    const rate = model.includes('fable') || model.includes('luna') ? 1.1 : 4.6;
+    const win = WINDOW[x.harness] ?? 200_000;
+    x.usage = {
+      tokens,
+      input: Math.floor(tokens * 0.04),
+      output: out,
+      cache_write: Math.floor(tokens * 0.7),
+      cache_read: tokens * (8 + Math.floor(r() * 20)),
+      cost_usd_est: Math.round(((tokens * rate) / 100_000) * 10_000) / 10_000,
+      priced: unknown ? 'unknown_model' : 'known',
+      model,
+      context_pct: Math.round(Math.min(96, (tokens / win) * 100 * (0.25 + r() * 0.5)) * 10) / 10,
+      context_window: win,
+      updated_at: T0 - Math.floor(r() * 600_000),
+    };
+  }
+  return [snap];
+}
+
 // ---- perf: one floor with 60 workers ------------------------------------------
 
 const STATES = ['working', 'working', 'working', 'working', 'idle', 'done', 'blocked', 'working', 'idle', 'working'];
@@ -361,6 +455,8 @@ function perfCity240() {
 }
 
 const FIXTURES = { demo, 'demo-m3': demoM3, 'demo-m3b': demoM3b, 'demo-m4': demoM4, 'perf-floor60': perfFloor60, 'perf-floor96': perfFloor96, 'perf-city240': perfCity240 };
+// M5 panels
+FIXTURES['demo-m5'] = demoM5;
 
 const check = process.argv.includes('--check');
 let stale = false;
