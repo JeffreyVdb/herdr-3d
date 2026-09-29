@@ -15,7 +15,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
 
-// hireOptions is what can be hired (and chosen as a floor's default hire).
+// hireOptions is the legacy fallback when harness discovery is unavailable.
 var hireOptions = proto.HireOptions{
 	Claude: proto.HarnessOptions{
 		Models:  []string{"claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5"},
@@ -28,7 +28,7 @@ var hireOptions = proto.HireOptions{
 	},
 }
 
-// HireOptions returns a copy of what can be hired.
+// HireOptions returns a copy of the legacy fallback catalog.
 func HireOptions() proto.HireOptions {
 	c := hireOptions
 	c.Codex.ExtraEfforts = map[string][]string{}
@@ -38,13 +38,6 @@ func HireOptions() proto.HireOptions {
 	c.Claude.Models, c.Claude.Efforts = slices.Clone(c.Claude.Models), slices.Clone(c.Claude.Efforts)
 	c.Codex.Models, c.Codex.Efforts = slices.Clone(c.Codex.Models), slices.Clone(c.Codex.Efforts)
 	return c
-}
-
-func validHire(h proto.Hire) error {
-	if err := validHireIn(hireOptions, h); err != nil {
-		return fmt.Errorf("default_hire.%w", err)
-	}
-	return nil
 }
 
 // validHireIn checks a harness/model/effort against hire options.
@@ -98,7 +91,7 @@ func validLabel(s string) bool { return strings.TrimSpace(s) != "" && len(s) <= 
 
 // applySettings folds floor.settings.set args into a floor's settings:
 // absent keys stay, null clears, a value (validated) replaces.
-func applySettings(cur store.FloorSettings, a proto.FloorSettingsArgs, statDir func(string) error) (store.FloorSettings, error) {
+func applySettings(cur store.FloorSettings, a proto.FloorSettingsArgs, statDir func(string) error, hire proto.HireOptions) (store.FloorSettings, error) {
 	next := cur
 	next.StatusOptions = slices.Clone(cur.StatusOptions)
 	bad := func(format string, args ...any) error { return &badArgsError{fmt.Errorf(format, args...)} }
@@ -149,8 +142,8 @@ func applySettings(cur store.FloorSettings, a proto.FloorSettingsArgs, statDir f
 	if a.DefaultHire.Set {
 		next.HireHarness, next.HireModel, next.HireEffort = "", "", ""
 		if v := a.DefaultHire.Value; v != nil {
-			if err := validHire(*v); err != nil {
-				return cur, &badArgsError{err}
+			if err := validHireIn(hire, *v); err != nil {
+				return cur, &badArgsError{fmt.Errorf("default_hire.%w", err)}
 			}
 			next.HireHarness, next.HireModel, next.HireEffort = v.Harness, v.Model, v.Effort
 		}
@@ -198,7 +191,7 @@ func (h *Hub) setSettings(ctx context.Context, a proto.FloorSettingsArgs) error 
 		return err
 	}
 	cur := h.settings[a.Session]
-	next, err := applySettings(cur, a, h.opts.StatDir)
+	next, err := applySettings(cur, a, h.opts.StatDir, h.hireOptions())
 	if err != nil {
 		return err
 	}

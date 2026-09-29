@@ -122,6 +122,16 @@ Everything else the bridge changes is its own SQLite database. How a wake and a 
 [`docs/protocol.md` "Wake and sleep"](docs/protocol.md#wake-and-sleep); hiring and sending home:
 [`docs/protocol.md` "Hire and send home"](docs/protocol.md#hire-and-send-home).
 
+At startup, the bridge discovers hire models from the installed harnesses: Codex `app-server`'s `model/list` and
+Claude Code's SDK initialization response. Both probes run concurrently, with a 10 s timeout each, in temporary
+directories. They send no prompt, start no agent turn, and are reaped after discovery; Claude tools, MCP servers,
+hooks and session persistence are disabled for the probe. The resulting `hire_options` is shared by hiring, floor
+defaults and team presets. Model-specific effort levels are retained. Each failed probe logs a warning and keeps
+that harness's legacy fallback list. Restart the bridge after updating a harness or changing its account/config
+to load its new catalog. Research and protocol details: [`docs/research/harness-model-discovery.md`](docs/research/harness-model-discovery.md).
+Executable lookup prefers `PATH`, then `~/.local/bin`, so native harness installations also work under systemd's
+restricted `PATH`. Use `--codex-cli` / `--claude-cli` for other installation paths.
+
 Run a private instance next to (or instead of) the real one; `dump` and `cmd` take the same `--socket`:
 
 ```sh
@@ -215,6 +225,8 @@ that directory.
 | `--socket` | `HERDR_WORLD_SOCKET` | `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` |
 | `--db` (serve) | `HERDR_WORLD_DB` | `$XDG_STATE_HOME/herdr-world/world.db`, else `~/.local/state/herdr-world/world.db` |
 | `--herdr` | `HERDR_WORLD_HERDR` | `herdr` on `PATH` (a woken server runs `herdr` from the login shell's `PATH`) |
+| `--codex-cli` | `HERDR_WORLD_CODEX_CLI` | `codex` on `PATH`, else `~/.local/bin/codex`: startup model discovery |
+| `--claude-cli` | `HERDR_WORLD_CLAUDE_CLI` | `claude` on `PATH`, else `~/.local/bin/claude`: startup model discovery |
 | `--systemd-run` | `HERDR_WORLD_SYSTEMD_RUN` | `systemd-run` on `PATH`: starts woken sessions |
 | `--sessions` | `HERDR_WORLD_SESSIONS` | all; a regexp limits which sessions are watched, and the only ones commands may wake, sleep, configure, hire into or send workers home from |
 | `--poll`, `--resnapshot` | `HERDR_WORLD_POLL`, `HERDR_WORLD_RESNAPSHOT` | `2s`, `30s` |

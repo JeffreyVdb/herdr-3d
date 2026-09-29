@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Floor, Snapshot, Worker } from '../net/protocol';
 import { DEFAULT_HIRE_OPTIONS, WorldStore } from './store';
+import { resolveChoice } from './hire';
+import { effortsFor, parseForm, formFrom } from './settings';
 
 const floor = (session: string, over: Partial<Floor> = {}): Floor => ({
   session,
@@ -258,6 +260,21 @@ describe('WorldStore M3 fields', () => {
     s.applySnapshot(snap({ hire_options: { claude: { models: 'nope' } } as never, floors: [floor('top', { transition: 'melting' as never })] }));
     expect(s.floorView('top')?.transition).toBeNull();
     expect(s.hireOptions).toEqual(DEFAULT_HIRE_OPTIONS);
+  });
+
+  it('uses newly discovered models and exact effort sets in hire and settings choices', () => {
+    const s = new WorldStore();
+    const hire_options = {
+      codex: { models: ['gpt-6.1-sol', 'gpt-future'], efforts: [], extra_efforts: { 'gpt-6.1-sol': ['high', 'ultra'], 'gpt-future': ['low'] } },
+    };
+    s.applySnapshot(snap({ hire_options }));
+    const choice = { harness: 'codex', model: 'gpt-6.1-sol', effort: 'ultra' };
+    expect(resolveChoice(s.hireOptions, choice)).toEqual(choice);
+    expect(effortsFor(s.hireOptions, 'codex', 'gpt-future')).toEqual(['low']);
+    expect(s.hireOptions.codex?.models).not.toContain('gpt-6-sol');
+    const form = formFrom({ default_hire: choice }, {}).form;
+    expect(parseForm(form, s.hireOptions).errors).toEqual({});
+    expect(parseForm({ ...form, model: 'gpt-future' }, s.hireOptions).errors.effort).toBeTruthy();
   });
 
   it('flips asleep ↔ running on a live floor.upsert, keeping every worker at its desk', () => {

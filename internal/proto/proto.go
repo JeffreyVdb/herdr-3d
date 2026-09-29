@@ -181,8 +181,8 @@ type HireOptions struct {
 	Codex  HarnessOptions `json:"codex"`
 }
 
-// HarnessOptions are one harness's models and efforts. ExtraEfforts are
-// efforts only some models take.
+// HarnessOptions are one harness's models and their common efforts.
+// ExtraEfforts are additional efforts supported by each individual model.
 type HarnessOptions struct {
 	Models       []string            `json:"models"`
 	Efforts      []string            `json:"efforts"`
