@@ -16,12 +16,17 @@ import (
 )
 
 // SVG policy. oksvg renders a small subset of SVG and is no safety
-// boundary (StrictErrorMode swallows handler errors, <use> expands work), so
-// checkSVG walks the whole document with encoding/xml first and refuses
-// anything outside a flat, path-based logo. The limits are design choices,
-// not proven worst cases.
+// boundary (StrictErrorMode swallows handler errors, <use> expands work, it
+// dispatches on local names only and reads every attribute, style= included),
+// so sanitizeSVG walks the whole document with encoding/xml first, refuses
+// what the policy below does not allow, and returns a canonical re-serialised
+// copy. oksvg only ever reads that copy: it has no namespaces, no text, no
+// element outside svgElements and no attribute outside svgAttrs (and style=
+// only carries svgStyleProps), so nothing reaches it that was not checked.
+// The limits are design choices, not proven worst cases.
 const (
 	svgNS          = "http://www.w3.org/2000/svg"
+	xlinkNS        = "http://www.w3.org/1999/xlink"
 	svgMaxDepth    = 64
 	svgMaxElements = 4096
 	svgMaxAttrs    = 32
@@ -30,18 +35,63 @@ const (
 	svgMaxCompiled = 1 << 18   // values in the compiled paths
 	svgMaxCoord    = 1e6       // absolute value of any coordinate, length or extent
 	svgMaxScale    = 1e3       // product of the scale factors down a branch
+	svgMaxDashWork = 2e6       // estimated dash segments of all strokes together
 )
 
 // The SVG elements a logo may use: what oksvg draws, minus <use>, <style>,
-// <image> and <text>, which it cannot render safely or at all. metadata and
-// elements of foreign namespaces (Inkscape, Sodipodi, RDF) are inert.
+// <image> and <text>, which it cannot render safely or at all. Elements of
+// other namespaces (Inkscape, Sodipodi, RDF, or anything else) are dropped
+// with their subtree, never passed on; so is all text.
 var svgElements = map[string]bool{
 	"svg": true, "g": true, "defs": true, "path": true, "rect": true, "circle": true, "ellipse": true,
 	"line": true, "polyline": true, "polygon": true, "linearGradient": true, "radialGradient": true,
 	"stop": true, "title": true, "desc": true, "metadata": true,
 }
 
-// Attributes whose values are lengths or coordinates: every number in them
+// The attributes oksvg reads (matched exactly: oksvg lower-cases some names
+// and ignores the namespace, so anything else is dropped rather than
+// forwarded). Attributes of other namespaces, class, href and all the
+// attributes that oksvg ignores are dropped.
+var svgAttrs = map[string]bool{
+	"id": true, "style": true, "d": true, "points": true, "viewBox": true, "x": true, "y": true,
+	"width": true, "height": true, "cx": true, "cy": true, "r": true, "rx": true, "ry": true,
+	"x1": true, "y1": true, "x2": true, "y2": true, "fx": true, "fy": true,
+	"transform": true, "gradientTransform": true, "gradientUnits": true, "spreadMethod": true,
+	"offset": true, "stop-color": true, "stop-opacity": true,
+	"fill": true, "stroke": true, "stroke-width": true, "stroke-dashoffset": true, "stroke-dasharray": true,
+	"stroke-miterlimit": true, "stroke-linecap": true, "stroke-linejoin": true,
+	"opacity": true, "fill-opacity": true, "stroke-opacity": true,
+}
+
+// The declarations a style="" attribute may carry: oksvg's presentation
+// properties. They get the same checks as the attribute of the same name;
+// other declarations are dropped.
+var svgStyleProps = map[string]bool{
+	"fill": true, "stroke": true, "stroke-width": true, "stroke-dashoffset": true, "stroke-dasharray": true,
+	"stroke-miterlimit": true, "stroke-linecap": true, "stroke-linejoin": true,
+	"opacity": true, "fill-opacity": true, "stroke-opacity": true, "transform": true,
+}
+
+// The elements that draw a shape (and so a dashed stroke).
+var svgShapes = map[string]bool{
+	"path": true, "rect": true, "circle": true, "ellipse": true, "line": true, "polyline": true, "polygon": true,
+}
+
+// Attributes that give a shape its extent, for the dash work estimate.
+var svgGeometry = map[string]bool{
+	"d": true, "points": true, "x": true, "y": true, "width": true, "height": true, "cx": true, "cy": true,
+	"r": true, "rx": true, "ry": true, "x1": true, "y1": true, "x2": true, "y2": true,
+}
+
+// svgState is what an open element passes down to its children.
+type svgState struct {
+	scale float64 // cumulative bound of the scale factors
+	dash  float64 // smallest non-zero stroke-dasharray entry, 0 for none
+	off   float64 // largest stroke-dashoffset
+	geom  float64 // sum of the coordinates of the element itself (not inherited)
+}
+
+// Properties whose values are lengths or coordinates: every number in them
 // is bounded.
 var svgNumeric = map[string]bool{
 	"d": true, "points": true, "viewBox": true, "x": true, "y": true, "width": true, "height": true,
@@ -78,160 +128,257 @@ func newDecoder(data []byte) *xml.Decoder {
 	return d
 }
 
-// checkSVG reads the whole document and refuses what the policy above does
-// not allow.
-func checkSVG(data []byte) error {
+// sanitizeSVG reads the whole document, refuses what the policy above does
+// not allow, and returns the canonical copy that oksvg is given.
+func sanitizeSVG(data []byte) ([]byte, error) {
 	d := newDecoder(data)
-	var depth, elements, pathBytes, pathOps int
+	var out bytes.Buffer
+	var depth, elements, pathBytes, pathOps, skip int
 	roots := 0
-	amp := []float64{1} // cumulative scale bound per open element
+	var dashWork float64
+	stack := []svgState{{scale: 1}} // one per open element
 	for {
 		t, err := d.Token()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return invalid("the SVG is not well-formed XML: %v", err)
+			return nil, invalid("the SVG is not well-formed XML: %v", err)
 		}
 		switch v := t.(type) {
 		case xml.Directive:
-			return unsupported("the SVG has an XML directive (DOCTYPE or ENTITY)")
+			return nil, unsupported("the SVG has an XML directive (DOCTYPE or ENTITY)")
 		case xml.ProcInst:
 			if v.Target != "xml" {
-				return unsupported("the SVG has an XML processing instruction")
+				return nil, unsupported("the SVG has an XML processing instruction")
 			}
 		case xml.CharData:
 			if depth == 0 && len(bytes.TrimSpace(v)) != 0 {
-				return invalid("text outside the SVG root")
+				return nil, invalid("text outside the SVG root")
 			}
 		case xml.EndElement:
 			depth--
-			amp = amp[:len(amp)-1]
+			stack = stack[:len(stack)-1]
+			if skip > 0 {
+				skip--
+				continue
+			}
+			out.WriteString("</" + v.Name.Local + ">")
 		case xml.StartElement:
 			depth++
 			elements++
 			if depth > svgMaxDepth {
-				return unsupported("the SVG is nested over %d levels", svgMaxDepth)
+				return nil, unsupported("the SVG is nested over %d levels", svgMaxDepth)
 			}
 			if elements > svgMaxElements {
-				return unsupported("the SVG has over %d elements", svgMaxElements)
+				return nil, unsupported("the SVG has over %d elements", svgMaxElements)
+			}
+			if len(v.Attr) > svgMaxAttrs {
+				return nil, unsupported("<%s> has over %d attributes", v.Name.Local, svgMaxAttrs)
+			}
+			if skip > 0 { // inside a dropped foreign element
+				skip++
+				stack = append(stack, stack[len(stack)-1])
+				continue
 			}
 			name := v.Name.Local
 			inert := v.Name.Space != "" && v.Name.Space != svgNS
 			if depth == 1 {
 				roots++
 				if roots > 1 || name != "svg" || inert {
-					return unsupported("the SVG must have one <svg> root")
+					return nil, unsupported("the SVG must have one <svg> root")
 				}
-			} else if name == "svg" && !inert {
-				return unsupported("nested <svg> elements are not supported")
+			} else if inert {
+				skip = 1
+				stack = append(stack, stack[len(stack)-1])
+				continue
+			} else if name == "svg" {
+				return nil, unsupported("nested <svg> elements are not supported")
 			}
-			if !inert && !svgElements[name] {
+			if !svgElements[name] {
 				switch name {
 				case "text", "tspan":
-					return unsupported("<%s> is not supported: convert the text to outlines (paths) or upload a PNG", name)
+					return nil, unsupported("<%s> is not supported: convert the text to outlines (paths) or upload a PNG", name)
 				default:
-					return unsupported("<%s> is not supported in a logo SVG: flatten it to plain shapes and paths, or upload a PNG", name)
+					return nil, unsupported("<%s> is not supported in a logo SVG: flatten it to plain shapes and paths, or upload a PNG", name)
 				}
 			}
-			if len(v.Attr) > svgMaxAttrs {
-				return unsupported("<%s> has over %d attributes", name, svgMaxAttrs)
-			}
-			scale := amp[len(amp)-1]
-			for _, a := range v.Attr {
-				if err := checkAttr(name, inert, a, &pathBytes, &pathOps, &scale); err != nil {
-					return err
-				}
+			st := stack[len(stack)-1]
+			st.geom = 0
+			attrs, err := sanitizeAttrs(name, v.Attr, &pathBytes, &pathOps, &st)
+			if err != nil {
+				return nil, err
 			}
 			if pathBytes > svgMaxPathData {
-				return unsupported("the SVG path data is over %d KiB", svgMaxPathData>>10)
+				return nil, unsupported("the SVG path data is over %d KiB", svgMaxPathData>>10)
 			}
 			if pathOps > svgMaxPathOps {
-				return unsupported("the SVG has over %d path commands", svgMaxPathOps)
+				return nil, unsupported("the SVG has over %d path commands", svgMaxPathOps)
 			}
-			if scale > svgMaxScale {
-				return unsupported("the SVG scales its shapes over %gx", svgMaxScale)
+			if st.scale > svgMaxScale {
+				return nil, unsupported("the SVG scales its shapes over %gx", svgMaxScale)
 			}
-			amp = append(amp, scale)
+			if svgShapes[name] && st.dash > 0 {
+				// Dashes and the shape scale together, so the count of
+				// segments is the stroke's length (bounded by its
+				// coordinates) plus the dash offset, over the shortest dash.
+				dashWork += (8*st.geom + st.off) / st.dash
+				if dashWork > svgMaxDashWork {
+					return nil, unsupported("the SVG has too many dashes: use longer dashes or fewer dashed shapes")
+				}
+			}
+			stack = append(stack, st)
+			out.WriteString("<" + name)
+			for _, a := range attrs {
+				out.WriteString(" " + a[0] + `="`)
+				_ = xml.EscapeText(&out, []byte(a[1]))
+				out.WriteString(`"`)
+			}
+			out.WriteString(">")
 		}
 	}
 	if roots != 1 || depth != 0 {
-		return invalid("the SVG has no <svg> root")
+		return nil, invalid("the SVG has no <svg> root")
 	}
-	return nil
+	return out.Bytes(), nil
 }
 
-func checkAttr(elem string, inert bool, a xml.Attr, pathBytes, pathOps *int, scale *float64) error {
-	local := a.Name.Local
-	val := a.Value
-	lower := strings.ToLower(val)
-	switch {
-	case strings.HasPrefix(strings.ToLower(local), "on"):
-		return unsupported("<%s> has an event handler (%s)", elem, local)
-	case local == "href":
-		if (elem != "linearGradient" && elem != "radialGradient") || !strings.HasPrefix(strings.TrimSpace(val), "#") {
-			return unsupported("<%s> refers to another resource (href)", elem)
+// sanitizeAttrs checks the attributes of one element in the SVG namespace and
+// returns those to keep, as name/value pairs with plain names.
+func sanitizeAttrs(elem string, attrs []xml.Attr, pathBytes, pathOps *int, st *svgState) ([][2]string, error) {
+	var keep [][2]string
+	seen := map[string]bool{}
+	for _, a := range attrs {
+		ns, local, val := a.Name.Space, a.Name.Local, a.Value
+		if ns == "xmlns" || (ns == "" && local == "xmlns") {
+			continue // namespace declaration: already applied by the decoder
 		}
-	}
-	// Namespace declarations and the private markup of editors (Inkscape's
-	// RDF metadata names licence URLs) are inert: oksvg never reads them.
-	if inert || a.Name.Space == "xmlns" || local == "xmlns" || (a.Name.Space != "" && a.Name.Space != svgNS && !svgNumeric[local]) {
-		return nil
-	}
-	for _, bad := range []string{"javascript:", "data:", "@import", "expression(", "http:", "https:", "file:"} {
-		if strings.Contains(lower, bad) {
-			return unsupported("<%s> has %q in %s", elem, bad, local)
+		if ns != "" && ns != svgNS && ns != xlinkNS {
+			continue // private markup of editors (Inkscape's RDF metadata names licence URLs): dropped
 		}
-	}
-	for rest := lower; ; {
-		i := strings.Index(rest, "url(")
-		if i < 0 {
-			break
-		}
-		rest = strings.TrimLeft(rest[i+4:], " \t\r\n'\"")
-		if !strings.HasPrefix(rest, "#") {
-			return unsupported("<%s> refers to another resource (url() in %s)", elem, local)
-		}
-	}
-	if local == "d" || local == "points" {
-		*pathBytes += len(val)
-	}
-	if local == "d" {
-		for _, r := range val {
-			switch r {
-			case 'M', 'm', 'L', 'l', 'H', 'h', 'V', 'v', 'C', 'c', 'S', 's', 'Q', 'q', 'T', 't', 'A', 'a', 'Z', 'z':
-				*pathOps++
+		lower := strings.ToLower(val)
+		switch {
+		case strings.HasPrefix(strings.ToLower(local), "on"):
+			return nil, unsupported("<%s> has an event handler (%s)", elem, local)
+		case local == "href":
+			if (elem != "linearGradient" && elem != "radialGradient") || !strings.HasPrefix(strings.TrimSpace(val), "#") {
+				return nil, unsupported("<%s> refers to another resource (href)", elem)
 			}
 		}
-	}
-	if svgNumeric[local] {
-		var nums []float64
-		if err := eachNumber(val, func(f float64) error {
-			if math.IsNaN(f) || math.IsInf(f, 0) || math.Abs(f) > svgMaxCoord {
-				return unsupported("<%s> has a number out of range in %s", elem, local)
+		for _, bad := range []string{"javascript:", "data:", "@import", "expression(", "http:", "https:", "file:"} {
+			if strings.Contains(lower, bad) {
+				return nil, unsupported("<%s> has %q in %s", elem, bad, local)
 			}
-			nums = append(nums, f)
-			return nil
-		}); err != nil {
-			return err
 		}
-		switch local {
-		case "stroke-dasharray":
-			if len(nums) > 16 {
-				return unsupported("<%s> has a long stroke-dasharray", elem)
+		for rest := lower; ; {
+			i := strings.Index(rest, "url(")
+			if i < 0 {
+				break
 			}
-			for _, f := range nums {
-				if f != 0 && math.Abs(f) < 0.01 {
-					return unsupported("<%s> has a stroke-dasharray with tiny dashes", elem)
+			rest = strings.TrimLeft(rest[i+4:], " \t\r\n'\"")
+			if !strings.HasPrefix(rest, "#") {
+				return nil, unsupported("<%s> refers to another resource (url() in %s)", elem, local)
+			}
+		}
+		if ns == xlinkNS || !svgAttrs[local] {
+			continue // xlink:href was checked above; the rest is not read by oksvg
+		}
+		if seen[local] {
+			return nil, invalid("<%s> repeats the attribute %s", elem, local)
+		}
+		seen[local] = true
+		if local == "d" || local == "points" {
+			*pathBytes += len(val)
+		}
+		if local == "d" {
+			for _, r := range val {
+				switch r {
+				case 'M', 'm', 'L', 'l', 'H', 'h', 'V', 'v', 'C', 'c', 'S', 's', 'Q', 'q', 'T', 't', 'A', 'a', 'Z', 'z':
+					*pathOps++
 				}
 			}
-		case "transform", "gradientTransform":
-			f, err := transformScale(val)
-			if err != nil {
-				return unsupported("<%s> has a transform that cannot be checked", elem)
-			}
-			*scale *= f
 		}
+		if local == "style" {
+			var err error
+			if val, err = sanitizeStyle(elem, val, st); err != nil {
+				return nil, err
+			}
+			if val == "" {
+				continue
+			}
+		} else if err := checkProp(elem, local, val, st); err != nil {
+			return nil, err
+		}
+		keep = append(keep, [2]string{local, val})
+	}
+	return keep, nil
+}
+
+// sanitizeStyle keeps the declarations of a style="" value that oksvg reads
+// (svgStyleProps), each checked like the attribute of the same name, and
+// splits them the way oksvg does: on ";", then at the first ":".
+func sanitizeStyle(elem, val string, st *svgState) (string, error) {
+	var keep []string
+	for _, decl := range strings.Split(val, ";") {
+		k, v, ok := strings.Cut(decl, ":")
+		if !ok {
+			continue
+		}
+		k, v = strings.ToLower(strings.TrimSpace(k)), strings.TrimSpace(v)
+		if !svgStyleProps[k] {
+			continue
+		}
+		if err := checkProp(elem, k, v, st); err != nil {
+			return "", err
+		}
+		keep = append(keep, k+":"+v)
+	}
+	return strings.Join(keep, ";"), nil
+}
+
+// checkProp bounds the numbers of a length or coordinate property, given as
+// an attribute or as a style declaration.
+func checkProp(elem, local, val string, st *svgState) error {
+	if !svgNumeric[local] {
+		return nil
+	}
+	var nums []float64
+	if err := eachNumber(val, func(f float64) error {
+		if math.IsNaN(f) || math.IsInf(f, 0) || math.Abs(f) > svgMaxCoord {
+			return unsupported("<%s> has a number out of range in %s", elem, local)
+		}
+		nums = append(nums, f)
+		if svgGeometry[local] {
+			st.geom += math.Abs(f)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	switch local {
+	case "stroke-dasharray":
+		if len(nums) > 16 {
+			return unsupported("<%s> has a long stroke-dasharray", elem)
+		}
+		for _, f := range nums {
+			f = math.Abs(f)
+			if f != 0 && f < 0.01 {
+				return unsupported("<%s> has a stroke-dasharray with tiny dashes", elem)
+			}
+			if f != 0 && (st.dash == 0 || f < st.dash) {
+				st.dash = f
+			}
+		}
+	case "stroke-dashoffset":
+		for _, f := range nums {
+			st.off = math.Max(st.off, math.Abs(f))
+		}
+	case "transform", "gradientTransform":
+		f, err := transformScale(val)
+		if err != nil {
+			return unsupported("<%s> has a transform that cannot be checked", elem)
+		}
+		st.scale *= f
 	}
 	return nil
 }
@@ -333,13 +480,14 @@ func eachNumber(s string, fn func(float64) error) error {
 	return nil
 }
 
-// renderSVG rasterises a checked SVG straight at its stored size (long edge
+// renderSVG rasterises a sanitised SVG straight at its stored size (long edge
 // MaxEdge), on a transparent canvas.
 func renderSVG(data []byte) (image.Image, error) {
-	if err := checkSVG(data); err != nil {
+	clean, err := sanitizeSVG(data)
+	if err != nil {
 		return nil, err
 	}
-	icon, err := oksvg.ReadIconStream(bytes.NewReader(bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})), oksvg.IgnoreErrorMode)
+	icon, err := oksvg.ReadIconStream(bytes.NewReader(clean), oksvg.IgnoreErrorMode)
 	if err != nil {
 		return nil, invalid("cannot read the SVG: %v", err)
 	}
