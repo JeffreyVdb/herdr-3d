@@ -288,6 +288,63 @@ type Worker struct {
 	// M5 term: Question is what a blocked worker's screen asks, while it
 	// is blocked and the bridge could read it.
 	Question *Question `json:"question,omitempty"`
+
+	// M6 runs: the worker's place in a write-code run.
+	// Round is the h3d_round token, else the label's trailing |r<N>.
+	Round int `json:"round,omitempty"`
+	// Ticket is the h3d_ticket token, else the label's ticket field.
+	Ticket string `json:"ticket,omitempty"`
+	// Issue is the GitHub issue the run works on, when a repo is known.
+	Issue *IssueRef `json:"issue,omitempty"`
+	// OrchID is a freelancer's orchestrator (a worker id).
+	OrchID string `json:"orch_id,omitempty"`
+	// Phase and Pass are an orchestrator's h3d_phase / h3d_pass tokens,
+	// remembered after the tokens are gone; OverCap is set past the
+	// review-pass cap.
+	Phase   string `json:"phase,omitempty"`
+	Pass    *int   `json:"pass,omitempty"`
+	OverCap bool   `json:"over_cap,omitempty"`
+	// Report is a freelancer's report in its run directory.
+	Report *RunReport `json:"report,omitempty"`
+}
+
+// M6 runs
+
+// IssueRef is a GitHub issue.
+type IssueRef struct {
+	Repo   string `json:"repo"`
+	Number int    `json:"number"`
+}
+
+// Report states.
+const (
+	ReportPending = "pending"
+	ReportReady   = "ready"
+	ReportInvalid = "invalid"
+)
+
+// Reviewer verdicts.
+const (
+	VerdictPass            = "PASS"
+	VerdictChangesRequired = "CHANGES_REQUIRED"
+	VerdictIncomplete      = "INCOMPLETE"
+)
+
+// RunReport is a freelancer's write-code report as the bridge read it.
+type RunReport struct {
+	State string `json:"state"`
+	// At is the file's mtime, unix ms.
+	At int64 `json:"at,omitempty"`
+	// Verdict, Blockers and Issues: reviewers only.
+	Verdict  string `json:"verdict,omitempty"`
+	Blockers *int   `json:"blockers,omitempty"`
+	Issues   *int   `json:"issues,omitempty"`
+	// InputRequired is what the worker needs to go on (≤ 500 bytes).
+	InputRequired *string `json:"input_required,omitempty"`
+	// Summary is a coder's or researcher's summary (≤ 300 bytes).
+	Summary string `json:"summary,omitempty"`
+	// Error is why an invalid report is invalid.
+	Error string `json:"error,omitempty"`
 }
 
 // Worktree is a worker's git worktree provenance.
