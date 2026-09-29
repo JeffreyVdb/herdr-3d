@@ -96,7 +96,15 @@ is closed (status 1008). A `proto` other than `1` gets `unsupported_proto` and i
   "hire_options":{
     "claude":{"models":["claude-opus-5-5","claude-fable-5-1"],"efforts":["low","medium","high","xhigh","max"]},
     "codex":{"models":["gpt-6-sol","gpt-6-luna","gpt-6-astra"],"efforts":["low","medium","high","xhigh","max"],
-             "extra_efforts":{"gpt-6-sol":["ultra"],"gpt-6-astra":["ultra"]}}}
+             "extra_efforts":{"gpt-6-sol":["ultra"],"gpt-6-astra":["ultra"]}}},
+  "presets":[
+    {"id":"p_1a2b3c4d5e6f","name":"Build team","seeded":true,
+     "roles":{"orch":{"harness":"claude","model":"claude-opus-5-5","effort":"medium"},
+              "coder":{"harness":"claude","model":"claude-opus-5-5","effort":"medium"},
+              "reviewer":{"harness":"codex","model":"gpt-6-sol","effort":"high"},
+              "ux":{"harness":"codex","model":"gpt-6-sol","effort":"high"},
+              "researcher":{"harness":"codex","model":"gpt-6-sol","effort":"low"}}}
+  ]
 }}
 ```
 
@@ -104,6 +112,9 @@ is closed (status 1008). A `proto` other than `1` gets `unsupported_proto` and i
 
 `hire_options` lists what can be hired: models and efforts per harness, `extra_efforts` being efforts only some models
 take. `floor.settings.set` validates `default_hire` against it; clients should read it rather than hardcode the lists.
+
+`presets` are the team presets, by name ignoring case (see [Team presets and starting a
+run](#team-presets-and-starting-a-run)); `[]` when there are none.
 
 Order is meaningful: `buildings` are in `sort` order and each lists its floors top to bottom (`index` order);
 `unassigned` is the lot of sessions that are in no building, by name. `floors` follows the same order (buildings, then the
@@ -132,6 +143,7 @@ lot), and `workers` follows the floors, each floor's workers in herdr's sidebar 
 | `transition` | `waking` \| `sleeping`, optional | a `floor.wake` / `floor.sleep` is in progress (see [Wake and sleep](#wake-and-sleep)) |
 | `settings` | object, optional | the floor's stored settings, only the keys that are set: `repo`, `project`, `status_field`, `default_cwd`, `default_hire` (shapes as in [`floor.settings.set`](#floor-settings)) |
 | `suggested` | object, optional | bridge-derived defaults: `repo` and `default_cwd` (see [Floor settings](#floor-settings)). What a client shows for a setting is `settings.X ?? suggested.X`. |
+| `last_preset` | string, optional | id of the team preset of the floor's last successful `run.start` (SQLite `floor_preset_last`); absent when none, or once that preset is deleted |
 
 An asleep floor's workers come from herdr's saved `session.json` (format version 3 only; any other version leaves the
 floor with no workers and an `error`).
@@ -214,6 +226,8 @@ and remember the last `seq` applied.
 | `worker.status` | `id`, `session`, `workspace_id`, `status`, `prev_status`, `status_since`, `title` | only `status` and/or `title` changed (the hot path). `title` is always present, `""` when cleared; on a title-only change `prev_status` equals `status` and `status_since` does not move. |
 | `worker.removed` | `id`, `session`, `workspace_id`, `reason`? | the workspace closed, the session was deleted, or the identity changed. `reason` is `"sent_home"` when the removal comes from `worker.fire` (the game plays the walk-out); absent otherwise. |
 | `worker.usage` | `id`, `session`, `usage` | the worker's `usage` changed; at most once per 5 s per worker (see [Usage and cost](#usage-and-cost)) |
+| `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
+| `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
 
 ```json
 {"t":"floor.upsert","seq":1043,"floor":{"session":"herdr-3d","state":"running","building":null,"index":null,"desks":7}}
@@ -290,6 +304,11 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.keys` | `{"id": string, "input": [{"text": string} \| {"key": string}…]}` | — | — (see [Input](#input)) |
 | `worker.prompt` | `{"id": string, "text": string}` | `{"queued": bool, "retried": bool}` | the worker's statuses |
 | `worker.answer` | `{"id": string, "hash": string, "choice"?: 1–9, "cancel"?: true}` | `{"sent": [string…], "resolved": bool}` | the worker's upsert without its `question` when it moves on |
+| `preset.create` | `{"name": string, "roles": {…}}` | `{"id": string}` | `preset.upsert` (see [Team presets and starting a run](#team-presets-and-starting-a-run)) |
+| `preset.update` | `{"id": string, "name"?: string, "roles"?: {…}}` (`roles` replaces all five) | — | `preset.upsert`; none when nothing changed |
+| `preset.delete` | `{"id": string}` | — | `preset.removed`, then `floor.upsert` for the floors whose `last_preset` it was |
+| `run.prepare` | `{"session", "issue"? \| "text"?, "preset"?, "orch"?, "extra"?}` | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
+| `run.start` | `{"session", "desk_index", "issue" \| "text", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then `floor.upsert` with `last_preset` |
 
 ```json
 {"t":"floor.assign","req_id":"8","args":{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}}
@@ -571,6 +590,115 @@ field.
 they start, completed with their outcome and a JSON `result`: for a hire the worker id, workspace, desk, cwd, branch,
 base, fetch, trust, the prompt outcome and any rollback; for a fire the git state it saw, how the agent exited, the
 cleanup choice and what happened to the worktree and branch.
+
+### Team presets and starting a run
+
+A **team preset** is the harness, model and effort of each role of a write-code run: the orchestrator the bridge
+hires, and the coders, reviewers, UX reviewers and researchers the orchestrator hires itself.
+
+```json
+{"id":"p_1a2b3c4d5e6f","name":"Build team","seeded":true,
+ "roles":{"orch":{"harness":"claude","model":"claude-opus-5-5","effort":"medium"},
+          "coder":{"harness":"claude","model":"claude-opus-5-5","effort":"medium"},
+          "reviewer":{"harness":"codex","model":"gpt-6-sol","effort":"high"},
+          "ux":{"harness":"codex","model":"gpt-6-sol","effort":"high"},
+          "researcher":{"harness":"codex","model":"gpt-6-sol","effort":"low"}}}
+```
+
+| field | |
+|---|---|
+| `id` | bridge-generated, `p_<12 hex>` |
+| `name` | 1–40 bytes (trimmed), no control characters, unique ignoring case (else `name_taken`) |
+| `seeded` | `true` for the "Build team" the bridge made itself |
+| `roles` | `orch`, `coder`, `reviewer`, `ux`, `researcher`, all five required, each a `{"harness", "model", "effort"}` of `hire_options` (as `default_hire`, else `bad_request` naming the role) |
+
+Presets are stored in SQLite (table `team_preset`) and survive restarts. The migration that makes the table seeds
+**Build team** exactly as above (`docs/decisions.md`: coders claude opus medium, reviewers and UX reviewers codex sol
+high, researchers codex sol low; the orchestrator claude opus medium), once: deleting it does not bring it back.
+`preset.create`, `preset.update` (a `name`, and/or `roles` replacing all five; `not_found` for an unknown id) and
+`preset.delete` answer as in [Commands](#commands).
+
+**`run.prepare`** fills the start-run dialog and its prompt preview. It changes nothing (it runs `git fetch origin` as
+`hire.prepare` does):
+
+```json
+{"t":"run.prepare","req_id":"40","args":{"session":"lab","issue":3}}
+{"t":"ack","req_id":"40","data":{"prompt":"/write-code https://github.com/JeffreyVdb/lab/issues/3\n\nTeam:\n- coders: claude claude-opus-5-5, effort medium\n- reviewers: codex gpt-6-sol, reasoning high\n- ux reviewers: codex gpt-6-sol, reasoning high\n- researchers: codex gpt-6-sol, reasoning low",
+  "label":"ORCH|issue-3",
+  "ticket":{"kind":"issue","repo":"JeffreyVdb/lab","number":3,"url":"https://github.com/JeffreyVdb/lab/issues/3"},
+  "preset":"p_1a2b3c4d5e6f","orch":{"harness":"claude","model":"claude-opus-5-5","effort":"medium"},
+  "cwd":"/home/dev/devel/lab","git":{…as hire.prepare…},"capacity":{…as hire.prepare…}}}
+```
+
+| arg | rule, else `bad_request` |
+|---|---|
+| `session` | a running, watched floor (as `hire.prepare`) |
+| `issue` | an int ≥ 1, or a string `"3"`, `"#3"` or `https://github.com/<owner>/<repo>/issues/<n>`. A number is an issue of the floor's effective repo (`settings.repo ?? suggested.repo`; none: `bad_request` "the floor has no linked repo"); a URL names its own. |
+| `text` | free text instead of an issue: 1–4096 bytes once trimmed, may span lines. At most one of `issue` / `text`; with neither, `prompt` and `label` are `""` and `ticket` is `null` (the dialog is not ready yet). |
+| `preset` | a preset id (`not_found`); default: the floor's `last_preset`, else the preset named "Build team" (ignoring case), else the first by name; `""` when there is no preset (then no `prompt` either) |
+| `orch` | `{"harness", "model", "effort"}` of `hire_options`; default: the preset's `orch` |
+| `extra` | extra instructions for the prompt, at most 8192 bytes |
+
+| field | |
+|---|---|
+| `prompt` | the orchestrator's first prompt, composed as below |
+| `label` | the orchestrator's workspace label, write-code's `ORCH\|<descr>`: `ORCH\|issue-<n>`, or `ORCH\|` and the first words of the text as lower-case words joined by `-`; the descr is at most 10 bytes (a long issue number is cut: `ORCH\|issue-1234` for 123456) |
+| `ticket` | `{"kind":"issue","repo","number","url"}` or `{"kind":"text","text"}` (trimmed) |
+| `preset`, `orch` | the defaults above, as used for `prompt` |
+| `cwd`, `git`, `capacity` | as in `hire.prepare` without a `cwd` (the floor's effective default cwd): where the orchestrator will work |
+
+The **prompt**:
+
+```
+/write-code https://github.com/JeffreyVdb/lab/issues/3
+
+Team:
+- coders: claude claude-opus-5-5, effort medium
+- reviewers: codex gpt-6-sol, reasoning high
+- ux reviewers: codex gpt-6-sol, reasoning high
+- researchers: codex gpt-6-sol, reasoning low
+
+<extra, trimmed>
+```
+
+The first line is `/write-code <ticket>` for a Claude orchestrator and `$write-code <ticket>` for a Codex one;
+`<ticket>` is the issue URL, or the text. A role line says `effort <e>` for a claude role and `reasoning <e>` for a codex
+one. With no `extra`, the blank line before it is left out too. (A pure function, `server.RunPrompt`.)
+
+**`run.start`** hires the orchestrator and gives it the prompt:
+
+```json
+{"t":"run.start","req_id":"41","args":{"session":"lab","desk_index":2,"issue":3,"preset":"p_1a2b3c4d5e6f",
+  "orch":{"harness":"claude","model":"claude-opus-5-5","effort":"medium"}}}
+{"t":"worker.upsert","seq":1400,"worker":{"id":"6f1c…","session":"lab","label":"ORCH|issue-3","desk_index":2,"hired_at":1790650000000,…}}
+{"t":"floor.upsert","seq":1403,"floor":{"session":"lab",…,"last_preset":"p_1a2b3c4d5e6f"}}
+{"t":"ack","req_id":"41","data":{"id":"6f1c…","workspace_id":"w4","branch":"h3d/bloop-6f1c2d","base_sha":"8739dd…",
+  "trust":"approved","prompted":true,"launch_id":"l_3b9e0c2a51f47d86","prompt":"/write-code https://github.com/JeffreyVdb/lab/issues/3\n\nTeam:\n…"}}
+```
+
+| arg | rule, else `bad_request` |
+|---|---|
+| `session`, `desk_index` | as `worker.hire` (`unknown_session`, `invalid_state`, `busy`, `desk_taken`, `capacity` likewise) |
+| `issue` / `text` | exactly one, as in `run.prepare` |
+| `orch` | required, `{"harness", "model", "effort"}` of `hire_options` |
+| `preset` | required, an existing preset id (else `not_found`) |
+| `extra` | optional, at most 8192 bytes |
+| `worktree` | bool, default **true**: the orchestrator works in a new linked worktree of the cwd's repository |
+| `label` | optional, as `worker.hire`'s `label`; default `run.prepare`'s |
+| `prompt` | optional, the edited preview, as `worker.hire`'s `prompt`; absent: the bridge composes it from the ticket, the preset, `orch.harness` and `extra` |
+
+It is the [`worker.hire`](#hire-and-send-home) hire, the same code path, events, rollback and audit: at `desk_index`,
+with `orch`'s harness, model and effort, the `label`, `worktree`, in the floor's effective default cwd, and the prompt
+as its first prompt (`herdr agent prompt` pastes it whole: a multi-line prompt arrives as one prompt). When the hire
+succeeds the bridge records the launch (SQLite `run_launch`: launch id, session, the ticket's repo and issue number or
+text, the orchestrator's worker id, the preset's id and name) and remembers the preset as the floor's `last_preset`
+(`floor.upsert`), then acks: `worker.hire`'s ack plus `launch_id` (`l_<16 hex>`) and `prompt` (what was sent; see
+`prompted` / `prompt_error` for whether it was). A failed hire records nothing. The launch's `run_id` is filled with the
+first `h3d_run` token the orchestrator shows (write-code tags its workspace with it when it starts). The bridge never
+touches GitHub: the skill itself moves the ticket.
+
+**Audit log.** `preset.*` and `run.prepare` get one row each; `run.start` gets a row when it starts, completed like a
+`worker.hire`'s with its result, which also has the `launch` id.
 
 ### Laptops: screens, input, changes and usage
 
@@ -872,8 +1000,8 @@ bridge at start:
 |---|---|
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
-| `not_found` | no building with that id |
-| `name_taken` | another building already has that name (ignoring case) |
+| `not_found` | no building with that id; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`) |
+| `name_taken` | another building, or another team preset, already has that name (ignoring case) |
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
 | `busy` | a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home |
@@ -926,6 +1054,9 @@ herdr-world cmd worker.fire '{"id":"a58752ea-…","worktree":"keep"}'
 herdr-world cmd worker.keys '{"id":"a58752ea-…","input":[{"text":"git status"},{"key":"enter"}]}'
 herdr-world cmd worker.prompt '{"id":"a58752ea-…","text":"Run the tests."}'
 herdr-world cmd worker.answer '{"id":"a58752ea-…","hash":"cdecbf4fcde864bc","choice":1}'
+herdr-world cmd preset.create '{"name":"Cheap","roles":{"orch":{"harness":"codex","model":"gpt-6-luna","effort":"low"},…}}'
+herdr-world cmd run.prepare '{"session":"h3d-scratch","issue":"#3"}' | jq -r .data.prompt
+herdr-world cmd run.start '{"session":"h3d-scratch","desk_index":1,"issue":3,"preset":"p_…","orch":{"harness":"codex","model":"gpt-6-luna","effort":"low"},"prompt":"Reply with OK."}'
 ```
 
 `dump` prints the `welcome` line on stderr. `cmd` prints the `ack` or `error` and exits 1 on error; it waits up to
