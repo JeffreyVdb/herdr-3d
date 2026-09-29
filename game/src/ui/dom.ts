@@ -35,6 +35,8 @@ export const ICON = {
   trash: '<path d="M5 7h14M10 7V5h4v2M7 7l.8 12.2a1 1 0 0 0 1 .8h6.4a1 1 0 0 0 1-.8L17 7"/>',
   move: '<path d="M4.5 12h11M11.5 7.5 16 12l-4.5 4.5"/><path d="M19.5 5v14"/>',
   plus: '<path d="M12 5.5v13M5.5 12h13"/>',
+  refresh: '<path d="M19 12a7 7 0 1 1-2.1-5"/><path d="M19.2 4.6v3.9h-3.9"/>',
+  chevron: '<path d="M7 9.5l5 5 5-5"/>',
 };
 
 export function icon(paths: string): SVGSVGElement {

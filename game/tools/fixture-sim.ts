@@ -24,6 +24,8 @@ import { StartSim } from './fixture-start.ts';
 import { CrewSim } from './fixture-crew.ts';
 // M7: the issues and pull request boards (`board.watch`, `sim.boards`, `simfail=no_m7`).
 import { BoardSim } from './fixture-boards.ts';
+// M10: the plan limits (`limits.refresh`, `simlimits=<scenario>`, `simfail=no_m10`).
+import { LimitsSim } from './fixture-limits.ts';
 
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
@@ -40,6 +42,8 @@ export interface SimOptions {
   usageMs?: number;
   /** M6: plays the scripted freelancer's lifecycle by itself, a step every `crewMs` (0 / absent: only on `sim.crew`). */
   crewMs?: number;
+  /** M10: which readings the plan limits show (tools/fixture-limits.ts; default `ok`). */
+  limits?: string;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -153,6 +157,7 @@ export class SimWorld {
       (snapshot.world as { presets?: unknown }).presets,
     );
     if (o.crewMs !== undefined) this.crewMs = o.crewMs;
+    this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
     this.boards = new BoardSim(
       {
         floors: this.floors,
@@ -173,6 +178,9 @@ export class SimWorld {
       o.fail !== 'no_m7',
     );
   }
+
+  /** M10: the plan limits (tools/fixture-limits.ts). */
+  private readonly limits: LimitsSim;
 
   /** M7: boards, work items and opening a PR (tools/fixture-boards.ts). */
   private readonly boards: BoardSim;
@@ -214,6 +222,7 @@ export class SimWorld {
     if (this.hireSent) world.hire_options = this.hire;
     this.start6.decorate(world);
     this.boards.decorate(world as { workers?: Worker[] });
+    this.limits.decorate(world);
     return { t: 'world.snapshot', seq: this.seq, world: structuredClone(world) };
   }
 
@@ -272,6 +281,7 @@ export class SimWorld {
       if (screens.handle(m.t, a, send, ack, (code, message) => send({ t: 'error', req_id: reqId, code, message }))) return;
       if (this.start6.handle(m.t, a, send, ack, fail)) return;
       if (this.boards.handle(m.t, a, send, ack, fail)) return;
+      if (this.limits.handle(m.t, send, ack)) return;
       switch (m.t) {
         case 'building.create':
           return ack(this.create(a, send));

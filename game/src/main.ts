@@ -175,6 +175,8 @@ export interface H3DDebug {
   board(): BoardSummary | null;
   /** M7: what the boards on the wall show: notes (with their atlas cell and pose), flights, gong rings, buffer writes. */
   boards(): ReturnType<import('./app').App['boardsInfo']>;
+  /** M10: what the plan limits widget shows (null before the game is up). */
+  limits(): ReturnType<import('./ui/limits').LimitsWidget['summary']> | null;
   /** M7: applies a board message as if the bridge had sent it. */
   injectBoard(m: BoardMessage): void;
   /** M7: the overlay for the floor you are on, as the top bar's Issues / PRs (and E on a board) open it. */
@@ -321,6 +323,7 @@ const h3d: H3DDebug = {
   },
   board: () => app?.boardsPanel.summary() ?? null,
   boards: () => app?.boardsInfo() ?? null,
+  limits: () => app?.limitsWidget.summary() ?? null,
   injectBoard: (m) => app?.injectBoard(m),
   openBoard: (w) => app?.openBoard(w),
   openBoardItem: (w, id) => {

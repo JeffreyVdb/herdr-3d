@@ -22,6 +22,8 @@ import './start.css';
 import { deskTabs } from './deskTabs';
 import { chips, type HireHost } from './hire';
 import { failureText } from './messages';
+// M10 limits
+import { planLimits } from './limits';
 
 /**
  * The start-run dialog (M6): the "Hire orchestrator" tab of the hire dialog
@@ -348,7 +350,7 @@ export class StartRunDialog {
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const book = this.host.store.presets;
     const free = fv ? freeDesks(fv).filter((d) => d === this.f.desk || !this.host.held(this.session).has(d)) : [];
-    const key = JSON.stringify([this.session, this.f.desk, this.state, this.f.workItem?.id ?? null, this.prep && { ...this.prep, prompt: '', label: '' }, this.f.preset, this.f.orch, this.f.worktree, where, this.takenBy(), this.statusText, book.version, free, this.ticketError !== null]);
+    const key = JSON.stringify([this.session, this.f.desk, this.state, this.f.workItem?.id ?? null, this.prep && { ...this.prep, prompt: '', label: '' }, this.f.preset, this.f.orch, this.f.worktree, where, this.takenBy(), this.statusText, book.version, free, this.ticketError !== null, this.host.store.limits.version]);
     if (key === this.renderedKey) {
       this.renderLive();
       return;
@@ -476,6 +478,13 @@ export class StartRunDialog {
             h('button', { class: 'btn btn--sm', 'data-key': 'refetch', disabled: this.state !== 'ready', onclick: () => void this.prepare() }, 'Fetch again'),
           ),
         );
+    }
+    // M10: the plan limits of every harness the run uses: the orchestrator's and the team preset's.
+    if (this.f.orch) {
+      const roles = this.preset()?.roles;
+      const inline = planLimits(this.host.store.limits, [this.f.orch.harness, ...(roles ? Object.values(roles).map((r) => r.harness) : [])], this.host.now());
+      nodes.push(h('div', { class: 'dd-plan-limits', 'data-hook': 'plan-limits' }, inline));
+      if (!inline) (nodes[nodes.length - 1] as HTMLElement).hidden = true;
     }
     nodes.push(this.promptField());
     if (this.prep) notices.push(this.capacityBlock());

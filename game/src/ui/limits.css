@@ -1,0 +1,375 @@
+/*
+ * Plan limits (M10): a small navy plate under the top bar, top right, like the
+ * rest of the office signage. Bars are green below 60 %, amber from 60 %, red
+ * from 85 %. The tape chip names the provider; numbers are mono and tabular.
+ */
+.limits {
+  --lm-ok: var(--plus);
+  --lm-warn: var(--sun);
+  --lm-high: #ff6058;
+  /* A popover in the top layer: reset what the browser gives one. */
+  position: fixed;
+  inset: calc(var(--topbar-bottom, 64px) + 8px) 12px auto auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  width: max-content;
+  height: auto;
+  max-width: min(560px, calc(100vw - 24px));
+  background: var(--ink);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  color: var(--text-on-ink);
+  font-size: 12px;
+  line-height: 1.3;
+  pointer-events: auto;
+  font-variant-numeric: tabular-nums;
+}
+.limits[hidden] {
+  display: none;
+}
+
+/* The Changes panel (m5.css) fills the right column: sit to its left. */
+.limits[data-beside='changes'] {
+  right: calc(min(780px, 58vw) + 24px);
+  max-width: calc(100vw - min(780px, 58vw) - 36px);
+}
+@media (max-width: 760px) {
+  .limits[data-beside='changes'] {
+    right: 12px;
+    max-width: min(560px, calc(100vw - 24px));
+  }
+}
+
+/* Reached: a red ring that breathes. */
+.limits[data-reached='true'] {
+  box-shadow: var(--shadow), 0 0 0 2px var(--lm-high);
+  animation: lm-pulse 1.8s ease-in-out infinite;
+}
+@keyframes lm-pulse {
+  50% {
+    box-shadow: var(--shadow), 0 0 0 5px rgb(255 96 88 / 35%);
+  }
+}
+
+.lm-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px 7px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.lm-strip:hover {
+  background: rgb(255 255 255 / 5%);
+}
+.lm-chev {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  color: var(--text-on-ink-2);
+  transition: transform 0.2s var(--ease);
+}
+.limits[data-open='true'] .lm-chev {
+  transform: rotate(180deg);
+}
+.lm-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Open, the panel says it all: the strip is just its title. */
+.lm-title {
+  display: none;
+  font-weight: 700;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-size: 13px;
+}
+.limits[data-open='true'] .lm-lines {
+  display: none;
+}
+.limits[data-open='true'] .lm-title {
+  display: inline;
+}
+
+/* One provider: tape, plan, then its windows; stale ones dim and say when they are as of. */
+.lm-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  min-width: 0;
+}
+.lm-tape {
+  --c: #a5522f;
+  flex: none;
+  min-width: 56px;
+  text-align: center;
+  box-sizing: border-box;
+  font-size: 10px;
+  padding: 2px 6px 1px;
+}
+.lm-tape--codex {
+  --c: var(--working);
+}
+.lm-plan {
+  min-width: 7ch;
+  color: var(--text-on-ink-2);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-size: 11px;
+}
+.lm-wins {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+}
+.lm-win {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.lm-lab {
+  color: var(--text-on-ink-2);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-size: 11px;
+}
+.lm-pct {
+  min-width: 3ch;
+  text-align: right;
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-weight: 700;
+}
+.lm-rs {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-on-ink-2);
+  font-size: 11px;
+}
+.lm-reset-ic {
+  width: 10px;
+  height: 10px;
+  opacity: 0.8;
+}
+.lm-none,
+.lm-line--wait {
+  color: var(--text-on-ink-2);
+}
+.lm-asof {
+  color: var(--text-on-ink-2);
+  font-size: 11px;
+  font-style: normal;
+  padding: 0 5px;
+  border: 1px dashed rgb(255 255 255 / 30%);
+  border-radius: 4px;
+}
+.lm-line[data-stale='true'] .lm-wins,
+.lm-line[data-stale='true'] .lm-plan,
+.lm-sec[data-stale='true'] .lm-rows {
+  opacity: 0.62;
+}
+
+/* The bar: a track and a fill in the severity colour (with the percentage beside it, never colour alone). */
+.lm-bar {
+  --sev: var(--lm-ok);
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 44px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 14%);
+  overflow: hidden;
+}
+.lm-bar[data-sev='warn'] {
+  --sev: var(--lm-warn);
+}
+.lm-bar[data-sev='high'] {
+  --sev: var(--lm-high);
+}
+.lm-bar i {
+  position: absolute;
+  inset: 0;
+  background: var(--sev);
+  transform: scaleX(var(--frac));
+  transform-origin: left;
+  transition: transform 0.5s var(--ease);
+}
+
+/* Expanded panel. */
+.lm-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--line);
+  min-width: 300px;
+}
+.lm-panel[hidden] {
+  display: none;
+}
+.lm-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+}
+.lm-sec > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lm-hit {
+  margin-left: auto;
+  color: var(--lm-high);
+  font-size: 11px;
+  font-weight: 700;
+}
+.lm-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lm-row {
+  display: grid;
+  grid-template-columns: 8.5em 64px 4ch 1fr;
+  align-items: center;
+  gap: 8px;
+}
+.lm-row .lm-bar {
+  width: 64px;
+}
+.lm-rowlab {
+  color: var(--text-on-ink-2);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lm-meta,
+.lm-read,
+.lm-problem {
+  margin: 0;
+  color: var(--text-on-ink-2);
+  font-size: 11.5px;
+}
+.lm-meta {
+  display: flex;
+  gap: 8px;
+}
+.lm-meta b {
+  color: var(--text-on-ink);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+}
+.lm-problem {
+  color: var(--sun);
+}
+.lm-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+.lm-foot .btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.lm-foot .btn svg {
+  width: 14px;
+  height: 14px;
+}
+.lm-refresh:disabled svg {
+  animation: lm-spin 1s linear infinite;
+}
+@keyframes lm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.lm-status {
+  color: var(--text-on-ink-2);
+  font-size: 11.5px;
+}
+
+/* Inline in the hire and start-run dialogs (on their light paper: same plate, own colours). */
+.lm-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: var(--ink);
+  color: var(--text-on-ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  --lm-ok: var(--plus);
+  --lm-warn: var(--sun);
+  --lm-high: #ff6058;
+}
+.lm-inline[data-hot='true'] {
+  box-shadow: inset 0 0 0 1.5px var(--lm-high);
+}
+.lm-inline-title {
+  margin: 0;
+  color: var(--text-on-ink-2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.lm-warn {
+  margin: 0;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgb(255 96 88 / 16%);
+  color: #ffd9d6;
+  font-weight: 600;
+}
+
+@media (max-width: 720px) {
+  .limits {
+    right: 8px;
+    max-width: calc(100vw - 16px);
+  }
+  .lm-rs {
+    display: none;
+  }
+  .lm-panel .lm-rs {
+    display: inline-flex;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .limits[data-reached='true'] {
+    animation: none;
+  }
+  .lm-bar i,
+  .lm-chev {
+    transition: none;
+  }
+  .lm-refresh:disabled svg {
+    animation: none;
+  }
+}
+
+.dd-plan-limits {
+  margin: 2px 0;
+}
+.dd-plan-limits[hidden] {
+  display: none;
+}

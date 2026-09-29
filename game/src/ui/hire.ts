@@ -20,6 +20,8 @@ import { effortsFor } from '../world/settings';
 import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
+// M10 limits
+import { planLimits } from './limits';
 // M6 start
 import { deskTabs } from './deskTabs';
 
@@ -74,11 +76,6 @@ export interface HireSummary {
   blocker: string | null;
   status: string;
   error: boolean;
-}
-
-/** Room for the chosen harness's plan limits (M10, #12): nothing yet. */
-export function renderPlanLimits(_harness: string): HTMLElement | null {
-  return null;
 }
 
 const DESK_PLUS = '<path d="M12 5v14M5 12h14"/>';
@@ -334,7 +331,7 @@ export class HireDialog {
     const fv = this.host.store.floorView(this.session);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const taken = this.takenBy();
-    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching]);
+    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version]);
     // Typing (task, label, folder) only needs the button; everything else re-renders.
     if (key === this.renderedKey) {
       this.renderActions();
@@ -412,7 +409,7 @@ export class HireDialog {
         chips('model', 'Model', modelsFor(options, this.f.harness), this.f.model, (v) => this.pick({ model: v })),
         chips('effort', 'Effort', effortsFor(options, this.f.harness, this.f.model), this.f.effort, (v) => this.pick({ effort: v })),
       );
-      const limits = renderPlanLimits(this.f.harness);
+      const limits = planLimits(this.host.store.limits, [this.f.harness], this.host.now());
       const slot = h('div', { class: 'dd-plan-limits', 'data-hook': 'plan-limits' });
       if (limits) slot.append(limits);
       else slot.hidden = true;

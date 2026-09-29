@@ -140,6 +140,8 @@ export interface World {
   hire_options?: HireOptions;
   /** M6 start: team presets by name (absent from an older bridge). */
   presets?: Preset[];
+  /** M10 limits: the latest reading of each provider (absent from an older bridge, `[]` before the first reading). */
+  limits?: Limits[];
 }
 
 export interface Hello {
@@ -224,7 +226,9 @@ export type WorldEvent =
   | WorkerUsageEvent
   // M6 start
   | PresetUpsert
-  | PresetRemoved;
+  | PresetRemoved
+  // M10 limits
+  | LimitsUpdate;
 
 export interface ErrorMessage {
   t: 'error';
@@ -386,6 +390,8 @@ export interface CommandArgs {
   'board.watch': { session: string };
   'board.unwatch': { session: string };
   'board.refresh': { session: string };
+  /** M10 limits: read the plan limits now (at most every 20 s). */
+  'limits.refresh': Record<string, never>;
   'issue.get': { session: string; id: string };
   'issue.comment': { session: string; id: string; body: string };
   'issue.close': { session: string; id: string; reason: CloseReason; confirm: true };
@@ -525,6 +531,7 @@ const EVENT_TYPES = new Set([
   // M6 start
   'preset.upsert',
   'preset.removed',
+  'limits.update',
 ]);
 
 type Obj = Record<string, unknown>;
@@ -583,6 +590,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
       return isObj(o.preset) && isStr(o.preset.id) && isStr(o.preset.name) && isObj(o.preset.roles);
     case 'preset.removed':
       return isStr(o.id);
+    // M10 limits: the fields of `Limits` flat in the event.
+    case 'limits.update':
+      return isStr(o.provider) && Array.isArray(o.windows);
   }
   return false;
 }
@@ -975,4 +985,52 @@ export function isBoardPrs(m: ServerMessage): m is BoardPrs {
 /** The connection-scoped board messages (no `seq`, never replayed): see docs/protocol.md "Boards". */
 export function isBoardMessage(m: ServerMessage): m is BoardMessage {
   return isBoardIssues(m) || isBoardPrs(m);
+}
+
+// M10 limits (docs/protocol.md "Plan limits"): the Claude and Codex plan windows.
+
+/** One usage window of a plan; `model` names a per-model window ("Opus"). */
+export interface LimitWindow {
+  /** "5h", "week", or a duration ("3d") for another window. */
+  label: string;
+  model?: string;
+  /** 0–100. */
+  pct: number;
+  /** Unix ms; 0 when unknown. */
+  resets_at: number;
+  window_mins?: number;
+}
+
+export interface LimitCredits {
+  has_credits: boolean;
+  unlimited: boolean;
+  balance?: string;
+}
+
+/** One provider's limits as of `at` (unix ms). */
+export interface Limits {
+  provider: string;
+  plan: string;
+  windows: LimitWindow[];
+  at: number;
+  /** Not a fresh answer of the CLI: from a transcript, or the last probe failed. */
+  stale: boolean;
+  /** Why there is no fresh reading: no_plan, not_installed, timeout, failed. */
+  error?: string;
+  /** probe | transcript. */
+  source?: string;
+  /** Codex's rateLimitReachedType while a limit is reached. */
+  reached?: string;
+  credits?: LimitCredits;
+}
+
+/** `limits.update`: a provider's new reading, flat. */
+export interface LimitsUpdate extends Limits {
+  t: 'limits.update';
+  seq: number;
+}
+
+/** `limits.refresh` ack. */
+export interface LimitsRefreshAck {
+  queued: boolean;
 }

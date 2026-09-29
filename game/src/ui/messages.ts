@@ -48,6 +48,7 @@ const DOES: Record<CommandName, string> = {
   'board.watch': 'show the issues and pull request boards',
   'board.unwatch': 'show the issues and pull request boards',
   'board.refresh': 'show the issues and pull request boards',
+  'limits.refresh': 'read the plan limits',
   'issue.get': 'read issues',
   'issue.comment': 'comment on issues',
   'issue.close': 'close issues',

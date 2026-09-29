@@ -45,6 +45,9 @@ import { askPrompt, BoardBook, nearestDesk, reviewPrompt } from './world/boards'
 import { BoardsPanel, type BoardOff, type BoardState } from './ui/boards/panel';
 import { openExternal } from './ui/boards/external';
 import { OpenPrDialog } from './ui/boards/openPr';
+// M10 limits
+import { LimitsWidget } from './ui/limits';
+import { LimitsPrefs } from './ui/limitsPrefs';
 import { can } from './world/boards';
 import { bannerVersion, type BuildInfo } from './version';
 
@@ -97,6 +100,9 @@ const GONG_GAP_MS = 450;
 /** Everything between the renderer and the bridge: views, input, HUD, frame pacing. */
 export class App {
   readonly store = new WorldStore();
+  /** M10 limits: the always-on plan limits widget and what it remembers. */
+  private readonly limitsPrefs = new LimitsPrefs();
+  readonly limitsWidget: LimitsWidget;
   readonly hud: Hud;
   readonly city: CityView;
   readonly client: BridgeClient;
@@ -207,7 +213,15 @@ export class App {
     // Sound (the first click, key or pointer lock unlocks it) and the receptionist in every lobby.
     this.audio = createGameAudio();
     this.hud.mountAudio(this.audio);
-    if (o.buildInfo) this.hud.mountAbout(o.buildInfo);
+    if (o.buildInfo) this.hud.mountAbout(o.buildInfo, this.limitsPrefs);
+    this.limitsWidget = new LimitsWidget(
+      this.hud.root,
+      this.store.limits,
+      { now: () => Date.now(), refresh: () => this.send('limits.refresh', {}), toast: (m) => this.hud.toast(m, 3600, 'info') },
+      this.limitsPrefs,
+    );
+    // Nothing re-renders it between readings but a reading turning stale.
+    setInterval(() => this.limitsWidget.tick(), 30_000);
     this.reception = createReception({ audio: this.audio, overlay: this.hud.root, shadows: this.shadows });
     this.radio = new RadioLink({ music: this.audio.music, toast: (m, ms, soft) => this.hud.toast(m, ms, 'info', soft), hudRadio: (n) => this.hud.setRadio(n) });
     this.city = new CityView(
@@ -424,6 +438,7 @@ export class App {
     this.sendHome.refresh();
     this.startRun.refresh();
     this.presetsPanel.refresh();
+    this.limitsWidget.update();
     this.m6Buttons.sync();
     // M7: holders and verdict stamps on the boards follow the workers.
     if (c.structure || c.workers.size) this.pushBoards();
@@ -1490,6 +1505,10 @@ export class App {
       // M5: 1–9 answer the looked-at worker's question with that choice, 0 denies (Esc).
       e.preventDefault();
       this.answerKey(this.target.id, Number(e.code.slice(-1)));
+    } else if (e.code === 'KeyL' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      // M10: Shift+L, the plan limits panel (plain L is the elevator on a floor).
+      e.preventDefault();
+      this.limitsWidget.toggleFromKey();
     } else if (e.code === 'KeyL' && this.mode === 'floor' && !this.transitioning && !e.metaKey && !e.ctrlKey && !e.altKey) {
       // The elevator from anywhere on the floor (the top bar has it too).
       e.preventDefault();

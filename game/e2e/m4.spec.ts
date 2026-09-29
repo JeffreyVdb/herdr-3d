@@ -131,7 +131,9 @@ test('E on an empty desk: the hire dialog from the keyboard, then the worker dro
   await expect(page.locator('.dd-capacity')).toHaveText('pastry: 14 of 24 · host: 35 of 60 · load 2.4 on 16 CPUs · memory 41 %');
   await expect(page.locator('#hire-worktree')).toBeChecked();
   await expect(page.locator('.dd-base')).toContainText('A new h3d/… branch from origin/main @');
-  await expect(page.locator('[data-hook="plan-limits"]')).toBeHidden();
+  // M10: the simulated bridge reads the plan limits; the chosen harness's are shown (e2e/m10-limits.spec.ts has the rest).
+  await expect(page.locator('[data-hook="plan-limits"] .lm-line')).toHaveCount(1);
+  await expect(page.locator('[data-hook="plan-limits"]')).toContainText('Claude');
 
   // The first task: typing never reaches the game (e, l, x, Tab-free); Shift+Enter is a new line.
   await page.keyboard.type('Label the loaves, extra seeds');
