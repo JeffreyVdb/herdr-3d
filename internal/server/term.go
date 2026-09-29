@@ -340,18 +340,83 @@ func (h *Hub) awaitRoom(ctx context.Context, w *watch) bool {
 	return ctx.Err() == nil
 }
 
+// watchQueue is what a watch's observer sent that its connection has not
+// been sent yet: one frame of at most maxPendingFrame bytes, the diffs
+// merged in order (ANSI diffs compose), a full frame replacing what is
+// pending. The observer's reader puts into it without ever waiting for the
+// connection, so its output is read continuously; past the bound the
+// queue overflows (it keeps nothing more) and the watch resyncs.
+type watchQueue struct {
+	mu         sync.Mutex
+	data       []byte
+	full       bool // data starts with a full frame
+	pending    bool
+	gotFull    bool // a first full frame came
+	overflow   bool
+	cols, rows int
+	ready      chan struct{} // (cap 1) something was put
+}
+
+func newWatchQueue() *watchQueue { return &watchQueue{ready: make(chan struct{}, 1)} }
+
+// put merges a frame in; a diff before any full frame applies to nothing
+// and is dropped.
+func (q *watchQueue) put(f herdr.Frame) {
+	q.mu.Lock()
+	switch {
+	case q.overflow:
+		q.mu.Unlock()
+		return
+	case f.Full:
+		q.gotFull = true
+		q.data, q.full = append(q.data[:0], f.Data...), true
+	case !q.gotFull:
+		q.mu.Unlock()
+		return
+	default:
+		q.data = append(q.data, f.Data...)
+	}
+	q.pending, q.cols, q.rows = true, f.Width, f.Height
+	if len(q.data) > maxPendingFrame {
+		q.overflow, q.data = true, nil
+	}
+	q.mu.Unlock()
+	select {
+	case q.ready <- struct{}{}:
+	default:
+	}
+}
+
+// take empties the queue: the pending frame (ok false: none), errResync
+// once it overflowed.
+func (q *watchQueue) take() (data []byte, full bool, cols, rows int, ok bool, err error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.overflow {
+		return nil, false, 0, 0, false, errResync
+	}
+	if !q.pending {
+		return nil, false, 0, 0, false, nil
+	}
+	data, full, cols, rows = q.data, q.full, q.cols, q.rows
+	q.data, q.full, q.pending = nil, false, false
+	return data, full, cols, rows, true, nil
+}
+
+func (q *watchQueue) state() (gotFull, overflow bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.gotFull, q.overflow
+}
+
 // pump forwards an observer's frames to the watch's connection, at most
-// fps a second: diffs arriving faster are concatenated in order (ANSI
-// diffs compose), a full frame replaces whatever is pending. It returns
-// when the observer ends (errObserverEnded, errStalled), the watch ends,
-// or it must resync (errResync: the pending diffs overflowed or the
-// connection has no room).
+// fps a second, through its watchQueue. It returns when the observer ends
+// (errObserverEnded, errStalled), the watch ends, or it must resync
+// (errResync: the queue overflowed or the connection has no room).
 func (h *Hub) pump(ctx context.Context, w *watch, obs herdr.FrameStream) error {
-	frames := make(chan herdr.Frame, 16)
+	q := newWatchQueue()
 	ended := make(chan error, 1)
-	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
+	go func() { // until obs is closed
 		for {
 			f, err := obs.Next()
 			switch {
@@ -364,11 +429,7 @@ func (h *Hub) pump(ctx context.Context, w *watch, obs herdr.FrameStream) error {
 				ended <- err
 				return
 			}
-			select {
-			case frames <- f:
-			case <-stop:
-				return
-			}
+			q.put(f)
 		}
 	}()
 	interval := time.Second / time.Duration(w.fps)
@@ -378,22 +439,22 @@ func (h *Hub) pump(ctx context.Context, w *watch, obs herdr.FrameStream) error {
 	flushAt.Stop()
 	defer flushAt.Stop()
 	var (
-		pend          []byte
-		full, pending bool
-		gotFull, arm  bool
-		cols, rows    int
-		last          time.Time
+		arm  bool
+		last time.Time
 	)
 	flush := func() error {
-		data := base64.StdEncoding.EncodeToString(pend)
-		err := h.term.send(w, func(n uint64) []byte {
-			return mustJSON(proto.TerminalFrame{T: proto.TTerminalFrame, ID: w.id, Pane: w.pane, N: n, Full: full,
-				Cols: cols, Rows: rows, Data: data})
-		})
-		if err != nil {
+		pend, full, cols, rows, ok, err := q.take()
+		if err != nil || !ok {
 			return err
 		}
-		pend, full, pending, last = pend[:0], false, false, time.Now()
+		data := base64.StdEncoding.EncodeToString(pend)
+		if err := h.term.send(w, func(n uint64) []byte {
+			return mustJSON(proto.TerminalFrame{T: proto.TTerminalFrame, ID: w.id, Pane: w.pane, N: n, Full: full,
+				Cols: cols, Rows: rows, Data: data})
+		}); err != nil {
+			return err
+		}
+		last = time.Now()
 		return nil
 	}
 	for {
@@ -403,28 +464,16 @@ func (h *Hub) pump(ctx context.Context, w *watch, obs herdr.FrameStream) error {
 		case err := <-ended:
 			return err
 		case <-first.C:
-			if !gotFull {
+			if gotFull, _ := q.state(); !gotFull {
 				return errStalled
 			}
 		case <-flushAt.C:
 			arm = false
-			if pending {
-				if err := flush(); err != nil {
-					return err
-				}
+			if err := flush(); err != nil {
+				return err
 			}
-		case f := <-frames:
-			switch {
-			case f.Full:
-				gotFull = true
-				pend, full = append(pend[:0], f.Data...), true
-			case !gotFull: // a diff before any full frame applies to nothing
-				continue
-			default:
-				pend = append(pend, f.Data...)
-			}
-			pending, cols, rows = true, f.Width, f.Height
-			if len(pend) > maxPendingFrame {
+		case <-q.ready:
+			if _, overflow := q.state(); overflow {
 				return errResync
 			}
 			if wait := interval - time.Since(last); wait <= 0 {

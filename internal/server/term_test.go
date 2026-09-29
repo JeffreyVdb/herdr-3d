@@ -553,12 +553,13 @@ func TestWatchResyncsInsteadOfOverflowing(t *testing.T) {
 		t.Fatalf("after the resync: %+v", f)
 	}
 
-	// 600 KiB of diffs inside one frame interval: resync.
+	// Over 512 KiB of diffs inside one frame interval: resync. (The
+	// first diff may go out with the full frame before it.)
 	d.command(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fps: 1})
 	o3 := tb.term.observer(t, 2)
 	o3.push(t, true, "x")
 	chunk := strings.Repeat("y", 100<<10)
-	for i := 0; i < 6 && !o3.closed(); i++ {
+	for i := 0; i < 7 && !o3.closed(); i++ {
 		select {
 		case o3.frames <- herdr.Frame{Width: 120, Height: 40, Data: []byte(chunk)}:
 		case <-o3.done:

@@ -606,8 +606,8 @@ key names, **never the text**.
   closing the connection stops them all. After a reconnect, watch again: frames are never replayed.
 - Caps: `--max-watches` per connection (default 6), `--max-observers` for the whole bridge (default 16); above either
   `terminal.watch` is `capacity`. Each watch has its own observer.
-- **Never block, never leak.** Each observer's output is read continuously. Pending diffs merge into one frame of at
-  most 512 KiB. Frames are only queued while the connection's send queue is at most half full, so they never push a
+- **Never block, never leak.** Each observer's output is read continuously, also while a frame is being sent. What
+  is not sent yet merges into one pending frame of at most 512 KiB, the watch's only queue. Frames are only queued while the connection's send queue is at most half full, so they never push a
   connection into the `slow consumer` disconnect: when the queue is over half full or the pending frame outgrows
   512 KiB, the bridge drops what is pending, stops the observer and, once the connection has room again, starts a new
   one (a resync: its first frame is full). An observer that exits, or sends no first frame within 5 s (herdr 0.9.0 drops
