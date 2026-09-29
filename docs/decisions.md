@@ -55,3 +55,11 @@ Implications:
 - **Pane-label identity marker** (`h3d-<short uuid>` on each worker's root pane): **approved**.
 - **Build team** (write-code): coders = claude `claude-opus-5-5` effort medium; reviewers = codex `gpt-6-sol` reasoning high.
 - **Repo**: own git repo at `herdr-3d/`, private GitHub repo `JeffreyVdb/herdr-3d` + GitHub Project.
+
+## 2026-09-29 — M6b (#28): arrival style and the desk monitor
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Drop from the sky, or step out of a void? | **Drop from above.** The hire falls into its chair from 1.6 m over the seat (0.36 s, a little stretched, its shadow growing on the seat), lands flattened, springs back and settles, with a puff of dust round the chair: 0.85 s in all, one `drop` phase. It suits the cartoon crew and needs no new material (a portal wants transparency and a shader). The desk is the worker's from the first frame (never `away`): look-at, the card, sitting at its screen and prompts work while it plays; only the figure moves. Only the floor you are on shows it; anywhere else it resolves at once. |
+| 2 | Where the monitor sits, how big | **Centred, facing the chair; the dock on the pod's outer side.** Glass 0.74 × 0.40 m (a 32" monitor; the M5 lid was 0.31 × 0.2) under the worker's hat line: its top is at 1.17 m, so the hat (the model cue) shows over it from across the pod, and the cards (1.62 m) and the empty desk's "+" (raised to 1.45 m) stay clear. The docks sit at the pods' outer corners, so every docked laptop's lid (and sticker) faces an aisle; the worker's photos, mug and plant stand on the other side, towards the neighbour. |
+| 3 | Readable at a glance | Standing, a monitor shows the **glance view**: the last lines that say something (no blank rows, empty frames or agent footer), wrapped at 22 columns, 5 lines, bold and lifted to 4.5:1, under a status bar with the status's word. At the Mac's 3024 × 1890 that is ~12 px text at 4 m, ~16 px at 3 m. Straight behind a worker its own body hides its monitor (it sits right in front of it), so monitors read diagonally along the aisles. Seated, the whole terminal. |
