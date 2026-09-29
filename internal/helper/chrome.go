@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 )
 
@@ -27,4 +28,13 @@ func OpenChrome(ctx context.Context, app, url, profile string) error {
 		return fmt.Errorf("open %s: %w: %s", app, err, out)
 	}
 	return nil
+}
+
+// InstalledApp returns where Chrome put the launcher of the installed web app
+// called name (Install page as app), if there is one: on macOS, an .app in
+// ~/Applications/Chrome Apps.localized.
+func InstalledApp(home, name string) (string, bool) {
+	p := filepath.Join(home, "Applications", "Chrome Apps.localized", name+".app")
+	fi, err := os.Stat(p)
+	return p, err == nil && fi.IsDir()
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/version"
 )
 
 // Timeouts for one connection.
@@ -48,7 +49,10 @@ func NewServer(hub *Hub, log *slog.Logger) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.serveWS)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(proto.VersionHeader, version.Version)
+		_, _ = w.Write([]byte("ok\n"))
+	})
 	return mux
 }
 

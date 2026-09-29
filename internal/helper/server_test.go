@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -282,4 +283,95 @@ func TestListenLoopbackOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	ln.Close()
+}
+
+// TestEmbeddedBundle serves the game from an fs.FS (the copy embedded in the
+// binary) the same way as from a directory.
+func TestEmbeddedBundle(t *testing.T) {
+	s := NewServer(ServerConfig{Port: testPort, ListenHost: "127.0.0.1", Token: testToken,
+		Bridge: &socketBridge{state: StateConnecting}, Log: quietLog(),
+		BundleFS: fstest.MapFS{
+			"index.html":           {Data: []byte("<!doctype html><title>h3d</title>")},
+			"assets/index-abc1.js": {Data: []byte("console.log('h3d')")},
+		}})
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	const host = "127.0.0.1:7777"
+
+	for _, tc := range []struct {
+		path, ctype, cache, body string
+	}{
+		{"/", "text/html; charset=utf-8", "no-cache", "<title>h3d</title>"},
+		{"/city/floor/2", "text/html; charset=utf-8", "no-cache", "<title>h3d</title>"},
+		{"/assets/index-abc1.js", "text/javascript; charset=utf-8", "immutable", "console.log"},
+	} {
+		resp, body := get(t, ts, "GET", host, tc.path)
+		if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != tc.ctype ||
+			!strings.Contains(resp.Header.Get("Cache-Control"), tc.cache) || !strings.Contains(body, tc.body) {
+			t.Errorf("%s: %d %q %q %q", tc.path, resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Cache-Control"), body)
+		}
+	}
+	if resp, _ := get(t, ts, "GET", host, "/missing.png"); resp.StatusCode != 404 {
+		t.Errorf("/missing.png: %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestMusicDir(t *testing.T) {
+	music := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(music, "house"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(music, "house", "a.ogg"), []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A secret next to the music dir must stay unreachable.
+	if err := os.WriteFile(filepath.Join(filepath.Dir(music), "secret.ogg"), []byte("no"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(ServerConfig{Port: testPort, ListenHost: "127.0.0.1", Token: testToken,
+		Bridge: &socketBridge{state: StateConnecting}, Log: quietLog(), MusicDir: music,
+		BundleFS: fstest.MapFS{
+			"index.html":            {Data: []byte("<!doctype html><title>h3d</title>")},
+			"music/house/game.ogg":  {Data: []byte("from the game")},
+			"music/house/other.ogg": {Data: []byte("from the game")},
+		}})
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	const host = "127.0.0.1:7777"
+
+	resp, body := get(t, ts, "GET", host, "/music/house/a.ogg")
+	if resp.StatusCode != 200 || body != "0123456789" || resp.Header.Get("Content-Type") != "audio/ogg" ||
+		resp.Header.Get("Cache-Control") != "no-cache" || resp.Header.Get("Accept-Ranges") != "bytes" {
+		t.Errorf("track: %d %q %q %q %q", resp.StatusCode, body, resp.Header.Get("Content-Type"), resp.Header.Get("Cache-Control"), resp.Header.Get("Accept-Ranges"))
+	}
+
+	req, _ := http.NewRequest("GET", ts.URL+"/music/house/a.ogg", nil)
+	req.Host = host
+	req.Header.Set("Range", "bytes=2-4")
+	rr, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rb, _ := io.ReadAll(rr.Body)
+	rr.Body.Close()
+	if rr.StatusCode != http.StatusPartialContent || string(rb) != "234" {
+		t.Errorf("range: %d %q, want 206 \"234\"", rr.StatusCode, rb)
+	}
+
+	// Not in the music dir: the game's own file, else 404.
+	if _, body := get(t, ts, "GET", host, "/music/house/game.ogg"); body != "from the game" {
+		t.Errorf("fallthrough body %q", body)
+	}
+	if resp, _ := get(t, ts, "GET", host, "/music/house/none.ogg"); resp.StatusCode != 404 {
+		t.Errorf("missing track: %d, want 404", resp.StatusCode)
+	}
+	// A directory is not a file, and dot-dot stays inside.
+	for _, p := range []string{"/music/house/", "/music/../secret.ogg", "/music/%2e%2e/secret.ogg"} {
+		if resp, body := get(t, ts, "GET", host, p); body == "no" || (resp.StatusCode == 200 && strings.Contains(body, "0123")) {
+			t.Errorf("%s leaked %q", p, body)
+		}
+	}
+	if resp, _ := get(t, ts, "GET", "evil.example", "/music/house/a.ogg"); resp.StatusCode != 403 {
+		t.Errorf("wrong Host: %d, want 403", resp.StatusCode)
+	}
 }

@@ -157,6 +157,21 @@ MacBook (M2 Max)                                   devbox (Linux)
   WebKit toggle for 120 Hz.
 - **Assets**: Kenney (CC0) furniture / props. Quaternius: check the license per pack (QAL 2026-08-28 on new packs), and don't
   commit QAL files.
+- **Music (M15, the lounge radio)**: real tracks by other artists, licensed per track. A track goes in only if its own
+  page grants commercial use, use in a game we sell and redistribution in the game files: **CC0**, **CC BY** (the exact
+  credit recorded) or a written / purchased license that names games. Never NC or ND, nothing for "YouTube / creators
+  only", nothing ambiguous. Rejected for a sold game: NCS, StreamBeats and Uppbeat Basic (their free terms cover videos,
+  not games), Incompetech and Josh Woodward (tracks pre-registered in Content ID), and **Tobu until Jeffrey has a signed
+  grant** (his own pages say games need permission). Each recording is one row of `game/music/manifest.json`: source and
+  download URLs, license and its URL, the attribution string, the archived proof page (`game/music/proof/`), the source's
+  sha256, and the transcoded file's length and loudness. Each row also has a **claim status**: `cleared` (the publisher
+  says in writing the track is not registered for fingerprinting; the statement is archived) or `hold` (license fine, claim
+  status unverified: fine in dev builds). Streamers of the game would be claimed on a registered track, so **a release build
+  must fail while any row is `hold`** (`pnpm -C game music --check --release`, and `H3D_RELEASE=1 vite build`). The audio
+  itself (~2.5 MB a track: Ogg Opus, 96 kb/s, normalised to -16 LUFS) is not committed: `pnpm -C game music` fetches
+  and transcodes it into the git-ignored `game/public/music/`; the manifest, the lock (source and output hashes) and the
+  proof pages are committed. Credits: a Music credits panel in the sound control and `MUSIC_CREDITS.txt` next to the build
+  output, both generated from the manifest. Sources and license findings: issue #30.
 
 ## 6. Dev / test loop (no Claude Code on the Mac)
 

@@ -10,6 +10,7 @@ import { memberOf, OfficeView, REACH, type Target } from './render/office';
 import { OutsideView } from './render/outside';
 import { BUILDING_TINTS, LOT_TINT } from './render/palette';
 import { WalkView } from './render/walk';
+import { RadioLink } from './radio/link';
 import { createGameAudio, createReception, receptionContext, type GameAudio, type Reception, type ReceptionEvent } from './reception';
 import { Hud, type PlanLabel } from './ui/hud';
 import { HireDialog, type HirePrefill } from './ui/hire';
@@ -45,11 +46,16 @@ import { BoardsPanel, type BoardOff, type BoardState } from './ui/boards/panel';
 import { openExternal } from './ui/boards/external';
 import { OpenPrDialog } from './ui/boards/openPr';
 import { can } from './world/boards';
+import { bannerVersion, type BuildInfo } from './version';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
   host: HTMLElement;
   params: URLSearchParams;
+  /** The build info the About panel shows. */
+  buildInfo?: BuildInfo;
+  /** The bridge's build version, from each welcome (null when it does not say). */
+  onBridgeVersion?: (version: string | null) => void;
 }
 
 export interface LookAt {
@@ -114,6 +120,8 @@ export class App {
   readonly receptionEvents: Array<{ ev: ReceptionEvent; at: number; building: string | null }> = [];
   readonly audio: GameAudio;
   readonly reception: Reception;
+  /** M15: the office radio (E and R on it, fades with where you are, toast, display). */
+  readonly radio: RadioLink;
   /** Worker id → status on screen as of the last rendered frame, and when it got there. */
   readonly rendered = new Map<string, { status: Display; at: number }>();
   frames = 0;
@@ -199,7 +207,9 @@ export class App {
     // Sound (the first click, key or pointer lock unlocks it) and the receptionist in every lobby.
     this.audio = createGameAudio();
     this.hud.mountAudio(this.audio);
+    if (o.buildInfo) this.hud.mountAbout(o.buildInfo);
     this.reception = createReception({ audio: this.audio, overlay: this.hud.root, shadows: this.shadows });
+    this.radio = new RadioLink({ music: this.audio.music, toast: (m, ms, soft) => this.hud.toast(m, ms, 'info', soft), hudRadio: (n) => this.hud.setRadio(n) });
     this.city = new CityView(
       this.hud.floorList,
       this.shadows,
@@ -239,7 +249,7 @@ export class App {
     );
 
     this.fixture = /\/fixture\//.test(o.params.get('ws') ?? '');
-    const token = takeToken(window.location, safeSession(), (u) => history.replaceState(null, '', u));
+    const token = takeToken(window.location, safeStorage(), (u) => history.replaceState(null, '', u));
     this.token = token;
     this.noOpen = o.params.get('open') === 'none';
     this.url = bridgeUrl(window.location, token);
@@ -248,6 +258,7 @@ export class App {
       clientName: CLIENT,
       socket: (u) => new WebSocket(u) as unknown as SocketLike,
       handlers: {
+        onWelcome: (w) => o.onBridgeVersion?.(bannerVersion(w.server)),
         onSnapshot: (s) => this.applyChange(this.store.applySnapshot(s)),
         onEvent: (e) => this.onWorldEvent(e),
         onConn: (m) => this.laptops.onConn(m),
@@ -1392,6 +1403,14 @@ export class App {
       // M7: E looking at a wall board: its overlay.
       e.preventDefault();
       this.openBoard(this.target.id === 'board.issues' ? 'issues' : 'prs');
+    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'radio') {
+      // M15: E on the radio: the next genre.
+      e.preventDefault();
+      this.radio.cycle();
+    } else if (e.code === 'KeyR' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !e.altKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'radio') {
+      // M15: R on the radio: the next track.
+      e.preventDefault();
+      this.radio.skip();
     } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'own-desk') {
       e.preventDefault();
       this.sit();
@@ -1574,9 +1593,11 @@ export class App {
       // The receptionist looks at you and places the bubble while the lobby can be seen (hud.css hides it elsewhere).
       if (area === 'lobby' || area === 'street') this.reception.update(dt, this.fpCam);
       this.audio.setListener(this.fpCam);
+      this.radio.frame(area === 'floor', this.office);
       this.updateLookAt();
       if (this.planOpen && (moved || this.planDirty)) this.layoutPlanLabels();
     } else {
+      this.radio.frame(false, null);
       if (this.tween) {
         const k = Math.min(1, (performance.now() - this.tween.t0) / this.tween.ms);
         const e = 1 - (1 - k) ** 3;
@@ -1651,6 +1672,8 @@ export class App {
     };
     const labels: PlanLabel[] = [];
     for (const p of o.layout.props) {
+      // M15: the radio is a thing on the counter, not a placeholder to label.
+      if (p.id === 'radio') continue;
       const c = toScreen((p.box.min[0] + p.box.max[0]) / 2, 0, (p.box.min[2] + p.box.max[2]) / 2);
       labels.push({ ...c, text: p.label, kind: 'prop' });
     }
@@ -2058,9 +2081,10 @@ function zero(): Counts {
   return { working: 0, needsYou: 0, idle: 0, done: 0, total: 0 };
 }
 
-function safeSession(): Storage | null {
+/** Durable, so an installed app can start without the #token= URL; the helper's token survives its restarts. */
+function safeStorage(): Storage | null {
   try {
-    return window.sessionStorage;
+    return window.localStorage;
   } catch {
     return null;
   }

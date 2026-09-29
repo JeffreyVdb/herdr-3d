@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Box3, Prop } from '../world/layout';
 import { FONT } from './cards/atlasCards';
 import { OFFICE } from './palette';
+import { buildRadio, type RadioMesh } from './radio';
 
 /** Static placeholder props (boards, lounge, cabinet, …): a few meshes per floor, textures drawn once. */
 
@@ -119,6 +120,8 @@ export interface PropMeshes {
   group: THREE.Group;
   /** M7: puts another texture on the front of a board (its cork, drawn by the board's notes). */
   swapBoard(id: 'board.issues' | 'board.prs', tex: THREE.Texture): void;
+  /** M15: the radio on the lounge counter (null when the layout has none). */
+  radio: RadioMesh | null;
   dispose(): void;
 }
 
@@ -257,6 +260,9 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
     );
     add(mugs);
   }
+  const radioProp = byId.get('radio');
+  const radio = radioProp ? buildRadio(radioProp.box) : null;
+  if (radio) add(radio.group);
   const rug = new THREE.Mesh(
     new THREE.PlaneGeometry(layout.rug.x1 - layout.rug.x0, layout.rug.z1 - layout.rug.z0).rotateX(-Math.PI / 2),
     toon(OFFICE.rug),
@@ -346,6 +352,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
         front.needsUpdate = true;
       }
     },
+    radio,
     dispose() {
       group.traverse((o) => {
         if (o instanceof THREE.Mesh) {
