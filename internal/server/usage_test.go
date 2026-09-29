@@ -85,6 +85,47 @@ func TestWorkerUsage(t *testing.T) {
 	}
 }
 
+// A worker whose agent session changes to one whose transcript is not
+// there yet loses the old session's usage: in an upsert, and in the next
+// snapshot.
+func TestUsageGoesWithItsAgentSession(t *testing.T) {
+	const (
+		oldID = "0a0b0c0d-4444-4444-8444-444444444441"
+		newID = "0a0b0c0d-4444-4444-8444-444444444442"
+	)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "-home-u-w1", oldID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"type":"assistant","message":{"id":"m1","model":"claude-opus-5-5","usage":`+
+		`{"input_tokens":1000000,"output_tokens":100000}}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := startBridge(t, "", server.Options{Usage: &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: dir},
+		Interval: 10 * time.Millisecond, Throttle: time.Hour}})
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	w := worker("w1", "a", oldID, "working")
+	w.Harness = world.HarnessClaude
+	b.floor("s1", true, w)
+	id := c.until(proto.EvWorkerUsage).ID
+
+	w.AgentSession = newID
+	b.floor("s1", true, w)
+	for {
+		ev := c.until(proto.EvWorkerUpsert)
+		if ev.Worker.ID == id && ev.Worker.AgentSession == newID && ev.Worker.Usage == nil {
+			break
+		}
+	}
+	for _, sw := range b.connect(proto.Hello{}).snapshot().World.Workers {
+		if sw.ID == id && sw.Usage != nil {
+			t.Fatalf("session %s shows the old session's usage %+v", sw.AgentSession, sw.Usage)
+		}
+	}
+}
+
 func appendLine(t *testing.T, path, s string) {
 	t.Helper()
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)

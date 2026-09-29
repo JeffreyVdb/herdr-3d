@@ -781,7 +781,10 @@ Worker field **`usage`** (in snapshots and `worker.upsert`) and event **`worker.
 - `worker.usage` is a world event (it has a `seq` and is replayed). It goes out when the usage changed (anything but
   `updated_at`), and **at most once per 5 s per worker**: a change within 5 s of the last one waits, then goes out as
   the latest value. A worker's first usage goes out as soon as it is read. A worker that loses its `agent_session`
-  loses its `usage` (`worker.upsert` without it). Workers without an `agent_session` have none (plain shells), except
+  loses its `usage` (`worker.upsert` without it), and so does one whose agent session (or the Codex rollout picked for
+  it, below) changes, on the first check after it: that usage was the old session's. The new session's comes as a
+  `worker.usage` once its transcript is read (still at most once per 5 s; read in that same check, it replaces the old
+  one directly). Workers without an `agent_session` have none (plain shells), except
   a running Codex (below).
 - The bridge checks every worker's transcripts every 2 s, reading from a stored byte offset: complete lines only (an
   incomplete last line waits for the next read), so appending a line reads only that line. A file that shrank or was

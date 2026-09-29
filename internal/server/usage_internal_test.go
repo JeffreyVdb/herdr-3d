@@ -177,3 +177,69 @@ func TestUsageCodexWithoutSession(t *testing.T) {
 		t.Fatal("c's found session kept")
 	}
 }
+
+// A worker that switches to another agent session (or rollout) loses the
+// old one's usage at once, whether or not the new transcript is there yet;
+// the new one's usage comes as the throttle lets it.
+func TestUsageGoesWithItsSession(t *testing.T) {
+	const (
+		oldID = "0a0b0c0d-3333-4333-8333-333333333331"
+		newID = "0a0b0c0d-3333-4333-8333-333333333332"
+	)
+	dir := t.TempDir()
+	write := func(id string, in int) {
+		t.Helper()
+		path := filepath.Join(dir, "p", id+".jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		line := fmt.Sprintf(`{"type":"assistant","message":{"id":"m-%s","model":"claude-opus-5-5","usage":{"input_tokens":%d,"output_tokens":1}}}`+"\n", id, in)
+		if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(oldID, 1_000_000)
+	tr := newUsageTracker(UsageConfig{Roots: usage.Roots{ClaudeProjects: dir}})
+	ws := []usageWorker{{id: "w", harness: "claude", session: oldID}}
+	t0 := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	if ups := tr.poll(ws, t0); len(ups) != 1 || ups[0].usage == nil || ups[0].usage.Input != 1_000_000 {
+		t.Fatalf("first = %+v", ups)
+	}
+	ws[0].shown = true
+
+	// No transcript for the new session yet: the old usage goes, once.
+	ws[0].session = newID
+	if ups := tr.poll(ws, t0.Add(time.Second)); len(ups) != 1 || ups[0].usage != nil {
+		t.Fatalf("switched = %+v, want the usage gone", ups)
+	}
+	ws[0].shown = false
+	if ups := tr.poll(ws, t0.Add(time.Hour)); len(ups) != 0 {
+		t.Fatalf("later = %+v", ups)
+	}
+	// Its transcript appears: its usage, counted from its own lines.
+	write(newID, 7)
+	ups := tr.poll(ws, t0.Add(time.Hour+usage.MissRescan))
+	if len(ups) != 1 || ups[0].usage == nil || ups[0].usage.Input != 7 {
+		t.Fatalf("new session = %+v", ups)
+	}
+	ws[0].shown = true
+
+	// Back to the old one within the throttle: the new one's usage goes at
+	// once, the old one's comes when the throttle lets it.
+	at := t0.Add(time.Hour + usage.MissRescan)
+	ws[0].session = oldID
+	if ups := tr.poll(ws, at.Add(time.Second)); len(ups) != 1 || ups[0].usage != nil {
+		t.Fatalf("switched within the throttle = %+v, want the usage gone", ups)
+	}
+	ws[0].shown = false
+	if ups := tr.poll(ws, at.Add(5*time.Second)); len(ups) != 1 || ups[0].usage == nil || ups[0].usage.Input != 1_000_000 {
+		t.Fatalf("after the throttle = %+v", ups)
+	}
+	ws[0].shown = true
+	// Past the throttle, a switch to a readable session replaces the usage
+	// in one update.
+	ws[0].session = newID
+	if ups := tr.poll(ws, at.Add(time.Minute)); len(ups) != 1 || ups[0].usage == nil || ups[0].usage.Input != 7 {
+		t.Fatalf("switched past the throttle = %+v", ups)
+	}
+}

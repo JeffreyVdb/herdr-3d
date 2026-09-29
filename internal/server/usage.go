@@ -127,12 +127,18 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	seen := map[string]bool{}
 	for _, w := range ws {
 		seen[w.id] = true
+		clear := false
 		if key := w.harness + "/" + w.session; tr.keys[w.id] != key {
 			tr.keys[w.id] = key
 			tr.sessions[w.id] = nil
 			if w.session != "" {
 				tr.sessions[w.id] = usage.NewSession(w.harness, w.session, tr.cfg.Roots, tr.cfg.Pricing)
 			}
+			// Another agent session (or rollout): the usage shown was the
+			// old one's and goes now, unless the new one's goes out
+			// instead. The throttle still holds for the new one.
+			clear = w.shown
+			delete(tr.throttle.shown, w.id)
 		}
 		s := tr.sessions[w.id]
 		if s == nil {
@@ -142,12 +148,14 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			tr.throttle.forget(w.id)
 			continue
 		}
-		u, ok := s.Poll(now)
-		if !ok {
-			continue
+		if u, ok := s.Poll(now); ok {
+			if pub, emit := tr.throttle.offer(w.id, u, now); emit {
+				ups = append(ups, usageUpdate{id: w.id, usage: &pub})
+				continue
+			}
 		}
-		if pub, emit := tr.throttle.offer(w.id, u, now); emit {
-			ups = append(ups, usageUpdate{id: w.id, usage: &pub})
+		if clear {
+			ups = append(ups, usageUpdate{id: w.id})
 		}
 	}
 	for id := range tr.keys {
