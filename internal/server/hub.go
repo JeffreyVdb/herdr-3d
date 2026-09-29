@@ -121,6 +121,16 @@ type Options struct {
 	// again (defaults DefaultQuestionPoll, DefaultAnswerTimeout,
 	// DefaultPromptRetryWait).
 	QuestionPoll, AnswerTimeout, PromptRetryWait time.Duration
+
+	// M6 runs.
+	// RunsDir is write-code's runs directory, where the freelancers'
+	// reports are (<RunsDir>/<h3d_run>/<h3d_report>; "": no reports), and
+	// ReportPoll how often they are looked at (default DefaultReportPoll).
+	RunsDir    string
+	ReportPoll time.Duration
+	// RunLaunch finds the issue of an orchestrator the game started, from
+	// its run_launch record (default: the store's).
+	RunLaunch func(ctx context.Context, workerID string) (proto.IssueRef, bool)
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -178,6 +188,12 @@ type Hub struct {
 	lanes     map[string]*inputLane    // worker id → its input commands, in order
 	questions map[string]questionState // worker id → what its blocked screen asks
 	asking    map[string]bool          // worker id → its screen reader runs
+	// M6 launch
+	presets    map[string]store.Preset // by id (mirrors team_preset)
+	lastPreset map[string]string       // session → preset id (mirrors floor_preset_last)
+	runPending map[string]bool         // orchestrators of launches whose run id is not known yet
+
+	runs runsState // M6 runs
 }
 
 type floorState struct {
@@ -213,6 +229,10 @@ type workerMeta struct {
 	status                 string
 	statusSince            int64
 	hiredAt                int64
+	// M6 runs: an orchestrator's last known phase and pass.
+	phase   string
+	pass    int
+	passSet bool
 }
 
 // branchRead is a linked worktree's branch as read at.
@@ -306,6 +326,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		opts.ExitPause = defaultExitPause
 	}
 	termDefaults(&opts) // M5 term
+	runsDefaults(&opts) // M6 runs
 	var epoch [8]byte
 	_, _ = rand.Read(epoch[:])
 	h := &Hub{
@@ -332,6 +353,10 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		usage:         map[string]*proto.Usage{},
 	}
 	h.initTerm() // M5 term
+	h.initRuns() // M6 runs
+	if h.opts.RunLaunch == nil {
+		h.opts.RunLaunch = storeRunLaunch(st, h.log)
+	}
 	if err := h.reload(ctx); err != nil {
 		return nil, err
 	}
@@ -340,6 +365,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		return nil, err
 	}
 	if h.lastHire, err = st.LastHires(ctx); err != nil {
+		return nil, err
+	}
+	if err := h.loadLaunch(ctx); err != nil { // M6 launch
 		return nil, err
 	}
 	desks, err := st.Desks(ctx)
@@ -384,6 +412,10 @@ func (h *Hub) Run(ctx context.Context) error {
 	if h.opts.Usage != nil { // M5 usage
 		h.wg.Add(1)
 		go h.trackUsage(ctx)
+	}
+	if h.opts.RunsDir != "" { // M6 runs
+		h.wg.Add(1)
+		go h.trackReports(ctx)
 	}
 	for {
 		select {
@@ -489,6 +521,11 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startPrompt
 		case proto.CmdWorkerAnswer:
 			start = h.startAnswer
+		// M6 launch
+		case proto.CmdRunPrepare:
+			start = h.startRunPrepare
+		case proto.CmdRunStart:
+			start = h.startRunStart
 		}
 		if start != nil {
 			// Accepted: the audit row is written (or begun) and the reply
@@ -647,6 +684,9 @@ func (h *Hub) command(ctx context.Context, cmd proto.Command) (any, error) {
 		if err = decodeArgs(cmd.Args, &a); err == nil {
 			err = h.setSettings(ctx, a)
 		}
+	// M6 launch
+	case proto.CmdPresetCreate, proto.CmdPresetUpdate, proto.CmdPresetDelete:
+		data, err = h.presetCommand(ctx, cmd)
 	default:
 		err = fmt.Errorf("%w: %q", errUnknownCommand, cmd.T)
 	}
@@ -657,6 +697,7 @@ func (h *Hub) command(ctx context.Context, cmd proto.Command) (any, error) {
 		return nil, err
 	}
 	h.syncLayout()
+	h.relink() // M6 runs: a floor's repo may have changed
 	return data, nil
 }
 
@@ -731,7 +772,9 @@ func (h *Hub) applyFloor(ctx context.Context, u world.FloorObs) {
 	for _, ev := range evs {
 		h.emit(ev)
 	}
+	h.relink()          // M6 runs
 	h.afterObserve(ctx) // M5 term
+	h.fillRunIDs(ctx)   // M6 launch
 }
 
 func (h *Hub) removeFloor(u world.FloorGone) {
@@ -756,6 +799,7 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 	h.releaseNames(context.Background(), u.Session, nil, h.opts.Now())
 	h.log.Info("floor removed", "session", u.Session)
 	h.syncLayout()
+	h.relink()      // M6 runs
 	h.syncWatches() // M5 term
 }
 
@@ -771,7 +815,9 @@ func (h *Hub) resync(ctx context.Context, session string) {
 	for _, ev := range evs {
 		h.emit(ev)
 	}
+	h.relink()          // M6 runs
 	h.afterObserve(ctx) // M5 term
+	h.fillRunIDs(ctx)   // M6 launch
 }
 
 // syncWorkers assigns identities, desks and names to the observed workers
@@ -810,7 +856,8 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			unresolved = append(unresolved, w)
 		}
 	}
-	records := map[string]store.Worker{} // stored state of reconciled workers
+	records := map[string]store.Worker{}      // stored state of reconciled workers
+	var storedRuns map[string]store.WorkerRun // M6 runs: their phase and pass
 	if len(unresolved) > 0 {
 		taken := map[string]bool{}
 		for _, id := range assigned {
@@ -823,6 +870,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		for _, r := range recs {
 			records[r.ID] = r
 		}
+		storedRuns = h.storedRuns(ctx, session) // M6 runs
 		for _, op := range f.hires {
 			taken[op.id] = true // a hire's identity is only its own workspace
 		}
@@ -916,6 +964,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		} else if r, ok := records[id]; ok {
 			base = workerMeta{harness: r.Harness, model: r.Model, effort: r.Effort, status: r.Status, statusSince: r.StatusSince,
 				hiredAt: r.HiredAt}
+			base = withStoredRun(base, storedRuns[id]) // M6 runs
 		}
 		metas[i] = nextMeta(base, w, now)
 	}
@@ -925,6 +974,10 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			claimed[i] = true // its name was only reserved in memory
 		}
 	}
+
+	// M6 runs: freelancers sit next to their orchestrator.
+	links := h.links(h.members(session, obs, ids))
+	moved := h.seatNearOrch(f, desks, obs, ids, links, at)
 
 	used := map[int]bool{}
 	for _, d := range desks {
@@ -938,12 +991,18 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		id := ids[i]
 		order = append(order, id)
 		h.persist(ctx, id, session, w, metas[i])
+		h.persistRun(ctx, id, metas[i]) // M6 runs
 		if claimed[i] {
 			if err := h.st.ClaimName(ctx, session, names[i], id); err != nil {
 				h.log.Error("saving worker name failed", "worker", id, "name", names[i], "err", err)
 			}
 		}
 		desk, seated := desks[id]
+		if moved[id] { // M6 runs
+			if err := h.st.AssignDesk(ctx, session, desk, id); err != nil {
+				h.log.Error("saving desk failed", "worker", id, "desk", desk, "err", err)
+			}
+		}
 		if op := f.hires[id]; !seated && op != nil {
 			desk, seated = op.desk, true
 			desks[id] = desk
@@ -960,8 +1019,10 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			if err := h.st.AssignDesk(ctx, session, desk, id); err != nil {
 				h.log.Error("saving desk failed", "worker", id, "desk", desk, "err", err)
 			}
+			h.seatedNew(id, at) // M6 runs
 		}
 		next := workerView(id, session, w, metas[i], names[i], desk, h.resume[id])
+		h.withRun(next, w, metas[i], links[id]) // M6 runs
 		if w.Worktree != nil && w.Worktree.Linked && w.Worktree.CheckoutPath != "" {
 			next.Branch = h.branchOf(w.Worktree.CheckoutPath, at)
 		}
@@ -1011,8 +1072,13 @@ func (h *Hub) floorNames(session string) map[string]nameClaim {
 }
 
 func metaOf(w *proto.Worker) workerMeta {
-	return workerMeta{harness: w.Harness, model: w.Model, effort: w.Effort, status: w.Status, statusSince: w.StatusSince,
+	m := workerMeta{harness: w.Harness, model: w.Model, effort: w.Effort, status: w.Status, statusSince: w.StatusSince,
 		hiredAt: w.HiredAt}
+	m.phase = w.Phase // M6 runs
+	if w.Pass != nil {
+		m.pass, m.passSet = *w.Pass, true
+	}
+	return m
 }
 
 // branchTTL is how long a linked worktree's branch, read from its files,
@@ -1046,7 +1112,7 @@ func nextMeta(m workerMeta, w world.WorkerObs, now int64) workerMeta {
 	if m.status != w.Status || m.statusSince == 0 {
 		m.status, m.statusSince = w.Status, now
 	}
-	return m
+	return runMeta(m, w) // M6 runs
 }
 
 // releaseNames records that the owners of a floor's names who are not
@@ -1161,6 +1227,7 @@ func (h *Hub) persist(ctx context.Context, id, session string, w world.WorkerObs
 
 func sameIdentityMeta(a, b workerMeta) bool {
 	a.status, a.statusSince, b.status, b.statusSince = "", 0, "", 0
+	a.phase, a.pass, a.passSet, b.phase, b.pass, b.passSet = "", 0, false, "", 0, false // M6 runs: in worker_run
 	return a == b
 }
 
@@ -1252,6 +1319,7 @@ func (h *Hub) floorView(session string, f *floorState) proto.Floor {
 		s := *f.suggested
 		v.Suggested = &s
 	}
+	v.LastPreset = h.lastPresetOf(session) // M6 launch
 	if a, ok := h.assign[session]; ok {
 		if _, ok := h.buildings[a.BuildingID]; ok {
 			b, i := a.BuildingID, a.Index
@@ -1326,7 +1394,7 @@ func (h *Hub) syncLayout() {
 func (h *Hub) snapshot() proto.Snapshot {
 	hire := h.hireOptions()
 	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
-		HireOptions: &hire}
+		HireOptions: &hire, Presets: h.presetViews()} // M6 launch: presets
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

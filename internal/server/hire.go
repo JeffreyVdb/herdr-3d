@@ -110,7 +110,12 @@ type hireOp struct {
 	notify                     chan struct{}
 	workspaceID, pane          string
 	seen                       bool
+	launched                   hireLaunched // run.start's, else nil
 }
+
+// hireLaunched finishes a run.start's hire that succeeded (hub goroutine):
+// it records the launch and returns the ack data.
+type hireLaunched func(ctx context.Context, res proto.HireResult, rep *hireReport) any
 
 func (op *hireOp) signal() {
 	select {
@@ -334,6 +339,14 @@ func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	return h.beginHire(ctx, c, cmd, a, nil)
+}
+
+// beginHire is the hire of worker.hire and run.start: it validates a,
+// reserves the desk and name, mints the worker id and starts the hire.
+// launched, if set, runs on the hub goroutine once the hire succeeded and
+// returns the ack data instead of the HireResult (run.start).
+func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHireArgs, launched hireLaunched) error {
 	f, err := h.hireFloor(a.Session)
 	if err != nil {
 		return err
@@ -405,7 +418,7 @@ func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error
 	op := &hireOp{id: id, session: a.Session, desk: desk, extra: extra, name: name, label: a.Label, marker: "h3d-" + hex[:12],
 		agent: slug(name) + "-" + hex[:6], harness: a.Harness, model: a.Model, effort: a.Effort, cwd: cwd,
 		prompt: a.Prompt, worktree: a.Worktree, hiredAt: at.UnixMilli(), client: c, cmd: cmd,
-		notify: make(chan struct{}, 1)}
+		notify: make(chan struct{}, 1), launched: launched}
 	if a.Worktree {
 		op.branch = "h3d/" + op.agent
 	}
@@ -484,6 +497,7 @@ type hireReport struct {
 	Start       string   `json:"start,omitempty"`
 	Trust       string   `json:"trust,omitempty"`
 	Prompt      string   `json:"prompt,omitempty"`
+	Launch      string   `json:"launch,omitempty"` // run.start's launch id
 	Rollback    []string `json:"rollback,omitempty"`
 	Steps       []string `json:"steps"`
 }
@@ -932,13 +946,16 @@ func (h *Hub) finishHire(ctx context.Context, op *hireOp, res *proto.HireResult,
 				delete(h.names[op.session], op.name)
 			}
 		}
-		h.syncLayout()
-		if aerr := h.st.AuditEnd(ctx, op.auditID, opErr, rep); aerr != nil {
-			h.log.Error("audit log write failed", "err", aerr)
-		}
 		var data any
 		if res != nil {
 			data = *res
+			if op.launched != nil {
+				data = op.launched(ctx, *res, rep)
+			}
+		}
+		h.syncLayout()
+		if aerr := h.st.AuditEnd(ctx, op.auditID, opErr, rep); aerr != nil {
+			h.log.Error("audit log write failed", "err", aerr)
 		}
 		h.reply(op.client, op.cmd, data, opErr)
 	})

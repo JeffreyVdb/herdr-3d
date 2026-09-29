@@ -13,6 +13,8 @@ import { DeskSet } from './desks';
 import { MezzanineView } from './mezzanine';
 import { BODY_TINTS, OFFICE } from './palette';
 import { buildProps, signTexture, type PropMeshes } from './props';
+// M6: write-code crews.
+import { crewLookOf, type CrewLook } from './crewLook';
 
 export type Target =
   | { kind: 'worker'; id: string; name: string; label: string; desk: number }
@@ -20,6 +22,20 @@ export type Target =
   | { kind: 'board' | 'prop'; id: string; label: string; milestone: string }
   /** #20: your own desk in the corner office (never a worker desk slot: E sits you down). */
   | { kind: 'own-desk'; id: 'own-desk'; label: string; name: string };
+
+/** M6: a crew member as the office draws it (test hook). */
+export interface CrewInfo {
+  id: string;
+  name: string;
+  desk: number;
+  role: string;
+  life: string | null;
+  overCap: boolean;
+  stamp: string | null;
+  run: string | null;
+  display: Display;
+  parts: string[];
+}
 
 export const SEAT_Y = 0.45;
 export const CARD_Y = 1.62;
@@ -48,14 +64,29 @@ export interface AwaySeat {
 export const GLASS_IN = { color: 0x9fd3f0, opacity: 0.16 };
 
 /** Visual state for a worker (shared by the office and the city). */
-export function memberOf(v: WorkerView) {
+export function memberOf(v: WorkerView): { tint: number; cue: ReturnType<typeof modelCue>; display: Display; phase: number; crew?: CrewLook } {
   const h = hash32(v.worker.id);
-  return {
+  const m = {
     tint: BODY_TINTS[h % BODY_TINTS.length] ?? 0xffd84a,
     cue: modelCue(v.harness, v.worker.model),
     display: v.display,
     phase: ((h >>> 8) % 6283) / 1000,
   };
+  // M6: a crew member's role look (the model cue stays).
+  return v.crew ? { ...m, crew: crewLookOf(v.crew, v.worker.phase) } : m;
+}
+
+/**
+ * M6: how far a reporting freelancer at `slot` turns in its chair to hold
+ * its folder out towards its orchestrator's desk (0: not on this floor).
+ */
+export function turnTowards(slot: { seat: { x: number; z: number }; yaw: number }, orch: { seat: { x: number; z: number } } | undefined): number {
+  if (!orch) return 0;
+  const want = Math.atan2(orch.seat.x - slot.seat.x, orch.seat.z - slot.seat.z);
+  let d = (want - slot.yaw) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return Math.max(-1.3, Math.min(1.3, d));
 }
 
 /**
@@ -296,6 +327,8 @@ export class OfficeView {
   apply(view: FloorView, outline?: Outline): boolean {
     if (view.desks !== this.layout.desks || outlineKey(outline) !== this.outlineKey) return false;
     this.setAsleep(view.asleep);
+    // M6: every seat is known before any is set (a reporting freelancer turns towards its orchestrator's).
+    for (let i = 0; i < this.seats.length; i++) this.seats[i] = view.seats[i] ?? null;
     const seen = new Set<string>();
     for (let i = 0; i < view.seats.length; i++) {
       const v = view.seats[i] ?? null;
@@ -356,6 +389,10 @@ export class OfficeView {
     this.seats[i] = v;
     this.obstacleCache = this.targetCache = this.targetOwnCache = null;
     const mem = v ? memberOf(v) : null;
+    if (mem?.crew && v?.crew?.life === 'reporting' && v.crew.orchId) {
+      const o = this.seats.findIndex((x) => x?.worker.id === v.crew?.orchId);
+      mem.crew.turn = turnTowards(s, o >= 0 ? this.layout.slots[o] : undefined);
+    }
     const away = this.away.get(i);
     if (away) {
       // Someone is walking in or packing up: the animation draws them, the desk waits without its "+".
@@ -470,6 +507,16 @@ export class OfficeView {
       const c = this.cards.card(desk);
       return c ? [{ desk, ...c, tall: tall.has(desk) }] : [];
     });
+  }
+
+  /** M6: the crew members seated here with what is drawn at their desks, and the crew parts drawn at all (test hook). */
+  crewInfo(): { members: CrewInfo[]; shown: string[] } {
+    const members = this.seats.flatMap((v, i) =>
+      v?.crew
+        ? [{ id: v.worker.id, name: v.name, desk: i, role: v.crew.role, life: v.crew.life, overCap: v.crew.overCap, stamp: v.crew.stamp?.text ?? null, run: v.crew.run, display: v.display, parts: this.crowd.crewAt(i) }]
+        : [],
+    );
+    return { members, shown: this.crowd.crewShown() };
   }
 
   seat(i: number): WorkerView | null {

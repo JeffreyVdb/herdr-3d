@@ -1,0 +1,30 @@
+{
+  "repo": "JeffreyVdb/lab",
+  "issue": 4,
+  "workspaces": [
+    { "label": "ORCH|lobby", "agent": "codex", "status": "idle", "title": "Orchestrating #4: waiting on pass 1",
+      "model": ["codex", "gpt-6-sol", "high"],
+      "tokens": { "h3d_role": "orch", "h3d_run": "20260928-1500-lobby", "h3d_phase": "review", "h3d_pass": "1" } },
+    { "label": "GROUND|lobby-maps", "agent": "codex", "status": "done", "title": "Research: map tiles for the lobby",
+      "model": ["codex", "gpt-6-sol", "low"],
+      "tokens": { "h3d_role": "ground", "h3d_run": "20260928-1500-lobby", "h3d_report": "ground-lobby-maps.json" } },
+    { "label": "CODE|lobby|4|r1", "agent": "claude", "status": "done", "title": "Lobby directory with a floor map",
+      "model": ["claude", "claude-opus-5-5", "medium"],
+      "tokens": { "h3d_role": "code", "h3d_run": "20260928-1500-lobby", "h3d_round": "1", "h3d_report": "code-lobby-r1.json" } },
+    { "label": "REVIEW|lobby|4|r1", "agent": "codex", "status": "done", "title": "Review r1: lobby directory",
+      "model": ["codex", "gpt-6-sol", "high"],
+      "tokens": { "h3d_role": "review", "h3d_run": "20260928-1500-lobby", "h3d_round": "1", "h3d_report": "review-lobby-r1.json" } },
+    { "label": "UX|lobby|4|r1", "agent": "codex", "status": "idle", "title": "UX r1: lobby directory",
+      "model": ["codex", "gpt-6-sol", "high"],
+      "tokens": { "h3d_role": "ux", "h3d_run": "20260928-1500-lobby", "h3d_round": "1", "h3d_report": "ux-lobby-r1.json" } },
+    { "label": "CODE|lobby-api|4|r1", "agent": "claude", "status": "working", "title": "Directory API: floors and names",
+      "model": ["claude", "claude-opus-5-5", "medium"],
+      "tokens": { "h3d_role": "code", "h3d_run": "20260928-1500-lobby", "h3d_round": "1", "h3d_report": "code-lobby-api-r1.json" } },
+    { "label": "GROUND|lobby-a11y", "agent": "codex", "status": "idle", "title": "",
+      "model": ["codex", "gpt-6-sol", "low"],
+      "tokens": { "h3d_role": "ground", "h3d_run": "20260928-1500-lobby", "h3d_report": "ground-lobby-a11y.json" } },
+    { "label": "CODE|lobby-sign|4|r1", "agent": null, "status": "unknown", "title": "",
+      "model": ["claude", "claude-opus-5-5", "medium"],
+      "tokens": { "h3d_role": "code", "h3d_run": "20260928-1500-lobby", "h3d_round": "1", "h3d_report": "code-lobby-sign-r1.json" } }
+  ]
+}

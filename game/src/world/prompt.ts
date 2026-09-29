@@ -18,7 +18,8 @@ export function promptBlocker(v: WorkerView | null, floor: Pick<FloorView, 'asle
   if (floor?.asleep) return `${v.worker.session} is asleep. Wake it from the elevator (L) to prompt ${v.name}.`;
   if (!v.worker.agent_kind && !v.harness) return `${v.name} is a plain shell, not a coding agent: sit at its laptop (E) to type there.`;
   // The bridge refuses a prompt while the agent waits on its screen (invalid_state): the question comes first.
-  if (v.display === 'needs_you') {
+  // (M6: an over-cap orchestrator needs you too, but its agent waits for exactly that prompt.)
+  if (v.worker.status === 'blocked') {
     const n = answerable(v.worker.question)?.choices.length ?? 0;
     return n
       ? `${v.name} is waiting for an answer first: pick one on its card (${n === 1 ? '1' : `1–${Math.min(n, 9)}`}, 0 denies).`

@@ -1,0 +1,1 @@
+{"input_required":null,"summary":"Lobby directory lists every floor with its map and the people on it; head 9b41d02 on lab-lobby, 18 new tests, make test green.","crucial_bits":["src/lobby/directory.ts:1-120 — the list","src/lobby/map.ts:30-90 — the SVG map","test/lobby.test.ts — new"]}

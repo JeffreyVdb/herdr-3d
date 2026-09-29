@@ -33,6 +33,12 @@ import { PromptOverlay } from './ui/prompt';
 import { answerable, answerArgs, answerKeys, digitPick, pickLabel, questionLine, type Pick as AnswerPick } from './world/answer';
 import { faceSpots, needQueue, nextNeed, type NeedItem } from './world/next';
 import { promptBlocker } from './world/prompt';
+// M6 start: starting a run from an empty desk or the top bar; team presets.
+import { m6StartButtons, type M6StartButtons } from './ui/startButtons';
+import { PresetsPanel } from './ui/presets';
+import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/startRun';
+// M6 crew: freelancers walk in and out with their briefcase.
+import { crewRole, isFreelancer } from './world/crew';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
@@ -121,6 +127,10 @@ export class App {
   private pendingNeed: NeedItem | null = null;
   /** M5: workers with an answer on its way. */
   private readonly answering = new Set<string>();
+  /** M6 start: the start-run dialog, the team presets panel and their top bar buttons. */
+  readonly startRun: StartRunDialog;
+  readonly presetsPanel: PresetsPanel;
+  private readonly m6Buttons: M6StartButtons;
 
   private readonly r: THREE.WebGPURenderer;
   private readonly cityCam: THREE.PerspectiveCamera;
@@ -250,7 +260,19 @@ export class App {
       toast: (m: string, kind: 'info' | 'error') => this.hud.toast(m, kind === 'error' ? 6500 : 3600, kind),
       now: () => Date.now(),
     };
-    this.hire = new HireDialog(o.host, { ...dialogHost, reserve: (s, d) => this.reserve(s, d), held: (s) => this.heldDesks(s) });
+    const hireHost = { ...dialogHost, reserve: (s: string, d: number) => this.reserve(s, d), held: (s: string) => this.heldDesks(s) };
+    this.hire = new HireDialog(o.host, { ...hireHost, orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ session: s, desk: d }, true) } });
+    // M6 start
+    this.presetsPanel = new PresetsPanel(o.host, dialogHost);
+    this.startRun = new StartRunDialog(o.host, {
+      ...hireHost,
+      hireAt: (s, d) => {
+        this.hire.open(s, d);
+        this.hire.focusTab();
+      },
+      openPresets: (from) => this.presetsPanel.open(from),
+      started: (id) => this.followOrch(id),
+    });
     this.sendHome = new SendHomeDialog(o.host, dialogHost);
     this.arrivals = new Arrivals(this.shadows);
     this.walk.scene.add(this.arrivals.group);
@@ -278,6 +300,7 @@ export class App {
     this.hud.on('battery', () => this.toggleBattery());
     this.hud.on('issues', () => this.openBoard('Issues'));
     this.hud.on('prs', () => this.openBoard('Pull requests'));
+    this.m6Buttons = m6StartButtons(this.hud, { run: () => this.openStartRun(), presets: (b) => this.openPresets(b), off: () => runUnsupported(hireHost) });
     this.bindInput();
     this.resize();
     this.hud.setCity(0, 0, zero());
@@ -331,6 +354,9 @@ export class App {
     this.panels.refresh();
     this.hire.refresh();
     this.sendHome.refresh();
+    this.startRun.refresh();
+    this.presetsPanel.refresh();
+    this.m6Buttons.sync();
   }
 
   // ---- M4: hire, send home, walking in and out ------------------------------------
@@ -342,10 +368,12 @@ export class App {
    */
   private onWorldEvent(e: WorldEvent): void {
     let after: (() => void) | null = null;
-    if (e.t === 'worker.upsert' && !this.store.workers.has(e.worker.id) && isFreshHire(e.worker.hired_at, Date.now())) {
+    // M6: a freelancer that shows up after the snapshot walks in too, and one that goes (whatever the reason) walks out.
+    const freelancer = (w: Parameters<typeof crewRole>[0] | undefined) => !!w && isFreelancer(crewRole(w));
+    if (e.t === 'worker.upsert' && !this.store.workers.has(e.worker.id) && (isFreshHire(e.worker.hired_at, Date.now()) || (this.store.snapshots > 0 && freelancer(e.worker)))) {
       const id = e.worker.id;
       after = () => this.startArrival('in', id);
-    } else if (e.t === 'worker.removed' && e.reason === 'sent_home' && this.store.workers.has(e.id)) {
+    } else if (e.t === 'worker.removed' && this.store.workers.has(e.id) && (e.reason === 'sent_home' || freelancer(this.store.workers.get(e.id)))) {
       const spec = this.arrivalSpec('out', e.id);
       const v = this.store.workerView(e.id);
       this.arrivals.cancel(e.id);
@@ -375,7 +403,11 @@ export class App {
     if (!L || !slot) return null;
     const route = kind === 'out' ? walkOutRoute(L, ctx.plan, storey, v.desk) : walkInRoute(L, ctx.plan, storey, v.desk);
     const m = memberOf(v);
-    return { id, kind, session, desk: v.desk, name: v.name, route, seatYaw: slot.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase };
+    const spec: ArrivalSpec = { id, kind, session, desk: v.desk, name: v.name, route, seatYaw: slot.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase };
+    // M6: a freelancer's briefcase and look.
+    if (v.crew?.freelancer) spec.carry = 'briefcase';
+    if (m.crew) spec.crew = m.crew;
+    return spec;
   }
 
   private startArrival(kind: ArrivalKind, id: string): void {
@@ -463,7 +495,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.sendHome.isOpen || this.prompt.isOpen;
+    return this.hire.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -487,7 +519,59 @@ export class App {
     const r = await this.client.request(t, args);
     entry.result = r;
     if (!r.ok && r.code === 'unknown_command') this.unsupported.add(t);
+    if (!r.ok && r.code === 'unknown_command') this.m6Buttons.sync();
     return r;
+  }
+
+  // ---- M6 start: starting a run, team presets ------------------------------------------
+
+  /**
+   * The start-run dialog for a floor (default: the one you are on) and a desk
+   * (default: its first free one). M7's "Hand to a worker" calls it with an issue.
+   */
+  openStartRun(o: Partial<StartRunOptions> = {}): void {
+    const s = o.session ?? this.hereSession();
+    const fv = s ? this.store.floorView(s) : null;
+    if (!s || !fv) {
+      this.hud.toast('Walk onto an office floor to start a run there.', 2400);
+      return;
+    }
+    if (fv.asleep || fv.transition) {
+      this.hud.toast(`${s} is ${fv.transition === 'waking' ? 'waking up' : fv.transition === 'sleeping' ? 'going to sleep' : 'asleep'}. Wake it from the elevator (L) to start a run.`, 3200);
+      return;
+    }
+    const held = this.heldDesks(s);
+    const d = o.desk ?? firstFreeDesk(fv, held);
+    if (d === null) {
+      this.hud.toast(`No free desk on ${s} right now.`, 2400);
+      return;
+    }
+    const seat = fv.seats[d];
+    if (seat || held.has(d)) {
+      this.hud.toast(seat ? `${seat.name} sits at Desk ${d + 1}.` : `Someone is already on the way to Desk ${d + 1}.`, 2000);
+      return;
+    }
+    this.walker.release();
+    this.walker.stop();
+    this.panels.close();
+    const opts: StartRunOptions & { desk: number } = { session: s, desk: d };
+    if (o.issue !== undefined) opts.issue = o.issue;
+    this.startRun.open(opts);
+  }
+
+  /** The team presets panel (from the top bar, or over the start-run dialog). */
+  openPresets(from: HTMLElement | null = null): void {
+    this.walker.release();
+    this.walker.stop();
+    this.panels.close();
+    this.presetsPanel.open(from);
+  }
+
+  /** A run started: you turn to its orchestrator's desk on the floor you are on, and watch it walk in. */
+  private followOrch(id: string): void {
+    const v = this.store.workerView(id);
+    if (!v || this.mode !== 'floor' || this.office?.session !== v.worker.session) return;
+    this.faceWorker(id);
   }
 
   /** The elevator panel of a building (null: the unassigned lot); walking around, of the building you are in. */

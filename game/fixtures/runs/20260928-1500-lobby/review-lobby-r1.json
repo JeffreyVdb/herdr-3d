@@ -1,0 +1,1 @@
+{"verdict":"INCOMPLETE","input_required":null,"issues_found":[{"id":"L1-1","priority":"medium","explanation":"Could not run the e2e suite: the browser cache is missing on this runner.","evidence":"make e2e","impact":"The map rendering is unreviewed."}]}

@@ -55,6 +55,19 @@ const (
 	EnvPricing        = "HERDR_WORLD_PRICING"
 )
 
+// M6 runs: write-code's runs directory (the contract names this variable).
+const EnvRunsDir = "H3D_RUNS_DIR"
+
+// DefaultRunsDir is $XDG_STATE_HOME/write-code/runs (~/.local/state/…).
+func DefaultRunsDir() string {
+	dir := os.Getenv("XDG_STATE_HOME")
+	if dir == "" {
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(dir, "write-code", "runs")
+}
+
 // M5 term: the laptops' caps.
 const (
 	EnvMaxWatches   = "HERDR_WORLD_MAX_WATCHES"
@@ -227,6 +240,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	gitBin := fs.String("git", envOr(EnvGit, "git"), "git executable, for worktree hires and send-home checks ($"+EnvGit+")")
 	codexSessions := fs.String("codex-sessions", envOr(EnvCodex, codex.DefaultSessionsDir()), "Codex rollout directory, for the sleep backfill and usage ($"+EnvCodex+")")
 	claudeProjects := fs.String("claude-projects", envOr(EnvClaudeProjects, usage.DefaultClaudeProjects()), "Claude Code transcript directory, for usage ($"+EnvClaudeProjects+")")
+	runsDir := fs.String("runs-dir", envOr(EnvRunsDir, DefaultRunsDir()), "write-code runs directory, for the freelancers' reports ($"+EnvRunsDir+")") // M6 runs
 	pricingFile := fs.String("pricing", os.Getenv(EnvPricing), "JSON file of model prices merged over the built-in table ($"+EnvPricing+")")
 	sessions := fs.String("sessions", os.Getenv(EnvSessions), "only watch sessions whose name matches this regexp ($"+EnvSessions+")")
 	fs.DurationVar(&poll, "poll", poll, "session discovery interval ($"+EnvPoll+")")
@@ -295,6 +309,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
 		ClaudeProjects: *claudeProjects, Pricing: pricing,
 		MaxWatches: maxWatches, MaxObservers: maxObservers,
+		RunsDir: *runsDir, // M6 runs
 	})
 }
 
@@ -345,6 +360,12 @@ type ServeConfig struct {
 	// M5 term: MaxWatches and MaxObservers cap the laptop screens (0:
 	// server.DefaultMaxWatches, server.DefaultMaxObservers).
 	MaxWatches, MaxObservers int
+
+	// M6 runs: RunsDir is write-code's runs directory, where the
+	// freelancers' reports are read ("": no reports); ReportPoll how often
+	// (0: server.DefaultReportPoll).
+	RunsDir    string
+	ReportPoll time.Duration
 }
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
@@ -373,6 +394,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		opts.Usage = &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: cfg.ClaudeProjects, CodexSessions: cfg.CodexSessions},
 			Pricing: cfg.Pricing}
 	}
+	opts.RunsDir, opts.ReportPoll = cfg.RunsDir, cfg.ReportPoll // M6 runs
 	opts.Caps, opts.HireOptions, opts.Load = cfg.Caps, cfg.HireOptions, server.HostLoad
 	opts.TrustTimeout, opts.SeenTimeout, opts.ExitTimeout = cfg.TrustTimeout, cfg.SeenTimeout, cfg.ExitTimeout
 	if dir := cfg.CodexSessions; dir != "" {

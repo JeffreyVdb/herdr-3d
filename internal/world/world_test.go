@@ -45,6 +45,7 @@ func TestFromSnapshot(t *testing.T) {
 		Tokens:   map[string]string{"h3d_run": "20260928-1344-bridge-ro", "h3d_role": "orch", "h3d_pass": "0", "h3d_phase": "coding"},
 		Worktree: &world.Worktree{RepoRoot: "/home/u/devel/herdr-3d", RepoName: "herdr-3d", CheckoutPath: "/home/u/devel/herdr-3d"},
 		Role:     "orch", Run: "20260928-1344-bridge-ro", Harness: "claude",
+		RunInfo: world.Run{Phase: "coding", Pass: intp(0)}, // M6 runs
 	}
 	if !reflect.DeepEqual(orch, want) {
 		t.Fatalf("w1 =\n%+v\nwant\n%+v", orch, want)

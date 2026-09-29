@@ -7,10 +7,11 @@
 - `internal/` — shared Go packages. Bridge: `herdr` (the only door to herdr: the read-only client and the allowlisted
   control surface for wake/sleep, hire/send home and the laptops), `watch` (session discovery and per-session watchers), `world`
   (floors/workers from snapshots and `session.json`, identity matching, worker names), `store` (SQLite), `server` (hub +
-  WebSocket, wake/sleep, floor settings, hire/send home), `proto` (protocol v1 types and client), `gitremote` (GitHub
+  WebSocket, wake/sleep, floor settings, hire/send home, M6 team presets and `run.start`), `proto` (protocol v1 types and client), `gitremote` (GitHub
   origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires, send-homes and the Changes
   panel), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
-  usage and cost from their transcripts, read incrementally, and the pricing table). Helper: `helper` (ssh tunnel
+  usage and cost from their transcripts, read incrementally, and the pricing table), `runs` (M6: write-code runs, the
+  freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it). Helper: `helper` (ssh tunnel
   supervisor, game server, `/ws` proxy). `app` holds both command lines.
 - `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).
 - `game/` — the game: Vite + strict TypeScript + three.js (`three/webgpu`), pnpm.
@@ -146,6 +147,16 @@ bin/herdr-world cmd --socket "$sock" worker.fire '{"id":"<id>","worktree":"delet
 sqlite3 /tmp/h3d-mytask/world.db 'select cmd, ok, error, result from audit_log'
 ```
 
+To try starting a run (M6), in the same throwaway session and repository: link the floor to a repo name (the bridge never
+calls GitHub) and send an explicit, harmless `prompt` with a cheap `orch`, so no write-code run starts:
+
+```sh
+bin/herdr-world cmd --socket "$sock" floor.settings.set "{\"session\":\"$s\",\"repo\":\"h3d/lab\",\"default_cwd\":\"$repo\"}"
+bin/herdr-world cmd --socket "$sock" run.prepare "{\"session\":\"$s\",\"issue\":3}" | jq -r .data.prompt
+bin/herdr-world cmd --socket "$sock" run.start "{\"session\":\"$s\",\"desk_index\":3,\"issue\":3,\"preset\":\"<id from run.prepare>\",\"orch\":{\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\"},\"prompt\":\"Reply with exactly the word: pong\"}"
+sqlite3 /tmp/h3d-mytask/world.db 'select id, run_id, repo, issue_number, preset_name from run_launch'
+```
+
 herdr puts worktrees in `~/.herdr/worktrees/<repo name>/`: give a throwaway repository a unique name and remove that
 directory when done. Answering a trust dialog is remembered by the agent (`~/.claude.json`, `~/.codex/config.toml`) for
 that directory.
@@ -164,6 +175,7 @@ that directory.
 | `--resume-timeout` | `HERDR_WORLD_RESUME_TIMEOUT` | `10s`: how long a wake waits for the agents before the fallback, and again for the fallback and its result (a wake acks within about `--wake-timeout` + 2 × this) |
 | `--codex-sessions` | `HERDR_WORLD_CODEX_SESSIONS` | `$CODEX_HOME/sessions`, else `~/.codex/sessions`: Codex rollouts, for the sleep backfill and usage |
 | `--claude-projects` | `HERDR_WORLD_CLAUDE_PROJECTS` | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`: Claude Code transcripts, for usage (M5) |
+| `--runs-dir` | `H3D_RUNS_DIR` | `$XDG_STATE_HOME/write-code/runs`, else `~/.local/state/write-code/runs`: write-code's run directories, for the freelancers' reports (M6, [`docs/protocol.md` "Runs and freelancers"](docs/protocol.md#runs-and-freelancers)); read only |
 | `--pricing` | `HERDR_WORLD_PRICING` | none: a JSON file of model prices merged over the built-in table (`internal/usage/pricing.json`; format in [`docs/protocol.md` "Usage and cost"](docs/protocol.md#usage-and-cost)) |
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
 | `--warn-workers`, `--max-workers` | `HERDR_WORLD_WARN_WORKERS`, `HERDR_WORLD_MAX_WORKERS` | `48`, `96`: the same for all watched running floors together |
@@ -187,8 +199,10 @@ journalctl --user -u herdr-world -f
 `Runner` that plays herdr and systemd-run; hires and send-homes run against an in-memory herdr floor and git). Only
 `internal/gitops` runs the real `git`, on repositories in a temp dir (M5: `worker.changes` is checked against `git
 status` and `git diff --stat` there, byte for byte against `git diff`). `internal/usage` reads synthetic transcripts
-(`testdata/`, no real content) and temp files. `make integration` runs, with build tag `integration`, against the
-installed herdr:
+(`testdata/`, no real content) and temp files; `internal/runs` and the M6 hub tests read temp run directories and a
+synthetic over-cap run (`game/fixtures/runs/20260928-1400-overcap`, the very run the game's `demo-m6` floor is built
+from: `TestOverCapFixture` reads it in place). `make integration` runs,
+with build tag `integration`, against the installed herdr:
 
 - `TestIntegrationThrowawaySession`: starts a headless server for a fresh session `h3d-it-<random>`, creates
   workspaces, reports a custom agent's states through `herdr pane report-agent` (no real coding agent), closes a
@@ -215,6 +229,19 @@ installed herdr:
   trust this folder" choice resolves it; a prompt is submitted, one sent while it works is `queued`; a Bash tool
   permission prompt is a `permission` question that choice 1 approves (the command ran). About 30 s, a few haiku turns.
   The agent remembers the trust of the test's temporary directory.
+
+- `TestIntegrationRunStart` (M6 launch): `run.prepare` on a floor linked to a made-up repo (Build team by default), then
+  `run.start` twice into worktrees of a local repository with a bare "origin": a Claude orchestrator
+  (`claude-haiku-4-5-20251001`, `low`) on an issue and a Codex one (`gpt-6-luna`, `low`) on free text, both chosen in
+  the command over the preset's and given an explicit multi-line prompt (never `/write-code`) that only the whole text
+  answers: each must reply with it, so the prompt arrived intact as one prompt. Checks the desk, label, ack, `run_launch`
+  and `last_preset`, and that `herdr workspace report-metadata … --token h3d_run=…` fills `run_launch.run_id`. About
+  30 s, one short turn each.
+- `TestIntegrationRuns` (M6): a write-code run without agents: plain workspaces, an `ORCH|…`, a coder and a reviewer
+  created and tagged with `workspace report-metadata` the way the skill does it, and a label-only coder; reports
+  published by rename into a temporary `--runs-dir`. It checks the links, the issue from the floor's repo, the desks
+  next to the orchestrator, the report states (pending, ready with verdict and counts, pending again for a new
+  `h3d_report`, invalid) and `over_cap`.
 
 The screens the question parser is tested on (`internal/server/testdata/screens`) were captured the same way, from
 throwaway sessions (`herdr pane read <pane> --source visible`): Claude's trust dialog, its Bash and Write permission
@@ -318,8 +345,8 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
 - `src/net` — protocol v1 client (hello → welcome → snapshot | replay → events, reconnect with backoff from
   `since_seq` + `epoch`; commands through `request(t, args)`, matched to their `ack` / `error` by `req_id`, with a
   per-command timeout: 10 s, `floor.sleep` 30 s, `floor.wake` 60 s since its ack waits for every agent; M4:
-  `hire.prepare` 30 s, `worker.hire` 90 s, `worker.fire.prepare` 20 s, `worker.fire` 45 s; a drop fails what is in
-  flight) and the endpoint: same-origin `/ws?token=…` (the helper opens `/#token=<token>`; the game
+  `hire.prepare` 30 s, `worker.hire` 90 s, `worker.fire.prepare` 20 s, `worker.fire` 45 s; M6: `run.prepare` 30 s,
+  `run.start` 90 s; a drop fails what is in flight) and the endpoint: same-origin `/ws?token=…` (the helper opens `/#token=<token>`; the game
   keeps it in `sessionStorage` as `h3d.token` and strips it from the URL), `?ws=<url>` to point elsewhere.
 - `src/world` — the world store (snapshot + events, fallbacks for an older bridge without `name`, `desk_index`,
   `harness`, `model`, `effort`, `status_since`, `floor.desks`, and M3's `transition`, `settings`, `suggested`,
@@ -336,13 +363,24 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   (`answer.ts`: digits → a question's choice; Approve = the choice that says Yes / Trust / Allow / Proceed, else the
   first; Deny = the "No" choice, else a cancel), the Changes panel's model (`changes.ts`: the diff split per file and
   classified per line, file states, branch / upstream / base / stat lines, the truncation notice), who can be prompted
-  (`prompt.ts`, the 16 KiB rule) and which laptops are live (`screens.ts`). Pure logic, covered by vitest.
+  (`prompt.ts`, the 16 KiB rule) and which laptops are live (`screens.ts`). M6: team presets (`presets.ts`: the
+  world's `presets` and their events, by name; `known` false from an older bridge, which sends none) and the start-run
+  dialog's state (`startRun.ts`: the one ticket input read as an issue number of the floor's repo, an issue URL or free
+  text; the prompt preview's generated / custom states; what blocks Start or a preset's Save; the args of
+  `run.prepare`, `run.start` and `preset.update`); write-code crews (`crew.ts`: the
+  role from `role` or the label, a freelancer's lifecycle hired → onboarding → working → blocked / reporting from its
+  status, report and whether it worked since first seen, verdict stamps, the ORCH's phase / pass and over-cap; an
+  over-cap ORCH and a freelancer whose report asks count as needing you). Pure logic, covered by vitest.
 - `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy;
   M3b: the walk scene (`walk.ts`), the building and street from outside (`outside.ts`, baked into one mesh by
   `bake.ts`) and the lobby (`lobby.ts`). M3c: the corner office (`mezzanine.ts`: two merged vertex-coloured toon
   meshes, its glass merged into the office's window glass, one material). M4: `arrivals.ts` draws the walks (standing
   workers, the cardboard box with a mug, a plant and a photo, the closed laptop); the office shows a desk someone packs
-  up at or walks in to without its "+" (`OfficeView.setAway`).
+  up at or walks in to without its "+" (`OfficeView.setAway`). M6: the crew's looks (`crewLook.ts`: role wear, desk
+  items, the ORCH's pass board, the brief, the report folder with its verdict stamp, sweat and a red alarm clock over
+  the cap, a run-coloured badge; one InstancedMesh per part on the crowd, hidden while nobody wears it, none in the
+  city), the card's role tag, stamp and crew lines (`cards/crewCard.ts`), and freelancers walking in and out with a
+  briefcase, waving goodbye (`arrival.ts` `carry: 'briefcase'`).
   Cards and city badges are canvas atlases drawn as one instanced quad batch each (a cell per worker / floor, redrawn
   only when it changes). A DOM layer was benchmarked on the Mac and lost: moving DOM elements over the canvas cost
   2.6–4.3 ms of main thread per frame for 24 cards and ~8 ms for 30 city badges, against 0.5 ms for the atlas. The DOM
@@ -367,7 +405,9 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   answers this connection's watch count.
 - `src/ui` — the HUD (DOM over the canvas) and the M3 panels (`panels.ts`: elevator, buildings, floor settings,
   confirmations; modal `<dialog>`s that re-render live and keep focus); M4: the hire dialog (`hire.ts`) and the
-  send-home dialog (`sendHome.ts`), styled in `hire.css`; M5: the prompt overlay (`prompt.ts`, P: a modal like the M4
+  send-home dialog (`sendHome.ts`), styled in `hire.css`; M6: the start-run dialog (`startRun.ts`, the empty desk's
+  "Hire orchestrator" tab from `deskTabs.ts`, the top bar's Run and Presets from `startButtons.ts`) and the team presets
+  panel (`presets.ts`), styled in `start.css`, and the prompt bar's crew line (`crewBar.ts`, `crew.css`); M5: the prompt overlay (`prompt.ts`, P: a modal like the M4
   dialogs, low on the screen), the Changes panel (`changes.ts`, C: a non-modal side panel in the HUD under the top bar,
   so the floor stays in view and walkable; its diff is drawn a window of lines at a time), the look-at bar's usage and
   Approve / Deny (`promptBar.ts`), styled in `m5.css`, and the seat bar (`seat.ts`, `seat.css`). Hidden, named hooks
@@ -381,7 +421,10 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   herdr-3d and pastry, and herdr-3d's docs worker in the repo's main checkout), `demo-m5` (demo-m4 with a `question`
   on each blocked worker, shaped like the bridge's captured screens: Claude Code's trust dialog with "No, exit" first,
   its AskUserQuestion menu and a Bash permission, a Codex approval, one without a menu; and `usage` on most agents, one
-  priced as an unknown model, one with no model yet), `perf-floor60`, `perf-floor96` (96
+  priced as an unknown model, one with no model yet), `demo-m6` (demo-m5 with a `lab` floor on top of Work holding
+  two write-code runs built from the synthetic run dirs in `fixtures/runs/` (see its README) the way the bridge reads
+  them: the over-cap ORCH at pass 3 waiting for you with its pass-3 crew in its pod, REVIEW r3 `CHANGES_REQUIRED`
+  with 2 blockers; and a run with every other freelancer state, each verdict and an `input_required`), `perf-floor60`, `perf-floor96` (96
   desks, every worker needs you: the corner office's worst case), `perf-city240`. `pnpm fixtures` regenerates them,
   `pnpm fixtures:check` flags stale files.
   Like the bridge, a building lists its floors top to bottom, which is `index` order (index 0 on top); vitest fails
@@ -397,7 +440,13 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   (`invalid_state`: answer first); an answer needs the question's hash (else `stale`, after an upsert with the current
   question), and trusting a folder leaves the agent idle; `worker.changes` has staged / unstaged / untracked /
   committed files for a `working` worker, a 1.6 MiB diff cut at 256 KiB for a `perf…` label, `not_a_repo` under
-  `/scratch`; working agents send `worker.usage` every `simusage` ms), dev WebSocket → unix-socket proxy,
+  `/scratch`; working agents send `worker.usage` every `simusage` ms); M6: `fixture-start.ts`, whose rules are at its
+  top: "Build team" is seeded, presets are validated like the bridge's, `run.prepare` composes the prompt exactly like
+  its prompt builder, `run.start` is the M4 hire (the ORCH gets `role: orch` and its `run` from the label, the floor its
+  `last_preset`), and `simfail=no_m6` plays an M5 bridge (no `presets`, every M6 command `unknown_command`); `fixture-crew.ts`, a scripted freelancer:
+  `sim.crew {step: hire|onboard|work|report|leave}` (the simulator's own, like `sim.watches`) seats a `CODE`
+  freelancer of an ORCH's run at the free desk nearest it, gives it an agent, sets it working, hands in its report
+  (`verdict` / `blockers` / `input_required` / `summary`) and closes it; `simcrew=<ms>` plays that round by itself), dev WebSocket → unix-socket proxy,
   throwaway-herdr helper, live (`live-*.ts`) and Mac perf drivers.
 
 Run it:
@@ -406,6 +455,7 @@ Run it:
 make dev   # then open http://127.0.0.1:<port>/?ws=/fixture/demo   (Vite serves fixtures at /fixture/<name>)
            # M3 panels without a bridge: ?ws=%2Ffixture%2Fdemo-m3%3Fsim%3D1   (the ws value URL-encoded)
            # M4 hire / send home: ?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simcap%3Dscratchpad%3A3%3A4
+           # M6 crews: ?ws=%2Ffixture%2Fdemo-m6%3Fsim%3D1%26simcrew%3D4000&floor=lab
 pnpm -C game fixture-server   # standalone fixture server on a leased port: ?ws=ws://127.0.0.1:<port>/ws
 pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering commands on every connection
 # against a private bridge: node game/tools/ws-unix-proxy.ts --port <leased> --socket <bridge.sock>, then ?ws=ws://127.0.0.1:<leased>/ws
@@ -413,7 +463,7 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 
 | query param | effect |
 |---|---|
-| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors) |
+| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors; M6: `simcrew=<ms>` walks a scripted freelancer in and out) |
 | `backend=webgl2` | force WebGL2 |
 | `screens=<n>` | M5: how many laptops around you are live (default 4, at most 5; `0` watches none: only the laptop you sit at is watched) |
 | `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |
@@ -425,6 +475,9 @@ M5 on the simulating server (`ws=…?sim=1…`): `simusage=<ms>` sends working a
 (default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|changes_failed` for the next prompt,
 answer or changes, `simfail=input_failed` fails the next `worker.keys`, `simfail=observer_failed` closes the next watch
 after its first frame. E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1%26simms%3D300%26simusage%3D2000`.
+
+M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
+`simfail=no_m6` plays a bridge without them. E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simms%3D300`.
 
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings
@@ -523,6 +576,23 @@ another floor it opens the elevator with that floor picked (Enter rides there, a
 line and the looked-at worker's card show its usage (`≈$0.09 · 37k tokens · ctx 4%`; `≈$1.50*` with a tooltip when
 priced as an unknown model), the top bar the floor's `≈$` total and "N need you".
 
+Starting a run (M6): on an empty desk's hire dialog (E on its "+") the **Hire orchestrator** tab (Shift+Tab to the
+tabs, ← →), or the top bar's **Run** on an office floor (the first free desk; the Desk field changes it), opens the
+start-run dialog: one **Ticket** input (`7` or `#7` is an issue of the floor's linked repo, an issue URL carries its
+own, anything else is free text; the read-back under it says which), the desk, the **team preset** (the floor's last
+one, else "Build team"), the orchestrator's harness → model → effort (the preset's, until you pick one), extra
+instructions, the label, the worktree (on by default) and the **first prompt**. The prompt comes from the bridge
+(`run.prepare`) a moment after every change; typing in it makes it yours ("Edited"): later changes never overwrite it
+and a note says when the fields now make a different one, **Reset to generated** takes theirs again, and Start sends
+yours as `run.start`'s `prompt` (a generated one is left to the bridge). **Ctrl+Enter** (⌘+Enter) starts from anywhere
+in the dialog, plain Enter never does; Esc closes and focus goes back. Capacity and a failed fetch show as in the hire
+dialog. The orchestrator walks in like a hire and you are turned to face its desk. **Presets** (in the dialog, and in
+the city's top bar) lists the team presets: create, edit (the name and the five roles × harness / model / effort) and
+delete (confirmed); a taken name or a bad choice is said by the field. Esc in the editor goes back to the list. An
+older bridge (no `presets` in its world, or `unknown_command`) leaves Run, the tab and the presets off with the reason.
+Below 1440 px wide the top bar's Hire and Run show only their icons (their words stay for screen readers and in the
+tooltip), so the floor's name and the counts keep their room.
+
 Tests:
 
 ```sh
@@ -557,7 +627,13 @@ make shot                     # Playwright WebGL2: game/test-results/{shot,m2-ci
                               # the user's own branch (delete the worktree only); walks you cannot see; a
                               # read-only bridge; m4-{hire-dialog,send-home-dirty,send-home-clean,walk-in,
                               # walk-out-pack,walk-out,hire-capacity-warn,hire-capacity-full,
-                              # hire-fetch-failed}.png
+                              # hire-fetch-failed}.png; M6 on demo-m4 with sim=1 (m6-start.spec.ts): the
+                              # Hire orchestrator tab from the keyboard, an issue number, Ctrl+Enter, the walk-in
+                              # and facing the orchestrator; the top bar's Run (first free desk, another desk),
+                              # free text, extra instructions, Esc giving focus back, a floor without a repo; an
+                              # edited prompt through field changes, reset, sent; presets create / edit / delete
+                              # (name taken, live in the dialog, focus back); simfail=no_m6: m6-{start-run-issue,
+                              # start-run-edited,presets-list,presets-edit}.png
                               # M5 laptops on demo-m4 with sim=1 (m5-screen.spec.ts): the nearest four laptops in
                               # view live and the rest glowing, screens=0 watching nothing, walking along a pod with
                               # screens=2 (screens swap one at a time, the passed ones frozen, no churn looking left
@@ -683,6 +759,11 @@ floor N preselected). `cards()` entries add `ask` (a question: text, choices, se
 worker's line) and `tall`. `needs()` (who needs you in N's order), `nextNeed()` (presses N: who it went to),
 `openPrompt(id)`, `openChanges(id)`, `face(id)` (stands you facing a worker of your floor, as N does; true when look-at
 picks it).
+
+M6 crew: `crew()` (the floor with an interior: per crew member its `desk`, `role`, `life`, `overCap`, `stamp`, `run`,
+`display` and the crew `parts` drawn at its desk; `shown`: the crew parts drawn at all), `simCrew(args)` (one
+`sim.crew` step of the simulator's scripted freelancer). `cards()` entries add `tag`, `stamp` and `crew` (the
+looked-at crew member's lines); `arrivals()` add `carry` (box | briefcase), `briefcase` and `wave`.
 
 ### Audio and voice lines
 

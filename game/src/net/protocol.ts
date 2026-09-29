@@ -33,6 +33,8 @@ export interface Floor {
   settings?: FloorSettings;
   /** M3: bridge-derived defaults (effective value = `settings.X ?? suggested.X`). */
   suggested?: FloorSuggested;
+  /** M6 start: the team preset of the last successful `run.start` here (omitted: none, or it was deleted). */
+  last_preset?: string;
 }
 
 export type FloorTransition = 'waking' | 'sleeping';
@@ -136,6 +138,8 @@ export interface World {
   workers: Worker[];
   /** M3 */
   hire_options?: HireOptions;
+  /** M6 start: team presets by name (absent from an older bridge). */
+  presets?: Preset[];
 }
 
 export interface Hello {
@@ -217,7 +221,10 @@ export type WorldEvent =
   | WorkerUpsert
   | WorkerStatusEvent
   | WorkerRemoved
-  | WorkerUsageEvent;
+  | WorkerUsageEvent
+  // M6 start
+  | PresetUpsert
+  | PresetRemoved;
 
 export interface ErrorMessage {
   t: 'error';
@@ -358,6 +365,23 @@ export interface CommandArgs {
   'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number };
   'terminal.unwatch': { id: string };
   'worker.keys': { id: string; input: KeyItem[] };
+  // M6 start: team presets and starting a run.
+  'preset.create': { name: string; roles: PresetRoles };
+  /** `roles` replaces all five. */
+  'preset.update': { id: string; name?: string; roles?: PresetRoles };
+  'preset.delete': { id: string };
+  'run.prepare': RunTicketArgs & { session: string; preset?: string; orch?: Hire; extra?: string };
+  'run.start': RunTicketArgs & {
+    session: string;
+    desk_index: number;
+    orch: Hire;
+    preset: string;
+    extra?: string;
+    worktree?: boolean;
+    label?: string;
+    /** The edited preview; absent: the bridge composes it. */
+    prompt?: string;
+  };
 }
 
 // M5: blocked workers' questions, usage, and the acks of the prompt, answer and Changes commands (docs/protocol.md
@@ -485,6 +509,9 @@ const EVENT_TYPES = new Set([
   'worker.status',
   'worker.removed',
   'worker.usage',
+  // M6 start
+  'preset.upsert',
+  'preset.removed',
 ]);
 
 type Obj = Record<string, unknown>;
@@ -538,6 +565,11 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
       return isStr(o.id);
     case 'worker.usage':
       return isStr(o.id) && isObj(o.usage);
+    // M6 start
+    case 'preset.upsert':
+      return isObj(o.preset) && isStr(o.preset.id) && isStr(o.preset.name) && isObj(o.preset.roles);
+    case 'preset.removed':
+      return isStr(o.id);
   }
   return false;
 }
@@ -599,4 +631,110 @@ export function isTerminalFrame(m: ServerMessage): m is TerminalFrame {
 export function isTerminalClosed(m: ServerMessage): m is TerminalClosed {
   const o = m as unknown as Obj;
   return m.t === 'terminal.closed' && isStr(o.id) && isStr(o.reason);
+}
+
+// M6 start: team presets and starting a run (docs/protocol.md "Team presets and starting a run").
+
+/** The five roles of a run's team. */
+export type PresetRole = 'orch' | 'coder' | 'reviewer' | 'ux' | 'researcher';
+
+export type PresetRoles = Record<PresetRole, Hire>;
+
+export interface Preset {
+  /** `p_<12 hex>`. */
+  id: string;
+  name: string;
+  /** The bridge seeded it ("Build team"); only marks its origin. */
+  seeded?: boolean;
+  roles: PresetRoles;
+}
+
+export interface PresetUpsert {
+  t: 'preset.upsert';
+  seq: number;
+  preset: Preset;
+}
+
+export interface PresetRemoved {
+  t: 'preset.removed';
+  seq: number;
+  id: string;
+}
+
+/** Exactly one of `issue` (a number, `"#3"`, `"3"` or an issue URL) or `text`; `run.prepare` also takes neither. */
+export interface RunTicketArgs {
+  issue?: number | string;
+  text?: string;
+}
+
+export type RunTicket = { kind: 'issue'; repo: string; number: number; url: string } | { kind: 'text'; text: string };
+
+/** `run.prepare` ack: the start-run dialog's defaults and its live prompt preview. */
+export interface RunPrepare {
+  /** "" while there is no ticket yet (or no preset at all). */
+  prompt: string;
+  /** "" while there is no ticket yet. */
+  label: string;
+  ticket?: RunTicket | null;
+  /** "" when there is no preset at all. */
+  preset: string;
+  /** The asked-for or the preset's orchestrator; null with no preset and none asked for. */
+  orch: Hire | null;
+  cwd: string;
+  git: HireGit | null;
+  capacity: HireCapacity;
+}
+
+/** `run.start` ack: the `worker.hire` ack plus the launch and the prompt that was sent. */
+export interface RunStartAck extends HireAck {
+  launch_id: string;
+  prompt: string;
+}
+
+// M6 crew: write-code runs and freelancers (docs/protocol.md "Runs and freelancers"). All optional; an older bridge
+// sends none of them (the game then reads the role from the label and shows no report, phase or pass).
+
+/** M6: the GitHub issue a run works on. */
+export interface WorkerIssue {
+  /** `owner/name`. */
+  repo: string;
+  number: number;
+}
+
+/** M6: a freelancer's report as the bridge read it (`<runs-dir>/<h3d_run>/<h3d_report>`). */
+export interface WorkerReport {
+  /** `pending` (no file yet), `ready`, `invalid`. */
+  state: 'pending' | 'ready' | 'invalid' | string;
+  /** Unix ms, the file's mtime. */
+  at?: number;
+  /** Reviewers: `PASS` | `CHANGES_REQUIRED` | `INCOMPLETE`. */
+  verdict?: string;
+  /** Reviewers: `issues_found` with priority BLOCKER, and all of them. */
+  blockers?: number;
+  issues?: number;
+  /** The worker is blocked on its orchestrator or you (≤ 500 bytes). */
+  input_required?: string | null;
+  /** Coders / researchers: the first 300 bytes of their summary. */
+  summary?: string;
+  /** `invalid`: why. */
+  error?: string;
+}
+
+// Declaration merging: the M6 fields of a worker, next to the ones above.
+export interface Worker {
+  /** M6: the write-code round (`h3d_round`, else the label's `|r<N>`). */
+  round?: number;
+  /** M6: the ticket field of a freelancer's label (or `h3d_ticket`). */
+  ticket?: string;
+  issue?: WorkerIssue;
+  /** M6, freelancers: the worker id of its orchestrator. */
+  orch_id?: string;
+  /** M6, orchestrators: `research|coding|review|fixing|waiting_user|pr|done` (others passed through). */
+  phase?: string;
+  /** M6, orchestrators: review passes so far. */
+  pass?: number;
+  /** M6, orchestrators: past the 3-pass cap (or at it, waiting for you). */
+  over_cap?: boolean;
+  /** M6, freelancers with a report token. */
+  report?: WorkerReport;
 }

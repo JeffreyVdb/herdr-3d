@@ -21,6 +21,8 @@
 // `simcap=<session>:<soft>:<hard>[,…]` sets floors' worker caps. M5: `simusage=<ms>` sends working agents'
 // `worker.usage` that often (default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|
 // changes_failed` for the next prompt / answer / changes (tools/fixture-panels.ts).
+// M6 crew: `simcrew=<ms>` walks a scripted freelancer through its lifecycle by
+// itself (tools/fixture-crew.ts; `sim.crew` steps it on demand).
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -152,6 +154,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             ...(q.get('simfail') ? { fail: q.get('simfail') as string } : {}),
             ...(q.get('simcap') ? { caps: parseCaps(q.get('simcap') as string) } : {}),
             ...(q.get('simusage') !== null ? { usageMs: Math.max(0, Number(q.get('simusage')) || 0) } : {}),
+            // M6 crew: the scripted freelancer plays by itself (tools/fixture-crew.ts).
+            ...(q.get('simcrew') !== null ? { crewMs: Math.max(0, Number(q.get('simcrew')) || 0) } : {}),
           }
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {

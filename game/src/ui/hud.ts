@@ -7,6 +7,8 @@ import { CHIP_TEXT } from '../world/derive';
 import { ICON as DOM_ICON } from './dom';
 import { mountAudioControls } from './audioControls';
 import { answerKeyEls, promptBarAria, promptBarKey, usageChip } from './promptBar';
+// M6 crew: role, run, issue and report on the bar.
+import { crewBarKey, crewLine } from './crewBar';
 import { usageTotal, type UsageTotal } from '../world/usage';
 import type { GameAudio } from '../audio';
 
@@ -169,6 +171,7 @@ export class Hud {
     this.buildings.hidden = mode !== 'city';
     this.elevator.hidden = mode === 'city';
     this.hire.hidden = mode === 'city' || this.root.dataset.area !== 'floor';
+    this.syncExtras();
     this.reticle.hidden = mode === 'city';
     this.floorList.hidden = this.buildingList.hidden = mode !== 'city';
     if (mode === 'city') {
@@ -277,6 +280,24 @@ export class Hud {
     this.root.dataset.area = area;
     const onFloor = area === 'floor';
     this.issues.hidden = this.prs.hidden = this.hire.hidden = this.mode === 'city' || !onFloor;
+    this.syncExtras();
+  }
+
+  // ---- M6 start: more top bar buttons (Run on a floor, Team presets in the city) -------
+
+  private readonly extras: Array<{ b: HTMLButtonElement; show: (mode: 'city' | 'floor', area: string | undefined) => boolean }> = [];
+
+  /** Adds a top bar button right after Hire or Buildings, shown while `show` says so. */
+  addTopbarButton(b: HTMLButtonElement, after: 'hire' | 'buildings', show: (mode: 'city' | 'floor', area: string | undefined) => boolean): void {
+    const prev = this.extras.filter((x) => x.b.previousElementSibling === (after === 'hire' ? this.hire : this.buildings)).at(-1)?.b;
+    (prev ?? (after === 'hire' ? this.hire : this.buildings)).after(b);
+    b.type = 'button';
+    this.extras.push({ b, show });
+    this.syncExtras();
+  }
+
+  private syncExtras(): void {
+    for (const x of this.extras ?? []) x.b.hidden = !x.show(this.mode, this.root.dataset.area);
   }
 
   /** The look-at prompt bar. */
@@ -285,6 +306,7 @@ export class Hud {
     const shown = w ? [w.name, w.display, taskLine(w.worker), modelLabel(w.harness, w.worker.model, w.worker.effort)] : [];
     // M5: the usage and the question on the bar.
     if (w) shown.push(...promptBarKey(w));
+    if (w) shown.push(...crewBarKey(w));
     const key = t ? JSON.stringify([t.kind, t.id, ...shown]) : '';
     if (key === this.promptKey) return;
     this.promptKey = key;
@@ -360,7 +382,8 @@ export class Hud {
       keys.append(disabled('E', 'Open', `Arrives in ${t.milestone}`));
       this.prompt.setAttribute('aria-label', t.label);
     }
-    this.prompt.replaceChildren(line, keys);
+    const crew = t.kind === 'worker' && w ? crewLine(w) : null;
+    this.prompt.replaceChildren(...(crew ? [line, crew, keys] : [line, keys]));
     this.prompt.hidden = false;
   }
 

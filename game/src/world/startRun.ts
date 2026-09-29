@@ -1,0 +1,221 @@
+/**
+ * Starting a run (M6): the start-run dialog's and the presets panel's state
+ * as pure functions, so vitest covers them. The ticket input (an issue
+ * number, an issue URL or free text, detected as you type), the prompt
+ * preview's generated / custom states, what blocks Start or Save, and the
+ * args `run.prepare`, `run.start` and `preset.*` send.
+ */
+
+import type { CommandArgs, Hire, HireOptions, Preset, PresetRoles, RunPrepare } from '../net/protocol';
+import { modelsFor } from './hire';
+import { PRESET_ROLES, ROLE_LABEL, type PresetBook } from './presets';
+import { effortsFor } from './settings';
+
+const bytes = (s: string) => new TextEncoder().encode(s).length;
+
+// ---- the ticket ------------------------------------------------------------------
+
+/** At most this many bytes of free text (the bridge's limit). */
+export const TICKET_TEXT_MAX = 4096;
+/** At most this many bytes of extra instructions. */
+export const EXTRA_MAX = 8192;
+
+export type TicketInput =
+  | { kind: 'empty' }
+  /** `repo` null: a bare number on a floor with no linked repo (`why` says so). */
+  | { kind: 'issue'; number: number; repo: string | null; url: string | null; from: 'number' | 'url'; arg: number | string; why: string | null }
+  | { kind: 'text'; text: string; why: string | null };
+
+const ISSUE_URL = /^https:\/\/github\.com\/([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})\/issues\/(\d{1,9})\/?(?:[?#]\S*)?$/;
+const ISSUE_NUMBER = /^#?(\d{1,9})$/;
+
+export const issueUrl = (repo: string, n: number) => `https://github.com/${repo}/issues/${n}`;
+
+/**
+ * What the one ticket input holds: `3` or `#3` is an issue of the floor's
+ * linked repo (`repo`: `settings.repo ?? suggested.repo`), an issue URL
+ * carries its own repo, anything else is free text (trimmed; it may span lines).
+ */
+export function parseTicket(input: string, repo: string | null | undefined): TicketInput {
+  const t = input.trim();
+  if (!t) return { kind: 'empty' };
+  const num = ISSUE_NUMBER.exec(t);
+  if (num) {
+    const n = Number(num[1]);
+    if (n < 1) return { kind: 'text', text: t, why: 'Issue numbers start at 1.' };
+    const r = repo || null;
+    return { kind: 'issue', number: n, repo: r, url: r ? issueUrl(r, n) : null, from: 'number', arg: n, why: r ? null : 'This floor has no linked repo: paste the issue’s URL, or link a repo in the floor settings.' };
+  }
+  const url = ISSUE_URL.exec(t);
+  if (url) {
+    const r = `${url[1]}/${url[2]}`;
+    const n = Number(url[3]);
+    if (n < 1) return { kind: 'text', text: t, why: 'Issue numbers start at 1.' };
+    const u = issueUrl(r, n);
+    return { kind: 'issue', number: n, repo: r, url: u, from: 'url', arg: u, why: null };
+  }
+  return { kind: 'text', text: t, why: bytes(t) > TICKET_TEXT_MAX ? `The ticket text is at most ${TICKET_TEXT_MAX} bytes.` : null };
+}
+
+/** The ticket's args (`issue` or `text`, or neither while there is none or it cannot be sent). */
+export function ticketArgs(t: TicketInput): { issue?: number | string; text?: string } {
+  if (t.kind === 'issue' && !t.why) return { issue: t.arg };
+  if (t.kind === 'text' && !t.why) return { text: t.text };
+  return {};
+}
+
+/** What the dialog says it read, e.g. "Issue #3 · JeffreyVdb/lab". */
+export function ticketLine(t: TicketInput): string {
+  if (t.kind === 'empty') return 'An issue number, an issue URL, or what to build in your own words.';
+  if (t.kind === 'issue') return t.repo ? `Issue #${t.number} · ${t.repo}` : `Issue #${t.number}`;
+  const words = t.text.split(/\s+/).filter(Boolean).length;
+  return `Free text · ${words} ${words === 1 ? 'word' : 'words'}`;
+}
+
+// ---- the prompt preview --------------------------------------------------------------
+
+/**
+ * The preview: `generated` is the bridge's latest `run.prepare` prompt, `text`
+ * what the textarea holds. Until the user edits it, it follows `generated`;
+ * once edited it is custom and later field changes never overwrite it (the
+ * dialog offers "Reset to generated" instead).
+ */
+export interface Preview {
+  generated: string;
+  text: string;
+  custom: boolean;
+}
+
+export const emptyPreview = (): Preview => ({ generated: '', text: '', custom: false });
+
+/** A new prompt from `run.prepare`. */
+export function previewGenerated(p: Preview, prompt: string): Preview {
+  return p.custom ? { ...p, generated: prompt } : { generated: prompt, text: prompt, custom: false };
+}
+
+/** The user typed in the preview; typed back to the generated prompt it follows the fields again. */
+export function previewEdited(p: Preview, text: string): Preview {
+  return { ...p, text, custom: text !== p.generated };
+}
+
+export function previewReset(p: Preview): Preview {
+  return { ...p, text: p.generated, custom: false };
+}
+
+/** Custom, and the fields now generate something else. */
+export function previewStale(p: Preview): boolean {
+  return p.custom && p.text !== p.generated;
+}
+
+/** `run.start`'s `prompt`: only a custom one (otherwise the bridge composes it). */
+export function previewArg(p: Preview): string | undefined {
+  return p.custom ? p.text : undefined;
+}
+
+// ---- the form ---------------------------------------------------------------------------
+
+export interface RunForm {
+  ticket: string;
+  desk: number;
+  /** '' until the first prepare says which one is the default. */
+  preset: string;
+  orch: Hire | null;
+  extra: string;
+  worktree: boolean;
+  /** '' = the generated label (`run.prepare`'s). */
+  label: string;
+}
+
+/** `run.prepare` args for the form as it is. */
+export function prepareArgs(session: string, f: RunForm, t: TicketInput): CommandArgs['run.prepare'] {
+  const a: CommandArgs['run.prepare'] = { session, ...ticketArgs(t) };
+  if (f.preset) a.preset = f.preset;
+  if (f.orch) a.orch = { ...f.orch };
+  const extra = f.extra.trim();
+  if (extra && bytes(f.extra) <= EXTRA_MAX) a.extra = f.extra;
+  return a;
+}
+
+/** Why Start is off (null: it can be pressed); `desk` and capacity are checked by the dialog. */
+export function startBlocker(f: RunForm, t: TicketInput, p: Preview, options: HireOptions, book: PresetBook): string | null {
+  if (t.kind === 'empty') return 'Say what to work on: an issue number, an issue URL or free text.';
+  if (t.why) return t.why;
+  if (!book.get(f.preset)) return book.list().length ? 'Choose a team preset.' : 'There is no team preset yet: create one first.';
+  const o = f.orch;
+  if (!o || !options[o.harness]) return 'Choose the orchestrator’s harness.';
+  if (!modelsFor(options, o.harness).includes(o.model)) return 'Choose the orchestrator’s model.';
+  if (!effortsFor(options, o.harness, o.model).includes(o.effort)) return 'Choose the orchestrator’s effort.';
+  if (bytes(f.extra) > EXTRA_MAX) return `Extra instructions are at most ${EXTRA_MAX} bytes.`;
+  const label = f.label.trim();
+  if (bytes(label) > 64) return 'The label is at most 64 bytes.';
+  if (label.startsWith('-')) return 'The label can’t start with “-”.';
+  if (p.custom) {
+    if (!p.text.trim()) return 'The prompt is empty: type one, or reset it to the generated one.';
+    if (p.text.trim().startsWith('--')) return 'The prompt can’t start with “--” (herdr would read it as a flag).';
+  }
+  return null;
+}
+
+/** `run.start` args: the label only when typed, the worktree only when the folder is a repo, the prompt only when custom. */
+export function startArgs(session: string, f: RunForm, t: TicketInput, p: Preview, prep: RunPrepare | null, worktreeOk: boolean): CommandArgs['run.start'] {
+  const a: CommandArgs['run.start'] = { session, desk_index: f.desk, ...ticketArgs(t), orch: { ...(f.orch as Hire) }, preset: f.preset };
+  if (f.extra.trim()) a.extra = f.extra;
+  a.worktree = !!prep?.git && f.worktree && worktreeOk;
+  const label = f.label.trim();
+  if (label) a.label = label;
+  const prompt = previewArg(p);
+  if (prompt !== undefined) a.prompt = prompt;
+  return a;
+}
+
+// ---- presets ------------------------------------------------------------------------------
+
+/** "claude · claude-opus-5-5 · medium". */
+export const hireLine = (h: Hire) => `${h.harness} · ${h.model} · ${h.effort}`;
+
+/** One line per role for a preset's row in the list. */
+export function presetLines(p: Preset): Array<{ role: string; line: string }> {
+  return PRESET_ROLES.map((r) => ({ role: ROLE_LABEL[r], line: hireLine(p.roles[r]) }));
+}
+
+export interface PresetDraft {
+  name: string;
+  roles: PresetRoles;
+}
+
+const sameHire = (a: Hire, b: Hire) => a.harness === b.harness && a.model === b.model && a.effort === b.effort;
+const CONTROL = /[\u0000-\u001f\u007f]/;
+
+/** Why a draft cannot be saved (null: it can); `except` is the preset being edited. */
+export function presetBlocker(d: PresetDraft, options: HireOptions, book: PresetBook, except = ''): { field: 'name' | 'roles'; why: string } | null {
+  const name = d.name.trim();
+  if (!name) return { field: 'name', why: 'Give the preset a name.' };
+  if (bytes(name) > 40) return { field: 'name', why: 'The name is at most 40 bytes.' };
+  if (CONTROL.test(name)) return { field: 'name', why: 'The name can’t hold control characters.' };
+  if (book.nameTaken(name, except)) return { field: 'name', why: `Another preset is already called “${name}”.` };
+  for (const r of PRESET_ROLES) {
+    const h = d.roles[r];
+    const ok = !!options[h.harness] && modelsFor(options, h.harness).includes(h.model) && effortsFor(options, h.harness, h.model).includes(h.effort);
+    if (!ok) return { field: 'roles', why: `Choose a harness, model and effort the bridge offers for ${ROLE_LABEL[r].toLowerCase()}.` };
+  }
+  return null;
+}
+
+/** `preset.update` args with only what changed (null: nothing did). */
+export function presetPatch(p: Preset, d: PresetDraft): CommandArgs['preset.update'] | null {
+  const a: CommandArgs['preset.update'] = { id: p.id };
+  const name = d.name.trim();
+  if (name !== p.name) a.name = name;
+  if (!PRESET_ROLES.every((r) => sameHire(p.roles[r], d.roles[r]))) a.roles = structuredClone(d.roles);
+  return a.name === undefined && a.roles === undefined ? null : a;
+}
+
+/** "Build team 2" for a copy of "Build team", the first name nobody has. */
+export function freshName(base: string, book: PresetBook): string {
+  const b = base.trim() || 'New team';
+  for (let k = 2; ; k++) {
+    const n = `${b} ${k}`;
+    if (!book.nameTaken(n) && bytes(n) <= 40) return n;
+    if (bytes(n) > 40) return freshName('New team', book);
+  }
+}
