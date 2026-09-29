@@ -86,6 +86,20 @@ export interface H3DDebug {
   cards(): Array<{ desk: number; name: string; display: string; task: string }>;
   /** Screen point of a floor's badge in the city (to click it). */
   badgePoint(session: string): { x: number; y: number } | null;
+  /** M5 screen: per worker of the floor you are on, what its laptop shows (live / pending / frozen / glow / dark) and its watch fps. */
+  screens(): Array<{ id: string; desk: number; state: string; fps: number | null }>;
+  /** M5 screen: the worker whose laptop you sit at, or null. */
+  seated(): string | null;
+  /** M5 screen: sits you at a worker's laptop as E does (false, with a toast, when you cannot). */
+  sitAt(workerId: string): boolean;
+  /** M5 screen: a live laptop's screen text from its xterm buffer, one string per row (null when not live). */
+  screenText(workerId: string): string[] | null;
+  /** M5 screen: the seat bar (shown, its tape, its note, ok / busy / error / offline). */
+  seat(): { shown: boolean; tape: string; note: string; state: string };
+  /** M5 screen: this connection's watches as the game counts them, and as the simulator (`sim=1`) does. */
+  watches(): Promise<{ game: number; sim: number | null }>;
+  /** M5 screen: drops the connection and connects again (the bridge forgets every watch; the game re-watches). */
+  reconnect(): void;
   bench(o?: BenchOptions): Promise<BenchResult>;
   /** M3: opens the elevator panel of a building id (null: the lot); no argument: the current floor's building. */
   openElevator(building?: string | null): void;
@@ -194,6 +208,21 @@ const h3d: H3DDebug = {
   focusBuilding: (i) => app?.focusBuilding(i, false),
   cards: () => app?.office?.shownCards() ?? [],
   badgePoint: (s) => app?.badgePoint(s) ?? null,
+  screens: () => app?.laptops.screens() ?? [],
+  seated: () => app?.laptops.seated ?? null,
+  sitAt: (id) => app?.sitAt(id) ?? false,
+  screenText: (id) => app?.laptops.text(id) ?? null,
+  seat: () => app?.seatBar.summary() ?? { shown: false, tape: '', note: '', state: '' },
+  watches: async () => {
+    if (!app) return { game: 0, sim: null };
+    // `sim.watches` is the fixture simulator's, not a bridge command.
+    const r = await app.client.request('sim.watches' as CommandName, {} as never);
+    return { game: app.laptops.watchCount, sim: r.ok ? ((r.data as { watches?: number }).watches ?? null) : null };
+  },
+  reconnect: () => {
+    app?.client.stop();
+    app?.client.start();
+  },
   openElevator: (b) => (b === undefined ? app?.openElevator() : app?.openElevator(b)),
   openBuildings: () => app?.openBuildings(),
   openSettings: (s) => app?.panels.openSettings(s),

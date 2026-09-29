@@ -2,7 +2,7 @@
 // headless Chrome through ~/h3d-tools playwright-core, one page per job, one
 // JSON line per job on stdout (bench result, optional base64 PNG).
 //   argv[2]: base64 JSON { base, jobs: [{ name, path, floor?, pose?, bench?, shot?, settle? }] }
-//   pose: overview | row (on the floor) | street | landing | window (M3b: outside, the top landing, a south window)
+//   pose: overview | row (on the floor) | street | landing | window (M3b: outside, the top landing, a south window) | laptop (M5: seated at one)
 //         mezz | desk (M3c: at the corner office's glass on the mezzanine, seated at your desk)
 const cfg = JSON.parse(Buffer.from(process.argv[2] ?? '', 'base64').toString('utf8'));
 const { chromium } = await import('playwright-core');
@@ -46,6 +46,13 @@ try {
                 window.__h3d.setPose({ x: m.sit.x, z: m.sit.z, y, yaw: m.sit.yaw, pitch: m.sit.pitch });
                 window.__h3d.sit();
               } else window.__h3d.setPose({ x: m.rect.x0 + 0.45, z: m.rect.z1 - 1.2, y, yaw: m.sit.yaw, pitch: -0.4 });
+            } else if (kind === 'laptop') {
+              // M5: seated at the laptop of the worker nearest the lobby side, looking at its terminal.
+              const z = Math.max(...L.slots.map((s) => s.seat.z)) + 1.1;
+              window.__h3d.setPose({ x: L.width / 2 + 0.3, z, yaw: 0, pitch: -0.2 });
+              const f = window.__h3d.world().find((x) => x.session === floor);
+              const near = f?.workers.map((w) => ({ w, s: L.slots[w.desk] })).filter((x) => x.s).sort((a, b) => b.s.seat.z - a.s.seat.z)[0];
+              if (near) window.__h3d.sitAt(near.w.id);
             } else if (kind === 'row') {
               const s = L.slots[6];
               window.__h3d.setPose({ x: s.seat.x + 1.2, z: s.seat.z + 2.6, yaw: 0.35, pitch: -0.12 });

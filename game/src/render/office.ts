@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { pickNearest, rayBox, type Pickable, type V3 } from '../world/collide';
 import { hash32, modelCue, taskLine, type Display } from '../world/derive';
-import { DESK_H, floorLayout, MEZZ_Y, seatRect, slotBoxes, wallPieces, type Box3, type FloorLayout, type Opening, type Outline, type Rect } from '../world/layout';
+import { DESK_H, floorLayout, MEZZ_Y, SEAT_OFFSET, seatRect, slotBoxes, wallPieces, type Box3, type FloorLayout, type Opening, type Outline, type Rect } from '../world/layout';
 import type { FloorView, WorkerView } from '../world/store';
 import { AtlasCards } from './cards/atlasCards';
 import { CARD_RANGE, cardWeight, OVERLOOK_CARD_RANGE } from './cards/select';
@@ -96,6 +96,10 @@ export class OfficeView {
   private cardCam: THREE.PerspectiveCamera | null = null;
   /** M4: desks someone is walking in to or packing up at (see `setAway`). */
   private readonly away = new Map<number, AwaySeat>();
+  /** M5: the desk whose worker stands aside while you sit at its laptop. */
+  private lean: number | null = null;
+  private atLaptop = false;
+  private planOn = false;
 
   constructor(view: FloorView, o: OfficeOptions) {
     this.session = view.session;
@@ -315,6 +319,19 @@ export class OfficeView {
     this.setSeat(desk, this.seats[desk] ?? null);
   }
 
+  /** M5: the worker at `desk` stands aside while you sit at its laptop (null: back in its chair). */
+  setLean(desk: number | null): void {
+    if (desk === this.lean) return;
+    const prev = this.lean;
+    this.lean = desk;
+    if (prev !== null) this.setSeat(prev, this.seats[prev] ?? null);
+    if (desk !== null) this.setSeat(desk, this.seats[desk] ?? null);
+  }
+
+  get leaning(): number | null {
+    return this.lean;
+  }
+
   /** M4: desks shown away from what the world says (test hook). */
   awayDesks(): Map<number, AwaySeat['show']> {
     return new Map([...this.away].map(([d, a]) => [d, a.show]));
@@ -339,7 +356,18 @@ export class OfficeView {
       return;
     }
     this.desks.set(i, { x: s.seat.x, y: 0, z: s.seat.z, yaw: s.yaw, scale: 1, display: mem?.display ?? null, cueColor: mem?.cue.color ?? 0xffffff });
-    if (v && mem) {
+    if (v && mem && this.lean === i) {
+      // M5: you sit at its laptop; it stands beside the chair, turned to watch the screen.
+      const fx = Math.sin(s.yaw);
+      const fz = Math.cos(s.yaw);
+      const x = s.seat.x - fz * 0.62 + fx * 0.3;
+      const z = s.seat.z + fx * 0.62 + fz * 0.3;
+      const yaw = Math.atan2(s.seat.x + fx * SEAT_OFFSET - x, s.seat.z + fz * SEAT_OFFSET - z);
+      this.crowd.set(i, { x, y: 0, z, yaw, scale: 1, ...mem, stride: 0 });
+      this.anchors[i] = new THREE.Vector3(x, CARD_Y + 0.25, z);
+      this.cards.setCard(i, { name: v.name, display: v.display, task: taskLine(v.worker) });
+      this.applied.set(v.worker.id, v.display);
+    } else if (v && mem) {
       this.crowd.set(i, { x: s.seat.x, y: SEAT_Y, z: s.seat.z, yaw: s.yaw, scale: 1, ...mem });
       this.anchors[i] = new THREE.Vector3(s.seat.x, CARD_Y, s.seat.z);
       this.cards.setCard(i, { name: v.name, display: v.display, task: taskLine(v.worker) });
@@ -359,9 +387,16 @@ export class OfficeView {
   }
 
   setPlan(on: boolean): void {
+    this.planOn = on;
     this.ceiling.visible = !on;
-    this.cards.setVisible(!on);
+    this.cards.setVisible(!on && !this.atLaptop);
     this.mezz.setPlan(on);
+  }
+
+  /** M5: sitting at a laptop, the cards stay out of the way (they draw on top of everything). */
+  setAtLaptop(on: boolean): void {
+    this.atLaptop = on;
+    this.cards.setVisible(!on && !this.planOn);
   }
 
   /** #20: up on the mezzanine, cards are measured as though you were nearer, and all of them can show. */
