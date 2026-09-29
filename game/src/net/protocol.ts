@@ -671,12 +671,15 @@ export type RunTicket = { kind: 'issue'; repo: string; number: number; url: stri
 
 /** `run.prepare` ack: the start-run dialog's defaults and its live prompt preview. */
 export interface RunPrepare {
-  /** "" while there is no ticket yet. */
+  /** "" while there is no ticket yet (or no preset at all). */
   prompt: string;
+  /** "" while there is no ticket yet. */
   label: string;
   ticket?: RunTicket | null;
+  /** "" when there is no preset at all. */
   preset: string;
-  orch: Hire;
+  /** The asked-for or the preset's orchestrator; null with no preset and none asked for. */
+  orch: Hire | null;
   cwd: string;
   git: HireGit | null;
   capacity: HireCapacity;

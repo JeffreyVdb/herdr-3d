@@ -57,6 +57,9 @@ describe('composePrompt (contract 2.2)', () => {
     expect(runLabel({ kind: 'issue', number: 123456 })).toBe('ORCH|issue-1234');
     expect(runLabel({ kind: 'text', text: 'Add a dark mode, please' })).toBe('ORCH|add-a-dark');
     expect(runLabel({ kind: 'text', text: '✨' })).toBe('ORCH|run');
+    // Whole words only; a first word longer than 10 bytes is cut.
+    expect(runLabel({ kind: 'text', text: 'Make it purple' })).toBe('ORCH|make-it');
+    expect(runLabel({ kind: 'text', text: 'Internationalise everything' })).toBe('ORCH|internatio');
   });
 });
 
@@ -100,7 +103,7 @@ describe('SimWorld runs (M6)', () => {
   it('prepares: no ticket yet, an issue number of the floor’s repo, free text, an issue URL', () => {
     const r = rig();
     const none = data(r.cmd('run.prepare', { session: 'herdr-3d' }).got()[0]);
-    expect(none).toMatchObject({ prompt: '', preset: SIM_BUILD_TEAM.id, orch: ROLES.orch, cwd: '/home/dev/devel/herdr-3d', capacity: { floor: { count: 18 } } });
+    expect(none).toMatchObject({ prompt: '', label: '', ticket: null, preset: SIM_BUILD_TEAM.id, orch: ROLES.orch, cwd: '/home/dev/devel/herdr-3d', capacity: { floor: { count: 18 } } });
     expect(none?.git).toMatchObject({ fetched: true });
     const url = 'https://github.com/JeffreyVdb/herdr-3d/issues/7';
     expect(data(r.cmd('run.prepare', { session: 'herdr-3d', issue: '#7' }).got()[0])).toMatchObject({
@@ -110,11 +113,11 @@ describe('SimWorld runs (M6)', () => {
     });
     expect(data(r.cmd('run.prepare', { session: 'herdr-3d', text: 'Make it purple', orch: { harness: 'codex', model: 'gpt-6-sol', effort: 'high' }, extra: 'Small diff.' }).got()[0])).toMatchObject({
       prompt: ['$write-code Make it purple', '', ...TEAM, '', 'Small diff.'].join('\n'),
-      label: 'ORCH|make-it-pu',
+      label: 'ORCH|make-it',
       ticket: { kind: 'text', text: 'Make it purple' },
     });
     // pastry has no repo: a number is refused, a URL carries its own.
-    expect(r.cmd('run.prepare', { session: 'pastry', issue: 3 }).got()[0]).toMatchObject({ code: 'bad_request', message: 'bad args: the floor has no linked repo' });
+    expect(r.cmd('run.prepare', { session: 'pastry', issue: 3 }).got()[0]).toMatchObject({ code: 'bad_request', message: "bad args: the floor has no linked repo: set its repo, or give the issue's URL" });
     expect(data(r.cmd('run.prepare', { session: 'pastry', issue: 'https://github.com/a/b/issues/9' }).got()[0])).toMatchObject({ ticket: { repo: 'a/b', number: 9 } });
     expect(r.cmd('run.prepare', { session: 'herdr-3d', issue: 3, text: 'x' }).got()[0]).toMatchObject({ code: 'bad_request' });
     expect(r.cmd('run.prepare', { session: 'herdr-3d', preset: 'p_nope' }).got()[0]).toMatchObject({ code: 'not_found' });
@@ -128,7 +131,7 @@ describe('SimWorld runs (M6)', () => {
     const got = c.got();
     const ack = data(got.find((m) => m.t === 'ack'));
     const url = 'https://github.com/JeffreyVdb/herdr-3d/issues/7';
-    expect(ack).toMatchObject({ trust: 'approved', prompted: true, launch_id: expect.stringMatching(/^l_[0-9a-f]+$/), prompt: [`/write-code ${url}`, '', ...TEAM].join('\n') });
+    expect(ack).toMatchObject({ trust: 'approved', prompted: true, launch_id: expect.stringMatching(/^l_[0-9a-f]{16}$/), prompt: [`/write-code ${url}`, '', ...TEAM].join('\n') });
     const w = r.store.workers.get(ack?.id as string);
     expect(w).toMatchObject({ desk_index: 5, label: 'ORCH|issue-7', role: 'orch', run: 'issue-7', harness: 'claude', model: 'claude-opus-5-5', effort: 'medium', status: 'working' });
     expect(r.store.floors.get('herdr-3d')?.last_preset).toBe(SIM_BUILD_TEAM.id);
@@ -139,6 +142,9 @@ describe('SimWorld runs (M6)', () => {
     const del = r.cmd('preset.delete', { id: SIM_BUILD_TEAM.id }).got();
     expect(del.map((m) => m.t)).toEqual(['preset.removed', 'floor.upsert', 'ack']);
     expect(r.store.floors.get('herdr-3d')?.last_preset).toBeUndefined();
+    // With no preset left: preset "", orch as asked (else null), no prompt.
+    expect(data(r.cmd('run.prepare', { session: 'herdr-3d', issue: 7 }).got()[0])).toMatchObject({ prompt: '', label: 'ORCH|issue-7', preset: '', orch: null });
+    expect(data(r.cmd('run.prepare', { session: 'herdr-3d', issue: 7, orch: ROLES.orch }).got()[0])).toMatchObject({ prompt: '', preset: '', orch: ROLES.orch });
   });
 
   it('sends an edited prompt as is, takes the label, refuses taken desks like a hire', () => {

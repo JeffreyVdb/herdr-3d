@@ -75,10 +75,20 @@ export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRo
   return lines.join('\n');
 }
 
-/** `ORCH|issue-<n>` or `ORCH|<slug of the text>`, at most 10 characters after `ORCH|`. */
+/**
+ * `ORCH|issue-<n>`, or `ORCH|` and the text's first whole words as a slug
+ * (`ORCH|run` when none): the descr at most 10 bytes, like the bridge's runLabel.
+ */
 export function runLabel(t: { kind: 'issue'; number: number } | { kind: 'text'; text: string }): string {
-  const descr = t.kind === 'issue' ? `issue-${t.number}` : t.text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+/, '').slice(0, 10).replace(/-+$/, '') || 'run';
-  return `ORCH|${descr.slice(0, 10)}`;
+  if (t.kind === 'issue') return `ORCH|${`issue-${t.number}`.slice(0, 10)}`;
+  let d = '';
+  for (const w of t.text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').split('-')) {
+    if (!w) continue;
+    if (!d) d = w.slice(0, 10);
+    else if (d.length + 1 + w.length <= 10) d += `-${w}`;
+    else break;
+  }
+  return `ORCH|${d || 'run'}`;
 }
 
 type Ticket = { kind: 'issue'; repo: string; number: number; url: string } | { kind: 'text'; text: string };
@@ -217,12 +227,15 @@ export class StartSim {
 
   /** The ticket of `issue` / `text` (`need`: one of them must be there). */
   private ticket(a: Obj, f: Floor, need: boolean): Ticket | null {
-    if (a.issue !== undefined && a.text !== undefined) throw this.bad('issue and text are exclusive');
-    if (a.text !== undefined) {
-      if (typeof a.text !== 'string' || !a.text.trim() || bytes(a.text) > 4096) throw this.bad('text must be 1-4096 bytes');
+    // Like the bridge: an empty text or a null issue is no ticket.
+    const hasIssue = a.issue !== undefined && a.issue !== null;
+    const hasText = a.text !== undefined && a.text !== '';
+    if (hasIssue && hasText) throw this.bad('give either an issue or a text, not both');
+    if (hasText) {
+      if (typeof a.text !== 'string' || !a.text.trim() || bytes(a.text.trim()) > 4096) throw this.bad('text must be 1-4096 bytes of text');
       return { kind: 'text', text: a.text.trim() };
     }
-    if (a.issue === undefined) {
+    if (!hasIssue) {
       if (need) throw this.bad('issue or text is required');
       return null;
     }
@@ -238,8 +251,8 @@ export class StartSim {
       } else if (/^#?\d+$/.test(s)) n = Number(s.replace('#', ''));
       else throw this.bad(`issue ${JSON.stringify(a.issue)}: want a number, "#<n>" or https://github.com/<owner>/<repo>/issues/<n>`);
     } else throw this.bad('issue must be a number or a string');
-    if (!Number.isInteger(n) || n < 1) throw this.bad('issue must be >= 1');
-    if (!repo) throw this.d.error('bad_request', 'bad args: the floor has no linked repo');
+    if (!Number.isInteger(n) || n < 1 || n > 2 ** 31 - 1) throw this.bad(`issue must be a positive integer, got ${n}`);
+    if (!repo) throw this.bad("the floor has no linked repo: set its repo, or give the issue's URL");
     return { kind: 'issue', repo, number: n, url: `https://github.com/${repo}/issues/${n}` };
   }
 
@@ -249,11 +262,10 @@ export class StartSim {
     return a.extra;
   }
 
-  private defaultPreset(f: Floor): Preset {
+  /** The floor's last preset, else "Build team", else the first; null when there is none. */
+  private defaultPreset(f: Floor): Preset | null {
     const list = this.list();
-    const p = (f.last_preset && this.presets.get(f.last_preset)) || list.find((x) => x.name === SIM_BUILD_TEAM.name) || list[0];
-    if (!p) throw this.d.error('not_found', 'not found: there is no team preset');
-    return p;
+    return (f.last_preset && this.presets.get(f.last_preset)) || list.find((x) => x.name === SIM_BUILD_TEAM.name) || list[0] || null;
   }
 
   private floorOf(a: Obj): Floor {
@@ -267,15 +279,16 @@ export class StartSim {
     this.only(a, ['session', 'issue', 'text', 'preset', 'orch', 'extra']);
     const f = this.floorOf(a);
     const t = this.ticket(a, f, false);
-    const p = a.preset === undefined ? this.defaultPreset(f) : this.preset(a.preset);
-    const orch = a.orch === undefined ? p.roles.orch : this.hireOf(a.orch, 'orch');
+    const p = a.preset === undefined || a.preset === '' ? this.defaultPreset(f) : this.preset(a.preset);
+    // No preset at all: preset "", orch as asked (else null), no prompt.
+    const orch = a.orch !== undefined && a.orch !== null ? this.hireOf(a.orch, 'orch') : (p?.roles.orch ?? null);
     const extra = this.extraOf(a);
     const h = this.d.prepare(f.session);
     return {
-      prompt: t ? composePrompt(orch, t.kind === 'issue' ? t.url : t.text, p.roles, extra) : '',
-      label: t ? runLabel(t) : 'ORCH|run',
+      prompt: t && p && orch ? composePrompt(orch, t.kind === 'issue' ? t.url : t.text, p.roles, extra) : '',
+      label: t ? runLabel(t) : '',
       ticket: t,
-      preset: p.id,
+      preset: p?.id ?? '',
       orch,
       cwd: h.cwd,
       git: h.git,
@@ -292,15 +305,13 @@ export class StartSim {
     const extra = this.extraOf(a);
     if (a.worktree !== undefined && typeof a.worktree !== 'boolean') throw this.bad('worktree must be a bool');
     if (a.label !== undefined && typeof a.label !== 'string') throw this.bad('label must be a string');
-    let prompt: string;
-    if (a.prompt !== undefined) {
-      if (typeof a.prompt !== 'string' || !a.prompt.trim()) throw this.bad('prompt must be a non-empty string');
-      prompt = a.prompt;
-    } else prompt = composePrompt(orch, t.kind === 'issue' ? t.url : t.text, p.roles, extra);
-    const label = (a.label as string | undefined)?.trim() || runLabel(t);
-    const worktree = a.worktree ?? this.d.prepare(f.session).git !== null;
+    if (a.prompt !== undefined && typeof a.prompt !== 'string') throw this.bad('prompt must be a string');
+    // An empty prompt is none: the bridge composes it (an edited one goes through worker.hire's rules).
+    const prompt = (a.prompt as string | undefined) || composePrompt(orch, t.kind === 'issue' ? t.url : t.text, p.roles, extra);
+    const label = (a.label as string | undefined) || runLabel(t);
+    const worktree = a.worktree ?? true;
     const hire: Obj = { session: f.session, desk_index: a.desk_index, harness: orch.harness, model: orch.model, effort: orch.effort, label, worktree, prompt };
-    const launch = `l_${(0x1a0000 + ++this.launches).toString(16)}`;
+    const launch = `l_${(++this.launches).toString(16).padStart(16, '0')}`;
     this.d.hireWorker(
       hire,
       send,

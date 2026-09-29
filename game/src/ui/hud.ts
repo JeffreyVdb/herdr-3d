@@ -169,6 +169,7 @@ export class Hud {
     this.buildings.hidden = mode !== 'city';
     this.elevator.hidden = mode === 'city';
     this.hire.hidden = mode === 'city' || this.root.dataset.area !== 'floor';
+    this.syncExtras();
     this.reticle.hidden = mode === 'city';
     this.floorList.hidden = this.buildingList.hidden = mode !== 'city';
     if (mode === 'city') {
@@ -277,6 +278,24 @@ export class Hud {
     this.root.dataset.area = area;
     const onFloor = area === 'floor';
     this.issues.hidden = this.prs.hidden = this.hire.hidden = this.mode === 'city' || !onFloor;
+    this.syncExtras();
+  }
+
+  // ---- M6 start: more top bar buttons (Run on a floor, Team presets in the city) -------
+
+  private readonly extras: Array<{ b: HTMLButtonElement; show: (mode: 'city' | 'floor', area: string | undefined) => boolean }> = [];
+
+  /** Adds a top bar button right after Hire or Buildings, shown while `show` says so. */
+  addTopbarButton(b: HTMLButtonElement, after: 'hire' | 'buildings', show: (mode: 'city' | 'floor', area: string | undefined) => boolean): void {
+    const prev = this.extras.filter((x) => x.b.previousElementSibling === (after === 'hire' ? this.hire : this.buildings)).at(-1)?.b;
+    (prev ?? (after === 'hire' ? this.hire : this.buildings)).after(b);
+    b.type = 'button';
+    this.extras.push({ b, show });
+    this.syncExtras();
+  }
+
+  private syncExtras(): void {
+    for (const x of this.extras ?? []) x.b.hidden = !x.show(this.mode, this.root.dataset.area);
   }
 
   /** The look-at prompt bar. */

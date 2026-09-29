@@ -1,0 +1,343 @@
+/*
+ * M6 start: starting a run and the team presets, in the M4 desk dialogs'
+ * navy signage (hire.css). An empty desk's dialog gets two tabs (a worker or
+ * an orchestrator); the orchestrator's first prompt is the one paper object
+ * here: a work-order slip, torn off a perforated pad, that it takes to its desk.
+ */
+
+.desk-dlg--run,
+.desk-dlg--presets {
+  width: min(640px, calc(100vw - 32px));
+}
+.desk-dlg select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 9px;
+  background: var(--well);
+  font: inherit;
+  color: inherit;
+}
+.desk-dlg select:hover {
+  border-color: rgb(255 255 255 / 30%);
+}
+.desk-dlg select:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 1px;
+}
+.desk-dlg select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.desk-dlg [aria-invalid='true'] {
+  border-color: #ff7b73;
+}
+.dd-label {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-on-ink-2);
+}
+
+/* ---- worker | orchestrator tabs ----------------------------------------------------- */
+
+.dd-tabs-slot {
+  flex: none;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.dd-head:has(+ .dd-tabs-slot:not([hidden])) {
+  border-bottom: 0;
+  padding-bottom: 6px;
+}
+.dd-tabs {
+  display: flex;
+  gap: 4px;
+}
+.dd-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 12px;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-on-ink-2);
+  cursor: pointer;
+  transition: color 140ms var(--ease), border-color 140ms var(--ease);
+}
+.dd-tab svg {
+  width: 17px;
+  height: 17px;
+}
+.dd-tab:hover {
+  color: var(--text-on-ink);
+}
+.dd-tab[aria-selected='true'] {
+  color: var(--text-on-ink);
+  border-bottom-color: var(--sun);
+  cursor: default;
+}
+.dd-tab[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.dd-tab:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: -3px;
+  border-radius: 8px 8px 0 0;
+}
+
+/* ---- the ticket and the team ---------------------------------------------------------- */
+
+.dd-ticket {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-height: 20px;
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--text-on-ink);
+}
+.dd-ticket[data-kind='empty'] {
+  color: var(--text-on-ink-2);
+}
+.tape--issue {
+  --c: var(--working);
+}
+.tape--text {
+  --c: var(--idle-chip);
+}
+.dd-ticket-why {
+  flex: 1 1 100%;
+  color: #ffb4ae;
+  font-weight: 700;
+}
+.dd-grid.dd-grid--run {
+  grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.6fr);
+}
+.dd-agent-title {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--text-on-ink);
+}
+.dd-fact {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px dashed rgb(255 255 255 / 18%);
+  border-radius: 9px;
+  color: var(--text-on-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- the first prompt: a work-order slip ---------------------------------------------- */
+
+.dd-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.dd-field .dd-preview-head label {
+  margin: 0;
+}
+.dd-preview-head .btn {
+  margin-left: auto;
+}
+.dd-preview-tape {
+  --c: var(--idle-chip);
+  font-size: 9.5px;
+  padding: 2px 5px 1px;
+}
+.dd-preview-tape.tape--note {
+  --c: var(--sun);
+}
+.dd-slip {
+  position: relative;
+}
+/* The pad's perforation: bites out of the slip's top edge in the dialog's navy. */
+.dd-slip::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 0;
+  height: 7px;
+  background: radial-gradient(circle at 6px 0, var(--ink) 3px, transparent 3.6px) 0 0 / 12px 7px repeat-x;
+  pointer-events: none;
+}
+.desk-dlg .dd-prompt {
+  display: block;
+  min-height: 190px;
+  max-height: 340px;
+  padding: 14px 14px 12px;
+  border: 0;
+  border-radius: 3px 3px 6px 6px;
+  background:
+    linear-gradient(transparent 0 calc(100% - 1px), rgb(28 37 64 / 10%) 0) 0 14px / 100% 19px local,
+    #eef2fb;
+  color: var(--ink);
+  caret-color: var(--ink);
+  font-size: 12.5px;
+  line-height: 19px;
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  box-shadow: 0 2px 0 rgb(0 0 0 / 22%), 0 8px 18px rgb(0 0 0 / 28%);
+}
+.desk-dlg .dd-prompt::placeholder {
+  color: #5b6685;
+}
+.desk-dlg .dd-prompt:hover {
+  background-color: #f6f8fd;
+}
+.desk-dlg .dd-prompt::selection {
+  background: rgb(255 194 51 / 55%);
+}
+.dd-preview[data-state='custom'] .dd-prompt {
+  box-shadow: 0 0 0 2px var(--sun), 0 2px 0 rgb(0 0 0 / 22%), 0 8px 18px rgb(0 0 0 / 28%);
+}
+#run-prompt-note[data-stale='true'] {
+  color: var(--sun);
+  font-weight: 700;
+}
+
+/* ---- team presets ----------------------------------------------------------------------- */
+
+.dd-plate--team {
+  min-width: 48px;
+  background: #101626;
+  box-shadow: inset 0 2px 7px rgb(0 0 0 / 60%), 0 1px 0 rgb(255 255 255 / 8%);
+  color: var(--sun);
+}
+.dd-plate--team svg {
+  width: 26px;
+  height: 26px;
+  stroke-width: 1.9;
+}
+.pp-empty {
+  margin: 0;
+  color: var(--text-on-ink-2);
+}
+.pp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.pp-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgb(255 255 255 / 4%);
+}
+.pp-row-head {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.pp-row-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pp-tools {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  gap: 6px;
+}
+.pp-roles {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 14px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.pp-roles dt {
+  color: var(--text-on-ink-2);
+  font-weight: 700;
+}
+.pp-roles dd {
+  margin: 0;
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  overflow-wrap: anywhere;
+}
+.pp-confirm {
+  grid-column: 1 / -1;
+}
+.pp-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.pp-table {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgb(255 255 255 / 4%);
+}
+.pp-tr {
+  display: grid;
+  grid-template-columns: 112px repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  align-items: center;
+}
+.pp-th {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-on-ink-2);
+}
+.pp-role {
+  font-weight: 700;
+  font-size: 13px;
+}
+.dd-field-error {
+  color: #ffb4ae;
+  font-weight: 700;
+}
+
+@media (max-width: 560px) {
+  .dd-grid.dd-grid--run {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pp-th {
+    display: none;
+  }
+  .pp-tr {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .pp-role {
+    grid-column: 1 / -1;
+  }
+  .dd-tab {
+    padding: 0 8px;
+  }
+}
