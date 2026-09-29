@@ -21,6 +21,12 @@ export const KEY_FONT = `800 21px ${FONT}`;
 export const USAGE_FONT = `600 21px ${FONT}`;
 /** What a question is about (a command, a path): terminal text. */
 export const ABOUT_FONT = `600 20px ${MONO}`;
+/** M6: a crew member's role tag, verdict stamp and lines. */
+export const TAG_FONT = `750 19px ${FONT}`;
+export const STAMP_FONT = `850 20px ${FONT}`;
+export const CREW_FONT = `600 21px ${FONT}`;
+/** M6: crew lines a tall card shows at most. */
+export const MAX_CREW = 3;
 /** Choices a card lists; the rest are named in a "+2 more" row. */
 export const MAX_CHOICES = 4;
 
@@ -28,7 +34,7 @@ export const MAX_CHOICES = 4;
 export type Measure = (font: string, text: string) => number;
 
 export interface CardRow {
-  kind: 'task' | 'about' | 'question' | 'choice' | 'more' | 'usage';
+  kind: 'task' | 'about' | 'question' | 'choice' | 'more' | 'usage' | 'tag' | 'crew';
   text: string;
   /** Baseline, from the cell's top. */
   y: number;
@@ -48,16 +54,18 @@ export interface CardLayout {
   rows: CardRow[];
 }
 
-/** A card that needs a tall cell: it has a question or a usage line. */
+/** A card that needs a tall cell: it has a question, a usage line or (M6) crew lines. */
 export function isTall(c: CardData): boolean {
-  return !!(c.ask && (c.ask.text || c.ask.choices.length)) || !!c.usage;
+  return !!(c.ask && (c.ask.text || c.ask.choices.length)) || !!c.usage || !!c.crew?.length;
 }
 
 /** The compact card a tall one falls back to when no tall cell is free: what it is about and its question as the task line. */
 export function compactOf(c: CardData): CardData {
   if (!c.ask?.text) return c;
   const about = c.ask.about?.[0];
-  return { name: c.name, display: c.display, task: about ? `${about} · ${c.ask.text}` : c.ask.text };
+  const out: CardData = { name: c.name, display: c.display, task: about ? `${about} · ${c.ask.text}` : c.ask.text };
+  if (c.tag) out.tag = c.tag;
+  return out;
 }
 
 const PAD = 6;
@@ -119,9 +127,19 @@ export function cardLayout(c: CardData, measure: Measure): CardLayout {
   const maxBubble = TALL_H - PAD - TAIL;
   const ask = c.ask && (c.ask.text || c.ask.choices.length) ? c.ask : null;
   const usage = c.usage ? ellipsizeWith(measure, USAGE_FONT, c.usage, TEXT_W) : '';
-  const build = (shownChoices: number, questionLines: number, aboutLines: number): { rows: CardRow[]; y: number } => {
+  const crew = (c.crew ?? []).filter(Boolean).slice(0, MAX_CREW);
+  const build = (shownChoices: number, questionLines: number, aboutLines: number, crewLines = crew.length): { rows: CardRow[]; y: number } => {
     const rows: CardRow[] = [];
     let y = top;
+    // M6: the role tag (and a reviewer's stamp) under the name, then the crew member's lines.
+    if (c.tag || c.stamp) {
+      y += 40;
+      rows.push({ kind: 'tag', text: c.tag?.text ?? '', y, x });
+    }
+    crew.slice(0, crewLines).forEach((line, k) => {
+      y += k === 0 ? (c.tag || c.stamp ? 34 : 40) : 28;
+      rows.push({ kind: 'crew', text: ellipsizeWith(measure, CREW_FONT, line, TEXT_W), y, x });
+    });
     if (ask) {
       const about = (ask.about ?? []).slice(0, aboutLines);
       about.forEach((line, k) => {
@@ -159,8 +177,11 @@ export function cardLayout(c: CardData, measure: Measure): CardLayout {
   for (let k = n; k >= Math.min(2, n); k--) tries.push([k, 2, 2]);
   const two = Math.min(2, n);
   tries.push([two, 1, 2], [two, 1, 1], [Math.min(1, n), 1, 1]);
-  let r = build(...(tries[0] as [number, number, number]));
-  for (const t of tries) {
+  // M6: then fewer crew lines.
+  const all: Array<[number, number, number, number]> = tries.map(([a, b, d]) => [a, b, d, crew.length]);
+  for (let k = crew.length - 1; k >= 0; k--) all.push([Math.min(1, n), 1, 1, k]);
+  let r = build(...(all[0] as [number, number, number, number]));
+  for (const t of all) {
     r = build(...t);
     if (r.y + 20 - PAD <= maxBubble) break;
   }

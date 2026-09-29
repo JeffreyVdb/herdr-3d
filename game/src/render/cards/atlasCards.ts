@@ -4,6 +4,9 @@ import { CHIP_TEXT } from '../../world/derive';
 import { STATUS_CHIP_CSS } from '../palette';
 import { ABOUT_FONT, CELL_H, CELL_W, CHOICE_FONT, cardLayout, compactOf, FONT, isTall, KEY_FONT, KEY_W, NAME_FONT, QUESTION_FONT, TALL_H, TASK_FONT, USAGE_FONT, type CardLayout } from './layout';
 import { CARD_RANGE, selectCards, type CardRange } from './select';
+// M6: crew tags and verdict stamps.
+import { drawStamp, drawTag, stampWidth } from './crewCard';
+import { CREW_FONT } from './layout';
 import { sameCard, type CardData, type Viewport } from './types';
 
 const COLS = 4;
@@ -70,9 +73,20 @@ export function drawCard(g: CanvasRenderingContext2D, x: number, y: number, c: C
   g.fillStyle = ink;
   g.font = NAME_FONT;
   g.fillText(ellipsize(g, c.name, tx - bx - 36), bx + 24, by + 46);
+  // M6: a crew member's role tag leads the task line, a reviewer's stamp ends it.
+  let taskX = bx + 24;
+  let taskW = bw - 48;
+  if (c.stamp) taskW -= stampWidth(g, c.stamp) + 10;
+  if (c.tag) {
+    const w = drawTag(g, taskX, by + 92, c.tag, Math.min(250, taskW * 0.6));
+    taskX += w + 10;
+    taskW -= w + 10;
+  }
   g.font = TASK_FONT;
   g.globalAlpha = red ? 1 : 0.82;
-  g.fillText(ellipsize(g, c.task, bw - 48), bx + 24, by + 92);
+  g.fillText(ellipsize(g, c.task, taskW), taskX, by + 92);
+  g.globalAlpha = 1;
+  if (c.stamp) drawStamp(g, bx + bw - 16, by + 84, c.stamp);
   g.restore();
 }
 
@@ -146,6 +160,14 @@ export function drawTallCard(g: CanvasRenderingContext2D, x: number, y: number, 
     } else if (r.kind === 'more') {
       g.font = CHOICE_FONT;
       g.globalAlpha = 0.78;
+      g.fillText(r.text, rx, ry);
+    } else if (r.kind === 'tag') {
+      // M6: the role tag, and a reviewer's verdict stamp at the right.
+      if (c.tag) drawTag(g, rx, ry, c.tag, CELL_W - 12 - 48 - (c.stamp ? 200 : 0));
+      if (c.stamp) drawStamp(g, x + CELL_W - 26, ry - 8, c.stamp);
+    } else if (r.kind === 'crew') {
+      g.font = CREW_FONT;
+      g.globalAlpha = red ? 0.96 : 0.8;
       g.fillText(r.text, rx, ry);
     } else if (r.kind === 'usage') {
       // A hairline above: the usage is about the worker, not its question.
