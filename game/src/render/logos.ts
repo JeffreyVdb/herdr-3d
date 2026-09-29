@@ -108,20 +108,27 @@ export class LogoCache {
     return p;
   }
 
-  /** Forgets failures, so the next `load` fetches again. */
-  retryFailed(): void {
+  /** Forgets failures, so the next `load` fetches again; true when there were any. */
+  retryFailed(): boolean {
+    const any = this.failed.size > 0;
     this.failed.clear();
+    return any;
   }
 
-  /** Disposes every texture whose hash is not in `wanted` (call after the views have moved to the new ones). */
-  keep(wanted: Iterable<string>): void {
-    const w = new Set(wanted);
+  /**
+   * Disposes every texture whose hash is not in `shown` (call after the views
+   * have moved to the new ones), and forgets the failures of hashes that no
+   * building has any more (`current`: the hashes buildings have now).
+   */
+  keep(shown: Iterable<string>, current: Iterable<string> = shown): void {
+    const w = new Set(shown);
     for (const [hash, e] of this.entries) {
       if (w.has(hash)) continue;
       this.release(e);
       this.entries.delete(hash);
     }
-    for (const hash of this.failed) if (!w.has(hash)) this.failed.delete(hash);
+    const c = new Set(current);
+    for (const hash of this.failed) if (!c.has(hash)) this.failed.delete(hash);
   }
 
   dispose(): void {

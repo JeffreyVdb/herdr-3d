@@ -280,7 +280,6 @@ export class App {
       handlers: {
         onWelcome: (w) => o.onBridgeVersion?.(bannerVersion(w.server)),
         onSnapshot: (s) => {
-          this.logos.retryFailed(); // M3d: a reconnect may reach a logo that was not there
           this.applyChange(this.store.applySnapshot(s));
           this.yieldTakenDesks(this.store.workers.keys());
         },
@@ -288,6 +287,8 @@ export class App {
         onConn: (m) => this.laptops.onConn(m),
         onBoard: (m) => this.onBoard(m),
         onState: (s) => {
+          // M3d: a logo that could not be fetched is tried again once the bridge is back (also after a replay, which sends no snapshot).
+          if (s.phase === 'live' && this.conn.phase !== 'live' && this.logos.retryFailed()) this.syncLogos();
           this.conn = s;
           // M7: a dropped connection forgot its board watch; the next live one watches again.
           if (s.phase !== 'live') this.watched = null;
@@ -951,7 +952,7 @@ export class App {
       this.city.setLogos(this.shownLogos);
     }
     this.showLobbyLogo();
-    this.logos.keep([...this.shownLogos.values()].map((e) => e.hash));
+    this.logos.keep([...this.shownLogos.values()].map((e) => e.hash), want.values());
   }
 
   private showLobbyLogo(): void {

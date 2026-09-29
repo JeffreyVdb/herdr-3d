@@ -12,7 +12,8 @@
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { Building, Cap, Floor, FloorSettings, Hire, HireOptions, Worker } from '../src/net/protocol.ts';
 import { screensOf } from './fixture-screen.ts';
-import type { StoredLogo } from './fixture-logo.ts';
+import { hashOf, type StoredLogo } from './fixture-logo.ts';
+import { logoPng, MAGENTA, type Palette } from './logo-art.ts';
 
 type Msg = Record<string, unknown>;
 type Send = (m: Msg) => void;
@@ -237,6 +238,16 @@ export class SimWorld {
     this.logos.set(id, logo);
     if (this.out) this.emit(this.out, { t: 'building.upsert', building: this.building(id) });
     return logo;
+  }
+
+  /** `simlogos=1`: every building starts with a made-up logo (a ring and three bars, a colour of its own), for perf runs. */
+  seedLogos(): void {
+    const rings: Palette['ring'][] = [MAGENTA.ring, [47, 107, 240], [18, 162, 106], [242, 169, 59], [138, 90, 200]];
+    let i = 0;
+    for (const b of this.sorted()) {
+      const bytes = logoPng(512, 192, { ring: rings[i++ % rings.length] as Palette['ring'], bars: MAGENTA.bars });
+      this.logos.set(b.id, { bytes, hash: hashOf(bytes), type: 'image/png' });
+    }
   }
 
   clearLogo(id: string): void {

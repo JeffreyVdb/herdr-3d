@@ -413,6 +413,7 @@ export class CityView {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose();
         (o.material as THREE.Material).dispose();
+        if (o instanceof THREE.InstancedMesh) o.dispose();
       }
     }
     this.signs.clear();
@@ -430,7 +431,7 @@ export class CityView {
     const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-SIGN.tilt, 0, 0));
     shown.forEach((spot, i) => {
       const entry = this.logos.get(spot.id as string) as LogoEntry;
-      const pw = Math.min(1.5, Math.max(0.6, spot.w * 0.5));
+      const pw = Math.min(1.9, Math.max(0.8, spot.w * 0.7));
       const ph = pw / 3;
       const at = new THREE.Vector3(spot.x, ph * 0.5 * Math.cos(SIGN.tilt) + 0.02, spot.z + 0.3);
       plates.setMatrixAt(i, new THREE.Matrix4().compose(at, q, new THREE.Vector3(pw, ph, SIGN.thick)));

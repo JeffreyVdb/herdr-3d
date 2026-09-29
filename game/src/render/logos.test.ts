@@ -58,9 +58,25 @@ describe('LogoCache', () => {
     expect(calls).toBe(1); // no retry storm
     fail = false;
     expect(await cache.load('h2', 'u')).not.toBeNull(); // another hash is fetched
-    cache.retryFailed();
+    expect(cache.retryFailed()).toBe(true);
+    expect(cache.retryFailed()).toBe(false);
     expect(await cache.load('h1', 'u')).not.toBeNull();
     expect(calls).toBe(3);
+  });
+
+  it('forgets a failure only when no building has that hash any more', async () => {
+    let calls = 0;
+    const cache = new LogoCache(async () => {
+      calls++;
+      throw new Error('404');
+    });
+    await cache.load('gone', 'u');
+    cache.keep([], ['gone']); // still the building's hash, nothing shown
+    expect(cache.hasFailed('gone')).toBe(true);
+    await cache.load('gone', 'u');
+    expect(calls).toBe(1);
+    cache.keep([], []); // the hash changed: a later return to it fetches again
+    expect(cache.hasFailed('gone')).toBe(false);
   });
 
   it('disposes the textures nobody wants any more, and only those', async () => {

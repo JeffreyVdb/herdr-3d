@@ -61,12 +61,13 @@ export interface FixtureOptions {
   log?: (msg: string) => void;
 }
 
-function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: SimOptions | null, logoKey: string | null): void {
+function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: SimOptions | null, logoKey: string | null, seedLogos = false): void {
   const send = (m: unknown) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(m));
   let greeted = false;
   const timers: ReturnType<typeof setTimeout>[] = [];
   const world = sim ? new SimWorld(rec.snapshot, sim) : null;
   // M3d: /logo requests with the same `simlogo=<key>` belong to this world.
+  if (world && seedLogos) world.seedLogos();
   const unregister = world && logoKey !== null ? registerLogoWorld(logoKey, world) : null;
   ws.on('close', () => {
     timers.forEach(clearTimeout);
@@ -167,7 +168,7 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {
       o.log?.(`fixture ${name}: client connected (${sim ? `simulating, step ${sim.stepMs} ms` : `play=${mode}`})`);
-      play(ws, rec, mode, epoch, sim, q.get('simlogo'));
+      play(ws, rec, mode, epoch, sim, q.get('simlogo'), q.get('simlogos') === '1');
     });
     return true;
   };

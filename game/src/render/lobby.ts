@@ -161,7 +161,7 @@ export class LobbyView {
     const wallSign = new THREE.Mesh(new THREE.PlaneGeometry(ww, ww / 4), new THREE.MeshBasicNodeMaterial({ map: wallTex }));
     wallSign.position.set((bw.x0 + bw.x1) / 2, 1.95, bw.z1 + 0.005);
     this.group.add(wallSign);
-    const wallLogo = new LogoSign(wallSign, ww, ww / 4, { plate: 0xfff6dd, bezel: C.yellow, pad: 0.1, rim: 0.05 });
+    const wallLogo = new LogoSign(wallSign, ww, 0.96, { plate: 0xfff6dd, bezel: C.yellow, pad: 0.1, rim: 0.05, lift: 0.07 });
     this.signs = { canopy: canopyLogo, wall: wallLogo };
     const d = L.desk;
     // Counter at 0.98 m: the receptionist (head top ~1.5 m) stands behind it, seen from the chest up.

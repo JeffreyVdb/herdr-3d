@@ -17,6 +17,8 @@ export interface PlateStyle {
   pad: number;
   /** How far the bezel reaches past the plate (world units). */
   rim: number;
+  /** Raise the plate by this much over the name board's centre. */
+  lift?: number;
 }
 
 /**
@@ -66,6 +68,7 @@ export class LogoSign {
     const g = this.group;
     g.name = 'logo.sign';
     g.position.copy(name.position);
+    g.position.y += style.lift ?? 0;
     g.quaternion.copy(name.quaternion);
     g.visible = false;
     const { rim } = style;
