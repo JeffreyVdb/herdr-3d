@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/execpath"
 )
 
 // Cmd is a process to start.
@@ -53,7 +55,7 @@ type execProc struct {
 
 // Start implements Runner.
 func (ExecRunner) Start(c Cmd) (Process, error) {
-	cmd := exec.Command(c.Path, c.Args...)
+	cmd := exec.Command(execpath.Resolve(c.Path), c.Args...)
 	cmd.Dir, cmd.Env = c.Dir, c.Env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	in, err := cmd.StdinPipe()

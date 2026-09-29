@@ -981,7 +981,8 @@ Unknown keys of the CLIs are ignored; the fields above are only ever added to.
 - **Schedule**: every 2 minutes while at least one client is connected (none: nothing is probed); `limits.refresh`
   reads both at once, at most once every 20 s (else `{"queued": false}`); after 3 failures in a row a provider is read
   every 10 minutes; one with no plan, or whose CLI is missing, every 30 minutes. `--claude` / `HERDR_WORLD_CLAUDE`,
-  `--codex` / `HERDR_WORLD_CODEX` name the executables (the systemd user manager's `PATH` may lack `~/.local/bin`);
+  `--codex` / `HERDR_WORLD_CODEX` name the executables. Lookup prefers `PATH`, then `~/.local/bin`, as model
+  discovery does, so native installs work with the systemd user manager's restricted `PATH`. Explicit paths are honored;
   `--no-limits` turns it off: `limits.refresh` is `unsupported` and the snapshot has no `limits` key (there is a `limits`
   key, `[]` at first, exactly when the bridge reads limits). A refresh acknowledged while a read is running is not lost:
   when that read ends, both providers are read again at once (the read that was running may predate the request).

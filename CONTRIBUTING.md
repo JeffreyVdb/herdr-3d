@@ -107,7 +107,8 @@ parts:
   --strict-mcp-config --disable-slash-commands --no-session-persistence` (one `get_usage` control request on stdin) and
   `codex app-server` (JSON-RPC `initialize`, `initialized`, `account/rateLimits/read`). They start no conversation, cost
   no tokens and write no session file; the bridge only reads Codex rollouts as a fallback. Nothing runs while no client
-  is connected. `--claude` / `--codex` name the executables, `--no-limits` turns it off (protocol: "Plan limits").
+  is connected. Lookup prefers `PATH`, then `~/.local/bin`, as model discovery does. `--claude` / `--codex` name
+  the executables, `--no-limits` turns it off (protocol: "Plan limits").
   `make integration` runs the live check that ten probes leave no Claude project and no Codex rollout behind.
 - **gh** (`githubcli.Client`, M7 boards): exactly one shape, `gh api graphql --method POST --input -`, with the request
   as JSON on stdin: `{"query": <one of the embedded documents in internal/githubcli/queries>, "variables": {…}}`.

@@ -28,7 +28,7 @@ const (
 // Limits.Error values.
 const (
 	LimitsNoPlan       = "no_plan"       // no plan limits: an API key, or signed out
-	LimitsNotInstalled = "not_installed" // the CLI is not on the bridge's PATH
+	LimitsNotInstalled = "not_installed" // the CLI was not found at its configured path, on PATH or in ~/.local/bin
 	LimitsTimeout      = "timeout"       // the CLI did not answer in time
 	LimitsFailed       = "failed"        // any other failure (details are in the bridge's log)
 )
