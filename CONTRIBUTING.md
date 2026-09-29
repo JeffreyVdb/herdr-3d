@@ -550,6 +550,8 @@ dialog. The orchestrator walks in like a hire and you are turned to face its des
 the city's top bar) lists the team presets: create, edit (the name and the five roles × harness / model / effort) and
 delete (confirmed); a taken name or a bad choice is said by the field. Esc in the editor goes back to the list. An
 older bridge (no `presets` in its world, or `unknown_command`) leaves Run, the tab and the presets off with the reason.
+Below 1440 px wide the top bar's Hire and Run show only their icons (their words stay for screen readers and in the
+tooltip), so the floor's name and the counts keep their room.
 
 Tests:
 
