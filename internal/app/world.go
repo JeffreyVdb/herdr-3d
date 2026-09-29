@@ -35,6 +35,8 @@ const (
 	EnvSocket     = "HERDR_WORLD_SOCKET"
 	EnvDB         = "HERDR_WORLD_DB"
 	EnvHerdr      = "HERDR_WORLD_HERDR"
+	EnvCodexCLI   = "HERDR_WORLD_CODEX_CLI"
+	EnvClaudeCLI  = "HERDR_WORLD_CLAUDE_CLI"
 	EnvSessions   = "HERDR_WORLD_SESSIONS"
 	EnvPoll       = "HERDR_WORLD_POLL"
 	EnvResnapshot = "HERDR_WORLD_RESNAPSHOT"
@@ -243,6 +245,8 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	ghBin := fs.String("gh", envOr(EnvGH, "gh"), "gh executable, for the issue and pull request boards ($"+EnvGH+")") // M7 boards
 	codexSessions := fs.String("codex-sessions", envOr(EnvCodex, codex.DefaultSessionsDir()), "Codex rollout directory, for the sleep backfill and usage ($"+EnvCodex+")")
 	claudeProjects := fs.String("claude-projects", envOr(EnvClaudeProjects, usage.DefaultClaudeProjects()), "Claude Code transcript directory, for usage ($"+EnvClaudeProjects+")")
+	codexCLI := fs.String("codex-cli", envOr(EnvCodexCLI, "codex"), "Codex binary for model discovery ($"+EnvCodexCLI+")")
+	claudeCLI := fs.String("claude-cli", envOr(EnvClaudeCLI, "claude"), "Claude Code binary for model discovery ($"+EnvClaudeCLI+")")
 	runsDir := fs.String("runs-dir", envOr(EnvRunsDir, DefaultRunsDir()), "write-code runs directory, for the freelancers' reports ($"+EnvRunsDir+")") // M6 runs
 	pricingFile := fs.String("pricing", os.Getenv(EnvPricing), "JSON file of model prices merged over the built-in table ($"+EnvPricing+")")
 	sessions := fs.String("sessions", os.Getenv(EnvSessions), "only watch sessions whose name matches this regexp ($"+EnvSessions+")")
@@ -304,13 +308,17 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 			return fmt.Errorf("-sessions: %w", err)
 		}
 	}
+	hireOptions := discoverHireOptions(ctx, log, *codexCLI, *claudeCLI)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return Serve(ctx, ServeConfig{
 		Socket: *socket, DB: *db, Herdr: &herdr.Client{Bin: *herdrBin}, Only: only,
 		Poll: poll, Resnapshot: resnap, MaxDesks: maxDesks, NameHold: nameHold, Log: log, Name: name,
 		Control:     &herdr.Control{Herdr: *herdrBin, SystemdRun: *systemdRun, Only: only},
 		WakeTimeout: wakeTimeout, ResumeTimeout: resumeTimeout, CodexSessions: *codexSessions,
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
-		ClaudeProjects: *claudeProjects, Pricing: pricing,
+		ClaudeProjects: *claudeProjects, Pricing: pricing, HireOptions: &hireOptions,
 		MaxWatches: maxWatches, MaxObservers: maxObservers,
 		RunsDir: *runsDir,                                     // M6 runs
 		Boards:  GitHubBoards(&githubcli.Client{Bin: *ghBin}), // M7 boards
@@ -339,7 +347,7 @@ type ServeConfig struct {
 	Git *gitops.Git
 	// Caps are the worker caps (zero: server.DefaultCaps).
 	Caps server.Caps
-	// HireOptions, if set, replaces what can be hired (tests only).
+	// HireOptions, if set, replaces what can be hired (discovered at CLI startup).
 	HireOptions *proto.HireOptions
 	// TrustTimeout, SeenTimeout and ExitTimeout: see server.Options.
 	TrustTimeout, SeenTimeout, ExitTimeout time.Duration

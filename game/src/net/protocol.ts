@@ -73,7 +73,7 @@ export interface FloorSuggested {
 export interface HarnessOptions {
   models: string[];
   efforts: string[];
-  /** Extra efforts only some models take (codex: `ultra` for sol/astra). */
+  /** Additional efforts supported by this model beyond the harness's common ones. */
   extra_efforts?: Record<string, string[]>;
 }
 

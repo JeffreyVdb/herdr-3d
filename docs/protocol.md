@@ -124,6 +124,9 @@ is closed (status 1008). A `proto` other than `1` gets `unsupported_proto` and i
 
 `hire_options` lists what can be hired: models and efforts per harness, `extra_efforts` being efforts only some models
 take. `floor.settings.set` validates `default_hire` against it; clients should read it rather than hardcode the lists.
+The bridge queries the installed Codex and Claude Code harnesses at startup; model order comes from each harness.
+`efforts` contains their common effort levels and `extra_efforts` preserves each model's additional levels. Either
+list may be empty. If discovery fails for one harness, only that harness uses the legacy fallback catalog.
 
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
@@ -430,7 +433,7 @@ not, is `unknown_session`.
 | `project` | `{"owner": string, "number": int}` | a GitHub Project (v2): owner as above, number ≥ 1 |
 | `status_field` | `{"name": string, "options": [string…]}` | name 1–64 bytes; 1–20 options, each 1–64 bytes, unique (not blank). A client may pre-fill `{"name":"Status","options":["Todo","Doing","QA","Done"]}`. The issue board (M7) uses only the `name`, as the project field its columns come from (default `Status`); the columns are that field's live options, not these. |
 | `default_cwd` | absolute path | an existing directory on the bridge host; stored cleaned (no trailing `/`) |
-| `default_hire` | `{"harness", "model", "effort"}` | one of `hire_options`: a model of that harness, an effort of it or an `extra_efforts` entry of that model (`ultra` only for `gpt-6-sol` / `gpt-6-astra`) |
+| `default_hire` | `{"harness", "model", "effort"}` | one of `hire_options`: a model of that harness, an effort of it or an `extra_efforts` entry of that model |
 
 Objects must not have other keys. Settings live in SQLite `floor_repo`.
 

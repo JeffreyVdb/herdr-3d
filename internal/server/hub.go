@@ -80,7 +80,7 @@ type Options struct {
 	Usage   *UsageConfig
 	// Caps are the worker caps (zero: DefaultCaps).
 	Caps Caps
-	// HireOptions, if set, replaces what can be hired (tests: cheap models).
+	// HireOptions, if set, replaces what can be hired (the harness catalogs).
 	HireOptions *proto.HireOptions
 	// Load reads the host load for hire.prepare (nil: none).
 	Load func() *proto.HostLoad
