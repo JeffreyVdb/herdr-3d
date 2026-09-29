@@ -13,6 +13,18 @@ import { Watches } from './watches';
 
 export { screensParam };
 
+/** M6b (test hook): where a live screen is drawn, against its desk monitor's terminal area (world coordinates, metres). */
+export interface ScreenMeshInfo {
+  desk: number;
+  mesh: string;
+  /** The live plane shows this terminal's canvas, in the glance view (standing) or the whole screen (sitting). */
+  texture: boolean;
+  glance: boolean;
+  center: { x: number; y: number; z: number };
+  size: { width: number; height: number };
+  monitor: { center: { x: number; y: number; z: number }; width: number; height: number };
+}
+
 /** What a laptop shows (test hook): live (watched, painted), pending (watched, no frame yet), frozen, glow, dark (asleep). */
 export type ScreenState = 'live' | 'pending' | 'frozen' | 'glow' | 'dark';
 
@@ -128,7 +140,7 @@ export class Laptops {
   private readonly v = new THREE.Vector3();
   private readonly m = new THREE.Matrix4();
   private readonly frustum = new THREE.Frustum();
-  private readonly sphere = new THREE.Sphere(new THREE.Vector3(), 0.22);
+  private readonly sphere = new THREE.Sphere(new THREE.Vector3(), 0.4);
   private readonly normal = new THREE.Vector3();
   private readonly toEye = new THREE.Vector3();
   private readonly camPos = new THREE.Vector3();
@@ -176,8 +188,10 @@ export class Laptops {
     let t = this.terms.get(id);
     if (!t) {
       t = this.pool.pop() ?? new LaptopTerminal();
-      const size = this.seat?.id === id ? this.seatedSize : LIVE_SIZE;
+      const seated = this.seat?.id === id;
+      const size = seated ? this.seatedSize : LIVE_SIZE;
       t.setSize(size.width, size.height);
+      t.setGlance(!seated);
       this.terms.set(id, t);
     }
     t.frame(f);
@@ -269,10 +283,13 @@ export class Laptops {
     this.leaving = null;
     office.setLean(v.desk);
     office.setAtLaptop(true);
-    // The seated screen: sized to the view, sharp from up close.
-    const h = Math.round(Math.min(1400, Math.max(560, window.innerHeight * Math.min(2, window.devicePixelRatio || 1) * 0.9)));
-    this.seatedSize = { width: Math.round(h * 1.55), height: h };
-    this.terms.get(id)?.setSize(this.seatedSize.width, this.seatedSize.height);
+    // The seated screen: the whole terminal, sized to the view, sharp from up close (the monitor's shape, at most 2400 wide).
+    const aspect = SCREEN.width / SCREEN.height;
+    const h = Math.round(Math.min(1400, 2400 / aspect, Math.max(560, window.innerHeight * Math.min(2, window.devicePixelRatio || 1) * 0.9)));
+    this.seatedSize = { width: Math.round(h * aspect), height: h };
+    const term = this.terms.get(id);
+    term?.setSize(this.seatedSize.width, this.seatedSize.height);
+    term?.setGlance(false);
     this.input = this.lanes.sit(id);
     this.host.seat.show(v.name, this.mac);
     this.host.seat.status('ok', null);
@@ -298,14 +315,16 @@ export class Laptops {
     this.input = null;
     s.office.setLean(null);
     s.office.setAtLaptop(false);
-    this.terms.get(s.id)?.setSize(LIVE_SIZE.width, LIVE_SIZE.height);
+    const term = this.terms.get(s.id);
+    term?.setSize(LIVE_SIZE.width, LIVE_SIZE.height);
+    term?.setGlance(true);
     this.host.seat.hide();
     this.leaving = snap ? null : { t0: performance.now(), from: { pos: this.camPos.clone(), quat: this.camQuat.clone() } };
     if (why) this.host.toast(why, 'error');
     this.syncWatches();
   }
 
-  /** Where the camera goes to have the laptop fill the view: square on to the screen, from the chair's side. */
+  /** Where the camera goes to have the monitor's terminal fill the view: square on to the screen, from the chair's side. */
   private seatPose(office: OfficeView, desk: number, camera: THREE.PerspectiveCamera): { pos: THREE.Vector3; quat: THREE.Quaternion } {
     const meshes = this.meshes as ScreenMeshes;
     const M = this.m.multiplyMatrices(office.root.matrixWorld, meshes.slotMatrix(desk, new THREE.Matrix4()));
@@ -544,6 +563,35 @@ export class Laptops {
       out.push({ id, desk: i, state, fps });
     }
     return out;
+  }
+
+  /** M6b: where a worker's live screen is drawn and where its monitor is (test hook). */
+  screenMesh(id: string): ScreenMeshInfo | null {
+    const desk = this.liveAt.get(id);
+    const o = this.attached;
+    const t = this.terms.get(id);
+    const mesh = desk !== undefined ? this.meshes?.liveMesh(desk) : null;
+    if (desk === undefined || !o || !mesh || !t || !this.meshes) return null;
+    o.root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(mesh);
+    const c = box.getCenter(new THREE.Vector3());
+    const M = new THREE.Matrix4().multiplyMatrices(o.root.matrixWorld, this.meshes.slotMatrix(desk, new THREE.Matrix4()));
+    const mc = SCREEN.center.clone().applyMatrix4(M);
+    const geo = mesh.geometry;
+    geo.computeBoundingBox();
+    const g = geo.boundingBox as THREE.Box3;
+    const gs = g.getSize(new THREE.Vector3());
+    const xy = (v: THREE.Vector3) => ({ x: +v.x.toFixed(4), y: +v.y.toFixed(4), z: +v.z.toFixed(4) });
+    return {
+      desk,
+      mesh: mesh.name,
+      texture: (mesh.material as THREE.MeshBasicMaterial).map === t.texture,
+      glance: t.glancing,
+      center: xy(c),
+      // The plane lies in the slot's x and (tilted) y: its width along x, its height from y and z.
+      size: { width: +gs.x.toFixed(4), height: +Math.hypot(gs.y, gs.z).toFixed(4) },
+      monitor: { center: xy(mc), width: SCREEN.width, height: SCREEN.height },
+    };
   }
 
   /** How much of a worker's frozen screen is not black (0–1; null: not frozen). */

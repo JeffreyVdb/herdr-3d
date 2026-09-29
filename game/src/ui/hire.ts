@@ -136,7 +136,7 @@ export class HireDialog {
     });
     this.dialog.addEventListener('cancel', () => {
       // Esc while the hire is on its way: the hire still happens; the dialog just goes.
-      if (this.state === 'hiring') this.host.toast('The hire is still on its way; the worker walks in when it is done.', 'info');
+      if (this.state === 'hiring') this.host.toast('The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
     });
     this.dialog.addEventListener('click', (e) => {
       if (e.target === this.dialog) this.close();

@@ -23,8 +23,8 @@ Worker states → animation:
 | idle / done | leaning back, coffee; `done` (unseen) gets a little "!" |
 | blocked / `input_required` | hand raised, speech bubble |
 | session stopped | floor lights off, workers asleep at desks (zZz) |
-| hired | walks in, sits, opens laptop |
-| fired | packs a cardboard box, takes laptop, walks out |
+| hired | drops in to its chair from above (M6b; walked in until then), its laptop in the desk's dock |
+| fired | packs a cardboard box (its things off the desk, the laptop out of its dock), walks out |
 | freelancer finished | waves, leaves with briefcase; verdict stamp (PASS / CHANGES_REQUIRED) |
 | ORCH over 3-pass cap | sweating, red clock over desk, "needs you" bubble |
 

@@ -3,8 +3,11 @@ import { Terminal, type IBufferCell } from '@xterm/xterm';
 import type { TerminalFrame } from '../net/protocol';
 import { paintBuffer } from './paint';
 
-/** Live laptop screens far from you, and the one you sit at (sized to the view when you sit down). */
-export const LIVE_SIZE = { width: 480, height: 310 };
+/**
+ * A live screen's canvas (M6b: the desk monitor's terminal area, sharp for the
+ * glance view's big type); the one you sit at is sized to the view instead.
+ */
+export const LIVE_SIZE = { width: 768, height: 322 };
 
 /** Base64 → bytes (xterm takes UTF-8 bytes as they came from the pane). */
 export function decodeFrame(data: string): Uint8Array {
@@ -29,6 +32,8 @@ export class LaptopTerminal {
   /** One cell object the painter reuses for every cell. */
   private readonly cell: IBufferCell;
   private cursorHidden = false;
+  /** M6b: the glance view (standing, the monitor read from a distance) or the whole screen (sitting at it). */
+  private glance = true;
   private dirty = false;
   private lastDraw = -Infinity;
   /** A frame has been painted since the last reset (before that, the laptop keeps its glow). */
@@ -90,6 +95,18 @@ export class LaptopTerminal {
     if (this.painted) this.paint(performance.now());
   }
 
+  /** M6b: the glance view (true) or the whole screen; a painted screen is painted again at once. */
+  setGlance(on: boolean): void {
+    if (on === this.glance) return;
+    this.glance = on;
+    this.lastDraw = -Infinity;
+    if (this.painted) this.paint(performance.now());
+  }
+
+  get glancing(): boolean {
+    return this.glance;
+  }
+
   /** Applies a frame: `full` resets first; a diff for other dimensions waits for a full one (false). */
   frame(f: TerminalFrame): boolean {
     if (!f.full && (f.cols !== this.term.cols || f.rows !== this.term.rows)) return false;
@@ -119,7 +136,12 @@ export class LaptopTerminal {
   private paint(now: number): void {
     this.dirty = false;
     this.lastDraw = now;
-    paintBuffer(this.g, this.term.buffer.active, { cols: this.term.cols, rows: this.term.rows, width: this.canvas.width, height: this.canvas.height, cursor: !this.cursorHidden }, this.cell);
+    paintBuffer(
+      this.g,
+      this.term.buffer.active,
+      { cols: this.term.cols, rows: this.term.rows, width: this.canvas.width, height: this.canvas.height, cursor: !this.cursorHidden, glance: this.glance },
+      this.cell,
+    );
     this.texture.needsUpdate = true;
     this.painted = true;
     this.paints++;

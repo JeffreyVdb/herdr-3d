@@ -1,14 +1,15 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { pickNearest, rayBox, type Pickable, type V3 } from '../world/collide';
-import { hash32, modelCue, type Display } from '../world/derive';
-import { DESK_H, floorLayout, MEZZ_Y, SEAT_OFFSET, seatRect, slotBoxes, wallPieces, type Box3, type FloorLayout, type Opening, type Outline, type Rect } from '../world/layout';
+import { hash32, modelCue, resolveHarness, type Display } from '../world/derive';
+import { deskKit, type DeskKit } from '../world/deskKit';
+import { DESK_H, floorLayout, MEZZ_Y, SEAT_OFFSET, seatRect, slotBoxes, wallPieces, type Box3, type DeskSlot, type FloorLayout, type Opening, type Outline, type Rect } from '../world/layout';
 import type { FloorView, WorkerView } from '../world/store';
 import { AtlasCards } from './cards/atlasCards';
 import { cardOf } from './cards/cardOf';
 import { CARD_RANGE, cardWeight, OVERLOOK_CARD_RANGE } from './cards/select';
 import type { CardData } from './cards/types';
-import { Crowd } from './crowd';
+import { Crowd, type Member } from './crowd';
 import { DeskSet } from './desks';
 import { MezzanineView } from './mezzanine';
 import { BODY_TINTS, OFFICE } from './palette';
@@ -53,13 +54,22 @@ export interface OfficeOptions {
 
 /**
  * M4: a desk shown other than the world says while someone packs up at it
- * (`busy`: chair out, laptop open, the worker drawn by the walk animation) or
- * walks in to it / has just left it (`empty`: chair in, no laptop, no "+").
+ * (`busy`: chair out, laptop in its dock, the worker drawn by the walk
+ * animation) or has just left it (`empty`: chair in, no laptop, no "+").
  */
 export interface AwaySeat {
   show: 'busy' | 'empty';
   display: Display;
   cue: number;
+  /** M6b, packing: the sticker's harness, and how many of the desk's things are in the box already. */
+  harness?: string | undefined;
+  packed?: number;
+}
+
+/** M6b: a worker dropping in to its chair (see `world/arrival.ts`): how high above the seat, how squashed. */
+export interface DropPose {
+  dy: number;
+  squash: number;
 }
 
 /** Glass seen from inside: a light tint over the street. */
@@ -136,8 +146,12 @@ export class OfficeView {
   private targetCache: Array<Pickable<Target>> | null = null;
   private targetOwnCache: Array<Pickable<Target>> | null = null;
   private cardCam: THREE.PerspectiveCamera | null = null;
-  /** M4: desks someone is walking in to or packing up at (see `setAway`). */
+  /** M4: desks someone is packing up at or has just left (see `setAway`). */
   private readonly away = new Map<number, AwaySeat>();
+  /** M6b: workers dropping in to their chairs (see `setDrop`). */
+  private readonly drops = new Map<number, DropPose>();
+  /** M6b: each desk's things. */
+  readonly kits: DeskKit[];
   /** M5: the desk whose worker stands aside while you sit at its laptop. */
   private lean: number | null = null;
   private atLaptop = false;
@@ -269,7 +283,8 @@ export class OfficeView {
     this.boards = new BoardsView(L.props, L.height, (id, tex) => this.props.swapBoard(id, tex));
     this.root.add(this.boards.group);
 
-    this.desks = new DeskSet(L.desks, o.shadows, true);
+    this.kits = L.slots.map((s) => deskKit(s));
+    this.desks = new DeskSet(L.desks, o.shadows, { plus: true, kits: this.kits });
     this.crowd = new Crowd(L.desks, o.shadows);
     this.root.add(this.desks.group, this.crowd.group);
 
@@ -367,14 +382,41 @@ export class OfficeView {
     });
   }
 
-  /** M4: shows a desk as `a` says instead of as the world does (null: as the world does again). */
+  /** M4: shows a desk as `a` says instead of as the world does (null: as the world does again). M6b: each thing packed leaves the desk as it goes. */
   setAway(desk: number, a: AwaySeat | null): void {
     const cur = this.away.get(desk) ?? null;
-    if (cur === a || (cur && a && cur.show === a.show && cur.display === a.display && cur.cue === a.cue)) return;
+    if (cur === a || (cur && a && cur.show === a.show && cur.display === a.display && cur.cue === a.cue && cur.harness === a.harness && cur.packed === a.packed)) return;
     if (!this.layout.slots[desk]) return;
     if (a) this.away.set(desk, a);
     else this.away.delete(desk);
     this.setSeat(desk, this.seats[desk] ?? null);
+  }
+
+  /**
+   * M6b: the worker at `desk` drops in to its chair (null: sitting as usual).
+   * Only its figure moves: the desk stays the worker's, card, look-at and all.
+   */
+  setDrop(desk: number, d: DropPose | null): void {
+    const cur = this.drops.get(desk) ?? null;
+    if (cur === d || (cur && d && cur.dy === d.dy && cur.squash === d.squash)) return;
+    if (d) this.drops.set(desk, d);
+    else this.drops.delete(desk);
+    const s = this.layout.slots[desk];
+    const v = this.seats[desk];
+    if (!s || !v || this.away.has(desk) || this.lean === desk) return;
+    this.crowd.set(desk, this.seated(desk, s, memberOf(v)));
+  }
+
+  /** M6b: desks with a worker dropping in (test hook). */
+  dropping(): number[] {
+    return [...this.drops.keys()];
+  }
+
+  /** A worker in its chair (dropping in, if it is). */
+  private seated(i: number, s: DeskSlot, mem: ReturnType<typeof memberOf>): Member {
+    const d = this.drops.get(i);
+    const side = this.kits[i]?.side ?? 1;
+    return { x: s.seat.x, y: SEAT_Y + (d?.dy ?? 0), z: s.seat.z, yaw: s.yaw, scale: 1, ...mem, deskSide: side, ...(d && d.squash !== 1 ? { squash: d.squash } : {}) };
   }
 
   /** M5: the worker at `desk` stands aside while you sit at its laptop (null: back in its chair). */
@@ -407,9 +449,9 @@ export class OfficeView {
     }
     const away = this.away.get(i);
     if (away) {
-      // Someone is walking in or packing up: the animation draws them, the desk waits without its "+".
+      // Someone is packing up or has just left: the animation draws them, the desk waits without its "+".
       const busy = away.show === 'busy';
-      this.desks.set(i, { x: s.seat.x, y: 0, z: s.seat.z, yaw: s.yaw, scale: 1, display: busy ? away.display : null, cueColor: away.cue, plus: false });
+      this.desks.set(i, { x: s.seat.x, y: 0, z: s.seat.z, yaw: s.yaw, scale: 1, display: busy ? away.display : null, cueColor: away.cue, plus: false, harness: away.harness, packed: away.packed ?? 0 });
       this.crowd.set(i, null);
       this.anchors[i] = null;
       this.cards.setCard(i, null);
@@ -417,7 +459,18 @@ export class OfficeView {
       this.cardsDirty = true;
       return;
     }
-    this.desks.set(i, { x: s.seat.x, y: 0, z: s.seat.z, yaw: s.yaw, scale: 1, display: mem?.display ?? null, cueColor: mem?.cue.color ?? 0xffffff });
+    this.desks.set(i, {
+      x: s.seat.x,
+      y: 0,
+      z: s.seat.z,
+      yaw: s.yaw,
+      scale: 1,
+      display: mem?.display ?? null,
+      cueColor: mem?.cue.color ?? 0xffffff,
+      harness: v ? resolveHarness(v.worker) : undefined,
+      // M6b: a freelancer brings its briefcase, no keepsakes.
+      personal: !v?.crew?.freelancer,
+    });
     if (v && mem && this.lean === i) {
       // M5: you sit at its laptop; it stands beside the chair, turned to watch the screen.
       const fx = Math.sin(s.yaw);
@@ -425,12 +478,12 @@ export class OfficeView {
       const x = s.seat.x - fz * 0.62 + fx * 0.3;
       const z = s.seat.z + fx * 0.62 + fz * 0.3;
       const yaw = Math.atan2(s.seat.x + fx * SEAT_OFFSET - x, s.seat.z + fz * SEAT_OFFSET - z);
-      this.crowd.set(i, { x, y: 0, z, yaw, scale: 1, ...mem, stride: 0 });
+      this.crowd.set(i, { x, y: 0, z, yaw, scale: 1, ...mem, stride: 0, deskSide: this.kits[i]?.side ?? 1 });
       this.anchors[i] = new THREE.Vector3(x, CARD_Y + 0.25, z);
       this.cards.setCard(i, cardOf(v, v.worker.id === this.focusId));
       this.applied.set(v.worker.id, v.display);
     } else if (v && mem) {
-      this.crowd.set(i, { x: s.seat.x, y: SEAT_Y, z: s.seat.z, yaw: s.yaw, scale: 1, ...mem });
+      this.crowd.set(i, this.seated(i, s, mem));
       this.anchors[i] = new THREE.Vector3(s.seat.x, CARD_Y, s.seat.z);
       this.cards.setCard(i, cardOf(v, v.worker.id === this.focusId));
       this.applied.set(v.worker.id, v.display);
@@ -508,7 +561,7 @@ export class OfficeView {
         const b = slotBoxes(s);
         const v = this.seats[i];
         if (v) targets.push({ boxes: [b.seat, b.desk], value: { kind: 'worker', id: v.worker.id, name: v.name, label: v.worker.label, desk: i } });
-        // A desk someone is packing up at, or walking in to, is not free to hire at.
+        // A desk someone is packing up at, or a hire is on its way to, is not free to hire at.
         else if (!this.away.has(i)) targets.push({ boxes: [b.desk, b.plus], value: { kind: 'desk', id: `desk-${i}`, desk: i, label: `Desk ${i + 1}` } });
       });
       this.targetCache = targets;
@@ -538,6 +591,13 @@ export class OfficeView {
 
   seat(i: number): WorkerView | null {
     return this.seats[i] ?? null;
+  }
+
+  /** M6b: what desk `i` draws (test hook): its parts, and the docked laptop's sticker. */
+  deskInfo(i: number): { parts: Record<string, number>; sticker: { logo: string; rim: number } | null; side: 1 | -1 } | null {
+    const k = this.kits[i];
+    if (!k) return null;
+    return { parts: this.desks.drawn(i) as Record<string, number>, sticker: this.desks.sticker(i), side: k.side };
   }
 
   /** Animates and lays out cards; call once per rendered frame. */

@@ -7,6 +7,7 @@ import * as THREE from 'three/webgpu';
 import { App, type LookAt, type Pose } from './app';
 import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
 import { runBench, type BenchOptions, type BenchResult } from './bench';
+import type { ScreenMeshInfo } from './laptop';
 import type { BoardMessage, CommandName, WorldEvent } from './net/protocol';
 import type { ArrivalInfo } from './render/arrivals';
 import type { CrewInfo } from './render/office';
@@ -68,7 +69,7 @@ export interface H3DDebug {
     building: string | null;
     asleep: boolean;
     desks: number;
-    workers: Array<{ id: string; name: string; label: string; desk: number; status: string; bridgeName: string | null; bridgeDesk: number | null }>;
+    workers: Array<{ id: string; name: string; label: string; desk: number; status: string; bridgeName: string | null; bridgeDesk: number | null; harness: string | null }>;
   }>;
   /** The office layout of a floor, in its building's outline (for scripted camera paths). */
   layout(session: string): ReturnType<typeof floorLayout> | null;
@@ -145,7 +146,7 @@ export interface H3DDebug {
   openStartRun(o?: Partial<StartRunOptions>): void;
   /** M6: the team presets panel. */
   openPresets(): void;
-  /** M4: workers walking in or out right now (phase, position, how far along, what their desk shows). */
+  /** M4: workers walking out (M6b: or dropping in) right now (phase, position, how far along, what their desk shows). */
   arrivals(): ArrivalInfo[];
   /** M4: walks that ended: `played` false when nobody could see it (it resolved at once). */
   arrivalLog(): Array<{ id: string; kind: 'in' | 'out'; played: boolean; session: string; desk: number }>;
@@ -153,6 +154,10 @@ export interface H3DDebug {
   arrivalRate(k: number): void;
   /** M4: the desks of the floor with an interior: who sits there, whether its "+" shows, what a walk holds it as. */
   desks(): Array<{ desk: number; worker: string | null; plus: boolean; away: 'busy' | 'empty' | null }>;
+  /** M6b: what a desk of the floor with an interior draws: its parts (instances drawn), the docked laptop's sticker, the dock side; `dropping`: a hire dropping in. */
+  deskArt(desk: number): { parts: Record<string, number>; sticker: { logo: string; rim: number } | null; side: 1 | -1; dropping: boolean } | null;
+  /** M6b: where a worker's live screen is drawn (world centre and size) against its desk monitor's terminal area; null when not live. */
+  screenMesh(workerId: string): ScreenMeshInfo | null;
   /** M5: N, as the key does: who it went to (null: nobody needs you). */
   nextNeed(): NeedItem | null;
   /** M5: who needs you, in the order N visits them. */
@@ -231,6 +236,7 @@ const h3d: H3DDebug = {
               status: w.worker.status,
               bridgeName: w.worker.name ?? null,
               bridgeDesk: w.worker.desk_index ?? null,
+              harness: w.harness ?? null,
             })),
           }))
       : [],
@@ -296,6 +302,12 @@ const h3d: H3DDebug = {
   arrivalLog: () => structuredClone(app?.arrivals.log ?? []),
   arrivalRate: (k) => app?.arrivals.setRate(k, performance.now() / 1000),
   desks: () => app?.deskStates() ?? [],
+  deskArt: (d) => {
+    const o = app?.office;
+    const info = o?.deskInfo(d);
+    return o && info ? { ...info, dropping: o.dropping().includes(d) } : null;
+  },
+  screenMesh: (id) => app?.laptops.screenMesh(id) ?? null,
   nextNeed: () => app?.goNextNeed() ?? null,
   needs: () => app?.needs() ?? [],
   openPrompt: (id) => app?.openPrompt(id),

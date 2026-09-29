@@ -402,8 +402,10 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   and ray picking, the M4 walk-out route (`route.ts`), floor-settings validation and diffing (`settings.ts`),
   building/floor reordering (`arrange.ts`); M4: the hire / send-home dialogs' state (`hire.ts`: the preselected
   choice, capacity states, the base's age, which send-home options are enabled, the first task's keys, the command
-  args) and the walk-in / walk-out timeline (`arrival.ts`: the walk-in is `walkOutRoute` reversed; heights come from
-  its waypoints). M5: the usage line and the floor total (`usage.ts`: `≈$0.09 · 37k tokens · ctx 4%`, only the known
+  args) and the arrivals' timeline (`arrival.ts`: the walk-out's heights come from its waypoints; M6b: a hire drops in
+  to its chair in under a second instead of walking in, never `away`). M6b: what stands on each desk (`deskKit.ts`:
+  the monitor, keyboard, mouse, the dock on the pod's outer side and its cables, the worker's photos, mug, plant and
+  notebook, varied by the desk index; vitest keeps them on the desktop and clear of each other at every desk count). M5: the usage line and the floor total (`usage.ts`: `≈$0.09 · 37k tokens · ctx 4%`, only the known
   parts, a `*` for a cost priced as an unknown model, never a bare `$`), N's queue (`next.ts`: blocked before done, the
   building you are in first, oldest `status_since` first, and where to stand facing a worker), quick replies
   (`answer.ts`: digits → a question's choice; Approve = the choice that says Yes / Trust / Allow / Proceed, else the
@@ -422,11 +424,17 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   `bake.ts`) and the lobby (`lobby.ts`). M3c: the corner office (`mezzanine.ts`: two merged vertex-coloured toon
   meshes, its glass merged into the office's window glass, one material). M4: `arrivals.ts` draws the walks (standing
   workers, the cardboard box with a mug, a plant and a photo, the closed laptop); the office shows a desk someone packs
-  up at or walks in to without its "+" (`OfficeView.setAway`). M6: the crew's looks (`crewLook.ts`: role wear, desk
+  up at without its "+" (`OfficeView.setAway`); M6b: the box on the keyboard, the desk's own things lifted into it
+  one by one, the laptop out of its dock; a hire's drop-in (`OfficeView.setDrop` moves only the figure; the landing
+  shadow and the puff of dust are `arrivals.ts`'). M6b desks (`desks.ts`): a monitor with a status bar (the status's
+  colour and word, from a small atlas), a keyboard, mouse, dock and cables (one merged mesh per dock side), the
+  laptop standing closed in the dock with its harness's sticker (Claude Code's spark or Codex's prompt, one atlas,
+  the model family's colour as its ring: `deskArt.ts`), the worker's things; instanced per part, only the desk, chair
+  and monitor cast shadows. M6: the crew's looks (`crewLook.ts`: role wear, desk
   items, the ORCH's pass board, the brief, the report folder with its verdict stamp, sweat and a red alarm clock over
   the cap, a run-coloured badge; one InstancedMesh per part on the crowd, hidden while nobody wears it, none in the
-  city), the card's role tag, stamp and crew lines (`cards/crewCard.ts`), and freelancers walking in and out with a
-  briefcase, waving goodbye (`arrival.ts` `carry: 'briefcase'`).
+  city), the card's role tag, stamp and crew lines (`cards/crewCard.ts`), and freelancers dropping in (M6b) and walking
+  out with a briefcase, waving goodbye (`arrival.ts` `carry: 'briefcase'`); a freelancer's desk has no keepsakes.
   Cards and city badges are canvas atlases drawn as one instanced quad batch each (a cell per worker / floor, redrawn
   only when it changes). A DOM layer was benchmarked on the Mac and lost: moving DOM elements over the canvas cost
   2.6–4.3 ms of main thread per frame for 24 cards and ~8 ms for 30 city badges, against 0.5 ms for the atlas. The DOM
@@ -434,11 +442,13 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   (`cards/layout.ts`: what its question is about, the question with the numbered choices as key caps; the looked-at
   worker's usage line): the nearest tall cards get one of 8 tall cells of a second small atlas, drawn as a second
   instanced batch (`cards/atlasCards.ts`; the per-desk atlas stays as it was; a tall card without a free cell shows
-  compact with what its question is about and the question as the task line). The laptop screens are `screens.ts` (below).
-- `src/laptop` — M5 laptop screens and sitting at a worker's laptop: `watches.ts` keeps the connection's
+  compact with what its question is about and the question as the task line). The screens are `screens.ts` (below).
+- `src/laptop` — M5 screens and sitting at a worker's screen (M6b: on its desk monitor): `watches.ts` keeps the connection's
   `terminal.watch`es in step with what the game wants (a full frame first, a gap re-watches, `unknown_command` turns
   screens off with the reason), `terminal.ts` is one xterm.js 6 terminal per live screen (never opened: only its VT
-  parser and buffer) painted by `paint.ts` into a canvas that is the laptop's texture, `keys.ts` maps a keydown to herdr
+  parser and buffer) painted by `paint.ts` into a canvas that is the monitor's texture (M6b: standing, the glance view,
+  the last lines that say something, 22 columns × 5 lines, big, bold and lifted to 4.5:1, so it reads from the aisle;
+  seated, the whole terminal), `keys.ts` maps a keydown to herdr
   keys and orders input (one command in flight, what is typed meanwhile goes in the next `worker.keys`), `index.ts`
   plans and ties it together. Which laptops are live is `src/world/screens.ts` (pure, vitest); the textured planes and
   the frozen-screen atlas (one instanced batch) are `src/render/screens.ts`; the seat bar is `src/ui/seat.ts`. Recorded
@@ -479,7 +489,7 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   `fixture-sim.ts`, M4's four included: a cwd is a git repo unless it has `/scratch` in it, `offline` in it fails every
   fetch (prepare reports it, a worktree hire is refused with `fetch_failed`); a `working` worker has uncommitted changes and 2 unpushed commits, a `blocked` one 1 unpushed commit; caps
   24 / 32 per floor and 60 / 80 for the host unless `simcap` says otherwise; hires are acked one step later with the
-  worker walking in, a first task sets it working the step after; branches are `h3d/<name>-<id6>`; `delete_branch` only for
+  worker arriving, a first task sets it working the step after; branches are `h3d/<name>-<id6>`; `delete_branch` only for
   a branch the simulator made or a fixture `h3d/…` one, like the bridge's recorded branches; M5: the laptops in
   `fixture-screen.ts` (see `src/laptop`), the rest in `fixture-panels.ts`, whose rules are at its top: a prompt starts
   an idle agent working a step later and done three steps after, a working one queues it, a blocked one refuses it
@@ -572,14 +582,15 @@ never branches from a stale origin; the bridge would refuse it with `fetch_faile
 with **Fetch again**, and hiring without a worktree still works. Warnings sit by the buttons, so they are in view
 without scrolling. Hire hides the desk's "+" at once (each hire in flight holds its own desk, so Esc and another hire
 meanwhile is fine: the top bar skips desks a hire is on its way to); the new
-worker walks in from the street, up the fire escape to its desk, carrying its box with the laptop on top, and sits
-down. Look at a worker and press **X** to send it home: its branch and folder, what is left on the desk (uncommitted
+worker drops in to its chair from above (under a second, M6b); its desk is its own at once, so you can look at it, sit
+at its screen and prompt it while it lands. Look at a worker and press **X** to send it home: its branch and folder, what is left on the desk (uncommitted
 changes, commits not on any remote) and, for a worker in a linked worktree of its own, keep / delete the worktree /
 delete the worktree and branch (delete only when the bridge says the tree is clean and pushed, else a warning says
 why; the branch too only when the bridge made it for this worker, `can_delete_branch`); a main checkout whose worktrees are still open cannot go yet. Focus starts on "keep", where Enter sends it home;
 with a delete picked only the button confirms. The worker packs a cardboard box, takes the laptop, walks out down the
-fire escape and away along the sidewalk, and the desk gets its "+" back. Walks play for floors of the building you are
-in (the interior only for the floor you are on); anywhere else they resolve at once. Esc closes either dialog, and
+fire escape and away along the sidewalk, and the desk gets its "+" back. Walk-outs play for floors of the building you
+are in (the interior only for the floor you are on), a drop-in only on the floor you are on; anywhere else they
+resolve at once. Esc closes either dialog, and
 the pointer lock is released while one is open.
 
 Outside (M3b): every floor has a door at the south end of its west wall; it slides open as you walk up to it, onto the
@@ -604,11 +615,13 @@ stop it, the mezzanine's floor does), so pointing at any worker or empty desk be
 measured as though you stood nearer, with no cap on how many show (on the floor it stays 24), so the whole floor's
 show. The floor plan shows the mezzanine's outline, the stair and your desk.
 
-Laptops (M5): the four nearest laptops you can see (and whose screens face you) show their worker's terminal live, at
-4 fps; a laptop keeps its last frame when it stops being live (frozen), or its status glow if it never was; asleep, they
-are dark. A nearer laptop takes over only from one out of view or clearly farther, one at a time, so walking does not
-flicker. Look at a worker and press **E** to sit at its laptop: the worker steps aside, the camera glides in and the
-laptop fills the view, at 10 fps. Everything you type goes to its terminal (letters, Enter, Tab and Shift+Tab, arrows,
+Screens (M5; M6b: on the desk monitors): the four nearest monitors you can see (and whose screens face you) show their
+worker's terminal live, at 4 fps, in the glance view (the last lines, big enough to read from the aisle) under the
+status bar; a monitor keeps its last frame when it stops being live (frozen), or its status glow if it never was;
+asleep, they are dark. A nearer one takes over only from one out of view or clearly farther, one at a time, so walking
+does not flicker. The worker's laptop stands closed in its dock, its sticker showing its harness. Look at a worker and
+press **E** to sit at its screen: the worker steps aside, the camera glides in and the whole terminal fills the view,
+at 10 fps. Everything you type goes to its terminal (letters, Enter, Tab and Shift+Tab, arrows,
 Home / End / Page keys, F1–F12, Backspace, Delete, Ctrl+letter; the game's own keys too), **Cmd+V** (Ctrl+V off a Mac)
 pastes (as a prompt to an agent, typed into a plain shell), **Shift+Esc** sends Esc, **Esc** (or the seat bar's Stand
 up) gets you up; so do the elevator, another floor, a panel, the plan or a teleport, and the worker leaving or its floor
@@ -645,7 +658,7 @@ instructions, the label, the worktree (on by default) and the **first prompt**. 
 and a note says when the fields now make a different one, **Reset to generated** takes theirs again, and Start sends
 yours as `run.start`'s `prompt` (a generated one is left to the bridge). **Ctrl+Enter** (⌘+Enter) starts from anywhere
 in the dialog, plain Enter never does; Esc closes and focus goes back. Capacity and a failed fetch show as in the hire
-dialog. The orchestrator walks in like a hire and you are turned to face its desk. **Presets** (in the dialog, and in
+dialog. The orchestrator drops in like a hire and you are turned to face its desk. **Presets** (in the dialog, and in
 the city's top bar) lists the team presets: create, edit (the name and the five roles × harness / model / effort) and
 delete (confirmed); a taken name or a bad choice is said by the field. Esc in the editor goes back to the list. An
 older bridge (no `presets` in its world, or `unknown_command`) leaves Run, the tab and the presets off with the reason.
@@ -686,7 +699,7 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # corner office, E at your desk, Esc and walking to get up; from the glass,
                               # lookAt() picks a worker below; the plan's labels; m3c-{mezzanine,desk-view,plan}.png; M4 on demo-m4 with
                               # sim=1 (m4.spec.ts): E at a desk's "+", the dialog from the keyboard (task keys,
-                              # chips, Tab order), hire → the walk-in on the reversed route → seated at that desk;
+                              # chips, Tab order), hire → the drop-in (M6b) → seated at that desk;
                               # the last choice preselected next time; X on a dirty worker (delete off, the
                               # warning), a clean one sent home with worktree + branch deleted (packing, the box,
                               # the laptop, down the stairs, the "+" back); the top bar's Hire (first free desk);
@@ -694,10 +707,10 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # 1024×640; two hires at once (Esc on a pending one), each on its own desk; a failed
                               # fetch at 1024×640 (worktree off, Fetch again, a plain hire); a clean worktree on
                               # the user's own branch (delete the worktree only); walks you cannot see; a
-                              # read-only bridge; m4-{hire-dialog,send-home-dirty,send-home-clean,walk-in,
+                              # read-only bridge; m4-{hire-dialog,send-home-dirty,send-home-clean,
                               # walk-out-pack,walk-out,hire-capacity-warn,hire-capacity-full,
                               # hire-fetch-failed}.png; M6 on demo-m4 with sim=1 (m6-start.spec.ts): the
-                              # Hire orchestrator tab from the keyboard, an issue number, Ctrl+Enter, the walk-in
+                              # Hire orchestrator tab from the keyboard, an issue number, Ctrl+Enter, the drop-in
                               # and facing the orchestrator; the top bar's Run (first free desk, another desk),
                               # free text, extra instructions, Esc giving focus back, a floor without a repo; an
                               # edited prompt through field changes, reset, sent; presets create / edit / delete
@@ -722,7 +735,12 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # cut 256 KiB diff (the notice, a window of lines, not_a_repo); N across floors through
                               # the elevator and from the city; usage on the bar, the card and the top bar, flagged,
                               # updated by worker.usage; m5-{prompt,prompt-queued,changes,changes-truncated,
-                              # quick-reply,usage,next-elevator}.png
+                              # quick-reply,usage,next-elevator}.png. M6b on demo-m4 with sim=1 (m6b.spec.ts): a
+                              # hire at an empty desk drops in and you sit at its screen while it lands, within a
+                              # second of the hire; the live screens on the desk monitors (in the glance view, over
+                              # the terminal area) and every docked laptop's sticker its worker's harness, an empty
+                              # desk's furniture; at 1512×945 @2x, the Mac's pixels: m6b-{row,desk,stickers,
+                              # empty-desk,drop-in,drop-land}.png
                               # M15 radio on demo-m3b (m15-radio.spec.ts, generated tone clips instead of the real
                               # tracks): look-at bar, E through Off / genres, R, the now-playing toast, fade in
                               # the lobby and back, a missing file, the music popover (slider / mute), the Music credits panel;
@@ -843,6 +861,13 @@ M6 crew: `crew()` (the floor with an interior: per crew member its `desk`, `role
 `display` and the crew `parts` drawn at its desk; `shown`: the crew parts drawn at all), `simCrew(args)` (one
 `sim.crew` step of the simulator's scripted freelancer). `cards()` entries add `tag`, `stamp` and `crew` (the
 looked-at crew member's lines); `arrivals()` add `carry` (box | briefcase), `briefcase` and `wave`.
+
+M6b: `deskArt(desk)` (a desk of the floor with an interior: the `parts` it draws, instances per part; the docked
+laptop's `sticker`, `logo` claude | codex | plain and its `rim` colour, null without a laptop; the dock `side`;
+`dropping`: a hire drops in there), `screenMesh(workerId)` (a live screen's plane: its `desk`, `mesh`, whether it
+shows the terminal's `texture` and in the `glance` view, its world `center` and `size`, against the desk `monitor`'s
+terminal area; null when not live). `arrivals()` add `dy` (a drop-in's height over the seat); `world()` workers add
+`harness`.
 
 M15 radio: `radio()` → `{genre, trackId, playing, volume, muted}` (`genre` is a genre id or `off`; `playing` is true while a track
 sounds on the floor that has the radio, and false when it is off, muted, faded out (lobby, street, fire escape, city) or not
