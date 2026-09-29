@@ -21,8 +21,8 @@ import { SeatBar } from './ui/seat';
 import { blocked, blocked3, groundAt, type WalkWorld } from './world/collide';
 import { buildingPlan, floorY, loadedFloor, placeAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
 import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, overlookReach, type Opening, type Outline } from './world/layout';
-import { walkInRoute, type ArrivalKind } from './world/arrival';
-import type { Display } from './world/derive';
+import type { ArrivalKind } from './world/arrival';
+import { resolveHarness, type Display } from './world/derive';
 import { firstFreeDesk, isFreshHire, Reservations } from './world/hire';
 import { walkOutRoute } from './world/route';
 import { WorldStore, type Change, type Counts, type FloorView, type WorkerView } from './world/store';
@@ -37,7 +37,7 @@ import { promptBlocker } from './world/prompt';
 import { m6StartButtons, type M6StartButtons } from './ui/startButtons';
 import { PresetsPanel } from './ui/presets';
 import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/startRun';
-// M6 crew: freelancers walk in and out with their briefcase.
+// M6 crew: freelancers drop in (M6b) and walk out with their briefcase.
 import { crewRole, isFreelancer } from './world/crew';
 
 export interface AppOptions {
@@ -87,11 +87,11 @@ export class App {
   readonly city: CityView;
   readonly client: BridgeClient;
   readonly panels: Panels;
-  /** M4: the hire and send-home dialogs, and the workers walking in and out. */
+  /** M4: the hire and send-home dialogs, and the workers dropping in (M6b) and walking out. */
   readonly hire: HireDialog;
   readonly sendHome: SendHomeDialog;
   readonly arrivals: Arrivals;
-  /** M4: hires on their way: their desks' "+" is hidden until the worker walks in. */
+  /** M4: hires on their way: their desks' "+" is hidden until the worker is there. */
   private readonly reserved = new Reservations();
   /** Commands sent to the bridge, in order (test hook). */
   readonly sent: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
@@ -359,16 +359,17 @@ export class App {
     this.m6Buttons.sync();
   }
 
-  // ---- M4: hire, send home, walking in and out ------------------------------------
+  // ---- M4: hire, send home, dropping in and walking out ----------------------------
 
   /**
    * A world event, with what M4 plays for it: a fresh hire's first upsert
-   * walks it in, a `sent_home` removal walks it out (captured before the
-   * store forgets the worker). Workers you cannot see resolve at once.
+   * drops it in to its chair (M6b), a `sent_home` removal walks it out
+   * (captured before the store forgets the worker). Workers you cannot see
+   * resolve at once.
    */
   private onWorldEvent(e: WorldEvent): void {
     let after: (() => void) | null = null;
-    // M6: a freelancer that shows up after the snapshot walks in too, and one that goes (whatever the reason) walks out.
+    // M6: a freelancer that shows up after the snapshot drops in too, and one that goes (whatever the reason) walks out.
     const freelancer = (w: Parameters<typeof crewRole>[0] | undefined) => !!w && isFreelancer(crewRole(w));
     if (e.t === 'worker.upsert' && !this.store.workers.has(e.worker.id) && (isFreshHire(e.worker.hired_at, Date.now()) || (this.store.snapshots > 0 && freelancer(e.worker)))) {
       const id = e.worker.id;
@@ -380,7 +381,7 @@ export class App {
       if (spec) this.beginArrival(spec);
       else if (v) this.arrivals.skip({ id: e.id, kind: 'out', session: v.worker.session, desk: v.desk });
     } else if (e.t === 'worker.removed' || e.t === 'floor.removed') {
-      // Gone some other way: a walk-in stops where it is.
+      // Gone some other way: a drop-in stops where it is.
       if (e.t === 'worker.removed') this.arrivals.cancel(e.id);
     } else if (e.t === 'worker.upsert' && this.arrivals.has(e.worker.id)) {
       const old = this.store.workers.get(e.worker.id);
@@ -390,7 +391,12 @@ export class App {
     after?.();
   }
 
-  /** What a walk needs: the worker's look, desk and route in the building you are in (null: not visible from here). */
+  /**
+   * What a walk needs: the worker's look, desk and route in the building you
+   * are in (null: not visible from here). M6b: a hire drops in to its chair,
+   * which only the floor with an interior shows; the walk-out goes down the
+   * fire escape, which the whole building sees.
+   */
   private arrivalSpec(kind: ArrivalKind, id: string): ArrivalSpec | null {
     const v = this.store.workerView(id);
     const ctx = this.building;
@@ -398,12 +404,26 @@ export class App {
     const session = v.worker.session;
     const storey = ctx.floors.findIndex((f) => f.session === session);
     if (storey < 0) return null;
+    if (kind === 'in' && this.office?.session !== session) return null;
     const L = this.office?.session === session ? this.office.layout : this.layoutOf(session);
     const slot = L?.slots[v.desk];
     if (!L || !slot) return null;
-    const route = kind === 'out' ? walkOutRoute(L, ctx.plan, storey, v.desk) : walkInRoute(L, ctx.plan, storey, v.desk);
+    const route = kind === 'out' ? walkOutRoute(L, ctx.plan, storey, v.desk) : [{ x: slot.seat.x, y: floorY(storey), z: slot.seat.z }];
     const m = memberOf(v);
-    const spec: ArrivalSpec = { id, kind, session, desk: v.desk, name: v.name, route, seatYaw: slot.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase };
+    const spec: ArrivalSpec = {
+      id,
+      kind,
+      session,
+      desk: v.desk,
+      name: v.name,
+      route,
+      seatYaw: slot.yaw,
+      tint: m.tint,
+      cue: m.cue,
+      display: m.display,
+      phase: m.phase,
+      harness: resolveHarness(v.worker),
+    };
     // M6: a freelancer's briefcase and look.
     if (v.crew?.freelancer) spec.carry = 'briefcase';
     if (m.crew) spec.crew = m.crew;
@@ -421,8 +441,8 @@ export class App {
 
   private beginArrival(spec: ArrivalSpec): void {
     if (!this.arrivals.start(spec, performance.now() / 1000)) return;
-    // The desk changes at once (no "+" flash before the next frame).
-    if (this.office?.session === spec.session) this.office.setAway(spec.desk, { show: spec.kind === 'out' ? 'busy' : 'empty', display: spec.display, cue: spec.cue.color });
+    // The desk changes at once (no "+" flash before the next frame); a hire is at its desk already (M6b), only its figure drops in.
+    if (this.office?.session === spec.session && spec.kind === 'out') this.office.setAway(spec.desk, { show: 'busy', display: spec.display, cue: spec.cue.color, harness: spec.harness, packed: 0 });
     this.activity(true);
   }
 
@@ -567,7 +587,7 @@ export class App {
     this.presetsPanel.open(from);
   }
 
-  /** A run started: you turn to its orchestrator's desk on the floor you are on, and watch it walk in. */
+  /** A run started: you turn to its orchestrator's desk on the floor you are on, and watch it drop in. */
   private followOrch(id: string): void {
     const v = this.store.workerView(id);
     if (!v || this.mode !== 'floor' || this.office?.session !== v.worker.session) return;
@@ -1312,7 +1332,11 @@ export class App {
   private stepArrivals(t: number): void {
     this.arrivals.group.position.y = -this.walk.base;
     const o = this.office;
-    for (const d of this.arrivals.update(performance.now() / 1000, t)) if (o?.session === d.session) o.setAway(d.desk, d.away);
+    for (const d of this.arrivals.update(performance.now() / 1000, t)) {
+      if (o?.session !== d.session) continue;
+      o.setAway(d.desk, d.away);
+      if (d.drop !== undefined) o.setDrop(d.desk, d.drop);
+    }
     this.applyReserve();
   }
 

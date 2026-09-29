@@ -5,7 +5,7 @@ import { INK } from './palette';
 // M6: write-code crews' looks.
 import { CREW_PARTS, crewGeometries, DESK_ITEM, DESK_TOP, FLOOR_Y, PIP_OFF, PIP_OVER, WORN, type CrewLook, type CrewPartKey } from './crewLook';
 import { PASS_CAP } from '../world/crew';
-import { SEAT_OFFSET } from '../world/layout';
+import { crewSpot } from '../world/deskKit';
 
 /**
  * Procedural rigid-part workers (docs/decisions.md): a round capsule body,
@@ -35,8 +35,12 @@ export interface Member {
   crew?: CrewLook;
   /** M6: waving goodbye (a freelancer leaving). */
   wave?: boolean;
-  /** M6: its briefcase in the left hand (a freelancer walking in or out). */
+  /** M6: its briefcase in the left hand (a freelancer walking out). */
   briefcase?: boolean;
+  /** M6b: squash and stretch (height factor; the width keeps the volume), dropping in to its chair. */
+  squash?: number;
+  /** M6b: its desk's dock side (`world/deskKit.ts`): a crew member's desk things go on that desk's free corners. */
+  deskSide?: 1 | -1;
 }
 
 interface CrewPart {
@@ -307,7 +311,9 @@ export class Crowd {
   private pose(i: number, m: Member, t: number): void {
     const ph = m.phase;
     this.q.setFromAxisAngle(this.v.set(0, 1, 0), m.yaw);
-    this.base.compose(this.v.set(m.x, m.y, m.z), this.q, this.s.set(m.scale, m.scale, m.scale));
+    const sq = m.squash ?? 1;
+    const wide = m.scale / Math.sqrt(sq);
+    this.base.compose(this.v.set(m.x, m.y, m.z), this.q, this.s.set(wide, m.scale * sq, wide));
 
     let bob = 0;
     let lean = 0;
@@ -401,7 +407,7 @@ export class Crowd {
     }
     if (turn) {
       this.q.setFromAxisAngle(this.v.set(0, 1, 0), m.yaw + turn);
-      this.base.compose(this.v.set(m.x, m.y, m.z), this.q, this.s.set(m.scale, m.scale, m.scale));
+      this.base.compose(this.v.set(m.x, m.y, m.z), this.q, this.s.set(wide, m.scale * sq, wide));
     }
 
     if (m.carry) {
@@ -497,16 +503,19 @@ export class Crowd {
     }
     if (c?.run != null) this.crewPut('badge', i, this.body, null);
     else this.crewHide('badge', i);
-    // Desk items sit on the desk top, left of the laptop; the pass board at its right-hand front corner.
+    // Desk items sit on the desk top in front of the dock (M6b: where the others keep a notebook); the pass board at the other front corner.
+    const side = m.deskSide ?? 1;
+    const item = crewSpot('item', side);
     for (const key of ['clipboard', 'tablet', 'magnifier'] as const) {
-      if (key === desk) this.crewPut(key, i, this.base, this.tmp2.makeTranslation(0.47, DESK_TOP, SEAT_OFFSET - 0.08));
+      if (key === desk) this.crewPut(key, i, this.base, this.tmp2.makeTranslation(item.x, DESK_TOP, item.z));
       else this.crewHide(key, i);
     }
     if (c && seated && c.role === 'orch' && c.pass !== null) {
-      this.crewPut('passBoard', i, this.base, this.tmp2.makeTranslation(-0.48, DESK_TOP, SEAT_OFFSET - 0.12));
+      const board = crewSpot('passBoard', side);
+      this.crewPut('passBoard', i, this.base, this.tmp2.makeTranslation(board.x, DESK_TOP, board.z));
       const blink = c.overCap && Math.sin(t * 6 + ph) < -0.2;
       for (let k = 0; k < 3; k++) {
-        this.tmp2.makeTranslation(-0.56 + k * 0.08, DESK_TOP + 0.125, SEAT_OFFSET - 0.15);
+        this.tmp2.makeTranslation(board.x + (k - 1) * 0.08, DESK_TOP + 0.125, board.z - 0.03);
         if (blink) this.tmp2.scale(this.s.set(0.001, 0.001, 0.001));
         this.crewPut('pips', i, this.base, this.tmp2, k);
       }

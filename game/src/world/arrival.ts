@@ -1,25 +1,28 @@
 /**
- * Walk-in and walk-out (M4) as a timeline: pure, so vitest covers it and the
- * renderer only draws what `poseAt` says. A worker sent home packs a
- * cardboard box at its desk, takes the laptop, stands up and walks
- * `walkOutRoute` out (fire escape, street, away east); a new hire walks the
- * same route reversed, carrying its box with the laptop on top, and sits
- * down. Heights come from the route's waypoints (`y`, feet above the street),
- * so taller floors and other flights need nothing here.
+ * Arrivals as a timeline: pure, so vitest covers it and the renderer only
+ * draws what `poseAt` says. M4: a worker sent home packs a cardboard box at
+ * its desk (M6b: its things go in one by one from where they stand on the
+ * desk, then the laptop out of its dock), stands up and walks `walkOutRoute`
+ * out (fire escape, street, away east). Heights come from the route's
+ * waypoints (`y`, feet above the street), so taller floors and other flights
+ * need nothing here.
+ *
+ * M6b: a new hire no longer walks in. It drops into its chair from above
+ * (`drop`: under a second, a squash as it lands, a puff of dust). The desk
+ * is the worker's from the first frame (never `away`): its card, look-at,
+ * sitting at its screen and prompts all work while it plays, so the drop is
+ * only for looks.
  */
 
-import type { BuildingPlan } from './building';
-import type { FloorLayout } from './layout';
-import { walkOutRoute, type Waypoint } from './route';
+import type { Waypoint } from './route';
 
 export type ArrivalKind = 'in' | 'out';
-export type Phase = 'pack' | 'stand' | 'walk' | 'vanish' | 'appear' | 'sit' | 'done' | 'wave';
+export type Phase = 'pack' | 'stand' | 'walk' | 'vanish' | 'drop' | 'done' | 'wave';
 
 /**
- * M6: what the walker carries. `box`: an employee (M4: a hire walks in with
- * its box and laptop, one sent home packs up). `briefcase`: a write-code
- * freelancer walks in and out with its briefcase in hand, and waves goodbye
- * at its desk before it leaves (no packing).
+ * M6: what the walker carries. `box`: an employee (one sent home packs up).
+ * `briefcase`: a write-code freelancer walks out with its briefcase in hand,
+ * and waves goodbye at its desk before it leaves (no packing).
  */
 export type Carry = 'box' | 'briefcase';
 /** M6: the goodbye wave at the desk. */
@@ -28,16 +31,25 @@ export const WAVE_S = 1.4;
 /** Walking pace (m/s): a relaxed stroll, a bit slower than you walk. */
 export const WALK_SPEED = 1.5;
 export const PACK_S = 2.6;
-/** Within the packing: the laptop is lifted off the desk onto the box. */
+/** Within the packing: the laptop is lifted out of its dock onto the box. */
 export const TAKE_LAPTOP_AT = 1.9;
 export const LIFT_S = 0.35;
 export const STAND_S = 0.6;
 export const VANISH_S = 0.5;
-export const APPEAR_S = 0.4;
-export const SIT_S = 0.7;
-/** When the items (mug, plant, photo) drop into the box during the packing. */
-export const ITEM_AT = [0.45, 0.95, 1.45];
-export const ITEMS = ITEM_AT.length;
+/** M6b: the drop-in: it falls for `FALL_S` from `DROP_H` above the seat, lands, and settles by `DROP_S`. */
+export const DROP_S = 0.85;
+export const FALL_S = 0.36;
+export const DROP_H = 1.6;
+/** M6b: the dust puff of the landing, and the landing shadow on the seat meanwhile. */
+export const PUFF_S = 0.42;
+/** M6b: how long one keepsake takes from the desk into the box. */
+export const ITEM_LIFT_S = 0.26;
+/** The desk's items (mug, plant, photo…) a box holds by default (the M4 three). */
+export const ITEMS = 3;
+/** When item `i` of `n` leaves the desk for the box during the packing: all of them before the laptop. */
+export function itemAt(i: number, n: number): number {
+  return n <= 1 ? 0.3 : 0.3 + (i * 1.2) / (n - 1);
+}
 /** The desk gets its "+" back once the worker is this far along the way out (out of the pod). */
 export const PLUS_BACK_AFTER_M = 2.2;
 /** Stride length (m) for the leg swing. */
@@ -45,11 +57,6 @@ export const STRIDE_M = 0.9;
 /** The worker's origin above its feet: seated (the chair seat) and standing. */
 export const SEAT_LIFT = 0.45;
 export const STAND_LIFT = 0.15;
-
-/** The walk-in: the walk-out reversed (street → fire escape → the floor's door → the desk). */
-export function walkInRoute(layout: FloorLayout, plan: BuildingPlan, storey: number, desk: number): Waypoint[] {
-  return walkOutRoute(layout, plan, storey, desk).reverse();
-}
 
 export interface Stage {
   phase: Exclude<Phase, 'done'>;
@@ -59,6 +66,7 @@ export interface Stage {
 
 export interface Timeline {
   kind: ArrivalKind;
+  /** The walk-out route (`out`); for `in`, just the seat. */
   route: Waypoint[];
   /** Cumulative distance (horizontal and vertical) at each waypoint. */
   at: number[];
@@ -69,6 +77,8 @@ export interface Timeline {
   total: number;
   /** M6 */
   carry: Carry;
+  /** M6b: the desk's items the packing puts in the box. */
+  items: number;
 }
 
 export function cumulative(route: readonly Waypoint[]): number[] {
@@ -82,8 +92,12 @@ export function cumulative(route: readonly Waypoint[]): number[] {
   return out;
 }
 
-/** `route`: the walk-out route for `out`, the walk-in route for `in`. */
-export function timeline(kind: ArrivalKind, route: Waypoint[], seatYaw: number, carry: Carry = 'box'): Timeline {
+/** `route`: the walk-out route for `out`, the seat for `in` (only its first point counts). `items`: what the packing takes off the desk. */
+export function timeline(kind: ArrivalKind, route: Waypoint[], seatYaw: number, carry: Carry = 'box', items = ITEMS): Timeline {
+  if (kind === 'in') {
+    const seat = route.at(-1) ?? { x: 0, y: 0, z: 0 };
+    return { kind, route: [seat], at: [0], length: 0, seatYaw, stages: [{ phase: 'drop', t0: 0, t1: DROP_S }], total: DROP_S, carry, items: 0 };
+  }
   const at = cumulative(route);
   const length = at[at.length - 1] ?? 0;
   const walk = length / WALK_SPEED;
@@ -98,17 +112,13 @@ export function timeline(kind: ArrivalKind, route: Waypoint[], seatYaw: number, 
     add('wave', WAVE_S);
     add('walk', walk);
     add('vanish', VANISH_S);
-  } else if (kind === 'out') {
+  } else {
     add('pack', PACK_S);
     add('stand', STAND_S);
     add('walk', walk);
     add('vanish', VANISH_S);
-  } else {
-    add('appear', APPEAR_S);
-    add('walk', walk);
-    add('sit', SIT_S);
   }
-  return { kind, route, at, length, seatYaw, stages, total: t, carry };
+  return { kind, route, at, length, seatYaw, stages, total: t, carry, items: carry === 'briefcase' ? 0 : Math.max(0, items) };
 }
 
 /** Facing along a direction in the xz plane (workers face +z at yaw 0). */
@@ -177,11 +187,13 @@ export interface ArrivalPose {
   scale: number;
   /** Where the box is: on the desk being packed, carried, or not there. */
   box: 'desk' | 'carried' | 'none';
-  /** 0..1: the box (and the laptop on it) popping up on the desk, or set down when sitting. */
+  /** 0..1: the box popping up on the desk. */
   boxScale: number;
-  /** Items in the box so far (0..ITEMS). */
+  /** Items in the box so far (0..the timeline's `items`). */
   items: number;
-  /** The laptop: the desk's own (`desk`), lifted from the desk onto the box (`lift`, `k` of the way), on the carried box, or gone. */
+  /** M6b: 0..1 of the way the next item (index `items`) is from the desk into the box; 0 while it is still on the desk. */
+  itemLift: number;
+  /** The laptop: in its dock on the desk (`desk`), lifted out onto the box (`lift`, `k` of the way), on the carried box, or gone. */
   laptop: 'desk' | 'lift' | 'carried' | 'none';
   lift: number;
   /** Distance walked (m). */
@@ -191,6 +203,12 @@ export interface ArrivalPose {
   briefcase: 'hand' | 'none';
   /** M6: waving goodbye. */
   wave: boolean;
+  /** M6b, dropping in: the height above the seat (m), the squash (1: none; under 1 flattened, over 1 stretched). */
+  dy: number;
+  squash: number;
+  /** M6b: the landing's dust puff, 0..1 of the way (null: none), and the landing shadow on the seat, 0..1 (0: none). */
+  puff: number | null;
+  shadow: number;
 }
 
 function stageAt(tl: Timeline, t: number): { s: Stage; k: number } | null {
@@ -202,7 +220,8 @@ export function poseAt(tl: Timeline, t: number): ArrivalPose {
   const p = boxPoseAt(tl, t);
   if (tl.carry !== 'briefcase') return p;
   // M6: the briefcase replaces the box and the laptop; it is in hand from standing up to sitting down.
-  return { ...p, box: 'none', boxScale: 1, laptop: 'none', lift: 0, items: 0, briefcase: p.phase === 'done' ? 'none' : 'hand', wave: p.phase === 'wave' };
+  if (tl.kind === 'in') return p;
+  return { ...p, box: 'none', boxScale: 1, laptop: 'none', lift: 0, items: 0, itemLift: 0, briefcase: p.phase === 'done' ? 'none' : 'hand', wave: p.phase === 'wave' };
 }
 
 function boxPoseAt(tl: Timeline, t: number): ArrivalPose {
@@ -221,13 +240,18 @@ function boxPoseAt(tl: Timeline, t: number): ArrivalPose {
     scale: 1,
     box: 'none',
     boxScale: 1,
-    items: ITEMS,
+    items: tl.items,
+    itemLift: 0,
     laptop: 'none',
     lift: 0,
     walked: 0,
     desk: 'free',
     briefcase: 'none',
     wave: false,
+    dy: 0,
+    squash: 1,
+    puff: null,
+    shadow: 0,
   };
   const walkAt = (d: number): Pick<ArrivalPose, 'x' | 'y' | 'z' | 'yaw' | 'walked'> => {
     const p = sampleRoute(route, tl.at, d);
@@ -246,7 +270,16 @@ function boxPoseAt(tl: Timeline, t: number): ArrivalPose {
   switch (s.phase) {
     case 'pack': {
       const tt = t - s.t0;
-      const items = ITEM_AT.filter((a) => tt >= a).length;
+      let items = 0;
+      let itemLift = 0;
+      for (let i = 0; i < tl.items; i++) {
+        const a = itemAt(i, tl.items);
+        if (tt >= a + ITEM_LIFT_S) items = i + 1;
+        else {
+          if (tt >= a) itemLift = clamp01((tt - a) / ITEM_LIFT_S);
+          break;
+        }
+      }
       const lifted = tt >= TAKE_LAPTOP_AT;
       return {
         ...base,
@@ -256,6 +289,7 @@ function boxPoseAt(tl: Timeline, t: number): ArrivalPose {
         box: 'desk',
         boxScale: ease(clamp01(tt / 0.3)),
         items,
+        itemLift,
         laptop: lifted ? (tt < TAKE_LAPTOP_AT + LIFT_S ? 'lift' : 'carried') : 'desk',
         lift: lifted ? clamp01((tt - TAKE_LAPTOP_AT) / LIFT_S) : 0,
         desk: lifted ? 'empty' : 'busy',
@@ -278,26 +312,28 @@ function boxPoseAt(tl: Timeline, t: number): ArrivalPose {
     case 'walk': {
       const d = tl.length * k;
       const p = walkAt(d);
-      const deskShow: DeskShow = tl.kind === 'in' ? 'empty' : d >= PLUS_BACK_AFTER_M ? 'free' : 'empty';
+      const deskShow: DeskShow = d >= PLUS_BACK_AFTER_M ? 'free' : 'empty';
       return { ...base, ...p, phase: 'walk', stride: (d / STRIDE_M) * Math.PI * 2, box: 'carried', laptop: 'carried', desk: deskShow };
     }
     case 'vanish':
       return { ...base, ...walkAt(tl.length), phase: 'vanish', scale: 1 - ease(k), box: 'carried', laptop: 'carried', desk: 'free' };
-    case 'appear':
-      return { ...base, ...walkAt(0), phase: 'appear', scale: ease(k), box: 'carried', laptop: 'carried', desk: 'empty' };
-    case 'sit': {
-      const lastYaw = sampleRoute(route, tl.at, tl.length).yaw;
+    case 'drop': {
+      // Falls (a little stretched), lands flattened on the seat, springs back up and settles.
+      const tt = t - s.t0;
+      const fall = clamp01(tt / FALL_S);
+      const u = Math.max(0, tt - FALL_S);
+      const rest = Math.max(1e-6, DROP_S - FALL_S);
+      const squash = tt < FALL_S ? 1 + 0.16 * fall * fall : 1 - 0.3 * Math.exp(-6 * u) * Math.cos(15 * u) * (1 - u / rest) ** 2;
       return {
         ...base,
-        phase: 'sit',
-        y: seat.y + STAND_LIFT + (SEAT_LIFT - STAND_LIFT) * ease(k),
-        yaw: turn(lastYaw, tl.seatYaw, ease(clamp01(k * 1.6))),
-        seated: k >= 0.5,
-        // The worker sets the box and laptop down as it sits: the world's laptop takes over at the end.
-        box: 'carried',
-        boxScale: 1 - ease(k),
-        laptop: 'carried',
-        desk: 'empty',
+        phase: 'drop',
+        y: seat.y + SEAT_LIFT + DROP_H * (1 - fall * fall),
+        seated: true,
+        dy: DROP_H * (1 - fall * fall),
+        squash,
+        puff: tt >= FALL_S && u < PUFF_S ? u / PUFF_S : null,
+        shadow: tt < FALL_S ? 0.25 + 0.75 * fall : 0,
+        desk: 'free',
       };
     }
   }
@@ -308,9 +344,10 @@ function boxPoseAt(tl: Timeline, t: number): ArrivalPose {
  * What each desk shows while walks run: one entry per desk. `ended` (walks
  * that just finished or were cancelled: the desk as the world says) come
  * first, then `walking` in the order the walks started, oldest first. The
- * newest walk on a desk owns it: a new hire walking in to the desk a worker
- * sent home is still walking out of keeps its desk empty, never the older
- * walk's "as the world says" (which would seat the new hire mid-walk).
+ * newest walk on a desk owns it: a walk-out that started after another walk
+ * there shows its packing, and a new hire dropping in to the desk a worker
+ * sent home is still leaving shows the new hire (as the world says), never
+ * the older walk's empty desk.
  */
 export function deskOwners<T extends { session: string; desk: number }>(ended: readonly T[], walking: readonly T[]): T[] {
   const by = new Map<string, T>();

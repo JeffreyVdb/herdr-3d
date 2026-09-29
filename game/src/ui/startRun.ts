@@ -133,7 +133,7 @@ export class StartRunDialog {
       if (back?.isConnected && !this.dialog.contains(back)) back.focus();
     });
     this.dialog.addEventListener('cancel', () => {
-      if (this.state === 'starting') this.host.toast('The run is still starting; its orchestrator walks in when it is hired.', 'info');
+      if (this.state === 'starting') this.host.toast('The run is still starting; its orchestrator shows up at the desk when it is hired.', 'info');
     });
     this.dialog.addEventListener('click', (e) => {
       if (e.target === this.dialog) this.close();
