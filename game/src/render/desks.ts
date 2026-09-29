@@ -196,19 +196,20 @@ export function monitorPieces(): Array<{ geo: THREE.BufferGeometry; color: numbe
   ];
 }
 
-/** The wireless keyboard: a silver slab with white key rows, the space bar in the front one. */
+/** The wireless keyboard: a silver slab with white key rows (flat, on top), the space bar in the front one. */
 export function keyboardPieces(): Array<{ geo: THREE.BufferGeometry; color: number }> {
   const K = KEYBOARD;
   const y = DESK_H + 0.005;
-  const out = [{ geo: box(K.w, 0.01, K.d, K.x, y, K.z), color: C.silver }];
-  for (let r = 0; r < 4; r++) out.push({ geo: box(K.w - 0.03, 0.006, 0.019, K.x, y + 0.008, K.z + 0.045 - r * 0.024), color: C.key });
+  const top = (w: number, x: number, z: number) => new THREE.PlaneGeometry(w, 0.019).rotateX(-Math.PI / 2).translate(x, y + 0.0056, z);
+  const out: Array<{ geo: THREE.BufferGeometry; color: number }> = [{ geo: box(K.w, 0.01, K.d, K.x, y, K.z), color: C.silver }];
+  for (let r = 0; r < 4; r++) out.push({ geo: top(K.w - 0.03, K.x, K.z + 0.045 - r * 0.024), color: C.key });
   const fz = K.z - 0.051;
   for (const [x0, x1] of [
     [-0.195, -0.085],
     [-0.075, 0.095],
     [0.105, 0.195],
   ] as const) {
-    out.push({ geo: box(x1 - x0, 0.006, 0.019, K.x + (x0 + x1) / 2, y + 0.008, fz), color: C.key });
+    out.push({ geo: top(x1 - x0, K.x + (x0 + x1) / 2, fz), color: C.key });
   }
   return out;
 }
@@ -232,7 +233,7 @@ function kitGeometry(side: DockSide): THREE.BufferGeometry {
   for (const x of [-0.011, 0.011]) p.add(box(0.012, 0.007, 0.004, x, DOCK.plate + 0.012, (DOCK.len - 0.02) / 2 + 0.001), C.groove, D);
   for (const c of kit.cables) {
     const curve = new THREE.CatmullRomCurve3(c.map((q) => new THREE.Vector3(q.x, q.y, q.z)), false, 'centripetal');
-    p.add(new THREE.TubeGeometry(curve, 20, CABLE_R, 4, false), C.ink);
+    p.add(new THREE.TubeGeometry(curve, 12, CABLE_R, 3, false), C.ink);
   }
   return p.build();
 }
@@ -643,7 +644,8 @@ export class DeskSet {
     }
     const h = (i * 2654435761) >>> 0;
     L.items.forEach(({ item, m }, n) => {
-      const show = personal && n >= packed && !(item.kind === 'mug' && mugInHand(d.display));
+      // Packing (`packed` set), the worker's hands are on the box: its mug is on the desk until it goes in.
+      const show = personal && n >= packed && !(item.kind === 'mug' && d.packed === undefined && mugInHand(d.display));
       if (!show) return;
       this.c.set(item.tint);
       if (item.kind === 'photo') {
