@@ -43,22 +43,53 @@ var (
 // recorded cwd is cwd, skipping ids for which skip returns true. It
 // returns "" when there is none (or root does not exist).
 func FindSession(root, cwd string, skip func(id string) bool) (string, error) {
+	return (&Finder{Root: root}).Find(cwd, skip)
+}
+
+// Finder is FindSession for a caller that looks often (the usage of Codex
+// workers herdr knows no session of): it remembers each rollout's
+// session_meta, which never changes, so a lookup only lists directories
+// and reads the first lines of new files (and of ones it could not read
+// yet, e.g. still being written). Not safe for concurrent use.
+type Finder struct {
+	Root  string
+	metas map[string]rolloutMeta // path → its session_meta
+}
+
+type rolloutMeta struct {
+	id, cwd string
+	ok      bool
+}
+
+// maxMetas bounds what a Finder remembers; past it, it starts afresh.
+const maxMetas = 4 * MaxScan
+
+// Find is FindSession under f.Root.
+func (f *Finder) Find(cwd string, skip func(id string) bool) (string, error) {
 	if cwd == "" {
 		return "", nil
+	}
+	if f.metas == nil || len(f.metas) > maxMetas {
+		f.metas = map[string]rolloutMeta{}
 	}
 	cwd = filepath.Clean(cwd)
 	scanned := 0
 	var found string
 	errStop := errors.New("stop")
-	err := walkNewest(root, 3, func(path string) error {
+	err := walkNewest(f.Root, 3, func(path string) error {
 		if scanned++; scanned > MaxScan {
 			return errStop
 		}
-		id, dir, ok := readMeta(path)
-		if !ok || filepath.Clean(dir) != cwd || !idRe.MatchString(id) || (skip != nil && skip(id)) {
+		m, seen := f.metas[path]
+		if !seen {
+			if m.id, m.cwd, m.ok = readMeta(path); m.ok {
+				f.metas[path] = m
+			}
+		}
+		if !m.ok || filepath.Clean(m.cwd) != cwd || !idRe.MatchString(m.id) || (skip != nil && skip(m.id)) {
 			return nil
 		}
-		found = id
+		found = m.id
 		return errStop
 	})
 	if err != nil && !errors.Is(err, errStop) {
@@ -124,4 +155,38 @@ func readMeta(path string) (id, cwd string, ok bool) {
 		return "", "", false
 	}
 	return meta.Payload.ID, meta.Payload.Cwd, meta.Payload.ID != "" && meta.Payload.Cwd != ""
+}
+
+// maxRolloutNames bounds how many rollout file names one FindRollout
+// looks at (it reads only the file whose name matches).
+const maxRolloutNames = 50000
+
+// FindRollout returns the rollout file of session id under root
+// (root/YYYY/MM/DD/rollout-*-<id>.jsonl, newest first), a regular file
+// whose first line's session_meta has that id; "" when there is none.
+func FindRollout(root, id string) (string, error) {
+	if !idRe.MatchString(id) {
+		return "", nil
+	}
+	suffix := "-" + id + ".jsonl"
+	scanned := 0
+	var found string
+	errStop := errors.New("stop")
+	err := walkNewest(root, 3, func(path string) error {
+		if scanned++; scanned > maxRolloutNames {
+			return errStop
+		}
+		if !strings.HasSuffix(path, suffix) {
+			return nil
+		}
+		if metaID, _, ok := readMeta(path); ok && metaID == id {
+			found = path
+			return errStop
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errStop) {
+		return "", err
+	}
+	return found, nil
 }

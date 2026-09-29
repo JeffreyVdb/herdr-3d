@@ -1,0 +1,642 @@
+/*
+ * M5 panels: the P prompt overlay, the C Changes panel, the usage figures
+ * and the Approve / Deny keys. The same office signage (solid navy,
+ * Recursive, label-maker tape); the prompt you write is a white speech
+ * bubble like the workers' cards, and the branch you read is printed on
+ * black embossing tape.
+ */
+
+/* ---- usage in the prompt bar and the top bar ---------------------------------- */
+
+.prompt-usage,
+.topbar-usage {
+  flex: none;
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.prompt-usage {
+  font-size: 12px;
+  color: var(--text-on-ink);
+}
+.topbar-usage {
+  align-self: center;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-on-ink);
+}
+/* N next to "need you": the key that goes there. */
+.topbar-key {
+  display: inline-grid;
+  place-items: center;
+  align-self: center;
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  margin-left: -8px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  background: var(--ink-2);
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-bottom-width: 2px;
+  font: 700 10.5px/1 var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  color: var(--text-on-ink);
+}
+/* Priced as an unknown model: the * says "see why"; the title does. */
+.prompt-usage--flagged,
+.topbar-usage--flagged {
+  text-decoration: underline dotted rgb(255 194 51 / 70%);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+@media (max-width: 760px) {
+  .prompt-usage {
+    display: none;
+  }
+}
+
+/* ---- Approve / Deny on a blocked worker ------------------------------------------ */
+
+.key--answer {
+  font-weight: 700;
+}
+.key--approve kbd {
+  background: var(--done-chip);
+  border-color: rgb(255 255 255 / 30%);
+}
+.key--deny kbd {
+  background: var(--needs_you-chip);
+  border-color: rgb(255 255 255 / 30%);
+}
+
+/* ---- P: the prompt overlay -------------------------------------------------------- */
+
+/* Low on the screen: the worker and its card stay in view above it. */
+.desk-dlg--prompt {
+  width: min(620px, calc(100vw - 32px));
+  margin: auto auto 18px;
+}
+.desk-dlg--prompt::backdrop {
+  background: rgb(18 24 44 / 22%);
+}
+.dd-plate--bubble {
+  min-width: 48px;
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 2px 5px rgb(0 0 0 / 30%);
+}
+.dd-plate--bubble svg {
+  width: 26px;
+  height: 26px;
+  stroke-width: 1.9;
+}
+.desk-dlg--prompt .dd-head .tape {
+  flex: none;
+}
+.pr-body {
+  gap: 8px;
+}
+/* The note: a speech bubble, white with a navy rule, its tail towards the worker. */
+.pr-note {
+  position: relative;
+  margin-bottom: 10px;
+  border: 3px solid #cfd6ea;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 2px 0 rgb(0 0 0 / 18%);
+  transition: border-color 160ms var(--ease);
+}
+.pr-note::after {
+  content: '';
+  position: absolute;
+  left: 34px;
+  bottom: -13px;
+  width: 20px;
+  height: 20px;
+  background: #fff;
+  border: solid #cfd6ea;
+  border-width: 0 3px 3px 0;
+  transform: skewX(24deg) rotate(45deg);
+  border-bottom-right-radius: 3px;
+  transition: border-color 160ms var(--ease);
+}
+.pr-note:focus-within,
+.pr-note:focus-within::after {
+  border-color: var(--sun);
+}
+/* Over `.desk-dlg textarea` (a dark well): the note is paper. */
+.desk-dlg .pr-text {
+  display: block;
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  min-height: 96px;
+  max-height: 42vh;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 15px;
+  background: transparent;
+  color: var(--ink);
+  font: 500 16px/1.45 var(--font);
+  resize: vertical;
+  caret-color: var(--working);
+  color-scheme: light;
+}
+.desk-dlg .pr-text:hover {
+  border-color: transparent;
+}
+.desk-dlg .pr-text:focus,
+.desk-dlg .pr-text:focus-visible {
+  outline: none;
+}
+.desk-dlg .pr-text::placeholder {
+  color: #6b7596;
+}
+.desk-dlg .pr-text::selection {
+  background: var(--sun);
+  color: var(--ink);
+}
+.desk-dlg .pr-text[readonly] {
+  opacity: 0.65;
+}
+/* While you write, the look-at bar under the overlay steps aside. */
+body:has(.desk-dlg--prompt[open]) .hud .prompt,
+body:has(.desk-dlg--prompt[open]) .hud .hint {
+  visibility: hidden;
+}
+.pr-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.pr-result .tape {
+  flex: none;
+}
+.pr-keys {
+  margin: 0;
+}
+.pr-keys kbd,
+.pr-queued kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  background: var(--ink-2);
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-bottom-width: 2px;
+  font: 700 10.5px/1 var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  color: var(--text-on-ink);
+}
+.pr-queued {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-on-ink-2);
+}
+.pr-queued .tape {
+  flex: none;
+}
+
+/* ---- C: the Changes panel ------------------------------------------------------------ */
+
+.changes {
+  --well: #121a31;
+  --add: #8fe3b4;
+  --del: #ffaaa3;
+  position: fixed;
+  z-index: 20;
+  top: calc(var(--topbar-bottom, 64px) + 10px);
+  right: 12px;
+  bottom: 12px;
+  left: auto;
+  width: min(780px, 58vw);
+  max-width: none;
+  max-height: none;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--ink);
+  color: var(--text-on-ink);
+  box-shadow: var(--shadow);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.35;
+  color-scheme: dark;
+  overflow: hidden;
+  pointer-events: auto;
+}
+.changes[open] {
+  display: flex;
+  flex-direction: column;
+}
+.changes button {
+  font: inherit;
+  color: inherit;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .changes[open] {
+    animation: cp-in 220ms var(--ease);
+  }
+  @keyframes cp-in {
+    from {
+      opacity: 0;
+      transform: translateX(18px);
+    }
+  }
+}
+@media (max-width: 760px) {
+  .changes {
+    top: auto;
+    left: 12px;
+    width: auto;
+    height: 64vh;
+  }
+}
+
+.cp-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 12px 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.cp-plate {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #101626;
+  box-shadow: inset 0 2px 7px rgb(0 0 0 / 60%), 0 1px 0 rgb(255 255 255 / 8%);
+  color: var(--sun);
+}
+.cp-plate svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 2.2;
+}
+.cp-titles {
+  flex: 1;
+  min-width: 0;
+}
+.cp-titles h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cp-titles p {
+  margin: 2px 0 0;
+  color: var(--text-on-ink-2);
+  font-size: 12px;
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+.cp-head .tape {
+  flex: none;
+}
+
+.cp-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 12px;
+}
+.cp-meta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 14px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.cp-meta dt {
+  color: var(--text-on-ink-2);
+}
+.cp-meta dd {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cp-meta code,
+.cp-diff-head code {
+  font: 600 12px/1.3 var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+}
+/* The branch on black embossing tape: raised white letters. */
+.cp-branch {
+  display: inline-block;
+  padding: 2px 8px 1px;
+  border-radius: 2px;
+  background: #0b0f1c;
+  color: #f4f6fb;
+  letter-spacing: 0.04em;
+  text-shadow: 0 -1px 0 rgb(0 0 0 / 60%), 0 1px 0 rgb(255 255 255 / 18%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), 0 1px 1px rgb(0 0 0 / 40%);
+  transform: rotate(-0.8deg);
+}
+.cp-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.cp-ab {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.cp-ab svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.6;
+}
+.cp-stat {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.cp-cut p {
+  margin: 0;
+}
+
+.cp-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 36%) minmax(0, 1fr);
+  gap: 10px;
+}
+@media (max-width: 1000px) {
+  .cp-main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(90px, 32%) minmax(0, 1fr);
+  }
+}
+.cp-files {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  overflow: auto;
+  border-radius: 10px;
+  background: rgb(0 0 0 / 16%);
+  scrollbar-width: thin;
+  scrollbar-color: #3a466e transparent;
+}
+.cp-files:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 1px;
+}
+.cp-file {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.cp-file:hover {
+  background: rgb(255 255 255 / 5%);
+}
+.cp-file[aria-selected='true'] {
+  background: var(--ink-2);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%);
+}
+.cp-chips {
+  display: inline-flex;
+  gap: 3px;
+}
+.cp-chip {
+  padding: 1px 5px 0;
+  border-radius: 3px;
+  font: 700 10px/1.5 var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.cp-chip--staged {
+  background: var(--done-chip);
+  color: #fff;
+}
+.cp-chip--unstaged {
+  background: var(--sun);
+  color: var(--ink);
+}
+.cp-chip--untracked {
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 45%);
+  color: var(--text-on-ink);
+}
+.cp-chip--committed {
+  background: rgb(255 255 255 / 10%);
+  color: var(--text-on-ink-2);
+}
+.cp-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.cp-dir {
+  color: var(--text-on-ink-2);
+}
+.cp-base {
+  font-weight: 700;
+}
+.cp-counts {
+  display: inline-flex;
+  gap: 6px;
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  color: var(--text-on-ink-2);
+}
+.cp-ins {
+  color: var(--add);
+}
+.cp-del {
+  color: var(--del);
+}
+
+.cp-diff {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  background: var(--well);
+  overflow: hidden;
+}
+.cp-diff-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--text-on-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.cp-diff-head code {
+  color: var(--text-on-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cp-nodiff {
+  margin: 0;
+  padding: 16px 12px;
+  color: var(--text-on-ink-2);
+}
+.cp-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+  scrollbar-width: thin;
+  scrollbar-color: #3a466e transparent;
+}
+.cp-scroll:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: -3px;
+}
+.cp-spacer {
+  position: relative;
+}
+.cp-window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  will-change: transform;
+}
+.cp-line {
+  display: grid;
+  grid-template-columns: 40px 40px max-content;
+  height: 18px;
+  font: 500 12px/18px var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  white-space: pre;
+  color: #d3daee;
+}
+.cp-num {
+  padding-right: 8px;
+  text-align: right;
+  color: #56628a;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.cp-code {
+  padding: 0 12px 0 4px;
+}
+.cp-line--add {
+  background: rgb(47 196 106 / 15%);
+  color: var(--add);
+}
+.cp-line--del {
+  background: rgb(232 65 58 / 17%);
+  color: var(--del);
+}
+.cp-line--hunk {
+  background: rgb(47 107 240 / 18%);
+  color: #b3c8ff;
+}
+.cp-line--meta {
+  color: var(--text-on-ink-2);
+  font-weight: 700;
+}
+.cp-line--note {
+  color: #8d97b6;
+  font-style: italic;
+}
+
+.cp-empty {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  flex: 1;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-on-ink-2);
+}
+.cp-empty p {
+  margin: 0;
+  max-width: 44ch;
+}
+.cp-empty--error p {
+  color: #ffb4ae;
+  font-weight: 700;
+}
+.cp-skeleton {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+.cp-skeleton i {
+  display: block;
+  height: 26px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 6%);
+}
+.cp-skeleton i:nth-child(1) {
+  width: 46%;
+}
+.cp-skeleton i:nth-child(4) {
+  height: 180px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cp-skeleton i {
+    animation: dd-breathe 1.4s ease-in-out infinite alternate;
+  }
+}
+.cp-status {
+  margin: 0;
+  padding: 0 14px 10px;
+  font-size: 12.5px;
+  color: var(--text-on-ink-2);
+}
+
+/* The look-at bar and the hint move into the floor's side of the screen while the panel is open. */
+@media (min-width: 761px) {
+  body:has(.changes[open]) .hud .prompt,
+  body:has(.changes[open]) .hud .hint {
+    left: calc((100vw - min(780px, 58vw) - 12px) / 2);
+    max-width: calc(100vw - min(780px, 58vw) - 48px);
+  }
+}

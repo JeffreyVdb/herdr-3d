@@ -2,6 +2,7 @@ import '@fontsource-variable/recursive/full.css';
 import './ui/hud.css';
 import './ui/panels.css';
 import './ui/hire.css';
+import './ui/m5.css';
 import * as THREE from 'three/webgpu';
 import { App, type LookAt, type Pose } from './app';
 import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
@@ -11,6 +12,9 @@ import type { ArrivalInfo } from './render/arrivals';
 import type { HireSummary } from './ui/hire';
 import type { PanelSummary } from './ui/panels';
 import type { SendHomeSummary } from './ui/sendHome';
+import type { ChangesSummary } from './ui/changes';
+import type { PromptSummary } from './ui/prompt';
+import type { NeedItem } from './world/next';
 import type { Area, BuildingPlan } from './world/building';
 import type { floorLayout } from './world/layout';
 import { walkOutRoute, type Waypoint } from './world/route';
@@ -82,10 +86,28 @@ export interface H3DDebug {
   pose(): (Pose & { eye: number; y: number; area: Area; storey: number | null; floor: string | null; seated: boolean }) | null;
   plan(open: boolean): void;
   focusBuilding(i: number | null): void;
-  /** Speech-bubble cards on screen and what they say. */
-  cards(): Array<{ desk: number; name: string; display: string; task: string }>;
+  /** Speech-bubble cards on screen and what they say; M5: a question (`ask`), the looked-at one's `usage`, `tall` when drawn with room for them. */
+  cards(): Array<{ desk: number; name: string; display: string; task: string; ask?: { text: string; about?: string[]; choices: Array<{ n: number; label: string }>; selected?: number | undefined } | null; usage?: string | null; tall: boolean }>;
   /** Screen point of a floor's badge in the city (to click it). */
   badgePoint(session: string): { x: number; y: number } | null;
+  /** M5: per worker of the floor you are on, what its laptop shows (live / pending / frozen / glow / dark) and its watch fps. */
+  screens(): Array<{ id: string; desk: number; state: string; fps: number | null }>;
+  /** M5: the worker whose laptop you sit at, or null. */
+  seated(): string | null;
+  /** M5: sits you at a worker's laptop as E does (false, with a toast, when you cannot). */
+  sitAt(workerId: string): boolean;
+  /** M5: a live laptop's screen text from its xterm buffer, one string per row (null when not live). */
+  screenText(workerId: string): string[] | null;
+  /** M5: how much of a worker's frozen laptop screen is not black (0–1), null when it is not frozen. */
+  frozenInk(workerId: string): number | null;
+  /** M5: the seat bar (shown, its tape, its note, ok / busy / error / offline). */
+  seat(): { shown: boolean; tape: string; note: string; state: string };
+  /** M5: this connection's watches as the game counts them, and as the simulator (`sim=1`) does. */
+  watches(): Promise<{ game: number; sim: number | null }>;
+  /** M5: drops the connection and connects again (the bridge forgets every watch; the game re-watches). */
+  reconnect(): void;
+  /** M5: the `terminal.watch` / `unwatch` the game sent by itself (the last 400; `sent()` leaves them out). */
+  watchLog(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
   bench(o?: BenchOptions): Promise<BenchResult>;
   /** M3: opens the elevator panel of a building id (null: the lot); no argument: the current floor's building. */
   openElevator(building?: string | null): void;
@@ -93,8 +115,8 @@ export interface H3DDebug {
   openBuildings(): void;
   /** M3: opens a floor's settings panel. */
   openSettings(session: string): void;
-  /** M3: what the open panel shows, null when none is open. */
-  panel(): PanelSummary | null;
+  /** M3: what the open panel shows, null when none is open; M5: else the prompt overlay's, else the Changes panel's. */
+  panel(): PanelSummary | PromptSummary | ChangesSummary | null;
   /** M3: commands sent to the bridge so far, with their result once answered. */
   sent(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
   /** M3: screen point of a floor itself in the city (to click its building). */
@@ -115,6 +137,15 @@ export interface H3DDebug {
   arrivalRate(k: number): void;
   /** M4: the desks of the floor with an interior: who sits there, whether its "+" shows, what a walk holds it as. */
   desks(): Array<{ desk: number; worker: string | null; plus: boolean; away: 'busy' | 'empty' | null }>;
+  /** M5: N, as the key does: who it went to (null: nobody needs you). */
+  nextNeed(): NeedItem | null;
+  /** M5: who needs you, in the order N visits them. */
+  needs(): NeedItem[];
+  /** M5: P / C on a worker, as the keys do. */
+  openPrompt(workerId: string): void;
+  openChanges(workerId: string): void;
+  /** M5: stands you facing a worker of the floor you are on, as N does; false when look-at does not pick it from there. */
+  face(workerId: string): boolean;
 }
 
 declare global {
@@ -194,10 +225,27 @@ const h3d: H3DDebug = {
   focusBuilding: (i) => app?.focusBuilding(i, false),
   cards: () => app?.office?.shownCards() ?? [],
   badgePoint: (s) => app?.badgePoint(s) ?? null,
+  screens: () => app?.laptops.screens() ?? [],
+  seated: () => app?.laptops.seated ?? null,
+  sitAt: (id) => app?.sitAt(id) ?? false,
+  screenText: (id) => app?.laptops.text(id) ?? null,
+  frozenInk: (id) => app?.laptops.frozenInk(id) ?? null,
+  seat: () => app?.seatBar.summary() ?? { shown: false, tape: '', note: '', state: '' },
+  watches: async () => {
+    if (!app) return { game: 0, sim: null };
+    // `sim.watches` is the fixture simulator's, not a bridge command.
+    const r = await app.client.request('sim.watches' as CommandName, {} as never);
+    return { game: app.laptops.watchCount, sim: r.ok ? ((r.data as { watches?: number }).watches ?? null) : null };
+  },
+  reconnect: () => {
+    app?.client.stop();
+    app?.client.start();
+  },
+  watchLog: () => structuredClone(app?.watchLog ?? []),
   openElevator: (b) => (b === undefined ? app?.openElevator() : app?.openElevator(b)),
   openBuildings: () => app?.openBuildings(),
   openSettings: (s) => app?.panels.openSettings(s),
-  panel: () => app?.panels.summary() ?? null,
+  panel: () => app?.panels.summary() ?? app?.prompt.summary() ?? app?.changes.summary() ?? null,
   sent: () => structuredClone(app?.sent ?? []),
   floorPoint: (s) => app?.floorPoint(s) ?? null,
   connection: () => ({ phase: app?.conn.phase ?? 'stopped', epoch: app?.client.resume.epoch ?? null }),
@@ -208,6 +256,13 @@ const h3d: H3DDebug = {
   arrivalLog: () => structuredClone(app?.arrivals.log ?? []),
   arrivalRate: (k) => app?.arrivals.setRate(k, performance.now() / 1000),
   desks: () => app?.deskStates() ?? [],
+  nextNeed: () => app?.goNextNeed() ?? null,
+  needs: () => app?.needs() ?? [],
+  openPrompt: (id) => app?.openPrompt(id),
+  face: (id) => app?.faceWorker(id) ?? false,
+  openChanges: (id) => {
+    if (app?.changes.worker !== id) app?.toggleChanges(id);
+  },
   bench: async (o) => {
     if (!app || !renderer) throw new Error('not started');
     return runBench(app, renderer, o);

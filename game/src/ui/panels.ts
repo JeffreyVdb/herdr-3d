@@ -48,7 +48,7 @@ export interface ElevatorRow {
 
 /** What the open panel shows (test hook `window.__h3d.panel()`). */
 export type PanelSummary = (
-  | { kind: 'elevator'; building: string | null; title: string; rows: ElevatorRow[]; lobby: { current: boolean } | null }
+  | { kind: 'elevator'; building: string | null; title: string; rows: ElevatorRow[]; lobby: { current: boolean } | null; /** M5: the floor N preselected. */ pick?: string }
   | { kind: 'buildings'; buildings: Array<{ id: string; name: string; floors: string[] }>; lot: string[] }
   | { kind: 'settings'; session: string; form: ShownForm; repoSuggested: boolean; statusDefault: boolean }
 ) & { status: string; confirm: { title: string; body: string } | null };
@@ -95,6 +95,8 @@ export class Panels {
   private settingsForm: { el: HTMLFormElement; read(): SettingsForm; session: string; repoSuggested: boolean; statusDefault: boolean } | null = null;
   private confirmState: { title: string; body: () => string; resolve(ok: boolean): void } | null = null;
   private statusText = '';
+  /** M5: the floor N preselected in the elevator, with why. */
+  private pick: { session: string; note: string } | null = null;
 
   constructor(
     parent: HTMLElement,
@@ -106,6 +108,7 @@ export class Panels {
       // `close` is queued: the panel may have been opened again since.
       if (this.dialog.open) return;
       this.view = null;
+      this.pick = null;
       this.renaming = null;
       this.moving = null;
       this.settingsForm = null;
@@ -129,8 +132,11 @@ export class Panels {
     if (this.dialog.open) this.dialog.close();
   }
 
-  openElevator(building: string | null): void {
+  /** M5: `pick` preselects a floor (N: someone there needs you), its note shown on the row and as the status. */
+  openElevator(building: string | null, pick?: { session: string; note: string }): void {
+    this.pick = pick ?? null;
     this.show({ kind: 'elevator', building });
+    if (pick) this.setStatus(pick.note);
   }
 
   openBuildings(): void {
@@ -163,7 +169,9 @@ export class Panels {
     const v = this.view;
     if (!v) return;
     let el: HTMLElement | null = null;
-    if (v.kind === 'elevator') el = this.body.querySelector<HTMLElement>('.lift-go[aria-current="location"]') ?? this.body.querySelector<HTMLElement>('.lift-go');
+    const picked = v.kind === 'elevator' && this.pick ? this.body.querySelector<HTMLElement>(`[data-key="go:${CSS.escape(this.pick.session)}"]`) : null;
+    if (picked) el = picked;
+    else if (v.kind === 'elevator') el = this.body.querySelector<HTMLElement>('.lift-go[aria-current="location"]') ?? this.body.querySelector<HTMLElement>('.lift-go');
     else if (v.kind === 'buildings') el = this.body.querySelector<HTMLElement>('#dir-new-name');
     else el = this.body.querySelector<HTMLElement>('#set-repo');
     (el ?? this.head.querySelector<HTMLElement>('.panel-close'))?.focus();
@@ -261,6 +269,7 @@ export class Panels {
       this.host.unsupported('floor.wake'),
       this.host.unsupported('floor.sleep'),
       this.host.inLobby(),
+      this.pick,
     ]);
     if (key === this.renderKey) return;
     this.renderKey = key;
@@ -334,7 +343,14 @@ export class Panels {
       h(
         'span',
         { class: 'lift-name' },
-        h('span', { class: 'lift-title' }, h('span', { class: 'lift-session' }, f.session), current ? h('span', { class: 'lift-here' }, 'You are here') : null),
+        h(
+          'span',
+          { class: 'lift-title' },
+          h('span', { class: 'lift-session' }, f.session),
+          current ? h('span', { class: 'lift-here' }, 'You are here') : null,
+          // M5: N picked this floor: someone here needs you.
+          this.pick?.session === f.session ? h('span', { class: 'tape tape--needs_you lift-need' }, 'Next up') : null,
+        ),
         meta,
       ),
     );
@@ -1206,7 +1222,7 @@ export class Panels {
     const store = this.host.store;
     if (v.kind === 'elevator') {
       const rows = this.rows(v.building);
-      return { kind: 'elevator', building: v.building, title: this.elevatorTitle(v.building), rows, lobby: rows.length ? { current: this.host.inLobby() } : null, ...base };
+      return { kind: 'elevator', building: v.building, title: this.elevatorTitle(v.building), rows, lobby: rows.length ? { current: this.host.inLobby() } : null, ...(this.pick ? { pick: this.pick.session } : {}), ...base };
     }
     if (v.kind === 'buildings') {
       return {

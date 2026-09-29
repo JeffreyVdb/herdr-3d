@@ -5,11 +5,12 @@
 - `cmd/herdr-world` — server-side bridge daemon (Go).
 - `cmd/h3d-helper` — Mac-side helper (Go, cross-compiled for `darwin/arm64`).
 - `internal/` — shared Go packages. Bridge: `herdr` (the only door to herdr: the read-only client and the allowlisted
-  control surface for wake/sleep and hire/send home), `watch` (session discovery and per-session watchers), `world`
+  control surface for wake/sleep, hire/send home and the laptops), `watch` (session discovery and per-session watchers), `world`
   (floors/workers from snapshots and `session.json`, identity matching, worker names), `store` (SQLite), `server` (hub +
   WebSocket, wake/sleep, floor settings, hire/send home), `proto` (protocol v1 types and client), `gitremote` (GitHub
-  origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires and send-homes), `codex`
-  (Codex session ids from rollout files, for the sleep backfill). Helper: `helper` (ssh tunnel
+  origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires, send-homes and the Changes
+  panel), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
+  usage and cost from their transcripts, read incrementally, and the pricing table). Helper: `helper` (ssh tunnel
   supervisor, game server, `/ws` proxy). `app` holds both command lines.
 - `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).
 - `game/` — the game: Vite + strict TypeScript + three.js (`three/webgpu`), pnpm.
@@ -46,8 +47,8 @@ parts:
 
 - **Reads** (`herdr.Client`): the socket methods `ping`, `session.snapshot` and `events.subscribe`, plus `herdr session
   list --json`. `TestReadOnlyAllowlist` is the tripwire.
-- **Writes** (`herdr.Control`), for `floor.wake` / `floor.sleep` and `worker.hire` / `worker.fire` only: exactly the
-  command shapes in `controlShapes`.
+- **Writes** (`herdr.Control`), for `floor.wake` / `floor.sleep`, `worker.hire` / `worker.fire` and the laptops (M5)
+  only: exactly the command shapes in `controlShapes`.
   - Wake and sleep: `systemd-run --user --unit=herdr-s-<name> … /bin/fish -l -c "exec herdr --session '<name>'
     server"`, `herdr session stop <name> --json`, `herdr --session <name> pane run <pane> "claude --resume <id>"` /
     `"codex resume <id>"`, `herdr --session <name> pane report-agent-session <pane> --source herdr:codex --agent codex
@@ -60,17 +61,29 @@ parts:
     prompt <pane> <text> --wait --until working --until blocked --timeout 8000`.
   - Send home: `pane send-text <pane> /exit` / `/quit`, `workspace close <ws>`, `worktree remove --workspace <ws>`
     (never `--force`, never `--group`).
+  - Laptops (M5, `terminal.watch`, `worker.keys` / `prompt` / `answer`): the read-only, long-running `terminal session
+    observe <pane> --cols <40–300> --rows <10–100>` (its own process group; SIGTERM, SIGKILL after 1 s, always reaped),
+    `pane send-keys <pane> <key>…` (only the key names in `docs/protocol.md` "Input", and the digits 1–9 of a menu),
+    `pane send-text <pane> <text>` (no control characters) and the fixed sequences of delete / home / end / pageup /
+    pagedown, `agent prompt <pane> <text>` with `--wait --until working --until blocked --timeout 8000` or without
+    (queued for an agent at work), and the hire's `pane read <pane> --source visible` (a blocked worker's question).
+    Typed text is never quoted in an error or the audit log. A herdr CLI call takes about 10 ms, so input goes through
+    the CLI (consecutive keys, and texts, batched into one call); the socket's `pane.send_input` is not used.
 
   Every variable is validated (session names, pane/workspace ids, agent session ids, absolute clean directories,
   labels without control characters or a leading `-`, `h3d/…` branches, `origin/…` bases, `h3d-<hex>` markers, models
   and efforts, prompts not starting with `--`), every argument is its own argv element, sessions outside `--sessions`
   are refused, and commands run with the `HERDR_*`/`CLAUDE*` variables stripped. `TestControlAllowlist` pins the set,
   the argv and the exported methods; widening any needs review.
-- **git** (`gitops.Git`, hires and send-homes only): exactly ten shapes (`shapes`, pinned by `TestGitAllowlist`):
+- **git** (`gitops.Git`, hires, send-homes and `worker.changes` only): exactly thirteen shapes (`shapes`, pinned by
+  `TestGitAllowlist`):
   `git -C <dir>` `rev-parse --show-toplevel`, `fetch --quiet origin`, `symbolic-ref --quiet --short
   refs/remotes/origin/HEAD`, `log -1 --format=%H %ct origin/<…> --`, `status --porcelain`, `symbolic-ref --quiet --short
   HEAD`, `rev-list --count HEAD --not --remotes`, `rev-list --count refs/heads/h3d/<…> --not --remotes`, `rev-parse
-  --verify --quiet refs/heads/h3d/<…>`, and `branch -D h3d/<…>`. A branch is deleted only when the bridge recorded
+  --verify --quiet refs/heads/h3d/<…>`, `branch -D h3d/<…>`, and for the Changes panel (M5, read-only) `status
+  --porcelain=v2 --branch -z --untracked-files=all`, `merge-base HEAD origin/<…>` and `diff --numstat --patch -z
+  --find-renames --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ <commit id | HEAD> --`. A
+  branch is deleted only when the bridge recorded
   making it for that worker (SQLite `hire_branch`, with its base commit; the name alone proves nothing) and either
   still points at that base (a hire's rollback, clean tree) or has all its commits on a remote (send home, the
   checkout still on it). Same clean environment, plus `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`.
@@ -90,7 +103,12 @@ bin/herdr-world dump --socket "$sock" --once | jq '.world.floors'
 bin/herdr-world cmd --socket "$sock" building.create '{"name":"Work"}'
 bin/herdr-world cmd --socket "$sock" floor.assign '{"session":"herdr-3d","building":"b_…"}'
 bin/herdr-world cmd --socket "$sock" floor.settings.set '{"session":"herdr-3d","repo":"JeffreyVdb/herdr-3d"}'
+bin/herdr-world cmd --socket "$sock" worker.changes '{"id":"<worker id>"}' | jq '.data | {branch, base, stat, omitted}'
+bin/herdr-world dump --socket "$sock" | jq -c 'select(.t == "worker.usage") | {id, usage}'
 ```
+
+`worker.changes` and usage only read (git in the worker's checkout, transcripts under `--claude-projects` and
+`--codex-sessions`), so a private bridge may show them for any session it watches.
 
 A private bridge acts on real sessions as soon as it is sent `floor.sleep`, `floor.wake`, `worker.hire` or
 `worker.fire`. Always start it with a
@@ -144,10 +162,14 @@ that directory.
 | `--name-hold` | `HERDR_WORLD_NAME_HOLD` | `168h` (7 days): how long a worker's name stays held after the bridge sees it leave its floor; then a newcomer may take it (`worker.name`) |
 | `--wake-timeout` | `HERDR_WORLD_WAKE_TIMEOUT` | `10s`: how long a woken server has to start, answer `ping` and be seen running (else `wake_failed`) |
 | `--resume-timeout` | `HERDR_WORLD_RESUME_TIMEOUT` | `10s`: how long a wake waits for the agents before the fallback, and again for the fallback and its result (a wake acks within about `--wake-timeout` + 2 × this) |
-| `--codex-sessions` | `HERDR_WORLD_CODEX_SESSIONS` | `$CODEX_HOME/sessions`, else `~/.codex/sessions`: Codex rollouts, for the sleep backfill |
+| `--codex-sessions` | `HERDR_WORLD_CODEX_SESSIONS` | `$CODEX_HOME/sessions`, else `~/.codex/sessions`: Codex rollouts, for the sleep backfill and usage |
+| `--claude-projects` | `HERDR_WORLD_CLAUDE_PROJECTS` | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`: Claude Code transcripts, for usage (M5) |
+| `--pricing` | `HERDR_WORLD_PRICING` | none: a JSON file of model prices merged over the built-in table (`internal/usage/pricing.json`; format in [`docs/protocol.md` "Usage and cost"](docs/protocol.md#usage-and-cost)) |
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
 | `--warn-workers`, `--max-workers` | `HERDR_WORLD_WARN_WORKERS`, `HERDR_WORLD_MAX_WORKERS` | `48`, `96`: the same for all watched running floors together |
 | `--git` | `HERDR_WORLD_GIT` | `git` on `PATH`: worktree hires, send-home checks and the repo suggestion |
+| `--max-watches` | `HERDR_WORLD_MAX_WATCHES` | `6`: laptop screens (`terminal.watch`) one connection may watch at once (`capacity` above) |
+| `--max-observers` | `HERDR_WORLD_MAX_OBSERVERS` | `16`: laptop screens watched at once over all connections, one `terminal session observe` each |
 | `--log-level`, `--log-format` | `HERDR_WORLD_LOG_LEVEL`, `HERDR_WORLD_LOG_FORMAT` | `info`, `text` (or `json`) |
 
 Install as a user service:
@@ -163,7 +185,9 @@ journalctl --user -u herdr-world -f
 
 `go test ./...` never touches herdr or systemd (fake socket server + recorded fixtures; `herdr.Control` gets a fake
 `Runner` that plays herdr and systemd-run; hires and send-homes run against an in-memory herdr floor and git). Only
-`internal/gitops` runs the real `git`, on repositories in a temp dir. `make integration` runs, with build tag `integration`, against the
+`internal/gitops` runs the real `git`, on repositories in a temp dir (M5: `worker.changes` is checked against `git
+status` and `git diff --stat` there, byte for byte against `git diff`). `internal/usage` reads synthetic transcripts
+(`testdata/`, no real content) and temp files. `make integration` runs, with build tag `integration`, against the
 installed herdr:
 
 - `TestIntegrationThrowawaySession`: starts a headless server for a fresh session `h3d-it-<random>`, creates
@@ -182,6 +206,20 @@ installed herdr:
   goes with its branch, the agents exit gracefully and the audit log has every step. It removes
   `~/.herdr/worktrees/h3d-it-repo-<random>` afterwards. The agents remember the trust of the test's temporary
   directories.
+
+- `TestIntegrationLaptops` (M5): a plain-shell workspace's screen through `terminal.watch` (a full frame, then diffs
+  showing what `worker.keys` typed), no `terminal session observe` process left (a `/proc` scan for the session's name,
+  unreaped ones included) after 20 watch / unwatch cycles, a connection closed mid-watch and a workspace closed while
+  watched (`terminal.closed` `worker_removed`); then a Claude (`claude-haiku-4-5-20251001`, `low`, `--permission-mode
+  default`) in a folder it has not seen: its trust dialog is a `trust` question, a wrong hash is `stale`, the "Yes, I
+  trust this folder" choice resolves it; a prompt is submitted, one sent while it works is `queued`; a Bash tool
+  permission prompt is a `permission` question that choice 1 approves (the command ran). About 30 s, a few haiku turns.
+  The agent remembers the trust of the test's temporary directory.
+
+The screens the question parser is tested on (`internal/server/testdata/screens`) were captured the same way, from
+throwaway sessions (`herdr pane read <pane> --source visible`): Claude's trust dialog, its Bash and Write permission
+prompts, an AskUserQuestion menu, Codex's approval (`-a on-request -s read-only`, a command outside the sandbox) and its
+trust dialog. Recapture them when an agent's dialogs change.
 
 All of them always name the `h3d-it-…` session explicitly, and the bridge under test watches only that session. They strip
 `HERDR_*`/`CLAUDE*` pane variables from herdr's environment and in `t.Cleanup`, also on failure, stop the session with
@@ -292,7 +330,13 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   building/floor reordering (`arrange.ts`); M4: the hire / send-home dialogs' state (`hire.ts`: the preselected
   choice, capacity states, the base's age, which send-home options are enabled, the first task's keys, the command
   args) and the walk-in / walk-out timeline (`arrival.ts`: the walk-in is `walkOutRoute` reversed; heights come from
-  its waypoints). Pure logic, covered by vitest.
+  its waypoints). M5: the usage line and the floor total (`usage.ts`: `≈$0.09 · 37k tokens · ctx 4%`, only the known
+  parts, a `*` for a cost priced as an unknown model, never a bare `$`), N's queue (`next.ts`: blocked before done, the
+  building you are in first, oldest `status_since` first, and where to stand facing a worker), quick replies
+  (`answer.ts`: digits → a question's choice; Approve = the choice that says Yes / Trust / Allow / Proceed, else the
+  first; Deny = the "No" choice, else a cancel), the Changes panel's model (`changes.ts`: the diff split per file and
+  classified per line, file states, branch / upstream / base / stat lines, the truncation notice), who can be prompted
+  (`prompt.ts`, the 16 KiB rule) and which laptops are live (`screens.ts`). Pure logic, covered by vitest.
 - `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy;
   M3b: the walk scene (`walk.ts`), the building and street from outside (`outside.ts`, baked into one mesh by
   `bake.ts`) and the lobby (`lobby.ts`). M3c: the corner office (`mezzanine.ts`: two merged vertex-coloured toon
@@ -302,17 +346,42 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   Cards and city badges are canvas atlases drawn as one instanced quad batch each (a cell per worker / floor, redrawn
   only when it changes). A DOM layer was benchmarked on the Mac and lost: moving DOM elements over the canvas cost
   2.6–4.3 ms of main thread per frame for 24 cards and ~8 ms for 30 city badges, against 0.5 ms for the atlas. The DOM
-  keeps a static floor list for keyboards and screen readers.
+  keeps a static floor list for keyboards and screen readers. M5: a blocked worker's card is tall
+  (`cards/layout.ts`: what its question is about, the question with the numbered choices as key caps; the looked-at
+  worker's usage line): the nearest tall cards get one of 8 tall cells of a second small atlas, drawn as a second
+  instanced batch (`cards/atlasCards.ts`; the per-desk atlas stays as it was; a tall card without a free cell shows
+  compact with what its question is about and the question as the task line). The laptop screens are `screens.ts` (below).
+- `src/laptop` — M5 laptop screens and sitting at a worker's laptop: `watches.ts` keeps the connection's
+  `terminal.watch`es in step with what the game wants (a full frame first, a gap re-watches, `unknown_command` turns
+  screens off with the reason), `terminal.ts` is one xterm.js 6 terminal per live screen (never opened: only its VT
+  parser and buffer) painted by `paint.ts` into a canvas that is the laptop's texture, `keys.ts` maps a keydown to herdr
+  keys and orders input (one command in flight, what is typed meanwhile goes in the next `worker.keys`), `index.ts`
+  plans and ties it together. Which laptops are live is `src/world/screens.ts` (pure, vitest); the textured planes and
+  the frozen-screen atlas (one instanced batch) are `src/render/screens.ts`; the seat bar is `src/ui/seat.ts`. Recorded
+  screens for the simulator are `fixtures/screens/{agent,shell}.jsonl` (real `herdr terminal session observe` output of
+  synthetic screens, made by `node tools/record-screens.ts` in a throwaway `h3d-m5screen-*` session); `sim=1` replays
+  them for `terminal.watch` (`tools/fixture-screen.ts`: an agent's recording for a worker with an agent, the shell's
+  otherwise, each from its own point, looping; at most `fps` frames a second, diffs in between concatenated),
+  `worker.keys` echoes what was typed (the screen first jumps to the end of its recording), and watches close on
+  `worker.removed`, a floor going to sleep or a new pane; `sim.watches` (the simulator's own, not a bridge command)
+  answers this connection's watch count.
 - `src/ui` — the HUD (DOM over the canvas) and the M3 panels (`panels.ts`: elevator, buildings, floor settings,
   confirmations; modal `<dialog>`s that re-render live and keep focus); M4: the hire dialog (`hire.ts`) and the
-  send-home dialog (`sendHome.ts`), styled in `hire.css`. Hidden, named hooks wait for later tickets:
+  send-home dialog (`sendHome.ts`), styled in `hire.css`; M5: the prompt overlay (`prompt.ts`, P: a modal like the M4
+  dialogs, low on the screen), the Changes panel (`changes.ts`, C: a non-modal side panel in the HUD under the top bar,
+  so the floor stays in view and walkable; its diff is drawn a window of lines at a time), the look-at bar's usage and
+  Approve / Deny (`promptBar.ts`), styled in `m5.css`, and the seat bar (`seat.ts`, `seat.css`). Hidden, named hooks
+  wait for later tickets:
   `renderPlanLimits(harness)` (#12), `renderHandoff` (M9) and `renderServices` (#14), each returning null for now.
   `src/input` — first-person walking.
 - `fixtures/` — recorded bridge streams (`herdr-world dump` format): `demo` (2 buildings, 3 floors, 40 workers; an M2
   bridge), `demo-m3` (the same city as an M3 bridge sends it: settings, suggestions, hire options, a floor in the
   unassigned lot; no events), `demo-m3b` (demo-m3 with all three floors in Work: herdr-3d on top, depot-manager asleep
   in the middle, pastry at the bottom), `demo-m4` (demo-m3b with linked git worktrees and branches on some workers of
-  herdr-3d and pastry, and herdr-3d's docs worker in the repo's main checkout), `perf-floor60`, `perf-floor96` (96
+  herdr-3d and pastry, and herdr-3d's docs worker in the repo's main checkout), `demo-m5` (demo-m4 with a `question`
+  on each blocked worker, shaped like the bridge's captured screens: Claude Code's trust dialog with "No, exit" first,
+  its AskUserQuestion menu and a Bash permission, a Codex approval, one without a menu; and `usage` on most agents, one
+  priced as an unknown model, one with no model yet), `perf-floor60`, `perf-floor96` (96
   desks, every worker needs you: the corner office's worst case), `perf-city240`. `pnpm fixtures` regenerates them,
   `pnpm fixtures:check` flags stale files.
   Like the bridge, a building lists its floors top to bottom, which is `index` order (index 0 on top); vitest fails
@@ -322,7 +391,14 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   fetch (prepare reports it, a worktree hire is refused with `fetch_failed`); a `working` worker has uncommitted changes and 2 unpushed commits, a `blocked` one 1 unpushed commit; caps
   24 / 32 per floor and 60 / 80 for the host unless `simcap` says otherwise; hires are acked one step later with the
   worker walking in, a first task sets it working the step after; branches are `h3d/<name>-<id6>`; `delete_branch` only for
-  a branch the simulator made or a fixture `h3d/…` one, like the bridge's recorded branches), dev WebSocket → unix-socket proxy, throwaway-herdr helper, live and Mac perf drivers.
+  a branch the simulator made or a fixture `h3d/…` one, like the bridge's recorded branches; M5: the laptops in
+  `fixture-screen.ts` (see `src/laptop`), the rest in `fixture-panels.ts`, whose rules are at its top: a prompt starts
+  an idle agent working a step later and done three steps after, a working one queues it, a blocked one refuses it
+  (`invalid_state`: answer first); an answer needs the question's hash (else `stale`, after an upsert with the current
+  question), and trusting a folder leaves the agent idle; `worker.changes` has staged / unstaged / untracked /
+  committed files for a `working` worker, a 1.6 MiB diff cut at 256 KiB for a `perf…` label, `not_a_repo` under
+  `/scratch`; working agents send `worker.usage` every `simusage` ms), dev WebSocket → unix-socket proxy,
+  throwaway-herdr helper, live (`live-*.ts`) and Mac perf drivers.
 
 Run it:
 
@@ -339,10 +415,16 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 |---|---|
 | `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors) |
 | `backend=webgl2` | force WebGL2 |
+| `screens=<n>` | M5: how many laptops around you are live (default 4, at most 5; `0` watches none: only the laptop you sit at is watched) |
 | `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |
 | `ts` | GPU timestamp queries (for `bench`) |
 | `shadows=0`, `badges=0`, `battery=1` | no shadows; no city badges (perf comparisons); start in battery saver |
 | `me=<name>` | M3c: the name on your desk's name plate and the office glass (default "You": the bridge sends no user name yet) |
+
+M5 on the simulating server (`ws=…?sim=1…`): `simusage=<ms>` sends working agents' `worker.usage` that often
+(default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|changes_failed` for the next prompt,
+answer or changes, `simfail=input_failed` fails the next `worker.keys`, `simfail=observer_failed` closes the next watch
+after its first frame. E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1%26simms%3D300%26simusage%3D2000`.
 
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings
@@ -387,6 +469,7 @@ with a delete picked only the button confirms. The worker packs a cardboard box,
 fire escape and away along the sidewalk, and the desk gets its "+" back. Walks play for floors of the building you are
 in (the interior only for the floor you are on); anywhere else they resolve at once. Esc closes either dialog, and
 the pointer lock is released while one is open.
+
 Outside (M3b): every floor has a door at the south end of its west wall; it slides open as you walk up to it, onto the
 fire escape. Walk down (or up) the flights to another floor's landing and in through its door: that floor gets the
 interior (as elevator travel would), the top bar shows it while you stand on its landing. The last flight comes down
@@ -408,6 +491,37 @@ slides open as you come up. Its floor blocks nothing below; its posts, the stair
 stop it, the mezzanine's floor does), so pointing at any worker or empty desk below shows it in the HUD, and cards are
 measured as though you stood nearer, with no cap on how many show (on the floor it stays 24), so the whole floor's
 show. The floor plan shows the mezzanine's outline, the stair and your desk.
+
+Laptops (M5): the four nearest laptops you can see (and whose screens face you) show their worker's terminal live, at
+4 fps; a laptop keeps its last frame when it stops being live (frozen), or its status glow if it never was; asleep, they
+are dark. A nearer laptop takes over only from one out of view or clearly farther, one at a time, so walking does not
+flicker. Look at a worker and press **E** to sit at its laptop: the worker steps aside, the camera glides in and the
+laptop fills the view, at 10 fps. Everything you type goes to its terminal (letters, Enter, Tab and Shift+Tab, arrows,
+Home / End / Page keys, F1–F12, Backspace, Delete, Ctrl+letter; the game's own keys too), **Cmd+V** (Ctrl+V off a Mac)
+pastes (as a prompt to an agent, typed into a plain shell), **Shift+Esc** sends Esc, **Esc** (or the seat bar's Stand
+up) gets you up; so do the elevator, another floor, a panel, the plan or a teleport, and the worker leaving or its floor
+going to sleep (a toast says why). Typing that fails shows in the seat bar. Getting up drops nothing you typed: what is
+still on its way (behind a slow paste, say) goes on, in order, and a failure then is a toast. E is disabled, with the reason, on an asleep
+floor, for a worker without a pane, and against a bridge without `terminal.watch`.
+
+Prompts, changes and quick replies (M5): look at a worker and press **P** to prompt it: the overlay sits low so the
+worker stays in view; **Enter** sends, **Shift+Enter** adds a line, **Esc** closes (an unsent draft is kept per
+worker). It shows Sending, then Sent (or Queued: a working worker's agent takes it on its next turn, and a "Will queue"
+chip says so before you send), or why it failed, with the text kept; the header's status tape follows the worker live.
+P is off, with the reason on the key, for a plain shell, a worker waiting on a question (answer it first: the bridge
+refuses a prompt then), an asleep floor, or a bridge without `worker.prompt`. **C** opens the worker's Changes panel on
+the right (C again, or Esc, closes it): branch, upstream with ahead / behind, the base, `N files changed · +a −d`, the
+files (staged, unstaged, untracked, committed; +/−) and the selected file's diff; ↑ ↓ Home End pick a file, Enter or →
+reads its diff, ← goes back to the list, **R** refreshes; keys typed in it never reach the game, and the scene stays
+walkable. A blocked worker's card shows what its question is about (the command, file or folder above the menu on
+its screen, as terminal text), the question and its numbered choices; looking at it, **1**–**9** answer with that
+choice and **0** denies (Esc on its screen); the look-at bar leads with Approve (the choice that says Yes / Trust /
+Allow / Proceed, else the first: Claude's trust dialog lists "No, exit" first) and Deny (the menu's "No" choice, else
+0); a stale question says what it is now. **N** goes to the next worker who needs you (blocked, oldest first, then
+done), in your building first, cycling on repeated N: on the floor you are on it puts you facing the worker; for
+another floor it opens the elevator with that floor picked (Enter rides there, and you arrive facing it). The look-at
+line and the looked-at worker's card show its usage (`≈$0.09 · 37k tokens · ctx 4%`; `≈$1.50*` with a tooltip when
+priced as an unknown model), the top bar the floor's `≈$` total and "N need you".
 
 Tests:
 
@@ -444,28 +558,68 @@ make shot                     # Playwright WebGL2: game/test-results/{shot,m2-ci
                               # read-only bridge; m4-{hire-dialog,send-home-dirty,send-home-clean,walk-in,
                               # walk-out-pack,walk-out,hire-capacity-warn,hire-capacity-full,
                               # hire-fetch-failed}.png
+                              # M5 laptops on demo-m4 with sim=1 (m5-screen.spec.ts): the nearest four laptops in
+                              # view live and the rest glowing, screens=0 watching nothing, walking along a pod with
+                              # screens=2 (screens swap one at a time, the passed ones frozen, no churn looking left
+                              # and right) and a reconnect watching again; E at a plain shell's laptop, typing that
+                              # echoes on its screen (checked in the xterm buffer), the game's keys (W, L, B, X, Tab,
+                              # Shift+Tab, Backspace) going to the terminal instead, Shift+Esc, a paste, Esc back to
+                              # the same pose; a paste into an agent's laptop as worker.prompt, a failed key
+                              # (simfail=input_failed) in the seat bar, the worker leaving; 20 sit / stand cycles with
+                              # no watch left in the simulator; an older bridge and an asleep floor (E disabled and
+                              # why); m5-screen-{live,seated,frozen}.png. M5 panels on demo-m5 with sim=1
+                              # (m5-panels.spec.ts): P to an idle worker (sent, working, done on screen) and to a
+                              # working one (queued, the chip back for the next one), a draft kept, the plain-shell /
+                              # asleep / failed-prompt reasons; a bridge without the M5 commands; 1 / 2 / 3 / 0 on a
+                              # Claude permission, Claude's trust dialog (Approve is its choice 2), a Codex approval
+                              # and a question without a menu, and a stale hash; the Changes panel from the keyboard
+                              # (staged / unstaged / untracked / committed, the diff, refresh keeps the file) and on a
+                              # cut 256 KiB diff (the notice, a window of lines, not_a_repo); N across floors through
+                              # the elevator and from the city; usage on the bar, the card and the top bar, flagged,
+                              # updated by worker.usage; m5-{prompt,prompt-queued,changes,changes-truncated,
+                              # quick-reply,usage,next-elevator}.png
 pnpm -C game test:live        # opt-in: status latency against a throwaway herdr session (see below)
 pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep/wake at the same desks (see below)
+pnpm -C game test:live:m5     # opt-in: the M5 laptops and panels against a real bridge and Claude (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
 ```
 
 `test:live` builds `bin/herdr-world` from the worktree (or runs `H3D_LIVE_BRIDGE=<path>`, e.g. another branch's
 bridge built elsewhere), starts `herdr --session h3d-m2game-<random> server` (with
-`HERDR_*`/`CLAUDE*` stripped), a private bridge on `$XDG_RUNTIME_DIR/h3d-m2game/bridge.sock` watching only that session,
+`HERDR_*`/`CLAUDE*` stripped), a private bridge on `$XDG_RUNTIME_DIR/h3d-m2game/<run>/bridge.sock` (db
+`/tmp/h3d-m2game/<run>/world.db`; every live check keeps its socket and db in a directory of its run's own, and removes
+only that) watching only that session,
 and the WebSocket → unix-socket proxy on a leased 127.0.0.1 port. The spec flips a custom agent's state with
 `herdr pane report-agent` and asserts each change is on screen within 1 s. It accepts an M1 bridge (name falls back
 to the label, desk to the lowest free local slot) and the M2 bridge (its own `name` and `desk_index`). The session is stopped and deleted
 afterwards; after a hard kill, check `herdr session list` for a leftover `h3d-m2game-*` session.
 
 `test:live:m3` builds the bridge the same way (or `H3D_LIVE_BRIDGE=<path>`), starts `h3d-m3game-<random>` with two
-plain-shell workspaces (no coding agents) and the proxy to `$XDG_RUNTIME_DIR/h3d-m3game/bridge.sock`; the spec
-(`e2e-live/m3.spec.ts`) runs its own private bridge on it (db `/tmp/h3d-m3game/world.db`, `--sessions
+plain-shell workspaces (no coding agents) and the proxy to `$XDG_RUNTIME_DIR/h3d-m3game/<run>/bridge.sock`; the spec
+(`e2e-live/m3.spec.ts`) runs its own private bridge on it (db `/tmp/h3d-m3game/<run>/world.db`, `--sessions
 '^h3d-m3game-…$'`) so it can restart it. It creates a building and moves the floor into it from the UI, restarts the
 bridge and checks both are still there, then sleeps the floor and wakes it from the elevator panel and checks every
 worker kept its desk, and saves floor settings from the panel (a status with a comma among them) and checks the
 restarted bridge still has them and that saving one other key sends only that key. On a
 bridge without `floor.wake` / `floor.settings.set` (it answers `unknown_command`) those tests are skipped and say so. Afterwards the session is stopped and deleted and the `herdr-s-h3d-m3game-…` unit a wake started is
 removed; after a hard kill, check `herdr session list` and `systemctl --user list-units 'herdr-s-h3d-*'`.
+
+`test:live:m5` builds the bridge the same way (or `H3D_LIVE_BRIDGE=<path>`) and starts `h3d-m5integ-<random>` with a
+plain shell in a temporary git repository (a commit not pushed to its local bare `origin`, a staged, a modified, a
+deleted and an untracked file) and two cheap Claude agents (`claude-haiku-4-5-20251001`, `low`, `--permission-mode
+default`) in new folders, so both stop at their trust dialogs; then a private bridge on
+`$XDG_RUNTIME_DIR/h3d-m5integ/<run>/bridge.sock` (db `/tmp/h3d-m5integ/<run>/world.db`; `<run>` is the run's own, so
+runs in parallel worktrees keep apart, and each removes only its own) watching only that session, and the proxy.
+`e2e-live/m5.spec.ts` drives the real game UI against it, in order: the three laptops live (the real screens in the
+xterm buffers, one `terminal session observe` each); E at the shell's laptop, typed text echoing there, Esc back to the
+same pose, and after 20 sit / stand cycles no watch in the game and no observer process (`/proc`); the first agent's
+trust dialog on its card, approved with its digit (2: "Yes, I trust this folder"); P: sent, working then idle / done
+on screen, and a second prompt while it works queued; its usage from its real transcript (the look-at line, the card,
+the top bar's `≈$`); a Bash permission prompt on the card, approved with 1 (the command ran); N to the blocked one
+before the done one, and the blocked one approved from its bubble; C on the shell matching `git diff --shortstat` /
+`--numstat` against the merge-base and `git status` (files, counts, chips), then over 256 KiB after two big staged files
+and R: the truncation notice. About 1.5 min and a few haiku turns. Shots go to `game/test-results/live-m5/`. The session
+is stopped and deleted afterwards, also on failure; Claude remembers the trust of the temporary folders.
 
 `perf:mac` serves `game/dist` on a leased port P and opens `ssh -o ControlMaster=no -o ControlPath=none -N -R
 127.0.0.1:P:127.0.0.1:P devmac`, so the Mac page is on its own loopback (a secure context: WebGPU).
@@ -476,6 +630,9 @@ pipelined throughput, GPU timestamps, and rAF frames that include DOM layout. M3
 `window8` (out of a top-floor window), and `floor60-street`; `bench()` reports the `area` it ran in. M3c jobs:
 `floor60-mezz` (at the corner office's glass, looking down over 60 workers), `floor60-desk` (seated at your desk) and
 `floor96-desk` (seated over 96 workers who all need you: every card shows).
+M5 jobs, on `perf-floor60` with the simulator: `floor60-screens` (the overview with four live laptop screens),
+`floor60-screens0` (the same with `screens=0`) and `floor60-laptop` (seated at a laptop). On the server,
+`H3D_BENCH=1` with the m5-screen spec runs the same comparison on WebGL2 (relative numbers only).
 
 `window.__h3d` (tests, perf): `backend`, `frames`, `error`, `ready`, `view()`, `lookAt()` → `{kind, id, name?, label?}`
 or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
@@ -510,6 +667,22 @@ status line), `arrivals()` (walkers now: kind, desk, phase, position, distance w
 desk shows, box / laptop / items), `arrivalLog()` (finished walks, `played: false` for ones nobody could see),
 `arrivalRate(k)` (plays walks k times as fast, from where they are), `desks()` (the floor with an interior: who sits at
 each desk, whether its "+" shows, what a walk holds it as).
+
+M5: `screens()` (per worker of the floor you are on: `desk`, `state` live | pending | frozen | glow | dark, and the
+`fps` it is watched at, else null), `seated()` (the worker whose laptop you sit at, or null), `sitAt(workerId)` (as E;
+false with a toast when you cannot), `screenText(workerId)` (a live laptop's screen from its xterm buffer, a string per
+row), `frozenInk(workerId)` (the share of its frozen screen that is not black, 0–1; null when not frozen), `seat()` (the seat bar: shown, tape, note, state ok | busy | error | offline), `watches()` (this connection's
+watches as the game counts them and, with `sim=1`, as the simulator does), `reconnect()` (drops the connection and
+connects again; the game re-watches) and `watchLog()` (the last 400 `terminal.watch` / `unwatch` the game sent by
+itself, with their results: `sent()` keeps to what you did, so it has your `worker.keys` and `worker.prompt` but not
+these). `panel()` also returns the prompt overlay (`kind: 'prompt'`: the worker, its status, `state` ready / sending /
+sent / failed, the text, `queued`, the ack's `result`, `blocker`, `status`) or else the Changes panel (`kind:
+'changes'`: `state`, error `code`, branch, upstream, base, stat, truncation notice, the files with their chips and
+counts, the selected file's diff: `lines`, the lines drawn now, why there is none); the elevator's adds `pick` (the
+floor N preselected). `cards()` entries add `ask` (a question: text, choices, selected), `usage` (the looked-at
+worker's line) and `tall`. `needs()` (who needs you in N's order), `nextNeed()` (presses N: who it went to),
+`openPrompt(id)`, `openChanges(id)`, `face(id)` (stands you facing a worker of your floor, as N does; true when look-at
+picks it).
 
 ### Audio and voice lines
 

@@ -11,10 +11,13 @@
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { Building, Cap, Floor, FloorSettings, Hire, HireOptions, Worker } from '../src/net/protocol.ts';
+import { screensOf } from './fixture-screen.ts';
 
 type Msg = Record<string, unknown>;
 type Send = (m: Msg) => void;
 type Obj = Record<string, unknown>;
+// M5: prompt, answer, changes and usage.
+import { PanelsSim } from './fixture-panels.ts';
 
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
@@ -27,6 +30,8 @@ export interface SimOptions {
   fail?: string | undefined;
   /** M4: per-floor caps `{session: {soft, hard}}` (default 24 / 32); the host's are 60 / 80. */
   caps?: Record<string, { soft: number; hard: number }>;
+  /** M5: how often working agents' usage goes out as `worker.usage` (ms; 0: never; default 5000). */
+  usageMs?: number;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -123,6 +128,7 @@ export class SimWorld {
     this.now = o.now ?? (() => Date.now());
     this.setT = o.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearT = o.clearTimeout ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+    if (o.usageMs !== undefined) this.usageMs = o.usageMs;
   }
 
   dispose(): void {
@@ -192,6 +198,27 @@ export class SimWorld {
     try {
       const a = m.args === undefined || m.args === null ? {} : m.args;
       if (!isObj(a)) throw bad('args must be an object');
+      // M5: laptop screens and seated input (tools/fixture-screen.ts); world events close the watches they end.
+      const screens = screensOf(this, () => ({
+        worker: (id: string) => this.workers.find((w) => w.id === id),
+        floor: (s: string) => this.floors.get(s),
+        later: (fn: () => void, ms: number) => {
+          const h = this.setT(() => {
+            this.timers.delete(h);
+            fn();
+          }, ms);
+          this.timers.add(h);
+          return h;
+        },
+        cancel: (h: unknown) => {
+          this.clearT(h);
+          this.timers.delete(h);
+        },
+        now: () => this.now(),
+        failNext: (code: string) => this.fail === code && ((this.fail = undefined), true),
+      }));
+      send = screens.tap(send);
+      if (screens.handle(m.t, a, send, ack, (code, message) => send({ t: 'error', req_id: reqId, code, message }))) return;
       switch (m.t) {
         case 'building.create':
           return ack(this.create(a, send));
@@ -217,6 +244,13 @@ export class SimWorld {
           return ack(this.firePrepare(a));
         case 'worker.fire':
           return this.fireWorker(a, send, ack, fail);
+        // M5 (tools/fixture-panels.ts)
+        case 'worker.prompt':
+          return this.panels.prompt(a, send, ack, fail);
+        case 'worker.answer':
+          return this.panels.answer(a, send, ack);
+        case 'worker.changes':
+          return this.panels.changes(a, ack, fail);
       }
       throw new CmdError('unknown_command', `unknown command: "${String(m.t)}"`);
     } catch (e) {
@@ -480,6 +514,41 @@ export class SimWorld {
         ack();
       },
     ]);
+  }
+
+  // ---- M5: prompt, answer, changes, usage (tools/fixture-panels.ts) ------
+
+  private panelsSim: PanelsSim | null = null;
+  private usageMs = 5000;
+
+  private get panels(): PanelsSim {
+    this.panelsSim ??= new PanelsSim({
+      workers: this.workers,
+      floors: this.floors,
+      stepMs: this.stepMs,
+      emit: (send, m) => this.emit(send, m),
+      after: (ms, fn) => {
+        const h = this.setT(() => {
+          this.timers.delete(h);
+          fn();
+        }, ms);
+        this.timers.add(h);
+      },
+      now: () => this.now(),
+      takeFail: (code) => {
+        if (this.fail !== code) return false;
+        this.fail = undefined;
+        return true;
+      },
+      error: (code, message) => new CmdError(code, message),
+    });
+    return this.panelsSim;
+  }
+
+  /** After the snapshot went out: the periodic `worker.usage` of working agents (`usageMs`). */
+  start(send: Send, o: { usageMs?: number } = {}): void {
+    this.usageMs = o.usageMs ?? this.usageMs;
+    this.panels.start(send, this.usageMs);
   }
 
   // ---- M4: hire and send home ------------------------------------------------

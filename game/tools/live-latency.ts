@@ -6,17 +6,18 @@
 // It builds the bridge from this worktree (bin/herdr-world; H3D_LIVE_BRIDGE=<path>
 // uses a prebuilt one instead, e.g. another branch's bridge), starts a
 // throwaway herdr session h3d-m2game-<random>, a private bridge watching only
-// that session (socket $XDG_RUNTIME_DIR/h3d-m2game/bridge.sock, db
-// /tmp/h3d-m2game/world.db), the dev WS→unix proxy on a leased port, and then
+// that session (socket $XDG_RUNTIME_DIR/h3d-m2game/<run>/bridge.sock, db
+// /tmp/h3d-m2game/<run>/world.db: this run's own), the dev WS→unix proxy on a leased port, and then
 // e2e-live/latency.spec.ts against the built game. Everything is stopped and
 // the session deleted afterwards, also on failure or Ctrl-C.
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, openSync, rmSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Throwaway, cleanEnv } from './herdr-throwaway.ts';
+import { makeRunPaths, removeRunPaths, runPaths, type RunPaths } from './live-paths.ts';
 import { startProxy } from './ws-unix-proxy.ts';
 
 const GAME = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -35,9 +36,8 @@ if (!existsSync(runtime)) {
   console.error(`no runtime dir (${runtime}); set XDG_RUNTIME_DIR`);
   process.exit(2);
 }
-const sockDir = join(runtime, 'h3d-m2game');
-const sock = join(sockDir, 'bridge.sock');
-const dbDir = '/tmp/h3d-m2game';
+/** This run's bridge socket and database. */
+let paths: RunPaths | null = null;
 
 const log = (m: string) => console.log(`live: ${m}`);
 const procs: ChildProcess[] = [];
@@ -56,7 +56,7 @@ async function cleanup(): Promise<void> {
     for (const p of problems) console.error(`live cleanup: ${p}`);
     log(`deleted throwaway session ${session.name}`);
   }
-  rmSync(sockDir, { recursive: true, force: true });
+  if (paths) removeRunPaths(paths);
 }
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
@@ -65,7 +65,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   });
 }
 
-function healthy(): Promise<boolean> {
+function healthy(sock: string): Promise<boolean> {
   return new Promise((res) => {
     const r = request({ socketPath: sock, path: '/healthz' }, (x) => {
       x.resume();
@@ -79,6 +79,9 @@ function healthy(): Promise<boolean> {
 async function main(): Promise<number> {
   mkdirSync(OUT, { recursive: true });
   const work = mkdtempSync(join(tmpdir(), 'h3d-m2game-'));
+  const run = runPaths('h3d-m2game', basename(work), runtime);
+  paths = run;
+  const sock = run.sock;
 
   let bin = process.env.H3D_LIVE_BRIDGE;
   if (bin) log(`using the prebuilt bridge ${bin}`);
@@ -92,17 +95,15 @@ async function main(): Promise<number> {
   await session.start(work, join(OUT, 'herdr-server.log'));
   log(`throwaway session ${session.name} is up`);
 
-  rmSync(sockDir, { recursive: true, force: true });
-  mkdirSync(dbDir, { recursive: true });
-  rmSync(join(dbDir, 'world.db'), { force: true });
+  makeRunPaths(run);
   const bridgeLog = openSync(join(OUT, 'bridge.log'), 'w');
   const bridge = spawn(
     bin,
-    ['--socket', sock, '--db', join(dbDir, 'world.db'), '--sessions', `^${session.name}$`, '--log-level', 'debug'],
+    ['--socket', sock, '--db', run.db, '--sessions', `^${session.name}$`, '--log-level', 'debug'],
     { env: cleanEnv(), stdio: ['ignore', bridgeLog, bridgeLog] },
   );
   procs.push(bridge);
-  for (let i = 0; !(await healthy()); i++) {
+  for (let i = 0; !(await healthy(sock)); i++) {
     if (i > 100 || bridge.exitCode !== null) throw new Error('bridge did not come up (see test-results/live/bridge.log)');
     await new Promise((r) => setTimeout(r, 100));
   }

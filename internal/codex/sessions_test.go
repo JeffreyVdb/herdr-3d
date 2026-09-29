@@ -68,6 +68,34 @@ func TestFindSession(t *testing.T) {
 	}
 }
 
+// A Finder reads a rollout's first line once, and one it could not read
+// (still being written) again the next time.
+func TestFinderRemembers(t *testing.T) {
+	root := t.TempDir()
+	rollout(t, root, "2026/09/28", "2026-09-28T10-00-00", "01a0-morning", "/home/u/repo")
+	f := &Finder{Root: root}
+	if got, err := f.Find("/home/u/repo", nil); got != "01a0-morning" || err != nil {
+		t.Fatalf("first = %q, %v", got, err)
+	}
+	// Its first line changed on disk (it never does): the remembered one counts.
+	rollout(t, root, "2026/09/28", "2026-09-28T10-00-00", "01a0-morning", "/home/u/other")
+	if got, _ := f.Find("/home/u/repo", nil); got != "01a0-morning" {
+		t.Fatalf("remembered = %q", got)
+	}
+	// A new rollout whose first line is not complete yet, then is.
+	partial := filepath.Join(root, "2026", "09", "28", "rollout-2026-09-28T11-00-00-01a0-late.jsonl")
+	if err := os.WriteFile(partial, []byte(`{"type":"session_meta","payload":{"id":"01a0-la`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := f.Find("/home/u/repo", nil); got != "01a0-morning" {
+		t.Fatalf("with a partial one = %q", got)
+	}
+	rollout(t, root, "2026/09/28", "2026-09-28T11-00-00", "01a0-late", "/home/u/repo")
+	if got, _ := f.Find("/home/u/repo", nil); got != "01a0-late" {
+		t.Fatalf("once written = %q", got)
+	}
+}
+
 func TestDefaultSessionsDir(t *testing.T) {
 	t.Setenv("CODEX_HOME", "/opt/codex")
 	if got := DefaultSessionsDir(); got != "/opt/codex/sessions" {
@@ -77,5 +105,31 @@ func TestDefaultSessionsDir(t *testing.T) {
 	t.Setenv("HOME", "/home/u")
 	if got := DefaultSessionsDir(); got != "/home/u/.codex/sessions" {
 		t.Errorf("default: %q", got)
+	}
+}
+
+func TestFindRollout(t *testing.T) {
+	root := t.TempDir()
+	rollout(t, root, "2026/09/27", "2026-09-27T23-00-00", "01a0-old", "/home/u/repo")
+	rollout(t, root, "2026/09/28", "2026-09-28T10-00-00", "01a0-morning", "/home/u/repo")
+	// A name that ends in the id but whose first line is another session.
+	rollout(t, root, "2026/09/28", "2026-09-28T11-00-00", "01a0-other", "/home/u/repo")
+	if err := os.Rename(filepath.Join(root, "2026/09/28/rollout-2026-09-28T11-00-00-01a0-other.jsonl"),
+		filepath.Join(root, "2026/09/28/rollout-2026-09-28T11-00-00-01a0-old.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{
+		"01a0-morning": "2026/09/28/rollout-2026-09-28T10-00-00-01a0-morning.jsonl",
+		"01a0-old":     "2026/09/27/rollout-2026-09-27T23-00-00-01a0-old.jsonl",
+		"01a0-none":    "",
+		"../x":         "",
+	} {
+		got, err := FindRollout(root, id)
+		if want != "" {
+			want = filepath.Join(root, filepath.FromSlash(want))
+		}
+		if err != nil || got != want {
+			t.Errorf("FindRollout(%q) = %q, %v; want %q", id, got, err, want)
+		}
 	}
 }

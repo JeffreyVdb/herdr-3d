@@ -282,6 +282,12 @@ type Worker struct {
 	HiredAt int64 `json:"hired_at,omitempty"`
 	// Branch is the checked-out branch of a worker in a linked worktree.
 	Branch string `json:"branch,omitempty"`
+	// M5 usage: Usage is the agent session's token usage and cost estimate
+	// (absent without an agent_session, or before the bridge read it).
+	Usage *Usage `json:"usage,omitempty"`
+	// M5 term: Question is what a blocked worker's screen asks, while it
+	// is blocked and the bridge could read it.
+	Question *Question `json:"question,omitempty"`
 }
 
 // Worktree is a worker's git worktree provenance.
@@ -318,6 +324,8 @@ type Event struct {
 	// Reason is set on worker.removed when worker.fire removed it
 	// (RemovedSentHome).
 	Reason string `json:"reason,omitempty"`
+	// M5 usage: Usage is set on worker.usage.
+	Usage *Usage `json:"usage,omitempty"`
 }
 
 // Command is a client request. Args depend on T (see the *Args types).
@@ -560,4 +568,105 @@ type Error struct {
 	ReqID   string `json:"req_id,omitempty"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// M5 usage: the Changes panel (worker.changes) and usage and cost (the
+// worker's usage, worker.usage).
+
+// CmdWorkerChanges reads a worker's git changes (read-only).
+const CmdWorkerChanges = "worker.changes"
+
+// EvWorkerUsage carries a worker's new usage (id, session, usage).
+const EvWorkerUsage = "worker.usage"
+
+// Error codes of worker.changes.
+const (
+	ErrChangesFailed = "changes_failed" // a git call failed or the 10 s deadline passed
+	ErrNotARepo      = "not_a_repo"     // the worker's cwd is not in a git work tree
+)
+
+// How a usage's cost was priced (Usage.Priced).
+const (
+	PricedKnown        = "known"
+	PricedUnknownModel = "unknown_model" // priced as the most expensive known model
+	PricedNone         = "none"          // no model seen
+)
+
+func init() { Commands = append(Commands, CmdWorkerChanges) }
+
+// WorkerChanges is the ack data of worker.changes: the worker's git state
+// against its base, from read-only git in its cwd.
+type WorkerChanges struct {
+	Cwd string `json:"cwd"`
+	// Branch is the checked-out branch, null when HEAD is detached.
+	Branch *string `json:"branch"`
+	// Head is HEAD's commit ("" on an unborn branch).
+	Head string `json:"head"`
+	// Upstream is the branch's upstream (null: none); Ahead and Behind
+	// count commits against it.
+	Upstream *string `json:"upstream"`
+	Ahead    int     `json:"ahead"`
+	Behind   int     `json:"behind"`
+	// Base is the merge-base with origin/<default branch>, null when there
+	// is no such ref (the diff is then against HEAD).
+	Base  *ChangesBase  `json:"base"`
+	Files []ChangedFile `json:"files"`
+	// Stat totals git diff --stat <base> (tracked files; not untracked ones).
+	Stat ChangesStat `json:"stat"`
+	// Diff is the unified diff, whole files in Files order up to 256 KiB;
+	// Omitted lists the files left out, DiffBytes is the uncapped size.
+	Diff      string   `json:"diff"`
+	DiffBytes int64    `json:"diff_bytes"`
+	Truncated bool     `json:"truncated"`
+	Omitted   []string `json:"omitted"`
+}
+
+// ChangesBase is the commit a worker's changes are diffed against.
+type ChangesBase struct {
+	Ref string `json:"ref"` // origin/<default branch>
+	SHA string `json:"sha"` // its merge-base with HEAD
+}
+
+// ChangedFile is one changed path. Index and Worktree are git status's X
+// and Y ("." unchanged), empty for an untracked file.
+type ChangedFile struct {
+	Path       string `json:"path"`
+	OrigPath   string `json:"orig_path,omitempty"`
+	Index      string `json:"index,omitempty"`
+	Worktree   string `json:"worktree,omitempty"`
+	Untracked  bool   `json:"untracked,omitempty"`
+	Insertions int    `json:"insertions"`
+	Deletions  int    `json:"deletions"`
+	Binary     bool   `json:"binary"`
+}
+
+// ChangesStat is git diff --stat's summary line.
+type ChangesStat struct {
+	Files      int `json:"files"`
+	Insertions int `json:"insertions"`
+	Deletions  int `json:"deletions"`
+}
+
+// Usage is a worker's agent session usage: token counts summed over the
+// session and its subagents, and an API-equivalent cost estimate.
+type Usage struct {
+	// Tokens is the headline count: Input + Output + CacheWrite (cache
+	// reads, the same context read again every turn, are not counted).
+	Tokens     int64 `json:"tokens"`
+	Input      int64 `json:"input"` // uncached input
+	Output     int64 `json:"output"`
+	CacheWrite int64 `json:"cache_write"`
+	CacheRead  int64 `json:"cache_read"`
+	// CostUSDEst is an estimate in USD; Priced says how it was priced.
+	CostUSDEst float64 `json:"cost_usd_est"`
+	Priced     string  `json:"priced"`
+	// Model is the model the transcript reports (last seen).
+	Model string `json:"model,omitempty"`
+	// ContextPct is the share of the context window in use, 0–100 with one
+	// decimal, null when unknown; ContextWindow is the window used (0:
+	// unknown).
+	ContextPct    *float64 `json:"context_pct"`
+	ContextWindow int64    `json:"context_window"`
+	// UpdatedAt is when the bridge saw it change, unix ms.
+	UpdatedAt int64 `json:"updated_at"`
 }

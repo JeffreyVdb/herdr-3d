@@ -123,6 +123,10 @@ export interface Worker {
   hired_at?: number;
   /** M4: the checkout's current branch, for a worker in a linked worktree (when known). */
   branch?: string;
+  /** M5: the question of a blocked worker. */
+  question?: Question;
+  /** M5: its agent session's token usage and cost estimate. */
+  usage?: Usage;
 }
 
 export interface World {
@@ -212,7 +216,8 @@ export type WorldEvent =
   | FloorRemoved
   | WorkerUpsert
   | WorkerStatusEvent
-  | WorkerRemoved;
+  | WorkerRemoved
+  | WorkerUsageEvent;
 
 export interface ErrorMessage {
   t: 'error';
@@ -319,7 +324,7 @@ export interface FireAck {
   note?: string;
 }
 
-/** Commands and their args (docs/protocol.md "Commands", M3 and M4 additions). */
+/** Commands and their args (docs/protocol.md "Commands", M3, M4 and M5 additions). */
 export interface CommandArgs {
   'building.create': { name: string };
   'building.rename': { id: string; name: string };
@@ -345,6 +350,114 @@ export interface CommandArgs {
   'worker.fire.prepare': { id: string };
   /** `handoff` (M9) and `stop_services` (#14) are reserved, not sent yet. */
   'worker.fire': { id: string; worktree?: FireWorktree };
+  /** M5 */
+  'worker.prompt': { id: string; text: string };
+  /** Exactly one of `choice` or `cancel`. */
+  'worker.answer': { id: string; hash: string; choice?: number; cancel?: boolean };
+  'worker.changes': { id: string };
+  'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number };
+  'terminal.unwatch': { id: string };
+  'worker.keys': { id: string; input: KeyItem[] };
+}
+
+// M5: blocked workers' questions, usage, and the acks of the prompt, answer and Changes commands (docs/protocol.md
+// "Laptops: screens, input, changes and usage").
+
+/** M5: a blocked worker's question, read from its screen (present only while it is `blocked`). */
+export interface QuestionChoice {
+  n: number;
+  label: string;
+}
+
+export interface Question {
+  /** `permission` | `choice` | `trust` | `other` (blocked, no menu recognised). */
+  kind: string;
+  /** The question line, trimmed; "" when none was found. */
+  text: string;
+  /** The last few non-empty screen lines. */
+  excerpt: string[];
+  /** Numbered choices of a recognised menu, else []. */
+  choices: QuestionChoice[];
+  /** The highlighted choice, when seen. */
+  selected?: number;
+  /** Identifies this question for `worker.answer`. */
+  hash: string;
+}
+
+/** M5: token usage and the API-equivalent cost estimate of a worker's agent session. */
+export interface Usage {
+  /** The headline count ("37k tokens"). */
+  tokens: number;
+  input?: number;
+  output?: number;
+  cache_write?: number;
+  cache_read?: number;
+  /** An estimate in USD: always shown as `≈$`. */
+  cost_usd_est: number;
+  /** `known`, `unknown_model` (priced as the most expensive known model: flagged), `none` (no model seen). */
+  priced: string;
+  model?: string;
+  /** 0–100, null when unknown. */
+  context_pct?: number | null;
+  context_window?: number;
+  updated_at?: number;
+}
+
+/** M5: usage changed (at most every 5 s per worker). */
+export interface WorkerUsageEvent {
+  t: 'worker.usage';
+  seq: number;
+  id: string;
+  session?: string;
+  usage: Usage;
+}
+
+/** M5: `worker.prompt` ack. */
+export interface PromptAck {
+  /** The worker was working: the agent takes the prompt on its next turn. */
+  queued: boolean;
+  /** herdr's paste needed one more Enter. */
+  retried: boolean;
+}
+
+/** M5: `worker.answer` ack. */
+export interface AnswerAck {
+  sent: string[];
+  resolved: boolean;
+}
+
+/** M5: a changed file in `worker.changes`. */
+export interface ChangeFile {
+  path: string;
+  orig_path?: string;
+  /** Porcelain v2 letters: `.` unchanged, `M`, `A`, `D`, `R`, … */
+  index?: string;
+  worktree?: string;
+  untracked?: boolean;
+  insertions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+/** M5: `worker.changes` ack: the worker's checkout against its base. */
+export interface Changes {
+  cwd: string;
+  /** null when detached. */
+  branch: string | null;
+  head?: string;
+  upstream?: string | null;
+  ahead?: number;
+  behind?: number;
+  /** The merge-base with origin's default branch; null: diffed against HEAD. */
+  base: { ref: string; sha: string } | null;
+  files: ChangeFile[];
+  stat: { files: number; insertions: number; deletions: number };
+  diff: string;
+  /** The uncapped size of the diff. */
+  diff_bytes: number;
+  truncated: boolean;
+  /** Files whose diff was left out (the cap). */
+  omitted: string[];
 }
 
 export type CommandName = keyof CommandArgs;
@@ -371,6 +484,7 @@ const EVENT_TYPES = new Set([
   'worker.upsert',
   'worker.status',
   'worker.removed',
+  'worker.usage',
 ]);
 
 type Obj = Record<string, unknown>;
@@ -422,6 +536,8 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
       return isStr(o.id) && isStr(o.status);
     case 'worker.removed':
       return isStr(o.id);
+    case 'worker.usage':
+      return isStr(o.id) && isObj(o.usage);
   }
   return false;
 }
@@ -434,4 +550,53 @@ export function isAck(m: ServerMessage): m is Ack {
 export function isError(m: ServerMessage): m is ErrorMessage {
   const o = m as unknown as Obj;
   return m.t === 'error' && isStr(o.code);
+}
+
+// M5: laptop screens (`terminal.watch` / `terminal.unwatch`, the connection-scoped `terminal.frame` /
+// `terminal.closed`) and seated input (`worker.keys`). No `seq`: frames are sent only to the watching connection
+// and never replayed; the client re-watches after a reconnect.
+
+/** One `worker.keys` item: literal text (no control characters) or one allowlisted herdr key name. */
+export type KeyItem = { text: string } | { key: string };
+
+/** `terminal.watch` ack. */
+export interface WatchAck {
+  pane: string;
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalFrame {
+  t: 'terminal.frame';
+  id: string;
+  pane: string;
+  /** Counts frames per watch from 1; a re-watch starts again at a `full` frame. */
+  n: number;
+  /** true: reset the screen, then apply `data`; false: apply `data` on top (diffs compose by concatenation). */
+  full: boolean;
+  cols: number;
+  rows: number;
+  /** Base64 ANSI bytes. */
+  data: string;
+}
+
+export type ClosedReason = 'worker_removed' | 'asleep' | 'pane_changed' | 'observer_failed';
+
+export interface TerminalClosed {
+  t: 'terminal.closed';
+  id: string;
+  reason: ClosedReason | string;
+}
+
+/** Connection-scoped messages (no `seq`): screens of watched laptops. */
+export type ConnMessage = TerminalFrame | TerminalClosed;
+
+export function isTerminalFrame(m: ServerMessage): m is TerminalFrame {
+  const o = m as unknown as Obj;
+  return m.t === 'terminal.frame' && isStr(o.id) && isInt(o.n) && typeof o.full === 'boolean' && isInt(o.cols) && isInt(o.rows) && isStr(o.data);
+}
+
+export function isTerminalClosed(m: ServerMessage): m is TerminalClosed {
+  const o = m as unknown as Obj;
+  return m.t === 'terminal.closed' && isStr(o.id) && isStr(o.reason);
 }

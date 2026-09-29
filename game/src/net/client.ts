@@ -5,9 +5,12 @@ import {
   isSnapshot,
   isWelcome,
   isWorldEvent,
+  isTerminalClosed,
+  isTerminalFrame,
   parseMessage,
   type CommandArgs,
   type CommandName,
+  type ConnMessage,
   type Hello,
   type Snapshot,
   type Welcome,
@@ -83,6 +86,8 @@ export interface ClientHandlers {
   onEvent(e: WorldEvent): void;
   onState?(s: ConnState): void;
   onWelcome?(w: Welcome): void;
+  /** M5: connection-scoped messages (no seq): laptop screen frames and closes. */
+  onConn?(m: ConnMessage): void;
 }
 
 export interface ClientOptions {
@@ -121,6 +126,9 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'worker.hire': 90_000,
   'worker.fire.prepare': 20_000,
   'worker.fire': 45_000,
+  // M5: a prompt waits up to 8 s for the agent to start, then 5 s after one more Enter; changes run git (10 s).
+  'worker.prompt': 20_000,
+  'worker.changes': 15_000,
 };
 
 interface Pending {
@@ -329,6 +337,11 @@ export class BridgeClient {
           if (isWorldEvent(m)) this.o.handlers.onEvent(m);
           return;
       }
+    }
+    // M5: laptop screens of this connection's watches (no seq, never replayed).
+    if (isTerminalFrame(m) || isTerminalClosed(m)) {
+      this.o.handlers.onConn?.(m);
+      return;
     }
     // Everything else (acks, unknown types) is ignored.
   }

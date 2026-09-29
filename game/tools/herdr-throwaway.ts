@@ -8,8 +8,8 @@ import { openSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 
 export const PREFIX = 'h3d-m2game-';
-/** Name prefixes this helper may create and touch (M2 latency, M3 floors). */
-export const PREFIXES = [PREFIX, 'h3d-m3game-'];
+/** Name prefixes this helper may create and touch (M2 latency, M3 floors, M5 recorded laptop screens, M5 live). */
+export const PREFIXES = [PREFIX, 'h3d-m3game-', 'h3d-m5screen-', 'h3d-m5integ-'];
 const ours = (name: string) => PREFIXES.some((p) => name.startsWith(p)) && /^[A-Za-z0-9._-]{1,64}$/.test(name);
 
 /** process.env without HERDR_* and CLAUDE* (they retarget herdr at the caller's own pane). */
@@ -39,13 +39,27 @@ export function listSessions(bin = herdrBin()): SessionInfo[] {
   return (JSON.parse(out) as { sessions: SessionInfo[] }).sessions;
 }
 
-/** Runs herdr against the named throwaway session only. */
-export function runScoped(name: string, args: string[], bin = herdrBin()): string {
+function checkScoped(name: string, args: string[]): void {
   if (!ours(name)) throw new Error(`refusing to touch non-throwaway session ${name}`);
   const i = args.indexOf('--session');
   const targeted = (i >= 0 && args[i + 1] === name) || (args[0] === 'session' && (args[1] === 'stop' || args[1] === 'delete') && args[2] === name);
   if (!targeted) throw new Error(`herdr call outside the throwaway session: herdr ${args.join(' ')}`);
+}
+
+/** Runs herdr against the named throwaway session only. */
+export function runScoped(name: string, args: string[], bin = herdrBin()): string {
+  checkScoped(name, args);
   return execFileSync(bin, args, { env: cleanEnv(), encoding: 'utf8', timeout: 30_000 });
+}
+
+/** The same, without waiting on it (e.g. `agent start`, which blocks until the agent is ready): its exit code and output. */
+export function startScoped(name: string, args: string[], bin = herdrBin()): Promise<{ code: number | null; out: string }> {
+  checkScoped(name, args);
+  const p = spawn(bin, args, { env: cleanEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  p.stdout?.on('data', (d: Buffer) => (out += String(d)));
+  p.stderr?.on('data', (d: Buffer) => (out += String(d)));
+  return new Promise((res) => p.once('exit', (code) => res({ code, out })));
 }
 
 /**

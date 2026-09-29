@@ -14,11 +14,14 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
   ```
 - Text frames, one JSON object per frame. Every object has a string field `t`, its type. Client messages are limited to
   64 KiB.
-- The bridge reads herdr (`ping`, `session.snapshot`, `events.subscribe`, `herdr session list`). Its only writes to
-  herdr are `floor.wake` / `floor.sleep` (see [Wake and sleep](#wake-and-sleep)) and `worker.hire` / `worker.fire`
-  (see [Hire and send home](#hire-and-send-home)), through a narrow allowlist of `herdr` / `systemd-run` command
-  shapes (CONTRIBUTING "Bridge" lists them), plus a few typed `git` commands for hiring into a worktree and checking a
-  tree before sending its worker home. Every other command only changes the bridge's own SQLite database.
+- The bridge reads herdr (`ping`, `session.snapshot`, `events.subscribe`, `herdr session list`, and for the laptop
+  screens the read-only `herdr terminal session observe`). Its only writes to herdr are `floor.wake` / `floor.sleep`
+  (see [Wake and sleep](#wake-and-sleep)), `worker.hire` / `worker.fire` (see [Hire and send
+  home](#hire-and-send-home)) and typing into a pane for `worker.keys`, `worker.prompt` and `worker.answer` (see
+  [Laptops](#laptops-screens-input-changes-and-usage)), through a narrow allowlist of `herdr` / `systemd-run` command
+  shapes (CONTRIBUTING "Bridge" lists them), plus a few typed `git` commands for hiring into a worktree, checking a
+  tree before sending its worker home and reading a worker's changes. Every other command only changes the bridge's
+  own SQLite database.
 
 ### Through `h3d-helper` (the Mac)
 
@@ -159,6 +162,8 @@ floor with no workers and an `error`).
 | `resume` | `pending` \| `confirmed` \| `fallback` \| `failed`, optional | only during and after a wake, for workers with an `agent_session`: how their agent came back (see [Wake and sleep](#wake-and-sleep)). Cleared by the next sleep and by a bridge restart. |
 | `hired_at` | int, optional | unix ms when the bridge hired this worker (`worker.hire`; stored). A client that first sees a worker with a recent `hired_at` (the game: under ~15 s) plays its walk-in. |
 | `branch` | string, optional | the checked-out branch of a worker in a linked worktree (`worktree.linked`), when known (read from the checkout's git `HEAD`; absent on a detached `HEAD`) |
+| `usage` | object, optional | its agent session's token counts and cost estimate (see [Usage and cost](#usage-and-cost)); absent without an `agent_session` (a running Codex excepted), or until the bridge found its transcript |
+| `question` | object, optional | what the screen of a `blocked` worker asks, while it is blocked (see [Blocked workers](#blocked-workers-question-quick-reply-approve--deny)) |
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
 none, so the bridge keeps the last known value until a new one shows up. They are absent when never known.
@@ -208,6 +213,7 @@ and remember the last `seq` applied.
 | `worker.upsert` | `worker` | a worker appeared, or anything besides `status`/`title` changed, e.g. its `resume` (full object) |
 | `worker.status` | `id`, `session`, `workspace_id`, `status`, `prev_status`, `status_since`, `title` | only `status` and/or `title` changed (the hot path). `title` is always present, `""` when cleared; on a title-only change `prev_status` equals `status` and `status_since` does not move. |
 | `worker.removed` | `id`, `session`, `workspace_id`, `reason`? | the workspace closed, the session was deleted, or the identity changed. `reason` is `"sent_home"` when the removal comes from `worker.fire` (the game plays the walk-out); absent otherwise. |
+| `worker.usage` | `id`, `session`, `usage` | the worker's `usage` changed; at most once per 5 s per worker (see [Usage and cost](#usage-and-cost)) |
 
 ```json
 {"t":"floor.upsert","seq":1043,"floor":{"session":"herdr-3d","state":"running","building":null,"index":null,"desks":7}}
@@ -219,6 +225,9 @@ and remember the last `seq` applied.
 {"t":"building.removed","seq":1049,"id":"b_77aa01b2c3d4"}
 {"t":"floor.removed","seq":1050,"session":"pastry"}
 ```
+
+`terminal.frame` and `terminal.closed` ([Laptop screens](#laptop-screens)) are not events: they go only to the
+connection that watches, have no `seq`, are not in the replay ring and are never replayed.
 
 A status or title change can also arrive inside a `worker.upsert` (when something else changed at the same time), so
 take `status`, `status_since` and `title` from both. When one observation changes a floor and its workers, the
@@ -275,6 +284,12 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.hire` | `{"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?}` | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent) |
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
+| `worker.changes` | `{"id": string}` | the worker's git changes, `{"cwd", "branch", "head", "upstream", "ahead", "behind", "base", "files", "stat", "diff", "diff_bytes", "truncated", "omitted"}` (see [Changes](#changes)) | — |
+| `terminal.watch` | `{"id": string, "fps"?: 1–30, "cols"?: 40–300, "rows"?: 10–100}` | `{"pane", "cols", "rows"}` | `terminal.frame`s to this connection only (see [Laptop screens](#laptop-screens)) |
+| `terminal.unwatch` | `{"id": string}` | — | — |
+| `worker.keys` | `{"id": string, "input": [{"text": string} \| {"key": string}…]}` | — | — (see [Input](#input)) |
+| `worker.prompt` | `{"id": string, "text": string}` | `{"queued": bool, "retried": bool}` | the worker's statuses |
+| `worker.answer` | `{"id": string, "hash": string, "choice"?: 1–9, "cancel"?: true}` | `{"sent": [string…], "resolved": bool}` | the worker's upsert without its `question` when it moves on |
 
 ```json
 {"t":"floor.assign","req_id":"8","args":{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}}
@@ -557,6 +572,296 @@ they start, completed with their outcome and a JSON `result`: for a hire the wor
 base, fetch, trust, the prompt outcome and any rollback; for a fire the git state it saw, how the agent exited, the
 cleanup choice and what happened to the worktree and branch.
 
+### Laptops: screens, input, changes and usage
+
+Every laptop command takes the bridge's worker `id`, never a pane id: the bridge uses the worker's own `pane_id`
+(its primary pane) as it is when the command runs. A worker on an asleep floor, or one without a pane, is
+`invalid_state`; an unknown id, or a worker on a floor the bridge does not watch, `unknown_worker`. Every command is
+audit-logged like the others; for `worker.keys` and `worker.prompt` the audit row keeps the lengths of the text and the
+key names, **never the text**.
+
+#### Laptop screens
+
+```json
+{"t":"terminal.watch","req_id":"50","args":{"id":"6db1905e-…","fps":4}}
+{"t":"ack","req_id":"50","data":{"pane":"w1:p1","cols":120,"rows":40}}
+{"t":"terminal.frame","id":"6db1905e-…","pane":"w1:p1","n":1,"full":true,"cols":120,"rows":40,"data":"G1s/MjAyNmgb…"}
+{"t":"terminal.frame","id":"6db1905e-…","pane":"w1:p1","n":2,"full":false,"cols":120,"rows":40,"data":"G1syOzFI…"}
+{"t":"terminal.closed","id":"6db1905e-…","reason":"worker_removed"}
+```
+
+- The bridge starts `herdr --session <s> terminal session observe <pane> --cols C --rows R` for the watch: a
+  read-only observer (it cannot type, resize, scroll or take over the pane). Its first frame is the full screen, then
+  diffs, each only when the screen changes. `data` is the frame's ANSI bytes in base64; a `full:false` frame applies on
+  top of the ones before it (a VT emulator such as xterm.js takes them in order). `n` counts the frames of this watch
+  from 1; `cols` × `rows` is the observer's size.
+- `cols` / `rows` default to **the pane's own size** (herdr's layout for it, from `session.snapshot`; 120 × 40, herdr's
+  headless size, when that is unknown). The observer does not reflow: a smaller one shows the pane's top-left part and
+  cuts off its bottom lines (where the prompt or a menu is), a larger one pads. So ask for another size only to match a
+  known one.
+- `fps` (default 4) is the most frames a second the bridge forwards. Diffs that arrive faster are concatenated in order
+  into one `full:false` frame (ANSI diffs compose); a full frame replaces whatever is pending.
+- Per connection: watching a worker again **restarts** its watch (a new observer, a fresh `full:true` frame, `n` from 1
+  again); that is also how to ask for a full frame. `terminal.unwatch` stops it (a no-op for a worker not watched), and
+  closing the connection stops them all. After a reconnect, watch again: frames are never replayed.
+- Caps: `--max-watches` per connection (default 6), `--max-observers` for the whole bridge (default 16); above either
+  `terminal.watch` is `capacity`. Each watch has its own observer. An observer that is stopping keeps its place under
+  both caps until it has exited and been reaped: a re-watch, or a watch right after an unwatch, starts its observer (and
+  is acked) once the old one is gone, waiting up to 3 s (then `capacity`).
+- **Never block, never leak.** Each observer's output is read continuously, also while a frame is being sent. What
+  is not sent yet merges into one pending frame of at most 512 KiB, the watch's only queue. Frames are only queued while the connection's send queue is at most half full, so they never push a
+  connection into the `slow consumer` disconnect: when the queue is over half full or the pending frame outgrows
+  512 KiB, the bridge drops what is pending, stops the observer and, once the connection has room again, starts a new
+  one (a resync: its first frame is full). An observer that exits, or sends no first frame within 5 s (herdr 0.9.0 drops
+  no stalled observer itself), is restarted after 250 ms, 500 ms, 1 s; after a 4th failure within 30 s the watch ends
+  with `observer_failed`. Silence after the first frame is normal (frames only come on change). Stopping an observer is
+  SIGTERM to its process group, SIGKILL after 1 s, and it is always reaped (the kernel also kills it should the bridge
+  die). Nothing survives an unwatch, a closed connection or a bridge shutdown.
+
+`terminal.closed` ends a watch the client did not stop itself: `reason` is `worker_removed` (the worker is gone or was
+sent home), `asleep` (its floor went to sleep), `pane_changed` (its primary pane changed: watch again) or
+`observer_failed`. It is not sent for a `terminal.unwatch`, a re-watch or a closed connection.
+
+#### Input
+
+```json
+{"t":"worker.keys","req_id":"51","args":{"id":"6db1905e-…","input":[{"text":"ls -la"},{"key":"enter"}]}}
+{"t":"ack","req_id":"51"}
+{"t":"worker.prompt","req_id":"52","args":{"id":"6db1905e-…","text":"Run the tests and fix what fails."}}
+{"t":"ack","req_id":"52","data":{"queued":false,"retried":false}}
+```
+
+**`worker.keys`** types into the worker's pane, in order. `input` has 1–64 items, each exactly one of `{"text":
+string}` (typed literally: 1–4096 bytes of UTF-8 without control characters, which must be keys; at most 8 KiB of text
+in one command) or `{"key": string}`, one of:
+
+| keys | sent as (xterm, checked on herdr 0.9.0) |
+|---|---|
+| `enter`, `esc`, `tab`, `shift+tab`, `backspace`, `space` | `\r`, `\e`, `\t`, `\e[Z`, `\x7f`, a space |
+| `up`, `down`, `left`, `right` | `\e[A` … `\e[D` (`\eOA` … when the application asked for cursor keys mode) |
+| `shift+up`, `shift+down`, `shift+left`, `shift+right`, `ctrl+left`, `ctrl+right`, `alt+left`, `alt+right` | `\e[1;2A` …, `\e[1;5D`, `\e[1;5C`, `\e[1;3D`, `\e[1;3C` |
+| `shift+enter`, `alt+enter`, `alt+backspace` | `\e[27;2;13~`, `\e\r`, `\e\x7f` |
+| `ctrl+a` … `ctrl+z` | `\x01` … `\x1a` |
+| `f1` … `f12` | `\eOP` … `\eOS`, `\e[15~` … `\e[24~` |
+| `delete`, `home`, `end`, `pageup`, `pagedown` | `\e[3~`, `\e[H`, `\e[F`, `\e[5~`, `\e[6~`: herdr 0.9.0 has no names for these (`unsupported key`), so the bridge types these fixed sequences |
+
+Anything else (digits and letters are text) is `bad_request`. Consecutive keys go to herdr as one `pane send-keys`,
+consecutive texts as one `pane send-text` (a herdr call takes about 10 ms). Input to one worker is serialized: commands
+for the same worker (`worker.keys`, `worker.prompt`, `worker.answer`) run one after the other in the order they
+arrived, so two quick `worker.keys` never interleave; at most 32 wait per worker (then `input_failed`). herdr
+refusing is `input_failed` (the message says which step and why).
+
+**`worker.prompt`** submits a prompt to the worker's agent (`herdr agent prompt <pane> <text>`: bracketed paste, then
+Enter). `text` is 1 byte to 16 KiB of UTF-8 without NUL (herdr 0.9.0 takes a leading `--` as text, too). Only for a
+worker with an agent (`agent_kind`); a plain shell is `invalid_state` (use `worker.keys`), and so is a `blocked`
+worker (answer its question first; herdr would refuse with `agent_blocked`). The game uses it for paste too.
+
+- Worker `working`: the agent takes it for its next turn (Claude and Codex queue it). Sent without waiting; the ack
+  says `queued: true`.
+- Otherwise herdr waits (up to 8 s) until the worker is `working` or `blocked`. When the text is in the agent's input
+  but its Enter was dropped (the known paste quirk; herdr: `agent_prompt_stalled` after 5 s), the bridge presses Enter
+  **once** more and waits up to 5 s for `working` / `blocked`: `retried: true`. Still not submitted, or herdr failing
+  otherwise: `prompt_failed`.
+
+#### Blocked workers: question, quick reply, approve / deny
+
+```json
+"question":{"kind":"permission","text":"Do you want to proceed?",
+  "excerpt":["Bash command","touch notes.txt","Create empty file notes.txt","Do you want to proceed?","❯ 1. Yes",
+             "2. Yes, and always allow access to /tmp/x from this project","3. No","Esc to cancel · Tab to amend"],
+  "choices":[{"n":1,"label":"Yes"},{"n":2,"label":"Yes, and always allow access to /tmp/x from this project"},{"n":3,"label":"No"}],
+  "selected":1,"hash":"cdecbf4fcde864bc"}
+```
+
+When a worker turns `blocked`, the bridge reads its screen (`herdr pane read --source visible`), and again every 2 s
+while it stays blocked; a new question is a `worker.upsert`. `question` is on the worker in snapshots and upserts only
+while it is `blocked` and its screen could be read; the upsert of the worker leaving `blocked` has none. Detection is
+heuristic, tested on screens captured from Claude Code 2.1 and Codex 0.158 (`internal/server/testdata/screens`):
+
+| field | |
+|---|---|
+| `kind` | `trust` (the agent's trust-this-folder dialog), `permission` (a menu whose first choice starts with "Yes" and one with "No": a tool or command approval), `choice` (any other menu, e.g. Claude's AskUserQuestion), `other` (blocked, no menu recognised) |
+| `text` | the line above the menu that asks ("Do you want to proceed?", "Would you like to run the following command?"), cut after its first `?`; `""` if none |
+| `excerpt` | the screen's last ≤ 8 non-empty lines, trimmed, each ≤ 200 characters |
+| `choices` | the menu, top to bottom, `n` from 1: the digits shown (`❯ 1. Yes  2. …  3. No`), or for a menu without digits (Claude's trust dialog) the cursor line and the lines aligned with it; `[]` without a menu |
+| `selected` | the choice the cursor (`❯` / `›`) is on, when seen |
+| `hash` | 16 hex over `kind`, `text`, `choices`, the lines above the menu (what it is about: up to the dialog's top rule, at most 12 lines, e.g. `Bash command` / `touch notes.txt`) and the worker's `status_since` (when it turned `blocked`); not the cursor, not the rest of the excerpt. It is which question an answer is for: an approval never approves another command, file or folder asked with the same words, nor anything asked after the worker was blocked again, even on the same screen. |
+
+What herdr 0.9.0 reports, and what picks a choice (checked live):
+
+| screen | herdr status | picks choice n | Esc |
+|---|---|---|---|
+| Claude trust dialog (`❯ No, exit` / `Yes, I trust this folder`, no digits) | `blocked` | arrows from `selected`, Enter (a digit does nothing) | cancels |
+| Claude tool permission (`❯ 1. Yes` / `2. Yes, and …` / `3. No`) | `blocked` | the digit | rejects (then `done`) |
+| Claude AskUserQuestion (`❯ 1. Tea` …, `n. Chat about this`) | `blocked` | the digit | cancels |
+| Codex approval (`› 1. Yes, proceed (y)` / `2. …` / `3. No, and tell Codex …`) | `blocked` | the digit | "No" |
+| Codex trust dialog (`› 1. Trust and continue` / `2. Quit`) | **`idle`**: never a question | Enter / Down + Enter (a digit does nothing) | quits |
+
+Note that the first choice of Claude's trust dialog is "No, exit": to approve a `trust` question, pick the choice that
+trusts (its label starts with "Yes" or "Trust").
+
+**`worker.answer`** answers the question: exactly one of `choice` (1–9, one of the question's `choices`) or `cancel:
+true` (Esc: deny / dismiss). The worker must be `blocked` (else `invalid_state`). When its turn on the worker's input
+lane comes, the bridge reads the screen again: if the worker is no longer blocked or the question there has another
+`hash`, it is `stale` (and the question the screen shows now goes out as a `worker.upsert`). Otherwise it presses the
+keys that pick the choice on that kind of menu (above), returned in `sent`, and waits up to 3 s for the worker to leave
+`blocked`: `resolved`. A screen that cannot be read, or herdr refusing the keys, is `input_failed`.
+
+```json
+{"t":"worker.answer","req_id":"53","args":{"id":"6db1905e-…","hash":"cdecbf4fcde864bc","choice":1}}
+{"t":"ack","req_id":"53","data":{"sent":["1"],"resolved":true}}
+{"t":"worker.answer","req_id":"54","args":{"id":"6db1905e-…","hash":"210cbd9cf0ff47af","cancel":true}}
+{"t":"ack","req_id":"54","data":{"sent":["esc"],"resolved":true}}
+```
+
+#### Changes
+
+**`worker.changes`** reads a worker's git state, read-only:
+
+```json
+{"t":"worker.changes","req_id":"55","args":{"id":"a58752ea-6511-4318-be9a-59e41c09d7c5"}}
+{"t":"ack","req_id":"55","data":{"cwd":"/home/dev/.herdr/worktrees/herdr-3d/mochi","branch":"h3d/mochi-a1b2c3",
+  "head":"3f09a1c…","upstream":"origin/h3d/mochi-a1b2c3","ahead":2,"behind":0,
+  "base":{"ref":"origin/main","sha":"0d8c09d…"},
+  "files":[{"path":"internal/server/term.go","index":"A","worktree":".","insertions":210,"deletions":0,"binary":false},
+    {"path":"internal/server/hub.go","index":".","worktree":"M","insertions":12,"deletions":3,"binary":false},
+    {"path":"notes.txt","untracked":true,"insertions":4,"deletions":0,"binary":false}],
+  "stat":{"files":2,"insertions":222,"deletions":3},
+  "diff":"diff --git a/internal/server/hub.go b/internal/server/hub.go\n…","diff_bytes":18230,"truncated":false,"omitted":[]}}
+```
+
+| field | |
+|---|---|
+| `cwd` | where it was read: the worker's checkout (`worktree.checkout_path`), else its `cwd`. Git runs in that directory's work tree top level. |
+| `branch` | the checked-out branch, `null` on a detached `HEAD` |
+| `head` | `HEAD`'s commit; `""` on an unborn branch |
+| `upstream`, `ahead`, `behind` | the branch's upstream (`null`: none) and the commits it is ahead of / behind it (0 without one) |
+| `base` | `{"ref": "origin/<default>", "sha"}`: the merge-base of `HEAD` and `origin/<default>` (the default branch as in `hire.prepare`: `origin/HEAD`, else `main` / `master`). `null` when there is no such ref or no common history: the diff is then against `HEAD` (an unborn branch: against the empty tree). There is no fetch: `origin/<default>` is as last fetched. |
+| `files` | every changed path, in git's diff order (against the base), then the paths only `git status` lists (changed against `HEAD`, not against the base), then untracked files. `path` is relative to the work tree top level (unquoted); `orig_path` is a rename's old path. `index` and `worktree` are `git status`'s X and Y (`.` unchanged, `M`, `T`, `A`, `D`, `R`, `C`, `U`); both are `.` for a file changed only by commits since the base. An untracked file has `untracked: true` instead. `insertions` / `deletions` are against the base (`--numstat`); a binary file has 0 / 0 and `binary: true`; an untracked text file's `insertions` are its lines (counted up to 1 MiB, else 0). At most 5000 files (then `truncated`). |
+| `stat` | the summary line of `git diff --stat <base>`: `files`, `insertions`, `deletions` of the tracked changes (untracked files are not in it) |
+| `diff` | the working tree (staged changes included) against the base, exactly as `git diff --find-renames <base>` prints it (no external diff or textconv runs), then a new-file diff for each untracked text file up to 64 KiB (as `git diff --no-index /dev/null <file>` prints it, without the `index` line). At most **256 KiB**: whole files only, in `files` order; a file whose diff does not fit in what is left is listed in `omitted` (a later, smaller one can still fit). A binary file shows git's `Binary files … differ`; untracked binary files, untracked files over 64 KiB, symlinks and anything else that is not a regular file inside the work tree get no content. |
+| `diff_bytes` | the size of the whole diff, uncapped, in bytes (the JSON string can differ: invalid UTF-8 is replaced) |
+| `truncated`, `omitted` | whether anything was left out (the cap, or files beyond 5000) and the files whose diff was left out for the cap |
+
+The git commands (`internal/gitops`, allowlisted like the rest): `rev-parse --show-toplevel`, `status --porcelain=v2
+--branch -z --untracked-files=all`, the default-branch lookup of `hire.prepare` (`symbolic-ref … refs/remotes/origin/HEAD`,
+`log -1 origin/<b>`), `merge-base HEAD origin/<default>`, and one `diff --numstat --patch -z --find-renames --no-color
+--no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ <base> --` (numbers and patches from one snapshot of the
+tree), with `GIT_OPTIONAL_LOCKS=0` (status does not even refresh the index). Nothing changes the repository. All of it
+runs off the hub (other commands are not held up) and shares a **10 s** deadline: past it, `changes_failed`.
+Untracked files are read by the bridge, inside the work tree only (no symlink out of it is followed).
+
+Errors: `unknown_worker` (unknown id, or a worker on an unwatched floor), `invalid_state` (its floor is asleep, or it has
+no directory), `not_a_repo` (its directory is not in a git work tree), `changes_failed`, `bad_request` (unknown `args`
+fields), `internal` (git not configured). Each call is one audit row.
+
+#### Usage and cost
+
+Worker field **`usage`** (in snapshots and `worker.upsert`) and event **`worker.usage`**:
+
+```json
+"usage":{"tokens":37210,"input":1200,"output":9010,"cache_write":27000,"cache_read":812000,
+         "cost_usd_est":0.4824,"priced":"known","model":"claude-opus-5-5",
+         "context_pct":4.2,"context_window":1000000,"updated_at":1790601900984}
+{"t":"worker.usage","seq":1200,"id":"a58752ea-6511-4318-be9a-59e41c09d7c5","session":"herdr-3d","usage":{…}}
+```
+
+| field | |
+|---|---|
+| `tokens` | the headline count ("37k tokens"): `input + output + cache_write`. Cache reads are left out: they are the same context read again every turn (a long session reads tens of millions), and Codex's own "tokens used" leaves them out too. |
+| `input` | uncached input tokens, summed over the agent session and its subagents |
+| `output` | output tokens (Codex: reasoning included, as Codex counts it) |
+| `cache_write`, `cache_read` | cache writes (Claude: 5-minute and 1-hour together) and cache reads (Codex: cached input) |
+| `cost_usd_est` | an API-equivalent **estimate** in USD, 6 decimals (below): standard API rates, not what a subscription costs; fast mode, batch, tool fees and discounts are not in it. The game labels it `≈$`. |
+| `priced` | `known`; `unknown_model` when some tokens are of a model the table does not know (priced as the most expensive model of that harness, the game flags it) or Claude Code's own cost says so; `none` while no model was seen |
+| `model` | the model the transcript reports last (Claude: the main transcript's last message; Codex: the last `turn_context`) |
+| `context_pct`, `context_window` | how full the context window is (below), 0–100 with one decimal, and the window used; `null` and 0 when unknown |
+| `updated_at` | when the bridge saw this usage change, unix ms (bridge clock) |
+
+- `worker.usage` is a world event (it has a `seq` and is replayed). It goes out when the usage changed (anything but
+  `updated_at`), and **at most once per 5 s per worker**: a change within 5 s of the last one waits, then goes out as
+  the latest value. A worker's first usage goes out as soon as it is read. A worker that loses its `agent_session`
+  loses its `usage` (`worker.upsert` without it), and so does one whose agent session (or the Codex rollout picked for
+  it, below) changes, on the first check after it: that usage was the old session's. The new session's comes as a
+  `worker.usage` once its transcript is read (still at most once per 5 s; read in that same check, it replaces the old
+  one directly). Workers without an `agent_session` have none (plain shells), except
+  a running Codex (below).
+- The bridge checks every worker's transcripts every 2 s, reading from a stored byte offset: complete lines only (an
+  incomplete last line waits for the next read), so appending a line reads only that line. A file that shrank or was
+  replaced is read again from the start and its session counted afresh. A transcript not found is looked for again at
+  most every 30 s (paths found are kept); a session's subagents directory is listed every 10 s. Symlinks are not
+  followed; lines over 16 MiB are skipped. Per session it remembers the last 8192 message ids.
+
+**Claude Code** transcripts: `<--claude-projects>/*/<agent_session>.jsonl` (the project directory is looked up, not
+derived from the cwd) and its subagents' `<that directory>/<agent_session>/subagents/agent-*.jsonl`.
+
+- Each `type: "assistant"` line has `message.id`, `message.model` and `message.usage` (`input_tokens`, `output_tokens`,
+  `cache_creation_input_tokens` with its `cache_creation.ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens`
+  split, `cache_read_input_tokens`). A message streams as several lines with the same `message.id` and a growing
+  `output_tokens`: its **last** line counts, once. Subagent messages have ids of their own (never the main
+  transcript's) and are added. `<synthetic>` messages (Claude Code's own error notes) have no usage and are skipped.
+- **`cost-state` lines exist**: Claude Code writes one when a session ends (`totalCostUSD`, `modelUsage`,
+  `hasUnknownModelCost`). A resumed session (a woken floor) appends after it, and the next one is cumulative. Its
+  total also counts calls the transcript does not show (titles and other side calls, typically well under 1 %). So
+  after a `cost-state`, `cost_usd_est` is its `totalCostUSD` plus the estimate of the messages after it: main
+  transcript messages after it, and subagent messages timestamped after the main transcript's last message before it.
+  Token counts are always the transcript's.
+- Cost: per model, `input × input + output × output + 5m writes × cache_write + 1h writes × cache_write_1h + reads ×
+  cache_read` (rates per million tokens); cache writes the 5m/1h split does not account for are priced as 1-hour
+  writes (the dearer). On 36 real sessions using only models of the table this gives Claude Code's own `totalCostUSD`
+  to the cent.
+- Context: the main transcript's last message's prompt (`input + cache_creation + cache_read`) over the model's window
+  (`context_window` in the table; a model id ending in `[1m]` has 1M; an unknown model's is unknown: `null`). An
+  estimate of what the next turn starts with, not Claude Code's own figure; subagents' contexts are not in it.
+
+**Codex** rollouts: `<--codex-sessions>/YYYY/MM/DD/rollout-*-<agent_session>.jsonl` whose first line's
+`session_meta.payload.id` is the session. Codex does not report its session to herdr, so a live Codex worker usually
+has no `agent_session` (until the sleep backfill tells herdr). For its usage the bridge then picks the rollout the
+backfill would: the newest whose `session_meta.payload.cwd` is the worker's `cwd` and whose session no other worker of
+its floor has (their own `agent_session`, or one picked this way first, in worker id order). It looks again every 30 s
+(a newer rollout there, e.g. after `/new`, takes over) and remembers each rollout's first line, so a lookup reads only
+new files. This is read-only and only for `usage`: herdr is not told, and the worker's `agent_session` stays empty.
+Two Codex agents started in the same folder can get each other's rollout.
+
+- The last `event_msg` of `payload.type: "token_count"` with an `info` holds the totals: `info.total_token_usage` with
+  `input_tokens` (cached input and cache writes included), `cached_input_tokens`, `cache_write_input_tokens`,
+  `output_tokens` (reasoning included: `reasoning_output_tokens` is not added again). One with `info: null` changes
+  nothing. The model is the last `turn_context`'s `payload.model`; growth between two token counts is priced at the
+  model active then, and counters that go down (a reset) start the sums over.
+- Cost: per model, `(input − cached − cache writes) × input + cached × cache_read + cache writes × cache_write + output
+  × output`. GPT-6's long-context rates (requests over 272K input tokens) never apply: Codex's window is 258,400.
+- Context: Codex's own formula, `(last_token_usage.total_tokens − 12000) / (model_context_window − 12000)` (12K is its
+  baseline), clamped to 0–100; `context_window` is `model_context_window`.
+
+**Pricing table** (USD per million tokens, standard API rates, retrieved 2026-09-29; the built-in
+`internal/usage/pricing.json`):
+
+| model | harness | input | output | cache write (Claude: 5m) | cache write 1h | cache read | context window |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `claude-fable-5-1` | claude | 10 | 50 | 12.5 | 20 | 0.25 | 1M |
+| `claude-opus-5-5` | claude | 4 | 20 | 5 | 8 | 0.20 | 1M |
+| `claude-sonnet-5-5` | claude | 2 | 10 | 2.5 | 4 | 0.20 | 1M |
+| `claude-haiku-4-5-20251001` | claude | 1 | 5 | 1.25 | 2 | 0.10 | 200K |
+| `gpt-6-astra` | codex | 10 | 50 | 12.5 | — | 1 | (rollout) |
+| `gpt-6-sol` | codex | 2 | 10 | 2.5 | — | 0.20 | (rollout) |
+| `gpt-6-luna` | codex | 0.10 | 0.50 | 0.125 | — | 0.01 | (rollout) |
+
+An unknown model is priced as the most expensive model of its harness (by output, then input price: Fable 5.1 for
+Claude, GPT-6 Astra for Codex) and flagged `unknown_model`. Older models seen in transcripts (`claude-opus-5`,
+`claude-fable-5`, `claude-opus-4-8`, `gpt-5.6-*`) are not in the table; add them with `--pricing`.
+
+`--pricing <file>` (`HERDR_WORLD_PRICING`) merges a file of the same format over the built-in table (a model of the same
+name is replaced, a new one added). Unknown fields, negative rates or a harness other than `claude` / `codex` stop the
+bridge at start:
+
+```json
+{"models":{"claude-opus-5":{"harness":"claude","input":5,"output":25,"cache_write":6.25,"cache_write_1h":10,
+  "cache_read":0.5,"context_window":1000000}}}
+```
+
+`harness` defaults to `claude` for a `claude-…` name, else `codex`; `cache_write_1h` defaults to `cache_write`;
+`context_window` (Claude only) to unknown. Account-level plan limits are #12, not this.
+
 ### Errors
 
 ```json
@@ -570,16 +875,21 @@ cleanup choice and what happened to the worktree and branch.
 | `not_found` | no building with that id |
 | `name_taken` | another building already has that name (ignoring case) |
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
-| `unknown_worker` | `worker.fire.prepare` / `worker.fire` for a worker id the bridge does not know (or on an unwatched floor) |
+| `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
 | `busy` | a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home |
-| `invalid_state` | `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor |
+| `invalid_state` | `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell or a blocked worker, `worker.answer` to a worker not blocked |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
-| `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`; the message says which |
+| `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`; the message says which |
 | `not_clean` | `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |
 | `fetch_failed` | `worker.hire` with `worktree: true` whose `git fetch origin` failed (no `origin`, offline, timed out after 20 s, …); the message is git's error. Nothing was made. (After the accept, like `bad_request` for a missing default branch.) |
 | `hire_failed`, `fire_failed` | herdr or git failed during a hire / send-home; the message says which step and why. `fire_failed` also when the agent did not exit (still running, or its processes could not be read): then nothing was closed or removed. `hire_failed` names what its rollback kept. |
 | `wake_failed` | the server did not start, did not answer `ping` or was not seen running within `--wake-timeout`; the message says why |
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
+| `input_failed` | `worker.keys` / `worker.answer`: herdr refused the keys or text, the screen could not be read, or 32 commands already wait for that worker; the message says why |
+| `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
+| `stale` | `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked |
+| `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
+| `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
 | `hello_required`, `unsupported_proto` | handshake failures; the connection is then closed with status 1008 |
 | `internal` | the bridge failed (database error, or waking, sleeping, hiring and firing is not configured); safe to retry |
 
@@ -588,8 +898,9 @@ Errors not tied to a command have no `req_id`.
 ## Flow control and closing
 
 Each client has a bounded send queue (1024 messages). The bridge never waits for a slow client: if the queue fills up,
-the client is disconnected with close status 1008, reason `slow consumer`. Reconnect with `since_seq`. On shutdown the
-bridge closes connections with status 1001 (`going away`) and removes its socket.
+the client is disconnected with close status 1008, reason `slow consumer`. Reconnect with `since_seq`. Laptop frames
+never fill it past half (they resync instead, see [Laptop screens](#laptop-screens)). On shutdown the bridge closes
+connections with status 1001 (`going away`) and removes its socket.
 
 ## Versioning
 
@@ -612,6 +923,9 @@ herdr-world cmd hire.prepare '{"session":"h3d-scratch"}'
 herdr-world cmd worker.hire '{"session":"h3d-scratch","desk_index":0,"harness":"codex","model":"gpt-6-luna","effort":"low"}'
 herdr-world cmd worker.fire.prepare '{"id":"a58752ea-…"}'
 herdr-world cmd worker.fire '{"id":"a58752ea-…","worktree":"keep"}'
+herdr-world cmd worker.keys '{"id":"a58752ea-…","input":[{"text":"git status"},{"key":"enter"}]}'
+herdr-world cmd worker.prompt '{"id":"a58752ea-…","text":"Run the tests."}'
+herdr-world cmd worker.answer '{"id":"a58752ea-…","hash":"cdecbf4fcde864bc","choice":1}'
 ```
 
 `dump` prints the `welcome` line on stderr. `cmd` prints the `ack` or `error` and exits 1 on error; it waits up to

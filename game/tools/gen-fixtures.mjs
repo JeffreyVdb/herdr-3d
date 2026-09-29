@@ -280,6 +280,127 @@ function demoM4() {
   return [snap];
 }
 
+// ---- demo-m5: demo-m4 with questions and usage --------------------------------
+// For the M5 panels on the simulating fixture server (`?sim=1`): the blocked
+// workers carry the question the bridge read off their screen, in the forms
+// of the real captures (internal/server/testdata/screens): Claude Code's
+// trust dialog (no digits, "No, exit" first), its AskUserQuestion menu and a
+// Bash permission menu, a Codex approval, and a question without a menu
+// (Codex's own trust dialog never shows as blocked, so it is not here). Most
+// agents report usage (one priced as an unknown model, one with no model seen
+// yet). N visits them oldest first: Tater (herdr-3d), Quibble (pastry), Tofu,
+// Sprocket, Waffle; then the done ones.
+
+/** 16 hex chars over kind + text + choices, standing in for the bridge's hash. */
+function qhash(kind, text, choices) {
+  let h = 2166136261;
+  let out = '';
+  for (let k = 0; out.length < 16; k++) {
+    for (const c of `${kind}|${text}|${choices.join('|')}#${k}`) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0;
+    out += h.toString(16).padStart(8, '0');
+  }
+  return out.slice(0, 16);
+}
+
+function question(kind, text, choices, excerpt, selected) {
+  const q = { kind, text, excerpt, choices: choices.map((label, i) => ({ n: i + 1, label })), hash: qhash(kind, text, choices) };
+  if (selected) q.selected = selected;
+  return q;
+}
+
+const WINDOW = { claude: 200_000, codex: 272_000 };
+
+function demoM5() {
+  const [base] = demoM4();
+  const snap = structuredClone(base);
+  const w = snap.world;
+  const r = rng(55);
+  const byName = (n) => w.workers.find((x) => x.name === n);
+  const ask = (name, title, q) => Object.assign(byName(name), { status: 'blocked', title, question: q });
+  ask('Tater', 'Claude Code', question('trust', 'Quick safety check: Is this a project you created or one you trust?', ['No, exit', 'Yes, I trust this folder'], [
+    'Accessing workspace:',
+    '/home/dev/devel/herdr-3d-wt/release',
+    'Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source',
+    'Claude Code’ll be able to read, edit, and execute files here.',
+    '❯ No, exit',
+    'Yes, I trust this folder',
+    'Enter to confirm · Esc to cancel',
+  ], 1));
+  // A Claude worker in pastry (was Codex): its AskUserQuestion menu.
+  Object.assign(byName('Quibble'), { agent_kind: 'claude', harness: 'claude', model: 'claude-opus-5-5', effort: 'high' });
+  ask('Quibble', 'Which unit system for the label?', question('choice', 'Which unit system should the nutrition label use?', [
+    'Metric (g, ml)', 'US customary (oz, cups)', 'Both, metric first', 'Type something.', 'Chat about this',
+  ], [
+    '☐ Units',
+    'Which unit system should the nutrition label use?',
+    '❯ 1. Metric (g, ml)',
+    '  2. US customary (oz, cups)',
+    '  3. Both, metric first',
+    '  4. Type something.',
+    '  5. Chat about this',
+    'Enter to select · ↑/↓ to navigate · Esc to cancel',
+  ], 1));
+  ask('Tofu', 'Push the M3 plan branch?', question('permission', 'Do you want to proceed?', [
+    'Yes', "Yes, and don't ask again for git push commands in /home/dev/devel/herdr-3d", 'No',
+  ], [
+    'Bash command',
+    'git push origin h3d/tofu-m3-plan',
+    'Push the plan branch for review',
+    'Do you want to proceed?',
+    '❯ 1. Yes',
+    "2. Yes, and don't ask again for git push commands in /home/dev/devel/herdr-3d",
+    '3. No',
+    'Esc to cancel · Tab to amend',
+  ], 1));
+  ask('Sprocket', 'Allow `go test ./internal/store`?', question('permission', 'Would you like to run the following command?', [
+    'Yes, proceed (y)', "Yes, and don't ask again for commands that start with `go test` (p)", 'No, and tell Codex what to do differently (esc)',
+  ], [
+    'Would you like to run the following command?',
+    'Reason: May I run the store tests outside the read-only sandbox?',
+    '$ go test ./internal/store',
+    '› 1. Yes, proceed (y)',
+    "2. Yes, and don't ask again for commands that start with `go test` (p)",
+    '3. No, and tell Codex what to do differently (esc)',
+    'Press enter to confirm or esc to cancel',
+  ], 1));
+  // Blocked with no menu on screen: the question is in its words, in the excerpt.
+  ask('Waffle', 'Regenerating the fixtures', question('other', '', [], [
+    'I can regenerate every fixture, or only the new demo-m5 one.',
+    'Should I regenerate every fixture, or only demo-m5?',
+    '❯',
+  ]));
+  for (const x of w.workers) {
+    // Plain shells have no agent session to count; one never ran a turn yet (below).
+    if (!x.agent_kind || x.name === 'Waffle') continue;
+    if (x.name === 'Zippy') {
+      x.usage = { tokens: 0, input: 0, output: 0, cache_write: 0, cache_read: 0, cost_usd_est: 0, priced: 'none', context_pct: null, updated_at: T0 };
+      continue;
+    }
+    const tokens = 4000 + Math.floor(r() * 380_000);
+    const out = Math.floor(tokens * (0.18 + r() * 0.1));
+    const unknown = x.name === 'Ravioli';
+    const model = unknown ? 'claude-preview-2026-09' : (x.model ?? (x.harness === 'codex' ? 'gpt-6-sol' : 'claude-opus-5-5'));
+    const rate = model.includes('fable') || model.includes('luna') ? 1.1 : 4.6;
+    const win = WINDOW[x.harness] ?? 200_000;
+    x.usage = {
+      tokens,
+      input: Math.floor(tokens * 0.04),
+      output: out,
+      cache_write: Math.floor(tokens * 0.7),
+      cache_read: tokens * (8 + Math.floor(r() * 20)),
+      cost_usd_est: Math.round(((tokens * rate) / 100_000) * 10_000) / 10_000,
+      priced: unknown ? 'unknown_model' : 'known',
+      model,
+      context_pct: Math.round(Math.min(96, (tokens / win) * 100 * (0.25 + r() * 0.5)) * 10) / 10,
+      context_window: win,
+      updated_at: T0 - Math.floor(r() * 600_000),
+    };
+  }
+  // Fixed numbers (not from the generator's random stream, so the others stay put).
+  byName('Waffle').usage = { tokens: 21_400, input: 900, output: 4100, cache_write: 14_000, cache_read: 210_000, cost_usd_est: 0.2511, priced: 'known', model: 'claude-opus-5-5', context_pct: 7.3, context_window: 200_000, updated_at: T0 };
+  return [snap];
+}
+
 // ---- perf: one floor with 60 workers ------------------------------------------
 
 const STATES = ['working', 'working', 'working', 'working', 'idle', 'done', 'blocked', 'working', 'idle', 'working'];
@@ -361,6 +482,8 @@ function perfCity240() {
 }
 
 const FIXTURES = { demo, 'demo-m3': demoM3, 'demo-m3b': demoM3b, 'demo-m4': demoM4, 'perf-floor60': perfFloor60, 'perf-floor96': perfFloor96, 'perf-city240': perfCity240 };
+// M5 panels
+FIXTURES['demo-m5'] = demoM5;
 
 const check = process.argv.includes('--check');
 let stale = false;

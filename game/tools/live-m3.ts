@@ -5,17 +5,18 @@
 //
 // Starts a throwaway herdr session h3d-m3game-<random> with two plain-shell
 // workspaces (no coding agents), the dev WS→unix proxy on a leased port to
-// $XDG_RUNTIME_DIR/h3d-m3game/bridge.sock, and e2e-live/m3.spec.ts against the
-// built game. The spec runs its own private bridge (db /tmp/h3d-m3game/world.db)
+// $XDG_RUNTIME_DIR/h3d-m3game/<run>/bridge.sock (this run's own), and e2e-live/m3.spec.ts against the
+// built game. The spec runs its own private bridge (db /tmp/h3d-m3game/<run>/world.db)
 // watching only that session, restarts it, and drives buildings, sleep and
 // wake from the UI. Afterwards the session is stopped and deleted and the
 // herdr-s-<session> unit a wake created is removed, also on failure or Ctrl-C.
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Throwaway } from './herdr-throwaway.ts';
+import { makeRunPaths, removeRunPaths, runPaths, type RunPaths } from './live-paths.ts';
 import { startProxy } from './ws-unix-proxy.ts';
 
 const GAME = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -34,9 +35,8 @@ if (!existsSync(runtime)) {
   console.error(`no runtime dir (${runtime}); set XDG_RUNTIME_DIR`);
   process.exit(2);
 }
-const sockDir = join(runtime, 'h3d-m3game');
-const sock = join(sockDir, 'bridge.sock');
-const dbDir = '/tmp/h3d-m3game';
+/** This run's bridge socket and database (made once `work` names the run). */
+let paths: RunPaths | null = null;
 
 const log = (m: string) => console.log(`live-m3: ${m}`);
 const procs: ChildProcess[] = [];
@@ -47,8 +47,9 @@ let cleaned = false;
 
 /** A bridge the spec left running (killed hard): only ours, found by its private socket. */
 function killStrayBridge(): void {
+  if (!paths) return;
   try {
-    execFileSync('pkill', ['-TERM', '-f', '--', `--socket ${sock} `], { stdio: 'ignore' });
+    execFileSync('pkill', ['-TERM', '-f', '--', `--socket ${paths.sock} `], { stdio: 'ignore' });
   } catch {
     // none running
   }
@@ -66,7 +67,7 @@ async function cleanup(): Promise<void> {
     for (const p of problems) console.error(`live-m3 cleanup: ${p}`);
     log(`deleted throwaway session ${session.name}`);
   }
-  rmSync(sockDir, { recursive: true, force: true });
+  if (paths) removeRunPaths(paths);
   if (work) rmSync(work, { recursive: true, force: true });
 }
 
@@ -80,6 +81,9 @@ async function main(): Promise<number> {
   mkdirSync(OUT, { recursive: true });
   rmSync(join(OUT, 'bridge.log'), { force: true });
   work = mkdtempSync(join(tmpdir(), PREFIX));
+  const run = runPaths('h3d-m3game', basename(work), runtime);
+  paths = run;
+  const sock = run.sock;
 
   let bin = process.env.H3D_LIVE_BRIDGE;
   if (bin) log(`using the prebuilt bridge ${bin}`);
@@ -98,10 +102,7 @@ async function main(): Promise<number> {
   }
   log(`workspaces ${labels.join(', ')}`);
 
-  rmSync(sockDir, { recursive: true, force: true });
-  mkdirSync(sockDir, { recursive: true, mode: 0o700 });
-  mkdirSync(dbDir, { recursive: true });
-  rmSync(join(dbDir, 'world.db'), { force: true });
+  makeRunPaths(run);
 
   const proxy = await startProxy(proxyPort, sock);
   closeProxy = () => proxy.close();
@@ -117,7 +118,7 @@ async function main(): Promise<number> {
       H3D_LIVE_WS: `ws://127.0.0.1:${proxyPort}/ws`,
       H3D_LIVE_BRIDGE_BIN: bin,
       H3D_LIVE_SOCKET: sock,
-      H3D_LIVE_DB: join(dbDir, 'world.db'),
+      H3D_LIVE_DB: run.db,
       H3D_LIVE_CWD: work,
       H3D_LIVE_OUT: OUT,
     },
