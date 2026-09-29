@@ -1,13 +1,25 @@
 import type * as THREE from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
+import type { Genre, Track } from './tracks';
 import { AUDIO_PREFS_KEY, createGameAudio, type AudioDeps, type Playback } from './index';
 
 /** Just enough of an AudioContext to watch what the module does with it. */
 class FakeParam {
   value = 0;
   targets: number[] = [];
+  /** Linear ramps asked for: where to, and how many seconds from the context's clock. */
+  ramps: Array<{ to: number; secs: number }> = [];
+  private from = 0;
   setTargetAtTime(v: number) {
     this.targets.push(v);
+    this.value = v;
+  }
+  setValueAtTime(v: number, t: number) {
+    this.value = v;
+    this.from = t;
+  }
+  linearRampToValueAtTime(v: number, t: number) {
+    this.ramps.push({ to: v, secs: Math.round((t - this.from) * 1000) / 1000 });
     this.value = v;
   }
   cancelScheduledValues() {}
@@ -65,6 +77,11 @@ class FakeContext {
     const g = Object.assign(new FakeNode(), { gain: new FakeParam() });
     this.gains.push(g);
     return g;
+  }
+  mediaSources = 0;
+  createMediaElementSource(_el: unknown) {
+    this.mediaSources++;
+    return new FakeNode();
   }
   createPanner() {
     const p = new FakePanner();
@@ -269,7 +286,7 @@ describe('game audio', () => {
     const off = audio.onChange(() => changes++);
     audio.volume = 0.35;
     audio.muted = true;
-    expect(JSON.parse(storage.getItem(AUDIO_PREFS_KEY) ?? '{}')).toEqual({ muted: true, volume: 0.35 });
+    expect(JSON.parse(storage.getItem(AUDIO_PREFS_KEY) ?? '{}')).toEqual({ muted: true, volume: 0.35, music: { volume: 0.4, muted: false, genre: 'house' } });
     expect(changes).toBe(2);
     off();
     audio.volume = 7;
@@ -442,5 +459,393 @@ describe('game audio', () => {
     await flush();
     expect(made[0]?.sources).toHaveLength(0);
     expect(audio.duration('receptionist/missing')).toBeNull();
+  });
+});
+
+// ---- the office radio (M15) ---------------------------------------------------------------------------
+
+/** An `HTMLAudioElement` that streams from a set of files: unknown URLs fail like a 404. */
+class FakeElement extends EventTarget {
+  paused = true;
+  currentTime = 0;
+  duration = Number.NaN;
+  preload = '';
+  plays = 0;
+  private attrs = new Map<string, string>();
+  constructor(private readonly exists: (url: string) => boolean) {
+    super();
+  }
+  get src(): string {
+    return this.attrs.get('src') ?? '';
+  }
+  set src(v: string) {
+    this.attrs.set('src', v);
+  }
+  getAttribute(n: string) {
+    return this.attrs.get(n) ?? null;
+  }
+  removeAttribute(n: string) {
+    this.attrs.delete(n);
+  }
+  load() {}
+  pause() {
+    this.paused = true;
+  }
+  async play() {
+    this.plays++;
+    this.paused = false;
+    await Promise.resolve();
+    if (!this.exists(this.src)) {
+      this.paused = true;
+      this.dispatchEvent(new Event('error'));
+      throw Object.assign(new Error('The element has no supported sources.'), { name: 'NotSupportedError' });
+    }
+    this.dispatchEvent(new Event('playing'));
+  }
+  /** The stream is `left` seconds from its end. */
+  nearEnd(left: number) {
+    this.duration = 200;
+    this.currentTime = 200 - left;
+    this.dispatchEvent(new Event('timeupdate'));
+  }
+}
+
+const GENRE_IDS: Genre[] = ['house', 'jazz', 'rock', 'pop', 'rap'];
+const catalogue = (g: Genre): Track[] => Array.from({ length: 5 }, (_, i) => ({ id: `${g}-${i + 1}`, genre: g, title: `${g} ${i + 1}`, artist: 'Artist', durationSec: 200 }));
+
+/** A manual clock for the fade-out pause and the crossfade cleanup. */
+function manualTimers() {
+  let now = 0;
+  const pending = new Map<number, { at: number; fn: () => void }>();
+  let next = 1;
+  return {
+    set: (fn: () => void, ms: number) => {
+      pending.set(next, { at: now + ms, fn });
+      return next++;
+    },
+    clear: (h: unknown) => void pending.delete(h as number),
+    /** Runs what falls due within `ms`. */
+    advance(ms: number) {
+      now += ms;
+      for (const [k, t] of [...pending]) if (t.at <= now) (pending.delete(k), t.fn());
+    },
+    get count() {
+      return pending.size;
+    },
+  };
+}
+
+/** A seeded shuffle, so a failing run replays. */
+const lcg = (seed = 7) => () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+
+function radio(over: { missing?: (url: string) => boolean; storage?: MemoryStorage; context?: AudioDeps['context'] } = {}) {
+  const els: FakeElement[] = [];
+  const timers = manualTimers();
+  const s = setup({
+    ...(over.storage ? { storage: over.storage } : {}),
+    ...(over.context !== undefined ? { context: over.context } : {}),
+    music: {
+      element: () => {
+        const e = new FakeElement((url) => !over.missing?.(url));
+        els.push(e);
+        return e as unknown as HTMLAudioElement;
+      },
+      url: (t) => `/music/${t.genre}/${t.id}.ogg`,
+      tracks: catalogue,
+      random: lcg(),
+      timer: timers,
+    },
+  });
+  const started: string[] = [];
+  s.audio.music.onTrack((n) => started.push(n.track.id));
+  const bus = () => (s.made[0] as FakeContext).gains[1] as { gain: FakeParam };
+  const fade = () => (s.made[0] as FakeContext).gains[2] as { gain: FakeParam };
+  const deckGain = (i: number) => (s.made[0] as FakeContext).gains[3 + i] as { gain: FakeParam };
+  /** Enter the floor with the radio: unlock (the first gesture), radio on, let the decks start. */
+  const enter = async () => {
+    await s.audio.unlock();
+    s.audio.music.setActive(true);
+    await flush();
+  };
+  return { ...s, els, timers, started, bus, fade, deckGain, enter, music: s.audio.music };
+}
+
+describe('the office radio', () => {
+  it('is Melodic house at 0.4 for a first-time player, and its settings are the music bus’s own, saved with the others', async () => {
+    const r = radio();
+    expect(r.music.state).toMatchObject({ genre: 'house', volume: 0.4, muted: false });
+    r.music.volume = 0.25;
+    r.music.muted = true;
+    r.music.setGenre('rock');
+    expect(JSON.parse(r.storage.getItem(AUDIO_PREFS_KEY) as string)).toEqual({ muted: false, volume: 0.8, music: { volume: 0.25, muted: true, genre: 'rock' } });
+    // Its own gain: the master slider and the music slider do not touch each other.
+    await r.audio.unlock();
+    expect(r.bus().gain.value).toBe(0);
+    r.music.muted = false;
+    expect(r.bus().gain.targets.at(-1)).toBe(0.25);
+    r.audio.volume = 0.5;
+    expect((r.made[0] as FakeContext).gains[0]?.gain.targets.at(-1)).toBe(0.5);
+    expect(r.bus().gain.targets.at(-1)).toBe(0.25);
+    // A new page reads them back; the old master-only shape still loads.
+    const again = radio({ storage: r.storage });
+    expect(again.music.state).toMatchObject({ genre: 'rock', volume: 0.25, muted: false });
+    const old = new MemoryStorage();
+    old.setItem(AUDIO_PREFS_KEY, JSON.stringify({ muted: true, volume: 0.3 }));
+    const legacy = radio({ storage: old });
+    expect(legacy.audio.muted).toBe(true);
+    expect(legacy.music.state).toMatchObject({ genre: 'house', volume: 0.4, muted: false });
+  });
+
+  it('streams the first track once you are on a floor and the first gesture unlocked sound', async () => {
+    const r = radio();
+    r.music.setActive(true);
+    await flush();
+    expect(r.els).toHaveLength(0); // nothing before the gesture
+    expect(r.music.state.playing).toBe(false);
+    await r.enter();
+    expect(r.els).toHaveLength(2);
+    expect(r.made[0]?.mediaSources).toBe(2);
+    const live = r.els.find((e) => !e.paused) as FakeElement;
+    expect(live.src).toMatch(/^\/music\/house\/house-[1-5]\.ogg$/);
+    expect(r.music.state).toMatchObject({ genre: 'house', playing: true, trackId: live.src.split('/').pop()?.replace('.ogg', '') });
+    expect(r.started).toEqual([r.music.state.trackId]);
+    // The radio comes from its place, HRTF, not from the listener.
+    r.music.setPosition({ x: 0.3, y: 1, z: 4.6 });
+    const panner = r.made[0]?.panners.at(-1) as FakePanner;
+    expect([panner.positionX.value, panner.positionY.value, panner.positionZ.value]).toEqual([0.3, 1, 4.6]);
+    expect(panner.panningModel).toBe('HRTF');
+  });
+
+  it('stop() (the receptionist’s) leaves the music playing', async () => {
+    const r = radio();
+    await r.enter();
+    r.audio.stop();
+    expect(r.els.some((e) => !e.paused)).toBe(true);
+    expect(r.music.state.playing).toBe(true);
+  });
+
+  it('crossfades two decks on a genre change: the new genre fades in while the old fades out, then the old is emptied', async () => {
+    const r = radio();
+    await r.enter();
+    const [a, b] = r.els as [FakeElement, FakeElement];
+    r.music.setGenre('jazz');
+    await flush();
+    // The old deck kept playing until the new one sounded; now both are on.
+    expect(a.paused).toBe(false);
+    expect(b.paused).toBe(false);
+    expect(a.src).toContain('/house/');
+    expect(b.src).toContain('/jazz/');
+    expect(r.deckGain(0).gain.ramps.at(-1)).toEqual({ to: 0, secs: 1.5 });
+    expect(r.deckGain(1).gain.ramps.at(-1)).toEqual({ to: 1, secs: 1.5 });
+    expect(r.music.state.genre).toBe('jazz');
+    r.timers.advance(1700);
+    expect(a.paused).toBe(true);
+    expect(a.getAttribute('src')).toBeNull();
+    expect(b.paused).toBe(false);
+    expect(r.started).toHaveLength(2);
+    // And back: the decks swap roles.
+    r.music.setGenre('house');
+    await flush();
+    expect(a.src).toContain('/house/');
+    expect(r.deckGain(0).gain.ramps.at(-1)).toEqual({ to: 1, secs: 1.5 });
+    expect(r.deckGain(1).gain.ramps.at(-1)).toEqual({ to: 0, secs: 1.5 });
+  });
+
+  it('E goes Off → Melodic house → Soft jazz → Rock → Pop → Rap → Off, saved; Off stops the stream', async () => {
+    const r = radio();
+    r.music.setGenre('off');
+    expect(r.music.state).toMatchObject({ genre: 'off', trackId: null, playing: false });
+    await r.enter();
+    expect(r.els.every((e) => e.paused)).toBe(true);
+    const seen: string[] = [];
+    for (let i = 0; i < 6; i++) seen.push(r.music.cycleGenre());
+    expect(seen).toEqual(['house', 'jazz', 'rock', 'pop', 'rap', 'off']);
+    await flush();
+    r.timers.advance(2000);
+    expect(r.els.every((e) => e.paused && e.getAttribute('src') === null)).toBe(true);
+    expect(JSON.parse(r.storage.getItem(AUDIO_PREFS_KEY) as string).music.genre).toBe('off');
+    expect(r.music.events.filter((e) => e.kind === 'genre').map((e) => e.genre)).toEqual(['off', 'house', 'jazz', 'rock', 'pop', 'rap', 'off']);
+  });
+
+  it('shuffles: no track repeats until the whole genre has played, and a new round never opens with the last track', async () => {
+    const r = radio();
+    await r.enter();
+    const picks = [r.music.state.trackId as string];
+    for (let i = 0; i < 14; i++) {
+      r.music.nextTrack();
+      picks.push(r.music.state.trackId as string);
+    }
+    const rounds = [picks.slice(0, 5), picks.slice(5, 10), picks.slice(10, 15)];
+    for (const round of rounds) expect(new Set(round).size).toBe(5);
+    expect(rounds[1]?.[0]).not.toBe(rounds[0]?.[4]);
+    expect(rounds[2]?.[0]).not.toBe(rounds[1]?.[4]);
+    // Every skip started the next track on the idle deck.
+    await flush();
+    expect(r.music.state).toMatchObject({ playing: true, trackId: picks[14] });
+  });
+
+  it('returning to a genre resumes from its next track, not from the start', async () => {
+    const r = radio();
+    await r.enter();
+    const firstHouse = r.music.state.trackId as string;
+    r.music.setGenre('jazz');
+    const firstJazz = r.music.state.trackId as string;
+    r.music.setGenre('house');
+    const secondHouse = r.music.state.trackId as string;
+    expect(secondHouse).not.toBe(firstHouse);
+    r.music.setGenre('jazz');
+    const secondJazz = r.music.state.trackId as string;
+    expect(secondJazz).not.toBe(firstJazz);
+    // The queue kept its place: five distinct house tracks before any repeats.
+    const house = new Set([firstHouse, secondHouse]);
+    r.music.setGenre('house');
+    for (let i = 0; i < 3; i++) {
+      house.add(r.music.state.trackId as string);
+      r.music.nextTrack();
+    }
+    house.add(r.music.state.trackId as string);
+    expect(house.size).toBe(5);
+  });
+
+  it('fades out on floor unload (0.5 s), stops streaming, and fades back in with the same track and no new announcement', async () => {
+    const r = radio();
+    await r.enter();
+    const track = r.music.state.trackId;
+    const live = r.els.find((e) => !e.paused) as FakeElement;
+    expect(r.fade().gain.ramps.at(-1)).toEqual({ to: 1, secs: 0.5 });
+    r.music.setActive(false);
+    expect(r.music.state.playing).toBe(false);
+    expect(r.fade().gain.ramps.at(-1)).toEqual({ to: 0, secs: 0.5 });
+    expect(live.paused).toBe(false); // still fading
+    r.timers.advance(700);
+    expect(live.paused).toBe(true);
+    expect(live.src).toContain(String(track)); // it resumes where it stopped
+    r.music.setActive(true);
+    await flush();
+    expect(live.paused).toBe(false);
+    expect(r.music.state).toMatchObject({ playing: true, trackId: track });
+    expect(r.fade().gain.ramps.at(-1)).toEqual({ to: 1, secs: 0.5 });
+    expect(r.started).toHaveLength(1);
+    expect(r.music.events.filter((e) => e.kind === 'fade').map((e) => e.detail)).toEqual(['in', 'out', 'in']);
+    // Coming back before the fade-out finished cancels the pause.
+    r.music.setActive(false);
+    r.timers.advance(200);
+    r.music.setActive(true);
+    r.timers.advance(2000);
+    expect(live.paused).toBe(false);
+  });
+
+  it('a missing track file is skipped to the next track, without throwing; none at all stays quiet', async () => {
+    const r = radio({ missing: (url) => url.includes('house-1') || url.includes('house-2') });
+    let first: string | null = null;
+    r.music.onTrack((n) => (first ??= n.track.id));
+    await r.enter();
+    await flush();
+    await flush();
+    expect(r.music.state.playing).toBe(true);
+    expect(first).not.toMatch(/house-[12]$/);
+    const skipped = r.music.events.filter((e) => e.kind === 'skip').map((e) => e.trackId);
+    for (const id of skipped) expect(['house-1', 'house-2']).toContain(id);
+
+    const none = radio({ missing: () => true });
+    await none.enter();
+    for (let i = 0; i < 12; i++) await flush();
+    expect(none.music.state.playing).toBe(false);
+    expect(none.music.events.filter((e) => e.kind === 'skip')).toHaveLength(5); // each track once, no loop
+    expect(none.music.events.some((e) => e.kind === 'unavailable')).toBe(true);
+    expect(none.started).toEqual([]);
+    // Another genre is tried afresh.
+    none.music.setGenre('jazz');
+    await flush();
+    expect(none.music.events.filter((e) => e.kind === 'skip')).toBeTruthy();
+  });
+
+  it('moves on by itself: the next track crossfades in near the end of this one, and after it if the stream just ends', async () => {
+    const r = radio();
+    await r.enter();
+    const first = r.music.state.trackId;
+    const live = r.els.find((e) => !e.paused) as FakeElement;
+    live.nearEnd(60);
+    expect(r.music.state.trackId).toBe(first);
+    live.nearEnd(1.2);
+    await flush();
+    const second = r.music.state.trackId;
+    expect(second).not.toBe(first);
+    expect(r.started).toEqual([first, second]);
+    const next = r.els.find((e) => e !== live && !e.paused) as FakeElement;
+    live.nearEnd(1.0); // the old deck is fading out: not the live one any more
+    expect(r.music.state.trackId).toBe(second);
+    r.timers.advance(1700);
+    next.dispatchEvent(new Event('ended'));
+    await flush();
+    expect(r.music.state.trackId).not.toBe(second);
+  });
+
+  it('mutes: music mute or master mute pauses the stream, unmuting brings it back', async () => {
+    const r = radio();
+    await r.enter();
+    const live = r.els.find((e) => !e.paused) as FakeElement;
+    r.music.muted = true;
+    expect(r.music.state).toMatchObject({ muted: true, playing: false });
+    r.timers.advance(700);
+    expect(live.paused).toBe(true);
+    r.music.muted = false;
+    await flush();
+    expect(live.paused).toBe(false);
+    expect(r.music.state.playing).toBe(true);
+    r.audio.muted = true;
+    expect(r.music.state.playing).toBe(false);
+    r.timers.advance(700);
+    expect(live.paused).toBe(true);
+    r.audio.muted = false;
+    await flush();
+    expect(r.music.state.playing).toBe(true);
+    expect(r.started).toHaveLength(1);
+  });
+
+  it('is silent, and never throws, without Web Audio, before the first gesture, or when the browser keeps the context locked', async () => {
+    const none = createGameAudio({ context: null, storage: null, events: null });
+    none.music.setActive(true);
+    none.music.setGenre('rock');
+    none.music.nextTrack();
+    none.music.setPosition({ x: 1, y: 1, z: 1 });
+    expect(none.music.cycleGenre()).toBe('pop');
+    expect(none.music.state.playing).toBe(false);
+    none.dispose();
+
+    let ctx!: FakeContext;
+    const locked = radio({
+      context: () => {
+        ctx = new FakeContext();
+        ctx.refuse = true;
+        return ctx as unknown as AudioContext;
+      },
+    });
+    locked.music.setActive(true);
+    await locked.audio.unlock();
+    locked.music.setGenre('jazz');
+    await flush();
+    expect(locked.audio.state).toBe('locked');
+    expect(locked.els.every((e) => e.paused && e.plays === 0)).toBe(true);
+    expect(locked.music.state).toMatchObject({ genre: 'jazz', playing: false });
+    // The gesture that finally unlocks it starts the radio.
+    ctx.refuse = false;
+    await locked.audio.unlock();
+    await flush();
+    expect(locked.music.state.playing).toBe(true);
+  });
+
+  it('keeps the listener on the camera while only the radio plays', async () => {
+    const r = radio();
+    await r.enter();
+    r.audio.setListener(camera(2, 1.6, 5));
+    const l = (r.made[0] as FakeContext).listener;
+    expect([l.positionX?.value, l.positionZ?.value]).toEqual([2, 5]);
+    r.audio.setListener(camera(3, 1.6, 6));
+    expect(l.positionX?.value).toBe(3);
+  });
+
+  it('every genre of the catalogue has tracks to shuffle (the default catalogue is the manifest)', async () => {
+    for (const g of GENRE_IDS) expect(catalogue(g)).toHaveLength(5);
   });
 });

@@ -1,5 +1,7 @@
 import { defineConfig, type Plugin } from 'vitest/config';
+import { creditsText, MANIFEST } from './src/audio/tracks.ts';
 import { fixtureUpgradeHandler } from './tools/fixture-server.ts';
+import { holdRows } from './tools/music.ts';
 
 /**
  * Serves the recorded bridge streams in fixtures/ at `/fixture/<name>` on the
@@ -19,10 +21,28 @@ function fixtures(): Plugin {
   };
 }
 
+/**
+ * M15: `MUSIC_CREDITS.txt` next to the build output, generated from
+ * music/manifest.json (the credits panel reads the same file). With
+ * `H3D_RELEASE=1` the build fails while any track is on claim hold.
+ */
+function musicCredits(): Plugin {
+  return {
+    name: 'h3d-music-credits',
+    buildStart() {
+      const hold = process.env.H3D_RELEASE ? holdRows(MANIFEST.tracks) : [];
+      if (hold.length) this.error(`release build: ${hold.length} music track(s) are not claim-cleared:\n${hold.join('\n')}`);
+    },
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'MUSIC_CREDITS.txt', source: `${creditsText(MANIFEST.tracks, MANIFEST.targetLufs)}\n` });
+    },
+  };
+}
+
 // Bind to loopback only. The port always comes from the CLI (`--port`), leased
 // via portlease by the Makefile; never hardcode one here.
 export default defineConfig({
-  plugins: [fixtures()],
+  plugins: [fixtures(), musicCredits()],
   // The Makefile passes `git describe`; the badge above the debug overlay shows it (src/version.ts).
   define: { __H3D_VERSION__: JSON.stringify(process.env.H3D_VERSION ?? 'dev') },
   server: { host: '127.0.0.1', strictPort: true },

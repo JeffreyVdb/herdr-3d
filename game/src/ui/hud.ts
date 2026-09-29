@@ -6,6 +6,7 @@ import type { Area } from '../world/building';
 import { CHIP_TEXT } from '../world/derive';
 import { ICON as DOM_ICON } from './dom';
 import { mountAudioControls } from './audioControls';
+import { MusicCredits } from './credits';
 import { answerKeyEls, promptBarAria, promptBarKey, usageChip } from './promptBar';
 // M6 crew: role, run, issue and report on the bar.
 import { crewBarKey, crewLine } from './crewBar';
@@ -95,8 +96,13 @@ export class Hud {
   private readonly doors = el('div', 'doors', '<div class="door"></div><div class="door"></div><div class="doors-label"></div>');
   private readonly dialog = el('dialog', 'sheet');
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
+  private toastSoft = false;
   private listeners = new Map<HudAction, Array<() => void>>();
   private promptKey = '';
+  /** M15: what the radio is tuned to, for its look-at bar (the last target, to redraw it when this changes). */
+  private radioName = 'Melodic house';
+  private lastTarget: Target | null = null;
+  private lastWorker: WorkerView | null = null;
   private mode: 'city' | 'floor' = 'city';
   /** M5: worker keys shown other than KEYS says (live, or disabled and why); see setKeyState. */
   private readonly keyStates = new Map<string, { live: boolean; why?: string }>();
@@ -182,7 +188,15 @@ export class Hud {
 
   /** M3b: the sound control (mute + volume) in the top bar, before the battery toggle. */
   mountAudio(audio: GameAudio): { dispose(): void } {
-    return mountAudioControls(this.battery.parentElement ?? this.root, audio, this.battery);
+    // M15: the Music credits panel, opened from the sound control.
+    const credits = new MusicCredits(this.root.parentElement ?? this.root);
+    const controls = mountAudioControls(this.battery.parentElement ?? this.root, audio, this.battery, { openCredits: (from) => credits.open(from) });
+    return {
+      dispose() {
+        controls.dispose();
+        credits.dispose();
+      },
+    };
   }
 
   setBattery(on: boolean): void {
@@ -300,13 +314,23 @@ export class Hud {
     for (const x of this.extras ?? []) x.b.hidden = !x.show(this.mode, this.root.dataset.area);
   }
 
+  /** M15: the radio's genre name ("Off" when stopped); redraws the bar when you are looking at it. */
+  setRadio(name: string): void {
+    if (name === this.radioName) return;
+    this.radioName = name;
+    if (this.lastTarget?.id === 'radio') this.setTarget(this.lastTarget, this.lastWorker);
+  }
+
   /** The look-at prompt bar. */
   setTarget(t: Target | null, w: WorkerView | null): void {
+    this.lastTarget = t;
+    this.lastWorker = w;
     // Everything the prompt shows for a worker, so a harness/effort-only upsert redraws it too.
     const shown = w ? [w.name, w.display, taskLine(w.worker), modelLabel(w.harness, w.worker.model, w.worker.effort)] : [];
     // M5: the usage and the question on the bar.
     if (w) shown.push(...promptBarKey(w));
     if (w) shown.push(...crewBarKey(w));
+    if (t?.id === 'radio') shown.push(this.radioName);
     const key = t ? JSON.stringify([t.kind, t.id, ...shown]) : '';
     if (key === this.promptKey) return;
     this.promptKey = key;
@@ -370,6 +394,20 @@ export class Hud {
       k.append(el('kbd', '', 'E'), document.createTextNode('Elevator'));
       keys.append(k);
       this.prompt.setAttribute('aria-label', 'Elevator · E Elevator');
+    } else if (t.kind === 'prop' && t.id === 'radio') {
+      // M15: the office radio: E cycles the genre (Off is a stop), R skips the track.
+      const off = this.radioName === 'Off';
+      line.append(text('prompt-name', 'Radio'), text('prompt-task', this.radioName));
+      const next = el('span', 'key');
+      next.append(el('kbd', '', 'E'), document.createTextNode('Next genre'));
+      keys.append(next);
+      if (off) keys.append(disabled('R', 'Next track', 'The radio is off: E picks a genre'));
+      else {
+        const skip = el('span', 'key');
+        skip.append(el('kbd', '', 'R'), document.createTextNode('Next track'));
+        keys.append(skip);
+      }
+      this.prompt.setAttribute('aria-label', `Radio: ${this.radioName} · E next genre · R next track`);
     } else if (t.kind === 'own-desk') {
       // #20: your desk in the corner office.
       line.append(text('prompt-name', t.label), text('prompt-task', `${t.name === 'You' ? 'Yours' : t.name} · look out over the whole floor`));
@@ -442,7 +480,10 @@ export class Hud {
     this.notice.replaceChildren(h, p);
   }
 
-  toast(msg: string, ms = 3200, kind: 'info' | 'error' = 'info'): void {
+  toast(msg: string, ms = 3200, kind: 'info' | 'error' = 'info', soft = false): void {
+    // A soft toast (M15's "now playing") never covers a message that is still up.
+    if (soft && !this.toastEl.hidden && !this.toastSoft) return;
+    this.toastSoft = soft;
     this.toastEl.textContent = msg;
     this.toastEl.dataset.kind = kind;
     this.toastEl.hidden = false;

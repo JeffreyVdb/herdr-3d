@@ -436,6 +436,11 @@ export class OfficeView {
     for (const m of this.glow) m.color.set(asleep ? 0x3a3f58 : 0xfff6dd);
   }
 
+  /** M15: what the radio's display says (null: off) and whether its LED glows. */
+  setRadio(display: string | null, playing: boolean): void {
+    this.props.radio?.set(display, playing);
+  }
+
   setPlan(on: boolean): void {
     this.planOn = on;
     this.ceiling.visible = !on;

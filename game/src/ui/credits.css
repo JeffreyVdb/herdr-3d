@@ -1,0 +1,121 @@
+/* The Music credits panel: the same navy panel as the elevator and presets, one label-maker tape per genre. */
+/* The frame of the other panels (panels.css `.panel`), under its own class: the specs that look for `dialog.panel` mean the M3 panels. */
+.credits {
+  width: min(580px, calc(100vw - 32px));
+  max-height: min(780px, calc(100vh - 32px));
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--ink);
+  color: var(--text-on-ink);
+  box-shadow: var(--shadow);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.35;
+  color-scheme: dark;
+  overflow: hidden;
+}
+.credits[open] {
+  display: flex;
+  flex-direction: column;
+}
+.credits::backdrop {
+  background: rgb(18 24 44 / 45%);
+}
+.credits button {
+  font: inherit;
+  color: inherit;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .credits[open] {
+    animation: credits-in 240ms var(--ease);
+  }
+  @keyframes credits-in {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+  }
+}
+.credits-body {
+  padding: 0 14px 12px;
+  outline: none;
+}
+.credits-genre-name {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 2px 8px;
+  background: var(--ink);
+  font-size: inherit;
+}
+.credits-count {
+  color: var(--text-on-ink-2);
+  font-size: 12px;
+  font-weight: 700;
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-variant-numeric: tabular-nums;
+}
+.credits-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.credits-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 8px 2px;
+  border-top: 1px solid var(--line);
+}
+.credits-who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.credits-title {
+  font-weight: 700;
+}
+.credits-artist {
+  color: var(--text-on-ink-2);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.credits-meta {
+  display: flex;
+  flex: none;
+  gap: 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.credits-link {
+  color: var(--sun);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.credits-link:hover {
+  color: #ffd25e;
+  text-decoration-thickness: 2px;
+}
+.credits-foot {
+  margin: 0;
+}
+.credits-body {
+  scrollbar-width: thin;
+  scrollbar-color: #3a466e transparent;
+}
+@media (max-width: 520px) {
+  .credits-row {
+    flex-direction: column;
+    gap: 4px;
+  }
+}
