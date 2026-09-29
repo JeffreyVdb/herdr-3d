@@ -109,7 +109,7 @@ func TestParseQuestionEdges(t *testing.T) {
 	if q := parseQuestion(moved, 1).q; q.Hash != base.Hash || q.Selected != 2 {
 		t.Errorf("cursor on 2: %+v", q)
 	}
-	if q := parseQuestion("● Reading 3 files…\n" + perm, 1).q; q.Hash != base.Hash {
+	if q := parseQuestion("● Reading 3 files…\n"+perm, 1).q; q.Hash != base.Hash {
 		t.Errorf("more history: hash %s, want %s", q.Hash, base.Hash)
 	}
 	// Another question or other choices are another hash.
