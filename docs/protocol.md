@@ -681,7 +681,7 @@ high, researchers codex sol low; the orchestrator claude opus medium), once: del
 
 ```json
 {"t":"run.prepare","req_id":"40","args":{"session":"lab","issue":3}}
-{"t":"ack","req_id":"40","data":{"prompt":"/write-code https://github.com/JeffreyVdb/lab/issues/3\n\nTeam:\n- coders: claude claude-opus-5-5, effort medium\n- reviewers: codex gpt-6-sol, reasoning high\n- ux reviewers: codex gpt-6-sol, reasoning high\n- researchers: codex gpt-6-sol, reasoning low",
+{"t":"ack","req_id":"40","data":{"prompt":"/write-code https://github.com/JeffreyVdb/lab/issues/3\n\nTeam:\n- coders: claude claude-opus-5-5, effort medium\n- reviewers: codex gpt-6-sol, reasoning high\n- ux reviewers: codex gpt-6-sol, reasoning high\n- researchers: codex gpt-6-sol, reasoning low\n\nMove the ticket status accordingly, pull request always means QA, merging the PR always means Done.",
   "label":"ORCH|issue-3",
   "ticket":{"kind":"issue","repo":"JeffreyVdb/lab","number":3,"url":"https://github.com/JeffreyVdb/lab/issues/3"},
   "preset":"p_1a2b3c4d5e6f","orch":{"harness":"claude","model":"claude-opus-5-5","effort":"medium"},
@@ -716,12 +716,16 @@ Team:
 - ux reviewers: codex gpt-6-sol, reasoning high
 - researchers: codex gpt-6-sol, reasoning low
 
+Move the ticket status accordingly, pull request always means QA, merging the PR always means Done.
+
 <extra, trimmed>
 ```
 
 The first line is `/write-code <ticket>` for a Claude orchestrator and `$write-code <ticket>` for a Codex one;
 `<ticket>` is the issue URL, or the text. A role line says `effort <e>` for a claude role and `reasoning <e>` for a codex
-one. With no `extra`, the blank line before it is left out too. (A pure function, `server.RunPrompt`.)
+one. The status line is there for an issue ticket only (the orchestrator then moves the issue's status:
+a pull request means QA, its merge means Done); a free-text ticket has none. With no `extra`, the blank line before it is
+left out too. (A pure function, `server.RunPrompt`.)
 
 **`run.start`** hires the orchestrator and gives it the prompt:
 

@@ -159,7 +159,7 @@ func TestRunPrepare(t *testing.T) {
 	c := hb.c
 	seed := w.Presets[0].ID
 	orch := buildTeam.Orch
-	issue3 := "/write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildTeamLines
+	issue3 := "/write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildTeamLines + "\n\n" + statusLine
 
 	// Nothing to work on yet: defaults, no prompt.
 	res := runPrepare(t, c, proto.RunPrepareArgs{Session: "s"})
@@ -271,7 +271,7 @@ func TestRunStart(t *testing.T) {
 	seed := w.Presets[0].ID
 	orch := proto.Hire{Harness: "claude", Model: "claude-fable-5-1", Effort: "high"}
 	desk := 3
-	prompt := "/write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildTeamLines + "\n\nUse port 5173."
+	prompt := "/write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildTeamLines + "\n\n" + statusLine + "\n\nUse port 5173."
 	evs, m := c.command(proto.CmdRunStart, "rs1", map[string]any{"session": "s", "desk_index": desk, "issue": "#3",
 		"orch": orch, "preset": seed, "extra": "Use port 5173."})
 	var res proto.RunStartResult

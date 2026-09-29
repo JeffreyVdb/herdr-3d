@@ -353,7 +353,7 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 	if ticket != nil {
 		res.Label = runLabel(ticket)
 		if havePreset && orch != nil {
-			res.Prompt = RunPrompt(orch.Harness, ticketRef(ticket), presetView(p).Roles, a.Extra)
+			res.Prompt = RunPrompt(orch.Harness, ticketRef(ticket), ticket.Kind == proto.TicketIssue, presetView(p).Roles, a.Extra)
 		}
 	}
 	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
@@ -400,7 +400,7 @@ func (h *Hub) startRunStart(ctx context.Context, c *Client, cmd proto.Command) e
 	}
 	prompt := a.Prompt
 	if prompt == "" {
-		prompt = RunPrompt(a.Orch.Harness, ticketRef(ticket), presetView(p).Roles, a.Extra)
+		prompt = RunPrompt(a.Orch.Harness, ticketRef(ticket), ticket.Kind == proto.TicketIssue, presetView(p).Roles, a.Extra)
 	}
 	label := a.Label
 	if label == "" {
