@@ -28,12 +28,16 @@ make build test lint   # Go binaries -> bin/, game bundle -> game/dist/, go test
 make integration       # bridge against a real herdr (and systemd-run) in throwaway sessions (see below)
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
 make dev               # Vite dev server on a portlease-leased port, 127.0.0.1 only
-make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check)
+make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check), seconds
+make e2e               # the full Playwright suite (e2e/*.spec.ts), H3D_WORKERS parallel workers, ~2.5 min
 ```
 
-- `make shot` runs Playwright against the **cached** Chromium in `~/.cache/ms-playwright` (`@playwright/test` is pinned
-  to the version that matches it). Browsers are never downloaded (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`). It forces the
+- `make shot` (only `e2e/shot.spec.ts`) and `make e2e` (every spec) run Playwright against the **cached** Chromium in
+  `~/.cache/ms-playwright` (`@playwright/test` is pinned to the version that matches it). Browsers are never downloaded (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`). It forces the
   WebGL2 backend (`?backend=webgl2`) because the server has no GPU; rendering goes through ANGLE → Vulkan → mesa llvmpipe.
+- `make e2e` runs `H3D_WORKERS` specs in parallel (default 6, a positive integer; anything else falls back to it). Every
+  test opens its own page against the shared preview server and writes only its own `test-results/<name>.png`, so keep
+  it that way: no shared files, no fixed ports, no order between tests. Lower it on a loaded machine if timeouts appear.
 - The page exposes `window.__h3d` (`backend`, `frames`, `error`) for tests.
 - Never hardcode ports. Use `portlease run` / `portlease reserve`, and bind `127.0.0.1` only. Other agents run in
   parallel worktrees on the same host.
@@ -598,7 +602,9 @@ Tests:
 ```sh
 make test lint                # vitest + tsc (protocol client and requests, store, layout, collision, cards, frame
                               # policy, fixtures, settings validation/diffing, reordering, the command simulation)
-make shot                     # Playwright WebGL2: game/test-results/{shot,m2-city,m2-floor-plan,m2-desk-row}.png,
+make shot                     # Playwright WebGL2, just the screenshot: game/test-results/shot.png
+make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS parallel, ~2.5 min):
+                              # game/test-results/{shot,m2-city,m2-floor-plan,m2-desk-row}.png,
                               # scripted look-at path, floor entry, keyboard focus, live plan labels, events
                               # during the elevator ride, held keys across floors, small-window plan; M3 on the
                               # simulating fixture server: m3-{buildings,elevator,settings,statuses,sleep-confirm,
