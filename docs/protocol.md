@@ -960,7 +960,7 @@ each (Claude, then Codex; a provider not read yet is absent):
 | `stale` | not a fresh answer of the CLI: it comes from a transcript, or the last probe failed and this is the reading before. Clients also treat a reading older than 10 minutes as stale. |
 | `error` | why there is no fresh reading: `no_plan` (an API key, or signed out), `not_installed`, `timeout`, `failed` |
 | `source` | `probe`, or `transcript` |
-| `reached` | Codex's `rateLimitReachedType` of the account's own limit, present while it is reached. The `rateLimitReachedType` of a model's own limit (`rateLimitsByLimitId`) is not here: it is `reached` on that limit's windows, so a client warns about it only for that model. |
+| `reached` | Codex's `rateLimitReachedType` of the account's own limit, present while it is reached. The `rateLimitReachedType` of a model's own limit (`rateLimitsByLimitId`) is not here: it is `reached` on that limit's windows, so a client warns about it only for that model. A model limit with no windows has nothing to carry it and is dropped. |
 | `credits` | Codex's `{"has_credits","unlimited","balance"}` |
 
 Unknown keys of the CLIs are ignored; the fields above are only ever added to.

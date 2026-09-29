@@ -85,6 +85,21 @@ func TestCodexModelLimitReachedStaysOnItsWindows(t *testing.T) {
 	}
 }
 
+// A model's limit reached with no window has no window to carry it: it is
+// dropped, not promoted to the account's Reached.
+func TestCodexWindowlessModelLimitReachedIsNotTheAccounts(t *testing.T) {
+	res := `{"rateLimits":{"limitId":"codex","primary":{"usedPercent":20,"windowDurationMins":300,"resetsAt":1790700000},"planType":"pro","rateLimitReachedType":null},` +
+		`"rateLimitsByLimitId":{"codex":{"limitId":"codex"},"codex_spark":{"limitId":"codex_spark","limitName":"Spark","rateLimitReachedType":"rate_limit_reached"}}}`
+	l, err := parseCodexRead(json.RawMessage(res), time.Unix(1790690000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []proto.LimitWindow{{Label: "5h", Pct: 20, ResetsAt: 1790700000000, WindowMins: 300}}
+	if l.Reached != "" || !slices.Equal(l.Windows, want) {
+		t.Fatalf("got %+v", l)
+	}
+}
+
 func TestCodexAppServerErrorFallsBackToTranscript(t *testing.T) {
 	c, r := newCfg(t, map[string]script{"codex": func(p *fakeProc) {
 		sc := p.reader()

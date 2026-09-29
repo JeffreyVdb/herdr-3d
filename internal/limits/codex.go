@@ -227,12 +227,10 @@ func parseCodexRead(res json.RawMessage, now time.Time) (proto.Limits, error) {
 		ws := o.windows(name)
 		if r := o.reached(); r != "" {
 			// A model's own limit reached is that model's: its windows
-			// carry it, not the reading.
+			// carry it, never the reading (the account's). With no window
+			// there is nothing to carry it, and it is dropped.
 			for i := range ws {
 				ws[i].Reached = r
-			}
-			if len(ws) == 0 && l.Reached == "" {
-				l.Reached = r
 			}
 		}
 		l.Windows = append(l.Windows, ws...)
