@@ -33,6 +33,8 @@ import { PromptOverlay } from './ui/prompt';
 import { answerable, answerArgs, answerKeys, digitPick, pickLabel, questionLine, type Pick as AnswerPick } from './world/answer';
 import { faceSpots, needQueue, nextNeed, type NeedItem } from './world/next';
 import { promptBlocker } from './world/prompt';
+// M6 crew: freelancers walk in and out with their briefcase.
+import { crewRole, isFreelancer } from './world/crew';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
@@ -342,10 +344,12 @@ export class App {
    */
   private onWorldEvent(e: WorldEvent): void {
     let after: (() => void) | null = null;
-    if (e.t === 'worker.upsert' && !this.store.workers.has(e.worker.id) && isFreshHire(e.worker.hired_at, Date.now())) {
+    // M6: a freelancer that shows up after the snapshot walks in too, and one that goes (whatever the reason) walks out.
+    const freelancer = (w: Parameters<typeof crewRole>[0] | undefined) => !!w && isFreelancer(crewRole(w));
+    if (e.t === 'worker.upsert' && !this.store.workers.has(e.worker.id) && (isFreshHire(e.worker.hired_at, Date.now()) || (this.store.snapshots > 0 && freelancer(e.worker)))) {
       const id = e.worker.id;
       after = () => this.startArrival('in', id);
-    } else if (e.t === 'worker.removed' && e.reason === 'sent_home' && this.store.workers.has(e.id)) {
+    } else if (e.t === 'worker.removed' && this.store.workers.has(e.id) && (e.reason === 'sent_home' || freelancer(this.store.workers.get(e.id)))) {
       const spec = this.arrivalSpec('out', e.id);
       const v = this.store.workerView(e.id);
       this.arrivals.cancel(e.id);
@@ -375,7 +379,11 @@ export class App {
     if (!L || !slot) return null;
     const route = kind === 'out' ? walkOutRoute(L, ctx.plan, storey, v.desk) : walkInRoute(L, ctx.plan, storey, v.desk);
     const m = memberOf(v);
-    return { id, kind, session, desk: v.desk, name: v.name, route, seatYaw: slot.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase };
+    const spec: ArrivalSpec = { id, kind, session, desk: v.desk, name: v.name, route, seatYaw: slot.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase };
+    // M6: a freelancer's briefcase and look.
+    if (v.crew?.freelancer) spec.carry = 'briefcase';
+    if (m.crew) spec.crew = m.crew;
+    return spec;
   }
 
   private startArrival(kind: ArrivalKind, id: string): void {

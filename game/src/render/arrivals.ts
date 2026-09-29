@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { deskOwners, poseAt, timeline, type ArrivalKind, type ArrivalPose, type DeskShow, type Timeline } from '../world/arrival';
+import { deskOwners, poseAt, timeline, type ArrivalKind, type ArrivalPose, type Carry, type DeskShow, type Timeline } from '../world/arrival';
+import type { CrewLook } from './crewLook';
 import type { Display, ModelCue } from '../world/derive';
 import { DESK_H, SEAT_OFFSET } from '../world/layout';
 import type { Waypoint } from '../world/route';
@@ -34,6 +35,10 @@ export interface ArrivalSpec {
   /** The status the worker had (the laptop screen while packing). */
   display: Display;
   phase: number;
+  /** M6: a freelancer carries its briefcase (and waves goodbye) instead of the box. */
+  carry?: Carry;
+  /** M6: its crew look (worn by the walker). */
+  crew?: CrewLook;
 }
 
 interface Active {
@@ -70,6 +75,10 @@ export interface ArrivalInfo {
   box: ArrivalPose['box'];
   laptop: ArrivalPose['laptop'];
   items: number;
+  /** M6 */
+  carry: Carry;
+  briefcase: ArrivalPose['briefcase'];
+  wave: boolean;
 }
 
 const CAPACITY = 8;
@@ -208,7 +217,7 @@ export class Arrivals {
       this.skip(spec);
       return false;
     }
-    const tl = timeline(spec.kind, spec.route, spec.seatYaw);
+    const tl = timeline(spec.kind, spec.route, spec.seatYaw, spec.carry ?? 'box');
     const sticker = this.parts.sticker;
     sticker.setColorAt(slot, this.color.set(spec.cue.color));
     if (sticker.instanceColor) sticker.instanceColor.needsUpdate = true;
@@ -307,6 +316,10 @@ export class Arrivals {
       phase: s.phase,
       ...(p.seated ? {} : { stride: p.stride ?? 0 }),
       carry: p.box === 'carried',
+      // M6: what the freelancer wears; no lifecycle props on the way.
+      ...(s.crew ? { crew: { ...s.crew, life: null, turn: 0 } } : {}),
+      briefcase: p.briefcase === 'hand',
+      wave: p.wave,
     });
     const yawQ = this.q.setFromAxisAngle(this.up, p.yaw);
     // The box: on the desk beside the laptop while packing, else carried in front.
@@ -370,6 +383,9 @@ export class Arrivals {
         box: p.box,
         laptop: p.laptop,
         items: p.items,
+        carry: a.tl.carry,
+        briefcase: p.briefcase,
+        wave: p.wave,
       };
     });
   }

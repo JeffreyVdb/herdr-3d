@@ -2,6 +2,10 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Display, ModelCue } from '../world/derive';
 import { INK } from './palette';
+// M6: write-code crews' looks.
+import { CREW_PARTS, crewGeometries, DESK_ITEM, DESK_TOP, FLOOR_Y, PIP_OFF, PIP_OVER, WORN, type CrewLook, type CrewPartKey } from './crewLook';
+import { PASS_CAP } from '../world/crew';
+import { SEAT_OFFSET } from '../world/layout';
 
 /**
  * Procedural rigid-part workers (docs/decisions.md): a round capsule body,
@@ -27,6 +31,19 @@ export interface Member {
   stride?: number;
   /** M4: both arms forward, holding a box. */
   carry?: boolean;
+  /** M6: a write-code crew member's role look and lifecycle props. */
+  crew?: CrewLook;
+  /** M6: waving goodbye (a freelancer leaving). */
+  wave?: boolean;
+  /** M6: its briefcase in the left hand (a freelancer walking in or out). */
+  briefcase?: boolean;
+}
+
+interface CrewPart {
+  mesh: THREE.InstancedMesh;
+  per: number;
+  /** Someone wears it this frame (else the mesh is hidden: no draw call). */
+  used: boolean;
 }
 
 type PartKey =
@@ -145,6 +162,11 @@ export class Crowd {
   private readonly v = new THREE.Vector3();
   private readonly s = new THREE.Vector3();
   private readonly color = new THREE.Color();
+  /** M6: the crew parts (see crewLook.ts). */
+  private readonly crewParts: Record<CrewPartKey, CrewPart>;
+  private readonly armLM = new THREE.Matrix4();
+  private readonly armRM = new THREE.Matrix4();
+  private readonly tmp3 = new THREE.Matrix4();
 
   constructor(
     readonly capacity: number,
@@ -169,6 +191,28 @@ export class Crowd {
     });
     this.byKey = Object.fromEntries(this.parts.map((p) => [p.key, p])) as Record<PartKey, Part>;
     this.members = Array.from({ length: capacity }, () => null);
+    const crewGeo = crewGeometries(low);
+    const crewParts: Partial<Record<CrewPartKey, CrewPart>> = {};
+    for (const d of CREW_PARTS) {
+      const mat = new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: !d.tinted });
+      if (d.emissive !== undefined) mat.emissive.set(d.emissive);
+      const mesh = new THREE.InstancedMesh(crewGeo[d.key], mat, Math.max(1, capacity * d.per));
+      mesh.name = `crowd.${d.key}`;
+      mesh.frustumCulled = false;
+      mesh.castShadow = shadows && d.shadow;
+      mesh.visible = false;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      for (let i = 0; i < mesh.count; i++) mesh.setMatrixAt(i, ZERO);
+      if (d.tinted) for (let i = 0; i < mesh.count; i++) mesh.setColorAt(i, this.color.set(0xffffff));
+      this.group.add(mesh);
+      crewParts[d.key] = { mesh, per: d.per, used: false };
+    }
+    this.crewParts = crewParts as Record<CrewPartKey, CrewPart>;
+  }
+
+  /** M6: crew parts drawn right now (test hook / frame budget). */
+  crewShown(): CrewPartKey[] {
+    return (Object.keys(this.crewParts) as CrewPartKey[]).filter((k) => this.crewParts[k].mesh.visible);
   }
 
   get(i: number): Member | null {
@@ -180,6 +224,7 @@ export class Crowd {
     this.members[i] = m;
     if (!m) {
       for (const p of this.parts) for (let k = 0; k < p.per; k++) p.mesh.setMatrixAt(i * p.per + k, ZERO);
+      for (const p of Object.values(this.crewParts)) for (let k = 0; k < p.per; k++) p.mesh.setMatrixAt(i * p.per + k, ZERO);
       this.flag(true, false);
       return;
     }
@@ -187,7 +232,21 @@ export class Crowd {
     for (const key of TINTED) this.byKey[key].mesh.setColorAt(i, this.color);
     this.color.set(m.cue.color);
     for (const key of CUED) this.byKey[key].mesh.setColorAt(i, this.color);
+    if (m.crew) this.crewColors(i, m.crew);
     this.flag(false, true);
+  }
+
+  /** M6: the run badge, the folder's stamp and the pass pips take their colours per member. */
+  private crewColors(i: number, c: CrewLook): void {
+    const P = this.crewParts;
+    P.badge.mesh.setColorAt(i, this.color.set(c.run ?? 0xffffff));
+    P.stamp.mesh.setColorAt(i, this.color.set(c.stamp ?? 0xffffff));
+    const lit = Math.min(PASS_CAP, c.pass ?? 0);
+    for (let k = 0; k < 3; k++) P.pips.mesh.setColorAt(i * 3 + k, this.color.set(c.overCap ? PIP_OVER : k < lit ? c.phaseColor : PIP_OFF));
+    for (const key of ['badge', 'stamp', 'pips'] as const) {
+      const col = P[key].mesh.instanceColor;
+      if (col) col.needsUpdate = true;
+    }
   }
 
   private flag(matrices: boolean, colors: boolean): void {
@@ -195,6 +254,7 @@ export class Crowd {
       if (matrices) p.mesh.instanceMatrix.needsUpdate = true;
       if (colors && p.mesh.instanceColor) p.mesh.instanceColor.needsUpdate = true;
     }
+    if (matrices) for (const p of Object.values(this.crewParts)) if (p.mesh.visible) p.mesh.instanceMatrix.needsUpdate = true;
   }
 
   private put(key: PartKey, i: number, parent: THREE.Matrix4, local: THREE.Matrix4 | null, k = 0): void {
@@ -215,10 +275,13 @@ export class Crowd {
 
   /** Recomputes every member's pose for time `t` (seconds). */
   update(t: number): void {
+    for (const p of Object.values(this.crewParts)) p.used = false;
     for (let i = 0; i < this.capacity; i++) {
       const m = this.members[i];
       if (m) this.pose(i, m, t);
     }
+    // M6: a crew part nobody wears is not drawn at all.
+    for (const p of Object.values(this.crewParts)) p.mesh.visible = p.used;
     this.flag(true, false);
   }
 
@@ -281,6 +344,47 @@ export class Crowd {
       }
     }
 
+    // M6: the crew's lifecycle poses (reading the brief, handing in the report) and waving goodbye.
+    const crew = m.crew;
+    const life = crew && m.display !== 'needs_you' && m.display !== 'asleep' && m.stride === undefined ? crew.life : null;
+    let turn = 0;
+    if (life === 'onboarding') {
+      lean = 0.06;
+      armL = armR = -1.05;
+      armLz = 0.42;
+      armRz = -0.42;
+      lookY = -0.016;
+      mug = false;
+    } else if (life === 'reporting') {
+      turn = crew?.turn ?? 0;
+      lean = 0.04;
+      armR = -1.45 + Math.sin(t * 2.2 + ph) * 0.05;
+      armRz = 0.12;
+      armL = -0.2;
+      mug = false;
+    }
+    if (m.wave) {
+      armR = -2.75;
+      armRz = 0;
+      wave = Math.sin(t * 9 + ph) * 0.55;
+      mug = false;
+    }
+    if (m.briefcase) {
+      lean = 0;
+      mug = false;
+      armL = -0.06;
+      armLz = 0.12;
+      // The free arm swings with the stride (a wave keeps it up).
+      if (!m.wave) {
+        armR = -0.15 + Math.sin(m.stride ?? 0) * 0.35;
+        armRz = -0.12;
+      }
+    }
+    if (turn) {
+      this.q.setFromAxisAngle(this.v.set(0, 1, 0), m.yaw + turn);
+      this.base.compose(this.v.set(m.x, m.y, m.z), this.q, this.s.set(m.scale, m.scale, m.scale));
+    }
+
     if (m.carry) {
       lean = 0;
       armL = armR = -1.3;
@@ -306,8 +410,9 @@ export class Crowd {
     if (m.cue.hat === 'cap') this.put('cap', i, this.body, null);
     else this.hide('cap', i);
 
-    this.put('armL', i, this.body, this.rot(armL, 0, armLz, -SHOULDER_X, SHOULDER_Y, 0.03));
-    const armRM = this.rot(armR, 0, armRz + wave, SHOULDER_X, SHOULDER_Y, 0.03);
+    const armLM = this.armLM.copy(this.rot(armL, 0, armLz, -SHOULDER_X, SHOULDER_Y, 0.03));
+    this.put('armL', i, this.body, armLM);
+    const armRM = this.armRM.copy(this.rot(armR, 0, armRz + wave, SHOULDER_X, SHOULDER_Y, 0.03));
     this.put('armR', i, this.body, armRM);
     if (mug) {
       // Hand = end of the right arm; the mug stays upright.
@@ -341,6 +446,98 @@ export class Crowd {
         this.put('zzz', i, this.base, this.tmp2, k);
       }
     } else this.hide('zzz', i);
+
+    this.poseCrew(i, m, t, life, armLM, armRM);
+  }
+
+  private crewPut(key: CrewPartKey, i: number, parent: THREE.Matrix4, local: THREE.Matrix4 | null, k = 0): void {
+    const p = this.crewParts[key];
+    p.used = true;
+    p.mesh.setMatrixAt(i * p.per + k, local ? this.m.multiplyMatrices(parent, local) : parent);
+  }
+
+  private crewHide(key: CrewPartKey, i: number): void {
+    const p = this.crewParts[key];
+    for (let k = 0; k < p.per; k++) p.mesh.setMatrixAt(i * p.per + k, ZERO);
+  }
+
+  /** M6: what a crew member wears, has on its desk and holds (see crewLook.ts). */
+  private poseCrew(i: number, m: Member, t: number, life: CrewLook['life'], armLM: THREE.Matrix4, armRM: THREE.Matrix4): void {
+    const c = m.crew;
+    const seated = m.stride === undefined;
+    const ph = m.phase;
+    const worn = c ? WORN[c.role] : null;
+    const desk = c && seated ? (DESK_ITEM[c.role] ?? null) : null;
+    for (const key of ['headset', 'hood', 'bowtie', 'scarf', 'backpack'] as const) {
+      if (key === worn) this.crewPut(key, i, this.body, null);
+      else this.crewHide(key, i);
+    }
+    if (c?.run != null) this.crewPut('badge', i, this.body, null);
+    else this.crewHide('badge', i);
+    // Desk items sit on the desk top, left of the laptop; the pass board at its right-hand front corner.
+    for (const key of ['clipboard', 'tablet', 'magnifier'] as const) {
+      if (key === desk) this.crewPut(key, i, this.base, this.tmp2.makeTranslation(0.47, DESK_TOP, SEAT_OFFSET - 0.08));
+      else this.crewHide(key, i);
+    }
+    if (c && seated && c.role === 'orch' && c.pass !== null) {
+      this.crewPut('passBoard', i, this.base, this.tmp2.makeTranslation(-0.48, DESK_TOP, SEAT_OFFSET - 0.12));
+      const blink = c.overCap && Math.sin(t * 6 + ph) < -0.2;
+      for (let k = 0; k < 3; k++) {
+        this.tmp2.makeTranslation(-0.56 + k * 0.08, DESK_TOP + 0.125, SEAT_OFFSET - 0.15);
+        if (blink) this.tmp2.scale(this.s.set(0.001, 0.001, 0.001));
+        this.crewPut('pips', i, this.base, this.tmp2, k);
+      }
+    } else {
+      this.crewHide('passBoard', i);
+      this.crewHide('pips', i);
+    }
+    // Onboarding: the brief held open in both hands, in front of the chest.
+    if (life === 'onboarding') this.crewPut('scroll', i, this.body, this.rot(-0.5, 0, 0, 0, 0.3, 0.42));
+    else this.crewHide('scroll', i);
+    // Reporting: the folder at the end of the outstretched right arm, its stamp on it.
+    if (life === 'reporting') {
+      this.v.set(0, -0.3, 0.02).applyMatrix4(armRM);
+      this.q.setFromEuler(this.e.set(-0.35, 0, 0));
+      this.tmp2.compose(this.v.setComponent(1, this.v.y + 0.12), this.q, this.s.set(1, 1, 1));
+      this.crewPut('folder', i, this.body, this.tmp2);
+      if (c?.stamp != null) this.crewPut('stamp', i, this.body, this.tmp2);
+      else this.crewHide('stamp', i);
+    } else {
+      this.crewHide('folder', i);
+      this.crewHide('stamp', i);
+    }
+    // The briefcase: in the left hand walking, else by the chair (freelancers).
+    if (m.briefcase) {
+      this.v.set(0, -0.3, 0.02).applyMatrix4(armLM);
+      this.tmp2.makeTranslation(this.v.x, this.v.y, this.v.z);
+      this.crewPut('briefcase', i, this.body, this.tmp2);
+    } else if (c && c.role !== 'orch' && seated) {
+      this.q.setFromEuler(this.e.set(0, 0.3, 0));
+      this.tmp2.compose(this.v.set(-0.42, FLOOR_Y + 0.29, 0.08), this.q, this.s.set(1, 1, 1));
+      this.crewPut('briefcase', i, this.base, this.tmp2);
+    } else this.crewHide('briefcase', i);
+    // Over the cap: sweat runs down its brow, a red alarm clock rings over its head.
+    if (c?.overCap && m.display !== 'asleep') {
+      for (let k = 0; k < 2; k++) {
+        const u = (t * 0.8 + ph / 6.283 + k * 0.5) % 1;
+        const sc = u < 0.8 ? 1 : Math.max(0.001, 1 - (u - 0.8) * 5);
+        this.tmp2.compose(this.v.set((k ? 1 : -1) * 0.2, 0.7 - u * 0.24, 0.17), this.q.identity(), this.s.set(sc, sc, sc));
+        this.crewPut('sweat', i, this.body, this.tmp2, k);
+      }
+      const ring = Math.sin(t * 38) * 0.12;
+      const hop = Math.abs(Math.sin(t * 19)) * 0.025;
+      this.q.setFromEuler(this.e.set(0, Math.sin(t * 0.9 + ph) * 0.5, ring));
+      this.tmp2.compose(this.v.set(0, 1.32 + hop, 0), this.q, this.s.set(1, 1, 1));
+      this.crewPut('clock', i, this.base, this.tmp2);
+      // The hands spin: the clock is past time.
+      this.tmp.makeRotationZ(-t * 4);
+      this.tmp.setPosition(0, 0, 0.045);
+      this.crewPut('clockHands', i, this.tmp3.multiplyMatrices(this.base, this.tmp2), this.tmp);
+    } else {
+      this.crewHide('sweat', i);
+      this.crewHide('clock', i);
+      this.crewHide('clockHands', i);
+    }
   }
 
   dispose(): void {

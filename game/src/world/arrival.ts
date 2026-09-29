@@ -13,7 +13,17 @@ import type { FloorLayout } from './layout';
 import { walkOutRoute, type Waypoint } from './route';
 
 export type ArrivalKind = 'in' | 'out';
-export type Phase = 'pack' | 'stand' | 'walk' | 'vanish' | 'appear' | 'sit' | 'done';
+export type Phase = 'pack' | 'stand' | 'walk' | 'vanish' | 'appear' | 'sit' | 'done' | 'wave';
+
+/**
+ * M6: what the walker carries. `box`: an employee (M4: a hire walks in with
+ * its box and laptop, one sent home packs up). `briefcase`: a write-code
+ * freelancer walks in and out with its briefcase in hand, and waves goodbye
+ * at its desk before it leaves (no packing).
+ */
+export type Carry = 'box' | 'briefcase';
+/** M6: the goodbye wave at the desk. */
+export const WAVE_S = 1.4;
 
 /** Walking pace (m/s): a relaxed stroll, a bit slower than you walk. */
 export const WALK_SPEED = 1.5;
@@ -57,6 +67,8 @@ export interface Timeline {
   seatYaw: number;
   stages: Stage[];
   total: number;
+  /** M6 */
+  carry: Carry;
 }
 
 export function cumulative(route: readonly Waypoint[]): number[] {
@@ -71,7 +83,7 @@ export function cumulative(route: readonly Waypoint[]): number[] {
 }
 
 /** `route`: the walk-out route for `out`, the walk-in route for `in`. */
-export function timeline(kind: ArrivalKind, route: Waypoint[], seatYaw: number): Timeline {
+export function timeline(kind: ArrivalKind, route: Waypoint[], seatYaw: number, carry: Carry = 'box'): Timeline {
   const at = cumulative(route);
   const length = at[at.length - 1] ?? 0;
   const walk = length / WALK_SPEED;
@@ -81,7 +93,12 @@ export function timeline(kind: ArrivalKind, route: Waypoint[], seatYaw: number):
     stages.push({ phase, t0: t, t1: t + d });
     t += d;
   };
-  if (kind === 'out') {
+  if (kind === 'out' && carry === 'briefcase') {
+    add('stand', STAND_S);
+    add('wave', WAVE_S);
+    add('walk', walk);
+    add('vanish', VANISH_S);
+  } else if (kind === 'out') {
     add('pack', PACK_S);
     add('stand', STAND_S);
     add('walk', walk);
@@ -91,7 +108,7 @@ export function timeline(kind: ArrivalKind, route: Waypoint[], seatYaw: number):
     add('walk', walk);
     add('sit', SIT_S);
   }
-  return { kind, route, at, length, seatYaw, stages, total: t };
+  return { kind, route, at, length, seatYaw, stages, total: t, carry };
 }
 
 /** Facing along a direction in the xz plane (workers face +z at yaw 0). */
@@ -170,6 +187,10 @@ export interface ArrivalPose {
   /** Distance walked (m). */
   walked: number;
   desk: DeskShow;
+  /** M6: the freelancer's briefcase, in its hand or not there. */
+  briefcase: 'hand' | 'none';
+  /** M6: waving goodbye. */
+  wave: boolean;
 }
 
 function stageAt(tl: Timeline, t: number): { s: Stage; k: number } | null {
@@ -178,6 +199,13 @@ function stageAt(tl: Timeline, t: number): { s: Stage; k: number } | null {
 }
 
 export function poseAt(tl: Timeline, t: number): ArrivalPose {
+  const p = boxPoseAt(tl, t);
+  if (tl.carry !== 'briefcase') return p;
+  // M6: the briefcase replaces the box and the laptop; it is in hand from standing up to sitting down.
+  return { ...p, box: 'none', boxScale: 1, laptop: 'none', lift: 0, items: 0, briefcase: p.phase === 'done' ? 'none' : 'hand', wave: p.phase === 'wave' };
+}
+
+function boxPoseAt(tl: Timeline, t: number): ArrivalPose {
   const route = tl.route;
   const cur = stageAt(tl, t);
   const seatEnd = tl.kind === 'out' ? route[0] : route[route.length - 1];
@@ -198,6 +226,8 @@ export function poseAt(tl: Timeline, t: number): ArrivalPose {
     lift: 0,
     walked: 0,
     desk: 'free',
+    briefcase: 'none',
+    wave: false,
   };
   const walkAt = (d: number): Pick<ArrivalPose, 'x' | 'y' | 'z' | 'yaw' | 'walked'> => {
     const p = sampleRoute(route, tl.at, d);
@@ -231,6 +261,9 @@ export function poseAt(tl: Timeline, t: number): ArrivalPose {
         desk: lifted ? 'empty' : 'busy',
       };
     }
+    case 'wave':
+      // M6: standing by the chair, turned to the way out, waving.
+      return { ...base, phase: 'wave', yaw: firstYaw, desk: 'empty' };
     case 'stand':
       return {
         ...base,

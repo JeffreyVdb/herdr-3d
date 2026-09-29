@@ -7,6 +7,8 @@ import { CHIP_TEXT } from '../world/derive';
 import { ICON as DOM_ICON } from './dom';
 import { mountAudioControls } from './audioControls';
 import { answerKeyEls, promptBarAria, promptBarKey, usageChip } from './promptBar';
+// M6 crew: role, run, issue and report on the bar.
+import { crewAria, crewBarKey, crewLine } from './crewBar';
 import { usageTotal, type UsageTotal } from '../world/usage';
 import type { GameAudio } from '../audio';
 
@@ -285,6 +287,7 @@ export class Hud {
     const shown = w ? [w.name, w.display, taskLine(w.worker), modelLabel(w.harness, w.worker.model, w.worker.effort)] : [];
     // M5: the usage and the question on the bar.
     if (w) shown.push(...promptBarKey(w));
+    if (w) shown.push(...crewBarKey(w));
     const key = t ? JSON.stringify([t.kind, t.id, ...shown]) : '';
     if (key === this.promptKey) return;
     this.promptKey = key;
@@ -330,6 +333,8 @@ export class Hud {
       keys.prepend(...answerKeyEls(w, this.keyStates.get('answer')));
       const extra = promptBarAria(w);
       if (extra) this.prompt.setAttribute('aria-label', `${this.prompt.getAttribute('aria-label') ?? ''} · ${extra}`);
+      const crew = crewAria(w);
+      if (crew) this.prompt.setAttribute('aria-label', `${this.prompt.getAttribute('aria-label') ?? ''} · ${crew}`);
     } else if (t.kind === 'desk') {
       line.append(text('prompt-name', t.label), text('prompt-task', 'Empty desk'));
       const k = el('span', 'key');
@@ -360,7 +365,8 @@ export class Hud {
       keys.append(disabled('E', 'Open', `Arrives in ${t.milestone}`));
       this.prompt.setAttribute('aria-label', t.label);
     }
-    this.prompt.replaceChildren(line, keys);
+    const crew = t.kind === 'worker' && w ? crewLine(w) : null;
+    this.prompt.replaceChildren(...(crew ? [line, crew, keys] : [line, keys]));
     this.prompt.hidden = false;
   }
 
