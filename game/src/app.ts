@@ -10,6 +10,7 @@ import { memberOf, OfficeView, REACH, type Target } from './render/office';
 import { OutsideView } from './render/outside';
 import { BUILDING_TINTS, LOT_TINT } from './render/palette';
 import { WalkView } from './render/walk';
+import { RadioLink } from './radio/link';
 import { createGameAudio, createReception, receptionContext, type GameAudio, type Reception, type ReceptionEvent } from './reception';
 import { Hud, type PlanLabel } from './ui/hud';
 import { HireDialog } from './ui/hire';
@@ -106,6 +107,8 @@ export class App {
   readonly receptionEvents: Array<{ ev: ReceptionEvent; at: number; building: string | null }> = [];
   readonly audio: GameAudio;
   readonly reception: Reception;
+  /** M15: the office radio (E and R on it, fades with where you are, toast, display). */
+  readonly radio: RadioLink;
   /** Worker id → status on screen as of the last rendered frame, and when it got there. */
   readonly rendered = new Map<string, { status: Display; at: number }>();
   frames = 0;
@@ -177,6 +180,7 @@ export class App {
     this.audio = createGameAudio();
     this.hud.mountAudio(this.audio);
     this.reception = createReception({ audio: this.audio, overlay: this.hud.root, shadows: this.shadows });
+    this.radio = new RadioLink({ music: this.audio.music, toast: (m, ms, soft) => this.hud.toast(m, ms, 'info', soft), hudRadio: (n) => this.hud.setRadio(n) });
     this.city = new CityView(
       this.hud.floorList,
       this.shadows,
@@ -1104,6 +1108,14 @@ export class App {
     } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'elevator') {
       e.preventDefault();
       this.openElevator();
+    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'radio') {
+      // M15: E on the radio: the next genre.
+      e.preventDefault();
+      this.radio.cycle();
+    } else if (e.code === 'KeyR' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !e.altKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'radio') {
+      // M15: R on the radio: the next track.
+      e.preventDefault();
+      this.radio.skip();
     } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'own-desk') {
       e.preventDefault();
       this.sit();
@@ -1286,9 +1298,11 @@ export class App {
       // The receptionist looks at you and places the bubble while the lobby can be seen (hud.css hides it elsewhere).
       if (area === 'lobby' || area === 'street') this.reception.update(dt, this.fpCam);
       this.audio.setListener(this.fpCam);
+      this.radio.frame(area === 'floor', this.office);
       this.updateLookAt();
       if (this.planOpen && (moved || this.planDirty)) this.layoutPlanLabels();
     } else {
+      this.radio.frame(false, null);
       if (this.tween) {
         const k = Math.min(1, (performance.now() - this.tween.t0) / this.tween.ms);
         const e = 1 - (1 - k) ** 3;
@@ -1363,6 +1377,8 @@ export class App {
     };
     const labels: PlanLabel[] = [];
     for (const p of o.layout.props) {
+      // M15: the radio is a thing on the counter, not a placeholder to label.
+      if (p.id === 'radio') continue;
       const c = toScreen((p.box.min[0] + p.box.max[0]) / 2, 0, (p.box.min[2] + p.box.max[2]) / 2);
       labels.push({ ...c, text: p.label, kind: 'prop' });
     }
