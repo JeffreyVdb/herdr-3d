@@ -65,6 +65,27 @@ export function splitDiff(diff: string): FileDiff[] {
   return out;
 }
 
+const HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
+/** Old / new line numbers per diff line (null where a side has none: headers, hunk lines, the other side's lines). */
+export function numberLines(d: FileDiff): Array<[number | null, number | null]> {
+  let o = 0;
+  let n = 0;
+  return d.lines.map((l, i) => {
+    const k = d.kinds[i];
+    if (k === 'hunk') {
+      const m = HUNK.exec(l);
+      o = Number(m?.[1] ?? 0);
+      n = Number(m?.[2] ?? 0);
+      return [null, null];
+    }
+    if (k === 'add') return [null, n++];
+    if (k === 'del') return [o++, null];
+    if (k === 'ctx') return [o++, n++];
+    return [null, null];
+  });
+}
+
 const WORD: Record<string, string> = {
   M: 'modified',
   A: 'added',

@@ -71,11 +71,13 @@ export function faceSpots(seat: { x: number; z: number }, seatYaw: number): Spot
   // Beside the worker: its forward turned a quarter.
   const rx = -fz;
   const rz = fx;
+  // Far enough back that its card (a question's choices stand tall over its head) is in view, near
+  // enough that look-at still picks it (within reach, the ray through the chair).
   return [
-    spot(-fx * 1.05, -fz * 1.05, -0.3),
-    spot(rx * 1.05, rz * 1.05, -0.28),
-    spot(-rx * 1.05, -rz * 1.05, -0.28),
-    spot(fx * 1.7, fz * 1.7, -0.22),
+    spot(-fx * 1.8, -fz * 1.8, -0.13),
+    spot(rx * 1.5, rz * 1.5, -0.14),
+    spot(-rx * 1.5, -rz * 1.5, -0.14),
+    spot(fx * 2, fz * 2, -0.12),
   ];
 }
 

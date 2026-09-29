@@ -63,12 +63,12 @@ describe('faceSpots', () => {
   it('stands behind the chair first, facing the worker', () => {
     // A worker facing south (+z) at (5, 5): behind it is north, and you look south at it.
     const [behind, side, other, across] = faceSpots({ x: 5, z: 5 }, 0);
-    expect(behind).toMatchObject({ x: 5, z: 3.95, pitch: -0.3 });
+    expect(behind).toMatchObject({ x: 5, z: 3.2, pitch: -0.13 });
     expect(Math.abs(behind?.yaw ?? 0)).toBeCloseTo(Math.PI, 3);
     expect(side?.z).toBeCloseTo(5);
     expect(other?.z).toBeCloseTo(5);
-    expect(Math.abs((side?.x ?? 0) - 5)).toBeCloseTo(1.05);
-    expect(across).toMatchObject({ x: 5, z: 6.7, yaw: 0 });
+    expect(Math.abs((side?.x ?? 0) - 5)).toBeCloseTo(1.5);
+    expect(across).toMatchObject({ x: 5, z: 7, yaw: 0 });
   });
   it('faces the seat from every spot (walker forward = (-sin yaw, -cos yaw))', () => {
     const seat = { x: 2, z: 7 };

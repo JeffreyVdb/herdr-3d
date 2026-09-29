@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Changes } from '../net/protocol';
-import { bytesText, changesView, fileState, noDiffReason, splitDiff, splitPath } from './changes';
+import { bytesText, changesView, fileState, noDiffReason, numberLines, splitDiff, splitPath } from './changes';
 
 const DIFF = [
   'diff --git a/internal/server/hub.go b/internal/server/hub.go',
@@ -58,6 +58,20 @@ describe('splitDiff', () => {
     expect(d[1]?.kinds.slice(-2)).toEqual(['hunk', 'del']);
     expect(d[2]?.kinds).toEqual(['meta', 'meta', 'meta']);
     expect(splitDiff('')).toEqual([]);
+  });
+
+  it('numbers the old and new lines from the hunk headers', () => {
+    const d = splitDiff(DIFF)[0];
+    if (!d) throw new Error('no diff');
+    expect(numberLines(d).slice(4)).toEqual([
+      [null, null],
+      [10, 10],
+      [11, null],
+      [null, 11],
+      [null, 12],
+      [12, null],
+      [null, null],
+    ]);
   });
 
   it('is fast for a 256 KiB diff', () => {
