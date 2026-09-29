@@ -2,12 +2,12 @@ import '../test/fakeCanvas';
 import * as THREE from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
 import type { Floor, Worker } from '../net/protocol';
-import { DROP_S, FALL_S } from '../world/arrival';
+import { DROP_S, FALL_S, PACK_S, TAKE_LAPTOP_AT } from '../world/arrival';
 import type { V3 } from '../world/collide';
 import { deskKit } from '../world/deskKit';
 import { floorLayout } from '../world/layout';
 import { WorldStore } from '../world/store';
-import { Arrivals, type ArrivalSpec } from './arrivals';
+import { Arrivals, type ArrivalSpec, type DeskAway } from './arrivals';
 import { DeskSet } from './desks';
 import { memberOf, OfficeView } from './office';
 
@@ -77,6 +77,67 @@ describe('OfficeView while a hire drops in (M6b)', () => {
     expect(arrivals.count).toBe(0);
     expect(office.dropping()).toEqual([]);
     expect(arrivals.log.at(-1)).toMatchObject({ id: 'new', kind: 'in', played: true });
+    office.dispose();
+    arrivals.dispose();
+  });
+});
+
+/** Pip (desk 0) sent home: its walk-out, as the app starts one (the desk busy at once, then the world forgets Pip). */
+function sendHome(store: WorldStore, office: OfficeView, arrivals: Arrivals, now: number): void {
+  const v = store.workerView('old')!;
+  const s = office.layout.slots[0]!;
+  const m = memberOf(v);
+  const route = [
+    { x: s.seat.x, y: 0, z: s.seat.z },
+    { x: s.seat.x + 6, y: 0, z: s.seat.z },
+  ];
+  const spec: ArrivalSpec = { id: 'old', kind: 'out', session: 'top', desk: 0, name: v.name, route, seatYaw: s.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase, harness: 'claude' };
+  expect(arrivals.start(spec, now)).toBe(true);
+  office.setAway(0, { show: 'busy', display: spec.display, cue: spec.cue.color, harness: spec.harness, packed: 0 });
+  store.applyEvent({ t: 'worker.removed', seq: 10, id: 'old', session: 'top', workspace_id: 'ws-old', reason: 'sent_home' });
+  office.apply(store.floorView('top')!);
+}
+
+/** As the app's frame loop does: what the arrivals say each desk shows (returned too). */
+function stepper(office: OfficeView, arrivals: Arrivals): (t: number) => DeskAway[] {
+  return (t) => {
+    const out = arrivals.update(t, t);
+    for (const d of out) {
+      office.setAway(d.desk, d.away);
+      if (d.drop !== undefined) office.setDrop(d.desk, d.drop);
+    }
+    return out;
+  };
+}
+
+/** The worker's own things on a desk (the office draws them). */
+const things = (o: OfficeView, desk: number) => {
+  const p = o.deskInfo(desk)!.parts;
+  return (p.photo ?? 0) + (p.mug ?? 0) + (p.plant ?? 0) + (p.notebook ?? 0);
+};
+
+describe('OfficeView while a worker packs up (M6b)', () => {
+  it('each thing leaves the desk as its packing starts, one by one, then the laptop', () => {
+    const store = world();
+    const office = new OfficeView(store.floorView('top')!, { shadows: false });
+    const arrivals = new Arrivals(false);
+    const kit = office.kits[0]!;
+    // Working: every one of Pip's things is on the desk, its mug too.
+    expect(things(office, 0)).toBe(kit.items.length);
+    sendHome(store, office, arrivals, 0);
+    const step = stepper(office, arrivals);
+    const seen: number[] = [];
+    for (let t = 0; t < TAKE_LAPTOP_AT; t += 0.02) {
+      const packed = step(t).find((d) => d.desk === 0)!.away!.packed!;
+      if (seen.at(-1) !== packed) seen.push(packed);
+      expect(things(office, 0), `t=${t.toFixed(2)}`).toBe(kit.items.length - packed);
+      expect(office.deskInfo(0)!.parts.laptop, `t=${t.toFixed(2)}`).toBe(1);
+    }
+    // Every count on the way, from all on the desk to all in the box.
+    expect(seen).toEqual(kit.items.map((_, n) => n).concat(kit.items.length));
+    step(PACK_S - 0.1);
+    expect(things(office, 0)).toBe(0);
+    expect(office.deskInfo(0)!.parts.laptop).toBeUndefined();
     office.dispose();
     arrivals.dispose();
   });

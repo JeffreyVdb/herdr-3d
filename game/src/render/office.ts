@@ -370,10 +370,10 @@ export class OfficeView {
     });
   }
 
-  /** M4: shows a desk as `a` says instead of as the world does (null: as the world does again). */
+  /** M4: shows a desk as `a` says instead of as the world does (null: as the world does again). M6b: each thing packed leaves the desk as it goes. */
   setAway(desk: number, a: AwaySeat | null): void {
     const cur = this.away.get(desk) ?? null;
-    if (cur === a || (cur && a && cur.show === a.show && cur.display === a.display && cur.cue === a.cue)) return;
+    if (cur === a || (cur && a && cur.show === a.show && cur.display === a.display && cur.cue === a.cue && cur.harness === a.harness && cur.packed === a.packed)) return;
     if (!this.layout.slots[desk]) return;
     if (a) this.away.set(desk, a);
     else this.away.delete(desk);
