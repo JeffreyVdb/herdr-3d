@@ -13,7 +13,7 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
   curl --unix-socket "$XDG_RUNTIME_DIR/herdr-world/bridge.sock" http://herdr-world/healthz
   ```
 - Text frames, one JSON object per frame. Every object has a string field `t`, its type. Client messages are limited to
-  64 KiB.
+  256 KiB (M7: a comment body is up to 64 KiB of text, escaped).
 - The bridge reads herdr (`ping`, `session.snapshot`, `events.subscribe`, `herdr session list`, and for the laptop
   screens the read-only `herdr terminal session observe`). Its only writes to herdr are `floor.wake` / `floor.sleep`
   (see [Wake and sleep](#wake-and-sleep)), `worker.hire` / `worker.fire` (see [Hire and send

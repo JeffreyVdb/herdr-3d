@@ -23,7 +23,8 @@ import (
 const (
 	helloTimeout = 10 * time.Second
 	writeTimeout = 10 * time.Second
-	maxClientMsg = 64 << 10
+	// A comment or pull request body is up to 64 KiB of text, escaped in JSON.
+	maxClientMsg = 256 << 10
 )
 
 var errShutdown = errors.New("server shutting down")

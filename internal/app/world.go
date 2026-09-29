@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
+	"github.com/JeffreyVdb/herdr-3d/internal/githubcli"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitremote"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
@@ -44,6 +45,7 @@ const (
 	EnvResumeTime = "HERDR_WORLD_RESUME_TIMEOUT"
 	EnvCodex      = "HERDR_WORLD_CODEX_SESSIONS"
 	EnvGit        = "HERDR_WORLD_GIT"
+	EnvGH         = "HERDR_WORLD_GH" // M7 boards
 	EnvFloorWarn  = "HERDR_WORLD_WARN_WORKERS_PER_FLOOR"
 	EnvFloorMax   = "HERDR_WORLD_MAX_WORKERS_PER_FLOOR"
 	EnvHostWarn   = "HERDR_WORLD_WARN_WORKERS"
@@ -238,6 +240,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	herdrBin := fs.String("herdr", envOr(EnvHerdr, "herdr"), "herdr executable ($"+EnvHerdr+")")
 	systemdRun := fs.String("systemd-run", envOr(EnvSystemdRun, "systemd-run"), "systemd-run executable, to wake floors ($"+EnvSystemdRun+")")
 	gitBin := fs.String("git", envOr(EnvGit, "git"), "git executable, for worktree hires and send-home checks ($"+EnvGit+")")
+	ghBin := fs.String("gh", envOr(EnvGH, "gh"), "gh executable, for the issue and pull request boards ($"+EnvGH+")") // M7 boards
 	codexSessions := fs.String("codex-sessions", envOr(EnvCodex, codex.DefaultSessionsDir()), "Codex rollout directory, for the sleep backfill and usage ($"+EnvCodex+")")
 	claudeProjects := fs.String("claude-projects", envOr(EnvClaudeProjects, usage.DefaultClaudeProjects()), "Claude Code transcript directory, for usage ($"+EnvClaudeProjects+")")
 	runsDir := fs.String("runs-dir", envOr(EnvRunsDir, DefaultRunsDir()), "write-code runs directory, for the freelancers' reports ($"+EnvRunsDir+")") // M6 runs
@@ -309,7 +312,8 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
 		ClaudeProjects: *claudeProjects, Pricing: pricing,
 		MaxWatches: maxWatches, MaxObservers: maxObservers,
-		RunsDir: *runsDir, // M6 runs
+		RunsDir: *runsDir,                                     // M6 runs
+		Boards:  GitHubBoards(&githubcli.Client{Bin: *ghBin}), // M7 boards
 	})
 }
 
@@ -366,6 +370,12 @@ type ServeConfig struct {
 	// (0: server.DefaultReportPoll).
 	RunsDir    string
 	ReportPoll time.Duration
+
+	// M7 boards: Boards finds the issue tracker and code host of a floor's
+	// link (nil: no boards). The poll timings are server.Options' (0:
+	// defaults).
+	Boards                                                    server.BoardFactory
+	BoardWatchPoll, BoardIdlePoll, BoardRefreshMin, BoardTick time.Duration
 }
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
@@ -389,12 +399,16 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	if cfg.Git != nil {
 		opts.Git = cfg.Git
 		opts.Changes = cfg.Git // M5 usage
+		opts.PRGit = cfg.Git   // M7 boards
 	}
 	if cfg.ClaudeProjects != "" || cfg.CodexSessions != "" { // M5 usage
 		opts.Usage = &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: cfg.ClaudeProjects, CodexSessions: cfg.CodexSessions},
 			Pricing: cfg.Pricing}
 	}
 	opts.RunsDir, opts.ReportPoll = cfg.RunsDir, cfg.ReportPoll // M6 runs
+	opts.Boards = cfg.Boards                                    // M7 boards
+	opts.BoardWatchPoll, opts.BoardIdlePoll, opts.BoardRefreshMin, opts.BoardTick =
+		cfg.BoardWatchPoll, cfg.BoardIdlePoll, cfg.BoardRefreshMin, cfg.BoardTick
 	opts.Caps, opts.HireOptions, opts.Load = cfg.Caps, cfg.HireOptions, server.HostLoad
 	opts.TrustTimeout, opts.SeenTimeout, opts.ExitTimeout = cfg.TrustTimeout, cfg.SeenTimeout, cfg.ExitTimeout
 	if dir := cfg.CodexSessions; dir != "" {
