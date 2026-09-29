@@ -163,6 +163,8 @@ type World struct {
 	// HireOptions are the harness/model/effort choices the bridge accepts
 	// (floor.settings.set default_hire, and hiring later).
 	HireOptions *HireOptions `json:"hire_options,omitempty"`
+	// M6 launch: Presets are the team presets, by name ignoring case.
+	Presets []Preset `json:"presets"`
 }
 
 // HireOptions lists what can be hired, per harness.
@@ -205,6 +207,9 @@ type Floor struct {
 	Settings *FloorSettings `json:"settings,omitempty"`
 	// Suggested are bridge-derived defaults for unset settings.
 	Suggested *Suggested `json:"suggested,omitempty"`
+	// M6 launch: LastPreset is the preset of the floor's last successful
+	// run.start (absent when none, or deleted).
+	LastPreset string `json:"last_preset,omitempty"`
 }
 
 // FloorSettings are a floor's stored settings; unset keys are absent.
@@ -326,6 +331,8 @@ type Event struct {
 	Reason string `json:"reason,omitempty"`
 	// M5 usage: Usage is set on worker.usage.
 	Usage *Usage `json:"usage,omitempty"`
+	// M6 launch: Preset is set on preset.upsert.
+	Preset *Preset `json:"preset,omitempty"`
 }
 
 // Command is a client request. Args depend on T (see the *Args types).
