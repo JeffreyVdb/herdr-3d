@@ -1,10 +1,16 @@
 import { defineConfig } from '@playwright/test';
 
-// The preview port is leased by `make shot` (portlease run --name preview).
+// The preview port is leased by `make shot` / `make e2e` (portlease run --name preview).
 const port = process.env.PORTLEASE_PREVIEW_PORT;
 if (!port) {
-  throw new Error('PORTLEASE_PREVIEW_PORT unset: run the screenshot test via `make shot`');
+  throw new Error('PORTLEASE_PREVIEW_PORT unset: run the e2e tests via `make shot` or `make e2e`');
 }
+
+// Every test opens its own page against the shared preview server, so specs run in parallel.
+// H3D_WORKERS overrides the count (a positive integer); anything else falls back to the default.
+const DEFAULT_WORKERS = 6;
+const asked = process.env.H3D_WORKERS;
+const workers = asked !== undefined && /^[1-9]\d*$/.test(asked.trim()) ? Number(asked) : DEFAULT_WORKERS;
 const baseURL = `http://127.0.0.1:${port}`;
 
 export default defineConfig({
@@ -13,7 +19,7 @@ export default defineConfig({
   outputDir: 'test-results/artifacts',
   timeout: 120_000,
   retries: 0,
-  workers: 1,
+  workers,
   reporter: 'list',
   use: {
     baseURL,
