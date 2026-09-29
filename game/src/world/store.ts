@@ -17,6 +17,8 @@ import {
   resolveHarness,
   type Display,
 } from './derive';
+// M6 start
+import { PresetBook } from './presets';
 
 export interface WorkerView {
   worker: Worker;
@@ -132,6 +134,8 @@ export class WorldStore {
   structureVersion = 0;
   /** Models and efforts a default hire may use (M3), else the built-in lists. */
   hireOptions: HireOptions = DEFAULT_HIRE_OPTIONS;
+  /** M6 start: team presets (`known` false from an older bridge). */
+  readonly presets = new PresetBook();
   private readonly localDesks = new Map<string, number>();
   private readonly since = new Map<string, number>();
   private readonly deskCache = new Map<string, Map<string, number>>();
@@ -156,6 +160,7 @@ export class WorldStore {
     }
     for (const id of [...this.localDesks.keys()]) if (!this.workers.has(id)) this.localDesks.delete(id);
     this.hireOptions = hireOptionsOf(s.world.hire_options);
+    this.presets.reset(s.world.presets);
     this.seq = s.seq;
     this.snapshots++;
     this.structureVersion++;
@@ -246,6 +251,13 @@ export class WorldStore {
         c.sessions.add(old.session);
         break;
       }
+      // M6 start: presets are no part of the scene; dialogs re-render on `presets.version`.
+      case 'preset.upsert':
+        this.presets.upsert(e.preset);
+        break;
+      case 'preset.removed':
+        this.presets.remove(e.id);
+        break;
     }
     if (c.structure) this.structureVersion++;
     return c;

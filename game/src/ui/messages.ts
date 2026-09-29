@@ -34,6 +34,12 @@ const DOES: Record<CommandName, string> = {
   'worker.prompt': 'send prompts',
   'worker.answer': 'answer questions',
   'worker.changes': 'show changes',
+  // M6 start
+  'preset.create': 'keep team presets',
+  'preset.update': 'keep team presets',
+  'preset.delete': 'keep team presets',
+  'run.prepare': 'start runs',
+  'run.start': 'start runs',
 };
 
 export function failureText(t: CommandName, code: string, message: string, ctx: FailureContext = {}): string {

@@ -20,6 +20,8 @@ import { effortsFor } from '../world/settings';
 import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
+// M6 start
+import { deskTabs } from './deskTabs';
 
 /**
  * The hire dialog (M4): E on an empty desk's "+", or the top bar's Hire for
@@ -42,6 +44,8 @@ export interface HireHost extends DialogHost {
   reserve(session: string, desk: number): () => void;
   /** Desks of a floor a hire (or a walk) is already on its way to: not free for this one. */
   held(session: string): ReadonlySet<number>;
+  /** M6 start: the "Hire orchestrator" tab (ui/startRun.ts): why it is off, and opening it for the same desk. */
+  orchestrate?: { off(): string | null; open(session: string, desk: number): void };
 }
 
 export type HireState = 'preparing' | 'ready' | 'hiring' | 'failed';
@@ -74,7 +78,7 @@ export function renderPlanLimits(_harness: string): HTMLElement | null {
 const DESK_PLUS = '<path d="M12 5v14M5 12h14"/>';
 
 /** A group of radio chips: label-maker tape for the chosen one, blank tape for the rest. */
-function chips(name: string, legend: string, values: string[], value: string, onPick: (v: string) => void, note: HTMLElement | null = null): HTMLFieldSetElement {
+export function chips(name: string, legend: string, values: string[], value: string, onPick: (v: string) => void, note: HTMLElement | null = null): HTMLFieldSetElement {
   const row = h('div', { class: 'dd-chips' });
   for (const v of values) {
     const input = h('input', { type: 'radio', name, value: v, class: 'visually-hidden', 'data-key': `${name}:${v}` });
@@ -88,6 +92,8 @@ function chips(name: string, legend: string, values: string[], value: string, on
 export class HireDialog {
   private readonly dialog = h('dialog', { class: 'desk-dlg desk-dlg--hire', 'aria-labelledby': 'hire-title', 'aria-describedby': 'hire-sub' });
   private readonly head = h('header', { class: 'dd-head' });
+  /** M6 start: Hire worker | Hire orchestrator. */
+  private readonly tabs = h('div', { class: 'dd-tabs-slot' });
   private readonly form = h('form', { class: 'dd-body', id: 'hire-form', novalidate: true });
   private readonly statusEl = h('p', { class: 'dd-status', role: 'status' });
   private readonly alertEl = h('p', { class: 'dd-status dd-status--error', role: 'alert' });
@@ -116,7 +122,7 @@ export class HireDialog {
   ) {
     this.alertEl.hidden = true;
     this.statusEl.hidden = true;
-    this.dialog.append(this.head, this.form, this.foot);
+    this.dialog.append(this.head, this.tabs, this.form, this.foot);
     // A late answer (a prepare, or a hire sent before Esc) is for a dialog that is gone: it never touches the next one.
     this.dialog.addEventListener('close', () => {
       if (!this.dialog.open) this.gen++;
@@ -148,6 +154,11 @@ export class HireDialog {
 
   close(): void {
     if (this.dialog.open) this.dialog.close();
+  }
+
+  /** M6 start: the Orchestrator tab handed over: focus on this dialog's Worker tab, as in one tab list. */
+  focusTab(): void {
+    this.dialog.querySelector<HTMLElement>('[data-key="tab:worker"]')?.focus();
   }
 
   /** Opens the dialog for a desk of a floor and asks the bridge for the defaults. */
@@ -321,6 +332,21 @@ export class HireDialog {
       h('div', { class: 'dd-titles' }, h('h2', { id: 'hire-title' }, this.title()), h('p', { id: 'hire-sub' }, `${this.session} · ${where}`)),
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
     );
+    // M6 start: the orchestrator tab opens the start-run dialog for this desk.
+    const orch = this.host.orchestrate;
+    this.tabs.hidden = !orch;
+    if (orch)
+      this.tabs.replaceChildren(
+        deskTabs(
+          'worker',
+          () => {
+            if (this.state === 'hiring') return;
+            this.close();
+            orch.open(this.session, this.desk);
+          },
+          orch.off(),
+        ),
+      );
 
     const ready = this.state === 'ready';
     const busy = this.state === 'hiring' || this.state === 'preparing';

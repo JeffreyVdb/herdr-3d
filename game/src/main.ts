@@ -14,6 +14,9 @@ import type { PanelSummary } from './ui/panels';
 import type { SendHomeSummary } from './ui/sendHome';
 import type { ChangesSummary } from './ui/changes';
 import type { PromptSummary } from './ui/prompt';
+// M6 start
+import type { PresetsSummary } from './ui/presets';
+import type { StartRunOptions, StartRunSummary } from './ui/startRun';
 import type { NeedItem } from './world/next';
 import type { Area, BuildingPlan } from './world/building';
 import type { floorLayout } from './world/layout';
@@ -127,8 +130,12 @@ export interface H3DDebug {
   openHire(desk?: number): void;
   /** M4: opens the send-home dialog for a worker. */
   openSendHome(workerId: string): void;
-  /** M4: what the open hire / send-home dialog shows, null when neither is open. */
-  dialog(): HireSummary | SendHomeSummary | null;
+  /** M4: what the open hire / send-home dialog shows, null when neither is open; M6: the presets panel (on top), else the start-run dialog first. */
+  dialog(): HireSummary | SendHomeSummary | StartRunSummary | PresetsSummary | null;
+  /** M6: the start-run dialog for a floor (default: yours) and desk (default: its first free one), as the top bar's Run and M7 open it. */
+  openStartRun(o?: Partial<StartRunOptions>): void;
+  /** M6: the team presets panel. */
+  openPresets(): void;
   /** M4: workers walking in or out right now (phase, position, how far along, what their desk shows). */
   arrivals(): ArrivalInfo[];
   /** M4: walks that ended: `played` false when nobody could see it (it resolved at once). */
@@ -251,7 +258,9 @@ const h3d: H3DDebug = {
   connection: () => ({ phase: app?.conn.phase ?? 'stopped', epoch: app?.client.resume.epoch ?? null }),
   openHire: (desk) => app?.openHire(desk),
   openSendHome: (id) => app?.openSendHome(id),
-  dialog: () => app?.hire.summary() ?? app?.sendHome.summary() ?? null,
+  dialog: () => app?.presetsPanel.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.sendHome.summary() ?? null,
+  openStartRun: (o) => app?.openStartRun(o),
+  openPresets: () => app?.openPresets(),
   arrivals: () => app?.arrivals.info(performance.now() / 1000) ?? [],
   arrivalLog: () => structuredClone(app?.arrivals.log ?? []),
   arrivalRate: (k) => app?.arrivals.setRate(k, performance.now() / 1000),
