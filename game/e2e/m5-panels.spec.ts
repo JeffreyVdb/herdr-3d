@@ -13,7 +13,9 @@ import { frames, openGame, shot, watchErrors } from './game';
 // menu) — N visits them in that order, then the done ones. A prompt to an idle agent starts it working one sim
 // step later, done three steps after that.
 
-const SIM = 'play=none&sim=1&simms=150&simusage=0';
+// A prompt or an answer holds `working` for three sim steps: wide enough (1.5 s) for a test polling at
+// the pace of a loaded machine (llvmpipe, parallel workers) not to miss it.
+const SIM = 'play=none&sim=1&simms=500&simusage=0';
 
 type Panel = NonNullable<ReturnType<Window['__h3d']['panel']>>;
 type Prompt = Extract<Panel, { kind: 'prompt' }>;

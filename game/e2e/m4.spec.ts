@@ -290,7 +290,8 @@ test('send home a clean worker: delete worktree + branch, it packs a box, takes 
   const carrying = await walker(page, (a) => a.id === id && a.phase === 'walk' && a.walked > 2.5, 'Marble walks off with the box', 15_000);
   await page.evaluate(() => window.__h3d.arrivalRate(0.02));
   expect(carrying).toMatchObject({ box: 'carried', laptop: 'carried', items: 3, desk_show: 'free' });
-  expect((await desks(page))[2]).toEqual({ desk: 2, worker: null, plus: true, away: null });
+  // The desk follows the walk a frame later than the walker snapshot: poll, do not read once.
+  await expect.poll(async () => (await desks(page))[2]).toEqual({ desk: 2, worker: null, plus: true, away: null });
   await lookTowards(page, carrying.x, carrying.y + 0.4, carrying.z);
   await frames(page, 4);
   await shot(page, 'm4-walk-out');
