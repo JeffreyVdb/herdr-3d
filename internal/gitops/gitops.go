@@ -4,7 +4,8 @@
 // variables, each its own argv element (no shell), in a clean
 // environment. Only DeleteBranch changes a repository, and only a branch
 // the bridge made (h3d/…, and recorded as made for that worker by the
-// caller); Fetch only updates remote-tracking refs.
+// caller); Fetch only updates remote-tracking refs. Changes (the Changes
+// panel) only reads.
 package gitops
 
 import (
@@ -12,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,10 +35,20 @@ type Git struct {
 	// GIT_TERMINAL_PROMPT=0 and GIT_OPTIONAL_LOCKS=0, output capped).
 	// Tests inject a fake.
 	Run Runner
+	// Pipe runs argv streaming its stdout to w, uncapped (default: exec like
+	// Run; with only Run set, Run's output is written to w).
+	Pipe PipeRunner
+	// ChangesTimeout bounds all the git calls of one Changes together
+	// (default DefaultChangesTimeout).
+	ChangesTimeout time.Duration
 }
 
 // Runner runs one command and returns its stdout and stderr.
 type Runner func(ctx context.Context, argv []string) (stdout, stderr []byte, err error)
+
+// PipeRunner runs one command, writing its stdout to w, and returns its
+// stderr.
+type PipeRunner func(ctx context.Context, argv []string, w io.Writer) (stderr []byte, err error)
 
 // Errors.
 var (
@@ -58,6 +70,10 @@ const (
 	opBranchAhead  = "branch-unpushed"
 	opBranchTip    = "branch-tip"
 	opDeleteBranch = "delete-branch"
+	// The Changes panel (read-only).
+	opStatusV2  = "status-v2"
+	opMergeBase = "merge-base"
+	opDiff      = "diff"
 )
 
 // shapes is the complete set of git commands the bridge runs. {git} is
@@ -76,24 +92,67 @@ var shapes = map[string][]string{
 	opBranchTip:   {"{git}", "-C", "{dir}", "rev-parse", "--verify", "--quiet", "refs/heads/{branch}"},
 	// Only a branch the bridge made, after its commits were seen pushed.
 	opDeleteBranch: {"{git}", "-C", "{dir}", "branch", "-D", "{branch}"},
+	// The Changes panel: status, the merge-base with origin/<default>, and
+	// numstat + patch of the work tree against it in one call (one snapshot).
+	// No external diff or textconv programs run.
+	opStatusV2:  {"{git}", "-C", "{dir}", "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"},
+	opMergeBase: {"{git}", "-C", "{dir}", "merge-base", "HEAD", "{ref}"},
+	opDiff: {"{git}", "-C", "{dir}", "diff", "--numstat", "--patch", "-z", "--find-renames", "--no-color", "--no-ext-diff",
+		"--no-textconv", "--src-prefix=a/", "--dst-prefix=b/", "{rev}", "--"},
 }
 
 var placeholders = map[string]func(string) bool{
 	"dir":    herdr.ValidDir,
 	"ref":    herdr.ValidBase,
 	"branch": herdr.ValidBranch,
+	"rev":    validRev,
 }
 
 var placeholderRe = regexp.MustCompile(`\{[a-z]+\}`)
 
 func (g *Git) run(ctx context.Context, op string, vars map[string]string) ([]byte, error) {
+	var stdout []byte
+	err := g.exec(ctx, op, vars, func(ctx context.Context, argv []string) ([]byte, error) {
+		runner := g.Run
+		if runner == nil {
+			runner = execRunner
+		}
+		var stderr []byte
+		var err error
+		stdout, stderr, err = runner(ctx, argv)
+		return stderr, err
+	})
+	return stdout, err
+}
+
+// pipe runs op like run, streaming its stdout to w.
+func (g *Git) pipe(ctx context.Context, op string, vars map[string]string, w io.Writer) error {
+	return g.exec(ctx, op, vars, func(ctx context.Context, argv []string) ([]byte, error) {
+		switch {
+		case g.Pipe != nil:
+			return g.Pipe(ctx, argv, w)
+		case g.Run != nil:
+			stdout, stderr, err := g.Run(ctx, argv)
+			if _, werr := w.Write(stdout); err == nil {
+				err = werr
+			}
+			return stderr, err
+		}
+		return execPipe(ctx, argv, w)
+	})
+}
+
+// exec builds op's argv from its shape and validated vars and runs it
+// with the op's timeout.
+func (g *Git) exec(ctx context.Context, op string, vars map[string]string,
+	run func(ctx context.Context, argv []string) (stderr []byte, err error)) error {
 	shape, ok := shapes[op]
 	if !ok {
-		return nil, fmt.Errorf("%w: unknown operation %q", ErrNotAllowed, op)
+		return fmt.Errorf("%w: unknown operation %q", ErrNotAllowed, op)
 	}
 	for name, v := range vars {
 		if valid, known := placeholders[name]; !known || !valid(v) {
-			return nil, fmt.Errorf("%w: invalid %s %q", ErrNotAllowed, name, v)
+			return fmt.Errorf("%w: invalid %s %q", ErrNotAllowed, name, v)
 		}
 	}
 	argv := make([]string, len(shape))
@@ -115,7 +174,7 @@ func (g *Git) run(ctx context.Context, op string, vars map[string]string) ([]byt
 		})
 	}
 	if missing != nil {
-		return nil, missing
+		return missing
 	}
 	timeout := g.Timeout
 	if timeout <= 0 {
@@ -126,19 +185,15 @@ func (g *Git) run(ctx context.Context, op string, vars map[string]string) ([]byt
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	runner := g.Run
-	if runner == nil {
-		runner = execRunner
-	}
-	stdout, stderr, err := runner(ctx, argv)
+	stderr, err := run(ctx, argv)
 	if err != nil {
 		msg := strings.TrimSpace(string(stderr))
 		if ctx.Err() != nil {
 			msg = "timed out after " + timeout.String()
 		}
-		return stdout, &Error{Op: op, Err: err, Stderr: msg}
+		return &Error{Op: op, Err: err, Stderr: msg}
 	}
-	return stdout, nil
+	return nil
 }
 
 // Error is a git command that failed.
@@ -319,11 +374,25 @@ const maxOutput = 1 << 20
 
 func execRunner(ctx context.Context, argv []string) ([]byte, []byte, error) {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Env = append(herdr.CleanEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C")
+	cmd.Env = gitEnv()
 	var stdout, stderr capped
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
 	return stdout.Bytes(), stderr.Bytes(), err
+}
+
+func execPipe(ctx context.Context, argv []string, w io.Writer) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Env = gitEnv()
+	cmd.WaitDelay = time.Second
+	var stderr capped
+	cmd.Stdout, cmd.Stderr = w, &stderr
+	err := cmd.Run()
+	return stderr.Bytes(), err
+}
+
+func gitEnv() []string {
+	return append(herdr.CleanEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C")
 }
 
 type capped struct{ bytes.Buffer }

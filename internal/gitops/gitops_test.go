@@ -25,6 +25,11 @@ func TestGitAllowlist(t *testing.T) {
 		"branch-unpushed": {"{git}", "-C", "{dir}", "rev-list", "--count", "refs/heads/{branch}", "--not", "--remotes"},
 		"branch-tip":      {"{git}", "-C", "{dir}", "rev-parse", "--verify", "--quiet", "refs/heads/{branch}"},
 		"delete-branch":   {"{git}", "-C", "{dir}", "branch", "-D", "{branch}"},
+		// M5: the Changes panel, read-only.
+		"status-v2":  {"{git}", "-C", "{dir}", "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"},
+		"merge-base": {"{git}", "-C", "{dir}", "merge-base", "HEAD", "{ref}"},
+		"diff": {"{git}", "-C", "{dir}", "diff", "--numstat", "--patch", "-z", "--find-renames", "--no-color", "--no-ext-diff",
+			"--no-textconv", "--src-prefix=a/", "--dst-prefix=b/", "{rev}", "--"},
 	}
 	if !reflect.DeepEqual(shapes, want) {
 		t.Fatalf("shapes = %q", shapes)
@@ -34,8 +39,8 @@ func TestGitAllowlist(t *testing.T) {
 	for i := range typ.NumMethod() {
 		methods = append(methods, typ.Method(i).Name)
 	}
-	if w := []string{"BranchTip", "BranchUnpushed", "Commit", "CurrentBranch", "DefaultBranch", "DeleteBranch", "Fetch",
-		"Status", "TopLevel", "Unpushed"}; !slices.Equal(methods, w) {
+	if w := []string{"BranchTip", "BranchUnpushed", "Changes", "Commit", "CurrentBranch", "DefaultBranch", "DeleteBranch",
+		"Fetch", "Status", "TopLevel", "Unpushed"}; !slices.Equal(methods, w) {
 		t.Fatalf("Git methods = %v, want %v", methods, w)
 	}
 
@@ -51,6 +56,15 @@ func TestGitAllowlist(t *testing.T) {
 		"branch with flags": func() error { return g.DeleteBranch(ctx, "/r", "h3d/x -f") },
 		"foreign ahead":     func() error { _, err := g.BranchUnpushed(ctx, "/r", "main"); return err },
 		"foreign tip":       func() error { _, err := g.BranchTip(ctx, "/r", "--all"); return err },
+		"changes relative":  func() error { _, err := g.Changes(ctx, "repo"); return err },
+		"diff option": func() error {
+			return g.pipe(ctx, opDiff, map[string]string{"dir": "/r", "rev": "--output=/tmp/x"}, nil)
+		},
+		"diff range": func() error { return g.pipe(ctx, opDiff, map[string]string{"dir": "/r", "rev": "HEAD..x"}, nil) },
+		"merge-base local": func() error {
+			_, err := g.run(ctx, opMergeBase, map[string]string{"dir": "/r", "ref": "main"})
+			return err
+		},
 	} {
 		if err := call(); !errors.Is(err, ErrNotAllowed) {
 			t.Errorf("%s: err = %v, want ErrNotAllowed", name, err)
