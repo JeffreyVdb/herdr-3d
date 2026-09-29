@@ -188,7 +188,8 @@ func inputSteps(items []proto.InputItem) ([]inputStep, error) {
 		case herdr.IsSequenceKey(*it.Key):
 			steps = append(steps, inputStep{seq: *it.Key})
 		default:
-			return nil, bad("input[%d].key %q is not a key name (see docs/protocol.md \"Input\")", i, clip(*it.Key))
+			// Not quoted: it may be anything the client typed.
+			return nil, bad("input[%d].key (%d bytes) is not a key name (see docs/protocol.md \"Input\")", i, len(*it.Key))
 		}
 	}
 	return steps, nil

@@ -127,6 +127,7 @@ func TestInputIsAuditedWithoutTheText(t *testing.T) {
 	c.mustAck(proto.CmdWorkerKeys, proto.WorkerKeysArgs{ID: id, Input: []proto.InputItem{text("hunter2 secret"), key("enter")}})
 	c.mustError(proto.CmdWorkerKeys, proto.WorkerKeysArgs{ID: id, Input: []proto.InputItem{text("secret\n"), key("secret-key")}},
 		proto.ErrBadRequest)
+	c.mustError(proto.CmdWorkerKeys, proto.WorkerKeysArgs{ID: id, Input: []proto.InputItem{key("my secret")}}, proto.ErrBadRequest)
 	c.mustAck(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: id, Text: "the secret plan ✓"})
 	c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: id, Text: "secret\x00"}, proto.ErrBadRequest)
 	c.send(json.RawMessage(`{"t":"worker.keys","req_id":"x","args":{"id":"` + id + `","input":"secret"}}`))
@@ -143,9 +144,9 @@ func TestInputIsAuditedWithoutTheText(t *testing.T) {
 		}
 		rows = append(rows, row)
 	}
-	if len(rows) != 5 || !strings.Contains(rows[0], `"input":[{"text_bytes":14},{"key":"enter"}]`) ||
-		!strings.Contains(rows[1], `{"key":"(not a key, 10 bytes)"}`) || !strings.Contains(rows[2], `"text_bytes":19,"text_runes":17`) ||
-		!strings.Contains(rows[4], `"redacted":true`) {
+	if len(rows) != 6 || !strings.Contains(rows[0], `"input":[{"text_bytes":14},{"key":"enter"}]`) ||
+		!strings.Contains(rows[1], `{"key":"(not a key, 10 bytes)"}`) || !strings.Contains(rows[2], `(not a key, 9 bytes)`) ||
+		!strings.Contains(rows[3], `"text_bytes":19,"text_runes":17`) || !strings.Contains(rows[5], `"redacted":true`) {
 		t.Fatalf("audit rows:\n%s", strings.Join(rows, "\n"))
 	}
 }
