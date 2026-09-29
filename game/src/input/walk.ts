@@ -5,6 +5,8 @@ import { EYE_HEIGHT } from '../world/layout';
 const WALK = 2.3; // m/s
 const RUN = 4.6;
 const LOOK = 0.0022; // rad per mouse count
+/** ms after an unlock before the browser takes a new pointer lock request. */
+const LOCK_COOLDOWN = 1300;
 const TURN = 2; // rad/s with the arrow keys
 export const RADIUS = 0.28;
 export const PITCH_LIMIT = 1.35;
@@ -51,6 +53,11 @@ export class Walker {
   private seatK = 0;
   /** False once the browser refused pointer lock (e.g. headless). */
   lockAvailable = true;
+  /** Pointer lock has worked at least once: a later refusal is transient, not "this browser can't". */
+  private everLocked = false;
+  /** When the lock last dropped (Esc): browsers refuse a re-request for about a second after. */
+  private unlockedAt = -Infinity;
+  private retry: ReturnType<typeof setTimeout> | undefined;
   private readonly keys = new Set<string>();
   private run = false;
   private readonly ac = new AbortController();
@@ -65,6 +72,8 @@ export class Walker {
       'pointerlockchange',
       () => {
         this.locked = document.pointerLockElement === this.dom;
+        if (this.locked) this.everLocked = true;
+        else this.unlockedAt = performance.now();
         this.onLockChange(this.locked, false);
       },
       sig,
@@ -126,6 +135,14 @@ export class Walker {
       this.onLockChange(false, true);
       return;
     }
+    // Chrome refuses a request right after the user left the lock with Esc; the click's
+    // user activation outlives the wait, so ask again once the cooldown is over.
+    const wait = LOCK_COOLDOWN - (performance.now() - this.unlockedAt);
+    if (wait > 0) {
+      clearTimeout(this.retry);
+      this.retry = setTimeout(() => this.requestLock(), wait);
+      return;
+    }
     try {
       const p = this.dom.requestPointerLock() as unknown as Promise<void> | undefined;
       p?.catch?.(() => this.lockFailed());
@@ -135,11 +152,14 @@ export class Walker {
   }
 
   private lockFailed(): void {
+    // It worked before, so this refusal is a hiccup: stay in the room, the next click retries.
+    if (this.everLocked) return;
     this.lockAvailable = false;
     this.onLockChange(false, true);
   }
 
   release(): void {
+    clearTimeout(this.retry);
     if (document.pointerLockElement === this.dom) document.exitPointerLock();
   }
 
