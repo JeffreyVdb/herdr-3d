@@ -128,7 +128,14 @@ parts:
   `building_logo` (migration after `migrationBoards`) and announced with a `building.upsert`. `go test ./internal/logo`
   has generated PNGs (alpha, wide, tall, oversize, truncated), the two WebP fixtures in `internal/logo/testdata` (lossless
   and lossy with alpha, from `golang.org/x/image`'s test data), an animated WebP, and a table of hostile SVGs. Extending
-  the SVG subset means adding a test here first: the preflight in `svg.go` is the safety boundary, oksvg is not.
+  the SVG subset means adding a test here first: the preflight in `svg.go` is the safety boundary, oksvg is not. oksvg
+  matches local names and reads every attribute (`style=`, upper-case names, foreign namespaces), so `sanitizeSVG` does
+  not just check the upload: it re-serialises it (SVG-namespace elements from an allowlist, attributes from an allowlist
+  by exact name, `style=` cut down to checked presentation properties, foreign markup and text dropped) and oksvg reads
+  only that copy. A new element, attribute or style property therefore needs an entry in `svgElements`, `svgAttrs` or
+  `svgStyleProps` and its checks in `checkProp`, plus a row in `TestSVGRefusals` or `TestSVGForeignMarkupIsDropped`.
+  A `GET /logo/{id}?h=` with a hash that is not the current one is `404` (never the new image under the old hash), and
+  the game's `LogoCache` never files bytes under a hash they do not have.
 
 Everything else the bridge changes is its own SQLite database. How a wake and a sleep go, and what they log:
 [`docs/protocol.md` "Wake and sleep"](docs/protocol.md#wake-and-sleep); hiring and sending home:
@@ -438,8 +445,10 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   via `createImageBitmap`, disposed when no building has it), `src/render/logoFit.ts` (the letterbox), `src/render/logoSign.ts`
   (a lit plate with the logo letterboxed on it, over the name board it hides) used by `lobby.ts` for the entrance sign and
   the reception wall, and the city's signs in `city.ts` (`setLogos`; one instanced draw for the plates, a quad a logo,
-  colours change with sleep and wake, nothing is rebuilt). `App.syncLogos` follows the buildings' `logo` hashes; a swap, not
-  a rebuild of the lobby (the hash is not in the building's `shape` key). A logo that cannot be fetched leaves the name.
+  lit while a floor runs, dim when all sleep; a sleep or wake rebuilds the city, signs included, as it always did, and the
+  textures are not reloaded since they are cached by hash). `App.syncLogos` follows the buildings' `logo` hashes; a
+  texture swap in the lobby, not a rebuild of it (the hash is not in the building's `shape` key), and only the city's signs
+  are rebuilt for the city. A logo that cannot be fetched leaves the name.
   The Buildings panel has the control (`panels.ts` `logoRow`).
 - `src/world` — the world store (snapshot + events, fallbacks for an older bridge without `name`, `desk_index`,
   `harness`, `model`, `effort`, `status_since`, `floor.desks`, and M3's `transition`, `settings`, `suggested`,

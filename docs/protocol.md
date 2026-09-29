@@ -449,7 +449,7 @@ commands: a WebSocket message is capped at 256 KiB and a logo may be 1 MiB.
 |---|---|
 | `PUT /logo/{building}` | The raw file as the body (any `Content-Type`: the type is decided from the bytes). Cap: **1 MiB** (`1048576` bytes), enforced with `http.MaxBytesReader`: an upload over it is refused with `413`, never truncated. Answers `200` `{"t":"ack","data":{"id","logo","w","h","bytes"}}` (`logo` is the new hash; `w`,`h` the stored size), after the bridge stored it and sent the `building.upsert`. |
 | `DELETE /logo/{building}` | Removes the logo. `200` `{"t":"ack","data":{"id"}}` also when there was none; `404` for an unknown building. The `building.upsert` (without `logo`) follows. |
-| `GET /logo/{building}[?h=<hash>]` | The stored PNG (`Content-Type: image/png`, `nosniff`, `ETag: "<hash>"`, a sandboxing `Content-Security-Policy`). `404` without a logo. With `?h=` equal to the current hash it is `Cache-Control: public, max-age=31536000, immutable`; without it, or with an older hash, `no-cache` (the bytes behind that URL can change). `If-None-Match` gets `304`. |
+| `GET /logo/{building}[?h=<hash>]` | The stored PNG (`Content-Type: image/png`, `nosniff`, `ETag: "<hash>"`, a sandboxing `Content-Security-Policy`). `404` without a logo. With `?h=` equal to the current hash it is `Cache-Control: public, max-age=31536000, immutable`; without `?h=` it is `no-cache` and the *current* image. **With `?h=` that is not the current hash** (the logo was replaced or cleared since the client read the `building.upsert`) it is `404` `not_found`, `no-store`, and no image: the URL names bytes, and the bridge never answers it with other bytes. The client asks again when the building's next `building.upsert` carries the new hash. `If-None-Match` gets `304`. |
 
 A change goes through the hub like a command (audit log rows `building.logo.set` / `building.logo.clear`, with the hash and
 sizes but no image), so every client gets the `building.upsert` with the new `logo`, also a replay after a reconnect.
@@ -468,7 +468,16 @@ px**, aspect kept:
   `<text>`, `<script>`, `<foreignObject>`, `<style>`, filters, masks, nested `<svg>` roots, event handlers,
   `href`s other than `#fragment` gradient references and `url(…)` other than `url(#fragment)`, depth over 64, more than
   4096 elements, more than 32 attributes on one, path data over 128 KiB or 8192 path commands, a number over 1e6, scale
-  chains over 1000×, tiny dash arrays. Convert text to outlines before exporting.
+  chains over 1000×, tiny dash arrays, and dashed strokes whose estimated dash count (length ÷ shortest dash, plus the
+  dash offset ÷ shortest dash) is over 2 million. Convert text to outlines before exporting.
+  The renderer never sees the upload itself, only a **canonical copy** that the check writes: elements and attributes of
+  any namespace other than SVG (Inkscape, Sodipodi, RDF metadata, anything else; oksvg matches local names and would
+  otherwise read `<x:rect>` or `x:width` as SVG) are dropped with their content, as are text, comments, `class`, and every
+  attribute oksvg does not read (matched by exact name, so `STROKE-DASHOFFSET` and `Style` are dropped too), and
+  prefixed SVG-namespace elements are written with plain names. A `style="…"` attribute is kept, but only its
+  presentation declarations (`fill`, `stroke`, `stroke-*`, `opacity`, `fill-opacity`, `stroke-opacity`, `transform`), each
+  checked exactly like the attribute of the same name (numbers, dashes, transforms, `url(#…)`); other declarations are
+  dropped. The same attribute given twice (also under two prefixes) is refused as `logo_invalid`.
 - The stored bytes are a freshly encoded PNG, so no metadata or trailing data survives; the **hash** is the sha256 of those
   bytes (the same picture uploaded twice has the same hash, a different picture never does).
 - At most 2 conversions run at once; a request waits at most 10 s for a slot and 10 s for the result, else `503`
@@ -480,7 +489,7 @@ Errors are the protocol's error object (`{"t":"error","code","message"}`) with a
 
 | status | `code` | when |
 |---|---|---|
-| `404` | `not_found` | no such building (`PUT`, `DELETE`), or no logo (`GET`) |
+| `404` | `not_found` | no such building (`PUT`, `DELETE`), no logo (`GET`), or `GET` with a `?h=` that is not the current hash |
 | `413` | `logo_too_large` | the upload is over 1 MiB, or the image over 8192 px a side / 16 megapixels |
 | `415` | `logo_unsupported` | not PNG, WebP or SVG; an animated WebP; an SVG feature that is not drawn (the message names it) |
 | `422` | `logo_invalid` | empty, corrupt or truncated; an SVG that is not well-formed or draws nothing |
@@ -489,7 +498,10 @@ Errors are the protocol's error object (`{"t":"error","code","message"}`) with a
 | `403` `502` | | the helper's own (token, host or origin refused; the tunnel is down) |
 
 The game shows a logo when it has one and the image can be fetched; without one, or when the fetch fails, the sign shows
-the building's name as before. It fetches each hash once and keeps one texture per hash. `GET /logo/{building}?h=<hash>`
+the building's name as before. It fetches each hash once and keeps one texture per hash, and files an image under a hash
+only if the bytes have that sha256 (checked with `crypto.subtle`, else against the `ETag`): a `404` for a `?h=` hash, or
+bytes of another hash, is a *stale* miss that is not cached and does not block another building that advertises the same
+hash (it fetches with its own URL); the building's next `building.upsert` brings the new hash. `GET /logo/{building}?h=<hash>`
 through the helper carries `token=` like `/ws`.
 
 ### Floor settings

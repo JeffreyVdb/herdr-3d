@@ -454,8 +454,10 @@ export class CityView {
 
   /**
    * Lit while any floor of the building runs, dim once every floor sleeps, as
-   * the facade windows are. Only colours change: no geometry is rebuilt on a
-   * sleep or a wake.
+   * the facade windows are. This only sets colours. A floor going to sleep or
+   * waking is a structure change, so the city (signs included: `rebuildSigns`)
+   * is rebuilt with it, as before logos; the logo textures are not reloaded,
+   * because the cache holds them by hash.
    */
   private lightSigns(force = false): void {
     if (!this.plates) return;

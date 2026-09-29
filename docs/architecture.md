@@ -168,7 +168,8 @@ MacBook (M2 Max)                                   devbox (Linux)
   WebKit toggle for 120 Hz.
 - **Logos** (M3d): the entrance sign on the lobby canopy and the reception wall show the logo letterboxed on their own lit
   plate (the name board is hidden, not rebuilt); the city has a small tilted sign on the pavement in front of the building,
-  its plate and logo dimmed while every floor sleeps (colours only). One mipmapped, premultiplied texture per hash in a
+  its plate and logo dimmed while every floor sleeps (a sleep or wake rebuilds the city and its signs, as it does the
+  rest of the city; the textures are not reloaded, the cache holds them by hash). One mipmapped, premultiplied texture per hash in a
   shared cache, one instanced draw for the city's plates and one quad per logo. A failed fetch leaves the name. Accent
   colours taken from the logo for a canopy stripe were left out.
 - **Assets**: Kenney (CC0) furniture / props. Quaternius: check the license per pack (QAL 2026-08-28 on new packs), and don't
