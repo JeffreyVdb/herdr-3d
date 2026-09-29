@@ -80,6 +80,10 @@ export interface H3DDebug {
   reception(): ReturnType<import('./reception').Reception['debug']> | null;
   /** M3b: reception events the game detected (front door in / out, elevator arrival, E at the desk). */
   receptionEvents(): Array<{ ev: string; at: number; building: string | null }>;
+  /** M15: the office radio: its genre (`off` too), the track, whether it is sounding (on its floor, not muted, fade in), the music volume. */
+  radio(): { genre: string; trackId: string | null; playing: boolean; volume: number; muted: boolean } | null;
+  /** M15: what the radio did, in order: genre changes, tracks picked and started, skipped files, fades in and out. */
+  radioEvents(): Array<{ at: number; kind: string; genre?: string; trackId?: string; detail?: string }>;
   enterFloor(session: string, pose?: Pose): Promise<void>;
   /** Applies a protocol event as if the bridge had sent it (drives live updates deterministically). */
   inject(e: WorldEvent): void;
@@ -226,6 +230,8 @@ const h3d: H3DDebug = {
   },
   reception: () => app?.reception.debug() ?? null,
   receptionEvents: () => structuredClone(app?.receptionEvents ?? []),
+  radio: () => (app ? { ...app.radio.state } : null),
+  radioEvents: () => structuredClone([...(app?.radio.events ?? [])]),
   enterFloor: async (s, pose) => {
     await app?.enterFloor(s, pose ? { transition: false, pose } : { transition: false });
   },

@@ -8,3 +8,9 @@ bin/
 .DS_Store
 test-results/
 playwright-report/
+
+# Music: licensed tracks are fetched by `pnpm -C game music`, never committed.
+game/public/music/
+game/music/.cache/
+game/music/incoming/*
+!game/music/incoming/.gitkeep
