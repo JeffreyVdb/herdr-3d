@@ -52,11 +52,12 @@ func TestWorkerWorkItem(t *testing.T) {
 
 // Without a provider factory the M6 link stays as it was.
 func TestWorkItemNeedsBoards(t *testing.T) {
-	hb := startHireBridge(t, nil, runWorker("o", "ORCH|demo", runTokens("orch", "run-1")))
+	hb := startHireBridge(t, nil, runWorker("o", "ORCH|demo", runTokens("orch", "run-1")),
+		runWorker("c", "CODE|demo|7|r1", runTokens("code", "run-1")))
 	setRepo(hb.c, "s", "JeffreyVdb/lab")
-	ws := workersOf(hb.world(func(w proto.World) bool { return workersOf(w, "s")["o"].Issue != nil }), "s")
-	if ws["o"].WorkItem != nil {
-		t.Fatalf("work_item = %+v", ws["o"].WorkItem)
+	ws := workersOf(hb.world(func(w proto.World) bool { return workersOf(w, "s")["c"].Issue != nil }), "s")
+	if ws["c"].WorkItem != nil || ws["o"].WorkItem != nil {
+		t.Fatalf("work_item = %+v %+v", ws["c"].WorkItem, ws["o"].WorkItem)
 	}
 }
 

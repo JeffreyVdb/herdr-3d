@@ -513,6 +513,7 @@ func dumpMain(ctx context.Context, name string, args []string, stdout, stderr io
 	once := fs.Bool("once", false, "exit after the snapshot (or the replay)")
 	since := fs.Int64("since", -1, "replay events after this seq instead of taking a snapshot (needs -epoch)")
 	epoch := fs.String("epoch", "", "bridge epoch the -since seq belongs to (from a previous welcome)")
+	board := fs.String("board", "", "watch this floor's issue and pull request boards too (board.watch): with -once, stop at the first fetched pair")
 	if err := fs.Parse(args); err != nil {
 		return usageError(err)
 	}
@@ -531,9 +532,16 @@ func dumpMain(ctx context.Context, name string, args []string, stdout, stderr io
 		return err
 	}
 	fmt.Fprintf(stderr, "welcome: epoch=%s server_seq=%d resume=%s\n", welcome.Epoch, welcome.ServerSeq, welcome.Resume)
-	if *once && welcome.Resume == proto.ResumeReplay && hello.SinceSeq != nil && *hello.SinceSeq == welcome.ServerSeq {
+	if *once && *board == "" && welcome.Resume == proto.ResumeReplay && hello.SinceSeq != nil && *hello.SinceSeq == welcome.ServerSeq {
 		return nil
 	}
+	if *board != "" { // M7 boards
+		watch := proto.Command{T: proto.CmdBoardWatch, ReqID: "dump-board", Args: mustMarshal(proto.BoardArgs{Session: *board})}
+		if err := conn.Send(ctx, watch); err != nil {
+			return err
+		}
+	}
+	fetched := map[string]bool{}
 	for {
 		env, msg, err := conn.Read(ctx)
 		if err != nil {
@@ -544,6 +552,20 @@ func dumpMain(ctx context.Context, name string, args []string, stdout, stderr io
 		}
 		if _, err := fmt.Fprintf(stdout, "%s\n", msg); err != nil {
 			return err
+		}
+		if *board != "" && *once {
+			var b struct {
+				FetchedAt int64 `json:"fetched_at"`
+			}
+			if (env.T == proto.TBoardIssues || env.T == proto.TBoardPRs) && json.Unmarshal(msg, &b) == nil && b.FetchedAt > 0 {
+				fetched[env.T] = true
+			}
+			if env.T == proto.TError || (env.T == proto.TAck && strings.Contains(string(msg), `"enabled":false`)) ||
+				(fetched[proto.TBoardIssues] && fetched[proto.TBoardPRs]) {
+				_ = conn.Close()
+				return nil
+			}
+			continue
 		}
 		if *once && (env.T == proto.TSnapshot || (welcome.Resume == proto.ResumeReplay && env.Seq >= welcome.ServerSeq)) {
 			_ = conn.Close()
@@ -618,4 +640,12 @@ func dial(ctx context.Context, socket string) (*proto.Conn, error) {
 		return nil, fmt.Errorf("is herdr-world running? %w", err)
 	}
 	return conn, nil
+}
+
+func mustMarshal(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }

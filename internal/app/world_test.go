@@ -103,6 +103,12 @@ type running struct {
 
 func serve(t *testing.T, db string, lister *herdrtest.Lister) running {
 	t.Helper()
+	return serveWith(t, db, lister, nil)
+}
+
+// serveWith is serve with a change to the bridge's config.
+func serveWith(t *testing.T, db string, lister *herdrtest.Lister, tweak func(*ServeConfig)) running {
+	t.Helper()
 	dir, err := os.MkdirTemp("", "h3d")
 	if err != nil {
 		t.Fatal(err)
@@ -112,12 +118,14 @@ func serve(t *testing.T, db string, lister *herdrtest.Lister) running {
 	ctx, cancel := context.WithCancel(context.Background())
 	ready := make(chan struct{})
 	done := make(chan error, 1)
-	go func() {
-		done <- Serve(ctx, ServeConfig{
-			Socket: sock, DB: db, Herdr: lister, Poll: 50 * time.Millisecond, Resnapshot: time.Hour,
-			Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Name: "herdr-world", Ready: func() { close(ready) },
-		})
-	}()
+	cfg := ServeConfig{
+		Socket: sock, DB: db, Herdr: lister, Poll: 50 * time.Millisecond, Resnapshot: time.Hour,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Name: "herdr-world", Ready: func() { close(ready) },
+	}
+	if tweak != nil {
+		tweak(&cfg)
+	}
+	go func() { done <- Serve(ctx, cfg) }()
 	select {
 	case <-ready:
 	case err := <-done:
