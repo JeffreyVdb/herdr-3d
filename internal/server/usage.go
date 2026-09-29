@@ -1,9 +1,12 @@
 package server
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/codex"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/usage"
 )
@@ -18,6 +21,10 @@ type UsageConfig struct {
 	// DefaultUsageInterval); Throttle the least time between two
 	// worker.usage events of one worker (default DefaultUsageThrottle).
 	Interval, Throttle time.Duration
+	// FindCodex finds the session of a Codex agent herdr knows none of:
+	// the newest rollout recorded in cwd whose id skip does not refuse
+	// ("": none). Default: a codex.Finder on Roots.CodexSessions.
+	FindCodex func(cwd string, skip func(id string) bool) (string, error)
 }
 
 // Usage timings.
@@ -30,6 +37,9 @@ const (
 type usageWorker struct {
 	id, harness, session string
 	shown                bool // it has a usage now
+	// floor is its session; codexCwd the cwd of a Codex agent herdr knows
+	// no session of, to find its rollout by (else "").
+	floor, codexCwd string
 }
 
 // usageUpdate is a worker's new usage, or (nil) its usage gone.
@@ -45,6 +55,13 @@ type usageTracker struct {
 	keys     map[string]string         // worker id → harness/agent session
 	sessions map[string]*usage.Session // worker id → its session (nil: none to read)
 	throttle usageThrottle
+	found    map[string]foundCodex // worker id → the Codex session found for it by its cwd
+}
+
+// foundCodex is a Codex session found by a worker's cwd, and when.
+type foundCodex struct {
+	cwd, id string
+	at      time.Time
 }
 
 func newUsageTracker(cfg UsageConfig) *usageTracker {
@@ -57,8 +74,18 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 	if cfg.Throttle <= 0 {
 		cfg.Throttle = DefaultUsageThrottle
 	}
+	if cfg.FindCodex == nil {
+		f := &codex.Finder{Root: cfg.Roots.CodexSessions}
+		cfg.FindCodex = func(cwd string, skip func(string) bool) (string, error) {
+			if f.Root == "" {
+				return "", nil
+			}
+			return f.Find(cwd, skip)
+		}
+	}
 	return &usageTracker{cfg: cfg, keys: map[string]string{}, sessions: map[string]*usage.Session{},
-		throttle: usageThrottle{every: cfg.Throttle, shown: map[string]proto.Usage{}, at: map[string]time.Time{}}}
+		throttle: usageThrottle{every: cfg.Throttle, shown: map[string]proto.Usage{}, at: map[string]time.Time{}},
+		found:    map[string]foundCodex{}}
 }
 
 // trackUsage runs the tracker until ctx is done.
@@ -95,6 +122,7 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 
 // poll reads the workers' sessions and returns the updates to publish.
 func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
+	ws = tr.findCodex(ws, now)
 	var ups []usageUpdate
 	seen := map[string]bool{}
 	for _, w := range ws {
@@ -132,6 +160,71 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	return ups
 }
 
+// findCodex gives each Codex agent herdr knows no session of (it does not
+// report one: only the sleep backfill tells herdr) the session of the
+// newest rollout recorded in its cwd that no other worker of its floor
+// has, as the backfill picks it; looked for again every usage.MissRescan.
+// Only for its usage: herdr is never told, and the worker's agent_session
+// stays empty.
+func (tr *usageTracker) findCodex(ws []usageWorker, now time.Time) []usageWorker {
+	taken := map[string]map[string]bool{} // floor → the sessions its workers have
+	take := func(floor, id string) {
+		if taken[floor] == nil {
+			taken[floor] = map[string]bool{}
+		}
+		taken[floor][id] = true
+	}
+	var want []int
+	for i, w := range ws {
+		switch {
+		case w.session != "":
+			take(w.floor, w.session)
+		case w.codexCwd != "":
+			want = append(want, i)
+		}
+	}
+	for id := range tr.found {
+		if !slices.ContainsFunc(want, func(i int) bool { return ws[i].id == id }) {
+			delete(tr.found, id)
+		}
+	}
+	if len(want) == 0 {
+		return ws
+	}
+	due := func(w usageWorker) bool {
+		f, ok := tr.found[w.id]
+		return !ok || f.cwd != w.codexCwd || now.Sub(f.at) >= usage.MissRescan || now.Before(f.at)
+	}
+	// Those not due keep what they have (first, so a lookup skips it), then the lookups; each in id order.
+	slices.SortFunc(want, func(a, b int) int {
+		if da, db := due(ws[a]), due(ws[b]); da != db {
+			if da {
+				return 1
+			}
+			return -1
+		}
+		return cmp.Compare(ws[a].id, ws[b].id)
+	})
+	out := slices.Clone(ws)
+	for _, i := range want {
+		w := &out[i]
+		f := tr.found[w.id]
+		if due(*w) || taken[w.floor][f.id] {
+			id, err := tr.cfg.FindCodex(w.codexCwd, func(id string) bool { return taken[w.floor][id] })
+			if err != nil && f.cwd == w.codexCwd && !taken[w.floor][f.id] {
+				id = f.id // keep the last answer through a failed lookup
+			}
+			f = foundCodex{cwd: w.codexCwd, id: id, at: now}
+			tr.found[w.id] = f
+		}
+		if f.id != "" {
+			w.harness, w.session = usage.Codex, f.id
+			take(w.floor, f.id)
+		}
+	}
+	return out
+}
+
 // usageWorkers lists the workers for the tracker (on the hub goroutine)
 // and forgets the usage of workers that are gone.
 func (h *Hub) usageWorkers() []usageWorker {
@@ -141,7 +234,11 @@ func (h *Hub) usageWorkers() []usageWorker {
 		if harness == "" {
 			harness = w.AgentKind
 		}
-		ws = append(ws, usageWorker{id: id, harness: harness, session: w.AgentSession, shown: w.Usage != nil})
+		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, shown: w.Usage != nil, floor: w.Session}
+		if w.AgentSession == "" && w.AgentKind == usage.Codex && w.Cwd != "" {
+			uw.codexCwd = w.Cwd
+		}
+		ws = append(ws, uw)
 	}
 	for id := range h.usage {
 		if h.workers[id] == nil {

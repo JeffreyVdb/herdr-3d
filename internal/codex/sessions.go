@@ -43,22 +43,53 @@ var (
 // recorded cwd is cwd, skipping ids for which skip returns true. It
 // returns "" when there is none (or root does not exist).
 func FindSession(root, cwd string, skip func(id string) bool) (string, error) {
+	return (&Finder{Root: root}).Find(cwd, skip)
+}
+
+// Finder is FindSession for a caller that looks often (the usage of Codex
+// workers herdr knows no session of): it remembers each rollout's
+// session_meta, which never changes, so a lookup only lists directories
+// and reads the first lines of new files (and of ones it could not read
+// yet, e.g. still being written). Not safe for concurrent use.
+type Finder struct {
+	Root  string
+	metas map[string]rolloutMeta // path → its session_meta
+}
+
+type rolloutMeta struct {
+	id, cwd string
+	ok      bool
+}
+
+// maxMetas bounds what a Finder remembers; past it, it starts afresh.
+const maxMetas = 4 * MaxScan
+
+// Find is FindSession under f.Root.
+func (f *Finder) Find(cwd string, skip func(id string) bool) (string, error) {
 	if cwd == "" {
 		return "", nil
+	}
+	if f.metas == nil || len(f.metas) > maxMetas {
+		f.metas = map[string]rolloutMeta{}
 	}
 	cwd = filepath.Clean(cwd)
 	scanned := 0
 	var found string
 	errStop := errors.New("stop")
-	err := walkNewest(root, 3, func(path string) error {
+	err := walkNewest(f.Root, 3, func(path string) error {
 		if scanned++; scanned > MaxScan {
 			return errStop
 		}
-		id, dir, ok := readMeta(path)
-		if !ok || filepath.Clean(dir) != cwd || !idRe.MatchString(id) || (skip != nil && skip(id)) {
+		m, seen := f.metas[path]
+		if !seen {
+			if m.id, m.cwd, m.ok = readMeta(path); m.ok {
+				f.metas[path] = m
+			}
+		}
+		if !m.ok || filepath.Clean(m.cwd) != cwd || !idRe.MatchString(m.id) || (skip != nil && skip(m.id)) {
 			return nil
 		}
-		found = id
+		found = m.id
 		return errStop
 	})
 	if err != nil && !errors.Is(err, errStop) {

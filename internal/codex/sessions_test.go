@@ -68,6 +68,34 @@ func TestFindSession(t *testing.T) {
 	}
 }
 
+// A Finder reads a rollout's first line once, and one it could not read
+// (still being written) again the next time.
+func TestFinderRemembers(t *testing.T) {
+	root := t.TempDir()
+	rollout(t, root, "2026/09/28", "2026-09-28T10-00-00", "01a0-morning", "/home/u/repo")
+	f := &Finder{Root: root}
+	if got, err := f.Find("/home/u/repo", nil); got != "01a0-morning" || err != nil {
+		t.Fatalf("first = %q, %v", got, err)
+	}
+	// Its first line changed on disk (it never does): the remembered one counts.
+	rollout(t, root, "2026/09/28", "2026-09-28T10-00-00", "01a0-morning", "/home/u/other")
+	if got, _ := f.Find("/home/u/repo", nil); got != "01a0-morning" {
+		t.Fatalf("remembered = %q", got)
+	}
+	// A new rollout whose first line is not complete yet, then is.
+	partial := filepath.Join(root, "2026", "09", "28", "rollout-2026-09-28T11-00-00-01a0-late.jsonl")
+	if err := os.WriteFile(partial, []byte(`{"type":"session_meta","payload":{"id":"01a0-la`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := f.Find("/home/u/repo", nil); got != "01a0-morning" {
+		t.Fatalf("with a partial one = %q", got)
+	}
+	rollout(t, root, "2026/09/28", "2026-09-28T11-00-00", "01a0-late", "/home/u/repo")
+	if got, _ := f.Find("/home/u/repo", nil); got != "01a0-late" {
+		t.Fatalf("once written = %q", got)
+	}
+}
+
 func TestDefaultSessionsDir(t *testing.T) {
 	t.Setenv("CODEX_HOME", "/opt/codex")
 	if got := DefaultSessionsDir(); got != "/opt/codex/sessions" {

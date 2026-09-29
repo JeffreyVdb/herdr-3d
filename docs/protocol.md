@@ -161,7 +161,7 @@ floor with no workers and an `error`).
 | `resume` | `pending` \| `confirmed` \| `fallback` \| `failed`, optional | only during and after a wake, for workers with an `agent_session`: how their agent came back (see [Wake and sleep](#wake-and-sleep)). Cleared by the next sleep and by a bridge restart. |
 | `hired_at` | int, optional | unix ms when the bridge hired this worker (`worker.hire`; stored). A client that first sees a worker with a recent `hired_at` (the game: under ~15 s) plays its walk-in. |
 | `branch` | string, optional | the checked-out branch of a worker in a linked worktree (`worktree.linked`), when known (read from the checkout's git `HEAD`; absent on a detached `HEAD`) |
-| `usage` | object, optional | M5: its agent session's token counts and cost estimate (see [Usage and cost](#usage-and-cost)); absent without an `agent_session`, or until the bridge found its transcript |
+| `usage` | object, optional | M5: its agent session's token counts and cost estimate (see [Usage and cost](#usage-and-cost)); absent without an `agent_session` (a running Codex excepted), or until the bridge found its transcript |
 | `question` | object, optional | M5: what the screen of a `blocked` worker asks, while it is blocked (see [Blocked workers](#blocked-workers-question-quick-reply-approve--deny)) |
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
@@ -778,8 +778,8 @@ Worker field **`usage`** (in snapshots and `worker.upsert`) and event **`worker.
 - `worker.usage` is a world event (it has a `seq` and is replayed). It goes out when the usage changed (anything but
   `updated_at`), and **at most once per 5 s per worker**: a change within 5 s of the last one waits, then goes out as
   the latest value. A worker's first usage goes out as soon as it is read. A worker that loses its `agent_session`
-  loses its `usage` (`worker.upsert` without it). Workers without an `agent_session` (plain shells, a fresh Codex
-  before the sleep backfill: Codex does not report its session to herdr) have none.
+  loses its `usage` (`worker.upsert` without it). Workers without an `agent_session` have none (plain shells), except
+  a running Codex (below).
 - The bridge checks every worker's transcripts every 2 s, reading from a stored byte offset: complete lines only (an
   incomplete last line waits for the next read), so appending a line reads only that line. A file that shrank or was
   replaced is read again from the start and its session counted afresh. A transcript not found is looked for again at
@@ -809,7 +809,13 @@ derived from the cwd) and its subagents' `<that directory>/<agent_session>/subag
   estimate of what the next turn starts with, not Claude Code's own figure; subagents' contexts are not in it.
 
 **Codex** rollouts: `<--codex-sessions>/YYYY/MM/DD/rollout-*-<agent_session>.jsonl` whose first line's
-`session_meta.payload.id` is the session.
+`session_meta.payload.id` is the session. Codex does not report its session to herdr, so a live Codex worker usually
+has no `agent_session` (until the sleep backfill tells herdr). For its usage the bridge then picks the rollout the
+backfill would: the newest whose `session_meta.payload.cwd` is the worker's `cwd` and whose session no other worker of
+its floor has (their own `agent_session`, or one picked this way first, in worker id order). It looks again every 30 s
+(a newer rollout there, e.g. after `/new`, takes over) and remembers each rollout's first line, so a lookup reads only
+new files. This is read-only and only for `usage`: herdr is not told, and the worker's `agent_session` stays empty.
+Two Codex agents started in the same folder can get each other's rollout.
 
 - The last `event_msg` of `payload.type: "token_count"` with an `info` holds the totals: `info.total_token_usage` with
   `input_tokens` (cached input and cache writes included), `cached_input_tokens`, `cache_write_input_tokens`,
