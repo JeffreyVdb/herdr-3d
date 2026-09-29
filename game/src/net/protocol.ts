@@ -690,3 +690,51 @@ export interface RunStartAck extends HireAck {
   launch_id: string;
   prompt: string;
 }
+
+// M6 crew: write-code runs and freelancers (docs/protocol.md "Runs and freelancers"). All optional; an older bridge
+// sends none of them (the game then reads the role from the label and shows no report, phase or pass).
+
+/** M6: the GitHub issue a run works on. */
+export interface WorkerIssue {
+  /** `owner/name`. */
+  repo: string;
+  number: number;
+}
+
+/** M6: a freelancer's report as the bridge read it (`<runs-dir>/<h3d_run>/<h3d_report>`). */
+export interface WorkerReport {
+  /** `pending` (no file yet), `ready`, `invalid`. */
+  state: 'pending' | 'ready' | 'invalid' | string;
+  /** Unix ms, the file's mtime. */
+  at?: number;
+  /** Reviewers: `PASS` | `CHANGES_REQUIRED` | `INCOMPLETE`. */
+  verdict?: string;
+  /** Reviewers: `issues_found` with priority BLOCKER, and all of them. */
+  blockers?: number;
+  issues?: number;
+  /** The worker is blocked on its orchestrator or you (≤ 500 bytes). */
+  input_required?: string | null;
+  /** Coders / researchers: the first 300 bytes of their summary. */
+  summary?: string;
+  /** `invalid`: why. */
+  error?: string;
+}
+
+// Declaration merging: the M6 fields of a worker, next to the ones above.
+export interface Worker {
+  /** M6: the write-code round (`h3d_round`, else the label's `|r<N>`). */
+  round?: number;
+  /** M6: the ticket field of a freelancer's label (or `h3d_ticket`). */
+  ticket?: string;
+  issue?: WorkerIssue;
+  /** M6, freelancers: the worker id of its orchestrator. */
+  orch_id?: string;
+  /** M6, orchestrators: `research|coding|review|fixing|waiting_user|pr|done` (others passed through). */
+  phase?: string;
+  /** M6, orchestrators: review passes so far. */
+  pass?: number;
+  /** M6, orchestrators: past the 3-pass cap (or at it, waiting for you). */
+  over_cap?: boolean;
+  /** M6, freelancers with a report token. */
+  report?: WorkerReport;
+}

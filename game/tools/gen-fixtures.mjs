@@ -401,6 +401,111 @@ function demoM5() {
   return [snap];
 }
 
+// ---- demo-m6: demo-m5 with two write-code runs on a lab floor ------------------
+// M6 crew: a `lab` floor on top of Work holds two synthetic runs read from
+// fixtures/runs/<run>/ (see its README): the over-cap orchestrator with its
+// pass-3 crew in the first pod, and a run with every other freelancer state.
+// Workers get the fields the bridge derives (contract §1): role, run, round,
+// ticket, issue, orch_id, phase / pass / over_cap, and each freelancer's report
+// read and cut the way the bridge does it. For the simulating fixture server
+// (`?sim=1`): `sim.crew` then walks a scripted freelancer in and out.
+
+const RUNS = join(OUT, 'runs');
+const PASS_CAP = 3;
+
+/** Cuts `s` to at most `n` UTF-8 bytes without splitting a character. */
+function cutBytes(s, n) {
+  const b = Buffer.from(s, 'utf8');
+  if (b.length <= n) return s;
+  let end = n;
+  while (end > 0 && (b[end] & 0xc0) === 0x80) end--;
+  return b.subarray(0, end).toString('utf8');
+}
+
+/** A report file as the bridge summarises it (contract §1.2). */
+function readReport(run, name, mtime) {
+  let v;
+  try {
+    v = JSON.parse(readFileSync(join(RUNS, run, name), 'utf8'));
+  } catch {
+    return { state: 'pending' };
+  }
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return { state: 'invalid', at: mtime, error: 'not a JSON object' };
+  const r = { state: 'ready', at: mtime };
+  if ('verdict' in v) {
+    if (!['PASS', 'CHANGES_REQUIRED', 'INCOMPLETE'].includes(v.verdict)) return { state: 'invalid', at: mtime, error: `bad verdict ${JSON.stringify(v.verdict)}` };
+    const issues = Array.isArray(v.issues_found) ? v.issues_found : [];
+    r.verdict = v.verdict;
+    r.blockers = issues.filter((i) => i && i.priority === 'BLOCKER').length;
+    r.issues = issues.length;
+  }
+  r.input_required = typeof v.input_required === 'string' && v.input_required ? cutBytes(v.input_required, 500) : null;
+  if (typeof v.summary === 'string') r.summary = cutBytes(v.summary, 300);
+  return r;
+}
+
+function demoM6() {
+  const [base] = demoM5();
+  const snap = structuredClone(base);
+  const w = snap.world;
+  const r = rng(66);
+  const session = 'lab';
+  const cwd = '/home/dev/devel/lab';
+  const work = w.buildings.find((b) => b.name === 'Work');
+  work.floors = [session, ...work.floors];
+  work.floors.forEach((s, index) => {
+    const f = w.floors.find((x) => x.session === s);
+    if (f) f.index = index;
+  });
+  const floor = {
+    session, state: 'running', building: work.id, index: 0, desks: 14,
+    settings: { repo: 'JeffreyVdb/lab' }, suggested: { repo: 'JeffreyVdb/lab', default_cwd: cwd },
+  };
+  w.floors.splice(0, 0, floor);
+  const names = ['Sprout', 'Clementine', 'Fig', 'Pretzel', 'Juniper', 'Walnut', 'Basil', 'Maple', 'Cashew', 'Poppy', 'Radish', 'Saffron', 'Turnip'];
+  let k = 0;
+  const workers = [];
+  // Desks the bridge would give: each run's freelancers nearest their orchestrator (pods of 4).
+  const seats = { '20260928-1400-overcap': [0, 1, 2, 3], '20260928-1500-lobby': [4, 5, 6, 7, 8, 9, 10, 11] };
+  for (const run of Object.keys(seats)) {
+    const spec = JSON.parse(readFileSync(join(RUNS, run, 'workspaces.json'), 'utf8'));
+    const issue = { repo: spec.repo, number: spec.issue };
+    let orch = null;
+    spec.workspaces.forEach((ws, i) => {
+      const t = ws.tokens;
+      const x = worker({
+        r, session, i: k, name: names[k], desk: seats[run][i], status: ws.status, title: ws.title || undefined,
+        label: ws.label, model: ws.agent ? ws.model : undefined, cwd,
+      });
+      k++;
+      // No agent yet (just hired): the bridge knows the harness from the tokens, not the pane.
+      if (!ws.agent) Object.assign(x, { harness: ws.model[0], model: ws.model[1], effort: ws.model[2] });
+      x.tokens = t;
+      x.role = t.h3d_role;
+      x.run = t.h3d_run;
+      const round = t.h3d_round ?? /\|r(\d+)$/.exec(ws.label)?.[1];
+      if (round) x.round = Number(round);
+      const parts = ws.label.split('|');
+      if (parts.length === 4) x.ticket = parts[2];
+      x.issue = issue;
+      if (t.h3d_role === 'orch') {
+        orch = x;
+        x.phase = t.h3d_phase;
+        x.pass = Number(t.h3d_pass);
+        if (x.pass > PASS_CAP || (x.pass === PASS_CAP && x.phase === 'waiting_user')) x.over_cap = true;
+      } else {
+        x.orch_id = orch.id;
+        x.report = t.h3d_report ? readReport(run, t.h3d_report, T0 - 600_000 + i * 45_000) : undefined;
+      }
+      workers.push(x);
+    });
+  }
+  // A plain employee on the floor too (no run, no role).
+  workers.push(worker({ r, session, i: k, name: names[k], desk: 12, status: 'working', title: 'Tidy the README', label: 'readme', model: MODELS[0], cwd }));
+  w.workers.push(...workers);
+  return [snap];
+}
+
 // ---- perf: one floor with 60 workers ------------------------------------------
 
 const STATES = ['working', 'working', 'working', 'working', 'idle', 'done', 'blocked', 'working', 'idle', 'working'];
@@ -484,6 +589,8 @@ function perfCity240() {
 const FIXTURES = { demo, 'demo-m3': demoM3, 'demo-m3b': demoM3b, 'demo-m4': demoM4, 'perf-floor60': perfFloor60, 'perf-floor96': perfFloor96, 'perf-city240': perfCity240 };
 // M5 panels
 FIXTURES['demo-m5'] = demoM5;
+// M6 crew
+FIXTURES['demo-m6'] = demoM6;
 
 const check = process.argv.includes('--check');
 let stale = false;

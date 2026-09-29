@@ -252,6 +252,8 @@ export class CityView {
     const x = f.origin.x + s.seat.x * S;
     const z = f.origin.z + s.seat.z * S;
     const mem = v ? memberOf(v) : null;
+    // M6: a crew's looks are too small to see from the city: no draw calls for them here.
+    if (mem) delete mem.crew;
     this.desks.set(g, { x, y: f.origin.y, z, yaw: s.yaw, scale: S, display: mem?.display ?? null, cueColor: mem?.cue.color ?? 0xffffff });
     if (v && mem) {
       this.crowd.set(g, { x, y: f.origin.y + SEAT_Y * S, z, yaw: s.yaw, scale: S, ...mem });

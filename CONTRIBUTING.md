@@ -366,13 +366,20 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   world's `presets` and their events, by name; `known` false from an older bridge, which sends none) and the start-run
   dialog's state (`startRun.ts`: the one ticket input read as an issue number of the floor's repo, an issue URL or free
   text; the prompt preview's generated / custom states; what blocks Start or a preset's Save; the args of
-  `run.prepare`, `run.start` and `preset.update`). Pure logic, covered by vitest.
+  `run.prepare`, `run.start` and `preset.update`); write-code crews (`crew.ts`: the
+  role from `role` or the label, a freelancer's lifecycle hired → onboarding → working → blocked / reporting from its
+  status, report and whether it worked since first seen, verdict stamps, the ORCH's phase / pass and over-cap; an
+  over-cap ORCH and a freelancer whose report asks count as needing you). Pure logic, covered by vitest.
 - `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy;
   M3b: the walk scene (`walk.ts`), the building and street from outside (`outside.ts`, baked into one mesh by
   `bake.ts`) and the lobby (`lobby.ts`). M3c: the corner office (`mezzanine.ts`: two merged vertex-coloured toon
   meshes, its glass merged into the office's window glass, one material). M4: `arrivals.ts` draws the walks (standing
   workers, the cardboard box with a mug, a plant and a photo, the closed laptop); the office shows a desk someone packs
-  up at or walks in to without its "+" (`OfficeView.setAway`).
+  up at or walks in to without its "+" (`OfficeView.setAway`). M6: the crew's looks (`crewLook.ts`: role wear, desk
+  items, the ORCH's pass board, the brief, the report folder with its verdict stamp, sweat and a red alarm clock over
+  the cap, a run-coloured badge; one InstancedMesh per part on the crowd, hidden while nobody wears it, none in the
+  city), the card's role tag, stamp and crew lines (`cards/crewCard.ts`), and freelancers walking in and out with a
+  briefcase, waving goodbye (`arrival.ts` `carry: 'briefcase'`).
   Cards and city badges are canvas atlases drawn as one instanced quad batch each (a cell per worker / floor, redrawn
   only when it changes). A DOM layer was benchmarked on the Mac and lost: moving DOM elements over the canvas cost
   2.6–4.3 ms of main thread per frame for 24 cards and ~8 ms for 30 city badges, against 0.5 ms for the atlas. The DOM
@@ -399,7 +406,7 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   confirmations; modal `<dialog>`s that re-render live and keep focus); M4: the hire dialog (`hire.ts`) and the
   send-home dialog (`sendHome.ts`), styled in `hire.css`; M6: the start-run dialog (`startRun.ts`, the empty desk's
   "Hire orchestrator" tab from `deskTabs.ts`, the top bar's Run and Presets from `startButtons.ts`) and the team presets
-  panel (`presets.ts`), styled in `start.css`; M5: the prompt overlay (`prompt.ts`, P: a modal like the M4
+  panel (`presets.ts`), styled in `start.css`, and the prompt bar's crew line (`crewBar.ts`, `crew.css`); M5: the prompt overlay (`prompt.ts`, P: a modal like the M4
   dialogs, low on the screen), the Changes panel (`changes.ts`, C: a non-modal side panel in the HUD under the top bar,
   so the floor stays in view and walkable; its diff is drawn a window of lines at a time), the look-at bar's usage and
   Approve / Deny (`promptBar.ts`), styled in `m5.css`, and the seat bar (`seat.ts`, `seat.css`). Hidden, named hooks
@@ -413,7 +420,10 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   herdr-3d and pastry, and herdr-3d's docs worker in the repo's main checkout), `demo-m5` (demo-m4 with a `question`
   on each blocked worker, shaped like the bridge's captured screens: Claude Code's trust dialog with "No, exit" first,
   its AskUserQuestion menu and a Bash permission, a Codex approval, one without a menu; and `usage` on most agents, one
-  priced as an unknown model, one with no model yet), `perf-floor60`, `perf-floor96` (96
+  priced as an unknown model, one with no model yet), `demo-m6` (demo-m5 with a `lab` floor on top of Work holding
+  two write-code runs built from the synthetic run dirs in `fixtures/runs/` (see its README) the way the bridge reads
+  them: the over-cap ORCH at pass 3 waiting for you with its pass-3 crew in its pod, REVIEW r3 `CHANGES_REQUIRED`
+  with 2 blockers; and a run with every other freelancer state, each verdict and an `input_required`), `perf-floor60`, `perf-floor96` (96
   desks, every worker needs you: the corner office's worst case), `perf-city240`. `pnpm fixtures` regenerates them,
   `pnpm fixtures:check` flags stale files.
   Like the bridge, a building lists its floors top to bottom, which is `index` order (index 0 on top); vitest fails
@@ -432,8 +442,10 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   `/scratch`; working agents send `worker.usage` every `simusage` ms); M6: `fixture-start.ts`, whose rules are at its
   top: "Build team" is seeded, presets are validated like the bridge's, `run.prepare` composes the prompt exactly like
   its prompt builder, `run.start` is the M4 hire (the ORCH gets `role: orch` and its `run` from the label, the floor its
-  `last_preset`), and `simfail=no_m6` plays an M5 bridge (no `presets`, every M6 command `unknown_command`), dev
-  WebSocket → unix-socket proxy,
+  `last_preset`), and `simfail=no_m6` plays an M5 bridge (no `presets`, every M6 command `unknown_command`); `fixture-crew.ts`, a scripted freelancer:
+  `sim.crew {step: hire|onboard|work|report|leave}` (the simulator's own, like `sim.watches`) seats a `CODE`
+  freelancer of an ORCH's run at the free desk nearest it, gives it an agent, sets it working, hands in its report
+  (`verdict` / `blockers` / `input_required` / `summary`) and closes it; `simcrew=<ms>` plays that round by itself), dev WebSocket → unix-socket proxy,
   throwaway-herdr helper, live (`live-*.ts`) and Mac perf drivers.
 
 Run it:
@@ -442,6 +454,7 @@ Run it:
 make dev   # then open http://127.0.0.1:<port>/?ws=/fixture/demo   (Vite serves fixtures at /fixture/<name>)
            # M3 panels without a bridge: ?ws=%2Ffixture%2Fdemo-m3%3Fsim%3D1   (the ws value URL-encoded)
            # M4 hire / send home: ?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simcap%3Dscratchpad%3A3%3A4
+           # M6 crews: ?ws=%2Ffixture%2Fdemo-m6%3Fsim%3D1%26simcrew%3D4000&floor=lab
 pnpm -C game fixture-server   # standalone fixture server on a leased port: ?ws=ws://127.0.0.1:<port>/ws
 pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering commands on every connection
 # against a private bridge: node game/tools/ws-unix-proxy.ts --port <leased> --socket <bridge.sock>, then ?ws=ws://127.0.0.1:<leased>/ws
@@ -449,7 +462,7 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 
 | query param | effect |
 |---|---|
-| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors) |
+| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors; M6: `simcrew=<ms>` walks a scripted freelancer in and out) |
 | `backend=webgl2` | force WebGL2 |
 | `screens=<n>` | M5: how many laptops around you are live (default 4, at most 5; `0` watches none: only the laptop you sit at is watched) |
 | `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |
@@ -745,6 +758,11 @@ floor N preselected). `cards()` entries add `ask` (a question: text, choices, se
 worker's line) and `tall`. `needs()` (who needs you in N's order), `nextNeed()` (presses N: who it went to),
 `openPrompt(id)`, `openChanges(id)`, `face(id)` (stands you facing a worker of your floor, as N does; true when look-at
 picks it).
+
+M6 crew: `crew()` (the floor with an interior: per crew member its `desk`, `role`, `life`, `overCap`, `stamp`, `run`,
+`display` and the crew `parts` drawn at its desk; `shown`: the crew parts drawn at all), `simCrew(args)` (one
+`sim.crew` step of the simulator's scripted freelancer). `cards()` entries add `tag`, `stamp` and `crew` (the
+looked-at crew member's lines); `arrivals()` add `carry` (box | briefcase), `briefcase` and `wave`.
 
 ### Audio and voice lines
 

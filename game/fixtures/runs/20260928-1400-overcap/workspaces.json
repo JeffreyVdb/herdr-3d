@@ -1,0 +1,18 @@
+{
+  "repo": "JeffreyVdb/lab",
+  "issue": 3,
+  "workspaces": [
+    { "label": "ORCH|overcap", "agent": "claude", "status": "idle", "title": "Orchestrating #3: pass 3 still has blockers",
+      "model": ["claude", "claude-opus-5-5", "medium"],
+      "tokens": { "h3d_role": "orch", "h3d_run": "20260928-1400-overcap", "h3d_phase": "waiting_user", "h3d_pass": "3" } },
+    { "label": "CODE|overcap|3|r3", "agent": "claude", "status": "done", "title": "Fix pass 2 blockers in the port picker",
+      "model": ["claude", "claude-opus-5-5", "medium"],
+      "tokens": { "h3d_role": "code", "h3d_run": "20260928-1400-overcap", "h3d_round": "3", "h3d_report": "code-overcap-r3.json" } },
+    { "label": "REVIEW|overcap|3|r3", "agent": "codex", "status": "done", "title": "Review r3: port picker fixes",
+      "model": ["codex", "gpt-6-sol", "high"],
+      "tokens": { "h3d_role": "review", "h3d_run": "20260928-1400-overcap", "h3d_round": "3", "h3d_report": "review-overcap-r3.json" } },
+    { "label": "UX|overcap|3|r3", "agent": "codex", "status": "done", "title": "UX r3: settings dialog",
+      "model": ["codex", "gpt-6-sol", "high"],
+      "tokens": { "h3d_role": "ux", "h3d_run": "20260928-1400-overcap", "h3d_round": "3", "h3d_report": "ux-overcap-r3.json" } }
+  ]
+}

@@ -10,6 +10,7 @@ import {
   STAND_LIFT,
   STAND_S,
   TAKE_LAPTOP_AT,
+  WAVE_S,
   WALK_SPEED,
   cumulative,
   deskOwners,
@@ -159,5 +160,47 @@ describe('desk owners while walks overlap', () => {
   it('start order decides, not the kind of walk', () => {
     // Start order matters, not the kind: a walk-out that started after a walk-in owns the desk.
     expect(deskOwners([], [away('f', 3, 'empty', 'in first'), away('f', 3, 'busy', 'out later')])).toEqual([away('f', 3, 'busy', 'out later')]);
+  });
+});
+
+// M6: freelancers walk in and out with a briefcase, and wave goodbye before they go.
+describe('the freelancer walks (M6)', () => {
+  const route = walkOutRoute(floors[0]!, plan, 0, 3);
+  const yaw = floors[0]!.slots[3]!.yaw;
+
+  it('leaving: stands up, waves with the briefcase in hand, walks out; no box, no packing', () => {
+    const tl = timeline('out', route, yaw, 'briefcase');
+    expect(tl.carry).toBe('briefcase');
+    expect(tl.stages.map((s) => s.phase)).toEqual(['stand', 'wave', 'walk', 'vanish']);
+    expect(tl.total).toBeCloseTo(STAND_S + WAVE_S + tl.length / WALK_SPEED + 0.5, 5);
+    const standing = poseAt(tl, STAND_S * 0.3);
+    expect(standing).toMatchObject({ phase: 'stand', box: 'none', laptop: 'none', briefcase: 'hand', wave: false, desk: 'empty' });
+    const waving = poseAt(tl, STAND_S + WAVE_S / 2);
+    expect(waving).toMatchObject({ phase: 'wave', seated: false, box: 'none', briefcase: 'hand', wave: true, desk: 'empty', walked: 0 });
+    expect(waving.y).toBeCloseTo(route[0]!.y + STAND_LIFT, 5);
+    const walking = poseAt(tl, STAND_S + WAVE_S + 3);
+    expect(walking).toMatchObject({ phase: 'walk', box: 'none', laptop: 'none', briefcase: 'hand', wave: false });
+    expect(walking.walked).toBeGreaterThan(0);
+    // Out of the pod: the desk is free again.
+    expect(poseAt(tl, STAND_S + WAVE_S + (PLUS_BACK_AFTER_M + 0.5) / WALK_SPEED).desk).toBe('free');
+    expect(poseAt(tl, tl.total + 1)).toMatchObject({ phase: 'done', scale: 0, briefcase: 'none' });
+  });
+
+  it('arriving: the briefcase in hand instead of the box and laptop', () => {
+    const inn = walkInRoute(floors[0]!, plan, 0, 3);
+    const tl = timeline('in', inn, yaw, 'briefcase');
+    expect(tl.stages.map((s) => s.phase)).toEqual(['appear', 'walk', 'sit']);
+    expect(poseAt(tl, 1)).toMatchObject({ phase: 'walk', box: 'none', laptop: 'none', briefcase: 'hand', wave: false, desk: 'empty' });
+    expect(poseAt(tl, tl.total + 1)).toMatchObject({ phase: 'done', seated: true, briefcase: 'none' });
+  });
+
+  it('the M4 walks are as they were: box, no briefcase, no wave', () => {
+    const tl = timeline('out', route, yaw);
+    expect(tl.carry).toBe('box');
+    expect(tl.stages.map((s) => s.phase)).toEqual(['pack', 'stand', 'walk', 'vanish']);
+    expect(poseAt(tl, PACK_S + STAND_S + 2)).toMatchObject({ box: 'carried', laptop: 'carried', briefcase: 'none', wave: false });
+    expect(poseAt(tl, TAKE_LAPTOP_AT - 0.1).items).toBeLessThanOrEqual(ITEMS);
+    expect(poseAt(tl, 0.1).seated).toBe(true);
+    expect(SEAT_LIFT).toBeGreaterThan(STAND_LIFT);
   });
 });

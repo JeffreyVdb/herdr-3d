@@ -9,6 +9,7 @@ import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
 import { runBench, type BenchOptions, type BenchResult } from './bench';
 import type { CommandName, WorldEvent } from './net/protocol';
 import type { ArrivalInfo } from './render/arrivals';
+import type { CrewInfo } from './render/office';
 import type { HireSummary } from './ui/hire';
 import type { PanelSummary } from './ui/panels';
 import type { SendHomeSummary } from './ui/sendHome';
@@ -90,7 +91,7 @@ export interface H3DDebug {
   plan(open: boolean): void;
   focusBuilding(i: number | null): void;
   /** Speech-bubble cards on screen and what they say; M5: a question (`ask`), the looked-at one's `usage`, `tall` when drawn with room for them. */
-  cards(): Array<{ desk: number; name: string; display: string; task: string; ask?: { text: string; about?: string[]; choices: Array<{ n: number; label: string }>; selected?: number | undefined } | null; usage?: string | null; tall: boolean }>;
+  cards(): Array<{ desk: number; name: string; display: string; task: string; ask?: { text: string; about?: string[]; choices: Array<{ n: number; label: string }>; selected?: number | undefined } | null; usage?: string | null; tall: boolean; tag?: { text: string; color: string } | null; stamp?: { tone: string; text: string } | null; crew?: string[] | null }>;
   /** Screen point of a floor's badge in the city (to click it). */
   badgePoint(session: string): { x: number; y: number } | null;
   /** M5: per worker of the floor you are on, what its laptop shows (live / pending / frozen / glow / dark) and its watch fps. */
@@ -153,6 +154,10 @@ export interface H3DDebug {
   openChanges(workerId: string): void;
   /** M5: stands you facing a worker of the floor you are on, as N does; false when look-at does not pick it from there. */
   face(workerId: string): boolean;
+  /** M6: the crew of the floor with an interior (role, lifecycle, stamp, the crew parts drawn at its desk) and the crew parts drawn at all. */
+  crew(): { members: CrewInfo[]; shown: string[] };
+  /** M6: the scripted freelancer of the fixture simulator (`sim=1`): one `sim.crew` step. */
+  simCrew(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
 }
 
 declare global {
@@ -269,6 +274,13 @@ const h3d: H3DDebug = {
   needs: () => app?.needs() ?? [],
   openPrompt: (id) => app?.openPrompt(id),
   face: (id) => app?.faceWorker(id) ?? false,
+  crew: () => app?.office?.crewInfo() ?? { members: [], shown: [] },
+  simCrew: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    // `sim.crew` is the fixture simulator's, not a bridge command.
+    const r = await app.client.request('sim.crew' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
   openChanges: (id) => {
     if (app?.changes.worker !== id) app?.toggleChanges(id);
   },

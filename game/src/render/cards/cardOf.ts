@@ -3,6 +3,8 @@ import { taskLine } from '../../world/derive';
 import type { WorkerView } from '../../world/store';
 import { usageText } from '../../world/usage';
 import type { CardData } from './types';
+// M6: write-code crews.
+import { withCrew } from './crewCard';
 
 /**
  * What a worker's speech bubble says: its name, status and task; M5: a
@@ -22,5 +24,6 @@ export function cardOf(v: WorkerView, focus = false): CardData {
     const u = usageText(v.worker.usage).line;
     if (u) card.usage = u;
   }
+  if (v.crew) withCrew(card, v.crew, focus, !!v.worker.title?.trim());
   return card;
 }
