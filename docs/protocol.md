@@ -159,6 +159,7 @@ floor with no workers and an `error`).
 | `resume` | `pending` \| `confirmed` \| `fallback` \| `failed`, optional | only during and after a wake, for workers with an `agent_session`: how their agent came back (see [Wake and sleep](#wake-and-sleep)). Cleared by the next sleep and by a bridge restart. |
 | `hired_at` | int, optional | unix ms when the bridge hired this worker (`worker.hire`; stored). A client that first sees a worker with a recent `hired_at` (the game: under ~15 s) plays its walk-in. |
 | `branch` | string, optional | the checked-out branch of a worker in a linked worktree (`worktree.linked`), when known (read from the checkout's git `HEAD`; absent on a detached `HEAD`) |
+| `usage` | object, optional | M5: its agent session's token counts and cost estimate (see [Usage and cost](#usage-and-cost)); absent without an `agent_session`, or until the bridge found its transcript |
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
 none, so the bridge keeps the last known value until a new one shows up. They are absent when never known.
@@ -208,6 +209,7 @@ and remember the last `seq` applied.
 | `worker.upsert` | `worker` | a worker appeared, or anything besides `status`/`title` changed, e.g. its `resume` (full object) |
 | `worker.status` | `id`, `session`, `workspace_id`, `status`, `prev_status`, `status_since`, `title` | only `status` and/or `title` changed (the hot path). `title` is always present, `""` when cleared; on a title-only change `prev_status` equals `status` and `status_since` does not move. |
 | `worker.removed` | `id`, `session`, `workspace_id`, `reason`? | the workspace closed, the session was deleted, or the identity changed. `reason` is `"sent_home"` when the removal comes from `worker.fire` (the game plays the walk-out); absent otherwise. |
+| `worker.usage` | `id`, `session`, `usage` | M5: the worker's `usage` changed; at most once per 5 s per worker (see [Usage and cost](#usage-and-cost)) |
 
 ```json
 {"t":"floor.upsert","seq":1043,"floor":{"session":"herdr-3d","state":"running","building":null,"index":null,"desks":7}}
@@ -275,6 +277,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.hire` | `{"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?}` | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent) |
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
+| `worker.changes` | `{"id": string}` | M5: the worker's git changes, `{"cwd", "branch", "head", "upstream", "ahead", "behind", "base", "files", "stat", "diff", "diff_bytes", "truncated", "omitted"}` (see [Changes](#changes)) | — |
 
 ```json
 {"t":"floor.assign","req_id":"8","args":{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}}
@@ -557,6 +560,150 @@ they start, completed with their outcome and a JSON `result`: for a hire the wor
 base, fetch, trust, the prompt outcome and any rollback; for a fire the git state it saw, how the agent exited, the
 cleanup choice and what happened to the worktree and branch.
 
+### Laptops: changes and usage
+
+M5. Each worker's laptop shows its git changes (the Changes panel) and its agent's token usage and cost. Both take only
+the bridge's worker id; the directory and the agent session come from the bridge's own worker record.
+
+#### Changes
+
+**`worker.changes`** reads a worker's git state, read-only:
+
+```json
+{"t":"worker.changes","req_id":"55","args":{"id":"a58752ea-6511-4318-be9a-59e41c09d7c5"}}
+{"t":"ack","req_id":"55","data":{"cwd":"/home/dev/.herdr/worktrees/herdr-3d/mochi","branch":"h3d/mochi-a1b2c3",
+  "head":"3f09a1c…","upstream":"origin/h3d/mochi-a1b2c3","ahead":2,"behind":0,
+  "base":{"ref":"origin/main","sha":"0d8c09d…"},
+  "files":[{"path":"internal/server/term.go","index":"A","worktree":".","insertions":210,"deletions":0,"binary":false},
+    {"path":"internal/server/hub.go","index":".","worktree":"M","insertions":12,"deletions":3,"binary":false},
+    {"path":"notes.txt","untracked":true,"insertions":4,"deletions":0,"binary":false}],
+  "stat":{"files":2,"insertions":222,"deletions":3},
+  "diff":"diff --git a/internal/server/hub.go b/internal/server/hub.go\n…","diff_bytes":18230,"truncated":false,"omitted":[]}}
+```
+
+| field | |
+|---|---|
+| `cwd` | where it was read: the worker's checkout (`worktree.checkout_path`), else its `cwd`. Git runs in that directory's work tree top level. |
+| `branch` | the checked-out branch, `null` on a detached `HEAD` |
+| `head` | `HEAD`'s commit; `""` on an unborn branch |
+| `upstream`, `ahead`, `behind` | the branch's upstream (`null`: none) and the commits it is ahead of / behind it (0 without one) |
+| `base` | `{"ref": "origin/<default>", "sha"}`: the merge-base of `HEAD` and `origin/<default>` (the default branch as in `hire.prepare`: `origin/HEAD`, else `main` / `master`). `null` when there is no such ref or no common history: the diff is then against `HEAD` (an unborn branch: against the empty tree). There is no fetch: `origin/<default>` is as last fetched. |
+| `files` | every changed path, in git's diff order (against the base), then the paths only `git status` lists (changed against `HEAD`, not against the base), then untracked files. `path` is relative to the work tree top level (unquoted); `orig_path` is a rename's old path. `index` and `worktree` are `git status`'s X and Y (`.` unchanged, `M`, `T`, `A`, `D`, `R`, `C`, `U`); both are `.` for a file changed only by commits since the base. An untracked file has `untracked: true` instead. `insertions` / `deletions` are against the base (`--numstat`); a binary file has 0 / 0 and `binary: true`; an untracked text file's `insertions` are its lines (counted up to 1 MiB, else 0). At most 5000 files (then `truncated`). |
+| `stat` | the summary line of `git diff --stat <base>`: `files`, `insertions`, `deletions` of the tracked changes (untracked files are not in it) |
+| `diff` | the working tree (staged changes included) against the base, exactly as `git diff --find-renames <base>` prints it (no external diff or textconv runs), then a new-file diff for each untracked text file up to 64 KiB (as `git diff --no-index /dev/null <file>` prints it, without the `index` line). At most **256 KiB**: whole files only, in `files` order; a file whose diff does not fit in what is left is listed in `omitted` (a later, smaller one can still fit). A binary file shows git's `Binary files … differ`; untracked binary files, untracked files over 64 KiB, symlinks and anything else that is not a regular file inside the work tree get no content. |
+| `diff_bytes` | the size of the whole diff, uncapped, in bytes (the JSON string can differ: invalid UTF-8 is replaced) |
+| `truncated`, `omitted` | whether anything was left out (the cap, or files beyond 5000) and the files whose diff was left out for the cap |
+
+The git commands (`internal/gitops`, allowlisted like the rest): `rev-parse --show-toplevel`, `status --porcelain=v2
+--branch -z --untracked-files=all`, the default-branch lookup of `hire.prepare` (`symbolic-ref … refs/remotes/origin/HEAD`,
+`log -1 origin/<b>`), `merge-base HEAD origin/<default>`, and one `diff --numstat --patch -z --find-renames --no-color
+--no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ <base> --` (numbers and patches from one snapshot of the
+tree), with `GIT_OPTIONAL_LOCKS=0` (status does not even refresh the index). Nothing changes the repository. All of it
+runs off the hub (other commands are not held up) and shares a **10 s** deadline: past it, `changes_failed`.
+Untracked files are read by the bridge, inside the work tree only (no symlink out of it is followed).
+
+Errors: `unknown_worker` (unknown id, or a worker on an unwatched floor), `invalid_state` (its floor is asleep, or it has
+no directory), `not_a_repo` (its directory is not in a git work tree), `changes_failed`, `bad_request` (unknown `args`
+fields), `internal` (git not configured). Each call is one audit row.
+
+#### Usage and cost
+
+Worker field **`usage`** (in snapshots and `worker.upsert`) and event **`worker.usage`**:
+
+```json
+"usage":{"tokens":37210,"input":1200,"output":9010,"cache_write":27000,"cache_read":812000,
+         "cost_usd_est":0.4824,"priced":"known","model":"claude-opus-5-5",
+         "context_pct":4.2,"context_window":1000000,"updated_at":1790601900984}
+{"t":"worker.usage","seq":1200,"id":"a58752ea-6511-4318-be9a-59e41c09d7c5","session":"herdr-3d","usage":{…}}
+```
+
+| field | |
+|---|---|
+| `tokens` | the headline count ("37k tokens"): `input + output + cache_write`. Cache reads are left out: they are the same context read again every turn (a long session reads tens of millions), and Codex's own "tokens used" leaves them out too. |
+| `input` | uncached input tokens, summed over the agent session and its subagents |
+| `output` | output tokens (Codex: reasoning included, as Codex counts it) |
+| `cache_write`, `cache_read` | cache writes (Claude: 5-minute and 1-hour together) and cache reads (Codex: cached input) |
+| `cost_usd_est` | an API-equivalent **estimate** in USD, 6 decimals (below): standard API rates, not what a subscription costs; fast mode, batch, tool fees and discounts are not in it. The game labels it `≈$`. |
+| `priced` | `known`; `unknown_model` when some tokens are of a model the table does not know (priced as the most expensive model of that harness, the game flags it) or Claude Code's own cost says so; `none` while no model was seen |
+| `model` | the model the transcript reports last (Claude: the main transcript's last message; Codex: the last `turn_context`) |
+| `context_pct`, `context_window` | how full the context window is (below), 0–100 with one decimal, and the window used; `null` and 0 when unknown |
+| `updated_at` | when the bridge saw this usage change, unix ms (bridge clock) |
+
+- `worker.usage` is a world event (it has a `seq` and is replayed). It goes out when the usage changed (anything but
+  `updated_at`), and **at most once per 5 s per worker**: a change within 5 s of the last one waits, then goes out as
+  the latest value. A worker's first usage goes out as soon as it is read. A worker that loses its `agent_session`
+  loses its `usage` (`worker.upsert` without it). Workers without an `agent_session` (plain shells, a fresh Codex
+  before the sleep backfill: Codex does not report its session to herdr) have none.
+- The bridge checks every worker's transcripts every 2 s, reading from a stored byte offset: complete lines only (an
+  incomplete last line waits for the next read), so appending a line reads only that line. A file that shrank or was
+  replaced is read again from the start and its session counted afresh. A transcript not found is looked for again at
+  most every 30 s (paths found are kept); a session's subagents directory is listed every 10 s. Symlinks are not
+  followed; lines over 16 MiB are skipped. Per session it remembers the last 8192 message ids.
+
+**Claude Code** transcripts: `<--claude-projects>/*/<agent_session>.jsonl` (the project directory is looked up, not
+derived from the cwd) and its subagents' `<that directory>/<agent_session>/subagents/agent-*.jsonl`.
+
+- Each `type: "assistant"` line has `message.id`, `message.model` and `message.usage` (`input_tokens`, `output_tokens`,
+  `cache_creation_input_tokens` with its `cache_creation.ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens`
+  split, `cache_read_input_tokens`). A message streams as several lines with the same `message.id` and a growing
+  `output_tokens`: its **last** line counts, once. Subagent messages have ids of their own (never the main
+  transcript's) and are added. `<synthetic>` messages (Claude Code's own error notes) have no usage and are skipped.
+- **`cost-state` lines exist**: Claude Code writes one when a session ends (`totalCostUSD`, `modelUsage`,
+  `hasUnknownModelCost`). A resumed session (a woken floor) appends after it, and the next one is cumulative. Its
+  total also counts calls the transcript does not show (titles and other side calls, typically well under 1 %). So
+  after a `cost-state`, `cost_usd_est` is its `totalCostUSD` plus the estimate of the messages after it: main
+  transcript messages after it, and subagent messages timestamped after the main transcript's last message before it.
+  Token counts are always the transcript's.
+- Cost: per model, `input × input + output × output + 5m writes × cache_write + 1h writes × cache_write_1h + reads ×
+  cache_read` (rates per million tokens); cache writes the 5m/1h split does not account for are priced as 1-hour
+  writes (the dearer). On 36 real sessions using only models of the table this gives Claude Code's own `totalCostUSD`
+  to the cent.
+- Context: the main transcript's last message's prompt (`input + cache_creation + cache_read`) over the model's window
+  (`context_window` in the table; a model id ending in `[1m]` has 1M; an unknown model's is unknown: `null`). An
+  estimate of what the next turn starts with, not Claude Code's own figure; subagents' contexts are not in it.
+
+**Codex** rollouts: `<--codex-sessions>/YYYY/MM/DD/rollout-*-<agent_session>.jsonl` whose first line's
+`session_meta.payload.id` is the session.
+
+- The last `event_msg` of `payload.type: "token_count"` with an `info` holds the totals: `info.total_token_usage` with
+  `input_tokens` (cached input and cache writes included), `cached_input_tokens`, `cache_write_input_tokens`,
+  `output_tokens` (reasoning included: `reasoning_output_tokens` is not added again). One with `info: null` changes
+  nothing. The model is the last `turn_context`'s `payload.model`; growth between two token counts is priced at the
+  model active then, and counters that go down (a reset) start the sums over.
+- Cost: per model, `(input − cached − cache writes) × input + cached × cache_read + cache writes × cache_write + output
+  × output`. GPT-6's long-context rates (requests over 272K input tokens) never apply: Codex's window is 258,400.
+- Context: Codex's own formula, `(last_token_usage.total_tokens − 12000) / (model_context_window − 12000)` (12K is its
+  baseline), clamped to 0–100; `context_window` is `model_context_window`.
+
+**Pricing table** (USD per million tokens, standard API rates, retrieved 2026-09-29; the built-in
+`internal/usage/pricing.json`):
+
+| model | harness | input | output | cache write (Claude: 5m) | cache write 1h | cache read | context window |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `claude-fable-5-1` | claude | 10 | 50 | 12.5 | 20 | 0.25 | 1M |
+| `claude-opus-5-5` | claude | 4 | 20 | 5 | 8 | 0.20 | 1M |
+| `claude-sonnet-5-5` | claude | 2 | 10 | 2.5 | 4 | 0.20 | 1M |
+| `claude-haiku-4-5-20251001` | claude | 1 | 5 | 1.25 | 2 | 0.10 | 200K |
+| `gpt-6-astra` | codex | 10 | 50 | 12.5 | — | 1 | (rollout) |
+| `gpt-6-sol` | codex | 2 | 10 | 2.5 | — | 0.20 | (rollout) |
+| `gpt-6-luna` | codex | 0.10 | 0.50 | 0.125 | — | 0.01 | (rollout) |
+
+An unknown model is priced as the most expensive model of its harness (by output, then input price: Fable 5.1 for
+Claude, GPT-6 Astra for Codex) and flagged `unknown_model`. Older models seen in transcripts (`claude-opus-5`,
+`claude-fable-5`, `claude-opus-4-8`, `gpt-5.6-*`) are not in the table; add them with `--pricing`.
+
+`--pricing <file>` (`HERDR_WORLD_PRICING`) merges a file of the same format over the built-in table (a model of the same
+name is replaced, a new one added). Unknown fields, negative rates or a harness other than `claude` / `codex` stop the
+bridge at start:
+
+```json
+{"models":{"claude-opus-5":{"harness":"claude","input":5,"output":25,"cache_write":6.25,"cache_write_1h":10,
+  "cache_read":0.5,"context_window":1000000}}}
+```
+
+`harness` defaults to `claude` for a `claude-…` name, else `codex`; `cache_write_1h` defaults to `cache_write`;
+`context_window` (Claude only) to unknown. Account-level plan limits are #12, not this.
+
 ### Errors
 
 ```json
@@ -582,6 +729,8 @@ cleanup choice and what happened to the worktree and branch.
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
 | `hello_required`, `unsupported_proto` | handshake failures; the connection is then closed with status 1008 |
 | `internal` | the bridge failed (database error, or waking, sleeping, hiring and firing is not configured); safe to retry |
+| `changes_failed` | M5: `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
+| `not_a_repo` | M5: `worker.changes` for a worker whose directory is not in a git work tree |
 
 Errors not tied to a command have no `req_id`.
 

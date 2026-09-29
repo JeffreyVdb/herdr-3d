@@ -8,8 +8,9 @@
   control surface for wake/sleep and hire/send home), `watch` (session discovery and per-session watchers), `world`
   (floors/workers from snapshots and `session.json`, identity matching, worker names), `store` (SQLite), `server` (hub +
   WebSocket, wake/sleep, floor settings, hire/send home), `proto` (protocol v1 types and client), `gitremote` (GitHub
-  origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires and send-homes), `codex`
-  (Codex session ids from rollout files, for the sleep backfill). Helper: `helper` (ssh tunnel
+  origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires, send-homes and the Changes
+  panel), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
+  usage and cost from their transcripts, read incrementally, and the pricing table). Helper: `helper` (ssh tunnel
   supervisor, game server, `/ws` proxy). `app` holds both command lines.
 - `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).
 - `game/` — the game: Vite + strict TypeScript + three.js (`three/webgpu`), pnpm.
@@ -66,11 +67,15 @@ parts:
   and efforts, prompts not starting with `--`), every argument is its own argv element, sessions outside `--sessions`
   are refused, and commands run with the `HERDR_*`/`CLAUDE*` variables stripped. `TestControlAllowlist` pins the set,
   the argv and the exported methods; widening any needs review.
-- **git** (`gitops.Git`, hires and send-homes only): exactly ten shapes (`shapes`, pinned by `TestGitAllowlist`):
+- **git** (`gitops.Git`, hires, send-homes and `worker.changes` only): exactly thirteen shapes (`shapes`, pinned by
+  `TestGitAllowlist`):
   `git -C <dir>` `rev-parse --show-toplevel`, `fetch --quiet origin`, `symbolic-ref --quiet --short
   refs/remotes/origin/HEAD`, `log -1 --format=%H %ct origin/<…> --`, `status --porcelain`, `symbolic-ref --quiet --short
   HEAD`, `rev-list --count HEAD --not --remotes`, `rev-list --count refs/heads/h3d/<…> --not --remotes`, `rev-parse
-  --verify --quiet refs/heads/h3d/<…>`, and `branch -D h3d/<…>`. A branch is deleted only when the bridge recorded
+  --verify --quiet refs/heads/h3d/<…>`, `branch -D h3d/<…>`, and for the Changes panel (M5, read-only) `status
+  --porcelain=v2 --branch -z --untracked-files=all`, `merge-base HEAD origin/<…>` and `diff --numstat --patch -z
+  --find-renames --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ <commit id | HEAD> --`. A
+  branch is deleted only when the bridge recorded
   making it for that worker (SQLite `hire_branch`, with its base commit; the name alone proves nothing) and either
   still points at that base (a hire's rollback, clean tree) or has all its commits on a remote (send home, the
   checkout still on it). Same clean environment, plus `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`.
@@ -90,7 +95,12 @@ bin/herdr-world dump --socket "$sock" --once | jq '.world.floors'
 bin/herdr-world cmd --socket "$sock" building.create '{"name":"Work"}'
 bin/herdr-world cmd --socket "$sock" floor.assign '{"session":"herdr-3d","building":"b_…"}'
 bin/herdr-world cmd --socket "$sock" floor.settings.set '{"session":"herdr-3d","repo":"JeffreyVdb/herdr-3d"}'
+bin/herdr-world cmd --socket "$sock" worker.changes '{"id":"<worker id>"}' | jq '.data | {branch, base, stat, omitted}'
+bin/herdr-world dump --socket "$sock" | jq -c 'select(.t == "worker.usage") | {id, usage}'
 ```
+
+`worker.changes` and usage only read (git in the worker's checkout, transcripts under `--claude-projects` and
+`--codex-sessions`), so a private bridge may show them for any session it watches.
 
 A private bridge acts on real sessions as soon as it is sent `floor.sleep`, `floor.wake`, `worker.hire` or
 `worker.fire`. Always start it with a
@@ -144,7 +154,9 @@ that directory.
 | `--name-hold` | `HERDR_WORLD_NAME_HOLD` | `168h` (7 days): how long a worker's name stays held after the bridge sees it leave its floor; then a newcomer may take it (`worker.name`) |
 | `--wake-timeout` | `HERDR_WORLD_WAKE_TIMEOUT` | `10s`: how long a woken server has to start, answer `ping` and be seen running (else `wake_failed`) |
 | `--resume-timeout` | `HERDR_WORLD_RESUME_TIMEOUT` | `10s`: how long a wake waits for the agents before the fallback, and again for the fallback and its result (a wake acks within about `--wake-timeout` + 2 × this) |
-| `--codex-sessions` | `HERDR_WORLD_CODEX_SESSIONS` | `$CODEX_HOME/sessions`, else `~/.codex/sessions`: Codex rollouts, for the sleep backfill |
+| `--codex-sessions` | `HERDR_WORLD_CODEX_SESSIONS` | `$CODEX_HOME/sessions`, else `~/.codex/sessions`: Codex rollouts, for the sleep backfill and usage |
+| `--claude-projects` | `HERDR_WORLD_CLAUDE_PROJECTS` | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`: Claude Code transcripts, for usage (M5) |
+| `--pricing` | `HERDR_WORLD_PRICING` | none: a JSON file of model prices merged over the built-in table (`internal/usage/pricing.json`; format in [`docs/protocol.md` "Usage and cost"](docs/protocol.md#usage-and-cost)) |
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
 | `--warn-workers`, `--max-workers` | `HERDR_WORLD_WARN_WORKERS`, `HERDR_WORLD_MAX_WORKERS` | `48`, `96`: the same for all watched running floors together |
 | `--git` | `HERDR_WORLD_GIT` | `git` on `PATH`: worktree hires, send-home checks and the repo suggestion |
@@ -163,7 +175,9 @@ journalctl --user -u herdr-world -f
 
 `go test ./...` never touches herdr or systemd (fake socket server + recorded fixtures; `herdr.Control` gets a fake
 `Runner` that plays herdr and systemd-run; hires and send-homes run against an in-memory herdr floor and git). Only
-`internal/gitops` runs the real `git`, on repositories in a temp dir. `make integration` runs, with build tag `integration`, against the
+`internal/gitops` runs the real `git`, on repositories in a temp dir (M5: `worker.changes` is checked against `git
+status` and `git diff --stat` there, byte for byte against `git diff`). `internal/usage` reads synthetic transcripts
+(`testdata/`, no real content) and temp files. `make integration` runs, with build tag `integration`, against the
 installed herdr:
 
 - `TestIntegrationThrowawaySession`: starts a headless server for a fresh session `h3d-it-<random>`, creates
