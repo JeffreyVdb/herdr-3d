@@ -443,6 +443,9 @@ func (l *Log) addSpan(i int32, sp span, c *contrib) {
 	}
 }
 
+// maxParsedBytes bounds the lines one items call keeps parsed at once.
+const maxParsedBytes = 4 << 20
+
 // Items reads the items at the given entry indexes back from the file
 // (full: untruncated, else capped for lists).
 func (l *Log) items(idx []int32, full bool) ([]proto.TranscriptItem, error) {
@@ -458,7 +461,13 @@ func (l *Log) items(idx []int32, full bool) ([]proto.TranscriptItem, error) {
 		es[j].spans = append([]span(nil), l.entries[i].spans...)
 	}
 	l.mu.Unlock()
+	// parsed shares one line's parse between the entries that came from it.
+	// A parse holds the line's inline images (base64) until it is dropped,
+	// so it is bounded by the bytes of the lines it holds, not by the page:
+	// an image-heavy page would otherwise keep every image line alive
+	// outside the image cache. A dropped line is parsed again if asked.
 	parsed := map[int64][]contrib{}
+	parsedBytes := 0
 	var buf []byte
 	out := make([]proto.TranscriptItem, 0, len(es))
 	for j, e := range es {
@@ -477,7 +486,12 @@ func (l *Log) items(idx []int32, full bool) ([]proto.TranscriptItem, error) {
 					return nil, fmt.Errorf("%w: %v", ErrReplaced, err)
 				}
 				cs, _ = l.parse(sp.off, buf)
+				if parsedBytes+int(sp.n) > maxParsedBytes {
+					clear(parsed)
+					parsedBytes = 0
+				}
 				parsed[sp.off] = cs
+				parsedBytes += int(sp.n)
 			}
 			if int(sp.k) >= len(cs) {
 				continue // the file changed under the index: a resync follows
@@ -729,51 +743,74 @@ func (l *Log) parseAt(off int64, n int) ([]contrib, error) {
 	return cs, nil
 }
 
-// Images lists the images of the whole session, oldest first: the refs of
-// every item that has any, from the index (no bytes; each item is read back
-// from the file once, its images are then remembered). At most limit, the
-// newest; more says there were older ones.
-func (l *Log) Images(limit int) (refs []proto.ImageRef, more bool, err error) {
+// MaxImagePageBytes is about the most a page of Images takes in JSON.
+const MaxImagePageBytes = 1 << 20
+
+// ImagePage is a run of the session's image refs, oldest first, and where
+// the older ones are.
+type ImagePage struct {
+	Refs    []proto.ImageRef
+	Cursor  string // before this: the images of the items older than these
+	HasMore bool
+}
+
+// Images lists the images of the session before seq (0: the newest), oldest
+// first: the refs of every item that has any, from the index (no bytes; each
+// item is read back from the file once, its images are then remembered). A
+// page is whole items, the newest ones, until it has limit refs or about
+// MaxImagePageBytes of JSON (an item is never split, so a page has at least
+// one item); Cursor continues with the older ones, so a session of any size
+// is listed by following it.
+func (l *Log) Images(before int64, limit int) (ImagePage, error) {
 	l.mu.Lock()
 	if l.err != nil {
 		err := l.err
 		l.mu.Unlock()
-		return nil, false, err
+		return ImagePage{}, err
+	}
+	end := int32(len(l.entries))
+	if before > 0 && before-1 < int64(end) {
+		end = int32(before - 1)
 	}
 	var idx []int32
-	for i := range l.entries {
+	for i := int32(0); i < end; i++ {
 		if l.entries[i].hasImg {
-			idx = append(idx, int32(i))
+			idx = append(idx, i)
 		}
 	}
 	l.mu.Unlock()
-	// Items are read in batches from the newest back, until limit images.
+	// Items are read in batches from the newest back.
 	const batch = 64
 	var newest [][]proto.ImageRef
-	total := 0
-	for end := len(idx); end > 0 && total < limit; {
-		start := max(0, end-batch)
-		items, err := l.items(idx[start:end], false)
+	total, size := 0, 0
+	last := len(idx) // idx[last:] were taken
+	for last > 0 && total < limit && size < MaxImagePageBytes {
+		start := max(0, last-batch)
+		items, err := l.items(idx[start:last], false)
 		if err != nil {
-			return nil, false, err
+			return ImagePage{}, err
 		}
 		for j := len(items) - 1; j >= 0; j-- {
+			last--
 			rs := itemImages(&items[j])
 			newest = append(newest, rs)
 			total += len(rs)
-		}
-		end = start
-		if end > 0 && total >= limit {
-			more = true
+			for i := range rs {
+				size += 200 + len(rs[i].Path) + len(rs[i].ItemID)
+			}
+			if total >= limit || size >= MaxImagePageBytes {
+				break
+			}
 		}
 	}
+	var pg ImagePage
 	for i := len(newest) - 1; i >= 0; i-- {
-		refs = append(refs, newest[i]...)
+		pg.Refs = append(pg.Refs, newest[i]...)
 	}
-	if len(refs) > limit {
-		refs, more = refs[len(refs)-limit:], true
+	if last > 0 {
+		pg.HasMore, pg.Cursor = true, Cursor(int64(idx[last])+1)
 	}
-	return refs, more, nil
+	return pg, nil
 }
 
 // itemImages are the image refs of an item, in order (copies).

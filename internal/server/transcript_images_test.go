@@ -140,7 +140,7 @@ func TestTranscriptImages(t *testing.T) {
 	// The session's images, oldest first, with no bytes.
 	_, ack = c.mustAck(proto.CmdTranscriptImages, proto.TranscriptImagesArgs{ID: id})
 	list := decode[proto.TranscriptImagesResult](t, ack)
-	if list.Truncated || len(list.Images) != 6 {
+	if list.HasMore || len(list.Images) != 6 {
 		t.Fatalf("%d images: %+v", len(list.Images), list)
 	}
 	ids := []string{"u1", "u2", "u3", "u4", "u5", "u5"}
@@ -171,6 +171,38 @@ func TestTranscriptImages(t *testing.T) {
 		t.Fatalf("huge = %+v", list.Images[2])
 	}
 	c.mustError(proto.CmdTranscriptImage, imageArgs(hugeHash, "full"), proto.ErrTooLarge)
+
+	// The list follows a cursor: pages of whole items, newest first, each
+	// older run in front, and the bad arguments are refused.
+	_, ack = c.mustAck(proto.CmdTranscriptImages, proto.TranscriptImagesArgs{ID: id, Limit: 2})
+	first := decode[proto.TranscriptImagesResult](t, ack)
+	if !first.HasMore || first.Cursor == "" || len(first.Images) != 2 || first.Images[1].ItemID != "u5" {
+		t.Fatalf("first page = %+v", first)
+	}
+	var paged []proto.ImageRef
+	paged = append(paged, first.Images...)
+	for cur, n := first.Cursor, 0; cur != ""; n++ {
+		if n > 10 {
+			t.Fatal("the cursor does not end")
+		}
+		_, ack = c.mustAck(proto.CmdTranscriptImages, proto.TranscriptImagesArgs{ID: id, Before: cur, Limit: 2})
+		pg := decode[proto.TranscriptImagesResult](t, ack)
+		paged = append(append([]proto.ImageRef(nil), pg.Images...), paged...)
+		if cur = ""; pg.HasMore {
+			cur = pg.Cursor
+		}
+	}
+	if len(paged) != len(list.Images) {
+		t.Fatalf("paged %d images, the whole list has %d", len(paged), len(list.Images))
+	}
+	for i := range paged {
+		if paged[i].ItemID != list.Images[i].ItemID || paged[i].Hash != list.Images[i].Hash {
+			t.Errorf("paged %d = %+v, want %+v", i, paged[i], list.Images[i])
+		}
+	}
+	c.mustError(proto.CmdTranscriptImages, map[string]any{"id": id, "before": "nope"}, proto.ErrBadRequest)
+	c.mustError(proto.CmdTranscriptImages, map[string]any{"id": id, "limit": proto.MaxSessionImages + 1}, proto.ErrBadRequest)
+	c.mustError(proto.CmdTranscriptImages, map[string]any{"id": id, "limit": -1}, proto.ErrBadRequest)
 
 	// Another connection was sent none of it.
 	c2 := b.connect(proto.Hello{})

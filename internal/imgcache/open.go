@@ -24,30 +24,35 @@ var errChanged = errors.New("path changed after it was checked")
 // MaxImage bytes) and read.
 func readUnder(root, real string) ([]byte, error) {
 	rel, err := filepath.Rel(root, real)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return nil, ErrNotAllowed
 	}
-	fd, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, err
-	}
-	comps := strings.Split(rel, string(filepath.Separator))
-	for i, c := range comps {
-		flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC
-		if i < len(comps)-1 {
-			flags |= unix.O_DIRECTORY
-		} else {
-			flags |= unix.O_NONBLOCK
-		}
-		next, err := unix.Openat(fd, c, flags, 0)
-		_ = unix.Close(fd)
+	const file = unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_NONBLOCK
+	var fd int
+	if rel == "." {
+		// The root is the file itself (a root naming exactly one file).
+		fd, err = unix.Open(root, file, 0)
 		if err != nil {
-			if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR) {
-				return nil, errChanged
-			}
+			return nil, openErr(err)
+		}
+	} else {
+		fd, err = unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+		if err != nil {
 			return nil, err
 		}
-		fd = next
+		comps := strings.Split(rel, string(filepath.Separator))
+		for i, c := range comps {
+			flags := file
+			if i < len(comps)-1 {
+				flags = unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_DIRECTORY
+			}
+			next, err := unix.Openat(fd, c, flags, 0)
+			_ = unix.Close(fd)
+			if err != nil {
+				return nil, openErr(err)
+			}
+			fd = next
+		}
 	}
 	f := os.NewFile(uintptr(fd), real)
 	defer f.Close()
@@ -69,4 +74,13 @@ func readUnder(root, real string) ([]byte, error) {
 		return nil, ErrTooLarge
 	}
 	return b, nil
+}
+
+// openErr says a link or a directory that is not one any more is a change
+// since the check.
+func openErr(err error) error {
+	if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR) {
+		return errChanged
+	}
+	return err
 }

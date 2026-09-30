@@ -283,18 +283,27 @@ type TranscriptImageResult struct {
 	Data string `json:"data"`
 }
 
-// TranscriptImagesArgs are the args of transcript.images.
+// TranscriptImagesArgs are the args of transcript.images: the newest images
+// (before "") or the ones before a cursor of an earlier answer. Limit is
+// about how many refs to send at most (default DefaultSessionImages); a page
+// is whole items, and is also bounded in bytes.
 type TranscriptImagesArgs struct {
-	ID string `json:"id"`
+	ID     string `json:"id"`
+	Before string `json:"before,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
 }
 
-// TranscriptImagesResult is the ack data of transcript.images: every image
-// of the session (oldest first), without bytes. Truncated: only the newest
-// MaxSessionImages are listed.
+// TranscriptImagesResult is the ack data of transcript.images: a run of the
+// session's images (oldest first), without bytes. HasMore: there are older
+// ones, from Cursor.
 type TranscriptImagesResult struct {
-	Images    []ImageRef `json:"images"`
-	Truncated bool       `json:"truncated,omitempty"`
+	Images  []ImageRef `json:"images"`
+	Cursor  string     `json:"cursor,omitempty"`
+	HasMore bool       `json:"has_more,omitempty"`
 }
 
-// MaxSessionImages is the most images transcript.images lists.
-const MaxSessionImages = 2000
+// Image list limits: the default and the most one transcript.images sends.
+const (
+	DefaultSessionImages = 500
+	MaxSessionImages     = 2000
+)

@@ -628,17 +628,32 @@ func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Comm
 			h.reply(c, cmd, nil, err)
 			return nil
 		}
+		if a.Limit < 0 || a.Limit > proto.MaxSessionImages {
+			h.reply(c, cmd, nil, bad("limit must be 1-%d", proto.MaxSessionImages))
+			return nil
+		}
+		if a.Limit == 0 {
+			a.Limit = proto.DefaultSessionImages
+		}
+		var before int64
+		if a.Before != "" {
+			var ok bool
+			if before, ok = transcript.ParseCursor(a.Before); !ok {
+				h.reply(c, cmd, nil, bad("before must be a cursor"))
+				return nil
+			}
+		}
 		id = a.ID
 		work = func(w *txWatch, log *transcript.Log) (any, error) {
-			refs, more, err := log.Images(proto.MaxSessionImages)
+			pg, err := log.Images(before, a.Limit)
 			if err != nil {
 				return nil, &codedError{proto.ErrInvalidState, fmt.Errorf("the transcript changed; watch again (%v)", err)}
 			}
-			if refs == nil {
-				refs = []proto.ImageRef{}
+			if pg.Refs == nil {
+				pg.Refs = []proto.ImageRef{}
 			}
-			w.noteRefs(refs)
-			return proto.TranscriptImagesResult{Images: refs, Truncated: more}, nil
+			w.noteRefs(pg.Refs)
+			return proto.TranscriptImagesResult{Images: pg.Refs, Cursor: pg.Cursor, HasMore: pg.HasMore}, nil
 		}
 	}
 	w := h.tx.get(c, id)

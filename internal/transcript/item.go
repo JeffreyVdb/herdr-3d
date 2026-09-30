@@ -335,7 +335,9 @@ func (b *builder) resolveImages(it *proto.TranscriptItem) {
 		env = defaultEnv
 	}
 	// Codex's view_image whose result has no image: the file it named.
-	if t := it.Tool; t != nil && t.Name == "view_image" && len(t.Images) == 0 && t.Status == proto.ToolOK && b.viewPath != "" {
+	// viewPath is set only by a view_image call, whatever the name shown
+	// (functions.view_image) says.
+	if t := it.Tool; t != nil && len(t.Images) == 0 && t.Status == proto.ToolOK && b.viewPath != "" {
 		ir := (&parseCtx{}).path(b.viewPath, proto.OriginAgent, proto.KindViewed, b.viewPath)
 		if b.srcs == nil {
 			b.srcs = map[*proto.ImageRef]*imgSrc{}

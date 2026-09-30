@@ -219,3 +219,18 @@ func TestFinalSwapToFIFODoesNotBlock(t *testing.T) {
 		t.Fatal("LoadPath blocks opening a FIFO")
 	}
 }
+
+// A root that names exactly one file serves that file.
+func TestRootThatIsOneFile(t *testing.T) {
+	drops, _ := tree(t)
+	file := filepath.Join(drops, "one.png")
+	if err := os.WriteFile(file, pngOf(t, 2, 2, 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, b, info, err := LoadPath(file, []string{file}); err != nil || info.Mime != PNG || len(b) == 0 {
+		t.Fatalf("%v %+v", err, info)
+	}
+	if _, _, _, err := LoadPath(filepath.Join(drops, "other.png"), []string{file}); !errors.Is(err, ErrNotAllowed) {
+		t.Fatalf("a sibling of the file root: %v", err)
+	}
+}

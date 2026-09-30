@@ -321,9 +321,10 @@ func TestSessionImages(t *testing.T) {
 		}
 	}
 	l := openLog(t, Claude, content, newImages(t, 0), "")
-	refs, more, err := l.Images(100)
-	if err != nil || more || len(refs) != 8 {
-		t.Fatalf("%d refs, more %v, %v", len(refs), more, err)
+	pg, err := l.Images(0, 100)
+	refs := pg.Refs
+	if err != nil || pg.HasMore || len(refs) != 8 {
+		t.Fatalf("%d refs, more %v, %v", len(refs), pg.HasMore, err)
 	}
 	for i, r := range refs {
 		wantItem := fmt.Sprintf("u%d", (i/2)*3)
@@ -331,9 +332,16 @@ func TestSessionImages(t *testing.T) {
 			t.Errorf("ref %d = %+v", i, r)
 		}
 	}
-	refs, more, err = l.Images(3)
-	if err != nil || !more || len(refs) != 3 || refs[2].ItemID != "u9" || refs[0].ItemID != "u6" {
-		t.Errorf("newest 3: %+v more %v %v", refs, more, err)
+	// A page is whole items: 3 refs asked, the two newest items (4 refs) come.
+	pg, err = l.Images(0, 3)
+	refs = pg.Refs
+	if err != nil || !pg.HasMore || len(refs) != 4 || refs[3].ItemID != "u9" || refs[0].ItemID != "u6" {
+		t.Errorf("newest 3: %+v more %v %v", refs, pg.HasMore, err)
+	}
+	// ... and the cursor goes on with the older ones.
+	pg, err = l.Images(mustCursor(t, pg.Cursor), 3)
+	if err != nil || pg.HasMore || len(pg.Refs) != 4 || pg.Refs[0].ItemID != "u0" || pg.Refs[3].ItemID != "u3" {
+		t.Errorf("older: %+v %v", pg, err)
 	}
 	// Only the items with images were read back (no text-only item parses images).
 }
@@ -395,15 +403,15 @@ func TestCodexImages(t *testing.T) {
 	}
 	// A view_image whose output has no image: the file it named, exactly it.
 	if rs := refsOf(items[4]); len(rs) != 1 || rs[0].Unavailable || rs[0].Path != viewFile || rs[0].Kind != proto.KindViewed || rs[0].Hash == "" {
-		t.Errorf("view_image path = %+v", rs)
+		t.Errorf("view_image path = %+v", *rs[0])
 	}
 	// ... and one that names something that is not an image is "not available".
 	if rs := refsOf(items[5]); len(rs) != 1 || !rs[0].Unavailable || rs[0].Reason == "" {
 		t.Errorf("view_image /etc/passwd = %+v", rs)
 	}
-	refs, _, _ := l.Images(50)
-	if len(refs) != 6 {
-		t.Errorf("session images = %d", len(refs))
+	pg, _ := l.Images(0, 50)
+	if len(pg.Refs) != 6 {
+		t.Errorf("session images = %d", len(pg.Refs))
 	}
 }
 
@@ -414,5 +422,80 @@ func TestImageRefIDsFollowTheItem(t *testing.T) {
 	items := all(t, l)
 	if r := refsOf(items[0])[0]; r.ItemID != items[0].ID || r.Seq != items[0].Seq {
 		t.Errorf("%+v vs %+v", r, items[0])
+	}
+}
+
+func mustCursor(t testing.TB, c string) int64 {
+	t.Helper()
+	n, ok := ParseCursor(c)
+	if !ok {
+		t.Fatalf("cursor %q", c)
+	}
+	return n
+}
+
+// Every image of a session is listed by following the cursor, however many
+// there are: 2001 refs (past the old cutoff), each page bounded.
+func TestImagesPaginateThroughEverySessionImage(t *testing.T) {
+	var content strings.Builder
+	img := pngBytes(t, 1, 1, 7)
+	for i := 0; i < 2001; i++ {
+		content.WriteString(claudeUserLine(t, fmt.Sprintf("u%d", i), claudeImg("image/png", img)))
+	}
+	l := openLog(t, Claude, content.String(), newImages(t, 0), "")
+	var got []proto.ImageRef
+	var before int64
+	pages := 0
+	for {
+		pg, err := l.Images(before, 500)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pg.Refs) == 0 || len(pg.Refs) > 500 {
+			t.Fatalf("page %d has %d refs", pages, len(pg.Refs))
+		}
+		got = append(pg.Refs, got...) // older pages go in front
+		pages++
+		if !pg.HasMore {
+			break
+		}
+		next := mustCursor(t, pg.Cursor)
+		if before != 0 && next >= before {
+			t.Fatalf("cursor %d does not go back from %d", next, before)
+		}
+		before = next
+	}
+	if len(got) != 2001 || pages != 5 {
+		t.Fatalf("%d refs in %d pages", len(got), pages)
+	}
+	for i, r := range got {
+		if r.ItemID != fmt.Sprintf("u%d", i) || r.Hash == "" {
+			t.Fatalf("ref %d = %+v", i, r)
+		}
+	}
+}
+
+// Codex's namespaced view_image (functions.view_image) with an output that
+// has no image bytes still shows the file it named.
+func TestCodexNamespacedViewImage(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "view.png")
+	if err := os.WriteFile(p, pngBytes(t, 2, 2, 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	content := jl(t, m{"type": "response_item", "payload": m{"type": "function_call", "namespace": "functions", "name": "view_image",
+		"call_id": "call", "arguments": fmt.Sprintf(`{"path":%q}`, p)}}) +
+		jl(t, m{"type": "response_item", "payload": m{"type": "function_call_output", "call_id": "call", "output": "attached local image"}})
+	l := openLog(t, Codex, content, newImages(t, 0), dir)
+	its := all(t, l)
+	if len(its) != 1 || its[0].Tool == nil || its[0].Tool.Name != "functions.view_image" {
+		t.Fatalf("items = %+v", its)
+	}
+	rs := refsOf(its[0])
+	if len(rs) != 1 || rs[0].Unavailable || rs[0].Hash == "" || rs[0].Kind != proto.KindViewed || rs[0].Path != p {
+		t.Fatalf("namespaced view_image = %+v", rs)
+	}
+	if pg, _ := l.Images(0, 50); len(pg.Refs) != 1 {
+		t.Errorf("session images = %d", len(pg.Refs))
 	}
 }

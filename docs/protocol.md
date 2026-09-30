@@ -1626,9 +1626,13 @@ changed under its hash, gone) is `not_found`; `binary` never has bytes. `agent` 
 `transcript.page` does. A watch has at most 16 image reads in flight (`busy` above). Not audit-logged (a read of what the
 watch shows), and nothing of the image is ever logged.
 
-**`transcript.images`** `{id}`: every image of the session, oldest first, as `{"images": [ImageRef…], "truncated"?}`,
-from the index (the whole file, not only the watch's window; each item that has images is read back once and its images
-remembered). Newest 2000 at most (`truncated`). No bytes; the hashes count as sent.
+**`transcript.images`** `{id, before?, limit?}`: the images of the session, oldest first, as
+`{"images": [ImageRef…], "cursor"?, "has_more"?}`, from the index (the whole file, not only the watch's window; each
+item that has images is read back once and its images remembered). Without `before` the newest come; a page is whole
+items (the newest ones, until `limit` refs, default 500, at most 2000 — `bad_request` above — or about 1 MiB of JSON;
+never fewer than one item), and with `has_more` the `cursor` goes in the next request's `before` for the older ones, so
+every image of a session of any size is reached by following it (a bad `before` is `bad_request`). No bytes; the hashes
+count as sent.
 
 #### Limits and lifecycle
 
