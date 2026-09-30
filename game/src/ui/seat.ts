@@ -96,7 +96,8 @@ export class SeatBar implements SeatView {
     this.el.append(this.askLine, line, this.keys, this.modeBtn, this.standBtn, this.input);
     if (prefs) {
       this.zoomBtns = this.buildLook(prefs);
-      this.el.append(this.look);
+      // At the end of the keys row (renderMode puts it back after the keys): the bar keeps its two rows.
+      this.keys.append(this.look);
       prefs.onChange((what) => {
         if (what === 'terminalTheme' || what === 'terminalZoom') this.renderLook();
       });
@@ -216,12 +217,18 @@ export class SeatBar implements SeatView {
     for (const k of ['terminal', 'transcript', 'images'] as const) this.modeOpts[k].toggleAttribute('data-on', k === m);
     const flip = key(['I'], m === 'images' ? 'Conversation' : 'Images');
     const nothing = 'nothing you type here goes to the terminal';
+    const aside = (text: string) => {
+      const a = el('span', 'seat-aside', text);
+      a.title = text;
+      return a;
+    };
     this.keys.replaceChildren(
       ...(m === 'transcript'
-        ? [key(['Enter'], 'Write a prompt'), flip, key(['Ctrl', 'Esc'], 'Terminal'), el('span', 'seat-aside', `PgUp, PgDn, j and k scroll; ${nothing}`)]
+        ? [key(['Enter'], 'Write a prompt'), flip, key(['Ctrl', 'Esc'], 'Terminal'), aside(`PgUp, PgDn, j and k scroll; ${nothing}`)]
         : m === 'images'
-          ? [key(['Enter'], 'Open'), flip, key(['Ctrl', 'Esc'], 'Terminal'), el('span', 'seat-aside', `Arrows move between images; ${nothing}`)]
-          : [key(['Shift', 'Esc'], 'Send Esc'), key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'), key(['Ctrl', 'Esc'], 'Conversation'), el('span', 'seat-aside', 'Tab, arrows and Ctrl keys go to the terminal')]),
+          ? [key(['Enter'], 'Open'), flip, key(['Ctrl', 'Esc'], 'Terminal'), aside(`Arrows move between images; ${nothing}`)]
+          : [key(['Shift', 'Esc'], 'Send Esc'), key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'), key(['Ctrl', 'Esc'], 'Conversation'), aside('Tab, arrows and Ctrl keys go to the terminal')]),
+      ...(this.prefs ? [this.look] : []),
     );
   }
 
