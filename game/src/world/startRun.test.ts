@@ -109,34 +109,91 @@ describe('the prompt preview', () => {
 
 describe('an image of the Extra instructions that has no path yet (#64)', () => {
   const shot = () => new File([new Uint8Array(4).fill(1)], 'shot.png', { type: 'image/png' });
+  const extraDraft = (upload: (f: File, h: string, s: AbortSignal) => Promise<unknown> = () => new Promise(() => {})) =>
+    new Draft({ upload: upload as never, createUrl: () => '', revokeUrl: () => {} });
+  /** What the bridge makes of the Extra's text: a task line, then the text as the field serialises it. */
+  const generated = (d: Draft) => previewGenerated(emptyPreview(), `/write-code task\n\n${markedText(d.snapshot())}`);
 
-  it('locks the First prompt while the generated text carries the bare marker, and opens it when the path is there', async () => {
+  it('locks the First prompt while the generated text carries the bare marker of a pending image, and opens it when the path is there', async () => {
     let finish!: (r: { ok: true; data: { path: string } }) => void;
-    const extra = new Draft({ upload: () => new Promise((r) => (finish = r as typeof finish)), createUrl: () => '', revokeUrl: () => {} });
+    const extra = extraDraft(() => new Promise((r) => (finish = r as typeof finish)));
     extra.addImages([shot()]);
     await Promise.resolve();
-    let p = previewGenerated(emptyPreview(), `/write-code task\n\n${markedText(extra.snapshot())}`);
+    let p = generated(extra);
     expect(p.text).toContain('[Image #1]');
-    expect(previewLocked(p)).toBe(true);
-    // The upload finishes: the next generated prompt has the path, and the First prompt is editable again.
+    expect(previewLocked(p, extra.snapshot())).toBe(true);
+    // The upload finishes: until the prompt is made again the old one still has the bare marker, so it stays locked.
     finish({ ok: true, data: { path: '/drops/shot.png' } });
     await extra.resolve();
+    expect(previewLocked(p, extra.snapshot())).toBe(true);
     p = previewGenerated(p, `/write-code task\n\n${markedText(extra.snapshot())}`);
     expect(p.text).toContain('[Image #1: /drops/shot.png]');
-    expect(previewLocked(p)).toBe(false);
+    expect(previewLocked(p, extra.snapshot())).toBe(false);
+  });
+
+  it('a failed image keeps it locked until the image is retried (path) or removed (the next prompt has no marker)', async () => {
+    let answer: (r: unknown) => void = () => {};
+    const extra = extraDraft(() => new Promise((r) => (answer = r)));
+    extra.addImages([shot()]);
+    await Promise.resolve();
+    answer({ ok: false, code: 'internal', message: 'drop zone down' });
+    await extra.resolve();
+    expect(extra.snapshot().images[0]?.status).toBe('error');
+    let p = generated(extra);
+    expect(p.text).toContain('[Image #1]');
+    expect(previewLocked(p, extra.snapshot())).toBe(true);
+    extra.removeImage(extra.snapshot().images[0]!.occ);
+    p = generated(extra);
+    expect(previewLocked(p, extra.snapshot())).toBe(false);
+  });
+
+  it('a marker-shaped sentence typed in the Extra, with no image attached, never locks', () => {
+    const extra = extraDraft();
+    extra.replace(0, 0, 'Keep the literal label [Image #1] in the docs.');
+    const p = generated(extra);
+    expect(p.text).toContain('[Image #1]');
+    expect(previewLocked(p, extra.snapshot())).toBe(false);
+    expect(previewArg(p)).toBeUndefined();
+  });
+
+  it('literal prose next to a real pending image: the image locks it, and the same number in the prose does not hide or double it', async () => {
+    const extra = extraDraft();
+    extra.replace(0, 0, 'Keep the label [Image #1] in the docs. ');
+    extra.addImages([shot()]);
+    await Promise.resolve();
+    const p = generated(extra);
+    expect(p.text.match(/\[Image #1\]/g)).toHaveLength(2); // the prose and the chip collide on the number
+    expect(previewLocked(p, extra.snapshot())).toBe(true);
+    // A prose number with no image of that number beside a real pending image #1.
+    const other = extraDraft();
+    other.replace(0, 0, 'see [Image #2] ');
+    other.addImages([shot()]);
+    expect(previewLocked(generated(other), other.snapshot())).toBe(true);
+  });
+
+  it('prose that collides with the number of an uploaded image does not lock', async () => {
+    const extra = extraDraft(() => Promise.resolve({ ok: true, data: { path: '/drops/a.png' } }));
+    extra.replace(0, 0, 'Keep the label [Image #1] in the docs. ');
+    extra.addImages([shot()]);
+    await extra.resolve();
+    const p = generated(extra);
+    expect(p.text).toContain('[Image #1: /drops/a.png]');
+    expect(p.text).toContain('the label [Image #1] in');
+    expect(previewLocked(p, extra.snapshot())).toBe(false);
   });
 
   it('with the lock in force the edit that would freeze a pathless marker cannot happen: the prompt sent is the bridge\'s', () => {
     const p = previewGenerated(emptyPreview(), 'task\n\n[Image #1]');
-    expect(previewLocked(p)).toBe(true);
+    expect(previewLocked(p, { segments: [{ kind: 'image' }], images: [{ n: 1 }] })).toBe(true);
     expect(previewArg(p)).toBeUndefined(); // generated: run.start carries no prompt, the bridge composes it from the resolved extra
   });
 
   it('an edited prompt, a prompt with path markers and a prompt with no image are never locked', () => {
-    expect(previewLocked(previewEdited(previewGenerated(emptyPreview(), 'a'), 'a, edited'))).toBe(false);
-    expect(previewLocked(previewEdited(previewGenerated(emptyPreview(), 'a [Image #1]'), 'a [Image #1], edited'))).toBe(false);
-    expect(previewLocked(previewGenerated(emptyPreview(), 'a [Image #1: /drops/a.png]'))).toBe(false);
-    expect(previewLocked(previewGenerated(emptyPreview(), 'plain'))).toBe(false);
+    const one = { segments: [{ kind: 'image' }], images: [{ n: 1 }] } as const;
+    expect(previewLocked(previewEdited(previewGenerated(emptyPreview(), 'a'), 'a, edited'), one)).toBe(false);
+    expect(previewLocked(previewEdited(previewGenerated(emptyPreview(), 'a [Image #1]'), 'a [Image #1], edited'), one)).toBe(false);
+    expect(previewLocked(previewGenerated(emptyPreview(), 'a [Image #1: /drops/a.png]'), one)).toBe(false);
+    expect(previewLocked(previewGenerated(emptyPreview(), 'plain'), one)).toBe(false);
   });
 });
 

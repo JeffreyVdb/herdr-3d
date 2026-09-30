@@ -657,6 +657,34 @@ describe('holdRefused (#64: a refused file holds the prompt until the user dismi
     expect(draft.doc.text).toBe('typing goes on');
   });
 
+  it('a refusal made after a send snapshot survives that send’s clearIf; the sent text and images still go', async () => {
+    const { draft } = harness({ holdRefused: true });
+    draft.replace(0, 0, 'first');
+    const sent = ok(await draft.resolve());
+    draft.addImages([pdf()]); // made while the send is pending: the revision is the same, the refusal is newer
+    expect(draft.revision).toBe(sent.revision);
+    expect(draft.clearIf(sent.revision)).toBe(true);
+    expect(draft.doc.text).toBe('');
+    expect(draft.refusal).toBe('notes.pdf is not a PNG, JPEG, GIF or WebP image.');
+    expect(await draft.resolve()).toMatchObject({ ok: false, reason: 'refused' });
+    expect(draft.dismissRefusal()).toBe(true);
+    expect(ok(await draft.resolve()).text).toBe('');
+  });
+
+  it('clearIf without a held refusal is unchanged, and clear() still drops a refusal', () => {
+    const { draft } = harness({ holdRefused: true });
+    draft.replace(0, 0, 'x');
+    expect(draft.clearIf(draft.revision)).toBe(true);
+    draft.addImages([pdf()]);
+    const seen: string[] = [];
+    draft.subscribe((e) => e.kind === 'refusal' && seen.push('refusal'));
+    draft.clearIf(draft.revision);
+    expect(seen).toEqual([]); // the held refusal is not announced as gone
+    draft.clear();
+    expect(draft.refusal).toBeNull();
+    expect(seen).toEqual(['refusal']);
+  });
+
   it('is cleared with the draft (a sent prompt) and is off by default', async () => {
     const held = harness({ holdRefused: true });
     held.draft.addImages([pdf()]);

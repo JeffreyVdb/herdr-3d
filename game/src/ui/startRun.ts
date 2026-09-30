@@ -607,7 +607,7 @@ export class StartRunDialog {
     this.extraC.setBusy(this.state === 'starting' || this.resolving);
     this.promptC.setBusy(this.state === 'starting' || this.resolving);
     this.extraC.setDisabled(this.state === 'failed');
-    this.promptC.setDisabled(this.state === 'failed' || previewLocked(this.preview));
+    this.promptC.setDisabled(this.state === 'failed' || previewLocked(this.preview, this.extraDraft.snapshot()));
     this.renderLive();
     if (focusKey === 'extra' || focusKey === 'prompt') (focusKey === 'extra' ? this.extraC : this.promptC).focus();
     else if (focusKey) {
@@ -717,7 +717,7 @@ export class StartRunDialog {
     const wrap = this.dialog.querySelector<HTMLElement>('.dd-preview');
     if (!tape || !note || !reset || !wrap) return;
     const p = this.preview;
-    const locked = previewLocked(p);
+    const locked = previewLocked(p, this.extraDraft.snapshot());
     this.promptC.setDisabled(this.state === 'failed' || locked);
     const waiting = this.timer !== null || this.inFlight;
     const stale = previewStale(p);

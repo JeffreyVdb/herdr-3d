@@ -518,6 +518,34 @@ test('Start Run: the First prompt is read-only while its generated text names an
   clean();
 });
 
+test('Start Run: marker-shaped words typed in Extra (no image attached) never lock the First prompt', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await onFloor(page, '', 'demo-m4');
+  await openRun(page);
+  await extraBox(page).click();
+  const literal = 'Keep the literal label [Image #1] in the docs.';
+  await pasteText(page, '#run-extra', literal);
+  await settled(page);
+  await expect(extraChips(page)).toHaveCount(0);
+  await expect.poll(async () => (await runState(page)).preview.text, { timeout: 10_000 }).toContain(literal);
+  // Plain text: the First prompt stays editable, says nothing about an image, and an edit of it goes as usual.
+  await expect(promptBox(page)).toHaveAttribute('contenteditable', 'true');
+  await expect(runDlg(page).locator('#run-prompt-note')).not.toContainText('Read-only');
+  await promptBox(page).click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type('\nBe careful');
+  expect((await runState(page)).preview.custom).toBe(true);
+  await expect(runDlg(page).locator('[data-key="reset-prompt"]')).toBeVisible();
+  await page.keyboard.press('ControlOrMeta+Enter');
+  await expect.poll(async () => (await runStarts(page)).length).toBe(1);
+  const args = (await runStarts(page))[0]!.args as { extra?: string; prompt?: string };
+  expect(args.extra).toBe(literal);
+  expect(args.prompt).toContain(literal);
+  expect(args.prompt!.endsWith('Be careful')).toBe(true);
+  clean();
+});
+
 // ---- the seated view ------------------------------------------------------------------------------------------------
 
 async function sitAt(page: Page, name: string, extra = ''): Promise<{ id: string; key: string }> {

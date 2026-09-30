@@ -510,6 +510,10 @@ export class Draft {
 
   /** After a successful send: nothing of the draft is kept. */
   clear(): void {
+    this.wipe(false);
+  }
+
+  private wipe(keepRefusal: boolean): void {
     this.hist = [{ doc: EMPTY_DOC, sel: EMPTY_SEL }];
     this.at = 0;
     this.cur = EMPTY_DOC;
@@ -517,16 +521,20 @@ export class Draft {
     this.rev++;
     this.lastTypeAt = -Infinity;
     for (const r of [...this.res.values()]) this.release(r);
-    const held = this.refused !== null;
-    this.refused = null;
+    const held = this.refused !== null && !keepRefusal;
+    if (!keepRefusal) this.refused = null;
     this.emit({ kind: 'doc', origin: 'api' });
     if (held) this.emit({ kind: 'refusal' });
   }
 
-  /** `clear()` only if nothing was edited since `revision`: a newer edit, made while the send was pending, survives it. */
+  /**
+   * `clear()` only if nothing was edited since `revision`: a newer edit, made while the send was pending, survives it.
+   * A held refusal survives too: `resolve()` does not resolve while one is held, so any refusal held now was made after
+   * the send's snapshot, and the send's (stale) acknowledgement must not dismiss it for the user.
+   */
   clearIf(revision: number): boolean {
     if (this.rev !== revision) return false;
-    this.clear();
+    this.wipe(true);
     return true;
   }
 

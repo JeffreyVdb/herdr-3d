@@ -137,4 +137,30 @@ describe('PromptOverlay', () => {
     await e.send();
     expect(e.requests).toHaveLength(0);
   });
+
+  it('a stale success ack keeps a refusal made after the send, so the next prompt is still held', async () => {
+    const e = setup();
+    e.overlay.open('A');
+    e.composer.insertText('first');
+    const a = e.send();
+    await e.flush();
+    e.overlay.close();
+    e.overlay.open('A');
+    e.composer.insertFiles([new File(['bad'], 'new.pdf', { type: 'application/pdf' })]);
+    expect(e.composer.getDraft().refusal).toContain('new.pdf');
+    e.requests[0]!.ack({ ok: true, data: {} });
+    await a;
+    expect(e.composer.getDraft().refusal).toContain('new.pdf');
+    expect(document.querySelector('.cmp-refusal')?.hasAttribute('hidden')).toBe(false);
+    e.composer.insertText('second');
+    await e.send();
+    await e.flush();
+    expect(e.requests).toHaveLength(1);
+    expect(e.overlay.summary()?.status).toMatch(/^Nothing was sent: new\.pdf/);
+
+    document.querySelector<HTMLButtonElement>('.cmp-dismiss')!.click();
+    void e.send();
+    await e.flush();
+    expect(e.requests.map((q) => q.args.text)).toEqual(['first', 'second']);
+  });
 });
