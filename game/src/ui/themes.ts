@@ -1,8 +1,9 @@
 /**
- * #59: the transcript's three presets. A preset sets the monospace font (the terminal canvas, the transcript's code
- * and tool rows, the limits widget, the HUD's numbers: every `--font-mono`), the transcript's prose font and size, the
- * transcript's colours (the `--tx-*` set) and the terminal's background, text and cursor. The 16 ANSI colours stay
- * (agents' TUIs keep their meaning), and the HUD, panels and dialogs keep Recursive (`--font`).
+ * #59: the three presets, picked apart for the two seated views. For the transcript a preset sets the monospace
+ * font (its code and tool rows, and every other `--font-mono` in the DOM: the limits widget, the boards, the HUD's
+ * numbers), the prose font and size and the colours (the `--tx-*` set); for the terminal it sets the canvas's font,
+ * background, text and cursor. The 16 ANSI colours stay (agents' TUIs keep their meaning), and the HUD, panels and
+ * dialogs keep Recursive (`--font`).
  *
  * Exactly three, hard-coded: nothing creates, edits or imports another. Quiet is the default and today's navy screen.
  */

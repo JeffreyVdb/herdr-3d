@@ -56,7 +56,7 @@ export interface LaptopHost {
   insets(): { top: number; bottom: number };
   /** M16: where the transcript overlay goes (the HUD, fixed over the viewport). */
   layer: HTMLElement;
-  /** #59: the transcript preset and its prefs (the font zoom, hidden tool calls); none: Quiet at 100% (tests). */
+  /** #59: the transcript's and the terminal's presets and zooms, hidden tool calls; none: Quiet at 100% (tests). */
   themes?: ThemeLoader;
 }
 
@@ -73,7 +73,12 @@ export interface SeatView {
    * in the transcript view (`key`: T while you have not typed into the terminal since, else Ctrl+Esc).
    */
   asking?(ask: { who: string; key: 'T' | 'Ctrl+Esc' } | null): void;
+  /** #59: one of the bar's own controls has the keyboard (the terminal's preset and zoom). */
+  owns?(t: EventTarget | null): boolean;
 }
+
+/** Keys a focused control of the seat bar keeps (moving between its controls, pressing one). */
+const CONTROL_KEYS = new Set(['Tab', 'Enter', ' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']);
 
 /** Where the game is this frame (what the controller needs to plan and to keep you seated). */
 export interface LaptopFrame {
@@ -272,12 +277,13 @@ export class Laptops {
     // #59: the screens follow the preset once its font can draw, and the seated one the zoom.
     host.themes?.onReady((t) => this.setLook(t));
     host.themes?.prefs.onChange((what) => {
-      if (what === 'zoom') for (const t of this.terms.values()) t.setZoom(this.zoom);
+      if (what === 'terminalZoom') for (const t of this.terms.values()) t.setZoom(this.zoom);
     });
   }
 
+  /** The terminal's own zoom (the transcript has another). */
   private get zoom(): number {
-    return this.host.themes?.prefs.zoom ?? ZOOM.reset;
+    return this.host.themes?.prefs.zoom('terminal') ?? ZOOM.reset;
   }
 
   /** #59: every screen (live and pooled) in the preset's font and colours. */
@@ -285,12 +291,17 @@ export class Laptops {
     for (const term of [...this.terms.values(), ...this.pool]) term.setLook(t.mono.stack, screenTheme(t.screen));
   }
 
-  /** #59: A−, A+ and reset, from the keys or the wheel; in terminal mode the seat bar says the level (the transcript's strip shows it). */
+  /**
+   * #59: A−, A+ and reset, from the keys or the wheel, for the view that is up: the transcript's zoom while you read
+   * (its strip shows the level), the terminal's otherwise (the seat bar shows it). The Images tab has no zoom.
+   */
   zoomBy(a: ZoomAction): void {
     const prefs = this.host.themes?.prefs;
     if (!prefs || !this.seat) return;
-    prefs.zoom = a === 'zoom-reset' ? ZOOM.reset : stepZoom(prefs.zoom, a === 'zoom-in' ? 1 : -1);
-    if (!this.transcript.shown) this.host.seat.status('ok', `Text size ${prefs.zoom}%${prefs.zoom === ZOOM.reset ? '' : ' · Ctrl+0 resets'}`);
+    const mode = this.transcript.mode;
+    if (mode === 'images') return;
+    const view = mode === 'transcript' ? 'transcript' : 'terminal';
+    prefs.setZoom(view, a === 'zoom-reset' ? ZOOM.reset : stepZoom(prefs.zoom(view), a === 'zoom-in' ? 1 : -1));
   }
 
   /** Ctrl+wheel (a trackpad's pinch too) over the view while seated: a step per notch, the rest carried over. */
@@ -666,6 +677,8 @@ export class Laptops {
       this.zoomBy(k.action);
       return true;
     }
+    // #59: on the seat bar's own controls (the terminal's preset and zoom), moving and pressing are theirs.
+    if (CONTROL_KEYS.has(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && this.host.seat.owns?.(e.target)) return true;
     if (this.transcript.shown) return this.readingKey(e, k.action === 'toggle-transcript');
     // #57: T answers the question in the transcript view (once you type into the terminal, T is a letter again).
     if (this.askId && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {

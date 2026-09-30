@@ -577,10 +577,12 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   send-home dialog (`sendHome.ts`), styled in `hire.css`; M6: the start-run dialog (`startRun.ts`, the empty desk's
   "Hire orchestrator" tab from `deskTabs.ts`, the top bar's Run and Presets from `startButtons.ts`) and the team presets
   panel (`presets.ts`), styled in `start.css`, and the prompt bar's crew line (`crewBar.ts`, `crew.css`); #59: the
-  transcript's three presets (`themes.ts`: typed constants, the zoom's clamp / step / reset, Departure Mono's 11 px
-  grid), what the view remembers (`themePrefs.ts`: `h3d.theme`, `h3d.transcript.hideTools`, `h3d.zoom`, guarded like
-  `limitsPrefs.ts`) and the loader that puts a preset on the page (`themeLoader.ts`: custom properties on the root, its
-  fonts from `src/fonts/` on first pick, the terminal told once they are in; defaults in `themes.css`); M5: the prompt overlay (`prompt.ts`, P: a modal like the M4
+  three presets (`themes.ts`: typed constants, the zoom's clamp / step / reset, Departure Mono's 11 px grid), what the
+  seated views remember (`themePrefs.ts`: the transcript's and the terminal's preset and zoom apart,
+  `h3d.theme.{transcript,terminal}`, `h3d.zoom.{transcript,terminal}`, and `h3d.transcript.hideTools`, guarded like
+  `limitsPrefs.ts`) and the loader (`themeLoader.ts`: the transcript's preset as custom properties on the root, fonts
+  from `src/fonts/` on first pick, the terminal told once its preset's faces are in; defaults in `themes.css`); the
+  seat bar holds the terminal's preset and zoom (`seat.ts`); M5: the prompt overlay (`prompt.ts`, P: a modal like the M4
   dialogs, low on the screen), the Changes panel (`changes.ts`, C: a non-modal side panel in the HUD under the top bar,
   so the floor stays in view and walkable; its diff is drawn a window of lines at a time), the look-at bar's usage and
   Approve / Deny (`promptBar.ts`), styled in `m5.css`, and the seat bar (`seat.ts`, `seat.css`). Hidden, named hooks
@@ -703,9 +705,9 @@ M16 on the simulating server (`tools/fixture-transcript.ts`, rules at its top): 
 for its conversation. `transcript.watch` answers a demo timeline of every item kind in the bridge's shape, the demo's
 Agent call pages the bridge's own output for its subagent fixture, and `sim.transcript` (`simTranscript(args)` in the
 hooks) pushes items or updates to a watch (`{id, items, updates}`) or closes it (`{id, close: "session_changed"}`);
-`simfail=no_m16` plays a bridge before M16. #59: the view's top strip has the preset (three swatches: Terminal, Quiet,
-Paper), Hide tools and A− / 100% / A+ (also Ctrl + = / − / 0 and Ctrl+wheel, while seated only); they reach the
-terminal too. `e2e/m59-themes.spec.ts` drives them. The game's tests read what the bridge makes of its own fixtures from
+`simfail=no_m16` plays a bridge before M16. #59: the view's top strip has the transcript's preset (three swatches:
+Terminal, Quiet, Paper), Hide tools and A− / 100% / A+; the seat bar has the terminal's own preset and zoom. Ctrl + = /
+− / 0 and Ctrl+wheel zoom the view that is up, while seated only. `e2e/m59-themes.spec.ts` drives them. The game's tests read what the bridge makes of its own fixtures from
 `game/fixtures/transcript/` (`H3D_UPDATE_FIXTURES=1 go test ./internal/transcript` writes them, and the Go test fails
 when they are stale). E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1&floor=herdr-3d`.
 
@@ -914,12 +916,14 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # the lobby and back, a missing file, the music popover (slider / mute), the Music credits panel;
                               # m15-{radio,radio-hint,radio-toast,audio-controls,credits}.png
                               # #59 transcript presets on demo-m5 with sim=1 (m59-themes.spec.ts): the font files a
-                              # fresh load fetches (Quiet's only; a stored preset's only), each preset from the
-                              # strip (computed fonts: mono vs prose; the terminal canvas and the limits widget;
-                              # a box in tool output lined up), Hide tools and its chip, blocked storage, the zoom
+                              # fresh load fetches (Quiet's only; a stored preset's only), each transcript preset
+                              # from its strip (computed fonts: mono vs prose; the limits widget; a box in tool
+                              # output lined up) and the terminal's from the seat bar, apart (the terminal in Paper
+                              # fetches no Newsreader), Hide tools and its chip, blocked storage, each view's zoom
                               # (keys, buttons, the prompt box, 200 % and 70 % laid out, Ctrl+wheel on the terminal,
                               # Departure Mono on 11 / 22 px), keyboard reach; m59-{transcript,terminal}-<preset>,
-                              # m59-transcript-<preset>-hidden, m59-zoom-{200,70}, m59-terminal-zoom-200.png
+                              # m59-transcript-<preset>-hidden, m59-mixed-{transcript,terminal} (Paper over
+                              # Terminal), m59-zoom-{200,70}, m59-terminal-zoom-200.png
                               # M7 on demo-m6 with sim=1 (m7-boards.spec.ts, m7-actions.spec.ts, m7-perf.spec.ts): the
                               # corkboard and PR board (columns, paper, pins, holders, CI, verdict stamps), E and the
                               # top bar opening the overlays, no-project / no-repo / older-bridge floors, the watch

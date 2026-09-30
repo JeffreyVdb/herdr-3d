@@ -1,8 +1,8 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { frames, openGame, shot, watchErrors } from './game';
 
-// #59: the transcript's three presets (fonts and colours, the terminal's and the limits widget's mono too), "Hide
-// tools" and the text zoom, for real on the WebGL2 path: demo-m5 with the simulating fixture server (the demo
+// #59: the three presets, picked apart for the transcript (fonts and colours; the limits widget's mono follows it) and
+// for the terminal (its canvas's font and colours), "Hide tools" and each view's text zoom, for real on the WebGL2 path: demo-m5 with the simulating fixture server (the demo
 // timeline of tools/fixture-transcript.ts, plus the items pushed below: a tool whose output draws a box, emphasis in a
 // reply, a long code line). You sit at Tofu, Ctrl+Esc opens the conversation.
 
@@ -12,6 +12,7 @@ const SIM = 'play=none&sim=1&simms=500&simusage=0&simlimits=ok';
 const FILES = { terminal: /DepartureMono|archivo/i, quiet: /jetbrains-mono|atkinson/i, paper: /space-mono|newsreader/i } as const;
 type Id = keyof typeof FILES;
 const IDS: Id[] = ['terminal', 'quiet', 'paper'];
+const LABEL = { terminal: 'Terminal', quiet: 'Quiet', paper: 'Paper' } as const;
 const FAMILY = {
   terminal: { mono: 'Departure Mono', prose: 'Archivo Variable' },
   quiet: { mono: 'JetBrains Mono Variable', prose: 'Atkinson Hyperlegible Next Variable' },
@@ -100,22 +101,21 @@ async function checkFonts(page: Page, tx: Locator, id: Id): Promise<void> {
   }
   // No ligatures in code (JetBrains Mono's are contextual alternates).
   expect(await tx.locator('.tx-out').first().evaluate((e) => getComputedStyle(e).fontVariantLigatures)).toBe('none');
-  // The picked preset's mono reaches the terminal canvas and the limits widget; the HUD keeps Recursive.
-  expect((await theme(page)).terminalFont).toContain(mono);
+  // The transcript's mono reaches the limits widget (every DOM monospace); the HUD keeps Recursive.
   expect(await family(page.locator('.lm-pct'))).toContain(mono);
   expect(await page.locator('.hud').first().evaluate((e) => getComputedStyle(e).fontFamily)).toContain('Recursive');
   // The fonts are really in (not the fallback).
   expect(await page.evaluate((f) => document.fonts.check(`16px "${f.mono}"`) && document.fonts.check(`16px "${f.prose}"`), FAMILY[id])).toBe(true);
 }
 
-test('a fresh load fetches Quiet’s fonts only; a stored preset fetches its own only, and survives a reload', async ({ page }) => {
+test('a fresh load fetches Quiet’s fonts only', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   const fonts = fontRequests(page);
   const id = await sitAt(page);
   await openTranscript(page, id);
   await page.evaluate(() => window.__h3d.themeLoaded());
-  expect(await theme(page)).toMatchObject({ picked: 'quiet', ready: 'quiet', zoom: 100, hideTools: false });
+  expect(await theme(page)).toMatchObject({ transcript: 'quiet', terminal: 'quiet', ready: 'quiet', transcriptZoom: 100, terminalZoom: 100, hideTools: false });
   // The selected preset's files were fetched (not an empty set passing trivially), no other preset's.
   await expect.poll(() => fonts.filter((u) => FILES.quiet.test(u)).length).toBeGreaterThanOrEqual(2);
   expect(fonts.filter((u) => FILES.terminal.test(u) || FILES.paper.test(u))).toEqual([]);
@@ -124,32 +124,47 @@ test('a fresh load fetches Quiet’s fonts only; a stored preset fetches its own
 });
 
 for (const pick of ['terminal', 'paper'] as const) {
-  test(`a stored ${pick} preset loads its fonts only, from the first frame`, async ({ page }) => {
+  test(`a stored ${pick} transcript loads its fonts only, from the first frame`, async ({ page }) => {
     test.setTimeout(150_000);
     const fonts = fontRequests(page);
-    const id = await sitAt(page, 'Tofu', { 'h3d.theme': pick });
+    const id = await sitAt(page, 'Tofu', { 'h3d.theme.transcript': pick, 'h3d.theme.terminal': pick });
     const tx = await openTranscript(page, id);
     await page.evaluate(() => window.__h3d.themeLoaded());
-    expect(await theme(page)).toMatchObject({ picked: pick, ready: pick });
+    expect(await theme(page)).toMatchObject({ transcript: pick, terminal: pick, ready: pick });
     await expect.poll(() => fonts.filter((u) => FILES[pick].test(u)).length).toBeGreaterThanOrEqual(2);
     const others = IDS.filter((i) => i !== pick);
     expect(fonts.filter((u) => others.some((o) => FILES[o].test(u)))).toEqual([]);
-    await expect(tx.locator('[role="radio"][aria-checked="true"]')).toHaveAttribute('aria-label', pick === 'terminal' ? 'Terminal' : 'Paper');
+    await expect(tx.locator('[role="radio"][aria-checked="true"]')).toHaveAttribute('aria-label', LABEL[pick]);
   });
 }
 
-test('each preset restyles the transcript, the terminal and the limits widget without a reload; tools shown and hidden', async ({ page }) => {
-  test.setTimeout(240_000);
+test('the terminal in Paper fetches Space Mono, not Newsreader (its prose font), and changes nothing in the DOM', async ({ page }) => {
+  test.setTimeout(150_000);
+  const fonts = fontRequests(page);
+  await sitAt(page, 'Tofu', { 'h3d.theme.terminal': 'paper' });
+  await page.evaluate(() => window.__h3d.themeLoaded());
+  expect(await theme(page)).toMatchObject({ transcript: 'quiet', terminal: 'paper', ready: 'paper' });
+  expect((await theme(page)).terminalFont).toContain('Space Mono');
+  await expect.poll(() => fonts.filter((u) => /space-mono/i.test(u)).length).toBeGreaterThanOrEqual(1);
+  expect(fonts.filter((u) => /newsreader|DepartureMono|archivo/i.test(u))).toEqual([]);
+  // The limits widget follows the transcript's preset, not the terminal's.
+  expect(await family(page.locator('.lm-pct'))).toContain('JetBrains Mono Variable');
+});
+
+test('each view takes its own preset without a reload: transcript (tools shown and hidden), terminal, a mixed pair', async ({ page }) => {
+  test.setTimeout(300_000);
   const clean = watchErrors(page);
   const id = await sitAt(page);
   const tx = await openTranscript(page, id);
   for (const pick of IDS) {
     await tx.locator(`[role="radio"][data-theme-id="${pick}"]`).click();
     await page.evaluate(() => window.__h3d.themeLoaded());
-    expect(await theme(page)).toMatchObject({ picked: pick, ready: pick });
+    expect(await theme(page)).toMatchObject({ transcript: pick, terminal: 'quiet' });
     await expect(tx).toHaveAttribute('data-theme', pick);
     await checkFonts(page, tx, pick);
-    // Box drawing in tool output: drawn by a face that has it (the mono, or the system monospace after it), in line.
+    // The terminal keeps its own.
+    expect((await theme(page)).terminalFont).toContain(FAMILY.quiet.mono);
+    // Box drawing in tool output: drawn by a face that has it, in line.
     const out = tx.locator('[data-id="m59-box"] .tx-out');
     await out.scrollIntoViewIfNeeded();
     const widths = await out.evaluate((e) => {
@@ -182,24 +197,39 @@ test('each preset restyles the transcript, the terminal and the limits widget wi
     await shot(page, `m59-transcript-${pick}-hidden`);
     await tx.locator('.tx-check-box').uncheck();
     await expect(tx.locator('[data-id="toolu_demo_grep"]')).toBeVisible();
-    // The terminal in the preset: its font and colours, painted with its metrics.
-    await page.keyboard.press('Control+Escape');
-    await expect(tx).toBeHidden();
-    await frames(page, 12);
-    expect((await theme(page)).terminalFont).toContain(FAMILY[pick].mono);
-    await shot(page, `m59-terminal-${pick}`);
-    await page.keyboard.press('Control+Escape');
-    await expect(tx).toBeVisible();
   }
-  // The pick survives a reload (and so does "Hide tools").
+  // The terminal's own presets, from the seat bar: its canvas changes, the transcript and the limits widget do not.
+  await page.keyboard.press('Control+Escape');
+  await expect(tx).toBeHidden();
+  const seatRadios = page.getByRole('radiogroup', { name: 'Terminal theme' });
+  for (const pick of IDS) {
+    await seatRadios.getByRole('radio', { name: LABEL[pick] }).click();
+    await page.evaluate(() => window.__h3d.themeLoaded());
+    expect(await theme(page)).toMatchObject({ transcript: 'paper', terminal: pick, ready: pick });
+    expect((await theme(page)).terminalFont).toContain(FAMILY[pick].mono);
+    expect(await family(page.locator('.lm-pct'))).toContain(FAMILY.paper.mono);
+    expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe('paper');
+    await frames(page, 12);
+    await shot(page, `m59-terminal-${pick}`);
+  }
+  // A mixed pair: the transcript in Paper over the terminal in Terminal (Departure Mono, phosphor green).
+  await seatRadios.getByRole('radio', { name: 'Terminal' }).click();
+  await page.evaluate(() => window.__h3d.themeLoaded());
+  await frames(page, 12);
+  await shot(page, 'm59-mixed-terminal');
+  await page.keyboard.press('Control+Escape');
+  await expect(tx).toBeVisible();
+  await frames(page, 6);
+  await shot(page, 'm59-mixed-transcript');
+  // Both picks survive a reload (and so does "Hide tools").
   await tx.locator('.tx-check-box').check();
   await page.reload();
   await page.waitForFunction(() => window.__h3d?.ready && window.__h3d.frames >= 3);
-  expect(await theme(page)).toMatchObject({ picked: 'paper', hideTools: true });
+  expect(await theme(page)).toMatchObject({ transcript: 'paper', terminal: 'terminal', hideTools: true });
   clean();
 });
 
-test('with localStorage blocked the preset, Hide tools and the zoom still work for the page', async ({ page }) => {
+test('with localStorage blocked both presets, Hide tools and both zooms still work for the page', async ({ page }) => {
   test.setTimeout(150_000);
   await page.addInitScript(() => {
     const boom = () => {
@@ -208,17 +238,19 @@ test('with localStorage blocked the preset, Hide tools and the zoom still work f
     Object.defineProperty(window, 'localStorage', { configurable: true, get: boom });
   });
   const id = await sitAt(page);
+  await page.getByRole('radiogroup', { name: 'Terminal theme' }).getByRole('radio', { name: 'Terminal' }).click();
+  await page.getByRole('button', { name: 'Larger terminal text' }).click();
   const tx = await openTranscript(page, id);
   await tx.locator('[role="radio"][data-theme-id="paper"]').click();
   await page.evaluate(() => window.__h3d.themeLoaded());
-  expect(await theme(page)).toMatchObject({ picked: 'paper', ready: 'paper' });
+  await tx.getByRole('button', { name: 'Larger text' }).click();
   await tx.getByRole('button', { name: 'Larger text' }).click();
   await tx.locator('.tx-check-box').check();
-  expect(await theme(page)).toMatchObject({ picked: 'paper', zoom: 110, hideTools: true });
+  expect(await theme(page)).toMatchObject({ transcript: 'paper', terminal: 'terminal', ready: 'terminal', transcriptZoom: 120, terminalZoom: 110, hideTools: true });
   await expect(tx.locator('[data-id="toolu_demo_grep"]')).toBeHidden();
 });
 
-test('the zoom: A− / 100% / A+ and Ctrl keys in the transcript, Ctrl+wheel on the terminal, only while seated', async ({ page }) => {
+test('each view has its own zoom: A− / 100% / A+ and the Ctrl keys in the transcript, Ctrl+wheel on the terminal, only while seated', async ({ page }) => {
   test.setTimeout(200_000);
   const clean = watchErrors(page);
   // Not seated: the keys are the browser's, never taken.
@@ -229,7 +261,7 @@ test('the zoom: A− / 100% / A+ and Ctrl keys in the transcript, Ctrl+wheel on 
     return e.defaultPrevented;
   });
   expect(prevented).toBe(false);
-  expect((await theme(page)).zoom).toBe(100);
+  expect(await theme(page)).toMatchObject({ transcriptZoom: 100, terminalZoom: 100 });
 
   const id = await sitAt(page, 'Nibble');
   const tx = await openTranscript(page, id);
@@ -253,10 +285,11 @@ test('the zoom: A− / 100% / A+ and Ctrl keys in the transcript, Ctrl+wheel on 
   await page.keyboard.press('Control+0');
   await expect(level).toHaveText('100%');
 
-  // 200% and 70%: nothing overlaps or clips, code scrolls sideways inside its block.
+  // 200% and 70%: nothing overlaps or clips, code scrolls sideways inside its block; the terminal's zoom stays.
   for (const z of [200, 70]) {
-    while ((await theme(page)).zoom !== z) await page.keyboard.press(z > 100 ? 'Control+=' : 'Control+-');
+    while ((await theme(page)).transcriptZoom !== z) await page.keyboard.press(z > 100 ? 'Control+=' : 'Control+-');
     await expect(level).toHaveText(`${z}%`);
+    expect((await theme(page)).terminalZoom).toBe(100);
     expect(Math.abs((await size()) - 13.5 * (z / 100))).toBeLessThan(0.2);
     expect(await monoSize()).toBeCloseTo(11.5 * (z / 100), 0);
     await tx.locator('[data-id="m59-say"]').scrollIntoViewIfNeeded();
@@ -276,50 +309,67 @@ test('the zoom: A− / 100% / A+ and Ctrl keys in the transcript, Ctrl+wheel on 
   }
   await page.keyboard.press('Control+0');
   await expect(level).toHaveText('100%');
+  await page.keyboard.press('Control+=');
+  await expect(level).toHaveText('110%');
 
-  // Terminal mode: Ctrl+wheel over the screen zooms, the seat bar says the level, the cursor stays on screen.
+  // Terminal mode: its own zoom. Ctrl+wheel over the screen, and the keys; the seat bar shows its level; the
+  // transcript's stays at 110%.
   await page.keyboard.press('Control+Escape');
   await expect(tx).toBeHidden();
+  const termLevel = page.locator('.seat-zoom-level');
+  await expect(termLevel).toHaveText('100%');
   await page.mouse.move(640, 360);
   await page.keyboard.down('Control');
   for (let i = 0; i < 10; i++) await page.mouse.wheel(0, -120);
   await page.keyboard.up('Control');
-  await expect.poll(async () => (await theme(page)).zoom).toBe(200);
-  await expect(page.locator('.seat')).toContainText('Text size 200%');
+  await expect.poll(async () => (await theme(page)).terminalZoom).toBe(200);
+  await expect(termLevel).toHaveText('200%');
+  expect((await theme(page)).transcriptZoom).toBe(110);
   await frames(page, 12);
   await shot(page, 'm59-terminal-zoom-200');
-  // The level survives a reload; switching preset keeps it (Departure Mono on its 22px step at 200%).
+  await page.keyboard.press('Control+-');
+  await expect(termLevel).toHaveText('190%');
+  await page.keyboard.press('Control+0');
+  await expect(termLevel).toHaveText('100%');
+  await page.getByRole('button', { name: 'Larger terminal text' }).click();
+  await expect(termLevel).toHaveText('110%');
+  expect((await theme(page)).transcriptZoom).toBe(110);
+
+  // Levels survive a reload; switching the transcript's preset keeps its zoom (Departure Mono on 22px at 200%).
   await page.reload();
   await page.waitForFunction(() => window.__h3d?.ready && window.__h3d.frames >= 3);
-  expect((await theme(page)).zoom).toBe(200);
-  const id2 = await sitAt(page);
+  expect(await theme(page)).toMatchObject({ transcriptZoom: 110, terminalZoom: 110 });
+  const id2 = await sitAt(page, 'Nibble');
   const tx2 = await openTranscript(page, id2);
+  for (let i = 0; i < 9; i++) await page.keyboard.press('Control+=');
+  expect((await theme(page)).transcriptZoom).toBe(200);
   await tx2.locator('[role="radio"][data-theme-id="terminal"]').click();
   await page.evaluate(() => window.__h3d.themeLoaded());
-  expect((await theme(page)).zoom).toBe(200);
+  expect((await theme(page)).transcriptZoom).toBe(200);
   expect(await tx2.locator('.tx-md pre code').first().evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBe(22);
   await tx2.getByRole('button', { name: /Text size 200%/ }).click();
   expect(await tx2.locator('.tx-md pre code').first().evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBe(11);
+  expect((await theme(page)).terminalZoom).toBe(110);
   clean();
 });
 
-test('the picker and Hide tools are reachable by keyboard, and the transcript keys still work', async ({ page }) => {
+test('both pickers and Hide tools are reachable by keyboard, and the transcript keys still work', async ({ page }) => {
   test.setTimeout(150_000);
   const id = await sitAt(page, 'Nibble');
   const tx = await openTranscript(page, id);
   const scroller = tx.locator('.tx-scroll');
   await scroller.focus();
-  // Tab from the timeline wraps round to the strip: the first stop in it that is ours is reached within a few presses.
   const focused = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.className ?? '');
+  // Shift+Tab from the timeline reaches the strip's controls: the transcript's preset (the checked radio holds the stop).
   let hops = 0;
   while (!(await focused()).includes('tx-theme') && hops++ < 40) await page.keyboard.press('Shift+Tab');
   expect(await focused()).toContain('tx-theme');
-  // The checked radio holds the tab stop; arrows pick.
+  expect(await page.evaluate(() => document.activeElement?.closest('[role="radiogroup"]')?.getAttribute('aria-label'))).toBe('Transcript theme');
   expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-checked'))).toBe('true');
   await page.keyboard.press('ArrowRight');
-  expect((await theme(page)).picked).toBe('paper');
+  expect((await theme(page)).transcript).toBe('paper');
   await page.keyboard.press('ArrowLeft');
-  expect((await theme(page)).picked).toBe('quiet');
+  expect((await theme(page)).transcript).toBe('quiet');
   hops = 0;
   while (!(await focused()).includes('tx-check-box') && hops++ < 20) await page.keyboard.press('Shift+Tab');
   expect(await focused()).toContain('tx-check-box');
@@ -327,7 +377,19 @@ test('the picker and Hide tools are reachable by keyboard, and the transcript ke
   expect((await theme(page)).hideTools).toBe(true);
   await page.keyboard.press('Space');
   expect((await theme(page)).hideTools).toBe(false);
-  // Back on the timeline: PgUp / PgDn and j / k scroll, Ctrl+Esc swaps, Esc stands up.
+  // Further on, the terminal's preset and zoom in the seat bar (in terminal mode every key is the pane's).
+  hops = 0;
+  while (!(await focused()).includes('seat-theme') && hops++ < 60) await page.keyboard.press('Shift+Tab');
+  expect(await focused()).toContain('seat-theme');
+  expect(await page.evaluate(() => document.activeElement?.closest('[role="radiogroup"]')?.getAttribute('aria-label'))).toBe('Terminal theme');
+  await page.keyboard.press('ArrowRight');
+  expect(await theme(page)).toMatchObject({ transcript: 'quiet', terminal: 'paper' });
+  await page.keyboard.press('Tab');
+  expect(await focused()).toContain('seat-zoom-btn');
+  await page.keyboard.press('Enter');
+  expect((await theme(page)).terminalZoom).toBe(90);
+  expect((await theme(page)).transcriptZoom).toBe(100);
+  // Back on the timeline: PgUp / PgDn and j / k scroll, Enter goes to the prompt box, Ctrl+Esc swaps, Esc stands up.
   await scroller.focus();
   const top = () => scroller.evaluate((e) => e.scrollTop);
   await page.keyboard.press('End');
@@ -339,7 +401,6 @@ test('the picker and Hide tools are reachable by keyboard, and the transcript ke
   await page.keyboard.press('k');
   expect(await top()).toBeLessThan(afterJ);
   await page.keyboard.press('PageDown');
-  // Enter goes to the prompt box, Esc from there… stands you up, as before; so back to the timeline first.
   await page.keyboard.press('Enter');
   expect(await focused()).toContain('tx-input');
   await scroller.focus();

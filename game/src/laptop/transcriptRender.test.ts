@@ -857,12 +857,12 @@ describe('#59: hide tool calls, the preset, the zoom', () => {
     document.addEventListener('keydown', count);
     radios[1]!.focus();
     radios[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
-    expect(prefs.theme).toBe('paper');
+    expect(prefs.theme('transcript')).toBe('paper');
     expect(document.activeElement).toBe(radios[2]);
     radios[2]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
-    expect(prefs.theme).toBe('terminal');
+    expect(prefs.theme('transcript')).toBe('terminal');
     radios[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
-    expect(prefs.theme).toBe('quiet');
+    expect(prefs.theme('transcript')).toBe('quiet');
     expect(sc.scrollTop).toBe(500); // ↓ on the radios is theirs, not the timeline's
     expect(reached).toBe(0); // nor the game's
     // Esc still reaches the seat (stands you up), a click picks.
@@ -870,9 +870,11 @@ describe('#59: hide tool calls, the preset, the zoom', () => {
     expect(reached).toBe(1);
     document.removeEventListener('keydown', count);
     radios[2]!.click();
-    expect(prefs.theme).toBe('paper');
+    expect(prefs.theme('transcript')).toBe('paper');
     expect(($('.tx') as HTMLElement).dataset.theme).toBe('paper');
     expect(radios[2]!.getAttribute('aria-checked')).toBe('true');
+    // The transcript's own: the terminal keeps its preset.
+    expect(prefs.theme('terminal')).toBe('quiet');
   });
 
   it('A− / 100% / A+ step the zoom by 10 within 70–200 and show it; the middle one resets', () => {
@@ -882,18 +884,20 @@ describe('#59: hide tool calls, the preset, the zoom', () => {
     expect(level!.textContent).toBe('100%');
     inc!.click();
     inc!.click();
-    expect(prefs.zoom).toBe(120);
+    expect(prefs.zoom('transcript')).toBe(120);
     expect(level!.textContent).toBe('120%');
     expect(level!.getAttribute('aria-label')).toBe('Text size 120%, back to 100%');
     level!.click();
-    expect(prefs.zoom).toBe(100);
+    expect(prefs.zoom('transcript')).toBe(100);
     for (let i = 0; i < 10; i++) out!.click();
-    expect(prefs.zoom).toBe(70);
+    expect(prefs.zoom('transcript')).toBe(70);
     expect(out!.disabled).toBe(true);
     for (let i = 0; i < 20; i++) inc!.click();
-    expect(prefs.zoom).toBe(200);
+    expect(prefs.zoom('transcript')).toBe(200);
     expect(inc!.disabled).toBe(true);
     expect(level!.textContent).toBe('200%');
+    // The transcript's own: the terminal's zoom stays.
+    expect(prefs.zoom('terminal')).toBe(100);
   });
 
   it('the zoom keys pass through the prompt box to the seat', () => {

@@ -9,7 +9,7 @@ import { drawSymbol, isSymbol } from './glyphs';
  * The colours are the office's: a navy screen, the HUD's hues for ANSI, and
  * the sun-yellow cursor of the HUD's focus ring.
  *
- * #59: the transcript preset picks the font, the background, the text and the
+ * #59: the terminal's preset picks the font, the background, the text and the
  * cursor (the 16 ANSI colours stay). Each glyph is drawn in its own cell, so
  * no font's ligatures (JetBrains Mono's `calt`) or fallback advances move a
  * column, and box drawing, block elements and braille are drawn as shapes

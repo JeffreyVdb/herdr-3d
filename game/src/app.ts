@@ -112,7 +112,7 @@ export class App {
   readonly store = new WorldStore();
   /** M10 limits: the always-on plan limits widget and what it remembers. */
   private readonly limitsPrefs = new LimitsPrefs();
-  /** #59: the transcript preset (fonts and colours, the terminal's too), hidden tool calls and the text zoom. */
+  /** #59: the transcript's and the terminal's presets (fonts, colours) and zooms, and hidden tool calls. */
   readonly themes = new ThemeLoader(new ViewPrefs());
   readonly limitsWidget: LimitsWidget;
   readonly hud: Hud;
@@ -383,7 +383,7 @@ export class App {
       paste: (t) => this.laptops.paste(t),
       stand: () => this.laptops.stand(),
       toggle: () => this.laptops.toggleTranscript(),
-    });
+    }, this.themes.prefs);
     this.laptops = new Laptops(
       {
         store: this.store,

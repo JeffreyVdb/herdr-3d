@@ -506,6 +506,10 @@
   border: 1px solid var(--tx-line);
   overflow-x: auto;
 }
+/* Room above the code for its language label, which would sit over a long first line. */
+.tx-md pre[data-lang] {
+  padding-top: calc(8px + 12px * var(--tx-k, 1));
+}
 .tx-md pre[data-lang]::after {
   content: attr(data-lang);
   position: absolute;

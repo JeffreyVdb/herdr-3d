@@ -31,7 +31,7 @@ export interface TranscriptRenderHost {
   onAnswerAsk(args: CommandArgs['worker.answer_ask']): Promise<AskResult>;
   onSwitchToTerminal(): void;
   loadSubagent(agentId: string): Promise<TranscriptItem[]>;
-  /** #59: the preset, hidden tool calls and the zoom, shared by every view (none: this view's own, kept nowhere). */
+  /** #59: the transcript's preset and zoom and hidden tool calls, shared by every view (none: this view's own, kept nowhere). */
   prefs?: ViewPrefs;
 }
 
@@ -666,11 +666,11 @@ class Transcript implements TranscriptView {
     const picker = h('div', { class: 'tx-themes', role: 'radiogroup', 'aria-label': 'Transcript theme' }, ...this.themeBtns);
     picker.addEventListener('keydown', (e) => this.onPickerKey(e));
     this.zoomBtns = {
-      out: h('button', { class: 'tx-zoom-btn', 'aria-label': 'Smaller text', title: 'Smaller text (Ctrl −)', onclick: () => (this.prefs.zoom = stepZoom(this.prefs.zoom, -1)) }, 'A−'),
-      reset: h('button', { class: 'tx-zoom-btn tx-zoom-level', title: 'Back to 100% (Ctrl 0)', onclick: () => (this.prefs.zoom = ZOOM.reset) }),
-      in: h('button', { class: 'tx-zoom-btn', 'aria-label': 'Larger text', title: 'Larger text (Ctrl +)', onclick: () => (this.prefs.zoom = stepZoom(this.prefs.zoom, 1)) }, 'A+'),
+      out: h('button', { class: 'tx-zoom-btn', 'aria-label': 'Smaller text', title: 'Smaller text (Ctrl −)', onclick: () => this.prefs.setZoom('transcript', stepZoom(this.prefs.zoom('transcript'), -1)) }, 'A−'),
+      reset: h('button', { class: 'tx-zoom-btn tx-zoom-level', title: 'Back to 100% (Ctrl 0)', onclick: () => this.prefs.setZoom('transcript', ZOOM.reset) }),
+      in: h('button', { class: 'tx-zoom-btn', 'aria-label': 'Larger text', title: 'Larger text (Ctrl +)', onclick: () => this.prefs.setZoom('transcript', stepZoom(this.prefs.zoom('transcript'), 1)) }, 'A+'),
     };
-    const zoom = h('div', { class: 'tx-zoom', role: 'group', 'aria-label': 'Text size' }, this.zoomBtns.out, this.zoomBtns.reset, this.zoomBtns.in);
+    const zoom = h('div', { class: 'tx-zoom', role: 'group', 'aria-label': 'Transcript text size' }, this.zoomBtns.out, this.zoomBtns.reset, this.zoomBtns.in);
     const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, this.busy, h('span', { class: 'tx-spacer' }), picker, zoom);
     this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, form);
     this.unprefs = this.prefs.onChange((what) => this.applyPrefs(what));
@@ -1124,9 +1124,11 @@ class Transcript implements TranscriptView {
   private applyPrefs(what: ViewPref | null): void {
     if (this.destroyed) return;
     const p = this.prefs;
-    this.root.dataset.theme = p.theme;
+    const theme = p.theme('transcript');
+    const zoom = p.zoom('transcript');
+    this.root.dataset.theme = theme;
     for (const b of this.themeBtns) {
-      const on = b.dataset.themeId === p.theme;
+      const on = b.dataset.themeId === theme;
       b.setAttribute('aria-checked', String(on));
       b.tabIndex = on ? 0 : -1;
     }
@@ -1138,23 +1140,23 @@ class Transcript implements TranscriptView {
       this.revealed.clear();
       for (const r of this.root.querySelectorAll('.tx-reveal')) r.classList.remove('tx-reveal');
     }
-    this.zoomBtns.reset.textContent = `${p.zoom}%`;
-    this.zoomBtns.reset.setAttribute('aria-label', `Text size ${p.zoom}%${p.zoom === ZOOM.reset ? '' : ', back to 100%'}`);
-    this.zoomBtns.out.disabled = p.zoom <= ZOOM.min;
-    this.zoomBtns.in.disabled = p.zoom >= ZOOM.max;
+    this.zoomBtns.reset.textContent = `${zoom}%`;
+    this.zoomBtns.reset.setAttribute('aria-label', `Text size ${zoom}%${zoom === ZOOM.reset ? '' : ', back to 100%'}`);
+    this.zoomBtns.out.disabled = zoom <= ZOOM.min;
+    this.zoomBtns.in.disabled = zoom >= ZOOM.max;
     this.renderBusy();
     // New sizes (a zoom, another preset's fonts) move the bottom: a view that followed it keeps following.
-    if (what === 'zoom' || what === 'theme' || what === 'hideTools') this.stick();
+    if (what === 'transcriptZoom' || what === 'transcriptTheme' || what === 'hideTools') this.stick();
   }
 
   private pickTheme(id: ThemeId): void {
-    this.prefs.theme = id;
+    this.prefs.setTheme('transcript', id);
   }
 
   /** The preset's radio group: ← → (↑ ↓, Home, End) move and pick, as radios do; the timeline's keys stay out. */
   private onPickerKey(e: KeyboardEvent): void {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    const i = this.themeBtns.findIndex((b) => b.dataset.themeId === this.prefs.theme);
+    const i = this.themeBtns.findIndex((b) => b.dataset.themeId === this.prefs.theme('transcript'));
     const n = this.themeBtns.length;
     const to = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? (i + 1) % n : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? (i - 1 + n) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
     if (to < 0) return;

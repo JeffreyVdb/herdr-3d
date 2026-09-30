@@ -1,17 +1,21 @@
 import { clampZoom, DEFAULT_THEME, isThemeId, ZOOM, type ThemeId } from './themes';
 
 /**
- * #59: what the transcript view remembers per browser, for every worker alike: the preset, whether tool calls are
- * hidden, and the font zoom. Guarded like `limitsPrefs.ts`: localStorage can be missing or throw (private windows,
- * blocked site data), so the values live here and storage only carries them to the next page load. A stored value
- * that is not one of ours is ignored (a zoom is clamped onto its steps).
+ * #59: what the seated views remember per browser, for every worker alike. The transcript and the terminal each have
+ * their own preset and their own zoom (the same three presets); the transcript also remembers whether tool calls are
+ * hidden. Guarded like `limitsPrefs.ts`: localStorage can be missing or throw (private windows, blocked site data), so
+ * the values live here and storage only carries them to the next page load. A stored value that is not one of ours is
+ * ignored (a zoom is clamped onto its steps).
  */
 
-const THEME = 'h3d.theme';
-const HIDE_TOOLS = 'h3d.transcript.hideTools';
-const ZOOM_KEY = 'h3d.zoom';
+/** The two seated views a preset and a zoom are chosen for. */
+export type ThemedView = 'transcript' | 'terminal';
 
-export type ViewPref = 'theme' | 'hideTools' | 'zoom';
+const THEME: Record<ThemedView, string> = { transcript: 'h3d.theme.transcript', terminal: 'h3d.theme.terminal' };
+const ZOOM_KEY: Record<ThemedView, string> = { transcript: 'h3d.zoom.transcript', terminal: 'h3d.zoom.terminal' };
+const HIDE_TOOLS = 'h3d.transcript.hideTools';
+
+export type ViewPref = 'transcriptTheme' | 'terminalTheme' | 'transcriptZoom' | 'terminalZoom' | 'hideTools';
 
 function defaultStorage(): Storage | null {
   try {
@@ -23,16 +27,22 @@ function defaultStorage(): Storage | null {
 
 export class ViewPrefs {
   private readonly listeners = new Set<(what: ViewPref) => void>();
-  private themeId: ThemeId;
+  private readonly themes: Record<ThemedView, ThemeId>;
+  private readonly zooms: Record<ThemedView, number>;
   private hide: boolean;
-  private level: number;
 
   constructor(private readonly storage: Storage | null = defaultStorage()) {
-    const t = this.read(THEME);
-    this.themeId = isThemeId(t) ? t : DEFAULT_THEME;
+    const theme = (v: ThemedView): ThemeId => {
+      const t = this.read(THEME[v]);
+      return isThemeId(t) ? t : DEFAULT_THEME;
+    };
+    const zoom = (v: ThemedView): number => {
+      const z = this.read(ZOOM_KEY[v]);
+      return z === null ? ZOOM.reset : clampZoom(z);
+    };
+    this.themes = { transcript: theme('transcript'), terminal: theme('terminal') };
+    this.zooms = { transcript: zoom('transcript'), terminal: zoom('terminal') };
     this.hide = this.read(HIDE_TOOLS) === '1';
-    const z = this.read(ZOOM_KEY);
-    this.level = z === null ? ZOOM.reset : clampZoom(z);
   }
 
   private read(key: string): string | null {
@@ -56,15 +66,28 @@ export class ViewPrefs {
     for (const fn of this.listeners) fn(what);
   }
 
-  get theme(): ThemeId {
-    return this.themeId;
+  theme(view: ThemedView): ThemeId {
+    return this.themes[view];
   }
 
-  set theme(id: ThemeId) {
-    if (!isThemeId(id) || id === this.themeId) return;
-    this.themeId = id;
-    this.write(THEME, id === DEFAULT_THEME ? null : id);
-    this.changed('theme');
+  setTheme(view: ThemedView, id: ThemeId): void {
+    if (!isThemeId(id) || id === this.themes[view]) return;
+    this.themes[view] = id;
+    this.write(THEME[view], id === DEFAULT_THEME ? null : id);
+    this.changed(view === 'transcript' ? 'transcriptTheme' : 'terminalTheme');
+  }
+
+  /** Percent, 70–200 in steps of 10 (100: the view's preset's own size). */
+  zoom(view: ThemedView): number {
+    return this.zooms[view];
+  }
+
+  setZoom(view: ThemedView, z: number): void {
+    const v = clampZoom(z);
+    if (v === this.zooms[view]) return;
+    this.zooms[view] = v;
+    this.write(ZOOM_KEY[view], v === ZOOM.reset ? null : String(v));
+    this.changed(view === 'transcript' ? 'transcriptZoom' : 'terminalZoom');
   }
 
   get hideTools(): boolean {
@@ -76,19 +99,6 @@ export class ViewPrefs {
     this.hide = on;
     this.write(HIDE_TOOLS, on ? '1' : null);
     this.changed('hideTools');
-  }
-
-  /** Percent, 70–200 in steps of 10 (100: the preset's own size). */
-  get zoom(): number {
-    return this.level;
-  }
-
-  set zoom(z: number) {
-    const v = clampZoom(z);
-    if (v === this.level) return;
-    this.level = v;
-    this.write(ZOOM_KEY, v === ZOOM.reset ? null : String(v));
-    this.changed('zoom');
   }
 
   onChange(fn: (what: ViewPref) => void): () => void {
