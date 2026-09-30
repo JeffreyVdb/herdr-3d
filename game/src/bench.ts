@@ -7,7 +7,8 @@ import { backendName } from './backend';
  * numbers compare: fixed dt, (A) serialized update+render+GPU wait, (B)
  * pipelined throughput, (C) GPU timestamp queries, plus (D) rAF-driven frames
  * that include the browser's style/layout/paint work (what the DOM card layer
- * costs).
+ * costs). The e2e specs only read (A) and the draw counts, so they can skip (B) and
+ * (D), which are most of the frames on llvmpipe.
  */
 
 export interface BenchOptions {
@@ -15,6 +16,10 @@ export interface BenchOptions {
   warm?: number;
   /** Camera motion every frame, so cards/badges are re-laid out each frame. */
   sway?: boolean;
+  /** (B) the pipelined throughput run (default true). Off: `pipelinedMs` is null. */
+  pipelined?: boolean;
+  /** (D) the 120 rAF-driven frames (default true). Off: `rafMainMs` and `rafIntervalMs` are null. */
+  raf?: boolean;
 }
 
 export interface Stats {
@@ -33,7 +38,9 @@ export interface BenchResult {
   frameMs: Stats;
   updateMs: Stats;
   submitMs: Stats;
-  pipelinedMs: number;
+  /** Null when the run skipped it (`pipelined: false`). */
+  pipelinedMs: number | null;
+  /** Null when the run skipped the rAF frames (`raf: false`). */
   rafMainMs: Stats | null;
   rafIntervalMs: Stats | null;
   gpuTimestampMs: Stats | 'unavailable' | null;
@@ -61,6 +68,8 @@ export async function runBench(app: App, r: THREE.WebGPURenderer, o: BenchOption
   const FRAMES = o.frames ?? 300;
   const WARM = o.warm ?? 60;
   const sway = o.sway ?? true;
+  const doPipelined = o.pipelined ?? true;
+  const doRaf = o.raf ?? true;
   const be = r.backend as unknown as GpuBackend;
   const name = backendName(r.backend);
   const px = new Uint8Array(4);
@@ -116,37 +125,42 @@ export async function runBench(app: App, r: THREE.WebGPURenderer, o: BenchOption
     upd.push(t1 - t0);
     sub.push(t2 - t1);
   }
-  const tp0 = performance.now();
-  for (let i = 0; i < FRAMES; i++) {
-    frame();
-    app.render();
-    if (i % 4 === 3) await sync();
+  let pipelined: number | null = null;
+  if (doPipelined) {
+    const tp0 = performance.now();
+    for (let i = 0; i < FRAMES; i++) {
+      frame();
+      app.render();
+      if (i % 4 === 3) await sync();
+    }
+    await sync();
+    pipelined = (performance.now() - tp0) / FRAMES;
   }
-  await sync();
-  const pipelined = (performance.now() - tp0) / FRAMES;
 
   // rAF frames: JS + the browser's own rendering steps for this frame.
   const main: number[] = [];
   const ts: number[] = [];
-  await new Promise<void>((done) => {
-    const ch = new MessageChannel();
-    let t0 = 0;
-    ch.port1.onmessage = () => {
-      main.push(performance.now() - t0);
-      if (main.length >= 120) {
-        ch.port1.close();
-        done();
-      } else requestAnimationFrame(cb);
-    };
-    const cb = (now: number) => {
-      ts.push(now);
-      t0 = performance.now();
-      frame();
-      app.render();
-      ch.port2.postMessage(0);
-    };
-    requestAnimationFrame(cb);
-  });
+  if (doRaf) {
+    await new Promise<void>((done) => {
+      const ch = new MessageChannel();
+      let t0 = 0;
+      ch.port1.onmessage = () => {
+        main.push(performance.now() - t0);
+        if (main.length >= 120) {
+          ch.port1.close();
+          done();
+        } else requestAnimationFrame(cb);
+      };
+      const cb = (now: number) => {
+        ts.push(now);
+        t0 = performance.now();
+        frame();
+        app.render();
+        ch.port2.postMessage(0);
+      };
+      requestAnimationFrame(cb);
+    });
+  }
 
   let gpu: Stats | 'unavailable' | null = null;
   const tsr = r as unknown as { resolveTimestampsAsync?: (type: string) => Promise<number | undefined> };
@@ -185,8 +199,8 @@ export async function runBench(app: App, r: THREE.WebGPURenderer, o: BenchOption
     frameMs: stats(tot),
     updateMs: stats(upd),
     submitMs: stats(sub),
-    pipelinedMs: +pipelined.toFixed(2),
-    rafMainMs: stats(main),
+    pipelinedMs: pipelined === null ? null : +pipelined.toFixed(2),
+    rafMainMs: doRaf ? stats(main) : null,
     rafIntervalMs: intervals.length ? stats(intervals) : null,
     gpuTimestampMs: gpu,
     drawCalls: info.drawCalls ?? info.calls ?? 0,
