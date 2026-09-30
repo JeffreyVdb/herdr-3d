@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
 // The dialogs as captured (testdata/screens/claude-ask-*, codex-ask-*: Claude
@@ -151,5 +153,55 @@ func TestEveryAskScreenIsADialog(t *testing.T) {
 		if want := strings.HasPrefix(filepath.Base(n), "claude-"); claude != want || codex == want {
 			t.Errorf("%s: claude %v, codex %v", n, claude, codex)
 		}
+	}
+}
+
+// A dialog is an ask's when it shows one of its questions with its options,
+// or its review with its headers (it shows no options); cut tabs and
+// scrolled-off options count.
+func TestDialogShowsAsk(t *testing.T) {
+	opts := func(labels ...string) []proto.AskOption {
+		var o []proto.AskOption
+		for _, l := range labels {
+			o = append(o, proto.AskOption{Label: l})
+		}
+		return o
+	}
+	two := &proto.Ask{Questions: []proto.AskQuestion{
+		{Header: "Color", Question: "Which color?", Options: opts("Red", "Blue")},
+		{Header: "Extras", Question: "Which extras?", Multi: true, Options: opts("Logs", "Metrics", "Traces")},
+	}}
+	for _, s := range []string{"claude-ask-two", "claude-ask-two-q2", "claude-ask-two-review"} {
+		if !parseClaudeDialog(screen(t, s)).showsAsk(two) {
+			t.Errorf("%s: not the ask's", s)
+		}
+	}
+	for name, a := range map[string]*proto.Ask{
+		"another question": {Questions: []proto.AskQuestion{{Header: "Drink", Question: "Tea or coffee?", Options: opts("Tea", "Coffee")}}},
+		"other options":    {Questions: []proto.AskQuestion{two.Questions[0], {Header: "Extras", Question: "Which extras?", Options: opts("Logs", "Spans", "Traces")}}},
+		"other headers":    {Questions: []proto.AskQuestion{{Header: "Hue", Question: "Which color?", Options: opts("Red", "Blue")}, two.Questions[1]}},
+	} {
+		if parseClaudeDialog(screen(t, "claude-ask-two-q2")).showsAsk(a) && name != "other headers" {
+			t.Errorf("%s: q2 taken for it", name)
+		}
+		// The review shows no options: its tabs tell.
+		if parseClaudeDialog(screen(t, "claude-ask-two-review")).showsAsk(a) != (name == "other options") {
+			t.Errorf("%s: the review taken for it", name)
+		}
+	}
+	if !headerIs("Observabil…", "Observability") || headerIs("Observabil…", "Migration") || !headerIs("x", "") {
+		t.Error("headerIs")
+	}
+	// Scrolled: only some options shown.
+	if !optionsShown([]dialogRow{{n: 3, label: "Traces"}, {n: 4, label: "Type something"}}, opts("Logs", "Metrics", "Traces")) ||
+		optionsShown([]dialogRow{{n: 4, label: "Type something"}}, opts("Logs", "Metrics", "Traces")) {
+		t.Error("optionsShown")
+	}
+	codex := &proto.Ask{Questions: []proto.AskQuestion{
+		{Question: "Which color?", Options: opts("Blue", "Green")}, {Question: "Which size?", Options: opts("Small", "Large")},
+		{Question: "Which style?", Options: opts("Plain", "Fancy")},
+	}}
+	if d := parseCodexDialog(screen(t, "codex-ask-multi-third")); !d.showsAsk(codex) || d.showsAsk(&proto.Ask{Questions: codex.Questions[2:]}) {
+		t.Error("codex: the third of three")
 	}
 }

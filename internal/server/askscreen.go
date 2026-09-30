@@ -8,9 +8,12 @@ package server
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
 var (
@@ -253,4 +256,75 @@ func (d codexDialog) cursor() int {
 		}
 	}
 	return 0
+}
+
+// optionsShown reports whether a dialog's numbered rows are the question's
+// options: every option row it shows (a short screen may scroll some off)
+// has that option's label, and it shows one at least.
+func optionsShown(rows []dialogRow, opts []proto.AskOption) bool {
+	seen := 0
+	for _, r := range rows {
+		if r.n < 1 || r.n > len(opts) {
+			continue
+		}
+		if !labelIs(r.label, opts[r.n-1].Label) {
+			return false
+		}
+		seen++
+	}
+	return seen > 0
+}
+
+// headerIs reports whether a tab shows a question's header: the same
+// words, or a cut one ("Observabil…") its start. A header the call left
+// empty is not checked.
+func headerIs(tab, header string) bool {
+	a, b := collapse(tab), collapse(header)
+	if b == "" || a == b {
+		return true
+	}
+	cut, ok := strings.CutSuffix(a, "…")
+	return ok && cut != "" && strings.HasPrefix(b, cut)
+}
+
+// showsQuestion reports whether a Claude dialog shows question q (not the
+// review): its text and its options.
+func (d claudeDialog) showsQuestion(q proto.AskQuestion) bool {
+	return d.ok && !d.review && sameQuestion(d.question, q.Question) && optionsShown(d.rows, q.Options)
+}
+
+// showsAsk reports whether a Claude dialog is ask's: one of its questions,
+// or its review with a tab per question header.
+func (d claudeDialog) showsAsk(ask *proto.Ask) bool {
+	if !d.ok {
+		return false
+	}
+	if !d.review {
+		return slices.ContainsFunc(ask.Questions, d.showsQuestion)
+	}
+	tabs := d.tabs
+	if n := len(tabs); n == len(ask.Questions)+1 && tabs[n-1] == "Submit" {
+		tabs = tabs[:n-1]
+	}
+	if len(tabs) != len(ask.Questions) {
+		return false
+	}
+	for i, t := range tabs {
+		if !headerIs(t, ask.Questions[i].Header) {
+			return false
+		}
+	}
+	return true
+}
+
+// showsQuestion reports whether Codex's overlay shows question i (0-based)
+// of an ask of n questions: its place, its text and its options.
+func (d codexDialog) showsQuestion(i, n int, q proto.AskQuestion) bool {
+	return d.ok && d.index == i+1 && d.count == n && sameQuestion(d.question, q.Question) && optionsShown(d.rows, q.Options)
+}
+
+// showsAsk reports whether Codex's overlay is on one of ask's questions.
+func (d codexDialog) showsAsk(ask *proto.Ask) bool {
+	i := d.index - 1
+	return i >= 0 && i < len(ask.Questions) && d.showsQuestion(i, len(ask.Questions), ask.Questions[i])
 }

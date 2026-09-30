@@ -430,3 +430,188 @@ func TestAnswerAskCodex(t *testing.T) {
 		t.Fatalf("still asking %+v", a)
 	}
 }
+
+// AC4: Dismiss presses Esc only on the ask's own dialog. The transcript
+// still has the old ask while the terminal shows another question: stale,
+// nothing pressed (Claude and Codex).
+func TestAnswerAskCancelChecksTheDialog(t *testing.T) {
+	ab := startAskBridge(t, "idle")
+	c := ab.connect(proto.Hello{})
+	snap := c.snapshot()
+	id, codex := idOf(t, snap, "w1"), idOf(t, snap, "w2")
+	const tu = "toolu_01FuqDRbauxtx9cAAmN3o8ex"
+	appendLine(t, ab.claude, fixture(t, "claude", "ask_pending.jsonl")) // Tea or coffee?
+	askOf(c, id, pendingID(tu))
+	playDialog(ab.termBridge, "w1:p1", "other", map[string]string{"other": readScreen(t, "claude-ask-chat"), "gone": "❯ \n"},
+		map[string]map[string]string{"other": {"esc": "gone"}}, nil) // Which approach?
+	c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: tu, Cancel: true}, proto.ErrStale)
+	// Same question, other options: not it either.
+	ab.term.setScreen("w1:p1", strings.Replace(strings.Replace(readScreen(t, "claude-ask-single"), "1. Tea", "1. Chai", 1), "2. Coffee", "2. Mocha", 1))
+	c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: tu, Cancel: true}, proto.ErrStale)
+
+	const three = "call_xQd1gbep11m9OuznwGJRfYFx"
+	appendLine(t, ab.codex, strings.SplitAfter(fixture(t, "codex", "ask.jsonl"), "\n")[2]) // Which color? (1/3)
+	askOf(c, codex, pendingID(three))
+	ab.term.setScreen("w2:p1", readScreen(t, "codex-ask-single")) // Which color should the fixture use? (1/1)
+	c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: codex, ToolUseID: three, Cancel: true}, proto.ErrStale)
+	if calls := ab.term.Calls(); len(calls) != 0 {
+		t.Fatalf("pressed %q", calls)
+	}
+	// Its own dialog: Esc.
+	playDialog(ab.termBridge, "w1:p1", "q", map[string]string{"q": readScreen(t, "claude-ask-single"), "gone": "❯ \n"},
+		map[string]map[string]string{"q": {"esc": "gone"}}, nil)
+	if r := answerAsk(t, c, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: tu, Cancel: true}); !slices.Equal(r.Sent, []string{"esc"}) {
+		t.Fatalf("result %+v", r)
+	}
+}
+
+// AC2: the terminal records what was sent, whatever the dialog held: an
+// Other ticked before is unticked when the answer has none (its digit);
+// Other text typed before is emptied (ctrl+e, ctrl+u) before the answer's
+// is typed; on a single-select question the arrows go to such a row (its
+// digit would submit the old text).
+func TestAnswerAskReconcilesOther(t *testing.T) {
+	ab := startAskBridge(t, "blocked")
+	c := ab.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	const multi = "toolu_01Bv5Gi7N62h8M1EKWjquU1S"
+	focused := readScreen(t, "claude-ask-multi-other-focused-text") // Logs and "Custom dashboards" ticked
+	start := withCursor(focused, "❯", 1)
+	review := readScreen(t, "claude-ask-multi-other-review")
+	reset := func() {
+		ab.term.mu.Lock()
+		ab.term.calls = nil
+		ab.term.mu.Unlock()
+	}
+
+	// Named options only: Other unticked (its text stays, as live).
+	playDialog(ab.termBridge, "w1:p1", "q", map[string]string{
+		"q": start, "unticked": strings.Replace(start, "[✔] Custom dashboards", "[ ] Custom dashboards", 1),
+		"review": strings.Replace(review, "→ Logs, Custom dashboards", "→ Logs", 1), "done": "● DONE\n",
+	}, map[string]map[string]string{"q": {"4": "unticked"}, "unticked": {"right": "review"}, "review": {"enter": "done"}},
+		map[string]func(){"done": func() { appendLine(t, ab.claude, fixtureLine(t, "claude", "ask_multi_other.jsonl", 1)) }})
+	appendLine(t, ab.claude, fixtureLine(t, "claude", "ask_multi_other.jsonl", 0))
+	askOf(c, id, pendingID(multi))
+	r := answerAsk(t, c, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: multi, Answers: []proto.AskAnswerArg{{Question: 0, Choices: []int{1}}}})
+	if want := []string{"4", "right", "enter"}; !r.Resolved || !slices.Equal(r.Sent, want) {
+		t.Fatalf("result %+v, want sent %q", r, want)
+	}
+
+	// Other text of its own: emptied, then typed (typing ticks it).
+	reset()
+	emptied := withCursor(readScreen(t, "claude-ask-multi-other-digit1"), "❯", 4) // Logs ticked, "[ ] Type something"
+	playDialog(ab.termBridge, "w1:p1", "q", map[string]string{
+		"q": start, "c2": withCursor(focused, "❯", 2), "c3": withCursor(focused, "❯", 3), "c4": focused, "emptied": emptied,
+		"typed": strings.Replace(focused, "Custom dashboards", "Grafana", 1), "submit": readScreen(t, "claude-ask-multi-other-submit-row"),
+		"review": strings.Replace(review, "Custom dashboards", "Grafana", 1), "done": "● DONE\n",
+	}, map[string]map[string]string{
+		"q": {"down": "c2"}, "c2": {"down": "c3"}, "c3": {"down": "c4"}, "c4": {"ctrl+u": "emptied"}, "emptied": {"text:Grafana": "typed"},
+		"typed": {"tab": "submit"}, "submit": {"enter": "review"}, "review": {"enter": "done"},
+	}, map[string]func(){"done": func() { appendLine(t, ab.claude, fixtureLine(t, "claude", "ask_multi_other.jsonl", 1)) }})
+	appendLine(t, ab.claude, fixtureLine(t, "claude", "ask_multi_other.jsonl", 0))
+	askOf(c, id, pendingID(multi))
+	r = answerAsk(t, c, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: multi, Answers: []proto.AskAnswerArg{{Question: 0, Choices: []int{1}, Other: str("Grafana")}}})
+	if want := []string{"down", "down", "down", "ctrl+e", "ctrl+u", "text", "tab", "enter", "enter"}; !r.Resolved || !slices.Equal(r.Sent, want) {
+		t.Fatalf("result %+v, want sent %q", r, want)
+	}
+
+	// Single-select, "Sparkling water" typed and left: arrows, emptied, typed, Enter.
+	reset()
+	const single = "toolu_012vhFKJwCHqKoQ1THGwjkLk"
+	typed := readScreen(t, "claude-ask-other-typed") // the cursor on "3. Sparkling water"
+	playDialog(ab.termBridge, "w1:p1", "q", map[string]string{
+		"q": withCursor(typed, "❯", 1), "c2": withCursor(typed, "❯", 2), "c3": typed, "emptied": readScreen(t, "claude-ask-other-selected"),
+		"juice": strings.Replace(typed, "Sparkling water", "Juice", 1), "done": "● Juice it is.\n",
+	}, map[string]map[string]string{
+		"q": {"down": "c2", "3": "done"}, "c2": {"down": "c3"}, "c3": {"ctrl+u": "emptied"}, "emptied": {"text:Juice": "juice"}, "juice": {"enter": "done"},
+	}, map[string]func(){"done": func() { appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 8)) }})
+	appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 7))
+	askOf(c, id, pendingID(single))
+	r = answerAsk(t, c, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: single, Answers: []proto.AskAnswerArg{{Question: 0, Other: str("Juice")}}})
+	if want := []string{"down", "down", "ctrl+e", "ctrl+u", "text", "enter"}; !r.Resolved || !slices.Equal(r.Sent, want) {
+		t.Fatalf("result %+v, want sent %q", r, want)
+	}
+}
+
+// AC4: the last key is checked too: a dialog still showing its question
+// (or its review) after it is input_failed, not a sent answer.
+func TestAnswerAskChecksTheLastKey(t *testing.T) {
+	ab := startAskBridge(t, "blocked")
+	c := ab.connect(proto.Hello{})
+	snap := c.snapshot()
+	id, codex := idOf(t, snap, "w1"), idOf(t, snap, "w2")
+
+	const tu = "toolu_01FuqDRbauxtx9cAAmN3o8ex"
+	appendLine(t, ab.claude, fixture(t, "claude", "ask_pending.jsonl"))
+	askOf(c, id, pendingID(tu))
+	ab.term.setScreen("w1:p1", readScreen(t, "claude-ask-single")) // the digit ignored
+	c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: tu, Answers: []proto.AskAnswerArg{{Question: 0, Choices: []int{1}}}}, proto.ErrInputFailed)
+
+	const two = "toolu_01U8ZrKFNvqFNsavBe7a22df"
+	playDialog(ab.termBridge, "w1:p1", "q1", map[string]string{
+		"q1": readScreen(t, "claude-ask-two"), "q2": readScreen(t, "claude-ask-two-q2"), "q2-logs": readScreen(t, "claude-ask-two-q2-toggle"),
+		"review": readScreen(t, "claude-ask-two-review"),
+	}, map[string]map[string]string{"q1": {"2": "q2"}, "q2": {"1": "q2-logs"}, "q2-logs": {"right": "review"}}, nil) // Enter on the review ignored
+	appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 5))
+	askOf(c, id, pendingID(two))
+	c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: two, Answers: []proto.AskAnswerArg{{Question: 0, Choices: []int{2}}, {Question: 1, Choices: []int{1}}}}, proto.ErrInputFailed)
+
+	const three = "call_xQd1gbep11m9OuznwGJRfYFx"
+	playDialog(ab.termBridge, "w2:p1", "q1", map[string]string{"q1": readScreen(t, "codex-ask-multi-first"), "q2": readScreen(t, "codex-ask-multi-second"),
+		"q3": readScreen(t, "codex-ask-multi-third")}, map[string]map[string]string{"q1": {"1": "q2"}, "q2": {"2": "q3"}}, nil) // the last digit ignored
+	appendLine(t, ab.codex, strings.SplitAfter(fixture(t, "codex", "ask.jsonl"), "\n")[2])
+	askOf(c, codex, pendingID(three))
+	c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: codex, ToolUseID: three, Answers: []proto.AskAnswerArg{{Question: 0, Choices: []int{1}}, {Question: 1, Choices: []int{2}}, {Question: 2, Choices: []int{1}}}}, proto.ErrInputFailed)
+}
+
+// input_failed reaches the audit log and the server's log: its message
+// names steps by number, never a question's, option's or typed text.
+func TestAnswerAskErrorsKeepNoContent(t *testing.T) {
+	ab := startAskBridge(t, "blocked")
+	c := ab.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	const single = "toolu_012vhFKJwCHqKoQ1THGwjkLk"
+	line := fixtureLine(t, "claude", "ask.jsonl", 7)
+	for from, to := range map[string]string{"What should we drink?": "Should we use secret-ACCOUNT-123?", `"Tea"`: `"secret-OPTION-456"`} {
+		if !strings.Contains(line, from) {
+			t.Fatalf("fixture has no %s", from)
+		}
+		line = strings.ReplaceAll(line, from, to)
+	}
+	appendLine(t, ab.claude, line)
+	askOf(c, id, pendingID(single))
+	// An unrelated screen: fails before any key.
+	ab.term.setScreen("w1:p1", "unrelated screen")
+	c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: single, Answers: []proto.AskAnswerArg{{Question: 0, Choices: []int{1}}}}, proto.ErrInputFailed)
+	// The dialog, which never shows the typed text: fails after it.
+	shown := strings.NewReplacer("What should we drink?", "Should we use secret-ACCOUNT-123?", "1. Tea", "1. secret-OPTION-456").Replace(readScreen(t, "claude-ask-other-selected"))
+	ab.term.setScreen("w1:p1", withCursor(shown, "❯", 1))
+	ab.term.onKeys = func(p string, keys []string) {
+		if p == "w1:p1" && slices.Equal(keys, []string{"3"}) {
+			ab.term.setScreen(p, shown)
+		}
+	}
+	c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: single, Answers: []proto.AskAnswerArg{{Question: 0, Other: str("secret-OTHER-789")}}}, proto.ErrInputFailed)
+	log, err := ab.st.AuditLog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var errs []string
+	for _, a := range log {
+		if a.Cmd != proto.CmdWorkerAnswerAsk {
+			continue
+		}
+		errs = append(errs, a.Error)
+		if !strings.Contains(a.Error, "input failed") {
+			t.Errorf("audit error %q", a.Error)
+		}
+		for _, s := range []string{"secret-", "drink", "Tea"} {
+			if strings.Contains(a.Args+a.Result+a.Error, s) {
+				t.Errorf("the audit kept %q: %s %s %s", s, a.Args, a.Result, a.Error)
+			}
+		}
+	}
+	if len(errs) != 2 || !strings.Contains(errs[1], "keys sent: 3 text") {
+		t.Errorf("audit errors %q", errs)
+	}
+}

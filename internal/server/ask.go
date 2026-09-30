@@ -364,10 +364,14 @@ func (h *Hub) waitAskResolved(ctx context.Context, id, toolUseID string) (bool, 
 // question's digit only moves the cursor: Enter); Other is its digit ("Type
 // something."), the text, Enter. A multi-select question's digits toggle
 // without moving the cursor, one per herdr call (several in one call were
-// dropped live); → leaves it, or with Other: arrows to its row, the text,
-// Enter if that left it unticked, Tab to the Submit row, Enter. With tabs
-// (several questions, or a multi-select one) the review comes last: Enter
-// on "Submit answers".
+// dropped live), and untick what the answer does not have (Other's row
+// too); → leaves it, or with Other: arrows to its row, the text, Enter if
+// that left it unticked, Tab to the Submit row, Enter. An Other row that
+// holds other text (typed in the terminal) is emptied first, ctrl+e then
+// ctrl+u; on a single-select question the arrows take the cursor there, as
+// its digit would submit that text. With tabs (several questions, or a
+// multi-select one) the review comes last: Enter on "Submit answers". After
+// the last key the dialog must be gone.
 func (d *askDriver) claude(ask *proto.Ask, answers []askAnswer) error {
 	tabbed := len(ask.Questions) > 1
 	for _, q := range ask.Questions {
@@ -375,24 +379,29 @@ func (d *askDriver) claude(ask *proto.Ask, answers []askAnswer) error {
 	}
 	for i, q := range ask.Questions {
 		ans := answers[i]
-		what := fmt.Sprintf("question %d (%q)", i+1, clip(q.Question))
 		var dlg claudeDialog
 		on := func(s string) bool {
 			dlg = parseClaudeDialog(s)
-			return dlg.ok && !dlg.review && sameQuestion(dlg.question, q.Question)
+			return dlg.showsQuestion(q)
 		}
-		if err := d.waitFor(what, on); err != nil {
+		// Step descriptions name questions and options by number only: the
+		// error reaches the audit log and the server's log.
+		if err := d.waitFor(fmt.Sprintf("question %d", i+1), on); err != nil {
 			return err
 		}
 		other := len(q.Options) + 1 // the "Type something" row
 		switch {
 		case !q.Multi && ans.other != nil:
-			if err := d.press(digit(other)); err != nil {
-				return err
-			}
-			if err := d.waitFor("its Type something row focused", func(s string) bool {
-				return on(s) && dlg.cursor() == other
-			}); err != nil {
+			if r, _ := dlg.row(other); isTypeRow(r.label) {
+				if err := d.press(digit(other)); err != nil {
+					return err
+				}
+				if err := d.waitFor("its Type something row focused", func(s string) bool {
+					return on(s) && dlg.cursor() == other
+				}); err != nil {
+					return err
+				}
+			} else if err := d.claudeMoveTo(on, &dlg, other); err != nil {
 				return err
 			}
 			if err := d.claudeType(on, &dlg, other, *ans.other); err != nil {
@@ -433,20 +442,22 @@ func (d *askDriver) claude(ask *proto.Ask, answers []askAnswer) error {
 				}
 			}
 			for _, r := range dlg.rows { // ticked before, not wanted now: untick
-				if r.box == 2 && r.n <= len(q.Options) && !slices.Contains(ans.choices, r.n) {
-					if err := d.press(digit(r.n)); err != nil {
-						return err
+				unwanted := (r.n <= len(q.Options) && !slices.Contains(ans.choices, r.n)) || (r.n == other && ans.other == nil)
+				if r.box != 2 || !unwanted {
+					continue
+				}
+				if err := d.press(digit(r.n)); err != nil {
+					return err
+				}
+				n := r.n
+				if err := d.waitFor(fmt.Sprintf("row %d unticked", n), func(s string) bool {
+					if !on(s) {
+						return false
 					}
-					n := r.n
-					if err := d.waitFor(fmt.Sprintf("option %d unticked", n), func(s string) bool {
-						if !on(s) {
-							return false
-						}
-						r, ok := dlg.row(n)
-						return ok && r.box == 1
-					}); err != nil {
-						return err
-					}
+					r, ok := dlg.row(n)
+					return ok && r.box == 1
+				}); err != nil {
+					return err
 				}
 			}
 			if ans.other == nil {
@@ -455,23 +466,8 @@ func (d *askDriver) claude(ask *proto.Ask, answers []askAnswer) error {
 				}
 				break
 			}
-			for dlg.cursor() != other {
-				key := "down"
-				if cur := dlg.cursor(); cur > other {
-					key = "up"
-				} else if cur == 0 { // on the Submit row: Other is above it
-					key = "up"
-				}
-				from := dlg.cursor()
-				if err := d.press(key); err != nil {
-					return err
-				}
-				if err := d.waitFor("the cursor moving towards Type something", func(s string) bool { return on(s) && dlg.cursor() != from }); err != nil {
-					return err
-				}
-				if len(d.sent) > 64 {
-					return fmt.Errorf("%w: the cursor never reached Type something", errInputFailed)
-				}
+			if err := d.claudeMoveTo(on, &dlg, other); err != nil {
+				return err
 			}
 			if err := d.claudeType(on, &dlg, other, *ans.other); err != nil {
 				return err
@@ -497,22 +493,73 @@ func (d *askDriver) claude(ask *proto.Ask, answers []askAnswer) error {
 				return err
 			}
 		}
-	}
-	if !tabbed {
-		return nil
+		if !tabbed { // its one question's last key
+			return d.waitGone(fmt.Sprintf("question %d answered", i+1), func(s string) bool { return !on(s) })
+		}
 	}
 	if err := d.waitFor("the review of the answers", func(s string) bool {
 		dlg := parseClaudeDialog(s)
-		return dlg.ok && dlg.review && dlg.cursor() == 1
+		return dlg.review && dlg.showsAsk(ask) && dlg.cursor() == 1
 	}); err != nil {
 		return err
 	}
-	return d.press("enter")
+	if err := d.press("enter"); err != nil {
+		return err
+	}
+	return d.waitGone("the answers submitted", func(s string) bool { return !parseClaudeDialog(s).showsAsk(ask) })
 }
 
-// claudeType types text into a focused Type something row and waits for
-// the row to show it.
+// isTypeRow reports whether a row is the empty Other row ("Type
+// something", "Type something." on a single-select question).
+func isTypeRow(label string) bool { return strings.TrimSuffix(label, ".") == claudeTypeRow }
+
+// claudeMoveTo takes the cursor to numbered row n with the arrows (from the
+// unnumbered Submit row, 0, up).
+func (d *askDriver) claudeMoveTo(on func(string) bool, dlg *claudeDialog, n int) error {
+	for dlg.cursor() != n {
+		key := "down"
+		if cur := dlg.cursor(); cur > n || cur == 0 {
+			key = "up"
+		}
+		from := dlg.cursor()
+		if err := d.press(key); err != nil {
+			return err
+		}
+		if err := d.waitFor(fmt.Sprintf("the cursor moving towards row %d", n), func(s string) bool { return on(s) && dlg.cursor() != from }); err != nil {
+			return err
+		}
+		if len(d.sent) > 64 {
+			return fmt.Errorf("%w: the cursor never reached row %d", errInputFailed, n)
+		}
+	}
+	return nil
+}
+
+// claudeType types text into a focused Type something row, emptied first
+// (ctrl+e, ctrl+u: verified live, typing goes in at the start of what is
+// there) when it holds other text, and waits for the row to show it.
 func (d *askDriver) claudeType(on func(string) bool, dlg *claudeDialog, row int, text string) error {
+	r, _ := dlg.row(row)
+	if r.label == text {
+		return nil // typed already
+	}
+	if !isTypeRow(r.label) {
+		if err := d.press("ctrl+e"); err != nil {
+			return err
+		}
+		if err := d.press("ctrl+u"); err != nil {
+			return err
+		}
+		if err := d.waitFor("its Type something row emptied", func(s string) bool {
+			if !on(s) {
+				return false
+			}
+			r, ok := dlg.row(row)
+			return ok && r.cursor && isTypeRow(r.label)
+		}); err != nil {
+			return err
+		}
+	}
 	if err := d.typeText(text); err != nil {
 		return err
 	}
@@ -533,17 +580,35 @@ func hasPreview(q proto.AskQuestion) bool {
 	return slices.ContainsFunc(q.Options, func(o proto.AskOption) bool { return o.Preview != "" })
 }
 
-// claudeCancel is Esc on the dialog: Claude records it as a rejected call
-// ("User rejected tool use") and an interruption.
-func (d *askDriver) claudeCancel(ask *proto.Ask) error {
-	on := func(s string) bool { return parseClaudeDialog(s).ok }
-	if err := d.waitFor("its dialog", on); err != nil {
+// cancel presses Esc on the ask's dialog, and only on it: shows says
+// whether a screen shows a dialog and whether it is the ask's. Another
+// question on the screen (the terminal moved on before the transcript
+// said so) is stale, nothing pressed.
+func (d *askDriver) cancel(shows func(screen string) (dialog, ours bool)) error {
+	another := false
+	if err := d.waitFor("its dialog", func(s string) bool {
+		dialog, ours := shows(s)
+		another = dialog && !ours
+		return ours
+	}); err != nil {
+		if another && errors.Is(err, errInputFailed) {
+			return fmt.Errorf("%w: the terminal shows another question (no keys pressed)", errStale)
+		}
 		return err
 	}
 	if err := d.press("esc"); err != nil {
 		return err
 	}
-	return d.waitGone("the dialog gone", func(s string) bool { return !on(s) })
+	return d.waitGone("the dialog closed", func(s string) bool { _, ours := shows(s); return !ours })
+}
+
+// claudeCancel is Esc on the dialog: Claude records it as a rejected call
+// ("User rejected tool use") and an interruption.
+func (d *askDriver) claudeCancel(ask *proto.Ask) error {
+	return d.cancel(func(s string) (bool, bool) {
+		dlg := parseClaudeDialog(s)
+		return dlg.ok, dlg.showsAsk(ask)
+	})
 }
 
 // codex drives Codex's request_user_input overlay (keys from its pinned
@@ -551,16 +616,18 @@ func (d *askDriver) claudeCancel(ask *proto.Ask) error {
 // option's digit picks it and goes to the next question (the last one's
 // submits them all); Other is the arrows to "None of the above", Enter
 // (its notes open), the text, Enter. A digit on "None of the above" would
-// submit it without the text. It has no multi-select.
+// submit it without the text. It has no multi-select. After the last key
+// the overlay must be gone.
 func (d *askDriver) codex(ask *proto.Ask, answers []askAnswer) error {
+	var on func(string) bool
 	for i, q := range ask.Questions {
 		ans := answers[i]
 		var dlg codexDialog
-		on := func(s string) bool {
+		on = func(s string) bool {
 			dlg = parseCodexDialog(s)
-			return dlg.ok && dlg.index == i+1 && sameQuestion(dlg.question, q.Question)
+			return dlg.showsQuestion(i, len(ask.Questions), q)
 		}
-		if err := d.waitFor(fmt.Sprintf("question %d (%q)", i+1, clip(q.Question)), on); err != nil {
+		if err := d.waitFor(fmt.Sprintf("question %d", i+1), on); err != nil {
 			return err
 		}
 		if ans.other == nil {
@@ -612,18 +679,16 @@ func (d *askDriver) codex(ask *proto.Ask, answers []askAnswer) error {
 			return err
 		}
 	}
-	return nil
+	// Each question's key is checked by the next one showing; the last one's here.
+	last := on
+	return d.waitGone(fmt.Sprintf("question %d answered", len(ask.Questions)), func(s string) bool { return !last(s) })
 }
 
 // codexCancel is Esc on the overlay: Codex interrupts the turn (the call's
 // output says it was aborted).
 func (d *askDriver) codexCancel(ask *proto.Ask) error {
-	on := func(s string) bool { return parseCodexDialog(s).ok }
-	if err := d.waitFor("its dialog", on); err != nil {
-		return err
-	}
-	if err := d.press("esc"); err != nil {
-		return err
-	}
-	return d.waitGone("the dialog gone", func(s string) bool { return !on(s) })
+	return d.cancel(func(s string) (bool, bool) {
+		dlg := parseCodexDialog(s)
+		return dlg.ok, dlg.showsAsk(ask)
+	})
 }

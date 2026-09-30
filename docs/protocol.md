@@ -1713,19 +1713,25 @@ answering (by its text, however it wraps), the cursor, the ticks, the typed text
 
 | dialog | keys |
 |---|---|
-| Claude, a single-select question | its option's digit (it moves on by itself); a preview question: the digit (it only moves the cursor), Enter; `other`: the digit of "Type something.", the text, Enter |
-| Claude, a multi-select question | each option's digit, **one herdr call each** (several in one call were dropped live), ticks checked; then → (the next question, or the review); with `other`: arrows to "Type something", the text (Enter if that left it unticked), Tab to the Submit / Next row, Enter |
+| Claude, a single-select question | its option's digit (it moves on by itself); a preview question: the digit (it only moves the cursor), Enter; `other`: the digit of "Type something.", the text, Enter; that row holding other text (typed in the terminal): arrows to it (its digit would submit that text), ctrl+e, ctrl+u (it empties), the text, Enter |
+| Claude, a multi-select question | each option's digit, **one herdr call each** (several in one call were dropped live), ticks checked; the digit again of each row ticked before that the answer does not have ("Type something" too: its digit unticks it without moving the cursor); then → (the next question, or the review); with `other`: arrows to "Type something", ctrl+e, ctrl+u if it holds other text, the text (Enter if that left it unticked), Tab to the Submit / Next row, Enter |
 | Claude, several questions or a multi-select one | then the review: Enter on "1. Submit answers" |
 | Claude, `cancel` | Esc (Claude records a rejected call and an interruption) |
 | Codex | per question, in order: its option's digit (the last one submits them all); `other`: arrows to "None of the above", Enter (its notes open), the text, Enter (a digit on "None of the above" would submit it without the text) |
 | Codex, `cancel` | Esc (Codex interrupts the turn) |
 
-A dialog that is not where it should be (another dialog, a question already answered in the terminal, a step that
-did not show) stops it with `input_failed` (the message says what did not show and the keys sent so far); the ask
-answered or replaced while it drives stops it with `stale`, and no more keys go. `sent` lists the key names pressed,
+The dialog is the ask's when it shows one of its questions (its text) with its options (each option row shown has
+that option's label), or (Claude) its review with a tab per question header. After the last key (the one question's,
+the review's Enter, Codex's last question's) the dialog must be gone within the step timeout (3 s). A dialog that is
+not where it should be (another dialog, a question already answered in the terminal, a step that did not show, the
+dialog still there after the last key) stops it with `input_failed` (the message names the step and the question by
+number, and the key names sent so far: never a question's, option's or typed text, as it reaches the audit log and
+the bridge's log); the ask answered or replaced while it drives stops it with `stale`, and no more keys go. `cancel`
+presses Esc only on the ask's own dialog: another question on the screen (the terminal moved on before its transcript
+said so) is `stale`, nothing pressed. `sent` lists the key names pressed,
 `text` for typed text (never the text). `resolved` is true only when the transcript recorded the call's result within
-8 s (the upsert without the `ask` comes before the ack); false means the keys went but the agent has not recorded an
-answer yet. A prompt to a worker with an ask is `invalid_state` (its dialog would take the text). The audit log keeps
+8 s (the upsert without the `ask` comes before the ack); false means the keys went and the dialog took them, but the
+agent has not recorded an answer yet. A prompt to a worker with an ask is `invalid_state` (its dialog would take the text). The audit log keeps
 the ids, the picks and each typed text's length (`other_bytes`, `prompt_bytes`), never the text.
 
 ```json
@@ -1772,9 +1778,9 @@ wraps, the options' labels without their descriptions or previews, and a Yes / N
 | `hire_failed`, `fire_failed` | herdr or git failed during a hire / send-home; the message says which step and why. `fire_failed` also when the agent did not exit (still running, or its processes could not be read): then nothing was closed or removed. `hire_failed` names what its rollback kept. |
 | `wake_failed` | the server did not start, did not answer `ping` or was not seen running within `--wake-timeout`; the message says why |
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
-| `input_failed` | `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text, the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step; the message says why |
+| `input_failed` | `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text, the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step, or still there after the last one; the message says why |
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
-| `stale` | `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed; `pr.merge` whose head moved since it was read |
+| `stale` | `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
 | `confirmation_required` | `issue.close`, `pr.merge` or `worker.open_pr` without `confirm: true` (see [Boards](#boards-issues-and-pull-requests)) |
