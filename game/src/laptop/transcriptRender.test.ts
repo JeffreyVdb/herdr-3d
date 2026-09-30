@@ -14,6 +14,7 @@ interface FakeHost extends TranscriptRenderHost {
 
 function fakeHost(load: (id: string) => Promise<TranscriptItem[]> = async () => []): FakeHost {
   const host: FakeHost = {
+    images: null,
     prompts: [],
     sendOk: true,
     answers: [],

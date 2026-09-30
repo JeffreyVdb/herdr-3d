@@ -1,7 +1,9 @@
 import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
-import type { TranscriptDiff, TranscriptItem } from '../net/protocol';
+import type { ImageRef, TranscriptDiff, TranscriptItem } from '../net/protocol';
+import { openImageLightbox } from '../ui/imageLightbox';
+import type { ImageFeed } from './imageFeed';
 import { h, icon } from '../ui/dom';
 
 /**
@@ -16,6 +18,8 @@ import { h, icon } from '../ui/dom';
  */
 
 export interface TranscriptRenderHost {
+  /** M16 phase 2: this worker's images (null: none can be fetched, every image is a "not available" card). */
+  images: ImageFeed | null;
   /** A prompt to send; resolving false (not sent) puts the text back in the prompt box. */
   onPromptSubmit(text: string): void | Promise<boolean>;
   onAnswer(hash: string, choice: number | null, cancel?: boolean): void;

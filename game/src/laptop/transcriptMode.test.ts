@@ -90,6 +90,7 @@ function harness(o: { storage?: unknown; renderer?: () => Promise<MountTranscrip
   };
   const storage = (o.storage ?? new MemStorage()) as Storage;
   const tx = new TranscriptMode({
+    feed: () => null,
     send: (t, args) => new Promise((resolve) => sent.push({ t, args: args as unknown as Record<string, unknown>, resolve })),
     renderer: o.renderer ?? (() => Promise.resolve(mount)),
     overlay: () => new FakeBox(layer) as unknown as HTMLElement,

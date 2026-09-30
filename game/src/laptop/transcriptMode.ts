@@ -3,6 +3,7 @@ import type { CommandArgs, Question, TranscriptItem, TranscriptWatchAck } from '
 import { failureText } from '../ui/messages';
 import { MAX_PROMPT } from './keys';
 import type { mountTranscript, TranscriptRenderHost, TranscriptView } from './transcriptRender';
+import type { ImageFeed } from './imageFeed';
 import { itemsOf } from './transcriptWatches';
 
 export type { TranscriptRenderHost, TranscriptView };
@@ -29,6 +30,8 @@ export interface OverlayRect {
 
 export interface TranscriptModeHost {
   send<T extends 'worker.prompt' | 'worker.answer' | 'transcript.page'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
+  /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list). */
+  feed(id: string): ImageFeed | null;
   /** Loads the render module (`loadRenderer`; tests pass a fake). */
   renderer(): Promise<MountTranscript | null>;
   /** A new, empty, hidden overlay element in the HUD; the controller removes it (`remove()`). */
@@ -211,6 +214,7 @@ export class TranscriptMode {
   private renderHost(s: Sitting): TranscriptRenderHost {
     const live = () => this.s === s;
     return {
+      images: this.host.feed(s.id),
       onPromptSubmit: (text) => {
         if (!live()) return Promise.resolve(false);
         const t = text.replace(/\u0000/g, '');

@@ -8,12 +8,14 @@ import { failureText } from '../ui/messages';
 import type { WorldStore } from '../world/store';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
 import { InputLanes, InputQueue, seatedKey, textItems } from './keys';
+import { ImageFeeds, type ImageFeed } from './imageFeed';
 import { LaptopTerminal, LIVE_SIZE } from './terminal';
 import { loadRenderer, TranscriptMode, type OverlayRect, type SeatMode } from './transcriptMode';
 import { TranscriptWatches } from './transcriptWatches';
 import { Watches } from './watches';
 
 export { screensParam };
+export type { ImageFeed };
 
 /** M6b (test hook): where a live screen is drawn, against its desk monitor's terminal area (world coordinates, metres). */
 export interface ScreenMeshInfo {
@@ -31,7 +33,7 @@ export interface ScreenMeshInfo {
 export type ScreenState = 'live' | 'pending' | 'frozen' | 'glow' | 'dark';
 
 /** The watches the game makes by itself. */
-export type WatchCommand = 'terminal.watch' | 'terminal.unwatch' | 'transcript.watch' | 'transcript.unwatch';
+export type WatchCommand = 'terminal.watch' | 'terminal.unwatch' | 'transcript.watch' | 'transcript.unwatch' | 'transcript.image' | 'transcript.images';
 
 export interface LaptopHost {
   store: WorldStore;
@@ -132,6 +134,8 @@ export class Laptops {
   readonly watches: Watches;
   readonly transcripts: TranscriptWatches;
   readonly transcript: TranscriptMode;
+  /** M16 phase 2: the images of the watched transcripts (the conversation, the Images tab, the desk prints). */
+  readonly feeds: ImageFeeds;
   readonly mac = isMac();
   private readonly terms = new Map<string, LaptopTerminal>();
   private readonly pool: LaptopTerminal[] = [];
@@ -188,8 +192,10 @@ export class Laptops {
       closed: (id, reason) => this.onClosed(id, reason),
       now: () => performance.now(),
     });
+    this.feeds = new ImageFeeds({ send: (t, args) => this.host.watch(t, args) });
     this.transcript = new TranscriptMode({
       send: (t, args) => this.host.send(t, args),
+      feed: (id) => this.feeds.get(id),
       renderer: loadRenderer,
       overlay: () => {
         const box = document.createElement('div');
@@ -208,9 +214,19 @@ export class Laptops {
     this.transcripts = new TranscriptWatches({
       send: (t, args) => this.host.watch(t, args),
       sink: {
-        reset: (id, ack) => this.transcript.reset(id, ack),
-        push: (id, items, updates) => this.transcript.push(id, items, updates),
-        stop: () => {},
+        reset: (id, ack) => {
+          // A new watch (or a new session after /clear): what the feed knew is stale.
+          this.feeds.peek(id)?.reset();
+          this.feeds.get(id).note(ack.items);
+          this.transcript.reset(id, ack);
+        },
+        push: (id, items, updates) => {
+          this.feeds.get(id).note([...items, ...updates]);
+          this.transcript.push(id, items, updates);
+        },
+        stop: (id) => {
+          if (this.seat?.id !== id) this.feeds.drop(id);
+        },
       },
       failed: (id, code, message) => this.onTranscriptFailed(id, code, message),
       closed: (id, reason) => this.onTranscriptClosed(id, reason),

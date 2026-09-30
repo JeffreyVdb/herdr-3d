@@ -37,6 +37,7 @@ function rig() {
   const status: Array<[string, string | null]> = [];
   const mode = new TranscriptMode({
     send,
+    feed: () => null,
     renderer: loadRenderer,
     overlay: () => {
       const box = document.createElement('div');

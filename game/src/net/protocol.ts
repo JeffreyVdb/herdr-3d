@@ -384,6 +384,10 @@ export interface CommandArgs {
   'transcript.page': { id: string; before: string; limit?: number; agent?: string };
   /** One item in full; with `agent`, an item of that subagent's timeline. */
   'transcript.item': { id: string; item: string; agent?: string };
+  /** M16 phase 2: one image by the hash of an `ImageRef` this connection was sent (never a path). */
+  'transcript.image': { id: string; hash: string; size: 'thumb' | 'full'; agent?: string };
+  /** M16 phase 2: every image of the session (no bytes), also the ones older than the watch's window. */
+  'transcript.images': { id: string };
   // M6 start: team presets and starting a run.
   'preset.create': { name: string; roles: PresetRoles };
   /** `roles` replaces all five. */
@@ -662,8 +666,43 @@ export interface TerminalClosed {
 // / `transcript.page` / `transcript.item`, the connection-scoped `transcript.items` / `transcript.closed`). Like
 // frames, no `seq`: sent only to the watching connection, never replayed; the client re-watches after a reconnect.
 
-/** An image in a transcript item (phase 1: never sent, only noted). */
+/** Who put an image in the conversation: `input` is only what the user attached to a prompt; `agent` is what the agent viewed or generated. */
+export type ImageOrigin = 'input' | 'agent';
+
+/**
+ * An image in a transcript item (phase 2). Never has bytes: `transcript.image` serves them by `hash`, and only a hash this
+ * connection was sent. The client never sends a path.
+ */
+export interface ImageRef {
+  /** sha256 of the image bytes, hex; absent when `unavailable`. The same image twice has the same hash. */
+  hash?: string;
+  /** image/png, image/jpeg, image/gif, image/webp; `binary` for inline bytes that are none of them (no thumbnail). */
+  mime?: string;
+  bytes?: number;
+  width?: number;
+  height?: number;
+  source: 'inline' | 'path';
+  /** A path image's file (or a URL): text for the "not available" card, never fetched by the client. */
+  path?: string;
+  origin: ImageOrigin;
+  /** A detail for a badge on an `agent` image. */
+  kind?: 'generated' | 'viewed';
+  /** The item the image is in, its `seq` and its `ts`: the Images tab links back to it. */
+  item_id?: string;
+  seq?: number;
+  ts?: number;
+  /** The bridge did not take the image; `reason` says why. */
+  unavailable?: boolean;
+  reason?: 'not_allowed' | 'missing' | 'too_large' | 'not_image' | 'invalid' | string;
+}
+
+/** An image part of an item (`parts`, a tool's `images`). */
 export interface ImagePart {
+  image: ImageRef;
+}
+
+/** What an older bridge (phase 1) sent for an image: only its place. */
+export interface ImageOmittedPart {
   image_omitted: true;
 }
 
@@ -695,7 +734,7 @@ export interface TranscriptItem {
   /** Noise shown only with "show system": dropped lines (as notices) and unknown ones. */
   hidden?: boolean;
   /** user / assistant / thinking: markdown text and images, in order. */
-  parts?: Array<{ text: string } | ImagePart>;
+  parts?: Array<{ text: string } | ImagePart | ImageOmittedPart>;
   /** A part's text was cut (`transcript.item` has it all). */
   truncated?: boolean;
   /** A tool call and its result (the result may arrive later, as an update); a subagent's call has one too. */
@@ -706,8 +745,8 @@ export interface TranscriptItem {
     status: 'running' | 'ok' | 'error' | 'interrupted';
     output_text?: string;
     output_truncated?: boolean;
-    /** Images in the output. */
-    images?: ImagePart[];
+    /** Images in the output (what the agent viewed: a `Read` of a PNG, a screenshot, Codex `view_image`). */
+    images?: Array<ImagePart | ImageOmittedPart>;
     diff?: TranscriptDiff;
     /** Every file of a patch that changes more than one (`diff` is the first). */
     diffs?: TranscriptDiff[];
@@ -748,6 +787,24 @@ export interface TranscriptPageAck {
 /** `transcript.item` ack. */
 export interface TranscriptItemAck {
   item: TranscriptItem;
+}
+
+/** `transcript.image` ack. */
+export interface TranscriptImageAck {
+  mime: string;
+  width: number;
+  height: number;
+  /** Bytes of the decoded image sent. */
+  bytes: number;
+  size: 'thumb' | 'full';
+  /** Base64. */
+  data: string;
+}
+
+/** `transcript.images` ack: the session's images, oldest first; `truncated`: only the newest 2000 are listed. */
+export interface TranscriptImagesAck {
+  images: ImageRef[];
+  truncated?: boolean;
 }
 
 export interface TranscriptItems extends Partial<TranscriptHead> {

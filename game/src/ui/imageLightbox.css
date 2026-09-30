@@ -1,0 +1,296 @@
+/*
+ * M16 phase 2: the enlarged view of a transcript image. The composer's preview family (same ink backdrop, sun focus ring,
+ * round close), plus a tool strip: zoom, copy, jump. The image sits on a checker-free deep navy so a transparent
+ * screenshot keeps its edges.
+ */
+
+.ilb {
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-on-ink, #eef2fb);
+  font-family: var(--font, system-ui, sans-serif);
+  overflow: hidden;
+}
+.ilb[open] {
+  display: flex;
+  flex-direction: column;
+}
+.ilb::backdrop {
+  background: rgb(10 14 28 / 92%);
+}
+.ilb *,
+.ilb *::before,
+.ilb *::after {
+  box-sizing: border-box;
+}
+.ilb svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+.ilb-stage {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 72px 64px 48px;
+  overflow: hidden;
+  cursor: zoom-out;
+  touch-action: none;
+}
+.ilb-img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #0b1122;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 45%), 0 2px 6px rgb(0 0 0 / 30%);
+  cursor: zoom-in;
+  transform-origin: center;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.ilb-img[hidden] {
+  display: none;
+}
+.ilb-img:not([src]) {
+  width: 240px;
+  height: 160px;
+}
+.ilb-loading {
+  filter: blur(3px);
+  opacity: 0.85;
+}
+.ilb-zoomed .ilb-img {
+  cursor: grab;
+  max-width: none;
+}
+.ilb-panning .ilb-img {
+  cursor: grabbing;
+}
+
+.ilb-top {
+  position: absolute;
+  inset: 0 0 auto 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 12px 12px 16px;
+  pointer-events: none;
+  background: linear-gradient(rgb(10 14 28 / 70%), transparent);
+}
+.ilb-top > * {
+  pointer-events: auto;
+}
+.ilb-cap {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.ilb-badge {
+  flex: none;
+  padding: 2px 9px 1px;
+  border-radius: 2px;
+  font-size: 11px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 0.6, 'MONO' 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink, #1c2540);
+}
+.ilb-badge-input {
+  background: #f4f6fb;
+}
+.ilb-badge-agent {
+  background: var(--sun, #ffc233);
+}
+.ilb-meta {
+  color: rgb(238 242 251 / 72%);
+  font-size: 12.5px;
+  font-variation-settings: 'MONO' 1;
+}
+.ilb-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+.ilb-btn,
+.ilb-nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  min-width: 40px;
+  padding: 0 12px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 999px;
+  background: var(--ink, #1c2540);
+  color: var(--text-on-ink, #eef2fb);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.ilb-btn:hover,
+.ilb-nav:hover {
+  background: var(--ink-2, #2a355a);
+}
+.ilb-btn:disabled,
+.ilb-nav:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ilb-btn:focus-visible,
+.ilb-nav:focus-visible {
+  outline: 3px solid var(--sun, #ffc233);
+  outline-offset: 2px;
+}
+.ilb-btn[hidden] {
+  display: none;
+}
+.ilb-fit {
+  min-width: 58px;
+  font-variation-settings: 'MONO' 1;
+}
+.ilb-close {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+}
+.ilb-nav {
+  position: absolute;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  transform: translateY(-50%);
+}
+.ilb-prev {
+  left: 12px;
+}
+.ilb-next {
+  right: 12px;
+}
+.ilb-count {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 14px;
+  text-align: center;
+  color: rgb(238 242 251 / 72%);
+  font-size: 12.5px;
+  font-variation-settings: 'MONO' 1;
+  pointer-events: none;
+}
+.ilb-status {
+  position: absolute;
+  left: 16px;
+  bottom: 14px;
+  font-size: 12.5px;
+  color: rgb(238 242 251 / 80%);
+  pointer-events: none;
+}
+.ilb-status:empty {
+  display: none;
+}
+.ilb-note {
+  position: absolute;
+  left: 50%;
+  bottom: 44px;
+  max-width: min(560px, 86vw);
+  padding: 6px 12px;
+  transform: translateX(-50%);
+  border-radius: 8px;
+  background: #2a2413;
+  border: 1px solid rgb(255 194 51 / 45%);
+  font-size: 13px;
+  text-align: center;
+}
+.ilb-note[hidden] {
+  display: none;
+}
+
+/* An image that is not available: a card that says so, with the path as text. */
+.ilb-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: min(480px, 100%);
+  padding: 22px 26px;
+  border-radius: 10px;
+  border: 1px dashed rgb(255 255 255 / 28%);
+  background: #101830;
+  text-align: center;
+  cursor: default;
+}
+.ilb-card[hidden] {
+  display: none;
+}
+.ilb-card-icon svg {
+  width: 30px;
+  height: 30px;
+  opacity: 0.6;
+}
+.ilb-card-title {
+  font-weight: 750;
+}
+.ilb-card-why {
+  font-size: 13px;
+  color: rgb(238 242 251 / 72%);
+}
+.ilb-card-path {
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: rgb(0 0 0 / 32%);
+  font-family: 'Recursive Variable', ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+@media (max-width: 720px) {
+  .ilb-stage {
+    padding: 112px 8px 48px;
+  }
+  .ilb-top {
+    flex-wrap: wrap;
+  }
+  .ilb-btn:not(.ilb-close):not(.ilb-copy):not(.ilb-jump) {
+    min-width: 36px;
+  }
+  .ilb-jump,
+  .ilb-copy {
+    padding: 0 10px;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ilb[open] {
+    animation: ilb-in 160ms var(--ease, ease-out);
+  }
+}
+@keyframes ilb-in {
+  from {
+    opacity: 0;
+  }
+}
