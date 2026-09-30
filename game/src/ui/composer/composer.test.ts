@@ -1022,7 +1022,7 @@ describe('a held refusal (#64)', () => {
     paste(env.editor, { files: [pdf()] });
     expect(refusal(env).hidden).toBe(false);
     expect(refusal(env).textContent).toBe('Not attached: notes.pdf is not a PNG, JPEG, GIF or WebP image. Nothing is sent until you dismiss this.');
-    expect(refusal(env).getAttribute('role')).toBe('alert');
+    expect(env.editor.parentElement?.querySelector('.cmp-sr')?.textContent).toBe('notes.pdf is not a PNG, JPEG, GIF or WebP image.');
     expect(dismissBtn(env).tagName).toBe('BUTTON');
     expect(dismissBtn(env).getAttribute('aria-label')).toMatch(/^Dismiss this message/);
     expect(env.editor.parentElement?.querySelector<HTMLElement>('.cmp-notice')?.hidden).toBe(true);

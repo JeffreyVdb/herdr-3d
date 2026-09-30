@@ -119,7 +119,9 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   // A draft that holds refusals (`holdRefused`, #64): the refused file stays said, with its dismiss, until the user acts.
   const refusalText = h('span', { class: 'cmp-refusal-text' });
   const dismiss = h('button', { class: 'cmp-dismiss', type: 'button', title: 'Dismiss: send without the refused file' }, icon(ICON.close));
-  const refusal = h('p', { class: 'cmp-refusal', role: 'alert', hidden: true }, refusalText, dismiss);
+  // Announced by `live` when it appears (polite), not a `role=alert` of its own: a hidden alert would be the first one
+  // anything looking for the dialog's alert finds.
+  const refusal = h('p', { class: 'cmp-refusal', hidden: true }, refusalText, dismiss);
   const element = h('div', { class: 'cmp' }, editor, notice, refusal, live);
 
   // ---- notices -------------------------------------------------------------------------
