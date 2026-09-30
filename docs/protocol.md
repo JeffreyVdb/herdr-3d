@@ -538,8 +538,9 @@ through the helper carries `token=` like `/ws`.
 
 ### Image upload
 
-#51, #13. An image for an agent's prompt (a screenshot pasted into the hire dialog's first task) is stored by
-**Drop Zone**, a small upload service that runs beside the bridge on the server, and the agent gets its path. Like the
+#51, #13, #64. An image for an agent's prompt (a screenshot pasted into any field that prompts an agent: the hire
+dialog's first task, the Start Run dialog's Extra instructions and First prompt, the transcript view's prompt box, the
+desk's prompt overlay (P) and a paste at a laptop's terminal) is stored by **Drop Zone**, a small upload service that runs beside the bridge on the server, and the agent gets its path. Like the
 logos it is HTTP on the bridge's socket and not a WebSocket command: a message is capped at 256 KiB and an image may be
 25 MiB, and a plain request has its own status, body cap and cancellation.
 
@@ -586,6 +587,31 @@ A client maps a network failure (no answer at all) to `offline`, as for the logo
   image and not the path.
 - A lost answer (the connection drops after Drop Zone stored the file) leaves a file nobody references, and a retry
   stores another (`-2`). That is accepted: the bridge does not delete what it cannot prove is its own.
+
+#### Markers in prompts (#64)
+
+Every prompt that can carry an image carries it as `[Image #n: <path>]` **inside its text**, after `POST /upload`
+answered; there is no image field on any command. `n` counts the images in the document in order (1, 2, …), whatever
+order the uploads finished in. The bridge never reads a marker: it passes the text on byte for byte, counts it against
+the cap of the field like any other characters, and refuses only what it refuses in any text (a NUL byte). The
+paths are the game's to check before it sends (absolute, no `]`, no line break or control character: the same grammar
+the transcript reads back into an image, `[Image #\d+: [^\]\n]+]`); the bridge does not repeat that check, so a
+client must not put a path in a marker that did not come from `POST /upload`. The Go tests
+(`internal/server/imagemarker_test.go`) pin each row:
+
+| command | field | cap (bytes, markers included) | sent |
+|---|---|---|---|
+| `worker.hire` | `prompt` | 32 KiB (`herdr.MaxPrompt`) | the hire dialog's first task |
+| `worker.prompt` | `text` | 16 KiB (`herdr.MaxMessage`) | the P overlay, the transcript view's prompt box, a paste at a laptop's terminal (an agent only: a plain shell answers `invalid_state`, so the game says an image cannot be pasted there before it uploads anything) |
+| `run.prepare`, `run.start` | `extra` | 8 KiB (`maxRunExtra`) | Start Run's Extra instructions; the bridge folds it, trimmed, into the orchestrator's first prompt, so `run.prepare`'s `prompt` shows the markers |
+| `run.start` | `prompt` | 32 KiB (the hire's) | an edited First prompt, as it is; never sent when not edited (the bridge composes it) |
+
+An image is uploaded as soon as it is pasted (a chip shows the progress), under a label per surface so files from
+different prompts tell apart: `hire`, `prompt-<worker>` (P), `transcript-<worker>`, `terminal-<worker>`, `run-extra`,
+`run-prompt`, i.e. `h3d-<label>-<n>` with the bridge's cleaning (`n` is the image's sequence in that draft). A prompt
+with an image that is still uploading waits for it; one with an image that failed (`upload_too_large`,
+`upload_unsupported`, `upload_busy`, `dropzone_unavailable`, or refused in the game before any upload: over 25 MiB, not
+a PNG, JPEG, GIF or WebP) is **not sent at all**, and the field says which image and why.
 
 ### Floor settings
 
