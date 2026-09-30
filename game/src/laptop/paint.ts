@@ -1,4 +1,6 @@
 import type { IBuffer, IBufferCell } from '@xterm/xterm';
+import { SYSTEM_MONO } from '../ui/themes';
+import { drawSymbol, isSymbol } from './glyphs';
 
 /**
  * M5: draws an xterm buffer (the VT state of a watched pane) into a 2D
@@ -6,6 +8,14 @@ import type { IBuffer, IBufferCell } from '@xterm/xterm';
  * one fillText each, the font squeezed to the cell width so columns line up.
  * The colours are the office's: a navy screen, the HUD's hues for ANSI, and
  * the sun-yellow cursor of the HUD's focus ring.
+ *
+ * #59: the transcript preset picks the font, the background, the text and the
+ * cursor (the 16 ANSI colours stay). Each glyph is drawn in its own cell, so
+ * no font's ligatures (JetBrains Mono's `calt`) or fallback advances move a
+ * column, and box drawing, block elements and braille are drawn as shapes
+ * (`glyphs.ts`): no preset's mono font has braille, two have no boxes. Seated,
+ * the zoom enlarges the cells past the fit (a viewport that keeps the cursor
+ * in view) or shrinks them inside the letterbox.
  *
  * M6b: the desk monitors are read from the aisle, 3–5 m away, where a
  * 120-column screen is a grey smudge. Standing, a monitor shows the glance
@@ -33,7 +43,13 @@ export const SCREEN_THEME: ScreenTheme = {
   ],
 };
 
-export const MONO = 'ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace';
+/** The system's monospace stack (the About card's font, and what every preset's stack falls back to). */
+export const MONO = SYSTEM_MONO;
+
+/** #59: a preset's screen colours on the office's ANSI 16. */
+export function screenTheme(s: { bg: number; fg: number; cursor: number }): ScreenTheme {
+  return { ...SCREEN_THEME, bg: s.bg, fg: s.fg, cursor: s.cursor };
+}
 
 /** xterm's 256-colour palette: the theme's 16, the 6×6×6 cube, the grey ramp. */
 export function paletteColor(n: number, t: ScreenTheme = SCREEN_THEME): number {
@@ -60,6 +76,10 @@ export interface PaintOptions {
   theme?: ScreenTheme;
   /** M6b: paint the glance view (the last lines, big) instead of the whole screen. */
   glance?: boolean;
+  /** #59: the font stack (the preset's mono; default the system's). */
+  font?: string;
+  /** #59: the seated zoom, percent (100: the pane fits the screen). Not for the glance view. */
+  zoom?: number;
 }
 
 /** M6b: the glance view's grid: this many columns and lines, whatever the pane's size. */
@@ -157,12 +177,12 @@ const lerp = (a: number, b: number, k: number) => {
   const m = (s: number) => Math.round(((a >> s) & 255) + (((b >> s) & 255) - ((a >> s) & 255)) * k);
   return (m(16) << 16) | (m(8) << 8) | m(0);
 };
-const lifted = new Map<number, number>();
+const lifted = new Map<string, number>();
 
 /** M6b: `fg` moved towards white (or black, on a light background) until it reads at 4.5:1 on `bg`. */
 export function readable(fg: number, bg: number, min = 4.5): number {
   if (contrast(fg, bg) >= min) return fg;
-  const key = fg * 0x1000000 + bg;
+  const key = `${fg}:${bg}:${min}`;
   const hit = lifted.get(key);
   if (hit !== undefined) return hit;
   const to = luminance(bg) > 0.3 ? 0x000000 : 0xffffff;
@@ -174,7 +194,10 @@ export function readable(fg: number, bg: number, min = 4.5): number {
 }
 
 /** The subset of a 2D context the painter uses (a fake one in vitest). */
-export type Paint2D = Pick<CanvasRenderingContext2D, 'fillStyle' | 'font' | 'textBaseline' | 'fillRect' | 'fillText' | 'measureText' | 'setTransform' | 'save' | 'restore'>;
+export type Paint2D = Pick<
+  CanvasRenderingContext2D,
+  'fillStyle' | 'strokeStyle' | 'lineWidth' | 'font' | 'textBaseline' | 'fillRect' | 'fillText' | 'measureText' | 'setTransform' | 'save' | 'restore' | 'beginPath' | 'moveTo' | 'lineTo' | 'arcTo' | 'stroke'
+>;
 
 interface Style {
   fg: number;
@@ -221,6 +244,49 @@ export function cellGrid(o: Pick<PaintOptions, 'cols' | 'rows' | 'width' | 'heig
   return { cw, ch, x0: pad + (w - cw * o.cols) / 2, y0: pad + (h - ch * o.rows) / 2 };
 }
 
+/** #59: the part of the pane on screen at a zoom: the cells' size and origin, and the first column and row shown. */
+export interface Viewport {
+  cw: number;
+  ch: number;
+  x0: number;
+  y0: number;
+  col0: number;
+  row0: number;
+  cols: number;
+  rows: number;
+}
+
+/** Columns kept between the cursor and the viewport's right edge when it scrolls sideways to follow it. */
+const FOLLOW_MARGIN = 4;
+
+/**
+ * #59: the seated screen at a zoom (percent). At 100% and below, the whole pane, its cells scaled and centred in the
+ * letterbox. Above, the cells grow past the fit and the screen shows the bottom-left of the pane, moved just enough
+ * to keep the cursor in view (with a margin on its right): an agent's prompt is at the bottom, a shell's cursor may be
+ * anywhere. Pure: the same screen and cursor give the same viewport.
+ */
+export function viewport(o: Pick<PaintOptions, 'cols' | 'rows' | 'width' | 'height'> & { zoom?: number; cursor?: { x: number; y: number } | null }): Viewport {
+  const fit = cellGrid(o);
+  const z = Math.min(2, Math.max(0.7, (o.zoom ?? 100) / 100));
+  if (z === 1) return { ...fit, col0: 0, row0: 0, cols: o.cols, rows: o.rows };
+  const cw = fit.cw * z;
+  const ch = fit.ch * z;
+  const pad = Math.round(o.width * PAD);
+  const w = o.width - pad * 2;
+  const h = o.height - pad * 2;
+  const cols = Math.max(1, Math.min(o.cols, Math.floor(w / cw + 1e-6)));
+  const rows = Math.max(1, Math.min(o.rows, Math.floor(h / ch + 1e-6)));
+  let col0 = 0;
+  let row0 = o.rows - rows;
+  const c = o.cursor;
+  if (c) {
+    if (c.x >= col0 + cols) col0 = Math.min(o.cols - cols, c.x - cols + 1 + Math.min(FOLLOW_MARGIN, cols - 1));
+    if (c.y < row0) row0 = Math.max(0, c.y);
+    else if (c.y >= row0 + rows) row0 = Math.min(o.rows - rows, c.y - rows + 1);
+  }
+  return { cw, ch, x0: pad + (w - cw * cols) / 2, y0: pad + (h - ch * rows) / 2, col0, row0, cols, rows };
+}
+
 /** The screen's rows as their cells' characters (the glance view's input). */
 function cellRows(buf: IBuffer, rows: number, cols: number, cell: IBufferCell | undefined): { rows: string[][]; cell: IBufferCell | undefined } {
   const out: string[][] = [];
@@ -238,37 +304,44 @@ function cellRows(buf: IBuffer, rows: number, cols: number, cell: IBufferCell | 
 }
 
 /**
- * Paints the visible screen of `buf` (M6b: or its glance view). Returns the
- * number of text runs drawn (a cost measure for tests and the bench).
+ * Paints the visible screen of `buf` (M6b: or its glance view; #59: seated, at a zoom). Returns the number of text
+ * runs drawn (a cost measure for tests and the bench): a run is cells of one style, its glyphs drawn one per cell.
  */
 export function paintBuffer(g: Paint2D, buf: IBuffer, o: PaintOptions, cell: IBufferCell | undefined = undefined): number {
   const t = o.theme ?? SCREEN_THEME;
+  const font = o.font ?? MONO;
   let c = cell;
   let lines: Segment[];
-  let grid: { cols: number; rows: number };
+  const showCursor = !o.glance && o.cursor && buf.viewportY === buf.baseY;
+  let view: Pick<Viewport, 'cw' | 'ch' | 'x0' | 'y0'>;
   if (o.glance) {
     const r = cellRows(buf, o.rows, o.cols, c);
     c = r.cell;
     lines = glanceView(r.rows);
-    grid = GLANCE;
+    view = cellGrid({ ...GLANCE, width: o.width, height: o.height });
   } else {
-    lines = Array.from({ length: o.rows }, (_, row) => ({ row, c0: 0, c1: o.cols }));
-    grid = o;
+    const v = viewport({ cols: o.cols, rows: o.rows, width: o.width, height: o.height, zoom: o.zoom ?? 100, cursor: showCursor ? { x: buf.cursorX, y: buf.cursorY } : null });
+    lines = Array.from({ length: v.rows }, (_, i) => ({ row: v.row0 + i, c0: v.col0, c1: v.col0 + v.cols }));
+    view = v;
   }
-  const { cw, ch, x0, y0 } = cellGrid({ cols: grid.cols, rows: grid.rows, width: o.width, height: o.height });
+  const { cw, ch, x0, y0 } = view;
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.fillStyle = hex(t.bg);
   g.fillRect(0, 0, o.width, o.height);
   const size = Math.max(4, Math.round(ch * 0.8));
   // Glance: heavier strokes, so the letters survive being small on screen.
   const w = o.glance ? ['600 ', '800 '] : ['400 ', '700 '];
-  const fonts = [0, 1, 2, 3].map((f) => `${f & ITALIC ? 'italic ' : ''}${f & BOLD ? w[1] : w[0]}${size}px ${MONO}`);
+  const fonts = [0, 1, 2, 3].map((f) => `${f & ITALIC ? 'italic ' : ''}${f & BOLD ? w[1] : w[0]}${size}px ${font}`);
   g.font = fonts[0] as string;
+  // The font's advance, squeezed or stretched to the cell (CELL_ASPECT keeps that within a monospace's range).
   const adv = g.measureText('M').width || size * 0.6;
   const sx = cw / adv;
   g.textBaseline = 'middle';
-  const cur = { x: buf.cursorX, y: buf.cursorY, show: !o.glance && o.cursor && buf.viewportY === buf.baseY };
+  const cur = { x: buf.cursorX, y: buf.cursorY, show: showCursor };
+  const lightScreen = luminance(t.bg) > 0.5;
   const s: Style = { fg: t.fg, bg: t.bg, flags: 0 };
+  const glyphs: string[] = [];
+  const shapes: number[] = [];
   let runs = 0;
   for (let i = 0; i < lines.length; i++) {
     const { row: y, c0, c1 } = lines[i] as Segment;
@@ -289,7 +362,8 @@ export function paintBuffer(g: Paint2D, buf: IBuffer, o: PaintOptions, cell: IBu
       const fg = s.fg;
       const bg = s.bg;
       const flags = s.flags;
-      let text = c.getChars() || ' ';
+      glyphs.length = 0;
+      glyphs.push(c.getChars());
       x += wd;
       // Extend the run over single-width cells of the same style (not over the cursor, drawn on its own).
       if (wd === 1 && !(cur.show && cur.y === y && cur.x === start)) {
@@ -298,7 +372,7 @@ export function paintBuffer(g: Paint2D, buf: IBuffer, o: PaintOptions, cell: IBu
           if (!n || n.getWidth() !== 1) break;
           styleOf(n, t, s);
           if (s.fg !== fg || s.bg !== bg || s.flags !== flags) break;
-          text += n.getChars() || ' ';
+          glyphs.push(n.getChars());
           x++;
         }
       }
@@ -306,21 +380,42 @@ export function paintBuffer(g: Paint2D, buf: IBuffer, o: PaintOptions, cell: IBu
       const wpx = (Math.min(x, c1) - start) * cw;
       const isCursor = cur.show && cur.y === y && cur.x === start;
       const cellBg = isCursor ? t.cursor : bg;
-      const cellFg = isCursor ? t.bg : o.glance ? readable(fg, bg) : fg;
+      // #59: the preset's text on an agent's own background (a diff's red and green lines), or any colour on a light
+      // screen (Paper: ANSI white on cream), is kept to 3:1; the glance view lifts everything to 4.5:1 as before.
+      const cellFg = isCursor ? t.bg : o.glance ? readable(fg, bg) : bg !== t.bg || lightScreen ? readable(fg, bg, 3) : fg;
       if (cellBg !== t.bg) {
         g.fillStyle = hex(cellBg);
         // A hair wider so adjacent runs leave no seams.
         g.fillRect(px, py, wpx + 0.5, ch + 0.5);
       }
-      if (text.trim()) {
-        g.fillStyle = hex(cellFg);
-        g.font = fonts[flags & (BOLD | ITALIC)] as string;
-        g.save();
-        g.setTransform(sx, 0, 0, 1, 0, 0);
-        g.fillText(text, px / sx, py + ch / 2);
+      // Each glyph at its own cell: no ligature forms across cells, a fallback glyph's advance moves nothing after it.
+      shapes.length = 0;
+      let drawn = false;
+      for (let k = 0; k < glyphs.length; k++) {
+        const ch0 = glyphs[k] as string;
+        if (!ch0 || ch0 === ' ') continue;
+        const cp = ch0.codePointAt(0) as number;
+        if (ch0.length <= 2 && isSymbol(cp)) {
+          shapes.push(k, cp);
+          continue;
+        }
+        if (!drawn) {
+          g.fillStyle = hex(cellFg);
+          g.font = fonts[flags & (BOLD | ITALIC)] as string;
+          g.save();
+          g.setTransform(sx, 0, 0, 1, 0, 0);
+          drawn = true;
+        }
+        const gx = px / sx + k * adv;
+        // Not the font's own (a fallback face): kept to its cells' width.
+        if (cp > 0x7e) g.fillText(ch0, gx, py + ch / 2, adv * wd);
+        else g.fillText(ch0, gx, py + ch / 2);
+      }
+      if (drawn) {
         g.restore();
         runs++;
       }
+      for (let k = 0; k < shapes.length; k += 2) drawSymbol(g, shapes[k + 1] as number, px + (shapes[k] as number) * cw, py, cw, ch, cellFg, cellBg);
       if (flags & (UNDERLINE | STRIKE | OVERLINE)) {
         g.fillStyle = hex(cellFg);
         const lw = Math.max(1, ch / 14);

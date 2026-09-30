@@ -6,8 +6,9 @@ import type { KeyItem } from '../net/protocol';
  * (`worker.keys` items: printable text as `{text}`, special keys as `{key}`
  * names from the contract's allowlist), stands you up (Esc), or starts a
  * paste (Cmd+V on a Mac, Ctrl+V elsewhere: the browser's paste event carries
- * the text), or swaps the terminal and the transcript (Ctrl+Esc, M16).
- * Nothing a seated key does reaches the game. Pure logic.
+ * the text), or swaps the terminal and the transcript (Ctrl+Esc, M16), or
+ * zooms the text (#59: Ctrl + = / + / − / 0, which no pane gets: see
+ * `zoomKey`). Nothing a seated key does reaches the game. Pure logic.
  */
 
 export interface KeyLike {
@@ -23,8 +24,11 @@ export interface KeyLike {
 export interface SeatKey {
   /** What the pane gets. */
   items: KeyItem[];
-  /** `stand`: Esc gets you up; `paste`: the browser's paste event follows with the text; `toggle-transcript` (M16): Ctrl+Esc swaps the terminal and the transcript. */
-  action?: 'stand' | 'paste' | 'toggle-transcript';
+  /**
+   * `stand`: Esc gets you up; `paste`: the browser's paste event follows with the text; `toggle-transcript` (M16):
+   * Ctrl+Esc swaps the terminal and the transcript; `zoom-in` / `zoom-out` / `zoom-reset` (#59): the text size.
+   */
+  action?: 'stand' | 'paste' | 'toggle-transcript' | ZoomAction;
   /** The browser must not act on it (Tab moving focus, Backspace, F5, Ctrl+W…). */
   prevent: boolean;
 }
@@ -77,6 +81,22 @@ const graphemes = new Intl.Segmenter();
 /** One printable character (a grapheme); named keys ("Enter", "F13", "Insert") are longer. */
 const printable = (k: string) => k.length > 0 && (k.length === 1 || [...graphemes.segment(k)].length === 1);
 
+export type ZoomAction = 'zoom-in' | 'zoom-out' | 'zoom-reset';
+
+/**
+ * #59: Ctrl + = or + zooms in, Ctrl + − out, Ctrl + 0 back to 100% (the main keys and the keypad's). None of them
+ * reaches a pane today (the Ctrl branch below sends ctrl+letter only), so taking them costs a pane nothing. Ctrl+_
+ * (Ctrl+Shift+− on a US layout) is not one: it is readline's, zsh's, fish's and Claude Code's undo. Cmd stays the
+ * browser's (a Mac's own zoom), as does Ctrl with Alt or Meta.
+ */
+export function zoomKey(e: KeyLike): ZoomAction | null {
+  if (!e.ctrlKey || e.altKey || e.metaKey) return null;
+  if (e.key === '=' || e.key === '+') return 'zoom-in';
+  if (e.key === '-' && !e.shiftKey) return 'zoom-out';
+  if (e.key === '0' && !e.shiftKey) return 'zoom-reset';
+  return null;
+}
+
 /** What a keydown does while you sit at a laptop (`mac`: Cmd is the command key, Ctrl goes to the pane). */
 export function seatedKey(e: KeyLike, mac: boolean): SeatKey {
   // IME composition and dead keys: the composed text arrives as input (see `composedText`).
@@ -88,6 +108,8 @@ export function seatedKey(e: KeyLike, mac: boolean): SeatKey {
     if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey) return { items: [], action: 'toggle-transcript', prevent: true };
     return e.ctrlKey || e.metaKey || e.altKey ? none(true) : { items: [], action: 'stand', prevent: true };
   }
+  const zoom = zoomKey(e);
+  if (zoom) return { items: [], action: zoom, prevent: true };
   const cmd = mac ? e.metaKey : e.ctrlKey;
   if (cmd && !e.altKey && e.code === 'KeyV') return { items: [], action: 'paste', prevent: false };
   // Cmd+← / → are the start and end of the line, as in a Mac terminal.
