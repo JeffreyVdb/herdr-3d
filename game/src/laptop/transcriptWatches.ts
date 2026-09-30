@@ -24,6 +24,8 @@ export interface TranscriptWatchHost {
 interface Watch {
   /** Tells a late answer to an older request from this one. */
   gen: number;
+  /** The items the watch asked for (a re-watch replaces it with more when someone sits down). */
+  limit: number;
   /** The ack came: pushes go to the sink (before it, they wait for it). */
   ready: boolean;
   queued: TranscriptItems[];
@@ -96,22 +98,37 @@ export class TranscriptWatches {
     return this.on.get(id)?.ready ?? false;
   }
 
-  sync(want: ReadonlySet<string>): void {
+  /**
+   * The watches to have: a set of workers (each with `WATCH_LIMIT` items), or a map of worker to how many items it needs
+   * (the desk prints only need the images, so a few; a worker you sit at needs the conversation). A watch that has fewer
+   * items than wanted is made again (the bridge replaces the old one).
+   */
+  sync(want: ReadonlySet<string> | ReadonlyMap<string, number>): void {
     if (this.disabled) return;
-    for (const id of [...this.on.keys()]) if (!want.has(id)) this.unwatch(id);
-    for (const m of [this.retryAt, this.lastClose]) for (const id of [...m.keys()]) if (!want.has(id)) m.delete(id);
+    const limits = new Map<string, number>();
+    if (want instanceof Map) for (const [id, n] of want) limits.set(id, n);
+    else for (const id of want as ReadonlySet<string>) limits.set(id, WATCH_LIMIT);
+    for (const id of [...this.on.keys()]) if (!limits.has(id)) this.unwatch(id);
+    for (const m of [this.retryAt, this.lastClose]) for (const id of [...m.keys()]) if (!limits.has(id)) m.delete(id);
     const now = this.host.now();
-    for (const id of want) {
-      if (this.on.has(id) || (this.retryAt.get(id) ?? -Infinity) > now) continue;
-      this.watch(id);
+    for (const [id, limit] of limits) {
+      const w = this.on.get(id);
+      if (w && w.limit >= limit) continue;
+      if (!w && (this.retryAt.get(id) ?? -Infinity) > now) continue;
+      this.watch(id, limit);
     }
   }
 
-  private watch(id: string): void {
+  /** The limit of a worker's watch (null: not watched). */
+  limitOf(id: string): number | null {
+    return this.on.get(id)?.limit ?? null;
+  }
+
+  private watch(id: string, limit = WATCH_LIMIT): void {
     const gen = ++this.gen;
     this.retryAt.delete(id);
-    this.on.set(id, { gen, ready: false, queued: [] });
-    void this.host.send('transcript.watch', { id, limit: WATCH_LIMIT }).then((r) => {
+    this.on.set(id, { gen, limit, ready: false, queued: [] });
+    void this.host.send('transcript.watch', { id, limit }).then((r) => {
       const w = this.on.get(id);
       if (!w || w.gen !== gen) return;
       if (!r.ok) {
@@ -166,7 +183,7 @@ export class TranscriptWatches {
     this.lastClose.set(c.id, now);
     if (REWATCH.has(c.reason)) {
       // The view keeps what it shows until the new watch's ack replaces it; a close right after the last one waits.
-      if (c.reason !== 'not_found' && now - last >= RETRY_MS) this.watch(c.id);
+      if (c.reason !== 'not_found' && now - last >= RETRY_MS) this.watch(c.id, w.limit);
       else this.retryAt.set(c.id, now + RETRY_MS);
     } else {
       this.retryAt.set(c.id, now + RETRY_MS);

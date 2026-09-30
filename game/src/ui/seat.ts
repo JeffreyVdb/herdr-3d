@@ -32,7 +32,7 @@ export class SeatBar implements SeatView {
   private readonly keys = el('div', 'seat-keys');
   private readonly standBtn = el('button', 'seat-stand');
   private readonly modeBtn = el('button', 'seat-mode');
-  private readonly modeOpts: Record<SeatMode, HTMLSpanElement> = { terminal: el('span', 'seat-mode-opt', 'Terminal'), transcript: el('span', 'seat-mode-opt', 'Transcript') };
+  private readonly modeOpts: Record<SeatMode, HTMLSpanElement> = { terminal: el('span', 'seat-mode-opt', 'Terminal'), transcript: el('span', 'seat-mode-opt', 'Transcript'), images: el('span', 'seat-mode-opt', 'Images') };
   private name = '';
   private mac = false;
   private current: SeatMode = 'terminal';
@@ -53,9 +53,9 @@ export class SeatBar implements SeatView {
     this.standBtn.append(el('kbd', '', 'Esc'), document.createTextNode('Stand up'));
     this.standBtn.addEventListener('click', () => handlers.stand());
     this.modeBtn.type = 'button';
-    this.modeBtn.title = 'Switch between the terminal and the conversation (Ctrl+Esc)';
+    this.modeBtn.title = 'Switch between the terminal and what you read last, the conversation or the images (Ctrl+Esc)';
     const opts = el('span', 'seat-mode-opts');
-    opts.append(this.modeOpts.terminal, this.modeOpts.transcript);
+    opts.append(this.modeOpts.terminal, this.modeOpts.transcript, this.modeOpts.images);
     this.modeBtn.append(el('kbd', '', 'Ctrl'), el('kbd', '', 'Esc'), opts);
     this.modeBtn.addEventListener('click', () => handlers.toggle());
     this.input = el('textarea', 'seat-input');
@@ -102,14 +102,19 @@ export class SeatBar implements SeatView {
   }
 
   private renderMode(): void {
-    const reading = this.current === 'transcript';
-    this.el.dataset.mode = this.current;
-    this.modeBtn.setAttribute('aria-label', reading ? 'Showing the conversation: switch to the terminal' : 'Showing the terminal: switch to the conversation');
-    for (const m of ['terminal', 'transcript'] as const) this.modeOpts[m].toggleAttribute('data-on', m === this.current);
+    const m = this.current;
+    this.el.dataset.mode = m;
+    const aria = { terminal: 'Showing the terminal: switch to the conversation or the images', transcript: 'Showing the conversation: switch to the terminal', images: 'Showing the images: switch to the terminal' };
+    this.modeBtn.setAttribute('aria-label', aria[m]);
+    for (const k of ['terminal', 'transcript', 'images'] as const) this.modeOpts[k].toggleAttribute('data-on', k === m);
+    const flip = key(['I'], m === 'images' ? 'Conversation' : 'Images');
+    const nothing = 'nothing you type here goes to the terminal';
     this.keys.replaceChildren(
-      ...(reading
-        ? [key(['Enter'], 'Write a prompt'), key(['Ctrl', 'Esc'], 'Terminal'), el('span', 'seat-aside', 'PgUp, PgDn, j and k scroll; nothing you type here goes to the terminal')]
-        : [key(['Shift', 'Esc'], 'Send Esc'), key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'), key(['Ctrl', 'Esc'], 'Conversation'), el('span', 'seat-aside', 'Tab, arrows and Ctrl keys go to the terminal')]),
+      ...(m === 'transcript'
+        ? [key(['Enter'], 'Write a prompt'), flip, key(['Ctrl', 'Esc'], 'Terminal'), el('span', 'seat-aside', `PgUp, PgDn, j and k scroll; ${nothing}`)]
+        : m === 'images'
+          ? [key(['Enter'], 'Open'), flip, key(['Ctrl', 'Esc'], 'Terminal'), el('span', 'seat-aside', `Arrows move between images; ${nothing}`)]
+          : [key(['Shift', 'Esc'], 'Send Esc'), key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'), key(['Ctrl', 'Esc'], 'Conversation'), el('span', 'seat-aside', 'Tab, arrows and Ctrl keys go to the terminal')]),
     );
   }
 
@@ -123,7 +128,7 @@ export class SeatBar implements SeatView {
     this.el.dataset.state = kind;
     // Sending is quick: keep the resting line instead of flickering "sending".
     if (kind === 'busy') return;
-    this.note.textContent = text ?? (this.current === 'transcript' ? `Reading ${this.name}’s conversation` : `Your keys go to ${this.name}’s terminal`);
+    this.note.textContent = text ?? (this.current === 'transcript' ? `Reading ${this.name}’s conversation` : this.current === 'images' ? `Looking at ${this.name}’s images` : `Your keys go to ${this.name}’s terminal`);
   }
 
   focus(): void {

@@ -117,9 +117,19 @@ export interface H3DDebug {
   seat(): { shown: boolean; tape: string; note: string; state: string; mode?: string };
   /** M16: the seated view's mode, its transcript watches and items, the overlay's box (null: hidden) and whether the view is mounted. */
   transcript(): ReturnType<import('./laptop').Laptops['transcriptState']> | null;
+  /** M16 phase 2: the prints on the desks near you (per desk: worker, prints with tray/blank/loaded/slot x,z), the textures' ledger, the transcript watches and lightboxes opened from prints. */
+  prints(): ReturnType<import('./laptop').Laptops['printsState']> | null;
+  /** M16 phase 2: a print's world position (a debug camera aims at it). */
+  printWorld(desk: number, index: number): { x: number; y: number; z: number } | null;
+  /** M16 phase 2: clicks the print under a viewport point (NDC, -1..1) as the pointer would; true when one opened a lightbox. */
+  clickPrint(ndcX: number, ndcY: number): boolean;
   /** M16: the fixture simulator's `sim.transcript` (push items to a watch, close it) and `sim.transcripts` (its watches). */
   simTranscript(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   simTranscripts(): Promise<{ watches: number; ids: string[] } | null>;
+  /** M16 phase 2: the simulator's `sim.image` (makes a PNG, answers its ImageRef, to push in `simTranscript` items). */
+  simImage(args: Record<string, unknown>): Promise<Record<string, unknown> | null>;
+  /** M16 phase 2: the image feeds alive (one per worker whose images are on screen) and the object URLs they hold. */
+  imageFeeds(): { ids: string[] };
   /** M5: this connection's watches as the game counts them, and as the simulator (`sim=1`) does. */
   watches(): Promise<{ game: number; sim: number | null }>;
   /** M5: drops the connection and connects again (the bridge forgets every watch; the game re-watches). */
@@ -285,12 +295,21 @@ const h3d: H3DDebug = {
   frozenInk: (id) => app?.laptops.frozenInk(id) ?? null,
   seat: () => app?.seatBar.summary() ?? { shown: false, tape: '', note: '', state: '' },
   transcript: () => app?.laptops.transcriptState() ?? null,
+  prints: () => app?.laptops.printsState() ?? null,
+  printWorld: (desk, index) => app?.laptops.printWorld(desk, index) ?? null,
+  clickPrint: (x, y) => app?.clickPrintAt(x, y) ?? false,
   simTranscript: async (args) => {
     if (!app) return { ok: false, code: 'not_started' };
     // `sim.transcript` is the fixture simulator's, not a bridge command.
     const r = await app.client.request('sim.transcript' as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
+  simImage: async (args) => {
+    if (!app) return null;
+    const r = await app.client.request('sim.image' as CommandName, args as never);
+    return r.ok ? (r.data as Record<string, unknown>) : null;
+  },
+  imageFeeds: () => ({ ids: app?.laptops.feeds.ids() ?? [] }),
   simTranscripts: async () => {
     if (!app) return null;
     const r = await app.client.request('sim.transcripts' as CommandName, {} as never);

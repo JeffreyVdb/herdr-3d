@@ -1,0 +1,322 @@
+/*
+ * M16 phase 2: the Images tab, third view of the seated overlay. The conversation's screen: the same deep navy, Recursive,
+ * sun-yellow for the one accent (the badge on what the agent made, the count of a repeated image). Input is the paper
+ * white the desk prints' IN tray uses, Agent the sun, so the two read apart at a glance.
+ */
+
+.imgs {
+  --tx-bg: #0f1526;
+  --tx-bg-2: #161e35;
+  --tx-bg-3: #1f2a47;
+  --tx-line: rgb(255 255 255 / 9%);
+  --tx-text: #e4e9f6;
+  --tx-text-2: #9aa5c3;
+  --tx-text-3: #6d789a;
+  --tx-sun: var(--sun, #ffc233);
+  --tx-blue: #6f9bff;
+  --tx-mono: 'Recursive Variable', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  color: var(--tx-text);
+  background: var(--tx-bg);
+  font-family: var(--font, 'Recursive Variable', system-ui, sans-serif);
+  font-size: 13.5px;
+  line-height: 1.5;
+  text-align: left;
+}
+.imgs *,
+.imgs *::before,
+.imgs *::after {
+  box-sizing: border-box;
+}
+.imgs svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.imgs button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.imgs :focus-visible {
+  outline: 2px solid var(--tx-blue);
+  outline-offset: 1px;
+}
+
+.imgs-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--tx-line);
+  background: var(--tx-bg-2);
+  font-size: 12px;
+}
+.imgs-title {
+  font-weight: 750;
+  font-variation-settings: 'CASL' 0.4;
+  letter-spacing: 0.02em;
+}
+.imgs-count-total {
+  color: var(--tx-text-3);
+  font-variation-settings: 'MONO' 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.imgs-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 14px 18px;
+  outline: none;
+  scrollbar-color: var(--tx-bg-3) transparent;
+  scrollbar-width: thin;
+}
+.imgs-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.imgs-group[hidden] {
+  display: none;
+}
+.imgs-h {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 2px 0 8px;
+  font-size: 13.5px;
+  font-weight: 750;
+  font-variation-settings: 'CASL' 0.4;
+}
+.imgs-h-n {
+  min-width: 1.4em;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--tx-bg-3);
+  color: var(--tx-text-2);
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variation-settings: 'MONO' 1;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.imgs-h-hint {
+  color: var(--tx-text-3);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.imgs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.imgs-item {
+  min-width: 0;
+}
+.imgs-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+.imgs-face {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--tx-line);
+  background: #0b1122;
+  transition: border-color 140ms var(--ease, ease-out), transform 140ms var(--ease, ease-out);
+}
+.imgs-tile:hover .imgs-face {
+  border-color: rgb(255 255 255 / 30%);
+}
+.imgs-group[data-origin='input'] .imgs-tile:hover .imgs-face,
+.imgs-group[data-origin='input'] .imgs-tile:focus-visible .imgs-face {
+  border-color: #f4f6fb;
+}
+.imgs-group[data-origin='agent'] .imgs-tile:hover .imgs-face,
+.imgs-group[data-origin='agent'] .imgs-tile:focus-visible .imgs-face {
+  border-color: var(--tx-sun);
+}
+.imgs-tile:focus-visible {
+  outline-offset: 3px;
+}
+.imgs-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.imgs-pending {
+  background: linear-gradient(100deg, #0b1122 30%, #16203a 50%, #0b1122 70%) 0 0 / 200% 100%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .imgs-pending {
+    animation: imgs-shimmer 1.4s linear infinite;
+  }
+}
+@keyframes imgs-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+.imgs-pending .imgs-img:not([src]) {
+  visibility: hidden;
+}
+
+/* A count of a repeated image, and which kind of agent image. */
+.imgs-n {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--tx-sun);
+  color: var(--ink, #1c2540);
+  font-size: 11.5px;
+  font-weight: 800;
+  font-variation-settings: 'MONO' 1;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 40%);
+}
+.imgs-n[hidden] {
+  display: none;
+}
+.imgs-kind {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 1px 7px;
+  border-radius: 3px;
+  background: rgb(10 14 28 / 82%);
+  border: 1px solid rgb(255 194 51 / 55%);
+  color: var(--tx-sun);
+  font-size: 10.5px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 0.6, 'MONO' 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.imgs-cap {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--tx-text-3);
+  font-size: 11.5px;
+  font-variation-settings: 'MONO' 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.imgs-when {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Not available: a compact tile that says so, with the path as text. */
+.imgs-gone,
+.imgs-chip {
+  align-content: center;
+  justify-items: center;
+  gap: 3px;
+  padding: 8px 10px;
+  border-style: dashed;
+  border-color: rgb(255 255 255 / 22%);
+  background: #101830;
+  text-align: center;
+}
+.imgs-gone svg,
+.imgs-chip svg {
+  opacity: 0.6;
+}
+.imgs-gone-t,
+.imgs-chip-t {
+  font-weight: 700;
+  font-size: 12.5px;
+}
+.imgs-gone-path,
+.imgs-gone-why,
+.imgs-chip-s {
+  max-width: 100%;
+  color: var(--tx-text-2);
+  font-family: var(--tx-mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.imgs-gone-why {
+  font-family: inherit;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* Loading, error, empty. */
+.imgs-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 14px;
+  color: var(--tx-text-2);
+}
+.imgs-status[hidden] {
+  display: none;
+}
+.imgs[data-state='empty'] .imgs-status {
+  align-items: center;
+  margin: 12vh auto 0;
+  max-width: 34em;
+  text-align: center;
+}
+.imgs-empty-t {
+  color: var(--tx-text);
+  font-weight: 700;
+}
+.imgs-err {
+  color: #ff7a72;
+}
+.imgs-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tx-blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (max-width: 720px), (max-height: 520px) {
+  .imgs-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px;
+  }
+  .imgs-h-hint {
+    display: none;
+  }
+}
