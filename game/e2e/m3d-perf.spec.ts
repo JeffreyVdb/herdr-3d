@@ -22,19 +22,22 @@ async function run(page: Page, logos: boolean, where: 'city' | 'lobby'): Promise
     if (logos) await expect.poll(async () => (await page.evaluate(() => window.__h3d.logos()))?.lobby?.canopy.showing, { timeout: 15_000 }).toBe('logo');
   }
   await frames(page, 20);
-  const bench = await page.evaluate(() => window.__h3d.bench({ frames: 200, warm: 60 }));
+  const bench = await page.evaluate(() => window.__h3d.bench({ frames: 40, warm: 10, pipelined: false, raf: false }));
   return { bench, signs: (await page.evaluate(() => window.__h3d.logos()))?.city.length ?? 0 };
 }
 
 for (const where of ['city', 'lobby'] as const) {
   test(`logos on every building of the ${where} stay in the frame budget`, async ({ page, browser }) => {
-    // Two 260-frame benches at 90-200 ms a frame on llvmpipe, and `make e2e` runs six specs at once on the same CPUs.
-    test.setTimeout(600_000);
+    // Two 50-frame benches (serialized only: the pipelined and rAF phases are not read here) at 90-200 ms a frame on
+    // llvmpipe, and `make e2e` runs six tests at once on the same CPUs.
+    test.setTimeout(300_000);
     const clean = watchErrors(page);
     const on = await run(page, true, where);
     expect(on.signs).toBe(5);
     await shot(page, `m3d-perf-${where}`);
     clean();
+    // The baseline must not share the CPU with a page still rendering the city.
+    await page.close();
 
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
     const off = await run(await ctx.newPage(), false, where);

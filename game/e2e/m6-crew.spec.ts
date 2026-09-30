@@ -204,7 +204,7 @@ test('frame budget: crew parts are instanced, and a floor without a run draws no
   expect(shown.length).toBeLessThanOrEqual(18);
   // The draw-call delta: the same view, benched with the crews and with every crew member made a plain worker.
   await viewDesks(page, [0, 1, 2, 3, 4, 5, 6, 7], 6, Math.PI / 2, -0.3);
-  const withCrew = await page.evaluate(() => window.__h3d.bench({ frames: 20 }));
+  const withCrew = await page.evaluate(() => window.__h3d.bench({ frames: 20, warm: 5, pipelined: false, raf: false }));
   const ids = (await crew(page)).members.map((m) => m.id);
   await page.evaluate((list) => {
     let seq = 9_000_000;
@@ -218,7 +218,7 @@ test('frame budget: crew parts are instanced, and a floor without a run draws no
   }, ids);
   await frames(page, 4);
   expect((await crew(page)).shown).toEqual([]);
-  const plain = await page.evaluate(() => window.__h3d.bench({ frames: 20 }));
+  const plain = await page.evaluate(() => window.__h3d.bench({ frames: 20, warm: 5, pipelined: false, raf: false }));
   console.log(`m6 draw calls: ${JSON.stringify({ withCrew: withCrew.drawCalls, plain: plain.drawCalls, delta: withCrew.drawCalls - plain.drawCalls, crewParts: shown.length, crewMembers: ids.length })}`);
   // Instanced: the delta is per part kind (and its shadow), never per worker.
   expect(withCrew.drawCalls - plain.drawCalls).toBeLessThanOrEqual(2 * 18);

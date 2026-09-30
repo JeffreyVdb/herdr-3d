@@ -20,13 +20,14 @@ async function run(page: Page, fail: string): Promise<{ bench: Awaited<ReturnTyp
   await frames(page, 30);
   const w = await wall(page);
   expect((await page.evaluate(() => window.__h3d.pose()))?.area, 'on the floor, facing the boards').toBe('floor');
-  const bench = await page.evaluate(() => window.__h3d.bench({ frames: 200, warm: 60 }));
+  const bench = await page.evaluate(() => window.__h3d.bench({ frames: 40, warm: 10, pipelined: false, raf: false }));
   return { bench, wall: w };
 }
 
 test('100 issue notes and 20 PR notes stay in the frame budget: two instanced draws, nothing written on a quiet frame', async ({ page, browser }) => {
-  // Two 260-frame benches at 90-200 ms a frame on llvmpipe, and `make e2e` runs six specs at once on the same CPUs.
-  test.setTimeout(600_000);
+  // Two 50-frame benches (serialized only: the pipelined and rAF phases are not read here) at 90-200 ms a frame on
+  // llvmpipe, and `make e2e` runs six tests at once on the same CPUs.
+  test.setTimeout(300_000);
   const clean = watchErrors(page);
   const on = await run(page, '');
   const w = on.wall as Wall;
@@ -42,6 +43,8 @@ test('100 issue notes and 20 PR notes stay in the frame budget: two instanced dr
   const after = (await wall(page)) as Wall;
   expect([after.issuesWrites, after.prsWrites]).toEqual([before.issuesWrites, before.prsWrites]);
   clean();
+  // The baseline must not share the CPU with a page still rendering the floor.
+  await page.close();
 
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const base = await run(await ctx.newPage(), 'no_m7');

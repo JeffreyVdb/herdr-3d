@@ -44,15 +44,23 @@ make integration       # bridge against a real herdr (and systemd-run) in throwa
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
 make dev               # Vite dev server on a portlease-leased port, 127.0.0.1 only
 make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check), seconds
-make e2e               # the full Playwright suite (e2e/*.spec.ts), H3D_WORKERS parallel workers, ~2.5 min
+make e2e               # the full Playwright suite (e2e/*.spec.ts), H3D_WORKERS parallel workers, ~7.5 min, one run per host
 ```
 
 - `make shot` (only `e2e/shot.spec.ts`) and `make e2e` (every spec) run Playwright against the **cached** Chromium in
   `~/.cache/ms-playwright` (`@playwright/test` is pinned to the version that matches it). Browsers are never downloaded (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`). It forces the
   WebGL2 backend (`?backend=webgl2`) because the server has no GPU; rendering goes through ANGLE → Vulkan → mesa llvmpipe.
-- `make e2e` runs `H3D_WORKERS` specs in parallel (default 6, a positive integer; anything else falls back to it). Every
-  test opens its own page against the shared preview server and writes only its own `test-results/<name>.png`, so keep
-  it that way: no shared files, no fixed ports, no order between tests. Lower it on a loaded machine if timeouts appear.
+- `make e2e` runs `H3D_WORKERS` tests in parallel (default 6, a positive integer; anything else falls back to it).
+  Playwright runs with `fullyParallel`, so the tests of one spec file are spread over the workers too. Every test opens
+  its own page against the shared preview server and writes only its own `test-results/<name>.png`, so keep it that
+  way: no shared files, no fixed ports, no order between tests (also within a file: no `describe.serial`, no pages
+  shared through `beforeAll`, no module-level mutable state). Lower it on a loaded machine if timeouts appear.
+- `make e2e` and `make shot` take a host-wide lock (`flock` on `$XDG_RUNTIME_DIR/herdr-3d-e2e.lock`, `/tmp` without
+  it): one Playwright run at a time per host. Two suites side by side take about as long as two in a row, but both
+  render below 10 fps on llvmpipe, where game time runs slower than wall time and fixed polls time out. A second run
+  prints `waiting for another worktree's e2e run (…)` and starts when the first ends (or fails, or is interrupted).
+  Without `flock` (util-linux), or when the lock can't be taken, both targets fail before Playwright starts, never
+  run unlocked. Running `pnpm exec playwright` directly skips the lock.
 - The page exposes `window.__h3d` (`backend`, `frames`, `error`) for tests.
 - Never hardcode ports. Use `portlease run` / `portlease reserve`, and bind `127.0.0.1` only. Other agents run in
   parallel worktrees on the same host.
@@ -830,7 +838,7 @@ Tests:
 make test lint                # vitest + tsc (protocol client and requests, store, layout, collision, cards, frame
                               # policy, fixtures, settings validation/diffing, reordering, the command simulation)
 make shot                     # Playwright WebGL2, just the screenshot: game/test-results/shot.png
-make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS parallel, ~2.5 min):
+make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS parallel, ~7.5 min, one per host):
                               # game/test-results/{shot,m2-city,m2-floor-plan,m2-desk-row}.png,
                               # scripted look-at path, floor entry, keyboard focus, live plan labels, events
                               # during the elevator ride, held keys across floors, small-window plan; M3 on the
@@ -964,6 +972,12 @@ pipelined throughput, GPU timestamps, and rAF frames that include DOM layout. M3
 M5 jobs, on `perf-floor60` with the simulator: `floor60-screens` (the overview with four live laptop screens),
 `floor60-screens0` (the same with `screens=0`) and `floor60-laptop` (seated at a laptop). On the server,
 `H3D_BENCH=1` with the m5-screen spec runs the same comparison on WebGL2 (relative numbers only).
+`bench(opts)` takes `frames` (300), `warm` (60), `sway` (true), and `pipelined` / `raf` (both true): false skips the
+pipelined throughput run (`pipelinedMs` is null) or the 120 rAF frames (`rafMainMs`, `rafIntervalMs` null). The
+default suite's perf specs (`m3d-perf`, `m7-perf`, the m6-crew frame budget) read only the serialized frame and the
+draw counts, so they bench `{ frames: 40, warm: 10, pipelined: false, raf: false }` (m6-crew: 20 and 5), and they
+close the first page before benching the baseline, so the two runs don't share the CPU. `perf:mac` and the
+`H3D_BENCH` benches keep the defaults.
 
 `window.__h3d` (tests, perf): `backend`, `frames`, `error`, `ready`, `view()`, `lookAt()` → `{kind, id, name?, label?}`
 or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
