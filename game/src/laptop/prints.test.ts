@@ -109,6 +109,18 @@ describe('the desks that have prints', () => {
     expect(r.prints.counts()).toMatchObject({ alive: 2, created: 2, disposed: 0 });
   });
 
+  it('the same image in both trays: both prints get their picture (one fetch, two textures)', async () => {
+    const r = rig([ref(1), ref(2, { hash: hashOf(1), origin: 'agent' })]);
+    await near(r, 0, ['a']);
+    const info = r.prints.info()[0];
+    expect(info?.prints.map((p) => [p.tray, p.blank, p.loaded])).toEqual([
+      ['in', false, true],
+      ['out', false, true],
+    ]);
+    expect(r.prints.counts()).toMatchObject({ alive: 2, created: 2 });
+    expect(r.log.filter((l) => l.t === 'transcript.image')).toHaveLength(1);
+  });
+
   it('shows at most ten prints, the newest, and only the two nearest desks', async () => {
     const r = rig(Array.from({ length: 30 }, (_, i) => ref(i + 1)));
     await near(r, 0, ['a', 'b', 'c']);

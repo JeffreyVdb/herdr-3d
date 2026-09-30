@@ -137,14 +137,14 @@ export class PrintMeshes {
       this.group.add(g);
       for (const t of ['in', 'out'] as const) g.add(this.tray(t));
     }
-    const keep = new Map(d.items.map((it) => [`${it.pick.tray}:${it.pick.key}`, it]));
+    const keep = new Map(d.items.map((it) => [it.pick.key, it]));
     const places = layoutPrints(worker, picks);
     const next: Item[] = [];
     picks.forEach((pick, i) => {
       const place = places[i] as PrintPlace;
-      const old = keep.get(`${pick.tray}:${pick.key}`);
+      const old = keep.get(pick.key);
       if (old) {
-        keep.delete(`${pick.tray}:${pick.key}`);
+        keep.delete(pick.key);
         this.place(old, place, pick);
         next.push(old);
         return;

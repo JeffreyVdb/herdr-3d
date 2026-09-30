@@ -40,7 +40,7 @@ export const trayOf = (r: Pick<ImageRef, 'origin'>): Tray => (r.origin === 'inpu
 
 /** What a picked ref needs to be drawn. */
 export interface PrintPick {
-  /** Stable across lists: the image's hash, else "item:index" for one with no bytes. */
+  /** Stable across lists, and its tray's: "<tray>:<hash>" (the same image lies in both trays), else "<tray>:item:path:index" for one with no bytes. Bytes are fetched by `ref.hash`, never by the key. */
   key: string;
   tray: Tray;
   ref: ImageRef;
@@ -60,11 +60,11 @@ export function pickPrints(refs: readonly ImageRef[]): PrintPick[] {
   for (let i = refs.length - 1; i >= 0; i--) {
     const r = refs[i] as ImageRef;
     const blank = blankRef(r);
-    const key = !blank && r.hash ? r.hash : `${r.item_id ?? ''}:${r.path ?? ''}:${i}`;
-    const dedupe = `${trayOf(r)}:${key}`;
-    if (seen.has(dedupe)) continue;
-    seen.add(dedupe);
-    out.push({ key, tray: trayOf(r), ref: r, blank });
+    const tray = trayOf(r);
+    const key = `${tray}:${!blank && r.hash ? r.hash : `${r.item_id ?? ''}:${r.path ?? ''}:${i}`}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ key, tray, ref: r, blank });
   }
   const take = (t: Tray) => out.filter((p) => p.tray === t).slice(0, MAX_TRAY).reverse();
   return [...take('in'), ...take('out')];

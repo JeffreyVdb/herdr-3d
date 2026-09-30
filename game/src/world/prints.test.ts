@@ -44,6 +44,9 @@ describe('pickPrints', () => {
     const c = ref({ n: 3, hash: a.hash as string, origin: 'agent' });
     const picks = pickPrints([a, b, c]);
     expect(picks.map((p) => [p.tray, p.ref.seq])).toEqual([['in', 2], ['out', 3]]);
+    // Each is its own print: the key carries the tray, so a texture, a click and a "tried" mark never mix them up.
+    expect(new Set(picks.map((p) => p.key)).size).toBe(2);
+    expect(picks.map((p) => p.ref.hash)).toEqual([a.hash, a.hash]);
   });
 
   it('blank prints: unavailable, binary, no hash — each its own card, never fetched', () => {
@@ -67,8 +70,8 @@ describe('layoutPrints', () => {
     const c = layoutPrints('w2', pickPrints(many.slice(0, 4)));
     expect(c).not.toEqual(a);
     // The turn and the offset come from the worker and the image, not from what else is there.
-    const p1 = a.find((p) => p.key === many[0]?.hash);
-    const p2 = layoutPrints('w1', pickPrints(many)).find((p) => p.key === many[0]?.hash);
+    const p1 = a.find((p) => p.key === `in:${many[0]?.hash}`);
+    const p2 = layoutPrints('w1', pickPrints(many)).find((p) => p.key === `in:${many[0]?.hash}`);
     expect(p1?.yaw).toBe(p2?.yaw);
     expect(p1?.z).toBe(p2?.z);
   });
