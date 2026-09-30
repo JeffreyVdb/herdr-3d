@@ -7,6 +7,15 @@
 // file name or a client MIME type. Every limit is checked before the costly
 // step: the size before parsing, the pixel budget (DecodeConfig) before a
 // decode, the whole SVG document (svg.go) before oksvg compiles geometry.
+//
+// Two boundaries keep an upload from hurting the bridge. What an SVG may
+// contain is decided by the allowlist sanitiser (svg.go), in the bridge. What
+// drawing it may cost is decided by a killable child process (worker.go): oksvg
+// and rasterx take no context and their cost cannot be bounded from the
+// source, so the bridge never runs them itself; it hands the sanitised copy to
+// a re-executed copy of its own binary and kills that at a deadline. PNG and
+// WebP are decoded in the bridge: their cost is bounded by the pixel caps
+// checked on the header first.
 package logo
 
 import (
@@ -37,8 +46,13 @@ var (
 	ErrTooLarge    = errors.New("logo too large")   // bytes or pixels over the limit
 	ErrUnsupported = errors.New("logo unsupported") // not PNG, WebP or a plain SVG; animated; SVG features we do not render
 	ErrInvalid     = errors.New("logo invalid")     // cannot be decoded: empty, corrupt, truncated, draws nothing
-	ErrBusy        = errors.New("logo busy")        // the conversion did not get a slot or finish in time
+	ErrBusy        = errors.New("logo busy")        // the conversion did not get a slot in time
 )
+
+// ErrTimeout marks an SVG that the render worker did not finish drawing before
+// its deadline (it was killed). It always comes together with ErrUnsupported:
+// retrying does not help, the document has to be simpler.
+var ErrTimeout = errors.New("logo render timeout")
 
 func tooLarge(format string, a ...any) error {
 	return fmt.Errorf("%w: %s", ErrTooLarge, fmt.Sprintf(format, a...))
@@ -64,9 +78,14 @@ func Hash(png []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Normalize converts an upload to the stored PNG. It is pure and does no
-// concurrency limiting: use Converter for that.
-func Normalize(data []byte) (res Result, err error) {
+// svgStage draws a sanitised SVG (the canonical copy) and returns the stored
+// PNG. Converter runs it in a child process; tests and the worker itself run
+// it in-process (renderSVGPNG).
+type svgStage func(clean []byte) (Result, error)
+
+// normalize converts an upload to the stored PNG, with svg drawing the SVGs.
+// It does no concurrency limiting: Converter does that.
+func normalize(data []byte, svg svgStage) (res Result, err error) {
 	defer func() { // a decoder bug must not take the bridge down
 		if r := recover(); r != nil {
 			res, err = Result{}, invalid("cannot process this image")
@@ -94,12 +113,19 @@ func Normalize(data []byte) (res Result, err error) {
 		if !looksLikeSVG(data) {
 			return Result{}, unsupported("not a PNG, WebP or SVG image")
 		}
-		source = "svg"
-		img, err = renderSVG(data)
+		clean, err := sanitizeSVG(data) // in the bridge: oksvg only ever sees this copy
+		if err != nil {
+			return Result{}, err
+		}
+		return svg(clean)
 	}
 	if err != nil {
 		return Result{}, err
 	}
+	return encodeResult(img, source)
+}
+
+func encodeResult(img image.Image, source string) (Result, error) {
 	var out bytes.Buffer
 	if err := png.Encode(&out, img); err != nil {
 		return Result{}, invalid("cannot encode the image: %v", err)

@@ -15,6 +15,11 @@ import (
 	"time"
 )
 
+// normalizeInProcess is the whole pipeline with the SVG drawn in this process,
+// for the many tests of what the sanitiser and the renderer do. The paths
+// through the child process are in worker_test.go.
+func normalizeInProcess(data []byte) (Result, error) { return normalize(data, renderSVGPNG) }
+
 func encodePNG(t *testing.T, img image.Image) []byte {
 	t.Helper()
 	var b bytes.Buffer
@@ -75,7 +80,7 @@ func TestNormalizeRaster(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := Normalize(tc.in)
+			r, err := normalizeInProcess(tc.in)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -97,7 +102,7 @@ func TestNormalizeRaster(t *testing.T) {
 }
 
 func TestSmallPNGKeepsItsPixels(t *testing.T) {
-	r, err := Normalize(alphaPNG(t, 40, 30))
+	r, err := normalizeInProcess(alphaPNG(t, 40, 30))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,11 +114,11 @@ func TestSmallPNGKeepsItsPixels(t *testing.T) {
 }
 
 func TestHashFollowsTheImage(t *testing.T) {
-	a, err := Normalize(alphaPNG(t, 64, 32))
+	a, err := normalizeInProcess(alphaPNG(t, 64, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := Normalize(alphaPNG(t, 64, 32))
+	again, err := normalizeInProcess(alphaPNG(t, 64, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +127,7 @@ func TestHashFollowsTheImage(t *testing.T) {
 	}
 	m := image.NewNRGBA(image.Rect(0, 0, 64, 32))
 	m.SetNRGBA(3, 3, color.NRGBA{B: 255, A: 255})
-	b, err := Normalize(encodePNG(t, m))
+	b, err := normalizeInProcess(encodePNG(t, m))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +170,7 @@ func TestNormalizeRefusals(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Normalize(tc.in)
+			_, err := normalizeInProcess(tc.in)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
@@ -251,7 +256,7 @@ func TestNormalizePanicIsInvalid(t *testing.T) {
 	// A decoder panic must not escape; the deferred recover turns it into ErrInvalid.
 	defer func() {
 		if r := recover(); r != nil {
-			t.Fatalf("Normalize panicked: %v", r)
+			t.Fatalf("normalize panicked: %v", r)
 		}
 	}()
 	for _, in := range [][]byte{
@@ -259,7 +264,7 @@ func TestNormalizePanicIsInvalid(t *testing.T) {
 		[]byte("RIFF\xff\xff\xff\xffWEBPVP8L" + strings.Repeat("\xff", 64)),
 		[]byte("RIFF\xff\xff\xff\xffWEBPVP8 " + strings.Repeat("\x00", 64)),
 	} {
-		if _, err := Normalize(in); err == nil {
+		if _, err := normalizeInProcess(in); err == nil {
 			t.Fatal("garbage was accepted")
 		}
 	}

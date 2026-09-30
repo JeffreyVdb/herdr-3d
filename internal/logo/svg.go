@@ -24,7 +24,13 @@ import (
 // copy. oksvg only ever reads that copy: it has no namespaces, no text, no
 // element outside svgElements and no attribute outside svgAttrs (and style=
 // only carries svgStyleProps), so nothing reaches it that was not checked.
-// The limits are design choices, not proven worst cases.
+// That is the boundary for what a document may contain. What drawing it may
+// cost is not decided here: no number in the source bounds oksvg's and
+// rasterx's work (they take no context, and the group and viewBox scales
+// change every number after the checks have seen it), so drawing runs in a
+// child process that is killed at a deadline (worker.go, convert.go). The
+// limits below are design choices that keep ordinary documents cheap and
+// refuse the obviously absurd early; they are not proven worst cases.
 const (
 	svgNS          = "http://www.w3.org/2000/svg"
 	xlinkNS        = "http://www.w3.org/1999/xlink"
@@ -37,15 +43,14 @@ const (
 	svgMaxCoord    = 1e6       // absolute value of any coordinate, length or extent
 	svgMaxScale    = 1e3       // product of the scale factors down a branch
 	svgMaxStops    = 64        // <stop>s in one gradient: rasterx walks them for every pixel
-	svgMaxWork     = 1e8       // path values times device extent, all shapes together (see renderSVG)
+	svgMaxWork     = 1e8       // path values times device extent, all shapes together: an early refusal (see renderSVG)
 )
 
 // svgRenderBudget is how long the drawing of a document may take, checked
-// between shapes. The source numbers do not say how slow drawing is (thousands
-// of shapes over the whole canvas, wide strokes: cheap to write, slow to
-// draw, and the group and viewBox scales change every number), so the drawing
-// stops itself: a document not drawn in this time is refused. A single shape
-// is not interrupted; svgMaxWork keeps that short. A var so a test can
+// between shapes: a best-effort early refusal, with a clear message, of a
+// document of thousands of shapes over the whole canvas (cheap to write, slow
+// to draw). It cannot interrupt a shape, so it is not a bound: the bound is the
+// child process's kill (Converter, DefaultRenderTimeout). A var so a test can
 // shorten it.
 var svgRenderBudget = time.Second
 
@@ -464,7 +469,8 @@ func eachNumber(s string, fn func(float64) error) error {
 }
 
 // renderSVG rasterises a sanitised SVG straight at its stored size (long edge
-// MaxEdge), on a transparent canvas.
+// MaxEdge), on a transparent canvas. It is what the render worker runs (and
+// tests, in-process); the bridge itself never calls it.
 func renderSVG(data []byte) (image.Image, error) {
 	clean, maxScale, err := sanitize(data)
 	if err != nil {
@@ -501,10 +507,14 @@ func renderSVG(data []byte) (image.Image, error) {
 	s := math.Min(float64(w)/vb.W, float64(h)/vb.H)
 	// The cost of a shape grows with its values (segments) and with how far
 	// they reach on the canvas, clipped or not, and the group and viewBox
-	// scales enlarge every number after the sanitiser has seen it. So bound the
-	// product, in output pixels, with the values oksvg compiled (which include
-	// what relative commands added up to), the stroke width (times the miter
-	// limit, which sets how far a join reaches) and the largest scale bound.
+	// scales enlarge every number after the sanitiser has seen it. This
+	// estimate refuses the documents where that is plain: the product, in
+	// output pixels, of the values oksvg compiled (which include what relative
+	// commands added up to), the stroke width (times the miter limit, which
+	// sets how far a join reaches) and the largest scale bound. The scale bound
+	// is not exact (a chain of transforms can stretch more than it says, and
+	// oksvg passes the stroke width unscaled), so a document can pass this and
+	// still be slow to draw: the child process's deadline is what bounds that.
 	work := 0.0
 	for _, p := range icon.SVGPaths {
 		reach := 0.0

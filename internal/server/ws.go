@@ -47,6 +47,11 @@ func NewServer(hub *Hub, log *slog.Logger) *Server {
 	return &Server{hub: hub, log: log, conv: logo.NewConverter(0, 0), conns: map[*websocket.Conn]context.CancelFunc{}}
 }
 
+// SetLogoRenderTimeout sets how long an SVG upload may take to draw before the
+// render worker is killed (default logo.DefaultRenderTimeout). Call it before
+// Serve.
+func (s *Server) SetLogoRenderTimeout(d time.Duration) { s.conv.SetRenderTimeout(d) }
+
 // Handler serves /ws (the protocol), /logo/{building} (M3d) and /healthz.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()

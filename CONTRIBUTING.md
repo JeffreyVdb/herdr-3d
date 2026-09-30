@@ -120,15 +120,15 @@ parts:
   the set of documents and which of them write (six mutations: addComment, addProjectV2ItemById,
   updateProjectV2ItemFieldValue, closeIssue, mergePullRequest, createPullRequest).
 
-- **Logos** (M3d, `internal/logo`, no new process): the image libraries are `golang.org/x/image` (`webp`, `draw`; BSD-3),
+- **Logos** (M3d, `internal/logo`; SVGs are drawn by the bridge's own executable run again as a killable child, see below): the image libraries are `golang.org/x/image` (`webp`, `draw`; BSD-3),
   `github.com/srwiley/oksvg` and `rasterx` (BSD-3; pinned pseudo-versions, untagged upstream) and `golang.org/x/net`
   (their charset reader), all pure Go, so `make helper-darwin` (CGO off) still builds. `h3d-helper` shares the `app`
   package with the bridge and so links them, but never calls them. The PUT body is read with `http.MaxBytesReader`
-  (1 MiB), converted by `logo.Converter` (2 at a time, 10 s to wait, 10 s to run), stored as PNG bytes in
+  (1 MiB), converted by `logo.Converter` (2 at a time, 10 s to wait for a slot, a 5 s deadline for drawing an SVG), stored as PNG bytes in
   `building_logo` (migration after `migrationBoards`) and announced with a `building.upsert`. `go test ./internal/logo`
   has generated PNGs (alpha, wide, tall, oversize, truncated), the two WebP fixtures in `internal/logo/testdata` (lossless
   and lossy with alpha, from `golang.org/x/image`'s test data), an animated WebP, and a table of hostile SVGs. Extending
-  the SVG subset means adding a test here first: the preflight in `svg.go` is the safety boundary, oksvg is not. oksvg
+  the SVG subset means adding a test here first: the sanitiser in `svg.go` decides what a document may contain, oksvg does not. oksvg
   matches local names and reads every attribute (`style=`, upper-case names, foreign namespaces), so `sanitizeSVG` does
   not just check the upload: it re-serialises it (SVG-namespace elements from an allowlist, attributes from an allowlist
   by exact name, `style=` cut down to checked presentation properties, foreign markup and text dropped) and oksvg reads
@@ -136,10 +136,25 @@ parts:
   `svgStyleProps` and its checks in `checkProp`, plus a row in `TestSVGRefusals` or `TestSVGForeignMarkupIsDropped`.
   Dashes are not supported and stay out: `stroke-dasharray`/`stroke-dashoffset` are not in `svgAttrs`, so they are dropped
   and strokes render solid (`TestSVGDashesAreDropped`), because rasterx's dashing cost cannot be bounded from the source
-  (it quantises dashes independently of the scales that enlarge the path). The cost of drawing is bounded where it can be
-  measured: `renderSVG` refuses shapes whose compiled values × output reach exceed `svgMaxWork`, gradients are capped at
-  `svgMaxStops`, and the loop over the shapes stops after `svgRenderBudget` (`TestSVGCostBounds` times the heaviest
-  documents the limits accept: about 0.6 s at worst on a laptop).
+  (it quantises dashes independently of the scales that enlarge the path).
+  What drawing may cost is not decided by any check of the source (a 65 KB document of nested unit-column transforms
+  took over 20 s in-process, and oksvg/rasterx take no context), so it is bounded by killing a process, not by
+  estimating: `logo.Converter` hands the sanitised copy to a **render worker**, `/proc/self/exe logo-worker` (the
+  bridge's own binary; `os.Executable` elsewhere) with `H3D_LOGO_WORKER=1`, over stdin/stdout. `worker.go` enters worker
+  mode from `init`, before `main` and any bridge setup (no store, no socket), so it also works in `go test`: the test
+  binary re-executes itself, and no package needs a `TestMain` for it. The parent (`convert.go`) kills the worker's process
+  group at `DefaultRenderTimeout` (5 s; `Converter.SetRenderTimeout`, `Server.SetLogoRenderTimeout`), on the caller's
+  cancellation and at 8 MiB of output, always reaps it, holds the conversion slot only as long as it lives, gives it
+  a minimal environment, and accepts only a PNG of at most 1024 px. In the worker, `RLIMIT_CPU` (deadline + 1 s),
+  no core dumps and `debug.SetMemoryLimit` are defence in depth (an address-space limit does not work with the Go
+  runtime). Timeout is `logo_unsupported` (`logo.ErrTimeout` together with `ErrUnsupported`), a crash or garbage is
+  `logo_invalid`, a worker that cannot start is `internal`. `svgMaxWork`, `svgMaxStops` and `svgRenderBudget` stay as best-effort
+  early refusals with clear messages (`TestSVGCostBounds`), not as a bound; PNG and WebP stay in-process (the pixel
+  caps read from the header bound them). `worker_test.go` has the slow document (`TestSlowSVGIsKilledAtTheDeadline`:
+  refused at the injected deadline, the child gone, the slot free), two hostile conversions not blocking a third, a
+  table of misbehaving workers (crash, exit codes, garbage, oversize output, a worker that never reads or never ends,
+  a grandchild) and the CPU limit. `deploy/herdr-world.service` needs nothing for this (no `noexec` or syscall
+  filter that would stop the bridge executing itself); keep it that way.
   A `GET /logo/{id}?h=` with a hash that is not the current one is `404` (never the new image under the old hash), and
   the game's `LogoCache` never files bytes under a hash they do not have.
 

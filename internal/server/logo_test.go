@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/logo"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -282,5 +283,52 @@ func TestDeletingTheBuildingDeletesItsLogo(t *testing.T) {
 	}
 	if st, _, _ := b.logoReq("PUT", id, bytes.NewReader(testPNG(t, 10, 10, color.NRGBA{A: 255})), ""); st != 404 {
 		t.Fatalf("PUT for a deleted building: %d", st)
+	}
+}
+
+// SVGs are drawn by a render worker (the test binary re-executing itself, see
+// internal/logo/worker.go). A normal one is stored; one that takes minutes to
+// draw is refused once the worker is killed at its deadline, and the bridge
+// converts the next one at once.
+func TestLogoSVGDrawnByWorker(t *testing.T) {
+	const deadline = 3 * time.Second
+	b := startBridgeWith(t, "", server.Options{}, func(s *server.Server) { s.SetLogoRenderTimeout(deadline) })
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	id := createBuilding(c, "Work")
+	const head = `<svg xmlns="http://www.w3.org/2000/svg" `
+	ok := head + `viewBox="0 0 10 10"><path d="M0 0 L10 0 L5 10 Z" fill="green"/></svg>`
+	// 65 KB, one shape, accepted by the checks: unit-column transforms stretch
+	// 4000 curves 50,000-fold (internal/logo TestSlowSVGIsKilledAtTheDeadline).
+	slow := head + `viewBox="0 0 10 10">` + strings.Repeat(`<g transform="matrix(.7071 .7071 .7071 .7071 0 0)">`, 31) +
+		`<path d="M0 0 ` + strings.Repeat("C10 0 0 10 10 10 C0 10 10 0 0 0 ", 2000) +
+		`" fill="red" stroke="blue" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>` +
+		strings.Repeat(`</g>`, 31) + `</svg>`
+
+	st, body, _ := b.logoReq("PUT", id, strings.NewReader(ok), "")
+	var ack struct {
+		Data struct {
+			Logo string `json:"logo"`
+			W    int    `json:"w"`
+			H    int    `json:"h"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &ack); err != nil || st != 200 || ack.Data.W != 1024 || ack.Data.H != 1024 || len(ack.Data.Logo) != 64 {
+		t.Fatalf("PUT svg: %d %s", st, body)
+	}
+	if st, png1, _ := b.logoReq("GET", id, nil, ""); st != 200 || logo.Hash(png1) != ack.Data.Logo {
+		t.Fatalf("GET: %d, hash %s want %s", st, logo.Hash(png1), ack.Data.Logo)
+	}
+
+	t0 := time.Now()
+	st, body, _ = b.logoReq("PUT", id, strings.NewReader(slow), "")
+	if took := time.Since(t0); st != 415 || logoErrCode(t, body) != proto.ErrLogoUnsupported || !strings.Contains(string(body), "too long") || took > deadline+3*time.Second {
+		t.Fatalf("PUT slow svg: %d %s after %v", st, body, took)
+	}
+	if got, _ := b.st.LogoOf(context.Background(), id); got.Hash != ack.Data.Logo {
+		t.Fatal("the refused upload replaced the logo")
+	}
+	if st, body, _ = b.logoReq("PUT", id, strings.NewReader(ok), ""); st != 200 {
+		t.Fatalf("PUT svg after the timeout: %d %s", st, body)
 	}
 }

@@ -33,7 +33,7 @@ func TestSVGRenders(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := Normalize([]byte(tc.svg))
+			r, err := normalizeInProcess([]byte(tc.svg))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,7 +49,7 @@ func TestSVGRenders(t *testing.T) {
 
 // A vector is drawn at the full stored size, on a transparent background.
 func TestSVGIsDrawnLargeAndTransparent(t *testing.T) {
-	r, err := Normalize([]byte(svgHead + `viewBox="0 0 10 10"><path d="M0 0 L10 0 L5 10 Z" fill="green"/></svg>`))
+	r, err := normalizeInProcess([]byte(svgHead + `viewBox="0 0 10 10"><path d="M0 0 L10 0 L5 10 Z" fill="green"/></svg>`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestSVGIsDrawnLargeAndTransparent(t *testing.T) {
 // The nonzero viewBox origin is the trap in oksvg's SetTarget: the shape must
 // start at x = 256 of 1024, with its half opacity.
 func TestSVGViewBoxOrigin(t *testing.T) {
-	r, err := Normalize([]byte(svgHead + `viewBox="10 20 2048 1024"><rect x="522" y="276" width="1024" height="512" fill="red" opacity="0.5"/></svg>`))
+	r, err := normalizeInProcess([]byte(svgHead + `viewBox="10 20 2048 1024"><rect x="522" y="276" width="1024" height="512" fill="red" opacity="0.5"/></svg>`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestSVGRefusals(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Normalize([]byte(tc.svg))
+			_, err := normalizeInProcess([]byte(tc.svg))
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
@@ -197,7 +197,7 @@ func TestSVGForeignMarkupIsDropped(t *testing.T) {
 	wrap := func(body string) string {
 		return `<svg xmlns="` + svgNS + `" xmlns:x="urn:evil" xmlns:s="` + svgNS + `" viewBox="0 0 10 10">` + body + `</svg>`
 	}
-	want, err := Normalize([]byte(wrap(plain)))
+	want, err := normalizeInProcess([]byte(wrap(plain)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestSVGForeignMarkupIsDropped(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := Normalize([]byte(wrap(tc.body)))
+			got, err := normalizeInProcess([]byte(wrap(tc.body)))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -261,11 +261,11 @@ func TestSVGDashesAreDropped(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := Normalize([]byte(tc.with))
+			got, err := normalizeInProcess([]byte(tc.with))
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, err := Normalize([]byte(tc.without))
+			want, err := normalizeInProcess([]byte(tc.without))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -304,11 +304,11 @@ func TestSVGFormerDashBombsRenderFast(t *testing.T) {
 	}
 }
 
-// renderWithin fails unless Normalize returns within d, and returns its error.
+// renderWithin fails unless the in-process conversion returns within d, and returns its error.
 func renderWithin(t *testing.T, doc string, d time.Duration) error {
 	t.Helper()
 	done := make(chan error, 1)
-	go func() { _, err := Normalize([]byte(doc)); done <- err }()
+	go func() { _, err := normalizeInProcess([]byte(doc)); done <- err }()
 	select {
 	case err := <-done:
 		return err
@@ -318,9 +318,11 @@ func renderWithin(t *testing.T, doc string, d time.Duration) error {
 	}
 }
 
-// What the preflight cannot bound from the source, the renderer bounds itself:
-// the work of a shape in output pixels, the stops of a gradient, and the time
-// of the drawing as a whole.
+// Best-effort early refusals of the renderer, for what the sanitiser cannot see
+// in the source: the work of a shape in output pixels, the stops of a gradient,
+// and the time of the drawing as a whole. None of these is the safety bound
+// (that is the killed worker process: worker_test.go); they keep the ordinary
+// worst cases cheap and their messages clear.
 func TestSVGCostBounds(t *testing.T) {
 	grad := func(n int) string {
 		var b strings.Builder
@@ -354,16 +356,16 @@ func TestSVGCostBounds(t *testing.T) {
 		defer func(d time.Duration) { svgRenderBudget = d }(svgRenderBudget)
 		svgRenderBudget = time.Nanosecond
 		two := vb100(`<rect width="9" height="9" fill="red"/><rect width="9" height="9" fill="blue"/>`)
-		if _, err := Normalize([]byte(two)); !errors.Is(err, ErrUnsupported) {
+		if _, err := normalizeInProcess([]byte(two)); !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("two shapes: err = %v, want %v", err, ErrUnsupported)
 		}
 		one := vb100(`<rect width="9" height="9" fill="red"/>`)
-		if _, err := Normalize([]byte(one)); err != nil {
+		if _, err := normalizeInProcess([]byte(one)); err != nil {
 			t.Fatalf("one shape: %v", err)
 		}
 	})
-	// The heaviest documents the limits let through, drawn well inside the
-	// time the bridge waits (10 s) and its own drawing budget.
+	// The heaviest documents of these kinds that the limits let through, drawn
+	// well inside the worker's deadline and the drawing budget.
 	curves := func(vb, coord string) string {
 		return svgHead + `viewBox="` + vb + `"><path d="M0 0 ` + strings.Repeat(fmt.Sprintf("C%s 0 0 %s %s %s C0 %s %s 0 0 0 ", coord, coord, coord, coord, coord, coord), 2000) +
 			`" fill="red" stroke="blue" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/></svg>`

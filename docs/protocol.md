@@ -471,10 +471,11 @@ px**, aspect kept:
   chains over 1000×, and gradients of more than 64 stops. Convert text to outlines before exporting. **Dashed strokes are
   not supported**: `stroke-dasharray` and `stroke-dashoffset` (attribute or `style`) are dropped and the stroke is drawn
   solid (rasterx's dashing cost depends on numbers, the group and viewBox scales among them, that the check cannot
-  bound). What the source cannot show about the cost of drawing is bounded when drawing: a document whose shapes are far
-  more detailed than their size on the canvas (path values × how far they reach in output pixels, stroke width and miter
-  limit included) is refused as too complex, and the drawing is abandoned, and the logo refused, if it has not finished
-  within 1 s of starting a shape (thousands of shapes over the whole canvas); one shape is never interrupted.
+  bound). What the source cannot show about the cost of drawing is not bounded by any check: the drawing runs in a
+  **render worker**, a child process that is killed at a hard deadline (see below). In the worker, best-effort early
+  refusals remain (with a clear message, not as a bound): a document whose shapes are far more detailed than their size
+  on the canvas (path values × how far they reach in output pixels, stroke width and miter limit included) is refused as
+  too complex, and one not drawn within 1 s of starting a shape (thousands of shapes over the whole canvas) is refused.
   The renderer never sees the upload itself, only a **canonical copy** that the check writes: elements and attributes of
   any namespace other than SVG (Inkscape, Sodipodi, RDF metadata, anything else; oksvg matches local names and would
   otherwise read `<x:rect>` or `x:width` as SVG) are dropped with their content, as are text, comments, `class`, and every
@@ -485,10 +486,22 @@ px**, aspect kept:
   dropped. The same attribute given twice (also under two prefixes) is refused as `logo_invalid`.
 - The stored bytes are a freshly encoded PNG, so no metadata or trailing data survives; the **hash** is the sha256 of those
   bytes (the same picture uploaded twice has the same hash, a different picture never does).
-- At most 2 conversions run at once; a request waits at most 10 s for a slot and 10 s for the result, else `503`
-  `logo_busy`. The image libraries take no context, so a conversion that overruns is abandoned (its answer is dropped),
-  not killed, and keeps its slot until it finishes; the input limits bound how long that can be. A killable worker
-  process would cut it off and was left out for its extra moving parts.
+- At most 2 conversions run at once; a request waits at most 10 s for a slot, else `503` `logo_busy`.
+- **What keeps an upload from hurting the bridge** is two things. *What an SVG may contain* is decided by the allowlist
+  check and the canonical copy (above), in the bridge. *What drawing it may cost* is decided by a killable child
+  process: oksvg and rasterx take no context and no check of the source bounds their cost (a 65 KB document of nested
+  transforms took over 20 s), so the bridge never runs them itself. It runs its own executable again as a hidden
+  `logo-worker` (entered before anything else in the process: no database, socket or listener; the systemd unit needs
+  no change), writes the canonical copy to its stdin and reads the PNG from its stdout. The worker gets a minimal
+  environment (none of the bridge's variables), a CPU limit of the deadline plus 1 s and no core dumps, and is killed
+  (`SIGKILL`, its whole process group) and reaped at the **deadline of 5 s**, or as soon as the caller goes away or it
+  writes more than 8 MiB. A conversion holds its slot for the life of the child, so a hostile document ties a slot up
+  for at most 5 s (two of them, both slots; an ordinary logo then waits at most that long). Its output is accepted only
+  if it is a PNG of at most 1024 px with nothing after it. A worker that is killed for time is `415` `logo_unsupported`
+  ("the SVG takes too long to draw": retrying does not help, the document has to be simpler); one that crashes, exits
+  non-zero, writes garbage or too much is `422` `logo_invalid` ("cannot process this image", nothing of its own words
+  is passed on); one that cannot be started at all is `500` `internal` and is logged. PNG and WebP are decoded in the
+  bridge itself: their cost is bounded by the size and pixel caps read from the header before the decode.
 
 Errors are the protocol's error object (`{"t":"error","code","message"}`) with an HTTP status:
 
@@ -496,9 +509,9 @@ Errors are the protocol's error object (`{"t":"error","code","message"}`) with a
 |---|---|---|
 | `404` | `not_found` | no such building (`PUT`, `DELETE`), no logo (`GET`), or `GET` with a `?h=` that is not the current hash |
 | `413` | `logo_too_large` | the upload is over 1 MiB, or the image over 8192 px a side / 16 megapixels |
-| `415` | `logo_unsupported` | not PNG, WebP or SVG; an animated WebP; an SVG feature that is not drawn (the message names it) |
-| `422` | `logo_invalid` | empty, corrupt or truncated; an SVG that is not well-formed or draws nothing |
-| `503` | `logo_busy` | no conversion slot in time, or the conversion took too long; retry |
+| `415` | `logo_unsupported` | not PNG, WebP or SVG; an animated WebP; an SVG feature that is not drawn (the message names it); an SVG that took over 5 s to draw (the render worker was killed) |
+| `422` | `logo_invalid` | empty, corrupt or truncated; an SVG that is not well-formed or draws nothing, or whose render worker failed |
+| `503` | `logo_busy` | no conversion slot in time (within 10 s); retry |
 | `500` | `internal` | the bridge failed |
 | `403` `502` | | the helper's own (token, host or origin refused; the tunnel is down) |
 
@@ -1397,7 +1410,7 @@ bridge at start:
 | `rate_limited` | the provider's rate limit |
 | `checks_not_green`, `not_mergeable` | `pr.merge` of a pull request whose checks are not green, or that is not mergeable (also a conflicting one, always); an override is `override` and `confirm_override` together |
 | `hello_required`, `unsupported_proto` | handshake failures; the connection is then closed with status 1008 |
-| `logo_too_large`, `logo_unsupported`, `logo_invalid`, `logo_busy` | M3d, only on the `/logo` HTTP routes (see [Building logos](#building-logos)): an upload over the size limit, of an unsupported kind, undecodable, or no conversion slot in time |
+| `logo_too_large`, `logo_unsupported`, `logo_invalid`, `logo_busy` | M3d, only on the `/logo` HTTP routes (see [Building logos](#building-logos)): an upload over the size limit, of an unsupported kind (an SVG that took too long to draw included), undecodable, or no conversion slot in time |
 | `internal` | the bridge failed (database error, or waking, sleeping, hiring and firing is not configured); safe to retry |
 
 Errors not tied to a command have no `req_id`.

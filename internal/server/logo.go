@@ -122,6 +122,12 @@ func logoFailure(w http.ResponseWriter, err error) {
 	}
 }
 
+// logoRefused reports whether err is the upload's fault (or plain load), as
+// opposed to a failure of the bridge.
+func logoRefused(err error) bool {
+	return errors.Is(err, logo.ErrTooLarge) || errors.Is(err, logo.ErrUnsupported) || errors.Is(err, logo.ErrInvalid) || errors.Is(err, logo.ErrBusy)
+}
+
 // buildingID reads and checks the id in the path; it answers 404 itself.
 func buildingID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	id := r.PathValue("id")
@@ -202,6 +208,9 @@ func (s *Server) putLogo(w http.ResponseWriter, r *http.Request) {
 	res, err := s.conv.Convert(r.Context(), data)
 	if err != nil {
 		if r.Context().Err() == nil {
+			if !logoRefused(err) { // the render worker could not run: the operator needs to know
+				s.log.Error("logo conversion failed", "err", err)
+			}
 			logoFailure(w, err)
 		}
 		return

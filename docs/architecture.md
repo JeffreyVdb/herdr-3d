@@ -119,7 +119,9 @@ MacBook (M2 Max)                                   devbox (Linux)
   `/ws`. `internal/logo` (pure Go: stdlib PNG, `x/image` WebP and Catmull-Rom, oksvg for a checked SVG subset) turns PNG,
   WebP or SVG into one alpha PNG of at most 1024 px, the bridge keeps those bytes and their sha256, and the
   `building.upsert` carries only the hash. Two conversions at a time, a wait limit, and everything checked before the
-  costly step (size, pixel budget, SVG preflight). Clients fetch by hash (`?h=`, immutable when current) and keep one
+  costly step (size, pixel budget, SVG allowlist sanitiser). Drawing an SVG cannot be bounded from its source, so it runs
+  in a child process, the bridge's own executable in a hidden worker mode, that is killed at a 5 s deadline: the sanitiser
+  decides what a document may contain, the killed process what it may cost. PNG and WebP are decoded in the bridge. Clients fetch by hash (`?h=`, immutable when current) and keep one
   texture per hash.
 - **Identity**: bridge-owned worker UUID; reconcile after restarts via persisted pane-label marker (written by the bridge
   on the workers it hires) → `agent_session` id → label+cwd → else new worker. Tokens vanish on herdr restart and workspace ids can be reused: re-apply tokens only
