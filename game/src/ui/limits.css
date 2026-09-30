@@ -64,7 +64,7 @@
 }
 
 /*
- * A screen-filling dialog (limits.ts SCREEN: the M3 panels, the Issues / Pull requests boards) would sit under the
+ * A screen-filling dialog (limits.ts SCREEN: the M3 panels, the Issues / Pull requests boards, the hire dialog) would sit under the
  * plate's header and first row. Where the viewport leaves a gutter right of it (JS decides: data-dock) the plate
  * slides into a slim edge tab: the worst percentage over a severity bar, never colour alone. Where it does not,
  * it is away, like the narrow-viewport fold. data-peek: a click on the tab or Shift+L opens the plate over the

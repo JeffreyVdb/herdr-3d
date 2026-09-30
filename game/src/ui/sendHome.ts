@@ -3,6 +3,7 @@ import { fireArgs, fireBlocked, fireOptions, leftovers, type FireOptions } from 
 import { h, icon, ICON } from './dom';
 import type { DialogHost } from './hire';
 import { failureText } from './messages';
+import { backdropPolicy } from './dismiss';
 
 /**
  * Send home (M4), the gentle fire: X looking at a worker. It asks the bridge
@@ -79,9 +80,8 @@ export class SendHomeDialog {
     this.dialog.addEventListener('close', () => {
       if (!this.dialog.open) this.gen++;
     });
-    this.dialog.addEventListener('click', (e) => {
-      if (e.target === this.dialog) this.close();
-    });
+    // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
+    backdropPolicy(this.dialog, 'none');
     this.form.addEventListener('submit', (e) => {
       e.preventDefault();
       void this.send();

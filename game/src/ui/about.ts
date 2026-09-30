@@ -1,6 +1,7 @@
 import type { BuildInfo } from '../version';
 import type { LimitsPrefs } from './limitsPrefs';
 import './about.css';
+import { backdropPolicy } from './dismiss';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -69,9 +70,8 @@ export class AboutDialog {
       this.opener?.focus();
       this.opener = null;
     });
-    this.dialog.addEventListener('click', (e) => {
-      if (e.target === this.dialog) this.close();
-    });
+    // A read-only sheet: the backdrop closes it only when the press and the click both began there (#51).
+    backdropPolicy(this.dialog, 'sheet', () => this.close());
     parent.append(this.dialog);
     this.off = info.onChange(() => this.render());
     this.render();

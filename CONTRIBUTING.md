@@ -598,7 +598,7 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 
 | query param | effect |
 |---|---|
-| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors; M6: `simcrew=<ms>` walks a scripted freelancer in and out; M3d (`tools/fixture-logo.ts`, `tools/logo-art.ts` draws the made-up test logo; no third-party logo ships): `simlogo=<key>` lets `/logo/<building>?simlogo=<key>` reach this connection's world, `simlogos=1` starts every building with a made-up logo, `simfail=logo_missing` makes the images 404, `simfail=logo_busy` fails the next upload) |
+| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors; #51: `simmodels=<n>` adds n Claude models to the hire options (a long model list); M6: `simcrew=<ms>` walks a scripted freelancer in and out; M3d (`tools/fixture-logo.ts`, `tools/logo-art.ts` draws the made-up test logo; no third-party logo ships): `simlogo=<key>` lets `/logo/<building>?simlogo=<key>` reach this connection's world, `simlogos=1` starts every building with a made-up logo, `simfail=logo_missing` makes the images 404, `simfail=logo_busy` fails the next upload) |
 | `backend=webgl2` | force WebGL2 |
 | `screens=<n>` | M5: how many laptops around you are live (default 4, at most 5; `0` watches none: only the laptop you sit at is watched) |
 | `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |
@@ -620,10 +620,11 @@ Shift+L (plain L is the elevator) for the panel (it never grows past the viewpor
 stay); it is switched off in About, or with the panel's Hide. On a viewport under 760 px wide it steps out of an open
 dialog or the Changes panel and comes back, panel as it was, when they close. Over a screen-filling dialog (`dialog.panel`,
 the Issues / Pull requests boards and their item modal) it steps out at any width: a slim edge tab (worst percentage and a
-severity bar) in the gutter right of the dialog, or, when the viewport leaves under 48 px there, away completely. A click on
+severity bar) in the gutter right of the dialog, or, when the viewport leaves under 48 px there, away completely (the hire
+dialog, a near-full-screen sheet since #51, is one of them: its own limits line is inline). A click on
 the tab or Shift+L then *peeks* the expanded panel above the dialog without touching the saved state (Shift+L again, the
 plate's header, a click elsewhere or closing the dialog ends the peek; a meter hidden from About stays hidden); when the
-dialog closes the plate is exactly as it was. The small centred dialogs (confirm, hire, start-run, send-home, …) keep the
+dialog closes the plate is exactly as it was. The small centred dialogs (confirm, start-run, send-home, …) keep the
 plate as it was, above them. The Changes panel still makes it step left.
 
 M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
@@ -674,7 +675,10 @@ Keyboard: in the city, Tab reaches the floor list (Enter goes inside), then the 
 building's elevator panel, the lot's too).
 Hire and send home (M4): look at an empty desk's green "+" and press **E** ("Hire a worker at Desk 11"), or press the
 top bar's **Hire** (on an office floor; Shift+Tab, then Tab past Elevator) for the first free desk. The dialog asks the
-bridge first (`hire.prepare`), then offers: an optional first task (**Enter** hires, **Shift+Enter** adds a line),
+bridge first (`hire.prepare`), then offers: an optional first task (**Enter** hires, **Shift+Enter** adds a line;
+the dialog is a near-full-screen sheet, #51: the task editor takes the space and grows with the window, the options
+sit beside it, or under it on a phone, and Hire / Cancel stay on screen; what you typed for a desk stays until a hire
+is acknowledged),
 harness → model → effort as chips (Tab into a group, ← → pick; the floor's default hire or the last hire on the floor
 is preselected and marked so), the label (the next generated name), the folder (the floor's default; changing it
 checks the new folder again), **Work in its own git worktree & branch** (on by default, only when the folder is a git
@@ -693,7 +697,10 @@ with a delete picked only the button confirms. The worker packs a cardboard box,
 fire escape and away along the sidewalk, and the desk gets its "+" back. Walk-outs play for floors of the building you
 are in (the interior only for the floor you are on), a drop-in only on the floor you are on; anywhere else they
 resolve at once. Esc closes either dialog, and
-the pointer lock is released while one is open.
+the pointer lock is released while one is open. Dialogs never close by accident (#51): the ones that hold typed text or
+a consequential choice (hire, start-run, presets, the P prompt, open-PR, the panels, send home, the board item) have no
+backdrop dismissal, only their close button and Esc; the read-only sheets (About, credits, the HUD sheet, the boards)
+close on the backdrop only when the press and the click both began there (`ui/dismiss.ts`; table in docs/decisions.md).
 
 Outside (M3b): every floor has a door at the south end of its west wall; it slides open as you walk up to it, onto the
 fire escape. Walk down (or up) the flights to another floor's landing and in through its door: that floor gets the

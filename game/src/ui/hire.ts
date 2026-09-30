@@ -24,6 +24,9 @@ import { failureText } from './messages';
 import { planLimits } from './limits';
 // M6 start
 import { deskTabs } from './deskTabs';
+// #51 drafts
+import { Drafts } from './drafts';
+import { backdropPolicy } from './dismiss';
 
 /**
  * The hire dialog (M4): E on an empty desk's "+", or the top bar's Hire for
@@ -92,12 +95,129 @@ export function chips(name: string, legend: string, values: string[], value: str
   return h('fieldset', { class: 'dd-pick', 'data-pick': name }, h('legend', {}, legend, note), row);
 }
 
+/** More models than this get a filter box and a multi-column list instead of one row of chips. */
+const MODEL_LIST_AT = 10;
+
+/**
+ * The model chooser of a harness with many models: a filter above the same radio chips, laid out in a grid that
+ * uses the width (the options pane scrolls as a whole, so there is no small scroll box of its own). Filtering only
+ * hides chips, so it never re-renders (focus and the checked model stay); the checked one always stays visible, so
+ * a filter never looks like a changed choice. Enter in the filter must not hire; Esc clears it before it closes anything.
+ */
+export function modelList(values: string[], value: string, query: string, onPick: (v: string) => void, onQuery: (q: string) => void): HTMLFieldSetElement {
+  const count = h('span', { class: 'dd-count', 'aria-live': 'polite' });
+  const none = h('p', { class: 'field-hint dd-none' });
+  const row = h('div', { class: 'dd-chips dd-chips--grid' });
+  const chipsByValue: Array<[string, HTMLLabelElement, HTMLInputElement]> = [];
+  for (const v of values) {
+    const input = h('input', { type: 'radio', name: 'model', value: v, class: 'visually-hidden', 'data-key': `model:${v}` });
+    input.checked = v === value;
+    input.addEventListener('change', () => input.checked && onPick(v));
+    const label = h('label', { class: 'dd-chip' }, input, h('span', {}, v));
+    chipsByValue.push([v, label, input]);
+    row.append(label);
+  }
+  const apply = (raw: string) => {
+    const q = raw.trim().toLowerCase();
+    let shown = 0;
+    for (const [v, label, input] of chipsByValue) {
+      const hit = !q || v.toLowerCase().includes(q);
+      if (hit) shown++;
+      label.hidden = !hit && !input.checked;
+    }
+    count.textContent = q ? `${shown} of ${values.length}` : `${values.length}`;
+    none.textContent = q && !shown ? `No model matches “${raw.trim()}”.` : '';
+    none.hidden = !none.textContent;
+  };
+  const search = h('input', { type: 'text', class: 'dd-search', 'data-key': 'model-search', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Filter ${values.length} models`, placeholder: `Filter ${values.length} models` });
+  search.value = query;
+  search.addEventListener('input', () => {
+    onQuery(search.value);
+    apply(search.value);
+  });
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') e.preventDefault();
+    else if (e.key === 'Escape' && search.value) {
+      e.preventDefault();
+      e.stopPropagation();
+      search.value = '';
+      onQuery('');
+      apply('');
+    }
+  });
+  apply(query);
+  return h('fieldset', { class: 'dd-pick dd-pick--models', 'data-pick': 'model' }, h('legend', {}, 'Model ', count), h('div', { class: 'dd-models' }, search, row, none));
+}
+
+/**
+ * The first-task editor: the one boundary the shared composer (#13) replaces. The dialog only reads and writes its
+ * text, focuses it and marks it busy; it lives in its own pane that a re-render of the options never touches, so its
+ * caret, selection and scroll survive a model or limits update.
+ */
+class TaskEditor {
+  readonly el: HTMLElement;
+  private readonly input = h('textarea', {
+    id: 'hire-task',
+    class: 'hire-task-input',
+    'data-key': 'task',
+    rows: 3,
+    spellcheck: 'true',
+    placeholder: 'What should they start on?',
+    'aria-describedby': 'hire-task-hint',
+  });
+
+  constructor(handlers: { change(): void; send(): void }) {
+    this.input.addEventListener('input', () => handlers.change());
+    // Enter hires, Shift+Enter is a new line.
+    this.input.addEventListener('keydown', (e) => {
+      if (taskKey(e) === 'send') {
+        e.preventDefault();
+        handlers.send();
+      }
+    });
+    this.el = h(
+      'div',
+      { class: 'dd-field dd-task' },
+      h('label', { for: 'hire-task' }, 'First task ', h('span', { class: 'dd-optional' }, 'optional')),
+      this.input,
+      h('p', { class: 'field-hint', id: 'hire-task-hint' }, h('kbd', {}, 'Enter'), ' hires · ', h('kbd', {}, 'Shift'), '+', h('kbd', {}, 'Enter'), ' adds a line'),
+    );
+  }
+
+  get text(): string {
+    return this.input.value;
+  }
+
+  set text(v: string) {
+    if (this.input.value !== v) this.input.value = v;
+  }
+
+  set busy(b: boolean) {
+    this.input.disabled = b;
+  }
+
+  focus(): void {
+    this.input.focus();
+  }
+}
+
 export class HireDialog {
   private readonly dialog = h('dialog', { class: 'desk-dlg desk-dlg--hire', 'aria-labelledby': 'hire-title', 'aria-describedby': 'hire-sub' });
   private readonly head = h('header', { class: 'dd-head' });
   /** M6 start: Hire worker | Hire orchestrator. */
   private readonly tabs = h('div', { class: 'dd-tabs-slot' });
   private readonly form = h('form', { class: 'dd-body', id: 'hire-form', novalidate: true });
+  /** The first task: its own pane, never re-rendered; harness, model, effort, folder and label sit in the options pane beside (or below) it. */
+  private readonly editor = new TaskEditor({
+    change: () => {
+      this.f.prompt = this.editor.text;
+      this.saveDraft();
+      this.renderActions();
+    },
+    send: () => void this.hire(),
+  });
+  private readonly editorPane = h('div', { class: 'hire-editor-pane' }, this.editor.el);
+  private readonly optionsPane = h('div', { class: 'hire-options-pane' });
   private readonly statusEl = h('p', { class: 'dd-status', role: 'status' });
   private readonly alertEl = h('p', { class: 'dd-status dd-status--error', role: 'alert' });
   private readonly actions = h('div', { class: 'dd-actions' });
@@ -119,6 +239,12 @@ export class HireDialog {
   private hireBtn: HTMLButtonElement | null = null;
   private renderedKey = '';
   private refetching = false;
+  /** #51: what was typed and not hired yet, per desk of a floor (memory, and localStorage where allowed). */
+  private readonly drafts = new Drafts('hire');
+  /** The label the user typed (the prepared name is only a default), restored over the prepared one. */
+  private typedLabel: string | null = null;
+  /** The model filter of a long list; a harness switch clears it. */
+  private modelQuery = '';
 
   constructor(
     parent: HTMLElement,
@@ -126,6 +252,7 @@ export class HireDialog {
   ) {
     this.alertEl.hidden = true;
     this.statusEl.hidden = true;
+    this.form.append(this.editorPane, this.optionsPane);
     this.dialog.append(this.head, this.tabs, this.form, this.foot);
     // A late answer (a prepare, or a hire sent before Esc) is for a dialog that is gone: it never touches the next one.
     this.dialog.addEventListener('close', () => {
@@ -135,9 +262,8 @@ export class HireDialog {
       // Esc while the hire is on its way: the hire still happens; the dialog just goes.
       if (this.state === 'hiring') this.host.toast('The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
     });
-    this.dialog.addEventListener('click', (e) => {
-      if (e.target === this.dialog) this.close();
-    });
+    // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
+    backdropPolicy(this.dialog, 'none');
     // Enter in the label or folder submits (Hire is the form's default button); a new folder is checked first.
     this.form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -175,14 +301,19 @@ export class HireDialog {
     this.prep = null;
     this.prepared = null;
     this.prefill = prefill;
-    this.f = { prompt: prefill.prompt ?? '', harness: '', model: '', effort: '', label: '', cwd: '', worktree: false };
+    // #51: the desk's draft comes back; a first task handed in ("Ask a worker…") starts this one instead and leaves the draft alone until it is edited.
+    const draft = this.drafts.get(this.draftKey());
+    this.typedLabel = draft?.fields?.label ?? null;
+    this.modelQuery = '';
+    this.f = { prompt: prefill.prompt ?? draft?.text ?? '', harness: '', model: '', effort: '', label: this.typedLabel ?? '', cwd: '', worktree: false };
+    this.editor.text = this.f.prompt;
     this.state = 'preparing';
     this.renderedKey = '';
     this.refetching = false;
     this.setStatus('Checking the floor, the folder and origin…');
     this.render();
     if (!this.dialog.open) this.dialog.showModal();
-    this.form.querySelector<HTMLElement>('#hire-task')?.focus();
+    this.editor.focus();
     void this.prepare();
   }
 
@@ -227,6 +358,7 @@ export class HireDialog {
       this.prep = p;
       const prompt = this.f.prompt;
       this.f = { ...formFromPrepare(p, options), prompt };
+      if (this.typedLabel !== null) this.f.label = this.typedLabel;
       this.prepared = resolveChoice(options, p.choice ?? null);
       // A reviewer's model wins over the floor's default (and is no longer "the floor default").
       const want = this.prefill.choice ? resolveChoice(options, this.prefill.choice) : null;
@@ -366,37 +498,9 @@ export class HireDialog {
     const busy = this.state === 'hiring' || this.state === 'preparing';
     const options = this.host.store.hireOptions;
 
-    // First task: Enter hires, Shift+Enter is a new line.
-    const task = h('textarea', {
-      id: 'hire-task',
-      'data-key': 'task',
-      rows: 3,
-      spellcheck: 'true',
-      placeholder: 'What should they start on?',
-      'aria-describedby': 'hire-task-hint',
-    });
-    task.value = this.f.prompt;
-    task.disabled = this.state === 'hiring';
-    task.addEventListener('input', () => {
-      this.f.prompt = task.value;
-      this.renderActions();
-    });
-    task.addEventListener('keydown', (e) => {
-      const k = taskKey(e);
-      if (k === 'send') {
-        e.preventDefault();
-        void this.hire();
-      }
-    });
-    const taskField = h(
-      'div',
-      { class: 'dd-field dd-task' },
-      h('label', { for: 'hire-task' }, 'First task ', h('span', { class: 'dd-optional' }, 'optional')),
-      task,
-      h('p', { class: 'field-hint', id: 'hire-task-hint' }, h('kbd', {}, 'Enter'), ' hires · ', h('kbd', {}, 'Shift'), '+', h('kbd', {}, 'Enter'), ' adds a line'),
-    );
+    this.editor.busy = this.state === 'hiring';
 
-    const nodes: Node[] = [taskField];
+    const nodes: Node[] = [];
     const notices: Node[] = [];
 
     if (this.prep) {
@@ -406,7 +510,7 @@ export class HireDialog {
         'div',
         { class: 'dd-agent' },
         chips('harness', 'Harness', Object.keys(options), this.f.harness, (v) => this.pick({ harness: v }), noteTape),
-        chips('model', 'Model', modelsFor(options, this.f.harness), this.f.model, (v) => this.pick({ model: v })),
+        this.modelField(modelsFor(options, this.f.harness)),
         chips('effort', 'Effort', effortsFor(options, this.f.harness, this.f.model), this.f.effort, (v) => this.pick({ effort: v })),
       );
       const limits = planLimits(this.host.store.limits, [{ harness: this.f.harness, model: this.f.model }], this.host.now());
@@ -418,6 +522,8 @@ export class HireDialog {
       label.value = this.f.label;
       label.addEventListener('input', () => {
         this.f.label = label.value;
+        this.typedLabel = label.value;
+        this.saveDraft();
         this.renderActions();
       });
       const cwd = h('input', { id: 'hire-cwd', 'data-key': 'cwd', autocomplete: 'off', spellcheck: 'false', placeholder: '/home/…', 'aria-describedby': 'hire-cwd-hint' });
@@ -490,15 +596,15 @@ export class HireDialog {
         ),
       );
     }
-    this.form.replaceChildren(...nodes);
+    this.optionsPane.replaceChildren(...nodes);
     this.notices.replaceChildren(...notices);
-    for (const el of this.form.querySelectorAll<HTMLInputElement>('input, textarea')) if ((busy || this.refetching) && el.id !== 'hire-task') el.disabled = true;
+    for (const el of this.optionsPane.querySelectorAll<HTMLInputElement>('input')) if (busy || this.refetching) el.disabled = true;
     this.renderActions();
     if (focusKey) {
       const back = this.dialog.querySelector<HTMLElement>(`[data-key="${CSS.escape(focusKey)}"]`) ?? this.dialog.querySelector<HTMLElement>(`#${CSS.escape(focusKey)}`);
       back?.focus();
       // A chip group re-rendered on another pick: focus its checked chip.
-      if (!back && focusKey.includes(':')) this.form.querySelector<HTMLElement>(`[data-pick="${focusKey.split(':')[0]}"] input:checked`)?.focus();
+      if (!back && focusKey.includes(':')) this.optionsPane.querySelector<HTMLElement>(`[data-pick="${focusKey.split(':')[0]}"] input:checked`)?.focus();
     }
   }
 
@@ -514,6 +620,25 @@ export class HireDialog {
       h('p', {}, h('span', { class: `tape tape--cap-${c.level}` }, tape), ' ', c.lines.join(' ')),
       h('p', { class: 'dd-capacity-facts' }, facts),
     );
+  }
+
+  /** Up to a row of chips; a long list gets a filter and a grid (`modelList`). */
+  private modelField(models: string[]): HTMLElement {
+    if (models.length <= MODEL_LIST_AT) return chips('model', 'Model', models, this.f.model, (v) => this.pick({ model: v }));
+    return modelList(models, this.f.model, this.modelQuery, (v) => this.pick({ model: v }), (q) => (this.modelQuery = q));
+  }
+
+  private draftKey(session = this.session, desk = this.desk): string {
+    return `${session}:${desk}`;
+  }
+
+  /** What the form holds that is worth keeping if the dialog goes: the task, and a label the user typed. */
+  private draftNow(): { text: string; fields?: Record<string, string> } {
+    return this.typedLabel ? { text: this.f.prompt, fields: { label: this.typedLabel } } : { text: this.f.prompt };
+  }
+
+  private saveDraft(): void {
+    this.drafts.set(this.draftKey(), this.draftNow());
   }
 
   private renderActions(): void {
@@ -540,15 +665,29 @@ export class HireDialog {
     const options = this.host.store.hireOptions;
     const next = resolveChoice(options, { harness: p.harness ?? this.f.harness, model: p.model ?? this.f.model, effort: p.effort ?? this.f.effort });
     if (!next) return;
+    if (next.harness !== this.f.harness) this.modelQuery = '';
     this.f = { ...this.f, ...next };
     this.render();
   }
 
+  /** Another desk: what is typed goes with it (an empty form takes that desk's own draft instead). */
   private moveTo(desk: number): void {
+    const mine = this.draftNow();
+    const from = this.draftKey();
     this.desk = desk;
+    if (mine.text.trim() || mine.fields) {
+      this.drafts.clear(from);
+      this.saveDraft();
+    } else {
+      const there = this.drafts.get(this.draftKey());
+      this.typedLabel = there?.fields?.label ?? null;
+      this.f.prompt = there?.text ?? '';
+      if (this.typedLabel !== null) this.f.label = this.typedLabel;
+      this.editor.text = this.f.prompt;
+    }
     this.setStatus('');
     this.render();
-    this.form.querySelector<HTMLElement>('#hire-task')?.focus();
+    this.editor.focus();
   }
 
   private async hire(): Promise<void> {
@@ -561,6 +700,9 @@ export class HireDialog {
     }
     const session = this.session;
     const desk = this.desk;
+    // The draft as sent: an acknowledged hire clears exactly this (a newer edit after Esc stays).
+    const sent = this.draftNow();
+    const sentKey = this.draftKey();
     const args = hireArgs(session, desk, this.f, this.prep.git);
     const who = args.label ?? this.prep.label;
     this.state = 'hiring';
@@ -579,8 +721,10 @@ export class HireDialog {
       const w = ack?.id ? this.host.store.workerView(ack.id) : null;
       const name = w?.name ?? who;
       const branch = ack?.branch ? ` on ${ack.branch}` : '';
+      // The worker exists but never got the task (`prompted: false`): the text stays, so it can be copied or sent by hand.
+      if (ack?.prompted !== false) this.drafts.clearIfUnchanged(sentKey, sent);
       const extra = [
-        ack?.prompted === false ? `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself.` : '',
+        ack?.prompted === false ? `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P); the text stays in this desk’s hire dialog.` : '',
       ].filter(Boolean);
       if (still) this.close();
       this.host.toast([`Hired ${name} at Desk ${(w?.desk ?? desk) + 1}${branch}. Here they come.`, ...extra].join(' '), extra.length ? 'error' : 'info');

@@ -15,6 +15,7 @@ import { answerKeyEls, promptBarAria, promptBarKey, usageChip } from './promptBa
 import { crewBarKey, crewLine } from './crewBar';
 import { usageTotal, type UsageTotal } from '../world/usage';
 import type { GameAudio } from '../audio';
+import { backdropPolicy } from './dismiss';
 
 /** Authored 24×24 stroke icons, one weight. */
 const ICON = {
@@ -162,9 +163,8 @@ export class Hud {
     this.toastEl.hidden = true;
     this.toastEl.setAttribute('role', 'status');
     this.toastEl.setAttribute('aria-live', 'polite');
-    this.dialog.addEventListener('click', (e) => {
-      if (e.target === this.dialog) this.dialog.close();
-    });
+    // A read-only sheet: the backdrop closes it only when the press and the click both began there (#51).
+    backdropPolicy(this.dialog, 'sheet', () => this.dialog.close());
     this.root.append(this.floorList, this.buildingList, this.plan, bar, this.reticle, this.prompt, this.hint, this.notice, this.toastEl, this.doors);
     parent.append(this.root, this.dialog);
     this.setMode('city');
