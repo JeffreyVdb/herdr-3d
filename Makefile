@@ -16,8 +16,11 @@ PORTLEASE := portlease run --project herdr-3d --worktree "$(CURDIR)"
 # One Playwright run (make e2e / make shot) per host: two suites at once both drop below 10 fps on llvmpipe and flake.
 # The subshell holds the lock on fd 9 and the run itself gets no copy (9>&-), so the lock goes when the subshell exits
 # (success, failure, ctrl-c), even if a stray browser outlives it. Waiting is announced only when there is a wait.
+# No flock, or a lock that can't be taken, fails the recipe before Playwright starts: never an unlocked run.
 E2E_LOCK := $${XDG_RUNTIME_DIR:-/tmp}/herdr-3d-e2e.lock
-E2E_LOCKED = flock -n 9 || { echo "waiting for another worktree's e2e run ($(E2E_LOCK))..." >&2; flock 9; }
+E2E_LOCKED = command -v flock >/dev/null || { echo "make: flock not found (util-linux); needed for the e2e lock" >&2; exit 1; }; \
+	flock -n 9 || { echo "waiting for another worktree's e2e run ($(E2E_LOCK))..." >&2; \
+	flock 9 || { echo "make: could not take the e2e lock ($(E2E_LOCK))" >&2; exit 1; }; }
 
 # The built game is copied here and embedded in h3d-helper (internal/webdist).
 EMBED_DIR := internal/webdist/game

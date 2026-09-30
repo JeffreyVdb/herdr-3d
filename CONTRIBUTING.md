@@ -57,7 +57,8 @@ make e2e               # the full Playwright suite (e2e/*.spec.ts), H3D_WORKERS 
   it): one Playwright run at a time per host. Two suites side by side take about as long as two in a row, but both
   render below 10 fps on llvmpipe, where game time runs slower than wall time and fixed polls time out. A second run
   prints `waiting for another worktree's e2e run (…)` and starts when the first ends (or fails, or is interrupted).
-  Running `pnpm exec playwright` directly skips the lock.
+  Without `flock` (util-linux), or when the lock can't be taken, both targets fail before Playwright starts, never
+  run unlocked. Running `pnpm exec playwright` directly skips the lock.
 - The page exposes `window.__h3d` (`backend`, `frames`, `error`) for tests.
 - Never hardcode ports. Use `portlease run` / `portlease reserve`, and bind `127.0.0.1` only. Other agents run in
   parallel worktrees on the same host.
