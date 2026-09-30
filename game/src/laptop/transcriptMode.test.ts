@@ -530,6 +530,26 @@ describe('pending prompts', () => {
     expect(reconcile([img], [item('u', 1, { kind: 'user', parts: [{ text: 'look\n' }, { text: '\nat these' }] })])).toEqual([]);
   });
 
+  it('an item takes one prompt only, however often it comes again (an update, a resync)', () => {
+    const ps = [pending('p1', 'go', 2, 'queued'), pending('p2', 'go', 2, 'queued')];
+    const echo = user('u3', 3, 'go');
+    const taken = new Set<string>();
+    const once = reconcile(ps, [echo], taken);
+    expect(once.map((p) => p.id)).toEqual(['p2']);
+    expect(reconcile(once, [echo], taken)).toBe(once);
+    // Given another id on the resync, it is still known by its place and text; a new item still takes p2.
+    expect(reconcile(once, [{ ...echo, id: 'o:120' }], taken)).toBe(once);
+    expect(reconcile(once, [echo, user('u4', 4, 'go')], taken)).toEqual([]);
+  });
+
+  it('one send: its item takes it, as before; the same words sent again wait for their own item', () => {
+    const taken = new Set<string>();
+    expect(reconcile([pending('p1', 'go', 2)], [user('u3', 3, 'go')], taken)).toEqual([]);
+    const again = [pending('p2', 'go', 3)];
+    expect(reconcile(again, [user('u3', 3, 'go')], taken)).toBe(again);
+    expect(reconcile(again, [user('u3', 3, 'go'), user('u5', 5, 'go')], taken)).toEqual([]);
+  });
+
   async function reading(h: ReturnType<typeof harness>) {
     h.tx.sit('a', 'Ada');
     h.tx.reset('a', ack([item('a1', 1), item('a2', 2)]));
@@ -560,6 +580,28 @@ describe('pending prompts', () => {
     expect(states(h)).toEqual([]);
     expect(v.pending.at(-1)).toEqual([]);
     expect(h.tx.itemCount).toBe(3);
+  });
+
+  it('two identical sends, one shown before a resync: the resync keeps the other until its own item comes', async () => {
+    const h = harness();
+    const { v, host } = await reading(h);
+    h.tx.activity('working', 900);
+    for (const i of [0, 1]) {
+      const sent = host.onPromptSubmit('go');
+      h.sent[i]?.resolve({ ok: true, data: { queued: true, retried: false } });
+      await sent;
+    }
+    expect(states(h)).toEqual(['queued', 'queued']);
+    h.tx.push('a', [user('u3', 3, 'go')], []);
+    expect(states(h)).toEqual(['queued']);
+    // An update of that item, then the resync's whole timeline with it: the second one still waits.
+    h.tx.push('a', [], [user('u3', 3, 'go')]);
+    h.tx.reset('a', ack([item('a1', 1), item('a2', 2), user('u3', 3, 'go')]));
+    expect(states(h)).toEqual(['queued']);
+    expect(v.pending.at(-1)).toHaveLength(1);
+    // Its own item in the next resync takes it.
+    h.tx.reset('a', ack([item('a1', 1), item('a2', 2), user('u3', 3, 'go'), user('u4', 4, 'go')]));
+    expect(states(h)).toEqual([]);
   });
 
   it('the item before the ack: the row goes, the ack does not bring it back', async () => {

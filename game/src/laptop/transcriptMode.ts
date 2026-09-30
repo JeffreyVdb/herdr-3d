@@ -162,6 +162,8 @@ interface Sitting {
   sendMark: number | null;
   /** The prompts sent from the view that the transcript has not shown yet (and refused ones, until the next send). */
   pending: readonly PendingPrompt[];
+  /** The `user` items that took a pending prompt (`reconcile`'s `taken`): a resync sends them again, they take no other. */
+  taken: Set<string>;
   /** What the view was last told of the cue (it is recomputed only when this changes). */
   cueKey: string;
   cueDirty: boolean;
@@ -231,7 +233,7 @@ export class TranscriptMode {
       id, name, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
-      pending: [], cueKey: '', cueDirty: true,
+      pending: [], taken: new Set(), cueKey: '', cueDirty: true,
     };
     if (wasReading) this.setMode(last, false);
     else this.host.modeChanged('terminal');
@@ -645,7 +647,7 @@ export class TranscriptMode {
 
   /** #58: prompts their items show are no longer pending, and what the agent does may read otherwise. */
   private itemsChanged(s: Sitting, items: readonly TranscriptItem[]): void {
-    const left = reconcile(s.pending, items);
+    const left = reconcile(s.pending, items, s.taken);
     if (left !== s.pending) {
       s.pending = left;
       this.pendingChanged(s);

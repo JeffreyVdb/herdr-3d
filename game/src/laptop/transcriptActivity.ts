@@ -86,12 +86,17 @@ export function itemKey(it: TranscriptItem): string {
   return promptKey(text);
 }
 
+/** How an item that took a prompt is known again: its `id`, and its place with its text (should a resync give it another id). */
+const marks = (it: TranscriptItem, key: string) => [`id:${it.id}`, `at:${it.seq}\u0000${key}`];
+
 /**
  * The prompts that `items` (new or updated) show, removed: each `user` item after a prompt's mark takes the first
  * waiting prompt with its text (identical prompts in the order sent), else the first with the same words. Refused
- * prompts never match. Returns the prompts still waiting (the same array when nothing matched).
+ * prompts never match. `taken` holds the items that already took one, and gets the ones that take one now: an item
+ * takes one prompt only, however often it comes again (an update, a resync's whole timeline). Returns the prompts still
+ * waiting (the same array when nothing matched).
  */
-export function reconcile(pending: readonly PendingPrompt[], items: readonly TranscriptItem[]): readonly PendingPrompt[] {
+export function reconcile(pending: readonly PendingPrompt[], items: readonly TranscriptItem[], taken: Set<string> = new Set()): readonly PendingPrompt[] {
   if (!pending.length) return pending;
   const users = items.filter((it) => it.kind === 'user' && !it.hidden).sort((a, b) => a.seq - b.seq);
   if (!users.length) return pending;
@@ -99,11 +104,14 @@ export function reconcile(pending: readonly PendingPrompt[], items: readonly Tra
   let hit = false;
   for (const it of users) {
     const key = itemKey(it);
+    const known = marks(it, key);
+    if (known.some((k) => taken.has(k))) continue;
     const open = (p: PendingPrompt) => p.state !== 'refused' && it.seq > p.mark;
     let at = left.findIndex((p) => open(p) && promptKey(p.text) === key);
     if (at < 0) at = left.findIndex((p) => open(p) && loose(promptKey(p.text)) === loose(key));
     if (at < 0) continue;
     left = left.filter((_, i) => i !== at);
+    for (const k of known) taken.add(k);
     hit = true;
   }
   return hit ? left : pending;
