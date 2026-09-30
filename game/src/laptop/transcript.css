@@ -1280,6 +1280,111 @@
     display: none;
   }
 }
+/*
+ * The top, the tabs and the foot never shrink, so on a narrow screen (a phone's projected monitor is under 200px
+ * tall) they must stay one line each: the tabs scroll sideways instead of wrapping, the top drops the terminal link
+ * (Ctrl+Esc and the toggle stay), the foot keeps its buttons and cuts its hint. Whatever height is left is the body's,
+ * which scrolls; the card may take most of the screen then, as the prompt box it replaces is off anyway.
+ */
+@container tx (max-width: 520px) {
+  /* The top strip too: one line (the tabs name the view; the count goes). */
+  .tx-bar {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .tx-title,
+  .tx-count {
+    display: none;
+  }
+  .tx-ask-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    /* Room for the focus ring, as in the body; the right edge fades where more tabs wait. */
+    margin-inline: -4px;
+    padding: 1px 4px;
+    mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+  }
+  .tx-ask-tab {
+    flex: none;
+  }
+  .tx-ask-hint-text {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}
+@container tx (max-height: 300px) {
+  .tx[data-asking] .tx-prompt {
+    display: none;
+  }
+  .tx[data-asking] .tx-main {
+    min-height: 2.6em;
+  }
+  .tx-ask {
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: none;
+    margin: 0 6px 6px;
+    padding: 5px 8px 6px;
+  }
+  /* Who asks and the tabs share the first line; the body's row takes what is left. */
+  .tx-ask {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    column-gap: 8px;
+    align-items: center;
+  }
+  .tx-ask-top {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .tx-ask-top .tx-ask-wait,
+  .tx-ask-top .tx-spacer,
+  .tx-ask-top .tx-to-term {
+    display: none;
+  }
+  .tx-ask-tabs {
+    grid-column: 2;
+    grid-row: 1;
+    margin-top: 0;
+  }
+  .tx-ask-body,
+  .tx-ask-foot,
+  .tx-ask-note {
+    grid-column: 1 / -1;
+    align-self: stretch;
+  }
+  .tx-ask-body {
+    max-height: 100%;
+  }
+  .tx-ask-question {
+    margin: 5px 0 4px;
+    font-size: 12.5px;
+  }
+  .tx-ask-opt {
+    padding: 3px 7px 3px 4px;
+    gap: 8px;
+  }
+  .tx-ask-foot {
+    margin-top: 4px;
+    padding-top: 4px;
+    gap: 8px;
+  }
+  .tx-ask-send {
+    padding: 3px 13px;
+  }
+  .tx-ask-note {
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
 
 /* The timeline's record of a question. */
 .tx-ask-item {

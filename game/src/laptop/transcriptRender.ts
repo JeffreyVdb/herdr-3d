@@ -1175,6 +1175,8 @@ class Transcript implements TranscriptView {
     const waiting = !!q || asking;
     if (waiting && (a === this.input || a === this.sendBtn)) this.scroller.focus({ preventScroll: true });
     this.input.disabled = waiting;
+    // A very short screen gives the card the prompt box's room while it is up (transcript.css).
+    this.root.toggleAttribute('data-asking', asking);
     this.input.placeholder = asking
       ? 'Answer the question above first (or in the terminal)'
       : q

@@ -489,6 +489,7 @@ export class AskCard {
     );
     if (this.note) parts.push(h('div', { class: `tx-ask-note${this.note.error ? ' is-error' : ''}`, role: this.note.error ? 'alert' : 'status' }, this.note.text));
     this.el.replaceChildren(...parts);
+    this.showActiveTab();
     this.tick();
     // Redrawn under the keyboard: it stays in the card (the text box, else the question's options).
     // While it is sent its controls are off: the keyboard goes back to the timeline, not to <body> (Esc there stands you up).
@@ -498,6 +499,16 @@ export class AskCard {
       if (!this.el.contains(document.activeElement)) this.host.focusTimeline();
     }
     this.host.resized();
+  }
+
+  /** On a narrow screen the tabs scroll sideways: the active one is brought into the strip. */
+  private showActiveTab(): void {
+    const strip = this.el.querySelector<HTMLElement>('.tx-ask-tabs');
+    const tab = strip?.querySelector<HTMLElement>('.tx-ask-tab.is-active');
+    if (!strip || !tab || strip.scrollWidth <= strip.clientWidth) return;
+    const s = strip.getBoundingClientRect();
+    const t = tab.getBoundingClientRect();
+    strip.scrollLeft += t.left - s.left - (s.width - t.width) / 2;
   }
 
   /** What the foot says: what is left to answer, or that it is being sent. */

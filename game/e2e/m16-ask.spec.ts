@@ -234,6 +234,65 @@ test('another question while an answer is sent: the old ack leaves it pinned, th
   clean();
 });
 
+/** Four questions with descriptions and previews: the tallest card, for the screen sizes below. */
+const four: Partial<Ask> = {
+  tool_use_id: 'toolu_e2e_four',
+  agent: 'claude',
+  questions: ['Storage', 'Delivery', 'Observability', 'Migration'].map((header, i) => ({
+    header,
+    question: `${header}: which approach should the service take for the ${header.toLowerCase()} of uploaded screenshots, given the helper proxy and the existing token checks?`,
+    multi: i === 2,
+    other: i !== 1,
+    options: [
+      { label: `${header} plan A (Recommended)`, description: 'Keeps the current shape and adds the least new moving parts to the bridge', ...(i === 1 ? { preview: 'POST /upload\n  Host: 127.0.0.1\n  Origin: game\n  X-Token: …' } : {}) },
+      { label: `${header} plan B`, description: 'More work up front, but it scales past one laptop per worker', ...(i === 1 ? { preview: 'ws.send(chunk)\n  ack → next\n  resume on reconnect' } : {}) },
+      { label: `${header} plan C`, description: 'Defers the decision: a flag, both paths, measure first' },
+    ],
+  })),
+};
+
+for (const [width, height] of [
+  [1280, 720],
+  [960, 600],
+  [390, 844],
+] as const) {
+  test(`a four-question card fits the laptop's screen at ${width}×${height}: every question and option reachable, Send clickable`, async ({ page }) => {
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width, height });
+    const w = demoWorker('Pebble');
+    await openGame(page, 'demo-m5', '', SIM);
+    await sitAtTranscript(page, w);
+    const tx = page.locator('.seat-transcript .tx');
+    const card = tx.locator('.tx-ask');
+    await page.evaluate((a) => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: a }), four);
+    await expect(card).toBeVisible();
+    // The card's parts are inside it (nothing cut by its edge), the body keeps room for the question and an option.
+    const inside = async (sel: string) => {
+      const [c, b] = await Promise.all([card.boundingBox(), card.locator(sel).first().boundingBox()]);
+      expect(c && b, sel).toBeTruthy();
+      if (!c || !b) return;
+      expect(b.y, `${sel} top`).toBeGreaterThanOrEqual(c.y - 0.5);
+      expect(b.y + b.height, `${sel} bottom`).toBeLessThanOrEqual(c.y + c.height + 0.5);
+    };
+    await inside('.tx-ask-foot');
+    await inside('.tx-ask-send');
+    await inside('.tx-ask-dismiss');
+    const body = await card.locator('.tx-ask-body').boundingBox();
+    expect(body && body.height, 'the question and options have room').toBeGreaterThanOrEqual(36);
+    await shot(page, `m16-ask-fit-${width}x${height}`);
+    // Every question answered with clicks (each option scrolled to, not hidden under an edge), then Send.
+    for (let i = 0; i < 4; i++) {
+      await card.locator('.tx-ask-tab').nth(i).click();
+      await expect(card.locator('.tx-ask-question')).toContainText(['Storage', 'Delivery', 'Observability', 'Migration'][i] as string);
+      await card.locator('button.tx-ask-opt[data-n="3"]').click();
+    }
+    await card.locator('.tx-ask-send').click();
+    await expect.poll(async () => (await sent(page, 'worker.answer_ask')).length).toBe(1);
+    await expect(card).toBeHidden();
+    clean();
+  });
+}
+
 test('where you stand: digits answer a one-pick ask, a richer one sends you to the laptop; seated at the terminal, T answers it in the transcript view', async ({ page }) => {
   const clean = watchErrors(page);
   const w = demoWorker('Pebble');
