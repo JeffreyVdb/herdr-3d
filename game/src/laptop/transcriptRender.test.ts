@@ -482,6 +482,21 @@ describe('keys inside the view', () => {
     expect(host.prompts).toEqual(['keep me', 'lost?', 'newer']);
   });
 
+  it('a refusal after the box was edited back to empty does not bring the old draft back', async () => {
+    let refuse: (ok: boolean) => void = () => undefined;
+    mount({ ...fakeHost(), onPromptSubmit: () => new Promise<boolean>((r) => (refuse = r)) } as FakeHost);
+    const ta = $('textarea') as HTMLTextAreaElement;
+    ta.value = 'old draft';
+    press(ta, 'Enter');
+    ta.value = 'new draft';
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    ta.value = '';
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    refuse(false);
+    await flush();
+    expect(ta.value).toBe('');
+  });
+
   it('the prompt: focusPrompt, Enter submits, Shift+Enter does not, keys do not reach the game', () => {
     mount();
     const seen: string[] = [];
@@ -556,6 +571,32 @@ describe('blocked banner', () => {
     view.setBlocked(null);
     expect(banner.hidden).toBe(true);
     expect(banner.childElementCount).toBe(0);
+  });
+
+  it('a question arriving while you type moves the keyboard to the timeline, once: its digits answer', () => {
+    mount();
+    const ta = $('textarea') as HTMLTextAreaElement;
+    const sc = $('.tx-scroll') as HTMLElement;
+    view.focusPrompt();
+    ta.value = 'follow-up';
+    view.setBlocked(Q);
+    expect(ta.disabled).toBe(true);
+    expect(document.activeElement).toBe(sc);
+    sc.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true, cancelable: true }));
+    expect(host.answers).toEqual([['h-123', 1, undefined]]);
+    expect(ta.value).toBe('follow-up');
+    // Another render of a question does not move the keyboard (it stays where the user put it).
+    const other = document.createElement('button');
+    document.body.append(other);
+    other.focus();
+    view.setBlocked({ ...Q, hash: 'h-456' });
+    expect(document.activeElement).toBe(other);
+    // Nor does a question arriving while the prompt box is not focused.
+    view.setBlocked(null);
+    other.focus();
+    view.setBlocked(Q);
+    expect(document.activeElement).toBe(other);
+    other.remove();
   });
 
   it('while blocked the prompt is off (the bridge refuses it), its draft kept; it comes back after', () => {

@@ -83,6 +83,8 @@ interface Sitting {
   view: TranscriptView | null;
   /** The render module is loading for this seat. */
   mounting: boolean;
+  /** Focus was asked for while the overlay was not placed yet (invisible: the browser ignores focus there). */
+  focusLater: boolean;
 }
 
 /**
@@ -128,7 +130,7 @@ export class TranscriptMode {
   sit(id: string, name: string, canRead = true): void {
     this.stand();
     const mode: SeatMode = canRead && readModes(this.host.storage).includes(id) ? 'transcript' : 'terminal';
-    this.s = { id, name, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', box: null, view: null, mounting: false };
+    this.s = { id, name, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', box: null, view: null, mounting: false, focusLater: false };
     if (mode === 'transcript') this.setMode('transcript', false);
     else this.host.modeChanged('terminal');
   }
@@ -163,7 +165,10 @@ export class TranscriptMode {
       writeModes(this.host.storage, ids);
     }
     if (mode === 'transcript') this.show(s);
-    else if (s.box) s.box.hidden = true;
+    else {
+      s.focusLater = false;
+      if (s.box) s.box.hidden = true;
+    }
     this.host.modeChanged(mode);
   }
 
@@ -248,6 +253,12 @@ export class TranscriptMode {
     const s = this.s;
     const b = s?.box;
     if (!s || !b || b.hidden) return;
+    // Not on screen yet (the first frame has not placed it): once it is (applyRect).
+    if (!this.rect) {
+      s.focusLater = true;
+      return;
+    }
+    s.focusLater = false;
     if (s.view) s.view.focus();
     else if (typeof b.focus === 'function') b.focus({ preventScroll: true });
   }
@@ -321,6 +332,7 @@ export class TranscriptMode {
     b.style.top = `${r.top}px`;
     b.style.width = `${r.width}px`;
     b.style.height = `${r.height}px`;
+    if (this.s?.focusLater && this.s.box === b) this.focus();
   }
 }
 

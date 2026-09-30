@@ -497,6 +497,8 @@ class Transcript implements TranscriptView {
   private readonly countEl: HTMLSpanElement;
   private readonly input: HTMLTextAreaElement;
   private readonly sendBtn: HTMLButtonElement;
+  /** Bumped by every edit of the prompt box and every send: a refused prompt comes back only if nothing happened since. */
+  private draftGen = 0;
   private readonly empty: HTMLDivElement;
 
   private following = true;
@@ -535,7 +537,10 @@ class Transcript implements TranscriptView {
     this.scroller.addEventListener('scroll', () => this.onScroll(), { passive: true });
     this.root.addEventListener('keydown', (e) => this.onKey(e));
     this.input.addEventListener('keydown', (e) => this.onInputKey(e));
-    this.input.addEventListener('input', () => this.grow());
+    this.input.addEventListener('input', () => {
+      this.draftGen++;
+      this.grow();
+    });
     hlDone.add(this.onHighlighted);
     if (typeof ResizeObserver !== 'undefined') {
       this.resize = new ResizeObserver(() => this.stick());
@@ -993,9 +998,10 @@ class Transcript implements TranscriptView {
     if (!text.trim() || this.input.disabled) return;
     this.input.value = '';
     this.grow();
-    // Not sent (refused, too long): the draft comes back unless something new was typed meanwhile.
+    const gen = ++this.draftGen;
+    // Not sent (refused, too long): the draft comes back unless the box was touched (or another send made) meanwhile.
     void Promise.resolve(this.host.onPromptSubmit(text)).then((sent) => {
-      if (sent === false && !this.destroyed && !this.input.value) {
+      if (sent === false && !this.destroyed && gen === this.draftGen && !this.input.value) {
         this.input.value = text;
         this.grow();
       }
@@ -1013,6 +1019,11 @@ class Transcript implements TranscriptView {
   private renderBanner(): void {
     const q = this.blocked;
     // A blocked worker takes no prompt (the bridge refuses it): answer above, or in the terminal. A draft stays.
+    // Disabling the focused box or button would drop the keyboard on <body>, out of reach of the reply digits and
+    // scroll keys: it goes to the timeline instead, once, as the question arrives (a disabled control never has focus
+    // later, so re-renders leave focus alone).
+    const a = document.activeElement;
+    if (q && (a === this.input || a === this.sendBtn)) this.scroller.focus({ preventScroll: true });
     this.input.disabled = !!q;
     this.input.placeholder = q ? 'Waiting for an answer to the question above (or switch to the terminal)' : PROMPT_HINT;
     this.sendBtn.disabled = !!q;

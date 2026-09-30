@@ -118,9 +118,15 @@ describe('TranscriptMode', () => {
     await flush();
     expect(h.views).toHaveLength(1);
     expect(h.views[0]?.calls).toEqual(['set x1,x2,x3']);
-    // The keyboard goes to the view's timeline (its scroll keys), not just the overlay around it.
+    // The keyboard goes to the view's timeline (its scroll keys), not just the overlay around it; while the overlay
+    // is not placed yet (invisible: a browser ignores focus there) it waits for the first place().
+    expect(h.views[0]?.focused).toBe(0);
+    h.tx.place({ left: 10, top: 80, width: 800, height: 500 });
     expect(h.views[0]?.focused).toBe(1);
     expect(h.layer[0]?.focused).toBe(0);
+    // Only once: moving the overlay does not take the keyboard back.
+    h.tx.place({ left: 12, top: 80, width: 800, height: 500 });
+    expect(h.views[0]?.focused).toBe(1);
     // Live: new items and updates go through applyUpdates, both upserted by id.
     h.tx.push('a', [item('x4', 4)], [item('x3', 3, { kind: 'tool' })]);
     expect(h.views[0]?.calls.at(-1)).toBe('apply x4,x3');
