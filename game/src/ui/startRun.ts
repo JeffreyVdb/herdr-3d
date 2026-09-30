@@ -144,6 +144,12 @@ export class StartRunDialog {
   private resolving = false;
   /** Bumped by every open: an answer for an older one is dropped. */
   private opened = 0;
+  /**
+   * The two composer fields are built once and stay in the form across re-renders (`keepChildren`): a composer that is
+   * detached loses its caret, its selection (a drag in progress) and its focus, which a textarea could be given back.
+   */
+  private readonly extraEl: HTMLElement;
+  private promptEl: HTMLElement | null = null;
 
   constructor(
     parent: HTMLElement,
@@ -190,6 +196,13 @@ export class StartRunDialog {
     });
     this.promptC.editor.id = 'run-prompt';
     this.promptC.editor.dataset.key = 'prompt';
+    this.extraEl = h(
+      'div',
+      { class: 'dd-field dd-extra' },
+      h('label', { id: 'run-extra-label', onclick: () => this.extraC.focus() }, 'Extra instructions ', h('span', { class: 'dd-optional' }, 'optional')),
+      this.extraC.element,
+      h('p', { class: 'field-hint', id: 'run-extra-hint' }, h('kbd', {}, 'Ctrl'), '+', h('kbd', {}, 'Enter'), ` starts the run · ${PASTE_HINT}`),
+    );
     this.dialog.append(this.head, this.tabsSlot, this.form, this.foot);
     this.dialog.addEventListener('close', () => {
       if (this.dialog.open) return;
@@ -516,13 +529,7 @@ export class StartRunDialog {
       this.renderActions();
     });
     nodes.push(
-      h(
-        'div',
-        { class: 'dd-field dd-extra' },
-        h('label', { id: 'run-extra-label', onclick: () => this.extraC.focus() }, 'Extra instructions ', h('span', { class: 'dd-optional' }, 'optional')),
-        this.extraC.element,
-        h('p', { class: 'field-hint', id: 'run-extra-hint' }, h('kbd', {}, 'Ctrl'), '+', h('kbd', {}, 'Enter'), ` starts the run · ${PASTE_HINT}`),
-      ),
+      this.extraEl,
       h(
         'div',
         { class: 'dd-grid' },
@@ -580,7 +587,7 @@ export class StartRunDialog {
         ),
       );
     }
-    this.form.replaceChildren(...nodes);
+    keepChildren(this.form, nodes);
     this.notices.replaceChildren(...notices);
     for (const el of this.form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea, button')) {
       // The composers' own chip buttons are theirs (`setBusy` / `setDisabled` below).
@@ -649,15 +656,16 @@ export class StartRunDialog {
   }
 
   private promptField(): HTMLElement {
-    this.showPreview();
+    if (this.promptEl) return this.promptEl;
     const reset = h('button', { class: 'btn btn--sm', 'data-key': 'reset-prompt', onclick: () => this.resetPrompt() }, 'Reset to generated');
-    return h(
+    this.promptEl = h(
       'div',
       { class: 'dd-field dd-preview' },
       h('div', { class: 'dd-preview-head' }, h('label', { id: 'run-prompt-label', onclick: () => this.promptC.focus() }, 'First prompt'), h('span', { class: 'tape dd-preview-tape' }), reset),
       h('div', { class: 'dd-slip' }, this.promptC.element),
       h('p', { class: 'field-hint', id: 'run-prompt-note' }),
     );
+    return this.promptEl;
   }
 
   /** What changes while typing, without a re-render: the ticket read-back, the preview, the button. */
@@ -899,6 +907,20 @@ export class StartRunDialog {
       status: this.statusText,
       error: this.statusError,
     };
+  }
+}
+
+/**
+ * Makes `parent`'s children exactly `nodes`, in order, without detaching a node that is already there (a
+ * `replaceChildren` would, and a composer loses its caret, selection and focus when it is detached).
+ */
+function keepChildren(parent: HTMLElement, nodes: readonly Node[]): void {
+  const keep = new Set<Node>(nodes);
+  for (const c of [...parent.childNodes]) if (!keep.has(c)) c.remove();
+  let ref: ChildNode | null = parent.firstChild;
+  for (const n of nodes) {
+    if (n === ref) ref = ref.nextSibling;
+    else parent.insertBefore(n, ref);
   }
 }
 
