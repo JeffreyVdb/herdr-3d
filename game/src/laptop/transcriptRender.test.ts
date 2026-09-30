@@ -805,10 +805,71 @@ describe('#59: hide tool calls, the preset, the zoom', () => {
     view.applyUpdates([tool('running'), tool('ok', 'Read'), item('assistant', { parts: [text('one')] }), item('subagent', { subagent: { agent_id: 'b', description: 'x', status: 'running' } })]);
     const jump = $('.tx-jump') as HTMLButtonElement;
     expect(jump.textContent).toBe('2 new · jump to latest');
-    // Shown again, they count.
+    // Shown again, they count: the two that came in hidden are unread rows you now see, and the new one.
     prefs.hideTools = false;
     view.applyUpdates([tool('ok')]);
-    expect(jump.textContent).toBe('3 new · jump to latest');
+    expect(jump.textContent).toBe('5 new · jump to latest');
+  });
+
+  it('the “new” chip follows the checkbox: ticked, it drops the unread tool calls; unticked, they count again', () => {
+    const prefs = new ViewPrefs(null);
+    withPrefs(prefs);
+    const sc = $('.tx-scroll') as HTMLElement;
+    layout(sc, 3000);
+    view.setItems([item('user', { parts: [text('hi')] })]);
+    sc.scrollTop = 0;
+    sc.dispatchEvent(new Event('scroll'));
+    const jump = $('.tx-jump') as HTMLButtonElement;
+    view.applyUpdates([tool('ok')]);
+    expect(jump.textContent).toBe('1 new · jump to latest');
+    // The only unread row is a tool call: hidden, nothing new shows.
+    prefs.hideTools = true;
+    expect(jump.hidden).toBe(true);
+    expect(jump.textContent).toBe('');
+    // A reply still counts; the tool call does not while hidden.
+    view.applyUpdates([item('assistant', { parts: [text('done')] })]);
+    expect(jump.textContent).toBe('1 new · jump to latest');
+    prefs.hideTools = false;
+    expect(jump.textContent).toBe('2 new · jump to latest');
+    // Read (at the bottom): nothing is new whatever the checkbox says.
+    sc.scrollTop = 3000;
+    sc.dispatchEvent(new Event('scroll'));
+    expect(jump.hidden).toBe(true);
+    prefs.hideTools = true;
+    prefs.hideTools = false;
+    expect(jump.hidden).toBe(true);
+  });
+
+  it('a hidden tool call that failed before the view mounted still shows on the strip (this turn’s, not old ones)', () => {
+    const prefs = new ViewPrefs(null);
+    prefs.hideTools = true;
+    withPrefs(prefs);
+    const busy = $('.tx-busy') as HTMLButtonElement;
+    const failed = (id: string, s: number, name: string): TranscriptItem => ({ id, seq: s, ts: Date.now(), kind: 'tool', tool: { name, input_summary: 'x', status: 'error' } });
+    // An old turn's failure (the agent went on, you answered since) and this turn's, plus one still running.
+    view.setItems([
+      item('user', { parts: [text('first')] }),
+      failed('old', 10, 'Edit'),
+      item('assistant', { parts: [text('fixed it')] }),
+      { ...item('user', { parts: [text('again')] }), seq: 20 },
+      failed('now', 30, 'Read'),
+      { id: 'run', seq: 31, ts: Date.now() - 5000, kind: 'tool', tool: { name: 'Bash', input_summary: 'make', status: 'running' } },
+    ]);
+    expect(busy.hidden).toBe(false);
+    expect(busy.dataset.state).toBe('failed');
+    expect(busy.textContent).toBe('Read failed');
+    busy.click();
+    expect(row('now').classList.contains('tx-reveal')).toBe(true);
+    expect(row('old').classList.contains('tx-reveal')).toBe(false);
+    expect(busy.dataset.state).toBe('running');
+    // A resync replaces the timeline: what you have seen fail stays acknowledged, a new failure is flagged.
+    view.setItems([
+      { ...item('user', { parts: [text('again')] }), id: 'u2', seq: 20 },
+      failed('now', 30, 'Read'),
+      failed('run', 31, 'Bash'),
+    ]);
+    expect(busy.dataset.state).toBe('failed');
+    expect(busy.textContent).toBe('Bash failed');
   });
 
   it('while hidden, the strip shows a running tool call, and a failed one until you look', () => {

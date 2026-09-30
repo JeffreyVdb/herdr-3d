@@ -436,6 +436,17 @@ class Timeline {
     return this.items.has(id);
   }
 
+  get(id: string): TranscriptItem | undefined {
+    return this.items.get(id);
+  }
+
+  /** The `seq` of the last item of this kind (-Infinity: none). */
+  lastSeq(kind: string): number {
+    let n = -Infinity;
+    for (const it of this.items.values()) if (it.kind === kind && it.seq > n) n = it.seq;
+    return n;
+  }
+
   systemCount(): number {
     let n = 0;
     for (const it of this.items.values()) if (isSystem(it)) n++;
@@ -596,7 +607,8 @@ class Transcript implements TranscriptView {
   private readonly empty: HTMLDivElement;
 
   private following = true;
-  private fresh = 0;
+  /** Rows that came in while you were scrolled up; the chip counts the ones that show (#59: recounted on each toggle). */
+  private readonly fresh = new Set<string>();
   private showSystem = false;
   private readonly thumbs: Thumbs;
   private blocked: BlockedQuestion | null = null;
@@ -699,8 +711,18 @@ class Transcript implements TranscriptView {
   setItems(items: TranscriptItem[]): void {
     if (this.destroyed) return;
     const hadAny = this.timeline.size > 0;
+    const wasFailed = new Set(this.timeline.tools(true).filter((t) => t.tool?.status === 'error').map((t) => t.id));
     const added = this.timeline.set(Array.isArray(items) ? items : []);
+    // #59: the first timeline (a failure that came while the terminal was up, before this view) or a resync is no
+    // quieter than a live update: this turn's hidden failures you have not seen fail yet go on the chip.
+    if (this.prefs.hideTools) for (const t of this.currentTurnTools()) if (t.tool?.status === 'error' && !wasFailed.has(t.id)) this.failedHidden.add(t.id);
     this.afterChange(hadAny ? added : [], !hadAny);
+  }
+
+  /** The tool rows that show otherwise (see `Timeline.tools`) since your last message: the turn the agent is on. */
+  private currentTurnTools(): TranscriptItem[] {
+    const since = this.timeline.lastSeq('user');
+    return this.timeline.tools(this.showSystem).filter((t) => t.seq > since);
   }
 
   applyUpdates(items: TranscriptItem[]): void {
@@ -789,7 +811,8 @@ class Transcript implements TranscriptView {
     row.dataset.id = it.id;
     row.dataset.kind = typeof it.kind === 'string' ? it.kind : 'unknown';
     if (isSystem(it)) row.classList.add('tx-sys');
-    if (isToolRow(it)) row.classList.add(this.revealed.has(it.id) ? 'tx-toolrow tx-reveal' : 'tx-toolrow');
+    if (isToolRow(it)) row.classList.add('tx-toolrow');
+    if (isToolRow(it) && this.revealed.has(it.id)) row.classList.add('tx-reveal');
     const t = clock(it.ts);
     if (t && !row.title) row.title = t;
     return row;
@@ -1069,8 +1092,8 @@ class Transcript implements TranscriptView {
 
   private onScroll(): void {
     this.following = this.atBottom();
-    if (this.following && this.fresh) {
-      this.fresh = 0;
+    if (this.following && this.fresh.size) {
+      this.fresh.clear();
       this.renderJump();
     }
   }
@@ -1081,12 +1104,13 @@ class Transcript implements TranscriptView {
       this.stick(true);
       return;
     }
-    // Only what shows counts as new: not system rows unless shown, not tool calls while they are hidden (#59).
-    const seen = added.filter((it) => (this.showSystem || !isSystem(it)) && !(this.prefs.hideTools && isToolRow(it))).length;
-    if (seen) {
-      this.fresh += seen;
-      this.renderJump();
-    }
+    for (const it of added) this.fresh.add(it.id);
+    if (added.length) this.renderJump();
+  }
+
+  /** Only what shows counts as new: not system rows unless shown, not tool calls while they are hidden (#59). */
+  private shows(it: TranscriptItem): boolean {
+    return (this.showSystem || !isSystem(it)) && !(this.prefs.hideTools && isToolRow(it));
   }
 
   /** Back to the bottom when following (content grew, the view resized, code got highlighted). */
@@ -1098,13 +1122,18 @@ class Transcript implements TranscriptView {
 
   private toBottom(): void {
     this.stick(true);
-    this.fresh = 0;
+    this.fresh.clear();
     this.renderJump();
   }
 
   private renderJump(): void {
-    this.jump.hidden = this.fresh === 0;
-    this.jump.textContent = this.fresh ? `${this.fresh} new · jump to latest` : '';
+    let n = 0;
+    for (const id of this.fresh) {
+      const it = this.timeline.get(id);
+      if (it && this.shows(it)) n++;
+    }
+    this.jump.hidden = n === 0;
+    this.jump.textContent = n ? `${n} new · jump to latest` : '';
   }
 
   private updateCounts(): void {
@@ -1145,6 +1174,7 @@ class Transcript implements TranscriptView {
     this.zoomBtns.out.disabled = zoom <= ZOOM.min;
     this.zoomBtns.in.disabled = zoom >= ZOOM.max;
     this.renderBusy();
+    this.renderJump();
     // New sizes (a zoom, another preset's fonts) move the bottom: a view that followed it keeps following.
     if (what === 'transcriptZoom' || what === 'transcriptTheme' || what === 'hideTools') this.stick();
   }
@@ -1219,6 +1249,7 @@ class Transcript implements TranscriptView {
     this.root.dataset.system = this.showSystem ? 'shown' : 'hidden';
     this.sysBtn.setAttribute('aria-pressed', String(this.showSystem));
     this.updateCounts();
+    this.renderJump();
     this.stick();
   }
 
