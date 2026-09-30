@@ -494,6 +494,8 @@ export class Laptops {
     this.host.seat.focus();
     // M16: its transcript is watched from now on (the first Ctrl+Esc shows it at once); its last mode comes back.
     this.transcript.sit(id, v.name, !this.whyNoTranscript());
+    // Its view starts empty: a watch a desk print kept since you last sat here is made again, for its ack's history.
+    this.transcripts.refresh(id);
     // With the seat bar up, the laptop fits between it and the top bar.
     this.seat.to = this.seatPose(office, v.desk, camera);
     this.seat.view = viewKey(camera);

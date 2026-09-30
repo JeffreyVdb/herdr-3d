@@ -75,6 +75,8 @@ export class TranscriptWatches {
   private readonly retryAt = new Map<string, number>();
   /** When each worker's watch was last closed by the bridge (the re-watch back-off). */
   private readonly lastClose = new Map<string, number>();
+  /** Workers whose sink starts over (`refresh`): the next `sync` that wants them hands it a fresh ack. */
+  private readonly fresh = new Set<string>();
   private gen = 0;
   /** Why transcripts are off: the bridge does not know `transcript.watch`. */
   disabled: string | null = null;
@@ -110,13 +112,26 @@ export class TranscriptWatches {
     else for (const id of want as ReadonlySet<string>) limits.set(id, WATCH_LIMIT);
     for (const id of [...this.on.keys()]) if (!limits.has(id)) this.unwatch(id);
     for (const m of [this.retryAt, this.lastClose]) for (const id of [...m.keys()]) if (!limits.has(id)) m.delete(id);
+    for (const id of [...this.fresh]) if (!limits.has(id)) this.fresh.delete(id);
     const now = this.host.now();
     for (const [id, limit] of limits) {
       const w = this.on.get(id);
-      if (w && w.limit >= limit) continue;
+      // An ack still to come resets the sink anyway.
+      if (w && !w.ready) this.fresh.delete(id);
+      if (w && w.limit >= limit && !this.fresh.has(id)) continue;
+      // Waiting out a close or a refusal (the watch made after it acks with the history).
       if (!w && (this.retryAt.get(id) ?? -Infinity) > now) continue;
-      this.watch(id, limit);
+      this.watch(id, Math.max(limit, w?.limit ?? 0));
     }
+  }
+
+  /**
+   * The sink's view of `id` starts empty again (you sat down at it): it needs the history, which only an ack brings. The
+   * next `sync` that wants `id` makes its watch again even when it has items enough (a desk print kept it after you
+   * stood up), unless its ack is still to come.
+   */
+  refresh(id: string): void {
+    if (!this.disabled) this.fresh.add(id);
   }
 
   /** The limit of a worker's watch (null: not watched). */
@@ -127,6 +142,7 @@ export class TranscriptWatches {
   private watch(id: string, limit = WATCH_LIMIT): void {
     const gen = ++this.gen;
     this.retryAt.delete(id);
+    this.fresh.delete(id);
     this.on.set(id, { gen, limit, ready: false, queued: [] });
     void this.host.send('transcript.watch', { id, limit }).then((r) => {
       const w = this.on.get(id);
@@ -159,6 +175,7 @@ export class TranscriptWatches {
       this.host.sink.stop(id);
     }
     this.retryAt.clear();
+    this.fresh.clear();
   }
 
   items(m: TranscriptItems): void {
@@ -200,5 +217,6 @@ export class TranscriptWatches {
     }
     this.retryAt.clear();
     this.lastClose.clear();
+    this.fresh.clear();
   }
 }
