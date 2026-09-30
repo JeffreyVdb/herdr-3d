@@ -133,7 +133,23 @@ test('a two-question ask: needs you while herdr says idle, a pinned card, answer
   await expect(card.locator('.tx-ask-send')).toBeEnabled();
   expect(await sent(page, 'worker.answer_ask')).toHaveLength(0);
   await shot(page, 'm16-ask-card-filled');
-  await tx.locator('.tx-scroll').focus();
+  await tx.locator('.tx-scroll').focus(); // the screenshot dropped the focus again
+
+  // On the card itself: Tab focuses the other question's option; Esc there goes back to the timeline, seated.
+  await page.keyboard.press('Tab');
+  await expect(card.locator('.tx-ask-tab.is-active')).toContainText('Extras');
+  await expect(card.locator('button.tx-ask-opt[data-n="1"]')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(tx.locator('.tx-scroll')).toBeFocused();
+  expect(await page.evaluate(() => window.__h3d.seated())).not.toBeNull();
+  // Tab, Tab (an option focused), a digit, Enter: sent from there.
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  await expect(card.locator('.tx-ask-tab.is-active')).toContainText('Extras');
+  await expect(card.locator('button.tx-ask-opt[data-n="1"]')).toBeFocused();
+  await page.keyboard.press('2');
+  await expect(card.locator('[role="checkbox"][aria-checked="true"]')).toHaveCount(3);
+  expect(await sent(page, 'worker.answer_ask')).toHaveLength(0);
   await page.keyboard.press('Enter');
 
   // Sending, then gone once the bridge says it is resolved; the timeline shows what the transcript recorded.
@@ -142,14 +158,14 @@ test('a two-question ask: needs you while herdr says idle, a pinned card, answer
     id: w.id,
     tool_use_id: 'toolu_e2e_two',
     answers: [
-      { question: 0, choices: [1, 3], other: 'Custom dashboards' },
+      { question: 0, choices: [1, 2, 3], other: 'Custom dashboards' },
       { question: 1, other: 'Green' },
     ],
   });
   await expect(card).toBeHidden();
   const item = tx.locator('.tx-ask-item[data-outcome="answered"]');
   await expect(item.locator('.tx-ask-answers li')).toHaveText([
-    '●You answered: Which extras should be enabled? → Logs, Traces, Custom dashboards',
+    '●You answered: Which extras should be enabled? → Logs, Metrics, Traces, Custom dashboards',
     '●You answered: Which color? → Green',
   ]);
   await expect(tx.locator('.tx-input')).toBeEnabled();
@@ -185,6 +201,36 @@ test('a stale answer is refused and the card updates; answered in the terminal, 
   await expect(tx.locator('.tx-ask-item[data-outcome="answered"] .tx-ask-answers li')).toHaveText([
     '●You answered: How should the laptop upload pasted screenshots: an HTTP POST through the helper, or WebSocket chunks? → HTTP POST via helper (Recommended)',
   ]);
+  clean();
+});
+
+test('another question while an answer is sent: the old ack leaves it pinned, the prompt stays off', async ({ page }) => {
+  const clean = watchErrors(page);
+  const w = demoWorker('Pebble');
+  await openGame(page, 'demo-m5', '', 'play=none&sim=1&simms=1500&simusage=0'); // slow acks: the new ask comes first
+  await sitAtTranscript(page, w);
+  const tx = page.locator('.seat-transcript .tx');
+  const card = tx.locator('.tx-ask');
+  await page.evaluate((a) => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: a }), one);
+  await card.locator('[data-n="2"]').click();
+  await card.locator('.tx-ask-send').click();
+  await expect(card).toHaveAttribute('data-phase', 'sending');
+  const q = one.questions?.[0] as Ask['questions'][number];
+  await page.evaluate((a) => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: a }), { ...one, tool_use_id: 'toolu_e2e_new', questions: [{ ...q, question: 'NEW QUESTION: which transport?' }] });
+  await expect(card.locator('.tx-ask-question')).toHaveText('NEW QUESTION: which transport?');
+  await expect(card).toHaveAttribute('data-phase', 'pending');
+  await expect(card.locator('[aria-checked="true"]')).toHaveCount(0);
+  // The old answer's ack (stale: another question now) changes nothing but a note.
+  await expect(card.locator('.tx-ask-note')).toContainText('changed meanwhile');
+  await expect(card).toBeVisible();
+  await expect(card.locator('.tx-ask-question')).toHaveText('NEW QUESTION: which transport?');
+  await expect(tx.locator('.tx-input')).toBeDisabled();
+  expect(await page.evaluate((id) => window.__h3d.needs().some((n) => n.id === id), w.id)).toBe(true);
+  // And it is answered as usual.
+  await card.locator('[data-n="1"]').click();
+  await card.locator('.tx-ask-send').click();
+  await expect(card).toBeHidden();
+  await expect.poll(async () => (await sent(page, 'worker.answer_ask')).map((c) => (c.args as { tool_use_id: string }).tool_use_id)).toEqual(['toolu_e2e_one', 'toolu_e2e_new']);
   clean();
 });
 

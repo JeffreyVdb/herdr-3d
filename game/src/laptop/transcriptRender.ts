@@ -1073,13 +1073,21 @@ class Transcript implements TranscriptView {
     if (e.defaultPrevented || e.target === this.input) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const target = e.target as HTMLElement | null;
+    // #57: on the pinned question its keys come first: Enter on an option or a tab sends, Esc goes back to the
+    // timeline (not up from the seat).
+    const inCard = !!target && this.ask.el.contains(target);
+    if (inCard && this.ask.key(e, true)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     // A focused button keeps Enter / Space (it opens its row); the game does not see them.
     if ((e.key === 'Enter' || e.key === ' ') && target?.closest('button, a, summary')) {
       e.stopPropagation();
       return;
     }
-    // #57: the pinned question takes its keys first (digits, Tab / ← →, Enter).
-    if (this.ask.shown && this.ask.key(e)) {
+    // #57: then, from the timeline, the pinned question's digits, Tab / ← →, Enter.
+    if (!inCard && this.ask.shown && this.ask.key(e)) {
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -1108,7 +1116,7 @@ class Transcript implements TranscriptView {
         this.scrollBy(-48);
         break;
       default: {
-        const q = this.blocked;
+        const q = this.ask.shown ? null : this.blocked; // the card wins over the screen's question
         const n = /^[1-9]$/.test(e.key) ? Number(e.key) : NaN;
         if (q && q.choices?.some((c) => c.n === n)) {
           this.host.onAnswer(q.hash, n);
