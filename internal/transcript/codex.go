@@ -275,8 +275,18 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 			_ = json.Unmarshal(input, &in)
 			viewPath = in.Path
 		}
+		var ask *askCall // #57: the question card
+		if it.Name == CodexAskTool && it.Namespace == "" {
+			if a, ok := parseAsk(Codex, input); ok {
+				ask = &a
+			}
+		}
 		return []contrib{{id: callID, kind: proto.ItemTool, ts: ts, maybeImg: viewPath != "", apply: func(b *builder) {
 			b.call(name, input, summary)
+			if ask != nil {
+				b.ask = ask
+				b.tool().Ask = ask.card(Codex)
+			}
 			if diffs != nil {
 				b.diffs = diffs
 			}
@@ -295,7 +305,14 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 			images = append(images, pc.codexImage(u, proto.OriginAgent, proto.KindViewed))
 		}
 		return []contrib{{link: linkResult, id: it.CallID, kind: proto.ItemTool, ts: ts, imgs: images,
-			apply: func(b *builder) { b.result(status, text, images) }}}
+			apply: func(b *builder) {
+				b.result(status, text, images)
+				if b.ask != nil && b.it.Tool.Ask != nil {
+					a := *b.it.Tool.Ask
+					a.Outcome, a.Answers = b.ask.codexResult(text)
+					b.it.Tool.Ask = &a
+				}
+			}}}
 	case "agent_message":
 		var ss []string
 		for _, p := range it.Content.list {

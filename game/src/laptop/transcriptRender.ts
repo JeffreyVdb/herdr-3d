@@ -1,7 +1,8 @@
 import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
-import type { TranscriptDiff, TranscriptItem } from '../net/protocol';
+import type { Ask, CommandArgs, TranscriptDiff, TranscriptItem } from '../net/protocol';
+import { AskCard, askItem, type AskResult } from './askCard';
 import type { ImageFeed } from './imageFeed';
 import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, Thumbs } from './transcriptImages';
 import { h, icon } from '../ui/dom';
@@ -23,6 +24,8 @@ export interface TranscriptRenderHost {
   /** A prompt to send; resolving false (not sent) puts the text back in the prompt box. */
   onPromptSubmit(text: string): void | Promise<boolean>;
   onAnswer(hash: string, choice: number | null, cancel?: boolean): void;
+  /** #57: answers (or dismisses) the worker's ask; `id` is filled in by the host. */
+  onAnswerAsk(args: CommandArgs['worker.answer_ask']): Promise<AskResult>;
   onSwitchToTerminal(): void;
   loadSubagent(agentId: string): Promise<TranscriptItem[]>;
 }
@@ -40,6 +43,8 @@ export interface TranscriptView {
   setItems(items: TranscriptItem[]): void;
   applyUpdates(items: TranscriptItem[]): void;
   setBlocked(q: BlockedQuestion | null): void;
+  /** #57: the worker's ask (null: none): a card pinned above the prompt box while it waits. */
+  setAsk(ask: Ask | null): void;
   /** The mode's tab strip (Conversation | Images), put in the bar after the title. */
   attachTabs(tabs: HTMLElement): void;
   /** Is the item in the timeline (loaded)? */
@@ -571,6 +576,9 @@ class Transcript implements TranscriptView {
   private showSystem = false;
   private readonly thumbs: Thumbs;
   private blocked: BlockedQuestion | null = null;
+  private readonly ask: AskCard;
+  /** Whether the banner and the prompt box were last drawn with the card up. */
+  private asking = false;
   private destroyed = false;
   /** Expanded rows, `scope/id`, kept across re-renders and resyncs. */
   private readonly expanded = new Set<string>();
@@ -596,10 +604,20 @@ class Transcript implements TranscriptView {
     this.input = h('textarea', { class: 'tx-input', rows: '1', placeholder: PROMPT_HINT, 'aria-label': 'Prompt', spellcheck: 'true' });
     this.sendBtn = h('button', { class: 'tx-send', title: 'Send', onclick: () => this.submit() }, 'Send');
     const form = h('div', { class: 'tx-prompt' }, this.input, this.sendBtn);
+    this.ask = new AskCard({
+      answer: (args) => host.onAnswerAsk(args),
+      toTerminal: () => host.onSwitchToTerminal(),
+      focusTimeline: () => this.focus(),
+      resized: () => {
+        this.stick();
+        // Shown or gone (also by itself, once its answer is recorded): the prompt box follows.
+        if (this.asking !== this.ask.shown) this.renderBanner();
+      },
+    });
     // The toggle sits on the left: the HUD's plan-limits widget can hang over the screen's top-right corner.
     this.titleEl = h('span', { class: 'tx-title' }, 'Transcript');
     const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn);
-    this.root = h('div', { class: 'tx', 'data-system': 'hidden' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), form);
+    this.root = h('div', { class: 'tx', 'data-system': 'hidden' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, form);
     this.updateCounts();
 
     this.scroller.addEventListener('scroll', () => this.onScroll(), { passive: true });
@@ -638,6 +656,13 @@ class Transcript implements TranscriptView {
     if (this.destroyed) return;
     this.blocked = q && typeof q === 'object' ? q : null;
     this.renderBanner();
+  }
+
+  setAsk(ask: Ask | null): void {
+    if (this.destroyed) return;
+    // The card wins over the screen's question: it has the whole question, the descriptions and multi-select
+    // (the banner and the prompt box are redrawn when it shows or goes, through its resized()).
+    this.ask.set(ask);
   }
 
   focus(): void {
@@ -681,6 +706,7 @@ class Transcript implements TranscriptView {
     this.resize?.disconnect();
     hlDone.delete(this.onHighlighted);
     this.thumbs.destroy();
+    this.ask.destroy();
     this.root.remove();
   }
 
@@ -717,6 +743,7 @@ class Transcript implements TranscriptView {
       case 'thinking':
         return this.thinkingRow(it, scope);
       case 'tool':
+        if (it.tool?.ask && typeof it.tool.ask === 'object' && Array.isArray(it.tool.ask.questions)) return askItem(it, it.tool.ask);
         return it.tool ? this.toolRow(it, scope) : this.unknownRow(it, 'tool call without details');
       case 'subagent':
         return it.subagent ? this.subagentRow(it, scope) : this.unknownRow(it, 'subagent without details');
@@ -1046,8 +1073,22 @@ class Transcript implements TranscriptView {
     if (e.defaultPrevented || e.target === this.input) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const target = e.target as HTMLElement | null;
+    // #57: on the pinned question its keys come first: Enter on an option or a tab sends, Esc goes back to the
+    // timeline (not up from the seat).
+    const inCard = !!target && this.ask.el.contains(target);
+    if (inCard && this.ask.key(e, true)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     // A focused button keeps Enter / Space (it opens its row); the game does not see them.
-    if ((e.key === 'Enter' || e.key === ' ') && target?.closest('button, a')) {
+    if ((e.key === 'Enter' || e.key === ' ') && target?.closest('button, a, summary')) {
+      e.stopPropagation();
+      return;
+    }
+    // #57: then, from the timeline, the pinned question's digits, Tab / ← →, Enter.
+    if (!inCard && this.ask.shown && this.ask.key(e)) {
+      e.preventDefault();
       e.stopPropagation();
       return;
     }
@@ -1075,7 +1116,7 @@ class Transcript implements TranscriptView {
         this.scrollBy(-48);
         break;
       default: {
-        const q = this.blocked;
+        const q = this.ask.shown ? null : this.blocked; // the card wins over the screen's question
         const n = /^[1-9]$/.test(e.key) ? Number(e.key) : NaN;
         if (q && q.choices?.some((c) => c.n === n)) {
           this.host.onAnswer(q.hash, n);
@@ -1123,16 +1164,25 @@ class Transcript implements TranscriptView {
   // --- blocked banner ---
 
   private renderBanner(): void {
-    const q = this.blocked;
+    const asking = this.ask.shown;
+    this.asking = asking;
+    const q = asking ? null : this.blocked;
     // A blocked worker takes no prompt (the bridge refuses it): answer above, or in the terminal. A draft stays.
     // Disabling the focused box or button would drop the keyboard on <body>, out of reach of the reply digits and
     // scroll keys: it goes to the timeline instead, once, as the question arrives (a disabled control never has focus
     // later, so re-renders leave focus alone).
     const a = document.activeElement;
-    if (q && (a === this.input || a === this.sendBtn)) this.scroller.focus({ preventScroll: true });
-    this.input.disabled = !!q;
-    this.input.placeholder = q ? 'Waiting for an answer to the question above (or switch to the terminal)' : PROMPT_HINT;
-    this.sendBtn.disabled = !!q;
+    const waiting = !!q || asking;
+    if (waiting && (a === this.input || a === this.sendBtn)) this.scroller.focus({ preventScroll: true });
+    this.input.disabled = waiting;
+    // A very short screen gives the card the prompt box's room while it is up (transcript.css).
+    this.root.toggleAttribute('data-asking', asking);
+    this.input.placeholder = asking
+      ? 'Answer the question above first (or in the terminal)'
+      : q
+        ? 'Waiting for an answer to the question above (or switch to the terminal)'
+        : PROMPT_HINT;
+    this.sendBtn.disabled = waiting;
     if (!q) {
       this.banner.hidden = true;
       this.banner.replaceChildren();

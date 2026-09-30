@@ -1,0 +1,26 @@
+
+ ▐▛███▛█   Claude Code v2.1.285
+▝▜██████▀  Haiku 4.5 · Claude Team
+ ▝▝   ▝▝   /tmp/askcard-claude-80dfd2 · /rc
+
+⚠ Safe mode: all customizations are disabled (CLAUDE.md, skills, plugins, hooks, MCP, agents, and
+  more)
+  Restart without --safe-mode to re-enable
+
+❯ Call AskUserQuestion now with exactly one question: header Drink, question Tea or coffee?,
+  options Tea (description Hot tea) and Coffee (description Hot coffee), multiSelect false. After I
+  answer reply only DONE. Do not use other tools.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Drink
+
+Tea or coffee?
+
+❯ 1. Tea
+     Hot tea
+  2. Coffee
+     Hot coffee
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

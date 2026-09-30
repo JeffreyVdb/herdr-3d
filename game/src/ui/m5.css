@@ -28,6 +28,19 @@
   font-weight: 700;
   color: var(--text-on-ink);
 }
+/* #57: its agent waits on a question, and since when. */
+.prompt-ask {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid rgb(255 194 51 / 55%);
+  border-radius: 999px;
+  color: var(--sun);
+  font-size: 12px;
+  font-weight: 700;
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 /* N next to "need you": the key that goes there. */
 .topbar-key {
   display: inline-grid;

@@ -250,8 +250,18 @@ func claudeAssistant(l *claudeLine, id string, ts int64, pc *parseCtx) []contrib
 				_ = json.Unmarshal(input, &in)
 				desc = in.Description
 			}
+			var ask *askCall // #57: the question card
+			if name == ClaudeAskTool {
+				if a, ok := parseAsk(Claude, input); ok {
+					ask = &a
+				}
+			}
 			c.apply = func(b *builder) {
 				b.call(name, input, summarize(input))
+				if ask != nil {
+					b.ask = ask
+					b.tool().Ask = ask.card(Claude)
+				}
 				if b.it.Kind == proto.ItemSubagent && b.it.Subagent == nil {
 					b.it.Subagent = &proto.TranscriptSubagent{Description: desc, Status: proto.ToolRunning}
 				}
@@ -464,6 +474,10 @@ func claudeResult(bl claudeBlock, l *claudeLine, first bool, ts int64, pc *parse
 		status = proto.ToolError
 	}
 	var tr *claudeToolResult
+	var raw json.RawMessage // #57: an ask's answers
+	if first {
+		raw = l.ToolUseResult
+	}
 	if first && len(l.ToolUseResult) > 0 && l.ToolUseResult[0] == '{' {
 		var r claudeToolResult
 		if json.Unmarshal(l.ToolUseResult, &r) == nil {
@@ -475,6 +489,11 @@ func claudeResult(bl claudeBlock, l *claudeLine, first bool, ts int64, pc *parse
 	}
 	return contrib{link: linkResult, id: bl.ToolUseID, kind: proto.ItemTool, ts: ts, imgs: images, apply: func(b *builder) {
 		b.result(status, text, images)
+		if b.ask != nil && b.it.Tool.Ask != nil {
+			a := *b.it.Tool.Ask
+			a.Outcome, a.Answers = b.ask.claudeResult(raw, bl.IsError)
+			b.it.Tool.Ask = &a
+		}
 		if tr == nil {
 			return
 		}

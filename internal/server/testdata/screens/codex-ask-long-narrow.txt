@@ -1,0 +1,29 @@
+
+› Call request_user_input with one question id=long header=Routing question="When sending a large
+  fixture payload through a helper process while the receiver is temporarily unavailable and the
+  terminal is narrow, which transport should preserve delivery ordering, retries, and a clear
+  progress indication for the person waiting at the laptop?" options "HTTP helper (Recommended)":
+  "Send a complete request through a helper process, retain the payload until the receiver confirms
+  delivery, and show progress while retrying temporary failures without duplicating accepted
+  messages." and "WebSocket stream": "Stream smaller chunks over a persistent connection, reconnect
+  when needed, preserve chunk ordering across retries, and display partial progress even when the
+  receiver takes a long time to recover." After the answer reply DONE. No other tools.
+
+
+
+  Question 1/1 (1 unanswered)
+  When sending a large fixture payload through a helper process while the receiver is temporarily
+  unavailable and the terminal is narrow, which transport should preserve delivery ordering,
+  retries, and a clear progress indication for the person waiting at the laptop?
+
+  › 1. HTTP helper (Recommended)  Send a complete request through a helper process, retain the
+                                  payload until the receiver confirms delivery, and show progress
+                                  while retrying temporary failures without duplicating accepted
+                                  messages.
+    2. WebSocket stream           Stream smaller chunks over a persistent connection, reconnect
+                                  when needed, preserve chunk ordering across retries, and display
+                                  partial progress even when the receiver takes a long time to
+                                  recover.
+    3. None of the above          Optionally, add details in notes (tab)
+
+  tab to add notes | enter to submit answer | esc to interrupt

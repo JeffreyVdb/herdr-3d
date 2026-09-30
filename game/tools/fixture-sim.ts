@@ -30,6 +30,8 @@ import { BoardSim } from './fixture-boards.ts';
 import { LimitsSim } from './fixture-limits.ts';
 // M16: the transcript view (`transcript.watch`, `sim.transcript`, `simfail=no_m16`).
 import { TranscriptSim } from './fixture-transcript.ts';
+// #57: agents' structured questions (`sim.ask`, `worker.answer_ask`).
+import { AskSim } from './fixture-ask.ts';
 
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
@@ -166,7 +168,13 @@ export class SimWorld {
     );
     if (o.crewMs !== undefined) this.crewMs = o.crewMs;
     this.transcripts = new TranscriptSim(
-      { worker: (id) => this.workers.find((x) => x.id === id), floor: (session) => this.floors.get(session), now: this.now, error: (code, message) => new CmdError(code, message) },
+      {
+        worker: (id) => this.workers.find((x) => x.id === id),
+        floor: (session) => this.floors.get(session),
+        now: this.now,
+        error: (code, message) => new CmdError(code, message),
+        extra: (id) => this.asks.extra(id),
+      },
       o.fail !== 'no_m16',
     );
     this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
@@ -344,6 +352,7 @@ export class SimWorld {
         this.transcripts.onEvent(x);
       };
       if (this.transcripts.handle(m.t, a, send, ack, fail)) return;
+      if (this.asks.handle(m.t, a, send, ack, fail)) return;
       if (screens.handle(m.t, a, send, ack, (code, message) => send({ t: 'error', req_id: reqId, code, message }))) return;
       if (this.start6.handle(m.t, a, send, ack, fail)) return;
       if (this.boards.handle(m.t, a, send, ack, fail)) return;
@@ -647,6 +656,37 @@ export class SimWorld {
         ack();
       },
     ]);
+  }
+
+  // ---- #57: asks (tools/fixture-ask.ts) ------
+
+  private askSim: AskSim | null = null;
+
+  private get asks(): AskSim {
+    this.askSim ??= new AskSim({
+      workers: this.workers,
+      floors: this.floors,
+      stepMs: this.stepMs,
+      emit: (send, m) => this.emit(send, m),
+      after: (ms, fn) => {
+        const h = this.setT(() => {
+          this.timers.delete(h);
+          fn();
+        }, ms);
+        this.timers.add(h);
+      },
+      now: () => this.now(),
+      takeFail: (code) => {
+        if (this.fail !== code) return false;
+        this.fail = undefined;
+        return true;
+      },
+      error: (code, message) => new CmdError(code, message),
+      push: (id, items, updates) => this.transcripts.push(id, items, updates),
+      nextSeq: (id) => this.transcripts.nextSeq(id),
+      work: (send, w, title) => this.panels.work(send, w, title),
+    });
+    return this.askSim;
   }
 
   // ---- M5: prompt, answer, changes, usage (tools/fixture-panels.ts) ------

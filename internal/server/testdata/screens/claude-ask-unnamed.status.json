@@ -1,0 +1,31 @@
+{
+  "id": "cli:agent:list",
+  "result": {
+    "type": "agent_list",
+    "agents": [
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "863feeee-542f-46d0-b46b-ecc594705eff"
+        },
+        "agent_status": "blocked",
+        "cwd": "/tmp/askrepro-h3d-askrepro-9cce",
+        "focused": false,
+        "foreground_cwd": "/tmp/askrepro-h3d-askrepro-9cce",
+        "interactive_ready": true,
+        "name": "plain",
+        "pane_id": "w2:p1",
+        "revision": 3,
+        "state_change_seq": 7,
+        "tab_id": "w2:t1",
+        "terminal_id": "term_65cb14686eec62",
+        "terminal_title": "✳ Screenshot upload transport",
+        "terminal_title_stripped": "Screenshot upload transport",
+        "workspace_id": "w2"
+      }
+    ]
+  }
+}

@@ -1,0 +1,37 @@
+
+ ▐▛███▛█   Claude Code v2.1.285
+▝▜██████▀  Haiku 4.5 · Claude Team
+ ▝▝   ▝▝   /tmp/askrepro-h3d-askrepro-9cce · /rc
+
+
+❯ Call the AskUserQuestion tool exactly once: header 'Drink', question 'Tea or coffee?', options Tea (Hot tea) and
+  Coffee (Hot coffee). Do nothing else.
+
+● User answered Claude's questions:
+  ⎿  · Tea or coffee? → Sparkling water
+
+● Sparkling water it is.
+
+✻ Brewed for 4s · done 1:32 PM
+
+❯ Call AskUserQuestion exactly once with two questions. First: header Extras, question 'Which extras should be
+  enabled?', multiSelect true, options Logs (Request logs), Metrics (Request metrics), Traces (Request traces). Second:
+  header Color, question 'Which color?', multiSelect false, options Red (Warm color), Blue (Cool color). After I
+  answer, reply DONE.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Extras  ☐ Color  ✔ Submit  →
+
+Which extras should be enabled?
+
+❯ 1. [ ] Logs
+         Request logs
+  2. [ ] Metrics
+         Request metrics
+  3. [ ] Traces
+         Request traces
+  4. [ ] Type something
+     Next
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

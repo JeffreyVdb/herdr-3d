@@ -123,6 +123,11 @@ type Options struct {
 	// again (defaults DefaultQuestionPoll, DefaultAnswerTimeout,
 	// DefaultPromptRetryWait).
 	QuestionPoll, AnswerTimeout, PromptRetryWait time.Duration
+	// #57: AskStepTimeout is how long worker.answer_ask waits for the
+	// dialog to show each step, AskResolveTimeout how long for the
+	// transcript to record the answer (defaults DefaultAskStepTimeout,
+	// DefaultAskResolveTimeout).
+	AskStepTimeout, AskResolveTimeout time.Duration
 
 	// M16 transcript: MaxTranscriptWatches caps the transcript watches of
 	// one connection (default DefaultMaxTranscriptWatches), TranscriptFlush
@@ -215,6 +220,10 @@ type Hub struct {
 	lanes     map[string]*inputLane    // worker id → its input commands, in order
 	questions map[string]questionState // worker id → what its blocked screen asks
 	asking    map[string]bool          // worker id → its screen reader runs
+	// #57: worker id → its ask as last published, and the last ask call
+	// whose result its transcript recorded.
+	asks        map[string]*proto.Ask
+	askResolved map[string]string
 	// M6 launch
 	presets    map[string]store.Preset // by id (mirrors team_preset)
 	lastPreset map[string]string       // session → preset id (mirrors floor_preset_last)
@@ -582,6 +591,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startPrompt
 		case proto.CmdWorkerAnswer:
 			start = h.startAnswer
+		case proto.CmdWorkerAnswerAsk: // #57
+			start = h.startAnswerAsk
 		// M16 transcript
 		case proto.CmdTranscriptWatch:
 			start = h.startTranscriptWatch
@@ -1124,6 +1135,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			next.Branch = h.branchOf(w.Worktree.CheckoutPath, at)
 		}
 		next.Usage = h.usage[id] // M5 usage
+		next.Ask = h.asks[id]    // #57
 		h.withQuestion(next)     // M5 term
 		if op := f.hires[id]; op != nil && !op.seen {
 			op.seen = true

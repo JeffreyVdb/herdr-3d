@@ -1,0 +1,30 @@
+  and reconnection handling for long running agent sessions? Options exactly HTTP POST via helper
+  (Recommended), description: Uses the existing helper to submit each answer with an explicit
+  request acknowledgment, retry failed deliveries, verify the terminal state after each step, and
+  preserve per worker ordering across long running sessions without requiring a persistent
+  connection. Second option WebSocket chunks (as #13), description: Maintains a persistent
+  bidirectional connection that forwards terminal chunks continuously, reconnects after transient
+  network interruptions, tracks worker identity and outstanding messages, and synchronizes the
+  transcript state when the operator switches between laptop views. After answer say DONE.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Transport
+
+│ For the live terminal streaming implementation, should the bridge send HTTP POST requests through
+│ the existing helper for each operator interaction, preserving explicit acknowledgments and retry
+│ behavior, or use WebSocket chunks matching issue thirteen, with continuous bidirectional delivery
+│ and reconnection handling for long running agent sessions?
+
+❯ 1. HTTP POST via helper (Recommended)
+     Uses the existing helper to submit each answer with an explicit request acknowledgment, retry
+     failed deliveries, verify the terminal state after each step, and preserve per worker ordering
+     across long running sessions without requiring a persistent connection.
+  2. WebSocket chunks (as #13)
+     Maintains a persistent bidirectional connection that forwards terminal chunks continuously,
+     reconnects after transient network interruptions, tracks worker identity and outstanding
+     messages, and synchronizes the transcript state when the operator switches between laptop
+     views.
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

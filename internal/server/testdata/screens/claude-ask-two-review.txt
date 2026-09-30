@@ -1,0 +1,28 @@
+
+● User answered Claude's questions:
+  ⎿  · Which features should be enabled? → Logs, Metrics, Traces
+
+● DONE
+
+✻ Churned for 2s · done 12:44 PM
+
+❯ Call AskUserQuestion exactly once with two questions. First header Color, question Which color?,
+  multiSelect false, options Red (description Warm color), Blue (description Cool color). Second
+  header Extras, question Which extras?, multiSelect true, options Logs (description Request logs),
+  Metrics (description Request metrics), Traces (description Request traces). After I answer say
+  DONE.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Color  ☒ Extras  ✔ Submit  →
+
+Review your answers
+
+ ● Which color?
+   → Blue
+ ● Which extras?
+   → Logs
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel

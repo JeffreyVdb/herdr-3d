@@ -1,0 +1,31 @@
+{
+  "id": "cli:agent:list",
+  "result": {
+    "type": "agent_list",
+    "agents": [
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "4fac904d-b04c-4d2d-810c-cffacc827c41"
+        },
+        "agent_status": "idle",
+        "cwd": "/tmp/askrepro-h3d-askrepro-9cce",
+        "focused": true,
+        "foreground_cwd": "/tmp/askrepro-h3d-askrepro-9cce",
+        "interactive_ready": true,
+        "name": "asker",
+        "pane_id": "w1:p1",
+        "revision": 2,
+        "state_change_seq": 4,
+        "tab_id": "w1:t1",
+        "terminal_id": "term_65cb141dc703f1",
+        "terminal_title": "✳ asker",
+        "terminal_title_stripped": "asker",
+        "workspace_id": "w1"
+      }
+    ]
+  }
+}

@@ -146,6 +146,9 @@ type TranscriptTool struct {
 	// Diffs has every file of a patch that changes more than one (Diff is
 	// the first).
 	Diffs []TranscriptDiff `json:"diffs,omitempty"`
+	// Ask is an AskUserQuestion / request_user_input call's question card
+	// (#57): its questions and, once answered, the answers.
+	Ask *TranscriptAsk `json:"ask,omitempty"`
 }
 
 // TranscriptDiff is a file's change as unified diff hunks.

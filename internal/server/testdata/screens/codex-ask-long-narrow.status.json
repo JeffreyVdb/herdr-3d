@@ -1,0 +1,32 @@
+{
+  "id": "cli:agent:list",
+  "result": {
+    "agents": [
+      {
+        "agent": "codex",
+        "agent_session": {
+          "agent": "codex",
+          "kind": "id",
+          "source": "herdr:codex",
+          "value": "01a0f1e6-d26a-7543-9ca9-a0add46b0f03"
+        },
+        "agent_status": "blocked",
+        "cwd": "/tmp/h3d-codex-ground",
+        "focused": true,
+        "foreground_cwd": "/tmp/h3d-codex-ground",
+        "interactive_ready": true,
+        "name": "groundcodex",
+        "pane_id": "w1:p1",
+        "revision": 153,
+        "state_change_seq": 13,
+        "tab_id": "w1:t1",
+        "terminal_id": "term_65cb0eaa4d6211",
+        "terminal_title": "[ . ] Action Required | Request fixture color | h3d-codex-ground",
+        "terminal_title_stripped": "[ . ] Action Required | Request fixture color | h3d-codex-ground",
+        "workspace_id": "w1"
+      }
+    ],
+    "type": "agent_list"
+  },
+  "pane_size": "100x30"
+}

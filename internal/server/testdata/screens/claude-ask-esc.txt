@@ -1,0 +1,30 @@
+❯ Call AskUserQuestion now one question header Layout question Which card layout?, multiSelect
+  false. Two options Compact description Small card preview exactly "## Compact\n+-------+\n| Title
+  |\n+-------+", Expanded description Large card preview exactly "## Expanded\n+-----------+\n|
+  Title     |\n| Details   |\n+-----------+". Include preview in each option object. After answer
+  say DONE.
+
+● User answered Claude's questions:
+  ⎿  · Which card layout? → Expanded
+
+● DONE
+
+✻ Sautéed for 2s · done 12:46 PM
+
+❯ Call AskUserQuestion now one question header Cancel question Continue experiment?, multiSelect
+  false, options Yes (description Continue), No (description Stop). If I decline, do not ask again;
+  reply DONE.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Cancel
+
+Continue experiment?
+
+❯ 1. Yes
+     Continue
+  2. No
+     Stop
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

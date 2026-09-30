@@ -32,6 +32,8 @@ export class SeatBar implements SeatView {
   private readonly keys = el('div', 'seat-keys');
   private readonly standBtn = el('button', 'seat-stand');
   private readonly modeBtn = el('button', 'seat-mode');
+  /** #57: the line that says the agent asks a question (terminal mode). */
+  private readonly askLine = el('div', 'seat-ask');
   private readonly modeOpts: Record<SeatMode, HTMLSpanElement> = { terminal: el('span', 'seat-mode-opt', 'Terminal'), transcript: el('span', 'seat-mode-opt', 'Transcript'), images: el('span', 'seat-mode-opt', 'Images') };
   private name = '';
   private mac = false;
@@ -78,7 +80,9 @@ export class SeatBar implements SeatView {
       e.preventDefault();
       handlers.paste(e.clipboardData?.getData('text/plain') ?? '');
     });
-    this.el.append(line, this.keys, this.modeBtn, this.standBtn, this.input);
+    this.askLine.hidden = true;
+    this.askLine.setAttribute('role', 'status');
+    this.el.append(this.askLine, line, this.keys, this.modeBtn, this.standBtn, this.input);
     hud.append(this.el);
   }
 
@@ -118,6 +122,20 @@ export class SeatBar implements SeatView {
     );
   }
 
+  /** #57: "Claude is asking a question. T to answer in the transcript view." (null: hidden). */
+  asking(ask: { who: string; key: 'T' | 'Ctrl+Esc' } | null): void {
+    this.askLine.hidden = !ask;
+    this.el.toggleAttribute('data-asking', !!ask);
+    if (!ask) {
+      this.askLine.replaceChildren();
+      return;
+    }
+    const keys = ask.key === 'T' ? ['T'] : ['Ctrl', 'Esc'];
+    const k = el('span', 'key');
+    for (const part of keys) k.append(el('kbd', '', part));
+    this.askLine.replaceChildren(el('span', 'seat-ask-tag', 'Question'), el('span', 'seat-ask-text', `${ask.who} is asking a question.`), k, el('span', 'seat-ask-text', 'to answer in the transcript view.'));
+  }
+
   hide(): void {
     this.el.hidden = true;
     delete this.hud.dataset.seated;
@@ -136,7 +154,14 @@ export class SeatBar implements SeatView {
   }
 
   /** What the bar says (test hook). */
-  summary(): { shown: boolean; tape: string; note: string; state: string; mode: SeatMode } {
-    return { shown: !this.el.hidden, tape: this.tape.textContent ?? '', note: this.note.textContent ?? '', state: this.el.dataset.state ?? '', mode: this.current };
+  summary(): { shown: boolean; tape: string; note: string; state: string; mode: SeatMode; ask: string | null } {
+    return {
+      shown: !this.el.hidden,
+      tape: this.tape.textContent ?? '',
+      note: this.note.textContent ?? '',
+      state: this.el.dataset.state ?? '',
+      mode: this.current,
+      ask: this.askLine.hidden ? null : [...this.askLine.children].map((c) => c.textContent ?? '').join(' '),
+    };
   }
 }

@@ -173,3 +173,39 @@ func TestParseQuestionEdges(t *testing.T) {
 		t.Errorf("excerpt = %q (%s)", q.Excerpt, q.Kind)
 	}
 }
+
+// #57: the structured-question dialogs, as the grounding captured them,
+// parse whole: a long question joined however it wraps (it was cut to its
+// last line, or lost at 100 columns), labels without their descriptions or
+// previews, and Claude's Yes / No question not a permission.
+func TestParseQuestionOnAskDialogs(t *testing.T) {
+	long := "For the live terminal streaming implementation, should the bridge send HTTP POST requests through the existing helper for each operator interaction, preserving explicit acknowledgments and retry behavior, or use WebSocket chunks matching issue thirteen, with continuous bidirectional delivery and reconnection handling for long running agent sessions?"
+	codexLong := "When sending a large fixture payload through a helper process while the receiver is temporarily unavailable and the terminal is narrow, which transport should preserve delivery ordering, retries, and a clear progress indication for the person waiting at the laptop?"
+	for _, tc := range []struct {
+		screen   string
+		text     string
+		choices  []string
+		selected int
+	}{
+		{"claude-ask-long-narrow", long, []string{"HTTP POST via helper (Recommended)", "WebSocket chunks (as #13)", "Type something.", "Chat about this"}, 1},
+		{"claude-ask-long-wide", long, []string{"HTTP POST via helper (Recommended)", "WebSocket chunks (as #13)", "Type something.", "Chat about this"}, 1},
+		{"claude-ask-named", "How should the laptop upload pasted screenshots to the bridge: through an HTTP POST handled by the small helper process that already proxies the WebSocket, or as WebSocket chunks like issue thirteen proposed?",
+			[]string{"HTTP POST via helper (Recommended)", "WebSocket chunks (as #13)", "Type something.", "Chat about this"}, 1},
+		{"claude-ask-preview", "Which card layout?", []string{"Compact", "Expanded"}, 1},
+		{"claude-ask-esc", "Continue experiment?", []string{"Yes", "No", "Type something.", "Chat about this"}, 1},
+		{"claude-ask-multi-digit3", "Which features should be enabled?", []string{"Logs", "Metrics", "Traces", "Alerts", "Type something", "Chat about this"}, 2},
+		{"codex-ask-single", "Which color should the fixture use?", []string{"Blue (Recommended)", "Green", "None of the above"}, 1},
+		{"codex-ask-long-narrow", codexLong, []string{"HTTP helper (Recommended)", "WebSocket stream", "None of the above"}, 1},
+	} {
+		t.Run(tc.screen, func(t *testing.T) {
+			sq := parseQuestion(screen(t, tc.screen), 1)
+			var labels []string
+			for _, c := range sq.q.Choices {
+				labels = append(labels, c.Label)
+			}
+			if sq.q.Kind != proto.QuestionChoice || sq.q.Text != clip(tc.text) || !slices.Equal(labels, tc.choices) || sq.q.Selected != tc.selected || !sq.numbered {
+				t.Fatalf("question = %+v", sq.q)
+			}
+		})
+	}
+}

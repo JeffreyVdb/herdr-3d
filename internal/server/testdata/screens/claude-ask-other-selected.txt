@@ -1,0 +1,30 @@
+  Remote (description Away). Header Four question Fourth choice? options Fast (description Quick),
+  Safe (description Careful). After answer say DONE.
+
+● User answered Claude's questions:
+  ⎿  · First choice? → Alpha
+     · Second choice? → Large
+     · Third choice? → Local
+     · Fourth choice? → Safe
+
+● DONE
+
+✻ Cooked for 3s · done 12:45 PM
+
+❯ Call AskUserQuestion now one question header Drink question What should we drink?, options Tea
+  (description Hot tea) and Coffee (description Hot coffee), multiSelect false. After answer say
+  DONE.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Drink
+
+What should we drink?
+
+  1. Tea
+     Hot tea
+  2. Coffee
+     Hot coffee
+❯ 3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · ctrl+g to edit in Nvim · Esc to cancel

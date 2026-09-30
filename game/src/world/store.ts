@@ -17,6 +17,8 @@ import {
   resolveHarness,
   type Display,
 } from './derive';
+// #57: asks
+import { askOf } from './ask';
 // M6 start
 import { LimitBook } from './limits';
 import { PresetBook } from './presets';
@@ -308,13 +310,15 @@ export class WorldStore {
     const asleep = f?.state === 'asleep';
     // M6: an over-cap orchestrator, or a freelancer whose report asks, needs you whatever its agent's status.
     const crew = crewView(w, this.crewSeen.has(id));
+    // #57: so does an agent waiting on its structured question (herdr may call it idle), since it asked.
+    const ask = asleep ? null : askOf(w);
     return {
       worker: w,
       name: displayName(w),
       desk,
       harness: resolveHarness(w),
-      since: this.since.get(id) ?? this.loadedAt,
-      display: crew?.needsYou && !asleep ? 'needs_you' : displayStatus(w.status, asleep),
+      since: ask ? ask.since : (this.since.get(id) ?? this.loadedAt),
+      display: (crew?.needsYou || ask) && !asleep ? 'needs_you' : displayStatus(w.status, asleep),
       crew,
     };
   }

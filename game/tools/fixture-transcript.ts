@@ -113,6 +113,8 @@ export interface TranscriptHost {
   floor(session: string): Floor | undefined;
   now(): number;
   error(code: string, message: string): Error;
+  /** #57: items the worker's timeline has on top of the demo (its ask calls, tools/fixture-ask.ts). */
+  extra?(id: string): TranscriptItem[];
 }
 
 const FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'transcript');
@@ -266,6 +268,8 @@ export class TranscriptSim {
     const n = this.watches.size - (this.watches.has(id) ? 1 : 0);
     if (n >= SIM_MAX_TRANSCRIPT_WATCHES) throw this.host.error('capacity', `capacity: this connection already watches ${n} transcripts (--max-transcript-watches)`);
     const items = demoTimeline(this.host.now());
+    const top = items.reduce((m, it) => Math.max(m, it.seq), 0);
+    (this.host.extra?.(id) ?? []).forEach((it, i) => items.push({ ...it, seq: top + i + 1 }));
     const watch: Watch = { send, items, sent: new Set() };
     this.watches.set(id, watch);
     const visible = items.filter((it) => !it.hidden);
@@ -350,6 +354,24 @@ export class TranscriptSim {
       height = th;
     }
     return { mime: 'image/png', width, height, bytes: bytes.length, size, data: bytes.toString('base64') };
+  }
+
+  /** #57 (tools/fixture-ask.ts): pushes items / updates to a worker's watch, if it has one; false when not watched. */
+  push(id: string, items: TranscriptItem[], updates: TranscriptItem[]): boolean {
+    if (!this.watches.has(id)) return false;
+    this.sim({ id, items, updates });
+    return true;
+  }
+
+  /** The seq an item added to a worker's watch now gets (1 when not watched). */
+  nextSeq(id: string): number {
+    const w = this.watches.get(id);
+    return (w?.items.reduce((m, it) => Math.max(m, it.seq), 0) ?? 0) + 1;
+  }
+
+  /** The item of a worker's watch, if it has it. */
+  itemOf(id: string, item: string): TranscriptItem | undefined {
+    return this.watches.get(id)?.items.find((it) => it.id === item);
   }
 
   private sim(a: Obj): Obj {

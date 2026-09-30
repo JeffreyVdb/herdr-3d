@@ -1,0 +1,29 @@
+  the fixture use?" and exactly two options Blue (Recommended): Calm blue. and Green: Fresh green.
+  After my answer reply only DONE. Do not use other tools.
+
+
+• Questions 1/1 answered
+  • Which color should the fixture use?
+    answer: Green
+
+• DONE
+
+  Worked for 52s • 12:42
+
+
+› Call request_user_input exactly once with three questions, each with two options. First id=color
+  header=Color question="Which color?" options Blue: Calm. and Green: Fresh. Second id=size
+  header=Size question="Which size?" options Small: Compact. and Large: Roomy. Third id=style
+  header=Style question="Which style?" options Plain: Simple. and Fancy: Decorated. After my answer
+  reply DONE. No other tools.
+
+
+
+  Question 2/3 (2 unanswered)
+  Which size?
+
+  › 1. Small              Compact.
+    2. Large              Roomy.
+    3. None of the above  Optionally, add details in notes (tab)
+
+  tab to add notes | enter to submit answer | ←/→ to navigate questions | esc to interrupt

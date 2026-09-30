@@ -135,6 +135,8 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   // M5: a prompt waits up to 8 s for the agent to start, then 5 s after one more Enter; changes run git (10 s).
   'worker.prompt': 20_000,
   'worker.changes': 15_000,
+  // #57: an answer is a dialog driven step by step (each checked on the screen), then the transcript watched.
+  'worker.answer_ask': 45_000,
   // M6 start: a run's prepare may `git fetch` like hire.prepare; its start is a hire.
   'run.prepare': 30_000,
   'run.start': 90_000,

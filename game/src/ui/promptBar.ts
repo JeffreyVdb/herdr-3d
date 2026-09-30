@@ -1,4 +1,5 @@
 import { answerable, answerKeys } from '../world/answer';
+import { askOf, isSimple, optionLabel, quickReplyBlocker, waitingText } from '../world/ask';
 import type { WorkerView } from '../world/store';
 import { usageText } from '../world/usage';
 import { h } from './dom';
@@ -13,7 +14,17 @@ import { h } from './dom';
 /** What these parts show, so the bar redraws when any of it changes. */
 export function promptBarKey(w: WorkerView): string[] {
   const q = w.display === 'needs_you' ? answerable(w.worker.question) : null;
-  return [usageText(w.worker.usage).line, q?.hash ?? ''];
+  const ask = w.display === 'needs_you' ? askOf(w.worker) : null;
+  // The ask's waiting time, to the minute (the bar is redrawn when it changes).
+  return [usageText(w.worker.usage).line, q?.hash ?? '', ask ? `${ask.tool_use_id} ${waitingText(ask.since, Date.now()).replace(/ \d+s$/, ' <1m')}` : ''];
+}
+
+/** #57: "asks · waiting 3m" on the bar of a worker whose agent waits on its question. */
+export function askChip(w: WorkerView, now = Date.now()): HTMLElement | null {
+  const ask = w.display === 'needs_you' ? askOf(w.worker) : null;
+  if (!ask) return null;
+  const wait = waitingText(ask.since, now).replace(/ \d+s$/, ' <1m');
+  return h('span', { class: 'prompt-ask', title: ask.questions.map((q) => q.question).join('\n') }, `asks · ${wait}`);
 }
 
 export function usageChip(w: WorkerView): HTMLElement | null {
@@ -24,12 +35,21 @@ export function usageChip(w: WorkerView): HTMLElement | null {
 
 /** Approve / Deny on a blocked worker's question (none when it has no question); `off` says why they can't be used. */
 export function answerKeyEls(w: WorkerView, off: { live: boolean; why?: string } | undefined = undefined): HTMLElement[] {
-  const q = w.display === 'needs_you' ? answerable(w.worker.question) : null;
-  if (!q) return [];
-  const k = answerKeys(q);
   const no = off && !off.live ? (off.why ?? 'Not available') : null;
   const key = (kbd: string, label: string, title: string, kind: string) =>
     h('span', { class: `key key--answer key--${kind}`, title: no ?? title, 'aria-disabled': no ? 'true' : null }, h('kbd', {}, kbd), label);
+  // #57: an ask: its digits pick when one pick answers it (0 dismisses); anything richer is answered at the laptop.
+  const ask = w.display === 'needs_you' ? askOf(w.worker) : null;
+  if (ask) {
+    const q0 = ask.questions[0] as NonNullable<(typeof ask.questions)[0]>;
+    if (!isSimple(ask)) return [key('E', 'Answer at laptop', `${quickReplyBlocker(ask)}: sit at its laptop and answer in the transcript view`, 'approve')];
+    const n = q0.options.length;
+    const first = optionLabel(q0.options[0]?.label ?? '').text;
+    return [key(n > 1 ? `1–${n}` : '1', 'Answer', `1 answers “${first}”${n > 1 ? `, up to ${n}` : ''}`, 'approve'), key('0', 'Dismiss', 'Esc on its dialog', 'deny')];
+  }
+  const q = w.display === 'needs_you' ? answerable(w.worker.question) : null;
+  if (!q) return [];
+  const k = answerKeys(q);
   const out: HTMLElement[] = [];
   if (k.approve) out.push(key(String(k.approve.n), 'Approve', `Answer “${k.approve.label}”`, 'approve'));
   if (k.denyChoice) out.push(key(String(k.denyChoice.n), 'Deny', `Answer “${k.denyChoice.label}”`, 'deny'));

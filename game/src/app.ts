@@ -6,7 +6,7 @@ import { postUpload } from './net/upload';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
 import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
-import { logoHashOf, type AnswerAck, type BoardMessage, type CommandArgs, type CommandName, type IssueCard, type MergedPullRequest, type PullRequest, type Question, type WatchBoardAck, type WorldEvent } from './net/protocol';
+import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type IssueCard, type MergedPullRequest, type PullRequest, type Question, type WatchBoardAck, type WorldEvent } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalSpec } from './render/arrivals';
@@ -36,6 +36,7 @@ import { ChangesPanel } from './ui/changes';
 import { failureText as commandFailure } from './ui/messages';
 import { PromptOverlay } from './ui/prompt';
 import { answerable, answerArgs, answerKeys, digitPick, pickLabel, questionLine, type Pick as AnswerPick } from './world/answer';
+import { askLine, askOf, isSimple, optionLabel, quickReplyBlocker } from './world/ask';
 import { faceSpots, needQueue, nextNeed, type NeedItem } from './world/next';
 import { promptBlocker } from './world/prompt';
 // M6 start: starting a run from an empty desk or the top bar; team presets.
@@ -1959,6 +1960,21 @@ export class App {
   private answerKey(id: string, digit: number): void {
     const v = this.store.workerView(id);
     if (!v) return;
+    // #57: an agent's structured question: a digit answers one that one pick answers; 0 dismisses it.
+    const ask = v.display === 'needs_you' ? askOf(v.worker) : null;
+    if (ask) {
+      const q0 = ask.questions[0] as NonNullable<(typeof ask.questions)[0]>;
+      if (digit !== 0 && !isSimple(ask)) {
+        this.hud.toast(`${v.name} asks ${quickReplyBlocker(ask) === 'pick several' ? 'a question with several picks' : `${ask.questions.length} questions`}: sit at its laptop (E) and answer in the transcript view.`, 3600);
+        return;
+      }
+      if (digit > q0.options.length) {
+        this.hud.toast(`${v.name}’s question has ${q0.options.length === 1 ? 'one option: 1' : `options 1–${q0.options.length}`}; 0 dismisses it; to type an answer, sit at its laptop (E).`, 3200);
+        return;
+      }
+      void this.answerAsk(id, ask, digit);
+      return;
+    }
     const q = v.display === 'needs_you' ? answerable(v.worker.question) : null;
     if (!q) {
       this.hud.toast(v.display === 'needs_you' ? `${v.name} needs you, but its screen showed no question to answer from here: sit at its laptop (E).` : `${v.name} isn’t asking anything right now.`, 3000);
@@ -2011,6 +2027,39 @@ export class App {
     this.hud.toast(r.code === 'unknown_command' ? 'This herdr-world can’t answer questions yet. Update the bridge to use it.' : commandFailure('worker.answer', r.code, r.message, { worker: name }), 5200, 'error');
   }
 
+  /** #57: answers a worker's ask from where you stand: option `digit` of its one question, 0 dismisses it. */
+  private async answerAsk(id: string, ask: Ask, digit: number): Promise<void> {
+    const v = this.store.workerView(id);
+    if (!v) return;
+    if (this.unsupported.has('worker.answer_ask')) {
+      this.hud.toast('This herdr-world can’t answer questions from here yet: sit at its laptop (E) and answer in its terminal.', 4000, 'error');
+      return;
+    }
+    if (this.answering.has(id)) {
+      this.hud.toast(`Still answering ${v.name}…`, 1600);
+      return;
+    }
+    const label = digit === 0 ? 'dismissed' : optionLabel(ask.questions[0]?.options[digit - 1]?.label ?? String(digit)).text;
+    this.answering.add(id);
+    this.hud.toast(digit === 0 ? `Dismissing ${v.name}’s question…` : `Answering ${v.name}: ${label}…`, 2400);
+    const args: CommandArgs['worker.answer_ask'] = digit === 0 ? { id, tool_use_id: ask.tool_use_id, cancel: true } : { id, tool_use_id: ask.tool_use_id, answers: [{ question: 0, choices: [digit] }] };
+    const r = await this.send('worker.answer_ask', args);
+    this.answering.delete(id);
+    const name = this.store.workerView(id)?.name ?? v.name;
+    if (r.ok) {
+      const ack = (r.data ?? {}) as Partial<AnswerAskAck>;
+      if (ack.resolved === false) this.hud.toast(`Sent “${label}” to ${name}, but it has not recorded it yet: look at its laptop (E).`, 4200);
+      else this.hud.toast(digit === 0 ? `Dismissed ${name}’s question.` : `Answered ${name}: ${label}.`, 2600);
+      return;
+    }
+    if (r.code === 'stale') {
+      const cur = askOf(this.store.workerView(id)?.worker);
+      this.hud.toast(cur ? `${name} asks something else now: “${askLine(cur)}”. Look at its card and answer again.` : `${name}’s question was answered meanwhile.`, 5200, 'error');
+      return;
+    }
+    this.hud.toast(r.code === 'unknown_command' ? 'This herdr-world can’t answer questions from here yet. Update the bridge to use it.' : commandFailure('worker.answer_ask', r.code, r.message, { worker: name }), 5200, 'error');
+  }
+
   /** Who needs you, in the order N visits them (blocked, then done; your building first). */
   needs(): NeedItem[] {
     const here = this.mode === 'floor' ? (this.building?.id ?? null) : undefined;
@@ -2037,8 +2086,9 @@ export class App {
     this.lastNeed = item.id;
     const v = this.store.workerView(item.id);
     const what = item.reason === 'blocked' ? 'needs you' : 'is done';
-    const q = v && item.reason === 'blocked' ? answerable(v.worker.question) : null;
-    const about = q ? `: “${questionLine(q)}”` : v ? `: ${v.worker.title?.trim() || v.worker.label}` : '';
+    const ask = v && item.reason === 'blocked' ? askOf(v.worker) : null;
+    const q = v && item.reason === 'blocked' && !ask ? answerable(v.worker.question) : null;
+    const about = ask ? `: asks “${askLine(ask)}”` : q ? `: “${questionLine(q)}”` : v ? `: ${v.worker.title?.trim() || v.worker.label}` : '';
     if (this.mode === 'floor' && this.place.area === 'floor' && this.office?.session === item.session) {
       this.pendingNeed = null;
       this.faceWorker(item.id);

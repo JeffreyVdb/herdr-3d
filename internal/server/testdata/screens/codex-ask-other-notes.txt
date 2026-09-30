@@ -1,0 +1,29 @@
+
+
+• Questions 3/3 answered
+  • Which color?
+    answer: Blue
+  • Which size?
+    answer: Large
+  • Which style?
+    answer: Plain
+
+• DONE
+
+
+› Call request_user_input with one question id=transport header=Transport question="Which transport
+  should carry the fixture payload?" options HTTP: Simple requests. and WebSocket: Live streams.
+  After my answer reply DONE. No other tools.
+
+
+
+  Question 1/1 (1 unanswered)
+  Which transport should carry the fixture payload?
+
+    1. HTTP               Simple requests.
+    2. WebSocket          Live streams.
+  › 3. None of the above  Optionally, add details in notes (tab)
+
+  › Add notes
+
+  tab or esc to clear notes | enter to submit answer

@@ -310,6 +310,9 @@ type Worker struct {
 	// M5 term: Question is what a blocked worker's screen asks, while it
 	// is blocked and the bridge could read it.
 	Question *Question `json:"question,omitempty"`
+	// #57: Ask is the structured question the agent's latest turn waits on,
+	// read from its transcript (whatever Status herdr reports).
+	Ask *Ask `json:"ask,omitempty"`
 
 	// M6 runs: the worker's place in a write-code run.
 	// Round is the h3d_round token, else the label's trailing |r<N>.

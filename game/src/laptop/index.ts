@@ -1,11 +1,12 @@
 import * as THREE from 'three/webgpu';
 import type { CommandResult } from '../net/client';
-import type { CommandArgs, CommandName, ConnMessage, KeyItem } from '../net/protocol';
+import type { Ask, CommandArgs, CommandName, ConnMessage, KeyItem } from '../net/protocol';
 import { glassFrame, screenFrame } from '../render/desks';
 import type { OfficeView } from '../render/office';
 import { PrintMeshes } from '../render/prints';
 import { ScreenMeshes } from '../render/screens';
 import { failureText } from '../ui/messages';
+import { askAgent, askOf } from '../world/ask';
 import type { WorldStore } from '../world/store';
 import { DESK_H, SEAT_OFFSET } from '../world/layout';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
@@ -62,6 +63,11 @@ export interface SeatView {
   focus(): void;
   /** M16: the terminal or the conversation is up. */
   setMode(mode: SeatMode): void;
+  /**
+   * #57: the worker's agent asks a question (null: it does not): in terminal mode a line says so and how to answer it
+   * in the transcript view (`key`: T while you have not typed into the terminal since, else Ctrl+Esc).
+   */
+  asking?(ask: { who: string; key: 'T' | 'Ctrl+Esc' } | null): void;
 }
 
 /** Where the game is this frame (what the controller needs to plan and to keep you seated). */
@@ -157,6 +163,10 @@ export class Laptops {
   /** Worker id → the desk its live screen is shown on. */
   private readonly liveAt = new Map<string, number>();
   private seat: Seat | null = null;
+  /** #57: the seated worker's ask (its tool_use_id), whether T still answers it, and what the seat bar says of it. */
+  private askId: string | null = null;
+  private askArmed = false;
+  private askShown = '';
   /** The camera gliding back after you stood up. */
   private leaving: { t0: number; from: { pos: THREE.Vector3; quat: THREE.Quaternion } } | null = null;
   private input: InputQueue | null = null;
@@ -524,6 +534,9 @@ export class Laptops {
     term?.setSize(LIVE_SIZE.width, LIVE_SIZE.height);
     term?.setGlance(true);
     this.meshes?.setFull(null);
+    this.askId = null;
+    this.askShown = '';
+    this.host.seat.asking?.(null);
     this.host.seat.hide();
     this.leaving = snap ? null : { t0: performance.now(), from: { pos: this.camPos.clone(), quat: this.camQuat.clone() } };
     if (why) this.host.toast(why, 'error');
@@ -576,11 +589,40 @@ export class Laptops {
     this.host.seat.status('error', kind === 'keys' ? `${name}’s terminal didn’t take that: ${why}` : `The paste didn’t reach ${name}: ${why}`);
   }
 
+  /**
+   * #57: the seated worker's ask. The transcript view gets it (a pinned card); in terminal mode the seat bar says
+   * so, and T switches to the transcript until you type into the terminal (then T is a letter again).
+   */
+  private syncAsk(ask: Ask | null): void {
+    this.transcript.asked(ask);
+    const id = ask?.tool_use_id ?? null;
+    if (id !== this.askId) {
+      this.askId = id;
+      this.askArmed = !!id;
+    }
+    const line = ask && this.transcript.mode === 'terminal' ? { who: askAgent(ask), key: this.askArmed ? ('T' as const) : ('Ctrl+Esc' as const) } : null;
+    const key = line ? `${line.who}\u0000${line.key}` : '';
+    if (key === this.askShown) return;
+    this.askShown = key;
+    this.host.seat.asking?.(line);
+  }
+
   /** A keydown while seated: true when it was consumed (nothing else sees it). */
   key(e: KeyboardEvent): boolean {
     if (!this.seat) return false;
     const k = seatedKey(e, this.mac);
     if (this.transcript.shown) return this.readingKey(e, k.action === 'toggle-transcript');
+    // #57: T answers the question in the transcript view (once you type into the terminal, T is a letter again).
+    if (this.askId && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+      if (this.askArmed && e.key.toLowerCase() === 't' && !e.shiftKey) {
+        e.preventDefault();
+        if (!this.whyNoTranscript()) {
+          this.transcript.setMode('transcript');
+          return true;
+        }
+      }
+      if (k.items.length) this.askArmed = false;
+    }
     if (k.prevent) e.preventDefault();
     if (k.action === 'stand') this.stand();
     else if (k.action === 'toggle-transcript') this.toggleTranscript();
@@ -686,7 +728,10 @@ export class Laptops {
       else if (s.office.isAsleep) this.stand(`${s.name}’s floor went to sleep, so you got up.`, true);
       else if (!v.worker.pane_id) this.stand(`${s.name} has no terminal any more, so you got up.`, true);
       else if (v.desk !== s.desk) this.stand(`${s.name} moved desks, so you got up.`, true);
-      else this.transcript.blocked(v.worker.status === 'blocked' ? (v.worker.question ?? null) : null);
+      else {
+        this.transcript.blocked(v.worker.status === 'blocked' ? (v.worker.question ?? null) : null);
+        this.syncAsk(askOf(v.worker)); // #57
+      }
     }
     const meshes = this.meshes;
     if (office && meshes) {

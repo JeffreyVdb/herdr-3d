@@ -1,0 +1,30 @@
+
+
+● User answered Claude's questions:
+  ⎿  · Which color? → Blue
+     · Which extras? → Logs
+
+● DONE
+
+✻ Brewed for 2s · done 12:45 PM
+
+❯ Call AskUserQuestion once with exactly four questions, all multiSelect false and two options
+  each. Header One question First choice? options Alpha (description First), Beta (description
+  Second). Header Two question Second choice? options Small (description Compact), Large
+  (description Spacious). Header Three question Third choice? options Local (description Nearby),
+  Remote (description Away). Header Four question Fourth choice? options Fast (description Quick),
+  Safe (description Careful). After answer say DONE.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ One  ☐ Two  ☐ Three  ☐ Four  ✔ Submit  →
+
+Second choice?
+
+❯ 1. Small
+     Compact
+  2. Large
+     Spacious
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

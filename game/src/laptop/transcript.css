@@ -963,3 +963,493 @@
   color: var(--tx-text-2);
   font-size: 12px;
 }
+
+/*
+ * #57: an agent's question. Pinned above the prompt box while it waits: the "waiting for you" sun of the blocked
+ * banner, the options as rows led by their key cap (round: pick one; square: pick several; filled: picked), so the
+ * digit you press is the one you see. In the timeline it is a quiet record of what was asked and answered.
+ */
+.tx-ask {
+  --tx-sun-soft: rgb(255 194 51 / 42%);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  margin: 0 10px 8px;
+  padding: 9px 12px 10px;
+  /* The question never eats the conversation; its top (who asks, the questions) and foot (Send) stay, the options scroll. */
+  max-height: min(60%, 500px);
+  overflow: hidden;
+  border: 1px solid var(--tx-sun-soft);
+  border-radius: 10px;
+  background: #221f16;
+  box-shadow: 0 -8px 22px -6px rgb(0 0 0 / 55%);
+}
+.tx-ask[hidden] {
+  display: none;
+}
+.tx-ask-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 194 51 / 35%) transparent;
+  /* Room for the focus ring of the first and last rows. */
+  margin: 0 -4px;
+  padding: 0 4px 2px;
+}
+.tx-ask-top,
+.tx-ask-tabs,
+.tx-ask-foot,
+.tx-ask-note {
+  flex: none;
+}
+.tx-ask-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.tx-ask-wait {
+  color: var(--tx-text-2);
+  font-size: 11.5px;
+  font-variation-settings: 'MONO' 1;
+  font-variant-numeric: tabular-nums;
+}
+.tx-ask-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+.tx-ask-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 11px 2px 3px;
+  border: 1px solid var(--tx-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--tx-text-2);
+  font-size: 12px;
+  font-weight: 650;
+}
+.tx-ask-tab:hover {
+  border-color: var(--tx-sun-soft);
+  color: var(--tx-text);
+}
+.tx-ask-tab.is-active {
+  border-color: var(--tx-sun);
+  background: rgb(255 194 51 / 12%);
+  color: var(--tx-text);
+}
+.tx-ask-tab-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--tx-bg-3);
+  color: var(--tx-text-2);
+  font-size: 10.5px;
+  font-weight: 800;
+  font-variation-settings: 'MONO' 1;
+}
+.tx-ask-tab.is-done .tx-ask-tab-mark {
+  background: var(--tx-green);
+  color: var(--ink, #1c2540);
+}
+.tx-ask-tab-mark svg,
+.tx-ask-key svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 3;
+}
+.tx-ask-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid rgb(255 194 51 / 35%);
+  border-radius: 999px;
+  color: var(--tx-sun);
+  font-size: 10.5px;
+  font-weight: 750;
+  font-variation-settings: 'MONO' 1;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.tx-ask-question {
+  margin: 9px 0 8px;
+  max-width: 72ch;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.42;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+.tx-ask-opts {
+  display: grid;
+  gap: 4px;
+}
+.tx-ask-opt {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  width: 100%;
+  padding: 6px 10px 6px 6px;
+  border: 1px solid rgb(255 255 255 / 7%);
+  border-radius: 7px;
+  background: rgb(255 255 255 / 2.5%);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease-out, background-color 120ms ease-out;
+}
+.tx-ask-opt:hover {
+  border-color: var(--tx-sun-soft);
+  background: rgb(255 194 51 / 6%);
+}
+.tx-ask-opt.is-on {
+  border-color: var(--tx-sun);
+  background: rgb(255 194 51 / 13%);
+}
+.tx-ask-opt:disabled,
+.tx-ask[data-phase='sending'] .tx-ask-opt {
+  cursor: default;
+  opacity: 0.6;
+}
+.tx-ask-key {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border: 1.5px solid rgb(255 194 51 / 65%);
+  border-radius: 50%;
+  color: var(--tx-sun);
+  font-size: 11.5px;
+  font-weight: 800;
+  font-variation-settings: 'MONO' 1;
+}
+.tx-ask-opts.is-multi .tx-ask-key {
+  border-radius: 5px;
+}
+.tx-ask-opt.is-on .tx-ask-key {
+  border-color: var(--tx-sun);
+  background: var(--tx-sun);
+  color: var(--ink, #1c2540);
+}
+.tx-ask-opt-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.tx-ask-opt-label {
+  color: var(--tx-text);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.tx-ask-rec {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 6px;
+  border: 1px solid rgb(255 194 51 / 30%);
+  border-radius: 999px;
+  color: rgb(255 214 120 / 85%);
+  font-size: 10.5px;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+.tx-ask-opt-desc {
+  color: var(--tx-text-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.tx-ask-preview {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  max-height: 9em;
+  overflow: auto;
+  border-radius: 5px;
+  background: rgb(0 0 0 / 28%);
+  color: var(--tx-text-2);
+  font: 11px/1.35 var(--tx-mono);
+  font-variation-settings: 'MONO' 1;
+  white-space: pre;
+}
+.tx-ask-other {
+  cursor: text;
+}
+.tx-ask-other-input {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--tx-line);
+  border-radius: 5px;
+  background: rgb(0 0 0 / 30%);
+  color: var(--tx-text);
+  font: inherit;
+  caret-color: var(--tx-sun);
+}
+.tx-ask-other-input::placeholder {
+  color: var(--tx-text-3);
+}
+.tx-ask-other-input:focus {
+  border-color: var(--tx-sun);
+  outline: none;
+}
+.tx-ask-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed rgb(255 194 51 / 20%);
+}
+.tx-ask-hint {
+  flex: 1;
+  min-width: 0;
+  color: var(--tx-text-2);
+  font-size: 12px;
+}
+.tx-ask-keys {
+  display: block;
+  color: var(--tx-text-3);
+  font-size: 11px;
+  font-variation-settings: 'MONO' 1;
+}
+.tx-ask-dismiss {
+  color: var(--tx-text-2);
+}
+.tx-ask-send {
+  flex: none;
+  padding: 5px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--tx-sun);
+  color: var(--ink, #1c2540);
+  font-weight: 750;
+}
+.tx-ask-send:hover:not(:disabled) {
+  background: #ffd261;
+}
+.tx-ask-send:disabled {
+  background: var(--tx-bg-3);
+  color: var(--tx-text-3);
+  cursor: default;
+}
+.tx-ask[data-phase='sending'] .tx-ask-send:disabled {
+  background: rgb(255 194 51 / 30%);
+  color: var(--tx-text);
+}
+.tx-ask-note {
+  margin-top: 6px;
+  color: var(--tx-text-2);
+  font-size: 12px;
+}
+.tx-ask-note.is-error {
+  color: var(--tx-red);
+}
+.tx .tx-ask button:disabled {
+  cursor: default;
+}
+/* A short screen: a tighter card, descriptions to two lines, no previews' height to spare. */
+@container tx (max-height: 470px) {
+  .tx-ask {
+    margin: 0 8px 6px;
+    padding: 6px 9px 7px;
+    max-height: 56%;
+  }
+  .tx-ask-question {
+    margin: 6px 0 5px;
+    font-size: 13px;
+  }
+  .tx-ask-opt {
+    padding: 4px 8px 4px 5px;
+  }
+  .tx-ask-opt-desc {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .tx-ask-preview {
+    max-height: 5em;
+  }
+  .tx-ask-keys {
+    display: none;
+  }
+}
+/*
+ * The top, the tabs and the foot never shrink, so on a narrow screen (a phone's projected monitor is under 200px
+ * tall) they must stay one line each: the tabs scroll sideways instead of wrapping, the top drops the terminal link
+ * (Ctrl+Esc and the toggle stay), the foot keeps its buttons and cuts its hint. Whatever height is left is the body's,
+ * which scrolls; the card may take most of the screen then, as the prompt box it replaces is off anyway.
+ */
+@container tx (max-width: 520px) {
+  /* The top strip too: one line (the tabs name the view; the count goes). */
+  .tx-bar {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .tx-title,
+  .tx-count {
+    display: none;
+  }
+  .tx-ask-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    /* Room for the focus ring, as in the body; the right edge fades where more tabs wait. */
+    margin-inline: -4px;
+    padding: 1px 4px;
+    mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+  }
+  .tx-ask-tab {
+    flex: none;
+  }
+  .tx-ask-hint-text {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}
+@container tx (max-height: 300px) {
+  .tx[data-asking] .tx-prompt {
+    display: none;
+  }
+  .tx[data-asking] .tx-main {
+    min-height: 2.6em;
+  }
+  .tx-ask {
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: none;
+    margin: 0 6px 6px;
+    padding: 5px 8px 6px;
+  }
+  /* Who asks and the tabs share the first line; the body's row takes what is left. */
+  .tx-ask {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    column-gap: 8px;
+    align-items: center;
+  }
+  .tx-ask-top {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .tx-ask-top .tx-ask-wait,
+  .tx-ask-top .tx-spacer,
+  .tx-ask-top .tx-to-term {
+    display: none;
+  }
+  .tx-ask-tabs {
+    grid-column: 2;
+    grid-row: 1;
+    margin-top: 0;
+  }
+  .tx-ask-body,
+  .tx-ask-foot,
+  .tx-ask-note {
+    grid-column: 1 / -1;
+    align-self: stretch;
+  }
+  .tx-ask-body {
+    max-height: 100%;
+  }
+  .tx-ask-question {
+    margin: 5px 0 4px;
+    font-size: 12.5px;
+  }
+  .tx-ask-opt {
+    padding: 3px 7px 3px 4px;
+    gap: 8px;
+  }
+  .tx-ask-foot {
+    margin-top: 4px;
+    padding-top: 4px;
+    gap: 8px;
+  }
+  .tx-ask-send {
+    padding: 3px 13px;
+  }
+  .tx-ask-note {
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* The timeline's record of a question. */
+.tx-ask-item {
+  padding: 7px 10px 8px;
+  border: 1px solid rgb(255 194 51 / 18%);
+  border-radius: 8px;
+  background: rgb(255 194 51 / 3.5%);
+}
+.tx-ask-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.tx-ask-item-who {
+  margin-right: 2px;
+  color: var(--tx-sun);
+  font-size: 12px;
+  font-weight: 750;
+}
+.tx-ask-asked,
+.tx-ask-answers {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 3px;
+  overflow-wrap: anywhere;
+}
+.tx-ask-dot {
+  margin-right: 6px;
+  color: var(--tx-green);
+  font-size: 10px;
+  vertical-align: 1px;
+}
+.tx-ask-said,
+.tx-ask-arrow,
+.tx-ask-notes {
+  color: var(--tx-text-2);
+}
+.tx-ask-a {
+  font-weight: 700;
+}
+.tx-ask-state {
+  margin-top: 5px;
+  color: var(--tx-text-2);
+  font-size: 12px;
+}
+.tx-ask-state--pending {
+  color: var(--tx-sun);
+}
+.tx-ask-input {
+  margin-top: 6px;
+}
+.tx-ask-input > summary {
+  width: max-content;
+  color: var(--tx-text-3);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.tx-ask-input > summary:hover {
+  color: var(--tx-text-2);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tx-ask-opt {
+    transition: none;
+  }
+}

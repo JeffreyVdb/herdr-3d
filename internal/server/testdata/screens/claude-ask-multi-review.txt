@@ -1,0 +1,24 @@
+     bidirectional delivery and reconnection handling for long running agent sessions? → WebSocket
+     chunks (as #13)
+
+● DONE
+
+✻ Cogitated for 4s · done 12:44 PM
+
+❯ Call AskUserQuestion once now. Header Features, question Which features should be enabled?,
+  multiSelect true, four options Logs (description Request logs), Metrics (description Request
+  metrics), Traces (description Request traces), Alerts (description Request alerts). After answer
+  say DONE.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Features  ✔ Submit  →
+
+Review your answers
+
+ ● Which features should be enabled?
+   → Logs, Metrics, Traces
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
