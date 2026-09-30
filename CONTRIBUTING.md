@@ -15,7 +15,9 @@
   Claude and Codex transcripts as one timeline of items, indexed by offset for the laptop's conversation view), `runs` (M6: write-code runs, the
   freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it), `limits` (M10: the Claude and
   Codex plan limits, read by running the two CLIs as probes through a fake-able process runner), `logo` (M3d: PNG, WebP
-  and restricted SVG in, one PNG of at most 1024 px out; pure Go, only the bridge uses it); M7 boards:
+  and restricted SVG in, one PNG of at most 1024 px out; pure Go, only the bridge uses it), `upload` (#51: one image
+  streamed to Drop Zone as one multipart request, the type sniffed and the size capped on the bytes, its path returned
+  verbatim; pure Go, a fake-able HTTP client, the bridge's `POST /upload` uses it); M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
   repository and project, the writes) and `githubcli` (the typed `gh` runner). `server`, `store` and `proto` never import
@@ -279,6 +281,7 @@ that directory.
 | `--codex-sessions` | `HERDR_WORLD_CODEX_SESSIONS` | `$CODEX_HOME/sessions`, else `~/.codex/sessions`: Codex rollouts, for the sleep backfill and usage |
 | `--claude-projects` | `HERDR_WORLD_CLAUDE_PROJECTS` | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`: Claude Code transcripts, for usage (M5) |
 | `--runs-dir` | `H3D_RUNS_DIR` | `$XDG_STATE_HOME/write-code/runs`, else `~/.local/state/write-code/runs`: write-code's run directories, for the freelancers' reports (M6, [`docs/protocol.md` "Runs and freelancers"](docs/protocol.md#runs-and-freelancers)); read only |
+| `--dropzone-url` | `HERDR_WORLD_DROPZONE_URL` | `http://127.0.0.1:8080`: Drop Zone, where pasted images are uploaded (#51, [`docs/protocol.md` "Image upload"](docs/protocol.md#image-upload)); the bridge's only client of it |
 | `--pricing` | `HERDR_WORLD_PRICING` | none: a JSON file of model prices merged over the built-in table (`internal/usage/pricing.json`; format in [`docs/protocol.md` "Usage and cost"](docs/protocol.md#usage-and-cost)) |
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
 | `--warn-workers`, `--max-workers` | `HERDR_WORLD_WARN_WORKERS`, `HERDR_WORLD_MAX_WORKERS` | `48`, `96`: the same for all watched running floors together |
@@ -380,6 +383,11 @@ killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herd
   `Authorization` are not forwarded, an upload over 1 MiB is refused (`413`) at the helper, other methods get `405`, and the
   routes come before the game fallback (also with `-dev-upstream`). The image conversion is the bridge's: the helper only
   moves bytes. `go test ./internal/helper -run Logo` covers the checks with a fake bridge and once end to end;
+- (#51) it proxies `POST /upload` (one image on its way to Drop Zone) to the bridge, guarded exactly like `/logo`
+  (`checkLogo`), with the token, `Origin`, `Cookie` and `Authorization` not forwarded and only `label` and `n` kept. A
+  body over `upload.MaxBytes` + 4 KiB is refused with `413` `upload_too_large`, by `Content-Length` and by counting a
+  chunked one; its `403`, `413` and `502` are the protocol's error object, and other methods get `405`. The route comes
+  before the game fallback. `go test ./internal/helper -run Upload`;
 - it opens a Chrome `--app` window on `http://127.0.0.1:7777/#token=…` with its own profile (`-no-open` skips that; it also skips it when the game is installed as a Chrome app, see
   `docs/releasing.md`).
   The token is kept in a file and survives restarts, so an open game window reconnects by itself.

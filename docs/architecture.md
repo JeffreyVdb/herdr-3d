@@ -123,6 +123,12 @@ MacBook (M2 Max)                                   devbox (Linux)
   in a child process, the bridge's own executable in a hidden worker mode, that is killed at a 5 s deadline: the sanitiser
   decides what a document may contain, the killed process what it may cost. PNG and WebP are decoded in the bridge. Clients fetch by hash (`?h=`, immutable when current) and keep one
   texture per hash.
+- **Image upload** (#51, built; details in `protocol.md` "Image upload"): a screenshot pasted into a prompt reaches the
+  agent as a file path. `POST /upload` (raw bytes, one image) is HTTP on the bridge socket, like the logos: `h3d-helper`
+  guards it and proxies it, the bridge (`internal/upload`) sniffs the type, caps 25 MiB on the bytes and streams it as
+  one multipart request to **Drop Zone** (`--dropzone-url`), which stores it and answers the absolute path; the game puts
+  the path in an `[Image #n: <path>]` marker. Nothing is held in memory and nothing is stored for a refused or aborted
+  image.
 - **Identity**: bridge-owned worker UUID; reconcile after restarts via persisted pane-label marker (written by the bridge
   on the workers it hires) → `agent_session` id → label+cwd → else new worker. Tokens vanish on herdr restart and workspace ids can be reused: re-apply tokens only
   after reconciliation.

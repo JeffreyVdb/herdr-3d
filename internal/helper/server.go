@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/upload"
 	"github.com/JeffreyVdb/herdr-3d/internal/version"
 )
 
@@ -99,7 +100,7 @@ func NewServer(cfg ServerConfig) *Server {
 
 // Handler serves everything. Every request must name the helper in its
 // Host header (no DNS rebinding); /ws and /api/open also need a same-origin
-// Origin and the token; /logo needs the token, and an Origin, when the browser
+// Origin and the token; /logo and POST /upload need the token, and an Origin, when the browser
 // sends one, must be the helper's own.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -114,6 +115,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /logo/{id}", s.checkLogo(logos))
 	mux.HandleFunc("/logo/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	})
+	// #51 images for prompts: POST /upload goes to the bridge, guarded like
+	// /logo, and wins over the site fallback. Other methods are refused.
+	mux.Handle("POST /upload", s.checkLogo(s.limitUpload(s.uploadProxy())))
+	mux.HandleFunc("/upload", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", "POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	})
 	mux.Handle("POST /api/open", s.open())
@@ -142,6 +150,10 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) forbid(w http.ResponseWriter, r *http.Request, why string) {
 	s.cfg.Log.Warn("request refused", "why", why, "path", r.URL.Path, "host", r.Host, "origin", r.Header.Get("Origin"), "remote", r.RemoteAddr)
+	if r.URL.Path == "/upload" { // the game reads its error code
+		uploadError(w, http.StatusForbidden, "forbidden", "the helper refused the request ("+why+")")
+		return
+	}
 	http.Error(w, "forbidden: "+why, http.StatusForbidden)
 }
 
@@ -404,6 +416,76 @@ func (s *Server) logoProxy() http.Handler {
 			st := s.cfg.Bridge.Status()
 			s.cfg.Log.Warn("bridge unreachable", "tunnel", st.State, "err", err)
 			http.Error(w, "bridge unreachable (tunnel "+st.State+")", http.StatusBadGateway)
+		},
+	}
+}
+
+// maxUploadBody is what the helper lets through on POST /upload: the bridge's
+// cap (upload.MaxBytes) and a little slack, so that an image of exactly the cap
+// is never cut off here. The bridge counts the bytes and gives the exact
+// verdict; this only keeps a runaway body out of the tunnel.
+const maxUploadBody = upload.MaxBytes + 4<<10
+
+// limitUpload refuses a body over maxUploadBody, by Content-Length at once and
+// by counting while it streams (a chunked or unlabelled body included). It
+// never truncates.
+func (s *Server) limitUpload(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > maxUploadBody {
+			uploadTooLarge(w)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBody)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// uploadError answers with the protocol's error object and a status, as the
+// bridge does for /upload.
+func uploadError(w http.ResponseWriter, status int, code, msg string) {
+	b, _ := json.Marshal(map[string]string{"t": "error", "code": code, "message": msg})
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_, _ = w.Write(append(b, '\n'))
+}
+
+func uploadTooLarge(w http.ResponseWriter) {
+	uploadError(w, http.StatusRequestEntityTooLarge, "upload_too_large", fmt.Sprintf("the image is over %d MiB", upload.MaxBytes>>20))
+}
+
+// uploadProxy forwards POST /upload to the bridge through the tunnel. Only
+// ?label= and ?n= go on: the token, Origin, Cookie and Authorization stay
+// here.
+func (s *Server) uploadProxy() http.Handler {
+	return &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			q := url.Values{}
+			for _, k := range []string{"label", "n"} {
+				if v, ok := pr.In.URL.Query()[k]; ok && len(v) > 0 {
+					q.Set(k, v[0])
+				}
+			}
+			pr.Out.URL = &url.URL{Scheme: "http", Host: "herdr-world", Path: "/upload", RawQuery: q.Encode()}
+			pr.Out.Host = "herdr-world"
+			pr.Out.Header.Del("Origin")
+			pr.Out.Header.Del("Cookie")
+			pr.Out.Header.Del("Authorization")
+		},
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return s.cfg.Bridge.Dial(ctx) },
+			// The bridge answers after Drop Zone did: its own limit is upload.DefaultTimeout.
+			ResponseHeaderTimeout: upload.DefaultTimeout + 15*time.Second,
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				uploadTooLarge(w)
+				return
+			}
+			st := s.cfg.Bridge.Status()
+			s.cfg.Log.Warn("bridge unreachable", "tunnel", st.State, "err", err)
+			uploadError(w, http.StatusBadGateway, "bridge_unreachable", "the bridge is not reachable (tunnel "+st.State+")")
 		},
 	}
 }
