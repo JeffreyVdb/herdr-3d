@@ -40,6 +40,7 @@ class FakeView {
   }
   applyUpdates(): void {}
   setBlocked(): void {}
+  setAsk(): void {}
   attachTabs(): void {
     this.tabs++;
   }

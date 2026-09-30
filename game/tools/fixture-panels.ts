@@ -5,7 +5,7 @@
 // - worker.prompt: an idle / done agent starts `working` one step later (the
 //   ack follows), then is `done` three steps after that; a `working` one gets
 //   the ack at once with `queued: true` and takes the prompt when its turn
-//   ends. A `blocked` one (answer its question first), a plain shell (no
+//   ends. A `blocked` one or one with an `ask` (answer its question first), a plain shell (no
 //   `agent_kind`) or an asleep floor is `invalid_state`. `simfail=prompt_failed` fails the next prompt
 //   (`prompt_failed`), `simfail=prompt_retried` acks it `retried: true`.
 // - worker.answer: needs the question's hash (else `stale`, after a
@@ -114,6 +114,11 @@ export class PanelsSim {
     });
   }
 
+  /** #57: a turn on a prompt that came another way (a dismissed ask's prompt). */
+  work(send: Send, w: Worker, title: string): void {
+    this.startTurn(send, w, title);
+  }
+
   // ---- worker.prompt -----------------------------------------------------------
 
   prompt(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void {
@@ -123,6 +128,7 @@ export class PanelsSim {
     const w = this.worker(a);
     if (!w.agent_kind) throw this.h.error('invalid_state', `invalid state: ${w.name ?? w.id} is a plain shell (use worker.keys)`);
     if (w.status === 'blocked') throw this.h.error('invalid_state', `invalid state: ${w.name ?? w.id} is blocked (answer its question with worker.answer)`);
+    if (w.ask) throw this.h.error('invalid_state', `invalid state: ${w.name ?? w.id} waits on its question: answer it first (worker.answer_ask)`);
     if (!text || bytes(text) > 16 * 1024 || text.includes('\0')) throw this.bad('text must be 1 byte to 16 KiB, without NUL');
     if (this.h.takeFail('prompt_failed')) {
       this.h.after(this.h.stepMs, () => fail(this.h.error('prompt_failed', `prompt_failed: ${w.name ?? 'the agent'} did not start working, even after one more Enter (simulated)`)));

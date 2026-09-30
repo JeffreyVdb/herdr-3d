@@ -137,6 +137,8 @@ export interface Worker {
   question?: Question;
   /** M5: its agent session's token usage and cost estimate. */
   usage?: Usage;
+  /** #57: the structured question its agent's latest turn waits on, read from its transcript (whatever `status` says). */
+  ask?: Ask;
 }
 
 export interface World {
@@ -373,6 +375,8 @@ export interface CommandArgs {
   'worker.prompt': { id: string; text: string };
   /** Exactly one of `choice` or `cancel`. */
   'worker.answer': { id: string; hash: string; choice?: number; cancel?: boolean };
+  /** #57: an answer for every question of the worker's ask, or `cancel` (Esc on its dialog) with an optional `prompt` sent after. */
+  'worker.answer_ask': { id: string; tool_use_id: string; answers?: AskAnswerArg[]; cancel?: boolean; prompt?: string };
   'worker.changes': { id: string };
   'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number };
   'terminal.unwatch': { id: string };
@@ -486,6 +490,72 @@ export interface PromptAck {
 export interface AnswerAck {
   sent: string[];
   resolved: boolean;
+}
+
+// #57: agents' structured questions (Claude's AskUserQuestion, Codex's request_user_input), docs/protocol.md
+// "Laptops: asks".
+
+export interface AskOption {
+  label: string;
+  description?: string;
+  /** Claude's markdown preview of the option (capped). */
+  preview?: string;
+}
+
+export interface AskQuestion {
+  /** Codex's question id; absent for Claude. */
+  id?: string;
+  header: string;
+  question: string;
+  /** Several options may be picked. */
+  multi: boolean;
+  /** It takes a typed answer too (Claude's "Type something", Codex's "None of the above" with notes). */
+  other: boolean;
+  /** The typed answer is masked on the agent's screen. */
+  secret?: boolean;
+  options: AskOption[];
+  truncated?: boolean;
+}
+
+/** A worker's pending ask. */
+export interface Ask {
+  tool_use_id: string;
+  source: string;
+  agent: 'claude' | 'codex' | string;
+  questions: AskQuestion[];
+  /** When the agent asked, unix ms. */
+  since: number;
+}
+
+/** One question's answer in `worker.answer_ask`: option numbers (1-based) and/or a typed `other`. */
+export interface AskAnswerArg {
+  question: number;
+  choices?: number[];
+  other?: string;
+}
+
+/** `worker.answer_ask` ack: the steps taken (typed text is "text") and whether the transcript recorded the answer. */
+export interface AnswerAskAck {
+  sent: string[];
+  resolved: boolean;
+  prompted?: boolean;
+}
+
+/** A recorded answer on an ask's transcript card. */
+export interface AskAnswer {
+  question: number;
+  answer: string;
+  labels?: string[];
+  other?: string;
+  notes?: string;
+}
+
+/** An AskUserQuestion / request_user_input tool item's question card. */
+export interface TranscriptAsk {
+  agent: string;
+  questions: AskQuestion[];
+  outcome: 'pending' | 'answered' | 'declined' | 'clarify' | 'interrupted' | string;
+  answers?: AskAnswer[];
 }
 
 /** M5: a changed file in `worker.changes`. */
@@ -750,6 +820,8 @@ export interface TranscriptItem {
     diff?: TranscriptDiff;
     /** Every file of a patch that changes more than one (`diff` is the first). */
     diffs?: TranscriptDiff[];
+    /** #57: an ask call's question card. */
+    ask?: TranscriptAsk;
   };
   /** `agent_id` is '' until the call's result names it (its timeline: `transcript.page` with `agent`). */
   subagent?: { agent_id: string; description: string; status: string };

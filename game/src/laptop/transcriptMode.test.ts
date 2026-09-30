@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
-import type { Question, TranscriptItem } from '../net/protocol';
+import type { Ask, Question, TranscriptItem } from '../net/protocol';
 import { ImageFeed } from './imageFeed';
 import { subagentItems, TranscriptMode, type MountTranscript, type SeatMode, type TranscriptRenderHost } from './transcriptMode';
 import { TranscriptWatches, watchAck } from './transcriptWatches';
@@ -36,6 +36,9 @@ class FakeView {
   }
   setBlocked(q: Question | null): void {
     this.calls.push(`blocked ${q?.hash ?? 'null'}`);
+  }
+  setAsk(a: Ask | null): void {
+    this.calls.push(`ask ${a?.tool_use_id ?? 'null'}`);
   }
   attachTabs(): void {}
   hasItem(): boolean {

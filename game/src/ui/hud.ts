@@ -10,7 +10,7 @@ import { AboutDialog } from './about';
 import type { LimitsPrefs } from './limitsPrefs';
 import { MusicCredits } from './credits';
 import type { BuildInfo } from '../version';
-import { answerKeyEls, promptBarAria, promptBarKey, usageChip } from './promptBar';
+import { answerKeyEls, promptBarAria, promptBarKey, usageChip, askChip } from './promptBar';
 // M6 crew: role, run, issue and report on the bar.
 import { crewBarKey, crewLine } from './crewBar';
 import { usageTotal, type UsageTotal } from '../world/usage';
@@ -382,6 +382,8 @@ export class Hud {
       // M5
       const usage = usageChip(w);
       if (usage) line.append(usage);
+      const asks = askChip(w); // #57
+      if (asks) line.append(asks);
       for (const [k, label, live] of KEYS) {
         const st = this.keyStates.get(k) ?? { live, why: 'Not wired up yet' };
         if (!st.live) {

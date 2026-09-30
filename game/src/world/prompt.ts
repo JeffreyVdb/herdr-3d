@@ -5,6 +5,7 @@
  */
 
 import { answerable } from './answer';
+import { askOf, isSimple } from './ask';
 import type { FloorView, WorkerView } from './store';
 
 export const PROMPT_MAX_BYTES = 16 * 1024;
@@ -17,6 +18,13 @@ export function promptBlocker(v: WorkerView | null, floor: Pick<FloorView, 'asle
   if (floor?.transition === 'sleeping') return `${v.worker.session} is going to sleep.`;
   if (floor?.asleep) return `${v.worker.session} is asleep. Wake it from the elevator (L) to prompt ${v.name}.`;
   if (!v.worker.agent_kind && !v.harness) return `${v.name} is a plain shell, not a coding agent: sit at its laptop (E) to type there.`;
+  // #57: an agent waiting on its structured question takes no prompt either (its dialog would get the text).
+  const ask = askOf(v.worker);
+  if (ask) {
+    return isSimple(ask)
+      ? `${v.name} is asking a question first: pick an answer on its card (1–${Math.min(ask.questions[0]?.options.length ?? 1, 9)}, 0 dismisses) or at its laptop (E).`
+      : `${v.name} is asking ${ask.questions.length > 1 ? `${ask.questions.length} questions` : 'a question'} first: answer at its laptop (E).`;
+  }
   // The bridge refuses a prompt while the agent waits on its screen (invalid_state): the question comes first.
   // (M6: an over-cap orchestrator needs you too, but its agent waits for exactly that prompt.)
   if (v.worker.status === 'blocked') {

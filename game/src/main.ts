@@ -114,7 +114,7 @@ export interface H3DDebug {
   /** M5: how much of a worker's frozen laptop screen is not black (0–1), null when it is not frozen. */
   frozenInk(workerId: string): number | null;
   /** M5: the seat bar (shown, its tape, its note, ok / busy / error / offline); M16: which mode it shows. */
-  seat(): { shown: boolean; tape: string; note: string; state: string; mode?: string };
+  seat(): { shown: boolean; tape: string; note: string; state: string; mode?: string; ask?: string | null };
   /** M16: the seated view's mode, its transcript watches and items, the overlay's box (null: hidden) and whether the view is mounted. */
   transcript(): ReturnType<import('./laptop').Laptops['transcriptState']> | null;
   /** M16 phase 2: the prints on the desks near you (per desk: worker, prints with tray/blank/loaded/slot x,z), the textures' ledger, the transcript watches and lightboxes opened from prints. */
@@ -126,6 +126,8 @@ export interface H3DDebug {
   /** M16: the fixture simulator's `sim.transcript` (push items to a watch, close it) and `sim.transcripts` (its watches). */
   simTranscript(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   simTranscripts(): Promise<{ watches: number; ids: string[] } | null>;
+  /** #57: the fixture simulator's `sim.ask` (a worker's agent asks, or the terminal ends the ask). */
+  simAsk(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M16 phase 2: the simulator's `sim.image` (makes a PNG, answers its ImageRef, to push in `simTranscript` items). */
   simImage(args: Record<string, unknown>): Promise<Record<string, unknown> | null>;
   /** M16 phase 2: the image feeds alive (one per worker whose images are on screen) and the object URLs they hold. */
@@ -302,6 +304,12 @@ const h3d: H3DDebug = {
     if (!app) return { ok: false, code: 'not_started' };
     // `sim.transcript` is the fixture simulator's, not a bridge command.
     const r = await app.client.request('sim.transcript' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  simAsk: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    // `sim.ask` is the fixture simulator's, not a bridge command.
+    const r = await app.client.request('sim.ask' as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
   simImage: async (args) => {

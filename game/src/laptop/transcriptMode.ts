@@ -1,5 +1,5 @@
 import type { CommandResult } from '../net/client';
-import type { CommandArgs, ImageRef, Question, TranscriptItem, TranscriptWatchAck } from '../net/protocol';
+import type { AnswerAskAck, Ask, CommandArgs, ImageRef, Question, TranscriptItem, TranscriptWatchAck } from '../net/protocol';
 import { failureText } from '../ui/messages';
 import { MAX_PROMPT } from './keys';
 import type { mountTranscript, TranscriptRenderHost, TranscriptView } from './transcriptRender';
@@ -50,7 +50,7 @@ export interface OverlayRect {
 }
 
 export interface TranscriptModeHost {
-  send<T extends 'worker.prompt' | 'worker.answer' | 'transcript.page'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
+  send<T extends 'worker.prompt' | 'worker.answer' | 'worker.answer_ask' | 'transcript.page'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list). */
   feed(id: string): ImageFeed | null;
   /** Loads the render module (`loadRenderer`; tests pass a fake). */
@@ -116,6 +116,9 @@ interface Sitting {
   index: Map<string, number>;
   question: Question | null;
   questionKey: string;
+  /** #57: the worker's ask, and its tool_use_id + since (so a new one is told from the same one). */
+  ask: Ask | null;
+  askKey: string;
   box: HTMLElement | null;
   view: TranscriptView | null;
   /** The panes the two views are in (the overlay itself when the host makes none). */
@@ -198,7 +201,7 @@ export class TranscriptMode {
     const wasReading = canRead && readModes(this.host.storage).includes(id);
     const last: ReadMode = wasReading && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
     this.s = {
-      id, name, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', box: null, view: null,
+      id, name, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false,
     };
@@ -464,6 +467,7 @@ export class TranscriptMode {
     }
     s.view.setItems([...s.items]);
     if (s.question) s.view.setBlocked(s.question);
+    if (s.ask) s.view.setAsk(s.ask);
     if (s.mode === 'transcript') this.focus();
     if (s.reveal) void this.revealNow(s);
   }
@@ -496,6 +500,18 @@ export class TranscriptMode {
           if (!live() || r.ok) return;
           this.host.status('error', failureText('worker.answer', r.code, r.message, { worker: s.name }));
         });
+      },
+      onAnswerAsk: async (args) => {
+        if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
+        const r = await this.host.send('worker.answer_ask', { ...args, id: s.id });
+        if (r.ok) {
+          const ack = (r.data ?? {}) as Partial<AnswerAskAck>;
+          if (live() && ack.resolved) this.host.status('ok', args.cancel ? `Dismissed ${s.name}’s question` : `Answered ${s.name}`);
+          return { ok: true, resolved: ack.resolved === true };
+        }
+        const message = failureText('worker.answer_ask', r.code, r.message, { worker: s.name });
+        if (live() && r.code !== 'stale') this.host.status('error', message);
+        return { ok: false, code: r.code, message };
       },
       onSwitchToTerminal: () => {
         if (live()) this.setMode('terminal');
@@ -579,6 +595,22 @@ export class TranscriptMode {
     s.questionKey = key;
     s.question = q;
     s.view?.setBlocked(q);
+  }
+
+  /** #57: the worker's ask (from the store; null when there is none). */
+  asked(ask: Ask | null): void {
+    const s = this.s;
+    if (!s) return;
+    const key = ask ? `${ask.tool_use_id}\u0000${JSON.stringify(ask.questions)}` : '';
+    if (key === s.askKey) return;
+    s.askKey = key;
+    s.ask = ask;
+    s.view?.setAsk(ask);
+  }
+
+  /** The seated worker's ask, while it waits on one. */
+  get ask(): Ask | null {
+    return this.s?.ask ?? null;
   }
 
   /** Where the monitor's screen is this frame (null: off the view). */

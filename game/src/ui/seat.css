@@ -209,3 +209,43 @@
     display: none;
   }
 }
+
+/* #57: the agent asks a question while you look at its terminal: how to answer it in the transcript view (a row of
+   its own only then: an empty row would still take its gap). */
+.seat[data-asking] {
+  grid-template-areas:
+    'ask ask ask'
+    'line mode stand'
+    'keys keys keys';
+}
+.seat-ask {
+  grid-area: ask;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: -2px 0 0;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 650;
+}
+.seat-ask[hidden] {
+  display: none;
+}
+.seat-ask-tag {
+  flex: none;
+  padding: 2px 8px 1px;
+  font-size: 10.5px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 0.6, 'MONO' 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--needs_you, #e8413a);
+  border-radius: 2px;
+  transform: rotate(-1.5deg);
+}
+.seat-ask .key kbd + kbd {
+  margin-left: -2px;
+}

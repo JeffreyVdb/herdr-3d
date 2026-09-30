@@ -123,7 +123,7 @@ const $$ = <E extends Element = HTMLElement>(sel: string) => [...container.query
 const row = (id: string) => $(`[data-id="${id}"]`) as HTMLElement;
 
 function mount(feed: ImageFeed | null): TranscriptView {
-  const host: TranscriptRenderHost = { images: feed, onPromptSubmit: () => Promise.resolve(true), onAnswer: () => {}, onSwitchToTerminal: () => {}, loadSubagent: async () => [] };
+  const host: TranscriptRenderHost = { images: feed, onPromptSubmit: () => Promise.resolve(true), onAnswer: () => {}, onAnswerAsk: async () => ({ ok: true, resolved: true }), onSwitchToTerminal: () => {}, loadSubagent: async () => [] };
   view = mountTranscript(container, host);
   return view;
 }

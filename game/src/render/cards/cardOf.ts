@@ -1,4 +1,5 @@
 import { answerable, choicesOf, questionAbout, questionLine } from '../../world/answer';
+import { askLine, askOf, isSimple, optionLabel, quickReplyBlocker } from '../../world/ask';
 import { taskLine } from '../../world/derive';
 import type { WorkerView } from '../../world/store';
 import { usageText } from '../../world/usage';
@@ -13,8 +14,16 @@ import { withCrew } from './crewCard';
  */
 export function cardOf(v: WorkerView, focus = false): CardData {
   const card: CardData = { name: v.name, display: v.display, task: taskLine(v.worker) };
-  const q = v.display === 'needs_you' ? answerable(v.worker.question) : null;
-  if (q) {
+  // #57: an agent's structured question wins over what its screen shows: its digits when one pick answers it, else
+  // where to answer it.
+  const ask = v.display === 'needs_you' ? askOf(v.worker) : null;
+  const q = v.display === 'needs_you' && !ask ? answerable(v.worker.question) : null;
+  if (ask) {
+    const q0 = ask.questions[0] as NonNullable<(typeof ask.questions)[0]>;
+    card.ask = isSimple(ask)
+      ? { text: q0.question.replace(/\s+/g, ' ').trim(), choices: q0.options.map((o, i) => ({ n: i + 1, label: optionLabel(o.label).text })), ...(q0.header ? { about: [q0.header] } : {}) }
+      : { text: askLine(ask), choices: [], about: [`${quickReplyBlocker(ask)}: answer at the laptop (E)`] };
+  } else if (q) {
     const text = questionLine(q);
     const choices = choicesOf(q).map((c) => ({ n: c.n, label: c.label }));
     const about = questionAbout(q);

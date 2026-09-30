@@ -25,6 +25,7 @@ function fakeHost(load: (id: string) => Promise<TranscriptItem[]> = async () => 
       return Promise.resolve(host.sendOk);
     },
     onAnswer: (hash, n, cancel) => host.answers.push([hash, n, cancel]),
+    onAnswerAsk: async () => ({ ok: true, resolved: true }),
     onSwitchToTerminal: () => host.terminal++,
     loadSubagent: (id) => {
       host.loads.push(id);
