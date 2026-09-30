@@ -11,8 +11,11 @@ import { askAgent, askOf } from '../world/ask';
 import type { WorldStore } from '../world/store';
 import { DESK_H, SEAT_OFFSET } from '../world/layout';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
-import { InputLanes, InputQueue, seatedKey, textItems } from './keys';
+import { InputLanes, InputQueue, seatedKey, textItems, type ZoomAction } from './keys';
 import { pasteImages } from './pasteImages';
+import { screenTheme } from './paint';
+import type { ThemeLoader } from '../ui/themeLoader';
+import { stepZoom, ZOOM, type ThemePreset } from '../ui/themes';
 import { ImageFeeds, type ImageFeed } from './imageFeed';
 import { decodeBitmap, Prints, printsParam, PRINT_WATCH_LIMIT } from './prints';
 import { LaptopTerminal, LIVE_SIZE } from './terminal';
@@ -57,6 +60,8 @@ export interface LaptopHost {
   insets(): { top: number; bottom: number };
   /** M16: where the transcript overlay goes (the HUD, fixed over the viewport). */
   layer: HTMLElement;
+  /** #59: the transcript's and the terminal's presets and zooms, hidden tool calls; none: Quiet at 100% (tests). */
+  themes?: ThemeLoader;
 }
 
 /** The HUD while you sit at a laptop. */
@@ -72,7 +77,16 @@ export interface SeatView {
    * in the transcript view (`key`: T while you have not typed into the terminal since, else Ctrl+Esc).
    */
   asking?(ask: { who: string; key: 'T' | 'Ctrl+Esc' } | null): void;
+  /** #59: one of the bar's own controls has the keyboard (the terminal's preset and zoom). */
+  owns?(t: EventTarget | null): boolean;
+  /** #59: the keyboard to the terminal's preset and zoom (Ctrl+,); false when there are none. */
+  focusLook?(): boolean;
+  /** #59: `t` is one of those controls. */
+  inLook?(t: EventTarget | null): boolean;
 }
+
+/** Keys a focused control of the seat bar keeps (moving between its controls, pressing one). */
+const CONTROL_KEYS = new Set(['Tab', 'Enter', ' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']);
 
 /** Where the game is this frame (what the controller needs to plan and to keep you seated). */
 export interface LaptopFrame {
@@ -246,6 +260,7 @@ export class Laptops {
       ...(this.host.upload ? { upload: this.host.upload } : {}),
       status: (kind, text) => this.host.seat.status(kind, text),
       modeChanged: (mode) => this.onMode(mode),
+      ...(host.themes ? { prefs: host.themes.prefs } : {}),
     });
     this.transcripts = new TranscriptWatches({
       send: (t, args) => this.host.watch(t, args),
@@ -268,7 +283,50 @@ export class Laptops {
       closed: (id, reason) => this.onTranscriptClosed(id, reason),
       now: () => performance.now(),
     });
+    // #59: the screens follow the preset once its font can draw, and the seated one the zoom.
+    host.themes?.onReady((t) => this.setLook(t));
+    host.themes?.prefs.onChange((what) => {
+      if (what === 'terminalZoom') for (const t of this.terms.values()) t.setZoom(this.zoom);
+    });
   }
+
+  /** The terminal's own zoom (the transcript has another). */
+  private get zoom(): number {
+    return this.host.themes?.prefs.zoom('terminal') ?? ZOOM.reset;
+  }
+
+  /** #59: every screen (live and pooled) in the preset's font and colours. */
+  private setLook(t: ThemePreset): void {
+    for (const term of [...this.terms.values(), ...this.pool]) term.setLook(t.mono.stack, screenTheme(t.screen));
+  }
+
+  /**
+   * #59: A−, A+ and reset, from the keys or the wheel, for the view that is up: the transcript's zoom while you read
+   * (its strip shows the level), the terminal's otherwise (the seat bar shows it). The Images tab has no zoom.
+   */
+  zoomBy(a: ZoomAction): void {
+    const prefs = this.host.themes?.prefs;
+    if (!prefs || !this.seat) return;
+    const mode = this.transcript.mode;
+    if (mode === 'images') return;
+    const view = mode === 'transcript' ? 'transcript' : 'terminal';
+    prefs.setZoom(view, a === 'zoom-reset' ? ZOOM.reset : stepZoom(prefs.zoom(view), a === 'zoom-in' ? 1 : -1));
+  }
+
+  /** Ctrl+wheel (a trackpad's pinch too) over the view while seated: a step per notch, the rest carried over. */
+  private wheelAcc = 0;
+  private readonly onWheel = (e: WheelEvent): void => {
+    if (!this.seat || !e.ctrlKey || !e.cancelable) return;
+    e.preventDefault();
+    const px = e.deltaMode === 1 ? e.deltaY * 40 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
+    this.wheelAcc += px;
+    const step = 60;
+    while (Math.abs(this.wheelAcc) >= step) {
+      const dir = this.wheelAcc > 0 ? -1 : 1;
+      this.wheelAcc -= -dir * step;
+      this.zoomBy(dir > 0 ? 'zoom-in' : 'zoom-out');
+    }
+  };
 
   // ---- bridge -------------------------------------------------------------------
 
@@ -300,6 +358,9 @@ export class Laptops {
     let t = this.terms.get(id);
     if (!t) {
       t = this.pool.pop() ?? new LaptopTerminal();
+      const look = this.host.themes?.ready;
+      if (look) t.setLook(look.mono.stack, screenTheme(look.screen));
+      t.setZoom(this.zoom);
       const seated = this.seat?.id === id;
       const size = seated ? this.seatedSize : LIVE_SIZE;
       t.setSize(size.width, size.height);
@@ -504,6 +565,9 @@ export class Laptops {
     term?.setGlance(false);
     this.meshes?.setFull(v.desk);
     this.input = this.lanes.sit(id);
+    // #59: Ctrl+wheel zooms the text while seated only (a non-passive listener, so it can keep the browser's zoom off).
+    this.wheelAcc = 0;
+    window.addEventListener('wheel', this.onWheel, { passive: false });
     this.host.seat.show(v.name, this.mac);
     this.host.seat.status('ok', null);
     this.host.seat.focus();
@@ -528,6 +592,7 @@ export class Laptops {
     const s = this.seat;
     if (!s) return;
     this.seat = null;
+    window.removeEventListener('wheel', this.onWheel);
     this.lanes.stand();
     this.input = null;
     this.transcript.stand();
@@ -616,6 +681,26 @@ export class Laptops {
   key(e: KeyboardEvent): boolean {
     if (!this.seat) return false;
     const k = seatedKey(e, this.mac);
+    if (k.action === 'zoom-in' || k.action === 'zoom-out' || k.action === 'zoom-reset') {
+      e.preventDefault();
+      this.zoomBy(k.action);
+      return true;
+    }
+    // #59: Ctrl+, from any view: the terminal's preset and zoom on the seat bar (works without a transcript, leaves the
+    // pane its Tab); Esc there hands the keyboard back to the view that is up instead of standing you up.
+    if (k.action === 'look') {
+      e.preventDefault();
+      this.host.seat.focusLook?.();
+      return true;
+    }
+    if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && this.host.seat.inLook?.(e.target)) {
+      e.preventDefault();
+      if (this.transcript.shown) this.transcript.focus();
+      else this.host.seat.focus();
+      return true;
+    }
+    // #59: on the seat bar's own controls (the terminal's preset and zoom), moving and pressing are theirs.
+    if (CONTROL_KEYS.has(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && this.host.seat.owns?.(e.target)) return true;
     if (this.transcript.shown) return this.readingKey(e, k.action === 'toggle-transcript');
     // #57: T answers the question in the transcript view (once you type into the terminal, T is a letter again).
     if (this.askId && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
@@ -970,6 +1055,11 @@ export class Laptops {
   /** The text on a live laptop's screen, one string per row (null when it is not live). */
   text(id: string): string[] | null {
     return this.terms.get(id)?.lines() ?? null;
+  }
+
+  /** #59: the font the seated screen draws with (test hook). */
+  seatedFont(): string | null {
+    return this.seat ? (this.terms.get(this.seat.id)?.fontStack ?? null) : null;
   }
 
   get watchCount(): number {

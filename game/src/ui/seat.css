@@ -35,7 +35,7 @@
   padding: 3px 9px 2px;
   font-size: 12px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 0.6, 'MONO' 1;
+  font-family: var(--font-mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink);
@@ -75,6 +75,7 @@
 }
 .seat-stand {
   grid-area: stand;
+  justify-self: end;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -102,7 +103,7 @@
   border: 1px solid rgb(255 255 255 / 22%);
   border-bottom-width: 2px;
   font: 700 11px/1 var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
 }
 .seat-keys {
   grid-area: keys;
@@ -119,6 +120,13 @@
 }
 .seat-aside {
   color: var(--text-on-ink-2);
+  /* #59: it gives way (an ellipsis, the whole line in its tooltip) so the terminal's controls fit beside the keys
+     without a second row: a taller bar would shrink the laptop's screen. */
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* M16: which view the laptop shows; the lit half is the one up. */
 .seat-mode {
@@ -150,7 +158,7 @@
   border: 1px solid rgb(255 255 255 / 22%);
   border-bottom-width: 2px;
   font: 700 11px/1 var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
 }
 .seat-mode-opts {
   display: inline-flex;
@@ -238,7 +246,7 @@
   padding: 2px 8px 1px;
   font-size: 10.5px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 0.6, 'MONO' 1;
+  font-family: var(--font-mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #fff;
@@ -248,4 +256,111 @@
 }
 .seat-ask .key kbd + kbd {
   margin-left: -2px;
+}
+
+/* #59: the terminal's preset (three tiny screens in its colours) and zoom, at the keys row's end. */
+.seat-look {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.seat-look-label {
+  color: var(--text-on-ink-2);
+  font-size: 12px;
+  font-weight: 700;
+}
+/* In terminal mode the screen says whose controls these are: the key alone, so the keys row stays one line (a taller
+   bar would shrink the laptop's screen). */
+.seat[data-mode='terminal'] .seat-look-label {
+  font-size: 0;
+}
+.seat-themes,
+.seat-zoom {
+  display: inline-flex;
+  align-items: center;
+  /* As tall as the keys' caps beside them (20px): the bar keeps its height. */
+  padding: 1px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 28%);
+}
+.seat-theme,
+.seat-zoom-btn {
+  display: inline-grid;
+  place-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-on-ink-2);
+  font: 700 11.5px/1 var(--font);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.seat-theme[aria-checked='true'] {
+  background: var(--ink-2);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 22%);
+}
+.seat-swatch {
+  width: 16px;
+  height: 11px;
+  border-radius: 3px;
+  background:
+    linear-gradient(var(--sw-ac), var(--sw-ac)) 10px 6px / 3px 3px no-repeat,
+    linear-gradient(var(--sw-fg), var(--sw-fg)) 3px 3px / 9px 1.5px no-repeat,
+    linear-gradient(var(--sw-fg), var(--sw-fg)) 3px 7px / 5px 1.5px no-repeat,
+    var(--sw-bg);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 25%);
+}
+.seat-zoom-btn {
+  min-width: 26px;
+}
+.seat-zoom-btn:hover:not(:disabled),
+.seat-theme:hover {
+  background: var(--ink-2);
+  color: var(--text-on-ink);
+}
+.seat-zoom-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.seat-zoom-level {
+  min-width: 42px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.seat-theme:focus-visible,
+.seat-zoom-btn:focus-visible {
+  outline: 2px solid var(--sun);
+  outline-offset: 1px;
+}
+/* #59: a phone's width: whose laptop it is and Stand up share the first row, the switch (its keys on it) takes the
+   next (side by side they ran off the screen), and the keys row drops the switch's key it would repeat; the terminal's
+   controls keep their key (Ctrl+,) without the word. */
+@media (max-width: 560px) {
+  .seat {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'line stand'
+      'mode mode'
+      'keys keys';
+  }
+  .seat[data-asking] {
+    grid-template-areas:
+      'ask ask'
+      'line stand'
+      'mode mode'
+      'keys keys';
+  }
+  .seat-mode {
+    justify-self: start;
+  }
+  .seat-keys .seat-key-mode {
+    display: none;
+  }
+  .seat-look-label {
+    font-size: 0;
+  }
 }

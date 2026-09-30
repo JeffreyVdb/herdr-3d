@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { Terminal, type IBufferCell } from '@xterm/xterm';
 import type { TerminalFrame } from '../net/protocol';
-import { paintBuffer } from './paint';
+import { MONO, paintBuffer, SCREEN_THEME, type ScreenTheme } from './paint';
 
 /**
  * A live screen's canvas (M6b: the desk monitor's terminal area, sharp for the
@@ -34,6 +34,10 @@ export class LaptopTerminal {
   private cursorHidden = false;
   /** M6b: the glance view (standing, the monitor read from a distance) or the whole screen (sitting at it). */
   private glance = true;
+  /** #59: the preset's font and colours, and the seated zoom (percent). */
+  private font = MONO;
+  private theme: ScreenTheme = SCREEN_THEME;
+  private zoom = 100;
   private dirty = false;
   private lastDraw = -Infinity;
   /** A frame has been painted since the last reset (before that, the laptop keeps its glow). */
@@ -103,6 +107,30 @@ export class LaptopTerminal {
     if (this.painted) this.paint(performance.now());
   }
 
+  /** #59: the preset's font (loaded before this is called) and colours; a painted screen is painted again at once. */
+  setLook(font: string, theme: ScreenTheme): void {
+    if (font === this.font && theme === this.theme) return;
+    this.font = font;
+    this.theme = theme;
+    this.repaint();
+  }
+
+  /** #59: the seated zoom, percent (the glance view ignores it). */
+  setZoom(zoom: number): void {
+    if (zoom === this.zoom) return;
+    this.zoom = zoom;
+    if (!this.glance) this.repaint();
+  }
+
+  get fontStack(): string {
+    return this.font;
+  }
+
+  private repaint(): void {
+    this.lastDraw = -Infinity;
+    if (this.painted) this.paint(performance.now());
+  }
+
   get glancing(): boolean {
     return this.glance;
   }
@@ -139,7 +167,7 @@ export class LaptopTerminal {
     paintBuffer(
       this.g,
       this.term.buffer.active,
-      { cols: this.term.cols, rows: this.term.rows, width: this.canvas.width, height: this.canvas.height, cursor: !this.cursorHidden, glance: this.glance },
+      { cols: this.term.cols, rows: this.term.rows, width: this.canvas.width, height: this.canvas.height, cursor: !this.cursorHidden, glance: this.glance, font: this.font, theme: this.theme, zoom: this.zoom },
       this.cell,
     );
     this.texture.needsUpdate = true;

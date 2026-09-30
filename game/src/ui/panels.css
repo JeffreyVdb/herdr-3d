@@ -116,7 +116,7 @@
   box-shadow: inset 0 2px 7px rgb(0 0 0 / 60%), 0 1px 0 rgb(255 255 255 / 8%);
   color: var(--sun);
   font: 800 24px/1 var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   letter-spacing: 0.06em;
   text-shadow: 0 0 8px rgb(255 194 51 / 45%);
 }
@@ -253,7 +253,7 @@
     0 2px 3px rgb(0 0 0 / 38%);
   color: #1c2540;
   font: 800 14px/1 var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   transition: background 200ms var(--ease), box-shadow 200ms var(--ease), color 200ms var(--ease);
 }
 .lift-num[data-empty]::after {
@@ -754,7 +754,7 @@
 .opt-num {
   font-size: 12px;
   font-weight: 700;
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   text-align: right;
   color: var(--text-on-ink-2);

@@ -1,10 +1,12 @@
 /* M16 phase 2: Conversation | Images, in the bar of both views. The lit half is the one up (as the seat bar's switch). */
 .seat-tabs {
+  flex: none;
   display: inline-flex;
+  white-space: nowrap;
   margin-left: 4px;
   padding: 2px;
   border-radius: 8px;
-  background: rgb(0 0 0 / 30%);
+  background: color-mix(in srgb, var(--tx-code-bg) 70%, transparent);
 }
 .seat-tab {
   display: inline-flex;
@@ -14,32 +16,31 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #9aa5c3;
+  color: var(--tx-text-2);
   font: inherit;
   font-size: 12px;
   font-weight: 650;
   cursor: pointer;
 }
 .seat-tab:hover {
-  color: #e4e9f6;
+  color: var(--tx-text);
 }
 .seat-tab[aria-selected='true'] {
-  background: var(--sun, #ffc233);
-  color: var(--ink, #1c2540);
+  background: var(--tx-sun);
+  color: var(--tx-on-sun);
   cursor: default;
 }
 .seat-tab:focus-visible {
-  outline: 2px solid #6f9bff;
+  outline: 2px solid var(--tx-blue);
   outline-offset: 1px;
 }
 .seat-tabs-n {
   min-width: 1.5em;
   padding: 0 5px;
   border-radius: 999px;
-  background: rgb(255 255 255 / 14%);
+  background: rgb(var(--tx-tint) / 14%);
   font-size: 11px;
   font-weight: 800;
-  font-variation-settings: 'MONO' 1;
   font-variant-numeric: tabular-nums;
   text-align: center;
 }

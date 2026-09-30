@@ -53,6 +53,8 @@ import { OpenPrDialog } from './ui/boards/openPr';
 // M10 limits
 import { LimitsWidget } from './ui/limits';
 import { LimitsPrefs } from './ui/limitsPrefs';
+import { ThemeLoader } from './ui/themeLoader';
+import { ViewPrefs } from './ui/themePrefs';
 import { can } from './world/boards';
 import { bannerVersion, type BuildInfo } from './version';
 
@@ -110,6 +112,8 @@ export class App {
   readonly store = new WorldStore();
   /** M10 limits: the always-on plan limits widget and what it remembers. */
   private readonly limitsPrefs = new LimitsPrefs();
+  /** #59: the transcript's and the terminal's presets (fonts, colours) and zooms, and hidden tool calls. */
+  readonly themes = new ThemeLoader(new ViewPrefs());
   readonly limitsWidget: LimitsWidget;
   readonly hud: Hud;
   readonly city: CityView;
@@ -380,7 +384,7 @@ export class App {
       paste: (t, files) => this.laptops.paste(t, files),
       stand: () => this.laptops.stand(),
       toggle: () => this.laptops.toggleTranscript(),
-    });
+    }, this.themes.prefs);
     this.laptops = new Laptops(
       {
         store: this.store,
@@ -392,6 +396,7 @@ export class App {
         seat: this.seatBar,
         insets: () => ({ top: parseFloat(this.hud.root.style.getPropertyValue('--topbar-bottom')) || 70, bottom: this.seatBar.el.getBoundingClientRect().height + 18 }),
         layer: this.hud.root,
+        themes: this.themes,
       },
       o.params,
     );

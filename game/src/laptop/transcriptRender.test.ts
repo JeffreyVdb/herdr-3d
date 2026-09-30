@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TranscriptItem } from '../net/protocol';
+import { ViewPrefs } from '../ui/themePrefs';
 import { duration, loadHighlighter, mountTranscript, parseHunk, stripAnsi, type BlockedQuestion, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
 
 interface FakeHost extends TranscriptRenderHost {
@@ -899,5 +900,221 @@ describe('the prompt box takes pasted screenshots (#64)', () => {
   it('the hint says a screenshot can be pasted', () => {
     mount();
     expect(box().dataset.placeholder).toMatch(/paste a screenshot to add it/);
+  });
+});
+
+describe('#59: hide tool calls, the preset, the zoom', () => {
+  const memory = (): Storage => {
+    const m = new Map<string, string>();
+    return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => void m.set(k, v), removeItem: (k) => void m.delete(k), clear: () => m.clear(), key: () => null, length: 0 };
+  };
+  const withPrefs = (prefs: ViewPrefs) => mount({ ...fakeHost(), prefs });
+  beforeEach(() => {
+    Element.prototype.scrollIntoView ??= function () {};
+  });
+  type Status = NonNullable<TranscriptItem['tool']>['status'];
+  const tool = (status: Status, name = 'Bash') => item('tool', { tool: { name, input_summary: 'ls', status } });
+  const askTool = () => item('tool', { tool: { name: 'AskUserQuestion', status: 'ok', ask: { questions: [{ question: 'Which?', header: 'Pick', options: [{ label: 'A' }, { label: 'B' }], multi_select: false }] } } as never });
+
+  it('hides tool rows (not subagents, not an agent’s question), and the choice outlives the view and the page', () => {
+    const st = memory();
+    const prefs = new ViewPrefs(st);
+    withPrefs(prefs);
+    view.setItems([item('user', { parts: [text('go')] }), tool('ok'), item('subagent', { subagent: { agent_id: 'a1', description: 'look', status: 'completed' } }), askTool(), item('assistant', { parts: [text('done')] })]);
+    const box = $('.tx-check-box') as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(($('.tx') as HTMLElement).dataset.tools).toBe('shown');
+    // The rows it would hide, and only those.
+    expect($$('.tx-toolrow').map((r) => r.dataset.id)).toEqual(['i2']);
+    expect($('.tx-check-n')?.textContent).toBe('1');
+    box.checked = true;
+    box.dispatchEvent(new Event('change'));
+    expect(prefs.hideTools).toBe(true);
+    expect(($('.tx') as HTMLElement).dataset.tools).toBe('hidden');
+    // Another view (the next seat), and the next page load, start with it ticked.
+    view.destroy();
+    withPrefs(new ViewPrefs(st));
+    expect(($('.tx-check-box') as HTMLInputElement).checked).toBe(true);
+    expect(($('.tx') as HTMLElement).dataset.tools).toBe('hidden');
+  });
+
+  it('the “new” chip does not count tool calls while they are hidden', () => {
+    const prefs = new ViewPrefs(null);
+    prefs.hideTools = true;
+    withPrefs(prefs);
+    const sc = $('.tx-scroll') as HTMLElement;
+    layout(sc, 3000);
+    view.setItems([item('user', { parts: [text('hi')] })]);
+    sc.scrollTop = 0;
+    sc.dispatchEvent(new Event('scroll'));
+    view.applyUpdates([tool('running'), tool('ok', 'Read'), item('assistant', { parts: [text('one')] }), item('subagent', { subagent: { agent_id: 'b', description: 'x', status: 'running' } })]);
+    const jump = $('.tx-jump') as HTMLButtonElement;
+    expect(jump.textContent).toBe('2 new · jump to latest');
+    // Shown again, they count: the two that came in hidden are unread rows you now see, and the new one.
+    prefs.hideTools = false;
+    view.applyUpdates([tool('ok')]);
+    expect(jump.textContent).toBe('5 new · jump to latest');
+  });
+
+  it('the “new” chip follows the checkbox: ticked, it drops the unread tool calls; unticked, they count again', () => {
+    const prefs = new ViewPrefs(null);
+    withPrefs(prefs);
+    const sc = $('.tx-scroll') as HTMLElement;
+    layout(sc, 3000);
+    view.setItems([item('user', { parts: [text('hi')] })]);
+    sc.scrollTop = 0;
+    sc.dispatchEvent(new Event('scroll'));
+    const jump = $('.tx-jump') as HTMLButtonElement;
+    view.applyUpdates([tool('ok')]);
+    expect(jump.textContent).toBe('1 new · jump to latest');
+    // The only unread row is a tool call: hidden, nothing new shows.
+    prefs.hideTools = true;
+    expect(jump.hidden).toBe(true);
+    expect(jump.textContent).toBe('');
+    // A reply still counts; the tool call does not while hidden.
+    view.applyUpdates([item('assistant', { parts: [text('done')] })]);
+    expect(jump.textContent).toBe('1 new · jump to latest');
+    prefs.hideTools = false;
+    expect(jump.textContent).toBe('2 new · jump to latest');
+    // Read (at the bottom): nothing is new whatever the checkbox says.
+    sc.scrollTop = 3000;
+    sc.dispatchEvent(new Event('scroll'));
+    expect(jump.hidden).toBe(true);
+    prefs.hideTools = true;
+    prefs.hideTools = false;
+    expect(jump.hidden).toBe(true);
+  });
+
+  it('a hidden tool call that failed before the view mounted still shows on the strip (this turn’s, not old ones)', () => {
+    const prefs = new ViewPrefs(null);
+    prefs.hideTools = true;
+    withPrefs(prefs);
+    const busy = $('.tx-busy') as HTMLButtonElement;
+    const failed = (id: string, s: number, name: string): TranscriptItem => ({ id, seq: s, ts: Date.now(), kind: 'tool', tool: { name, input_summary: 'x', status: 'error' } });
+    // An old turn's failure (the agent went on, you answered since) and this turn's, plus one still running.
+    view.setItems([
+      item('user', { parts: [text('first')] }),
+      failed('old', 10, 'Edit'),
+      item('assistant', { parts: [text('fixed it')] }),
+      { ...item('user', { parts: [text('again')] }), seq: 20 },
+      failed('now', 30, 'Read'),
+      { id: 'run', seq: 31, ts: Date.now() - 5000, kind: 'tool', tool: { name: 'Bash', input_summary: 'make', status: 'running' } },
+    ]);
+    expect(busy.hidden).toBe(false);
+    expect(busy.dataset.state).toBe('failed');
+    expect(busy.textContent).toBe('Read failed');
+    busy.click();
+    expect(row('now').classList.contains('tx-reveal')).toBe(true);
+    expect(row('old').classList.contains('tx-reveal')).toBe(false);
+    expect(busy.dataset.state).toBe('running');
+    // A resync replaces the timeline: what you have seen fail stays acknowledged, a new failure is flagged.
+    view.setItems([
+      { ...item('user', { parts: [text('again')] }), id: 'u2', seq: 20 },
+      failed('now', 30, 'Read'),
+      failed('run', 31, 'Bash'),
+    ]);
+    expect(busy.dataset.state).toBe('failed');
+    expect(busy.textContent).toBe('Bash failed');
+  });
+
+  it('while hidden, the strip shows a running tool call, and a failed one until you look', () => {
+    const prefs = new ViewPrefs(null);
+    withPrefs(prefs);
+    const busy = $('.tx-busy') as HTMLButtonElement;
+    view.setItems([item('user', { parts: [text('hi')] }), { id: 't1', seq: 50, ts: Date.now() - 12_000, kind: 'tool', tool: { name: 'Bash', input_summary: 'make', status: 'running' } }]);
+    expect(busy.hidden).toBe(true); // tool calls shown: their own rows say it
+    prefs.hideTools = true;
+    expect(busy.hidden).toBe(false);
+    expect(busy.dataset.state).toBe('running');
+    expect(busy.textContent).toMatch(/^Bash · 1[12]s$/);
+    // It fails: red, named, until clicked.
+    view.applyUpdates([{ id: 't1', seq: 50, ts: Date.now() - 12_000, kind: 'tool', tool: { name: 'Bash', input_summary: 'make', status: 'error', output_text: 'boom' } }]);
+    expect(busy.dataset.state).toBe('failed');
+    expect(busy.textContent).toBe('Bash failed');
+    busy.click();
+    expect(busy.hidden).toBe(true);
+    // Its row shows (the rest stay hidden) until tool calls are shown or hidden again.
+    expect(row('t1').classList.contains('tx-reveal')).toBe(true);
+    view.applyUpdates([{ id: 't2', seq: 51, ts: Date.now(), kind: 'tool', tool: { name: 'Edit', input_summary: 'a.ts', status: 'error' } }, { id: 't3', seq: 52, ts: Date.now(), kind: 'tool', tool: { name: 'Read', input_summary: 'b.ts', status: 'error' } }]);
+    expect(busy.textContent).toBe('2 tool calls failed');
+    expect(row('t1').classList.contains('tx-reveal')).toBe(true);
+    expect(row('t2').classList.contains('tx-reveal')).toBe(false);
+    prefs.hideTools = false;
+    expect(busy.hidden).toBe(true);
+    expect($$('.tx-reveal')).toHaveLength(0);
+  });
+
+  it('the preset is a radio group: one checked, ← → pick, the timeline keys stay out', () => {
+    const prefs = new ViewPrefs(null);
+    withPrefs(prefs);
+    const group = $('[role="radiogroup"]') as HTMLElement;
+    expect(group.getAttribute('aria-label')).toBe('Transcript theme');
+    const radios = $$<HTMLButtonElement>('[role="radio"]');
+    expect(radios.map((r) => r.getAttribute('aria-label'))).toEqual(['Terminal', 'Quiet', 'Paper']);
+    expect(radios.map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'true', 'false']);
+    expect(radios.map((r) => r.tabIndex)).toEqual([-1, 0, -1]);
+    expect(($('.tx') as HTMLElement).dataset.theme).toBe('quiet');
+    const sc = $('.tx-scroll') as HTMLElement;
+    layout(sc, 3000);
+    sc.scrollTop = 500;
+    sc.dispatchEvent(new Event('scroll'));
+    let reached = 0;
+    const count = () => reached++;
+    document.addEventListener('keydown', count);
+    radios[1]!.focus();
+    radios[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    expect(prefs.theme('transcript')).toBe('paper');
+    expect(document.activeElement).toBe(radios[2]);
+    radios[2]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    expect(prefs.theme('transcript')).toBe('terminal');
+    radios[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    expect(prefs.theme('transcript')).toBe('quiet');
+    expect(sc.scrollTop).toBe(500); // ↓ on the radios is theirs, not the timeline's
+    expect(reached).toBe(0); // nor the game's
+    // Esc still reaches the seat (stands you up), a click picks.
+    radios[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(reached).toBe(1);
+    document.removeEventListener('keydown', count);
+    radios[2]!.click();
+    expect(prefs.theme('transcript')).toBe('paper');
+    expect(($('.tx') as HTMLElement).dataset.theme).toBe('paper');
+    expect(radios[2]!.getAttribute('aria-checked')).toBe('true');
+    // The transcript's own: the terminal keeps its preset.
+    expect(prefs.theme('terminal')).toBe('quiet');
+  });
+
+  it('A− / 100% / A+ step the zoom by 10 within 70–200 and show it; the middle one resets', () => {
+    const prefs = new ViewPrefs(null);
+    withPrefs(prefs);
+    const [out, level, inc] = $$<HTMLButtonElement>('.tx-zoom-btn');
+    expect(level!.textContent).toBe('100%');
+    inc!.click();
+    inc!.click();
+    expect(prefs.zoom('transcript')).toBe(120);
+    expect(level!.textContent).toBe('120%');
+    expect(level!.getAttribute('aria-label')).toBe('Text size 120%, back to 100%');
+    level!.click();
+    expect(prefs.zoom('transcript')).toBe(100);
+    for (let i = 0; i < 10; i++) out!.click();
+    expect(prefs.zoom('transcript')).toBe(70);
+    expect(out!.disabled).toBe(true);
+    for (let i = 0; i < 20; i++) inc!.click();
+    expect(prefs.zoom('transcript')).toBe(200);
+    expect(inc!.disabled).toBe(true);
+    expect(level!.textContent).toBe('200%');
+    // The transcript's own: the terminal's zoom stays.
+    expect(prefs.zoom('terminal')).toBe(100);
+  });
+
+  it('the zoom keys pass through the prompt box to the seat', () => {
+    mount();
+    const input = $('.tx-input') as HTMLTextAreaElement;
+    let reached = 0;
+    const count = () => reached++;
+    document.addEventListener('keydown', count);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: '=', ctrlKey: true, bubbles: true, cancelable: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true }));
+    document.removeEventListener('keydown', count);
+    expect(reached).toBe(1);
   });
 });

@@ -1,4 +1,6 @@
 import '@fontsource-variable/recursive/full.css';
+import './fonts/quiet.css';
+import './ui/themes.css';
 import './ui/hud.css';
 import './ui/panels.css';
 import './ui/hire.css';
@@ -115,6 +117,13 @@ export interface H3DDebug {
   frozenInk(workerId: string): number | null;
   /** M5: the seat bar (shown, its tape, its note, ok / busy / error / offline); M16: which mode it shows. */
   seat(): { shown: boolean; tape: string; note: string; state: string; mode?: string; ask?: string | null };
+  /**
+   * #59: the transcript's and the terminal's presets as picked, the one the terminal draws with (its fonts loaded),
+   * each view's zoom, hidden tool calls, and the seated screen's font; `themeLoaded` settles when the latest picks'
+   * fonts are in.
+   */
+  theme(): { transcript: string; terminal: string; ready: string; transcriptZoom: number; terminalZoom: number; hideTools: boolean; terminalFont: string | null };
+  themeLoaded(): Promise<void>;
   /** M16: the seated view's mode, its transcript watches and items, the overlay's box (null: hidden) and whether the view is mounted. */
   transcript(): ReturnType<import('./laptop').Laptops['transcriptState']> | null;
   /** M16 phase 2: the prints on the desks near you (per desk: worker, prints with tray/blank/loaded/slot x,z), the textures' ledger, the transcript watches and lightboxes opened from prints. */
@@ -296,6 +305,13 @@ const h3d: H3DDebug = {
   screenText: (id) => app?.laptops.text(id) ?? null,
   frozenInk: (id) => app?.laptops.frozenInk(id) ?? null,
   seat: () => app?.seatBar.summary() ?? { shown: false, tape: '', note: '', state: '' },
+  theme: () => {
+    const t = app?.themes;
+    return t
+      ? { transcript: t.theme.id, terminal: t.terminal.id, ready: t.ready.id, transcriptZoom: t.prefs.zoom('transcript'), terminalZoom: t.prefs.zoom('terminal'), hideTools: t.prefs.hideTools, terminalFont: app?.laptops.seatedFont() ?? null }
+      : { transcript: '', terminal: '', ready: '', transcriptZoom: 100, terminalZoom: 100, hideTools: false, terminalFont: null };
+  },
+  themeLoaded: () => app?.themes.loading ?? Promise.resolve(),
   transcript: () => app?.laptops.transcriptState() ?? null,
   prints: () => app?.laptops.printsState() ?? null,
   printWorld: (desk, index) => app?.laptops.printWorld(desk, index) ?? null,

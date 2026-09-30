@@ -2,6 +2,7 @@ import type { CommandResult } from '../net/client';
 import type { AnswerAskAck, Ask, CommandArgs, ImageRef, Question, TranscriptItem, TranscriptWatchAck } from '../net/protocol';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
+import type { ViewPrefs } from '../ui/themePrefs';
 import { MAX_PROMPT } from './keys';
 import type { mountTranscript, TranscriptRenderHost, TranscriptView } from './transcriptRender';
 import type { ImageFeed } from './imageFeed';
@@ -72,6 +73,8 @@ export interface TranscriptModeHost {
   status(kind: 'ok' | 'error', text: string | null): void;
   /** The mode changed (the seat bar's toggle, the terminal watch's fps, the monitor's frame). */
   modeChanged(mode: SeatMode): void;
+  /** #59: the preset, hidden tool calls and the zoom (the view's top strip sets them). */
+  prefs?: ViewPrefs;
 }
 
 /** Remembered per worker: the ones last read in transcript mode (terminal is the default), newest last. */
@@ -481,6 +484,7 @@ export class TranscriptMode {
       images: this.host.feed(s.id),
       upload: this.host.upload ?? null,
       label: s.name,
+      ...(this.host.prefs ? { prefs: this.host.prefs } : {}),
       onPromptSubmit: (text) => {
         if (!live()) return Promise.resolve(false);
         const t = text.replace(/\u0000/g, '');
