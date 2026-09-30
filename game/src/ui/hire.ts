@@ -275,7 +275,10 @@ export class HireDialog {
   private refetching = false;
   /** #51: what was typed and not hired yet, per desk of a floor (memory, and localStorage where allowed): the text and label. */
   private readonly drafts = new Drafts('hire');
-  /** The first task's composer draft per desk (text, images, their uploads): kept in memory while the page lives; images do not survive a reload. */
+  /**
+   * The first task's composer draft per desk (text, images, their uploads): kept in memory while the page lives; images do not survive a reload.
+   * The entry is also the owner of the desk's stored draft: whoever saves it (a task or label edit, the desk's own draft on open, a move) is registered here.
+   */
   private readonly docs = new Map<string, PromptDraft>();
   /** The last hire attempt stopped on a failed upload: the message stays until every image is uploaded or gone. */
   private uploadFailed = false;
@@ -347,7 +350,7 @@ export class HireDialog {
     this.modelQuery = '';
     this.uploadFailed = false;
     // The desk's composer draft (images too) if it is still in memory, else the text storage kept; a first task handed in starts a draft of its own.
-    this.editor.show(prefill.prompt !== undefined ? this.newDoc(prefill.prompt) : (this.docs.get(this.draftKey()) ?? this.newDoc(draft?.text ?? '')));
+    this.editor.show(prefill.prompt !== undefined ? this.newDoc(prefill.prompt) : this.deskDoc(this.draftKey(), draft?.text ?? ''));
     this.f = { prompt: this.editor.text, harness: '', model: '', effort: '', label: this.typedLabel ?? '', cwd: '', worktree: false };
     this.state = 'preparing';
     this.renderedKey = '';
@@ -680,8 +683,20 @@ export class HireDialog {
     return this.typedLabel ? { text, fields: { label: this.typedLabel } } : { text };
   }
 
+  /** Saves what is on screen as the desk's draft, and makes that draft the desk's owner: a first task handed in only takes the desk here. */
   private saveDraft(): void {
+    this.docs.set(this.draftKey(), this.editor.draft);
     this.drafts.set(this.draftKey(), this.draftNow());
+  }
+
+  /** The desk's own draft: the one in memory, else a new one that starts from the stored text. */
+  private deskDoc(key: string, text: string): PromptDraft {
+    let d = this.docs.get(key);
+    if (!d) {
+      d = this.newDoc(text);
+      this.docs.set(key, d);
+    }
+    return d;
   }
 
   private newDoc(text = ''): PromptDraft {
@@ -697,8 +712,7 @@ export class HireDialog {
   /** The task changed (typing, an image added or removed, an upload finished or failed). */
   private taskChanged(s: DraftSnapshot): void {
     this.f.prompt = promptText(s);
-    // The draft belongs to its desk from the first edit on (a first task handed in stays out of the way until then).
-    this.docs.set(this.draftKey(), this.editor.draft);
+    // The draft belongs to its desk from the first save on (a first task handed in stays out of the way until then).
     this.saveDraft();
     if (this.uploadFailed && !s.failed) {
       this.uploadFailed = false;
@@ -707,17 +721,16 @@ export class HireDialog {
     this.renderActions();
   }
 
-  /** A hire was acknowledged: what was sent is gone, unless it was edited since (`revision`), and the desk's stored text goes with it. */
-  private clearSent(key: string, doc: PromptDraft, revision: number, sent: { text: string; fields?: Record<string, string> }): void {
-    if (!doc.clearIf(revision)) return;
-    const current = this.docs.get(key);
-    // A newer draft took the desk while this hire was pending (Esc, a reopen with a first task, an edit): its memory and stored text are its own.
-    if (current && current !== doc) return;
-    if (current) this.docs.delete(key);
+  /**
+   * A hire was acknowledged: what was sent is gone, unless it was edited since (`revision`), and the desk's stored text goes with it.
+   * Only the draft that owns a desk clears it: a newer one that took the desk while this hire was pending (Esc, a reopen with a first task, then a text or label edit) is its own, whatever it says.
+   */
+  private clearSent(doc: PromptDraft, revision: number, sent: { text: string; fields?: Record<string, string> }): void {
+    const key = [...this.docs].find(([, d]) => d === doc)?.[0];
+    if (key === undefined || !doc.clearIf(revision)) return;
+    this.docs.delete(key);
     const now = this.drafts.get(key);
     if (!now) return;
-    // (The draft on screen clears itself and saves that; any other one, with a label saved before its first edit, must still hold what was sent.)
-    if (this.editor.draft !== doc && now.text !== sent.text) return;
     // The label typed since stays.
     this.drafts.set(key, JSON.stringify(now.fields ?? {}) === JSON.stringify(sent.fields ?? {}) ? { text: '' } : { text: '', ...(now.fields ? { fields: now.fields } : {}) });
   }
@@ -767,7 +780,7 @@ export class HireDialog {
     } else {
       const there = this.drafts.get(this.draftKey());
       this.typedLabel = there?.fields?.label ?? null;
-      this.editor.show(this.docs.get(this.draftKey()) ?? this.newDoc(there?.text ?? ''));
+      this.editor.show(this.deskDoc(this.draftKey(), there?.text ?? ''));
       this.f.prompt = this.editor.text;
       if (this.typedLabel !== null) this.f.label = this.typedLabel;
     }
@@ -788,7 +801,6 @@ export class HireDialog {
     const desk = this.desk;
     // The draft as sent: an acknowledged hire clears exactly this (a newer edit after Esc stays).
     const sent = this.draftNow();
-    const sentKey = this.draftKey();
     const doc = this.editor.draft;
     const args = hireArgs(session, desk, this.f, this.prep.git);
     const who = args.label ?? this.prep.label;
@@ -837,7 +849,7 @@ export class HireDialog {
       const name = w?.name ?? who;
       const branch = ack?.branch ? ` on ${ack.branch}` : '';
       // The worker exists but never got the task (`prompted: false`): the text stays, so it can be copied or sent by hand.
-      if (ack?.prompted !== false) this.clearSent(sentKey, doc, revision, sent);
+      if (ack?.prompted !== false) this.clearSent(doc, revision, sent);
       const extra = [
         ack?.prompted === false ? `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P); the text stays in this desk’s hire dialog.` : '',
       ].filter(Boolean);

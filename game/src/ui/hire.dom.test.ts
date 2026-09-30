@@ -116,4 +116,29 @@ describe('HireDialog: clearing after an acknowledged hire', () => {
     await pending;
     expect(localStorage.getItem(KEY)).toContain('new prefill');
   });
+
+  it('keeps a prefilled first task with the very same text, saved only by its label (memory and storage)', async () => {
+    const { dlg, inner, ack, finishUpload } = setup();
+    dlg.open('floor', 0);
+    await tick();
+    inner.editor.draft.replace(0, 0, 'old sent prompt');
+    inner.editor.draft.addImages([new File([new Uint8Array([1, 2])], 'screenshot.png', { type: 'image/png' })]);
+    const pending = inner.hire();
+    await tick();
+    dlg.close();
+    dlg.open('floor', 0, { prompt: 'old sent prompt' });
+    await tick();
+    const label = document.querySelector<HTMLInputElement>('#hire-label')!;
+    label.value = 'Nibble';
+    label.dispatchEvent(new Event('input'));
+    finishUpload({ ok: true, data: { path: '/tmp/img.png' } });
+    await tick();
+    ack({ ok: true, data: { id: 'worker', prompted: true } });
+    await pending;
+    expect(inner.editor.draft.doc.text).toBe('old sent prompt');
+    expect(JSON.parse(localStorage.getItem(KEY)!)).toMatchObject({ text: 'old sent prompt', fields: { label: 'Nibble' } });
+    dlg.close();
+    dlg.open('floor', 0);
+    expect(inner.editor.draft.doc.text).toBe('old sent prompt');
+  });
 });
