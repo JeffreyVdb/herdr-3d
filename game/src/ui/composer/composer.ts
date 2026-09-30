@@ -17,6 +17,7 @@
 import './composer.css';
 import { postUpload } from '../../net/upload';
 import { h, ICON, icon } from '../dom';
+import { filesOf } from './field';
 import { Draft, type AddResult, type DraftEvent, type DraftOptions, type DraftSnapshot, type ResolveResult, type Uploader } from './draft';
 import { openPreview, type Preview } from './lightbox';
 import { caret, IMG, type Occurrence, rangeOf, type Selection, ZWSP } from './model';
@@ -64,6 +65,10 @@ export interface Composer {
   focus(): void;
   /** Read-only while the host is sending: no typing, no chip removal. Previews still open. */
   setBusy(busy: boolean): void;
+  /** Read-only and out of reach because the field cannot take a prompt now (#64: a blocked worker): the draft stays. */
+  setDisabled(disabled: boolean): void;
+  setPlaceholder(text: string): void;
+  clearNotice(): void;
   openPreview(occ: string): void;
   closePreview(): void;
   readonly previewOpen: boolean;
@@ -81,7 +86,10 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   let draft = o.draft ?? makeDraft(o);
   let unsub: () => void = () => {};
   let composing = false;
+  /** Read-only, for either reason (the host is sending, or the field is off). */
   let busy = false;
+  let hostBusy = false;
+  let hostOff = false;
   let refocus = false;
   let dead = false;
   let preview: Preview | null = null;
@@ -446,19 +454,6 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     reconcile();
   });
 
-  /** Files a clipboard or a drag carries: file items first, the file list only if there were none (never both). */
-  const filesOf = (dt: DataTransfer | null): File[] => {
-    if (!dt) return [];
-    const out: File[] = [];
-    for (const it of Array.from(dt.items ?? [])) {
-      if (it.kind !== 'file') continue;
-      const f = it.getAsFile();
-      if (f) out.push(f);
-    }
-    if (out.length === 0) out.push(...Array.from(dt.files ?? []));
-    return out;
-  };
-
   editor.addEventListener('paste', (e) => {
     const dt = e.clipboardData;
     if (!dt) return;
@@ -565,6 +560,26 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   };
   document.addEventListener('selectionchange', onSelectionChange);
 
+  /** Read-only while the host is sending or the field is off. */
+  function lock(): void {
+    const b = hostBusy || hostOff;
+    const changed = b !== busy;
+    // Making the editor read-only takes focus from it: give it back when the host is done, if nothing else took it.
+    if (changed && b) refocus = focusInEditor();
+    busy = b;
+    editor.setAttribute('contenteditable', String(!b));
+    editor.setAttribute('aria-busy', String(hostBusy));
+    if (hostOff) editor.setAttribute('aria-disabled', 'true');
+    else editor.removeAttribute('aria-disabled');
+    element.classList.toggle('cmp--busy', hostBusy);
+    element.classList.toggle('cmp--off', hostOff);
+    paintAll();
+    if (changed && !b) {
+      if (refocus && (!document.activeElement || document.activeElement === document.body)) focusEditor();
+      refocus = false;
+    }
+  }
+
   // ---- lifecycle -----------------------------------------------------------------------
 
   attach(draft);
@@ -581,17 +596,19 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     insertText,
     focus: focusEditor,
     setBusy(b) {
-      if (b === busy) return;
-      // Making the editor read-only takes focus from it: give it back when the host is done, if nothing else took it.
-      if (b) refocus = focusInEditor();
-      busy = b;
-      editor.setAttribute('contenteditable', String(!b));
-      editor.setAttribute('aria-busy', String(b));
-      element.classList.toggle('cmp--busy', b);
-      paintAll();
-      if (!b && refocus && (!document.activeElement || document.activeElement === document.body)) focusEditor();
-      if (!b) refocus = false;
+      if (b === hostBusy) return;
+      hostBusy = b;
+      lock();
     },
+    setDisabled(d) {
+      if (d === hostOff) return;
+      hostOff = d;
+      lock();
+    },
+    setPlaceholder(text) {
+      editor.dataset.placeholder = text;
+    },
+    clearNotice,
     openPreview: openPreviewOf,
     closePreview,
     get previewOpen() {

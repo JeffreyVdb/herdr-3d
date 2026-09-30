@@ -93,6 +93,14 @@ describe('the fixture POST /upload (the bridge’s contract)', () => {
     expect((await post('label=a&n=1&fail_upload=all&upload_key=t7', PNG)).status).toBe(502);
   });
 
+  it('#64: fail_code=upload_busy fails with the bridge’s 429, upload_delay holds the answer back', async () => {
+    const busy = await post('label=a&n=1&fail_upload=all&fail_code=upload_busy&upload_key=t9', PNG);
+    expect([busy.status, (parse(busy) as { code: string }).code]).toEqual([429, 'upload_busy']);
+    const t0 = Date.now();
+    expect((await post('label=a&n=1&upload_delay=150&upload_key=t10', PNG)).status).toBe(200);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(140);
+  });
+
   it('logs what it received per key, never the bytes', async () => {
     await post('label=a&n=1&upload_key=t8', PNG);
     await post('label=a&n=2&upload_key=t8&fail_upload=2', JPG);

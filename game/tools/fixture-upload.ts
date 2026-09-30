@@ -8,7 +8,9 @@
 // `fail_upload=<N>` fails the first N uploads (`all`: every one) with `dropzone_unavailable`, counted per
 // `upload_key=<key>` so specs running in parallel do not share the count. `GET /upload/_log?upload_key=<key>` lists
 // what the fixture received (label, n, size, mime, result; never bytes), for a spec to check that a retry did not
-// send an image that was already stored.
+// send an image that was already stored. #64: `fail_code=upload_busy` makes those failures the bridge's `429
+// upload_busy` instead (the fourth upload at once), and `upload_delay=<ms>` holds every answer back that long (a
+// pending upload a spec can look at).
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -125,12 +127,21 @@ export function uploadRoute(req: IncomingMessage, res: ServerResponse): boolean 
     const want = url.searchParams.get('fail_upload');
     const seen = counts.get(key) ?? 0;
     counts.set(key, seen + 1);
-    if (want !== null && (want === 'all' || seen < Number(want))) {
-      record(bytes.length, type.mime, 'dropzone_unavailable');
-      return fail(res, 502, 'dropzone_unavailable', 'Drop Zone is not answering');
-    }
-    record(bytes.length, type.mime, 'ok');
-    json(res, 200, { data: { path: `/home/fixture/drops/2026-09/h3d-${label}-${n || 1}.${type.ext}`, mime: type.mime, size: bytes.length } });
+    const delay = Math.min(30_000, Math.max(0, Number(url.searchParams.get('upload_delay')) || 0));
+    const answer = (): void => {
+      if (want !== null && (want === 'all' || seen < Number(want))) {
+        if (url.searchParams.get('fail_code') === 'upload_busy') {
+          record(bytes.length, type.mime, 'upload_busy');
+          return fail(res, 429, 'upload_busy', 'too many uploads at once: try again in a moment');
+        }
+        record(bytes.length, type.mime, 'dropzone_unavailable');
+        return fail(res, 502, 'dropzone_unavailable', 'Drop Zone is not answering');
+      }
+      record(bytes.length, type.mime, 'ok');
+      json(res, 200, { data: { path: `/home/fixture/drops/2026-09/h3d-${label}-${n || 1}.${type.ext}`, mime: type.mime, size: bytes.length } });
+    };
+    if (delay > 0) setTimeout(answer, delay);
+    else answer();
   });
   return true;
 }

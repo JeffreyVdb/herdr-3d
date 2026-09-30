@@ -21,6 +21,7 @@ import {
   type Doc,
   EMPTY_DOC,
   HIRE_PROMPT_MAX_BYTES,
+  IMG,
   imagesIn,
   indexOfOcc,
   MAX_IMAGES,
@@ -37,6 +38,8 @@ import {
   serializePrompt,
   type SerializedImage,
   segments,
+  splitMarkers,
+  cleanText,
   type Selection,
   caret,
 } from './model';
@@ -424,6 +427,55 @@ export class Draft {
     this.cancel(r);
     this.res.delete(r.id);
     this.opts.revokeUrl(r.url);
+  }
+
+  /**
+   * Makes `text` the whole document, with no undo history behind it (a generated prompt replacing the last one, not
+   * something the user typed). Each `[Image #n: <path>]` whose path is an uploaded image of `from` becomes a chip that
+   * is already uploaded (no second upload; the bytes are shared for its thumbnail); any other marker stays text. The
+   * caret goes to the end. False (and no event) when the document would not change.
+   */
+  replaceAll(text: string, from?: Draft): boolean {
+    const known = new Map<string, Resource>();
+    if (from) for (const r of from.res.values()) if (r.status === 'ready' && r.path !== undefined && !known.has(r.path)) known.set(r.path, r);
+    const mine = new Map<string, string>();
+    const occs: Occurrence[] = [];
+    let out = '';
+    for (const part of splitMarkers(cleanText(text))) {
+      if (part.kind === 'text') {
+        out += part.text;
+        continue;
+      }
+      const src = known.get(part.path);
+      if (!src || occs.length >= this.opts.maxImages) {
+        out += `[Image #${occs.length + 1}: ${part.path}]`;
+        continue;
+      }
+      let res = mine.get(part.path);
+      if (res === undefined) {
+        const r: Resource = { id: `r${++this.ids}`, seq: ++this.seq, name: src.name, mime: src.mime, size: src.size, blob: src.blob, url: this.opts.createUrl(src.blob), status: 'ready', path: part.path, attempt: 0 };
+        this.res.set(r.id, r);
+        res = r.id;
+        mine.set(part.path, res);
+      }
+      occs.push({ occ: `o${++this.ids}`, res });
+      out += IMG;
+    }
+    const paths = (d: Doc) => d.images.map((o) => this.res.get(o.res)?.path ?? '');
+    const doc: Doc = { text: out, images: occs };
+    if (doc.text === this.cur.text && paths(doc).join('\n') === paths(this.cur).join('\n')) {
+      this.gc();
+      return false;
+    }
+    const sel = caret(out.length);
+    this.hist = [{ doc, sel }];
+    this.at = 0;
+    this.cur = doc;
+    this.sel = sel;
+    this.rev++;
+    this.lastTypeAt = -Infinity;
+    this.afterChange('api');
+    return true;
   }
 
   /** After a successful send: nothing of the draft is kept. */

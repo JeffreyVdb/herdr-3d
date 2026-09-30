@@ -127,6 +127,26 @@ export function resourcesOf(doc: Doc): string[] {
   return [...new Set(doc.images.map((o) => o.res))];
 }
 
+// ---- markers ------------------------------------------------------------------------------
+
+/** One `[Image #n: <path>]` marker (the bridge's transcript reads the same grammar: no `]` or line break in the path). */
+const MARKER = /\[Image #\d+: ([^\]\n]+)\]/g;
+
+export type MarkedPart = { kind: 'text'; text: string } | { kind: 'marker'; path: string };
+
+/** A prompt's text cut at its markers, in order (`replaceAll` turns the ones it knows into chips). */
+export function splitMarkers(text: string): MarkedPart[] {
+  const out: MarkedPart[] = [];
+  let at = 0;
+  for (const m of text.matchAll(MARKER)) {
+    if (m.index > at) out.push({ kind: 'text', text: text.slice(at, m.index) });
+    out.push({ kind: 'marker', path: m[1] as string });
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) out.push({ kind: 'text', text: text.slice(at) });
+  return out;
+}
+
 // ---- limits ------------------------------------------------------------------------------
 
 /** Most images one prompt may carry (an opinion, not a ticket number: the agents read them one by one). */

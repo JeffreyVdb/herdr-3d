@@ -542,3 +542,67 @@ describe('subscribe', () => {
     expect(seen).toEqual(['doc:dom', 'res', 'doc:api', 'res', 'doc:history']);
   });
 });
+
+describe('replaceAll (#64: a generated prompt with the markers of images already uploaded elsewhere)', () => {
+  const uploaded = async () => {
+    const src = harness();
+    src.draft.addImages([png('a.png'), png('b.png')]);
+    await tick();
+    src.calls[0]!.ok('/drops/a 1.png');
+    src.calls[1]!.ok('/drops/b.png');
+    await tick();
+    return src.draft;
+  };
+
+  it('turns the markers of ready images of the source into ready chips, without uploading, and keeps other markers as text', async () => {
+    const from = await uploaded();
+    const { draft, calls } = harness();
+    const text = 'See [Image #1: /drops/a 1.png] and [Image #2: /drops/b.png], not [Image #3: /elsewhere.png].';
+    expect(draft.replaceAll(text, from)).toBe(true);
+    expect(draft.doc.text).toBe(`See ${IMG} and ${IMG}, not [Image #3: /elsewhere.png].`);
+    expect(draft.snapshot().images.map((i) => [i.n, i.name, i.status, i.path])).toEqual([[1, 'a.png', 'ready', '/drops/a 1.png'], [2, 'b.png', 'ready', '/drops/b.png']]);
+    expect(calls).toHaveLength(0);
+    expect(draft.selection).toEqual(caret(draft.doc.text.length));
+    const r = ok(await draft.resolve({ maxBytes: 1000 }));
+    // The chips serialise to the same markers, numbered by document order.
+    expect(r.text).toBe('See [Image #1: /drops/a 1.png] and [Image #2: /drops/b.png], not [Image #3: /elsewhere.png].');
+  });
+
+  it('is not an undo step, replaces the last one, and does nothing (no event) when nothing would change', async () => {
+    const from = await uploaded();
+    const { draft } = harness();
+    const seen: string[] = [];
+    draft.subscribe((e) => seen.push(e.kind));
+    draft.replaceAll('one [Image #1: /drops/b.png]', from);
+    expect(draft.canUndo).toBe(false);
+    draft.replaceAll('two', from);
+    expect(draft.doc.text).toBe('two');
+    expect(draft.canUndo).toBe(false);
+    expect(draft.resourceCount).toBe(0);
+    const n = seen.length;
+    expect(draft.replaceAll('two', from)).toBe(false);
+    expect(seen).toHaveLength(n);
+  });
+
+  it('a marker whose image is not ready in the source stays text; the same path twice is two chips of one resource', async () => {
+    const src = harness();
+    src.draft.addImages([png('a.png'), png('b.png')]);
+    await tick();
+    src.calls[0]!.ok('/drops/a.png'); // b is still uploading
+    await tick();
+    const { draft } = harness();
+    draft.replaceAll('[Image #1: /drops/a.png] [Image #2: /drops/a.png] [Image #3: /drops/b.png]', src.draft);
+    expect(draft.doc.images).toHaveLength(2);
+    expect(draft.doc.images[0]!.res).toBe(draft.doc.images[1]!.res);
+    expect(draft.doc.text).toBe(`${IMG} ${IMG} [Image #3: /drops/b.png]`);
+  });
+
+  it('releases the images of the document it replaces', async () => {
+    const from = await uploaded();
+    const { draft, urls } = harness();
+    draft.replaceAll('[Image #1: /drops/a 1.png]', from);
+    expect(urls.size).toBe(1);
+    draft.replaceAll('nothing', from);
+    expect(urls.size).toBe(0);
+  });
+});
