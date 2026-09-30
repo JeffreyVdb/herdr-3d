@@ -387,7 +387,7 @@ export interface CommandArgs {
   /** M16 phase 2: one image by the hash of an `ImageRef` this connection was sent (never a path). */
   'transcript.image': { id: string; hash: string; size: 'thumb' | 'full'; agent?: string };
   /** M16 phase 2: every image of the session (no bytes), also the ones older than the watch's window. */
-  'transcript.images': { id: string };
+  'transcript.images': { id: string; before?: string; limit?: number };
   // M6 start: team presets and starting a run.
   'preset.create': { name: string; roles: PresetRoles };
   /** `roles` replaces all five. */
@@ -801,10 +801,11 @@ export interface TranscriptImageAck {
   data: string;
 }
 
-/** `transcript.images` ack: the session's images, oldest first; `truncated`: only the newest 2000 are listed. */
+/** `transcript.images` ack: a run of the session's images, oldest first; `has_more`: the older ones start at `cursor` (ask again with `before`). */
 export interface TranscriptImagesAck {
   images: ImageRef[];
-  truncated?: boolean;
+  cursor?: string;
+  has_more?: boolean;
 }
 
 export interface TranscriptItems extends Partial<TranscriptHead> {

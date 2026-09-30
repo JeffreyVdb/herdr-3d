@@ -35,6 +35,11 @@ export const THUMB_PARALLEL = 4;
 /** Thumbnails kept: at most this many, and this many bytes. */
 export const THUMB_KEEP = 240;
 export const THUMB_KEEP_BYTES = 40 << 20;
+/** Refs asked for per `transcript.images` request; and the most requests one list takes (a runaway bridge cannot loop it). */
+export const LIST_PAGE = 1000;
+export const MAX_LIST_PAGES = 500;
+/** Image places remembered to tell a new one from a re-sent item. */
+const MAX_SEEN = 50_000;
 /** Full images kept (they are big). */
 export const FULL_KEEP = 3;
 
@@ -60,7 +65,8 @@ export function imageAck(data: unknown): TranscriptImageAck | null {
 export function imagesAck(data: unknown): TranscriptImagesAck {
   const list = isObj(data) && Array.isArray(data.images) ? data.images : [];
   const images = list.filter((r): r is ImageRef => isObj(r) && typeof r.source === 'string' && (r.origin === 'input' || r.origin === 'agent'));
-  return { images, truncated: isObj(data) && data.truncated === true };
+  const cursor = isObj(data) && typeof data.cursor === 'string' && data.cursor ? data.cursor : undefined;
+  return { images, ...(cursor ? { cursor } : {}), ...(isObj(data) && data.has_more === true ? { has_more: true } : {}) };
 }
 
 /** Every image ref in items (parts and tool output), in order. */
@@ -82,6 +88,8 @@ interface Queued {
 export class ImageFeed {
   /** Hashes the bridge sent this connection for this worker (the only ones it will serve). */
   private readonly sent = new Set<string>();
+  /** The image occurrences (item, place in the item, what it resolved to) the main timeline showed: a new one is a list change. */
+  private readonly seen = new Set<string>();
   /** Which subagent's timeline a hash came from (the bridge reads its log for it). */
   private readonly agentOf = new Map<string, string>();
   private readonly thumbs = new Map<string, Promise<ImageData | null>>();
@@ -110,29 +118,59 @@ export class ImageFeed {
     return () => this.listeners.delete(fn);
   }
 
-  /** Items (a watch's ack, a push, a page) were shown to the connection: their hashes may be asked for. */
+  /**
+   * Items (a watch's ack, a push, a page) were shown to the connection: their hashes may be asked for. `agent`: they are
+   * a subagent's (the bridge reads that log for their bytes); they are not in the session list, which does not change.
+   */
   note(items: readonly TranscriptItem[], agent?: string): ImageRef[] {
     const all: ImageRef[] = [];
-    for (const it of items) for (const r of refsOfItem(it)) all.push(r);
-    this.noteRefs(all, agent);
+    let fresh = false;
+    for (const it of items) {
+      refsOfItem(it).forEach((r, j) => {
+        if (this.see(r, it.id, j, agent)) fresh = true;
+        all.push(r);
+      });
+    }
+    if (fresh) this.changed();
     return all;
   }
 
   noteRefs(refs: readonly ImageRef[], agent?: string): void {
+    const at = new Map<string, number>();
     let fresh = false;
     for (const r of refs) {
-      if (typeof r.hash !== 'string' || !r.hash || r.unavailable) continue;
-      if (!this.sent.has(r.hash)) fresh = true;
-      this.sent.add(r.hash);
-      if (agent) this.agentOf.set(r.hash, agent);
+      const item = r.item_id ?? '';
+      const j = at.get(item) ?? 0;
+      at.set(item, j + 1);
+      if (this.see(r, item, j, agent)) fresh = true;
     }
     if (fresh) this.changed();
+  }
+
+  /**
+   * One ref was shown. Its hash may be fetched from now on. True when it is a change of the session list: a place in
+   * the timeline not seen before (a new item's image, also one whose bytes are already known, or that is not available),
+   * or a ref that resolved to something else (a file that appeared).
+   */
+  private see(r: ImageRef, item: string, j: number, agent?: string): boolean {
+    if (typeof r.hash === 'string' && r.hash && !r.unavailable) {
+      // A hash the main timeline showed stays read from it.
+      if (agent && !this.sent.has(r.hash)) this.agentOf.set(r.hash, agent);
+      this.sent.add(r.hash);
+    }
+    if (agent) return false;
+    const k = `${item}#${j}:${r.hash ?? ''}:${r.unavailable ? (r.reason ?? '?') : ''}`;
+    if (this.seen.has(k)) return false;
+    if (this.seen.size >= MAX_SEEN) this.seen.clear();
+    this.seen.add(k);
+    return true;
   }
 
   /** A fresh watch (or another session): the hashes sent before, and the images fetched, belong to the old timeline. */
   reset(): void {
     this.sent.clear();
     this.agentOf.clear();
+    this.seen.clear();
     this.list_ = null;
     this.listed_ = null;
     this.changed();
@@ -161,9 +199,18 @@ export class ImageFeed {
     if (this.list_) return this.list_;
     const p = (async () => {
       this.counts.lists++;
-      const r = await this.host.send('transcript.images', { id: this.id });
-      if (!r.ok) throw new Error(r.message || r.code);
-      const refs = imagesAck(r.data).images;
+      // The newest run first, then the older ones by cursor until the bridge has no more: every image of the session.
+      const pages: ImageRef[][] = [];
+      let before: string | undefined;
+      for (let n = 0; n < MAX_LIST_PAGES; n++) {
+        const r = await this.host.send('transcript.images', { id: this.id, limit: LIST_PAGE, ...(before ? { before } : {}) });
+        if (!r.ok) throw new Error(r.message || r.code);
+        const a = imagesAck(r.data);
+        pages.push(a.images);
+        if (!a.has_more || !a.cursor || a.cursor === before || this.disposed) break;
+        before = a.cursor;
+      }
+      const refs = pages.reverse().flat();
       for (const ref of refs) if (typeof ref.hash === 'string' && ref.hash) this.sent.add(ref.hash);
       this.listed_ = refs;
       return refs;
