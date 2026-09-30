@@ -187,6 +187,52 @@ describe('transcript mode with the real render module', () => {
     r.mode.stand();
   });
 
+  it("sit again while a print keeps the watch: the old watch's update landing before the new ack does not undo the ack's result", async () => {
+    const r = rig();
+    layer = r.layer;
+    const sit = (id: string) => {
+      r.mode.sit(id, 'Ada');
+      r.watches.refresh(id);
+      r.watches.sync(new Map([[id, WATCH_LIMIT]]));
+    };
+    const ack = (items: TranscriptItem[]): CommandResult => ({ ok: true, data: { harness: 'claude', session: 's1', version: '2.1.0', cursor: 'c:1', has_more: false, pending: false, items } });
+    const watches = () => r.sent.filter((s) => s.t === 'transcript.watch');
+    const bash = CLAUDE.find((it) => it.tool?.name === 'Bash') as TranscriptItem;
+    const { output_text: _, ...tool } = bash.tool as NonNullable<TranscriptItem['tool']>;
+    const running: TranscriptItem = { ...bash, tool: { ...tool, status: 'running' } };
+    const done: TranscriptItem = { ...bash, tool: { ...tool, status: 'ok', output_text: 'the-result-of-ls' } };
+    const withTool = (t: TranscriptItem) => CLAUDE.map((it) => (it.id === t.id ? t : it));
+
+    sit('w1');
+    watches()[0]?.resolve(ack(withTool(running)));
+    await Promise.resolve();
+    r.mode.stand();
+    r.watches.sync(new Map([['w1', PRINT_WATCH_LIMIT]]));
+    sit('w1');
+    expect(watches()).toHaveLength(2);
+    r.mode.toggle();
+    const box = r.mode.box as HTMLElement;
+    await settle(() => !!box.querySelector('.tx'));
+
+    // The replaced watch's push (the call still running) lands while the new ack is on its way; that ack has the result.
+    r.watches.items({ t: 'transcript.items', id: 'w1', items: [], updates: [running] });
+    watches()[1]?.resolve(ack(withTool(done)));
+    await Promise.resolve();
+    expect(r.mode.itemCount).toBe(CLAUDE.length);
+    const row = () => box.querySelector<HTMLElement>(`[data-id="${CSS.escape(bash.id)}"]`) as HTMLElement;
+    expect(row().getAttribute('data-status')).toBe('ok');
+    (row().querySelector('.tx-tool-row') as HTMLButtonElement).click();
+    await settle(() => row().textContent?.includes('the-result-of-ls') ?? false);
+
+    // The new watch's live pushes still apply.
+    const failed: TranscriptItem = { ...done, tool: { ...tool, status: 'error', output_text: 'boom' } };
+    const next: TranscriptItem = { id: 'live-1', seq: 10_000, ts: 0, kind: 'assistant', parts: [{ text: 'after' }] };
+    r.watches.items({ t: 'transcript.items', id: 'w1', items: [next], updates: [failed] });
+    expect(r.mode.itemCount).toBe(CLAUDE.length + 1);
+    expect(row().getAttribute('data-status')).toBe('error');
+    r.mode.stand();
+  });
+
   it('a pending watch: the first push (with the head) fills the view', async () => {
     const r = rig();
     layer = r.layer;

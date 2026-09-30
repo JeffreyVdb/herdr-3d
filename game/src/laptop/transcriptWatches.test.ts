@@ -8,6 +8,8 @@ const item = (id: string, seq = 1, extra: Partial<TranscriptItem> = {}): Transcr
 function harness() {
   const sent: Array<{ t: string; args: Record<string, unknown>; resolve: (r: CommandResult) => void }> = [];
   const log: string[] = [];
+  /** The updates of each push, whole. */
+  const updates: TranscriptItem[][] = [];
   const failed: Array<[string, string]> = [];
   const closed: Array<[string, string]> = [];
   let now = 0;
@@ -15,7 +17,10 @@ function harness() {
     send: (t, args) => new Promise((resolve) => sent.push({ t, args: args as unknown as Record<string, unknown>, resolve })),
     sink: {
       reset: (id, ack) => log.push(`reset ${id} ${ack.items.map((i) => i.id).join(',')}`),
-      push: (id, items, updates) => log.push(`push ${id} +${items.map((i) => i.id).join(',')} ~${updates.map((i) => i.id).join(',')}`),
+      push: (id, items, u) => {
+        updates.push(u);
+        log.push(`push ${id} +${items.map((i) => i.id).join(',')} ~${u.map((i) => i.id).join(',')}`);
+      },
       stop: (id) => log.push(`stop ${id}`),
     },
     failed: (id, code) => failed.push([id, code]),
@@ -28,7 +33,7 @@ function harness() {
     await Promise.resolve();
   };
   const ack = (items: TranscriptItem[], o: object = {}): CommandResult => ({ ok: true, data: { harness: 'claude', session: 's1', version: '2.3.1', cursor: 'c:1', has_more: false, pending: false, items, ...o } });
-  return { w, sent, log, failed, closed, answer, ack, tick: (ms: number) => (now += ms) };
+  return { w, sent, log, updates, failed, closed, answer, ack, tick: (ms: number) => (now += ms) };
 }
 
 const want = (...ids: string[]) => new Set(ids);
@@ -81,10 +86,10 @@ describe('TranscriptWatches', () => {
       ['transcript.watch', { id: 'a', limit: 200 }],
     ]);
     expect(h.w.ready('a')).toBe(false);
-    // Pushes meanwhile wait for the new ack.
+    // A push meanwhile is the old watch's: the new ack has it.
     h.w.items({ t: 'transcript.items', id: 'a', items: [item('x2', 2)], updates: [] });
     await h.answer(1, h.ack([item('x1'), item('x2', 2)]));
-    expect(h.log).toEqual(['reset a x1', 'reset a x1,x2', 'push a +x2 ~']);
+    expect(h.log).toEqual(['reset a x1', 'reset a x1,x2']);
     // Once: the next syncs keep it.
     h.w.sync(new Map([['a', 200]]));
     h.w.sync(new Map([['a', 1]]));
@@ -162,7 +167,7 @@ describe('TranscriptWatches', () => {
     expect(h.sent).toHaveLength(1);
   });
 
-  it('hands the ack to the sink, then pushes; pushes before the ack wait for it', async () => {
+  it('hands the ack to the sink, then pushes; pushes before the ack are dropped (the ack is newer)', async () => {
     const h = harness();
     h.w.sync(want('a'));
     h.w.items({ t: 'transcript.items', id: 'a', items: [item('x2', 2)], updates: [] });
@@ -170,9 +175,49 @@ describe('TranscriptWatches', () => {
     expect(h.log).toEqual([]);
     await h.answer(0, h.ack([item('x1')]));
     expect(h.w.ready('a')).toBe(true);
+    expect(h.log).toEqual(['reset a x1']);
     h.w.items({ t: 'transcript.items', id: 'a', updates: [item('x1', 1, { kind: 'tool' })] });
     h.w.items({ t: 'transcript.items', id: 'a', items: [], updates: [] }); // nothing in it
-    expect(h.log).toEqual(['reset a x1', 'push a +x2 ~', 'push a + ~x1']);
+    expect(h.log).toEqual(['reset a x1', 'push a + ~x1']);
+  });
+
+  it("a re-watch: the replaced watch's update arriving before the new ack does not undo the ack's newer item", async () => {
+    const running = item('t1', 2, { kind: 'tool', tool: { name: 'Bash', input_summary: 'ls', status: 'running' } });
+    const done = item('t1', 2, { kind: 'tool', tool: { name: 'Bash', input_summary: 'ls', status: 'ok', output_text: 'a b' } });
+    const h = harness();
+    h.w.sync(new Map([['a', 200]]));
+    await h.answer(0, h.ack([item('x1'), running]));
+    // Stood up (a print keeps the watch), sat down again: made again.
+    h.w.sync(new Map([['a', 1]]));
+    h.w.refresh('a');
+    h.w.sync(new Map([['a', 200]]));
+    expect(h.sent).toHaveLength(2);
+    // The old watch's last push, from before the re-watch, lands while the new ack is still to come.
+    h.w.items({ t: 'transcript.items', id: 'a', items: [], updates: [running] });
+    await h.answer(1, h.ack([item('x1'), done]));
+    expect(h.log).toEqual(['reset a x1,t1', 'reset a x1,t1']);
+    expect(h.updates).toEqual([]);
+    // Live pushes of the new watch still apply.
+    h.w.items({ t: 'transcript.items', id: 'a', items: [item('x3', 3)], updates: [done] });
+    expect(h.log.at(-1)).toBe('push a +x3 ~t1');
+    expect(h.updates).toEqual([[done]]);
+  });
+
+  it('the watches made again after a close or for more items drop what comes before their ack too', async () => {
+    const h = harness();
+    h.w.sync(new Map([['a', 1]]));
+    await h.answer(0, h.ack([item('x1')]));
+    // More items wanted: a new watch; a push of the old one meanwhile is dropped.
+    h.w.sync(new Map([['a', 200]]));
+    h.w.items({ t: 'transcript.items', id: 'a', items: [item('old', 2)], updates: [] });
+    await h.answer(1, h.ack([item('x0'), item('x1', 2)]));
+    // Closed (resync): watched again at once; a push before that ack is dropped as well.
+    h.tick(5000);
+    h.w.closed({ t: 'transcript.closed', id: 'a', reason: 'resync' });
+    h.w.items({ t: 'transcript.items', id: 'a', items: [item('old2', 3)], updates: [] });
+    await h.answer(2, h.ack([item('x1', 2), item('x2', 3)]));
+    h.w.items({ t: 'transcript.items', id: 'a', items: [item('x4', 4)], updates: [] });
+    expect(h.log).toEqual(['reset a x1', 'reset a x0,x1', 'reset a x1,x2', 'push a +x4 ~']);
   });
 
   it('drops malformed items and fills in a partial ack', () => {

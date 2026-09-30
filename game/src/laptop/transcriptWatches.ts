@@ -5,7 +5,7 @@ import type { CommandArgs, TranscriptClosed, TranscriptItem, TranscriptItems, Tr
 export interface TranscriptSink {
   /** A watch (or a re-watch) was acked: the whole timeline so far, replacing what was there. */
   reset(id: string, ack: TranscriptWatchAck): void;
-  /** Live: new items and whole replacements of items already sent (by `id`). */
+  /** Live, after the ack: new items and whole replacements of items already sent (by `id`). */
   push(id: string, items: TranscriptItem[], updates: TranscriptItem[]): void;
   /** Not watched any more (stood up, closed for good, the connection dropped). */
   stop(id: string): void;
@@ -26,9 +26,11 @@ interface Watch {
   gen: number;
   /** The items the watch asked for (a re-watch replaces it with more when someone sits down). */
   limit: number;
-  /** The ack came: pushes go to the sink (before it, they wait for it). */
+  /**
+   * The ack came: pushes go to the sink. Before it they are dropped: they come from the watch this one replaced (the
+   * bridge pushes a watch's items only after its ack), and the ack's items are newer than they are.
+   */
   ready: boolean;
-  queued: TranscriptItems[];
 }
 
 /** How many items a watch starts with. */
@@ -62,7 +64,8 @@ export function watchAck(data: unknown): TranscriptWatchAck {
 /**
  * M16: the connection's `transcript.watch`es, brought to what the game wants
  * (`sync`: the workers whose transcripts it reads; today the one you sit
- * at). Pushes before a watch's ack wait for it. The bridge's closes watch
+ * at). Pushes before a watch's ack are dropped (they are the replaced
+ * watch's, older than the ack's items). The bridge's closes watch
  * again (`session_changed` with the new session's items, `resync`,
  * `not_found`) or end it (`worker_removed`, `asleep`); either way not more
  * often than every RETRY_MS. After `unknown_command` (an older bridge) it is
@@ -143,7 +146,7 @@ export class TranscriptWatches {
     const gen = ++this.gen;
     this.retryAt.delete(id);
     this.fresh.delete(id);
-    this.on.set(id, { gen, limit, ready: false, queued: [] });
+    this.on.set(id, { gen, limit, ready: false });
     void this.host.send('transcript.watch', { id, limit }).then((r) => {
       const w = this.on.get(id);
       if (!w || w.gen !== gen) return;
@@ -157,8 +160,6 @@ export class TranscriptWatches {
       }
       w.ready = true;
       this.host.sink.reset(id, watchAck(r.data));
-      const q = w.queued.splice(0);
-      for (const m of q) this.deliver(m);
     });
   }
 
@@ -179,13 +180,7 @@ export class TranscriptWatches {
   }
 
   items(m: TranscriptItems): void {
-    const w = this.on.get(m.id);
-    if (!w) return;
-    if (!w.ready) w.queued.push(m);
-    else this.deliver(m);
-  }
-
-  private deliver(m: TranscriptItems): void {
+    if (!this.on.get(m.id)?.ready) return;
     const items = itemsOf(m.items);
     const updates = itemsOf(m.updates);
     if (items.length || updates.length) this.host.sink.push(m.id, items, updates);
