@@ -113,8 +113,13 @@ export interface H3DDebug {
   screenText(workerId: string): string[] | null;
   /** M5: how much of a worker's frozen laptop screen is not black (0–1), null when it is not frozen. */
   frozenInk(workerId: string): number | null;
-  /** M5: the seat bar (shown, its tape, its note, ok / busy / error / offline). */
-  seat(): { shown: boolean; tape: string; note: string; state: string };
+  /** M5: the seat bar (shown, its tape, its note, ok / busy / error / offline); M16: which mode it shows. */
+  seat(): { shown: boolean; tape: string; note: string; state: string; mode?: string };
+  /** M16: the seated view's mode, its transcript watches and items, the overlay's box (null: hidden) and whether the view is mounted. */
+  transcript(): ReturnType<import('./laptop').Laptops['transcriptState']> | null;
+  /** M16: the fixture simulator's `sim.transcript` (push items to a watch, close it) and `sim.transcripts` (its watches). */
+  simTranscript(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  simTranscripts(): Promise<{ watches: number; ids: string[] } | null>;
   /** M5: this connection's watches as the game counts them, and as the simulator (`sim=1`) does. */
   watches(): Promise<{ game: number; sim: number | null }>;
   /** M5: drops the connection and connects again (the bridge forgets every watch; the game re-watches). */
@@ -279,6 +284,18 @@ const h3d: H3DDebug = {
   screenText: (id) => app?.laptops.text(id) ?? null,
   frozenInk: (id) => app?.laptops.frozenInk(id) ?? null,
   seat: () => app?.seatBar.summary() ?? { shown: false, tape: '', note: '', state: '' },
+  transcript: () => app?.laptops.transcriptState() ?? null,
+  simTranscript: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    // `sim.transcript` is the fixture simulator's, not a bridge command.
+    const r = await app.client.request('sim.transcript' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  simTranscripts: async () => {
+    if (!app) return null;
+    const r = await app.client.request('sim.transcripts' as CommandName, {} as never);
+    return r.ok ? (r.data as { watches: number; ids: string[] }) : null;
+  },
   watches: async () => {
     if (!app) return { game: 0, sim: null };
     // `sim.watches` is the fixture simulator's, not a bridge command.

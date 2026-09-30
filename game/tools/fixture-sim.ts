@@ -28,6 +28,8 @@ import { CrewSim } from './fixture-crew.ts';
 import { BoardSim } from './fixture-boards.ts';
 // M10: the plan limits (`limits.refresh`, `simlimits=<scenario>`, `simfail=no_m10`).
 import { LimitsSim } from './fixture-limits.ts';
+// M16: the transcript view (`transcript.watch`, `sim.transcript`, `simfail=no_m16`).
+import { TranscriptSim } from './fixture-transcript.ts';
 
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
@@ -159,6 +161,10 @@ export class SimWorld {
       (snapshot.world as { presets?: unknown }).presets,
     );
     if (o.crewMs !== undefined) this.crewMs = o.crewMs;
+    this.transcripts = new TranscriptSim(
+      { worker: (id) => this.workers.find((x) => x.id === id), floor: (session) => this.floors.get(session), now: this.now, error: (code, message) => new CmdError(code, message) },
+      o.fail !== 'no_m16',
+    );
     this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
     this.boards = new BoardSim(
       {
@@ -183,6 +189,7 @@ export class SimWorld {
 
   /** M10: the plan limits (tools/fixture-limits.ts). */
   private readonly limits: LimitsSim;
+  private readonly transcripts: TranscriptSim;
 
   /** M7: boards, work items and opening a PR (tools/fixture-boards.ts). */
   private readonly boards: BoardSim;
@@ -326,6 +333,13 @@ export class SimWorld {
         failNext: (code: string) => this.fail === code && ((this.fail = undefined), true),
       }));
       send = screens.tap(send);
+      // M16: world events end the transcript watches they concern, too.
+      const plain = send;
+      send = (x: Msg) => {
+        plain(x);
+        this.transcripts.onEvent(x);
+      };
+      if (this.transcripts.handle(m.t, a, send, ack, fail)) return;
       if (screens.handle(m.t, a, send, ack, (code, message) => send({ t: 'error', req_id: reqId, code, message }))) return;
       if (this.start6.handle(m.t, a, send, ack, fail)) return;
       if (this.boards.handle(m.t, a, send, ack, fail)) return;

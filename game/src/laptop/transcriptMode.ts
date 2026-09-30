@@ -2,44 +2,18 @@ import type { CommandResult } from '../net/client';
 import type { CommandArgs, Question, TranscriptItem, TranscriptWatchAck } from '../net/protocol';
 import { failureText } from '../ui/messages';
 import { MAX_PROMPT } from './keys';
+import type { mountTranscript, TranscriptRenderHost, TranscriptView } from './transcriptRender';
 import { itemsOf } from './transcriptWatches';
 
-// The render module's side (`transcriptRender.ts`, M16): what the seated view calls it with. Declared here to the
-// agreed shapes so the shell builds on its own; the module is loaded lazily (`loadRenderer`).
+export type { TranscriptRenderHost, TranscriptView };
 
-export interface TranscriptRenderHost {
-  onPromptSubmit(text: string): void;
-  onAnswer(hash: string, choice: number | null, cancel?: boolean): void;
-  onSwitchToTerminal(): void;
-  loadSubagent(agentId: string): Promise<TranscriptItem[]>;
-}
+/** The render module's entry (`transcriptRender.ts`): what the seated view mounts in its overlay. */
+export type MountTranscript = typeof mountTranscript;
 
-export interface BlockedQuestion {
-  kind: string;
-  text: string;
-  excerpt: string[];
-  choices: { n: number; label: string }[];
-  selected?: number;
-  hash: string;
-}
-
-export interface TranscriptView {
-  setItems(items: TranscriptItem[]): void;
-  applyUpdates(items: TranscriptItem[]): void;
-  setBlocked(q: BlockedQuestion | null): void;
-  focusPrompt(): void;
-  destroy(): void;
-}
-
-export type MountTranscript = (container: HTMLElement, host: TranscriptRenderHost) => TranscriptView;
-
-/** The render module, loaded on the first switch to the transcript (it brings markdown and sanitising along); null when the build has none. */
+/** The render module, loaded on the first switch to the transcript (it brings markdown, sanitising and highlighting along). */
 export async function loadRenderer(): Promise<MountTranscript | null> {
-  const mods = import.meta.glob('./transcriptRender.ts');
-  const load = Object.values(mods)[0];
-  if (!load) return null;
-  const mod = (await load()) as { mountTranscript?: unknown };
-  return typeof mod.mountTranscript === 'function' ? (mod.mountTranscript as MountTranscript) : null;
+  const mod = await import('./transcriptRender');
+  return typeof mod.mountTranscript === 'function' ? mod.mountTranscript : null;
 }
 
 /** What you look at while seated: the live terminal, or the worker's conversation drawn over the monitor. */
@@ -54,7 +28,7 @@ export interface OverlayRect {
 }
 
 export interface TranscriptModeHost {
-  send<T extends 'worker.prompt' | 'worker.answer' | 'transcript.item'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
+  send<T extends 'worker.prompt' | 'worker.answer' | 'transcript.page'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** Loads the render module (`loadRenderer`; tests pass a fake). */
   renderer(): Promise<MountTranscript | null>;
   /** A new, empty, hidden overlay element in the HUD; the controller removes it (`remove()`). */
@@ -70,6 +44,8 @@ export interface TranscriptModeHost {
 /** Remembered per worker: the ones last read in transcript mode (terminal is the default), newest last. */
 const MODES_KEY = 'h3d.seat.transcript';
 const MODES_MAX = 64;
+/** How many of a subagent's items its nested timeline shows (the newest; the bridge's most). */
+const SUBAGENT_LIMIT = 500;
 
 function readModes(s: Storage | null): string[] {
   try {
@@ -217,7 +193,7 @@ export class TranscriptMode {
     s.mounting = false;
     if (!mount) {
       this.setMode('terminal', false);
-      this.host.status('error', 'This build of the game has no transcript view.');
+      this.host.status('error', 'The transcript view did not load: try again.');
       return;
     }
     s.view = mount(s.box, this.renderHost(s));
@@ -254,8 +230,9 @@ export class TranscriptMode {
         if (live()) this.setMode('terminal');
       },
       loadSubagent: async (agentId) => {
-        const r = await this.host.send('transcript.item', { id: s.id, item: agentId });
-        if (!r.ok) throw new Error(failureText('transcript.item', r.code, r.message, { worker: s.name }));
+        // A subagent's own timeline: its newest page (the bridge finds <session>/subagents/agent-<id>.jsonl).
+        const r = await this.host.send('transcript.page', { id: s.id, before: '', agent: agentId, limit: SUBAGENT_LIMIT });
+        if (!r.ok) throw new Error(failureText('transcript.page', r.code, r.message, { worker: s.name }));
         return subagentItems(r.data);
       },
     };
@@ -339,11 +316,8 @@ export class TranscriptMode {
   }
 }
 
-/** A `transcript.item` ack for a subagent: its timeline (`items`), or the one item it sent. */
+/** A `transcript.page` ack for a subagent (`TranscriptPageAck`): its items, oldest first. */
 export function subagentItems(data: unknown): TranscriptItem[] {
   if (typeof data !== 'object' || data === null) return [];
-  const d = data as Record<string, unknown>;
-  if (Array.isArray(d.items)) return itemsOf(d.items);
-  if (d.item !== undefined) return itemsOf([d.item]);
-  return itemsOf([d]);
+  return itemsOf((data as Record<string, unknown>).items);
 }

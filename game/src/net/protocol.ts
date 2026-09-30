@@ -380,8 +380,10 @@ export interface CommandArgs {
   // M16: the transcript view at a laptop (docs/protocol.md "Laptops: transcript").
   'transcript.watch': { id: string; limit?: number };
   'transcript.unwatch': { id: string };
-  'transcript.page': { id: string; before: string; limit?: number };
-  'transcript.item': { id: string; item: string };
+  /** The items before `before` (a cursor); with `agent`, a Claude subagent's own timeline (`before` '': its newest). */
+  'transcript.page': { id: string; before: string; limit?: number; agent?: string };
+  /** One item in full; with `agent`, an item of that subagent's timeline. */
+  'transcript.item': { id: string; item: string; agent?: string };
   // M6 start: team presets and starting a run.
   'preset.create': { name: string; roles: PresetRoles };
   /** `roles` replaces all five. */
@@ -665,17 +667,38 @@ export interface ImagePart {
   image_omitted: true;
 }
 
+/** A hunk as the bridge sends it: lines start with ' ', '-' or '+'; Codex patches have no line numbers (all 0). */
+export interface TranscriptHunk {
+  old_start: number;
+  old_lines: number;
+  new_start: number;
+  new_lines: number;
+  lines: string[] | null;
+}
+
+/** A file's change as unified-diff hunks (`TranscriptHunk`s from the bridge; the renderer reads other shapes too). */
+export interface TranscriptDiff {
+  path: string;
+  hunks: unknown[];
+  /** Lines were left out (`transcript.item` has them). */
+  truncated?: boolean;
+}
+
 export interface TranscriptItem {
   /** Stable across updates: Claude message.id/uuid (+block), Codex item id/call_id. */
   id: string;
   /** Order within this transcript. */
   seq: number;
-  /** Unix ms. */
+  /** Unix ms (0: the line had no timestamp). */
   ts: number;
   kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'subagent' | 'compaction' | 'notice' | 'unknown';
-  /** user / assistant: markdown text and images, in order. */
+  /** Noise shown only with "show system": dropped lines (as notices) and unknown ones. */
+  hidden?: boolean;
+  /** user / assistant / thinking: markdown text and images, in order. */
   parts?: Array<{ text: string } | ImagePart>;
-  /** A tool call and its result (the result may arrive later, as an update). */
+  /** A part's text was cut (`transcript.item` has it all). */
+  truncated?: boolean;
+  /** A tool call and its result (the result may arrive later, as an update); a subagent's call has one too. */
   tool?: {
     name: string;
     input_summary: string;
@@ -683,16 +706,22 @@ export interface TranscriptItem {
     status: 'running' | 'ok' | 'error' | 'interrupted';
     output_text?: string;
     output_truncated?: boolean;
-    diff?: { path: string; hunks: unknown[] };
+    /** Images in the output. */
+    images?: ImagePart[];
+    diff?: TranscriptDiff;
+    /** Every file of a patch that changes more than one (`diff` is the first). */
+    diffs?: TranscriptDiff[];
   };
+  /** `agent_id` is '' until the call's result names it (its timeline: `transcript.page` with `agent`). */
   subagent?: { agent_id: string; description: string; status: string };
-  notice?: { text: string };
+  /** `source`: the line type it came from ("system/turn_duration", "attachment/date", …). */
+  notice?: { text: string; source?: string };
   /** `unknown`: the line or block type the bridge did not know. */
   raw_type?: string;
 }
 
-/** `transcript.watch` ack (and `transcript.page`'s: the items before `cursor`). */
-export interface TranscriptWatchAck {
+/** What a watch says of the transcript it reads (the ack; the first push after a `pending` one). */
+export interface TranscriptHead {
   harness: string;
   session: string;
   version: string;
@@ -701,10 +730,27 @@ export interface TranscriptWatchAck {
   has_more: boolean;
   /** No transcript yet (a fresh hire, a plain shell): items come once it appears. */
   pending: boolean;
+}
+
+/** `transcript.watch` ack. */
+export interface TranscriptWatchAck extends TranscriptHead {
   items: TranscriptItem[];
 }
 
-export interface TranscriptItems {
+/** `transcript.page` ack: the items before the asked cursor (or a subagent's), oldest first. */
+export interface TranscriptPageAck {
+  items: TranscriptItem[];
+  /** Where the page before this one starts. */
+  cursor: string;
+  has_more: boolean;
+}
+
+/** `transcript.item` ack. */
+export interface TranscriptItemAck {
+  item: TranscriptItem;
+}
+
+export interface TranscriptItems extends Partial<TranscriptHead> {
   t: 'transcript.items';
   id: string;
   /** New items (absent: none). */

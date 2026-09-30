@@ -568,10 +568,12 @@ export class Laptops {
     return true;
   }
 
-  /** A key on something in the transcript (its prompt box, a tool row's button) is its own. */
+  /** A key on a control in the transcript (its prompt box, a tool row's button, a link) is its own; on the timeline itself it is not. */
   private transcriptOwns(t: EventTarget | null): boolean {
     const box = this.transcript.box;
-    return !!box && t instanceof Node && t !== box && box.contains(t);
+    if (!box || !(t instanceof Element) || !box.contains(t)) return false;
+    const control = t.closest('button, a, input, textarea, select, [contenteditable]');
+    return !!control && box.contains(control);
   }
 
   /** Where the keyboard goes while seated (a click on the view): the terminal's input, or the transcript. */

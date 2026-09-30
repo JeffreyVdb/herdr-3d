@@ -227,7 +227,8 @@ describe('rows per kind', () => {
           name: 'Edit',
           input_summary: 'src/app.ts',
           status: 'ok',
-          diff: { path: 'src/app.ts', hunks: [{ oldStart: 10, oldLines: 3, newStart: 10, newLines: 3, lines: [' const a = 1;', '-const b = 2;', '+const b = 3;', ' const c = 4;'] }] },
+          // The bridge's TranscriptHunk (snake_case, from Claude's structuredPatch).
+          diff: { path: 'src/app.ts', hunks: [{ old_start: 10, old_lines: 3, new_start: 10, new_lines: 3, lines: [' const a = 1;', '-const b = 2;', '+const b = 3;', ' const c = 4;'] }] },
         },
       }),
     ]);
@@ -248,9 +249,30 @@ describe('rows per kind', () => {
     ]);
   });
 
-  it('compaction is a divider; notices and unknown entries hide until "show system"', () => {
+  it('a Codex apply_patch over two files: every file, no made-up line numbers; output images as chips', () => {
     mount();
-    view.setItems([item('compaction', { notice: { text: 'summary' } }), item('notice', { notice: { text: 'Turn took 12s' } }), item('unknown', { raw_type: 'queue-operation' })]);
+    const a = { path: 'a.go', hunks: [{ old_start: 0, old_lines: 1, new_start: 0, new_lines: 1, lines: ['-x := 1', '+x := 2'] }] };
+    const b = { path: 'b.go', hunks: [{ old_start: 0, old_lines: 0, new_start: 0, new_lines: 1, lines: ['+y := 3'] }], truncated: true };
+    view.setItems([item('tool', { tool: { name: 'apply_patch', input_summary: 'a.go, b.go', status: 'ok', diff: a, diffs: [a, b], images: [{ image_omitted: true }] } })]);
+    expect(row('i1').querySelector('.tx-tool-row .tx-diff-stat')?.textContent).toBe('+2 −1');
+    ($('.tx-tool-row') as HTMLButtonElement).click();
+    expect($$('.tx-diff-path').map((e) => e.textContent)).toEqual(['a.go', 'b.go']);
+    expect($('.tx-dh')).toBeNull();
+    expect($$('.tx-dl .tx-dn').every((n) => n.textContent === '')).toBe(true);
+    expect(row('i1').textContent).toContain('Diff truncated');
+    expect(row('i1').querySelectorAll('.tx-img-chip').length).toBe(1);
+  });
+
+  it('compaction is a divider; hidden notices and unknown entries wait for "show system", other notices show', () => {
+    mount();
+    view.setItems([
+      item('compaction', { notice: { text: 'summary' } }),
+      item('notice', { hidden: true, notice: { text: 'Turn took 12s', source: 'system/turn_duration' } }),
+      item('unknown', { hidden: true, raw_type: 'queue-operation' }),
+      item('notice', { notice: { text: 'Interrupted by user', source: 'user/interrupt' } }),
+    ]);
+    expect(row('i4').classList.contains('tx-sys')).toBe(false);
+    expect(row('i4').textContent).toContain('Interrupted by user');
     expect(row('i1').getAttribute('role')).toBe('separator');
     expect(row('i1').classList.contains('tx-sys')).toBe(false);
     expect(row('i2').classList.contains('tx-sys')).toBe(true);
@@ -346,7 +368,7 @@ describe('follow mode', () => {
     sc.dispatchEvent(new Event('scroll'));
     height = 2800;
     view.applyUpdates([item('assistant', { parts: [text('one')] }), item('tool', { tool: { name: 'Bash', input_summary: 'ls', status: 'running' } })]);
-    view.applyUpdates([item('notice', { notice: { text: 'hidden, not counted' } })]);
+    view.applyUpdates([item('notice', { hidden: true, notice: { text: 'hidden, not counted' } })]);
     expect(sc.scrollTop).toBe(300);
     const jump = $('.tx-jump') as HTMLButtonElement;
     expect(jump.hidden).toBe(false);
@@ -534,6 +556,17 @@ describe('subagents', () => {
     expect(host.loads).toEqual(['ag-1', 'ag-1']);
   });
 
+  it('a running subagent the bridge has no agent_id for yet asks for nothing', () => {
+    mount();
+    view.setItems([item('subagent', { subagent: { agent_id: '', description: 'Explore', status: 'running' } })]);
+    ($('.tx-sub-row') as HTMLButtonElement).click();
+    expect(host.loads).toEqual([]);
+    expect($('.tx-sub-body')?.textContent).toContain('once it reports back');
+    // Its result names it: now it loads.
+    view.applyUpdates([{ id: 'i1', seq: 1, ts: T0, kind: 'subagent', subagent: { agent_id: 'ag-9', description: 'Explore', status: 'completed' } }]);
+    expect(host.loads).toEqual(['ag-9']);
+  });
+
   it('a failed load says so and can be retried', async () => {
     let fail = true;
     mount(fakeHost(async () => {
@@ -603,6 +636,9 @@ describe('helpers', () => {
     expect(parseHunk({ oldStart: 3, oldLines: 2, newStart: 3, newLines: 3, lines: [' a', '+b', ' c'] })).toEqual({ header: '@@ -3,2 +3,3 @@', oldStart: 3, newStart: 3, lines: [' a', '+b', ' c'] });
     expect(parseHunk('--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@ fn\n-a\n+b\n c\n')).toEqual({ header: '@@ -1,2 +1,2 @@ fn', oldStart: 1, newStart: 1, lines: ['-a', '+b', ' c'] });
     expect(parseHunk({ lines: ['+only'] })).toEqual({ header: null, oldStart: null, newStart: null, lines: ['+only'] });
+    expect(parseHunk({ old_start: 0, old_lines: 0, new_start: 1, new_lines: 1, lines: ['+new'] })).toEqual({ header: '@@ -0,0 +1,1 @@', oldStart: 0, newStart: 1, lines: ['+new'] });
+    expect(parseHunk({ old_start: 0, old_lines: 1, new_start: 0, new_lines: 1, lines: ['-a', '+b'] })).toEqual({ header: null, oldStart: null, newStart: null, lines: ['-a', '+b'] });
+    expect(parseHunk({ old_start: 1, old_lines: 0, new_start: 1, new_lines: 0, lines: null }).lines).toEqual([]);
     expect(parseHunk(7).lines).toEqual([' 7']);
   });
 

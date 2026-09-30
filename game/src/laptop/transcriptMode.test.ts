@@ -172,16 +172,17 @@ describe('TranscriptMode', () => {
     host.onAnswer('h1', 2);
     host.onAnswer('h1', null, true);
     host.onAnswer('h1', null);
-    const sub = host.loadSubagent('agent-7');
+    const sub = host.loadSubagent('a7');
     expect(h.sent.map((s) => [s.t, s.args])).toEqual([
       ['worker.prompt', { id: 'a', text: 'fix the test' }],
       ['worker.answer', { id: 'a', hash: 'h1', choice: 2 }],
       ['worker.answer', { id: 'a', hash: 'h1', cancel: true }],
-      ['transcript.item', { id: 'a', item: 'agent-7' }],
+      // A subagent's own timeline is a page of it (transcript.item is one item by its item id).
+      ['transcript.page', { id: 'a', before: '', agent: 'a7', limit: 500 }],
     ]);
     h.sent[0]?.resolve({ ok: true, data: { sent: 'prompt' } });
     h.sent[1]?.resolve({ ok: false, code: 'stale_question', message: 'the question changed' });
-    h.sent[3]?.resolve({ ok: true, data: { items: [item('s1'), item('s2', 2)] } });
+    h.sent[3]?.resolve({ ok: true, data: { items: [item('s1'), item('s2', 2)], cursor: 'c:1', has_more: false } });
     expect((await sub).map((i) => i.id)).toEqual(['s1', 's2']);
     await flush();
     expect(h.status[0]).toEqual(['ok', 'Sent to Ada']);
@@ -193,11 +194,17 @@ describe('TranscriptMode', () => {
     expect(h.views[0]?.calls.at(-1)).toBe('prompt');
   });
 
-  it('reads a subagent from items, one item, or the ack itself', () => {
-    expect(subagentItems({ items: [item('a')] }).map((i) => i.id)).toEqual(['a']);
-    expect(subagentItems({ item: item('b') }).map((i) => i.id)).toEqual(['b']);
-    expect(subagentItems(item('c')).map((i) => i.id)).toEqual(['c']);
+  it('reads a subagent from its page ack; a failed load throws for the view to show', async () => {
+    expect(subagentItems({ items: [item('a'), { junk: true }], cursor: 'c:1', has_more: false }).map((i) => i.id)).toEqual(['a']);
+    expect(subagentItems({ item: item('b') })).toEqual([]);
     expect(subagentItems(null)).toEqual([]);
+    const h = harness();
+    h.tx.sit('a', 'Ada');
+    h.tx.toggle();
+    await flush();
+    const sub = (h.views[0] as FakeView).host.loadSubagent('a7');
+    h.sent[0]?.resolve({ ok: false, code: 'not_found', message: 'no transcript for subagent "a7"' });
+    await expect(sub).rejects.toThrow();
   });
 
   it('remembers the mode per worker; blocked storage breaks nothing', () => {

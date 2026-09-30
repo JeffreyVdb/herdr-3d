@@ -1,7 +1,7 @@
 import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
-import type { TranscriptItem } from '../net/protocol';
+import type { TranscriptDiff, TranscriptItem } from '../net/protocol';
 import { h, icon } from '../ui/dom';
 
 /**
@@ -271,6 +271,18 @@ function toolIcon(name: string): string {
   return TX_ICON.tool;
 }
 
+/** An image in a message or a tool's output (phase 1: the bridge only says where one was). */
+const imageChip = () => h('span', { class: 'tx-img-chip', title: 'Images come in a later version' }, icon(TX_ICON.image), '[image — not shown yet]');
+
+/** A tool's diffs: every file of a multi-file patch (`diffs`), else its one `diff`. */
+function toolDiffs(t: NonNullable<TranscriptItem['tool']>): TranscriptDiff[] {
+  const ok = (d: unknown): d is TranscriptDiff => !!d && typeof d === 'object' && Array.isArray((d as TranscriptDiff).hunks);
+  const many = Array.isArray(t.diffs) ? t.diffs.filter(ok) : [];
+  return many.length ? many : ok(t.diff) ? [t.diff] : [];
+}
+
+const toolImages = (t: NonNullable<TranscriptItem['tool']>) => (Array.isArray(t.images) ? t.images.length : 0);
+
 const STATUS_TEXT: Record<string, string> = { running: 'running', ok: 'done', error: 'error', interrupted: 'interrupted' };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -285,8 +297,9 @@ interface Hunk {
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
-/** A hunk as the bridge sends it: Claude's structuredPatch (`{oldStart, oldLines, newStart, newLines, lines}`), a
- * unified-diff string, or `{lines}` alone. Anything else becomes its JSON as context lines. */
+/** A hunk as the bridge sends it (`TranscriptHunk`: `{old_start, old_lines, new_start, new_lines, lines}`, all starts 0
+ * for Codex), Claude's raw structuredPatch (`{oldStart, …}`), a unified-diff string, or `{lines}` alone. Anything else
+ * becomes its JSON as context lines. */
 export function parseHunk(raw: unknown): Hunk {
   if (typeof raw === 'string') {
     const lines = raw.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
@@ -306,12 +319,14 @@ export function parseHunk(raw: unknown): Hunk {
   }
   if (raw && typeof raw === 'object') {
     const o = raw as Record<string, unknown>;
-    const lines = Array.isArray(o.lines) ? o.lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))) : null;
+    const lines = Array.isArray(o.lines) ? o.lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))) : o.lines === null ? [] : null;
     if (lines) {
-      const oldStart = num(o.oldStart ?? o.old_start);
-      const newStart = num(o.newStart ?? o.new_start);
-      const oldLines = num(o.oldLines ?? o.old_lines);
-      const newLines = num(o.newLines ?? o.new_lines);
+      let oldStart = num(o.oldStart ?? o.old_start);
+      let newStart = num(o.newStart ?? o.new_start);
+      let oldLines = num(o.oldLines ?? o.old_lines);
+      let newLines = num(o.newLines ?? o.new_lines);
+      // The bridge's Codex patches have no line numbers: every field is 0 (a real hunk starts at line 1 on one side).
+      if (oldStart === 0 && newStart === 0) oldStart = newStart = oldLines = newLines = null;
       const header = oldStart !== null && newStart !== null ? `@@ -${oldStart}${oldLines !== null ? `,${oldLines}` : ''} +${newStart}${newLines !== null ? `,${newLines}` : ''} @@` : typeof o.header === 'string' ? o.header : null;
       return { header, oldStart, newStart, lines };
     }
@@ -333,7 +348,7 @@ function diffStat(hunks: unknown[]): { add: number; del: number } {
 
 const MAX_DIFF_LINES = 2000;
 
-function renderDiff(diff: { path: string; hunks: unknown[] }): HTMLElement {
+function renderDiff(diff: TranscriptDiff): HTMLElement {
   const hunks = Array.isArray(diff.hunks) ? diff.hunks : [];
   const { add, del } = diffStat(hunks);
   const box = h('div', { class: 'tx-diff' }, h('div', { class: 'tx-diff-file' }, h('span', { class: 'tx-diff-path' }, String(diff.path ?? '')), h('span', { class: 'tx-diff-stat' }, h('span', { class: 'tx-add-n' }, `+${add}`), ' ', h('span', { class: 'tx-del-n' }, `−${del}`))));
@@ -365,8 +380,9 @@ function renderDiff(diff: { path: string; hunks: unknown[] }): HTMLElement {
 // ---------------------------------------------------------------------------------------------------------------
 // The view
 
-const SYSTEM_KINDS = new Set<TranscriptItem['kind']>(['notice', 'unknown']);
-const isSystem = (it: TranscriptItem) => SYSTEM_KINDS.has(it.kind);
+/** Shown only with "show system": what the bridge marks hidden (dropped lines, as notices) and unknown entries. A notice
+ * it does not hide (an interrupt, a turn's error, command output) is part of the conversation. */
+const isSystem = (it: TranscriptItem) => it.hidden === true || it.kind === 'unknown';
 const EXCERPT_LINES = 4;
 const MAX_INPUT_JSON = 4000;
 
@@ -595,7 +611,7 @@ class Transcript implements TranscriptView {
       case 'compaction':
         return h('li', { class: 'tx-item tx-compaction', role: 'separator', title: it.notice?.text ?? '' }, h('span', { class: 'tx-compaction-label' }, 'Context compacted'));
       case 'notice':
-        return h('li', { class: 'tx-item tx-notice' }, h('span', { class: 'tx-notice-tag' }, 'system'), h('span', { class: 'tx-notice-text' }, it.notice?.text ?? it.raw_type ?? ''));
+        return h('li', { class: 'tx-item tx-notice' }, h('span', { class: 'tx-notice-tag' }, it.hidden ? 'system' : 'note'), h('span', { class: 'tx-notice-text' }, it.notice?.text ?? it.raw_type ?? ''));
       default:
         return this.unknownRow(it, null);
     }
@@ -614,9 +630,10 @@ class Transcript implements TranscriptView {
         setMarkdown(md, p.text);
         box.append(md);
       } else if (p && typeof p === 'object' && 'image_omitted' in p) {
-        box.append(h('span', { class: 'tx-img-chip', title: 'Images come in a later version' }, icon(TX_ICON.image), '[image — not shown yet]'));
+        box.append(imageChip());
       }
     }
+    if (it.truncated) box.append(h('div', { class: 'tx-note' }, 'Truncated: only the start is shown.'));
     if (!box.childElementCount) box.classList.add('tx-blank');
     return box;
   }
@@ -672,8 +689,8 @@ class Transcript implements TranscriptView {
         if (ms >= 0 && ms < 86_400_000) dur.textContent = duration(ms);
       }
     }
-    const diff = t.diff && typeof t.diff === 'object' && Array.isArray(t.diff.hunks) ? t.diff : null;
-    const stat = diff ? diffStat(diff.hunks) : null;
+    const diffs = toolDiffs(t);
+    const stat = diffs.length ? diffs.map((d) => diffStat(d.hunks)).reduce((a, b) => ({ add: a.add + b.add, del: a.del + b.del })) : null;
     const head = h(
       'button',
       { class: 'tx-tool-row', 'aria-expanded': 'false' },
@@ -687,18 +704,18 @@ class Transcript implements TranscriptView {
     );
     const body = h('div', { class: 'tx-tool-body' });
     const ex = this.expander(`${scope}/${it.id}`, (open) => {
-      if (open && !body.childNodes.length) this.fillTool(body, t, diff);
+      if (open && !body.childNodes.length) this.fillTool(body, t, diffs);
       body.hidden = !open;
     });
     head.setAttribute('aria-expanded', String(ex.open));
     head.addEventListener('click', () => ex.toggle(head));
     body.hidden = !ex.open;
-    if (ex.open) this.fillTool(body, t, diff);
+    if (ex.open) this.fillTool(body, t, diffs);
     row.append(head, body);
     return row;
   }
 
-  private fillTool(body: HTMLElement, t: NonNullable<TranscriptItem['tool']>, diff: { path: string; hunks: unknown[] } | null): void {
+  private fillTool(body: HTMLElement, t: NonNullable<TranscriptItem['tool']>, diffs: TranscriptDiff[]): void {
     if (t.input !== undefined && t.input !== null) {
       let json: string;
       try {
@@ -711,10 +728,15 @@ class Transcript implements TranscriptView {
         body.append(h('div', { class: 'tx-label' }, 'Input'), h('pre', { class: 'tx-out tx-input-json' }, json));
       }
     }
-    if (diff) body.append(renderDiff(diff));
+    for (const d of diffs) {
+      body.append(renderDiff(d));
+      if (d.truncated) body.append(h('div', { class: 'tx-note' }, 'Diff truncated: only the start is shown.'));
+    }
     if (typeof t.output_text === 'string' && t.output_text.length) {
       body.append(h('div', { class: 'tx-label' }, 'Output'), h('pre', { class: 'tx-out' }, stripAnsi(t.output_text)));
-    } else if (!diff && t.status !== 'running') body.append(h('div', { class: 'tx-note' }, 'No output.'));
+    } else if (!diffs.length && !toolImages(t) && t.status !== 'running') body.append(h('div', { class: 'tx-note' }, 'No output.'));
+    const images = toolImages(t);
+    for (let i = 0; i < images; i++) body.append(imageChip());
     if (t.output_truncated) body.append(h('div', { class: 'tx-note' }, 'Output truncated: only the start is shown.'));
     if (t.status === 'running') body.append(h('div', { class: 'tx-note' }, 'Still running…'));
   }
@@ -752,6 +774,11 @@ class Transcript implements TranscriptView {
   }
 
   private fillSub(body: HTMLElement, agentId: string, status: string, key: string): void {
+    // The bridge learns a Claude subagent's id from its call's result: until then there is no timeline to ask for.
+    if (!agentId) {
+      body.replaceChildren(h('div', { class: 'tx-note' }, status === 'running' ? 'Its steps show here once it reports back.' : 'This subagent’s steps were not recorded.'));
+      return;
+    }
     let st = this.subs.get(agentId);
     if (!st) {
       st = { items: null, error: null, loading: null, status };
