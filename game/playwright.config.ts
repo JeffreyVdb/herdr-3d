@@ -6,7 +6,8 @@ if (!port) {
   throw new Error('PORTLEASE_PREVIEW_PORT unset: run the e2e tests via `make shot` or `make e2e`');
 }
 
-// Every test opens its own page against the shared preview server, so specs run in parallel.
+// Every test opens its own page against the shared preview server and depends on no other test, so tests run in
+// parallel, one at a time per worker (fullyParallel: a heavy spec file is spread over the workers, not one long pole).
 // H3D_WORKERS overrides the count (a positive integer); anything else falls back to the default.
 const DEFAULT_WORKERS = 6;
 const asked = process.env.H3D_WORKERS;
@@ -21,6 +22,7 @@ export default defineConfig({
   outputDir: 'test-results/artifacts',
   timeout: 120_000,
   retries: 0,
+  fullyParallel: true,
   workers,
   reporter: 'list',
   use: {
