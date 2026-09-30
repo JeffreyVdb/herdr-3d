@@ -13,6 +13,12 @@ export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD := 1
 # Ports are leased from portlease, never hardcoded. Servers bind 127.0.0.1 only.
 PORTLEASE := portlease run --project herdr-3d --worktree "$(CURDIR)"
 
+# One Playwright run (make e2e / make shot) per host: two suites at once both drop below 10 fps on llvmpipe and flake.
+# The subshell holds the lock on fd 9 and the run itself gets no copy (9>&-), so the lock goes when the subshell exits
+# (success, failure, ctrl-c), even if a stray browser outlives it. Waiting is announced only when there is a wait.
+E2E_LOCK := $${XDG_RUNTIME_DIR:-/tmp}/herdr-3d-e2e.lock
+E2E_LOCKED = flock -n 9 || { echo "waiting for another worktree's e2e run ($(E2E_LOCK))..." >&2; flock 9; }
+
 # The built game is copied here and embedded in h3d-helper (internal/webdist).
 EMBED_DIR := internal/webdist/game
 RELEASE_DIR := bin/release
@@ -83,11 +89,11 @@ dev: deps
 ## shot: headless WebGL2 screenshot of the built game -> game/test-results/shot.png (e2e/shot.spec.ts only)
 shot: game-build
 	rm -f game/test-results/shot.png
-	$(PORTLEASE) --name preview --service game-shot -- $(PNPM) exec playwright test e2e/shot.spec.ts
+	@( $(E2E_LOCKED); set -x; $(PORTLEASE) --name preview --service game-shot -- $(PNPM) exec playwright test e2e/shot.spec.ts 9>&- ) 9>"$(E2E_LOCK)"
 
-## e2e: the full headless Playwright suite (all e2e/*.spec.ts, H3D_WORKERS parallel workers)
+## e2e: the full headless Playwright suite (all e2e/*.spec.ts, H3D_WORKERS parallel workers; one run per host)
 e2e: game-build
-	$(PORTLEASE) --name preview --service game-e2e -- $(PNPM) exec playwright test
+	@( $(E2E_LOCKED); set -x; $(PORTLEASE) --name preview --service game-e2e -- $(PNPM) exec playwright test 9>&- ) 9>"$(E2E_LOCK)"
 
 ## deps: install game dependencies from the lockfile
 deps: game/node_modules/.modules.yaml
