@@ -88,8 +88,6 @@ Implications:
 | 7 | Concurrency and time | At most 4 uploads at once (a fifth is `429` `upload_busy`, not queued: a queue would hold a client's body open), 2 minutes for the whole upload (`504` `upload_timeout`), 5 s to connect, 30 s for Drop Zone's answer after the last byte, no redirects (an image is never replayed elsewhere). The pipe to Drop Zone is closed when the context ends: the HTTP transport waits for its writer, which waits on the pipe, so cancelling a context alone would hang. |
 | 8 | Audit | Rows `image.upload` with label, `n`, size, type and outcome; never the bytes, and not the path (an audit row is not where a path is needed). |
 
-| 5 | Small dialogs (confirm, hire, start-run, send-home, prompt, presets, open-PR) | **Unchanged**: the plate stays above them (hire and start-run also show the limits inline). Only the Changes panel steps it aside, as before. **Amended 2026-09-30 (#51): hire is no longer small**, see below. |
-
 ## 2026-09-30 — #51: dialogs never close by accident; the hire dialog is a full-screen sheet
 
 The bug: `click` with `e.target === dialog` closed a dialog when a press inside (a text selection) was released on the backdrop, because the click lands on the two targets' common ancestor, the `<dialog>`. Ten dialogs had that check; all are replaced by one helper, `backdropPolicy` in `game/src/ui/dismiss.ts`.
