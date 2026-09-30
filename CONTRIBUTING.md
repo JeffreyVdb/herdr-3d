@@ -606,6 +606,16 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 | `shadows=0`, `badges=0`, `battery=1` | no shadows; no city badges (perf comparisons); start in battery saver |
 | `me=<name>` | M3c: the name on your desk's name plate and the office glass (default "You": the bridge sends no user name yet) |
 
+#51 prompt composer (`src/ui/composer/`, `src/net/upload.ts`): a `contenteditable` with image chips, shared by every prompt. `model.ts`
+(document, serialiser: pure), `draft.ts` (the draft object a host keeps: history, images, upload queue, `resolve()`), `composer.ts`
+(the view, `mountComposer`), `lightbox.ts` (the enlarged view), `tree.ts` (DOM ↔ offsets). Decisions: `docs/decisions.md`
+(2026-09-30). A host mounts it with a `Draft` (or a `wsUrl`), asks `resolve()` for the final text on `onSubmit`, and keeps
+the draft object to keep the prompt across a closed dialog. The fixture server answers `POST /upload` (`tools/fixture-upload.ts`:
+a fake `/home/fixture/drops/2026-09/h3d-<label>-<n>.<ext>` path; `fail_upload=<N|all>&upload_key=<key>` in the `ws` query fails
+the first N uploads of that key; `GET /upload/_log?upload_key=<key>` lists what it received). `/?composer-demo&ws=…` mounts the
+composer in a test-only dialog with no game (`src/ui/composer/demo.ts`, loaded only on that parameter) for `e2e/composer.spec.ts`;
+`H3D_EVIDENCE_DIR` sends its screenshots elsewhere than `test-results/composer`.
+
 M5 on the simulating server (`ws=…?sim=1…`): `simusage=<ms>` sends working agents' `worker.usage` that often
 (default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|changes_failed` for the next prompt,
 answer or changes, `simfail=input_failed` fails the next `worker.keys`, `simfail=observer_failed` closes the next watch

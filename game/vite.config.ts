@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from 'vitest/config';
 import { creditsText, MANIFEST } from './src/audio/tracks.ts';
 import { fixtureUpgradeHandler } from './tools/fixture-server.ts';
 import { logoRoute } from './tools/fixture-logo.ts';
+import { uploadRoute } from './tools/fixture-upload.ts';
 import { holdRows } from './tools/music.ts';
 
 /**
@@ -15,12 +16,12 @@ function fixtures(): Plugin {
     name: 'h3d-fixtures',
     configureServer(server) {
       server.httpServer?.on('upgrade', handler);
-      server.middlewares.use((req, res, next) => (logoRoute(req, res) ? undefined : next()));
+      server.middlewares.use((req, res, next) => (logoRoute(req, res) || uploadRoute(req, res) ? undefined : next()));
     },
     configurePreviewServer(server) {
       server.httpServer.on('upgrade', handler);
-      // M3d: the bridge's /logo/<building> routes, for a simulated world (tools/fixture-logo.ts).
-      server.middlewares.use((req, res, next) => (logoRoute(req, res) ? undefined : next()));
+      // M3d: the bridge's /logo/<building> routes, for a simulated world (tools/fixture-logo.ts); #51: /upload (tools/fixture-upload.ts).
+      server.middlewares.use((req, res, next) => (logoRoute(req, res) || uploadRoute(req, res) ? undefined : next()));
     },
   };
 }
