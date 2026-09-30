@@ -1929,8 +1929,8 @@ export class App {
     };
     const labels: PlanLabel[] = [];
     for (const p of o.layout.props) {
-      // M15: the radio is a thing on the counter, not a placeholder to label.
-      if (p.id === 'radio') continue;
+      // M15: the radio is a thing on the counter, not a placeholder to label; M17: nor is a look-only prop (the clock on the partition).
+      if (p.id === 'radio' || p.milestone === null) continue;
       const c = toScreen((p.box.min[0] + p.box.max[0]) / 2, 0, (p.box.min[2] + p.box.max[2]) / 2);
       labels.push({ ...c, text: p.label, kind: 'prop' });
     }
