@@ -181,10 +181,21 @@
   background: radial-gradient(circle at 6px 0, var(--ink) 3px, transparent 3.6px) 0 0 / 12px 7px repeat-x;
   pointer-events: none;
 }
-.desk-dlg .dd-prompt {
-  display: block;
-  min-height: 190px;
-  max-height: 340px;
+/* Extra instructions: the composer (#64) in the slot the textarea had. */
+.dd-extra .cmp {
+  --cmp-min-height: 70px;
+  --cmp-max-height: 180px;
+}
+.dd-extra .cmp-editor {
+  padding: 8px 10px;
+}
+/* The slip is the shared composer on paper: the editor is the slip, mono like a work order; its chips stay navy prints. */
+.dd-slip .cmp {
+  --cmp-min-height: 190px;
+  --cmp-max-height: 340px;
+  --cmp-err: #b3261e;
+}
+.dd-slip .cmp-editor {
   padding: 14px 14px 12px;
   border: 0;
   border-radius: 3px 3px 6px 6px;
@@ -198,16 +209,32 @@
   font-variation-settings: 'CASL' 0, 'MONO' 1;
   box-shadow: 0 2px 0 rgb(0 0 0 / 22%), 0 8px 18px rgb(0 0 0 / 28%);
 }
-.desk-dlg .dd-prompt::placeholder {
-  color: #5b6685;
-}
-.desk-dlg .dd-prompt:hover {
+.dd-slip .cmp-editor:hover {
   background-color: #f6f8fd;
 }
-.desk-dlg .dd-prompt::selection {
+.dd-slip .cmp-editor[data-empty='true']::before {
+  left: 14px;
+  right: 14px;
+  color: #5b6685;
+}
+.dd-slip .cmp-editor::selection,
+.dd-slip .cmp-editor ::selection {
   background: rgb(255 194 51 / 55%);
 }
-.dd-preview[data-state='custom'] .dd-prompt {
+.dd-slip .cmp-chip {
+  color: var(--text-on-ink);
+  font-variation-settings: normal;
+}
+.dd-slip .cmp-chip[data-status='error'] {
+  background: #4a2531;
+}
+.dd-slip .cmp-notice {
+  margin: 0;
+  padding: 6px 14px 8px;
+  background: #eef2fb;
+  border-radius: 0 0 6px 6px;
+}
+.dd-preview[data-state='custom'] .dd-slip .cmp-editor {
   box-shadow: 0 0 0 2px var(--sun), 0 2px 0 rgb(0 0 0 / 22%), 0 8px 18px rgb(0 0 0 / 28%);
 }
 #run-prompt-note[data-stale='true'] {

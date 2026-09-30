@@ -62,6 +62,8 @@ async function faceDesk(page: Page, session: string, desk: number, back = 0.45, 
 }
 
 const prompt = (page: Page) => page.locator('#run-prompt');
+/** What the First prompt composer shows (a contenteditable has no value): its text, line breaks kept. */
+const promptShown = (page: Page) => prompt(page).evaluate((e) => (e as HTMLElement).innerText.replace(/\u200B/g, '').replace(/\n$/, ''));
 
 test('E on an empty desk: Hire orchestrator from the keyboard, an issue number, Ctrl+Enter starts the run and you face the orchestrator', async ({ page }) => {
   test.setTimeout(120_000);
@@ -103,7 +105,7 @@ test('E on an empty desk: Hire orchestrator from the keyboard, an issue number, 
   expect(d.ticket).toMatchObject({ kind: 'issue', number: 7, repo: 'JeffreyVdb/herdr-3d', url: URL7 });
   await expect(page.locator('#run-ticket-read')).toHaveText('#7 Issue #7 · JeffreyVdb/herdr-3d');
   expect(d.preview).toMatchObject({ custom: false, text: [`/write-code ${URL7}`, '', ...TEAM, '', STATUS].join('\n') });
-  await expect(prompt(page)).toHaveValue([`/write-code ${URL7}`, '', ...TEAM, '', STATUS].join('\n'));
+  await expect.poll(() => promptShown(page)).toBe([`/write-code ${URL7}`, '', ...TEAM, '', STATUS].join('\n'));
   await expect(page.locator('#run-label')).toHaveAttribute('placeholder', 'ORCH|issue-7');
   expect(d.blocker).toBeNull();
   // A codex orchestrator: $write-code and the effort chips of codex.
@@ -217,7 +219,7 @@ test('an edited prompt survives field changes, is sent as is, and can be reset',
   d = await settled(page);
   expect(d.preview.generated).toBe(`${generated}\n\nMind the budget.`);
   expect(d.preview.text).toBe(`${generated}\n\nStart with the tests.`);
-  await expect(prompt(page)).toHaveValue(`${generated}\n\nStart with the tests.`);
+  await expect.poll(() => promptShown(page)).toBe(`${generated}\n\nStart with the tests.`);
   await expect(page.locator('#run-prompt-note')).toHaveText(/the fields above now make a different prompt/);
   await prompt(page).scrollIntoViewIfNeeded();
   await shot(page, 'm6-start-run-edited');
@@ -225,7 +227,10 @@ test('an edited prompt survives field changes, is sent as is, and can be reset',
   await page.locator('[data-key="reset-prompt"]').click();
   d = (await dialog(page)) as Run;
   expect(d.preview).toMatchObject({ custom: false, text: `${generated}\n\nMind the budget.` });
-  await prompt(page).fill('/write-code https://github.com/JeffreyVdb/herdr-3d/issues/7\n\nOnly the docs, please.');
+  // A contenteditable: type it (Enter is a line break of the composer's own; `fill` makes block markup out of newlines).
+  await prompt(page).click();
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.type('/write-code https://github.com/JeffreyVdb/herdr-3d/issues/7\n\nOnly the docs, please.');
   await page.locator('dialog.desk-dlg--run [data-key="start"]').click();
   await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'run.start').map((c) => (c.args as { prompt?: string }).prompt)).toEqual([
     '/write-code https://github.com/JeffreyVdb/herdr-3d/issues/7\n\nOnly the docs, please.',

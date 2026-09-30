@@ -48,7 +48,7 @@ test('a question arriving while you type: the prompt turns off, its draft kept, 
   await page.evaluate((x) => window.__h3d.inject({ t: 'worker.upsert', seq: 1_000_000, worker: x }), { ...w, status: 'blocked', question: q });
   await expect(tx.locator('.tx-banner')).toContainText('Allow the second push?');
   await expect(tx.locator('.tx-input')).toBeDisabled();
-  await expect(tx.locator('.tx-input')).toHaveValue('draft while agent works');
+  await expect(tx.locator('.tx-input')).toHaveText('draft while agent works');
   // The keyboard went to the timeline, not <body>.
   await expect(tx.locator('.tx-scroll')).toBeFocused();
 

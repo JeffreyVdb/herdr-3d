@@ -342,7 +342,8 @@ export class App {
       toast: (m: string, kind: 'info' | 'error') => this.hud.toast(m, kind === 'error' ? 6500 : 3600, kind),
       now: () => Date.now(),
     };
-    const hireHost = { ...dialogHost, upload: (f: Blob, hint: { label?: string; n?: number }, signal?: AbortSignal) => postUpload(this.url, f, hint, signal), reserve: (s: string, d: number) => this.reserve(s, d), held: (s: string) => this.heldDesks(s) };
+    const upload = (f: Blob, hint: { label?: string; n?: number }, signal?: AbortSignal) => postUpload(this.url, f, hint, signal);
+    const hireHost = { ...dialogHost, upload, reserve: (s: string, d: number) => this.reserve(s, d), held: (s: string) => this.heldDesks(s) };
     this.hire = new HireDialog(o.host, { ...hireHost, orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ session: s, desk: d }, true) } });
     // M6 start
     this.presetsPanel = new PresetsPanel(o.host, dialogHost);
@@ -376,7 +377,7 @@ export class App {
     this.walk.scene.add(this.arrivals.group);
     this.seatBar = new SeatBar(this.hud.root, {
       text: (t) => this.laptops.typeText(t),
-      paste: (t) => this.laptops.paste(t),
+      paste: (t, files) => this.laptops.paste(t, files),
       stand: () => this.laptops.stand(),
       toggle: () => this.laptops.toggleTranscript(),
     });
@@ -387,6 +388,7 @@ export class App {
         watch: (t, args) => this.sendWatch(t, args),
         unsupported: (t) => this.unsupported.has(t),
         toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 5200 : 3200, kind),
+        upload,
         seat: this.seatBar,
         insets: () => ({ top: parseFloat(this.hud.root.style.getPropertyValue('--topbar-bottom')) || 70, bottom: this.seatBar.el.getBoundingClientRect().height + 18 }),
         layer: this.hud.root,
@@ -394,7 +396,7 @@ export class App {
       o.params,
     );
     // M5: the Changes panel sits in the HUD, under the top bar, and leaves the floor in view.
-    this.prompt = new PromptOverlay(o.host, dialogHost);
+    this.prompt = new PromptOverlay(o.host, { ...dialogHost, upload });
     this.openPr = new OpenPrDialog(o.host, {
       ...dialogHost,
       providerName: (session) => this.boardBook.get(session).prs?.provider_name ?? this.boardBook.get(session).issues?.provider_name ?? 'the provider',

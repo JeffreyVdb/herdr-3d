@@ -738,30 +738,87 @@
   border-top: 1px solid var(--tx-line);
   background: var(--tx-bg-2);
 }
-.tx-input {
+/* The prompt box is the shared composer (#64): its editor wears the box's look, its chips scale with the view (em). */
+.tx .cmp {
+  --cmp-well: var(--tx-bg);
+  --cmp-min-height: 2.3em;
+  --cmp-max-height: 10em;
+  --cmp-ok: var(--tx-green);
+  --cmp-err: var(--tx-red);
   flex: 1;
-  min-width: 0;
-  min-height: 32px;
-  max-height: 140px;
-  resize: none;
-  padding: 6px 10px;
+  color: var(--tx-text);
+}
+.tx .cmp-editor {
+  padding: 0.4em 0.7em;
   border: 1px solid var(--tx-line);
-  border-radius: 8px;
-  background: var(--tx-bg);
+  border-radius: 0.55em;
   color: var(--tx-text);
   font: inherit;
   line-height: 1.4;
+  caret-color: var(--tx-sun);
 }
-.tx-input::placeholder {
-  color: var(--tx-text-3);
+.tx .cmp-editor:hover {
+  border-color: var(--tx-line);
 }
-.tx-input:focus {
+.tx .cmp-editor:focus-visible {
   outline: none;
   border-color: var(--tx-blue);
 }
-.tx-input:disabled {
+.tx .cmp-editor[data-empty='true']::before {
+  left: 0.7em;
+  right: 0.7em;
+  overflow: hidden;
+  color: var(--tx-text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tx .cmp-editor[aria-disabled='true'] {
   opacity: 0.7;
   cursor: not-allowed;
+}
+.tx .cmp-notice {
+  margin: 0.35em 0 0;
+  font-size: 0.85em;
+}
+.tx .cmp-chip {
+  color: var(--tx-text);
+  background: var(--tx-bg-3);
+  border-color: var(--tx-line);
+}
+.tx .cmp-chip[data-status='error'] {
+  border-color: var(--tx-red);
+}
+.tx .cmp-thumb {
+  width: 3.9em;
+  height: 2.7em;
+}
+.tx .cmp-name {
+  font-size: 0.85em;
+}
+.tx .cmp-state {
+  font-size: 0.75em;
+  color: var(--tx-text-2);
+}
+.tx .cmp-num {
+  font-size: 0.72em;
+  line-height: 1.45;
+}
+.tx .cmp-remove,
+.tx .cmp-retry {
+  font-size: 0.8em;
+  color: var(--tx-text);
+}
+.tx .cmp-remove {
+  width: 2em;
+  height: 2em;
+}
+.tx .cmp-retry {
+  height: 2em;
+}
+.tx .cmp-thumb:focus-visible,
+.tx .cmp-remove:focus-visible,
+.tx .cmp-retry:focus-visible {
+  outline-color: var(--tx-blue);
 }
 .tx-send:disabled {
   opacity: 0.45;

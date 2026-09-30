@@ -3,6 +3,7 @@ import { baseText, capacityView, fetchNote, firstFreeDesk, freeDesks, modelsFor,
 import { effortsFor } from '../world/settings';
 import {
   emptyPreview,
+  EXTRA_MAX,
   parseTicket,
   prepareArgs,
   previewEdited,
@@ -25,6 +26,11 @@ import { failureText } from './messages';
 // M10 limits
 import { planLimits } from './limits';
 import { backdropPolicy } from './dismiss';
+// #64 composer
+import { mountComposer, type Composer } from './composer/composer';
+import { Draft as PromptDraft } from './composer/draft';
+import { failedImagesText, markedText, notSentText, PASTE_HINT } from './composer/field';
+import { HIRE_PROMPT_MAX_BYTES } from './composer/model';
 
 /**
  * The start-run dialog (M6): the "Hire orchestrator" tab of the hire dialog
@@ -33,6 +39,11 @@ import { backdropPolicy } from './dismiss';
  * M4 hire) whose first prompt starts a /write-code run with a team preset.
  * The prompt preview comes from `run.prepare` on every field change; once
  * edited it is the user's, and field changes only say that it differs.
+ * #64: Extra instructions and the First prompt are the shared composer: paste
+ * a screenshot and it sits in the text as a chip, the orchestrator gets
+ * `[Image #n: <path>]` in its place. The generated prompt shows the extra's
+ * images as chips too. The Ticket is text only (its words make the label and
+ * the issue reference; images belong in Extra).
  */
 
 export interface StartRunHost extends HireHost {
@@ -122,6 +133,17 @@ export class StartRunDialog {
   private startBtn: HTMLButtonElement | null = null;
   /** Where focus goes back to when the dialog closes (not when it hands over to the Worker tab). */
   private returnTo: HTMLElement | null = null;
+  /** #64: the Extra instructions and the First prompt, each a composer over a draft of its own (text, images, uploads). */
+  private readonly extraC: Composer;
+  private readonly promptC: Composer;
+  private extraDraft: PromptDraft;
+  private promptDraft: PromptDraft;
+  /** The dialog is putting the generated prompt into its composer: that is not an edit. */
+  private syncing = false;
+  /** Start is waiting for the images (read-only meanwhile), then sends. */
+  private resolving = false;
+  /** Bumped by every open: an answer for an older one is dropped. */
+  private opened = 0;
 
   constructor(
     parent: HTMLElement,
@@ -129,6 +151,45 @@ export class StartRunDialog {
   ) {
     this.alertEl.hidden = true;
     this.statusEl.hidden = true;
+    this.extraDraft = this.newDraft('run-extra', EXTRA_MAX);
+    this.promptDraft = this.newDraft('run-prompt', HIRE_PROMPT_MAX_BYTES);
+    this.extraC = mountComposer({
+      draft: this.extraDraft,
+      labelledBy: 'run-extra-label',
+      describedBy: 'run-extra-hint',
+      placeholder: 'Anything the orchestrator should know: scope, constraints, taste',
+      // Enter adds a line; Ctrl/⌘+Enter starts the run from anywhere in the dialog (its own key handler, below).
+      submitPolicy: 'mod-enter',
+      onChange: (s) => {
+        if (this.syncing) return;
+        const text = markedText(s);
+        if (text !== this.f.extra) {
+          this.f.extra = text;
+          this.schedule();
+        }
+        this.renderActions();
+      },
+    });
+    this.extraC.editor.id = 'run-extra';
+    this.extraC.editor.dataset.key = 'extra';
+    this.promptC = mountComposer({
+      draft: this.promptDraft,
+      labelledBy: 'run-prompt-label',
+      describedBy: 'run-prompt-note',
+      placeholder: 'The first prompt appears here once there is a ticket.',
+      submitPolicy: 'mod-enter',
+      onChange: (s) => {
+        if (this.syncing) return;
+        const text = markedText(s);
+        if (text !== this.preview.text) {
+          this.preview = previewEdited(this.preview, text);
+          this.renderPreviewState();
+        }
+        this.renderActions();
+      },
+    });
+    this.promptC.editor.id = 'run-prompt';
+    this.promptC.editor.dataset.key = 'prompt';
     this.dialog.append(this.head, this.tabsSlot, this.form, this.foot);
     this.dialog.addEventListener('close', () => {
       if (this.dialog.open) return;
@@ -152,6 +213,11 @@ export class StartRunDialog {
     });
     this.form.addEventListener('submit', (e) => e.preventDefault());
     parent.append(this.dialog);
+  }
+
+  /** A composer draft whose uploads say which field they came from (`h3d-run-extra-1.png`). */
+  private newDraft(label: string, maxPromptBytes: number): PromptDraft {
+    return new PromptDraft({ upload: (f, hint, signal) => this.host.upload(f, hint, signal), label, maxPromptBytes });
   }
 
   get isOpen(): boolean {
@@ -181,6 +247,15 @@ export class StartRunDialog {
     if (o.issue !== undefined) this.f.ticket = typeof o.issue === 'number' ? `#${o.issue}` : o.issue;
     this.f.workItem = o.workItem ?? null;
     this.preview = emptyPreview();
+    // A new run starts from empty fields: the last one's drafts (and their uploads) go.
+    this.opened++;
+    this.resolving = false;
+    this.extraDraft.dispose();
+    this.promptDraft.dispose();
+    this.extraDraft = this.newDraft('run-extra', EXTRA_MAX);
+    this.promptDraft = this.newDraft('run-prompt', HIRE_PROMPT_MAX_BYTES);
+    this.extraC.setDraft(this.extraDraft);
+    this.promptC.setDraft(this.promptDraft);
     this.orchTouched = false;
     this.ticketError = null;
     this.renderedKey = '';
@@ -331,6 +406,11 @@ export class StartRunDialog {
     if (this.capacity()?.level === 'full') return 'Over the hard cap: send someone home first.';
     const t = this.ticket();
     if (this.ticketError && t.kind !== 'empty') return this.ticketError;
+    // An image that did not upload: its chip says why and has its Retry; nothing starts until it is uploaded or gone.
+    const bad = failedImagesText(this.extraDraft.snapshot());
+    if (bad) return `Extra instructions: ${bad}`;
+    const badPrompt = this.preview.custom ? failedImagesText(this.promptDraft.snapshot()) : null;
+    if (badPrompt) return `First prompt: ${badPrompt}`;
     return startBlocker(this.f, t, this.preview, this.host.store.hireOptions, this.host.store.presets);
   }
 
@@ -429,12 +509,6 @@ export class StartRunDialog {
       );
     } else nodes.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i')));
 
-    const extra = h('textarea', { id: 'run-extra', 'data-key': 'extra', rows: 2, spellcheck: 'true', placeholder: 'Anything the orchestrator should know: scope, constraints, taste' });
-    extra.value = this.f.extra;
-    extra.addEventListener('input', () => {
-      this.f.extra = extra.value;
-      this.schedule();
-    });
     const label = h('input', { id: 'run-label', 'data-key': 'label', autocomplete: 'off', spellcheck: 'false', maxlength: 64, placeholder: this.prep?.label || 'ORCH|…' });
     label.value = this.f.label;
     label.addEventListener('input', () => {
@@ -442,7 +516,13 @@ export class StartRunDialog {
       this.renderActions();
     });
     nodes.push(
-      h('div', { class: 'dd-field' }, h('label', { for: 'run-extra' }, 'Extra instructions ', h('span', { class: 'dd-optional' }, 'optional')), extra),
+      h(
+        'div',
+        { class: 'dd-field dd-extra' },
+        h('label', { id: 'run-extra-label', onclick: () => this.extraC.focus() }, 'Extra instructions ', h('span', { class: 'dd-optional' }, 'optional')),
+        this.extraC.element,
+        h('p', { class: 'field-hint', id: 'run-extra-hint' }, h('kbd', {}, 'Ctrl'), '+', h('kbd', {}, 'Enter'), ` starts the run · ${PASTE_HINT}`),
+      ),
       h(
         'div',
         { class: 'dd-grid' },
@@ -503,13 +583,20 @@ export class StartRunDialog {
     this.form.replaceChildren(...nodes);
     this.notices.replaceChildren(...notices);
     for (const el of this.form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea, button')) {
+      // The composers' own chip buttons are theirs (`setBusy` / `setDisabled` below).
+      if (el.closest('.cmp')) continue;
       // The ticket and the texts stay typeable while the bridge answers; the rest waits for it.
-      const typeable = el.id === 'run-ticket' || el.id === 'run-extra' || el.id === 'run-label';
+      const typeable = el.id === 'run-ticket' || el.id === 'run-label';
       // The presets stay reachable unless a start is on its way (on an older bridge the panel says why they are off).
       if (el.dataset.key === 'presets' ? this.state === 'starting' : (busy && !typeable) || this.state === 'starting' || this.state === 'failed') el.disabled = true;
     }
+    this.extraC.setBusy(this.state === 'starting' || this.resolving);
+    this.promptC.setBusy(this.state === 'starting' || this.resolving);
+    this.extraC.setDisabled(this.state === 'failed');
+    this.promptC.setDisabled(this.state === 'failed');
     this.renderLive();
-    if (focusKey) {
+    if (focusKey === 'extra' || focusKey === 'prompt') (focusKey === 'extra' ? this.extraC : this.promptC).focus();
+    else if (focusKey) {
       const back = this.dialog.querySelector<HTMLElement>(`[data-key="${CSS.escape(focusKey)}"]`) ?? this.dialog.querySelector<HTMLElement>(`#${CSS.escape(focusKey)}`);
       back?.focus();
       if (caret && (back instanceof HTMLTextAreaElement || back instanceof HTMLInputElement)) {
@@ -562,19 +649,13 @@ export class StartRunDialog {
   }
 
   private promptField(): HTMLElement {
-    const ta = h('textarea', { id: 'run-prompt', 'data-key': 'prompt', class: 'dd-prompt', rows: 9, spellcheck: 'false', 'aria-describedby': 'run-prompt-note', placeholder: 'The first prompt appears here once there is a ticket.' });
-    ta.value = this.preview.text;
-    ta.addEventListener('input', () => {
-      this.preview = previewEdited(this.preview, ta.value);
-      this.renderPreviewState();
-      this.renderActions();
-    });
+    this.showPreview();
     const reset = h('button', { class: 'btn btn--sm', 'data-key': 'reset-prompt', onclick: () => this.resetPrompt() }, 'Reset to generated');
     return h(
       'div',
       { class: 'dd-field dd-preview' },
-      h('div', { class: 'dd-preview-head' }, h('label', { for: 'run-prompt' }, 'First prompt'), h('span', { class: 'tape dd-preview-tape' }), reset),
-      h('div', { class: 'dd-slip' }, ta),
+      h('div', { class: 'dd-preview-head' }, h('label', { id: 'run-prompt-label', onclick: () => this.promptC.focus() }, 'First prompt'), h('span', { class: 'tape dd-preview-tape' }), reset),
+      h('div', { class: 'dd-slip' }, this.promptC.element),
       h('p', { class: 'field-hint', id: 'run-prompt-note' }),
     );
   }
@@ -593,13 +674,25 @@ export class StartRunDialog {
       read.dataset.kind = t.kind;
       if (why) read.append(h('span', { class: 'dd-ticket-why', role: 'alert' }, why));
     }
-    const ta = this.dialog.querySelector<HTMLTextAreaElement>('#run-prompt');
     // A custom prompt is what the user typed: only a generated one follows the bridge.
-    if (ta && !this.preview.custom && ta.value !== this.preview.text) ta.value = this.preview.text;
+    if (!this.preview.custom && markedText(this.promptC.getSnapshot()) !== this.preview.text) this.showPreview();
     const label = this.dialog.querySelector<HTMLInputElement>('#run-label');
     if (label && this.prep) label.placeholder = this.prep.label || 'ORCH|…';
     this.renderPreviewState();
     this.renderActions();
+  }
+
+  /**
+   * Puts the preview text into the First prompt composer. The extra's uploaded images come back as chips there (their
+   * markers name the paths the extra's draft holds), so the prompt shows a picture where the orchestrator will read one.
+   */
+  private showPreview(): void {
+    this.syncing = true;
+    try {
+      this.promptDraft.replaceAll(this.preview.text, this.extraDraft);
+    } finally {
+      this.syncing = false;
+    }
   }
 
   private renderPreviewState(): void {
@@ -616,11 +709,13 @@ export class StartRunDialog {
     tape.classList.toggle('tape--note', p.custom);
     reset.hidden = !p.custom;
     reset.disabled = this.state === 'starting';
-    note.textContent = p.custom
-      ? stale
-        ? 'Your edit is kept: the fields above now make a different prompt. Start sends yours as it is.'
-        : 'Your edit is kept and sent as it is.'
-      : 'Made from the fields above. Edit it to send your own.';
+    note.textContent = `${
+      p.custom
+        ? stale
+          ? 'Your edit is kept: the fields above now make a different prompt. Start sends yours as it is.'
+          : 'Your edit is kept and sent as it is.'
+        : 'Made from the fields above. Edit it to send your own.'
+    } ${PASTE_HINT[0]?.toUpperCase()}${PASTE_HINT.slice(1)}.`;
     note.dataset.stale = stale ? 'true' : 'false';
   }
 
@@ -699,17 +794,14 @@ export class StartRunDialog {
 
   private resetPrompt(): void {
     this.preview = previewReset(this.preview);
-    const ta = this.dialog.querySelector<HTMLTextAreaElement>('#run-prompt');
-    if (ta) {
-      ta.value = this.preview.text;
-      ta.focus();
-    }
+    this.showPreview();
+    this.promptC.focus();
     this.renderPreviewState();
     this.renderActions();
   }
 
   private async start(): Promise<void> {
-    if (this.state !== 'ready' || !this.prep) return;
+    if (this.state !== 'ready' || !this.prep || this.resolving) return;
     const blocker = this.blocker();
     if (blocker) {
       this.setStatus(blocker, true);
@@ -720,7 +812,32 @@ export class StartRunDialog {
     const session = this.session;
     const desk = this.f.desk;
     const t = this.ticket();
-    const args: CommandArgs['run.start'] = startArgs(session, this.f, t, this.preview, this.prep, worktreeUsable(this.prep.git));
+    // #64: the images first. Uploads still on their way are waited for (the fields are read-only meanwhile); one that
+    // failed, or a text too long with the paths in it, stops the start with the fields as they are.
+    const opened = this.opened;
+    const custom = this.preview.custom;
+    this.resolving = true;
+    this.extraC.setBusy(true);
+    this.promptC.setBusy(true);
+    if (this.extraDraft.snapshot().uploading || (custom && this.promptDraft.snapshot().uploading)) this.setStatus('Uploading the images, then starting the run…');
+    this.renderActions();
+    const [extra, prompt] = await Promise.all([this.extraDraft.resolve({ maxBytes: EXTRA_MAX }), custom ? this.promptDraft.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES }) : Promise.resolve(null)]);
+    if (opened !== this.opened) return; // another run's dialog: its own fields
+    this.resolving = false;
+    this.extraC.setBusy(false);
+    this.promptC.setBusy(false);
+    const bad = !extra.ok ? { field: 'Extra instructions', r: extra } : prompt && !prompt.ok ? { field: 'First prompt', r: prompt } : null;
+    if (bad || !extra.ok || (prompt && !prompt.ok)) {
+      const msg = bad && bad.r.reason !== 'disposed' ? `${bad.field}: ${notSentText(bad.r, { nothing: 'started', again: 'start' })}` : '';
+      if (msg && this.dialog.open) this.setStatus(msg, true);
+      this.renderActions();
+      return;
+    }
+    if (!this.dialog.open) return;
+    // What the bridge is sent: the extra with its final markers, and (edited prompts only) the prompt as resolved.
+    const form: RunForm = { ...this.f, extra: extra.text };
+    const preview: Preview = prompt ? { ...this.preview, text: prompt.text } : this.preview;
+    const args: CommandArgs['run.start'] = startArgs(session, form, t, preview, this.prep, worktreeUsable(this.prep.git));
     const who = args.label ?? this.prep.label;
     this.state = 'starting';
     const release = this.host.reserve(session, desk);
@@ -739,6 +856,11 @@ export class StartRunDialog {
       const on = t.kind === 'issue' ? ` on #${t.number}` : t.kind === 'work_item' ? ` on ${t.item.key}` : '';
       const extra = ack?.prompted === false ? ` The prompt was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P).` : '';
       if (still) this.close();
+      // Sent: the fields' drafts (and their uploads) are done with.
+      if (opened === this.opened) {
+        this.extraDraft.dispose();
+        this.promptDraft.dispose();
+      }
       this.host.toast(`Started a run${on}: ${name} takes Desk ${(w?.desk ?? desk) + 1}. Here they come.${extra}`, extra ? 'error' : 'info');
       if (ack?.id) this.host.started(ack.id, t.kind === 'work_item' ? { provider: t.item.provider, id: t.item.id } : undefined);
       return;
