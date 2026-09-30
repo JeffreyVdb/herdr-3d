@@ -37,7 +37,7 @@ async function sitAt(page: Page, name: string): Promise<string> {
 /**
  * Phase 2 (#56): the images of the demo timeline are real PNGs served by the simulator like the bridge does
  * (transcript.image, only hashes it sent). The user's message has two screenshots and one outside the bridge's roots;
- * a Read of a PNG shows its images inside the expanded row; two generated images in adjacent assistant items share one
+ * a Read of a PNG shows its images without opening the row (#70), under its header; two generated images in adjacent assistant items share one
  * strip; a click opens the lightbox (zoom, copy, Esc closes only it).
  */
 async function imagesInTheConversation(page: Page, tx: ReturnType<Page['locator']>, worker: string): Promise<void> {
@@ -62,13 +62,31 @@ async function imagesInTheConversation(page: Page, tx: ReturnType<Page['locator'
   expect((await asked()).every((a) => a.size === 'thumb')).toBe(true);
   expect((await watchLog(page)).filter((c) => c.t === 'transcript.image').every((c) => c.result?.ok)).toBe(true);
 
-  // A Read of a PNG: collapsed it shows nothing, expanded the images are in the row.
+  // #70: a Read of a PNG shows its images collapsed, under its header, with no click; opened, the row shows its text
+  // and not the images a second time.
   const read = tx.locator('.tx-tool', { hasText: 'hire-375x667.png' });
-  await expect(read.locator('.tx-thumb')).toHaveCount(0);
+  const readHead = read.locator('.tx-tool-row');
   await read.scrollIntoViewIfNeeded();
-  await read.locator('.tx-tool-row').click();
-  await expect(read.locator('.tx-tool-body .tx-strip .tx-thumb img')).toHaveCount(2);
+  await expect(readHead).toHaveAttribute('aria-expanded', 'false');
+  await expect(read.locator('.tx-tool-body')).toBeHidden();
+  await expect(read.locator(':scope > .tx-tool-strip .tx-thumb img')).toHaveCount(2);
   await expect.poll(() => read.locator('.tx-thumb img').evaluateAll((els) => els.every((e) => (e as HTMLImageElement).naturalWidth > 0))).toBe(true);
+  await expect(read.locator('.tx-tool-strip')).toHaveAttribute('aria-label', 'Read: dialog-evidence/hire-375x667.png — 2 images');
+  // Under the header, not beside it; each thumbnail at most 240 px on its long side (two share the strip).
+  const headBox = await readHead.boundingBox();
+  for (const b of await read.locator('.tx-tool-strip .tx-thumb').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON() as { y: number; width: number; height: number }))) {
+    expect(b.y).toBeGreaterThanOrEqual((headBox?.y ?? 0) + (headBox?.height ?? 0));
+    expect(Math.max(b.width, b.height)).toBeLessThanOrEqual(240);
+  }
+  await frames(page, 2);
+  await shot(page, 'm70-read-collapsed');
+  await readHead.click();
+  await expect(readHead).toHaveAttribute('aria-expanded', 'true');
+  await expect(read.locator('.tx-tool-body')).toBeVisible();
+  await expect(read.locator('.tx-tool-body .tx-thumb')).toHaveCount(0);
+  await expect(read.locator('.tx-thumb')).toHaveCount(2);
+  await readHead.click();
+  await expect(read.locator('.tx-tool-body')).toBeHidden();
 
   // Two adjacent image-only assistant items share one strip (the second row is folded into the first).
   const merged = tx.locator('.tx-imgonly.tx-assistant:not(.tx-merged)');
@@ -101,6 +119,16 @@ async function imagesInTheConversation(page: Page, tx: ReturnType<Page['locator'
   await expect(page.locator('dialog.ilb .ilb-card')).toContainText('/etc/hosts.png');
   await page.keyboard.press('Escape');
   await expect(page.locator('dialog.ilb')).toHaveCount(0);
+  // #70: a click on the collapsed Read's thumbnail opens the lightbox on its two images and leaves the row closed.
+  await read.scrollIntoViewIfNeeded();
+  await read.locator('.tx-tool-strip .tx-thumb').nth(1).click();
+  await expect(lb).toBeVisible();
+  await expect(lb.locator('.ilb-count')).toHaveText('2 / 2');
+  await expect(lb.locator('.ilb-badge')).toHaveText('Agent viewed');
+  await page.keyboard.press('Escape');
+  await expect(lb).toHaveCount(0);
+  await expect(readHead).toHaveAttribute('aria-expanded', 'false');
+  await expect(read.locator('.tx-tool-body')).toBeHidden();
   // Only hashes the bridge sent were ever asked for.
   expect((await watchLog(page)).filter((c) => c.t === 'transcript.image').every((c) => c.result?.ok)).toBe(true);
 }

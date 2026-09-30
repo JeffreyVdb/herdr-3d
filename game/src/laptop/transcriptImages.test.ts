@@ -5,6 +5,9 @@ import type { ImageRef, TranscriptItem } from '../net/protocol';
 import { ImageFeed, type ImageFeedHost } from './imageFeed';
 import { imageRuns, imagesOf, isImageOnly, thumbSize } from './transcriptImages';
 import { mountTranscript, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
+import { ViewPrefs } from '../ui/themePrefs';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 // jsdom has neither showModal nor close on <dialog>, no object URLs, no IntersectionObserver.
 beforeAll(() => {
@@ -122,8 +125,8 @@ const $ = <E extends Element = HTMLElement>(sel: string) => container.querySelec
 const $$ = <E extends Element = HTMLElement>(sel: string) => [...container.querySelectorAll<E>(sel)];
 const row = (id: string) => $(`[data-id="${id}"]`) as HTMLElement;
 
-function mount(feed: ImageFeed | null): TranscriptView {
-  const host: TranscriptRenderHost = { images: feed, onPromptSubmit: () => Promise.resolve(true), onAnswer: () => {}, onAnswerAsk: async () => ({ ok: true, resolved: true }), onSwitchToTerminal: () => {}, loadSubagent: async () => [] };
+function mount(feed: ImageFeed | null, more: Partial<TranscriptRenderHost> = {}): TranscriptView {
+  const host: TranscriptRenderHost = { images: feed, onPromptSubmit: () => Promise.resolve(true), onAnswer: () => {}, onAnswerAsk: async () => ({ ok: true, resolved: true }), onSwitchToTerminal: () => {}, loadSubagent: async () => [], ...more };
   view = mountTranscript(container, host);
   return view;
 }
@@ -160,18 +163,116 @@ describe('images in the conversation', () => {
     expect(($$('.tx-thumb')[2] as HTMLElement).style.width).toBe('420px');
   });
 
-  it('a Read of an image shows it inside the expanded tool row', async () => {
+  it('a Read of an image shows it collapsed, under the row’s header, outside its body (#70)', async () => {
     const { feed, asked } = fakeFeed([ref(9)]);
-    mount(feed).setItems([item('tool', { tool: { name: 'Read', input_summary: 'dialog-evidence/hire.png', status: 'ok', images: [img(9)] } })]);
-    await flush();
-    expect($('.tx-thumb')).toBeNull(); // collapsed: nothing shown, nothing fetched
-    expect(asked).toEqual([]);
-    ($('.tx-tool-row') as HTMLButtonElement).click();
+    mount(feed).setItems([item('tool', { tool: { name: 'Read', input_summary: 'dialog-evidence/hire.png', input: { file_path: 'dialog-evidence/hire.png' }, status: 'ok', images: [img(9)] } })]);
     await flush();
     await flush();
-    expect($$('.tx-tool-body .tx-strip .tx-thumb img').length).toBe(1);
+    const tool = $('.tx-tool') as HTMLElement;
+    expect(tool.classList.contains('tx-toolimg')).toBe(true);
+    // Collapsed: header, then the strip (loaded), then the body, still hidden and still empty (it fills on first open).
+    expect([...tool.children].map((c) => c.className)).toEqual(['tx-tool-row', 'tx-strip tx-tool-strip', 'tx-tool-body']);
+    const body = $('.tx-tool-body') as HTMLElement;
+    expect(body.hidden).toBe(true);
+    expect(body.childNodes.length).toBe(0);
+    expect($$('.tx-tool-strip .tx-thumb img').map((i) => i.getAttribute('src'))).toEqual([expect.stringMatching(/^blob:test\/\d+$/)]);
     expect(asked).toEqual([{ hash: H(9), size: 'thumb' }]);
-    expect($('.tx-note')?.textContent ?? '').not.toContain('No output');
+    expect($('.tx-tool-strip')?.getAttribute('aria-label')).toBe('Read: dialog-evidence/hire.png — 1 image');
+    // Opened: the text body fills; the image is not repeated in it, nor fetched again.
+    ($('.tx-tool-row') as HTMLButtonElement).click();
+    expect(body.hidden).toBe(false);
+    expect(body.textContent).toContain('file_path');
+    expect(body.querySelector('.tx-strip, .tx-thumb')).toBeNull();
+    expect($$('.tx-thumb').length).toBe(1);
+    expect(body.textContent).not.toContain('No output');
+    await flush();
+    expect(asked.length).toBe(1);
+  });
+
+  it('a tool call with only images says so when opened, not “No output.”', async () => {
+    const { feed } = fakeFeed([ref(1), ref(2)]);
+    mount(feed).setItems([item('tool', { tool: { name: 'view_image', input_summary: '', status: 'ok', images: [img(1), img(2)] } })]);
+    ($('.tx-tool-row') as HTMLButtonElement).click();
+    expect($('.tx-tool-body')?.textContent).toBe('No text output: the images are above.');
+    expect($('.tx-tool-strip')?.getAttribute('aria-label')).toBe('view_image — 2 images');
+  });
+
+  it('a click on a thumbnail opens the lightbox and leaves the row as it was; the header still toggles it', async () => {
+    const { feed } = fakeFeed([ref(9)]);
+    mount(feed).setItems([item('tool', { tool: { name: 'Read', input_summary: 'a.png', status: 'ok', output_text: 'read 1 image', images: [img(9)] } })]);
+    await flush();
+    const head = $('.tx-tool-row') as HTMLButtonElement;
+    const thumb = $('.tx-tool-strip .tx-thumb') as HTMLButtonElement;
+    expect(head.contains(thumb)).toBe(false);
+    thumb.click();
+    expect(document.querySelector('dialog.ilb')).not.toBeNull();
+    expect(head.getAttribute('aria-expanded')).toBe('false');
+    expect(($('.tx-tool-body') as HTMLElement).hidden).toBe(true);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(document.querySelector('dialog.ilb')).toBeNull();
+    // Enter and Space on the thumbnail are the button's (no scroll, no row toggle, nothing for the game).
+    let reached = 0;
+    const count = () => reached++;
+    document.addEventListener('keydown', count);
+    for (const key of ['Enter', ' ']) thumb.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    document.removeEventListener('keydown', count);
+    expect(reached).toBe(0);
+    expect(head.getAttribute('aria-expanded')).toBe('false');
+    head.click();
+    expect(head.getAttribute('aria-expanded')).toBe('true');
+    expect(($('.tx-tool-body') as HTMLElement).textContent).toContain('read 1 image');
+    head.click();
+    expect(($('.tx-tool-body') as HTMLElement).hidden).toBe(true);
+  });
+
+  it('a running Read gets its strip when it finishes; a later update draws the fetched thumbnail at once', async () => {
+    const { feed, asked } = fakeFeed([ref(9)]);
+    const v = mount(feed);
+    const t = item('tool', { tool: { name: 'Read', input_summary: 'a.png', status: 'running' } });
+    v.setItems([t]);
+    expect($('.tx-tool-strip')).toBeNull();
+    expect(row(t.id).classList.contains('tx-toolimg')).toBe(false);
+    v.applyUpdates([{ ...t, tool: { name: 'Read', input_summary: 'a.png', status: 'ok', images: [img(9)] } }]);
+    await flush();
+    await flush();
+    expect(row(t.id).classList.contains('tx-toolimg')).toBe(true);
+    const src = $('.tx-tool-strip .tx-thumb img')?.getAttribute('src');
+    expect(src).toMatch(/^blob:test\/\d+$/);
+    expect(asked).toEqual([{ hash: H(9), size: 'thumb' }]);
+    // Drawn again (another update of the item, a resync): the thumbnail is there before any observer or request.
+    v.applyUpdates([{ ...t, tool: { name: 'Read', input_summary: 'a.png', status: 'ok', output_text: 'x', images: [img(9)] } }]);
+    const thumb = $('.tx-tool-strip .tx-thumb') as HTMLElement;
+    expect(thumb.dataset.state).toBe('ready');
+    expect(thumb.querySelector('img')?.getAttribute('src')).toBe(src);
+    // Its box has its size before the bytes arrive (no jump when they do): width and aspect ratio from the ref.
+    expect(thumb.style.width).toBe('420px');
+    expect(thumb.style.aspectRatio).toBe('420 / 263');
+    v.setItems([{ ...t, tool: { name: 'Read', input_summary: 'a.png', status: 'ok', images: [img(9)] } }]);
+    expect(($('.tx-tool-strip .tx-thumb') as HTMLElement).dataset.state).toBe('ready');
+    await flush();
+    expect(asked.length).toBe(1);
+  });
+
+  it('an image that is not available is a card in the collapsed row too', async () => {
+    const { feed, asked } = fakeFeed();
+    mount(feed).setItems([item('tool', { tool: { name: 'Read', input_summary: '/etc/x.png', status: 'ok', images: [{ image: { source: 'path', path: '/etc/x.png', origin: 'agent', kind: 'viewed', unavailable: true, reason: 'not_allowed' } }] } })]);
+    await flush();
+    expect($('.tx-tool-strip .tx-imgcard .tx-imgcard-path')?.textContent).toBe('/etc/x.png');
+    expect(asked).toEqual([]);
+  });
+
+  it('a subagent’s Read shows its images collapsed too', async () => {
+    const { feed } = fakeFeed([ref(5)]);
+    const nested = [{ id: 's1', seq: 1, ts: T0, kind: 'tool' as const, tool: { name: 'Read', input_summary: 'b.png', status: 'ok' as const, images: [img(5)] } }];
+    mount(feed, { loadSubagent: async () => nested }).setItems([item('subagent', { subagent: { agent_id: 'a1', description: 'look', status: 'completed' } })]);
+    ($('.tx-sub-row') as HTMLButtonElement).click();
+    await flush();
+    await flush();
+    await flush();
+    const sub = $('.tx-nested [data-id="s1"]') as HTMLElement;
+    expect(sub.classList.contains('tx-toolimg')).toBe(true);
+    expect(sub.querySelector('.tx-tool-body')?.hasAttribute('hidden')).toBe(true);
+    expect(sub.querySelectorAll('.tx-tool-strip .tx-thumb img').length).toBe(1);
   });
 
   it('thumbnails are fetched when they scroll into view, not before', async () => {
@@ -301,5 +402,92 @@ describe('adjacent image-only items share one strip', () => {
     expect(v.scrollToItem(u2.id)).toBe(true);
     expect(scrolled[0]).toBe(row(u1.id));
     expect(v.scrollToItem('nope')).toBe(false);
+  });
+});
+
+describe('#70: tool calls hidden, their images stay', () => {
+  // The real stylesheet, so that what is on screen is what the cascade says (jsdom computes `display`).
+  const css = readFileSync(join(import.meta.dirname, 'transcript.css'), 'utf8');
+  let style: HTMLStyleElement;
+  beforeEach(() => {
+    style = document.createElement('style');
+    style.textContent = css;
+    document.head.append(style);
+    Element.prototype.scrollIntoView ??= function () {};
+  });
+  afterEach(() => style.remove());
+  const shown = (el: Element | null) => {
+    for (let e = el; e && e !== document.body; e = e.parentElement) if (getComputedStyle(e).display === 'none') return false;
+    return !!el;
+  };
+  function scrolledUp(): HTMLElement {
+    const sc = $('.tx-scroll') as HTMLElement;
+    let top = 0;
+    Object.defineProperty(sc, 'scrollHeight', { configurable: true, get: () => 3000 });
+    Object.defineProperty(sc, 'clientHeight', { configurable: true, get: () => 400 });
+    Object.defineProperty(sc, 'scrollTop', { configurable: true, get: () => top, set: (v: number) => (top = Math.max(0, Math.min(v, 2600))) });
+    sc.scrollTop = 0;
+    sc.dispatchEvent(new Event('scroll'));
+    return sc;
+  }
+
+  it('a tool row with images is a bare strip: no header, no body; other tool rows are gone', async () => {
+    const prefs = new ViewPrefs(null);
+    prefs.hideTools = true;
+    const { feed } = fakeFeed([ref(9)]);
+    mount(feed, { prefs }).setItems([
+      item('user', { parts: [text('look')] }),
+      item('tool', { tool: { name: 'Bash', input_summary: 'ls', status: 'ok' } }),
+      item('tool', { tool: { name: 'Read', input_summary: 'shot.png', status: 'ok', images: [img(9)] } }),
+    ]);
+    await flush();
+    const bash = row('i2');
+    const read = row('i3');
+    expect(shown(bash)).toBe(false);
+    expect(shown(read)).toBe(true);
+    expect(shown(read.querySelector('.tx-tool-row'))).toBe(false);
+    expect(shown(read.querySelector('.tx-tool-body'))).toBe(false);
+    expect(shown(read.querySelector('.tx-tool-strip .tx-thumb'))).toBe(true);
+    // A screen reader still hears whose images they are.
+    expect(read.querySelector('.tx-tool-strip')?.getAttribute('aria-label')).toBe('Read: shot.png — 1 image');
+    // Shown again: the whole row.
+    prefs.hideTools = false;
+    expect(shown(bash)).toBe(true);
+    expect(shown(read.querySelector('.tx-tool-row'))).toBe(true);
+    expect(shown(read.querySelector('.tx-tool-strip'))).toBe(true);
+  });
+
+  it('the “new” chip counts a hidden tool call’s images (they show); the failed chip still names the failed call', () => {
+    const prefs = new ViewPrefs(null);
+    prefs.hideTools = true;
+    const { feed } = fakeFeed([ref(1), ref(2)]);
+    mount(feed, { prefs }).setItems([item('user', { parts: [text('hi')] })]);
+    scrolledUp();
+    const jump = $('.tx-jump') as HTMLButtonElement;
+    const busy = $('.tx-busy') as HTMLButtonElement;
+    const run = item('tool', { tool: { name: 'Read', input_summary: 'a.png', status: 'running' } });
+    view!.applyUpdates([item('tool', { tool: { name: 'Bash', input_summary: 'ls', status: 'ok' } }), run]);
+    // Nothing of these shows yet: the Bash call is hidden and the running Read has no image yet (the busy chip says it runs).
+    expect(jump.hidden).toBe(true);
+    expect(busy.dataset.state).toBe('running');
+    view!.applyUpdates([{ ...run, tool: { name: 'Read', input_summary: 'a.png', status: 'ok', images: [img(1)] } }]);
+    expect(jump.textContent).toBe('1 new · jump to latest');
+    expect(busy.hidden).toBe(true);
+    // A failed Read with an image: its image shows (and counts), its failure is still hidden, so the chip says it.
+    const bad = item('tool', { tool: { name: 'Read', input_summary: 'b.png', status: 'error', output_text: 'too big', images: [img(2)] } });
+    view!.applyUpdates([bad]);
+    expect(jump.textContent).toBe('2 new · jump to latest');
+    expect(busy.hidden).toBe(false);
+    expect(busy.dataset.state).toBe('failed');
+    expect(busy.textContent).toBe('Read failed');
+    // The chip shows that row whole (header and text), not just its strip.
+    busy.click();
+    const r = row(bad.id);
+    expect(r.classList.contains('tx-reveal')).toBe(true);
+    expect(shown(r.querySelector('.tx-tool-row'))).toBe(true);
+    expect(busy.hidden).toBe(true);
+    // Unticked, every tool row counts again: the Bash call joins the two Reads.
+    prefs.hideTools = false;
+    expect(jump.textContent).toBe('3 new · jump to latest');
   });
 });
