@@ -105,7 +105,7 @@ test('P prompts the looked-at worker: sent, then it works and is done; queued wh
   await page.keyboard.type('Then update docs/protocol.md');
   await page.keyboard.press('Enter');
   p = await promptPanel(page, 'sent');
-  expect(p).toMatchObject({ result: { queued: true, retried: false }, queued: true, status: 'Queued: Nibble takes it after the current turn.' });
+  expect(p).toMatchObject({ result: { queued: true, retried: false }, queued: true, status: 'Queued: Nibble takes it when it can.' });
   await expect(page.locator('.pr-queued')).toBeHidden();
   await expect(page.locator('.desk-dlg--prompt .dd-status .tape')).toHaveText('Queued');
   await shot(page, 'm5-prompt-queued');

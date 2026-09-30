@@ -847,6 +847,7 @@ export class Laptops {
       else if (v.desk !== s.desk) this.stand(`${s.name} moved desks, so you got up.`, true);
       else {
         this.transcript.blocked(v.worker.status === 'blocked' ? (v.worker.question ?? null) : null);
+        this.transcript.activity(v.worker.status, v.worker.status_since ?? null); // #58
         this.syncAsk(askOf(v.worker)); // #57
       }
     }
@@ -1093,6 +1094,9 @@ export class Laptops {
     tabMounted: boolean;
     imageCount: number | null;
     counts: { mounted: number; destroyed: number; tabsMounted: number; tabsDestroyed: number; overlays: number; removed: number };
+    /** #58: the cue the view shows (`thinking@<since>`, '' for none) and the pending prompts' states. */
+    cue: string;
+    pending: string[];
   } {
     const b = this.transcript.box;
     const r = b && !b.hidden ? b.getBoundingClientRect() : null;
@@ -1105,6 +1109,8 @@ export class Laptops {
       tabMounted: this.transcript.tabMounted,
       imageCount: this.transcript.imageCount,
       counts: { ...this.transcript.counts },
+      cue: this.transcript.cueState,
+      pending: this.transcript.pending.map((p) => (p.late ? `${p.state}+late` : p.state)),
     };
   }
 

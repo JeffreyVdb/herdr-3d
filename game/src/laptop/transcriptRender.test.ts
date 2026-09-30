@@ -1118,3 +1118,125 @@ describe('#59: hide tool calls, the preset, the zoom', () => {
     expect(reached).toBe(1);
   });
 });
+
+describe('#58: the live cue and the prompts on their way', () => {
+  const pend = (id: string, state: 'sending' | 'sent' | 'queued' | 'refused', extra: { late?: boolean; reason?: string; text?: string } = {}) => ({ id, text: extra.text ?? `prompt ${id}`, state, late: extra.late ?? false, mark: 0, due: null, ...(extra.reason ? { reason: extra.reason } : {}) });
+
+  it('one flashing label at the end of the timeline, its time a sibling the ticker sets; gone from the DOM with the status', () => {
+    vi.useFakeTimers({ now: T0 + 12_000 });
+    try {
+      mount({ ...fakeHost(), label: 'Ada' });
+      view.setItems([item('user', { parts: [text('hi')] })]);
+      view.setPending([pend('p1', 'sent')]);
+      view.setActivity({ kind: 'thinking', since: T0 });
+      const cue = $('.tx-activity') as HTMLElement;
+      // After the timeline and the pending rows.
+      expect(($('.tx-scroll') as HTMLElement).lastElementChild?.lastElementChild).toBe(cue);
+      expect($$('.tx-activity-label')).toHaveLength(1);
+      const label = $('.tx-activity-label') as HTMLElement;
+      expect(label.textContent).toBe('Thinking…');
+      // No element per letter: the word is one text node, beside its icon.
+      expect(label.children).toHaveLength(1);
+      expect(label.querySelector('svg')).not.toBeNull();
+      const time = $('.tx-activity-time') as HTMLElement;
+      expect(label.contains(time)).toBe(false);
+      expect(time.textContent).toBe('12s');
+      expect($('.tx-live')?.textContent).toBe('Ada is thinking');
+      expect($('.tx-live')?.getAttribute('aria-live')).toBe('polite');
+      // The 1 s ticker moves the time and nothing else: the label is the same node, the live region says nothing new.
+      $('.tx-live')?.replaceChildren();
+      vi.advanceTimersByTime(3000);
+      expect(time.textContent).toBe('15s');
+      expect($('.tx-activity-label')).toBe(label);
+      expect($('.tx-live')?.textContent).toBe('');
+      // The same cue again (every frame) changes nothing.
+      view.setActivity({ kind: 'thinking', since: T0 });
+      expect($('.tx-activity-label')).toBe(label);
+      view.setActivity({ kind: 'working', since: T0 });
+      expect($('.tx-activity-label')?.textContent).toBe('Working…');
+      expect($('.tx-live')?.textContent).toBe('Ada is working');
+      view.setActivity(null);
+      expect($('.tx-activity')).toBeNull();
+      expect($$('.tx-activity-label')).toHaveLength(0);
+      view.destroy();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a hidden tab pauses it (the view marks the root)', () => {
+    mount();
+    const root = $('.tx') as HTMLElement;
+    expect(root.hasAttribute('data-page-hidden')).toBe(false);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(root.hasAttribute('data-page-hidden')).toBe(true);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(root.hasAttribute('data-page-hidden')).toBe(false);
+  });
+
+  it('pending rows: your bubble, dimmed, with its state; queued, late and refused say so; Dismiss asks the host', () => {
+    const dismissed: string[] = [];
+    mount({ ...fakeHost(), label: 'Ada', onDismissPending: (id) => dismissed.push(id) });
+    expect(($('.tx-empty') as HTMLElement).hidden).toBe(false);
+    view.setPending([pend('p1', 'sending', { text: 'look [Image #1: /tmp/x.png]' })]);
+    // Your first prompt to an empty conversation is not "No conversation yet".
+    expect(($('.tx-empty') as HTMLElement).hidden).toBe(true);
+    const chip = () => $$('.tx-pending-state').map((e) => e.textContent);
+    expect($$('.tx-pending')).toHaveLength(1);
+    expect($('.tx-pending')?.classList.contains('tx-user')).toBe(true);
+    expect($('.tx-pending .tx-bubble')?.textContent?.trim()).toBe('look [Image #1]');
+    expect(chip()).toEqual(['Sending…']);
+    expect($('.tx-live')?.textContent).toBe('Sending…');
+    view.setPending([pend('p1', 'sent'), pend('p2', 'queued')]);
+    expect(chip()).toEqual(['Sent', 'Queued · Ada takes it when it can']);
+    view.setPending([pend('p1', 'sent', { late: true }), pend('p2', 'queued', { late: true })]);
+    expect(chip()).toEqual(['Sent · not seen in the transcript yet', 'Queued · not seen in the transcript yet']);
+    view.setPending([pend('p3', 'refused', { reason: 'Ada is blocked: answer its question first.' })]);
+    expect($('.tx-pending')?.getAttribute('data-state')).toBe('refused');
+    expect(chip()).toEqual(['Not sent: Ada is blocked: answer its question first.']);
+    expect($('.tx-live')?.textContent).toBe('Not sent: Ada is blocked: answer its question first.');
+    ($('.tx-pending .tx-link') as HTMLButtonElement).click();
+    expect(dismissed).toEqual(['p3']);
+    view.setPending([]);
+    expect($$('.tx-pending')).toHaveLength(0);
+    expect(($('.tx-empty') as HTMLElement).hidden).toBe(false);
+  });
+
+  it('your own send goes to the bottom and follows again, even scrolled up', async () => {
+    mount();
+    const sc = $('.tx-scroll') as HTMLElement;
+    let height = 2000;
+    layout(sc, () => height);
+    view.setItems([item('user', { parts: [text('hi')] })]);
+    sc.scrollTop = 100;
+    sc.dispatchEvent(new Event('scroll'));
+    write('go on');
+    press(box(), 'Enter');
+    expect(sc.scrollTop).toBe(1600);
+    // Its row (and later ones) keep it there.
+    height = 2300;
+    view.setPending([pend('p1', 'sending', { text: 'go on' })]);
+    expect(sc.scrollTop).toBe(1900);
+    await flush();
+    expect(host.prompts).toEqual(['go on']);
+  });
+
+  it('a running subagent’s header ticks its elapsed time like a running tool', () => {
+    vi.useFakeTimers({ now: T0 + 65_000 });
+    try {
+      mount();
+      view.setItems([{ id: 's', seq: 1, ts: T0, kind: 'subagent', tool: { name: 'Agent', input_summary: 'x', status: 'running' }, subagent: { agent_id: '', description: 'Look around', status: 'running' } }]);
+      const dur = () => row('s').querySelector('.tx-sub-row .tx-tool-dur')?.textContent;
+      expect(dur()).toBe('1m 05s');
+      vi.advanceTimersByTime(2000);
+      expect(dur()).toBe('1m 07s');
+      view.applyUpdates([{ id: 's', seq: 1, ts: T0, kind: 'subagent', tool: { name: 'Agent', input_summary: 'x', status: 'ok' }, subagent: { agent_id: 'a1', description: 'Look around', status: 'completed' } }]);
+      expect(dur()).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

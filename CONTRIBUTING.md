@@ -723,6 +723,24 @@ Terminal, Quiet, Paper), Hide tools and A− / 100% / A+; the seat bar has the t
 − / 0 and Ctrl+wheel zoom the view that is up, while seated only; Ctrl+, puts the keyboard on the terminal's controls (Esc goes back). `e2e/m59-themes.spec.ts` drives them. The game's tests read what the bridge makes of its own fixtures from
 `game/fixtures/transcript/` (`H3D_UPDATE_FIXTURES=1 go test ./internal/transcript` writes them, and the Go test fails
 when they are stale). E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1&floor=herdr-3d`.
+#58: the view says what the agent is doing and shows a prompt at once (`laptop/transcriptActivity.ts`, pure: the rules
+from `docs/research/transcript-activity.md`). While the worker is `working` the timeline ends in a flashing
+"Thinking…" (or "Working…" when the current turn's last item is assistant text) with the time since `status_since`;
+a running tool or subagent in the turn speaks for itself (its row ticks), and there is nothing while idle, done,
+blocked or under a question card. The turn starts after a watermark: the timeline's top when the status became
+`working` (not coming back from `blocked`) or when you sent to a worker not at work; sat down at one already working,
+the last item is taken as it is. The flash is one element animating opacity only (`tx-pulse`, CSS, compositor), in the
+DOM only while it shows (not in terminal mode or the images tab, not with the overlay off the view), paused in a hidden
+tab, still under `prefers-reduced-motion`; its time is a sibling span on the view's 1 s ticker, and a polite live
+region announces state changes only. A sent prompt is a dimmed user row at once (`Sending…` → `Sent` / `Queued ·
+<name> takes it when it can` / `Not sent: <reason>` with Dismiss, the text staying in the box); the first new `user`
+item after it with its text (trimmed, CR/CRLF as LF, image markers apart; identical ones in order) replaces it. Not
+seen 15 s after the ack (`SENT_TIMEOUT_MS`; a queued one: 15 s after the turn it waited for ends) it says "not seen in
+the transcript yet" and still waits. Your own send scrolls to the bottom and follows. On the simulator `simecho=<ms>`
+writes a prompt's user item to the watch that long after the agent took it (a queued one mid-turn, as both CLIs do);
+without it prompts never show. `e2e/m16-transcript-activity.spec.ts` drives it (`getAnimations()`: one running
+animation, opacity only, none in terminal mode or once idle); `e2e/m58-activity-perf.spec.ts` (opt-in, `H3D_PERF=1`,
+~4 min) traces 60 s idle / cue / idle for paints, layouts, long tasks, thread time and the label layer's paint count.
 
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings

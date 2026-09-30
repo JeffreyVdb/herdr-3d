@@ -10,7 +10,7 @@
 // database.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
-import type { Building, Cap, Floor, FloorSettings, Hire, HireOptions, Worker } from '../src/net/protocol.ts';
+import type { Building, Cap, Floor, FloorSettings, Hire, HireOptions, TranscriptItem, Worker } from '../src/net/protocol.ts';
 import { screensOf } from './fixture-screen.ts';
 import { hashOf, type StoredLogo } from './fixture-logo.ts';
 import { logoPng, MAGENTA, type Palette } from './logo-art.ts';
@@ -52,6 +52,8 @@ export interface SimOptions {
   limits?: string;
   /** #51: this many extra Claude models (`claude-lab-01`…) on top of the three, to see a long model list (`simmodels=<n>`). */
   models?: number;
+  /** #58: a prompt's `user` item goes to its worker's transcript watch this long after the agent took it (`simecho=<ms>`; absent: never). */
+  echoMs?: number;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -167,6 +169,7 @@ export class SimWorld {
       (snapshot.world as { presets?: unknown }).presets,
     );
     if (o.crewMs !== undefined) this.crewMs = o.crewMs;
+    this.echoMs = o.echoMs ?? null;
     this.transcripts = new TranscriptSim(
       {
         worker: (id) => this.workers.find((x) => x.id === id),
@@ -693,6 +696,19 @@ export class SimWorld {
 
   private panelsSim: PanelsSim | null = null;
   private usageMs = 5000;
+  private readonly echoMs: number | null;
+  private echoes = 0;
+
+  /** #58: the prompt as the agent writes it to its transcript: trimmed, a user item after the others. */
+  private echo(w: Worker, text: string): void {
+    if (this.echoMs === null) return;
+    const h = this.setT(() => {
+      this.timers.delete(h);
+      const item: TranscriptItem = { id: `sim-echo-${++this.echoes}`, seq: this.transcripts.nextSeq(w.id), ts: this.now(), kind: 'user', parts: [{ text: text.trim() }] };
+      this.transcripts.push(w.id, [item], []);
+    }, this.echoMs);
+    this.timers.add(h);
+  }
 
   private get panels(): PanelsSim {
     this.panelsSim ??= new PanelsSim({
@@ -714,6 +730,7 @@ export class SimWorld {
         return true;
       },
       error: (code, message) => new CmdError(code, message),
+      echo: (w, text) => this.echo(w, text),
     });
     return this.panelsSim;
   }

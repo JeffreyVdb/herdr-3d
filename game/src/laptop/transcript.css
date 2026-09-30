@@ -1061,6 +1061,103 @@
   }
 }
 
+/* #58: after the timeline, the prompts on their way and what the agent is doing now. */
+.tx-tail > * {
+  margin-top: 8px;
+}
+.tx-pending-list:empty {
+  display: none;
+}
+/* Your bubble where its message will be, dimmed until the transcript has it; under it what became of it. */
+.tx-pending {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+.tx-pending > .tx-bubble {
+  opacity: 0.66;
+}
+.tx-pending-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 2px 6px;
+  max-width: 82%;
+  text-align: right;
+  padding-right: 4px;
+  color: var(--tx-text-3);
+  font-size: calc(11px * var(--tx-k, 1));
+}
+.tx-pending[data-state='queued'] .tx-pending-state {
+  color: var(--tx-text-2);
+}
+.tx-pending[data-late='true'] .tx-pending-state {
+  font-style: italic;
+}
+.tx-pending[data-state='refused'] > .tx-bubble {
+  opacity: 1;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tx-red) 50%, transparent);
+}
+.tx-pending[data-state='refused'] .tx-pending-state {
+  color: var(--tx-red);
+}
+.tx-pending-meta .tx-link {
+  padding: 0 2px;
+  font-size: inherit;
+}
+
+/*
+ * The live cue: the word (and its icon) flash, one element animating opacity only, on the compositor (no filter, no
+ * shadow, no colour: nothing that repaints). The time is a sibling the 1 s ticker sets. It is in the DOM only while the
+ * worker works and the conversation is up; a hidden tab pauses it.
+ */
+.tx-activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+  color: var(--tx-text-2);
+  font-size: calc(12.5px * var(--tx-k, 1));
+}
+.tx-activity-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-style: italic;
+  animation: tx-pulse 1.2s ease-in-out infinite;
+  will-change: opacity;
+}
+.tx-activity-label svg {
+  color: var(--tx-blue);
+}
+.tx-activity-time {
+  color: var(--tx-text-3);
+  font-size: calc(11px * var(--tx-k, 1));
+  font-variant-numeric: tabular-nums;
+}
+.tx[data-page-hidden] .tx-activity-label {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tx-activity-label {
+    animation: none;
+    will-change: auto;
+  }
+}
+/* What the live region says is for screen readers only. */
+.tx-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ---- Images (phase 2): strips of thumbnails, cards for what is not available ---------------------------------- */
 
 .tx-strip {
