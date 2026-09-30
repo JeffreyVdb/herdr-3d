@@ -1,0 +1,635 @@
+[
+  {
+    "id": "99929b3a-d233-40c9-be9a-77841edd2f1d",
+    "seq": 1,
+    "ts": 1790764976682,
+    "kind": "user",
+    "parts": [
+      {
+        "text": "Call AskUserQuestion now with exactly one question: header Drink, question Tea or coffee?, options Tea (description Hot tea) and Coffee (description Hot coffee), multiSelect false. After I answer reply only DONE. Do not use other tools."
+      }
+    ]
+  },
+  {
+    "id": "toolu_014F63f4HMf8ayZ7AhNMC8Uh",
+    "seq": 2,
+    "ts": 1790764978861,
+    "kind": "tool",
+    "tool": {
+      "name": "AskUserQuestion",
+      "input_summary": "{\"questions\":[{\"header\":\"Drink\",\"question\":\"Tea or coffee?\",\"multiSelect\":false,\"options\":[{\"label\":\"Tea\",\"description\":\"Hot tea\"},{\"label\":\"Coffee\",\"description\":\"Hot coffee\"}]}]}",
+      "input": {
+        "questions": [
+          {
+            "header": "Drink",
+            "question": "Tea or coffee?",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "Tea",
+                "description": "Hot tea"
+              },
+              {
+                "label": "Coffee",
+                "description": "Hot coffee"
+              }
+            ]
+          }
+        ]
+      },
+      "status": "ok",
+      "output_text": "Your questions have been answered: \"Tea or coffee?\"=\"Coffee\". You can now continue with these answers in mind.",
+      "ask": {
+        "agent": "claude",
+        "questions": [
+          {
+            "header": "Drink",
+            "question": "Tea or coffee?",
+            "multi": false,
+            "other": true,
+            "options": [
+              {
+                "label": "Tea",
+                "description": "Hot tea"
+              },
+              {
+                "label": "Coffee",
+                "description": "Hot coffee"
+              }
+            ]
+          }
+        ],
+        "outcome": "answered",
+        "answers": [
+          {
+            "question": 0,
+            "answer": "Coffee",
+            "labels": [
+              "Coffee"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "toolu_01P9x5hp4AnueE99ehy3kNqX",
+    "seq": 3,
+    "ts": 1790765067863,
+    "kind": "tool",
+    "tool": {
+      "name": "AskUserQuestion",
+      "input_summary": "{\"questions\":[{\"header\":\"Features\",\"question\":\"Which features should be enabled?\",\"multiSelect\":true,\"options\":[{\"label\":\"Logs\",\"description\":\"Request logs\"},{\"label\":\"Metrics\",\"description\":\"Request…",
+      "input": {
+        "questions": [
+          {
+            "header": "Features",
+            "question": "Which features should be enabled?",
+            "multiSelect": true,
+            "options": [
+              {
+                "label": "Logs",
+                "description": "Request logs"
+              },
+              {
+                "label": "Metrics",
+                "description": "Request metrics"
+              },
+              {
+                "label": "Traces",
+                "description": "Request traces"
+              },
+              {
+                "label": "Alerts",
+                "description": "Request alerts"
+              }
+            ]
+          }
+        ]
+      },
+      "status": "ok",
+      "output_text": "Your questions have been answered: \"Which features should be enabled?\"=\"Logs, Metrics, Traces\". You can now continue with these answers in mind.",
+      "ask": {
+        "agent": "claude",
+        "questions": [
+          {
+            "header": "Features",
+            "question": "Which features should be enabled?",
+            "multi": true,
+            "other": true,
+            "options": [
+              {
+                "label": "Logs",
+                "description": "Request logs"
+              },
+              {
+                "label": "Metrics",
+                "description": "Request metrics"
+              },
+              {
+                "label": "Traces",
+                "description": "Request traces"
+              },
+              {
+                "label": "Alerts",
+                "description": "Request alerts"
+              }
+            ]
+          }
+        ],
+        "outcome": "answered",
+        "answers": [
+          {
+            "question": 0,
+            "answer": "Logs, Metrics, Traces",
+            "labels": [
+              "Logs",
+              "Metrics",
+              "Traces"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "toolu_01U8ZrKFNvqFNsavBe7a22df",
+    "seq": 4,
+    "ts": 1790765099783,
+    "kind": "tool",
+    "tool": {
+      "name": "AskUserQuestion",
+      "input_summary": "{\"questions\":[{\"header\":\"Color\",\"question\":\"Which color?\",\"multiSelect\":false,\"options\":[{\"label\":\"Red\",\"description\":\"Warm color\"},{\"label\":\"Blue\",\"description\":\"Cool color\"}]},{\"header\":\"Extras\",\"q…",
+      "input": {
+        "questions": [
+          {
+            "header": "Color",
+            "question": "Which color?",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "Red",
+                "description": "Warm color"
+              },
+              {
+                "label": "Blue",
+                "description": "Cool color"
+              }
+            ]
+          },
+          {
+            "header": "Extras",
+            "question": "Which extras?",
+            "multiSelect": true,
+            "options": [
+              {
+                "label": "Logs",
+                "description": "Request logs"
+              },
+              {
+                "label": "Metrics",
+                "description": "Request metrics"
+              },
+              {
+                "label": "Traces",
+                "description": "Request traces"
+              }
+            ]
+          }
+        ]
+      },
+      "status": "ok",
+      "output_text": "Your questions have been answered: \"Which color?\"=\"Blue\", \"Which extras?\"=\"Logs\". You can now continue with these answers in mind.",
+      "ask": {
+        "agent": "claude",
+        "questions": [
+          {
+            "header": "Color",
+            "question": "Which color?",
+            "multi": false,
+            "other": true,
+            "options": [
+              {
+                "label": "Red",
+                "description": "Warm color"
+              },
+              {
+                "label": "Blue",
+                "description": "Cool color"
+              }
+            ]
+          },
+          {
+            "header": "Extras",
+            "question": "Which extras?",
+            "multi": true,
+            "other": true,
+            "options": [
+              {
+                "label": "Logs",
+                "description": "Request logs"
+              },
+              {
+                "label": "Metrics",
+                "description": "Request metrics"
+              },
+              {
+                "label": "Traces",
+                "description": "Request traces"
+              }
+            ]
+          }
+        ],
+        "outcome": "answered",
+        "answers": [
+          {
+            "question": 0,
+            "answer": "Blue",
+            "labels": [
+              "Blue"
+            ]
+          },
+          {
+            "question": 1,
+            "answer": "Logs",
+            "labels": [
+              "Logs"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "toolu_012vhFKJwCHqKoQ1THGwjkLk",
+    "seq": 5,
+    "ts": 1790765160428,
+    "kind": "tool",
+    "tool": {
+      "name": "AskUserQuestion",
+      "input_summary": "{\"questions\":[{\"header\":\"Drink\",\"question\":\"What should we drink?\",\"multiSelect\":false,\"options\":[{\"label\":\"Tea\",\"description\":\"Hot tea\"},{\"label\":\"Coffee\",\"description\":\"Hot coffee\"}]}]}",
+      "input": {
+        "questions": [
+          {
+            "header": "Drink",
+            "question": "What should we drink?",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "Tea",
+                "description": "Hot tea"
+              },
+              {
+                "label": "Coffee",
+                "description": "Hot coffee"
+              }
+            ]
+          }
+        ]
+      },
+      "status": "ok",
+      "output_text": "The user answered: \"What should we drink?\"=\"Sparkling water\". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+      "ask": {
+        "agent": "claude",
+        "questions": [
+          {
+            "header": "Drink",
+            "question": "What should we drink?",
+            "multi": false,
+            "other": true,
+            "options": [
+              {
+                "label": "Tea",
+                "description": "Hot tea"
+              },
+              {
+                "label": "Coffee",
+                "description": "Hot coffee"
+              }
+            ]
+          }
+        ],
+        "outcome": "answered",
+        "answers": [
+          {
+            "question": 0,
+            "answer": "Sparkling water",
+            "other": "Sparkling water"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "toolu_016fnAt3wyH2JR5UL7TnKKNB",
+    "seq": 6,
+    "ts": 1790765179089,
+    "kind": "tool",
+    "tool": {
+      "name": "AskUserQuestion",
+      "input_summary": "{\"questions\":[{\"header\":\"Layout\",\"question\":\"Which card layout?\",\"multiSelect\":false,\"options\":[{\"label\":\"Compact\",\"description\":\"Small card\",\"preview\":\"## Compact\\n+-------+\\n| Title |\\n+-------+\"},…",
+      "input": {
+        "questions": [
+          {
+            "header": "Layout",
+            "question": "Which card layout?",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "Compact",
+                "description": "Small card",
+                "preview": "## Compact\n+-------+\n| Title |\n+-------+"
+              },
+              {
+                "label": "Expanded",
+                "description": "Large card",
+                "preview": "## Expanded\n+-----------+\n| Title     |\n| Details   |\n+-----------+"
+              }
+            ]
+          }
+        ]
+      },
+      "status": "ok",
+      "output_text": "Your questions have been answered: \"Which card layout?\"=\"Expanded\" selected preview:\n## Expanded\n+-----------+\n| Title     |\n| Details   |\n+-----------+. You can now continue with these answers in mind.",
+      "ask": {
+        "agent": "claude",
+        "questions": [
+          {
+            "header": "Layout",
+            "question": "Which card layout?",
+            "multi": false,
+            "other": false,
+            "options": [
+              {
+                "label": "Compact",
+                "description": "Small card",
+                "preview": "## Compact\n+-------+\n| Title |\n+-------+"
+              },
+              {
+                "label": "Expanded",
+                "description": "Large card",
+                "preview": "## Expanded\n+-----------+\n| Title     |\n| Details   |\n+-----------+"
+              }
+            ]
+          }
+        ],
+        "outcome": "answered",
+        "answers": [
+          {
+            "question": 0,
+            "answer": "Expanded",
+            "labels": [
+              "Expanded"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "toolu_01UYJ8PfzgPp69vD6PS9cA2K",
+    "seq": 7,
+    "ts": 1790765231779,
+    "kind": "tool",
+    "tool": {
+      "name": "AskUserQuestion",
+      "input_summary": "{\"questions\":[{\"header\":\"Cancel\",\"question\":\"Continue experiment?\",\"multiSelect\":false,\"options\":[{\"label\":\"Yes\",\"description\":\"Continue\"},{\"label\":\"No\",\"description\":\"Stop\"}]}]}",
+      "input": {
+        "questions": [
+          {
+            "header": "Cancel",
+            "question": "Continue experiment?",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "Yes",
+                "description": "Continue"
+              },
+              {
+                "label": "No",
+                "description": "Stop"
+              }
+            ]
+          }
+        ]
+      },
+      "status": "error",
+      "output_text": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+      "ask": {
+        "agent": "claude",
+        "questions": [
+          {
+            "header": "Cancel",
+            "question": "Continue experiment?",
+            "multi": false,
+            "other": true,
+            "options": [
+              {
+                "label": "Yes",
+                "description": "Continue"
+              },
+              {
+                "label": "No",
+                "description": "Stop"
+              }
+            ]
+          }
+        ],
+        "outcome": "declined"
+      }
+    }
+  },
+  {
+    "id": "7420a066-b9d6-4f5a-8d62-2ece2d56e9b9",
+    "seq": 8,
+    "ts": 1790765245454,
+    "kind": "notice",
+    "notice": {
+      "text": "Interrupted by user",
+      "source": "user/interrupted"
+    }
+  },
+  {
+    "id": "toolu_011WWra1kZyUuaFy6ku7fUUj",
+    "seq": 9,
+    "ts": 1790765247956,
+    "kind": "tool",
+    "tool": {
+      "name": "AskUserQuestion",
+      "input_summary": "{\"questions\":[{\"header\":\"Discuss\",\"question\":\"Which approach?\",\"multiSelect\":false,\"options\":[{\"label\":\"Simple\",\"description\":\"Minimal\"},{\"label\":\"Detailed\",\"description\":\"Thorough\"}]}]}",
+      "input": {
+        "questions": [
+          {
+            "header": "Discuss",
+            "question": "Which approach?",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "Simple",
+                "description": "Minimal"
+              },
+              {
+                "label": "Detailed",
+                "description": "Thorough"
+              }
+            ]
+          }
+        ]
+      },
+      "status": "error",
+      "output_text": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nThe user wants to clarify these questions.\n    This means they may have additional information, context or questions for you.\n    Take their response into account and then reformulate the questions if appropriate.\n    Start by asking them what they would like to clarify.\n\n    Questions asked:\n- \"Which approach?\"\n  (No answer provided)",
+      "ask": {
+        "agent": "claude",
+        "questions": [
+          {
+            "header": "Discuss",
+            "question": "Which approach?",
+            "multi": false,
+            "other": true,
+            "options": [
+              {
+                "label": "Simple",
+                "description": "Minimal"
+              },
+              {
+                "label": "Detailed",
+                "description": "Thorough"
+              }
+            ]
+          }
+        ],
+        "outcome": "clarify"
+      }
+    }
+  },
+  {
+    "id": "toolu_01SgCShe3VvQYc12cPwEwovK",
+    "seq": 10,
+    "ts": 1790765469417,
+    "kind": "tool",
+    "tool": {
+      "name": "AskUserQuestion",
+      "input_summary": "{\"questions\":[{\"header\":\"Preview\",\"question\":\"Which preview?\",\"multiSelect\":false,\"options\":[{\"label\":\"A\",\"description\":\"First\",\"preview\":\"## A\\nAlpha\"},{\"label\":\"B\",\"description\":\"Second\",\"preview\":…",
+      "input": {
+        "questions": [
+          {
+            "header": "Preview",
+            "question": "Which preview?",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "A",
+                "description": "First",
+                "preview": "## A\nAlpha"
+              },
+              {
+                "label": "B",
+                "description": "Second",
+                "preview": "## B\nBeta"
+              }
+            ]
+          }
+        ]
+      },
+      "status": "ok",
+      "output_text": "The user answered: \"Which preview?\"=\"B\" selected preview:\n## B\nBeta notes: Prefer larger type. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+      "ask": {
+        "agent": "claude",
+        "questions": [
+          {
+            "header": "Preview",
+            "question": "Which preview?",
+            "multi": false,
+            "other": false,
+            "options": [
+              {
+                "label": "A",
+                "description": "First",
+                "preview": "## A\nAlpha"
+              },
+              {
+                "label": "B",
+                "description": "Second",
+                "preview": "## B\nBeta"
+              }
+            ]
+          }
+        ],
+        "outcome": "answered",
+        "answers": [
+          {
+            "question": 0,
+            "answer": "B",
+            "labels": [
+              "B"
+            ],
+            "notes": "Prefer larger type"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "0cb7a5cf-2b58-4bdf-8466-82c1dad22413",
+    "seq": 11,
+    "ts": 1790766521248,
+    "kind": "user",
+    "parts": [
+      {
+        "text": "Call the AskUserQuestion tool exactly once: header 'Drink', question 'Tea or coffee?', options Tea (Hot tea) and Coffee (Hot coffee). Do nothing else."
+      }
+    ]
+  },
+  {
+    "id": "toolu_01FuqDRbauxtx9cAAmN3o8ex",
+    "seq": 12,
+    "ts": 1790766523807,
+    "kind": "tool",
+    "tool": {
+      "name": "AskUserQuestion",
+      "input_summary": "{\"questions\":[{\"header\":\"Drink\",\"question\":\"Tea or coffee?\",\"multiSelect\":false,\"options\":[{\"label\":\"Tea\",\"description\":\"Hot tea\"},{\"label\":\"Coffee\",\"description\":\"Hot coffee\"}]}]}",
+      "input": {
+        "questions": [
+          {
+            "header": "Drink",
+            "question": "Tea or coffee?",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "Tea",
+                "description": "Hot tea"
+              },
+              {
+                "label": "Coffee",
+                "description": "Hot coffee"
+              }
+            ]
+          }
+        ]
+      },
+      "status": "running",
+      "ask": {
+        "agent": "claude",
+        "questions": [
+          {
+            "header": "Drink",
+            "question": "Tea or coffee?",
+            "multi": false,
+            "other": true,
+            "options": [
+              {
+                "label": "Tea",
+                "description": "Hot tea"
+              },
+              {
+                "label": "Coffee",
+                "description": "Hot coffee"
+              }
+            ]
+          }
+        ],
+        "outcome": "pending"
+      }
+    }
+  }
+]

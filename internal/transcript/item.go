@@ -71,6 +71,8 @@ type builder struct {
 	srcs map[*proto.ImageRef]*imgSrc
 	// viewPath is the file a Codex view_image call named.
 	viewPath string
+	// ask is an ask call's questions (#57), for its result's answers.
+	ask *askCall
 }
 
 type blockParts struct {
@@ -144,6 +146,11 @@ func (b *builder) result(status, text string, images []imgRef) {
 func (b *builder) interrupt() {
 	if t := b.it.Tool; t != nil && t.Status == proto.ToolRunning {
 		t.Status = proto.ToolInterrupted
+		if t.Ask != nil && t.Ask.Outcome == proto.AskPending {
+			a := *t.Ask
+			a.Outcome = proto.AskInterrupted
+			t.Ask = &a
+		}
 		if s := b.it.Subagent; s != nil && s.Status == proto.ToolRunning {
 			s.Status = proto.ToolInterrupted
 		}

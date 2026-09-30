@@ -64,6 +64,7 @@ type Session struct {
 	found  bool
 	rescan time.Duration // how long a miss waits (MissRescan)
 	tap    Tap
+	lines  Lines
 }
 
 // Tap gets the main transcript's lines as the session reads them, so the
@@ -75,6 +76,25 @@ type Tap interface {
 	// replaced (read again from its start), or it went (gone). The tap
 	// gets nothing more.
 	Void(gone bool)
+}
+
+// Lines gets every line of the main transcript the session reads, from the
+// file's start (#57: the worker's ask is read from them), and Reset when the
+// lines it got are void: the file was replaced (it gets them all again) or
+// went.
+type Lines interface {
+	Line(line []byte)
+	Reset()
+}
+
+// SetLines sends the main transcript's lines to l (nil: none). Set it before
+// the first Poll, so l reads the file from its start.
+func (s *Session) SetLines(l Lines) { s.lines = l }
+
+func (s *Session) resetLines() {
+	if s.lines != nil {
+		s.lines.Reset()
+	}
 }
 
 // SetTap sends the main transcript's lines read from now on to t (nil:
@@ -139,6 +159,7 @@ func (s *Session) Poll(now time.Time) (u proto.Usage, ok bool) {
 		}
 		if s.found { // found again after it went: count it all afresh
 			s.parse = newParser(s.harness)
+			s.resetLines()
 			for _, t := range s.subs {
 				t.Restart()
 			}
@@ -152,6 +173,7 @@ func (s *Session) Poll(now time.Time) (u proto.Usage, ok bool) {
 	if errors.Is(err, jsonl.ErrReplaced) {
 		// A file was truncated or replaced: forget everything, read it all.
 		s.void(false)
+		s.resetLines()
 		s.parse = newParser(s.harness)
 		s.main.Restart()
 		for _, t := range s.subs {
@@ -162,6 +184,7 @@ func (s *Session) Poll(now time.Time) (u proto.Usage, ok bool) {
 	if err != nil && !errors.Is(err, jsonl.ErrReplaced) && s.main != nil {
 		if _, serr := os.Lstat(s.main.Path); errors.Is(serr, fs.ErrNotExist) {
 			s.void(true)
+			s.resetLines()
 			s.main, s.missAt = nil, now // gone: look again later, keep what was counted
 		}
 	}
@@ -179,6 +202,9 @@ func (s *Session) usage() (proto.Usage, bool) {
 func (s *Session) read(now time.Time) error {
 	if err := s.main.Next(func(off int64, b []byte) {
 		s.parse.line(true, b)
+		if s.lines != nil {
+			s.lines.Line(b)
+		}
 		if s.tap != nil {
 			s.tap.Line(off, b)
 		}

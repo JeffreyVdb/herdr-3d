@@ -19,6 +19,9 @@ var gameFixtures = []struct {
 	{"claude.json", Claude, []string{"message.jsonl", "bash.jsonl", "bash_error.jsonl", "edit.jsonl", "write.jsonl", "read_image.jsonl",
 		"user.jsonl", "user_marker.jsonl", "agent.jsonl", "interrupted.jsonl", "system.jsonl", "compact.jsonl", "attachment.jsonl", "unknown.jsonl"}},
 	{"claude-subagent.json", Claude, []string{"subagent.jsonl"}},
+	// #57: question cards, answered every way and one pending.
+	{"claude-ask.json", Claude, []string{"ask.jsonl", "ask_pending.jsonl"}},
+	{"codex-ask.json", Codex, []string{"ask.jsonl", "ask_pending.jsonl"}},
 	{"codex.json", Codex, []string{"session.jsonl", "tools.jsonl", "apply_patch.jsonl", "image.jsonl", "view_image.jsonl", "generated.jsonl", "aborted.jsonl", "compacted.jsonl", "unknown.jsonl"}},
 }
 

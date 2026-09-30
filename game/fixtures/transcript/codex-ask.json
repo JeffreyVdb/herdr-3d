@@ -1,0 +1,384 @@
+[
+  {
+    "id": "call_lmhWgAiCLClNM22yFzQXRXcZ",
+    "seq": 1,
+    "ts": 1790764891883,
+    "kind": "tool",
+    "tool": {
+      "name": "request_user_input",
+      "input_summary": "{\"questions\":[{\"header\":\"Color\",\"id\":\"color\",\"question\":\"Which color should the fixture use?\",\"options\":[{\"label\":\"Blue (Recommended)\",\"description\":\"Calm blue.\"},{\"label\":\"Green\",\"description\":\"Fres…",
+      "input": {
+        "questions": [
+          {
+            "header": "Color",
+            "id": "color",
+            "question": "Which color should the fixture use?",
+            "options": [
+              {
+                "label": "Blue (Recommended)",
+                "description": "Calm blue."
+              },
+              {
+                "label": "Green",
+                "description": "Fresh green."
+              }
+            ]
+          }
+        ]
+      },
+      "status": "ok",
+      "output_text": "{\"answers\":{\"color\":{\"answers\":[\"Green\"]}}}",
+      "ask": {
+        "agent": "codex",
+        "questions": [
+          {
+            "id": "color",
+            "header": "Color",
+            "question": "Which color should the fixture use?",
+            "multi": false,
+            "other": true,
+            "options": [
+              {
+                "label": "Blue (Recommended)",
+                "description": "Calm blue."
+              },
+              {
+                "label": "Green",
+                "description": "Fresh green."
+              }
+            ]
+          }
+        ],
+        "outcome": "answered",
+        "answers": [
+          {
+            "question": 0,
+            "answer": "Green",
+            "labels": [
+              "Green"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "call_xQd1gbep11m9OuznwGJRfYFx",
+    "seq": 2,
+    "ts": 1790764967334,
+    "kind": "tool",
+    "tool": {
+      "name": "request_user_input",
+      "input_summary": "{\"questions\":[{\"header\":\"Color\",\"id\":\"color\",\"question\":\"Which color?\",\"options\":[{\"label\":\"Blue\",\"description\":\"Calm.\"},{\"label\":\"Green\",\"description\":\"Fresh.\"}]},{\"header\":\"Size\",\"id\":\"size\",\"quest…",
+      "input": {
+        "questions": [
+          {
+            "header": "Color",
+            "id": "color",
+            "question": "Which color?",
+            "options": [
+              {
+                "label": "Blue",
+                "description": "Calm."
+              },
+              {
+                "label": "Green",
+                "description": "Fresh."
+              }
+            ]
+          },
+          {
+            "header": "Size",
+            "id": "size",
+            "question": "Which size?",
+            "options": [
+              {
+                "label": "Small",
+                "description": "Compact."
+              },
+              {
+                "label": "Large",
+                "description": "Roomy."
+              }
+            ]
+          },
+          {
+            "header": "Style",
+            "id": "style",
+            "question": "Which style?",
+            "options": [
+              {
+                "label": "Plain",
+                "description": "Simple."
+              },
+              {
+                "label": "Fancy",
+                "description": "Decorated."
+              }
+            ]
+          }
+        ]
+      },
+      "status": "ok",
+      "output_text": "{\"answers\":{\"color\":{\"answers\":[\"Blue\"]},\"style\":{\"answers\":[\"Plain\"]},\"size\":{\"answers\":[\"Large\"]}}}",
+      "ask": {
+        "agent": "codex",
+        "questions": [
+          {
+            "id": "color",
+            "header": "Color",
+            "question": "Which color?",
+            "multi": false,
+            "other": true,
+            "options": [
+              {
+                "label": "Blue",
+                "description": "Calm."
+              },
+              {
+                "label": "Green",
+                "description": "Fresh."
+              }
+            ]
+          },
+          {
+            "id": "size",
+            "header": "Size",
+            "question": "Which size?",
+            "multi": false,
+            "other": true,
+            "options": [
+              {
+                "label": "Small",
+                "description": "Compact."
+              },
+              {
+                "label": "Large",
+                "description": "Roomy."
+              }
+            ]
+          },
+          {
+            "id": "style",
+            "header": "Style",
+            "question": "Which style?",
+            "multi": false,
+            "other": true,
+            "options": [
+              {
+                "label": "Plain",
+                "description": "Simple."
+              },
+              {
+                "label": "Fancy",
+                "description": "Decorated."
+              }
+            ]
+          }
+        ],
+        "outcome": "answered",
+        "answers": [
+          {
+            "question": 0,
+            "answer": "Blue",
+            "labels": [
+              "Blue"
+            ]
+          },
+          {
+            "question": 1,
+            "answer": "Large",
+            "labels": [
+              "Large"
+            ]
+          },
+          {
+            "question": 2,
+            "answer": "Plain",
+            "labels": [
+              "Plain"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "call_fLK98VtFQnWLvYRk0fcH9SZH",
+    "seq": 3,
+    "ts": 1790764994420,
+    "kind": "tool",
+    "tool": {
+      "name": "request_user_input",
+      "input_summary": "{\"questions\":[{\"header\":\"Transport\",\"id\":\"transport\",\"question\":\"Which transport should carry the fixture payload?\",\"options\":[{\"label\":\"HTTP\",\"description\":\"Simple requests.\"},{\"label\":\"WebSocket\",\"…",
+      "input": {
+        "questions": [
+          {
+            "header": "Transport",
+            "id": "transport",
+            "question": "Which transport should carry the fixture payload?",
+            "options": [
+              {
+                "label": "HTTP",
+                "description": "Simple requests."
+              },
+              {
+                "label": "WebSocket",
+                "description": "Live streams."
+              }
+            ]
+          }
+        ]
+      },
+      "status": "ok",
+      "output_text": "{\"answers\":{\"transport\":{\"answers\":[\"None of the above\",\"user_note: Use a local file instead.\"]}}}",
+      "ask": {
+        "agent": "codex",
+        "questions": [
+          {
+            "id": "transport",
+            "header": "Transport",
+            "question": "Which transport should carry the fixture payload?",
+            "multi": false,
+            "other": true,
+            "options": [
+              {
+                "label": "HTTP",
+                "description": "Simple requests."
+              },
+              {
+                "label": "WebSocket",
+                "description": "Live streams."
+              }
+            ]
+          }
+        ],
+        "outcome": "answered",
+        "answers": [
+          {
+            "question": 0,
+            "answer": "Use a local file instead.",
+            "other": "Use a local file instead."
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "call_Qlh9OpdxlSo72tTndrVqBNXT",
+    "seq": 4,
+    "ts": 1790765094267,
+    "kind": "tool",
+    "tool": {
+      "name": "request_user_input",
+      "input_summary": "{\"questions\":[{\"header\":\"Cancel\",\"id\":\"cancel\",\"question\":\"Which cancellation fixture?\",\"options\":[{\"label\":\"First\",\"description\":\"First option.\"},{\"label\":\"Second\",\"description\":\"Second option.\"}]}]}",
+      "input": {
+        "questions": [
+          {
+            "header": "Cancel",
+            "id": "cancel",
+            "question": "Which cancellation fixture?",
+            "options": [
+              {
+                "label": "First",
+                "description": "First option."
+              },
+              {
+                "label": "Second",
+                "description": "Second option."
+              }
+            ]
+          }
+        ]
+      },
+      "status": "ok",
+      "output_text": "aborted by user after 15.9s",
+      "ask": {
+        "agent": "codex",
+        "questions": [
+          {
+            "id": "cancel",
+            "header": "Cancel",
+            "question": "Which cancellation fixture?",
+            "multi": false,
+            "other": true,
+            "options": [
+              {
+                "label": "First",
+                "description": "First option."
+              },
+              {
+                "label": "Second",
+                "description": "Second option."
+              }
+            ]
+          }
+        ],
+        "outcome": "declined"
+      }
+    }
+  },
+  {
+    "id": "o:5289",
+    "seq": 5,
+    "ts": 1790765110149,
+    "kind": "notice",
+    "notice": {
+      "text": "Turn interrupted",
+      "source": "event_msg/turn_aborted"
+    }
+  },
+  {
+    "id": "call_ViDcGCpH6sM2VSovBVHRdQHu",
+    "seq": 6,
+    "ts": 1790765035059,
+    "kind": "tool",
+    "tool": {
+      "name": "request_user_input",
+      "input_summary": "{\"questions\":[{\"header\":\"Routing\",\"id\":\"long\",\"question\":\"When sending a large fixture payload through a helper process while the receiver is temporarily unavailable and the terminal is narrow, which…",
+      "input": {
+        "questions": [
+          {
+            "header": "Routing",
+            "id": "long",
+            "question": "When sending a large fixture payload through a helper process while the receiver is temporarily unavailable and the terminal is narrow, which transport should preserve delivery ordering, retries, and a clear progress indication for the person waiting at the laptop?",
+            "options": [
+              {
+                "label": "HTTP helper (Recommended)",
+                "description": "Send a complete request through a helper process, retain the payload until the receiver confirms delivery, and show progress while retrying temporary failures without duplicating accepted messages."
+              },
+              {
+                "label": "WebSocket stream",
+                "description": "Stream smaller chunks over a persistent connection, reconnect when needed, preserve chunk ordering across retries, and display partial progress even when the receiver takes a long time to recover."
+              }
+            ]
+          }
+        ]
+      },
+      "status": "running",
+      "ask": {
+        "agent": "codex",
+        "questions": [
+          {
+            "id": "long",
+            "header": "Routing",
+            "question": "When sending a large fixture payload through a helper process while the receiver is temporarily unavailable and the terminal is narrow, which transport should preserve delivery ordering, retries, and a clear progress indication for the person waiting at the laptop?",
+            "multi": false,
+            "other": true,
+            "options": [
+              {
+                "label": "HTTP helper (Recommended)",
+                "description": "Send a complete request through a helper process, retain the payload until the receiver confirms delivery, and show progress while retrying temporary failures without duplicating accepted messages."
+              },
+              {
+                "label": "WebSocket stream",
+                "description": "Stream smaller chunks over a persistent connection, reconnect when needed, preserve chunk ordering across retries, and display partial progress even when the receiver takes a long time to recover."
+              }
+            ]
+          }
+        ],
+        "outcome": "pending"
+      }
+    }
+  }
+]

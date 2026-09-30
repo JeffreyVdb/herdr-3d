@@ -440,3 +440,48 @@ func TestTap(t *testing.T) {
 		t.Fatalf("gone: %+v", tap2)
 	}
 }
+
+type recLines struct {
+	lines  []string
+	resets int
+}
+
+func (r *recLines) Line(b []byte) { r.lines = append(r.lines, string(b)) }
+func (r *recLines) Reset()        { r.lines, r.resets = nil, r.resets+1 }
+
+// #57: Lines gets every main line from the file's start (not a subagent's),
+// and a Reset whenever those are void: all of them again after a
+// replacement, none while it is gone, all of the new file when it is back.
+func TestLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "p", claudeID+".jsonl")
+	first, second := assistant("m1", "claude-opus-5-5", "", 100, 10, 0, 0), assistant("m2", "claude-opus-5-5", "", 200, 20, 0, 0)
+	writeFile(t, path, first)
+	writeFile(t, filepath.Join(dir, "p", claudeID, "subagents", "agent-a1.jsonl"), assistant("s1", "claude-opus-5-5", "", 1, 1, 0, 0))
+	s := NewSession(Claude, claudeID, Roots{ClaudeProjects: dir}, DefaultPricing())
+	r := &recLines{}
+	s.SetLines(r)
+	s.Poll(t0)
+	appendFile(t, path, second+`{"type":"user"`)
+	s.Poll(t0.Add(time.Second))
+	if len(r.lines) != 2 || r.lines[0]+"\n" != first || r.lines[1]+"\n" != second || r.resets != 0 {
+		t.Fatalf("lines = %q, resets %d", r.lines, r.resets)
+	}
+	writeFile(t, path, second) // replaced: all again
+	s.Poll(t0.Add(2 * time.Second))
+	if len(r.lines) != 1 || r.lines[0]+"\n" != second || r.resets != 1 {
+		t.Fatalf("after replacement: %q, resets %d", r.lines, r.resets)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	s.Poll(t0.Add(3 * time.Second))
+	if len(r.lines) != 0 || r.resets != 2 {
+		t.Fatalf("gone: %q, resets %d", r.lines, r.resets)
+	}
+	writeFile(t, path, first)
+	s.Poll(t0.Add(3*time.Second + MissRescan))
+	if len(r.lines) != 1 || r.lines[0]+"\n" != first {
+		t.Fatalf("back: %q, resets %d", r.lines, r.resets)
+	}
+}
