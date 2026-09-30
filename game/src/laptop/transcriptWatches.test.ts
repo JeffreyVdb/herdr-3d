@@ -45,6 +45,26 @@ describe('TranscriptWatches', () => {
     expect(h.w.count).toBe(0);
   });
 
+  it('a worker can be watched with a few items (desk prints); sitting there makes the watch again with more', async () => {
+    const h = harness();
+    h.w.sync(new Map([['a', 1]]));
+    h.w.sync(new Map([['a', 1]]));
+    expect(h.sent.map((s) => s.args)).toEqual([{ id: 'a', limit: 1 }]);
+    expect(h.w.limitOf('a')).toBe(1);
+    await h.answer(0, h.ack([item('x1')]));
+    // Sat down: a watch of 200 replaces it (the bridge replaces a watch of the same worker); a late answer to the first is ignored.
+    h.w.sync(new Map([['a', 200]]));
+    h.w.sync(new Map([['a', 200]]));
+    expect(h.sent.slice(1).map((s) => [s.t, s.args])).toEqual([['transcript.watch', { id: 'a', limit: 200 }]]);
+    expect(h.w.limitOf('a')).toBe(200);
+    await h.answer(1, h.ack([item('x0', 1), item('x1', 2)]));
+    expect(h.log).toEqual(['reset a x1', 'reset a x0,x1']);
+    // Back to few items: the bigger watch stays (nothing is made again for fewer).
+    h.w.sync(new Map([['a', 1]]));
+    expect(h.sent).toHaveLength(2);
+    expect(h.w.limitOf('a')).toBe(200);
+  });
+
   it('hands the ack to the sink, then pushes; pushes before the ack wait for it', async () => {
     const h = harness();
     h.w.sync(want('a'));

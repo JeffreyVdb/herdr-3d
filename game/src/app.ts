@@ -1658,7 +1658,31 @@ export class App {
     }
     // M5: seated, a click keeps the keyboard on the laptop (no mouse look).
     if (this.laptops.seated) return this.laptops.focusSeat();
+    if (!this.planOpen && this.clickPrints(e)) return;
     if (!this.planOpen) this.walker.requestLock();
+  }
+
+  /** M16 phase 2: a click on a print lying on a desk (from the crosshair while the mouse looks, else the pointer). */
+  private clickPrints(e: PointerEvent): boolean {
+    if (this.mode !== 'floor' || this.place.area !== 'floor') return false;
+    const canvas = this.r.domElement;
+    const rect = canvas.getBoundingClientRect();
+    const locked = document.pointerLockElement === canvas;
+    const x = locked ? 0 : ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = locked ? 0 : -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    this.walker.applyTo(this.fpCam, this.walk.base);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(x, y), this.fpCam);
+    return this.laptops.clickPrint(ray);
+  }
+
+  /** Test hook: a click on the print under a point of the viewport (NDC), as the pointer would. */
+  clickPrintAt(ndcX: number, ndcY: number): boolean {
+    if (this.mode !== 'floor') return false;
+    this.walker.applyTo(this.fpCam, this.walk.base);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.fpCam);
+    return this.laptops.clickPrint(ray);
   }
 
   private onPlanClick(e: MouseEvent): void {
@@ -2124,7 +2148,8 @@ export class App {
     this.watchLog.push(entry);
     if (this.watchLog.length > 400) this.watchLog.shift();
     const r = await this.client.request(t, args);
-    entry.result = r;
+    // An image is megabytes of base64: the log keeps whether it came, not what.
+    entry.result = r.ok && (t === 'transcript.image' || t === 'transcript.images') ? { ok: true, data: null } : r;
     if (!r.ok && r.code === 'unknown_command') this.unsupported.add(t);
     return r;
   }

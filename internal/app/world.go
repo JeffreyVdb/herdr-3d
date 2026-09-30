@@ -23,10 +23,12 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitremote"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/imgcache"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
+	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/upload"
 	"github.com/JeffreyVdb/herdr-3d/internal/usage"
 	"github.com/JeffreyVdb/herdr-3d/internal/watch"
@@ -82,6 +84,53 @@ const (
 	EnvDropzoneURL     = "HERDR_WORLD_DROPZONE_URL"
 	DefaultDropzoneURL = "http://127.0.0.1:8080"
 )
+
+// M16 phase 2: the images of the transcripts. Drop Zone's data directory
+// is where #13/#51's [Image #n: path] markers point; only under it (and
+// the other roots in docs/protocol.md "Laptops: transcript") is a path read.
+const (
+	EnvDropzoneData = "HERDR_WORLD_DROPZONE_DATA"
+	EnvImageCache   = "HERDR_WORLD_IMAGE_CACHE"
+)
+
+// DefaultDropzoneData is $DROPZONE_DATA (Drop Zone's own variable), else ~/drops.
+func DefaultDropzoneData() string {
+	if d := os.Getenv("DROPZONE_DATA"); d != "" {
+		return d
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, "drops")
+	}
+	return ""
+}
+
+// transcriptImages builds the images the transcripts are read with: the
+// bounded content-addressed cache (with a 0700 disk directory unless
+// cacheDir is "-") and the roots path images may be under.
+func transcriptImages(log *slog.Logger, dropzoneData, cacheDir, codexSessions string) *transcript.Images {
+	var roots []string
+	if dropzoneData != "" {
+		roots = append(roots, dropzoneData)
+	}
+	codexHome := filepath.Dir(codexSessions)
+	if codexSessions == "" {
+		codexHome = filepath.Dir(codex.DefaultSessionsDir())
+	}
+	roots = append(roots, filepath.Join(codexHome, "generated_images"))
+	dir := cacheDir
+	switch dir {
+	case "":
+		dir = imgcache.DefaultDir()
+	case "-":
+		dir = ""
+	}
+	cache, err := imgcache.New(imgcache.Config{Dir: dir})
+	if err != nil {
+		log.Warn("image disk cache off", "dir", dir, "err", err)
+		cache, _ = imgcache.New(imgcache.Config{})
+	}
+	return &transcript.Images{Cache: cache, Roots: roots}
+}
 
 // M5 term: the laptops' caps.
 const (
@@ -268,8 +317,10 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	claudeProjects := fs.String("claude-projects", envOr(EnvClaudeProjects, usage.DefaultClaudeProjects()), "Claude Code transcript directory, for usage ($"+EnvClaudeProjects+")")
 	codexCLI := fs.String("codex-cli", envOr(EnvCodexCLI, "codex"), "Codex binary for model discovery ($"+EnvCodexCLI+")")
 	claudeCLI := fs.String("claude-cli", envOr(EnvClaudeCLI, "claude"), "Claude Code binary for model discovery ($"+EnvClaudeCLI+")")
-	runsDir := fs.String("runs-dir", envOr(EnvRunsDir, DefaultRunsDir()), "write-code runs directory, for the freelancers' reports ($"+EnvRunsDir+")")           // M6 runs
-	dropzoneURL := fs.String("dropzone-url", envOr(EnvDropzoneURL, DefaultDropzoneURL), "Drop Zone URL, where pasted images are uploaded ($"+EnvDropzoneURL+")") // #51 upload
+	runsDir := fs.String("runs-dir", envOr(EnvRunsDir, DefaultRunsDir()), "write-code runs directory, for the freelancers' reports ($"+EnvRunsDir+")")                                                       // M6 runs
+	dropzoneURL := fs.String("dropzone-url", envOr(EnvDropzoneURL, DefaultDropzoneURL), "Drop Zone URL, where pasted images are uploaded ($"+EnvDropzoneURL+")")                                             // #51 upload
+	dropzoneData := fs.String("dropzone-data", envOr(EnvDropzoneData, DefaultDropzoneData()), "Drop Zone's data directory: a root a transcript's [Image #n: path] may be read under ($"+EnvDropzoneData+")") // M16 images
+	imageCache := fs.String("image-cache", os.Getenv(EnvImageCache), "directory of the transcript image disk cache, \"-\" for none (default $XDG_CACHE_HOME/herdr-world/img) ($"+EnvImageCache+")")          // M16 images
 	pricingFile := fs.String("pricing", os.Getenv(EnvPricing), "JSON file of model prices merged over the built-in table ($"+EnvPricing+")")
 	sessions := fs.String("sessions", os.Getenv(EnvSessions), "only watch sessions whose name matches this regexp ($"+EnvSessions+")")
 	fs.DurationVar(&poll, "poll", poll, "session discovery interval ($"+EnvPoll+")")
@@ -354,10 +405,11 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
 		ClaudeProjects: *claudeProjects, Pricing: pricing, HireOptions: &hireOptions,
 		MaxWatches: maxWatches, MaxObservers: maxObservers, MaxTranscriptWatches: maxTxWatches,
-		RunsDir: *runsDir,                                     // M6 runs
-		Boards:  GitHubBoards(&githubcli.Client{Bin: *ghBin}), // M7 boards
-		Limits:  lim,                                          // M10 limits
-		Uploads: images,                                       // #51 upload
+		RunsDir:          *runsDir,                                                          // M6 runs
+		Boards:           GitHubBoards(&githubcli.Client{Bin: *ghBin}),                      // M7 boards
+		Limits:           lim,                                                               // M10 limits
+		Uploads:          images,                                                            // #51 upload
+		TranscriptImages: transcriptImages(log, *dropzoneData, *imageCache, *codexSessions), // M16 images
 	})
 }
 
@@ -432,6 +484,10 @@ type ServeConfig struct {
 	// #51: where POST /upload puts images (nil: it answers
 	// dropzone_unavailable).
 	Uploads server.Uploader
+
+	// M16 phase 2: the transcripts' images (nil: inline images are
+	// described but not kept, no path is read).
+	TranscriptImages *transcript.Images
 }
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
@@ -460,7 +516,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	}
 	if cfg.ClaudeProjects != "" || cfg.CodexSessions != "" { // M5 usage
 		opts.Usage = &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: cfg.ClaudeProjects, CodexSessions: cfg.CodexSessions},
-			Pricing: cfg.Pricing}
+			Pricing: cfg.Pricing, Images: cfg.TranscriptImages}
 	}
 	opts.RunsDir, opts.ReportPoll = cfg.RunsDir, cfg.ReportPoll // M6 runs
 	opts.Boards = cfg.Boards                                    // M7 boards

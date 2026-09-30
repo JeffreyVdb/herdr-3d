@@ -116,7 +116,7 @@ func textOf(it proto.TranscriptItem) string {
 
 func hasImage(it proto.TranscriptItem) bool {
 	for _, p := range it.Parts {
-		if p.ImageOmitted {
+		if p.Image != nil {
 			return true
 		}
 	}
@@ -160,6 +160,8 @@ func TestClaudeLines(t *testing.T) {
 			{kind: proto.ItemUser, text: "/clear"},
 			{kind: proto.ItemNotice, source: "user/command_output", text: "Set effort level to high"},
 		}},
+		{"a user's [Image #n: path] marker", []string{"user_marker.jsonl"}, []want{
+			{kind: proto.ItemUser, images: true, text: "what is wrong with this?"}}},
 		{"interrupted", []string{"interrupted.jsonl"}, []want{
 			{kind: proto.ItemTool, tool: "Bash", status: proto.ToolError, text: "The user doesn't want to proceed"},
 			{kind: proto.ItemNotice, source: "user/interrupted", text: "Interrupted by user"},
@@ -255,6 +257,10 @@ func TestCodexLines(t *testing.T) {
 			{kind: proto.ItemUser, images: true, text: "Something is wrong with the claude/codex limits"},
 			{kind: proto.ItemTool, tool: "exec", status: proto.ToolOK, images: true},
 		}},
+		{"view_image: the output's image", []string{"view_image.jsonl"}, []want{
+			{kind: proto.ItemTool, tool: "view_image", status: proto.ToolOK, images: true, text: "/tmp/github-app-access-request-guide.png"},
+		}},
+		{"a generated image", []string{"generated.jsonl"}, []want{{kind: proto.ItemAssistant, id: "img:call_QjS7MQbBDcgOE4dkGsXea7nA", images: true}}},
 		{"agents", []string{"agents.jsonl"}, []want{
 			{kind: proto.ItemTool, tool: "collaboration.spawn_agent", status: proto.ToolRunning},
 			hidden("inter_agent_communication_metadata"),

@@ -12,6 +12,8 @@ const DEFAULT_WORKERS = 6;
 const asked = process.env.H3D_WORKERS;
 const workers = asked !== undefined && /^[1-9]\d*$/.test(asked.trim()) ? Number(asked) : DEFAULT_WORKERS;
 const baseURL = `http://127.0.0.1:${port}`;
+// H3D_DIST: another build directory (agents building side by side in one checkout); default dist.
+const dist = /^[\w.-]+$/.test(process.env.H3D_DIST ?? '') ? (process.env.H3D_DIST as string) : 'dist';
 
 export default defineConfig({
   testDir: 'e2e',
@@ -32,7 +34,7 @@ export default defineConfig({
     },
   },
   webServer: {
-    command: `pnpm exec vite preview --host 127.0.0.1 --port ${port} --strictPort`,
+    command: `pnpm exec vite preview --outDir ${dist} --host 127.0.0.1 --port ${port} --strictPort`,
     url: baseURL,
     reuseExistingServer: false,
     timeout: 30_000,

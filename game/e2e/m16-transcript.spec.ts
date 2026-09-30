@@ -19,7 +19,9 @@ const watchLog = (page: Page) => page.evaluate(() => window.__h3d.watchLog());
 const termFps = async (page: Page, id: string) => ((await watchLog(page)).filter((c) => c.t === 'terminal.watch' && (c.args as { id: string }).id === id).at(-1)?.args as { fps?: number } | undefined)?.fps;
 
 async function sitAt(page: Page, name: string): Promise<string> {
-  await openGame(page, 'demo-m5', '', SIM);
+  // No desk prints (?prints=0): they watch the transcripts of the desks near you too (e2e/m16-prints.spec.ts); this
+  // counts the seat's watch alone.
+  await openGame(page, 'demo-m5', '&prints=0', SIM);
   await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
   await frames(page, 3);
   const id = await page.evaluate((n) => window.__h3d.world().flatMap((f) => f.workers).find((w) => w.name === n)?.id ?? '', name);
@@ -30,6 +32,77 @@ async function sitAt(page: Page, name: string): Promise<string> {
   await expect(page.locator('.seat')).toBeVisible();
   await frames(page, 30);
   return id;
+}
+
+/**
+ * Phase 2 (#56): the images of the demo timeline are real PNGs served by the simulator like the bridge does
+ * (transcript.image, only hashes it sent). The user's message has two screenshots and one outside the bridge's roots;
+ * a Read of a PNG shows its images inside the expanded row; two generated images in adjacent assistant items share one
+ * strip; a click opens the lightbox (zoom, copy, Esc closes only it).
+ */
+async function imagesInTheConversation(page: Page, tx: ReturnType<Page['locator']>, worker: string): Promise<void> {
+  const first = tx.locator('.tx-user').first();
+  // A pasted image inline in the bubble, beside the one that is "not available" (its path as text).
+  const strip = first.locator('.tx-bubble .tx-strip');
+  // Thumbnails load when they scroll into view (the vitest with a controlled IntersectionObserver pins that down).
+  await first.scrollIntoViewIfNeeded();
+  await expect(strip.locator('.tx-thumb')).toHaveCount(2);
+  await expect(strip.locator('.tx-thumb img')).toHaveCount(2);
+  await expect.poll(() => strip.locator('.tx-thumb img').evaluateAll((els) => els.map((e) => (e as HTMLImageElement).naturalWidth))).toEqual([480, 270]);
+  expect(await strip.evaluate((e) => getComputedStyle(e).flexWrap)).toBe('wrap');
+  const card = strip.locator('.tx-imgcard');
+  await expect(card).toHaveCount(1);
+  await expect(card).toContainText('Image not available');
+  await expect(card.locator('.tx-imgcard-path')).toHaveText('/etc/hosts.png');
+  // Thumbnails are at most 480 px on the long side, on screen and on the wire.
+  for (const box of await strip.locator('.tx-thumb').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON() as { width: number; height: number }))) {
+    expect(Math.max(box.width, box.height)).toBeLessThanOrEqual(480);
+  }
+  const asked = async () => (await watchLog(page)).filter((c) => c.t === 'transcript.image').map((c) => c.args as { hash: string; size: string });
+  expect((await asked()).every((a) => a.size === 'thumb')).toBe(true);
+  expect((await watchLog(page)).filter((c) => c.t === 'transcript.image').every((c) => c.result?.ok)).toBe(true);
+
+  // A Read of a PNG: collapsed it shows nothing, expanded the images are in the row.
+  const read = tx.locator('.tx-tool', { hasText: 'hire-375x667.png' });
+  await expect(read.locator('.tx-thumb')).toHaveCount(0);
+  await read.scrollIntoViewIfNeeded();
+  await read.locator('.tx-tool-row').click();
+  await expect(read.locator('.tx-tool-body .tx-strip .tx-thumb img')).toHaveCount(2);
+  await expect.poll(() => read.locator('.tx-thumb img').evaluateAll((els) => els.every((e) => (e as HTMLImageElement).naturalWidth > 0))).toBe(true);
+
+  // Two adjacent image-only assistant items share one strip (the second row is folded into the first).
+  const merged = tx.locator('.tx-imgonly.tx-assistant:not(.tx-merged)');
+  await expect(merged).toHaveCount(1);
+  await expect(merged.locator('.tx-thumb')).toHaveCount(2);
+  await expect(tx.locator('.tx-imgonly.tx-merged')).toHaveCount(1);
+  // The user's later message has text: its image is its own strip.
+  await expect(tx.locator('.tx-user', { hasText: 'Same screenshot again' }).locator('.tx-thumb')).toHaveCount(1);
+
+  // Click: the lightbox with the full image (a second request, full), zoom and copy; Esc closes it and only it.
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => {});
+  await strip.locator('.tx-thumb').first().click();
+  const lb = page.locator('dialog.ilb');
+  await expect(lb).toBeVisible();
+  await expect.poll(async () => (await asked()).filter((a) => a.size === 'full').length).toBe(1);
+  await expect.poll(() => lb.locator('.ilb-img').evaluate((e) => (e as HTMLImageElement).naturalWidth)).toBe(1280);
+  await expect(lb.locator('.ilb-badge')).toHaveText('You sent');
+  await lb.getByRole('button', { name: 'Zoom in' }).click();
+  await expect(lb.locator('.ilb-fit')).not.toHaveText('Fit');
+  expect(await lb.locator('.ilb-img').evaluate((e) => (e as HTMLElement).style.transform)).toContain('scale');
+  await lb.getByRole('button', { name: 'Copy image' }).click();
+  await expect(lb.locator('.ilb-status')).toContainText(/Image copied|Couldn’t copy/);
+  await shot(page, 'm16-lightbox');
+  await page.keyboard.press('Escape');
+  await expect(lb).toHaveCount(0);
+  expect(await page.evaluate(() => window.__h3d.seated())).toBe(worker);
+  expect((await txState(page)).mode).toBe('transcript');
+  // The not-available image opens as its card.
+  await card.click();
+  await expect(page.locator('dialog.ilb .ilb-card')).toContainText('/etc/hosts.png');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog.ilb')).toHaveCount(0);
+  // Only hashes the bridge sent were ever asked for.
+  expect((await watchLog(page)).filter((c) => c.t === 'transcript.image').every((c) => c.result?.ok)).toBe(true);
 }
 
 test('Ctrl+Esc at a seated laptop: the conversation over the monitor, fed by transcript.watch, and back', async ({ page }) => {
@@ -61,7 +134,7 @@ test('Ctrl+Esc at a seated laptop: the conversation over the monitor, fed by tra
   const keysBefore = await sentKeys();
   const scroller = tx.locator('.tx-scroll');
   const scrollTop = () => scroller.evaluate((e) => e.scrollTop);
-  await expect(tx.locator('.tx-user')).toBeVisible();
+  await expect(tx.locator('.tx-user').first()).toBeVisible();
   await expect(scroller).toBeFocused();
   const bottom = await scrollTop();
   expect(bottom).toBeGreaterThan(0); // it follows: at the bottom
@@ -99,8 +172,8 @@ test('Ctrl+Esc at a seated laptop: the conversation over the monitor, fed by tra
 
   // Rows: the bubble with the image placeholder, collapsed reasoning, tools, a divider; what the bridge hides waits
   // for "show system", its other notices show.
-  await expect(tx.locator('.tx-user .tx-bubble')).toContainText('HUD overlaps');
-  await expect(tx.locator('.tx-img-chip')).toHaveText(/image — not shown yet/);
+  await expect(tx.locator('.tx-user .tx-bubble').first()).toContainText('HUD overlaps');
+  await imagesInTheConversation(page, tx, worker);
   await expect(tx.locator('.tx-thinking-body')).toBeHidden();
   await expect(tx.locator('.tx-compaction')).toBeVisible();
   await expect(tx.locator('.tx-notice', { hasText: 'Interrupted by user' })).toBeVisible();
@@ -131,7 +204,7 @@ test('Ctrl+Esc at a seated laptop: the conversation over the monitor, fed by tra
 
   // Untrusted markdown: nothing ran, nothing live.
   expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
-  expect(await tx.locator('script, img, [onerror], a[href^="javascript"]').count()).toBe(0);
+  expect(await tx.locator('script, .tx-md img, [onerror], a[href^="javascript"]').count()).toBe(0);
   // Code blocks get highlighted once the lazy highlighter loads.
   await expect(tx.locator('.tx-said pre code.hljs')).toHaveCount(1, { timeout: 15_000 });
 
@@ -149,7 +222,7 @@ test('Ctrl+Esc at a seated laptop: the conversation over the monitor, fed by tra
   await page.evaluate(() =>
     window.__h3d.simTranscript({
       id: window.__h3d.seated(),
-      updates: [{ id: 'toolu_demo_bash2', seq: 14, ts: Date.now(), kind: 'tool', tool: { name: 'Bash', input_summary: 'pnpm vitest run src/laptop --reporter dot', status: 'ok', output_text: 'Tests  42 passed' } }],
+      updates: [{ id: 'toolu_demo_bash2', seq: 17, ts: Date.now(), kind: 'tool', tool: { name: 'Bash', input_summary: 'pnpm vitest run src/laptop --reporter dot', status: 'ok', output_text: 'Tests  42 passed' } }],
     }),
   );
   await expect(tx.locator('[data-id="toolu_demo_bash2"]')).toHaveAttribute('data-status', 'ok');
@@ -255,3 +328,68 @@ test('sit / toggle / stand cycles leave no transcript watches or overlays behind
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.simTranscripts()))?.watches).toBe(0);
   clean();
 });
+
+// #56: at 1280x720 the plan-limits plate hung over the top right of the overlay's header; it now steps out of the
+// reading overlay like out of a screen dialog (an edge tab beside it, Shift+L peeks). At 960x600 a blocked question
+// used to leave little room above the prompt: the banner is capped and compact, the timeline keeps its room.
+for (const [w, h] of [
+  [1280, 720],
+  [960, 600],
+] as const) {
+  test(`the plan-limits plate and the blocked banner leave the conversation its room at ${w}x${h}`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width: w, height: h });
+    await openGame(page, 'demo-m5', '&prints=0', `${SIM}&simlimits=ok`);
+    await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
+    await frames(page, 3);
+    const id = await page.evaluate(() => window.__h3d.world().flatMap((f) => f.workers).find((x) => x.name === 'Tofu')?.id ?? '');
+    expect(await page.evaluate((i) => window.__h3d.face(i), id)).toBe(true);
+    await frames(page, 3);
+    expect(await page.evaluate((i) => window.__h3d.sitAt(i), id)).toBe(true);
+    await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
+    await frames(page, 20);
+    // The plate is open in the corner while you stand at the desk...
+    await expect(page.locator('.limits')).toBeVisible();
+    await page.keyboard.press('Control+Escape');
+    const tx = page.locator('.seat-transcript .tx');
+    await expect(tx.locator('.tx-user').first()).toBeVisible();
+    await frames(page, 8);
+    // ... and steps out of the overlay: a slim tab (or nothing), never over the header.
+    await expect(page.locator('.limits')).toHaveAttribute('data-dock', /^(tab|away)$/);
+    const box = (await txState(page)).box as NonNullable<Tx['box']>;
+    const plate = await page.locator('.limits').evaluate((e) => {
+      const r = e.getBoundingClientRect();
+      return getComputedStyle(e).display === 'none' ? null : { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    });
+    if (plate) expect(plate.left >= box.left + box.width || plate.right <= box.left || plate.top >= box.top + box.height || plate.bottom <= box.top, 'the plate is over the overlay').toBe(true);
+    // Every control of the bar, the banner and the prompt is hit-testable (nothing covers it).
+    const covered = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>('.seat-transcript .tx-bar button, .seat-transcript .tx-banner button, .seat-transcript .tx-send, .seat-transcript .tx-input')]
+        .filter((e) => {
+          const r = e.getBoundingClientRect();
+          const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 12));
+          return !hit || !e.contains(hit);
+        })
+        .map((e) => e.className),
+    );
+    expect(covered).toEqual([]);
+    // Peek: Shift+L brings the plate over the overlay for a moment.
+    await page.keyboard.press('Shift+L');
+    await expect(page.locator('.limits')).toHaveAttribute('data-peek', 'true');
+    await page.keyboard.press('Shift+L');
+    await expect(page.locator('.limits')).toHaveAttribute('data-peek', 'false');
+    // Tofu is blocked: the banner takes less than half the overlay and the timeline keeps at least 130 px.
+    await expect(tx.locator('.tx-banner')).toBeVisible();
+    const m = await page.evaluate(() => {
+      const q = (s: string) => document.querySelector<HTMLElement>(`.seat-transcript ${s}`)?.getBoundingClientRect();
+      return { root: q('.tx')?.height ?? 0, banner: q('.tx-banner')?.height ?? 0, scroll: q('.tx-scroll')?.height ?? 0, input: q('.tx-input')?.height ?? 0 };
+    });
+    expect(m.banner).toBeLessThanOrEqual(m.root * 0.47);
+    expect(m.scroll).toBeGreaterThanOrEqual(130);
+    expect(m.input).toBeGreaterThan(20);
+    await frames(page, 6);
+    await shot(page, `m16-transcript-${w}x${h}`);
+    clean();
+  });
+}

@@ -33,6 +33,8 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'transcript.unwatch': 'show a worker’s conversation',
   'transcript.page': 'show a worker’s conversation',
   'transcript.item': 'show a worker’s conversation',
+  'transcript.image': 'show the images of a conversation',
+  'transcript.images': 'show the images of a conversation',
   'building.create': 'create buildings',
   'building.rename': 'rename buildings',
   'building.delete': 'delete buildings',

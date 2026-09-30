@@ -69,6 +69,7 @@ type entry struct {
 	ts     int64
 	kind   string
 	hidden bool
+	hasImg bool // a line of it has an image (or an [Image #n: path] marker)
 	spans  []span
 }
 
@@ -102,6 +103,7 @@ type Log struct {
 	err      error // why it ended
 	subs     map[*Sub]struct{}
 	isReady  bool
+	env      *imageEnv // resolves the items' images
 }
 
 func parserOf(harness string) func(int64, []byte) ([]contrib, string) {
@@ -119,13 +121,13 @@ func Supported(harness string) bool { return harness == Claude || harness == Cod
 // The lines before next are read from the file, once, in the background;
 // the tail's lines after it must be passed to Line. Ready is closed when
 // the index caught up.
-func Follow(harness, path string, fi fs.FileInfo, next int64) (*Log, error) {
-	return follow(harness, path, fi, next, nil)
+func Follow(harness, path string, fi fs.FileInfo, next int64, opts ...Option) (*Log, error) {
+	return follow(harness, path, fi, next, nil, opts...)
 }
 
 // follow is Follow; wrap, if set, wraps the file's reads (tests).
-func follow(harness, path string, fi fs.FileInfo, next int64, wrap func(io.ReaderAt) io.ReaderAt) (*Log, error) {
-	l, err := open(harness, path, fi)
+func follow(harness, path string, fi fs.FileInfo, next int64, wrap func(io.ReaderAt) io.ReaderAt, opts ...Option) (*Log, error) {
+	l, err := open(harness, path, fi, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -141,8 +143,8 @@ func follow(harness, path string, fi fs.FileInfo, next int64, wrap func(io.Reade
 
 // Read indexes the whole transcript at path (a subagent's), in the
 // caller's goroutine; Refresh reads what was appended since.
-func Read(ctx context.Context, harness, path string) (*Log, error) {
-	l, err := open(harness, path, nil)
+func Read(ctx context.Context, harness, path string, opts ...Option) (*Log, error) {
+	l, err := open(harness, path, nil, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +158,7 @@ func Read(ctx context.Context, harness, path string) (*Log, error) {
 	return l, nil
 }
 
-func open(harness, path string, fi fs.FileInfo) (*Log, error) {
+func open(harness, path string, fi fs.FileInfo, opts []Option) (*Log, error) {
 	if !Supported(harness) {
 		return nil, fmt.Errorf("no transcripts for harness %q", harness)
 	}
@@ -168,9 +170,18 @@ func open(harness, path string, fi fs.FileInfo) (*Log, error) {
 		f.Close()
 		return nil, ErrReplaced
 	}
-	return &Log{harness: harness, path: path, parse: parserOf(harness), f: f, r: f, fi: got, ready: make(chan struct{}),
-		done: make(chan struct{}), byID: map[string]int32{}, msgs: map[string]*msgState{}, subs: map[*Sub]struct{}{}}, nil
+	l := &Log{harness: harness, path: path, parse: parserOf(harness), f: f, r: f, fi: got, ready: make(chan struct{}),
+		done: make(chan struct{}), byID: map[string]int32{}, msgs: map[string]*msgState{}, subs: map[*Sub]struct{}{},
+		env: newImageEnv()}
+	for _, o := range opts {
+		o(l)
+	}
+	return l, nil
 }
+
+// defaultEnv resolves the images of an item built without a log (tests):
+// it decodes and hashes inline images and keeps nothing.
+var defaultEnv = newImageEnv()
 
 // build indexes the lines before the tail's, then goes live.
 func (l *Log) build(ctx context.Context) {
@@ -340,7 +351,7 @@ func (l *Log) index(off int64, n int, cs []contrib, version string) {
 		switch c.link {
 		case linkOwn:
 			if i, ok := l.byID[c.id]; ok {
-				l.addSpan(i, sp)
+				l.addSpan(i, sp, c)
 				continue
 			}
 			i := l.newEntry(c.id, c, sp)
@@ -350,19 +361,19 @@ func (l *Log) index(off int64, n int, cs []contrib, version string) {
 		case linkBlock:
 			m := l.msg(c.msg)
 			if i, ok := m.blocks[c.block]; ok {
-				l.addSpan(i, sp)
+				l.addSpan(i, sp, c)
 				m.last = i
 				continue
 			}
 			if last := m.last; last >= 0 && (c.kind == proto.ItemAssistant || c.kind == proto.ItemThinking) &&
 				l.entries[last].kind == c.kind {
 				m.blocks[c.block] = last
-				l.addSpan(last, sp)
+				l.addSpan(last, sp, c)
 				continue
 			}
 			if i, ok := l.byID[c.id]; ok { // a tool_use id seen before
 				m.blocks[c.block], m.last = i, i
-				l.addSpan(i, sp)
+				l.addSpan(i, sp, c)
 				continue
 			}
 			i := l.newEntry(c.id, c, sp)
@@ -379,11 +390,11 @@ func (l *Log) index(off int64, n int, cs []contrib, version string) {
 				l.newEntry(c.id, c, sp)
 				continue
 			}
-			l.addSpan(i, sp)
+			l.addSpan(i, sp, c)
 			l.closeCall(i)
 		case linkAbort:
 			for _, i := range l.open {
-				l.addSpan(i, sp)
+				l.addSpan(i, sp, c)
 			}
 			l.open = l.open[:0]
 		}
@@ -415,7 +426,7 @@ func (l *Log) closeCall(i int32) {
 
 func (l *Log) newEntry(id string, c *contrib, sp span) int32 {
 	i := int32(len(l.entries))
-	l.entries = append(l.entries, entry{id: id, ts: c.ts, kind: c.kind, hidden: c.hidden, spans: []span{sp}})
+	l.entries = append(l.entries, entry{id: id, ts: c.ts, kind: c.kind, hidden: c.hidden, hasImg: c.hasImg(), spans: []span{sp}})
 	l.byID[id] = i
 	for s := range l.subs {
 		s.signal()
@@ -423,13 +434,17 @@ func (l *Log) newEntry(id string, c *contrib, sp span) int32 {
 	return i
 }
 
-func (l *Log) addSpan(i int32, sp span) {
+func (l *Log) addSpan(i int32, sp span, c *contrib) {
 	e := &l.entries[i]
 	e.spans = append(e.spans, sp)
+	e.hasImg = e.hasImg || c.hasImg()
 	for s := range l.subs {
 		s.update(i)
 	}
 }
+
+// maxParsedBytes bounds the lines one items call keeps parsed at once.
+const maxParsedBytes = 4 << 20
 
 // Items reads the items at the given entry indexes back from the file
 // (full: untruncated, else capped for lists).
@@ -446,7 +461,13 @@ func (l *Log) items(idx []int32, full bool) ([]proto.TranscriptItem, error) {
 		es[j].spans = append([]span(nil), l.entries[i].spans...)
 	}
 	l.mu.Unlock()
+	// parsed shares one line's parse between the entries that came from it.
+	// A parse holds the line's inline images (base64) until it is dropped,
+	// so it is bounded by the bytes of the lines it holds, not by the page:
+	// an image-heavy page would otherwise keep every image line alive
+	// outside the image cache. A dropped line is parsed again if asked.
 	parsed := map[int64][]contrib{}
+	parsedBytes := 0
 	var buf []byte
 	out := make([]proto.TranscriptItem, 0, len(es))
 	for j, e := range es {
@@ -465,7 +486,12 @@ func (l *Log) items(idx []int32, full bool) ([]proto.TranscriptItem, error) {
 					return nil, fmt.Errorf("%w: %v", ErrReplaced, err)
 				}
 				cs, _ = l.parse(sp.off, buf)
+				if parsedBytes+int(sp.n) > maxParsedBytes {
+					clear(parsed)
+					parsedBytes = 0
+				}
 				parsed[sp.off] = cs
+				parsedBytes += int(sp.n)
 			}
 			if int(sp.k) >= len(cs) {
 				continue // the file changed under the index: a resync follows
@@ -474,11 +500,12 @@ func (l *Log) items(idx []int32, full bool) ([]proto.TranscriptItem, error) {
 			if b == nil {
 				b = newBuilder(e.id, int64(idx[j])+1, c)
 				b.it.Kind, b.it.Hidden = e.kind, e.hidden
+				b.env = l.env
 			}
 			b.add(c)
 		}
 		if b == nil {
-			b = &builder{it: proto.TranscriptItem{ID: e.id, Seq: int64(idx[j]) + 1, TS: e.ts, Kind: e.kind, Hidden: e.hidden}}
+			b = &builder{it: proto.TranscriptItem{ID: e.id, Seq: int64(idx[j]) + 1, TS: e.ts, Kind: e.kind, Hidden: e.hidden}, env: l.env}
 		}
 		out = append(out, b.finish(full))
 	}
@@ -701,4 +728,105 @@ func (s *Sub) Close() {
 	s.l.mu.Lock()
 	delete(s.l.subs, s)
 	s.l.mu.Unlock()
+}
+
+// parseAt reads the line at off (n bytes) back from the file and parses it.
+func (l *Log) parseAt(off int64, n int) ([]contrib, error) {
+	buf := make([]byte, n)
+	if _, err := l.r.ReadAt(buf, off); err != nil {
+		if l.Err() != nil {
+			return nil, l.Err()
+		}
+		return nil, fmt.Errorf("%w: %v", ErrReplaced, err)
+	}
+	cs, _ := l.parse(off, buf)
+	return cs, nil
+}
+
+// MaxImagePageBytes is about the most a page of Images takes in JSON.
+const MaxImagePageBytes = 1 << 20
+
+// ImagePage is a run of the session's image refs, oldest first, and where
+// the older ones are.
+type ImagePage struct {
+	Refs    []proto.ImageRef
+	Cursor  string // before this: the images of the items older than these
+	HasMore bool
+}
+
+// Images lists the images of the session before seq (0: the newest), oldest
+// first: the refs of every item that has any, from the index (no bytes; each
+// item is read back from the file once, its images are then remembered). A
+// page is whole items, the newest ones, until it has limit refs or about
+// MaxImagePageBytes of JSON (an item is never split, so a page has at least
+// one item); Cursor continues with the older ones, so a session of any size
+// is listed by following it.
+func (l *Log) Images(before int64, limit int) (ImagePage, error) {
+	l.mu.Lock()
+	if l.err != nil {
+		err := l.err
+		l.mu.Unlock()
+		return ImagePage{}, err
+	}
+	end := int32(len(l.entries))
+	if before > 0 && before-1 < int64(end) {
+		end = int32(before - 1)
+	}
+	var idx []int32
+	for i := int32(0); i < end; i++ {
+		if l.entries[i].hasImg {
+			idx = append(idx, i)
+		}
+	}
+	l.mu.Unlock()
+	// Items are read in batches from the newest back.
+	const batch = 64
+	var newest [][]proto.ImageRef
+	total, size := 0, 0
+	last := len(idx) // idx[last:] were taken
+	for last > 0 && total < limit && size < MaxImagePageBytes {
+		start := max(0, last-batch)
+		items, err := l.items(idx[start:last], false)
+		if err != nil {
+			return ImagePage{}, err
+		}
+		for j := len(items) - 1; j >= 0; j-- {
+			last--
+			rs := itemImages(&items[j])
+			newest = append(newest, rs)
+			total += len(rs)
+			for i := range rs {
+				size += 200 + len(rs[i].Path) + len(rs[i].ItemID)
+			}
+			if total >= limit || size >= MaxImagePageBytes {
+				break
+			}
+		}
+	}
+	var pg ImagePage
+	for i := len(newest) - 1; i >= 0; i-- {
+		pg.Refs = append(pg.Refs, newest[i]...)
+	}
+	if last > 0 {
+		pg.HasMore, pg.Cursor = true, Cursor(int64(idx[last])+1)
+	}
+	return pg, nil
+}
+
+// itemImages are the image refs of an item, in order (copies).
+func itemImages(it *proto.TranscriptItem) []proto.ImageRef {
+	var out []proto.ImageRef
+	for _, p := range it.Parts {
+		if p.Image != nil {
+			out = append(out, *p.Image)
+		}
+	}
+	if t := it.Tool; t != nil {
+		for _, p := range t.Images {
+			if p.Image != nil {
+				out = append(out, *p.Image)
+			}
+		}
+	}
+	return out
 }

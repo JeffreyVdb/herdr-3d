@@ -3,17 +3,23 @@ import type { CommandResult } from '../net/client';
 import type { CommandArgs, CommandName, ConnMessage, KeyItem } from '../net/protocol';
 import { glassFrame, screenFrame } from '../render/desks';
 import type { OfficeView } from '../render/office';
+import { PrintMeshes } from '../render/prints';
 import { ScreenMeshes } from '../render/screens';
 import { failureText } from '../ui/messages';
 import type { WorldStore } from '../world/store';
+import { DESK_H, SEAT_OFFSET } from '../world/layout';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
 import { InputLanes, InputQueue, seatedKey, textItems } from './keys';
+import { ImageFeeds, type ImageFeed } from './imageFeed';
+import { decodeBitmap, Prints, printsParam, PRINT_WATCH_LIMIT } from './prints';
 import { LaptopTerminal, LIVE_SIZE } from './terminal';
-import { loadRenderer, TranscriptMode, type OverlayRect, type SeatMode } from './transcriptMode';
-import { TranscriptWatches } from './transcriptWatches';
+import { createSeatTabs, FLIP_KEY } from './seatTabs';
+import { loadImagesTab, loadRenderer, TranscriptMode, type OverlayRect, type SeatMode } from './transcriptMode';
+import { TranscriptWatches, WATCH_LIMIT } from './transcriptWatches';
 import { Watches } from './watches';
 
 export { screensParam };
+export type { ImageFeed };
 
 /** M6b (test hook): where a live screen is drawn, against its desk monitor's terminal area (world coordinates, metres). */
 export interface ScreenMeshInfo {
@@ -31,7 +37,7 @@ export interface ScreenMeshInfo {
 export type ScreenState = 'live' | 'pending' | 'frozen' | 'glow' | 'dark';
 
 /** The watches the game makes by itself. */
-export type WatchCommand = 'terminal.watch' | 'terminal.unwatch' | 'transcript.watch' | 'transcript.unwatch';
+export type WatchCommand = 'terminal.watch' | 'terminal.unwatch' | 'transcript.watch' | 'transcript.unwatch' | 'transcript.image' | 'transcript.images';
 
 export interface LaptopHost {
   store: WorldStore;
@@ -91,6 +97,8 @@ const glideMs = () => (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)
 const PLAN_MS = 250;
 
 const SCREEN = screenFrame();
+/** Where a desk's prints lie, in slot space (world/prints.ts): the middle of the strip in front of the keyboard. */
+const PRINT_SPOT = new THREE.Vector3(0, DESK_H, SEAT_OFFSET - 0.28);
 /** The screen you sit at covers the whole glass, the status bar's strip too: the terminal gets all of it. */
 const GLASS = glassFrame();
 /** The seated terminal's watch while you read the transcript: kept alive, so switching back shows it at once. */
@@ -105,6 +113,9 @@ function storage(): Storage | null {
     return null;
   }
 }
+
+/** A text box has the keyboard: its letters are its own (the seat bar's hidden keyboard is not one: it only catches keys for the terminal). */
+const inText = (t: EventTarget | null): boolean => t instanceof Element && !t.classList.contains('seat-input') && !!t.closest('input, textarea, select, [contenteditable]');
 
 function isMac(): boolean {
   const n = globalThis.navigator as (Navigator & { userAgentData?: { platform?: string } }) | undefined;
@@ -132,6 +143,10 @@ export class Laptops {
   readonly watches: Watches;
   readonly transcripts: TranscriptWatches;
   readonly transcript: TranscriptMode;
+  /** M16 phase 2: the images of the watched transcripts (the conversation, the Images tab, the desk prints). */
+  readonly feeds: ImageFeeds;
+  /** M16 phase 2: the prints on the desks near you. */
+  readonly prints: Prints;
   readonly mac = isMac();
   private readonly terms = new Map<string, LaptopTerminal>();
   private readonly pool: LaptopTerminal[] = [];
@@ -188,9 +203,21 @@ export class Laptops {
       closed: (id, reason) => this.onClosed(id, reason),
       now: () => performance.now(),
     });
+    this.feeds = new ImageFeeds({ send: (t, args) => this.host.watch(t, args) });
+    this.prints = new Prints({ feeds: this.feeds, ready: (id) => this.transcripts.ready(id), decode: decodeBitmap }, printsParam(params.get('prints')));
     this.transcript = new TranscriptMode({
       send: (t, args) => this.host.send(t, args),
+      feed: (id) => this.feeds.get(id),
       renderer: loadRenderer,
+      imagesRenderer: loadImagesTab,
+      tabs: (pick) => createSeatTabs(pick),
+      pane: (box) => {
+        const pane = document.createElement('div');
+        pane.className = 'seat-pane';
+        pane.hidden = true;
+        box.append(pane);
+        return pane;
+      },
       overlay: () => {
         const box = document.createElement('div');
         box.className = 'seat-transcript';
@@ -208,9 +235,19 @@ export class Laptops {
     this.transcripts = new TranscriptWatches({
       send: (t, args) => this.host.watch(t, args),
       sink: {
-        reset: (id, ack) => this.transcript.reset(id, ack),
-        push: (id, items, updates) => this.transcript.push(id, items, updates),
-        stop: () => {},
+        reset: (id, ack) => {
+          // A new watch (or a new session after /clear): what the feed knew is stale.
+          this.feeds.peek(id)?.reset();
+          this.feeds.get(id).note(ack.items);
+          this.transcript.reset(id, ack);
+        },
+        push: (id, items, updates) => {
+          this.feeds.get(id).note([...items, ...updates]);
+          this.transcript.push(id, items, updates);
+        },
+        stop: (id) => {
+          if (this.seat?.id !== id) this.feeds.drop(id);
+        },
       },
       failed: (id, code, message) => this.onTranscriptFailed(id, code, message),
       closed: (id, reason) => this.onTranscriptClosed(id, reason),
@@ -235,6 +272,8 @@ export class Laptops {
       this.watches.lost();
       this.transcripts.lost();
       this.planner.clear();
+      this.prints.clear();
+      this.prints.planner.clear();
       if (this.seat) this.host.seat.status('offline', 'Not connected to herdr-world: what you type is not sent');
     } else {
       this.lastPlan = -Infinity;
@@ -312,7 +351,7 @@ export class Laptops {
     const s = this.seat;
     if (s && this.meshes) {
       const t = this.terms.get(s.id);
-      if (mode === 'transcript') {
+      if (mode !== 'terminal') {
         // The monitor behind the overlay holds the screen as it was ("reading"); the watch goes on at 1 fps.
         const at = this.liveAt.get(s.id);
         if (at !== undefined) this.meshes.setLive(at, null);
@@ -325,21 +364,23 @@ export class Laptops {
   }
 
   private onTranscriptFailed(id: string, code: string, message: string): void {
+    this.prints.failed(id, performance.now());
     if (this.seat?.id !== id) return;
     const name = this.seat.name;
     if (code === 'unknown_command') {
       this.transcript.stop(id);
       this.host.seat.status('error', failureText('transcript.watch', code, message));
-    } else if (this.transcript.mode === 'transcript') {
+    } else if (this.transcript.mode !== 'terminal') {
       this.host.seat.status('error', code === 'capacity' ? 'herdr-world is reading as many conversations as it allows. Trying again in a moment.' : failureText('transcript.watch', code, message, { worker: name }));
     }
   }
 
   private onTranscriptClosed(id: string, reason: string): void {
+    this.prints.forget(id);
     if (this.seat?.id !== id) return;
     // The terminal's own close (or the frame loop) stands you up; the overlay goes back to the terminal meanwhile.
     if (reason === 'worker_removed' || reason === 'asleep') this.transcript.stop(id);
-    else if (reason === 'session_changed' && this.transcript.mode === 'transcript') this.host.seat.status('ok', `${this.seat.name} started a new session`);
+    else if (reason === 'session_changed' && this.transcript.mode !== 'terminal') this.host.seat.status('ok', `${this.seat.name} started a new session`);
   }
 
   /** Where the monitor's glass is on the viewport (CSS px), between the top bar and the seat bar. */
@@ -473,6 +514,7 @@ export class Laptops {
     this.lanes.stand();
     this.input = null;
     this.transcript.stand();
+    this.markReading(null);
     this.meshes?.unfreeze(s.desk);
     s.office.setLean(null);
     s.office.setAtLaptop(false);
@@ -564,6 +606,10 @@ export class Laptops {
     } else if (e.key === 'Enter' && !mods && !this.transcriptOwns(e.target)) {
       e.preventDefault();
       this.transcript.focusPrompt();
+    } else if (e.key.toLowerCase() === FLIP_KEY && !mods && !inText(e.target)) {
+      // Conversation <-> Images. The prompt box (and any text field) keeps its letters.
+      e.preventDefault();
+      this.transcript.flip();
     }
     return true;
   }
@@ -609,6 +655,7 @@ export class Laptops {
     if (this.seat && this.seat.office !== office) this.stand(null, true);
     this.meshes?.dispose();
     this.meshes = null;
+    this.prints.setMeshes(null);
     this.attached = office;
     this.desks = new Map();
     this.liveAt.clear();
@@ -616,6 +663,9 @@ export class Laptops {
     if (office) {
       this.meshes = new ScreenMeshes(office.layout.slots);
       office.root.add(this.meshes.group);
+      const prints = new PrintMeshes(office.layout.slots);
+      office.root.add(prints.group);
+      this.prints.setMeshes(prints);
     }
     this.syncWatches();
   }
@@ -674,7 +724,23 @@ export class Laptops {
       meshes.update(f.now);
     }
     this.moveCamera(f.camera, f.now);
-    if (this.transcript.shown) this.transcript.place(this.glassRect(f.camera));
+    if (this.transcript.shown) {
+      const rect = this.glassRect(f.camera);
+      this.transcript.place(rect);
+      this.markReading(rect);
+    } else this.markReading(null);
+  }
+
+  /**
+   * The page says a reading overlay is up and where it ends (its right edge, px): the plan-limits plate steps out of it
+   * like out of a screen dialog (ui/limits.ts), and follows a resize.
+   */
+  private markReading(rect: OverlayRect | null): void {
+    const el = document.documentElement;
+    const v = rect ? String(Math.round(rect.left + rect.width)) : null;
+    if (el.getAttribute('data-reading') === v) return;
+    if (v === null) el.removeAttribute('data-reading');
+    else el.setAttribute('data-reading', v);
   }
 
   private plan(f: LaptopFrame, office: OfficeView, meshes: ScreenMeshes): void {
@@ -683,6 +749,7 @@ export class Laptops {
     cam.getWorldPosition(this.v);
     const eye = this.v.clone();
     const cands: Candidate[] = [];
+    const printCands: Candidate[] = [];
     const desks = new Map<string, number>();
     const away = office.awayDesks();
     const M = new THREE.Matrix4();
@@ -696,12 +763,18 @@ export class Laptops {
       // In view, and facing you (from behind you see the lid).
       const facing = this.normal.copy(SCREEN.normal).transformDirection(M).dot(this.toEye.subVectors(eye, this.sphere.center)) > 0;
       cands.push({ id: w.worker.id, dist: this.sphere.center.distanceTo(eye), visible: facing && this.frustum.intersectsSphere(this.sphere) });
+      // M16 phase 2: prints lie on desks of workers that have a conversation, in view (no matter which way the lid faces).
+      if (w.worker.agent_kind || w.harness) {
+        this.sphere.center.copy(PRINT_SPOT).applyMatrix4(M);
+        printCands.push({ id: w.worker.id, dist: this.sphere.center.distanceTo(eye), visible: this.frustum.intersectsSphere(this.sphere) });
+      }
     }
     // A desk whose worker changed (left, moved, someone new) forgets its frozen screen.
     const now = new Map([...desks].map(([id, d]) => [d, id]));
     for (const [id, d] of this.desks) if (now.get(d) !== id) meshes.unfreeze(d);
     this.desks = desks;
     if (this.connected && !this.watches.disabled) this.planner.plan(f.now, cands, this.cfg.live);
+    this.prints.update(f.now, printCands, desks, this.seat?.id ?? null, this.connected && !office.isAsleep && !this.whyNoTranscript());
     this.syncWatches();
   }
 
@@ -712,8 +785,14 @@ export class Laptops {
     if (this.attached && !this.attached.isAsleep) for (const id of this.planner.live) want.set(id, this.cfg.fps);
     if (this.seat) want.set(this.seat.id, this.transcript.shown ? READING_FPS : this.cfg.seatedFps);
     this.watches.sync(want);
-    // M16: the transcript of the worker you sit at (not counted against the terminal watches).
-    this.transcripts.sync(new Set(this.seat && !this.whyNoTranscript() ? [this.seat.id] : []));
+    // M16: the transcript of the worker you sit at (not counted against the terminal watches), and a few items of the
+    // desks that have prints (only their images matter).
+    const tx = new Map<string, number>();
+    if (!this.whyNoTranscript()) {
+      for (const id of this.prints.wants()) tx.set(id, PRINT_WATCH_LIMIT);
+      if (this.seat) tx.set(this.seat.id, WATCH_LIMIT);
+    }
+    this.transcripts.sync(tx);
   }
 
   private moveCamera(cam: THREE.PerspectiveCamera, now: number): void {
@@ -818,8 +897,34 @@ export class Laptops {
     return this.watches.count;
   }
 
+  /** M16 phase 2: a click (the ray from the crosshair or the pointer) on a desk's print opens the lightbox. */
+  clickPrint(ray: THREE.Raycaster): boolean {
+    return !this.seat && this.prints.click(ray);
+  }
+
+  /** M16 phase 2: per desk with prints, what lies on it and how many pictures are loaded; and the textures' ledger (test hook). */
+  printsState(): { desks: ReturnType<Prints['info']>; counts: ReturnType<Prints['counts']>; watches: string[]; lightboxes: number } {
+    return { desks: this.prints.info(), counts: this.prints.counts(), watches: this.transcripts.ids(), lightboxes: this.prints.lightboxes };
+  }
+
+  /** M16 phase 2: where a print is in the world (test hook: aim a camera at it). */
+  printWorld(desk: number, index: number): { x: number; y: number; z: number } | null {
+    const m = this.prints.worldOf(desk, index);
+    return m ? { x: m.x, y: m.y, z: m.z } : null;
+  }
+
   /** M16: the seated view's mode, its transcript and overlay (test hook). */
-  transcriptState(): { mode: SeatMode; watches: number; items: number; box: OverlayRect | null; mounted: boolean } {
+  transcriptState(): {
+    mode: SeatMode;
+    watches: number;
+    items: number;
+    box: OverlayRect | null;
+    mounted: boolean;
+    /** M16 phase 2: the images tab is mounted; the distinct images the strip counts; views/tabs/overlays made and removed. */
+    tabMounted: boolean;
+    imageCount: number | null;
+    counts: { mounted: number; destroyed: number; tabsMounted: number; tabsDestroyed: number; overlays: number; removed: number };
+  } {
     const b = this.transcript.box;
     const r = b && !b.hidden ? b.getBoundingClientRect() : null;
     return {
@@ -828,6 +933,9 @@ export class Laptops {
       items: this.transcript.itemCount,
       box: r ? { left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) } : null,
       mounted: this.transcript.counts.mounted > this.transcript.counts.destroyed,
+      tabMounted: this.transcript.tabMounted,
+      imageCount: this.transcript.imageCount,
+      counts: { ...this.transcript.counts },
     };
   }
 
@@ -835,6 +943,7 @@ export class Laptops {
     this.stand(null, true);
     this.lanes.clear();
     this.attach(null);
+    this.prints.dispose();
     for (const t of [...this.terms.values(), ...this.pool]) t.dispose();
     this.terms.clear();
     this.pool.length = 0;

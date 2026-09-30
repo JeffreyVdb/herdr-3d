@@ -33,6 +33,13 @@ const NARROW = '(max-width: 760px)';
  */
 const SCREEN = 'dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open]';
 
+/**
+ * The seated reading overlay (the conversation, the Images tab; laptop/index.ts marks the page with `data-reading`) is a
+ * screen too, though not a dialog: it covers the plate's corner of the laptop, so the plate steps out of it the same
+ * way (edge tab beside it when there is room, else away; Shift+L peeks).
+ */
+const READING = '.seat-transcript:not([hidden])';
+
 /** Free width the edge tab needs right of a screen dialog: its 32 px, 8 px from the edge, and 8 px clear of the dialog (limits.css). */
 const TAB_ROOM = 48;
 
@@ -194,7 +201,7 @@ export class LimitsWidget {
 
   /** A screen-filling dialog is open (and the plate is on screen at all). */
   private screenOpen(): boolean {
-    return !this.root.hidden && !this.folded && !!document.querySelector(SCREEN);
+    return !this.root.hidden && !this.folded && (!!document.querySelector(SCREEN) || !!document.querySelector(READING));
   }
 
   /** The plate steps aside over a screen dialog (a peek excepted): Shift+L reaches it through the app even though the dialog owns the keys. */
@@ -205,7 +212,7 @@ export class LimitsWidget {
   /** Room right of every open screen dialog for the edge tab. */
   private roomForTab(): boolean {
     let right = 0;
-    for (const d of document.querySelectorAll(SCREEN)) right = Math.max(right, d.getBoundingClientRect().right);
+    for (const d of document.querySelectorAll(`${SCREEN}, ${READING}`)) right = Math.max(right, d.getBoundingClientRect().right);
     return document.documentElement.clientWidth - right >= TAB_ROOM;
   }
 
@@ -243,12 +250,12 @@ export class LimitsWidget {
     window.addEventListener('resize', this.onResize);
     if (typeof MutationObserver === 'undefined') return;
     this.watcher = new MutationObserver((records) => {
-      if (!records.some((r) => r.target instanceof HTMLDialogElement)) return;
+      if (!records.some((r) => r.target instanceof HTMLDialogElement || r.attributeName === 'data-reading')) return;
       this.root.dataset.beside = document.querySelector('dialog.changes[open]') ? 'changes' : '';
       this.update();
       if (records.some((r) => r.target instanceof HTMLDialogElement && r.target.open)) this.raise();
     });
-    this.watcher.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open'] });
+    this.watcher.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open', 'data-reading'] });
   }
 
   get isOpen(): boolean {

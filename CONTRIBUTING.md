@@ -12,7 +12,10 @@
   panel), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
   usage and cost from their transcripts, read incrementally, and the pricing table), `jsonl` (the shared reading of
   those JSONL files: one tail per transcript, complete lines from byte offsets, no symlinks), `transcript` (M16: the
-  Claude and Codex transcripts as one timeline of items, indexed by offset for the laptop's conversation view), `runs` (M6: write-code runs, the
+  Claude and Codex transcripts as one timeline of items, indexed by offset for the laptop's conversation view; phase 2:
+  their images as `ImageRef`s, decoded, hashed and resolved through the allowlist of path roots), `imgcache` (M16 phase 2:
+  the bounded content-addressed image cache, memory LRU plus an optional 0600/0700 disk cache; the type sniff, the
+  thumbnails, the path allowlist; pure Go), `runs` (M6: write-code runs, the
   freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it), `limits` (M10: the Claude and
   Codex plan limits, read by running the two CLIs as probes through a fake-able process runner), `logo` (M3d: PNG, WebP
   and restricted SVG in, one PNG of at most 1024 px out; pure Go, only the bridge uses it), `upload` (#51: one image

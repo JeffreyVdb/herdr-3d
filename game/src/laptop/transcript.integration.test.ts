@@ -37,6 +37,7 @@ function rig() {
   const status: Array<[string, string | null]> = [];
   const mode = new TranscriptMode({
     send,
+    feed: () => null,
     renderer: loadRenderer,
     overlay: () => {
       const box = document.createElement('div');
@@ -119,7 +120,7 @@ describe('transcript mode with the real render module', () => {
     expect(box.hidden).toBe(true);
     r.mode.stand();
     expect(box.isConnected).toBe(false);
-    expect(r.mode.counts).toEqual({ mounted: 1, destroyed: 1, overlays: 1, removed: 1 });
+    expect(r.mode.counts).toMatchObject({ mounted: 1, destroyed: 1, overlays: 1, removed: 1 });
   });
 
   it('Codex: a multi-file apply_patch shows every file, with no made-up line numbers', async () => {

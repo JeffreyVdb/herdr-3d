@@ -37,10 +37,20 @@ type codexLine struct {
 	Payload   json.RawMessage `json:"payload"`
 }
 
-// codexPart is a content or output item. Image data is never decoded.
+// codexPart is a content or output item.
 type codexPart struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type     string `json:"type"`
+	Text     string `json:"text"`
+	ImageURL string `json:"image_url"`
+}
+
+// codexImage is an image part's ref: a data URL is inline, anything else
+// (a remote URL) is text the view shows, never fetched.
+func (pc *parseCtx) codexImage(url, origin, kind string) imgRef {
+	if mime, b64, ok := dataURL(url); ok {
+		return pc.inline(mime, b64, origin, kind)
+	}
+	return pc.external(url, origin, kind)
 }
 
 type codexItem struct {
@@ -64,7 +74,7 @@ type codexItem struct {
 // rollouts) {"content", "success"}.
 type codexOutput struct {
 	text    string
-	images  int
+	images  []string // image_url of each image part
 	success *bool
 }
 
@@ -85,7 +95,7 @@ func (o *codexOutput) UnmarshalJSON(b []byte) error {
 		for _, p := range ps {
 			switch p.Type {
 			case "input_image", "output_image", "image":
-				o.images++
+				o.images = append(o.images, p.ImageURL)
 			default:
 				if p.Text != "" {
 					ss = append(ss, p.Text)
@@ -116,6 +126,10 @@ type codexEvent struct {
 	Message    string   `json:"message"`
 	DurationMs *float64 `json:"duration_ms"`
 	Reason     string   `json:"reason"`
+	// image_generation_end: the image as base64 and where Codex saved it.
+	CallID    string `json:"call_id"`
+	Result    string `json:"result"`
+	SavedPath string `json:"saved_path"`
 }
 
 // parseCodex reads one line of a Codex rollout.
@@ -126,17 +140,18 @@ func parseCodex(off int64, b []byte) (cs []contrib, version string) {
 	}
 	ts := parseTS(l.Timestamp)
 	id := offID(off)
+	pc := newParseCtx(off, b)
 	switch l.Type {
 	case "response_item":
 		var it codexItem
 		if err := json.Unmarshal(l.Payload, &it); err != nil {
 			return []contrib{unknownItem(id, "response_item", ts)}, ""
 		}
-		return codexResponse(&it, id, ts), ""
+		return codexResponse(&it, id, ts, pc), ""
 	case "event_msg":
 		var ev codexEvent
 		_ = json.Unmarshal(l.Payload, &ev)
-		cs := []contrib{codexEventItem(&ev, id, ts)}
+		cs := []contrib{codexEventItem(&ev, id, ts, pc)}
 		if ev.Type == "turn_aborted" {
 			cs = append(cs, contrib{link: linkAbort, ts: ts, apply: func(b *builder) { b.interrupt() }})
 		}
@@ -190,14 +205,14 @@ func imageWrapper(s string) bool {
 	return s == "</image>" || (strings.HasPrefix(s, "<image") && strings.HasSuffix(s, ">") && !strings.Contains(s, "\n"))
 }
 
-func codexResponse(it *codexItem, lineID string, ts int64) []contrib {
+func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contrib {
 	id := it.ID
 	if id == "" {
 		id = lineID
 	}
 	switch it.Type {
 	case "message":
-		return []contrib{codexMessage(it, id, ts)}
+		return []contrib{codexMessage(it, id, ts, pc)}
 	case "reasoning":
 		var parts []proto.TranscriptPart
 		for _, p := range append(it.Summary.list, it.Content.list...) {
@@ -252,10 +267,21 @@ func codexResponse(it *codexItem, lineID string, ts int64) []contrib {
 				summary = strings.Join(paths, ", ")
 			}
 		}
-		return []contrib{{id: callID, kind: proto.ItemTool, ts: ts, apply: func(b *builder) {
+		viewPath := ""
+		if it.Name == "view_image" {
+			var in struct {
+				Path string `json:"path"`
+			}
+			_ = json.Unmarshal(input, &in)
+			viewPath = in.Path
+		}
+		return []contrib{{id: callID, kind: proto.ItemTool, ts: ts, maybeImg: viewPath != "", apply: func(b *builder) {
 			b.call(name, input, summary)
 			if diffs != nil {
 				b.diffs = diffs
+			}
+			if viewPath != "" {
+				b.viewPath = viewPath
 			}
 		}}}
 	case "function_call_output", "custom_tool_call_output", "local_shell_call_output":
@@ -263,8 +289,12 @@ func codexResponse(it *codexItem, lineID string, ts int64) []contrib {
 		if s := it.Output.success; s != nil && !*s {
 			status = proto.ToolError
 		}
-		text, images := it.Output.text, it.Output.images
-		return []contrib{{link: linkResult, id: it.CallID, kind: proto.ItemTool, ts: ts,
+		text := it.Output.text
+		var images []imgRef
+		for _, u := range it.Output.images {
+			images = append(images, pc.codexImage(u, proto.OriginAgent, proto.KindViewed))
+		}
+		return []contrib{{link: linkResult, id: it.CallID, kind: proto.ItemTool, ts: ts, imgs: images,
 			apply: func(b *builder) { b.result(status, text, images) }}}
 	case "agent_message":
 		var ss []string
@@ -282,8 +312,9 @@ func codexResponse(it *codexItem, lineID string, ts int64) []contrib {
 	return []contrib{unknownItem(id, "response_item/"+it.Type, ts)}
 }
 
-func codexMessage(it *codexItem, id string, ts int64) contrib {
+func codexMessage(it *codexItem, id string, ts int64, pc *parseCtx) contrib {
 	var parts []proto.TranscriptPart
+	var imgs []imgRef
 	var dropped []string
 	list := it.Content.list
 	if it.Content.isStr {
@@ -292,7 +323,13 @@ func codexMessage(it *codexItem, id string, ts int64) contrib {
 	for _, p := range list {
 		switch p.Type {
 		case "input_image", "output_image", "image":
-			parts = append(parts, proto.TranscriptPart{ImageOmitted: true})
+			origin, kind := proto.OriginInput, ""
+			if it.Role != "user" {
+				origin, kind = proto.OriginAgent, proto.KindGenerated
+			}
+			ir := pc.codexImage(p.ImageURL, origin, kind)
+			imgs = append(imgs, ir)
+			parts = append(parts, proto.TranscriptPart{Image: ir.ref})
 		default:
 			switch {
 			case strings.TrimSpace(p.Text) == "":
@@ -300,7 +337,15 @@ func codexMessage(it *codexItem, id string, ts int64) contrib {
 				dropped = append(dropped, p.Text)
 			case it.Role == "user" && imageWrapper(p.Text):
 			default:
-				parts = append(parts, textParts(p.Text)...)
+				var ps []proto.TranscriptPart
+				var is []imgRef
+				if it.Role == "user" {
+					ps, is = textParts(pc, p.Text)
+				} else {
+					ps = []proto.TranscriptPart{{Text: p.Text}}
+				}
+				parts = append(parts, ps...)
+				imgs = append(imgs, is...)
 			}
 		}
 	}
@@ -309,9 +354,9 @@ func codexMessage(it *codexItem, id string, ts int64) contrib {
 		if len(parts) == 0 {
 			return hiddenNotice(id, "message/user", strings.Join(dropped, "\n"), ts)
 		}
-		return contrib{id: id, kind: proto.ItemUser, ts: ts, apply: func(b *builder) { b.it.Parts = parts }}
+		return contrib{id: id, kind: proto.ItemUser, ts: ts, imgs: imgs, apply: func(b *builder) { b.it.Parts = parts }}
 	case "assistant":
-		return contrib{id: id, kind: proto.ItemAssistant, ts: ts, apply: func(b *builder) { b.it.Parts = parts }}
+		return contrib{id: id, kind: proto.ItemAssistant, ts: ts, imgs: imgs, apply: func(b *builder) { b.it.Parts = parts }}
 	}
 	if it.Role == "developer" || it.Role == "system" {
 		return hiddenNotice(id, "message/"+it.Role, partsText(parts), ts)
@@ -333,9 +378,25 @@ func callArguments(raw json.RawMessage) json.RawMessage {
 	return raw
 }
 
-func codexEventItem(ev *codexEvent, id string, ts int64) contrib {
+func codexEventItem(ev *codexEvent, id string, ts int64, pc *parseCtx) contrib {
 	src := "event_msg/" + ev.Type
 	switch ev.Type {
+	case "image_generation_end":
+		// The image Codex generated: its base64, else the file it saved.
+		var ir imgRef
+		switch {
+		case ev.Result != "":
+			ir = pc.inline("", ev.Result, proto.OriginAgent, proto.KindGenerated)
+		case ev.SavedPath != "":
+			ir = pc.path(ev.SavedPath, proto.OriginAgent, proto.KindGenerated)
+		default:
+			return hiddenNotice(id, src, "", ts)
+		}
+		if ev.CallID != "" {
+			id = "img:" + ev.CallID
+		}
+		return contrib{id: id, kind: proto.ItemAssistant, ts: ts, imgs: []imgRef{ir},
+			apply: func(b *builder) { b.it.Parts = []proto.TranscriptPart{{Image: ir.ref}} }}
 	case "task_complete":
 		note := "Turn done"
 		if ev.DurationMs != nil {

@@ -13,12 +13,20 @@
 //   falling asleep → `{asleep}`.
 // - `sim.transcript {id, items?, updates?, close?}` (the simulator's own): pushes `transcript.items` to the worker's
 //   watch, or closes it with `close` as the reason. `sim.transcripts {}` answers `{watches, ids}`.
+// - Images (phase 2): `transcript.image {id, hash, size, agent?}` answers only a hash the watch was sent (items shown
+//   by watch/page/item, pushes, `transcript.images`), as the decoded PNG (thumb: at most 480 px on its longest side)
+//   in base64; a hash made with `too_large` refuses `full` with `too_large`. `transcript.images {id}` lists every
+//   image of the session (the demo has some older than any window). `sim.image {w?, h?, seed?, origin?, kind?,
+//   too_large?, unavailable?, reason?, path?}` makes an image (PNG bytes kept) and answers its ImageRef, to push in
+//   `sim.transcript` items. Every image is a real PNG, so screenshots show pictures.
 // - `simfail=no_m16` plays a bridge before M16: every transcript command is `unknown_command`.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Floor, TranscriptItem, Worker } from '../src/net/protocol.ts';
+import { PNG } from 'pngjs';
+import type { Floor, ImageRef, TranscriptItem, Worker } from '../src/net/protocol.ts';
 
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
@@ -26,6 +34,79 @@ type Send = (m: Obj) => void;
 export const SIM_MAX_TRANSCRIPT_WATCHES = 4;
 /** The agent id of the demo's subagent: the one fixtures/transcript/claude-subagent.json was read from. */
 export const SIM_SUBAGENT = 'aa3716c63ba631707';
+
+/** A synthetic screenshot: a gradient, a header bar and blocks laid out from the seed (no text: no font needed). */
+export function drawPng(w: number, h: number, seed: number): Buffer {
+  const png = new PNG({ width: w, height: h });
+  const rnd = (n: number) => {
+    let x = (seed * 374761393 + n * 668265263) >>> 0;
+    x = ((x ^ (x >>> 13)) * 1274126177) >>> 0;
+    return ((x ^ (x >>> 16)) >>> 0) / 4294967295;
+  };
+  const hue = (seed * 47) % 360;
+  const rgb = (hh: number, sat: number, lum: number): [number, number, number] => {
+    const a = sat * Math.min(lum, 1 - lum);
+    const f = (n: number) => {
+      const k = (n + hh / 30) % 12;
+      return Math.round(255 * (lum - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))));
+    };
+    return [f(0), f(8), f(4)];
+  };
+  const put = (x: number, y: number, c: [number, number, number]) => {
+    const i = (y * w + x) * 4;
+    png.data[i] = c[0];
+    png.data[i + 1] = c[1];
+    png.data[i + 2] = c[2];
+    png.data[i + 3] = 255;
+  };
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) put(x, y, rgb(hue, 0.35, 0.16 + 0.12 * (y / h) + 0.04 * (x / w)));
+  const bar = Math.max(6, Math.round(h * 0.09));
+  for (let y = 0; y < bar; y++) for (let x = 0; x < w; x++) put(x, y, rgb((hue + 30) % 360, 0.45, 0.32));
+  for (let k = 0; k < 5; k++) {
+    const bw = Math.round(w * (0.18 + rnd(k * 4) * 0.3));
+    const bh = Math.round(h * (0.1 + rnd(k * 4 + 1) * 0.22));
+    const bx = Math.round(rnd(k * 4 + 2) * (w - bw));
+    const by = bar + 4 + Math.round(rnd(k * 4 + 3) * (h - bar - bh - 8));
+    const c = rgb((hue + 60 + k * 40) % 360, 0.55, 0.55);
+    for (let y = Math.max(bar, by); y < Math.min(h, by + bh); y++) for (let x = bx; x < Math.min(w, bx + bw); x++) put(x, y, c);
+  }
+  return PNG.sync.write(png);
+}
+
+interface SimImage {
+  bytes: Buffer;
+  width: number;
+  height: number;
+  tooLarge: boolean;
+}
+
+/** Every image the simulator ever made, by hash (content addressed, as the bridge's cache). */
+const IMAGES = new Map<string, SimImage>();
+
+export interface SimImageSpec {
+  w?: number;
+  h?: number;
+  seed?: number;
+  origin?: 'input' | 'agent';
+  kind?: 'generated' | 'viewed';
+  tooLarge?: boolean;
+  unavailable?: boolean;
+  reason?: string;
+  path?: string;
+}
+
+/** An ImageRef for a made image (or an unavailable one: no bytes). */
+export function simImage(spec: SimImageSpec = {}): ImageRef {
+  const origin = spec.origin ?? 'agent';
+  const base: ImageRef = { source: spec.path ? 'path' : 'inline', origin, ...(origin === 'agent' ? { kind: spec.kind ?? 'viewed' } : {}), ...(spec.path ? { path: spec.path } : {}) };
+  if (spec.unavailable) return { ...base, unavailable: true, reason: spec.reason ?? 'not_allowed' };
+  const w = spec.w ?? 640;
+  const h = spec.h ?? 400;
+  const bytes = drawPng(w, h, spec.seed ?? 1);
+  const hash = createHash('sha256').update(bytes).digest('hex');
+  IMAGES.set(hash, { bytes, width: w, height: h, tooLarge: !!spec.tooLarge });
+  return { ...base, hash, mime: 'image/png', bytes: bytes.length, width: w, height: h };
+}
 
 export interface TranscriptHost {
   worker(id: string): Worker | undefined;
@@ -39,6 +120,16 @@ const FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'transcript');
 let subagent: TranscriptItem[] | null = null;
 const subagentItems = (): TranscriptItem[] => (subagent ??= JSON.parse(readFileSync(join(FIXTURES, 'claude-subagent.json'), 'utf8')) as TranscriptItem[]);
 
+// The demo's images: real PNGs made once. The user's two screenshots (one sent twice), one that is outside the bridge's
+// roots, what the agent viewed with a Read, and two it generated.
+const SHOT = simImage({ origin: 'input', w: 1280, h: 720, seed: 3 });
+const SHOT_B = simImage({ origin: 'input', w: 375, h: 667, seed: 5 });
+const LOST = simImage({ origin: 'input', path: '/etc/hosts.png', unavailable: true, reason: 'not_allowed' });
+const VIEWED = simImage({ w: 375, h: 667, seed: 8 });
+const VIEWED_B = simImage({ w: 1024, h: 640, seed: 9 });
+const MOCK = simImage({ kind: 'generated', w: 512, h: 512, seed: 12 });
+const MOCK_B = simImage({ kind: 'generated', w: 640, h: 360, seed: 14 });
+
 /** The demo timeline at `now`: every kind the bridge sends, a few of each worth looking at (and some hostile text). */
 export function demoTimeline(now: number): TranscriptItem[] {
   let seq = 0;
@@ -48,11 +139,14 @@ export function demoTimeline(now: number): TranscriptItem[] {
   };
   return [
     it('notice', { hidden: true, notice: { text: 'claude 2.1.0', source: 'system/init' } }),
-    it('user', { parts: [{ text: 'The HUD overlaps the laptop screen on small windows. Can you fix it and add a test?' }, { image_omitted: true }] }),
+    it('user', { parts: [{ text: 'The HUD overlaps the laptop screen on small windows. Can you fix it and add a test?' }, { image: SHOT }, { image: SHOT_B }, { image: LOST }] }),
     it('thinking', { parts: [{ text: 'The seat pose uses `insets()`; the overlap is probably the seat bar height.' }] }),
     it('assistant', { parts: [{ text: "I'll look at how the seated camera is placed. The relevant code is in `seatPose`:\n\n```ts\nconst top = Math.min(H * 0.3, ins.top + 10);\nconst bottom = Math.min(H * 0.35, ins.bottom + 10);\n```" }] }),
     it('tool', { tool: { name: 'Grep', input_summary: 'insets\\(\\) in src/', status: 'ok', output_text: 'src/app.ts:361\nsrc/laptop/index.ts:343' } }, 'toolu_demo_grep'),
-    it('tool', { tool: { name: 'Read', input_summary: 'src/laptop/index.ts', status: 'ok', output_text: '…' } }, 'toolu_demo_read'),
+    it('tool', { tool: { name: 'Read', input_summary: 'dialog-evidence/hire-375x667.png', status: 'ok', images: [{ image: VIEWED }, { image: VIEWED_B }] } }, 'toolu_demo_read'),
+    it('assistant', { parts: [{ image: MOCK }] }),
+    it('assistant', { parts: [{ image: MOCK_B }] }),
+    it('user', { parts: [{ text: 'Same screenshot again, the seat bar this time:' }, { image: SHOT }] }),
     it('notice', { hidden: true, notice: { text: 'Turn took 41s', source: 'system/turn_duration' } }),
     it(
       'tool',
@@ -84,12 +178,31 @@ export function demoTimeline(now: number): TranscriptItem[] {
     it('assistant', { parts: [{ text: 'One test fails because of **the Esc mapping**. See <script>window.__pwned = 1</script> [details](javascript:window.__pwned=2) and <img src=x onerror="window.__pwned=3">.' }] }),
     it('tool', { tool: { name: 'Bash', input_summary: 'pnpm vitest run src/laptop --reporter dot', status: 'running' } }, 'toolu_demo_bash2'),
     it('unknown', { hidden: true, raw_type: 'queue-operation' }),
-  ];
+  ].map(link);
+}
+
+/** Every image ref of an item, in order. */
+function refsOf(it: TranscriptItem): ImageRef[] {
+  const out: ImageRef[] = [];
+  for (const p of it.parts ?? []) if ('image' in p) out.push(p.image);
+  for (const p of it.tool?.images ?? []) if ('image' in p) out.push(p.image);
+  return out;
+}
+
+/** The bridge fills each ref with the item it is in. Copies: the same ref can be in two items. */
+function link(it: TranscriptItem): TranscriptItem {
+  const fill = (r: ImageRef): ImageRef => ({ ...r, item_id: it.id, seq: it.seq, ts: it.ts });
+  const out: TranscriptItem = { ...it };
+  if (it.parts) out.parts = it.parts.map((p) => ('image' in p ? { image: fill(p.image) } : p));
+  if (it.tool?.images) out.tool = { ...it.tool, images: it.tool.images.map((p) => ('image' in p ? { image: fill(p.image) } : p)) };
+  return out;
 }
 
 interface Watch {
   send: Send;
   items: TranscriptItem[];
+  /** The hashes this connection was sent for this worker. */
+  sent: Set<string>;
 }
 
 export class TranscriptSim {
@@ -104,7 +217,7 @@ export class TranscriptSim {
 
   /** Handles the transcript commands; false for anything else. */
   handle(t: unknown, a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): boolean {
-    if (typeof t !== 'string' || !(t.startsWith('transcript.') || t === 'sim.transcript' || t === 'sim.transcripts')) return false;
+    if (typeof t !== 'string' || !(t.startsWith('transcript.') || t === 'sim.transcript' || t === 'sim.transcripts' || t === 'sim.image')) return false;
     try {
       if (!this.on && t.startsWith('transcript.')) throw this.host.error('unknown_command', `unknown command: "${t}"`);
       if (t === 'transcript.watch') ack(this.watch(a, send));
@@ -113,6 +226,9 @@ export class TranscriptSim {
         ack();
       } else if (t === 'transcript.page') ack(this.page(a));
       else if (t === 'transcript.item') ack(this.item(a));
+      else if (t === 'transcript.image') ack(this.image(a));
+      else if (t === 'transcript.images') ack(this.images(a));
+      else if (t === 'sim.image') ack(simImage(a as SimImageSpec));
       else if (t === 'sim.transcript') ack(this.sim(a));
       else if (t === 'sim.transcripts') ack({ watches: this.watches.size, ids: [...this.watches.keys()] });
       else throw this.host.error('unknown_command', `unknown command: "${t}"`);
@@ -150,10 +266,13 @@ export class TranscriptSim {
     const n = this.watches.size - (this.watches.has(id) ? 1 : 0);
     if (n >= SIM_MAX_TRANSCRIPT_WATCHES) throw this.host.error('capacity', `capacity: this connection already watches ${n} transcripts (--max-transcript-watches)`);
     const items = demoTimeline(this.host.now());
-    this.watches.set(id, { send, items });
+    const watch: Watch = { send, items, sent: new Set() };
+    this.watches.set(id, watch);
     const visible = items.filter((it) => !it.hidden);
     const from = visible.length > limit ? items.indexOf(visible[visible.length - limit] as TranscriptItem) : 0;
-    return { harness: 'claude', session: `sim-${id}`, version: '2.1.0', cursor: `c:${items[from]?.seq ?? 1}`, has_more: from > 0, pending: false, items: items.slice(from) };
+    const shown = items.slice(from);
+    this.note(watch, shown);
+    return { harness: 'claude', session: `sim-${id}`, version: '2.1.0', cursor: `c:${items[from]?.seq ?? 1}`, has_more: from > 0, pending: false, items: shown };
   }
 
   private watched(a: Obj): Watch {
@@ -175,9 +294,12 @@ export class TranscriptSim {
     if (!agent) {
       if (!before) throw this.host.error('bad_request', 'before is needed (it is optional with agent)');
       const seq = Number(before.slice(2));
-      return { items: w.items.filter((it) => it.seq < seq), cursor: 'c:1', has_more: false };
+      const older = w.items.filter((it) => it.seq < seq);
+      this.note(w, older);
+      return { items: older, cursor: 'c:1', has_more: false };
     }
     if (agent !== SIM_SUBAGENT) throw this.host.error('not_found', `no transcript for subagent "${agent}"`);
+    this.note(w, subagentItems());
     return { items: subagentItems(), cursor: 'c:1', has_more: false };
   }
 
@@ -188,7 +310,46 @@ export class TranscriptSim {
     const from = agent === SIM_SUBAGENT ? subagentItems() : agent ? null : w.items;
     const it = from?.find((x) => x.id === want);
     if (!it) throw this.host.error('not_found', `no item "${want}" in the transcript`);
+    this.note(w, [it]);
     return { item: it };
+  }
+
+  private note(w: Watch, items: readonly TranscriptItem[]): void {
+    for (const it of items) for (const r of refsOf(it)) if (r.hash) w.sent.add(r.hash);
+  }
+
+  private images(a: Obj): Obj {
+    const w = this.watched(a);
+    const refs = w.items.flatMap(refsOf);
+    for (const r of refs) if (r.hash) w.sent.add(r.hash);
+    return { images: refs };
+  }
+
+  private image(a: Obj): Obj {
+    const w = this.watched(a);
+    const hash = this.str(a, 'hash');
+    const size = this.str(a, 'size');
+    if (!/^[0-9a-f]{64}$/.test(hash)) throw this.host.error('bad_request', 'bad args: hash must be the sha256 of an image, in hex');
+    if (size !== 'thumb' && size !== 'full') throw this.host.error('bad_request', 'bad args: size must be "thumb" or "full"');
+    const img = IMAGES.get(hash);
+    if (!w.sent.has(hash) || !img) throw this.host.error('not_found', 'no image with that hash was sent on this connection');
+    if (size === 'full' && img.tooLarge) throw this.host.error('too_large', 'the image is over 12 MiB of base64');
+    let bytes = img.bytes;
+    let width = img.width;
+    let height = img.height;
+    if (size === 'thumb' && Math.max(width, height) > 480) {
+      // Nearest-neighbour is enough for a stand-in.
+      const k = 480 / Math.max(width, height);
+      const tw = Math.max(1, Math.round(width * k));
+      const th = Math.max(1, Math.round(height * k));
+      const src = PNG.sync.read(bytes);
+      const dst = new PNG({ width: tw, height: th });
+      for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) src.data.copy(dst.data, (y * tw + x) * 4, (Math.floor(y / k) * width + Math.floor(x / k)) * 4, (Math.floor(y / k) * width + Math.floor(x / k)) * 4 + 4);
+      bytes = PNG.sync.write(dst);
+      width = tw;
+      height = th;
+    }
+    return { mime: 'image/png', width, height, bytes: bytes.length, size, data: bytes.toString('base64') };
   }
 
   private sim(a: Obj): Obj {
@@ -206,6 +367,8 @@ export class TranscriptSim {
       if (at >= 0) w.items[at] = it;
       else w.items.push(it);
     }
+    this.note(w, items);
+    this.note(w, updates);
     w.send({ t: 'transcript.items', id, items, updates });
     return { pushed: items.length + updates.length };
   }

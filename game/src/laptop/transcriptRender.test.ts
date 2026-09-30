@@ -14,6 +14,7 @@ interface FakeHost extends TranscriptRenderHost {
 
 function fakeHost(load: (id: string) => Promise<TranscriptItem[]> = async () => []): FakeHost {
   const host: FakeHost = {
+    images: null,
     prompts: [],
     sendOk: true,
     answers: [],
@@ -94,7 +95,7 @@ describe('untrusted text renders inert (marked + DOMPurify)', () => {
   ].join('\n\n');
 
   function assertInert(root: HTMLElement): void {
-    expect(root.querySelector('script, img, iframe, svg:not([aria-hidden="true"]), style, object, embed, form, details')).toBeNull();
+    expect(root.querySelector('script, .tx-md img, iframe, svg:not([aria-hidden="true"]), style, object, embed, form, details')).toBeNull();
     for (const el of root.querySelectorAll('*')) {
       for (const a of el.getAttributeNames()) expect(a.toLowerCase().startsWith('on'), `${el.tagName} has ${a}`).toBe(false);
       const href = el.getAttribute('href');
@@ -163,15 +164,14 @@ describe('untrusted text renders inert (marked + DOMPurify)', () => {
 });
 
 describe('rows per kind', () => {
-  it('user bubble, assistant markdown, the image placeholder chip', () => {
+  it('user bubble, assistant markdown, an older bridge’s image placeholder as a "not available" card', () => {
     mount();
     view.setItems([item('user', { parts: [text('look at **this**'), { image_omitted: true }] }), item('assistant', { parts: [text('# Title\n\n- one\n- two')] })]);
     const u = row('i1');
     expect(u.querySelector('.tx-bubble strong')?.textContent).toBe('this');
-    const chip = u.querySelector('.tx-img-chip') as HTMLElement;
-    expect(chip.textContent).toContain('[image — not shown yet]');
-    expect(chip.tagName).toBe('SPAN');
-    expect(chip.closest('button, a')).toBeNull();
+    const card = u.querySelector('.tx-strip .tx-imgcard') as HTMLElement;
+    expect(card.textContent).toContain('Image not available');
+    expect(card.title).toContain('older than image support');
     const a = row('i2');
     expect(a.querySelector('.tx-said h1')?.textContent).toBe('Title');
     expect(a.querySelectorAll('li').length).toBe(2);
@@ -255,7 +255,7 @@ describe('rows per kind', () => {
     ]);
   });
 
-  it('a Codex apply_patch over two files: every file, no made-up line numbers; output images as chips', () => {
+  it('a Codex apply_patch over two files: every file, no made-up line numbers; output images in a strip', () => {
     mount();
     const a = { path: 'a.go', hunks: [{ old_start: 0, old_lines: 1, new_start: 0, new_lines: 1, lines: ['-x := 1', '+x := 2'] }] };
     const b = { path: 'b.go', hunks: [{ old_start: 0, old_lines: 0, new_start: 0, new_lines: 1, lines: ['+y := 3'] }], truncated: true };
@@ -266,7 +266,7 @@ describe('rows per kind', () => {
     expect($('.tx-dh')).toBeNull();
     expect($$('.tx-dl .tx-dn').every((n) => n.textContent === '')).toBe(true);
     expect(row('i1').textContent).toContain('Diff truncated');
-    expect(row('i1').querySelectorAll('.tx-img-chip').length).toBe(1);
+    expect(row('i1').querySelectorAll('.tx-strip .tx-imgcard').length).toBe(1);
   });
 
   it('compaction is a divider; hidden notices and unknown entries wait for "show system", other notices show', () => {

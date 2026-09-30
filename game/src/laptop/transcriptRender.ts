@@ -2,6 +2,8 @@ import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
 import type { TranscriptDiff, TranscriptItem } from '../net/protocol';
+import type { ImageFeed } from './imageFeed';
+import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, Thumbs } from './transcriptImages';
 import { h, icon } from '../ui/dom';
 
 /**
@@ -16,6 +18,8 @@ import { h, icon } from '../ui/dom';
  */
 
 export interface TranscriptRenderHost {
+  /** M16 phase 2: this worker's images (null: none can be fetched, every image is a "not available" card). */
+  images: ImageFeed | null;
   /** A prompt to send; resolving false (not sent) puts the text back in the prompt box. */
   onPromptSubmit(text: string): void | Promise<boolean>;
   onAnswer(hash: string, choice: number | null, cancel?: boolean): void;
@@ -36,6 +40,12 @@ export interface TranscriptView {
   setItems(items: TranscriptItem[]): void;
   applyUpdates(items: TranscriptItem[]): void;
   setBlocked(q: BlockedQuestion | null): void;
+  /** The mode's tab strip (Conversation | Images), put in the bar after the title. */
+  attachTabs(tabs: HTMLElement): void;
+  /** Is the item in the timeline (loaded)? */
+  hasItem(id: string): boolean;
+  /** Scrolls to an item and flashes it; false when it is not loaded (the caller pages older items first). */
+  scrollToItem(id: string): boolean;
   /** The keyboard to the timeline (its scroll keys work at once). */
   focus(): void;
   focusPrompt(): void;
@@ -274,9 +284,6 @@ function toolIcon(name: string): string {
   return TX_ICON.tool;
 }
 
-/** An image in a message or a tool's output (phase 1: the bridge only says where one was). */
-const imageChip = () => h('span', { class: 'tx-img-chip', title: 'Images come in a later version' }, icon(TX_ICON.image), '[image — not shown yet]');
-
 /** A tool's diffs: every file of a multi-file patch (`diffs`), else its one `diff`. */
 function toolDiffs(t: NonNullable<TranscriptItem['tool']>): TranscriptDiff[] {
   const ok = (d: unknown): d is TranscriptDiff => !!d && typeof d === 'object' && Array.isArray((d as TranscriptDiff).hunks);
@@ -284,7 +291,7 @@ function toolDiffs(t: NonNullable<TranscriptItem['tool']>): TranscriptDiff[] {
   return many.length ? many : ok(t.diff) ? [t.diff] : [];
 }
 
-const toolImages = (t: NonNullable<TranscriptItem['tool']>) => (Array.isArray(t.images) ? t.images.length : 0);
+const toolImages = (t: NonNullable<TranscriptItem['tool']>) => imagesOf(t.images);
 
 const STATUS_TEXT: Record<string, string> = { running: 'running', ok: 'done', error: 'error', interrupted: 'interrupted' };
 
@@ -395,6 +402,11 @@ class Timeline {
   readonly el: HTMLOListElement;
   private items = new Map<string, TranscriptItem>();
   private rows = new Map<string, HTMLElement>();
+  /** Merged image-only rows, and the first row of the run each is shown in. */
+  private readonly merged = new Set<string>();
+  private readonly leadOf = new Map<string, string>();
+  /** An image-only row's own thumbnails (a merged row gives its away and gets them back). */
+  private readonly own = new WeakMap<HTMLElement, HTMLElement[]>();
 
   constructor(
     private readonly view: Transcript,
@@ -432,6 +444,7 @@ class Timeline {
       return row;
     });
     this.el.replaceChildren(...rows);
+    this.regroup();
     return sorted.filter((it) => !before.has(it.id));
   }
 
@@ -453,7 +466,58 @@ class Timeline {
       if (!prev) added.push(it);
       this.insert(it, row);
     }
+    this.regroup();
     return added;
+  }
+
+  /** The row an item is shown in: a merged image-only item shows in the row of the run's first. */
+  row(id: string): HTMLElement | undefined {
+    const lead = this.leadOf.get(id);
+    return this.rows.get(lead ?? id);
+  }
+
+  /**
+   * Runs of image-only items share one strip (`imageRuns` has the rule): the first item's row keeps every thumbnail of
+   * the run and the others are hidden, so a run of screenshots reads as one row. Everything is undone and done again
+   * on every change, so an update of any item of a run (or a row that breaks it) is right.
+   */
+  regroup(): void {
+    // A row seen for the first time is whole: its thumbnails are its own.
+    for (const r of this.rows.values()) {
+      const strip = r.classList.contains('tx-imgonly') ? r.querySelector('.tx-strip') : null;
+      if (strip && !this.own.has(r)) this.own.set(r, [...strip.children] as HTMLElement[]);
+    }
+    for (const r of this.rows.values()) {
+      const own = this.own.get(r);
+      const strip = r.querySelector('.tx-strip');
+      if (!own || !strip) continue;
+      if (strip.childElementCount !== own.length || r.hidden) {
+        r.hidden = false;
+        r.classList.remove('tx-merged');
+        strip.replaceChildren(...own);
+        strip.setAttribute('aria-label', own.length > 1 ? `${own.length} images` : 'Image');
+      }
+    }
+    this.merged.clear();
+    this.leadOf.clear();
+    const sorted = [...this.items.values()].sort(bySeq);
+    for (const ids of imageRuns(sorted, this.view.systemShown)) {
+      if (ids.length < 2) continue;
+      const lead = this.rows.get(ids[0] as string);
+      const leadStrip = lead?.querySelector('.tx-strip');
+      if (!lead || !leadStrip) continue;
+      for (const id of ids.slice(1)) {
+        const r = this.rows.get(id);
+        const strip = r?.querySelector('.tx-strip');
+        if (!r || !strip) continue;
+        leadStrip.append(...strip.children);
+        r.hidden = true;
+        r.classList.add('tx-merged');
+        this.merged.add(id);
+        this.leadOf.set(id, ids[0] as string);
+      }
+      leadStrip.setAttribute('aria-label', `${leadStrip.childElementCount} images`);
+    }
   }
 
   private insert(it: TranscriptItem, row: HTMLElement): void {
@@ -495,6 +559,7 @@ class Transcript implements TranscriptView {
   private readonly jump: HTMLButtonElement;
   private readonly sysBtn: HTMLButtonElement;
   private readonly countEl: HTMLSpanElement;
+  private readonly titleEl: HTMLSpanElement;
   private readonly input: HTMLTextAreaElement;
   private readonly sendBtn: HTMLButtonElement;
   /** Bumped by every edit of the prompt box and every send: a refused prompt comes back only if nothing happened since. */
@@ -504,6 +569,7 @@ class Transcript implements TranscriptView {
   private following = true;
   private fresh = 0;
   private showSystem = false;
+  private readonly thumbs: Thumbs;
   private blocked: BlockedQuestion | null = null;
   private destroyed = false;
   /** Expanded rows, `scope/id`, kept across re-renders and resyncs. */
@@ -525,12 +591,14 @@ class Transcript implements TranscriptView {
     this.banner = h('div', { class: 'tx-banner', role: 'alert', hidden: true });
     this.empty = h('div', { class: 'tx-empty' }, 'No conversation yet.');
     this.scroller = h('div', { class: 'tx-scroll', tabindex: '-1', 'aria-label': 'Conversation' }, this.empty, this.timeline.el);
+    this.thumbs = new Thumbs({ feed: host.images, root: this.scroller });
     this.jump = h('button', { class: 'tx-jump', hidden: true, onclick: () => this.toBottom() });
     this.input = h('textarea', { class: 'tx-input', rows: '1', placeholder: PROMPT_HINT, 'aria-label': 'Prompt', spellcheck: 'true' });
     this.sendBtn = h('button', { class: 'tx-send', title: 'Send', onclick: () => this.submit() }, 'Send');
     const form = h('div', { class: 'tx-prompt' }, this.input, this.sendBtn);
     // The toggle sits on the left: the HUD's plan-limits widget can hang over the screen's top-right corner.
-    const bar = h('div', { class: 'tx-bar' }, h('span', { class: 'tx-title' }, 'Transcript'), this.countEl, this.sysBtn);
+    this.titleEl = h('span', { class: 'tx-title' }, 'Transcript');
+    const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn);
     this.root = h('div', { class: 'tx', 'data-system': 'hidden' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), form);
     this.updateCounts();
 
@@ -577,6 +645,29 @@ class Transcript implements TranscriptView {
     this.scroller.focus({ preventScroll: true });
   }
 
+  attachTabs(tabs: HTMLElement): void {
+    if (this.destroyed) return;
+    this.titleEl.after(tabs);
+  }
+
+  hasItem(id: string): boolean {
+    return this.timeline.has(id);
+  }
+
+  scrollToItem(id: string): boolean {
+    if (this.destroyed) return false;
+    const row = this.timeline.row(id);
+    if (!row) return false;
+    // Reveal a hidden system row too? Images never come from one.
+    this.following = false;
+    row.scrollIntoView({ block: 'center' });
+    this.onScroll();
+    row.classList.remove('tx-flash');
+    void row.offsetWidth;
+    row.classList.add('tx-flash');
+    return true;
+  }
+
   focusPrompt(): void {
     if (this.destroyed || this.input.disabled) return;
     this.input.focus();
@@ -589,7 +680,13 @@ class Transcript implements TranscriptView {
     this.ticker = null;
     this.resize?.disconnect();
     hlDone.delete(this.onHighlighted);
+    this.thumbs.destroy();
     this.root.remove();
+  }
+
+  /** Rows of the timeline that merge image-only items need to know whether system rows show (they break a run then). */
+  get systemShown(): boolean {
+    return this.showSystem;
   }
 
   // --- rows ---
@@ -614,9 +711,9 @@ class Transcript implements TranscriptView {
   private build(it: TranscriptItem, scope: string): HTMLElement {
     switch (it.kind) {
       case 'user':
-        return h('li', { class: 'tx-item tx-user' }, this.parts(it, 'tx-bubble'));
+        return h('li', { class: isImageOnly(it) ? 'tx-item tx-user tx-imgonly' : 'tx-item tx-user' }, this.parts(it, 'tx-bubble'));
       case 'assistant':
-        return h('li', { class: 'tx-item tx-assistant' }, this.parts(it, 'tx-said'));
+        return h('li', { class: isImageOnly(it) ? 'tx-item tx-assistant tx-imgonly' : 'tx-item tx-assistant' }, this.parts(it, 'tx-said'));
       case 'thinking':
         return this.thinkingRow(it, scope);
       case 'tool':
@@ -639,15 +736,23 @@ class Transcript implements TranscriptView {
 
   private parts(it: TranscriptItem, cls: string): HTMLElement {
     const box = h('div', { class: cls });
+    // Consecutive images (no text between) are one strip; text between them makes another.
+    let run: unknown[] = [];
+    const flush = () => {
+      if (!run.length) return;
+      box.append(this.thumbs.strip(imagesOf(run)));
+      run = [];
+    };
     for (const p of Array.isArray(it.parts) ? it.parts : []) {
-      if (p && typeof p === 'object' && 'text' in p && typeof p.text === 'string') {
+      if (isImagePart(p) || isOmittedPart(p)) run.push(p);
+      else if (p && typeof p === 'object' && 'text' in p && typeof p.text === 'string') {
+        flush();
         const md = h('div', { class: 'tx-md' });
         setMarkdown(md, p.text);
         box.append(md);
-      } else if (p && typeof p === 'object' && 'image_omitted' in p) {
-        box.append(imageChip());
       }
     }
+    flush();
     if (it.truncated) box.append(h('div', { class: 'tx-note' }, 'Truncated: only the start is shown.'));
     if (!box.childElementCount) box.classList.add('tx-blank');
     return box;
@@ -749,9 +854,9 @@ class Transcript implements TranscriptView {
     }
     if (typeof t.output_text === 'string' && t.output_text.length) {
       body.append(h('div', { class: 'tx-label' }, 'Output'), h('pre', { class: 'tx-out' }, stripAnsi(t.output_text)));
-    } else if (!diffs.length && !toolImages(t) && t.status !== 'running') body.append(h('div', { class: 'tx-note' }, 'No output.'));
+    } else if (!diffs.length && !toolImages(t).length && t.status !== 'running') body.append(h('div', { class: 'tx-note' }, 'No output.'));
     const images = toolImages(t);
-    for (let i = 0; i < images; i++) body.append(imageChip());
+    if (images.length) body.append(this.thumbs.strip(images));
     if (t.output_truncated) body.append(h('div', { class: 'tx-note' }, 'Output truncated: only the start is shown.'));
     if (t.status === 'running') body.append(h('div', { class: 'tx-note' }, 'Still running…'));
   }
@@ -923,6 +1028,7 @@ class Transcript implements TranscriptView {
 
   private toggleSystem(): void {
     this.showSystem = !this.showSystem;
+    this.timeline.regroup();
     this.root.dataset.system = this.showSystem ? 'shown' : 'hidden';
     this.sysBtn.setAttribute('aria-pressed', String(this.showSystem));
     this.updateCounts();

@@ -36,6 +36,8 @@
   text-align: left;
   user-select: text;
   -webkit-user-select: text;
+  /* Its height is the screen's: the banner and the strips ask how much room there is. */
+  container: tx / size;
 }
 .tx *,
 .tx *::before,
@@ -105,6 +107,42 @@
 }
 .tx-banner[hidden] {
   display: none;
+}
+/* The question never eats the conversation: at most under half the screen, the rest scrolls inside it. */
+.tx-banner {
+  max-height: min(46%, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 194 51 / 35%) transparent;
+}
+/* A short screen (a small window): a tighter plate, three lines of the question's excerpt, one row of answers. */
+@container tx (max-height: 470px) {
+  .tx-banner {
+    margin: 6px 8px 0;
+    padding: 6px 9px 7px;
+    max-height: min(44%, 200px);
+  }
+  .tx-banner-tag {
+    font-size: 10px;
+  }
+  .tx-banner-excerpt {
+    max-height: 4.4em;
+    margin-top: 5px;
+    padding: 3px 7px;
+    font-size: 11px;
+  }
+  .tx-banner-actions {
+    margin-top: 5px;
+    gap: 4px 6px;
+  }
+  .tx-choice {
+    padding: 2px 9px 2px 3px;
+    font-size: 12px;
+  }
+  .tx-choice-label {
+    max-width: 24ch;
+  }
 }
 .tx-banner-head {
   display: flex;
@@ -363,21 +401,6 @@
 }
 .tx-plain {
   white-space: pre-wrap;
-}
-.tx-img-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin: 2px 0;
-  padding: 2px 9px;
-  border: 1px dashed rgb(255 255 255 / 22%);
-  border-radius: 6px;
-  color: var(--tx-text-2);
-  font-size: 12px;
-}
-.tx-md + .tx-img-chip,
-.tx-img-chip + .tx-md {
-  margin-top: 6px;
 }
 
 /* Chips and collapsible rows */
@@ -798,4 +821,145 @@
 }
 .tx .hljs-strong {
   font-weight: 700;
+}
+
+/* Jump to message: the row the Images tab (or a print) pointed at. */
+.tx-flash {
+  animation: tx-flash 1.6s ease-out;
+}
+@keyframes tx-flash {
+  from {
+    background: rgb(255 194 51 / 26%);
+    box-shadow: 0 0 0 2px rgb(255 194 51 / 55%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tx-flash {
+    animation: none;
+    outline: 2px solid rgb(255 194 51 / 55%);
+  }
+}
+
+/* ---- Images (phase 2): strips of thumbnails, cards for what is not available ---------------------------------- */
+
+.tx-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+.tx-md + .tx-strip,
+.tx-strip + .tx-md,
+.tx-strip + .tx-strip {
+  margin-top: 6px;
+}
+.tx-imgonly .tx-bubble {
+  padding: 6px;
+}
+.tx-imgonly .tx-said {
+  padding: 0;
+}
+.tx-merged {
+  display: none;
+}
+.tx-thumb {
+  position: relative;
+  flex: 0 1 auto;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--tx-bg-2);
+  box-shadow: inset 0 0 0 1px var(--tx-line);
+  cursor: zoom-in;
+}
+.tx-thumb::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 10%);
+  pointer-events: none;
+}
+.tx-thumb[data-origin='input']::after {
+  box-shadow: inset 0 0 0 1px rgb(228 233 246 / 30%);
+}
+.tx-thumb[data-state='idle'],
+.tx-thumb[data-state='loading'] {
+  background: linear-gradient(100deg, var(--tx-bg-2) 30%, var(--tx-bg-3) 50%, var(--tx-bg-2) 70%) 0 0 / 240% 100%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tx-thumb[data-state='loading'] {
+    animation: tx-shimmer 1.4s ease-in-out infinite;
+  }
+  .tx-thumb[data-state='ready'] .tx-img {
+    animation: tx-fade 180ms ease-out;
+  }
+}
+@keyframes tx-shimmer {
+  to {
+    background-position: -140% 0;
+  }
+}
+@keyframes tx-fade {
+  from {
+    opacity: 0;
+  }
+}
+.tx-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.tx-img:not([src]) {
+  visibility: hidden;
+}
+.tx-imgcard {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  min-width: 132px;
+  max-width: min(100%, 320px);
+  padding: 8px 12px;
+  border: 1px dashed rgb(255 255 255 / 24%);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tx-text-2);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.tx-imgcard:hover {
+  background: rgb(255 255 255 / 4%);
+}
+.tx-imgcard svg {
+  opacity: 0.7;
+}
+.tx-imgcard-title {
+  font-weight: 650;
+}
+.tx-imgcard-path {
+  max-width: 100%;
+  color: var(--tx-text-3);
+  font-family: var(--tx-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.tx-imgchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border: 1px dashed rgb(255 255 255 / 22%);
+  border-radius: 6px;
+  color: var(--tx-text-2);
+  font-size: 12px;
 }
