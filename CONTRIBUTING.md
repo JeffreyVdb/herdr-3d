@@ -582,7 +582,8 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   `h3d.theme.{transcript,terminal}`, `h3d.zoom.{transcript,terminal}`, and `h3d.transcript.hideTools`, guarded like
   `limitsPrefs.ts`) and the loader (`themeLoader.ts`: the transcript's preset as custom properties on the root, fonts
   from `src/fonts/` on first pick, the terminal told once its preset's faces are in; defaults in `themes.css`); the
-  seat bar holds the terminal's preset and zoom (`seat.ts`); M5: the prompt overlay (`prompt.ts`, P: a modal like the M4
+  seat bar holds the terminal's preset and zoom (`seat.ts`); the shipped fonts (`fontCredits.ts`: the credits panel's
+  rows and each one's licence file, which the build writes in full into `FONT_LICENSES.txt` next to the bundle); M5: the prompt overlay (`prompt.ts`, P: a modal like the M4
   dialogs, low on the screen), the Changes panel (`changes.ts`, C: a non-modal side panel in the HUD under the top bar,
   so the floor stays in view and walkable; its diff is drawn a window of lines at a time), the look-at bar's usage and
   Approve / Deny (`promptBar.ts`), styled in `m5.css`, and the seat bar (`seat.ts`, `seat.css`). Hidden, named hooks

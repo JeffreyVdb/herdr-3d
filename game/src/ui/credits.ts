@@ -1,6 +1,7 @@
 import { CHANGES, GENRES, LICENSE_NAME, MANIFEST, type MusicRow } from '../audio/tracks';
 import './credits.css';
 import { backdropPolicy } from './dismiss';
+import { FONT_CREDITS, FONT_LICENSES_FILE, OFL, type FontCredit } from './fontCredits';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -33,37 +34,6 @@ function closeIcon(): SVGSVGElement {
   s.append(p);
   return s;
 }
-
-/** A font the game ships, its copyright line and licence (the SIL Open Font License 1.1 unless it says otherwise). */
-export interface FontCredit {
-  name: string;
-  /** What it is for in the game. */
-  role: string;
-  /** The copyright line of its licence file. */
-  copyright: string;
-  source: string;
-  license?: { name: string; url: string };
-}
-
-const OFL = { name: 'SIL OFL 1.1', url: 'https://openfontlicense.org/open-font-license-official-text/' };
-
-/** #59: the fonts: Recursive for the HUD, then each transcript preset's mono and prose faces (ui/themes.ts). */
-export const FONT_CREDITS: readonly FontCredit[] = [
-  { name: 'Recursive', role: 'The HUD, panels and dialogs', copyright: 'Copyright 2019 The Recursive Project Authors', source: 'https://github.com/arrowtype/recursive' },
-  { name: 'Departure Mono', role: 'Terminal preset, monospace', copyright: 'Copyright 2022–2024 Helena Zhang (helenazhang.com)', source: 'https://github.com/rektdeckard/departure-mono' },
-  { name: 'Archivo', role: 'Terminal preset, text', copyright: 'Copyright 2020 The Archivo Project Authors', source: 'https://github.com/Omnibus-Type/Archivo' },
-  { name: 'JetBrains Mono', role: 'Quiet preset, monospace', copyright: 'Copyright 2020 The JetBrains Mono Project Authors', source: 'https://github.com/JetBrains/JetBrainsMono' },
-  { name: 'Atkinson Hyperlegible Next', role: 'Quiet preset, text', copyright: 'Copyright 2020–2024 The Atkinson Hyperlegible Next Project Authors', source: 'https://github.com/googlefonts/atkinson-hyperlegible-next' },
-  { name: 'Space Mono', role: 'Paper preset, monospace', copyright: 'Copyright 2016 The Space Mono Project Authors', source: 'https://github.com/googlefonts/spacemono' },
-  { name: 'Newsreader', role: 'Paper preset, text', copyright: 'Copyright 2020 The Newsreader Project Authors', source: 'https://github.com/productiontype/Newsreader' },
-  {
-    name: 'H3D Box (DejaVu Sans Mono)',
-    role: 'Box drawing in tool output, Quiet and Paper presets',
-    copyright: 'Copyright 2003 Bitstream, Inc.; DejaVu changes are in the public domain; subset and renamed',
-    source: 'https://github.com/dejavu-fonts/dejavu-fonts',
-    license: { name: 'Bitstream Vera licence', url: 'https://dejavu-fonts.github.io/License.html' },
-  },
-];
 
 function fontRow(f: FontCredit): HTMLLIElement {
   const li = el('li', 'credits-row credits-font');
@@ -140,9 +110,17 @@ export class MusicCredits {
     fontsTitle.setAttribute('aria-label', `Fonts, ${FONT_CREDITS.length}`);
     const fontList = el('ul', 'credits-list');
     fontList.append(...FONT_CREDITS.map(fontRow));
-    fonts.append(fontsTitle, fontList);
+    // The licences' full texts ship with the game (the OFL and the Bitstream Vera licence ask it): a local file.
+    const texts = el('p', 'credits-fonts-texts');
+    const local = el('a', 'credits-link', FONT_LICENSES_FILE);
+    local.href = FONT_LICENSES_FILE;
+    local.target = '_blank';
+    local.rel = 'noopener';
+    local.setAttribute('aria-label', `The fonts’ licences in full, ${FONT_LICENSES_FILE}, shipped with the game`);
+    texts.append(document.createTextNode('Their licences in full ship with the game: '), local, document.createTextNode('.'));
+    fonts.append(fontsTitle, fontList, texts);
     body.append(fonts);
-    const foot = el('p', 'panel-status credits-foot', `Each music file is ${CHANGES}. The same list ships as MUSIC_CREDITS.txt. The fonts’ licences are linked above.`);
+    const foot = el('p', 'panel-status credits-foot', `Each music file is ${CHANGES}. The same list ships as MUSIC_CREDITS.txt, the fonts’ licences as ${FONT_LICENSES_FILE}.`);
 
     this.dialog.setAttribute('aria-labelledby', 'credits-title');
     this.dialog.append(head, body, foot);

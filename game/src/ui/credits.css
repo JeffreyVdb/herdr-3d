@@ -109,6 +109,16 @@
 .credits-foot {
   margin: 0;
 }
+/* #59: the sun's tape takes the ink (white on it was 1.6:1), as the hire panel's notes do. */
+.credits-genre-name .tape {
+  color: var(--ink);
+  text-shadow: none;
+}
+.credits-fonts-texts {
+  margin: 10px 2px 0;
+  color: var(--text-on-ink-2);
+  font-size: 12.5px;
+}
 .credits-body {
   scrollbar-width: thin;
   scrollbar-color: #3a466e transparent;

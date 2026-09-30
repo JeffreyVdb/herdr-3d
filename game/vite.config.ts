@@ -1,5 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vitest/config';
 import { creditsText, MANIFEST } from './src/audio/tracks.ts';
+import { FONT_LICENSES_FILE, fontLicensesText } from './src/ui/fontCredits.ts';
 import { fixtureUpgradeHandler } from './tools/fixture-server.ts';
 import { logoRoute } from './tools/fixture-logo.ts';
 import { uploadRoute } from './tools/fixture-upload.ts';
@@ -44,10 +48,32 @@ function musicCredits(): Plugin {
   };
 }
 
+/**
+ * #59: `FONT_LICENSES.txt` next to the build output: every shipped font's licence file in full (src/ui/fontCredits.ts),
+ * as the OFL and the Bitstream Vera licence ask of a copy of the fonts. The dev server serves it too, for the credits
+ * panel's link.
+ */
+function fontLicenses(): Plugin {
+  const dir = dirname(fileURLToPath(import.meta.url));
+  const text = () => fontLicensesText((f) => readFileSync(join(dir, f), 'utf8'));
+  return {
+    name: 'h3d-font-licenses',
+    configureServer(server) {
+      server.middlewares.use(`/${FONT_LICENSES_FILE}`, (_req, res) => {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.end(text());
+      });
+    },
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: FONT_LICENSES_FILE, source: text() });
+    },
+  };
+}
+
 // Bind to loopback only. The port always comes from the CLI (`--port`), leased
 // via portlease by the Makefile; never hardcode one here.
 export default defineConfig({
-  plugins: [fixtures(), musicCredits()],
+  plugins: [fixtures(), musicCredits(), fontLicenses()],
   // The Makefile passes `git describe`; the badge above the debug overlay shows it (src/version.ts).
   define: { __H3D_VERSION__: JSON.stringify(process.env.H3D_VERSION ?? 'dev') },
   server: { host: '127.0.0.1', strictPort: true },

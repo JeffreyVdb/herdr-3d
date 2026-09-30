@@ -186,6 +186,9 @@ MacBook (M2 Max)                                   devbox (Linux)
   `--font-mono` on the page) and for its terminal canvas (font and screen colours). Only Quiet's fonts come with the
   app: another preset's stylesheet (Latin-only `@font-face`s, split by Vite) loads when it is first picked, and the
   canvas repaints once its faces have loaded. Each view has its own font zoom (70–200 %); the HUD does not zoom.
+  Every shipped font's licence goes with the build in full (`FONT_LICENSES.txt` next to the bundle, from
+  `src/ui/fontCredits.ts`; the OFL and the Bitstream Vera licence ask it), linked from the credits panel, which keeps
+  each font's copyright line.
 - **Assets**: Kenney (CC0) furniture / props. Quaternius: check the license per pack (QAL 2026-08-28 on new packs), and don't
   commit QAL files.
 - **Music (M15, the lounge radio)**: real tracks by other artists, licensed per track. A track goes in only if its own
