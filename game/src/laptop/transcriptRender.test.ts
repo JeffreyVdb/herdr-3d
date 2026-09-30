@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TranscriptItem } from '../net/protocol';
+import { ViewPrefs } from '../ui/themePrefs';
 import { duration, loadHighlighter, mountTranscript, parseHunk, stripAnsi, type BlockedQuestion, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
 
 interface FakeHost extends TranscriptRenderHost {
@@ -754,5 +755,156 @@ describe('helpers', () => {
     expect(duration(185_000)).toBe('3m 05s');
     expect(duration(3_720_000)).toBe('1h 02m');
     expect(duration(-1)).toBe('');
+  });
+});
+
+describe('#59: hide tool calls, the preset, the zoom', () => {
+  const memory = (): Storage => {
+    const m = new Map<string, string>();
+    return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => void m.set(k, v), removeItem: (k) => void m.delete(k), clear: () => m.clear(), key: () => null, length: 0 };
+  };
+  const withPrefs = (prefs: ViewPrefs) => mount({ ...fakeHost(), prefs });
+  beforeEach(() => {
+    Element.prototype.scrollIntoView ??= function () {};
+  });
+  type Status = NonNullable<TranscriptItem['tool']>['status'];
+  const tool = (status: Status, name = 'Bash') => item('tool', { tool: { name, input_summary: 'ls', status } });
+  const askTool = () => item('tool', { tool: { name: 'AskUserQuestion', status: 'ok', ask: { questions: [{ question: 'Which?', header: 'Pick', options: [{ label: 'A' }, { label: 'B' }], multi_select: false }] } } as never });
+
+  it('hides tool rows (not subagents, not an agent’s question), and the choice outlives the view and the page', () => {
+    const st = memory();
+    const prefs = new ViewPrefs(st);
+    withPrefs(prefs);
+    view.setItems([item('user', { parts: [text('go')] }), tool('ok'), item('subagent', { subagent: { agent_id: 'a1', description: 'look', status: 'completed' } }), askTool(), item('assistant', { parts: [text('done')] })]);
+    const box = $('.tx-check-box') as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(($('.tx') as HTMLElement).dataset.tools).toBe('shown');
+    // The rows it would hide, and only those.
+    expect($$('.tx-toolrow').map((r) => r.dataset.id)).toEqual(['i2']);
+    expect($('.tx-check-n')?.textContent).toBe('1');
+    box.checked = true;
+    box.dispatchEvent(new Event('change'));
+    expect(prefs.hideTools).toBe(true);
+    expect(($('.tx') as HTMLElement).dataset.tools).toBe('hidden');
+    // Another view (the next seat), and the next page load, start with it ticked.
+    view.destroy();
+    withPrefs(new ViewPrefs(st));
+    expect(($('.tx-check-box') as HTMLInputElement).checked).toBe(true);
+    expect(($('.tx') as HTMLElement).dataset.tools).toBe('hidden');
+  });
+
+  it('the “new” chip does not count tool calls while they are hidden', () => {
+    const prefs = new ViewPrefs(null);
+    prefs.hideTools = true;
+    withPrefs(prefs);
+    const sc = $('.tx-scroll') as HTMLElement;
+    layout(sc, 3000);
+    view.setItems([item('user', { parts: [text('hi')] })]);
+    sc.scrollTop = 0;
+    sc.dispatchEvent(new Event('scroll'));
+    view.applyUpdates([tool('running'), tool('ok', 'Read'), item('assistant', { parts: [text('one')] }), item('subagent', { subagent: { agent_id: 'b', description: 'x', status: 'running' } })]);
+    const jump = $('.tx-jump') as HTMLButtonElement;
+    expect(jump.textContent).toBe('2 new · jump to latest');
+    // Shown again, they count.
+    prefs.hideTools = false;
+    view.applyUpdates([tool('ok')]);
+    expect(jump.textContent).toBe('3 new · jump to latest');
+  });
+
+  it('while hidden, the strip shows a running tool call, and a failed one until you look', () => {
+    const prefs = new ViewPrefs(null);
+    withPrefs(prefs);
+    const busy = $('.tx-busy') as HTMLButtonElement;
+    view.setItems([item('user', { parts: [text('hi')] }), { id: 't1', seq: 50, ts: Date.now() - 12_000, kind: 'tool', tool: { name: 'Bash', input_summary: 'make', status: 'running' } }]);
+    expect(busy.hidden).toBe(true); // tool calls shown: their own rows say it
+    prefs.hideTools = true;
+    expect(busy.hidden).toBe(false);
+    expect(busy.dataset.state).toBe('running');
+    expect(busy.textContent).toMatch(/^Bash · 1[12]s$/);
+    // It fails: red, named, until clicked.
+    view.applyUpdates([{ id: 't1', seq: 50, ts: Date.now() - 12_000, kind: 'tool', tool: { name: 'Bash', input_summary: 'make', status: 'error', output_text: 'boom' } }]);
+    expect(busy.dataset.state).toBe('failed');
+    expect(busy.textContent).toBe('Bash failed');
+    busy.click();
+    expect(busy.hidden).toBe(true);
+    // Its row shows (the rest stay hidden) until tool calls are shown or hidden again.
+    expect(row('t1').classList.contains('tx-reveal')).toBe(true);
+    view.applyUpdates([{ id: 't2', seq: 51, ts: Date.now(), kind: 'tool', tool: { name: 'Edit', input_summary: 'a.ts', status: 'error' } }, { id: 't3', seq: 52, ts: Date.now(), kind: 'tool', tool: { name: 'Read', input_summary: 'b.ts', status: 'error' } }]);
+    expect(busy.textContent).toBe('2 tool calls failed');
+    expect(row('t1').classList.contains('tx-reveal')).toBe(true);
+    expect(row('t2').classList.contains('tx-reveal')).toBe(false);
+    prefs.hideTools = false;
+    expect(busy.hidden).toBe(true);
+    expect($$('.tx-reveal')).toHaveLength(0);
+  });
+
+  it('the preset is a radio group: one checked, ← → pick, the timeline keys stay out', () => {
+    const prefs = new ViewPrefs(null);
+    withPrefs(prefs);
+    const group = $('[role="radiogroup"]') as HTMLElement;
+    expect(group.getAttribute('aria-label')).toBe('Transcript theme');
+    const radios = $$<HTMLButtonElement>('[role="radio"]');
+    expect(radios.map((r) => r.getAttribute('aria-label'))).toEqual(['Terminal', 'Quiet', 'Paper']);
+    expect(radios.map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'true', 'false']);
+    expect(radios.map((r) => r.tabIndex)).toEqual([-1, 0, -1]);
+    expect(($('.tx') as HTMLElement).dataset.theme).toBe('quiet');
+    const sc = $('.tx-scroll') as HTMLElement;
+    layout(sc, 3000);
+    sc.scrollTop = 500;
+    sc.dispatchEvent(new Event('scroll'));
+    let reached = 0;
+    const count = () => reached++;
+    document.addEventListener('keydown', count);
+    radios[1]!.focus();
+    radios[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    expect(prefs.theme).toBe('paper');
+    expect(document.activeElement).toBe(radios[2]);
+    radios[2]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    expect(prefs.theme).toBe('terminal');
+    radios[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    expect(prefs.theme).toBe('quiet');
+    expect(sc.scrollTop).toBe(500); // ↓ on the radios is theirs, not the timeline's
+    expect(reached).toBe(0); // nor the game's
+    // Esc still reaches the seat (stands you up), a click picks.
+    radios[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(reached).toBe(1);
+    document.removeEventListener('keydown', count);
+    radios[2]!.click();
+    expect(prefs.theme).toBe('paper');
+    expect(($('.tx') as HTMLElement).dataset.theme).toBe('paper');
+    expect(radios[2]!.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('A− / 100% / A+ step the zoom by 10 within 70–200 and show it; the middle one resets', () => {
+    const prefs = new ViewPrefs(null);
+    withPrefs(prefs);
+    const [out, level, inc] = $$<HTMLButtonElement>('.tx-zoom-btn');
+    expect(level!.textContent).toBe('100%');
+    inc!.click();
+    inc!.click();
+    expect(prefs.zoom).toBe(120);
+    expect(level!.textContent).toBe('120%');
+    expect(level!.getAttribute('aria-label')).toBe('Text size 120%, back to 100%');
+    level!.click();
+    expect(prefs.zoom).toBe(100);
+    for (let i = 0; i < 10; i++) out!.click();
+    expect(prefs.zoom).toBe(70);
+    expect(out!.disabled).toBe(true);
+    for (let i = 0; i < 20; i++) inc!.click();
+    expect(prefs.zoom).toBe(200);
+    expect(inc!.disabled).toBe(true);
+    expect(level!.textContent).toBe('200%');
+  });
+
+  it('the zoom keys pass through the prompt box to the seat', () => {
+    mount();
+    const input = $('.tx-input') as HTMLTextAreaElement;
+    let reached = 0;
+    const count = () => reached++;
+    document.addEventListener('keydown', count);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: '=', ctrlKey: true, bubbles: true, cancelable: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true }));
+    document.removeEventListener('keydown', count);
+    expect(reached).toBe(1);
   });
 });

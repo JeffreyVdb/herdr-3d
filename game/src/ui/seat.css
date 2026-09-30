@@ -35,7 +35,7 @@
   padding: 3px 9px 2px;
   font-size: 12px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 0.6, 'MONO' 1;
+  font-family: var(--font-mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink);
@@ -102,7 +102,7 @@
   border: 1px solid rgb(255 255 255 / 22%);
   border-bottom-width: 2px;
   font: 700 11px/1 var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
 }
 .seat-keys {
   grid-area: keys;
@@ -150,7 +150,7 @@
   border: 1px solid rgb(255 255 255 / 22%);
   border-bottom-width: 2px;
   font: 700 11px/1 var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
 }
 .seat-mode-opts {
   display: inline-flex;
@@ -238,7 +238,7 @@
   padding: 2px 8px 1px;
   font-size: 10.5px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 0.6, 'MONO' 1;
+  font-family: var(--font-mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #fff;

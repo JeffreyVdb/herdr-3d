@@ -6,6 +6,9 @@ import { AskCard, askItem, type AskResult } from './askCard';
 import type { ImageFeed } from './imageFeed';
 import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, Thumbs } from './transcriptImages';
 import { h, icon } from '../ui/dom';
+import { ViewPrefs, type ViewPref } from '../ui/themePrefs';
+import { THEMES, ZOOM, stepZoom, type ThemeId } from '../ui/themes';
+import { zoomKey } from './keys';
 
 /**
  * M16: a worker's conversation as DOM, drawn over the laptop screen while you sit there (the seated view's
@@ -28,6 +31,8 @@ export interface TranscriptRenderHost {
   onAnswerAsk(args: CommandArgs['worker.answer_ask']): Promise<AskResult>;
   onSwitchToTerminal(): void;
   loadSubagent(agentId: string): Promise<TranscriptItem[]>;
+  /** #59: the preset, hidden tool calls and the zoom, shared by every view (none: this view's own, kept nowhere). */
+  prefs?: ViewPrefs;
 }
 
 export interface BlockedQuestion {
@@ -398,6 +403,8 @@ function renderDiff(diff: TranscriptDiff): HTMLElement {
 /** Shown only with "show system": what the bridge marks hidden (dropped lines, as notices) and unknown entries. A notice
  * it does not hide (an interrupt, a turn's error, command output) is part of the conversation. */
 const isSystem = (it: TranscriptItem) => it.hidden === true || it.kind === 'unknown';
+/** #59: what "Hide tool calls" hides: tool rows (not subagents, not an agent's question, which is part of the conversation). */
+export const isToolRow = (it: TranscriptItem) => it.kind === 'tool' && !!it.tool && !(it.tool.ask && typeof it.tool.ask === 'object' && Array.isArray(it.tool.ask.questions));
 const EXCERPT_LINES = 4;
 const PROMPT_HINT = 'Message the agent…  (Enter sends, Shift+Enter for a new line)';
 const MAX_INPUT_JSON = 4000;
@@ -433,6 +440,11 @@ class Timeline {
     let n = 0;
     for (const it of this.items.values()) if (isSystem(it)) n++;
     return n;
+  }
+
+  /** #59: the tool rows (what "Hide tool calls" hides) that show otherwise (system ones only with "show system"). */
+  tools(showSystem: boolean): TranscriptItem[] {
+    return [...this.items.values()].filter((it) => isToolRow(it) && (showSystem || !isSystem(it))).sort(bySeq);
   }
 
   /** Replaces everything; returns the items that were not there before. */
@@ -563,6 +575,18 @@ class Transcript implements TranscriptView {
   private readonly banner: HTMLDivElement;
   private readonly jump: HTMLButtonElement;
   private readonly sysBtn: HTMLButtonElement;
+  /** #59: the view's prefs and its controls in the top strip: hide tool calls, the preset, the zoom. */
+  private readonly prefs: ViewPrefs;
+  private readonly unprefs: () => void;
+  private readonly toolsBox: HTMLInputElement;
+  private readonly toolsCount: HTMLSpanElement;
+  /** While tool calls are hidden: the one running now, or the ones that failed since. */
+  private readonly busy: HTMLButtonElement;
+  private readonly themeBtns: HTMLButtonElement[];
+  private readonly zoomBtns: { out: HTMLButtonElement; reset: HTMLButtonElement; in: HTMLButtonElement };
+  /** Tool calls that failed while hidden, not looked at yet; and hidden rows shown anyway (looked at from the chip). */
+  private readonly failedHidden = new Set<string>();
+  private readonly revealed = new Set<string>();
   private readonly countEl: HTMLSpanElement;
   private readonly titleEl: HTMLSpanElement;
   private readonly input: HTMLTextAreaElement;
@@ -616,8 +640,41 @@ class Transcript implements TranscriptView {
     });
     // The toggle sits on the left: the HUD's plan-limits widget can hang over the screen's top-right corner.
     this.titleEl = h('span', { class: 'tx-title' }, 'Transcript');
-    const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn);
-    this.root = h('div', { class: 'tx', 'data-system': 'hidden' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, form);
+    // #59: hide tool calls, the working chip, the preset and the zoom. The preset's swatch is drawn in its colours only:
+    // naming it in its own fonts would fetch them for every preset (they load when picked).
+    this.prefs = host.prefs ?? new ViewPrefs(null);
+    this.toolsBox = h('input', { type: 'checkbox', class: 'tx-check-box', onchange: () => (this.prefs.hideTools = this.toolsBox.checked) });
+    this.toolsCount = h('span', { class: 'tx-check-n' });
+    const tools = h('label', { class: 'tx-check', title: 'Hide tool calls (subagents and questions stay)' }, this.toolsBox, h('span', {}, 'Hide tools'), this.toolsCount);
+    this.busy = h('button', { class: 'tx-busy', hidden: true, onclick: () => this.showHiddenTools() });
+    this.themeBtns = THEMES.map((t) =>
+      h(
+        'button',
+        {
+          class: 'tx-theme',
+          role: 'radio',
+          'data-theme-id': t.id,
+          'aria-label': t.label,
+          title: `${t.label}: ${t.blurb}`,
+          style: `--sw-bg: ${t.palette.bg}; --sw-fg: ${t.palette.text}; --sw-ac: ${t.palette.blue}`,
+          onclick: () => this.pickTheme(t.id),
+        },
+        h('span', { class: 'tx-swatch', 'aria-hidden': 'true' }),
+        h('span', { class: 'tx-theme-name', 'aria-hidden': 'true' }, t.label),
+      ),
+    );
+    const picker = h('div', { class: 'tx-themes', role: 'radiogroup', 'aria-label': 'Transcript theme' }, ...this.themeBtns);
+    picker.addEventListener('keydown', (e) => this.onPickerKey(e));
+    this.zoomBtns = {
+      out: h('button', { class: 'tx-zoom-btn', 'aria-label': 'Smaller text', title: 'Smaller text (Ctrl −)', onclick: () => (this.prefs.zoom = stepZoom(this.prefs.zoom, -1)) }, 'A−'),
+      reset: h('button', { class: 'tx-zoom-btn tx-zoom-level', title: 'Back to 100% (Ctrl 0)', onclick: () => (this.prefs.zoom = ZOOM.reset) }),
+      in: h('button', { class: 'tx-zoom-btn', 'aria-label': 'Larger text', title: 'Larger text (Ctrl +)', onclick: () => (this.prefs.zoom = stepZoom(this.prefs.zoom, 1)) }, 'A+'),
+    };
+    const zoom = h('div', { class: 'tx-zoom', role: 'group', 'aria-label': 'Text size' }, this.zoomBtns.out, this.zoomBtns.reset, this.zoomBtns.in);
+    const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, this.busy, h('span', { class: 'tx-spacer' }), picker, zoom);
+    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, form);
+    this.unprefs = this.prefs.onChange((what) => this.applyPrefs(what));
+    this.applyPrefs(null);
     this.updateCounts();
 
     this.scroller.addEventListener('scroll', () => this.onScroll(), { passive: true });
@@ -648,6 +705,8 @@ class Transcript implements TranscriptView {
 
   applyUpdates(items: TranscriptItem[]): void {
     if (this.destroyed || !Array.isArray(items) || items.length === 0) return;
+    // #59: a tool call that fails while tool calls are hidden is not lost: the strip's chip says so until you look.
+    if (this.prefs.hideTools) for (const it of items) if (isItem(it) && isToolRow(it) && it.tool?.status === 'error' && (this.showSystem || !isSystem(it))) this.failedHidden.add(it.id);
     const added = this.timeline.apply(items);
     this.afterChange(added, false);
   }
@@ -705,6 +764,7 @@ class Transcript implements TranscriptView {
     this.ticker = null;
     this.resize?.disconnect();
     hlDone.delete(this.onHighlighted);
+    this.unprefs();
     this.thumbs.destroy();
     this.ask.destroy();
     this.root.remove();
@@ -729,6 +789,7 @@ class Transcript implements TranscriptView {
     row.dataset.id = it.id;
     row.dataset.kind = typeof it.kind === 'string' ? it.kind : 'unknown';
     if (isSystem(it)) row.classList.add('tx-sys');
+    if (isToolRow(it)) row.classList.add(this.revealed.has(it.id) ? 'tx-toolrow tx-reveal' : 'tx-toolrow');
     const t = clock(it.ts);
     if (t && !row.title) row.title = t;
     return row;
@@ -995,6 +1056,7 @@ class Transcript implements TranscriptView {
         return;
       }
       for (const s of spans) s.textContent = this.elapsed(Number(s.dataset.since));
+      this.renderBusy();
     }, 1000);
   }
 
@@ -1019,7 +1081,8 @@ class Transcript implements TranscriptView {
       this.stick(true);
       return;
     }
-    const seen = added.filter((it) => this.showSystem || !isSystem(it)).length;
+    // Only what shows counts as new: not system rows unless shown, not tool calls while they are hidden (#59).
+    const seen = added.filter((it) => (this.showSystem || !isSystem(it)) && !(this.prefs.hideTools && isToolRow(it))).length;
     if (seen) {
       this.fresh += seen;
       this.renderJump();
@@ -1051,6 +1114,101 @@ class Transcript implements TranscriptView {
     this.sysBtn.textContent = sys ? `Show system (${sys})` : 'Show system';
     if (this.showSystem) this.sysBtn.textContent = sys ? `Hide system (${sys})` : 'Hide system';
     this.empty.hidden = n > 0;
+    const tools = this.timeline.tools(this.showSystem).length;
+    this.toolsCount.textContent = tools ? String(tools) : '';
+    this.renderBusy();
+  }
+
+  // --- #59: hide tool calls, the preset, the zoom ---
+
+  private applyPrefs(what: ViewPref | null): void {
+    if (this.destroyed) return;
+    const p = this.prefs;
+    this.root.dataset.theme = p.theme;
+    for (const b of this.themeBtns) {
+      const on = b.dataset.themeId === p.theme;
+      b.setAttribute('aria-checked', String(on));
+      b.tabIndex = on ? 0 : -1;
+    }
+    const was = this.root.dataset.tools === 'hidden';
+    this.toolsBox.checked = p.hideTools;
+    this.root.dataset.tools = p.hideTools ? 'hidden' : 'shown';
+    if (was !== p.hideTools) {
+      this.failedHidden.clear();
+      this.revealed.clear();
+      for (const r of this.root.querySelectorAll('.tx-reveal')) r.classList.remove('tx-reveal');
+    }
+    this.zoomBtns.reset.textContent = `${p.zoom}%`;
+    this.zoomBtns.reset.setAttribute('aria-label', `Text size ${p.zoom}%${p.zoom === ZOOM.reset ? '' : ', back to 100%'}`);
+    this.zoomBtns.out.disabled = p.zoom <= ZOOM.min;
+    this.zoomBtns.in.disabled = p.zoom >= ZOOM.max;
+    this.renderBusy();
+    // New sizes (a zoom, another preset's fonts) move the bottom: a view that followed it keeps following.
+    if (what === 'zoom' || what === 'theme' || what === 'hideTools') this.stick();
+  }
+
+  private pickTheme(id: ThemeId): void {
+    this.prefs.theme = id;
+  }
+
+  /** The preset's radio group: ← → (↑ ↓, Home, End) move and pick, as radios do; the timeline's keys stay out. */
+  private onPickerKey(e: KeyboardEvent): void {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const i = this.themeBtns.findIndex((b) => b.dataset.themeId === this.prefs.theme);
+    const n = this.themeBtns.length;
+    const to = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? (i + 1) % n : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? (i - 1 + n) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+    if (to < 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const b = this.themeBtns[to] as HTMLButtonElement;
+    this.pickTheme(b.dataset.themeId as ThemeId);
+    b.focus();
+  }
+
+  /**
+   * While tool calls are hidden the strip says what they do: the ones that failed since (red, until you look), else
+   * the one running now and for how long, so a quiet view does not look stuck.
+   */
+  private renderBusy(): void {
+    if (!this.prefs.hideTools) {
+      this.busy.hidden = true;
+      return;
+    }
+    const tools = this.timeline.tools(this.showSystem);
+    for (const id of this.failedHidden) if (!tools.some((t) => t.id === id && t.tool?.status === 'error')) this.failedHidden.delete(id);
+    const failed = this.failedHidden.size;
+    const running = tools.filter((t) => t.tool?.status === 'running' && !this.revealed.has(t.id));
+    const last = running.at(-1);
+    this.busy.dataset.state = failed ? 'failed' : 'running';
+    if (failed) {
+      const name = String(tools.find((t) => this.failedHidden.has(t.id))?.tool?.name ?? 'tool');
+      this.busy.textContent = failed === 1 ? `${name} failed` : `${failed} tool calls failed`;
+      this.busy.title = 'Show the failed tool calls';
+    } else if (last) {
+      const more = running.length > 1 ? ` +${running.length - 1}` : '';
+      this.busy.textContent = `${String(last.tool?.name ?? 'tool')}${more} · ${this.elapsed(last.ts) || 'running'}`;
+      this.busy.title = 'A hidden tool call is running: show it';
+    }
+    this.busy.hidden = !failed && !last;
+  }
+
+  /** The chip: shows the hidden rows it speaks of (the failed ones, else the running ones) and goes to the last. */
+  private showHiddenTools(): void {
+    const tools = this.timeline.tools(this.showSystem);
+    const ids = this.failedHidden.size ? [...this.failedHidden] : tools.filter((t) => t.tool?.status === 'running').map((t) => t.id);
+    this.failedHidden.clear();
+    let last: HTMLElement | undefined;
+    for (const id of ids) {
+      this.revealed.add(id);
+      const row = this.timeline.row(id);
+      row?.classList.add('tx-reveal');
+      last = row ?? last;
+    }
+    this.renderBusy();
+    if (last) {
+      const id = last.dataset.id;
+      if (id) this.scrollToItem(id);
+    }
   }
 
   private toggleSystem(): void {
@@ -1131,8 +1289,8 @@ class Transcript implements TranscriptView {
 
   private onInputKey(e: KeyboardEvent): void {
     // Esc is the shell's as everywhere in the seated view (a bare one stands you up, Ctrl/Cmd+Esc goes back to the
-    // terminal); every other key typed here is the prompt's.
-    if (e.key === 'Escape') return;
+    // terminal), and the text zoom (#59) works from here too; every other key typed here is the prompt's.
+    if (e.key === 'Escape' || zoomKey(e)) return;
     e.stopPropagation();
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();

@@ -195,7 +195,7 @@
   caret-color: var(--ink);
   font-size: 12.5px;
   line-height: 19px;
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   box-shadow: 0 2px 0 rgb(0 0 0 / 22%), 0 8px 18px rgb(0 0 0 / 28%);
 }
 .desk-dlg .dd-prompt::placeholder {
@@ -283,7 +283,7 @@
 }
 .pp-roles dd {
   margin: 0;
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   overflow-wrap: anywhere;
 }
 .pp-confirm {

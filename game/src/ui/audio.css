@@ -204,7 +204,7 @@
   text-align: right;
   color: var(--text-on-ink-2);
   font-weight: 700;
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 .audio-pop .audio-credits {

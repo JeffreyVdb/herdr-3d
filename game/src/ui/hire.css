@@ -105,7 +105,7 @@
 }
 .dd-plate--desk b {
   font: 800 22px/1 var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--text-on-ink);
 }
@@ -213,12 +213,12 @@
   border: 1px solid rgb(255 255 255 / 22%);
   border-bottom-width: 2px;
   font: 700 10.5px/1 var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   color: var(--text-on-ink);
 }
 .desk-dlg code {
   font-family: var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   font-size: 12.5px;
   overflow-wrap: anywhere;
 }
@@ -271,7 +271,7 @@
   border-radius: 3px;
   font-size: 12px;
   font-weight: 700;
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   letter-spacing: 0.02em;
   color: var(--text-on-ink-2);
   transition: background 140ms var(--ease), color 140ms var(--ease), transform 180ms var(--ease), border-color 140ms var(--ease);

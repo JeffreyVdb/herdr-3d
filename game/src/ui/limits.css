@@ -122,7 +122,7 @@
   background: rgb(255 255 255 / 8%);
 }
 .lm-tab-pct {
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
@@ -223,7 +223,7 @@
 .lm-plan {
   min-width: 7ch;
   color: var(--text-on-ink-2);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 .lm-wins {
@@ -239,13 +239,13 @@
 }
 .lm-lab {
   color: var(--text-on-ink-2);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 .lm-pct {
   min-width: 3ch;
   text-align: right;
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   font-weight: 700;
 }
 .lm-rs {
@@ -375,7 +375,7 @@
 }
 .lm-rowlab {
   color: var(--text-on-ink-2);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
@@ -394,7 +394,7 @@
 }
 .lm-meta b {
   color: var(--text-on-ink);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
 }
 .lm-problem {
   color: var(--sun);

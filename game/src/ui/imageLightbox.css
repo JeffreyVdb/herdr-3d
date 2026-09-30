@@ -108,7 +108,7 @@
   border-radius: 2px;
   font-size: 11px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 0.6, 'MONO' 1;
+  font-family: var(--font-mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink, #1c2540);
@@ -122,7 +122,7 @@
 .ilb-meta {
   color: rgb(238 242 251 / 72%);
   font-size: 12.5px;
-  font-variation-settings: 'MONO' 1;
+  font-family: var(--font-mono);
 }
 .ilb-tools {
   display: flex;
@@ -167,7 +167,7 @@
 }
 .ilb-fit {
   min-width: 58px;
-  font-variation-settings: 'MONO' 1;
+  font-family: var(--font-mono);
 }
 .ilb-close {
   width: 44px;
@@ -198,7 +198,7 @@
   text-align: center;
   color: rgb(238 242 251 / 72%);
   font-size: 12.5px;
-  font-variation-settings: 'MONO' 1;
+  font-family: var(--font-mono);
   pointer-events: none;
 }
 .ilb-status {
