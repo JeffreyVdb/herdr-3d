@@ -531,6 +531,18 @@ func TestAnswerAskReconcilesOther(t *testing.T) {
 	if want := []string{"down", "down", "ctrl+e", "ctrl+u", "text", "enter"}; !r.Resolved || !slices.Equal(r.Sent, want) {
 		t.Fatalf("result %+v, want sent %q", r, want)
 	}
+
+	// The cursor left on that row edits its text (a digit would be typed there, seen live): up first, then the digit.
+	reset()
+	playDialog(ab.termBridge, "w1:p1", "q", map[string]string{"q": typed, "c2": withCursor(typed, "❯", 2), "done": "● Tea it is.\n"},
+		map[string]map[string]string{"q": {"up": "c2"}, "c2": {"1": "done"}},
+		map[string]func(){"done": func() { appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 8)) }})
+	appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 7))
+	askOf(c, id, pendingID(single))
+	r = answerAsk(t, c, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: single, Answers: []proto.AskAnswerArg{{Question: 0, Choices: []int{1}}}})
+	if want := []string{"up", "1"}; !r.Resolved || !slices.Equal(r.Sent, want) {
+		t.Fatalf("result %+v, want sent %q", r, want)
+	}
 }
 
 // AC4: the last key is checked too: a dialog still showing its question
@@ -555,6 +567,20 @@ func TestAnswerAskChecksTheLastKey(t *testing.T) {
 	appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 5))
 	askOf(c, id, pendingID(two))
 	c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: two, Answers: []proto.AskAnswerArg{{Question: 0, Choices: []int{2}}, {Question: 1, Choices: []int{1}}}}, proto.ErrInputFailed)
+
+	// Codex's notes open (in the terminal): a digit would go into them, none pressed.
+	const other = "call_fLK98VtFQnWLvYRk0fcH9SZH"
+	codexLines := strings.SplitAfter(fixture(t, "codex", "ask.jsonl"), "\n")
+	appendLine(t, ab.codex, codexLines[4])
+	askOf(c, codex, pendingID(other))
+	ab.term.setScreen("w2:p1", readScreen(t, "codex-ask-other-notes"))
+	c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: codex, ToolUseID: other, Answers: []proto.AskAnswerArg{{Question: 0, Choices: []int{1}}}}, proto.ErrInputFailed)
+	for _, call := range ab.term.Calls() {
+		if strings.Contains(call, "w2:p1") {
+			t.Fatalf("pressed %q", call)
+		}
+	}
+	appendLine(t, ab.codex, codexLines[5]) // answered: the next ask is the three questions'
 
 	const three = "call_xQd1gbep11m9OuznwGJRfYFx"
 	playDialog(ab.termBridge, "w2:p1", "q1", map[string]string{"q1": readScreen(t, "codex-ask-multi-first"), "q2": readScreen(t, "codex-ask-multi-second"),

@@ -369,7 +369,9 @@ func (h *Hub) waitAskResolved(ctx context.Context, id, toolUseID string) (bool, 
 // that left it unticked, Tab to the Submit row, Enter. An Other row that
 // holds other text (typed in the terminal) is emptied first, ctrl+e then
 // ctrl+u; on a single-select question the arrows take the cursor there, as
-// its digit would submit that text. With tabs (several questions, or a
+// its digit would submit that text. The cursor left on that row (in the
+// terminal) edits its text, where a digit is typed (seen live): the arrows
+// take it off first. With tabs (several questions, or a
 // multi-select one) the review comes last: Enter on "Submit answers". After
 // the last key the dialog must be gone.
 func (d *askDriver) claude(ask *proto.Ask, answers []askAnswer) error {
@@ -390,9 +392,18 @@ func (d *askDriver) claude(ask *proto.Ask, answers []askAnswer) error {
 			return err
 		}
 		other := len(q.Options) + 1 // the "Type something" row
+		// The cursor on it (left there in the terminal) edits its text: a digit would be typed, not pressed.
+		typing := dlg.cursor() == other
+		if typing && (ans.other == nil || q.Multi) {
+			if err := d.claudeMoveTo(on, &dlg, other-1); err != nil {
+				return err
+			}
+		}
 		switch {
 		case !q.Multi && ans.other != nil:
-			if r, _ := dlg.row(other); isTypeRow(r.label) {
+			if typing {
+				// focused already
+			} else if r, _ := dlg.row(other); isTypeRow(r.label) {
 				if err := d.press(digit(other)); err != nil {
 					return err
 				}
@@ -631,6 +642,9 @@ func (d *askDriver) codex(ask *proto.Ask, answers []askAnswer) error {
 			return err
 		}
 		if ans.other == nil {
+			if dlg.notes { // opened in the terminal: a digit would go into them
+				return fmt.Errorf("%w: question %d has its notes open (no keys pressed for it); look at the terminal", errInputFailed, i+1)
+			}
 			if err := d.press(digit(ans.choices[0])); err != nil {
 				return err
 			}

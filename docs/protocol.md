@@ -1720,7 +1720,9 @@ answering (by its text, however it wraps), the cursor, the ticks, the typed text
 | Codex | per question, in order: its option's digit (the last one submits them all); `other`: arrows to "None of the above", Enter (its notes open), the text, Enter (a digit on "None of the above" would submit it without the text) |
 | Codex, `cancel` | Esc (Codex interrupts the turn) |
 
-The dialog is the ask's when it shows one of its questions (its text) with its options (each option row shown has
+The cursor left (in the terminal) on a Claude question's "Type something" row edits its text, where a digit is
+typed (seen live): the arrows take it off before any digit. Codex notes left open take no digit: `input_failed`, nothing
+pressed. The dialog is the ask's when it shows one of its questions (its text) with its options (each option row shown has
 that option's label), or (Claude) its review with a tab per question header. After the last key (the one question's,
 the review's Enter, Codex's last question's) the dialog must be gone within the step timeout (3 s). A dialog that is
 not where it should be (another dialog, a question already answered in the terminal, a step that did not show, the
