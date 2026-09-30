@@ -24,6 +24,7 @@ import { chips, type HireHost } from './hire';
 import { failureText } from './messages';
 // M10 limits
 import { planLimits } from './limits';
+import { backdropPolicy } from './dismiss';
 
 /**
  * The start-run dialog (M6): the "Hire orchestrator" tab of the hire dialog
@@ -140,9 +141,8 @@ export class StartRunDialog {
     this.dialog.addEventListener('cancel', () => {
       if (this.state === 'starting') this.host.toast('The run is still starting; its orchestrator shows up at the desk when it is hired.', 'info');
     });
-    this.dialog.addEventListener('click', (e) => {
-      if (e.target === this.dialog) this.close();
-    });
+    // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
+    backdropPolicy(this.dialog, 'none');
     // Ctrl+Enter (⌘+Enter) starts from anywhere in the dialog; plain Enter never does.
     this.dialog.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) {

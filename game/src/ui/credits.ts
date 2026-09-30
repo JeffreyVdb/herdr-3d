@@ -1,5 +1,6 @@
 import { CHANGES, GENRES, LICENSE_NAME, MANIFEST, type MusicRow } from '../audio/tracks';
 import './credits.css';
+import { backdropPolicy } from './dismiss';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -98,10 +99,8 @@ export class MusicCredits {
       this.opener?.focus();
       this.opener = null;
     });
-    // A click on the backdrop closes it, like a sheet.
-    this.dialog.addEventListener('click', (e) => {
-      if (e.target === this.dialog) this.close();
-    });
+    // A read-only sheet: the backdrop closes it only when the press and the click both began there (#51).
+    backdropPolicy(this.dialog, 'sheet', () => this.close());
     parent.append(this.dialog);
   }
 

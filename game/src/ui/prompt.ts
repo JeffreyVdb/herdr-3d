@@ -4,6 +4,7 @@ import { promptBlocker, promptTextError, willQueue } from '../world/prompt';
 import { h, icon, ICON } from './dom';
 import type { DialogHost } from './hire';
 import { failureText } from './messages';
+import { backdropPolicy } from './dismiss';
 
 /**
  * P, the prompt overlay (M5): look at a worker, press P, write, Enter. It
@@ -127,9 +128,8 @@ export class PromptOverlay {
     this.dialog.addEventListener('close', () => {
       if (!this.dialog.open) letGo();
     });
-    this.dialog.addEventListener('click', (e) => {
-      if (e.target === this.dialog) this.close();
-    });
+    // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
+    backdropPolicy(this.dialog, 'none');
     parent.append(this.dialog);
   }
 

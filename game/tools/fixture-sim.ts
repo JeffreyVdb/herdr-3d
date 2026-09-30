@@ -48,6 +48,8 @@ export interface SimOptions {
   crewMs?: number;
   /** M10: which readings the plan limits show (tools/fixture-limits.ts; default `ok`). */
   limits?: string;
+  /** #51: this many extra Claude models (`claude-lab-01`…) on top of the three, to see a long model list (`simmodels=<n>`). */
+  models?: number;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -133,8 +135,10 @@ export class SimWorld {
     for (const b of w.buildings) this.buildings.set(b.id, { id: b.id, name: b.name, sort: b.sort });
     for (const f of w.floors) this.floors.set(f.session, f);
     this.workers = w.workers;
-    this.hire = w.hire_options ?? SIM_HIRE_OPTIONS;
-    this.hireSent = w.hire_options !== undefined;
+    const base = structuredClone(w.hire_options ?? SIM_HIRE_OPTIONS);
+    if (o.models && base.claude) base.claude.models.push(...Array.from({ length: o.models }, (_, i) => `claude-lab-${String(i + 1).padStart(2, '0')}`));
+    this.hire = base;
+    this.hireSent = w.hire_options !== undefined || !!o.models;
     this.stepMs = o.stepMs ?? 600;
     this.originDown = o.fail === 'fetch_failed';
     this.fail = this.originDown ? undefined : o.fail;

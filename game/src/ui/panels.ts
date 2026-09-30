@@ -7,6 +7,7 @@ import { h, icon, ICON, replaceKeepingFocus, type Child } from './dom';
 import { LOGO_ACCEPT, precheckLogo } from '../net/logo';
 import { logoHashOf } from '../net/protocol';
 import { failureText } from './messages';
+import { backdropPolicy } from './dismiss';
 
 /**
  * The M3 panels over the HUD: the elevator (a building's floors, travel,
@@ -136,10 +137,8 @@ export class Panels {
       this.settingsForm = null;
       this.list = null;
     });
-    // A click on the backdrop closes the panel (like the sheet).
-    this.dialog.addEventListener('click', (e) => {
-      if (e.target === this.dialog) this.close();
-    });
+    // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
+    backdropPolicy(this.dialog, 'none');
     // Esc: `cancel` fires at once (the queued `close` could reach a newer confirmation).
     this.confirmEl.addEventListener('cancel', () => this.endConfirm(false));
     parent.append(this.dialog, this.confirmEl);

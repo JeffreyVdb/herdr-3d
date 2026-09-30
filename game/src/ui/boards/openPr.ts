@@ -3,6 +3,7 @@ import { h, icon, ICON } from '../dom';
 import type { DialogHost } from '../hire';
 import { failureText } from '../messages';
 import './boards.css';
+import { backdropPolicy } from '../dismiss';
 
 /**
  * M7: "Open PR" for a plain worker (from its Changes panel): `worker.open_pr.prepare` says what would be pushed and
@@ -75,9 +76,8 @@ export class OpenPrDialog {
       this.returnTo = null;
       if (back?.isConnected) back.focus();
     });
-    this.dialog.addEventListener('click', (e) => {
-      if (e.target === this.dialog) this.close();
-    });
+    // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
+    backdropPolicy(this.dialog, 'none');
     this.form.addEventListener('submit', (e) => e.preventDefault());
     this.titleInput.addEventListener('input', () => {
       this.title = this.titleInput.value;

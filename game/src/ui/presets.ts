@@ -7,6 +7,7 @@ import { presetBlocker, presetLines, presetPatch, type PresetDraft } from '../wo
 import type { WorldStore } from '../world/store';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
 import { failureText } from './messages';
+import { backdropPolicy } from './dismiss';
 
 /**
  * Team presets (M6): list, create, edit (name and the five roles ×
@@ -82,9 +83,8 @@ export class PresetsPanel {
       const twin = back.isConnected ? back : back.dataset.key ? this.returnScope?.querySelector<HTMLElement>(`[data-key="${CSS.escape(back.dataset.key)}"]`) : null;
       twin?.focus();
     });
-    this.dialog.addEventListener('click', (e) => {
-      if (e.target === this.dialog) this.close();
-    });
+    // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
+    backdropPolicy(this.dialog, 'none');
     this.body.addEventListener('submit', (e) => {
       e.preventDefault();
       if (this.view.kind === 'edit') void this.save();
