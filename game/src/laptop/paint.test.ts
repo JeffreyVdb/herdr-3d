@@ -220,6 +220,24 @@ describe('paintBuffer with the presets (#59)', () => {
     expect(contrast(rgb(g.texts.find((x) => x.text === 'd')!.style), SCREEN_THEME.bg)).toBeLessThan(3);
     t.dispose();
   });
+  it('keeps concealed text (SGR 8) invisible in every preset, on a cell background too, and in the glance view', async () => {
+    const t = new Terminal({ cols: 30, rows: 3, scrollback: 0 });
+    await write(t, 'a\x1b[8mSECRET\x1b[0mb\r\n\x1b[44;8mHIDDEN\x1b[0m\r\n\x1b[4;9;8mXY\x1b[0m');
+    for (const preset of THEMES) {
+      for (const glance of [false, true]) {
+        const f = fakeCtx();
+        paintBuffer(f.g, t.buffer.active, { cols: 30, rows: 3, width: 300, height: 60, cursor: false, glance, theme: screenTheme(preset.screen) });
+        const drawn = f.texts.map((x) => x.text).join('');
+        expect(drawn).toContain('a');
+        expect(drawn).toContain('b');
+        expect(drawn).not.toMatch(/[SECRTHIDNXY]/);
+        // The blue cell background still shows; no underline or strike marks the concealed cells.
+        if (!glance) expect(f.rects.some((r) => r.style === css(screenTheme(preset.screen).ansi[4] as number))).toBe(true);
+        expect(f.rects.filter((r) => r.h < 3 && r.style !== css(screenTheme(preset.screen).ansi[4] as number)).length).toBe(0);
+      }
+    }
+    t.dispose();
+  });
 });
 
 describe('viewport (#59 zoom)', () => {

@@ -210,6 +210,8 @@ const ITALIC = 2;
 const UNDERLINE = 4;
 const STRIKE = 8;
 const OVERLINE = 16;
+/** SGR 8: the cell's background only, whatever the contrast floor would make of its text. */
+const CONCEAL = 32;
 
 function styleOf(c: IBufferCell, t: ScreenTheme, out: Style): void {
   let fg = c.isFgRGB() ? c.getFgColor() : c.isFgPalette() ? paletteColor(c.getFgColor(), t) : t.fg;
@@ -217,9 +219,13 @@ function styleOf(c: IBufferCell, t: ScreenTheme, out: Style): void {
   if (c.isInverse()) [fg, bg] = [bg, fg];
   // Bold keeps its colour (no bright shift); dim halves towards the background.
   if (c.isDim()) fg = mix(fg, bg);
-  if (c.isInvisible()) fg = bg;
   out.fg = fg;
   out.bg = bg;
+  if (c.isInvisible()) {
+    out.fg = bg;
+    out.flags = CONCEAL;
+    return;
+  }
   out.flags = (c.isBold() ? BOLD : 0) | (c.isItalic() ? ITALIC : 0) | (c.isUnderline() ? UNDERLINE : 0) | (c.isStrikethrough() ? STRIKE : 0) | (c.isOverline() ? OVERLINE : 0);
 }
 
@@ -296,7 +302,7 @@ function cellRows(buf: IBuffer, rows: number, cols: number, cell: IBufferCell | 
     const cells: string[] = [];
     for (let x = 0; x < cols; x++) {
       c = line?.getCell(x, c);
-      cells.push(!c ? ' ' : c.getWidth() === 0 ? '' : c.getChars() || ' ');
+      cells.push(!c ? ' ' : c.getWidth() === 0 ? '' : c.isInvisible() ? ' ' : c.getChars() || ' ');
     }
     out.push(cells);
   }
@@ -376,6 +382,8 @@ export function paintBuffer(g: Paint2D, buf: IBuffer, o: PaintOptions, cell: IBu
           x++;
         }
       }
+      // Concealed: nothing drawn but the background (#59: the contrast floor below would otherwise lift it into view).
+      if (flags & CONCEAL) glyphs.length = 0;
       const px = x0 + (start - c0) * cw;
       const wpx = (Math.min(x, c1) - start) * cw;
       const isCursor = cur.show && cur.y === y && cur.x === start;
