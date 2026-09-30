@@ -5,6 +5,8 @@ import { duration, loadHighlighter, mountTranscript, parseHunk, stripAnsi, type 
 
 interface FakeHost extends TranscriptRenderHost {
   prompts: string[];
+  /** What the next prompts resolve to (false: refused). */
+  sendOk: boolean;
   answers: Array<[string, number | null, boolean | undefined]>;
   terminal: number;
   loads: string[];
@@ -13,10 +15,14 @@ interface FakeHost extends TranscriptRenderHost {
 function fakeHost(load: (id: string) => Promise<TranscriptItem[]> = async () => []): FakeHost {
   const host: FakeHost = {
     prompts: [],
+    sendOk: true,
     answers: [],
     terminal: 0,
     loads: [],
-    onPromptSubmit: (t) => host.prompts.push(t),
+    onPromptSubmit: (t) => {
+      host.prompts.push(t);
+      return Promise.resolve(host.sendOk);
+    },
     onAnswer: (hash, n, cancel) => host.answers.push([hash, n, cancel]),
     onSwitchToTerminal: () => host.terminal++,
     loadSubagent: (id) => {
@@ -273,7 +279,8 @@ describe('rows per kind', () => {
     ]);
     expect(row('i4').classList.contains('tx-sys')).toBe(false);
     expect(row('i4').textContent).toContain('Interrupted by user');
-    expect(row('i1').getAttribute('role')).toBe('separator');
+    expect(row('i1').getAttribute('role')).toBeNull();
+    expect(row('i1').querySelector('[role="separator"]')).not.toBeNull();
     expect(row('i1').classList.contains('tx-sys')).toBe(false);
     expect(row('i2').classList.contains('tx-sys')).toBe(true);
     expect(row('i3').classList.contains('tx-sys')).toBe(true);
@@ -438,6 +445,43 @@ describe('keys inside the view', () => {
     }
   });
 
+  it('focus() puts the keyboard on the timeline: scroll keys work at once', () => {
+    mount();
+    const outer = document.createElement('button');
+    document.body.append(outer);
+    outer.focus();
+    const sc = $('.tx-scroll') as HTMLElement;
+    layout(sc, 2000);
+    view.focus();
+    expect(document.activeElement).toBe(sc);
+    const e = new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true });
+    (document.activeElement as HTMLElement).dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+    expect(sc.scrollTop).toBe(1600);
+    outer.remove();
+  });
+
+  it('a refused prompt comes back in the box (unless something new was typed)', async () => {
+    mount();
+    const ta = $('textarea') as HTMLTextAreaElement;
+    host.sendOk = false;
+    ta.value = 'keep me';
+    press(ta, 'Enter');
+    expect(ta.value).toBe('');
+    await flush();
+    expect(ta.value).toBe('keep me');
+    ta.value = 'lost?';
+    press(ta, 'Enter');
+    ta.value = 'newer';
+    await flush();
+    expect(ta.value).toBe('newer');
+    host.sendOk = true;
+    press(ta, 'Enter');
+    await flush();
+    expect(ta.value).toBe('');
+    expect(host.prompts).toEqual(['keep me', 'lost?', 'newer']);
+  });
+
   it('the prompt: focusPrompt, Enter submits, Shift+Enter does not, keys do not reach the game', () => {
     mount();
     const seen: string[] = [];
@@ -457,11 +501,10 @@ describe('keys inside the view', () => {
       expect(host.prompts).toEqual(['run the tests']);
       expect(ta.value).toBe('');
       expect(seen).toEqual([]);
+      // Esc is the game's even in the prompt box: Ctrl+Esc back to the terminal, a bare one stands you up.
       press(ta, 'Escape', { ctrlKey: true });
-      expect(seen).toEqual(['Escape']);
       press(ta, 'Escape');
-      expect(document.activeElement).not.toBe(ta);
-      expect(seen).toEqual(['Escape']);
+      expect(seen).toEqual(['Escape', 'Escape']);
       // The Send button too.
       ta.value = 'again';
       ($('.tx-send') as HTMLButtonElement).click();
@@ -513,6 +556,27 @@ describe('blocked banner', () => {
     view.setBlocked(null);
     expect(banner.hidden).toBe(true);
     expect(banner.childElementCount).toBe(0);
+  });
+
+  it('while blocked the prompt is off (the bridge refuses it), its draft kept; it comes back after', () => {
+    mount();
+    const ta = $('textarea') as HTMLTextAreaElement;
+    const send = $('.tx-send') as HTMLButtonElement;
+    ta.value = 'draft';
+    view.setBlocked(Q);
+    expect(ta.disabled).toBe(true);
+    expect(send.disabled).toBe(true);
+    expect(ta.placeholder).toMatch(/question above/);
+    send.click();
+    view.focusPrompt();
+    expect(host.prompts).toEqual([]);
+    expect(document.activeElement).not.toBe(ta);
+    expect(ta.value).toBe('draft');
+    view.setBlocked(null);
+    expect(ta.disabled).toBe(false);
+    expect(send.disabled).toBe(false);
+    send.click();
+    expect(host.prompts).toEqual(['draft']);
   });
 
   it('an empty question reads "Waiting for input" and still offers the terminal', () => {

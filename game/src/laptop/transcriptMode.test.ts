@@ -36,6 +36,10 @@ class FakeView {
   setBlocked(q: Question | null): void {
     this.calls.push(`blocked ${q?.hash ?? 'null'}`);
   }
+  focused = 0;
+  focus(): void {
+    this.focused++;
+  }
   focusPrompt(): void {
     this.calls.push('prompt');
   }
@@ -114,7 +118,9 @@ describe('TranscriptMode', () => {
     await flush();
     expect(h.views).toHaveLength(1);
     expect(h.views[0]?.calls).toEqual(['set x1,x2,x3']);
-    expect(h.layer[0]?.focused).toBe(1);
+    // The keyboard goes to the view's timeline (its scroll keys), not just the overlay around it.
+    expect(h.views[0]?.focused).toBe(1);
+    expect(h.layer[0]?.focused).toBe(0);
     // Live: new items and updates go through applyUpdates, both upserted by id.
     h.tx.push('a', [item('x4', 4)], [item('x3', 3, { kind: 'tool' })]);
     expect(h.views[0]?.calls.at(-1)).toBe('apply x4,x3');
@@ -167,8 +173,8 @@ describe('TranscriptMode', () => {
     h.tx.toggle();
     await flush();
     const host = (h.views[0] as FakeView).host;
-    host.onPromptSubmit('fix the test');
-    host.onPromptSubmit('   ');
+    const sentOk = host.onPromptSubmit('fix the test');
+    await expect(host.onPromptSubmit('   ')).resolves.toBe(false);
     host.onAnswer('h1', 2);
     host.onAnswer('h1', null, true);
     host.onAnswer('h1', null);
@@ -185,6 +191,7 @@ describe('TranscriptMode', () => {
     h.sent[3]?.resolve({ ok: true, data: { items: [item('s1'), item('s2', 2)], cursor: 'c:1', has_more: false } });
     expect((await sub).map((i) => i.id)).toEqual(['s1', 's2']);
     await flush();
+    await expect(sentOk).resolves.toBe(true);
     expect(h.status[0]).toEqual(['ok', 'Sent to Ada']);
     expect(h.status[1]?.[0]).toBe('error');
     host.onSwitchToTerminal();

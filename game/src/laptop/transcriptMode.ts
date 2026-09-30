@@ -207,14 +207,19 @@ export class TranscriptMode {
     const live = () => this.s === s;
     return {
       onPromptSubmit: (text) => {
-        if (!live()) return;
+        if (!live()) return Promise.resolve(false);
         const t = text.replace(/\u0000/g, '');
-        if (!t.trim()) return;
-        if (bytes(t) > MAX_PROMPT) return this.host.status('error', 'That prompt is over 16 KiB: send less at a time.');
-        void this.host.send('worker.prompt', { id: s.id, text: t }).then((r) => {
-          if (!live()) return;
+        if (!t.trim()) return Promise.resolve(false);
+        if (bytes(t) > MAX_PROMPT) {
+          this.host.status('error', 'That prompt is over 16 KiB: send less at a time.');
+          return Promise.resolve(false);
+        }
+        // Resolves whether it went: a refused prompt goes back in the box.
+        return this.host.send('worker.prompt', { id: s.id, text: t }).then((r) => {
+          if (!live()) return r.ok;
           if (r.ok) this.host.status('ok', `Sent to ${s.name}`);
           else this.host.status('error', failureText('worker.prompt', r.code, r.message, { worker: s.name }));
+          return r.ok;
         });
       },
       onAnswer: (hash, choice, cancel) => {
@@ -238,10 +243,13 @@ export class TranscriptMode {
     };
   }
 
-  /** Focus to the transcript (its keys: scrolling, the prompt box). */
+  /** Focus to the transcript: its timeline once the view is up (so its scroll keys work at once), else the overlay. */
   focus(): void {
-    const b = this.s?.box;
-    if (b && !b.hidden && typeof b.focus === 'function') b.focus({ preventScroll: true });
+    const s = this.s;
+    const b = s?.box;
+    if (!s || !b || b.hidden) return;
+    if (s.view) s.view.focus();
+    else if (typeof b.focus === 'function') b.focus({ preventScroll: true });
   }
 
   /** Enter in transcript mode: to the prompt box. */

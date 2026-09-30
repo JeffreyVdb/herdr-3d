@@ -642,17 +642,19 @@
 
 /* Compaction, notices, unknown */
 .tx-compaction {
+  margin: 6px 0;
+}
+.tx-compaction-rule {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 6px 0;
   color: var(--tx-text-3);
   font-size: 11px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
-.tx-compaction::before,
-.tx-compaction::after {
+.tx-compaction-rule::before,
+.tx-compaction-rule::after {
   content: '';
   flex: 1;
   border-top: 1px dashed rgb(255 255 255 / 18%);
@@ -733,6 +735,14 @@
 .tx-input:focus {
   outline: none;
   border-color: var(--tx-blue);
+}
+.tx-input:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.tx-send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .tx-send {
   flex: none;

@@ -55,6 +55,25 @@ test('Ctrl+Esc at a seated laptop: the conversation over the monitor, fed by tra
   await expect.poll(() => termFps(page, worker)).toBe(1);
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.screens())).find((s) => s.id === worker)?.state).toBe('frozen');
 
+  // Right after Ctrl+Esc, with nothing clicked, the scroll keys work (the keyboard is on the timeline) and nothing
+  // reaches the pane.
+  const sentKeys = async () => (await sent(page)).filter((c) => c.t === 'worker.keys').length;
+  const keysBefore = await sentKeys();
+  const scroller = tx.locator('.tx-scroll');
+  const scrollTop = () => scroller.evaluate((e) => e.scrollTop);
+  await expect(tx.locator('.tx-user')).toBeVisible();
+  await expect(scroller).toBeFocused();
+  const bottom = await scrollTop();
+  expect(bottom).toBeGreaterThan(0); // it follows: at the bottom
+  await page.keyboard.press('Home');
+  expect(await scrollTop()).toBe(0);
+  await page.keyboard.press('j');
+  expect(await scrollTop()).toBeGreaterThan(0);
+  await page.keyboard.press('PageDown');
+  await page.keyboard.press('End');
+  expect(await scrollTop()).toBeGreaterThanOrEqual(bottom - 2);
+  expect(await sentKeys()).toBe(keysBefore);
+
   // The overlay sits between the top bar and the seat bar, over the laptop the camera looks at.
   const box = (await txState(page)).box as NonNullable<Tx['box']>;
   const seatTop = await page.locator('.seat').evaluate((e) => e.getBoundingClientRect().top);
@@ -136,39 +155,46 @@ test('Ctrl+Esc at a seated laptop: the conversation over the monitor, fed by tra
   await expect(tx.locator('[data-id="toolu_demo_bash2"]')).toHaveAttribute('data-status', 'ok');
   await expect(tx.locator('[data-id="toolu_demo_bash2"]')).toHaveCount(1);
 
-  // Keys stay in the view: they scroll it and nothing reaches the pane.
-  const sentKeys = async () => (await sent(page)).filter((c) => c.t === 'worker.keys').length;
-  const keysBefore = await sentKeys();
-  await tx.locator('.tx-scroll').focus();
-  const scrollTop = () => tx.locator('.tx-scroll').evaluate((e) => e.scrollTop);
+  // Back to the terminal and again (Ctrl+Esc twice): the keyboard is on the timeline again, no click needed.
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(async () => (await txState(page)).mode).toBe('terminal');
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(async () => (await txState(page)).mode).toBe('transcript');
+  await expect(scroller).toBeFocused();
   await page.keyboard.press('End');
-  const bottom = await scrollTop();
-  await page.keyboard.press('Home');
-  expect(await scrollTop()).toBe(0);
-  await page.keyboard.press('j');
-  expect(await scrollTop()).toBeGreaterThan(0);
+  const end = await scrollTop();
+  await page.keyboard.press('k');
+  expect(await scrollTop()).toBeLessThan(end);
   await page.keyboard.press('End');
-  expect(await scrollTop()).toBeGreaterThanOrEqual(bottom - 2);
+
+  // Tofu is blocked, so the prompt is off (the bridge would refuse it): Enter does not reach it, typing sends nothing.
+  await expect(tx.locator('.tx-input')).toBeDisabled();
+  await expect(tx.locator('.tx-send')).toBeDisabled();
+  await page.keyboard.press('Enter');
+  await expect(tx.locator('.tx-input')).not.toBeFocused();
+  await page.keyboard.type('xyz');
+  expect((await sent(page)).filter((c) => c.t === 'worker.prompt')).toEqual([]);
 
   // Scrolled up, a new item shows the chip instead of moving the view.
   await page.keyboard.press('Home');
   await page.evaluate(() => window.__h3d.simTranscript({ id: window.__h3d.seated(), items: [{ id: 'demo-99', seq: 99, ts: Date.now(), kind: 'assistant', parts: [{ text: 'All green now.' }] }] }));
   await expect(tx.locator('.tx-jump')).toHaveText('1 new · jump to latest');
   expect(await scrollTop()).toBe(0);
+
+  // `1` on the timeline answers the question (worker.answer); Tofu works again and the prompt comes back.
+  await page.keyboard.press('1');
+  await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'worker.answer').at(-1)?.args).toMatchObject({ id: worker, choice: 1 });
+  await expect(tx.locator('.tx-banner')).toBeHidden();
+  await expect(tx.locator('.tx-input')).toBeEnabled();
   await tx.locator('.tx-jump').click();
   await expect(tx.locator('.tx-jump')).toBeHidden();
 
-  // Enter (on the timeline) goes to the prompt box; the prompt goes out as worker.prompt, not as keys.
-  await tx.locator('.tx-scroll').focus();
+  // Enter goes to the prompt box; the prompt goes out as worker.prompt, not as keys.
   await page.keyboard.press('Enter');
   await expect(tx.locator('.tx-input')).toBeFocused();
   await page.keyboard.type('please rerun the tests');
   await page.keyboard.press('Enter');
   await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'worker.prompt').at(-1)?.args).toEqual({ id: worker, text: 'please rerun the tests' });
-  // `1` on the timeline answers the question (worker.answer, the question's hash).
-  await tx.locator('.tx-scroll').focus();
-  await page.keyboard.press('1');
-  await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'worker.answer').at(-1)?.args).toMatchObject({ id: worker, choice: 1 });
   expect(await sentKeys()).toBe(keysBefore);
   expect(await page.evaluate(() => window.__h3d.seated())).toBe(worker);
 
@@ -185,7 +211,6 @@ test('Ctrl+Esc at a seated laptop: the conversation over the monitor, fed by tra
   await expect.poll(async () => (await txState(page)).watches).toBe(1);
 
   // Ctrl+Esc again: the live terminal at the seated fps, the overlay hidden (kept for the next switch).
-  await tx.locator('.tx-scroll').focus();
   await page.keyboard.press('Control+Escape');
   await expect.poll(async () => (await txState(page)).mode).toBe('terminal');
   expect((await txState(page)).box).toBeNull();
@@ -194,7 +219,13 @@ test('Ctrl+Esc at a seated laptop: the conversation over the monitor, fed by tra
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.screens())).find((s) => s.id === worker)?.state).toBe('live');
   expect((await page.evaluate(() => window.__h3d.seat())).mode).toBe('terminal');
 
-  // Standing up ends the transcript watch and removes the overlay.
+  // Back in the transcript, with a draft in the prompt box: a single Esc stands you up, as everywhere seated. That
+  // ends the transcript watch and removes the overlay.
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(async () => (await txState(page)).mode).toBe('transcript');
+  await page.keyboard.press('Enter');
+  await expect(tx.locator('.tx-input')).toBeFocused();
+  await page.keyboard.type('half a thought');
   await page.keyboard.press('Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
   await expect.poll(async () => (await txState(page)).watches).toBe(0);

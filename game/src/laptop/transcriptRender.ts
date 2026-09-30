@@ -16,7 +16,8 @@ import { h, icon } from '../ui/dom';
  */
 
 export interface TranscriptRenderHost {
-  onPromptSubmit(text: string): void;
+  /** A prompt to send; resolving false (not sent) puts the text back in the prompt box. */
+  onPromptSubmit(text: string): void | Promise<boolean>;
   onAnswer(hash: string, choice: number | null, cancel?: boolean): void;
   onSwitchToTerminal(): void;
   loadSubagent(agentId: string): Promise<TranscriptItem[]>;
@@ -35,6 +36,8 @@ export interface TranscriptView {
   setItems(items: TranscriptItem[]): void;
   applyUpdates(items: TranscriptItem[]): void;
   setBlocked(q: BlockedQuestion | null): void;
+  /** The keyboard to the timeline (its scroll keys work at once). */
+  focus(): void;
   focusPrompt(): void;
   destroy(): void;
 }
@@ -384,6 +387,7 @@ function renderDiff(diff: TranscriptDiff): HTMLElement {
  * it does not hide (an interrupt, a turn's error, command output) is part of the conversation. */
 const isSystem = (it: TranscriptItem) => it.hidden === true || it.kind === 'unknown';
 const EXCERPT_LINES = 4;
+const PROMPT_HINT = 'Message the agent…  (Enter sends, Shift+Enter for a new line)';
 const MAX_INPUT_JSON = 4000;
 
 /** A list of items (the transcript, or a subagent's nested one), in `seq` order, each row keyed by id. */
@@ -492,6 +496,7 @@ class Transcript implements TranscriptView {
   private readonly sysBtn: HTMLButtonElement;
   private readonly countEl: HTMLSpanElement;
   private readonly input: HTMLTextAreaElement;
+  private readonly sendBtn: HTMLButtonElement;
   private readonly empty: HTMLDivElement;
 
   private following = true;
@@ -519,9 +524,9 @@ class Transcript implements TranscriptView {
     this.empty = h('div', { class: 'tx-empty' }, 'No conversation yet.');
     this.scroller = h('div', { class: 'tx-scroll', tabindex: '-1', 'aria-label': 'Conversation' }, this.empty, this.timeline.el);
     this.jump = h('button', { class: 'tx-jump', hidden: true, onclick: () => this.toBottom() });
-    this.input = h('textarea', { class: 'tx-input', rows: '1', placeholder: 'Message the agent…  (Enter sends, Shift+Enter for a new line)', 'aria-label': 'Prompt', spellcheck: 'true' });
-    const send = h('button', { class: 'tx-send', title: 'Send', onclick: () => this.submit() }, 'Send');
-    const form = h('div', { class: 'tx-prompt' }, this.input, send);
+    this.input = h('textarea', { class: 'tx-input', rows: '1', placeholder: PROMPT_HINT, 'aria-label': 'Prompt', spellcheck: 'true' });
+    this.sendBtn = h('button', { class: 'tx-send', title: 'Send', onclick: () => this.submit() }, 'Send');
+    const form = h('div', { class: 'tx-prompt' }, this.input, this.sendBtn);
     // The toggle sits on the left: the HUD's plan-limits widget can hang over the screen's top-right corner.
     const bar = h('div', { class: 'tx-bar' }, h('span', { class: 'tx-title' }, 'Transcript'), this.countEl, this.sysBtn);
     this.root = h('div', { class: 'tx', 'data-system': 'hidden' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), form);
@@ -562,8 +567,13 @@ class Transcript implements TranscriptView {
     this.renderBanner();
   }
 
-  focusPrompt(): void {
+  focus(): void {
     if (this.destroyed) return;
+    this.scroller.focus({ preventScroll: true });
+  }
+
+  focusPrompt(): void {
+    if (this.destroyed || this.input.disabled) return;
     this.input.focus();
   }
 
@@ -609,7 +619,7 @@ class Transcript implements TranscriptView {
       case 'subagent':
         return it.subagent ? this.subagentRow(it, scope) : this.unknownRow(it, 'subagent without details');
       case 'compaction':
-        return h('li', { class: 'tx-item tx-compaction', role: 'separator', title: it.notice?.text ?? '' }, h('span', { class: 'tx-compaction-label' }, 'Context compacted'));
+        return h('li', { class: 'tx-item tx-compaction', title: it.notice?.text ?? '' }, h('div', { role: 'separator', class: 'tx-compaction-rule' }, h('span', { class: 'tx-compaction-label' }, 'Context compacted')));
       case 'notice':
         return h('li', { class: 'tx-item tx-notice' }, h('span', { class: 'tx-notice-tag' }, it.hidden ? 'system' : 'note'), h('span', { class: 'tx-notice-text' }, it.notice?.text ?? it.raw_type ?? ''));
       default:
@@ -968,15 +978,10 @@ class Transcript implements TranscriptView {
   }
 
   private onInputKey(e: KeyboardEvent): void {
-    // Ctrl/Cmd+Esc is the shell's (back to the terminal).
-    if (e.key === 'Escape' && (e.ctrlKey || e.metaKey)) return;
+    // Esc is the shell's as everywhere in the seated view (a bare one stands you up, Ctrl/Cmd+Esc goes back to the
+    // terminal); every other key typed here is the prompt's.
+    if (e.key === 'Escape') return;
     e.stopPropagation();
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      this.input.blur();
-      this.scroller.focus({ preventScroll: true });
-      return;
-    }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       this.submit();
@@ -985,10 +990,16 @@ class Transcript implements TranscriptView {
 
   private submit(): void {
     const text = this.input.value;
-    if (!text.trim()) return;
+    if (!text.trim() || this.input.disabled) return;
     this.input.value = '';
     this.grow();
-    this.host.onPromptSubmit(text);
+    // Not sent (refused, too long): the draft comes back unless something new was typed meanwhile.
+    void Promise.resolve(this.host.onPromptSubmit(text)).then((sent) => {
+      if (sent === false && !this.destroyed && !this.input.value) {
+        this.input.value = text;
+        this.grow();
+      }
+    });
   }
 
   private grow(): void {
@@ -1001,6 +1012,10 @@ class Transcript implements TranscriptView {
 
   private renderBanner(): void {
     const q = this.blocked;
+    // A blocked worker takes no prompt (the bridge refuses it): answer above, or in the terminal. A draft stays.
+    this.input.disabled = !!q;
+    this.input.placeholder = q ? 'Waiting for an answer to the question above (or switch to the terminal)' : PROMPT_HINT;
+    this.sendBtn.disabled = !!q;
     if (!q) {
       this.banner.hidden = true;
       this.banner.replaceChildren();
