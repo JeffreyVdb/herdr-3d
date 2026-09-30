@@ -5,6 +5,9 @@ import type { Display } from '../world/derive';
 import { floorLayout, outlineOf, ROOM_HEIGHT, type Box3, type FloorLayout } from '../world/layout';
 import type { BuildingView, FloorView, WorkerView } from '../world/store';
 import { FONT } from './cards/atlasCards';
+import { letterbox } from './logoFit';
+import type { LogoEntry } from './logos';
+import { logoMaterial } from './logoSign';
 import { BadgeLayer } from './badges';
 import { Crowd } from './crowd';
 import { DeskSet } from './desks';
@@ -48,6 +51,27 @@ export interface BuildingFrame {
   name: string;
 }
 
+/** M3d: the sign in front of a building, lit while any of its floors is running. */
+const SIGN = { lit: 0xfff6dd, dim: 0x3a3f5c, logoLit: 0xffffff, logoDim: 0x5b6182, tilt: 0.38, thick: 0.035 };
+
+interface SignSpot {
+  /** Building id, null for the lot (which has no logo). */
+  id: string | null;
+  bi: number;
+  /** Middle of the front edge, and the building's width. */
+  x: number;
+  z: number;
+  w: number;
+}
+
+interface SignMark {
+  spot: SignSpot;
+  logo: THREE.Mesh;
+  instance: number;
+  entry: LogoEntry;
+  lit: boolean;
+}
+
 type Part = 'slab' | 'wallN' | 'wallW' | 'kneeS' | 'kneeE' | 'pillar' | 'strip' | 'band' | 'rug' | 'mezz';
 
 const color = new THREE.Color();
@@ -80,6 +104,12 @@ export class CityView {
   private buildingButtons: HTMLButtonElement[] = [];
   /** Building id per city building index, null for the lot. */
   private buildingIds: Array<string | null> = [];
+  /** M3d: logos by building id, and the signs built from them. */
+  private logos = new Map<string, LogoEntry>();
+  private spots: SignSpot[] = [];
+  private readonly signs = new THREE.Group();
+  private marks: SignMark[] = [];
+  private plates: THREE.InstancedMesh | null = null;
 
   constructor(
     private readonly badgeParent: HTMLElement,
@@ -96,6 +126,8 @@ export class CityView {
     this.sun.shadow.bias = -0.0008;
     this.scene.add(this.sun, this.sun.target);
     this.scene.add(this.dynamic);
+    this.signs.name = 'city.signs';
+    this.scene.add(this.signs);
   }
 
   /** Rebuilds everything from the store's city (on structural changes). */
@@ -130,6 +162,7 @@ export class CityView {
     let deskBase = 0;
     let fi = 0;
     this.buildings = [];
+    this.spots = [];
     for (const p of plans) {
       const bx0 = offX + p.x0;
       const bz0 = offZ + (maxD - p.d);
@@ -164,6 +197,7 @@ export class CityView {
       this.addBuildingButton(p.b);
       const h = Math.max(1, p.b.floors.length) * FH;
       this.addRoof(bx0, bz0, p.w, p.d, h, p.b.building?.name ?? 'Unassigned', tint);
+      this.spots.push({ id: p.b.building?.id ?? null, bi: p.bi, x: bx0 + p.w / 2, z: bz0 + p.d, w: p.w });
       this.buildings.push({
         center: new THREE.Vector3(bx0 + p.w / 2, h / 2, bz0 + p.d / 2),
         radius: Math.hypot(p.w, p.d, h) / 2 + 0.5,
@@ -177,6 +211,7 @@ export class CityView {
 
     this.bounds.set(new THREE.Vector3(offX - 1, 0, offZ - 1), new THREE.Vector3(offX + totalW + 1, Math.max(FH, ...this.buildings.map((b) => b.center.y * 2)) + 1, offZ + maxD + 1));
     this.addGround(offX, offZ, totalW, maxD);
+    this.rebuildSigns();
     const c = this.bounds.getCenter(new THREE.Vector3());
     const r = this.bounds.getSize(new THREE.Vector3()).length() / 2 + 6;
     this.sun.position.set(c.x + r * 0.5, r * 1.2, c.z + r * 0.8);
@@ -313,6 +348,7 @@ export class CityView {
     f.view = v;
     this.label(f.button, v);
     this.paintBadge(f);
+    this.lightSigns();
   }
 
   updateWorker(v: WorkerView): void {
@@ -358,6 +394,88 @@ export class CityView {
       new THREE.MeshToonMaterial({ color: 0x39425a }),
     );
     this.dynamic.add(sign, posts);
+  }
+
+  // ---- M3d: building logo signs ------------------------------------------------------
+
+  /**
+   * The logos to show, by building id: a low sign on the pavement in front of
+   * each building that has one. Cheap to call again (it only rebuilds the
+   * signs, never the buildings); the textures belong to the caller.
+   */
+  setLogos(logos: ReadonlyMap<string, LogoEntry>): void {
+    this.logos = new Map(logos);
+    this.rebuildSigns();
+  }
+
+  private disposeSigns(): void {
+    for (const o of [...this.signs.children]) {
+      if (o instanceof THREE.Mesh) {
+        o.geometry.dispose();
+        (o.material as THREE.Material).dispose();
+        if (o instanceof THREE.InstancedMesh) o.dispose();
+      }
+    }
+    this.signs.clear();
+    this.marks = [];
+    this.plates = null;
+  }
+
+  private rebuildSigns(): void {
+    this.disposeSigns();
+    const shown = this.spots.filter((s) => s.id !== null && this.logos.has(s.id));
+    if (!shown.length) return;
+    const plates = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0xffffff }), shown.length);
+    plates.name = 'city.signPlates';
+    plates.frustumCulled = false;
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-SIGN.tilt, 0, 0));
+    shown.forEach((spot, i) => {
+      const entry = this.logos.get(spot.id as string) as LogoEntry;
+      const pw = Math.min(1.9, Math.max(0.8, spot.w * 0.7));
+      const ph = pw / 3;
+      const at = new THREE.Vector3(spot.x, ph * 0.5 * Math.cos(SIGN.tilt) + 0.02, spot.z + 0.3);
+      plates.setMatrixAt(i, new THREE.Matrix4().compose(at, q, new THREE.Vector3(pw, ph, SIGN.thick)));
+      const fit = letterbox(entry.width, entry.height, pw, ph, 0.1);
+      const logo = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), logoMaterial(entry.texture));
+      logo.name = 'city.signLogo';
+      logo.renderOrder = 1;
+      logo.scale.set(fit.w, fit.h, 1);
+      // On the plate's face: its own +z, a hair proud of the box.
+      const local = new THREE.Vector3(fit.x + fit.w / 2 - pw / 2, ph / 2 - fit.y - fit.h / 2, SIGN.thick / 2 + 0.004).applyQuaternion(q);
+      logo.position.copy(at).add(local);
+      logo.quaternion.copy(q);
+      this.signs.add(logo);
+      this.marks.push({ spot, logo, instance: i, entry, lit: true });
+    });
+    this.signs.add(plates);
+    this.plates = plates;
+    this.lightSigns(true);
+  }
+
+  /**
+   * Lit while any floor of the building runs, dim once every floor sleeps, as
+   * the facade windows are. This only sets colours. A floor going to sleep or
+   * waking is a structure change, so the city (signs included: `rebuildSigns`)
+   * is rebuilt with it, as before logos; the logo textures are not reloaded,
+   * because the cache holds them by hash.
+   */
+  private lightSigns(force = false): void {
+    if (!this.plates) return;
+    let changed = false;
+    for (const m of this.marks) {
+      const lit = this.floors.some((f) => f.building === m.spot.bi && !f.view.asleep);
+      if (lit === m.lit && !force) continue;
+      m.lit = lit;
+      this.plates.setColorAt(m.instance, color.set(lit ? SIGN.lit : SIGN.dim));
+      (m.logo.material as THREE.MeshBasicNodeMaterial).color.set(lit ? SIGN.logoLit : SIGN.logoDim);
+      changed = true;
+    }
+    if (changed && this.plates.instanceColor) this.plates.instanceColor.needsUpdate = true;
+  }
+
+  /** What the city shows of each logo (test hook): building id, hash, lit. */
+  signInfo(): Array<{ building: string; hash: string; lit: boolean }> {
+    return this.marks.map((m) => ({ building: m.spot.id as string, hash: m.entry.hash, lit: m.lit }));
   }
 
   private addGround(offX: number, offZ: number, totalW: number, maxD: number): void {
@@ -407,6 +525,7 @@ export class CityView {
       }
     });
     this.dynamic.clear();
+    this.disposeSigns();
     this.crowd = null;
     this.desks = null;
     this.parts = null;

@@ -4,6 +4,8 @@ import { buildingOrder, floorMove } from '../world/arrange';
 import { DEFAULT_STATUS_FIELD, effortsFor, formFrom, parseForm, settingsPatch, type FieldKey, type SettingsForm, type StatusRow } from '../world/settings';
 import type { FloorView, WorldStore } from '../world/store';
 import { h, icon, ICON, replaceKeepingFocus, type Child } from './dom';
+import { LOGO_ACCEPT, precheckLogo } from '../net/logo';
+import { logoHashOf } from '../net/protocol';
 import { failureText } from './messages';
 
 /**
@@ -29,6 +31,13 @@ export interface PanelHost {
   travelLobby(building: string | null): void;
   /** HUD toast, for results that arrive after the panel closed. */
   toast(msg: string, kind: 'info' | 'error'): void;
+  /** M3d: where a building's logo image is fetched from (it carries the token and the hash). */
+  logoUrl(building: string, hash: string): string;
+  /** M3d: the game tried to load the logo behind this hash and could not (the signs show the name). */
+  logoFailed(hash: string): boolean;
+  /** M3d: sends a logo file for a building / removes it (HTTP; the world then says the new hash). */
+  setLogo(building: string, file: File): Promise<CommandResult>;
+  clearLogo(building: string): Promise<CommandResult>;
 }
 
 type View = { kind: 'elevator'; building: string | null } | { kind: 'buildings' } | { kind: 'settings'; session: string; from: View | null };
@@ -49,7 +58,7 @@ export interface ElevatorRow {
 /** What the open panel shows (test hook `window.__h3d.panel()`). */
 export type PanelSummary = (
   | { kind: 'elevator'; building: string | null; title: string; rows: ElevatorRow[]; lobby: { current: boolean } | null; /** M5: the floor N preselected. */ pick?: string }
-  | { kind: 'buildings'; buildings: Array<{ id: string; name: string; floors: string[] }>; lot: string[] }
+  | { kind: 'buildings'; buildings: Array<{ id: string; name: string; floors: string[]; logo: string | null; logoBusy: string | null }>; lot: string[] }
   | { kind: 'settings'; session: string; form: ShownForm; repoSuggested: boolean; statusDefault: boolean }
 ) & { status: string; confirm: { title: string; body: string } | null };
 
@@ -57,6 +66,8 @@ export type PanelSummary = (
 type ShownForm = Omit<SettingsForm, 'statusOptions'> & { statusOptions: string[] };
 
 const LOT = 'Unassigned lot';
+const LOGO_SHOWN = 'Shown on the entrance sign, the reception wall and the city.';
+const LOGO_UNLOADED = 'Saved, but the image could not be loaded — showing the name. It will retry on reconnect.';
 
 function stateOf(v: FloorView): ElevatorRow['state'] {
   return v.asleep ? 'asleep' : 'running';
@@ -97,13 +108,24 @@ export class Panels {
   private statusText = '';
   /** M5: the floor N preselected in the elevator, with why. */
   private pick: { session: string; note: string } | null = null;
+  /** M3d: the one file input all the "Set logo" buttons use, and the building it is for. */
+  private readonly logoInput = h('input', { type: 'file', accept: LOGO_ACCEPT, hidden: true, tabindex: '-1', 'aria-hidden': 'true', 'data-key': 'logo-file' });
+  private logoFor: string | null = null;
+  /** M3d: a chosen file, shown in the thumbnail while it uploads (object URLs, by building). */
+  private readonly logoPreview = new Map<string, string>();
 
   constructor(
     parent: HTMLElement,
     private readonly host: PanelHost,
   ) {
-    this.dialog.append(this.head, this.body, this.statusEl, this.alertEl);
+    this.dialog.append(this.head, this.body, this.statusEl, this.alertEl, this.logoInput);
     this.alertEl.hidden = true;
+    this.logoInput.addEventListener('change', () => {
+      const id = this.logoFor;
+      const file = this.logoInput.files?.[0];
+      this.logoInput.value = '';
+      if (id && file) void this.uploadLogo(id, file);
+    });
     this.dialog.addEventListener('close', () => {
       // `close` is queued: the panel may have been opened again since.
       if (this.dialog.open) return;
@@ -500,7 +522,7 @@ export class Panels {
     const bs = store.sortedBuildings();
     const lot = store.stack(null);
     const key = JSON.stringify([
-      bs.map((b) => [b.id, b.name, store.stack(b.id).map((f) => [f.session, f.floor.index, f.asleep])]),
+      bs.map((b) => [b.id, b.name, logoHashOf(b), this.logoPreview.has(b.id), store.stack(b.id).map((f) => [f.session, f.floor.index, f.asleep])]),
       lot.map((f) => [f.session, f.asleep]),
       [...this.busy],
       this.renaming && { id: this.renaming.id, error: this.renaming.error },
@@ -659,7 +681,106 @@ export class Panels {
     const list = h('ol', { class: 'dir-floors', 'aria-label': `Floors of ${name}, top to bottom` });
     floors.forEach((f, j) => list.append(this.floorItem(f, id, j, floors.length)));
     if (!floors.length) list.append(h('li', { class: 'dir-empty' }, 'No floors yet. Use Move on a floor below to bring one here.'));
-    return h('section', { class: 'dir-building', 'data-id': id, 'aria-label': name }, head, list);
+    return h('section', { class: 'dir-building', 'data-id': id, 'aria-label': name }, head, this.logoRow(id, name), list);
+  }
+
+  /** M3d: the building's logo: a thumbnail, and Set / Change / Clear. */
+  private logoRow(id: string, name: string): HTMLElement {
+    const hash = logoHashOf(this.host.store.buildings.get(id));
+    const busy = this.busy.get(`l:${id}`);
+    const src = this.logoPreview.get(id) ?? (hash ? this.host.logoUrl(id, hash) : null);
+    const holder = h('span', { class: 'logo-thumb', 'aria-hidden': src ? null : 'true' });
+    const placeholder = () => h('span', { class: 'logo-thumb-empty' }, icon(ICON.image));
+    if (src) {
+      const img = h('img', { src, alt: `Logo of ${name}`, decoding: 'async' });
+      img.addEventListener('error', () => {
+        holder.replaceChildren(placeholder(), h('span', { class: 'visually-hidden' }, 'The logo could not be loaded'));
+        if (hash && !busy && !this.logoPreview.has(id)) {
+          stateEl.textContent = LOGO_UNLOADED;
+          stateEl.classList.add('logo-state--error');
+        }
+      });
+      holder.append(img);
+    } else holder.append(placeholder());
+    const failed = !!hash && !this.logoPreview.has(id) && this.host.logoFailed(hash);
+    const state = busy ?? (failed ? LOGO_UNLOADED : hash ? LOGO_SHOWN : 'None yet: the signs show the name.');
+    const stateEl = h('p', { class: `logo-state${failed ? ' logo-state--error' : ''}` }, state);
+    const disabled = !!busy;
+    const set = h(
+      'button',
+      {
+        class: `btn btn--sm${hash ? '' : ' btn--primary'}`,
+        'data-key': `logo-set:${id}`,
+        'aria-disabled': disabled ? 'true' : null,
+        'aria-label': `${hash ? 'Change' : 'Set'} the logo of ${name}`,
+        onclick: () => {
+          if (disabled) return;
+          this.logoFor = id;
+          this.logoInput.click();
+        },
+      },
+      icon(ICON.image),
+      h('span', {}, busy ? 'Working…' : hash ? 'Change logo' : 'Set logo'),
+    );
+    const tools = h('div', { class: 'logo-tools' }, set);
+    if (hash) {
+      tools.append(
+        h(
+          'button',
+          {
+            class: 'btn btn--sm',
+            'data-key': `logo-clear:${id}`,
+            'aria-disabled': disabled ? 'true' : null,
+            'aria-label': `Clear the logo of ${name}`,
+            onclick: () => {
+              if (!disabled) void this.clearLogo(id, name);
+            },
+          },
+          icon(ICON.close),
+          h('span', {}, 'Clear'),
+        ),
+      );
+    }
+    return h('div', { class: 'dir-logo', 'data-logo': hash ?? '' }, holder, h('div', { class: 'logo-text' }, h('p', { class: 'logo-title' }, 'Logo'), stateEl, tools));
+  }
+
+  private async uploadLogo(id: string, file: File): Promise<void> {
+    const name = this.host.store.buildings.get(id)?.name ?? 'the building';
+    const focusSet = () => this.list?.querySelector<HTMLElement>(`[data-key="logo-set:${CSS.escape(id)}"]`)?.focus();
+    const why = precheckLogo(file);
+    if (why) {
+      this.notify(why, 'error');
+      return;
+    }
+    const k = `l:${id}`;
+    if (this.busy.has(k)) return;
+    this.busy.set(k, 'Uploading…');
+    this.logoPreview.set(id, URL.createObjectURL(file));
+    this.setStatus(`Uploading the logo for ${name}…`);
+    this.refresh();
+    const r = await this.host.setLogo(id, file);
+    this.busy.delete(k);
+    const url = this.logoPreview.get(id);
+    this.logoPreview.delete(id);
+    if (url) URL.revokeObjectURL(url);
+    if (r.ok) this.notify(`Logo saved for ${name}.`);
+    else this.notify(failureText('logo.set', r.code, r.message, { name }), 'error');
+    this.refresh();
+    focusSet();
+  }
+
+  private async clearLogo(id: string, name: string): Promise<void> {
+    const k = `l:${id}`;
+    if (this.busy.has(k)) return;
+    this.busy.set(k, 'Clearing…');
+    this.setStatus(`Clearing the logo of ${name}…`);
+    this.refresh();
+    const r = await this.host.clearLogo(id);
+    this.busy.delete(k);
+    if (r.ok) this.notify(`Cleared the logo of ${name}. The signs show its name again.`);
+    else this.notify(failureText('logo.clear', r.code, r.message, { name }), 'error');
+    this.refresh();
+    this.list?.querySelector<HTMLElement>(`[data-key="logo-set:${CSS.escape(id)}"]`)?.focus();
   }
 
   private lotBlock(lot: FloorView[]): HTMLElement {
@@ -1227,7 +1348,7 @@ export class Panels {
     if (v.kind === 'buildings') {
       return {
         kind: 'buildings',
-        buildings: store.sortedBuildings().map((b) => ({ id: b.id, name: b.name, floors: store.stack(b.id).map((f) => f.session) })),
+        buildings: store.sortedBuildings().map((b) => ({ id: b.id, name: b.name, floors: store.stack(b.id).map((f) => f.session), logo: logoHashOf(b), logoBusy: this.busy.get(`l:${b.id}`) ?? null })),
         lot: store.stack(null).map((f) => f.session),
         ...base,
       };

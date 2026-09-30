@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -18,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/version"
 )
@@ -97,11 +99,23 @@ func NewServer(cfg ServerConfig) *Server {
 
 // Handler serves everything. Every request must name the helper in its
 // Host header (no DNS rebinding); /ws and /api/open also need a same-origin
-// Origin and the token.
+// Origin and the token; /logo needs the token, and an Origin, when the browser
+// sends one, must be the helper's own.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.Handle("GET /ws", s.checkWS(s.bridgeProxy()))
+	// M3d building logos: GET, PUT and DELETE /logo/{building} go to the
+	// bridge. They come before the site fallback below, and anything else
+	// under /logo/ is refused rather than handed to the game or Vite.
+	logos := s.logoProxy()
+	mux.Handle("GET /logo/{id}", s.checkLogo(logos))
+	mux.Handle("PUT /logo/{id}", s.checkLogo(s.limitLogo(logos)))
+	mux.Handle("DELETE /logo/{id}", s.checkLogo(logos))
+	mux.HandleFunc("/logo/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	})
 	mux.Handle("POST /api/open", s.open())
 	mux.HandleFunc("/api/open", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Allow", "POST")
@@ -313,4 +327,83 @@ func CheckBundle(dir string) error {
 		return fmt.Errorf("%s/index.html is not a file", dir)
 	}
 	return nil
+}
+
+// maxLogoUpload is the bridge's limit on a logo upload (logo.MaxInput; the
+// helper does not link the image code). The helper refuses more before it
+// reaches the tunnel.
+const maxLogoUpload = 1 << 20
+
+// checkLogo guards /logo. The token (?token=, as for /ws) is always needed.
+// Unlike /ws, a same-origin GET from a page carries no Origin header (browsers
+// leave it out of same-origin GETs, images and fetches included), so an absent
+// Origin passes, and a present one must be the helper's own. A PUT or DELETE
+// is a non-GET request: a browser always sends Origin, and it is checked the
+// same way; a client that sends none (curl) still needs the token.
+func (s *Server) checkLogo(next http.Handler) http.Handler {
+	want := []byte(s.cfg.Token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if o := r.Header.Get("Origin"); o != "" && !s.origins[o] {
+			s.forbid(w, r, "origin not allowed")
+			return
+		}
+		if got := []byte(r.URL.Query().Get("token")); len(want) == 0 || subtle.ConstantTimeCompare(got, want) != 1 {
+			s.forbid(w, r, "bad token")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// limitLogo refuses an upload over maxLogoUpload, by Content-Length at once
+// and by counting while it streams. It never truncates.
+func (s *Server) limitLogo(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > maxLogoUpload {
+			logoTooLarge(w)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxLogoUpload)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func logoTooLarge(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusRequestEntityTooLarge)
+	_, _ = w.Write([]byte(`{"t":"error","code":"logo_too_large","message":"the file is over 1048576 bytes"}` + "\n"))
+}
+
+// logoProxy forwards /logo/{id} to the bridge through the tunnel. Only the
+// building id and the ?h= hash go on: the token, Origin, Cookie and
+// Authorization stay here.
+func (s *Server) logoProxy() http.Handler {
+	return &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			q := url.Values{}
+			if h := pr.In.URL.Query().Get("h"); h != "" {
+				q.Set("h", h)
+			}
+			pr.Out.URL = &url.URL{Scheme: "http", Host: "herdr-world", Path: "/logo/" + pr.In.PathValue("id"), RawQuery: q.Encode()}
+			pr.Out.Host = "herdr-world"
+			pr.Out.Header.Del("Origin")
+			pr.Out.Header.Del("Cookie")
+			pr.Out.Header.Del("Authorization")
+		},
+		Transport: &http.Transport{
+			DialContext:           func(ctx context.Context, _, _ string) (net.Conn, error) { return s.cfg.Bridge.Dial(ctx) },
+			ResponseHeaderTimeout: 45 * time.Second, // a conversion waits up to 10 s for a slot and 10 s to run
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				logoTooLarge(w)
+				return
+			}
+			st := s.cfg.Bridge.Status()
+			s.cfg.Log.Warn("bridge unreachable", "tunnel", st.State, "err", err)
+			http.Error(w, "bridge unreachable (tunnel "+st.State+")", http.StatusBadGateway)
+		},
+	}
 }

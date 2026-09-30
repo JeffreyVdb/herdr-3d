@@ -16,6 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/logo"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/version"
 )
@@ -32,8 +33,9 @@ var errShutdown = errors.New("server shutting down")
 
 // Server serves the protocol over WebSocket.
 type Server struct {
-	hub *Hub
-	log *slog.Logger
+	hub  *Hub
+	log  *slog.Logger
+	conv *logo.Converter // M3d: logo uploads
 
 	mu    sync.Mutex
 	conns map[*websocket.Conn]context.CancelFunc // cancelling a conn's reads closes it at once
@@ -42,13 +44,19 @@ type Server struct {
 
 // NewServer returns a server for hub.
 func NewServer(hub *Hub, log *slog.Logger) *Server {
-	return &Server{hub: hub, log: log, conns: map[*websocket.Conn]context.CancelFunc{}}
+	return &Server{hub: hub, log: log, conv: logo.NewConverter(0, 0), conns: map[*websocket.Conn]context.CancelFunc{}}
 }
 
-// Handler serves /ws (the protocol) and /healthz.
+// SetLogoRenderTimeout sets how long an SVG upload may take to draw before the
+// render worker is killed (default logo.DefaultRenderTimeout). Call it before
+// Serve.
+func (s *Server) SetLogoRenderTimeout(d time.Duration) { s.conv.SetRenderTimeout(d) }
+
+// Handler serves /ws (the protocol), /logo/{building} (M3d) and /healthz.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.serveWS)
+	s.logoRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(proto.VersionHeader, version.Version)
 		_, _ = w.Write([]byte("ok\n"))

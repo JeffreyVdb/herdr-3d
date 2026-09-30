@@ -41,6 +41,12 @@ type bridge struct {
 
 func startBridge(t *testing.T, db string, opts server.Options) *bridge {
 	t.Helper()
+	return startBridgeWith(t, db, opts, nil)
+}
+
+// startBridgeWith is startBridge that lets the test set up the server (before it serves).
+func startBridgeWith(t *testing.T, db string, opts server.Options, setup func(*server.Server)) *bridge {
+	t.Helper()
 	if db == "" {
 		db = filepath.Join(t.TempDir(), "world.db")
 	}
@@ -63,7 +69,11 @@ func startBridge(t *testing.T, db string, opts server.Options) *bridge {
 	hubDone := make(chan struct{})
 	go func() { hub.Run(ctx); close(hubDone) }()
 	go func() {
-		server.NewServer(hub, quietLog()).Serve(ctx, ln)
+		srv := server.NewServer(hub, quietLog())
+		if setup != nil {
+			setup(srv)
+		}
+		srv.Serve(ctx, ln)
 		<-hubDone
 		st.Close()
 		close(b.stopped)

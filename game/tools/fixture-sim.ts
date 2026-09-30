@@ -12,6 +12,8 @@
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { Building, Cap, Floor, FloorSettings, Hire, HireOptions, Worker } from '../src/net/protocol.ts';
 import { screensOf } from './fixture-screen.ts';
+import { hashOf, type StoredLogo } from './fixture-logo.ts';
+import { logoPng, MAGENTA, type Palette } from './logo-art.ts';
 
 type Msg = Record<string, unknown>;
 type Send = (m: Msg) => void;
@@ -205,7 +207,53 @@ export class SimWorld {
   private building(id: string): Building {
     const b = this.buildings.get(id);
     if (!b) throw new CmdError('not_found', `not found: building "${id}"`);
-    return { ...b, floors: this.floorsOf(id) };
+    const logo = this.logos.get(id);
+    return { ...b, floors: this.floorsOf(id), ...(logo ? { logo: logo.hash } : {}) };
+  }
+
+  // ---- M3d building logos (tools/fixture-logo.ts) --------------------------
+
+  private readonly logos = new Map<string, StoredLogo>();
+  private out: Send | null = null;
+
+  logoOf(id: string): StoredLogo | undefined {
+    return this.logos.get(id);
+  }
+
+  /** The `simfail` still pending, for the HTTP side. */
+  failure(): string | undefined {
+    return this.fail;
+  }
+
+  /** True (and used up) when `simfail` is `code`. */
+  takeFailure(code: string): boolean {
+    if (this.fail !== code) return false;
+    this.fail = undefined;
+    return true;
+  }
+
+  /** Stores a logo and tells the client, like the bridge's PUT /logo/{id}. */
+  setLogo(id: string, logo: StoredLogo): StoredLogo {
+    this.building(id);
+    this.logos.set(id, logo);
+    if (this.out) this.emit(this.out, { t: 'building.upsert', building: this.building(id) });
+    return logo;
+  }
+
+  /** `simlogos=1`: every building starts with a made-up logo (a ring and three bars, a colour of its own), for perf runs. */
+  seedLogos(): void {
+    const rings: Palette['ring'][] = [MAGENTA.ring, [47, 107, 240], [18, 162, 106], [242, 169, 59], [138, 90, 200]];
+    let i = 0;
+    for (const b of this.sorted()) {
+      const bytes = logoPng(512, 192, { ring: rings[i++ % rings.length] as Palette['ring'], bars: MAGENTA.bars });
+      this.logos.set(b.id, { bytes, hash: hashOf(bytes), type: 'image/png' });
+    }
+  }
+
+  clearLogo(id: string): void {
+    this.building(id);
+    if (!this.logos.delete(id)) return;
+    if (this.out) this.emit(this.out, { t: 'building.upsert', building: this.building(id) });
   }
 
   private sorted(): Building[] {
@@ -363,6 +411,7 @@ export class SimWorld {
       this.floorEvent(send, f);
     }
     this.buildings.delete(id);
+    this.logos.delete(id);
     this.resort(
       [...this.buildings.values()].sort((x, y) => x.sort - y.sort).map((x) => x.id),
       send,
@@ -613,6 +662,7 @@ export class SimWorld {
 
   /** After the snapshot went out: the periodic `worker.usage` of working agents (`usageMs`). */
   start(send: Send, o: { usageMs?: number } = {}): void {
+    this.out = send;
     this.usageMs = o.usageMs ?? this.usageMs;
     this.panels.start(send, this.usageMs);
     this.crew.start(send, this.crewMs);

@@ -7,6 +7,8 @@ import type { Baker } from './bake';
 import { FONT } from './cards/atlasCards';
 import { GLASS_IN } from './office';
 import { OFFICE } from './palette';
+import { LogoSign } from './logoSign';
+import type { LogoEntry } from './logos';
 import { canvasTexture, elevatorMeshes } from './props';
 
 /**
@@ -41,6 +43,8 @@ export class LobbyView {
   private open = 0;
   private readonly targets: Array<{ boxes: Box3[]; value: LobbyTarget }>;
   private placeholder: THREE.Object3D | null = null;
+  /** M3d: the entrance sign and the reception wall, which show the logo when there is one. */
+  readonly signs: { canopy: LogoSign; wall: LogoSign };
 
   constructor(
     private readonly plan: BuildingPlan,
@@ -146,6 +150,7 @@ export class LobbyView {
     const canopySign = new THREE.Mesh(new THREE.PlaneGeometry(cw, cw / 4), new THREE.MeshBasicNodeMaterial({ map: canopyTex }));
     canopySign.position.set((cx0 + cx1) / 2, 2.8 + cw / 8, D + 1.72);
     this.group.add(canopySign);
+    const canopyLogo = new LogoSign(canopySign, cw, cw / 4, { plate: 0xfff6dd, bezel: C.navy, pad: 0.1, rim: 0.07 });
 
     // Reception: the feature wall, the desk (navy front, wood top, a yellow stripe), a monitor.
     const bw = L.backWall;
@@ -156,6 +161,8 @@ export class LobbyView {
     const wallSign = new THREE.Mesh(new THREE.PlaneGeometry(ww, ww / 4), new THREE.MeshBasicNodeMaterial({ map: wallTex }));
     wallSign.position.set((bw.x0 + bw.x1) / 2, 1.95, bw.z1 + 0.005);
     this.group.add(wallSign);
+    const wallLogo = new LogoSign(wallSign, ww, 0.96, { plate: 0xfff6dd, bezel: C.yellow, pad: 0.1, rim: 0.05, lift: 0.07 });
+    this.signs = { canopy: canopyLogo, wall: wallLogo };
     const d = L.desk;
     // Counter at 0.98 m: the receptionist (head top ~1.5 m) stands behind it, seen from the chest up.
     b.box(d.x0, 0, d.z0, d.x1, 0.92, d.z1, C.navy);
@@ -209,6 +216,12 @@ export class LobbyView {
   private tex(t: THREE.Texture): THREE.Texture {
     this.textures.push(t);
     return t;
+  }
+
+  /** M3d: the building's logo on the entrance sign and the reception wall; null brings the name back. */
+  setLogo(entry: LogoEntry | null): void {
+    this.signs.canopy.set(entry);
+    this.signs.wall.set(entry);
   }
 
   /** Puts the receptionist (its feet at its origin, facing +z) behind the desk. */

@@ -62,3 +62,24 @@ describe('failureText: boards (M7)', () => {
     expect(failureText('building.rename', 'not_found', '')).toBe('That building no longer exists.');
   });
 });
+
+describe('failureText: logos (M3d)', () => {
+  it('names what to do for each refusal', () => {
+    expect(failureText('logo.set', 'logo_too_large', 'logo too large: the file is over 1048576 bytes')).toBe(
+      'That logo is too big (the file is over 1048576 bytes). Logos can be up to 1 MB and 8192 px a side: export it smaller, or as an SVG.',
+    );
+    expect(failureText('logo.set', 'logo_unsupported', 'logo unsupported: <text> is not supported')).toBe(
+      'That file can’t be used as a logo: <text> is not supported. Use a PNG, WebP or SVG drawn with plain shapes and paths (no text, images or scripts inside).',
+    );
+    expect(failureText('logo.set', 'logo_unsupported', '')).toMatch(/^That file can’t be used as a logo\. Use a PNG/);
+    expect(failureText('logo.set', 'logo_invalid', 'logo invalid: cannot decode the image')).toBe('The bridge could not read that image (cannot decode the image). Export it again, or pick another file.');
+    expect(failureText('logo.set', 'logo_busy', '')).toMatch(/busy turning other logos/);
+  });
+  it('covers the connection and the missing building', () => {
+    expect(failureText('logo.set', 'offline', '')).toMatch(/nothing was sent/);
+    expect(failureText('logo.clear', 'forbidden', '')).toMatch(/helper refused/);
+    expect(failureText('logo.set', 'not_found', 'x', { name: 'Work' })).toBe('Work no longer exists, so its logo was not saved.');
+    expect(failureText('logo.clear', 'not_found', 'x', { name: 'Work' })).toBe('Work no longer exists, so its logo was not cleared.');
+    expect(failureText('logo.set', 'internal', 'boom')).toBe('herdr-world failed: boom. Safe to retry.');
+  });
+});

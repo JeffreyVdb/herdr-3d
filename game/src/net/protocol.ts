@@ -16,6 +16,14 @@ export interface Building {
   sort: number;
   /** Sessions in this building, top floor first (bridge-derived). */
   floors: string[];
+  /** M3d: the hash (sha256, hex) of the building's logo; absent without one. The image is GET /logo/{id}. */
+  logo?: string;
+}
+
+/** The logo hash of a building: a non-empty string, else null (older bridges and odd values have none). */
+export function logoHashOf(b: Pick<Building, 'logo'> | null | undefined): string | null {
+  const h = b?.logo;
+  return typeof h === 'string' && /^[0-9a-f]{8,128}$/i.test(h) ? h : null;
 }
 
 export interface Floor {

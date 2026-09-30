@@ -29,6 +29,9 @@ RuntimeDirectoryMode=0700
 StateDirectory=herdr-world
 StateDirectoryMode=0700
 UMask=0077
+# SVG logos are drawn by the bridge executing itself (/proc/self/exe logo-worker,
+# killed after 5 s): do not add NoExecPaths=, SystemCallFilter= without execve,
+# or a TasksMax= below 2 without checking that logo uploads still work.
 NoNewPrivileges=yes
 Restart=on-failure
 RestartSec=2s
