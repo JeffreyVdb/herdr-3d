@@ -235,6 +235,12 @@ export class SeatBar implements SeatView {
     this.modeBtn.setAttribute('aria-label', aria[m]);
     for (const k of ['terminal', 'transcript', 'images'] as const) this.modeOpts[k].toggleAttribute('data-on', k === m);
     const flip = key(['I'], m === 'images' ? 'Conversation' : 'Images');
+    // The switch's own key, repeated here (a narrow bar drops it: the switch shows it).
+    const swap = (label: string) => {
+      const k = key(['Ctrl', 'Esc'], label);
+      k.classList.add('seat-key-mode');
+      return k;
+    };
     const nothing = 'nothing you type here goes to the terminal';
     const aside = (text: string) => {
       const a = el('span', 'seat-aside', text);
@@ -243,10 +249,10 @@ export class SeatBar implements SeatView {
     };
     this.keys.replaceChildren(
       ...(m === 'transcript'
-        ? [key(['Enter'], 'Write a prompt'), flip, key(['Ctrl', 'Esc'], 'Terminal'), aside(`PgUp, PgDn, j and k scroll; ${nothing}`)]
+        ? [key(['Enter'], 'Write a prompt'), flip, swap('Terminal'), aside(`PgUp, PgDn, j and k scroll; ${nothing}`)]
         : m === 'images'
-          ? [key(['Enter'], 'Open'), flip, key(['Ctrl', 'Esc'], 'Terminal'), aside(`Arrows move between images; ${nothing}`)]
-          : [key(['Shift', 'Esc'], 'Send Esc'), key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'), key(['Ctrl', 'Esc'], 'Conversation'), aside('Tab, arrows and Ctrl keys go to the terminal')]),
+          ? [key(['Enter'], 'Open'), flip, swap('Terminal'), aside(`Arrows move between images; ${nothing}`)]
+          : [key(['Shift', 'Esc'], 'Send Esc'), key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'), swap('Conversation'), aside('Tab, arrows and Ctrl keys go to the terminal')]),
       ...(this.prefs ? [this.look] : []),
     );
   }

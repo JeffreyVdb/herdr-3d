@@ -118,11 +118,13 @@
   display: none;
 }
 .tx-busy {
+  /* It gives way before the strip wraps (no basis: it takes what the line has left, up to its width, then ellipsis). */
+  flex: 1 1 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
-  max-width: 22ch;
+  min-width: 34px;
+  max-width: max-content;
   padding: 1px 9px 1px 7px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--tx-blue) 35%, transparent);
@@ -1497,8 +1499,24 @@
   .tx[data-asking] .tx-prompt {
     display: none;
   }
+  /* #59: a line of the conversation peeks out (the strip may take two rows on a narrow screen now). */
   .tx[data-asking] .tx-main {
-    min-height: 2.6em;
+    min-height: 1.8em;
+  }
+  /* #59: the strip's rows tighter (it wraps to two on a phone), every control still its own size to click. */
+  .tx-bar {
+    padding: 3px 10px;
+    row-gap: 3px;
+  }
+  .tx-bar .seat-tab {
+    padding-block: 0;
+  }
+  .tx-sys-toggle {
+    padding-block: 0;
+  }
+  .tx-theme,
+  .tx-zoom-btn {
+    height: 18px;
   }
   .tx-ask {
     flex: 0 1 auto;

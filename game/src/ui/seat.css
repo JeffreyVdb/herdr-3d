@@ -271,6 +271,11 @@
   font-size: 12px;
   font-weight: 700;
 }
+/* In terminal mode the screen says whose controls these are: the key alone, so the keys row stays one line (a taller
+   bar would shrink the laptop's screen). */
+.seat[data-mode='terminal'] .seat-look-label {
+  font-size: 0;
+}
 .seat-themes,
 .seat-zoom {
   display: inline-flex;
@@ -331,33 +336,29 @@
   outline: 2px solid var(--sun);
   outline-offset: 1px;
 }
-/* #59: a phone's width: the switch and Stand up get a row of their own under whose laptop it is (side by side with it
-   they ran off the screen), the switch without its keys (the keys row says them), and the terminal's controls keep
-   their key (Ctrl+,) without the word. */
+/* #59: a phone's width: whose laptop it is and Stand up share the first row, the switch (its keys on it) takes the
+   next (side by side they ran off the screen), and the keys row drops the switch's key it would repeat; the terminal's
+   controls keep their key (Ctrl+,) without the word. */
 @media (max-width: 560px) {
   .seat {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
-      'line line'
-      'mode stand'
+      'line stand'
+      'mode mode'
       'keys keys';
   }
   .seat[data-asking] {
     grid-template-areas:
       'ask ask'
-      'line line'
-      'mode stand'
+      'line stand'
+      'mode mode'
       'keys keys';
   }
   .seat-mode {
     justify-self: start;
-    min-width: 0;
   }
-  .seat-mode > kbd {
+  .seat-keys .seat-key-mode {
     display: none;
-  }
-  .seat-mode-opts {
-    margin-left: 0;
   }
   .seat-look-label {
     font-size: 0;
