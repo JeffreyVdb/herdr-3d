@@ -611,7 +611,7 @@ different prompts tell apart: `hire`, `prompt-<worker>` (P), `transcript-<worker
 `run-prompt`, i.e. `h3d-<label>-<n>` with the bridge's cleaning (`n` is the image's sequence in that draft). A prompt
 with an image that is still uploading waits for it; one with an image that failed (`upload_too_large`,
 `upload_unsupported`, `upload_busy`, `dropzone_unavailable`, or refused in the game before any upload: over 25 MiB, not
-a PNG, JPEG, GIF or WebP) is **not sent at all**, and the field says which image and why.
+a PNG, JPEG, GIF or WebP) is **not sent at all**, and the field says which image and why. A file refused in the game never becomes a chip, so the fields that prompt an agent (P, Start Run, the transcript box) hold the refusal as a message with a dismiss button and send nothing while it is up; the user's dismissal is what lets the prompt go, without that file (the hire dialog lists the file in its notice and sends the rest; the terminal paste pre-checks every file and sends none of them).
 
 ### Floor settings
 

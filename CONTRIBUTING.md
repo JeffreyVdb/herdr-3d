@@ -657,7 +657,7 @@ The P overlay (`ui/prompt.ts`, `#prompt-text`, a `Draft` per worker), Start Run'
 view's prompt box (`laptop/transcriptRender.ts`, `.tx-input`, styled with `--tx-*` and `em` in `transcript.css`) and a
 paste at a laptop's terminal (`ui/seat.ts` reads the clipboard's files, `laptop/pasteImages.ts` uploads through a `Draft`
 and queues one `worker.prompt` of markers; a plain shell is told it cannot take an image). A field sends only when every
-image is up (it waits for one that is uploading) and not at all when one failed. `e2e/prompt-images.spec.ts` drives all of
+image is up (it waits for one that is uploading) and not at all when one failed or when a file it refused is still held (`Draft` option `holdRefused`: the refusal shows under the field with a dismiss button and only the user's dismissal lifts it; the hire dialog does not opt in). Start Run's First prompt is read-only while its generated text carries a bare `[Image #n]` of Extra (`previewLocked`). `e2e/prompt-images.spec.ts` drives all of
 them (chips, markers sent, failed / pending / refused images, the desk drafts, the terminal and the plain shell); the
 fixture's upload adds `fail_code=upload_busy` (the failures are the bridge's `429`) and `upload_delay=<ms>` (a pending
 upload to look at).
