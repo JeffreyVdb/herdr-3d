@@ -645,14 +645,18 @@
   flex: 1 1 auto;
   min-height: 0;
 }
-.desk-dlg--hire .hire-task-input {
-  flex: 1 1 auto;
-  min-height: 8rem;
-  max-height: none;
+/* The composer (#51) fills the slot the textarea had: the editor grows with the pane and scrolls inside. */
+.desk-dlg--hire .cmp {
+  --cmp-min-height: 8rem;
+}
+.desk-dlg--hire .cmp-editor {
   padding: 12px 14px;
-  resize: none;
   font-size: 15px;
   line-height: 1.55;
+}
+.desk-dlg--hire .cmp-editor[data-empty='true']::before {
+  left: 14px;
+  right: 14px;
 }
 .hire-options-pane {
   display: grid;

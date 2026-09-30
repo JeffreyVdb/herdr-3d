@@ -325,12 +325,15 @@ describe('Enter and Shift+Enter', () => {
     expect(env.draft.selection).toEqual(caret(2));
   });
 
-  it('Ctrl+Enter and Alt+Enter add a line under the Enter policy', () => {
+  it('Ctrl/⌘+Enter also sends under the Enter policy; Alt+Enter adds a line', () => {
     const env = setup();
     key(env.editor, 'Enter', { ctrlKey: true });
+    key(env.editor, 'Enter', { metaKey: true });
+    expect(env.submits).toBe(2);
+    expect(env.draft.doc.text).toBe('');
     key(env.editor, 'Enter', { altKey: true });
-    expect(env.draft.doc.text).toBe('\n\n');
-    expect(env.submits).toBe(0);
+    expect(env.draft.doc.text).toBe('\n');
+    expect(env.submits).toBe(2);
   });
 
   it('under the mod-enter policy Enter adds a line and Ctrl/⌘+Enter sends', () => {

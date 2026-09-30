@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BridgeClient, type CommandResult, type ConnState, type SocketLike } from './net/client';
 import { bridgeUrl, takeToken } from './net/endpoint';
+import { postUpload } from './net/upload';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
 import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
@@ -101,6 +102,9 @@ const CLIENT = 'herdr-3d-game/0.2';
 const GONG_GAP_MS = 450;
 
 /** Everything between the renderer and the bridge: views, input, HUD, frame pacing. */
+/** A key aimed at a text field, an editable area (the prompt composer, #51) included: it types, the game does not take it. */
+const typingIn = (t: EventTarget | null): boolean => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || (t instanceof HTMLElement && t.isContentEditable);
+
 export class App {
   readonly store = new WorldStore();
   /** M10 limits: the always-on plan limits widget and what it remembers. */
@@ -337,7 +341,7 @@ export class App {
       toast: (m: string, kind: 'info' | 'error') => this.hud.toast(m, kind === 'error' ? 6500 : 3600, kind),
       now: () => Date.now(),
     };
-    const hireHost = { ...dialogHost, reserve: (s: string, d: number) => this.reserve(s, d), held: (s: string) => this.heldDesks(s) };
+    const hireHost = { ...dialogHost, upload: (f: Blob, hint: { label?: string; n?: number }, signal?: AbortSignal) => postUpload(this.url, f, hint, signal), reserve: (s: string, d: number) => this.reserve(s, d), held: (s: string) => this.heldDesks(s) };
     this.hire = new HireDialog(o.host, { ...hireHost, orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ session: s, desk: d }, true) } });
     // M6 start
     this.presetsPanel = new PresetsPanel(o.host, dialogHost);
@@ -1506,7 +1510,7 @@ export class App {
       return;
     }
     // M10 (#47): a screen-filling dialog hides the plan limits; Shift+L still peeks them over it (else the dialog owns the keys).
-    if (e.code === 'KeyL' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && this.limitsWidget.overScreen && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+    if (e.code === 'KeyL' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && this.limitsWidget.overScreen && !typingIn(e.target)) {
       e.preventDefault();
       this.limitsWidget.toggleFromKey();
       return;
@@ -1515,7 +1519,7 @@ export class App {
     if (this.hud.sheetOpen || this.panels.open || this.dialogOpen) return;
     // M5: at a worker's laptop every key goes to its terminal (Esc gets you up).
     if (this.laptops.key(e)) return;
-    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+    const typing = typingIn(e.target);
     if (typing) return;
     // M5: keys in the Changes panel are its own.
     if (this.changes.owns(e.target)) return;

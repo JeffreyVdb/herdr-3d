@@ -361,7 +361,8 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
 
   const isSubmit = (e: KeyboardEvent): boolean => {
     const mod = e.ctrlKey || e.metaKey;
-    return policy === 'enter' ? !e.shiftKey && !mod && !e.altKey : mod;
+    // Enter policy: Ctrl/⌘+Enter sends too (the hire dialog's textarea always did).
+    return policy === 'enter' ? !e.shiftKey && !e.altKey : mod;
   };
 
   /** Arrow keys beside a chip step over it in one press; everywhere else the browser moves the caret. */

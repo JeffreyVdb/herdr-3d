@@ -161,14 +161,6 @@ export class Reservations {
   }
 }
 
-/** What a key in the first-task textarea does: Enter sends, Shift+Enter is a new line, anything else types. */
-export function taskKey(e: { key: string; shiftKey: boolean; isComposing?: boolean; altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }): 'send' | 'newline' | null {
-  if (e.key !== 'Enter' || e.isComposing) return null;
-  if (e.shiftKey) return 'newline';
-  if (e.altKey) return null;
-  return 'send';
-}
-
 /** The hire dialog as filled in. */
 export interface HireForm {
   prompt: string;

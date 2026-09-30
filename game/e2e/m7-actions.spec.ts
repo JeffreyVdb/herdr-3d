@@ -172,7 +172,7 @@ test('Ask a worker…: the plain hire dialog at the nearest free desk with the i
   const d = (await page.evaluate(() => window.__h3d.dialog())) as { desk: number; form: { prompt: string } };
   expect(d.desk).toBe(5);
   expect(d.form.prompt).toBe(`Investigate #13 (https://github.com/${HERDR}/issues/13) and report back. Don't change code.`);
-  await expect(page.locator('#hire-task')).toHaveValue(d.form.prompt);
+  await expect(page.locator('#hire-task')).toHaveText(d.form.prompt);
   clean();
 });
 

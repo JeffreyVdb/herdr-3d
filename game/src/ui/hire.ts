@@ -11,7 +11,6 @@ import {
   hireBlocker,
   modelsFor,
   resolveChoice,
-  taskKey,
   worktreeUsable,
   type CapacityView,
   type HireForm,
@@ -27,6 +26,10 @@ import { deskTabs } from './deskTabs';
 // #51 drafts
 import { Drafts } from './drafts';
 import { backdropPolicy } from './dismiss';
+// #51 composer
+import { mountComposer, type Composer } from './composer/composer';
+import { Draft as PromptDraft, type DraftSnapshot, type FailedImage, type ResolveResult, type Uploader } from './composer/draft';
+import { HIRE_PROMPT_MAX_BYTES, serializeErrorText } from './composer/model';
 
 /**
  * The hire dialog (M4): E on an empty desk's "+", or the top bar's Hire for
@@ -49,6 +52,8 @@ export interface HireHost extends DialogHost {
   reserve(session: string, desk: number): () => void;
   /** Desks of a floor a hire (or a walk) is already on its way to: not free for this one. */
   held(session: string): ReadonlySet<number>;
+  /** #51: one image to Drop Zone through the bridge (`net/upload.ts`), for the first task's composer. */
+  upload: Uploader;
   /** M6 start: the "Hire orchestrator" tab (ui/startRun.ts): why it is off, and opening it for the same desk. */
   orchestrate?: { off(): string | null; open(session: string, desk: number): void };
 }
@@ -79,6 +84,8 @@ export interface HireSummary {
   blocker: string | null;
   status: string;
   error: boolean;
+  /** The first task's images in document order (`n` is the marker's number). */
+  images: Array<{ n: number; name: string; status: string; path: string | null }>;
 }
 
 const DESK_PLUS = '<path d="M12 5v14M5 12h14"/>';
@@ -149,55 +156,85 @@ export function modelList(values: string[], value: string, query: string, onPick
   return h('fieldset', { class: 'dd-pick dd-pick--models', 'data-pick': 'model' }, h('legend', {}, 'Model ', count), h('div', { class: 'dd-models' }, search, row, none));
 }
 
+/** The dialog's line when a hire is held back by images that did not upload (each chip has its own reason and Retry). */
+function uploadFailedText(failed: FailedImage[]): string {
+  const names = failed.map((f) => `image ${f.numbers.join(' and ') || '?'} (${f.name})`).join(', ');
+  return `Nothing was hired: ${names} did not upload (${failed[0]?.message ?? 'unknown error'}). Retry ${failed.length === 1 ? 'it' : 'them'} on the picture, or remove ${failed.length === 1 ? 'it' : 'them'}, then hire again. Your prompt is kept.`;
+}
+
+/** The prompt as the form sees it: the text, each image a bare `[Image #n]` (the paths only exist once uploaded, at send time). */
+function promptText(s: DraftSnapshot): string {
+  let n = 0;
+  return s.segments.map((g) => (g.kind === 'text' ? g.text : `[Image #${++n}]`)).join('');
+}
+
 /**
- * The first-task editor: the one boundary the shared composer (#13) replaces. The dialog only reads and writes its
- * text, focuses it and marks it busy; it lives in its own pane that a re-render of the options never touches, so its
- * caret, selection and scroll survive a model or limits update.
+ * The first-task editor: the shared composer (#13) in its own pane that a re-render of the options never touches, so
+ * its caret, selection and scroll survive a model or limits update. The dialog shows it a `PromptDraft` per desk (text,
+ * images, uploads), focuses it and marks it busy; Enter asks the dialog to hire, Shift+Enter adds a line.
  */
 class TaskEditor {
   readonly el: HTMLElement;
-  private readonly input = h('textarea', {
-    id: 'hire-task',
-    class: 'hire-task-input',
-    'data-key': 'task',
-    rows: 3,
-    spellcheck: 'true',
-    placeholder: 'What should they start on?',
-    'aria-describedby': 'hire-task-hint',
-  });
+  private readonly composer: Composer;
 
-  constructor(handlers: { change(): void; send(): void }) {
-    this.input.addEventListener('input', () => handlers.change());
-    // Enter hires, Shift+Enter is a new line.
-    this.input.addEventListener('keydown', (e) => {
-      if (taskKey(e) === 'send') {
-        e.preventDefault();
-        handlers.send();
-      }
+  constructor(handlers: { change(s: DraftSnapshot): void; send(): void; upload: Uploader }) {
+    this.composer = mountComposer({
+      draft: new PromptDraft({ upload: handlers.upload, maxPromptBytes: HIRE_PROMPT_MAX_BYTES }),
+      labelledBy: 'hire-task-label',
+      describedBy: 'hire-task-hint',
+      placeholder: 'What should they start on?',
+      submitPolicy: 'enter',
+      onSubmit: handlers.send,
+      onChange: handlers.change,
     });
+    // The editor takes the textarea's hooks: the label, the tests and the focus keys all know `#hire-task`.
+    this.composer.editor.id = 'hire-task';
+    this.composer.editor.dataset.key = 'task';
     this.el = h(
       'div',
       { class: 'dd-field dd-task' },
-      h('label', { for: 'hire-task' }, 'First task ', h('span', { class: 'dd-optional' }, 'optional')),
-      this.input,
-      h('p', { class: 'field-hint', id: 'hire-task-hint' }, h('kbd', {}, 'Enter'), ' hires · ', h('kbd', {}, 'Shift'), '+', h('kbd', {}, 'Enter'), ' adds a line'),
+      h('label', { id: 'hire-task-label', onclick: () => this.focus() }, 'First task ', h('span', { class: 'dd-optional' }, 'optional')),
+      this.composer.element,
+      h('p', { class: 'field-hint', id: 'hire-task-hint' }, h('kbd', {}, 'Enter'), ' hires · ', h('kbd', {}, 'Shift'), '+', h('kbd', {}, 'Enter'), ' adds a line · paste a screenshot to add it'),
     );
   }
 
-  get text(): string {
-    return this.input.value;
+  get draft(): PromptDraft {
+    return this.composer.getDraft();
   }
 
-  set text(v: string) {
-    if (this.input.value !== v) this.input.value = v;
+  /** Shows a desk's draft (its uploads go on wherever they are). */
+  show(d: PromptDraft): void {
+    if (this.composer.getDraft() !== d) this.composer.setDraft(d);
+  }
+
+  get text(): string {
+    return promptText(this.composer.getSnapshot());
+  }
+
+  resolve(): Promise<ResolveResult> {
+    return this.composer.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES });
   }
 
   set busy(b: boolean) {
-    this.input.disabled = b;
+    this.composer.setBusy(b);
+  }
+
+  get previewOpen(): boolean {
+    return this.composer.previewOpen;
   }
 
   focus(): void {
-    this.input.focus();
+    this.composer.focus();
+  }
+
+  closePreview(): void {
+    this.composer.closePreview();
+  }
+
+  /** The dialog's DOM is going: a preview holds a window listener. */
+  dispose(): void {
+    this.composer.dispose();
   }
 }
 
@@ -209,11 +246,8 @@ export class HireDialog {
   private readonly form = h('form', { class: 'dd-body', id: 'hire-form', novalidate: true });
   /** The first task: its own pane, never re-rendered; harness, model, effort, folder and label sit in the options pane beside (or below) it. */
   private readonly editor = new TaskEditor({
-    change: () => {
-      this.f.prompt = this.editor.text;
-      this.saveDraft();
-      this.renderActions();
-    },
+    upload: (file, hint, signal) => this.host.upload(file, hint, signal),
+    change: (s) => this.taskChanged(s),
     send: () => void this.hire(),
   });
   private readonly editorPane = h('div', { class: 'hire-editor-pane' }, this.editor.el);
@@ -239,8 +273,12 @@ export class HireDialog {
   private hireBtn: HTMLButtonElement | null = null;
   private renderedKey = '';
   private refetching = false;
-  /** #51: what was typed and not hired yet, per desk of a floor (memory, and localStorage where allowed). */
+  /** #51: what was typed and not hired yet, per desk of a floor (memory, and localStorage where allowed): the text and label. */
   private readonly drafts = new Drafts('hire');
+  /** The first task's composer draft per desk (text, images, their uploads): kept in memory while the page lives; images do not survive a reload. */
+  private readonly docs = new Map<string, PromptDraft>();
+  /** The last hire attempt stopped on a failed upload: the message stays until every image is uploaded or gone. */
+  private uploadFailed = false;
   /** The label the user typed (the prepared name is only a default), restored over the prepared one. */
   private typedLabel: string | null = null;
   /** The model filter of a long list; a harness switch clears it. */
@@ -257,6 +295,8 @@ export class HireDialog {
     // A late answer (a prepare, or a hire sent before Esc) is for a dialog that is gone: it never touches the next one.
     this.dialog.addEventListener('close', () => {
       if (!this.dialog.open) this.gen++;
+      // An enlarged image is nested in this dialog: it goes with it (it holds a window key listener).
+      this.editor.closePreview();
     });
     this.dialog.addEventListener('cancel', () => {
       // Esc while the hire is on its way: the hire still happens; the dialog just goes.
@@ -305,8 +345,10 @@ export class HireDialog {
     const draft = this.drafts.get(this.draftKey());
     this.typedLabel = draft?.fields?.label ?? null;
     this.modelQuery = '';
-    this.f = { prompt: prefill.prompt ?? draft?.text ?? '', harness: '', model: '', effort: '', label: this.typedLabel ?? '', cwd: '', worktree: false };
-    this.editor.text = this.f.prompt;
+    this.uploadFailed = false;
+    // The desk's composer draft (images too) if it is still in memory, else the text storage kept; a first task handed in starts a draft of its own.
+    this.editor.show(prefill.prompt !== undefined ? this.newDoc(prefill.prompt) : (this.docs.get(this.draftKey()) ?? this.newDoc(draft?.text ?? '')));
+    this.f = { prompt: this.editor.text, harness: '', model: '', effort: '', label: this.typedLabel ?? '', cwd: '', worktree: false };
     this.state = 'preparing';
     this.renderedKey = '';
     this.refetching = false;
@@ -632,13 +674,47 @@ export class HireDialog {
     return `${session}:${desk}`;
   }
 
-  /** What the form holds that is worth keeping if the dialog goes: the task, and a label the user typed. */
+  /** What the form holds that is worth keeping across a reload: the task's text (not its images), and a label the user typed. */
   private draftNow(): { text: string; fields?: Record<string, string> } {
-    return this.typedLabel ? { text: this.f.prompt, fields: { label: this.typedLabel } } : { text: this.f.prompt };
+    const text = this.editor.draft.snapshot().text;
+    return this.typedLabel ? { text, fields: { label: this.typedLabel } } : { text };
   }
 
   private saveDraft(): void {
     this.drafts.set(this.draftKey(), this.draftNow());
+  }
+
+  private newDoc(text = ''): PromptDraft {
+    const d = new PromptDraft({
+      upload: (file, hint, signal) => this.host.upload(file, hint, signal),
+      label: () => this.f.label.trim() || this.prep?.label || 'hire',
+      maxPromptBytes: HIRE_PROMPT_MAX_BYTES,
+    });
+    if (text) d.replace(0, 0, text);
+    return d;
+  }
+
+  /** The task changed (typing, an image added or removed, an upload finished or failed). */
+  private taskChanged(s: DraftSnapshot): void {
+    this.f.prompt = promptText(s);
+    // The draft belongs to its desk from the first edit on (a first task handed in stays out of the way until then).
+    this.docs.set(this.draftKey(), this.editor.draft);
+    this.saveDraft();
+    if (this.uploadFailed && !s.failed) {
+      this.uploadFailed = false;
+      this.setStatus('');
+    }
+    this.renderActions();
+  }
+
+  /** A hire was acknowledged: what was sent is gone, unless it was edited since (`revision`), and the desk's stored text goes with it. */
+  private clearSent(key: string, doc: PromptDraft, revision: number, sent: { fields?: Record<string, string> }): void {
+    if (!doc.clearIf(revision)) return;
+    if (this.docs.get(key) === doc) this.docs.delete(key);
+    const now = this.drafts.get(key);
+    if (!now) return;
+    // The label typed since stays.
+    this.drafts.set(key, JSON.stringify(now.fields ?? {}) === JSON.stringify(sent.fields ?? {}) ? { text: '' } : { text: '', ...(now.fields ? { fields: now.fields } : {}) });
   }
 
   private renderActions(): void {
@@ -673,17 +749,22 @@ export class HireDialog {
   /** Another desk: what is typed goes with it (an empty form takes that desk's own draft instead). */
   private moveTo(desk: number): void {
     const mine = this.draftNow();
+    const doc = this.editor.draft;
     const from = this.draftKey();
     this.desk = desk;
-    if (mine.text.trim() || mine.fields) {
+    if (mine.text.trim() || mine.fields || doc.doc.images.length > 0) {
+      const there = this.docs.get(this.draftKey());
+      this.docs.delete(from);
+      this.docs.set(this.draftKey(), doc);
+      if (there && there !== doc) there.dispose();
       this.drafts.clear(from);
       this.saveDraft();
     } else {
       const there = this.drafts.get(this.draftKey());
       this.typedLabel = there?.fields?.label ?? null;
-      this.f.prompt = there?.text ?? '';
+      this.editor.show(this.docs.get(this.draftKey()) ?? this.newDoc(there?.text ?? ''));
+      this.f.prompt = this.editor.text;
       if (this.typedLabel !== null) this.f.label = this.typedLabel;
-      this.editor.text = this.f.prompt;
     }
     this.setStatus('');
     this.render();
@@ -703,14 +784,43 @@ export class HireDialog {
     // The draft as sent: an acknowledged hire clears exactly this (a newer edit after Esc stays).
     const sent = this.draftNow();
     const sentKey = this.draftKey();
+    const doc = this.editor.draft;
     const args = hireArgs(session, desk, this.f, this.prep.git);
     const who = args.label ?? this.prep.label;
-    this.state = 'hiring';
-    const release = this.host.reserve(session, desk);
-    const steps = [args.worktree ? 'creating the worktree' : null, `starting ${args.harness}`, args.prompt ? 'handing over the first task' : null].filter(Boolean);
-    this.setStatus(`Hiring ${who}: ${steps.join(', ')}…`);
-    this.render();
     const gen = this.gen;
+    let revision = doc.revision;
+    // The images go first: Drop Zone paths go into the text, so nothing is sent until every image is uploaded.
+    this.state = 'hiring';
+    this.uploadFailed = false;
+    if (args.prompt) {
+      const waiting = doc.snapshot().images.filter((i) => i.status === 'pending' || i.status === 'uploading').length;
+      this.setStatus(waiting ? `Uploading ${waiting === 1 ? 'the image' : `${waiting} images`} for ${who}…` : `Preparing ${who}’s first task…`);
+      this.render();
+      const r = await doc.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES });
+      const open = this.dialog.open && gen === this.gen;
+      if (!r.ok) {
+        // No worker.hire: the whole prompt stays, each failed chip says why and has its Retry.
+        const msg = r.reason === 'upload' ? uploadFailedText(r.failed) : r.reason === 'serialize' ? serializeErrorText(r.error) : '';
+        if (open) this.state = 'ready';
+        if (msg && open) {
+          this.uploadFailed = r.reason === 'upload';
+          this.setStatus(msg, true);
+        } else if (msg) this.host.toast(msg, 'error');
+        else if (open) this.setStatus('');
+        if (open) this.render();
+        return;
+      }
+      args.prompt = r.text;
+      revision = r.revision;
+    }
+    const release = this.host.reserve(session, desk);
+    // (The dialog may have been closed, even reopened for another desk, while the images went up: then it is not ours to touch.)
+    if (this.dialog.open && gen === this.gen) {
+      const steps = [args.worktree ? 'creating the worktree' : null, `starting ${args.harness}`, args.prompt ? 'handing over the first task' : null].filter(Boolean);
+      this.state = 'hiring';
+      this.setStatus(`Hiring ${who}: ${steps.join(', ')}…`);
+      this.render();
+    }
     const r = await this.host.send('worker.hire', args);
     release();
     // Esc'd meanwhile (and maybe another hire opened): only a toast, this dialog is someone else's now.
@@ -722,7 +832,7 @@ export class HireDialog {
       const name = w?.name ?? who;
       const branch = ack?.branch ? ` on ${ack.branch}` : '';
       // The worker exists but never got the task (`prompted: false`): the text stays, so it can be copied or sent by hand.
-      if (ack?.prompted !== false) this.drafts.clearIfUnchanged(sentKey, sent);
+      if (ack?.prompted !== false) this.clearSent(sentKey, doc, revision, sent);
       const extra = [
         ack?.prompted === false ? `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P); the text stays in this desk’s hire dialog.` : '',
       ].filter(Boolean);
@@ -771,6 +881,7 @@ export class HireDialog {
       blocker: this.blocker(),
       status: this.statusText,
       error: this.statusError,
+      images: this.editor.draft.snapshot().images.map((i) => ({ n: i.n, name: i.name, status: i.status, path: i.path })),
     };
   }
 }

@@ -488,7 +488,7 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   mezzanine (`FloorLayout.mezzanine`: posts, stair, glass, your desk, its walking supports and solids), height-aware walking collision
   and ray picking, the M4 walk-out route (`route.ts`), floor-settings validation and diffing (`settings.ts`),
   building/floor reordering (`arrange.ts`); M4: the hire / send-home dialogs' state (`hire.ts`: the preselected
-  choice, capacity states, the base's age, which send-home options are enabled, the first task's keys, the command
+  choice, capacity states, the base's age, which send-home options are enabled, the command
   args) and the arrivals' timeline (`arrival.ts`: the walk-out's heights come from its waypoints; M6b: a hire drops in
   to its chair in under a second instead of walking in, never `away`). M6b: what stands on each desk (`deskKit.ts`:
   the monitor, keyboard, mouse, the dock on the pod's outer side and its cables, the worker's photos, mug, plant and
@@ -622,7 +622,10 @@ the draft object to keep the prompt across a closed dialog. The fixture server a
 a fake `/home/fixture/drops/2026-09/h3d-<label>-<n>.<ext>` path; `fail_upload=<N|all>&upload_key=<key>` in the `ws` query fails
 the first N uploads of that key; `GET /upload/_log?upload_key=<key>` lists what it received). `/?composer-demo&ws=…` mounts the
 composer in a test-only dialog with no game (`src/ui/composer/demo.ts`, loaded only on that parameter) for `e2e/composer.spec.ts`;
-`H3D_EVIDENCE_DIR` sends its screenshots elsewhere than `test-results/composer`.
+`H3D_EVIDENCE_DIR` sends its screenshots elsewhere than `test-results/composer`. The hire dialog mounts the composer for its first
+task (`TaskEditor` in `src/ui/hire.ts`, `#hire-task` is the editable element): one `Draft` per desk in memory, the text mirrored
+to `localStorage`, Hire waits for `draft.resolve()` before it sends `worker.hire`; `e2e/hire-composer.spec.ts` drives it (paste,
+enlarged view, forced upload failure and retry, two markers in document order) on the simulating fixture server.
 
 M5 on the simulating server (`ws=…?sim=1…`): `simusage=<ms>` sends working agents' `worker.usage` that often
 (default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|changes_failed` for the next prompt,
@@ -693,7 +696,8 @@ Keyboard: in the city, Tab reaches the floor list (Enter goes inside), then the 
 building's elevator panel, the lot's too).
 Hire and send home (M4): look at an empty desk's green "+" and press **E** ("Hire a worker at Desk 11"), or press the
 top bar's **Hire** (on an office floor; Shift+Tab, then Tab past Elevator) for the first free desk. The dialog asks the
-bridge first (`hire.prepare`), then offers: an optional first task (**Enter** hires, **Shift+Enter** adds a line;
+bridge first (`hire.prepare`), then offers: an optional first task (**Enter** hires, **Shift+Enter** adds a line; paste a screenshot and it goes into the text as a
+thumbnail at the caret, click it to see it enlarged (**Esc** closes only that), the agent gets `[Image #n: <path>]` in its place;
 the dialog is a near-full-screen sheet, #51: the task editor takes the space and grows with the window, the options
 sit beside it, or under it on a phone, and Hire / Cancel stay on screen; what you typed for a desk stays until a hire
 is acknowledged),

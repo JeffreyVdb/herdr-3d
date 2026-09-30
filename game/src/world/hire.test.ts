@@ -18,7 +18,6 @@ import {
   leftovers,
   Reservations,
   resolveChoice,
-  taskKey,
   worktreeUsable,
 } from './hire';
 import { DEFAULT_HIRE_OPTIONS, type FloorView } from './store';
@@ -173,17 +172,6 @@ describe('hires on their way (reservations)', () => {
     expect(b()).toBe(true);
     expect(r.desks('pastry')).toEqual(new Set());
     expect(r.desks('scratchpad')).toEqual(new Set([2]));
-  });
-});
-
-describe('first task textarea keys', () => {
-  it('Enter sends, Shift+Enter adds a line, composing and Alt do nothing', () => {
-    expect(taskKey({ key: 'Enter', shiftKey: false })).toBe('send');
-    expect(taskKey({ key: 'Enter', shiftKey: false, metaKey: true })).toBe('send');
-    expect(taskKey({ key: 'Enter', shiftKey: true })).toBe('newline');
-    expect(taskKey({ key: 'Enter', shiftKey: false, isComposing: true })).toBeNull();
-    expect(taskKey({ key: 'Enter', shiftKey: false, altKey: true })).toBeNull();
-    expect(taskKey({ key: 'a', shiftKey: false })).toBeNull();
   });
 });
 

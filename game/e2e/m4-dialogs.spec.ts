@@ -39,7 +39,15 @@ async function openHire(page: Page, desk = 5): Promise<Hire> {
   return hireDialog(page);
 }
 
-const selected = (box: Locator) => box.evaluate((e) => (e as HTMLTextAreaElement).selectionEnd - (e as HTMLTextAreaElement).selectionStart);
+/** How much of a text box is selected: a textarea's own selection, or (the composer is a contenteditable) the document's when it is inside. */
+const selected = (box: Locator) =>
+  box.evaluate((e) => {
+    if (e instanceof HTMLTextAreaElement) return e.selectionEnd - e.selectionStart;
+    const s = getSelection();
+    return s && s.anchorNode && e.contains(s.anchorNode) && e.contains(s.focusNode) ? s.toString().length : 0;
+  });
+/** What the first task reads as (images as `[Image #n]`), from the dialog's own summary. */
+const taskText = async (page: Page) => ((await dialog(page)) as Hire).form.prompt;
 
 /** A real mouse gesture: press on the first line of `box`, drag out to (x, y), release. */
 async function dragOut(page: Page, box: Locator, x: number, y: number): Promise<void> {
@@ -61,9 +69,11 @@ test('hire: a press in the task released on the backdrop keeps the dialog, the t
   const d = (await hireDlg(page).boundingBox())!;
   // Out past the dialog's left edge, and out past its top edge.
   for (const [x, y] of [[3, d.y + 60], [d.x + 200, 3]] as const) {
+    // A press on selected text starts dragging it (the composer refuses that): collapse the last selection first.
+    await task.press('Control+End');
     await dragOut(page, task, x, y);
     await expect(hireDlg(page)).toBeVisible();
-    await expect(task).toHaveValue(text);
+    expect(await taskText(page)).toBe(text);
     expect(await selected(task)).toBeGreaterThan(0);
     expect(((await dialog(page)) as Hire).form.prompt).toBe(text);
   }
@@ -101,7 +111,8 @@ test('hire: what was typed comes back for the desk, until a hire is acknowledged
   // Same desk: back as it was. Another desk: its own (empty) draft.
   let d = await openHire(page, one);
   expect(d.form).toMatchObject({ prompt: 'Draft for the first desk', label: 'Nibble' });
-  await expect(page.locator('#hire-task')).toHaveValue('Draft for the first desk');
+  expect(await taskText(page)).toBe('Draft for the first desk');
+  await expect(page.locator('#hire-task')).toHaveText('Draft for the first desk');
   await page.keyboard.press('Escape');
   d = await openHire(page, two);
   expect(d.form.prompt).toBe('');
