@@ -727,7 +727,7 @@ M16 on the simulating server (`tools/fixture-transcript.ts`, rules at its top): 
 for its conversation. `transcript.watch` answers a demo timeline of every item kind in the bridge's shape, the demo's
 Agent call pages the bridge's own output for its subagent fixture, and `sim.transcript` (`simTranscript(args)` in the
 hooks) pushes items or updates to a watch (`{id, items, updates}`) or closes it (`{id, close: "session_changed"}`);
-`simfail=no_m16` plays a bridge before M16. #59: the view's top strip has the transcript's preset (three swatches:
+`simfail=no_m16` plays a bridge before M16. The demo's `Read` of a PNG shows its two thumbnails under its collapsed header, and still does with Hide tools on (#70). #59: the view's top strip has the transcript's preset (three swatches:
 Terminal, Quiet, Paper), Hide tools and A− / 100% / A+; the seat bar has the terminal's own preset and zoom. Ctrl + = /
 − / 0 and Ctrl+wheel zoom the view that is up, while seated only; Ctrl+, puts the keyboard on the terminal's controls (Esc goes back). `e2e/m59-themes.spec.ts` drives them. The game's tests read what the bridge makes of its own fixtures from
 `game/fixtures/transcript/` (`H3D_UPDATE_FIXTURES=1 go test ./internal/transcript` writes them, and the Go test fails

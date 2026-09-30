@@ -162,8 +162,17 @@
     animation: none;
   }
 }
-.tx[data-tools='hidden'] .tx-toolrow:not(.tx-reveal) {
+.tx[data-tools='hidden'] .tx-toolrow:not(.tx-reveal):not(.tx-toolimg) {
   display: none;
+}
+/* #70: hiding tool calls does not hide what the agent looked at: a tool row with images keeps its strip, bare. */
+.tx[data-tools='hidden'] .tx-toolimg:not(.tx-reveal) > :not(.tx-tool-strip) {
+  display: none;
+}
+.tx[data-tools='hidden'] .tx-toolimg:not(.tx-reveal) > .tx-tool-strip {
+  margin: 0;
+  padding: 0;
+  border-left: 0;
 }
 .tx-look {
   flex: none;
@@ -1164,6 +1173,30 @@
   font-size: var(--tx-mono-fs, 11.5px);
   overflow-wrap: anywhere;
   user-select: text;
+}
+/*
+ * #70: a tool row's images, under its header whether or not it is open, on the body's own rule so header, images and
+ * (opened) text read as one call. An image that is not available is a one-line card here, so the row stays short.
+ */
+.tx-tool-strip {
+  margin: 4px 0 0 12px;
+  padding: 3px 0 3px 10px;
+  border-left: 2px solid var(--tx-bg-3);
+}
+.tx-tool-strip + .tx-tool-body {
+  margin-top: 0;
+}
+.tx-tool-strip .tx-imgcard {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 10px;
+}
+.tx-thumb[data-cached] .tx-img {
+  animation: none;
 }
 .tx-imgchip {
   display: inline-flex;
