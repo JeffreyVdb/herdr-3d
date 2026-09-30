@@ -29,6 +29,52 @@ async function sitAt(page: Page, name: string): Promise<string> {
   return id;
 }
 
+// A phone: every control of the lightbox is on the screen and can be hit (the Close button ran off the right edge).
+test('the lightbox fits a 390 x 844 screen: zoom, copy, jump and close are all inside it', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await sitAt(page, 'Tofu');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await frames(page, 6);
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(async () => (await txState(page)).mounted).toBe(true);
+  const box = page.locator('.seat-transcript');
+  await expect.poll(async () => (await txState(page)).imageCount).toBeGreaterThan(0);
+  await box.locator('.tx-bar .seat-tab[data-mode="images"]').click();
+  await expect.poll(async () => (await txState(page)).mode).toBe('images');
+  const tab = box.locator('.imgs');
+  await tab.locator('.imgs-group[data-origin="input"] .imgs-item').first().locator('.imgs-tile').click();
+  const lb = page.locator('dialog.ilb');
+  await expect(lb).toBeVisible();
+  await expect(lb.locator('.ilb-jump')).toBeVisible();
+  await expect(lb.locator('.ilb-img.ilb-loading')).toHaveCount(0);
+  const vp = page.viewportSize() as { width: number; height: number };
+  const controls = await lb.locator('.ilb-btn, .ilb-nav').evaluateAll((els) =>
+    els
+      .filter((e) => getComputedStyle(e).display !== 'none' && !(e as HTMLElement).hidden)
+      .map((e) => {
+        const r = e.getBoundingClientRect();
+        // What is at the middle of the control: the control itself (nothing covers it, it is not clipped).
+        const at = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+        return { cls: (e as HTMLElement).className, x0: r.left, y0: r.top, x1: r.right, y1: r.bottom, hit: !!at && (e === at || e.contains(at)) };
+      }),
+  );
+  const names = controls.map((c) => c.cls);
+  for (const want of ['ilb-zoom-out', 'ilb-zoom-in', 'ilb-fit', 'ilb-copy', 'ilb-jump', 'ilb-close']) expect(names.join(' '), `${want} is there`).toContain(want);
+  for (const c of controls) {
+    expect(c.x0, `${c.cls} left`).toBeGreaterThanOrEqual(0);
+    expect(c.y0, `${c.cls} top`).toBeGreaterThanOrEqual(0);
+    expect(c.x1, `${c.cls} right`).toBeLessThanOrEqual(vp.width);
+    expect(c.y1, `${c.cls} bottom`).toBeLessThanOrEqual(vp.height);
+    expect(c.hit, `${c.cls} can be hit`).toBe(true);
+  }
+  await shot(page, 'm16-lightbox-390');
+  // Close closes (a tap on the button, not the Escape key).
+  await lb.locator('.ilb-close').click();
+  await expect(lb).toHaveCount(0);
+  clean();
+});
+
 test('the Images tab: Input and Agent, deduped, lightbox, jump to message, live, and clean after standing up', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);

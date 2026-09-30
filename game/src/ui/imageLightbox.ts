@@ -110,8 +110,8 @@ export function openImageLightbox(o: LightboxOptions): Lightbox {
   const zoomOut = btn('ilb-zoom-out', 'Zoom out (−)', '<path d="M5 12h14"/>', () => setZoom(z / STEP));
   const zoomIn = btn('ilb-zoom-in', 'Zoom in (+)', ICON.plus, () => setZoom(z * STEP));
   const zoomFit = h('button', { class: 'ilb-btn ilb-fit', title: 'Fit to screen (0) or actual size (1)', onclick: () => toggleActual() }, 'Fit');
-  const copyBtn = h('button', { class: 'ilb-btn ilb-copy', title: 'Copy image (C)', onclick: () => void copy() }, icon('<rect x="8.5" y="8.5" width="10" height="11" rx="1.6"/><path d="M15.5 8.5v-2a1.6 1.6 0 0 0-1.6-1.6H7A1.6 1.6 0 0 0 5.5 6.5v8.8A1.6 1.6 0 0 0 7 16.9h1.5"/>'), 'Copy image');
-  const jumpBtn = h('button', { class: 'ilb-btn ilb-jump', title: 'Show this in the conversation (J)', onclick: () => jump() }, icon('<path d="M5 12h10.5M11.5 7.5 16 12l-4.5 4.5"/><path d="M19.5 5v14"/>'), 'Jump to message');
+  const copyBtn = h('button', { class: 'ilb-btn ilb-copy', 'aria-label': 'Copy image', title: 'Copy image (C)', onclick: () => void copy() }, icon('<rect x="8.5" y="8.5" width="10" height="11" rx="1.6"/><path d="M15.5 8.5v-2a1.6 1.6 0 0 0-1.6-1.6H7A1.6 1.6 0 0 0 5.5 6.5v8.8A1.6 1.6 0 0 0 7 16.9h1.5"/>'), h('span', { class: 'ilb-lbl' }, 'Copy image'));
+  const jumpBtn = h('button', { class: 'ilb-btn ilb-jump', 'aria-label': 'Jump to message', title: 'Show this in the conversation (J)', onclick: () => jump() }, icon('<path d="M5 12h10.5M11.5 7.5 16 12l-4.5 4.5"/><path d="M19.5 5v14"/>'), h('span', { class: 'ilb-lbl' }, 'Jump to message'));
   const closeBtn = h('button', { class: 'ilb-btn ilb-close', 'aria-label': 'Close (Esc)', title: 'Close (Esc)', onclick: () => close() }, icon(ICON.close));
   const prev = h('button', { class: 'ilb-nav ilb-prev', 'aria-label': 'Previous image (←)', title: 'Previous image (←)', onclick: () => show(index - 1) }, icon(ICON.back));
   const next = h('button', { class: 'ilb-nav ilb-next', 'aria-label': 'Next image (→)', title: 'Next image (→)', onclick: () => show(index + 1) }, icon('<path d="M9.5 6l6 6-6 6"/>'));
