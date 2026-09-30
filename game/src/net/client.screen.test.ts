@@ -57,3 +57,24 @@ describe('connection-scoped screen messages', () => {
     expect(h.conn).toEqual([]);
   });
 });
+
+// M16: transcript.items / transcript.closed are connection-scoped too.
+describe('connection-scoped transcript messages', () => {
+  it('hands items and closes to onConn without moving the sequence', () => {
+    const h = live();
+    const items = { t: 'transcript.items', id: 'w1', items: [{ id: 'a', seq: 1, ts: 0, kind: 'user', parts: [{ text: 'hi' }] }], updates: [] };
+    h.sock.recv(items);
+    h.sock.recv({ t: 'transcript.closed', id: 'w1', reason: 'session_changed' });
+    h.sock.recv({ t: 'worker.status', seq: 6, id: 'w', session: 's', workspace_id: 'x', status: 'idle' });
+    expect(h.conn).toEqual([items, { t: 'transcript.closed', id: 'w1', reason: 'session_changed' }]);
+    expect(h.events).toEqual([6]);
+  });
+
+  it('drops malformed ones', () => {
+    const h = live();
+    h.sock.recv({ t: 'transcript.items', items: [] });
+    h.sock.recv({ t: 'transcript.items', id: 'w1', items: 'x' });
+    h.sock.recv({ t: 'transcript.closed', id: 'w1' });
+    expect(h.conn).toEqual([]);
+  });
+});

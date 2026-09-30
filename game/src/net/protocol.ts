@@ -369,6 +369,11 @@ export interface CommandArgs {
   'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number };
   'terminal.unwatch': { id: string };
   'worker.keys': { id: string; input: KeyItem[] };
+  // M16: the transcript view at a laptop (docs/protocol.md "Laptops: transcript").
+  'transcript.watch': { id: string; limit?: number };
+  'transcript.unwatch': { id: string };
+  'transcript.page': { id: string; before: string; limit?: number };
+  'transcript.item': { id: string; item: string };
   // M6 start: team presets and starting a run.
   'preset.create': { name: string; roles: PresetRoles };
   /** `roles` replaces all five. */
@@ -643,8 +648,83 @@ export interface TerminalClosed {
   reason: ClosedReason | string;
 }
 
-/** Connection-scoped messages (no `seq`): screens of watched laptops. */
-export type ConnMessage = TerminalFrame | TerminalClosed;
+// M16: a worker's agent conversation as a timeline of normalised items (`transcript.watch` / `transcript.unwatch`
+// / `transcript.page` / `transcript.item`, the connection-scoped `transcript.items` / `transcript.closed`). Like
+// frames, no `seq`: sent only to the watching connection, never replayed; the client re-watches after a reconnect.
+
+/** An image in a transcript item (phase 1: never sent, only noted). */
+export interface ImagePart {
+  image_omitted: true;
+}
+
+export interface TranscriptItem {
+  /** Stable across updates: Claude message.id/uuid (+block), Codex item id/call_id. */
+  id: string;
+  /** Order within this transcript. */
+  seq: number;
+  /** Unix ms. */
+  ts: number;
+  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'subagent' | 'compaction' | 'notice' | 'unknown';
+  /** user / assistant: markdown text and images, in order. */
+  parts?: Array<{ text: string } | ImagePart>;
+  /** A tool call and its result (the result may arrive later, as an update). */
+  tool?: {
+    name: string;
+    input_summary: string;
+    input?: unknown;
+    status: 'running' | 'ok' | 'error' | 'interrupted';
+    output_text?: string;
+    output_truncated?: boolean;
+    diff?: { path: string; hunks: unknown[] };
+  };
+  subagent?: { agent_id: string; description: string; status: string };
+  notice?: { text: string };
+  /** `unknown`: the line or block type the bridge did not know. */
+  raw_type?: string;
+}
+
+/** `transcript.watch` ack (and `transcript.page`'s: the items before `cursor`). */
+export interface TranscriptWatchAck {
+  harness: string;
+  session: string;
+  version: string;
+  /** Where the next `transcript.page` starts (older items). */
+  cursor: string;
+  has_more: boolean;
+  /** No transcript yet (a fresh hire, a plain shell): items come once it appears. */
+  pending: boolean;
+  items: TranscriptItem[];
+}
+
+export interface TranscriptItems {
+  t: 'transcript.items';
+  id: string;
+  /** New items (absent: none). */
+  items?: TranscriptItem[];
+  /** Whole replacements of items already sent, by `id` (a tool result arriving, a streamed message growing). */
+  updates?: TranscriptItem[];
+}
+
+export type TranscriptClosedReason = 'worker_removed' | 'asleep' | 'session_changed' | 'resync' | 'not_found';
+
+export interface TranscriptClosed {
+  t: 'transcript.closed';
+  id: string;
+  reason: TranscriptClosedReason | string;
+}
+
+export function isTranscriptItems(m: ServerMessage): m is TranscriptItems {
+  const o = m as unknown as Obj;
+  return m.t === 'transcript.items' && isStr(o.id) && (o.items === undefined || Array.isArray(o.items)) && (o.updates === undefined || Array.isArray(o.updates));
+}
+
+export function isTranscriptClosed(m: ServerMessage): m is TranscriptClosed {
+  const o = m as unknown as Obj;
+  return m.t === 'transcript.closed' && isStr(o.id) && isStr(o.reason);
+}
+
+/** Connection-scoped messages (no `seq`): screens and transcripts of watched laptops. */
+export type ConnMessage = TerminalFrame | TerminalClosed | TranscriptItems | TranscriptClosed;
 
 export function isTerminalFrame(m: ServerMessage): m is TerminalFrame {
   const o = m as unknown as Obj;

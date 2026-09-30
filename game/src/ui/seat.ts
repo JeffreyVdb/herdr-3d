@@ -1,5 +1,6 @@
 import './seat.css';
 import type { SeatView } from '../laptop';
+import type { SeatMode } from '../laptop/transcriptMode';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', text = ''): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -20,7 +21,8 @@ function key(k: string[], label: string): HTMLSpanElement {
  * terminal your keys go to (on label-maker tape, like the status chips),
  * how to get up and how to send Esc, and what went wrong when typing
  * failed. A visually hidden textarea keeps the keyboard focus, so IME
- * composition and the browser's paste land here.
+ * composition and the browser's paste land here. M16: a switch between the
+ * terminal and the worker's conversation (Ctrl+Esc), showing which is up.
  */
 export class SeatBar implements SeatView {
   readonly el: HTMLDivElement;
@@ -29,11 +31,15 @@ export class SeatBar implements SeatView {
   private readonly note = el('span', 'seat-note');
   private readonly keys = el('div', 'seat-keys');
   private readonly standBtn = el('button', 'seat-stand');
+  private readonly modeBtn = el('button', 'seat-mode');
+  private readonly modeOpts: Record<SeatMode, HTMLSpanElement> = { terminal: el('span', 'seat-mode-opt', 'Terminal'), transcript: el('span', 'seat-mode-opt', 'Transcript') };
   private name = '';
+  private mac = false;
+  private current: SeatMode = 'terminal';
 
   constructor(
     private readonly hud: HTMLElement,
-    handlers: { text(t: string): void; paste(t: string): void; stand(): void },
+    handlers: { text(t: string): void; paste(t: string): void; stand(): void; toggle(): void },
   ) {
     this.el = el('div', 'seat');
     this.el.hidden = true;
@@ -46,6 +52,12 @@ export class SeatBar implements SeatView {
     this.standBtn.type = 'button';
     this.standBtn.append(el('kbd', '', 'Esc'), document.createTextNode('Stand up'));
     this.standBtn.addEventListener('click', () => handlers.stand());
+    this.modeBtn.type = 'button';
+    this.modeBtn.title = 'Switch between the terminal and the conversation (Ctrl+Esc)';
+    const opts = el('span', 'seat-mode-opts');
+    opts.append(this.modeOpts.terminal, this.modeOpts.transcript);
+    this.modeBtn.append(el('kbd', '', 'Ctrl'), el('kbd', '', 'Esc'), opts);
+    this.modeBtn.addEventListener('click', () => handlers.toggle());
     this.input = el('textarea', 'seat-input');
     this.input.setAttribute('aria-label', 'Keyboard for the terminal');
     this.input.autocapitalize = 'off';
@@ -66,21 +78,39 @@ export class SeatBar implements SeatView {
       e.preventDefault();
       handlers.paste(e.clipboardData?.getData('text/plain') ?? '');
     });
-    this.el.append(line, this.keys, this.standBtn, this.input);
+    this.el.append(line, this.keys, this.modeBtn, this.standBtn, this.input);
     hud.append(this.el);
   }
 
   show(name: string, mac: boolean): void {
     this.name = name;
+    this.mac = mac;
     this.tape.textContent = `At ${name}’s laptop`;
-    this.keys.replaceChildren(
-      key(['Shift', 'Esc'], 'Send Esc'),
-      key([mac ? '⌘' : 'Ctrl', 'V'], 'Paste'),
-      el('span', 'seat-aside', 'Tab, arrows and Ctrl keys go to the terminal'),
-    );
+    this.current = 'terminal';
+    this.renderMode();
     this.status('ok', null);
     this.el.hidden = false;
     this.hud.dataset.seated = '1';
+  }
+
+  /** M16: what the laptop shows: the terminal (your keys go to it) or the conversation (they stay in the view). */
+  setMode(mode: SeatMode): void {
+    if (mode === this.current) return;
+    this.current = mode;
+    this.renderMode();
+    this.status('ok', null);
+  }
+
+  private renderMode(): void {
+    const reading = this.current === 'transcript';
+    this.el.dataset.mode = this.current;
+    this.modeBtn.setAttribute('aria-label', reading ? 'Showing the conversation: switch to the terminal' : 'Showing the terminal: switch to the conversation');
+    for (const m of ['terminal', 'transcript'] as const) this.modeOpts[m].toggleAttribute('data-on', m === this.current);
+    this.keys.replaceChildren(
+      ...(reading
+        ? [key(['Enter'], 'Write a prompt'), key(['Ctrl', 'Esc'], 'Terminal'), el('span', 'seat-aside', 'PgUp, PgDn, j and k scroll; nothing you type here goes to the terminal')]
+        : [key(['Shift', 'Esc'], 'Send Esc'), key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'), key(['Ctrl', 'Esc'], 'Conversation'), el('span', 'seat-aside', 'Tab, arrows and Ctrl keys go to the terminal')]),
+    );
   }
 
   hide(): void {
@@ -93,7 +123,7 @@ export class SeatBar implements SeatView {
     this.el.dataset.state = kind;
     // Sending is quick: keep the resting line instead of flickering "sending".
     if (kind === 'busy') return;
-    this.note.textContent = text ?? `Your keys go to ${this.name}’s terminal`;
+    this.note.textContent = text ?? (this.current === 'transcript' ? `Reading ${this.name}’s conversation` : `Your keys go to ${this.name}’s terminal`);
   }
 
   focus(): void {
@@ -101,7 +131,7 @@ export class SeatBar implements SeatView {
   }
 
   /** What the bar says (test hook). */
-  summary(): { shown: boolean; tape: string; note: string; state: string } {
-    return { shown: !this.el.hidden, tape: this.tape.textContent ?? '', note: this.note.textContent ?? '', state: this.el.dataset.state ?? '' };
+  summary(): { shown: boolean; tape: string; note: string; state: string; mode: SeatMode } {
+    return { shown: !this.el.hidden, tape: this.tape.textContent ?? '', note: this.note.textContent ?? '', state: this.el.dataset.state ?? '', mode: this.current };
   }
 }
