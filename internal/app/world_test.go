@@ -304,3 +304,29 @@ func TestDumpReplay(t *testing.T) {
 		t.Fatalf("replay dump: out %q err %q (seq was %d)", out.String(), errOut.String(), seq)
 	}
 }
+
+// The transcripts' images are read from Drop Zone's data directory (its own variable, else ~/drops), Codex's generated
+// images and nothing else the operator did not name; the disk cache is private and can be turned off.
+func TestTranscriptImageRoots(t *testing.T) {
+	t.Setenv("DROPZONE_DATA", "/srv/drops")
+	if got := DefaultDropzoneData(); got != "/srv/drops" {
+		t.Errorf("DROPZONE_DATA: %q", got)
+	}
+	t.Setenv("DROPZONE_DATA", "")
+	t.Setenv("HOME", "/home/u")
+	if got := DefaultDropzoneData(); got != "/home/u/drops" {
+		t.Errorf("default: %q", got)
+	}
+	cache := filepath.Join(t.TempDir(), "img")
+	im := transcriptImages(slog.New(slog.NewTextHandler(io.Discard, nil)), "/srv/drops", cache, "/opt/codex/sessions")
+	want := []string{"/srv/drops", "/opt/codex/generated_images"}
+	if !slices.Equal(im.Roots, want) {
+		t.Errorf("roots = %v, want %v", im.Roots, want)
+	}
+	if fi, err := os.Stat(cache); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("cache dir %v %v", fi, err)
+	}
+	if im := transcriptImages(slog.New(slog.NewTextHandler(io.Discard, nil)), "", "-", "/opt/codex/sessions"); im.Cache.Dir() != "" || len(im.Roots) != 1 {
+		t.Errorf("no disk cache / no drop zone: %q %v", im.Cache.Dir(), im.Roots)
+	}
+}
