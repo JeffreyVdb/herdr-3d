@@ -6,6 +6,11 @@ import { AskCard, askItem, type AskResult } from './askCard';
 import type { ImageFeed } from './imageFeed';
 import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, Thumbs } from './transcriptImages';
 import { h, icon } from '../ui/dom';
+// #64: the prompt box is the shared composer, so a screenshot can be pasted into it
+import { mountComposer, type Composer } from '../ui/composer/composer';
+import { Draft as PromptDraft, type Uploader } from '../ui/composer/draft';
+import { hasContent, heldRefusalText, notSentText, PASTE_HINT } from '../ui/composer/field';
+import { WORKER_PROMPT_MAX_BYTES } from '../ui/composer/model';
 import { ViewPrefs, type ViewPref } from '../ui/themePrefs';
 import { THEMES, ZOOM, stepZoom, type ThemeId } from '../ui/themes';
 import { zoomKey } from './keys';
@@ -24,8 +29,12 @@ import { zoomKey } from './keys';
 export interface TranscriptRenderHost {
   /** M16 phase 2: this worker's images (null: none can be fetched, every image is a "not available" card). */
   images: ImageFeed | null;
-  /** A prompt to send; resolving false (not sent) puts the text back in the prompt box. */
+  /** A prompt to send (images already uploaded, as `[Image #n: <path>]` markers); resolving false (not sent) leaves it in the prompt box. */
   onPromptSubmit(text: string): void | Promise<boolean>;
+  /** #64: one image to Drop Zone (null: none can be uploaded here, a pasted image says so). */
+  upload?: Uploader | null;
+  /** #64: the worker's name, for the upload's file name. */
+  label?: string;
   onAnswer(hash: string, choice: number | null, cancel?: boolean): void;
   /** #57: answers (or dismisses) the worker's ask; `id` is filled in by the host. */
   onAnswerAsk(args: CommandArgs['worker.answer_ask']): Promise<AskResult>;
@@ -406,7 +415,10 @@ const isSystem = (it: TranscriptItem) => it.hidden === true || it.kind === 'unkn
 /** #59: what "Hide tool calls" hides: tool rows (not subagents, not an agent's question, which is part of the conversation). */
 export const isToolRow = (it: TranscriptItem) => it.kind === 'tool' && !!it.tool && !(it.tool.ask && typeof it.tool.ask === 'object' && Array.isArray(it.tool.ask.questions));
 const EXCERPT_LINES = 4;
-const PROMPT_HINT = 'Message the agent…  (Enter sends, Shift+Enter for a new line)';
+const PROMPT_HINT = `Message the agent…  (Enter sends, Shift+Enter for a new line, ${PASTE_HINT})`;
+
+/** Where a pasted image goes when the host has no upload: the chip says it did not go up. */
+const NO_UPLOAD: Uploader = () => Promise.resolve({ ok: false, code: 'unavailable', message: 'images cannot be uploaded from here' });
 const MAX_INPUT_JSON = 4000;
 
 /** A list of items (the transcript, or a subagent's nested one), in `seq` order, each row keyed by id. */
@@ -600,10 +612,14 @@ class Transcript implements TranscriptView {
   private readonly revealed = new Set<string>();
   private readonly countEl: HTMLSpanElement;
   private readonly titleEl: HTMLSpanElement;
-  private readonly input: HTMLTextAreaElement;
+  /** The prompt box: the composer's editor (#64). */
+  private readonly input: HTMLElement;
+  private readonly composer: Composer;
   private readonly sendBtn: HTMLButtonElement;
-  /** Bumped by every edit of the prompt box and every send: a refused prompt comes back only if nothing happened since. */
-  private draftGen = 0;
+  /** The box cannot take a prompt now (the worker waits on a question). */
+  private promptOff = false;
+  /** A prompt is on its way (uploading, then sent): the box is read-only until it is answered. */
+  private sending = false;
   private readonly empty: HTMLDivElement;
 
   private following = true;
@@ -637,9 +653,17 @@ class Transcript implements TranscriptView {
     this.scroller = h('div', { class: 'tx-scroll', tabindex: '-1', 'aria-label': 'Conversation' }, this.empty, this.timeline.el);
     this.thumbs = new Thumbs({ feed: host.images, root: this.scroller });
     this.jump = h('button', { class: 'tx-jump', hidden: true, onclick: () => this.toBottom() });
-    this.input = h('textarea', { class: 'tx-input', rows: '1', placeholder: PROMPT_HINT, 'aria-label': 'Prompt', spellcheck: 'true' });
+    this.composer = mountComposer({
+      draft: new PromptDraft({ upload: host.upload ?? NO_UPLOAD, label: `transcript-${host.label ?? 'worker'}`, maxPromptBytes: WORKER_PROMPT_MAX_BYTES, holdRefused: true }),
+      ariaLabel: 'Prompt',
+      placeholder: PROMPT_HINT,
+      submitPolicy: 'enter',
+      onSubmit: () => this.submit(),
+    });
+    this.input = this.composer.editor;
+    this.input.classList.add('tx-input');
     this.sendBtn = h('button', { class: 'tx-send', title: 'Send', onclick: () => this.submit() }, 'Send');
-    const form = h('div', { class: 'tx-prompt' }, this.input, this.sendBtn);
+    const form = h('div', { class: 'tx-prompt' }, this.composer.element, this.sendBtn);
     this.ask = new AskCard({
       answer: (args) => host.onAnswerAsk(args),
       toTerminal: () => host.onSwitchToTerminal(),
@@ -693,10 +717,6 @@ class Transcript implements TranscriptView {
     this.scroller.addEventListener('scroll', () => this.onScroll(), { passive: true });
     this.root.addEventListener('keydown', (e) => this.onKey(e));
     this.input.addEventListener('keydown', (e) => this.onInputKey(e));
-    this.input.addEventListener('input', () => {
-      this.draftGen++;
-      this.grow();
-    });
     hlDone.add(this.onHighlighted);
     if (typeof ResizeObserver !== 'undefined') {
       this.resize = new ResizeObserver(() => this.stick());
@@ -776,8 +796,8 @@ class Transcript implements TranscriptView {
   }
 
   focusPrompt(): void {
-    if (this.destroyed || this.input.disabled) return;
-    this.input.focus();
+    if (this.destroyed || this.promptOff) return;
+    this.composer.focus();
   }
 
   destroy(): void {
@@ -790,6 +810,9 @@ class Transcript implements TranscriptView {
     this.unprefs();
     this.thumbs.destroy();
     this.ask.destroy();
+    // The composer's draft goes with the view: its uploads are cancelled, its object URLs revoked.
+    this.composer.dispose();
+    this.composer.getDraft().dispose();
     this.root.remove();
   }
 
@@ -1326,31 +1349,45 @@ class Transcript implements TranscriptView {
     // terminal), and the text zoom (#59) works from here too; every other key typed here is the prompt's.
     if (e.key === 'Escape' || zoomKey(e)) return;
     e.stopPropagation();
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-      e.preventDefault();
-      this.submit();
-    }
+    // Enter sends and Shift+Enter adds a line: the composer's own key handling (submitPolicy 'enter').
   }
 
   private submit(): void {
-    const text = this.input.value;
-    if (!text.trim() || this.input.disabled) return;
-    this.input.value = '';
-    this.grow();
-    const gen = ++this.draftGen;
-    // Not sent (refused, too long): the draft comes back unless the box was touched (or another send made) meanwhile.
-    void Promise.resolve(this.host.onPromptSubmit(text)).then((sent) => {
-      if (sent === false && !this.destroyed && gen === this.draftGen && !this.input.value) {
-        this.input.value = text;
-        this.grow();
-      }
-    });
+    if (this.promptOff || this.sending) return;
+    const draft = this.composer.getDraft();
+    // A file the box refused stays held until dismissed: the prompt does not go without the picture meant for it.
+    const held = heldRefusalText(draft.snapshot(), { nothing: 'sent', again: 'send' });
+    if (held) {
+      this.composer.notice(held, 'error');
+      return;
+    }
+    if (!hasContent(draft.snapshot())) return;
+    this.sending = true;
+    this.composer.setBusy(true);
+    void this.send(draft);
   }
 
-  private grow(): void {
-    const el = this.input;
-    el.style.height = 'auto';
-    if (el.scrollHeight) el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+  /**
+   * The images first (waited for, the box read-only meanwhile; one that did not upload stops it, its chip has the
+   * Retry), then the prompt. Not sent (refused, too long, an image failed): the box keeps what was written.
+   */
+  private async send(draft: PromptDraft): Promise<void> {
+    const r = await draft.resolve({ maxBytes: WORKER_PROMPT_MAX_BYTES });
+    if (this.destroyed) return;
+    if (!r.ok) {
+      this.sending = false;
+      this.composer.setBusy(false);
+      const why = notSentText(r, { nothing: 'sent', again: 'send' });
+      if (why) this.composer.notice(why, 'error');
+      return;
+    }
+    this.composer.clearNotice();
+    const sent = await Promise.resolve(this.host.onPromptSubmit(r.text)).catch(() => false);
+    if (this.destroyed) return;
+    this.sending = false;
+    this.composer.setBusy(false);
+    // Sent: the box is empty again (an edit made meanwhile is impossible while it is read-only, but a draft swap is not).
+    if (sent !== false) draft.clearIf(r.revision);
   }
 
   // --- blocked banner ---
@@ -1365,15 +1402,17 @@ class Transcript implements TranscriptView {
     // later, so re-renders leave focus alone).
     const a = document.activeElement;
     const waiting = !!q || asking;
-    if (waiting && (a === this.input || a === this.sendBtn)) this.scroller.focus({ preventScroll: true });
-    this.input.disabled = waiting;
+    if (waiting && (this.input.contains(a) || a === this.sendBtn)) this.scroller.focus({ preventScroll: true });
+    this.promptOff = waiting;
+    this.composer.setDisabled(waiting);
     // A very short screen gives the card the prompt box's room while it is up (transcript.css).
     this.root.toggleAttribute('data-asking', asking);
-    this.input.placeholder = asking
+    this.composer.setPlaceholder(asking
       ? 'Answer the question above first (or in the terminal)'
       : q
         ? 'Waiting for an answer to the question above (or switch to the terminal)'
-        : PROMPT_HINT;
+        : PROMPT_HINT,
+    );
     this.sendBtn.disabled = waiting;
     if (!q) {
       this.banner.hidden = true;

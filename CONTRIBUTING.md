@@ -659,6 +659,18 @@ composer in a test-only dialog with no game (`src/ui/composer/demo.ts`, loaded o
 task (`TaskEditor` in `src/ui/hire.ts`, `#hire-task` is the editable element): one `Draft` per desk in memory, the text mirrored
 to `localStorage`, Hire waits for `draft.resolve()` before it sends `worker.hire`; `e2e/hire-composer.spec.ts` drives it (paste,
 enlarged view, forced upload failure and retry, two markers in document order) on the simulating fixture server.
+#64: every other field that prompts an agent mounts the same composer (paste a screenshot: a chip, the agent gets
+`[Image #n: <path>]`; `field.ts` has what the fields share: `markedText`, the failure wording, `filesOf`, the hint).
+The P overlay (`ui/prompt.ts`, `#prompt-text`, a `Draft` per worker), Start Run's Extra instructions and First prompt
+(`ui/startRun.ts`, `#run-extra` and `#run-prompt`: two composers; the generated prompt is put into the second with
+`Draft.replaceAll`, turning the markers of Extra's uploaded images into chips; the Ticket stays text), the transcript
+view's prompt box (`laptop/transcriptRender.ts`, `.tx-input`, styled with `--tx-*` and `em` in `transcript.css`) and a
+paste at a laptop's terminal (`ui/seat.ts` reads the clipboard's files, `laptop/pasteImages.ts` uploads through a `Draft`
+and queues one `worker.prompt` of markers; a plain shell is told it cannot take an image). A field sends only when every
+image is up (it waits for one that is uploading) and not at all when one failed or when a file it refused is still held (`Draft` option `holdRefused`: the refusal shows under the field with a dismiss button and only the user's dismissal lifts it; the hire dialog does not opt in). Start Run's First prompt is read-only while its generated text carries a bare `[Image #n]` of Extra (`previewLocked`). `e2e/prompt-images.spec.ts` drives all of
+them (chips, markers sent, failed / pending / refused images, the desk drafts, the terminal and the plain shell); the
+fixture's upload adds `fail_code=upload_busy` (the failures are the bridge's `429`) and `upload_delay=<ms>` (a pending
+upload to look at).
 
 M5 on the simulating server (`ws=…?sim=1…`): `simusage=<ms>` sends working agents' `worker.usage` that often
 (default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|changes_failed` for the next prompt,
@@ -737,7 +749,9 @@ building's elevator panel, the lot's too).
 Hire and send home (M4): look at an empty desk's green "+" and press **E** ("Hire a worker at Desk 11"), or press the
 top bar's **Hire** (on an office floor; Shift+Tab, then Tab past Elevator) for the first free desk. The dialog asks the
 bridge first (`hire.prepare`), then offers: an optional first task (**Enter** hires, **Shift+Enter** adds a line; paste a screenshot and it goes into the text as a
-thumbnail at the caret, click it to see it enlarged (**Esc** closes only that), the agent gets `[Image #n: <path>]` in its place;
+thumbnail at the caret, click it to see it enlarged (**Esc** closes only that), the agent gets `[Image #n: <path>]` in its place (#64: the same in
+Start Run's Extra instructions and First prompt, the P overlay and the transcript view's prompt box, and a screenshot pasted at an agent's laptop;
+a prompt is sent once its images are uploaded, and not at all when one failed);
 the dialog is a near-full-screen sheet, #51: the task editor takes the space and grows with the window, the options
 sit beside it, or under it on a phone, and Hire / Cancel stay on screen; what you typed for a desk stays until a hire
 is acknowledged),
@@ -794,7 +808,7 @@ does not flicker. The worker's laptop stands closed in its dock, its sticker sho
 press **E** to sit at its screen: the worker steps aside, the camera glides in and the whole terminal fills the view,
 at 10 fps. Everything you type goes to its terminal (letters, Enter, Tab and Shift+Tab, arrows,
 Home / End / Page keys, F1–F12, Backspace, Delete, Ctrl+letter; the game's own keys too), **Cmd+V** (Ctrl+V off a Mac)
-pastes (as a prompt to an agent, typed into a plain shell), **Shift+Esc** sends Esc, **Esc** (or the seat bar's Stand
+pastes (as a prompt to an agent, typed into a plain shell; a screenshot goes to an agent as `[Image #n: <path>]` markers once uploaded, a plain shell says it cannot take one and types nothing), **Shift+Esc** sends Esc, **Esc** (or the seat bar's Stand
 up) gets you up; so do the elevator, another floor, a panel, the plan or a teleport, and the worker leaving or its floor
 going to sleep (a toast says why). Typing that fails shows in the seat bar. Getting up drops nothing you typed: what is
 still on its way (behind a slow paste, say) goes on, in order, and a failure then is a toast. E is disabled, with the reason, on an asleep
@@ -802,7 +816,7 @@ floor, for a worker without a pane, and against a bridge without `terminal.watch
 
 Prompts, changes and quick replies (M5): look at a worker and press **P** to prompt it: the overlay sits low so the
 worker stays in view; **Enter** sends, **Shift+Enter** adds a line, **Esc** closes (an unsent draft is kept per
-worker). It shows Sending, then Sent (or Queued: a working worker's agent takes it on its next turn, and a "Will queue"
+worker, pasted screenshots included: **paste a screenshot to add it**, it sits in the note as a chip). It shows Sending, then Sent (or Queued: a working worker's agent takes it on its next turn, and a "Will queue"
 chip says so before you send), or why it failed, with the text kept; the header's status tape follows the worker live.
 P is off, with the reason on the key, for a plain shell, a worker waiting on a question (answer it first: the bridge
 refuses a prompt then), an asleep floor, or a bridge without `worker.prompt`. **C** opens the worker's Changes panel on
@@ -828,7 +842,10 @@ instructions, the label, the worktree (on by default) and the **first prompt**. 
 (`run.prepare`) a moment after every change; typing in it makes it yours ("Edited"): later changes never overwrite it
 and a note says when the fields now make a different one, **Reset to generated** takes theirs again, and Start sends
 yours as `run.start`'s `prompt` (a generated one is left to the bridge). **Ctrl+Enter** (⌘+Enter) starts from anywhere
-in the dialog, plain Enter never does; Esc closes and focus goes back. Capacity and a failed fetch show as in the hire
+in the dialog, plain Enter never does; Esc closes and focus goes back. #64: **paste a screenshot** into the extra
+instructions or the first prompt and it is a chip; the generated first prompt then carries `[Image #n: <path>]` and shows
+the chip too, Start waits for an image that is still uploading and does not start when one failed (the ticket takes
+text only). Capacity and a failed fetch show as in the hire
 dialog. The orchestrator drops in like a hire and you are turned to face its desk. **Presets** (in the dialog, and in
 the city's top bar) lists the team presets: create, edit (the name and the five roles × harness / model / effort) and
 delete (confirmed); a taken name or a bad choice is said by the field. Esc in the editor goes back to the list. An
@@ -893,7 +910,8 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # and right) and a reconnect watching again; E at a plain shell's laptop, typing that
                               # echoes on its screen (checked in the xterm buffer), the game's keys (W, L, B, X, Tab,
                               # Shift+Tab, Backspace) going to the terminal instead, Shift+Esc, a paste, Esc back to
-                              # the same pose; a paste into an agent's laptop as worker.prompt, a failed key
+                              # the same pose; a paste into an agent's laptop as worker.prompt (#64: an image as its
+                              # marker, a plain shell told it cannot take one: e2e/prompt-images.spec.ts), a failed key
                               # (simfail=input_failed) in the seat bar, the worker leaving; 20 sit / stand cycles with
                               # no watch left in the simulator; an older bridge and an asleep floor (E disabled and
                               # why); m5-screen-{live,seated,frozen}.png. M5 panels on demo-m5 with sim=1

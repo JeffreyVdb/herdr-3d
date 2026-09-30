@@ -5,12 +5,14 @@ import { glassFrame, screenFrame } from '../render/desks';
 import type { OfficeView } from '../render/office';
 import { PrintMeshes } from '../render/prints';
 import { ScreenMeshes } from '../render/screens';
+import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import { askAgent, askOf } from '../world/ask';
 import type { WorldStore } from '../world/store';
 import { DESK_H, SEAT_OFFSET } from '../world/layout';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
 import { InputLanes, InputQueue, seatedKey, textItems, type ZoomAction } from './keys';
+import { pasteImages } from './pasteImages';
 import { screenTheme } from './paint';
 import type { ThemeLoader } from '../ui/themeLoader';
 import { stepZoom, ZOOM, type ThemePreset } from '../ui/themes';
@@ -50,6 +52,8 @@ export interface LaptopHost {
   watch<T extends WatchCommand>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   unsupported(t: CommandName): boolean;
   toast(msg: string, kind: 'info' | 'error'): void;
+  /** #64: one image to Drop Zone through the bridge: a pasted screenshot in the transcript's prompt box or the terminal. */
+  upload?: Uploader;
   /** The seat bar (ui/seat.ts). */
   seat: SeatView;
   /** CSS px the HUD covers at the top (the top bar) and the bottom (the seat bar): the laptop goes between. */
@@ -253,6 +257,7 @@ export class Laptops {
         return box;
       },
       storage: storage(),
+      ...(this.host.upload ? { upload: this.host.upload } : {}),
       status: (kind, text) => this.host.seat.status(kind, text),
       modeChanged: (mode) => this.onMode(mode),
       ...(host.themes ? { prefs: host.themes.prefs } : {}),
@@ -768,11 +773,38 @@ export class Laptops {
     this.input.keys(items);
   }
 
-  /** A paste while seated (Cmd/Ctrl+V): `worker.prompt` for an agent, typed for a plain shell. */
-  paste(text: string): void {
+  /**
+   * A paste while seated (Cmd/Ctrl+V): `worker.prompt` for an agent, typed for a plain shell. #64: a paste that carries
+   * images (a screenshot) goes to an agent as `[Image #n: <path>]` markers once they are uploaded; a plain shell has no
+   * agent to read a picture, so it is told so and nothing is typed.
+   */
+  paste(text: string, files: readonly File[] = []): void {
     if (!this.seat || !this.input || this.transcript.shown) return;
+    if (files.length > 0) {
+      this.pasteImages(files);
+      return;
+    }
     if (!this.input.paste(text)) this.host.seat.status('error', 'That paste is over 16 KiB: paste less at a time.');
     else this.host.seat.status('busy', null);
+  }
+
+  /** #64: the pasted images become markers in one paste (see `pasteImages`); standing up does not cancel it, only a failure is then a toast. */
+  private pasteImages(files: readonly File[]): void {
+    const seat = this.seat;
+    const lane = this.input;
+    if (!seat || !lane) return;
+    const { id, name } = seat;
+    void pasteImages(files, {
+      name,
+      agent: !!this.host.store.workers.get(id)?.agent_kind,
+      upload: this.host.upload,
+      paste: (text) => lane.paste(text),
+      // The bar's note is a few words wide and ends in an ellipsis: an error is a toast as well, so it can be read whole.
+      say: (kind, msg) => {
+        if (this.seat?.id === id) this.host.seat.status(kind, msg);
+        if (kind === 'error') this.host.toast(msg, 'error');
+      },
+    });
   }
 
   // ---- per frame ---------------------------------------------------------------------

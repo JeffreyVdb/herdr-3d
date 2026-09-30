@@ -142,41 +142,52 @@
 .pr-note:focus-within::after {
   border-color: var(--sun);
 }
-/* Over `.desk-dlg textarea` (a dark well): the note is paper. */
-.desk-dlg .pr-text {
-  display: block;
+/* The note is the shared composer (#64) on paper: its editor is the paper (no well, no border), its chips stay navy prints. */
+.pr-note .cmp {
+  --cmp-min-height: 96px;
+  --cmp-max-height: 42vh;
+  --cmp-err: #b3261e;
   position: relative;
   z-index: 1;
-  width: 100%;
-  min-height: 96px;
-  max-height: 42vh;
-  box-sizing: border-box;
+}
+.pr-note .cmp-editor {
   padding: 12px 14px;
   border: 0;
   border-radius: 15px;
   background: transparent;
   color: var(--ink);
   font: 500 16px/1.45 var(--font);
-  resize: vertical;
   caret-color: var(--working);
   color-scheme: light;
 }
-.desk-dlg .pr-text:hover {
+.pr-note .cmp-editor:hover {
   border-color: transparent;
 }
-.desk-dlg .pr-text:focus,
-.desk-dlg .pr-text:focus-visible {
+.pr-note .cmp-editor:focus-visible {
   outline: none;
 }
-.desk-dlg .pr-text::placeholder {
+.pr-note .cmp-editor[data-empty='true']::before {
+  left: 14px;
+  right: 14px;
   color: #6b7596;
 }
-.desk-dlg .pr-text::selection {
+.pr-note .cmp-editor ::selection,
+.pr-note .cmp-editor::selection {
   background: var(--sun);
   color: var(--ink);
 }
-.desk-dlg .pr-text[readonly] {
+.pr-note .cmp-editor[contenteditable='false'] {
   opacity: 0.65;
+}
+.pr-note .cmp-chip {
+  color: var(--text-on-ink);
+}
+.pr-note .cmp-chip[data-status='error'] {
+  background: #4a2531;
+}
+.pr-note .cmp-notice {
+  margin: 0;
+  padding: 0 14px 10px;
 }
 /* While you write, the look-at bar under the overlay steps aside. */
 body:has(.desk-dlg--prompt[open]) .hud .prompt,

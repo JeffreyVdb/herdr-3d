@@ -139,7 +139,7 @@ test('Hand to a worker: the start-run dialog with the card as work_item, the las
   await expect(page.locator('dialog.desk-dlg--run .dd-workitem')).toContainText('#12');
   await expect(page.locator('#run-ticket')).toHaveCount(0);
   // The prompt the bridge builds for the card (the simulator: the M6 path with the issue's URL).
-  await expect(page.locator('#run-prompt')).toHaveValue(new RegExp(`^/write-code https://github.com/${HERDR}/issues/12`));
+  await expect(page.locator('#run-prompt')).toHaveText(new RegExp(`^/write-code https://github.com/${HERDR}/issues/12`));
   await shot(page, 'm7-hand-to-worker');
   await page.keyboard.press('ControlOrMeta+Enter');
   await expect.poll(async () => (await sentOf(page, 'run.start')).length).toBe(1);

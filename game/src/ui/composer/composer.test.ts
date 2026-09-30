@@ -402,6 +402,28 @@ describe('Enter and Shift+Enter', () => {
     expect(document.activeElement).toBe(other);
   });
 
+  it('a focus the host asked for while read-only is given when it is writable again, even over another focus (#64)', () => {
+    const env = setup();
+    const other = document.createElement('button');
+    document.body.append(other);
+    env.c.setBusy(true);
+    other.focus();
+    env.c.focus();
+    expect(document.activeElement).toBe(other);
+    env.c.setBusy(false);
+    expect(document.activeElement).toBe(env.editor);
+    // Once given, it is not asked again.
+    env.c.setBusy(true);
+    other.focus();
+    env.c.setBusy(false);
+    expect(document.activeElement).toBe(other);
+    // Switched off: the same.
+    env.c.setDisabled(true);
+    env.c.focus();
+    env.c.setDisabled(false);
+    expect(document.activeElement).toBe(env.editor);
+  });
+
   it('does nothing while busy', () => {
     const env = setup();
     env.c.setBusy(true);
@@ -985,5 +1007,72 @@ describe('tree mapping', () => {
     const br = document.createElement('br');
     t.after(br);
     expect(pointToOffset(env.editor, env.editor, [...env.editor.childNodes].indexOf(br) + 1)).toBe(3);
+  });
+});
+
+describe('a held refusal (#64)', () => {
+  const pdf = () => new File(['x'], 'notes.pdf', { type: 'application/pdf' });
+  const refusal = (env: Env) => env.editor.parentElement!.querySelector<HTMLElement>('.cmp-refusal')!;
+  const dismissBtn = (env: Env) => refusal(env).querySelector<HTMLButtonElement>('.cmp-dismiss')!;
+  const held = () => new Draft({ upload: () => new Promise(() => {}), holdRefused: true });
+
+  it('shows the refusal with a dismiss button (named, keyboard reachable) and no second notice', () => {
+    const env = setup({ draft: held() });
+    expect(refusal(env).hidden).toBe(true);
+    paste(env.editor, { files: [pdf()] });
+    expect(refusal(env).hidden).toBe(false);
+    expect(refusal(env).textContent).toBe('Not attached: notes.pdf is not a PNG, JPEG, GIF or WebP image. Nothing is sent until you dismiss this.');
+    expect(env.editor.parentElement?.querySelector('.cmp-sr')?.textContent).toBe('notes.pdf is not a PNG, JPEG, GIF or WebP image.');
+    expect(dismissBtn(env).tagName).toBe('BUTTON');
+    expect(dismissBtn(env).getAttribute('aria-label')).toMatch(/^Dismiss this message/);
+    expect(env.editor.parentElement?.querySelector<HTMLElement>('.cmp-notice')?.hidden).toBe(true);
+    expect(env.notices.at(-1)?.[1]).toBe('error');
+  });
+
+  it('keeps it through other notices, removing an image and typing; Enter still only asks the host to send', () => {
+    const env = setup({ draft: held() });
+    env.c.insertFiles([png('a.png')]);
+    paste(env.editor, { files: [pdf()] });
+    env.c.notice('something else', 'error');
+    env.c.clearNotice();
+    env.c.insertText('typed');
+    env.editor.querySelector<HTMLButtonElement>('.cmp-remove')!.click();
+    expect(refusal(env).hidden).toBe(false);
+    expect(env.draft.refusal).not.toBeNull();
+    env.editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    expect(env.submits).toBe(1); // the host reads the refusal and says no; the composer never sends by itself
+  });
+
+  it('dismissing clears the refusal, says so and gives the editor the focus back', () => {
+    const env = setup({ draft: held() });
+    paste(env.editor, { files: [pdf()] });
+    dismissBtn(env).click();
+    expect(refusal(env).hidden).toBe(true);
+    expect(env.draft.refusal).toBeNull();
+    expect(document.activeElement).toBe(env.editor);
+  });
+
+  it('comes back with its draft: another draft shows none, the first shows it again', () => {
+    const env = setup({ draft: held() });
+    const first = env.draft;
+    paste(env.editor, { files: [pdf()] });
+    const other = held();
+    env.c.setDraft(other);
+    expect(refusal(env).hidden).toBe(true);
+    env.c.setDraft(first);
+    expect(refusal(env).hidden).toBe(false);
+  });
+
+  it('cannot be dismissed while the host is sending; a draft without the option keeps the plain notice', () => {
+    const env = setup({ draft: held() });
+    paste(env.editor, { files: [pdf()] });
+    env.c.setBusy(true);
+    expect(dismissBtn(env).disabled).toBe(true);
+    env.c.setBusy(false);
+    expect(dismissBtn(env).disabled).toBe(false);
+    const plain = setup();
+    paste(plain.editor, { files: [pdf()] });
+    expect(refusal(plain).hidden).toBe(true);
+    expect(plain.editor.parentElement?.querySelector('.cmp-notice')?.textContent).toMatch(/notes\.pdf is not a PNG/);
   });
 });

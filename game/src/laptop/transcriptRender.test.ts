@@ -58,6 +58,28 @@ const $$ = <E extends Element = HTMLElement>(sel: string) => [...container.query
 const row = (id: string) => $(`[data-id="${id}"]`) as HTMLElement;
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
+/** The prompt box is the composer's editor (#64): a contenteditable, its text is the document's. */
+const box = () => $('.tx-input') as HTMLElement;
+const boxText = () => (box().textContent ?? '').replace(/\u200B/g, '');
+/** What typing does: the browser edits the text node and fires `input`. */
+function write(text: string): void {
+  box().replaceChildren(document.createTextNode(text));
+  document.getSelection()?.setBaseAndExtent(box().firstChild as Text, text.length, box().firstChild as Text, text.length);
+  box().dispatchEvent(new Event('input', { bubbles: true }));
+}
+/** A paste event carrying image files, as a screenshot does. */
+function pasteImages(files: File[]): void {
+  const e = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(e, 'clipboardData', { value: { items: files.map((f) => ({ kind: 'file', type: f.type, getAsFile: () => f })), files, getData: () => '' } });
+  box().dispatchEvent(e);
+}
+const press = (target: Element, key: string, init: KeyboardEventInit = {}) => {
+  const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
+  target.dispatchEvent(e);
+  return e;
+};
+const isOff = () => box().getAttribute('aria-disabled') === 'true';
+
 /** jsdom has no layout: give the scroller a size and a real, settable scrollTop. */
 function layout(el: HTMLElement, content: number | (() => number), client = 400): void {
   let top = 0;
@@ -463,69 +485,66 @@ describe('keys inside the view', () => {
     outer.remove();
   });
 
-  it('a refused prompt comes back in the box (unless something new was typed)', async () => {
-    mount();
-    const ta = $('textarea') as HTMLTextAreaElement;
-    host.sendOk = false;
-    ta.value = 'keep me';
-    press(ta, 'Enter');
-    expect(ta.value).toBe('');
+  it('a refused prompt stays in the box; the box is read-only while it is on its way', async () => {
+    let answer: (ok: boolean) => void = () => undefined;
+    const h = fakeHost();
+    h.onPromptSubmit = (t) => {
+      h.prompts.push(t);
+      return new Promise<boolean>((r) => (answer = r));
+    };
+    mount(h);
+    write('keep me');
+    press(box(), 'Enter');
     await flush();
-    expect(ta.value).toBe('keep me');
-    ta.value = 'lost?';
-    press(ta, 'Enter');
-    ta.value = 'newer';
+    expect(h.prompts).toEqual(['keep me']);
+    expect(box().getAttribute('contenteditable')).toBe('false');
+    // A second Enter while it is on its way sends nothing more.
+    press(box(), 'Enter');
     await flush();
-    expect(ta.value).toBe('newer');
-    host.sendOk = true;
-    press(ta, 'Enter');
+    expect(h.prompts).toEqual(['keep me']);
+    answer(false);
     await flush();
-    expect(ta.value).toBe('');
-    expect(host.prompts).toEqual(['keep me', 'lost?', 'newer']);
+    expect(box().getAttribute('contenteditable')).toBe('true');
+    expect(boxText()).toBe('keep me');
+    press(box(), 'Enter');
+    await flush();
+    answer(true);
+    await flush();
+    expect(h.prompts).toEqual(['keep me', 'keep me']);
+    expect(boxText()).toBe('');
   });
 
-  it('a refusal after the box was edited back to empty does not bring the old draft back', async () => {
-    let refuse: (ok: boolean) => void = () => undefined;
-    mount({ ...fakeHost(), onPromptSubmit: () => new Promise<boolean>((r) => (refuse = r)) } as FakeHost);
-    const ta = $('textarea') as HTMLTextAreaElement;
-    ta.value = 'old draft';
-    press(ta, 'Enter');
-    ta.value = 'new draft';
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
-    ta.value = '';
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
-    refuse(false);
-    await flush();
-    expect(ta.value).toBe('');
-  });
-
-  it('the prompt: focusPrompt, Enter submits, Shift+Enter does not, keys do not reach the game', () => {
+  it('the prompt: focusPrompt, Enter submits, Shift+Enter does not, keys do not reach the game', async () => {
     mount();
     const seen: string[] = [];
     const onWin = (e: KeyboardEvent) => seen.push(e.key);
     window.addEventListener('keydown', onWin);
     try {
       view.focusPrompt();
-      const ta = $('textarea') as HTMLTextAreaElement;
+      const ta = box();
       expect(document.activeElement).toBe(ta);
       press(ta, 'Enter');
       expect(host.prompts).toEqual([]);
-      ta.value = 'run the tests';
+      write('run the tests');
+      // Shift+Enter is a new line (the composer's own), not a send.
       press(ta, 'Enter', { shiftKey: true });
+      await flush();
       expect(host.prompts).toEqual([]);
-      press(ta, 'w');
+      expect(boxText()).toBe('run the tests\n');
       press(ta, 'Enter');
-      expect(host.prompts).toEqual(['run the tests']);
-      expect(ta.value).toBe('');
+      await flush();
+      expect(host.prompts).toEqual(['run the tests\n']);
+      expect(boxText()).toBe('');
       expect(seen).toEqual([]);
       // Esc is the game's even in the prompt box: Ctrl+Esc back to the terminal, a bare one stands you up.
       press(ta, 'Escape', { ctrlKey: true });
       press(ta, 'Escape');
       expect(seen).toEqual(['Escape', 'Escape']);
       // The Send button too.
-      ta.value = 'again';
+      write('again');
       ($('.tx-send') as HTMLButtonElement).click();
-      expect(host.prompts).toEqual(['run the tests', 'again']);
+      await flush();
+      expect(host.prompts).toEqual(['run the tests\n', 'again']);
     } finally {
       window.removeEventListener('keydown', onWin);
     }
@@ -577,16 +596,16 @@ describe('blocked banner', () => {
 
   it('a question arriving while you type moves the keyboard to the timeline, once: its digits answer', () => {
     mount();
-    const ta = $('textarea') as HTMLTextAreaElement;
+    const ta = box();
     const sc = $('.tx-scroll') as HTMLElement;
     view.focusPrompt();
-    ta.value = 'follow-up';
+    write('follow-up');
     view.setBlocked(Q);
-    expect(ta.disabled).toBe(true);
+    expect(isOff()).toBe(true);
     expect(document.activeElement).toBe(sc);
     sc.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true, cancelable: true }));
     expect(host.answers).toEqual([['h-123', 1, undefined]]);
-    expect(ta.value).toBe('follow-up');
+    expect(boxText()).toBe('follow-up');
     // Another render of a question does not move the keyboard (it stays where the user put it).
     const other = document.createElement('button');
     document.body.append(other);
@@ -601,24 +620,26 @@ describe('blocked banner', () => {
     other.remove();
   });
 
-  it('while blocked the prompt is off (the bridge refuses it), its draft kept; it comes back after', () => {
+  it('while blocked the prompt is off (the bridge refuses it), its draft kept; it comes back after', async () => {
     mount();
-    const ta = $('textarea') as HTMLTextAreaElement;
+    const ta = box();
     const send = $('.tx-send') as HTMLButtonElement;
-    ta.value = 'draft';
+    write('draft');
     view.setBlocked(Q);
-    expect(ta.disabled).toBe(true);
+    expect(isOff()).toBe(true);
     expect(send.disabled).toBe(true);
-    expect(ta.placeholder).toMatch(/question above/);
+    expect(ta.dataset.placeholder).toMatch(/question above/);
     send.click();
     view.focusPrompt();
+    await flush();
     expect(host.prompts).toEqual([]);
     expect(document.activeElement).not.toBe(ta);
-    expect(ta.value).toBe('draft');
+    expect(boxText()).toBe('draft');
     view.setBlocked(null);
-    expect(ta.disabled).toBe(false);
+    expect(isOff()).toBe(false);
     expect(send.disabled).toBe(false);
     send.click();
+    await flush();
     expect(host.prompts).toEqual(['draft']);
   });
 
@@ -755,6 +776,130 @@ describe('helpers', () => {
     expect(duration(185_000)).toBe('3m 05s');
     expect(duration(3_720_000)).toBe('1h 02m');
     expect(duration(-1)).toBe('');
+  });
+});
+
+describe('the prompt box takes pasted screenshots (#64)', () => {
+  const png = (name: string) => new File([new Uint8Array(8).fill(1)], name, { type: 'image/png' });
+  interface Up {
+    label: string;
+    n: number;
+    ok(path?: string): void;
+    fail(message?: string): void;
+  }
+  const withUpload = () => {
+    const ups: Up[] = [];
+    const h = fakeHost();
+    h.label = 'Sunny Otter';
+    h.upload = (_f, hint) =>
+      new Promise((resolve) => {
+        ups.push({
+          label: hint.label,
+          n: hint.n,
+          ok: (path = `/drops/h3d-${hint.n}.png`) => resolve({ ok: true, data: { path, mime: 'image/png', size: 8 } }),
+          fail: (message = 'Drop Zone is down') => resolve({ ok: false, code: 'dropzone_unavailable', message }),
+        });
+      });
+    return { h, ups };
+  };
+  const notice = () => $('.tx .cmp-notice') as HTMLElement;
+
+  it('a pasted screenshot is a chip, uploaded under the surface and the worker; sending carries its [Image #n: path] marker', async () => {
+    const { h, ups } = withUpload();
+    mount(h);
+    write('look at ');
+    pasteImages([png('a.png')]);
+    expect($$('.cmp-chip')).toHaveLength(1);
+    expect(ups.map((u) => [u.label, u.n])).toEqual([['transcript-Sunny Otter', 1]]);
+    // Enter while it is still uploading: nothing goes yet, the box waits read-only.
+    press(box(), 'Enter');
+    await flush();
+    expect(h.prompts).toEqual([]);
+    expect(box().getAttribute('contenteditable')).toBe('false');
+    ups[0]!.ok('/home/u/drops/h3d-transcript-1.png');
+    await flush();
+    expect(h.prompts).toEqual(['look at [Image #1: /home/u/drops/h3d-transcript-1.png]']);
+    expect($$('.cmp-chip')).toHaveLength(0);
+    expect(boxText()).toBe('');
+  });
+
+  it('an image alone is a prompt', async () => {
+    const { h, ups } = withUpload();
+    mount(h);
+    pasteImages([png('a.png')]);
+    ups[0]!.ok('/d/a.png');
+    await flush();
+    press(box(), 'Enter');
+    await flush();
+    expect(h.prompts).toEqual(['[Image #1: /d/a.png]']);
+  });
+
+  it('an upload that failed blocks the send, says so, keeps the prompt and its chip; Retry then send goes', async () => {
+    const { h, ups } = withUpload();
+    mount(h);
+    write('fix it ');
+    pasteImages([png('a.png')]);
+    ups[0]!.fail('Too many uploads at once: try again in a moment');
+    await flush();
+    press(box(), 'Enter');
+    await flush();
+    expect(h.prompts).toEqual([]);
+    expect(notice().hidden).toBe(false);
+    expect(notice().textContent).toMatch(/Nothing was sent: image 1 \(a\.png\) did not upload/);
+    expect(box().getAttribute('contenteditable')).toBe('true');
+    expect(boxText()).toContain('fix it');
+    ($('.cmp-retry') as HTMLButtonElement).click();
+    expect(ups).toHaveLength(2);
+    ups[1]!.ok('/d/a.png');
+    await flush();
+    press(box(), 'Enter');
+    await flush();
+    expect(h.prompts).toEqual(['fix it [Image #1: /d/a.png]']);
+  });
+
+  it('a prompt refused by the bridge keeps its images for another try', async () => {
+    const { h, ups } = withUpload();
+    mount(h);
+    pasteImages([png('a.png')]);
+    ups[0]!.ok('/d/a.png');
+    await flush();
+    h.sendOk = false;
+    press(box(), 'Enter');
+    await flush();
+    expect(h.prompts).toEqual(['[Image #1: /d/a.png]']);
+    expect($$('.cmp-chip')).toHaveLength(1);
+    h.sendOk = true;
+    press(box(), 'Enter');
+    await flush();
+    expect(h.prompts).toEqual(['[Image #1: /d/a.png]', '[Image #1: /d/a.png]']);
+    expect($$('.cmp-chip')).toHaveLength(0);
+  });
+
+  it('without an upload door the chip says it did not go up and nothing is sent', async () => {
+    mount(); // fakeHost: no upload
+    pasteImages([png('a.png')]);
+    await flush();
+    expect($('.cmp-chip')?.getAttribute('data-status')).toBe('error');
+    expect($('.cmp-state')?.textContent).toMatch(/images cannot be uploaded from here/);
+    press(box(), 'Enter');
+    await flush();
+    expect(host.prompts).toEqual([]);
+  });
+
+  it('pasted text is still text', async () => {
+    mount();
+    const e = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(e, 'clipboardData', { value: { items: [], files: [], getData: (t: string) => (t === 'text/plain' ? 'from the clipboard' : '') } });
+    box().dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+    press(box(), 'Enter');
+    await flush();
+    expect(host.prompts).toEqual(['from the clipboard']);
+  });
+
+  it('the hint says a screenshot can be pasted', () => {
+    mount();
+    expect(box().dataset.placeholder).toMatch(/paste a screenshot to add it/);
   });
 });
 

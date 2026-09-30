@@ -119,6 +119,38 @@ export function previewReset(p: Preview): Preview {
   return { ...p, text: p.generated, custom: false };
 }
 
+/** `[Image #n]`: the marker of an image whose upload has not given it a path yet (`[Image #n: <path>]` once it has). */
+const PATHLESS_IMAGE = /\[Image #(\d+)\]/g;
+
+/** The part of the Extra instructions' draft that tells its images from its prose (a `DraftSnapshot` has it). */
+export interface ExtraImages {
+  segments: readonly ({ kind: 'text'; text: string } | { kind: 'image' })[];
+  images: readonly { n: number }[];
+}
+
+const bareMarkers = (text: string): Map<number, number> => {
+  const out = new Map<number, number>();
+  for (const m of text.matchAll(PATHLESS_IMAGE)) out.set(Number(m[1]), (out.get(Number(m[1])) ?? 0) + 1);
+  return out;
+};
+
+/**
+ * The generated prompt names an image of the Extra instructions by a bare `[Image #n]` (the upload is on its way, or
+ * has failed, or has just finished and the prompt is not yet made again). The First prompt is read-only then: an edit
+ * would freeze that marker, without the path the orchestrator needs, into a prompt that overrides the one the bridge
+ * composes. It opens again when the preview carries the path or the image is gone. Only an image of the Extra counts:
+ * a marker-shaped sentence the user typed in the Extra instructions is prose (the draft says which is which), so a
+ * bare marker locks only where the preview holds more of that number than the Extra's own prose does, and the Extra
+ * has an image with that number. A custom prompt never locks: it has no bare marker of the Extra's (its own images
+ * are chips).
+ */
+export function previewLocked(p: Preview, extra: ExtraImages): boolean {
+  if (p.custom || extra.images.length === 0) return false;
+  const prose = bareMarkers(extra.segments.map((g) => (g.kind === 'text' ? g.text : '')).join(''));
+  for (const [n, count] of bareMarkers(p.text)) if (n <= extra.images.length && count > (prose.get(n) ?? 0)) return true;
+  return false;
+}
+
 /** Custom, and the fields now generate something else. */
 export function previewStale(p: Preview): boolean {
   return p.custom && p.text !== p.generated;

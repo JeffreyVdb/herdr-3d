@@ -73,6 +73,52 @@
 .cmp-notice[hidden] {
   display: none;
 }
+.cmp-refusal {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+  margin: 6px 0 0;
+  font-size: 0.95em;
+  font-weight: 700;
+  color: var(--cmp-err);
+}
+.cmp-refusal[hidden] {
+  display: none;
+}
+.cmp-refusal-text {
+  flex: 1;
+  min-width: 0;
+}
+.cmp-dismiss {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9em;
+  height: 1.9em;
+  margin: -0.2em 0;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.cmp-dismiss svg {
+  width: 1em;
+  height: 1em;
+}
+.cmp-dismiss:hover {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.cmp-dismiss:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.cmp-dismiss:focus-visible {
+  outline: 3px solid var(--sun, #ffc233);
+  outline-offset: 1px;
+}
 .cmp-sr {
   position: absolute;
   width: 1px;

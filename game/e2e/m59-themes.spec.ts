@@ -280,7 +280,7 @@ test('each view has its own zoom: A− / 100% / A+ and the Ctrl keys in the tran
   await tx.locator('.tx-input').focus();
   await page.keyboard.press('Control+-');
   await expect(level).toHaveText('110%');
-  await expect(tx.locator('.tx-input')).toHaveValue('');
+  await expect(tx.locator('.tx-input')).toHaveText('');
   await tx.locator('.tx-scroll').focus();
   await page.keyboard.press('Control+0');
   await expect(level).toHaveText('100%');

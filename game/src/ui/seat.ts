@@ -2,6 +2,7 @@ import './seat.css';
 import type { SeatView } from '../laptop';
 import { LOOK_KEY } from '../laptop/keys';
 import type { SeatMode } from '../laptop/transcriptMode';
+import { filesOf } from './composer/field';
 import type { ViewPrefs } from './themePrefs';
 import { stepZoom, THEMES, ZOOM, type ThemeId } from './themes';
 
@@ -52,7 +53,7 @@ export class SeatBar implements SeatView {
 
   constructor(
     private readonly hud: HTMLElement,
-    handlers: { text(t: string): void; paste(t: string): void; stand(): void; toggle(): void },
+    handlers: { text(t: string): void; paste(t: string, files?: File[]): void; stand(): void; toggle(): void },
     private readonly prefs: ViewPrefs | null = null,
   ) {
     this.el = el('div', 'seat');
@@ -90,7 +91,9 @@ export class SeatBar implements SeatView {
     });
     this.input.addEventListener('paste', (e) => {
       e.preventDefault();
-      handlers.paste(e.clipboardData?.getData('text/plain') ?? '');
+      // #64: a screenshot on the clipboard comes as files (the text a copied file may carry is its name, not a paste).
+      const files = filesOf(e.clipboardData);
+      handlers.paste(e.clipboardData?.getData('text/plain') ?? '', files);
     });
     this.askLine.hidden = true;
     this.askLine.setAttribute('role', 'status');
@@ -282,6 +285,7 @@ export class SeatBar implements SeatView {
     // Sending is quick: keep the resting line instead of flickering "sending".
     if (kind === 'busy') return;
     this.note.textContent = text ?? (this.current === 'transcript' ? `Reading ${this.name}’s conversation` : this.current === 'images' ? `Looking at ${this.name}’s images` : `Your keys go to ${this.name}’s terminal`);
+    this.note.title = this.note.textContent;
   }
 
   focus(): void {

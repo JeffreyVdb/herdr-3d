@@ -1,5 +1,6 @@
 import type { CommandResult } from '../net/client';
 import type { AnswerAskAck, Ask, CommandArgs, ImageRef, Question, TranscriptItem, TranscriptWatchAck } from '../net/protocol';
+import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import type { ViewPrefs } from '../ui/themePrefs';
 import { MAX_PROMPT } from './keys';
@@ -66,6 +67,8 @@ export interface TranscriptModeHost {
   overlay(): HTMLElement;
   /** Where the last mode per worker is kept (null: nowhere, it lasts until the page reloads). */
   storage: Storage | null;
+  /** #64: one image to Drop Zone, for the prompt box (none: a pasted image says it cannot go up). */
+  upload?: Uploader;
   /** The seat bar's note. */
   status(kind: 'ok' | 'error', text: string | null): void;
   /** The mode changed (the seat bar's toggle, the terminal watch's fps, the monitor's frame). */
@@ -479,6 +482,8 @@ export class TranscriptMode {
     const live = () => this.s === s;
     return {
       images: this.host.feed(s.id),
+      upload: this.host.upload ?? null,
+      label: s.name,
       ...(this.host.prefs ? { prefs: this.host.prefs } : {}),
       onPromptSubmit: (text) => {
         if (!live()) return Promise.resolve(false);

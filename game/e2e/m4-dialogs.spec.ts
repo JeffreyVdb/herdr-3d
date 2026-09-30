@@ -160,7 +160,7 @@ test('the other typed-text dialogs never close from the backdrop either (start-r
   await extra.fill('Scope: the header only. Keep the footer as it is.');
   await dragOut(page, extra, 4, 4);
   await expect(run).toBeVisible();
-  await expect(extra).toHaveValue('Scope: the header only. Keep the footer as it is.');
+  await expect(extra).toHaveText('Scope: the header only. Keep the footer as it is.');
   expect(await selected(extra)).toBeGreaterThan(0);
   await page.mouse.click(4, 4);
   await expect(run).toBeVisible();
@@ -187,7 +187,7 @@ test('the other typed-text dialogs never close from the backdrop either (start-r
   await text.fill('Please look at the header overlap on mobile.');
   await dragOut(page, text, 4, 4);
   await expect(prompt).toBeVisible();
-  await expect(text).toHaveValue('Please look at the header overlap on mobile.');
+  await expect(text).toHaveText('Please look at the header overlap on mobile.');
   expect(await selected(text)).toBeGreaterThan(0);
   await page.mouse.click(4, 4);
   await expect(prompt).toBeVisible();

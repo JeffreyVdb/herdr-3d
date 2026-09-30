@@ -17,6 +17,7 @@
 import './composer.css';
 import { postUpload } from '../../net/upload';
 import { h, ICON, icon } from '../dom';
+import { filesOf } from './field';
 import { Draft, type AddResult, type DraftEvent, type DraftOptions, type DraftSnapshot, type ResolveResult, type Uploader } from './draft';
 import { openPreview, type Preview } from './lightbox';
 import { caret, IMG, type Occurrence, rangeOf, type Selection, ZWSP } from './model';
@@ -64,6 +65,12 @@ export interface Composer {
   focus(): void;
   /** Read-only while the host is sending: no typing, no chip removal. Previews still open. */
   setBusy(busy: boolean): void;
+  /** Read-only and out of reach because the field cannot take a prompt now (#64: a blocked worker): the draft stays. */
+  setDisabled(disabled: boolean): void;
+  setPlaceholder(text: string): void;
+  clearNotice(): void;
+  /** Scrolls the held refusal (if any) into view: a host that refuses a send because of it shows where it is. */
+  revealRefusal(): void;
   openPreview(occ: string): void;
   closePreview(): void;
   readonly previewOpen: boolean;
@@ -81,8 +88,13 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   let draft = o.draft ?? makeDraft(o);
   let unsub: () => void = () => {};
   let composing = false;
+  /** Read-only, for either reason (the host is sending, or the field is off). */
   let busy = false;
+  let hostBusy = false;
+  let hostOff = false;
   let refocus = false;
+  /** The host asked for focus while the editor was read-only: it gets it when the editor is writable again. */
+  let wantFocus = false;
   let dead = false;
   let preview: Preview | null = null;
   const policy = o.submitPolicy ?? 'enter';
@@ -104,7 +116,13 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   });
   const notice = h('p', { class: 'cmp-notice', role: 'status', 'aria-live': 'polite', hidden: true });
   const live = h('span', { class: 'cmp-sr', role: 'status', 'aria-live': 'polite' });
-  const element = h('div', { class: 'cmp' }, editor, notice, live);
+  // A draft that holds refusals (`holdRefused`, #64): the refused file stays said, with its dismiss, until the user acts.
+  const refusalText = h('span', { class: 'cmp-refusal-text' });
+  const dismiss = h('button', { class: 'cmp-dismiss', type: 'button', title: 'Dismiss: send without the refused file' }, icon(ICON.close));
+  // Announced by `live` when it appears (polite), not a `role=alert` of its own: a hidden alert would be the first one
+  // anything looking for the dialog's alert finds.
+  const refusal = h('p', { class: 'cmp-refusal', hidden: true }, refusalText, dismiss);
+  const element = h('div', { class: 'cmp' }, editor, notice, refusal, live);
 
   // ---- notices -------------------------------------------------------------------------
 
@@ -122,6 +140,14 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
       notice.textContent = '';
     }
   };
+  /** The draft's held refusal, drawn (it is the draft's, so it comes back with the draft when a worker's note reopens). */
+  function paintRefusal(): void {
+    const why = draft.refusal;
+    refusal.hidden = why === null;
+    refusalText.textContent = why === null ? '' : `Not attached: ${why} Nothing is sent until you dismiss this.`;
+    dismiss.setAttribute('aria-label', 'Dismiss this message and send without the refused file');
+    dismiss.disabled = busy;
+  }
 
   // ---- drawing -------------------------------------------------------------------------
 
@@ -182,6 +208,7 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     for (const el of editor.querySelectorAll<HTMLElement>(`.${CHIP}`)) paintChip(el);
     const d = draft.doc;
     editor.dataset.empty = String(d.text === '');
+    paintRefusal();
   }
 
   /** Draws the editor from the draft: a text node for every text run, the chips between, the tail line. */
@@ -256,7 +283,9 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
 
   function onDraft(e: DraftEvent): void {
     if (dead) return;
-    if (e.kind === 'resource') {
+    if (e.kind === 'refusal') {
+      paintRefusal();
+    } else if (e.kind === 'resource') {
       const mine = [...editor.querySelectorAll<HTMLElement>(`.${CHIP}`)].filter((c) => c.dataset.res === e.id);
       for (const c of mine) paintChip(c);
       const el = mine[0];
@@ -279,6 +308,7 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     closePreview();
     render();
     clearNotice();
+    paintRefusal();
   }
 
   // ---- edits ---------------------------------------------------------------------------
@@ -290,7 +320,12 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
 
   function insertFiles(files: readonly File[], at?: number): AddResult {
     const r = draft.addImages(files, at === undefined ? rangeOf(where()) : [at, at]);
-    if (r.errors.length > 0) say(r.errors.join(' '), 'error');
+    if (r.errors.length > 0 && draft.refusal !== null) {
+      // Held by the draft: the refusal line says it (and stays); the notice would say it twice.
+      clearNotice();
+      live.textContent = r.errors.join(' ');
+      o.onNotice?.(r.errors.join(' '), 'error');
+    } else if (r.errors.length > 0) say(r.errors.join(' '), 'error');
     else clearNotice();
     if (r.added > 0) {
       say(`${r.added === 1 ? 'Image' : `${r.added} images`} added. ${draft.doc.images.length} in the prompt.`);
@@ -308,7 +343,12 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   }
 
   function focusEditor(): void {
-    if (dead || busy) return;
+    if (dead) return;
+    if (busy) {
+      wantFocus = true;
+      return;
+    }
+    wantFocus = false;
     editor.focus({ preventScroll: true });
     writeSelection(draft.selection);
   }
@@ -446,19 +486,6 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     reconcile();
   });
 
-  /** Files a clipboard or a drag carries: file items first, the file list only if there were none (never both). */
-  const filesOf = (dt: DataTransfer | null): File[] => {
-    if (!dt) return [];
-    const out: File[] = [];
-    for (const it of Array.from(dt.items ?? [])) {
-      if (it.kind !== 'file') continue;
-      const f = it.getAsFile();
-      if (f) out.push(f);
-    }
-    if (out.length === 0) out.push(...Array.from(dt.files ?? []));
-    return out;
-  };
-
   editor.addEventListener('paste', (e) => {
     const dt = e.clipboardData;
     if (!dt) return;
@@ -516,6 +543,11 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   });
   // Nothing inside is meant to be dragged out and back in: a chip or a selection dropped again would bring markup.
   editor.addEventListener('dragstart', (e) => e.preventDefault());
+  dismiss.addEventListener('click', () => {
+    if (busy || !draft.dismissRefusal()) return;
+    say('Dismissed. The prompt goes without the refused file.');
+    focusEditor();
+  });
 
   function offsetAtPoint(x: number, y: number): number | null {
     const doc = document as Document & {
@@ -565,6 +597,27 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   };
   document.addEventListener('selectionchange', onSelectionChange);
 
+  /** Read-only while the host is sending or the field is off. */
+  function lock(): void {
+    const b = hostBusy || hostOff;
+    const changed = b !== busy;
+    // Making the editor read-only takes focus from it: give it back when the host is done, if nothing else took it.
+    if (changed && b) refocus = focusInEditor();
+    busy = b;
+    editor.setAttribute('contenteditable', String(!b));
+    editor.setAttribute('aria-busy', String(hostBusy));
+    if (hostOff) editor.setAttribute('aria-disabled', 'true');
+    else editor.removeAttribute('aria-disabled');
+    element.classList.toggle('cmp--busy', hostBusy);
+    element.classList.toggle('cmp--off', hostOff);
+    paintAll();
+    if (changed && !b) {
+      const back = refocus && (!document.activeElement || document.activeElement === document.body);
+      refocus = false;
+      if (wantFocus || back) focusEditor();
+    }
+  }
+
   // ---- lifecycle -----------------------------------------------------------------------
 
   attach(draft);
@@ -581,16 +634,21 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     insertText,
     focus: focusEditor,
     setBusy(b) {
-      if (b === busy) return;
-      // Making the editor read-only takes focus from it: give it back when the host is done, if nothing else took it.
-      if (b) refocus = focusInEditor();
-      busy = b;
-      editor.setAttribute('contenteditable', String(!b));
-      editor.setAttribute('aria-busy', String(b));
-      element.classList.toggle('cmp--busy', b);
-      paintAll();
-      if (!b && refocus && (!document.activeElement || document.activeElement === document.body)) focusEditor();
-      if (!b) refocus = false;
+      if (b === hostBusy) return;
+      hostBusy = b;
+      lock();
+    },
+    setDisabled(d) {
+      if (d === hostOff) return;
+      hostOff = d;
+      lock();
+    },
+    setPlaceholder(text) {
+      editor.dataset.placeholder = text;
+    },
+    clearNotice,
+    revealRefusal() {
+      if (!refusal.hidden) refusal.scrollIntoView?.({ block: 'nearest' });
     },
     openPreview: openPreviewOf,
     closePreview,

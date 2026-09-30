@@ -229,6 +229,6 @@ describe('the card in the transcript view: keys', () => {
     await flush();
     expect(root.querySelector('.tx-ask')?.hasAttribute('hidden')).toBe(false);
     expect(root.querySelector('.tx-ask-question')?.textContent).toBe('NEW QUESTION: which color?');
-    expect(root.querySelector<HTMLTextAreaElement>('.tx-input')?.disabled).toBe(true);
+    expect(root.querySelector<HTMLElement>('.tx-input')?.getAttribute('aria-disabled')).toBe('true');
   });
 });

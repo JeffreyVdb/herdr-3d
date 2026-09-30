@@ -8,6 +8,7 @@ import {
   IMG,
   imagesIn,
   moveImage,
+  splitMarkers,
   type Occurrence,
   offsetOfImage,
   pathProblem,
@@ -291,5 +292,20 @@ describe('serializeErrorText', () => {
     expect(serializeErrorText({ kind: 'unresolved', res: 'a' }, 'shot.png')).toBe('shot.png has not been uploaded yet.');
     expect(serializeErrorText({ kind: 'too_long', bytes: 33000, max: 32768 })).toBe('The prompt is 32.2 KB with the image paths. The limit is 32 KB: shorten the text.');
     expect(serializeErrorText({ kind: 'bad_path', res: 'a', path: 'x', reason: 'the path is not absolute' })).toMatch(/not absolute/);
+  });
+});
+
+describe('splitMarkers (#64)', () => {
+  it('cuts text at [Image #n: path] markers, paths with spaces and non-ASCII whole', () => {
+    expect(splitMarkers('a [Image #1: /d/x y-2.png] b\n[Image #2: /d/é.jpg]')).toEqual([
+      { kind: 'text', text: 'a ' },
+      { kind: 'marker', path: '/d/x y-2.png' },
+      { kind: 'text', text: ' b\n' },
+      { kind: 'marker', path: '/d/é.jpg' },
+    ]);
+  });
+  it('leaves what is not a marker as text', () => {
+    expect(splitMarkers('[Image #x: /a] [Image #1 /a] [Image #1: /a\n]')).toEqual([{ kind: 'text', text: '[Image #x: /a] [Image #1 /a] [Image #1: /a\n]' }]);
+    expect(splitMarkers('')).toEqual([]);
   });
 });

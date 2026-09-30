@@ -128,7 +128,10 @@ MacBook (M2 Max)                                   devbox (Linux)
   guards it and proxies it, the bridge (`internal/upload`) sniffs the type, caps 25 MiB on the bytes and streams it as
   one multipart request to **Drop Zone** (`--dropzone-url`), which stores it and answers the absolute path; the game puts
   the path in an `[Image #n: <path>]` marker. Nothing is held in memory and nothing is stored for a refused or aborted
-  image.
+  image. #64: every prompt field mounts the same composer (`game/src/ui/composer/`) and sends the marker inside its
+  text: hire, Start Run (Extra instructions and First prompt), the transcript view's prompt box and the P overlay; a paste
+  at a laptop's terminal goes through the composer's draft without a view (`laptop/pasteImages.ts`). The bridge treats a
+  marker as text on every command (`protocol.md` "Markers in prompts").
 - **Identity**: bridge-owned worker UUID; reconcile after restarts via persisted pane-label marker (written by the bridge
   on the workers it hires) → `agent_session` id → label+cwd → else new worker. Tokens vanish on herdr restart and workspace ids can be reused: re-apply tokens only
   after reconciliation.
