@@ -1,0 +1,37 @@
+/* Test-only host for the composer (e2e/composer.spec.ts): a dialog shaped like the hire dialog will be, with the editor filling it. */
+
+.cmp-demo {
+  width: min(760px, calc(100vw - 32px));
+  height: min(520px, calc(100vh - 32px));
+}
+.cmp-demo-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 14px 16px 0;
+}
+.cmp-demo-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px 14px;
+}
+.cmp-demo-out {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-height: 96px;
+  margin: 0;
+  overflow: auto;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-on-ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cmp-demo-reopen {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+}

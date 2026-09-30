@@ -25,6 +25,8 @@
 // itself (tools/fixture-crew.ts; `sim.crew` steps it on demand). M10: `simlimits=ok|hot|reached|old|transcript|noplan|none` picks the
 // plan limits' readings (tools/fixture-limits.ts), `simfail=no_m10` plays a bridge without them. #51: `simmodels=<n>` adds n
 // Claude models to the hire options (a long model list).
+// #51: `POST /upload` stores nothing and answers a fake Drop Zone path (tools/fixture-upload.ts); the query of the ws URL
+// carries `fail_upload=<N|all>&upload_key=<key>` to make uploads fail.
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -32,6 +34,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { logoRoute, registerLogoWorld } from './fixture-logo.ts';
+import { uploadRoute } from './fixture-upload.ts';
 import { SimWorld, type SimOptions } from './fixture-sim.ts';
 
 export const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
@@ -181,8 +184,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
 export function startFixtureServer(port: number | string, o: FixtureOptions = {}): Promise<Server> {
   const handler = fixtureUpgradeHandler(o);
   const srv = createServer((req, res) => {
-    if (logoRoute(req, res)) return;
-    res.writeHead(404, { 'content-type': 'text/plain' }).end('herdr-3d fixture server: WebSocket only (/fixture/<name>, /ws), and /logo/<building>\n');
+    if (logoRoute(req, res) || uploadRoute(req, res)) return;
+    res.writeHead(404, { 'content-type': 'text/plain' }).end('herdr-3d fixture server: WebSocket only (/fixture/<name>, /ws), /logo/<building> and /upload\n');
   });
   srv.on('upgrade', (req, socket, head) => {
     if (!handler(req, socket, head)) socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
