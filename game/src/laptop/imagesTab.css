@@ -1,21 +1,10 @@
 /*
  * M16 phase 2: the Images tab, third view of the seated overlay. The conversation's screen: the same deep navy, Recursive,
- * sun-yellow for the one accent (the badge on what the agent made, the count of a repeated image). Input is the paper
+ * sun-yellow for the one accent (#59: the transcript preset's fonts and colours, not its zoom) (the badge on what the agent made, the count of a repeated image). Input is the paper
  * white the desk prints' IN tray uses, Agent the sun, so the two read apart at a glance.
  */
 
 .imgs {
-  --tx-bg: #0f1526;
-  --tx-bg-2: #161e35;
-  --tx-bg-3: #1f2a47;
-  --tx-line: rgb(255 255 255 / 9%);
-  --tx-text: #e4e9f6;
-  --tx-text-2: #9aa5c3;
-  --tx-text-3: #6d789a;
-  --tx-sun: var(--sun, #ffc233);
-  --tx-blue: #6f9bff;
-  --tx-mono: 'Recursive Variable', ui-monospace, 'SFMono-Regular', Menlo, monospace;
-
   position: absolute;
   inset: 0;
   display: flex;
@@ -26,7 +15,7 @@
   box-sizing: border-box;
   color: var(--tx-text);
   background: var(--tx-bg);
-  font-family: var(--font, 'Recursive Variable', system-ui, sans-serif);
+  font-family: var(--tx-prose);
   font-size: 13.5px;
   line-height: 1.5;
   text-align: left;
@@ -63,12 +52,11 @@
 }
 .imgs-title {
   font-weight: 750;
-  font-variation-settings: 'CASL' 0.4;
   letter-spacing: 0.02em;
 }
 .imgs-count-total {
   color: var(--tx-text-3);
-  font-variation-settings: 'MONO' 1;
+  font-variant-numeric: tabular-nums;
   font-variant-numeric: tabular-nums;
 }
 
@@ -97,8 +85,7 @@
   margin: 2px 0 8px;
   font-size: 13.5px;
   font-weight: 750;
-  font-variation-settings: 'CASL' 0.4;
-}
+  }
 .imgs-h-n {
   min-width: 1.4em;
   padding: 0 6px;
@@ -107,7 +94,7 @@
   color: var(--tx-text-2);
   font-size: 11.5px;
   font-weight: 700;
-  font-variation-settings: 'MONO' 1;
+  font-variant-numeric: tabular-nums;
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
@@ -151,15 +138,15 @@
   overflow: hidden;
   border-radius: 8px;
   border: 1px solid var(--tx-line);
-  background: #0b1122;
+  background: var(--tx-code-bg);
   transition: border-color 140ms var(--ease, ease-out), transform 140ms var(--ease, ease-out);
 }
 .imgs-tile:hover .imgs-face {
-  border-color: rgb(255 255 255 / 30%);
+  border-color: rgb(var(--tx-tint) / 30%);
 }
 .imgs-group[data-origin='input'] .imgs-tile:hover .imgs-face,
 .imgs-group[data-origin='input'] .imgs-tile:focus-visible .imgs-face {
-  border-color: #f4f6fb;
+  border-color: var(--tx-text);
 }
 .imgs-group[data-origin='agent'] .imgs-tile:hover .imgs-face,
 .imgs-group[data-origin='agent'] .imgs-tile:focus-visible .imgs-face {
@@ -177,7 +164,7 @@
   object-fit: contain;
 }
 .imgs-pending {
-  background: linear-gradient(100deg, #0b1122 30%, #16203a 50%, #0b1122 70%) 0 0 / 200% 100%;
+  background: linear-gradient(100deg, var(--tx-code-bg) 30%, var(--tx-bg-2) 50%, var(--tx-code-bg) 70%) 0 0 / 200% 100%;
 }
 @media (prefers-reduced-motion: no-preference) {
   .imgs-pending {
@@ -201,10 +188,10 @@
   padding: 1px 7px;
   border-radius: 999px;
   background: var(--tx-sun);
-  color: var(--ink, #1c2540);
+  color: var(--tx-on-sun);
   font-size: 11.5px;
   font-weight: 800;
-  font-variation-settings: 'MONO' 1;
+  font-variant-numeric: tabular-nums;
   font-variant-numeric: tabular-nums;
   box-shadow: 0 1px 4px rgb(0 0 0 / 40%);
 }
@@ -217,12 +204,12 @@
   left: 6px;
   padding: 1px 7px;
   border-radius: 3px;
-  background: rgb(10 14 28 / 82%);
-  border: 1px solid rgb(255 194 51 / 55%);
-  color: var(--tx-sun);
+  background: color-mix(in srgb, var(--tx-code-bg) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tx-sun) 55%, transparent);
+  color: var(--tx-sun-text);
   font-size: 10.5px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 0.6, 'MONO' 1;
+  font-variant-numeric: tabular-nums;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -232,7 +219,7 @@
   gap: 8px;
   color: var(--tx-text-3);
   font-size: 11.5px;
-  font-variation-settings: 'MONO' 1;
+  font-variant-numeric: tabular-nums;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
@@ -250,8 +237,8 @@
   gap: 3px;
   padding: 8px 10px;
   border-style: dashed;
-  border-color: rgb(255 255 255 / 22%);
-  background: #101830;
+  border-color: rgb(var(--tx-tint) / 22%);
+  background: var(--tx-bg-2);
   text-align: center;
 }
 .imgs-gone svg,
@@ -304,7 +291,7 @@
   font-weight: 700;
 }
 .imgs-err {
-  color: #ff7a72;
+  color: var(--tx-red);
 }
 .imgs-link {
   padding: 0;

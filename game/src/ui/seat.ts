@@ -1,6 +1,9 @@
 import './seat.css';
 import type { SeatView } from '../laptop';
+import { LOOK_KEY } from '../laptop/keys';
 import type { SeatMode } from '../laptop/transcriptMode';
+import type { ViewPrefs } from './themePrefs';
+import { stepZoom, THEMES, ZOOM, type ThemeId } from './themes';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', text = ''): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -23,6 +26,10 @@ function key(k: string[], label: string): HTMLSpanElement {
  * failed. A visually hidden textarea keeps the keyboard focus, so IME
  * composition and the browser's paste land here. M16: a switch between the
  * terminal and the worker's conversation (Ctrl+Esc), showing which is up.
+ * #59: the terminal's own preset and zoom (the transcript has its own, in its
+ * strip): three swatches and A− / level / A+, always in view. In terminal mode
+ * every key is the pane's, so the mouse and Ctrl + = / − / 0 reach them there;
+ * by keyboard Ctrl+, reaches them from any view (Esc goes back).
  */
 export class SeatBar implements SeatView {
   readonly el: HTMLDivElement;
@@ -35,6 +42,10 @@ export class SeatBar implements SeatView {
   /** #57: the line that says the agent asks a question (terminal mode). */
   private readonly askLine = el('div', 'seat-ask');
   private readonly modeOpts: Record<SeatMode, HTMLSpanElement> = { terminal: el('span', 'seat-mode-opt', 'Terminal'), transcript: el('span', 'seat-mode-opt', 'Transcript'), images: el('span', 'seat-mode-opt', 'Images') };
+  /** #59: the terminal's preset and zoom. */
+  private readonly look = el('div', 'seat-look');
+  private readonly swatches: HTMLButtonElement[] = [];
+  private readonly zoomBtns: { out: HTMLButtonElement; level: HTMLButtonElement; in: HTMLButtonElement } | null = null;
   private name = '';
   private mac = false;
   private current: SeatMode = 'terminal';
@@ -42,6 +53,7 @@ export class SeatBar implements SeatView {
   constructor(
     private readonly hud: HTMLElement,
     handlers: { text(t: string): void; paste(t: string): void; stand(): void; toggle(): void },
+    private readonly prefs: ViewPrefs | null = null,
   ) {
     this.el = el('div', 'seat');
     this.el.hidden = true;
@@ -83,7 +95,118 @@ export class SeatBar implements SeatView {
     this.askLine.hidden = true;
     this.askLine.setAttribute('role', 'status');
     this.el.append(this.askLine, line, this.keys, this.modeBtn, this.standBtn, this.input);
+    if (prefs) {
+      this.zoomBtns = this.buildLook(prefs);
+      // At the end of the keys row (renderMode puts it back after the keys): the bar keeps its two rows.
+      this.keys.append(this.look);
+      prefs.onChange((what) => {
+        if (what === 'terminalTheme' || what === 'terminalZoom') this.renderLook();
+      });
+      this.renderLook();
+    }
     hud.append(this.el);
+  }
+
+  /** #59: "Terminal" and its three swatches (a radio group), then A− / level / A+. */
+  private buildLook(prefs: ViewPrefs): { out: HTMLButtonElement; level: HTMLButtonElement; in: HTMLButtonElement } {
+    const group = el('div', 'seat-themes');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Terminal theme');
+    group.setAttribute('aria-keyshortcuts', LOOK_KEY.aria);
+    for (const t of THEMES) {
+      const b = el('button', 'seat-theme');
+      b.type = 'button';
+      b.setAttribute('role', 'radio');
+      b.dataset.themeId = t.id;
+      b.setAttribute('aria-label', t.label);
+      b.title = `Terminal: ${t.label} (${t.mono.family}, ${t.blurb.split(',')[0]?.toLowerCase()})`;
+      // A tiny screen in the preset's terminal colours: its background, a line of its text, its cursor.
+      b.style.setProperty('--sw-bg', `#${t.screen.bg.toString(16).padStart(6, '0')}`);
+      b.style.setProperty('--sw-fg', `#${t.screen.fg.toString(16).padStart(6, '0')}`);
+      b.style.setProperty('--sw-ac', `#${t.screen.cursor.toString(16).padStart(6, '0')}`);
+      b.append(el('span', 'seat-swatch'));
+      b.addEventListener('click', () => {
+        prefs.setTheme('terminal', t.id);
+        this.backToPane();
+      });
+      this.swatches.push(b);
+      group.append(b);
+    }
+    group.addEventListener('keydown', (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const n = this.swatches.length;
+      const i = this.swatches.findIndex((b) => b.dataset.themeId === prefs.theme('terminal'));
+      const to = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? (i + 1) % n : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? (i - 1 + n) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+      if (to < 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const b = this.swatches[to] as HTMLButtonElement;
+      prefs.setTheme('terminal', b.dataset.themeId as ThemeId);
+      b.focus();
+    });
+    const zoom = el('div', 'seat-zoom');
+    zoom.setAttribute('role', 'group');
+    zoom.setAttribute('aria-label', 'Terminal text size');
+    const btn = (cls: string, text: string, label: string | null, title: string, fn: () => void) => {
+      const b = el('button', cls, text);
+      b.type = 'button';
+      if (label) b.setAttribute('aria-label', label);
+      b.title = title;
+      b.addEventListener('click', () => {
+        fn();
+        this.backToPane();
+      });
+      return b;
+    };
+    const out = btn('seat-zoom-btn', 'A−', 'Smaller terminal text', 'Smaller terminal text (Ctrl −)', () => prefs.setZoom('terminal', stepZoom(prefs.zoom('terminal'), -1)));
+    const level = btn('seat-zoom-btn seat-zoom-level', '', null, 'Terminal text back to 100% (Ctrl 0)', () => prefs.setZoom('terminal', ZOOM.reset));
+    const inc = btn('seat-zoom-btn', 'A+', 'Larger terminal text', 'Larger terminal text (Ctrl +)', () => prefs.setZoom('terminal', stepZoom(prefs.zoom('terminal'), 1)));
+    zoom.append(out, level, inc);
+    // Its label is its key, as the keys beside it are: Ctrl+, from any view (the pane keeps Tab).
+    const label = key([...LOOK_KEY.label], 'Terminal');
+    label.classList.add('seat-look-label');
+    label.title = `The terminal’s theme and text size (${LOOK_KEY.label.join(' ')}; Esc goes back)`;
+    this.look.append(label, group, zoom);
+    return { out, level, in: inc };
+  }
+
+  /** In terminal mode a click on the controls hands the keyboard straight back to the pane. */
+  private backToPane(): void {
+    if (this.current === 'terminal' && !this.el.hidden) this.focus();
+  }
+
+  private renderLook(): void {
+    const p = this.prefs;
+    const z = this.zoomBtns;
+    if (!p || !z) return;
+    for (const b of this.swatches) {
+      const on = b.dataset.themeId === p.theme('terminal');
+      b.setAttribute('aria-checked', String(on));
+      b.tabIndex = on ? 0 : -1;
+    }
+    const level = p.zoom('terminal');
+    z.level.textContent = `${level}%`;
+    z.level.setAttribute('aria-label', `Terminal text size ${level}%${level === ZOOM.reset ? '' : ', back to 100%'}`);
+    z.out.disabled = level <= ZOOM.min;
+    z.in.disabled = level >= ZOOM.max;
+  }
+
+  /** #59: the keyboard to the terminal's picked preset (Ctrl+,); false when the bar has no controls. */
+  focusLook(): boolean {
+    const b = this.swatches.find((s) => s.getAttribute('aria-checked') === 'true');
+    if (!b || this.el.hidden) return false;
+    b.focus();
+    return true;
+  }
+
+  /** #59: `t` is one of the terminal's preset and zoom controls (Esc there hands the keyboard back, see the controller). */
+  inLook(t: EventTarget | null): boolean {
+    return t instanceof Element && this.look.contains(t);
+  }
+
+  /** #59: a control of the bar has the keyboard (its Tab, Enter, Space and arrows are its own, not the pane's). */
+  owns(t: EventTarget | null): boolean {
+    return t instanceof Element && t !== this.input && this.el.contains(t) && !!t.closest('button');
   }
 
   show(name: string, mac: boolean): void {
@@ -112,13 +235,25 @@ export class SeatBar implements SeatView {
     this.modeBtn.setAttribute('aria-label', aria[m]);
     for (const k of ['terminal', 'transcript', 'images'] as const) this.modeOpts[k].toggleAttribute('data-on', k === m);
     const flip = key(['I'], m === 'images' ? 'Conversation' : 'Images');
+    // The switch's own key, repeated here (a narrow bar drops it: the switch shows it).
+    const swap = (label: string) => {
+      const k = key(['Ctrl', 'Esc'], label);
+      k.classList.add('seat-key-mode');
+      return k;
+    };
     const nothing = 'nothing you type here goes to the terminal';
+    const aside = (text: string) => {
+      const a = el('span', 'seat-aside', text);
+      a.title = text;
+      return a;
+    };
     this.keys.replaceChildren(
       ...(m === 'transcript'
-        ? [key(['Enter'], 'Write a prompt'), flip, key(['Ctrl', 'Esc'], 'Terminal'), el('span', 'seat-aside', `PgUp, PgDn, j and k scroll; ${nothing}`)]
+        ? [key(['Enter'], 'Write a prompt'), flip, swap('Terminal'), aside(`PgUp, PgDn, j and k scroll; ${nothing}`)]
         : m === 'images'
-          ? [key(['Enter'], 'Open'), flip, key(['Ctrl', 'Esc'], 'Terminal'), el('span', 'seat-aside', `Arrows move between images; ${nothing}`)]
-          : [key(['Shift', 'Esc'], 'Send Esc'), key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'), key(['Ctrl', 'Esc'], 'Conversation'), el('span', 'seat-aside', 'Tab, arrows and Ctrl keys go to the terminal')]),
+          ? [key(['Enter'], 'Open'), flip, swap('Terminal'), aside(`Arrows move between images; ${nothing}`)]
+          : [key(['Shift', 'Esc'], 'Send Esc'), key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'), swap('Conversation'), aside('Tab, arrows and Ctrl keys go to the terminal')]),
+      ...(this.prefs ? [this.look] : []),
     );
   }
 
@@ -154,8 +289,9 @@ export class SeatBar implements SeatView {
   }
 
   /** What the bar says (test hook). */
-  summary(): { shown: boolean; tape: string; note: string; state: string; mode: SeatMode; ask: string | null } {
+  summary(): { shown: boolean; tape: string; note: string; state: string; mode: SeatMode; ask: string | null; terminalZoom: string | null } {
     return {
+      terminalZoom: this.zoomBtns?.level.textContent ?? null,
       shown: !this.el.hidden,
       tape: this.tape.textContent ?? '',
       note: this.note.textContent ?? '',

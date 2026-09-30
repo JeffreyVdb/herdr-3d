@@ -28,7 +28,7 @@
 .crew-issue,
 .crew-run {
   flex: none;
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 .crew-issue {

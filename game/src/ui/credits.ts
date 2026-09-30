@@ -1,6 +1,7 @@
 import { CHANGES, GENRES, LICENSE_NAME, MANIFEST, type MusicRow } from '../audio/tracks';
 import './credits.css';
 import { backdropPolicy } from './dismiss';
+import { FONT_CREDITS, FONT_LICENSES_FILE, OFL, type FontCredit } from './fontCredits';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -32,6 +33,17 @@ function closeIcon(): SVGSVGElement {
   p.setAttribute('d', 'M6.5 6.5l11 11M17.5 6.5l-11 11');
   s.append(p);
   return s;
+}
+
+function fontRow(f: FontCredit): HTMLLIElement {
+  const li = el('li', 'credits-row credits-font');
+  const who = el('div', 'credits-who');
+  who.append(el('span', 'credits-title', f.name), el('span', 'credits-artist', `${f.role}. ${f.copyright}.`));
+  const meta = el('div', 'credits-meta');
+  const lic = f.license ?? OFL;
+  meta.append(link(lic.url, lic.name, `${f.name}: license, ${lic === OFL ? 'SIL Open Font License 1.1' : lic.name}`), link(f.source, 'Source', `${f.name}: source`));
+  li.append(who, meta);
+  return li;
 }
 
 /** One track: what it is, who made it, and the license and source it came under. */
@@ -89,7 +101,26 @@ export class MusicCredits {
       sec.append(title, ul);
       body.append(sec);
     }
-    const foot = el('p', 'panel-status credits-foot', `Each file is ${CHANGES}. The same list ships as MUSIC_CREDITS.txt.`);
+    // #59: the fonts, after the music: the credits panel is the one place the game names what it ships.
+    const fonts = el('section', 'credits-genre credits-fonts');
+    const fontsTitle = el('h3', 'credits-genre-name');
+    const fontsTape = el('span', 'tape', 'Fonts');
+    fontsTape.style.setProperty('--c', 'var(--sun)');
+    fontsTitle.append(fontsTape, el('span', 'credits-count', String(FONT_CREDITS.length)));
+    fontsTitle.setAttribute('aria-label', `Fonts, ${FONT_CREDITS.length}`);
+    const fontList = el('ul', 'credits-list');
+    fontList.append(...FONT_CREDITS.map(fontRow));
+    // The licences' full texts ship with the game (the OFL and the Bitstream Vera licence ask it): a local file.
+    const texts = el('p', 'credits-fonts-texts');
+    const local = el('a', 'credits-link', FONT_LICENSES_FILE);
+    local.href = FONT_LICENSES_FILE;
+    local.target = '_blank';
+    local.rel = 'noopener';
+    local.setAttribute('aria-label', `The fonts’ licences in full, ${FONT_LICENSES_FILE}, shipped with the game`);
+    texts.append(document.createTextNode('Their licences in full ship with the game: '), local, document.createTextNode('.'));
+    fonts.append(fontsTitle, fontList, texts);
+    body.append(fonts);
+    const foot = el('p', 'panel-status credits-foot', `Each music file is ${CHANGES}. The same list ships as MUSIC_CREDITS.txt, the fonts’ licences as ${FONT_LICENSES_FILE}.`);
 
     this.dialog.setAttribute('aria-labelledby', 'credits-title');
     this.dialog.append(head, body, foot);

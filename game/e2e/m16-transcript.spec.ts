@@ -161,6 +161,8 @@ test('Ctrl+Esc at a seated laptop: the conversation over the monitor, fed by tra
   // Nothing of the HUD (the plan limits widget hangs over the top right) covers the view's controls.
   const covered = await page.evaluate(() =>
     [...document.querySelectorAll<HTMLElement>('.seat-transcript .tx-bar button, .seat-transcript .tx-send, .seat-transcript .tx-input')]
+      // A control that is not shown (#59: the working chip while nothing runs) is not covered.
+      .filter((e) => e.offsetParent !== null)
       .filter((e) => {
         const r = e.getBoundingClientRect();
         const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
@@ -366,6 +368,7 @@ for (const [w, h] of [
     // Every control of the bar, the banner and the prompt is hit-testable (nothing covers it).
     const covered = await page.evaluate(() =>
       [...document.querySelectorAll<HTMLElement>('.seat-transcript .tx-bar button, .seat-transcript .tx-banner button, .seat-transcript .tx-send, .seat-transcript .tx-input')]
+        .filter((e) => e.offsetParent !== null)
         .filter((e) => {
           const r = e.getBoundingClientRect();
           const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 12));

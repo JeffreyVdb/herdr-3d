@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { KeyItem } from '../net/protocol';
-import { InputLanes, InputQueue, KEY_NAMES, MAX_ITEMS, MAX_TEXT, mergeItems, seatedKey, takeBatch, textItems, type KeyLike } from './keys';
+import { InputLanes, InputQueue, KEY_NAMES, MAX_ITEMS, MAX_TEXT, mergeItems, seatedKey, takeBatch, textItems, zoomKey, type KeyLike } from './keys';
 
 const kd = (key: string, o: Partial<KeyLike> = {}): KeyLike => ({
   key,
@@ -11,6 +11,51 @@ const kd = (key: string, o: Partial<KeyLike> = {}): KeyLike => ({
   metaKey: false,
   shiftKey: false,
   ...o,
+});
+
+describe('zoom keys (#59)', () => {
+  it('Ctrl + = / + zoom in, Ctrl + − out, Ctrl + 0 resets, on the main keys and the keypad, on a Mac too', () => {
+    for (const mac of [false, true]) {
+      expect(seatedKey(kd('=', { ctrlKey: true, code: 'Equal' }), mac)).toEqual({ items: [], action: 'zoom-in', prevent: true });
+      expect(seatedKey(kd('+', { ctrlKey: true, shiftKey: true, code: 'Equal' }), mac).action).toBe('zoom-in');
+      expect(seatedKey(kd('+', { ctrlKey: true, code: 'NumpadAdd' }), mac).action).toBe('zoom-in');
+      expect(seatedKey(kd('-', { ctrlKey: true, code: 'Minus' }), mac).action).toBe('zoom-out');
+      expect(seatedKey(kd('-', { ctrlKey: true, code: 'NumpadSubtract' }), mac).action).toBe('zoom-out');
+      expect(seatedKey(kd('0', { ctrlKey: true, code: 'Digit0' }), mac).action).toBe('zoom-reset');
+    }
+  });
+
+  it('takes nothing a pane gets: Ctrl+_ (the shells’ and Claude’s undo), Ctrl+letters, and leaves Cmd / Alt chords alone', () => {
+    // Ctrl+Shift+− is Ctrl+_: not a zoom (and, as before, nothing the pane gets from this game either).
+    expect(zoomKey(kd('_', { ctrlKey: true, shiftKey: true, code: 'Minus' }))).toBeNull();
+    expect(seatedKey(kd('_', { ctrlKey: true, shiftKey: true, code: 'Minus' }), false).action).toBeUndefined();
+    expect(seatedKey(kd('a', { ctrlKey: true }), false)).toEqual({ items: [{ key: 'ctrl+a' }], prevent: true });
+    // Cmd (a Mac's own browser zoom), Alt, AltGr chords and the bare keys are not zoom.
+    expect(zoomKey(kd('=', { metaKey: true, code: 'Equal' }))).toBeNull();
+    expect(seatedKey(kd('=', { metaKey: true, code: 'Equal' }), true)).toEqual({ items: [], prevent: false });
+    expect(zoomKey(kd('-', { ctrlKey: true, altKey: true, code: 'Minus' }))).toBeNull();
+    expect(zoomKey(kd('0', { ctrlKey: true, shiftKey: true, code: 'Digit0' }))).toBeNull();
+    expect(seatedKey(kd('='), false).items).toEqual([{ text: '=' }]);
+    expect(seatedKey(kd('0'), false).items).toEqual([{ text: '0' }]);
+    // Before #59 these four sent nothing to the pane either: taking them costs a pane nothing.
+    expect(KEY_NAMES.some((k) => /ctrl\+[-=+0_]/.test(k))).toBe(false);
+  });
+});
+
+describe('the look key (#59)', () => {
+  it('Ctrl+, goes to the terminal’s preset and zoom, on a Mac too; nothing a pane got before, and Cmd+, stays the browser’s', () => {
+    for (const mac of [false, true]) expect(seatedKey(kd(',', { ctrlKey: true, code: 'Comma' }), mac)).toEqual({ items: [], action: 'look', prevent: true });
+    // AZERTY's comma sits on the M key: the character decides, not the key's place.
+    expect(seatedKey(kd(',', { ctrlKey: true, code: 'KeyM' }), false).action).toBe('look');
+    expect(seatedKey(kd(',', { metaKey: true, code: 'Comma' }), true)).toEqual({ items: [], prevent: false });
+    expect(seatedKey(kd(',', { ctrlKey: true, altKey: true, code: 'Comma' }), false).action).toBeUndefined();
+    expect(seatedKey(kd('<', { ctrlKey: true, shiftKey: true, code: 'Comma' }), false).action).toBeUndefined();
+    expect(seatedKey(kd(',', { code: 'Comma' }), false).items).toEqual([{ text: ',' }]);
+    // Tab and Shift+Tab stay the pane's.
+    expect(seatedKey(kd('Tab'), false).items).toEqual([{ key: 'tab' }]);
+    expect(seatedKey(kd('Tab', { shiftKey: true }), false).items).toEqual([{ key: 'shift+tab' }]);
+    expect(KEY_NAMES).not.toContain('ctrl+,');
+  });
 });
 
 describe('seatedKey', () => {

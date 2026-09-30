@@ -15,6 +15,7 @@ import {
   type AskPick,
 } from '../world/ask';
 import { h, icon } from '../ui/dom';
+import { zoomKey } from './keys';
 
 const CHECK = '<path d="M5.5 12.5l4 4 9-9"/>';
 /** An option's key cap: its digit, or a tick when a multi-select one is picked. */
@@ -315,6 +316,7 @@ export class AskCard {
   }
 
   private onOtherKey(e: KeyboardEvent, input: HTMLInputElement): void {
+    if (zoomKey(e)) return; // #59: the text zoom works from here too
     e.stopPropagation(); // what is typed here is the answer's, not the game's or the timeline's
     const a = this.shownAsk;
     if (!a) return;

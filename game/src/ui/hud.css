@@ -269,7 +269,7 @@ body {
   padding: 2px 7px 1px;
   font-size: 11px;
   font-weight: 700;
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: #fff;
@@ -352,7 +352,7 @@ body {
 .prompt-model {
   flex: none;
   font-size: 12px;
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   color: var(--text-on-ink-2);
 }
 .prompt-keys {
@@ -382,7 +382,7 @@ body {
   border: 1px solid rgb(255 255 255 / 22%);
   border-bottom-width: 2px;
   font: 700 11px/1 var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
 }
 .key[aria-disabled='true'] {
   opacity: 0.42;
@@ -521,7 +521,7 @@ body {
   color: var(--text-on-ink-2);
 }
 .notice code {
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   font-size: 12.5px;
   color: var(--text-on-ink);
   word-break: break-all;
@@ -620,7 +620,7 @@ body {
   background: #101626;
   color: var(--sun);
   font: 800 22px/1 var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-family: var(--font-mono);
   letter-spacing: 0.08em;
   opacity: 0;
   transition: opacity 140ms linear;
