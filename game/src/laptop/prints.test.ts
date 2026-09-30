@@ -157,6 +157,65 @@ describe('the desks that have prints', () => {
     expect(r.log.filter((l) => l.t === 'transcript.image')).toHaveLength(1);
   });
 
+  it('an image that left the tray and comes back (a new occurrence) gets its picture again', async () => {
+    const list = [ref(1)];
+    const r = rig(list);
+    await near(r, 0, ['a']);
+    const feed = r.feeds.get('a');
+    const shown = (n: number, item = `i${n}`, seq = n) => {
+      const image = ref(n, { origin: 'input', item_id: item, seq });
+      list.push(image);
+      feed.note([{ id: item, seq, ts: seq, kind: 'user', parts: [{ image }] }]);
+    };
+    const key = `in:${hashOf(1)}`;
+    expect(r.prints.info()[0]?.prints.find((p) => p.key === key)?.loaded).toBe(true);
+    // Five newer inputs push it out of the IN tray: its print goes, its texture is disposed.
+    for (const n of [3, 5, 7, 9, 11]) shown(n);
+    r.prints.tick(RELIST_MS + 1);
+    await flush();
+    expect(r.prints.info()[0]?.prints.some((p) => p.key === key)).toBe(false);
+    expect(r.prints.counts()).toMatchObject({ alive: MAX_TRAY });
+    // The same image again, later in the session: it is the newest print, and it has its picture.
+    shown(1, 'again', 12);
+    r.prints.tick(2 * RELIST_MS + 2);
+    await flush();
+    const prints = r.prints.info()[0]?.prints ?? [];
+    expect(prints.filter((p) => p.tray === 'in').at(-1)).toMatchObject({ key, blank: false, loaded: true });
+    expect(prints.every((p) => p.loaded)).toBe(true);
+    expect(r.prints.counts()).toMatchObject({ alive: MAX_TRAY });
+    // Nothing leaks from the round trip.
+    r.prints.clear();
+    r.feeds.drop('a');
+    const c = r.prints.counts();
+    expect(c.alive).toBe(0);
+    expect(c.disposed).toBe(c.created);
+    expect(c.closed).toBe(c.created);
+    expect(r.bitmaps.every((b) => b.closed)).toBe(true);
+    expect(urls.revoked).toBe(urls.made);
+  });
+
+  it('a failed thumbnail is not asked again when the list is read again while its print stays', async () => {
+    const list = [ref(1)];
+    const r = rig(list, { failThumbs: true });
+    await near(r, 0, ['a']);
+    const asks = () => r.log.filter((l) => l.t === 'transcript.image').map((l) => l.hash);
+    expect(asks()).toEqual([hashOf(1)]);
+    const feed = r.feeds.get('a');
+    for (let i = 0; i < 5; i++) {
+      const image = ref(100 + 2 * i);
+      list.push(image);
+      feed.note([{ id: image.item_id as string, seq: image.seq as number, ts: 0, kind: 'user', parts: [{ image }] }]);
+      r.prints.tick((i + 1) * (RELIST_MS + 1));
+      await flush();
+    }
+    // Every refresh showed the failed IN print again; it was asked for once, each new OUT print once.
+    expect(asks().filter((h) => h === hashOf(1))).toHaveLength(1);
+    expect(asks()).toHaveLength(6);
+    for (let t = 10_000; t < 20_000; t += 250) r.prints.tick(t);
+    await flush();
+    expect(asks()).toHaveLength(6);
+  });
+
   it('the desk you sit at keeps its prints whatever the planner says', async () => {
     const r = rig([ref(1)]);
     r.ready.add('a');

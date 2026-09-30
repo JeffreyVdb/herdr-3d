@@ -53,7 +53,11 @@ interface State {
   picks: PrintPick[];
   dirtyAt: number | null;
   refreshing: boolean;
-  /** Prints whose thumbnail is being made, is made, or cannot be (blank for good until the feed resets). */
+  /**
+   * Prints on the desk whose thumbnail is being made, is made, or cannot be (blank while the print stays: a failure is
+   * not asked again at every read of the list). A print that leaves the desk is forgotten with its texture, so the
+   * same image coming back later is a new print that gets its picture.
+   */
   tried: Set<string>;
 }
 
@@ -215,6 +219,8 @@ export class Prints {
     if (!meshes || !feed) return;
     st.picks = pickPrints(refs);
     meshes.setDesk(st.desk, st.id, st.picks);
+    const on = new Set(st.picks.map((p) => p.key));
+    for (const key of st.tried) if (!on.has(key)) st.tried.delete(key);
     for (const p of st.picks) {
       if (p.blank || !p.ref.hash || st.tried.has(p.key) || meshes.loaded(st.desk).has(p.key)) continue;
       if (!feed.canFetch(p.ref)) continue;
