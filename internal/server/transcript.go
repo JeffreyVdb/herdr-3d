@@ -531,6 +531,11 @@ func closedReason(err error) string {
 func (h *Hub) finishTranscriptCmd(hctx context.Context, w *txWatch, cmd proto.Command, data *proto.TranscriptWatchResult, err error) {
 	if data != nil {
 		w.noteImages(data.Items)
+		// An empty view in the game is traced from here: which worker, and why (no transcript yet, or nothing in it).
+		if data.Pending || len(data.Items) == 0 {
+			h.log.Debug("transcript watch acked empty", "client", w.c.name, "worker", w.id, "req_id", cmd.ReqID,
+				"pending", data.Pending, "items", len(data.Items), "limit", w.limit)
+		}
 	}
 	if derr := h.doWait(hctx, func() {
 		h.audit(hctx, w.c, cmd, err)

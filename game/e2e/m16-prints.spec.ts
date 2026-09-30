@@ -160,3 +160,56 @@ test('walking away takes every print, texture and watch with it; 20 sit / stand 
   expect((await page.evaluate(() => window.__h3d.simTranscripts()))?.watches).toBe(0);
   clean();
 });
+
+test('sitting again at a desk whose prints kept its watch shows the whole conversation again; the prints stay as they were (#62)', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  const { id, desk } = await open(page);
+  await lookAtPrints(page, desk);
+  await expect.poll(async () => (await deskOf(page, id))?.textures).toBe(6);
+  const watchesOf = async () => (await page.evaluate(() => window.__h3d.watchLog())).filter((c) => c.t === 'transcript.watch' && (c.args as { id: string }).id === id);
+  const items = () => page.evaluate(() => window.__h3d.transcript()?.items ?? 0);
+  const sit = async () => {
+    expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);
+    await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
+  };
+
+  await sit();
+  await expect.poll(items).toBeGreaterThan(0);
+  const history = await items();
+  expect((await watchesOf()).map((c) => (c.args as { limit: number }).limit)).toEqual([1, 200]);
+  await expect.poll(async () => (await watchesOf()).at(-1)?.result?.ok).toBe(true);
+  // Up and down again at once (sitting while seated stands you up first): the desk still has its prints when you stand,
+  // so they keep the watch of 200 (nothing is unwatched, or made again for fewer items).
+  await sit();
+  expect((await page.evaluate(() => window.__h3d.watchLog())).some((c) => c.t === 'transcript.unwatch' && (c.args as { id: string }).id === id)).toBe(false);
+  expect((await printsOf(page))?.watches).toContain(id);
+
+  // Sitting again: a new watch, whose ack is the whole history again (not only what is pushed from now on).
+  await expect.poll(async () => (await watchesOf()).length).toBe(3);
+  expect((await watchesOf()).at(-1)?.args).toEqual({ id, limit: 200 });
+  await expect.poll(async () => (await watchesOf()).at(-1)?.result?.ok).toBe(true);
+  await expect.poll(items).toBe(history);
+  await page.keyboard.press('Control+Escape');
+  const tx = page.locator('.seat-transcript');
+  await expect(tx).toBeVisible();
+  await expect(tx.locator('.tx-list:not(.tx-nested) > .tx-item')).toHaveCount(history);
+  await expect(tx.locator('.tx-list:not(.tx-nested) > .tx-item:not(.tx-sys)').first()).toBeVisible();
+  await expect(tx.locator('.tx-empty')).toBeHidden();
+
+  // The prints did not flicker: the same seven, the same six pictures, none dropped or made twice (another desk near
+  // you may have got its own prints meanwhile: six pictures a desk).
+  const d = (await deskOf(page, id)) as Prints['desks'][number];
+  expect(d.prints).toHaveLength(7);
+  expect(d.textures).toBe(6);
+  await expect.poll(async () => {
+    const st = (await printsOf(page)) as Prints;
+    return { ...st.counts, perDesk: st.counts.created / st.desks.length };
+  }).toMatchObject({ disposed: 0, perDesk: 6 });
+  const st = (await printsOf(page)) as Prints;
+  expect(st.counts.alive).toBe(st.counts.created);
+  await page.keyboard.press('Control+Escape');
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
+  clean();
+});

@@ -1640,6 +1640,10 @@ count as sent.
   `transcript.watch` is `capacity`. These are not terminal watches: they do not count against `--max-watches`.
   Watching a worker again replaces its watch (a fresh ack); `transcript.unwatch` stops it (a no-op for a worker not
   watched), and closing the connection stops them all. After a reconnect, watch again: pushes are never replayed.
+- A watch's pushes come only after its ack: the old watch sends nothing once the new `transcript.watch` is taken, and
+  the new one pushes only what changed after its ack's page. So a `transcript.items` for a worker that arrives while
+  its (re-)watch's ack is still to come is from the watch it replaced (or one unwatched) and older than the ack's
+  items: drop it, the ack has it.
 - **Never block, never leak**, as terminal frames: a push is only queued while the connection's send queue is at most
   half full. When it is fuller, or the watch fell 4096 changes behind, the bridge drops what is pending and ends the
   watch with `transcript.closed{reason: "resync"}`: watch again. Nothing of a watch outlives an unwatch, a closed

@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { TranscriptItem } from '../net/protocol';
 import { loadRenderer, TranscriptMode } from './transcriptMode';
-import { TranscriptWatches } from './transcriptWatches';
+import { PRINT_WATCH_LIMIT } from './prints';
+import { TranscriptWatches, WATCH_LIMIT } from './transcriptWatches';
 
 /**
  * M16 end to end on the game's side: the real watch, the real seated-mode controller and the real render module
@@ -139,6 +140,96 @@ describe('transcript mode with the real render module', () => {
     const files = (patch.tool?.diffs ?? [patch.tool?.diff]).map((d) => d?.path);
     expect([...row.querySelectorAll('.tx-diff-path')].map((e) => e.textContent)).toEqual(files);
     expect([...row.querySelectorAll('.tx-dl .tx-dn')].every((n) => n.textContent === '')).toBe(true);
+    r.mode.stand();
+  });
+
+  it('sit, stand while a desk print keeps the watch, sit again: a new watch, its ack shows the history, live pushes after it', async () => {
+    const r = rig();
+    layer = r.layer;
+    // As the laptop sits you down: the view starts empty, the watches are told so, then synced.
+    const sit = (id: string) => {
+      r.mode.sit(id, 'Ada');
+      r.watches.refresh(id);
+      r.watches.sync(new Map([[id, WATCH_LIMIT]]));
+    };
+    const ack = (items: TranscriptItem[]): CommandResult => ({ ok: true, data: { harness: 'claude', session: 's1', version: '2.1.0', cursor: 'c:1', has_more: false, pending: false, items } });
+    const watches = () => r.sent.filter((s) => s.t === 'transcript.watch');
+    sit('w1');
+    watches()[0]?.resolve(ack(CLAUDE));
+    await Promise.resolve();
+    expect(r.mode.itemCount).toBe(CLAUDE.length);
+
+    // Stood up: the desk's print still wants a few items, so the watch of 200 stays.
+    r.mode.stand();
+    r.watches.sync(new Map([['w1', PRINT_WATCH_LIMIT]]));
+    expect(r.sent.some((s) => s.t === 'transcript.unwatch')).toBe(false);
+    expect(r.mode.itemCount).toBe(0);
+
+    sit('w1');
+    expect(watches().map((s) => s.args)).toEqual([
+      { id: 'w1', limit: 200 },
+      { id: 'w1', limit: 200 },
+    ]);
+    r.mode.toggle();
+    const box = r.mode.box as HTMLElement;
+    await settle(() => !!box.querySelector('.tx'));
+    watches()[1]?.resolve(ack(CLAUDE));
+    await Promise.resolve();
+    expect(r.mode.itemCount).toBe(CLAUDE.length);
+    expect(box.querySelectorAll('.tx-list:not(.tx-nested) > .tx-item').length).toBe(CLAUDE.length);
+    expect((box.querySelector('.tx-empty') as HTMLElement).hidden).toBe(true);
+
+    // Live: appended after the history.
+    const next: TranscriptItem = { id: 'live-1', seq: 10_000, ts: 0, kind: 'assistant', parts: [{ text: 'after' }] };
+    r.watches.items({ t: 'transcript.items', id: 'w1', items: [next], updates: [] });
+    expect(r.mode.itemCount).toBe(CLAUDE.length + 1);
+    expect(box.querySelectorAll('.tx-list:not(.tx-nested) > .tx-item').length).toBe(CLAUDE.length + 1);
+    r.mode.stand();
+  });
+
+  it("sit again while a print keeps the watch: the old watch's update landing before the new ack does not undo the ack's result", async () => {
+    const r = rig();
+    layer = r.layer;
+    const sit = (id: string) => {
+      r.mode.sit(id, 'Ada');
+      r.watches.refresh(id);
+      r.watches.sync(new Map([[id, WATCH_LIMIT]]));
+    };
+    const ack = (items: TranscriptItem[]): CommandResult => ({ ok: true, data: { harness: 'claude', session: 's1', version: '2.1.0', cursor: 'c:1', has_more: false, pending: false, items } });
+    const watches = () => r.sent.filter((s) => s.t === 'transcript.watch');
+    const bash = CLAUDE.find((it) => it.tool?.name === 'Bash') as TranscriptItem;
+    const { output_text: _, ...tool } = bash.tool as NonNullable<TranscriptItem['tool']>;
+    const running: TranscriptItem = { ...bash, tool: { ...tool, status: 'running' } };
+    const done: TranscriptItem = { ...bash, tool: { ...tool, status: 'ok', output_text: 'the-result-of-ls' } };
+    const withTool = (t: TranscriptItem) => CLAUDE.map((it) => (it.id === t.id ? t : it));
+
+    sit('w1');
+    watches()[0]?.resolve(ack(withTool(running)));
+    await Promise.resolve();
+    r.mode.stand();
+    r.watches.sync(new Map([['w1', PRINT_WATCH_LIMIT]]));
+    sit('w1');
+    expect(watches()).toHaveLength(2);
+    r.mode.toggle();
+    const box = r.mode.box as HTMLElement;
+    await settle(() => !!box.querySelector('.tx'));
+
+    // The replaced watch's push (the call still running) lands while the new ack is on its way; that ack has the result.
+    r.watches.items({ t: 'transcript.items', id: 'w1', items: [], updates: [running] });
+    watches()[1]?.resolve(ack(withTool(done)));
+    await Promise.resolve();
+    expect(r.mode.itemCount).toBe(CLAUDE.length);
+    const row = () => box.querySelector<HTMLElement>(`[data-id="${CSS.escape(bash.id)}"]`) as HTMLElement;
+    expect(row().getAttribute('data-status')).toBe('ok');
+    (row().querySelector('.tx-tool-row') as HTMLButtonElement).click();
+    await settle(() => row().textContent?.includes('the-result-of-ls') ?? false);
+
+    // The new watch's live pushes still apply.
+    const failed: TranscriptItem = { ...done, tool: { ...tool, status: 'error', output_text: 'boom' } };
+    const next: TranscriptItem = { id: 'live-1', seq: 10_000, ts: 0, kind: 'assistant', parts: [{ text: 'after' }] };
+    r.watches.items({ t: 'transcript.items', id: 'w1', items: [next], updates: [failed] });
+    expect(r.mode.itemCount).toBe(CLAUDE.length + 1);
+    expect(row().getAttribute('data-status')).toBe('error');
     r.mode.stand();
   });
 
