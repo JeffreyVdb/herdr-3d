@@ -75,6 +75,10 @@ export interface SeatView {
   asking?(ask: { who: string; key: 'T' | 'Ctrl+Esc' } | null): void;
   /** #59: one of the bar's own controls has the keyboard (the terminal's preset and zoom). */
   owns?(t: EventTarget | null): boolean;
+  /** #59: the keyboard to the terminal's preset and zoom (Ctrl+,); false when there are none. */
+  focusLook?(): boolean;
+  /** #59: `t` is one of those controls. */
+  inLook?(t: EventTarget | null): boolean;
 }
 
 /** Keys a focused control of the seat bar keeps (moving between its controls, pressing one). */
@@ -675,6 +679,19 @@ export class Laptops {
     if (k.action === 'zoom-in' || k.action === 'zoom-out' || k.action === 'zoom-reset') {
       e.preventDefault();
       this.zoomBy(k.action);
+      return true;
+    }
+    // #59: Ctrl+, from any view: the terminal's preset and zoom on the seat bar (works without a transcript, leaves the
+    // pane its Tab); Esc there hands the keyboard back to the view that is up instead of standing you up.
+    if (k.action === 'look') {
+      e.preventDefault();
+      this.host.seat.focusLook?.();
+      return true;
+    }
+    if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && this.host.seat.inLook?.(e.target)) {
+      e.preventDefault();
+      if (this.transcript.shown) this.transcript.focus();
+      else this.host.seat.focus();
       return true;
     }
     // #59: on the seat bar's own controls (the terminal's preset and zoom), moving and pressing are theirs.

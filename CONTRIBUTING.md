@@ -563,7 +563,7 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   prompt box while the worker waits, and its timeline entry), styled in `transcript.css`. #59: `paint.ts` draws each
   glyph in its own cell (no ligatures, no fallback advance moving a column) in the preset's font and colours, box
   drawing / block elements / braille as shapes (`glyphs.ts`), and seated at the zoom (`viewport`: the letterbox below
-  100%, above it the pane's bottom-left, moved to keep the cursor in view); `keys.ts` `zoomKey` is Ctrl + = / + / − / 0. Which laptops are live is `src/world/screens.ts` (pure, vitest); the textured planes and
+  100%, above it the pane's bottom-left, moved to keep the cursor in view); `keys.ts` `zoomKey` is Ctrl + = / + / − / 0 and `LOOK_KEY` Ctrl+, (the keyboard to the terminal's preset and zoom). Which laptops are live is `src/world/screens.ts` (pure, vitest); the textured planes and
   the frozen-screen atlas (one instanced batch) are `src/render/screens.ts`; the seat bar is `src/ui/seat.ts`. Recorded
   screens for the simulator are `fixtures/screens/{agent,shell}.jsonl` (real `herdr terminal session observe` output of
   synthetic screens, made by `node tools/record-screens.ts` in a throwaway `h3d-m5screen-*` session); `sim=1` replays
@@ -707,7 +707,7 @@ Agent call pages the bridge's own output for its subagent fixture, and `sim.tran
 hooks) pushes items or updates to a watch (`{id, items, updates}`) or closes it (`{id, close: "session_changed"}`);
 `simfail=no_m16` plays a bridge before M16. #59: the view's top strip has the transcript's preset (three swatches:
 Terminal, Quiet, Paper), Hide tools and A− / 100% / A+; the seat bar has the terminal's own preset and zoom. Ctrl + = /
-− / 0 and Ctrl+wheel zoom the view that is up, while seated only. `e2e/m59-themes.spec.ts` drives them. The game's tests read what the bridge makes of its own fixtures from
+− / 0 and Ctrl+wheel zoom the view that is up, while seated only; Ctrl+, puts the keyboard on the terminal's controls (Esc goes back). `e2e/m59-themes.spec.ts` drives them. The game's tests read what the bridge makes of its own fixtures from
 `game/fixtures/transcript/` (`H3D_UPDATE_FIXTURES=1 go test ./internal/transcript` writes them, and the Go test fails
 when they are stale). E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1&floor=herdr-3d`.
 

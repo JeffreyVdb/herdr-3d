@@ -42,6 +42,22 @@ describe('zoom keys (#59)', () => {
   });
 });
 
+describe('the look key (#59)', () => {
+  it('Ctrl+, goes to the terminal’s preset and zoom, on a Mac too; nothing a pane got before, and Cmd+, stays the browser’s', () => {
+    for (const mac of [false, true]) expect(seatedKey(kd(',', { ctrlKey: true, code: 'Comma' }), mac)).toEqual({ items: [], action: 'look', prevent: true });
+    // AZERTY's comma sits on the M key: the character decides, not the key's place.
+    expect(seatedKey(kd(',', { ctrlKey: true, code: 'KeyM' }), false).action).toBe('look');
+    expect(seatedKey(kd(',', { metaKey: true, code: 'Comma' }), true)).toEqual({ items: [], prevent: false });
+    expect(seatedKey(kd(',', { ctrlKey: true, altKey: true, code: 'Comma' }), false).action).toBeUndefined();
+    expect(seatedKey(kd('<', { ctrlKey: true, shiftKey: true, code: 'Comma' }), false).action).toBeUndefined();
+    expect(seatedKey(kd(',', { code: 'Comma' }), false).items).toEqual([{ text: ',' }]);
+    // Tab and Shift+Tab stay the pane's.
+    expect(seatedKey(kd('Tab'), false).items).toEqual([{ key: 'tab' }]);
+    expect(seatedKey(kd('Tab', { shiftKey: true }), false).items).toEqual([{ key: 'shift+tab' }]);
+    expect(KEY_NAMES).not.toContain('ctrl+,');
+  });
+});
+
 describe('seatedKey', () => {
   it('sends printable text as text, special keys by their herdr names', () => {
     expect(seatedKey(kd('a'), true)).toEqual({ items: [{ text: 'a' }], prevent: true });

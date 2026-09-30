@@ -8,7 +8,9 @@ import type { KeyItem } from '../net/protocol';
  * paste (Cmd+V on a Mac, Ctrl+V elsewhere: the browser's paste event carries
  * the text), or swaps the terminal and the transcript (Ctrl+Esc, M16), or
  * zooms the text (#59: Ctrl + = / + / − / 0, which no pane gets: see
- * `zoomKey`). Nothing a seated key does reaches the game. Pure logic.
+ * `zoomKey`), or goes to the terminal's preset and zoom controls (#59:
+ * Ctrl+, as for an app's settings, see `LOOK_KEY`). Nothing a seated key does
+ * reaches the game. Pure logic.
  */
 
 export interface KeyLike {
@@ -26,9 +28,10 @@ export interface SeatKey {
   items: KeyItem[];
   /**
    * `stand`: Esc gets you up; `paste`: the browser's paste event follows with the text; `toggle-transcript` (M16):
-   * Ctrl+Esc swaps the terminal and the transcript; `zoom-in` / `zoom-out` / `zoom-reset` (#59): the text size.
+   * Ctrl+Esc swaps the terminal and the transcript; `zoom-in` / `zoom-out` / `zoom-reset` (#59): the text size;
+   * `look` (#59): the keyboard to the seat bar's terminal preset and zoom.
    */
-  action?: 'stand' | 'paste' | 'toggle-transcript' | ZoomAction;
+  action?: 'stand' | 'paste' | 'toggle-transcript' | 'look' | ZoomAction;
   /** The browser must not act on it (Tab moving focus, Backspace, F5, Ctrl+W…). */
   prevent: boolean;
 }
@@ -97,6 +100,14 @@ export function zoomKey(e: KeyLike): ZoomAction | null {
   return null;
 }
 
+/**
+ * #59: Ctrl+, (settings, in many apps) takes the keyboard to the terminal's preset and zoom on the seat bar, in every
+ * view, so they are reachable without the transcript (a bridge may not have one) and without taking Tab from the
+ * pane. Like the zoom keys it sent a pane nothing before (the Ctrl branch below sends ctrl+letter only); on a Mac
+ * Cmd+, stays the browser's settings. As `KeyboardEvent.key`: the comma wherever the layout puts it.
+ */
+export const LOOK_KEY = { key: ',', label: ['Ctrl', ','], aria: 'Control+,' } as const;
+
 /** What a keydown does while you sit at a laptop (`mac`: Cmd is the command key, Ctrl goes to the pane). */
 export function seatedKey(e: KeyLike, mac: boolean): SeatKey {
   // IME composition and dead keys: the composed text arrives as input (see `composedText`).
@@ -110,6 +121,7 @@ export function seatedKey(e: KeyLike, mac: boolean): SeatKey {
   }
   const zoom = zoomKey(e);
   if (zoom) return { items: [], action: zoom, prevent: true };
+  if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key === LOOK_KEY.key) return { items: [], action: 'look', prevent: true };
   const cmd = mac ? e.metaKey : e.ctrlKey;
   if (cmd && !e.altKey && e.code === 'KeyV') return { items: [], action: 'paste', prevent: false };
   // Cmd+← / → are the start and end of the line, as in a Mac terminal.

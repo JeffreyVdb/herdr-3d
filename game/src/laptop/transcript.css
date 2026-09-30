@@ -48,12 +48,14 @@
   outline-offset: 1px;
 }
 
-/* Top strip */
+/* Top strip. #59: it wraps rather than clip: every control keeps its size, and the preset and zoom (`.tx-look`, pushed
+   to the end) go to a second line when the first has no room for them. */
 .tx-bar {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 4px 10px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--tx-line);
   background: var(--tx-bg-2);
@@ -71,6 +73,8 @@
   flex: 1;
 }
 .tx-sys-toggle {
+  flex: none;
+  white-space: nowrap;
   padding: 2px 9px;
   border: 1px solid var(--tx-line);
   border-radius: 999px;
@@ -90,6 +94,7 @@
 
 /* #59: Hide tools, the working chip, the preset's swatches, the zoom. The strip's controls: fixed sizes (no zoom). */
 .tx-check {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -157,6 +162,15 @@
 }
 .tx[data-tools='hidden'] .tx-toolrow:not(.tx-reveal) {
   display: none;
+}
+.tx-look {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px 10px;
+  margin-left: auto;
 }
 .tx-themes,
 .tx-zoom {
@@ -1420,11 +1434,12 @@
 }
 /*
  * The top, the tabs and the foot never shrink, so on a narrow screen (a phone's projected monitor is under 200px
- * tall) they must stay one line each: the tabs scroll sideways instead of wrapping, the top drops the terminal link
+ * tall) they keep to as few lines as they can (#59: the top strip takes a second rather than clip its controls): the
+ * tabs scroll sideways instead of wrapping, the top drops the terminal link
  * (Ctrl+Esc and the toggle stay), the foot keeps its buttons and cuts its hint. Whatever height is left is the body's,
  * which scrolls; the card may take most of the screen then, as the prompt box it replaces is off anyway.
  */
-/* #59: a narrower screen keeps the strip on one line: the picked preset's name and the title go first. */
+/* #59: a narrower screen: the picked preset's name and the title go first, then the strip wraps (see .tx-bar). */
 @container tx (max-width: 820px) {
   .tx-theme[aria-checked='true'] .tx-theme-name {
     display: none;
@@ -1453,12 +1468,7 @@
   }
 }
 @container tx (max-width: 520px) {
-  /* The top strip too: one line (the tabs name the view; the count goes). */
-  .tx-bar {
-    flex-wrap: nowrap;
-    white-space: nowrap;
-    overflow: hidden;
-  }
+  /* The top strip: the tabs name the view, the count goes (its controls wrap, see .tx-bar). */
   .tx-title,
   .tx-count {
     display: none;

@@ -31,9 +31,9 @@ function fontRequests(page: Page): string[] {
   return urls;
 }
 
-async function sitAt(page: Page, name = 'Tofu', init: Record<string, string> = {}): Promise<string> {
+async function sitAt(page: Page, name = 'Tofu', init: Record<string, string> = {}, sim = SIM): Promise<string> {
   if (Object.keys(init).length) await page.addInitScript((kv) => Object.entries(kv).forEach(([k, v]) => localStorage.setItem(k, v)), init);
-  await openGame(page, 'demo-m5', '&prints=0', SIM);
+  await openGame(page, 'demo-m5', '&prints=0', sim);
   await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
   await frames(page, 3);
   const id = await page.evaluate((n) => window.__h3d.world().flatMap((f) => f.workers).find((w) => w.name === n)?.id ?? '', name);
@@ -411,3 +411,106 @@ test('both pickers and Hide tools are reachable by keyboard, and the transcript 
   await page.keyboard.press('Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
 });
+
+test('Ctrl+, reaches the terminal’s preset and zoom without a transcript (a bridge before M16), and Tab stays the pane’s', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await sitAt(page, 'Tofu', {}, `${SIM}&simfail=no_m16`);
+  const focused = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.className ?? '');
+  // No conversation to open: Ctrl+Esc says why and stays on the terminal.
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().state)).toBe('error');
+  expect(await page.evaluate(() => window.__h3d.seat().mode)).toBe('terminal');
+  // Tab and Shift+Tab are the pane's: the keyboard stays on the pane's hidden input.
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Shift+Tab');
+  expect(await focused()).toContain('seat-input');
+  // The seat bar says the key; Ctrl+, lands on the picked preset.
+  const label = page.locator('.seat-look-label');
+  await expect(label.locator('kbd')).toHaveText(['Ctrl', ',']);
+  expect(await page.locator('.seat [role="radiogroup"]').getAttribute('aria-keyshortcuts')).toBe('Control+,');
+  await page.keyboard.press('Control+,');
+  expect(await focused()).toContain('seat-theme');
+  expect(await page.evaluate(() => document.activeElement?.closest('[role="radiogroup"]')?.getAttribute('aria-label'))).toBe('Terminal theme');
+  await page.keyboard.press('ArrowRight');
+  await page.evaluate(() => window.__h3d.themeLoaded());
+  expect(await theme(page)).toMatchObject({ transcript: 'quiet', terminal: 'paper', ready: 'paper' });
+  await page.keyboard.press('Tab');
+  expect(await focused()).toContain('seat-zoom-btn');
+  await page.keyboard.press('Enter');
+  expect((await theme(page)).terminalZoom).toBe(90);
+  // Esc hands the keyboard back to the pane (you stay seated); the next Esc stands you up.
+  const back = page.locator('.seat-zoom-btn').first();
+  await back.focus();
+  await page.keyboard.press('Escape');
+  expect(await focused()).toContain('seat-input');
+  expect(await page.evaluate(() => window.__h3d.seated())).not.toBeNull();
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
+  clean();
+});
+
+/** Every shown control of `sel` (buttons, inputs), with its box, and the boxes it must lie in. */
+async function controlsInside(page: Page, sel: string, within: string): Promise<{ outside: string[]; count: number }> {
+  return page.evaluate(
+    ([s, w]) => {
+      const box = document.querySelector<HTMLElement>(w)!.getBoundingClientRect();
+      const vw = document.documentElement.clientWidth;
+      const vh = document.documentElement.clientHeight;
+      const els = [...document.querySelectorAll<HTMLElement>(`${s} button, ${s} input`)].filter((e) => e.offsetParent !== null && getComputedStyle(e).visibility !== 'hidden');
+      const outside = els
+        .filter((e) => {
+          const r = e.getBoundingClientRect();
+          if (r.width < 8) return false; // the Hide tools label's box is its checkbox's
+          return r.left < box.left - 0.5 || r.right > box.right + 0.5 || r.top < box.top - 0.5 || r.bottom > box.bottom + 0.5 || r.left < 0 || r.right > vw || r.top < 0 || r.bottom > vh;
+        })
+        .map((e) => `${e.className} ${e.getAttribute('aria-label') ?? e.textContent} ${JSON.stringify(e.getBoundingClientRect())}`);
+      return { outside, count: els.length };
+    },
+    [sel, within] as const,
+  );
+}
+
+for (const [w, h] of [
+  [640, 667],
+  [390, 667],
+] as const) {
+  test(`at ${w}×${h} the transcript strip and the seat bar keep every control in view, the level too`, async ({ page }) => {
+    test.setTimeout(150_000);
+    await page.setViewportSize({ width: w, height: h });
+    const id = await sitAt(page, 'Tofu', { 'h3d.theme.transcript': 'paper', 'h3d.zoom.transcript': '70', 'h3d.transcript.hideTools': '1' });
+    const tx = await openTranscript(page, id);
+    await page.evaluate(() => window.__h3d.themeLoaded());
+    // The worst case the review found: Paper, 70%, Hide tools on (its chip up), a question pinned.
+    expect(await theme(page)).toMatchObject({ transcript: 'paper', transcriptZoom: 70, hideTools: true });
+    await frames(page, 5);
+    const strip = await controlsInside(page, '.seat-transcript .tx-bar', '.seat-transcript .tx-bar');
+    expect(strip.outside, 'strip controls outside the strip or the window').toEqual([]);
+    expect(strip.count).toBeGreaterThanOrEqual(8);
+    // The strip is inside the overlay, and the overlay inside the window.
+    const inView = await controlsInside(page, '.seat-transcript .tx-bar', '.seat-transcript');
+    expect(inView.outside).toEqual([]);
+    const level = tx.locator('.tx-zoom-level');
+    await expect(level).toHaveAttribute('aria-label', /^Text size 70%/);
+    await expect(level).toBeVisible();
+    await expect(level).toHaveText('70%');
+    for (const name of ['Terminal', 'Quiet', 'Paper', 'Smaller text', 'Larger text']) await expect(tx.getByRole(name.includes('text') ? 'button' : 'radio', { name, exact: true })).toBeVisible();
+    await tx.getByRole('button', { name: 'Larger text' }).click();
+    await expect(level).toHaveText('80%');
+    const seat = await controlsInside(page, '.seat', '.seat');
+    expect(seat.outside, 'seat bar controls outside the bar or the window').toEqual([]);
+    await shot(page, `m59-narrow-${w}-transcript`);
+    // The terminal's side: the seat bar's controls, in terminal mode, at the same width.
+    await page.keyboard.press('Control+Escape');
+    await expect(tx).toBeHidden();
+    await frames(page, 5);
+    const term = await controlsInside(page, '.seat', '.seat');
+    expect(term.outside, 'seat bar controls outside the bar or the window (terminal mode)').toEqual([]);
+    expect(term.count).toBeGreaterThanOrEqual(8);
+    await expect(page.locator('.seat-zoom-level')).toHaveText('100%');
+    await expect(page.locator('.seat-zoom-level')).toBeVisible();
+    await page.locator('.seat [aria-label="Larger terminal text"]').click();
+    await expect(page.locator('.seat-zoom-level')).toHaveText('110%');
+    await shot(page, `m59-narrow-${w}-terminal`);
+  });
+}

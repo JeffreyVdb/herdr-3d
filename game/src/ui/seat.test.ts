@@ -49,9 +49,34 @@ describe('seat bar: the terminal’s preset and zoom (#59)', () => {
     expect(bar.owns(document.body)).toBe(false);
   });
 
+  it('Ctrl+, lands on the picked preset (the label says so); Esc from the controls hands the keyboard back', () => {
+    const hud = document.createElement('div');
+    document.body.append(hud);
+    const prefs = new ViewPrefs(null);
+    prefs.setTheme('terminal', 'paper');
+    const bar = new SeatBar(hud, noop, prefs);
+    bar.show('Tofu', false);
+    bar.focus();
+    const label = hud.querySelector('.seat-look-label') as HTMLElement;
+    expect([...label.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual(['Ctrl', ',']);
+    const group = hud.querySelector('[role="radiogroup"]') as HTMLElement;
+    expect(group.getAttribute('aria-keyshortcuts')).toBe('Control+,');
+    expect(bar.focusLook()).toBe(true);
+    const paper = hud.querySelector('[data-theme-id="paper"]') as HTMLButtonElement;
+    expect(document.activeElement).toBe(paper);
+    expect(bar.inLook(paper)).toBe(true);
+    expect(bar.inLook(hud.querySelector('.seat-stand'))).toBe(false);
+    expect(bar.inLook(bar.input)).toBe(false);
+    // Back to the pane's keyboard.
+    bar.focus();
+    expect(document.activeElement).toBe(bar.input);
+    hud.remove();
+  });
+
   it('without prefs (an older host), no controls', () => {
     const hud = document.createElement('div');
-    new SeatBar(hud, noop);
+    const bar = new SeatBar(hud, noop);
     expect(hud.querySelector('.seat-look')).toBeNull();
+    expect(bar.focusLook()).toBe(false);
   });
 });

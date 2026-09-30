@@ -1,5 +1,6 @@
 import './seat.css';
 import type { SeatView } from '../laptop';
+import { LOOK_KEY } from '../laptop/keys';
 import type { SeatMode } from '../laptop/transcriptMode';
 import type { ViewPrefs } from './themePrefs';
 import { stepZoom, THEMES, ZOOM, type ThemeId } from './themes';
@@ -28,7 +29,7 @@ function key(k: string[], label: string): HTMLSpanElement {
  * #59: the terminal's own preset and zoom (the transcript has its own, in its
  * strip): three swatches and A− / level / A+, always in view. In terminal mode
  * every key is the pane's, so the mouse and Ctrl + = / − / 0 reach them there;
- * by keyboard they are Tab stops from the transcript view.
+ * by keyboard Ctrl+, reaches them from any view (Esc goes back).
  */
 export class SeatBar implements SeatView {
   readonly el: HTMLDivElement;
@@ -111,6 +112,7 @@ export class SeatBar implements SeatView {
     const group = el('div', 'seat-themes');
     group.setAttribute('role', 'radiogroup');
     group.setAttribute('aria-label', 'Terminal theme');
+    group.setAttribute('aria-keyshortcuts', LOOK_KEY.aria);
     for (const t of THEMES) {
       const b = el('button', 'seat-theme');
       b.type = 'button';
@@ -160,7 +162,11 @@ export class SeatBar implements SeatView {
     const level = btn('seat-zoom-btn seat-zoom-level', '', null, 'Terminal text back to 100% (Ctrl 0)', () => prefs.setZoom('terminal', ZOOM.reset));
     const inc = btn('seat-zoom-btn', 'A+', 'Larger terminal text', 'Larger terminal text (Ctrl +)', () => prefs.setZoom('terminal', stepZoom(prefs.zoom('terminal'), 1)));
     zoom.append(out, level, inc);
-    this.look.append(el('span', 'seat-look-label', 'Terminal'), group, zoom);
+    // Its label is its key, as the keys beside it are: Ctrl+, from any view (the pane keeps Tab).
+    const label = key([...LOOK_KEY.label], 'Terminal');
+    label.classList.add('seat-look-label');
+    label.title = `The terminal’s theme and text size (${LOOK_KEY.label.join(' ')}; Esc goes back)`;
+    this.look.append(label, group, zoom);
     return { out, level, in: inc };
   }
 
@@ -183,6 +189,19 @@ export class SeatBar implements SeatView {
     z.level.setAttribute('aria-label', `Terminal text size ${level}%${level === ZOOM.reset ? '' : ', back to 100%'}`);
     z.out.disabled = level <= ZOOM.min;
     z.in.disabled = level >= ZOOM.max;
+  }
+
+  /** #59: the keyboard to the terminal's picked preset (Ctrl+,); false when the bar has no controls. */
+  focusLook(): boolean {
+    const b = this.swatches.find((s) => s.getAttribute('aria-checked') === 'true');
+    if (!b || this.el.hidden) return false;
+    b.focus();
+    return true;
+  }
+
+  /** #59: `t` is one of the terminal's preset and zoom controls (Esc there hands the keyboard back, see the controller). */
+  inLook(t: EventTarget | null): boolean {
+    return t instanceof Element && this.look.contains(t);
   }
 
   /** #59: a control of the bar has the keyboard (its Tab, Enter, Space and arrows are its own, not the pane's). */

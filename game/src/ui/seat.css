@@ -331,8 +331,35 @@
   outline: 2px solid var(--sun);
   outline-offset: 1px;
 }
+/* #59: a phone's width: the switch and Stand up get a row of their own under whose laptop it is (side by side with it
+   they ran off the screen), the switch without its keys (the keys row says them), and the terminal's controls keep
+   their key (Ctrl+,) without the word. */
 @media (max-width: 560px) {
-  .seat-look-label {
+  .seat {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'line line'
+      'mode stand'
+      'keys keys';
+  }
+  .seat[data-asking] {
+    grid-template-areas:
+      'ask ask'
+      'line line'
+      'mode stand'
+      'keys keys';
+  }
+  .seat-mode {
+    justify-self: start;
+    min-width: 0;
+  }
+  .seat-mode > kbd {
     display: none;
+  }
+  .seat-mode-opts {
+    margin-left: 0;
+  }
+  .seat-look-label {
+    font-size: 0;
   }
 }
