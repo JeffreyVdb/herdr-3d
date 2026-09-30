@@ -1,0 +1,354 @@
+/*
+ * The prompt composer (#51): a text area that also holds pictures. It borrows the desk dialogs' look (the navy well,
+ * the sun-yellow caret and focus ring) and keeps their signage: each pasted image sits in the text as a chip with a
+ * numbered label-maker tag, and the number is the one the agent will read ("Image #2"). It works inside any dark
+ * panel; the host sets its size (the editor fills its parent and scrolls inside).
+ */
+
+.cmp {
+  --cmp-well: var(--well, #121a31);
+  --cmp-ok: #8ee6b8;
+  --cmp-err: #ffb4ae;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  color: var(--text-on-ink, #eef2fb);
+  font: inherit;
+}
+
+.cmp-editor {
+  position: relative;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-height: var(--cmp-min-height, 4.5em);
+  max-height: var(--cmp-max-height, none);
+  padding: 8px 10px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: normal;
+  line-height: 1.45;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 9px;
+  background: var(--cmp-well);
+  caret-color: var(--sun, #ffc233);
+  cursor: text;
+  outline: none;
+  scrollbar-color: rgb(255 255 255 / 30%) transparent;
+  scrollbar-width: thin;
+}
+.cmp-editor:hover {
+  border-color: rgb(255 255 255 / 30%);
+}
+.cmp-editor:focus-visible {
+  outline: 3px solid var(--sun, #ffc233);
+  outline-offset: 1px;
+}
+.cmp-editor[contenteditable='false'] {
+  opacity: 0.6;
+  cursor: progress;
+}
+.cmp-editor[data-empty='true']::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  color: #8f9abb;
+  pointer-events: none;
+  white-space: pre-wrap;
+}
+.cmp--dropping .cmp-editor {
+  border-color: var(--sun, #ffc233);
+  background: color-mix(in srgb, var(--cmp-well) 88%, var(--sun, #ffc233));
+}
+
+.cmp-notice {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--cmp-err);
+}
+.cmp-notice[hidden] {
+  display: none;
+}
+.cmp-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---- the chip ----------------------------------------------------------------------------- */
+
+.cmp-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  vertical-align: middle;
+  box-sizing: border-box;
+  max-width: min(100%, 280px);
+  margin: 2px 3px;
+  padding: 3px 4px 5px 3px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 10px;
+  background: var(--ink-2, #2a355a);
+  overflow: hidden;
+  white-space: normal;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+.cmp-thumb-wrap {
+  position: relative;
+  flex: none;
+  display: block;
+}
+.cmp-thumb {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: #0b1122;
+  overflow: hidden;
+  cursor: zoom-in;
+}
+.cmp-thumb img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+/* The tag: the number the marker will carry. */
+.cmp-num {
+  position: absolute;
+  left: -3px;
+  top: -4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--sun, #ffc233);
+  color: var(--ink, #1c2540);
+  font: 700 10.5px/15px var(--font, system-ui, sans-serif);
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 35%);
+  pointer-events: none;
+}
+.cmp-text {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  line-height: 1.2;
+}
+.cmp-name {
+  overflow: hidden;
+  max-width: 14ch;
+  font-size: 12.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmp-state {
+  overflow: hidden;
+  max-width: 14ch;
+  font-size: 11px;
+  color: var(--text-on-ink-2, #b9c3dc);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmp-chip[data-status='ready'] .cmp-state {
+  color: var(--cmp-ok);
+}
+.cmp-chip[data-status='error'] {
+  border-color: rgb(255 123 115 / 60%);
+  background: rgb(216 48 44 / 22%);
+}
+.cmp-chip[data-status='error'] .cmp-state {
+  color: var(--cmp-err);
+}
+.cmp-chip[data-status='error'] .cmp-name,
+.cmp-chip[data-status='error'] .cmp-state {
+  max-width: 16ch;
+}
+
+.cmp-remove,
+.cmp-retry {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 0;
+  color: var(--text-on-ink, #eef2fb);
+  background: transparent;
+  font: 700 11.5px/1 var(--font, system-ui, sans-serif);
+  cursor: pointer;
+}
+.cmp-remove {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+}
+.cmp-remove svg {
+  width: 14px;
+  height: 14px;
+}
+.cmp-retry {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 13px;
+  background: rgb(255 255 255 / 14%);
+}
+.cmp-retry svg {
+  width: 13px;
+  height: 13px;
+}
+.cmp-retry[hidden] {
+  display: none;
+}
+.cmp-remove:hover,
+.cmp-retry:hover {
+  background: rgb(255 255 255 / 24%);
+}
+.cmp-remove:disabled,
+.cmp-retry:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.cmp-thumb:focus-visible,
+.cmp-remove:focus-visible,
+.cmp-retry:focus-visible {
+  outline: 3px solid var(--sun, #ffc233);
+  outline-offset: 1px;
+}
+
+/* Upload progress: a thin bar along the chip's foot while it waits or uploads. */
+.cmp-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: transparent;
+  pointer-events: none;
+}
+.cmp-chip[data-status='pending'] .cmp-bar,
+.cmp-chip[data-status='uploading'] .cmp-bar {
+  background: linear-gradient(90deg, transparent 0 20%, var(--sun, #ffc233) 20% 55%, transparent 55%);
+}
+.cmp-chip[data-status='pending'] .cmp-bar {
+  opacity: 0.35;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cmp-chip[data-status='uploading'] .cmp-bar {
+    background: linear-gradient(90deg, transparent 0, var(--sun, #ffc233) 50%, transparent 100%) 0 0 / 60% 100% no-repeat;
+    animation: cmp-slide 1.1s var(--ease, ease-in-out) infinite;
+  }
+}
+@keyframes cmp-slide {
+  from {
+    background-position: -60% 0;
+  }
+  to {
+    background-position: 160% 0;
+  }
+}
+
+/* ---- the enlarged view ---------------------------------------------------------------------- */
+
+.cmp-lightbox {
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-on-ink, #eef2fb);
+  font-family: var(--font, system-ui, sans-serif);
+  overflow: hidden;
+}
+.cmp-lightbox[open] {
+  display: flex;
+  flex-direction: column;
+}
+.cmp-lightbox::backdrop {
+  background: rgb(10 14 28 / 90%);
+}
+.cmp-lb-stage {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 64px 24px 56px;
+  cursor: zoom-out;
+}
+.cmp-lb-img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #0b1122;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 45%), 0 2px 6px rgb(0 0 0 / 30%);
+  cursor: default;
+}
+.cmp-lb-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 50%;
+  background: var(--ink, #1c2540);
+  color: var(--text-on-ink, #eef2fb);
+  cursor: pointer;
+}
+.cmp-lb-close svg {
+  width: 20px;
+  height: 20px;
+}
+.cmp-lb-close:hover {
+  background: var(--ink-2, #2a355a);
+}
+.cmp-lb-close:focus-visible {
+  outline: 3px solid var(--sun, #ffc233);
+  outline-offset: 2px;
+}
+.cmp-lb-cap {
+  position: absolute;
+  left: 16px;
+  right: 72px;
+  top: 22px;
+  margin: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cmp-lightbox[open] {
+    animation: cmp-in 160ms var(--ease, ease-out);
+  }
+}
+@keyframes cmp-in {
+  from {
+    opacity: 0;
+  }
+}

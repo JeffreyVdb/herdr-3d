@@ -15,7 +15,9 @@
   Claude and Codex transcripts as one timeline of items, indexed by offset for the laptop's conversation view), `runs` (M6: write-code runs, the
   freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it), `limits` (M10: the Claude and
   Codex plan limits, read by running the two CLIs as probes through a fake-able process runner), `logo` (M3d: PNG, WebP
-  and restricted SVG in, one PNG of at most 1024 px out; pure Go, only the bridge uses it); M7 boards:
+  and restricted SVG in, one PNG of at most 1024 px out; pure Go, only the bridge uses it), `upload` (#51: one image
+  streamed to Drop Zone as one multipart request, the type sniffed and the size capped on the bytes, its path returned
+  verbatim; pure Go, a fake-able HTTP client, the bridge's `POST /upload` uses it); M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
   repository and project, the writes) and `githubcli` (the typed `gh` runner). `server`, `store` and `proto` never import
@@ -279,6 +281,7 @@ that directory.
 | `--codex-sessions` | `HERDR_WORLD_CODEX_SESSIONS` | `$CODEX_HOME/sessions`, else `~/.codex/sessions`: Codex rollouts, for the sleep backfill and usage |
 | `--claude-projects` | `HERDR_WORLD_CLAUDE_PROJECTS` | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects`: Claude Code transcripts, for usage (M5) |
 | `--runs-dir` | `H3D_RUNS_DIR` | `$XDG_STATE_HOME/write-code/runs`, else `~/.local/state/write-code/runs`: write-code's run directories, for the freelancers' reports (M6, [`docs/protocol.md` "Runs and freelancers"](docs/protocol.md#runs-and-freelancers)); read only |
+| `--dropzone-url` | `HERDR_WORLD_DROPZONE_URL` | `http://127.0.0.1:8080`: Drop Zone, where pasted images are uploaded (#51, [`docs/protocol.md` "Image upload"](docs/protocol.md#image-upload)); the bridge's only client of it |
 | `--pricing` | `HERDR_WORLD_PRICING` | none: a JSON file of model prices merged over the built-in table (`internal/usage/pricing.json`; format in [`docs/protocol.md` "Usage and cost"](docs/protocol.md#usage-and-cost)) |
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
 | `--warn-workers`, `--max-workers` | `HERDR_WORLD_WARN_WORKERS`, `HERDR_WORLD_MAX_WORKERS` | `48`, `96`: the same for all watched running floors together |
@@ -380,6 +383,11 @@ killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herd
   `Authorization` are not forwarded, an upload over 1 MiB is refused (`413`) at the helper, other methods get `405`, and the
   routes come before the game fallback (also with `-dev-upstream`). The image conversion is the bridge's: the helper only
   moves bytes. `go test ./internal/helper -run Logo` covers the checks with a fake bridge and once end to end;
+- (#51) it proxies `POST /upload` (one image on its way to Drop Zone) to the bridge, guarded exactly like `/logo`
+  (`checkLogo`), with the token, `Origin`, `Cookie` and `Authorization` not forwarded and only `label` and `n` kept. A
+  body over `upload.MaxBytes` + 4 KiB is refused with `413` `upload_too_large`, by `Content-Length` and by counting a
+  chunked one; its `403`, `413` and `502` are the protocol's error object, and other methods get `405`. The route comes
+  before the game fallback. `go test ./internal/helper -run Upload`;
 - it opens a Chrome `--app` window on `http://127.0.0.1:7777/#token=…` with its own profile (`-no-open` skips that; it also skips it when the game is installed as a Chrome app, see
   `docs/releasing.md`).
   The token is kept in a file and survives restarts, so an open game window reconnects by itself.
@@ -480,7 +488,7 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   mezzanine (`FloorLayout.mezzanine`: posts, stair, glass, your desk, its walking supports and solids), height-aware walking collision
   and ray picking, the M4 walk-out route (`route.ts`), floor-settings validation and diffing (`settings.ts`),
   building/floor reordering (`arrange.ts`); M4: the hire / send-home dialogs' state (`hire.ts`: the preselected
-  choice, capacity states, the base's age, which send-home options are enabled, the first task's keys, the command
+  choice, capacity states, the base's age, which send-home options are enabled, the command
   args) and the arrivals' timeline (`arrival.ts`: the walk-out's heights come from its waypoints; M6b: a hire drops in
   to its chair in under a second instead of walking in, never `away`). M6b: what stands on each desk (`deskKit.ts`:
   the monitor, keyboard, mouse, the dock on the pod's outer side and its cables, the worker's photos, mug, plant and
@@ -598,13 +606,26 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 
 | query param | effect |
 |---|---|
-| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors; M6: `simcrew=<ms>` walks a scripted freelancer in and out; M3d (`tools/fixture-logo.ts`, `tools/logo-art.ts` draws the made-up test logo; no third-party logo ships): `simlogo=<key>` lets `/logo/<building>?simlogo=<key>` reach this connection's world, `simlogos=1` starts every building with a made-up logo, `simfail=logo_missing` makes the images 404, `simfail=logo_busy` fails the next upload) |
+| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors; #51: `simmodels=<n>` adds n Claude models to the hire options (a long model list); M6: `simcrew=<ms>` walks a scripted freelancer in and out; M3d (`tools/fixture-logo.ts`, `tools/logo-art.ts` draws the made-up test logo; no third-party logo ships): `simlogo=<key>` lets `/logo/<building>?simlogo=<key>` reach this connection's world, `simlogos=1` starts every building with a made-up logo, `simfail=logo_missing` makes the images 404, `simfail=logo_busy` fails the next upload) |
 | `backend=webgl2` | force WebGL2 |
 | `screens=<n>` | M5: how many laptops around you are live (default 4, at most 5; `0` watches none: only the laptop you sit at is watched) |
 | `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |
 | `ts` | GPU timestamp queries (for `bench`) |
 | `shadows=0`, `badges=0`, `battery=1` | no shadows; no city badges (perf comparisons); start in battery saver |
 | `me=<name>` | M3c: the name on your desk's name plate and the office glass (default "You": the bridge sends no user name yet) |
+
+#51 prompt composer (`src/ui/composer/`, `src/net/upload.ts`): a `contenteditable` with image chips, shared by every prompt. `model.ts`
+(document, serialiser: pure), `draft.ts` (the draft object a host keeps: history, images, upload queue, `resolve()`), `composer.ts`
+(the view, `mountComposer`), `lightbox.ts` (the enlarged view), `tree.ts` (DOM ↔ offsets). Decisions: `docs/decisions.md`
+(2026-09-30). A host mounts it with a `Draft` (or a `wsUrl`), asks `resolve()` for the final text on `onSubmit`, and keeps
+the draft object to keep the prompt across a closed dialog. The fixture server answers `POST /upload` (`tools/fixture-upload.ts`:
+a fake `/home/fixture/drops/2026-09/h3d-<label>-<n>.<ext>` path; `fail_upload=<N|all>&upload_key=<key>` in the `ws` query fails
+the first N uploads of that key; `GET /upload/_log?upload_key=<key>` lists what it received). `/?composer-demo&ws=…` mounts the
+composer in a test-only dialog with no game (`src/ui/composer/demo.ts`, loaded only on that parameter) for `e2e/composer.spec.ts`;
+`H3D_EVIDENCE_DIR` sends its screenshots elsewhere than `test-results/composer`. The hire dialog mounts the composer for its first
+task (`TaskEditor` in `src/ui/hire.ts`, `#hire-task` is the editable element): one `Draft` per desk in memory, the text mirrored
+to `localStorage`, Hire waits for `draft.resolve()` before it sends `worker.hire`; `e2e/hire-composer.spec.ts` drives it (paste,
+enlarged view, forced upload failure and retry, two markers in document order) on the simulating fixture server.
 
 M5 on the simulating server (`ws=…?sim=1…`): `simusage=<ms>` sends working agents' `worker.usage` that often
 (default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|changes_failed` for the next prompt,
@@ -620,10 +641,11 @@ Shift+L (plain L is the elevator) for the panel (it never grows past the viewpor
 stay); it is switched off in About, or with the panel's Hide. On a viewport under 760 px wide it steps out of an open
 dialog or the Changes panel and comes back, panel as it was, when they close. Over a screen-filling dialog (`dialog.panel`,
 the Issues / Pull requests boards and their item modal) it steps out at any width: a slim edge tab (worst percentage and a
-severity bar) in the gutter right of the dialog, or, when the viewport leaves under 48 px there, away completely. A click on
+severity bar) in the gutter right of the dialog, or, when the viewport leaves under 48 px there, away completely (the hire
+dialog, a near-full-screen sheet since #51, is one of them: its own limits line is inline). A click on
 the tab or Shift+L then *peeks* the expanded panel above the dialog without touching the saved state (Shift+L again, the
 plate's header, a click elsewhere or closing the dialog ends the peek; a meter hidden from About stays hidden); when the
-dialog closes the plate is exactly as it was. The small centred dialogs (confirm, hire, start-run, send-home, …) keep the
+dialog closes the plate is exactly as it was. The small centred dialogs (confirm, start-run, send-home, …) keep the
 plate as it was, above them. The Changes panel still makes it step left.
 
 M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
@@ -674,7 +696,11 @@ Keyboard: in the city, Tab reaches the floor list (Enter goes inside), then the 
 building's elevator panel, the lot's too).
 Hire and send home (M4): look at an empty desk's green "+" and press **E** ("Hire a worker at Desk 11"), or press the
 top bar's **Hire** (on an office floor; Shift+Tab, then Tab past Elevator) for the first free desk. The dialog asks the
-bridge first (`hire.prepare`), then offers: an optional first task (**Enter** hires, **Shift+Enter** adds a line),
+bridge first (`hire.prepare`), then offers: an optional first task (**Enter** hires, **Shift+Enter** adds a line; paste a screenshot and it goes into the text as a
+thumbnail at the caret, click it to see it enlarged (**Esc** closes only that), the agent gets `[Image #n: <path>]` in its place;
+the dialog is a near-full-screen sheet, #51: the task editor takes the space and grows with the window, the options
+sit beside it, or under it on a phone, and Hire / Cancel stay on screen; what you typed for a desk stays until a hire
+is acknowledged),
 harness → model → effort as chips (Tab into a group, ← → pick; the floor's default hire or the last hire on the floor
 is preselected and marked so), the label (the next generated name), the folder (the floor's default; changing it
 checks the new folder again), **Work in its own git worktree & branch** (on by default, only when the folder is a git
@@ -693,7 +719,10 @@ with a delete picked only the button confirms. The worker packs a cardboard box,
 fire escape and away along the sidewalk, and the desk gets its "+" back. Walk-outs play for floors of the building you
 are in (the interior only for the floor you are on), a drop-in only on the floor you are on; anywhere else they
 resolve at once. Esc closes either dialog, and
-the pointer lock is released while one is open.
+the pointer lock is released while one is open. Dialogs never close by accident (#51): the ones that hold typed text or
+a consequential choice (hire, start-run, presets, the P prompt, open-PR, the panels, send home, the board item) have no
+backdrop dismissal, only their close button and Esc; the read-only sheets (About, credits, the HUD sheet, the boards)
+close on the backdrop only when the press and the click both began there (`ui/dismiss.ts`; table in docs/decisions.md).
 
 Outside (M3b): every floor has a door at the south end of its west wall; it slides open as you walk up to it, onto the
 fire escape. Walk down (or up) the flights to another floor's landing and in through its door: that floor gets the

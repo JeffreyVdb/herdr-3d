@@ -608,3 +608,138 @@
     margin-top: 0;
   }
 }
+
+/*
+ * ---- the hire dialog is a near-full-screen sheet (#51) ----------------------------------
+ * Rows: header, tabs, body, footer. The footer is a row of the shell, not sticky inside a scroller, so Hire and
+ * Cancel are always on screen. The body is two panes: the first task, which takes the space, and the options
+ * (harness, model, effort, label, folder, worktree) beside it, or under it on a phone. Every pane and child that
+ * has to shrink says min-width / min-height 0.
+ */
+
+.desk-dlg--hire {
+  --gap: 12px;
+  width: calc(100vw - 2 * var(--gap) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  height: calc(100vh - 2 * var(--gap) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  height: calc(100dvh - 2 * var(--gap) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  max-width: none;
+  max-height: none;
+}
+.desk-dlg--hire .dd-body {
+  grid-template-columns: minmax(0, 1fr) minmax(20rem, 28rem);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 20px;
+  padding: 16px 20px;
+  overflow: hidden;
+}
+.hire-editor-pane,
+.hire-options-pane {
+  min-width: 0;
+  min-height: 0;
+}
+.hire-editor-pane {
+  display: flex;
+  flex-direction: column;
+}
+.hire-editor-pane .dd-task {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* The composer (#51) fills the slot the textarea had: the editor grows with the pane and scrolls inside. */
+.desk-dlg--hire .cmp {
+  --cmp-min-height: 8rem;
+}
+.desk-dlg--hire .cmp-editor {
+  padding: 12px 14px;
+  font-size: 15px;
+  line-height: 1.55;
+}
+.desk-dlg--hire .cmp-editor[data-empty='true']::before {
+  left: 14px;
+  right: 14px;
+}
+.hire-options-pane {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  overflow: auto;
+  /* A little room so the scrollbar does not sit on the chips. */
+  padding-right: 6px;
+  margin-right: -6px;
+  scrollbar-width: thin;
+  scrollbar-color: #3a466e transparent;
+}
+.desk-dlg--hire .dd-foot {
+  padding: 12px 20px;
+}
+.desk-dlg--hire .dd-notices {
+  max-height: min(40vh, 14rem);
+}
+
+/* A harness with many models: a filter, then chips in as many columns as fit. */
+.dd-pick--models {
+  display: block;
+}
+.dd-pick--models legend {
+  float: none;
+  flex-direction: row;
+  align-items: baseline;
+  margin: 0 0 6px;
+  padding: 0;
+}
+.dd-count {
+  margin-left: 4px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-on-ink-2);
+}
+.dd-models {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.desk-dlg .dd-search {
+  height: 34px;
+}
+.dd-chips--grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+}
+.dd-chips--grid .dd-chip span {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+}
+.dd-none {
+  margin: 0;
+}
+
+/* Under it, on a phone: one column, the whole body scrolls, the footer stays. */
+@media (max-width: 759px) {
+  .desk-dlg--hire {
+    --gap: 0px;
+    border-radius: 0;
+  }
+  .desk-dlg--hire .dd-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    gap: 16px;
+    padding: 12px 14px;
+    overflow: auto;
+  }
+  .hire-editor-pane {
+    min-height: clamp(11rem, 36dvh, 24rem);
+  }
+  .hire-options-pane {
+    overflow: visible;
+    padding-right: 0;
+    margin-right: 0;
+  }
+  .desk-dlg--hire .dd-notices {
+    max-height: 28dvh;
+  }
+  .desk-dlg--hire .dd-foot {
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+}

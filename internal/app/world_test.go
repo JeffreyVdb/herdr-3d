@@ -64,6 +64,10 @@ func TestWorldVersionAndUsage(t *testing.T) {
 	if code := World("herdr-world", []string{"serve"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "worker caps") {
 		t.Fatalf("%s=0: code %d, err %q", EnvFloorMax, code, errOut.String())
 	}
+	errOut.Reset()
+	if code := World("herdr-world", []string{"serve", "-dropzone-url", "127.0.0.1:8080"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "dropzone-url") {
+		t.Fatalf("-dropzone-url without a scheme: code %d, err %q", code, errOut.String())
+	}
 	if code := World("herdr-world", []string{"serve", "-wake-timeout", "0s"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "wake-timeout") {
 		t.Fatalf("-wake-timeout 0s: code %d, err %q", code, errOut.String())
 	}

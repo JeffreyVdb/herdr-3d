@@ -36,6 +36,7 @@ type Server struct {
 	hub  *Hub
 	log  *slog.Logger
 	conv *logo.Converter // M3d: logo uploads
+	up   Uploader        // #51: images for prompts (nil: none)
 
 	mu    sync.Mutex
 	conns map[*websocket.Conn]context.CancelFunc // cancelling a conn's reads closes it at once
@@ -52,11 +53,12 @@ func NewServer(hub *Hub, log *slog.Logger) *Server {
 // Serve.
 func (s *Server) SetLogoRenderTimeout(d time.Duration) { s.conv.SetRenderTimeout(d) }
 
-// Handler serves /ws (the protocol), /logo/{building} (M3d) and /healthz.
+// Handler serves /ws (the protocol), /logo/{building} (M3d), POST /upload (#51) and /healthz.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.serveWS)
 	s.logoRoutes(mux)
+	s.uploadRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(proto.VersionHeader, version.Version)
 		_, _ = w.Write([]byte("ok\n"))

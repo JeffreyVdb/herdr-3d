@@ -200,7 +200,9 @@ test('the hire dialog shows the chosen harness’s limits and warns above 85 %',
   await expect(slot.locator('.lm-line')).toHaveCount(1);
   await expect(slot.locator('.lm-line')).toContainText('Claude');
   await expect(slot.locator('.lm-warn')).toHaveText(/^Claude week limit is at 91%, resets /);
-  expect(await undimmed(page)).toBe(true); // the corner widget is above the modal dialog's backdrop
+  // #51: the hire dialog is a screen dialog now (a near-full-screen sheet): the corner plate steps out of it (no gutter for the edge tab), and the dialog's own line is the limits.
+  await expect(limits(page)).toHaveAttribute('data-dock', 'away');
+  await expect(limits(page)).toBeHidden();
   await shot(page, 'm10-hire-warn');
   // Codex: its own limits and its own warning.
   await page.locator('[data-key="harness:codex"]').check({ force: true });
@@ -610,7 +612,7 @@ test('a board wider than the room beside it folds the widget away; Shift+L still
   clean();
 });
 
-test('an M3 panel (settings) at any width also gets the edge tab; small dialogs (hire) keep the plate as it was', async ({ page }) => {
+test('an M3 panel (settings) at any width also gets the edge tab; the hire sheet folds it away, small dialogs (start-run) keep the plate', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   await openGame(page, 'demo-m4', '', SIM());
@@ -626,8 +628,18 @@ test('an M3 panel (settings) at any width also gets the edge tab; small dialogs 
   await expect(limits(page)).toHaveAttribute('data-dock', '');
   await expect(page.locator('.lm-strip')).toBeVisible();
 
+  // #51: the hire dialog is a near-full-screen sheet, so a screen dialog too: no gutter for the tab, the plate is away (its limits are inline).
   await page.evaluate(() => window.__h3d.openHire(5));
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind).toBe('hire');
+  await expect(limits(page)).toHaveAttribute('data-dock', 'away');
+  await expect(page.locator('[data-hook="plan-limits"] .lm-line')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.dialog())).toBeNull();
+  await expect(limits(page)).toHaveAttribute('data-dock', '');
+
+  // A small dialog (start-run) keeps the plate as it was, above it.
+  await page.evaluate(() => window.__h3d.openStartRun({ session: 'herdr-3d', desk: 5 }));
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind).toBe('start-run');
   await expect(limits(page)).toHaveAttribute('data-dock', ''); // today's behaviour: the plate stays, above the dialog
   await expect(page.locator('.lm-strip')).toBeVisible();
   expect(await undimmed(page)).toBe(true);

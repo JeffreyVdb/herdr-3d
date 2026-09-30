@@ -27,6 +27,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
+	"github.com/JeffreyVdb/herdr-3d/internal/upload"
 	"github.com/JeffreyVdb/herdr-3d/internal/usage"
 	"github.com/JeffreyVdb/herdr-3d/internal/watch"
 )
@@ -74,6 +75,13 @@ func DefaultRunsDir() string {
 	}
 	return filepath.Join(dir, "write-code", "runs")
 }
+
+// #51 image upload: Drop Zone's base URL. The bridge is its only client; a
+// browser never names an upstream.
+const (
+	EnvDropzoneURL     = "HERDR_WORLD_DROPZONE_URL"
+	DefaultDropzoneURL = "http://127.0.0.1:8080"
+)
 
 // M5 term: the laptops' caps.
 const (
@@ -260,7 +268,8 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	claudeProjects := fs.String("claude-projects", envOr(EnvClaudeProjects, usage.DefaultClaudeProjects()), "Claude Code transcript directory, for usage ($"+EnvClaudeProjects+")")
 	codexCLI := fs.String("codex-cli", envOr(EnvCodexCLI, "codex"), "Codex binary for model discovery ($"+EnvCodexCLI+")")
 	claudeCLI := fs.String("claude-cli", envOr(EnvClaudeCLI, "claude"), "Claude Code binary for model discovery ($"+EnvClaudeCLI+")")
-	runsDir := fs.String("runs-dir", envOr(EnvRunsDir, DefaultRunsDir()), "write-code runs directory, for the freelancers' reports ($"+EnvRunsDir+")") // M6 runs
+	runsDir := fs.String("runs-dir", envOr(EnvRunsDir, DefaultRunsDir()), "write-code runs directory, for the freelancers' reports ($"+EnvRunsDir+")")           // M6 runs
+	dropzoneURL := fs.String("dropzone-url", envOr(EnvDropzoneURL, DefaultDropzoneURL), "Drop Zone URL, where pasted images are uploaded ($"+EnvDropzoneURL+")") // #51 upload
 	pricingFile := fs.String("pricing", os.Getenv(EnvPricing), "JSON file of model prices merged over the built-in table ($"+EnvPricing+")")
 	sessions := fs.String("sessions", os.Getenv(EnvSessions), "only watch sessions whose name matches this regexp ($"+EnvSessions+")")
 	fs.DurationVar(&poll, "poll", poll, "session discovery interval ($"+EnvPoll+")")
@@ -294,6 +303,10 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	}
 	if nameHold <= 0 {
 		return fmt.Errorf("-name-hold must be positive, got %s", nameHold)
+	}
+	images, err := upload.New(upload.Config{URL: *dropzoneURL}) // #51 upload
+	if err != nil {
+		return fmt.Errorf("-dropzone-url: %w", err)
 	}
 	if wakeTimeout <= 0 || resumeTimeout <= 0 {
 		return fmt.Errorf("-wake-timeout and -resume-timeout must be positive, got %s and %s", wakeTimeout, resumeTimeout)
@@ -344,6 +357,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		RunsDir: *runsDir,                                     // M6 runs
 		Boards:  GitHubBoards(&githubcli.Client{Bin: *ghBin}), // M7 boards
 		Limits:  lim,                                          // M10 limits
+		Uploads: images,                                       // #51 upload
 	})
 }
 
@@ -414,6 +428,10 @@ type ServeConfig struct {
 	// M10 limits: reads the Claude and Codex plan limits while a client is
 	// connected (nil: none).
 	Limits *limits.Config
+
+	// #51: where POST /upload puts images (nil: it answers
+	// dropzone_unavailable).
+	Uploads server.Uploader
 }
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
@@ -485,7 +503,11 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 			Rescan: hub.Rescans(),
 		})
 	})
-	run("server", func() error { return server.NewServer(hub, log).Serve(ctx, ln) })
+	run("server", func() error {
+		srv := server.NewServer(hub, log)
+		srv.SetUploader(cfg.Uploads)
+		return srv.Serve(ctx, ln)
+	})
 	if cfg.Ready != nil {
 		cfg.Ready()
 	}

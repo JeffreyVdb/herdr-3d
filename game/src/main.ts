@@ -417,12 +417,17 @@ async function start(): Promise<void> {
   }
 }
 
-start().catch((err: unknown) => {
-  h3d.error = String(err);
-  console.error('h3d: renderer failed to start', err);
-  const overlay = document.getElementById('debug');
-  if (overlay) {
-    overlay.textContent = `renderer error: ${String(err)}`;
-    overlay.classList.add('error');
-  }
-});
+if (params.has('composer-demo')) {
+  // #51, test only: the prompt composer in a fixture dialog, no game (e2e/composer.spec.ts). Loaded on this parameter only.
+  void import('./ui/composer/demo').then((m) => m.mountDemo());
+} else {
+  start().catch((err: unknown) => {
+    h3d.error = String(err);
+    console.error('h3d: renderer failed to start', err);
+    const overlay = document.getElementById('debug');
+    if (overlay) {
+      overlay.textContent = `renderer error: ${String(err)}`;
+      overlay.classList.add('error');
+    }
+  });
+}

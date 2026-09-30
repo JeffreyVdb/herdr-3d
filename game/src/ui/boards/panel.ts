@@ -7,6 +7,7 @@ import { failureText } from '../messages';
 import type { DialogHost } from '../hire';
 import './boards.css';
 import { setMarkdown } from './markdown';
+import { backdropPolicy } from '../dismiss';
 
 /**
  * M7: the Issues and Pull requests overlays and their item modals. The overlay lists what the floor's board says (the
@@ -128,11 +129,10 @@ export class BoardsPanel {
   ) {
     this.dialog.append(this.head, this.notice, this.body);
     this.item.append(this.itemHead, this.itemBody, this.itemFoot);
-    for (const d of [this.dialog, this.item]) {
-      d.addEventListener('click', (e) => {
-        if (e.target === d) d.close();
-      });
-    }
+    // The board is read-only: the backdrop closes it only when the press and the click both began there (#51).
+    // The item modal holds the comment box: only its close button and Esc close it.
+    backdropPolicy(this.dialog, 'sheet', () => this.dialog.close());
+    backdropPolicy(this.item, 'none');
     this.dialog.addEventListener('close', () => {
       if (this.dialog.open) return;
       this.item.close();

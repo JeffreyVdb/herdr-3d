@@ -13,7 +13,7 @@ import './limits.css';
  * the bridge sends a reading (`limits.update`) or a reading crosses into
  * stale; `tick` is that second check and does nothing else.
  *
- * Over a screen-filling dialog (SCREEN, #47) the plate would hide its close button and first row, so it
+ * Over a screen-filling dialog (SCREEN, #47, #51) the plate would hide its close button and first row, so it
  * steps out of it: into a slim edge tab (worst percentage and a severity bar) when the viewport leaves a
  * gutter right of the dialog for it, else away completely, like the narrow-viewport fold. Either way it
  * stays reachable: a click on the tab or Shift+L "peeks" the plate over the dialog (expanded, whatever the
@@ -25,12 +25,13 @@ import './limits.css';
 const NARROW = '(max-width: 760px)';
 
 /**
- * The dialogs that fill the screen (the M3 panels, the Issues / Pull requests boards and their item modal): at any
- * viewport width the plate steps out of them. The confirm, hire, start-run, send-home, prompt, presets and open-PR
- * dialogs are small and centred; they keep today's behaviour (the plate stays above them in the top layer, and the
- * hire and start-run ones show the limits inline as well).
+ * The dialogs that fill the screen (the M3 panels, the Issues / Pull requests boards and their item modal, and since
+ * #51 the hire dialog, a near-full-screen sheet): at any viewport width the plate steps out of them. The confirm,
+ * start-run, send-home, prompt, presets and open-PR dialogs are small and centred; they keep today's behaviour (the
+ * plate stays above them in the top layer, and the start-run one shows the limits inline as well). The hire dialog
+ * shows the chosen harness's limits inline too, so nothing is lost when the plate folds away over it.
  */
-const SCREEN = 'dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open]';
+const SCREEN = 'dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open]';
 
 /** Free width the edge tab needs right of a screen dialog: its 32 px, 8 px from the edge, and 8 px clear of the dialog (limits.css). */
 const TAB_ROOM = 48;

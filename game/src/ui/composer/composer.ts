@@ -1,0 +1,621 @@
+/**
+ * The shared prompt composer: a `contenteditable` with plain text and atomic image chips, for every place a prompt
+ * is typed (the hire dialog's first task; later the P overlay and the start-run instructions).
+ *
+ * The document lives in a `Draft` (`draft.ts`), not in the DOM: the DOM is drawn from it, and read back on `input`
+ * (typing, an IME commit, a native delete), so the browser edits text natively while everything the browser cannot
+ * be trusted with goes through the model: chips, paste, drop, Enter, delete next to a chip, undo/redo. One history
+ * (the draft's) covers text and images; the browser's own undo is never used. Rich text never gets in: paste is
+ * `text/plain` or image files, drop is image files, and anything else the browser puts in is read as text and the
+ * editor is drawn again in its canonical shape (`tree.ts`).
+ *
+ * The host owns what happens with the prompt (`onSubmit` is only a request), the draft object (keep it to keep
+ * text, images and paths across a closed dialog) and the layout: the editor is a flex child that fills its parent
+ * (`min-height: 0`, internal scroll), sized by the host's CSS.
+ */
+
+import './composer.css';
+import { postUpload } from '../../net/upload';
+import { h, ICON, icon } from '../dom';
+import { Draft, type AddResult, type DraftEvent, type DraftOptions, type DraftSnapshot, type ResolveResult, type Uploader } from './draft';
+import { openPreview, type Preview } from './lightbox';
+import { caret, IMG, type Occurrence, rangeOf, type Selection, ZWSP } from './model';
+import { CHIP, isCanonical, offsetToPoint, pointToOffset, readDoc, TAIL } from './tree';
+
+export interface ComposerOptions {
+  /** The draft to show; else the composer makes one (the host then keeps it with `getDraft()`). */
+  draft?: Draft;
+  /** For a draft the composer makes: uploads go beside this bridge WebSocket URL. */
+  wsUrl?: string;
+  /** For a draft the composer makes, instead of `wsUrl`. */
+  upload?: Uploader;
+  label?: DraftOptions['label'];
+  maxPromptBytes?: number;
+  maxImages?: number;
+  /** The accessible name of the editor (or `labelledBy`). */
+  ariaLabel?: string;
+  labelledBy?: string;
+  describedBy?: string;
+  placeholder?: string;
+  /** `enter`: Enter sends, Shift+Enter adds a line. `mod-enter`: Ctrl/⌘+Enter sends, Enter adds a line. */
+  submitPolicy?: 'enter' | 'mod-enter';
+  /** The user asked to send. Only a request: the host decides (and calls `resolve()`). */
+  onSubmit?: () => void;
+  /** The document or an image's state changed. */
+  onChange?: (snapshot: DraftSnapshot) => void;
+  /** A message for the user, also shown under the editor. */
+  onNotice?: (message: string, kind: 'error' | 'info') => void;
+}
+
+export interface Composer {
+  /** The whole component: mount this. */
+  readonly element: HTMLElement;
+  /** The editable root (for a host that needs its size or focus). */
+  readonly editor: HTMLElement;
+  getDraft(): Draft;
+  /** Shows another draft (a desk's, a worker's): the editor is drawn from it, its uploads go on where they are. */
+  setDraft(d: Draft): void;
+  getSnapshot(): DraftSnapshot;
+  /** The final text with the image markers, once every image is uploaded; see `Draft.resolve`. */
+  resolve(o?: { maxBytes?: number; hint?: boolean }): Promise<ResolveResult>;
+  retry(resourceId: string): boolean;
+  insertFiles(files: readonly File[]): AddResult;
+  insertText(text: string): void;
+  focus(): void;
+  /** Read-only while the host is sending: no typing, no chip removal. Previews still open. */
+  setBusy(busy: boolean): void;
+  openPreview(occ: string): void;
+  closePreview(): void;
+  readonly previewOpen: boolean;
+  notice(message: string, kind?: 'error' | 'info'): void;
+  /** Removes the view and its listeners. The draft is not touched: the host clears or disposes it. */
+  dispose(): void;
+}
+
+const STATE_TEXT = { pending: 'Waiting…', uploading: 'Uploading…', ready: 'Uploaded', error: 'Failed' } as const;
+
+let uid = 0;
+
+export function mountComposer(o: ComposerOptions = {}): Composer {
+  const id = `cmp${++uid}`;
+  let draft = o.draft ?? makeDraft(o);
+  let unsub: () => void = () => {};
+  let composing = false;
+  let busy = false;
+  let refocus = false;
+  let dead = false;
+  let preview: Preview | null = null;
+  const policy = o.submitPolicy ?? 'enter';
+  /** The chips already drawn, by occurrence, so a redraw keeps their images loaded. */
+  const chips = new Map<string, HTMLElement>();
+
+  const editor = h('div', {
+    class: 'cmp-editor',
+    id: `${id}-editor`,
+    contenteditable: 'true',
+    role: 'textbox',
+    'aria-multiline': 'true',
+    'aria-label': o.labelledBy ? null : (o.ariaLabel ?? 'Prompt'),
+    'aria-labelledby': o.labelledBy,
+    'aria-describedby': o.describedBy,
+    'data-placeholder': o.placeholder ?? '',
+    'data-empty': 'true',
+    spellcheck: 'true',
+  });
+  const notice = h('p', { class: 'cmp-notice', role: 'status', 'aria-live': 'polite', hidden: true });
+  const live = h('span', { class: 'cmp-sr', role: 'status', 'aria-live': 'polite' });
+  const element = h('div', { class: 'cmp' }, editor, notice, live);
+
+  // ---- notices -------------------------------------------------------------------------
+
+  function say(message: string, kind: 'error' | 'info' = 'info'): void {
+    if (kind === 'error') {
+      notice.textContent = message;
+      notice.hidden = false;
+      notice.dataset.kind = 'error';
+    } else live.textContent = message;
+    o.onNotice?.(message, kind);
+  }
+  const clearNotice = (): void => {
+    if (!notice.hidden) {
+      notice.hidden = true;
+      notice.textContent = '';
+    }
+  };
+
+  // ---- drawing -------------------------------------------------------------------------
+
+  const imageWord = (n: number, name: string): string => `image ${n}, ${name}`;
+
+  function makeChip(occ: Occurrence): HTMLElement {
+    const thumb = h('button', { class: 'cmp-thumb', tabindex: '0' }, h('img', { alt: '', draggable: 'false' }));
+    const badge = h('span', { class: 'cmp-num', 'aria-hidden': 'true' });
+    const name = h('span', { class: 'cmp-name' });
+    const state = h('span', { class: 'cmp-state' });
+    const retry = h('button', { class: 'cmp-retry' }, icon(ICON.refresh), 'Retry');
+    const remove = h('button', { class: 'cmp-remove' }, icon(ICON.close));
+    const bar = h('span', { class: 'cmp-bar', 'aria-hidden': 'true' });
+    const el = h(
+      'span',
+      { class: CHIP, contenteditable: 'false', draggable: 'false', 'data-occ': occ.occ, 'data-res': occ.res, role: 'group' },
+      h('span', { class: 'cmp-thumb-wrap' }, thumb, badge),
+      h('span', { class: 'cmp-text' }, name, state),
+      retry,
+      remove,
+      bar,
+    );
+    chips.set(occ.occ, el);
+    return el;
+  }
+
+  /** Brings a chip's number, name, state and buttons up to date with the draft. */
+  function paintChip(el: HTMLElement): void {
+    const occ = el.dataset.occ ?? '';
+    const r = draft.resource(el.dataset.res ?? '');
+    const n = draft.numberOf(occ);
+    const name = r?.name ?? 'image';
+    const status = r?.status ?? 'error';
+    el.dataset.status = status;
+    el.setAttribute('aria-label', `${imageWord(n, name)}, ${STATE_TEXT[status].toLowerCase().replace('…', '')}`);
+    el.querySelector('.cmp-num')!.textContent = `#${n}`;
+    const nameEl = el.querySelector<HTMLElement>('.cmp-name')!;
+    nameEl.textContent = name;
+    nameEl.title = name;
+    const stateEl = el.querySelector<HTMLElement>('.cmp-state')!;
+    stateEl.textContent = status === 'error' ? `Failed: ${r?.error ?? 'upload failed'}` : STATE_TEXT[status];
+    stateEl.title = status === 'error' ? (r?.error ?? '') : '';
+    const thumb = el.querySelector<HTMLButtonElement>('.cmp-thumb')!;
+    thumb.setAttribute('aria-label', `Preview ${imageWord(n, name)}`);
+    thumb.setAttribute('aria-haspopup', 'dialog');
+    const img = thumb.querySelector('img')!;
+    if (r?.url && img.getAttribute('src') !== r.url) img.setAttribute('src', r.url);
+    const retry = el.querySelector<HTMLButtonElement>('.cmp-retry')!;
+    retry.hidden = status !== 'error';
+    retry.setAttribute('aria-label', `Retry uploading ${imageWord(n, name)}`);
+    retry.disabled = busy;
+    const remove = el.querySelector<HTMLButtonElement>('.cmp-remove')!;
+    remove.setAttribute('aria-label', `Remove ${imageWord(n, name)}`);
+    remove.disabled = busy;
+  }
+
+  function paintAll(): void {
+    for (const el of editor.querySelectorAll<HTMLElement>(`.${CHIP}`)) paintChip(el);
+    const d = draft.doc;
+    editor.dataset.empty = String(d.text === '');
+  }
+
+  /** Draws the editor from the draft: a text node for every text run, the chips between, the tail line. */
+  function render(): void {
+    const d = draft.doc;
+    const top = editor.scrollTop;
+    const parts = d.text.split(IMG);
+    const nodes: Node[] = [];
+    const live = new Set<string>();
+    parts.forEach((t, i) => {
+      nodes.push(document.createTextNode(t === '' ? ZWSP : t));
+      const occ = d.images[i];
+      if (occ && i < parts.length - 1) {
+        live.add(occ.occ);
+        nodes.push(chips.get(occ.occ) ?? makeChip(occ));
+      }
+    });
+    for (const k of [...chips.keys()]) if (!live.has(k)) chips.delete(k);
+    nodes.push(h('br', { class: TAIL }));
+    editor.replaceChildren(...nodes);
+    editor.scrollTop = top;
+    paintAll();
+  }
+
+  // ---- selection -----------------------------------------------------------------------
+
+  const focusInEditor = (): boolean => document.activeElement === editor;
+
+  /** The DOM selection as offsets, or null when it is not in the editor. */
+  function readSelection(): Selection | null {
+    const s = document.getSelection();
+    if (!s || s.rangeCount === 0 || !s.anchorNode || !s.focusNode) return null;
+    if (!editor.contains(s.anchorNode) || !editor.contains(s.focusNode)) return null;
+    return { anchor: pointToOffset(editor, s.anchorNode, s.anchorOffset), focus: pointToOffset(editor, s.focusNode, s.focusOffset) };
+  }
+
+  /** Puts the DOM selection where the offsets say, keeping the direction of a backward selection. */
+  function writeSelection(sel: Selection): void {
+    const s = document.getSelection();
+    if (!s) return;
+    const a = offsetToPoint(editor, sel.anchor);
+    const f = sel.anchor === sel.focus ? a : offsetToPoint(editor, sel.focus);
+    s.setBaseAndExtent(a.node, a.offset, f.node, f.offset);
+  }
+
+  /** Where an edit goes: the live selection while typing, else the last one the draft remembers. */
+  function where(): Selection {
+    return (focusInEditor() ? readSelection() : null) ?? draft.selection;
+  }
+
+  // ---- reading back --------------------------------------------------------------------
+
+  function known(): Map<string, Occurrence> {
+    return new Map(draft.doc.images.map((im) => [im.occ, im]));
+  }
+
+  /** The browser edited the DOM: take the document out of it. */
+  function reconcile(): void {
+    const sel = readSelection() ?? draft.selection;
+    const { doc, foreign } = readDoc(editor, known());
+    draft.fromEditor(doc, sel);
+    const changedShape = foreign || !isCanonical(editor);
+    if (changedShape) {
+      render();
+      if (focusInEditor()) writeSelection(draft.selection);
+    } else {
+      paintAll();
+    }
+  }
+
+  // ---- draft events --------------------------------------------------------------------
+
+  function onDraft(e: DraftEvent): void {
+    if (dead) return;
+    if (e.kind === 'resource') {
+      const mine = [...editor.querySelectorAll<HTMLElement>(`.${CHIP}`)].filter((c) => c.dataset.res === e.id);
+      for (const c of mine) paintChip(c);
+      const el = mine[0];
+      const r = draft.resource(e.id);
+      if (el && r?.status === 'error') {
+        const n = draft.numberOf(el.dataset.occ ?? '');
+        say(`Image ${n} (${r.name}) failed to upload: ${r.error ?? 'unknown error'}. Retry it or remove it.`, 'error');
+      }
+    } else if (e.origin !== 'dom') {
+      render();
+      if (focusInEditor()) writeSelection(draft.selection);
+    }
+    o.onChange?.(draft.snapshot());
+  }
+
+  function attach(d: Draft): void {
+    unsub();
+    draft = d;
+    unsub = d.subscribe(onDraft);
+    closePreview();
+    render();
+    clearNotice();
+  }
+
+  // ---- edits ---------------------------------------------------------------------------
+
+  function insertText(text: string): void {
+    const [a, b] = rangeOf(where());
+    draft.replace(a, b, text);
+  }
+
+  function insertFiles(files: readonly File[], at?: number): AddResult {
+    const r = draft.addImages(files, at === undefined ? rangeOf(where()) : [at, at]);
+    if (r.errors.length > 0) say(r.errors.join(' '), 'error');
+    else clearNotice();
+    if (r.added > 0) {
+      say(`${r.added === 1 ? 'Image' : `${r.added} images`} added. ${draft.doc.images.length} in the prompt.`);
+    }
+    return r;
+  }
+
+  function removeAt(occ: string): void {
+    if (busy) return;
+    const n = draft.numberOf(occ);
+    draft.removeImage(occ);
+    clearNotice();
+    say(`Image ${n} removed.`);
+    focusEditor();
+  }
+
+  function focusEditor(): void {
+    if (dead || busy) return;
+    editor.focus({ preventScroll: true });
+    writeSelection(draft.selection);
+  }
+
+  // ---- preview -------------------------------------------------------------------------
+
+  function openPreviewOf(occ: string): void {
+    if (preview?.isOpen) return;
+    const im = draft.snapshot().images.find((i) => i.occ === occ);
+    if (!im) return;
+    // The bookmark is the draft's own record of the caret and the editor's scroll: the click that opens the
+    // preview does not move either (mousedown on a chip is not allowed to), and nothing can change them while it is
+    // open.
+    const focused = focusInEditor();
+    // The live selection when the editor has focus: the draft's copy of it trails the browser's by an event.
+    const live = focused ? readSelection() : null;
+    if (live) draft.setSelection(live);
+    const bookmark = { sel: draft.selection, top: editor.scrollTop, focused };
+    const unpin = draft.pin(im.res);
+    const restore = (): void => {
+      if (dead) return;
+      const put = (): void => {
+        editor.scrollTop = bookmark.top;
+        if (bookmark.focused && !busy) {
+          editor.focus({ preventScroll: true });
+          writeSelection(draft.selection);
+        }
+      };
+      draft.setSelection(bookmark.sel);
+      put();
+      // The browser puts focus back on what had it when the dialog closes, in the same task: once more after it.
+      requestAnimationFrame(() => {
+        if (dead) return;
+        const cur = readSelection();
+        const want = draft.selection;
+        if (bookmark.focused && (!cur || cur.anchor !== want.anchor || cur.focus !== want.focus || !focusInEditor())) put();
+      });
+    };
+    preview = openPreview(element, { url: im.url, name: im.name, label: `Image ${im.n}` }, unpin, () => {
+      preview = null;
+      restore();
+    });
+  }
+
+  function closePreview(): void {
+    preview?.close();
+  }
+
+  // ---- input handlers ------------------------------------------------------------------
+
+  const isSubmit = (e: KeyboardEvent): boolean => {
+    const mod = e.ctrlKey || e.metaKey;
+    // Enter policy: Ctrl/⌘+Enter sends too (the hire dialog's textarea always did).
+    return policy === 'enter' ? !e.shiftKey && !e.altKey : mod;
+  };
+
+  /** Arrow keys beside a chip step over it in one press; everywhere else the browser moves the caret. */
+  function arrow(e: KeyboardEvent): boolean {
+    if (e.altKey || e.ctrlKey || e.metaKey) return false;
+    const sel = readSelection();
+    if (!sel) return false;
+    const dir = e.key === 'ArrowLeft' ? -1 : 1;
+    if (!e.shiftKey && sel.anchor !== sel.focus) return false;
+    const next = draft.doc.text[dir < 0 ? sel.focus - 1 : sel.focus];
+    if (next !== IMG) return false;
+    const focus = sel.focus + dir;
+    const to = e.shiftKey ? { anchor: sel.anchor, focus } : caret(focus);
+    draft.setSelection(to);
+    writeSelection(to);
+    return true;
+  }
+
+  editor.addEventListener('keydown', (e) => {
+    if (e.target !== editor) return; // a chip's own buttons: Enter and Space are theirs
+    if (composing || e.isComposing || e.keyCode === 229) return;
+    if (busy) {
+      if (e.key === 'Enter') e.preventDefault();
+      return;
+    }
+    const mod = e.ctrlKey || e.metaKey;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (isSubmit(e)) o.onSubmit?.();
+      else insertText('\n');
+    } else if (mod && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault();
+      if (e.shiftKey) draft.redo();
+      else draft.undo();
+    } else if (mod && !e.altKey && !e.shiftKey && (e.key === 'y' || e.key === 'Y')) {
+      e.preventDefault();
+      draft.redo();
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      if (arrow(e)) e.preventDefault();
+    }
+  });
+
+  editor.addEventListener('beforeinput', (e) => {
+    if (busy) {
+      e.preventDefault();
+      return;
+    }
+    const t = e.inputType;
+    if (t === 'historyUndo' || t === 'historyRedo') {
+      e.preventDefault();
+      if (t === 'historyUndo') draft.undo();
+      else draft.redo();
+      return;
+    }
+    if (composing || e.isComposing) return;
+    if (t === 'insertParagraph' || t === 'insertLineBreak') {
+      e.preventDefault();
+      insertText('\n');
+    } else if (t === 'insertFromDrop' || t === 'insertFromPaste' || t === 'insertFromYank') {
+      // Our own drop and paste handlers took these; anything that still gets here would bring markup.
+      e.preventDefault();
+    } else if (t === 'deleteContentBackward' || t === 'deleteContentForward') {
+      const sel = readSelection();
+      if (!sel || sel.anchor !== sel.focus) return;
+      const at = t === 'deleteContentBackward' ? sel.focus - 1 : sel.focus;
+      if (draft.doc.text[at] !== IMG) return;
+      e.preventDefault();
+      const occ = draft.doc.images[draft.doc.text.slice(0, at).split(IMG).length - 1];
+      if (occ) removeAt(occ.occ);
+    }
+  });
+
+  editor.addEventListener('input', () => {
+    if (!composing) reconcile();
+  });
+  editor.addEventListener('compositionstart', () => {
+    composing = true;
+  });
+  editor.addEventListener('compositionend', () => {
+    composing = false;
+    reconcile();
+  });
+
+  /** Files a clipboard or a drag carries: file items first, the file list only if there were none (never both). */
+  const filesOf = (dt: DataTransfer | null): File[] => {
+    if (!dt) return [];
+    const out: File[] = [];
+    for (const it of Array.from(dt.items ?? [])) {
+      if (it.kind !== 'file') continue;
+      const f = it.getAsFile();
+      if (f) out.push(f);
+    }
+    if (out.length === 0) out.push(...Array.from(dt.files ?? []));
+    return out;
+  };
+
+  editor.addEventListener('paste', (e) => {
+    const dt = e.clipboardData;
+    if (!dt) return;
+    e.preventDefault();
+    if (busy) return;
+    const files = filesOf(dt);
+    if (files.length > 0) {
+      insertFiles(files);
+      return;
+    }
+    const text = dt.getData('text/plain');
+    if (text) insertText(text);
+  });
+
+  const selectedText = (): { a: number; b: number; text: string } | null => {
+    const sel = readSelection();
+    if (!sel || sel.anchor === sel.focus) return null;
+    const [a, b] = rangeOf(sel);
+    return { a, b, text: draft.doc.text.slice(a, b).split(IMG).join('') };
+  };
+  editor.addEventListener('copy', (e) => {
+    const s = selectedText();
+    if (!s || !e.clipboardData) return;
+    e.preventDefault();
+    e.clipboardData.setData('text/plain', s.text);
+  });
+  editor.addEventListener('cut', (e) => {
+    const s = selectedText();
+    if (!s || !e.clipboardData) return;
+    e.preventDefault();
+    if (busy) return;
+    e.clipboardData.setData('text/plain', s.text);
+    draft.replace(s.a, s.b, '');
+  });
+
+  const hasFiles = (e: DragEvent): boolean => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+  editor.addEventListener('dragover', (e) => {
+    if (busy || !hasFiles(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    element.classList.add('cmp--dropping');
+  });
+  editor.addEventListener('dragleave', (e) => {
+    if (!editor.contains(e.relatedTarget as Node | null)) element.classList.remove('cmp--dropping');
+  });
+  editor.addEventListener('drop', (e) => {
+    e.preventDefault();
+    element.classList.remove('cmp--dropping');
+    if (busy) return;
+    const files = filesOf(e.dataTransfer);
+    if (files.length === 0) return;
+    const at = offsetAtPoint(e.clientX, e.clientY);
+    insertFiles(files, at ?? undefined);
+    focusEditor();
+  });
+  // Nothing inside is meant to be dragged out and back in: a chip or a selection dropped again would bring markup.
+  editor.addEventListener('dragstart', (e) => e.preventDefault());
+
+  function offsetAtPoint(x: number, y: number): number | null {
+    const doc = document as Document & {
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    };
+    let node: Node | null = null;
+    let off = 0;
+    const p = doc.caretPositionFromPoint?.(x, y);
+    if (p) {
+      node = p.offsetNode;
+      off = p.offset;
+    } else {
+      const r = doc.caretRangeFromPoint?.(x, y);
+      if (r) {
+        node = r.startContainer;
+        off = r.startOffset;
+      }
+    }
+    if (!node || !editor.contains(node)) return null;
+    return pointToOffset(editor, node, off);
+  }
+
+  // The chips' buttons. A press on one must not move the caret or take focus from the editor.
+  editor.addEventListener('mousedown', (e) => {
+    if ((e.target as Element).closest(`.${CHIP} button`)) e.preventDefault();
+  });
+  editor.addEventListener('click', (e) => {
+    const btn = (e.target as Element).closest<HTMLElement>(`.${CHIP} button`);
+    const chip = btn?.closest<HTMLElement>(`.${CHIP}`);
+    if (!btn || !chip) return;
+    const occ = chip.dataset.occ ?? '';
+    if (btn.classList.contains('cmp-thumb')) openPreviewOf(occ);
+    else if (btn.classList.contains('cmp-remove')) removeAt(occ);
+    else if (btn.classList.contains('cmp-retry')) {
+      clearNotice();
+      draft.retry(chip.dataset.res ?? '');
+      focusEditor();
+    }
+  });
+
+  /** The caret is kept in the draft while the editor has focus, for a preview or a closed dialog to give back. */
+  const onSelectionChange = (): void => {
+    if (composing || dead || !focusInEditor()) return;
+    const sel = readSelection();
+    if (sel) draft.setSelection(sel);
+  };
+  document.addEventListener('selectionchange', onSelectionChange);
+
+  // ---- lifecycle -----------------------------------------------------------------------
+
+  attach(draft);
+
+  return {
+    element,
+    editor,
+    getDraft: () => draft,
+    setDraft: attach,
+    getSnapshot: () => draft.snapshot(),
+    resolve: (r) => draft.resolve(r),
+    retry: (rid) => draft.retry(rid),
+    insertFiles: (files) => insertFiles(files),
+    insertText,
+    focus: focusEditor,
+    setBusy(b) {
+      if (b === busy) return;
+      // Making the editor read-only takes focus from it: give it back when the host is done, if nothing else took it.
+      if (b) refocus = focusInEditor();
+      busy = b;
+      editor.setAttribute('contenteditable', String(!b));
+      editor.setAttribute('aria-busy', String(b));
+      element.classList.toggle('cmp--busy', b);
+      paintAll();
+      if (!b && refocus && (!document.activeElement || document.activeElement === document.body)) focusEditor();
+      if (!b) refocus = false;
+    },
+    openPreview: openPreviewOf,
+    closePreview,
+    get previewOpen() {
+      return preview?.isOpen ?? false;
+    },
+    notice: say,
+    dispose() {
+      if (dead) return;
+      closePreview();
+      dead = true;
+      unsub();
+      document.removeEventListener('selectionchange', onSelectionChange);
+      element.remove();
+    },
+  };
+
+  function makeDraft(c: ComposerOptions): Draft {
+    const upload: Uploader | undefined = c.upload ?? (c.wsUrl ? (file, hint, signal) => postUpload(c.wsUrl as string, file, hint, signal) : undefined);
+    if (!upload) throw new Error('mountComposer: give it a draft, an upload function or a wsUrl');
+    return new Draft({
+      upload,
+      ...(c.label !== undefined ? { label: c.label } : {}),
+      ...(c.maxPromptBytes !== undefined ? { maxPromptBytes: c.maxPromptBytes } : {}),
+      ...(c.maxImages !== undefined ? { maxImages: c.maxImages } : {}),
+    });
+  }
+}

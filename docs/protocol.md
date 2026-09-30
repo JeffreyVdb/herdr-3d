@@ -9,7 +9,7 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
   directory is `0700`, the socket `0600`: access is "can act as this unix user", which for the Mac means "has SSH access"
   (`ssh -N -L <local.sock>:<bridge.sock>`). Nothing listens on TCP.
 - HTTP/1.1 on that socket: `GET /ws` upgrades to the WebSocket, `GET|PUT|DELETE /logo/{building}` carry building logos
-  (M3d, see [Building logos](#building-logos)), `GET /healthz` answers `ok` and carries the bridge's build version in the `X-H3D-Version` header (the body stays `ok`: a helper from an older release checks it exactly). `welcome.server` is the same build as a banner, `herdr-world <version>`.
+  (M3d, see [Building logos](#building-logos)), `POST /upload` carries one image to Drop Zone (see [Image upload](#image-upload)), `GET /healthz` answers `ok` and carries the bridge's build version in the `X-H3D-Version` header (the body stays `ok`: a helper from an older release checks it exactly). `welcome.server` is the same build as a banner, `herdr-world <version>`.
   ```sh
   curl --unix-socket "$XDG_RUNTIME_DIR/herdr-world/bridge.sock" http://herdr-world/healthz
   ```
@@ -50,6 +50,12 @@ always sends with `Origin`; it is checked when present, and a client that sends 
 `POST` and the other methods get `405`. The token, `Origin`, `Cookie` and `Authorization` are not forwarded (only the
 building id and `?h=`). The helper refuses an upload over 1 MiB with `413` `logo_too_large` before it reaches the tunnel,
 and cuts a streamed one off at the limit; it does not link the image code (the bridge converts).
+
+The helper proxies `POST /upload` (see [Image upload](#image-upload)) under the same rules as `/logo` (`Host`, the
+`token` query parameter, `Origin` when present; `403` `forbidden` as the error object, and `405` for any other method
+with `Allow: POST`). Only `label` and `n` go on to the bridge. It lets a body of at most 25 MiB + 4 KiB through (by
+`Content-Length` at once, and by counting while it streams, so a chunked or unlabelled body too) and answers `413`
+`upload_too_large` past that; the bridge decides the exact 25 MiB.
 
 A `502` means the tunnel is down; the helper's own `GET /healthz` reports the tunnel state
 (`{"tunnel":{"state":"up|connecting|degraded|backoff",…}}`, `503` unless `up`).
@@ -528,6 +534,57 @@ the request that got it: when a building advertises a hash again while a request
 `H1`), that request's stale or failed answer is dropped and the hash is asked for again, once. `GET /logo/{building}?h=<hash>`
 through the helper carries `token=` like `/ws`.
 
+### Image upload
+
+#51, #13. An image for an agent's prompt (a screenshot pasted into the hire dialog's first task) is stored by
+**Drop Zone**, a small upload service that runs beside the bridge on the server, and the agent gets its path. Like the
+logos it is HTTP on the bridge's socket and not a WebSocket command: a message is capped at 256 KiB and an image may be
+25 MiB, and a plain request has its own status, body cap and cancellation.
+
+| request | |
+|---|---|
+| `POST /upload?label=<hint>&n=<int>` | The **raw image bytes** as the body (not multipart). `Content-Type` is only a hint: the type is decided from the bytes. `n` is a positive integer (1 to 9999): the image's sequence in the draft or desk; `label` a hint for the file stem (optional). The bridge names the file `h3d-<label>-<n>`: the label lower-cased and cut down to `[a-z0-9-]` (anything else becomes a dash, at most 24 characters), `hire` when nothing is left. Through the helper the URL has `token=` like `/ws`. |
+
+Answers `200` `{"t":"ack","data":{"path","mime","size"}}` with `path` the absolute path **exactly as Drop Zone returned
+it** (only its one framing line feed is removed; Drop Zone picks the month folder and any collision suffix such as
+`-2`, so a client never predicts it), `mime` one of `image/png`, `image/jpeg`, `image/gif`, `image/webp`, and `size` the
+bytes stored. A failure is the protocol's error object with an HTTP status:
+
+| status | `code` | when |
+|---|---|---|
+| `400` | `bad_request` | empty body, `n` missing or not 1 to 9999, or the upload was cut off |
+| `413` | `upload_too_large` | over **25 MiB** (`25 << 20` = 26214400 bytes; `upload.MaxBytes` in Go, `UPLOAD_MAX_BYTES` in the game) |
+| `415` | `upload_unsupported` | not PNG, JPEG, GIF or WebP, by the sniffed bytes (`http.DetectContentType`): SVG, HTML, TIFF, HEIC and octet-stream are refused whatever the client says |
+| `429` | `upload_busy` | four uploads are already running (`Retry-After: 5`) |
+| `502` | `dropzone_unavailable` | Drop Zone did not answer, answered an error, or the bridge has no Drop Zone |
+| `502` | `dropzone_bad_response` | Drop Zone's answer is not one absolute path: empty, relative, several lines, control characters, a `]`, not UTF-8, over 4096 bytes; or it answered before it had the whole image |
+| `504` | `upload_timeout` | the whole upload took over 2 minutes |
+| `403` `502` | `forbidden`, `bridge_unreachable` | the helper's own (token, host or origin refused; the tunnel is down) |
+| `500` | `internal` | the bridge failed |
+
+A client maps a network failure (no answer at all) to `offline`, as for the logos.
+
+- **The cap is on bytes, not on headers.** The bridge counts what arrives (`http.MaxBytesReader`, then again while it
+  streams), whatever `Content-Length` says or whether there is one; one byte over is `413`, never a shortened image.
+  Exactly 25 MiB is accepted.
+- **Nothing is stored for an image that is refused.** The bridge forwards to Drop Zone (`POST <dropzone>/upload`,
+  multipart, the `name` field **before** the one `file` part: Drop Zone ignores a late name, and a second file part would
+  make it an archive; one request per image) while it reads, and never holds the image in memory. The `file` part
+  carries the sniffed type and a safe file name. An image over the cap, a client that goes away, a deadline, or a
+  failure of any kind ends the request **without the multipart footer**, so Drop Zone sees an incomplete body and stores
+  nothing. The first 512 bytes are read first to decide the type, so an unsupported file never reaches Drop Zone.
+- **Sniffing is not decoding.** A file that starts like a PNG is accepted whether or not it decodes; the bridge does not
+  look at pixels.
+- **The path is Drop Zone's answer, verbatim.** It is not rebuilt, quoted, trimmed or made relative; a path that could
+  break the marker `[Image #n: <path>]` (a `]`, a line break, a control character) is refused, not repaired.
+- **The Drop Zone URL** is the bridge's own (`--dropzone-url`, `HERDR_WORLD_DROPZONE_URL`, default
+  `http://127.0.0.1:8080`); a request never names an upstream. Redirects are not followed. The bridge never writes
+  Drop Zone's directory itself.
+- **Audit and log** record the label, `n`, size, type and outcome (audit rows `image.upload`, client `http`), never the
+  image and not the path.
+- A lost answer (the connection drops after Drop Zone stored the file) leaves a file nobody references, and a retry
+  stores another (`-2`). That is accepted: the bridge does not delete what it cannot prove is its own.
+
 ### Floor settings
 
 ```json
@@ -676,7 +733,7 @@ remote-tracking refs) and is audited like any command.
 | `label` | 1–64 bytes, no control characters, not starting with `-`; default: the next generated name (`hire.prepare`'s `label`). The worker's name is the label when that is a free generated name, else the next generated name. |
 | `cwd` | absolute, existing directory; default as in `hire.prepare` |
 | `worktree` | `true`: hire into a new linked git worktree and branch of `cwd`'s repository (below); `cwd` must be in a git work tree with a known `origin/<default>` |
-| `prompt` | optional first task, 1–32768 bytes of UTF-8 without NUL, not starting with `--` (herdr's CLI would read it as a flag). Sent once the agent is ready. |
+| `prompt` | optional first task, 1–32768 bytes of UTF-8 without NUL, not starting with `--` (herdr's CLI would read it as a flag). Sent once the agent is ready. The game sends pasted images as `[Image #n: <absolute path>]` markers in the text, after uploading them (`POST /upload`, above). |
 | `handoff`, `stop_services` | reserved (M9, #14); refused like any unknown field |
 
 Capacity: a hire that would put the floor above `--max-workers-per-floor` or the host above `--max-workers` is
