@@ -63,7 +63,17 @@ describe('seatedKey', () => {
   it('Esc stands you up, Shift+Esc sends Esc to the pane', () => {
     expect(seatedKey(kd('Escape'), true)).toEqual({ items: [], action: 'stand', prevent: true });
     expect(seatedKey(kd('Escape', { shiftKey: true }), true)).toEqual({ items: [{ key: 'esc' }], prevent: true });
-    expect(seatedKey(kd('Escape', { ctrlKey: true }), true)).toEqual({ items: [], prevent: true });
+  });
+
+  it('Ctrl+Esc swaps the terminal and the transcript (M16); Meta, Alt and Ctrl+Shift+Esc are swallowed', () => {
+    for (const mac of [true, false]) {
+      expect(seatedKey(kd('Escape', { ctrlKey: true }), mac), `mac ${mac}`).toEqual({ items: [], action: 'toggle-transcript', prevent: true });
+      expect(seatedKey(kd('Escape', { metaKey: true }), mac)).toEqual({ items: [], prevent: true });
+      expect(seatedKey(kd('Escape', { altKey: true }), mac)).toEqual({ items: [], prevent: true });
+      expect(seatedKey(kd('Escape', { ctrlKey: true, shiftKey: true }), mac)).toEqual({ items: [], prevent: true });
+      expect(seatedKey(kd('Escape', { ctrlKey: true, altKey: true }), mac)).toEqual({ items: [], prevent: true });
+      expect(seatedKey(kd('Escape', { ctrlKey: true, metaKey: true }), mac)).toEqual({ items: [], prevent: true });
+    }
   });
 
   it('Ctrl+letter is a ctrl chord by physical key; Ctrl+other is swallowed', () => {

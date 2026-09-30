@@ -9,6 +9,8 @@ import type { WorldStore } from '../world/store';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
 import { InputLanes, InputQueue, seatedKey, textItems } from './keys';
 import { LaptopTerminal, LIVE_SIZE } from './terminal';
+import { loadRenderer, TranscriptMode, type OverlayRect, type SeatMode } from './transcriptMode';
+import { TranscriptWatches } from './transcriptWatches';
 import { Watches } from './watches';
 
 export { screensParam };
@@ -28,17 +30,22 @@ export interface ScreenMeshInfo {
 /** What a laptop shows (test hook): live (watched, painted), pending (watched, no frame yet), frozen, glow, dark (asleep). */
 export type ScreenState = 'live' | 'pending' | 'frozen' | 'glow' | 'dark';
 
+/** The watches the game makes by itself. */
+export type WatchCommand = 'terminal.watch' | 'terminal.unwatch' | 'transcript.watch' | 'transcript.unwatch';
+
 export interface LaptopHost {
   store: WorldStore;
   send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** The watches the game makes by itself (kept out of the log of what you did). */
-  watch<T extends 'terminal.watch' | 'terminal.unwatch'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
+  watch<T extends WatchCommand>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   unsupported(t: CommandName): boolean;
   toast(msg: string, kind: 'info' | 'error'): void;
   /** The seat bar (ui/seat.ts). */
   seat: SeatView;
   /** CSS px the HUD covers at the top (the top bar) and the bottom (the seat bar): the laptop goes between. */
   insets(): { top: number; bottom: number };
+  /** M16: where the transcript overlay goes (the HUD, fixed over the viewport). */
+  layer: HTMLElement;
 }
 
 /** The HUD while you sit at a laptop. */
@@ -47,6 +54,8 @@ export interface SeatView {
   hide(): void;
   status(kind: 'ok' | 'busy' | 'error' | 'offline', text: string | null): void;
   focus(): void;
+  /** M16: the terminal or the conversation is up. */
+  setMode(mode: SeatMode): void;
 }
 
 /** Where the game is this frame (what the controller needs to plan and to keep you seated). */
@@ -84,8 +93,18 @@ const PLAN_MS = 250;
 const SCREEN = screenFrame();
 /** The screen you sit at covers the whole glass, the status bar's strip too: the terminal gets all of it. */
 const GLASS = glassFrame();
+/** The seated terminal's watch while you read the transcript: kept alive, so switching back shows it at once. */
+const READING_FPS = 1;
 const viewKey = (cam: THREE.PerspectiveCamera) => `${cam.aspect.toFixed(4)}:${window.innerHeight}`;
 const smooth = (k: number) => k * k * (3 - 2 * k);
+
+function storage(): Storage | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
 
 function isMac(): boolean {
   const n = globalThis.navigator as (Navigator & { userAgentData?: { platform?: string } }) | undefined;
@@ -101,12 +120,18 @@ function isMac(): boolean {
  * glides the camera to its laptop, which it watches at a higher fps, and
  * sends what you type (`keys.ts`) until you stand up: Esc, a teleport, the
  * elevator, another floor, a panel, the worker leaving or its floor going to
- * sleep. Standing up ends the seated watch at once.
+ * sleep. Standing up ends the seated watch at once. M16: seated, Ctrl+Esc
+ * swaps the terminal for the worker's conversation (`transcriptMode.ts`),
+ * drawn in a DOM overlay over the monitor; its transcript is watched
+ * (`transcriptWatches.ts`) from the moment you sit, and the terminal stays
+ * watched at 1 fps behind it (the monitor shows it frozen).
  */
 export class Laptops {
   readonly cfg: ScreenConfig;
   readonly planner: WatchPlanner;
   readonly watches: Watches;
+  readonly transcripts: TranscriptWatches;
+  readonly transcript: TranscriptMode;
   readonly mac = isMac();
   private readonly terms = new Map<string, LaptopTerminal>();
   private readonly pool: LaptopTerminal[] = [];
@@ -163,13 +188,43 @@ export class Laptops {
       closed: (id, reason) => this.onClosed(id, reason),
       now: () => performance.now(),
     });
+    this.transcript = new TranscriptMode({
+      send: (t, args) => this.host.send(t, args),
+      renderer: loadRenderer,
+      overlay: () => {
+        const box = document.createElement('div');
+        box.className = 'seat-transcript';
+        box.tabIndex = -1;
+        box.hidden = true;
+        box.setAttribute('role', 'region');
+        box.setAttribute('aria-label', 'Conversation');
+        this.host.layer.append(box);
+        return box;
+      },
+      storage: storage(),
+      status: (kind, text) => this.host.seat.status(kind, text),
+      modeChanged: (mode) => this.onMode(mode),
+    });
+    this.transcripts = new TranscriptWatches({
+      send: (t, args) => this.host.watch(t, args),
+      sink: {
+        reset: (id, ack) => this.transcript.reset(id, ack),
+        push: (id, items, updates) => this.transcript.push(id, items, updates),
+        stop: () => {},
+      },
+      failed: (id, code, message) => this.onTranscriptFailed(id, code, message),
+      closed: (id, reason) => this.onTranscriptClosed(id, reason),
+      now: () => performance.now(),
+    });
   }
 
   // ---- bridge -------------------------------------------------------------------
 
   onConn(m: ConnMessage): void {
     if (m.t === 'terminal.frame') this.watches.frame(m);
-    else this.watches.closed(m);
+    else if (m.t === 'terminal.closed') this.watches.closed(m);
+    else if (m.t === 'transcript.items') this.transcripts.items(m);
+    else this.transcripts.closed(m);
   }
 
   /** The connection is up (again) or down: down, the bridge forgot every watch; up, the next plan watches again. */
@@ -178,6 +233,7 @@ export class Laptops {
     this.connected = live;
     if (!live) {
       this.watches.lost();
+      this.transcripts.lost();
       this.planner.clear();
       if (this.seat) this.host.seat.status('offline', 'Not connected to herdr-world: what you type is not sent');
     } else {
@@ -231,6 +287,104 @@ export class Laptops {
     else if (reason === 'asleep') this.stand(`${name}’s floor went to sleep, so you got up.`, true);
     else if (reason === 'observer_failed') this.host.seat.status('error', `${name}’s screen stopped updating. It comes back when herdr-world restarts the observer.`);
     // pane_changed: the next sync watches the new pane.
+  }
+
+  // ---- M16: the transcript ----------------------------------------------------------
+
+  /** Why Ctrl+Esc cannot show the conversation, or null when it can. */
+  private whyNoTranscript(): string | null {
+    const why = this.transcripts.disabled ?? (this.host.unsupported('transcript.watch') ? '' : null);
+    return why === null ? null : failureText('transcript.watch', 'unknown_command', why);
+  }
+
+  /** Ctrl+Esc or the seat bar's switch: the terminal or the conversation. */
+  toggleTranscript(): void {
+    if (!this.seat) return;
+    if (this.transcript.mode === 'terminal') {
+      const why = this.whyNoTranscript();
+      if (why) return this.host.seat.status('error', why);
+    }
+    this.transcript.toggle();
+  }
+
+  private onMode(mode: SeatMode): void {
+    this.host.seat.setMode(mode);
+    const s = this.seat;
+    if (s && this.meshes) {
+      const t = this.terms.get(s.id);
+      if (mode === 'transcript') {
+        // The monitor behind the overlay holds the screen as it was ("reading"); the watch goes on at 1 fps.
+        const at = this.liveAt.get(s.id);
+        if (at !== undefined) this.meshes.setLive(at, null);
+        this.liveAt.delete(s.id);
+        if (t?.painted) this.meshes.freeze(s.desk, t.canvas);
+      } else this.meshes.unfreeze(s.desk);
+    }
+    if (mode === 'terminal') this.host.seat.focus();
+    this.syncWatches();
+  }
+
+  private onTranscriptFailed(id: string, code: string, message: string): void {
+    if (this.seat?.id !== id) return;
+    const name = this.seat.name;
+    if (code === 'unknown_command') {
+      this.transcript.stop(id);
+      this.host.seat.status('error', failureText('transcript.watch', code, message));
+    } else if (this.transcript.mode === 'transcript') {
+      this.host.seat.status('error', code === 'capacity' ? 'herdr-world is reading as many conversations as it allows. Trying again in a moment.' : failureText('transcript.watch', code, message, { worker: name }));
+    }
+  }
+
+  private onTranscriptClosed(id: string, reason: string): void {
+    if (this.seat?.id !== id) return;
+    // The terminal's own close (or the frame loop) stands you up; the overlay goes back to the terminal meanwhile.
+    if (reason === 'worker_removed' || reason === 'asleep') this.transcript.stop(id);
+    else if (reason === 'session_changed' && this.transcript.mode === 'transcript') this.host.seat.status('ok', `${this.seat.name} started a new session`);
+  }
+
+  /** Where the monitor's glass is on the viewport (CSS px), between the top bar and the seat bar. */
+  private glassRect(cam: THREE.PerspectiveCamera): OverlayRect | null {
+    const s = this.seat;
+    if (!s || !this.meshes) return null;
+    const M = this.m.multiplyMatrices(s.office.root.matrixWorld, this.meshes.slotMatrix(s.desk, new THREE.Matrix4()));
+    const center = this.v.copy(GLASS.center).applyMatrix4(M);
+    const normal = GLASS.normal.clone().transformDirection(M);
+    const up = GLASS.up.clone().transformDirection(M);
+    const right = new THREE.Vector3().crossVectors(up, normal).normalize();
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    cam.updateMatrixWorld();
+    for (const [a, b] of [
+      [-1, -1],
+      [1, -1],
+      [1, 1],
+      [-1, 1],
+    ] as const) {
+      const p = center
+        .clone()
+        .addScaledVector(right, (a * GLASS.width) / 2)
+        .addScaledVector(up, (b * GLASS.height) / 2)
+        .project(cam);
+      if (p.z < -1 || p.z > 1) return null;
+      const x = ((p.x + 1) / 2) * W;
+      const y = ((1 - p.y) / 2) * H;
+      x0 = Math.min(x0, x);
+      x1 = Math.max(x1, x);
+      y0 = Math.min(y0, y);
+      y1 = Math.max(y1, y);
+    }
+    // Never under the top bar or the seat bar, nor off the window.
+    const ins = this.host.insets();
+    x0 = Math.max(0, x0);
+    x1 = Math.min(W, x1);
+    y0 = Math.max(ins.top, y0);
+    y1 = Math.min(H - ins.bottom, y1);
+    if (x1 - x0 < 40 || y1 - y0 < 40) return null;
+    return { left: Math.round(x0), top: Math.round(y0), width: Math.round(x1 - x0), height: Math.round(y1 - y0) };
   }
 
   private watchFailure(code: string, message: string): string {
@@ -297,6 +451,8 @@ export class Laptops {
     this.host.seat.show(v.name, this.mac);
     this.host.seat.status('ok', null);
     this.host.seat.focus();
+    // M16: its transcript is watched from now on (the first Ctrl+Esc shows it at once); its last mode comes back.
+    this.transcript.sit(id, v.name, !this.whyNoTranscript());
     // With the seat bar up, the laptop fits between it and the top bar.
     this.seat.to = this.seatPose(office, v.desk, camera);
     this.seat.view = viewKey(camera);
@@ -316,6 +472,8 @@ export class Laptops {
     this.seat = null;
     this.lanes.stand();
     this.input = null;
+    this.transcript.stand();
+    this.meshes?.unfreeze(s.desk);
     s.office.setLean(null);
     s.office.setAtLaptop(false);
     const term = this.terms.get(s.id);
@@ -378,10 +536,50 @@ export class Laptops {
   key(e: KeyboardEvent): boolean {
     if (!this.seat) return false;
     const k = seatedKey(e, this.mac);
+    if (this.transcript.shown) return this.readingKey(e, k.action === 'toggle-transcript');
     if (k.prevent) e.preventDefault();
     if (k.action === 'stand') this.stand();
+    else if (k.action === 'toggle-transcript') this.toggleTranscript();
     else if (k.items.length) this.type(k.items);
     return true;
+  }
+
+  /**
+   * M16: a keydown while you read the transcript. Nothing goes to the pane:
+   * Ctrl+Esc goes back to the terminal, Esc stands you up, Enter goes to the
+   * prompt box; every other key (scrolling, typing in the prompt box) is the
+   * transcript's own, as is a key it already took (`defaultPrevented`).
+   */
+  private readingKey(e: KeyboardEvent, toggle: boolean): boolean {
+    if (toggle) {
+      e.preventDefault();
+      this.toggleTranscript();
+      return true;
+    }
+    if (e.defaultPrevented || e.isComposing) return true;
+    const mods = e.ctrlKey || e.metaKey || e.altKey || e.shiftKey;
+    if (e.key === 'Escape' && !mods) {
+      e.preventDefault();
+      this.stand();
+    } else if (e.key === 'Enter' && !mods && !this.transcriptOwns(e.target)) {
+      e.preventDefault();
+      this.transcript.focusPrompt();
+    }
+    return true;
+  }
+
+  /** A key on a control in the transcript (its prompt box, a tool row's button, a link) is its own; on the timeline itself it is not. */
+  private transcriptOwns(t: EventTarget | null): boolean {
+    const box = this.transcript.box;
+    if (!box || !(t instanceof Element) || !box.contains(t)) return false;
+    const control = t.closest('button, a, input, textarea, select, [contenteditable]');
+    return !!control && box.contains(control);
+  }
+
+  /** Where the keyboard goes while seated (a click on the view): the terminal's input, or the transcript. */
+  focusSeat(): void {
+    if (this.transcript.shown) this.transcript.focus();
+    else this.host.seat.focus();
   }
 
   /** Typed text from composition (IME, dead keys) or the seat bar's input. */
@@ -390,14 +588,14 @@ export class Laptops {
   }
 
   private type(items: KeyItem[]): void {
-    if (!this.seat || !this.input || !items.length) return;
+    if (!this.seat || !this.input || !items.length || this.transcript.shown) return;
     this.host.seat.status('busy', null);
     this.input.keys(items);
   }
 
   /** A paste while seated (Cmd/Ctrl+V): `worker.prompt` for an agent, typed for a plain shell. */
   paste(text: string): void {
-    if (!this.seat || !this.input) return;
+    if (!this.seat || !this.input || this.transcript.shown) return;
     if (!this.input.paste(text)) this.host.seat.status('error', 'That paste is over 16 KiB: paste less at a time.');
     else this.host.seat.status('busy', null);
   }
@@ -436,6 +634,7 @@ export class Laptops {
       else if (s.office.isAsleep) this.stand(`${s.name}’s floor went to sleep, so you got up.`, true);
       else if (!v.worker.pane_id) this.stand(`${s.name} has no terminal any more, so you got up.`, true);
       else if (v.desk !== s.desk) this.stand(`${s.name} moved desks, so you got up.`, true);
+      else this.transcript.blocked(v.worker.status === 'blocked' ? (v.worker.question ?? null) : null);
     }
     const meshes = this.meshes;
     if (office && meshes) {
@@ -454,6 +653,8 @@ export class Laptops {
         const seated = this.seat?.id === id;
         const fps = seated ? this.cfg.seatedFps : this.cfg.fps;
         if (t.draw(f.now, 1000 / fps - 4)) this.paints++;
+        // M16: reading the transcript, the monitor behind it stays frozen (see onMode).
+        if (seated && this.transcript.shown) continue;
         const at = this.liveAt.get(id);
         if (at !== undefined && at !== desk) {
           meshes.setLive(at, null);
@@ -473,6 +674,7 @@ export class Laptops {
       meshes.update(f.now);
     }
     this.moveCamera(f.camera, f.now);
+    if (this.transcript.shown) this.transcript.place(this.glassRect(f.camera));
   }
 
   private plan(f: LaptopFrame, office: OfficeView, meshes: ScreenMeshes): void {
@@ -508,8 +710,10 @@ export class Laptops {
     if (!this.connected) return;
     const want = new Map<string, number>();
     if (this.attached && !this.attached.isAsleep) for (const id of this.planner.live) want.set(id, this.cfg.fps);
-    if (this.seat) want.set(this.seat.id, this.cfg.seatedFps);
+    if (this.seat) want.set(this.seat.id, this.transcript.shown ? READING_FPS : this.cfg.seatedFps);
     this.watches.sync(want);
+    // M16: the transcript of the worker you sit at (not counted against the terminal watches).
+    this.transcripts.sync(new Set(this.seat && !this.whyNoTranscript() ? [this.seat.id] : []));
   }
 
   private moveCamera(cam: THREE.PerspectiveCamera, now: number): void {
@@ -562,6 +766,7 @@ export class Laptops {
       const t = this.terms.get(id);
       let state: ScreenState = 'glow';
       if (o.isAsleep) state = 'dark';
+      else if (this.seat?.id === id && this.transcript.shown) state = this.meshes?.isFrozen(i) ? 'frozen' : 'glow';
       else if (fps !== null) state = t?.painted ? 'live' : 'pending';
       else if (this.meshes?.isFrozen(i)) state = 'frozen';
       out.push({ id, desk: i, state, fps });
@@ -611,6 +816,19 @@ export class Laptops {
 
   get watchCount(): number {
     return this.watches.count;
+  }
+
+  /** M16: the seated view's mode, its transcript and overlay (test hook). */
+  transcriptState(): { mode: SeatMode; watches: number; items: number; box: OverlayRect | null; mounted: boolean } {
+    const b = this.transcript.box;
+    const r = b && !b.hidden ? b.getBoundingClientRect() : null;
+    return {
+      mode: this.transcript.mode,
+      watches: this.transcripts.count,
+      items: this.transcript.itemCount,
+      box: r ? { left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) } : null,
+      mounted: this.transcript.counts.mounted > this.transcript.counts.destroyed,
+    };
   }
 
   dispose(): void {

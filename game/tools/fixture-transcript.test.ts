@@ -1,0 +1,106 @@
+import { describe, expect, it } from 'vitest';
+import type { TranscriptItem } from '../src/net/protocol';
+import { watchAck } from '../src/laptop/transcriptWatches';
+import { loadFixture } from './fixture-server';
+import { SimWorld } from './fixture-sim';
+import { SIM_MAX_TRANSCRIPT_WATCHES, SIM_SUBAGENT } from './fixture-transcript';
+
+type Msg = Record<string, unknown>;
+
+function rig(fail?: string) {
+  const { snapshot } = loadFixture('demo-m4');
+  const timers = new Map<number, () => void>();
+  let t = 0;
+  const sim = new SimWorld(snapshot as never, {
+    fail,
+    stepMs: 100,
+    now: () => 1_000_000,
+    setTimeout: (fn) => (timers.set(++t, fn), t),
+    clearTimeout: (h) => timers.delete(h as number),
+  });
+  /** Runs every timer due, and the ones they start. */
+  const settle = () => {
+    for (let i = 0; i < 100 && timers.size; i++) {
+      const [id, fn] = [...timers][0] as [number, () => void];
+      timers.delete(id);
+      fn();
+    }
+  };
+  const out: Msg[] = [];
+  let n = 0;
+  const cmd = (t: string, args: unknown) => {
+    const req_id = `r${++n}`;
+    sim.handle({ t, req_id, args }, (m) => out.push(m));
+    return out.find((m) => m.req_id === req_id) as Msg & { data?: Record<string, unknown>; code?: string };
+  };
+  return { sim, out, cmd, settle };
+}
+
+const world = loadFixture('demo-m4').snapshot as unknown as { world: { workers: Array<{ name?: string; id: string }> } };
+const byName = (name: string) => world.world.workers.find((w) => w.name === name)?.id as string;
+const agent = byName('Nibble'); // herdr-3d, claude
+const asleep = byName('Muffin'); // depot-manager, asleep
+
+describe('TranscriptSim', () => {
+  it('acks a watch with the demo timeline in the bridge’s shape', () => {
+    const r = rig();
+    const a = r.cmd('transcript.watch', { id: agent, limit: 200 });
+    expect(a.t).toBe('ack');
+    const ack = watchAck(a.data);
+    expect(ack).toMatchObject({ harness: 'claude', pending: false, has_more: false });
+    expect(ack.items.length).toBe((a.data?.items as unknown[]).length);
+    const kinds = new Set(ack.items.map((it) => it.kind));
+    for (const k of ['user', 'assistant', 'thinking', 'tool', 'subagent', 'compaction', 'notice', 'unknown']) expect(kinds).toContain(k);
+    expect(ack.items.find((it) => it.kind === 'subagent')?.subagent?.agent_id).toBe(SIM_SUBAGENT);
+    expect(r.cmd('sim.transcripts', {}).data).toEqual({ watches: 1, ids: [agent] });
+    expect(r.cmd('transcript.unwatch', { id: agent }).t).toBe('ack');
+    expect(r.cmd('sim.transcripts', {}).data).toEqual({ watches: 0, ids: [] });
+  });
+
+  it('limits and refusals as the bridge: limit, unknown worker, asleep, capacity', () => {
+    const r = rig();
+    expect(r.cmd('transcript.watch', { id: agent, limit: 501 }).code).toBe('bad_request');
+    expect(r.cmd('transcript.watch', { id: 'nope' }).code).toBe('unknown_worker');
+    expect(r.cmd('transcript.watch', { id: asleep }).code).toBe('invalid_state');
+    const awake = world.world.workers.filter((w) => w.id !== asleep).slice(0, SIM_MAX_TRANSCRIPT_WATCHES + 1);
+    for (const w of awake.slice(0, SIM_MAX_TRANSCRIPT_WATCHES)) expect(r.cmd('transcript.watch', { id: w.id }).t).toBe('ack');
+    // A re-watch replaces; a fifth worker is over the cap.
+    expect(r.cmd('transcript.watch', { id: awake[0]?.id }).t).toBe('ack');
+    expect(r.cmd('transcript.watch', { id: awake[SIM_MAX_TRANSCRIPT_WATCHES]?.id }).code).toBe('capacity');
+  });
+
+  it('a subagent is a page with agent; other pages need a cursor; only for a watched worker', () => {
+    const r = rig();
+    expect(r.cmd('transcript.page', { id: agent, before: '', agent: SIM_SUBAGENT }).code).toBe('invalid_state');
+    r.cmd('transcript.watch', { id: agent });
+    const sub = r.cmd('transcript.page', { id: agent, before: '', agent: SIM_SUBAGENT, limit: 500 });
+    expect(sub.t).toBe('ack');
+    expect(Object.keys(sub.data ?? {}).sort()).toEqual(['cursor', 'has_more', 'items']);
+    expect((sub.data?.items as TranscriptItem[]).length).toBeGreaterThan(0);
+    expect(r.cmd('transcript.page', { id: agent, before: '', agent: 'other' }).code).toBe('not_found');
+    expect(r.cmd('transcript.page', { id: agent, before: '' }).code).toBe('bad_request');
+    expect(r.cmd('transcript.page', { id: agent, before: 'c:1' }).data).toEqual({ items: [], cursor: 'c:1', has_more: false });
+    expect((r.cmd('transcript.item', { id: agent, item: 'toolu_demo_edit' }).data?.item as TranscriptItem).tool?.name).toBe('Edit');
+    expect(r.cmd('transcript.item', { id: agent, item: 'nope' }).code).toBe('not_found');
+  });
+
+  it('sim.transcript pushes items and closes; world events close the watches they end', () => {
+    const r = rig();
+    r.cmd('transcript.watch', { id: agent });
+    r.cmd('sim.transcript', { id: agent, updates: [{ id: 'toolu_demo_bash2', seq: 14, ts: 0, kind: 'tool', tool: { name: 'Bash', input_summary: 'x', status: 'ok' } }] });
+    expect(r.out.find((m) => m.t === 'transcript.items')).toMatchObject({ id: agent, items: [], updates: [{ id: 'toolu_demo_bash2' }] });
+    r.cmd('sim.transcript', { id: agent, close: 'session_changed' });
+    expect(r.out.find((m) => m.t === 'transcript.closed')).toEqual({ t: 'transcript.closed', id: agent, reason: 'session_changed' });
+    expect(r.cmd('sim.transcripts', {}).data).toMatchObject({ watches: 0 });
+    // The worker's floor falls asleep: asleep.
+    r.cmd('transcript.watch', { id: agent });
+    r.cmd('floor.sleep', { session: 'herdr-3d' });
+    r.settle();
+    expect(r.out.filter((m) => m.t === 'transcript.closed').at(-1)).toEqual({ t: 'transcript.closed', id: agent, reason: 'asleep' });
+  });
+
+  it('simfail=no_m16 plays a bridge before M16', () => {
+    const r = rig('no_m16');
+    expect(r.cmd('transcript.watch', { id: agent }).code).toBe('unknown_command');
+  });
+});

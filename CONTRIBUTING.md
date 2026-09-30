@@ -10,7 +10,9 @@
   WebSocket, wake/sleep, floor settings, hire/send home, M6 team presets and `run.start`), `proto` (protocol v1 types and client), `gitremote` (GitHub
   origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires, send-homes and the Changes
   panel), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
-  usage and cost from their transcripts, read incrementally, and the pricing table), `runs` (M6: write-code runs, the
+  usage and cost from their transcripts, read incrementally, and the pricing table), `jsonl` (the shared reading of
+  those JSONL files: one tail per transcript, complete lines from byte offsets, no symlinks), `transcript` (M16: the
+  Claude and Codex transcripts as one timeline of items, indexed by offset for the laptop's conversation view), `runs` (M6: write-code runs, the
   freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it), `limits` (M10: the Claude and
   Codex plan limits, read by running the two CLIs as probes through a fake-able process runner), `logo` (M3d: PNG, WebP
   and restricted SVG in, one PNG of at most 1024 px out; pure Go, only the bridge uses it); M7 boards:
@@ -639,6 +641,14 @@ fail (`{fail: "message"}`, or `head_moved` to make a merge answer `stale`; `{fai
 (`{poll: true}`). `simfail=no_m7` plays a bridge before M7 (every board command `unknown_command`). `open=none` in the page
 URL makes "Open in …" record the page instead of opening a window. E.g.
 `?ws=%2Ffixture%2Fdemo-m6%3Fsim%3D1%26simms%3D150&floor=lab`.
+
+M16 on the simulating server (`tools/fixture-transcript.ts`, rules at its top): sit at any worker and press Ctrl+Esc
+for its conversation. `transcript.watch` answers a demo timeline of every item kind in the bridge's shape, the demo's
+Agent call pages the bridge's own output for its subagent fixture, and `sim.transcript` (`simTranscript(args)` in the
+hooks) pushes items or updates to a watch (`{id, items, updates}`) or closes it (`{id, close: "session_changed"}`);
+`simfail=no_m16` plays a bridge before M16. The game's tests read what the bridge makes of its own fixtures from
+`game/fixtures/transcript/` (`H3D_UPDATE_FIXTURES=1 go test ./internal/transcript` writes them, and the Go test fails
+when they are stale). E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1&floor=herdr-3d`.
 
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings

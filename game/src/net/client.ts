@@ -7,6 +7,8 @@ import {
   isWorldEvent,
   isTerminalClosed,
   isTerminalFrame,
+  isTranscriptClosed,
+  isTranscriptItems,
   isBoardMessage,
   parseMessage,
   type CommandArgs,
@@ -88,7 +90,7 @@ export interface ClientHandlers {
   onEvent(e: WorldEvent): void;
   onState?(s: ConnState): void;
   onWelcome?(w: Welcome): void;
-  /** M5: connection-scoped messages (no seq): laptop screen frames and closes. */
+  /** M5: connection-scoped messages (no seq): laptop screen frames and closes; M16: transcript items and closes. */
   onConn?(m: ConnMessage): void;
   /** M7: board messages (no seq, never replayed): the issues and pull requests of the floor this connection watches. */
   onBoard?(m: BoardMessage): void;
@@ -357,6 +359,11 @@ export class BridgeClient {
     }
     // M5: laptop screens of this connection's watches (no seq, never replayed).
     if (isTerminalFrame(m) || isTerminalClosed(m)) {
+      this.o.handlers.onConn?.(m);
+      return;
+    }
+    // M16: transcripts of this connection's watches (no seq, never replayed; the game watches again after a reconnect).
+    if (isTranscriptItems(m) || isTranscriptClosed(m)) {
       this.o.handlers.onConn?.(m);
       return;
     }

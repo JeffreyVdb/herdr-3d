@@ -1,0 +1,4 @@
+{"type":"hologram-state","hologram":{"frames":3},"sessionId":"5ddf9ceb-867a-4acd-bc22-3174e886c664","timestamp":"2026-09-29T10:06:00.000Z","uuid":"4b1f0c2e-7d3a-4f59-9e81-6a2c5d7b9e10","version":"9.0.0"}
+{"parentUuid":"4b1f0c2e-7d3a-4f59-9e81-6a2c5d7b9e10","isSidechain":false,"message":{"model":"claude-opus-9","id":"msg_future01","type":"message","role":"assistant","content":[{"type":"hologram","frames":[1,2,3]}]},"apiBlockIndex":0,"type":"assistant","uuid":"5c2a1d3f-8e4b-4a6c-9f92-7b3d6e8c0f21","timestamp":"2026-09-29T10:06:01.000Z","sessionId":"5ddf9ceb-867a-4acd-bc22-3174e886c664","version":"9.0.0"}
+{"parentUuid":"5c2a1d3f-8e4b-4a6c-9f92-7b3d6e8c0f21","isSidechain":false,"type":"system","subtype":"hologram_summary","content":"3 frames","timestamp":"2026-09-29T10:06:02.000Z","uuid":"6d3b2e4a-9f5c-4b7d-8a03-8c4e7f9d1a32","sessionId":"5ddf9ceb-867a-4acd-bc22-3174e886c664","version":"9.0.0"}
+not json at all {

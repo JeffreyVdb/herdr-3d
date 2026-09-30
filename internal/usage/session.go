@@ -11,6 +11,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/jsonl"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
@@ -55,12 +56,50 @@ type Session struct {
 	pricing     *Pricing
 
 	parse  parser
-	main   *tail
+	main   *jsonl.Tail
 	subDir string
-	subs   map[string]*tail // Claude subagents, by path
-	missAt time.Time        // when a lookup last found nothing
-	subAt  time.Time        // when the subagents were last listed
+	subs   map[string]*jsonl.Tail // Claude subagents, by path
+	missAt time.Time              // when a lookup last found nothing
+	subAt  time.Time              // when the subagents were last listed
 	found  bool
+	rescan time.Duration // how long a miss waits (MissRescan)
+	tap    Tap
+}
+
+// Tap gets the main transcript's lines as the session reads them, so the
+// transcript view shares the one read of the file (internal/transcript).
+type Tap interface {
+	// Line is one complete line and the byte offset it starts at.
+	Line(off int64, line []byte)
+	// Void says the lines sent are void: the file was truncated or
+	// replaced (read again from its start), or it went (gone). The tap
+	// gets nothing more.
+	Void(gone bool)
+}
+
+// SetTap sends the main transcript's lines read from now on to t (nil:
+// none).
+func (s *Session) SetTap(t Tap) { s.tap = t }
+
+// Main is the main transcript found (path "" until then), the file as last
+// read (nil before) and where the next line the tap gets starts: every
+// line before it was read already.
+func (s *Session) Main() (path string, fi fs.FileInfo, next int64) {
+	if s.main == nil {
+		return "", nil, 0
+	}
+	return s.main.Path, s.main.File(), s.main.Delivered()
+}
+
+// SetRescan sets how long a transcript not found waits before it is looked
+// for again (0: MissRescan).
+func (s *Session) SetRescan(d time.Duration) { s.rescan = d }
+
+func (s *Session) void(gone bool) {
+	if s.tap != nil {
+		s.tap.Void(gone)
+		s.tap = nil
+	}
 }
 
 // NewSession reads the usage of agent session id of harness (claude or
@@ -72,7 +111,7 @@ func NewSession(harness, id string, roots Roots, p *Pricing) *Session {
 	if harness != Claude && harness != Codex {
 		return nil
 	}
-	return &Session{harness: harness, id: id, roots: roots, pricing: p, subs: map[string]*tail{}, parse: newParser(harness)}
+	return &Session{harness: harness, id: id, roots: roots, pricing: p, subs: map[string]*jsonl.Tail{}, parse: newParser(harness)}
 }
 
 func newParser(harness string) parser {
@@ -86,7 +125,11 @@ func newParser(harness string) parser {
 // returns its usage; ok is false until its transcript was found.
 func (s *Session) Poll(now time.Time) (u proto.Usage, ok bool) {
 	if s.main == nil {
-		if !s.missAt.IsZero() && now.Sub(s.missAt) < MissRescan && !now.Before(s.missAt) {
+		rescan := s.rescan
+		if rescan <= 0 {
+			rescan = MissRescan
+		}
+		if !s.missAt.IsZero() && now.Sub(s.missAt) < rescan && !now.Before(s.missAt) {
 			return s.usage()
 		}
 		path := s.find()
@@ -97,26 +140,28 @@ func (s *Session) Poll(now time.Time) (u proto.Usage, ok bool) {
 		if s.found { // found again after it went: count it all afresh
 			s.parse = newParser(s.harness)
 			for _, t := range s.subs {
-				t.restart()
+				t.Restart()
 			}
 		}
-		s.main, s.found = &tail{path: path}, true
+		s.main, s.found = jsonl.NewTail(path), true
 		if s.harness == Claude {
 			s.subDir = filepath.Join(filepath.Dir(path), s.id, "subagents")
 		}
 	}
 	err := s.read(now)
-	if errors.Is(err, errReplaced) {
+	if errors.Is(err, jsonl.ErrReplaced) {
 		// A file was truncated or replaced: forget everything, read it all.
+		s.void(false)
 		s.parse = newParser(s.harness)
-		s.main.restart()
+		s.main.Restart()
 		for _, t := range s.subs {
-			t.restart()
+			t.Restart()
 		}
 		err = s.read(now)
 	}
-	if err != nil && !errors.Is(err, errReplaced) && s.main != nil {
-		if _, serr := os.Lstat(s.main.path); errors.Is(serr, fs.ErrNotExist) {
+	if err != nil && !errors.Is(err, jsonl.ErrReplaced) && s.main != nil {
+		if _, serr := os.Lstat(s.main.Path); errors.Is(serr, fs.ErrNotExist) {
+			s.void(true)
 			s.main, s.missAt = nil, now // gone: look again later, keep what was counted
 		}
 	}
@@ -132,7 +177,12 @@ func (s *Session) usage() (proto.Usage, bool) {
 
 // read reads the main transcript, then the subagents'.
 func (s *Session) read(now time.Time) error {
-	if err := s.main.next(func(b []byte) { s.parse.line(true, b) }); err != nil {
+	if err := s.main.Next(func(off int64, b []byte) {
+		s.parse.line(true, b)
+		if s.tap != nil {
+			s.tap.Line(off, b)
+		}
+	}); err != nil {
 		return err
 	}
 	if s.subDir == "" {
@@ -145,7 +195,7 @@ func (s *Session) read(now time.Time) error {
 			name := e.Name()
 			if e.Type().IsRegular() && strings.HasPrefix(name, "agent-") && strings.HasSuffix(name, ".jsonl") {
 				if p := filepath.Join(s.subDir, name); s.subs[p] == nil {
-					s.subs[p] = &tail{path: p}
+					s.subs[p] = jsonl.NewTail(p)
 				}
 			}
 		}
@@ -156,9 +206,9 @@ func (s *Session) read(now time.Time) error {
 	}
 	sort.Strings(paths)
 	for _, p := range paths {
-		err := s.subs[p].next(func(b []byte) { s.parse.line(false, b) })
+		err := s.subs[p].Next(func(_ int64, b []byte) { s.parse.line(false, b) })
 		switch {
-		case errors.Is(err, errReplaced):
+		case errors.Is(err, jsonl.ErrReplaced):
 			return err
 		case errors.Is(err, fs.ErrNotExist):
 			delete(s.subs, p) // what it had stays counted
@@ -198,10 +248,10 @@ func (s *Session) find() string {
 func (s *Session) BytesRead() int64 {
 	var n int64
 	if s.main != nil {
-		n += s.main.read
+		n += s.main.BytesRead()
 	}
 	for _, t := range s.subs {
-		n += t.read
+		n += t.BytesRead()
 	}
 	return n
 }

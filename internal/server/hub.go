@@ -124,6 +124,13 @@ type Options struct {
 	// DefaultPromptRetryWait).
 	QuestionPoll, AnswerTimeout, PromptRetryWait time.Duration
 
+	// M16 transcript: MaxTranscriptWatches caps the transcript watches of
+	// one connection (default DefaultMaxTranscriptWatches), TranscriptFlush
+	// is the least time between two pushes of a watch (default
+	// DefaultTranscriptFlush). Transcripts are read with Usage (nil: none).
+	MaxTranscriptWatches int
+	TranscriptFlush      time.Duration
+
 	// M6 runs.
 	// RunsDir is write-code's runs directory, where the freelancers'
 	// reports are (<RunsDir>/<h3d_run>/<h3d_report>; "": no reports), and
@@ -214,6 +221,10 @@ type Hub struct {
 	runPending map[string]bool         // orchestrators of launches whose run id is not known yet
 
 	runs runsState // M6 runs
+
+	// M16 transcript
+	tx        txWatches     // transcripts being watched
+	usageKick chan struct{} // asks the usage tracker for a round now
 
 	boards boardsState // M7 boards
 
@@ -382,8 +393,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		limits:        map[string]proto.Limits{},
 		limitsPoller:  newLimitsPoller(opts.Limits),
 	}
-	h.initTerm() // M5 term
-	h.initRuns() // M6 runs
+	h.initTerm()        // M5 term
+	h.initTranscripts() // M16 transcript
+	h.initRuns()        // M6 runs
 	if h.opts.RunLaunch == nil {
 		h.opts.RunLaunch = storeRunLaunch(st, h.log)
 	}
@@ -527,8 +539,9 @@ func (h *Hub) Leave(c *Client) {
 	_ = h.do(context.Background(), func(context.Context) {
 		delete(h.clients, c)
 		h.setClients()
-		h.dropWatches(c)    // M5 term
-		h.dropBoardWatch(c) // M7 boards
+		h.dropWatches(c)           // M5 term
+		h.dropTranscriptWatches(c) // M16 transcript
+		h.dropBoardWatch(c)        // M7 boards
 	})
 }
 
@@ -569,6 +582,13 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startPrompt
 		case proto.CmdWorkerAnswer:
 			start = h.startAnswer
+		// M16 transcript
+		case proto.CmdTranscriptWatch:
+			start = h.startTranscriptWatch
+		case proto.CmdTranscriptUnwatch:
+			start = h.startTranscriptUnwatch
+		case proto.CmdTranscriptPage, proto.CmdTranscriptItem:
+			start = h.startTranscriptRead
 		// M6 launch
 		case proto.CmdRunPrepare:
 			start = h.startRunPrepare
