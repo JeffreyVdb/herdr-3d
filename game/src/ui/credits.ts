@@ -34,6 +34,48 @@ function closeIcon(): SVGSVGElement {
   return s;
 }
 
+/** A font the game ships, its copyright line and licence (the SIL Open Font License 1.1 unless it says otherwise). */
+export interface FontCredit {
+  name: string;
+  /** What it is for in the game. */
+  role: string;
+  /** The copyright line of its licence file. */
+  copyright: string;
+  source: string;
+  license?: { name: string; url: string };
+}
+
+const OFL = { name: 'SIL OFL 1.1', url: 'https://openfontlicense.org/open-font-license-official-text/' };
+
+/** #59: the fonts: Recursive for the HUD, then each transcript preset's mono and prose faces (ui/themes.ts). */
+export const FONT_CREDITS: readonly FontCredit[] = [
+  { name: 'Recursive', role: 'The HUD, panels and dialogs', copyright: 'Copyright 2019 The Recursive Project Authors', source: 'https://github.com/arrowtype/recursive' },
+  { name: 'Departure Mono', role: 'Terminal preset, monospace', copyright: 'Copyright 2022–2024 Helena Zhang (helenazhang.com)', source: 'https://github.com/rektdeckard/departure-mono' },
+  { name: 'Archivo', role: 'Terminal preset, text', copyright: 'Copyright 2020 The Archivo Project Authors', source: 'https://github.com/Omnibus-Type/Archivo' },
+  { name: 'JetBrains Mono', role: 'Quiet preset, monospace', copyright: 'Copyright 2020 The JetBrains Mono Project Authors', source: 'https://github.com/JetBrains/JetBrainsMono' },
+  { name: 'Atkinson Hyperlegible Next', role: 'Quiet preset, text', copyright: 'Copyright 2020–2024 The Atkinson Hyperlegible Next Project Authors', source: 'https://github.com/googlefonts/atkinson-hyperlegible-next' },
+  { name: 'Space Mono', role: 'Paper preset, monospace', copyright: 'Copyright 2016 The Space Mono Project Authors', source: 'https://github.com/googlefonts/spacemono' },
+  { name: 'Newsreader', role: 'Paper preset, text', copyright: 'Copyright 2020 The Newsreader Project Authors', source: 'https://github.com/productiontype/Newsreader' },
+  {
+    name: 'H3D Box (DejaVu Sans Mono)',
+    role: 'Box drawing in tool output, Quiet and Paper presets',
+    copyright: 'Copyright 2003 Bitstream, Inc.; DejaVu changes are in the public domain; subset and renamed',
+    source: 'https://github.com/dejavu-fonts/dejavu-fonts',
+    license: { name: 'Bitstream Vera licence', url: 'https://dejavu-fonts.github.io/License.html' },
+  },
+];
+
+function fontRow(f: FontCredit): HTMLLIElement {
+  const li = el('li', 'credits-row credits-font');
+  const who = el('div', 'credits-who');
+  who.append(el('span', 'credits-title', f.name), el('span', 'credits-artist', `${f.role}. ${f.copyright}.`));
+  const meta = el('div', 'credits-meta');
+  const lic = f.license ?? OFL;
+  meta.append(link(lic.url, lic.name, `${f.name}: license, ${lic === OFL ? 'SIL Open Font License 1.1' : lic.name}`), link(f.source, 'Source', `${f.name}: source`));
+  li.append(who, meta);
+  return li;
+}
+
 /** One track: what it is, who made it, and the license and source it came under. */
 function row(r: MusicRow): HTMLLIElement {
   const li = el('li', 'credits-row');
@@ -89,7 +131,18 @@ export class MusicCredits {
       sec.append(title, ul);
       body.append(sec);
     }
-    const foot = el('p', 'panel-status credits-foot', `Each file is ${CHANGES}. The same list ships as MUSIC_CREDITS.txt.`);
+    // #59: the fonts, after the music: the credits panel is the one place the game names what it ships.
+    const fonts = el('section', 'credits-genre credits-fonts');
+    const fontsTitle = el('h3', 'credits-genre-name');
+    const fontsTape = el('span', 'tape', 'Fonts');
+    fontsTape.style.setProperty('--c', 'var(--sun)');
+    fontsTitle.append(fontsTape, el('span', 'credits-count', String(FONT_CREDITS.length)));
+    fontsTitle.setAttribute('aria-label', `Fonts, ${FONT_CREDITS.length}`);
+    const fontList = el('ul', 'credits-list');
+    fontList.append(...FONT_CREDITS.map(fontRow));
+    fonts.append(fontsTitle, fontList);
+    body.append(fonts);
+    const foot = el('p', 'panel-status credits-foot', `Each music file is ${CHANGES}. The same list ships as MUSIC_CREDITS.txt. The fonts’ licences are linked above.`);
 
     this.dialog.setAttribute('aria-labelledby', 'credits-title');
     this.dialog.append(head, body, foot);

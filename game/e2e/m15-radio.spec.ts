@@ -210,9 +210,12 @@ test('the sound control has a music popover with a slider and mute of its own, a
   await expect(pop).toBeHidden();
   const dialog = page.getByRole('dialog', { name: 'Music credits' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator('.credits-row')).toHaveCount(total);
+  await expect(dialog.locator('.credits-row:not(.credits-font)')).toHaveCount(total);
   expect(total).toBeGreaterThanOrEqual(25);
-  await expect(dialog.getByRole('heading', { level: 3 })).toHaveCount(5);
+  // The genres, then (#59) the fonts: Recursive, each transcript preset's two (all OFL), and the box-drawing subset.
+  await expect(dialog.getByRole('heading', { level: 3 })).toHaveCount(6);
+  await expect(dialog.locator('.credits-font .credits-title')).toHaveText(['Recursive', 'Departure Mono', 'Archivo', 'JetBrains Mono', 'Atkinson Hyperlegible Next', 'Space Mono', 'Newsreader', 'H3D Box (DejaVu Sans Mono)']);
+  for (const link of await dialog.locator('.credits-font').getByRole('link', { name: /license, SIL Open Font License 1\.1/ }).all()) await expect(link).toHaveAttribute('href', /openfontlicense\.org/);
   for (const n of NAMES) await expect(dialog.locator('.credits-genre-name', { hasText: n })).toHaveCount(1);
   const first = dialog.locator('.credits-row').first();
   await expect(first.getByRole('link', { name: /license, CC/ })).toHaveAttribute('href', /creativecommons\.org/);
