@@ -70,6 +70,7 @@ const (
 	ErrHireFailed       = "hire_failed"
 	ErrFireFailed       = "fire_failed"
 	ErrFetchFailed      = "fetch_failed" // worker.hire into a worktree whose git fetch origin failed
+	ErrTooLarge         = "too_large"    // transcript.image full over 12 MiB of base64
 	// M3d logos (the /logo HTTP routes; not WebSocket commands).
 	ErrLogoTooLarge    = "logo_too_large"   // over 1 MiB, or over the pixel budget
 	ErrLogoUnsupported = "logo_unsupported" // not PNG, WebP or a plain SVG; animated; an SVG feature that is not rendered

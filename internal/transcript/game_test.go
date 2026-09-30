@@ -17,9 +17,9 @@ var gameFixtures = []struct {
 	files         []string
 }{
 	{"claude.json", Claude, []string{"message.jsonl", "bash.jsonl", "bash_error.jsonl", "edit.jsonl", "write.jsonl", "read_image.jsonl",
-		"user.jsonl", "agent.jsonl", "interrupted.jsonl", "system.jsonl", "compact.jsonl", "attachment.jsonl", "unknown.jsonl"}},
+		"user.jsonl", "user_marker.jsonl", "agent.jsonl", "interrupted.jsonl", "system.jsonl", "compact.jsonl", "attachment.jsonl", "unknown.jsonl"}},
 	{"claude-subagent.json", Claude, []string{"subagent.jsonl"}},
-	{"codex.json", Codex, []string{"session.jsonl", "tools.jsonl", "apply_patch.jsonl", "image.jsonl", "aborted.jsonl", "compacted.jsonl", "unknown.jsonl"}},
+	{"codex.json", Codex, []string{"session.jsonl", "tools.jsonl", "apply_patch.jsonl", "image.jsonl", "view_image.jsonl", "generated.jsonl", "aborted.jsonl", "compacted.jsonl", "unknown.jsonl"}},
 }
 
 func TestGameFixtures(t *testing.T) {

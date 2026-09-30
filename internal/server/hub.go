@@ -587,7 +587,7 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startTranscriptWatch
 		case proto.CmdTranscriptUnwatch:
 			start = h.startTranscriptUnwatch
-		case proto.CmdTranscriptPage, proto.CmdTranscriptItem:
+		case proto.CmdTranscriptPage, proto.CmdTranscriptItem, proto.CmdTranscriptImage, proto.CmdTranscriptImages:
 			start = h.startTranscriptRead
 		// M6 launch
 		case proto.CmdRunPrepare:

@@ -153,7 +153,19 @@
       "status": "ok",
       "images": [
         {
-          "image_omitted": true
+          "image": {
+            "hash": "6b7fa434f92a8b80aab02d9bf1a12e49ffcae424e4013a1c4f68b67e3d2bbcd0",
+            "mime": "image/png",
+            "bytes": 70,
+            "width": 1,
+            "height": 1,
+            "source": "inline",
+            "origin": "agent",
+            "kind": "viewed",
+            "item_id": "toolu_01F5DbXr792Q1cUqpQuRab9q",
+            "seq": 8,
+            "ts": 1790735207887
+          }
         }
       ]
     }
@@ -179,10 +191,32 @@
         "text": "The usage widget is covering up things: [Image #1], here it covers up the exit button on the issues window\nand when it's the big version, it covers up some ticket: [Image #2]\n\nI would still like to have the hud for claude/codex usage but it needs to hide in a neat way when opening windows that take the entire screen.\nClosing these screens should prompt it that it's got space again so that it can enlarge again."
       },
       {
-        "image_omitted": true
+        "image": {
+          "hash": "6b7fa434f92a8b80aab02d9bf1a12e49ffcae424e4013a1c4f68b67e3d2bbcd0",
+          "mime": "image/png",
+          "bytes": 70,
+          "width": 1,
+          "height": 1,
+          "source": "inline",
+          "origin": "input",
+          "item_id": "f2becb83-63a9-4e06-9a15-1bf2471f6ea7",
+          "seq": 10,
+          "ts": 1790711082928
+        }
       },
       {
-        "image_omitted": true
+        "image": {
+          "hash": "6b7fa434f92a8b80aab02d9bf1a12e49ffcae424e4013a1c4f68b67e3d2bbcd0",
+          "mime": "image/png",
+          "bytes": 70,
+          "width": 1,
+          "height": 1,
+          "source": "inline",
+          "origin": "input",
+          "item_id": "f2becb83-63a9-4e06-9a15-1bf2471f6ea7",
+          "seq": 10,
+          "ts": 1790711082928
+        }
       }
     ]
   },
@@ -220,8 +254,31 @@
     }
   },
   {
-    "id": "toolu_01GpmLgfG4MErwKXAfTwBBy5",
+    "id": "b81b596a-e73c-4a2d-987a-4fd994b48223",
     "seq": 14,
+    "ts": 1790734565614,
+    "kind": "user",
+    "parts": [
+      {
+        "image": {
+          "source": "path",
+          "path": "/home/dev/drops/2026-09/h3d-hire-1.png",
+          "origin": "input",
+          "item_id": "b81b596a-e73c-4a2d-987a-4fd994b48223",
+          "seq": 14,
+          "ts": 1790734565614,
+          "unavailable": true,
+          "reason": "not_allowed"
+        }
+      },
+      {
+        "text": "\nwhat is wrong with this?"
+      }
+    ]
+  },
+  {
+    "id": "toolu_01GpmLgfG4MErwKXAfTwBBy5",
+    "seq": 15,
     "ts": 1790713250750,
     "kind": "subagent",
     "tool": {
@@ -243,7 +300,7 @@
   },
   {
     "id": "toolu_013jf2aKrmnPFeNmqgoyzMhZ",
-    "seq": 15,
+    "seq": 16,
     "ts": 1790594120675,
     "kind": "tool",
     "tool": {
@@ -258,7 +315,7 @@
   },
   {
     "id": "7d3b782a-0429-4420-a463-df5e57f79244",
-    "seq": 16,
+    "seq": 17,
     "ts": 1790594129974,
     "kind": "notice",
     "notice": {
@@ -268,7 +325,7 @@
   },
   {
     "id": "41485716-d098-4a40-897b-6683a69ca35b",
-    "seq": 17,
+    "seq": 18,
     "ts": 1790734411788,
     "kind": "notice",
     "hidden": true,
@@ -279,7 +336,7 @@
   },
   {
     "id": "a4bd9a40-851b-4944-b221-8ffe68c3e582",
-    "seq": 18,
+    "seq": 19,
     "ts": 1790734411804,
     "kind": "notice",
     "notice": {
@@ -289,7 +346,7 @@
   },
   {
     "id": "bb811260-b88f-4891-956c-215f7b61efc4",
-    "seq": 19,
+    "seq": 20,
     "ts": 1790734593877,
     "kind": "notice",
     "notice": {
@@ -299,7 +356,7 @@
   },
   {
     "id": "be603518-98e4-4b9a-947a-dab9a3ff41fe",
-    "seq": 20,
+    "seq": 21,
     "ts": 1790692529776,
     "kind": "notice",
     "hidden": true,
@@ -310,7 +367,7 @@
   },
   {
     "id": "9551869e-90d2-4b87-a7e9-19c56ec3bba0",
-    "seq": 21,
+    "seq": 22,
     "ts": 1790691484457,
     "kind": "notice",
     "notice": {
@@ -320,7 +377,7 @@
   },
   {
     "id": "0c4f6e1a-5b2d-4f0e-9a51-2f3c7d9e8a10",
-    "seq": 22,
+    "seq": 23,
     "ts": 1790676000000,
     "kind": "user",
     "parts": [
@@ -331,7 +388,7 @@
   },
   {
     "id": "8e2b9d41-6c3a-4e57-b1f0-7a9c2d4e6f01",
-    "seq": 23,
+    "seq": 24,
     "ts": 1790676312123,
     "kind": "compaction",
     "notice": {
@@ -341,7 +398,7 @@
   },
   {
     "id": "2d7f1c8e-9b4a-4e3d-8f62-1c5b7a9e0d23",
-    "seq": 24,
+    "seq": 25,
     "ts": 1790676312200,
     "kind": "notice",
     "notice": {
@@ -351,7 +408,7 @@
   },
   {
     "id": "445ad43d-1eb2-44d6-af88-2bdcc913c7f2",
-    "seq": 25,
+    "seq": 26,
     "ts": 1790735963840,
     "kind": "notice",
     "hidden": true,
@@ -362,7 +419,7 @@
   },
   {
     "id": "b5139197-1f5a-4b08-b401-bcc78674ed12",
-    "seq": 26,
+    "seq": 27,
     "ts": 1790735963840,
     "kind": "notice",
     "hidden": true,
@@ -373,7 +430,7 @@
   },
   {
     "id": "77ad39ee-8cdc-43e2-b391-039d3a0f756d",
-    "seq": 27,
+    "seq": 28,
     "ts": 1790735963914,
     "kind": "notice",
     "hidden": true,
@@ -384,7 +441,7 @@
   },
   {
     "id": "2618d6a6-5907-43dc-9d16-fa97afe94c96",
-    "seq": 28,
+    "seq": 29,
     "ts": 1790735963943,
     "kind": "notice",
     "hidden": true,
@@ -395,7 +452,7 @@
   },
   {
     "id": "ff5a2531-6674-4ff5-9cb8-5d5fbf39d58d",
-    "seq": 29,
+    "seq": 30,
     "ts": 1790733827625,
     "kind": "user",
     "parts": [
@@ -406,7 +463,7 @@
   },
   {
     "id": "66a6e73f-9713-4980-880a-dd40e77f462d",
-    "seq": 30,
+    "seq": 31,
     "ts": 1790734778672,
     "kind": "notice",
     "hidden": true,
@@ -417,7 +474,7 @@
   },
   {
     "id": "4b1f0c2e-7d3a-4f59-9e81-6a2c5d7b9e10",
-    "seq": 31,
+    "seq": 32,
     "ts": 1790676360000,
     "kind": "unknown",
     "hidden": true,
@@ -425,7 +482,7 @@
   },
   {
     "id": "msg_future01#0",
-    "seq": 32,
+    "seq": 33,
     "ts": 1790676361000,
     "kind": "unknown",
     "hidden": true,
@@ -433,15 +490,15 @@
   },
   {
     "id": "6d3b2e4a-9f5c-4b7d-8a03-8c4e7f9d1a32",
-    "seq": 33,
+    "seq": 34,
     "ts": 1790676362000,
     "kind": "unknown",
     "hidden": true,
     "raw_type": "system/hologram_summary"
   },
   {
-    "id": "o:48003",
-    "seq": 34,
+    "id": "o:48604",
+    "seq": 35,
     "ts": 0,
     "kind": "unknown",
     "hidden": true,

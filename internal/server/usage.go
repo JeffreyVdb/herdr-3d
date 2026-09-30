@@ -8,6 +8,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/usage"
 )
 
@@ -25,6 +26,10 @@ type UsageConfig struct {
 	// the newest rollout recorded in cwd whose id skip does not refuse
 	// ("": none). Default: a codex.Finder on Roots.CodexSessions.
 	FindCodex func(cwd string, skip func(id string) bool) (string, error)
+	// Images are the transcripts' images (M16): the cache they are filed
+	// in and the roots their paths may be under (nil: inline images are
+	// described but cannot be fetched, no path is read).
+	Images *transcript.Images
 }
 
 // Usage timings.
@@ -40,7 +45,8 @@ type usageWorker struct {
 	// floor is its session; codexCwd the cwd of a Codex agent herdr knows
 	// no session of, to find its rollout by (else "").
 	floor, codexCwd string
-	watched         bool // M16: a connection watches its transcript
+	watched         bool   // M16: a connection watches its transcript
+	cwd             string // M16: its directory, a root of its transcript's path images
 }
 
 // usageUpdate is a worker's new usage, or (nil) its usage gone.
@@ -278,7 +284,7 @@ func (h *Hub) usageWorkers() []usageWorker {
 			harness = w.AgentKind
 		}
 		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, shown: w.Usage != nil, floor: w.Session,
-			watched: h.tx.watched(id)}
+			watched: h.tx.watched(id), cwd: w.Cwd}
 		if w.AgentSession == "" && w.AgentKind == usage.Codex && w.Cwd != "" {
 			uw.codexCwd = w.Cwd
 		}

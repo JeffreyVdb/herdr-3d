@@ -10,12 +10,14 @@ package server
 import (
 	"container/list"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/imgcache"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/usage"
@@ -34,6 +36,11 @@ const (
 	WatchedRescan = 2 * time.Second
 	// maxAgentLogs is how many subagent timelines a watch keeps indexed.
 	maxAgentLogs = 4
+	// maxImageReads is how many transcript.image reads one watch has in
+	// flight; more are busy.
+	maxImageReads = 16
+	// maxSentHashes bounds the image hashes a watch remembers sending.
+	maxSentHashes = 200_000
 )
 
 // txOffer is what the usage tracker found for a watched worker: its agent
@@ -56,6 +63,51 @@ type txWatch struct {
 	log     *transcript.Log
 	session string
 	agents  *agentLogs
+	// sent are the image hashes this connection was sent (an item, a page,
+	// the image list): transcript.image serves only those, and never a path
+	// or a hash it was not told.
+	sentMu sync.Mutex
+	sent   map[string]struct{}
+	// reads is the in-flight transcript.image reads.
+	reads chan struct{}
+}
+
+// noteImages remembers the hashes of the images in items as sent.
+func (w *txWatch) noteImages(items []proto.TranscriptItem) {
+	w.sentMu.Lock()
+	defer w.sentMu.Unlock()
+	note := func(r *proto.ImageRef) {
+		if r != nil && r.Hash != "" && len(w.sent) < maxSentHashes {
+			w.sent[r.Hash] = struct{}{}
+		}
+	}
+	for i := range items {
+		for _, p := range items[i].Parts {
+			note(p.Image)
+		}
+		if t := items[i].Tool; t != nil {
+			for _, p := range t.Images {
+				note(p.Image)
+			}
+		}
+	}
+}
+
+func (w *txWatch) noteRefs(refs []proto.ImageRef) {
+	w.sentMu.Lock()
+	defer w.sentMu.Unlock()
+	for i := range refs {
+		if h := refs[i].Hash; h != "" && len(w.sent) < maxSentHashes {
+			w.sent[h] = struct{}{}
+		}
+	}
+}
+
+func (w *txWatch) wasSent(hash string) bool {
+	w.sentMu.Lock()
+	defer w.sentMu.Unlock()
+	_, ok := w.sent[hash]
+	return ok
 }
 
 // txWatches are the running transcript watches (their own lock: pushes are
@@ -212,7 +264,8 @@ func (h *Hub) startTranscriptWatch(ctx context.Context, c *Client, cmd proto.Com
 	if a.Limit == 0 {
 		a.Limit = DefaultTranscriptLimit
 	}
-	if _, err := h.txWorker(a.ID); err != nil {
+	wk, err := h.txWorker(a.ID)
+	if err != nil {
 		return err
 	}
 	n := h.tx.count(c)
@@ -223,7 +276,8 @@ func (h *Hub) startTranscriptWatch(ctx context.Context, c *Client, cmd proto.Com
 		return fmt.Errorf("%w: this connection already watches %d transcripts (--max-transcript-watches)", errCapacity, n)
 	}
 	wctx, cancel := context.WithCancel(ctx)
-	w := &txWatch{c: c, id: a.ID, limit: a.Limit, cancel: cancel, offers: make(chan txOffer, 1), agents: newAgentLogs()}
+	w := &txWatch{c: c, id: a.ID, limit: a.Limit, cancel: cancel, offers: make(chan txOffer, 1), agents: newAgentLogs(h.txImageOptions(wk.Cwd)),
+		sent: map[string]struct{}{}, reads: make(chan struct{}, maxImageReads)}
 	if old := h.tx.add(w); old != nil {
 		old.cancel()
 	}
@@ -380,6 +434,8 @@ func (h *Hub) runTranscriptWatch(hctx, ctx context.Context, w *txWatch, cmd prot
 		if len(items) == 0 && len(updates) == 0 {
 			return true
 		}
+		w.noteImages(items)
+		w.noteImages(updates)
 		msg := mustJSON(proto.TranscriptItems{T: proto.TTranscriptItems, ID: w.id, Items: items, Updates: updates})
 		if err := h.tx.send(w, msg); err != nil {
 			if errors.Is(err, errResync) {
@@ -419,6 +475,7 @@ func (h *Hub) runTranscriptWatch(hctx, ctx context.Context, w *txWatch, cmd prot
 				}
 				wake = sub.Wake()
 				hd := head(o, page, false)
+				w.noteImages(page.Items)
 				msg := mustJSON(proto.TranscriptItems{T: proto.TTranscriptItems, ID: w.id, Items: page.Items,
 					Updates: []proto.TranscriptItem{}, TranscriptHead: &hd})
 				if err := h.tx.send(w, msg); err != nil {
@@ -472,6 +529,9 @@ func closedReason(err error) string {
 // finishTranscriptCmd audits transcript.watch (the worker id only) and
 // answers it.
 func (h *Hub) finishTranscriptCmd(hctx context.Context, w *txWatch, cmd proto.Command, data *proto.TranscriptWatchResult, err error) {
+	if data != nil {
+		w.noteImages(data.Items)
+	}
 	if derr := h.doWait(hctx, func() {
 		h.audit(hctx, w.c, cmd, err)
 		if data == nil {
@@ -489,7 +549,7 @@ func (h *Hub) finishTranscriptCmd(hctx context.Context, w *txWatch, cmd proto.Co
 // only for a worker the connection watches.
 func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Command) error {
 	var id, agent string
-	var work func(log *transcript.Log) (any, error)
+	var work func(w *txWatch, log *transcript.Log) (any, error)
 	switch cmd.T {
 	case proto.CmdTranscriptPage:
 		var a proto.TranscriptPageArgs
@@ -516,11 +576,12 @@ func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Comm
 			return nil
 		}
 		id, agent = a.ID, a.Agent
-		work = func(log *transcript.Log) (any, error) {
+		work = func(w *txWatch, log *transcript.Log) (any, error) {
 			p, err := log.Before(before, a.Limit)
 			if err != nil {
 				return nil, &codedError{proto.ErrInvalidState, fmt.Errorf("the transcript changed; watch again (%v)", err)}
 			}
+			w.noteImages(p.Items)
 			return proto.TranscriptPageResult{Items: p.Items, Cursor: p.Cursor, HasMore: p.HasMore}, nil
 		}
 	case proto.CmdTranscriptItem:
@@ -534,7 +595,7 @@ func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Comm
 			return nil
 		}
 		id, agent = a.ID, a.Agent
-		work = func(log *transcript.Log) (any, error) {
+		work = func(w *txWatch, log *transcript.Log) (any, error) {
 			it, ok, err := log.Item(a.Item)
 			switch {
 			case err != nil:
@@ -542,7 +603,42 @@ func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Comm
 			case !ok:
 				return nil, &codedError{proto.ErrNotFound, fmt.Errorf("no item %q in the transcript", a.Item)}
 			}
+			w.noteImages([]proto.TranscriptItem{it})
 			return proto.TranscriptItemResult{Item: it}, nil
+		}
+	case proto.CmdTranscriptImage:
+		var a proto.TranscriptImageArgs
+		if err := decodeArgs(cmd.Args, &a); err != nil {
+			h.reply(c, cmd, nil, err)
+			return nil
+		}
+		if !imgcache.ValidHash(a.Hash) {
+			h.reply(c, cmd, nil, bad("hash must be the sha256 of an image, in hex"))
+			return nil
+		}
+		if a.Size != proto.ImageThumb && a.Size != proto.ImageFull {
+			h.reply(c, cmd, nil, bad("size must be %q or %q", proto.ImageThumb, proto.ImageFull))
+			return nil
+		}
+		id, agent = a.ID, a.Agent
+		work = func(w *txWatch, log *transcript.Log) (any, error) { return readImage(w, log, a) }
+	case proto.CmdTranscriptImages:
+		var a proto.TranscriptImagesArgs
+		if err := decodeArgs(cmd.Args, &a); err != nil {
+			h.reply(c, cmd, nil, err)
+			return nil
+		}
+		id = a.ID
+		work = func(w *txWatch, log *transcript.Log) (any, error) {
+			refs, more, err := log.Images(proto.MaxSessionImages)
+			if err != nil {
+				return nil, &codedError{proto.ErrInvalidState, fmt.Errorf("the transcript changed; watch again (%v)", err)}
+			}
+			if refs == nil {
+				refs = []proto.ImageRef{}
+			}
+			w.noteRefs(refs)
+			return proto.TranscriptImagesResult{Images: refs, Truncated: more}, nil
 		}
 	}
 	w := h.tx.get(c, id)
@@ -573,7 +669,7 @@ func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Comm
 		}
 		var data any
 		if err == nil {
-			data, err = work(read)
+			data, err = work(w, read)
 		}
 		if derr := h.doWait(ctx, func() { h.reply(c, cmd, data, err) }); derr != nil {
 			h.log.Warn("command abandoned", "cmd", cmd.T, "err", derr)
@@ -588,6 +684,7 @@ type agentLogs struct {
 	mu     sync.Mutex
 	order  *list.List // of *agentLog, most recent first
 	closed bool       // the watch ended
+	opts   []transcript.Option
 }
 
 type agentLog struct {
@@ -595,7 +692,9 @@ type agentLog struct {
 	log  *transcript.Log
 }
 
-func newAgentLogs() *agentLogs { return &agentLogs{order: list.New()} }
+func newAgentLogs(opts []transcript.Option) *agentLogs {
+	return &agentLogs{order: list.New(), opts: opts}
+}
 
 // get returns subagent agent's log of the Claude session main is the
 // transcript of: <dir>/<session>/subagents/agent-<agent>.jsonl.
@@ -619,7 +718,7 @@ func (a *agentLogs) get(ctx context.Context, main *transcript.Log, session, agen
 		a.order.Remove(e)
 		break
 	}
-	log, err := transcript.Read(ctx, transcript.Claude, path)
+	log, err := transcript.Read(ctx, transcript.Claude, path, a.opts...)
 	if err != nil {
 		return nil, &codedError{proto.ErrNotFound, fmt.Errorf("no transcript for subagent %q", agent)}
 	}
@@ -668,7 +767,7 @@ func (tr *usageTracker) syncTranscript(w usageWorker, s *usage.Session, key stri
 	if path == "" {
 		return
 	}
-	log, err := transcript.Follow(w.harness, path, fi, next)
+	log, err := transcript.Follow(w.harness, path, fi, next, tr.imageOptions(w.cwd)...)
 	if err != nil {
 		return // looked at again next round
 	}
@@ -690,4 +789,74 @@ func (tr *usageTracker) offers(ws []usageWorker) map[string]txOffer {
 		out[w.id] = o
 	}
 	return out
+}
+
+// txImageOptions are the options a transcript log is opened with for a
+// worker: the bridge's images, and the worker's own directory as a root of
+// its path images.
+func (h *Hub) txImageOptions(cwd string) []transcript.Option {
+	var opts []transcript.Option
+	if h.opts.Usage != nil && h.opts.Usage.Images != nil {
+		opts = append(opts, transcript.WithImages(h.opts.Usage.Images))
+	}
+	if cwd != "" {
+		opts = append(opts, transcript.WithCwd(cwd))
+	}
+	return opts
+}
+
+// readImage answers transcript.image: the thumbnail or the full image of a
+// hash this connection was sent.
+func readImage(w *txWatch, log *transcript.Log, a proto.TranscriptImageArgs) (any, error) {
+	if !w.wasSent(a.Hash) {
+		return nil, &codedError{proto.ErrNotFound, errors.New("no image with that hash was sent on this connection")}
+	}
+	select {
+	case w.reads <- struct{}{}:
+		defer func() { <-w.reads }()
+	default:
+		return nil, &codedError{proto.ErrBusy, fmt.Errorf("already reading %d images for this watch", maxImageReads)}
+	}
+	if a.Size == proto.ImageThumb {
+		t, err := log.Thumb(a.Hash)
+		if err != nil {
+			return nil, imageError(err)
+		}
+		return proto.TranscriptImageResult{Mime: t.Mime, Width: t.Width, Height: t.Height, Bytes: len(t.Data), Size: proto.ImageThumb,
+			Data: base64.StdEncoding.EncodeToString(t.Data)}, nil
+	}
+	data, err := log.Image(a.Hash)
+	if err != nil {
+		return nil, imageError(err)
+	}
+	if base64.StdEncoding.EncodedLen(len(data)) > proto.MaxFullImageBase64 {
+		return nil, &codedError{proto.ErrTooLarge, fmt.Errorf("the image is %d bytes, the most sent whole is %d bytes of base64", len(data), proto.MaxFullImageBase64)}
+	}
+	info, _ := imgcache.Inspect(data)
+	return proto.TranscriptImageResult{Mime: info.Mime, Width: info.Width, Height: info.Height, Bytes: len(data), Size: proto.ImageFull,
+		Data: base64.StdEncoding.EncodeToString(data)}, nil
+}
+
+// imageError is a failed image read as a protocol error.
+func imageError(err error) error {
+	switch {
+	case errors.Is(err, transcript.ErrNoImage), errors.Is(err, imgcache.ErrNotAllowed), errors.Is(err, imgcache.ErrMissing),
+		errors.Is(err, imgcache.ErrNotFile), errors.Is(err, imgcache.ErrNotImage), errors.Is(err, imgcache.ErrTooLarge):
+		return &codedError{proto.ErrNotFound, errors.New("the image is not available")}
+	case errors.Is(err, transcript.ErrReplaced), errors.Is(err, transcript.ErrGone), errors.Is(err, transcript.ErrClosed):
+		return &codedError{proto.ErrInvalidState, fmt.Errorf("the transcript changed; watch again (%v)", err)}
+	}
+	return &codedError{proto.ErrInternal, errors.New("the image could not be read")}
+}
+
+// imageOptions is txImageOptions for the tracker.
+func (tr *usageTracker) imageOptions(cwd string) []transcript.Option {
+	var opts []transcript.Option
+	if tr.cfg.Images != nil {
+		opts = append(opts, transcript.WithImages(tr.cfg.Images))
+	}
+	if cwd != "" {
+		opts = append(opts, transcript.WithCwd(cwd))
+	}
+	return opts
 }

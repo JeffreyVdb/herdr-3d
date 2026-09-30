@@ -74,8 +74,26 @@ type claudeLine struct {
 	} `json:"compactMetadata"`
 }
 
-// claudeBlock is a message content block. Image data is never decoded:
-// the decoder skips fields that are not here.
+// claudeSource is an image block's source: base64 data or a URL.
+type claudeSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+	URL       string `json:"url"`
+}
+
+// image makes the ref of an image block.
+func (pc *parseCtx) claudeImage(src *claudeSource, origin, kind string) imgRef {
+	switch {
+	case src == nil:
+		return pc.external("", origin, kind)
+	case src.Type == "url" || (src.Data == "" && src.URL != ""):
+		return pc.external(src.URL, origin, kind)
+	}
+	return pc.inline(src.MediaType, src.Data, origin, kind)
+}
+
+// claudeBlock is a message content block.
 type claudeBlock struct {
 	Type      string               `json:"type"`
 	Text      string               `json:"text"`
@@ -86,12 +104,14 @@ type claudeBlock struct {
 	ToolUseID string               `json:"tool_use_id"`
 	Content   strOr[claudeSubPart] `json:"content"`
 	IsError   bool                 `json:"is_error"`
+	Source    *claudeSource        `json:"source"`
 }
 
 // claudeSubPart is a block inside a tool result.
 type claudeSubPart struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type   string        `json:"type"`
+	Text   string        `json:"text"`
+	Source *claudeSource `json:"source"`
 }
 
 // claudeToolResult is what the bridge renders of a toolUseResult.
@@ -156,13 +176,14 @@ func parseClaude(off int64, b []byte) (cs []contrib, version string) {
 	if id == "" {
 		id = offID(off)
 	}
+	pc := newParseCtx(off, b)
 	switch {
 	case l.Type == "assistant" && l.Message != nil:
-		return claudeAssistant(&l, id, ts), l.Version
+		return claudeAssistant(&l, id, ts, pc), l.Version
 	case l.Type == "user" && l.Message != nil:
-		return claudeUser(&l, id, ts), l.Version
+		return claudeUser(&l, id, ts, pc), l.Version
 	case l.Type == "attachment":
-		return []contrib{claudeAttachment(&l, id, ts)}, l.Version
+		return []contrib{claudeAttachment(&l, id, ts, pc)}, l.Version
 	case l.Type == "system":
 		return []contrib{claudeSystem(&l, id, ts)}, l.Version
 	case claudeMeta[l.Type]:
@@ -175,7 +196,7 @@ func parseClaude(off int64, b []byte) (cs []contrib, version string) {
 	return []contrib{unknownItem(id, raw, ts)}, l.Version
 }
 
-func claudeAssistant(l *claudeLine, id string, ts int64) []contrib {
+func claudeAssistant(l *claudeLine, id string, ts int64, pc *parseCtx) []contrib {
 	msg := l.Message.ID
 	if msg == "" {
 		msg = id
@@ -210,8 +231,10 @@ func claudeAssistant(l *claudeLine, id string, ts int64) []contrib {
 				b.setBlock(idx, proto.TranscriptPart{Text: text})
 			}
 		case "image":
+			ir := pc.claudeImage(bl.Source, proto.OriginAgent, proto.KindGenerated)
 			c.kind = proto.ItemAssistant
-			c.apply = func(b *builder) { b.setBlock(idx, proto.TranscriptPart{ImageOmitted: true}) }
+			c.imgs = []imgRef{ir}
+			c.apply = func(b *builder) { b.setBlock(idx, proto.TranscriptPart{Image: ir.ref}) }
 		case "tool_use", "server_tool_use":
 			if bl.ID != "" {
 				c.id = bl.ID
@@ -236,12 +259,12 @@ func claudeAssistant(l *claudeLine, id string, ts int64) []contrib {
 		default:
 			if strings.HasSuffix(bl.Type, "_tool_result") && bl.ToolUseID != "" {
 				// A server tool's result (web search, advisor): its call's.
-				text, images := subText(bl.Content)
+				text, images := subText(pc, bl.Content)
 				status := proto.ToolOK
 				if bl.IsError {
 					status = proto.ToolError
 				}
-				cs = append(cs, contrib{link: linkResult, id: bl.ToolUseID, kind: proto.ItemTool, ts: ts,
+				cs = append(cs, contrib{link: linkResult, id: bl.ToolUseID, kind: proto.ItemTool, ts: ts, imgs: images,
 					apply: func(b *builder) { b.result(status, text, images) }})
 				continue
 			}
@@ -254,13 +277,13 @@ func claudeAssistant(l *claudeLine, id string, ts int64) []contrib {
 	return cs
 }
 
-// subText is a tool result's text and how many images it has.
-func subText(c strOr[claudeSubPart]) (string, int) {
+// subText is a tool result's text and its images (what the agent viewed).
+func subText(pc *parseCtx, c strOr[claudeSubPart]) (string, []imgRef) {
 	if c.isStr {
-		return c.str, 0
+		return c.str, nil
 	}
 	var sb strings.Builder
-	images := 0
+	var images []imgRef
 	for _, p := range c.list {
 		switch p.Type {
 		case "text":
@@ -269,7 +292,7 @@ func subText(c strOr[claudeSubPart]) (string, int) {
 			}
 			sb.WriteString(p.Text)
 		case "image":
-			images++
+			images = append(images, pc.claudeImage(p.Source, proto.OriginAgent, proto.KindViewed))
 		}
 	}
 	return sb.String(), images
@@ -281,7 +304,7 @@ const (
 	interruptNoticeSrc = "user/interrupted"
 )
 
-func claudeUser(l *claudeLine, id string, ts int64) []contrib {
+func claudeUser(l *claudeLine, id string, ts int64, pc *parseCtx) []contrib {
 	content := l.Message.Content
 	if l.IsCompactSummary {
 		text := content.str
@@ -292,6 +315,7 @@ func claudeUser(l *claudeLine, id string, ts int64) []contrib {
 	}
 	var cs []contrib
 	var parts []proto.TranscriptPart
+	var imgs []imgRef
 	var dropped []string // wrapper text taken out
 	interrupted := false
 	addText := func(s string) {
@@ -306,7 +330,9 @@ func claudeUser(l *claudeLine, id string, ts int64) []contrib {
 		if strings.TrimSpace(stripped) == "" {
 			return
 		}
-		parts = append(parts, textParts(stripped)...)
+		ps, is := textParts(pc, stripped)
+		parts = append(parts, ps...)
+		imgs = append(imgs, is...)
 	}
 	blocks := content.list
 	if content.isStr {
@@ -318,9 +344,11 @@ func claudeUser(l *claudeLine, id string, ts int64) []contrib {
 		case "text":
 			addText(bl.Text)
 		case "image":
-			parts = append(parts, proto.TranscriptPart{ImageOmitted: true})
+			ir := pc.claudeImage(bl.Source, proto.OriginInput, "")
+			imgs = append(imgs, ir)
+			parts = append(parts, proto.TranscriptPart{Image: ir.ref})
 		case "tool_result":
-			cs = append(cs, claudeResult(bl, l, firstResult, ts))
+			cs = append(cs, claudeResult(bl, l, firstResult, ts, pc))
 			firstResult = false
 		default:
 			cs = append(cs, unknownItem(fmt.Sprintf("%s#%d", id, len(cs)), "user/"+bl.Type, ts))
@@ -337,7 +365,7 @@ func claudeUser(l *claudeLine, id string, ts int64) []contrib {
 			cs = append(cs, c)
 			break
 		}
-		cs = append(cs, contrib{id: id, kind: proto.ItemUser, ts: ts, apply: func(b *builder) { b.it.Parts = parts }})
+		cs = append(cs, contrib{id: id, kind: proto.ItemUser, ts: ts, imgs: imgs, apply: func(b *builder) { b.it.Parts = parts }})
 	}
 	return cs
 }
@@ -426,8 +454,8 @@ func joinTexts(bs []claudeBlock) string {
 // claudeResult is a tool_result block: its call's result. The line's
 // toolUseResult (structured: diffs, subagents, interruptions) goes with
 // the first one.
-func claudeResult(bl claudeBlock, l *claudeLine, first bool, ts int64) contrib {
-	text, images := subText(bl.Content)
+func claudeResult(bl claudeBlock, l *claudeLine, first bool, ts int64, pc *parseCtx) contrib {
+	text, images := subText(pc, bl.Content)
 	status := proto.ToolOK
 	switch {
 	case strings.HasPrefix(strings.TrimSpace(text), interruptedText):
@@ -445,7 +473,7 @@ func claudeResult(bl claudeBlock, l *claudeLine, first bool, ts int64) contrib {
 			}
 		}
 	}
-	return contrib{link: linkResult, id: bl.ToolUseID, kind: proto.ItemTool, ts: ts, apply: func(b *builder) {
+	return contrib{link: linkResult, id: bl.ToolUseID, kind: proto.ItemTool, ts: ts, imgs: images, apply: func(b *builder) {
 		b.result(status, text, images)
 		if tr == nil {
 			return
@@ -508,13 +536,13 @@ type claudeAttach struct {
 
 // claudeAttachment is noise (reminders, hook context, tool lists…), with
 // one exception: a prompt the user queued while the agent worked.
-func claudeAttachment(l *claudeLine, id string, ts int64) contrib {
+func claudeAttachment(l *claudeLine, id string, ts int64, pc *parseCtx) contrib {
 	var a claudeAttach
 	_ = json.Unmarshal(l.Attachment, &a)
 	if a.Type == "queued_command" && a.CommandMode == "prompt" && a.Origin != nil && a.Origin.Kind == "human" &&
 		strings.TrimSpace(a.Prompt) != "" {
-		parts := textParts(a.Prompt)
-		return contrib{id: id, kind: proto.ItemUser, ts: ts, apply: func(b *builder) { b.it.Parts = parts }}
+		parts, imgs := textParts(pc, a.Prompt)
+		return contrib{id: id, kind: proto.ItemUser, ts: ts, imgs: imgs, apply: func(b *builder) { b.it.Parts = parts }}
 	}
 	text := a.Prompt
 	if text == "" {

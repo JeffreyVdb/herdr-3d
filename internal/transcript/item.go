@@ -53,7 +53,12 @@ type contrib struct {
 	kind   string
 	hidden bool
 	ts     int64
-	apply  func(b *builder)
+	// imgs are the images the contribution puts in its item.
+	imgs []imgRef
+	// maybeImg: the item may get an image when it is built (a Codex
+	// view_image call, whose result names a file).
+	maybeImg bool
+	apply    func(b *builder)
 }
 
 // builder assembles an item from its contributions.
@@ -61,6 +66,11 @@ type builder struct {
 	it     proto.TranscriptItem
 	blocks []blockParts // linkBlock parts, by block
 	diffs  []proto.TranscriptDiff
+	// env resolves the item's images; srcs is where each one's bytes are.
+	env  *imageEnv
+	srcs map[*proto.ImageRef]*imgSrc
+	// viewPath is the file a Codex view_image call named.
+	viewPath string
 }
 
 type blockParts struct {
@@ -74,6 +84,12 @@ func newBuilder(id string, seq int64, c *contrib) *builder {
 
 // add applies one contribution.
 func (b *builder) add(c *contrib) {
+	for _, ir := range c.imgs {
+		if b.srcs == nil {
+			b.srcs = map[*proto.ImageRef]*imgSrc{}
+		}
+		b.srcs[ir.ref] = ir.src
+	}
 	if c.apply != nil {
 		c.apply(b)
 	}
@@ -108,7 +124,7 @@ func (b *builder) call(name string, input json.RawMessage, summary string) {
 }
 
 // result sets a call's result.
-func (b *builder) result(status, text string, images int) {
+func (b *builder) result(status, text string, images []imgRef) {
 	t := b.tool()
 	if t.Status == "" || t.Status == proto.ToolRunning || status != proto.ToolOK {
 		t.Status = status
@@ -116,8 +132,8 @@ func (b *builder) result(status, text string, images int) {
 	if text != "" {
 		t.OutputText = text
 	}
-	for range images {
-		t.Images = append(t.Images, proto.TranscriptPart{ImageOmitted: true})
+	for _, ir := range images {
+		t.Images = append(t.Images, proto.TranscriptPart{Image: ir.ref})
 	}
 	if b.it.Subagent != nil && b.it.Subagent.Status == proto.ToolRunning && status != proto.ToolOK {
 		b.it.Subagent.Status = status
@@ -148,6 +164,7 @@ func (b *builder) finish(full bool) proto.TranscriptItem {
 			it.Parts = append(it.Parts, bp.parts...)
 		}
 	}
+	b.resolveImages(&it)
 	if len(b.diffs) > 0 {
 		t := b.tool()
 		t.Diff = &b.diffs[0]
@@ -276,10 +293,21 @@ func summarize(input json.RawMessage) string {
 	return string(input)
 }
 
-// textParts turns text into parts, each "[Image #n: path]" marker an
-// omitted image (the path is never looked at).
-func textParts(s string) []proto.TranscriptPart {
+// imageMarkerPath is the path of an "[Image #n: path]" marker.
+func imageMarkerPath(marker string) string {
+	i := strings.Index(marker, ": ")
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimSuffix(marker[i+2:], "]"))
+}
+
+// textParts turns text into parts, each "[Image #n: path]" marker a path
+// image (its path is only read if it is under a root the bridge serves;
+// else the view shows the path as text under "not available").
+func textParts(pc *parseCtx, s string) ([]proto.TranscriptPart, []imgRef) {
 	var out []proto.TranscriptPart
+	var imgs []imgRef
 	for s != "" {
 		loc := imageMarker.FindStringIndex(s)
 		if loc == nil {
@@ -288,11 +316,50 @@ func textParts(s string) []proto.TranscriptPart {
 		if t := s[:loc[0]]; strings.TrimSpace(t) != "" {
 			out = append(out, proto.TranscriptPart{Text: t})
 		}
-		out = append(out, proto.TranscriptPart{ImageOmitted: true})
+		ir := pc.path(imageMarkerPath(s[loc[0]:loc[1]]), proto.OriginInput, "")
+		imgs = append(imgs, ir)
+		out = append(out, proto.TranscriptPart{Image: ir.ref})
 		s = s[loc[1]:]
 	}
 	if strings.TrimSpace(s) != "" {
 		out = append(out, proto.TranscriptPart{Text: s})
 	}
-	return out
+	return out, imgs
 }
+
+// resolveImages fills every image ref of the item (parts and tool output)
+// from its source, and says which item it is in.
+func (b *builder) resolveImages(it *proto.TranscriptItem) {
+	env := b.env
+	if env == nil {
+		env = defaultEnv
+	}
+	// Codex's view_image whose result has no image: the file it named.
+	if t := it.Tool; t != nil && t.Name == "view_image" && len(t.Images) == 0 && t.Status == proto.ToolOK && b.viewPath != "" {
+		ir := (&parseCtx{}).path(b.viewPath, proto.OriginAgent, proto.KindViewed, b.viewPath)
+		if b.srcs == nil {
+			b.srcs = map[*proto.ImageRef]*imgSrc{}
+		}
+		b.srcs[ir.ref] = ir.src
+		c := *t
+		c.Images = []proto.TranscriptPart{{Image: ir.ref}}
+		it.Tool = &c
+	}
+	fill := func(r *proto.ImageRef) {
+		if r == nil {
+			return
+		}
+		env.resolve(r, b.srcs[r])
+		r.ItemID, r.Seq, r.TS = it.ID, it.Seq, it.TS
+	}
+	for _, p := range it.Parts {
+		fill(p.Image)
+	}
+	if t := it.Tool; t != nil {
+		for _, p := range t.Images {
+			fill(p.Image)
+		}
+	}
+}
+
+func (c *contrib) hasImg() bool { return len(c.imgs) > 0 || c.maybeImg }
