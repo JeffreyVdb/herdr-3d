@@ -1,12 +1,18 @@
 import type { CommandResult } from '../net/client';
-import type { CommandArgs, TranscriptClosed, TranscriptItem, TranscriptItems, TranscriptWatchAck } from '../net/protocol';
+import type { CommandArgs, TranscriptClosed, TranscriptHead, TranscriptItem, TranscriptItems, TranscriptWatchAck } from '../net/protocol';
+
+/** Which transcript a timeline is: its `seq`s count in it (another session is another log, counted from 1 again). */
+export type TimelineOf = Pick<TranscriptHead, 'harness' | 'session'>;
 
 /** Where a watched transcript goes. */
 export interface TranscriptSink {
   /** A watch (or a re-watch) was acked: the whole timeline so far, replacing what was there. */
   reset(id: string, ack: TranscriptWatchAck): void;
-  /** Live, after the ack: new items and whole replacements of items already sent (by `id`). */
-  push(id: string, items: TranscriptItem[], updates: TranscriptItem[]): void;
+  /**
+   * Live, after the ack: new items and whole replacements of items already sent (by `id`). `head`: the transcript they
+   * are of, when the push says (the first one of a pending watch, once its transcript appeared).
+   */
+  push(id: string, items: TranscriptItem[], updates: TranscriptItem[], head?: TimelineOf): void;
   /** Not watched any more (stood up, closed for good, the connection dropped). */
   stop(id: string): void;
 }
@@ -183,7 +189,8 @@ export class TranscriptWatches {
     if (!this.on.get(m.id)?.ready) return;
     const items = itemsOf(m.items);
     const updates = itemsOf(m.updates);
-    if (items.length || updates.length) this.host.sink.push(m.id, items, updates);
+    const head = typeof m.session === 'string' ? { harness: typeof m.harness === 'string' ? m.harness : '', session: m.session } : undefined;
+    if (items.length || updates.length) this.host.sink.push(m.id, items, updates, head);
   }
 
   closed(c: TranscriptClosed): void {

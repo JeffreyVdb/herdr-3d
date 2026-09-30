@@ -7,7 +7,7 @@ import { MAX_PROMPT } from './keys';
 import type { mountTranscript, TranscriptRenderHost, TranscriptView } from './transcriptRender';
 import type { ImageFeed } from './imageFeed';
 import type { ImagesTabHost, ImagesTabView, MountImagesTab } from './imagesTab';
-import { itemsOf } from './transcriptWatches';
+import { itemsOf, type TimelineOf } from './transcriptWatches';
 import { activityCue, reconcile, SENT_TIMEOUT_MS, topSeq, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 
 export type { ImagesTabHost, ImagesTabView, MountImagesTab, TranscriptRenderHost, TranscriptView };
@@ -164,6 +164,8 @@ interface Sitting {
   pending: readonly PendingPrompt[];
   /** The `user` items that took a pending prompt (`reconcile`'s `taken`): a resync sends them again, they take no other. */
   taken: Set<string>;
+  /** The transcript the `seq`s (and so `taken` and the marks) are of: `harness/session`, the bridge's key (null: no ack yet). */
+  timeline: string | null;
   /** What the view was last told of the cue (it is recomputed only when this changes). */
   cueKey: string;
   cueDirty: boolean;
@@ -233,7 +235,7 @@ export class TranscriptMode {
       id, name, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
-      pending: [], taken: new Set(), cueKey: '', cueDirty: true,
+      pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true,
     };
     if (wasReading) this.setMode(last, false);
     else this.host.modeChanged('terminal');
@@ -620,6 +622,7 @@ export class TranscriptMode {
   reset(id: string, ack: TranscriptWatchAck): void {
     const s = this.s;
     if (s?.id !== id) return;
+    this.timeline(s, ack);
     s.items = [...ack.items];
     s.index = new Map(s.items.map((it, i) => [it.id, i]));
     s.cursor = ack.cursor;
@@ -629,9 +632,10 @@ export class TranscriptMode {
   }
 
   /** Live: new items and replacements, both by `id` (a new item already here replaces it). */
-  push(id: string, items: TranscriptItem[], updates: TranscriptItem[]): void {
+  push(id: string, items: TranscriptItem[], updates: TranscriptItem[], head?: TimelineOf): void {
     const s = this.s;
     if (s?.id !== id) return;
+    if (head) this.timeline(s, head);
     const changed = [...items, ...updates];
     for (const it of changed) {
       const at = s.index.get(it.id);
@@ -643,6 +647,26 @@ export class TranscriptMode {
     }
     if (changed.length) s.view?.applyUpdates(changed);
     this.itemsChanged(s, changed);
+  }
+
+  /**
+   * #58: another transcript (a new session while seated: /clear, /new, a resume) counts its `seq`s from 1 again, so
+   * nothing marked in the old one holds. Its items are other items: one at the same place with the same words as one
+   * that took a prompt is a new echo. A prompt still waiting was sent before the switch, so its item may be anywhere in
+   * the new timeline (the send that started the session, one just after it). Where the turn started is not known: the
+   * last item is taken as it is, and the next start of work marks the new timeline's top. A resync of the same
+   * transcript keeps it all (its items are the ones already seen).
+   */
+  private timeline(s: Sitting, head: TimelineOf): void {
+    const key = `${head.harness}/${head.session}`;
+    if (key === s.timeline) return;
+    const first = s.timeline === null;
+    s.timeline = key;
+    if (first) return;
+    s.taken = new Set();
+    if (s.pending.some((p) => p.mark !== 0)) s.pending = s.pending.map((p) => (p.mark !== 0 ? { ...p, mark: 0 } : p));
+    s.mark = null;
+    s.sendMark = null;
   }
 
   /** #58: prompts their items show are no longer pending, and what the agent does may read otherwise. */

@@ -734,7 +734,10 @@ DOM only while it shows (not in terminal mode or the images tab, not with the ov
 tab, still under `prefers-reduced-motion`; its time is a sibling span on the view's 1 s ticker, and a polite live
 region announces state changes only. A sent prompt is a dimmed user row at once (`Sending…` → `Sent` / `Queued ·
 <name> takes it when it can` / `Not sent: <reason>` with Dismiss, the text staying in the box); the first new `user`
-item after it with its text (trimmed, CR/CRLF as LF, image markers apart; identical ones in order) replaces it. Not
+item after it with its text (trimmed, CR/CRLF as LF, image markers apart; identical ones in order) replaces it, and
+an item takes one prompt only however often a resync sends it again. Another session while seated (`/new`, `/clear`:
+`session_changed`, its `seq`s from 1 again) starts that over: a prompt still waiting may be anywhere in it, and the
+turn's watermark is dropped (the last item is taken as it is). Not
 seen 15 s after the ack (`SENT_TIMEOUT_MS`; a queued one: 15 s after the turn it waited for ends) it says "not seen in
 the transcript yet" and still waits. Your own send scrolls to the bottom and follows. On the simulator `simecho=<ms>`
 writes a prompt's user item to the watch that long after the agent took it (a queued one mid-turn, as both CLIs do);

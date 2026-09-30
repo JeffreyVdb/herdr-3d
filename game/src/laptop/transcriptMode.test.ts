@@ -604,6 +604,116 @@ describe('pending prompts', () => {
     expect(states(h)).toEqual([]);
   });
 
+  // #58: a new CLI session while seated (/new, /clear, a resume): the bridge closes the watch (`session_changed`) and
+  // the re-watch acks the new transcript, its seqs counted from 1 again.
+  const of = (session: string, items: TranscriptItem[], extra: Record<string, unknown> = {}) => watchAck({ harness: 'claude', session, cursor: 'c:1', items, ...extra });
+  const send = async (h: ReturnType<typeof harness>, host: TranscriptRenderHost, text: string, queued = false) => {
+    const sent = host.onPromptSubmit(text);
+    h.sent.at(-1)?.resolve({ ok: true, data: { queued, retried: false } });
+    await sent;
+  };
+
+  it('a new session: its echo at the place and with the words of one the old session had is its own', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    h.tx.activity('idle', 100);
+    await send(h, host, 'go');
+    h.tx.push('a', [user('old-uuid', 3, 'go')], []);
+    expect(states(h)).toEqual([]);
+    h.tx.reset('a', of('s2', [item('b1', 1), item('b2', 2)]));
+    await send(h, host, 'go');
+    expect(h.tx.pending.map((p) => p.mark)).toEqual([2]);
+    h.tx.push('a', [user('new-uuid', 3, 'go')], []);
+    expect(states(h)).toEqual([]);
+  });
+
+  it('a resync of the same session: an item still takes one prompt only, in the old session and in the new one', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    h.tx.activity('working', 900);
+    await send(h, host, 'go', true);
+    await send(h, host, 'go', true);
+    h.tx.push('a', [user('u3', 3, 'go')], []);
+    h.tx.reset('a', ack([item('a1', 1), item('a2', 2), user('u3', 3, 'go')]));
+    expect(states(h)).toEqual(['queued']);
+    h.tx.reset('a', of('s2', [item('b1', 1), item('b2', 2)]));
+    await send(h, host, 'go', true);
+    expect(states(h)).toEqual(['queued', 'queued']);
+    h.tx.push('a', [user('n3', 3, 'go')], []);
+    expect(states(h)).toEqual(['queued']);
+    h.tx.push('a', [], [user('n3', 3, 'go')]);
+    h.tx.reset('a', of('s2', [item('b1', 1), item('b2', 2), user('n3', 3, 'go')]));
+    expect(states(h)).toEqual(['queued']);
+    h.tx.reset('a', of('s2', [item('b1', 1), item('b2', 2), user('n3', 3, 'go'), user('n4', 4, 'go')]));
+    expect(states(h)).toEqual([]);
+  });
+
+  it('a prompt still waiting when the session changes: its item may be anywhere in the new one', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    h.tx.activity('idle', 100);
+    h.tx.push('a', [3, 4, 5, 6, 7, 8, 9].map((n) => item(`a${n}`, n)), []);
+    // The send that starts the new session: its item is in the new session's first ack.
+    await send(h, host, 'start over');
+    expect(h.tx.pending.map((p) => p.mark)).toEqual([9]);
+    h.tx.reset('a', of('s2', [user('n1', 1, 'start over'), item('n2', 2)]));
+    expect(states(h)).toEqual([]);
+    // One sent just before the switch, whose new transcript is not there yet: its item comes in the first push.
+    await send(h, host, 'next');
+    h.tx.reset('a', of('s3', [], { pending: true }));
+    expect(states(h)).toEqual(['sent']);
+    h.tx.push('a', [user('m1', 1, 'next')], [], { harness: 'claude', session: 's3' });
+    expect(states(h)).toEqual([]);
+    // A resync of the same session keeps the mark: an older item with those words is not the one.
+    await send(h, host, 'next');
+    h.tx.reset('a', of('s3', [user('m1', 1, 'next')]));
+    expect(states(h)).toEqual(['sent']);
+  });
+
+  it("a pending watch's first push names its session: a resync of that session keeps what its items took", async () => {
+    const h = harness();
+    const wsent: Array<{ t: string; resolve: (r: CommandResult) => void }> = [];
+    const tw = new TranscriptWatches({
+      send: (t) => new Promise((resolve) => wsent.push({ t, resolve })),
+      sink: { reset: (id, a) => h.tx.reset(id, a), push: (id, i, u, head) => h.tx.push(id, i, u, head), stop: () => {} },
+      failed: () => {},
+      closed: () => {},
+      now: () => 0,
+    });
+    h.tx.sit('a', 'Ada');
+    tw.sync(new Set(['a']));
+    wsent[0]?.resolve({ ok: true, data: { harness: 'claude', session: '', cursor: 'c:1', pending: true, items: [] } });
+    await flush();
+    h.tx.toggle();
+    await flush();
+    const host = (h.views[0] as FakeView).host;
+    h.tx.activity('working', 900);
+    await send(h, host, 'go', true);
+    await send(h, host, 'go', true);
+    tw.items({ t: 'transcript.items', id: 'a', items: [user('u1', 1, 'go')], updates: [], harness: 'claude', session: 's3', version: '', cursor: 'c:1', has_more: false, pending: false });
+    expect(states(h)).toEqual(['queued']);
+    tw.closed({ t: 'transcript.closed', id: 'a', reason: 'resync' });
+    expect(wsent.at(-1)?.t).toBe('transcript.watch');
+    wsent.at(-1)?.resolve({ ok: true, data: { harness: 'claude', session: 's3', cursor: 'c:1', items: [user('u1', 1, 'go')] } });
+    await flush();
+    expect(states(h)).toEqual(['queued']);
+  });
+
+  it("the turn's mark is of the old session: after a switch the new session's items say what the turn does", async () => {
+    const h = harness();
+    await reading(h);
+    h.tx.push('a', [3, 4, 5, 6].map((n) => item(`a${n}`, n)), []);
+    h.tx.activity('idle', 100);
+    h.tx.activity('working', 900);
+    expect(h.tx.cueState).toBe('thinking@900');
+    const running = item('t2', 2, { kind: 'tool', tool: { name: 'Bash', input_summary: '', status: 'running' } });
+    h.tx.reset('a', of('s2', [user('n1', 1, 'x'), running]));
+    // The running tool row speaks for itself.
+    expect(h.tx.cueState).toBe('');
+    h.tx.push('a', [], [{ ...running, tool: { name: 'Bash', input_summary: '', status: 'ok' } }]);
+    expect(h.tx.cueState).toBe('thinking@900');
+  });
+
   it('the item before the ack: the row goes, the ack does not bring it back', async () => {
     const h = harness();
     const { host } = await reading(h);

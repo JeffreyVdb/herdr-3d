@@ -271,9 +271,9 @@ export class Laptops {
           this.feeds.get(id).note(ack.items);
           this.transcript.reset(id, ack);
         },
-        push: (id, items, updates) => {
+        push: (id, items, updates, head) => {
           this.feeds.get(id).note([...items, ...updates]);
-          this.transcript.push(id, items, updates);
+          this.transcript.push(id, items, updates, head);
         },
         stop: (id) => {
           if (this.seat?.id !== id) this.feeds.drop(id);
