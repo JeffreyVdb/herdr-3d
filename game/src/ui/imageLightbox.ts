@@ -56,6 +56,7 @@ const REASONS: Record<string, string> = {
   too_large: 'The file is over 25 MB.',
   not_image: 'The file is not a PNG, JPEG, GIF or WebP image.',
   invalid: 'The image data could not be read.',
+  omitted: 'This herdr-world is older than image support: update the bridge to see images.',
 };
 
 export function unavailableText(r: Pick<ImageRef, 'unavailable' | 'reason' | 'mime'>): string {

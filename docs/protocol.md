@@ -1443,9 +1443,9 @@ bridge at start:
 
 A worker's agent conversation as one timeline of items, for the laptop's conversation view (M16): the same session as
 the terminal, read from the agent's own transcript file, so the TUI is never touched. Claude Code and Codex both
-become the same item model; the game never sees raw JSONL. Images are not part of this phase: an image is only its
-place in an item (`{"image_omitted": true}`); the bridge never decodes one, and never reads a path an `[Image #n:
-path]` marker names.
+become the same item model; the game never sees raw JSONL. Images are part of it since phase 2 (#56): an item carries
+an `ImageRef` (below), never bytes; the bytes come from `transcript.image`, by hash, for a hash this connection was
+sent.
 
 ```json
 {"t":"transcript.watch","req_id":"60","args":{"id":"6db1905e-…","limit":200}}
@@ -1456,6 +1456,10 @@ path]` marker names.
 {"t":"transcript.item","req_id":"62","args":{"id":"6db1905e-…","item":"toolu_01…"}}
 {"t":"ack","req_id":"62","data":{"item":{…}}}
 {"t":"transcript.page","req_id":"63","args":{"id":"6db1905e-…","agent":"aa3716c63ba631707"}}
+{"t":"transcript.image","req_id":"65","args":{"id":"6db1905e-…","hash":"9f2c…","size":"thumb"}}
+{"t":"ack","req_id":"65","data":{"mime":"image/png","width":480,"height":270,"bytes":41230,"size":"thumb","data":"iVBORw0KGgo…"}}
+{"t":"transcript.images","req_id":"66","args":{"id":"6db1905e-…"}}
+{"t":"ack","req_id":"66","data":{"images":[{"hash":"9f2c…","mime":"image/png","bytes":183422,"width":1280,"height":720,"source":"inline","origin":"input","item_id":"msg_01a0…","seq":59,"ts":1790710517124}]}}
 {"t":"transcript.unwatch","req_id":"64","args":{"id":"6db1905e-…"}}
 {"t":"ack","req_id":"64"}
 {"t":"transcript.closed","id":"6db1905e-…","reason":"session_changed"}
@@ -1517,7 +1521,7 @@ shows). `transcript.watch` and `transcript.unwatch` are audit-logged with the wo
 {"id":"toolu_018mQCao59VwQiRK6L6zHu5h","seq":58,"ts":1790734485453,"kind":"tool",
  "tool":{"name":"Edit","input_summary":"/home/u/…/protocol.ts","input":{…},"status":"ok","output_text":"The file … has been updated.",
    "diff":{"path":"/home/u/…/protocol.ts","hunks":[{"old_start":369,"old_lines":6,"new_start":369,"new_lines":11,"lines":["   ctx","-old","+new"]}]}}}
-{"id":"msg_01a0eeaa-0d84-…","seq":59,"ts":1790710517124,"kind":"user","parts":[{"image_omitted":true},{"text":"[Image #1] what is this?"}]}
+{"id":"msg_01a0eeaa-0d84-…","seq":59,"ts":1790710517124,"kind":"user","parts":[{"image":{"hash":"9f2c…","mime":"image/png","bytes":183422,"width":1280,"height":720,"source":"inline","origin":"input","item_id":"msg_01a0eeaa-0d84-…","seq":59,"ts":1790710517124}},{"text":"[Image #1] what is this?"}]}
 {"id":"o:10450","seq":60,"ts":1790659967485,"kind":"notice","hidden":true,"notice":{"text":"","source":"event_msg/item_completed"}}
 ```
 
@@ -1528,9 +1532,9 @@ shows). `transcript.watch` and `transcript.unwatch` are audit-logged with the wo
 | `ts` | unix ms of the item's first line (0 when it has no timestamp) |
 | `kind` | `user`, `assistant`, `thinking`, `tool`, `subagent`, `compaction`, `notice`, `unknown` |
 | `hidden` | `true` for what the view shows only with its "show system" toggle: the dropped lines (as notices, below) and `unknown` items. The bridge sends them all; the game filters. `limit` counts only items that are not hidden. |
-| `parts` | `user` / `assistant` / `thinking`: in order, each `{"text": markdown}` or `{"image_omitted": true}`. A `[Image #n: /path]` marker in text is an `image_omitted` part (the path is not kept). Thinking with no text (Claude's redacted thinking, Codex's encrypted reasoning with an empty summary) has no parts: a "reasoning" chip. |
+| `parts` | `user` / `assistant` / `thinking`: in order, each `{"text": markdown}` or `{"image": ImageRef}`. A `[Image #n: /path]` marker in a user's text is an image part of its own (`source: "path"`, resolved only under the roots below); the text around it stays. Thinking with no text (Claude's redacted thinking, Codex's encrypted reasoning with an empty summary) has no parts: a "reasoning" chip. |
 | `truncated` | a part's or the notice's text was cut for the list (`transcript.item` has it all) |
-| `tool` | `tool` / `subagent`: `name` (Codex: `namespace.name` when namespaced), `input_summary` (the input's first line, at most 200 characters: the command, file path, pattern, URL…; Codex `exec` scripts: their first `cmd`; `apply_patch`: the files), `input` (the raw input as JSON; in lists only when at most 4 KiB), `status` (`running` until the result comes, then `ok`, `error` or `interrupted`), `output_text` (the result's text, at most 64 KiB in lists: then `output_truncated: true`), `images` (`[{"image_omitted": true}, …]`, images in the result), `diff` (`{path, hunks, truncated?}`: Claude `Edit`/`Write`'s `structuredPatch`, a created file as all added lines; Codex `apply_patch`, whose hunks have no line numbers: 0), `diffs` (every file, when a patch changes more than one; `diff` is the first). Diff lines are capped at 64 KiB in lists (`truncated`). |
+| `tool` | `tool` / `subagent`: `name` (Codex: `namespace.name` when namespaced), `input_summary` (the input's first line, at most 200 characters: the command, file path, pattern, URL…; Codex `exec` scripts: their first `cmd`; `apply_patch`: the files), `input` (the raw input as JSON; in lists only when at most 4 KiB), `status` (`running` until the result comes, then `ok`, `error` or `interrupted`), `output_text` (the result's text, at most 64 KiB in lists: then `output_truncated: true`), `images` (`[{"image": ImageRef}, …]`, the images in the result: what the agent viewed), `diff` (`{path, hunks, truncated?}`: Claude `Edit`/`Write`'s `structuredPatch`, a created file as all added lines; Codex `apply_patch`, whose hunks have no line numbers: 0), `diffs` (every file, when a patch changes more than one; `diff` is the first). Diff lines are capped at 64 KiB in lists (`truncated`). |
 | `subagent` | a Claude `Agent` / `Task` call: `agent_id` (from its result, `""` until then), `description`, `status` (`running`, then the result's: `completed`, `async_launched`, … or `error` / `interrupted`) |
 | `notice` | `notice` / `compaction`: `text` (at most 64 KiB in lists, 512 bytes for hidden ones) and `source`, the line type it came from |
 | `raw_type` | `unknown`: the line or block type not recognised (`hologram-state`, `assistant/hologram`, `event_msg/…`, `(invalid line)`) |
@@ -1567,6 +1571,65 @@ item, so drift shows up instead of being lost.
 Shown as notices: Claude `system` `turn_duration` ("Turn took 9m 52s"), `away_summary`, `informational`, `api_error`,
 `local_command` output; Codex `task_complete`, `turn_aborted`, `error`.
 
+
+#### Images
+
+An `ImageRef` says what an image is and where it sits; it never has bytes.
+
+```json
+{"hash":"9f2c…","mime":"image/png","bytes":183422,"width":1280,"height":720,"source":"inline","origin":"input",
+ "item_id":"msg_01a0eeaa-0d84-…","seq":59,"ts":1790710517124}
+{"source":"path","path":"/etc/hosts.png","origin":"input","unavailable":true,"reason":"not_allowed","item_id":"…","seq":59,"ts":1790710517124}
+```
+
+| field | |
+|---|---|
+| `hash` | sha256 of the image bytes, hex: the key of `transcript.image`. The same image twice (Claude repeats payloads, a screenshot sent again) has the same hash. Absent when `unavailable`. |
+| `mime` | `image/png`, `image/jpeg`, `image/gif` or `image/webp`, from the **bytes** (never the transcript's label); `binary` for inline bytes that are none of them (an SVG, a PDF): no thumbnail, no download. |
+| `bytes`, `width`, `height` | of the original (width and height 0/absent when the header could not be read) |
+| `source` | `inline` (base64 in the transcript) or `path` (a file the transcript names) |
+| `path` | `source: "path"`: the path, or a URL, as **text** for the view. The client never sends it back. |
+| `origin` | `input`: only what the user attached to a prompt (a paste, an `[Image #n: path]` marker in a user message). `agent`: everything else, what the LLM viewed or generated. |
+| `kind` | `agent` images only, a detail for a badge: `generated` (Codex `image_generation_end`, an assistant `image` block, a file under `~/.codex/generated_images`) or `viewed` (a Claude `Read` of a PNG, a screenshot in a tool result, Codex `view_image`) |
+| `item_id`, `seq`, `ts` | the item the image is in (the Images view links back to it) |
+| `unavailable`, `reason` | the bridge did not take the image: `not_allowed` (a path outside the roots, or a symlink out of them; a URL), `missing`, `too_large` (over 25 MB), `not_image`, `invalid` (bad base64) |
+
+**Where images come from.** Claude: `image` blocks with a base64 `source`, in user messages (`input`) and in
+`tool_result.content[]` (`agent`/`viewed`; a `Read` of a PNG is the common case, shown inside the expanded tool row);
+an assistant `image` block is `agent`/`generated`. Codex: `input_image` data URLs in user messages (`input`; the
+`<image name=… path=…>` wrapper text around them is dropped) and in tool outputs (`agent`/`viewed`), an
+`image_generation_end` event (`agent`/`generated`: its `result` base64, else its `saved_path`), and a `view_image` call
+whose output has no image (the file it named, exactly that file). A `url` source (Claude) or a remote `image_url`
+(Codex) is never fetched: it is an `unavailable` image whose `path` is the URL.
+
+**Inline images** are decoded once, hashed and filed in a bounded content-addressed cache: **64 MiB** in memory (least
+recently used out first), and in a `0600`-file / `0700`-directory disk cache under `$XDG_CACHE_HOME/herdr-world/img/`
+(`--image-cache <dir>`, `-` for none; 512 MiB, oldest out first) so bytes that left memory come back without reading
+the transcript again; if they are in neither, the bridge reads the transcript line they came from again, so the cache
+never has to be complete. Items never hold base64. The original of an image over 25 MB is not kept.
+
+**Path images** are read only under an **allowlist of roots**: Drop Zone's data directory (`--dropzone-data`, default
+`$DROPZONE_DATA` or `~/drops`: where #13/#51's `[Image #n: /abs/path]` markers point), `~/.codex/generated_images` (beside
+`--codex-sessions`), the worker's own `cwd`, and the exact file a Codex `view_image` call named. The path must be
+absolute and clean, inside a root as written **and** after `EvalSymlinks` (a symlink that leaves the root is refused), a
+regular file of at most 25 MB whose bytes are a PNG, JPEG, GIF or WebP. A path outside every root is refused before any
+file system call, so the bridge does not even look at it; anything refused is an `unavailable` image whose `path` the
+view shows as text with "not available". A path that vanished is the same. The client never names a path.
+
+**`transcript.image`** `{id, hash, size, agent?}`, `size` `thumb` or `full`: the image with that hash, only for a worker
+this connection watches and **only for a hash the bridge already sent this connection** (in the watch ack, a push, a
+page, an item or the image list; else `not_found`, also for a hash that never was in the transcript). Ack:
+`{mime, width, height, bytes, size, data}` with `data` the base64 of the image (`thumb`: at most **480 px** on the
+longest side, PNG, or JPEG for a JPEG original; a GIF is its first frame). A `full` image whose base64 would be over
+**12 MiB** is `too_large` (the view keeps the thumbnail and says so). An image that can no longer be read (a file
+changed under its hash, gone) is `not_found`; `binary` never has bytes. `agent` reads a Claude subagent's timeline like
+`transcript.page` does. A watch has at most 16 image reads in flight (`busy` above). Not audit-logged (a read of what the
+watch shows), and nothing of the image is ever logged.
+
+**`transcript.images`** `{id}`: every image of the session, oldest first, as `{"images": [ImageRef…], "truncated"?}`,
+from the index (the whole file, not only the watch's window; each item that has images is read back once and its images
+remembered). Newest 2000 at most (`truncated`). No bytes; the hashes count as sent.
+
 #### Limits and lifecycle
 
 - `--max-transcript-watches` (`HERDR_WORLD_MAX_TRANSCRIPT_WATCHES`, default 4) per connection: above it
@@ -1595,13 +1658,14 @@ transcript file that was truncated or replaced) or `not_found` (the transcript f
 |---|---|
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
-| `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
+| `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
 | `name_taken` | another building, or another team preset, already has that name (ignoring case) |
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
-| `busy` | a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home |
-| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell or a blocked worker, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
+| `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home |
+| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell or a blocked worker, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
+| `too_large` | `transcript.image` with `size: "full"` for an image whose base64 is over 12 MiB (its thumbnail is still served) |
 | `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`, `transcript.watch` above `--max-transcript-watches`; the message says which |
 | `not_clean` | `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |
 | `fetch_failed` | `worker.hire` with `worktree: true` whose `git fetch origin` failed (no `origin`, offline, timed out after 20 s, …); the message is git's error. Nothing was made. (After the accept, like `bad_request` for a missing default branch.) |
