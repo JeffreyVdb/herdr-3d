@@ -58,6 +58,10 @@ type claudeDialog struct {
 	rows      []dialogRow
 	submitRow bool // the unnumbered Submit row of a multi-select question
 	submitCur bool // the cursor is on it
+	// reviewed: on the review, the questions it lists ("● Which color?",
+	// its lines joined, a cut one's "…" dropped), the answer under each
+	// ("→ Blue") left out.
+	reviewed []string
 }
 
 func screenLines(screen string) []string {
@@ -115,6 +119,7 @@ func parseClaudeDialog(screen string) claudeDialog {
 	}
 	var question []string
 	hinted := false
+	answer := false // on the review: in an answer's lines
 	for _, l := range lines[head+1:] {
 		t := strings.TrimSpace(l)
 		switch {
@@ -145,12 +150,25 @@ func parseClaudeDialog(screen string) claudeDialog {
 			d.submitRow, d.submitCur = true, m[1] != ""
 			continue
 		}
-		if len(d.rows) == 0 && !d.review {
+		switch {
+		case len(d.rows) > 0:
+		case !d.review:
 			question = append(question, strings.TrimSpace(strings.TrimPrefix(t, "│")))
+		default:
+			switch s, ok := strings.CutPrefix(t, "●"); {
+			case ok:
+				d.reviewed, answer = append(d.reviewed, strings.TrimSpace(s)), false
+			case strings.HasPrefix(t, "→"):
+				answer = true
+			case !answer && len(d.reviewed) > 0: // a long question's next line
+				d.reviewed[len(d.reviewed)-1] += " " + t
+			}
 		}
 	}
 	if d.review {
-		question = nil
+		for i, q := range d.reviewed {
+			d.reviewed[i] = strings.TrimSuffix(collapse(q), "…")
+		}
 		// The review's rows are Submit answers and Cancel; the lines above them list the answers.
 		d.ok = hinted && len(d.rows) > 0 && d.rows[0].label == claudeSubmitAll
 		return d
@@ -294,7 +312,8 @@ func (d claudeDialog) showsQuestion(q proto.AskQuestion) bool {
 }
 
 // showsAsk reports whether a Claude dialog is ask's: one of its questions,
-// or its review with a tab per question header.
+// or its review with a tab per question header and each question listed,
+// in order (a review cut too short to tell, or one listing fewer, is not).
 func (d claudeDialog) showsAsk(ask *proto.Ask) bool {
 	if !d.ok {
 		return false
@@ -306,11 +325,11 @@ func (d claudeDialog) showsAsk(ask *proto.Ask) bool {
 	if n := len(tabs); n == len(ask.Questions)+1 && tabs[n-1] == "Submit" {
 		tabs = tabs[:n-1]
 	}
-	if len(tabs) != len(ask.Questions) {
+	if len(tabs) != len(ask.Questions) || len(d.reviewed) != len(ask.Questions) {
 		return false
 	}
 	for i, t := range tabs {
-		if !headerIs(t, ask.Questions[i].Header) {
+		if !headerIs(t, ask.Questions[i].Header) || !sameQuestion(d.reviewed[i], ask.Questions[i].Question) {
 			return false
 		}
 	}

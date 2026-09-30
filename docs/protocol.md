@@ -1722,8 +1722,11 @@ answering (by its text, however it wraps), the cursor, the ticks, the typed text
 
 The cursor left (in the terminal) on a Claude question's "Type something" row edits its text, where a digit is
 typed (seen live): the arrows take it off before any digit. Codex notes left open take no digit: `input_failed`, nothing
-pressed. The dialog is the ask's when it shows one of its questions (its text) with its options (each option row shown has
-that option's label), or (Claude) its review with a tab per question header. After the last key (the one question's,
+pressed; for `other`, notes open on "None of the above" that are empty take the text, then Enter, notes holding exactly
+that text take Enter, and notes holding anything else are `input_failed`, nothing pressed (Enter would submit them).
+The dialog is the ask's when it shows one of its questions (its text) with its options (each option row shown has
+that option's label), or (Claude) its review with a tab per question header and each question's text listed in its
+place (however it wraps; cut, its start; a review cut too short to tell, or listing fewer, is not the ask's). After the last key (the one question's,
 the review's Enter, Codex's last question's) the dialog must be gone within the step timeout (3 s). A dialog that is
 not where it should be (another dialog, a question already answered in the terminal, a step that did not show, the
 dialog still there after the last key) stops it with `input_failed` (the message names the step and the question by

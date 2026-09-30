@@ -626,8 +626,10 @@ func (d *askDriver) claudeCancel(ask *proto.Ask) error {
 // source, verified live for these: testdata/screens/codex-ask-*): an
 // option's digit picks it and goes to the next question (the last one's
 // submits them all); Other is the arrows to "None of the above", Enter
-// (its notes open), the text, Enter. A digit on "None of the above" would
-// submit it without the text. It has no multi-select. After the last key
+// (its notes open), the text, Enter; notes open already (in the terminal)
+// take only the text if empty, only Enter if they hold it, no keys if they
+// hold other text. A digit on "None of the above" would submit it without
+// the text. It has no multi-select. After the last key
 // the overlay must be gone.
 func (d *askDriver) codex(ask *proto.Ask, answers []askAnswer) error {
 	var on func(string) bool
@@ -651,44 +653,60 @@ func (d *askDriver) codex(ask *proto.Ask, answers []askAnswer) error {
 			continue
 		}
 		other := len(q.Options) + 1 // "None of the above"
-		for dlg.cursor() != other {
-			key := "down"
-			if dlg.cursor() > other {
-				key = "up"
-			}
-			from := dlg.cursor()
-			if err := d.press(key); err != nil {
-				return err
-			}
-			if err := d.waitFor("the cursor moving towards None of the above", func(s string) bool { return on(s) && dlg.cursor() != from }); err != nil {
-				return err
-			}
-			if len(d.sent) > 64 {
-				return fmt.Errorf("%w: the cursor never reached None of the above", errInputFailed)
-			}
-		}
-		if err := d.press("enter"); err != nil {
-			return err
-		}
-		if err := d.waitFor("its notes open", func(s string) bool { return on(s) && dlg.notes && dlg.notesText == "" }); err != nil {
-			return err
-		}
-		if err := d.typeText(*ans.other); err != nil {
-			return err
-		}
 		text := *ans.other
-		if err := d.waitFor("the typed answer in its notes", func(s string) bool {
-			if !on(s) || !dlg.notes {
-				return false
+		// Its notes open already (in the terminal): Enter would submit what
+		// they hold. Empty on None of the above, the text goes in; holding
+		// this text, Enter; anything else, no keys.
+		opened, typed := false, false
+		if dlg.notes {
+			opened = dlg.cursor() == other && dlg.notesText == ""
+			typed = dlg.cursor() == other && !q.Secret && collapse(dlg.notesText) == collapse(text)
+			if !opened && !typed {
+				return fmt.Errorf("%w: question %d has its notes open (no keys pressed for it); look at the terminal", errInputFailed, i+1)
 			}
-			if q.Secret { // masked
-				return dlg.notesText != "" && strings.Trim(dlg.notesText, "*") == ""
-			}
-			return labelIs(dlg.notesText, text)
-		}); err != nil {
-			return err
 		}
-		d.settle()
+		if !opened && !typed {
+			for dlg.cursor() != other {
+				key := "down"
+				if dlg.cursor() > other {
+					key = "up"
+				}
+				from := dlg.cursor()
+				if err := d.press(key); err != nil {
+					return err
+				}
+				if err := d.waitFor("the cursor moving towards None of the above", func(s string) bool { return on(s) && dlg.cursor() != from }); err != nil {
+					return err
+				}
+				if len(d.sent) > 64 {
+					return fmt.Errorf("%w: the cursor never reached None of the above", errInputFailed)
+				}
+			}
+			if err := d.press("enter"); err != nil {
+				return err
+			}
+			if err := d.waitFor("its notes open", func(s string) bool { return on(s) && dlg.notes && dlg.notesText == "" }); err != nil {
+				return err
+			}
+			opened = true
+		}
+		if opened {
+			if err := d.typeText(text); err != nil {
+				return err
+			}
+			if err := d.waitFor("the typed answer in its notes", func(s string) bool {
+				if !on(s) || !dlg.notes {
+					return false
+				}
+				if q.Secret { // masked
+					return dlg.notesText != "" && strings.Trim(dlg.notesText, "*") == ""
+				}
+				return labelIs(dlg.notesText, text)
+			}); err != nil {
+				return err
+			}
+			d.settle()
+		}
 		if err := d.press("enter"); err != nil {
 			return err
 		}

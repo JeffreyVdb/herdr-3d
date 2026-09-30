@@ -641,3 +641,72 @@ func TestAnswerAskErrorsKeepNoContent(t *testing.T) {
 		t.Errorf("audit errors %q", errs)
 	}
 }
+
+// Review of #57: Dismiss on Claude's review presses Esc only when the
+// review lists the ask's questions. A later ask with the same headers
+// (Color, Extras) but other questions is stale, nothing pressed.
+func TestAnswerAskCancelChecksTheReview(t *testing.T) {
+	ab := startAskBridge(t, "idle")
+	c := ab.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	const tu = "toolu_01U8ZrKFNvqFNsavBe7a22df" // Which color? / Which extras?
+	appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 5))
+	askOf(c, id, pendingID(tu))
+	other := strings.NewReplacer("Which color?", "Which color should production alerts use?",
+		"Which extras?", "Which extras should the production dashboard expose?").Replace(readScreen(t, "claude-ask-two-review"))
+	playDialog(ab.termBridge, "w1:p1", "other", map[string]string{"other": other, "gone": "❯ \n"},
+		map[string]map[string]string{"other": {"esc": "gone"}}, nil)
+	c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: tu, Cancel: true}, proto.ErrStale)
+	if calls := ab.term.Calls(); len(calls) != 0 {
+		t.Fatalf("pressed %q", calls)
+	}
+	// Its own review: Esc.
+	playDialog(ab.termBridge, "w1:p1", "review", map[string]string{"review": readScreen(t, "claude-ask-two-review"), "gone": "❯ \n"},
+		map[string]map[string]string{"review": {"esc": "gone"}}, nil)
+	if r := answerAsk(t, c, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: tu, Cancel: true}); !slices.Equal(r.Sent, []string{"esc"}) {
+		t.Fatalf("result %+v", r)
+	}
+	// Answering: the other review after its questions is not submitted.
+	playDialog(ab.termBridge, "w1:p1", "q1", map[string]string{
+		"q1": readScreen(t, "claude-ask-two"), "q2": readScreen(t, "claude-ask-two-q2"), "q2-logs": readScreen(t, "claude-ask-two-q2-toggle"),
+		"other": other, "gone": "❯ \n",
+	}, map[string]map[string]string{"q1": {"2": "q2"}, "q2": {"1": "q2-logs"}, "q2-logs": {"right": "other"}, "other": {"enter": "gone"}}, nil)
+	c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: tu, Answers: []proto.AskAnswerArg{{Question: 0, Choices: []int{2}}, {Question: 1, Choices: []int{1}}}}, proto.ErrInputFailed)
+	if calls := ab.term.Calls(); strings.HasSuffix(calls[len(calls)-1], "enter") {
+		t.Fatalf("pressed %q", calls)
+	}
+}
+
+// Review of #57: Codex's notes open already (in the terminal) on None of
+// the above: Enter would submit what they hold. Other text there is
+// input_failed, nothing pressed; empty, the answer's text goes in, then
+// Enter; the answer's text already, Enter.
+func TestAnswerAskCodexOtherWithNotesOpen(t *testing.T) {
+	ab := startAskBridge(t, "blocked")
+	c := ab.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w2")
+	const tu = "call_fLK98VtFQnWLvYRk0fcH9SZH"
+	lines := strings.SplitAfter(fixture(t, "codex", "ask.jsonl"), "\n")
+	typed := readScreen(t, "codex-ask-other-typed") // "Use a local file instead."
+	playDialog(ab.termBridge, "w2:p1", "old", map[string]string{"old": typed, "gone": "• DONE\n"},
+		map[string]map[string]string{"old": {"enter": "gone"}}, map[string]func(){"gone": func() { appendLine(t, ab.codex, lines[5]) }})
+	appendLine(t, ab.codex, lines[4])
+	askOf(c, id, pendingID(tu))
+	c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: tu, Answers: []proto.AskAnswerArg{{Question: 0, Other: str("Use the new production service.")}}}, proto.ErrInputFailed)
+	if calls := ab.term.Calls(); len(calls) != 0 {
+		t.Fatalf("pressed %q", calls)
+	}
+
+	for name, start := range map[string]string{"empty": "notes", "holding the text": "typed"} {
+		playDialog(ab.termBridge, "w2:p1", start, map[string]string{"notes": readScreen(t, "codex-ask-other-notes"), "typed": typed, "done": "• DONE\n"},
+			map[string]map[string]string{"notes": {"text:Use a local file instead.": "typed"}, "typed": {"enter": "done"}}, nil)
+		r := answerAsk(t, c, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: tu, Answers: []proto.AskAnswerArg{{Question: 0, Other: str("Use a local file instead.")}}})
+		want := []string{"text", "enter"}
+		if start == "typed" {
+			want = want[1:]
+		}
+		if !slices.Equal(r.Sent, want) {
+			t.Fatalf("%s: result %+v", name, r)
+		}
+	}
+}

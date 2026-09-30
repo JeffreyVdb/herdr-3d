@@ -205,3 +205,44 @@ func TestDialogShowsAsk(t *testing.T) {
 		t.Error("codex: the third of three")
 	}
 }
+
+// The review is the ask's only when it lists the ask's questions, each in
+// its place: the same headers are not enough. A long one wraps or is cut;
+// one cut too short to tell, or a review listing fewer, is not the ask's.
+func TestReviewShowsAsk(t *testing.T) {
+	for s, want := range map[string][]string{
+		"claude-ask-two-review":         {"Which color?", "Which extras?"},
+		"claude-ask-four-review":        {"First choice?", "Second choice?", "Third choice?", "Fourth choice?"},
+		"claude-ask-multi-other-review": {"Which extras to enable?"},
+	} {
+		if d := parseClaudeDialog(screen(t, s)); !d.ok || !slices.Equal(d.reviewed, want) {
+			t.Errorf("%s: reviewed %q", s, d.reviewed)
+		}
+	}
+	two := func(q1, q2 string) *proto.Ask {
+		return &proto.Ask{Questions: []proto.AskQuestion{{Header: "Color", Question: q1}, {Header: "Extras", Question: q2, Multi: true}}}
+	}
+	review := screen(t, "claude-ask-two-review")
+	if d := parseClaudeDialog(review); d.showsAsk(two("Which color should production alerts use?", "Which extras should the production dashboard expose?")) ||
+		d.showsAsk(two("Which extras?", "Which color?")) || d.showsAsk(&proto.Ask{Questions: two("Which color?", "Which extras?").Questions[:1]}) {
+		t.Error("another ask's review with the same headers taken for it")
+	}
+	long := two("Which color should production alerts use?", "Which extras should the production dashboard expose?")
+	for name, s := range map[string]string{
+		"wrapped": strings.NewReplacer(" ● Which color?", " ● Which color should production\n   alerts use?",
+			" ● Which extras?", " ● Which extras should the production dashboard\n   expose?").Replace(review),
+		"cut": strings.NewReplacer("Which color?", "Which color should production al…", "Which extras?", "Which extras should the production…").Replace(review),
+	} {
+		if !parseClaudeDialog(s).showsAsk(long) {
+			t.Errorf("%s: not the ask's", name)
+		}
+	}
+	for name, s := range map[string]string{
+		"cut short": strings.NewReplacer("Which color?", "Which co…", "Which extras?", "Which ex…").Replace(review),
+		"one gone":  strings.Replace(review, " ● Which extras?\n   → Logs\n", "", 1),
+	} {
+		if d := parseClaudeDialog(s); !d.ok || d.showsAsk(long) || d.showsAsk(two("Which color?", "Which extras?")) {
+			t.Errorf("%s: %+v taken for the ask", name, d)
+		}
+	}
+}
