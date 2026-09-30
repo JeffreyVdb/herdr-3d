@@ -35,9 +35,8 @@ export const THUMB_PARALLEL = 4;
 /** Thumbnails kept: at most this many, and this many bytes. */
 export const THUMB_KEEP = 240;
 export const THUMB_KEEP_BYTES = 40 << 20;
-/** Refs asked for per `transcript.images` request; and the most requests one list takes (a runaway bridge cannot loop it). */
+/** Refs asked for per `transcript.images` request. A list takes as many as the session needs (no cap). */
 export const LIST_PAGE = 1000;
-export const MAX_LIST_PAGES = 500;
 /** Image places remembered to tell a new one from a re-sent item. */
 const MAX_SEEN = 50_000;
 /** Full images kept (they are big). */
@@ -98,6 +97,11 @@ export class ImageFeed {
   private readonly fulls = new Map<string, ImageData>();
   private list_: Promise<ImageRef[]> | null = null;
   private listed_: ImageRef[] | null = null;
+  /** Lists started, and which of them `listed_` came from: an older one that ends late does not replace a newer one. */
+  private lists = 0;
+  private listedBy = 0;
+  /** Bumps on `reset`: a list that was paging the old timeline stops. */
+  private timeline = 0;
   private queue: Queued[] = [];
   private running = 0;
   private disposed = false;
@@ -173,6 +177,7 @@ export class ImageFeed {
     this.seen.clear();
     this.list_ = null;
     this.listed_ = null;
+    this.timeline++;
     this.changed();
   }
 
@@ -193,26 +198,43 @@ export class ImageFeed {
 
   // --- the session's images ---
 
-  /** Every image of the session (the bridge's list), oldest first; asked once until an item with images arrives. */
+  /**
+   * Every image of the session (the bridge's list), oldest first; asked once until an item with images arrives. The
+   * cursor is followed until the bridge has no more, however many pages that takes: nothing is cut off. A bridge whose
+   * cursor does not move on (one it gave before, or none while it says there is more) fails the list, which the Images
+   * tab shows, rather than looping or passing a part for the whole.
+   */
   list(): Promise<ImageRef[]> {
     if (this.disposed) return Promise.resolve([]);
     if (this.list_) return this.list_;
-    const p = (async () => {
+    const mine = ++this.lists;
+    const timeline = this.timeline;
+    const p = (async (): Promise<ImageRef[]> => {
       this.counts.lists++;
-      // The newest run first, then the older ones by cursor until the bridge has no more: every image of the session.
+      // The newest run first, then the older ones by cursor.
       const pages: ImageRef[][] = [];
+      const cursors = new Set<string>();
       let before: string | undefined;
-      for (let n = 0; n < MAX_LIST_PAGES; n++) {
+      for (;;) {
         const r = await this.host.send('transcript.images', { id: this.id, limit: LIST_PAGE, ...(before ? { before } : {}) });
+        if (this.disposed) return [];
+        // Another timeline began (a fresh watch): these pages are the old one's; list the new one instead.
+        if (this.timeline !== timeline) return this.list();
         if (!r.ok) throw new Error(r.message || r.code);
         const a = imagesAck(r.data);
         pages.push(a.images);
-        if (!a.has_more || !a.cursor || a.cursor === before || this.disposed) break;
+        if (!a.has_more) break;
+        if (!a.cursor) throw new Error('the bridge said there are more images but gave no cursor');
+        if (cursors.has(a.cursor)) throw new Error('the bridge repeated a page of the image list');
+        cursors.add(a.cursor);
         before = a.cursor;
       }
       const refs = pages.reverse().flat();
       for (const ref of refs) if (typeof ref.hash === 'string' && ref.hash) this.sent.add(ref.hash);
-      this.listed_ = refs;
+      if (mine > this.listedBy) {
+        this.listed_ = refs;
+        this.listedBy = mine;
+      }
       return refs;
     })();
     this.list_ = p;

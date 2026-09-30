@@ -91,10 +91,91 @@ describe('the session list', () => {
     expect(feed.canFetch(refs[0] as ImageRef)).toBe(true);
   });
 
-  it('a bridge that repeats its cursor cannot loop it', async () => {
+  it('has no page cap: a session of 1500 pages arrives whole', async () => {
+    // A conforming bridge that answers two refs a page (fewer than asked is allowed).
+    const all = Array.from({ length: 3000 }, (_, i) => ref(i + 1));
+    const { feed, sent } = feedOf((s) => {
+      const before = s.args.before as string | undefined;
+      const end = before ? Number(before.slice(2)) : all.length;
+      const start = Math.max(0, end - 2);
+      return { ok: true, data: { images: all.slice(start, end), ...(start > 0 ? { cursor: `c:${start}`, has_more: true } : {}) } };
+    });
+    const refs = await feed.list();
+    expect(sent.filter((s) => s.t === 'transcript.images')).toHaveLength(1500);
+    expect(refs).toHaveLength(3000);
+    expect(refs[0]?.item_id).toBe('i1');
+    expect(refs.map((r) => r.item_id)).toEqual(all.map((r) => r.item_id));
+  });
+
+  it('a bridge that repeats its cursor fails the list instead of looping it or cutting it short', async () => {
     const { feed, sent } = feedOf(() => ({ ok: true, data: { images: [ref(1)], cursor: 'c:5', has_more: true } }));
-    await feed.list();
+    await expect(feed.list()).rejects.toThrow(/repeated/);
     expect(sent.filter((s) => s.t === 'transcript.images')).toHaveLength(2);
+    expect(feed.listed()).toBeNull();
+  });
+
+  it('a cursor that comes back after others is a repeat too', async () => {
+    const next: Record<string, string> = { '': 'c:a', 'c:a': 'c:b', 'c:b': 'c:a' };
+    const { feed, sent } = feedOf((s) => ({ ok: true, data: { images: [ref(1)], cursor: next[(s.args.before as string) ?? ''], has_more: true } }));
+    await expect(feed.list()).rejects.toThrow(/repeated/);
+    expect(sent.filter((s) => s.t === 'transcript.images')).toHaveLength(3);
+  });
+
+  it('has_more without a cursor fails the list', async () => {
+    const { feed } = feedOf(() => ({ ok: true, data: { images: [ref(1)], has_more: true } }));
+    await expect(feed.list()).rejects.toThrow(/cursor/);
+    expect(feed.listed()).toBeNull();
+  });
+
+  it('a reset while the list is paging stops it: the pages of the old timeline are not kept', async () => {
+    let feedRef: ImageFeed | null = null;
+    let pages = 0;
+    const { feed, sent } = feedOf((s) => {
+      pages++;
+      const before = s.args.before as string | undefined;
+      if (pages === 2) feedRef?.reset(); // another session starts while the old one is being listed
+      if (pages <= 2) return { ok: true, data: { images: [ref(before ? 100 : 101)], cursor: 'c:old' + pages, has_more: true } };
+      return { ok: true, data: { images: [ref(7)] } };
+    });
+    feedRef = feed;
+    const refs = await feed.list();
+    expect(refs.map((r) => r.item_id)).toEqual(['i7']);
+    expect(feed.listed()?.map((r) => r.item_id)).toEqual(['i7']);
+    expect(feed.has(H(100))).toBe(false);
+    expect(feed.has(H(101))).toBe(false);
+    expect(sent.filter((s) => s.t === 'transcript.images')).toHaveLength(3);
+  });
+
+  it('a dispose while the list is paging stops it', async () => {
+    let feedRef: ImageFeed | null = null;
+    const { feed, sent } = feedOf(() => {
+      feedRef?.dispose();
+      return { ok: true, data: { images: [ref(1)], cursor: `c:${sent.length}`, has_more: true } };
+    });
+    feedRef = feed;
+    expect(await feed.list()).toEqual([]);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('an older list that ends after a newer one does not replace it', async () => {
+    let n = 0;
+    const gates: Array<() => void> = [];
+    const sent: Sent[] = [];
+    const feed = new ImageFeed('w', {
+      send: (t, args) => {
+        sent.push({ t, args: args as unknown as Record<string, unknown> });
+        const images = [ref(++n)];
+        return new Promise<CommandResult>((res) => gates.push(() => res({ ok: true, data: { images } })));
+      },
+    });
+    const first = feed.list();
+    feed.changed();
+    const second = feed.list();
+    gates[1]?.();
+    expect((await second).map((r) => r.item_id)).toEqual(['i2']);
+    gates[0]?.();
+    await first;
+    expect(feed.listed()?.map((r) => r.item_id)).toEqual(['i2']);
   });
 
   it('a failed page fails the list, and the next list() tries again', async () => {
