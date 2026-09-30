@@ -29,7 +29,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	xdraw "golang.org/x/image/draw"
@@ -505,31 +504,3 @@ func (c *Cache) trimDisk() {
 
 // Dir is the disk cache's directory ("": none).
 func (c *Cache) Dir() string { return c.dir }
-
-// ReadFile reads a regular file of at most MaxImage bytes without
-// following a symlink at its end (callers resolve the path first).
-func ReadFile(path string) ([]byte, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !fi.Mode().IsRegular() {
-		return nil, errors.New("not a regular file")
-	}
-	if fi.Size() > MaxImage {
-		return nil, ErrTooLarge
-	}
-	b, err := io.ReadAll(io.LimitReader(f, MaxImage+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > MaxImage {
-		return nil, ErrTooLarge
-	}
-	return b, nil
-}

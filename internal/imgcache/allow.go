@@ -40,12 +40,13 @@ func Reason(err error) string {
 	return ReasonInvalid
 }
 
-// readFile reads an allowed file (tests count the reads).
-var readFile = ReadFile
+// readFile reads an allowed file (tests count the reads and race it).
+var readFile = readUnder
 
 // PathImage is an image file that passed the allowlist.
 type PathImage struct {
 	Real  string // the path after EvalSymlinks
+	root  string // the real root it is under: the read starts there
 	Size  int64
 	MTime int64 // unix ns
 }
@@ -94,13 +95,13 @@ func CheckPath(path string, roots []string) (PathImage, error) {
 	if err != nil {
 		return PathImage{}, ErrMissing
 	}
-	ok := false
+	root := ""
 	for _, rr := range realRoots {
-		if within(rr, real) {
-			ok = true
+		if within(rr, real) && len(rr) > len(root) {
+			root = rr
 		}
 	}
-	if !ok {
+	if root == "" {
 		return PathImage{}, ErrNotAllowed
 	}
 	fi, err := os.Lstat(real)
@@ -113,7 +114,7 @@ func CheckPath(path string, roots []string) (PathImage, error) {
 	if fi.Size() > MaxImage {
 		return PathImage{}, ErrTooLarge
 	}
-	return PathImage{Real: real, Size: fi.Size(), MTime: fi.ModTime().UnixNano()}, nil
+	return PathImage{Real: real, root: root, Size: fi.Size(), MTime: fi.ModTime().UnixNano()}, nil
 }
 
 // LoadPath checks path and reads it: an image of a type the bridge serves.
@@ -122,10 +123,13 @@ func LoadPath(path string, roots []string) (PathImage, []byte, Info, error) {
 	if err != nil {
 		return pi, nil, Info{}, err
 	}
-	b, err := readFile(pi.Real)
+	b, err := readFile(pi.root, pi.Real)
 	if err != nil {
-		if errors.Is(err, ErrTooLarge) {
+		switch {
+		case errors.Is(err, ErrTooLarge), errors.Is(err, ErrNotFile), errors.Is(err, ErrNotAllowed):
 			return pi, nil, Info{}, err
+		case errors.Is(err, errChanged):
+			return pi, nil, Info{}, ErrNotAllowed
 		}
 		return pi, nil, Info{}, ErrMissing
 	}

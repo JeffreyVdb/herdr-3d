@@ -265,18 +265,21 @@ func TestDiskCacheIsBounded(t *testing.T) {
 }
 
 func TestReadFileRefusals(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := ReadFile(dir); err == nil {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readUnder(dir, dir); err == nil {
 		t.Error("a directory was read")
 	}
 	link := filepath.Join(dir, "l.png")
 	target := filepath.Join(dir, "t.png")
 	_ = os.WriteFile(target, pngOf(t, 4, 4, 0), 0o600)
 	_ = os.Symlink(target, link)
-	if _, err := ReadFile(link); err == nil {
+	if _, err := readUnder(dir, link); err == nil {
 		t.Error("a symlink was followed")
 	}
-	if _, err := ReadFile(target); err != nil {
+	if _, err := readUnder(dir, target); err != nil {
 		t.Error(err)
 	}
 }

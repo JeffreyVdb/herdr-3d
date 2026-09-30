@@ -4,7 +4,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // tree makes <base>/drops (a root), <base>/secret (not one) and returns
@@ -29,7 +31,7 @@ func countReads(t *testing.T) *[]string {
 	t.Helper()
 	var reads []string
 	old := readFile
-	readFile = func(p string) ([]byte, error) { reads = append(reads, p); return old(p) }
+	readFile = func(root, p string) ([]byte, error) { reads = append(reads, p); return old(root, p) }
 	t.Cleanup(func() { readFile = old })
 	return &reads
 }
@@ -127,5 +129,93 @@ func TestReasonWords(t *testing.T) {
 		if got := Reason(err); got != want {
 			t.Errorf("%v: %s", err, got)
 		}
+	}
+}
+
+// An ancestor directory swapped for a link to outside the root between
+// CheckPath and the read is not read through.
+func TestAncestorSwapDoesNotEscapeAllowlist(t *testing.T) {
+	drops, secret := tree(t)
+	sub := filepath.Join(drops, "sub")
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "image.png"), pngOf(t, 2, 2, 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(secret, "image.png"), pngOf(t, 2, 2, 2), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := readFile
+	defer func() { readFile = old }()
+	readFile = func(root, p string) ([]byte, error) {
+		if err := os.Rename(sub, sub+"-old"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(secret, sub); err != nil {
+			t.Fatal(err)
+		}
+		return old(root, p)
+	}
+	_, b, _, err := LoadPath(filepath.Join(sub, "image.png"), []string{drops})
+	if !errors.Is(err, ErrNotAllowed) || len(b) != 0 {
+		t.Fatalf("read through a swapped ancestor: %d bytes, %v", len(b), err)
+	}
+}
+
+// The file swapped for a link at the very end is refused.
+func TestFinalSwapToSymlinkRefused(t *testing.T) {
+	drops, secret := tree(t)
+	file := filepath.Join(drops, "image.png")
+	if err := os.WriteFile(file, pngOf(t, 2, 2, 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(secret, "s.png"), pngOf(t, 2, 2, 2), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := readFile
+	defer func() { readFile = old }()
+	readFile = func(root, p string) ([]byte, error) {
+		_ = os.Remove(p)
+		_ = os.Symlink(filepath.Join(secret, "s.png"), p)
+		return old(root, p)
+	}
+	if _, b, _, err := LoadPath(file, []string{drops}); err == nil || len(b) != 0 {
+		t.Fatalf("read through a swapped link: %v", err)
+	}
+}
+
+// A file swapped for a FIFO after the check does not hold the caller: the
+// open does not block and the opened descriptor is refused.
+func TestFinalSwapToFIFODoesNotBlock(t *testing.T) {
+	drops, _ := tree(t)
+	file := filepath.Join(drops, "image.png")
+	if err := os.WriteFile(file, pngOf(t, 2, 2, 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := readFile
+	defer func() { readFile = old }()
+	readFile = func(root, p string) ([]byte, error) {
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Mkfifo(p, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return old(root, p)
+	}
+	done := make(chan error, 1)
+	go func() { _, _, _, err := LoadPath(file, []string{drops}); done <- err }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrNotFile) {
+			t.Fatalf("err %v, want %v", err, ErrNotFile)
+		}
+	case <-time.After(2 * time.Second):
+		// Release the blocked open so the goroutine ends.
+		if w, err := os.OpenFile(file, os.O_WRONLY, 0); err == nil {
+			w.Close()
+		}
+		t.Fatal("LoadPath blocks opening a FIFO")
 	}
 }
