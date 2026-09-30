@@ -57,13 +57,14 @@ export type PropKind =
   | 'lounge'
   | 'radio'
   | 'dropzone'
-  | 'elevator';
+  | 'elevator'
+  | 'clock';
 
 export interface Prop {
   id: PropKind;
   label: string;
-  /** Milestone that makes it do something, shown in the HUD. */
-  milestone: string;
+  /** Milestone that makes it do something, shown in the HUD; null for a prop that is only looked at (M17's clock): no E. */
+  milestone: string | null;
   box: Box3;
   /** Blocks walking (wall-mounted props do not). */
   solid: boolean;
@@ -350,6 +351,8 @@ export function floorLayout(deskCount: number, outline?: Outline): FloorLayout {
     { id: 'radio', label: 'Radio', milestone: 'M15', box: box(...RADIO_BOX), solid: false },
     { id: 'dropzone', label: 'Drop Zone inbox', milestone: 'M11', box: box(width / 2 + 2.4, 0, depth - 1.5, width / 2 + 3.6, 0.95, depth - 0.8), solid: true },
     { id: 'elevator', label: 'Elevator', milestone: 'M3', box: box(width / 2 - 1.1, 0, depth - 0.12, width / 2 + 1.1, 2.4, depth), solid: false },
+    // M17: the wall clock, high on the board partition's north face, where the desks look.
+    { id: 'clock', label: 'Clock', milestone: null, box: box(width / 2 - 0.55, 1.78, bz - 0.17, width / 2 + 0.55, 2.3, bz - 0.1), solid: false },
   ];
   // Lounge furniture beyond the sofa: coffee table and the coffee counter.
   colliders.push(...props.filter((p) => p.solid).map((p) => rectOf(p.box)));

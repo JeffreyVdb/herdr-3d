@@ -217,6 +217,10 @@ export interface H3DDebug {
   logos(): ReturnType<import('./app').App['logoInfo']> | null;
   /** M7: the fixture simulator's `sim.boards` (merge a PR, make polls fail, …). */
   simBoards(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** M17: the light as shown (`daylight`, eased) and its `target`, the zone and where it comes from, the latitude, whether the time is pinned, the office lamps and what the wall clock's face shows. */
+  daylight(): ReturnType<import('./app').App['daylightInfo']> | null;
+  /** M17: what the office clock shows, `14:05 · Wed 30 Sep` (null before the game is up). */
+  clock(): string | null;
 }
 
 declare global {
@@ -401,6 +405,8 @@ const h3d: H3DDebug = {
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
   logos: () => app?.logoInfo() ?? null,
+  daylight: () => app?.daylightInfo() ?? null,
+  clock: () => (app?.clockFace.time ? `${app.clockFace.time} · ${app.clockFace.date}` : null),
   openChanges: (id) => {
     if (app?.changes.worker !== id) app?.toggleChanges(id);
   },

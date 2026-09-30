@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Box3, Prop } from '../world/layout';
 import { FONT } from './cards/atlasCards';
 import { OFFICE } from './palette';
+import { buildClock, type ClockMesh } from './clock';
 import { buildRadio, type RadioMesh } from './radio';
 
 /** Static placeholder props (boards, lounge, cabinet, …): a few meshes per floor, textures drawn once. */
@@ -122,6 +123,8 @@ export interface PropMeshes {
   swapBoard(id: 'board.issues' | 'board.prs', tex: THREE.Texture): void;
   /** M15: the radio on the lounge counter (null when the layout has none). */
   radio: RadioMesh | null;
+  /** M17: the wall clock (null when the layout has none). */
+  clock: ClockMesh | null;
   dispose(): void;
 }
 
@@ -263,6 +266,15 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
   const radioProp = byId.get('radio');
   const radio = radioProp ? buildRadio(radioProp.box) : null;
   if (radio) add(radio.group);
+  const clockProp = byId.get('clock');
+  const clock = clockProp ? buildClock(clockProp.box) : null;
+  if (clock) {
+    clock.group.traverse((o) => {
+      // The case casts no shadow onto the desks; it takes the room's.
+      if (o instanceof THREE.Mesh) o.receiveShadow = !(o.material instanceof THREE.MeshBasicMaterial);
+    });
+    group.add(clock.group);
+  }
   const rug = new THREE.Mesh(
     new THREE.PlaneGeometry(layout.rug.x1 - layout.rug.x0, layout.rug.z1 - layout.rug.z0).rotateX(-Math.PI / 2),
     toon(OFFICE.rug),
@@ -353,6 +365,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
       }
     },
     radio,
+    clock,
     dispose() {
       group.traverse((o) => {
         if (o instanceof THREE.Mesh) {

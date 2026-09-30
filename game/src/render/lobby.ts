@@ -4,6 +4,7 @@ import { FACE, type BuildingPlan } from '../world/building';
 import { pickNearest, type V3 } from '../world/collide';
 import { ROOM_HEIGHT, WALL_T, type Box3 } from '../world/layout';
 import type { Baker } from './bake';
+import type { Look } from './daylook';
 import { FONT } from './cards/atlasCards';
 import { GLASS_IN } from './office';
 import { OFFICE } from './palette';
@@ -16,8 +17,10 @@ import { canvasTexture, elevatorMeshes } from './props';
  * sliding doors, the reception desk facing them (the receptionist stands
  * behind it, in front of a navy feature wall with the building's name), a
  * bench, plants, a floor directory, and the elevator where it is on every
- * floor. Its static parts are baked into the outside mesh; the glass, the
- * doors, the elevator, the signs and the receptionist are their own meshes.
+ * floor. Its static parts are baked: the front and the canopy into the
+ * outside mesh, the room into a mesh of its own (M17: its own lights keep it
+ * lit at night, when the street darkens); the glass, the doors, the elevator,
+ * the signs and the receptionist are their own meshes.
  */
 
 export type LobbyTarget = 'reception' | 'elevator';
@@ -43,12 +46,15 @@ export class LobbyView {
   private open = 0;
   private readonly targets: Array<{ boxes: Box3[]; value: LobbyTarget }>;
   private placeholder: THREE.Object3D | null = null;
+  private readonly glassMat: THREE.MeshBasicNodeMaterial;
   /** M3d: the entrance sign and the reception wall, which show the logo when there is one. */
   readonly signs: { canopy: LogoSign; wall: LogoSign };
 
   constructor(
     private readonly plan: BuildingPlan,
     b: Baker,
+    /** The room itself (floor, walls, ceiling, desk, bench, plants): baked apart from the front. */
+    inner: Baker,
     name: string,
     tint: number,
     floors: string[],
@@ -59,7 +65,7 @@ export class LobbyView {
     const T = WALL_T;
     const H = ROOM_HEIGHT;
     const v = (x: number, y: number, z: number) => ({ x, y, z });
-    const flat = (x0: number, z0: number, x1: number, z1: number, y: number, hex: number) => b.quad(v(x0, y, z1), v(x1, y, z1), v(x1, y, z0), v(x0, y, z0), hex);
+    const flat = (x0: number, z0: number, x1: number, z1: number, y: number, hex: number) => inner.quad(v(x0, y, z1), v(x1, y, z1), v(x1, y, z0), v(x0, y, z0), hex);
     const base = new THREE.Color(tint).lerp(new THREE.Color(C.ink), 0.62).getHex();
 
     // Floor: pale terrazzo with a border, a mat inside the door and a runner up to the desk.
@@ -68,20 +74,20 @@ export class LobbyView {
     flat(L.front.x0 - 0.2, D - 1.8, L.front.x1 + 0.2, D - 0.05, 0.007, C.mat);
     flat(L.front.x0 + 0.15, L.desk.z1 + 0.25, L.front.x1 - 0.15, D - 1.8, 0.006, OFFICE.rug);
     // Walls: the room faces (the facade skin is outside.ts), navy skirting, the ceiling and its lights.
-    b.box(-T, 0, -T, W + T, H, 0, C.wall, 'nz');
-    b.box(-T, 0, 0, 0, H, D, C.wall, 'nx');
-    b.box(W, 0, 0, W + T, H, D, C.wall, 'px');
-    b.box(0, 0, 0, W, 0.12, 0.03, C.navy);
-    b.box(0, 0, 0, 0.03, 0.12, D, C.navy);
-    b.box(W - 0.03, 0, 0, W, 0.12, D, C.navy);
-    b.quad(v(0, H, 0), v(W, H, 0), v(W, H, D), v(0, H, D), C.ceiling, true);
+    inner.box(-T, 0, -T, W + T, H, 0, C.wall, 'nz');
+    inner.box(-T, 0, 0, 0, H, D, C.wall, 'nx');
+    inner.box(W, 0, 0, W + T, H, D, C.wall, 'px');
+    inner.box(0, 0, 0, W, 0.12, 0.03, C.navy);
+    inner.box(0, 0, 0, 0.03, 0.12, D, C.navy);
+    inner.box(W - 0.03, 0, 0, W, 0.12, D, C.navy);
+    inner.quad(v(0, H, 0), v(W, H, 0), v(W, H, D), v(0, H, D), C.ceiling, true);
     const nx = Math.max(2, Math.round(W / 4.5));
     const nz = Math.max(2, Math.round(D / 4.5));
     for (let j = 0; j < nz; j++)
       for (let i = 0; i < nx; i++) {
         const x = ((i + 0.5) * W) / nx;
         const z = ((j + 0.5) * D) / nz;
-        b.quad(v(x - 0.7, H - 0.01, z - 0.3), v(x + 0.7, H - 0.01, z - 0.3), v(x + 0.7, H - 0.01, z + 0.3), v(x - 0.7, H - 0.01, z + 0.3), C.panel, true);
+        inner.quad(v(x - 0.7, H - 0.01, z - 0.3), v(x + 0.7, H - 0.01, z - 0.3), v(x + 0.7, H - 0.01, z + 0.3), v(x - 0.7, H - 0.01, z + 0.3), C.panel, true);
       }
 
     // The front: piers and a transom in the plinth colour, mullions, glass (see-through both ways).
@@ -114,6 +120,7 @@ export class LobbyView {
       glass.push(new THREE.PlaneGeometry(w, h).rotateY(Math.PI).translate((x0 + x1) / 2, 0.14 + h / 2, zf - 0.001));
     }
     const glassMat = new THREE.MeshBasicNodeMaterial({ color: GLASS_IN.color, transparent: true, opacity: 0.22, depthWrite: false });
+    this.glassMat = glassMat;
     const front = new THREE.Mesh(mergeAll(glass), glassMat);
     front.name = 'lobby.glass';
     this.group.add(front);
@@ -154,8 +161,8 @@ export class LobbyView {
 
     // Reception: the feature wall, the desk (navy front, wood top, a yellow stripe), a monitor.
     const bw = L.backWall;
-    b.box(bw.x0, 0, bw.z0, bw.x1, 2.7, bw.z1, C.navy);
-    b.box(bw.x0, 2.7, bw.z0, bw.x1, 2.76, bw.z1, C.yellow);
+    inner.box(bw.x0, 0, bw.z0, bw.x1, 2.7, bw.z1, C.navy);
+    inner.box(bw.x0, 2.7, bw.z0, bw.x1, 2.76, bw.z1, C.yellow);
     const wallTex = this.tex(nameTexture(name, 'Welcome · reception', '#24406e', '#ffffff', '#ffc233'));
     const ww = Math.min(3.2, bw.x1 - bw.x0 - 0.4);
     const wallSign = new THREE.Mesh(new THREE.PlaneGeometry(ww, ww / 4), new THREE.MeshBasicNodeMaterial({ map: wallTex }));
@@ -165,28 +172,28 @@ export class LobbyView {
     this.signs = { canopy: canopyLogo, wall: wallLogo };
     const d = L.desk;
     // Counter at 0.98 m: the receptionist (head top ~1.5 m) stands behind it, seen from the chest up.
-    b.box(d.x0, 0, d.z0, d.x1, 0.92, d.z1, C.navy);
-    b.box(d.x0 - 0.06, 0.92, d.z0 - 0.06, d.x1 + 0.06, 0.98, d.z1 + 0.06, OFFICE.wood);
-    b.box(d.x0 + 0.02, 0.52, d.z1, d.x1 - 0.02, 0.6, d.z1 + 0.01, C.yellow, 'nz');
-    b.box(d.x0, 0.74, d.z0 - 0.35, d.x1, 0.78, d.z0, OFFICE.wood);
+    inner.box(d.x0, 0, d.z0, d.x1, 0.92, d.z1, C.navy);
+    inner.box(d.x0 - 0.06, 0.92, d.z0 - 0.06, d.x1 + 0.06, 0.98, d.z1 + 0.06, OFFICE.wood);
+    inner.box(d.x0 + 0.02, 0.52, d.z1, d.x1 - 0.02, 0.6, d.z1 + 0.01, C.yellow, 'nz');
+    inner.box(d.x0, 0.74, d.z0 - 0.35, d.x1, 0.78, d.z0, OFFICE.wood);
     const mx = L.receptionist.x + 0.55;
-    b.box(mx - 0.26, 0.98, d.z0 + 0.12, mx + 0.26, 1.3, d.z0 + 0.16, 0x1b1f2b);
-    b.quad(v(mx + 0.23, 1.01, d.z0 + 0.119), v(mx - 0.23, 1.01, d.z0 + 0.119), v(mx - 0.23, 1.27, d.z0 + 0.119), v(mx + 0.23, 1.27, d.z0 + 0.119), 0x9fd6ff, true);
-    b.geo(new THREE.SphereGeometry(0.06, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).translate(d.x1 - 0.35, 0.98, d.z1 - 0.15), C.yellow);
+    inner.box(mx - 0.26, 0.98, d.z0 + 0.12, mx + 0.26, 1.3, d.z0 + 0.16, 0x1b1f2b);
+    inner.quad(v(mx + 0.23, 1.01, d.z0 + 0.119), v(mx - 0.23, 1.01, d.z0 + 0.119), v(mx - 0.23, 1.27, d.z0 + 0.119), v(mx + 0.23, 1.27, d.z0 + 0.119), 0x9fd6ff, true);
+    inner.geo(new THREE.SphereGeometry(0.06, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).translate(d.x1 - 0.35, 0.98, d.z1 - 0.15), C.yellow);
 
     // Bench by the glass (facing into the lobby), plants.
     const be = L.bench;
-    for (let i = 0; i < 3; i++) b.box(be.x0, 0.42, be.z0 + i * 0.18, be.x1, 0.46, be.z0 + i * 0.18 + 0.14, OFFICE.wood);
-    for (const y of [0.62, 0.8]) b.box(be.x0, y, be.z1 - 0.05, be.x1, y + 0.12, be.z1, OFFICE.wood);
-    for (const x of [be.x0 + 0.12, be.x1 - 0.12]) for (const z of [be.z0 + 0.06, be.z1 - 0.06]) b.box(x - 0.03, 0, z - 0.03, x + 0.03, 0.42, z + 0.03, C.navy);
+    for (let i = 0; i < 3; i++) inner.box(be.x0, 0.42, be.z0 + i * 0.18, be.x1, 0.46, be.z0 + i * 0.18 + 0.14, OFFICE.wood);
+    for (const y of [0.62, 0.8]) inner.box(be.x0, y, be.z1 - 0.05, be.x1, y + 0.12, be.z1, OFFICE.wood);
+    for (const x of [be.x0 + 0.12, be.x1 - 0.12]) for (const z of [be.z0 + 0.06, be.z1 - 0.06]) inner.box(x - 0.03, 0, z - 0.03, x + 0.03, 0.42, z + 0.03, C.navy);
     const pot = new THREE.CylinderGeometry(0.24, 0.19, 0.46, 12).translate(0, 0.23, 0);
     const leaves = new THREE.IcosahedronGeometry(0.42, 1).translate(0, 0.9, 0);
     const leaves2 = new THREE.IcosahedronGeometry(0.3, 1).translate(0.16, 1.28, 0.05);
     for (const p of L.plants) {
       const m = new THREE.Matrix4().makeTranslation(p.x, 0, p.z);
-      b.geo(pot, OFFICE.pot, m);
-      b.geo(leaves, OFFICE.plant, m);
-      b.geo(leaves2, 0x55b86b, m);
+      inner.geo(pot, OFFICE.pot, m);
+      inner.geo(leaves, OFFICE.plant, m);
+      inner.geo(leaves2, 0x55b86b, m);
     }
     pot.dispose();
     leaves.dispose();
@@ -252,6 +259,11 @@ export class LobbyView {
   /** What the view ray hits in the lobby (absolute coordinates), within reach. */
   pick(o: V3, dir: V3, reach: number): LobbyTarget | null {
     return pickNearest(o, dir, this.targets, reach, this.plan.lobby.walls)?.value ?? null;
+  }
+
+  /** M17: the glass front takes the sky's colour (the room behind it is lit by its own lights). */
+  setDaylight(look: Look): void {
+    this.glassMat.color.copy(look.glass);
   }
 
   dispose(): void {

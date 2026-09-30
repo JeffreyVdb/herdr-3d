@@ -62,6 +62,9 @@ make e2e               # the full Playwright suite (e2e/*.spec.ts), H3D_WORKERS 
   Without `flock` (util-linux), or when the lock can't be taken, both targets fail before Playwright starts, never
   run unlocked. Running `pnpm exec playwright` directly skips the lock.
 - The page exposes `window.__h3d` (`backend`, `frames`, `error`) for tests.
+- M17: every spec's `openGame` pins the time (`&time=2026-09-30T12:00`, `NOON` in `e2e/game.ts`) unless the test passes its
+  own `time=`, and `make shot` goes through it: no spec reads the wall clock's daylight. A test of the real clock fixes
+  the browser's clock with `page.clock.setFixedTime` and its zone with `timezoneId` (`e2e/m17-daynight.spec.ts`).
 - Never hardcode ports. Use `portlease run` / `portlease reserve`, and bind `127.0.0.1` only. Other agents run in
   parallel worktrees on the same host.
 - CI (`.github/workflows/ci.yml`) runs go vet/gofmt/test, the darwin cross-build, tsc and vitest. No Playwright in CI.
@@ -527,7 +530,9 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   `run.prepare`, `run.start` and `preset.update`); write-code crews (`crew.ts`: the
   role from `role` or the label, a freelancer's lifecycle hired → onboarding → working → blocked / reporting from its
   status, report and whether it worked since first seen, verdict stamps, the ORCH's phase / pass and over-cap; an
-  over-cap ORCH and a freelancer whose report asks count as needing you). Pure logic, covered by vitest.
+  over-cap ORCH and a freelancer whose report asks count as needing you); M17: the time of day (`daylight.ts`: an
+  instant, a zone and an optional latitude to daylight, the sun and the zone's clock; `timeOfDay.ts`: which time and
+  zone, from the page's overrides, the settings and the browser; see "Day and night" below). Pure logic, covered by vitest.
 - `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy;
   M3b: the walk scene (`walk.ts`), the building and street from outside (`outside.ts`, baked into one mesh by
   `bake.ts`) and the lobby (`lobby.ts`). M3c: the corner office (`mezzanine.ts`: two merged vertex-coloured toon
@@ -552,6 +557,7 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   worker's usage line): the nearest tall cards get one of 8 tall cells of a second small atlas, drawn as a second
   instanced batch (`cards/atlasCards.ts`; the per-desk atlas stays as it was; a tall card without a free cell shows
   compact with what its question is about and the question as the task line). The screens are `screens.ts` (below).
+  M17: `daylook.ts` (the eased light and the colours and intensities it gives every scene) and `clock.ts` (the wall clock).
 - `src/laptop` — M5 screens and sitting at a worker's screen (M6b: on its desk monitor): `watches.ts` keeps the connection's
   `terminal.watch`es in step with what the game wants (a full frame first, a gap re-watches, `unknown_command` turns
   screens off with the reason), `terminal.ts` is one xterm.js 6 terminal per live screen (never opened: only its VT
@@ -580,7 +586,7 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   three presets (`themes.ts`: typed constants, the zoom's clamp / step / reset, Departure Mono's 11 px grid), what the
   seated views remember (`themePrefs.ts`: the transcript's and the terminal's preset and zoom apart,
   `h3d.theme.{transcript,terminal}`, `h3d.zoom.{transcript,terminal}`, and `h3d.transcript.hideTools`, guarded like
-  `limitsPrefs.ts`) and the loader (`themeLoader.ts`: the transcript's preset as custom properties on the root, fonts
+  `limitsPrefs.ts`; M17's `timePrefs.ts` too: the timezone and latitude of About's Day and night) and the loader (`themeLoader.ts`: the transcript's preset as custom properties on the root, fonts
   from `src/fonts/` on first pick, the terminal told once its preset's faces are in; defaults in `themes.css`); the
   seat bar holds the terminal's preset and zoom (`seat.ts`); the shipped fonts (`fontCredits.ts`: the credits panel's
   rows and each one's licence file, which the build writes in full into `FONT_LICENSES.txt` next to the bundle); M5: the prompt overlay (`prompt.ts`, P: a modal like the M4
@@ -646,6 +652,9 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 | `ts` | GPU timestamp queries (for `bench`) |
 | `shadows=0`, `badges=0`, `battery=1` | no shadows; no city badges (perf comparisons); start in battery saver |
 | `me=<name>` | M3c: the name on your desk's name plate and the office glass (default "You": the bridge sends no user name yet) |
+| `time=HH:MM`, `time=YYYY-MM-DDTHH:MM` | M17: pins the time of day (the clock time in the effective zone, today's date there unless given): the clock shows it, the light does not move, and it starts there (no easing). Invalid: ignored, with a console warning |
+| `tz=<IANA zone>` | M17: the timezone for this page load, over the About setting and the browser's (`Europe/Brussels`, `UTC`, an alias like `Europe/Kiev`; a numeric offset is refused) |
+| `lat=<degrees>` | M17: the latitude for this page load (−90…90), over the About setting: sunrise and sunset from the season; without one, the fixed dawn and dusk |
 
 #51 prompt composer (`src/ui/composer/`, `src/net/upload.ts`): a `contenteditable` with image chips, shared by every prompt. `model.ts`
 (document, serialiser: pure), `draft.ts` (the draft object a host keeps: history, images, upload queue, `resolve()`), `composer.ts`
@@ -853,6 +862,25 @@ older bridge (no `presets` in its world, or `unknown_command`) leaves Run, the t
 Below 1440 px wide the top bar's Hire and Run show only their icons (their words stay for screen readers and in the
 tooltip), so the floor's name and the counts keep their room.
 
+Day and night (M17): the game follows the viewer's local time. `src/world/daylight.ts` is pure (no DOM, no three):
+an instant, a zone and an optional latitude give `daylight` 0…1, the sun's `elevation` / `azimuth`, `warmth` (dawn's
+and dusk's tint) and the zone's clock (`civilAt`, from `Intl` parts). With a latitude, the sun's altitude comes from the
+latitude, the declination of the day of the year and the hour angle, with solar noon at 12:00 local *standard* time
+(13:00 on a summer clock; no longitude), and daylight ramps from −6° to +7°, so the day's length follows the season and
+a polar day or night clamps; without one, the fixed curve: dawn 06:30–08:00, dusk 18:30–20:00 clock time.
+`src/world/timeOfDay.ts` decides the time and the zone: `?time=` / `?tz=` / `?lat=` over the About settings
+(`src/ui/timePrefs.ts`: `h3d.time.zone`, `h3d.time.lat`, guarded like `limitsPrefs.ts`, invalid input refused and not
+stored) over the browser's zone. `App` reads it just past every minute, at once when a setting changes or the tab comes
+back, and `render/daylook.ts` eases the light towards it over about three seconds (a first load or a pinned time starts
+there). The scenes only move colours and intensities of lights they built once: the walk scene's sky, fog, hemisphere
+and sun (composed with an asleep floor's dim: darker at every hour), the city's, the baked street's material colour (the
+lamp globes, the neighbours' lit windows and the lobby's room are meshes of their own; the panes turn warm at night on a
+running floor through their own node material), the lamps' pools of light, and the office's two non-shadow spot lamps
+(`LAMPS` in `render/office.ts`, off on an asleep floor) and window glass. The wall clock (`clock` prop on the board
+partition's desk side, `render/clock.ts`): HH:MM and `Wed 30 Sep` in the effective zone, backlit, drawn when that
+changes. It is a look-only prop (`milestone: null`): the bar says what it shows and has no key. Settings: About →
+Day and night (timezone, latitude; empty is the default, applied live).
+
 The lounge radio (M15): on the coffee counter in the north-west corner (a `radio` prop). Look at it: the bar reads
 "Radio: Melodic house · E next genre · R next track". **E** goes Off → Melodic house → Soft jazz → Rock → Pop → Rap → Off
 (Off stops it), **R** skips the track; a toast names each new track (title · artist, about 3 s). The genre is the player's,
@@ -934,6 +962,13 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # tracks): look-at bar, E through Off / genres, R, the now-playing toast, fade in
                               # the lobby and back, a missing file, the music popover (slider / mute), the Music credits panel;
                               # m15-{radio,radio-hint,radio-toast,audio-controls,credits}.png
+                              # M17 day and night on demo-m3b (m17-daynight.spec.ts): ?time= noon and 23:00 (the
+                              # city, a running floor, the clock and its bar, the street), an asleep floor darker
+                              # than a running one by day and at night (canvas luma), ?lat= in June and December,
+                              # the real clock (page.clock + timezoneId): the date over midnight without a reload,
+                              # the light easing up, ?tz=, the About fields (refusals, live); m17-{day,night}-
+                              # {city,floor,clock,street}.png, m17-about-time.png. m17-perf.spec.ts: perf-floor60
+                              # at night against noon (H3D_M17_RUNS=<n> pairs, H3D_DIST=<build> for a baseline)
                               # #59 transcript presets on demo-m5 with sim=1 (m59-themes.spec.ts): the font files a
                               # fresh load fetches (Quiet's only; a stored preset's only), each transcript preset
                               # from its strip (computed fonts: mono vs prose; the limits widget; a box in tool
@@ -1081,6 +1116,10 @@ shows the terminal's `texture` and in the `glance` view, its world `center` and 
 terminal area; null when not live). `arrivals()` add `dy` (a drop-in's height over the seat); `world()` workers add
 `harness`.
 
+M17: `daylight()` → `{daylight, target, warmth, zone, zoneSource, latitude, pinned, model, instant, clock, lamps, face}`
+(`daylight` as eased and shown, `target` as read; `zoneSource` `override` | `setting` | `browser`; `model` `latitude` |
+`fixed`; `lamps` the office lamps' intensities; `face` what the wall clock's canvas shows, with `day`), `clock()` → the
+clock's text, `14:05 · Wed 30 Sep`.
 M15 radio: `radio()` → `{genre, trackId, playing, volume, muted}` (`genre` is a genre id or `off`; `playing` is true while a track
 sounds on the floor that has the radio, and false when it is off, muted, faded out (lobby, street, fire escape, city) or not
 unlocked yet), `radioEvents()` (what the radio did, in order: `genre`, `select`, `start`, `skip`, `fade` in / out,

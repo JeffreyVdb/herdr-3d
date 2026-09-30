@@ -1,5 +1,8 @@
 import type { BuildInfo } from '../version';
 import type { LimitsPrefs } from './limitsPrefs';
+import type { TimePrefs } from './timePrefs';
+import { browserZone } from '../world/daylight';
+import type { TimeOfDay } from '../world/timeOfDay';
 import './about.css';
 import { backdropPolicy } from './dismiss';
 
@@ -26,6 +29,14 @@ function closeIcon(): SVGSVGElement {
   return s;
 }
 
+/** M17: the time of day's settings, and the time of day that reads them (for what is in effect). */
+export interface TimeSettingsHost {
+  prefs: TimePrefs;
+  time: TimeOfDay;
+}
+
+let fieldSerial = 0;
+
 /**
  * The About panel: which build each side of the game is (this bundle, the Mac
  * helper, the bridge) and which renderer backend is drawing. It used to be a
@@ -39,11 +50,15 @@ export class AboutDialog {
   private readonly note = el('p', 'about-note');
   private opener: HTMLElement | null = null;
   private readonly off: () => void;
+  /** M17: re-reads the time settings into their fields (on open: `?tz=` or another tab may have moved them). */
+  private syncTime: (() => void) | null = null;
+  private offTime: (() => void) | null = null;
 
   constructor(
     parent: HTMLElement,
     private readonly info: BuildInfo,
     private readonly limits?: LimitsPrefs,
+    private readonly time?: TimeSettingsHost,
   ) {
     const head = el('header', 'panel-head');
     const titles = el('div', 'panel-titles');
@@ -62,6 +77,7 @@ export class AboutDialog {
     body.tabIndex = -1;
     body.append(this.list, this.note);
     if (limits) body.append(this.limitsSwitch(limits));
+    if (time) body.append(this.timeSettings(time));
 
     this.dialog.setAttribute('aria-labelledby', 'about-title');
     this.dialog.append(head, body);
@@ -92,6 +108,98 @@ export class AboutDialog {
     return label;
   }
 
+  /**
+   * M17: the timezone and latitude of the game's day and night. A field
+   * commits on Enter or when it loses focus; what the browser cannot use is
+   * said under the field and not kept. Empty goes back to the default.
+   */
+  private timeSettings(host: TimeSettingsHost): HTMLElement {
+    const { prefs, time } = host;
+    const box = el('section', 'about-time');
+    const id = `about-time-${++fieldSerial}`;
+    box.setAttribute('aria-labelledby', `${id}-h`);
+    const h = el('h3', 'about-time-title', 'Day and night');
+    h.id = `${id}-h`;
+    const grid = el('div', 'about-time-grid');
+    const field = (key: string, label: string, input: HTMLInputElement, hint: HTMLElement, short = false) => {
+      const f = el('div', short ? 'about-field about-field--short' : 'about-field');
+      input.id = `${id}-${key}`;
+      input.setAttribute('aria-describedby', hint.id = `${id}-${key}-hint`);
+      const l = el('label', 'about-field-label', label);
+      l.htmlFor = input.id;
+      f.append(l, input, hint);
+      return f;
+    };
+
+    const zone = el('input');
+    zone.type = 'text';
+    zone.autocomplete = 'off';
+    zone.spellcheck = false;
+    zone.placeholder = browserZone();
+    zone.value = prefs.timeZone ?? '';
+    const zones = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.('timeZone') ?? [];
+    if (zones.length) {
+      const list = el('datalist');
+      list.id = `${id}-zones`;
+      list.append(...zones.map((z) => Object.assign(el('option'), { value: z })));
+      zone.setAttribute('list', list.id);
+      box.append(list);
+    }
+    const zoneHint = el('p', 'about-field-hint');
+
+    const lat = el('input');
+    lat.type = 'text';
+    lat.inputMode = 'decimal';
+    lat.autocomplete = 'off';
+    lat.placeholder = 'Not set';
+    lat.value = prefs.latitude === null ? '' : String(prefs.latitude);
+    const latHint = el('p', 'about-field-hint');
+
+    const say = (input: HTMLInputElement, hint: HTMLElement, error: string | null, ok: string) => {
+      input.setAttribute('aria-invalid', error ? 'true' : 'false');
+      hint.classList.toggle('about-field-error', !!error);
+      hint.textContent = error ?? ok;
+    };
+    const zoneOk = () => {
+      const src = time.zoneSource;
+      const now = time.timeZone;
+      return src === 'override' ? `The page address sets ${now} for now (?tz=).` : src === 'setting' ? `In effect: ${now}.` : `In effect: ${now}, this browser’s zone.`;
+    };
+    const latOk = () =>
+      time.latitude === null ? 'Not set: dawn 06:30–08:00, dusk 18:30–20:00.' : `${prefs.latitude === null ? 'The page address sets' : 'Set:'} ${time.latitude}°. Sunrise and sunset follow the season.`;
+    const sync = () => {
+      if (document.activeElement !== zone && zone.getAttribute('aria-invalid') !== 'true') zone.value = prefs.timeZone ?? '';
+      if (document.activeElement !== lat && lat.getAttribute('aria-invalid') !== 'true') lat.value = prefs.latitude === null ? '' : String(prefs.latitude);
+      if (zone.getAttribute('aria-invalid') !== 'true') say(zone, zoneHint, null, zoneOk());
+      if (lat.getAttribute('aria-invalid') !== 'true') say(lat, latHint, null, latOk());
+    };
+    const commit = (input: HTMLInputElement, hint: HTMLElement, set: (v: string) => ReturnType<TimePrefs['setTimeZone']>, ok: () => string) => {
+      const r = set(input.value);
+      say(input, hint, r.ok ? null : r.error, ok());
+      if (r.ok) sync();
+    };
+    zone.addEventListener('change', () => commit(zone, zoneHint, (v) => prefs.setTimeZone(v), zoneOk));
+    lat.addEventListener('change', () => commit(lat, latHint, (v) => prefs.setLatitude(v), latOk));
+    for (const [input, hint, ok] of [
+      [zone, zoneHint, zoneOk],
+      [lat, latHint, latOk],
+    ] as const) {
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') input.dispatchEvent(new Event('change'));
+      });
+      // Typing again clears a refusal until the next commit.
+      input.addEventListener('input', () => {
+        if (input.getAttribute('aria-invalid') === 'true') say(input, hint, null, ok());
+      });
+    }
+    this.offTime = prefs.onChange(sync);
+    this.syncTime = sync;
+    sync();
+    grid.append(field('zone', 'Timezone', zone, zoneHint), field('lat', 'Latitude', lat, latHint, true));
+    box.append(h, el('p', 'about-time-lede', 'The office follows the local time: dark outside at night, lit by its own lamps.'), grid);
+    return box;
+  }
+
   get isOpen(): boolean {
     return this.dialog.open;
   }
@@ -100,6 +208,7 @@ export class AboutDialog {
     if (this.dialog.open) return;
     this.opener = from;
     this.render();
+    this.syncTime?.();
     this.dialog.showModal();
     this.dialog.querySelector<HTMLElement>('.about-body')?.focus();
   }
@@ -110,6 +219,7 @@ export class AboutDialog {
 
   dispose(): void {
     this.off();
+    this.offTime?.();
     this.close();
     this.dialog.remove();
   }

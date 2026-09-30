@@ -6,7 +6,7 @@ import type { Area } from '../world/building';
 import { CHIP_TEXT } from '../world/derive';
 import { ICON as DOM_ICON } from './dom';
 import { mountAudioControls } from './audioControls';
-import { AboutDialog } from './about';
+import { AboutDialog, type TimeSettingsHost } from './about';
 import type { LimitsPrefs } from './limitsPrefs';
 import { MusicCredits } from './credits';
 import type { BuildInfo } from '../version';
@@ -107,6 +107,8 @@ export class Hud {
   private promptKey = '';
   /** M15: what the radio is tuned to, for its look-at bar (the last target, to redraw it when this changes). */
   private radioName = 'Melodic house';
+  /** M17: what a look-only prop (no milestone, no E) says it shows, by prop id: the clock's time. */
+  private readonly propInfo = new Map<string, string>();
   private lastTarget: Target | null = null;
   private lastWorker: WorkerView | null = null;
   private mode: 'city' | 'floor' = 'city';
@@ -196,8 +198,8 @@ export class Hud {
   }
 
   /** The About panel (build versions), opened from the top bar's info button. */
-  mountAbout(info: BuildInfo, limits?: LimitsPrefs): { dispose(): void } {
-    const about = new AboutDialog(this.root.parentElement ?? this.root, info, limits);
+  mountAbout(info: BuildInfo, limits?: LimitsPrefs, time?: TimeSettingsHost): { dispose(): void } {
+    const about = new AboutDialog(this.root.parentElement ?? this.root, info, limits, time);
     const open = () => about.open(this.about);
     this.about.addEventListener('click', open);
     return {
@@ -342,6 +344,13 @@ export class Hud {
     if (this.lastTarget?.id === 'radio') this.setTarget(this.lastTarget, this.lastWorker);
   }
 
+  /** M17: the line a look-only prop's bar shows (the clock: `14:05 · Wed 30 Sep · Europe/Brussels`); redraws it when looked at. */
+  setPropInfo(id: string, info: string): void {
+    if (this.propInfo.get(id) === info) return;
+    this.propInfo.set(id, info);
+    if (this.lastTarget?.id === id) this.setTarget(this.lastTarget, this.lastWorker);
+  }
+
   /** The look-at prompt bar. */
   setTarget(t: Target | null, w: WorkerView | null): void {
     this.lastTarget = t;
@@ -352,6 +361,7 @@ export class Hud {
     if (w) shown.push(...promptBarKey(w));
     if (w) shown.push(...crewBarKey(w));
     if (t?.id === 'radio') shown.push(this.radioName);
+    if (t && this.propInfo.has(t.id)) shown.push(this.propInfo.get(t.id) ?? '');
     const key = t ? JSON.stringify([t.kind, t.id, ...shown, ...(t.kind === 'board' ? [this.boardInfo.get(t.id) ?? null] : [])]) : '';
     if (key === this.promptKey) return;
     this.promptKey = key;
@@ -450,13 +460,18 @@ export class Hud {
         keys.append(k);
       }
       this.prompt.setAttribute('aria-label', `${name} · E Open`);
+    } else if ((t.kind === 'board' || t.kind === 'prop') && t.milestone === null) {
+      // M17: a prop that is only looked at (the clock): what it shows, no key.
+      const info = this.propInfo.get(t.id) ?? '';
+      line.append(text('prompt-name', t.label), text('prompt-task', info));
+      this.prompt.setAttribute('aria-label', info ? `${t.label}: ${info}` : t.label);
     } else if (t.kind === 'board' || t.kind === 'prop') {
       line.append(text('prompt-name', t.label), text('prompt-task', `Placeholder until ${t.milestone}`));
       keys.append(disabled('E', 'Open', `Arrives in ${t.milestone}`));
       this.prompt.setAttribute('aria-label', t.label);
     }
     const crew = t.kind === 'worker' && w ? crewLine(w) : null;
-    this.prompt.replaceChildren(...(crew ? [line, crew, keys] : [line, keys]));
+    this.prompt.replaceChildren(...(crew ? [line, crew, keys] : keys.childElementCount ? [line, keys] : [line]));
     this.prompt.hidden = false;
   }
 
