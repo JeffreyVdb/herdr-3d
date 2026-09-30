@@ -184,7 +184,8 @@ export class AskCard {
   }
 
   focus(): void {
-    const b = this.el.querySelector<HTMLElement>('.tx-ask-opt[aria-checked="true"]:not(:disabled), .tx-ask-opt:not(:disabled)');
+    // The picked option, else the first (a selector list would take the first in the document either way).
+    const b = this.el.querySelector<HTMLElement>('button.tx-ask-opt[aria-checked="true"]:not(:disabled)') ?? this.el.querySelector<HTMLElement>('button.tx-ask-opt:not(:disabled)');
     b?.focus({ preventScroll: true });
   }
 
