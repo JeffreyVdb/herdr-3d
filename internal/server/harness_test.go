@@ -55,7 +55,9 @@ func startBridgeWith(t *testing.T, db string, opts server.Options, setup func(*s
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts.Log = quietLog()
+	if opts.Log == nil {
+		opts.Log = quietLog()
+	}
 	hub, err := server.NewHub(ctx, st, opts)
 	if err != nil {
 		t.Fatal(err)

@@ -1,11 +1,14 @@
 package server_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -227,6 +230,81 @@ func TestTranscriptWatch(t *testing.T) {
 	}
 	if watches < 3 {
 		t.Errorf("%d watches audited", watches)
+	}
+}
+
+// logBuf is a bridge log the test reads while the hub writes to it.
+type logBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *logBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *logBuf) lines(msg string) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []string
+	for _, line := range strings.Split(l.b.String(), "\n") {
+		if strings.Contains(line, "msg=\""+msg+"\"") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// Watching a worker again on the same connection replaces its watch (a
+// sit after a desk print kept it: no capacity error, no second watch),
+// and a watch acked pending or with no items is logged at debug with the
+// worker's id, never with content.
+func TestTranscriptRewatchAndEmptyAckLog(t *testing.T) {
+	const sess = "0a0b0c0d-5555-4555-8555-555555555561"
+	dir := t.TempDir()
+	writeTranscript(t, filepath.Join(dir, "-home-u-w1", sess+".jsonl"), fixture(t, "claude", "message.jsonl"))
+	var logs logBuf
+	b := startBridge(t, "", server.Options{Usage: &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: dir},
+		Interval: 20 * time.Millisecond}, TranscriptFlush: 10 * time.Millisecond, MaxTranscriptWatches: 1,
+		Log: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))})
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	w1 := worker("w1", "a", sess, "working")
+	w1.Harness = world.HarnessClaude
+	b.floor("s1", true, w1, worker("w2", "b", "", "idle"))
+	id := workerID(t, c, sess)
+
+	for _, limit := range []int{1, 200, 200} {
+		_, ack := c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: id, Limit: limit})
+		if res := decode[proto.TranscriptWatchResult](t, ack); res.Pending || len(res.Items) == 0 {
+			t.Fatalf("limit %d: ack = %+v", limit, res)
+		}
+		if n := b.hub.TranscriptWatches(); n != 1 {
+			t.Fatalf("limit %d: %d watches", limit, n)
+		}
+	}
+	if l := logs.lines("transcript watch acked empty"); len(l) != 0 {
+		t.Fatalf("logged a full ack as empty: %q", l)
+	}
+
+	// A plain shell: pending.
+	id2 := ""
+	for _, w := range b.connect(proto.Hello{}).snapshot().World.Workers {
+		if w.ID != id {
+			id2 = w.ID
+		}
+	}
+	c.mustAck(proto.CmdTranscriptUnwatch, proto.WorkerArgs{ID: id})
+	_, ack := c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: id2, Limit: 10})
+	if res := decode[proto.TranscriptWatchResult](t, ack); !res.Pending {
+		t.Fatalf("pending ack = %+v", res)
+	}
+	l := logs.lines("transcript watch acked empty")
+	if len(l) != 1 || !strings.Contains(l[0], "level=DEBUG") || !strings.Contains(l[0], "worker="+id2) ||
+		!strings.Contains(l[0], "pending=true") || !strings.Contains(l[0], "items=0") || !strings.Contains(l[0], "limit=10") {
+		t.Fatalf("empty ack log = %q", l)
 	}
 }
 
