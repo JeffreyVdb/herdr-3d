@@ -12,10 +12,10 @@
   width: min(780px, calc(100vw - 32px));
   box-sizing: border-box;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   grid-template-areas:
-    'line stand'
-    'keys keys';
+    'line mode stand'
+    'keys keys keys';
   align-items: center;
   gap: 8px 14px;
   padding: 10px 12px 10px 14px;
@@ -120,6 +120,69 @@
 .seat-aside {
   color: var(--text-on-ink-2);
 }
+/* M16: which view the laptop shows; the lit half is the one up. */
+.seat-mode {
+  grid-area: mode;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 6px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 9px;
+  background: var(--ink-2);
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 140ms var(--ease);
+}
+.seat-mode:hover {
+  background: #34416c;
+}
+.seat-mode kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: var(--ink);
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-bottom-width: 2px;
+  font: 700 11px/1 var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+}
+.seat-mode-opts {
+  display: inline-flex;
+  margin-left: 4px;
+  border-radius: 6px;
+  background: var(--ink);
+}
+.seat-mode-opt {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-on-ink-2);
+}
+.seat-mode-opt[data-on] {
+  color: var(--ink);
+  background: var(--sun);
+}
+
+/* M16: the conversation, drawn over the monitor's glass while you read it (placed each frame, in viewport px). */
+.seat-transcript {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  pointer-events: auto;
+  outline: none;
+  background: var(--ink);
+  color: var(--text-on-ink);
+}
+.seat-transcript[hidden] {
+  display: none;
+}
+
 /* Keeps the keyboard focus (IME, paste) without being seen. */
 .seat-input {
   position: absolute;

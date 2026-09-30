@@ -20,7 +20,7 @@ import { HireDialog, type HirePrefill } from './ui/hire';
 import { Panels } from './ui/panels';
 import { SendHomeDialog } from './ui/sendHome';
 import { RADIUS, Walker } from './input/walk';
-import { Laptops } from './laptop';
+import { Laptops, type WatchCommand } from './laptop';
 import { SeatBar } from './ui/seat';
 import { blocked, blocked3, groundAt, type WalkWorld } from './world/collide';
 import { buildingPlan, floorY, loadedFloor, placeAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
@@ -369,7 +369,12 @@ export class App {
     });
     this.arrivals = new Arrivals(this.shadows);
     this.walk.scene.add(this.arrivals.group);
-    this.seatBar = new SeatBar(this.hud.root, { text: (t) => this.laptops.typeText(t), paste: (t) => this.laptops.paste(t), stand: () => this.laptops.stand() });
+    this.seatBar = new SeatBar(this.hud.root, {
+      text: (t) => this.laptops.typeText(t),
+      paste: (t) => this.laptops.paste(t),
+      stand: () => this.laptops.stand(),
+      toggle: () => this.laptops.toggleTranscript(),
+    });
     this.laptops = new Laptops(
       {
         store: this.store,
@@ -379,6 +384,7 @@ export class App {
         toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 5200 : 3200, kind),
         seat: this.seatBar,
         insets: () => ({ top: parseFloat(this.hud.root.style.getPropertyValue('--topbar-bottom')) || 70, bottom: this.seatBar.el.getBoundingClientRect().height + 18 }),
+        layer: this.hud.root,
       },
       o.params,
     );
@@ -1647,7 +1653,7 @@ export class App {
       return;
     }
     // M5: seated, a click keeps the keyboard on the laptop (no mouse look).
-    if (this.laptops.seated) return this.seatBar.focus();
+    if (this.laptops.seated) return this.laptops.focusSeat();
     if (!this.planOpen) this.walker.requestLock();
   }
 
@@ -2109,7 +2115,7 @@ export class App {
   // ---- M5: sitting at a worker's laptop ----------------------------------------
 
   /** A watch the game makes by itself: like `send`, logged in `watchLog` instead of `sent`. */
-  private async sendWatch<T extends 'terminal.watch' | 'terminal.unwatch'>(t: T, args: CommandArgs[T]): Promise<CommandResult> {
+  private async sendWatch<T extends WatchCommand>(t: T, args: CommandArgs[T]): Promise<CommandResult> {
     const entry: (typeof this.watchLog)[number] = { t, args };
     this.watchLog.push(entry);
     if (this.watchLog.length > 400) this.watchLog.shift();

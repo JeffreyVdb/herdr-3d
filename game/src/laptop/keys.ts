@@ -6,7 +6,8 @@ import type { KeyItem } from '../net/protocol';
  * (`worker.keys` items: printable text as `{text}`, special keys as `{key}`
  * names from the contract's allowlist), stands you up (Esc), or starts a
  * paste (Cmd+V on a Mac, Ctrl+V elsewhere: the browser's paste event carries
- * the text). Nothing a seated key does reaches the game. Pure logic.
+ * the text), or swaps the terminal and the transcript (Ctrl+Esc, M16).
+ * Nothing a seated key does reaches the game. Pure logic.
  */
 
 export interface KeyLike {
@@ -22,8 +23,8 @@ export interface KeyLike {
 export interface SeatKey {
   /** What the pane gets. */
   items: KeyItem[];
-  /** `stand`: Esc gets you up; `paste`: the browser's paste event follows with the text. */
-  action?: 'stand' | 'paste';
+  /** `stand`: Esc gets you up; `paste`: the browser's paste event follows with the text; `toggle-transcript` (M16): Ctrl+Esc swaps the terminal and the transcript. */
+  action?: 'stand' | 'paste' | 'toggle-transcript';
   /** The browser must not act on it (Tab moving focus, Backspace, F5, Ctrl+W…). */
   prevent: boolean;
 }
@@ -81,7 +82,12 @@ export function seatedKey(e: KeyLike, mac: boolean): SeatKey {
   // IME composition and dead keys: the composed text arrives as input (see `composedText`).
   if (e.isComposing || e.key === 'Process' || e.key === 'Dead' || e.key === 'Unidentified') return none(false);
   if (MODIFIERS.has(e.key)) return none(false);
-  if (e.key === 'Escape') return e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey ? one('esc') : e.ctrlKey || e.metaKey || e.altKey ? none(true) : { items: [], action: 'stand', prevent: true };
+  if (e.key === 'Escape') {
+    if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) return one('esc');
+    // M16: Ctrl+Esc (on a Mac too) swaps the terminal and the transcript; the other modified Escs do nothing.
+    if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey) return { items: [], action: 'toggle-transcript', prevent: true };
+    return e.ctrlKey || e.metaKey || e.altKey ? none(true) : { items: [], action: 'stand', prevent: true };
+  }
   const cmd = mac ? e.metaKey : e.ctrlKey;
   if (cmd && !e.altKey && e.code === 'KeyV') return { items: [], action: 'paste', prevent: false };
   // Cmd+← / → are the start and end of the line, as in a Mac terminal.

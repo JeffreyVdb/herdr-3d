@@ -28,6 +28,11 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'terminal.watch': 'show laptop screens',
   'terminal.unwatch': 'show laptop screens',
   'worker.keys': 'type on a worker’s laptop',
+  // M16
+  'transcript.watch': 'show a worker’s conversation',
+  'transcript.unwatch': 'show a worker’s conversation',
+  'transcript.page': 'show a worker’s conversation',
+  'transcript.item': 'show a worker’s conversation',
   'building.create': 'create buildings',
   'building.rename': 'rename buildings',
   'building.delete': 'delete buildings',
