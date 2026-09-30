@@ -165,7 +165,7 @@ func (h *Hub) startAnswerAsk(ctx context.Context, c *Client, cmd proto.Command) 
 		return bad("want answers (one per question) or cancel: true")
 	case a.Prompt != "" && !a.Cancel:
 		return bad("a prompt goes only with cancel")
-	case a.Prompt != "" && (!herdr.ValidMessage(a.Prompt) || strings.HasPrefix(a.Prompt, "--")):
+	case a.Prompt != "" && !herdr.ValidMessage(a.Prompt):
 		return bad("prompt must be 1-%d bytes of UTF-8 without NUL, got %d bytes", herdr.MaxMessage, len(a.Prompt))
 	}
 	w, _, err := h.termWorker(a.ID)
