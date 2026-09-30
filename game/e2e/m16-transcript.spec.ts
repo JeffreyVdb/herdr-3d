@@ -125,6 +125,9 @@ async function imagesInTheConversation(page: Page, tx: ReturnType<Page['locator'
   await expect(lb).toBeVisible();
   await expect(lb.locator('.ilb-count')).toHaveText('2 / 2');
   await expect(lb.locator('.ilb-badge')).toHaveText('Agent viewed');
+  // Its full image answered before Esc (a request still on its way has no result for the check below).
+  await expect.poll(() => lb.locator('.ilb-img').evaluate((e) => (e as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await expect.poll(async () => (await watchLog(page)).filter((c) => c.t === 'transcript.image').every((c) => c.result)).toBe(true);
   await page.keyboard.press('Escape');
   await expect(lb).toHaveCount(0);
   await expect(readHead).toHaveAttribute('aria-expanded', 'false');
