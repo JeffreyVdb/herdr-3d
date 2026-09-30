@@ -46,7 +46,7 @@ var readFile = readUnder
 // PathImage is an image file that passed the allowlist.
 type PathImage struct {
 	Real  string // the path after EvalSymlinks
-	root  string // the real root it is under: the read starts there
+	root  string // the real root it is under: the read checks it again
 	Size  int64
 	MTime int64 // unix ns
 }

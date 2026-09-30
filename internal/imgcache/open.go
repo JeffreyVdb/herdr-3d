@@ -15,44 +15,37 @@ import (
 var errChanged = errors.New("path changed after it was checked")
 
 // readUnder reads the file at real, which CheckPath found under root with
-// no symlink on the way. The read does not trust that anymore: it walks
-// down from root one component at a time, never following a symlink
-// (O_NOFOLLOW on each, O_DIRECTORY on the directories), so a directory
-// swapped for a link since the check is refused instead of read through.
-// The file is opened without blocking (a FIFO swapped in cannot hold the
-// caller) and the opened descriptor is what is checked (regular, at most
-// MaxImage bytes) and read.
+// no symlink anywhere in it (real and root are EvalSymlinks results). The
+// read does not trust that anymore: it walks down from "/" one component
+// at a time, never following a symlink (O_NOFOLLOW on each, O_DIRECTORY on
+// the directories), so a directory swapped for a link since the check,
+// whether below the root, the root itself or one above it, is refused
+// instead of read through. What is read is what is at real now, reached
+// only through directories; real is under root as text, so it is under the
+// root. The file is opened without blocking (a FIFO swapped in cannot hold
+// the caller) and the opened descriptor is what is checked (regular, at
+// most MaxImage bytes) and read.
 func readUnder(root, real string) ([]byte, error) {
-	rel, err := filepath.Rel(root, real)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if !filepath.IsAbs(root) || !filepath.IsAbs(real) || filepath.Clean(real) != real || !within(filepath.Clean(root), real) || real == "/" {
 		return nil, ErrNotAllowed
 	}
 	const file = unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_NONBLOCK
-	var fd int
-	if rel == "." {
-		// The root is the file itself (a root naming exactly one file).
-		fd, err = unix.Open(root, file, 0)
+	fd, err := unix.Open("/", walkDir, 0)
+	if err != nil {
+		return nil, err
+	}
+	comps := strings.Split(real[1:], string(filepath.Separator))
+	for i, c := range comps {
+		flags := file
+		if i < len(comps)-1 {
+			flags = walkDir | unix.O_NOFOLLOW
+		}
+		next, err := unix.Openat(fd, c, flags, 0)
+		_ = unix.Close(fd)
 		if err != nil {
 			return nil, openErr(err)
 		}
-	} else {
-		fd, err = unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-		if err != nil {
-			return nil, err
-		}
-		comps := strings.Split(rel, string(filepath.Separator))
-		for i, c := range comps {
-			flags := file
-			if i < len(comps)-1 {
-				flags = unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_DIRECTORY
-			}
-			next, err := unix.Openat(fd, c, flags, 0)
-			_ = unix.Close(fd)
-			if err != nil {
-				return nil, openErr(err)
-			}
-			fd = next
-		}
+		fd = next
 	}
 	f := os.NewFile(uintptr(fd), real)
 	defer f.Close()

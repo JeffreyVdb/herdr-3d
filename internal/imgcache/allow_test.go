@@ -1,9 +1,11 @@
 package imgcache
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -232,5 +234,132 @@ func TestRootThatIsOneFile(t *testing.T) {
 	}
 	if _, _, _, err := LoadPath(filepath.Join(drops, "other.png"), []string{file}); !errors.Is(err, ErrNotAllowed) {
 		t.Fatalf("a sibling of the file root: %v", err)
+	}
+}
+
+// Any directory on the way to the file, the root and those above it as
+// well as those below, swapped for a link to a look-alike tree outside
+// between CheckPath and the read, is not read through; nor is a root that
+// names one file, or the directories above it. A root that is a link and
+// stays one is still served.
+func TestSwapAnywhereOnTheWayDoesNotEscape(t *testing.T) {
+	cases := []struct {
+		name string
+		file string // the image, relative to base
+		root string // the root, relative to base
+		swap string // what is swapped for a link, relative to base
+	}{
+		{"a directory below the root", "a/allowed/drops/sub/image.png", "a/allowed/drops", "a/allowed/drops/sub"},
+		{"the root", "a/allowed/drops/image.png", "a/allowed/drops", "a/allowed/drops"},
+		{"the root's parent", "a/allowed/drops/image.png", "a/allowed/drops", "a/allowed"},
+		{"a directory further above", "a/allowed/drops/image.png", "a/allowed/drops", "a"},
+		{"a file root", "a/allowed/one.png", "a/allowed/one.png", "a/allowed/one.png"},
+		{"a file root's parent", "a/allowed/one.png", "a/allowed/one.png", "a/allowed"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			base, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			inside, outside := pngOf(t, 2, 2, 1), pngOf(t, 2, 2, 2)
+			file := filepath.Join(base, c.file)
+			swap := filepath.Join(base, c.swap)
+			// the look-alike: the same path below a link target outside
+			rel, err := filepath.Rel(swap, file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(base, "secret", filepath.Base(swap))
+			elsewhere := filepath.Join(target, rel) // rel is "." for a file swapped itself
+			for p, b := range map[string][]byte{file: inside, elsewhere: outside} {
+				if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, b, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			old := readFile
+			defer func() { readFile = old }()
+			readFile = func(root, p string) ([]byte, error) {
+				if err := os.Rename(swap, swap+"-old"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, swap); err != nil {
+					t.Fatal(err)
+				}
+				return old(root, p)
+			}
+			_, b, _, err := LoadPath(file, []string{filepath.Join(base, c.root)})
+			if bytes.Equal(b, outside) {
+				t.Fatalf("served the outside image through the swapped %s", c.swap)
+			}
+			if !errors.Is(err, ErrNotAllowed) || len(b) != 0 {
+				t.Fatalf("%d bytes, %v; want %v", len(b), err, ErrNotAllowed)
+			}
+		})
+	}
+}
+
+// A root configured as a link, and a directory above the root that is a
+// link, both stable, are followed once when the path is checked: the image
+// is served, named through the link or by its real path.
+func TestStableLinkedRootsAreServed(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(base, "real", "drops")
+	if err := os.MkdirAll(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	img := pngOf(t, 2, 2, 1)
+	if err := os.WriteFile(filepath.Join(real, "image.png"), img, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(base, "rootlink")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(base, "real"), filepath.Join(base, "uplink")); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ path, root string }{
+		{filepath.Join(base, "rootlink", "image.png"), filepath.Join(base, "rootlink")},
+		{filepath.Join(real, "image.png"), filepath.Join(base, "rootlink")},
+		{filepath.Join(base, "uplink", "drops", "image.png"), filepath.Join(base, "uplink", "drops")},
+		{filepath.Join(base, "rootlink", "image.png"), filepath.Join(base, "rootlink", "image.png")},
+	} {
+		if _, b, info, err := LoadPath(c.path, []string{c.root}); err != nil || info.Mime != PNG || !bytes.Equal(b, img) {
+			t.Errorf("%s under %s: %v %+v", c.path, c.root, err, info)
+		}
+	}
+}
+
+// A directory above the root that may be passed through but not listed
+// does not stop the read (the walk only looks names up in it).
+func TestSearchOnlyDirectoryAboveTheRoot(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("O_PATH is linux only")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every directory")
+	}
+	drops, _ := tree(t)
+	root := filepath.Join(drops, "pass", "drops")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	img := pngOf(t, 2, 2, 1)
+	if err := os.WriteFile(filepath.Join(root, "image.png"), img, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pass := filepath.Join(drops, "pass")
+	if err := os.Chmod(pass, 0o100); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(pass, 0o700) })
+	if _, b, _, err := LoadPath(filepath.Join(root, "image.png"), []string{root}); err != nil || !bytes.Equal(b, img) {
+		t.Fatalf("%d bytes, %v", len(b), err)
 	}
 }
