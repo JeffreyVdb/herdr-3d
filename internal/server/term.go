@@ -574,6 +574,12 @@ func termDefaults(o *Options) {
 	if o.PromptRetryWait <= 0 {
 		o.PromptRetryWait = DefaultPromptRetryWait
 	}
+	if o.MaxTranscriptWatches <= 0 { // M16 transcript
+		o.MaxTranscriptWatches = DefaultMaxTranscriptWatches
+	}
+	if o.TranscriptFlush <= 0 {
+		o.TranscriptFlush = DefaultTranscriptFlush
+	}
 }
 
 func (h *Hub) initTerm() {
@@ -589,6 +595,7 @@ func (h *Hub) initTerm() {
 // end, blocked workers get their screen read (hub goroutine).
 func (h *Hub) afterObserve(ctx context.Context) {
 	h.syncWatches()
+	h.syncTranscriptWatches() // M16 transcript
 	h.askQuestions(ctx)
 }
 

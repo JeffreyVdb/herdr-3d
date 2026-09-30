@@ -1,0 +1,693 @@
+package server
+
+// M16 transcript: a worker's agent conversation at the laptop. A
+// transcript.watch follows the worker's transcript as the usage tracker
+// finds and reads it (one tail per worker, shared: the tracker hands each
+// watched worker's lines to its transcript.Log) and pushes new and changed
+// items to the watching connection only: connection-scoped messages, no
+// seq, never in the replay ring.
+
+import (
+	"container/list"
+	"context"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
+	"github.com/JeffreyVdb/herdr-3d/internal/usage"
+)
+
+// Defaults and limits of the transcript view.
+const (
+	DefaultMaxTranscriptWatches = 4 // per connection
+	DefaultTranscriptLimit      = 200
+	MaxTranscriptLimit          = 500
+	// DefaultTranscriptFlush is the least time between two pushes of one
+	// watch (at most 4 a second).
+	DefaultTranscriptFlush = 250 * time.Millisecond
+	// WatchedRescan is how often a watched worker's transcript not found
+	// (or a Codex worker's rollout) is looked for.
+	WatchedRescan = 2 * time.Second
+	// maxAgentLogs is how many subagent timelines a watch keeps indexed.
+	maxAgentLogs = 4
+)
+
+// txOffer is what the usage tracker found for a watched worker: its agent
+// session (key: harness/session) and, once its transcript was found, the
+// log that follows it.
+type txOffer struct {
+	key, harness, session string
+	log                   *transcript.Log
+}
+
+// txWatch is one connection watching one worker's transcript.
+type txWatch struct {
+	c       *Client
+	id      string
+	limit   int
+	cancel  context.CancelFunc
+	offers  chan txOffer // (cap 1) the tracker's latest
+	stopped bool         // unregistered (under txWatches.mu)
+	// Under txWatches.mu: what page and item read.
+	log     *transcript.Log
+	session string
+	agents  *agentLogs
+}
+
+// txWatches are the running transcript watches (their own lock: pushes are
+// sent from the watches' goroutines).
+type txWatches struct {
+	mu  sync.Mutex
+	byC map[*Client]map[string]*txWatch
+}
+
+func (t *txWatches) get(c *Client, id string) *txWatch {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.byC[c][id]
+}
+
+func (t *txWatches) count(c *Client) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.byC[c])
+}
+
+// add registers w, replacing (and returning) the connection's watch of the
+// same worker.
+func (t *txWatches) add(w *txWatch) (old *txWatch) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	m := t.byC[w.c]
+	if m == nil {
+		m = map[string]*txWatch{}
+		t.byC[w.c] = m
+	}
+	if old = m[w.id]; old != nil {
+		old.stopped = true
+	}
+	m[w.id] = w
+	return old
+}
+
+// remove unregisters w if it is still registered; nothing of it is sent
+// after that.
+func (t *txWatches) remove(w *txWatch) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if w.stopped || t.byC[w.c][w.id] != w {
+		return false
+	}
+	w.stopped = true
+	delete(t.byC[w.c], w.id)
+	if len(t.byC[w.c]) == 0 {
+		delete(t.byC, w.c)
+	}
+	return true
+}
+
+func (t *txWatches) all() []*txWatch {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var out []*txWatch
+	for _, m := range t.byC {
+		for _, w := range m {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// watched reports whether any connection watches worker id.
+func (t *txWatches) watched(id string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, m := range t.byC {
+		if m[id] != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// offer hands the tracker's verdict on worker id to its watches, the
+// latest replacing one not taken yet.
+func (t *txWatches) offer(id string, o txOffer) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, m := range t.byC {
+		w := m[id]
+		if w == nil {
+			continue
+		}
+		select {
+		case <-w.offers:
+		default:
+		}
+		w.offers <- o
+	}
+}
+
+// setLog records what a watch reads now (its goroutine).
+func (t *txWatches) setLog(w *txWatch, log *transcript.Log, session string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	w.log, w.session = log, session
+}
+
+func (t *txWatches) reading(w *txWatch) (*transcript.Log, string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return w.log, w.session
+}
+
+// send queues a push of w without blocking, only while w is registered
+// and its connection's send queue is at most half full (as terminal
+// frames).
+func (t *txWatches) send(w *txWatch, msg []byte) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if w.stopped {
+		return errWatchStopped
+	}
+	if !roomy(w.c) {
+		return errResync
+	}
+	select {
+	case w.c.send <- msg:
+		return nil
+	default:
+		return errResync
+	}
+}
+
+func (h *Hub) initTranscripts() {
+	h.tx.byC = map[*Client]map[string]*txWatch{}
+	h.usageKick = make(chan struct{}, 1)
+}
+
+// kickUsage asks the usage tracker for a round now.
+func (h *Hub) kickUsage() {
+	select {
+	case h.usageKick <- struct{}{}:
+	default:
+	}
+}
+
+// startTranscriptWatch validates transcript.watch and starts the watch;
+// the ack comes once the worker's transcript is indexed, or is pending
+// (hub goroutine).
+func (h *Hub) startTranscriptWatch(ctx context.Context, c *Client, cmd proto.Command) error {
+	var a proto.TranscriptWatchArgs
+	if err := decodeArgs(cmd.Args, &a); err != nil {
+		return err
+	}
+	if a.Limit < 0 || a.Limit > MaxTranscriptLimit {
+		return bad("limit must be 1-%d", MaxTranscriptLimit)
+	}
+	if a.Limit == 0 {
+		a.Limit = DefaultTranscriptLimit
+	}
+	if _, err := h.txWorker(a.ID); err != nil {
+		return err
+	}
+	n := h.tx.count(c)
+	if h.tx.get(c, a.ID) != nil { // a re-watch replaces it
+		n--
+	}
+	if n >= h.opts.MaxTranscriptWatches {
+		return fmt.Errorf("%w: this connection already watches %d transcripts (--max-transcript-watches)", errCapacity, n)
+	}
+	wctx, cancel := context.WithCancel(ctx)
+	w := &txWatch{c: c, id: a.ID, limit: a.Limit, cancel: cancel, offers: make(chan txOffer, 1), agents: newAgentLogs()}
+	if old := h.tx.add(w); old != nil {
+		old.cancel()
+	}
+	h.wg.Add(1)
+	go h.runTranscriptWatch(ctx, wctx, w, cmd)
+	h.kickUsage()
+	return nil
+}
+
+// txWorker is the worker a transcript command is for: known, on a watched
+// floor that is running.
+func (h *Hub) txWorker(id string) (*proto.Worker, error) {
+	w := h.workers[id]
+	if w == nil {
+		return nil, fmt.Errorf("%w: %q", errUnknownWorker, id)
+	}
+	f, err := h.floorFor(w.Session)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %q", errUnknownWorker, id)
+	}
+	if !f.running {
+		return nil, fmt.Errorf("%w: floor %q is asleep", errInvalidState, w.Session)
+	}
+	if h.opts.Usage == nil {
+		return nil, errors.New("transcripts are not configured")
+	}
+	return w, nil
+}
+
+// startTranscriptUnwatch answers transcript.unwatch; a watch that is not
+// there is a no-op.
+func (h *Hub) startTranscriptUnwatch(ctx context.Context, c *Client, cmd proto.Command) error {
+	var a proto.WorkerArgs
+	if err := decodeArgs(cmd.Args, &a); err != nil {
+		return err
+	}
+	if w := h.tx.get(c, a.ID); w != nil && h.tx.remove(w) {
+		w.cancel()
+	}
+	h.audit(ctx, c, cmd, nil)
+	h.reply(c, cmd, nil, nil)
+	return nil
+}
+
+// dropTranscriptWatches stops every transcript watch of a connection that
+// went away.
+func (h *Hub) dropTranscriptWatches(c *Client) {
+	for _, w := range h.tx.all() {
+		if w.c == c && h.tx.remove(w) {
+			w.cancel()
+		}
+	}
+}
+
+// syncTranscriptWatches ends the watches whose worker went or fell asleep
+// (hub goroutine, after each observation).
+func (h *Hub) syncTranscriptWatches() {
+	for _, w := range h.tx.all() {
+		reason := ""
+		wk := h.workers[w.id]
+		switch {
+		case wk == nil:
+			reason = proto.ClosedWorkerRemoved
+		case h.floors[wk.Session] == nil || !h.floors[wk.Session].running:
+			reason = proto.ClosedAsleep
+		}
+		if reason != "" {
+			h.closeTranscriptWatch(w, reason)
+		}
+	}
+}
+
+// closeTranscriptWatch ends a watch and tells its connection why (hub
+// goroutine).
+func (h *Hub) closeTranscriptWatch(w *txWatch, reason string) {
+	if !h.tx.remove(w) {
+		return
+	}
+	w.cancel()
+	h.log.Debug("transcript watch closed", "client", w.c.name, "worker", w.id, "reason", reason)
+	h.deliver(w.c, mustJSON(proto.TranscriptClosed{T: proto.TTranscriptClosed, ID: w.id, Reason: reason}))
+}
+
+// runTranscriptWatch follows the tracker's offers for the watch's worker:
+// it acks (pending while there is no transcript), then pushes what the
+// log gains at most every TranscriptFlush, until the watch ends. hctx is
+// the hub's context (replies), ctx the watch's.
+func (h *Hub) runTranscriptWatch(hctx, ctx context.Context, w *txWatch, cmd proto.Command) {
+	defer h.wg.Done()
+	defer w.cancel()
+	defer w.agents.close()
+	var (
+		acked bool
+		key   string
+		log   *transcript.Log
+		sub   *transcript.Sub
+		last  time.Time
+		timer = time.NewTimer(time.Hour)
+		armed bool
+	)
+	timer.Stop()
+	defer timer.Stop()
+	defer func() {
+		if sub != nil {
+			sub.Close()
+		}
+	}()
+	closeWith := func(reason string) {
+		_ = h.doWait(hctx, func() { h.closeTranscriptWatch(w, reason) })
+	}
+	fail := func(err error) {
+		if !acked {
+			h.tx.remove(w)
+			h.finishTranscriptCmd(hctx, w, cmd, nil, err)
+		}
+	}
+	// open subscribes to a log once it is indexed.
+	open := func(o txOffer) (transcript.Page, bool) {
+		select {
+		case <-ctx.Done():
+			fail(fmt.Errorf("%w: the watch stopped before its transcript was read", errInvalidState))
+			return transcript.Page{}, false
+		case <-o.log.Ready():
+		}
+		s, page, err := o.log.Subscribe(w.limit)
+		if err != nil {
+			reason := closedReason(err)
+			if !acked {
+				fail(fmt.Errorf("%w: the transcript changed while it was read (%v); watch again", errInvalidState, err))
+			} else {
+				closeWith(reason)
+			}
+			return transcript.Page{}, false
+		}
+		sub, log, key = s, o.log, o.key
+		h.tx.setLog(w, o.log, o.session)
+		return page, true
+	}
+	head := func(o txOffer, p transcript.Page, pending bool) proto.TranscriptHead {
+		hd := proto.TranscriptHead{Harness: o.harness, Session: o.session, Cursor: p.Cursor, HasMore: p.HasMore, Pending: pending}
+		if o.log != nil {
+			hd.Version = o.log.Version()
+		}
+		return hd
+	}
+	flush := func() bool {
+		armed = false
+		items, updates, err := sub.Take()
+		if err != nil {
+			closeWith(closedReason(err))
+			return false
+		}
+		last = time.Now()
+		if len(items) == 0 && len(updates) == 0 {
+			return true
+		}
+		msg := mustJSON(proto.TranscriptItems{T: proto.TTranscriptItems, ID: w.id, Items: items, Updates: updates})
+		if err := h.tx.send(w, msg); err != nil {
+			if errors.Is(err, errResync) {
+				h.log.Debug("transcript watch resync", "client", w.c.name, "worker", w.id)
+				closeWith(proto.ClosedResync)
+			}
+			return false
+		}
+		return true
+	}
+	var wake <-chan struct{}
+	for {
+		select {
+		case <-ctx.Done():
+			fail(fmt.Errorf("%w: the watch stopped before its transcript was read", errInvalidState))
+			return
+		case o := <-w.offers:
+			switch {
+			case !acked && o.log == nil:
+				acked, key = true, o.key
+				h.tx.setLog(w, nil, o.session)
+				h.finishTranscriptCmd(hctx, w, cmd, &proto.TranscriptWatchResult{
+					TranscriptHead: head(o, transcript.Page{Cursor: transcript.Cursor(1)}, true),
+					Items:          []proto.TranscriptItem{}}, nil)
+			case !acked:
+				page, ok := open(o)
+				if !ok {
+					return
+				}
+				acked, wake = true, sub.Wake()
+				h.finishTranscriptCmd(hctx, w, cmd, &proto.TranscriptWatchResult{TranscriptHead: head(o, page, false),
+					Items: page.Items}, nil)
+			case log == nil && o.log != nil: // pending: the transcript appeared
+				page, ok := open(o)
+				if !ok {
+					return
+				}
+				wake = sub.Wake()
+				hd := head(o, page, false)
+				msg := mustJSON(proto.TranscriptItems{T: proto.TTranscriptItems, ID: w.id, Items: page.Items,
+					Updates: []proto.TranscriptItem{}, TranscriptHead: &hd})
+				if err := h.tx.send(w, msg); err != nil {
+					if errors.Is(err, errResync) {
+						closeWith(proto.ClosedResync)
+					}
+					return
+				}
+				last = time.Now()
+			case log == nil:
+				key = o.key
+				h.tx.setLog(w, nil, o.session)
+			case o.key != key: // another agent session or rollout
+				closeWith(proto.ClosedSessionChanged)
+				return
+			}
+		case <-wake:
+			if log.Err() != nil {
+				closeWith(closedReason(log.Err()))
+				return
+			}
+			if wait := h.opts.TranscriptFlush - time.Since(last); wait > 0 {
+				if !armed {
+					timer.Reset(wait)
+					armed = true
+				}
+				continue
+			}
+			if !flush() {
+				return
+			}
+		case <-timer.C:
+			if !flush() {
+				return
+			}
+		}
+	}
+}
+
+// closedReason is the transcript.closed reason for why a log ended.
+func closedReason(err error) string {
+	switch {
+	case errors.Is(err, transcript.ErrGone):
+		return proto.ClosedNotFound
+	case errors.Is(err, transcript.ErrClosed):
+		return proto.ClosedSessionChanged // the tracker lets a log go when the worker's session changes
+	}
+	return proto.ClosedResync
+}
+
+// finishTranscriptCmd audits transcript.watch (the worker id only) and
+// answers it.
+func (h *Hub) finishTranscriptCmd(hctx context.Context, w *txWatch, cmd proto.Command, data *proto.TranscriptWatchResult, err error) {
+	if derr := h.doWait(hctx, func() {
+		h.audit(hctx, w.c, cmd, err)
+		if data == nil {
+			h.reply(w.c, cmd, nil, err)
+			return
+		}
+		h.reply(w.c, cmd, data, err)
+	}); derr != nil {
+		h.log.Warn("command abandoned", "cmd", cmd.T, "err", derr)
+	}
+}
+
+// startTranscriptRead answers transcript.page and transcript.item off the
+// hub goroutine. They are reads of what the watch shows: not audited, and
+// only for a worker the connection watches.
+func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Command) error {
+	var id, agent string
+	var work func(log *transcript.Log) (any, error)
+	switch cmd.T {
+	case proto.CmdTranscriptPage:
+		var a proto.TranscriptPageArgs
+		if err := decodeArgs(cmd.Args, &a); err != nil {
+			h.reply(c, cmd, nil, err)
+			return nil
+		}
+		if a.Limit < 0 || a.Limit > MaxTranscriptLimit {
+			h.reply(c, cmd, nil, bad("limit must be 1-%d", MaxTranscriptLimit))
+			return nil
+		}
+		if a.Limit == 0 {
+			a.Limit = DefaultTranscriptLimit
+		}
+		var before int64
+		if a.Before != "" {
+			var ok bool
+			if before, ok = transcript.ParseCursor(a.Before); !ok {
+				h.reply(c, cmd, nil, bad("before must be a cursor"))
+				return nil
+			}
+		} else if a.Agent == "" {
+			h.reply(c, cmd, nil, bad("before is needed (it is optional with agent)"))
+			return nil
+		}
+		id, agent = a.ID, a.Agent
+		work = func(log *transcript.Log) (any, error) {
+			p, err := log.Before(before, a.Limit)
+			if err != nil {
+				return nil, &codedError{proto.ErrInvalidState, fmt.Errorf("the transcript changed; watch again (%v)", err)}
+			}
+			return proto.TranscriptPageResult{Items: p.Items, Cursor: p.Cursor, HasMore: p.HasMore}, nil
+		}
+	case proto.CmdTranscriptItem:
+		var a proto.TranscriptItemArgs
+		if err := decodeArgs(cmd.Args, &a); err != nil {
+			h.reply(c, cmd, nil, err)
+			return nil
+		}
+		if a.Item == "" {
+			h.reply(c, cmd, nil, bad("item is needed"))
+			return nil
+		}
+		id, agent = a.ID, a.Agent
+		work = func(log *transcript.Log) (any, error) {
+			it, ok, err := log.Item(a.Item)
+			switch {
+			case err != nil:
+				return nil, &codedError{proto.ErrInvalidState, fmt.Errorf("the transcript changed; watch again (%v)", err)}
+			case !ok:
+				return nil, &codedError{proto.ErrNotFound, fmt.Errorf("no item %q in the transcript", a.Item)}
+			}
+			return proto.TranscriptItemResult{Item: it}, nil
+		}
+	}
+	w := h.tx.get(c, id)
+	if w == nil {
+		if _, err := h.txWorker(id); err != nil {
+			h.reply(c, cmd, nil, err)
+			return nil
+		}
+		h.reply(c, cmd, nil, fmt.Errorf("%w: this connection does not watch that transcript", errInvalidState))
+		return nil
+	}
+	log, session := h.tx.reading(w)
+	if log == nil {
+		h.reply(c, cmd, nil, fmt.Errorf("%w: the transcript is pending", errInvalidState))
+		return nil
+	}
+	if agent != "" && (log.Harness() != transcript.Claude || !transcript.ValidAgentID(agent)) {
+		h.reply(c, cmd, nil, bad("agent must be a Claude subagent's agent_id"))
+		return nil
+	}
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		read := log
+		var err error
+		if agent != "" {
+			read, err = w.agents.get(ctx, log, session, agent)
+		}
+		var data any
+		if err == nil {
+			data, err = work(read)
+		}
+		if derr := h.doWait(ctx, func() { h.reply(c, cmd, data, err) }); derr != nil {
+			h.log.Warn("command abandoned", "cmd", cmd.T, "err", derr)
+		}
+	}()
+	return nil
+}
+
+// agentLogs are the subagent timelines a watch read, the most recent
+// maxAgentLogs (each refreshed when read again).
+type agentLogs struct {
+	mu     sync.Mutex
+	order  *list.List // of *agentLog, most recent first
+	closed bool       // the watch ended
+}
+
+type agentLog struct {
+	path string
+	log  *transcript.Log
+}
+
+func newAgentLogs() *agentLogs { return &agentLogs{order: list.New()} }
+
+// get returns subagent agent's log of the Claude session main is the
+// transcript of: <dir>/<session>/subagents/agent-<agent>.jsonl.
+func (a *agentLogs) get(ctx context.Context, main *transcript.Log, session, agent string) (*transcript.Log, error) {
+	path := filepath.Join(filepath.Dir(main.Path()), session, "subagents", "agent-"+agent+".jsonl")
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return nil, &codedError{proto.ErrInvalidState, errors.New("the watch ended")}
+	}
+	for e := a.order.Front(); e != nil; e = e.Next() {
+		al := e.Value.(*agentLog)
+		if al.path != path {
+			continue
+		}
+		if err := al.log.Refresh(ctx); err == nil {
+			a.order.MoveToFront(e)
+			return al.log, nil
+		}
+		al.log.Close() // replaced: read it again
+		a.order.Remove(e)
+		break
+	}
+	log, err := transcript.Read(ctx, transcript.Claude, path)
+	if err != nil {
+		return nil, &codedError{proto.ErrNotFound, fmt.Errorf("no transcript for subagent %q", agent)}
+	}
+	a.order.PushFront(&agentLog{path: path, log: log})
+	for a.order.Len() > maxAgentLogs {
+		b := a.order.Back()
+		b.Value.(*agentLog).log.Close()
+		a.order.Remove(b)
+	}
+	return log, nil
+}
+
+func (a *agentLogs) close() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.closed = true
+	for e := a.order.Front(); e != nil; e = e.Next() {
+		e.Value.(*agentLog).log.Close()
+	}
+	a.order.Init()
+}
+
+// txLog is the log the tracker keeps for a watched worker.
+type txLog struct {
+	key string
+	log *transcript.Log
+}
+
+// syncTranscript keeps worker w's log while it is watched (before and
+// after its session's Poll: a transcript found in the Poll gets its log
+// then) and drops it when not (usage tracker goroutine).
+func (tr *usageTracker) syncTranscript(w usageWorker, s *usage.Session, key string) {
+	cur := tr.logs[w.id]
+	if cur != nil && (!w.watched || cur.key != key || cur.log.Err() != nil) {
+		cur.log.Close()
+		delete(tr.logs, w.id)
+		if s != nil {
+			s.SetTap(nil)
+		}
+		cur = nil
+	}
+	if !w.watched || s == nil || cur != nil || !transcript.Supported(w.harness) {
+		return
+	}
+	path, fi, next := s.Main()
+	if path == "" {
+		return
+	}
+	log, err := transcript.Follow(w.harness, path, fi, next)
+	if err != nil {
+		return // looked at again next round
+	}
+	tr.logs[w.id] = &txLog{key: key, log: log}
+	s.SetTap(log)
+}
+
+// offers is the tracker's verdict for every watched worker after a round.
+func (tr *usageTracker) offers(ws []usageWorker) map[string]txOffer {
+	out := map[string]txOffer{}
+	for _, w := range ws {
+		if !w.watched {
+			continue
+		}
+		o := txOffer{key: tr.keys[w.id], harness: w.harness, session: w.session}
+		if l := tr.logs[w.id]; l != nil && l.key == o.key {
+			o.log = l.log
+		}
+		out[w.id] = o
+	}
+	return out
+}

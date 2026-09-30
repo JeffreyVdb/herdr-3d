@@ -10,7 +10,9 @@
   WebSocket, wake/sleep, floor settings, hire/send home, M6 team presets and `run.start`), `proto` (protocol v1 types and client), `gitremote` (GitHub
   origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires, send-homes and the Changes
   panel), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
-  usage and cost from their transcripts, read incrementally, and the pricing table), `runs` (M6: write-code runs, the
+  usage and cost from their transcripts, read incrementally, and the pricing table), `jsonl` (the shared reading of
+  those JSONL files: one tail per transcript, complete lines from byte offsets, no symlinks), `transcript` (M16: the
+  Claude and Codex transcripts as one timeline of items, indexed by offset for the laptop's conversation view), `runs` (M6: write-code runs, the
   freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it), `limits` (M10: the Claude and
   Codex plan limits, read by running the two CLIs as probes through a fake-able process runner), `logo` (M3d: PNG, WebP
   and restricted SVG in, one PNG of at most 1024 px out; pure Go, only the bridge uses it); M7 boards:
