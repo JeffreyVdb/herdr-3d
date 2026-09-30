@@ -40,6 +40,12 @@ export interface TranscriptView {
   setItems(items: TranscriptItem[]): void;
   applyUpdates(items: TranscriptItem[]): void;
   setBlocked(q: BlockedQuestion | null): void;
+  /** The mode's tab strip (Conversation | Images), put in the bar after the title. */
+  attachTabs(tabs: HTMLElement): void;
+  /** Is the item in the timeline (loaded)? */
+  hasItem(id: string): boolean;
+  /** Scrolls to an item and flashes it; false when it is not loaded (the caller pages older items first). */
+  scrollToItem(id: string): boolean;
   /** The keyboard to the timeline (its scroll keys work at once). */
   focus(): void;
   focusPrompt(): void;
@@ -416,6 +422,10 @@ class Timeline {
     return this.items.has(id);
   }
 
+  row(id: string): HTMLElement | undefined {
+    return this.rows.get(id);
+  }
+
   systemCount(): number {
     let n = 0;
     for (const it of this.items.values()) if (isSystem(it)) n++;
@@ -499,6 +509,7 @@ class Transcript implements TranscriptView {
   private readonly jump: HTMLButtonElement;
   private readonly sysBtn: HTMLButtonElement;
   private readonly countEl: HTMLSpanElement;
+  private readonly titleEl: HTMLSpanElement;
   private readonly input: HTMLTextAreaElement;
   private readonly sendBtn: HTMLButtonElement;
   /** Bumped by every edit of the prompt box and every send: a refused prompt comes back only if nothing happened since. */
@@ -534,7 +545,8 @@ class Transcript implements TranscriptView {
     this.sendBtn = h('button', { class: 'tx-send', title: 'Send', onclick: () => this.submit() }, 'Send');
     const form = h('div', { class: 'tx-prompt' }, this.input, this.sendBtn);
     // The toggle sits on the left: the HUD's plan-limits widget can hang over the screen's top-right corner.
-    const bar = h('div', { class: 'tx-bar' }, h('span', { class: 'tx-title' }, 'Transcript'), this.countEl, this.sysBtn);
+    this.titleEl = h('span', { class: 'tx-title' }, 'Transcript');
+    const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn);
     this.root = h('div', { class: 'tx', 'data-system': 'hidden' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), form);
     this.updateCounts();
 
@@ -579,6 +591,29 @@ class Transcript implements TranscriptView {
   focus(): void {
     if (this.destroyed) return;
     this.scroller.focus({ preventScroll: true });
+  }
+
+  attachTabs(tabs: HTMLElement): void {
+    if (this.destroyed) return;
+    this.titleEl.after(tabs);
+  }
+
+  hasItem(id: string): boolean {
+    return this.timeline.has(id);
+  }
+
+  scrollToItem(id: string): boolean {
+    if (this.destroyed) return false;
+    const row = this.timeline.row(id);
+    if (!row) return false;
+    // Reveal a hidden system row too? Images never come from one.
+    this.following = false;
+    row.scrollIntoView({ block: 'center' });
+    this.onScroll();
+    row.classList.remove('tx-flash');
+    void row.offsetWidth;
+    row.classList.add('tx-flash');
+    return true;
   }
 
   focusPrompt(): void {

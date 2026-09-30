@@ -36,6 +36,13 @@ class FakeView {
   setBlocked(q: Question | null): void {
     this.calls.push(`blocked ${q?.hash ?? 'null'}`);
   }
+  attachTabs(): void {}
+  hasItem(): boolean {
+    return false;
+  }
+  scrollToItem(): boolean {
+    return false;
+  }
   focused = 0;
   focus(): void {
     this.focused++;

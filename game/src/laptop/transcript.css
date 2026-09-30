@@ -799,3 +799,20 @@
 .tx .hljs-strong {
   font-weight: 700;
 }
+
+/* Jump to message: the row the Images tab (or a print) pointed at. */
+.tx-flash {
+  animation: tx-flash 1.6s ease-out;
+}
+@keyframes tx-flash {
+  from {
+    background: rgb(255 194 51 / 26%);
+    box-shadow: 0 0 0 2px rgb(255 194 51 / 55%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tx-flash {
+    animation: none;
+    outline: 2px solid rgb(255 194 51 / 55%);
+  }
+}
