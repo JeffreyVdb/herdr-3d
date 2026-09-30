@@ -36,6 +36,8 @@ type UsageConfig struct {
 const (
 	DefaultUsageInterval = 2 * time.Second
 	DefaultUsageThrottle = 5 * time.Second
+	// WatchedUsageInterval is how often the transcripts are checked while a connection watches one.
+	WatchedUsageInterval = time.Second
 )
 
 // usageWorker is what the tracker needs of a worker.
@@ -104,14 +106,26 @@ func (h *Hub) trackUsage(ctx context.Context) {
 	defer h.wg.Done()
 	tr := newUsageTracker(*h.opts.Usage)
 	defer tr.closeLogs()
-	tick := time.NewTicker(tr.cfg.Interval)
-	defer tick.Stop()
+	timer := time.NewTimer(tr.cfg.Interval)
+	defer timer.Stop()
 	for {
 		tr.round(ctx, h)
+		// A watched transcript is read every second, not every two: a pasted screenshot is in the view within 3 s.
+		wait := tr.cfg.Interval
+		if len(tr.txOffers) > 0 {
+			wait = min(wait, WatchedUsageInterval)
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(wait)
 		select {
 		case <-ctx.Done():
 			return
-		case <-tick.C:
+		case <-timer.C:
 		case <-h.usageKick: // a new transcript watch
 		}
 	}
