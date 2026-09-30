@@ -244,6 +244,9 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	if w.AgentKind == "" {
 		return fmt.Errorf("%w: %s runs no agent (a plain shell: use worker.keys)", errInvalidState, w.Name)
 	}
+	if w.Ask != nil { // #57: its dialog would take the text
+		return fmt.Errorf("%w: %s waits on its question: answer it first (worker.answer_ask)", errInvalidState, w.Name)
+	}
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		return h.prompt(ctx, a, session, pane)
 	})
@@ -256,6 +259,9 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pane string) (any, error) {
 	status, err := query(ctx, h, func() string {
 		if w := h.workers[a.ID]; w != nil {
+			if w.Ask != nil { // #57: asked meanwhile
+				return statusAsking
+			}
 			return w.Status
 		}
 		return ""
@@ -265,6 +271,8 @@ func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pan
 	}
 	t := h.opts.Term
 	switch status {
+	case statusAsking:
+		return nil, fmt.Errorf("%w: the worker waits on its question: answer it first", errInvalidState)
 	case statusBlocked:
 		return nil, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
 	case statusWorking:
@@ -347,6 +355,33 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			TextBytes int    `json:"text_bytes"`
 			TextRunes int    `json:"text_runes"`
 		}{a.ID, len(a.Text), utf8.RuneCountInString(a.Text)})
+	// #57: the picks and the typed texts' lengths, never the texts.
+	case proto.CmdWorkerAnswerAsk:
+		var a proto.WorkerAnswerAskArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		type answer struct {
+			Question   int   `json:"question"`
+			Choices    []int `json:"choices,omitempty"`
+			OtherBytes *int  `json:"other_bytes,omitempty"`
+		}
+		out := struct {
+			ID          string   `json:"id"`
+			ToolUseID   string   `json:"tool_use_id"`
+			Answers     []answer `json:"answers,omitempty"`
+			Cancel      bool     `json:"cancel,omitempty"`
+			PromptBytes int      `json:"prompt_bytes,omitempty"`
+		}{ID: a.ID, ToolUseID: clip(a.ToolUseID), Cancel: a.Cancel, PromptBytes: len(a.Prompt)}
+		for _, x := range a.Answers {
+			an := answer{Question: x.Question, Choices: x.Choices}
+			if x.Other != nil {
+				n := len(*x.Other)
+				an.OtherBytes = &n
+			}
+			out.Answers = append(out.Answers, an)
+		}
+		return mustJSON(out)
 	// M16 transcript: the worker id only.
 	case proto.CmdTranscriptWatch, proto.CmdTranscriptUnwatch:
 		var a struct {

@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.285
+▝▜██████▀  Haiku 4.5 · Claude Team
+ ▝▝   ▝▝   /tmp/askrepro-h3d-askrepro-9cce · /rc
+
+
+❯ Call the AskUserQuestion tool exactly once, with one question, header 'Transport', question 'How should the laptop
+  upload pasted screenshots to the bridge: through an HTTP POST handled by the small helper process that already
+  proxies the WebSocket, or as WebSocket chunks like issue thirteen proposed?', options: label 'HTTP POST via helper
+  (Recommended)' description 'Reuses the helper proxy that already checks Host, Origin and the token; one multipart
+  request per image, simple retries and a clear size cap', and label 'WebSocket chunks (as #13)' description 'Keeps
+  everything on the one connection but needs chunk framing, reassembly, backpressure and resume on reconnect, which is
+  a lot of new protocol for one feature'. Do nothing else.
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Transport
+
+│ How should the laptop upload pasted screenshots to the bridge: through an HTTP POST handled by the small helper
+│ process that already proxies the WebSocket, or as WebSocket chunks like issue thirteen proposed?
+
+❯ 1. HTTP POST via helper (Recommended)
+     Reuses the helper proxy that already checks Host, Origin and the token; one multipart request per image, simple
+     retries and a clear size cap
+  2. WebSocket chunks (as #13)
+     Keeps everything on the one connection but needs chunk framing, reassembly, backpressure and resume on reconnect,
+     which is a lot of new protocol for one feature
+  3. Type something.
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────── asker ─

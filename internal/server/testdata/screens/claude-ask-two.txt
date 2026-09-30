@@ -1,0 +1,30 @@
+  multiSelect true, four options Logs (description Request logs), Metrics (description Request
+  metrics), Traces (description Request traces), Alerts (description Request alerts). After answer
+  say DONE.
+
+● User answered Claude's questions:
+  ⎿  · Which features should be enabled? → Logs, Metrics, Traces
+
+● DONE
+
+✻ Churned for 2s · done 12:44 PM
+
+❯ Call AskUserQuestion exactly once with two questions. First header Color, question Which color?,
+  multiSelect false, options Red (description Warm color), Blue (description Cool color). Second
+  header Extras, question Which extras?, multiSelect true, options Logs (description Request logs),
+  Metrics (description Request metrics), Traces (description Request traces). After I answer say
+  DONE.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Color  ☐ Extras  ✔ Submit  →
+
+Which color?
+
+❯ 1. Red
+     Warm color
+  2. Blue
+     Cool color
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

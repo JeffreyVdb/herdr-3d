@@ -574,6 +574,12 @@ func termDefaults(o *Options) {
 	if o.PromptRetryWait <= 0 {
 		o.PromptRetryWait = DefaultPromptRetryWait
 	}
+	if o.AskStepTimeout <= 0 { // #57
+		o.AskStepTimeout = DefaultAskStepTimeout
+	}
+	if o.AskResolveTimeout <= 0 {
+		o.AskResolveTimeout = DefaultAskResolveTimeout
+	}
 	if o.MaxTranscriptWatches <= 0 { // M16 transcript
 		o.MaxTranscriptWatches = DefaultMaxTranscriptWatches
 	}
@@ -589,6 +595,8 @@ func (h *Hub) initTerm() {
 	h.lanes = map[string]*inputLane{}
 	h.questions = map[string]questionState{}
 	h.asking = map[string]bool{}
+	h.asks = map[string]*proto.Ask{} // #57
+	h.askResolved = map[string]string{}
 }
 
 // afterObserve follows a change of the workers: watches whose worker went

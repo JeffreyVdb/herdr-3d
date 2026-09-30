@@ -1,0 +1,30 @@
+
+
+✻ Sautéed for 2s · done 12:46 PM
+
+❯ Call AskUserQuestion now one question header Cancel question Continue experiment?, multiSelect
+  false, options Yes (description Continue), No (description Stop). If I decline, do not ask again;
+  reply DONE.
+
+● User declined to answer questions
+  ⎿  · Continue experiment? (Yes / No)
+
+✻ Cogitated for 1s · done 12:47 PM
+
+❯ Call AskUserQuestion now one question header Discuss question Which approach?, multiSelect false,
+  options Simple (description Minimal), Detailed (description Thorough). If I choose Chat about
+  this reply DONE without asking another question.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Discuss
+
+Which approach?
+
+❯ 1. Simple
+     Minimal
+  2. Detailed
+     Thorough
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

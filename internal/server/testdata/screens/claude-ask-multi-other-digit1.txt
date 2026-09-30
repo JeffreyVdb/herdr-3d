@@ -1,0 +1,30 @@
+
+
+❯ Call AskUserQuestion now one question header Interrupt question Pick a mode?, multiSelect false,
+  options Fast (description Speed), Safe (description Caution). If interrupted do not ask again.
+
+● User declined to answer questions
+  ⎿  · Pick a mode? (Fast / Safe)
+
+✻ Sautéed for 1s · done 12:48 PM
+
+❯ Call AskUserQuestion once now one question header Extra question Which extras to enable?,
+  multiSelect true, options Logs (description Logging), Metrics (description Counters), Traces
+  (description Spans). After answer say DONE.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Extra  ✔ Submit  →
+
+Which extras to enable?
+
+❯ 1. [✔] Logs
+         Logging
+  2. [ ] Metrics
+         Counters
+  3. [ ] Traces
+         Spans
+  4. [ ] Type something
+     Submit
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

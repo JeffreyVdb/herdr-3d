@@ -1,0 +1,30 @@
+
+● DONE
+
+✻ Brewed for 3s · done 12:46 PM
+
+❯ Call AskUserQuestion now one question header Layout question Which card layout?, multiSelect
+  false. Two options Compact description Small card preview exactly "## Compact\n+-------+\n| Title
+  |\n+-------+", Expanded description Large card preview exactly "## Expanded\n+-----------+\n|
+  Title     |\n| Details   |\n+-----------+". Include preview in each option object. After answer
+  say DONE.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Layout
+
+Which card layout?
+
+❯ 1. Compact                      ┌──────────────────────────────────────────┐
+  2. Expanded                     │ Compact                                  │
+                                  │                                          │
+                                  │ +-------+                                │
+                                  │ | Title |                                │
+                                  ├─── ✂ ─── 1 lines hidden ─────────────────┤
+                                  └──────────────────────────────────────────┘
+
+                                  Notes: press n to add notes
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Chat about this
+
+Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel

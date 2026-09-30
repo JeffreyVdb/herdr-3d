@@ -74,6 +74,7 @@ type fakeTerm struct {
 	observeFn func(n int) error // fails the n-th Observe (0-based) when it returns an error
 	screens   map[string]string
 	onKeys    func(pane string, keys []string)
+	onText    func(pane, text string) // #57
 	onPrompt  func(pane, how string)
 	submit    []error // SubmitPrompt results in turn
 	textGate  chan struct{}
@@ -174,6 +175,12 @@ func (f *fakeTerm) SendText(_ context.Context, session, pane, text string) error
 		<-gate
 	}
 	f.record("text %s %q", pane, text)
+	f.mu.Lock()
+	on := f.onText
+	f.mu.Unlock()
+	if on != nil {
+		on(pane, text)
+	}
 	return nil
 }
 

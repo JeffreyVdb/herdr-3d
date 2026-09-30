@@ -1,0 +1,30 @@
+
+● DONE
+
+✻ Brewed for 2s · done 12:45 PM
+
+❯ Call AskUserQuestion once with exactly four questions, all multiSelect false and two options
+  each. Header One question First choice? options Alpha (description First), Beta (description
+  Second). Header Two question Second choice? options Small (description Compact), Large
+  (description Spacious). Header Three question Third choice? options Local (description Nearby),
+  Remote (description Away). Header Four question Fourth choice? options Fast (description Quick),
+  Safe (description Careful). After answer say DONE.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ One  ☒ Two  ☒ Three  ☒ Four  ✔ Submit  →
+
+Review your answers
+
+ ● First choice?
+   → Alpha
+ ● Second choice?
+   → Large
+ ● Third choice?
+   → Local
+ ● Fourth choice?
+   → Safe
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel

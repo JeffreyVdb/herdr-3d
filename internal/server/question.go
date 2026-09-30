@@ -30,6 +30,7 @@ const (
 const (
 	statusBlocked = "blocked"
 	statusWorking = "working"
+	statusAsking  = "asking" // #57: not herdr's: a worker with an ask
 
 	maxExcerptLines = 8
 	maxExcerptRunes = 200
@@ -103,8 +104,40 @@ func parseQuestion(screen string, since int64) screenQuestion {
 		first = nonEmpty[len(nonEmpty)-1] + 1 // no menu: the question is among the last lines
 	}
 	sq.q.Text = questionText(lines, first)
+	askDialog(&sq, screen)
 	sq.q.Hash = questionHash(sq.q, about, since)
 	return sq
+}
+
+// askDialog reads an agent's structured-question dialog (Claude's
+// AskUserQuestion, Codex's request_user_input) with its own parser (#57):
+// the whole question however it wraps, the options' labels without their
+// descriptions or previews, and never a permission, even when its options
+// are Yes and No.
+func askDialog(sq *screenQuestion, screen string) {
+	if sq.q.Kind == proto.QuestionTrust {
+		return
+	}
+	var text string
+	var rows []dialogRow
+	if d := parseClaudeDialog(screen); d.ok {
+		text, rows = d.question, d.rows
+		if d.review {
+			text = "Ready to submit your answers?"
+		}
+	} else if d := parseCodexDialog(screen); d.ok {
+		text, rows = d.question, d.rows
+	} else {
+		return
+	}
+	sq.q.Kind, sq.q.Text, sq.q.Selected, sq.numbered = proto.QuestionChoice, clip(text), 0, true
+	sq.q.Choices = make([]proto.Choice, 0, len(rows))
+	for _, r := range rows {
+		sq.q.Choices = append(sq.q.Choices, proto.Choice{N: r.n, Label: clip(r.label)})
+		if r.cursor {
+			sq.q.Selected = r.n
+		}
+	}
 }
 
 // numberedMenu finds choices 1…k whose last one is near the bottom of the
