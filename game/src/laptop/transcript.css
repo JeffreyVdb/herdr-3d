@@ -1074,8 +1074,9 @@
   align-items: flex-end;
   gap: 3px;
 }
+/* Dimmed no further than keeps its text at 4.5:1 or more on every preset (Paper, the lowest, 5:1). */
 .tx-pending > .tx-bubble {
-  opacity: 0.66;
+  opacity: 0.72;
 }
 .tx-pending-meta {
   display: flex;
