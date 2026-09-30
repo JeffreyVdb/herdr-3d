@@ -91,6 +91,8 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   let hostBusy = false;
   let hostOff = false;
   let refocus = false;
+  /** The host asked for focus while the editor was read-only: it gets it when the editor is writable again. */
+  let wantFocus = false;
   let dead = false;
   let preview: Preview | null = null;
   const policy = o.submitPolicy ?? 'enter';
@@ -316,7 +318,12 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   }
 
   function focusEditor(): void {
-    if (dead || busy) return;
+    if (dead) return;
+    if (busy) {
+      wantFocus = true;
+      return;
+    }
+    wantFocus = false;
     editor.focus({ preventScroll: true });
     writeSelection(draft.selection);
   }
@@ -575,8 +582,9 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     element.classList.toggle('cmp--off', hostOff);
     paintAll();
     if (changed && !b) {
-      if (refocus && (!document.activeElement || document.activeElement === document.body)) focusEditor();
+      const back = refocus && (!document.activeElement || document.activeElement === document.body);
       refocus = false;
+      if (wantFocus || back) focusEditor();
     }
   }
 

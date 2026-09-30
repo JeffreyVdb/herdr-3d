@@ -402,6 +402,28 @@ describe('Enter and Shift+Enter', () => {
     expect(document.activeElement).toBe(other);
   });
 
+  it('a focus the host asked for while read-only is given when it is writable again, even over another focus (#64)', () => {
+    const env = setup();
+    const other = document.createElement('button');
+    document.body.append(other);
+    env.c.setBusy(true);
+    other.focus();
+    env.c.focus();
+    expect(document.activeElement).toBe(other);
+    env.c.setBusy(false);
+    expect(document.activeElement).toBe(env.editor);
+    // Once given, it is not asked again.
+    env.c.setBusy(true);
+    other.focus();
+    env.c.setBusy(false);
+    expect(document.activeElement).toBe(other);
+    // Switched off: the same.
+    env.c.setDisabled(true);
+    env.c.focus();
+    env.c.setDisabled(false);
+    expect(document.activeElement).toBe(env.editor);
+  });
+
   it('does nothing while busy', () => {
     const env = setup();
     env.c.setBusy(true);
