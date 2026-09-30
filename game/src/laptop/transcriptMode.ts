@@ -504,7 +504,11 @@ export class TranscriptMode {
         // A subagent's own timeline: its newest page (the bridge finds <session>/subagents/agent-<id>.jsonl).
         const r = await this.host.send('transcript.page', { id: s.id, before: '', agent: agentId, limit: SUBAGENT_LIMIT });
         if (!r.ok) throw new Error(failureText('transcript.page', r.code, r.message, { worker: s.name }));
-        return subagentItems(r.data);
+        const items = subagentItems(r.data);
+        // Their images are the bridge's to serve (it authorized them in this page); the feed asks for nothing else, and
+        // says whose log to read.
+        this.host.feed(s.id)?.note(items, agentId);
+        return items;
       },
     };
   }

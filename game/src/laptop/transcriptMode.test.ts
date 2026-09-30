@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { Question, TranscriptItem } from '../net/protocol';
+import { ImageFeed } from './imageFeed';
 import { subagentItems, TranscriptMode, type MountTranscript, type SeatMode, type TranscriptRenderHost } from './transcriptMode';
 import { TranscriptWatches, watchAck } from './transcriptWatches';
 
@@ -84,7 +85,7 @@ const flush = async () => {
   for (let i = 0; i < 4; i++) await Promise.resolve();
 };
 
-function harness(o: { storage?: unknown; renderer?: () => Promise<MountTranscript | null> } = {}) {
+function harness(o: { storage?: unknown; renderer?: () => Promise<MountTranscript | null>; feed?: ImageFeed } = {}) {
   const layer: FakeBox[] = [];
   const views: FakeView[] = [];
   const sent: Array<{ t: string; args: Record<string, unknown>; resolve: (r: CommandResult) => void }> = [];
@@ -97,7 +98,7 @@ function harness(o: { storage?: unknown; renderer?: () => Promise<MountTranscrip
   };
   const storage = (o.storage ?? new MemStorage()) as Storage;
   const tx = new TranscriptMode({
-    feed: () => null,
+    feed: () => o.feed ?? null,
     send: (t, args) => new Promise((resolve) => sent.push({ t, args: args as unknown as Record<string, unknown>, resolve })),
     renderer: o.renderer ?? (() => Promise.resolve(mount)),
     overlay: () => new FakeBox(layer) as unknown as HTMLElement,
@@ -226,6 +227,29 @@ describe('TranscriptMode', () => {
     const sub = (h.views[0] as FakeView).host.loadSubagent('a7');
     h.sent[0]?.resolve({ ok: false, code: 'not_found', message: 'no transcript for subagent "a7"' });
     await expect(sub).rejects.toThrow();
+  });
+
+  it("a subagent's images are noted with its agent id: fetchable, read from its log", async () => {
+    const asked: Array<Record<string, unknown>> = [];
+    const feed = new ImageFeed('a', {
+      send: (_t, args) => {
+        asked.push(args as unknown as Record<string, unknown>);
+        return Promise.resolve<CommandResult>({ ok: true, data: { mime: 'image/png', width: 1, height: 1, bytes: 3, size: 'thumb', data: btoa('abc') } });
+      },
+    });
+    URL.createObjectURL = () => 'blob:sub';
+    const h = harness({ feed });
+    h.tx.sit('a', 'Ada');
+    h.tx.toggle();
+    await flush();
+    const image = { source: 'path', origin: 'agent', kind: 'viewed', hash: 'e'.repeat(64), mime: 'image/png', path: '/w/shot.png' } as const;
+    const sub = (h.views[0] as FakeView).host.loadSubagent('a7');
+    expect(feed.canFetch(image)).toBe(false);
+    h.sent[0]?.resolve({ ok: true, data: { items: [item('s1', 1, { kind: 'tool', tool: { name: 'Read', input_summary: '', status: 'ok', images: [{ image }] } })], cursor: 'c:1', has_more: false } });
+    await sub;
+    expect(feed.canFetch(image)).toBe(true);
+    await feed.thumb(image.hash);
+    expect(asked.at(-1)).toMatchObject({ id: 'a', hash: image.hash, size: 'thumb', agent: 'a7' });
   });
 
   it('remembers the mode per worker; blocked storage breaks nothing', () => {
