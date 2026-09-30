@@ -195,8 +195,23 @@ test('each view takes its own preset without a reload: transcript (tools shown a
     await expect(tx.locator('.tx-busy')).toContainText('Bash');
     await frames(page, 4);
     await shot(page, `m59-transcript-${pick}-hidden`);
+    // #70: a Read's images stay while tool calls are hidden, as a bare strip (no header, no body).
+    const read = tx.locator('[data-id="toolu_demo_read"]');
+    await read.scrollIntoViewIfNeeded();
+    await expect(read.locator('.tx-tool-strip .tx-thumb')).toHaveCount(2);
+    await expect(read.locator('.tx-tool-strip')).toBeVisible();
+    await expect(read.locator('.tx-tool-row')).toBeHidden();
+    await expect.poll(() => read.locator('.tx-thumb img').evaluateAll((els) => els.every((e) => (e as HTMLImageElement).naturalWidth > 0))).toBe(true);
+    await frames(page, 4);
+    await shot(page, `m70-toolimg-${pick}-hidden`);
     await tx.locator('.tx-check-box').uncheck();
     await expect(tx.locator('[data-id="toolu_demo_grep"]')).toBeVisible();
+    // Shown: the same strip under the Read's collapsed header.
+    await expect(read.locator('.tx-tool-row')).toBeVisible();
+    await expect(read.locator('.tx-tool-body')).toBeHidden();
+    await read.scrollIntoViewIfNeeded();
+    await frames(page, 4);
+    await shot(page, `m70-toolimg-${pick}`);
   }
   // The terminal's own presets, from the seat bar: its canvas changes, the transcript and the limits widget do not.
   await page.keyboard.press('Control+Escape');

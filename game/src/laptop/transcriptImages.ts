@@ -8,7 +8,8 @@ import type { ImageFeed } from './imageFeed';
  *
  * - A message's images (`parts`) and a tool row's (`images`) are one wrapping strip of thumbnails, at most 480 px on the
  *   longest side (a lone image gets the room, several share the row). A thumbnail is fetched when it scrolls into view
- *   (IntersectionObserver) and only for a hash the bridge sent; a click opens the lightbox on the strip's images.
+ *   (IntersectionObserver) and only for a hash the bridge sent; a click opens the lightbox on the strip's images. A tool
+ *   row's strip shows under its header with the row collapsed, and alone while tool calls are hidden (#70).
  * - Images that are not available (a path outside the bridge's roots, a file that is gone, a URL, bytes that are no
  *   image) are a compact card with the path as text. Nothing here ever builds a path or a URL of its own: the only
  *   `src` is an object URL the feed made from bytes the bridge sent.
@@ -99,10 +100,10 @@ export class Thumbs {
 
   constructor(private readonly host: StripHost) {}
 
-  /** A strip for `refs`, one thumbnail each. */
-  strip(refs: ImageRef[]): HTMLElement {
+  /** A strip for `refs`, one thumbnail each; `label` names the group (a tool row's strip says whose images they are). */
+  strip(refs: ImageRef[], label?: string): HTMLElement {
     const long = refs.length > 1 ? LONG_SHARED : LONG_ALONE;
-    const strip = h('div', { class: 'tx-strip', role: 'group', 'aria-label': refs.length > 1 ? `${refs.length} images` : 'Image' });
+    const strip = h('div', { class: 'tx-strip', role: 'group', 'aria-label': label ?? (refs.length > 1 ? `${refs.length} images` : 'Image') });
     refs.forEach((r, i) => strip.append(this.thumb(r, long, refs, i)));
     return strip;
   }
@@ -139,6 +140,15 @@ export class Thumbs {
       btn.replaceWith(this.thumbFailed(r, open));
     };
     img.addEventListener('error', fail);
+    // Already fetched (a row drawn again: an update of its item, a resync): shown at once, no shimmer, no second look.
+    const have = feed?.thumbNow(r.hash);
+    if (have) {
+      img.src = have.url;
+      btn.dataset.state = 'ready';
+      btn.dataset.cached = '';
+      if (have.width && have.height && !r.width) btn.style.aspectRatio = `${have.width} / ${have.height}`;
+      return btn;
+    }
     const load = () => {
       if (this.destroyed || !feed) return;
       btn.dataset.state = 'loading';

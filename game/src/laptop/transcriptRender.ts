@@ -414,6 +414,8 @@ function renderDiff(diff: TranscriptDiff): HTMLElement {
 const isSystem = (it: TranscriptItem) => it.hidden === true || it.kind === 'unknown';
 /** #59: what "Hide tool calls" hides: tool rows (not subagents, not an agent's question, which is part of the conversation). */
 export const isToolRow = (it: TranscriptItem) => it.kind === 'tool' && !!it.tool && !(it.tool.ask && typeof it.tool.ask === 'object' && Array.isArray(it.tool.ask.questions));
+/** #70: a tool row with images (a Read of a PNG, a screenshot, a `view_image`): its strip shows collapsed, and stays when tool calls are hidden. */
+export const toolHasImages = (it: TranscriptItem) => isToolRow(it) && toolImages(it.tool as NonNullable<TranscriptItem['tool']>).length > 0;
 const EXCERPT_LINES = 4;
 const PROMPT_HINT = `Message the agent…  (Enter sends, Shift+Enter for a new line, ${PASTE_HINT})`;
 
@@ -836,6 +838,7 @@ class Transcript implements TranscriptView {
     row.dataset.kind = typeof it.kind === 'string' ? it.kind : 'unknown';
     if (isSystem(it)) row.classList.add('tx-sys');
     if (isToolRow(it)) row.classList.add('tx-toolrow');
+    if (toolHasImages(it)) row.classList.add('tx-toolimg');
     if (isToolRow(it) && this.revealed.has(it.id)) row.classList.add('tx-reveal');
     const t = clock(it.ts);
     if (t && !row.title) row.title = t;
@@ -966,7 +969,18 @@ class Transcript implements TranscriptView {
     head.addEventListener('click', () => ex.toggle(head));
     body.hidden = !ex.open;
     if (ex.open) this.fillTool(body, t, diffs);
-    row.append(head, body);
+    row.append(head);
+    // #70: the images show without opening the row, under its header and outside the lazy body (a thumbnail is its own
+    // button, so a click on it opens the lightbox and never toggles the row). With tool calls hidden it is all that shows.
+    const images = toolImages(t);
+    if (images.length) {
+      const n = images.length === 1 ? '1 image' : `${images.length} images`;
+      const sum = String(t.input_summary ?? '').trim();
+      const strip = this.thumbs.strip(images, `${String(t.name ?? 'tool')}${sum ? `: ${sum}` : ''} — ${n}`);
+      strip.classList.add('tx-tool-strip');
+      row.append(strip);
+    }
+    row.append(body);
     return row;
   }
 
@@ -990,10 +1004,11 @@ class Transcript implements TranscriptView {
     if (typeof t.output_text === 'string' && t.output_text.length) {
       body.append(h('div', { class: 'tx-label' }, 'Output'), h('pre', { class: 'tx-out' }, stripAnsi(t.output_text)));
     } else if (!diffs.length && !toolImages(t).length && t.status !== 'running') body.append(h('div', { class: 'tx-note' }, 'No output.'));
-    const images = toolImages(t);
-    if (images.length) body.append(this.thumbs.strip(images));
+    // The images are not repeated here: the row shows them collapsed (toolRow).
     if (t.output_truncated) body.append(h('div', { class: 'tx-note' }, 'Output truncated: only the start is shown.'));
     if (t.status === 'running') body.append(h('div', { class: 'tx-note' }, 'Still running…'));
+    const images = toolImages(t).length;
+    if (images && !body.childNodes.length) body.append(h('div', { class: 'tx-note' }, images === 1 ? 'No text output: the image is above.' : 'No text output: the images are above.'));
   }
 
   private subagentRow(it: TranscriptItem, scope: string): HTMLElement {
@@ -1129,12 +1144,16 @@ class Transcript implements TranscriptView {
       return;
     }
     for (const it of added) this.fresh.add(it.id);
-    if (added.length) this.renderJump();
+    // An update can change what an unread row shows too (#70: a hidden Read that finishes with its images).
+    if (added.length || this.fresh.size) this.renderJump();
   }
 
-  /** Only what shows counts as new: not system rows unless shown, not tool calls while they are hidden (#59). */
+  /**
+   * Only what shows counts as new: not system rows unless shown, not tool calls while they are hidden (#59), except a
+   * tool call's images, which stay on screen as a bare strip then (#70).
+   */
   private shows(it: TranscriptItem): boolean {
-    return (this.showSystem || !isSystem(it)) && !(this.prefs.hideTools && isToolRow(it));
+    return (this.showSystem || !isSystem(it)) && !(this.prefs.hideTools && isToolRow(it) && !toolHasImages(it));
   }
 
   /** Back to the bottom when following (content grew, the view resized, code got highlighted). */
