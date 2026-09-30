@@ -14,6 +14,8 @@ import { DeskSet } from './desks';
 import { MezzanineView } from './mezzanine';
 import { BODY_TINTS, OFFICE } from './palette';
 import { buildProps, signTexture, type PropMeshes } from './props';
+import type { ClockFace } from './clock';
+import { lookOf, NOON, type Look } from './daylook';
 // M7: the corkboard, the pull request board and the merge gong.
 import { BoardsView } from './boards/boards';
 // M6: write-code crews.
@@ -22,7 +24,7 @@ import { crewLookOf, type CrewLook } from './crewLook';
 export type Target =
   | { kind: 'worker'; id: string; name: string; label: string; desk: number }
   | { kind: 'desk'; id: string; desk: number; label: string }
-  | { kind: 'board' | 'prop'; id: string; label: string; milestone: string }
+  | { kind: 'board' | 'prop'; id: string; label: string; milestone: string | null }
   /** #20: your own desk in the corner office (never a worker desk slot: E sits you down). */
   | { kind: 'own-desk'; id: 'own-desk'; label: string; name: string };
 
@@ -74,6 +76,16 @@ export interface DropPose {
 
 /** Glass seen from inside: a light tint over the street. */
 export const GLASS_IN = { color: 0x9fd3f0, opacity: 0.16 };
+
+/**
+ * M17: the office's own lamps, a constant set of non-shadow spot lights under
+ * the ceiling shining down on the desk area (a point light that high lights
+ * the ceiling more than the desks). Adding, removing or hiding a light
+ * recompiles the scene's materials, dimming one does not: they stay and only
+ * their intensity moves. Two, measured on the WebGL2 fallback
+ * (docs/decisions.md). Full at night, a little by day, off on an asleep floor.
+ */
+export const LAMPS = { count: 2, intensity: 80, night: 1, day: 0.3, below: 0.4, angle: 1.2, penumbra: 0.85, color: 0xffe4bf } as const;
 
 /** Visual state for a worker (shared by the office and the city). */
 export function memberOf(v: WorkerView): { tint: number; cue: ReturnType<typeof modelCue>; display: Display; phase: number; crew?: CrewLook } {
@@ -128,6 +140,10 @@ export class OfficeView {
   private readonly static: THREE.Object3D[] = [];
   private readonly ceiling: THREE.Group;
   private readonly glow: THREE.MeshBasicMaterial[] = [];
+  /** M17: the lamps, the window glass, and the time of day they follow. */
+  private readonly lamps: THREE.SpotLight[] = [];
+  private readonly glassMat: THREE.MeshBasicNodeMaterial;
+  private look: Look = lookOf(NOON);
   private readonly door: THREE.Mesh;
   private readonly doorClosedZ: number;
   private doorOpen = 0;
@@ -242,6 +258,7 @@ export class OfficeView {
     this.addStatic(walls, skirting);
     // One glass material: the windows, the corner office's walls and its door.
     const glassMat = new THREE.MeshBasicNodeMaterial({ color: GLASS_IN.color, transparent: true, opacity: GLASS_IN.opacity, depthWrite: false });
+    this.glassMat = glassMat;
     this.mezz = new MezzanineView(L.mezzanine, o.owner ?? 'You', glassMat, o.shadows);
     this.addStatic(this.mezz.group);
     const pane = new THREE.Mesh(mergeGeometries([...glass, ...this.mezz.glass]), glassMat);
@@ -277,6 +294,19 @@ export class OfficeView {
     );
     this.ceiling.add(ceil, panels);
     this.root.add(this.ceiling);
+    // The lamps: evenly across the desk area's width, under the ceiling panels.
+    const da = L.deskArea;
+    for (let i = 0; i < LAMPS.count; i++) {
+      const lamp = new THREE.SpotLight(LAMPS.color, 0, 0, LAMPS.angle, LAMPS.penumbra, 2);
+      lamp.name = `office.lamp${i}`;
+      lamp.castShadow = false;
+      const x = da.x0 + ((i + 0.5) * (da.x1 - da.x0)) / LAMPS.count;
+      const z = (da.z0 + da.z1) / 2;
+      lamp.position.set(x, L.height - LAMPS.below, z);
+      lamp.target.position.set(x, 0, z);
+      this.lamps.push(lamp);
+      this.root.add(lamp, lamp.target);
+    }
 
     this.props = buildProps(L.props, L, view.level ? `${view.level.number}` : '·');
     this.root.add(this.props.group);
@@ -495,10 +525,35 @@ export class OfficeView {
     this.cardsDirty = true;
   }
 
-  /** Lights off on an asleep floor: the ceiling panels here, the room light in the walk scene. */
+  /** Lights off on an asleep floor: the ceiling panels and the lamps here, the room light in the walk scene. */
   private setAsleep(asleep: boolean): void {
     this.asleep = asleep;
     for (const m of this.glow) m.color.set(asleep ? 0x3a3f58 : 0xfff6dd);
+    this.applyLight();
+  }
+
+  /** M17: the time of day: the lamps (with the asleep state, neither overwrites the other) and the window glass. */
+  setDaylight(look: Look): void {
+    this.look = look;
+    this.applyLight();
+    this.props.clock?.setDay(look.day);
+  }
+
+  private applyLight(): void {
+    const k = this.asleep ? 0 : LAMPS.intensity * (LAMPS.night + (LAMPS.day - LAMPS.night) * this.look.day);
+    for (const l of this.lamps) l.intensity = k;
+    this.glassMat.color.copy(this.look.glass);
+    this.glassMat.opacity = this.look.glassOpacity;
+  }
+
+  /** M17: what the wall clock shows. */
+  setClock(face: Pick<ClockFace, 'time' | 'date'>): void {
+    this.props.clock?.set(face);
+  }
+
+  /** M17: the clock's face and the lamps' intensity (test hook). */
+  lightInfo(): { lamps: number[]; clock: ClockFace | null } {
+    return { lamps: this.lamps.map((l) => +l.intensity.toFixed(3)), clock: this.props.clock?.shown ?? null };
   }
 
   /** M15: what the radio's display says (null: off) and whether its LED glows. */

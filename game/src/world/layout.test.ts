@@ -127,8 +127,25 @@ describe('floorLayout', () => {
   it('has every placeholder prop, labelled', () => {
     const ids = floorLayout(20).props.map((p) => p.id);
     expect(ids.sort()).toEqual(
-      ['board.issues', 'board.prs', 'board.services', 'dropzone', 'elevator', 'filing', 'lounge', 'radio', 'tv', 'whiteboard'].sort(),
+      ['board.issues', 'board.prs', 'board.services', 'clock', 'dropzone', 'elevator', 'filing', 'lounge', 'radio', 'tv', 'whiteboard'].sort(),
     );
+  });
+
+  it('M17: hangs the clock on the board partition, facing the desks, above them, only to be looked at', () => {
+    for (const n of [0, 6, 20, 62, 96]) {
+      const l = floorLayout(n);
+      const clock = l.props.find((p) => p.id === 'clock');
+      expect(clock, `${n} desks`).toMatchObject({ label: 'Clock', milestone: null, solid: false });
+      const b = (clock as NonNullable<typeof clock>).box;
+      const wall = l.walls[4] as NonNullable<(typeof l.walls)[4]>;
+      // On the partition's north face (the desks' side), within its length and under its top.
+      expect(b.max[2]).toBeCloseTo(wall.min[2], 5);
+      expect(b.min[0]).toBeGreaterThan(wall.min[0]);
+      expect(b.max[0]).toBeLessThan(wall.max[0]);
+      expect(b.max[1]).toBeLessThanOrEqual(wall.max[1]);
+      // Above the monitors: readable from the desks.
+      expect(b.min[1]).toBeGreaterThan(1.5);
+    }
   });
 
   it('puts the radio on the lounge counter, in reach from the lounge aisle, without a collider of its own', () => {

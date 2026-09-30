@@ -14,6 +14,10 @@ import { memberOf, OfficeView, REACH, type Target } from './render/office';
 import { OutsideView } from './render/outside';
 import { BUILDING_TINTS, LOT_TINT } from './render/palette';
 import { WalkView } from './render/walk';
+import { DaylightEase, lookOf } from './render/daylook';
+import { TimeOfDay, overridesFrom } from './world/timeOfDay';
+import type { Daylight } from './world/daylight';
+import { TimePrefs } from './ui/timePrefs';
 import { RadioLink } from './radio/link';
 import { createGameAudio, createReception, receptionContext, type GameAudio, type Reception, type ReceptionEvent } from './reception';
 import { Hud, type PlanLabel } from './ui/hud';
@@ -114,6 +118,16 @@ export class App {
   private readonly limitsPrefs = new LimitsPrefs();
   /** #59: the transcript's and the terminal's presets (fonts, colours) and zooms, and hidden tool calls. */
   readonly themes = new ThemeLoader(new ViewPrefs());
+  /** M17: the time of day: the settings (About), the page's overrides, the eased light and the clock. */
+  readonly timePrefs = new TimePrefs();
+  readonly timeOfDay: TimeOfDay;
+  readonly daylight = new DaylightEase();
+  /** The last sample read, and what the clock shows from it. */
+  private sample: Daylight | null = null;
+  clockFace = { time: '', date: '', zone: '' };
+  /** When to read the time again (Date.now ms; the next minute, or never while pinned). */
+  private nextRead = 0;
+  private clockOffice: OfficeView | null = null;
   readonly limitsWidget: LimitsWidget;
   readonly hud: Hud;
   readonly city: CityView;
@@ -231,12 +245,13 @@ export class App {
     this.shadows = o.params.get('shadows') !== '0';
     this.owner = (o.params.get('me') ?? '').trim().slice(0, 40) || 'You';
     this.batterySaver = o.params.get('battery') === '1';
+    this.timeOfDay = new TimeOfDay(this.timePrefs, overridesFrom(o.params, (m) => console.warn(m)));
     this.hud = new Hud(o.host);
     this.hud.setBattery(this.batterySaver);
     // Sound (the first click, key or pointer lock unlocks it) and the receptionist in every lobby.
     this.audio = createGameAudio();
     this.hud.mountAudio(this.audio);
-    if (o.buildInfo) this.hud.mountAbout(o.buildInfo, this.limitsPrefs);
+    if (o.buildInfo) this.hud.mountAbout(o.buildInfo, this.limitsPrefs, { prefs: this.timePrefs, time: this.timeOfDay });
     this.limitsWidget = new LimitsWidget(
       this.hud.root,
       this.store.limits,
@@ -259,6 +274,9 @@ export class App {
     this.cityCam = new THREE.PerspectiveCamera(42, 1, 0.1, 600);
     this.fpCam = new THREE.PerspectiveCamera(70, 1, 0.05, 320);
     this.walk = new WalkView(this.shadows);
+    // M17: start at the time's light (not eased from noon), and follow the settings live.
+    this.readTime(true);
+    this.timePrefs.onChange(() => this.readTime(false));
     this.planCam = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
     this.controls = new OrbitControls(this.cityCam, this.r.domElement);
     this.controls.enableDamping = true;
@@ -440,6 +458,8 @@ export class App {
 
   resume(): void {
     this.lastRender = -Infinity;
+    // M17: back from a hidden tab: the time moved on.
+    this.readTime(false);
     void this.r.setAnimationLoop((t) => this.tick(t));
   }
 
@@ -1750,9 +1770,62 @@ export class App {
     this.render();
   }
 
+  // ---- time of day (M17) -------------------------------------------------------
+
+  /** Reads the time: the light's target (`snap`: straight there), the clock, when to read again. */
+  readTime(snap: boolean): void {
+    const s = this.timeOfDay.sample();
+    this.sample = s;
+    // A pinned time is frozen and starts where it stays: no easing from the last one.
+    this.daylight.set(s, snap || this.timeOfDay.pinned);
+    const f = TimeOfDay.face(s, this.timeOfDay.timeZone);
+    this.clockFace = f;
+    this.clockOffice = null;
+    this.hud.setPropInfo('clock', `${f.time} · ${f.date} · ${f.zone}`);
+    const now = Date.now();
+    // Next read: just past the next minute (the clock rolls over on time), or never while pinned.
+    this.nextRead = this.timeOfDay.pinned ? Infinity : now - (now % 60_000) + 60_050;
+    this.applyDaylight();
+  }
+
+  private applyDaylight(): void {
+    const look = lookOf(this.daylight.state);
+    this.walk.setDaylight(look);
+    this.city.setDaylight(look);
+  }
+
+  private stepDaylight(dt: number): void {
+    if (Date.now() >= this.nextRead) this.readTime(false);
+    if (this.daylight.step(dt)) this.applyDaylight();
+    if (this.office && this.office !== this.clockOffice) {
+      this.office.setClock(this.clockFace);
+      this.clockOffice = this.office;
+    }
+  }
+
+  /** M17: the light and the clock as shown (test hook). */
+  daylightInfo(): { daylight: number; target: number; warmth: number; zone: string; zoneSource: string; latitude: number | null; pinned: boolean; model: string; instant: number; clock: { time: string; date: string; zone: string }; lamps: number[]; face: { time: string; date: string; day: boolean } | null } {
+    const info = this.office?.lightInfo();
+    return {
+      daylight: +this.daylight.state.day.toFixed(4),
+      target: +this.daylight.target.day.toFixed(4),
+      warmth: +this.daylight.state.warmth.toFixed(4),
+      zone: this.timeOfDay.timeZone,
+      zoneSource: this.timeOfDay.zoneSource,
+      latitude: this.timeOfDay.latitude,
+      pinned: this.timeOfDay.pinned,
+      model: this.sample?.model ?? 'fixed',
+      instant: this.timeOfDay.instant(),
+      clock: { ...this.clockFace },
+      lamps: info?.lamps ?? [],
+      face: info?.clock ?? null,
+    };
+  }
+
   /** One update at `dt` seconds of game time `t`. Also used by the benchmark. */
   step(dt: number, t: number): void {
     this.lastT = t;
+    this.stepDaylight(dt);
     if (this.mode === 'floor' && this.building) {
       if (this.walker.step(dt, this.walkWorldNow())) {
         this.cameraMoved = true;

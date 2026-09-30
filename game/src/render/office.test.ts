@@ -9,6 +9,7 @@ import { floorLayout } from '../world/layout';
 import { WorldStore } from '../world/store';
 import { Arrivals, type ArrivalSpec, type DeskAway } from './arrivals';
 import { DeskSet } from './desks';
+import { lookOf, NOON } from './daylook';
 import { memberOf, OfficeView } from './office';
 
 const floor: Floor = { session: 'top', state: 'running', building: 'b1', index: 0, desks: 8 };
@@ -271,5 +272,44 @@ describe('desk art frame budget (M6b)', () => {
     const city = new DeskSet(240, true, { plus: false });
     expect(meshesOf(city).map((m) => m.name).sort()).toEqual(['desks.chair', 'desks.chairBase', 'desks.legs', 'desks.monitor', 'desks.screen', 'desks.top']);
     for (const d of [small, big, city]) d.dispose();
+  });
+});
+
+describe('OfficeView day and night (M17)', () => {
+  const NIGHT = { day: 0, warmth: 0, azimuth: 0, elevation: -40 };
+
+  it('the wall clock is looked at like a prop, with nothing to do (no milestone), and shows what it is told', () => {
+    const office = new OfficeView(world().floorView('top')!, { shadows: false });
+    const c = office.layout.props.find((p) => p.id === 'clock')!;
+    const mid: V3 = [(c.box.min[0] + c.box.max[0]) / 2, (c.box.min[1] + c.box.max[1]) / 2, c.box.min[2]];
+    const origin: V3 = [mid[0], 1.55, mid[2] - 2.2];
+    const d = [mid[0] - origin[0], mid[1] - origin[1], mid[2] - origin[2]];
+    const n = Math.hypot(...d);
+    expect(office.pick(origin, [d[0]! / n, d[1]! / n, d[2]! / n])).toMatchObject({ kind: 'prop', id: 'clock', label: 'Clock', milestone: null });
+    office.setClock({ time: '23:00', date: 'Wed 30 Sep' });
+    office.setDaylight(lookOf(NIGHT));
+    expect(office.lightInfo().clock).toEqual({ time: '23:00', date: 'Wed 30 Sep', day: false });
+    office.dispose();
+  });
+
+  it('the lamps are full at night, a little by day and off on an asleep floor, whichever changes first', () => {
+    const store = world();
+    const office = new OfficeView(store.floorView('top')!, { shadows: false });
+    office.setDaylight(lookOf(NIGHT));
+    const night = office.lightInfo().lamps;
+    office.setDaylight(lookOf(NOON));
+    const day = office.lightInfo().lamps;
+    expect(night.length).toBe(2);
+    expect(night[0]).toBeGreaterThan(day[0]! * 2);
+    expect(day[0]).toBeGreaterThan(0);
+    // The floor goes to sleep at night: off; the light changing again does not turn them back on.
+    office.setDaylight(lookOf(NIGHT));
+    store.applyEvent({ t: 'floor.upsert', seq: 3, floor: { ...floor, state: 'asleep' } });
+    office.apply(store.floorView('top')!);
+    expect(office.isAsleep).toBe(true);
+    expect(office.lightInfo().lamps).toEqual([0, 0]);
+    office.setDaylight(lookOf(NOON));
+    expect(office.lightInfo().lamps).toEqual([0, 0]);
+    office.dispose();
   });
 });

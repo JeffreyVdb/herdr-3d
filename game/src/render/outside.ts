@@ -1,8 +1,12 @@
 import * as THREE from 'three/webgpu';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { attribute, dot, mix, step, uniform, vec3 } from 'three/tsl';
 import { FACE, floorY, RAIL_H, RISE, RISERS, SLAB, TREAD, type BuildingPlan } from '../world/building';
 import { ROOM_HEIGHT, WALL_T, wallPieces, type Box3, type Opening } from '../world/layout';
 import { Baker, bakedMaterial } from './bake';
+import type { Look } from './daylook';
 import { LobbyView } from './lobby';
+import { canvasTexture } from './props';
 
 /**
  * The building from outside and the street around it, in absolute
@@ -16,6 +20,13 @@ import { LobbyView } from './lobby';
  *
  * The panes face outwards and are opaque: from outside you can't see in;
  * from inside, back-face culling hides them and you look out.
+ *
+ * M17: the time of day tints the baked street and facade by their
+ * material's colour (never a re-bake). What glows keeps out of that tint:
+ * the lamp globes and the neighbours' lit windows are a mesh of their own,
+ * the lobby's interior another (its own lights keep it bright), and the
+ * panes turn warm at night where a floor is running and stay dark where it
+ * sleeps. Pools of lamp light on the ground fade in at dusk.
  */
 
 /** Street palette: the city view's colours, walked at full size. */
@@ -51,7 +62,13 @@ export interface BuildingLook {
 }
 
 const color = new THREE.Color();
-const mix = (a: number, b: number, k: number) => color.set(a).lerp(new THREE.Color(b), k).getHex();
+const mixHex = (a: number, b: number, k: number) => color.set(a).lerp(new THREE.Color(b), k).getHex();
+
+function mergeAll(gs: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const out = mergeGeometries(gs);
+  for (const g of gs) g.dispose();
+  return out;
+}
 
 /** Deterministic 0..1 noise for placing backdrop details. */
 function noise(i: number, salt = 0): number {
@@ -68,6 +85,13 @@ export class OutsideView {
   readonly lobby: LobbyView;
   private readonly baked: THREE.Mesh;
   private readonly panes: THREE.Mesh;
+  /** M17: lamp globes and lit neighbour windows, the lobby's interior, and the lamps' pools of light. */
+  private readonly glow: THREE.Mesh;
+  private readonly inner: THREE.Mesh;
+  private readonly pools: THREE.Mesh;
+  /** 1 by day, 0 at night: the panes' own mix (see `paneMaterial`). */
+  private readonly paneDay = uniform(1);
+  private readonly doorBase: THREE.Color;
   /** Pane vertex ranges per storey: [glass start, count, strip start, count]. */
   private readonly paneRanges: Array<Array<[number, number, boolean]>> = [];
   private readonly doors: THREE.InstancedMesh;
@@ -84,24 +108,47 @@ export class OutsideView {
     this.group.name = 'outside';
     const b = new Baker();
     const panes = new Baker();
+    const glow = new Baker();
+    const inner = new Baker();
+    const pools: THREE.BufferGeometry[] = [];
     const tint = look.tint;
     this.buildFacade(b, panes, tint);
     this.buildFireEscape(b);
-    this.buildStreet(b);
-    this.buildNeighbours(b);
-    this.lobby = new LobbyView(plan, b, look.name, tint, look.floors.map((f) => f.session));
+    this.buildStreet(b, glow, pools);
+    this.buildNeighbours(b, glow);
+    this.lobby = new LobbyView(plan, b, inner, look.name, tint, look.floors.map((f) => f.session));
     this.baked = new THREE.Mesh(b.build(), bakedMaterial());
     this.baked.name = 'outside.baked';
-    this.panes = new THREE.Mesh(panes.build(), bakedMaterial());
+    this.panes = new THREE.Mesh(panes.build(), this.paneMaterial());
     this.panes.name = 'outside.panes';
-    this.group.add(this.baked, this.panes, this.lobby.group);
+    this.glow = new THREE.Mesh(glow.build(), bakedMaterial());
+    this.glow.name = 'outside.glow';
+    this.inner = new THREE.Mesh(inner.build(), bakedMaterial());
+    this.inner.name = 'outside.lobby';
+    const poolTex = canvasTexture(128, 128, (g) => {
+      const r = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+      r.addColorStop(0, 'rgba(255,255,255,1)');
+      r.addColorStop(0.45, 'rgba(255,255,255,0.45)');
+      r.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = r;
+      g.fillRect(0, 0, 128, 128);
+    });
+    this.textures.push(poolTex);
+    this.pools = new THREE.Mesh(
+      pools.length ? mergeAll(pools) : new THREE.BufferGeometry(),
+      new THREE.MeshBasicNodeMaterial({ map: poolTex, color: 0xffc27a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    this.pools.name = 'outside.pools';
+    this.pools.renderOrder = 1;
+    this.group.add(this.baked, this.panes, this.glow, this.inner, this.pools, this.lobby.group);
 
     // Closed fire-escape doors, one per floor (the loaded floor's is hidden).
     const e = plan.escape;
     const dh = e.door.height;
     const dw = e.door.z1 - e.door.z0;
     const doorGeo = new THREE.BoxGeometry(0.04, dh, dw).translate(0, dh / 2, 0);
-    this.doors = new THREE.InstancedMesh(doorGeo, new THREE.MeshBasicNodeMaterial({ color: mix(STREET.navy, 0x000000, 0.12) }), plan.floors);
+    this.doorBase = new THREE.Color(mixHex(STREET.navy, 0x000000, 0.12));
+    this.doors = new THREE.InstancedMesh(doorGeo, new THREE.MeshBasicNodeMaterial({ color: this.doorBase.clone() }), plan.floors);
     this.doors.name = 'outside.doors';
     for (let s = 0; s < plan.floors; s++) {
       const m = new THREE.Matrix4().makeTranslation(-WALL_T - 0.02, floorY(s), (e.door.z0 + e.door.z1) / 2);
@@ -111,7 +158,7 @@ export class OutsideView {
     this.doors.instanceMatrix.needsUpdate = true;
     this.doors.computeBoundingSphere();
     this.group.add(this.doors);
-    for (const o of [this.baked, this.panes, this.doors]) {
+    for (const o of [this.baked, this.panes, this.glow, this.inner, this.pools, this.doors]) {
       o.castShadow = false;
       o.receiveShadow = false;
     }
@@ -122,10 +169,10 @@ export class OutsideView {
 
   private buildFacade(b: Baker, panes: Baker, tint: number): void {
     const { width: W, depth: D, floors: n } = this.plan;
-    const band = mix(tint, 0xffffff, 0.55);
-    const reveal = mix(tint, STREET.ink, 0.12);
-    const frame = mix(tint, STREET.ink, 0.45);
-    const base = mix(tint, STREET.ink, 0.62);
+    const band = mixHex(tint, 0xffffff, 0.55);
+    const reveal = mixHex(tint, STREET.ink, 0.12);
+    const frame = mixHex(tint, STREET.ink, 0.45);
+    const base = mixHex(tint, STREET.ink, 0.62);
     const T = WALL_T;
     for (let s = 0; s < n; s++) {
       const y0 = floorY(s);
@@ -313,7 +360,7 @@ export class OutsideView {
 
   // ---- street -------------------------------------------------------------------
 
-  private buildStreet(b: Baker): void {
+  private buildStreet(b: Baker, glow: Baker, pools: THREE.BufferGeometry[]): void {
     const P = this.plan;
     const { width: W, depth: D, fence: f, road } = P;
     const FAR = 90;
@@ -390,7 +437,8 @@ export class OutsideView {
       const tip = v(l.x, 4.05, l.z + 0.75); // the arm reaches out over the road
       this.beam(b, v(l.x, 4.1, l.z), tip, 0.07, 0.07, STREET.navy);
       const gm = new THREE.Matrix4().makeTranslation(tip.x, tip.y - 0.28, tip.z);
-      b.geo(globe, STREET.lamp, gm);
+      glow.geo(globe, STREET.lamp, gm);
+      pools.push(new THREE.PlaneGeometry(5.2, 5.2).rotateX(-Math.PI / 2).translate(tip.x, 0.03, tip.z));
       b.box(tip.x - 0.16, tip.y - 0.08, tip.z - 0.16, tip.x + 0.16, tip.y + 0.02, tip.z + 0.16, STREET.navy);
     }
     pole.dispose();
@@ -420,7 +468,7 @@ export class OutsideView {
 
   // ---- backdrop -------------------------------------------------------------------
 
-  private buildNeighbours(b: Baker): void {
+  private buildNeighbours(b: Baker, glow: Baker): void {
     const P = this.plan;
     const { width: W, depth: D, fence: f, road } = P;
     const TINTS = [0xd9c8b4, 0xb9c7d6, 0xc9d8c0, 0xe0c6c0, 0xcfc5de, 0xd6d0b8, 0xc4d3d9];
@@ -428,7 +476,7 @@ export class OutsideView {
     const block = (x0: number, z0: number, x1: number, z1: number, h: number, faces: string) => {
       const i = k++;
       const hex = TINTS[i % TINTS.length] as number;
-      const trim = mix(hex, STREET.ink, 0.25);
+      const trim = mixHex(hex, STREET.ink, 0.25);
       b.box(x0, -0.03, z0, x1, h, z1, hex, 'ny');
       b.box(x0 - 0.15, h, z0 - 0.15, x1 + 0.15, h + 0.35, z1 + 0.15, trim, 'ny');
       if (noise(i, 3) > 0.45) {
@@ -455,11 +503,13 @@ export class OutsideView {
             const u = u0 + (c + 0.5) * pitch;
             const lit = noise(i * 131 + r * 17 + c, 9);
             const glass = lit > 0.86 ? STREET.lamp : lit > 0.45 ? 0x7f95b0 : 0x5d6f8c;
+            // Somebody's lit window glows at night like the lamps (M17).
+            const bk = lit > 0.86 ? glow : b;
             const [a, cc] = [u - 0.7, u + 0.7];
-            if (face === 'pz') b.quad(v(a, y, z1 + 0.02), v(cc, y, z1 + 0.02), v(cc, y + 1.6, z1 + 0.02), v(a, y + 1.6, z1 + 0.02), glass, true);
-            if (face === 'nz') b.quad(v(cc, y, z0 - 0.02), v(a, y, z0 - 0.02), v(a, y + 1.6, z0 - 0.02), v(cc, y + 1.6, z0 - 0.02), glass, true);
-            if (face === 'px') b.quad(v(x1 + 0.02, y, cc), v(x1 + 0.02, y, a), v(x1 + 0.02, y + 1.6, a), v(x1 + 0.02, y + 1.6, cc), glass, true);
-            if (face === 'nx') b.quad(v(x0 - 0.02, y, a), v(x0 - 0.02, y, cc), v(x0 - 0.02, y + 1.6, cc), v(x0 - 0.02, y + 1.6, a), glass, true);
+            if (face === 'pz') bk.quad(v(a, y, z1 + 0.02), v(cc, y, z1 + 0.02), v(cc, y + 1.6, z1 + 0.02), v(a, y + 1.6, z1 + 0.02), glass, true);
+            if (face === 'nz') bk.quad(v(cc, y, z0 - 0.02), v(a, y, z0 - 0.02), v(a, y + 1.6, z0 - 0.02), v(cc, y + 1.6, z0 - 0.02), glass, true);
+            if (face === 'px') bk.quad(v(x1 + 0.02, y, cc), v(x1 + 0.02, y, a), v(x1 + 0.02, y + 1.6, a), v(x1 + 0.02, y + 1.6, cc), glass, true);
+            if (face === 'nx') bk.quad(v(x0 - 0.02, y, a), v(x0 - 0.02, y, cc), v(x0 - 0.02, y + 1.6, cc), v(x0 - 0.02, y + 1.6, a), glass, true);
           }
         }
       };
@@ -482,6 +532,31 @@ export class OutsideView {
   }
 
   // ---- state ----------------------------------------------------------------------
+
+  /**
+   * The panes' material: by day their painted colours (a running floor's pale
+   * sky, a sleeping one's navy); at night a running floor's panes glow warm,
+   * a sleeping one's go nearly black. One node graph, one uniform to move.
+   */
+  private paneMaterial(): THREE.MeshBasicNodeMaterial {
+    const m = new THREE.MeshBasicNodeMaterial();
+    const painted = attribute('color', 'vec3');
+    const lit = step(0.3, dot(painted, vec3(0.2126, 0.7152, 0.0722)));
+    const night = mix(painted.mul(0.3), vec3(1.0, 0.72, 0.36), lit);
+    m.colorNode = mix(night, painted, this.paneDay);
+    return m;
+  }
+
+  /** M17: the time of day on the baked outside (see the class comment). */
+  setDaylight(look: Look): void {
+    (this.baked.material as THREE.MeshBasicNodeMaterial).color.copy(look.outside);
+    (this.inner.material as THREE.MeshBasicNodeMaterial).color.copy(look.inside);
+    (this.doors.material as THREE.MeshBasicNodeMaterial).color.copy(this.doorBase).multiply(look.outside);
+    // The globes and lit windows are glowing colour already: the dark around them and the pools say they are on.
+    (this.pools.material as THREE.MeshBasicNodeMaterial).opacity = 0.5 * look.lamps;
+    this.paneDay.value = look.day;
+    this.lobby.setDaylight(look);
+  }
 
   /** Running floors' windows lit, asleep floors' dark (ground floor first). */
   setFloors(asleep: boolean[]): void {
@@ -507,7 +582,7 @@ export class OutsideView {
   dispose(): void {
     this.group.removeFromParent();
     this.lobby.dispose();
-    for (const o of [this.baked, this.panes, this.doors]) {
+    for (const o of [this.baked, this.panes, this.glow, this.inner, this.pools, this.doors]) {
       o.geometry.dispose();
       (o.material as THREE.Material).dispose();
     }

@@ -5,6 +5,8 @@ import { dirname, resolve } from 'node:path';
 import { pixelStats } from './pixels';
 
 export const RESULTS = resolve(import.meta.dirname, '../test-results');
+/** M17: the pinned time every spec opens at unless it asks for another (`&time=` in `extra`): full daylight, as before the time of day, on a fixed date. */
+export const NOON = '2026-09-30T12:00';
 
 /** Collects page errors; call `expectClean()` at the end of a test. */
 export function watchErrors(page: Page): () => void {
@@ -24,7 +26,9 @@ export function watchErrors(page: Page): () => void {
  */
 export async function openGame(page: Page, fixture = 'demo', extra = '', wsQuery = 'play=none'): Promise<void> {
   const ws = encodeURIComponent(`/fixture/${fixture}?${wsQuery}`);
-  await page.goto(`/?backend=webgl2&ws=${ws}${extra}`);
+  // M17: never the wall clock's light: noon unless the test pins its own time.
+  const time = /[?&]time=/.test(extra) ? '' : `&time=${NOON}`;
+  await page.goto(`/?backend=webgl2&ws=${ws}${time}${extra}`);
   await page.waitForFunction(() => window.__h3d?.error || (window.__h3d?.ready && window.__h3d.frames >= 3), undefined, {
     timeout: 60_000,
   });

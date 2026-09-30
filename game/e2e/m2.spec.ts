@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, NOON, openGame, shot, watchErrors } from './game';
 
 // The demo fixture (fixtures/demo.jsonl): Work = herdr-3d (floor 2, running,
 // 18 workers on 20 desks, desks 6 and 13 free) + depot-manager (floor 1,
@@ -334,7 +334,7 @@ test('a status event from the fixture stream reaches the rendered state', async 
   const clean = watchErrors(page);
   // Events every 400 ms after the snapshot: first, Nibble goes working → done.
   const ws = encodeURIComponent('/fixture/demo?play=400');
-  await page.goto(`/?backend=webgl2&ws=${ws}&floor=herdr-3d&plan=1`);
+  await page.goto(`/?backend=webgl2&ws=${ws}&floor=herdr-3d&plan=1&time=${NOON}`);
   await page.waitForFunction(() => window.__h3d?.ready, undefined, { timeout: 60_000 });
   const nibble = await page.evaluate(() => window.__h3d.world().flatMap((f) => f.workers).find((w) => w.name === 'Nibble')?.id);
   if (!nibble) throw new Error('Nibble missing');

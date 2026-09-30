@@ -9,6 +9,7 @@ import { letterbox } from './logoFit';
 import type { LogoEntry } from './logos';
 import { logoMaterial } from './logoSign';
 import { BadgeLayer } from './badges';
+import { lookOf, NOON, sceneDir, type Look } from './daylook';
 import { Crowd } from './crowd';
 import { DeskSet } from './desks';
 import { MEZZ_COLORS } from './mezzanine';
@@ -72,7 +73,7 @@ interface SignMark {
   lit: boolean;
 }
 
-type Part = 'slab' | 'wallN' | 'wallW' | 'kneeS' | 'kneeE' | 'pillar' | 'strip' | 'band' | 'rug' | 'mezz';
+type Part = 'slab' | 'wallN' | 'wallW' | 'kneeS' | 'kneeE' | 'pillar' | 'strip' | 'band' | 'rug' | 'mezz' | 'glow';
 
 const color = new THREE.Color();
 
@@ -97,6 +98,14 @@ export class CityView {
   private badgeLayer: BadgeLayer | null = null;
   private dynamic = new THREE.Group();
   private readonly sun: THREE.DirectionalLight;
+  /** M17: the sky light, and the time of day both follow (see `setDaylight`). */
+  private readonly hemi = new THREE.HemisphereLight(0xeaf6ff, 0x7ba36a, 1.35);
+  private look: Look = lookOf(NOON);
+  /** Where the sun stood before M17 (its noon): its bearing and distance from the city's centre. */
+  private sunFrame = { heading: 148, dist: 10, target: new THREE.Vector3() };
+  private readonly tmp = new THREE.Vector3();
+  /** M17: the running floors' room light at night, a warm haze inside each (additive; nothing by day). */
+  private readonly glowMat = new THREE.MeshBasicMaterial({ color: 0xffb561, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
   private hover: string | null = null;
   private readonly v = new THREE.Vector3();
   private readonly workerSlot = new Map<string, number>();
@@ -119,7 +128,7 @@ export class CityView {
     private readonly onBuilding: (building: string | null) => void = () => {},
   ) {
     this.scene.background = new THREE.Color(0x9fd6ff);
-    this.scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x7ba36a, 1.35));
+    this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xfff1dc, 2.3);
     this.sun.castShadow = shadows;
     this.sun.shadow.mapSize.set(2048, 2048);
@@ -128,6 +137,31 @@ export class CityView {
     this.scene.add(this.dynamic);
     this.signs.name = 'city.signs';
     this.scene.add(this.signs);
+  }
+
+  /**
+   * M17: the time of day. The dollhouses are lit (toon), so the sky light and
+   * the sun dim and warm; the running floors' window bands and ceiling strips
+   * are unlit colour and keep glowing, so at night the city shows which
+   * floors are alive. A moonlit fill keeps the rooms readable.
+   */
+  setDaylight(look: Look): void {
+    this.look = look;
+    const k = look.day;
+    (this.scene.background as THREE.Color).copy(look.citySky);
+    this.hemi.intensity = 0.42 + (1.4 - 0.42) * k;
+    this.hemi.color.set(0x5a6aa8).lerp(new THREE.Color(0xeaf6ff), k);
+    this.hemi.groundColor.set(0x1c2436).lerp(new THREE.Color(0x7ba36a), k);
+    this.sun.intensity = 0.35 + (2.4 - 0.35) * k;
+    this.sun.color.copy(look.sunColor);
+    this.glowMat.opacity = 0.2 * look.lamps;
+    this.placeSun();
+  }
+
+  private placeSun(): void {
+    const f = this.sunFrame;
+    sceneDir(this.look.sunDir, f.heading, this.tmp);
+    this.sun.position.copy(f.target).addScaledVector(this.tmp, f.dist);
   }
 
   /** Rebuilds everything from the store's city (on structural changes). */
@@ -214,8 +248,10 @@ export class CityView {
     this.rebuildSigns();
     const c = this.bounds.getCenter(new THREE.Vector3());
     const r = this.bounds.getSize(new THREE.Vector3()).length() / 2 + 6;
-    this.sun.position.set(c.x + r * 0.5, r * 1.2, c.z + r * 0.8);
+    // Before M17 the sun stood at c + r (0.5, 1.2, 0.8): that stays its noon.
+    this.sunFrame = { heading: (Math.atan2(0.5, -0.8) * 180) / Math.PI, dist: r * Math.hypot(0.5, 1.2, 0.8), target: c.clone() };
     this.sun.target.position.copy(c);
+    this.placeSun();
     Object.assign(this.sun.shadow.camera, { left: -r, right: r, top: r, bottom: -r, near: 0.5, far: r * 3.5 });
     this.sun.shadow.camera.updateProjectionMatrix();
   }
@@ -244,6 +280,7 @@ export class CityView {
       band: mk('band', basic(), false, new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0)),
       rug: mk('rug', new THREE.MeshToonMaterial({ color: OFFICE.rug }), false, new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2)),
       mezz: mk('mezz', toon(), true),
+      glow: mk('glow', this.glowMat, false),
     };
   }
 
@@ -273,6 +310,8 @@ export class CityView {
     // The corner office's mezzanine (#20), a warm oak deck in the north-east corner.
     const M = L.mezzanine;
     this.setPart('mezz', i, f.origin.x + ((M.rect.x0 + M.rect.x1) / 2) * S, y0 + M.under * S, f.origin.z + ((M.rect.z0 + M.rect.z1) / 2) * S, (M.rect.x1 - M.rect.x0) * S, (M.y - M.under) * S * 1.6, (M.rect.z1 - M.rect.z0) * S, asleep ? 0x6a5a4a : MEZZ_COLORS.oak);
+    // M17: a running floor's lamps (the haze fills the room; an asleep floor has none).
+    this.setPart('glow', i, x0 + w / 2, y0 + 0.01, z0 + d / 2, asleep ? 0 : w - 0.2, asleep ? 0 : FH - SLAB - 0.06, asleep ? 0 : d - 0.2);
     this.setPart('rug', i, f.origin.x + ((L.rug.x0 + L.rug.x1) / 2) * S, y0 + 0.005, f.origin.z + ((L.rug.z0 + L.rug.z1) / 2) * S, (L.rug.x1 - L.rug.x0) * S, 1, (L.rug.z1 - L.rug.z0) * S);
   }
 
