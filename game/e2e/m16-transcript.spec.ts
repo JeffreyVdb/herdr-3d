@@ -19,7 +19,9 @@ const watchLog = (page: Page) => page.evaluate(() => window.__h3d.watchLog());
 const termFps = async (page: Page, id: string) => ((await watchLog(page)).filter((c) => c.t === 'terminal.watch' && (c.args as { id: string }).id === id).at(-1)?.args as { fps?: number } | undefined)?.fps;
 
 async function sitAt(page: Page, name: string): Promise<string> {
-  await openGame(page, 'demo-m5', '', SIM);
+  // No desk prints (?prints=0): they watch the transcripts of the desks near you too (e2e/m16-prints.spec.ts); this
+  // counts the seat's watch alone.
+  await openGame(page, 'demo-m5', '&prints=0', SIM);
   await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
   await frames(page, 3);
   const id = await page.evaluate((n) => window.__h3d.world().flatMap((f) => f.workers).find((w) => w.name === n)?.id ?? '', name);
@@ -42,6 +44,8 @@ async function imagesInTheConversation(page: Page, tx: ReturnType<Page['locator'
   const first = tx.locator('.tx-user').first();
   // A pasted image inline in the bubble, beside the one that is "not available" (its path as text).
   const strip = first.locator('.tx-bubble .tx-strip');
+  // Thumbnails load when they scroll into view (the vitest with a controlled IntersectionObserver pins that down).
+  await first.scrollIntoViewIfNeeded();
   await expect(strip.locator('.tx-thumb')).toHaveCount(2);
   await expect(strip.locator('.tx-thumb img')).toHaveCount(2);
   await expect.poll(() => strip.locator('.tx-thumb img').evaluateAll((els) => els.map((e) => (e as HTMLImageElement).naturalWidth))).toEqual([480, 270]);
@@ -61,6 +65,7 @@ async function imagesInTheConversation(page: Page, tx: ReturnType<Page['locator'
   // A Read of a PNG: collapsed it shows nothing, expanded the images are in the row.
   const read = tx.locator('.tx-tool', { hasText: 'hire-375x667.png' });
   await expect(read.locator('.tx-thumb')).toHaveCount(0);
+  await read.scrollIntoViewIfNeeded();
   await read.locator('.tx-tool-row').click();
   await expect(read.locator('.tx-tool-body .tx-strip .tx-thumb img')).toHaveCount(2);
   await expect.poll(() => read.locator('.tx-thumb img').evaluateAll((els) => els.every((e) => (e as HTMLImageElement).naturalWidth > 0))).toBe(true);
@@ -335,7 +340,7 @@ for (const [w, h] of [
     test.setTimeout(120_000);
     const clean = watchErrors(page);
     await page.setViewportSize({ width: w, height: h });
-    await openGame(page, 'demo-m5', '', `${SIM}&simlimits=ok`);
+    await openGame(page, 'demo-m5', '&prints=0', `${SIM}&simlimits=ok`);
     await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
     await frames(page, 3);
     const id = await page.evaluate(() => window.__h3d.world().flatMap((f) => f.workers).find((x) => x.name === 'Tofu')?.id ?? '');

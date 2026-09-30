@@ -74,7 +74,11 @@ export class Prints {
   lightboxes = 0;
   private now = 0;
 
-  constructor(private readonly host: PrintsHost) {}
+  constructor(
+    private readonly host: PrintsHost,
+    /** `?prints=<n>`: how many desks near you have prints (0 turns them off, like `screens=0`). */
+    readonly desksMax = PRINT_DESKS,
+  ) {}
 
   /** The floor you are on changed (null: none): every desk's prints go. */
   setMeshes(meshes: PrintMeshes | null): void {
@@ -94,12 +98,12 @@ export class Prints {
    */
   update(now: number, cands: readonly Candidate[], desks: ReadonlyMap<string, number>, seat: string | null, enabled: boolean): void {
     this.now = now;
-    if (!enabled || !this.meshes) {
+    if (!enabled || !this.meshes || this.desksMax <= 0) {
       this.planner.clear();
       this.clear();
       return;
     }
-    this.planner.plan(now, cands, PRINT_DESKS);
+    this.planner.plan(now, cands, this.desksMax);
     const want = new Set(this.planner.live);
     if (seat && desks.has(seat)) want.add(seat);
     for (const id of this.pinned.keys()) if (desks.has(id)) want.add(id);
@@ -301,4 +305,11 @@ export class Prints {
 /** A thumbnail's blob as an upright bitmap for a texture. */
 export function decodeBitmap(blob: Blob): Promise<ImageBitmap> {
   return createImageBitmap(blob, { imageOrientation: 'flipY', premultiplyAlpha: 'none' });
+}
+
+/** `?prints=<n>`: desks with prints around you (default PRINT_DESKS, 0: none, at most 4). */
+export function printsParam(v: string | null, def = PRINT_DESKS): number {
+  if (v === null || v.trim() === '') return def;
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 ? Math.min(4, n) : def;
 }

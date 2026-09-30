@@ -11,7 +11,7 @@ import { DESK_H, SEAT_OFFSET } from '../world/layout';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
 import { InputLanes, InputQueue, seatedKey, textItems } from './keys';
 import { ImageFeeds, type ImageFeed } from './imageFeed';
-import { decodeBitmap, Prints, PRINT_WATCH_LIMIT } from './prints';
+import { decodeBitmap, Prints, printsParam, PRINT_WATCH_LIMIT } from './prints';
 import { LaptopTerminal, LIVE_SIZE } from './terminal';
 import { createSeatTabs, FLIP_KEY } from './seatTabs';
 import { loadImagesTab, loadRenderer, TranscriptMode, type OverlayRect, type SeatMode } from './transcriptMode';
@@ -204,7 +204,7 @@ export class Laptops {
       now: () => performance.now(),
     });
     this.feeds = new ImageFeeds({ send: (t, args) => this.host.watch(t, args) });
-    this.prints = new Prints({ feeds: this.feeds, ready: (id) => this.transcripts.ready(id), decode: decodeBitmap });
+    this.prints = new Prints({ feeds: this.feeds, ready: (id) => this.transcripts.ready(id), decode: decodeBitmap }, printsParam(params.get('prints')));
     this.transcript = new TranscriptMode({
       send: (t, args) => this.host.send(t, args),
       feed: (id) => this.feeds.get(id),

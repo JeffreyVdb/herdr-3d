@@ -193,7 +193,8 @@ test('a freelancer drops in with its briefcase, onboards, works, reports and lea
 
 test('frame budget: crew parts are instanced, and a floor without a run draws none of them', async ({ page }) => {
   const clean = watchErrors(page);
-  await openGame(page, 'demo-m6', '', SIM);
+  // No desk prints (?prints=0): they come and go with the workers' transcripts and are not what this counts.
+  await openGame(page, 'demo-m6', '&prints=0', SIM);
   await enter(page, 'pastry');
   expect((await crew(page)).shown).toEqual([]);
   await enter(page);
