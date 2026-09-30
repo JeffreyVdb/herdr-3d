@@ -40,6 +40,7 @@ type usageWorker struct {
 	// floor is its session; codexCwd the cwd of a Codex agent herdr knows
 	// no session of, to find its rollout by (else "").
 	floor, codexCwd string
+	watched         bool // M16: a connection watches its transcript
 }
 
 // usageUpdate is a worker's new usage, or (nil) its usage gone.
@@ -56,6 +57,10 @@ type usageTracker struct {
 	sessions map[string]*usage.Session // worker id → its session (nil: none to read)
 	throttle usageThrottle
 	found    map[string]foundCodex // worker id → the Codex session found for it by its cwd
+	// M16 transcript: the logs of the watched workers' transcripts (fed
+	// by their sessions' tails), and the last round's verdicts for them.
+	logs     map[string]*txLog
+	txOffers map[string]txOffer
 }
 
 // foundCodex is a Codex session found by a worker's cwd, and when.
@@ -85,13 +90,14 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 	}
 	return &usageTracker{cfg: cfg, keys: map[string]string{}, sessions: map[string]*usage.Session{},
 		throttle: usageThrottle{every: cfg.Throttle, shown: map[string]proto.Usage{}, at: map[string]time.Time{}},
-		found:    map[string]foundCodex{}}
+		found:    map[string]foundCodex{}, logs: map[string]*txLog{}}
 }
 
 // trackUsage runs the tracker until ctx is done.
 func (h *Hub) trackUsage(ctx context.Context) {
 	defer h.wg.Done()
 	tr := newUsageTracker(*h.opts.Usage)
+	defer tr.closeLogs()
 	tick := time.NewTicker(tr.cfg.Interval)
 	defer tick.Stop()
 	for {
@@ -100,7 +106,15 @@ func (h *Hub) trackUsage(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+		case <-h.usageKick: // a new transcript watch
 		}
+	}
+}
+
+func (tr *usageTracker) closeLogs() {
+	for id, l := range tr.logs {
+		l.log.Close()
+		delete(tr.logs, id)
 	}
 }
 
@@ -111,6 +125,9 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 		return
 	}
 	ups := tr.poll(ws, h.opts.Now())
+	for id, o := range tr.txOffers { // M16 transcript
+		h.tx.offer(id, o)
+	}
 	if len(ups) > 0 {
 		_ = h.doWait(ctx, func() {
 			for _, u := range ups {
@@ -141,6 +158,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			delete(tr.throttle.shown, w.id)
 		}
 		s := tr.sessions[w.id]
+		tr.syncTranscript(w, s, tr.keys[w.id])
 		if s == nil {
 			if w.shown { // no agent session any more: no usage
 				ups = append(ups, usageUpdate{id: w.id})
@@ -148,7 +166,13 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			tr.throttle.forget(w.id)
 			continue
 		}
-		if u, ok := s.Poll(now); ok {
+		s.SetRescan(0)
+		if w.watched {
+			s.SetRescan(WatchedRescan)
+		}
+		u, ok := s.Poll(now)
+		tr.syncTranscript(w, s, tr.keys[w.id])
+		if ok {
 			if pub, emit := tr.throttle.offer(w.id, u, now); emit {
 				ups = append(ups, usageUpdate{id: w.id, usage: &pub})
 				continue
@@ -165,6 +189,13 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			tr.throttle.forget(id)
 		}
 	}
+	for id, l := range tr.logs {
+		if !seen[id] {
+			l.log.Close()
+			delete(tr.logs, id)
+		}
+	}
+	tr.txOffers = tr.offers(ws)
 	return ups
 }
 
@@ -201,7 +232,11 @@ func (tr *usageTracker) findCodex(ws []usageWorker, now time.Time) []usageWorker
 	}
 	due := func(w usageWorker) bool {
 		f, ok := tr.found[w.id]
-		return !ok || f.cwd != w.codexCwd || now.Sub(f.at) >= usage.MissRescan || now.Before(f.at)
+		rescan := usage.MissRescan
+		if w.watched { // M16: a watched Codex's /new shows soon
+			rescan = WatchedRescan
+		}
+		return !ok || f.cwd != w.codexCwd || now.Sub(f.at) >= rescan || now.Before(f.at)
 	}
 	// Those not due keep what they have (first, so a lookup skips it), then the lookups; each in id order.
 	slices.SortFunc(want, func(a, b int) int {
@@ -242,7 +277,8 @@ func (h *Hub) usageWorkers() []usageWorker {
 		if harness == "" {
 			harness = w.AgentKind
 		}
-		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, shown: w.Usage != nil, floor: w.Session}
+		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, shown: w.Usage != nil, floor: w.Session,
+			watched: h.tx.watched(id)}
 		if w.AgentSession == "" && w.AgentKind == usage.Codex && w.Cwd != "" {
 			uw.codexCwd = w.Cwd
 		}

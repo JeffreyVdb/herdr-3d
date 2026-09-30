@@ -81,6 +81,9 @@ const (
 	EnvMaxObservers = "HERDR_WORLD_MAX_OBSERVERS"
 )
 
+// M16 transcript: the transcript watches' cap.
+const EnvMaxTranscriptWatches = "HERDR_WORLD_MAX_TRANSCRIPT_WATCHES"
+
 const worldUsage = `usage:
   %[1]s [serve] [flags]          run the bridge (default)
   %[1]s dump [flags]             print the world snapshot, then events, as JSON lines
@@ -239,6 +242,10 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	if err != nil {
 		return err
 	}
+	maxTxWatches, err := envInt(EnvMaxTranscriptWatches, server.DefaultMaxTranscriptWatches) // M16 transcript
+	if err != nil {
+		return err
+	}
 	fs := newFlagSet(name, "serve", stderr)
 	socket := fs.String("socket", envOr(EnvSocket, DefaultSocket()), "unix socket to serve on ($"+EnvSocket+")")
 	db := fs.String("db", envOr(EnvDB, DefaultDB()), "SQLite database ($"+EnvDB+")")
@@ -268,6 +275,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	fs.IntVar(&caps.HostHard, "max-workers", caps.HostHard, "most workers the host may be hired up to ($"+EnvHostMax+")")
 	fs.IntVar(&maxWatches, "max-watches", maxWatches, "most laptop screens one connection may watch ($"+EnvMaxWatches+")")
 	fs.IntVar(&maxObservers, "max-observers", maxObservers, "most laptop screens watched at once, host-wide ($"+EnvMaxObservers+")")
+	fs.IntVar(&maxTxWatches, "max-transcript-watches", maxTxWatches, "most transcripts one connection may watch ($"+EnvMaxTranscriptWatches+")")
 	level := fs.String("log-level", envOr(EnvLogLevel, "info"), "debug, info, warn or error ($"+EnvLogLevel+")")
 	format := fs.String("log-format", envOr(EnvLogFormat, "text"), "text or json ($"+EnvLogFormat+")")
 	showVersion := fs.Bool("version", false, "print version and exit")
@@ -297,6 +305,9 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	}
 	if maxWatches < 1 || maxObservers < 1 {
 		return fmt.Errorf("-max-watches and -max-observers must be at least 1, got %d and %d", maxWatches, maxObservers)
+	}
+	if maxTxWatches < 1 {
+		return fmt.Errorf("-max-transcript-watches must be at least 1, got %d", maxTxWatches)
 	}
 	log, err := newLogger(stderr, *level, *format)
 	if err != nil {
@@ -329,7 +340,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		WakeTimeout: wakeTimeout, ResumeTimeout: resumeTimeout, CodexSessions: *codexSessions,
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
 		ClaudeProjects: *claudeProjects, Pricing: pricing, HireOptions: &hireOptions,
-		MaxWatches: maxWatches, MaxObservers: maxObservers,
+		MaxWatches: maxWatches, MaxObservers: maxObservers, MaxTranscriptWatches: maxTxWatches,
 		RunsDir: *runsDir,                                     // M6 runs
 		Boards:  GitHubBoards(&githubcli.Client{Bin: *ghBin}), // M7 boards
 		Limits:  lim,                                          // M10 limits
@@ -384,6 +395,10 @@ type ServeConfig struct {
 	// server.DefaultMaxWatches, server.DefaultMaxObservers).
 	MaxWatches, MaxObservers int
 
+	// M16 transcript: MaxTranscriptWatches caps one connection's transcript
+	// watches (0: server.DefaultMaxTranscriptWatches).
+	MaxTranscriptWatches int
+
 	// M6 runs: RunsDir is write-code's runs directory, where the
 	// freelancers' reports are read ("": no reports); ReportPoll how often
 	// (0: server.DefaultReportPoll).
@@ -419,6 +434,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		opts.Term = cfg.Control // M5 term
 	}
 	opts.MaxWatches, opts.MaxObservers, opts.PaneSize = cfg.MaxWatches, cfg.MaxObservers, paneSize(cfg.Herdr) // M5 term
+	opts.MaxTranscriptWatches = cfg.MaxTranscriptWatches                                                      // M16 transcript
 	if cfg.Git != nil {
 		opts.Git = cfg.Git
 		opts.Changes = cfg.Git // M5 usage

@@ -391,6 +391,10 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.keys` | `{"id": string, "input": [{"text": string} \| {"key": string}…]}` | — | — (see [Input](#input)) |
 | `worker.prompt` | `{"id": string, "text": string}` | `{"queued": bool, "retried": bool}` | the worker's statuses |
 | `worker.answer` | `{"id": string, "hash": string, "choice"?: 1–9, "cancel"?: true}` | `{"sent": [string…], "resolved": bool}` | the worker's upsert without its `question` when it moves on |
+| `transcript.watch` | `{"id": string, "limit"?: 1–500}` | `{"harness", "session", "version", "cursor", "has_more", "pending", "items"}` | `transcript.items` to this connection only (see [Laptops: transcript](#laptops-transcript)) |
+| `transcript.unwatch` | `{"id": string}` | — | — |
+| `transcript.page` | `{"id": string, "before"?: cursor, "limit"?: 1–500, "agent"?: string}` | `{"items", "cursor", "has_more"}` | — |
+| `transcript.item` | `{"id": string, "item": string, "agent"?: string}` | `{"item"}` | — |
 | `preset.create` | `{"name": string, "roles": {…}}` | `{"id": string}` | `preset.upsert` (see [Team presets and starting a run](#team-presets-and-starting-a-run)) |
 | `preset.update` | `{"id": string, "name"?: string, "roles"?: {…}}` (`roles` replaces all five) | — | `preset.upsert`; none when nothing changed |
 | `preset.delete` | `{"id": string}` | — | `preset.removed`, then `floor.upsert` for the floors whose `last_preset` it was |
@@ -1206,7 +1210,9 @@ Worker field **`usage`** (in snapshots and `worker.upsert`) and event **`worker.
   incomplete last line waits for the next read), so appending a line reads only that line. A file that shrank or was
   replaced is read again from the start and its session counted afresh. A transcript not found is looked for again at
   most every 30 s (paths found are kept); a session's subagents directory is listed every 10 s. Symlinks are not
-  followed; lines over 16 MiB are skipped. Per session it remembers the last 8192 message ids.
+  followed; lines over 16 MiB are skipped. Per session it remembers the last 8192 message ids. A worker whose
+  transcript is watched ([Laptops: transcript](#laptops-transcript)) is looked for every 2 s instead, and shares this
+  read: the transcript view gets the lines as usage reads them.
 
 **Claude Code** transcripts: `<--claude-projects>/*/<agent_session>.jsonl` (the project directory is looked up, not
 derived from the cwd) and its subagents' `<that directory>/<agent_session>/subagents/agent-*.jsonl`.
@@ -1278,6 +1284,152 @@ bridge at start:
 `harness` defaults to `claude` for a `claude-…` name, else `codex`; `cache_write_1h` defaults to `cache_write`;
 `context_window` (Claude only) to unknown. Account-level plan limits are #12, not this.
 
+### Laptops: transcript
+
+A worker's agent conversation as one timeline of items, for the laptop's conversation view (M16): the same session as
+the terminal, read from the agent's own transcript file, so the TUI is never touched. Claude Code and Codex both
+become the same item model; the game never sees raw JSONL. Images are not part of this phase: an image is only its
+place in an item (`{"image_omitted": true}`); the bridge never decodes one, and never reads a path an `[Image #n:
+path]` marker names.
+
+```json
+{"t":"transcript.watch","req_id":"60","args":{"id":"6db1905e-…","limit":200}}
+{"t":"ack","req_id":"60","data":{"harness":"claude","session":"0a0b0c0d-…","version":"2.1.285","cursor":"c:18237","has_more":true,"pending":false,"items":[…]}}
+{"t":"transcript.items","id":"6db1905e-…","items":[…],"updates":[…]}
+{"t":"transcript.page","req_id":"61","args":{"id":"6db1905e-…","before":"c:18237","limit":200}}
+{"t":"ack","req_id":"61","data":{"items":[…],"cursor":"c:18037","has_more":true}}
+{"t":"transcript.item","req_id":"62","args":{"id":"6db1905e-…","item":"toolu_01…"}}
+{"t":"ack","req_id":"62","data":{"item":{…}}}
+{"t":"transcript.page","req_id":"63","args":{"id":"6db1905e-…","agent":"aa3716c63ba631707"}}
+{"t":"transcript.unwatch","req_id":"64","args":{"id":"6db1905e-…"}}
+{"t":"ack","req_id":"64"}
+{"t":"transcript.closed","id":"6db1905e-…","reason":"session_changed"}
+```
+
+**Which file.** The worker's transcript is the one its usage is read from ([Usage and cost](#usage-and-cost)), found
+by the bridge from the worker id alone (the client never names a file): Claude's
+`<--claude-projects>/*/<agent_session>.jsonl`, Codex's rollout of its `agent_session`, or for a live Codex without
+one the rollout picked by its `cwd` (with the same caveat for two Codex agents in one folder). The file is read by the
+worker's one tail, the usage one: a watch adds no second tail. When a watch starts, the bridge indexes the part of the
+file that tail read already, once, in the background (it never holds up other commands); after that every line the
+tail reads goes into the index as it is read. While a worker is watched its transcript is looked for every **2 s**
+(not 30 s) when it is not found yet, and a Codex worker's rollout is picked again every 2 s.
+
+**The index**, not the transcript, is what the bridge keeps: for each item the byte offsets of its lines (and the few
+ids that pair a call with its result). An item is read back from the file when it is sent. A 50 MB transcript, mostly
+base64 images, indexes in about 0.3 s and adds a few MB to the bridge; its first page takes milliseconds, and paging to
+the top never reads the file from the start again.
+
+**`transcript.watch`** `{id, limit}` (`limit` 1–500, default 200) acks once the index has caught up, with the newest
+`limit` visible items (hidden ones between them come along, see `hidden`) and:
+
+| field | |
+|---|---|
+| `harness` | `claude`, `codex`, or the worker's harness (`""` for a shell) while `pending` |
+| `session` | the agent session read (Claude's session id, the Codex rollout's), `""` while pending |
+| `version` | the agent's version the transcript records last (Claude's `version`, Codex's `session_meta.cli_version`); `""` when none |
+| `cursor` | `c:<seq>`: the oldest item sent; `transcript.page` with it as `before` returns the ones before |
+| `has_more` | items older than those sent exist |
+| `pending` | the worker has no transcript yet (a fresh hire, a plain shell, an agent that wrote nothing): `items` is `[]`. When one appears (a new `agent_session`, a first line), the first `transcript.items` push carries the newest page **and** these head fields (`harness` … `pending: false`), as the ack would have. |
+| `items` | oldest first |
+
+Then **`transcript.items`** pushes what changed, **at most 4 a second** per watch: `items` are new items (in `seq`
+order), `updates` whole replacements of items sent before, by `id` (a tool's result came, an interrupted call, a
+Claude message that got another text block, a block sent again). An update can be of an item the client has not
+loaded (it paged less far): ignore it.
+
+**`transcript.page`** `{id, before, limit}` returns up to `limit` visible items older than `before` (a cursor), with
+`cursor` and `has_more` as above; `before` is required. With **`agent`** (a Claude subagent's `agent_id`, from a
+`subagent` item) it pages that subagent's own timeline instead,
+`<the session's directory>/<agent_session>/subagents/agent-<agent_id>.jsonl`, and `before` is optional (none: its
+newest). A subagent's timeline is read on request, not pushed: page it again (the bridge reads only what was
+appended since) when its `subagent` item's status changes. Each watch keeps the last 4 subagents it read indexed.
+
+**`transcript.item`** `{id, item, agent?}` is one item in full: no caps (below) and the tool's raw `input`. Unknown
+`item`: `not_found`.
+
+A page is also cut at about 4 MiB of items (the older ones wait for the next page: `has_more`), and at 2000 items
+hidden ones included. `transcript.page` and `transcript.item` are only for a worker this connection watches (else, or
+while it is pending, `invalid_state`), run off the hub and are not audit-logged (they are reads of what the watch
+shows). `transcript.watch` and `transcript.unwatch` are audit-logged with the worker id only, never content.
+
+#### Items
+
+```json
+{"id":"toolu_01GpmLgfG4MErwKXAfTwBBy5","seq":57,"ts":1790713250750,"kind":"subagent",
+ "tool":{"name":"Agent","input_summary":"Map logo touchpoints in repo","status":"ok","output_text":"Async agent launched…"},
+ "subagent":{"agent_id":"aa3716c63ba631707","description":"Map logo touchpoints in repo","status":"async_launched"}}
+{"id":"toolu_018mQCao59VwQiRK6L6zHu5h","seq":58,"ts":1790734485453,"kind":"tool",
+ "tool":{"name":"Edit","input_summary":"/home/u/…/protocol.ts","input":{…},"status":"ok","output_text":"The file … has been updated.",
+   "diff":{"path":"/home/u/…/protocol.ts","hunks":[{"old_start":369,"old_lines":6,"new_start":369,"new_lines":11,"lines":["   ctx","-old","+new"]}]}}}
+{"id":"msg_01a0eeaa-0d84-…","seq":59,"ts":1790710517124,"kind":"user","parts":[{"image_omitted":true},{"text":"[Image #1] what is this?"}]}
+{"id":"o:10450","seq":60,"ts":1790659967485,"kind":"notice","hidden":true,"notice":{"text":"","source":"event_msg/item_completed"}}
+```
+
+| field | |
+|---|---|
+| `id` | stable for the transcript: Claude's `message.id` plus the index of the item's first block (`msg_…#1`), a `tool_use` id, a line's `uuid`; Codex's item `id` or a call's `call_id`; `o:<byte offset>` for a line without one |
+| `seq` | the item's place in the transcript, from 1: the order in which items first appear |
+| `ts` | unix ms of the item's first line (0 when it has no timestamp) |
+| `kind` | `user`, `assistant`, `thinking`, `tool`, `subagent`, `compaction`, `notice`, `unknown` |
+| `hidden` | `true` for what the view shows only with its "show system" toggle: the dropped lines (as notices, below) and `unknown` items. The bridge sends them all; the game filters. `limit` counts only items that are not hidden. |
+| `parts` | `user` / `assistant` / `thinking`: in order, each `{"text": markdown}` or `{"image_omitted": true}`. A `[Image #n: /path]` marker in text is an `image_omitted` part (the path is not kept). Thinking with no text (Claude's redacted thinking, Codex's encrypted reasoning with an empty summary) has no parts: a "reasoning" chip. |
+| `truncated` | a part's or the notice's text was cut for the list (`transcript.item` has it all) |
+| `tool` | `tool` / `subagent`: `name` (Codex: `namespace.name` when namespaced), `input_summary` (the input's first line, at most 200 characters: the command, file path, pattern, URL…; Codex `exec` scripts: their first `cmd`; `apply_patch`: the files), `input` (the raw input as JSON; in lists only when at most 4 KiB), `status` (`running` until the result comes, then `ok`, `error` or `interrupted`), `output_text` (the result's text, at most 64 KiB in lists: then `output_truncated: true`), `images` (`[{"image_omitted": true}, …]`, images in the result), `diff` (`{path, hunks, truncated?}`: Claude `Edit`/`Write`'s `structuredPatch`, a created file as all added lines; Codex `apply_patch`, whose hunks have no line numbers: 0), `diffs` (every file, when a patch changes more than one; `diff` is the first). Diff lines are capped at 64 KiB in lists (`truncated`). |
+| `subagent` | a Claude `Agent` / `Task` call: `agent_id` (from its result, `""` until then), `description`, `status` (`running`, then the result's: `completed`, `async_launched`, … or `error` / `interrupted`) |
+| `notice` | `notice` / `compaction`: `text` (at most 64 KiB in lists, 512 bytes for hidden ones) and `source`, the line type it came from |
+| `raw_type` | `unknown`: the line or block type not recognised (`hologram-state`, `assistant/hologram`, `event_msg/…`, `(invalid line)`) |
+
+**Parsing** (`internal/transcript`, fixtures of real lines in `internal/transcript/testdata`). Both formats are
+internal and change between releases: nothing fails the parse; a line or block that is not recognised is an `unknown`
+item, so drift shows up instead of being lost.
+
+- **Claude Code.** An assistant message streams as several lines with the same `message.id`, one block each
+  (`apiBlockIndex`): consecutive `text` blocks are one `assistant` item and consecutive `thinking` blocks one
+  `thinking` item, parts in block order; a block sent again replaces its part. `tool_use` / `server_tool_use` is a
+  `tool` item (an `Agent` / `Task` one a `subagent`), and the `tool_result` (with the line's `toolUseResult`: diffs,
+  `interrupted`, `agentId`) or `*_tool_result` block that answers it updates that item. `is_error` is `error`; a
+  result starting "[Request interrupted by user" is `interrupted`. A user line "[Request interrupted by user…]" is a
+  notice and interrupts every call still running. `system` `compact_boundary` is a `compaction` (the items before it
+  stay: the view shows the whole history, not the model's context); the summary line after it (`isCompactSummary`) a
+  notice. `/command` lines are user items (`/clear`), their output (`<local-command-stdout>`, `!` shell output) a
+  notice.
+- **Codex.** `response_item`s: `message` (`user` / `assistant`; the `<image …>` wrapper text around a pasted image is
+  dropped), `reasoning` (its summary), `function_call` / `custom_tool_call` / `local_shell_call` and their `_output`
+  (paired by `call_id`; an output `{"success": false}` is `error`), `agent_message` (a notice: sender → recipient).
+  `compacted` is a `compaction` (its `replacement_history` is never read). `event_msg` `turn_aborted` is a notice and
+  interrupts every call still running; `task_complete` a notice ("Turn took 13.8s"); `error` a notice.
+
+**Hidden** (sent with `hidden: true`, as `notice`s whose `source` is the type):
+
+| Claude Code | Codex |
+|---|---|
+| every `attachment` line (reminders, hook context, tool lists, dates…), **except** a prompt the user queued while the agent worked (`queued_command` from a human): that is a `user` item | `message` of role `developer` (or `system`) |
+| `isMeta` user lines (skill bodies, caveats) and user text that is only `<system-reminder>` wrappers (wrappers are cut from other text) | the injected user context: `# AGENTS.md instructions…`, `<environment_context>`, `<user_instructions>` |
+| metadata lines: `last-prompt`, `mode`, `permission-mode`, `bridge-session`, `atis-latch`, `ai-title`, `custom-title`, `agent-name`, `cost-state`, `pr-link`, `file-history-*`, `queue-operation`, `frame-link`, `artifact-*`, `summary`, `progress`, `tag` | `session_meta`, `turn_context`, `world_state`, `token_usage_record`, `inter_agent_communication_metadata` |
+| `system` `stop_hook_summary`, and a `local_command` with no output | `event_msg`s that repeat response items or keep books: `token_count`, `item_completed`, `thread_settings_applied`, `task_started`, `user_message`, `agent_message`, `agent_reasoning*`, `exec_command_*`, `patch_apply_*`, … |
+
+Shown as notices: Claude `system` `turn_duration` ("Turn took 9m 52s"), `away_summary`, `informational`, `api_error`,
+`local_command` output; Codex `task_complete`, `turn_aborted`, `error`.
+
+#### Limits and lifecycle
+
+- `--max-transcript-watches` (`HERDR_WORLD_MAX_TRANSCRIPT_WATCHES`, default 4) per connection: above it
+  `transcript.watch` is `capacity`. These are not terminal watches: they do not count against `--max-watches`.
+  Watching a worker again replaces its watch (a fresh ack); `transcript.unwatch` stops it (a no-op for a worker not
+  watched), and closing the connection stops them all. After a reconnect, watch again: pushes are never replayed.
+- **Never block, never leak**, as terminal frames: a push is only queued while the connection's send queue is at most
+  half full. When it is fuller, or the watch fell 4096 changes behind, the bridge drops what is pending and ends the
+  watch with `transcript.closed{reason: "resync"}`: watch again. Nothing of a watch outlives an unwatch, a closed
+  connection or a bridge shutdown; the index goes when no connection watches the worker.
+- A worker on an asleep floor is `invalid_state`; an unknown id `unknown_worker`.
+
+**`transcript.closed`** ends a watch the client did not stop: `reason` is `worker_removed` (the worker is gone or was
+sent home), `asleep` (its floor went to sleep), `session_changed` (another agent session: a new `agent_session`, or
+another Codex rollout picked, e.g. after `/clear` or `/new`; watch again for the new one), `resync` (see above; also a
+transcript file that was truncated or replaced) or `not_found` (the transcript file went). It is not sent for a
+`transcript.unwatch`, a re-watch or a closed connection.
+
 ### Errors
 
 ```json
@@ -1288,14 +1440,14 @@ bridge at start:
 |---|---|
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
-| `not_found` | no building with that id; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
+| `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
 | `name_taken` | another building, or another team preset, already has that name (ignoring case) |
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
 | `busy` | a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home |
-| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell or a blocked worker, `worker.answer` to a worker not blocked |
+| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell or a blocked worker, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
-| `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`; the message says which |
+| `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`, `transcript.watch` above `--max-transcript-watches`; the message says which |
 | `not_clean` | `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |
 | `fetch_failed` | `worker.hire` with `worktree: true` whose `git fetch origin` failed (no `origin`, offline, timed out after 20 s, …); the message is git's error. Nothing was made. (After the accept, like `bad_request` for a missing default branch.) |
 | `hire_failed`, `fire_failed` | herdr or git failed during a hire / send-home; the message says which step and why. `fire_failed` also when the agent did not exit (still running, or its processes could not be read): then nothing was closed or removed. `hire_failed` names what its rollback kept. |
@@ -1320,7 +1472,8 @@ Errors not tied to a command have no `req_id`.
 
 Each client has a bounded send queue (1024 messages). The bridge never waits for a slow client: if the queue fills up,
 the client is disconnected with close status 1008, reason `slow consumer`. Reconnect with `since_seq`. Laptop frames
-never fill it past half (they resync instead, see [Laptop screens](#laptop-screens)). On shutdown the bridge closes
+never fill it past half (they resync instead, see [Laptop screens](#laptop-screens)), nor do transcript pushes
+([Laptops: transcript](#laptops-transcript)). On shutdown the bridge closes
 connections with status 1001 (`going away`) and removes its socket.
 
 ## Versioning

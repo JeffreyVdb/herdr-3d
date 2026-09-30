@@ -347,6 +347,15 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			TextBytes int    `json:"text_bytes"`
 			TextRunes int    `json:"text_runes"`
 		}{a.ID, len(a.Text), utf8.RuneCountInString(a.Text)})
+	// M16 transcript: the worker id only.
+	case proto.CmdTranscriptWatch, proto.CmdTranscriptUnwatch:
+		var a struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		return mustJSON(a)
 	// M7 boards: the target and the byte counts, never a body.
 	case proto.CmdIssueComment, proto.CmdPRComment:
 		var a proto.CommentArgs

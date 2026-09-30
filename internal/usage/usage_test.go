@@ -377,3 +377,66 @@ func copyTree(t *testing.T, from, to string) {
 		t.Fatal(err)
 	}
 }
+
+type recTap struct {
+	offs  []int64
+	lines []string
+	void  []bool
+}
+
+func (r *recTap) Line(off int64, b []byte) {
+	r.offs, r.lines = append(r.offs, off), append(r.lines, string(b))
+}
+func (r *recTap) Void(gone bool) { r.void = append(r.void, gone) }
+
+// The tap gets the main transcript's lines as the session reads them, with
+// their offsets, and is told when they are void; Main says where the next
+// line starts. A missing transcript is looked for again after SetRescan.
+func TestTap(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "p", claudeID+".jsonl")
+	s := NewSession(Claude, claudeID, Roots{ClaudeProjects: dir}, DefaultPricing())
+	s.SetRescan(2 * time.Second)
+	if _, ok := s.Poll(t0); ok {
+		t.Fatal("found a missing transcript")
+	}
+	first := assistant("m1", "claude-opus-5-5", "", 100, 10, 0, 0)
+	writeFile(t, path, first)
+	if p, _, _ := s.Main(); p != "" {
+		t.Fatal("found before the rescan")
+	}
+	if _, ok := s.Poll(t0.Add(2 * time.Second)); !ok {
+		t.Fatal("not found after SetRescan")
+	}
+	p, fi, next := s.Main()
+	if p != path || fi == nil || next != int64(len(first)) {
+		t.Fatalf("main = %q %v %d", p, fi, next)
+	}
+	tap := &recTap{}
+	s.SetTap(tap)
+	second := assistant("m2", "claude-opus-5-5", "", 200, 20, 0, 0)
+	appendFile(t, path, second+`{"type":"user"`) // and half a line
+	s.Poll(t0.Add(3 * time.Second))
+	if len(tap.lines) != 1 || tap.offs[0] != int64(len(first)) || tap.lines[0]+"\n" != second {
+		t.Fatalf("tap = %+v", tap)
+	}
+	if _, _, next := s.Main(); next != int64(len(first)+len(second)) {
+		t.Fatalf("next = %d", next)
+	}
+	// Replaced: void, and nothing more for this tap.
+	writeFile(t, path, second)
+	s.Poll(t0.Add(4 * time.Second))
+	if len(tap.void) != 1 || tap.void[0] || len(tap.lines) != 1 {
+		t.Fatalf("after replacement: %+v", tap)
+	}
+	// Gone: void (gone) for a new tap.
+	tap2 := &recTap{}
+	s.SetTap(tap2)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	s.Poll(t0.Add(5 * time.Second))
+	if len(tap2.void) != 1 || !tap2.void[0] {
+		t.Fatalf("gone: %+v", tap2)
+	}
+}

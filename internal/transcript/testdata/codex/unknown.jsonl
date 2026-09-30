@@ -1,0 +1,4 @@
+{"timestamp":"2026-09-29T10:06:00.000Z","ordinal":40,"type":"hologram_record","payload":{"frames":3}}
+{"timestamp":"2026-09-29T10:06:01.000Z","ordinal":41,"type":"response_item","payload":{"type":"hologram_call","id":"hc_01","frames":[1,2,3]}}
+{"timestamp":"2026-09-29T10:06:02.000Z","ordinal":42,"type":"event_msg","payload":{"type":"hologram_started","frames":3}}
+{"timestamp":"2026-09-29T10:06:03.000Z","ordinal":43,"type":"response_item","payload":{"type":"message","id":"msg_future_role","role":"narrator","content":[{"type":"input_text","text":"a role nobody knows"}]}}
