@@ -69,6 +69,8 @@ export interface Composer {
   setDisabled(disabled: boolean): void;
   setPlaceholder(text: string): void;
   clearNotice(): void;
+  /** Scrolls the held refusal (if any) into view: a host that refuses a send because of it shows where it is. */
+  revealRefusal(): void;
   openPreview(occ: string): void;
   closePreview(): void;
   readonly previewOpen: boolean;
@@ -114,7 +116,11 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   });
   const notice = h('p', { class: 'cmp-notice', role: 'status', 'aria-live': 'polite', hidden: true });
   const live = h('span', { class: 'cmp-sr', role: 'status', 'aria-live': 'polite' });
-  const element = h('div', { class: 'cmp' }, editor, notice, live);
+  // A draft that holds refusals (`holdRefused`, #64): the refused file stays said, with its dismiss, until the user acts.
+  const refusalText = h('span', { class: 'cmp-refusal-text' });
+  const dismiss = h('button', { class: 'cmp-dismiss', type: 'button', title: 'Dismiss: send without the refused file' }, icon(ICON.close));
+  const refusal = h('p', { class: 'cmp-refusal', role: 'alert', hidden: true }, refusalText, dismiss);
+  const element = h('div', { class: 'cmp' }, editor, notice, refusal, live);
 
   // ---- notices -------------------------------------------------------------------------
 
@@ -132,6 +138,14 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
       notice.textContent = '';
     }
   };
+  /** The draft's held refusal, drawn (it is the draft's, so it comes back with the draft when a worker's note reopens). */
+  function paintRefusal(): void {
+    const why = draft.refusal;
+    refusal.hidden = why === null;
+    refusalText.textContent = why === null ? '' : `Not attached: ${why} Nothing is sent until you dismiss this.`;
+    dismiss.setAttribute('aria-label', 'Dismiss this message and send without the refused file');
+    dismiss.disabled = busy;
+  }
 
   // ---- drawing -------------------------------------------------------------------------
 
@@ -192,6 +206,7 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     for (const el of editor.querySelectorAll<HTMLElement>(`.${CHIP}`)) paintChip(el);
     const d = draft.doc;
     editor.dataset.empty = String(d.text === '');
+    paintRefusal();
   }
 
   /** Draws the editor from the draft: a text node for every text run, the chips between, the tail line. */
@@ -266,7 +281,9 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
 
   function onDraft(e: DraftEvent): void {
     if (dead) return;
-    if (e.kind === 'resource') {
+    if (e.kind === 'refusal') {
+      paintRefusal();
+    } else if (e.kind === 'resource') {
       const mine = [...editor.querySelectorAll<HTMLElement>(`.${CHIP}`)].filter((c) => c.dataset.res === e.id);
       for (const c of mine) paintChip(c);
       const el = mine[0];
@@ -289,6 +306,7 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     closePreview();
     render();
     clearNotice();
+    paintRefusal();
   }
 
   // ---- edits ---------------------------------------------------------------------------
@@ -300,7 +318,12 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
 
   function insertFiles(files: readonly File[], at?: number): AddResult {
     const r = draft.addImages(files, at === undefined ? rangeOf(where()) : [at, at]);
-    if (r.errors.length > 0) say(r.errors.join(' '), 'error');
+    if (r.errors.length > 0 && draft.refusal !== null) {
+      // Held by the draft: the refusal line says it (and stays); the notice would say it twice.
+      clearNotice();
+      live.textContent = r.errors.join(' ');
+      o.onNotice?.(r.errors.join(' '), 'error');
+    } else if (r.errors.length > 0) say(r.errors.join(' '), 'error');
     else clearNotice();
     if (r.added > 0) {
       say(`${r.added === 1 ? 'Image' : `${r.added} images`} added. ${draft.doc.images.length} in the prompt.`);
@@ -518,6 +541,11 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   });
   // Nothing inside is meant to be dragged out and back in: a chip or a selection dropped again would bring markup.
   editor.addEventListener('dragstart', (e) => e.preventDefault());
+  dismiss.addEventListener('click', () => {
+    if (busy || !draft.dismissRefusal()) return;
+    say('Dismissed. The prompt goes without the refused file.');
+    focusEditor();
+  });
 
   function offsetAtPoint(x: number, y: number): number | null {
     const doc = document as Document & {
@@ -617,6 +645,9 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
       editor.dataset.placeholder = text;
     },
     clearNotice,
+    revealRefusal() {
+      if (!refusal.hidden) refusal.scrollIntoView?.({ block: 'nearest' });
+    },
     openPreview: openPreviewOf,
     closePreview,
     get previewOpen() {

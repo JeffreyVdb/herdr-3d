@@ -35,10 +35,21 @@ export function uploadFailedText(failed: FailedImage[], o: { nothing: string; ag
   return `Nothing was ${o.nothing}: ${names(failed)} did not upload (${failed[0]?.message ?? 'unknown error'}). Retry ${one ? 'it' : 'them'} on the picture, or remove ${one ? 'it' : 'them'}, then ${o.again} again. Your prompt is kept.`;
 }
 
+/** Why a prompt is held back by a file the composer refused (the field shows the refusal with its dismiss button). */
+export function refusedText(message: string, o: { nothing: string; again: string }): string {
+  return `Nothing was ${o.nothing}: ${message} Dismiss that message (the × under the box) to ${o.again} without it. Your prompt is kept.`;
+}
+
+/** The refusal a draft holds, in words for a Send that was pressed anyway; null when none is held. */
+export function heldRefusalText(s: DraftSnapshot, o: { nothing: string; again: string }): string | null {
+  return s.refusal === null ? null : refusedText(s.refusal, o);
+}
+
 /** Why `resolve()` gave nothing to send, in words for the field ('' when the draft is gone: nothing to say). */
 export function notSentText(r: Exclude<ResolveResult, { ok: true }>, o: { nothing: string; again: string }): string {
   if (r.reason === 'upload') return uploadFailedText(r.failed, o);
   if (r.reason === 'serialize') return serializeErrorText(r.error);
+  if (r.reason === 'refused') return refusedText(r.message, o);
   return '';
 }
 

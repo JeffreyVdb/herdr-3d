@@ -8,7 +8,7 @@ import { backdropPolicy } from './dismiss';
 // #64 composer
 import { mountComposer, type Composer } from './composer/composer';
 import { Draft as PromptDraft, type Uploader } from './composer/draft';
-import { failedImagesText, hasContent, markedText, notSentText, PASTE_HINT } from './composer/field';
+import { failedImagesText, hasContent, heldRefusalText, markedText, notSentText, PASTE_HINT } from './composer/field';
 import { WORKER_PROMPT_MAX_BYTES } from './composer/model';
 
 /** The overlay's host: the dialogs' plus one image to Drop Zone through the bridge (#64). */
@@ -158,7 +158,7 @@ export class PromptOverlay {
 
   /** A worker's note: images upload with a hint that names the worker, so files of different notes tell apart. */
   private newDraft(id: string): PromptDraft {
-    return new PromptDraft({ upload: (f, hint, signal) => this.host.upload(f, hint, signal), label: () => `prompt-${this.host.store.workerView(id)?.name ?? 'worker'}`, maxPromptBytes: WORKER_PROMPT_MAX_BYTES });
+    return new PromptDraft({ upload: (f, hint, signal) => this.host.upload(f, hint, signal), label: () => `prompt-${this.host.store.workerView(id)?.name ?? 'worker'}`, maxPromptBytes: WORKER_PROMPT_MAX_BYTES, holdRefused: true });
   }
 
   private draftOf(id: string): PromptDraft {
@@ -287,7 +287,8 @@ export class PromptOverlay {
     const draft = this.draftOf(id);
     const snap = draft.snapshot();
     // Nothing to send, or an image that did not upload: say so before anything goes (each chip has its Retry).
-    const empty = !hasContent(snap) ? 'Write something first.' : failedImagesText(snap);
+    // A file the note refused stays held until dismissed: the note does not go without the picture meant for it.
+    const empty = heldRefusalText(snap, { nothing: 'sent', again: 'send' }) ?? (!hasContent(snap) ? 'Write something first.' : failedImagesText(snap));
     if (empty) {
       this.setStatus(empty, true);
       this.composer.focus();
@@ -304,8 +305,9 @@ export class PromptOverlay {
     if (!res.ok || bad) {
       const msg = res.ok ? (bad as string) : notSentText(res, { nothing: 'sent', again: 'send' });
       if (!res.ok && res.reason === 'disposed') return;
+      // A send that outlived its overlay (closed, maybe reopened for another worker) only toasts: the overlay's state,
+      // busy flag and composer belong to whatever is on screen now, which may have a send of its own in flight.
       if (!stillHere()) {
-        this.state = 'ready';
         this.host.toast(msg, 'error');
         return;
       }
@@ -328,7 +330,6 @@ export class PromptOverlay {
           ? `Sent: ${name} is on it (herdr’s paste needed one more Enter).`
           : `Sent: ${name} is on it.`;
       if (!still) {
-        this.state = 'ready';
         this.host.toast(msg, 'info');
         return;
       }
@@ -345,7 +346,6 @@ export class PromptOverlay {
         ? (this.blocker() ?? `${name} can’t take a prompt right now: ${r.message.replace(/^invalid state:\s*/, '')}.`)
         : failureText('worker.prompt', r.code, r.message, { worker: name });
     if (!still) {
-      this.state = 'ready';
       this.host.toast(msg, 'error');
       return;
     }

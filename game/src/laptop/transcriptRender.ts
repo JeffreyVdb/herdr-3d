@@ -9,7 +9,7 @@ import { h, icon } from '../ui/dom';
 // #64: the prompt box is the shared composer, so a screenshot can be pasted into it
 import { mountComposer, type Composer } from '../ui/composer/composer';
 import { Draft as PromptDraft, type Uploader } from '../ui/composer/draft';
-import { hasContent, notSentText, PASTE_HINT } from '../ui/composer/field';
+import { hasContent, heldRefusalText, notSentText, PASTE_HINT } from '../ui/composer/field';
 import { WORKER_PROMPT_MAX_BYTES } from '../ui/composer/model';
 
 /**
@@ -618,7 +618,7 @@ class Transcript implements TranscriptView {
     this.thumbs = new Thumbs({ feed: host.images, root: this.scroller });
     this.jump = h('button', { class: 'tx-jump', hidden: true, onclick: () => this.toBottom() });
     this.composer = mountComposer({
-      draft: new PromptDraft({ upload: host.upload ?? NO_UPLOAD, label: `transcript-${host.label ?? 'worker'}`, maxPromptBytes: WORKER_PROMPT_MAX_BYTES }),
+      draft: new PromptDraft({ upload: host.upload ?? NO_UPLOAD, label: `transcript-${host.label ?? 'worker'}`, maxPromptBytes: WORKER_PROMPT_MAX_BYTES, holdRefused: true }),
       ariaLabel: 'Prompt',
       placeholder: PROMPT_HINT,
       submitPolicy: 'enter',
@@ -1163,6 +1163,12 @@ class Transcript implements TranscriptView {
   private submit(): void {
     if (this.promptOff || this.sending) return;
     const draft = this.composer.getDraft();
+    // A file the box refused stays held until dismissed: the prompt does not go without the picture meant for it.
+    const held = heldRefusalText(draft.snapshot(), { nothing: 'sent', again: 'send' });
+    if (held) {
+      this.composer.notice(held, 'error');
+      return;
+    }
     if (!hasContent(draft.snapshot())) return;
     this.sending = true;
     this.composer.setBusy(true);

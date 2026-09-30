@@ -606,3 +606,66 @@ describe('replaceAll (#64: a generated prompt with the markers of images already
     expect(urls.size).toBe(0);
   });
 });
+
+describe('holdRefused (#64: a refused file holds the prompt until the user dismisses it)', () => {
+  const pdf = () => new File(['x'], 'notes.pdf', { type: 'application/pdf' });
+
+  it('holds the refusal, keeps the text and the good files, and will not resolve', async () => {
+    const { draft, calls } = harness({ holdRefused: true });
+    draft.replace(0, 0, 'look at this');
+    const r = draft.addImages([png('a.png'), pdf()]);
+    expect(r.added).toBe(1);
+    expect(draft.refusal).toBe('notes.pdf is not a PNG, JPEG, GIF or WebP image.');
+    expect(draft.snapshot().refusal).toBe(draft.refusal);
+    const res = await draft.resolve();
+    expect(res).toMatchObject({ ok: false, reason: 'refused', message: 'notes.pdf is not a PNG, JPEG, GIF or WebP image.' });
+    expect(calls).toHaveLength(1); // the refused resolve did not wait for, or start, anything it did not need
+    expect(draft.doc.text).toContain('look at this');
+  });
+
+  it('holds a file over the size limit and an overflow of the image limit the same way', async () => {
+    const { draft } = harness({ holdRefused: true, maxImages: 1 });
+    draft.addImages([png('a.png'), png('b.png')]);
+    expect(draft.refusal).toBe('You can attach up to 1 images to one prompt.');
+    draft.dismissRefusal();
+    const huge = png('huge.png');
+    Object.defineProperty(huge, 'size', { value: UPLOAD_MAX_BYTES + 1 });
+    draft.addImages([huge]);
+    expect(draft.refusal).toMatch(/^huge\.png is /);
+    expect((await draft.resolve()).ok).toBe(false);
+  });
+
+  it('dismiss is the explicit resolution: it announces once, then the draft resolves with the text', async () => {
+    const { draft } = harness({ holdRefused: true });
+    const seen: string[] = [];
+    draft.subscribe((e) => e.kind === 'refusal' && seen.push(draft.refusal ?? 'gone'));
+    draft.replace(0, 0, 'text only');
+    draft.addImages([pdf()]);
+    expect(draft.dismissRefusal()).toBe(true);
+    expect(draft.dismissRefusal()).toBe(false);
+    expect(seen).toEqual(['notes.pdf is not a PNG, JPEG, GIF or WebP image.', 'gone']);
+    expect(ok(await draft.resolve()).text).toBe('text only');
+  });
+
+  it('a second refusal adds to the first; typing and plain text change nothing about it', async () => {
+    const { draft } = harness({ holdRefused: true });
+    draft.addImages([pdf()]);
+    draft.addImages([new File(['x'], 'a.svg', { type: 'image/svg+xml' })]);
+    draft.replace(0, 0, 'typing goes on');
+    expect(draft.refusal).toContain('notes.pdf');
+    expect(draft.refusal).toContain('a.svg');
+    expect(draft.doc.text).toBe('typing goes on');
+  });
+
+  it('is cleared with the draft (a sent prompt) and is off by default', async () => {
+    const held = harness({ holdRefused: true });
+    held.draft.addImages([pdf()]);
+    held.draft.clear();
+    expect(held.draft.refusal).toBeNull();
+    const plain = harness();
+    plain.draft.replace(0, 0, 'hire');
+    plain.draft.addImages([pdf()]);
+    expect(plain.draft.refusal).toBeNull();
+    expect(ok(await plain.draft.resolve()).text).toBe('hire');
+  });
+});

@@ -227,11 +227,13 @@ test('P: an image over 25 MB or not an image is refused with a message and never
   const { key } = await onFloor(page, '&upload_delay=1500');
   const id = await openPrompt(page, 'Pebble');
   await paste(page, '#prompt-text', [{ name: 'huge.png', bytes: (25 << 20) + 1 }]);
-  await expect(promptDlg(page).locator('.cmp-notice')).toContainText('huge.png is 25.0 MB');
+  await expect(promptDlg(page).locator('.cmp-refusal')).toContainText('huge.png is 25.0 MB');
   await expect(pChips(page)).toHaveCount(0);
   await paste(page, '#prompt-text', [{ name: 'doc.pdf', mime: 'application/pdf' }]);
-  await expect(promptDlg(page).locator('.cmp-notice')).toContainText('doc.pdf is not a PNG, JPEG, GIF or WebP image');
+  await expect(promptDlg(page).locator('.cmp-refusal')).toContainText('doc.pdf is not a PNG, JPEG, GIF or WebP image');
   await expect(pChips(page)).toHaveCount(0);
+  await promptDlg(page).locator('.cmp-dismiss').click(); // the refusals hold the send (below) until they are dismissed
+  await expect(promptDlg(page).locator('.cmp-refusal')).toBeHidden();
   // A pending upload: Enter waits (read-only, the status says so), nothing is sent until it is up.
   await page.keyboard.type('look ');
   await paste(page, '#prompt-text', [{ name: 'slow.png' }]);
@@ -243,6 +245,40 @@ test('P: an image over 25 MB or not an image is refused with a message and never
   await expect.poll(async () => (await sentOf(page, 'worker.prompt')).map((c) => c.args), { timeout: 10_000 }).toEqual([{ id, text: `look [Image #1: ${DROP}/h3d-prompt-pebble-1.png]` }]);
   const log = (await page.evaluate(async (k) => (await fetch(`/upload/_log?upload_key=${k}`)).json(), key)).data as unknown[];
   expect(log).toHaveLength(1); // the two refused files never reached the bridge
+  clean();
+});
+
+test('P: a file the note refused holds the send (text kept, refusal stays up) until the refusal is dismissed from the keyboard; then it goes', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await onFloor(page);
+  const id = await openPrompt(page, 'Pebble');
+  await page.keyboard.type('look at this');
+  await paste(page, '#prompt-text', [{ name: 'huge.png', bytes: (25 << 20) + 1 }]);
+  const refusal = promptDlg(page).locator('.cmp-refusal');
+  await expect(refusal).toContainText('huge.png is 25.0 MB');
+  await expect(pChips(page)).toHaveCount(0);
+  await page.keyboard.press('Enter');
+  await expect(promptDlg(page).locator('.dd-status--error')).toContainText('Nothing was sent: huge.png is 25.0 MB');
+  await page.getByRole('button', { name: 'Send to Pebble' }).click();
+  await frames(page, 3);
+  expect(await sentOf(page, 'worker.prompt')).toHaveLength(0);
+  await expect(refusal).toBeVisible();
+  expect(await shown(pEditor(page))).toBe('look at this');
+  expect((await pState(page)).state).toBe('ready');
+  await shot(page, '11-prompt-overlay-refused-holds-send');
+  // Plain text and plain-text paste go on working; they do not resolve the refusal.
+  await pasteText(page, '#prompt-text', ', please');
+  await expect(refusal).toBeVisible();
+  // The explicit resolution, by keyboard: Tab reaches the dismiss button, Enter presses it, the note has focus again.
+  await page.keyboard.press('Tab');
+  await expect(promptDlg(page).locator('.cmp-dismiss')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(refusal).toBeHidden();
+  await expect(pEditor(page)).toBeFocused();
+  expect(await sentOf(page, 'worker.prompt')).toHaveLength(0);
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await sentOf(page, 'worker.prompt')).map((c) => c.args)).toEqual([{ id, text: 'look at this, please' }]);
   clean();
 });
 
@@ -382,8 +418,9 @@ test('Start Run: a pending upload holds Start until it is up; too big / not an i
   await openRun(page);
   await extraBox(page).click();
   await paste(page, '#run-extra', [{ name: 'huge.png', bytes: (25 << 20) + 1 }, { name: 'doc.pdf', mime: 'application/pdf' }]);
-  await expect(runDlg(page).locator('.dd-extra .cmp-notice')).toContainText('huge.png is 25.0 MB');
+  await expect(runDlg(page).locator('.dd-extra .cmp-refusal')).toContainText('huge.png is 25.0 MB');
   await expect(extraChips(page)).toHaveCount(0);
+  await runDlg(page).locator('.dd-extra .cmp-dismiss').click(); // a refusal holds the start until it is dismissed (below)
   await paste(page, '#run-extra', [{ name: 'slow.png' }]);
   await expect(extraChips(page).locator('.cmp-state')).toHaveText('Uploading…');
   await page.keyboard.press('ControlOrMeta+Enter');
@@ -403,6 +440,81 @@ test('Start Run: the Ticket stays text: no chip, no promise of one in its hint',
   await expect(runDlg(page).locator('.cmp-chip')).toHaveCount(0);
   expect(await page.locator('#run-ticket').evaluate((e) => e.tagName)).toBe('TEXTAREA');
   await expect(page.locator('#run-ticket-hint')).not.toContainText('screenshot');
+  clean();
+});
+
+test('Start Run: a file Extra or the First prompt refused holds Start (the fields keep their text) until each refusal is dismissed; then it starts', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await onFloor(page, '', 'demo-m4');
+  await openRun(page);
+  await extraBox(page).click();
+  await page.keyboard.type('Extra text');
+  await paste(page, '#run-extra', [{ name: 'doc.pdf', mime: 'application/pdf' }]);
+  await paste(page, '#run-prompt', [{ name: 'huge.png', bytes: (25 << 20) + 1 }]);
+  const extraRefusal = runDlg(page).locator('.dd-extra .cmp-refusal');
+  const slipRefusal = runDlg(page).locator('.dd-slip .cmp-refusal');
+  await expect(extraRefusal).toContainText('doc.pdf is not a PNG, JPEG, GIF or WebP image');
+  await expect(slipRefusal).toContainText('huge.png is 25.0 MB');
+  await page.keyboard.press('ControlOrMeta+Enter');
+  await expect(runDlg(page).locator('.dd-status--error')).toContainText('Extra instructions: Nothing was started: doc.pdf is not a PNG');
+  await expect(extraRefusal).toBeInViewport(); // a refusal scrolled out of sight is brought back
+  await runDlg(page).locator('[data-key="start"]').click({ force: true }); // aria-disabled: pressed anyway, it says why and does not go
+  await frames(page, 3);
+  expect(await runStarts(page)).toHaveLength(0);
+  expect((await runState(page)).blocker).toMatch(/^Extra instructions: Nothing was started/);
+  expect(await shown(extraBox(page))).toBe('Extra text');
+  await expect(extraRefusal).toBeVisible();
+  await shot(page, '12-start-run-refused-holds-start');
+  await extraRefusal.locator('.cmp-dismiss').click();
+  await expect(extraRefusal).toBeHidden();
+  await page.keyboard.press('ControlOrMeta+Enter');
+  await expect(runDlg(page).locator('.dd-status--error')).toContainText('First prompt: Nothing was started: huge.png is 25.0 MB');
+  expect(await runStarts(page)).toHaveLength(0);
+  await slipRefusal.locator('.cmp-dismiss').click();
+  await expect(slipRefusal).toBeHidden();
+  await page.keyboard.press('ControlOrMeta+Enter');
+  await expect.poll(async () => (await runStarts(page)).length).toBe(1);
+  const args = (await runStarts(page))[0]!.args as { extra?: string; prompt?: string };
+  expect(args.extra).toBe('Extra text');
+  expect(args.prompt).toBeUndefined();
+  clean();
+});
+
+test('Start Run: the First prompt is read-only while its generated text names an Extra image that has no path yet; once it has, an edit goes with the path, never a bare marker', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await onFloor(page, '&upload_delay=5000', 'demo-m4');
+  await openRun(page);
+  await extraBox(page).click();
+  await page.keyboard.type('Mock: ');
+  await paste(page, '#run-extra', [{ name: 'mock.png' }]);
+  await expect(extraChips(page).locator('.cmp-state')).toHaveText('Uploading…');
+  // The generated prompt carries the bare marker while the upload is on its way: the field says why it cannot be edited.
+  await expect.poll(async () => (await runState(page)).preview.text, { timeout: 10_000 }).toMatch(/\[Image #1\]/);
+  await expect(promptBox(page)).toHaveAttribute('contenteditable', 'false');
+  await expect(runDlg(page).locator('#run-prompt-note')).toContainText('Read-only until the image in Extra instructions has uploaded');
+  await shot(page, '13-start-run-first-prompt-waits-for-image');
+  await promptBox(page).click({ force: true }); // aria-disabled: Playwright would wait for it; a user's click lands at once
+  await page.keyboard.type('EDIT');
+  expect((await runState(page)).preview.custom).toBe(false);
+  expect(await shown(promptBox(page))).not.toContain('EDIT');
+  // The image is up: the preview carries its path (as a chip), and the First prompt can be edited.
+  const marker = `[Image #1: ${DROP}/h3d-run-extra-1.png]`;
+  await expect.poll(async () => (await runState(page)).preview.text, { timeout: 20_000 }).toContain(marker);
+  await expect(promptBox(page)).toHaveAttribute('contenteditable', 'true');
+  await settled(page);
+  await promptBox(page).click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type('\nBe careful');
+  expect((await runState(page)).preview.custom).toBe(true);
+  await page.keyboard.press('ControlOrMeta+Enter');
+  await expect.poll(async () => (await runStarts(page)).length).toBe(1);
+  const args = (await runStarts(page))[0]!.args as { extra?: string; prompt?: string };
+  expect(args.prompt).toContain(marker);
+  expect(args.prompt).not.toMatch(/\[Image #1\]/);
+  expect(args.prompt!.endsWith('Be careful')).toBe(true);
+  expect(args.extra).toBe(`Mock: ${marker}`);
   clean();
 });
 
@@ -473,8 +585,9 @@ test('transcript: a failed upload (Drop Zone down) blocks the send with a word, 
   await toTranscript(page);
   await page.keyboard.type('see ');
   await paste(page, '.seat-transcript .tx-input', [{ name: 'huge.png', bytes: (25 << 20) + 1 }, { name: 'doc.pdf', mime: 'application/pdf' }]);
-  await expect(tx(page).locator('.cmp-notice')).toContainText('huge.png is 25.0 MB');
+  await expect(tx(page).locator('.cmp-refusal')).toContainText('huge.png is 25.0 MB');
   await expect(txChips(page)).toHaveCount(0);
+  await tx(page).locator('.cmp-dismiss').click(); // a refusal holds the send until it is dismissed (below)
   await paste(page, '.seat-transcript .tx-input', [{ name: 'bad.png', color: '#e8413a' }]);
   await expect(txChips(page).locator('.cmp-state')).toContainText('Failed');
   await page.keyboard.press('Enter');
@@ -503,6 +616,34 @@ test('transcript: a pending upload holds the prompt (the box read-only) until it
   expect(await sentOf(page, 'worker.prompt')).toHaveLength(0);
   await expect.poll(async () => (await sentOf(page, 'worker.prompt')).length, { timeout: 10_000 }).toBe(1);
   await expect(txBox(page)).toHaveAttribute('contenteditable', 'true');
+  clean();
+});
+
+test('transcript: a file the box refused holds the send (prompt kept, refusal stays up) until it is dismissed; then it goes', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  const { id } = await sitAt(page, 'Pebble');
+  await toTranscript(page);
+  await page.keyboard.type('see this');
+  await paste(page, '.seat-transcript .tx-input', [{ name: 'doc.pdf', mime: 'application/pdf' }]);
+  const refusal = tx(page).locator('.cmp-refusal');
+  await expect(refusal).toContainText('doc.pdf is not a PNG, JPEG, GIF or WebP image');
+  await page.keyboard.press('Enter');
+  await expect(tx(page).locator('.cmp-notice')).toContainText('Nothing was sent: doc.pdf is not a PNG');
+  await tx(page).locator('.tx-send').click();
+  await frames(page, 3);
+  expect(await sentOf(page, 'worker.prompt')).toHaveLength(0);
+  await expect(refusal).toBeVisible();
+  expect(await shown(txBox(page))).toBe('see this');
+  await shot(page, '14-transcript-refused-holds-send');
+  await txBox(page).focus();
+  await page.keyboard.press('Tab');
+  await expect(tx(page).locator('.cmp-dismiss')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(refusal).toBeHidden();
+  await expect(txBox(page)).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await sentOf(page, 'worker.prompt')).map((c) => c.args)).toEqual([{ id, text: 'see this' }]);
   clean();
 });
 

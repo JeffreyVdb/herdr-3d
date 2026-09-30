@@ -8,6 +8,7 @@ import {
   prepareArgs,
   previewEdited,
   previewGenerated,
+  previewLocked,
   previewReset,
   previewStale,
   startArgs,
@@ -29,7 +30,7 @@ import { backdropPolicy } from './dismiss';
 // #64 composer
 import { mountComposer, type Composer } from './composer/composer';
 import { Draft as PromptDraft } from './composer/draft';
-import { failedImagesText, markedText, notSentText, PASTE_HINT } from './composer/field';
+import { failedImagesText, heldRefusalText, markedText, notSentText, PASTE_HINT } from './composer/field';
 import { HIRE_PROMPT_MAX_BYTES } from './composer/model';
 
 /**
@@ -230,7 +231,7 @@ export class StartRunDialog {
 
   /** A composer draft whose uploads say which field they came from (`h3d-run-extra-1.png`). */
   private newDraft(label: string, maxPromptBytes: number): PromptDraft {
-    return new PromptDraft({ upload: (f, hint, signal) => this.host.upload(f, hint, signal), label, maxPromptBytes });
+    return new PromptDraft({ upload: (f, hint, signal) => this.host.upload(f, hint, signal), label, maxPromptBytes, holdRefused: true });
   }
 
   get isOpen(): boolean {
@@ -420,6 +421,12 @@ export class StartRunDialog {
     const t = this.ticket();
     if (this.ticketError && t.kind !== 'empty') return this.ticketError;
     // An image that did not upload: its chip says why and has its Retry; nothing starts until it is uploaded or gone.
+    // A file a field refused stays held until the user dismisses it: the run does not start without the picture meant for it.
+    const held = { nothing: 'started', again: 'start' };
+    const refused = heldRefusalText(this.extraDraft.snapshot(), held);
+    if (refused) return `Extra instructions: ${refused}`;
+    const refusedPrompt = heldRefusalText(this.promptDraft.snapshot(), held);
+    if (refusedPrompt) return `First prompt: ${refusedPrompt}`;
     const bad = failedImagesText(this.extraDraft.snapshot());
     if (bad) return `Extra instructions: ${bad}`;
     const badPrompt = this.preview.custom ? failedImagesText(this.promptDraft.snapshot()) : null;
@@ -600,7 +607,7 @@ export class StartRunDialog {
     this.extraC.setBusy(this.state === 'starting' || this.resolving);
     this.promptC.setBusy(this.state === 'starting' || this.resolving);
     this.extraC.setDisabled(this.state === 'failed');
-    this.promptC.setDisabled(this.state === 'failed');
+    this.promptC.setDisabled(this.state === 'failed' || previewLocked(this.preview));
     this.renderLive();
     if (focusKey === 'extra' || focusKey === 'prompt') (focusKey === 'extra' ? this.extraC : this.promptC).focus();
     else if (focusKey) {
@@ -710,6 +717,8 @@ export class StartRunDialog {
     const wrap = this.dialog.querySelector<HTMLElement>('.dd-preview');
     if (!tape || !note || !reset || !wrap) return;
     const p = this.preview;
+    const locked = previewLocked(p);
+    this.promptC.setDisabled(this.state === 'failed' || locked);
     const waiting = this.timer !== null || this.inFlight;
     const stale = previewStale(p);
     wrap.dataset.state = p.custom ? 'custom' : 'generated';
@@ -717,13 +726,16 @@ export class StartRunDialog {
     tape.classList.toggle('tape--note', p.custom);
     reset.hidden = !p.custom;
     reset.disabled = this.state === 'starting';
-    note.textContent = `${
-      p.custom
-        ? stale
-          ? 'Your edit is kept: the fields above now make a different prompt. Start sends yours as it is.'
-          : 'Your edit is kept and sent as it is.'
-        : 'Made from the fields above. Edit it to send your own.'
-    } ${PASTE_HINT[0]?.toUpperCase()}${PASTE_HINT.slice(1)}.`;
+    const paste = `${PASTE_HINT[0]?.toUpperCase()}${PASTE_HINT.slice(1)}.`;
+    note.textContent = locked
+      ? 'Read-only until the image in Extra instructions has uploaded (retry or remove it there if it failed): an edit now would send its marker without the file.'
+      : `${
+          p.custom
+            ? stale
+              ? 'Your edit is kept: the fields above now make a different prompt. Start sends yours as it is.'
+              : 'Your edit is kept and sent as it is.'
+            : 'Made from the fields above. Edit it to send your own.'
+        } ${paste}`;
     note.dataset.stale = stale ? 'true' : 'false';
   }
 
@@ -814,6 +826,8 @@ export class StartRunDialog {
     if (blocker) {
       this.setStatus(blocker, true);
       this.renderActions();
+      // A refusal is held by a field that may be scrolled out of sight: show it.
+      (this.extraDraft.refusal !== null ? this.extraC : this.promptDraft.refusal !== null ? this.promptC : null)?.revealRefusal();
       return;
     }
     this.clearTimer();

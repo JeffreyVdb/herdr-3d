@@ -119,6 +119,20 @@ export function previewReset(p: Preview): Preview {
   return { ...p, text: p.generated, custom: false };
 }
 
+/** `[Image #n]`: the marker of an image whose upload has not given it a path yet (`[Image #n: <path>]` once it has). */
+const PATHLESS_IMAGE = /\[Image #\d+\]/;
+
+/**
+ * The generated prompt still names an image of the Extra instructions by a bare `[Image #n]` (the upload is on its way,
+ * or has failed). The First prompt is read-only then: an edit would freeze that marker, without the path the
+ * orchestrator needs, into a prompt that overrides the one the bridge composes. It opens again when the preview
+ * carries the path (the image uploaded) or the image is gone. A custom prompt never locks: it has no bare marker of
+ * the Extra's (its own images are chips).
+ */
+export function previewLocked(p: Preview): boolean {
+  return !p.custom && PATHLESS_IMAGE.test(p.text);
+}
+
 /** Custom, and the fields now generate something else. */
 export function previewStale(p: Preview): boolean {
   return p.custom && p.text !== p.generated;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../../net/client';
 import { Draft } from './draft';
-import { failedImagesText, hasContent, markedText, notSentText, PASTE_HINT, uploadFailedText } from './field';
+import { failedImagesText, hasContent, heldRefusalText, markedText, notSentText, PASTE_HINT, uploadFailedText } from './field';
 
 const png = (name: string) => new File([new Uint8Array(4).fill(1)], name, { type: 'image/png' });
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -64,5 +64,19 @@ describe('hasContent and the hint', () => {
     d.addImages([png('a.png')]);
     expect(hasContent(d.snapshot())).toBe(true);
     expect(PASTE_HINT).toBe('paste a screenshot to add it');
+  });
+});
+
+describe('a held refusal (#64)', () => {
+  it('is said with how to go on, in the words of the field that was not sent', async () => {
+    const d = new Draft({ upload: () => new Promise(() => {}), createUrl: () => '', revokeUrl: () => {}, holdRefused: true });
+    d.replace(0, 0, 'see this');
+    expect(heldRefusalText(d.snapshot(), { nothing: 'sent', again: 'send' })).toBeNull();
+    d.addImages([new File(['x'], 'notes.pdf', { type: 'application/pdf' })]);
+    const words = heldRefusalText(d.snapshot(), { nothing: 'sent', again: 'send' });
+    expect(words).toBe('Nothing was sent: notes.pdf is not a PNG, JPEG, GIF or WebP image. Dismiss that message (the × under the box) to send without it. Your prompt is kept.');
+    const r = await d.resolve();
+    if (r.ok) throw new Error('resolved');
+    expect(notSentText(r, { nothing: 'sent', again: 'send' })).toBe(words);
   });
 });

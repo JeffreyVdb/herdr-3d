@@ -11,6 +11,7 @@ import {
   previewArg,
   previewEdited,
   previewGenerated,
+  previewLocked,
   previewReset,
   previewStale,
   startArgs,
@@ -19,6 +20,8 @@ import {
   ticketLine,
   type RunForm,
 } from './startRun';
+import { Draft } from '../ui/composer/draft';
+import { markedText } from '../ui/composer/field';
 import { DEFAULT_HIRE_OPTIONS } from './store';
 
 const H = DEFAULT_HIRE_OPTIONS;
@@ -101,6 +104,39 @@ describe('the prompt preview', () => {
     p = previewEdited(p, 'A');
     expect(p.custom).toBe(false);
     expect(previewGenerated(p, 'C').text).toBe('C');
+  });
+});
+
+describe('an image of the Extra instructions that has no path yet (#64)', () => {
+  const shot = () => new File([new Uint8Array(4).fill(1)], 'shot.png', { type: 'image/png' });
+
+  it('locks the First prompt while the generated text carries the bare marker, and opens it when the path is there', async () => {
+    let finish!: (r: { ok: true; data: { path: string } }) => void;
+    const extra = new Draft({ upload: () => new Promise((r) => (finish = r as typeof finish)), createUrl: () => '', revokeUrl: () => {} });
+    extra.addImages([shot()]);
+    await Promise.resolve();
+    let p = previewGenerated(emptyPreview(), `/write-code task\n\n${markedText(extra.snapshot())}`);
+    expect(p.text).toContain('[Image #1]');
+    expect(previewLocked(p)).toBe(true);
+    // The upload finishes: the next generated prompt has the path, and the First prompt is editable again.
+    finish({ ok: true, data: { path: '/drops/shot.png' } });
+    await extra.resolve();
+    p = previewGenerated(p, `/write-code task\n\n${markedText(extra.snapshot())}`);
+    expect(p.text).toContain('[Image #1: /drops/shot.png]');
+    expect(previewLocked(p)).toBe(false);
+  });
+
+  it('with the lock in force the edit that would freeze a pathless marker cannot happen: the prompt sent is the bridge\'s', () => {
+    const p = previewGenerated(emptyPreview(), 'task\n\n[Image #1]');
+    expect(previewLocked(p)).toBe(true);
+    expect(previewArg(p)).toBeUndefined(); // generated: run.start carries no prompt, the bridge composes it from the resolved extra
+  });
+
+  it('an edited prompt, a prompt with path markers and a prompt with no image are never locked', () => {
+    expect(previewLocked(previewEdited(previewGenerated(emptyPreview(), 'a'), 'a, edited'))).toBe(false);
+    expect(previewLocked(previewEdited(previewGenerated(emptyPreview(), 'a [Image #1]'), 'a [Image #1], edited'))).toBe(false);
+    expect(previewLocked(previewGenerated(emptyPreview(), 'a [Image #1: /drops/a.png]'))).toBe(false);
+    expect(previewLocked(previewGenerated(emptyPreview(), 'plain'))).toBe(false);
   });
 });
 

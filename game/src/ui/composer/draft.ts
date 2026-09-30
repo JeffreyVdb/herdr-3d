@@ -74,6 +74,12 @@ export interface DraftOptions {
   maxImages?: number;
   /** The default cap of `resolve()` in utf-8 bytes. */
   maxPromptBytes?: number;
+  /**
+   * A file `addImages` refuses (too big, not an image, over the limit) is *held* as the draft's refusal, and the draft
+   * does not resolve until the user dismisses it (`dismissRefusal`): the prompt is not sent without the picture the
+   * user meant to attach (#64). Off by default: the hire dialog says so in its notice and lets the rest go.
+   */
+  holdRefused?: boolean;
   historyLimit?: number;
   /** Typing within this many ms of the last typing is one undo step. */
   coalesceMs?: number;
@@ -86,7 +92,9 @@ export type DraftEvent =
   /** The document or the caret changed: `dom` when the editor's own typing did it (nothing to redraw). */
   | { kind: 'doc'; origin: 'dom' | 'api' | 'history' }
   /** A resource's state changed. */
-  | { kind: 'resource'; id: string };
+  | { kind: 'resource'; id: string }
+  /** The held refusal appeared or was dismissed. */
+  | { kind: 'refusal' };
 
 export interface ImageInfo {
   /** The marker's number, from the document order. */
@@ -114,6 +122,8 @@ export interface DraftSnapshot {
   uploading: boolean;
   /** Any image whose upload failed. */
   failed: boolean;
+  /** The held refusal (`holdRefused`): why a file was not attached. The draft does not resolve until it is dismissed. */
+  refusal: string | null;
 }
 
 export interface FailedImage {
@@ -129,6 +139,7 @@ export type ResolveResult =
   | { ok: true; text: string; revision: number; images: SerializedImage[] }
   | { ok: false; reason: 'upload'; revision: number; failed: FailedImage[] }
   | { ok: false; reason: 'serialize'; revision: number; error: SerializeError }
+  | { ok: false; reason: 'refused'; revision: number; message: string }
   | { ok: false; reason: 'disposed'; revision: number };
 
 export interface AddResult {
@@ -162,6 +173,7 @@ export class Draft {
   private seq = 0;
   private ids = 0;
   private dead = false;
+  private refused: string | null = null;
 
   constructor(opts: DraftOptions) {
     this.opts = {
@@ -182,6 +194,7 @@ export class Draft {
         if (u && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(u);
       },
       label: 'hire',
+      holdRefused: false,
       ...opts,
     };
   }
@@ -215,6 +228,10 @@ export class Draft {
   }
   get canRedo(): boolean {
     return this.at < this.hist.length - 1;
+  }
+  /** The held refusal (`holdRefused`), or null. */
+  get refusal(): string | null {
+    return this.refused;
   }
   /** How many resources are held (tests: nothing leaks). */
   get resourceCount(): number {
@@ -251,6 +268,7 @@ export class Draft {
       images,
       uploading: images.some((i) => i.status === 'pending' || i.status === 'uploading'),
       failed: images.some((i) => i.status === 'error'),
+      refusal: this.refused,
     };
   }
 
@@ -301,11 +319,23 @@ export class Draft {
       else accepted.push(f);
     }
     if (overflow) errors.push(`You can attach up to ${this.opts.maxImages} images to one prompt.`);
+    if (this.opts.holdRefused && errors.length > 0) {
+      this.refused = [...new Set([...(this.refused ? [this.refused] : []), errors.join(' ')])].join(' ');
+      this.emit({ kind: 'refusal' });
+    }
     if (accepted.length === 0) return { added: 0, errors };
     const occs: Occurrence[] = accepted.map((f) => ({ occ: `o${++this.ids}`, res: this.addResource(f).id }));
     const [a, b] = start <= end ? [start, end] : [end, start];
     this.apply(replaceRange(this.cur, a, b, '', occs), caret(caretAfter(a, b, '', occs)), 'api', false);
     return { added: accepted.length, errors };
+  }
+
+  /** The user dismissed the held refusal: the prompt goes without the refused file(s). False when none was held. */
+  dismissRefusal(): boolean {
+    if (this.refused === null) return false;
+    this.refused = null;
+    this.emit({ kind: 'refusal' });
+    return true;
   }
 
   private addResource(f: File): Resource {
@@ -487,7 +517,10 @@ export class Draft {
     this.rev++;
     this.lastTypeAt = -Infinity;
     for (const r of [...this.res.values()]) this.release(r);
+    const held = this.refused !== null;
+    this.refused = null;
     this.emit({ kind: 'doc', origin: 'api' });
+    if (held) this.emit({ kind: 'refusal' });
   }
 
   /** `clear()` only if nothing was edited since `revision`: a newer edit, made while the send was pending, survives it. */
@@ -609,6 +642,7 @@ export class Draft {
     const doc = this.cur;
     const revision = this.rev;
     if (this.dead) return { ok: false, reason: 'disposed', revision };
+    if (this.refused !== null) return { ok: false, reason: 'refused', revision, message: this.refused };
     const ids = resourcesOf(doc);
     for (const id of ids) this.wants.set(id, (this.wants.get(id) ?? 0) + 1);
     try {
