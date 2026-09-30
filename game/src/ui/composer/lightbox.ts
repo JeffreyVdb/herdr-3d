@@ -15,6 +15,52 @@ import { h, ICON, icon } from '../dom';
 
 let open = 0;
 
+/** A held Esc goes on repeating after the preview it closed: the guard swallows those until the key is up. Idle time after which it drops on its own (a lost keyup). */
+const HELD_ESC_IDLE_MS = 1000;
+
+/**
+ * Esc closed the preview and may still be down: its auto-repeat keydowns (and the host's `cancel`) must not fall through
+ * to the host, or one physical press closes both layers. Lifts on Esc keyup, a new Esc press, another key, blur, or after
+ * `HELD_ESC_IDLE_MS` without a repeat.
+ */
+function swallowHeldEscape(hostDialog: HTMLDialogElement | null): void {
+  let timer = 0;
+  const lift = (): void => {
+    window.clearTimeout(timer);
+    window.removeEventListener('keydown', onKeyDown, true);
+    window.removeEventListener('keyup', onKeyUp, true);
+    window.removeEventListener('blur', lift);
+    hostDialog?.removeEventListener('cancel', refuse, true);
+  };
+  const arm = (): void => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(lift, HELD_ESC_IDLE_MS);
+  };
+  const onKeyDown = (e: KeyboardEvent): void => {
+    // A press that is not a repeat is a new one (its keyup was lost, or another key came): the host's to handle.
+    if (e.key !== 'Escape' || !e.repeat) {
+      lift();
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    arm();
+  };
+  const onKeyUp = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') lift();
+  };
+  const refuse = (e: Event): void => {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  };
+  window.addEventListener('keydown', onKeyDown, true);
+  window.addEventListener('keyup', onKeyUp, true);
+  window.addEventListener('blur', lift);
+  hostDialog?.addEventListener('cancel', refuse, true);
+  arm();
+}
+
 /** True while any preview is open: a host's own Esc / cancel handler can ask before it closes itself. */
 export const previewOpen = (): boolean => open > 0;
 
@@ -57,11 +103,11 @@ export function openPreview(host: HTMLElement, img: PreviewImage, release: () =>
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
-    if (!e.repeat) close();
+    if (!e.repeat) close(true);
   };
   const refuseCancel = (e: Event): void => {
     e.preventDefault();
-    close();
+    close(true);
   };
   // In the capture phase, so it runs before a host handler that was added earlier, and that handler never sees a
   // cancel that was meant for the preview.
@@ -87,12 +133,14 @@ export function openPreview(host: HTMLElement, img: PreviewImage, release: () =>
   window.addEventListener('keydown', onKey, true);
   hostDialog?.addEventListener('cancel', refuseHostCancel, true);
 
-  function close(): void {
+  /** `byKey`: Esc (or a close request) did it, and the key may still be down. */
+  function close(byKey = false): void {
     if (done) return;
     done = true;
     open--;
     window.removeEventListener('keydown', onKey, true);
     hostDialog?.removeEventListener('cancel', refuseHostCancel, true);
+    if (byKey) swallowHeldEscape(hostDialog);
     if (dlg.open) dlg.close();
     dlg.remove();
     release();

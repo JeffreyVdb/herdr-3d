@@ -279,6 +279,55 @@ test('Esc closes only the topmost layer, once per press, however the host handle
   await expect(lightbox(page)).toHaveCount(0);
 });
 
+/** One physical Esc press held down: the key goes down, repeats while held, comes up. `CDP` is the only way to send `autoRepeat`. */
+async function heldEscape(page: Page, repeats: number): Promise<{ down(): Promise<unknown>; repeat(): Promise<void>; up(): Promise<unknown> }> {
+  const cdp = await page.context().newCDPSession(page);
+  const key = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 };
+  return {
+    down: () => cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', ...key }),
+    repeat: async () => {
+      for (let i = 0; i < repeats; i++) await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', autoRepeat: true, ...key });
+    },
+    up: () => cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key }),
+  };
+}
+
+test('a held Esc closes only the enlarged view: its auto-repeat never reaches the host, and a new press after the key is up does', async ({ page }) => {
+  await open(page);
+  await paste(page, [{ name: 'a.png' }]);
+  await chips(page).first().locator('.cmp-thumb').click();
+  await expect(lightbox(page)).toBeVisible();
+  const esc = await heldEscape(page, 5);
+  await esc.down();
+  await expect(lightbox(page)).toHaveCount(0);
+  await esc.repeat();
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).dialog.open)).toBe(true);
+  expect(await hostEvents(page)).toEqual([]);
+  await esc.up();
+  // The key is up: a new press is the host's.
+  await page.keyboard.press('Escape');
+  await expect.poll(() => hostEvents(page)).toContain('close');
+  expect(await page.evaluate(() => (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).dialog.open)).toBe(false);
+});
+
+test('the held-Esc guard lets go of a keyup that never comes: a new Esc press then closes the host', async ({ page }) => {
+  await open(page);
+  await paste(page, [{ name: 'a.png' }]);
+  const hostOpen = () => page.evaluate(() => (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).dialog.open);
+  await chips(page).first().locator('.cmp-thumb').click();
+  await expect(lightbox(page)).toBeVisible();
+  const esc = await heldEscape(page, 1);
+  await esc.down(); // and no keyup
+  await expect(lightbox(page)).toHaveCount(0);
+  await esc.repeat();
+  expect(await hostOpen()).toBe(true);
+  // A new (non-repeat) press with the keyup lost: it is not swallowed.
+  await esc.down();
+  await expect.poll(() => hostEvents(page)).toContain('close');
+  expect(await hostOpen()).toBe(false);
+});
+
 test('a backward selection, the caret and the scroll come back exactly after the enlarged view', async ({ page }) => {
   await open(page);
   // Enough lines to scroll inside the editor.

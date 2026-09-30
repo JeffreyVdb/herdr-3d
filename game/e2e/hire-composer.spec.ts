@@ -171,6 +171,29 @@ test('a pasted screenshot lands inline at the caret; the enlarged view closes by
   clean();
 });
 
+test('a held Esc closes only the enlarged view in the hire dialog; a fresh press then closes the dialog', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await onFloor(page);
+  await openHire(page);
+  await paste(page, [{ name: 'shot-a.png' }]);
+  await chips(page).first().locator('.cmp-thumb').click();
+  await expect(lightbox(page)).toBeVisible();
+  const cdp = await page.context().newCDPSession(page);
+  const key = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 };
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', ...key });
+  await expect(lightbox(page)).toHaveCount(0);
+  for (let i = 0; i < 5; i++) await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', autoRepeat: true, ...key });
+  await page.waitForTimeout(100);
+  await expect(hireDlg(page)).toBeVisible();
+  await expect(editor(page)).toBeFocused();
+  expect((await summary(page)).images.map((i) => i.name)).toEqual(['shot-a.png']);
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+  await page.keyboard.press('Escape');
+  await expect(hireDlg(page)).toBeHidden();
+  clean();
+});
+
 test('hire with two pasted images sends both markers in document order, with the paths Drop Zone gave', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);

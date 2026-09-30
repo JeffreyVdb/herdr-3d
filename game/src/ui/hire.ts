@@ -708,11 +708,16 @@ export class HireDialog {
   }
 
   /** A hire was acknowledged: what was sent is gone, unless it was edited since (`revision`), and the desk's stored text goes with it. */
-  private clearSent(key: string, doc: PromptDraft, revision: number, sent: { fields?: Record<string, string> }): void {
+  private clearSent(key: string, doc: PromptDraft, revision: number, sent: { text: string; fields?: Record<string, string> }): void {
     if (!doc.clearIf(revision)) return;
-    if (this.docs.get(key) === doc) this.docs.delete(key);
+    const current = this.docs.get(key);
+    // A newer draft took the desk while this hire was pending (Esc, a reopen with a first task, an edit): its memory and stored text are its own.
+    if (current && current !== doc) return;
+    if (current) this.docs.delete(key);
     const now = this.drafts.get(key);
     if (!now) return;
+    // (The draft on screen clears itself and saves that; any other one, with a label saved before its first edit, must still hold what was sent.)
+    if (this.editor.draft !== doc && now.text !== sent.text) return;
     // The label typed since stays.
     this.drafts.set(key, JSON.stringify(now.fields ?? {}) === JSON.stringify(sent.fields ?? {}) ? { text: '' } : { text: '', ...(now.fields ? { fields: now.fields } : {}) });
   }

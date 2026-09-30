@@ -687,15 +687,64 @@ describe('the preview', () => {
     document.removeEventListener('keydown', bubbled);
   });
 
-  it('a held Esc closes the preview once and does not go on to the host', () => {
+  it('a held Esc closes the preview once; its repeats never reach the host, and a new press after the keyup does', () => {
     const { env } = hosted();
     env.c.insertFiles([png()]);
     open(env);
-    const first = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
-    const again = new KeyboardEvent('keydown', { key: 'Escape', repeat: true, bubbles: true, cancelable: true });
-    document.body.dispatchEvent(first);
-    document.body.dispatchEvent(again);
-    expect(again.defaultPrevented).toBe(false); // the preview is gone; a repeat is the host’s business
+    const bubbled = vi.fn();
+    document.addEventListener('keydown', bubbled);
+    const key = (init: KeyboardEventInit) => new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...init });
+    document.body.dispatchEvent(key({}));
+    expect(lb()).toBeNull();
+    for (let i = 0; i < 3; i++) {
+      const again = key({ repeat: true });
+      document.body.dispatchEvent(again);
+      expect(again.defaultPrevented).toBe(true);
+    }
+    expect(bubbled).not.toHaveBeenCalled();
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape' }));
+    const next = key({});
+    document.body.dispatchEvent(next);
+    expect(next.defaultPrevented).toBe(false);
+    expect(bubbled).toHaveBeenCalledTimes(1);
+    document.removeEventListener('keydown', bubbled);
+  });
+
+  it('the held-Esc guard lifts on another key, a blur and after a second without a repeat', () => {
+    vi.useFakeTimers();
+    try {
+      const closedByEsc = () => {
+        const { env } = hosted();
+        env.c.insertFiles([png()]);
+        open(env);
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        expect(lb()).toBeNull();
+      };
+      const repeatSwallowed = (): boolean => {
+        const again = new KeyboardEvent('keydown', { key: 'Escape', repeat: true, bubbles: true, cancelable: true });
+        document.body.dispatchEvent(again);
+        return again.defaultPrevented;
+      };
+      closedByEsc();
+      expect(repeatSwallowed()).toBe(true);
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+      expect(repeatSwallowed()).toBe(false);
+
+      closedByEsc();
+      expect(repeatSwallowed()).toBe(true);
+      window.dispatchEvent(new Event('blur'));
+      expect(repeatSwallowed()).toBe(false);
+
+      closedByEsc();
+      vi.advanceTimersByTime(600);
+      expect(repeatSwallowed()).toBe(true); // a repeat re-arms the idle time
+      vi.advanceTimersByTime(900);
+      expect(repeatSwallowed()).toBe(true);
+      vi.advanceTimersByTime(1001);
+      expect(repeatSwallowed()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('refuses a cancel of the host while the preview is open, and a cancel of the preview closes only it', () => {
@@ -711,7 +760,11 @@ describe('the preview', () => {
     expect(own.defaultPrevented).toBe(true);
     expect(lb()).toBeNull();
     expect(hostCancelled()).toBe(0); // the host's own handler never saw either
-    // Closed: the host’s cancel is its own again.
+    // Closed, and an Esc may still be down: the host's cancel stays refused until its keyup, then it is its own again.
+    const held = new Event('cancel', { cancelable: true });
+    dialog.dispatchEvent(held);
+    expect(held.defaultPrevented).toBe(true);
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape' }));
     const later = new Event('cancel', { cancelable: true });
     dialog.dispatchEvent(later);
     expect(later.defaultPrevented).toBe(false);
