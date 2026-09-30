@@ -13,7 +13,9 @@
   usage and cost from their transcripts, read incrementally, and the pricing table), `jsonl` (the shared reading of
   those JSONL files: one tail per transcript, complete lines from byte offsets, no symlinks), `transcript` (M16: the
   Claude and Codex transcripts as one timeline of items, indexed by offset for the laptop's conversation view; phase 2:
-  their images as `ImageRef`s, decoded, hashed and resolved through the allowlist of path roots), `imgcache` (M16 phase 2:
+  their images as `ImageRef`s, decoded, hashed and resolved through the allowlist of path roots; #57: the agents'
+  structured questions, `AskTracker` knowing the one a session's latest turn waits on, fed the usage tail's lines, and
+  the question cards of their tool items), `imgcache` (M16 phase 2:
   the bounded content-addressed image cache, memory LRU plus an optional 0600/0700 disk cache; the type sniff, the
   thumbnails, the path allowlist; pure Go), `runs` (M6: write-code runs, the
   freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it), `limits` (M10: the Claude and
@@ -85,6 +87,8 @@ parts:
     `pane send-text <pane> <text>` (no control characters) and the fixed sequences of delete / home / end / pageup /
     pagedown, `agent prompt <pane> <text>` with `--wait --until working --until blocked --timeout 8000` or without
     (queued for an agent at work), and the hire's `pane read <pane> --source visible` (a blocked worker's question).
+    #57's `worker.answer_ask` uses these same shapes (digits, arrows, `tab`, `enter`, `esc`, `send-text`, `pane
+    read` between steps): no new one.
     Typed text is never quoted in an error or the audit log. A herdr CLI call takes about 10 ms, so input goes through
     the CLI (consecutive keys, and texts, batched into one call); the socket's `pane.send_input` is not used.
 
@@ -358,7 +362,13 @@ both providers):
 The screens the question parser is tested on (`internal/server/testdata/screens`) were captured the same way, from
 throwaway sessions (`herdr pane read <pane> --source visible`): Claude's trust dialog, its Bash and Write permission
 prompts, an AskUserQuestion menu, Codex's approval (`-a on-request -s read-only`, a command outside the sandbox) and its
-trust dialog. Recapture them when an agent's dialogs change.
+trust dialog. #57 adds every shape of the structured-question dialogs, `claude-ask-*` (one question, two and four with
+tabs and the review, multi-select, Other typed, previews, long questions at 100 × 30 and 200 × 50, a `--name`d session
+herdr called idle; `.status.json` beside a screen is `herdr agent list` at that moment) and `codex-ask-*` (Plan mode /
+`default_mode_request_user_input`: one and three questions, Other with notes, long ones), which the dialog parsers
+(`askscreen.go`) and `worker.answer_ask`'s drivers are tested on, each key step against the screen it led to live
+(the grounding of #57 has the sequences). Recapture them when an agent's dialogs change; for a Claude that must write
+its pending call to the transcript use Sonnet, or Haiku with `--strict-mcp-config` (Haiku with MCP servers does not).
 
 All of them always name the `h3d-it-…` session explicitly, and the bridge under test watches only that session. They strip
 `HERDR_*`/`CLAUDE*` pane variables from herdr's environment and in `t.Cleanup`, also on failure, stop the session with
@@ -499,7 +509,8 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   parts, a `*` for a cost priced as an unknown model, never a bare `$`), N's queue (`next.ts`: blocked before done, the
   building you are in first, oldest `status_since` first, and where to stand facing a worker), quick replies
   (`answer.ts`: digits → a question's choice; Approve = the choice that says Yes / Trust / Allow / Proceed, else the
-  first; Deny = the "No" choice, else a cancel), the Changes panel's model (`changes.ts`: the diff split per file and
+  first; Deny = the "No" choice, else a cancel; #57: `ask.ts`, an agent's structured question: the picks per question,
+when they answer everything, the `worker.answer_ask` args, a recorded answer's lines, "waiting 3m"), the Changes panel's model (`changes.ts`: the diff split per file and
   classified per line, file states, branch / upstream / base / stat lines, the truncation notice), who can be prompted
   (`prompt.ts`, the 16 KiB rule) and which laptops are live (`screens.ts`). M6: team presets (`presets.ts`: the
   world's `presets` and their events, by name; `known` false from an older bridge, which sends none) and the start-run
@@ -540,7 +551,8 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   the last lines that say something, 22 columns × 5 lines, big, bold and lifted to 4.5:1, so it reads from the aisle;
   seated, the whole terminal), `keys.ts` maps a keydown to herdr
   keys and orders input (one command in flight, what is typed meanwhile goes in the next `worker.keys`), `index.ts`
-  plans and ties it together. Which laptops are live is `src/world/screens.ts` (pure, vitest); the textured planes and
+  plans and ties it together. #57: `askCard.ts` is the question card of the transcript view (the one pinned above the
+  prompt box while the worker waits, and its timeline entry), styled in `transcript.css`. Which laptops are live is `src/world/screens.ts` (pure, vitest); the textured planes and
   the frozen-screen atlas (one instanced batch) are `src/render/screens.ts`; the seat bar is `src/ui/seat.ts`. Recorded
   screens for the simulator are `fixtures/screens/{agent,shell}.jsonl` (real `herdr terminal session observe` output of
   synthetic screens, made by `node tools/record-screens.ts` in a throwaway `h3d-m5screen-*` session); `sim=1` replays
@@ -666,6 +678,11 @@ fail (`{fail: "message"}`, or `head_moved` to make a merge answer `stale`; `{fai
 (`{poll: true}`). `simfail=no_m7` plays a bridge before M7 (every board command `unknown_command`). `open=none` in the page
 URL makes "Open in …" record the page instead of opening a window. E.g.
 `?ws=%2Ffixture%2Fdemo-m6%3Fsim%3D1%26simms%3D150&floor=lab`.
+
+#57 on the simulating server (`tools/fixture-ask.ts`, rules at its top): `sim.ask {id, ask}` (`simAsk(args)` in the
+hooks) makes a worker's agent ask (its card and the transcript's pending call), `{id, ask: null, answers?}` ends it as
+the terminal would; `worker.answer_ask` answers it like the bridge (`stale`, `bad_request`, the ask gone and the call's
+card answered before the ack); `simfail=answer_ask_failed` / `answer_unresolved`. `e2e/m16-ask.spec.ts` drives it.
 
 M16 on the simulating server (`tools/fixture-transcript.ts`, rules at its top): sit at any worker and press Ctrl+Esc
 for its conversation. `transcript.watch` answers a demo timeline of every item kind in the bridge's shape, the demo's

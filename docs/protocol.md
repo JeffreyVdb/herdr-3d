@@ -219,6 +219,7 @@ floor with no workers and an `error`).
 | `branch` | string, optional | the checked-out branch of a worker in a linked worktree (`worktree.linked`), when known (read from the checkout's git `HEAD`; absent on a detached `HEAD`) |
 | `usage` | object, optional | its agent session's token counts and cost estimate (see [Usage and cost](#usage-and-cost)); absent without an `agent_session` (a running Codex excepted), or until the bridge found its transcript |
 | `question` | object, optional | what the screen of a `blocked` worker asks, while it is blocked (see [Blocked workers](#blocked-workers-question-quick-reply-approve--deny)) |
+| `ask` | object, optional | #57: the structured question (Claude's AskUserQuestion, Codex's request_user_input) its agent's latest turn waits on, read from its transcript whatever `status` says (see [Laptops: asks](#laptops-asks)) |
 | `round` | int ≥ 1, optional | write-code round: the `h3d_round` token, else the label's trailing `\|r<N>` (see [Runs and freelancers](#runs-and-freelancers)) |
 | `ticket` | string ≤ 32 bytes, optional | the `h3d_ticket` token, else the label's ticket field (`CODE\|descr\|<ticket>\|r<N>`, likewise `REVIEW` and `UX`) |
 | `issue` | object, optional | `{"repo":"owner/name","number":7}`: the GitHub issue of the worker's run, when a repo is known |
@@ -408,6 +409,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.keys` | `{"id": string, "input": [{"text": string} \| {"key": string}…]}` | — | — (see [Input](#input)) |
 | `worker.prompt` | `{"id": string, "text": string}` | `{"queued": bool, "retried": bool}` | the worker's statuses |
 | `worker.answer` | `{"id": string, "hash": string, "choice"?: 1–9, "cancel"?: true}` | `{"sent": [string…], "resolved": bool}` | the worker's upsert without its `question` when it moves on |
+| `worker.answer_ask` | `{"id": string, "tool_use_id": string, "answers"?: [{"question": int, "choices"?: [int…], "other"?: string}…], "cancel"?: true, "prompt"?: string}` | `{"sent": [string…], "resolved": bool, "prompted"?: bool}` | the worker's upsert without its `ask` once the transcript has the answer (before the ack) (see [Laptops: asks](#laptops-asks)) |
 | `transcript.watch` | `{"id": string, "limit"?: 1–500}` | `{"harness", "session", "version", "cursor", "has_more", "pending", "items"}` | `transcript.items` to this connection only (see [Laptops: transcript](#laptops-transcript)) |
 | `transcript.unwatch` | `{"id": string}` | — | — |
 | `transcript.page` | `{"id": string, "before"?: cursor, "limit"?: 1–500, "agent"?: string}` | `{"items", "cursor", "has_more"}` | — |
@@ -1275,6 +1277,10 @@ What herdr 0.9.0 reports, and what picks a choice (checked live):
 Note that the first choice of Claude's trust dialog is "No, exit": to approve a `trust` question, pick the choice that
 trusts (its label starts with "Yes" or "Trust").
 
+A Claude session started with `--name` (every hire) is **`idle`** (or `done`) to herdr 0.9.0 while its AskUserQuestion
+dialog is up (the name's rule at the bottom of the screen hides the dialog from herdr's blocked-form rule), so it never
+gets a `question`; its `ask` (read from the transcript, [Laptops: asks](#laptops-asks)) is what flags and answers it.
+
 **`worker.answer`** answers the question: exactly one of `choice` (1–9, one of the question's `choices`) or `cancel:
 true` (Esc: deny / dismiss). The worker must be `blocked` (else `invalid_state`). When its turn on the worker's input
 lane comes, the bridge reads the screen again: if the worker is no longer blocked or the question there has another
@@ -1652,6 +1658,96 @@ another Codex rollout picked, e.g. after `/clear` or `/new`; watch again for the
 transcript file that was truncated or replaced) or `not_found` (the transcript file went). It is not sent for a
 `transcript.unwatch`, a re-watch or a closed connection.
 
+### Laptops: asks
+
+#57. When an agent asks a structured question, the laptop's transcript view (and the quick reply where you stand)
+answers it; the terminal stays the source of truth: the bridge types the answer into the agent's own dialog.
+
+```json
+"ask":{"tool_use_id":"toolu_01FuqDRbauxtx9cAAmN3o8ex","source":"transcript","agent":"claude","since":1790766523807,
+  "questions":[{"header":"Drink","question":"Tea or coffee?","multi":false,"other":true,
+    "options":[{"label":"Tea","description":"Hot tea"},{"label":"Coffee","description":"Hot coffee"}]}]}
+```
+
+**Reading it.** The usage tracker reads every worker's transcript anyway (its one tail, from the file's start, every
+2 s, every second while one is watched; see [Usage and cost](#usage-and-cost)), and the same lines tell it the ask the
+latest turn waits on:
+
+- Claude Code: the last `AskUserQuestion` `tool_use` of the main conversation (`isSidechain` lines, a subagent's, are
+  not the worker's dialog) that has no `tool_result` of its `tool_use_id` yet (an error result resolves it too: Esc is
+  `is_error` with `toolUseResult: "User rejected tool use"`, "Chat about this" a clarification request), no genuine
+  prompt after it (a reminder, a task notification or a meta line is not one) and no `[Request interrupted by user…]`.
+- Codex: the last `response_item` `function_call` named `request_user_input` with no `function_call_output` of its
+  `call_id` and no `turn_aborted` or new user message after it (its `arguments` are JSON in a string). Codex offers it
+  in Plan mode (Default mode with `[features] default_mode_request_user_input = true`).
+- A call whose questions have no options is not an ask (Codex refuses it at once; Claude never shows it).
+
+So `ask` is on the worker **whatever herdr reports**: herdr 0.9.0 says `idle` (or `done`) for a Claude session started
+with `--name` (every hire) while its dialog is up (see docs/decisions.md, 2026-09-30). It is in snapshots and
+`worker.upsert`s, is cleared in the upsert where the result is read, and goes with the worker's session (a new one,
+`/clear`, a new rollout). It is the ask, not a status: a client counts a worker with one as waiting on you, like
+`blocked` (the game: its card, the counts, N), waiting since `since` (the call's timestamp; the bridge's clock when
+the line has none). Its fields:
+
+| field | |
+|---|---|
+| `tool_use_id` | Claude's `tool_use` id or Codex's `call_id`: which ask an answer is for |
+| `source` | `transcript` |
+| `agent` | `claude` \| `codex` |
+| `questions` | 1–4, each `{id?, header, question, multi, other, secret?, options: [{label, description?, preview?}], truncated?}`: `id` is Codex's (its answers are keyed by it); `multi` picks several (Claude's `multiSelect`; Codex has none); `other` takes a typed answer (Claude's "Type something": every question but one with previews, whose dialog has no such row; Codex's "None of the above" with notes, on every question); `secret` is masked on its screen (Codex `isSecret`) |
+
+Caps (it is in every snapshot): at most 4 questions and 8 options each, a header 64 bytes, a question 2000, a label
+200, a description 1000, a preview 1024; `truncated` says one was cut. A transcript item of such a call has the same
+questions as `tool.ask` (see below).
+
+**Answering it.** **`worker.answer_ask`** takes one answer per question, `{question: <index>, choices: [1-based option
+numbers…], other?: <text>}` (a single-select question takes one choice or `other`; a multi-select one choices and/or
+`other`; `other` is 1–4096 bytes of one line without control characters, only where `other` is true), or `cancel: true`
+(Esc on its dialog), optionally with a `prompt` sent once the dialog is gone ("I want to talk about this first" in one
+action). It is `stale` when the worker has no ask or another `tool_use_id` (answered in the terminal meanwhile, or
+something else asked); `bad_request` for answers that do not fit the questions. On the worker's input lane (after its
+other input) it checks the ask again, then drives the dialog with the keys verified live (Claude Code 2.1.285, codex-cli
+0.159.2, herdr 0.9.0; the screens are in `internal/server/testdata/screens/claude-ask-*`, `codex-ask-*`), reading the
+screen before and after every step and pressing nothing unless the dialog shows what it expects: the question it is
+answering (by its text, however it wraps), the cursor, the ticks, the typed text, the review:
+
+| dialog | keys |
+|---|---|
+| Claude, a single-select question | its option's digit (it moves on by itself); a preview question: the digit (it only moves the cursor), Enter; `other`: the digit of "Type something.", the text, Enter |
+| Claude, a multi-select question | each option's digit, **one herdr call each** (several in one call were dropped live), ticks checked; then → (the next question, or the review); with `other`: arrows to "Type something", the text (Enter if that left it unticked), Tab to the Submit / Next row, Enter |
+| Claude, several questions or a multi-select one | then the review: Enter on "1. Submit answers" |
+| Claude, `cancel` | Esc (Claude records a rejected call and an interruption) |
+| Codex | per question, in order: its option's digit (the last one submits them all); `other`: arrows to "None of the above", Enter (its notes open), the text, Enter (a digit on "None of the above" would submit it without the text) |
+| Codex, `cancel` | Esc (Codex interrupts the turn) |
+
+A dialog that is not where it should be (another dialog, a question already answered in the terminal, a step that
+did not show) stops it with `input_failed` (the message says what did not show and the keys sent so far); the ask
+answered or replaced while it drives stops it with `stale`, and no more keys go. `sent` lists the key names pressed,
+`text` for typed text (never the text). `resolved` is true only when the transcript recorded the call's result within
+8 s (the upsert without the `ask` comes before the ack); false means the keys went but the agent has not recorded an
+answer yet. A prompt to a worker with an ask is `invalid_state` (its dialog would take the text). The audit log keeps
+the ids, the picks and each typed text's length (`other_bytes`, `prompt_bytes`), never the text.
+
+```json
+{"t":"worker.answer_ask","req_id":"61","args":{"id":"6db1905e-…","tool_use_id":"toolu_013cY4rbTxmy3foDDYjPKtTL",
+  "answers":[{"question":0,"choices":[1,3],"other":"Custom dashboards"},{"question":1,"other":"Green"}]}}
+{"t":"ack","req_id":"61","data":{"sent":["1","3","down","down","down","text","tab","enter","3","text","enter","enter"],"resolved":true}}
+{"t":"worker.answer_ask","req_id":"62","args":{"id":"6db1905e-…","tool_use_id":"toolu_01BUcPM6aQV2dWp9WtSoCD5W","cancel":true,"prompt":"Let's talk about it first."}}
+{"t":"ack","req_id":"62","data":{"sent":["esc"],"resolved":true,"prompted":true}}
+```
+
+**In the transcript.** An `AskUserQuestion` / `request_user_input` tool item has `tool.ask`: `{agent, questions,
+outcome, answers?}`, `outcome` one of `pending`, `answered`, `declined` (Esc; Codex's cancelled call), `clarify`
+(Claude's "Chat about this"), `interrupted`, and `answers` `[{question, answer, labels?, other?, notes?}]` from the
+result (Claude: `toolUseResult.answers`, keyed by the full question text, several labels joined with ", ";
+`annotations` notes; Codex: the output's `answers` by question id, `"user_note: …"` the typed text). A secret's typed
+text is `••••••`. The game shows it as a card whose answered form is `● You answered: <question> → <answer>`, also for
+an answer typed in the terminal.
+
+The screen parser of `worker.question` reads these dialogs with the same parsers: the whole question however it
+wraps, the options' labels without their descriptions or previews, and a Yes / No question is `choice`, not
+`permission`.
+
 ### Errors
 
 ```json
@@ -1667,7 +1763,7 @@ transcript file that was truncated or replaced) or `not_found` (the transcript f
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
 | `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home |
-| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell or a blocked worker, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
+| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker or one with an `ask`, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `too_large` | `transcript.image` with `size: "full"` for an image whose base64 is over 12 MiB (its thumbnail is still served) |
 | `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`, `transcript.watch` above `--max-transcript-watches`; the message says which |
@@ -1676,9 +1772,9 @@ transcript file that was truncated or replaced) or `not_found` (the transcript f
 | `hire_failed`, `fire_failed` | herdr or git failed during a hire / send-home; the message says which step and why. `fire_failed` also when the agent did not exit (still running, or its processes could not be read): then nothing was closed or removed. `hire_failed` names what its rollback kept. |
 | `wake_failed` | the server did not start, did not answer `ping` or was not seen running within `--wake-timeout`; the message says why |
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
-| `input_failed` | `worker.keys` / `worker.answer`: herdr refused the keys or text, the screen could not be read, or 32 commands already wait for that worker; the message says why |
+| `input_failed` | `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text, the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step; the message says why |
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
-| `stale` | `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `pr.merge` whose head moved since it was read |
+| `stale` | `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed; `pr.merge` whose head moved since it was read |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
 | `confirmation_required` | `issue.close`, `pr.merge` or `worker.open_pr` without `confirm: true` (see [Boards](#boards-issues-and-pull-requests)) |
