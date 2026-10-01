@@ -45,6 +45,8 @@ type fakeFloor struct {
 	closeErrs      map[string]error // workspace → CloseWorkspace's error
 	onKey          func(pane string, key herdr.Key)
 	decorate       func(w *world.WorkerObs) // sets what the watcher derives (role, run) of a new workspace
+	// fresh is what a fresh read of herdr (Options.Fresh) returns instead of the floor as published.
+	fresh func(published []world.WorkerObs) ([]world.WorkerObs, error)
 }
 
 func newFakeFloor(b *bridge, session string, fh *fakeHerdr, workers ...world.WorkerObs) *fakeFloor {
@@ -61,6 +63,17 @@ func (f *fakeFloor) publish() {
 		Workers: slices.Clone(f.workers)}
 	f.mu.Unlock()
 	f.b.publish(obs)
+}
+
+// Fresh is Options.Fresh: herdr's state right now.
+func (f *fakeFloor) Fresh(_ context.Context, socket string) ([]world.WorkerObs, error) {
+	f.mu.Lock()
+	cur, fresh := slices.Clone(f.workers), f.fresh
+	f.mu.Unlock()
+	if fresh != nil {
+		return fresh(cur)
+	}
+	return cur, nil
 }
 
 func (f *fakeFloor) create(dir, label string, wt *world.Worktree) herdr.Created {
@@ -361,6 +374,7 @@ func startHireBridgeAt(t *testing.T, db string, tweak func(*server.Options), wor
 	// The floor needs the bridge, the bridge needs the floor as Options.Hire.
 	var fl *fakeFloor
 	opts.Hire = hireProxy{get: func() *fakeFloor { return fl }}
+	opts.Fresh = func(ctx context.Context, socket string) ([]world.WorkerObs, error) { return fl.Fresh(ctx, socket) }
 	if tweak != nil {
 		tweak(&opts)
 	}
@@ -1359,6 +1373,46 @@ func TestSendHomeClosesTheIdleMainCheckout(t *testing.T) {
 		}
 		// Nothing holds it hidden now: a worker.
 		hb.world(func(w proto.World) bool { _, ok := workersOf(w, "s")["w1"]; return ok && len(workersOf(w, "s")) == 1 })
+	})
+	// What herdr shows when the bridge is about to close the workspace is
+	// what counts, not what it showed at the last observation.
+	skipped := func(t *testing.T, fresh func([]world.WorkerObs) ([]world.WorkerObs, error), why string) {
+		t.Helper()
+		hb := startHireBridge(t, nil, mainShell("w1"), linkedWorker("w2", "h3d/pixel-a1b2c3"))
+		hb.fl.fresh = fresh
+		hired(t, hb, "w2")
+		fire(t, hb, "w2") // still sent home
+		if closed(hb, "w1") {
+			t.Fatalf("closed the main checkout against herdr's fresh state: %q", hb.fl.Calls())
+		}
+		hb.world(func(w proto.World) bool { _, ok := workersOf(w, "s")["w1"]; return ok && len(workersOf(w, "s")) == 1 })
+		if row := auditRow(t, hb.bridge, proto.CmdWorkerFire); !row.OK || !strings.Contains(row.Result, "main checkout w1 skipped: "+why) {
+			t.Fatalf("audit = %+v", row)
+		}
+	}
+	t.Run("an agent started in it after the last observation", func(t *testing.T) {
+		skipped(t, func(cur []world.WorkerObs) ([]world.WorkerObs, error) {
+			for i := range cur {
+				if cur[i].WorkspaceID == "w1" {
+					cur[i].AgentKind, cur[i].Status = "claude", "working"
+				}
+			}
+			return cur, nil
+		}, "an agent runs in it")
+	})
+	t.Run("a worktree was opened after the last observation", func(t *testing.T) {
+		skipped(t, func(cur []world.WorkerObs) ([]world.WorkerObs, error) {
+			return append(cur, linkedWorker("w9", "h3d/mochi-d4e5f6")), nil
+		}, "a worktree of the repository is open again")
+	})
+	t.Run("herdr cannot be read", func(t *testing.T) {
+		skipped(t, func([]world.WorkerObs) ([]world.WorkerObs, error) { return nil, errors.New("connection refused") },
+			"herdr's state cannot be read: connection refused")
+	})
+	t.Run("closed meanwhile", func(t *testing.T) {
+		skipped(t, func(cur []world.WorkerObs) ([]world.WorkerObs, error) {
+			return slices.DeleteFunc(cur, func(w world.WorkerObs) bool { return w.WorkspaceID == "w1" }), nil
+		}, "it is gone")
 	})
 	t.Run("close fails", func(t *testing.T) {
 		hb := startHireBridge(t, nil, mainShell("w1"), linkedWorker("w2", "h3d/pixel-a1b2c3"))

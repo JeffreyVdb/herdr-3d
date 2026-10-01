@@ -110,6 +110,11 @@ type Options struct {
 	// PaneSize is a pane's size in cells, the observer's default size
 	// (nil or not ok: 120 × 40).
 	PaneSize func(ctx context.Context, socket, pane string) (cols, rows int, ok bool)
+	// Fresh reads a floor's workspaces from herdr right now (a
+	// session.snapshot), not from the hub's last observation: the check
+	// before the bridge closes a repository's idle main checkout. Nil: it
+	// cannot be checked and nothing is closed.
+	Fresh func(ctx context.Context, socket string) ([]world.WorkerObs, error)
 	// MaxWatches caps the watches of one connection, MaxObservers all of
 	// them (defaults DefaultMaxWatches, DefaultMaxObservers).
 	MaxWatches, MaxObservers int

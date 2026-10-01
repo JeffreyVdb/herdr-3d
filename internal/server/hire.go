@@ -1074,6 +1074,11 @@ func (h *Hub) closeIdleMain(ctx context.Context, notify <-chan struct{}, session
 		return
 	}
 	for _, id := range r.ids {
+		if why := h.mainStillIdle(ctx, session, repo, id); why != "" {
+			h.log.Warn("not closing the idle main checkout", "session", session, "workspace", id, "repo", repo, "why", why)
+			step("herdr workspace close of the repository's main checkout %s skipped: %s", id, why)
+			continue
+		}
 		if err := h.opts.Hire.CloseWorkspace(ctx, session, id); err != nil {
 			h.log.Warn("closing the idle main checkout failed", "session", session, "workspace", id, "repo", repo, "err", err)
 			step("herdr workspace close of the repository's main checkout %s failed: %v", id, err)
@@ -1085,6 +1090,45 @@ func (h *Hub) closeIdleMain(ctx context.Context, notify <-chan struct{}, session
 			return !slices.Contains(ids, id)
 		})
 	}
+}
+
+// mainStillIdle re-reads the floor from herdr (not the hub's last
+// observation, which an agent may have outrun: closing a workspace kills
+// every process in it) and says why the main checkout workspace id must not
+// be closed, "" when it is still a shell of a repository without an open
+// linked worktree. A floor that cannot be read is no reason to close.
+func (h *Hub) mainStillIdle(ctx context.Context, session, repo, id string) string {
+	socket, err := query(ctx, h, func() string {
+		if f := h.floors[session]; f != nil {
+			return f.socket
+		}
+		return ""
+	})
+	if err != nil {
+		return err.Error()
+	}
+	if h.opts.Fresh == nil || socket == "" {
+		return "herdr's state cannot be read"
+	}
+	rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	fresh, err := h.opts.Fresh(rctx, socket)
+	if err != nil {
+		return fmt.Sprintf("herdr's state cannot be read: %v", err)
+	}
+	why := "it is gone"
+	for _, w := range fresh {
+		switch {
+		case w.IsLinked() && w.Worktree.RepoRoot == repo:
+			return "a worktree of the repository is open again"
+		case w.WorkspaceID == id && w.IsMainCheckout() && w.Worktree.RepoRoot == repo:
+			why = ""
+			if w.HasAgent() {
+				why = "an agent runs in it"
+			}
+		}
+	}
+	return why
 }
 
 // groupBlocked says why herdr would refuse to close a worker's workspace:
