@@ -1223,7 +1223,8 @@ during a stroke, a drag or a text edit: it uploads the image files the bridge do
 has. On `409`, and on a `whiteboard.updated` of a version it has not seen (an agent's pin, another window), it fetches
 the board, restores the remote elements on their own and reconciles them into the live scene (Excalidraw's
 `reconcileElements`: the higher element `version` wins, a stroke in progress is kept, `CaptureUpdateAction.NEVER`), then
-saves again. A save is one snapshot: the elements, files and appState it sends and the PNG it renders are taken at one
+saves again. A fetched board older than the version the session already has (a newer merge or save landed while it
+waited on image bytes) is dropped: the version only goes up. A save is one snapshot: the elements, files and appState it sends and the PNG it renders are taken at one
 moment, and it is posted on the version they were based on; when a merge moved the board on while the files went up or
 the PNG was made, the round starts over on the new version (a stroke drawn meanwhile goes in the next save). The
 board's appState (background, grid) is saved like the elements, and a merge takes the remote one unless it was changed
@@ -1231,7 +1232,8 @@ here since the last save. Closing the board saves what is left first, the change
 included (bounded: 8 s). When that fails (the bridge is unreachable), the board stays open and asks: **Retry**,
 **Close, keep a draft** (the changes stay in this browser, in memory and in `localStorage` key
 `h3d.wb.draft.<bridge>|<floor>` when they fit, and come back, reconciled with the board, the next time it opens, then
-are saved), or **Discard changes**.
+are saved; a save drops the draft only once it has all of it, and a closed board's late save never does), or
+**Discard changes**.
 
 **Image ids.** An image's file id is the sha256 of the bytes the bridge stores, and the bridge checks it. Excalidraw
 hashes a pasted file before it scales it down (1440 px), so before a save the editor re-hashes each file's bytes and
