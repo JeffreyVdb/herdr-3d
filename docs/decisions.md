@@ -250,6 +250,18 @@ Decisions (orchestrator and user) and what was measured while building it:
 | 9 | Look-only props | `Prop.milestone: null` means the prop is only looked at: the bar shows its label and a line it is given (`Hud.setPropInfo(id, text)`; the clock's `14:05 · Wed 30 Sep · Europe/Brussels`) and no key, instead of "Placeholder until Mx". Not a special case of the clock's id. |
 | 10 | Out of scope | Seasons beyond the latitude model, longitude, the receptionist's greeting by time of day, night-time crowd behaviour. |
 
+## 2026-10-01 — #83: wrap up, then send home
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Where does the verdict come from? | The agent's **transcript**, never a command, a token or the screen: the line it ends its final message with, `H3D-WRAPUP <nonce> CLEAN` or `… BLOCKED: <reason>`, read by `transcript.WrapUpTracker` from the same tail as usage and asks. Only lines from the armed offset, only after the bridge's own prompt (the user line holding the nonce), only the last non-empty line of a turn's final assistant message, matched strictly; the same marker anywhere else in that message is no result. A fresh nonce per arm kills stale and quoted lines. Codex and Claude only (`invalid_state` otherwise). |
+| 2 | The offset | Taken by the usage tracker itself, after its read of that round (`Session.Delivered()`), before the prompt is sent: so the prompt is after it and no line from it on was read without the tracker. Restored after a restart, the tracker is attached before the session's first read (lines before the offset skipped); a tail already past the offset is void and needs you. |
+| 3 | When it decides | The turn ended in the transcript and no line came since, herdr says `idle` / `done`, both for 2 s, no `ask`. `blocked` and asks wait. |
+| 4 | What disarms | BLOCKED, no result, two markers, a time-out (`--wrapup-timeout`, 30 min), a lost transcript, a CLEAN whose re-check or send home failed: **needs you**, stored, its nonce dead. A person's `worker.prompt` / `worker.keys` while armed, or a prompt or interruption typed in herdr after the bridge's (seen in the transcript): disarmed, nothing needs you. Answering an ask does not disarm (it is the wrap-up's own question). A reply while it needs you leaves it needing you: only "Wrap up again" (a new `worker.wrapup`) re-arms. |
+| 5 | Teardown | `runFire`, the same code path as Send home, with the armed choice and `fireOp.strict`: a tree that changed while the agent exited fails it (`not_clean`, the worker stays) instead of sending it home with the worktree kept. Four clean-and-pushed checks before a removal: the arm, after CLEAN, and runFire's pair. Plain Send home keeps its `note` behaviour. |
+| 6 | The dialog | A second action, "Wrap up, then send home", in the send-home dialog; delete preselected whenever `can_delete` (both actions); Enter with a delete opens an inline confirm, Cancel focused (a click, or Tab + Enter, confirms). The cleanup prompt is a plain `<textarea>`, not the #51 composer: the ticket wants Enter **and** Ctrl/Shift+Enter to add lines and only the button to send, which the composer's policies do not offer, and a cleanup task needs no screenshot. |
+| 7 | On the desk | The worker's card carries a cardboard `WRAPPING UP` tape with a drawn box while armed; needing you, the card is red and its task line is the reason. The final toast follows `worker.removed` `sent_home` of a worker that was armed. |
+
 ## 2026-10-01 — #86: shadow acne from the moving sun
 
 | # | Question | Decision |

@@ -15,7 +15,8 @@
   Claude and Codex transcripts as one timeline of items, indexed by offset for the laptop's conversation view; phase 2:
   their images as `ImageRef`s, decoded, hashed and resolved through the allowlist of path roots; #57: the agents'
   structured questions, `AskTracker` knowing the one a session's latest turn waits on, fed the usage tail's lines, and
-  the question cards of their tool items), `imgcache` (M16 phase 2:
+  the question cards of their tool items; #83: `WrapUpTracker`, an armed wrap-up's result line, fed the same lines with
+  their byte offsets), `imgcache` (M16 phase 2:
   the bounded content-addressed image cache, memory LRU plus an optional 0600/0700 disk cache; the type sniff, the
   thumbnails, the path allowlist; pure Go), `runs` (M6: write-code runs, the
   freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it), `limits` (M10: the Claude and
@@ -305,6 +306,7 @@ that directory.
 | `--sessions` | `HERDR_WORLD_SESSIONS` | all; a regexp limits which sessions are watched, and the only ones commands may wake, sleep, configure, hire into or send workers home from |
 | `--poll`, `--resnapshot` | `HERDR_WORLD_POLL`, `HERDR_WORLD_RESNAPSHOT` | `2s`, `30s` |
 | `--max-desks` | `HERDR_WORLD_MAX_DESKS` | `96`: cap on the desks a floor renders beyond its occupied ones (`floor.desks`) |
+| `--wrapup-timeout` | `HERDR_WORLD_WRAPUP_TIMEOUT` | `30m`: how long an armed wrap-up waits for the agent's result line before it needs you (#83, [`docs/protocol.md` "Wrap up"](docs/protocol.md#wrap-up)) |
 | `--name-hold` | `HERDR_WORLD_NAME_HOLD` | `168h` (7 days): how long a worker's name stays held after the bridge sees it leave its floor; then a newcomer may take it (`worker.name`) |
 | `--wake-timeout` | `HERDR_WORLD_WAKE_TIMEOUT` | `10s`: how long a woken server has to start, answer `ping` and be seen running (else `wake_failed`) |
 | `--resume-timeout` | `HERDR_WORLD_RESUME_TIMEOUT` | `10s`: how long a wake waits for the agents before the fallback, and again for the fallback and its result (a wake acks within about `--wake-timeout` + 2 × this) |
@@ -753,6 +755,14 @@ URL makes "Open in …" record the page instead of opening a window. E.g.
 hooks) makes a worker's agent ask (its card and the transcript's pending call), `{id, ask: null, answers?}` ends it as
 the terminal would; `worker.answer_ask` answers it like the bridge (`stale`, `bad_request`, the ask gone and the call's
 card answered before the ack); `simfail=answer_ask_failed` / `answer_unresolved`. `e2e/m16-ask.spec.ts` drives it.
+
+#83 on the simulating server (`tools/fixture-sim.ts`): `worker.wrapup` checks like `worker.fire` (a Claude or Codex
+agent, a delete only on a clean tree) and arms the worker; `sim.wrapup {id, verdict: "clean" | "blocked" | "none",
+reason?}` (`simWrapUp(args)` in the hooks) plays its transcript's result line: `clean` sends it home (`worker.removed`
+`sent_home`), the others make it need you. `worker.wrapup.cancel` drops it. `e2e/m83-wrapup.spec.ts` drives the dialog
+(delete preselected, Enter in the prompt, the confirm step), the desk tape and the toasts; the bridge's side is
+`internal/server/wrapup_test.go` (real transcript files, the fake herdr floor: CLEAN to `worktree remove`, the decision
+table, strict delete, restart).
 
 M16 on the simulating server (`tools/fixture-transcript.ts`, rules at its top): sit at any worker and press Ctrl+Esc
 for its conversation. `transcript.watch` answers a demo timeline of every item kind in the bridge's shape, the demo's
