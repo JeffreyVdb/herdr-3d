@@ -179,6 +179,9 @@ type World struct {
 	// bridge has; [] before its first. nil (the key is left out) when the
 	// bridge does not read limits (--no-limits): the client shows no widget.
 	Limits []Limits `json:"limits,omitzero"`
+	// M13 screen: whether a game shares its screen (docs/protocol.md
+	// "Screen share").
+	Screen *ScreenState `json:"screen,omitempty"`
 }
 
 // HireOptions lists what can be hired, per harness.
@@ -393,6 +396,7 @@ type Worktree struct {
 //	worker.removed   id, session, workspace_id, reason
 //	worker.status    id, session, workspace_id, status, prev_status, status_since, title
 //	limits.update    the fields of Limits
+//	screen.state     the fields of ScreenState
 type Event struct {
 	T           string    `json:"t"`
 	Seq         uint64    `json:"seq"`
@@ -417,6 +421,9 @@ type Event struct {
 	// M10 limits: on limits.update the fields of Limits are flat in the
 	// event.
 	*Limits
+	// M13 screen: on screen.state the fields of ScreenState are flat in the
+	// event.
+	*ScreenState
 }
 
 // Command is a client request. Args depend on T (see the *Args types).

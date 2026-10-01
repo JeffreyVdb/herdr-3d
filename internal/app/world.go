@@ -26,6 +26,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/imgcache"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/screenshare"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
@@ -65,6 +66,10 @@ const (
 	EnvClaudeProjects = "HERDR_WORLD_CLAUDE_PROJECTS"
 	EnvPricing        = "HERDR_WORLD_PRICING"
 )
+
+// M13 screen share: where grabbed frames are stored (default
+// screenshare.DefaultDir: $XDG_RUNTIME_DIR/herdr-world/screen, tmpfs).
+const EnvScreenDir = "HERDR_WORLD_SCREEN_DIR"
 
 // M6 runs: write-code's runs directory (the contract names this variable).
 const EnvRunsDir = "H3D_RUNS_DIR"
@@ -322,6 +327,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	dropzoneURL := fs.String("dropzone-url", envOr(EnvDropzoneURL, DefaultDropzoneURL), "Drop Zone URL, where pasted images are uploaded ($"+EnvDropzoneURL+")")                                             // #51 upload
 	dropzoneData := fs.String("dropzone-data", envOr(EnvDropzoneData, DefaultDropzoneData()), "Drop Zone's data directory: a root a transcript's [Image #n: path] may be read under ($"+EnvDropzoneData+")") // M16 images
 	imageCache := fs.String("image-cache", os.Getenv(EnvImageCache), "directory of the transcript image disk cache, \"-\" for none (default $XDG_CACHE_HOME/herdr-world/img) ($"+EnvImageCache+")")          // M16 images
+	screenDir := fs.String("screen-dir", os.Getenv(EnvScreenDir), "private directory (tmpfs) for screen-share frames (default $XDG_RUNTIME_DIR/herdr-world/screen) ($"+EnvScreenDir+")")                     // M13 screen
 	pricingFile := fs.String("pricing", os.Getenv(EnvPricing), "JSON file of model prices merged over the built-in table ($"+EnvPricing+")")
 	sessions := fs.String("sessions", os.Getenv(EnvSessions), "only watch sessions whose name matches this regexp ($"+EnvSessions+")")
 	fs.DurationVar(&poll, "poll", poll, "session discovery interval ($"+EnvPoll+")")
@@ -394,6 +400,16 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	if !*noLimits { // M10 limits
 		lim = &limits.Config{ClaudeBin: *claudeBin, CodexBin: *codexBin, CodexSessions: *codexSessions, Log: log}
 	}
+	if *screenDir == "" { // M13 screen
+		dir, fallback, err := screenshare.DefaultDir()
+		switch {
+		case err != nil:
+			log.Warn("no directory for screen-share frames: screen.grab will fail", "err", err)
+		case fallback:
+			log.Warn("XDG_RUNTIME_DIR is not set: screen-share frames go to the user's runtime directory", "dir", dir)
+		}
+		*screenDir = dir
+	}
 	hireOptions := discoverHireOptions(ctx, log, *codexCLI, *claudeCLI)
 	if err := ctx.Err(); err != nil {
 		return err
@@ -411,6 +427,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		Limits:           lim,                                                               // M10 limits
 		Uploads:          images,                                                            // #51 upload
 		TranscriptImages: transcriptImages(log, *dropzoneData, *imageCache, *codexSessions), // M16 images
+		ScreenDir:        *screenDir,                                                        // M13 screen
 	})
 }
 
@@ -489,6 +506,11 @@ type ServeConfig struct {
 	// M16 phase 2: the transcripts' images (nil: inline images are
 	// described but not kept, no path is read).
 	TranscriptImages *transcript.Images
+
+	// M13 screen share: where grabbed frames are stored ("": none, and
+	// screen.grab fails); ScreenTimeout and ScreenTTL: see server.Options.
+	ScreenDir                string
+	ScreenTimeout, ScreenTTL time.Duration
 }
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
@@ -525,7 +547,8 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	opts.Boards = cfg.Boards                                    // M7 boards
 	opts.BoardWatchPoll, opts.BoardIdlePoll, opts.BoardRefreshMin, opts.BoardTick =
 		cfg.BoardWatchPoll, cfg.BoardIdlePoll, cfg.BoardRefreshMin, cfg.BoardTick
-	opts.Limits = cfg.Limits // M10 limits
+	opts.Limits = cfg.Limits                                                                             // M10 limits
+	opts.ScreenDir, opts.ScreenTimeout, opts.ScreenTTL = cfg.ScreenDir, cfg.ScreenTimeout, cfg.ScreenTTL // M13 screen
 	opts.Caps, opts.HireOptions, opts.Load = cfg.Caps, cfg.HireOptions, server.HostLoad
 	opts.TrustTimeout, opts.SeenTimeout, opts.ExitTimeout = cfg.TrustTimeout, cfg.SeenTimeout, cfg.ExitTimeout
 	if dir := cfg.CodexSessions; dir != "" {
