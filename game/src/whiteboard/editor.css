@@ -1,0 +1,10 @@
+/*
+ * M13: Excalidraw inside the whiteboard overlay (loaded with the editor, never at start). Its library sidebar and its
+ * help dialog link to excalidraw.com, GitHub and Discord: they are not offered here (the menu and the welcome screen
+ * are our own, editor.ts). CSS only hides; nothing in them fetches until clicked, and the bundle has no other door.
+ */
+.wb .excalidraw .default-sidebar-trigger,
+.wb .excalidraw .library-menu-browse-button,
+.wb .excalidraw .help-icon {
+  display: none !important;
+}

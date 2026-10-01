@@ -255,6 +255,11 @@ export class SimWorld {
     return this.logos.get(id);
   }
 
+  /** M13: an event from the HTTP side (tools/fixture-whiteboard.ts), in this world's sequence. */
+  announce(m: Msg): void {
+    if (this.out) this.emit(this.out, m);
+  }
+
   /** The `simfail` still pending, for the HTTP side. */
   failure(): string | undefined {
     return this.fail;

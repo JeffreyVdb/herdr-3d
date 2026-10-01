@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node tools/check-bundle.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -27,6 +27,7 @@
     "perf:mac": "pnpm build && portlease run --project herdr-3d --worktree .. --name preview --service game-perf -- node tools/mac-perf.ts"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "0.18.1",
     "@fontsource-variable/archivo": "5.3.0",
     "@fontsource-variable/atkinson-hyperlegible-next": "5.3.0",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
@@ -37,12 +38,16 @@
     "dompurify": "3.4.16",
     "highlight.js": "11.12.0",
     "marked": "18.0.14",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "three": "0.186.1"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",
     "@types/node": "24.19.0",
     "@types/pngjs": "6.0.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "@types/three": "0.186.0",
     "@types/ws": "8.18.1",
     "ffmpeg-static": "5.3.0",

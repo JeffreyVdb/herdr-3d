@@ -242,7 +242,9 @@ export type WorldEvent =
   // M10 limits
   | LimitsUpdate
   // M13 screen
-  | ScreenStateEvent;
+  | ScreenStateEvent
+  // M13 whiteboard
+  | WhiteboardUpdated;
 
 export interface ErrorMessage {
   t: 'error';
@@ -437,6 +439,10 @@ export interface CommandArgs {
   /** The answer to a frame request that has no frame (the JPEG itself goes to POST /screen/frame/{req_id}). */
   'screen.frame': { req_id: string; error: string; message?: string };
   'screen.grab': { floor: string; requester: string };
+  // M13 whiteboard (docs/protocol.md "Whiteboard"; the board's bytes are HTTP, net/whiteboard.ts).
+  'whiteboard.get': { floor: string };
+  'whiteboard.clear': { floor: string; confirm: true; author?: string };
+  'drops.list': { limit?: number };
 }
 
 // M5: blocked workers' questions, usage, and the acks of the prompt, answer and Changes commands (docs/protocol.md
@@ -635,6 +641,8 @@ const EVENT_TYPES = new Set([
   'preset.removed',
   'limits.update',
   'screen.state', // M13 screen
+  // M13 whiteboard
+  'whiteboard.updated',
 ]);
 
 type Obj = Record<string, unknown>;
@@ -699,6 +707,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // M13 screen: the fields of `ScreenState` flat in the event.
     case 'screen.state':
       return typeof o.sharing === 'boolean';
+    // M13 whiteboard: the fields of `WhiteboardState` flat in the event.
+    case 'whiteboard.updated':
+      return isWhiteboardState(o);
   }
   return false;
 }
@@ -1413,4 +1424,58 @@ export function isScreenMessage(m: ServerMessage): m is ScreenMessage {
   if (m.t === 'screen.frame_request') return isStr(o.req_id) && /^[0-9a-f]{32}$/.test(o.req_id);
   if (m.t === 'screen.grabbed') return isStr(o.requester) && isStr(o.floor);
   return false;
+}
+
+// ---- M13 whiteboard (docs/protocol.md "Whiteboard") ----------------------------------------------------------------
+
+/** An agent's pin the board's render does not show yet. */
+export interface WhiteboardPin {
+  id: string;
+  kind: 'image' | 'note' | string;
+  author: string;
+  note?: string;
+  file?: string;
+  version: number;
+  at: number;
+}
+
+/** A floor's board without its content: `whiteboard.get`'s ack, `whiteboard.updated`. */
+export interface WhiteboardState {
+  floor: string;
+  /** 0: never saved. */
+  version: number;
+  author: string;
+  at: number;
+  /** The version render.png shows; `render` false: there is none (empty or cleared). */
+  render_version: number;
+  render: boolean;
+  /** The render is behind `version` (agents pinned since): `stale_pins` is what it does not show. */
+  stale: boolean;
+  stale_pins: WhiteboardPin[];
+}
+
+export interface WhiteboardUpdated extends WhiteboardState {
+  t: 'whiteboard.updated';
+  seq: number;
+}
+
+export function isWhiteboardState(o: unknown): o is WhiteboardState {
+  if (!isObj(o)) return false;
+  return isStr(o.floor) && isInt(o.version) && isInt(o.render_version) && typeof o.render === 'boolean' && typeof o.stale === 'boolean' && Array.isArray(o.stale_pins);
+}
+
+/** One file in Drop Zone's data directory (`drops.list`), newest first; `image`: it can be pinned. */
+export interface Drop {
+  path: string;
+  name: string;
+  size: number;
+  mtime: number;
+  mime: string;
+  image: boolean;
+  /** Why not: not_image, too_large. */
+  reason?: string;
+}
+
+export interface DropsListAck {
+  drops: Drop[];
 }

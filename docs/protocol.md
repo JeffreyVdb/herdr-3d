@@ -13,6 +13,8 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
   ```sh
   curl --unix-socket "$XDG_RUNTIME_DIR/herdr-world/bridge.sock" http://herdr-world/healthz
   ```
+- M13: `/whiteboard/{floor}/…` carry a floor's whiteboard (scene, image files, render) and `GET /drops/file` a recent
+  drop's bytes, over HTTP on the same socket (see [Whiteboard](#whiteboard)).
 - Text frames, one JSON object per frame. Every object has a string field `t`, its type. Client messages are limited to
   256 KiB (M7: a comment body is up to 64 KiB of text, escaped).
 - The bridge reads herdr (`ping`, `session.snapshot`, `events.subscribe`, `herdr session list`, and for the laptop
@@ -62,6 +64,14 @@ The helper proxies `POST /screen/frame/{req_id}` (M13, see [Screen share](#scree
 is `405` with `Allow: POST`). Only the path goes on, no query. An id that is not 32 lowercase hex digits is `400`
 `bad_request`; a body over 8 MiB + 4 KiB is `413` `frame_too_large`, by `Content-Length` and by counting while it
 streams.
+
+M13: the helper proxies the whiteboard's routes the browser uses (see [Whiteboard](#whiteboard)): `GET
+/whiteboard/{floor}`, `POST /whiteboard/{floor}/save`, `GET /whiteboard/{floor}/render.png`, `GET|PUT
+/whiteboard/{floor}/files/{id}` and `GET /drops/file`, under the same rules as `/logo` (`Host`, `token`, `Origin` when
+present). Only their own query parameters go on (`version`; `base`, `author`; `v`; `path`, `thumb`). A save body is
+let through up to 32 MiB + 128 KiB, a file up to 8 MiB + 4 KiB (`413` `whiteboard_too_large` past that).
+`POST /whiteboard/{floor}/pin` (the agents' pins, for the office CLI on the bridge's host) and anything else under
+`/whiteboard/` or `/drops/` answer `404` there and never reach the bridge.
 
 A `502` means the tunnel is down; the helper's own `GET /healthz` reports the tunnel state
 (`{"tunnel":{"state":"up|connecting|degraded|backoff",…}}`, `503` unless `up`).
@@ -353,6 +363,7 @@ and remember the last `seq` applied.
 | `worker.status` | `id`, `session`, `workspace_id`, `status`, `prev_status`, `status_since`, `title` | only `status` and/or `title` changed (the hot path). `title` is always present, `""` when cleared; on a title-only change `prev_status` equals `status` and `status_since` does not move. |
 | `worker.removed` | `id`, `session`, `workspace_id`, `reason`? | the workspace closed, the session was deleted, or the identity changed. `reason` is `"sent_home"` when the removal comes from `worker.fire` (the game plays the walk-out); absent otherwise. |
 | `worker.usage` | `id`, `session`, `usage` | the worker's `usage` changed; at most once per 5 s per worker (see [Usage and cost](#usage-and-cost)) |
+| `whiteboard.updated` | `floor`, `version`, `author`, `at`, `render_version`, `render`, `stale`, `stale_pins` | M13: a floor's whiteboard has a new version (a save, a clear, an agent's pin; flat in the event, see [Whiteboard](#whiteboard)) |
 | `limits.update` | `provider`, `plan`, `windows`, `at`, `stale`, `error`?, `source`?, `reached`?, `credits`? | a provider's plan limits were read (flat in the event, see [Plan limits](#plan-limits)); one per provider per read, about every 2 minutes while a client is connected |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
@@ -446,6 +457,10 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `run.prepare` | `{"session", "issue"? \| "text"? \| "work_item"?, "preset"?, "orch"?, "extra"?}` | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
 | `run.start` | `{"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
 | `limits.refresh` | `{}` | `{"queued": bool}`: `false` when the last refresh was less than 20 s ago | `limits.update` for both providers when queued (see [Plan limits](#plan-limits)) |
+| `whiteboard.get` | `{"floor"}` | the board's state, `{"floor", "version", "author", "at", "render_version", "render", "stale", "stale_pins"}` (its content is HTTP, see [Whiteboard](#whiteboard)) | — |
+| `whiteboard.clear` | `{"floor", "confirm": true, "author"?}` | the new state | `whiteboard.updated` |
+| `whiteboard.pin` | `{"floor", "author", "note", "request_id"?}` (an image: `POST /whiteboard/{floor}/pin`) | the new state plus `{"elements": [id…], "repeated"?}` | `whiteboard.updated` (none for a repeated `request_id`) |
+| `drops.list` | `{"limit"?: 1–50}` (default 20) | `{"drops": [{"path", "name", "size", "mtime", "mime", "image", "reason"?}…]}` | — |
 | `board.watch` | `{"session"}` | `{"enabled": bool, "reason"?}`, then `board.issues` and `board.prs` to this connection (see [Boards](#boards-issues-and-pull-requests)) | — |
 | `board.unwatch` | `{"session"}` | — | — |
 | `board.refresh` | `{"session"}` | `{"queued": bool}` | the boards of the poll, to the watchers |
@@ -1233,6 +1248,126 @@ one typed shape, `gh api graphql --method POST --input -`, with a fixed set of e
 client), 20 s per call, in a clean environment. Without `gh` the boards say `gh not found` and the write commands answer
 `provider_failed`.
 
+### Whiteboard
+
+M13 (#15). Every floor has a whiteboard on its north wall: look at it and press E, and an
+[Excalidraw](https://github.com/excalidraw/excalidraw) 0.18.1 editor opens over the game (loaded on that first open
+only, its fonts served by the game itself). The bridge keeps each floor's board: a versioned Excalidraw scene, its image
+files stored once by the sha256 of their bytes, and a PNG render the room's board shows. Agents pin images and notes on
+it (the office CLI, M14 #16).
+
+The board's bytes are HTTP on the bridge's socket, like the logos and `/upload` (a scene with its render is far over
+the 256 KiB a message may be); the WebSocket carries the commands without bytes and `whiteboard.updated`. Through the
+helper every URL has `token=` like `/ws`.
+
+**Storage** (`--whiteboards` / `HERDR_WORLD_WHITEBOARDS`, default `$XDG_DATA_HOME/herdr-3d/whiteboards`, else
+`~/.local/share/herdr-3d/whiteboards`; `-` for none: the commands answer `unsupported`, the routes `501`), one
+directory per floor, `0700`, files `0600`, every write a temp file renamed into place:
+
+| file | |
+|---|---|
+| `<floor>/head.json` | the current `version`, its `author` and `at`, `render_version` / `render`, the newest 100 `stale_pins`, the kept versions (`version`, `author`, `at`), the last 64 pin request ids. Bounded (at most 1 MiB, and a commit refuses a head over it before it writes anything). Written last: until it is, the previous version stays current with its own render. |
+| `<floor>/v/<n>.json` | version `n`: `{"schema":1,"floor","version","author","at","excalidraw_version","scene":{"type":"excalidraw","version":2,"source":"herdr-3d","elements":[…],"appState":{…}},"files":{"<sha256>":{"mimeType","size","created"}}}`. The **last 20** are kept; older ones are deleted. |
+| `<floor>/v/<n>.files.json` | the ids of the image files version `n` uses (`["<sha256>",…]`), for the file collection |
+| `<floor>/files/<sha256>` | an image's bytes; the name is the sha256 (hex) of exactly these bytes. A file no kept version uses is deleted an hour after it was last written (it may be on its way into a save). |
+| `<floor>/renders/<n>.png` | the client's export of version `n`; the current one is `render_version`'s. A save writes its own (it never replaces the current render), and the others are deleted once `head.json` names the new one (a clear names none). |
+
+`<floor>` is a herdr session name (`[A-Za-z0-9._-]`, 1 to 64, not starting with `-`, not only dots): one path
+component, never `..`. Reads need only a valid name; writes (save, file, clear, pin) need a floor the bridge watches
+(`unknown_session`, `404` over HTTP).
+
+**The scene.** `elements` are Excalidraw's, verbatim and in order, **deletion tombstones included** (an open editor
+needs them to reconcile a delete), at most 20000, the scene's JSON at most 16 MiB. Each is checked: a JSON object with
+an `id` (`[A-Za-z0-9_-]`, 1 to 64, unique), a known `type` (`rectangle`, `diamond`, `ellipse`, `arrow`, `line`,
+`freedraw`, `text`, `image`, `frame`, `magicframe`, `embeddable`, `iframe`), `version` ≥ 1, numeric coordinates within
+±10⁷, an `index` that is a valid fractional index or null, and for an image a `fileId` of 64 lower-case hex digits. A
+live image's file must be stored (`whiteboard_missing_file`); a tombstone's may be gone. Of `appState` only the four
+keys Excalidraw itself stores with a scene are kept, each checked (`viewBackgroundColor`, `gridSize`, `gridStep`,
+`gridModeEnabled`); selection, zoom, tools, menus and collaborators are the session's, never the board's.
+
+| request | |
+|---|---|
+| `GET /whiteboard/{floor}[?version=N]` | `{"t":"ack","data":{"state": <state>, "version", "scene", "files", "excalidraw_version", "history": [{"version","author","at"}…]}}`: the current version, or kept version `N` (`404` when it is not kept). A board never saved is version 0 with no elements. |
+| `PUT /whiteboard/{floor}/files/{sha256}` | an image's raw bytes, before the save that uses it. The id must be the sha256 of the body (`422` `whiteboard_hash_mismatch`), the type by the bytes PNG, JPEG, GIF or WebP (`415`), at most 8 MiB (`413`), and a floor's files at most 256 MiB together (`413`). `{"id","mime","size","stored"}`: `stored` is `false` for a file already there (nothing is written again, and no audit row). |
+| `GET /whiteboard/{floor}/files/{sha256}` | its bytes, `Cache-Control: private, max-age=31536000, immutable` (the name is the content), `nosniff`, a sandbox CSP |
+| `POST /whiteboard/{floor}/save?base=N&author=<name>` | `multipart/form-data` with a `scene` part (`{"elements","appState"}`) and a `render` part (the PNG: at most 2400 px a side, 16 MiB). `N` is the version the scene is based on (0 for a new board). `200` with the new state: version `N+1`, `render_version` = it, no stale pins. `409` `{"t":"error","code":"whiteboard_conflict","message","version": <current>}` when `N` is not the current version: nothing is stored. |
+| `GET /whiteboard/{floor}/render.png[?v=N]` | the latest render, `X-Render-Version: <n>`; with `?v=` only that version (`404` once there is a newer one: a cache never files the new picture under the old URL), cached for good; without, `no-store`. `404` when there is none (an empty or cleared board). |
+| `POST /whiteboard/{floor}/pin?author=<name>&request_id=<id>` | an agent's pin: the body is an image (PNG, JPEG, GIF, WebP, ≤ 8 MiB) or, with `Content-Type: text/plain`, a note (UTF-8, ≤ 4 KiB, ≤ 200 lines). `{"t":"ack","data": <state> + {"elements":[id…], "repeated"?}}`. The bridge's socket only: the helper does not proxy it. |
+| `GET /drops/file?path=<abs>[&thumb=1]` | a recent drop's bytes (or a thumbnail of at most 480 px), for the editor's "Pin a drop" |
+
+The state (`whiteboard.get`'s ack, `whiteboard.updated`, the saves' and the pins' answers):
+
+```json
+{"t":"whiteboard.updated","seq":1203,"floor":"herdr-3d","version":12,"author":"Nibble","at":1790841600000,
+ "render_version":11,"render":true,"stale":true,
+ "stale_pins":[{"id":"pin_8c1e…","kind":"note","author":"Nibble","note":"Use the blue CTA","version":12,"at":1790841600000}]}
+```
+
+`stale` is `render_version != version`: agents pinned since the render (a clear renders an empty board: `render`
+false, not stale). `stale_pins` lists what the render does not show yet (newest last), until a client saves the board
+again; the room's board shows them on a sticky note, the editor in its ledge.
+
+**Saving and merging** (the game, `game/src/whiteboard/editor.ts`). The editor saves 1.2 s after the last change, never
+during a stroke, a drag or a text edit: it uploads the image files the bridge does not have yet, exports the PNG
+(`exportToBlob`, at most 2400 px, `exportScale` 1, the background, light theme) and posts the save on the version it
+has. On `409`, and on a `whiteboard.updated` of a version it has not seen (an agent's pin, another window), it fetches
+the board, restores the remote elements on their own and reconciles them into the live scene (Excalidraw's
+`reconcileElements`: the higher element `version` wins, a stroke in progress is kept, `CaptureUpdateAction.NEVER`), then
+saves again. A fetched board older than the version the session already has (a newer merge or save landed while it
+waited on image bytes) is dropped: the version only goes up. A save is one snapshot: the elements, files and appState it sends and the PNG it renders are taken at one
+moment, and it is posted on the version they were based on; when a merge moved the board on while the files went up or
+the PNG was made, the round starts over on the new version (a stroke drawn meanwhile goes in the next save). The
+board's appState (background, grid) is saved like the elements, and a merge takes the remote one unless it was changed
+here since the last save. Closing the board saves what is left first, the changes made during a save in flight
+included (bounded: 8 s). When that fails (the bridge is unreachable), the board stays open and asks: **Retry**,
+**Close, keep a draft** (the changes stay in this browser, in memory and in `localStorage` key
+`h3d.wb.draft.<bridge>|<floor>` when they fit, and come back, reconciled with the board, the next time it opens, then
+are saved; a save drops the draft only once it has all of it, and a closed board's late save never does), or
+**Discard changes**.
+
+**Image ids.** An image's file id is the sha256 of the bytes the bridge stores, and the bridge checks it. Excalidraw
+hashes a pasted file before it scales it down (1440 px), so before a save the editor re-hashes each file's bytes and
+re-files one whose id does not match under its hash (an SVG or another type the bridge does not store becomes PNG
+first). The same picture pasted or pinned twice is one file.
+
+**Agents' pins** (`whiteboard.Store.Pin`, which the office CLI of M14 calls through `whiteboard.pin` for a note or the
+HTTP pin for an image; `Hub.PinWhiteboard` in Go): the bridge appends one complete Excalidraw element, every field of
+0.18.1 present: an `image` (the file stored once by hash, scaled to fit 640 × 480, `status: "saved"`) or a `text`
+(Excalifont 20, line height 1.25, left/top, `autoResize`, a provisional width the editor measures with the font
+loaded before it renders). It goes on top of everything (the fractional index after the highest one, tombstones
+included: fractional-indexing 3.2.0's `generateKeyBetween(last, null)`), in a column 80 units right of the drawing,
+below the pins already in that column (a pin moved into the drawing counts as drawing), with `customData.herdr`
+`{"author","kind":"agent-pin","requestId"?,"at"}`. The render goes stale. A repeated `request_id` pins nothing new
+(`repeated: true`, the same element ids, no event).
+
+**Clear** (`whiteboard.clear`, `confirm: true`, else `confirmation_required`; the game asks first): a new version in
+which every element is a tombstone (the open editors delete them) and there is no render. The versions before stay in
+the history (`GET …?version=N`).
+
+**Recent drops** (`drops.list`, for "Pin a drop"; #13's composer can use it too): the newest regular files, by
+modification time, in Drop Zone's data directory (`--dropzone-data`, the root the transcripts' path images use) and
+its folders one level down (Drop Zone's month folders), hidden files, links and anything but regular files skipped.
+Read only: the bridge never writes there. Each is `{"path","name","size","mtime","mime","image","reason"?}`; only
+`image: true` drops (PNG, JPEG, GIF, WebP of at most 25 MiB, by their first bytes) can be pinned, the others are listed
+greyed with their `reason` (`not_image`, `too_large`). `GET /drops/file` reads a path only under that directory, with
+the transcripts' allowlist (absolute, clean, no link out, walked down without following one), `404` otherwise.
+
+**Audit** rows (client `http` for the HTTP routes): `whiteboard.save` `{"floor","base","author","scene_bytes",
+"render_bytes","version"}`, `whiteboard.file` `{"floor","id","size","stored"}` (only when a file was written, or
+refused), `whiteboard.pin` `{"floor","author","kind","bytes","request_id","version"}`, `whiteboard.clear`
+`{"floor","confirm"}`, and the commands' own rows. Never an image or a note's text.
+
+| status | `code` | when |
+|---|---|---|
+| `400` | `whiteboard_invalid`, `bad_request` | a scene, element, note or multipart body that is not well-formed; `base` missing |
+| `404` | `not_found`, `unknown_session` | not a floor name, a version not kept, no render, no such file; a write to a floor the bridge does not watch |
+| `409` | `whiteboard_conflict` | a save on a version that is not the current one (with `version`) |
+| `413` | `whiteboard_too_large` | over a cap: scene 16 MiB or 20000 elements, file 8 MiB, a floor's files 256 MiB, render 16 MiB or 2400 px a side, note 4 KiB or 200 lines |
+| `415` | `whiteboard_unsupported` | an image that is not PNG, JPEG, GIF or WebP; a render that is not a PNG |
+| `422` | `whiteboard_hash_mismatch`, `whiteboard_missing_file` | a file id that is not the sha256 of its bytes; a live image whose file was not uploaded |
+| `501` | `unsupported` | the bridge keeps no whiteboards (`--whiteboards -`) |
+| `503` | `drops_unavailable` | no Drop Zone data directory |
+
 ### Plan limits
 
 M10 (#12). The bridge reads how much of the Claude and Codex plans is used, so the game can show it always and warn
@@ -1991,6 +2126,9 @@ wraps, the options' labels without their descriptions or previews, and a Yes / N
 | `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home |
 | `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker or one with an `ask`, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
+| `whiteboard_conflict` | M13: a save whose `base` is not the board's current version (HTTP `409`, with the current `version`) |
+| `whiteboard_invalid`, `whiteboard_too_large`, `whiteboard_unsupported`, `whiteboard_hash_mismatch`, `whiteboard_missing_file` | M13: a scene, file, render or pin the bridge refuses (see [Whiteboard](#whiteboard)) |
+| `drops_unavailable` | `drops.list` without a Drop Zone data directory, or one that cannot be read |
 | `too_large` | `transcript.image` with `size: "full"` for an image whose base64 is over 12 MiB (its thumbnail is still served) |
 | `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`, `transcript.watch` above `--max-transcript-watches`; the message says which |
 | `not_clean` | `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |

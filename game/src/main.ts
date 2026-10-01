@@ -229,6 +229,13 @@ export interface H3DDebug {
   screenStop(): void;
   /** M17: what the office clock shows, `14:05 · Wed 30 Sep` (null before the game is up). */
   clock(): string | null;
+  /** M13: the floor's whiteboard (its state, what the room's board shows, the overlay), and opening it as E does. */
+  whiteboard(): ReturnType<import('./app').App['whiteboardInfo']> | null;
+  openWhiteboard(): void;
+  /** M13: the open editor's Excalidraw API (for drawing in tests), null when none is open. */
+  excalidraw(): unknown;
+  /** M13: the `whiteboard.get`s the game sent by itself (`sent()` leaves them out). */
+  wbLog(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
 }
 
 declare global {
@@ -423,6 +430,10 @@ const h3d: H3DDebug = {
   },
   screenStop: () => app?.screen.stop(),
   clock: () => (app?.clockFace.time ? `${app.clockFace.time} · ${app.clockFace.date}` : null),
+  whiteboard: () => app?.whiteboardInfo() ?? null,
+  openWhiteboard: () => app?.openWhiteboard(),
+  excalidraw: () => app?.whiteboard.current?.excalidraw ?? null,
+  wbLog: () => structuredClone(app?.wbLog ?? []),
   openChanges: (id) => {
     if (app?.changes.worker !== id) app?.toggleChanges(id);
   },

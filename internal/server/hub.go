@@ -23,6 +23,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
+	"github.com/JeffreyVdb/herdr-3d/internal/whiteboard"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
 
@@ -185,6 +186,11 @@ type Options struct {
 	// screenshare.DefaultSweep).
 	ScreenDir                             string
 	ScreenTimeout, ScreenTTL, ScreenSweep time.Duration
+	// M13 whiteboard: the floors' boards (nil: the whiteboard commands and
+	// routes fail with unsupported), and Drop Zone's data directory for
+	// drops.list ("": drops_unavailable).
+	Whiteboards *whiteboard.Store
+	DropsRoot   string
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -672,6 +678,15 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startScreenFrame
 		case proto.CmdScreenGrab:
 			start = h.startScreenGrab
+		// M13 whiteboard
+		case proto.CmdWhiteboardGet:
+			start = h.startWhiteboardGet
+		case proto.CmdWhiteboardClear:
+			start = h.startWhiteboardClear
+		case proto.CmdWhiteboardPin:
+			start = h.startWhiteboardPin
+		case proto.CmdDropsList:
+			start = h.startDropsList
 		}
 		if start != nil {
 			// Accepted: the audit row is written (or begun) and the reply

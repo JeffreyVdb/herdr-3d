@@ -87,6 +87,30 @@ export function signTexture(text: string, sub: string, bg: string, fg: string, w
   });
 }
 
+/** M13: the whiteboard before anything is drawn on it (a few strokes, and how to start). */
+function whiteboardPlaceholder(): THREE.CanvasTexture {
+  return canvasTexture(1024, 420, (g) => {
+    g.fillStyle = '#fbfcff';
+    g.fillRect(0, 0, 1024, 420);
+    g.strokeStyle = '#2f6bf0';
+    g.lineWidth = 7;
+    g.lineCap = 'round';
+    g.beginPath();
+    g.arc(200, 210, 80, 0, Math.PI * 2);
+    g.moveTo(280, 210);
+    g.bezierCurveTo(420, 120, 520, 320, 660, 200);
+    g.stroke();
+    g.strokeStyle = '#e8413a';
+    g.strokeRect(690, 130, 220, 150);
+    g.fillStyle = '#1c2540';
+    g.font = `700 44px ${FONT}`;
+    g.fillText('Whiteboard', 36, 58);
+    g.font = `500 28px ${FONT}`;
+    g.fillStyle = '#7a8398';
+    g.fillText('Empty · look here and press E to draw', 36, 390);
+  });
+}
+
 function faceTexture(mesh: THREE.Mesh, tex: THREE.Texture, base: number): void {
   // Box face order: +x, -x, +y, -y, +z, -z. Front (+z) carries the texture.
   const plain = toon(base);
@@ -128,6 +152,8 @@ export interface PropMeshes {
   clock: ClockMesh | null;
   /** M13: the screen-share TV (null when the layout has none). */
   tv: TvMesh | null;
+  /** M13: puts the board's render on the whiteboard (null: back to the placeholder); the one it replaces is disposed. */
+  setWhiteboard(tex: THREE.Texture | null): void;
   dispose(): void;
 }
 
@@ -163,35 +189,24 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
     boardMeshes.set(id, m);
   }
 
+  // M13: the whiteboard shows its floor's latest render (setWhiteboard); this placeholder until there is one.
   const wb = byId.get('whiteboard');
+  let wbFront: THREE.MeshToonMaterial | null = null;
+  let wbPlaceholder: THREE.Texture | null = null;
+  let wbShown: THREE.Texture | null = null;
   if (wb) {
     const m = boxAt({ min: [wb.box.min[0], wb.box.min[1], wb.box.min[2]], max: [wb.box.max[0], wb.box.max[1], wb.box.max[2]] }, toon(0xffffff));
-    faceTexture(
-      m,
-      tex(
-        canvasTexture(1024, 420, (g) => {
-          g.fillStyle = '#fbfcff';
-          g.fillRect(0, 0, 1024, 420);
-          g.strokeStyle = '#2f6bf0';
-          g.lineWidth = 7;
-          g.lineCap = 'round';
-          g.beginPath();
-          g.arc(200, 210, 80, 0, Math.PI * 2);
-          g.moveTo(280, 210);
-          g.bezierCurveTo(420, 120, 520, 320, 660, 200);
-          g.stroke();
-          g.strokeStyle = '#e8413a';
-          g.strokeRect(690, 130, 220, 150);
-          g.fillStyle = '#1c2540';
-          g.font = `700 44px ${FONT}`;
-          g.fillText('Whiteboard', 36, 58);
-          g.font = `500 28px ${FONT}`;
-          g.fillStyle = '#7a8398';
-          g.fillText('arrives in M13', 36, 390);
-        }),
-      ),
-      0xdfe4ee,
-    );
+    wbPlaceholder = tex(whiteboardPlaceholder());
+    faceTexture(m, wbPlaceholder, 0xdfe4ee);
+    const mats = m.material;
+    if (Array.isArray(mats) && mats[4] instanceof THREE.MeshToonMaterial) {
+      wbFront = mats[4];
+      // Readable in the room's light, like the boards' notes.
+      wbFront.emissive.set(0xffffff);
+      wbFront.emissiveMap = wbPlaceholder;
+      wbFront.emissiveIntensity = 0.25;
+    }
+    m.name = 'whiteboard';
     add(m);
   }
 
@@ -367,9 +382,22 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
     },
     radio,
     clock,
+    setWhiteboard(t) {
+      if (!wbFront) {
+        t?.dispose();
+        return;
+      }
+      const next = t ?? wbPlaceholder;
+      if (wbShown && wbShown !== t) wbShown.dispose();
+      wbShown = t;
+      wbFront.map = next;
+      wbFront.emissiveMap = next;
+      wbFront.needsUpdate = true;
+    },
     tv,
     dispose() {
       tv?.dispose(); // first: it lets go of the share's texture, which is not the floor's to dispose
+      wbShown?.dispose();
       group.traverse((o) => {
         if (o instanceof THREE.Mesh) {
           o.geometry.dispose();

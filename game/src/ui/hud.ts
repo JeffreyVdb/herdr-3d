@@ -357,6 +357,13 @@ export class Hud {
     if (this.lastTarget?.id === id) this.setTarget(this.lastTarget, this.lastWorker);
   }
 
+  /** M13: what the whiteboard says when looked at (its version, the agents' pins its render does not show yet). */
+  setWhiteboard(st: { version: number; author: string; stale: boolean; stale_pins: unknown[] } | null): void {
+    const pins = st?.stale_pins.length ?? 0;
+    const info = !st || !st.version ? 'Empty · draw the first thing' : pins ? `${pins} new pin${pins === 1 ? '' : 's'} · last change by ${st.author}` : `Last change by ${st.author}`;
+    this.setPropInfo('whiteboard', info);
+  }
+
   /** The look-at prompt bar. */
   setTarget(t: Target | null, w: WorkerView | null): void {
     this.lastTarget = t;
@@ -471,6 +478,14 @@ export class Hud {
       const info = this.propInfo.get('tv') ?? 'Off · Share screen in the top bar';
       line.append(text('prompt-name', t.label), text('prompt-task', info));
       this.prompt.setAttribute('aria-label', `${t.label}: ${info}`);
+    } else if (t.kind === 'prop' && t.id === 'whiteboard') {
+      // M13: the floor's whiteboard opens its editor.
+      const info = this.propInfo.get('whiteboard') ?? 'Draw, paste a screenshot, pin a drop';
+      line.append(text('prompt-name', t.label), text('prompt-task', info));
+      const k = el('span', 'key');
+      k.append(el('kbd', '', 'E'), document.createTextNode('Open'));
+      keys.append(k);
+      this.prompt.setAttribute('aria-label', `${t.label}: ${info} · E Open`);
     } else if ((t.kind === 'board' || t.kind === 'prop') && t.milestone === null) {
       // M17: a prop that is only looked at (the clock): what it shows, no key.
       const info = this.propInfo.get(t.id) ?? '';

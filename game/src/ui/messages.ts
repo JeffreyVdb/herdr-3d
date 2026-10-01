@@ -77,6 +77,10 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'screen.share': 'show a shared screen to agents',
   'screen.frame': 'show a shared screen to agents',
   'screen.grab': 'show a shared screen to agents',
+  // M13 whiteboard
+  'whiteboard.get': 'keep whiteboards',
+  'whiteboard.clear': 'keep whiteboards',
+  'drops.list': 'list recent drops',
 };
 
 export function failureText(t: CommandName | LogoAction, code: string, message: string, ctx: FailureContext = {}): string {

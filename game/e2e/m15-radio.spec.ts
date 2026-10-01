@@ -212,9 +212,13 @@ test('the sound control has a music popover with a slider and mute of its own, a
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('.credits-row:not(.credits-font)')).toHaveCount(total);
   expect(total).toBeGreaterThanOrEqual(25);
-  // The genres, then (#59) the fonts: Recursive, each transcript preset's two (all OFL), and the box-drawing subset.
+  // The genres, then (#59) the fonts: Recursive, each transcript preset's two (all OFL), and the box-drawing subset;
+  // M13: then the whiteboard editor's (Excalidraw's) nine families.
   await expect(dialog.getByRole('heading', { level: 3 })).toHaveCount(6);
-  await expect(dialog.locator('.credits-font .credits-title')).toHaveText(['Recursive', 'Departure Mono', 'Archivo', 'JetBrains Mono', 'Atkinson Hyperlegible Next', 'Space Mono', 'Newsreader', 'H3D Box (DejaVu Sans Mono)']);
+  await expect(dialog.locator('.credits-font .credits-title')).toHaveText([
+    'Recursive', 'Departure Mono', 'Archivo', 'JetBrains Mono', 'Atkinson Hyperlegible Next', 'Space Mono', 'Newsreader', 'H3D Box (DejaVu Sans Mono)',
+    'Excalifont', 'Virgil', 'Xiaolai', 'Nunito', 'Lilita One', 'Assistant', 'Comic Shanns', 'Cascadia Code', 'Liberation Sans 1.05',
+  ]);
   for (const link of await dialog.locator('.credits-font').getByRole('link', { name: /license, SIL Open Font License 1\.1/ }).all()) await expect(link).toHaveAttribute('href', /openfontlicense\.org/);
   // The licences' full texts ship with the game, linked from the panel (#59).
   const local = dialog.getByRole('link', { name: /licences in full, FONT_LICENSES\.txt/ });
@@ -224,7 +228,10 @@ test('the sound control has a music popover with a slider and mute of its own, a
     return { ok: r.ok, text: await r.text() };
   }, await local.evaluate((a) => (a as HTMLAnchorElement).href));
   expect(licences.ok).toBe(true);
-  expect(licences.text.match(/SIL OPEN FONT LICENSE Version 1\.1 - 26 February 2007/g)?.length).toBe(7);
+  // Seven of the game's, and seven of the whiteboard's (six OFL fonts and Cascadia's repository licence).
+  expect(licences.text.match(/SIL OPEN FONT LICENSE Version 1\.1 - 26 February 2007/g)?.length).toBe(14);
+  expect(licences.text).toContain('Copyright (c) 2018 Shannon Miwa');
+  expect(licences.text).toContain('GNU GENERAL PUBLIC LICENSE');
   expect(licences.text).toContain('Bitstream Vera is');
   // The sun's tapes are written in ink (#59: white on it was 1.6:1).
   expect(await dialog.locator('.credits-fonts .tape').evaluate((e) => getComputedStyle(e).color)).not.toBe('rgb(255, 255, 255)');
