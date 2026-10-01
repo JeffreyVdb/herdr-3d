@@ -204,6 +204,7 @@ export class App {
   /** M13: the whiteboard overlay, each floor's board as last heard of, and the `whiteboard.get`s the game sent by itself (test hook; not in `sent`). */
   readonly whiteboard: WhiteboardOverlay;
   private readonly wbStates = new Map<string, WhiteboardState>();
+  private readonly wbFetching = new Set<string>();
   private wbLoad: { office: OfficeView; key: string; abort: AbortController } | null = null;
   readonly wbLog: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
   /** M7: pages the game asked to open, and how (test hook). */
@@ -338,7 +339,10 @@ export class App {
           if (s.phase !== 'live') this.watched = null;
           this.syncBoardWatch();
           // M13: a new connection may have missed boards' saves: read the floor's again.
-          if (s.phase === 'live' && this.conn.phase !== 'live') this.refreshWhiteboard();
+          if (s.phase === 'live' && this.conn.phase !== 'live') {
+            this.wbStates.clear();
+            this.refreshWhiteboard();
+          }
           // M5: a dropped connection took every watch with it; the next live one watches again.
           this.laptops.setConnected(s.phase === 'live');
           this.hud.setConn(s, this.fixture, Date.now());
@@ -1314,6 +1318,16 @@ export class App {
   }
 
   private async fetchWhiteboard(floor: string): Promise<void> {
+    if (this.wbFetching.has(floor)) return;
+    this.wbFetching.add(floor);
+    try {
+      await this.fetchWhiteboardOnce(floor);
+    } finally {
+      this.wbFetching.delete(floor);
+    }
+  }
+
+  private async fetchWhiteboardOnce(floor: string): Promise<void> {
     const entry: (typeof this.wbLog)[number] = { t: 'whiteboard.get', args: { floor } };
     this.wbLog.push(entry);
     if (this.wbLog.length > 400) this.wbLog.shift();
