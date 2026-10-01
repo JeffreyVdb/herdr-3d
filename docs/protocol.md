@@ -171,6 +171,9 @@ list may be empty. If discovery fails for one harness, only that harness uses th
 before M10 does: a client shows no limits widget without it (and none inline in the hire and start-run dialogs), and
 "Plan limits · reading…" only while the key is there and `[]`.
 
+`ai` (#92) is the AI integration's state, never a key (see [AI integration](#ai-integration)); the key is left out by a
+bridge without the service, as by one from before #92: a client's Settings then says the bridge has no AI integration.
+
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
 
@@ -366,6 +369,7 @@ and remember the last `seq` applied.
 | `worker.usage` | `id`, `session`, `usage` | the worker's `usage` changed; at most once per 5 s per worker (see [Usage and cost](#usage-and-cost)) |
 | `whiteboard.updated` | `floor`, `version`, `author`, `at`, `render_version`, `render`, `stale`, `stale_pins` | M13: a floor's whiteboard has a new version (a save, a clear, an agent's pin; flat in the event, see [Whiteboard](#whiteboard)) |
 | `limits.update` | `provider`, `plan`, `windows`, `at`, `stale`, `error`?, `source`?, `reached`?, `credits`? | a provider's plan limits were read (flat in the event, see [Plan limits](#plan-limits)); one per provider per read, about every 2 minutes while a client is connected |
+| `ai.update` | `classifier`, `llm`, `last_error`? | #92: the AI integration's state changed (a role saved or cleared, a test passed or failed, a key rejected); the whole state, flat in the event (see [AI integration](#ai-integration)) |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
@@ -460,6 +464,11 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `run.prepare` | `{"session", "issue"? \| "text"? \| "work_item"?, "preset"?, "orch"?, "extra"?}` | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
 | `run.start` | `{"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
 | `limits.refresh` | `{}` | `{"queued": bool}`: `false` when the last refresh was less than 20 s ago | `limits.update` for both providers when queued (see [Plan limits](#plan-limits)) |
+| `ai.get` | `{}` | the AI state (see [AI integration](#ai-integration)) | — |
+| `ai.models` | `{"role", "key"?, "base_url"?}` | `{"models": [{"id", "description"?}], "base_url"?}` | — |
+| `ai.test` | `{"role", "key"?, "base_url"?, "model"?, "extra_body"?}` | `{"ok": true, "latency_ms", "json_mode"?, "base_url"?, "score"?}` | `ai.update` when it changes the role in use |
+| `ai.set` | `{"role", "key"?, "base_url"?, "model"?, "extra_body"?}` | the AI state | `ai.update` |
+| `ai.clear` | `{"role"}` | the AI state | `ai.update` |
 | `whiteboard.get` | `{"floor"}` | the board's state, `{"floor", "version", "author", "at", "render_version", "render", "stale", "stale_pins"}` (its content is HTTP, see [Whiteboard](#whiteboard)) | — |
 | `whiteboard.clear` | `{"floor", "confirm": true, "author"?}` | the new state | `whiteboard.updated` |
 | `whiteboard.pin` | `{"floor", "author", "note", "request_id"?}` (an image: `POST /whiteboard/{floor}/pin`) | the new state plus `{"elements": [id…], "repeated"?}` | `whiteboard.updated` (none for a repeated `request_id`) |
@@ -1532,6 +1541,66 @@ Unknown keys of the CLIs are ignored; the fields above are only ever added to.
   when that read ends, both providers are read again at once (the read that was running may predate the request).
   A Codex CLI that is missing still falls back to the rollouts, when there are any.
 
+### AI integration
+
+#92. Two bridge-wide models, configured once and used by features (none yet; #90 is the first): the **classifier**
+(Jev, by TypeSafe: a score in [0,1] for a yes/no question about some state) and the **LLM** (any OpenAI-compatible
+endpoint: OpenRouter, LiteLLM, vLLM, Ollama, Xiaomi MiMo…). `internal/ai` holds them and knows no feature: a feature
+takes the `ai.Classifier` or `ai.LLM` interface (with fakes for its tests). **Configuring a model sends nothing.** The
+only calls the bridge makes by itself are `ai.models` (a model list) and `ai.test` (one tiny round trip), both asked for.
+
+```json
+{"classifier":{"state":"ready","model":"jev-latest","key_set":true,"key_hint":"d1f9","env":[]},
+ "llm":{"state":"incomplete","base_url":"https://api.xiaomimimo.com/v1","model":"","key_set":true,"key_hint":"3a7c",
+        "json_mode":null,"extra_body":{"thinking":{"type":"disabled"}},"env":["key"]},
+ "last_error":{"role":"llm","kind":"auth_failed","message":"the key was rejected (HTTP 401)","at":1790702330276,"runtime":true}}
+```
+
+`ai.get` answers it, `world.snapshot`'s `ai` holds it, `ai.update` carries it flat. A bridge without the service has no
+`ai` key and answers `unsupported` (a bridge before #92: `unknown_command`).
+
+- **`state`** per role: `off` (nothing configured), `incomplete` (a part is missing: the classifier needs a key and a
+  model, the LLM a base URL and a model; an LLM's key is optional, for Ollama or vLLM without one), `invalid` (the last
+  test or a feature's call failed), `ready`. A role that is not `ready` makes **no call at all**, for any feature.
+- **Keys** are sent by the game in `ai.models`, `ai.test` and `ai.set` and nowhere else. The bridge never sends one back:
+  only `key_set` and `key_hint` (the last four characters, `""` for a key under 8). A blank or absent `key` means "the
+  current key". Keys live in one `0600` file next to the database (`ai.json`, `--ai-file` / `HERDR_WORLD_AI_FILE`), not
+  in it, written atomically, never logged. They are scrubbed from every error (the provider's own text is clipped and
+  cleaned: the key, `Bearer …` and key-shaped strings go) and the audit log has the role, base URL, model and whether a
+  key was given, never a key or its length. A file that is not valid JSON stops the bridge (it is never overwritten).
+- **`env`** lists the fields the bridge environment sets (`HERDR_WORLD_AI_CLASSIFIER_KEY_FILE`,
+  `HERDR_WORLD_AI_CLASSIFIER_MODEL`, `HERDR_WORLD_AI_LLM_BASE_URL`, `HERDR_WORLD_AI_LLM_KEY_FILE`,
+  `HERDR_WORLD_AI_LLM_MODEL`; the keys are files, so a key is not in the environment). They win over the stored values
+  and are read-only: naming one in `ai.test` / `ai.set` is `env_locked`. `ai.clear` removes the stored role; the
+  environment stays in force.
+- **`ai.models`** `{role, key?, base_url?}`. Classifier: `GET https://api.typesafe.ai/v1/models` →
+  `models[].name`; a 401 is `auth_failed`. LLM: `GET {base}/models` → `data[].id` (sorted), the base URL normalised
+  (trailing slash removed; `/v1` added **only** if `{base}/models` is 404 and `{base}/v1/models` works, the result's
+  `base_url` says what was used); no `/models` at all is `no_models_endpoint` and the client lets the user type a model
+  id. A base URL is `http(s)://host…` without credentials, query or fragment; redirects are never followed.
+- **`ai.test`** `{role, key?, base_url?, model?, extra_body?}` (fields left out are the current ones). The classifier
+  gets a trivial yes/no question and must answer a score in [0,1] (`score`). The LLM gets a one-line JSON request with
+  `response_format: {"type":"json_object"}`; on a 400 it is repeated without, and `json_mode` says which works. A
+  failure is an error (`auth_failed`, `unreachable`, `timeout`, `bad_response`, `rate_limited`, `provider_failed`,
+  `incomplete`, `bad_request`). A pass is remembered for 30 minutes, for exactly that config (a fingerprint of base URL,
+  model, key and `extra_body`). A test of the config **in use** that fails makes the role `invalid`; one that passes lifts
+  `invalid`. A test of anything else changes no state.
+- **`ai.set`** `{role, key?, base_url?, model?, extra_body?}` saves a role and returns the state; fields left out are
+  kept. It is `test_required` unless exactly that config passed `ai.test`: **a role never becomes `ready` untested**.
+  `extra_body` (LLM only) is a JSON object of at most 4 KiB merged into every chat request (`{"thinking":{"type":"disabled"}}`
+  for MiMo); it cannot set `messages`, `model` or `stream`; `null` clears it. Nothing is hardcoded per vendor.
+- **`ai.clear`** `{role}` removes a role's settings and key.
+- **Bounds** (shared by every feature and both roles): a timeout per attempt (3 s classifier, 15 s LLM; model lists and
+  tests 15 s), **at most one retry** (a network failure, a timeout or a 5xx; the `response_format` fallback is that one
+  retry; a 401/403 or a 429 is never retried), and **two calls in flight at most** over the whole bridge; a waiting call
+  gives up with its context and holds no slot.
+- **Runtime 401/403** makes that role `invalid`, with `last_error {role, kind: "auth_failed", runtime: true}`, and
+  every consumer pauses (they get `ErrNotReady`, no request goes out) until a passing `ai.test` of the config in use, an
+  `ai.set` or an `ai.clear`. The game shows a toast ("AI integration paused: classification key rejected") on
+  the `ai.update` that carries it, and a chip in the top bar while a role is configured but not `ready`.
+- Error codes besides the usual: `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`,
+  `rate_limited`, `provider_failed`, `incomplete`, `test_required`, `env_locked`.
+
 ### Laptops: screens, input, changes and usage
 
 Every laptop command takes the bridge's worker `id`, never a pane id: the bridge uses the worker's own `pane_id`
@@ -2252,6 +2321,7 @@ wraps, the options' labels without their descriptions or previews, and a Yes / N
 | code | meaning |
 |---|---|
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
+| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
 | `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
 | `name_taken` | another building, or another team preset, already has that name (ignoring case) |

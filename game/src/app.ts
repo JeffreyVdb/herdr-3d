@@ -59,6 +59,9 @@ import { OpenPrDialog } from './ui/boards/openPr';
 import { ScreenShareController } from './screen';
 // M10 limits
 import { LimitsWidget } from './ui/limits';
+// #92 AI integration
+import { aiSection } from './ui/aiSection';
+import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
 import type { SettingsDialog } from './ui/settings';
 import { displaySection, timeSection } from './ui/settingsSections';
@@ -274,6 +277,12 @@ export class App {
     this.settings = this.hud.mountSettings();
     this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
+    // #92: the bridge-wide AI models. A chip while one is set up but unusable, a toast when a call just stopped one.
+    this.settings.addSection('ai', 'AI integration', aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
+    this.store.ai.onChange((notice) => {
+      this.hud.setAiChip(aiChip(this.store.ai.state));
+      if (notice) this.hud.toast(notice, 7000, 'error');
+    });
     this.limitsWidget = new LimitsWidget(
       this.hud.root,
       this.store.limits,

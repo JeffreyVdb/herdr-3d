@@ -201,6 +201,8 @@ export interface H3DDebug {
   crew(): { members: CrewInfo[]; shown: string[] };
   /** M6: the scripted freelancer of the fixture simulator (`sim=1`): one `sim.crew` step. */
   simCrew(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** #92: the fixture simulator's `sim.ai {reject}`: a feature's call got the role's key rejected (`sim=1`). */
+  simAi(args: Record<string, unknown>): Promise<{ ok: boolean; code?: string }>;
   /** M7: the open Issues / Pull requests overlay (and its item modal), null when none is open. */
   board(): BoardSummary | null;
   /** M7: what the boards on the wall show: notes (with their atlas cell and pose), flights, gong rings, buffer writes. */
@@ -412,6 +414,11 @@ const h3d: H3DDebug = {
     // `sim.crew` is the fixture simulator's, not a bridge command.
     const r = await app.client.request('sim.crew' as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  simAi: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request('sim.ai' as CommandName, args as never);
+    return r.ok ? { ok: true } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
   board: () => app?.boardsPanel.summary() ?? null,
   boards: () => app?.boardsInfo() ?? null,

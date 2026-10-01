@@ -87,6 +87,8 @@ export class Hud {
   private readonly battery = el('button', 'btn btn--icon', svg(ICON.leaf));
   private readonly settings = el('button', 'btn btn--icon', svg(ICON.gear));
   private readonly about = el('button', 'btn btn--icon', svg(ICON.info));
+  /** #92: shown while an AI model is set up but cannot be used (a rejected key, a missing part); a click opens Settings. */
+  private readonly aiChip = el('button', 'ai-chip', '<i></i><span></span>');
   private readonly buildings = el('button', 'btn', `${svg(ICON.building)}<span>Buildings</span>`);
   /** On a floor: its building's elevator panel, for keyboards and when the elevator is out of sight. */
   private readonly elevator = el('button', 'btn', `${svg(ICON.lift)}<span>Elevator</span>`);
@@ -137,6 +139,9 @@ export class Hud {
     this.settings.setAttribute('aria-label', 'Settings');
     this.settings.setAttribute('aria-haspopup', 'dialog');
     this.settings.type = 'button';
+    this.aiChip.type = 'button';
+    this.aiChip.hidden = true;
+    this.aiChip.setAttribute('aria-haspopup', 'dialog');
     this.about.title = 'About: game, helper and bridge versions';
     this.about.setAttribute('aria-label', 'About');
     this.about.setAttribute('aria-haspopup', 'dialog');
@@ -147,7 +152,7 @@ export class Hud {
     this.buildings.title = 'Buildings: create, rename and arrange buildings and floors (M)';
     this.elevator.title = 'Elevator: ride to another floor, wake or sleep floors, floor settings (L)';
     this.hire.title = 'Hire a worker at the first free desk on this floor (or look at a desk’s + and press E)';
-    actions.append(this.buildings, this.issues, this.prs, this.elevator, this.hire, this.settings, this.about, this.battery, this.conn);
+    actions.append(this.buildings, this.issues, this.prs, this.elevator, this.hire, this.aiChip, this.settings, this.about, this.battery, this.conn);
     bar.append(place, this.counts, actions);
     this.counts.after(this.usageEl);
     this.usageEl.hidden = true;
@@ -220,7 +225,19 @@ export class Hud {
   mountSettings(): SettingsDialog {
     const settings = new SettingsDialog(this.root.parentElement ?? this.root);
     this.settings.addEventListener('click', () => settings.open(this.settings));
+    this.aiChip.addEventListener('click', () => settings.open(this.aiChip));
     return settings;
+  }
+
+  /** #92: the AI chip (null hides it): which model stopped and that Settings is where to fix it. */
+  setAiChip(chip: { text: string; title: string; level: 'warn' | 'error' } | null): void {
+    this.aiChip.hidden = !chip;
+    if (!chip) return;
+    this.aiChip.dataset.level = chip.level;
+    this.aiChip.title = chip.title;
+    this.aiChip.setAttribute('aria-label', `${chip.text}. ${chip.title}`);
+    const span = this.aiChip.querySelector('span');
+    if (span) span.textContent = chip.text;
   }
 
   /** M13: the screen share control, in the top bar before Settings and About; shown everywhere (a share is the game's, not a floor's). */
