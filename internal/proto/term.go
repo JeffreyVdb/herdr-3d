@@ -55,9 +55,12 @@ type TerminalWatchArgs struct {
 	Fps  int    `json:"fps,omitempty"`
 	Cols int    `json:"cols,omitempty"`
 	Rows int    `json:"rows,omitempty"`
-	// Fullscreen (#74) asks the bridge to zoom the pane's tab on the pane
-	// while it is watched, and to put the tab back after.
-	Fullscreen bool `json:"fullscreen,omitempty"`
+	// Fullscreen (#74) is a tri-state. true asks the bridge to zoom the
+	// pane's tab on the pane while it is watched, and to put the tab back
+	// after. false does not zoom. Both make the watch follow the pane's zoom,
+	// focus and size (terminal.state). Absent (nil): the watch of an old
+	// client, as before #74: no zoom, no state messages.
+	Fullscreen *bool `json:"fullscreen,omitempty"`
 }
 
 // Zoom states of a watched pane (ZoomInfo.State).

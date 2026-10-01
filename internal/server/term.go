@@ -83,6 +83,7 @@ type watch struct {
 	autoCols, autoRows bool            // the size is the pane's, not the client's, so it follows the pane
 	resize             chan [2]int     // the pane's new size, for the pump (cap 1)
 	fullscreen         bool            // the tab is wanted zoomed on the pane (under hub.zoom.mu)
+	follow             bool            // the client sent fullscreen (true or false): it hears of the pane's zoom, focus and size changing
 	zoom               zoomWatch       // under hub.zoom.mu
 	zoomAck            *proto.ZoomInfo // the zoom state the ack tells (runWatch's goroutine only)
 }
@@ -240,7 +241,7 @@ func (h *Hub) startWatch(ctx context.Context, c *Client, cmd proto.Command) erro
 	}
 	w := &watch{c: c, id: a.ID, session: wk.Session, pane: wk.PaneID, cols: a.Cols, rows: a.Rows, fps: a.Fps,
 		socket: f.socket, autoCols: a.Cols == 0, autoRows: a.Rows == 0, resize: make(chan [2]int, 1),
-		fullscreen: a.Fullscreen}
+		fullscreen: a.Fullscreen != nil && *a.Fullscreen, follow: a.Fullscreen != nil}
 	if w.fps == 0 {
 		w.fps = DefaultWatchFps
 	}
@@ -318,14 +319,23 @@ func (h *Hub) runWatch(hctx, ctx context.Context, w *watch, cmd proto.Command) {
 	defer h.zoomRelease(context.WithoutCancel(hctx), w) // #74: after the cancel below
 	defer w.cancel()
 	// #74: a fullscreen watch zooms its pane's tab first, so the size read
-	// next is the zoomed one. A zoom that fails or a tab that cannot be read
-	// leaves the watch at the best known size.
-	st, haveState := h.paneState(ctx, w.socket, w.pane)
+	// next is the zoomed one, unless it took over a watch that decided that
+	// already (a re-watch never zooms again). A zoom that fails or a tab that
+	// cannot be read leaves the watch at the best known size.
 	h.zoom.mu.Lock()
-	fullscreen := w.fullscreen
+	zoom := w.fullscreen && !w.zoom.adopted
 	h.zoom.mu.Unlock()
-	if fullscreen && haveState {
-		st = h.zoomOn(ctx, w, st, zoomWhyWatch)
+	var (
+		st        herdr.PaneState
+		haveState bool
+	)
+	if zoom {
+		var err error
+		st, err = h.zoomOn(ctx, w, zoomWhyWatch, false)
+		haveState = err == nil
+	}
+	if !haveState {
+		st, haveState = h.paneState(ctx, w.socket, w.pane)
 	}
 	if w.cols == 0 || w.rows == 0 {
 		cols, rows := defaultCols, defaultRows
@@ -342,7 +352,7 @@ func (h *Hub) runWatch(hctx, ctx context.Context, w *watch, cmd proto.Command) {
 	h.zoomSize(w, w.cols, w.rows)
 	if info, ok := h.zoomInfo(w, st); ok {
 		w.zoomAck = &info
-		if fullscreen {
+		if w.follow {
 			h.followStart(w, info, w.cols, w.rows)
 		}
 	}

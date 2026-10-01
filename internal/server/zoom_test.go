@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -178,7 +179,7 @@ func TestFullscreenWatchZoomsASplitPaneAndPutsItBack(t *testing.T) {
 	c := tb.connect(proto.Hello{Client: "seat"})
 	id := idOf(t, c.snapshot(), "w1")
 
-	_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: true})
+	_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
 	res := watchResult(t, ack)
 	if res.Cols != 134 || res.Rows != 49 || res.Zoom == nil || *res.Zoom != (proto.ZoomInfo{State: "zoomed", Applied: true}) {
 		t.Fatalf("ack = %+v zoom %+v: the whole tab area, zoomed by the bridge", res, res.Zoom)
@@ -210,7 +211,7 @@ func TestFullscreenWatchIsPutBackWhenTheConnectionDrops(t *testing.T) {
 	tb := startZoomBridge(t, floor)
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
-	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: true})
+	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
 	c.conn.CloseNow()
 	waitFor(t, "the tab is put back", func() bool { return !floor.zoomed("w1") })
 }
@@ -222,7 +223,7 @@ func TestFullscreenWatchIsPutBackWhenTheBridgeStops(t *testing.T) {
 	tb := startZoomBridge(t, floor)
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
-	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: true})
+	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
 	if !floor.zoomed("w1") {
 		t.Fatal("not zoomed")
 	}
@@ -259,7 +260,7 @@ func TestFullscreenOfASinglePaneTabZoomsNothing(t *testing.T) {
 	tb := startZoomBridge(t, floor)
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
-	_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: true})
+	_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
 	res := watchResult(t, ack)
 	if res.Zoom == nil || *res.Zoom != (proto.ZoomInfo{State: "single"}) || res.Cols != 134 {
 		t.Fatalf("ack = %+v zoom %+v", res, res.Zoom)
@@ -280,7 +281,7 @@ func TestFullscreenKeepsATabTheHumanZoomed(t *testing.T) {
 	tb := startZoomBridge(t, floor)
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
-	_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: true})
+	_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
 	res := watchResult(t, ack)
 	if res.Zoom == nil || *res.Zoom != (proto.ZoomInfo{State: "zoomed"}) || res.Cols != 134 {
 		t.Fatalf("ack = %+v zoom %+v: zoomed, not by the bridge", res, res.Zoom)
@@ -301,7 +302,7 @@ func TestHumanUnzoomWhileSeatedIsReportedAndNotUndone(t *testing.T) {
 	tb := startZoomBridge(t, floor)
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
-	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: true})
+	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
 	o := tb.term.observer(t, 0)
 	o.push(t, true, "full")
 	c.frame()
@@ -336,7 +337,7 @@ func TestFocusMovingAwayIsReported(t *testing.T) {
 	tb := startZoomBridge(t, floor)
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
-	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: true})
+	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
 	floor.with("w1", func(t *fakeTab) { t.focused = "w1:p2" })
 	if st := c.state(); st.Zoom.State != "split" || st.Zoom.Applied || st.Cols != 67 {
 		t.Fatalf("state = %+v", st)
@@ -353,7 +354,7 @@ func TestExplicitSizeIsNotResized(t *testing.T) {
 	tb := startZoomBridge(t, floor)
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
-	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Cols: 100, Rows: 30, Fullscreen: true})
+	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Cols: 100, Rows: 30, Fullscreen: ptr(true)})
 	floor.with("w1", func(t *fakeTab) { t.zoomed = false })
 	if st := c.state(); st.Cols != 100 || st.Rows != 30 || st.Zoom.State != "split" {
 		t.Fatalf("state = %+v", st)
@@ -372,8 +373,8 @@ func TestTwoFullscreenWatchersOfATabShareTheZoom(t *testing.T) {
 	b := tb.connect(proto.Hello{Client: "b"})
 	id := idOf(t, a.snapshot(), "w1")
 	b.snapshot()
-	a.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: true})
-	_, ack := b.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: true})
+	a.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
+	_, ack := b.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
 	if res := watchResult(t, ack); res.Zoom == nil || *res.Zoom != (proto.ZoomInfo{State: "zoomed", Applied: true}) {
 		t.Fatalf("second watcher ack zoom = %+v: the tab is the bridge's", res.Zoom)
 	}
@@ -401,7 +402,7 @@ func TestRewatchKeepsTheZoom(t *testing.T) {
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
 	for range 3 {
-		_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: true})
+		_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
 		if res := watchResult(t, ack); res.Zoom == nil || !res.Zoom.Applied {
 			t.Fatalf("ack zoom = %+v", res.Zoom)
 		}
@@ -421,7 +422,7 @@ func TestFailedZoomNeverFailsTheWatch(t *testing.T) {
 	tb := startZoomBridge(t, floor)
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
-	_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: true})
+	_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
 	res := watchResult(t, ack)
 	if res.Cols != 67 || res.Zoom == nil || *res.Zoom != (proto.ZoomInfo{State: "split"}) {
 		t.Fatalf("ack = %+v zoom %+v: the best known size", res, res.Zoom)
@@ -443,7 +444,7 @@ func TestAsleepSessionIsNotZoomedBack(t *testing.T) {
 	tb := startZoomBridge(t, floor)
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
-	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: true})
+	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
 	tb.publishFloor(false)
 	if cl := c.closed(); cl.Reason != proto.ClosedAsleep {
 		t.Fatalf("closed = %+v", cl)
@@ -544,10 +545,345 @@ func TestFullscreenWithoutZoomSupport(t *testing.T) {
 	tb := startTermBridge(t, nil, shell("w1"))
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
-	_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: true})
+	_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
 	if res := watchResult(t, ack); res.Zoom != nil || res.Cols != 132 {
 		t.Fatalf("ack = %+v zoom %+v", res, res.Zoom)
 	}
 	yes := true
 	c.mustError(proto.CmdTerminalZoom, proto.TerminalZoomArgs{ID: id, On: &yes}, proto.ErrInternal)
+}
+
+// zoomGate is a PaneState that parks the next read until released: it lets
+// a test line a slow read up against another watch's write.
+type zoomGate struct {
+	floor   *zoomFloor
+	armed   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newZoomGate(floor *zoomFloor) *zoomGate {
+	return &zoomGate{floor: floor, entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+// arm parks the next read.
+func (g *zoomGate) arm() { g.armed.Store(true) }
+
+func (g *zoomGate) state(ctx context.Context, socket, pane string) (herdr.PaneState, bool) {
+	st, ok := g.floor.state(ctx, socket, pane)
+	if g.armed.CompareAndSwap(true, false) {
+		close(g.entered)
+		<-g.release
+	}
+	return st, ok
+}
+
+// startGatedBridge is startZoomBridge with PaneState behind gate (no
+// follow polling: ZoomPoll is an hour).
+func startGatedBridge(t *testing.T, floor *zoomFloor, gate *zoomGate) *termBridge {
+	t.Helper()
+	ft := newFakeTerm()
+	tb := startTermBridge(t, func(o *server.Options) {
+		o.Term = &zoomTerm{fakeTerm: ft, floor: floor}
+		o.PaneState = gate.state
+		o.ZoomPoll = time.Hour
+	}, shell("w1"))
+	tb.term = ft
+	return tb
+}
+
+// nextReply reads c's messages until the one that answers reqID.
+func (c *client) nextReply(reqID string) {
+	c.t.Helper()
+	for {
+		if m := c.next(); m.env.ReqID == reqID {
+			return
+		}
+	}
+}
+
+// B1: a re-watch (a new fps on a transcript switch, a gap) takes over the
+// decision of the watch it replaces: the human unzoomed, so it does not
+// zoom again. Only terminal.zoom on does.
+func TestRewatchAfterHumanUnzoomDoesNotZoomAgain(t *testing.T) {
+	floor := newZoomFloor()
+	floor.splitTab("w1")
+	tb := startZoomBridge(t, floor)
+	c := tb.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
+
+	floor.with("w1", func(t *fakeTab) { t.zoomed = false })
+	c.state()
+	_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true), Fps: 2})
+	if res := watchResult(t, ack); res.Cols != 67 || res.Zoom == nil || *res.Zoom != (proto.ZoomInfo{State: "split"}) {
+		t.Fatalf("re-watch ack = %+v zoom %+v: the split the human left", res, res.Zoom)
+	}
+	// The same after the human moved the focus to the other pane.
+	floor.with("w1", func(t *fakeTab) { t.zoomed, t.focused = true, "w1:p2" })
+	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true), Fps: 3})
+	if w := floor.writes(); !slices.Equal(w, []string{"on w1:p1"}) {
+		t.Fatalf("writes = %q: a re-watch zoomed again", w)
+	}
+	// The player asking is another matter.
+	_, ack = c.mustAck(proto.CmdTerminalZoom, proto.TerminalZoomArgs{ID: id, On: ptr(true)})
+	if res := watchResult(t, ack); res.Zoom == nil || res.Zoom.State != "zoomed" {
+		t.Fatalf("terminal.zoom on = %+v", res.Zoom)
+	}
+	if w := floor.writes(); !slices.Equal(w, []string{"on w1:p1", "on w1:p1"}) {
+		t.Fatalf("writes = %q: terminal.zoom on is the one that zooms again", w)
+	}
+}
+
+// B2: a terminal.zoom that is still reading when its watch ends takes no
+// ref and zooms nothing: nobody would put the tab back.
+func TestZoomCommandInFlightWhenTheWatchEndsZoomsNothing(t *testing.T) {
+	floor := newZoomFloor()
+	floor.splitTab("w1")
+	gate := newZoomGate(floor)
+	tb := startGatedBridge(t, floor, gate)
+	c := tb.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id})
+	obs := tb.term.observer(t, 0)
+
+	gate.arm()
+	args, _ := json.Marshal(proto.TerminalZoomArgs{ID: id, On: ptr(true)})
+	c.send(proto.Command{T: proto.CmdTerminalZoom, ReqID: "late", Args: args})
+	<-gate.entered
+	c.mustAck(proto.CmdTerminalUnwatch, proto.WorkerArgs{ID: id})
+	waitFor(t, "the watch ends", obs.closed)
+	time.Sleep(50 * time.Millisecond) // its release ran
+	close(gate.release)
+	c.nextReply("late")
+	time.Sleep(60 * time.Millisecond)
+	if floor.zoomed("w1") || len(floor.writes()) != 0 {
+		t.Fatalf("writes = %q, zoomed %v: a command zoomed a watch that had ended", floor.writes(), floor.zoomed("w1"))
+	}
+}
+
+// B3: a watch that turned fullscreen off is not a fullscreen watcher: the
+// last one that is puts the tab back.
+func TestWatchThatTurnedFullscreenOffDoesNotHoldTheTab(t *testing.T) {
+	floor := newZoomFloor()
+	floor.splitTab("w1")
+	tb := startZoomBridge(t, floor)
+	a := tb.connect(proto.Hello{Client: "a"})
+	b := tb.connect(proto.Hello{Client: "b"})
+	id := idOf(t, a.snapshot(), "w1")
+	b.snapshot()
+	a.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
+	b.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
+	a.mustAck(proto.CmdTerminalZoom, proto.TerminalZoomArgs{ID: id, On: ptr(false)})
+	b.mustAck(proto.CmdTerminalZoom, proto.TerminalZoomArgs{ID: id, On: ptr(true)})
+	b.mustAck(proto.CmdTerminalUnwatch, proto.WorkerArgs{ID: id})
+	waitFor(t, "the tab is put back", func() bool { return !floor.zoomed("w1") })
+	if w := floor.writes(); !slices.Equal(w, []string{"on w1:p1", "off w1:p1", "on w1:p1", "off w1:p1"}) {
+		t.Fatalf("writes = %q", w)
+	}
+}
+
+// B3: a watch that only follows (fullscreen false) is no owner either: it
+// standing up leaves a tab another laptop zoomed.
+func TestFollowingWatchStandingUpLeavesTheOtherLaptopsZoom(t *testing.T) {
+	floor := newZoomFloor()
+	floor.splitTab("w1")
+	tb := startZoomBridge(t, floor)
+	a := tb.connect(proto.Hello{Client: "a"})
+	b := tb.connect(proto.Hello{Client: "b"})
+	id := idOf(t, a.snapshot(), "w1")
+	b.snapshot()
+	a.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
+	b.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(false)})
+	a.mustAck(proto.CmdTerminalUnwatch, proto.WorkerArgs{ID: id})
+	waitFor(t, "the tab is put back", func() bool { return !floor.zoomed("w1") })
+}
+
+// B4: a watch decides on the tab as it is when its turn to write comes, not
+// as it was when it looked. Its read is inside the write lock, so an earlier
+// watch's restore cannot run between the read and the write: the restore waits
+// for the new watch, which finds the tab zoomed, holds it, and the restore
+// finds it is no longer the last. (With the read outside the lock the new
+// watch decided "zoomed already" on a tab the restore then put back.)
+func TestNewWatchReadsTheTabInsideTheWriteLock(t *testing.T) {
+	floor := newZoomFloor()
+	floor.splitTab("w1")
+	gate := newZoomGate(floor)
+	tb := startGatedBridge(t, floor, gate)
+	a := tb.connect(proto.Hello{Client: "a"})
+	b := tb.connect(proto.Hello{Client: "b"})
+	id := idOf(t, a.snapshot(), "w1")
+	b.snapshot()
+	a.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
+
+	gate.arm()
+	args, _ := json.Marshal(proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
+	b.send(proto.Command{T: proto.CmdTerminalWatch, ReqID: "new", Args: args})
+	<-gate.entered // b is reading, with the write lock
+	a.mustAck(proto.CmdTerminalUnwatch, proto.WorkerArgs{ID: id})
+	time.Sleep(50 * time.Millisecond) // a's restore waits for the lock
+	close(gate.release)
+	b.nextReply("new")
+	time.Sleep(80 * time.Millisecond)
+	if !floor.zoomed("w1") || !slices.Equal(floor.writes(), []string{"on w1:p1"}) {
+		t.Fatalf("zoomed %v, writes = %q: the restore of the first watch undid the second one's", floor.zoomed("w1"), floor.writes())
+	}
+	b.mustAck(proto.CmdTerminalUnwatch, proto.WorkerArgs{ID: id})
+	waitFor(t, "the tab is put back", func() bool { return !floor.zoomed("w1") })
+}
+
+// B5: the tab the bridge zoomed is the one it puts back: a pane the human
+// moved to a tab of theirs, zoomed, is left as it is.
+func TestRestoreLeavesTheTabThePaneMovedTo(t *testing.T) {
+	floor := newZoomFloor()
+	floor.splitTab("w1")
+	ft := newFakeTerm()
+	var moved atomic.Bool
+	tb := startTermBridge(t, func(o *server.Options) {
+		o.Term = &zoomTerm{fakeTerm: ft, floor: floor}
+		o.ZoomPoll = time.Hour
+		o.PaneState = func(ctx context.Context, s, p string) (herdr.PaneState, bool) {
+			st, ok := floor.state(ctx, s, p)
+			if moved.Load() {
+				st.TabID = "w1:t2"
+			}
+			return st, ok
+		}
+	}, shell("w1"))
+	tb.term = ft
+	c := tb.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(true)})
+	moved.Store(true) // the pane is in another tab now, zoomed there by the human
+	c.mustAck(proto.CmdTerminalUnwatch, proto.WorkerArgs{ID: id})
+	time.Sleep(100 * time.Millisecond)
+	if !floor.zoomed("w1") || !slices.Equal(floor.writes(), []string{"on w1:p1"}) {
+		t.Fatalf("writes = %q, zoomed %v: the restore unzoomed a tab it never zoomed", floor.writes(), floor.zoomed("w1"))
+	}
+}
+
+// B6: a herdr that refuses the zoom is an input_failed of the command (the
+// watch itself stays fail-open), and the refused command changes nothing:
+// the watch does not become a fullscreen one.
+func TestZoomCommandReturnsWhatHerdrRefused(t *testing.T) {
+	floor := newZoomFloor()
+	floor.splitTab("w1")
+	tb := startZoomBridge(t, floor)
+	c := tb.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id})
+	floor.mu.Lock()
+	floor.fail = errors.New("herdr refuses zoom")
+	floor.mu.Unlock()
+	c.mustError(proto.CmdTerminalZoom, proto.TerminalZoomArgs{ID: id, On: ptr(true)}, proto.ErrInputFailed)
+	floor.mu.Lock()
+	floor.fail = nil
+	floor.mu.Unlock()
+	if floor.zoomed("w1") {
+		t.Fatal("zoomed")
+	}
+
+	// Off: the tab stays zoomed, the error says so, and the watch is still a
+	// fullscreen one that puts the tab back.
+	yes := true
+	c.mustAck(proto.CmdTerminalZoom, proto.TerminalZoomArgs{ID: id, On: &yes})
+	floor.mu.Lock()
+	floor.fail = errors.New("herdr refuses unzoom")
+	floor.mu.Unlock()
+	c.mustError(proto.CmdTerminalZoom, proto.TerminalZoomArgs{ID: id, On: ptr(false)}, proto.ErrInputFailed)
+	floor.mu.Lock()
+	floor.fail = nil
+	floor.mu.Unlock()
+	if !floor.zoomed("w1") {
+		t.Fatal("unzoomed")
+	}
+	c.mustAck(proto.CmdTerminalUnwatch, proto.WorkerArgs{ID: id})
+	waitFor(t, "the tab is put back", func() bool { return !floor.zoomed("w1") })
+
+	rows := zoomAudit(t, tb)
+	if len(rows) != 4 || !strings.HasPrefix(rows[0], "failed ") || !strings.HasPrefix(rows[2], "failed ") {
+		t.Fatalf("zoom audit = %q: every write has its row, the refused ones as failed", rows)
+	}
+}
+
+// B7: a client that sent fullscreen false follows the pane too: it hears
+// of the human zooming, and its observer follows the size. It owns nothing
+// of the tab until it zooms by terminal.zoom.
+func TestWatchWithFullscreenFalseFollowsTheTab(t *testing.T) {
+	floor := newZoomFloor()
+	floor.splitTab("w1")
+	tb := startZoomBridge(t, floor)
+	c := tb.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	_, ack := c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id, Fullscreen: ptr(false)})
+	if res := watchResult(t, ack); res.Cols != 67 || res.Zoom == nil || *res.Zoom != (proto.ZoomInfo{State: "split"}) {
+		t.Fatalf("ack = %+v zoom %+v", res, res.Zoom)
+	}
+	floor.with("w1", func(t *fakeTab) { t.zoomed, t.focused = true, "w1:p1" })
+	if st := c.state(); st.Zoom != (proto.ZoomInfo{State: "zoomed"}) || st.Cols != 134 || st.Rows != 49 {
+		t.Fatalf("state = %+v: the human zoomed, not the bridge", st)
+	}
+	if o := tb.term.observer(t, 1); o.cols != 134 || o.rows != 49 {
+		t.Fatalf("observer = %dx%d: it follows the size", o.cols, o.rows)
+	}
+	c.mustAck(proto.CmdTerminalUnwatch, proto.WorkerArgs{ID: id})
+	time.Sleep(60 * time.Millisecond)
+	if w := floor.writes(); len(w) != 0 || !floor.zoomed("w1") {
+		t.Fatalf("writes = %q, zoomed %v: the human's tab is left alone", w, floor.zoomed("w1"))
+	}
+}
+
+// B7 / A8: a client that never sent fullscreen is not followed: no state
+// messages, one observer, no snapshot polling for it.
+func TestWatchWithoutTheFullscreenFieldIsNeverFollowed(t *testing.T) {
+	floor := newZoomFloor()
+	floor.splitTab("w1")
+	var reads atomic.Int32
+	ft := newFakeTerm()
+	tb := startTermBridge(t, func(o *server.Options) {
+		o.Term = &zoomTerm{fakeTerm: ft, floor: floor}
+		o.ZoomPoll = 10 * time.Millisecond
+		o.PaneState = func(ctx context.Context, s, p string) (herdr.PaneState, bool) {
+			reads.Add(1)
+			return floor.state(ctx, s, p)
+		}
+	}, shell("w1"))
+	tb.term = ft
+	c := tb.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	c.mustAck(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: id})
+	n := reads.Load()
+	floor.with("w1", func(t *fakeTab) { t.zoomed, t.focused = true, "w1:p1" })
+	time.Sleep(150 * time.Millisecond)
+	if got := reads.Load(); got != n {
+		t.Fatalf("%d snapshot reads after the watch started: an old client's watch is not polled", got-n)
+	}
+	if n := tb.term.observers(); n != 1 {
+		t.Fatalf("%d observers, want the one the watch started", n)
+	}
+	// No terminal.state arrives: the next message is the frame.
+	tb.term.observer(t, 0).push(t, true, "x")
+	if m := c.next(); m.env.T != proto.TTerminalFrame {
+		t.Fatalf("got %s, want only the frame", m.raw)
+	}
+}
+
+// The wire shape of the tri-state: absent, false and true are three things.
+func TestTerminalWatchFullscreenIsATriState(t *testing.T) {
+	for _, tc := range []struct {
+		json string
+		want *bool
+	}{{`{"id":"a"}`, nil}, {`{"id":"a","fullscreen":false}`, ptr(false)}, {`{"id":"a","fullscreen":true}`, ptr(true)}} {
+		var a proto.TerminalWatchArgs
+		if err := json.Unmarshal([]byte(tc.json), &a); err != nil {
+			t.Fatal(err)
+		}
+		if (a.Fullscreen == nil) != (tc.want == nil) || (tc.want != nil && *a.Fullscreen != *tc.want) {
+			t.Fatalf("%s decoded to %v", tc.json, a.Fullscreen)
+		}
+		out, _ := json.Marshal(a)
+		if !strings.Contains(string(out), `"fullscreen"`) != (tc.want == nil) {
+			t.Fatalf("%s encoded to %s: false must be sent, only absent omitted", tc.json, out)
+		}
+	}
 }

@@ -159,7 +159,7 @@ func TestIntegrationFullscreenLaptop(t *testing.T) {
 	watch := func(fullscreen bool) proto.TerminalWatchResult {
 		t.Helper()
 		var res proto.TerminalWatchResult
-		b.ack(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: w.ID, Fullscreen: fullscreen}, 20*time.Second, &res)
+		b.ack(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: w.ID, Fullscreen: &fullscreen}, 20*time.Second, &res)
 		return res
 	}
 	unwatch := func() {

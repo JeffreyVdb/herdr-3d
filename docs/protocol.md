@@ -404,7 +404,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
 | `worker.changes` | `{"id": string}` | the worker's git changes, `{"cwd", "branch", "head", "upstream", "ahead", "behind", "base", "files", "stat", "diff", "diff_bytes", "truncated", "omitted"}` (see [Changes](#changes)) | — |
-| `terminal.watch` | `{"id": string, "fps"?: 1–30, "cols"?: 40–300, "rows"?: 10–100, "fullscreen"?: bool}` | `{"pane", "cols", "rows", "zoom"?}` | `terminal.frame`s to this connection only; with `fullscreen`, also `terminal.state` (see [Laptop screens](#laptop-screens)) |
+| `terminal.watch` | `{"id": string, "fps"?: 1–30, "cols"?: 40–300, "rows"?: 10–100, "fullscreen"?: bool}` | `{"pane", "cols", "rows", "zoom"?}` | `terminal.frame`s to this connection only; with `fullscreen` (true or false), also `terminal.state` (see [Fullscreen](#fullscreen-74)) |
 | `terminal.unwatch` | `{"id": string}` | — | — |
 | `terminal.zoom` | `{"id": string, "on": bool}` | `{"pane", "cols", "rows", "zoom"}` | a `terminal.state` and, if the size changed, a full `terminal.frame` (see [Fullscreen](#fullscreen-74)) |
 | `worker.keys` | `{"id": string, "input": [{"text": string} \| {"key": string}…]}` | — | — (see [Input](#input)) |
@@ -1237,6 +1237,13 @@ has **pane zoom**, a per-tab flag that makes the tab show its focused pane alone
 `"fullscreen": true` zooms the pane's tab while it is watched and puts it back after (this is the bridge's one write
 that changes what a human's herdr TUI shows; `terminal.watch` without `fullscreen` behaves exactly as before).
 
+`fullscreen` is a **tri-state**. *Absent* is the watch of a client from before #74: nothing is zoomed, the bridge does
+not look at the pane's tab again and sends no `terminal.state`, whatever happens to the tab. `true` zooms. `false` does
+not zoom and takes no ownership, but says that the client wants the chip's truth: the watch follows the pane's zoom,
+focus and size like a `true` one (`terminal.state`, the observer at the new size) and can zoom later with
+`terminal.zoom`. A client sends `false` for the preference "no fullscreen" and leaves the field out for the screens it
+only shows (the ambient laptops).
+
 ```json
 {"t":"terminal.watch","req_id":"51","args":{"id":"6db1905e-…","fullscreen":true}}
 {"t":"ack","req_id":"51","data":{"pane":"w1:p1","cols":134,"rows":49,"zoom":{"state":"zoomed","applied":true}}}
@@ -1258,16 +1265,24 @@ that changes what a human's herdr TUI shows; `terminal.watch` without `fullscree
   scrollbar: area 114 × 49 gave a 111 × 47 terminal); the observer pads that difference, which is better than cutting off
   the rows a prompt is on. Observer frames carry the size that was asked for, not the pane's real one, so the bridge
   cannot correct this guess. An explicit `cols` / `rows` is the client's own and is never changed by a zoom.
-- **Ownership.** The bridge remembers per (session, tab) that it zoomed the tab, counted by the fullscreen watches of
-  that tab over all connections. When the last of them ends (`terminal.unwatch`, a re-watch without `fullscreen`, a
-  closed connection, `terminal.closed`, the bridge shutting down) and the tab is still zoomed, it runs the `--off`.
-  It does not, when the tab was already zoomed before the watch (the human's), when the human unzoomed it since, or when
-  the floor is asleep (no herdr call is made). It **never zooms again on its own** after the first time: if the human
-  changes the focus or unzooms while seated, the laptop is told and the player decides.
-  A re-watch of the same worker keeps the zoom (no put back and zoom again in between).
+- **Ownership.** The bridge remembers per (session, tab) that it zoomed the tab, counted by the watches that want the
+  tab fullscreen (`fullscreen: true`, or `terminal.zoom` on) over all connections. A watch that follows only
+  (`fullscreen: false`) or that turned fullscreen off with `terminal.zoom` is not counted: it is no owner and its
+  ending puts nothing back, nor stops the last real owner from doing so. When the last counted watch ends
+  (`terminal.unwatch`, a re-watch without `fullscreen: true`, a closed connection, `terminal.closed`, the bridge shutting
+  down) and the tab is still zoomed, it runs the `--off`. It does not, when the tab was already zoomed before the watch
+  (the human's), when the human unzoomed it since, when the pane is no longer in the tab the bridge zoomed (it is
+  looked at again before the write; a pane the human moved to another tab leaves that tab alone), or when the floor is
+  asleep (no herdr call is made). Every decision to write is made on the pane's state read under the write lock that
+  serialises the bridge's zoom writes, never on one read before waiting for it.
+  The bridge **never zooms again on its own** after the first time: if the human changes the focus or unzooms while
+  seated, the laptop is told and the player decides. A re-watch of the same worker (the game does it for a new fps, on a
+  frame gap) takes over the watch it replaces with its decision: the tab is not put back and zoomed again in between,
+  and it is **not zoomed again** even with `fullscreen: true` when the human unzoomed or moved the focus meanwhile.
+  Only `terminal.zoom` with `on: true` zooms again.
   `--on` always focuses the pane in herdr (that is how zoom picks the pane to show): a watcher that zooms moves the
   human's TUI focus. Two watchers of different panes of one tab take turns at being the visible one.
-- **`terminal.state`** goes to a watch that sent `fullscreen: true` or used `terminal.zoom`, like `terminal.frame`: no
+- **`terminal.state`** goes to a watch that sent `fullscreen` (true or false) or used `terminal.zoom`, like `terminal.frame`: no
   `seq`, not replayed, dropped when the connection has no room. It is sent when the pane's `zoom` or size changed
   (the bridge looks at the session's snapshot every 2 s while such a watch lives). A size that was not set by the
   client follows the pane: the observer starts over at the new `cols` × `rows` and the next `terminal.frame` is a full
@@ -1275,9 +1290,13 @@ that changes what a human's herdr TUI shows; `terminal.watch` without `fullscree
 - **`terminal.zoom`** `{id, on}` (the worker must be watched by the connection: `bad_request` otherwise, also for a
   missing `on`): `on: true` zooms the tab on the pane and takes ownership as `fullscreen` does (a watch without it
   starts following); `on: false` unzooms the tab, also one the human zoomed (the player asked), and the bridge owns
-  nothing of it afterwards. `input_failed` when herdr refused. The ack is the new state, `cols` × `rows` included.
+  nothing of it afterwards (the watch is no longer counted, see Ownership). `input_failed` when herdr refused the
+  zoom or the pane/tab could not be read, or when the watch ended while the command was in flight (a command never
+  zooms, or takes ownership for, a watch that is gone); a refused command changes nothing. The ack is the new state,
+  `cols` × `rows` included.
 - **Failures never fail a watch.** A tab that cannot be read, a failed `pane zoom`, a single-pane tab or a headless
-  session leave the watch at the best known size (`zoom` says `split`, or `zoomed` with `headless`).
+  session leave the watch at the best known size (`zoom` says `split`, or `zoomed` with `headless`). This is for the
+  zoom at `terminal.watch` only: an explicit `terminal.zoom` reports a failure as `input_failed`.
 - **Audit.** Every zoom write is its own audit row `pane.zoom` with `{"session","pane","mode":"on"|"off","why"}`
   (`why` is `watch`, `command`, `stand-up`), apart from the row of the `terminal.watch` / `terminal.zoom` command.
   The bridge runs exactly two zoom commands, `herdr --session <s> pane zoom <pane> --on` and `--off`: never `--toggle`,

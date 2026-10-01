@@ -100,6 +100,10 @@ parts:
     (queued for an agent at work), and the hire's `pane read <pane> --source visible` (a blocked worker's question).
     #74's fullscreen laptop adds exactly two: `pane zoom <pane> --on` and `pane zoom <pane> --off` (explicit modes,
     never `--toggle`; `Control.SetZoom`), each write its own `pane.zoom` audit row (`{"session","pane","mode","why"}`).
+    The hub's zoom code (`internal/server/zoom.go`) has two locks: `zoomTabs.write` serialises the zoom writes and the
+    reads their decisions rest on (held across herdr calls, always taken first), `zoomTabs.mu` guards the refs and
+    flags (never held across a herdr call; the hub goroutine takes it). A ref is held only by a watch that wants the
+    tab fullscreen; `terminal.watch.fullscreen` is a `*bool` (absent: an old client, never followed).
     #57's `worker.answer_ask` uses these same shapes (digits, arrows, `tab`, `enter`, `esc`, `send-text`, `pane
     read` between steps): no new one.
     Typed text is never quoted in an error or the audit log. A herdr CLI call takes about 10 ms, so input goes through
@@ -363,7 +367,8 @@ both providers):
   nothing is zoomed; headless the flag flips (`headless`, 120 × 40) and is put back on `terminal.unwatch`; with a TUI
   attached (a `python3` pty client at 140 × 50, skipped without python3) the watch is the tab's whole content area,
   a human unzooming is reported (`terminal.state`) and not undone, a tab the human zoomed is never put back, and the
-  audit log has one `pane.zoom` row per write. About 4 s, no agent.
+  audit log has one `pane.zoom` row per write. About 4 s, no agent. (The ownership rules, their races and the
+  error contract are pinned against a fake herdr floor in `internal/server/zoom_test.go`.)
 - `TestIntegrationRunStart` (M6 launch): `run.prepare` on a floor linked to a made-up repo (Build team by default), then
   `run.start` twice into worktrees of a local repository with a bare "origin": a Claude orchestrator
   (`claude-haiku-4-5-20251001`, `low`) on an issue and a Codex one (`gpt-6-luna`, `low`) on free text, both chosen in
@@ -575,7 +580,8 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   plans and ties it together. #74: the seated watch asks for `fullscreen` (the bridge zooms the pane's herdr tab), `watches.ts`
   keeps its zoom state (the ack's `zoom`, `terminal.state`, `terminal.zoom`; a bridge without them: no chip, no error),
   `fullscreen.ts` (pure) turns it into the seat bar's chip (`Fullscreen` / `Split pane 60×40` / `Fullscreen unavailable`),
-  the preference is `h3d.term.fullscreen` (`themePrefs.ts`), and `paint.ts` `viewport` fits a pane much narrower than the
+  the preference is `h3d.term.fullscreen` (`themePrefs.ts`; off is sent as `fullscreen: false`, which only follows the
+  pane, and the ambient laptops send no field), and `paint.ts` `viewport` fits a pane much narrower than the
   screen to its width (`widthFit`). The simulator plays the zoom with `simzoom=old|single|split|headless`
   (`tools/fixture-screen.ts`; `sim.unzoom` is the human unzooming). #57: `askCard.ts` is the question card of the transcript view (the one pinned above the
   prompt box while the worker waits, and its timeline entry), styled in `transcript.css`. #59: `paint.ts` draws each
