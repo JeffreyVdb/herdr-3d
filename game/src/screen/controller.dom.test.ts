@@ -89,4 +89,15 @@ describe('ScreenShareController', () => {
     await settle();
     expect(t.sent).toEqual([['screen.frame', { req_id: 'a'.repeat(32), error: 'not_sharing', message: 'screen sharing is off' }]]);
   });
+
+  it('a Stop drops the frame requests still waiting (SC-R1)', async () => {
+    const t = setup();
+    t.c.start();
+    await settle();
+    const ended = vi.spyOn(t.c.responder, 'ended');
+    t.track.dispatchEvent(new Event('mute')); // a change while live is not an end
+    expect(ended).not.toHaveBeenCalled();
+    t.c.stop();
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
 });

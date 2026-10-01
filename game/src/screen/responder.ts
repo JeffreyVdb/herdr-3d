@@ -1,8 +1,10 @@
 /**
  * M13 screen share: answering the bridge's `screen.frame_request`s. The only time a frame leaves the browser is in
- * reply to one, for the capture that is live when it arrives. Requests are answered one at a time, in order (an
- * encode is a few tens of ms, and the bridge has at most 4 waiting); a request that cannot have a frame is answered
- * with `screen.frame {req_id, error}` at once, so the grab fails with the reason rather than a timeout.
+ * reply to one, for the capture that is live when it arrives: each request is bound to that capture's generation, and
+ * one that waited in the queue past its capture's end (a Stop, then maybe a new Share of another source) is never
+ * encoded nor uploaded. Requests are answered one at a time, in order (an encode is a few tens of ms, and the bridge
+ * has at most 4 waiting); a request that cannot have a frame is answered with `screen.frame {req_id, error}` at once,
+ * so the grab fails with the reason rather than a timeout.
  */
 
 import type { CommandResult } from '../net/client';
@@ -25,8 +27,14 @@ const MAX_QUEUED = 8;
 
 export type FrameOutcome = { reqId: string; ok: true; bytes: number; w: number; h: number } | { reqId: string; ok: false; code: string };
 
+/** A request waiting its turn, with the generation of the capture that was live when it arrived. */
+interface Queued {
+  reqId: string;
+  gen: number;
+}
+
 export class FrameResponder {
-  private readonly queue: string[] = [];
+  private readonly queue: Queued[] = [];
   private busy = false;
   /** Every answer given, newest last (test hook; bounded). */
   readonly answered: FrameOutcome[] = [];
@@ -35,31 +43,46 @@ export class FrameResponder {
 
   /** One frame request from the bridge. */
   request(reqId: string): void {
-    if (this.queue.includes(reqId)) return;
-    if (this.queue.length >= MAX_QUEUED) {
-      this.fail(reqId, 'unavailable', 'too many frame requests at once');
-      return;
-    }
-    this.queue.push(reqId);
-    if (!this.busy) void this.drain();
-  }
-
-  private async drain(): Promise<void> {
-    this.busy = true;
-    try {
-      for (let id = this.queue.shift(); id !== undefined; id = this.queue.shift()) await this.answer(id);
-    } finally {
-      this.busy = false;
-    }
-  }
-
-  private async answer(reqId: string): Promise<void> {
+    if (this.queue.some((q) => q.reqId === reqId)) return;
     const live = this.d.live();
     if (!live) {
       this.fail(reqId, 'not_sharing', 'screen sharing is off');
       return;
     }
-    const alive = () => this.d.alive(live.gen);
+    if (this.queue.length >= MAX_QUEUED) {
+      this.fail(reqId, 'unavailable', 'too many frame requests at once');
+      return;
+    }
+    this.queue.push({ reqId, gen: live.gen });
+    if (!this.busy) void this.drain();
+  }
+
+  /**
+   * The capture ended (Stop, Chrome's "Stop sharing"): every request still waiting goes, unanswered. The bridge
+   * already failed their grabs on `screen.share {sharing: false}` (or when this connection went away), so telling it
+   * again would only be refused.
+   */
+  ended(): void {
+    for (const q of this.queue.splice(0)) this.record({ reqId: q.reqId, ok: false, code: 'stopped' });
+  }
+
+  private async drain(): Promise<void> {
+    this.busy = true;
+    try {
+      for (let q = this.queue.shift(); q !== undefined; q = this.queue.shift()) await this.answer(q);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private async answer({ reqId, gen }: Queued): Promise<void> {
+    const alive = () => this.d.alive(gen);
+    const live = this.d.live();
+    // The capture it was asked of, and no other: one started since is a different source the agent never asked for.
+    if (!live || live.gen !== gen || !alive()) {
+      this.fail(reqId, 'stopped', 'screen sharing stopped before the frame was taken');
+      return;
+    }
     let frame: { blob: Blob; w: number; h: number };
     try {
       frame = await (this.d.encode ?? encodeFrame)(live.source, alive);

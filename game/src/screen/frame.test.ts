@@ -98,6 +98,12 @@ describe('FrameResponder', () => {
         live = false;
         gen++;
       },
+      /** A new Share (another source, maybe): live again, as a later capture. */
+      restart: () => {
+        live = true;
+        gen += 2;
+      },
+      gen: () => gen,
     };
   }
   const settle = () => new Promise((res) => setTimeout(res, 0));
@@ -146,6 +152,38 @@ describe('FrameResponder', () => {
     expect(t.posted).toEqual([]);
     expect(t.refused).toEqual([[ID(1), 'stopped']]);
   });
+
+  // SC-R1: a request that waited behind a slow upload is bound to its capture: after Stop and a new Share (another
+  // source) it is neither encoded nor uploaded, with or without the controller dropping the queue.
+  for (const dropped of [true, false]) {
+    it(`a queued request never crosses a Stop into the next share${dropped ? '' : ' (queue not dropped)'}`, async () => {
+      let release: () => void = () => {};
+      const encoded: number[] = [];
+      let t!: ReturnType<typeof responder>;
+      t = responder({
+        encode: async () => (encoded.push(t.gen()), { blob: jpeg, w: 1, h: 1 }),
+        post: (id) => (id === ID(1) ? new Promise((res) => (release = () => res({ ok: true, data: null }))) : Promise.resolve({ ok: true, data: null })),
+      });
+      t.r.request(ID(1));
+      t.r.request(ID(2));
+      await settle();
+      expect(t.posted).toEqual([ID(1)]);
+      t.stop();
+      if (dropped) t.r.ended();
+      t.restart();
+      release();
+      for (let i = 0; i < 5; i++) await settle();
+      expect(encoded).toEqual([1]);
+      expect(t.posted).toEqual([ID(1)]);
+      expect(t.r.answered.find((a) => a.reqId === ID(2))).toEqual({ reqId: ID(2), ok: false, code: 'stopped' });
+      expect(t.refused).toEqual(dropped ? [] : [[ID(2), 'stopped']]);
+      // A request of the new capture is answered from it.
+      t.r.request(ID(3));
+      await settle();
+      expect(t.posted).toEqual([ID(1), ID(3)]);
+      expect(encoded).toEqual([1, 4]);
+    });
+  }
 
   it('an encode failure and an unreachable bridge are told to the bridge', async () => {
     const bad = responder({ encode: () => Promise.reject(new FrameError('unavailable', 'paused')) });

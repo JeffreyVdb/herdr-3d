@@ -112,6 +112,7 @@ export class ScreenShareController {
     const was = this.last;
     this.last = v;
     this.control.set(v);
+    if (was.phase === 'live' && (v.phase !== 'live' || v.gen !== was.gen)) this.responder.ended();
     this.host.tvInfo?.(tvLine(v));
     if (was.phase === 'live' && v.phase === 'off' && !this.stopping) this.host.toast('Screen sharing stopped', 'info');
     this.report();
