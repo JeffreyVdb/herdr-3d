@@ -578,7 +578,7 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   instanced batch (`cards/atlasCards.ts`; the per-desk atlas stays as it was; a tall card without a free cell shows
   compact with what its question is about and the question as the task line). The screens are `screens.ts` (below).
   M17: `daylook.ts` (the eased light and the colours and intensities it gives every scene) and `clock.ts` (the wall clock).
-  #86: `toonSun.ts` (every toon material lights with it: faces turned away from the sun stay flat and never read the sun's
+  #86: `toonSun.ts` (every toon material lights with it: faces turned away from the sun stay flat and take no shadow from the sun's
   shadow map; `normalBiasFor` sizes the suns' `shadow.normalBias`).
 - `src/laptop` — M5 screens and sitting at a worker's screen (M6b: on its desk monitor): `watches.ts` keeps the connection's
   `terminal.watch`es in step with what the game wants (a full frame first, a gap re-watches, `unknown_command` turns
