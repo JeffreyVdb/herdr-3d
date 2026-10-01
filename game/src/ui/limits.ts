@@ -35,7 +35,8 @@ const NARROW = '(max-width: 760px)';
  * plate stays above them in the top layer, and the start-run one shows the limits inline as well). The hire dialog
  * shows the chosen harness's limits inline too, so nothing is lost when the plate folds away over it.
  */
-const SCREEN = 'dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open]';
+// M13: the whiteboard overlay (a div, ui/whiteboard.ts) carries `open` while it is up, like a dialog.
+const SCREEN = 'dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open], .wb[open]';
 
 /**
  * The seated reading overlay (the conversation, the Images tab; laptop/index.ts marks the page with `data-reading`) is a

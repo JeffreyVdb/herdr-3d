@@ -1,7 +1,7 @@
 import { CHANGES, GENRES, LICENSE_NAME, MANIFEST, type MusicRow } from '../audio/tracks';
 import './credits.css';
 import { backdropPolicy } from './dismiss';
-import { FONT_CREDITS, FONT_LICENSES_FILE, OFL, type FontCredit } from './fontCredits';
+import { ALL_FONT_CREDITS as FONT_CREDITS, FONT_LICENSES_FILE, OFL, type FontCredit } from './fontCredits';
 
 const NS = 'http://www.w3.org/2000/svg';
 

@@ -37,6 +37,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { logoRoute, registerLogoWorld } from './fixture-logo.ts';
 import { uploadRoute } from './fixture-upload.ts';
+import { registerWhiteboardWorld, whiteboardCommand, whiteboardRoute } from './fixture-whiteboard.ts';
 import { SimWorld, type SimOptions } from './fixture-sim.ts';
 
 export const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
@@ -67,7 +68,7 @@ export interface FixtureOptions {
   log?: (msg: string) => void;
 }
 
-function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: SimOptions | null, logoKey: string | null, seedLogos = false): void {
+function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: SimOptions | null, logoKey: string | null, seedLogos = false, wbKey: string | null = null): void {
   const send = (m: unknown) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(m));
   let greeted = false;
   const timers: ReturnType<typeof setTimeout>[] = [];
@@ -75,9 +76,12 @@ function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: Si
   // M3d: /logo requests with the same `simlogo=<key>` belong to this world.
   if (world && seedLogos) world.seedLogos();
   const unregister = world && logoKey !== null ? registerLogoWorld(logoKey, world) : null;
+  // M13: /whiteboard requests with the same `wb_key=<key>` announce their changes in this world.
+  const unregisterWb = world && wbKey !== null ? registerWhiteboardWorld(wbKey, (m) => world.announce(m)) : null;
   ws.on('close', () => {
     timers.forEach(clearTimeout);
     unregister?.();
+    unregisterWb?.();
     world?.dispose();
   });
   ws.on('message', (data) => {
@@ -116,6 +120,19 @@ function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: Si
       return;
     }
     if (world) {
+      // M13: the whiteboard's commands (tools/fixture-whiteboard.ts), with `wb_key=<key>`.
+      if (wbKey !== null && typeof m.req_id === 'string' && whiteboardKnown(m.t)) {
+        const reqId = m.req_id;
+        const args = ((m as { args?: unknown }).args ?? {}) as Record<string, unknown>;
+        try {
+          whiteboardCommand(wbKey, m.t, args, (data) => send(data === undefined ? { t: 'ack', req_id: reqId } : { t: 'ack', req_id: reqId, data }), (code, message) => {
+            throw Object.assign(new Error(message), { code });
+          }, 'herdr-3d-game');
+        } catch (err) {
+          send({ t: 'error', req_id: reqId, code: (err as { code?: string }).code ?? 'internal', message: (err as Error).message });
+        }
+        return;
+      }
       world.handle(m as Record<string, unknown>, send);
       return;
     }
@@ -126,6 +143,8 @@ function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: Si
     }
   });
 }
+
+const whiteboardKnown = (t: unknown) => t === 'whiteboard.get' || t === 'whiteboard.clear' || t === 'drops.list';
 
 /** `simcap=scratchpad:3:4,pastry:10:12` → per-floor caps (bad entries are skipped). */
 export function parseCaps(v: string): Record<string, { soft: number; hard: number }> {
@@ -180,7 +199,7 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {
       o.log?.(`fixture ${name}: client connected (${sim ? `simulating, step ${sim.stepMs} ms` : `play=${mode}`})`);
-      play(ws, rec, mode, epoch, sim, q.get('simlogo'), q.get('simlogos') === '1');
+      play(ws, rec, mode, epoch, sim, q.get('simlogo'), q.get('simlogos') === '1', q.get('wb_key'));
     });
     return true;
   };
@@ -190,7 +209,7 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
 export function startFixtureServer(port: number | string, o: FixtureOptions = {}): Promise<Server> {
   const handler = fixtureUpgradeHandler(o);
   const srv = createServer((req, res) => {
-    if (logoRoute(req, res) || uploadRoute(req, res)) return;
+    if (logoRoute(req, res) || uploadRoute(req, res) || whiteboardRoute(req, res)) return;
     res.writeHead(404, { 'content-type': 'text/plain' }).end('herdr-3d fixture server: WebSocket only (/fixture/<name>, /ws), /logo/<building> and /upload\n');
   });
   srv.on('upgrade', (req, socket, head) => {

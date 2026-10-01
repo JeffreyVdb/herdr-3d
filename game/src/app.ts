@@ -61,6 +61,10 @@ import { ThemeLoader } from './ui/themeLoader';
 import { ViewPrefs } from './ui/themePrefs';
 import { can } from './world/boards';
 import { bannerVersion, type BuildInfo } from './version';
+// M13: the whiteboard (Excalidraw, loaded on first use) and its render on the room's board.
+import { WhiteboardOverlay } from './ui/whiteboard';
+import { loadBoardTexture } from './render/whiteboardTexture';
+import type { WhiteboardState } from './net/protocol';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
@@ -197,6 +201,11 @@ export class App {
   readonly openPr: OpenPrDialog;
   /** M7: the `board.watch` / `unwatch` / `refresh` the game sends by itself, the last 400 (test hook; not in `sent`). */
   readonly boardLog: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
+  /** M13: the whiteboard overlay, each floor's board as last heard of, and the `whiteboard.get`s the game sent by itself (test hook; not in `sent`). */
+  readonly whiteboard: WhiteboardOverlay;
+  private readonly wbStates = new Map<string, WhiteboardState>();
+  private wbLoad: { office: OfficeView; key: string; abort: AbortController } | null = null;
+  readonly wbLog: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
   /** M7: pages the game asked to open, and how (test hook). */
   readonly opened: Array<{ url: string; via: string }> = [];
   private readonly token: string | null;
@@ -328,6 +337,8 @@ export class App {
           // M7: a dropped connection forgot its board watch; the next live one watches again.
           if (s.phase !== 'live') this.watched = null;
           this.syncBoardWatch();
+          // M13: a new connection may have missed boards' saves: read the floor's again.
+          if (s.phase === 'live' && this.conn.phase !== 'live') this.refreshWhiteboard();
           // M5: a dropped connection took every watch with it; the next live one watches again.
           this.laptops.setConnected(s.phase === 'live');
           this.hud.setConn(s, this.fixture, Date.now());
@@ -425,6 +436,17 @@ export class App {
       ...dialogHost,
       providerName: (session) => this.boardBook.get(session).prs?.provider_name ?? this.boardBook.get(session).issues?.provider_name ?? 'the provider',
       external: (url) => this.external(url),
+    });
+    this.whiteboard = new WhiteboardOverlay(o.host, {
+      wsUrl: () => this.url,
+      author: () => this.owner,
+      send: (t, args) => this.send(t, args),
+      toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 6500 : 3600, kind),
+      saved: (st) => this.onWhiteboard(st),
+      closed: () => {
+        this.updateHint();
+        this.activity(true);
+      },
     });
     this.changes = new ChangesPanel(this.hud.root, {
       ...dialogHost,
@@ -534,6 +556,7 @@ export class App {
     }
     this.applyChange(this.store.applyEvent(e));
     if (e.t === 'worker.upsert') this.yieldTakenDesks([e.worker.id]);
+    if (e.t === 'whiteboard.updated') this.onWhiteboard(e); // M13
     after?.();
   }
 
@@ -678,7 +701,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen;
+    return this.hire.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -1050,6 +1073,7 @@ export class App {
     this.cameraMoved = true;
     this.syncBoardWatch();
     this.pushBoards();
+    this.syncWhiteboard(); // M13
   }
 
   private unloadFloor(): void {
@@ -1113,6 +1137,7 @@ export class App {
     this.planCam.userData.fit = false;
     this.cameraMoved = true;
     this.pushBoards();
+    this.syncWhiteboard(); // M13
   }
 
   /** What the walker touches now (rebuilt when the floor with an interior or its seats change). */
@@ -1247,6 +1272,93 @@ export class App {
     this.batterySaver = !this.batterySaver;
     this.hud.setBattery(this.batterySaver);
     this.hud.toast(this.batterySaver ? 'Battery saver on: 60 fps moving, 30 fps idle' : 'Battery saver off: 120 fps moving, 60 fps idle', 2200);
+  }
+
+  // ---- M13: whiteboard --------------------------------------------------------------------------------
+
+  /** E on the whiteboard: the floor's board in the editor (an older bridge has none). */
+  openWhiteboard(): void {
+    const s = this.hereSession();
+    if (!s) {
+      this.hud.toast('Walk onto an office floor to use its whiteboard.', 2400);
+      return;
+    }
+    if (this.unsupported.has('whiteboard.get')) {
+      this.hud.toast('Update the bridge to use the whiteboard.', 3200);
+      return;
+    }
+    this.walker.release();
+    this.walker.stop();
+    this.panels.close();
+    this.updateHint();
+    void this.whiteboard.open(s);
+  }
+
+  /** A floor's board changed (an event, a save of ours): the open editor merges it, the room shows its render. */
+  private onWhiteboard(st: WhiteboardState): void {
+    const old = this.wbStates.get(st.floor);
+    if (old && old.version > st.version) return;
+    this.wbStates.set(st.floor, st);
+    this.whiteboard.updated(st);
+    if (this.office?.session === st.floor) {
+      this.syncWhiteboard();
+      this.hud.setWhiteboard(st);
+    }
+  }
+
+  /** Reads the board of the floor with an interior again (after a reconnect, or the first time). */
+  private refreshWhiteboard(): void {
+    const s = this.office?.session;
+    if (!s || this.unsupported.has('whiteboard.get')) return;
+    void this.fetchWhiteboard(s);
+  }
+
+  private async fetchWhiteboard(floor: string): Promise<void> {
+    const entry: (typeof this.wbLog)[number] = { t: 'whiteboard.get', args: { floor } };
+    this.wbLog.push(entry);
+    if (this.wbLog.length > 400) this.wbLog.shift();
+    const r = await this.client.request('whiteboard.get', { floor });
+    entry.result = r;
+    if (!r.ok) {
+      if (r.code === 'unknown_command' || r.code === 'unsupported') this.unsupported.add('whiteboard.get');
+      return;
+    }
+    this.onWhiteboard(r.data as WhiteboardState);
+  }
+
+  /** The room's board shows its floor's render (one texture per floor; loading it again only when it changed). */
+  private syncWhiteboard(): void {
+    const o = this.office;
+    if (!o) return;
+    const st = this.wbStates.get(o.session);
+    if (!st) {
+      if (this.conn.phase === 'live') this.refreshWhiteboard();
+      return;
+    }
+    this.hud.setWhiteboard(st);
+    const key = `${st.version}:${st.render_version}:${st.render}:${st.stale_pins.length}`;
+    if (this.wbLoad?.office === o && this.wbLoad.key === key) return;
+    this.wbLoad?.abort.abort();
+    const abort = new AbortController();
+    this.wbLoad = { office: o, key, abort };
+    loadBoardTexture(this.url, st, abort.signal)
+      .then((tex) => {
+        if (this.office !== o || abort.signal.aborted) {
+          tex?.dispose();
+          return;
+        }
+        o.setWhiteboard(tex);
+        this.activity(false);
+      })
+      .catch((err: unknown) => {
+        if (!abort.signal.aborted) console.warn('whiteboard render not loaded', err);
+      });
+  }
+
+  /** M13: what the room's whiteboard shows (test hook). */
+  whiteboardInfo(): { state: WhiteboardState | null; shown: string | null; overlay: ReturnType<WhiteboardOverlay['info']> } {
+    const s = this.office?.session;
+    return { state: s ? (this.wbStates.get(s) ?? null) : null, shown: this.office?.whiteboardShown ?? null, overlay: this.whiteboard.info() };
   }
 
   // ---- M7: boards ------------------------------------------------------------------------------------
@@ -1538,6 +1650,8 @@ export class App {
       if (this.walker.key(e, false) && this.mode === 'floor') e.preventDefault();
       return;
     }
+    // M13: the whiteboard's editor owns every key while it is open (its Esc closes it, ui/whiteboard.ts).
+    if (this.whiteboard.isOpen) return;
     // M10 (#47): a screen-filling dialog hides the plan limits; Shift+L still peeks them over it (else the dialog owns the keys).
     if (e.code === 'KeyL' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && this.limitsWidget.overScreen && !typingIn(e.target)) {
       e.preventDefault();
@@ -1576,6 +1690,10 @@ export class App {
       // M7: E looking at a wall board: its overlay.
       e.preventDefault();
       this.openBoard(this.target.id === 'board.issues' ? 'issues' : 'prs');
+    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'whiteboard') {
+      // M13: E looking at the whiteboard: its editor.
+      e.preventDefault();
+      this.openWhiteboard();
     } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'radio') {
       // M15: E on the radio: the next genre.
       e.preventDefault();

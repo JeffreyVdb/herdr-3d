@@ -1,0 +1,345 @@
+/*
+ * M13: the whiteboard overlay. The room's board brought up close: Excalidraw's white surface inside the board's
+ * brushed-aluminium edge, the game's navy chrome above it, and under it the board's marker tray, the ledge that holds
+ * what you do to the board itself (pin a drop, clear it). Status reads as label-maker tape, like the HUD's chips.
+ * Mounted outside .hud (its button rules must not reach Excalidraw's), above it.
+ */
+
+.wb {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  padding: 18px 18px 14px;
+  background: rgb(10 14 28 / 88%);
+  color: var(--text-on-ink, #eef2fb);
+  font-family: var(--font, system-ui, sans-serif);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.wb[hidden] {
+  display: none;
+}
+.wb *,
+.wb *::before,
+.wb *::after {
+  box-sizing: border-box;
+}
+.wb-frame {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.wb-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 0 4px 10px 6px;
+}
+.wb-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 0.6;
+  letter-spacing: -0.01em;
+}
+.wb-floor {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--text-on-ink-2, #b9c3dc);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Label-maker tape: what the board's save is doing. */
+.wb-status {
+  flex: none;
+  margin-left: auto;
+  padding: 3px 10px 2px;
+  border-radius: 2px;
+  background: #f4f6fb;
+  color: var(--ink, #1c2540);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 30%);
+  transform: rotate(-0.6deg);
+}
+.wb-status[data-kind='saving'],
+.wb-status[data-kind='dirty'],
+.wb-status[data-kind='loading'] {
+  background: var(--sun, #ffc233);
+}
+.wb-status[data-kind='error'] {
+  max-width: 46vw;
+  overflow: hidden;
+  background: var(--needs_you-chip, #d8302c);
+  color: #fff;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+/* The board: white surface, aluminium edge. */
+.wb-surface {
+  position: relative;
+  /* Excalidraw's own layers stack inside the board: the picker and the confirmation stay above them. */
+  isolation: isolate;
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 7px solid #c3cad6;
+  border-radius: 10px 10px 4px 4px;
+  background: #ffffff;
+  box-shadow:
+    inset 0 0 0 1px #9aa4b5,
+    0 1px 0 #e8ecf2,
+    0 18px 40px rgb(0 0 0 / 45%);
+  overflow: hidden;
+}
+.wb-canvas {
+  position: absolute;
+  inset: 0;
+}
+.wb-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #fbfcff;
+  color: var(--ink-soft, #5b6685);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+}
+.wb-loading[hidden] {
+  display: none;
+}
+
+/* The marker tray under the board. */
+.wb-ledge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 54px;
+  margin: 0 10px;
+  padding: 8px 12px;
+  border-radius: 0 0 12px 12px;
+  background: linear-gradient(#aab2c0, #8f98a8 55%, #7d8698);
+  box-shadow: 0 8px 18px rgb(0 0 0 / 40%);
+}
+.wb-hint {
+  margin-left: auto;
+  color: #1f2740;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.wb-pins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.wb-pins[hidden] {
+  display: none;
+}
+.wb-pin {
+  max-width: 38ch;
+  overflow: hidden;
+  padding: 3px 9px 2px;
+  border-radius: 2px;
+  background: #fff3c4;
+  color: var(--ink, #1c2540);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 25%);
+}
+
+.wb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 14px 0 12px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 999px;
+  background: var(--ink, #1c2540);
+  color: var(--text-on-ink, #eef2fb);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.wb-btn svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+}
+.wb-btn:hover {
+  background: var(--ink-2, #2a355a);
+}
+.wb-btn:focus-visible,
+.wb-drop:focus-visible {
+  outline: 3px solid var(--sun, #ffc233);
+  outline-offset: 2px;
+}
+.wb-btn--quiet {
+  border-color: rgb(28 37 64 / 35%);
+  background: rgb(255 255 255 / 55%);
+  color: var(--ink, #1c2540);
+}
+.wb-btn--quiet:hover {
+  background: rgb(255 255 255 / 80%);
+}
+.wb-btn--danger {
+  background: var(--needs_you-chip, #d8302c);
+}
+.wb-btn--danger:hover {
+  background: #b9221f;
+}
+.wb-close {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+}
+
+/* Pin a drop: a tray of the newest drops, above the ledge. */
+.wb-picker,
+.wb-confirm {
+  position: absolute;
+  left: 18px;
+  bottom: 64px;
+  z-index: 2;
+  width: min(560px, calc(100% - 36px));
+  max-height: min(460px, 70vh);
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: var(--radius, 14px);
+  background: var(--ink, #1c2540);
+  box-shadow: var(--shadow);
+}
+.wb-picker[hidden],
+.wb-confirm[hidden] {
+  display: none;
+}
+.wb-picker-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 750;
+}
+.wb-picker-note {
+  margin: 4px 2px;
+  color: var(--text-on-ink-2, #b9c3dc);
+}
+.wb-drops {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wb-drop {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 9px;
+  background: var(--ink-2, #2a355a);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wb-drop:hover:not(:disabled) {
+  border-color: var(--sun, #ffc233);
+}
+.wb-drop:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.wb-drop-img,
+.wb-drop-file {
+  display: grid;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  place-items: center;
+  border-radius: 5px;
+  background: #0b1122;
+  object-fit: cover;
+}
+.wb-drop-file {
+  color: var(--text-on-ink-2, #b9c3dc);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  font-weight: 700;
+}
+.wb-drop-name {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-drop-meta {
+  color: var(--text-on-ink-2, #b9c3dc);
+  font-size: 11.5px;
+}
+
+.wb-confirm {
+  left: auto;
+  right: 18px;
+  width: min(420px, calc(100% - 36px));
+}
+.wb-confirm-text {
+  margin: 0 0 12px;
+  color: var(--text-on-ink-2, #b9c3dc);
+}
+.wb-confirm-text strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-on-ink, #eef2fb);
+  font-size: 15px;
+}
+.wb-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .wb {
+    padding: 8px 6px 6px;
+  }
+  .wb-hint {
+    display: none;
+  }
+  .wb-ledge {
+    margin: 0 4px;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .wb:not([hidden]) {
+    animation: wb-in 180ms var(--ease, ease-out);
+  }
+}
+@keyframes wb-in {
+  from {
+    opacity: 0;
+  }
+}

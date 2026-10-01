@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vitest/config';
 import { creditsText, MANIFEST } from './src/audio/tracks.ts';
@@ -8,6 +8,8 @@ import { fixtureUpgradeHandler } from './tools/fixture-server.ts';
 import { logoRoute } from './tools/fixture-logo.ts';
 import { uploadRoute } from './tools/fixture-upload.ts';
 import { holdRows } from './tools/music.ts';
+import { EXCALIDRAW_ASSETS_DIR } from './src/whiteboard/version.ts';
+import { whiteboardRoute } from './tools/fixture-whiteboard.ts';
 
 /**
  * Serves the recorded bridge streams in fixtures/ at `/fixture/<name>` on the
@@ -20,12 +22,12 @@ function fixtures(): Plugin {
     name: 'h3d-fixtures',
     configureServer(server) {
       server.httpServer?.on('upgrade', handler);
-      server.middlewares.use((req, res, next) => (logoRoute(req, res) || uploadRoute(req, res) ? undefined : next()));
+      server.middlewares.use((req, res, next) => (logoRoute(req, res) || uploadRoute(req, res) || whiteboardRoute(req, res) ? undefined : next()));
     },
     configurePreviewServer(server) {
       server.httpServer.on('upgrade', handler);
       // M3d: the bridge's /logo/<building> routes, for a simulated world (tools/fixture-logo.ts); #51: /upload (tools/fixture-upload.ts).
-      server.middlewares.use((req, res, next) => (logoRoute(req, res) || uploadRoute(req, res) ? undefined : next()));
+      server.middlewares.use((req, res, next) => (logoRoute(req, res) || uploadRoute(req, res) || whiteboardRoute(req, res) ? undefined : next()));
     },
   };
 }
@@ -70,18 +72,66 @@ function fontLicenses(): Plugin {
   };
 }
 
+/**
+ * M13: Excalidraw's fonts (the whole packaged tree: every family and all of Xiaolai's CJK subsets, 234 files) are part
+ * of the build at `assets/excalidraw-<version>/fonts/`, where the whiteboard's EXCALIDRAW_ASSET_PATH points, so no font
+ * is fetched from a CDN. The dev server serves them from node_modules. Their licences: src/ui/fontCredits.ts.
+ */
+function excalidrawFonts(): Plugin {
+  const src = resolve(dirname(fileURLToPath(import.meta.url)), 'node_modules/@excalidraw/excalidraw/dist/prod/fonts');
+  const prefix = `/${EXCALIDRAW_ASSETS_DIR}/fonts/`;
+  const walk = (d: string): string[] => readdirSync(d).flatMap((n) => (statSync(join(d, n)).isDirectory() ? walk(join(d, n)) : [join(d, n)]));
+  return {
+    name: 'h3d-excalidraw-fonts',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const path = decodeURIComponent((req.url ?? '').split('?')[0] ?? '');
+        if (!path.startsWith(prefix)) return next();
+        const file = resolve(src, path.slice(prefix.length));
+        if (!file.startsWith(src + sep)) return next();
+        try {
+          const body = readFileSync(file);
+          res.setHeader('Content-Type', 'font/woff2');
+          res.end(body);
+        } catch {
+          next();
+        }
+      });
+    },
+    generateBundle() {
+      for (const f of walk(src)) {
+        this.emitFile({ type: 'asset', fileName: `${EXCALIDRAW_ASSETS_DIR}/fonts/${relative(src, f).split(sep).join('/')}`, source: readFileSync(f) });
+      }
+    },
+  };
+}
+
 // Bind to loopback only. The port always comes from the CLI (`--port`), leased
 // via portlease by the Makefile; never hardcode one here.
 export default defineConfig({
-  plugins: [fixtures(), musicCredits(), fontLicenses()],
+  plugins: [fixtures(), musicCredits(), fontLicenses(), excalidrawFonts()],
   // The Makefile passes `git describe`; the badge above the debug overlay shows it (src/version.ts).
   define: { __H3D_VERSION__: JSON.stringify(process.env.H3D_VERSION ?? 'dev') },
   server: { host: '127.0.0.1', strictPort: true },
   preview: { host: '127.0.0.1', strictPort: true },
   // three/webgpu alone is ~1 MB minified; one chunk is fine for now.
-  build: { target: 'es2023', chunkSizeWarningLimit: 2000 },
+  // M13: the manifest is what tools/check-bundle.ts reads to prove the entry chunk has no React or Excalidraw in it.
+  // Excalidraw's editor chunk is ~1.4 MB (the lazy one): the warning limit covers it.
+  build: {
+    target: 'es2023',
+    chunkSizeWarningLimit: 4000,
+    manifest: true,
+    rolldownOptions: {
+      // Radix (inside Excalidraw) marks its modules "use client", which means nothing outside React Server Components.
+      onwarn(w, warn) {
+        if (w.code !== 'MODULE_LEVEL_DIRECTIVE') warn(w);
+      },
+    },
+  },
   test: {
     include: ['src/**/*.test.ts', 'e2e/**/*.test.ts', 'tools/**/*.test.ts'],
     environment: 'node',
+    // M13: Excalidraw (src/whiteboard/goPins.test.ts) imports JSON without an import attribute: Vite transforms it.
+    server: { deps: { inline: [/@excalidraw\//] } },
   },
 });
