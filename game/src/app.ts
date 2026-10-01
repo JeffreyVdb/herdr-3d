@@ -24,6 +24,7 @@ import { Hud, type PlanLabel } from './ui/hud';
 import { HireDialog, type HirePrefill } from './ui/hire';
 import { Panels } from './ui/panels';
 import { SendHomeDialog } from './ui/sendHome';
+import { needsYouText, sentHomeText, wrapUpOf } from './world/wrapup';
 import { RADIUS, Walker } from './input/walk';
 import { Laptops, type WatchCommand } from './laptop';
 import { SeatBar } from './ui/seat';
@@ -31,7 +32,7 @@ import { blocked, blocked3, groundAt, type WalkWorld } from './world/collide';
 import { buildingPlan, floorY, loadedFloor, placeAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
 import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, overlookReach, type Opening, type Outline } from './world/layout';
 import type { ArrivalKind } from './world/arrival';
-import { resolveHarness, type Display } from './world/derive';
+import { displayName, resolveHarness, type Display } from './world/derive';
 import { firstFreeDesk, freeDesks, isFreshHire, Reservations } from './world/hire';
 import { walkOutRoute } from './world/route';
 import { WorldStore, type Change, type Counts, type FloorView, type WorkerView } from './world/store';
@@ -580,10 +581,28 @@ export class App {
       const old = this.store.workers.get(e.worker.id);
       if (old && (old.session !== e.worker.session || old.desk_index !== e.worker.desk_index)) this.arrivals.cancel(e.worker.id);
     }
+    this.wrapUpToasts(e); // #83
     this.applyChange(this.store.applyEvent(e));
     if (e.t === 'worker.upsert') this.yieldTakenDesks([e.worker.id]);
     if (e.t === 'whiteboard.updated') this.onWhiteboard(e); // M13
     after?.();
+  }
+
+  /**
+   * #83: what a wrap-up did by itself, said before the store forgets what it was: the worker went home after its
+   * CLEAN (`sent_home` while armed), or the wrap-up stopped and needs you.
+   */
+  private wrapUpToasts(e: WorldEvent): void {
+    const id = e.t === 'worker.removed' ? e.id : e.t === 'worker.upsert' ? e.worker.id : null;
+    const old = id ? this.store.workers.get(id) : undefined;
+    const was = old ? wrapUpOf(old) : null;
+    if (!old || was?.state !== 'armed') return;
+    const name = displayName(old);
+    if (e.t === 'worker.removed' && e.reason === 'sent_home') this.hud.toast(sentHomeText(name, was, !!old.worktree?.linked), 4800, 'info');
+    else if (e.t === 'worker.upsert') {
+      const now = wrapUpOf(e.worker);
+      if (now?.state === 'needs_you') this.hud.toast(needsYouText(name, now), 6500, 'error');
+    }
   }
 
   /**

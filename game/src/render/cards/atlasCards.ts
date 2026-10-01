@@ -37,21 +37,44 @@ function drawBubble(g: CanvasRenderingContext2D, x: number, y: number, c: CardDa
   g.lineWidth = 4;
   g.strokeStyle = red ? '#9e1f19' : 'rgba(28,37,64,0.85)';
   g.stroke();
-  // Status tape.
+  // Status tape (#83: or the card's own, a box drawn before its text).
   g.font = `700 22px ${FONT}`;
-  const chip = CHIP_TEXT[c.display];
-  const tw = g.measureText(chip).width + 22;
+  const chip = c.tape?.text ?? CHIP_TEXT[c.display];
+  const boxW = c.tape?.box ? 26 : 0;
+  const tw = g.measureText(chip).width + 22 + boxW;
   const tx = bx + bw - 18 - tw;
   g.translate(tx + tw / 2, by + 34);
   g.rotate(-0.03);
-  g.fillStyle = red ? '#ffffff' : STATUS_CHIP_CSS[c.display];
+  g.fillStyle = c.tape ? c.tape.color : red ? '#ffffff' : STATUS_CHIP_CSS[c.display];
   g.fillRect(-tw / 2, -17, tw, 34);
-  g.fillStyle = red ? STATUS_CHIP_CSS.needs_you : '#ffffff';
+  g.fillStyle = c.tape ? '#ffffff' : red ? STATUS_CHIP_CSS.needs_you : '#ffffff';
   g.textBaseline = 'middle';
   g.textAlign = 'center';
-  g.fillText(chip, 0, 1);
+  g.fillText(chip, boxW / 2, 1);
+  if (boxW) drawBox(g, -tw / 2 + 11, -9);
   g.setTransform(1, 0, 0, 1, 0, 0);
   return tx;
+}
+
+/** #83: the cardboard box of the wrapping-up tape, 20 × 18 from (x, y): body, open flaps, the tape across. */
+function drawBox(g: CanvasRenderingContext2D, x: number, y: number): void {
+  g.save();
+  g.strokeStyle = '#ffffff';
+  g.lineWidth = 2.2;
+  g.lineJoin = 'round';
+  g.beginPath();
+  g.rect(x + 2, y + 6, 16, 12);
+  g.moveTo(x + 2, y + 6);
+  g.lineTo(x, y + 2);
+  g.lineTo(x + 7, y);
+  g.lineTo(x + 10, y + 6);
+  g.lineTo(x + 13, y);
+  g.lineTo(x + 20, y + 2);
+  g.lineTo(x + 18, y + 6);
+  g.moveTo(x + 7, y + 11);
+  g.lineTo(x + 13, y + 11);
+  g.stroke();
+  g.restore();
 }
 
 /**

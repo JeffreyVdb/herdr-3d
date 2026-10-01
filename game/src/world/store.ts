@@ -19,6 +19,8 @@ import {
 } from './derive';
 // #57: asks
 import { askOf } from './ask';
+// #83: wrap-ups
+import { wrapUpOf } from './wrapup';
 // M6 start
 import { LimitBook } from './limits';
 import { PresetBook } from './presets';
@@ -312,13 +314,15 @@ export class WorldStore {
     const crew = crewView(w, this.crewSeen.has(id));
     // #57: so does an agent waiting on its structured question (herdr may call it idle), since it asked.
     const ask = asleep ? null : askOf(w);
+    // #83: and a wrap-up that stopped without sending it home.
+    const wrapStuck = wrapUpOf(w)?.state === 'needs_you';
     return {
       worker: w,
       name: displayName(w),
       desk,
       harness: resolveHarness(w),
       since: ask ? ask.since : (this.since.get(id) ?? this.loadedAt),
-      display: (crew?.needsYou || ask) && !asleep ? 'needs_you' : displayStatus(w.status, asleep),
+      display: (crew?.needsYou || ask || wrapStuck) && !asleep ? 'needs_you' : displayStatus(w.status, asleep),
       crew,
     };
   }

@@ -137,6 +137,8 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'worker.hire': 90_000,
   'worker.fire.prepare': 20_000,
   'worker.fire': 45_000,
+  // #83: the arm checks git, waits for the tracker's next round (~2 s), then prompts like worker.prompt.
+  'worker.wrapup': 30_000,
   // M5: a prompt waits up to 8 s for the agent to start, then 5 s after one more Enter; changes run git (10 s).
   'worker.prompt': 20_000,
   'worker.changes': 15_000,

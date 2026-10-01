@@ -14,6 +14,15 @@ export interface CardData {
   stamp?: CardStamp | null;
   /** M6: the looked-at crew member's lines (issue and run, phase and pass, its report's summary). */
   crew?: string[] | null;
+  /** #83: a tape in place of the status's (`WRAPPING UP`, cardboard), with a box drawn before its text. */
+  tape?: CardTape | null;
+}
+
+export interface CardTape {
+  text: string;
+  /** CSS colour of the tape; its text is white. */
+  color: string;
+  box?: boolean;
 }
 
 export interface CardTag {
@@ -65,4 +74,7 @@ export const sameCard = (a: CardData | null, b: CardData | null) =>
     (a.tag?.color ?? null) === (b.tag?.color ?? null) &&
     (a.stamp?.text ?? null) === (b.stamp?.text ?? null) &&
     (a.stamp?.tone ?? null) === (b.stamp?.tone ?? null) &&
-    (a.crew ?? []).join('\n') === (b.crew ?? []).join('\n'));
+    (a.crew ?? []).join('\n') === (b.crew ?? []).join('\n') &&
+    // #83
+    (a.tape?.text ?? null) === (b.tape?.text ?? null) &&
+    (a.tape?.color ?? null) === (b.tape?.color ?? null));

@@ -6,6 +6,9 @@ import { usageText } from '../../world/usage';
 import type { CardData } from './types';
 // M6: write-code crews.
 import { withCrew } from './crewCard';
+// #83: wrap-ups.
+import { needsYouLine, WRAPPING_UP, wrapUpOf } from '../../world/wrapup';
+import { BOX_TAPE } from '../palette';
 
 /**
  * What a worker's speech bubble says: its name, status and task; M5: a
@@ -34,5 +37,9 @@ export function cardOf(v: WorkerView, focus = false): CardData {
     if (u) card.usage = u;
   }
   if (v.crew) withCrew(card, v.crew, focus, !!v.worker.title?.trim());
+  // #83: wrapping up, the cardboard tape; a wrap-up that needs you says why (a question of its agent goes first).
+  const wrap = wrapUpOf(v.worker);
+  if (wrap?.state === 'armed' && v.display !== 'needs_you' && v.display !== 'asleep') card.tape = { text: WRAPPING_UP, color: BOX_TAPE, box: true };
+  else if (wrap?.state === 'needs_you' && !card.ask) card.task = needsYouLine(wrap);
   return card;
 }
