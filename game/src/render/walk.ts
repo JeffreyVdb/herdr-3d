@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { lookOf, NOON, sceneDir, type Look } from './daylook';
+import { normalBiasFor, SHADOW_MAP } from './toonSun';
 import type { OfficeView } from './office';
 import { STREET, type OutsideView } from './outside';
 
@@ -42,7 +43,7 @@ export class WalkView {
     this.scene.background = new THREE.Color(STREET.sky);
     this.scene.fog = new THREE.Fog(STREET.sky, 60, 230);
     this.sun.castShadow = shadows;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
     this.sun.shadow.bias = -0.0006;
     this.scene.add(this.hemi, this.sun, this.sun.target);
     this.apply();
@@ -94,6 +95,7 @@ export class WalkView {
     const half = Math.max(L.width, L.depth) * 0.62;
     Object.assign(this.sun.shadow.camera, { left: -half, right: half, top: half, bottom: -half, near: 0.5, far: 40 });
     this.sun.shadow.camera.updateProjectionMatrix();
+    this.sun.shadow.normalBias = normalBiasFor(half);
   }
 
   /** Room light off (an asleep floor, seen from inside or its landing). Composes with the time of day. */

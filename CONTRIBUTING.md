@@ -578,6 +578,8 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   instanced batch (`cards/atlasCards.ts`; the per-desk atlas stays as it was; a tall card without a free cell shows
   compact with what its question is about and the question as the task line). The screens are `screens.ts` (below).
   M17: `daylook.ts` (the eased light and the colours and intensities it gives every scene) and `clock.ts` (the wall clock).
+  #86: `toonSun.ts` (every toon material lights with it: faces turned away from the sun stay flat and take no shadow from the sun's
+  shadow map; `normalBiasFor` sizes the suns' `shadow.normalBias`).
 - `src/laptop` — M5 screens and sitting at a worker's screen (M6b: on its desk monitor): `watches.ts` keeps the connection's
   `terminal.watch`es in step with what the game wants (a full frame first, a gap re-watches, `unknown_command` turns
   screens off with the reason), `terminal.ts` is one xterm.js 6 terminal per live screen (never opened: only its VT
@@ -1017,7 +1019,8 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # than a running one by day and at night (canvas luma), ?lat= in June and December,
                               # the real clock (page.clock + timezoneId): the date over midnight without a reload,
                               # the light easing up, ?tz=, the About fields (refusals, live); m17-{day,night}-
-                              # {city,floor,clock,street}.png, m17-about-time.png. m17-perf.spec.ts: perf-floor60
+                              # {city,floor,clock,street}.png, m17-about-time.png. m17-shadow-acne.spec.ts (#86): ?lat=51 at 09:00-17:00,
+                              # no vertical stripes (stripeScore) on the whiteboard, partition, sofa and the city's walls; floor shadows stay. m17-perf.spec.ts: perf-floor60
                               # at night against noon (H3D_M17_RUNS=<n> pairs, H3D_DIST=<build> for a baseline)
                               # #59 transcript presets on demo-m5 with sim=1 (m59-themes.spec.ts): the font files a
                               # fresh load fetches (Quiet's only; a stored preset's only), each transcript preset

@@ -10,6 +10,7 @@ import type { LogoEntry } from './logos';
 import { logoMaterial } from './logoSign';
 import { BadgeLayer } from './badges';
 import { lookOf, NOON, sceneDir, type Look } from './daylook';
+import { normalBiasFor, SHADOW_MAP } from './toonSun';
 import { Crowd } from './crowd';
 import { DeskSet } from './desks';
 import { MEZZ_COLORS } from './mezzanine';
@@ -131,7 +132,7 @@ export class CityView {
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xfff1dc, 2.3);
     this.sun.castShadow = shadows;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
     this.sun.shadow.bias = -0.0008;
     this.scene.add(this.sun, this.sun.target);
     this.scene.add(this.dynamic);
@@ -254,6 +255,7 @@ export class CityView {
     this.placeSun();
     Object.assign(this.sun.shadow.camera, { left: -r, right: r, top: r, bottom: -r, near: 0.5, far: r * 3.5 });
     this.sun.shadow.camera.updateProjectionMatrix();
+    this.sun.shadow.normalBias = normalBiasFor(r);
   }
 
   private makeParts(n: number): Record<Part, THREE.InstancedMesh> {
