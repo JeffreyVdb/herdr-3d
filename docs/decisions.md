@@ -250,6 +250,15 @@ Decisions (orchestrator and user) and what was measured while building it:
 | 9 | Look-only props | `Prop.milestone: null` means the prop is only looked at: the bar shows its label and a line it is given (`Hud.setPropInfo(id, text)`; the clock's `14:05 · Wed 30 Sep · Europe/Brussels`) and no key, instead of "Placeholder until Mx". Not a special case of the clock's id. |
 | 10 | Out of scope | Seasons beyond the latitude model, longitude, the receptionist's greeting by time of day, night-time crowd behaviour. |
 
+## 2026-10-01 — #86: shadow acne from the moving sun
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Why vertical stripes since M17 | The sun used to stand in one direction that happened to spare the walls. With a latitude it sweeps the sky, so every wall spends the day at a grazing angle or with its back to the sun, and the shadow map striped the faces turned away from it (sofa, whiteboard, the board partition, the city's dollhouse walls): a constant depth `bias` only, no `normalBias`, and three's toon model (`ToonLightingModel`, the node path **both** backends run: `?backend=webgl2` is `WebGPURenderer` with the WebGL2 backend) steps `N·L * 0.5 + 0.5` to 0.7 / 1.0 without clamping at 0, so a back face still took 70 % of the sun **and sampled the shadow map**. The e2e suite pins noon with no latitude (the fixed sun), which is why it never showed. |
+| 2 | The fix | `render/toonSun.ts` replaces the toon material's lighting model once, for every `MeshToonMaterial` (it overrides `MeshToonNodeMaterial.prototype.setupLightingModel`; `ToonLightingModel` is not exported): the same 0.7 / 1.0 steps, but the light the step multiplies fades from the **unshadowed** light (`lightNode.baseColorNode`, before `ShadowNode` multiplied it) to the shadowed one over the first 0.08 of N·L. A back face is flat 0.7 and never reads the shadow map; a facing face is shadowed as before. Plus `shadow.normalBias` on both suns, `4 × half / 2048` (two texels of the orthographic frustum: about 0.024 in the office, scaled with the city's), the constant `bias` kept. Back faces stay flat rather than grey next to a lit wall: the whiteboard and the wall around it agree. A partition seen from behind is now the flat 0.7 tone (it used to be shadowed dark, striped at the edges). |
+| 3 | Left as it was | The floor's shadows of desks, workers and mullions (they receive on a facing face; the edge moves a pixel or two with the normal bias); the shadow map size and the office frustum (no stripes remain at grazing angles with the bias). |
+| 4 | Test | `e2e/m17-shadow-acne.spec.ts`: lat 51, 09:00 to 17:00 on 1 Oct, the issue's poses; `stripeScore` (`e2e/pixels.ts`, luma turning back on itself along the rows of a plain rectangle) over the whiteboard's margin, the partition, the sofa's back and the city's wall. The old code scores 10 to 150 where the new scores 0; the spec fails on it at 13:00, 15:00 and 17:00. |
+
 ## 2026-10-01 — #66: the main checkout herdr opens for a worktree hire
 
 | # | Question | Decision |
