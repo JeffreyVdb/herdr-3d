@@ -37,6 +37,11 @@ type LayoutInfo struct {
 	WorkspaceID string       `json:"workspace_id"`
 	TabID       string       `json:"tab_id"`
 	Panes       []LayoutPane `json:"panes"`
+	// #74: the tab is zoomed (its focused pane fills Area; Panes keep the
+	// split rectangles), which pane is focused, and the tab's content area.
+	Zoomed        bool   `json:"zoomed"`
+	FocusedPaneID string `json:"focused_pane_id"`
+	Area          Rect   `json:"area"`
 }
 
 // LayoutPane is one pane of a layout.
@@ -62,28 +67,85 @@ const headlessCols, headlessRows = 120, 40
 // when only its height is known.
 const wideRatio = 2.8
 
+// ZoomState is what a pane's tab shows of it (docs/protocol.md "Laptop
+// screens").
+type ZoomState string
+
+const (
+	ZoomSingle ZoomState = "single" // the tab has one pane
+	ZoomZoomed ZoomState = "zoomed" // the tab is zoomed on this pane
+	ZoomSplit  ZoomState = "split"  // the pane shows at its split size
+)
+
+// PaneState is a pane's size and what its tab does with it (#74).
+type PaneState struct {
+	TabID     string
+	PaneCount int  // panes in the tab
+	Zoomed    bool // the tab is zoomed (on any of its panes)
+	Focused   bool // this pane is the tab's focused pane
+	// Cols and Rows are the pane's size in cells (see PaneSize).
+	Cols, Rows int
+	// Headless: the tab's area is herdr's headless 120 × 40, so most likely
+	// no client is attached and a zoom resizes nothing.
+	Headless bool
+}
+
+// Zoom is the pane's ZoomState: zoomed only for the tab's one visible pane.
+func (p PaneState) Zoom() ZoomState {
+	switch {
+	case p.PaneCount <= 1:
+		return ZoomSingle
+	case p.Zoomed && p.Focused:
+		return ZoomZoomed
+	}
+	return ZoomSplit
+}
+
+// PaneState is a pane's size and zoom state, if it is there. A zoomed tab
+// shows only its focused pane, at the tab's content area (the snapshot keeps
+// reporting the split rectangles), so that pane's size is the area; the real
+// terminal is a few cells smaller (borders, scrollbar) and the observer pads
+// the difference, which beats cutting off the rows an agent's prompt is on.
+func (s *Snapshot) PaneState(pane string) (PaneState, bool) {
+	for _, l := range s.Layouts {
+		for _, p := range l.Panes {
+			if p.PaneID != pane || p.Rect.Width <= 0 || p.Rect.Height <= 0 {
+				continue
+			}
+			st := PaneState{TabID: l.TabID, PaneCount: len(l.Panes), Zoomed: l.Zoomed, Focused: l.FocusedPaneID == pane,
+				Headless: l.Area.Width == headlessCols && l.Area.Height == headlessRows}
+			rect := p.Rect
+			if st.Zoom() == ZoomZoomed && l.Area.Width > 0 && l.Area.Height > 0 {
+				rect = l.Area
+			}
+			st.Cols, st.Rows = s.sizeOf(pane, rect)
+			return st, true
+		}
+	}
+	return PaneState{}, false
+}
+
 // PaneSize is a pane's size in cells, if it is there. The layout's rectangle
 // is the size its attached clients last gave it, but a pane nobody laid out
 // gets herdr's headless 120 × 40 while the pane itself (`scroll.viewport_rows`)
 // is as tall as its terminal really is; an observer smaller than the pane
 // cuts off its bottom rows, where an agent's prompt is. So the taller of the
 // two is the height, and when the layout was stale the width is a guess from it.
+// The pane of a zoomed tab that is its focused one has the tab's area (#74).
 func (s *Snapshot) PaneSize(pane string) (cols, rows int, ok bool) {
-	for _, l := range s.Layouts {
-		for _, p := range l.Panes {
-			if p.PaneID == pane && p.Rect.Width > 0 && p.Rect.Height > 0 {
-				cols, rows = p.Rect.Width, p.Rect.Height
-				if v := s.viewportRows(pane); v > rows {
-					rows = v
-					if cols == headlessCols && p.Rect.Height == headlessRows {
-						cols = max(cols, int(float64(rows)*wideRatio))
-					}
-				}
-				return cols, rows, true
-			}
+	st, ok := s.PaneState(pane)
+	return st.Cols, st.Rows, ok
+}
+
+func (s *Snapshot) sizeOf(pane string, rect Rect) (cols, rows int) {
+	cols, rows = rect.Width, rect.Height
+	if v := s.viewportRows(pane); v > rows {
+		rows = v
+		if cols == headlessCols && rect.Height == headlessRows {
+			cols = max(cols, int(float64(rows)*wideRatio))
 		}
 	}
-	return 0, 0, false
+	return cols, rows
 }
 
 // viewportRows is a pane's real height from its scroll state, 0 if unknown.

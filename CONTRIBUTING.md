@@ -98,6 +98,8 @@ parts:
     `pane send-text <pane> <text>` (no control characters) and the fixed sequences of delete / home / end / pageup /
     pagedown, `agent prompt <pane> <text>` with `--wait --until working --until blocked --timeout 8000` or without
     (queued for an agent at work), and the hire's `pane read <pane> --source visible` (a blocked worker's question).
+    #74's fullscreen laptop adds exactly two: `pane zoom <pane> --on` and `pane zoom <pane> --off` (explicit modes,
+    never `--toggle`; `Control.SetZoom`), each write its own `pane.zoom` audit row (`{"session","pane","mode","why"}`).
     #57's `worker.answer_ask` uses these same shapes (digits, arrows, `tab`, `enter`, `esc`, `send-text`, `pane
     read` between steps): no new one.
     Typed text is never quoted in an error or the audit log. A herdr CLI call takes about 10 ms, so input goes through
@@ -357,6 +359,11 @@ both providers):
   permission prompt is a `permission` question that choice 1 approves (the command ran). About 30 s, a few haiku turns.
   The agent remembers the trust of the test's temporary directory.
 
+- `TestIntegrationFullscreenLaptop` (#74): a two-pane tab watched with `fullscreen` against the real herdr: without it
+  nothing is zoomed; headless the flag flips (`headless`, 120 × 40) and is put back on `terminal.unwatch`; with a TUI
+  attached (a `python3` pty client at 140 × 50, skipped without python3) the watch is the tab's whole content area,
+  a human unzooming is reported (`terminal.state`) and not undone, a tab the human zoomed is never put back, and the
+  audit log has one `pane.zoom` row per write. About 4 s, no agent.
 - `TestIntegrationRunStart` (M6 launch): `run.prepare` on a floor linked to a made-up repo (Build team by default), then
   `run.start` twice into worktrees of a local repository with a bare "origin": a Claude orchestrator
   (`claude-haiku-4-5-20251001`, `low`) on an issue and a Codex one (`gpt-6-luna`, `low`) on free text, both chosen in

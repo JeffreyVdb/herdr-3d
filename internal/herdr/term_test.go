@@ -63,6 +63,11 @@ func TestTermControlRefusesBadInputBeforeRunning(t *testing.T) {
 		"huge prompt":         func() error { return c.QueuePrompt(ctx, "h3d-it-1", "w1:p1", strings.Repeat("x", MaxMessage+1)) },
 		"prompt unwatched":    func() error { return c.QueuePrompt(ctx, "depot-manager", "w1:p1", "hi") },
 		"prompt bad utf-8":    func() error { return c.SubmitPrompt(ctx, "h3d-it-1", "w1:p1", "\xc3") },
+		"zoom unwatched":      func() error { return c.SetZoom(ctx, "herdr-3d", "w1:p1", true) },
+		"zoom pane as flag":   func() error { return c.SetZoom(ctx, "h3d-it-1", "--toggle", true) },
+		"zoom pane with arg":  func() error { return c.SetZoom(ctx, "h3d-it-1", "w1:p1 --toggle", false) },
+		"zoom empty pane":     func() error { return c.SetZoom(ctx, "h3d-it-1", "", false) },
+		"zoom bad session":    func() error { return c.SetZoom(ctx, "-h3d-it", "w1:p1", true) },
 		"prompt pane as flag": func() error { return c.SubmitPrompt(ctx, "h3d-it-1", "--pane", "hi") },
 	} {
 		if err := call(); !errors.Is(err, ErrNotAllowed) {

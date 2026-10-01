@@ -76,6 +76,15 @@ type watch struct {
 	cancel          context.CancelFunc
 	n               uint64 // frames sent (under termWatches.mu)
 	stopped         bool   // unregistered (under termWatches.mu)
+
+	// #74: the fullscreen laptop.
+	ctx                context.Context
+	socket             string
+	autoCols, autoRows bool            // the size is the pane's, not the client's, so it follows the pane
+	resize             chan [2]int     // the pane's new size, for the pump (cap 1)
+	fullscreen         bool            // the tab is wanted zoomed on the pane (under hub.zoom.mu)
+	zoom               zoomWatch       // under hub.zoom.mu
+	zoomAck            *proto.ZoomInfo // the zoom state the ack tells (runWatch's goroutine only)
 }
 
 func (t *termWatches) get(c *Client, id string) *watch {
@@ -229,18 +238,20 @@ func (h *Hub) startWatch(ctx context.Context, c *Client, cmd proto.Command) erro
 	case host >= h.opts.MaxObservers:
 		return fmt.Errorf("%w: %d panes are watched already (--max-observers)", errCapacity, host)
 	}
-	w := &watch{c: c, id: a.ID, session: wk.Session, pane: wk.PaneID, cols: a.Cols, rows: a.Rows, fps: a.Fps}
+	w := &watch{c: c, id: a.ID, session: wk.Session, pane: wk.PaneID, cols: a.Cols, rows: a.Rows, fps: a.Fps,
+		socket: f.socket, autoCols: a.Cols == 0, autoRows: a.Rows == 0, resize: make(chan [2]int, 1),
+		fullscreen: a.Fullscreen}
 	if w.fps == 0 {
 		w.fps = DefaultWatchFps
 	}
 	wctx, cancel := context.WithCancel(ctx)
-	w.cancel = cancel
+	w.cancel, w.ctx = cancel, wctx
 	if old := h.term.add(w); old != nil {
+		h.zoomAdopt(old, w)
 		old.cancel()
 	}
-	socket := f.socket
 	h.wg.Add(1)
-	go h.runWatch(ctx, wctx, w, cmd, socket)
+	go h.runWatch(ctx, wctx, w, cmd)
 	return nil
 }
 
@@ -291,6 +302,9 @@ func (h *Hub) closeWatch(w *watch, reason string) {
 	if !h.term.remove(w) {
 		return
 	}
+	if reason == proto.ClosedAsleep {
+		h.zoomAsleep(w) // #74: nothing to put back through a stopped session
+	}
 	w.cancel()
 	h.log.Debug("watch closed", "client", w.c.name, "worker", w.id, "reason", reason)
 	h.deliver(w.c, mustJSON(proto.TerminalClosed{T: proto.TTerminalClosed, ID: w.id, Reason: reason}))
@@ -299,21 +313,37 @@ func (h *Hub) closeWatch(w *watch, reason string) {
 // runWatch runs a watch's observer until the watch ends, restarting it to
 // resync and, with backoff, when it exits or stalls. hctx is the hub's
 // context (replies), ctx the watch's.
-func (h *Hub) runWatch(hctx, ctx context.Context, w *watch, cmd proto.Command, socket string) {
+func (h *Hub) runWatch(hctx, ctx context.Context, w *watch, cmd proto.Command) {
 	defer h.wg.Done()
+	defer h.zoomRelease(context.WithoutCancel(hctx), w) // #74: after the cancel below
 	defer w.cancel()
+	// #74: a fullscreen watch zooms its pane's tab first, so the size read
+	// next is the zoomed one. A zoom that fails or a tab that cannot be read
+	// leaves the watch at the best known size.
+	st, haveState := h.paneState(ctx, w.socket, w.pane)
+	h.zoom.mu.Lock()
+	fullscreen := w.fullscreen
+	h.zoom.mu.Unlock()
+	if fullscreen && haveState {
+		st = h.zoomOn(ctx, w, st, zoomWhyWatch)
+	}
 	if w.cols == 0 || w.rows == 0 {
 		cols, rows := defaultCols, defaultRows
-		if h.opts.PaneSize != nil {
-			if c, r, ok := h.opts.PaneSize(ctx, socket, w.pane); ok {
-				cols, rows = min(max(c, herdr.MinCols), herdr.MaxCols), min(max(r, herdr.MinRows), herdr.MaxRows)
-			}
+		if haveState {
+			cols, rows = min(max(st.Cols, herdr.MinCols), herdr.MaxCols), min(max(st.Rows, herdr.MinRows), herdr.MaxRows)
 		}
 		if w.cols == 0 {
 			w.cols = cols
 		}
 		if w.rows == 0 {
 			w.rows = rows
+		}
+	}
+	h.zoomSize(w, w.cols, w.rows)
+	if info, ok := h.zoomInfo(w, st); ok {
+		w.zoomAck = &info
+		if fullscreen {
+			h.followStart(w, info, w.cols, w.rows)
 		}
 	}
 	var fails []time.Time
@@ -381,7 +411,7 @@ func (h *Hub) startObserver(ctx context.Context, w *watch) (herdr.FrameStream, e
 func (h *Hub) finishWatchCmd(hctx context.Context, w *watch, cmd proto.Command, err error) {
 	var data any
 	if err == nil {
-		data = proto.TerminalWatchResult{Pane: w.pane, Cols: w.cols, Rows: w.rows}
+		data = proto.TerminalWatchResult{Pane: w.pane, Cols: w.cols, Rows: w.rows, Zoom: w.zoomAck}
 	}
 	if derr := h.doWait(hctx, func() {
 		h.audit(hctx, w.c, cmd, err)
@@ -526,6 +556,10 @@ func (h *Hub) pump(ctx context.Context, w *watch, obs herdr.FrameStream) error {
 			return ctx.Err()
 		case err := <-ended:
 			return err
+		case sz := <-w.resize: // #74: the pane's size changed (zoomed, unzoomed)
+			w.cols, w.rows = sz[0], sz[1]
+			h.zoomSize(w, w.cols, w.rows)
+			return errResync
 		case <-first.C:
 			if gotFull, _ := q.state(); !gotFull {
 				return errStalled
@@ -580,6 +614,9 @@ func termDefaults(o *Options) {
 	if o.AskResolveTimeout <= 0 {
 		o.AskResolveTimeout = DefaultAskResolveTimeout
 	}
+	if o.ZoomPoll <= 0 { // #74
+		o.ZoomPoll = DefaultZoomPoll
+	}
 	if o.MaxTranscriptWatches <= 0 { // M16 transcript
 		o.MaxTranscriptWatches = DefaultMaxTranscriptWatches
 	}
@@ -592,6 +629,7 @@ func (h *Hub) initTerm() {
 	h.term.byC = map[*Client]map[string]*watch{}
 	h.term.procsOf = map[*Client]int{}
 	h.term.freed = make(chan struct{})
+	h.zoom.tabs = map[string]*zoomTab{} // #74
 	h.lanes = map[string]*inputLane{}
 	h.questions = map[string]questionState{}
 	h.asking = map[string]bool{}

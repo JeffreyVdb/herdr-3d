@@ -508,6 +508,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		opts.Term = cfg.Control // M5 term
 	}
 	opts.MaxWatches, opts.MaxObservers, opts.PaneSize = cfg.MaxWatches, cfg.MaxObservers, paneSize(cfg.Herdr) // M5 term
+	opts.PaneState = paneState(cfg.Herdr)                                                                     // #74
 	opts.MaxTranscriptWatches = cfg.MaxTranscriptWatches                                                      // M16 transcript
 	if cfg.Git != nil {
 		opts.Git = cfg.Git
@@ -599,6 +600,23 @@ func paneSize(read watch.Herdr) func(ctx context.Context, socket, pane string) (
 			return 0, 0, false
 		}
 		return snap.PaneSize(pane)
+	}
+}
+
+// paneState reads a pane's size and what its tab does with it (zoomed,
+// focused, how many panes) from its session's snapshot, read only (#74).
+func paneState(read watch.Herdr) func(ctx context.Context, socket, pane string) (herdr.PaneState, bool) {
+	return func(ctx context.Context, socket, pane string) (herdr.PaneState, bool) {
+		if read == nil || socket == "" {
+			return herdr.PaneState{}, false
+		}
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		snap, err := read.Snapshot(ctx, socket)
+		if err != nil {
+			return herdr.PaneState{}, false
+		}
+		return snap.PaneState(pane)
 	}
 }
 
