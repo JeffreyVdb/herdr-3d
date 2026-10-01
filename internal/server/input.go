@@ -95,7 +95,7 @@ func (h *Hub) startInput(ctx context.Context, c *Client, cmd proto.Command, id s
 	if len(l.jobs) >= maxQueuedInputs {
 		return fmt.Errorf("%w: %d commands are already waiting for this worker", errInputFailed, len(l.jobs))
 	}
-	l.jobs = append(l.jobs, func(ctx context.Context) {
+	h.queueLane(ctx, id, func(ctx context.Context) {
 		t, err := query(ctx, h, func() laneTarget {
 			w, _, err := h.termWorker(id)
 			if err != nil {
@@ -116,12 +116,23 @@ func (h *Hub) startInput(ctx context.Context, c *Client, cmd proto.Command, id s
 			h.log.Warn("command abandoned", "cmd", cmd.T, "err", derr)
 		}
 	})
+	return nil
+}
+
+// queueLane queues a job on the worker's input lane (hub goroutine), and
+// runs the lane if it is idle.
+func (h *Hub) queueLane(ctx context.Context, id string, job func(context.Context)) {
+	l := h.lanes[id]
+	if l == nil {
+		l = &inputLane{}
+		h.lanes[id] = l
+	}
+	l.jobs = append(l.jobs, job)
 	if !l.running {
 		l.running = true
 		h.wg.Add(1)
 		go h.runLane(ctx, id)
 	}
-	return nil
 }
 
 func (h *Hub) runLane(ctx context.Context, id string) {
@@ -208,6 +219,7 @@ func (h *Hub) startKeys(ctx context.Context, c *Client, cmd proto.Command) error
 	if _, _, err := h.termWorker(a.ID); err != nil {
 		return err
 	}
+	h.tookOver(ctx, a.ID) // #83: a person types: an armed wrap-up is off
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		t := h.opts.Term
 		for i, s := range steps {
@@ -247,6 +259,7 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	if w.Ask != nil { // #57: its dialog would take the text
 		return fmt.Errorf("%w: %s waits on its question: answer it first (worker.answer_ask)", errInvalidState, w.Name)
 	}
+	h.tookOver(ctx, a.ID) // #83: a person prompts: an armed wrap-up is off
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		res, err := h.prompt(ctx, a, session, pane)
 		if err == nil {
@@ -401,6 +414,17 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			Bytes     int    `json:"bytes"`
 			RequestID string `json:"request_id,omitempty"`
 		}{clip(a.Floor), clip(a.Author), "note", len(a.Note), clip(a.RequestID)})
+	// #83: the prompt by its length, never its text.
+	case proto.CmdWorkerWrapUp:
+		var a proto.WorkerWrapUpArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		return mustJSON(struct {
+			ID          string `json:"id"`
+			Worktree    string `json:"worktree,omitempty"`
+			PromptBytes int    `json:"prompt_bytes"`
+		}{a.ID, clip(a.Worktree), len(a.Prompt)})
 	// M16 transcript: the worker id only.
 	case proto.CmdTranscriptWatch, proto.CmdTranscriptUnwatch:
 		var a struct {

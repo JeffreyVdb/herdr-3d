@@ -100,6 +100,11 @@ type Options struct {
 	// go (default DefaultSeenTimeout); ExitTimeout how long an agent has to
 	// exit when sent home (default DefaultExitTimeout).
 	TrustTimeout, SeenTimeout, ExitTimeout time.Duration
+	// #83: WrapUpTimeout is how long an armed wrap-up waits for its result
+	// (default DefaultWrapUpTimeout), WrapUpDebounce how long the ended turn
+	// and herdr's idle must hold before it is read (default
+	// DefaultWrapUpDebounce).
+	WrapUpTimeout, WrapUpDebounce time.Duration
 	// HirePoll is how often a hire or send-home looks at a pane, and
 	// ExitPause the pause between Codex's /quit and Enter (defaults 250 ms,
 	// 400 ms).
@@ -272,6 +277,8 @@ type Hub struct {
 	nclients     atomic.Int32 // len(clients), for the poller
 
 	screen screenState // M13 screen share
+
+	wrapups map[string]*wrapUp // #83: by worker id
 }
 
 type floorState struct {
@@ -397,6 +404,12 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if opts.ExitTimeout <= 0 {
 		opts.ExitTimeout = DefaultExitTimeout
 	}
+	if opts.WrapUpTimeout <= 0 {
+		opts.WrapUpTimeout = DefaultWrapUpTimeout
+	}
+	if opts.WrapUpDebounce <= 0 {
+		opts.WrapUpDebounce = DefaultWrapUpDebounce
+	}
 	if opts.HirePoll <= 0 {
 		opts.HirePoll = defaultHirePoll
 	}
@@ -451,6 +464,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		return nil, err
 	}
 	if err := h.loadLaunch(ctx); err != nil { // M6 launch
+		return nil, err
+	}
+	if err := h.loadWrapUps(ctx); err != nil { // #83
 		return nil, err
 	}
 	if err := h.initBoards(ctx); err != nil { // M7 boards
@@ -615,6 +631,10 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startHirePrepare
 		case proto.CmdFirePrepare:
 			start = h.startFirePrepare
+		case proto.CmdWorkerWrapUp: // #83
+			start = h.startWrapUp
+		case proto.CmdWorkerWrapUpCancel:
+			start = h.startWrapUpCancel
 		case proto.CmdWorkerChanges: // M5 usage
 			start = h.startChanges
 		// M5 term
@@ -1102,12 +1122,14 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			if err := h.st.CloseWorker(ctx, id); err != nil {
 				h.log.Error("recording closed worker failed", "worker", id, "err", err)
 			}
+			h.forgetWrapUp(ctx, id) // #83: closed in herdr
 		}
 		ev := proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: session, WorkspaceID: w.WorkspaceID}
 		if op := f.fires[id]; op != nil && !rawWS[op.workspaceID] {
 			ev.Reason = proto.RemovedSentHome
 			op.removed = true
 			op.signal()
+			h.forgetWrapUp(ctx, id) // #83: sent home
 		}
 		evs = append(evs, ev)
 	}
@@ -1202,9 +1224,10 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		if w.Worktree != nil && w.Worktree.Linked && w.Worktree.CheckoutPath != "" {
 			next.Branch = h.branchOf(w.Worktree.CheckoutPath, at)
 		}
-		next.Usage = h.usage[id] // M5 usage
-		next.Ask = h.asks[id]    // #57
-		h.withQuestion(next)     // M5 term
+		next.Usage = h.usage[id]       // M5 usage
+		next.Ask = h.asks[id]          // #57
+		next.WrapUp = h.wrapUpView(id) // #83
+		h.withQuestion(next)           // M5 term
 		if op := f.hires[id]; op != nil && !op.seen {
 			op.seen = true
 			op.signal()
