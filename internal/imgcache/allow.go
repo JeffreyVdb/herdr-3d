@@ -57,6 +57,10 @@ type PathImage struct {
 // at most MaxImage bytes. A path outside every root is refused before any
 // file system call.
 func CheckPath(path string, roots []string) (PathImage, error) {
+	return checkPath(path, roots, true)
+}
+
+func checkPath(path string, roots []string, capSize bool) (PathImage, error) {
 	if path == "" || !filepath.IsAbs(path) || strings.ContainsRune(path, 0) || filepath.Clean(path) != path {
 		return PathImage{}, ErrNotAllowed
 	}
@@ -111,7 +115,7 @@ func CheckPath(path string, roots []string) (PathImage, error) {
 	if !fi.Mode().IsRegular() {
 		return PathImage{}, ErrNotFile
 	}
-	if fi.Size() > MaxImage {
+	if capSize && fi.Size() > MaxImage {
 		return PathImage{}, ErrTooLarge
 	}
 	return PathImage{Real: real, root: root, Size: fi.Size(), MTime: fi.ModTime().UnixNano()}, nil
@@ -143,4 +147,25 @@ func LoadPath(path string, roots []string) (PathImage, []byte, Info, error) {
 // within reports whether path is root or below it.
 func within(root, path string) bool {
 	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
+}
+
+// SniffPath checks path like CheckPath and reads only the first bytes of it:
+// its image type ("" for anything else). The size is not capped (a file too
+// large to serve still has a type).
+func SniffPath(path string, roots []string) (PathImage, string, error) {
+	pi, err := checkPath(path, roots, false)
+	if err != nil {
+		return pi, "", err
+	}
+	b, err := headUnder(pi.root, pi.Real, 16)
+	if err != nil {
+		if errors.Is(err, errChanged) {
+			return pi, "", ErrNotAllowed
+		}
+		if errors.Is(err, ErrNotFile) || errors.Is(err, ErrNotAllowed) {
+			return pi, "", err
+		}
+		return pi, "", ErrMissing
+	}
+	return pi, Sniff(b), nil
 }
