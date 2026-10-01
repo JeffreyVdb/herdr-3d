@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
@@ -201,6 +202,10 @@ type Options struct {
 	// drops.list ("": drops_unavailable).
 	Whiteboards *whiteboard.Store
 	DropsRoot   string
+
+	// #92 AI integration: the classification model and the LLM (nil: the
+	// ai.* commands fail with unsupported, the snapshot has no ai).
+	AI *ai.Service
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -539,6 +544,10 @@ func (h *Hub) Run(ctx context.Context) error {
 		h.wg.Add(1)
 		go h.runScreenJanitor(ctx)
 	}
+	if h.opts.AI != nil { // #92 AI integration
+		h.wg.Add(1)
+		go h.trackAI(ctx)
+	}
 	var boardC <-chan time.Time // M7 boards
 	if h.opts.Boards != nil {
 		t := time.NewTicker(h.opts.BoardTick)
@@ -678,6 +687,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startRunStart
 		case proto.CmdLimitsRefresh: // M10 limits
 			start = h.startLimitsRefresh
+		case proto.CmdAIGet, proto.CmdAIModels, proto.CmdAITest, proto.CmdAISet, proto.CmdAIClear: // #92
+			start = h.startAI
 		// M7 boards
 		case proto.CmdBoardWatch:
 			start = h.startBoardWatch
@@ -765,6 +776,8 @@ func errorCode(err error) string {
 	switch {
 	case errors.As(err, &coded):
 		return coded.code
+	case aiErrorCode(err) != "": // #92
+		return aiErrorCode(err)
 	case boardCode(err) != "": // M7 boards
 		return boardCode(err)
 	case errors.As(err, &fetch):
@@ -1624,6 +1637,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
 		HireOptions: &hire, Presets: h.presetViews(), Limits: h.limitsViews()} // M6 launch: presets; M10 limits
 	w.Screen = h.screenView() // M13 screen
+	w.AI = h.aiView()         // #92 AI integration
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

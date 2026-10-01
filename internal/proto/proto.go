@@ -182,6 +182,9 @@ type World struct {
 	// M13 screen: whether a game shares its screen (docs/protocol.md
 	// "Screen share").
 	Screen *ScreenState `json:"screen,omitempty"`
+	// #92 AI integration: the settings of the classification model and the
+	// LLM (never a key). nil (left out) when the bridge has no AI service.
+	AI *AI `json:"ai,omitempty"`
 }
 
 // HireOptions lists what can be hired, per harness.
@@ -399,6 +402,7 @@ type Worktree struct {
 //	worker.status    id, session, workspace_id, status, prev_status, status_since, title
 //	limits.update    the fields of Limits
 //	screen.state     the fields of ScreenState
+//	ai.update        the fields of AI (#92)
 type Event struct {
 	T           string    `json:"t"`
 	Seq         uint64    `json:"seq"`
@@ -426,6 +430,9 @@ type Event struct {
 	// M13 screen: on screen.state the fields of ScreenState are flat in the
 	// event.
 	*ScreenState
+	// #92 AI integration: on ai.update the fields of AI are flat in the
+	// event.
+	*AI
 }
 
 // Command is a client request. Args depend on T (see the *Args types).
