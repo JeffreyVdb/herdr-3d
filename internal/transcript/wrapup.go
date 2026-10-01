@@ -5,10 +5,12 @@ package transcript
 // one line, `H3D-WRAPUP <nonce> CLEAN` or `H3D-WRAPUP <nonce> BLOCKED:
 // <reason>`; WrapUpTracker reads that line from the transcript. Only lines
 // from the armed offset on count, only after the bridge's own prompt (the
-// user line holding the nonce) was read, and only the last non-empty line
-// of the final assistant message of a turn: a quoted marker, a stale nonce,
-// a marker mid-message or followed by more text, or the prompt's own copy of
-// the footer never match.
+// first user prompt from there that ends with the nonce's footer) was read,
+// and only the last non-empty line of the final assistant message of a
+// turn, as it is (no trimming, but a trailing "\r"): a quoted or indented
+// marker, one in a code fence, a stale nonce, a marker mid-message or
+// followed by more text, or the prompt's own copy of the footer never match.
+// Every user prompt after the bridge's is a person's: they took over.
 //
 // Turn ends, checked against Claude Code 2.1.285 and codex-cli 0.159.2:
 // Claude's final message is the assistant message (one message id, its
@@ -55,8 +57,9 @@ func WrapUpFooter(nonce string) string {
 
 // WrapUpVerdict reads an assistant message's text: CLEAN or BLOCKED (with
 // its reason) when its last non-empty line is exactly the result line of
-// nonce and no other line of it carries that nonce's marker; else
-// WrapUpNone.
+// nonce, byte for byte (only a trailing "\r" is dropped: leading or trailing
+// spaces, quotes, list markers, an indented or fenced code block are not
+// it), and no other line of it carries that nonce's marker; else WrapUpNone.
 func WrapUpVerdict(text, nonce string) (verdict, reason string) {
 	if !ValidWrapUpNonce(nonce) {
 		return WrapUpNone, ""
@@ -72,15 +75,23 @@ func WrapUpVerdict(text, nonce string) (verdict, reason string) {
 	if last < 0 {
 		return WrapUpNone, ""
 	}
-	m := wrapUpLineRe.FindStringSubmatch(strings.TrimSpace(lines[last]))
-	if m == nil || m[1] != nonce {
+	line := strings.TrimSuffix(lines[last], "\r")
+	m := wrapUpLineRe.FindStringSubmatch(line)
+	if m == nil || m[1] != nonce || strings.TrimRight(line, " \t") != line {
 		return WrapUpNone, ""
 	}
 	mark := WrapUpPrefix + " " + nonce
+	fenced := false
 	for _, l := range lines[:last] {
 		if strings.Contains(l, mark) {
 			return WrapUpNone, "" // two markers: never guess which one is meant
 		}
+		if t := strings.TrimSpace(l); strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+			fenced = !fenced
+		}
+	}
+	if fenced {
+		return WrapUpNone, "" // an example in a code block left open
 	}
 	if m[2] == "CLEAN" {
 		return WrapUpClean, ""
@@ -94,10 +105,12 @@ func WrapUpVerdict(text, nonce string) (verdict, reason string) {
 
 // WrapUpState is what a WrapUpTracker read so far.
 type WrapUpState struct {
-	// Prompted: the bridge's prompt (a user line holding the nonce) was read.
+	// Prompted: the bridge's prompt (the first user prompt from the offset
+	// that ends with the nonce's footer) was read.
 	Prompted bool
 	// TookOver: a person prompted the agent or interrupted it after the
-	// bridge's prompt (a prompt without the nonce, an interruption).
+	// bridge's prompt (any later prompt, even one quoting the marker, or an
+	// interruption).
 	TookOver bool
 	// Ended: the latest turn after the prompt ended; Verdict and Reason are
 	// its final message's result.
@@ -122,6 +135,7 @@ type WrapUpTracker struct {
 	msgID   string          // Claude: the message the text is of
 	text    strings.Builder // the latest assistant message's text, this turn
 	hasText bool
+	asked   string // the bridge's prompt as read, once Prompted
 }
 
 // NewWrapUpTracker follows a harness's (claude or codex) transcript for
@@ -168,19 +182,30 @@ func (t *WrapUpTracker) newTurn() {
 	t.text.Reset()
 }
 
-// mark reports whether s holds the nonce's marker (the bridge's prompt).
-func (t *WrapUpTracker) mark(s string) bool { return strings.Contains(s, WrapUpPrefix+" "+t.nonce) }
+// asking is a user prompt's text as the bridge's would read: without
+// Claude's paste wrapper and reminders, line ends and the ends trimmed.
+func asking(text string) string {
+	text = systemReminder.ReplaceAllString(unwrapPasted(strings.ReplaceAll(text, "\r\n", "\n")), "")
+	return strings.TrimSpace(text)
+}
 
-// prompt reads a user's text: the bridge's prompt, or a person's (one
-// before the bridge's was answered before it, in the turns that do not
-// count).
+// prompt reads a user's text. Before the bridge's prompt: the bridge's
+// (it ends with the nonce's footer), or a person's (answered before it, in
+// the turns that do not count). After it, every prompt is a person's, even
+// one quoting the marker: they took over. Only the bridge's prompt read
+// once more (the same text: Claude's queued prompt and its user line) is
+// not.
 func (t *WrapUpTracker) prompt(text string) {
-	if t.mark(text) {
-		t.st.Prompted = true
+	s := asking(text)
+	switch {
+	case !t.st.Prompted && strings.HasSuffix(s, WrapUpFooter(t.nonce)):
+		t.st.Prompted, t.asked = true, s
 		t.newTurn()
-		return
+	case t.st.Prompted && s == t.asked:
+		t.newTurn()
+	default:
+		t.interrupted()
 	}
-	t.interrupted()
 }
 
 // interrupted notes a person stepping in after the bridge's prompt.
@@ -197,11 +222,12 @@ func (t *WrapUpTracker) end() {
 }
 
 type wrapUpClaudeLine struct {
-	Type             string `json:"type"`
-	Subtype          string `json:"subtype"`
-	IsSidechain      bool   `json:"isSidechain"`
-	IsMeta           bool   `json:"isMeta"`
-	IsCompactSummary bool   `json:"isCompactSummary"`
+	Type             string          `json:"type"`
+	Subtype          string          `json:"subtype"`
+	IsSidechain      bool            `json:"isSidechain"`
+	IsMeta           bool            `json:"isMeta"`
+	IsCompactSummary bool            `json:"isCompactSummary"`
+	Attachment       json.RawMessage `json:"attachment"`
 	Message          *struct {
 		ID         string             `json:"id"`
 		StopReason *string            `json:"stop_reason"`
@@ -220,13 +246,17 @@ func (t *WrapUpTracker) claudeLine(b []byte) {
 			t.end()
 		}
 		return
+	case "attachment":
+		// A prompt queued while the agent worked: the bridge's, or a
+		// person's.
+		var a claudeAttach
+		if json.Unmarshal(l.Attachment, &a) == nil && a.Type == "queued_command" && a.CommandMode == "prompt" &&
+			strings.TrimSpace(a.Prompt) != "" {
+			t.prompt(a.Prompt)
+		}
+		return
 	case "user", "assistant":
 	default:
-		// Attachments (a prompt queued while the agent worked, …): the
-		// bridge's prompt shows by its nonce.
-		if !t.st.Prompted && t.mark(string(b)) {
-			t.prompt(string(b))
-		}
 		return
 	}
 	if l.Message == nil {
@@ -249,7 +279,7 @@ func (t *WrapUpTracker) claudeLine(b []byte) {
 			case bl.Type != "text":
 			case strings.HasPrefix(strings.TrimSpace(bl.Text), interruptedText):
 				t.interrupted()
-			case t.mark(bl.Text) || genuinePrompt(bl.Text):
+			case genuinePrompt(bl.Text):
 				t.prompt(bl.Text)
 			}
 		}

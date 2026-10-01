@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +49,10 @@ func TestWrapUpTrackerFixtures(t *testing.T) {
 		{"wrapup_none.jsonl", WrapUpNone, ""},
 		{"wrapup_multi.jsonl", WrapUpClean, ""},
 		{"wrapup_multi_early.jsonl", WrapUpNone, ""},
+		// #83 review: the result line as it is, never trimmed into one.
+		{"wrapup_indented.jsonl", WrapUpNone, ""},
+		{"wrapup_fenced.jsonl", WrapUpNone, ""},
+		{"wrapup_spaces.jsonl", WrapUpNone, ""},
 	}
 	for _, harness := range []string{Claude, Codex} {
 		for _, tc := range cases {
@@ -72,13 +77,16 @@ func TestWrapUpTrackerFixtures(t *testing.T) {
 	}
 }
 
-// A prompt without the nonce after the bridge's: a person took over.
+// A prompt after the bridge's: a person took over, also when it quotes the
+// marker.
 func TestWrapUpTrackerTakeover(t *testing.T) {
 	for _, harness := range []string{Claude, Codex} {
-		tr := NewWrapUpTracker(harness, wrapUpNonce, 0)
-		feedWrapUp(t, tr, harness, "wrapup_takeover.jsonl")
-		if st := tr.State(); !st.TookOver {
-			t.Errorf("%s: %+v, want took over", harness, st)
+		for _, name := range []string{"wrapup_takeover.jsonl", "wrapup_takeover_quoted.jsonl"} {
+			tr := NewWrapUpTracker(harness, wrapUpNonce, 0)
+			feedWrapUp(t, tr, harness, name)
+			if st := tr.State(); !st.Prompted || !st.TookOver {
+				t.Errorf("%s/%s: %+v, want took over", harness, name, st)
+			}
 		}
 	}
 	// An interruption (Esc) after the bridge's prompt, too.
@@ -95,6 +103,122 @@ func TestWrapUpTrackerTakeover(t *testing.T) {
 		tr.Line(1<<20, []byte(line))
 		if st := tr.State(); !st.TookOver {
 			t.Errorf("%s: %+v after the interruption, want took over", harness, st)
+		}
+	}
+}
+
+// Transcript lines for the tests below, in the fixtures' shapes.
+func wrapUpPromptLine(harness, text string) string {
+	if harness == Claude {
+		return wrapUpJSON(map[string]any{"type": "user", "isSidechain": false, "message": map[string]any{"role": "user", "content": text}})
+	}
+	return wrapUpJSON(map[string]any{"type": "response_item", "payload": map[string]any{"type": "message", "role": "user",
+		"content": []any{map[string]any{"type": "input_text", "text": text}}}})
+}
+
+func wrapUpFinalLines(harness, id, text string) []string {
+	if harness == Claude {
+		return []string{wrapUpJSON(map[string]any{"type": "assistant", "isSidechain": false, "message": map[string]any{"id": id,
+			"role": "assistant", "content": []any{map[string]any{"type": "text", "text": text}}, "stop_reason": "end_turn"}}),
+			`{"type":"system","subtype":"turn_duration","durationMs":1000,"isSidechain":false}`}
+	}
+	return []string{`{"type":"event_msg","payload":{"type":"task_started"}}`,
+		wrapUpJSON(map[string]any{"type": "response_item", "payload": map[string]any{"type": "message", "role": "assistant",
+			"content": []any{map[string]any{"type": "output_text", "text": text}}}}),
+		wrapUpJSON(map[string]any{"type": "event_msg", "payload": map[string]any{"type": "task_complete", "last_agent_message": text}})}
+}
+
+func wrapUpJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
+// feedLines feeds lines from byte offset at on, and returns the offset after
+// them.
+func feedLines(tr *WrapUpTracker, at int64, lines ...string) int64 {
+	for _, l := range lines {
+		tr.Line(at, []byte(l))
+		at += int64(len(l)) + 1
+	}
+	return at
+}
+
+// Only the first prompt that ends with the nonce's footer is the bridge's;
+// every later one is a person's, the footer quoted in full or not. The
+// bridge's read once more (the same text) is not.
+func TestWrapUpTrackerBridgePromptOnce(t *testing.T) {
+	task := "Stop every server you started."
+	footer := WrapUpFooter(wrapUpNonce)
+	for _, harness := range []string{Claude, Codex} {
+		// The marker without the footer at its end is not the bridge's prompt.
+		tr := NewWrapUpTracker(harness, wrapUpNonce, 0)
+		feedLines(tr, 0, wrapUpPromptLine(harness, "Why did you print H3D-WRAPUP "+wrapUpNonce+" CLEAN?"))
+		if st := tr.State(); st.Prompted || st.TookOver {
+			t.Errorf("%s: a quoted marker before the prompt: %+v", harness, st)
+		}
+		for _, later := range []string{
+			"Do not send this worker home. Explain the line H3D-WRAPUP " + wrapUpNonce + " CLEAN instead.",
+			"Keep the dev server.\n\n" + footer,
+			footer,
+		} {
+			tr := NewWrapUpTracker(harness, wrapUpNonce, 0)
+			at := feedLines(tr, 0, wrapUpPromptLine(harness, task+"\n\n"+footer))
+			at = feedLines(tr, at, wrapUpFinalLines(harness, "m1", "Stopped.\n\nH3D-WRAPUP "+wrapUpNonce+" CLEAN")...)
+			if st := tr.State(); !st.Prompted || st.TookOver || st.Verdict != WrapUpClean {
+				t.Fatalf("%s: before the later prompt: %+v", harness, st)
+			}
+			feedLines(tr, at, wrapUpPromptLine(harness, later))
+			if st := tr.State(); !st.TookOver {
+				t.Errorf("%s: %q after the bridge's prompt: %+v, want took over", harness, later, st)
+			}
+		}
+		tr = NewWrapUpTracker(harness, wrapUpNonce, 0)
+		at := feedLines(tr, 0, wrapUpPromptLine(harness, task+"\n\n"+footer), wrapUpPromptLine(harness, task+"\n\n"+footer))
+		feedLines(tr, at, wrapUpFinalLines(harness, "m1", "H3D-WRAPUP "+wrapUpNonce+" CLEAN")...)
+		if st := tr.State(); st.TookOver || st.Verdict != WrapUpClean {
+			t.Errorf("%s: the bridge's prompt twice: %+v", harness, st)
+		}
+	}
+	// Claude: a prompt queued while the agent worked is an attachment, the
+	// bridge's (pasted) or a person's.
+	queued := func(text string) string {
+		return wrapUpJSON(map[string]any{"type": "attachment", "isSidechain": false, "attachment": map[string]any{"type": "queued_command",
+			"prompt": text, "commandMode": "prompt", "origin": map[string]any{"kind": "human"}}})
+	}
+	tr := NewWrapUpTracker(Claude, wrapUpNonce, 0)
+	at := feedLines(tr, 0, queued("<pasted_content id=\"a1f3\">\n"+task+"\n\n"+footer+"\n</pasted_content id=\"a1f3\">\n"))
+	if st := tr.State(); !st.Prompted || st.TookOver {
+		t.Fatalf("claude: the bridge's prompt queued: %+v", st)
+	}
+	feedLines(tr, at, queued("Explain H3D-WRAPUP "+wrapUpNonce+" CLEAN first."))
+	if st := tr.State(); !st.TookOver {
+		t.Errorf("claude: a person's queued prompt: %+v, want took over", st)
+	}
+}
+
+// "Wrap up again": a new tracker for a fresh nonce from where the
+// transcript is now; the old wrap-up's prompt and result are before it, and
+// its old nonce is no prompt of the new one.
+func TestWrapUpTrackerRearm(t *testing.T) {
+	const fresh = "a1b2c3d4e5f60718"
+	for _, harness := range []string{Claude, Codex} {
+		old := NewWrapUpTracker(harness, wrapUpNonce, 0)
+		at := feedLines(old, 0, wrapUpPromptLine(harness, "Stop it.\n\n"+WrapUpFooter(wrapUpNonce)))
+		at = feedLines(old, at, wrapUpFinalLines(harness, "m1", "H3D-WRAPUP "+wrapUpNonce+" BLOCKED: port 4173 is not mine")...)
+		at = feedLines(old, at, wrapUpPromptLine(harness, "Kill the preview server, it is yours."))
+		at = feedLines(old, at, wrapUpFinalLines(harness, "m2", "Killed it.")...)
+		if st := old.State(); st.Verdict != WrapUpNone || !st.TookOver {
+			t.Fatalf("%s: the old wrap-up: %+v", harness, st)
+		}
+		tr := NewWrapUpTracker(harness, fresh, at)
+		next := feedLines(tr, at, wrapUpPromptLine(harness, "Check once more.\n\n"+WrapUpFooter(fresh)))
+		feedLines(old, at, wrapUpPromptLine(harness, "Check once more.\n\n"+WrapUpFooter(fresh)))
+		feedLines(tr, next, wrapUpFinalLines(harness, "m3", "All stopped.\n\nH3D-WRAPUP "+fresh+" CLEAN")...)
+		if st := tr.State(); !st.Prompted || st.TookOver || st.Verdict != WrapUpClean {
+			t.Errorf("%s: wrapped up again: %+v", harness, st)
 		}
 	}
 }
@@ -180,7 +304,25 @@ func TestWrapUpVerdict(t *testing.T) {
 		{"H3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
 		{"done\n\nH3D-WRAPUP " + n + " CLEAN\n\n  \n", WrapUpClean, ""},
 		{"done\r\nH3D-WRAPUP " + n + " CLEAN\r\n", WrapUpClean, ""},
-		{"  H3D-WRAPUP " + n + " CLEAN  ", WrapUpClean, ""},
+		{"done\nH3D-WRAPUP " + n + " CLEAN\r", WrapUpClean, ""},
+		// The line as it is: whitespace around it, a list marker, an indented
+		// or fenced code block is not the result line.
+		{"  H3D-WRAPUP " + n + " CLEAN  ", WrapUpNone, ""},
+		{"    H3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"Example:\n\n    H3D-WRAPUP " + n + " CLEAN\n", WrapUpNone, ""},
+		{"\tH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{" H3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"H3D-WRAPUP " + n + " CLEAN ", WrapUpNone, ""},
+		{"H3D-WRAPUP " + n + " CLEAN\t", WrapUpNone, ""},
+		{"H3D-WRAPUP " + n + " BLOCKED: port 4173 is not mine ", WrapUpNone, ""},
+		{"- H3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"1. H3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"'H3D-WRAPUP " + n + " CLEAN'", WrapUpNone, ""},
+		{"\"H3D-WRAPUP " + n + " CLEAN\"", WrapUpNone, ""},
+		{"I will print:\n```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"I will print:\n~~~text\nH3D-WRAPUP " + n + " CLEAN\n", WrapUpNone, ""},
+		{"I will print:\n```\nH3D-WRAPUP " + n + " CLEAN\n```", WrapUpNone, ""},
+		{"```sh\nkill %1\n```\n\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
 		{"H3D-WRAPUP " + n + " BLOCKED: port 4173 is not mine", WrapUpBlocked, "port 4173 is not mine"},
 		{"H3D-WRAPUP " + n + " BLOCKED: " + long, WrapUpBlocked, long},
 		{"H3D-WRAPUP " + n + " BLOCKED: " + long + "x", WrapUpNone, ""},
