@@ -296,6 +296,8 @@ export class BoardsPanel {
     this.notice.textContent = notes.join(' ');
     this.notice.dataset.tone = m?.stale ? 'warn' : 'info';
 
+    // The columns go away under a live drag: it ends, dropping nothing.
+    if (st.off || !m || (m.fetched_at === 0 && count === 0) || this.which !== 'issues') this.drag.cancel();
     if (st.off) {
       this.body.replaceChildren(h('div', { class: 'bd-off' }, h('h3', {}, st.off.text), st.off.sub ? h('p', {}, st.off.sub) : null));
       return;
