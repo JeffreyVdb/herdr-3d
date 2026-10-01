@@ -14,11 +14,15 @@ import './limits.css';
  * stale; `tick` is that second check and does nothing else.
  *
  * Over a screen-filling dialog (SCREEN, #47, #51) the plate would hide its close button and first row, so it
- * steps out of it: into a slim edge tab (worst percentage and a severity bar) when the viewport leaves a
- * gutter right of the dialog for it, else away completely, like the narrow-viewport fold. Either way it
+ * steps out of it, and so it does while you sit at a worker's laptop (#53, SEATED): into a slim edge tab (worst
+ * percentage and a severity bar) when the viewport leaves a gutter right of the dialog for it, else away completely, like the narrow-viewport fold. Either way it
  * stays reachable: a click on the tab or Shift+L "peeks" the plate over the dialog (expanded, whatever the
  * saved state), and clicking the plate's header, Shift+L again, a click outside it, or closing the dialog
  * it was started over (or opening another one on top of it) ends the peek. A peek never touches the saved prefs, so when the dialog closes the plate is what it was.
+ * Seated, the laptop's glass (terminal and conversation alike) is the screen to keep clear of: the plate is the tab in
+ * the gutter right of it when there is room, else away (the same peek, which ends when you stand up), and standing up
+ * gives back the docked or open plate the prefs say. At the terminal Shift+L is an L for the pane (as in any text
+ * box), so the tab is the way in there when it shows; in the conversation Shift+L peeks.
  */
 
 /** Below this width a dialog or the Changes panel spans the screen (limits.css follows the same line). */
@@ -40,8 +44,14 @@ const SCREEN = 'dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dl
  */
 const READING = '.seat-transcript:not([hidden])';
 
+/** #53: seated at a worker's laptop (laptop/index.ts marks the page with `data-seated`, the glass's right edge in px); the plate is its edge tab beside the glass, or away. */
+const SEATED = 'html[data-seated]';
+
 /** Free width the edge tab needs right of a screen dialog: its 32 px, 8 px from the edge, and 8 px clear of the dialog (limits.css). */
 const TAB_ROOM = 48;
+
+/** Free width the snug tab (22 px, 3 px from the edge, 2 px clear of the glass; data-fit='snug' in limits.css) needs where the full one does not fit. */
+const TAB_ROOM_SNUG = 27;
 
 export interface LimitsHost {
   now(): number;
@@ -199,21 +209,25 @@ export class LimitsWidget {
     return dialogs[dialogs.length - 1] ?? null;
   }
 
-  /** A screen-filling dialog is open (and the plate is on screen at all). */
+  /** A screen-filling dialog is open, or you sit at a laptop (and the plate is on screen at all). */
   private screenOpen(): boolean {
-    return !this.root.hidden && !this.folded && (!!document.querySelector(SCREEN) || !!document.querySelector(READING));
+    return !this.root.hidden && !this.folded && (!!document.querySelector(SCREEN) || !!document.querySelector(READING) || !!document.querySelector(SEATED));
   }
 
-  /** The plate steps aside over a screen dialog (a peek excepted): Shift+L reaches it through the app even though the dialog owns the keys. */
+  /** The plate steps aside over a screen dialog or at a laptop (a peek excepted): Shift+L reaches it through the app even though the dialog or the laptop owns the keys. */
   get overScreen(): boolean {
     return this.screenOpen();
   }
 
-  /** Room right of every open screen dialog for the edge tab. */
-  private roomForTab(): boolean {
+  /** The edge tab that fits right of every open screen dialog and of the seated laptop's glass: the full one, a snug one in a thin gutter, or none. */
+  private tabFit(): 'full' | 'snug' | null {
     let right = 0;
     for (const d of document.querySelectorAll(`${SCREEN}, ${READING}`)) right = Math.max(right, d.getBoundingClientRect().right);
-    return document.documentElement.clientWidth - right >= TAB_ROOM;
+    const seated = document.querySelector(SEATED);
+    // The glass's right edge (laptop/index.ts); not measured yet (or off screen): assume it fills the view.
+    if (seated) right = Math.max(right, Number(seated.getAttribute('data-seated') || Infinity));
+    const room = document.documentElement.clientWidth - right;
+    return room >= TAB_ROOM ? 'full' : room >= TAB_ROOM_SNUG ? 'snug' : null;
   }
 
   /**
@@ -250,12 +264,12 @@ export class LimitsWidget {
     window.addEventListener('resize', this.onResize);
     if (typeof MutationObserver === 'undefined') return;
     this.watcher = new MutationObserver((records) => {
-      if (!records.some((r) => r.target instanceof HTMLDialogElement || r.attributeName === 'data-reading')) return;
+      if (!records.some((r) => r.target instanceof HTMLDialogElement || r.attributeName === 'data-reading' || r.attributeName === 'data-seated')) return;
       this.root.dataset.beside = document.querySelector('dialog.changes[open]') ? 'changes' : '';
       this.update();
       if (records.some((r) => r.target instanceof HTMLDialogElement && r.target.open)) this.raise();
     });
-    this.watcher.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open', 'data-reading'] });
+    this.watcher.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open', 'data-reading', 'data-seated'] });
   }
 
   get isOpen(): boolean {
@@ -299,7 +313,7 @@ export class LimitsWidget {
     const folded = this.folded;
     const screen = this.screenOpen();
     if (this.peek && (!screen || this.topScreen() !== this.peekOwner)) {
-      // The dialog it was over is gone (or another opened on top of it, or the meter was hidden): back to the docked/saved state.
+      // The dialog it was over is gone (you stood up, or another opened on top of it, or the meter was hidden): back to the docked/saved state.
       this.peek = false;
       this.peekOwner = null;
       this.watchOutside(false);
@@ -307,7 +321,9 @@ export class LimitsWidget {
     const open = !this.root.hidden && !folded && (screen ? this.peek : this.prefs.open);
     this.place();
     this.root.dataset.folded = String(folded);
-    this.root.dataset.dock = screen && !this.peek ? (this.roomForTab() ? 'tab' : 'away') : '';
+    const fit = screen && !this.peek ? this.tabFit() : null;
+    this.root.dataset.dock = screen && !this.peek ? (fit ? 'tab' : 'away') : '';
+    this.root.dataset.fit = fit ?? '';
     this.root.dataset.peek = String(this.peek);
     this.panel.hidden = !open;
     this.strip.setAttribute('aria-expanded', String(open));

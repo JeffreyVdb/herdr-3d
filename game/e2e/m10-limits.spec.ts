@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
 import { frames, openGame, shot, watchErrors } from './game';
@@ -643,5 +645,243 @@ test('an M3 panel (settings) at any width also gets the edge tab; the hire sheet
   await expect(limits(page)).toHaveAttribute('data-dock', ''); // today's behaviour: the plate stays, above the dialog
   await expect(page.locator('.lm-strip')).toBeVisible();
   expect(await undimmed(page)).toBe(true);
+  clean();
+});
+
+// Seated at a worker's laptop (#53): the laptop's screen fills the view, so the plate is its edge tab, and standing up gives
+// back what the prefs say. Peeks (the tab, Shift+L) leave the prefs alone. demo-m5 has the floor and the workers to sit at.
+
+/** The first worker of demo-m5's floor. */
+const firstWorker = (): string => {
+  const snap = JSON.parse(readFileSync(resolve(import.meta.dirname, '../fixtures/demo-m5.jsonl'), 'utf8').split('\n')[0] ?? '{}') as { world: { workers: Array<{ id: string }> } };
+  return snap.world.workers[0]!.id;
+};
+const savedHidden = (page: Page) => page.evaluate(() => localStorage.getItem('h3d.limits.hidden'));
+
+async function sitAtLaptop(page: Page): Promise<void> {
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await frames(page, 3);
+  const id = firstWorker();
+  expect(await page.evaluate((w) => window.__h3d.face(w), id)).toBe(true);
+  await frames(page, 3);
+  await page.keyboard.press('e');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
+  await frames(page, 10);
+}
+
+async function standUp(page: Page): Promise<void> {
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
+}
+
+/** The monitor's glass on the viewport: the conversation overlay is laid over exactly it. Leaves the seat in the terminal view it found. */
+async function glassBox(page: Page): Promise<Box> {
+  const mode = () => page.evaluate(() => window.__h3d.transcript()?.mode);
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(mode).toBe('transcript');
+  await expect.poll(() => page.evaluate(() => window.__h3d.transcript()?.box ?? null)).not.toBeNull();
+  await frames(page, 10);
+  const b = (await page.evaluate(() => window.__h3d.transcript()!.box))!;
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(mode).toBe('terminal');
+  await frames(page, 10);
+  return { x: b.left, y: b.top, width: b.width, height: b.height };
+}
+
+// The tab never covers the glass, and it stays: in the gutter right of the monitor it is the full tab where that has room
+// (1600x700), else a snug one fitted to the thin gutter (1280x900, 1024x768 and 800x600 leave 39, 30 and 27 px). Clickable
+// in both views, peeking without touching the saved state, and a peeked plate hands back to the tab.
+for (const [w, h, want] of [
+  [1024, 768, 'snug'],
+  [1280, 900, 'snug'],
+  [800, 600, null], // the gutter depends on the seat's camera: snug or full, never away
+  [1600, 700, 'full'],
+] as const) {
+  test(`seated at ${w}x${h} the limits tab sits clear of the glass${want ? ` (${want})` : ''}, in the terminal and in the conversation`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width: w, height: h });
+    await openGame(page, 'demo-m5', '', `${SIM()}&simusage=0`);
+    await withReadings(page);
+    await sitAtLaptop(page);
+    const glass = await glassBox(page);
+    // The full tab needs 48 px right of the glass, the snug one 27 (limits.ts); the glass is measured independently of the widget.
+    const gutter = w - (glass.x + glass.width);
+    const fit = gutter >= 48 ? 'full' : 'snug';
+    test.info().annotations.push({ type: 'gutter', description: `${w}x${h}: glass ${JSON.stringify(glass)}, gutter ${gutter}px, fit ${fit}` });
+    expect(gutter, `gutter right of the glass ${JSON.stringify(glass)}`).toBeGreaterThanOrEqual(27);
+    if (want) expect(fit).toBe(want);
+
+    const tabClearOfGlass = async (view: string): Promise<void> => {
+      await expect(limits(page), `${view}: dock`).toHaveAttribute('data-dock', 'tab');
+      await expect(limits(page), `${view}: fit`).toHaveAttribute('data-fit', fit);
+      await expect(page.locator('[data-key="limits-tab"]'), `${view}: tab`).toBeVisible();
+      await expect(page.locator('.lm-tab-pct'), `${view}: worst %`).toBeVisible();
+      await expect(page.locator('.lm-tab-bar'), `${view}: severity bar`).toBeVisible();
+      // (it fades in from the edge: measure once it has settled)
+      let tab!: Box;
+      await expect.poll(async () => {
+        tab = (await limits(page).boundingBox())!;
+        return tab.x + tab.width <= w && apart(tab, glass);
+      }, { message: `${view}: tab clear of glass ${JSON.stringify(glass)}` }).toBe(true);
+      expect(tab.width, `${view}: hit target`).toBeGreaterThanOrEqual(20);
+      const pct = (await page.locator('.lm-tab-pct').boundingBox())!;
+      expect(pct.x, `${view}: % inside the tab`).toBeGreaterThanOrEqual(tab.x - 0.5);
+      expect(pct.x + pct.width, `${view}: % inside the tab`).toBeLessThanOrEqual(tab.x + tab.width + 0.5);
+    };
+
+    const peeks = async (view: string): Promise<void> => {
+      await page.locator('[data-key="limits-tab"]').click();
+      await expect(limits(page), `${view}: peek`).toHaveAttribute('data-peek', 'true');
+      await expect(page.locator('.lm-panel')).toBeVisible();
+      expect(await savedOpen(page)).toBeNull();
+      // The peeked plate is not a trap: its header hands back to the tab.
+      await page.locator('.lm-strip').click();
+      await expect(limits(page), `${view}: peek ended`).toHaveAttribute('data-peek', 'false');
+      await expect(limits(page)).toHaveAttribute('data-fit', fit);
+      expect(await savedOpen(page)).toBeNull();
+      await tabClearOfGlass(view);
+    };
+
+    await tabClearOfGlass('terminal');
+    await peeks('terminal');
+
+    // The conversation is laid over the same glass.
+    await page.keyboard.press('Control+Escape');
+    await expect.poll(() => page.evaluate(() => window.__h3d.transcript()?.mode)).toBe('transcript');
+    await frames(page, 10);
+    expect(await page.evaluate(() => window.__h3d.transcript()!.box)).toMatchObject({ left: glass.x, top: glass.y, width: glass.width, height: glass.height });
+    await tabClearOfGlass('conversation');
+    await peeks('conversation');
+
+    // Shift+L peeks from the conversation too, and a click outside ends it; standing up gives the plate back.
+    await page.keyboard.press('Shift+L');
+    await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+    await expect(page.locator('.lm-panel')).toBeVisible();
+    expect(await savedOpen(page)).toBeNull();
+    await standUp(page);
+    await expect(limits(page)).toHaveAttribute('data-dock', '');
+    await expect(limits(page)).toHaveAttribute('data-fit', '');
+    await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+    await expect(page.locator('.lm-strip')).toBeVisible();
+    clean();
+  });
+}
+
+for (const expanded of [false, true]) {
+  test(`sitting at a laptop ${expanded ? 'with the panel expanded' : 'with the strip'}: the widget is the edge tab, and standing up gives it back as saved`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const clean = watchErrors(page);
+    if (expanded) await page.addInitScript(() => localStorage.setItem('h3d.limits.open', '1'));
+    await openGame(page, 'demo-m5', '', `${SIM()}&simusage=0`);
+    await withReadings(page);
+    await expect(page.locator('.lm-panel')).toBeVisible({ visible: expanded });
+
+    await sitAtLaptop(page);
+    await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+    await expect(limits(page)).toBeVisible();
+    await expect(page.locator('.lm-panel')).toBeHidden();
+    await expect(page.locator('.lm-strip')).toBeHidden();
+    await expect(page.locator('.lm-tab-pct')).toHaveText('61%');
+    expect((await widget(page))!.open).toBe(false);
+    // The tab is a sliver in the corner, not the plate.
+    expect((await limits(page).boundingBox())!.width).toBeLessThan(48);
+    expect(await savedOpen(page)).toBe(expanded ? '1' : null);
+    await shot(page, `m10-seated-${expanded ? 'expanded' : 'strip'}`);
+
+    await standUp(page);
+    await expect(limits(page)).toHaveAttribute('data-dock', '');
+    await expect(page.locator('.lm-panel')).toBeVisible({ visible: expanded });
+    await expect(page.locator('.lm-strip')).toBeVisible();
+    expect((await widget(page))!.open).toBe(expanded);
+    expect(await savedOpen(page)).toBe(expanded ? '1' : null);
+    clean();
+  });
+}
+
+test('seated, a click on the tab or Shift+L peeks the panel without touching the saved state, and standing up ends the peek', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  const keys = () => page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.keys'));
+  await openGame(page, 'demo-m5', '', `${SIM()}&simusage=0`);
+  await withReadings(page);
+  await sitAtLaptop(page);
+
+  // At the terminal Shift+L is an L for the pane, as in any text box: no peek.
+  await page.keyboard.press('Shift+L');
+  await expect.poll(async () => JSON.stringify(await keys())).toContain('"text":"L"');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+
+  await page.locator('[data-key="limits-tab"]').click();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  await expect(page.locator('.lm-panel')).toBeVisible();
+  expect((await widget(page))!.open).toBe(true);
+  expect(await onTop(page)).toBe(true);
+  expect(await savedOpen(page)).toBeNull();
+  await shot(page, 'm10-seated-peek');
+
+  // Shift+L (focus is on the plate now) ends it and brings it back; so does the header and a click outside.
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  await page.locator('.lm-strip').click();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await page.locator('[data-key="limits-tab"]').click();
+  await expect(page.locator('.lm-panel')).toBeVisible();
+  await page.mouse.click(300, 400);
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  expect(await savedOpen(page)).toBeNull();
+
+  // Standing up with a peek open ends it; the plate is the docked strip again.
+  await page.locator('[data-key="limits-tab"]').click();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  await standUp(page);
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await expect(limits(page)).toHaveAttribute('data-dock', '');
+  await expect(page.locator('.lm-panel')).toBeHidden();
+  await expect(page.locator('.lm-strip')).toBeVisible();
+  expect(await savedOpen(page)).toBeNull();
+  clean();
+});
+
+test('seated, a meter the user hid stays hidden', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await page.addInitScript(() => localStorage.setItem('h3d.limits.hidden', '1'));
+  await openGame(page, 'demo-m5', '', `${SIM()}&simusage=0`);
+  await expect.poll(async () => (await widget(page))?.hidden).toBe(true);
+  await sitAtLaptop(page);
+  await expect(limits(page)).toBeHidden();
+  await standUp(page);
+  await expect(limits(page)).toBeHidden();
+  expect(await savedHidden(page)).toBe('1');
+  clean();
+});
+
+test('seated on a narrow viewport the glass leaves no gutter: the widget is away, and still peeks from the conversation', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 420, height: 800 });
+  await openGame(page, 'demo-m5', '', `${SIM()}&simusage=0`);
+  await withReadings(page);
+  await sitAtLaptop(page);
+  await expect(limits(page)).toHaveAttribute('data-dock', 'away');
+  await expect(limits(page)).toBeHidden();
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.transcript()?.mode)).toBe('transcript');
+  await frames(page, 10);
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  await expect(page.locator('.lm-panel')).toBeVisible();
+  // (it fades in from the edge: wait for it to settle)
+  await expect.poll(async () => {
+    const box = (await limits(page).boundingBox())!;
+    return box.x >= 0 && box.x + box.width <= 420;
+  }).toBe(true);
+  await standUp(page);
+  await expect(limits(page)).toHaveAttribute('data-dock', '');
+  await expect(page.locator('.lm-strip')).toBeVisible();
   clean();
 });

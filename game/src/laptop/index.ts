@@ -581,6 +581,7 @@ export class Laptops {
       view: '',
     };
     this.leaving = null;
+    document.documentElement.setAttribute('data-seated', '');
     office.setLean(v.desk);
     office.setAtLaptop(true);
     // The seated screen: the whole terminal over the whole glass, sized to the view, sharp from up close (the monitor's shape, at most 2400 wide).
@@ -625,6 +626,7 @@ export class Laptops {
     this.input = null;
     this.transcript.stand();
     this.markReading(null);
+    document.documentElement.removeAttribute('data-seated');
     this.meshes?.unfreeze(s.desk);
     s.office.setLean(null);
     s.office.setAtLaptop(false);
@@ -918,11 +920,23 @@ export class Laptops {
       meshes.update(f.now);
     }
     this.moveCamera(f.camera, f.now);
+    // Seated, the glass is what the plate keeps clear of in either view; the conversation is laid over exactly it.
+    const rect = this.seat ? this.glassRect(f.camera) : null;
     if (this.transcript.shown) {
-      const rect = this.glassRect(f.camera);
       this.transcript.place(rect);
       this.markReading(rect);
     } else this.markReading(null);
+    if (this.seat) this.markSeated(rect);
+  }
+
+  /**
+   * #53: the page says you sit at a laptop and where its glass ends (its right edge, px; empty while it is not on
+   * screen): the plan-limits plate keeps clear of it (ui/limits.ts), and follows the camera's glide and a resize.
+   */
+  private markSeated(rect: OverlayRect | null): void {
+    const el = document.documentElement;
+    const v = rect ? String(Math.round(rect.left + rect.width)) : '';
+    if (el.getAttribute('data-seated') !== v) el.setAttribute('data-seated', v);
   }
 
   /**

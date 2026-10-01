@@ -713,12 +713,15 @@ Shift+L (plain L is the elevator) for the panel (it never grows past the viewpor
 stay); it is switched off in About, or with the panel's Hide. On a viewport under 760 px wide it steps out of an open
 dialog or the Changes panel and comes back, panel as it was, when they close. Over a screen-filling dialog (`dialog.panel`,
 the Issues / Pull requests boards and their item modal) it steps out at any width: a slim edge tab (worst percentage and a
-severity bar) in the gutter right of the dialog, or, when the viewport leaves under 48 px there, away completely (the hire
+severity bar) in the gutter right of the dialog, or, when the viewport leaves under 27 px there, away completely (a snug tab from 27 px, the full one from 48 px) (the hire
 dialog, a near-full-screen sheet since #51, is one of them: its own limits line is inline). A click on
 the tab or Shift+L then *peeks* the expanded panel above the dialog without touching the saved state (Shift+L again, the
 plate's header, a click elsewhere or closing the dialog ends the peek; a meter hidden from About stays hidden); when the
 dialog closes the plate is exactly as it was. The small centred dialogs (confirm, start-run, send-home, …) keep the
-plate as it was, above them. The Changes panel still makes it step left.
+plate as it was, above them. Seated at a worker's laptop (E, #53) it is the same, measured against the monitor's glass (the
+terminal's and the conversation's alike): the edge tab in the gutter right of the glass (the full 32 px one from 48 px of gutter, a snug 22 px one down to 27 px, which is what 800x600 to 1280x900 leave), else away (a phone-width glass fills the view); a
+click on the tab (or Shift+L, anywhere but the terminal's own input, where it types an L; with no tab, Shift+L from the
+conversation) peeks the panel, and standing up gives back the docked or open plate the saved state says. The Changes panel still makes it step left.
 
 M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
 `simfail=no_m6` plays a bridge without them. E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simms%3D300`.
