@@ -28,8 +28,13 @@ var claudeSubagentTools = map[string]bool{"Agent": true, "Task": true}
 
 var (
 	systemReminder = regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`)
-	imageMarker    = regexp.MustCompile(`\[Image #\d+: [^\]\n]+\]`)
-	xmlTag         = regexp.MustCompile(`(?s)<([a-z][a-z0-9-]*)>(.*?)</([a-z][a-z0-9-]*)>`)
+	// pastedContent is the wrapper Claude Code puts around pasted text (also text sent as a bracketed paste) of 20 or more
+	// characters: `<pasted_content id="bc45">\n…\n</pasted_content id="bc45">`, with a blank line before it and a line end after (what was
+	// typed around it stays, blanks and all).
+	// RE2 has no backreference, so the two ids are not compared: a paste does not hold a closing tag.
+	pastedContent = regexp.MustCompile(`(?s)(?:\n\n)?<pasted_content id="[0-9a-f]+">\n?(.*?)\n?</pasted_content id="[0-9a-f]+">\n?`)
+	imageMarker   = regexp.MustCompile(`\[Image #\d+: [^\]\n]+\]`)
+	xmlTag        = regexp.MustCompile(`(?s)<([a-z][a-z0-9-]*)>(.*?)</([a-z][a-z0-9-]*)>`)
 )
 
 // strOr is a JSON value that is a string or a list of T.
@@ -308,6 +313,16 @@ func subText(pc *parseCtx, c strOr[claudeSubPart]) (string, []imgRef) {
 	return sb.String(), images
 }
 
+// unwrapPasted takes the paste wrapper out of a prompt, keeping what was pasted and what was typed around it. The
+// transcript has it as the model got it (the "queued_command" attachment too); a person never typed it, and the
+// prompt they sent from the laptop has none, so it would show twice.
+func unwrapPasted(s string) string {
+	if !strings.Contains(s, "<pasted_content ") {
+		return s
+	}
+	return strings.TrimSpace(pastedContent.ReplaceAllString(s, "$1"))
+}
+
 const (
 	interruptedText    = "[Request interrupted by user"
 	compactSummarySrc  = "user/compact_summary"
@@ -340,7 +355,7 @@ func claudeUser(l *claudeLine, id string, ts int64, pc *parseCtx) []contrib {
 		if strings.TrimSpace(stripped) == "" {
 			return
 		}
-		ps, is := textParts(pc, stripped)
+		ps, is := textParts(pc, unwrapPasted(stripped))
 		parts = append(parts, ps...)
 		imgs = append(imgs, is...)
 	}
@@ -560,7 +575,7 @@ func claudeAttachment(l *claudeLine, id string, ts int64, pc *parseCtx) contrib 
 	_ = json.Unmarshal(l.Attachment, &a)
 	if a.Type == "queued_command" && a.CommandMode == "prompt" && a.Origin != nil && a.Origin.Kind == "human" &&
 		strings.TrimSpace(a.Prompt) != "" {
-		parts, imgs := textParts(pc, a.Prompt)
+		parts, imgs := textParts(pc, unwrapPasted(a.Prompt))
 		return contrib{id: id, kind: proto.ItemUser, ts: ts, imgs: imgs, apply: func(b *builder) { b.it.Parts = parts }}
 	}
 	text := a.Prompt
