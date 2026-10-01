@@ -1,6 +1,7 @@
 import './seat.css';
 import type { SeatView } from '../laptop';
 import { LOOK_KEY } from '../laptop/keys';
+import type { FullscreenChip } from '../laptop/fullscreen';
 import type { SeatMode } from '../laptop/transcriptMode';
 import { filesOf } from './composer/field';
 import type { ViewPrefs } from './themePrefs';
@@ -30,7 +31,8 @@ function key(k: string[], label: string): HTMLSpanElement {
  * #59: the terminal's own preset and zoom (the transcript has its own, in its
  * strip): three swatches and A− / level / A+, always in view. In terminal mode
  * every key is the pane's, so the mouse and Ctrl + = / − / 0 reach them there;
- * by keyboard Ctrl+, reaches them from any view (Esc goes back).
+ * by keyboard Ctrl+, reaches them from any view (Esc goes back). #74: a split herdr pane shows at its own size, so
+ * beside them a chip states that fact ("Split pane 60×40") and switches herdr's zoom for the pane.
  */
 export class SeatBar implements SeatView {
   readonly el: HTMLDivElement;
@@ -46,6 +48,10 @@ export class SeatBar implements SeatView {
   /** #59: the terminal's preset and zoom. */
   private readonly look = el('div', 'seat-look');
   private readonly swatches: HTMLButtonElement[] = [];
+  /** #74: the fullscreen chip (hidden while there is nothing to say), and what a click of it asks for. */
+  private readonly fsBtn = el('button', 'seat-fs');
+  private readonly fsText = el('span', 'seat-fs-text');
+  private fsAction: FullscreenChip['action'] = null;
   private readonly zoomBtns: { out: HTMLButtonElement; level: HTMLButtonElement; in: HTMLButtonElement } | null = null;
   private name = '';
   private mac = false;
@@ -53,7 +59,7 @@ export class SeatBar implements SeatView {
 
   constructor(
     private readonly hud: HTMLElement,
-    handlers: { text(t: string): void; paste(t: string, files?: File[]): void; stand(): void; toggle(): void },
+    handlers: { text(t: string): void; paste(t: string, files?: File[]): void; stand(): void; toggle(): void; fullscreen?(action: 'zoom' | 'unzoom'): void },
     private readonly prefs: ViewPrefs | null = null,
   ) {
     this.el = el('div', 'seat');
@@ -99,7 +105,7 @@ export class SeatBar implements SeatView {
     this.askLine.setAttribute('role', 'status');
     this.el.append(this.askLine, line, this.keys, this.modeBtn, this.standBtn, this.input);
     if (prefs) {
-      this.zoomBtns = this.buildLook(prefs);
+      this.zoomBtns = this.buildLook(prefs, handlers.fullscreen);
       // At the end of the keys row (renderMode puts it back after the keys): the bar keeps its two rows.
       this.keys.append(this.look);
       prefs.onChange((what) => {
@@ -111,7 +117,7 @@ export class SeatBar implements SeatView {
   }
 
   /** #59: "Terminal" and its three swatches (a radio group), then A− / level / A+. */
-  private buildLook(prefs: ViewPrefs): { out: HTMLButtonElement; level: HTMLButtonElement; in: HTMLButtonElement } {
+  private buildLook(prefs: ViewPrefs, fullscreen?: (action: 'zoom' | 'unzoom') => void): { out: HTMLButtonElement; level: HTMLButtonElement; in: HTMLButtonElement } {
     const group = el('div', 'seat-themes');
     group.setAttribute('role', 'radiogroup');
     group.setAttribute('aria-label', 'Terminal theme');
@@ -169,7 +175,14 @@ export class SeatBar implements SeatView {
     const label = key([...LOOK_KEY.label], 'Terminal');
     label.classList.add('seat-look-label');
     label.title = `The terminal’s theme and text size (${LOOK_KEY.label.join(' ')}; Esc goes back)`;
-    this.look.append(label, group, zoom);
+    this.fsBtn.type = 'button';
+    this.fsBtn.hidden = true;
+    this.fsBtn.append(el('span', 'seat-fs-dot'), this.fsText);
+    this.fsBtn.addEventListener('click', () => {
+      if (this.fsAction) fullscreen?.(this.fsAction);
+      this.backToPane();
+    });
+    this.look.append(label, group, zoom, this.fsBtn);
     return { out, level, in: inc };
   }
 
@@ -192,6 +205,21 @@ export class SeatBar implements SeatView {
     z.level.setAttribute('aria-label', `Terminal text size ${level}%${level === ZOOM.reset ? '' : ', back to 100%'}`);
     z.out.disabled = level <= ZOOM.min;
     z.in.disabled = level >= ZOOM.max;
+  }
+
+  /** #74: the fullscreen chip's state (null: hide it, there is nothing to say about this pane). */
+  setFullscreen(chip: FullscreenChip | null): void {
+    this.fsAction = chip?.action ?? null;
+    this.fsBtn.hidden = !chip;
+    this.el.toggleAttribute('data-fs', !!chip);
+    if (!chip) return;
+    this.fsText.textContent = chip.label;
+    this.fsBtn.setAttribute('aria-pressed', String(chip.pressed));
+    this.fsBtn.setAttribute('aria-label', chip.aria);
+    this.fsBtn.toggleAttribute('data-unavailable', chip.disabled);
+    if (chip.disabled) this.fsBtn.setAttribute('aria-disabled', 'true');
+    else this.fsBtn.removeAttribute('aria-disabled');
+    this.fsBtn.title = chip.title;
   }
 
   /** #59: the keyboard to the terminal's picked preset (Ctrl+,); false when the bar has no controls. */
@@ -293,8 +321,9 @@ export class SeatBar implements SeatView {
   }
 
   /** What the bar says (test hook). */
-  summary(): { shown: boolean; tape: string; note: string; state: string; mode: SeatMode; ask: string | null; terminalZoom: string | null } {
+  summary(): { shown: boolean; tape: string; note: string; state: string; mode: SeatMode; ask: string | null; terminalZoom: string | null; fullscreen: { label: string; pressed: boolean; unavailable: boolean } | null } {
     return {
+      fullscreen: this.fsBtn.hidden ? null : { label: this.fsText.textContent ?? '', pressed: this.fsBtn.getAttribute('aria-pressed') === 'true', unavailable: this.fsBtn.hasAttribute('data-unavailable') },
       terminalZoom: this.zoomBtns?.level.textContent ?? null,
       shown: !this.el.hidden,
       tape: this.tape.textContent ?? '',

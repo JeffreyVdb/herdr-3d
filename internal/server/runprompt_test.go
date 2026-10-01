@@ -23,6 +23,14 @@ const buildTeamLines = `Team:
 - ux reviewers: codex gpt-6-sol, reasoning high
 - researchers: codex gpt-6-sol, reasoning low`
 
+// placementLine is the rule of where an orchestrator starts its agents
+// (#74); a prompt has it after the team, whatever the ticket.
+const placementLine = "Start every agent you hire in its own herdr workspace or tab, never in a split pane of your tab or of another agent's tab: " +
+	"a laptop shows a pane at its own size, and a fullscreen terminal is wanted."
+
+// buildHead is the team of buildTeam and the placement rule.
+const buildHead = buildTeamLines + "\n\n" + placementLine
+
 func TestRunPrompt(t *testing.T) {
 	issueURL := server.IssueURL("JeffreyVdb/lab", 3)
 	if issueURL != "https://github.com/JeffreyVdb/lab/issues/3" {
@@ -45,30 +53,30 @@ func TestRunPrompt(t *testing.T) {
 		want    string
 	}{
 		{"claude issue", "claude", issueURL, true, buildTeam, "",
-			"/write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildTeamLines + "\n\n" + statusLine},
+			"/write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildHead + "\n\n" + statusLine},
 		{"codex issue", "codex", issueURL, true, buildTeam, "",
-			"$write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildTeamLines + "\n\n" + statusLine},
+			"$write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildHead + "\n\n" + statusLine},
 		{"claude issue + extra", "claude", issueURL, true, buildTeam, "  Use port 5173 for the demo.\nKeep it small.\n\n",
-			"/write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildTeamLines + "\n\n" + statusLine +
+			"/write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildHead + "\n\n" + statusLine +
 				"\n\nUse port 5173 for the demo.\nKeep it small."},
 		{"codex issue + extra", "codex", issueURL, true, buildTeam, "Keep it small.",
-			"$write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildTeamLines + "\n\n" + statusLine + "\n\nKeep it small."},
+			"$write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildHead + "\n\n" + statusLine + "\n\nKeep it small."},
 		{"claude text", "claude", "  " + multi + "\n", false, buildTeam, "",
-			"/write-code " + multi + "\n\n" + buildTeamLines},
+			"/write-code " + multi + "\n\n" + buildHead},
 		{"codex text", "codex", multi, false, buildTeam, "",
-			"$write-code " + multi + "\n\n" + buildTeamLines},
+			"$write-code " + multi + "\n\n" + buildHead},
 		{"claude text + extra", "claude", multi, false, buildTeam, "No new deps.",
-			"/write-code " + multi + "\n\n" + buildTeamLines + "\n\nNo new deps."},
+			"/write-code " + multi + "\n\n" + buildHead + "\n\nNo new deps."},
 		{"codex text + extra", "codex", multi, false, buildTeam, "No new deps.",
-			"$write-code " + multi + "\n\n" + buildTeamLines + "\n\nNo new deps."},
+			"$write-code " + multi + "\n\n" + buildHead + "\n\nNo new deps."},
 		{"whitespace-only extra is none", "claude", issueURL, true, buildTeam, " \n\t ",
-			"/write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildTeamLines + "\n\n" + statusLine},
+			"/write-code https://github.com/JeffreyVdb/lab/issues/3\n\n" + buildHead + "\n\n" + statusLine},
 		{"effort vs reasoning follows each role's harness", "codex", issueURL, true, mixed, "",
 			"$write-code https://github.com/JeffreyVdb/lab/issues/3\n\nTeam:\n" +
 				"- coders: codex gpt-6-luna, reasoning xhigh\n" +
 				"- reviewers: claude claude-fable-5-1, effort max\n" +
 				"- ux reviewers: claude claude-opus-5-5, effort low\n" +
-				"- researchers: codex gpt-6-astra, reasoning ultra\n\n" + statusLine},
+				"- researchers: codex gpt-6-astra, reasoning ultra\n\n" + placementLine + "\n\n" + statusLine},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := server.RunPrompt(tc.harness, tc.ticket, tc.issue, tc.roles, tc.extra); got != tc.want {

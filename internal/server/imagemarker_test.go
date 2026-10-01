@@ -55,7 +55,7 @@ func TestRunPromptsCarryImageMarkers(t *testing.T) {
 	// run.prepare folds `extra` (trimmed) into the orchestrator's prompt as it is, markers included.
 	extra := "Match the mock-up " + markerA + "\n\nSee also " + markerB + "\n"
 	res := runPrepare(t, c, proto.RunPrepareArgs{Session: "s", Text: "Tidy the lobby", Extra: extra})
-	wantPrompt := "/write-code Tidy the lobby\n\n" + buildTeamLines + "\n\n" + strings.TrimSpace(extra)
+	wantPrompt := "/write-code Tidy the lobby\n\n" + buildHead + "\n\n" + strings.TrimSpace(extra)
 	if res.Prompt != wantPrompt {
 		t.Fatalf("prepared prompt =\n%q\nwant\n%q", res.Prompt, wantPrompt)
 	}

@@ -91,3 +91,30 @@ describe('view prefs (#59)', () => {
     expect(seen).toEqual(['transcriptTheme', 'terminalTheme', 'transcriptZoom', 'terminalZoom', 'hideTools']);
   });
 });
+
+describe('fullscreen pref (#74)', () => {
+  it('is on until turned off, stored only when off, and announced', () => {
+    const st = memory();
+    const p = new ViewPrefs(st);
+    const seen: string[] = [];
+    p.onChange((w) => seen.push(w));
+    expect(p.fullscreen).toBe(true);
+    p.fullscreen = true;
+    expect(seen).toEqual([]);
+    p.fullscreen = false;
+    expect(Object.fromEntries(st.map)).toEqual({ 'h3d.term.fullscreen': '0' });
+    expect(new ViewPrefs(st).fullscreen).toBe(false);
+    p.fullscreen = true;
+    expect(st.map.size).toBe(0);
+    expect(seen).toEqual(['fullscreen', 'fullscreen']);
+  });
+
+  it('survives storage that throws, and ignores a stored value that is not ours', () => {
+    const p = new ViewPrefs(broken());
+    expect(p.fullscreen).toBe(true);
+    p.fullscreen = false;
+    expect(p.fullscreen).toBe(false);
+    expect(new ViewPrefs(memory({ 'h3d.term.fullscreen': 'no' })).fullscreen).toBe(true);
+  });
+});
+

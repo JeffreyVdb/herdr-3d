@@ -10,7 +10,8 @@ import { frames, openGame, shot, watchErrors } from './game';
 
 const SIM = 'play=none&sim=1&simms=150';
 const URL7 = 'https://github.com/JeffreyVdb/herdr-3d/issues/7';
-const TEAM = ['Team:', '- coders: claude claude-opus-5-5, effort medium', '- reviewers: codex gpt-6-sol, reasoning high', '- ux reviewers: codex gpt-6-sol, reasoning high', '- researchers: codex gpt-6-sol, reasoning low'];
+const PLACEMENT = "Start every agent you hire in its own herdr workspace or tab, never in a split pane of your tab or of another agent's tab: a laptop shows a pane at its own size, and a fullscreen terminal is wanted.";
+const TEAM = ['Team:', '- coders: claude claude-opus-5-5, effort medium', '- reviewers: codex gpt-6-sol, reasoning high', '- ux reviewers: codex gpt-6-sol, reasoning high', '- researchers: codex gpt-6-sol, reasoning low', '', PLACEMENT];
 const STATUS = 'Move the ticket status accordingly, pull request always means QA, merging the PR always means Done.';
 
 type Dialog = NonNullable<ReturnType<Window['__h3d']['dialog']>>;

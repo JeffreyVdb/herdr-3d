@@ -345,7 +345,7 @@ and remember the last `seq` applied.
 {"t":"floor.removed","seq":1050,"session":"pastry"}
 ```
 
-`terminal.frame` and `terminal.closed` ([Laptop screens](#laptop-screens)) are not events: they go only to the
+`terminal.frame`, `terminal.state` and `terminal.closed` ([Laptop screens](#laptop-screens)) are not events: they go only to the
 connection that watches, have no `seq`, are not in the replay ring and are never replayed.
 
 A status or title change can also arrive inside a `worker.upsert` (when something else changed at the same time), so
@@ -404,8 +404,9 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
 | `worker.changes` | `{"id": string}` | the worker's git changes, `{"cwd", "branch", "head", "upstream", "ahead", "behind", "base", "files", "stat", "diff", "diff_bytes", "truncated", "omitted"}` (see [Changes](#changes)) | — |
-| `terminal.watch` | `{"id": string, "fps"?: 1–30, "cols"?: 40–300, "rows"?: 10–100}` | `{"pane", "cols", "rows"}` | `terminal.frame`s to this connection only (see [Laptop screens](#laptop-screens)) |
+| `terminal.watch` | `{"id": string, "fps"?: 1–30, "cols"?: 40–300, "rows"?: 10–100, "fullscreen"?: bool}` | `{"pane", "cols", "rows", "zoom"?}` | `terminal.frame`s to this connection only; with `fullscreen` (true or false), also `terminal.state` (see [Fullscreen](#fullscreen-74)) |
 | `terminal.unwatch` | `{"id": string}` | — | — |
+| `terminal.zoom` | `{"id": string, "on": bool}` | `{"pane", "cols", "rows", "zoom"}` | a `terminal.state` and, if the size changed, a full `terminal.frame` (see [Fullscreen](#fullscreen-74)) |
 | `worker.keys` | `{"id": string, "input": [{"text": string} \| {"key": string}…]}` | — | — (see [Input](#input)) |
 | `worker.prompt` | `{"id": string, "text": string}` | `{"queued": bool, "retried": bool}` | the worker's statuses |
 | `worker.answer` | `{"id": string, "hash": string, "choice"?: 1–9, "cancel"?: true}` | `{"sent": [string…], "resolved": bool}` | the worker's upsert without its `question` when it moves on |
@@ -910,7 +911,7 @@ high, researchers codex sol low; the orchestrator claude opus medium), once: del
 
 ```json
 {"t":"run.prepare","req_id":"40","args":{"session":"lab","issue":3}}
-{"t":"ack","req_id":"40","data":{"prompt":"/write-code https://github.com/JeffreyVdb/lab/issues/3\n\nTeam:\n- coders: claude claude-opus-5-5, effort medium\n- reviewers: codex gpt-6-sol, reasoning high\n- ux reviewers: codex gpt-6-sol, reasoning high\n- researchers: codex gpt-6-sol, reasoning low\n\nMove the ticket status accordingly, pull request always means QA, merging the PR always means Done.",
+{"t":"ack","req_id":"40","data":{"prompt":"/write-code https://github.com/JeffreyVdb/lab/issues/3\n\nTeam:\n- coders: claude claude-opus-5-5, effort medium\n- reviewers: codex gpt-6-sol, reasoning high\n- ux reviewers: codex gpt-6-sol, reasoning high\n- researchers: codex gpt-6-sol, reasoning low\n\nStart every agent you hire in its own herdr workspace or tab, never in a split pane of your tab or of another agent's tab: a laptop shows a pane at its own size, and a fullscreen terminal is wanted.\n\nMove the ticket status accordingly, pull request always means QA, merging the PR always means Done.",
   "label":"ORCH|issue-3",
   "ticket":{"kind":"issue","repo":"JeffreyVdb/lab","number":3,"url":"https://github.com/JeffreyVdb/lab/issues/3"},
   "preset":"p_1a2b3c4d5e6f","orch":{"harness":"claude","model":"claude-opus-5-5","effort":"medium"},
@@ -945,6 +946,8 @@ Team:
 - ux reviewers: codex gpt-6-sol, reasoning high
 - researchers: codex gpt-6-sol, reasoning low
 
+Start every agent you hire in its own herdr workspace or tab, never in a split pane of your tab or of another agent's tab: a laptop shows a pane at its own size, and a fullscreen terminal is wanted.
+
 Move the ticket status accordingly, pull request always means QA, merging the PR always means Done.
 
 <extra, trimmed>
@@ -952,7 +955,8 @@ Move the ticket status accordingly, pull request always means QA, merging the PR
 
 The first line is `/write-code <ticket>` for a Claude orchestrator and `$write-code <ticket>` for a Codex one;
 `<ticket>` is the issue URL, or the text. A role line says `effort <e>` for a claude role and `reasoning <e>` for a codex
-one. The status line is there for an issue ticket only (the orchestrator then moves the issue's status:
+one. The placement line (#74: a laptop shows a pane at its own size, so every agent goes in its own workspace or tab,
+never in a split) is always there. The status line is there for an issue ticket only (the orchestrator then moves the issue's status:
 a pull request means QA, its merge means Done); a free-text ticket has none. With no `extra`, the blank line before it is
 left out too. (A pure function, `server.RunPrompt`.)
 
@@ -1187,7 +1191,7 @@ key names, **never the text**.
 
 ```json
 {"t":"terminal.watch","req_id":"50","args":{"id":"6db1905e-…","fps":4}}
-{"t":"ack","req_id":"50","data":{"pane":"w1:p1","cols":120,"rows":40}}
+{"t":"ack","req_id":"50","data":{"pane":"w1:p1","cols":120,"rows":40,"zoom":{"state":"single","applied":false}}}
 {"t":"terminal.frame","id":"6db1905e-…","pane":"w1:p1","n":1,"full":true,"cols":120,"rows":40,"data":"G1s/MjAyNmgb…"}
 {"t":"terminal.frame","id":"6db1905e-…","pane":"w1:p1","n":2,"full":false,"cols":120,"rows":40,"data":"G1syOzFI…"}
 {"t":"terminal.closed","id":"6db1905e-…","reason":"worker_removed"}
@@ -1201,7 +1205,8 @@ key names, **never the text**.
 - `cols` / `rows` default to **the pane's own size** (herdr's layout for it, from `session.snapshot`; 120 × 40, herdr's
   headless size, when that is unknown). The observer does not reflow: a smaller one shows the pane's top-left part and
   cuts off its bottom lines (where the prompt or a menu is), a larger one pads. So ask for another size only to match a
-  known one.
+  known one. A pane in a split shows at its split size (60 columns of a 120-column tab): see [Fullscreen](#fullscreen-74).
+  `zoom` in the ack (always, when the bridge could read the pane's tab) says what the pane's tab does with it.
 - `fps` (default 4) is the most frames a second the bridge forwards. Diffs that arrive faster are concatenated in order
   into one `full:false` frame (ANSI diffs compose); a full frame replaces whatever is pending.
 - Per connection: watching a worker again **restarts** its watch (a new observer, a fresh `full:true` frame, `n` from 1
@@ -1224,6 +1229,78 @@ key names, **never the text**.
 `terminal.closed` ends a watch the client did not stop itself: `reason` is `worker_removed` (the worker is gone or was
 sent home), `asleep` (its floor went to sleep), `pane_changed` (its primary pane changed: watch again) or
 `observer_failed`. It is not sent for a `terminal.unwatch`, a re-watch or a closed connection.
+
+##### Fullscreen (#74)
+
+A pane in a split shows at its own size: the agent really renders at that width, and the observer cannot reflow it. herdr
+has **pane zoom**, a per-tab flag that makes the tab show its focused pane alone, so a `terminal.watch` with
+`"fullscreen": true` zooms the pane's tab while it is watched and puts it back after (this is the bridge's one write
+that changes what a human's herdr TUI shows; `terminal.watch` without `fullscreen` behaves exactly as before).
+
+`fullscreen` is a **tri-state**. *Absent* is the watch of a client from before #74: nothing is zoomed, the bridge does
+not look at the pane's tab again and sends no `terminal.state`, whatever happens to the tab. `true` zooms. `false` does
+not zoom and takes no ownership, but says that the client wants the chip's truth: the watch follows the pane's zoom,
+focus and size like a `true` one (`terminal.state`, the observer at the new size) and can zoom later with
+`terminal.zoom`. A client sends `false` for the preference "no fullscreen" and leaves the field out for the screens it
+only shows (the ambient laptops).
+
+```json
+{"t":"terminal.watch","req_id":"51","args":{"id":"6db1905e-…","fullscreen":true}}
+{"t":"ack","req_id":"51","data":{"pane":"w1:p1","cols":134,"rows":49,"zoom":{"state":"zoomed","applied":true}}}
+{"t":"terminal.state","id":"6db1905e-…","pane":"w1:p1","cols":67,"rows":49,"zoom":{"state":"split","applied":false}}
+{"t":"terminal.zoom","req_id":"52","args":{"id":"6db1905e-…","on":true}}
+{"t":"ack","req_id":"52","data":{"pane":"w1:p1","cols":134,"rows":49,"zoom":{"state":"zoomed","applied":true}}}
+```
+
+- **`zoom`** (the ack of `terminal.watch` and `terminal.zoom`, and `terminal.state`): `state` is `single` (the tab has
+  one pane: nothing to zoom, and `fullscreen` writes nothing), `zoomed` (the tab is zoomed on this pane) or `split` (the
+  tab has several panes and this one shows at its split size: not zoomed, or zoomed on another pane). `applied` is true
+  when the bridge zoomed the tab itself and will put it back (false for a tab the human zoomed). `headless` (only with
+  `zoomed`) is true when the tab's area is herdr's headless 120 × 40, which means most likely no herdr TUI is attached:
+  the zoom flag is set but herdr resizes no terminal without a client, so the pane did not grow (upstream herdrdev/herdr#1709).
+  The ack has no `zoom` when the bridge could not read the pane's tab (an old bridge never has it).
+- **Size.** In a zoomed tab the pane's size is the tab's content area (`session.snapshot` keeps reporting the split
+  rectangles, but its layout has `zoomed`, `focused_pane_id` and the tab's `area`), so `cols` × `rows` of the ack and of
+  the frames are the area. herdr makes the real terminal about 3 columns and 2 rows smaller than the area (borders and
+  scrollbar: area 114 × 49 gave a 111 × 47 terminal); the observer pads that difference, which is better than cutting off
+  the rows a prompt is on. Observer frames carry the size that was asked for, not the pane's real one, so the bridge
+  cannot correct this guess. An explicit `cols` / `rows` is the client's own and is never changed by a zoom.
+- **Ownership.** The bridge remembers per (session, tab) that it zoomed the tab, counted by the watches that want the
+  tab fullscreen (`fullscreen: true`, or `terminal.zoom` on) over all connections. A watch that follows only
+  (`fullscreen: false`) or that turned fullscreen off with `terminal.zoom` is not counted: it is no owner and its
+  ending puts nothing back, nor stops the last real owner from doing so. When the last counted watch ends
+  (`terminal.unwatch`, a re-watch without `fullscreen: true`, a closed connection, `terminal.closed`, the bridge shutting
+  down) and the tab is still zoomed, it runs the `--off`. It does not, when the tab was already zoomed before the watch
+  (the human's), when the human unzoomed it since, when the pane is no longer in the tab the bridge zoomed (it is
+  looked at again before the write; a pane the human moved to another tab leaves that tab alone), or when the floor is
+  asleep (no herdr call is made). Every decision to write is made on the pane's state read under the write lock that
+  serialises the bridge's zoom writes, never on one read before waiting for it.
+  The bridge **never zooms again on its own** after the first time: if the human changes the focus or unzooms while
+  seated, the laptop is told and the player decides. A re-watch of the same worker (the game does it for a new fps, on a
+  frame gap) takes over the watch it replaces with its decision: the tab is not put back and zoomed again in between,
+  and it is **not zoomed again** even with `fullscreen: true` when the human unzoomed or moved the focus meanwhile.
+  Only `terminal.zoom` with `on: true` zooms again.
+  `--on` always focuses the pane in herdr (that is how zoom picks the pane to show): a watcher that zooms moves the
+  human's TUI focus. Two watchers of different panes of one tab take turns at being the visible one.
+- **`terminal.state`** goes to a watch that sent `fullscreen` (true or false) or used `terminal.zoom`, like `terminal.frame`: no
+  `seq`, not replayed, dropped when the connection has no room. It is sent when the pane's `zoom` or size changed
+  (the bridge looks at the session's snapshot every 2 s while such a watch lives). A size that was not set by the
+  client follows the pane: the observer starts over at the new `cols` × `rows` and the next `terminal.frame` is a full
+  one (`n` from 1 again, like a resync). It repeats nothing the ack or the previous state said.
+- **`terminal.zoom`** `{id, on}` (the worker must be watched by the connection: `bad_request` otherwise, also for a
+  missing `on`): `on: true` zooms the tab on the pane and takes ownership as `fullscreen` does (a watch without it
+  starts following); `on: false` unzooms the tab, also one the human zoomed (the player asked), and the bridge owns
+  nothing of it afterwards (the watch is no longer counted, see Ownership). `input_failed` when herdr refused the
+  zoom or the pane/tab could not be read, or when the watch ended while the command was in flight (a command never
+  zooms, or takes ownership for, a watch that is gone); a refused command changes nothing. The ack is the new state,
+  `cols` × `rows` included.
+- **Failures never fail a watch.** A tab that cannot be read, a failed `pane zoom`, a single-pane tab or a headless
+  session leave the watch at the best known size (`zoom` says `split`, or `zoomed` with `headless`). This is for the
+  zoom at `terminal.watch` only: an explicit `terminal.zoom` reports a failure as `input_failed`.
+- **Audit.** Every zoom write is its own audit row `pane.zoom` with `{"session","pane","mode":"on"|"off","why"}`
+  (`why` is `watch`, `command`, `stand-up`), apart from the row of the `terminal.watch` / `terminal.zoom` command.
+  The bridge runs exactly two zoom commands, `herdr --session <s> pane zoom <pane> --on` and `--off`: never `--toggle`,
+  never without a mode.
 
 #### Input
 
@@ -1813,7 +1890,7 @@ wraps, the options' labels without their descriptions or previews, and a Yes / N
 | `hire_failed`, `fire_failed` | herdr or git failed during a hire / send-home; the message says which step and why. `fire_failed` also when the agent did not exit (still running, or its processes could not be read): then nothing was closed or removed. `hire_failed` names what its rollback kept. |
 | `wake_failed` | the server did not start, did not answer `ping` or was not seen running within `--wake-timeout`; the message says why |
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
-| `input_failed` | `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text, the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step, or still there after the last one; the message says why |
+| `input_failed` | `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text (`terminal.zoom`: herdr refused the zoom), the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step, or still there after the last one; the message says why |
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
 | `stale` | `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |

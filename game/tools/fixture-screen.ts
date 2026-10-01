@@ -13,6 +13,12 @@
 // `simfail=observer_failed` closes the next watch after its first frame.
 // `sim.watches` (not a bridge command) answers how many watches this
 // connection has, for tests.
+// #74: `simzoom=` plays the bridge's pane zoom. Absent: a bridge before it (`fullscreen` is ignored, the ack has no
+// `zoom`, `terminal.zoom` is `unknown_command`); `old`: one that refuses the `fullscreen` argument (`bad_request`);
+// `single` (the tab has one pane), `split` (it has several: `fullscreen: true` and `terminal.zoom` zoom it, standing up
+// or watching without `fullscreen` restores it) and `headless` (the same, but the zoom does not widen the pane:
+// `headless: true` in the zoom state). `sim.unzoom {id}` plays the human unzooming the tab: a `terminal.state`.
+// The sim's screens keep their recorded size in every state; only the zoom state changes.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import { readFileSync } from 'node:fs';
@@ -83,6 +89,16 @@ export interface ScreenHost {
   now(): number;
   /** Consumes a one-shot `simfail` of this code. */
   failNext(code: string): boolean;
+  /** #74: `simzoom` (undefined: a bridge before pane zoom). */
+  zoomMode?(): ZoomMode | undefined;
+}
+
+export type ZoomMode = 'old' | 'single' | 'split' | 'headless';
+
+interface ZoomState {
+  state: 'single' | 'zoomed' | 'split';
+  applied: boolean;
+  headless?: boolean;
 }
 
 class ScreenError extends Error {
@@ -124,6 +140,10 @@ const hash = (s: string) => {
 
 export class SimScreens {
   readonly watches = new Map<string, Watch>();
+  /** #74: the workers whose tab is zoomed (by a fullscreen watch or `terminal.zoom`), and so applied by the bridge. */
+  private readonly zoomed = new Set<string>();
+  /** #74: the workers whose watch wants its tab fullscreen (the bridge's refs): a re-watch of one does not zoom again. */
+  private readonly held = new Set<string>();
   private readonly screens = new Map<string, Screen>();
   private readonly host: ScreenHost;
 
@@ -149,8 +169,21 @@ export class SimScreens {
         case 'terminal.unwatch':
           this.only(a, ['id']);
           this.stop(this.str(a, 'id'));
+          this.release(this.str(a, 'id'));
           ack();
           return true;
+        case 'terminal.zoom':
+          if (!this.host.zoomMode?.() || this.host.zoomMode() === 'old') return false;
+          this.zoom(a, ack);
+          return true;
+        case 'sim.unzoom': {
+          const id = this.str(a, 'id');
+          this.zoomed.delete(id);
+          const w = this.watches.get(id);
+          if (w) this.pushState(w);
+          ack();
+          return true;
+        }
         case 'worker.keys':
           this.keys(a);
           ack();
@@ -187,8 +220,10 @@ export class SimScreens {
   }
 
   private watch(a: Obj, send: Send, ack: (d?: unknown) => void): void {
-    this.only(a, ['id', 'fps', 'cols', 'rows']);
+    const mode = this.host.zoomMode?.();
+    this.only(a, mode === 'old' ? ['id', 'fps', 'cols', 'rows'] : ['id', 'fps', 'cols', 'rows', 'fullscreen']);
     const id = this.str(a, 'id');
+    if (a.fullscreen !== undefined && typeof a.fullscreen !== 'boolean') throw new ScreenError('bad_request', 'bad args: fullscreen must be a boolean');
     const int = (k: string, lo: number, hi: number) => {
       const v = a[k];
       if (v === undefined) return undefined;
@@ -205,9 +240,47 @@ export class SimScreens {
     const s = this.screen(w);
     const watch: Watch = { id, pane: w.pane_id as string, fps, n: 0, pending: [Buffer.concat(s.tape)], full: true, timer: null, lastSent: -Infinity, send, failAfterFirst: this.host.failNext('observer_failed') };
     this.watches.set(id, watch);
-    ack({ pane: watch.pane, cols: s.rec.cols, rows: s.rec.rows });
+    // #74: fullscreen true zooms, unless the watch it replaces held the tab already (a re-watch never zooms again);
+    // false and absent restore, as the bridge's stand-up does.
+    if (a.fullscreen === true) {
+      if (!this.held.has(id)) this.zoomed.add(id);
+      this.held.add(id);
+    } else this.release(id);
+    const zoom = this.zoomState(id);
+    ack({ pane: watch.pane, cols: s.rec.cols, rows: s.rec.rows, ...(zoom ? { zoom } : {}) });
     this.flush(watch);
     if (!s.timer && !s.typed) this.advance(id, s);
+  }
+
+  /** #74: the zoom state of a worker's pane under `simzoom` (undefined: a bridge without it). */
+  private zoomState(id: string): ZoomState | undefined {
+    const mode = this.host.zoomMode?.();
+    if (!mode || mode === 'old') return undefined;
+    if (mode === 'single') return { state: 'single', applied: false };
+    const on = this.zoomed.has(id);
+    return { state: on ? 'zoomed' : 'split', applied: on, ...(on && mode === 'headless' ? { headless: true } : {}) };
+  }
+
+  /** #74: `terminal.state` for a watch (the zoom changed behind the game's back). */
+  private pushState(w: Watch): void {
+    const zoom = this.zoomState(w.id);
+    const s = this.screens.get(w.id);
+    if (zoom) w.send({ t: 'terminal.state', id: w.id, pane: w.pane, cols: s?.rec.cols ?? 120, rows: s?.rec.rows ?? 36, zoom });
+  }
+
+  private zoom(a: Obj, ack: (d?: unknown) => void): void {
+    this.only(a, ['id', 'on']);
+    const id = this.str(a, 'id');
+    if (typeof a.on !== 'boolean') throw new ScreenError('bad_request', 'bad args: on must be a boolean');
+    this.target(id);
+    const w = this.watches.get(id);
+    if (!w) throw new ScreenError('bad_request', `bad args: this connection does not watch ${id}`);
+    if (a.on) {
+      this.zoomed.add(id);
+      this.held.add(id);
+    } else this.release(id);
+    const s = this.screens.get(id);
+    ack({ pane: w.pane, cols: s?.rec.cols ?? 120, rows: s?.rec.rows ?? 36, zoom: this.zoomState(id) });
   }
 
   private screen(w: Worker): Screen {
@@ -304,6 +377,7 @@ export class SimScreens {
     const w = this.watches.get(id);
     if (!w) return;
     this.stop(id);
+    this.release(id);
     w.send({ t: 'terminal.closed', id, reason });
   }
 
@@ -372,6 +446,14 @@ export class SimScreens {
 
   dispose(): void {
     for (const id of [...this.watches.keys()]) this.stop(id);
+    this.zoomed.clear();
+    this.held.clear();
+  }
+
+  /** #74: the watch no longer wants the tab fullscreen: it is put back (the sim's zoom is the bridge's). */
+  private release(id: string): void {
+    this.zoomed.delete(id);
+    this.held.delete(id);
   }
 }
 

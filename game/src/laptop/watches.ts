@@ -1,5 +1,6 @@
 import type { CommandResult } from '../net/client';
-import type { CommandArgs, TerminalClosed, TerminalFrame } from '../net/protocol';
+import type { CommandArgs, TerminalClosed, TerminalFrame, TerminalState, ZoomInfo } from '../net/protocol';
+import { isZoomInfo } from '../net/protocol';
 
 /** Where frames go: a watched worker's screen, and when it stops being live. */
 export interface ScreenSink {
@@ -9,12 +10,14 @@ export interface ScreenSink {
 }
 
 export interface WatchHost {
-  send<T extends 'terminal.watch' | 'terminal.unwatch'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
+  send<T extends 'terminal.watch' | 'terminal.unwatch' | 'terminal.zoom'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   sink: ScreenSink;
   /** A watch was refused (`capacity`, `invalid_state`, `unknown_worker`, …) or its observer failed. */
   failed(id: string, code: string, message: string): void;
   /** The bridge ended a watch (`terminal.closed`); `pane_changed` is re-watched by the next sync. */
   closed(id: string, reason: string): void;
+  /** #74: a watch's zoom state or size changed (its ack, `terminal.state`, a zoom answer, a frame of a new size). */
+  zoomChanged?(id: string): void;
   now(): number;
 }
 
@@ -26,6 +29,14 @@ interface Watch {
   full: boolean;
   n: number;
   resyncAt: number;
+  /**
+   * #74: what the watch told the bridge: true asks it to zoom the pane's tab (the seated screen), false follows the
+   * pane without zooming it, undefined sent nothing (the ambient laptops: shown as they are, never followed).
+   */
+  fullscreen: boolean | undefined;
+  /** #74: where the pane stands in its tab, and the size its screen is at; null before the ack (and on a bridge before #74). */
+  zoom: ZoomInfo | null;
+  size: { cols: number; rows: number } | null;
 }
 
 /** A diff out of order asks for a fresh full frame (a re-watch), at most this often. */
@@ -43,6 +54,10 @@ export class Watches {
   private gen = 0;
   /** Why screens are off: the bridge does not know `terminal.watch`. */
   disabled: string | null = null;
+  /** #74: the bridge refused `fullscreen` as an argument (a bridge before it): watches go without. */
+  private noFullscreen = false;
+  /** #74: the bridge does not know `terminal.zoom`. */
+  zoomUnsupported = false;
 
   constructor(private readonly host: WatchHost) {}
 
@@ -58,25 +73,97 @@ export class Watches {
     return [...this.on.keys()];
   }
 
-  sync(want: ReadonlyMap<string, number>): void {
-    if (this.disabled) return;
-    for (const id of [...this.on.keys()]) if (!want.has(id)) this.unwatch(id);
-    for (const [id, fps] of want) if (this.on.get(id)?.fps !== fps) this.watch(id, fps);
+  /** The zoom state of a watch (#74), null when it has none. */
+  zoomOf(id: string): { zoom: ZoomInfo; size: { cols: number; rows: number } | null; fullscreen: boolean } | null {
+    const w = this.on.get(id);
+    return w?.zoom ? { zoom: w.zoom, size: w.size, fullscreen: w.fullscreen === true } : null;
   }
 
-  private watch(id: string, fps: number): void {
+  /**
+   * `fullscreen`: the watches that say what they want of their pane's tab (the seated screen: true zooms it, false
+   * only follows it; the others show a pane at its own size and must not move the tab around, so they are not in it).
+   * A change restarts the watch, as a new fps does.
+   */
+  sync(want: ReadonlyMap<string, number>, fullscreen: ReadonlyMap<string, boolean> = new Map()): void {
+    if (this.disabled) return;
+    for (const id of [...this.on.keys()]) if (!want.has(id)) this.unwatch(id);
+    for (const [id, fps] of want) {
+      const fs = this.noFullscreen ? undefined : fullscreen.get(id);
+      const w = this.on.get(id);
+      if (w?.fps !== fps || w.fullscreen !== fs) this.watch(id, fps, fs);
+    }
+  }
+
+  private watch(id: string, fps: number, fullscreen?: boolean): void {
     const gen = ++this.gen;
-    this.on.set(id, { fps, gen, full: false, n: 0, resyncAt: this.host.now() + RESYNC_MS });
+    // A watch that replaces another (a new fps, fullscreen on or off) keeps what the last one knew until its ack: the
+    // seat bar's chip does not blink out and back in.
+    const prev = this.on.get(id);
+    this.on.set(id, { fps, gen, full: false, n: 0, resyncAt: this.host.now() + RESYNC_MS, fullscreen, zoom: prev?.zoom ?? null, size: prev?.size ?? null });
     // No cols / rows: the bridge observes at the pane's own size (herdr's observer clips a smaller one, it does not
     // reflow), and each frame says the size the screen is drawn at.
-    void this.host.send('terminal.watch', { id, fps }).then((r) => {
+    void this.host.send('terminal.watch', { id, fps, ...(fullscreen === undefined ? {} : { fullscreen }) }).then((r) => {
       const w = this.on.get(id);
-      if (r.ok || !w || w.gen !== gen) return;
+      if (!w || w.gen !== gen) return;
+      if (r.ok) return this.acked(id, w, r.data);
+      if (fullscreen !== undefined && r.code === 'bad_request') {
+        // A bridge before #74 does not know the argument: watch without it, and never ask again.
+        this.noFullscreen = true;
+        this.watch(id, fps);
+        return;
+      }
       this.on.delete(id);
       this.host.sink.stop(id);
       if (r.code === 'unknown_command') this.disable(r.message);
       this.host.failed(id, r.code, r.message);
     });
+  }
+
+  private acked(id: string, w: Watch, data: unknown): void {
+    const a = data as { cols?: unknown; rows?: unknown; zoom?: unknown } | null;
+    // An older bridge has no `zoom`: no chip, no error.
+    w.zoom = a && isZoomInfo(a.zoom) ? a.zoom : null;
+    if (a && Number.isInteger(a.cols) && Number.isInteger(a.rows)) w.size = { cols: a.cols as number, rows: a.rows as number };
+    this.host.zoomChanged?.(id);
+  }
+
+  /** `terminal.state`: the pane's zoom, focus or size changed (the human zoomed, unzoomed or moved focus). */
+  state(m: TerminalState): void {
+    const w = this.on.get(m.id);
+    if (!w) return;
+    w.zoom = m.zoom;
+    w.size = { cols: m.cols, rows: m.rows };
+    this.host.zoomChanged?.(m.id);
+  }
+
+  /**
+   * #74: the chip's switch. The watch keeps its place: `on` zooms the pane's tab (the bridge keeps it zoomed for as long
+   * as the watch lasts), off goes back to the split view. Resolves to whether the bridge did it; a bridge that does not
+   * know `terminal.zoom` hides the chip.
+   */
+  async zoom(id: string, on: boolean): Promise<CommandResult | null> {
+    const w = this.on.get(id);
+    if (!w) return null;
+    // Optimistic, so the next sync does not restart the watch to say the same.
+    const was = w.fullscreen;
+    w.fullscreen = on;
+    const gen = w.gen;
+    const r = await this.host.send('terminal.zoom', { id, on });
+    const cur = this.on.get(id);
+    if (!cur || cur.gen !== gen) return r;
+    if (r.ok) {
+      const a = r.data as { cols?: unknown; rows?: unknown; zoom?: unknown } | null;
+      if (a && isZoomInfo(a.zoom)) cur.zoom = a.zoom;
+      if (a && Number.isInteger(a.cols) && Number.isInteger(a.rows)) cur.size = { cols: a.cols as number, rows: a.rows as number };
+    } else if (r.code === 'unknown_command') {
+      this.zoomUnsupported = true;
+      cur.zoom = null;
+    } else {
+      // Refused: the next sync watches again as the preference says (one more try, with the watch's own zoom).
+      cur.fullscreen = was;
+    }
+    this.host.zoomChanged?.(id);
+    return r;
   }
 
   private unwatch(id: string): void {
@@ -99,6 +186,10 @@ export class Watches {
     if (f.full) {
       w.full = true;
       w.n = f.n;
+      if (w.size?.cols !== f.cols || w.size.rows !== f.rows) {
+        w.size = { cols: f.cols, rows: f.rows };
+        if (w.zoom) this.host.zoomChanged?.(f.id);
+      }
       this.host.sink.frame(f.id, f);
       return;
     }
@@ -107,9 +198,13 @@ export class Watches {
       const now = this.host.now();
       if (now >= w.resyncAt) {
         this.on.delete(f.id);
-        this.watch(f.id, w.fps);
+        this.watch(f.id, w.fps, w.fullscreen);
         const nw = this.on.get(f.id);
-        if (nw) nw.resyncAt = now + RESYNC_MS;
+        if (nw) {
+          nw.resyncAt = now + RESYNC_MS;
+          nw.zoom = w.zoom;
+          nw.size = w.size;
+        }
       }
       return;
     }

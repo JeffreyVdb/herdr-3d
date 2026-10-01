@@ -188,6 +188,18 @@ func (c *Control) QueuePrompt(ctx context.Context, session, pane, text string) e
 	return err
 }
 
+// SetZoom zooms a pane's tab on the pane (on; herdr also focuses the pane)
+// or puts the tab back (`pane zoom <pane> --on` / `--off`, #74). Both are
+// explicit modes: a repeated call changes nothing more, and never toggles.
+func (c *Control) SetZoom(ctx context.Context, session, pane string, on bool) error {
+	op := opZoomOff
+	if on {
+		op = opZoomOn
+	}
+	_, err := c.run(ctx, op, map[string]string{"session": session, "pane": pane})
+	return err
+}
+
 // Streamer starts a long-running command and returns it running.
 type Streamer func(argv []string) (Proc, error)
 
