@@ -141,6 +141,10 @@ test('draw, close, reload: the drawing is still there, the room shows its render
   await expect.poll(() => sceneTypes(page), { timeout: 15_000 }).toEqual(['image', 'rectangle', 'text']);
   expect(await page.evaluate(() => window.__h3d.pose())).toMatchObject({ x: pose?.x, z: pose?.z });
   await savedAt(page, 1);
+  // The hand-drawn font and the CJK subset for 先 came from the game itself (the CDN fallback would be blocked above).
+  const fonts = (await editorChunks(page)).filter((n) => n.includes('/assets/excalidraw-0.18.1/fonts/'));
+  expect(fonts.some((n) => n.includes('/fonts/Excalifont/'))).toBe(true);
+  expect(fonts.some((n) => n.includes('/fonts/Xiaolai/'))).toBe(true);
   await evidence(page, 'whiteboard-drawn');
 
   // Esc: the selection goes first, then the board closes (the image is still selected after the paste).
