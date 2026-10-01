@@ -213,11 +213,18 @@ MacBook (M2 Max)                                   devbox (Linux)
   Every shipped font's licence goes with the build in full (`FONT_LICENSES.txt` next to the bundle, from
   `src/ui/fontCredits.ts`; the OFL and the Bitstream Vera licence ask it), linked from the credits panel, which keeps
   each font's copyright line.
+- **Settings window** (#91): the gear in the top bar (or `,`) opens `game/src/ui/settings.ts`, `SettingsDialog`: everything
+  the player can change, as sections in the About panel's frame. A section is
+  `addSection(id, title, render, { store })`: the dialog draws the heading and the storage label (`'browser'`: "This
+  browser", `localStorage` prefs; `'bridge'`: "Bridge", shared by every client), `render(body)` fills the body and may
+  return `{ open, dispose }`. Sections show in the order they were added; a feature adds its own from `App` without
+  touching the dialog (#90's follow-up questions are the first "Bridge" section). Display (the plan-limits switch) and
+  Day and night (`ui/settingsSections.ts`) are the first two. About (`ui/about.ts`) is read-only build info.
 - **Day and night** (M17): the game follows the viewer's local time, in the browser, with no bridge or protocol part.
   `game/src/world/daylight.ts` (pure) turns an instant, an IANA zone and an optional latitude into a daylight value
   0…1, the sun's altitude and bearing, a dawn/dusk warmth and the zone's clock; with a latitude the sun comes from the
   declination and the hour angle (solar noon at 12:00 standard time, no longitude), without one from a fixed curve
-  (dawn 06:30–08:00, dusk 18:30–20:00). The zone and latitude are client settings (About; `?tz=`, `?lat=` for a page
+  (dawn 06:30–08:00, dusk 18:30–20:00). The zone and latitude are client settings (Settings, #91; `?tz=`, `?lat=` for a page
   load), `?time=` pins the hour for tests and screenshots. The light is read about once a minute and eased over a few
   seconds. The scenes keep one light set and change only colours and intensities (three.js rebuilds pipelines when
   lights come or go): the sky, fog, sun and sky light, a runtime tint of the baked street (no night bake), warm panes on

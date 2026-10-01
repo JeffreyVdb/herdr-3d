@@ -172,6 +172,15 @@ body {
   align-items: center;
   gap: 6px;
 }
+/* #91: the Settings gear is one more button; where the bar is short (the share's words are gone too, screenShare.css) tighter gaps and padding keep the counts' words at 1280 px and the floor's name whole at 1024 (see also audio.css's shorter slider). */
+@media (max-width: 1500px) {
+  .topbar-actions {
+    gap: 4px;
+  }
+  .topbar-actions .btn:not(.btn--icon) {
+    padding: 0 9px;
+  }
+}
 
 .count {
   display: inline-flex;
@@ -655,6 +664,13 @@ body {
   }
   .topbar-counts .count span {
     display: none;
+  }
+  /* #91: the actions drop to their own row under the counts and wrap, so every button (the Settings gear last of the pointer-reachable ones) stays on screen at 360 px. */
+  .topbar-actions {
+    order: 4;
+    flex: 0 0 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
   .prompt-model {
     display: none;

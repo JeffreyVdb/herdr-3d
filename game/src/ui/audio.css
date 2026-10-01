@@ -93,7 +93,7 @@
   background: linear-gradient(to right, var(--text-on-ink-2) var(--fill), rgb(255 255 255 / 12%) var(--fill));
 }
 
-/* The top bar keeps the floor's name whole at 1024 px: a shorter slider there (the About button and the Issues / PRs
+/* The top bar keeps the floor's name whole at 1024 px: a shorter slider there (the About and Settings buttons and the Issues / PRs
    buttons take the room the longer one had). */
 @media (max-width: 1100px) {
   .audio-vol {

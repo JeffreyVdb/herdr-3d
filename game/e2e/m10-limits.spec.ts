@@ -157,7 +157,7 @@ test('old and transcript readings are dimmed with the time they are as of', asyn
   await shot(page, 'm10-stale');
 });
 
-test('it can be hidden from the panel, comes back in About and with Shift+L, and is absent from an older bridge', async ({ page }) => {
+test('it can be hidden from the panel, comes back in Settings and with Shift+L, and is absent from an older bridge', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   await openGame(page, 'demo-m4', '', SIM());
@@ -166,10 +166,10 @@ test('it can be hidden from the panel, comes back in About and with Shift+L, and
   await page.locator('[data-key="limits-hide"]').click();
   await expect(limits(page)).toBeHidden();
   expect(await page.evaluate(() => localStorage.getItem('h3d.limits.hidden'))).toBe('1');
-  await expect(page.locator('.toast')).toHaveText('Plan limits hidden. Show them again in About.');
-  // About has the switch.
-  await page.locator('button[aria-label="About"]').click();
-  const box = page.locator('#about-limits');
+  await expect(page.locator('.toast')).toHaveText('Plan limits hidden. Show them again in Settings.');
+  // Settings has the switch (Display).
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const box = page.locator('#settings-limits');
   await expect(box).not.toBeChecked();
   await box.check();
   await expect(box).toBeChecked();

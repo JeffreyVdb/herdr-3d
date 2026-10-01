@@ -1,0 +1,110 @@
+/* The Settings window (#91): the About panel's frame (credits.css `.credits`), then one block per section: heading, where it is kept, content. */
+dialog.settings {
+  width: min(420px, calc(100vw - 32px));
+}
+.settings .settings-body {
+  padding-top: 14px;
+}
+.settings-section + .settings-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.settings-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.settings-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+}
+/* Where the section is kept: a quiet tag, the same tone as the field labels. */
+.settings-store {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-on-ink-2);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.settings-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.settings-switch input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--sun);
+}
+
+/* M17: day and night. Two fields, styled like the panels' inputs (panels.css `.panel input`). */
+.settings-lede {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  color: var(--text-on-ink-2);
+}
+.settings-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.settings-field-label {
+  margin-bottom: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-on-ink-2);
+}
+.settings-field input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 9px;
+  background: #121a31;
+  color: var(--text-on-ink);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  caret-color: var(--sun);
+}
+.settings-field input::placeholder {
+  color: #8f9abb;
+}
+.settings-field input:hover {
+  border-color: rgb(255 255 255 / 30%);
+}
+.settings-field input:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 1px;
+}
+.settings-field input[aria-invalid='true'] {
+  border-color: #ff7b73;
+}
+.settings-field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-on-ink-2);
+}
+.settings-field-error {
+  color: #ffb4ae;
+  font-weight: 700;
+}
+/* A latitude is a few characters: a short field, its hint beside the room it leaves. */
+.settings-field--short input {
+  max-width: 150px;
+}

@@ -143,10 +143,10 @@ export class LimitsWidget {
     this.tab = h('button', { class: 'lm-tab', 'data-key': 'limits-tab', title: 'Plan limits: click to peek (Shift+L)' }, this.tabPct, this.tabBar);
     this.tab.addEventListener('click', () => this.setPeek(true, true));
     this.refreshBtn.addEventListener('click', () => void this.refresh());
-    const hide = h('button', { class: 'btn btn--sm lm-hide', 'data-key': 'limits-hide', title: 'Hide this meter (bring it back in About)' }, h('span', {}, 'Hide meter'));
+    const hide = h('button', { class: 'btn btn--sm lm-hide', 'data-key': 'limits-hide', title: 'Hide this meter (bring it back in Settings)' }, h('span', {}, 'Hide meter'));
     hide.addEventListener('click', () => {
       this.prefs.hidden = true;
-      this.host.toast('Plan limits hidden. Show them again in About.');
+      this.host.toast('Plan limits hidden. Show them again in Settings.');
     });
     this.panel.hidden = true;
     this.root = h('aside', { class: 'limits', 'data-hook': 'limits', popover: 'manual' }, this.tab, this.strip, this.panel);
@@ -310,7 +310,7 @@ export class LimitsWidget {
     this.update();
   }
 
-  /** Brings the widget back or takes it away (from About, or the panel's Hide). */
+  /** Brings the widget back or takes it away (from Settings, or the panel's Hide). */
   private sync(): void {
     this.root.hidden = this.prefs.hidden || !this.book.known;
     const folded = this.folded;
