@@ -117,8 +117,9 @@ MacBook (M2 Max)                                   devbox (Linux)
   board view, read in the same feed and sent as each card's `position`); the overlay moves a card by dragging it
   (`game/src/ui/boards/drag.ts` the slot arithmetic, `cardDrag.ts` the pointer events) and `issue.set_status` with
   `after` puts it in that slot (the `order` capability: the status write when it changes, then
-  `updateProjectV2ItemPosition`). A poll that was in flight when a write landed never becomes the latest board, and
-  the game holds a drop's placement until a board polled after the write shows it.
+  `updateProjectV2ItemPosition`). A poll that was in flight when a write landed never becomes the latest board (a
+  write that failed halfway, `provider.ErrPartial`, counts as one and refreshes too), and the game holds a drop's
+  placement until a board polled after the write shows it; a failed drop says why inside the board.
 - **Building logos** (M3d, built; details in `protocol.md` "Building logos"): a building can carry a logo, stored by the
   bridge itself (no remote URL, so the game never loads an image from a third-party host, it works offline and through
   the helper). Upload, clear and fetch are HTTP on the bridge socket, `PUT|DELETE|GET /logo/{building}`, not WebSocket

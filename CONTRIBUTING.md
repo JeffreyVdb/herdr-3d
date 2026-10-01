@@ -151,8 +151,8 @@ parts:
   token); the environment is the bridge's minus `HERDR_*` / `CLAUDE*`, plus `GH_PROMPT_DISABLED=1 NO_COLOR=1
   GH_NO_UPDATE_NOTIFIER=1`; 20 s per call, output capped at 8 MiB; GraphQL `errors` are read also when `gh` exits 0;
   401 / exit 4 is `provider_failed` "GitHub auth", a rate limit is `rate_limited`. `TestGitHubAllowlist` pins the argv,
-  the set of documents and which of them write (six mutations: addComment, addProjectV2ItemById,
-  updateProjectV2ItemFieldValue, closeIssue, mergePullRequest, createPullRequest).
+  the set of documents and which of them write (seven mutations: addComment, addProjectV2ItemById,
+  updateProjectV2ItemFieldValue, updateProjectV2ItemPosition, closeIssue, mergePullRequest, createPullRequest).
 
 - **Logos** (M3d, `internal/logo`; SVGs are drawn by the bridge's own executable run again as a killable child, see below): the image libraries are `golang.org/x/image` (`webp`, `draw`; BSD-3),
   `github.com/srwiley/oksvg` and `rasterx` (BSD-3; pinned pseudo-versions, untagged upstream) and `golang.org/x/net`

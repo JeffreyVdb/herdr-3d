@@ -1187,7 +1187,8 @@ connection watches one floor at a time; a new `board.watch` replaces the old one
 floors too). Floors linking the same repository and project share one fetch. `board.refresh` polls now, joins a poll in
 flight, and starts at most one poll per 10 s per floor (else `queued: false` and the cache is sent to the caller again,
 `initial: true`). After a successful write (`issue.comment`, `issue.close`, `issue.set_status`, `pr.comment`, `pr.merge`,
-`worker.open_pr`) the bridge queues a refresh of that floor; the boards follow the ack. A poll that was already in
+`worker.open_pr`), and after one that failed once part of it had landed (a move whose status was written but not its
+place: `provider_failed`), the bridge queues a refresh of that floor; the boards follow the reply. A poll that was already in
 flight when the write landed may have read the board from before it: it is dropped (never sent, never the cache) and
 the refresh runs instead, so every non-initial `board.issues` a connection gets after a write's ack was polled after the
 write (#52; the game relies on it to hold a dragged card in its new place). An `initial: true` replay can still be older. The cache is in SQLite
@@ -1227,7 +1228,8 @@ on a floor with no board (no repo, no provider) is `unsupported`.
   `after` a card is after its item; the top of a column is right after the item before the column's first card (none
   when that card is the project's first); an empty column is the top of the project. The two writes are not one
   transaction: when the place fails after the status changed, the error says so (`provider_failed`: "its status
-  changed, but its place in the column did not"), and the refresh shows what GitHub has. An anchor the provider no
+  changed, but its place in the column did not"), and the bridge refreshes the board all the same (polls in flight are
+dropped as after a successful write), so it shows what GitHub has. An anchor the provider no
   longer has in the project's order is `stale`. **Moving a card into a done column changes its status only: the issue
   stays open** (closing is `issue.close`), the same as without `after`.
 - **`confirm: true` is required** on `issue.close`, `pr.merge` and `worker.open_pr` (missing or false:
