@@ -15,6 +15,7 @@ and `docs/decisions.md`. Where a verifier and a follow-up disagree, the one with
 | Freelancer | write-code worker (`GROUND/CODE/REVIEW/UX`) | `h3d_*` workspace tokens + `~/.local/state/write-code/runs/<run_id>/` |
 | Board wall (issues Kanban, pull requests) | the floor's issue tracker and code host — GitHub today (Issues, Projects v2, PRs), later files in the repo or Monday.com | the provider, through the bridge's neutral `tracker` / `codehost` interfaces; last good boards, open PRs and announced merges cached in bridge SQLite |
 | Building logo (entrance sign, reception wall, city sign) | an image the user picks for a building | bridge SQLite (`building_logo`: the normalised PNG); the building carries its hash |
+| Whiteboard (north wall of every floor) | an Excalidraw board shared by the floor, agents pin on it (M14) | bridge files, `~/.local/share/herdr-3d/whiteboards/<floor>/` (versioned scenes, images by sha256, the current render) |
 | Plan limits meter (top-right widget) | the Claude and Codex plan windows (5 h, week, per model) | the `claude` / `codex` CLIs, run as probes by the bridge (`internal/limits`), only while a client is connected |
 
 Worker states → animation:
@@ -132,6 +133,16 @@ MacBook (M2 Max)                                   devbox (Linux)
   text: hire, Start Run (Extra instructions and First prompt), the transcript view's prompt box and the P overlay; a paste
   at a laptop's terminal goes through the composer's draft without a view (`laptop/pasteImages.ts`). The bridge treats a
   marker as text on every command (`protocol.md` "Markers in prompts").
+- **Whiteboard** (M13 #15, built; details in `protocol.md` "Whiteboard"): E on a floor's whiteboard opens Excalidraw
+  (React 19), loaded by one dynamic import on the first open (`game/src/whiteboard/load.ts`; `tools/check-bundle.ts`
+  fails the build when it reaches the entry chunk), its fonts served by the game. The bridge (`internal/whiteboard`,
+  files, not SQLite) keeps each floor's scene versioned (the last 20), image files once by sha256 and the client's PNG
+  render, which the room's board shows. The bytes are HTTP on the bridge socket (`/whiteboard/{floor}/…`, a save is scene
+  plus render on a base version, `409` on a stale one and the client merges with Excalidraw's `reconcileElements`); the
+  WebSocket has `whiteboard.get` / `.clear` / `.pin` and `whiteboard.updated`. Agents' pins are complete Excalidraw
+  elements made in Go; until a client renders the board again the render is stale and the pins are listed beside it.
+  A close whose save fails never drops the drawing: the board asks (retry, keep a draft in the browser, discard).
+  `drops.list` reads Drop Zone's newest files for "Pin a drop".
 - **Identity**: bridge-owned worker UUID; reconcile after restarts via persisted pane-label marker (written by the bridge
   on the workers it hires) → `agent_session` id → label+cwd → else new worker. Tokens vanish on herdr restart and workspace ids can be reused: re-apply tokens only
   after reconciliation.

@@ -37,6 +37,8 @@ type Server struct {
 	log  *slog.Logger
 	conv *logo.Converter // M3d: logo uploads
 	up   Uploader        // #51: images for prompts (nil: none)
+	// M13: drops' thumbnails are decoded two at a time.
+	dropThumbs chan struct{}
 
 	mu    sync.Mutex
 	conns map[*websocket.Conn]context.CancelFunc // cancelling a conn's reads closes it at once
@@ -45,7 +47,7 @@ type Server struct {
 
 // NewServer returns a server for hub.
 func NewServer(hub *Hub, log *slog.Logger) *Server {
-	return &Server{hub: hub, log: log, conv: logo.NewConverter(0, 0), conns: map[*websocket.Conn]context.CancelFunc{}}
+	return &Server{hub: hub, log: log, conv: logo.NewConverter(0, 0), dropThumbs: make(chan struct{}, 2), conns: map[*websocket.Conn]context.CancelFunc{}}
 }
 
 // SetLogoRenderTimeout sets how long an SVG upload may take to draw before the
@@ -53,12 +55,14 @@ func NewServer(hub *Hub, log *slog.Logger) *Server {
 // Serve.
 func (s *Server) SetLogoRenderTimeout(d time.Duration) { s.conv.SetRenderTimeout(d) }
 
-// Handler serves /ws (the protocol), /logo/{building} (M3d), POST /upload (#51) and /healthz.
+// Handler serves /ws (the protocol), /logo/{building} (M3d), POST /upload (#51), /whiteboard/{floor}/… and
+// /drops/file (M13) and /healthz.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.serveWS)
 	s.logoRoutes(mux)
 	s.uploadRoutes(mux)
+	s.whiteboardRoutes(mux) // M13 whiteboard
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(proto.VersionHeader, version.Version)
 		_, _ = w.Write([]byte("ok\n"))

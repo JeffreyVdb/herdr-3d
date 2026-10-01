@@ -124,6 +124,11 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Allow", "POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	})
+	// M13 whiteboard: the board's routes and a drop's bytes go to the bridge,
+	// guarded like /logo. POST /whiteboard/{floor}/pin is the office CLI's
+	// (on the bridge's host) and is refused here, like anything else under
+	// /whiteboard/ and /drops/.
+	s.whiteboardRoutes(mux)
 	mux.Handle("POST /api/open", s.open())
 	mux.HandleFunc("/api/open", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Allow", "POST")
@@ -150,7 +155,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) forbid(w http.ResponseWriter, r *http.Request, why string) {
 	s.cfg.Log.Warn("request refused", "why", why, "path", r.URL.Path, "host", r.Host, "origin", r.Header.Get("Origin"), "remote", r.RemoteAddr)
-	if r.URL.Path == "/upload" { // the game reads its error code
+	if r.URL.Path == "/upload" || isWhiteboardPath(r.URL.Path) { // the game reads its error code
 		uploadError(w, http.StatusForbidden, "forbidden", "the helper refused the request ("+why+")")
 		return
 	}

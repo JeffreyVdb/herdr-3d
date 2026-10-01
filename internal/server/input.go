@@ -388,6 +388,19 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			out.Answers = append(out.Answers, an)
 		}
 		return mustJSON(out)
+	// M13 whiteboard: an agent's note by its length, never its text.
+	case proto.CmdWhiteboardPin:
+		var a proto.WhiteboardPinArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		return mustJSON(struct {
+			Floor     string `json:"floor"`
+			Author    string `json:"author"`
+			Kind      string `json:"kind"`
+			Bytes     int    `json:"bytes"`
+			RequestID string `json:"request_id,omitempty"`
+		}{clip(a.Floor), clip(a.Author), "note", len(a.Note), clip(a.RequestID)})
 	// M16 transcript: the worker id only.
 	case proto.CmdTranscriptWatch, proto.CmdTranscriptUnwatch:
 		var a struct {

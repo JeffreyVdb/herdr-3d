@@ -556,6 +556,14 @@ export class OfficeView {
     return { lamps: this.lamps.map((l) => +l.intensity.toFixed(3)), clock: this.props.clock?.shown ?? null };
   }
 
+  /** M13: the whiteboard's render (null: the placeholder); `whiteboardShown` says which (test hook). */
+  setWhiteboard(tex: THREE.Texture | null): void {
+    this.props.setWhiteboard(tex);
+    this.whiteboardShown = tex ? (tex.userData.key as string | undefined) ?? 'render' : null;
+  }
+
+  whiteboardShown: string | null = null;
+
   /** M15: what the radio's display says (null: off) and whether its LED glows. */
   setRadio(display: string | null, playing: boolean): void {
     this.props.radio?.set(display, playing);

@@ -1,0 +1,127 @@
+{
+  "elements": [
+    {
+      "id": "drawn",
+      "type": "rectangle",
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 50,
+      "angle": 0,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "index": "a0",
+      "roundness": null,
+      "seed": 1,
+      "version": 3,
+      "versionNonce": 7,
+      "isDeleted": false,
+      "boundElements": null,
+      "updated": 1,
+      "link": null,
+      "locked": false
+    },
+    {
+      "id": "pin_476dac8af0af8a3fe020",
+      "type": "image",
+      "x": 180,
+      "y": 0,
+      "width": 64,
+      "height": 32,
+      "angle": 0,
+      "strokeColor": "transparent",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "index": "a1",
+      "roundness": null,
+      "seed": 348424808,
+      "version": 1,
+      "versionNonce": 964658250,
+      "isDeleted": false,
+      "boundElements": null,
+      "updated": 1790845200000,
+      "link": null,
+      "locked": false,
+      "customData": {
+        "herdr": {
+          "author": "Nibble",
+          "kind": "agent-pin",
+          "requestId": "fixture-image",
+          "at": 1790845200000
+        }
+      },
+      "fileId": "a33b626b735e7adc874c272efb55207b045c1f95810d328acbee8d1f7238322e",
+      "status": "saved",
+      "scale": [
+        1,
+        1
+      ],
+      "crop": null
+    },
+    {
+      "id": "pin_8affa9bc8437d941dc1d",
+      "type": "text",
+      "x": 180,
+      "y": 72,
+      "width": 204,
+      "height": 50,
+      "angle": 0,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "strokeStyle": "solid",
+      "roughness": 1,
+      "opacity": 100,
+      "groupIds": [],
+      "frameId": null,
+      "index": "a2",
+      "roundness": null,
+      "seed": 1971511267,
+      "version": 1,
+      "versionNonce": 707702611,
+      "isDeleted": false,
+      "boundElements": null,
+      "updated": 1790845200000,
+      "link": null,
+      "locked": false,
+      "customData": {
+        "herdr": {
+          "author": "Nibble",
+          "kind": "agent-pin",
+          "at": 1790845200000
+        }
+      },
+      "text": "Review the layout\nbefore Friday",
+      "originalText": "Review the layout\nbefore Friday",
+      "fontSize": 20,
+      "fontFamily": 5,
+      "textAlign": "left",
+      "verticalAlign": "top",
+      "containerId": null,
+      "autoResize": true,
+      "lineHeight": 1.25
+    }
+  ],
+  "files": {
+    "a33b626b735e7adc874c272efb55207b045c1f95810d328acbee8d1f7238322e": {
+      "mimeType": "image/png",
+      "size": 119,
+      "created": 1790845200000
+    }
+  },
+  "png": "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAgCAIAAAAt/+nTAAAAPklEQVR4nOzPoQ0AMAgAwabpPh2M5RkBhceS3Ku3937k2dztAQAAAAAAAAAAAAAAAAAAAAAAAAAAAACYAmoAhEMBzY8r76YAAAAASUVORK5CYII="
+}

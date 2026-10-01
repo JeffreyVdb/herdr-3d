@@ -26,6 +26,47 @@ var errChanged = errors.New("path changed after it was checked")
 // the caller) and the opened descriptor is what is checked (regular, at
 // most MaxImage bytes) and read.
 func readUnder(root, real string) ([]byte, error) {
+	f, err := openUnder(root, real)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if fi.Size() > MaxImage {
+		return nil, ErrTooLarge
+	}
+	b, err := io.ReadAll(io.LimitReader(f, MaxImage+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > MaxImage {
+		return nil, ErrTooLarge
+	}
+	return b, nil
+}
+
+// headUnder reads at most n bytes from the start of the file at real, the
+// same way readUnder reaches it (M13's recent drops sniff their type).
+func headUnder(root, real string, n int) ([]byte, error) {
+	f, err := openUnder(root, real)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b := make([]byte, n)
+	k, err := io.ReadFull(f, b)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return b[:k], nil
+}
+
+// openUnder opens real for readUnder and headUnder: walked down from "/"
+// without following a link, and a regular file.
+func openUnder(root, real string) (*os.File, error) {
 	if !filepath.IsAbs(root) || !filepath.IsAbs(real) || filepath.Clean(real) != real || !within(filepath.Clean(root), real) || real == "/" {
 		return nil, ErrNotAllowed
 	}
@@ -48,25 +89,16 @@ func readUnder(root, real string) ([]byte, error) {
 		fd = next
 	}
 	f := os.NewFile(uintptr(fd), real)
-	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
+		f.Close()
 		return nil, err
 	}
 	if !fi.Mode().IsRegular() {
+		f.Close()
 		return nil, ErrNotFile
 	}
-	if fi.Size() > MaxImage {
-		return nil, ErrTooLarge
-	}
-	b, err := io.ReadAll(io.LimitReader(f, MaxImage+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > MaxImage {
-		return nil, ErrTooLarge
-	}
-	return b, nil
+	return f, nil
 }
 
 // openErr says a link or a directory that is not one any more is a change
