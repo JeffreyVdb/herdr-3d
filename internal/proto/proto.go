@@ -316,6 +316,8 @@ type Worker struct {
 	// #57: Ask is the structured question the agent's latest turn waits on,
 	// read from its transcript (whatever Status herdr reports).
 	Ask *Ask `json:"ask,omitempty"`
+	// #83: WrapUp is the worker's wrap-up, armed or needing you.
+	WrapUp *WrapUp `json:"wrapup,omitempty"`
 
 	// M6 runs: the worker's place in a write-code run.
 	// Round is the h3d_round token, else the label's trailing |r<N>.
