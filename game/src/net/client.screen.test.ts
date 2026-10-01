@@ -50,6 +50,17 @@ describe('connection-scoped screen messages', () => {
     expect(h.client.resume.seq).toBe(6);
   });
 
+  it('hands #74 terminal.state to onConn (no seq), and drops one without a valid zoom', () => {
+    const h = live();
+    const state = { t: 'terminal.state', id: 'w1', pane: 'w1:p1', cols: 131, rows: 47, zoom: { state: 'zoomed', applied: true } };
+    h.sock.recv(state);
+    h.sock.recv({ ...state, zoom: { state: 'huge', applied: true } });
+    h.sock.recv({ ...state, zoom: undefined });
+    h.sock.recv({ t: 'worker.status', seq: 6, id: 'w', session: 's', workspace_id: 'x', status: 'idle' });
+    expect(h.conn).toEqual([state]);
+    expect(h.client.resume.seq).toBe(6);
+  });
+
   it('drops malformed frames', () => {
     const h = live();
     h.sock.recv({ t: 'terminal.frame', id: 'w1', n: 'one', full: true, cols: 1, rows: 1, data: '' });

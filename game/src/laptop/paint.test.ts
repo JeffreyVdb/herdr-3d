@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { Terminal } from '@xterm/xterm';
 import { describe, expect, it } from 'vitest';
 import { THEMES } from '../ui/themes';
-import { CELL_ASPECT, cellGrid, contrast, GLANCE, glanceView, paintBuffer, paletteColor, readable, SCREEN_THEME, screenTheme, viewport, type Paint2D } from './paint';
+import { CELL_ASPECT, cellGrid, contrast, FIT_WIDTH_MAX, GLANCE, glanceView, paintBuffer, paletteColor, readable, SCREEN_THEME, screenTheme, viewport, widthFit, type Paint2D } from './paint';
 
 /**
  * A 2D context that records what is drawn: each glyph with its left edge and the width it takes on the canvas
@@ -237,6 +237,54 @@ describe('paintBuffer with the presets (#59)', () => {
       }
     }
     t.dispose();
+  });
+});
+
+describe('width fit (#74)', () => {
+  const narrow = { cols: 60, rows: 40, width: 1200, height: 500 };
+  const pad = 30; // PAD of 1200
+
+  it('a normal pane keeps the height fit: nothing changes for it', () => {
+    const wide = { cols: 120, rows: 36, width: 1200, height: 800 };
+    expect(widthFit(wide)).toBe(1);
+    expect(viewport({ ...wide, fitWidth: true })).toEqual(viewport(wide));
+    expect(viewport({ ...wide, zoom: 150, fitWidth: true })).toEqual(viewport({ ...wide, zoom: 150 }));
+  });
+
+  it('without the option a narrow pane stays at the height fit, letterboxed', () => {
+    const v = viewport(narrow);
+    expect(v).toMatchObject({ col0: 0, row0: 0, cols: 60, rows: 40 });
+    expect(v.x0).toBeGreaterThan(pad * 4);
+  });
+
+  it('a pane much narrower than the screen fills its width at 100%, showing the bottom of the pane', () => {
+    const fit = cellGrid(narrow);
+    expect(widthFit(narrow)).toBeCloseTo(1140 / (fit.cw * 60), 6);
+    const v = viewport({ ...narrow, fitWidth: true });
+    expect(v.cols).toBe(60);
+    expect(v.rows).toBeLessThan(40);
+    expect(v).toMatchObject({ col0: 0, row0: 40 - v.rows });
+    expect(v.x0).toBeCloseTo(pad, 3);
+    expect(v.x0 + v.cw * v.cols).toBeCloseTo(1200 - pad, 3);
+    // The cells keep their aspect.
+    expect(v.cw / v.ch).toBeCloseTo(fit.cw / fit.ch, 6);
+  });
+
+  it('keeps the cursor in view, and the A+ / A− steps go on from the width fit', () => {
+    const v = viewport({ ...narrow, fitWidth: true, cursor: { x: 5, y: 2 } });
+    expect(v.row0).toBe(2);
+    const big = viewport({ ...narrow, fitWidth: true, zoom: 150 });
+    expect(big.cw).toBeCloseTo(viewport({ ...narrow, fitWidth: true }).cw * 1.5, 6);
+    const small = viewport({ ...narrow, fitWidth: true, zoom: 70 });
+    expect(small.cw).toBeCloseTo(viewport({ ...narrow, fitWidth: true }).cw * 0.7, 6);
+  });
+
+  it('never grows the cells past FIT_WIDTH_MAX times the height fit', () => {
+    const thin = { cols: 20, rows: 40, width: 1200, height: 500 };
+    expect(widthFit(thin)).toBe(FIT_WIDTH_MAX);
+    const v = viewport({ ...thin, fitWidth: true });
+    expect(v.cw).toBeCloseTo(cellGrid(thin).cw * FIT_WIDTH_MAX, 6);
+    expect(v.cols).toBe(20);
   });
 });
 

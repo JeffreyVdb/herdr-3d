@@ -12,6 +12,7 @@ import type { WorldStore } from '../world/store';
 import { DESK_H, SEAT_OFFSET } from '../world/layout';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
 import { InputLanes, InputQueue, seatedKey, textItems, type ZoomAction } from './keys';
+import { fullscreenChip, type FullscreenChip } from './fullscreen';
 import { pasteImages } from './pasteImages';
 import { screenTheme } from './paint';
 import type { ThemeLoader } from '../ui/themeLoader';
@@ -43,7 +44,7 @@ export interface ScreenMeshInfo {
 export type ScreenState = 'live' | 'pending' | 'frozen' | 'glow' | 'dark';
 
 /** The watches the game makes by itself. */
-export type WatchCommand = 'terminal.watch' | 'terminal.unwatch' | 'transcript.watch' | 'transcript.unwatch' | 'transcript.image' | 'transcript.images';
+export type WatchCommand = 'terminal.watch' | 'terminal.unwatch' | 'terminal.zoom' | 'transcript.watch' | 'transcript.unwatch' | 'transcript.image' | 'transcript.images';
 
 export interface LaptopHost {
   store: WorldStore;
@@ -83,6 +84,8 @@ export interface SeatView {
   focusLook?(): boolean;
   /** #59: `t` is one of those controls. */
   inLook?(t: EventTarget | null): boolean;
+  /** #74: the fullscreen chip for the pane you sit at (null: nothing to say about it). */
+  setFullscreen?(chip: FullscreenChip | null): void;
 }
 
 /** Keys a focused control of the seat bar keeps (moving between its controls, pressing one). */
@@ -229,6 +232,7 @@ export class Laptops {
       sink: { frame: (id, f) => this.onFrame(id, f), stop: (id) => this.onStop(id) },
       failed: (id, code, message) => this.onFailed(id, code, message),
       closed: (id, reason) => this.onClosed(id, reason),
+      zoomChanged: (id) => this.syncChip(id),
       now: () => performance.now(),
     });
     this.feeds = new ImageFeeds({ send: (t, args) => this.host.watch(t, args) });
@@ -333,6 +337,7 @@ export class Laptops {
   onConn(m: ConnMessage): void {
     if (m.t === 'terminal.frame') this.watches.frame(m);
     else if (m.t === 'terminal.closed') this.watches.closed(m);
+    else if (m.t === 'terminal.state') this.watches.state(m);
     else if (m.t === 'transcript.items') this.transcripts.items(m);
     else this.transcripts.closed(m);
   }
@@ -402,6 +407,28 @@ export class Laptops {
     else if (reason === 'asleep') this.stand(`${name}’s floor went to sleep, so you got up.`, true);
     else if (reason === 'observer_failed') this.host.seat.status('error', `${name}’s screen stopped updating. It comes back when herdr-world restarts the observer.`);
     // pane_changed: the next sync watches the new pane.
+  }
+
+  // ---- #74: fullscreen --------------------------------------------------------------
+
+  /** The seat bar's fullscreen chip follows the state of the seated watch (`id`: the watch that changed). */
+  private syncChip(id?: string): void {
+    const s = this.seat;
+    if (!s || (id !== undefined && id !== s.id)) return;
+    const z = this.watches.zoomOf(s.id);
+    this.host.seat.setFullscreen?.(z ? fullscreenChip(z.zoom, z.size) : null);
+  }
+
+  /** The chip's click: zoom the seated pane's herdr tab, or go back to the split layout. It is the player's choice, so it is remembered. */
+  fullscreen(action: 'zoom' | 'unzoom'): void {
+    const s = this.seat;
+    if (!s) return;
+    const on = action === 'zoom';
+    const prefs = this.host.themes?.prefs;
+    if (prefs) prefs.fullscreen = on;
+    void this.watches.zoom(s.id, on).then((r) => {
+      if (r && !r.ok && r.code !== 'unknown_command') this.host.seat.status('error', failureText('terminal.zoom', r.code, r.message, { worker: s.name }));
+    });
   }
 
   // ---- M16: the transcript ----------------------------------------------------------
@@ -570,6 +597,7 @@ export class Laptops {
     window.addEventListener('wheel', this.onWheel, { passive: false });
     this.host.seat.show(v.name, this.mac);
     this.host.seat.status('ok', null);
+    this.syncChip(id);
     this.host.seat.focus();
     // M16: its transcript is watched from now on (the first Ctrl+Esc shows it at once); its last mode comes back.
     this.transcript.sit(id, v.name, !this.whyNoTranscript());
@@ -607,6 +635,7 @@ export class Laptops {
     this.askId = null;
     this.askShown = '';
     this.host.seat.asking?.(null);
+    this.host.seat.setFullscreen?.(null);
     this.host.seat.hide();
     this.leaving = snap ? null : { t0: performance.now(), from: { pos: this.camPos.clone(), quat: this.camQuat.clone() } };
     if (why) this.host.toast(why, 'error');
@@ -949,7 +978,11 @@ export class Laptops {
     const want = new Map<string, number>();
     if (this.attached && !this.attached.isAsleep) for (const id of this.planner.live) want.set(id, this.cfg.fps);
     if (this.seat) want.set(this.seat.id, this.transcript.shown ? READING_FPS : this.cfg.seatedFps);
-    this.watches.sync(want);
+    // #74: only the screen you sit at asks for fullscreen (the others show their panes as they are, and must not move
+    // the tab around); the player's preference says whether it does.
+    const fullscreen = new Set<string>();
+    if (this.seat && (this.host.themes?.prefs.fullscreen ?? true)) fullscreen.add(this.seat.id);
+    this.watches.sync(want, fullscreen);
     // M16: the transcript of the worker you sit at (not counted against the terminal watches), and a few items of the
     // desks that have prints (only their images matter).
     const tx = new Map<string, number>();

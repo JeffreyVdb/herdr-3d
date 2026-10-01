@@ -52,6 +52,8 @@ export interface SimOptions {
   limits?: string;
   /** #51: this many extra Claude models (`claude-lab-01`…) on top of the three, to see a long model list (`simmodels=<n>`). */
   models?: number;
+  /** #74: the bridge's pane zoom as played by the screens (tools/fixture-screen.ts; `simzoom=`; absent: a bridge before it). */
+  zoom?: 'old' | 'single' | 'split' | 'headless';
   /** #58: a prompt's `user` item goes to its worker's transcript watch this long after the agent took it (`simecho=<ms>`; absent: never). */
   echoMs?: number;
   now?: () => number;
@@ -117,6 +119,7 @@ export class SimWorld {
   private readonly timers = new Set<unknown>();
   private readonly stepMs: number;
   private fail: string | undefined;
+  private readonly zoomMode: SimOptions['zoom'];
   private nextId = 0;
   /** M4: desks a hire in flight reserved, per floor (`session:desk`). */
   private readonly hiring = new Set<string>();
@@ -170,6 +173,7 @@ export class SimWorld {
     );
     if (o.crewMs !== undefined) this.crewMs = o.crewMs;
     this.echoMs = o.echoMs ?? null;
+    this.zoomMode = o.zoom;
     this.transcripts = new TranscriptSim(
       {
         worker: (id) => this.workers.find((x) => x.id === id),
@@ -346,6 +350,7 @@ export class SimWorld {
         },
         now: () => this.now(),
         failNext: (code: string) => this.fail === code && ((this.fail = undefined), true),
+        zoomMode: () => this.zoomMode,
       }));
       send = screens.tap(send);
       // M16: world events end the transcript watches they concern, too.

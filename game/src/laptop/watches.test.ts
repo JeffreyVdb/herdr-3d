@@ -9,12 +9,14 @@ function harness() {
   const stopped: string[] = [];
   const failed: Array<[string, string]> = [];
   const closed: Array<[string, string]> = [];
+  const changed: string[] = [];
   let now = 0;
   const w = new Watches({
     send: (t, args) => new Promise((resolve) => sent.push({ t, args: args as unknown as Record<string, unknown>, resolve })),
     sink: { frame: (id, f) => frames.push([id, f.n, f.full]), stop: (id) => stopped.push(id) },
     failed: (id, code) => failed.push([id, code]),
     closed: (id, reason) => closed.push([id, reason]),
+    zoomChanged: (id) => changed.push(id),
     now: () => now,
   });
   const answer = async (i: number, r: CommandResult) => {
@@ -23,7 +25,7 @@ function harness() {
     await Promise.resolve();
   };
   const f = (id: string, n: number, full = false): TerminalFrame => ({ t: 'terminal.frame', id, pane: 'w1:p1', n, full, cols: 120, rows: 36, data: '' });
-  return { w, sent, frames, stopped, failed, closed, answer, f, tick: (ms: number) => (now += ms) };
+  return { w, sent, frames, stopped, failed, closed, changed, answer, f, tick: (ms: number) => (now += ms) };
 }
 
 const want = (...e: Array<[string, number]>) => new Map(e);
@@ -119,5 +121,88 @@ describe('Watches', () => {
     // Nothing is unwatched (that connection is gone); the same want watches again.
     h.w.sync(want(['a', 4], ['b', 4]));
     expect(h.sent.map((s) => s.t)).toEqual(['terminal.watch', 'terminal.watch', 'terminal.watch', 'terminal.watch']);
+  });
+
+  describe('fullscreen (#74)', () => {
+    const split = { pane: 'w1:p1', cols: 60, rows: 40, zoom: { state: 'split', applied: false } };
+    const fs = (...ids: string[]) => new Set(ids);
+
+    it('asks for fullscreen only for the watches that want it; a change restarts the watch', async () => {
+      const h = harness();
+      h.w.sync(want(['a', 4], ['b', 4]), fs('b'));
+      expect(h.sent.map((s) => s.args)).toEqual([{ id: 'a', fps: 4 }, { id: 'b', fps: 4, fullscreen: true }]);
+      h.w.sync(want(['a', 4], ['b', 4]), fs('b'));
+      expect(h.sent).toHaveLength(2);
+      h.w.sync(want(['a', 4], ['b', 4]), fs());
+      expect(h.sent.slice(2).map((s) => s.args)).toEqual([{ id: 'b', fps: 4 }]);
+    });
+
+    it('keeps the ack’s zoom state and size, and follows terminal.state', async () => {
+      const h = harness();
+      h.w.sync(want(['a', 4]), fs('a'));
+      expect(h.w.zoomOf('a')).toBeNull();
+      await h.answer(0, { ok: true, data: split });
+      expect(h.w.zoomOf('a')).toEqual({ zoom: split.zoom, size: { cols: 60, rows: 40 }, fullscreen: true });
+      h.w.state({ t: 'terminal.state', id: 'a', pane: 'w1:p1', cols: 131, rows: 47, zoom: { state: 'zoomed', applied: true } });
+      expect(h.w.zoomOf('a')).toMatchObject({ zoom: { state: 'zoomed' }, size: { cols: 131, rows: 47 } });
+      h.w.state({ t: 'terminal.state', id: 'zzz', pane: 'x', cols: 1, rows: 1, zoom: { state: 'split', applied: false } });
+      expect(h.changed).toEqual(['a', 'a']);
+    });
+
+    it('an older bridge: no zoom in the ack means no state and no error', async () => {
+      const h = harness();
+      h.w.sync(want(['a', 4]), fs('a'));
+      await h.answer(0, { ok: true, data: { pane: 'w1:p1', cols: 120, rows: 36 } });
+      expect(h.w.zoomOf('a')).toBeNull();
+      expect(h.failed).toEqual([]);
+    });
+
+    it('a bridge that refuses the argument is asked again without it, and never with it again', async () => {
+      const h = harness();
+      h.w.sync(want(['a', 4]), fs('a'));
+      await h.answer(0, { ok: false, code: 'bad_request', message: 'bad args: json: unknown field "fullscreen"' });
+      expect(h.sent[1]?.args).toEqual({ id: 'a', fps: 4 });
+      expect(h.failed).toEqual([]);
+      h.w.sync(want(['a', 4]), fs('a'));
+      expect(h.sent).toHaveLength(2);
+      h.w.sync(want(['a', 4], ['b', 4]), fs('a', 'b'));
+      expect(h.sent[2]?.args).toEqual({ id: 'b', fps: 4 });
+    });
+
+    it('terminal.zoom switches the watch without restarting it, and takes the answer', async () => {
+      const h = harness();
+      h.w.sync(want(['a', 4]), fs());
+      await h.answer(0, { ok: true, data: split });
+      const done = h.w.zoom('a', true);
+      expect(h.sent[1]).toMatchObject({ t: 'terminal.zoom', args: { id: 'a', on: true } });
+      // The next plan (the pref says fullscreen now) does not restart the watch.
+      h.w.sync(want(['a', 4]), fs('a'));
+      expect(h.sent).toHaveLength(2);
+      await h.answer(1, { ok: true, data: { pane: 'w1:p1', cols: 131, rows: 47, zoom: { state: 'zoomed', applied: true } } });
+      await done;
+      expect(h.w.zoomOf('a')).toMatchObject({ zoom: { state: 'zoomed', applied: true }, size: { cols: 131, rows: 47 }, fullscreen: true });
+    });
+
+    it('a bridge that does not know terminal.zoom drops the state and says so', async () => {
+      const h = harness();
+      h.w.sync(want(['a', 4]), fs());
+      await h.answer(0, { ok: true, data: split });
+      const done = h.w.zoom('a', true);
+      await h.answer(1, { ok: false, code: 'unknown_command', message: 'unknown command' });
+      await done;
+      expect(h.w.zoomUnsupported).toBe(true);
+      expect(h.w.zoomOf('a')).toBeNull();
+    });
+
+    it('a resync keeps the zoom state and asks for fullscreen again', async () => {
+      const h = harness();
+      h.w.sync(want(['a', 4]), fs('a'));
+      await h.answer(0, { ok: true, data: split });
+      h.w.frame(h.f('a', 1, true));
+      h.tick(3000);
+      h.w.frame(h.f('a', 5));
+      expect(h.sent[1]?.args).toEqual({ id: 'a', fps: 4, fullscreen: true });
+      expect(h.w.zoomOf('a')?.zoom.state).toBe('split');
+    });
   });
 });

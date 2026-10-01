@@ -378,8 +378,11 @@ export interface CommandArgs {
   /** #57: an answer for every question of the worker's ask, or `cancel` (Esc on its dialog) with an optional `prompt` sent after. */
   'worker.answer_ask': { id: string; tool_use_id: string; answers?: AskAnswerArg[]; cancel?: boolean; prompt?: string };
   'worker.changes': { id: string };
-  'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number };
+  /** #74: `fullscreen` asks the bridge to zoom the pane's herdr tab while the watch lasts (absent / false: as before). */
+  'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number; fullscreen?: boolean };
   'terminal.unwatch': { id: string };
+  /** #74: the seat bar's fullscreen toggle; `on: false` goes back to the split view. Needs a watch of the worker. */
+  'terminal.zoom': { id: string; on: boolean };
   'worker.keys': { id: string; input: KeyItem[] };
   // M16: the transcript view at a laptop (docs/protocol.md "Laptops: transcript").
   'transcript.watch': { id: string; limit?: number };
@@ -703,11 +706,42 @@ export function isError(m: ServerMessage): m is ErrorMessage {
 /** One `worker.keys` item: literal text (no control characters) or one allowlisted herdr key name. */
 export type KeyItem = { text: string } | { key: string };
 
-/** `terminal.watch` ack. */
+/**
+ * #74: where a watched pane stands in its herdr tab. `single`: the tab has one pane; `zoomed`: this pane fills the tab;
+ * `split`: the tab has several panes and this one shows at its own split size. `applied`: the bridge zoomed the tab
+ * for this watch. `headless`: the tab's area is herdr's headless 120 × 40, so likely no herdr screen is attached and a
+ * zoom did not make the pane's terminal any wider.
+ */
+export interface ZoomInfo {
+  state: 'single' | 'zoomed' | 'split';
+  applied: boolean;
+  headless?: boolean;
+}
+
+/** `terminal.watch` ack; `zoom` is absent from a bridge before #74. */
 export interface WatchAck {
   pane: string;
   cols: number;
   rows: number;
+  zoom?: ZoomInfo;
+}
+
+/** `terminal.zoom` ack: the watch's new size and zoom state. */
+export interface ZoomAck {
+  pane: string;
+  cols: number;
+  rows: number;
+  zoom: ZoomInfo;
+}
+
+/** #74: the watched pane's zoom, focus or size changed (a connection-scoped message like the frames: no seq, not replayed). */
+export interface TerminalState {
+  t: 'terminal.state';
+  id: string;
+  pane: string;
+  cols: number;
+  rows: number;
+  zoom: ZoomInfo;
 }
 
 export interface TerminalFrame {
@@ -908,11 +942,24 @@ export function isTranscriptClosed(m: ServerMessage): m is TranscriptClosed {
 }
 
 /** Connection-scoped messages (no `seq`): screens and transcripts of watched laptops. */
-export type ConnMessage = TerminalFrame | TerminalClosed | TranscriptItems | TranscriptClosed;
+export type ConnMessage = TerminalFrame | TerminalClosed | TerminalState | TranscriptItems | TranscriptClosed;
 
 export function isTerminalFrame(m: ServerMessage): m is TerminalFrame {
   const o = m as unknown as Obj;
   return m.t === 'terminal.frame' && isStr(o.id) && isInt(o.n) && typeof o.full === 'boolean' && isInt(o.cols) && isInt(o.rows) && isStr(o.data);
+}
+
+const ZOOM_STATES = ['single', 'zoomed', 'split'];
+
+/** A well-formed `zoom` object (state, applied, optional headless). */
+export function isZoomInfo(v: unknown): v is ZoomInfo {
+  const o = v as Obj | null;
+  return !!o && typeof o === 'object' && isStr(o.state) && ZOOM_STATES.includes(o.state) && typeof o.applied === 'boolean' && (o.headless === undefined || typeof o.headless === 'boolean');
+}
+
+export function isTerminalState(m: ServerMessage): m is TerminalState {
+  const o = m as unknown as Obj;
+  return m.t === 'terminal.state' && isStr(o.id) && isInt(o.cols) && isInt(o.rows) && isZoomInfo(o.zoom);
 }
 
 export function isTerminalClosed(m: ServerMessage): m is TerminalClosed {

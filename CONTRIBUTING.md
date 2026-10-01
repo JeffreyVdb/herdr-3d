@@ -572,7 +572,12 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   the last lines that say something, 22 columns × 5 lines, big, bold and lifted to 4.5:1, so it reads from the aisle;
   seated, the whole terminal), `keys.ts` maps a keydown to herdr
   keys and orders input (one command in flight, what is typed meanwhile goes in the next `worker.keys`), `index.ts`
-  plans and ties it together. #57: `askCard.ts` is the question card of the transcript view (the one pinned above the
+  plans and ties it together. #74: the seated watch asks for `fullscreen` (the bridge zooms the pane's herdr tab), `watches.ts`
+  keeps its zoom state (the ack's `zoom`, `terminal.state`, `terminal.zoom`; a bridge without them: no chip, no error),
+  `fullscreen.ts` (pure) turns it into the seat bar's chip (`Fullscreen` / `Split pane 60×40` / `Fullscreen unavailable`),
+  the preference is `h3d.term.fullscreen` (`themePrefs.ts`), and `paint.ts` `viewport` fits a pane much narrower than the
+  screen to its width (`widthFit`). The simulator plays the zoom with `simzoom=old|single|split|headless`
+  (`tools/fixture-screen.ts`; `sim.unzoom` is the human unzooming). #57: `askCard.ts` is the question card of the transcript view (the one pinned above the
   prompt box while the worker waits, and its timeline entry), styled in `transcript.css`. #59: `paint.ts` draws each
   glyph in its own cell (no ligatures, no fallback advance moving a column) in the preset's font and colours, box
   drawing / block elements / braille as shapes (`glyphs.ts`), and seated at the zoom (`viewport`: the letterbox below
@@ -1006,6 +1011,9 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # Departure Mono on 11 / 22 px), keyboard reach; m59-{transcript,terminal}-<preset>,
                               # m59-transcript-<preset>-hidden, m59-mixed-{transcript,terminal} (Paper over
                               # Terminal), m59-zoom-{200,70}, m59-terminal-zoom-200.png
+                              # #74 fullscreen chip (h74-fullscreen.spec.ts, simzoom=): the seated watch asks for fullscreen, the chip
+                              # toggles it through terminal.zoom, the human unzooming reaches it, headless, single pane and older
+                              # bridges, keyboard, AA contrast at the three presets, the bar's height; h74-*.png
                               # M7 on demo-m6 with sim=1 (m7-boards.spec.ts, m7-actions.spec.ts, m7-perf.spec.ts): the
                               # corkboard and PR board (columns, paper, pins, holders, CI, verdict stamps), E and the
                               # top bar opening the overlays, no-project / no-repo / older-bridge floors, the watch

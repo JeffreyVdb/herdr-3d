@@ -8,13 +8,14 @@ import { SimWorld } from './fixture-sim';
 type Msg = Record<string, unknown>;
 
 /** A sim on demo-m4 with a fake clock: `advance(ms)` runs what is due, in order. */
-function rig(fail?: string) {
+function rig(fail?: string, zoom?: 'old' | 'single' | 'split' | 'headless') {
   let now = 0;
   let id = 0;
   const timers = new Map<number, { at: number; fn: () => void }>();
   const { snapshot } = loadFixture('demo-m4');
   const sim = new SimWorld(snapshot as never, {
     fail,
+    ...(zoom ? { zoom } : {}),
     stepMs: 100,
     now: () => now,
     setTimeout: (fn, ms) => {
@@ -204,3 +205,65 @@ describe('SimScreens', () => {
     expect(r.timers.size).toBe(0);
   });
 });
+
+// #74: simzoom plays the bridge's pane zoom.
+describe('SimScreens: pane zoom (#74)', () => {
+  const zoomOf = (m?: Msg) => (m?.data as { zoom?: Msg } | undefined)?.zoom;
+
+  it('a bridge before it ignores fullscreen, has no zoom in the ack and does not know terminal.zoom', () => {
+    const r = rig();
+    const c = r.cmd('terminal.watch', { id: agent, fps: 4, fullscreen: true });
+    expect(zoomOf(c.reply())).toBeUndefined();
+    const z = r.cmd('terminal.zoom', { id: agent, on: true });
+    expect(z.reply()).toMatchObject({ t: 'error', code: 'unknown_command' });
+  });
+
+  it('simzoom=old refuses the fullscreen argument like a strict bridge', () => {
+    const r = rig(undefined, 'old');
+    expect(r.cmd('terminal.watch', { id: agent, fullscreen: true }).reply()).toMatchObject({ t: 'error', code: 'bad_request' });
+    expect(zoomOf(r.cmd('terminal.watch', { id: agent }).reply())).toBeUndefined();
+    expect(r.cmd('terminal.zoom', { id: agent, on: true }).reply()).toMatchObject({ code: 'unknown_command' });
+  });
+
+  it('a single-pane tab is single whatever is asked', () => {
+    const r = rig(undefined, 'single');
+    expect(zoomOf(r.cmd('terminal.watch', { id: agent, fullscreen: true }).reply())).toEqual({ state: 'single', applied: false });
+    expect(zoomOf(r.cmd('terminal.zoom', { id: agent, on: true }).reply())).toEqual({ state: 'single', applied: false });
+  });
+
+  it('a split pane is zoomed by a fullscreen watch, a replacing watch without it restores, and unwatch restores', () => {
+    const r = rig(undefined, 'split');
+    expect(zoomOf(r.cmd('terminal.watch', { id: agent, fps: 4 }).reply())).toEqual({ state: 'split', applied: false });
+    expect(zoomOf(r.cmd('terminal.watch', { id: agent, fps: 4, fullscreen: true }).reply())).toEqual({ state: 'zoomed', applied: true });
+    expect(zoomOf(r.cmd('terminal.watch', { id: agent, fps: 1, fullscreen: true }).reply())).toEqual({ state: 'zoomed', applied: true });
+    expect(zoomOf(r.cmd('terminal.watch', { id: agent, fps: 4 }).reply())).toEqual({ state: 'split', applied: false });
+    r.cmd('terminal.watch', { id: agent, fullscreen: true });
+    r.cmd('terminal.unwatch', { id: agent });
+    expect(zoomOf(r.cmd('terminal.watch', { id: agent }).reply())).toEqual({ state: 'split', applied: false });
+  });
+
+  it('terminal.zoom switches a watched pane, validates its arguments, and needs a watch', () => {
+    const r = rig(undefined, 'split');
+    expect(r.cmd('terminal.zoom', { id: agent, on: true }).reply()).toMatchObject({ code: 'bad_request' });
+    r.cmd('terminal.watch', { id: agent });
+    expect(r.cmd('terminal.zoom', { id: agent }).reply()).toMatchObject({ code: 'bad_request' });
+    expect(r.cmd('terminal.zoom', { id: agent, on: 'yes' }).reply()).toMatchObject({ code: 'bad_request' });
+    expect(r.cmd('terminal.zoom', { id: agent, on: true, extra: 1 }).reply()).toMatchObject({ code: 'bad_request' });
+    const on = r.cmd('terminal.zoom', { id: agent, on: true }).reply();
+    expect(on?.data).toMatchObject({ pane: 'w1:p1', cols: 120, rows: 36, zoom: { state: 'zoomed', applied: true } });
+    expect(zoomOf(r.cmd('terminal.zoom', { id: agent, on: false }).reply())).toEqual({ state: 'split', applied: false });
+  });
+
+  it('headless: the zoom is set but the pane does not widen', () => {
+    const r = rig(undefined, 'headless');
+    expect(zoomOf(r.cmd('terminal.watch', { id: agent, fullscreen: true }).reply())).toEqual({ state: 'zoomed', applied: true, headless: true });
+  });
+
+  it('sim.unzoom plays the human unzooming: a terminal.state to the watching connection', () => {
+    const r = rig(undefined, 'split');
+    r.cmd('terminal.watch', { id: agent, fullscreen: true });
+    const c = r.cmd('sim.unzoom', { id: agent });
+    expect(c.got().find((m) => m.t === 'terminal.state')).toEqual({ t: 'terminal.state', id: agent, pane: 'w1:p1', cols: 120, rows: 36, zoom: { state: 'split', applied: false } });
+  });
+});
+

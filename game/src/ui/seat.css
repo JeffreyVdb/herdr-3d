@@ -336,6 +336,67 @@
   outline: 2px solid var(--sun);
   outline-offset: 1px;
 }
+/* #74: the chip is one more control on the keys row, which the bar's usual width has no room left for (the keys' hint
+   gives way first, then the row would wrap and the bar grow, taking the laptop's height): while it shows, the bar is
+   as much wider as it needs. A narrow window wraps as it always did. */
+.seat[data-fs] {
+  width: min(980px, calc(100vw - 32px));
+}
+/* #74: the fullscreen chip: the fact that a pane is split ("Split pane 60×40") and herdr's zoom for it.
+   A dot says the state (filled: the pane fills its tab); a pane that cannot be widened keeps its words at full
+   contrast and gets a dashed edge instead of fading, since the words are the information. */
+.seat-fs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  max-width: 100%;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 28%);
+  color: var(--text-on-ink-2);
+  font: 700 11.5px/1 var(--font);
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.seat-fs[hidden] {
+  display: none;
+}
+.seat-fs-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.seat-fs-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px currentcolor;
+}
+.seat-fs[aria-pressed='true'] {
+  background: var(--ink-2);
+  color: var(--text-on-ink);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 22%);
+}
+.seat-fs[aria-pressed='true'] .seat-fs-dot {
+  background: var(--sun);
+  box-shadow: none;
+}
+.seat-fs:hover:not([aria-disabled='true']) {
+  background: var(--ink-2);
+  color: var(--text-on-ink);
+}
+.seat-fs[aria-disabled='true'] {
+  cursor: default;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 30%);
+  background: transparent;
+}
+.seat-fs:focus-visible {
+  outline: 2px solid var(--sun);
+  outline-offset: 1px;
+}
 /* #59: a phone's width: whose laptop it is and Stand up share the first row, the switch (its keys on it) takes the
    next (side by side they ran off the screen), and the keys row drops the switch's key it would repeat; the terminal's
    controls keep their key (Ctrl+,) without the word. */
@@ -362,5 +423,8 @@
   }
   .seat-look-label {
     font-size: 0;
+  }
+  .seat-fs {
+    max-width: 170px;
   }
 }
