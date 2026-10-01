@@ -384,6 +384,34 @@ func TestWrapUpFencedExampleNeverFires(t *testing.T) {
 	}
 }
 
+// #83 review: a top-level fence closed at another indent than its opener's
+// is closed: CLEAN after it sends the worker home, Claude or Codex.
+func TestWrapUpClosedFenceSendsHome(t *testing.T) {
+	for _, name := range []string{"w1", "w2"} {
+		t.Run(name, func(t *testing.T) {
+			wb := startWrapBridge(t, "", "", nil)
+			c := wb.connect(proto.Hello{})
+			c.snapshot()
+			id := wb.ids[name]
+			nonce := wb.arm(t, c, name, proto.FireDelete)
+			text, _ := wb.prompted(t, name+":p1")
+			final := "Stopped.\n```sh\nkill %1\n ```\nH3D-WRAPUP " + nonce + " CLEAN"
+			if name == "w1" {
+				wb.reply(t, text, final)
+			} else {
+				appendTo(t, wb.codex, wrapCodexLine("event_msg", map[string]any{"type": "task_started"})+
+					wrapCodexLine("response_item", map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": text}}})+
+					wrapCodexLine("response_item", map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": final}}})+
+					wrapCodexLine("event_msg", map[string]any{"type": "task_complete", "last_agent_message": final}))
+			}
+			removedSentHome(c, id)
+			if calls := wb.fl.Calls(); !slices.Contains(calls, "remove-worktree "+name) {
+				t.Fatalf("herdr calls = %q", calls)
+			}
+		})
+	}
+}
+
 // A person prompting (or typing) while armed takes over: disarmed, nothing
 // needs you. So does a prompt typed in herdr itself, seen in the transcript.
 func TestWrapUpTakeover(t *testing.T) {

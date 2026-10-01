@@ -106,26 +106,88 @@ func WrapUpVerdict(text, nonce string) (verdict, reason string) {
 // a run of the same character, at least as long, indented at most 3 spaces
 // and followed by nothing but spaces or tabs closes it. Lists and quotes are
 // not parsed, and a fence in a list item closes where a top-level one would
-// not, so callers read it both ways: plainly, and with atIndent (only a
-// close at the opener's own indent counts); either one open is no result.
-func fenceOpen(lines []string, atIndent bool) bool {
+// not, so callers read it both ways: plainly, and listed: a fence opened at
+// or past a list item's content indent (that of any list marker line read
+// before it, in a fence or not: where a list ends is not parsed) closes only
+// at the opener's own indent, and a line left of that indent before its
+// close may end the item: still open. Either one open is no result.
+func fenceOpen(lines []string, listed bool) bool {
 	var open struct {
 		ch        byte // 0: no fence open
 		n, indent int
+		inItem    bool
 	}
+	item := -1 // the least content indent of a list item so far
 	for _, l := range lines {
+		if c, ok := listItem(l); ok && (item < 0 || c < item) {
+			item = c
+		}
+		if open.ch != 0 && open.inItem && strings.TrimSpace(l) != "" && lineIndent(l) < open.indent {
+			return true // it may end the item, and the fence with it: unsure
+		}
 		indent, ch, n, info, ok := fenceLine(l)
 		switch {
 		case !ok:
 		case open.ch == 0:
 			if ch != '`' || !strings.Contains(info, "`") {
 				open.ch, open.n, open.indent = ch, n, indent
+				open.inItem = listed && item >= 0 && indent >= item
 			}
-		case ch == open.ch && n >= open.n && strings.Trim(info, " \t\r") == "" && (!atIndent || indent == open.indent):
+		case ch == open.ch && n >= open.n && strings.Trim(info, " \t\r") == "" && (!open.inItem || indent == open.indent):
 			open.ch = 0
 		}
 	}
 	return open.ch != 0
+}
+
+// lineIndent is a line's indent in columns (tab stops of 4).
+func lineIndent(l string) int {
+	w := 0
+	for i := 0; i < len(l); i++ {
+		switch l[i] {
+		case ' ':
+			w++
+		case '\t':
+			w += 4 - w%4
+		default:
+			return w
+		}
+	}
+	return w
+}
+
+// listItem reads a line as a list item's first: the indent its content
+// starts at (a tab after the marker counts as one space: never more than
+// CommonMark's).
+func listItem(l string) (content int, ok bool) {
+	i := 0
+	for i < len(l) && l[i] == ' ' {
+		i++
+	}
+	switch {
+	case i < len(l) && (l[i] == '-' || l[i] == '*' || l[i] == '+'):
+		i++
+	default:
+		d := i
+		for i < len(l) && i-d < 10 && l[i] >= '0' && l[i] <= '9' {
+			i++
+		}
+		if i == d || i-d > 9 || i == len(l) || (l[i] != '.' && l[i] != ')') {
+			return 0, false
+		}
+		i++
+	}
+	rest := strings.TrimRight(l[i:], "\r")
+	sp := len(rest) - len(strings.TrimLeft(rest, " "))
+	switch {
+	case rest == "" || strings.TrimLeft(rest, " \t") == "":
+		return i + 1, true // a blank item: its content starts one past it
+	case sp == 0 && rest[0] != '\t':
+		return 0, false
+	case sp == 0 || sp > 4:
+		return i + 1, true // a tab, or an indented code block in it
+	}
+	return i + sp, true
 }
 
 // fenceLine reads a line as a code fence: its indent, character, run length

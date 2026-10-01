@@ -341,6 +341,14 @@ func TestWrapUpVerdict(t *testing.T) {
 		// opens one.
 		{"- Stopped:\n  ```\n  ~~~\n```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
 		{"- ```\n  ```\n```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"- Stopped:\n  ```sh\n  kill %1\n ```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"1. Stopped:\n   ```sh\n   kill %1\n```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"- Stopped\nlazily:\n  ```\n```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"- Stopped.\n\n  ```\n```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		// A line left of the item's fence may end the item, and the fence
+		// with it: the run after it may open one.
+		{"- Stopped:\n  ```sh\nkill %1\n  ```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"2. Stopped:\n   ~~~\n```\n   ~~~~~\n- Done.\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
 		// Closed fences before it: still the result.
 		{"Stopped:\n```text\n````\n\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
 		{"Stopped:\n````\n```\n````` \t\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
@@ -375,6 +383,21 @@ func TestWrapUpVerdict(t *testing.T) {
 		{"", WrapUpNone, ""},
 		{"\n \n", WrapUpNone, ""},
 	}
+	// #83 review: a top-level fence closes at any indent up to 3, whatever
+	// its opener's; so does one before a list, or after one but left of its
+	// content.
+	for open := 0; open <= 3; open++ {
+		for closed := 0; closed <= 3; closed++ {
+			if open != closed {
+				fence := "Stopped.\n" + strings.Repeat(" ", open) + "```sh\nkill %1\n" + strings.Repeat(" ", closed) + "```\n"
+				cases = append(cases, struct{ text, verdict, reason string }{fence + "H3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""})
+			}
+		}
+	}
+	cases = append(cases, []struct{ text, verdict, reason string }{
+		{"```sh\nkill %1\n ```\n- Closed the pane.\n\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
+		{"1. Closed the pane.\n\n  ```sh\n  kill %1\n```\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
+	}...)
 	for _, tc := range cases {
 		v, r := WrapUpVerdict(tc.text, n)
 		if v != tc.verdict || r != tc.reason {

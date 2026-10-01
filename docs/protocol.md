@@ -1039,8 +1039,10 @@ is `worker.fire`'s, step by step, with the worktree choice made up front.
    markers, an indented code block or a code fence still open make it no result, as does the same marker anywhere else
    in that message. A fence is read as CommonMark reads one: only a run of its own character (backticks or tildes), at
    least as long, indented at most 3 spaces and with nothing after it closes it, so four backticks are not closed by
-   three, nor backticks by tildes. Lists are not parsed: the fences are read as top-level ones and again as a list
-   item's (only a close at the opener's own indent counts), and still open either way is no result. A
+   three, nor backticks by tildes; a top-level fence closes at any indent up to 3, whatever its opener's. Lists are not
+   parsed: the fences are read as top-level ones and again with list items in mind (a fence opened at or past the
+   content indent of a list marker line before it closes only at the opener's own indent, and any line left of that
+   indent before its close leaves it open), and still open either way is no result. A
    Claude turn ends with an assistant message whose `stop_reason` is not `tool_use` (or `system/turn_duration`), a Codex
    one with `task_complete`.
 4. **Decide**, once the turn ended in the transcript, no line came since and herdr has said `idle` (or `done`), each for
