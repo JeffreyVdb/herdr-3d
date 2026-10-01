@@ -215,7 +215,7 @@ func TestIntegrationHireAndSendHome(t *testing.T) {
 			Log:  slog.New(slog.NewTextHandler(testWriter{t}, &slog.HandlerOptions{Level: slog.LevelDebug})),
 			Name: "herdr-world", Ready: func() { close(ready) },
 			Control: &herdr.Control{Herdr: s.bin, Only: only}, Git: &gitops.Git{},
-			Caps: server.Caps{FloorSoft: 1, FloorHard: 2, HostSoft: 100, HostHard: 200}, HireOptions: &opts,
+			Caps: server.Caps{FloorSoft: 0, FloorHard: 1, HostSoft: 100, HostHard: 200}, HireOptions: &opts,
 		})
 	}()
 	t.Cleanup(func() {
@@ -260,7 +260,7 @@ func TestIntegrationHireAndSendHome(t *testing.T) {
 	var prep proto.HirePrepareResult
 	b.ack(proto.CmdHirePrepare, proto.HirePrepareArgs{Session: s.name, Cwd: repo}, 30*time.Second, &prep)
 	if prep.Git == nil || !prep.Git.Fetched || prep.Git.DefaultBranch != "main" || prep.Git.BaseSHA != merged ||
-		prep.ChoiceSource != proto.ChoiceNone || prep.Capacity.Floor != (proto.CapacityCount{Count: 0, Soft: 1, Hard: 2}) {
+		prep.ChoiceSource != proto.ChoiceNone || prep.Capacity.Floor != (proto.CapacityCount{Count: 0, Soft: 0, Hard: 1}) {
 		t.Fatalf("hire.prepare = %+v (git %+v)", prep, prep.Git)
 	}
 
@@ -288,6 +288,26 @@ func TestIntegrationHireAndSendHome(t *testing.T) {
 	gitIn(t, checkout, "merge-base", "--is-ancestor", merged, "HEAD") // it has the merged commit
 	if got := gitIn(t, repo, "rev-parse", "HEAD"); got != localHead {
 		t.Fatalf("the local checkout moved: %s", got)
+	}
+	// herdr opened the repository's main checkout for the worktree: two
+	// workspaces, one worker (the main checkout is a shell, hidden).
+	workspaces := func() int {
+		var list struct {
+			Result struct {
+				Workspaces []struct{} `json:"workspaces"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(s.run("--session", s.name, "workspace", "list"), &list); err != nil {
+			t.Fatal(err)
+		}
+		return len(list.Result.Workspaces)
+	}
+	if n := workspaces(); n != 2 {
+		t.Fatalf("herdr has %d workspaces after a worktree hire, want the worktree and the main checkout", n)
+	}
+	b.ack(proto.CmdHirePrepare, proto.HirePrepareArgs{Session: s.name}, 30*time.Second, &prep)
+	if prep.Capacity.Floor.Count != 1 {
+		t.Fatalf("capacity after a worktree hire = %+v, want one worker", prep.Capacity)
 	}
 	marker := "h3d-" + strings.ReplaceAll(hired.ID, "-", "")[:12]
 	if !slices.ContainsFunc(evs, func(ev proto.Event) bool {
@@ -360,13 +380,16 @@ func TestIntegrationHireAndSendHome(t *testing.T) {
 		t.Fatalf("branch still there: %q", out)
 	}
 
-	// herdr opened the repository's main checkout as a workspace for the
-	// worktree group; it is a worker too. Remembered choice: codex.
+	// The main checkout herdr opened for the worktree went with the last
+	// worktree (best effort). Remembered choice: codex.
 	b.ack(proto.CmdHirePrepare, proto.HirePrepareArgs{Session: s.name}, 30*time.Second, &prep)
 	if prep.ChoiceSource != proto.ChoiceLast || prep.Choice == nil || prep.Choice.Model != cheapCodex {
 		t.Fatalf("remembered choice = %+v", prep)
 	}
 	floorCount := prep.Capacity.Floor.Count
+	if n := workspaces(); n != floorCount {
+		t.Fatalf("herdr has %d workspaces after sending the worktree home, want %d", n, floorCount)
+	}
 
 	// Hire a Claude worker (plain workspace, a directory Claude never saw)
 	// at desk 3: at the desk within 5 s, trust dialog answered, native args.

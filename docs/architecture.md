@@ -77,9 +77,9 @@ MacBook (M2 Max)                                   devbox (Linux)
   agent-office #119) → the workspace is bound to that id (so it sits at the chosen desk) → pane-label marker
   `h3d-<12 hex>` → `agent start <name>-<id6> --kind claude|codex --pane … -- <args>` through the shell pane (fish
   wrappers apply) → answer the trust dialog → optional first prompt. Capacity caps per floor and host (soft: warn,
-  hard: refuse); a worktree hire counts two when herdr will open the repository's main checkout too. The branch is
+  hard: refuse); a worktree hire counts one: the repository's main checkout herdr may open with it holds only a shell and is hidden (not a worker) while it has no agent and a worktree of the repository is open. The branch is
   recorded as the bridge's for that worker (SQLite `hire_branch`, with its base commit). A failed hire rolls back:
-  the workspace closes; the checkout goes only if clean, the branch only if still at its base.
+  the workspace closes; the checkout goes only if clean, the branch only if still at its base; then the idle main checkout herdr opened for it is closed too.
   - claude: `--model claude-opus-5-5|claude-fable-5-1|claude-sonnet-5-5 --effort low|medium|high|xhigh|max --permission-mode bypassPermissions --name <label>`
   - codex: `-m gpt-6-sol|gpt-6-luna|gpt-6-astra -c model_reasoning_effort=low…max (+ultra sol/astra) --dangerously-bypass-approvals-and-sandbox`
   - Native args are not persisted by herdr → bridge stores harness/model/effort, `hired_at`, the desk, and the last
@@ -97,7 +97,7 @@ MacBook (M2 Max)                                   devbox (Linux)
   for that worker, only while the checkout is on it and its commits are on a remote) → `worker.removed` with
   `reason: "sent_home"`. Never for sleep: a
   graceful exit drops `agent_session` so it can't resume. herdr closes a main checkout with open linked worktrees only
-  as a group; the bridge refuses that instead.
+  as a group; the bridge refuses that instead (for a main checkout with an agent: an agentless one is hidden). When the last bridge-hired worktree of a repository is sent home, its idle main checkout is closed too (`workspace close`, best effort).
 - **Boards** (M7, built; details in `protocol.md` "Boards: issues and pull requests"): a floor with an effective repo
   has an issue board and a pull request board. The bridge talks to them only through two small neutral interfaces
   (`internal/tracker`, `internal/codehost`; opaque item ids, provider-defined columns, capability flags, optional URL

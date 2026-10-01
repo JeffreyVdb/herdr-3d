@@ -237,6 +237,20 @@ by, in order: a pane-label marker `h3d-<short uuid>`; the native `agent_session`
 workers it has not seen closing). Otherwise it is a new worker. The bridge writes a marker only on the workers it hires
 (`worker.hire` labels their root pane `h3d-<first 12 hex of the worker id>`); it never writes tokens to herdr.
 
+### Hidden main checkouts
+
+`herdr worktree create` opens one more workspace, for the repository's **main checkout**, when none is open on the
+floor (its worktree group needs it as the primary workspace). It holds only a shell, so it is **not a worker**: the
+bridge leaves it out of `worker.upsert`s and the snapshot, it takes no desk, and it does not count in `deskCount`,
+`capacity` or the caps. The rule is derived from herdr's state on every observation, so it holds across bridge
+restarts: a workspace is hidden when it is a repository's main checkout (`worktree.linked` false, a `repo_root`), has
+**no agent** (no agent kind, name or session in its primary pane), and a linked worktree workspace of the same
+repository is open on the same floor. It is also held hidden while a worktree hire of that repository is being made
+(rollback included) or a bridge-hired worktree worker is being sent home, so the shell never shows between steps. When an
+agent starts in it, or the last linked worktree of its repository goes (and the bridge did not close it), it is a
+worker like any other: `worker.upsert`, a desk. When an agent in it exits while worktrees are open, it is
+`worker.removed` (no `reason`) and its desk is freed. A hire's own workspace is never hidden.
+
 ### Desks and names
 
 Each worker holds a **desk** on its floor: `desk_index` is stored in SQLite (`desk_assignment`) under the worker's id,
@@ -735,7 +749,7 @@ remote-tracking refs) and is audited like any command.
 | `choice`, `choice_source` | the harness/model/effort to pre-select: the floor's `default_hire` (`"floor_default"`), else the last choice hired on this floor (`"last"`, stored per floor in SQLite, table `floor_hire_last`), else `null` (`"none"`). A remembered choice no longer in `hire_options` is skipped. |
 | `label` | the next generated worker name (a name no worker of the floor owns or holds): the default label, and the new worker's name when the hire keeps it |
 | `git` | `null` when `cwd` is not in a git work tree. Else `repo_root` (the work tree's top level), `default_branch` (from `origin/HEAD`, else `main` / `master` when `origin/<that>` exists; `""` when unknown), `base_sha` and `base_time` (unix ms, commit time) of `origin/<default_branch>` **after** `git fetch origin`, `fetched` and, when the fetch failed (no `origin`, offline, …, bounded at 20 s), `fetch_error`. A failed fetch is not an error of `hire.prepare` (the base shown is then the last fetched one), but the dialog should warn: a worktree hire now would be refused with `fetch_failed`. A plain hire is unaffected. |
-| `capacity` | workers on this floor (`floor.count`, hires in flight included; a worktree hire as two while herdr may open its repository's main checkout too) and on every running floor the bridge watches (`host.count`), with the configured caps (`--warn-workers-per-floor` / `--max-workers-per-floor`, `--warn-workers` / `--max-workers`). A hire that would reach above `hard` is refused (`capacity`); above `soft` the dialog should warn. `load` is the host's 1-minute load average, CPU count and memory in use (`/proc`); absent when unreadable. |
+| `capacity` | workers on this floor (`floor.count`, hires in flight included; a repository's idle main checkout is not a worker, see "Hidden main checkouts") and on every running floor the bridge watches (`host.count`), with the configured caps (`--warn-workers-per-floor` / `--max-workers-per-floor`, `--warn-workers` / `--max-workers`). A hire that would reach above `hard` is refused (`capacity`); above `soft` the dialog should warn. `load` is the host's 1-minute load average, CPU count and memory in use (`/proc`); absent when unreadable. |
 
 **`worker.hire`** hires a worker at a free desk:
 
@@ -765,11 +779,8 @@ remote-tracking refs) and is audited like any command.
 | `handoff`, `stop_services` | reserved (M9, #14); refused like any unknown field |
 
 Capacity: a hire that would put the floor above `--max-workers-per-floor` or the host above `--max-workers` is
-`capacity` (the `message` says which). A worktree hire counts as **two** workers when no workspace of the
-repository's main checkout is open on the floor, because herdr then opens one too (step 1). That is checked when the
-hire is accepted (the main checkout counts as open when `cwd` is inside the `worktree.repo_root` of an open,
-non-linked worker) and again once git named the repository, before herdr makes anything; a `capacity` then comes
-after the accept, like the `bad_request` for a missing default branch. Then, in order (each step bounded; the whole hire usually takes 4–10 s):
+`capacity` (the `message` says which). A worktree hire needs room for **one** worker, like any hire: the main
+checkout herdr may open with it (step 1) is not a worker. Then, in order (each step bounded; the whole hire usually takes 4–10 s):
 
 1. **Worktree hires**: `git fetch origin` in the repository. If it fails, the hire is refused with `fetch_failed`
    (the `message` is git's error) and nothing is made: a branch from the last fetched, possibly stale
@@ -780,8 +791,8 @@ after the accept, like the `bad_request` for a missing default branch. Then, in 
    `~/.herdr/worktrees/<repo>/<branch with / as ->`. The branch is recorded in SQLite (table `hire_branch`: worker id,
    repository, branch, the base commit it was made from): only a branch recorded for a worker is ever deleted, by that
    worker's send home or by its hire's rollback. When no workspace of the repository's main checkout is open on the
-   floor, herdr opens one too (its worktree group needs it): it shows up as one more worker, in the main checkout, at the
-   lowest free desk. Plain hires: `herdr workspace create --cwd <cwd> --label <label> --no-focus`.
+   floor, herdr opens one too (its worktree group needs it, and it holds only a shell): the bridge does not report it
+   as a worker while it has no agent (below). Plain hires: `herdr workspace create --cwd <cwd> --label <label> --no-focus`.
 2. The new workspace is bound to the worker id minted for this hire, so it appears at `desk_index` with its name,
    `hired_at`, `harness`, `model` and `effort` (`worker.upsert`). Its root pane gets the identity marker
    `herdr pane rename <pane> h3d-<12 hex>`.
@@ -836,7 +847,7 @@ back, the branch h3d/… is kept (it has commits since …)`) and in the audit r
 | `can_delete` | the worker is in a linked worktree, the tree is clean and nothing is unpushed. Only then may `worker.fire` delete the worktree. |
 | `can_delete_branch` | `can_delete`, and the bridge recorded making a branch for this worker (`hire_branch`), the checkout is on that branch now, and every commit of that branch is on a remote. Only then may `worker.fire` use `delete_branch`: offer "delete worktree + branch" only when this is `true`. |
 | `reason` | why `can_delete` is false |
-| `can_fire`, `fire_blocked` | `false` (and why) when herdr would refuse to close the workspace: a repository's main checkout whose linked worktree workspaces are still open on the floor (herdr's `workspace_group_close_required`; send those home first). The bridge never closes a group. |
+| `can_fire`, `fire_blocked` | `false` (and why) when herdr would refuse to close the workspace: a repository's main checkout with an agent in it whose linked worktree workspaces are still open on the floor (herdr's `workspace_group_close_required`; send those home first). The bridge never closes a group. (An agentless main checkout is not a worker while worktrees are open, so there is nothing to send home: below.) |
 
 **`worker.fire`** sends the worker home:
 
@@ -867,6 +878,13 @@ back, the branch h3d/… is kept (it has commits since …)`) and in the audit r
    again and the name held as for any worker that leaves. For `delete_branch`, then — its commits counted once
    more — `git branch -D <recorded branch>` in the main checkout (safe: every commit is on a remote), and its
    `hire_branch` record is dropped. If the count is not 0 the branch is kept and `note` says so.
+   Then, for a worker the bridge hired into a linked worktree (it has a `hire_branch` record, whichever cleanup was
+   chosen): when no linked worktree workspace of that repository is open on the floor any more, the repository's main
+   checkout workspace herdr opened for it, if it is still idle (below), is closed with `herdr workspace close
+   <workspace>`. This is best effort: a failure is logged and noted in the audit row, never fails the send home, and
+   the workspace then shows as a worker (nothing hides it any more). A workspace with an agent is never closed.
+   No group close is involved: the last linked worktree is gone by then, which is what herdr's
+   `workspace_group_close_required` waits for.
 5. The audit row is completed with each step (exit keys, released or not, the git state, the cleanup choice and
    outcome) and the ack sent. A failure is `fire_failed` with what went wrong.
 

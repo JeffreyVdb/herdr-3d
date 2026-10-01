@@ -94,14 +94,13 @@ func (e *fetchFailedError) Unwrap() error { return e.err }
 // hireOp is a worker.hire in flight. Its desk is reserved and its worker
 // id minted from the start; workspaceID and pane are set (on the hub
 // goroutine) once herdr made the workspace, and seen once the hub saw it.
-// extra is 1 while the hire may also open its repository's main checkout
-// (a worktree hire when none is open on the floor): it counts too.
+// repo is a worktree hire's repository, set with the workspace.
 type hireOp struct {
 	id, session                string
-	desk, extra                int
+	desk                       int
 	name, label, marker, agent string
 	harness, model, effort     string
-	cwd, prompt, branch        string
+	cwd, prompt, branch, repo  string
 	worktree                   bool
 	hiredAt                    int64
 	client                     *Client
@@ -126,10 +125,14 @@ func (op *hireOp) signal() {
 
 // fireOp is a worker.fire in flight. For delete_branch, branch and
 // repoRoot are the branch the bridge recorded making for the worker.
+// repo is the repository of a linked worktree worker the bridge hired
+// (else empty): once its last worktree is gone, the main checkout herdr
+// opened for it goes too.
 type fireOp struct {
 	id, name, session, workspaceID string
 	pane, harness, choice          string
 	checkout, repoRoot, branch     string
+	repo                           string
 	client                         *Client
 	cmd                            proto.Command
 	auditID                        int64
@@ -212,7 +215,7 @@ func (h *Hub) counts(session string) (floor, host int) {
 		n := len(f.order)
 		for _, op := range f.hires {
 			if !op.seen {
-				n += 1 + op.extra
+				n++
 			}
 		}
 		host += n
@@ -396,13 +399,7 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 			return fmt.Errorf("%w: desk %d is being hired into", errDeskTaken, desk)
 		}
 	}
-	// A worktree hire opens the main checkout too when it is not open on
-	// the floor; runHire checks again once it knows the repository.
-	extra := 0
-	if a.Worktree && !h.mainCheckoutOpen(f, cwd, false) {
-		extra = 1
-	}
-	if err := h.checkCaps(a.Session, 1+extra, extra > 0); err != nil {
+	if err := h.checkCaps(a.Session, 1); err != nil {
 		return err
 	}
 	if h.opts.Hire == nil {
@@ -415,7 +412,7 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 	if held[name] || !world.IsName(name) {
 		name = world.PickName(id, held)
 	}
-	op := &hireOp{id: id, session: a.Session, desk: desk, extra: extra, name: name, label: a.Label, marker: "h3d-" + hex[:12],
+	op := &hireOp{id: id, session: a.Session, desk: desk, name: name, label: a.Label, marker: "h3d-" + hex[:12],
 		agent: slug(name) + "-" + hex[:6], harness: a.Harness, model: a.Model, effort: a.Effort, cwd: cwd,
 		prompt: a.Prompt, worktree: a.Worktree, hiredAt: at.UnixMilli(), client: c, cmd: cmd,
 		notify: make(chan struct{}, 1), launched: launched}
@@ -441,39 +438,17 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 
 // checkCaps refuses a hire that would put the floor or the host above its
 // hard cap with need more workers (hires in flight already count).
-// withMain: need includes the repository's main checkout.
-func (h *Hub) checkCaps(session string, need int, withMain bool) error {
+func (h *Hub) checkCaps(session string, need int) error {
 	floorN, hostN := h.counts(session)
 	caps := h.opts.Caps
-	also := ""
-	if withMain {
-		also = "; a worktree hire also opens the repository's main checkout, which is not open on the floor"
-	}
 	switch {
 	case floorN+need > caps.FloorHard:
-		return fmt.Errorf("%w: the floor has %d workers, the most is %d (--max-workers-per-floor)%s", errCapacity, floorN,
-			caps.FloorHard, also)
+		return fmt.Errorf("%w: the floor has %d workers, the most is %d (--max-workers-per-floor)", errCapacity, floorN,
+			caps.FloorHard)
 	case hostN+need > caps.HostHard:
-		return fmt.Errorf("%w: the host has %d workers, the most is %d (--max-workers)%s", errCapacity, hostN, caps.HostHard, also)
+		return fmt.Errorf("%w: the host has %d workers, the most is %d (--max-workers)", errCapacity, hostN, caps.HostHard)
 	}
 	return nil
-}
-
-// mainCheckoutOpen reports whether a workspace in the main checkout of
-// the repository at dir is open on the floor: one whose repository root
-// is dir (exact), or contains dir.
-func (h *Hub) mainCheckoutOpen(f *floorState, dir string, exact bool) bool {
-	for _, id := range f.order {
-		w := h.workers[id]
-		if w == nil || w.Worktree == nil || w.Worktree.Linked || w.Worktree.RepoRoot == "" {
-			continue
-		}
-		root := w.Worktree.RepoRoot
-		if dir == root || (!exact && strings.HasPrefix(dir, strings.TrimSuffix(root, "/")+"/")) {
-			return true
-		}
-	}
-	return false
 }
 
 // hireReport is the audit-log result of a worker.hire.
@@ -523,6 +498,11 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 			if kept := h.rollbackHire(ctx, op, created, repo, rep); kept != "" {
 				err = fmt.Errorf("%w; rolling back, %s", err, kept)
 			}
+			if op.worktree {
+				h.closeIdleMain(ctx, op.notify, op.session, repo, created.WorkspaceID, func(format string, args ...any) {
+					rep.Rollback = append(rep.Rollback, fmt.Sprintf(format, args...))
+				})
+			}
 		}
 		h.finishHire(ctx, op, nil, err, rep)
 	}
@@ -538,22 +518,6 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 			return
 		}
 		rep.RepoRoot = repo
-		// Now that the repository is known: does herdr open its main
-		// checkout too?
-		var capErr error
-		if err := h.doWait(ctx, func() {
-			op.extra = 0
-			if f := h.floors[op.session]; f != nil && !h.mainCheckoutOpen(f, repo, true) {
-				op.extra = 1
-			}
-			capErr = h.checkCaps(op.session, 0, op.extra > 0)
-		}); err != nil {
-			return
-		}
-		if capErr != nil {
-			fail(capErr)
-			return
-		}
 		// Only a freshly fetched base: the last fetched one may lack what
 		// was merged since, and every branch from it would revert that
 		// (agent-office #119).
@@ -607,7 +571,7 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	}
 	rep.WorkspaceID, rep.Pane = created.WorkspaceID, created.PaneID
 	res.WorkspaceID = created.WorkspaceID
-	if err := h.doWait(ctx, func() { h.bindHire(ctx, op, created) }); err != nil {
+	if err := h.doWait(ctx, func() { op.repo = repo; h.bindHire(ctx, op, created) }); err != nil {
 		return
 	}
 
@@ -940,6 +904,9 @@ func (h *Hub) finishHire(ctx context.Context, op *hireOp, res *proto.HireResult,
 	err := h.doWait(ctx, func() {
 		if f := h.floors[op.session]; f != nil && f.hires[op.id] == op {
 			delete(f.hires, op.id)
+			if op.repo != "" {
+				h.resync(ctx, op.session) // its repository's main checkout is no longer held hidden
+			}
 		}
 		if !op.seen {
 			if c, ok := h.names[op.session][op.name]; ok && c.owner == op.id {
@@ -1018,6 +985,106 @@ func (h *Hub) fireWorker(id string) (*proto.Worker, *floorState, error) {
 		return nil, nil, fmt.Errorf("%w: %s is already being sent home", errBusy, w.Name)
 	}
 	return w, f, nil
+}
+
+// holdRepos are the repositories whose idle main checkout stays hidden
+// although no linked worktree of them is open (yet, or any more): a
+// worktree hire made its workspace, or a worker the bridge hired into a
+// linked worktree is being sent home. The hold ends with the operation,
+// after the main checkout was closed (closeIdleMain).
+func (h *Hub) holdRepos(f *floorState) map[string]bool {
+	var repos map[string]bool
+	hold := func(repo string) {
+		if repo != "" {
+			if repos == nil {
+				repos = map[string]bool{}
+			}
+			repos[repo] = true
+		}
+	}
+	for _, op := range f.hires {
+		hold(op.repo)
+	}
+	for _, op := range f.fires {
+		hold(op.repo)
+	}
+	return repos
+}
+
+// hireWorkspaces are the workspaces hires in flight made: workers whatever
+// they look like yet (an agentless one is not a hidden main checkout).
+func (h *Hub) hireWorkspaces(f *floorState) map[string]bool {
+	var ws map[string]bool
+	for _, op := range f.hires {
+		if op.workspaceID != "" {
+			if ws == nil {
+				ws = map[string]bool{}
+			}
+			ws[op.workspaceID] = true
+		}
+	}
+	return ws
+}
+
+// signalOps wakes the operations waiting on the floor's workspaces.
+func (h *Hub) signalOps(f *floorState) {
+	for _, op := range f.hires {
+		op.signal()
+	}
+	for _, op := range f.fires {
+		op.signal()
+	}
+}
+
+// closeIdleMain closes, best effort, the main checkout workspace herdr
+// opened for a repository's worktrees (see world.HiddenMainCheckouts)
+// once no linked worktree of the repository is open on the floor any more.
+// gone is the workspace of the worktree just closed or removed: it is
+// waited for first. It never closes a workspace with an agent, and a
+// failure is only logged and noted: the workspace then shows as a worker
+// again.
+func (h *Hub) closeIdleMain(ctx context.Context, notify <-chan struct{}, session, repo, gone string, step func(format string, args ...any)) {
+	// What herdr last showed.
+	idle := func() (ids []string, linked, goneOpen bool) {
+		f := h.floors[session]
+		if f == nil {
+			return nil, false, false
+		}
+		for _, w := range f.last {
+			switch {
+			case w.WorkspaceID == gone:
+				goneOpen = true
+			case w.IsLinked() && w.Worktree.RepoRoot == repo:
+				linked = true
+			case w.IsMainCheckout() && w.Worktree.RepoRoot == repo && !w.HasAgent():
+				ids = append(ids, w.WorkspaceID)
+			}
+		}
+		return ids, linked, goneOpen
+	}
+	if !awaitOn(ctx, h, notify, time.Now().Add(h.opts.SeenTimeout), func() bool { _, _, open := idle(); return !open }) {
+		return
+	}
+	type found struct {
+		ids    []string
+		linked bool
+	}
+	r, err := query(ctx, h, func() found { ids, linked, _ := idle(); return found{ids, linked} })
+	if err != nil || r.linked {
+		return
+	}
+	for _, id := range r.ids {
+		if err := h.opts.Hire.CloseWorkspace(ctx, session, id); err != nil {
+			h.log.Warn("closing the idle main checkout failed", "session", session, "workspace", id, "repo", repo, "err", err)
+			step("herdr workspace close of the repository's main checkout %s failed: %v", id, err)
+			continue
+		}
+		step("herdr workspace close of the repository's main checkout %s", id)
+		awaitOn(ctx, h, notify, time.Now().Add(h.opts.SeenTimeout), func() bool {
+			ids, _, _ := idle()
+			return !slices.Contains(ids, id)
+		})
+	}
 }
 
 // groupBlocked says why herdr would refuse to close a worker's workspace:
@@ -1190,14 +1257,20 @@ func (h *Hub) startFire(ctx context.Context, c *Client, cmd proto.Command) error
 			return errors.New("deleting worktrees is not configured")
 		}
 	}
+	var made store.HireBranch
+	var recorded bool
+	if w.Worktree != nil && w.Worktree.Linked {
+		if made, recorded, err = h.st.HireBranchOf(ctx, w.ID); err != nil {
+			return err
+		}
+		if recorded {
+			op.repo = w.Worktree.RepoRoot
+		}
+	}
 	if a.Worktree == proto.FireDeleteBranch {
 		// Only the branch the bridge recorded making for this worker; its
 		// name alone proves nothing.
-		made, ok, err := h.st.HireBranchOf(ctx, w.ID)
-		if err != nil {
-			return err
-		}
-		if !ok || !herdr.ValidBranch(made.Branch) || !herdr.ValidDir(made.RepoRoot) {
+		if !recorded || !herdr.ValidBranch(made.Branch) || !herdr.ValidDir(made.RepoRoot) {
 			return bad("the bridge made no branch for %s: delete the worktree only", w.Name)
 		}
 		op.branch, op.repoRoot = made.Branch, made.RepoRoot
@@ -1321,6 +1394,9 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 			}
 		}
 		rep.step("git branch -D %s: %s", op.branch, orOK(res.Note))
+	}
+	if op.repo != "" {
+		h.closeIdleMain(ctx, op.notify, op.session, op.repo, op.workspaceID, rep.step)
 	}
 	rep.Worktree = res.Worktree
 	h.finishFire(ctx, op, &res, nil, rep)
@@ -1488,6 +1564,9 @@ func (h *Hub) finishFire(ctx context.Context, op *fireOp, res *proto.FireResult,
 	err := h.doWait(ctx, func() {
 		if f := h.floors[op.session]; f != nil && f.fires[op.id] == op {
 			delete(f.fires, op.id)
+			if op.repo != "" {
+				h.resync(ctx, op.session) // its repository's main checkout is no longer held hidden
+			}
 		}
 		if aerr := h.st.AuditEnd(ctx, op.auditID, opErr, rep); aerr != nil {
 			h.log.Error("audit log write failed", "err", aerr)

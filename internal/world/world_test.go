@@ -186,3 +186,35 @@ func TestIsMarker(t *testing.T) {
 		}
 	}
 }
+
+func TestHiddenMainCheckouts(t *testing.T) {
+	main := func(ws, repo string) world.WorkerObs {
+		return world.WorkerObs{WorkspaceID: ws, Worktree: &world.Worktree{RepoRoot: repo, CheckoutPath: repo}}
+	}
+	linked := func(ws, repo string) world.WorkerObs {
+		return world.WorkerObs{WorkspaceID: ws, AgentKind: "claude",
+			Worktree: &world.Worktree{RepoRoot: repo, CheckoutPath: repo + "-wt", Linked: true}}
+	}
+	withAgent := func(w world.WorkerObs) world.WorkerObs { w.AgentKind = "claude"; return w }
+	plain := world.WorkerObs{WorkspaceID: "p"}
+	for _, tc := range []struct {
+		name         string
+		obs          []world.WorkerObs
+		hold, exempt map[string]bool
+		want         map[string]bool
+	}{
+		{"agentless main with a linked worktree", []world.WorkerObs{main("m", "/r"), linked("l", "/r")}, nil, nil, map[string]bool{"m": true}},
+		{"no linked worktree", []world.WorkerObs{main("m", "/r"), plain}, nil, nil, nil},
+		{"linked worktree of another repository", []world.WorkerObs{main("m", "/r"), linked("l", "/other")}, nil, nil, nil},
+		{"agent in the main checkout", []world.WorkerObs{withAgent(main("m", "/r")), linked("l", "/r")}, nil, nil, nil},
+		{"agent session of a sleeping floor", []world.WorkerObs{{WorkspaceID: "m", AgentSession: "s1", Worktree: main("m", "/r").Worktree}, linked("l", "/r")}, nil, nil, nil},
+		{"held repository", []world.WorkerObs{main("m", "/r")}, map[string]bool{"/r": true}, nil, map[string]bool{"m": true}},
+		{"exempt workspace", []world.WorkerObs{main("m", "/r"), linked("l", "/r")}, nil, map[string]bool{"m": true}, nil},
+		{"no repository root", []world.WorkerObs{{WorkspaceID: "m", Worktree: &world.Worktree{}}, linked("l", "")}, nil, nil, nil},
+		{"two repositories", []world.WorkerObs{main("m1", "/a"), main("m2", "/b"), linked("l", "/b")}, nil, nil, map[string]bool{"m2": true}},
+	} {
+		if got := world.HiddenMainCheckouts(tc.obs, tc.hold, tc.exempt); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: hidden = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
