@@ -548,8 +548,18 @@ export class Hud {
     this.toastEl.textContent = msg;
     this.toastEl.dataset.kind = kind;
     this.toastEl.hidden = false;
+    this.placeToast();
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => (this.toastEl.hidden = true), ms);
+  }
+
+  /** A long toast (M13's macOS denial) that the plan limits panel would cover goes under the panel instead. */
+  private placeToast(): void {
+    this.toastEl.style.top = '';
+    const l = this.root.ownerDocument.querySelector('[data-hook="limits"]')?.getBoundingClientRect();
+    if (!l || l.width === 0) return;
+    const t = this.toastEl.getBoundingClientRect();
+    if (t.left < l.right && l.left < t.right && t.top < l.bottom && l.top < t.bottom) this.toastEl.style.top = `${this.toastEl.offsetTop + l.bottom + 8 - t.top}px`;
   }
 
   sheet(title: string, body: string): void {

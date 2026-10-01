@@ -21,6 +21,8 @@ interface Mock {
   calls: unknown[];
   tracks: MediaStreamTrack[];
   fail: string | null;
+  /** The rejection's message (default: a picker cancel's). */
+  failMessage?: string;
 }
 declare global {
   interface Window {
@@ -37,7 +39,7 @@ async function installScreenMock(page: Page): Promise<void> {
       configurable: true,
       value: async (opts: unknown) => {
         mock.calls.push(JSON.parse(JSON.stringify(opts, (k, v) => (k === 'controller' ? 'CaptureController' : v))));
-        if (mock.fail) throw new DOMException(mock.fail === 'NotAllowedError' ? 'Permission denied' : 'no', mock.fail);
+        if (mock.fail) throw new DOMException(mock.failMessage ?? (mock.fail === 'NotAllowedError' ? 'Permission denied' : 'no'), mock.fail);
         const canvas = document.createElement('canvas');
         canvas.width = 1280;
         canvas.height = 720;
@@ -205,4 +207,24 @@ test('a cancelled picker changes nothing and says nothing; a refusal by the brow
   await page.locator('.share-start').click();
   await expect(page.locator('.toast')).toContainText('could not be captured');
   expect((await screen(page))?.phase).toBe('off');
+});
+
+test('the macOS denial is read in full: the toast stays clear of the plan limits panel', async ({ page }) => {
+  await installScreenMock(page);
+  await openGame(page, 'demo-m5', '', 'play=none&sim=1&simms=150&simusage=0&simlimits=ok');
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await expect(page.locator('.limits')).toBeVisible();
+  await page.evaluate(() => Object.assign(window.__screenMock, { fail: 'NotAllowedError', failMessage: 'Permission denied by system' }));
+  for (const width of [1920, 1280]) {
+    await page.setViewportSize({ width, height: width === 1920 ? 1080 : 720 });
+    await page.locator('.share-start').click();
+    const toast = page.locator('.toast');
+    await expect(toast).toContainText('record the screen');
+    await expect(toast).toHaveCSS('opacity', '1');
+    const [t, l] = [await toast.boundingBox(), await page.locator('.limits').boundingBox()];
+    if (!t || !l) throw new Error('no toast or limits panel');
+    const overlaps = t.x < l.x + l.width && l.x < t.x + t.width && t.y < l.y + l.height && l.y < t.y + t.height;
+    expect(overlaps, `toast ${JSON.stringify(t)} limits ${JSON.stringify(l)} at ${width}`).toBe(false);
+    await page.screenshot({ path: resolve(EVIDENCE, `07-denied-${width}.png`) });
+  }
 });
