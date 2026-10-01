@@ -248,7 +248,13 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 		return fmt.Errorf("%w: %s waits on its question: answer it first (worker.answer_ask)", errInvalidState, w.Name)
 	}
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
-		return h.prompt(ctx, a, session, pane)
+		res, err := h.prompt(ctx, a, session, pane)
+		if err == nil {
+			// #58: its user line is read now, not on the tracker's next tick
+			// (a watched transcript's is a second away).
+			h.kickUsage()
+		}
+		return res, err
 	})
 }
 

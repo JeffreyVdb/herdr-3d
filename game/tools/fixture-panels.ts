@@ -7,7 +7,9 @@
 //   the ack at once with `queued: true` and takes the prompt when its turn
 //   ends. A `blocked` one or one with an `ask` (answer its question first), a plain shell (no
 //   `agent_kind`) or an asleep floor is `invalid_state`. `simfail=prompt_failed` fails the next prompt
-//   (`prompt_failed`), `simfail=prompt_retried` acks it `retried: true`.
+//   (`prompt_failed`), `simfail=prompt_retried` acks it `retried: true`. #58: with `simecho=<ms>` the prompt's
+//   `user` item reaches the worker's transcript watch that long after its turn starts, or, queued, after the ack (both
+//   CLIs take a queued prompt mid-turn); without it, never.
 // - worker.answer: needs the question's hash (else `stale`, after a
 //   worker.upsert with the current question, as the bridge re-reads the
 //   screen); a "No" choice, a cancel or trusting a folder (the agent then
@@ -41,6 +43,8 @@ export interface PanelsHost {
   /** True (once) when `simfail` asked for this failure. */
   takeFail(code: string): boolean;
   error(code: string, message: string): Error;
+  /** #58: the agent took a prompt: its `user` item goes to the transcript (`simecho`). */
+  echo?(w: Worker, text: string): void;
 }
 
 /** The bridge's cap on `diff` (docs: 256 KiB). */
@@ -139,6 +143,7 @@ export class PanelsSim {
       q.push(text);
       this.queued.set(w.id, q);
       ack({ queued: true, retried: false });
+      this.h.echo?.(w, text);
       return;
     }
     const retried = this.h.takeFail('prompt_retried');
@@ -146,6 +151,7 @@ export class PanelsSim {
       if (!this.h.workers.includes(w)) return fail(this.h.error('unknown_worker', `unknown worker: "${w.id}"`));
       this.startTurn(send, w, firstLine(text));
       ack({ queued: false, retried });
+      this.h.echo?.(w, text);
     });
   }
 

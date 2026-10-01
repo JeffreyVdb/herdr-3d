@@ -1143,6 +1143,11 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		}
 		prev := h.workers[id]
 		h.workers[id] = next
+		// #58: a watched worker starting a turn: its transcript is read now
+		// (the prompt's user line, the first items), not on the next tick.
+		if prev != nil && prev.Status != statusWorking && next.Status == statusWorking && h.tx.watched(id) {
+			h.kickUsage()
+		}
 		switch {
 		case prev == nil:
 			evs = append(evs, proto.Event{T: proto.EvWorkerUpsert, Worker: next})

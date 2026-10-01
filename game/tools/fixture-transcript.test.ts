@@ -7,13 +7,14 @@ import { SIM_MAX_TRANSCRIPT_WATCHES, SIM_SUBAGENT } from './fixture-transcript';
 
 type Msg = Record<string, unknown>;
 
-function rig(fail?: string) {
+function rig(fail?: string, echoMs?: number) {
   const { snapshot } = loadFixture('demo-m4');
   const timers = new Map<number, () => void>();
   let t = 0;
   const sim = new SimWorld(snapshot as never, {
     fail,
     stepMs: 100,
+    ...(echoMs !== undefined ? { echoMs } : {}),
     now: () => 1_000_000,
     setTimeout: (fn) => (timers.set(++t, fn), t),
     clearTimeout: (h) => timers.delete(h as number),
@@ -42,6 +43,31 @@ const agent = byName('Nibble'); // herdr-3d, claude
 const asleep = byName('Muffin'); // depot-manager, asleep
 
 describe('TranscriptSim', () => {
+  it('#58 simecho: a prompt reaches the watch as its user item, taken at once when idle, mid-turn when queued', () => {
+    const r = rig(undefined, 250);
+    const idle = world.world.workers.find((w) => (w as { status?: string; agent_kind?: string }).status === 'idle' && (w as { agent_kind?: string }).agent_kind)?.id as string;
+    for (const id of [agent, idle]) r.cmd('transcript.watch', { id });
+    const users = (id: string) => r.out.filter((m) => m.t === 'transcript.items' && m.id === id).flatMap((m) => m.items as TranscriptItem[]).filter((it) => it.kind === 'user');
+    const queued = r.cmd('worker.prompt', { id: agent, text: '  and the docs\n' });
+    expect(queued.data).toEqual({ queued: true, retried: false });
+    r.cmd('worker.prompt', { id: idle, text: 'fix it' });
+    expect(users(agent)).toEqual([]);
+    r.settle();
+    expect(users(agent).map((it) => it.parts)).toEqual([[{ text: 'and the docs' }]]);
+    expect(users(idle).map((it) => it.parts)).toEqual([[{ text: 'fix it' }]]);
+    // After the timeline it was watched with (a new watch has the same demo, without it).
+    const top = Math.max(...watchAck(r.cmd('transcript.watch', { id: idle }).data).items.map((it) => it.seq));
+    expect(users(idle)[0]?.seq).toBe(top + 1);
+  });
+
+  it('#58 without simecho, prompts never show in the transcript', () => {
+    const r = rig();
+    r.cmd('transcript.watch', { id: agent });
+    r.cmd('worker.prompt', { id: agent, text: 'x' });
+    r.settle();
+    expect(r.out.filter((m) => m.t === 'transcript.items')).toEqual([]);
+  });
+
   it('acks a watch with the demo timeline in the bridge’s shape', () => {
     const r = rig();
     const a = r.cmd('transcript.watch', { id: agent, limit: 200 });

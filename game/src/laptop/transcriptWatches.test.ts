@@ -179,6 +179,9 @@ describe('TranscriptWatches', () => {
     h.w.items({ t: 'transcript.items', id: 'a', updates: [item('x1', 1, { kind: 'tool' })] });
     h.w.items({ t: 'transcript.items', id: 'a', items: [], updates: [] }); // nothing in it
     expect(h.log).toEqual(['reset a x1', 'push a + ~x1']);
+    // #58: nothing in it but the session's head (a pending transcript that appeared empty): the sink needs the head.
+    h.w.items({ t: 'transcript.items', id: 'a', items: [], updates: [], harness: 'claude', session: 's2' });
+    expect(h.log.at(-1)).toBe('push a + ~');
   });
 
   it("a re-watch: the replaced watch's update arriving before the new ack does not undo the ack's newer item", async () => {

@@ -325,7 +325,7 @@ export class PromptOverlay {
       // Sent: its draft goes (text and images), unless you wrote another one meanwhile (closed and opened the overlay again).
       draft.clearIf(res.revision);
       const msg = result.queued
-        ? `Queued: ${name} takes it after the current turn.`
+        ? `Queued: ${name} takes it when it can.`
         : result.retried
           ? `Sent: ${name} is on it (herdr’s paste needed one more Enter).`
           : `Sent: ${name} is on it.`;

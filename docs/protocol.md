@@ -1504,7 +1504,7 @@ one the rollout picked by its `cwd` (with the same caveat for two Codex agents i
 worker's one tail, the usage one: a watch adds no second tail. When a watch starts, the bridge indexes the part of the
 file that tail read already, once, in the background (it never holds up other commands); after that every line the
 tail reads goes into the index as it is read. While a worker is watched its transcript is looked for every **2 s**
-(not 30 s) when it is not found yet, and a Codex worker's rollout is picked again every 2 s. While any transcript is watched the tail reads every **1 s** instead of every 2 s, so a pasted screenshot is in the view within 3 s of its line being written (1 s to read it, at most 250 ms to push it, then the thumbnail).
+(not 30 s) when it is not found yet, and a Codex worker's rollout is picked again every 2 s. While any transcript is watched the tail reads every **1 s** instead of every 2 s, so a pasted screenshot is in the view within 3 s of its line being written (1 s to read it, at most 250 ms to push it, then the thumbnail). A `worker.prompt` that succeeded, and a watched worker turning `working`, have the tail read at once instead of on its next tick (#58): the prompt's `user` item is pushed in well under a second, the 250 ms between two pushes of a watch at most (`TestPromptEchoLatency`).
 
 **The index**, not the transcript, is what the bridge keeps: for each item the byte offsets of its lines (and the few
 ids that pair a call with its result). An item is read back from the file when it is sent. A 50 MB transcript, mostly

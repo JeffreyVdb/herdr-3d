@@ -24,7 +24,8 @@
 // M6 crew: `simcrew=<ms>` walks a scripted freelancer through its lifecycle by
 // itself (tools/fixture-crew.ts; `sim.crew` steps it on demand). M10: `simlimits=ok|hot|reached|old|transcript|noplan|none` picks the
 // plan limits' readings (tools/fixture-limits.ts), `simfail=no_m10` plays a bridge without them. #51: `simmodels=<n>` adds n
-// Claude models to the hire options (a long model list).
+// Claude models to the hire options (a long model list). #58: `simecho=<ms>` writes a prompt's `user` item to its
+// worker's transcript watch that long after the turn takes it (tools/fixture-panels.ts; absent: never).
 // #51: `POST /upload` stores nothing and answers a fake Drop Zone path (tools/fixture-upload.ts); the query of the ws URL
 // carries `fail_upload=<N|all>&upload_key=<key>` to make uploads fail.
 import { readFileSync } from 'node:fs';
@@ -170,6 +171,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             // #51: a long model list in the hire dialog.
             ...(q.get('simmodels') ? { models: Math.min(200, Math.max(0, Number(q.get('simmodels')) || 0)) } : {}),
             ...(q.get('simcrew') !== null ? { crewMs: Math.max(0, Number(q.get('simcrew')) || 0) } : {}),
+            // #58: prompts show in the transcript, a while after they were taken.
+            ...(q.get('simecho') !== null ? { echoMs: Math.max(0, Number(q.get('simecho')) || 0) } : {}),
           }
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {

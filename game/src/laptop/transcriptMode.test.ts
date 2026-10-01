@@ -4,6 +4,7 @@ import type { Ask, Question, TranscriptItem } from '../net/protocol';
 import { ImageFeed } from './imageFeed';
 import { subagentItems, TranscriptMode, type MountTranscript, type SeatMode, type TranscriptRenderHost } from './transcriptMode';
 import { TranscriptWatches, watchAck } from './transcriptWatches';
+import { activityCue, promptKey, reconcile, SENT_TIMEOUT_MS, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 
 const item = (id: string, seq = 1, extra: Partial<TranscriptItem> = {}): TranscriptItem => ({ id, seq, ts: 0, kind: 'assistant', parts: [{ text: id }], ...extra });
 
@@ -39,6 +40,14 @@ class FakeView {
   }
   setAsk(a: Ask | null): void {
     this.calls.push(`ask ${a?.tool_use_id ?? 'null'}`);
+  }
+  cues: Array<ActivityCue | null> = [];
+  setActivity(c: ActivityCue | null): void {
+    this.cues.push(c);
+  }
+  pending: Array<readonly PendingPrompt[]> = [];
+  setPending(rows: readonly PendingPrompt[]): void {
+    this.pending.push(rows);
   }
   attachTabs(): void {}
   hasItem(): boolean {
@@ -100,7 +109,9 @@ function harness(o: { storage?: unknown; renderer?: () => Promise<MountTranscrip
     return v;
   };
   const storage = (o.storage ?? new MemStorage()) as Storage;
+  const clock = { t: 1_000_000 };
   const tx = new TranscriptMode({
+    now: () => clock.t,
     feed: () => o.feed ?? null,
     send: (t, args) => new Promise((resolve) => sent.push({ t, args: args as unknown as Record<string, unknown>, resolve })),
     renderer: o.renderer ?? (() => Promise.resolve(mount)),
@@ -109,7 +120,7 @@ function harness(o: { storage?: unknown; renderer?: () => Promise<MountTranscrip
     status: (kind, text) => status.push([kind, text]),
     modeChanged: (m) => modes.push(m),
   });
-  return { tx, layer, views, sent, status, modes, storage, mount };
+  return { tx, layer, views, sent, status, modes, storage, mount, clock };
 }
 
 const ack = (items: TranscriptItem[]) => watchAck({ harness: 'claude', session: 's', cursor: 'c:1', items });
@@ -388,5 +399,420 @@ describe('sit / toggle / stand cycles', () => {
     expect(h.tx.counts.mounted).toBe(h.tx.counts.destroyed);
     expect(h.views.every((v) => v.destroyed)).toBe(true);
     expect(h.views.length).toBeGreaterThan(0);
+  });
+});
+
+// #58: what the agent is doing (the spike's table, docs/research/transcript-activity.md) and the prompts on their way.
+describe('the live cue', () => {
+  const user = (id: string, seq: number, text = id) => item(id, seq, { kind: 'user', parts: [{ text }] });
+  const tool = (id: string, seq: number, status: 'running' | 'ok' | 'error' | 'interrupted') => item(id, seq, { kind: 'tool', tool: { name: 'Bash', input_summary: '', status } });
+  const sub = (id: string, seq: number, status: string) => item(id, seq, { kind: 'subagent', subagent: { agent_id: '', description: 'd', status } });
+  const cue = (items: TranscriptItem[], mark: number | null = 0, status = 'working') => activityCue(items, status, 500, mark)?.kind ?? null;
+
+  it('says nothing unless the worker is working', () => {
+    for (const st of ['idle', 'done', 'blocked', 'unknown', '']) expect(cue([user('u', 1)], 0, st)).toBeNull();
+  });
+
+  it('maps the current turn’s last meaningful item', () => {
+    expect(cue([])).toBe('thinking');
+    expect(cue([user('u', 1)])).toBe('thinking');
+    expect(cue([user('u', 1), item('t', 2, { kind: 'thinking' })])).toBe('thinking');
+    for (const st of ['ok', 'error', 'interrupted'] as const) expect(cue([user('u', 1), tool('b', 2, st)])).toBe('thinking');
+    expect(cue([user('u', 1), item('a', 2)])).toBe('working');
+    // A running tool or synchronous subagent speaks for itself: no cue under it.
+    expect(cue([user('u', 1), tool('b', 2, 'running')])).toBeNull();
+    expect(cue([user('u', 1), sub('s', 2, 'running')])).toBeNull();
+    expect(cue([user('u', 1), sub('s', 2, 'completed')])).toBe('thinking');
+    expect(cue([user('u', 1), sub('s', 2, 'async_launched')])).toBe('thinking');
+    expect(cue([user('u', 1), sub('s', 2, 'completed'), item('a', 3)])).toBe('working');
+    // One still running earlier in the turn too (Codex runs tools side by side).
+    expect(cue([user('u', 1), tool('b', 2, 'running'), item('a', 3)])).toBeNull();
+    // Notices, hidden lines and unknown entries are skipped.
+    expect(cue([user('u', 1), item('a', 2), item('n', 3, { kind: 'notice', notice: { text: 'x' } }), item('q', 4, { kind: 'unknown', hidden: true })])).toBe('working');
+    expect(cue([user('u', 1), item('h', 2, { hidden: true })])).toBe('thinking');
+  });
+
+  it('the watermark: the previous turn’s text is not "Working…", nor its stale running tool a reason for silence', () => {
+    const before = [user('u', 1), tool('b', 2, 'running'), item('a', 3)];
+    expect(cue(before, 3)).toBe('thinking');
+    expect(cue([...before, user('u2', 4)], 3)).toBe('thinking');
+    expect(cue([...before, user('u2', 4), item('a2', 5)], 3)).toBe('working');
+    // No watermark (sat down at a worker already at work): the last item as it is.
+    expect(cue(before, null)).toBe('working');
+    expect(cue([user('u', 1), tool('b', 2, 'running')], null)).toBeNull();
+    expect(cue([tool('b', 1, 'running'), item('a', 2)], null)).toBe('working');
+  });
+
+  async function reading(h: ReturnType<typeof harness>, items: TranscriptItem[] = [item('a1', 1), item('a2', 2)]): Promise<FakeView> {
+    h.tx.sit('a', 'Ada');
+    h.tx.reset('a', ack(items));
+    h.tx.toggle();
+    await flush();
+    h.tx.place({ left: 0, top: 0, width: 800, height: 500 });
+    return h.views[0] as FakeView;
+  }
+
+  it('starts a turn when the worker starts working, follows its items, and goes with the status', async () => {
+    const h = harness();
+    const v = await reading(h);
+    h.tx.activity('idle', 100);
+    expect(h.tx.cueState).toBe('');
+    h.tx.activity('working', 900);
+    // The assistant text before is the last turn's: Thinking…, with the time since the status changed.
+    expect(h.tx.cueState).toBe('thinking@900');
+    expect(v.cues.at(-1)).toEqual({ kind: 'thinking', since: 900 });
+    h.tx.push('a', [item('a3', 3)], []);
+    expect(h.tx.cueState).toBe('working@900');
+    h.tx.push('a', [item('t4', 4, { kind: 'tool', tool: { name: 'Bash', input_summary: '', status: 'running' } })], []);
+    expect(h.tx.cueState).toBe('');
+    h.tx.push('a', [], [item('t4', 4, { kind: 'tool', tool: { name: 'Bash', input_summary: '', status: 'ok' } })]);
+    expect(h.tx.cueState).toBe('thinking@900');
+    // Every frame calls it: the view hears only of changes.
+    const n = v.cues.length;
+    for (let i = 0; i < 10; i++) h.tx.activity('working', 900);
+    expect(v.cues.length).toBe(n);
+    // Blocked: the banner owns it; back to working is the same turn (the watermark stays).
+    h.tx.activity('blocked', 1500);
+    expect(v.cues.at(-1)).toBeNull();
+    h.tx.activity('working', 1600);
+    expect(h.tx.cueState).toBe('thinking@1600');
+    h.tx.activity('done', 2000);
+    expect(v.cues.at(-1)).toBeNull();
+  });
+
+  it('only while the conversation can be seen: not in terminal mode, off the view, or under a question card', async () => {
+    const h = harness();
+    const v = await reading(h);
+    h.tx.activity('idle', 100);
+    h.tx.activity('working', 900);
+    expect(h.tx.cueState).toBe('thinking@900');
+    h.tx.toggle();
+    expect(h.tx.mode).toBe('terminal');
+    expect(v.cues.at(-1)).toBeNull();
+    h.tx.toggle();
+    expect(h.tx.cueState).toBe('thinking@900');
+    h.tx.place(null);
+    expect(h.tx.cueState).toBe('');
+    h.tx.place({ left: 0, top: 0, width: 800, height: 500 });
+    expect(h.tx.cueState).toBe('thinking@900');
+    h.tx.asked({ tool_use_id: 'toolu_q', since: 1, questions: [] } as unknown as Ask);
+    expect(h.tx.cueState).toBe('');
+    h.tx.asked(null);
+    expect(h.tx.cueState).toBe('thinking@900');
+  });
+
+  it('sat down at a worker already working: no watermark, the last item as it is', async () => {
+    const h = harness();
+    await reading(h);
+    h.tx.activity('working', 900);
+    expect(h.tx.cueState).toBe('working@900');
+  });
+});
+
+describe('pending prompts', () => {
+  const user = (id: string, seq: number, text: string) => item(id, seq, { kind: 'user', parts: [{ text }] });
+  const pending = (id: string, text: string, mark = 0, state: PendingPrompt['state'] = 'sent'): PendingPrompt => ({ id, text, state, late: false, mark, due: null });
+
+  it('normalises like the CLIs write a prompt: trimmed, CRLF / CR as LF, image markers apart', () => {
+    expect(promptKey('  fix it\r\nnow\r ')).toBe('fix it\nnow');
+    expect(promptKey('see [Image #1: /tmp/a b.png] here')).toBe('see  here');
+  });
+
+  it('a user item after the mark takes the first prompt with its text; identical ones in order; refused ones never', () => {
+    const ps = [pending('p1', 'go'), pending('p2', 'go'), pending('p3', 'other', 0, 'refused')];
+    expect(reconcile(ps, [user('u', 1, ' go\n')]).map((p) => p.id)).toEqual(['p2', 'p3']);
+    expect(reconcile(ps, [user('u', 1, 'go'), user('v', 2, 'go')]).map((p) => p.id)).toEqual(['p3']);
+    expect(reconcile(ps, [user('u', 1, 'other')])).toBe(ps);
+    // An item from before the send is not it; neither is an assistant item.
+    expect(reconcile([pending('p1', 'go', 5)], [user('u', 5, 'go'), item('go', 6)]).length).toBe(1);
+    // Around an image marker the blanks may differ (the bridge splits the text there).
+    const img = pending('p1', 'look\n[Image #1: /p/a.png]\n[Image #2: /p/b.png]\nat these');
+    expect(reconcile([img], [item('u', 1, { kind: 'user', parts: [{ text: 'look\n' }, { text: '\nat these' }] })])).toEqual([]);
+  });
+
+  it('an item takes one prompt only, however often it comes again (an update, a resync)', () => {
+    const ps = [pending('p1', 'go', 2, 'queued'), pending('p2', 'go', 2, 'queued')];
+    const echo = user('u3', 3, 'go');
+    const taken = new Set<string>();
+    const once = reconcile(ps, [echo], taken);
+    expect(once.map((p) => p.id)).toEqual(['p2']);
+    expect(reconcile(once, [echo], taken)).toBe(once);
+    // Given another id on the resync, it is still known by its place and text; a new item still takes p2.
+    expect(reconcile(once, [{ ...echo, id: 'o:120' }], taken)).toBe(once);
+    expect(reconcile(once, [echo, user('u4', 4, 'go')], taken)).toEqual([]);
+  });
+
+  it('one send: its item takes it, as before; the same words sent again wait for their own item', () => {
+    const taken = new Set<string>();
+    expect(reconcile([pending('p1', 'go', 2)], [user('u3', 3, 'go')], taken)).toEqual([]);
+    const again = [pending('p2', 'go', 3)];
+    expect(reconcile(again, [user('u3', 3, 'go')], taken)).toBe(again);
+    expect(reconcile(again, [user('u3', 3, 'go'), user('u5', 5, 'go')], taken)).toEqual([]);
+  });
+
+  async function reading(h: ReturnType<typeof harness>) {
+    h.tx.sit('a', 'Ada');
+    h.tx.reset('a', ack([item('a1', 1), item('a2', 2)]));
+    h.tx.toggle();
+    await flush();
+    h.tx.place({ left: 0, top: 0, width: 800, height: 500 });
+    const v = h.views[0] as FakeView;
+    return { v, host: v.host };
+  }
+  const states = (h: ReturnType<typeof harness>) => h.tx.pending.map((p) => `${p.state}${p.late ? '+late' : ''}`);
+
+  it('sent: a row at once, Sent on the ack, replaced (not doubled) by its user item; a second Enter meanwhile sends nothing', async () => {
+    const h = harness();
+    const { v, host } = await reading(h);
+    h.tx.activity('idle', 100);
+    const sent = host.onPromptSubmit('fix the test');
+    // In the same frame: the view has the row, before any ack.
+    expect(v.pending.at(-1)?.map((p) => [p.text, p.state])).toEqual([['fix the test', 'sending']]);
+    await expect(host.onPromptSubmit('fix the test')).resolves.toBe(false);
+    expect(h.sent.filter((c) => c.t === 'worker.prompt')).toHaveLength(1);
+    h.sent[0]?.resolve({ ok: true, data: { queued: false, retried: false } });
+    await expect(sent).resolves.toBe(true);
+    expect(states(h)).toEqual(['sent']);
+    // Its turn: the prompt it sent starts it.
+    h.tx.activity('working', 900);
+    expect(h.tx.cueState).toBe('thinking@900');
+    h.tx.push('a', [user('u3', 3, 'fix the test')], []);
+    expect(states(h)).toEqual([]);
+    expect(v.pending.at(-1)).toEqual([]);
+    expect(h.tx.itemCount).toBe(3);
+  });
+
+  it('two identical sends, one shown before a resync: the resync keeps the other until its own item comes', async () => {
+    const h = harness();
+    const { v, host } = await reading(h);
+    h.tx.activity('working', 900);
+    for (const i of [0, 1]) {
+      const sent = host.onPromptSubmit('go');
+      h.sent[i]?.resolve({ ok: true, data: { queued: true, retried: false } });
+      await sent;
+    }
+    expect(states(h)).toEqual(['queued', 'queued']);
+    h.tx.push('a', [user('u3', 3, 'go')], []);
+    expect(states(h)).toEqual(['queued']);
+    // An update of that item, then the resync's whole timeline with it: the second one still waits.
+    h.tx.push('a', [], [user('u3', 3, 'go')]);
+    h.tx.reset('a', ack([item('a1', 1), item('a2', 2), user('u3', 3, 'go')]));
+    expect(states(h)).toEqual(['queued']);
+    expect(v.pending.at(-1)).toHaveLength(1);
+    // Its own item in the next resync takes it.
+    h.tx.reset('a', ack([item('a1', 1), item('a2', 2), user('u3', 3, 'go'), user('u4', 4, 'go')]));
+    expect(states(h)).toEqual([]);
+  });
+
+  // #58: a new CLI session while seated (/new, /clear, a resume): the bridge closes the watch (`session_changed`) and
+  // the re-watch acks the new transcript, its seqs counted from 1 again.
+  const of = (session: string, items: TranscriptItem[], extra: Record<string, unknown> = {}) => watchAck({ harness: 'claude', session, cursor: 'c:1', items, ...extra });
+  const send = async (h: ReturnType<typeof harness>, host: TranscriptRenderHost, text: string, queued = false) => {
+    const sent = host.onPromptSubmit(text);
+    h.sent.at(-1)?.resolve({ ok: true, data: { queued, retried: false } });
+    await sent;
+  };
+
+  it('a new session: its echo at the place and with the words of one the old session had is its own', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    h.tx.activity('idle', 100);
+    await send(h, host, 'go');
+    h.tx.push('a', [user('old-uuid', 3, 'go')], []);
+    expect(states(h)).toEqual([]);
+    h.tx.reset('a', of('s2', [item('b1', 1), item('b2', 2)]));
+    await send(h, host, 'go');
+    expect(h.tx.pending.map((p) => p.mark)).toEqual([2]);
+    h.tx.push('a', [user('new-uuid', 3, 'go')], []);
+    expect(states(h)).toEqual([]);
+  });
+
+  it('a resync of the same session: an item still takes one prompt only, in the old session and in the new one', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    h.tx.activity('working', 900);
+    await send(h, host, 'go', true);
+    await send(h, host, 'go', true);
+    h.tx.push('a', [user('u3', 3, 'go')], []);
+    h.tx.reset('a', ack([item('a1', 1), item('a2', 2), user('u3', 3, 'go')]));
+    expect(states(h)).toEqual(['queued']);
+    h.tx.reset('a', of('s2', [item('b1', 1), item('b2', 2)]));
+    await send(h, host, 'go', true);
+    expect(states(h)).toEqual(['queued', 'queued']);
+    h.tx.push('a', [user('n3', 3, 'go')], []);
+    expect(states(h)).toEqual(['queued']);
+    h.tx.push('a', [], [user('n3', 3, 'go')]);
+    h.tx.reset('a', of('s2', [item('b1', 1), item('b2', 2), user('n3', 3, 'go')]));
+    expect(states(h)).toEqual(['queued']);
+    h.tx.reset('a', of('s2', [item('b1', 1), item('b2', 2), user('n3', 3, 'go'), user('n4', 4, 'go')]));
+    expect(states(h)).toEqual([]);
+  });
+
+  it('a prompt still waiting when the session changes: its item may be anywhere in the new one', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    h.tx.activity('idle', 100);
+    h.tx.push('a', [3, 4, 5, 6, 7, 8, 9].map((n) => item(`a${n}`, n)), []);
+    // The send that starts the new session: its item is in the new session's first ack.
+    await send(h, host, 'start over');
+    expect(h.tx.pending.map((p) => p.mark)).toEqual([9]);
+    h.tx.reset('a', of('s2', [user('n1', 1, 'start over'), item('n2', 2)]));
+    expect(states(h)).toEqual([]);
+    // One sent just before the switch, whose new transcript is not there yet: its item comes in the first push.
+    await send(h, host, 'next');
+    h.tx.reset('a', of('s3', [], { pending: true }));
+    expect(states(h)).toEqual(['sent']);
+    h.tx.push('a', [user('m1', 1, 'next')], [], { harness: 'claude', session: 's3' });
+    expect(states(h)).toEqual([]);
+    // A resync of the same session keeps the mark: an older item with those words is not the one.
+    await send(h, host, 'next');
+    h.tx.reset('a', of('s3', [user('m1', 1, 'next')]));
+    expect(states(h)).toEqual(['sent']);
+  });
+
+  it("a pending watch's first push names its session: a resync of that session keeps what its items took", async () => {
+    const h = harness();
+    const wsent: Array<{ t: string; resolve: (r: CommandResult) => void }> = [];
+    const tw = new TranscriptWatches({
+      send: (t) => new Promise((resolve) => wsent.push({ t, resolve })),
+      sink: { reset: (id, a) => h.tx.reset(id, a), push: (id, i, u, head) => h.tx.push(id, i, u, head), stop: () => {} },
+      failed: () => {},
+      closed: () => {},
+      now: () => 0,
+    });
+    h.tx.sit('a', 'Ada');
+    tw.sync(new Set(['a']));
+    wsent[0]?.resolve({ ok: true, data: { harness: 'claude', session: '', cursor: 'c:1', pending: true, items: [] } });
+    await flush();
+    h.tx.toggle();
+    await flush();
+    const host = (h.views[0] as FakeView).host;
+    h.tx.activity('working', 900);
+    await send(h, host, 'go', true);
+    await send(h, host, 'go', true);
+    tw.items({ t: 'transcript.items', id: 'a', items: [user('u1', 1, 'go')], updates: [], harness: 'claude', session: 's3', version: '', cursor: 'c:1', has_more: false, pending: false });
+    expect(states(h)).toEqual(['queued']);
+    tw.closed({ t: 'transcript.closed', id: 'a', reason: 'resync' });
+    expect(wsent.at(-1)?.t).toBe('transcript.watch');
+    wsent.at(-1)?.resolve({ ok: true, data: { harness: 'claude', session: 's3', cursor: 'c:1', items: [user('u1', 1, 'go')] } });
+    await flush();
+    expect(states(h)).toEqual(['queued']);
+  });
+
+  it("a pending watch's first push may be empty and still name its session: a resync of that session keeps what its items took", async () => {
+    const h = harness();
+    const wsent: Array<{ t: string; resolve: (r: CommandResult) => void }> = [];
+    const tw = new TranscriptWatches({
+      send: (t) => new Promise((resolve) => wsent.push({ t, resolve })),
+      sink: { reset: (id, a) => h.tx.reset(id, a), push: (id, i, u, head) => h.tx.push(id, i, u, head), stop: () => {} },
+      failed: () => {},
+      closed: () => {},
+      now: () => 0,
+    });
+    h.tx.sit('a', 'Ada');
+    tw.sync(new Set(['a']));
+    wsent[0]?.resolve({ ok: true, data: { harness: 'claude', session: '', cursor: 'c:1', pending: true, items: [] } });
+    await flush();
+    h.tx.toggle();
+    await flush();
+    const host = (h.views[0] as FakeView).host;
+    h.tx.activity('working', 900);
+    await send(h, host, 'go', true);
+    await send(h, host, 'go', true);
+    // The transcript appeared with nothing in it yet: its head comes alone.
+    tw.items({ t: 'transcript.items', id: 'a', items: [], updates: [], harness: 'claude', session: 's3', version: '', cursor: 'c:1', has_more: false, pending: false });
+    expect(states(h)).toEqual(['queued', 'queued']);
+    tw.items({ t: 'transcript.items', id: 'a', items: [user('u1', 1, 'go')], updates: [] });
+    expect(states(h)).toEqual(['queued']);
+    tw.closed({ t: 'transcript.closed', id: 'a', reason: 'resync' });
+    expect(wsent.at(-1)?.t).toBe('transcript.watch');
+    wsent.at(-1)?.resolve({ ok: true, data: { harness: 'claude', session: 's3', cursor: 'c:1', items: [user('u1', 1, 'go')] } });
+    await flush();
+    expect(states(h)).toEqual(['queued']);
+  });
+
+  it("the turn's mark is of the old session: after a switch the new session's items say what the turn does", async () => {
+    const h = harness();
+    await reading(h);
+    h.tx.push('a', [3, 4, 5, 6].map((n) => item(`a${n}`, n)), []);
+    h.tx.activity('idle', 100);
+    h.tx.activity('working', 900);
+    expect(h.tx.cueState).toBe('thinking@900');
+    const running = item('t2', 2, { kind: 'tool', tool: { name: 'Bash', input_summary: '', status: 'running' } });
+    h.tx.reset('a', of('s2', [user('n1', 1, 'x'), running]));
+    // The running tool row speaks for itself.
+    expect(h.tx.cueState).toBe('');
+    h.tx.push('a', [], [{ ...running, tool: { name: 'Bash', input_summary: '', status: 'ok' } }]);
+    expect(h.tx.cueState).toBe('thinking@900');
+  });
+
+  it('the item before the ack: the row goes, the ack does not bring it back', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    const sent = host.onPromptSubmit('quick');
+    h.tx.push('a', [user('u3', 3, 'quick')], []);
+    expect(states(h)).toEqual([]);
+    h.sent[0]?.resolve({ ok: true, data: { queued: false, retried: false } });
+    await sent;
+    expect(states(h)).toEqual([]);
+  });
+
+  it('queued: waits as long as the turn does, then gets the "not seen yet" hint; it is taken mid-turn too', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    h.tx.activity('working', 900);
+    const cue = h.tx.cueState;
+    const sent = host.onPromptSubmit('and then this');
+    h.sent[0]?.resolve({ ok: true, data: { queued: true, retried: false } });
+    await sent;
+    expect(states(h)).toEqual(['queued']);
+    // A queued prompt does not restart the turn or its time.
+    expect(h.tx.cueState).toBe(cue);
+    h.clock.t += 5 * 60_000;
+    h.tx.activity('working', 900);
+    expect(states(h)).toEqual(['queued']);
+    h.tx.activity('done', 2000);
+    h.clock.t += SENT_TIMEOUT_MS - 1;
+    h.tx.activity('done', 2000);
+    expect(states(h)).toEqual(['queued']);
+    h.clock.t += 1;
+    h.tx.activity('done', 2000);
+    expect(states(h)).toEqual(['queued+late']);
+    // Late is a hint: when it does come, it is replaced all the same.
+    h.tx.push('a', [user('u3', 3, 'and then this')], []);
+    expect(states(h)).toEqual([]);
+  });
+
+  it('sent but not seen within 15 s: the hint', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    const sent = host.onPromptSubmit('hello');
+    h.sent[0]?.resolve({ ok: true, data: {} });
+    await sent;
+    h.clock.t += SENT_TIMEOUT_MS;
+    h.tx.activity('idle', 100);
+    expect(states(h)).toEqual(['sent+late']);
+  });
+
+  it('refused: an error row with the reason, the prompt kept (resolves false); the next send or Dismiss clears it', async () => {
+    const h = harness();
+    const { v, host } = await reading(h);
+    const sent = host.onPromptSubmit('nope');
+    h.sent[0]?.resolve({ ok: false, code: 'invalid_state', message: 'invalid state: Ada is blocked' });
+    await expect(sent).resolves.toBe(false);
+    expect(states(h)).toEqual(['refused']);
+    expect(h.tx.pending[0]?.reason).toBeTruthy();
+    expect(v.pending.at(-1)?.[0]?.state).toBe('refused');
+    host.onDismissPending?.(h.tx.pending[0]?.id ?? '');
+    expect(states(h)).toEqual([]);
+    const again = host.onPromptSubmit('nope');
+    h.sent[1]?.resolve({ ok: false, code: 'prompt_failed', message: 'x' });
+    await again;
+    void host.onPromptSubmit('yes');
+    // The new send replaces the old error row.
+    expect(states(h)).toEqual(['sending']);
+    // Standing up forgets them.
+    h.tx.stand();
+    expect(h.tx.pending).toEqual([]);
   });
 });

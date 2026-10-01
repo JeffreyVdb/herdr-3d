@@ -1,5 +1,5 @@
 import type { CommandResult } from '../net/client';
-import type { AnswerAskAck, Ask, CommandArgs, ImageRef, Question, TranscriptItem, TranscriptWatchAck } from '../net/protocol';
+import type { AnswerAskAck, Ask, CommandArgs, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck } from '../net/protocol';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import type { ViewPrefs } from '../ui/themePrefs';
@@ -7,7 +7,8 @@ import { MAX_PROMPT } from './keys';
 import type { mountTranscript, TranscriptRenderHost, TranscriptView } from './transcriptRender';
 import type { ImageFeed } from './imageFeed';
 import type { ImagesTabHost, ImagesTabView, MountImagesTab } from './imagesTab';
-import { itemsOf } from './transcriptWatches';
+import { itemsOf, type TimelineOf } from './transcriptWatches';
+import { activityCue, reconcile, SENT_TIMEOUT_MS, topSeq, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 
 export type { ImagesTabHost, ImagesTabView, MountImagesTab, TranscriptRenderHost, TranscriptView };
 
@@ -75,6 +76,8 @@ export interface TranscriptModeHost {
   modeChanged(mode: SeatMode): void;
   /** #59: the preset, hidden tool calls and the zoom (the view's top strip sets them). */
   prefs?: ViewPrefs;
+  /** #58: the clock of the pending prompts' "not seen yet" hint (default Date.now; tests pass their own). */
+  now?(): number;
 }
 
 /** Remembered per worker: the ones last read in transcript mode (terminal is the default), newest last. */
@@ -150,6 +153,22 @@ interface Sitting {
   tabs: SeatTabs | null;
   /** Focus was asked for while the overlay was not placed yet (invisible: the browser ignores focus there). */
   focusLater: boolean;
+  /** #58: the worker's status as the store has it (null: not seen yet) and since when (the bridge's clock). */
+  status: string | null;
+  since: number;
+  /** The current turn starts after this `seq` (null: you sat down while it worked, the last item is taken as it is). */
+  mark: number | null;
+  /** The timeline's top when you sent a prompt to a worker not at work: its turn starts there. */
+  sendMark: number | null;
+  /** The prompts sent from the view that the transcript has not shown yet (and refused ones, until the next send). */
+  pending: readonly PendingPrompt[];
+  /** The `user` items that took a pending prompt (`reconcile`'s `taken`): a resync sends them again, they take no other. */
+  taken: Set<string>;
+  /** The transcript the `seq`s (and so `taken` and the marks) are of: `harness/session`, the bridge's key (null: no ack yet). */
+  timeline: string | null;
+  /** What the view was last told of the cue (it is recomputed only when this changes). */
+  cueKey: string;
+  cueDirty: boolean;
 }
 
 /**
@@ -166,8 +185,14 @@ export class TranscriptMode {
   /** Views mounted and destroyed, overlays made and removed (test hook: nothing may be left over). */
   readonly counts = { mounted: 0, destroyed: 0, overlays: 0, removed: 0, tabsMounted: 0, tabsDestroyed: 0 };
   private rect: OverlayRect | null = null;
+  /** Numbers the pending prompts. */
+  private pid = 0;
 
   constructor(private readonly host: TranscriptModeHost) {}
+
+  private now(): number {
+    return this.host.now?.() ?? Date.now();
+  }
 
   get seated(): string | null {
     return this.s?.id ?? null;
@@ -209,7 +234,8 @@ export class TranscriptMode {
     this.s = {
       id, name, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
-      revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false,
+      revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
+      pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true,
     };
     if (wasReading) this.setMode(last, false);
     else this.host.modeChanged('terminal');
@@ -275,6 +301,8 @@ export class TranscriptMode {
       s.focusLater = false;
       if (s.box) s.box.hidden = true;
     }
+    // #58: the cue runs only while the conversation is up.
+    this.cue(s, true);
     this.tabsChanged(s);
     this.host.modeChanged(mode);
   }
@@ -474,6 +502,9 @@ export class TranscriptMode {
     s.view.setItems([...s.items]);
     if (s.question) s.view.setBlocked(s.question);
     if (s.ask) s.view.setAsk(s.ask);
+    if (s.pending.length) s.view.setPending(s.pending);
+    s.cueKey = '';
+    this.cue(s, true);
     if (s.mode === 'transcript') this.focus();
     if (s.reveal) void this.revealNow(s);
   }
@@ -493,13 +524,39 @@ export class TranscriptMode {
           this.host.status('error', 'That prompt is over 16 KiB: send less at a time.');
           return Promise.resolve(false);
         }
+        // #58: one on its way at a time (a second Enter while it is sending sends nothing).
+        if (s.pending.some((p) => p.state === 'sending')) return Promise.resolve(false);
+        // #58: its row is in the timeline at once, until its `user` item comes; a refused one before it goes.
+        const p: PendingPrompt = { id: `p${++this.pid}`, text: t, state: 'sending', late: false, mark: topSeq(s.items), due: null };
+        s.pending = [...s.pending.filter((x) => x.state !== 'refused'), p];
+        // To a worker not at work it starts a turn: that turn's items come after this.
+        if (s.status !== 'working') s.sendMark = p.mark;
+        this.pendingChanged(s);
         // Resolves whether it went: a refused prompt goes back in the box.
         return this.host.send('worker.prompt', { id: s.id, text: t }).then((r) => {
           if (!live()) return r.ok;
           if (r.ok) this.host.status('ok', `Sent to ${s.name}`);
           else this.host.status('error', failureText('worker.prompt', r.code, r.message, { worker: s.name }));
+          const queued = r.ok && ((r.data ?? {}) as Partial<PromptAck>).queued === true;
+          const now = this.now();
+          // Already shown by its item (it can come before the ack): nothing to change.
+          if (!s.pending.some((x) => x.id === p.id)) return r.ok;
+          s.pending = s.pending.map((x): PendingPrompt => {
+            if (x.id !== p.id) return x;
+            if (!r.ok) return { ...x, state: 'refused', reason: failureText('worker.prompt', r.code, r.message, { worker: s.name }), due: null };
+            // A queued prompt may wait for the whole turn: the hint only once the agent stopped working.
+            return { ...x, state: queued ? 'queued' : 'sent', due: queued && s.status === 'working' ? null : now + SENT_TIMEOUT_MS };
+          });
+          this.pendingChanged(s);
           return r.ok;
         });
+      },
+      onDismissPending: (id) => {
+        if (!live()) return;
+        const left = s.pending.filter((x) => x.id !== id || x.state !== 'refused');
+        if (left.length === s.pending.length) return;
+        s.pending = left;
+        this.pendingChanged(s);
       },
       onAnswer: (hash, choice, cancel) => {
         if (!live()) return;
@@ -565,17 +622,20 @@ export class TranscriptMode {
   reset(id: string, ack: TranscriptWatchAck): void {
     const s = this.s;
     if (s?.id !== id) return;
+    this.timeline(s, ack);
     s.items = [...ack.items];
     s.index = new Map(s.items.map((it, i) => [it.id, i]));
     s.cursor = ack.cursor;
     s.hasMore = ack.has_more;
     s.view?.setItems([...s.items]);
+    this.itemsChanged(s, s.items);
   }
 
   /** Live: new items and replacements, both by `id` (a new item already here replaces it). */
-  push(id: string, items: TranscriptItem[], updates: TranscriptItem[]): void {
+  push(id: string, items: TranscriptItem[], updates: TranscriptItem[], head?: TimelineOf): void {
     const s = this.s;
     if (s?.id !== id) return;
+    if (head) this.timeline(s, head);
     const changed = [...items, ...updates];
     for (const it of changed) {
       const at = s.index.get(it.id);
@@ -586,6 +646,97 @@ export class TranscriptMode {
       }
     }
     if (changed.length) s.view?.applyUpdates(changed);
+    this.itemsChanged(s, changed);
+  }
+
+  /**
+   * #58: another transcript (a new session while seated: /clear, /new, a resume) counts its `seq`s from 1 again, so
+   * nothing marked in the old one holds. Its items are other items: one at the same place with the same words as one
+   * that took a prompt is a new echo. A prompt still waiting was sent before the switch, so its item may be anywhere in
+   * the new timeline (the send that started the session, one just after it). Where the turn started is not known: the
+   * last item is taken as it is, and the next start of work marks the new timeline's top. A resync of the same
+   * transcript keeps it all (its items are the ones already seen).
+   */
+  private timeline(s: Sitting, head: TimelineOf): void {
+    const key = `${head.harness}/${head.session}`;
+    if (key === s.timeline) return;
+    const first = s.timeline === null;
+    s.timeline = key;
+    if (first) return;
+    s.taken = new Set();
+    if (s.pending.some((p) => p.mark !== 0)) s.pending = s.pending.map((p) => (p.mark !== 0 ? { ...p, mark: 0 } : p));
+    s.mark = null;
+    s.sendMark = null;
+  }
+
+  /** #58: prompts their items show are no longer pending, and what the agent does may read otherwise. */
+  private itemsChanged(s: Sitting, items: readonly TranscriptItem[]): void {
+    const left = reconcile(s.pending, items, s.taken);
+    if (left !== s.pending) {
+      s.pending = left;
+      this.pendingChanged(s);
+    }
+    s.cueDirty = true;
+    this.cue(s);
+  }
+
+  private pendingChanged(s: Sitting): void {
+    s.view?.setPending(s.pending);
+    s.cueDirty = true;
+    this.cue(s);
+  }
+
+  /**
+   * #58: the seated worker's status, every frame (from the store). A turn starts when it becomes `working` (not when it
+   * comes back from `blocked`: that is the same turn); a pending prompt's "not seen yet" hint shows once it is due.
+   */
+  activity(status: string, since: number | null): void {
+    const s = this.s;
+    if (!s) return;
+    const now = this.now();
+    if (status !== s.status || (since ?? s.since) !== s.since) {
+      const was = s.status;
+      if (status === 'working' && was !== 'working' && was !== null && was !== 'blocked') s.mark = s.sendMark ?? topSeq(s.items);
+      if (status === 'working') s.sendMark = null;
+      // The turn a queued prompt waited for is over: now it should show soon.
+      if (was === 'working' && status !== 'working' && s.pending.some((p) => p.state === 'queued' && p.due === null)) {
+        s.pending = s.pending.map((p) => (p.state === 'queued' && p.due === null ? { ...p, due: now + SENT_TIMEOUT_MS } : p));
+        s.view?.setPending(s.pending);
+      }
+      s.status = status;
+      s.since = since ?? now;
+      s.cueDirty = true;
+    }
+    if (s.pending.some((p) => !p.late && p.due !== null && now >= p.due)) {
+      s.pending = s.pending.map((p) => (!p.late && p.due !== null && now >= p.due ? { ...p, late: true } : p));
+      s.view?.setPending(s.pending);
+    }
+    this.cue(s);
+  }
+
+  /**
+   * The cue goes to the view only when it changes, and only while it can be seen: the conversation up and placed on the
+   * screen, no question pinned (the card is what the agent waits on). Anything else takes it out of the DOM.
+   */
+  private cue(s: Sitting, force = false): void {
+    if (!s.view || (!s.cueDirty && !force)) return;
+    s.cueDirty = false;
+    const seen = s.mode === 'transcript' && !!this.rect && !s.ask;
+    const cue: ActivityCue | null = seen && s.status ? activityCue(s.items, s.status, s.since, s.mark) : null;
+    const key = cue ? `${cue.kind}@${cue.since}` : '';
+    if (key === s.cueKey) return;
+    s.cueKey = key;
+    s.view.setActivity(cue);
+  }
+
+  /** The cue as the view was last told it (test hook): `thinking@<since>`, or '' for none. */
+  get cueState(): string {
+    return this.s?.cueKey ?? '';
+  }
+
+  /** The pending prompts (test hook). */
+  get pending(): readonly PendingPrompt[] {
+    return this.s?.pending ?? [];
   }
 
   /** The watch ended for good (`worker_removed`, `asleep`, the connection): the overlay goes back to the terminal. */
@@ -615,6 +766,7 @@ export class TranscriptMode {
     s.askKey = key;
     s.ask = ask;
     s.view?.setAsk(ask);
+    this.cue(s, true);
   }
 
   /** The seated worker's ask, while it waits on one. */
@@ -626,8 +778,11 @@ export class TranscriptMode {
   place(rect: OverlayRect | null): void {
     const same = (a: OverlayRect | null, b: OverlayRect | null) => a === b || (!!a && !!b && a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height);
     if (same(rect, this.rect)) return;
+    const shown = !!this.rect;
     this.rect = rect;
     if (this.s?.box) this.applyRect(this.s.box);
+    // Off the view (or back on it): the cue stops (or runs again).
+    if (this.s && shown !== !!rect) this.cue(this.s, true);
   }
 
   private applyRect(b: HTMLElement): void {

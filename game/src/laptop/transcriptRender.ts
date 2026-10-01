@@ -14,6 +14,7 @@ import { WORKER_PROMPT_MAX_BYTES } from '../ui/composer/model';
 import { ViewPrefs, type ViewPref } from '../ui/themePrefs';
 import { THEMES, ZOOM, stepZoom, type ThemeId } from '../ui/themes';
 import { zoomKey } from './keys';
+import type { ActivityCue, PendingPrompt } from './transcriptActivity';
 
 /**
  * M16: a worker's conversation as DOM, drawn over the laptop screen while you sit there (the seated view's
@@ -40,6 +41,8 @@ export interface TranscriptRenderHost {
   onAnswerAsk(args: CommandArgs['worker.answer_ask']): Promise<AskResult>;
   onSwitchToTerminal(): void;
   loadSubagent(agentId: string): Promise<TranscriptItem[]>;
+  /** #58: a refused prompt's row is dismissed. */
+  onDismissPending?(id: string): void;
   /** #59: the transcript's preset and zoom and hidden tool calls, shared by every view (none: this view's own, kept nowhere). */
   prefs?: ViewPrefs;
 }
@@ -65,6 +68,10 @@ export interface TranscriptView {
   hasItem(id: string): boolean;
   /** Scrolls to an item and flashes it; false when it is not loaded (the caller pages older items first). */
   scrollToItem(id: string): boolean;
+  /** #58: the live cue at the bottom of the timeline ("Thinking…" / "Working…" and for how long; null: none). */
+  setActivity(cue: ActivityCue | null): void;
+  /** #58: the prompts you sent that the transcript does not show yet, after its last item. */
+  setPending(rows: readonly PendingPrompt[]): void;
   /** The keyboard to the timeline (its scroll keys work at once). */
   focus(): void;
   focusPrompt(): void;
@@ -642,6 +649,16 @@ class Transcript implements TranscriptView {
   private ticker: ReturnType<typeof setInterval> | null = null;
   private resize: ResizeObserver | null = null;
   private readonly onHighlighted = () => this.stick();
+  /** #58: after the timeline, the prompts on their way and the live cue; a polite live region says when either changes. */
+  private readonly pendingList: HTMLOListElement;
+  private readonly pendingEls = new Map<string, { key: string; el: HTMLElement }>();
+  private pendingRows: readonly PendingPrompt[] = [];
+  private readonly tail: HTMLDivElement;
+  private activity: ActivityCue | null = null;
+  private activityRow: HTMLElement | null = null;
+  private readonly live: HTMLDivElement;
+  /** A hidden tab pauses the cue's flash (the browser still runs a CSS animation there). */
+  private readonly onVisibility = () => this.root.toggleAttribute('data-page-hidden', document.visibilityState === 'hidden');
 
   constructor(
     container: HTMLElement,
@@ -652,7 +669,10 @@ class Transcript implements TranscriptView {
     this.sysBtn = h('button', { class: 'tx-sys-toggle', 'aria-pressed': 'false', title: 'Show system notices and unrecognised entries', onclick: () => this.toggleSystem() });
     this.banner = h('div', { class: 'tx-banner', role: 'alert', hidden: true });
     this.empty = h('div', { class: 'tx-empty' }, 'No conversation yet.');
-    this.scroller = h('div', { class: 'tx-scroll', tabindex: '-1', 'aria-label': 'Conversation' }, this.empty, this.timeline.el);
+    this.pendingList = h('ol', { class: 'tx-list tx-pending-list', 'aria-label': 'Prompts on their way' });
+    this.tail = h('div', { class: 'tx-tail' }, this.pendingList);
+    this.live = h('div', { class: 'tx-live', role: 'status', 'aria-live': 'polite' });
+    this.scroller = h('div', { class: 'tx-scroll', tabindex: '-1', 'aria-label': 'Conversation' }, this.empty, this.timeline.el, this.tail);
     this.thumbs = new Thumbs({ feed: host.images, root: this.scroller });
     this.jump = h('button', { class: 'tx-jump', hidden: true, onclick: () => this.toBottom() });
     this.composer = mountComposer({
@@ -711,7 +731,7 @@ class Transcript implements TranscriptView {
     const zoom = h('div', { class: 'tx-zoom', role: 'group', 'aria-label': 'Transcript text size' }, this.zoomBtns.out, this.zoomBtns.reset, this.zoomBtns.in);
     // The preset and the zoom keep together at the strip's end; a narrow screen wraps them to a line of their own.
     const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, this.busy, h('div', { class: 'tx-look' }, picker, zoom));
-    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, form);
+    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, form, this.live);
     this.unprefs = this.prefs.onChange((what) => this.applyPrefs(what));
     this.applyPrefs(null);
     this.updateCounts();
@@ -720,6 +740,8 @@ class Transcript implements TranscriptView {
     this.root.addEventListener('keydown', (e) => this.onKey(e));
     this.input.addEventListener('keydown', (e) => this.onInputKey(e));
     hlDone.add(this.onHighlighted);
+    document.addEventListener('visibilitychange', this.onVisibility);
+    this.onVisibility();
     if (typeof ResizeObserver !== 'undefined') {
       this.resize = new ResizeObserver(() => this.stick());
       this.resize.observe(this.scroller);
@@ -769,6 +791,60 @@ class Transcript implements TranscriptView {
     this.ask.set(ask);
   }
 
+  setActivity(cue: ActivityCue | null): void {
+    if (this.destroyed) return;
+    const was = this.activity;
+    if (was === cue || (was && cue && was.kind === cue.kind && was.since === cue.since)) return;
+    this.activity = cue;
+    if (!cue) {
+      // Out of the DOM, not hidden: nothing is left animating.
+      this.activityRow?.remove();
+      this.activityRow = null;
+    } else {
+      // One flashing element (the word and its icon, opacity only: transcript.css); the time is its sibling, set by the
+      // 1 s ticker, so its repaint never happens inside the animated layer.
+      const word = cue.kind === 'working' ? 'Working…' : 'Thinking…';
+      const row = h(
+        'div',
+        { class: 'tx-activity', 'data-kind': cue.kind },
+        h('span', { class: 'tx-activity-label' }, icon(cue.kind === 'working' ? TX_ICON.edit : TX_ICON.brain), word),
+        h('span', { class: 'tx-activity-time tx-tick', 'data-since': String(cue.since) }, this.elapsed(cue.since)),
+      );
+      if (this.activityRow) this.activityRow.replaceWith(row);
+      else this.tail.append(row);
+      this.activityRow = row;
+      this.tick();
+    }
+    // The state is announced when it changes, never the ticking time.
+    if (was?.kind !== cue?.kind) this.announce(cue ? `${this.agent} is ${cue.kind === 'working' ? 'working' : 'thinking'}` : '');
+    this.stick();
+  }
+
+  setPending(rows: readonly PendingPrompt[]): void {
+    if (this.destroyed) return;
+    const before = new Map(this.pendingRows.map((p) => [p.id, p]));
+    this.pendingRows = Array.isArray(rows) ? rows : [];
+    const els: HTMLElement[] = [];
+    let say = '';
+    for (const p of this.pendingRows) {
+      const key = `${p.state}\u0000${p.late}\u0000${p.reason ?? ''}`;
+      let at = this.pendingEls.get(p.id);
+      if (!at || at.key !== key) {
+        at = { key, el: this.pendingRow(p) };
+        this.pendingEls.set(p.id, at);
+        const old = before.get(p.id);
+        if (!old || old.state !== p.state || old.late !== p.late) say = this.pendingText(p);
+      }
+      els.push(at.el);
+    }
+    const ids = new Set(this.pendingRows.map((p) => p.id));
+    for (const id of this.pendingEls.keys()) if (!ids.has(id)) this.pendingEls.delete(id);
+    this.pendingList.replaceChildren(...els);
+    if (say) this.announce(say);
+    this.updateCounts();
+    this.stick();
+  }
+
   focus(): void {
     if (this.destroyed) return;
     this.scroller.focus({ preventScroll: true });
@@ -809,6 +885,7 @@ class Transcript implements TranscriptView {
     this.ticker = null;
     this.resize?.disconnect();
     hlDone.delete(this.onHighlighted);
+    document.removeEventListener('visibilitychange', this.onVisibility);
     this.unprefs();
     this.thumbs.destroy();
     this.ask.destroy();
@@ -909,6 +986,42 @@ class Transcript implements TranscriptView {
     };
   }
 
+  /** The worker's name, for the cue and the queued prompt's chip. */
+  private get agent(): string {
+    return this.host.label || 'The agent';
+  }
+
+  private announce(text: string): void {
+    this.live.textContent = text;
+  }
+
+  /** What a pending prompt's chip says. */
+  private pendingText(p: PendingPrompt): string {
+    switch (p.state) {
+      case 'sending':
+        return 'Sending…';
+      case 'refused':
+        return `Not sent: ${p.reason ?? 'the bridge refused it'}`;
+      case 'queued':
+        return p.late ? 'Queued · not seen in the transcript yet' : `Queued · ${this.agent} takes it when it can`;
+      default:
+        return p.late ? 'Sent · not seen in the transcript yet' : 'Sent';
+    }
+  }
+
+  /** #58: a prompt on its way, where its message will be: your bubble, dimmed, and what became of it. */
+  private pendingRow(p: PendingPrompt): HTMLElement {
+    const md = h('div', { class: 'tx-md' });
+    // Its images show once the agent has them: until then the marker reads as the number it will have.
+    setMarkdown(md, p.text.replace(/\[Image #(\d+): [^\]\n]+\]/g, '[Image #$1]'));
+    const meta = h('div', { class: 'tx-pending-meta' }, h('span', { class: 'tx-pending-state' }, this.pendingText(p)));
+    if (p.state === 'refused') {
+      const why = 'The prompt is still in the box below: change it or send it again.';
+      meta.append(h('button', { class: 'tx-link', title: why, onclick: () => this.host.onDismissPending?.(p.id) }, 'Dismiss'));
+    }
+    return h('li', { class: 'tx-item tx-user tx-pending', 'data-state': p.state, 'data-late': String(p.late), 'data-pending': p.id }, h('div', { class: 'tx-bubble' }, md), meta);
+  }
+
   private thinkingRow(it: TranscriptItem, scope: string): HTMLElement {
     const text = (it.parts ?? [])
       .map((p) => (p && typeof p === 'object' && 'text' in p && typeof p.text === 'string' ? p.text : ''))
@@ -937,6 +1050,7 @@ class Transcript implements TranscriptView {
     const row = h('li', { class: 'tx-item tx-tool', 'data-status': status });
     const dur = h('span', { class: 'tx-tool-dur' });
     if (status === 'running') {
+      dur.classList.add('tx-tick');
       dur.dataset.since = String(it.ts);
       dur.textContent = this.elapsed(it.ts);
       this.tick();
@@ -1035,12 +1149,24 @@ class Transcript implements TranscriptView {
       h('span', { class: 'tx-tool-name' }, 'Subagent'),
       h('span', { class: 'tx-tool-sum' }, String(s.description ?? '')),
       h('span', { class: 'tx-tool-status' }, String(s.status ?? '')),
+      this.subDuration(it, String(s.status ?? '')),
       h('span', { class: 'tx-caret' }, icon(TX_ICON.chevron)),
     );
     body.hidden = !ex.open;
     if (ex.open) this.fillSub(body, agentId, String(s.status ?? ''), key);
     row.append(head, body);
     return row;
+  }
+
+  /** #58: a subagent at work shows for how long, as a running tool does (the bottom cue leaves it the say). */
+  private subDuration(it: TranscriptItem, status: string): HTMLElement {
+    const dur = h('span', { class: 'tx-tool-dur' });
+    if (status !== 'running' || !Number.isFinite(it.ts) || it.ts <= 0) return dur;
+    dur.classList.add('tx-tick');
+    dur.dataset.since = String(it.ts);
+    dur.textContent = this.elapsed(it.ts);
+    this.tick();
+    return dur;
   }
 
   private fillSub(body: HTMLElement, agentId: string, status: string, key: string): void {
@@ -1107,11 +1233,11 @@ class Transcript implements TranscriptView {
     return duration(Math.max(0, Date.now() - since));
   }
 
-  /** Keeps running tools' elapsed time ticking, while there are any. */
+  /** Keeps running tools', subagents' and the cue's elapsed time ticking, while there are any. */
   private tick(): void {
     if (this.ticker) return;
     this.ticker = setInterval(() => {
-      const spans = this.root.querySelectorAll<HTMLElement>('.tx-tool[data-status="running"] .tx-tool-dur[data-since]');
+      const spans = this.root.querySelectorAll<HTMLElement>('.tx-tick[data-since]');
       if (!spans.length || this.destroyed) {
         if (this.ticker) clearInterval(this.ticker);
         this.ticker = null;
@@ -1185,7 +1311,7 @@ class Transcript implements TranscriptView {
     this.countEl.textContent = n ? `${n - sys} ${n - sys === 1 ? 'entry' : 'entries'}` : '';
     this.sysBtn.textContent = sys ? `Show system (${sys})` : 'Show system';
     if (this.showSystem) this.sysBtn.textContent = sys ? `Hide system (${sys})` : 'Hide system';
-    this.empty.hidden = n > 0;
+    this.empty.hidden = n > 0 || this.pendingRows.length > 0;
     const tools = this.timeline.tools(this.showSystem).length;
     this.toolsCount.textContent = tools ? String(tools) : '';
     this.renderBusy();
@@ -1383,6 +1509,8 @@ class Transcript implements TranscriptView {
     if (!hasContent(draft.snapshot())) return;
     this.sending = true;
     this.composer.setBusy(true);
+    // #58: your own send brings you to the bottom, where its row goes, and follows from there.
+    this.toBottom();
     void this.send(draft);
   }
 
