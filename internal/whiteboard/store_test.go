@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 )
 
 func pngOf(t testing.TB, w, h int, c color.Color) []byte {
@@ -364,5 +366,14 @@ func TestClearKeepsHistory(t *testing.T) {
 	b, _ = s.Get("f")
 	if h.Version != 3 || len(b.Snapshot.Scene.Elements) != 0 {
 		t.Fatalf("second clear: v%d, %d elements", h.Version, len(b.Snapshot.Scene.Elements))
+	}
+}
+
+// A floor is a herdr session: the names are the same set.
+func TestFloorNamesAreSessionNames(t *testing.T) {
+	for _, f := range []string{"", ".", "..", "-x", "x-", "a.b", "a/b", "A_z-9", strings.Repeat("s", 64), strings.Repeat("s", 65), "é", "a b", "..x"} {
+		if ValidFloor(f) != herdr.ValidSessionName(f) {
+			t.Errorf("%q: floor %v, session %v", f, ValidFloor(f), herdr.ValidSessionName(f))
+		}
 	}
 }

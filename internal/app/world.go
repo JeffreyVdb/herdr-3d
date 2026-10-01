@@ -32,6 +32,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/upload"
 	"github.com/JeffreyVdb/herdr-3d/internal/usage"
 	"github.com/JeffreyVdb/herdr-3d/internal/watch"
+	"github.com/JeffreyVdb/herdr-3d/internal/whiteboard"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
 
@@ -132,6 +133,9 @@ func transcriptImages(log *slog.Logger, dropzoneData, cacheDir, codexSessions st
 	}
 	return &transcript.Images{Cache: cache, Roots: roots}
 }
+
+// M13 whiteboard: where the floors' boards are kept.
+const EnvWhiteboards = "HERDR_WORLD_WHITEBOARDS"
 
 // M5 term: the laptops' caps.
 const (
@@ -322,6 +326,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	dropzoneURL := fs.String("dropzone-url", envOr(EnvDropzoneURL, DefaultDropzoneURL), "Drop Zone URL, where pasted images are uploaded ($"+EnvDropzoneURL+")")                                             // #51 upload
 	dropzoneData := fs.String("dropzone-data", envOr(EnvDropzoneData, DefaultDropzoneData()), "Drop Zone's data directory: a root a transcript's [Image #n: path] may be read under ($"+EnvDropzoneData+")") // M16 images
 	imageCache := fs.String("image-cache", os.Getenv(EnvImageCache), "directory of the transcript image disk cache, \"-\" for none (default $XDG_CACHE_HOME/herdr-world/img) ($"+EnvImageCache+")")          // M16 images
+	whiteboards := fs.String("whiteboards", envOr(EnvWhiteboards, whiteboard.DefaultRoot()), "directory of the floors' whiteboards, \"-\" for none ($"+EnvWhiteboards+")")                                   // M13 whiteboard
 	pricingFile := fs.String("pricing", os.Getenv(EnvPricing), "JSON file of model prices merged over the built-in table ($"+EnvPricing+")")
 	sessions := fs.String("sessions", os.Getenv(EnvSessions), "only watch sessions whose name matches this regexp ($"+EnvSessions+")")
 	fs.DurationVar(&poll, "poll", poll, "session discovery interval ($"+EnvPoll+")")
@@ -411,6 +416,8 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		Limits:           lim,                                                               // M10 limits
 		Uploads:          images,                                                            // #51 upload
 		TranscriptImages: transcriptImages(log, *dropzoneData, *imageCache, *codexSessions), // M16 images
+		Whiteboards:      *whiteboards,                                                      // M13 whiteboard
+		DropsRoot:        *dropzoneData,                                                     // M13 drops.list
 	})
 }
 
@@ -489,6 +496,11 @@ type ServeConfig struct {
 	// M16 phase 2: the transcripts' images (nil: inline images are
 	// described but not kept, no path is read).
 	TranscriptImages *transcript.Images
+
+	// M13 whiteboard: the boards' directory ("" or "-": no whiteboards) and
+	// Drop Zone's data directory, for drops.list ("": none).
+	Whiteboards string
+	DropsRoot   string
 }
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
@@ -526,6 +538,11 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	opts.BoardWatchPoll, opts.BoardIdlePoll, opts.BoardRefreshMin, opts.BoardTick =
 		cfg.BoardWatchPoll, cfg.BoardIdlePoll, cfg.BoardRefreshMin, cfg.BoardTick
 	opts.Limits = cfg.Limits // M10 limits
+
+	if cfg.Whiteboards != "" && cfg.Whiteboards != "-" { // M13 whiteboard
+		opts.Whiteboards = whiteboard.New(cfg.Whiteboards)
+	}
+	opts.DropsRoot = cfg.DropsRoot
 	opts.Caps, opts.HireOptions, opts.Load = cfg.Caps, cfg.HireOptions, server.HostLoad
 	opts.TrustTimeout, opts.SeenTimeout, opts.ExitTimeout = cfg.TrustTimeout, cfg.SeenTimeout, cfg.ExitTimeout
 	if dir := cfg.CodexSessions; dir != "" {
