@@ -356,6 +356,11 @@ func TestWhiteboardCommandsAndPins(t *testing.T) {
 			cmds = append(cmds, r.Client+":"+r.Cmd)
 		}
 	}
+	for _, r := range log {
+		if strings.Contains(r.Args, "Look here") {
+			t.Errorf("a note's text is in the audit log: %s", r.Args)
+		}
+	}
 	want := "game:whiteboard.get,http:whiteboard.save,game:whiteboard.pin,http:whiteboard.pin,http:whiteboard.pin,game:whiteboard.clear"
 	if strings.Join(cmds, ",") != want {
 		t.Fatalf("audit\n got %v\nwant %s", cmds, want)
