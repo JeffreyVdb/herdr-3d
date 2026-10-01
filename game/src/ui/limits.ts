@@ -19,9 +19,10 @@ import './limits.css';
  * stays reachable: a click on the tab or Shift+L "peeks" the plate over the dialog (expanded, whatever the
  * saved state), and clicking the plate's header, Shift+L again, a click outside it, or closing the dialog
  * it was started over (or opening another one on top of it) ends the peek. A peek never touches the saved prefs, so when the dialog closes the plate is what it was.
- * Seated, the laptop's screen fills the view and there is no dialog to measure: the plate is the tab (the same peek,
- * which ends when you stand up), and standing up gives back the docked or open plate the prefs say. At the terminal
- * Shift+L is an L for the pane (as in any text box), so the tab is the way in there; in the transcript it peeks.
+ * Seated, the laptop's glass (terminal and conversation alike) is the screen to keep clear of: the plate is the tab in
+ * the gutter right of it when there is room, else away (the same peek, which ends when you stand up), and standing up
+ * gives back the docked or open plate the prefs say. At the terminal Shift+L is an L for the pane (as in any text
+ * box), so the tab is the way in there when it shows; in the conversation Shift+L peeks.
  */
 
 /** Below this width a dialog or the Changes panel spans the screen (limits.css follows the same line). */
@@ -43,7 +44,7 @@ const SCREEN = 'dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dl
  */
 const READING = '.seat-transcript:not([hidden])';
 
-/** #53: seated at a worker's laptop (laptop/index.ts marks the page with `data-seated`); the screen fills the view, so the plate is its edge tab. */
+/** #53: seated at a worker's laptop (laptop/index.ts marks the page with `data-seated`, the glass's right edge in px); the plate is its edge tab beside the glass, or away. */
 const SEATED = 'html[data-seated]';
 
 /** Free width the edge tab needs right of a screen dialog: its 32 px, 8 px from the edge, and 8 px clear of the dialog (limits.css). */
@@ -215,10 +216,13 @@ export class LimitsWidget {
     return this.screenOpen();
   }
 
-  /** Room right of every open screen dialog for the edge tab. */
+  /** Room right of every open screen dialog, and of the seated laptop's glass, for the edge tab. */
   private roomForTab(): boolean {
     let right = 0;
     for (const d of document.querySelectorAll(`${SCREEN}, ${READING}`)) right = Math.max(right, d.getBoundingClientRect().right);
+    const seated = document.querySelector(SEATED);
+    // The glass's right edge (laptop/index.ts); not measured yet (or off screen): assume it fills the view.
+    if (seated) right = Math.max(right, Number(seated.getAttribute('data-seated') || Infinity));
     return document.documentElement.clientWidth - right >= TAB_ROOM;
   }
 

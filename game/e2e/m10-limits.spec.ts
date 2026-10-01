@@ -674,6 +674,69 @@ async function standUp(page: Page): Promise<void> {
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
 }
 
+/** The monitor's glass on the viewport: the conversation overlay is laid over exactly it. Leaves the seat in the terminal view it found. */
+async function glassBox(page: Page): Promise<Box> {
+  const mode = () => page.evaluate(() => window.__h3d.transcript()?.mode);
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(mode).toBe('transcript');
+  await expect.poll(() => page.evaluate(() => window.__h3d.transcript()?.box ?? null)).not.toBeNull();
+  await frames(page, 10);
+  const b = (await page.evaluate(() => window.__h3d.transcript()!.box))!;
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(mode).toBe('terminal');
+  await frames(page, 10);
+  return { x: b.left, y: b.top, width: b.width, height: b.height };
+}
+
+// The tab never covers the glass: it sits in the gutter right of the monitor when there is room (1600x700), else the plate is away
+// (1024x768 and 1280x900 leave 30 and 39 px; the tab needs 48), and a viewport in between does one or the other, never overlaps.
+for (const [w, h, dock] of [
+  [1024, 768, 'away'],
+  [1280, 900, 'away'],
+  [800, 600, null],
+  [1600, 700, 'tab'],
+] as const) {
+  test(`seated at ${w}x${h} the limits tab ${dock === 'away' ? 'steps away' : dock === 'tab' ? 'sits beside the glass' : 'keeps clear of the glass'}, in the terminal and in the conversation`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width: w, height: h });
+    await openGame(page, 'demo-m5', '', `${SIM()}&simusage=0`);
+    await withReadings(page);
+    await sitAtLaptop(page);
+    const glass = await glassBox(page);
+
+    const keepsClear = async (view: string): Promise<void> => {
+      const at = await limits(page).getAttribute('data-dock');
+      expect(['tab', 'away'], `${view}: dock`).toContain(at);
+      if (dock) expect(at, `${view}: dock`).toBe(dock);
+      if (at === 'away') return expect(limits(page), `${view}: away`).toBeHidden();
+      await expect(limits(page)).toBeVisible();
+      const tab = (await limits(page).boundingBox())!;
+      expect(apart(tab, glass), `${view}: tab ${JSON.stringify(tab)} over glass ${JSON.stringify(glass)}`).toBe(true);
+      expect(tab.x + tab.width).toBeLessThanOrEqual(w);
+    };
+    await keepsClear('terminal');
+
+    // The conversation is laid over the same glass.
+    await page.keyboard.press('Control+Escape');
+    await expect.poll(() => page.evaluate(() => window.__h3d.transcript()?.mode)).toBe('transcript');
+    await frames(page, 10);
+    expect(await page.evaluate(() => window.__h3d.transcript()!.box)).toMatchObject({ left: glass.x, top: glass.y, width: glass.width, height: glass.height });
+    await keepsClear('conversation');
+
+    // Away or not, Shift+L peeks from the conversation; the saved state is left alone, and standing up gives the plate back.
+    await page.keyboard.press('Shift+L');
+    await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+    await expect(page.locator('.lm-panel')).toBeVisible();
+    expect(await savedOpen(page)).toBeNull();
+    await standUp(page);
+    await expect(limits(page)).toHaveAttribute('data-dock', '');
+    await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+    await expect(page.locator('.lm-strip')).toBeVisible();
+    clean();
+  });
+}
+
 for (const expanded of [false, true]) {
   test(`sitting at a laptop ${expanded ? 'with the panel expanded' : 'with the strip'}: the widget is the edge tab, and standing up gives it back as saved`, async ({ page }) => {
     test.setTimeout(120_000);
@@ -766,20 +829,26 @@ test('seated, a meter the user hid stays hidden', async ({ page }) => {
   clean();
 });
 
-test('seated on a narrow viewport the widget is still the tab, and still peeks', async ({ page }) => {
+test('seated on a narrow viewport the glass leaves no gutter: the widget is away, and still peeks from the conversation', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   await page.setViewportSize({ width: 420, height: 800 });
   await openGame(page, 'demo-m5', '', `${SIM()}&simusage=0`);
   await withReadings(page);
   await sitAtLaptop(page);
-  await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
-  await expect(limits(page)).toBeVisible();
-  await page.locator('[data-key="limits-tab"]').click();
+  await expect(limits(page)).toHaveAttribute('data-dock', 'away');
+  await expect(limits(page)).toBeHidden();
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.transcript()?.mode)).toBe('transcript');
+  await frames(page, 10);
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
   await expect(page.locator('.lm-panel')).toBeVisible();
-  const box = (await limits(page).boundingBox())!;
-  expect(box.x).toBeGreaterThanOrEqual(0);
-  expect(box.x + box.width).toBeLessThanOrEqual(420);
+  // (it fades in from the edge: wait for it to settle)
+  await expect.poll(async () => {
+    const box = (await limits(page).boundingBox())!;
+    return box.x >= 0 && box.x + box.width <= 420;
+  }).toBe(true);
   await standUp(page);
   await expect(limits(page)).toHaveAttribute('data-dock', '');
   await expect(page.locator('.lm-strip')).toBeVisible();

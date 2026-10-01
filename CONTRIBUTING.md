@@ -700,9 +700,10 @@ dialog, a near-full-screen sheet since #51, is one of them: its own limits line 
 the tab or Shift+L then *peeks* the expanded panel above the dialog without touching the saved state (Shift+L again, the
 plate's header, a click elsewhere or closing the dialog ends the peek; a meter hidden from About stays hidden); when the
 dialog closes the plate is exactly as it was. The small centred dialogs (confirm, start-run, send-home, …) keep the
-plate as it was, above them. Seated at a worker's laptop (E, #53) it is the same: the edge tab, a click on it (or Shift+L,
-anywhere but the terminal's own input, where it types an L) peeks the panel, and standing up gives back the docked or open
-plate the saved state says. The Changes panel still makes it step left.
+plate as it was, above them. Seated at a worker's laptop (E, #53) it is the same, measured against the monitor's glass (the
+terminal's and the conversation's alike): the edge tab in the gutter right of the glass when there is room, else away; a
+click on the tab (or Shift+L, anywhere but the terminal's own input, where it types an L; with no tab, Shift+L from the
+conversation) peeks the panel, and standing up gives back the docked or open plate the saved state says. The Changes panel still makes it step left.
 
 M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
 `simfail=no_m6` plays a bridge without them. E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simms%3D300`.
