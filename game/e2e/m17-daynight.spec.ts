@@ -147,7 +147,7 @@ test.describe('the real clock (page.clock, Brussels)', () => {
     clean();
   });
 
-  test('?tz= and the About setting move the clock live; a bad zone is refused where it was typed and not kept', async ({ page }) => {
+  test('?tz= and the Settings field move the clock live; a bad zone is refused where it was typed and not kept', async ({ page }) => {
     test.setTimeout(120_000);
     const clean = watchErrors(page);
     await page.clock.setFixedTime(new Date('2026-09-30T12:05:00Z'));
@@ -158,8 +158,8 @@ test.describe('the real clock (page.clock, Brussels)', () => {
     await page.goto(`/?backend=webgl2&ws=${encodeURIComponent('/fixture/demo-m3b?play=none')}`);
     await page.waitForFunction(() => window.__h3d?.ready && window.__h3d.frames >= 3, undefined, { timeout: 60_000 });
     expect(await clock(page)).toBe('14:05 · Wed 30 Sep');
-    await page.getByRole('button', { name: 'About' }).click();
-    const dialog = page.getByRole('dialog', { name: 'About' });
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Settings' });
     const zone = dialog.getByLabel('Timezone');
     await expect(dialog.getByText('In effect: Europe/Brussels, this browser’s zone.')).toBeVisible();
     // Refused: an offset, then a made-up place. Nothing stored, the clock unchanged.
@@ -188,7 +188,7 @@ test.describe('the real clock (page.clock, Brussels)', () => {
     await lat.press('Tab');
     await expect(lat).toHaveAttribute('aria-invalid', 'false');
     await expect.poll(async () => (await info(page)).latitude).toBe(50.85);
-    await shot(page, 'm17-about-time');
+    await shot(page, 'm17-settings-time');
     // Cleared: back to the browser's zone.
     await zone.fill('');
     await zone.press('Enter');

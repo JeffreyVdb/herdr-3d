@@ -59,6 +59,8 @@ import { ScreenShareController } from './screen';
 // M10 limits
 import { LimitsWidget } from './ui/limits';
 import { LimitsPrefs } from './ui/limitsPrefs';
+import type { SettingsDialog } from './ui/settings';
+import { displaySection, timeSection } from './ui/settingsSections';
 import { ThemeLoader } from './ui/themeLoader';
 import { ViewPrefs } from './ui/themePrefs';
 import { can } from './world/boards';
@@ -124,8 +126,10 @@ export class App {
   private readonly limitsPrefs = new LimitsPrefs();
   /** #59: the transcript's and the terminal's presets (fonts, colours) and zooms, and hidden tool calls. */
   readonly themes = new ThemeLoader(new ViewPrefs());
-  /** M17: the time of day: the settings (About), the page's overrides, the eased light and the clock. */
+  /** M17: the time of day: the settings (Settings), the page's overrides, the eased light and the clock. */
   readonly timePrefs = new TimePrefs();
+  /** #91: the Settings window; features add their sections to it (`settings.addSection`). */
+  readonly settings: SettingsDialog;
   readonly timeOfDay: TimeOfDay;
   readonly daylight = new DaylightEase();
   /** The last sample read, and what the clock shows from it. */
@@ -265,7 +269,10 @@ export class App {
     // Sound (the first click, key or pointer lock unlocks it) and the receptionist in every lobby.
     this.audio = createGameAudio();
     this.hud.mountAudio(this.audio);
-    if (o.buildInfo) this.hud.mountAbout(o.buildInfo, this.limitsPrefs, { prefs: this.timePrefs, time: this.timeOfDay });
+    if (o.buildInfo) this.hud.mountAbout(o.buildInfo);
+    this.settings = this.hud.mountSettings();
+    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs), { store: 'browser' });
+    this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
     this.limitsWidget = new LimitsWidget(
       this.hud.root,
       this.store.limits,
@@ -1808,6 +1815,10 @@ export class App {
       this.openBuildings();
     } else if (e.code === 'KeyB' && !e.metaKey && !e.ctrlKey) {
       this.toggleBattery();
+    } else if (e.code === 'Comma' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      // #91: the Settings window (typing in a field never gets here: `typingIn` returns above).
+      e.preventDefault();
+      this.settings.open();
     } else if (e.code === 'Backspace' && this.mode === 'floor') {
       e.preventDefault();
       void this.leaveFloor();
