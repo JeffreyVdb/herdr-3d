@@ -1036,8 +1036,11 @@ is `worker.fire`'s, step by step, with the worktree choice made up front.
    counts, and every later user prompt is a person's, even one quoting the marker), and only the **last non-empty line
    of the final assistant message of a turn**, matched strictly against the line as it is (only a trailing `\r`
    dropped): `^H3D-WRAPUP <nonce> (CLEAN|BLOCKED: .{1,200})$`. Leading or trailing whitespace, quotes, backticks, list
-   markers, an indented code block or a code fence left open make it no result, as does the same marker anywhere else
-   in that message. A
+   markers, an indented code block or a code fence still open make it no result, as does the same marker anywhere else
+   in that message. A fence is read as CommonMark reads one: only a run of its own character (backticks or tildes), at
+   least as long, indented at most 3 spaces and with nothing after it closes it, so four backticks are not closed by
+   three, nor backticks by tildes. Lists are not parsed: the fences are read as top-level ones and again as a list
+   item's (only a close at the opener's own indent counts), and still open either way is no result. A
    Claude turn ends with an assistant message whose `stop_reason` is not `tool_use` (or `system/turn_duration`), a Codex
    one with `task_complete`.
 4. **Decide**, once the turn ended in the transcript, no line came since and herdr has said `idle` (or `done`), each for

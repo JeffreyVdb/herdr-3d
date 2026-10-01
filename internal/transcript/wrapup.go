@@ -58,8 +58,9 @@ func WrapUpFooter(nonce string) string {
 // WrapUpVerdict reads an assistant message's text: CLEAN or BLOCKED (with
 // its reason) when its last non-empty line is exactly the result line of
 // nonce, byte for byte (only a trailing "\r" is dropped: leading or trailing
-// spaces, quotes, list markers, an indented or fenced code block are not
-// it), and no other line of it carries that nonce's marker; else WrapUpNone.
+// spaces, quotes, list markers, an indented code block or a code fence still
+// open (see fenceOpen) are not it), and no other line of it carries that
+// nonce's marker; else WrapUpNone.
 func WrapUpVerdict(text, nonce string) (verdict, reason string) {
 	if !ValidWrapUpNonce(nonce) {
 		return WrapUpNone, ""
@@ -81,16 +82,12 @@ func WrapUpVerdict(text, nonce string) (verdict, reason string) {
 		return WrapUpNone, ""
 	}
 	mark := WrapUpPrefix + " " + nonce
-	fenced := false
 	for _, l := range lines[:last] {
 		if strings.Contains(l, mark) {
 			return WrapUpNone, "" // two markers: never guess which one is meant
 		}
-		if t := strings.TrimSpace(l); strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
-			fenced = !fenced
-		}
 	}
-	if fenced {
+	if fenceOpen(lines[:last], false) || fenceOpen(lines[:last], true) {
 		return WrapUpNone, "" // an example in a code block left open
 	}
 	if m[2] == "CLEAN" {
@@ -101,6 +98,51 @@ func WrapUpVerdict(text, nonce string) (verdict, reason string) {
 		return WrapUpNone, ""
 	}
 	return WrapUpBlocked, reason
+}
+
+// fenceOpen reports whether a code fence is still open after lines, read as
+// CommonMark reads a fence: an opener is 3 or more backticks or tildes
+// indented at most 3 spaces (a backtick one with no backtick after it); only
+// a run of the same character, at least as long, indented at most 3 spaces
+// and followed by nothing but spaces or tabs closes it. Lists and quotes are
+// not parsed, and a fence in a list item closes where a top-level one would
+// not, so callers read it both ways: plainly, and with atIndent (only a
+// close at the opener's own indent counts); either one open is no result.
+func fenceOpen(lines []string, atIndent bool) bool {
+	var open struct {
+		ch        byte // 0: no fence open
+		n, indent int
+	}
+	for _, l := range lines {
+		indent, ch, n, info, ok := fenceLine(l)
+		switch {
+		case !ok:
+		case open.ch == 0:
+			if ch != '`' || !strings.Contains(info, "`") {
+				open.ch, open.n, open.indent = ch, n, indent
+			}
+		case ch == open.ch && n >= open.n && strings.Trim(info, " \t\r") == "" && (!atIndent || indent == open.indent):
+			open.ch = 0
+		}
+	}
+	return open.ch != 0
+}
+
+// fenceLine reads a line as a code fence: its indent, character, run length
+// and what follows the run.
+func fenceLine(l string) (indent int, ch byte, n int, info string, ok bool) {
+	for indent < len(l) && l[indent] == ' ' {
+		indent++
+	}
+	if indent > 3 || indent == len(l) || (l[indent] != '`' && l[indent] != '~') {
+		return 0, 0, 0, "", false // a tab before it indents it 4 or more: code, no fence
+	}
+	ch = l[indent]
+	rest := strings.TrimLeft(l[indent:], string(ch))
+	if n = len(l) - indent - len(rest); n < 3 {
+		return 0, 0, 0, "", false
+	}
+	return indent, ch, n, rest, true
 }
 
 // WrapUpState is what a WrapUpTracker read so far.

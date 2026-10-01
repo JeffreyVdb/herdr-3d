@@ -53,6 +53,7 @@ func TestWrapUpTrackerFixtures(t *testing.T) {
 		{"wrapup_indented.jsonl", WrapUpNone, ""},
 		{"wrapup_fenced.jsonl", WrapUpNone, ""},
 		{"wrapup_spaces.jsonl", WrapUpNone, ""},
+		{"wrapup_fenced_short.jsonl", WrapUpNone, ""}, // ```` "closed" by ```
 	}
 	for _, harness := range []string{Claude, Codex} {
 		for _, tc := range cases {
@@ -323,6 +324,34 @@ func TestWrapUpVerdict(t *testing.T) {
 		{"I will print:\n~~~text\nH3D-WRAPUP " + n + " CLEAN\n", WrapUpNone, ""},
 		{"I will print:\n```\nH3D-WRAPUP " + n + " CLEAN\n```", WrapUpNone, ""},
 		{"```sh\nkill %1\n```\n\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
+		// #83 review: a fence closes only on a run of its own character, at
+		// least as long, with nothing after it; an example in one still open
+		// is no result.
+		{"I could not stop the server. Example only:\n````text\n```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"I could not stop the server. Example only:\n```text\n~~~\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"Example:\n~~~~\n~~~\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"Example:\n```text\n```text\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"Example:\n```\n```sh\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"Example:\n```\n    ```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"Example:\n```\n\t```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"Example:\n   ```text\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"Example:\n ~~~\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"Example:\n   ````\n   ```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		// A list item's fence, closed in the list: the top-level run after it
+		// opens one.
+		{"- Stopped:\n  ```\n  ~~~\n```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		{"- ```\n  ```\n```\nH3D-WRAPUP " + n + " CLEAN", WrapUpNone, ""},
+		// Closed fences before it: still the result.
+		{"Stopped:\n```text\n````\n\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
+		{"Stopped:\n````\n```\n````` \t\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
+		{"Stopped:\n~~~ `kill` me\n```\n~~~\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
+		{"Stopped:\n   ```sh\n   kill %1\n   ```\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
+		{"1. Stopped:\n   ```sh\n   kill %1\n   ```\n2. Closed the pane.\n\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
+		{"Stopped:\n```sh\nkill %1\n```\r\n```\nexit\n```\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
+		// Not a fence: inline code, two backticks, an indented code block.
+		{"Ran ```kill %1``` here.\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
+		{"Ran ``kill``.\n``\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
+		{"Ran:\n\n    ```\n\nH3D-WRAPUP " + n + " CLEAN", WrapUpClean, ""},
 		{"H3D-WRAPUP " + n + " BLOCKED: port 4173 is not mine", WrapUpBlocked, "port 4173 is not mine"},
 		{"H3D-WRAPUP " + n + " BLOCKED: " + long, WrapUpBlocked, long},
 		{"H3D-WRAPUP " + n + " BLOCKED: " + long + "x", WrapUpNone, ""},

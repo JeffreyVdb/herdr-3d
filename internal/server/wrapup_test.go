@@ -353,6 +353,37 @@ func TestWrapUpDecisions(t *testing.T) {
 	}
 }
 
+// #83 review: CLEAN as an example in a code fence still open (a shorter or
+// another character's run does not close it) is no result: it needs you, and
+// nothing is closed or removed.
+func TestWrapUpFencedExampleNeverFires(t *testing.T) {
+	for name, example := range map[string]string{
+		"shorter": "I could not stop the server. Example only:\n````text\n```\n",
+		"mixed":   "I could not stop the server. Example only:\n```text\n~~~\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			wb := startWrapBridge(t, "", "", nil)
+			c := wb.connect(proto.Hello{})
+			c.snapshot()
+			id := wb.ids["w1"]
+			nonce := wb.arm(t, c, "w1", proto.FireDelete)
+			text, _ := wb.prompted(t, "w1:p1")
+			wb.reply(t, text, example+"H3D-WRAPUP "+nonce+" CLEAN")
+			w := wrapUpOf(c, id, wrapState(proto.WrapUpNeedsYou))
+			if w.WrapUp.Reason != "did not report a wrap-up result" {
+				t.Fatalf("needs you: %+v", w.WrapUp)
+			}
+			time.Sleep(200 * time.Millisecond)
+			if calls := wb.fl.Calls(); len(calls) != 0 {
+				t.Fatalf("herdr calls = %q", calls)
+			}
+			if ws := workersOf(wb.world(func(proto.World) bool { return true }), "s"); ws["w1"].ID != id {
+				t.Fatalf("w1 left: %+v", ws)
+			}
+		})
+	}
+}
+
 // A person prompting (or typing) while armed takes over: disarmed, nothing
 // needs you. So does a prompt typed in herdr itself, seen in the transcript.
 func TestWrapUpTakeover(t *testing.T) {
