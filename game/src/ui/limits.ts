@@ -265,7 +265,9 @@ export class LimitsWidget {
     window.addEventListener('resize', this.onResize);
     if (typeof MutationObserver === 'undefined') return;
     this.watcher = new MutationObserver((records) => {
-      if (!records.some((r) => r.target instanceof HTMLDialogElement || r.attributeName === 'data-reading' || r.attributeName === 'data-seated')) return;
+      // (The whiteboard overlay is a div with `open`, not a dialog: SCREEN lists it.)
+      const screen = (r: MutationRecord) => r.target instanceof HTMLDialogElement || (r.target instanceof Element && r.target.classList.contains('wb'));
+      if (!records.some((r) => screen(r) || r.attributeName === 'data-reading' || r.attributeName === 'data-seated')) return;
       this.root.dataset.beside = document.querySelector('dialog.changes[open]') ? 'changes' : '';
       this.update();
       if (records.some((r) => r.target instanceof HTMLDialogElement && r.target.open)) this.raise();
