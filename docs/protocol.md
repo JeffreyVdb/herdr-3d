@@ -1176,10 +1176,11 @@ directory per floor, `0700`, files `0600`, every write a temp file renamed into 
 
 | file | |
 |---|---|
-| `<floor>/head.json` | the current `version`, its `author` and `at`, `render_version` / `render`, the `stale_pins`, the kept versions and the files each uses, the last 64 pin request ids. Written last: a crash leaves the previous version current. |
+| `<floor>/head.json` | the current `version`, its `author` and `at`, `render_version` / `render`, the newest 100 `stale_pins`, the kept versions (`version`, `author`, `at`), the last 64 pin request ids. Bounded (at most 1 MiB, and a commit refuses a head over it before it writes anything). Written last: until it is, the previous version stays current with its own render. |
 | `<floor>/v/<n>.json` | version `n`: `{"schema":1,"floor","version","author","at","excalidraw_version","scene":{"type":"excalidraw","version":2,"source":"herdr-3d","elements":[…],"appState":{…}},"files":{"<sha256>":{"mimeType","size","created"}}}`. The **last 20** are kept; older ones are deleted. |
+| `<floor>/v/<n>.files.json` | the ids of the image files version `n` uses (`["<sha256>",…]`), for the file collection |
 | `<floor>/files/<sha256>` | an image's bytes; the name is the sha256 (hex) of exactly these bytes. A file no kept version uses is deleted an hour after it was last written (it may be on its way into a save). |
-| `<floor>/render.png` | the client's export of version `render_version` |
+| `<floor>/renders/<n>.png` | the client's export of version `n`; the current one is `render_version`'s. A save writes its own (it never replaces the current render), and the others are deleted once `head.json` names the new one (a clear names none). |
 
 `<floor>` is a herdr session name (`[A-Za-z0-9._-]`, 1 to 64, not starting with `-`, not only dots): one path
 component, never `..`. Reads need only a valid name; writes (save, file, clear, pin) need a floor the bridge watches
@@ -1222,7 +1223,15 @@ during a stroke, a drag or a text edit: it uploads the image files the bridge do
 has. On `409`, and on a `whiteboard.updated` of a version it has not seen (an agent's pin, another window), it fetches
 the board, restores the remote elements on their own and reconciles them into the live scene (Excalidraw's
 `reconcileElements`: the higher element `version` wins, a stroke in progress is kept, `CaptureUpdateAction.NEVER`), then
-saves again. Closing the board saves what is left first.
+saves again. A save is one snapshot: the elements, files and appState it sends and the PNG it renders are taken at one
+moment, and it is posted on the version they were based on; when a merge moved the board on while the files went up or
+the PNG was made, the round starts over on the new version (a stroke drawn meanwhile goes in the next save). The
+board's appState (background, grid) is saved like the elements, and a merge takes the remote one unless it was changed
+here since the last save. Closing the board saves what is left first, the changes made during a save in flight
+included (bounded: 8 s). When that fails (the bridge is unreachable), the board stays open and asks: **Retry**,
+**Close, keep a draft** (the changes stay in this browser, in memory and in `localStorage` key
+`h3d.wb.draft.<bridge>|<floor>` when they fit, and come back, reconciled with the board, the next time it opens, then
+are saved), or **Discard changes**.
 
 **Image ids.** An image's file id is the sha256 of the bytes the bridge stores, and the bridge checks it. Excalidraw
 hashes a pasted file before it scales it down (1440 px), so before a save the editor re-hashes each file's bytes and

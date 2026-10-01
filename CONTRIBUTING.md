@@ -23,7 +23,7 @@
   and restricted SVG in, one PNG of at most 1024 px out; pure Go, only the bridge uses it), `upload` (#51: one image
   streamed to Drop Zone as one multipart request, the type sniffed and the size capped on the bytes, its path returned
   verbatim; pure Go, a fake-able HTTP client, the bridge's `POST /upload` uses it); M13 (#15): `whiteboard` (each
-floor's Excalidraw board: versioned scenes, the last 20 kept, image files once by sha256, `render.png`, agents' pins as
+floor's Excalidraw board: versioned scenes, the last 20 kept, image files once by sha256, each version's render, agents' pins as
 complete Excalidraw elements with valid fractional indices; files only, pure Go, the bridge's `/whiteboard/` routes and
 commands sit on it) and `drops` (Drop Zone's newest files, read only through imgcache's allowlist, for "Pin a drop");
 M7 boards:
