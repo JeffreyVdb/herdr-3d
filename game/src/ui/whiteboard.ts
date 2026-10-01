@@ -7,7 +7,11 @@
  * Esc, in order: Excalidraw's own use first (finishing a text, a line, a crop; closing a menu, a colour popup, a
  * dialog, the sidebar, a context menu or the link editor), then our picker or confirmation, then the selection is
  * dropped, then the drawing tool goes back to the pointer, and only then the board closes. The close button always
- * closes. Closing saves what is left first.
+ * closes. Closing saves what is left first; when that save fails (the bridge is unreachable) the board stays open with
+ * the choice: retry, close and keep a draft (it comes back on the next open), or discard the changes.
+ *
+ * While it is open the game behind it is inert: Tab stays in the overlay and Excalidraw's popovers (added to the body
+ * after it opened) are not touched.
  */
 
 import type { CommandResult } from '../net/client';
@@ -42,6 +46,8 @@ export interface WhiteboardInfo {
   pins: string[];
   picker: boolean;
   confirm: boolean;
+  /** The close found changes it could not save: the retry / keep a draft / discard choice is up. */
+  unsaved: boolean;
 }
 
 export class WhiteboardOverlay {
@@ -63,6 +69,10 @@ export class WhiteboardOverlay {
   private pins: string[] = [];
   private closing: Promise<void> | null = null;
   private returnFocus: HTMLElement | null = null;
+  /** What confirmEl asks: clearing the board, or what to do with changes a close could not save. */
+  private confirmKind: 'clear' | 'unsaved' | null = null;
+  /** The background elements this overlay made inert (given back on close). */
+  private inerted: HTMLElement[] = [];
   private readonly onKeyCapture = (e: KeyboardEvent) => this.keyCapture(e);
 
   constructor(
@@ -104,6 +114,7 @@ export class WhiteboardOverlay {
     if (this.closing) await this.closing;
     if (this.floor === floor) return;
     if (this.floor) await this.close();
+    if (this.floor) return; // its changes could not be saved: that board stays open with the choice
     const gen = ++this.gen;
     this.floor = floor;
     this.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -112,12 +123,13 @@ export class WhiteboardOverlay {
     this.pins = [];
     this.renderPins();
     this.picker.hidden = true;
-    this.confirmEl.hidden = true;
+    this.hideConfirm();
     this.loadingEl.hidden = false;
     this.loadingEl.textContent = 'Opening the whiteboard…';
     this.setStatus({ kind: 'loading' });
     this.root.hidden = false;
     this.root.setAttribute('open', ''); // the limits plate steps aside, as for a screen dialog (ui/limits.ts)
+    this.inertBackground(true);
     window.addEventListener('keydown', this.onKeyCapture, true);
     try {
       const mod = await loadEditor();
@@ -127,7 +139,11 @@ export class WhiteboardOverlay {
         floor,
         mount: this.mount,
         author: () => this.host.author(),
-        status: (s) => gen === this.gen && this.setStatus(s),
+        status: (s) => {
+          if (gen !== this.gen) return;
+          this.setStatus(s);
+          if (s.kind === 'saved' && this.confirmKind === 'unsaved') setTimeout(() => this.savedLate(), 0);
+        },
         stale: (s) => {
           if (gen !== this.gen) return;
           this.pins = pinsText(s);
@@ -147,27 +163,85 @@ export class WhiteboardOverlay {
     }
   }
 
-  /** Saves what is left, then closes. */
+  /**
+   * Saves what is left, then closes. When the save fails or does not finish in time, the board stays open and asks
+   * what to do with the changes (never dropped without that choice).
+   */
   close(): Promise<void> {
     if (!this.floor) return Promise.resolve();
     if (this.closing) return this.closing;
     this.closing = (async () => {
       const session = this.session;
       this.picker.hidden = true;
-      this.confirmEl.hidden = true;
+      this.hideConfirm();
       if (session?.dirty) this.setStatus({ kind: 'saving' });
-      await session?.close().catch(() => undefined);
-      this.gen++;
-      this.session = null;
-      this.floor = null;
-      this.root.hidden = true;
-      this.root.removeAttribute('open');
-      window.removeEventListener('keydown', this.onKeyCapture, true);
-      this.mount.replaceChildren();
-      this.returnFocus?.focus?.();
-      this.host.closed();
+      const saved = session ? await session.flush().catch(() => false) : true;
+      if (!saved && session && this.session === session) return this.askUnsaved();
+      this.finish('draft');
     })().finally(() => (this.closing = null));
     return this.closing;
+  }
+
+  /** Closes now: the session keeps a draft of anything unsaved ('draft') or drops it ('discard'). */
+  private finish(keep: 'draft' | 'discard'): void {
+    if (!this.floor) return;
+    this.session?.dispose(keep);
+    this.gen++;
+    this.session = null;
+    this.floor = null;
+    this.hideConfirm();
+    this.root.hidden = true;
+    this.root.removeAttribute('open');
+    this.inertBackground(false);
+    window.removeEventListener('keydown', this.onKeyCapture, true);
+    this.mount.replaceChildren();
+    this.returnFocus?.focus?.();
+    this.host.closed();
+  }
+
+  /** The choice is up and a retry in the background saved everything after all: close, as was asked. */
+  private savedLate(): void {
+    const s = this.session;
+    if (this.confirmKind === 'unsaved' && !this.confirmEl.hidden && s && s.statusNow.kind === 'saved' && !s.dirty) void this.close();
+  }
+
+  private askUnsaved(): void {
+    const why = this.status.kind === 'error' ? this.status.message : 'the bridge did not answer in time';
+    const retry = h('button', { class: 'wb-btn wb-btn--go', onclick: () => void this.close() }, 'Retry');
+    const keep = h('button', { class: 'wb-btn wb-btn--quiet', onclick: () => this.finish('draft') }, 'Close, keep a draft');
+    const discard = h('button', { class: 'wb-btn wb-btn--quiet wb-btn--discard', onclick: () => this.finish('discard') }, 'Discard changes');
+    this.confirmEl.setAttribute('aria-label', 'Your changes are not saved');
+    this.confirmEl.replaceChildren(
+      h(
+        'p',
+        { class: 'wb-confirm-text' },
+        h('strong', {}, 'Your latest changes aren’t saved.'),
+        `Saving failed: ${why}. Retry, or close and keep a draft in this browser: it comes back the next time you open this board.`,
+      ),
+      h('div', { class: 'wb-confirm-actions' }, discard, keep, retry),
+    );
+    this.confirmKind = 'unsaved';
+    this.confirmEl.hidden = false;
+    retry.focus();
+  }
+
+  private hideConfirm(): void {
+    this.confirmEl.hidden = true;
+    this.confirmKind = null;
+  }
+
+  /** While open, everything around the overlay up to the body is inert (focus and pointer stay in it). */
+  private inertBackground(on: boolean): void {
+    for (const el of this.inerted) el.inert = false;
+    this.inerted = [];
+    if (!on) return;
+    for (let node: HTMLElement = this.root; node !== document.body && node.parentElement; node = node.parentElement) {
+      for (const sib of node.parentElement.children) {
+        if (sib === node || !(sib instanceof HTMLElement) || sib.inert || sib instanceof HTMLScriptElement) continue;
+        sib.inert = true;
+        this.inerted.push(sib);
+      }
+    }
   }
 
   /** whiteboard.updated: the open board merges it (an agent's pin, another client's save, a clear). */
@@ -193,7 +267,7 @@ export class WhiteboardOverlay {
       e.preventDefault();
       e.stopPropagation();
       this.picker.hidden = true;
-      this.confirmEl.hidden = true;
+      this.hideConfirm();
       this.focusEditor();
       return;
     }
@@ -212,7 +286,7 @@ export class WhiteboardOverlay {
       this.focusEditor();
       return;
     }
-    this.confirmEl.hidden = true;
+    this.hideConfirm();
     this.picker.hidden = false;
     this.picker.replaceChildren(h('p', { class: 'wb-picker-note' }, 'Reading Drop Zone…'));
     const r = await this.host.send('drops.list', { limit: 20 });
@@ -273,17 +347,19 @@ export class WhiteboardOverlay {
     this.picker.hidden = true;
     const floor = this.floor;
     const yes = h('button', { class: 'wb-btn wb-btn--danger', onclick: () => void this.clear(floor) }, 'Clear board');
-    const no = h('button', { class: 'wb-btn wb-btn--quiet', onclick: () => ((this.confirmEl.hidden = true), this.focusEditor()) }, 'Keep it');
+    const no = h('button', { class: 'wb-btn wb-btn--quiet', onclick: () => (this.hideConfirm(), this.focusEditor()) }, 'Keep it');
+    this.confirmEl.setAttribute('aria-label', 'Clear the whiteboard');
     this.confirmEl.replaceChildren(
       h('p', { class: 'wb-confirm-text' }, h('strong', {}, `Clear the whiteboard for everyone on ${floor}?`), ' The last 20 versions stay in its history.'),
       h('div', { class: 'wb-confirm-actions' }, no, yes),
     );
+    this.confirmKind = 'clear';
     this.confirmEl.hidden = false;
     no.focus();
   }
 
   private async clear(floor: string): Promise<void> {
-    this.confirmEl.hidden = true;
+    this.hideConfirm();
     this.focusEditor();
     // What is drawn but not saved goes into the history first.
     await this.session?.save();
@@ -301,7 +377,8 @@ export class WhiteboardOverlay {
       text: this.statusEl.textContent ?? '',
       pins: [...this.pins],
       picker: !this.picker.hidden,
-      confirm: !this.confirmEl.hidden,
+      confirm: !this.confirmEl.hidden && this.confirmKind === 'clear',
+      unsaved: !this.confirmEl.hidden && this.confirmKind === 'unsaved',
     };
   }
 

@@ -36,6 +36,7 @@ import type { RemoteExcalidrawElement } from '@excalidraw/excalidraw/data/reconc
 import { fileUrl, getBoard, putFile, saveBoard, sha256Hex, WB_FILE_TYPES, WB_MAX_FILE, WB_RENDER_MAX_SIDE, type BoardData } from '../net/whiteboard';
 import type { WhiteboardState } from '../net/protocol';
 import { blankRender, cleanAppState, fitInto, isIdle, type BoardStatus, type EditorHost } from './model';
+import { draftKey, dropDraft, keepDraft, readDraft } from './draft';
 
 export type { EditorHost } from './model';
 
@@ -104,12 +105,31 @@ async function storable(blob: Blob): Promise<Blob> {
 
 const imageOf = <T extends ExcalidrawElement>(e: T): e is T & ExcalidrawImageElement => e.type === 'image';
 
+type BoardAppState = ReturnType<typeof cleanAppState>;
+
+/** What a save sends, taken at one moment: the scene, its files, the board's appState and the version it is based on. */
+interface SaveSnapshot {
+  elements: readonly OrderedExcalidrawElement[];
+  files: BinaryFiles;
+  appState: BoardAppState;
+  base: number;
+  /** The elements' and the appState's signatures: what is saved once this lands. */
+  els: string;
+  app: string;
+}
+
+const elsSig = (els: readonly ExcalidrawElement[]): string => hashElementsVersion(els).toString();
+/** The board's part of an appState (background, grid) as JSON: compared, never parsed. */
+const appSig = (a: unknown): string => JSON.stringify(cleanAppState(a as Record<string, unknown>));
+
 /** One open whiteboard: the editor mounted in `host.mount` and its sync with the bridge. */
 export class BoardSession {
   private api: ExcalidrawImperativeAPI | null = null;
   private root: Root | null = null;
   private base = 0;
-  private savedSig = '';
+  /** The signatures of what the bridge has at `base`: the elements (hashElementsVersion) and the board's appState. */
+  private savedEls = '';
+  private savedApp = '';
   /** Files the bridge has (by id), so each goes up once. */
   private readonly uploaded = new Set<string>();
   /** Original file id → the hash of the bytes it stores as (canonicalised already). */
@@ -122,8 +142,13 @@ export class BoardSession {
   private closed = false;
   private changeSeq = 0;
   private status: BoardStatus = { kind: 'loading' };
+  private readonly draft: string;
+  /** A kept draft came back at open: the first save that lands drops it. */
+  private restored = false;
 
-  constructor(private readonly host: EditorHost) {}
+  constructor(private readonly host: EditorHost) {
+    this.draft = draftKey(host.wsUrl, host.floor);
+  }
 
   private setStatus(s: BoardStatus): void {
     this.status = s;
@@ -143,15 +168,27 @@ export class BoardSession {
     if (this.closed) return;
     this.base = board.version;
     this.noteState(board.state);
-    const elements = restoreElements(board.scene.elements as ExcalidrawElement[], null, { repairBindings: true });
-    this.savedSig = hashElementsVersion(elements).toString();
+    let elements: readonly OrderedExcalidrawElement[] = restoreElements(board.scene.elements as ExcalidrawElement[], null, { repairBindings: true });
+    this.savedEls = elsSig(elements);
+    let appState: BoardAppState = cleanAppState(board.scene.appState);
+    this.savedApp = JSON.stringify(appState);
+    const draft = readDraft(this.draft);
+    if (draft) {
+      // What a close could not save, on top of the board as it is now (an agent's pin since stays): it is saved below.
+      const mine = restoreElements(draft.elements as ExcalidrawElement[], null, { repairBindings: true });
+      elements = reconcileElements(mine, elements as RemoteExcalidrawElement[], {} as AppState);
+      if (draft.appState) appState = cleanAppState(draft.appState);
+      const have = new Set(files.map((f) => f.id as string));
+      for (const f of draft.files) if (!have.has(f.id)) files.push(f as BinaryFileData);
+      this.restored = true;
+    }
     const ready = new Promise<ExcalidrawImperativeAPI>((resolve) => {
       this.root = createRoot(this.host.mount);
       this.root.render(
         h(
           Excalidraw,
           {
-            initialData: { elements, appState: { ...cleanAppState(board.scene.appState), theme: 'light' }, files: Object.fromEntries(files.map((f) => [f.id, f])), scrollToContent: true },
+            initialData: { elements, appState: { ...appState, theme: 'light' }, files: Object.fromEntries(files.map((f) => [f.id, f])), scrollToContent: true },
             excalidrawAPI: (api) => {
               this.api = api;
               resolve(api);
@@ -188,12 +225,21 @@ export class BoardSession {
     });
     const api = await ready;
     if (this.closed) return;
+    // The board's appState as Excalidraw shows it (its defaults filled in) is what is saved, unless a draft changed it.
+    if (!draft?.appState) this.savedApp = appSig(api.getAppState());
     if (this.stale) {
       // Agents pinned since the last render: lay their notes out with the fonts loaded and render the board again.
       await this.normalizePins(api);
       this.schedule(0);
     }
-    this.setStatus({ kind: 'saved', version: this.base });
+    if (this.restored && !this.unsaved(api)) {
+      dropDraft(this.draft); // nothing in it the bridge does not have
+      this.restored = false;
+    }
+    if (this.unsaved(api)) {
+      this.setStatus({ kind: 'dirty' });
+      this.schedule(0);
+    } else this.setStatus({ kind: 'saved', version: this.base });
   }
 
   private async fetchFiles(board: BoardData): Promise<BinaryFileData[]> {
@@ -221,17 +267,22 @@ export class BoardSession {
   }
 
   private changed(): void {
-    if (this.closed || !this.api) return;
-    const sig = this.sig();
-    if (sig === this.savedSig) return;
+    if (this.closed || !this.api || !this.unsaved(this.api)) return;
     this.changeSeq++;
     if (this.status.kind === 'saved') this.setStatus({ kind: 'dirty' });
     this.schedule(SAVE_DEBOUNCE_MS);
   }
 
-  private sig(): string {
-    if (!this.api) return '';
-    return hashElementsVersion(this.api.getSceneElementsIncludingDeleted()).toString();
+  /** The live scene or the board's appState differs from what the bridge has. */
+  private unsaved(api: ExcalidrawImperativeAPI): boolean {
+    return elsSig(api.getSceneElementsIncludingDeleted()) !== this.savedEls || appSig(api.getAppState()) !== this.savedApp;
+  }
+
+  /** The board as one save sends it. The PNG is made from this, and it is posted on this base, whatever comes after. */
+  private snapshot(api: ExcalidrawImperativeAPI): SaveSnapshot {
+    const elements = api.getSceneElementsIncludingDeleted();
+    const appState = cleanAppState(api.getAppState() as unknown as Record<string, unknown>);
+    return { elements, files: api.getFiles(), appState, base: this.base, els: elsSig(elements), app: JSON.stringify(appState) };
   }
 
   private schedule(ms: number): void {
@@ -266,24 +317,35 @@ export class BoardSession {
     if (!api) return;
     for (let round = 0; round < MAX_ROUNDS; round++) {
       await this.canonicalize(api);
-      const elements = api.getSceneElementsIncludingDeleted();
-      const sig = hashElementsVersion(elements).toString();
-      if (sig === this.savedSig && !this.stale) {
+      if (this.api !== api) return;
+      const snap = this.snapshot(api);
+      if (snap.els === this.savedEls && snap.app === this.savedApp && !this.stale) {
         this.setStatus({ kind: 'saved', version: this.base });
         return;
       }
       this.setStatus({ kind: 'saving' });
       try {
-        await this.uploadFiles(api, elements);
-        const render = await this.render(api);
-        const appState = cleanAppState(api.getAppState() as unknown as Record<string, unknown>);
-        const r = await saveBoard(this.host.wsUrl, this.host.floor, { base: this.base, author: this.host.author(), scene: { elements, appState }, render });
+        await this.uploadFiles(snap);
+        const render = await this.render(snap);
+        // A merge moved the board on while the files went up or the PNG was made: this snapshot is from before it, and
+        // posting it on the new base would drop what the merge brought (an agent's pin). Take the scene again.
+        if (this.base !== snap.base) continue;
+        const r = await saveBoard(this.host.wsUrl, this.host.floor, { base: snap.base, author: this.host.author(), scene: { elements: snap.elements, appState: snap.appState }, render });
         if (r.ok) {
           const st = r.data as WhiteboardState;
-          this.base = st.version;
-          this.savedSig = sig;
-          this.noteState(st);
-          this.setStatus({ kind: 'saved', version: this.base });
+          // (A merge of a still newer version may have landed meanwhile: then that one is what is saved.)
+          if (st.version >= this.base) {
+            this.base = st.version;
+            this.savedEls = snap.els;
+            this.savedApp = snap.app;
+            this.noteState(st);
+          }
+          if (this.restored) {
+            dropDraft(this.draft);
+            this.restored = false;
+          }
+          // Drawn while it was saving: the next save (scheduled by the change) takes it.
+          this.setStatus(this.unsaved(api) ? { kind: 'dirty' } : { kind: 'saved', version: this.base });
           this.host.saved(st);
           return;
         }
@@ -335,9 +397,9 @@ export class BoardSession {
     api.updateScene({ elements: next, captureUpdate: CaptureUpdateAction.NEVER });
   }
 
-  private async uploadFiles(api: ExcalidrawImperativeAPI, elements: readonly ExcalidrawElement[]): Promise<void> {
-    const files = api.getFiles();
-    const ids = new Set(elements.filter(imageOf).map((e) => e.fileId as string | null));
+  private async uploadFiles(snap: SaveSnapshot): Promise<void> {
+    const files = snap.files;
+    const ids = new Set(snap.elements.filter(imageOf).map((e) => e.fileId as string | null));
     for (const id of ids) {
       if (!id || this.uploaded.has(id)) continue;
       const f = files[id];
@@ -349,14 +411,14 @@ export class BoardSession {
     }
   }
 
-  /** The board as a PNG of at most WB_RENDER_MAX_SIDE px (exportScale 1: a larger saved scale would beat the cap). */
-  private async render(api: ExcalidrawImperativeAPI): Promise<Blob> {
-    const elements = api.getSceneElements();
-    const bg = api.getAppState().viewBackgroundColor;
+  /** The snapshot as a PNG of at most WB_RENDER_MAX_SIDE px (exportScale 1: a larger saved scale would beat the cap). */
+  private async render(snap: SaveSnapshot): Promise<Blob> {
+    const elements = snap.elements.filter((e) => !e.isDeleted);
+    const bg = snap.appState.viewBackgroundColor;
     if (!elements.length) return blankRender(bg);
     return exportToBlob({
       elements,
-      files: api.getFiles(),
+      files: snap.files,
       mimeType: 'image/png',
       maxWidthOrHeight: WB_RENDER_MAX_SIDE,
       exportPadding: 24,
@@ -369,8 +431,10 @@ export class BoardSession {
     const api = this.api;
     if (!api) return;
     const r = await getBoard(this.host.wsUrl, this.host.floor);
-    if (!r.ok || this.closed) return;
+    if (!r.ok || this.closed || this.api !== api) return;
     const board = r.data as BoardData;
+    // Older than what this session has already (its own save landed meanwhile): nothing to merge.
+    if (board.version < this.base) return;
     const have = api.getFiles();
     const missing = Object.keys(board.files).filter((id) => !have[id]);
     if (missing.length) api.addFiles(await this.fetchFiles({ ...board, files: Object.fromEntries(missing.map((id) => [id, board.files[id] as BoardData['files'][string]])) }));
@@ -378,16 +442,23 @@ export class BoardSession {
     this.noteState(board.state);
     // Remote alone: restoring against the local elements would bump the remote versions above them.
     let remote = restoreElements(board.scene.elements as ExcalidrawElement[], null, { repairBindings: true });
-    const remoteSig = hashElementsVersion(remote).toString();
-    const local = api.getSceneElementsIncludingDeleted();
-    const localUnsaved = hashElementsVersion(local).toString() !== this.savedSig;
+    const remoteSig = elsSig(remote);
+    const remoteApp = cleanAppState(board.scene.appState);
     if (this.stalePins.size) remote = await this.normalizeList(remote, api.getFiles());
+    if (this.closed || this.api !== api) return;
+    // The live scene as it is now (after the await above: a stroke drawn meanwhile is in it).
+    const local = api.getSceneElementsIncludingDeleted();
+    const localUnsaved = elsSig(local) !== this.savedEls;
+    // The background and the grid are the board's too: the remote ones win, unless they were changed here since the
+    // last save (then ours are saved next, over them).
+    const localAppUnsaved = appSig(api.getAppState()) !== this.savedApp;
     const merged = reconcileElements(local, remote as RemoteExcalidrawElement[], api.getAppState());
-    api.updateScene({ elements: merged, captureUpdate: CaptureUpdateAction.NEVER });
+    api.updateScene({ elements: merged, ...(localAppUnsaved ? {} : { appState: remoteApp as unknown as AppState }), captureUpdate: CaptureUpdateAction.NEVER });
     this.base = board.version;
     // Nothing of ours on top of the remote board: it is what is saved (only a stale render still needs a save).
-    if (!localUnsaved) this.savedSig = remoteSig;
-    if (this.stale || hashElementsVersion(api.getSceneElementsIncludingDeleted()).toString() !== this.savedSig) this.schedule(SAVE_DEBOUNCE_MS / 2);
+    if (!localUnsaved) this.savedEls = remoteSig;
+    if (!localAppUnsaved) this.savedApp = JSON.stringify(remoteApp);
+    if (this.stale || this.unsaved(api)) this.schedule(SAVE_DEBOUNCE_MS / 2);
     else this.setStatus({ kind: 'saved', version: this.base });
   }
 
@@ -466,23 +537,63 @@ export class BoardSession {
 
   /** Unsaved changes (or a save in flight). */
   get dirty(): boolean {
-    return !!this.saving || !!this.timer || (!!this.api && this.sig() !== this.savedSig);
+    return !!this.saving || !!this.timer || (!!this.api && this.unsaved(this.api));
   }
 
-  /** Saves what is left (bounded), then unmounts the editor. */
-  async close(timeoutMs = 8000): Promise<void> {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
+  /**
+   * Saves what is left, until nothing is: what was drawn while a save was in flight goes in the next one. True when
+   * the board is saved; false when a save failed or `timeoutMs` passed (the session stays as it was, its retry
+   * scheduled: the caller retries, keeps a draft or discards, see dispose).
+   */
+  async flush(timeoutMs = 8000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const api = this.api;
+      if (!api || this.closed) return true;
+      if (this.timer) {
+        clearTimeout(this.timer);
+        this.timer = null;
+      }
+      if (!this.saving && !this.stale && !this.unsaved(api)) return true;
+      const left = deadline - Date.now();
+      if (left <= 0) return false;
+      let late: ReturnType<typeof setTimeout> | undefined;
+      const done = await Promise.race([this.save().then(() => true), new Promise<boolean>((r) => (late = setTimeout(() => r(false), left)))]);
+      clearTimeout(late);
+      if (!done || this.status.kind === 'error') return false;
     }
-    if (this.api && (this.dirty || this.stale)) {
-      await Promise.race([this.save(), new Promise((r) => setTimeout(r, timeoutMs))]);
-    }
+  }
+
+  /**
+   * Unmounts the editor. What is not saved yet is kept as a draft for the next open of this board ('draft': in memory,
+   * and in localStorage when it fits), or dropped with any draft kept before ('discard', the user's choice).
+   */
+  dispose(keep: 'draft' | 'discard' = 'draft'): void {
+    const api = this.api;
+    if (keep === 'discard') dropDraft(this.draft);
+    else if (api && (this.saving || this.unsaved(api))) this.keepDraft(api);
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
     this.api = null;
     this.root?.unmount();
     this.root = null;
+  }
+
+  private keepDraft(api: ExcalidrawImperativeAPI): void {
+    const elements = api.getSceneElementsIncludingDeleted();
+    const files = api.getFiles();
+    const ids = new Set(elements.filter((e) => imageOf(e) && !e.isDeleted).map((e) => (e as ExcalidrawImageElement).fileId as string | null));
+    const live = [...ids].flatMap((id) => (id && files[id] ? [files[id]] : []));
+    const app = appSig(api.getAppState()) !== this.savedApp ? cleanAppState(api.getAppState() as unknown as Record<string, unknown>) : null;
+    keepDraft(this.draft, { v: 1, at: Date.now(), elements: [...elements], files: live, appState: app });
+  }
+
+  /** Saves what is left (bounded) and unmounts the editor, keeping a draft of what could not be saved. */
+  async close(timeoutMs = 8000): Promise<boolean> {
+    const saved = await this.flush(timeoutMs);
+    this.dispose('draft');
+    return saved;
   }
 
   /** Test hook: the editor's API. */

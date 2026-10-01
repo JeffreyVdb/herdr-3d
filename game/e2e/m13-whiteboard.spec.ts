@@ -278,3 +278,78 @@ test('an agent pin on a closed board: the room lists it until the board is opene
   await expect.poll(async () => (await info(page)).shown, { timeout: 15_000 }).toBe(`render:${st.version}`);
   clean();
 });
+
+test('a close that cannot save keeps the board open with the choice, and a kept draft comes back after a reload', async ({ page }) => {
+  test.setTimeout(240_000);
+  // The injected 503s are logged by the browser as failed loads; anything else is an error.
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => m.type() === 'error' && !/status of 503/.test(m.text()) && errors.push(m.text()));
+  const key = unique();
+  await openGame(page, 'demo', '&me=Theo', `play=none&sim=1&simusage=0&wb_key=${key}`);
+  await faceBoard(page);
+  await openBoard(page);
+  // The limits plate steps aside as soon as the board opens (WB-U2).
+  await expect(page.locator('.limits')).toHaveAttribute('data-dock', /^(tab|away)$/);
+  await page.keyboard.press('KeyR');
+  await drag(page, 0.2, 0.3, 0.35, 0.5);
+  await savedAt(page, 1);
+
+  // The bridge stops answering saves: a second rectangle cannot be saved, and closing does not throw it away.
+  await page.route('**/whiteboard/*/save*', (route) => route.fulfill({ status: 503, contentType: 'text/plain', body: 'bridge down' }));
+  await page.keyboard.press('KeyR');
+  await drag(page, 0.55, 0.3, 0.7, 0.5);
+  await expect.poll(() => sceneTypes(page)).toEqual(['rectangle', 'rectangle']);
+  await expect.poll(async () => (await info(page)).overlay.status, { timeout: 15_000 }).toBe('error');
+  await page.locator('.wb-close').click();
+  await expect.poll(async () => (await info(page)).overlay.unsaved, { timeout: 20_000 }).toBe(true);
+  expect((await info(page)).overlay.open).toBe(true);
+  const ask = page.locator('.wb-confirm');
+  await expect(ask).toContainText('Your latest changes aren’t saved.');
+  await expect(ask.getByRole('button', { name: 'Retry' })).toBeFocused();
+  await evidence(page, 'unsaved-close');
+  // Retry fails the same way: still open, still asking.
+  await ask.getByRole('button', { name: 'Retry' }).click();
+  await expect.poll(async () => (await info(page)).overlay.unsaved, { timeout: 20_000 }).toBe(true);
+  expect((await stored(page, key)).elements.filter((e) => e.type === 'rectangle' && !e.isDeleted)).toHaveLength(1);
+  await ask.getByRole('button', { name: 'Close, keep a draft' }).click();
+  await expect.poll(async () => (await info(page)).overlay.open).toBe(false);
+  expect(await page.evaluate(() => document.querySelector('[inert]'))).toBeNull();
+
+  // The bridge is back; a reload (the draft is in localStorage), and the board opens with both rectangles and saves them.
+  await page.unroute('**/whiteboard/*/save*');
+  await page.reload();
+  await page.waitForFunction(() => window.__h3d?.ready && window.__h3d.frames >= 3, undefined, { timeout: 60_000 });
+  await faceBoard(page);
+  await openBoard(page);
+  await expect.poll(() => sceneTypes(page), { timeout: 15_000 }).toEqual(['rectangle', 'rectangle']);
+  await expect.poll(async () => (await stored(page, key)).elements.filter((e) => e.type === 'rectangle' && !e.isDeleted).length, { timeout: 30_000 }).toBe(2);
+  await savedAt(page, 2);
+  expect(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('h3d.wb.draft.')))).toEqual([]);
+  await page.locator('.wb-close').click();
+  await expect.poll(async () => (await info(page)).overlay.open).toBe(false);
+
+  // Discarding is a choice too: a change that cannot be saved, discarded, is gone the next time.
+  await page.route('**/whiteboard/*/save*', (route) => route.fulfill({ status: 503, contentType: 'text/plain', body: 'bridge down' }));
+  await openBoard(page);
+  await page.keyboard.press('KeyR');
+  await drag(page, 0.2, 0.6, 0.3, 0.75);
+  await expect.poll(() => sceneTypes(page)).toEqual(['rectangle', 'rectangle', 'rectangle']);
+  await page.locator('.wb-close').click();
+  await expect.poll(async () => (await info(page)).overlay.unsaved, { timeout: 20_000 }).toBe(true);
+  await ask.getByRole('button', { name: 'Discard changes' }).click();
+  await expect.poll(async () => (await info(page)).overlay.open).toBe(false);
+  await page.unroute('**/whiteboard/*/save*');
+  await openBoard(page);
+  expect(await sceneTypes(page)).toEqual(['rectangle', 'rectangle']);
+  // The game behind the board is inert: Shift+Tab from the close button stays out of its controls (WB-U3).
+  expect(await page.evaluate(() => document.querySelector('.hud')?.closest('[inert]') !== null)).toBe(true);
+  await page.locator('.wb-close').focus();
+  for (let i = 0; i < 3; i++) {
+    await page.keyboard.press('Shift+Tab');
+    expect(await page.evaluate(() => { const a = document.activeElement; return !a || a === document.body || !!a.closest('.wb, .excalidraw'); })).toBe(true);
+  }
+  await page.locator('.wb-close').click();
+  await expect.poll(async () => (await info(page)).overlay.open).toBe(false);
+  expect(errors).toEqual([]);
+});

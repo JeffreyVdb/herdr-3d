@@ -318,8 +318,28 @@
 }
 .wb-confirm-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+/* The way on, on the ink panel: the board's yellow marker. */
+.wb-btn--go {
+  border-color: transparent;
+  background: var(--sun, #ffc233);
+  color: var(--ink, #1c2540);
+}
+.wb-btn--go:hover {
+  background: #ffd25e;
+}
+/* Unsaved changes on close: discarding them stands apart, on the left, in the board's red marker. */
+.wb-btn--discard {
+  margin-right: auto;
+  border-color: rgb(255 132 120 / 50%);
+  background: transparent;
+  color: #ffb9b1;
+}
+.wb-btn--discard:hover {
+  background: rgb(216 48 44 / 22%);
 }
 
 @media (max-width: 720px) {
