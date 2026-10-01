@@ -36,7 +36,7 @@ import type { RemoteExcalidrawElement } from '@excalidraw/excalidraw/data/reconc
 import { fileUrl, getBoard, putFile, saveBoard, sha256Hex, WB_FILE_TYPES, WB_MAX_FILE, WB_RENDER_MAX_SIDE, type BoardData } from '../net/whiteboard';
 import type { WhiteboardState } from '../net/protocol';
 import { blankRender, cleanAppState, fitInto, isIdle, type BoardStatus, type EditorHost } from './model';
-import { draftKey, dropDraft, keepDraft, readDraft } from './draft';
+import { draftKey, dropDraft, dropDraftIf, keepDraft, readDraft, type Draft } from './draft';
 
 export type { EditorHost } from './model';
 
@@ -122,6 +122,36 @@ const elsSig = (els: readonly ExcalidrawElement[]): string => hashElementsVersio
 /** The board's part of an appState (background, grid) as JSON: compared, never parsed. */
 const appSig = (a: unknown): string => JSON.stringify(cleanAppState(a as Record<string, unknown>));
 
+/**
+ * A saved scene (and its appState signature) has all of a draft: reconciling the draft into it would change nothing.
+ * Every draft element is in it at a version Excalidraw's reconcile keeps over the draft's (higher, or the same with a
+ * nonce not above it: data/reconcile.ts), and the draft's appState, when it changed one, is the saved one. A draft
+ * with anything more (a stroke drawn after that save was taken) is not covered and stays.
+ */
+function covers(saved: readonly ExcalidrawElement[], app: string, d: Draft): boolean {
+  if (d.appState && appSig(d.appState) !== app) return false;
+  const have = new Map(saved.map((e) => [e.id, e]));
+  return restoreElements(d.elements as ExcalidrawElement[], null).every((e) => {
+    const s = have.get(e.id);
+    return !!s && (s.version > e.version || (s.version === e.version && s.versionNonce <= e.versionNonce));
+  });
+}
+
+type PinSizes = Map<string, { version: number; width: number; height: number }>;
+
+/** `elements` with the measured pin sizes; a pin edited since it was measured keeps its own. Same array if none apply. */
+function resized(elements: readonly OrderedExcalidrawElement[], sizes: PinSizes): OrderedExcalidrawElement[] {
+  if (!sizes.size) return elements as OrderedExcalidrawElement[];
+  let changed = false;
+  const out = elements.map((e) => {
+    const f = sizes.get(e.id);
+    if (!f || f.version !== e.version || (f.width === e.width && f.height === e.height)) return e;
+    changed = true;
+    return newElementWith(e, { width: f.width, height: f.height });
+  });
+  return changed ? out : (elements as OrderedExcalidrawElement[]);
+}
+
 /** One open whiteboard: the editor mounted in `host.mount` and its sync with the bridge. */
 export class BoardSession {
   private api: ExcalidrawImperativeAPI | null = null;
@@ -143,8 +173,10 @@ export class BoardSession {
   private changeSeq = 0;
   private status: BoardStatus = { kind: 'loading' };
   private readonly draft: string;
-  /** A kept draft came back at open: the first save that lands drops it. */
+  /** A kept draft came back at open: a save that lands with all of it drops it (never once disposed). */
   private restored = false;
+  /** The newest version the bridge announced before the editor was up: merged once it is. */
+  private announced = 0;
 
   constructor(private readonly host: EditorHost) {
     this.draft = draftKey(host.wsUrl, host.floor);
@@ -230,16 +262,23 @@ export class BoardSession {
     if (this.stale) {
       // Agents pinned since the last render: lay their notes out with the fonts loaded and render the board again.
       await this.normalizePins(api);
+      if (this.closed) return;
       this.schedule(0);
     }
-    if (this.restored && !this.unsaved(api)) {
-      dropDraft(this.draft); // nothing in it the bridge does not have
-      this.restored = false;
-    }
+    // Nothing in the draft the bridge does not have: it goes (only that draft: what it covers is checked again).
+    if (this.restored && !this.unsaved(api)) this.dropDraftCovered(api.getSceneElementsIncludingDeleted(), this.savedApp);
     if (this.unsaved(api)) {
       this.setStatus({ kind: 'dirty' });
       this.schedule(0);
     } else this.setStatus({ kind: 'saved', version: this.base });
+    // The board changed on the bridge while it opened (its update came before the editor could merge it).
+    if (this.announced > this.base) void this.merge().catch(() => {});
+  }
+
+  /** Drops the kept draft if `elements` (saved, with appState `app`) have all of it; a disposed session never does. */
+  private dropDraftCovered(elements: readonly ExcalidrawElement[], app: string): void {
+    if (this.closed || !this.restored) return;
+    if (dropDraftIf(this.draft, (d) => covers(elements, app, d))) this.restored = false;
   }
 
   private async fetchFiles(board: BoardData): Promise<BinaryFileData[]> {
@@ -327,6 +366,8 @@ export class BoardSession {
       try {
         await this.uploadFiles(snap);
         const render = await this.render(snap);
+        // Closed meanwhile (kept as a draft, or discarded): a disposed session posts nothing more.
+        if (this.closed || this.api !== api) return;
         // A merge moved the board on while the files went up or the PNG was made: this snapshot is from before it, and
         // posting it on the new base would drop what the merge brought (an agent's pin). Take the scene again.
         if (this.base !== snap.base) continue;
@@ -340,15 +381,15 @@ export class BoardSession {
             this.savedApp = snap.app;
             this.noteState(st);
           }
-          if (this.restored) {
-            dropDraft(this.draft);
-            this.restored = false;
-          }
+          // A draft restored at open goes once a save has all of it. Not when the session was closed meanwhile: the
+          // draft kept then has what was drawn after this snapshot (and belongs to the next open).
+          this.dropDraftCovered(snap.elements, snap.app);
           // Drawn while it was saving: the next save (scheduled by the change) takes it.
           this.setStatus(this.unsaved(api) ? { kind: 'dirty' } : { kind: 'saved', version: this.base });
           this.host.saved(st);
           return;
         }
+        if (this.closed) return;
         if (r.code === 'whiteboard_conflict') {
           await this.merge();
           continue;
@@ -386,11 +427,11 @@ export class BoardSession {
         const bytes = new Uint8Array(await blob.arrayBuffer());
         to = await sha256Hex(bytes);
         this.canon.set(id, to);
-        if (to !== id) api.addFiles([{ id: to as FileId, mimeType: blob.type as BinaryFileData['mimeType'], dataURL: await toDataURL(blob), created: f.created }]);
+        if (to !== id && this.api === api) api.addFiles([{ id: to as FileId, mimeType: blob.type as BinaryFileData['mimeType'], dataURL: await toDataURL(blob), created: f.created }]);
       }
       if (to !== id) remap.set(id, to);
     }
-    if (!remap.size) return;
+    if (!remap.size || this.api !== api) return;
     const next = api
       .getSceneElementsIncludingDeleted()
       .map((e) => (imageOf(e) && e.fileId && remap.has(e.fileId) ? newElementWith(e, { fileId: remap.get(e.fileId) as FileId }) : e));
@@ -426,27 +467,40 @@ export class BoardSession {
     });
   }
 
-  /** Fetches the board and reconciles it into the live scene (local strokes in progress are kept). */
+  /**
+   * Fetches the board and reconciles it into the live scene (local strokes in progress are kept). Merges may overlap
+   * (an update arrives while one waits on image bytes) and a save may land during one: the version is checked against
+   * the base after every await, and a board older than what the session already has is dropped before it touches the
+   * scene, the appState, the base or the saved signatures. The base only ever goes up.
+   */
   async merge(): Promise<void> {
     const api = this.api;
     if (!api) return;
     const r = await getBoard(this.host.wsUrl, this.host.floor);
-    if (!r.ok || this.closed || this.api !== api) return;
+    if (!r.ok) return;
     const board = r.data as BoardData;
-    // Older than what this session has already (its own save landed meanwhile): nothing to merge.
-    if (board.version < this.base) return;
+    const current = () => !this.closed && this.api === api && board.version >= this.base;
+    if (!current()) return;
     const have = api.getFiles();
     const missing = Object.keys(board.files).filter((id) => !have[id]);
-    if (missing.length) api.addFiles(await this.fetchFiles({ ...board, files: Object.fromEntries(missing.map((id) => [id, board.files[id] as BoardData['files'][string]])) }));
-    for (const id of Object.keys(board.files)) this.uploaded.add(id);
-    this.noteState(board.state);
+    if (missing.length) {
+      const files = await this.fetchFiles({ ...board, files: Object.fromEntries(missing.map((id) => [id, board.files[id] as BoardData['files'][string]])) });
+      if (!current()) return;
+      api.addFiles(files);
+    }
     // Remote alone: restoring against the local elements would bump the remote versions above them.
     let remote = restoreElements(board.scene.elements as ExcalidrawElement[], null, { repairBindings: true });
     const remoteSig = elsSig(remote);
     const remoteApp = cleanAppState(board.scene.appState);
-    if (this.stalePins.size) remote = await this.normalizeList(remote, api.getFiles());
-    if (this.closed || this.api !== api) return;
-    // The live scene as it is now (after the await above: a stroke drawn meanwhile is in it).
+    const pins = new Set(board.state.stale_pins.map((p) => p.id));
+    if (pins.size) {
+      remote = resized(remote, await this.measurePins(remote, api.getFiles(), pins));
+      if (!current()) return;
+    }
+    // From here to the end nothing awaits: this board is applied whole, against the live scene as it is now (a stroke
+    // drawn during the awaits above is in it).
+    for (const id of Object.keys(board.files)) this.uploaded.add(id);
+    this.noteState(board.state);
     const local = api.getSceneElementsIncludingDeleted();
     const localUnsaved = elsSig(local) !== this.savedEls;
     // The background and the grid are the board's too: the remote ones win, unless they were changed here since the
@@ -462,29 +516,37 @@ export class BoardSession {
     else this.setStatus({ kind: 'saved', version: this.base });
   }
 
-  /** The bridge says the board changed: merge it unless it is our own save. */
+  /** The bridge says the board changed: merge it unless it is our own save (or, before the editor is up, note it). */
   remote(state: WhiteboardState): void {
-    if (this.closed || !this.api || state.version <= this.base) return;
-    void this.merge();
+    if (this.closed || state.version <= this.base) return;
+    if (!this.api) {
+      this.announced = Math.max(this.announced, state.version);
+      return;
+    }
+    // A merge that fails leaves the board as it is: the next save's conflict merges again.
+    void this.merge().catch(() => {});
   }
 
   /** Lays out the agents' pins (their notes' sizes are the bridge's guesses) with the fonts loaded. */
   private async normalizePins(api: ExcalidrawImperativeAPI): Promise<void> {
+    const sizes = await this.measurePins(api.getSceneElementsIncludingDeleted(), api.getFiles(), this.stalePins);
+    if (this.api !== api) return;
+    // The scene as it is now (a merge or a stroke may have landed during the measure), not the one measured.
     const all = api.getSceneElementsIncludingDeleted();
-    const next = await this.normalizeList(all, api.getFiles());
+    const next = resized(all, sizes);
     if (next !== all) api.updateScene({ elements: next, captureUpdate: CaptureUpdateAction.NEVER });
   }
 
-  private async normalizeList(elements: readonly OrderedExcalidrawElement[], files: BinaryFiles): Promise<OrderedExcalidrawElement[]> {
-    const pins = elements.filter((e) => this.stalePins.has(e.id) && !e.isDeleted && e.type === 'text');
-    if (!pins.length) return elements as OrderedExcalidrawElement[];
+  /** The sizes of the pinned notes in `elements` measured with their fonts loaded, by id and for their version. */
+  private async measurePins(elements: readonly OrderedExcalidrawElement[], files: BinaryFiles, ids: ReadonlySet<string>): Promise<PinSizes> {
+    const pins = elements.filter((e) => ids.has(e.id) && !e.isDeleted && e.type === 'text');
+    if (!pins.length) return new Map();
     // A tiny export loads the font faces the notes use, so the measure below uses them.
     await exportToCanvas({ elements: pins, files, maxWidthOrHeight: 1, appState: { exportScale: 1 }, exportPadding: 1 }).catch(() => null);
-    const fixed = new Map(restoreElements(pins, null, { repairBindings: true, refreshDimensions: true }).map((e) => [e.id, e]));
-    return elements.map((e) => {
-      const f = fixed.get(e.id);
-      return f && (f.width !== e.width || f.height !== e.height) ? newElementWith(e, { width: f.width, height: f.height }) : e;
-    }) as OrderedExcalidrawElement[];
+    const version = new Map(pins.map((e) => [e.id, e.version]));
+    return new Map(
+      restoreElements(pins, null, { repairBindings: true, refreshDimensions: true }).map((e) => [e.id, { version: version.get(e.id) ?? -1, width: e.width, height: e.height }]),
+    );
   }
 
   /** Pins an image (a drop's bytes) in the middle of the view, as one undoable step. */
@@ -497,8 +559,10 @@ export class BoardSession {
     const bmp = await createImageBitmap(stored);
     const size = fitInto(bmp.width, bmp.height, DROP_BOX.w, DROP_BOX.h);
     bmp.close();
+    const dataURL = await toDataURL(stored);
+    if (this.api !== api) return; // closed meanwhile
     this.canon.set(id, id);
-    api.addFiles([{ id, mimeType: stored.type as BinaryFileData['mimeType'], dataURL: await toDataURL(stored), created: Date.now() }]);
+    api.addFiles([{ id, mimeType: stored.type as BinaryFileData['mimeType'], dataURL, created: Date.now() }]);
     const st = api.getAppState();
     const mid = viewportCoordsToSceneCoords({ clientX: st.offsetLeft + st.width / 2, clientY: st.offsetTop + st.height / 2 }, st);
     const [el] = convertToExcalidrawElements([
@@ -569,6 +633,7 @@ export class BoardSession {
    * and in localStorage when it fits), or dropped with any draft kept before ('discard', the user's choice).
    */
   dispose(keep: 'draft' | 'discard' = 'draft'): void {
+    if (this.closed) return; // once: a disposed session never touches the drafts again
     const api = this.api;
     if (keep === 'discard') dropDraft(this.draft);
     else if (api && (this.saving || this.unsaved(api))) this.keepDraft(api);

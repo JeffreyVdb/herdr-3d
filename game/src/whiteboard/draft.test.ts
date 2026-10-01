@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { draftKey, dropDraft, keepDraft, MAX_STORED_DRAFT, readDraft, type Draft } from './draft';
+import { draftKey, dropDraft, dropDraftIf, keepDraft, MAX_STORED_DRAFT, readDraft, type Draft } from './draft';
 
 class MemStorage {
   readonly m = new Map<string, string>();
@@ -51,5 +51,24 @@ describe('whiteboard drafts', () => {
     dropDraft('k4', s);
     dropDraft('k5', full);
     dropDraft('k6', null);
+  });
+
+  it('a save drops only the copies it has all of: a newer draft kept since stays', () => {
+    const s = store();
+    keepDraft('k7', draft('saved'), s);
+    const has = (text: string) => (d: Draft) => (d.elements[0] as { text: string }).text === text;
+    expect(dropDraftIf('k7', has('saved'), s)).toBe(true);
+    expect(readDraft('k7', s)).toBeNull();
+    // A close kept a newer draft after the save was taken: neither copy goes.
+    keepDraft('k8', draft('newer'), s);
+    expect(dropDraftIf('k8', has('saved'), s)).toBe(false);
+    expect(readDraft('k8', s)?.elements).toEqual([{ id: 'a', text: 'newer' }]);
+    expect(s.getItem('h3d.wb.draft.k8')).toContain('newer');
+    // After a reload (no memory copy) the stored one is checked the same way.
+    s.setItem('h3d.wb.draft.k9', JSON.stringify(draft('newer')));
+    expect(dropDraftIf('k9', has('saved'), s)).toBe(false);
+    expect(dropDraftIf('k9', has('newer'), s)).toBe(true);
+    expect(s.getItem('h3d.wb.draft.k9')).toBeNull();
+    dropDraft('k8', s);
   });
 });

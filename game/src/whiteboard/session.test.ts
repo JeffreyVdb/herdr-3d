@@ -133,6 +133,7 @@ beforeEach(() => {
   renderHold = null;
   open = [];
   localStorage.clear();
+  drafts.dropDraft(drafts.draftKey(WS, FLOOR)); // the memory copy outlives localStorage.clear()
 });
 afterEach(() => {
   for (const s of open) s.dispose('discard');
@@ -254,5 +255,142 @@ describe('BoardSession', () => {
     other.s.dispose('discard');
     expect(drafts.readDraft(key)).toBeNull();
     expect(localStorage.getItem(`h3d.wb.draft.${key}`)).toBeNull();
+  }, 30_000);
+
+  it('a late save of a restored session keeps the newer draft a close kept meanwhile (WB-U1, pass 2 repro)', async () => {
+    const [a, b, c] = make('a', 'restored', 'new') as [OrderedExcalidrawElement, OrderedExcalidrawElement, OrderedExcalidrawElement];
+    const key = drafts.draftKey(WS, FLOOR);
+    const { s, f } = session([a], 1);
+    open.push(s);
+    // open() reconciled a kept draft [a, restored] into the board and set restored, before its first save.
+    drafts.keepDraft(key, { v: 1, at: 1, elements: [a, b], files: [], appState: null });
+    Object.assign(s, { restored: true });
+    f.draw([a, b]);
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    bridgeSaves(1, () => gate);
+    const saving = s.save();
+    await until(() => posted().length === 1);
+    // Drawn while that save is held; the close runs out of time and the user keeps a draft.
+    f.draw([a, b, c]);
+    expect(await s.flush(10)).toBe(false);
+    s.dispose('draft');
+    expect(ids(drafts.readDraft(key)?.elements as ExcalidrawElement[])).toEqual(['a', 'restored', 'new']);
+    release();
+    await saving;
+    expect(ids(posted()[0]?.scene.elements ?? [])).toEqual(['a', 'restored']);
+    // The bridge has [a, restored] only: the kept draft (memory and storage) is what still has `new`.
+    expect(ids(drafts.readDraft(key)?.elements as ExcalidrawElement[])).toEqual(['a', 'restored', 'new']);
+    expect(localStorage.getItem(`h3d.wb.draft.${key}`)).toContain('"id":"new"');
+    expect(posted()).toHaveLength(1);
+  }, 30_000);
+
+  it('a restored draft goes once a save has all of it, not before (WB-U1)', async () => {
+    const [a, b, c] = make('a', 'restored', 'new') as [OrderedExcalidrawElement, OrderedExcalidrawElement, OrderedExcalidrawElement];
+    const key = drafts.draftKey(WS, FLOOR);
+    const { s, f } = session([a], 1);
+    open.push(s);
+    // A draft with more than this session shows (kept by a close in another tab after this one opened, say).
+    drafts.keepDraft(key, { v: 1, at: 1, elements: [a, b, c], files: [], appState: { ...WHITE, viewBackgroundColor: '#123456' } });
+    Object.assign(s, { restored: true });
+    f.draw([a, b]);
+    bridgeSaves(1);
+    expect(await s.flush()).toBe(true);
+    expect(drafts.readDraft(key), 'the save lacks `new` and the background: the draft stays').not.toBeNull();
+    f.draw([a, b, c]);
+    expect(await s.flush()).toBe(true);
+    expect(drafts.readDraft(key), 'still not its background').not.toBeNull();
+    f.setBackground('#123456');
+    expect(await s.flush()).toBe(true);
+    expect(drafts.readDraft(key)).toBeNull();
+    expect(localStorage.getItem(`h3d.wb.draft.${key}`)).toBeNull();
+  }, 30_000);
+
+  it('a session closed during a save posts nothing more (discarded changes are not saved behind the user)', async () => {
+    const [a, b] = make('a', 'b') as [OrderedExcalidrawElement, OrderedExcalidrawElement];
+    const { s, f } = session([a], 1);
+    bridgeSaves(1);
+    let release = () => {};
+    renderHold = new Promise<void>((r) => (release = r));
+    f.draw([a, b]);
+    const saving = s.save();
+    await until(() => vi.mocked(ex.exportToBlob).mock.calls.length > 0);
+    s.dispose('discard');
+    renderHold = null;
+    release();
+    await saving;
+    expect(net.saveBoard).not.toHaveBeenCalled();
+    expect(drafts.readDraft(drafts.draftKey(WS, FLOOR))).toBeNull();
+  }, 30_000);
+
+  it('an older merge waiting on an image does not replace a newer remote background (WB-R1, pass 2 repro)', async () => {
+    const fileId = 'a'.repeat(64);
+    const els = [...make('a'), ...ex.convertToExcalidrawElements([{ type: 'image', id: 'im', fileId: fileId as never, x: 200, y: 0, width: 20, height: 20 }], { regenerateIds: false })] as OrderedExcalidrawElement[];
+    const { s, f } = session(els, 1);
+    open.push(s);
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const meta = { [fileId]: { mimeType: 'image/png', size: 1, created: 1 } };
+    const older = board(2, els, { ...WHITE, viewBackgroundColor: '#ff0000' });
+    Object.assign(older.data.files, meta);
+    let fetches = 0;
+    Object.assign(s, {
+      fetchFiles: async () => {
+        if (++fetches === 1) await gate;
+        return [{ id: fileId, mimeType: 'image/png', created: 1, dataURL: 'data:image/png;base64,AA==' }];
+      },
+    });
+    const newer = board(3, els, { ...WHITE, viewBackgroundColor: '#00ff00' });
+    Object.assign(newer.data.files, meta);
+    net.getBoard.mockResolvedValueOnce(older).mockResolvedValueOnce(newer);
+    const merging = s.merge();
+    await until(() => fetches === 1);
+    await s.merge();
+    expect(f.app().viewBackgroundColor).toBe('#00ff00');
+    release();
+    await merging;
+    expect(f.app().viewBackgroundColor, 'v2 must not overwrite v3').toBe('#00ff00');
+    expect((s as unknown as { base: number }).base).toBe(3);
+    expect(s.dirty).toBe(false);
+  }, 30_000);
+
+  it('a merge that started before a save landed does not take the base or the appState back (WB-R1)', async () => {
+    const fileId = 'b'.repeat(64);
+    const els = [...make('a'), ...ex.convertToExcalidrawElements([{ type: 'image', id: 'im', fileId: fileId as never, x: 200, y: 0, width: 20, height: 20 }], { regenerateIds: false })] as OrderedExcalidrawElement[];
+    const { s, f } = session(els, 1);
+    open.push(s);
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    // Another client's v2: a red background (and the image).
+    const v2 = board(2, els, { ...WHITE, viewBackgroundColor: '#ff0000' });
+    Object.assign(v2.data.files, { [fileId]: { mimeType: 'image/png', size: 1, created: 1 } });
+    net.getBoard.mockResolvedValue(v2);
+    let fetches = 0;
+    Object.assign(s, {
+      fetchFiles: async () => {
+        if (++fetches === 1) await gate;
+        return [{ id: fileId, mimeType: 'image/png', created: 1, dataURL: 'data:image/png;base64,AA==' }];
+      },
+    });
+    // whiteboard.updated v2: the merge waits on the image bytes.
+    s.remote(v2.data.state);
+    await until(() => fetches === 1);
+    // Meanwhile a blue background here: its save conflicts, merges v2 (keeping blue) and lands as v3.
+    f.setBackground('#0000ff');
+    let n = 0;
+    net.saveBoard.mockImplementation(async () =>
+      ++n === 1
+        ? { ok: false, code: 'whiteboard_conflict', message: 'stale base' }
+        : { ok: true, data: { floor: FLOOR, version: 3, author: 'Theo', at: 1, render_version: 3, render: true, stale: false, stale_pins: [] } },
+    );
+    expect(await s.flush()).toBe(true);
+    expect(posted().map((p) => p.base)).toEqual([1, 2]);
+    expect((s as unknown as { base: number }).base).toBe(3);
+    release();
+    await until(() => fetches >= 2);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(f.app().viewBackgroundColor).toBe('#0000ff');
+    expect((s as unknown as { base: number }).base).toBe(3);
+    expect(s.dirty).toBe(false);
   }, 30_000);
 });

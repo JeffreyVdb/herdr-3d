@@ -2,7 +2,8 @@
  * M13 whiteboard: a board's unsaved changes, kept when its editor closes without saving them (the bridge could not be
  * reached and the user chose to close anyway). In memory for as long as the page lives, and in localStorage as well
  * when it fits, so the next open of that board brings them back (reconciled with what the bridge has since) and saves
- * them. One draft per bridge and floor; a save that lands drops it. No React, no Excalidraw: unit-tested on its own.
+ * them. One draft per bridge and floor; a save that lands with all of it drops it. No React, no Excalidraw:
+ * unit-tested on its own.
  */
 
 /** A file a draft's images use: Excalidraw's BinaryFileData. */
@@ -84,7 +85,31 @@ export function readDraft(key: string, store: Storage | null = storage()): Draft
   }
 }
 
-/** Drops the draft kept for key (it was saved, or the user discarded it). */
+/**
+ * Drops the copies of the draft kept for key (memory, localStorage) that `covered` says a save has all of; a copy with
+ * more (kept later, by a close after that save was taken) stays. True when no draft is left for key.
+ */
+export function dropDraftIf(key: string, covered: (d: Draft) => boolean, store: Storage | null = storage()): boolean {
+  let left = false;
+  const m = memory.get(key);
+  if (m) {
+    if (covered(m)) memory.delete(key);
+    else left = true;
+  }
+  try {
+    const raw = store?.getItem(PREFIX + key);
+    if (raw) {
+      const d: unknown = JSON.parse(raw);
+      if (!isDraft(d) || covered(d)) store?.removeItem(PREFIX + key);
+      else left = true;
+    }
+  } catch {
+    // blocked or unreadable storage: nothing there to drop
+  }
+  return !left;
+}
+
+/** Drops the draft kept for key, whatever it holds (the user discarded the changes). */
 export function dropDraft(key: string, store: Storage | null = storage()): void {
   memory.delete(key);
   try {
