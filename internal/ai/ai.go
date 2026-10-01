@@ -134,14 +134,23 @@ var (
 
 // Scrub removes the given secrets, bearer tokens and anything shaped like an
 // API key from s, the way the gh token is removed from githubcli errors.
+// Every non-empty secret is removed, however short: a key the settings accept
+// is a key that must never leave.
 func Scrub(s string, secrets ...string) string {
+	s = redact(s, secrets...)
+	s = bearerRe.ReplaceAllString(s, "${1}[key]")
+	return skRe.ReplaceAllString(s, "[key]")
+}
+
+// redact replaces the given secrets only, nothing shaped like a key: for
+// text that is not an error message, where a long model id must stay intact.
+func redact(s string, secrets ...string) string {
 	for _, k := range secrets {
-		if len(k) >= 4 {
+		if k != "" {
 			s = strings.ReplaceAll(s, k, "[key]")
 		}
 	}
-	s = bearerRe.ReplaceAllString(s, "${1}[key]")
-	return skRe.ReplaceAllString(s, "[key]")
+	return s
 }
 
 // FirstJSONObject finds the first complete JSON object in text (the answer of

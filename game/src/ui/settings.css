@@ -237,3 +237,10 @@ dialog.settings {
 .settings-field textarea[aria-invalid='true'] {
   border-color: #ff7b73;
 }
+
+/* #92: the AI section's buttons are thumb-sized on a phone. */
+@media (max-width: 600px) {
+  .settings-role .btn--sm {
+    min-height: 44px;
+  }
+}

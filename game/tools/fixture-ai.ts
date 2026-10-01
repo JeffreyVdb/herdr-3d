@@ -4,7 +4,8 @@
 // - `ai.models` / `ai.test` really call the endpoint: Jev at `simjev=<url>` (the real API when absent) and the
 //   LLM at the base URL the game sends; the fakes the e2e starts answer them. 401/403 is `auth_failed`, a missing
 //   `/models` is `no_models_endpoint` (after trying `/v1`);
-// - `ai.set` is `test_required` unless exactly that config passed `ai.test`; a blank key keeps the stored one;
+// - `ai.set` is `test_required` unless exactly that config passed `ai.test`, as submitted or as resolved (the base
+//   URL with /v1 added); a blank key keeps the stored one;
 // - every change is an `ai.update` event with the state flat in it;
 // - `simai=off` plays a bridge without the service: `ai.*` is `unsupported`; `simfail=no_ai` a bridge before #92.
 //
@@ -41,7 +42,7 @@ export class AiSim {
   private cls: Cls | null = null;
   private llm: Llm | null = null;
   private readonly invalid = new Set<string>();
-  private readonly passed = new Map<string, { fp: string; base_url: string; json_mode: boolean | null }>();
+  private readonly passed = new Map<string, { fps: string[]; base_url: string; json_mode: boolean | null }>();
 
   constructor(
     private readonly jev: string,
@@ -213,7 +214,9 @@ export class AiSim {
       throw e;
     }
     res.latency_ms = Date.now() - t0;
-    this.passed.set(role, { fp: this.fp(role, d), ...pass });
+    const fps = [this.fp(role, d)];
+    if (role === 'llm' && pass.base_url !== d.base_url) fps.push(this.fp(role, { ...d, base_url: pass.base_url }));
+    this.passed.set(role, { fps, ...pass });
     return res;
   }
 
@@ -226,7 +229,7 @@ export class AiSim {
     const role = this.role(a);
     const d = this.draft(role, a);
     const p = this.passed.get(role);
-    if (!p || p.fp !== this.fp(role, d)) throw new AiError('test_required', 'test these settings first: they have not passed a test');
+    if (!p || !p.fps.includes(this.fp(role, d))) throw new AiError('test_required', 'test these settings first: they have not passed a test');
     this.invalid.delete(role);
     if (role === 'classifier') this.cls = { model: d.model, key: d.key };
     else this.llm = { base_url: p.base_url || d.base_url, model: d.model, key: d.key, extra: d.extra, json_mode: p.json_mode };

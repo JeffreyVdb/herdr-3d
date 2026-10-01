@@ -112,6 +112,32 @@ test('configure both models through the panel: each is ready, the bridge keeps t
     const everything = await page.evaluate(() => document.documentElement.outerHTML + [...document.querySelectorAll('input,textarea')].map((e) => (e as HTMLInputElement).value).join('|'));
     expect(everything).not.toContain(JEV_KEY);
     expect(everything).not.toContain(LLM_KEY);
+    // The game's command log (what __h3d.sent() exposes) never held a typed key either.
+    const log = await page.evaluate(() => window.__h3d.sent());
+    expect(log.filter((c) => c.t.startsWith('ai.')).length).toBeGreaterThan(4);
+    expect(JSON.stringify(log)).not.toContain(JEV_KEY);
+    expect(JSON.stringify(log)).not.toContain(LLM_KEY);
+  } finally {
+    await Promise.all([jev.close(), llm.close()]);
+  }
+  clean();
+});
+
+test('Test before Load models: a bare base URL is resolved by the Test and the result can be saved', async ({ page }) => {
+  const clean = watchErrors(page);
+  const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
+  try {
+    const { llm: llmBox } = await setup(page, jev);
+    await llmBox.getByLabel('Base URL').fill(llm.url);
+    await llmBox.getByLabel('API key').fill(LLM_KEY);
+    await llmBox.getByLabel('Model').fill('mimo-v2.6-flash');
+    await llmBox.getByRole('button', { name: 'Test' }).click();
+    await expect(llmBox).toContainText('Test passed');
+    await expect(llmBox.getByLabel('Base URL')).toHaveValue(`${llm.url}/v1`);
+    await expect(llmBox.getByRole('button', { name: 'Save' })).toBeEnabled();
+    await llmBox.getByRole('button', { name: 'Save' }).click();
+    await expect(llmBox.locator('.settings-badge')).toHaveText('Ready');
+    await expect(llmBox.getByLabel('Base URL')).toHaveValue(`${llm.url}/v1`);
   } finally {
     await Promise.all([jev.close(), llm.close()]);
   }

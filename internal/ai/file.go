@@ -16,6 +16,16 @@ import (
 type Stored struct {
 	Classifier *StoredClassifier `json:"classifier,omitempty"`
 	LLM        *StoredLLM        `json:"llm,omitempty"`
+	// EnvBase remembers what a passing test resolved the environment's LLM
+	// base URL to (/v1 added). It is a cache keyed by the environment's URL:
+	// it applies only while that URL is unchanged, and Clear keeps it.
+	EnvBase *ResolvedBase `json:"env_base,omitempty"`
+}
+
+// ResolvedBase is a base URL and what it was resolved to.
+type ResolvedBase struct {
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 // StoredClassifier is the classifier's settings.
@@ -35,6 +45,10 @@ type StoredLLM struct {
 
 func (s Stored) clone() Stored {
 	var c Stored
+	if s.EnvBase != nil {
+		v := *s.EnvBase
+		c.EnvBase = &v
+	}
 	if s.Classifier != nil {
 		v := *s.Classifier
 		c.Classifier = &v

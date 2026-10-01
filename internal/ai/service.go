@@ -18,7 +18,8 @@ import (
 const (
 	DefaultClassifierTimeout = 3 * time.Second
 	DefaultLLMTimeout        = 15 * time.Second
-	// DefaultListTimeout bounds a model-list load and a test.
+	// DefaultListTimeout bounds a model-list load. A test is bounded by its
+	// role's request timeout.
 	DefaultListTimeout = 15 * time.Second
 	// DefaultConcurrency is the global limit of calls in flight, over every
 	// feature and both roles.
@@ -72,10 +73,11 @@ type Service struct {
 	passed  map[Role]passedTest
 }
 
-// passedTest is the last passing test of a role: what it tested (a
-// fingerprint of the whole config, key included) and what it learned.
+// passedTest is the last passing test of a role: what it tested (the
+// fingerprints of the whole config, key included, as submitted and, for an
+// LLM whose base URL was resolved, as resolved) and what it learned.
 type passedTest struct {
-	fp       string
+	fps      []string
 	at       time.Time
 	baseURL  string // the LLM's base URL as resolved (/v1 added)
 	jsonMode *bool
@@ -207,6 +209,10 @@ func (s *Service) effectiveLocked(r Role) config {
 		}
 		if e.LLMBaseURL != "" {
 			c.baseURL = trimSlash(e.LLMBaseURL)
+			// What a passing test resolved it to (/v1 added) is what calls use.
+			if rb := s.stored.EnvBase; rb != nil && rb.From == c.baseURL {
+				c.baseURL = rb.To
+			}
 		}
 		if e.LLMModel != "" {
 			c.model = e.LLMModel
@@ -324,9 +330,16 @@ func (s *Service) State(r Role) State {
 // ---- failures ------------------------------------------------------------
 
 // fail records that a role's config failed (a test or a call): it is invalid
-// until a test passes, it is saved again or cleared.
-func (s *Service) fail(r Role, err error, runtime bool) {
+// until a test passes, it is saved again or cleared. c is the config the
+// failed request used: when the role has been given another one since (a new
+// key tested and saved while the request was out), the failure belongs to the
+// old config and the new one is left alone.
+func (s *Service) fail(r Role, c config, err error, runtime bool) {
 	s.mu.Lock()
+	if s.effectiveLocked(r).fingerprint(r) != c.fingerprint(r) {
+		s.mu.Unlock()
+		return
+	}
 	le := &LastError{Role: r, Kind: KindOf(err), Message: err.Error(), At: s.opts.Now().UnixMilli(), Runtime: runtime}
 	s.invalid[r] = le
 	s.last = le
@@ -409,7 +422,7 @@ func (h classifierHandle) Classify(ctx context.Context, state map[string]any, qu
 	if err != nil {
 		err = s.scrubbed(err, c.key)
 		if KindOf(err) == KindAuthFailed {
-			s.fail(RoleClassifier, err, true)
+			s.fail(RoleClassifier, c, err, true)
 		}
 		return 0, err
 	}
@@ -429,7 +442,7 @@ func (h llmHandle) Complete(ctx context.Context, req Request) (string, error) {
 	if err != nil {
 		err = s.scrubbed(err, c.key)
 		if KindOf(err) == KindAuthFailed {
-			s.fail(RoleLLM, err, true)
+			s.fail(RoleLLM, c, err, true)
 		}
 		return "", err
 	}

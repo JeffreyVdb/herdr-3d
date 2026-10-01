@@ -149,6 +149,27 @@ describe('the AI integration section (#92)', () => {
     expect(r.textContent).toContain('must be a JSON object');
   });
 
+  it('Test before Load models: the resolved base URL replaces the typed one and Save sends exactly that', async () => {
+    const m = mount({}, {
+      'ai.test': () => ({ ok: true, data: { ok: true, latency_ms: 40, json_mode: true, base_url: 'https://api.example.com/v1' } }),
+      'ai.set': () => ({ ok: true, data: {} }),
+    });
+    const r = m.role(1);
+    const base = m.input(r, 'Base URL');
+    m.type(base, 'https://api.example.com');
+    m.type(m.input(r, 'API key'), 'sk-abcdefghijkl');
+    m.type(m.input(r, 'Model'), 'mimo-v2.6-flash');
+    expect(m.btn(r, 'Save').disabled).toBe(true);
+    m.btn(r, 'Test').click();
+    await m.flush();
+    expect(m.sent[0]).toEqual({ t: 'ai.test', args: { role: 'llm', base_url: 'https://api.example.com', key: 'sk-abcdefghijkl', model: 'mimo-v2.6-flash' } });
+    expect(base.value).toBe('https://api.example.com/v1');
+    expect(m.btn(r, 'Save').disabled).toBe(false);
+    m.btn(r, 'Save').click();
+    await m.flush();
+    expect(m.sent.at(-1)).toEqual({ t: 'ai.set', args: { role: 'llm', base_url: 'https://api.example.com/v1', key: 'sk-abcdefghijkl', model: 'mimo-v2.6-flash' } });
+  });
+
   it('a missing /models offers the typed id; an LLM may be tested without a key', async () => {
     const m = mount({}, { 'ai.models': () => ({ ok: false, code: 'no_models_endpoint', message: 'x' }), 'ai.test': () => ({ ok: true, data: { ok: true, latency_ms: 5 } }) });
     const r = m.role(1);

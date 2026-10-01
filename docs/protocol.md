@@ -1566,7 +1566,9 @@ only calls the bridge makes by itself are `ai.models` (a model list) and `ai.tes
   only `key_set` and `key_hint` (the last four characters, `""` for a key under 8). A blank or absent `key` means "the
   current key". Keys live in one `0600` file next to the database (`ai.json`, `--ai-file` / `HERDR_WORLD_AI_FILE`), not
   in it, written atomically, never logged. They are scrubbed from every error (the provider's own text is clipped and
-  cleaned: the key, `Bearer …` and key-shaped strings go) and the audit log has the role, base URL, model and whether a
+  cleaned: the key, however short, `Bearer …` and key-shaped strings go) and from the model ids and descriptions of
+  `ai.models` (the key itself only: a long id that is no key stays whole). The game's own command log
+  (`window.__h3d.sent()`) records an `ai.*` command with `key` replaced by `[redacted]`. The audit log has the role, base URL, model and whether a
   key was given, never a key or its length. A file that is not valid JSON stops the bridge (it is never overwritten).
 - **`env`** lists the fields the bridge environment sets (`HERDR_WORLD_AI_CLASSIFIER_KEY_FILE`,
   `HERDR_WORLD_AI_CLASSIFIER_MODEL`, `HERDR_WORLD_AI_LLM_BASE_URL`, `HERDR_WORLD_AI_LLM_KEY_FILE`,
@@ -1577,26 +1579,32 @@ only calls the bridge makes by itself are `ai.models` (a model list) and `ai.tes
   `models[].name`; a 401 is `auth_failed`. LLM: `GET {base}/models` → `data[].id` (sorted), the base URL normalised
   (trailing slash removed; `/v1` added **only** if `{base}/models` is 404 and `{base}/v1/models` works, the result's
   `base_url` says what was used); no `/models` at all is `no_models_endpoint` and the client lets the user type a model
-  id. A base URL is `http(s)://host…` without credentials, query or fragment; redirects are never followed.
+  id. A base URL is `http(s)://host…` without credentials, query or fragment; redirects are never followed. A load takes
+  one of the two global call slots like a feature's call.
 - **`ai.test`** `{role, key?, base_url?, model?, extra_body?}` (fields left out are the current ones). The classifier
   gets a trivial yes/no question and must answer a score in [0,1] (`score`). The LLM gets a one-line JSON request with
   `response_format: {"type":"json_object"}`; on a 400 it is repeated without, and `json_mode` says which works. A
   failure is an error (`auth_failed`, `unreachable`, `timeout`, `bad_response`, `rate_limited`, `provider_failed`,
-  `incomplete`, `bad_request`). A pass is remembered for 30 minutes, for exactly that config (a fingerprint of base URL,
-  model, key and `extra_body`). A test of the config **in use** that fails makes the role `invalid`; one that passes lifts
+  `incomplete`, `bad_request`). A test takes one of the two global call slots and is bounded by its role's request
+  timeout (3 s classifier, 15 s LLM, per request). A pass is remembered for 30 minutes, for exactly that config (a
+  fingerprint of base URL, model, key and `extra_body`) **and**, when the base URL was resolved (`/v1` added), for the
+  config with the resolved URL: the panel shows the resolved URL after a test and submits it to `ai.set`. A test of the config **in use** that fails makes the role `invalid`; one that passes lifts
   `invalid`. A test of anything else changes no state.
 - **`ai.set`** `{role, key?, base_url?, model?, extra_body?}` saves a role and returns the state; fields left out are
   kept. It is `test_required` unless exactly that config passed `ai.test`: **a role never becomes `ready` untested**.
   `extra_body` (LLM only) is a JSON object of at most 4 KiB merged into every chat request (`{"thinking":{"type":"disabled"}}`
-  for MiMo); it cannot set `messages`, `model` or `stream`; `null` clears it. Nothing is hardcoded per vendor.
+  for MiMo); it cannot set `messages`, `model` or `stream`; `null` clears it. Nothing is hardcoded per vendor. When the
+  base URL is the environment's (`HERDR_WORLD_AI_LLM_BASE_URL`), the URL a passing test resolved it to is remembered
+  (`env_base` in `ai.json`, only while the environment URL is the same) and is what the view shows and calls use.
 - **`ai.clear`** `{role}` removes a role's settings and key.
-- **Bounds** (shared by every feature and both roles): a timeout per attempt (3 s classifier, 15 s LLM; model lists and
-  tests 15 s), **at most one retry** (a network failure, a timeout or a 5xx; the `response_format` fallback is that one
-  retry; a 401/403 or a 429 is never retried), and **two calls in flight at most** over the whole bridge; a waiting call
-  gives up with its context and holds no slot.
+- **Bounds** (shared by every feature and both roles): a timeout per attempt (3 s classifier, 15 s LLM; model lists 15 s;
+  tests use their role's bound), **at most one retry** (a network failure, a timeout or a 5xx; the `response_format` fallback is that one
+  retry; a 401/403 or a 429 is never retried), and **two calls in flight at most** over the whole bridge, model-list loads and tests included; a waiting
+  call gives up with its context and holds no slot.
 - **Runtime 401/403** makes that role `invalid`, with `last_error {role, kind: "auth_failed", runtime: true}`, and
   every consumer pauses (they get `ErrNotReady`, no request goes out) until a passing `ai.test` of the config in use, an
-  `ai.set` or an `ai.clear`. The game shows a toast ("AI integration paused: classification key rejected") on
+  `ai.set` or an `ai.clear`. A rejection that comes back for a config no longer in use (the key was replaced while the
+  request was out) is ignored. The game shows a toast ("AI integration paused: classification key rejected") on
   the `ai.update` that carries it, and a chip in the top bar while a role is configured but not `ready`.
 - Error codes besides the usual: `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`,
   `rate_limited`, `provider_failed`, `incomplete`, `test_required`, `env_locked`.

@@ -114,41 +114,58 @@ func (s *Service) Models(ctx context.Context, r Role, f Fields) (*ModelsResult, 
 	if err != nil {
 		return nil, err
 	}
+	switch {
+	case r == RoleClassifier && c.key == "":
+		return nil, newErr(KindIncomplete, "enter the key first")
+	case r == RoleLLM && c.baseURL == "":
+		return nil, newErr(KindIncomplete, "enter the base URL first")
+	}
+	// A load is a call like any other: it takes one of the global slots.
+	release, err := s.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	ctx, cancel := context.WithTimeout(ctx, s.opts.ListTimeout)
 	defer cancel()
+	var res ModelsResult
 	switch r {
 	case RoleClassifier:
-		if c.key == "" {
-			return nil, newErr(KindIncomplete, "enter the key first")
-		}
-		m, err := s.jev.models(ctx, c.key)
-		if err != nil {
-			return nil, s.scrubbed(err, c.key)
-		}
-		return &ModelsResult{Models: m}, nil
+		res.Models, err = s.jev.models(ctx, c.key)
 	default:
-		if c.baseURL == "" {
-			return nil, newErr(KindIncomplete, "enter the base URL first")
-		}
-		base, m, err := s.resolveBase(ctx, c.baseURL, c.key)
-		if err != nil {
-			return nil, s.scrubbed(err, c.key)
-		}
-		return &ModelsResult{Models: m, BaseURL: base}, nil
+		res.BaseURL, res.Models, err = s.resolveBase(ctx, c.baseURL, c.key, 0)
 	}
+	if err != nil {
+		return nil, s.scrubbed(err, c.key)
+	}
+	// A provider's ids and descriptions are its words: they never carry the key.
+	for i, m := range res.Models {
+		res.Models[i] = ModelInfo{ID: redact(m.ID, c.key), Description: redact(m.Description, c.key)}
+	}
+	return &res, nil
 }
 
 // resolveBase lists {base}/models, and when that 404s tries {base}/v1/models:
-// only if that works is /v1 added.
-func (s *Service) resolveBase(ctx context.Context, base, key string) (string, []ModelInfo, error) {
-	m, err := s.openAI.models(ctx, base, key)
+// only if that works is /v1 added. A per above zero bounds each of the two
+// requests.
+func (s *Service) resolveBase(ctx context.Context, base, key string, per time.Duration) (string, []ModelInfo, error) {
+	list := func(base string) ([]ModelInfo, error) {
+		lctx := ctx
+		if per > 0 {
+			var cancel context.CancelFunc
+			lctx, cancel = context.WithTimeout(ctx, per)
+			defer cancel()
+		}
+		return s.openAI.models(lctx, base, key)
+	}
+	m, err := list(base)
 	if err == nil {
 		return base, m, nil
 	}
 	if KindOf(err) != KindNoModels || strings.HasSuffix(base, "/v1") {
 		return base, nil, err
 	}
-	m2, err2 := s.openAI.models(ctx, base+"/v1", key)
+	m2, err2 := list(base + "/v1")
 	if err2 == nil {
 		return base + "/v1", m2, nil
 	}
@@ -171,34 +188,49 @@ func (s *Service) Test(ctx context.Context, r Role, f Fields) (*TestResult, erro
 		return nil, err
 	}
 	fp := c.fingerprint(r)
-	ctx, cancel := context.WithTimeout(ctx, s.opts.ListTimeout)
-	defer cancel()
+	// A test is a call like any other: it takes one of the global slots, and
+	// is bounded by its role's request timeout.
+	release, err := s.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	start := s.opts.Now()
 	var res *TestResult
-	var pass passedTest
+	pass := passedTest{fps: []string{fp}}
 	switch r {
 	case RoleClassifier:
+		cctx, cancel := context.WithTimeout(ctx, s.opts.ClassifierTimeout)
+		defer cancel()
 		var score float64
-		score, err = s.jev.classify(ctx, c.key, c.model, map[string]any{"message": "Hello, how are you today?"}, "Is the message a greeting?")
+		score, err = s.jev.classify(cctx, c.key, c.model, map[string]any{"message": "Hello, how are you today?"}, "Is the message a greeting?")
 		res = &TestResult{Score: &score}
 	default:
 		res, pass.baseURL, pass.jsonMode, err = s.testLLM(ctx, c)
+		if err == nil && pass.baseURL != c.baseURL {
+			// The pass also covers the resolved config: that is what the UI
+			// submits next, and what runs.
+			resolved := c
+			resolved.baseURL = pass.baseURL
+			pass.fps = append(pass.fps, resolved.fingerprint(r))
+		}
 	}
 	if err != nil {
 		err = s.scrubbed(err, c.key)
 		s.mu.Lock()
 		inUse := s.effectiveLocked(r).fingerprint(r) == fp
 		s.mu.Unlock()
-		if inUse && ctx.Err() == nil {
-			s.fail(r, err, false)
+		// A cancelled or timed-out test says nothing about the key.
+		if inUse && ctx.Err() == nil && KindOf(err) != KindTimeout {
+			s.fail(r, c, err, false)
 		}
 		return nil, err
 	}
 	res.LatencyMS = time.Since(start).Milliseconds()
-	pass.fp, pass.at = fp, s.opts.Now()
+	pass.at = s.opts.Now()
 	s.mu.Lock()
 	s.passed[r] = pass
-	lift := s.effectiveLocked(r).fingerprint(r) == fp && s.invalid[r] != nil
+	lift := s.invalid[r] != nil && pass.covers(s.effectiveLocked(r).fingerprint(r))
 	if lift {
 		s.recoverLocked(r)
 	}
@@ -209,11 +241,21 @@ func (s *Service) Test(ctx context.Context, r Role, f Fields) (*TestResult, erro
 	return res, nil
 }
 
+// covers reports whether the test passed this config.
+func (p passedTest) covers(fp string) bool {
+	for _, f := range p.fps {
+		if f == fp {
+			return true
+		}
+	}
+	return false
+}
+
 // testLLM asks for a one-line JSON object, with response_format and, when
 // the endpoint refuses it, without: that is how json_mode is found.
 func (s *Service) testLLM(ctx context.Context, c config) (*TestResult, string, *bool, error) {
 	base := c.baseURL
-	if b, _, err := s.resolveBase(ctx, c.baseURL, c.key); err == nil {
+	if b, _, err := s.resolveBase(ctx, c.baseURL, c.key, s.opts.LLMTimeout); err == nil {
 		base = b
 	} else if k := KindOf(err); k == KindAuthFailed || k == KindUnreachable || k == KindTimeout {
 		return nil, "", nil, err
@@ -226,10 +268,15 @@ func (s *Service) testLLM(ctx context.Context, c config) (*TestResult, string, *
 	temp := 0.0
 	req.Temperature = &temp
 	mode := true
-	text, rejected, err := s.openAI.complete(ctx, base, c.key, c.model, c.extra, req, mode)
+	ask := func(mode bool) (string, bool, error) {
+		actx, cancel := context.WithTimeout(ctx, s.opts.LLMTimeout)
+		defer cancel()
+		return s.openAI.complete(actx, base, c.key, c.model, c.extra, req, mode)
+	}
+	text, rejected, err := ask(mode)
 	if rejected {
 		mode = false
-		text, _, err = s.openAI.complete(ctx, base, c.key, c.model, c.extra, req, mode)
+		text, _, err = ask(mode)
 	}
 	if err != nil {
 		return nil, "", nil, err
@@ -254,7 +301,7 @@ func (s *Service) Set(r Role, f Fields) error {
 	fp := c.fingerprint(r)
 	s.mu.Lock()
 	p, ok := s.passed[r]
-	if !ok || p.fp != fp || s.opts.Now().Sub(p.at) > testValidity {
+	if !ok || !p.covers(fp) || s.opts.Now().Sub(p.at) > testValidity {
 		s.mu.Unlock()
 		return newErr(KindTestRequired, "test these settings first: they have not passed a test")
 	}
@@ -294,6 +341,14 @@ func (s *Service) applyLocked(next *Stored, r Role, c config, p passedTest) {
 	case RoleLLM:
 		if next.LLM == nil {
 			next.LLM = &StoredLLM{}
+		}
+		if locked["base_url"] {
+			// The environment owns the URL; the pass resolved it: remember
+			// that, so calls go where the test went.
+			next.EnvBase = nil
+			if env := trimSlash(s.opts.Env.LLMBaseURL); p.baseURL != "" && p.baseURL != env {
+				next.EnvBase = &ResolvedBase{From: env, To: p.baseURL}
+			}
 		}
 		next.LLM.BaseURL = pick("base_url", p.baseURL, next.LLM.BaseURL)
 		next.LLM.Model = pick("model", c.model, next.LLM.Model)

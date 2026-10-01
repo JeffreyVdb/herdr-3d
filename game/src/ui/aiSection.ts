@@ -432,7 +432,7 @@ type AiSectionHandleCur = AiClassifier | AiLlm;
  */
 export function aiSection(host: AiSectionHost): (body: HTMLElement) => SectionHandle {
   return (body) => {
-    const intro = el('p', 'settings-lede', 'Models the bridge can call for features. A feature has to be switched on separately and says what it sends; nothing is sent until you press Test.');
+    const intro = el('p', 'settings-lede', 'Models the bridge can call for features. A feature has to be switched on separately and says what it sends; nothing is sent until you press Load models or Test.');
     const missing = el('p', 'settings-field-hint', 'This bridge has no AI integration. Update it to use this.');
     const forms = (['classifier', 'llm'] as const).map((r) => new RoleForm(r, host));
     body.append(intro, missing, ...forms.map((f) => f.root));

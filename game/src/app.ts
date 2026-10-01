@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BridgeClient, type CommandResult, type ConnState, type SocketLike } from './net/client';
 import { bridgeUrl, takeToken } from './net/endpoint';
 import { postUpload } from './net/upload';
+import { loggedArgs } from './net/redact';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
 import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
@@ -798,7 +799,8 @@ export class App {
   }
 
   async send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult> {
-    const entry: (typeof this.sent)[number] = { t, args };
+    // The log (and window.__h3d.sent()) never holds a typed API key; the command goes out as it is.
+    const entry: (typeof this.sent)[number] = { t, args: loggedArgs(t, args) };
     this.sent.push(entry);
     const r = await this.client.request(t, args);
     entry.result = r;
