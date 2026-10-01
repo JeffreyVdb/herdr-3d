@@ -252,7 +252,8 @@ export class Hud {
         break;
     }
     this.conn.dataset.phase = s.phase;
-    this.conn.title = s.phase === 'waiting' || s.phase === 'failed' ? s.reason : '';
+    // M13: under 1100 px the words go (screenShare.css) and the title carries them.
+    this.conn.title = s.phase === 'waiting' || s.phase === 'failed' ? s.reason : text;
     if (span && span.textContent !== text) span.textContent = text;
   }
 

@@ -86,7 +86,7 @@ async function facingTv(page: Page, z = 3.2): Promise<void> {
 }
 
 const screen = (page: Page) => page.evaluate(() => window.__h3d.screen());
-const shares = async (page: Page) => (await page.evaluate(() => window.__h3d.sent())).filter((c) => c.t === 'screen.share').map((c) => c.args);
+const shares = async (page: Page) => (await page.evaluate(() => window.__h3d.screen()))?.reported ?? [];
 
 test('Share → LIVE and the TV plays it; a frame request gets a JPEG and a toast; Stop clears it all', async ({ page }) => {
   const errors: string[] = [];
@@ -133,7 +133,14 @@ test('Share → LIVE and the TV plays it; a frame request gets a JPEG and a toas
   }
   expect(blue / (tvShot.width * tvShot.height)).toBeGreaterThan(0.4);
   await page.screenshot({ path: resolve(EVIDENCE, '02-live-tv.png') });
+  // On a wide bar the badge also says what is shared (under 1500 px only the tape and Stop: the words are its title).
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await expect(page.locator('.share-what')).toBeVisible();
   await page.locator('.topbar').screenshot({ path: resolve(EVIDENCE, '03-live-badge.png') });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await expect(page.locator('.share-what')).toBeHidden();
+  await expect(page.locator('.share-live')).toHaveAttribute('title', /^Sharing a window\./);
+  await facingTv(page);
 
   // An agent asks: the bridge sends a frame request, the game answers with a JPEG over HTTP.
   const t0 = Date.now();

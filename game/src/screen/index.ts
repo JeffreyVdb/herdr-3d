@@ -37,6 +37,8 @@ export class ScreenShareController {
   readonly control: ShareControl;
   /** Who looked, newest last (test hook). */
   readonly grabbed: Array<{ requester: string; floor: string }> = [];
+  /** Every `screen.share` sent, oldest first (test hook; bounded). */
+  readonly reports: Array<CommandArgs['screen.share']> = [];
   private connected = false;
   private reported: string | null = null;
   private stopping = false;
@@ -122,6 +124,8 @@ export class ScreenShareController {
     const key = JSON.stringify(args);
     if (key === this.reported) return;
     this.reported = key;
+    this.reports.push(args);
+    if (this.reports.length > 50) this.reports.shift();
     void this.host.send('screen.share', args);
   }
 

@@ -344,7 +344,12 @@ export class App {
 
     // M13 screen share: the top bar control, the TV texture, the frames the bridge asks for.
     this.screen = new ScreenShareController({
-      send: (t, args) => this.send(t, args),
+      // Not `send`: the share's reports and refusals stay out of the command log the other features' tests read.
+      send: async (t, args) => {
+        const r = await this.client.request(t, args);
+        if (!r.ok && r.code === 'unknown_command') this.unsupported.add(t);
+        return r;
+      },
       url: this.url,
       toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 9000 : 3600, kind),
       office: () => this.office,
@@ -726,6 +731,7 @@ export class App {
       texture: this.screen.texture.current ? { w: this.screen.texture.current.w, h: this.screen.texture.current.h } : null,
       answered: [...this.screen.responder.answered],
       grabbed: [...this.screen.grabbed],
+      reported: [...this.screen.reports],
     };
   }
 

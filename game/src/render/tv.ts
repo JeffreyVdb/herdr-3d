@@ -136,15 +136,17 @@ export function buildTv(box: Box3): TvMesh {
   body.castShadow = true;
   body.receiveShadow = true;
   group.add(body);
-  const unlit = (o: THREE.MeshBasicMaterialParameters) => new THREE.MeshBasicMaterial({ toneMapped: false, ...o });
-  const black = new THREE.Mesh(new THREE.PlaneGeometry(screenW, screenH), unlit({ color: 0x000000 }));
+  // The set's own parts use the plain basic material the other signs use (no new shader program when a floor
+  // loads); only the picture is unlit without tone mapping, and it compiles once the share is on.
+  const basic = (o: THREE.MeshBasicMaterialParameters) => new THREE.MeshBasicMaterial(o);
+  const black = new THREE.Mesh(new THREE.PlaneGeometry(screenW, screenH), basic({ color: 0x000000 }));
   black.position.set(cx, cy, z1 + 0.002);
   const idle = sign('Screen share', 'Share screen in the top bar');
   const paused = sign('Paused', 'the shared source is hidden');
-  const signMat = unlit({ map: idle });
+  const signMat = basic({ map: idle });
   const signMesh = new THREE.Mesh(new THREE.PlaneGeometry(screenW, screenH), signMat);
   signMesh.position.set(cx, cy, z1 + 0.003);
-  const picMat = unlit({ color: 0xffffff });
+  const picMat = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
   // three r186 keys a render pipeline by a map's `mapping` (and, on WebGPU, its filters), not by its being a video.
   // On the WebGL2 backend the picture then reuses the sign's program, which lacks the shader's sRGB decode a video
   // gets (it is uploaded raw), and shows washed out. A key of its own keeps it a program of its own.
@@ -154,7 +156,7 @@ export function buildTv(box: Box3): TvMesh {
   pic.position.set(cx, cy, z1 + 0.004);
   pic.visible = false;
   // A small red light under the screen while the share is on it.
-  const lamp = new THREE.Mesh(new THREE.CircleGeometry(0.018, 12), unlit({ color: 0xff3b30 }));
+  const lamp = new THREE.Mesh(new THREE.CircleGeometry(0.018, 12), basic({ color: 0xff3b30 }));
   lamp.position.set(x1 - BEZEL - 0.03, y0 + BEZEL / 2, z1 + 0.002);
   lamp.visible = false;
   group.add(black, signMesh, pic, lamp);
