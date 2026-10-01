@@ -11,6 +11,14 @@
 // - `pr.merge` refuses like the bridge: `confirmation_required`, `not_mergeable` (conflicts, always),
 //   `checks_not_green` / `not_mergeable` unless `override` and `confirm_override`. A merge is announced once, on the
 //   next poll, and moves the issues it closes to Done.
+// - #52: a project's cards carry `position` (their rank in the project's one order, seeded to match the old sort) and
+//   the board the `order` capability. `issue.set_status` takes `after` like the bridge: absent the status only, null the
+//   top of the column (right before its first card; an empty column: the top of the project), a card id of the target
+//   column right after it (unknown, another column's or the card itself: `bad_request`; no project: `unsupported`).
+//   `sim.boards {fail_write: "message"}` makes every `issue.set_status` fail with `provider_failed` (null clears it);
+//   `{no_refresh: true}` makes writes queue no poll (a refresh that is late), `false` back to normal.
+//   `{partial_write: "message"}` makes an `issue.set_status` with `after` change the status, not the place, and fail
+//   with `provider_failed` ("its status changed, but its place in the column did not: …"); its poll is queued.
 // - `simfail=no_m7` plays a bridge before M7: every board command is `unknown_command`.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
@@ -129,6 +137,8 @@ interface Repo {
   prs: SimPr[];
   /** Merged since the last poll: announced by the next `board.prs`. */
   merged: Array<{ id: string; key: string; title: string; merged_at: number; closes: string[] }>;
+  /** #52: the project's order of the cards (ids), across all columns; empty without a project. */
+  order: string[];
   next: number;
   fetchedAt: number;
 }
@@ -248,7 +258,7 @@ function toyRepo(now: number): Repo {
     mkPr(r, 9, 'Overcap: stop after three passes', 'h3d/overcap-fix', { closes: [`${r}#3`], checks: 'failure', review: 'changes_requested' }),
     mkPr(r, 10, 'Lobby: wave at the door', 'h3d/lobby', { closes: [`${r}#4`], checks: 'pending', review: 'none', mergeable: 'unknown' }),
   ];
-  return { repo: r, project: true, columns: PROJECT_COLUMNS, cards, prs, merged: [], next: 11, fetchedAt: now };
+  return { repo: r, project: true, columns: PROJECT_COLUMNS, cards, prs, merged: [], order: [], next: 11, fetchedAt: now };
 }
 
 function herdrRepo(now: number): Repo {
@@ -279,7 +289,7 @@ function herdrRepo(now: number): Repo {
     mkPr(r, 34, 'docs: protocol boards section', 'docs/protocol-boards', { checks: 'success', review: 'review_required' }),
     mkPr(r, 35, 'feat: lounge', 'feat/lounge', { checks: 'pending', review: 'none', mergeable: 'conflicting', draft: true }),
   ];
-  return { repo: r, project: true, columns: PROJECT_COLUMNS, cards, prs, merged: [], next: 36, fetchedAt: now };
+  return { repo: r, project: true, columns: PROJECT_COLUMNS, cards, prs, merged: [], order: [], next: 36, fetchedAt: now };
 }
 
 /** 100 issues and 20 pull requests: the perf check. */
@@ -306,7 +316,7 @@ function perfRepo(now: number): Repo {
       review: (['approved', 'changes_requested', 'review_required', 'none'] as const)[i % 4] as PullRequest['review'],
     }),
   );
-  return { repo: r, project: true, columns: PROJECT_COLUMNS, cards, prs, merged: [], next: 121, fetchedAt: now };
+  return { repo: r, project: true, columns: PROJECT_COLUMNS, cards, prs, merged: [], order: [], next: 121, fetchedAt: now };
 }
 
 /** Any other repo: no project, so Open / Closed. */
@@ -318,7 +328,25 @@ function plainRepo(repo: string, now: number): Repo {
     mkCard(repo, 4, 'Retire the old dashboard', 'closed', { state: 'closed', closed_at: now - 30 * HOUR, updated_at: now - 30 * HOUR }),
   ];
   const prs = [mkPr(repo, 5, 'Savings plan report', 'feat/savings', { closes: [`${repo}#1`] })];
-  return { repo, project: false, columns: PLAIN_COLUMNS, cards, prs, merged: [], next: 6, fetchedAt: now };
+  return { repo, project: false, columns: PLAIN_COLUMNS, cards, prs, merged: [], order: [], next: 6, fetchedAt: now };
+}
+
+const RANK: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+const byUrgency = (a: IssueCard, b: IssueCard) =>
+  (RANK[a.priority ?? ''] ?? 4) - (RANK[b.priority ?? ''] ?? 4) || (b.updated_at ?? 0) - (a.updated_at ?? 0) || a.key.localeCompare(b.key, undefined, { numeric: true });
+const byClosed = (a: IssueCard, b: IssueCard) => (b.closed_at ?? b.updated_at ?? 0) - (a.closed_at ?? a.updated_at ?? 0) || byUrgency(a, b);
+
+/** A project's first order: column by column, each the way the game sorted it before there was one. */
+function seedOrder(b: Repo): Repo {
+  if (!b.project) return b;
+  b.order = b.columns.flatMap((col) =>
+    b.cards
+      .map((c) => c.card)
+      .filter((c) => c.column === col.id)
+      .sort(col.done ? byClosed : byUrgency)
+      .map((c) => c.id),
+  );
+  return b;
 }
 
 export class BoardSim {
@@ -331,6 +359,12 @@ export class BoardSim {
   private rate: { remaining: number; reset_at: number } | null = null;
   private truncated = false;
   private pending = false;
+  /** `sim.boards {fail_write}`: what every issue.set_status fails with. */
+  private failWrite: string | null = null;
+  /** `sim.boards {no_refresh}`: writes queue no poll. */
+  private noRefresh = false;
+  /** `sim.boards {partial_write}`: what an issue.set_status with `after` fails with once its status changed. */
+  private partialWrite: string | null = null;
 
   constructor(d: BoardsDeps, enabled: boolean) {
     this.d = d;
@@ -352,7 +386,7 @@ export class BoardSim {
     let b = this.repos.get(repo);
     if (!b) {
       const now = this.d.now();
-      b = repo === 'JeffreyVdb/lab' ? toyRepo(now) : repo === 'JeffreyVdb/herdr-3d' ? herdrRepo(now) : repo === 'JeffreyVdb/bench' ? perfRepo(now) : plainRepo(repo, now);
+      b = seedOrder(repo === 'JeffreyVdb/lab' ? toyRepo(now) : repo === 'JeffreyVdb/herdr-3d' ? herdrRepo(now) : repo === 'JeffreyVdb/bench' ? perfRepo(now) : plainRepo(repo, now));
       this.repos.set(repo, b);
     }
     return b;
@@ -370,7 +404,7 @@ export class BoardSim {
   // ---- messages ---------------------------------------------------------------------------------
 
   private caps(b: Repo, kind: 'issues' | 'prs'): BoardCaps {
-    return kind === 'issues' ? { comment: true, close: true, set_status: b.project } : { comment: true, merge: true, open_from_branch: true };
+    return kind === 'issues' ? { comment: true, close: true, set_status: b.project, order: b.project } : { comment: true, merge: true, open_from_branch: true };
   }
 
   private base(b: Repo, initial: boolean) {
@@ -387,7 +421,12 @@ export class BoardSim {
   }
 
   private issues(session: string, b: Repo, initial: boolean): BoardIssues {
-    const cards = b.cards.map((c) => (c.card.state === 'closed' ? { ...c.card, capabilities: { close: false } } : c.card));
+    const rank = new Map(b.order.map((id, i) => [id, i]));
+    const cards = b.cards.map((c) => {
+      const at = rank.get(c.card.id);
+      const card = at === undefined ? c.card : { ...c.card, position: at };
+      return c.card.state === 'closed' ? { ...card, capabilities: { close: false } } : card;
+    });
     return { t: 'board.issues', session, ...this.base(b, initial), capabilities: this.caps(b, 'issues'), columns: b.columns, cards } as BoardIssues;
   }
 
@@ -564,14 +603,31 @@ export class BoardSim {
   }
 
   private setStatus(a: Obj): void {
-    this.only(a, ['session', 'id', 'column']);
+    this.only(a, ['session', 'id', 'column', 'after']);
     const { session, b, c } = this.card(a);
     if (!b.project) throw this.d.error('unsupported', 'this floor has no project: statuses cannot be set');
     const col = this.text(a, 'column', 512);
     if (!b.columns.some((x) => x.id === col)) throw this.d.error('not_found', `not found: column "${col}"`);
+    const id = c.card.id;
+    let at: number | null = null; // where in the order it goes (null: it stays)
+    if ('after' in a) {
+      const rest = b.order.filter((x) => x !== id);
+      const inCol = (x: string) => b.cards.find((y) => y.card.id === x)?.card.column === col;
+      if (a.after === null) {
+        const first = rest.findIndex(inCol);
+        at = first < 0 ? 0 : first;
+      } else {
+        if (typeof a.after !== 'string' || a.after === id || !inCol(a.after)) throw this.bad(`after ${JSON.stringify(a.after)} is not another card of that column`);
+        at = rest.indexOf(a.after) + 1;
+      }
+      if (this.failWrite === null && this.partialWrite === null) b.order = [...rest.slice(0, at), id, ...rest.slice(at)];
+    }
+    if (this.failWrite !== null) throw this.d.error('provider_failed', this.failWrite);
     c.card.column = col;
     c.card.updated_at = this.d.now();
-    this.queue(session);
+    if (!this.noRefresh) this.queue(session);
+    // The status landed, the place did not: the bridge refreshes all the same.
+    if (this.partialWrite !== null && 'after' in a) throw this.d.error('provider_failed', `its status changed, but its place in the column did not: ${this.partialWrite}`);
   }
 
   /** Marks a PR merged: gone from the open list, announced on the next poll, its issues closed and in Done. */
@@ -659,6 +715,9 @@ export class BoardSim {
     if (a.fail !== undefined) this.failing = typeof a.fail === 'string' ? a.fail : null;
     if (a.rate !== undefined) this.rate = isObj(a.rate) ? (a.rate as { remaining: number; reset_at: number }) : null;
     if (typeof a.truncated === 'boolean') this.truncated = a.truncated;
+    if (a.fail_write !== undefined) this.failWrite = typeof a.fail_write === 'string' ? a.fail_write : null;
+    if (typeof a.no_refresh === 'boolean') this.noRefresh = a.no_refresh;
+    if (a.partial_write !== undefined) this.partialWrite = typeof a.partial_write === 'string' ? a.partial_write : null;
     if (isObj(a.card)) {
       // Moves a card (a poll finds it in another column) without a command of the game's.
       const c = b.cards.find((x) => x.card.id === (a.card as Obj).id);

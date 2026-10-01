@@ -151,8 +151,8 @@ parts:
   token); the environment is the bridge's minus `HERDR_*` / `CLAUDE*`, plus `GH_PROMPT_DISABLED=1 NO_COLOR=1
   GH_NO_UPDATE_NOTIFIER=1`; 20 s per call, output capped at 8 MiB; GraphQL `errors` are read also when `gh` exits 0;
   401 / exit 4 is `provider_failed` "GitHub auth", a rate limit is `rate_limited`. `TestGitHubAllowlist` pins the argv,
-  the set of documents and which of them write (six mutations: addComment, addProjectV2ItemById,
-  updateProjectV2ItemFieldValue, closeIssue, mergePullRequest, createPullRequest).
+  the set of documents and which of them write (seven mutations: addComment, addProjectV2ItemById,
+  updateProjectV2ItemFieldValue, updateProjectV2ItemPosition, closeIssue, mergePullRequest, createPullRequest).
 
 - **Logos** (M3d, `internal/logo`; SVGs are drawn by the bridge's own executable run again as a killable child, see below): the image libraries are `golang.org/x/image` (`webp`, `draw`; BSD-3),
   `github.com/srwiley/oksvg` and `rasterx` (BSD-3; pinned pseudo-versions, untagged upstream) and `golang.org/x/net`
@@ -745,7 +745,9 @@ poll of the floor, as the bridge does. `sim.boards` (the simulator's own command
 PR (`{merge: id}`: gone from the open list, announced by the next poll, its issues closed and in Done), makes the next polls
 fail (`{fail: "message"}`, or `head_moved` to make a merge answer `stale`; `{fail: null}` clears it), sets the rate limit
 (`{rate: {remaining, reset_at}}`) or the paging flag (`{truncated: true}`), moves a card (`{card: {id, column}}`) or polls
-(`{poll: true}`). `simfail=no_m7` plays a bridge before M7 (every board command `unknown_command`). `open=none` in the page
+(`{poll: true}`). #52: a project's cards carry `position` (seeded in the old urgency / closed order) and the board `order`;
+`issue.set_status` takes `after` like the bridge; `{fail_write: "message"}` makes every `issue.set_status` fail
+(`provider_failed`, null clears it) and `{no_refresh: true}` makes writes queue no poll (a late refresh). `simfail=no_m7` plays a bridge before M7 (every board command `unknown_command`). `open=none` in the page
 URL makes "Open in …" record the page instead of opening a window. E.g.
 `?ws=%2Ffixture%2Fdemo-m6%3Fsim%3D1%26simms%3D150&floor=lab`.
 
@@ -1039,7 +1041,11 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # top bar opening the overlays, no-project / no-repo / older-bridge floors, the watch
                               # (one floor, again after a reconnect), diff animations, the sanitised markdown, Hand to
                               # a worker and the peel-off, Ask, Close, Move, comment, Merge and its double confirmation,
-                              # the gong, Open PR for a plain worker, 100 issues + 20 PRs; m7-*.png
+                              # the gong, Open PR for a plain worker, 100 issues + 20 PRs; m7-*.png; #52 dragging
+                              # cards: the slot line above / below a card, the exact set_status args, an empty column
+                              # and a column's end, Esc / outside / own place cancel, a failed write snaps back, a
+                              # stale board never moves it back, no project no drag, edge scroll, reduced motion, a
+                              # finger (swipe scrolls, long press drags); m52-drag-preview.png
                               # M3d logos on demo-m3 with sim=1 and a world key (m3d-logos.spec.ts, m3d-perf.spec.ts):
                               # choosing e2e/fixtures/test-logo.png in the Buildings panel (from the keyboard) puts it on
                               # the entrance sign, the reception wall and the city; Clear brings the names back; a city
@@ -1186,7 +1192,8 @@ atlas `cell` and `face` (key, title, paper, pin, holder, done / CI, review, clos
 `batches` (two instanced draws, however many notes), `office` (a counter: a board update must not build another floor),
 `watched` and `off`), `board()` (the open overlay: its columns with the keys of their cards, the freshness notice, and
 the open item modal with its visible `actions`, open confirmation, comments and body text), `openBoard(which)`,
-`openBoardItem(which, id)`, `injectBoard(message)`, `boardLog()` (the `board.watch` / `unwatch` / `refresh` the game sent
+`openBoardItem(which, id)`, `injectBoard(message)`, `boardMessage(which)` (#52: a copy of the last board message of the
+floor you are on), `boardLog()` (the `board.watch` / `unwatch` / `refresh` the game sent
 by itself; `sent()` leaves them out), `opened()` (pages the game asked to open, and `via` `helper` or `window`),
 `simBoards(args)`. `dialog()` also returns the Open PR dialog (`kind: 'open-pr'`), and a start-run dialog started from a
 card has `ticket.kind === 'work_item'`.

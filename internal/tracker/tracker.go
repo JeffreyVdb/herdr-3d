@@ -26,6 +26,9 @@ type Capabilities struct {
 	Comment   bool `json:"comment"`
 	Close     bool `json:"close"`
 	SetStatus bool `json:"set_status"`
+	// Order: a card's place in its column can be set too (SetStatus with
+	// an Anchor), and cards carry their Position.
+	Order bool `json:"order"`
 }
 
 // Column is one status column, in provider order. Done marks a done column.
@@ -55,6 +58,10 @@ type Card struct {
 	Author    string            `json:"author"`
 	UpdatedAt int64             `json:"updated_at"`
 	ClosedAt  *int64            `json:"closed_at"`
+	// Position is the card's rank in the provider's order (0 first), when
+	// it has one: a column lists its cards by it. Nil for a card that has
+	// no place in that order (not in the project).
+	Position *int `json:"position,omitempty"`
 	// Capabilities, when set, replace the board's for this card.
 	Capabilities *Capabilities `json:"capabilities,omitempty"`
 }
@@ -106,8 +113,17 @@ type Tracker interface {
 	Comment(ctx context.Context, id, body string) (provider.Comment, error)
 	// Close closes the issue for reason (completed, not_planned, duplicate).
 	Close(ctx context.Context, id, reason string) error
-	// SetStatus moves the issue to a column of the last Board.
-	SetStatus(ctx context.Context, id, columnID string) error
+	// SetStatus moves the issue to a column of the last Board. With at nil
+	// only the status changes; with an Anchor (Capabilities.Order) the card
+	// also lands at that place of the column, and a move within its own
+	// column changes only its place.
+	SetStatus(ctx context.Context, id, columnID string, at *Anchor) error
+}
+
+// Anchor is where a moved card lands in its column: right after the card
+// After (an id of the same column), or at the top when After is "".
+type Anchor struct {
+	After string
 }
 
 // RunLinker is what a tracker implements when a write-code run's issue

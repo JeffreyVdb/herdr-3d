@@ -50,7 +50,7 @@ describe('board.watch', () => {
     }
     expect(issues.columns.map((c) => c.name)).toEqual(['Todo', 'Doing', 'QA', 'Done']);
     expect(issues.columns.find((c) => c.name === 'Done')?.done).toBe(true);
-    expect(issues.capabilities).toEqual({ comment: true, close: true, set_status: true });
+    expect(issues.capabilities).toEqual({ comment: true, close: true, set_status: true, order: true });
     expect(prs.capabilities).toEqual({ comment: true, merge: true, open_from_branch: true });
     expect(prs.merged).toEqual([]);
     expect(issues.cards[0]?.id).toMatch(/^JeffreyVdb\/herdr-3d#\d+$/);
@@ -69,7 +69,8 @@ describe('board.watch', () => {
     r.cmd('board.watch', { session: 'pastry' });
     const i = r.boards().issues[0] as BoardIssues;
     expect(i.columns.map((c) => c.id)).toEqual(['open', 'closed']);
-    expect(i.capabilities).toEqual({ comment: true, close: true, set_status: false });
+    expect(i.capabilities).toEqual({ comment: true, close: true, set_status: false, order: false });
+    expect(i.cards.some((c) => 'position' in c)).toBe(false);
     expect(r.cmd('issue.set_status', { session: 'pastry', id: 'someone/else#1', column: 'closed' }).err()).toMatchObject({ code: 'unsupported' });
   });
 
@@ -105,6 +106,46 @@ describe('writes', () => {
     expect(r.out.length).toBe(before + 1);
     r.settle();
     expect(r.out.slice(before + 1).map((m) => [m.t, m.initial])).toEqual([['board.issues', false], ['board.prs', false]]);
+  });
+
+  it('#52: cards carry their place in the project, seeded the way the game sorted them before', () => {
+    const r = watch();
+    const b = r.boards().issues.at(-1) as BoardIssues;
+    const todo = b.cards.filter((c) => c.column === '49294ed0').sort((x, y) => (x.position ?? 0) - (y.position ?? 0));
+    // Medium, then the two lows by recency, then the rest by recency.
+    expect(todo.map((c) => c.key).slice(0, 4)).toEqual(['#12', '#14', '#23', '#13']);
+    expect(new Set(b.cards.map((c) => c.position)).size).toBe(b.cards.length);
+    expect(b.cards.every((c) => typeof c.position === 'number')).toBe(true);
+  });
+
+  it('#52: issue.set_status with after places the card, like the bridge', () => {
+    const r = watch();
+    const order = () => {
+      r.settle();
+      const b = r.boards().issues.at(-1) as BoardIssues;
+      const col = (id: string) => b.cards.filter((c) => c.column === id).sort((x, y) => (x.position as number) - (y.position as number)).map((c) => c.key);
+      return { todo: col('49294ed0'), doing: col('ae6334b4'), qa: col('64e1b0ac') };
+    };
+    const start = order();
+    expect(start.doing).toEqual(['#9', '#20']);
+    const set = (id: number, column: string, after?: unknown) => r.cmd('issue.set_status', { session: 'herdr-3d', id: `${HERDR}#${id}`, column, ...(after === undefined ? {} : { after }) });
+    // Right after a card of another column, then the top of a column, then a reorder within one.
+    expect(set(13, 'ae6334b4', `${HERDR}#9`).ack()).toBeDefined();
+    expect(order().doing).toEqual(['#9', '#13', '#20']);
+    expect(set(14, 'ae6334b4', null).ack()).toBeDefined();
+    expect(order().doing).toEqual(['#14', '#9', '#13', '#20']);
+    expect(set(20, 'ae6334b4', `${HERDR}#14`).ack()).toBeDefined();
+    expect(order().doing).toEqual(['#14', '#20', '#9', '#13']);
+    // Without after: the status only, the card keeps its place in the project's order.
+    expect(set(9, '64e1b0ac').ack()).toBeDefined();
+    expect(order().qa).toEqual(['#9', '#21', '#22']);
+    // Refused like the bridge.
+    for (const after of [`${HERDR}#404`, `${HERDR}#12`, `${HERDR}#20`, 3]) expect(set(20, 'ae6334b4', after).err()).toMatchObject({ code: 'bad_request' });
+    // A failing write changes nothing.
+    r.cmd('sim.boards', { fail_write: 'GitHub: Resource not accessible' });
+    expect(set(13, '49294ed0', null).err()).toMatchObject({ code: 'provider_failed', message: expect.stringContaining('Resource not accessible') });
+    r.cmd('sim.boards', { fail_write: null });
+    expect(order().doing).toEqual(['#14', '#20', '#13']);
   });
 
   it('issue.close needs confirm: true and a reason, and moves the card to Done', () => {

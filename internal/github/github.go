@@ -98,6 +98,7 @@ type source struct {
 
 	fetch sync.Mutex // one feed at a time; the second caller reuses it
 	last  *feed
+	cards map[string]string // issue node id → card id of the latest feed (kept after a write)
 
 	mu    sync.Mutex
 	nodes map[string]string // item id → GraphQL node id
@@ -151,7 +152,7 @@ func (s *source) remember(node, id string) {
 }
 
 func (s *source) trackerCaps() tracker.Capabilities {
-	return tracker.Capabilities{Comment: true, Close: true, SetStatus: s.hasProject()}
+	return tracker.Capabilities{Comment: true, Close: true, SetStatus: s.hasProject(), Order: s.hasProject()}
 }
 
 // feed returns the feed of this poll: a recent one that covers watched, else
@@ -172,7 +173,7 @@ func (s *source) feed(ctx context.Context, watched []string) (*feed, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.last = f
+	s.last, s.cards = f, f.cardNodes
 	return f, nil
 }
 

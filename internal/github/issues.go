@@ -196,7 +196,14 @@ func (t *issues) Close(ctx context.Context, id, reason string) error {
 	return nil
 }
 
-func (t *issues) SetStatus(ctx context.Context, id, columnID string) error {
+// SetStatus moves an issue to a column (a Status option of the project),
+// adding it to the project first when it is not in it. With an anchor it
+// then sets its place (updateProjectV2ItemPosition, which only knows "after
+// this item" in the project's one order across all statuses): the status is
+// written only when it changes, so a move within the column writes its place
+// only. The writes are not one transaction: when one fails after another
+// landed, the error says what changed and is a provider.ErrPartial.
+func (t *issues) SetStatus(ctx context.Context, id, columnID string, at *tracker.Anchor) error {
 	if !t.hasProject() {
 		return provider.Errorf(provider.ErrUnsupported, "this board has no project: issues have no status to set")
 	}
@@ -219,6 +226,9 @@ func (t *issues) SetStatus(ctx context.Context, id, columnID string) error {
 							ID     string `json:"id"`
 							Number int    `json:"number"`
 						} `json:"project"`
+						Value *struct {
+							OptionID string `json:"optionId"`
+						} `json:"fieldValueByName"`
 					} `json:"nodes"`
 				} `json:"projectItems"`
 			} `json:"issue"`
@@ -228,7 +238,7 @@ func (t *issues) SetStatus(ctx context.Context, id, columnID string) error {
 		} `json:"repositoryOwner"`
 	}
 	if err := t.query(ctx, githubcli.DocStatusTarget, map[string]any{"owner": t.owner(), "repo": t.repoName(), "number": n,
-		"projectOwner": projectOwner, "projectNumber": t.cfg.ProjectNumber}, &res); err != nil {
+		"projectOwner": projectOwner, "projectNumber": t.cfg.ProjectNumber, "statusField": t.statusField()}, &res); err != nil {
 		return err
 	}
 	if res.Repository == nil || res.Repository.Issue == nil {
@@ -257,13 +267,24 @@ func (t *issues) SetStatus(ctx context.Context, id, columnID string) error {
 		return provider.Errorf(provider.ErrBadInput, "%q is not a column of the board", columnID)
 	}
 	issue := res.Repository.Issue
-	itemID := ""
+	itemID, status := "", ""
 	for _, it := range issue.ProjectItems.Nodes {
 		if it.Project.ID == p.ID {
 			itemID = it.ID
+			if it.Value != nil {
+				status = it.Value.OptionID
+			}
 			break
 		}
 	}
+	// Where it lands, worked out before anything is written.
+	var afterID *string
+	if at != nil {
+		if afterID, err = t.placeAfter(ctx, p.ID, id, itemID, columnID, at); err != nil {
+			return err
+		}
+	}
+	added := false
 	if itemID == "" { // the issue is not in the project yet
 		var add struct {
 			Add struct {
@@ -278,11 +299,100 @@ func (t *issues) SetStatus(ctx context.Context, id, columnID string) error {
 		if itemID = add.Add.Item.ID; itemID == "" {
 			return provider.Failed("GitHub did not add %s to the project", id)
 		}
+		added = true
+		t.changed()
 	}
-	if err := t.query(ctx, githubcli.DocSetStatus, map[string]any{"projectId": p.ID, "itemId": itemID, "fieldId": fieldID,
-		"optionId": columnID}, nil); err != nil {
+	wrote := false
+	if at == nil || status != columnID {
+		if err := t.query(ctx, githubcli.DocSetStatus, map[string]any{"projectId": p.ID, "itemId": itemID, "fieldId": fieldID,
+			"optionId": columnID}, nil); err != nil {
+			if added {
+				return provider.Partial(fmt.Errorf("it was added to the project, but its status did not change: %w", err))
+			}
+			return err
+		}
+		wrote = true
+		t.changed()
+	}
+	if at == nil {
+		return nil
+	}
+	vars := map[string]any{"projectId": p.ID, "itemId": itemID}
+	if afterID != nil {
+		vars["afterId"] = *afterID
+	}
+	if err := t.query(ctx, githubcli.DocSetPosition, vars, nil); err != nil {
+		if wrote {
+			return provider.Partial(fmt.Errorf("its status changed, but its place in the column did not: %w", err))
+		}
 		return err
 	}
 	t.changed()
 	return nil
+}
+
+// placeAfter is the project item a moved card goes right after (nil: the
+// top of the project). After a card: that card's item. At the top of a
+// column: the item right before the column's first card in the project's
+// order (the moved one left out), none when that card is the project's
+// first; an empty column has nothing to go after either.
+func (t *issues) placeAfter(ctx context.Context, projectID, id, itemID, columnID string, at *tracker.Anchor) (*string, error) {
+	o, err := t.orderNow(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if at.After != "" {
+		if at.After == id {
+			return nil, provider.Errorf(provider.ErrBadInput, "a card cannot go after itself")
+		}
+		a := o.itemOf(at.After)
+		if a == "" || a == itemID {
+			return nil, provider.Errorf(provider.ErrStale, "%s is not in the project's order any more: refresh the board", at.After)
+		}
+		return &a, nil
+	}
+	var prev *string
+	for i := range o.items {
+		it := &o.items[i]
+		if it.id == itemID && itemID != "" {
+			continue
+		}
+		if it.card != "" && it.card != id && it.column == columnID {
+			return prev, nil
+		}
+		prev = &it.id
+	}
+	return nil, nil // an empty column: the top of the project
+}
+
+// orderNow is the project's order as it is now: the last feed's when nothing
+// was written since, else read again (its cards are the last feed's).
+func (t *issues) orderNow(ctx context.Context, projectID string) (*order, error) {
+	t.fetch.Lock()
+	last, cards := t.last, t.cards
+	t.fetch.Unlock()
+	if last != nil && last.order != nil {
+		return last.order, nil
+	}
+	if cards == nil { // no board read yet: the feed has both
+		f, err := t.feed(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		if f.order == nil {
+			return nil, provider.Errorf(provider.ErrUnsupported, "the project has more items than the bridge reads: cards cannot be ordered")
+		}
+		return f.order, nil
+	}
+	o, complete, err := t.readOrder(ctx, projectID, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if !complete {
+		return nil, provider.Errorf(provider.ErrUnsupported, "the project has more items than the bridge reads: cards cannot be ordered")
+	}
+	for i := range o.items {
+		o.items[i].card = cards[o.items[i].node]
+	}
+	return o, nil
 }

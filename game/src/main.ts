@@ -207,6 +207,8 @@ export interface H3DDebug {
   limits(): ReturnType<import('./ui/limits').LimitsWidget['summary']> | null;
   /** M7: applies a board message as if the bridge had sent it. */
   injectBoard(m: BoardMessage): void;
+  /** #52: the last board message of that kind of the floor you are on, as the game has it (a copy). */
+  boardMessage(which: 'issues' | 'prs'): BoardMessage | null;
   /** M7: the overlay for the floor you are on, as the top bar's Issues / PRs (and E on a board) open it. */
   openBoard(which: 'issues' | 'prs'): void;
   /** M7: the overlay with an item's modal open (an opaque id). */
@@ -407,6 +409,11 @@ const h3d: H3DDebug = {
   boards: () => app?.boardsInfo() ?? null,
   limits: () => app?.limitsWidget.summary() ?? null,
   injectBoard: (m) => app?.injectBoard(m),
+  boardMessage: (w) => {
+    const s = app?.hereSession();
+    const b = s ? app?.boardBook.get(s) : null;
+    return structuredClone((w === 'issues' ? b?.issues : b?.prs) ?? null);
+  },
   openBoard: (w) => app?.openBoard(w),
   openBoardItem: (w, id) => {
     const s = app?.hereSession();

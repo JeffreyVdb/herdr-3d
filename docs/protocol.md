@@ -467,7 +467,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `issue.get` | `{"session", "id"}` | `{"card", "body", "author", "created_at", "comments", "comments_truncated"}` | — |
 | `issue.comment` | `{"session", "id", "body"}` | `{"comment"}` | boards after the refresh |
 | `issue.close` | `{"session", "id", "reason", "confirm": true}` | — | boards after the refresh |
-| `issue.set_status` | `{"session", "id", "column"}` | — | boards after the refresh |
+| `issue.set_status` | `{"session", "id", "column", "after"?}` (`after`: null or a card id, with the `order` capability) | — | boards after the refresh |
 | `pr.get` | `{"session", "id"}` | `{"pr", "body", "author", "created_at", "files", "files_truncated", "checks", "comments", "comments_truncated"}` | — |
 | `pr.comment` | `{"session", "id", "body"}` | `{"comment"}` | boards after the refresh |
 | `pr.merge` | `{"session", "id", "method", "confirm": true, "override"?, "confirm_override"?}` | `{"merged": true}` | boards after the refresh |
@@ -1142,14 +1142,14 @@ connection watches one floor at a time; a new `board.watch` replaces the old one
 ```json
 {"t":"board.issues","session":"herdr-3d","provider":"github","provider_name":"GitHub","initial":false,
  "fetched_at":1790670000000,"stale":false,"truncated":false,"rate":{"remaining":4870,"reset_at":1790673600000},
- "capabilities":{"comment":true,"close":true,"set_status":true},
+ "capabilities":{"comment":true,"close":true,"set_status":true,"order":true},
  "columns":[{"id":"49294ed0","name":"Todo","done":false},{"id":"ae6334b4","name":"Doing","done":false},
             {"id":"64e1b0ac","name":"QA","done":false},{"id":"ccf5765b","name":"Done","done":true}],
  "cards":[{"id":"JeffreyVdb/herdr-3d#9","key":"#9","title":"M7: Issues Kanban + Pull Requests board (GitHub)",
            "state":"open","column":"ae6334b4","url":"https://github.com/JeffreyVdb/herdr-3d/issues/9",
            "labels":[{"name":"bridge","color":"#1d76db"}],"priority":"high",
            "assignees":[{"name":"JeffreyVdb","avatar_url":"https://…"}],"author":"JeffreyVdb",
-           "updated_at":1790670000000,"closed_at":null}]}
+           "updated_at":1790670000000,"closed_at":null,"position":2}]}
 {"t":"board.prs","session":"herdr-3d","provider":"github","provider_name":"GitHub","initial":false,
  "fetched_at":1790670000000,"stale":false,"truncated":false,"rate":{"remaining":4870,"reset_at":1790673600000},
  "capabilities":{"comment":true,"merge":true,"open_from_branch":true},
@@ -1169,13 +1169,14 @@ connection watches one floor at a time; a new `board.watch` replaces the old one
 | `stale`, `error` | the last poll failed: this is the previous good data again (never emptied), with a short `error` (never a token). A failed poll is never a merge. |
 | `truncated` | the provider hit its paging limit (500 open issues or pull requests, or a nested list past 100): the board is incomplete |
 | `rate` | optional, `{remaining, reset_at}` (unix ms) of the provider's rate limit, to show "rate limit: next refresh 14:05" |
-| `capabilities` | the board's; a card may carry its own `capabilities` that replace them (a closed issue: `close: false`) |
+| `capabilities` | the board's; a card may carry its own `capabilities` that replace them (a closed issue: `close: false`). `comment`, `close`, `set_status`, and `order` (#52): `issue.set_status` can also place the card in its column, and the cards carry `position`. GitHub: `set_status` and `order` with a project, neither without one. |
 | `columns` | in order. GitHub project: the Status field's options as they are now, `done: true` for the option named "Done" (ignoring case). No project: `open`, and `closed` (done). Issues with no status in the project go to a leading `{"id":"","name":"No status"}` column that is there only when it has cards. |
 | card `state` | `open` \| `closed`; the cards are the open issues and the ones closed in the last 7 days (exact cut-off) of this repo |
 | card `column` | a column `id` |
 | card `labels` | `{name, color: "#rrggbb"}`, in the provider's order, priority labels included |
 | card `priority` | optional `urgent` \| `high` \| `medium` \| `low` from the labels (ignoring case): `p0`, `critical`, `urgent` → urgent; `p1`, `high`; `p2`, `medium`; `p3`, `p4`, `low`; also as `priority: x`, `priority/x`, `priority-x`; the most urgent one wins |
 | card `closed_at`, `updated_at` | unix ms, `closed_at` null while open |
+| card `position` | optional (#52): the card's rank in the provider's own order, `0` first, across all columns; absent for a card that has none (GitHub: an issue that is not in the project). A column lists its cards by `position`, done columns too; the ones without one come after them (most urgent, then most recently updated; done columns: latest closed). A provider without an order sends none, and that old sort is the whole order. GitHub: the project's items in manual position order (`items(orderBy: POSITION)`, the order of an unsorted board view, which GitHub shares between all statuses), paged 100 at a time up to 500; a project with more items sends no position at all (never a partial order) and the board is `truncated`. Drafts, pull requests, items of other repositories and issues that are not on the board are skipped; the ranks are those of the cards. |
 | PR `checks` | `success` \| `failure` \| `pending` \| `none` (no checks at all is `none`, never green) |
 | PR `review` | `approved` \| `changes_requested` \| `review_required` \| `none` |
 | PR `mergeable` | `mergeable` \| `conflicting` \| `unknown` |
@@ -1186,12 +1187,17 @@ connection watches one floor at a time; a new `board.watch` replaces the old one
 floors too). Floors linking the same repository and project share one fetch. `board.refresh` polls now, joins a poll in
 flight, and starts at most one poll per 10 s per floor (else `queued: false` and the cache is sent to the caller again,
 `initial: true`). After a successful write (`issue.comment`, `issue.close`, `issue.set_status`, `pr.comment`, `pr.merge`,
-`worker.open_pr`) the bridge queues a refresh of that floor; the boards follow the ack. The cache is in SQLite
+`worker.open_pr`), and after one that failed once part of it had landed (a move whose status was written but not its
+place: `provider_failed`), the bridge queues a refresh of that floor; the boards follow the reply. A poll that was already in
+flight when the write landed may have read the board from before it: it is dropped (never sent, never the cache) and
+the refresh runs instead, so every non-initial `board.issues` a connection gets after a write's ack was polled after the
+write (#52; the game relies on it to hold a dragged card in its new place). An `initial: true` replay can still be older. The cache is in SQLite
 (`board_cache`, the open pull requests of the last good poll in `board_open_pr`, announced merges in
 `board_merge_announced`): `board.watch` answers at once from it, also right after a restart.
 
 **Rate limit.** Every poll reads the provider's rate (GitHub: `rateLimit { cost remaining resetAt }`, about 12 points a
-poll). Below what one more round of every board-enabled repository plus a reserve of 100 needs, only floors somebody
+poll; the project's first 100 items for `position` ride in the same query, measured at no extra point, and each further
+page of 100 is a call of its own, about 1 point). Below what one more round of every board-enabled repository plus a reserve of 100 needs, only floors somebody
 watches are polled; below 50 left, or after a rate-limit error, nothing is until `reset_at`; a secondary limit that names no
 reset waits 60 s, then twice as long each time, up to 10 min. The messages carry `rate` and, after a failed poll, `stale`.
 
@@ -1208,13 +1214,24 @@ on a floor with no board (no repo, no provider) is `unsupported`.
 | `issue.get` | `{session, id}` | `{"card", "body": markdown, "author": {name, avatar_url}, "created_at", "comments": [{id, author, body, created_at}], "comments_truncated"}`: the first 100 comments; the body is raw markdown, **the client sanitises** |
 | `issue.comment` | `{session, id, body}` | `{"comment": {id, author, body, created_at}}` |
 | `issue.close` | `{session, id, reason: "completed" \| "not_planned" \| "duplicate", confirm: true}` | — |
-| `issue.set_status` | `{session, id, column}` (an issue not in the project is added to it first) | — |
+| `issue.set_status` | `{session, id, column, after?}` (an issue not in the project is added to it first). `after` (#52, needs `order`): absent, the status only and the card keeps its place in the order; `null`, the top of the column; a card id (opaque, like `id`), right after that card. | — |
 | `pr.get` | `{session, id}` | `{"pr", "body", "author", "created_at", "files": [{path, additions, deletions, change}], "files_truncated", "checks": [{name, state: success \| failure \| pending \| neutral \| skipped, url}], "comments", "comments_truncated"}` |
 | `pr.comment` | `{session, id, body}` | `{"comment"}` |
 | `pr.merge` | `{session, id, method: "merge" \| "squash" \| "rebase", confirm: true, override?, confirm_override?}` | `{"merged": true}` |
 | `worker.open_pr.prepare` | `{id}` (worker id) | `{"can_open", "reason"?, "branch", "base", "ahead", "dirty", "existing"?: {id, key, url}, "title", "body"}`: the title is the latest commit's subject, the body the list of the commits' subjects |
 | `worker.open_pr` | `{id, title, body, confirm: true}` | `{"pr": {id, key, url}, "pushed": bool, "existed": bool}` |
 
+- **`issue.set_status` with `after`** (#52): the card lands at that place of the column; within its own column it is a
+  reorder. `after` must be another card of the target column on the last board (or one a write since moved there),
+  else `bad_request`; any `after` on a board or card without `order` is `unsupported`. GitHub writes the status only
+  when it changes, then `updateProjectV2ItemPosition`, which knows only "after this item" in the project's one order:
+  `after` a card is after its item; the top of a column is right after the item before the column's first card (none
+  when that card is the project's first); an empty column is the top of the project. The two writes are not one
+  transaction: when the place fails after the status changed, the error says so (`provider_failed`: "its status
+  changed, but its place in the column did not"), and the bridge refreshes the board all the same (polls in flight are
+dropped as after a successful write), so it shows what GitHub has. An anchor the provider no
+  longer has in the project's order is `stale`. **Moving a card into a done column changes its status only: the issue
+  stays open** (closing is `issue.close`), the same as without `after`.
 - **`confirm: true` is required** on `issue.close`, `pr.merge` and `worker.open_pr` (missing or false:
   `confirmation_required`, nothing happens). The game asks the user first; the flag makes a stray client call safe.
 - **`pr.merge`** reads the pull request fresh right before merging and refuses with `checks_not_green` when its `checks`
@@ -1239,7 +1256,7 @@ on a floor with no board (no repo, no provider) is `unsupported`.
 
 **Audit log.** Each board command gets a row; the slow ones (everything that calls the provider) are begun when they start
 and completed with a result: `issue.comment` / `pr.comment` the target id, the byte count and the comment id, `issue.close`
-the reason, `issue.set_status` the column, `pr.merge` the method, the checks and mergeability it read, `override` and `gate`
+the reason, `issue.set_status` the column (and `after`, when it was set), `pr.merge` the method, the checks and mergeability it read, `override` and `gate`
 when the override was needed, and `merged`, `worker.open_pr` the worker, the branch, the base, `pushed`, `pr` and
 `existed`.
 

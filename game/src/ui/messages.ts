@@ -150,6 +150,7 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
     case 'prompt_failed':
       return `The prompt did not reach ${ctx.worker ?? 'the worker'}: ${why.replace(/^prompt_failed:\s*/, '') || 'the agent did not start'}. Your text is still here: try again, or sit at its laptop (E).`;
     case 'stale':
+      if (t === 'issue.set_status') return `The board changed while you moved ${ctx.item ?? 'the card'}. It shows what is there now; try again.`;
       if (t === 'pr.merge') return `${ctx.item ?? 'The pull request'} changed while you decided (a new commit arrived). Read it again before you merge.`;
       return `${ctx.worker ?? 'The worker'}’s question changed before the answer arrived. The card shows the current one.`;
     case 'input_failed':
@@ -164,6 +165,8 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
     case 'unsupported':
       return `${ctx.provider ?? 'This provider'} can’t do that here${why ? ` (${why})` : ''}.`;
     case 'provider_failed':
+      // A move can fail halfway (the status written, the place not): the board refreshes after either.
+      if (t === 'issue.set_status') return `${ctx.provider ?? 'The provider'} refused or failed${why ? `: ${why}` : ''}. The board shows where ${ctx.item ?? 'the card'} is now.`;
       return `${ctx.provider ?? 'The provider'} refused or failed${why ? `: ${why}` : ''}. Nothing was changed as far as herdr-world knows; try again.`;
     case 'rate_limited':
       return `${ctx.provider ?? 'The provider'} is rate limiting herdr-world${why ? ` (${why})` : ''}. Try again after the reset time on the board.`;

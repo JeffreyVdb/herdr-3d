@@ -1,0 +1,10 @@
+query ProjectItemsPage($projectId:ID!, $after:String, $statusField:String!) {
+  node(id:$projectId) {
+    ... on ProjectV2 { items(first:100, after:$after, orderBy:{field:POSITION,direction:ASC}) { ...ProjectOrder } }
+  }
+  rateLimit { cost limit remaining resetAt }
+}
+fragment ProjectOrder on ProjectV2ItemConnection {
+  pageInfo { hasNextPage endCursor }
+  nodes { id content { __typename ... on Issue { id } } fieldValueByName(name:$statusField) { ... on ProjectV2ItemFieldSingleSelectValue { optionId } } }
+}

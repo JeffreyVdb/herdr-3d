@@ -28,6 +28,11 @@ fragment ProjectBoard on ProjectV2 {
     pageInfo { hasNextPage endCursor }
     nodes { ... on ProjectV2SingleSelectField { id name options { id name } } }
   }
+  items(first:100, orderBy:{field:POSITION,direction:ASC}) { ...ProjectOrder }
+}
+fragment ProjectOrder on ProjectV2ItemConnection {
+  pageInfo { hasNextPage endCursor }
+  nodes { id content { __typename ... on Issue { id } } fieldValueByName(name:$statusField) { ... on ProjectV2ItemFieldSingleSelectValue { optionId } } }
 }
 fragment IssueCard on Issue {
   id number title state stateReason url

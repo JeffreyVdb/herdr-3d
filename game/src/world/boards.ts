@@ -71,6 +71,20 @@ export function byUrgency(a: IssueCard, b: IssueCard): number {
 
 const byClosed = (a: IssueCard, b: IssueCard) => (b.closed_at ?? b.updated_at ?? 0) - (a.closed_at ?? a.updated_at ?? 0) || byUrgency(a, b);
 
+/** #52: the provider's order (`position`) first; the cards without one after them, by `fallback`. */
+const byPosition =
+  (fallback: (a: IssueCard, b: IssueCard) => number) =>
+  (a: IssueCard, b: IssueCard): number => {
+    const pa = typeof a.position === 'number' ? a.position : null;
+    const pb = typeof b.position === 'number' ? b.position : null;
+    if (pa !== null && pb !== null) return pa - pb || fallback(a, b);
+    if (pa !== null) return -1;
+    if (pb !== null) return 1;
+    return fallback(a, b);
+  };
+const BY_POSITION = byPosition(byUrgency);
+const BY_POSITION_DONE = byPosition(byClosed);
+
 // ---- holders ------------------------------------------------------------------------------
 
 export interface Holder {
@@ -127,7 +141,10 @@ export interface ColumnView {
   cards: IssueCard[];
 }
 
-/** The columns as the wall and the overlay list them, cards sorted (done column: latest closed first). Empty "No status" is left out. */
+/**
+ * The columns as the wall and the overlay list them. Cards follow the provider's order (`position`, #52); the ones without
+ * a position come after them, most urgent first (done column: latest closed first). Empty "No status" is left out.
+ */
 export function columnViews(m: Pick<BoardIssues, 'columns' | 'cards'>): ColumnView[] {
   const known = new Set(m.columns.map((c) => c.id));
   const cols: BoardColumn[] = [...m.columns];
@@ -136,7 +153,7 @@ export function columnViews(m: Pick<BoardIssues, 'columns' | 'cards'>): ColumnVi
   return cols
     .map((c) => {
       const cards = m.cards.filter((x) => (known.has(x.column) ? x.column === c.id : c.id === ''));
-      cards.sort(c.done ? byClosed : byUrgency);
+      cards.sort(c.done ? BY_POSITION_DONE : BY_POSITION);
       return { id: c.id, name: c.name, done: c.done === true, cards };
     })
     .filter((c) => c.id !== '' || c.cards.length > 0);

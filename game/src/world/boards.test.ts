@@ -96,6 +96,27 @@ describe('columns', () => {
     expect(cols[2]?.cards.map((c) => c.key)).toEqual(['#6', '#5']);
   });
 
+  it('follows the provider’s order when cards have a position, done columns too; the unranked ones after them by the old rule', () => {
+    const cards = [
+      card('a/b#1', { priority: 'urgent', position: 4 }),
+      card('a/b#2', { position: 1 }),
+      card('a/b#3', { priority: 'low', updated_at: 9 }),
+      card('a/b#4', { priority: 'high', updated_at: 1 }),
+      card('a/b#5', { column: 'done', state: 'closed', closed_at: 10, position: 0 }),
+      card('a/b#6', { column: 'done', state: 'closed', closed_at: 30, position: 7 }),
+      card('a/b#7', { column: 'done', state: 'closed', closed_at: 50 }),
+      card('a/b#8', { column: 'done', state: 'closed', closed_at: 40 }),
+      card('a/b#9', { position: 0 }),
+    ];
+    const cols = columnViews(issues(cards));
+    expect(cols[0]?.cards.map((c) => c.key)).toEqual(['#9', '#2', '#1', '#4', '#3']);
+    expect(cols[2]?.cards.map((c) => c.key)).toEqual(['#5', '#6', '#7', '#8']);
+    // A provider without an order keeps exactly the old sort.
+    const plain = columnViews(issues(cards.map(({ position: _p, ...c }) => c)));
+    expect(plain[0]?.cards.map((c) => c.key)).toEqual(['#1', '#4', '#3', '#2', '#9']);
+    expect(plain[2]?.cards.map((c) => c.key)).toEqual(['#7', '#8', '#6', '#5']);
+  });
+
   it('keeps a card of an unknown column in a No status column', () => {
     const cols = columnViews(issues([card('a/b#1', { column: 'gone' })]));
     expect(cols[0]).toMatchObject({ id: '', name: 'No status' });

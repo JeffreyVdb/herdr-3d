@@ -51,6 +51,10 @@ var (
 	// ErrBadInput: the provider refused an argument (a column it does not
 	// have, a base branch that is gone).
 	ErrBadInput = errors.New("bad input")
+	// ErrPartial: a call of several writes failed after one of them
+	// landed, so the provider's state changed anyway. It goes with the
+	// failure's own kind (see Partial): the caller still refreshes.
+	ErrPartial = errors.New("partial")
 )
 
 // RateLimitError is a rate limit: the provider will answer again at
@@ -69,6 +73,15 @@ func (e *RateLimitError) Error() string {
 
 // Failed is an ErrFailed with a message.
 func Failed(format string, args ...any) error { return Errorf(ErrFailed, format, args...) }
+
+// Partial marks err, which came after a write that landed, as an
+// ErrPartial; errors.Is still finds err's own kind.
+func Partial(err error) error { return &partialError{err: err} }
+
+type partialError struct{ err error }
+
+func (e *partialError) Error() string   { return e.err.Error() }
+func (e *partialError) Unwrap() []error { return []error{ErrPartial, e.err} }
 
 // Errorf wraps kind with a message (kind's own text is not repeated).
 func Errorf(kind error, format string, args ...any) error {

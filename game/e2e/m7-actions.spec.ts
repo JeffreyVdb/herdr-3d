@@ -425,3 +425,389 @@ test('Open PR says why when the worker is not on a branch the bridge made', asyn
   await expect(page.locator('dialog.desk-dlg--openpr .dd-status--error')).toContainText('refused it');
   clean();
 });
+
+// ---- #52: dragging cards between the columns ------------------------------------------------------------------------
+// The lab floor's project board: Todo #7 #6 #5, Doing #3 #4, QA #8, Done #2 #1 (the project's order, `position`).
+
+const COL = { todo: '49294ed0', doing: 'ae6334b4', qa: '64e1b0ac', done: 'ccf5765b' } as const;
+const boardDlg = (page: Page) => page.locator('dialog.desk-dlg--board');
+const cardEl = (page: Page, n: number, repo = lab) => boardDlg(page).locator(`.bd-card[data-id="${repo}#${n}"]`);
+const colEl = (page: Page, id: string) => boardDlg(page).locator(`.bd-col[data-col="${id}"]`);
+const slotLine = (page: Page) => boardDlg(page).locator('.bd-slot');
+const keysOf = async (page: Page) => Object.fromEntries(((await board(page))?.columns ?? []).map((c) => [c.name, c.keys]));
+
+async function box(loc: ReturnType<Page['locator']>) {
+  const b = await loc.boundingBox();
+  if (!b) throw new Error('not on screen');
+  return b;
+}
+
+async function openIssues(page: Page, session = 'lab', notes = 8): Promise<void> {
+  await enter(page, session);
+  await expect.poll(async () => (await wall(page))?.issues.length).toBe(notes);
+  await page.evaluate(() => window.__h3d.openBoard('issues'));
+  await expect(boardDlg(page)).toBeVisible();
+  await expect.poll(async () => (await board(page))?.columns.length ?? 0).toBeGreaterThan(1);
+  // The dialog's opening slide is over: what is measured now is where it stays.
+  await boardDlg(page).evaluate((d) => Promise.all(d.getAnimations({ subtree: true }).map((a) => a.finished)));
+}
+
+/** Presses on a card's middle and moves a little: the drag is live. */
+async function pickUp(page: Page, n: number, repo = lab): Promise<void> {
+  const b = await box(cardEl(page, n, repo));
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width / 2 + 8, b.y + b.height / 2 + 8, { steps: 3 });
+  await expect(page.locator('.bd-card--lifted')).toHaveCount(1);
+}
+
+/** The middle of the slot line, once it shows in that column and has come to rest (it glides between slots). */
+async function lineAt(page: Page, column: string): Promise<number> {
+  await expect(boardDlg(page).locator(`.bd-slot[data-column="${column}"]`)).toHaveCount(1);
+  await slotLine(page).evaluate((e) => Promise.all(e.getAnimations().map((a) => a.finished)));
+  const l = await box(slotLine(page));
+  return l.y + l.height / 2;
+}
+
+const setStatus = async (page: Page) => (await sentOf(page, 'issue.set_status')).map((c) => c.args);
+
+test('#52 drag with the mouse: the line above a card in its top half, below it in its bottom half; the drop sends after and the card stays there after the poll', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', EXTRA, SIM);
+  await openIssues(page);
+  expect(await keysOf(page)).toMatchObject({ Todo: ['#7', '#6', '#5'], Doing: ['#3', '#4'], QA: ['#8'], Done: ['#2', '#1'] });
+  await expect(cardEl(page, 5)).toHaveAttribute('data-drag', 'true');
+  const three = await box(cardEl(page, 3));
+  const four = await box(cardEl(page, 4));
+  await pickUp(page, 5);
+  // The spot it left is a ghost; the card follows the pointer.
+  await expect(cardEl(page, 5)).toHaveClass(/bd-card--ghost/);
+  // Over #3's top half: the line above #3.
+  await page.mouse.move(three.x + three.width / 2, three.y + three.height * 0.25, { steps: 6 });
+  await expect(colEl(page, COL.doing)).toHaveAttribute('data-over', 'true');
+  let y = await lineAt(page, COL.doing);
+  expect(y).toBeLessThan(three.y);
+  expect(y).toBeGreaterThan(three.y - 12);
+  // Over its bottom half: below #3, between it and #4.
+  await page.mouse.move(three.x + three.width / 2, three.y + three.height * 0.75, { steps: 4 });
+  await expect.poll(async () => (await lineAt(page, COL.doing)) > three.y + three.height).toBe(true);
+  y = await lineAt(page, COL.doing);
+  expect(y).toBeLessThan(four.y);
+  const lifted = await box(page.locator('.bd-card--lifted'));
+  expect(Math.abs(lifted.y + lifted.height / 2 - (three.y + three.height * 0.75))).toBeLessThan(lifted.height);
+  await shot(page, 'm52-drag-preview');
+  expect(await setStatus(page)).toEqual([]);
+  await page.mouse.up();
+  await expect.poll(async () => (await setStatus(page)).length).toBe(1);
+  expect((await setStatus(page))[0]).toEqual({ session: 'lab', id: `${lab}#5`, column: COL.doing, after: `${lab}#3` });
+  // At once, and no card opened for the release.
+  expect((await keysOf(page)).Doing).toEqual(['#3', '#5', '#4']);
+  expect((await keysOf(page)).Todo).toEqual(['#7', '#6']);
+  expect((await board(page))?.item ?? null).toBeNull();
+  await expect(page.locator('.bd-card--lifted')).toHaveCount(0);
+  await expect(slotLine(page)).toHaveCount(0);
+  // The bridge's refresh, and another poll: still there, now by the project's order itself.
+  await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[0]?.result?.ok).toBe(true);
+  await page.evaluate(() => window.__h3d.simBoards({ poll: true }));
+  await frames(page, 10);
+  expect((await keysOf(page)).Doing).toEqual(['#3', '#5', '#4']);
+  const m = (await page.evaluate(() => window.__h3d.boardMessage('issues'))) as { cards: Array<{ key: string; position?: number }> };
+  const pos = (k: string) => m.cards.find((c) => c.key === k)?.position ?? -1;
+  expect(pos('#3')).toBeLessThan(pos('#5'));
+  expect(pos('#5')).toBeLessThan(pos('#4'));
+  clean();
+});
+
+test('#52 drag to the end of a column and into an empty one', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', EXTRA, SIM);
+  await openIssues(page);
+  // #8 to the end of Done: below its last card.
+  const one = await box(cardEl(page, 1));
+  await pickUp(page, 8);
+  await page.mouse.move(one.x + one.width / 2, one.y + one.height + 40, { steps: 6 });
+  expect(await lineAt(page, COL.done)).toBeGreaterThan(one.y + one.height);
+  await page.mouse.up();
+  await expect.poll(async () => (await setStatus(page)).length).toBe(1);
+  expect((await setStatus(page))[0]).toEqual({ session: 'lab', id: `${lab}#8`, column: COL.done, after: `${lab}#1` });
+  expect(await keysOf(page)).toMatchObject({ QA: [], Done: ['#2', '#1', '#8'] });
+  await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[0]?.result?.ok).toBe(true);
+  // QA is empty now: #6 into it, at the top (after: null).
+  const qa = await box(colEl(page, COL.qa));
+  await pickUp(page, 6);
+  await page.mouse.move(qa.x + qa.width / 2, qa.y + 60, { steps: 6 });
+  await lineAt(page, COL.qa);
+  await expect(colEl(page, COL.qa)).toHaveAttribute('data-over', 'true');
+  await page.mouse.up();
+  await expect.poll(async () => (await setStatus(page)).length).toBe(2);
+  expect((await setStatus(page))[1]).toEqual({ session: 'lab', id: `${lab}#6`, column: COL.qa, after: null });
+  await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[1]?.result?.ok).toBe(true);
+  await page.evaluate(() => window.__h3d.simBoards({ poll: true }));
+  await frames(page, 10);
+  expect(await keysOf(page)).toMatchObject({ Todo: ['#7', '#5'], QA: ['#6'], Done: ['#2', '#1', '#8'] });
+  clean();
+});
+
+test('#52 Esc, a drop outside the columns or on its own place cancel: nothing sent, nothing moved; a plain click still opens the card', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', EXTRA, SIM);
+  await openIssues(page);
+  const before = await keysOf(page);
+  const three = await box(cardEl(page, 3));
+  const five = await box(cardEl(page, 5));
+  // Esc: the drag ends, the board stays open.
+  await pickUp(page, 5);
+  await page.mouse.move(three.x + three.width / 2, three.y + 5, { steps: 4 });
+  await lineAt(page, COL.doing);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.bd-card--lifted')).toHaveCount(0);
+  await expect(slotLine(page)).toHaveCount(0);
+  await expect(cardEl(page, 5)).not.toHaveClass(/bd-card--ghost/);
+  // The button still down, back over the card it picked up: its release is the cancelled drag's, not a click.
+  await page.mouse.move(five.x + five.width / 2, five.y + five.height / 2, { steps: 4 });
+  await page.mouse.up();
+  await frames(page, 4);
+  await expect(boardDlg(page)).toBeVisible();
+  expect((await board(page))?.item ?? null).toBeNull();
+  // Over the dialog's header: no column, no line; the drop there does nothing.
+  await pickUp(page, 5);
+  const head = await box(boardDlg(page).locator('.dd-head'));
+  await page.mouse.move(head.x + head.width / 2, head.y + head.height / 2, { steps: 6 });
+  await expect(boardDlg(page).locator('.bd-col[data-over]')).toHaveCount(0);
+  await expect(slotLine(page)).toHaveCount(0);
+  await page.mouse.up();
+  // Back on its own place: no line (its ghost is the place), and no command.
+  await pickUp(page, 6);
+  await expect(slotLine(page)).toHaveCount(0);
+  await page.mouse.up();
+  await frames(page, 4);
+  expect(await setStatus(page)).toEqual([]);
+  expect(await keysOf(page)).toEqual(before);
+  expect((await board(page))?.item ?? null).toBeNull();
+  // A click with no drag opens the card, as before.
+  await cardEl(page, 5).click();
+  await expect.poll(async () => (await item(page)).key ?? null).toBe('#5');
+  // And the modal's Move to… still moves the status only: no after.
+  await expect.poll(async () => (await item(page)).state).toBe('ready');
+  await act(page, 'move-to').selectOption({ label: 'QA' });
+  await act(page, 'move').click();
+  await expect.poll(async () => (await setStatus(page)).length).toBe(1);
+  expect((await setStatus(page))[0]).toEqual({ session: 'lab', id: `${lab}#5`, column: COL.qa });
+  clean();
+});
+
+test('#52 a failed write puts the card back and says why', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', EXTRA, SIM);
+  await openIssues(page);
+  await page.evaluate(() => window.__h3d.simBoards({ fail_write: 'Resource not accessible by integration' }));
+  const three = await box(cardEl(page, 3));
+  await pickUp(page, 5);
+  await page.mouse.move(three.x + three.width / 2, three.y + three.height * 0.75, { steps: 6 });
+  await lineAt(page, COL.doing);
+  await page.mouse.up();
+  await expect.poll(async () => (await setStatus(page)).length).toBe(1);
+  await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[0]?.result?.code).toBe('provider_failed');
+  // Said in the board, which stays open over the HUD: visible, on top, and announced from inside the modal.
+  const alert = boardDlg(page).locator('.bd-alert-text');
+  await expect(alert).toBeVisible();
+  await expect(alert).toHaveText('GitHub refused or failed: Resource not accessible by integration. The board shows where #5 is now.');
+  await expect(alert).toHaveAttribute('role', 'alert');
+  expect(await alert.evaluate((e) => {
+    const r = e.getBoundingClientRect();
+    return e.contains(document.elementFromPoint(r.left + 8, r.top + r.height / 2));
+  })).toBe(true);
+  await expect.poll(async () => (await keysOf(page)).Doing).toEqual(['#3', '#4']);
+  expect((await keysOf(page)).Todo).toEqual(['#7', '#6', '#5']);
+  await expect(cardEl(page, 5)).not.toHaveAttribute('data-moving', 'true');
+  await shot(page, 'm52-drag-failed');
+  // Dismissed, it goes; so does it when the next drag starts.
+  await boardDlg(page).locator('[data-key="dismiss-move-error"]').click();
+  await expect(boardDlg(page).locator('.bd-alert')).toBeHidden();
+  clean();
+});
+
+test('#52 a write that fails halfway (the status changed, the place did not): the error says so and the refresh shows the card where it is', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', EXTRA, SIM);
+  await openIssues(page);
+  await page.evaluate(() => window.__h3d.simBoards({ partial_write: 'Resource not accessible by integration' }));
+  const three = await box(cardEl(page, 3));
+  await pickUp(page, 5);
+  await page.mouse.move(three.x + three.width / 2, three.y + three.height * 0.75, { steps: 6 });
+  await lineAt(page, COL.doing);
+  await page.mouse.up();
+  await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[0]?.result?.code).toBe('provider_failed');
+  await expect(boardDlg(page).locator('.bd-alert-text')).toContainText('its status changed, but its place in the column did not');
+  // The bridge's refresh: #5 in Doing, at its old place in the project's order (not where it was dropped).
+  await expect.poll(async () => (await keysOf(page)).Doing).toContain('#5');
+  expect((await keysOf(page)).Todo).toEqual(['#7', '#6']);
+  await frames(page, 10);
+  expect((await keysOf(page)).Doing).toContain('#5');
+  clean();
+});
+
+test('#52 a board polled before the write never makes the card jump back; no project means no dragging', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', EXTRA, SIM);
+  await openIssues(page);
+  const old = await page.evaluate(() => window.__h3d.boardMessage('issues'));
+  // The bridge's refresh is late: the board that comes first is one from before the write.
+  await page.evaluate(() => window.__h3d.simBoards({ no_refresh: true }));
+  const three = await box(cardEl(page, 3));
+  await pickUp(page, 5);
+  await page.mouse.move(three.x + three.width / 2, three.y + 4, { steps: 6 });
+  await lineAt(page, COL.doing);
+  await page.mouse.up();
+  await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[0]?.result?.ok).toBe(true);
+  expect((await setStatus(page))[0]).toEqual({ session: 'lab', id: `${lab}#5`, column: COL.doing, after: null });
+  await page.evaluate((m) => window.__h3d.injectBoard({ ...(m as object), initial: false, fetched_at: Date.now() } as never), old);
+  await frames(page, 4);
+  expect((await keysOf(page)).Doing).toEqual(['#5', '#3', '#4']);
+  // The refresh comes: the same.
+  await page.evaluate(() => window.__h3d.simBoards({ no_refresh: false, poll: true }));
+  await frames(page, 10);
+  expect((await keysOf(page)).Doing).toEqual(['#5', '#3', '#4']);
+
+  // A floor with no project: no card can be picked up, and a drag does nothing.
+  await page.evaluate(() => window.__h3d.board() && document.querySelector<HTMLDialogElement>('dialog.desk-dlg--board')?.close());
+  await openIssues(page, 'depot-manager', 4);
+  await expect(boardDlg(page).locator('.bd-card[data-drag]')).toHaveCount(0);
+  const closed = await box(colEl(page, 'closed'));
+  const b = await box(cardEl(page, 1, 'fomra/depot-manager'));
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(closed.x + closed.width / 2, closed.y + 80, { steps: 6 });
+  await expect(page.locator('.bd-card--lifted')).toHaveCount(0);
+  await page.mouse.up();
+  await frames(page, 4);
+  expect(await setStatus(page)).toHaveLength(1);
+  clean();
+});
+
+test('#52 far columns: the board scrolls sideways near its edge to reach Done', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 620, height: 720 });
+  await openGame(page, 'demo-m6', EXTRA, SIM);
+  await openIssues(page);
+  const body = boardDlg(page).locator('.bd-body');
+  const bb = await box(body);
+  expect(await body.evaluate((e) => e.scrollWidth > e.clientWidth + 100)).toBe(true);
+  expect(await body.evaluate((e) => e.scrollLeft)).toBe(0);
+  await pickUp(page, 5);
+  // Rest near the right edge: the board scrolls until Done is in reach.
+  await page.mouse.move(bb.x + bb.width - 8, bb.y + 120, { steps: 6 });
+  await expect.poll(async () => body.evaluate((e) => e.scrollLeft + e.clientWidth >= e.scrollWidth - 2), { timeout: 20_000 }).toBe(true);
+  const done = await box(colEl(page, COL.done));
+  await page.mouse.move(done.x + done.width / 2, done.y + 20, { steps: 4 });
+  await lineAt(page, COL.done);
+  await page.mouse.up();
+  await expect.poll(async () => (await setStatus(page)).length).toBe(1);
+  expect((await setStatus(page))[0]).toEqual({ session: 'lab', id: `${lab}#5`, column: COL.done, after: null });
+  clean();
+});
+
+test('#52 prefers-reduced-motion: no lift or slide animation, the line still shows', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await openGame(page, 'demo-m6', EXTRA, SIM);
+  await openIssues(page);
+  const three = await box(cardEl(page, 3));
+  await pickUp(page, 5);
+  await page.mouse.move(three.x + three.width / 2, three.y + 4, { steps: 4 });
+  await lineAt(page, COL.doing);
+  expect(await slotLine(page).evaluate((e) => getComputedStyle(e).transitionDuration)).toBe('0s');
+  expect(await page.locator('.bd-card--lifted').evaluate((e) => getComputedStyle(e).animationName)).toBe('none');
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  // With motion allowed the note lifts off with an animation.
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await pickUp(page, 5);
+  expect(await page.locator('.bd-card--lifted').evaluate((e) => getComputedStyle(e).animationName)).toBe('bd-lift');
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  expect(await setStatus(page)).toEqual([]);
+  clean();
+});
+
+test.describe('#52 touch', () => {
+  test.use({ hasTouch: true, viewport: { width: 620, height: 720 } });
+
+  test('a swipe scrolls the board; a long press picks the card up and the finger drags it without scrolling the page', async ({ page }) => {
+    test.setTimeout(150_000);
+    const clean = watchErrors(page);
+    await openGame(page, 'demo-m6', EXTRA, SIM);
+    await openIssues(page);
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (type: string, x?: number, y?: number) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: x === undefined ? [] : [{ x, y: y as number }] } as never);
+    const body = boardDlg(page).locator('.bd-body');
+    // A swipe left that starts on a card: the board scrolls, nothing is picked up.
+    const six = await box(cardEl(page, 6));
+    let x = six.x + six.width / 2;
+    const y = six.y + six.height / 2;
+    // (Headless Chromium on llvmpipe lets the first touch sequences after the dialog opens go by without a scroll, before
+    // its compositor has the board's scroller: the swipe is tried up to four times, and none of them may pick a card up.)
+    await frames(page, 10);
+    for (let k = 0; k < 4 && (await body.evaluate((e) => e.scrollLeft)) === 0; k++) {
+      await touch('touchStart', x, y);
+      for (let i = 1; i <= 8; i++) {
+        await touch('touchMove', x - i * 25, y);
+        await page.waitForTimeout(16);
+      }
+      await touch('touchEnd');
+      await page.waitForTimeout(300);
+      await expect(page.locator('.bd-card--lifted')).toHaveCount(0);
+    }
+    await expect.poll(async () => body.evaluate((e) => e.scrollLeft)).toBeGreaterThan(50);
+    await expect(page.locator('.bd-card--lifted')).toHaveCount(0);
+    expect(await setStatus(page)).toEqual([]);
+    await body.evaluate((e) => (e.scrollLeft = 0));
+    // A long press on #5, then the finger carries it onto #3's bottom half.
+    const five = await box(cardEl(page, 5));
+    const three = await box(cardEl(page, 3));
+    x = five.x + five.width / 2;
+    await touch('touchStart', x, five.y + five.height / 2);
+    await page.waitForTimeout(600);
+    await expect(page.locator('.bd-card--lifted')).toHaveCount(1);
+    const steps = 8;
+    const tx = three.x + three.width / 2;
+    const ty = three.y + three.height * 0.75;
+    for (let i = 1; i <= steps; i++) {
+      await touch('touchMove', x + ((tx - x) * i) / steps, five.y + five.height / 2 + ((ty - five.y - five.height / 2) * i) / steps);
+      await page.waitForTimeout(16);
+    }
+    await lineAt(page, COL.doing);
+    expect(await body.evaluate((e) => e.scrollTop)).toBe(0);
+    await touch('touchEnd');
+    await expect.poll(async () => (await setStatus(page)).length).toBe(1);
+    expect((await setStatus(page))[0]).toEqual({ session: 'lab', id: `${lab}#5`, column: COL.doing, after: `${lab}#3` });
+    expect((await board(page))?.item ?? null).toBeNull();
+    // The browser takes the finger back (pointercancel): the drag ends, nothing is sent and nothing opens; a tap still opens.
+    await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[0]?.result?.ok).toBe(true);
+    await frames(page, 10);
+    await body.evaluate((e) => (e.scrollLeft = 0));
+    await expect(cardEl(page, 6)).toBeVisible();
+    const six2 = await box(cardEl(page, 6));
+    x = six2.x + six2.width / 2;
+    await touch('touchStart', x, six2.y + six2.height / 2);
+    await page.waitForTimeout(600);
+    await expect(page.locator('.bd-card--lifted')).toHaveCount(1);
+    await touch('touchMove', x + 20, six2.y + six2.height / 2 + 20);
+    await touch('touchCancel');
+    await expect(page.locator('.bd-card--lifted')).toHaveCount(0);
+    await page.waitForTimeout(500);
+    expect(await setStatus(page)).toHaveLength(1);
+    expect((await board(page))?.item ?? null).toBeNull();
+    await page.touchscreen.tap(x, six2.y + six2.height / 2);
+    await expect.poll(async () => (await item(page)).key ?? null).toBe('#6');
+    clean();
+  });
+});

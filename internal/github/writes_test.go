@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/codehost"
 	"github.com/JeffreyVdb/herdr-3d/internal/githubcli"
 	"github.com/JeffreyVdb/herdr-3d/internal/provider"
+	"github.com/JeffreyVdb/herdr-3d/internal/tracker"
 )
 
 // edit changes a fixture through fn.
@@ -232,7 +234,7 @@ func TestSetStatus(t *testing.T) {
 	}))
 	tr, _ := reg.For(projectCfg)
 	ctx := context.Background()
-	if err := tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#9", "ae6334b4"); err != nil {
+	if err := tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#9", "ae6334b4", nil); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(gh.docs(), []githubcli.Doc{githubcli.DocStatusTarget, githubcli.DocSetStatus}) {
@@ -246,7 +248,7 @@ func TestSetStatus(t *testing.T) {
 	// An issue that is not in the project is added first.
 	inProject = false
 	gh.calls = nil
-	if err := tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#9", "49294ed0"); err != nil {
+	if err := tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#9", "49294ed0", nil); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(gh.docs(), []githubcli.Doc{githubcli.DocStatusTarget, githubcli.DocAddProjectItem, githubcli.DocSetStatus}) {
@@ -260,9 +262,209 @@ func TestSetStatus(t *testing.T) {
 	}
 	// A column the field does not have is refused before anything is written.
 	gh.calls = nil
-	if err := tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#9", "zzzz"); !errors.Is(err, provider.ErrBadInput) ||
+	if err := tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#9", "zzzz", nil); !errors.Is(err, provider.ErrBadInput) ||
 		!slices.Equal(gh.docs(), []githubcli.Doc{githubcli.DocStatusTarget}) {
 		t.Fatalf("an unknown column: %v %v", err, gh.docs())
+	}
+}
+
+// target is the status-target answer for issue number n of the fixture's
+// project: its item (none: not in the project) with its status.
+func target(n int, item, status string) string {
+	items := `[]`
+	if item != "" {
+		value := `null`
+		if status != "" {
+			value = `{"optionId":"` + status + `"}`
+		}
+		items = `[{"id":"PVTI_other","project":{"id":"PVT_other","number":9},"fieldValueByName":{"optionId":"zzzz"}},
+			{"id":"` + item + `","project":{"id":"PVT_kwHOAAplCs4Bk8CS","number":2},"fieldValueByName":` + value + `}]`
+	}
+	return fmt.Sprintf(`{"data":{"repository":{"issue":{"id":"I_%d","number":%d,"projectItems":{"nodes":%s}}},
+		"repositoryOwner":{"__typename":"User","projectV2":{"id":"PVT_kwHOAAplCs4Bk8CS","number":2,"title":"b","fields":{"nodes":[{},
+		{"id":"F_status","name":"Status","options":[{"id":"49294ed0","name":"Todo"},{"id":"ae6334b4","name":"Doing"},
+		{"id":"64e1b0ac","name":"QA"},{"id":"ccf5765b","name":"Done"}]}]}}}}}`, n, n, items)
+}
+
+// orderBoard is a registry whose GitHub has the fixture's project (its order:
+// #7 Done, a draft, #30 Todo, a pull request, another repository's issue in
+// Doing, #9 Doing, content out of reach, #4 (not a card), #6 Done) and
+// answers status-target from targets; the position write fails with posErr
+// when it is set.
+func orderBoard(t *testing.T, targets map[float64]string, posErr *string) (*Registry, *fakeGH) {
+	return newRegistry(t, writes(t, func(doc githubcli.Doc, vars map[string]any) (string, bool) {
+		switch doc {
+		case githubcli.DocFeed:
+			return fixture(t, "feed-project.json"), true
+		case githubcli.DocStatusTarget:
+			if vars["statusField"] != "Status" {
+				t.Errorf("status-target vars = %v", vars)
+			}
+			return targets[vars["number"].(float64)], true
+		case githubcli.DocAddProjectItem:
+			return `{"data":{"addProjectV2ItemById":{"item":{"id":"PVTI_new","project":{"id":"PVT_kwHOAAplCs4Bk8CS","number":2}}}}}`, true
+		case githubcli.DocSetStatus:
+			return `{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"x"}}}}`, true
+		case githubcli.DocSetPosition:
+			if posErr != nil && *posErr != "" {
+				return `{"data":{"updateProjectV2ItemPosition":null},"errors":[{"type":"FORBIDDEN","message":"` + *posErr + `"}]}`, true
+			}
+			return `{"data":{"updateProjectV2ItemPosition":{"clientMutationId":null}}}`, true
+		case githubcli.DocItemsPage:
+			// The order after the moves: #30 went to Doing after #9.
+			return `{"data":{"node":{"items":{"pageInfo":{"hasNextPage":false},"nodes":[
+				{"id":"PVTI_7","content":{"__typename":"Issue","id":"I_7"},"fieldValueByName":{"optionId":"ccf5765b"}},
+				{"id":"PVTI_9","content":{"__typename":"Issue","id":"I_9"},"fieldValueByName":{"optionId":"ae6334b4"}},
+				{"id":"PVTI_30","content":{"__typename":"Issue","id":"I_30"},"fieldValueByName":{"optionId":"ae6334b4"}},
+				{"id":"PVTI_6","content":{"__typename":"Issue","id":"I_6"},"fieldValueByName":{"optionId":"ccf5765b"}}]}}}}`, true
+		}
+		return "", false
+	}))
+}
+
+// SetStatus with an anchor: the status (when it changes), then the place,
+// with the afterId the slot means in the project's one order.
+func TestSetStatusOrder(t *testing.T) {
+	ctx := context.Background()
+	const todo, doing, qa, done = "49294ed0", "ae6334b4", "64e1b0ac", "ccf5765b"
+	targets := map[float64]string{30: target(30, "PVTI_30", todo), 9: target(9, "PVTI_9", doing), 6: target(6, "PVTI_6", done),
+		32: target(32, "", "")}
+	posErr := ""
+	for _, tc := range []struct {
+		name  string
+		id    string
+		col   string
+		after string // "" the top
+		docs  []githubcli.Doc
+		vars  map[string]any // of the position write
+	}{
+		{"after a card of another column", "JeffreyVdb/herdr-3d#30", doing, "JeffreyVdb/herdr-3d#9",
+			[]githubcli.Doc{githubcli.DocStatusTarget, githubcli.DocSetStatus, githubcli.DocSetPosition},
+			map[string]any{"projectId": "PVT_kwHOAAplCs4Bk8CS", "itemId": "PVTI_30", "afterId": "PVTI_9"}},
+		// Doing's first card is #9: right after the item before it (another
+		// repository's issue), the moved card left out.
+		{"the top of a column", "JeffreyVdb/herdr-3d#30", doing, "",
+			[]githubcli.Doc{githubcli.DocStatusTarget, githubcli.DocSetStatus, githubcli.DocSetPosition},
+			map[string]any{"projectId": "PVT_kwHOAAplCs4Bk8CS", "itemId": "PVTI_30", "afterId": "PVTI_elsewhere"}},
+		// Done's first card #7 is the project's first item: no afterId.
+		{"the top of a column that starts the project", "JeffreyVdb/herdr-3d#30", done, "",
+			[]githubcli.Doc{githubcli.DocStatusTarget, githubcli.DocSetStatus, githubcli.DocSetPosition},
+			map[string]any{"projectId": "PVT_kwHOAAplCs4Bk8CS", "itemId": "PVTI_30"}},
+		{"an empty column", "JeffreyVdb/herdr-3d#30", qa, "",
+			[]githubcli.Doc{githubcli.DocStatusTarget, githubcli.DocSetStatus, githubcli.DocSetPosition},
+			map[string]any{"projectId": "PVT_kwHOAAplCs4Bk8CS", "itemId": "PVTI_30"}},
+		// A move within its own column writes no status.
+		{"a reorder in the column", "JeffreyVdb/herdr-3d#6", done, "",
+			[]githubcli.Doc{githubcli.DocStatusTarget, githubcli.DocSetPosition},
+			map[string]any{"projectId": "PVT_kwHOAAplCs4Bk8CS", "itemId": "PVTI_6"}},
+		{"after a card further down", "JeffreyVdb/herdr-3d#7", done, "JeffreyVdb/herdr-3d#6",
+			[]githubcli.Doc{githubcli.DocStatusTarget, githubcli.DocSetStatus, githubcli.DocSetPosition},
+			map[string]any{"projectId": "PVT_kwHOAAplCs4Bk8CS", "itemId": "PVTI_7", "afterId": "PVTI_6"}},
+		// Not in the project yet: added, its status set, then its place.
+		{"not in the project", "JeffreyVdb/herdr-3d#32", doing, "JeffreyVdb/herdr-3d#9",
+			[]githubcli.Doc{githubcli.DocStatusTarget, githubcli.DocAddProjectItem, githubcli.DocSetStatus, githubcli.DocSetPosition},
+			map[string]any{"projectId": "PVT_kwHOAAplCs4Bk8CS", "itemId": "PVTI_new", "afterId": "PVTI_9"}},
+	} {
+		reg, gh := orderBoard(t, targets, &posErr)
+		tr, _ := reg.For(projectCfg)
+		if _, err := tr.Board(ctx); err != nil {
+			t.Fatal(err)
+		}
+		gh.calls = nil
+		if tc.id == "JeffreyVdb/herdr-3d#7" {
+			targets[7] = target(7, "PVTI_7", todo) // its status is not Done (yet)
+		}
+		if err := tr.SetStatus(ctx, tc.id, tc.col, &tracker.Anchor{After: tc.after}); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if !slices.Equal(gh.docs(), tc.docs) {
+			t.Fatalf("%s: calls = %v", tc.name, gh.docs())
+		}
+		if v := gh.last(githubcli.DocSetPosition); !maps.Equal(v, tc.vars) {
+			t.Fatalf("%s: position vars = %v, want %v", tc.name, v, tc.vars)
+		}
+		if slices.Contains(tc.docs, githubcli.DocSetStatus) {
+			if v := gh.last(githubcli.DocSetStatus); v["optionId"] != tc.col {
+				t.Fatalf("%s: status vars = %v", tc.name, v)
+			}
+		}
+	}
+
+	// Without an anchor nothing changes: the status only, also in its own column.
+	reg, gh := orderBoard(t, targets, &posErr)
+	tr, _ := reg.For(projectCfg)
+	if err := tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#9", doing, nil); err != nil ||
+		!slices.Equal(gh.docs(), []githubcli.Doc{githubcli.DocStatusTarget, githubcli.DocSetStatus}) {
+		t.Fatalf("a status only: %v %v", err, gh.docs())
+	}
+
+	// After a write the order is read again (the feed's is stale), its cards the feed's.
+	if _, err := tr.Board(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#30", doing, &tracker.Anchor{After: "JeffreyVdb/herdr-3d#9"}); err != nil {
+		t.Fatal(err)
+	}
+	gh.calls = nil
+	if err := tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#6", doing, &tracker.Anchor{}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(gh.docs(), []githubcli.Doc{githubcli.DocStatusTarget, githubcli.DocItemsPage, githubcli.DocSetStatus, githubcli.DocSetPosition}) {
+		t.Fatalf("calls = %v", gh.docs())
+	}
+	// Doing starts with #9 now, right after #7.
+	if v := gh.last(githubcli.DocSetPosition); v["afterId"] != "PVTI_7" || v["itemId"] != "PVTI_6" {
+		t.Fatalf("position vars = %v", v)
+	}
+	if v := gh.last(githubcli.DocItemsPage); v["after"] != nil || v["projectId"] != "PVT_kwHOAAplCs4Bk8CS" {
+		t.Fatalf("items vars = %v", v)
+	}
+
+	// An anchor that is not in the project's order: stale, nothing written.
+	reg, gh = orderBoard(t, targets, &posErr)
+	tr, _ = reg.For(projectCfg)
+	if _, err := tr.Board(ctx); err != nil {
+		t.Fatal(err)
+	}
+	gh.calls = nil
+	if err := tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#30", doing, &tracker.Anchor{After: "JeffreyVdb/herdr-3d#32"}); !errors.Is(err, provider.ErrStale) ||
+		!slices.Equal(gh.docs(), []githubcli.Doc{githubcli.DocStatusTarget}) {
+		t.Fatalf("a stale anchor: %v %v", err, gh.docs())
+	}
+
+	// The status is written, the place is not: the error says which.
+	posErr = "Resource not accessible by integration"
+	err := tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#30", doing, &tracker.Anchor{After: "JeffreyVdb/herdr-3d#9"})
+	if !errors.Is(err, provider.ErrFailed) || !errors.Is(err, provider.ErrPartial) || !strings.Contains(err.Error(), "status changed, but its place") ||
+		!strings.Contains(err.Error(), "Resource not accessible") || !slices.Contains(gh.docs(), githubcli.DocSetStatus) {
+		t.Fatalf("a failed place: %v %v", err, gh.docs())
+	}
+	// A reorder that fails changed nothing: the plain error.
+	err = tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#6", done, &tracker.Anchor{})
+	if !errors.Is(err, provider.ErrFailed) || errors.Is(err, provider.ErrPartial) || strings.Contains(err.Error(), "status changed") {
+		t.Fatalf("a failed reorder: %v", err)
+	}
+	posErr = ""
+}
+
+// An issue added to the project whose status then fails: the add landed,
+// so the error is partial.
+func TestSetStatusPartialAdd(t *testing.T) {
+	reg, _ := newRegistry(t, writes(t, func(doc githubcli.Doc, vars map[string]any) (string, bool) {
+		switch doc {
+		case githubcli.DocStatusTarget:
+			return target(32, "", ""), true
+		case githubcli.DocAddProjectItem:
+			return `{"data":{"addProjectV2ItemById":{"item":{"id":"PVTI_new","project":{"id":"PVT_kwHOAAplCs4Bk8CS","number":2}}}}}`, true
+		case githubcli.DocSetStatus:
+			return `{"data":{"updateProjectV2ItemFieldValue":null},"errors":[{"type":"FORBIDDEN","message":"no"}]}`, true
+		}
+		return "", false
+	}))
+	tr, _ := reg.For(projectCfg)
+	err := tr.SetStatus(context.Background(), "JeffreyVdb/herdr-3d#32", "ae6334b4", nil)
+	if !errors.Is(err, provider.ErrFailed) || !errors.Is(err, provider.ErrPartial) || !strings.Contains(err.Error(), "added to the project") {
+		t.Fatalf("a failed status after an add: %v", err)
 	}
 }
 

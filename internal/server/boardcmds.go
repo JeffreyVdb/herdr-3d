@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -124,9 +125,17 @@ func (bf *boardFloor) noHost() error {
 
 // startBoardAsync runs a provider call off the hub goroutine, with its audit
 // row begun now (args without bodies) and completed with the report when it
-// ends. After a successful write the floor's refresh is queued.
+// ends. After a successful write (or a partial one: provider.ErrPartial)
+// the floor's refresh is queued.
 func (h *Hub) startBoardAsync(ctx context.Context, c *Client, cmd proto.Command, session string, write bool,
 	work func(context.Context) (data, report any, err error)) error {
+	return h.startBoardWork(ctx, c, cmd, session, write, work, nil)
+}
+
+// startBoardWork is startBoardAsync with applied, which runs on the hub
+// goroutine after a successful call, before the reply.
+func (h *Hub) startBoardWork(ctx context.Context, c *Client, cmd proto.Command, session string, write bool,
+	work func(context.Context) (data, report any, err error), applied func()) error {
 	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, auditArgs(cmd))
 	if err != nil {
 		return err
@@ -139,8 +148,13 @@ func (h *Hub) startBoardAsync(ctx context.Context, c *Client, cmd proto.Command,
 			if aerr := h.st.AuditEnd(ctx, auditID, err, report); aerr != nil {
 				h.log.Error("audit log write failed", "err", aerr)
 			}
+			if err == nil && applied != nil {
+				applied()
+			}
 			h.reply(c, cmd, data, err)
-			if write && err == nil {
+			// A write that failed after part of it landed changed the
+			// board too: polls begun before it are dropped all the same.
+			if write && (err == nil || errors.Is(err, provider.ErrPartial)) {
 				h.queueBoard(ctx, session)
 			}
 		}); derr != nil {
@@ -245,16 +259,80 @@ func (h *Hub) startIssueSetStatus(ctx context.Context, c *Client, cmd proto.Comm
 	if err != nil {
 		return err
 	}
-	if !cardCaps(bf, a.ID).SetStatus {
+	caps := cardCaps(bf, a.ID)
+	if !caps.SetStatus {
 		return fmt.Errorf("%w: this board has no status to set", errUnsupported)
 	}
+	at, err := setStatusAnchor(bf, a, caps)
+	if err != nil {
+		return err
+	}
 	tr := bf.set.Tracker
-	return h.startBoardAsync(ctx, c, cmd, a.Session, true, func(ctx context.Context) (any, any, error) {
-		if err := tr.SetStatus(ctx, a.ID, a.Column); err != nil {
+	report := map[string]any{"id": a.ID, "column": a.Column}
+	if at != nil {
+		report["after"] = at.After
+	}
+	return h.startBoardWork(ctx, c, cmd, a.Session, true, func(ctx context.Context) (any, any, error) {
+		if err := tr.SetStatus(ctx, a.ID, a.Column, at); err != nil {
 			return nil, nil, err
 		}
-		return nil, map[string]any{"id": a.ID, "column": a.Column}, nil
+		return nil, report, nil
+	}, func() {
+		// Until the refresh lands, the last board knows the card's new
+		// column: a move anchored on it right away is checked against that.
+		if bf := h.boards.floors[a.Session]; bf != nil {
+			bf.moved(a.ID, a.Column)
+		}
 	})
+}
+
+// moved puts a card of the last board in another column (a write said so;
+// the next poll has the rest).
+func (bf *boardFloor) moved(id, column string) {
+	if bf.issues == nil {
+		return
+	}
+	is := *bf.issues
+	is.Cards = slices.Clone(is.Cards)
+	for i := range is.Cards {
+		if is.Cards[i].ID == id {
+			is.Cards[i].Column = column
+		}
+	}
+	bf.issues = &is
+}
+
+// setStatusAnchor checks issue.set_status's after (nil when it is absent):
+// null is the top of the column; a card id must be another card of that
+// column on the last board.
+func setStatusAnchor(bf *boardFloor, a proto.IssueSetStatusArgs, caps tracker.Capabilities) (*tracker.Anchor, error) {
+	if !a.After.Set {
+		return nil, nil
+	}
+	if !caps.Order {
+		return nil, fmt.Errorf("%w: %s cannot order the cards of a column", errUnsupported, bf.info.Name)
+	}
+	if a.After.Value == nil {
+		return &tracker.Anchor{}, nil
+	}
+	after := *a.After.Value
+	if err := validItemID(after); err != nil {
+		return nil, bad("after: %v", err)
+	}
+	if after == a.ID {
+		return nil, bad("after must be another card than the one that moves")
+	}
+	if bf.issues != nil {
+		for _, c := range bf.issues.Cards {
+			if c.ID == after {
+				if c.Column != a.Column {
+					return nil, bad("after %q is not a card of that column", after)
+				}
+				return &tracker.Anchor{After: after}, nil
+			}
+		}
+	}
+	return nil, bad("after %q is not a card of the board", after)
 }
 
 func (h *Hub) startPRGet(ctx context.Context, c *Client, cmd proto.Command) error {
