@@ -155,6 +155,9 @@ func parseClaudeDialog(screen string) claudeDialog {
 		case !d.review:
 			question = append(question, strings.TrimSpace(strings.TrimPrefix(t, "│")))
 		default:
+			// A long question is listed behind a bar ("│ ● Research says…",
+			// "│   keeps the…"), as it is shown on its own tab.
+			t = strings.TrimSpace(strings.TrimPrefix(t, "│"))
 			switch s, ok := strings.CutPrefix(t, "●"); {
 			case ok:
 				d.reviewed, answer = append(d.reviewed, strings.TrimSpace(s)), false

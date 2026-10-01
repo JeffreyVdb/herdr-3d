@@ -219,6 +219,15 @@ func TestReviewShowsAsk(t *testing.T) {
 			t.Errorf("%s: reviewed %q", s, d.reviewed)
 		}
 	}
+	// Captured live (Claude Code 2.1.286, Haiku 4.5, 120 × 40, keys 1 1):
+	// long questions are listed behind a bar, as on their own tabs.
+	splits := &proto.Ask{Questions: []proto.AskQuestion{
+		{Header: "Design", Question: "Research says herdr zoom alone does NOT guarantee fullscreen for the game's laptop. Findings: (1) session.snapshot keeps the split rects even when the tab is zoomed, so the bridge still sees 60 cols; (2) with a TUI attached, zoom resizes only the focused pane's PTY, but with no client attached it resizes nothing; (3) zoom is per tab, shared with your own herdr TUI, and is cleared by any split or sibling close, and moves with focus. Which design do you want?"},
+		{Header: "Prevent splits", Question: "Also fix the cause of the splits? The splits come from orchestrators (write-code / herdr skill) starting helper agents in sibling panes; hire/run.start in this repo already uses its own workspace. Should this ticket also change the run.start prompt/brief the game sends so helpers are told to use tabs or workspaces, never splits?"},
+	}}
+	if d := parseClaudeDialog(screen(t, "claude-ask-long-review")); !d.ok || !d.review || d.cursor() != 1 || !d.showsAsk(splits) {
+		t.Errorf("claude-ask-long-review: %+v not the ask's review", d)
+	}
 	two := func(q1, q2 string) *proto.Ask {
 		return &proto.Ask{Questions: []proto.AskQuestion{{Header: "Color", Question: q1}, {Header: "Extras", Question: q2, Multi: true}}}
 	}
