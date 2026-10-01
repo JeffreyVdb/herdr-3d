@@ -427,7 +427,8 @@ export interface CommandArgs {
   'issue.get': { session: string; id: string };
   'issue.comment': { session: string; id: string; body: string };
   'issue.close': { session: string; id: string; reason: CloseReason; confirm: true };
-  'issue.set_status': { session: string; id: string; column: string };
+  /** #52: `after` (with the `order` capability) also places the card: null the top of the column, a card id right after it. */
+  'issue.set_status': { session: string; id: string; column: string; after?: string | null };
   'pr.get': { session: string; id: string };
   'pr.comment': { session: string; id: string; body: string };
   'pr.merge': { session: string; id: string; method: MergeMethod; confirm: true; override?: boolean; confirm_override?: true };
@@ -1140,6 +1141,8 @@ export interface BoardCaps {
   comment?: boolean;
   close?: boolean;
   set_status?: boolean;
+  /** #52: a card's place in its column can be set (`issue.set_status` with `after`); cards carry `position`. */
+  order?: boolean;
   merge?: boolean;
   open_from_branch?: boolean;
 }
@@ -1160,6 +1163,8 @@ export interface IssueCard {
   author?: string;
   updated_at: number | null;
   closed_at: number | null;
+  /** #52: the card's rank in the provider's order (0 first); absent for a card that has no place in it. */
+  position?: number;
   capabilities?: BoardCaps;
 }
 

@@ -640,9 +640,120 @@
   gap: 8px;
   justify-content: flex-end;
 }
+/* ---- #52: dragging a note to another column ------------------------------------------------------ */
+
+.bd-card[data-drag='true'] {
+  cursor: grab;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+.bd-col {
+  transition: box-shadow 140ms var(--ease), background-color 140ms var(--ease);
+}
+.bd-dragging,
+.bd-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+/* Nothing lifts under a note in the hand. */
+.bd-dragging .bd-card:hover,
+.bd-dragging .bd-card:focus-visible {
+  transform: none;
+  box-shadow: 0 2px 0 rgb(0 0 0 / 18%), 0 6px 12px rgb(0 0 0 / 30%);
+}
+/* The column the note would land in. */
+.bd-col[data-over='true'] {
+  background: color-mix(in srgb, var(--well) 90%, var(--sun));
+  box-shadow: inset 0 2px 8px rgb(0 0 0 / 40%), inset 0 0 0 2px rgb(255 194 51 / 55%);
+}
+/* Where the note was: an empty patch of board, its pin still in it. */
+.bd-card.bd-card--ghost {
+  background: rgb(255 255 255 / 4%);
+  box-shadow: none;
+  outline: 1.5px dashed rgb(255 255 255 / 26%);
+  outline-offset: -1.5px;
+  transform: none;
+}
+.bd-card--ghost > :not(.bd-pin) {
+  visibility: hidden;
+}
+/* The note in the hand: off the board, tilted, a pinhole where the pin was. */
+.bd-card.bd-card--lifted {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 50;
+  margin: 0;
+  pointer-events: none;
+  rotate: 2.2deg;
+  scale: 1.035;
+  box-shadow: 0 4px 8px rgb(0 0 0 / 26%), 0 18px 32px rgb(0 0 0 / 42%);
+  transition: none;
+  will-change: transform;
+}
+.bd-card--lifted .bd-pin {
+  top: 8px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border: 0;
+  background: rgb(28 37 64 / 40%);
+  box-shadow: inset 0 1px 1px rgb(0 0 0 / 45%);
+}
+/* The slot: a taut thread between two pins. */
+.bd-slot {
+  position: fixed;
+  z-index: 51;
+  height: 3px;
+  margin: -1.5px 0 0 -3px;
+  padding: 0 3px;
+  box-sizing: content-box;
+  border-radius: 2px;
+  background: var(--sun);
+  box-shadow: 0 0 0 1px rgb(28 37 64 / 55%), 0 2px 6px rgb(0 0 0 / 40%);
+  pointer-events: none;
+  transition: top 90ms var(--ease);
+}
+.bd-slot::before,
+.bd-slot::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--sun);
+  border: 1.5px solid rgb(28 37 64 / 55%);
+  box-sizing: border-box;
+  box-shadow: 0 2px 2px rgb(0 0 0 / 30%);
+}
+.bd-slot::before {
+  left: -5px;
+}
+.bd-slot::after {
+  right: -5px;
+}
+/* Sent, not answered yet. */
+.bd-card[data-moving='true'] {
+  opacity: 0.8;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bd-card--lifted {
+    animation: bd-lift 160ms var(--ease) both;
+  }
+}
+@keyframes bd-lift {
+  from {
+    rotate: 0deg;
+    scale: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .bd-card,
-  .bd-pr {
+  .bd-pr,
+  .bd-col,
+  .bd-slot {
     transition: none;
   }
   .bd-card:nth-child(odd),

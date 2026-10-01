@@ -1,6 +1,6 @@
 import type { CommandResult } from '../../net/client';
 import type { BoardComment, BoardIssues, BoardLabel, BoardPrs, IssueCard, IssueDetail, PrDetail, PullRequest, CloseReason, MergeMethod, CommentAck } from '../../net/protocol';
-import { can, CHECKS_WORD, CLOSE_REASONS, columnViews, closesText, freshness, holdersOf, keysById, MERGEABLE_WORD, mergeBlocker, paperOf, pinOf, PRIORITY_WORD, readableInk, REVIEW_WORD, timeAgo, verdictOf } from '../../world/boards';
+import { can, CHECKS_WORD, CLOSE_REASONS, columnViews, type ColumnView, closesText, freshness, holdersOf, keysById, MERGEABLE_WORD, mergeBlocker, paperOf, pinOf, PRIORITY_WORD, readableInk, REVIEW_WORD, timeAgo, verdictOf } from '../../world/boards';
 import type { WorkerView } from '../../world/store';
 import { h, icon, ICON, replaceKeepingFocus } from '../dom';
 import { failureText } from '../messages';
@@ -8,6 +8,8 @@ import type { DialogHost } from '../hire';
 import './boards.css';
 import { setMarkdown } from './markdown';
 import { backdropPolicy } from '../dismiss';
+import { CardDrag } from './cardDrag';
+import { placeMoves, showsMove, type PendingMove } from './drag';
 
 /**
  * M7: the Issues and Pull requests overlays and their item modals. The overlay lists what the floor's board says (the
@@ -50,6 +52,21 @@ type Which = 'issues' | 'prs';
 type Detail<T> = { state: 'loading' } | { state: 'ready'; data: T } | { state: 'error'; message: string };
 
 type MergeStep = { step: 'confirm' | 'override1' | 'override2'; method: MergeMethod };
+
+/**
+ * #52: a card the game moved by a drag. It shows at once; on a failure it goes back. Once acknowledged it stays until a
+ * board polled after the write (any non-initial board.issues that arrives after the ack: the bridge never shows a poll
+ * that began before a write) shows it there, or until `MOVE_HOLD_MS` have passed, whatever that board says.
+ */
+interface Move extends PendingMove {
+  seq: number;
+  acked: boolean;
+  /** The board at the ack: a later one is the bridge's refresh. */
+  seen: BoardIssues | null;
+  until: number;
+}
+
+const MOVE_HOLD_MS = 20_000;
 
 const GLYPH = {
   issues: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/>',
@@ -122,12 +139,35 @@ export class BoardsPanel {
   /** Kept between renders: what is typed is never lost to a poll. */
   private readonly commentBox = h('textarea', { id: 'bd-comment', 'data-key': 'comment-text', rows: 3, spellcheck: 'true', placeholder: 'Write a comment (Markdown)…', 'aria-label': 'Comment' });
   private returnTo: HTMLElement | null = null;
+  /** #52: dragging cards; the moves it made that the board does not show yet, and the writes in order. */
+  private readonly drag: CardDrag;
+  private readonly moves = new Map<string, Move>();
+  private moveSeq = 0;
+  private writes: Promise<unknown> = Promise.resolve();
+  private held = false;
 
   constructor(
     parent: HTMLElement,
     private readonly host: BoardsHost,
   ) {
     this.dialog.append(this.head, this.notice, this.body);
+    this.drag = new CardDrag(this.body, this.dialog, {
+      canDrag: (id) => this.canDrag(id),
+      ordered: (id) => {
+        const board = this.state().issues;
+        return can(board, board?.cards.find((c) => c.id === id), 'order');
+      },
+      drop: (id, column, after) => this.dropCard(id, column, after),
+      live: (on) => {
+        if (on || !this.held) return;
+        this.held = false;
+        this.render();
+      },
+    });
+    // The Esc that ends a drag is not the one that closes the board.
+    this.dialog.addEventListener('cancel', (e) => {
+      if (this.drag.active || this.drag.swallowing) e.preventDefault();
+    });
     this.item.append(this.itemHead, this.itemBody, this.itemFoot);
     // The board is read-only: the backdrop closes it only when the press and the click both began there (#51).
     // The item modal holds the comment box: only its close button and Esc close it.
@@ -135,6 +175,7 @@ export class BoardsPanel {
     backdropPolicy(this.item, 'none');
     this.dialog.addEventListener('close', () => {
       if (this.dialog.open) return;
+      this.drag.cancel();
       this.item.close();
       const back = this.returnTo;
       this.returnTo = null;
@@ -183,6 +224,8 @@ export class BoardsPanel {
       const a = document.activeElement;
       this.returnTo = a instanceof HTMLElement && a !== document.body ? a : null;
     }
+    this.drag.cancel();
+    if (session !== this.session) this.moves.clear();
     this.which = which;
     this.session = session;
     if (this.item.open) this.item.close();
@@ -201,8 +244,11 @@ export class BoardsPanel {
         this.close();
         return;
       }
+      this.drag.cancel();
+      this.moves.clear();
       this.session = s;
     }
+    this.settleMoves();
     this.render();
     if (this.item.open) this.renderItem();
   }
@@ -263,12 +309,19 @@ export class BoardsPanel {
   }
 
   private renderIssues(m: BoardIssues, workers: readonly WorkerView[]): void {
-    const cols = columnViews(m);
+    // A live drag keeps the columns it measures: what came meanwhile is drawn when it ends.
+    if (this.drag.active) {
+      this.held = true;
+      return;
+    }
+    const cols = this.issueViews(m);
     const holders = holdersOf(m.cards, workers);
+    // A card can land in any status column but "No status" (it can leave it).
+    const drops = m.cards.some((c) => can(m, c, 'set_status'));
     const nodes = cols.map((c) =>
       h(
         'section',
-        { class: 'bd-col', 'data-done': c.done ? 'true' : null, 'data-col': c.id, 'aria-label': `${c.name}, ${c.cards.length}` },
+        { class: 'bd-col', 'data-done': c.done ? 'true' : null, 'data-col': c.id, 'data-drop': drops && c.id !== '' ? 'true' : null, 'aria-label': `${c.name}, ${c.cards.length}` },
         h('h3', { class: 'bd-col-head' }, h('span', {}, c.name), h('b', {}, String(c.cards.length))),
         h(
           'div',
@@ -285,9 +338,18 @@ export class BoardsPanel {
     if (card.priority) meta.append(h('span', { class: `tape tape--prio tape--prio-${card.priority}` }, PRIORITY_WORD[card.priority]));
     if (holder) meta.append(h('span', { class: 'bd-holder', title: `${holder} is working on it` }, holder));
     for (const a of card.assignees.slice(0, 2)) meta.append(h('span', { class: 'bd-assignee' }, a.name));
+    const pending = this.moves.get(card.id);
     const b = h(
       'button',
-      { class: 'bd-card', 'data-key': `card:${card.id}`, 'data-id': card.id, 'data-state': card.state, onclick: (e: Event) => this.openIssue(card.id, e.currentTarget as HTMLElement) },
+      {
+        class: 'bd-card',
+        'data-key': `card:${card.id}`,
+        'data-id': card.id,
+        'data-state': card.state,
+        'data-drag': can(this.state().issues, card, 'set_status') ? 'true' : null,
+        'data-moving': pending && !pending.acked ? 'true' : null,
+        onclick: (e: Event) => this.openIssue(card.id, e.currentTarget as HTMLElement),
+      },
       h('span', { class: 'bd-pin', 'aria-hidden': 'true' }),
       h('span', { class: 'bd-card-top' }, h('span', { class: 'bd-key' }, card.key), card.state === 'closed' ? h('span', { class: 'bd-closed' }, 'closed') : null),
       h('span', { class: 'bd-card-title' }, card.title),
@@ -298,6 +360,64 @@ export class BoardsPanel {
     b.style.setProperty('--paper', paperOf(card));
     b.style.setProperty('--pin', pinOf(card));
     return b;
+  }
+
+  // ---- #52: moving cards by dragging them ---------------------------------------------------------------
+
+  /** The columns as the board says, with the moves the bridge has not shown yet applied. */
+  private issueViews(m: BoardIssues): ColumnView[] {
+    if (!this.moves.size) return columnViews(m);
+    const moves = [...this.moves.values()];
+    const to = new Map(moves.map((x) => [x.id, x.column]));
+    const cards = m.cards.map((c) => (to.has(c.id) ? { ...c, column: to.get(c.id) as string } : c));
+    return placeMoves(columnViews({ columns: m.columns, cards }), moves);
+  }
+
+  private canDrag(id: string): boolean {
+    const board = this.state().issues;
+    const card = board?.cards.find((c) => c.id === id);
+    // One write per card at a time.
+    return this.which === 'issues' && !this.item.open && !!card && can(board, card, 'set_status') && !(this.moves.get(id) && !this.moves.get(id)?.acked);
+  }
+
+  private dropCard(id: string, column: string, after: string | null | undefined): void {
+    const board = this.state().issues;
+    const card = board?.cards.find((c) => c.id === id);
+    if (!board || !card) return;
+    const session = this.session;
+    const move: Move = { id, column, ...(after !== undefined ? { after } : {}), seq: ++this.moveSeq, acked: false, seen: null, until: 0 };
+    this.moves.delete(id);
+    this.moves.set(id, move);
+    this.render();
+    const args = { session, id, column, ...(after !== undefined ? { after } : {}) };
+    // In order: a drop can be anchored on a card that the one before it moved.
+    this.writes = this.writes.then(async () => {
+      const r = await this.host.send('issue.set_status', args);
+      if (this.moves.get(id) !== move || this.session !== session) return;
+      if (!r.ok) {
+        this.moves.delete(id);
+        this.host.toast(failureText('issue.set_status', r.code, r.message, { item: card.key, provider: this.providerName() }), 'error');
+      } else {
+        move.acked = true;
+        move.seen = this.state().issues;
+        move.until = this.host.now() + MOVE_HOLD_MS;
+        window.setTimeout(() => this.refresh(), MOVE_HOLD_MS + 50);
+      }
+      if (this.dialog.open) this.render();
+    });
+  }
+
+  /** Forgets the moves a board polled after their write shows, and the ones held long enough. */
+  private settleMoves(): void {
+    if (!this.moves.size) return;
+    const board = this.state().issues;
+    const now = this.host.now();
+    const views = board ? columnViews(board) : [];
+    for (const [id, m] of this.moves) {
+      if (!m.acked) continue;
+      const fresh = board !== null && board !== m.seen && !board.initial;
+      if (now >= m.until || (fresh && showsMove(views, m))) this.moves.delete(id);
+    }
   }
 
   private renderPrs(m: BoardPrs, issues: BoardIssues | null, workers: readonly WorkerView[]): void {
@@ -785,7 +905,7 @@ export class BoardsPanel {
     const columns =
       this.which === 'issues'
         ? st.issues
-          ? columnViews(st.issues).map((c) => ({ id: c.id, name: c.name, keys: c.cards.map((x) => x.key) }))
+          ? this.issueViews(st.issues).map((c) => ({ id: c.id, name: c.name, keys: c.cards.map((x) => x.key) }))
           : []
         : [{ id: '', name: 'Open', keys: st.prs?.prs.map((p) => p.key) ?? [] }];
     let item: ItemSummary | null = null;
