@@ -17,11 +17,17 @@ func IssueURL(repo string, number int) string {
 // issueStatusLine tells the orchestrator how the issue's status follows the run.
 const issueStatusLine = "Move the ticket status accordingly, pull request always means QA, merging the PR always means Done."
 
+// placementLine tells the orchestrator where its agents go: a laptop shows a
+// pane at the pane's own size, so an agent in a split next to another is a
+// narrow screen (#74).
+const placementLine = "Start every agent you hire in its own herdr workspace or tab, never in a split pane of your tab or of another agent's tab: " +
+	"a laptop shows a pane at its own size, and a fullscreen terminal is wanted."
+
 // RunPrompt composes an orchestrator's first prompt: the write-code skill
 // invoked the harness's way (claude /write-code, codex $write-code) on the
 // ticket (an issue URL, or free text, trimmed), the team of the preset,
-// for an issue the line telling the orchestrator to move its status, and
-// the extra instructions (trimmed; with the blank line before them left
+// the line telling it where to start its agents, for an issue the line
+// telling it to move the status, and the extra instructions (trimmed; with the blank line before them left
 // out when empty).
 func RunPrompt(orchHarness, ticket string, isIssue bool, roles proto.PresetRoles, extra string) string {
 	skill := "/write-code"
@@ -45,6 +51,7 @@ func RunPrompt(orchHarness, ticket string, isIssue bool, roles proto.PresetRoles
 		}
 		fmt.Fprintf(&b, "\n- %s: %s %s, %s %s", r.what, r.hire.Harness, r.hire.Model, knob, r.hire.Effort)
 	}
+	b.WriteString("\n\n" + placementLine)
 	if isIssue {
 		b.WriteString("\n\n" + issueStatusLine)
 	}

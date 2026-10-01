@@ -61,6 +61,9 @@ function roleLine(h: Hire): string {
   return `${h.harness} ${h.model}, ${h.harness === 'codex' ? 'reasoning' : 'effort'} ${h.effort}`;
 }
 
+/** Added after the team for every ticket (#74): where the orchestrator starts its agents, as the bridge's `placementLine`. */
+export const PLACEMENT_LINE = "Start every agent you hire in its own herdr workspace or tab, never in a split pane of your tab or of another agent's tab: a laptop shows a pane at its own size, and a fullscreen terminal is wanted.";
+
 /** Added for an issue ticket, after the team: how the issue's status follows the run. */
 export const ISSUE_STATUS_LINE = 'Move the ticket status accordingly, pull request always means QA, merging the PR always means Done.';
 
@@ -74,6 +77,8 @@ export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRo
     `- reviewers: ${roleLine(roles.reviewer)}`,
     `- ux reviewers: ${roleLine(roles.ux)}`,
     `- researchers: ${roleLine(roles.researcher)}`,
+    '',
+    PLACEMENT_LINE,
   ];
   if (isIssue) lines.push('', ISSUE_STATUS_LINE);
   const x = extra.trim();
