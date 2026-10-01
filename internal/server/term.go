@@ -557,6 +557,9 @@ func (h *Hub) pump(ctx context.Context, w *watch, obs herdr.FrameStream) error {
 		case err := <-ended:
 			return err
 		case sz := <-w.resize: // #74: the pane's size changed (zoomed, unzoomed)
+			if sz[0] == w.cols && sz[1] == w.rows {
+				continue // a resize the observer already has
+			}
 			w.cols, w.rows = sz[0], sz[1]
 			h.zoomSize(w, w.cols, w.rows)
 			return errResync
