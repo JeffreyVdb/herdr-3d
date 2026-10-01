@@ -111,6 +111,11 @@ type Options struct {
 	// PaneSize is a pane's size in cells, the observer's default size
 	// (nil or not ok: 120 × 40).
 	PaneSize func(ctx context.Context, socket, pane string) (cols, rows int, ok bool)
+	// Fresh reads a floor's workspaces from herdr right now (a
+	// session.snapshot), not from the hub's last observation: the check
+	// before the bridge closes a repository's idle main checkout. Nil: it
+	// cannot be checked and nothing is closed.
+	Fresh func(ctx context.Context, socket string) ([]world.WorkerObs, error)
 	// #74: PaneState is a pane's size and what its tab does with it (zoomed,
 	// focused, how many panes), read from the session's snapshot (nil: the
 	// size from PaneSize, and no fullscreen laptops). ZoomPoll is how often
@@ -942,6 +947,23 @@ func (h *Hub) resync(ctx context.Context, session string) {
 // of a floor and returns the worker events of the diff (the caller emits
 // them after the floor's own events).
 func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, obs []world.WorkerObs, fresh, closing bool) []proto.Event {
+	// A repository's main checkout herdr opened for its worktree group is
+	// not a worker (see world.HiddenMainCheckouts); it stays in the raw
+	// observation, so its disappearance is not a closed worker.
+	rawWS := map[string]bool{}
+	for _, w := range obs {
+		rawWS[w.WorkspaceID] = true
+	}
+	if hidden := world.HiddenMainCheckouts(obs, h.holdRepos(f), h.hireWorkspaces(f)); len(hidden) > 0 {
+		shown := make([]world.WorkerObs, 0, len(obs))
+		for _, w := range obs {
+			if !hidden[w.WorkspaceID] {
+				shown = append(shown, w)
+			}
+		}
+		obs = shown
+	}
+	defer h.signalOps(f)
 	assigned := map[string]string{} // workspace id → worker id
 	if !fresh {
 		for _, w := range obs {
@@ -1024,10 +1046,6 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 	for _, id := range assigned {
 		present[id] = true
 	}
-	obsWS := map[string]bool{}
-	for _, w := range obs {
-		obsWS[w.WorkspaceID] = true
-	}
 	at := h.opts.Now()
 	var evs []proto.Event
 	for _, id := range f.order {
@@ -1040,13 +1058,13 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		if w == nil {
 			continue
 		}
-		if closing && !obsWS[w.WorkspaceID] {
+		if closing && !rawWS[w.WorkspaceID] {
 			if err := h.st.CloseWorker(ctx, id); err != nil {
 				h.log.Error("recording closed worker failed", "worker", id, "err", err)
 			}
 		}
 		ev := proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: session, WorkspaceID: w.WorkspaceID}
-		if op := f.fires[id]; op != nil && !obsWS[op.workspaceID] {
+		if op := f.fires[id]; op != nil && !rawWS[op.workspaceID] {
 			ev.Reason = proto.RemovedSentHome
 			op.removed = true
 			op.signal()

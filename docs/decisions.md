@@ -250,6 +250,16 @@ Decisions (orchestrator and user) and what was measured while building it:
 | 9 | Look-only props | `Prop.milestone: null` means the prop is only looked at: the bar shows its label and a line it is given (`Hud.setPropInfo(id, text)`; the clock's `14:05 · Wed 30 Sep · Europe/Brussels`) and no key, instead of "Placeholder until Mx". Not a special case of the clock's id. |
 | 10 | Out of scope | Seasons beyond the latitude model, longitude, the receptionist's greeting by time of day, night-time crowd behaviour. |
 
+## 2026-10-01 — #66: the main checkout herdr opens for a worktree hire
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Show it, hide it, or avoid it? | **Hide it** (the issue's option 2). `herdr worktree create` opens a workspace for the repository's main checkout when none is open on the floor; it holds a shell, no agent, and the player expects one minion per hire. Option 1 needs a new prop, option 3 needs herdr. |
+| 2 | When is a workspace hidden? | A **stateless rule** on herdr's current state (`world.HiddenMainCheckouts`): a repository's main checkout (`Worktree` set, not linked, `RepoRoot` set), no agent, and a linked worktree workspace of the repository open on the same floor. Nothing is stored, so it survives bridge restarts; an agent starting in it, or the last worktree going, makes it a worker again by itself (`worker.upsert`). A shell the user opened in a main checkout is hidden by the same rule while worktrees of it are open. |
+| 3 | Capacity | A worktree hire is **one** worker. `mainCheckoutOpen`, `hireOp.extra` and the "counts two" check are gone; the hidden workspace is not in `f.order`, so `counts`, `deskCount` and the caps never see it. |
+| 4 | Cleanup | Sending home the last worktree of a bridge-hired worker (a `hire_branch` record exists), or rolling a worktree hire back, closes the hidden main checkout with `workspace close` once no linked worktree of the repository is open, only while it still has no agent. `workspace close` kills every process in the workspace, so the hub's last observation is not trusted for that: immediately before each close it re-reads herdr (`session.snapshot`, an allowed read, `Options.Fresh`) and skips the close (logged and audited) if an agent runs in the workspace, a linked worktree of the repository is open again, the workspace is gone, or the state cannot be read. Best effort: a failure is logged and audited, the send home still succeeds, and the workspace then shows as a worker. The workspace stays hidden while the operation runs (`holdRepos`), so it never flashes between the worktree going and the close. |
+| 5 | `can_fire: false` | Stays for a main checkout that is visible (one with an agent) while worktrees of it are open. |
+
 ## 2026-10-01 — a laptop of a split pane is fullscreen (#74)
 
 | # | Question | Decision |

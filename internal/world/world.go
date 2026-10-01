@@ -175,3 +175,52 @@ func h3dTokens(tokens map[string]string) map[string]string {
 	}
 	return out
 }
+
+// HasAgent reports whether an agent runs (or is saved) in the workspace's
+// primary pane.
+func (w WorkerObs) HasAgent() bool {
+	return w.AgentKind != "" || w.AgentName != "" || w.AgentSession != ""
+}
+
+// IsMainCheckout reports whether the workspace is a repository's main
+// checkout (not a linked worktree).
+func (w WorkerObs) IsMainCheckout() bool {
+	return w.Worktree != nil && !w.Worktree.Linked && w.Worktree.RepoRoot != ""
+}
+
+// IsLinked reports whether the workspace is a linked worktree of a
+// repository.
+func (w WorkerObs) IsLinked() bool {
+	return w.Worktree != nil && w.Worktree.Linked && w.Worktree.RepoRoot != ""
+}
+
+// HiddenMainCheckouts picks the workspaces that are not workers: the main
+// checkout of a repository with no agent in it while a linked worktree of
+// that repository is open on the floor. herdr opens one with the first
+// worktree of a repository (its worktree group needs it as the primary
+// workspace); it is only a shell, so the game does not show it. holdRepos
+// are repositories to treat as having a linked worktree open (one that is
+// being made or sent home), exempt workspaces are never hidden (a hire's
+// own). The rule is derived from the observation alone: an agent in the
+// workspace, or the last linked worktree gone, makes it a worker again.
+func HiddenMainCheckouts(obs []WorkerObs, holdRepos, exempt map[string]bool) map[string]bool {
+	linked := map[string]bool{}
+	for _, w := range obs {
+		if w.IsLinked() {
+			linked[w.Worktree.RepoRoot] = true
+		}
+	}
+	var hidden map[string]bool
+	for _, w := range obs {
+		if !w.IsMainCheckout() || w.HasAgent() || exempt[w.WorkspaceID] {
+			continue
+		}
+		if repo := w.Worktree.RepoRoot; linked[repo] || holdRepos[repo] {
+			if hidden == nil {
+				hidden = map[string]bool{}
+			}
+			hidden[w.WorkspaceID] = true
+		}
+	}
+	return hidden
+}

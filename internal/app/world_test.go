@@ -209,8 +209,15 @@ func TestServeDumpCmd(t *testing.T) {
 	for len(w.Floors) < 2 {
 		w = dumpOnce(t, b.sock)
 	}
-	if w.Floors[0].Session != "alpha" || w.Floors[0].State != "running" || w.Floors[1].State != "asleep" || len(w.Workers) != 8 {
+	// sleepy's w3 is the idle main checkout of gcr, whose worktree w1Q is
+	// open: not a worker.
+	if w.Floors[0].Session != "alpha" || w.Floors[0].State != "running" || w.Floors[1].State != "asleep" || len(w.Workers) != 7 {
 		t.Fatalf("world = %+v", w)
+	}
+	for _, wk := range w.Workers {
+		if wk.Session == "sleepy" && wk.WorkspaceID == "w3" {
+			t.Fatalf("the idle main checkout is a worker: %+v", wk)
+		}
 	}
 
 	out, err := runCLI(t, cmdMain, "-socket", b.sock, proto.CmdBuildingCreate, `{"name":"Work"}`)

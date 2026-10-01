@@ -280,7 +280,7 @@ func TestRunStart(t *testing.T) {
 	}
 	res = ackData[proto.RunStartResult](t, m)
 	if !regexp.MustCompile(`^l_[0-9a-f]{16}$`).MatchString(res.LaunchID) || res.Prompt != prompt || res.ID == "" ||
-		res.WorkspaceID != "w2" || res.Prompted == nil || !*res.Prompted || !strings.HasPrefix(res.Branch, "h3d/") ||
+		res.WorkspaceID != "w3" || res.Prompted == nil || !*res.Prompted || !strings.HasPrefix(res.Branch, "h3d/") ||
 		res.BaseSHA != hb.git.sha || res.Trust != proto.TrustNone {
 		t.Fatalf("ack = %s", m.raw)
 	}
@@ -290,9 +290,9 @@ func TestRunStart(t *testing.T) {
 	calls := hb.fl.Calls()
 	wantCalls := []string{
 		"worktree s /home/u/lab " + res.Branch + " origin/main ORCH|issue-3",
-		"mark w2:p1 " + marker,
-		"start-agent w2:p1 " + strings.TrimPrefix(res.Branch, "h3d/") + " claude claude-fable-5-1 high ORCH|issue-3",
-		"prompt w2:p1 " + strconv.Quote(prompt),
+		"mark w3:p1 " + marker,
+		"start-agent w3:p1 " + strings.TrimPrefix(res.Branch, "h3d/") + " claude claude-fable-5-1 high ORCH|issue-3",
+		"prompt w3:p1 " + strconv.Quote(prompt),
 	}
 	if !slices.Equal(calls, wantCalls) {
 		t.Fatalf("herdr calls =\n%q\nwant\n%q", calls, wantCalls)
@@ -319,12 +319,12 @@ func TestRunStart(t *testing.T) {
 		l.PresetID != seed || l.PresetName != "Build team" || l.Session != "s" {
 		t.Fatalf("run_launch = %+v %v %v", l, ok, err)
 	}
-	hb.fl.update("w2", func(w *world.WorkerObs) {
+	hb.fl.update("w3", func(w *world.WorkerObs) {
 		w.Tokens = map[string]string{"h3d_role": "orch", "h3d_run": "20260929-0900-lab"}
 	})
 	waitRunID(t, hb, res.ID, "20260929-0900-lab")
-	hb.fl.update("w2", func(w *world.WorkerObs) { w.Tokens = map[string]string{"h3d_run": "later"} })
-	hb.world(func(w proto.World) bool { return workersOf(w, "s")["w2"].Tokens["h3d_run"] == "later" })
+	hb.fl.update("w3", func(w *world.WorkerObs) { w.Tokens = map[string]string{"h3d_run": "later"} })
+	hb.world(func(w proto.World) bool { return workersOf(w, "s")["w3"].Tokens["h3d_run"] == "later" })
 	if l, _, _ = hb.st.RunLaunchByWorker(context.Background(), res.ID); l.RunID != "20260929-0900-lab" {
 		t.Fatalf("run id moved: %+v", l)
 	}
@@ -343,7 +343,7 @@ func TestRunStart(t *testing.T) {
 		Orch: &cheapTeam.Orch, Preset: cheap, Worktree: ptr(false), Label: "Boss", Prompt: edited})
 	res2 := ackData[proto.RunStartResult](t, m)
 	calls = hb.fl.Calls()[len(wantCalls):]
-	if res2.Prompt != edited || res2.Branch != "" || calls[0] != "create s /home/u/lab Boss" || calls[len(calls)-1] != "prompt w3:p1 "+strconv.Quote(edited) {
+	if res2.Prompt != edited || res2.Branch != "" || calls[0] != "create s /home/u/lab Boss" || calls[len(calls)-1] != "prompt w4:p1 "+strconv.Quote(edited) {
 		t.Fatalf("edited run: %s\n%q", m.raw, calls)
 	}
 	if l, _, _ := hb.st.RunLaunchByWorker(context.Background(), res2.ID); l.TicketText != "Tidy the lobby" || l.Repo != "" || l.PresetName != "Cheap" {

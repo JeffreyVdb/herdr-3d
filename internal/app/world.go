@@ -32,6 +32,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/upload"
 	"github.com/JeffreyVdb/herdr-3d/internal/usage"
 	"github.com/JeffreyVdb/herdr-3d/internal/watch"
+	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
 
 // Environment variables mirroring the flags (a flag wins over its variable).
@@ -507,6 +508,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		opts.Hire = cfg.Control
 		opts.Term = cfg.Control // M5 term
 	}
+	opts.Fresh = freshWorkers(cfg.Herdr)
 	opts.MaxWatches, opts.MaxObservers, opts.PaneSize = cfg.MaxWatches, cfg.MaxObservers, paneSize(cfg.Herdr) // M5 term
 	opts.PaneState = paneState(cfg.Herdr)                                                                     // #74
 	opts.MaxTranscriptWatches = cfg.MaxTranscriptWatches                                                      // M16 transcript
@@ -609,6 +611,22 @@ func paneSize(read watch.Herdr) func(ctx context.Context, socket, pane string) (
 	return func(ctx context.Context, socket, pane string) (int, int, bool) {
 		st, ok := state(ctx, socket, pane)
 		return st.Cols, st.Rows, ok
+	}
+}
+
+// freshWorkers reads a session's workspaces from herdr right now (read
+// only: session.snapshot), what the hub checks before it closes an idle
+// main checkout.
+func freshWorkers(read watch.Herdr) func(ctx context.Context, socket string) ([]world.WorkerObs, error) {
+	if read == nil {
+		return nil
+	}
+	return func(ctx context.Context, socket string) ([]world.WorkerObs, error) {
+		snap, err := read.Snapshot(ctx, socket)
+		if err != nil {
+			return nil, err
+		}
+		return world.FromSnapshot(snap), nil
 	}
 }
 

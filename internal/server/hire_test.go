@@ -40,8 +40,13 @@ type fakeFloor struct {
 	publishEarly bool          // publish a new workspace before CreateWorkspace returns
 	createGate   chan struct{} // CreateWorkspace waits for it when set
 	exitWorks    bool          // TypeExit + Enter bring the pane back to its shell
-	onKey        func(pane string, key herdr.Key)
-	decorate     func(w *world.WorkerObs) // sets what the watcher derives (role, run) of a new workspace
+	// noMainCheckout: a worktree hire does not open the repository's main checkout
+	noMainCheckout bool
+	closeErrs      map[string]error // workspace → CloseWorkspace's error
+	onKey          func(pane string, key herdr.Key)
+	decorate       func(w *world.WorkerObs) // sets what the watcher derives (role, run) of a new workspace
+	// fresh is what a fresh read of herdr (Options.Fresh) returns instead of the floor as published.
+	fresh func(published []world.WorkerObs) ([]world.WorkerObs, error)
 }
 
 func newFakeFloor(b *bridge, session string, fh *fakeHerdr, workers ...world.WorkerObs) *fakeFloor {
@@ -58,6 +63,17 @@ func (f *fakeFloor) publish() {
 		Workers: slices.Clone(f.workers)}
 	f.mu.Unlock()
 	f.b.publish(obs)
+}
+
+// Fresh is Options.Fresh: herdr's state right now.
+func (f *fakeFloor) Fresh(_ context.Context, socket string) ([]world.WorkerObs, error) {
+	f.mu.Lock()
+	cur, fresh := slices.Clone(f.workers), f.fresh
+	f.mu.Unlock()
+	if fresh != nil {
+		return fresh(cur)
+	}
+	return cur, nil
 }
 
 func (f *fakeFloor) create(dir, label string, wt *world.Worktree) herdr.Created {
@@ -100,6 +116,14 @@ func (f *fakeFloor) CreateWorkspace(ctx context.Context, session, dir, label str
 
 func (f *fakeFloor) CreateWorktree(_ context.Context, session, repo, branch, base, label string) (herdr.Created, error) {
 	f.record("worktree %s %s %s %s %s", session, repo, branch, base, label)
+	// Like herdr: the first worktree of a repository on a floor opens its
+	// main checkout too (a shell, no agent).
+	f.mu.Lock()
+	mainOpen := slices.ContainsFunc(f.workers, func(w world.WorkerObs) bool { return w.IsMainCheckout() && w.Worktree.RepoRoot == repo })
+	f.mu.Unlock()
+	if !mainOpen && !f.noMainCheckout {
+		f.create(repo, "repo", &world.Worktree{RepoRoot: repo, RepoName: "repo", CheckoutPath: repo})
+	}
 	path := "/home/u/.herdr/worktrees/repo/" + strings.ReplaceAll(branch, "/", "-")
 	cr := f.create(path, label, &world.Worktree{RepoRoot: repo, RepoName: "repo", CheckoutPath: path, Linked: true})
 	cr.Branch = branch
@@ -194,6 +218,12 @@ func (f *fakeFloor) close(ws string) {
 
 func (f *fakeFloor) CloseWorkspace(_ context.Context, session, ws string) error {
 	f.record("close %s", ws)
+	f.mu.Lock()
+	err := f.closeErrs[ws]
+	f.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	f.close(ws)
 	return nil
 }
@@ -344,6 +374,7 @@ func startHireBridgeAt(t *testing.T, db string, tweak func(*server.Options), wor
 	// The floor needs the bridge, the bridge needs the floor as Options.Hire.
 	var fl *fakeFloor
 	opts.Hire = hireProxy{get: func() *fakeFloor { return fl }}
+	opts.Fresh = func(ctx context.Context, socket string) ([]world.WorkerObs, error) { return fl.Fresh(ctx, socket) }
 	if tweak != nil {
 		tweak(&opts)
 	}
@@ -778,9 +809,9 @@ func TestHireRollsBackAWorktree(t *testing.T) {
 		kept          string // in the error
 		stillRecorded bool
 	}{
-		{"fresh", nil, "", "remove-worktree w1", true, "", false},
-		{"dirty", []string{"?? notes.txt"}, "", "close w1", false, "are kept (1 uncommitted change)", true},
-		{"with commits", nil, "0123456789abcdef0123456789abcdef01234567", "remove-worktree w1", false,
+		{"fresh", nil, "", "remove-worktree w2", true, "", false},
+		{"dirty", []string{"?? notes.txt"}, "", "close w2", false, "are kept (1 uncommitted change)", true},
+		{"with commits", nil, "0123456789abcdef0123456789abcdef01234567", "remove-worktree w2", false,
 			"is kept (it has commits since 8739ddc5f3e1: now at 0123456789ab)", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -801,11 +832,16 @@ func TestHireRollsBackAWorktree(t *testing.T) {
 				!strings.Contains(e.Message, tc.kept) {
 				t.Fatalf("reply = %s", m.raw)
 			}
+			// The worktree's workspace is w2; herdr opened the main
+			// checkout (w1) for it, and the rollback closes that too.
 			calls := hb.fl.Calls()
-			if !slices.Contains(calls, tc.herdr) || len(slices.DeleteFunc(slices.Clone(calls), func(c string) bool {
+			if !slices.Contains(calls, tc.herdr) || !slices.Contains(calls, "close w1") || len(slices.DeleteFunc(slices.Clone(calls), func(c string) bool {
 				return strings.HasPrefix(c, "remove-worktree") || strings.HasPrefix(c, "close")
-			})) != len(calls)-1 {
+			})) != len(calls)-2 {
 				t.Fatalf("herdr calls = %q", calls)
+			}
+			if w := hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 0 }); len(w.Workers) != 0 {
+				t.Fatalf("workers left: %+v", w.Workers)
 			}
 			deleted := slices.ContainsFunc(hb.git.Calls(), func(c string) bool { return strings.HasPrefix(c, "branch -D") })
 			if deleted != tc.deleted {
@@ -828,29 +864,36 @@ func TestHireRollsBackAWorktree(t *testing.T) {
 }
 
 // herdr opens the repository's main checkout with the first worktree of
-// it on a floor: that is one more worker, and counts against the caps.
-func TestHireCountsTheMainCheckout(t *testing.T) {
+// it on a floor, but that is no worker: a worktree hire needs room for one.
+func TestWorktreeHireNeedsOneWorker(t *testing.T) {
 	caps := func(hard int) func(*server.Options) {
 		return func(o *server.Options) {
 			o.Caps = server.Caps{FloorSoft: 1, FloorHard: hard, HostSoft: 1, HostHard: 50}
 		}
 	}
-	// Hard cap 1, an empty floor: a plain hire fits, a worktree hire not.
+	// Hard cap 1, an empty floor: the worktree hire fits, and so does
+	// nothing else afterwards.
 	hb := startHireBridge(t, caps(1))
 	hb.git.repos["/home/u/repo"] = "/home/u/repo"
 	a := hireArgs(0)
 	a.Cwd, a.Worktree = "/home/u/repo", true
 	_, m := hb.c.command(proto.CmdWorkerHire, "wt", a)
-	if e := errorOf(m); e.Code != proto.ErrCapacity || !strings.Contains(e.Message, "main checkout") {
-		t.Fatalf("worktree hire at hard cap 1: %s", m.raw)
+	res := ackData[proto.HireResult](t, m)
+	if res.WorkspaceID != "w2" { // w1 is the hidden main checkout
+		t.Fatalf("hire = %+v", res)
 	}
-	if calls := hb.fl.Calls(); len(calls) != 0 {
-		t.Fatalf("refused hire ran herdr: %q", calls)
+	w := hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 1 })
+	if len(w.Workers) != 1 || w.Workers[0].ID != res.ID {
+		t.Fatalf("workers = %+v", w.Workers)
 	}
-	a.Worktree = false
-	hb.c.mustAck(proto.CmdWorkerHire, a)
+	_, m = hb.c.command(proto.CmdHirePrepare, "p", proto.HirePrepareArgs{Session: "s"})
+	if got := ackData[proto.HirePrepareResult](t, m).Capacity; got.Floor.Count != 1 || got.Host.Count != 1 {
+		t.Fatalf("capacity = %+v", got)
+	}
+	a.DeskIndex = ptr(1)
+	hb.c.mustError(proto.CmdWorkerHire, a, proto.ErrCapacity)
 
-	// The main checkout already open: only the worktree counts.
+	// The main checkout already has a worker: still one more.
 	main := claudeW("w1", "")
 	main.Cwd = "/home/u/repo"
 	main.Worktree = &world.Worktree{RepoRoot: "/home/u/repo", RepoName: "repo", CheckoutPath: "/home/u/repo"}
@@ -859,21 +902,8 @@ func TestHireCountsTheMainCheckout(t *testing.T) {
 	a = hireArgs(1)
 	a.Cwd, a.Worktree = "/home/u/repo/sub", true
 	hb.c.mustAck(proto.CmdWorkerHire, a)
-
-	// Inside an open main checkout's directory, but its own repository
-	// (found once git runs): refused then, before herdr makes anything.
-	outer := claudeW("w1", "")
-	outer.Cwd = "/home/u"
-	outer.Worktree = &world.Worktree{RepoRoot: "/home/u", RepoName: "u", CheckoutPath: "/home/u"}
-	hb = startHireBridge(t, caps(2), outer)
-	hb.git.repos["/home/u/nested"] = "/home/u/nested"
-	a.Cwd = "/home/u/nested"
-	_, m = hb.c.command(proto.CmdWorkerHire, "nested", a)
-	if e := errorOf(m); e.Code != proto.ErrCapacity || !strings.Contains(e.Message, "main checkout") {
-		t.Fatalf("nested repository at hard cap 2: %s", m.raw)
-	}
-	if calls := hb.fl.Calls(); len(calls) != 0 {
-		t.Fatalf("refused hire ran herdr: %q", calls)
+	if w := hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 2 }); len(w.Workers) != 2 {
+		t.Fatalf("workers = %+v", w.Workers)
 	}
 }
 
@@ -1204,5 +1234,227 @@ func TestHirePromptStalled(t *testing.T) {
 	_, m = hb.c.command(proto.CmdWorkerHire, "h2", a)
 	if res := ackData[proto.HireResult](t, m); res.Prompted == nil || *res.Prompted || !strings.Contains(res.PromptError, "agent_prompt_stalled") {
 		t.Fatalf("ack = %s", m.raw)
+	}
+}
+
+// mainShell is a repository's main checkout with only a shell in it, as
+// herdr opens it for the first worktree.
+func mainShell(ws string) world.WorkerObs {
+	w := worker(ws, "repo", "", "unknown")
+	w.Cwd, w.IdentityCwd = "/home/u/repo", "/home/u/repo"
+	w.Worktree = &world.Worktree{RepoRoot: "/home/u/repo", RepoName: "repo", CheckoutPath: "/home/u/repo"}
+	return w
+}
+
+// eventWhere reads events until one satisfies ok.
+func eventWhere(c *client, ok func(proto.Event) bool) proto.Event {
+	c.t.Helper()
+	for {
+		if ev := c.event(); ok(ev) {
+			return ev
+		}
+	}
+}
+
+// The main checkout herdr opened for a repository's worktrees is no
+// worker while it has no agent: no desk, no count. It is one again when an
+// agent runs in it or its last worktree is gone.
+func TestIdleMainCheckoutIsNoWorker(t *testing.T) {
+	hb := startHireBridge(t, nil, mainShell("w1"), linkedWorker("w2", "h3d/pixel-a1b2c3"))
+	w := hb.world(hasWorkers("s", 1))
+	if _, ok := workersOf(w, "s")["w2"]; !ok {
+		t.Fatalf("workers = %+v", w.Workers)
+	}
+	desks := floorOf(w, "s").Desks
+	capacity := func() proto.Capacity {
+		_, m := hb.c.command(proto.CmdHirePrepare, "p", proto.HirePrepareArgs{Session: "s"})
+		return ackData[proto.HirePrepareResult](t, m).Capacity
+	}
+	if c := capacity(); c.Floor.Count != 1 || c.Host.Count != 1 {
+		t.Fatalf("capacity = %+v", c)
+	}
+
+	// An agent starts in it: a worker, at its own desk.
+	hb.fl.update("w1", func(w *world.WorkerObs) { w.AgentKind, w.Status = "claude", "idle" })
+	eventWhere(hb.c, func(ev proto.Event) bool { return ev.T == proto.EvWorkerUpsert && ev.Worker.WorkspaceID == "w1" })
+	w = hb.world(hasWorkers("s", 2))
+	if a, b := workersOf(w, "s")["w1"], workersOf(w, "s")["w2"]; a.DeskIndex == b.DeskIndex {
+		t.Fatalf("desks = %d and %d", a.DeskIndex, b.DeskIndex)
+	}
+	if c := capacity(); c.Floor.Count != 2 {
+		t.Fatalf("capacity = %+v", c)
+	}
+
+	// The agent goes: hidden again, and its desk is free.
+	hb.fl.update("w1", func(w *world.WorkerObs) { w.AgentKind, w.Status = "", "unknown" })
+	eventWhere(hb.c, func(ev proto.Event) bool { return ev.T == proto.EvWorkerRemoved && ev.WorkspaceID == "w1" })
+	w = hb.world(hasWorkers("s", 1))
+	if got := floorOf(w, "s").Desks; got != desks {
+		t.Fatalf("desks = %d, want %d", got, desks)
+	}
+
+	// The last worktree goes: the shell is a worker like any other.
+	hb.fl.close("w2")
+	w = hb.world(func(w proto.World) bool { _, ok := workersOf(w, "s")["w1"]; return ok && len(workersOf(w, "s")) == 1 })
+	if c := capacity(); c.Floor.Count != 1 {
+		t.Fatalf("capacity = %+v", c)
+	}
+}
+
+// A main checkout with an agent stays a worker, and cannot go while its
+// worktrees are open.
+func TestIdleMainCheckoutDoesNotCountAgainstCaps(t *testing.T) {
+	hb := startHireBridge(t, func(o *server.Options) {
+		o.Caps = server.Caps{FloorSoft: 1, FloorHard: 2, HostSoft: 1, HostHard: 50}
+	}, mainShell("w1"), linkedWorker("w2", "h3d/pixel-a1b2c3"))
+	hb.world(hasWorkers("s", 1))
+	a := hireArgs(1)
+	hb.c.mustAck(proto.CmdWorkerHire, a) // the second worker fits
+	a.DeskIndex = ptr(2)
+	hb.c.mustError(proto.CmdWorkerHire, a, proto.ErrCapacity) // a third does not
+}
+
+// Sending home the last worktree the bridge hired closes the main checkout
+// herdr opened for it, when nothing else works there.
+func TestSendHomeClosesTheIdleMainCheckout(t *testing.T) {
+	hired := func(t *testing.T, hb *hireBridge, ws string) {
+		t.Helper()
+		id := workersOf(hb.world(func(w proto.World) bool { _, ok := workersOf(w, "s")[ws]; return ok }), "s")[ws].ID
+		if err := hb.st.RecordHireBranch(context.Background(), store.HireBranch{WorkerID: id, Session: "s",
+			RepoRoot: "/home/u/repo", Branch: "h3d/pixel-a1b2c3", BaseSHA: hb.git.sha}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fire := func(t *testing.T, hb *hireBridge, ws string) {
+		t.Helper()
+		hb.fl.setProcs(ws+":p1", atShell())
+		id := workersOf(hb.world(func(w proto.World) bool { _, ok := workersOf(w, "s")[ws]; return ok }), "s")[ws].ID
+		hb.c.mustAck(proto.CmdWorkerFire, proto.WorkerFireArgs{ID: id})
+	}
+	closed := func(hb *hireBridge, ws string) bool { return slices.Contains(hb.fl.Calls(), "close "+ws) }
+
+	t.Run("closes it", func(t *testing.T) {
+		hb := startHireBridge(t, nil, mainShell("w1"), linkedWorker("w2", "h3d/pixel-a1b2c3"))
+		hired(t, hb, "w2")
+		fire(t, hb, "w2")
+		if calls := hb.fl.Calls(); !slices.Equal(calls[len(calls)-2:], []string{"close w2", "close w1"}) {
+			t.Fatalf("herdr calls = %q", calls)
+		}
+		hb.world(hasWorkers("s", 0))
+		if row := auditRow(t, hb.bridge, proto.CmdWorkerFire); !row.OK || !strings.Contains(row.Result, "main checkout w1") {
+			t.Fatalf("audit = %+v", row)
+		}
+	})
+	t.Run("another worktree is still open", func(t *testing.T) {
+		hb := startHireBridge(t, nil, mainShell("w1"), linkedWorker("w2", "h3d/pixel-a1b2c3"), linkedWorker("w3", "h3d/mochi-d4e5f6"))
+		hired(t, hb, "w2")
+		fire(t, hb, "w2")
+		if closed(hb, "w1") {
+			t.Fatalf("closed the main checkout of an open worktree: %q", hb.fl.Calls())
+		}
+		hb.world(hasWorkers("s", 1))
+	})
+	t.Run("an agent works in it", func(t *testing.T) {
+		main := claudeW("w1", "")
+		main.Worktree = mainShell("w1").Worktree
+		hb := startHireBridge(t, nil, main, linkedWorker("w2", "h3d/pixel-a1b2c3"))
+		hired(t, hb, "w2")
+		fire(t, hb, "w2")
+		if closed(hb, "w1") {
+			t.Fatalf("closed a main checkout with an agent: %q", hb.fl.Calls())
+		}
+		hb.world(hasWorkers("s", 1))
+	})
+	t.Run("not hired by the bridge", func(t *testing.T) {
+		hb := startHireBridge(t, nil, mainShell("w1"), linkedWorker("w2", "h3d/pixel-a1b2c3"))
+		fire(t, hb, "w2")
+		if closed(hb, "w1") {
+			t.Fatalf("closed the main checkout of a worktree the bridge did not hire: %q", hb.fl.Calls())
+		}
+		// Nothing holds it hidden now: a worker.
+		hb.world(func(w proto.World) bool { _, ok := workersOf(w, "s")["w1"]; return ok && len(workersOf(w, "s")) == 1 })
+	})
+	// What herdr shows when the bridge is about to close the workspace is
+	// what counts, not what it showed at the last observation.
+	skipped := func(t *testing.T, fresh func([]world.WorkerObs) ([]world.WorkerObs, error), why string) {
+		t.Helper()
+		hb := startHireBridge(t, nil, mainShell("w1"), linkedWorker("w2", "h3d/pixel-a1b2c3"))
+		hb.fl.fresh = fresh
+		hired(t, hb, "w2")
+		fire(t, hb, "w2") // still sent home
+		if closed(hb, "w1") {
+			t.Fatalf("closed the main checkout against herdr's fresh state: %q", hb.fl.Calls())
+		}
+		hb.world(func(w proto.World) bool { _, ok := workersOf(w, "s")["w1"]; return ok && len(workersOf(w, "s")) == 1 })
+		if row := auditRow(t, hb.bridge, proto.CmdWorkerFire); !row.OK || !strings.Contains(row.Result, "main checkout w1 skipped: "+why) {
+			t.Fatalf("audit = %+v", row)
+		}
+	}
+	t.Run("an agent started in it after the last observation", func(t *testing.T) {
+		skipped(t, func(cur []world.WorkerObs) ([]world.WorkerObs, error) {
+			for i := range cur {
+				if cur[i].WorkspaceID == "w1" {
+					cur[i].AgentKind, cur[i].Status = "claude", "working"
+				}
+			}
+			return cur, nil
+		}, "an agent runs in it")
+	})
+	t.Run("a worktree was opened after the last observation", func(t *testing.T) {
+		skipped(t, func(cur []world.WorkerObs) ([]world.WorkerObs, error) {
+			return append(cur, linkedWorker("w9", "h3d/mochi-d4e5f6")), nil
+		}, "a worktree of the repository is open again")
+	})
+	t.Run("herdr cannot be read", func(t *testing.T) {
+		skipped(t, func([]world.WorkerObs) ([]world.WorkerObs, error) { return nil, errors.New("connection refused") },
+			"herdr's state cannot be read: connection refused")
+	})
+	t.Run("closed meanwhile", func(t *testing.T) {
+		skipped(t, func(cur []world.WorkerObs) ([]world.WorkerObs, error) {
+			return slices.DeleteFunc(cur, func(w world.WorkerObs) bool { return w.WorkspaceID == "w1" }), nil
+		}, "it is gone")
+	})
+	t.Run("close fails", func(t *testing.T) {
+		hb := startHireBridge(t, nil, mainShell("w1"), linkedWorker("w2", "h3d/pixel-a1b2c3"))
+		hb.fl.closeErrs = map[string]error{"w1": errors.New("workspace_group_close_required")}
+		hired(t, hb, "w2")
+		fire(t, hb, "w2") // still sent home
+		hb.world(func(w proto.World) bool { _, ok := workersOf(w, "s")["w1"]; return ok && len(workersOf(w, "s")) == 1 })
+		if row := auditRow(t, hb.bridge, proto.CmdWorkerFire); !row.OK || !strings.Contains(row.Result, "main checkout w1 failed") {
+			t.Fatalf("audit = %+v", row)
+		}
+	})
+}
+
+// A worktree hire on an empty floor ends with one worker; sending it home
+// closes the main checkout herdr opened for it.
+func TestWorktreeHireOnAnEmptyFloor(t *testing.T) {
+	hb := startHireBridge(t, nil)
+	hb.git.repos["/home/u/repo"] = "/home/u/repo"
+	a := hireArgs(0)
+	a.Cwd, a.Worktree = "/home/u/repo", true
+	_, m := hb.c.command(proto.CmdWorkerHire, "h", a)
+	res := ackData[proto.HireResult](t, m)
+	w := hb.world(hasWorkers("s", 1))
+	if got := workersOf(w, "s")[res.WorkspaceID]; got.ID != res.ID || got.DeskIndex != 0 {
+		t.Fatalf("workers = %+v", w.Workers)
+	}
+	hb.fl.mu.Lock()
+	open := len(hb.fl.workers)
+	hb.fl.mu.Unlock()
+	if open != 2 {
+		t.Fatalf("herdr has %d workspaces, want the worktree and its main checkout", open)
+	}
+
+	hb.c.mustAck(proto.CmdWorkerFire, proto.WorkerFireArgs{ID: res.ID})
+	if calls := hb.fl.Calls(); calls[len(calls)-1] != "close w1" {
+		t.Fatalf("herdr calls = %q", calls)
+	}
+	hb.world(hasWorkers("s", 0))
+	hb.fl.mu.Lock()
+	open = len(hb.fl.workers)
+	hb.fl.mu.Unlock()
+	if open != 0 {
+		t.Fatalf("herdr still has %d workspaces", open)
 	}
 }
