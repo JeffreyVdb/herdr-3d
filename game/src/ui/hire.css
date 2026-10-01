@@ -743,3 +743,68 @@
     padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* ---- #83 wrap up, then send home ----------------------------------------------------- */
+
+/* The worker's wrap-up heads the form: cardboard while it waits for CLEAN, red once it needs you. */
+.dd-wrap-state {
+  display: grid;
+}
+.dd-wrap {
+  display: grid;
+  gap: 6px;
+}
+.dd-wrap p {
+  margin: 0;
+}
+.dd-wrap .tape {
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.dd-callout--box {
+  border-color: rgb(201 147 90 / 55%);
+  background: rgb(201 147 90 / 13%);
+}
+.tape--box {
+  --c: #94632f;
+}
+.dd-wrap-reason {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.dd-wrap-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.dd-wrap-prompt textarea {
+  min-height: 92px;
+}
+.dd-wrap-prompt .field-hint b {
+  color: var(--text-on-ink);
+}
+/* The send home's actions wrap rather than squeeze: three of them, one long. */
+.desk-dlg--home .dd-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* Enter on a delete: the warning takes the footer's whole row, Cancel first and focused. */
+.desk-dlg--home .dd-actions--confirm {
+  flex: 1 1 100%;
+}
+.dd-confirm {
+  flex: 1 1 100%;
+  display: grid;
+  gap: 8px;
+}
+.dd-confirm p {
+  margin: 0;
+}
+.dd-confirm p + p {
+  margin-top: 0;
+}
+.dd-confirm code {
+  overflow-wrap: anywhere;
+  color: #ffd9a8;
+}

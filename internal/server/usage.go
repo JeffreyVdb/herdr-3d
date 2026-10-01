@@ -47,9 +47,10 @@ type usageWorker struct {
 	// floor is its session; codexCwd the cwd of a Codex agent herdr knows
 	// no session of, to find its rollout by (else "").
 	floor, codexCwd string
-	watched         bool   // M16: a connection watches its transcript
-	cwd             string // M16: its directory, a root of its transcript's path images
-	asking          bool   // #57: it has an ask now
+	watched         bool       // M16: a connection watches its transcript
+	cwd             string     // M16: its directory, a root of its transcript's path images
+	asking          bool       // #57: it has an ask now
+	wrap            *wrapWatch // #83: its armed wrap-up
 }
 
 // usageUpdate is a worker's new usage, or (nil) its usage gone.
@@ -75,6 +76,10 @@ type usageTracker struct {
 	asks     map[string]*transcript.AskTracker
 	askShown map[string]askShown
 	askUps   []askUpdate
+	// #83: every session's line fan-out (its ask and wrap-up trackers), and
+	// this round's looks at the armed wrap-ups.
+	lines   map[string]*txLines
+	wrapUps []wrapUpdate
 }
 
 // foundCodex is a Codex session found by a worker's cwd, and when.
@@ -105,7 +110,7 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 	return &usageTracker{cfg: cfg, keys: map[string]string{}, sessions: map[string]*usage.Session{},
 		throttle: usageThrottle{every: cfg.Throttle, shown: map[string]proto.Usage{}, at: map[string]time.Time{}},
 		found:    map[string]foundCodex{}, logs: map[string]*txLog{},
-		asks: map[string]*transcript.AskTracker{}, askShown: map[string]askShown{}}
+		asks: map[string]*transcript.AskTracker{}, askShown: map[string]askShown{}, lines: map[string]*txLines{}}
 }
 
 // trackUsage runs the tracker until ctx is done.
@@ -155,14 +160,18 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 	for id, o := range tr.txOffers { // M16 transcript
 		h.tx.offer(id, o)
 	}
-	asks := tr.askUps // #57
-	if len(ups) > 0 || len(asks) > 0 {
+	asks := tr.askUps   // #57
+	wraps := tr.wrapUps // #83
+	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 {
 		_ = h.doWait(ctx, func() {
 			for _, u := range ups {
 				h.setUsage(u.id, u.usage)
 			}
 			for _, a := range asks {
 				h.setAsk(a.id, a.ask, a.resolved)
+			}
+			for _, u := range wraps {
+				h.wrapUpSeen(ctx, u)
 			}
 		})
 	}
@@ -171,7 +180,7 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 // poll reads the workers' sessions and returns the updates to publish.
 func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	ws = tr.findCodex(ws, now)
-	tr.askUps = nil
+	tr.askUps, tr.wrapUps = nil, nil
 	var ups []usageUpdate
 	seen := map[string]bool{}
 	for _, w := range ws {
@@ -181,14 +190,17 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			tr.keys[w.id] = key
 			tr.sessions[w.id] = nil
 			delete(tr.asks, w.id)
+			delete(tr.lines, w.id)
 			if w.session != "" {
 				tr.sessions[w.id] = usage.NewSession(w.harness, w.session, tr.cfg.Roots, tr.cfg.Pricing)
 			}
 			if s := tr.sessions[w.id]; s != nil { // #57: the ask, from the same lines, the file's first included
-				if a := transcript.NewAskTracker(w.harness); a != nil {
-					tr.asks[w.id] = a
-					s.SetLines(a)
+				l := &txLines{ask: transcript.NewAskTracker(w.harness)} // #83: and a wrap-up's
+				if l.ask != nil {
+					tr.asks[w.id] = l.ask
 				}
+				tr.lines[w.id] = l
+				s.SetLines(l)
 			}
 			// Another agent session (or rollout): the usage shown was the
 			// old one's and goes now, unless the new one's goes out
@@ -198,12 +210,14 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		}
 		s := tr.sessions[w.id]
 		tr.syncTranscript(w, s, tr.keys[w.id])
+		tr.wrapBefore(w) // #83
 		if s == nil {
 			if w.shown { // no agent session any more: no usage
 				ups = append(ups, usageUpdate{id: w.id})
 			}
 			tr.throttle.forget(w.id)
 			tr.offerAsk(w)
+			tr.offerWrapUp(w)
 			continue
 		}
 		s.SetRescan(0)
@@ -213,6 +227,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		u, ok := s.Poll(now)
 		tr.syncTranscript(w, s, tr.keys[w.id])
 		tr.offerAsk(w)
+		tr.offerWrapUp(w)
 		if ok {
 			if pub, emit := tr.throttle.offer(w.id, u, now); emit {
 				ups = append(ups, usageUpdate{id: w.id, usage: &pub})
@@ -229,6 +244,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			delete(tr.sessions, id)
 			delete(tr.asks, id)
 			delete(tr.askShown, id)
+			delete(tr.lines, id)
 			tr.throttle.forget(id)
 		}
 	}
@@ -321,7 +337,7 @@ func (h *Hub) usageWorkers() []usageWorker {
 			harness = w.AgentKind
 		}
 		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, shown: w.Usage != nil, floor: w.Session,
-			watched: h.tx.watched(id), cwd: w.Cwd, asking: w.Ask != nil}
+			watched: h.tx.watched(id), cwd: w.Cwd, asking: w.Ask != nil, wrap: h.wrapWatchOf(id)}
 		if w.AgentSession == "" && w.AgentKind == usage.Codex && w.Cwd != "" {
 			uw.codexCwd = w.Cwd
 		}

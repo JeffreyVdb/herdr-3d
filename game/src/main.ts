@@ -102,7 +102,7 @@ export interface H3DDebug {
   plan(open: boolean): void;
   focusBuilding(i: number | null): void;
   /** Speech-bubble cards on screen and what they say; M5: a question (`ask`), the looked-at one's `usage`, `tall` when drawn with room for them. */
-  cards(): Array<{ desk: number; name: string; display: string; task: string; ask?: { text: string; about?: string[]; choices: Array<{ n: number; label: string }>; selected?: number | undefined } | null; usage?: string | null; tall: boolean; tag?: { text: string; color: string } | null; stamp?: { tone: string; text: string } | null; crew?: string[] | null }>;
+  cards(): Array<{ desk: number; name: string; display: string; task: string; ask?: { text: string; about?: string[]; choices: Array<{ n: number; label: string }>; selected?: number | undefined } | null; usage?: string | null; tall: boolean; tag?: { text: string; color: string } | null; stamp?: { tone: string; text: string } | null; crew?: string[] | null; tape?: { text: string; color: string; box?: boolean } | null }>;
   /** Screen point of a floor's badge in the city (to click it). */
   badgePoint(session: string): { x: number; y: number } | null;
   /** M5: per worker of the floor you are on, what its laptop shows (live / pending / frozen / glow / dark) and its watch fps. */
@@ -139,6 +139,8 @@ export interface H3DDebug {
   simTranscripts(): Promise<{ watches: number; ids: string[] } | null>;
   /** #57: the fixture simulator's `sim.ask` (a worker's agent asks, or the terminal ends the ask). */
   simAsk(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** #83: the fixture simulator's `sim.wrapup`: an armed worker's transcript reports `clean`, `blocked` (with a reason) or `none`. */
+  simWrapUp(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M16 phase 2: the simulator's `sim.image` (makes a PNG, answers its ImageRef, to push in `simTranscript` items). */
   simImage(args: Record<string, unknown>): Promise<Record<string, unknown> | null>;
   /** M16 phase 2: the image feeds alive (one per worker whose images are on screen) and the object URLs they hold. */
@@ -347,6 +349,12 @@ const h3d: H3DDebug = {
     if (!app) return { ok: false, code: 'not_started' };
     // `sim.ask` is the fixture simulator's, not a bridge command.
     const r = await app.client.request('sim.ask' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  simWrapUp: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    // `sim.wrapup` is the fixture simulator's, not a bridge command.
+    const r = await app.client.request('sim.wrapup' as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
   simImage: async (args) => {

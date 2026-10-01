@@ -139,6 +139,26 @@ export interface Worker {
   usage?: Usage;
   /** #57: the structured question its agent's latest turn waits on, read from its transcript (whatever `status` says). */
   ask?: Ask;
+  /** #83: its wrap-up, while armed or needing you. */
+  wrapup?: WrapUp;
+}
+
+/**
+ * #83: a worker's wrap-up. `armed`: the cleanup prompt went out and the bridge waits for the agent's result line;
+ * `needs_you`: disarmed without a send home (BLOCKED, no result, a time-out, a failed check), `reason` says why.
+ */
+export interface WrapUp {
+  state: 'armed' | 'needs_you';
+  /** The send home's worktree choice, made up front. */
+  worktree: FireWorktree;
+  /** Unix ms (bridge clock). */
+  armed_at: number;
+  reason?: string;
+}
+
+/** #83: `worker.wrapup` ack: the prompt went out now, or (`queued`) for the agent's next turn. */
+export interface WrapUpAck {
+  queued?: boolean;
 }
 
 export interface World {
@@ -377,6 +397,9 @@ export interface CommandArgs {
   'worker.fire.prepare': { id: string };
   /** `handoff` (M9) and `stop_services` (#14) are reserved, not sent yet. */
   'worker.fire': { id: string; worktree?: FireWorktree };
+  /** #83: the cleanup prompt (the bridge appends its result-line footer) and the send home's worktree choice. */
+  'worker.wrapup': { id: string; prompt: string; worktree?: FireWorktree };
+  'worker.wrapup.cancel': { id: string };
   /** M5 */
   'worker.prompt': { id: string; text: string };
   /** Exactly one of `choice` or `cancel`. */

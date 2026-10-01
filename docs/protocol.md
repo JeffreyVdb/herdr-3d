@@ -19,7 +19,7 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
   256 KiB (M7: a comment body is up to 64 KiB of text, escaped).
 - The bridge reads herdr (`ping`, `session.snapshot`, `events.subscribe`, `herdr session list`, and for the laptop
   screens the read-only `herdr terminal session observe`). Its only writes to herdr are `floor.wake` / `floor.sleep`
-  (see [Wake and sleep](#wake-and-sleep)), `worker.hire` / `worker.fire` (see [Hire and send
+  (see [Wake and sleep](#wake-and-sleep)), `worker.hire` / `worker.fire` / `worker.wrapup` (see [Hire and send
   home](#hire-and-send-home)) and typing into a pane for `worker.keys`, `worker.prompt` and `worker.answer` (see
   [Laptops](#laptops-screens-input-changes-and-usage)), through a narrow allowlist of `herdr` / `systemd-run` command
   shapes (CONTRIBUTING "Bridge" lists them), plus (M10) two read-only probes of the `claude` and `codex` CLIs for the [plan
@@ -239,6 +239,7 @@ floor with no workers and an `error`).
 | `usage` | object, optional | its agent session's token counts and cost estimate (see [Usage and cost](#usage-and-cost)); absent without an `agent_session` (a running Codex excepted), or until the bridge found its transcript |
 | `question` | object, optional | what the screen of a `blocked` worker asks, while it is blocked (see [Blocked workers](#blocked-workers-question-quick-reply-approve--deny)) |
 | `ask` | object, optional | #57: the structured question (Claude's AskUserQuestion, Codex's request_user_input) its agent's latest turn waits on, read from its transcript whatever `status` says (see [Laptops: asks](#laptops-asks)) |
+| `wrapup` | object, optional | #83: its wrap-up, `{"state": "armed" \| "needs_you", "worktree": "keep" \| "delete" \| "delete_branch", "armed_at": int, "reason"?: string}` (unix ms, bridge clock; `reason` with `needs_you`), while armed or needing you (see [Wrap up](#wrap-up)) |
 | `round` | int ≥ 1, optional | write-code round: the `h3d_round` token, else the label's trailing `\|r<N>` (see [Runs and freelancers](#runs-and-freelancers)) |
 | `ticket` | string ≤ 32 bytes, optional | the `h3d_ticket` token, else the label's ticket field (`CODE\|descr\|<ticket>\|r<N>`, likewise `REVIEW` and `UX`) |
 | `issue` | object, optional | `{"repo":"owner/name","number":7}`: the GitHub issue of the worker's run, when a repo is known |
@@ -361,7 +362,7 @@ and remember the last `seq` applied.
 | `floor.removed` | `session` | the session was deleted in herdr (its workers get `worker.removed` first) |
 | `worker.upsert` | `worker` | a worker appeared, or anything besides `status`/`title` changed, e.g. its `resume` (full object) |
 | `worker.status` | `id`, `session`, `workspace_id`, `status`, `prev_status`, `status_since`, `title` | only `status` and/or `title` changed (the hot path). `title` is always present, `""` when cleared; on a title-only change `prev_status` equals `status` and `status_since` does not move. |
-| `worker.removed` | `id`, `session`, `workspace_id`, `reason`? | the workspace closed, the session was deleted, or the identity changed. `reason` is `"sent_home"` when the removal comes from `worker.fire` (the game plays the walk-out); absent otherwise. |
+| `worker.removed` | `id`, `session`, `workspace_id`, `reason`? | the workspace closed, the session was deleted, or the identity changed. `reason` is `"sent_home"` when the removal comes from `worker.fire` or a wrap-up's CLEAN (#83; the game plays the walk-out); absent otherwise. |
 | `worker.usage` | `id`, `session`, `usage` | the worker's `usage` changed; at most once per 5 s per worker (see [Usage and cost](#usage-and-cost)) |
 | `whiteboard.updated` | `floor`, `version`, `author`, `at`, `render_version`, `render`, `stale`, `stale_pins` | M13: a floor's whiteboard has a new version (a save, a clear, an agent's pin; flat in the event, see [Whiteboard](#whiteboard)) |
 | `limits.update` | `provider`, `plan`, `windows`, `at`, `stale`, `error`?, `source`?, `reached`?, `credits`? | a provider's plan limits were read (flat in the event, see [Plan limits](#plan-limits)); one per provider per read, about every 2 minutes while a client is connected |
@@ -439,6 +440,8 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.hire` | `{"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?}` | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent) |
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
+| `worker.wrapup` | `{"id": string, "prompt": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"queued"?: true}` | the worker's upsert with `wrapup` `armed` (before the ack); later, on CLEAN, `worker.removed` with `reason: "sent_home"` (see [Wrap up](#wrap-up)) |
+| `worker.wrapup.cancel` | `{"id": string}` | — | the worker's upsert without `wrapup` |
 | `worker.changes` | `{"id": string}` | the worker's git changes, `{"cwd", "branch", "head", "upstream", "ahead", "behind", "base", "files", "stat", "diff", "diff_bytes", "truncated", "omitted"}` (see [Changes](#changes)) | — |
 | `terminal.watch` | `{"id": string, "fps"?: 1–30, "cols"?: 40–300, "rows"?: 10–100, "fullscreen"?: bool}` | `{"pane", "cols", "rows", "zoom"?}` | `terminal.frame`s to this connection only; with `fullscreen` (true or false), also `terminal.state` (see [Fullscreen](#fullscreen-74)) |
 | `terminal.unwatch` | `{"id": string}` | — | — |
@@ -997,10 +1000,87 @@ back, the branch h3d/… is kept (it has commits since …)`) and in the audit r
 `handoff` (M9) and `stop_services` (#14) are reserved `worker.fire` arguments; today they are refused like any unknown
 field.
 
+#### Wrap up
+
+#83. **`worker.wrapup`** gives a worker's agent one last cleanup prompt and sends the worker home **once the agent
+reports, in its transcript, that it is clean**. The agent only decides whether the send home goes ahead; the teardown
+is `worker.fire`'s, step by step, with the worktree choice made up front.
+
+```json
+{"t":"worker.wrapup","req_id":"42","args":{"id":"a58752ea-…","prompt":"Stop every server, background process, pane and freelancer you started in this session. Don't touch anything else.","worktree":"delete"}}
+{"t":"worker.upsert","seq":1310,"worker":{"id":"a58752ea-…",…,"wrapup":{"state":"armed","worktree":"delete","armed_at":1790859600000}}}
+{"t":"ack","req_id":"42","data":{}}
+```
+
+1. **Arm.** Checked like `worker.fire` (`worktree` as there; the floor running, no hire or send home of it in flight,
+   not a main checkout whose worktrees are open), plus: the worker runs a Claude or Codex agent whose transcript the
+   bridge reads (`--claude-projects` / `--codex-sessions`; else `invalid_state`, or `internal` when this bridge reads
+   none), it is not blocked and has no `ask` (`invalid_state`), and it is not armed already (`busy`; one that needs you
+   may be armed again). For `delete` / `delete_branch` the tree must be clean and pushed now, as `worker.fire.prepare`
+   reports it (`not_clean`, nothing sent). `prompt` is 1 byte to 16 KiB minus the footer, without NUL (`bad_request`).
+   Then a fresh nonce (16 hex digits) is made, the transcript offset the bridge reads from is taken (where its tail
+   of that transcript is now, within about 2 s), and `{worker, nonce, worktree, armed_at, transcript, offset}` is
+   stored (SQLite `worker_wrapup`), so a restart resumes the watch.
+2. **Prompt.** `prompt` + a blank line + the footer, through the worker's input lane like `worker.prompt` (queued for
+   an agent at work: `queued`; a failed prompt disarms and fails the command as `worker.prompt` would). The footer,
+   exactly:
+   ```
+   When you are done, end your final message with exactly one line:
+   H3D-WRAPUP <nonce> CLEAN
+   or, if anything could not be stopped or needs a decision:
+   H3D-WRAPUP <nonce> BLOCKED: <one-line reason>
+   ```
+   Clients never see the nonce or the footer.
+3. **Watch.** The bridge reads the transcript from the offset (the same tail as usage and `ask`), only after the
+   bridge's prompt (the first user prompt from the offset that ends with the nonce's footer; an earlier turn never
+   counts, and every later user prompt is a person's, even one quoting the marker), and only the **last non-empty line
+   of the final assistant message of a turn**, matched strictly against the line as it is (only a trailing `\r`
+   dropped): `^H3D-WRAPUP <nonce> (CLEAN|BLOCKED: .{1,200})$`. Leading or trailing whitespace, quotes, backticks, list
+   markers, an indented code block or a code fence still open make it no result, as does the same marker anywhere else
+   in that message. A fence is read as CommonMark reads one: only a run of its own character (backticks or tildes), at
+   least as long, indented at most 3 spaces and with nothing after it closes it, so four backticks are not closed by
+   three, nor backticks by tildes; a top-level fence closes at any indent up to 3, whatever its opener's. Lists are not
+   parsed: the fences are read as top-level ones and again with list items in mind (a fence opened at or past the
+   content indent of a list marker line before it closes only at the opener's own indent, and any line left of that
+   indent before its close leaves it open), and still open either way is no result. A
+   Claude turn ends with an assistant message whose `stop_reason` is not `tool_use` (or `system/turn_duration`), a Codex
+   one with `task_complete`.
+4. **Decide**, once the turn ended in the transcript, no line came since and herdr has said `idle` (or `done`), each for
+   `WrapUpDebounce` (2 s), with no `ask`:
+
+   | Seen | What follows |
+   |---|---|
+   | `CLEAN` | The tree is checked again (clean and pushed, for a delete). Still fine: `worker.fire`'s steps with the armed choice, strict (below), audited as a `worker.fire` row whose `result` has `"wrapup": {"nonce", "verdict": "clean"}`; then `worker.removed` with `reason: "sent_home"`. Not fine, or the send home fails: `needs_you` with why, nothing removed. |
+   | `BLOCKED: <reason>` | `needs_you` with the agent's reason. Nothing is touched. |
+   | no result line, a malformed one, a wrong nonce, two markers | `needs_you`, `"did not report a wrap-up result"`. |
+   | herdr says `blocked`, or the worker has an `ask` | keep waiting: the question shows as ever. |
+   | a person prompts or types into the worker (`worker.prompt`, `worker.keys`; or a prompt or interruption typed in herdr, seen in the transcript after the bridge's), also after a `CLEAN` while its tree check runs, until the send home starts | disarmed, `wrapup` gone: the person took over; nothing is sent home. |
+   | no result within `--wrapup-timeout` (30 min) | `needs_you`, `"no wrap-up result within 30m0s"`. |
+   | the transcript is gone or replaced, or the agent session changed | `needs_you`, `"its transcript is gone, …"`. |
+   | the worker closed in herdr, or sent home | the wrap-up is forgotten. |
+
+   `needs_you` is disarmed for good: its nonce is dead, a later `CLEAN` does nothing, and a reply to the agent (a plain
+   `worker.prompt`) leaves it as it is. Only a new `worker.wrapup` (the game's "Wrap up again", a short follow-up with
+   a fresh nonce) can lead to a send home; **`worker.wrapup.cancel`** drops it (armed or needing you; `busy` once a
+   CLEAN's send home started, `invalid_state` without one).
+5. **Strict.** A wrap-up's send home deletes the worktree or leaves the worker at its desk, never half of it: when the
+   tree changed while the agent exited (step 3 of `worker.fire`), `worker.fire` keeps the worktree and sends the worker
+   home with a `note`; a wrap-up's fails instead (`not_clean`: nothing is closed or removed, the worker stays, with the
+   agent exited) and needs you. So a worktree goes only through `herdr worktree remove` (never `--force`) after four
+   clean-and-pushed checks: at the arm, after `CLEAN`, and `worker.fire`'s pair.
+6. **Restart.** A stored wrap-up comes back with the bridge: an armed one is read again from its stored offset (the
+   transcript is read from its start; lines before the offset never count), one needing you stays. A transcript that
+   is gone then needs you; nothing is sent home without a verdict read after the restart.
+
+A wrap-up only touches the worker it was armed on (an orchestrator's freelancers are its prompt's business, never
+the bridge's), and the verdict only ever comes from the transcript: no command reports one.
+
 **Audit log.** `hire.prepare` and `worker.fire.prepare` get one row each. `worker.hire` and `worker.fire` get a row when
 they start, completed with their outcome and a JSON `result`: for a hire the worker id, workspace, desk, cwd, branch,
 base, fetch, trust, the prompt outcome and any rollback; for a fire the git state it saw, how the agent exited, the
-cleanup choice and what happened to the worktree and branch.
+cleanup choice and what happened to the worktree and branch. #83: `worker.wrapup` gets one row for the arm (the prompt
+by its length only; `result` the nonce, choice, transcript and offset), `worker.wrapup.cancel` one row, and a CLEAN's send
+home its `worker.fire` row (client: whoever armed it).
 
 ### Team presets and starting a run
 
@@ -2140,7 +2220,7 @@ wraps, the options' labels without their descriptions or previews, and a Yes / N
 | `name_taken` | another building, or another team preset, already has that name (ignoring case) |
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
-| `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home |
+| `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started |
 | `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker or one with an `ask`, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `whiteboard_conflict` | M13: a save whose `base` is not the board's current version (HTTP `409`, with the current `version`) |
@@ -2148,7 +2228,7 @@ wraps, the options' labels without their descriptions or previews, and a Yes / N
 | `drops_unavailable` | `drops.list` without a Drop Zone data directory, or one that cannot be read |
 | `too_large` | `transcript.image` with `size: "full"` for an image whose base64 is over 12 MiB (its thumbnail is still served) |
 | `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`, `transcript.watch` above `--max-transcript-watches`; the message says which |
-| `not_clean` | `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |
+| `not_clean` | #83: `worker.wrapup` with a delete for a tree that is not clean and pushed now; `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |
 | `fetch_failed` | `worker.hire` with `worktree: true` whose `git fetch origin` failed (no `origin`, offline, timed out after 20 s, …); the message is git's error. Nothing was made. (After the accept, like `bad_request` for a missing default branch.) |
 | `hire_failed`, `fire_failed` | herdr or git failed during a hire / send-home; the message says which step and why. `fire_failed` also when the agent did not exit (still running, or its processes could not be read): then nothing was closed or removed. `hire_failed` names what its rollback kept. |
 | `wake_failed` | the server did not start, did not answer `ping` or was not seen running within `--wake-timeout`; the message says why |

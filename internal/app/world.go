@@ -52,6 +52,7 @@ const (
 	EnvSystemdRun = "HERDR_WORLD_SYSTEMD_RUN"
 	EnvWakeTime   = "HERDR_WORLD_WAKE_TIMEOUT"
 	EnvResumeTime = "HERDR_WORLD_RESUME_TIMEOUT"
+	EnvWrapUpTime = "HERDR_WORLD_WRAPUP_TIMEOUT"
 	EnvCodex      = "HERDR_WORLD_CODEX_SESSIONS"
 	EnvGit        = "HERDR_WORLD_GIT"
 	EnvGH         = "HERDR_WORLD_GH"     // M7 boards
@@ -291,6 +292,10 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	if err != nil {
 		return err
 	}
+	wrapUpTimeout, err := envDuration(EnvWrapUpTime, server.DefaultWrapUpTimeout) // #83
+	if err != nil {
+		return err
+	}
 	caps := server.DefaultCaps
 	for _, c := range []struct {
 		env string
@@ -341,6 +346,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	fs.DurationVar(&nameHold, "name-hold", nameHold, "how long a worker's name stays held after it leaves its floor ($"+EnvNameHold+")")
 	fs.DurationVar(&wakeTimeout, "wake-timeout", wakeTimeout, "how long a woken server has to start, answer ping and be seen running ($"+EnvWakeTime+")")
 	fs.DurationVar(&resumeTimeout, "resume-timeout", resumeTimeout, "how long a wake waits for the agents, before the fallback and again for it ($"+EnvResumeTime+")")
+	fs.DurationVar(&wrapUpTimeout, "wrapup-timeout", wrapUpTimeout, "how long an armed wrap-up waits for the agent's result line before it needs you ($"+EnvWrapUpTime+")")
 	fs.IntVar(&caps.FloorSoft, "warn-workers-per-floor", caps.FloorSoft, "workers on a floor above which the hire dialog warns ($"+EnvFloorWarn+")")
 	fs.IntVar(&caps.FloorHard, "max-workers-per-floor", caps.FloorHard, "most workers a floor may be hired up to ($"+EnvFloorMax+")")
 	fs.IntVar(&caps.HostSoft, "warn-workers", caps.HostSoft, "workers on the host above which the hire dialog warns ($"+EnvHostWarn+")")
@@ -370,6 +376,9 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	images, err := upload.New(upload.Config{URL: *dropzoneURL}) // #51 upload
 	if err != nil {
 		return fmt.Errorf("-dropzone-url: %w", err)
+	}
+	if wrapUpTimeout <= 0 {
+		return fmt.Errorf("-wrapup-timeout must be positive, got %s", wrapUpTimeout)
 	}
 	if wakeTimeout <= 0 || resumeTimeout <= 0 {
 		return fmt.Errorf("-wake-timeout and -resume-timeout must be positive, got %s and %s", wakeTimeout, resumeTimeout)
@@ -423,7 +432,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		Socket: *socket, DB: *db, Herdr: &herdr.Client{Bin: *herdrBin}, Only: only,
 		Poll: poll, Resnapshot: resnap, MaxDesks: maxDesks, NameHold: nameHold, Log: log, Name: name,
 		Control:     &herdr.Control{Herdr: *herdrBin, SystemdRun: *systemdRun, Only: only},
-		WakeTimeout: wakeTimeout, ResumeTimeout: resumeTimeout, CodexSessions: *codexSessions,
+		WakeTimeout: wakeTimeout, ResumeTimeout: resumeTimeout, WrapUpTimeout: wrapUpTimeout, CodexSessions: *codexSessions,
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
 		ClaudeProjects: *claudeProjects, Pricing: pricing, HireOptions: &hireOptions,
 		MaxWatches: maxWatches, MaxObservers: maxObservers, MaxTranscriptWatches: maxTxWatches,
@@ -466,6 +475,8 @@ type ServeConfig struct {
 	TrustTimeout, SeenTimeout, ExitTimeout time.Duration
 	// WakeTimeout and ResumeTimeout: see server.Options (0: defaults).
 	WakeTimeout, ResumeTimeout time.Duration
+	// WrapUpTimeout: see server.Options (0: the default).
+	WrapUpTimeout time.Duration
 	// ResumePoll and ResumeSettle: see server.Options (0: defaults).
 	ResumePoll, ResumeSettle time.Duration
 	// CodexSessions is the Codex rollout directory for the sleep backfill
@@ -567,6 +578,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	opts.DropsRoot = cfg.DropsRoot
 	opts.Caps, opts.HireOptions, opts.Load = cfg.Caps, cfg.HireOptions, server.HostLoad
 	opts.TrustTimeout, opts.SeenTimeout, opts.ExitTimeout = cfg.TrustTimeout, cfg.SeenTimeout, cfg.ExitTimeout
+	opts.WrapUpTimeout = cfg.WrapUpTimeout // #83
 	if dir := cfg.CodexSessions; dir != "" {
 		opts.CodexSession = func(cwd string, skip func(string) bool) (string, error) { return codex.FindSession(dir, cwd, skip) }
 	}

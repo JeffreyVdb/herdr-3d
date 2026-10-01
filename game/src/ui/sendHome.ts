@@ -1,5 +1,6 @@
-import type { FireAck, FirePrepare, FireWorktree } from '../net/protocol';
+import type { FireAck, FirePrepare, FireWorktree, WrapUp, WrapUpAck } from '../net/protocol';
 import { fireArgs, fireBlocked, fireOptions, leftovers, type FireOptions } from '../world/hire';
+import { armedText, defaultChoice, WRAPUP_AGAIN_PROMPT, WRAPUP_PROMPT, worktreeFate, wrapUpOf } from '../world/wrapup';
 import { h, icon, ICON } from './dom';
 import type { DialogHost } from './hire';
 import { failureText } from './messages';
@@ -10,11 +11,21 @@ import { backdropPolicy } from './dismiss';
  * what is left on the desk (`worker.fire.prepare`: branch, uncommitted
  * changes, commits not on any remote), offers keep / delete worktree /
  * delete worktree + branch for a worker in a worktree of its own (delete only
- * when that is safe), then `worker.fire`. The header's plate is the
- * cardboard box they leave with.
+ * when that is safe, and preselected then), then `worker.fire`. The header's
+ * plate is the cardboard box they leave with.
+ *
+ * #83: "Wrap up, then send home" gives the agent one last cleanup prompt
+ * first (`worker.wrapup`), the worktree choice made up front; the bridge
+ * sends it home once it reports CLEAN. While a wrap-up is armed the dialog
+ * offers to cancel it; once it needs you, to wrap up again or dismiss it.
+ * Enter never deletes at once: with a delete chosen it opens a confirm step
+ * whose Cancel has the focus. Enter in the prompt adds a line.
  */
 
 export type SendHomeState = 'preparing' | 'ready' | 'sending' | 'failed';
+
+/** #83: sending home now, or wrapping up first. */
+export type SendHomeMode = 'home' | 'wrapup';
 
 export interface SendHomeSummary {
   kind: 'send-home';
@@ -29,6 +40,14 @@ export interface SendHomeSummary {
   choice: FireWorktree;
   status: string;
   error: boolean;
+  /** #83 */
+  mode: SendHomeMode;
+  /** The inline "Delete the worktree…?" step is open. */
+  confirming: boolean;
+  /** The Wrap up prompt as typed. */
+  prompt: string;
+  /** The worker's wrap-up, armed or needing you. */
+  wrapup: WrapUp | null;
 }
 
 /** Room for "Handoff first" (M9, #11): nothing yet. */
@@ -53,13 +72,25 @@ const CHOICES: Array<{ v: FireWorktree; label: string; hint: string }> = [
 /** Porcelain lines shown before "and N more". */
 const SHOW_DIRTY = 6;
 
+const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
 export class SendHomeDialog {
   private readonly dialog = h('dialog', { class: 'desk-dlg desk-dlg--home', 'aria-labelledby': 'home-title', 'aria-describedby': 'home-sub' });
   private readonly head = h('header', { class: 'dd-head' });
+  /** #83: the worker's wrap-up, armed or needing you (kept apart from the form, so a live update leaves the form alone). */
+  private readonly wrapEl = h('div', { class: 'dd-wrap-state', 'data-key': 'wrap-state' });
   private readonly form = h('form', { class: 'dd-body', id: 'home-form', novalidate: true });
   private readonly statusEl = h('p', { class: 'dd-status', role: 'status' });
   private readonly alertEl = h('p', { class: 'dd-status dd-status--error', role: 'alert' });
   private readonly actions = h('div', { class: 'dd-actions' });
+  /** #83: the cleanup prompt; one element, so what you typed survives a re-render. */
+  private readonly promptEl = h('textarea', {
+    id: 'home-wrap-prompt',
+    'data-key': 'wrap-prompt',
+    rows: 4,
+    spellcheck: true,
+    'aria-describedby': 'home-wrap-hint',
+  }) as HTMLTextAreaElement;
   private id = '';
   private name = '';
   private desk = 0;
@@ -67,6 +98,10 @@ export class SendHomeDialog {
   private state: SendHomeState = 'preparing';
   private prep: FirePrepare | null = null;
   private choice: FireWorktree = 'keep';
+  private mode: SendHomeMode = 'home';
+  private confirming = false;
+  /** The wrap-up the banner shows (to redraw it only when it changes). */
+  private shownWrap = '';
   private statusText = '';
   private statusError = false;
   private gen = 0;
@@ -80,18 +115,33 @@ export class SendHomeDialog {
     this.dialog.addEventListener('close', () => {
       if (!this.dialog.open) this.gen++;
     });
+    // Esc in the confirm step steps back to the dialog; it does not close it.
+    this.dialog.addEventListener('cancel', (e) => {
+      if (!this.confirming) return;
+      e.preventDefault();
+      this.closeConfirm();
+    });
     // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
     backdropPolicy(this.dialog, 'none');
+    // A click on the send button (or Space on it): it sends, with the choice in plain sight.
     this.form.addEventListener('submit', (e) => {
       e.preventDefault();
-      void this.send();
+      this.submit(false);
     });
-    // Enter on the (safe) keep choice sends home; with a delete chosen, only the button does.
-    this.form.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter' || !(e.target instanceof HTMLInputElement) || e.target.type !== 'radio') return;
+    // Enter on a choice or on the send button sends with keep; with a delete chosen it opens the confirm step (its
+    // Cancel focused, so a second stray Enter cancels). In the prompt Enter and Shift+Enter add a line, never send.
+    this.dialog.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.isComposing || this.confirming) return;
+      const t = e.target;
+      if (t instanceof HTMLTextAreaElement) return;
+      const sends = (t instanceof HTMLInputElement && t.type === 'radio') || (t instanceof HTMLElement && t.dataset.key === 'send');
+      if (!sends) return;
       e.preventDefault();
-      if (this.choice === 'keep') void this.send();
-      else this.setStatus('Enter only confirms when the worktree is kept: to delete, use the button.', false);
+      this.submit(true);
+    });
+    this.promptEl.addEventListener('input', () => {
+      if (this.statusError) this.setStatus('');
+      this.renderActions();
     });
     parent.append(this.dialog);
   }
@@ -113,6 +163,9 @@ export class SendHomeDialog {
     this.session = v.worker.session;
     this.prep = null;
     this.choice = 'keep';
+    this.mode = 'home';
+    this.confirming = false;
+    this.promptEl.value = WRAPUP_PROMPT;
     this.state = 'preparing';
     this.setStatus('Looking at what is on the desk…');
     this.render();
@@ -122,7 +175,16 @@ export class SendHomeDialog {
   }
 
   private title(): string {
-    return `Send ${this.name} home`;
+    return this.mode === 'wrapup' ? `Wrap up ${this.name}, then send home` : `Send ${this.name} home`;
+  }
+
+  private wrap(): WrapUp | null {
+    const w = this.host.store.workers.get(this.id);
+    return w ? wrapUpOf(w) : null;
+  }
+
+  private linked(): boolean {
+    return !!(this.prep?.worktree?.linked ?? this.host.store.workers.get(this.id)?.worktree?.linked);
   }
 
   private async prepare(): Promise<void> {
@@ -143,23 +205,44 @@ export class SendHomeDialog {
     }
     this.prep = r.data as FirePrepare;
     this.name = this.prep.name || this.name;
+    // Delete is preselected whenever it is safe; the choice stays if the prepare is asked again and it still is.
+    if (!fireOptions(this.prep).enabled[this.choice] || this.choice === 'keep') this.choice = defaultChoice(this.prep);
     this.state = 'ready';
     this.setStatus('');
     this.render();
-    // Keyboard: on the keep choice (Enter sends home, safely), else on Send home itself.
+    this.focusFirst();
+  }
+
+  /** Keyboard: on the chosen worktree (Enter: send home, or the confirm step for a delete), else on the action. */
+  private focusFirst(): void {
+    if (!this.prep) return;
+    if (this.mode === 'wrapup') {
+      this.promptEl.focus();
+      return;
+    }
     const first = fireBlocked(this.prep)
       ? this.actions.querySelector<HTMLElement>('[data-key="cancel"]')
       : (this.form.querySelector<HTMLElement>('input[name="home-worktree"]:checked') ?? this.actions.querySelector<HTMLElement>('[data-key="send"]'));
     first?.focus();
   }
 
-  /** The world changed: the worker may be gone (sent home elsewhere, closed in herdr). */
+  /** The world changed: the worker may be gone (sent home elsewhere, closed in herdr), or its wrap-up moved on. */
   refresh(): void {
     if (!this.dialog.open || this.state === 'sending') return;
     if (!this.host.store.workers.has(this.id)) {
       this.close();
       this.host.toast(`${this.name} has already left.`, 'info');
+      return;
     }
+    if (this.wrapKey() !== this.shownWrap) {
+      this.renderWrap();
+      this.renderActions();
+    }
+  }
+
+  private wrapKey(): string {
+    const u = this.wrap();
+    return u ? `${u.state}|${u.worktree}|${u.armed_at}|${u.reason ?? ''}` : '';
   }
 
   private setStatus(msg: string, error = false): void {
@@ -180,11 +263,24 @@ export class SendHomeDialog {
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
     );
     const p = this.prep;
-    const nodes: Node[] = [];
+    const nodes: Node[] = [this.wrapEl];
     if (!p) {
       nodes.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i')));
     } else {
       const o = fireOptions(p);
+      if (this.mode === 'wrapup') {
+        // The last prompt first: it is what this mode is for.
+        this.promptEl.disabled = this.state === 'sending';
+        nodes.push(
+          h(
+            'div',
+            { class: 'dd-field dd-wrap-prompt' },
+            h('label', { for: 'home-wrap-prompt' }, 'Last prompt'),
+            this.promptEl,
+            h('p', { class: 'field-hint', id: 'home-wrap-hint' }, 'herdr-world adds the line it reads the result from. On CLEAN it sends ', h('b', {}, this.name), ' home; anything else waits for you.'),
+          ),
+        );
+      }
       const facts = h('dl', { class: 'dd-facts' });
       const fact = (k: string, val: Node | string) => facts.append(h('dt', {}, k), h('dd', {}, val));
       if (p.branch) fact('Branch', h('code', {}, p.branch));
@@ -214,7 +310,7 @@ export class SendHomeDialog {
       nodes.push(desk);
 
       if (o.offered) {
-        const set = h('fieldset', { class: 'dd-choices' }, h('legend', {}, 'The worktree'));
+        const set = h('fieldset', { class: 'dd-choices' }, h('legend', {}, this.mode === 'wrapup' ? 'The worktree, once it reports CLEAN' : 'The worktree'));
         for (const c of CHOICES.filter((x) => o.choices.includes(x.v))) {
           const on = o.enabled[c.v];
           const input = h('input', { type: 'radio', name: 'home-worktree', value: c.v, id: `home-${c.v}`, 'data-key': `wt:${c.v}`, 'aria-describedby': `home-${c.v}-hint` });
@@ -253,29 +349,173 @@ export class SendHomeDialog {
       }
     }
     this.form.replaceChildren(...nodes);
+    this.renderWrap();
     this.renderActions();
   }
 
-  private renderActions(): void {
+  /** #83: the worker's wrap-up on top of the form: what it waits for, or why it needs you. */
+  private renderWrap(): void {
+    this.shownWrap = this.wrapKey();
+    const u = this.wrap();
+    const busy = this.state === 'sending';
+    if (!u) {
+      this.wrapEl.replaceChildren();
+      this.wrapEl.hidden = true;
+      return;
+    }
+    this.wrapEl.hidden = false;
+    if (u.state === 'armed') {
+      this.wrapEl.replaceChildren(
+        h(
+          'div',
+          { class: 'dd-callout dd-callout--box dd-wrap', role: 'status' },
+          h('p', {}, h('span', { class: 'tape tape--box' }, 'Wrapping up'), ` since ${clock(u.armed_at)}`),
+          h('p', {}, armedText(this.name, u, this.linked())),
+          h('div', { class: 'dd-wrap-actions' }, h('button', { type: 'button', class: 'btn btn--danger-quiet', 'data-key': 'wrap-cancel', 'aria-disabled': busy ? 'true' : null, onclick: () => void this.cancelWrap('cancel') }, 'Cancel wrap-up')),
+        ),
+      );
+      return;
+    }
+    this.wrapEl.replaceChildren(
+      h(
+        'div',
+        { class: 'dd-callout dd-callout--error dd-wrap', role: 'alert' },
+        h('p', {}, h('span', { class: 'tape tape--needs_you' }, 'Needs you'), ' The wrap-up stopped. Nothing was sent home.'),
+        h('p', { class: 'dd-wrap-reason', 'data-key': 'wrap-reason' }, u.reason || 'It stopped without a result.'),
+        h(
+          'div',
+          { class: 'dd-wrap-actions' },
+          h('button', { type: 'button', class: 'btn btn--quiet', 'data-key': 'wrap-dismiss', 'aria-disabled': busy ? 'true' : null, onclick: () => void this.cancelWrap('dismiss') }, 'Dismiss'),
+          h('button', { type: 'button', class: 'btn', 'data-key': 'wrap-again', 'aria-disabled': busy || !this.prep ? 'true' : null, onclick: () => this.wrapAgain(u) }, 'Wrap up again'),
+        ),
+      ),
+    );
+  }
+
+  /** What blocks the send right now (shown on the button), null when it may go. */
+  private why(): string | null {
     const ready = this.state === 'ready' && !!this.prep;
-    const deleting = this.choice !== 'keep';
-    const text = this.state === 'sending' ? 'Sending home…' : deleting ? `Send ${this.name} home and delete` : `Send ${this.name} home`;
     const blocked = this.prep ? fireBlocked(this.prep) : null;
-    const why = !ready
-      ? this.state === 'sending'
-        ? 'On the way out.'
-        : 'Waiting for herdr-world…'
-      : this.host.unsupported('worker.fire')
-        ? failureText('worker.fire', 'unknown_command', '')
-        : blocked
-          ? `${this.name} can’t go home yet: ${blocked}.`
-          : null;
+    const cmd = this.mode === 'wrapup' ? 'worker.wrapup' : 'worker.fire';
+    if (!ready) return this.state === 'sending' ? (this.mode === 'wrapup' ? 'Sending the last prompt.' : 'On the way out.') : 'Waiting for herdr-world…';
+    if (this.host.unsupported(cmd)) return failureText(cmd, 'unknown_command', '');
+    if (blocked) return `${this.name} can’t go home yet: ${blocked}.`;
+    if (this.mode === 'wrapup' && this.wrap()?.state === 'armed') return `${this.name} is wrapping up already: cancel it first.`;
+    if (this.mode === 'wrapup' && !this.promptEl.value.trim()) return 'Write the last prompt first.';
+    return null;
+  }
+
+  private deleting(): boolean {
+    return this.choice !== 'keep' && !!this.prep && fireOptions(this.prep).enabled[this.choice];
+  }
+
+  private renderActions(): void {
     const had = document.activeElement instanceof HTMLElement && this.actions.contains(document.activeElement) ? document.activeElement.dataset.key : null;
-    const cancel = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, 'Cancel');
-    const retry = this.state === 'failed' && !this.host.unsupported('worker.fire.prepare') ? h('button', { class: 'btn', 'data-key': 'retry', onclick: () => this.retry() }, 'Try again') : null;
+    if (this.confirming && this.prep?.worktree) {
+      this.renderConfirm(this.prep.worktree.path);
+      return;
+    }
+    this.actions.classList.remove('dd-actions--confirm');
+    const deleting = this.deleting();
+    const wrapping = this.mode === 'wrapup';
+    const sending = this.state === 'sending';
+    const text = sending
+      ? wrapping
+        ? 'Sending the prompt…'
+        : 'Sending home…'
+      : wrapping
+        ? 'Wrap up, then send home'
+        : deleting
+          ? `Send ${this.name} home and delete`
+          : `Send ${this.name} home`;
+    const why = this.why();
+    const cancel = h('button', { type: 'button', class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, 'Cancel');
+    const retry =
+      this.state === 'failed' && !this.host.unsupported('worker.fire.prepare') ? h('button', { type: 'button', class: 'btn', 'data-key': 'retry', onclick: () => this.retry() }, 'Try again') : null;
+    // #83: the second action, and the way back from it.
+    const armed = this.wrap()?.state === 'armed';
+    const toWrap =
+      !wrapping && this.prep && !armed && !this.host.unsupported('worker.wrapup')
+        ? h('button', { type: 'button', class: 'btn', 'data-key': 'wrap', 'aria-disabled': this.state !== 'ready' || fireBlocked(this.prep) ? 'true' : null, onclick: () => this.setMode('wrapup') }, 'Wrap up, then send home')
+        : null;
+    const back = wrapping ? h('button', { type: 'button', class: 'btn btn--quiet', 'data-key': 'back', 'aria-disabled': sending ? 'true' : null, onclick: () => this.setMode('home') }, icon(ICON.back), 'Send home now') : null;
     const send = h('button', { class: 'btn btn--danger', type: 'submit', form: 'home-form', 'data-key': 'send', 'aria-disabled': why ? 'true' : null, title: why }, text);
-    this.actions.replaceChildren(...[retry, cancel, send].filter((x): x is HTMLButtonElement => !!x));
+    this.actions.replaceChildren(...[back, retry, cancel, toWrap, send].filter((x): x is HTMLButtonElement => !!x));
     if (had) this.actions.querySelector<HTMLElement>(`[data-key="${had}"]`)?.focus();
+  }
+
+  /** The inline warning before a delete: Cancel focused, the danger button one Tab away. */
+  private renderConfirm(path: string): void {
+    this.actions.classList.add('dd-actions--confirm');
+    const wrapping = this.mode === 'wrapup';
+    const cancel = h('button', { type: 'button', class: 'btn', 'data-key': 'confirm-cancel', onclick: () => this.closeConfirm() }, 'Cancel');
+    const go = h(
+      'button',
+      { type: 'button', class: 'btn btn--danger', 'data-key': 'confirm', onclick: () => this.confirmed() },
+      wrapping ? 'Wrap up and delete' : `Send ${this.name} home and delete`,
+    );
+    this.actions.replaceChildren(
+      h(
+        'div',
+        { class: 'dd-callout dd-callout--error dd-confirm', role: 'alertdialog', 'aria-labelledby': 'home-confirm-q', 'data-key': 'confirm-step' },
+        h('p', { id: 'home-confirm-q' }, 'Delete the worktree at ', h('code', {}, path), '? This cannot be undone.'),
+        wrapping ? h('p', { class: 'field-hint' }, `It goes once ${this.name} reports CLEAN.`) : null,
+        h('div', { class: 'dd-wrap-actions' }, cancel, go),
+      ),
+    );
+    cancel.focus();
+  }
+
+  private openConfirm(): void {
+    this.confirming = true;
+    this.renderActions();
+  }
+
+  private closeConfirm(): void {
+    this.confirming = false;
+    this.renderActions();
+    this.actions.querySelector<HTMLElement>('[data-key="send"]')?.focus();
+  }
+
+  private confirmed(): void {
+    this.confirming = false;
+    void (this.mode === 'wrapup' ? this.wrapUp() : this.send());
+  }
+
+  /** Enter (`viaEnter`) with a delete chosen asks first; a click sends. */
+  private submit(viaEnter: boolean): void {
+    if (this.state !== 'ready' || !this.prep) return;
+    const why = this.why();
+    if (why) {
+      this.setStatus(why, true);
+      if (this.mode === 'wrapup' && !this.promptEl.value.trim()) this.promptEl.focus();
+      return;
+    }
+    if (viaEnter && this.deleting() && this.prep.worktree) {
+      this.openConfirm();
+      return;
+    }
+    void (this.mode === 'wrapup' ? this.wrapUp() : this.send());
+  }
+
+  private setMode(mode: SendHomeMode): void {
+    if (this.state === 'sending' || this.mode === mode) return;
+    this.mode = mode;
+    this.confirming = false;
+    this.setStatus('');
+    this.render();
+    if (mode === 'wrapup') this.promptEl.focus();
+    else this.focusFirst();
+  }
+
+  /** "Wrap up again": the short follow-up, the choice it had (when still possible). */
+  private wrapAgain(u: WrapUp): void {
+    if (this.state !== 'ready' || !this.prep) return;
+    this.promptEl.value = WRAPUP_AGAIN_PROMPT;
+    if (fireOptions(this.prep).enabled[u.worktree]) this.choice = u.worktree;
+    this.mode = 'home';
+    this.setMode('wrapup');
+    this.promptEl.select();
   }
 
   private retry(): void {
@@ -331,6 +571,52 @@ export class SendHomeDialog {
     this.render();
   }
 
+  /** #83: the last prompt goes out; the bridge sends the worker home once it reports CLEAN. */
+  private async wrapUp(): Promise<void> {
+    const p = this.prep;
+    if (this.state !== 'ready' || !p || this.why()) return;
+    const choice = fireArgs(this.id, p, this.choice).worktree;
+    const prompt = this.promptEl.value;
+    const name = this.name;
+    this.state = 'sending';
+    this.setStatus(`Sending ${name} its last prompt…`);
+    this.render();
+    const gen = this.gen;
+    const r = await this.host.send('worker.wrapup', { id: this.id, prompt, ...(choice ? { worktree: choice } : {}) });
+    const still = this.dialog.open && gen === this.gen;
+    this.state = 'ready';
+    if (r.ok) {
+      const queued = (r.data as WrapUpAck | undefined)?.queued === true;
+      const fate = worktreeFate(choice ?? 'keep', !!p.worktree?.linked);
+      this.close();
+      this.host.toast(`${name} is wrapping up${queued ? ' after its current turn' : ''}. Once it reports CLEAN it goes home.${fate ? ` ${fate}` : ''}`, 'info');
+      return;
+    }
+    const msg = failureText('worker.wrapup', r.code, r.message, { worker: name, floor: this.session });
+    if (!still) {
+      this.host.toast(msg, 'error');
+      return;
+    }
+    this.setStatus(msg, true);
+    if (r.code === 'not_clean') {
+      void this.prepare().then(() => this.setStatus(msg, true));
+      return;
+    }
+    this.render();
+  }
+
+  /** #83: cancel an armed wrap-up, or dismiss one that needs you. */
+  private async cancelWrap(how: 'cancel' | 'dismiss'): Promise<void> {
+    if (this.state === 'sending') return;
+    const name = this.name;
+    const r = await this.host.send('worker.wrapup.cancel', { id: this.id });
+    if (!r.ok) {
+      this.setStatus(failureText('worker.wrapup.cancel', r.code, r.message, { worker: name, floor: this.session }), true);
+      return;
+    }
+    this.setStatus(how === 'cancel' ? `Cancelled ${name}’s wrap-up. It stays at its desk.` : `Dismissed. ${name} stays at its desk.`);
+  }
+
   summary(): SendHomeSummary | null {
     if (!this.dialog.open) return null;
     return {
@@ -345,6 +631,10 @@ export class SendHomeDialog {
       choice: this.choice,
       status: this.statusText,
       error: this.statusError,
+      mode: this.mode,
+      confirming: this.confirming,
+      prompt: this.promptEl.value,
+      wrapup: this.wrap(),
     };
   }
 }

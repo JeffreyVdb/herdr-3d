@@ -406,6 +406,13 @@ export class SimWorld {
           return ack(this.firePrepare(a));
         case 'worker.fire':
           return this.fireWorker(a, send, ack, fail);
+        // #83: wrap up, then send home; `sim.wrapup` plays the agent's result line.
+        case 'worker.wrapup':
+          return ack(this.wrapUp(a, send));
+        case 'worker.wrapup.cancel':
+          return ack(this.wrapUpCancel(a, send));
+        case 'sim.wrapup':
+          return this.wrapUpResult(a, send, ack);
         // M5 (tools/fixture-panels.ts)
         case 'worker.prompt':
           return this.panels.prompt(a, send, ack, fail);
@@ -1066,6 +1073,69 @@ export class SimWorld {
     if (!linked) out.reason = wt ? 'it works in the repo’s main checkout, not a worktree of its own' : 'it is not in a git worktree';
     else if (!clean) out.reason = [t.dirty.length ? 'the worktree has uncommitted changes' : '', t.unpushed ? `${t.unpushed} ${t.unpushed === 1 ? 'commit is' : 'commits are'} not on any remote` : ''].filter(Boolean).join(' and ');
     return out;
+  }
+
+  /**
+   * #83: `worker.wrapup` checks like `worker.fire` (an agent in Claude or Codex, a delete only when clean), arms the
+   * worker and acks; the result comes from `sim.wrapup`. A worker already armed is busy.
+   */
+  private wrapUp(a: Obj, send: Send): Obj {
+    onlyKeys(a, ['id', 'prompt', 'worktree']);
+    const w = this.worker(a);
+    const prompt = str(a, 'prompt');
+    if (!prompt.trim()) throw bad('prompt must be 1-16000 bytes');
+    const choice = a.worktree ?? 'keep';
+    if (choice !== 'keep' && choice !== 'delete' && choice !== 'delete_branch') throw bad('worktree must be keep, delete or delete_branch');
+    if (w.agent_kind !== 'claude' && w.agent_kind !== 'codex') throw new CmdError('invalid_state', `invalid state: ${w.name ?? w.id} runs no Claude or Codex agent: its wrap-up result could not be read`);
+    if (w.wrapup?.state === 'armed' || this.leaving.has(w.id)) throw new CmdError('busy', `busy: ${w.name ?? w.id} is wrapping up already`);
+    const p = this.firePrepare({ id: w.id });
+    if (choice !== 'keep') {
+      if (!w.worktree?.linked) throw bad('worktree: the worker is not in a linked worktree');
+      if (!p.can_delete) throw new CmdError('not_clean', `not clean: ${String(p.reason)}: commit and push first, or keep the worktree`);
+      if (choice === 'delete_branch' && !p.can_delete_branch) throw bad('the bridge made no branch for it: delete the worktree only');
+    }
+    if (p.can_fire === false) throw new CmdError('fire_failed', `fire_failed: ${String(p.fire_blocked)}`);
+    w.wrapup = { state: 'armed', worktree: choice, armed_at: this.now() };
+    this.upsertWorker(send, w);
+    return { queued: w.status === 'working' };
+  }
+
+  private wrapUpCancel(a: Obj, send: Send): undefined {
+    onlyKeys(a, ['id']);
+    const w = this.worker(a);
+    if (!w.wrapup) throw new CmdError('invalid_state', `invalid state: ${w.name ?? w.id} is not wrapping up`);
+    if (this.leaving.has(w.id)) throw new CmdError('busy', `busy: ${w.name ?? w.id} reported CLEAN and is being sent home`);
+    delete w.wrapup;
+    this.upsertWorker(send, w);
+    return undefined;
+  }
+
+  /** `sim.wrapup {id, verdict: clean|blocked|none, reason?}`: what the armed worker's transcript says. */
+  private wrapUpResult(a: Obj, send: Send, ack: (d?: unknown) => void): void {
+    onlyKeys(a, ['id', 'verdict', 'reason']);
+    const w = this.worker(a);
+    const u = w.wrapup;
+    if (u?.state !== 'armed') throw new CmdError('invalid_state', `invalid state: ${w.name ?? w.id} is not armed`);
+    if (a.verdict !== 'clean') {
+      w.wrapup = { ...u, state: 'needs_you', reason: a.verdict === 'blocked' ? str(a, 'reason') : 'did not report a wrap-up result' };
+      this.upsertWorker(send, w);
+      return ack();
+    }
+    // CLEAN: the same steps as worker.fire with the armed choice; nobody waits for its ack.
+    this.leaving.add(w.id);
+    const f = this.floors.get(w.session);
+    ack();
+    this.later([
+      () => {
+        this.leaving.delete(w.id);
+        const i = this.workers.indexOf(w);
+        if (i < 0) return;
+        this.workers.splice(i, 1);
+        this.hireBranch.delete(w.id);
+        this.emit(send, { t: 'worker.removed', id: w.id, session: w.session, workspace_id: w.workspace_id, reason: 'sent_home' });
+        if (f) this.resize(send, f);
+      },
+    ]);
   }
 
   private fireWorker(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void {

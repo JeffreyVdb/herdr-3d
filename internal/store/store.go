@@ -161,6 +161,8 @@ var migrations = []string{
 	migrationBoards,
 	// M3d building logos: the normalised PNG per building.
 	migrationLogo,
+	// #83: armed wrap-ups (and those needing you), resumed after a restart.
+	migrationWrapUp,
 }
 
 // Fingerprint kinds.

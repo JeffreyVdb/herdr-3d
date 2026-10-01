@@ -443,11 +443,14 @@ func TestTap(t *testing.T) {
 
 type recLines struct {
 	lines  []string
+	offs   []int64
 	resets int
 }
 
-func (r *recLines) Line(b []byte) { r.lines = append(r.lines, string(b)) }
-func (r *recLines) Reset()        { r.lines, r.resets = nil, r.resets+1 }
+func (r *recLines) Line(off int64, b []byte) {
+	r.lines, r.offs = append(r.lines, string(b)), append(r.offs, off)
+}
+func (r *recLines) Reset() { r.lines, r.offs, r.resets = nil, nil, r.resets+1 }
 
 // #57: Lines gets every main line from the file's start (not a subagent's),
 // and a Reset whenever those are void: all of them again after a
@@ -466,6 +469,10 @@ func TestLines(t *testing.T) {
 	s.Poll(t0.Add(time.Second))
 	if len(r.lines) != 2 || r.lines[0]+"\n" != first || r.lines[1]+"\n" != second || r.resets != 0 {
 		t.Fatalf("lines = %q, resets %d", r.lines, r.resets)
+	}
+	// #83: each with the byte offset it starts at.
+	if r.offs[0] != 0 || r.offs[1] != int64(len(first)) || s.Delivered() != int64(len(first)+len(second)) || !s.Found() {
+		t.Fatalf("offsets %v, delivered %d", r.offs, s.Delivered())
 	}
 	writeFile(t, path, second) // replaced: all again
 	s.Poll(t0.Add(2 * time.Second))

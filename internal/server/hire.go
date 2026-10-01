@@ -128,16 +128,22 @@ func (op *hireOp) signal() {
 // repo is the repository of a linked worktree worker the bridge hired
 // (else empty): once its last worktree is gone, the main checkout herdr
 // opened for it goes too.
+//
+// #83: a wrap-up's send home has no client (nobody waits for its reply),
+// is strict (a tree that changed while the agent exited fails it instead
+// of keeping the worktree) and carries its verdict for the audit log.
 type fireOp struct {
 	id, name, session, workspaceID string
 	pane, harness, choice          string
 	checkout, repoRoot, branch     string
 	repo                           string
-	client                         *Client
+	client                         *Client // nil: a wrap-up's
 	cmd                            proto.Command
 	auditID                        int64
 	notify                         chan struct{}
 	removed                        bool
+	strict                         bool
+	wrapup                         *fireWrapUp
 }
 
 func (op *fireOp) signal() {
@@ -1268,71 +1274,89 @@ func (h *Hub) startFire(ctx context.Context, c *Client, cmd proto.Command) error
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	if a.Worktree == "" {
-		a.Worktree = proto.FireKeep
-	}
-	if !slices.Contains([]string{proto.FireKeep, proto.FireDelete, proto.FireDeleteBranch}, a.Worktree) {
-		return bad("worktree must be keep, delete or delete_branch, got %q", a.Worktree)
-	}
 	w, f, err := h.fireWorker(a.ID)
 	if err != nil {
 		return err
 	}
-	if why := h.groupBlocked(w, f); why != "" {
-		return fmt.Errorf("%w: %s", errFireFailed, why)
+	op, err := h.newFireOp(ctx, w, f, a.Worktree)
+	if err != nil {
+		return err
 	}
-	if !herdr.ValidWorkspaceID(w.WorkspaceID) {
-		return fmt.Errorf("%w: workspace id %q", errFireFailed, w.WorkspaceID)
-	}
-	if h.opts.Hire == nil {
-		return errors.New("sending workers home is not configured")
-	}
-	op := &fireOp{id: w.ID, name: w.Name, session: w.Session, workspaceID: w.WorkspaceID, pane: w.PaneID, choice: a.Worktree,
-		checkout: checkoutOf(w), client: c, cmd: cmd, notify: make(chan struct{}, 1)}
-	op.harness = w.AgentKind
-	if op.harness == "" {
-		op.harness = w.Harness
-	}
-	if a.Worktree != proto.FireKeep {
-		switch {
-		case w.Worktree == nil || !w.Worktree.Linked:
-			return bad("%s does not work in a linked worktree: only keep is possible", w.Name)
-		case h.opts.Git == nil:
-			return errors.New("deleting worktrees is not configured")
-		}
-	}
-	var made store.HireBranch
-	var recorded bool
-	if w.Worktree != nil && w.Worktree.Linked {
-		if made, recorded, err = h.st.HireBranchOf(ctx, w.ID); err != nil {
-			return err
-		}
-		if recorded {
-			op.repo = w.Worktree.RepoRoot
-		}
-	}
-	if a.Worktree == proto.FireDeleteBranch {
-		// Only the branch the bridge recorded making for this worker; its
-		// name alone proves nothing.
-		if !recorded || !herdr.ValidBranch(made.Branch) || !herdr.ValidDir(made.RepoRoot) {
-			return bad("the bridge made no branch for %s: delete the worktree only", w.Name)
-		}
-		op.branch, op.repoRoot = made.Branch, made.RepoRoot
-	}
+	op.client, op.cmd = c, cmd
 	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, cmd.Args)
 	if err != nil {
 		return err
 	}
 	op.auditID = auditID
+	h.beginFire(ctx, op, f)
+	h.log.Info("send home started", "client", c.name, "req_id", cmd.ReqID, "session", w.Session, "worker", w.ID,
+		"worktree", op.choice)
+	return nil
+}
+
+// newFireOp validates sending w home with a worktree choice ("": keep), as
+// worker.fire and a wrap-up's CLEAN do, and returns the operation (no
+// client, not started).
+func (h *Hub) newFireOp(ctx context.Context, w *proto.Worker, f *floorState, choice string) (*fireOp, error) {
+	if choice == "" {
+		choice = proto.FireKeep
+	}
+	if !slices.Contains([]string{proto.FireKeep, proto.FireDelete, proto.FireDeleteBranch}, choice) {
+		return nil, bad("worktree must be keep, delete or delete_branch, got %q", choice)
+	}
+	if why := h.groupBlocked(w, f); why != "" {
+		return nil, fmt.Errorf("%w: %s", errFireFailed, why)
+	}
+	if !herdr.ValidWorkspaceID(w.WorkspaceID) {
+		return nil, fmt.Errorf("%w: workspace id %q", errFireFailed, w.WorkspaceID)
+	}
+	if h.opts.Hire == nil {
+		return nil, errors.New("sending workers home is not configured")
+	}
+	op := &fireOp{id: w.ID, name: w.Name, session: w.Session, workspaceID: w.WorkspaceID, pane: w.PaneID, choice: choice,
+		checkout: checkoutOf(w), notify: make(chan struct{}, 1)}
+	op.harness = w.AgentKind
+	if op.harness == "" {
+		op.harness = w.Harness
+	}
+	if choice != proto.FireKeep {
+		switch {
+		case w.Worktree == nil || !w.Worktree.Linked:
+			return nil, bad("%s does not work in a linked worktree: only keep is possible", w.Name)
+		case h.opts.Git == nil:
+			return nil, errors.New("deleting worktrees is not configured")
+		}
+	}
+	var made store.HireBranch
+	var recorded bool
+	if w.Worktree != nil && w.Worktree.Linked {
+		var err error
+		if made, recorded, err = h.st.HireBranchOf(ctx, w.ID); err != nil {
+			return nil, err
+		}
+		if recorded {
+			op.repo = w.Worktree.RepoRoot
+		}
+	}
+	if choice == proto.FireDeleteBranch {
+		// Only the branch the bridge recorded making for this worker; its
+		// name alone proves nothing.
+		if !recorded || !herdr.ValidBranch(made.Branch) || !herdr.ValidDir(made.RepoRoot) {
+			return nil, bad("the bridge made no branch for %s: delete the worktree only", w.Name)
+		}
+		op.branch, op.repoRoot = made.Branch, made.RepoRoot
+	}
+	return op, nil
+}
+
+// beginFire starts an operation from newFireOp, its audit row begun.
+func (h *Hub) beginFire(ctx context.Context, op *fireOp, f *floorState) {
 	if f.fires == nil {
 		f.fires = map[string]*fireOp{}
 	}
-	f.fires[w.ID] = op
-	h.log.Info("send home started", "client", c.name, "req_id", cmd.ReqID, "session", w.Session, "worker", w.ID,
-		"worktree", a.Worktree)
+	f.fires[op.id] = op
 	h.wg.Add(1)
 	go h.runFire(ctx, op)
-	return nil
 }
 
 // fireReport is the audit-log result of a worker.fire.
@@ -1347,6 +1371,15 @@ type fireReport struct {
 	Released  bool     `json:"released"`
 	Worktree  string   `json:"worktree,omitempty"`
 	Steps     []string `json:"steps"`
+	// #83: the wrap-up whose CLEAN sent the worker home.
+	WrapUp *fireWrapUp `json:"wrapup,omitempty"`
+}
+
+// fireWrapUp is the wrap-up behind a send home, in its audit report.
+type fireWrapUp struct {
+	Nonce   string `json:"nonce"`
+	Verdict string `json:"verdict"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 func (r *fireReport) step(format string, args ...any) {
@@ -1360,7 +1393,8 @@ func (r *fireReport) step(format string, args ...any) {
 func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 	defer h.wg.Done()
 	hh := h.opts.Hire
-	rep := &fireReport{Worker: op.id, Workspace: op.workspaceID, Choice: op.choice, Checkout: op.checkout, Steps: []string{}}
+	rep := &fireReport{Worker: op.id, Workspace: op.workspaceID, Choice: op.choice, Checkout: op.checkout, Steps: []string{},
+		WrapUp: op.wrapup}
 	res := proto.FireResult{Worktree: proto.WorktreeKept}
 	remove := op.choice != proto.FireKeep
 	if remove {
@@ -1394,6 +1428,14 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 		if why, err := h.fireCheck(ctx, op, rep); err != nil || why != "" {
 			if err != nil {
 				why = err.Error()
+			}
+			if op.strict {
+				// #83: a wrap-up deletes the worktree or leaves the worker
+				// at its desk, never half of it.
+				rep.step("the tree changed while the agent exited (%s): nothing closed", why)
+				h.finishFire(ctx, op, nil, fmt.Errorf("%w: the tree changed while %s's agent exited (%s): nothing was closed or removed",
+					errNotClean, op.name, why), rep)
+				return
 			}
 			remove = false
 			res.Note = "the tree changed while the agent exited (" + why + "): the worktree is kept"
@@ -1614,6 +1656,12 @@ func (h *Hub) finishFire(ctx context.Context, op *fireOp, res *proto.FireResult,
 		}
 		if aerr := h.st.AuditEnd(ctx, op.auditID, opErr, rep); aerr != nil {
 			h.log.Error("audit log write failed", "err", aerr)
+		}
+		if op.wrapup != nil { // #83
+			h.wrapUpFired(ctx, op, opErr)
+		}
+		if op.client == nil {
+			return
 		}
 		var data any
 		if res != nil {

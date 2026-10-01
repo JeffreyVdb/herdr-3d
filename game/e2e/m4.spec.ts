@@ -247,19 +247,20 @@ test('send home a clean worker: delete worktree + branch, it packs a box, takes 
   let d = await homeDialog(page);
   expect(d.options).toEqual({ offered: true, choices: ['keep', 'delete', 'delete_branch'], enabled: { keep: true, delete: true, delete_branch: true }, warning: null, branchNote: null });
   await expect(page.locator('.dd-desk .tape')).toHaveText('All pushed');
-  // Pick "delete the worktree and the branch": Enter on it does not send (only the button does).
-  expect(await focusedKey(page)).toBe('wt:keep');
-  await page.keyboard.press('ArrowDown');
+  // #83: delete is preselected when it is safe. Pick "delete the worktree and the branch": Enter on it does not send,
+  // it asks first (Cancel focused, so a second Enter cancels); Tab and Enter on the danger button confirm.
+  expect(d.choice).toBe('delete');
+  expect(await focusedKey(page)).toBe('wt:delete');
   await page.keyboard.press('ArrowDown');
   expect(((await dialog(page)) as Home).choice).toBe('delete_branch');
-  await page.keyboard.press('Enter');
-  expect((await sent(page)).map((c) => c.t)).toEqual(['worker.fire.prepare']);
   await expect(page.locator('dialog.desk-dlg--home [data-key="send"]')).toHaveText('Send Marble home and delete');
   await shot(page, 'm4-send-home-clean');
+  await page.keyboard.press('Enter');
+  expect((await sent(page)).map((c) => c.t)).toEqual(['worker.fire.prepare']);
+  await expect(page.locator('dialog.desk-dlg--home .dd-confirm')).toContainText('Delete the worktree at /home/dev/pastry-wt/timers? This cannot be undone.');
+  expect(await focusedKey(page)).toBe('confirm-cancel');
   await page.keyboard.press('Tab');
-  expect(await focusedKey(page)).toBe('cancel');
-  await page.keyboard.press('Tab');
-  expect(await focusedKey(page)).toBe('send');
+  expect(await focusedKey(page)).toBe('confirm');
   // Slow motion, to watch it pack.
   await page.evaluate(() => window.__h3d.arrivalRate(0.5));
   await page.keyboard.press('Enter');

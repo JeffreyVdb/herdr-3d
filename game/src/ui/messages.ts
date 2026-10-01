@@ -48,6 +48,8 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'worker.hire': 'hire workers',
   'worker.fire.prepare': 'send workers home',
   'worker.fire': 'send workers home',
+  'worker.wrapup': 'wrap up workers',
+  'worker.wrapup.cancel': 'wrap up workers',
   // M5
   'worker.prompt': 'send prompts',
   'worker.answer': 'answer questions',
@@ -97,6 +99,8 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
       return `This herdr-world can’t ${DOES[t]} yet${why && !why.startsWith('unknown command') ? ` (${why})` : ''}. Update the bridge to use it.`;
     case 'busy':
       if (t === 'worker.fire' || t === 'worker.fire.prepare') return `${ctx.worker ?? 'This worker'} is still being hired or already on the way out.`;
+      if (t === 'worker.wrapup') return `${ctx.worker ?? 'This worker'} is already wrapping up, being hired or on the way out.`;
+      if (t === 'worker.wrapup.cancel') return `${ctx.worker ?? 'This worker'} already reported CLEAN and is on the way out.`;
       return `${floor} is already waking up or going to sleep. Try again once it is done.`;
     case 'invalid_state':
       if (t === 'floor.wake') return `${floor} is already awake.`;
@@ -143,6 +147,7 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
     case 'unknown_worker':
       return `${ctx.worker ?? 'That worker'} is no longer on the floor.`;
     case 'not_clean':
+      if (t === 'worker.wrapup') return `Nothing was sent: ${why.replace(/^not clean:\s*/, '') || 'the worktree has uncommitted changes or unpushed commits'}.`;
       return `The worktree was kept: ${why || 'it has uncommitted changes or unpushed commits'}.`;
     case 'fire_failed':
       return `${ctx.worker ?? 'The worker'} could not be sent home: ${why || 'herdr-world gave no reason'}.`;
