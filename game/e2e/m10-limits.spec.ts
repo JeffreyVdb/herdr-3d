@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
 import { frames, openGame, shot, watchErrors } from './game';
@@ -643,5 +645,143 @@ test('an M3 panel (settings) at any width also gets the edge tab; the hire sheet
   await expect(limits(page)).toHaveAttribute('data-dock', ''); // today's behaviour: the plate stays, above the dialog
   await expect(page.locator('.lm-strip')).toBeVisible();
   expect(await undimmed(page)).toBe(true);
+  clean();
+});
+
+// Seated at a worker's laptop (#53): the laptop's screen fills the view, so the plate is its edge tab, and standing up gives
+// back what the prefs say. Peeks (the tab, Shift+L) leave the prefs alone. demo-m5 has the floor and the workers to sit at.
+
+/** The first worker of demo-m5's floor. */
+const firstWorker = (): string => {
+  const snap = JSON.parse(readFileSync(resolve(import.meta.dirname, '../fixtures/demo-m5.jsonl'), 'utf8').split('\n')[0] ?? '{}') as { world: { workers: Array<{ id: string }> } };
+  return snap.world.workers[0]!.id;
+};
+const savedHidden = (page: Page) => page.evaluate(() => localStorage.getItem('h3d.limits.hidden'));
+
+async function sitAtLaptop(page: Page): Promise<void> {
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await frames(page, 3);
+  const id = firstWorker();
+  expect(await page.evaluate((w) => window.__h3d.face(w), id)).toBe(true);
+  await frames(page, 3);
+  await page.keyboard.press('e');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
+  await frames(page, 10);
+}
+
+async function standUp(page: Page): Promise<void> {
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
+}
+
+for (const expanded of [false, true]) {
+  test(`sitting at a laptop ${expanded ? 'with the panel expanded' : 'with the strip'}: the widget is the edge tab, and standing up gives it back as saved`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const clean = watchErrors(page);
+    if (expanded) await page.addInitScript(() => localStorage.setItem('h3d.limits.open', '1'));
+    await openGame(page, 'demo-m5', '', `${SIM()}&simusage=0`);
+    await withReadings(page);
+    await expect(page.locator('.lm-panel')).toBeVisible({ visible: expanded });
+
+    await sitAtLaptop(page);
+    await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+    await expect(limits(page)).toBeVisible();
+    await expect(page.locator('.lm-panel')).toBeHidden();
+    await expect(page.locator('.lm-strip')).toBeHidden();
+    await expect(page.locator('.lm-tab-pct')).toHaveText('61%');
+    expect((await widget(page))!.open).toBe(false);
+    // The tab is a sliver in the corner, not the plate.
+    expect((await limits(page).boundingBox())!.width).toBeLessThan(48);
+    expect(await savedOpen(page)).toBe(expanded ? '1' : null);
+    await shot(page, `m10-seated-${expanded ? 'expanded' : 'strip'}`);
+
+    await standUp(page);
+    await expect(limits(page)).toHaveAttribute('data-dock', '');
+    await expect(page.locator('.lm-panel')).toBeVisible({ visible: expanded });
+    await expect(page.locator('.lm-strip')).toBeVisible();
+    expect((await widget(page))!.open).toBe(expanded);
+    expect(await savedOpen(page)).toBe(expanded ? '1' : null);
+    clean();
+  });
+}
+
+test('seated, a click on the tab or Shift+L peeks the panel without touching the saved state, and standing up ends the peek', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  const keys = () => page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.keys'));
+  await openGame(page, 'demo-m5', '', `${SIM()}&simusage=0`);
+  await withReadings(page);
+  await sitAtLaptop(page);
+
+  // At the terminal Shift+L is an L for the pane, as in any text box: no peek.
+  await page.keyboard.press('Shift+L');
+  await expect.poll(async () => JSON.stringify(await keys())).toContain('"text":"L"');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+
+  await page.locator('[data-key="limits-tab"]').click();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  await expect(page.locator('.lm-panel')).toBeVisible();
+  expect((await widget(page))!.open).toBe(true);
+  expect(await onTop(page)).toBe(true);
+  expect(await savedOpen(page)).toBeNull();
+  await shot(page, 'm10-seated-peek');
+
+  // Shift+L (focus is on the plate now) ends it and brings it back; so does the header and a click outside.
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+  await page.keyboard.press('Shift+L');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  await page.locator('.lm-strip').click();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await page.locator('[data-key="limits-tab"]').click();
+  await expect(page.locator('.lm-panel')).toBeVisible();
+  await page.mouse.click(300, 400);
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  expect(await savedOpen(page)).toBeNull();
+
+  // Standing up with a peek open ends it; the plate is the docked strip again.
+  await page.locator('[data-key="limits-tab"]').click();
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  await standUp(page);
+  await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+  await expect(limits(page)).toHaveAttribute('data-dock', '');
+  await expect(page.locator('.lm-panel')).toBeHidden();
+  await expect(page.locator('.lm-strip')).toBeVisible();
+  expect(await savedOpen(page)).toBeNull();
+  clean();
+});
+
+test('seated, a meter the user hid stays hidden', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await page.addInitScript(() => localStorage.setItem('h3d.limits.hidden', '1'));
+  await openGame(page, 'demo-m5', '', `${SIM()}&simusage=0`);
+  await expect.poll(async () => (await widget(page))?.hidden).toBe(true);
+  await sitAtLaptop(page);
+  await expect(limits(page)).toBeHidden();
+  await standUp(page);
+  await expect(limits(page)).toBeHidden();
+  expect(await savedHidden(page)).toBe('1');
+  clean();
+});
+
+test('seated on a narrow viewport the widget is still the tab, and still peeks', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 420, height: 800 });
+  await openGame(page, 'demo-m5', '', `${SIM()}&simusage=0`);
+  await withReadings(page);
+  await sitAtLaptop(page);
+  await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+  await expect(limits(page)).toBeVisible();
+  await page.locator('[data-key="limits-tab"]').click();
+  await expect(page.locator('.lm-panel')).toBeVisible();
+  const box = (await limits(page).boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(420);
+  await standUp(page);
+  await expect(limits(page)).toHaveAttribute('data-dock', '');
+  await expect(page.locator('.lm-strip')).toBeVisible();
   clean();
 });

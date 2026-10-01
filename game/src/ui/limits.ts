@@ -14,11 +14,14 @@ import './limits.css';
  * stale; `tick` is that second check and does nothing else.
  *
  * Over a screen-filling dialog (SCREEN, #47, #51) the plate would hide its close button and first row, so it
- * steps out of it: into a slim edge tab (worst percentage and a severity bar) when the viewport leaves a
- * gutter right of the dialog for it, else away completely, like the narrow-viewport fold. Either way it
+ * steps out of it, and so it does while you sit at a worker's laptop (#53, SEATED): into a slim edge tab (worst
+ * percentage and a severity bar) when the viewport leaves a gutter right of the dialog for it, else away completely, like the narrow-viewport fold. Either way it
  * stays reachable: a click on the tab or Shift+L "peeks" the plate over the dialog (expanded, whatever the
  * saved state), and clicking the plate's header, Shift+L again, a click outside it, or closing the dialog
  * it was started over (or opening another one on top of it) ends the peek. A peek never touches the saved prefs, so when the dialog closes the plate is what it was.
+ * Seated, the laptop's screen fills the view and there is no dialog to measure: the plate is the tab (the same peek,
+ * which ends when you stand up), and standing up gives back the docked or open plate the prefs say. At the terminal
+ * Shift+L is an L for the pane (as in any text box), so the tab is the way in there; in the transcript it peeks.
  */
 
 /** Below this width a dialog or the Changes panel spans the screen (limits.css follows the same line). */
@@ -39,6 +42,9 @@ const SCREEN = 'dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dl
  * way (edge tab beside it when there is room, else away; Shift+L peeks).
  */
 const READING = '.seat-transcript:not([hidden])';
+
+/** #53: seated at a worker's laptop (laptop/index.ts marks the page with `data-seated`); the screen fills the view, so the plate is its edge tab. */
+const SEATED = 'html[data-seated]';
 
 /** Free width the edge tab needs right of a screen dialog: its 32 px, 8 px from the edge, and 8 px clear of the dialog (limits.css). */
 const TAB_ROOM = 48;
@@ -199,12 +205,12 @@ export class LimitsWidget {
     return dialogs[dialogs.length - 1] ?? null;
   }
 
-  /** A screen-filling dialog is open (and the plate is on screen at all). */
+  /** A screen-filling dialog is open, or you sit at a laptop (and the plate is on screen at all). */
   private screenOpen(): boolean {
-    return !this.root.hidden && !this.folded && (!!document.querySelector(SCREEN) || !!document.querySelector(READING));
+    return !this.root.hidden && !this.folded && (!!document.querySelector(SCREEN) || !!document.querySelector(READING) || !!document.querySelector(SEATED));
   }
 
-  /** The plate steps aside over a screen dialog (a peek excepted): Shift+L reaches it through the app even though the dialog owns the keys. */
+  /** The plate steps aside over a screen dialog or at a laptop (a peek excepted): Shift+L reaches it through the app even though the dialog or the laptop owns the keys. */
   get overScreen(): boolean {
     return this.screenOpen();
   }
@@ -250,12 +256,12 @@ export class LimitsWidget {
     window.addEventListener('resize', this.onResize);
     if (typeof MutationObserver === 'undefined') return;
     this.watcher = new MutationObserver((records) => {
-      if (!records.some((r) => r.target instanceof HTMLDialogElement || r.attributeName === 'data-reading')) return;
+      if (!records.some((r) => r.target instanceof HTMLDialogElement || r.attributeName === 'data-reading' || r.attributeName === 'data-seated')) return;
       this.root.dataset.beside = document.querySelector('dialog.changes[open]') ? 'changes' : '';
       this.update();
       if (records.some((r) => r.target instanceof HTMLDialogElement && r.target.open)) this.raise();
     });
-    this.watcher.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open', 'data-reading'] });
+    this.watcher.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open', 'data-reading', 'data-seated'] });
   }
 
   get isOpen(): boolean {
@@ -299,7 +305,7 @@ export class LimitsWidget {
     const folded = this.folded;
     const screen = this.screenOpen();
     if (this.peek && (!screen || this.topScreen() !== this.peekOwner)) {
-      // The dialog it was over is gone (or another opened on top of it, or the meter was hidden): back to the docked/saved state.
+      // The dialog it was over is gone (you stood up, or another opened on top of it, or the meter was hidden): back to the docked/saved state.
       this.peek = false;
       this.peekOwner = null;
       this.watchOutside(false);

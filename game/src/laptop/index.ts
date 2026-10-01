@@ -554,6 +554,7 @@ export class Laptops {
       view: '',
     };
     this.leaving = null;
+    document.documentElement.setAttribute('data-seated', '');
     office.setLean(v.desk);
     office.setAtLaptop(true);
     // The seated screen: the whole terminal over the whole glass, sized to the view, sharp from up close (the monitor's shape, at most 2400 wide).
@@ -597,6 +598,7 @@ export class Laptops {
     this.input = null;
     this.transcript.stand();
     this.markReading(null);
+    document.documentElement.removeAttribute('data-seated');
     this.meshes?.unfreeze(s.desk);
     s.office.setLean(null);
     s.office.setAtLaptop(false);
