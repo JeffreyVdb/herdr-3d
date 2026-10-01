@@ -49,6 +49,10 @@ type Control struct {
 	// its stdout (default: exec in its own process group with
 	// CleanEnv(os.Environ())). Tests inject a fake.
 	Stream Streamer
+
+	// #95: TypeGap is the pause after each chunk of a typed prompt
+	// (default DefaultTypeGap).
+	TypeGap time.Duration
 }
 
 // Runner runs one command and returns its stdout and stderr.
@@ -91,6 +95,8 @@ const (
 	opSendSequence = "send-sequence"
 	opPromptWait   = "prompt-wait"
 	opPromptQueued = "prompt-queued"
+	// #95: one chunk of a prompt typed into Claude Code.
+	opTypeText = "type-text"
 )
 
 // #74: control operations of the fullscreen laptop (pane zoom).
@@ -167,6 +173,10 @@ var controlShapes = map[string][]string{
 	opPromptWait: {"{herdr}", "--session", "{session}", "agent", "prompt", "{pane}", "{message}",
 		"--wait", "--until", "working", "--until", "blocked", "--timeout", "8000"},
 	opPromptQueued: {"{herdr}", "--session", "{session}", "agent", "prompt", "{pane}", "{message}"},
+	// #95: a prompt to Claude Code is typed, in chunks (then key-enter):
+	// the same command as send-text, but its text may hold "\n" (a new
+	// line in Claude's input, not Enter).
+	opTypeText: {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "{chunk}"},
 
 	// #74. Zoom a pane's tab to that pane (it also focuses the pane) and put
 	// the tab back. Explicit modes only: never --toggle, never no mode, so a
@@ -403,11 +413,14 @@ var placeholders = map[string]func(string) bool{
 	"input":   ValidInputText,
 	"seq":     validSequence,
 	"message": ValidMessage,
+
+	// #95
+	"chunk": validTypedChunk,
 }
 
 // secretPlaceholders are what a person typed: a refused value is never
 // quoted in an error (errors reach the log and the audit log).
-var secretPlaceholders = map[string]bool{"text": true, "input": true, "message": true}
+var secretPlaceholders = map[string]bool{"text": true, "input": true, "message": true, "chunk": true}
 
 // run is the single choke point for control commands: it expands the
 // shape of op with vars after validating each one (and the session

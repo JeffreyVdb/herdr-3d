@@ -292,7 +292,7 @@ func TestRunStart(t *testing.T) {
 		"worktree s /home/u/lab " + res.Branch + " origin/main ORCH|issue-3",
 		"mark w3:p1 " + marker,
 		"start-agent w3:p1 " + strings.TrimPrefix(res.Branch, "h3d/") + " claude claude-fable-5-1 high ORCH|issue-3",
-		"prompt w3:p1 " + strconv.Quote(prompt),
+		"type w3:p1 " + strconv.Quote(prompt), // #95: typed into Claude
 	}
 	if !slices.Equal(calls, wantCalls) {
 		t.Fatalf("herdr calls =\n%q\nwant\n%q", calls, wantCalls)

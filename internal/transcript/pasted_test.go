@@ -41,3 +41,30 @@ func TestClaudePastedPromptHasNoWrapper(t *testing.T) {
 		}
 	}
 }
+
+// #95: ClaudePasted finds a person's prompt with pasted text, for the
+// bridge's warning that a typed prompt arrived as a paste.
+func TestClaudePasted(t *testing.T) {
+	wrapped := `\n\n<pasted_content id=\"9fa6\">\n/run-crew https://x/1\nTeam: a\n</pasted_content id=\"9fa6\">\n`
+	for name, c := range map[string]struct {
+		line, want string
+		ok         bool
+	}{
+		"user string": {`{"type":"user","message":{"role":"user","content":"` + wrapped + `"}}`, "/run-crew https://x/1\nTeam: a", true},
+		"user blocks": {`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"see ` + wrapped + ` and fix it"}]}}`,
+			"see /run-crew https://x/1\nTeam: a and fix it", true},
+		"escaped": {`{"type":"user","message":{"content":"\u003cpasted_content id=\"ab\"\u003e\nhi there\n\u003c/pasted_content id=\"ab\"\u003e"}}`, "hi there", true},
+		"queued": {`{"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","prompt":"` + wrapped + `"}}`,
+			"/run-crew https://x/1\nTeam: a", true},
+		"typed":       {`{"type":"user","message":{"content":"/run-crew https://x/1"}}`, "", false},
+		"meta":        {`{"type":"user","isMeta":true,"message":{"content":"` + wrapped + `"}}`, "", false},
+		"sidechain":   {`{"type":"user","isSidechain":true,"message":{"content":"` + wrapped + `"}}`, "", false},
+		"assistant":   {`{"type":"assistant","message":{"content":[{"type":"text","text":"` + wrapped + `"}]}}`, "", false},
+		"tool result": {`{"type":"user","message":{"content":[{"type":"tool_result","content":"` + wrapped + `"}]}}`, "", false},
+		"bad json":    {`{"type":"user", <pasted_content `, "", false},
+	} {
+		if got, ok := ClaudePasted([]byte(c.line)); ok != c.ok || got != c.want {
+			t.Errorf("%s: %q, %v; want %q, %v", name, got, ok, c.want, c.ok)
+		}
+	}
+}

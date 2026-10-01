@@ -621,6 +621,12 @@ func termDefaults(o *Options) {
 	if o.PromptRetryWait <= 0 {
 		o.PromptRetryWait = DefaultPromptRetryWait
 	}
+	if o.PromptReadyWait <= 0 { // #95
+		o.PromptReadyWait = DefaultPromptReadyWait
+	}
+	if o.PromptAckWait <= 0 {
+		o.PromptAckWait = DefaultPromptAckWait
+	}
 	if o.AskStepTimeout <= 0 { // #57
 		o.AskStepTimeout = DefaultAskStepTimeout
 	}
@@ -648,6 +654,7 @@ func (h *Hub) initTerm() {
 	h.asking = map[string]bool{}
 	h.asks = map[string]*proto.Ask{} // #57
 	h.askResolved = map[string]string{}
+	h.typed, h.starts, h.dirty = map[string][]typedNote{}, map[string]uint64{}, map[string]int{} // #95
 }
 
 // afterObserve follows a change of the workers: watches whose worker went

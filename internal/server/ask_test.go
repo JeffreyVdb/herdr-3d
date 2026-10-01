@@ -367,7 +367,8 @@ func TestAnswerAskChecksTheScreen(t *testing.T) {
 	}
 }
 
-// Esc, then the prompt once the transcript has the rejection.
+// Esc, then the prompt once the transcript has the rejection and herdr
+// sees the agent idle (#95: typed into Claude).
 func TestAnswerAskCancelWithAPrompt(t *testing.T) {
 	ab := startAskBridge(t, "blocked")
 	c := ab.connect(proto.Hello{})
@@ -376,6 +377,7 @@ func TestAnswerAskCancelWithAPrompt(t *testing.T) {
 	playDialog(ab.termBridge, "w1:p1", "q", map[string]string{"q": readScreen(t, "claude-ask-esc"), "gone": "  ⎿  User declined to answer questions\n"},
 		map[string]map[string]string{"q": {"esc": "gone"}}, map[string]func(){"gone": func() {
 			appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 12)+fixtureLine(t, "claude", "ask.jsonl", 13))
+			go func() { time.Sleep(100 * time.Millisecond); ab.setStatus("w1", "idle") }() // herdr a moment later
 		}})
 	appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 11))
 	askOf(c, id, pendingID(tu))
@@ -383,7 +385,7 @@ func TestAnswerAskCancelWithAPrompt(t *testing.T) {
 	if !r.Resolved || !r.Prompted || !slices.Equal(r.Sent, []string{"esc"}) {
 		t.Fatalf("result %+v", r)
 	}
-	if calls := ab.term.Calls(); !slices.Equal(calls, []string{"keys w1:p1 esc", `submit w1:p1 "Let's talk about it first."`}) {
+	if calls := ab.term.Calls(); !slices.Equal(calls, []string{"keys w1:p1 esc", `type w1:p1 "Let's talk about it first."`}) {
 		t.Fatalf("calls %q", calls)
 	}
 }

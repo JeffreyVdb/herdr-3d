@@ -141,6 +141,11 @@ type Options struct {
 	// again (defaults DefaultQuestionPoll, DefaultAnswerTimeout,
 	// DefaultPromptRetryWait).
 	QuestionPoll, AnswerTimeout, PromptRetryWait time.Duration
+	// #95: PromptReadyWait is how long a prompt to Claude waits for the
+	// agent to be ready before it is typed, PromptAckWait how long it then
+	// waits for the agent to start working before Enter is pressed again
+	// (defaults DefaultPromptReadyWait, DefaultPromptAckWait).
+	PromptReadyWait, PromptAckWait time.Duration
 	// #57: AskStepTimeout is how long worker.answer_ask waits for the
 	// dialog to show each step, AskResolveTimeout how long for the
 	// transcript to record the answer (defaults DefaultAskStepTimeout,
@@ -258,6 +263,13 @@ type Hub struct {
 	// whose result its transcript recorded.
 	asks        map[string]*proto.Ask
 	askResolved map[string]string
+	// #95: worker id → the prompts typed into it lately (fingerprints), and
+	// how often herdr saw it start working or get blocked.
+	typed  map[string][]typedNote
+	starts map[string]uint64
+	// #95 R1: worker id → EraseTyped's count for a prompt partly typed
+	// into its input box that could not be erased.
+	dirty map[string]int
 	// M6 launch
 	presets    map[string]store.Preset // by id (mirrors team_preset)
 	lastPreset map[string]string       // session → preset id (mirrors floor_preset_last)
@@ -969,6 +981,9 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 		w := h.workers[id]
 		delete(h.workers, id)
 		delete(h.saved, id)
+		delete(h.typed, id) // #95
+		delete(h.starts, id)
+		delete(h.dirty, id)
 		if w != nil {
 			h.emit(proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: w.Session, WorkspaceID: w.WorkspaceID})
 		}
@@ -1115,6 +1130,9 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		w := h.workers[id]
 		delete(h.workers, id)
 		delete(h.saved, id)
+		delete(h.typed, id) // #95
+		delete(h.starts, id)
+		delete(h.dirty, id)
 		if w == nil {
 			continue
 		}
@@ -1234,6 +1252,11 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		}
 		prev := h.workers[id]
 		h.workers[id] = next
+		// #95: a typed prompt is acked by the worker starting, however short
+		// its turn.
+		if (next.Status == statusWorking || next.Status == statusBlocked) && (prev == nil || prev.Status != next.Status) {
+			h.starts[id]++
+		}
 		// #58: a watched worker starting a turn: its transcript is read now
 		// (the prompt's user line, the first items), not on the next tick.
 		if prev != nil && prev.Status != statusWorking && next.Status == statusWorking && h.tx.watched(id) {

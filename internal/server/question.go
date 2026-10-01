@@ -30,6 +30,8 @@ const (
 const (
 	statusBlocked = "blocked"
 	statusWorking = "working"
+	statusIdle    = "idle"
+	statusDone    = "done"
 	statusAsking  = "asking" // #57: not herdr's: a worker with an ask
 
 	maxExcerptLines = 8

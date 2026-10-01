@@ -93,13 +93,17 @@ type wrapUpdate struct {
 // txLines feeds a session's lines to the worker's ask tracker and, while a
 // wrap-up is armed, its wrap-up tracker (usage tracker goroutine).
 type txLines struct {
-	ask  *transcript.AskTracker
-	wrap *transcript.WrapUpTracker
+	ask   *transcript.AskTracker
+	wrap  *transcript.WrapUpTracker
+	paste *pasteWatch // #95
 }
 
 func (l *txLines) Line(off int64, b []byte) {
 	if l.ask != nil {
 		l.ask.Line(b)
+	}
+	if l.paste != nil {
+		l.paste.line(b)
 	}
 	if l.wrap != nil {
 		l.wrap.Line(off, b)
@@ -280,6 +284,9 @@ func (h *Hub) startWrapUp(ctx context.Context, c *Client, cmd proto.Command) err
 		return fmt.Errorf("%w: %s waits on its question: answer it first", errInvalidState, w.Name)
 	case w.Status == statusBlocked:
 		return fmt.Errorf("%w: %s is blocked: answer its question first", errInvalidState, w.Name)
+	}
+	if err := checkTyped(w.AgentKind, a.Prompt, room, "prompt"); err != nil { // #95
+		return err
 	}
 	if old := h.wrapups[a.ID]; old != nil && old.state != proto.WrapUpNeedsYou {
 		return fmt.Errorf("%w: %s is wrapping up already", errBusy, w.Name)

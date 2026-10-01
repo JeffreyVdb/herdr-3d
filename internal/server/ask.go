@@ -178,6 +178,11 @@ func (h *Hub) startAnswerAsk(ctx context.Context, c *Client, cmd proto.Command) 
 	case w.Ask.ToolUseID != a.ToolUseID:
 		return fmt.Errorf("%w: %s asks another question now (tool_use_id %s)", errStale, w.Name, w.Ask.ToolUseID)
 	}
+	if a.Prompt != "" && w.Ask.Agent == proto.AskClaude {
+		if err := checkTyped(proto.AskClaude, a.Prompt, herdr.MaxMessage, "prompt"); err != nil {
+			return err
+		}
+	}
 	var answers []askAnswer
 	if !a.Cancel {
 		if answers, err = checkAnswers(w.Ask, a.Answers); err != nil {
@@ -323,7 +328,11 @@ func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answer
 		return nil, err
 	}
 	if a.Prompt != "" && res.Resolved {
-		if err := h.opts.Term.SubmitPrompt(ctx, session, pane, a.Prompt); err != nil {
+		if ask.Agent == proto.AskClaude { // #95: typed, once the dismissed dialog is gone
+			if _, err := h.typePrompt(ctx, a.ID, session, pane, a.Prompt, true); err != nil {
+				return nil, fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)
+			}
+		} else if err := h.opts.Term.SubmitPrompt(ctx, session, pane, a.Prompt); err != nil {
 			var api *herdr.APIError
 			if !errors.As(err, &api) || api.Code != "agent_prompt_stalled" {
 				return nil, fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)

@@ -96,7 +96,10 @@ parts:
     --kind claude --pane <pane> --timeout 30000 -- --model <m> --effort <e> --permission-mode bypassPermissions --name
     <label>` / `--kind codex … -- -m <m> -c model_reasoning_effort=<e> --dangerously-bypass-approvals-and-sandbox`, the
     read-only `pane read <pane> --source visible` (trust dialog), `pane send-keys <pane> down|enter|ctrl+c`, `agent
-    prompt <pane> <text> --wait --until working --until blocked --timeout 8000`.
+    prompt <pane> <text> --wait --until working --until blocked --timeout 8000` (Codex), and for Claude (#95) the
+    prompt typed: `pane send-text <pane> <chunk>` (`type-text`: at most 700 characters, `\n` its only control
+    character, 50 ms apart) then `pane send-keys <pane> enter` (`Control.TypePrompt`); a prompt that fails part way
+    is erased with the laptops' `pane send-keys <pane> ctrl+u backspace …` (`Control.EraseTyped`).
   - Send home: `pane send-text <pane> /exit` / `/quit`, `workspace close <ws>`, `worktree remove --workspace <ws>`
     (never `--force`, never `--group`).
   - Laptops (M5, `terminal.watch`, `worker.keys` / `prompt` / `answer`): the read-only, long-running `terminal session
@@ -104,7 +107,7 @@ parts:
     `pane send-keys <pane> <key>…` (only the key names in `docs/protocol.md` "Input", and the digits 1–9 of a menu),
     `pane send-text <pane> <text>` (no control characters) and the fixed sequences of delete / home / end / pageup /
     pagedown, `agent prompt <pane> <text>` with `--wait --until working --until blocked --timeout 8000` or without
-    (queued for an agent at work), and the hire's `pane read <pane> --source visible` (a blocked worker's question).
+    (queued for an agent at work; Codex only: a prompt to Claude is typed, as for the hire), and the hire's `pane read <pane> --source visible` (a blocked worker's question).
     #74's fullscreen laptop adds exactly two: `pane zoom <pane> --on` and `pane zoom <pane> --off` (explicit modes,
     never `--toggle`; `Control.SetZoom`), each write its own `pane.zoom` audit row (`{"session","pane","mode","why"}`).
     The hub's zoom code (`internal/server/zoom.go`) has two locks: `zoomTabs.write` serialises the zoom writes and the

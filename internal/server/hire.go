@@ -32,6 +32,10 @@ type HireHerdr interface {
 	ReadPane(ctx context.Context, session, pane string) (string, error)
 	SendKey(ctx context.Context, session, pane string, key herdr.Key) error
 	Prompt(ctx context.Context, session, pane, text string) error
+	// #95: a Claude hire's prompt is typed (in chunks, then Enter), and
+	// what a failed one left in its input box erased.
+	TypePrompt(ctx context.Context, session, pane, text string) error
+	EraseTyped(ctx context.Context, session, pane string, n int) error
 	TypeExit(ctx context.Context, session, pane, harness string) error
 	CloseWorkspace(ctx context.Context, session, workspace string) error
 	RemoveWorktree(ctx context.Context, session, workspace string) error
@@ -379,6 +383,11 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 	}
 	if a.Prompt != "" && !herdr.ValidPrompt(a.Prompt) {
 		return bad("prompt must be 1-%d bytes of text, not starting with \"--\"", herdr.MaxPrompt)
+	}
+	if a.Prompt != "" {
+		if err := checkTyped(a.Harness, a.Prompt, herdr.MaxPrompt, "prompt"); err != nil { // #95
+			return err
+		}
 	}
 	cwd, err := h.hireCwd(a.Session, f, a.Cwd)
 	if err != nil {
@@ -787,6 +796,9 @@ func (h *Hub) answerTrust(ctx context.Context, op *hireOp, pane, dir string) (tr
 // Enter (herdr: agent_prompt_stalled): Enter is pressed again until the
 // worker is seen working.
 func (h *Hub) sendPrompt(ctx context.Context, op *hireOp, pane string) (sent bool, how string, err error) {
+	if typesPrompts(op.harness) {
+		return h.typeHirePrompt(ctx, op, pane)
+	}
 	deadline := time.Now().Add(h.opts.TrustTimeout)
 	for tries := 1; ; tries++ {
 		err := h.opts.Hire.Prompt(ctx, op.session, pane, op.prompt)
@@ -804,6 +816,51 @@ func (h *Hub) sendPrompt(ctx context.Context, op *hireOp, pane string) (sent boo
 		}
 		sleepCtx(ctx, 4*h.opts.HirePoll)
 	}
+}
+
+// typeHirePrompt types a Claude hire's first prompt (#95): once herdr
+// sees the agent idle or done (text typed before its input box is up is
+// lost; within TrustTimeout), on the worker's input lane so a laptop's
+// keys cannot land between two chunks. Then the worker is watched for
+// PromptAckWait to start working, and Enter pressed again until it does
+// (pressUntilWorking: an agent just past its trust dialog can drop the
+// first Enter).
+func (h *Hub) typeHirePrompt(ctx context.Context, op *hireOp, pane string) (sent bool, how string, err error) {
+	deadline := time.Now().Add(h.opts.TrustTimeout)
+	var cur promptState
+	for {
+		if cur, err = query(ctx, h, func() promptState { return h.promptState(op.id) }); err != nil {
+			return false, "", err
+		}
+		if cur.status == statusIdle || cur.status == statusDone {
+			break
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return false, "", fmt.Errorf("the agent was not ready for its prompt within %s (herdr says %q)", h.opts.TrustTimeout, cur.status)
+		}
+		sleepCtx(ctx, h.opts.HirePoll)
+	}
+	// Read only once the job is done (onLane returned nil).
+	var typedHow string
+	var typedErr error
+	if err := h.onLane(ctx, op.id, func(ctx context.Context) {
+		if typedErr = h.doWait(ctx, func() { h.noteTyped(op.id, op.prompt) }); typedErr != nil {
+			return
+		}
+		if typedErr = h.opts.Hire.TypePrompt(ctx, op.session, pane, op.prompt); typedErr != nil {
+			h.erasePartlyTyped(ctx, op.id, op.session, pane, typedErr, h.opts.Hire.EraseTyped)
+			return
+		}
+		started, err := h.awaitStarted(ctx, op.id, cur.starts, h.opts.PromptAckWait)
+		if typedHow, typedErr = "typed", err; err != nil || started {
+			return
+		}
+		n, err := h.pressUntilWorking(ctx, op, pane, errors.New("typed, but the agent did not start working, Enter pressed again"))
+		typedHow, typedErr = fmt.Sprintf("typed, then %d× Enter", n), err
+	}); err != nil {
+		return false, "", err
+	}
+	return typedErr == nil, typedHow, typedErr
 }
 
 // pressUntilWorking presses Enter (at most 3 times) until the hired
