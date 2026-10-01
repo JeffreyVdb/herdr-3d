@@ -665,6 +665,13 @@ body {
   .topbar-counts .count span {
     display: none;
   }
+  /* #91: the actions drop to their own row under the counts and wrap, so every button (the Settings gear last of the pointer-reachable ones) stays on screen at 360 px. */
+  .topbar-actions {
+    order: 4;
+    flex: 0 0 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
   .prompt-model {
     display: none;
   }

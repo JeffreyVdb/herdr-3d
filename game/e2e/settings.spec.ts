@@ -104,3 +104,23 @@ test('Settings fits a narrow screen', async ({ page }) => {
   await shot(page, 'settings-narrow');
   clean();
 });
+
+test('on a floor at 360 px every top-bar button is on screen and a real click on the gear opens Settings', async ({ page }) => {
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 360, height: 640 });
+  await openGame(page);
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await expect(page.locator('.hud')).toHaveAttribute('data-mode', 'floor');
+  const buttons = page.locator('.topbar button:visible');
+  expect(await buttons.count()).toBeGreaterThan(4);
+  for (const [i, box] of (await buttons.evaluateAll((bs) => bs.map((b) => ({ label: b.getAttribute('aria-label') ?? b.textContent, r: b.getBoundingClientRect().toJSON() })))).entries()) {
+    expect(box.r.x, `button ${i} (${box.label}) left edge`).toBeGreaterThanOrEqual(0);
+    expect(box.r.x + box.r.width, `button ${i} (${box.label}) right edge`).toBeLessThanOrEqual(360);
+    expect(box.r.y + box.r.height, `button ${i} (${box.label}) bottom edge`).toBeLessThanOrEqual(640);
+  }
+  // A real pointer click at the gear's centre (not a scrolled-into-view or keyboard shortcut open).
+  const g = (await gear(page).boundingBox())!;
+  await page.mouse.click(g.x + g.width / 2, g.y + g.height / 2);
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+  clean();
+});

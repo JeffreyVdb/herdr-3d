@@ -1,5 +1,5 @@
 /* The Settings window (#91): the About panel's frame (credits.css `.credits`), then one block per section: heading, where it is kept, content. */
-.settings {
+dialog.settings {
   width: min(420px, calc(100vw - 32px));
 }
 .settings .settings-body {
