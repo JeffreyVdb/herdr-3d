@@ -92,6 +92,8 @@ export interface BoardSummary {
   /** Issues: the columns and the keys of their cards; PRs: one column of keys. */
   columns: Array<{ id: string; name: string; keys: string[] }>;
   notice: string | null;
+  /** #52: why the last drop did not land (shown above the columns). */
+  alert: string | null;
   off: string | null;
   item: ItemSummary | null;
 }
@@ -116,6 +118,8 @@ export class BoardsPanel {
   private readonly dialog = h('dialog', { class: 'desk-dlg desk-dlg--board', 'aria-labelledby': 'board-title', 'aria-describedby': 'board-sub' });
   private readonly head = h('header', { class: 'dd-head' });
   private readonly notice = h('div', { class: 'bd-notice', role: 'status' });
+  /** #52: why the last drop did not land, in the board itself (the HUD's toast is under the modal board). */
+  private readonly alert = h('div', { class: 'bd-alert' });
   private readonly body = h('div', { class: 'bd-body' });
   private readonly item = h('dialog', { class: 'desk-dlg desk-dlg--item', 'aria-labelledby': 'item-title' });
   private readonly itemHead = h('header', { class: 'dd-head' });
@@ -150,7 +154,7 @@ export class BoardsPanel {
     parent: HTMLElement,
     private readonly host: BoardsHost,
   ) {
-    this.dialog.append(this.head, this.notice, this.body);
+    this.dialog.append(this.head, this.notice, this.alert, this.body);
     this.drag = new CardDrag(this.body, this.dialog, {
       canDrag: (id) => this.canDrag(id),
       ordered: (id) => {
@@ -159,6 +163,7 @@ export class BoardsPanel {
       },
       drop: (id, column, after) => this.dropCard(id, column, after),
       live: (on) => {
+        if (on) this.alert.replaceChildren(); // a new drag: the last one's error is over
         if (on || !this.held) return;
         this.held = false;
         this.render();
@@ -176,6 +181,7 @@ export class BoardsPanel {
     this.dialog.addEventListener('close', () => {
       if (this.dialog.open) return;
       this.drag.cancel();
+      this.alert.replaceChildren();
       this.item.close();
       const back = this.returnTo;
       this.returnTo = null;
@@ -226,6 +232,7 @@ export class BoardsPanel {
     }
     this.drag.cancel();
     if (session !== this.session) this.moves.clear();
+    if (session !== this.session || which !== this.which) this.alert.replaceChildren();
     this.which = which;
     this.session = session;
     if (this.item.open) this.item.close();
@@ -246,6 +253,7 @@ export class BoardsPanel {
       }
       this.drag.cancel();
       this.moves.clear();
+      this.alert.replaceChildren();
       this.session = s;
     }
     this.settleMoves();
@@ -398,7 +406,9 @@ export class BoardsPanel {
       if (this.moves.get(id) !== move || this.session !== session) return;
       if (!r.ok) {
         this.moves.delete(id);
-        this.host.toast(failureText('issue.set_status', r.code, r.message, { item: card.key, provider: this.providerName() }), 'error');
+        const text = failureText('issue.set_status', r.code, r.message, { item: card.key, provider: this.providerName() });
+        if (this.dialog.open) this.moveFailed(id, text);
+        else this.host.toast(text, 'error');
       } else {
         move.acked = true;
         move.seen = this.state().issues;
@@ -407,6 +417,15 @@ export class BoardsPanel {
       }
       if (this.dialog.open) this.render();
     });
+  }
+
+  /** A drop that did not land says why above the columns, until it is dismissed or the next drag starts. */
+  private moveFailed(id: string, text: string): void {
+    const dismiss = () => {
+      this.alert.replaceChildren();
+      this.body.querySelector<HTMLElement>(`.bd-card[data-id="${CSS.escape(id)}"]`)?.focus();
+    };
+    this.alert.replaceChildren(h('p', { class: 'bd-alert-text', role: 'alert' }, text), h('button', { class: 'btn btn--sm', 'data-key': 'dismiss-move-error', onclick: dismiss }, 'Dismiss'));
   }
 
   /** Forgets the moves a board polled after their write shows, and the ones held long enough. */
@@ -935,6 +954,7 @@ export class BoardsPanel {
       provider: m?.provider_name ?? '',
       columns,
       notice: this.notice.hidden ? null : (this.notice.textContent ?? ''),
+      alert: this.alert.querySelector('.bd-alert-text')?.textContent ?? null,
       off: st.off ? st.off.text : null,
       item,
     };

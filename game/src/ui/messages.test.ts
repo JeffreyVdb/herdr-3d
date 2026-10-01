@@ -55,6 +55,10 @@ describe('failureText: boards (M7)', () => {
     expect(failureText('issue.close', 'provider_failed', 'GitHub auth', { provider: 'GitHub' })).toBe('GitHub refused or failed: GitHub auth. Nothing was changed as far as herdr-world knows; try again.');
     expect(failureText('issue.comment', 'rate_limited', '', { provider: 'GitHub' })).toMatch(/^GitHub is rate limiting/);
     expect(failureText('issue.set_status', 'unsupported', 'no project', { provider: 'GitHub' })).toBe('GitHub can’t do that here (no project).');
+    expect(failureText('issue.set_status', 'provider_failed', 'its status changed, but its place in the column did not: no', { provider: 'GitHub', item: '#5' })).toBe(
+      'GitHub refused or failed: its status changed, but its place in the column did not: no. The board shows where #5 is now.',
+    );
+    expect(failureText('issue.set_status', 'stale', 'stale', { item: '#5' })).toBe('The board changed while you moved #5. It shows what is there now; try again.');
     expect(failureText('issue.close', 'confirmation_required', '')).toMatch(/wanted a confirmation/);
   });
 

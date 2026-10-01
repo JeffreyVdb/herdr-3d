@@ -17,6 +17,8 @@
 //   column right after it (unknown, another column's or the card itself: `bad_request`; no project: `unsupported`).
 //   `sim.boards {fail_write: "message"}` makes every `issue.set_status` fail with `provider_failed` (null clears it);
 //   `{no_refresh: true}` makes writes queue no poll (a refresh that is late), `false` back to normal.
+//   `{partial_write: "message"}` makes an `issue.set_status` with `after` change the status, not the place, and fail
+//   with `provider_failed` ("its status changed, but its place in the column did not: …"); its poll is queued.
 // - `simfail=no_m7` plays a bridge before M7: every board command is `unknown_command`.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
@@ -361,6 +363,8 @@ export class BoardSim {
   private failWrite: string | null = null;
   /** `sim.boards {no_refresh}`: writes queue no poll. */
   private noRefresh = false;
+  /** `sim.boards {partial_write}`: what an issue.set_status with `after` fails with once its status changed. */
+  private partialWrite: string | null = null;
 
   constructor(d: BoardsDeps, enabled: boolean) {
     this.d = d;
@@ -616,12 +620,14 @@ export class BoardSim {
         if (typeof a.after !== 'string' || a.after === id || !inCol(a.after)) throw this.bad(`after ${JSON.stringify(a.after)} is not another card of that column`);
         at = rest.indexOf(a.after) + 1;
       }
-      if (this.failWrite === null) b.order = [...rest.slice(0, at), id, ...rest.slice(at)];
+      if (this.failWrite === null && this.partialWrite === null) b.order = [...rest.slice(0, at), id, ...rest.slice(at)];
     }
     if (this.failWrite !== null) throw this.d.error('provider_failed', this.failWrite);
     c.card.column = col;
     c.card.updated_at = this.d.now();
     if (!this.noRefresh) this.queue(session);
+    // The status landed, the place did not: the bridge refreshes all the same.
+    if (this.partialWrite !== null && 'after' in a) throw this.d.error('provider_failed', `its status changed, but its place in the column did not: ${this.partialWrite}`);
   }
 
   /** Marks a PR merged: gone from the open list, announced on the next poll, its issues closed and in Done. */
@@ -711,6 +717,7 @@ export class BoardSim {
     if (typeof a.truncated === 'boolean') this.truncated = a.truncated;
     if (a.fail_write !== undefined) this.failWrite = typeof a.fail_write === 'string' ? a.fail_write : null;
     if (typeof a.no_refresh === 'boolean') this.noRefresh = a.no_refresh;
+    if (a.partial_write !== undefined) this.partialWrite = typeof a.partial_write === 'string' ? a.partial_write : null;
     if (isObj(a.card)) {
       // Moves a card (a poll finds it in another column) without a command of the game's.
       const c = b.cards.find((x) => x.card.id === (a.card as Obj).id);

@@ -557,6 +557,7 @@ test('#52 Esc, a drop outside the columns or on its own place cancel: nothing se
   await openIssues(page);
   const before = await keysOf(page);
   const three = await box(cardEl(page, 3));
+  const five = await box(cardEl(page, 5));
   // Esc: the drag ends, the board stays open.
   await pickUp(page, 5);
   await page.mouse.move(three.x + three.width / 2, three.y + 5, { steps: 4 });
@@ -565,8 +566,12 @@ test('#52 Esc, a drop outside the columns or on its own place cancel: nothing se
   await expect(page.locator('.bd-card--lifted')).toHaveCount(0);
   await expect(slotLine(page)).toHaveCount(0);
   await expect(cardEl(page, 5)).not.toHaveClass(/bd-card--ghost/);
+  // The button still down, back over the card it picked up: its release is the cancelled drag's, not a click.
+  await page.mouse.move(five.x + five.width / 2, five.y + five.height / 2, { steps: 4 });
   await page.mouse.up();
+  await frames(page, 4);
   await expect(boardDlg(page)).toBeVisible();
+  expect((await board(page))?.item ?? null).toBeNull();
   // Over the dialog's header: no column, no line; the drop there does nothing.
   await pickUp(page, 5);
   const head = await box(boardDlg(page).locator('.dd-head'));
@@ -607,10 +612,43 @@ test('#52 a failed write puts the card back and says why', async ({ page }) => {
   await page.mouse.up();
   await expect.poll(async () => (await setStatus(page)).length).toBe(1);
   await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[0]?.result?.code).toBe('provider_failed');
-  await expect(page.locator('.toast')).toContainText('GitHub refused or failed: Resource not accessible by integration');
+  // Said in the board, which stays open over the HUD: visible, on top, and announced from inside the modal.
+  const alert = boardDlg(page).locator('.bd-alert-text');
+  await expect(alert).toBeVisible();
+  await expect(alert).toHaveText('GitHub refused or failed: Resource not accessible by integration. The board shows where #5 is now.');
+  await expect(alert).toHaveAttribute('role', 'alert');
+  expect(await alert.evaluate((e) => {
+    const r = e.getBoundingClientRect();
+    return e.contains(document.elementFromPoint(r.left + 8, r.top + r.height / 2));
+  })).toBe(true);
   await expect.poll(async () => (await keysOf(page)).Doing).toEqual(['#3', '#4']);
   expect((await keysOf(page)).Todo).toEqual(['#7', '#6', '#5']);
   await expect(cardEl(page, 5)).not.toHaveAttribute('data-moving', 'true');
+  await shot(page, 'm52-drag-failed');
+  // Dismissed, it goes; so does it when the next drag starts.
+  await boardDlg(page).locator('[data-key="dismiss-move-error"]').click();
+  await expect(boardDlg(page).locator('.bd-alert')).toBeHidden();
+  clean();
+});
+
+test('#52 a write that fails halfway (the status changed, the place did not): the error says so and the refresh shows the card where it is', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', EXTRA, SIM);
+  await openIssues(page);
+  await page.evaluate(() => window.__h3d.simBoards({ partial_write: 'Resource not accessible by integration' }));
+  const three = await box(cardEl(page, 3));
+  await pickUp(page, 5);
+  await page.mouse.move(three.x + three.width / 2, three.y + three.height * 0.75, { steps: 6 });
+  await lineAt(page, COL.doing);
+  await page.mouse.up();
+  await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[0]?.result?.code).toBe('provider_failed');
+  await expect(boardDlg(page).locator('.bd-alert-text')).toContainText('its status changed, but its place in the column did not');
+  // The bridge's refresh: #5 in Doing, at its old place in the project's order (not where it was dropped).
+  await expect.poll(async () => (await keysOf(page)).Doing).toContain('#5');
+  expect((await keysOf(page)).Todo).toEqual(['#7', '#6']);
+  await frames(page, 10);
+  expect((await keysOf(page)).Doing).toContain('#5');
   clean();
 });
 
@@ -752,6 +790,24 @@ test.describe('#52 touch', () => {
     await expect.poll(async () => (await setStatus(page)).length).toBe(1);
     expect((await setStatus(page))[0]).toEqual({ session: 'lab', id: `${lab}#5`, column: COL.doing, after: `${lab}#3` });
     expect((await board(page))?.item ?? null).toBeNull();
+    // The browser takes the finger back (pointercancel): the drag ends, nothing is sent and nothing opens; a tap still opens.
+    await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[0]?.result?.ok).toBe(true);
+    await frames(page, 10);
+    await body.evaluate((e) => (e.scrollLeft = 0));
+    await expect(cardEl(page, 6)).toBeVisible();
+    const six2 = await box(cardEl(page, 6));
+    x = six2.x + six2.width / 2;
+    await touch('touchStart', x, six2.y + six2.height / 2);
+    await page.waitForTimeout(600);
+    await expect(page.locator('.bd-card--lifted')).toHaveCount(1);
+    await touch('touchMove', x + 20, six2.y + six2.height / 2 + 20);
+    await touch('touchCancel');
+    await expect(page.locator('.bd-card--lifted')).toHaveCount(0);
+    await page.waitForTimeout(500);
+    expect(await setStatus(page)).toHaveLength(1);
+    expect((await board(page))?.item ?? null).toBeNull();
+    await page.touchscreen.tap(x, six2.y + six2.height / 2);
+    await expect.poll(async () => (await item(page)).key ?? null).toBe('#6');
     clean();
   });
 });

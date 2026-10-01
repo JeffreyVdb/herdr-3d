@@ -30,6 +30,8 @@ const TOUCH_SLOP = 10;
 const LONG_PRESS_MS = 380;
 /** A click that follows a drag's release is the drag's, not a click on the card (a touch's comes a little later). */
 const CLICK_AFTER_MS = 400;
+/** A drag ended while its pointer is still down (Esc, the columns went away) waits this long at most for the release. */
+const RELEASE_WAIT_MS = 10_000;
 
 interface Pending {
   id: string;
@@ -41,6 +43,13 @@ interface Pending {
   x: number;
   y: number;
   timer: number | null;
+}
+
+/** The pointer of a drag that ended: the click its release makes is the drag's too. */
+interface Mute {
+  pointerId: number;
+  touch: boolean;
+  timer: number;
 }
 
 interface Live {
@@ -64,6 +73,7 @@ export class CardDrag {
   private drag: Live | null = null;
   private readonly line: HTMLElement;
   private swallowUntil = 0;
+  private mute: Mute | null = null;
 
   /** `body` scrolls the columns; `layer` (the dialog, in the top layer) holds the card that follows the pointer. */
   constructor(
@@ -96,7 +106,7 @@ export class CardDrag {
   /** Ends whatever is going on without a drop (the board closed, the floor changed). */
   cancel(): void {
     this.abandon();
-    this.finish(false);
+    this.finish(false, false);
   }
 
   // ---- before the drag ------------------------------------------------------------------------------
@@ -146,13 +156,13 @@ export class CardDrag {
     if (this.drag && e.pointerId === this.drag.pointerId) {
       this.drag.x = e.clientX;
       this.drag.y = e.clientY;
-      this.finish(true);
+      this.finish(true, true);
     }
   };
 
   private readonly onCancel = (e: PointerEvent): void => {
     if (this.pending && e.pointerId === this.pending.pointerId) this.abandon();
-    else if (this.drag && e.pointerId === this.drag.pointerId) this.finish(false);
+    else if (this.drag && e.pointerId === this.drag.pointerId) this.finish(false, true);
   };
 
   private readonly onKey = (e: KeyboardEvent): void => {
@@ -160,7 +170,7 @@ export class CardDrag {
     e.preventDefault();
     e.stopPropagation();
     this.swallowUntil = performance.now() + 250;
-    this.finish(false);
+    this.finish(false, false);
   };
 
   /** Forgets a press that did not become a drag. */
@@ -296,8 +306,11 @@ export class CardDrag {
     this.line.dataset.slot = String(s.index);
   }
 
-  /** Ends the drag: a drop that changes something goes to the host, everything else changes nothing. */
-  private finish(drop: boolean): void {
+  /**
+   * Ends the drag: a drop that changes something goes to the host, everything else changes nothing. `released`: its
+   * pointer is up (or cancelled) already; else (Esc, the columns went away) the button is still down.
+   */
+  private finish(drop: boolean, released: boolean): void {
     const g = this.drag;
     if (!g) return;
     cancelAnimationFrame(g.frame);
@@ -317,15 +330,66 @@ export class CardDrag {
     g.el.classList.remove('bd-card--ghost');
     this.body.classList.remove('bd-dragging');
     for (const c of this.body.querySelectorAll<HTMLElement>('.bd-col[data-over]')) delete c.dataset.over;
-    // The click the release makes is the drag's.
-    const swallow = (e: Event) => {
-      e.preventDefault();
-      e.stopPropagation();
-      window.removeEventListener('click', swallow, true);
-    };
-    window.addEventListener('click', swallow, true);
-    window.setTimeout(() => window.removeEventListener('click', swallow, true), g.touch ? CLICK_AFTER_MS : 0);
+    this.muteClick(g.pointerId, g.touch, released);
     if (slot && !same) this.host.drop(g.id, slot.column, g.ordered ? afterFor(target, slot.index, g.id) : undefined);
     this.host.live(false);
   }
+
+  // ---- after the drag ---------------------------------------------------------------------------------
+
+  /**
+   * The click the drag's release makes is the drag's, not a click on the card under it: muted. When the button is still
+   * down that is the click after its release, however long it is held (a bounded wait); a new press ends it early, so
+   * the next click is a click again. A click from the keyboard (detail 0) is never the drag's.
+   */
+  private muteClick(pointerId: number, touch: boolean, released: boolean): void {
+    this.unmute();
+    const m: Mute = { pointerId, touch, timer: 0 };
+    this.mute = m;
+    window.addEventListener('click', this.onMutedClick, true);
+    window.addEventListener('pointerdown', this.onMutedDown, true);
+    if (released) {
+      this.released(m);
+      return;
+    }
+    window.addEventListener('pointerup', this.onMutedUp, true);
+    window.addEventListener('pointercancel', this.onMutedUp, true);
+    m.timer = window.setTimeout(() => this.unmute(), RELEASE_WAIT_MS);
+  }
+
+  /** Its pointer is up: the click comes with the release (a touch's a little later), or not at all. */
+  private released(m: Mute): void {
+    clearTimeout(m.timer);
+    m.timer = window.setTimeout(() => this.unmute(), m.touch ? CLICK_AFTER_MS : 0);
+  }
+
+  private unmute(): void {
+    const m = this.mute;
+    if (!m) return;
+    this.mute = null;
+    clearTimeout(m.timer);
+    window.removeEventListener('click', this.onMutedClick, true);
+    window.removeEventListener('pointerdown', this.onMutedDown, true);
+    window.removeEventListener('pointerup', this.onMutedUp, true);
+    window.removeEventListener('pointercancel', this.onMutedUp, true);
+  }
+
+  private readonly onMutedUp = (e: PointerEvent): void => {
+    const m = this.mute;
+    if (!m || e.pointerId !== m.pointerId) return;
+    window.removeEventListener('pointerup', this.onMutedUp, true);
+    window.removeEventListener('pointercancel', this.onMutedUp, true);
+    this.released(m);
+  };
+
+  private readonly onMutedDown = (): void => {
+    this.unmute(); // a new press: its click is a click
+  };
+
+  private readonly onMutedClick = (e: MouseEvent): void => {
+    if (e.detail === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.unmute();
+  };
 }
