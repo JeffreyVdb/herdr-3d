@@ -221,6 +221,12 @@ export interface H3DDebug {
   simBoards(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M17: the light as shown (`daylight`, eased) and its `target`, the zone and where it comes from, the latitude, whether the time is pinned, the office lamps and what the wall clock's face shows. */
   daylight(): ReturnType<import('./app').App['daylightInfo']> | null;
+  /** M13: the screen share (phase, surface, paused, video size), what this floor's TV shows, the frames answered and who looked. */
+  screen(): ReturnType<import('./app').App['screenInfo']> | null;
+  /** M13: sends `screen.grab` on the game's own connection, as M14's CLI would on its own (the fixture simulator answers it). */
+  screenGrab(args: { floor: string; requester: string }): Promise<{ ok: boolean; data?: unknown; code?: string; message?: string }>;
+  /** M13: Stop, as the top bar's button does. */
+  screenStop(): void;
   /** M17: what the office clock shows, `14:05 · Wed 30 Sep` (null before the game is up). */
   clock(): string | null;
   /** M13: the floor's whiteboard (its state, what the room's board shows, the overlay), and opening it as E does. */
@@ -416,6 +422,13 @@ const h3d: H3DDebug = {
   },
   logos: () => app?.logoInfo() ?? null,
   daylight: () => app?.daylightInfo() ?? null,
+  screen: () => (app ? structuredClone(app.screenInfo()) : null),
+  screenGrab: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request('screen.grab', args, { timeoutMs: 15_000 });
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: r.code, message: r.message };
+  },
+  screenStop: () => app?.screen.stop(),
   clock: () => (app?.clockFace.time ? `${app.clockFace.time} · ${app.clockFace.date}` : null),
   whiteboard: () => app?.whiteboardInfo() ?? null,
   openWhiteboard: () => app?.openWhiteboard(),

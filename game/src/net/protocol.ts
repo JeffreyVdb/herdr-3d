@@ -152,6 +152,8 @@ export interface World {
   presets?: Preset[];
   /** M10 limits: the latest reading of each provider (absent from an older bridge or with --no-limits: no widget; `[]` before the first reading). */
   limits?: Limits[];
+  /** M13 screen: whether a game shares its screen (absent from an older bridge: it cannot grab frames). */
+  screen?: ScreenState;
 }
 
 export interface Hello {
@@ -239,6 +241,8 @@ export type WorldEvent =
   | PresetRemoved
   // M10 limits
   | LimitsUpdate
+  // M13 screen
+  | ScreenStateEvent
   // M13 whiteboard
   | WhiteboardUpdated;
 
@@ -429,6 +433,12 @@ export interface CommandArgs {
   'pr.merge': { session: string; id: string; method: MergeMethod; confirm: true; override?: boolean; confirm_override?: true };
   'worker.open_pr.prepare': { id: string };
   'worker.open_pr': { id: string; title: string; body: string; confirm: true };
+  // M13 screen (docs/protocol.md "Screen share").
+  /** Sent after every (re)connect, sharing or not: it makes this connection a game a grab can ask. */
+  'screen.share': { sharing: boolean; surface?: DisplaySurface };
+  /** The answer to a frame request that has no frame (the JPEG itself goes to POST /screen/frame/{req_id}). */
+  'screen.frame': { req_id: string; error: string; message?: string };
+  'screen.grab': { floor: string; requester: string };
   // M13 whiteboard (docs/protocol.md "Whiteboard"; the board's bytes are HTTP, net/whiteboard.ts).
   'whiteboard.get': { floor: string };
   'whiteboard.clear': { floor: string; confirm: true; author?: string };
@@ -630,6 +640,7 @@ const EVENT_TYPES = new Set([
   'preset.upsert',
   'preset.removed',
   'limits.update',
+  'screen.state', // M13 screen
   // M13 whiteboard
   'whiteboard.updated',
 ]);
@@ -693,6 +704,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // M10 limits: the fields of `Limits` flat in the event.
     case 'limits.update':
       return isStr(o.provider) && Array.isArray(o.windows);
+    // M13 screen: the fields of `ScreenState` flat in the event.
+    case 'screen.state':
+      return typeof o.sharing === 'boolean';
     // M13 whiteboard: the fields of `WhiteboardState` flat in the event.
     case 'whiteboard.updated':
       return isWhiteboardState(o);
@@ -1357,6 +1371,59 @@ export interface LimitsUpdate extends Limits {
 /** `limits.refresh` ack. */
 export interface LimitsRefreshAck {
   queued: boolean;
+}
+
+// M13 screen share (docs/protocol.md "Screen share"): the TV shows the shared screen locally; the bridge asks this
+// game for one frame per `screen.grab` (`screen.frame_request`, on this connection only, never replayed) and tells it
+// who looked (`screen.grabbed`).
+
+/** What `getDisplayMedia` captured: a tab, a window or a whole screen. */
+export type DisplaySurface = 'browser' | 'window' | 'monitor';
+
+export const DISPLAY_SURFACES: readonly DisplaySurface[] = ['browser', 'window', 'monitor'];
+
+export interface ScreenState {
+  sharing: boolean;
+  surface?: DisplaySurface;
+}
+
+/** `screen.state`: whether a game shares, flat. */
+export interface ScreenStateEvent extends ScreenState {
+  t: 'screen.state';
+  seq: number;
+}
+
+export interface ScreenFrameRequest {
+  t: 'screen.frame_request';
+  req_id: string;
+}
+
+export interface ScreenGrabbed {
+  t: 'screen.grabbed';
+  requester: string;
+  floor: string;
+  at: number;
+}
+
+export type ScreenMessage = ScreenFrameRequest | ScreenGrabbed;
+
+/** The `screen.grab` ack. */
+export interface ScreenGrabResult {
+  path: string;
+  bytes: number;
+  w: number;
+  h: number;
+  surface?: DisplaySurface;
+  at: number;
+  expires: number;
+}
+
+/** The connection-scoped screen messages (no `seq`). A frame request id is 32 lowercase hex digits. */
+export function isScreenMessage(m: ServerMessage): m is ScreenMessage {
+  const o = m as unknown as Obj;
+  if (m.t === 'screen.frame_request') return isStr(o.req_id) && /^[0-9a-f]{32}$/.test(o.req_id);
+  if (m.t === 'screen.grabbed') return isStr(o.requester) && isStr(o.floor);
+  return false;
 }
 
 // ---- M13 whiteboard (docs/protocol.md "Whiteboard") ----------------------------------------------------------------

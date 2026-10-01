@@ -9,7 +9,7 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
   directory is `0700`, the socket `0600`: access is "can act as this unix user", which for the Mac means "has SSH access"
   (`ssh -N -L <local.sock>:<bridge.sock>`). Nothing listens on TCP.
 - HTTP/1.1 on that socket: `GET /ws` upgrades to the WebSocket, `GET|PUT|DELETE /logo/{building}` carry building logos
-  (M3d, see [Building logos](#building-logos)), `POST /upload` carries one image to Drop Zone (see [Image upload](#image-upload)), `GET /healthz` answers `ok` and carries the bridge's build version in the `X-H3D-Version` header (the body stays `ok`: a helper from an older release checks it exactly). `welcome.server` is the same build as a banner, `herdr-world <version>`.
+  (M3d, see [Building logos](#building-logos)), `POST /upload` carries one image to Drop Zone (see [Image upload](#image-upload)), `POST /screen/frame/{req_id}` carries the one JPEG a screen grab asked for (M13, see [Screen share](#screen-share)), `GET /healthz` answers `ok` and carries the bridge's build version in the `X-H3D-Version` header (the body stays `ok`: a helper from an older release checks it exactly). `welcome.server` is the same build as a banner, `herdr-world <version>`.
   ```sh
   curl --unix-socket "$XDG_RUNTIME_DIR/herdr-world/bridge.sock" http://herdr-world/healthz
   ```
@@ -58,6 +58,12 @@ The helper proxies `POST /upload` (see [Image upload](#image-upload)) under the 
 with `Allow: POST`). Only `label` and `n` go on to the bridge. It lets a body of at most 25 MiB + 4 KiB through (by
 `Content-Length` at once, and by counting while it streams, so a chunked or unlabelled body too) and answers `413`
 `upload_too_large` past that; the bridge decides the exact 25 MiB.
+
+The helper proxies `POST /screen/frame/{req_id}` (M13, see [Screen share](#screen-share)) under the same rules as
+`/upload` (`Host`, `token`, `Origin` when present; `403` `forbidden` as the error object; anything else under `/screen/`
+is `405` with `Allow: POST`). Only the path goes on, no query. An id that is not 32 lowercase hex digits is `400`
+`bad_request`; a body over 8 MiB + 4 KiB is `413` `frame_too_large`, by `Content-Length` and by counting while it
+streams.
 
 M13: the helper proxies the whiteboard's routes the browser uses (see [Whiteboard](#whiteboard)): `GET
 /whiteboard/{floor}`, `POST /whiteboard/{floor}/save`, `GET /whiteboard/{floor}/render.png`, `GET|PUT
@@ -167,6 +173,9 @@ before M10 does: a client shows no limits widget without it (and none inline in 
 
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
+
+`screen` (M13) is `{"sharing": false}`, or `{"sharing": true, "surface": "browser|window|monitor"}` while a connected
+game shares its screen (see [Screen share](#screen-share)); a bridge from before M13 leaves it out.
 
 Order is meaningful: `buildings` are in `sort` order and each lists its floors top to bottom (`index` order);
 `unassigned` is the lot of sessions that are in no building, by name. `floors` follows the same order (buildings, then the
@@ -358,6 +367,7 @@ and remember the last `seq` applied.
 | `limits.update` | `provider`, `plan`, `windows`, `at`, `stale`, `error`?, `source`?, `reached`?, `credits`? | a provider's plan limits were read (flat in the event, see [Plan limits](#plan-limits)); one per provider per read, about every 2 minutes while a client is connected |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
+| `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
 
 ```json
 {"t":"floor.upsert","seq":1043,"floor":{"session":"herdr-3d","state":"running","building":null,"index":null,"desks":7}}
@@ -371,7 +381,8 @@ and remember the last `seq` applied.
 ```
 
 `terminal.frame`, `terminal.state` and `terminal.closed` ([Laptop screens](#laptop-screens)) are not events: they go only to the
-connection that watches, have no `seq`, are not in the replay ring and are never replayed.
+connection that watches, have no `seq`, are not in the replay ring and are never replayed. Neither are M13's
+`screen.frame_request` and `screen.grabbed` ([Screen share](#screen-share)): they go only to the sharing game.
 
 A status or title change can also arrive inside a `worker.upsert` (when something else changed at the same time), so
 take `status`, `status_since` and `title` from both. When one observation changes a floor and its workers, the
@@ -642,6 +653,85 @@ different prompts tell apart: `hire`, `prompt-<worker>` (P), `transcript-<worker
 with an image that is still uploading waits for it; one with an image that failed (`upload_too_large`,
 `upload_unsupported`, `upload_busy`, `dropzone_unavailable`, or refused in the game before any upload: over 25 MiB, not
 a PNG, JPEG, GIF or WebP) is **not sent at all**, and the field says which image and why. A file refused in the game never becomes a chip, so the fields that prompt an agent (P, Start Run, the transcript box) hold the refusal as a message with a dismiss button and send nothing while it is up; the user's dismissal is what lets the prompt go, without that file (the hire dialog lists the file in its notice and sends the rest; the terminal paste pre-checks every file and sends none of them).
+
+### Screen share
+
+M13 (#15). The TV on every floor shows the Mac's shared screen, and an agent can look at it once when asked to ("look
+at my screen"; the office CLI of M14, #16). **The share stays on the Mac**: the game plays it on the TV from the
+capture's own `<video>`; nothing of it leaves the browser except one JPEG per `screen.grab`, sent only in answer to the
+bridge's request for that grab, while the game shows a red LIVE badge. A grab is refused while nothing is shared, every
+grab is audited, and the game shows who looked.
+
+**Sharing** (the game). "Share screen" in the top bar calls `getDisplayMedia` from the click (a user activation is
+required; localhost is a secure context), so Chrome's own picker offers a Chrome tab, a window or an entire screen, as
+in Google Meet: `selfBrowserSurface: "exclude"` (the game's own tab is not offered), `surfaceSwitching: "include"`
+("Share this tab instead" works while sharing), `monitorTypeSurfaces: "include"`, `preferCurrentTab: false`, no audio,
+the video bounded to at most 1920 × 1080 at 15 fps (30 at most), and a fresh `CaptureController` set to
+`no-focus-change` where Chrome has one (the focus stays on the game). While sharing the top bar has a red **LIVE** tape,
+what is shared (`a tab`, `a window`, `your screen`, from the track's `displaySurface`) and **Stop**, which stops every
+track. Chrome's own "Stop sharing" bar, a source that closes and Stop all end the share the same way; a cancelled
+picker does nothing. A refusal by macOS (`NotAllowedError` with Chrome's "by system" message, or one that comes back
+faster than the picker can be seen) says where to allow Chrome: System Settings → Privacy & Security → Screen & System
+Audio Recording (Screen Recording on older macOS). A muted track (the source is unavailable for now) shows "Paused" on
+the TV and refuses frames; a resize or a switched surface is followed (the TV's texture is remade at the new size).
+The TV shows the share letterboxed on its screen, unlit and not tone mapped, on the WebGPU backend and the WebGL2
+fallback alike.
+
+**Commands**
+
+| `t` | args | ack `data` |
+|---|---|---|
+| `screen.share` | `sharing` (bool), `surface`? (`browser` \| `window` \| `monitor`, while sharing) | none. The game sends it after **every** (re)connect, sharing or not (that makes its connection a game, one a grab can ask: a connection that never sent it, a CLI's, is not), and again on every change. Audited. |
+| `screen.grab` | `floor` (a session the bridge knows), `requester` (the worker's name the toast shows: 1–64 bytes of UTF-8, no control or format characters, no U+FFFD, no leading or trailing space) | `{"path","bytes","w","h","surface"?,"at","expires"}`: the stored JPEG (`at`, `expires` in unix ms). Errors above, plus `bad_request`, `unknown_session`, `busy` (four grabs already wait), `internal` (no frame directory) |
+| `screen.frame` | `req_id` (of a `screen.frame_request` this connection was sent), `error` (a short code: `not_sharing`, `unavailable`, `stopped`, `encode_failed`, `upload_failed`), `message`? | none; the grab fails at once with `frame_unavailable` and the message (control characters removed, at most 200 bytes). `not_found` for a request that is not this connection's or no longer waits |
+
+**A grab, step by step**
+
+1. `screen.grab` on any connection (M14's CLI: `herdr-world cmd screen.grab '{"floor":"herdr-3d","requester":"Nibble"}'`,
+   or in Go `(*proto.Conn).ScreenGrab`, or in-process `(*server.Hub).GrabScreen`). No game connected: `no_client`; a
+   game that shares nothing: `not_sharing`.
+2. The bridge sends the game that started sharing last a `{"t":"screen.frame_request","req_id":"<32 hex>"}` (128
+   random bits; on that connection only, no `seq`).
+3. The game draws the video's current frame to a canvas at most 1920 px wide and 4096 tall (aspect kept, never
+   upscaled) and encodes a JPEG at quality 0.8. A request belongs to the capture that is live when it arrives: one
+   that is still waiting when that capture ends (Stop, then perhaps a new Share of another source) is dropped, never
+   encoded or uploaded, and a Stop during an encode sends nothing. It answers requests one at a time, and `POST`s the bytes to `/screen/frame/<req_id>`
+   (beside `/ws`, with its token, through the helper; `Content-Type: image/jpeg`). When it has no frame it answers
+   `screen.frame` instead.
+4. The bridge accepts the body only while a grab waits for that id. It checks the JPEG magic bytes, at most 8 MiB on the
+   bytes that arrive, at most 1920 × 4096 pixels from the header, then decodes it fully; a refusal fails the grab at
+   once with the same code (`frame_invalid` `422`, `frame_too_large` `413`; `not_found` `404` for an id nobody waits
+   for, `bad_request` `400` for a malformed one). `200` `{"t":"ack","data":{"bytes","w","h"}}`.
+5. The JPEG goes to `<screen dir>/frame-<unix ms>-<req_id>.jpg` (`0600`, written to a temporary name and renamed),
+   the grab's audit row is written (`screen.grab`, the caller's client name, `floor`, `requester`, `bytes`, `w`, `h`,
+   `surface`; also for every refusal), the game is sent `{"t":"screen.grabbed","requester","floor","at"}` and shows "<requester>
+   looked at your screen", and the ack carries the path.
+
+The whole grab has **5 s** (`server.DefaultScreenTimeout`; the target round trip is under 2 s): after that it is
+`frame_timeout` and a late frame is refused. The bridge ends a request after those 5 s even when its caller has stopped
+waiting (an in-process `GrabScreen` whose context ended), and a grab cancelled before its request was registered asks
+the game nothing, so an abandoned grab never holds one of the 4 slots. The game disconnecting fails its waiting grabs at once with `no_client`,
+stopping the share with `not_sharing`. A `screen.share {sharing:false}` or a disconnect also ends `screen.state`'s
+`sharing` when no other game shares.
+
+**Storage.** The screen directory is `$XDG_RUNTIME_DIR/herdr-world/screen` (tmpfs; `--screen-dir` /
+`HERDR_WORLD_SCREEN_DIR` to override), created `0700` and refused if it is not a directory owned by the bridge's user
+(a symlink included). Without `XDG_RUNTIME_DIR` the bridge uses `/run/user/<uid>/herdr-world/screen` when that runtime
+directory exists, and says so in its log; with neither, it starts anyway and every grab is `internal` with "no runtime
+directory for screen frames: set XDG_RUNTIME_DIR or --screen-dir" (frames never go to a disk-backed `/tmp`). A frame
+lives **10 minutes**: a janitor removes expired ones every 30 s, and the bridge removes them (and any half-written
+temporary file) when it starts.
+
+**Manual check on a Mac** (the picker, macOS and Chrome's own UI cannot run in CI; the e2e test replaces
+`getDisplayMedia` by a canvas stream): open the game in the helper's `--app` window with another normal Chrome window
+of two tabs open, press Share screen, and check the picker offers Chrome Tab (the other tabs, not the game's), Window
+and Entire Screen; share a tab and use "Share this tab instead"; the focus stays on the game; the LIVE badge names what
+is shared; Chrome's "Stop sharing" bar and the top bar's Stop both end it; minimise and restore a shared window (the TV
+shows Paused, or keeps the last frame where macOS does not mute it); turn off Chrome in System Settings → Privacy &
+Security → Screen & System Audio Recording and check the message, then turn it on again; run `herdr-world cmd
+screen.grab '{"floor":"<a floor>","requester":"Nibble"}'` on the server and check the toast, the path, the picture, the
+audit row (`sqlite3 world.db "select * from audit_log where cmd = 'screen.grab'"`) and that the file is gone 10 minutes
+later; with `?backend=webgl2` and without, check the TV's colours and letterboxing, and a portrait and a Retina source.
 
 ### Floor settings
 
@@ -2057,6 +2147,8 @@ wraps, the options' labels without their descriptions or previews, and a Yes / N
 | `rate_limited` | the provider's rate limit |
 | `checks_not_green`, `not_mergeable` | `pr.merge` of a pull request whose checks are not green, or that is not mergeable (also a conflicting one, always); an override is `override` and `confirm_override` together |
 | `hello_required`, `unsupported_proto` | handshake failures; the connection is then closed with status 1008 |
+| `no_client`, `not_sharing` | M13 `screen.grab`: no game is connected (or the sharing one went away mid-grab); a game is connected and shares nothing (or stopped mid-grab) |
+| `frame_timeout`, `frame_invalid`, `frame_too_large`, `frame_unavailable` | M13 `screen.grab`: the game sent no frame within 5 s; what it sent is not a valid JPEG; it is over 8 MiB, or wider than 1920 or taller than 4096 pixels; the game said it has no frame (the source is paused, sharing stopped while it encoded). The last three are also the answers of `POST /screen/frame/{req_id}` |
 | `logo_too_large`, `logo_unsupported`, `logo_invalid`, `logo_busy` | M3d, only on the `/logo` HTTP routes (see [Building logos](#building-logos)): an upload over the size limit, of an unsupported kind (an SVG that took too long to draw included), undecodable, or no conversion slot in time |
 | `internal` | the bridge failed (database error, or waking, sleeping, hiring and firing is not configured); safe to retry |
 

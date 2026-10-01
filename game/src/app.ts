@@ -54,6 +54,8 @@ import { askPrompt, BoardBook, nearestDesk, reviewPrompt } from './world/boards'
 import { BoardsPanel, type BoardOff, type BoardState } from './ui/boards/panel';
 import { openExternal } from './ui/boards/external';
 import { OpenPrDialog } from './ui/boards/openPr';
+// M13 screen share
+import { ScreenShareController } from './screen';
 // M10 limits
 import { LimitsWidget } from './ui/limits';
 import { LimitsPrefs } from './ui/limitsPrefs';
@@ -158,6 +160,8 @@ export class App {
   readonly reception: Reception;
   /** M15: the office radio (E and R on it, fades with where you are, toast, display). */
   readonly radio: RadioLink;
+  /** M13: the screen share and the TV that shows it. */
+  readonly screen: ScreenShareController;
   /** Worker id → status on screen as of the last rendered frame, and when it got there. */
   readonly rendered = new Map<string, { status: Display; at: number }>();
   frames = 0;
@@ -331,6 +335,7 @@ export class App {
         onEvent: (e) => this.onWorldEvent(e),
         onConn: (m) => this.laptops.onConn(m),
         onBoard: (m) => this.onBoard(m),
+        onScreen: (m) => this.screen.onMessage(m), // M13 screen
         onState: (s) => {
           // M3d: a logo that could not be fetched is tried again once the bridge is back (also after a replay, which sends no snapshot).
           if (s.phase === 'live' && this.conn.phase !== 'live' && this.logos.retryFailed()) this.syncLogos();
@@ -345,11 +350,28 @@ export class App {
           }
           // M5: a dropped connection took every watch with it; the next live one watches again.
           this.laptops.setConnected(s.phase === 'live');
+          this.screen.setConnected(s.phase === 'live'); // M13: a new connection is told whether this game shares
           this.hud.setConn(s, this.fixture, Date.now());
           this.updateNotice();
         },
       },
     });
+
+    // M13 screen share: the top bar control, the TV texture, the frames the bridge asks for.
+    this.screen = new ScreenShareController({
+      // Not `send`: the share's reports and refusals stay out of the command log the other features' tests read.
+      send: async (t, args) => {
+        const r = await this.client.request(t, args);
+        if (!r.ok && r.code === 'unknown_command') this.unsupported.add(t);
+        return r;
+      },
+      url: this.url,
+      toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 9000 : 3600, kind),
+      office: () => this.office,
+      log: (m) => console.info(m),
+      tvInfo: (line) => this.hud.setPropInfo('tv', line),
+    });
+    this.hud.mountScreenShare(this.screen.control.el);
 
     this.panels = new Panels(o.host, {
       store: this.store,
@@ -723,6 +745,23 @@ export class App {
   // ---- commands and panels ------------------------------------------------------
 
   /** Sends a command; remembers commands an older bridge does not know. */
+  /** M13: the screen share and this floor's TV (test hook). */
+  screenInfo() {
+    const v = this.screen.share.view;
+    return {
+      phase: v.phase,
+      surface: v.surface ?? null,
+      paused: v.paused,
+      w: v.w,
+      h: v.h,
+      tv: this.office?.screenInfo() ?? null,
+      texture: this.screen.texture.current ? { w: this.screen.texture.current.w, h: this.screen.texture.current.h } : null,
+      answered: [...this.screen.responder.answered],
+      grabbed: [...this.screen.grabbed],
+      reported: [...this.screen.reports],
+    };
+  }
+
   async send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult> {
     const entry: (typeof this.sent)[number] = { t, args };
     this.sent.push(entry);
@@ -1070,6 +1109,7 @@ export class App {
     this.walk.setOffice(this.office, floorY(storey));
     this.walk.outside?.setLoaded(storey);
     old?.dispose();
+    this.screen.paint(); // M13: the share on this floor's TV
     this.office.setPlan(this.planOpen);
     this.worldCache = null;
     this.planCam.userData.fit = false;
@@ -1134,6 +1174,7 @@ export class App {
     this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner });
     this.walk.setOffice(this.office, floorY(this.loaded));
     old.dispose();
+    this.screen.paint(); // M13
     this.office.setDoor(this.fireDoor);
     this.office.setMezzDoor(this.mezzDoor);
     this.office.setPlan(this.planOpen);

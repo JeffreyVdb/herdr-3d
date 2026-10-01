@@ -17,6 +17,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -100,7 +101,7 @@ func NewServer(cfg ServerConfig) *Server {
 
 // Handler serves everything. Every request must name the helper in its
 // Host header (no DNS rebinding); /ws and /api/open also need a same-origin
-// Origin and the token; /logo and POST /upload need the token, and an Origin, when the browser
+// Origin and the token; /logo, POST /upload and POST /screen/frame/{id} need the token, and an Origin, when the browser
 // sends one, must be the helper's own.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -121,6 +122,14 @@ func (s *Server) Handler() http.Handler {
 	// /logo, and wins over the site fallback. Other methods are refused.
 	mux.Handle("POST /upload", s.checkLogo(s.limitUpload(s.uploadProxy())))
 	mux.HandleFunc("/upload", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	})
+	// M13 screen share: the JPEG the game answers a frame request with goes
+	// to the bridge, guarded like /upload. Anything else under /screen/ is
+	// refused rather than handed to the game.
+	mux.Handle("POST /screen/frame/{id}", s.checkLogo(s.limitFrame(s.frameProxy())))
+	mux.HandleFunc("/screen/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Allow", "POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	})
@@ -155,7 +164,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) forbid(w http.ResponseWriter, r *http.Request, why string) {
 	s.cfg.Log.Warn("request refused", "why", why, "path", r.URL.Path, "host", r.Host, "origin", r.Header.Get("Origin"), "remote", r.RemoteAddr)
-	if r.URL.Path == "/upload" || isWhiteboardPath(r.URL.Path) { // the game reads its error code
+	if r.URL.Path == "/upload" || strings.HasPrefix(r.URL.Path, "/screen/") || isWhiteboardPath(r.URL.Path) { // the game reads its error code
 		uploadError(w, http.StatusForbidden, "forbidden", "the helper refused the request ("+why+")")
 		return
 	}
@@ -486,6 +495,66 @@ func (s *Server) uploadProxy() http.Handler {
 			var tooBig *http.MaxBytesError
 			if errors.As(err, &tooBig) {
 				uploadTooLarge(w)
+				return
+			}
+			st := s.cfg.Bridge.Status()
+			s.cfg.Log.Warn("bridge unreachable", "tunnel", st.State, "err", err)
+			uploadError(w, http.StatusBadGateway, "bridge_unreachable", "the bridge is not reachable (tunnel "+st.State+")")
+		},
+	}
+}
+
+// M13 screen share.
+
+// maxFrameBody is what the helper lets through on POST /screen/frame/{id}:
+// the bridge's cap (screenshare.MaxBytes; the helper does not link it) and a
+// little slack. The bridge counts the bytes and checks the JPEG.
+const maxFrameBody = 8<<20 + 4<<10
+
+// frameIDRe is a frame request id as the bridge makes them.
+var frameIDRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// limitFrame refuses a body over maxFrameBody (by Content-Length at once,
+// and by counting while it streams) and an id that is not one.
+func (s *Server) limitFrame(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !frameIDRe.MatchString(r.PathValue("id")) {
+			uploadError(w, http.StatusBadRequest, "bad_request", "a frame request id is 32 hex digits")
+			return
+		}
+		if r.ContentLength > maxFrameBody {
+			frameTooLarge(w)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxFrameBody)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func frameTooLarge(w http.ResponseWriter) {
+	uploadError(w, http.StatusRequestEntityTooLarge, "frame_too_large", fmt.Sprintf("the frame is over %d MiB", maxFrameBody>>20))
+}
+
+// frameProxy forwards POST /screen/frame/{id} to the bridge through the
+// tunnel. Only the path goes on: no query, and the token, Origin, Cookie and
+// Authorization stay here.
+func (s *Server) frameProxy() http.Handler {
+	return &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL = &url.URL{Scheme: "http", Host: "herdr-world", Path: "/screen/frame/" + pr.In.PathValue("id")}
+			pr.Out.Host = "herdr-world"
+			pr.Out.Header.Del("Origin")
+			pr.Out.Header.Del("Cookie")
+			pr.Out.Header.Del("Authorization")
+		},
+		Transport: &http.Transport{
+			DialContext:           func(ctx context.Context, _, _ string) (net.Conn, error) { return s.cfg.Bridge.Dial(ctx) },
+			ResponseHeaderTimeout: 20 * time.Second, // the bridge reads for at most 10 s
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				frameTooLarge(w)
 				return
 			}
 			st := s.cfg.Bridge.Status()

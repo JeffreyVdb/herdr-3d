@@ -55,13 +55,15 @@ func NewServer(hub *Hub, log *slog.Logger) *Server {
 // Serve.
 func (s *Server) SetLogoRenderTimeout(d time.Duration) { s.conv.SetRenderTimeout(d) }
 
-// Handler serves /ws (the protocol), /logo/{building} (M3d), POST /upload (#51), /whiteboard/{floor}/… and
-// /drops/file (M13) and /healthz.
+// Handler serves /ws (the protocol), /logo/{building} (M3d), POST /upload (#51),
+// POST /screen/frame/{req_id}, /whiteboard/{floor}/… and /drops/file (M13) and
+// /healthz.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.serveWS)
 	s.logoRoutes(mux)
 	s.uploadRoutes(mux)
+	s.screenRoutes(mux)     // M13 screen
 	s.whiteboardRoutes(mux) // M13 whiteboard
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(proto.VersionHeader, version.Version)

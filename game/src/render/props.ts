@@ -5,6 +5,7 @@ import { FONT } from './cards/atlasCards';
 import { OFFICE } from './palette';
 import { buildClock, type ClockMesh } from './clock';
 import { buildRadio, type RadioMesh } from './radio';
+import { buildTv, type TvMesh } from './tv';
 
 /** Static placeholder props (boards, lounge, cabinet, …): a few meshes per floor, textures drawn once. */
 
@@ -149,6 +150,8 @@ export interface PropMeshes {
   radio: RadioMesh | null;
   /** M17: the wall clock (null when the layout has none). */
   clock: ClockMesh | null;
+  /** M13: the screen-share TV (null when the layout has none). */
+  tv: TvMesh | null;
   /** M13: puts the board's render on the whiteboard (null: back to the placeholder); the one it replaces is disposed. */
   setWhiteboard(tex: THREE.Texture | null): void;
   dispose(): void;
@@ -207,12 +210,10 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
     add(m);
   }
 
-  const tv = byId.get('tv');
-  if (tv) {
-    const m = boxAt(tv.box, toon(0x1b1f2b));
-    faceTexture(m, tex(signTexture('Screen share', 'arrives in M13', '#101626', '#9fd6ff', 768, 432)), 0x1b1f2b);
-    add(m);
-  }
+  // M13: the screen-share TV (render/tv.ts); it gets the share's texture through `tv.show`.
+  const tvProp = byId.get('tv');
+  const tv = tvProp ? buildTv(tvProp.box) : null;
+  if (tv) group.add(tv.group);
 
   const filing = byId.get('filing');
   if (filing) {
@@ -393,7 +394,9 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
       wbFront.emissiveMap = next;
       wbFront.needsUpdate = true;
     },
+    tv,
     dispose() {
+      tv?.dispose(); // first: it lets go of the share's texture, which is not the floor's to dispose
       wbShown?.dispose();
       group.traverse((o) => {
         if (o instanceof THREE.Mesh) {

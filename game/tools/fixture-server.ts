@@ -37,6 +37,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { logoRoute, registerLogoWorld } from './fixture-logo.ts';
 import { uploadRoute } from './fixture-upload.ts';
+import { screenRoute } from './fixture-share.ts';
 import { registerWhiteboardWorld, whiteboardCommand, whiteboardRoute } from './fixture-whiteboard.ts';
 import { SimWorld, type SimOptions } from './fixture-sim.ts';
 
@@ -209,7 +210,7 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
 export function startFixtureServer(port: number | string, o: FixtureOptions = {}): Promise<Server> {
   const handler = fixtureUpgradeHandler(o);
   const srv = createServer((req, res) => {
-    if (logoRoute(req, res) || uploadRoute(req, res) || whiteboardRoute(req, res)) return;
+    if (logoRoute(req, res) || uploadRoute(req, res) || screenRoute(req, res) || whiteboardRoute(req, res)) return;
     res.writeHead(404, { 'content-type': 'text/plain' }).end('herdr-3d fixture server: WebSocket only (/fixture/<name>, /ws), /logo/<building> and /upload\n');
   });
   srv.on('upgrade', (req, socket, head) => {

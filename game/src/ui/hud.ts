@@ -209,6 +209,11 @@ export class Hud {
     };
   }
 
+  /** M13: the screen share control, in the top bar before About; shown everywhere (a share is the game's, not a floor's). */
+  mountScreenShare(el: HTMLElement): void {
+    this.about.before(el);
+  }
+
   /** M3b: the sound control (mute + volume) in the top bar, before the battery toggle. */
   mountAudio(audio: GameAudio): { dispose(): void } {
     // M15: the Music credits panel, opened from the sound control.
@@ -247,7 +252,8 @@ export class Hud {
         break;
     }
     this.conn.dataset.phase = s.phase;
-    this.conn.title = s.phase === 'waiting' || s.phase === 'failed' ? s.reason : '';
+    // M13: under 1100 px the words go (screenShare.css) and the title carries them.
+    this.conn.title = s.phase === 'waiting' || s.phase === 'failed' ? s.reason : text;
     if (span && span.textContent !== text) span.textContent = text;
   }
 
@@ -467,6 +473,11 @@ export class Hud {
         keys.append(k);
       }
       this.prompt.setAttribute('aria-label', `${name} · E Open`);
+    } else if (t.kind === 'prop' && t.id === 'tv') {
+      // M13: the screen-share TV says whether it shows your screen; the top bar's control starts and stops it.
+      const info = this.propInfo.get('tv') ?? 'Off · Share screen in the top bar';
+      line.append(text('prompt-name', t.label), text('prompt-task', info));
+      this.prompt.setAttribute('aria-label', `${t.label}: ${info}`);
     } else if (t.kind === 'prop' && t.id === 'whiteboard') {
       // M13: the floor's whiteboard opens its editor.
       const info = this.propInfo.get('whiteboard') ?? 'Draw, paste a screenshot, pin a drop';
@@ -552,8 +563,18 @@ export class Hud {
     this.toastEl.textContent = msg;
     this.toastEl.dataset.kind = kind;
     this.toastEl.hidden = false;
+    this.placeToast();
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => (this.toastEl.hidden = true), ms);
+  }
+
+  /** A long toast (M13's macOS denial) that the plan limits panel would cover goes under the panel instead. */
+  private placeToast(): void {
+    this.toastEl.style.top = '';
+    const l = this.root.ownerDocument.querySelector('[data-hook="limits"]')?.getBoundingClientRect();
+    if (!l || l.width === 0) return;
+    const t = this.toastEl.getBoundingClientRect();
+    if (t.left < l.right && l.left < t.right && t.top < l.bottom && l.top < t.bottom) this.toastEl.style.top = `${this.toastEl.offsetTop + l.bottom + 8 - t.top}px`;
   }
 
   sheet(title: string, body: string): void {

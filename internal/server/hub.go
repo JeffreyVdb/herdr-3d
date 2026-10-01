@@ -177,6 +177,15 @@ type Options struct {
 	// connected (nil: none, and limits.refresh fails with unsupported).
 	Limits *limits.Config
 
+	// M13 screen share (screen.go).
+	// ScreenDir is where grabbed frames are stored, a private directory on
+	// tmpfs ("": none, and screen.grab fails with internal). ScreenTimeout
+	// bounds a grab's wait for its frame (default DefaultScreenTimeout),
+	// ScreenTTL how long a frame is kept (default screenshare.DefaultTTL),
+	// ScreenSweep how often expired ones are removed (default
+	// screenshare.DefaultSweep).
+	ScreenDir                             string
+	ScreenTimeout, ScreenTTL, ScreenSweep time.Duration
 	// M13 whiteboard: the floors' boards (nil: the whiteboard commands and
 	// routes fail with unsupported), and Drop Zone's data directory for
 	// drops.list ("": drops_unavailable).
@@ -261,6 +270,8 @@ type Hub struct {
 	limits       map[string]proto.Limits // by provider, as last published
 	limitsPoller *limits.Poller
 	nclients     atomic.Int32 // len(clients), for the poller
+
+	screen screenState // M13 screen share
 }
 
 type floorState struct {
@@ -425,6 +436,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	h.initTerm()        // M5 term
 	h.initTranscripts() // M16 transcript
 	h.initRuns()        // M6 runs
+	h.initScreen()      // M13 screen
 	if h.opts.RunLaunch == nil {
 		h.opts.RunLaunch = storeRunLaunch(st, h.log)
 	}
@@ -494,6 +506,10 @@ func (h *Hub) Run(ctx context.Context) error {
 	if h.limitsPoller != nil { // M10 limits
 		h.wg.Add(1)
 		go h.trackLimits(ctx)
+	}
+	if h.screen.frames != nil { // M13 screen
+		h.wg.Add(1)
+		go h.runScreenJanitor(ctx)
 	}
 	var boardC <-chan time.Time // M7 boards
 	if h.opts.Boards != nil {
@@ -571,6 +587,7 @@ func (h *Hub) Leave(c *Client) {
 		h.dropWatches(c)           // M5 term
 		h.dropTranscriptWatches(c) // M16 transcript
 		h.dropBoardWatch(c)        // M7 boards
+		h.dropScreen(c)            // M13 screen
 	})
 }
 
@@ -654,6 +671,13 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startOpenPRPrepare
 		case proto.CmdWorkerOpenPR:
 			start = h.startOpenPR
+		// M13 screen
+		case proto.CmdScreenShare:
+			start = h.startScreenShare
+		case proto.CmdScreenFrame:
+			start = h.startScreenFrame
+		case proto.CmdScreenGrab:
+			start = h.startScreenGrab
 		// M13 whiteboard
 		case proto.CmdWhiteboardGet:
 			start = h.startWhiteboardGet
@@ -1553,6 +1577,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	hire := h.hireOptions()
 	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
 		HireOptions: &hire, Presets: h.presetViews(), Limits: h.limitsViews()} // M6 launch: presets; M10 limits
+	w.Screen = h.screenView() // M13 screen
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

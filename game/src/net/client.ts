@@ -11,11 +11,13 @@ import {
   isTranscriptClosed,
   isTranscriptItems,
   isBoardMessage,
+  isScreenMessage,
   parseMessage,
   type CommandArgs,
   type CommandName,
   type BoardMessage,
   type ConnMessage,
+  type ScreenMessage,
   type Hello,
   type Snapshot,
   type Welcome,
@@ -95,6 +97,8 @@ export interface ClientHandlers {
   onConn?(m: ConnMessage): void;
   /** M7: board messages (no seq, never replayed): the issues and pull requests of the floor this connection watches. */
   onBoard?(m: BoardMessage): void;
+  /** M13: screen share messages of this connection (no seq, never replayed): frame requests and who looked. */
+  onScreen?(m: ScreenMessage): void;
 }
 
 export interface ClientOptions {
@@ -373,6 +377,11 @@ export class BridgeClient {
     // M7: boards of the watched floor (no seq, never replayed; the game watches again after a reconnect).
     if (isBoardMessage(m)) {
       this.o.handlers.onBoard?.(m);
+      return;
+    }
+    // M13: a frame request for the shared screen, or who looked at it.
+    if (isScreenMessage(m)) {
+      this.o.handlers.onScreen?.(m);
       return;
     }
     // Everything else (acks, unknown types) is ignored.
