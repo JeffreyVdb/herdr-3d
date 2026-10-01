@@ -38,5 +38,6 @@ describe('Go-made pins through restoreElements', () => {
     // Their order is the indices' order, and no index was repaired (that would bump the versions).
     expect(out.map((e) => e.index)).toEqual(fixture.elements.map((e) => e.index));
     expect([...out.map((e) => e.index as string)].sort()).toEqual(out.map((e) => e.index));
-  });
+    // Importing Excalidraw (transformed for the test, see vite.config.ts) takes seconds on a loaded machine.
+  }, 120_000);
 });
