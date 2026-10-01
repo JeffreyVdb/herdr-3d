@@ -201,8 +201,8 @@ func (t *issues) Close(ctx context.Context, id, reason string) error {
 // then sets its place (updateProjectV2ItemPosition, which only knows "after
 // this item" in the project's one order across all statuses): the status is
 // written only when it changes, so a move within the column writes its place
-// only. The two writes are not one transaction: when the place fails after
-// the status changed, the error says so.
+// only. The writes are not one transaction: when one fails after another
+// landed, the error says what changed and is a provider.ErrPartial.
 func (t *issues) SetStatus(ctx context.Context, id, columnID string, at *tracker.Anchor) error {
 	if !t.hasProject() {
 		return provider.Errorf(provider.ErrUnsupported, "this board has no project: issues have no status to set")
@@ -284,6 +284,7 @@ func (t *issues) SetStatus(ctx context.Context, id, columnID string, at *tracker
 			return err
 		}
 	}
+	added := false
 	if itemID == "" { // the issue is not in the project yet
 		var add struct {
 			Add struct {
@@ -298,12 +299,16 @@ func (t *issues) SetStatus(ctx context.Context, id, columnID string, at *tracker
 		if itemID = add.Add.Item.ID; itemID == "" {
 			return provider.Failed("GitHub did not add %s to the project", id)
 		}
+		added = true
 		t.changed()
 	}
 	wrote := false
 	if at == nil || status != columnID {
 		if err := t.query(ctx, githubcli.DocSetStatus, map[string]any{"projectId": p.ID, "itemId": itemID, "fieldId": fieldID,
 			"optionId": columnID}, nil); err != nil {
+			if added {
+				return provider.Partial(fmt.Errorf("it was added to the project, but its status did not change: %w", err))
+			}
 			return err
 		}
 		wrote = true
@@ -318,7 +323,7 @@ func (t *issues) SetStatus(ctx context.Context, id, columnID string, at *tracker
 	}
 	if err := t.query(ctx, githubcli.DocSetPosition, vars, nil); err != nil {
 		if wrote {
-			return fmt.Errorf("its status changed, but its place in the column did not: %w", err)
+			return provider.Partial(fmt.Errorf("its status changed, but its place in the column did not: %w", err))
 		}
 		return err
 	}

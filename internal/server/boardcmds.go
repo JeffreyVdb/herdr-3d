@@ -125,7 +125,8 @@ func (bf *boardFloor) noHost() error {
 
 // startBoardAsync runs a provider call off the hub goroutine, with its audit
 // row begun now (args without bodies) and completed with the report when it
-// ends. After a successful write the floor's refresh is queued.
+// ends. After a successful write (or a partial one: provider.ErrPartial)
+// the floor's refresh is queued.
 func (h *Hub) startBoardAsync(ctx context.Context, c *Client, cmd proto.Command, session string, write bool,
 	work func(context.Context) (data, report any, err error)) error {
 	return h.startBoardWork(ctx, c, cmd, session, write, work, nil)
@@ -151,7 +152,9 @@ func (h *Hub) startBoardWork(ctx context.Context, c *Client, cmd proto.Command, 
 				applied()
 			}
 			h.reply(c, cmd, data, err)
-			if write && err == nil {
+			// A write that failed after part of it landed changed the
+			// board too: polls begun before it are dropped all the same.
+			if write && (err == nil || errors.Is(err, provider.ErrPartial)) {
 				h.queueBoard(ctx, session)
 			}
 		}); derr != nil {

@@ -435,16 +435,37 @@ func TestSetStatusOrder(t *testing.T) {
 	// The status is written, the place is not: the error says which.
 	posErr = "Resource not accessible by integration"
 	err := tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#30", doing, &tracker.Anchor{After: "JeffreyVdb/herdr-3d#9"})
-	if !errors.Is(err, provider.ErrFailed) || !strings.Contains(err.Error(), "status changed, but its place") ||
+	if !errors.Is(err, provider.ErrFailed) || !errors.Is(err, provider.ErrPartial) || !strings.Contains(err.Error(), "status changed, but its place") ||
 		!strings.Contains(err.Error(), "Resource not accessible") || !slices.Contains(gh.docs(), githubcli.DocSetStatus) {
 		t.Fatalf("a failed place: %v %v", err, gh.docs())
 	}
 	// A reorder that fails changed nothing: the plain error.
 	err = tr.SetStatus(ctx, "JeffreyVdb/herdr-3d#6", done, &tracker.Anchor{})
-	if !errors.Is(err, provider.ErrFailed) || strings.Contains(err.Error(), "status changed") {
+	if !errors.Is(err, provider.ErrFailed) || errors.Is(err, provider.ErrPartial) || strings.Contains(err.Error(), "status changed") {
 		t.Fatalf("a failed reorder: %v", err)
 	}
 	posErr = ""
+}
+
+// An issue added to the project whose status then fails: the add landed,
+// so the error is partial.
+func TestSetStatusPartialAdd(t *testing.T) {
+	reg, _ := newRegistry(t, writes(t, func(doc githubcli.Doc, vars map[string]any) (string, bool) {
+		switch doc {
+		case githubcli.DocStatusTarget:
+			return target(32, "", ""), true
+		case githubcli.DocAddProjectItem:
+			return `{"data":{"addProjectV2ItemById":{"item":{"id":"PVTI_new","project":{"id":"PVT_kwHOAAplCs4Bk8CS","number":2}}}}}`, true
+		case githubcli.DocSetStatus:
+			return `{"data":{"updateProjectV2ItemFieldValue":null},"errors":[{"type":"FORBIDDEN","message":"no"}]}`, true
+		}
+		return "", false
+	}))
+	tr, _ := reg.For(projectCfg)
+	err := tr.SetStatus(context.Background(), "JeffreyVdb/herdr-3d#32", "ae6334b4", nil)
+	if !errors.Is(err, provider.ErrFailed) || !errors.Is(err, provider.ErrPartial) || !strings.Contains(err.Error(), "added to the project") {
+		t.Fatalf("a failed status after an add: %v", err)
+	}
 }
 
 // prDetailWith is the failing-checks pull request with its state changed.

@@ -490,3 +490,37 @@ func TestBoardWriteDuringPoll(t *testing.T) {
 		t.Fatalf("%d polls after the write, want the one in flight and its refresh", tr.Polls()-before)
 	}
 }
+
+// A write that fails after part of it landed (the status changed, the
+// place did not): the poll in flight is dropped all the same, and the
+// refresh shows the card where the provider has it.
+func TestBoardPartialWriteDuringPoll(t *testing.T) {
+	bb := startBoardBridge(t, nil)
+	tr, _ := bb.fb.repo("JeffreyVdb/lab")
+	tr.board.Cards = []tracker.Card{card("JeffreyVdb/lab#9", "#9", "Boards", "todo")}
+	bb.link("JeffreyVdb/lab")
+	bb.polled("s")
+	w := bb.watcher()
+	w.watch("s")
+	w.pair()
+	tr.set(func(f *fakeTracker) {
+		f.gate, f.early = make(chan struct{}), true
+		f.failOn = map[string]error{"set_status": provider.Partial(provider.Failed("its status changed, but its place in the column did not"))}
+	})
+	before := tr.Polls()
+	bb.clk.Advance(time.Minute)
+	eventually(t, "the poll in flight", func() bool { return tr.Polls() == before+1 })
+	bb.c.mustError(proto.CmdIssueSetStatus, proto.IssueSetStatusArgs{Session: "s", ID: "JeffreyVdb/lab#9", Column: "done"}, proto.ErrProviderFailed)
+	tr.set(func(f *fakeTracker) {
+		f.board.Cards = []tracker.Card{card("JeffreyVdb/lab#9", "#9", "Boards", "done")}
+		close(f.gate)
+		f.gate, f.early = nil, false
+	})
+	is, _ := w.pair()
+	if len(is.Cards) != 1 || is.Cards[0].Column != "done" || is.Initial {
+		t.Fatalf("the first board after the partial write = %+v", is.Cards)
+	}
+	if tr.Polls() != before+2 {
+		t.Fatalf("%d polls after the write, want the one in flight and its refresh", tr.Polls()-before)
+	}
+}
