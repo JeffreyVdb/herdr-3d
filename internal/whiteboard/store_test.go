@@ -177,8 +177,12 @@ func TestHistoryKeepsLast20AndCollectsFiles(t *testing.T) {
 		t.Fatalf("head %d, retained %+v", h.Version, h.Retained)
 	}
 	ents, _ := os.ReadDir(filepath.Join(s.Root(), "f", "v"))
-	if len(ents) != Keep {
-		t.Fatalf("%d versions on disk", len(ents))
+	if len(ents) != 2*Keep { // v/<n>.json and v/<n>.files.json
+		t.Fatalf("%d version files on disk", len(ents))
+	}
+	// One render: the current one.
+	if ents, _ := os.ReadDir(filepath.Join(s.Root(), "f", "renders")); len(ents) != 1 || ents[0].Name() != "26.png" {
+		t.Fatalf("renders on disk %v", ents)
 	}
 	if _, err := s.Version("f", 6); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("pruned version 6: %v", err)
@@ -375,5 +379,110 @@ func TestFloorNamesAreSessionNames(t *testing.T) {
 		if ValidFloor(f) != herdr.ValidSessionName(f) {
 			t.Errorf("%q: floor %v, session %v", f, ValidFloor(f), herdr.ValidSessionName(f))
 		}
+	}
+}
+
+// head.json does not grow with the files of the kept versions: a scene of 900
+// images saved past Keep versions stays readable (the head used to list every
+// version's files and outgrew the 1 MiB it is read with).
+func TestHeadStaysSmallWithManyFiles(t *testing.T) {
+	s, _ := newStore(t)
+	els := make([]string, 900)
+	for i := range els {
+		b := pngOf(t, 1, 1, color.RGBA{R: byte(i), G: byte(i >> 8), A: 255})
+		if _, _, err := s.PutFile("f", Hash(b), b); err != nil {
+			t.Fatal(err)
+		}
+		els[i] = imageEl(fmt.Sprintf("im%d", i), "a0", Hash(b), false)
+	}
+	sc := scene(els...)
+	for v := range int64(Keep + 2) {
+		save(t, s, "f", v, sc)
+		if _, err := s.Get("f"); err != nil {
+			t.Fatalf("get after save %d: %v", v+1, err)
+		}
+	}
+	fi, err := os.Stat(filepath.Join(s.Root(), "f", "head.json"))
+	if err != nil || fi.Size() > 16<<10 {
+		t.Fatalf("head.json %d bytes, %v", fi.Size(), err)
+	}
+	// The collection still knows each kept version's files: none is gone.
+	if ents, _ := os.ReadDir(filepath.Join(s.Root(), "f", "files")); len(ents) != 900 {
+		t.Fatalf("%d files kept", len(ents))
+	}
+}
+
+// failHead makes the store's next head.json write fail, as a crash between a
+// commit's new files and its head would.
+func failHead(t *testing.T) {
+	t.Helper()
+	writeFile = func(path string, data []byte) error {
+		if filepath.Base(path) == "head.json" {
+			return errors.New("injected head write failure")
+		}
+		return writeAtomic(path, data)
+	}
+	t.Cleanup(func() { writeFile = writeAtomic })
+}
+
+// A save or a clear whose head.json is not written leaves the previous
+// version current with its own render, across a restart too.
+func TestInterruptedCommitKeepsVersionAndRender(t *testing.T) {
+	s, _ := newStore(t)
+	black, white := pngOf(t, 1, 1, color.Black), pngOf(t, 2, 2, color.White)
+	if _, err := s.Save("f", SaveInput{Base: 0, Scene: scene(), Render: black}); err != nil {
+		t.Fatal(err)
+	}
+	check := func(when string, st *Store) {
+		t.Helper()
+		b, err := st.Get("f")
+		if err != nil || b.Version != 1 || len(b.Snapshot.Scene.Elements) != 0 {
+			t.Fatalf("%s: board v%d %d elements, %v", when, b.Version, len(b.Snapshot.Scene.Elements), err)
+		}
+		png, v, err := st.Render("f")
+		if err != nil || v != 1 || !bytes.Equal(png, black) {
+			t.Fatalf("%s: render v%d, the old one %v, %v", when, v, bytes.Equal(png, black), err)
+		}
+	}
+	failHead(t)
+	if _, err := s.Save("f", SaveInput{Base: 1, Scene: scene(rect("r", "a0", 0, 0, 1)), Render: white}); err == nil {
+		t.Fatal("the save did not fail")
+	}
+	check("after a failed save", s)
+	if _, err := s.Clear("f", "Theo"); err == nil {
+		t.Fatal("the clear did not fail")
+	}
+	check("after a failed clear", s)
+	writeFile = writeAtomic
+	check("after a restart", New(s.Root()))
+	// The next save takes the version the failed one would have had, with its own render.
+	h, err := s.Save("f", SaveInput{Base: 1, Scene: scene(rect("r", "a0", 0, 0, 1)), Render: white})
+	if err != nil || h.Version != 2 {
+		t.Fatalf("save after: %+v %v", h, err)
+	}
+	if png, v, err := s.Render("f"); err != nil || v != 2 || !bytes.Equal(png, white) {
+		t.Fatalf("render after: v%d %v", v, err)
+	}
+	if ents, _ := os.ReadDir(filepath.Join(s.Root(), "f", "renders")); len(ents) != 1 {
+		t.Fatalf("renders on disk %v", ents)
+	}
+}
+
+// head.json lists the newest maxStalePins pins, however many agents pin
+// before a client renders the board.
+func TestStalePinsAreBounded(t *testing.T) {
+	s, _ := newStore(t)
+	save(t, s, "f", 0, scene())
+	for i := range maxStalePins + 20 {
+		if _, err := s.Pin("f", Pin{Author: "Nibble", Note: fmt.Sprintf("note %d %s", i, strings.Repeat("x", 300))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h, err := s.Head("f")
+	if err != nil || len(h.StalePins) != maxStalePins || !h.Stale() {
+		t.Fatalf("head: %d stale pins, stale %v, %v", len(h.StalePins), h.Stale(), err)
+	}
+	if last := h.StalePins[maxStalePins-1]; last.Version != h.Version || !strings.HasPrefix(last.Note, fmt.Sprintf("note %d ", maxStalePins+19)) {
+		t.Fatalf("newest stale pin %+v", last)
 	}
 }

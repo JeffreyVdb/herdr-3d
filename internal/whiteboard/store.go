@@ -6,13 +6,16 @@
 //
 // On disk, <root>/<floor>/ (0700, files 0600):
 //
-//	head.json        the current version, its author, the render's version, the stale pins
+//	head.json        the current version, its author, the render's version, the stale pins (small, bounded)
 //	v/<n>.json       version n: the scene (elements incl. tombstones, appState) and its files' manifest
+//	v/<n>.files.json the ids of the files version n uses (for the collection)
 //	files/<sha256>   one image's bytes; the name is the sha256 of exactly these bytes
-//	render.png       the client's export of the version head.render_version
+//	renders/<n>.png  the client's export of version n; head.render_version names the current one
 //
-// Every write is a temp file renamed into place; head.json is written last,
-// so a crash leaves the previous version current.
+// Every write is a temp file renamed into place, and a commit only adds
+// files until head.json is written last, so a crash leaves the previous
+// version current with its own render; what the new head no longer names
+// is removed after it.
 package whiteboard
 
 import (
@@ -71,6 +74,20 @@ const syscallNoFollow = syscall.O_NOFOLLOW
 // maxRequests is how many pin request ids a floor remembers.
 const maxRequests = 64
 
+// maxStalePins is how many stale pins head.json lists (the newest): the
+// room's note and the overlay show a few, and the head stays small.
+const maxStalePins = 100
+
+// maxHead is the most head.json may be. Its content is bounded (Keep
+// versions without their files, maxStalePins, maxRequests), and a commit
+// refuses a head over it before it writes anything, so the store never
+// writes a head it would not read.
+const maxHead = 1 << 20
+
+// maxUses is the most a version's files list (v/<n>.files.json) may be:
+// MaxElements ids.
+const maxUses = int64(MaxElements)*68 + 1024
+
 // The image types a board stores: what imgcache serves.
 var imageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
 
@@ -104,9 +121,9 @@ type Head struct {
 	// board was empty then, there is no PNG). Stale when it is behind Version.
 	RenderVersion int64      `json:"render_version"`
 	Render        bool       `json:"render"`
-	StalePins     []StalePin `json:"stale_pins"`
-	// Retained lists the kept versions and the files each uses, for the
-	// file collection without reading every version.
+	StalePins     []StalePin `json:"stale_pins"` // the newest maxStalePins
+	// Retained lists the kept versions (their files are in
+	// v/<n>.files.json: a head with each version's files grew with them).
 	Retained []Retained   `json:"retained,omitempty"`
 	Requests []pinRequest `json:"requests,omitempty"`
 }
@@ -116,10 +133,9 @@ func (h Head) Stale() bool { return h.RenderVersion != h.Version }
 
 // Retained is one kept version.
 type Retained struct {
-	Version int64    `json:"version"`
-	Author  string   `json:"author"`
-	At      int64    `json:"at"`
-	Files   []string `json:"files,omitempty"`
+	Version int64  `json:"version"`
+	Author  string `json:"author"`
+	At      int64  `json:"at"`
 }
 
 type pinRequest struct {
@@ -194,6 +210,14 @@ func (s *Store) lock(floor string) (func(), error) {
 
 func (s *Store) dir(floor string) string { return filepath.Join(s.root, floor) }
 
+func (s *Store) versionPath(floor string, v int64, ext string) string {
+	return filepath.Join(s.dir(floor), "v", strconv.FormatInt(v, 10)+ext)
+}
+
+func (s *Store) renderPath(floor string, v int64) string {
+	return filepath.Join(s.dir(floor), "renders", strconv.FormatInt(v, 10)+".png")
+}
+
 func (s *Store) nowMS() int64 { return s.Now().UnixMilli() }
 
 // ---- reading ---------------------------------------------------------------
@@ -216,7 +240,7 @@ func readJSON(path string, v any, limit int64) error {
 
 func (s *Store) readHead(floor string) (Head, error) {
 	var h Head
-	err := readJSON(filepath.Join(s.dir(floor), "head.json"), &h, 1<<20)
+	err := readJSON(filepath.Join(s.dir(floor), "head.json"), &h, maxHead)
 	if errors.Is(err, fs.ErrNotExist) {
 		return Head{StalePins: []StalePin{}}, nil
 	}
@@ -231,7 +255,7 @@ func (s *Store) readSnapshot(floor string, v int64) (Snapshot, error) {
 		return Snapshot{Schema: 1, Floor: floor, ExcalidrawVersion: ExcalidrawVersion, Scene: emptyScene(), Files: map[string]FileMeta{}}, nil
 	}
 	var sn Snapshot
-	err := readJSON(filepath.Join(s.dir(floor), "v", strconv.FormatInt(v, 10)+".json"), &sn, MaxScene+MaxScene/2)
+	err := readJSON(s.versionPath(floor, v, ".json"), &sn, MaxScene+MaxScene/2)
 	if errors.Is(err, fs.ErrNotExist) {
 		return sn, fmt.Errorf("%w: version %d of %s", ErrNotFound, v, floor)
 	}
@@ -302,7 +326,8 @@ func (s *Store) File(floor, id string) ([]byte, string, error) {
 	return b, sniff(b), nil
 }
 
-// Render returns render.png and the version it shows (ErrNotFound: none).
+// Render returns the current render (renders/<render_version>.png) and the
+// version it shows (ErrNotFound: none).
 func (s *Store) Render(floor string) ([]byte, int64, error) {
 	unlock, err := s.lock(floor)
 	if err != nil {
@@ -316,7 +341,7 @@ func (s *Store) Render(floor string) ([]byte, int64, error) {
 	if !h.Render {
 		return nil, h.RenderVersion, fmt.Errorf("%w: no render of %s", ErrNotFound, floor)
 	}
-	b, err := readLimited(filepath.Join(s.dir(floor), "render.png"), MaxRender)
+	b, err := readLimited(s.renderPath(floor, h.RenderVersion), MaxRender)
 	if err != nil {
 		return nil, h.RenderVersion, fmt.Errorf("%w: no render of %s", ErrNotFound, floor)
 	}
@@ -361,7 +386,7 @@ func sniff(b []byte) string {
 
 // ensure makes the floor's directories 0700.
 func (s *Store) ensure(floor string) error {
-	for _, d := range []string{s.root, s.dir(floor), filepath.Join(s.dir(floor), "v"), filepath.Join(s.dir(floor), "files")} {
+	for _, d := range []string{s.root, s.dir(floor), filepath.Join(s.dir(floor), "v"), filepath.Join(s.dir(floor), "files"), filepath.Join(s.dir(floor), "renders")} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return err
 		}
@@ -380,6 +405,9 @@ func (s *Store) ensure(floor string) error {
 	}
 	return nil
 }
+
+// writeFile is how the store writes a file (a test makes one fail).
+var writeFile = writeAtomic
 
 // writeAtomic writes data to path through a 0600 temp file in its directory.
 func writeAtomic(path string, data []byte) error {
@@ -412,7 +440,7 @@ func (s *Store) writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(path, b)
+	return writeFile(path, b)
 }
 
 // checkImage sniffs b and reads its size from its header.
@@ -487,7 +515,7 @@ func (s *Store) putFile(floor, id string, b []byte) (bool, error) {
 	if total+int64(len(b)) > MaxFloorFiles {
 		return false, fmt.Errorf("%w: a floor's images are at most %d MiB together", ErrTooLarge, MaxFloorFiles>>20)
 	}
-	return true, writeAtomic(path, b)
+	return true, writeFile(path, b)
 }
 
 func dirSize(dir string) (int64, error) {
@@ -595,31 +623,37 @@ func (s *Store) Save(floor string, in SaveInput) (Head, error) {
 	}
 	scene := emptyScene()
 	scene.Elements, scene.AppState = raw, app
-	return s.commit(floor, h, scene, files, used, cleanAuthor(in.Author), func(n *Head) error {
-		if err := writeAtomic(filepath.Join(s.dir(floor), "render.png"), in.Render); err != nil {
-			return err
-		}
-		n.RenderVersion, n.Render, n.StalePins = n.Version, true, []StalePin{}
-		return nil
-	})
+	return s.commit(floor, h, scene, files, used, cleanAuthor(in.Author), commitOpts{render: in.Render})
 }
 
-// commit writes the next version (v/<n>.json, then what before does, then
-// head.json), prunes the versions past Keep and collects unused files.
-func (s *Store) commit(floor string, h Head, scene Scene, files map[string]FileMeta, used []string, author string, before func(*Head) error) (Head, error) {
+// commitOpts is what a commit does beside the scene.
+type commitOpts struct {
+	render   []byte      // Save: the new version's render (nil: the current one stays, a pin)
+	noRender bool        // Clear: the new version has none
+	head     func(*Head) // more changes to the new head
+}
+
+// commit writes the next version: v/<n>.json, v/<n>.files.json and its
+// render (renders/<n>.png), all new files that replace nothing current,
+// then head.json, which makes them current. Only then are the versions past
+// Keep, the renders the head does not name and unused files removed.
+func (s *Store) commit(floor string, h Head, scene Scene, files map[string]FileMeta, used []string, author string, o commitOpts) (Head, error) {
 	now := s.nowMS()
 	n := h
 	n.Version, n.Author, n.At = h.Version+1, author, now
-	sn := Snapshot{Schema: 1, Floor: floor, Version: n.Version, Author: author, At: now, ExcalidrawVersion: ExcalidrawVersion, Scene: scene, Files: files}
-	if err := s.writeJSON(filepath.Join(s.dir(floor), "v", strconv.FormatInt(n.Version, 10)+".json"), sn); err != nil {
-		return Head{}, err
+	switch {
+	case o.render != nil:
+		n.RenderVersion, n.Render, n.StalePins = n.Version, true, []StalePin{}
+	case o.noRender:
+		n.RenderVersion, n.Render, n.StalePins = n.Version, false, []StalePin{}
 	}
-	if before != nil {
-		if err := before(&n); err != nil {
-			return Head{}, err
-		}
+	if o.head != nil {
+		o.head(&n)
 	}
-	n.Retained = append(slices.Clone(h.Retained), Retained{Version: n.Version, Author: author, At: now, Files: used})
+	if len(n.StalePins) > maxStalePins {
+		n.StalePins = slices.Clone(n.StalePins[len(n.StalePins)-maxStalePins:])
+	}
+	n.Retained = append(slices.Clone(h.Retained), Retained{Version: n.Version, Author: author, At: now})
 	var gone []int64
 	if len(n.Retained) > Keep {
 		for _, r := range n.Retained[:len(n.Retained)-Keep] {
@@ -627,25 +661,56 @@ func (s *Store) commit(floor string, h Head, scene Scene, files map[string]FileM
 		}
 		n.Retained = slices.Clone(n.Retained[len(n.Retained)-Keep:])
 	}
-	if err := s.writeJSON(filepath.Join(s.dir(floor), "head.json"), n); err != nil {
+	head, err := json.Marshal(n)
+	if err != nil {
+		return Head{}, err
+	}
+	if len(head) > maxHead {
+		return Head{}, fmt.Errorf("%w: the board's head would be %d bytes", ErrTooLarge, len(head))
+	}
+	if used == nil {
+		used = []string{}
+	}
+	sn := Snapshot{Schema: 1, Floor: floor, Version: n.Version, Author: author, At: now, ExcalidrawVersion: ExcalidrawVersion, Scene: scene, Files: files}
+	if err := s.writeJSON(s.versionPath(floor, n.Version, ".json"), sn); err != nil {
+		return Head{}, err
+	}
+	if err := s.writeJSON(s.versionPath(floor, n.Version, ".files.json"), used); err != nil {
+		return Head{}, err
+	}
+	if o.render != nil {
+		if err := writeFile(s.renderPath(floor, n.Version), o.render); err != nil {
+			return Head{}, err
+		}
+	}
+	if err := writeFile(filepath.Join(s.dir(floor), "head.json"), head); err != nil {
 		return Head{}, err
 	}
 	for _, v := range gone {
-		_ = os.Remove(filepath.Join(s.dir(floor), "v", strconv.FormatInt(v, 10)+".json"))
+		_ = os.Remove(s.versionPath(floor, v, ".json"))
+		_ = os.Remove(s.versionPath(floor, v, ".files.json"))
 	}
 	s.collect(floor, n)
 	return n, nil
 }
 
 // collect removes image files that no kept version uses and that are older
-// than FileGrace (one may be on its way into a save), and leftover temp
-// files and versions no head names.
+// than FileGrace (one may be on its way into a save), every render but the
+// current one, and leftover temp files and versions no head names. When a
+// kept version's files list cannot be read, no image file is removed.
 func (s *Store) collect(floor string, h Head) {
 	keep := map[string]bool{}
 	versions := map[string]bool{}
+	known := true
 	for _, r := range h.Retained {
 		versions[strconv.FormatInt(r.Version, 10)+".json"] = true
-		for _, f := range r.Files {
+		versions[strconv.FormatInt(r.Version, 10)+".files.json"] = true
+		var ids []string
+		if err := readJSON(s.versionPath(floor, r.Version, ".files.json"), &ids, maxUses); err != nil {
+			known = false
+			continue
+		}
+		for _, f := range ids {
 			keep[f] = true
 		}
 	}
@@ -654,7 +719,7 @@ func (s *Store) collect(floor string, h Head) {
 	ents, _ := os.ReadDir(dir)
 	for _, e := range ents {
 		fi, err := e.Info()
-		if err != nil || keep[e.Name()] || fi.ModTime().After(cutoff) {
+		if !known || err != nil || keep[e.Name()] || fi.ModTime().After(cutoff) {
 			continue
 		}
 		_ = os.Remove(filepath.Join(dir, e.Name()))
@@ -667,6 +732,19 @@ func (s *Store) collect(floor string, h Head) {
 		}
 		if fi, err := e.Info(); err == nil && fi.ModTime().Before(cutoff) {
 			_ = os.Remove(filepath.Join(vdir, e.Name()))
+		}
+	}
+	// Renders are written under the floor's lock only: any but the head's is
+	// an old one or a failed commit's.
+	current := ""
+	if h.Render {
+		current = strconv.FormatInt(h.RenderVersion, 10) + ".png"
+	}
+	rdir := filepath.Join(s.dir(floor), "renders")
+	ents, _ = os.ReadDir(rdir)
+	for _, e := range ents {
+		if e.Name() != current {
+			_ = os.Remove(filepath.Join(rdir, e.Name()))
 		}
 	}
 }
@@ -713,13 +791,7 @@ func (s *Store) Clear(floor, author string) (Head, error) {
 		}
 		scene.Elements = append(scene.Elements, b)
 	}
-	return s.commit(floor, h, scene, map[string]FileMeta{}, nil, cleanAuthor(author), func(n *Head) error {
-		if err := os.Remove(filepath.Join(s.dir(floor), "render.png")); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		n.RenderVersion, n.Render, n.StalePins = n.Version, false, []StalePin{}
-		return nil
-	})
+	return s.commit(floor, h, scene, map[string]FileMeta{}, nil, cleanAuthor(author), commitOpts{noRender: true})
 }
 
 // PinResult is what a pin did.
@@ -824,7 +896,7 @@ func (s *Store) Pin(floor string, p Pin) (PinResult, error) {
 	if err != nil {
 		return PinResult{}, err
 	}
-	n, err := s.commit(floor, h, scene, keepOnly(files, used), used, author, func(n *Head) error {
+	n, err := s.commit(floor, h, scene, keepOnly(files, used), used, author, commitOpts{head: func(n *Head) {
 		n.StalePins = append(slices.Clone(h.StalePins), stale)
 		if p.RequestID != "" {
 			n.Requests = append(slices.Clone(h.Requests), pinRequest{ID: p.RequestID, Elements: []string{id}, Version: n.Version})
@@ -832,8 +904,7 @@ func (s *Store) Pin(floor string, p Pin) (PinResult, error) {
 				n.Requests = n.Requests[len(n.Requests)-maxRequests:]
 			}
 		}
-		return nil
-	})
+	}})
 	if err != nil {
 		return PinResult{}, err
 	}
