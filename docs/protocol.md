@@ -678,8 +678,9 @@ fallback alike.
 2. The bridge sends the game that started sharing last a `{"t":"screen.frame_request","req_id":"<32 hex>"}` (128
    random bits; on that connection only, no `seq`).
 3. The game draws the video's current frame to a canvas at most 1920 px wide and 4096 tall (aspect kept, never
-   upscaled) and encodes a JPEG at quality 0.8. It checks the capture is still the live one before and after encoding
-   (a Stop meanwhile sends nothing), answers requests one at a time, and `POST`s the bytes to `/screen/frame/<req_id>`
+   upscaled) and encodes a JPEG at quality 0.8. A request belongs to the capture that is live when it arrives: one
+   that is still waiting when that capture ends (Stop, then perhaps a new Share of another source) is dropped, never
+   encoded or uploaded, and a Stop during an encode sends nothing. It answers requests one at a time, and `POST`s the bytes to `/screen/frame/<req_id>`
    (beside `/ws`, with its token, through the helper; `Content-Type: image/jpeg`). When it has no frame it answers
    `screen.frame` instead.
 4. The bridge accepts the body only while a grab waits for that id. It checks the JPEG magic bytes, at most 8 MiB on the
@@ -692,7 +693,9 @@ fallback alike.
    looked at your screen", and the ack carries the path.
 
 The whole grab has **5 s** (`server.DefaultScreenTimeout`; the target round trip is under 2 s): after that it is
-`frame_timeout` and a late frame is refused. The game disconnecting fails its waiting grabs at once with `no_client`,
+`frame_timeout` and a late frame is refused. The bridge ends a request after those 5 s even when its caller has stopped
+waiting (an in-process `GrabScreen` whose context ended), and a grab cancelled before its request was registered asks
+the game nothing, so an abandoned grab never holds one of the 4 slots. The game disconnecting fails its waiting grabs at once with `no_client`,
 stopping the share with `not_sharing`. A `screen.share {sharing:false}` or a disconnect also ends `screen.state`'s
 `sharing` when no other game shares.
 
