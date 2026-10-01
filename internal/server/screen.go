@@ -61,6 +61,7 @@ type framePending struct {
 	surface string
 	res     chan frameResult // buffered: the one answer
 	done    bool
+	expire  *time.Timer // ends it after Options.ScreenTimeout, whoever waits
 }
 
 type frameResult struct {
@@ -143,8 +144,17 @@ func (h *Hub) finishFrame(p *framePending, r frameResult) {
 		return
 	}
 	p.done = true
+	p.expire.Stop()
 	delete(h.screen.pending, p.id)
 	p.res <- r
+}
+
+// dropFrame forgets a grab its caller gave up on (hub goroutine).
+func (h *Hub) dropFrame(p *framePending) {
+	if h.screen.pending[p.id] == p {
+		p.expire.Stop()
+		delete(h.screen.pending, p.id)
+	}
 }
 
 // dropScreen forgets a game that left (Leave): it no longer shares, and the
@@ -271,7 +281,14 @@ func (h *Hub) grabScreen(ctx context.Context, a proto.ScreenGrabArgs) (proto.Scr
 		p   *framePending
 		err error
 	}
+	// The registration may run after the caller stopped waiting for it
+	// (query returns on ctx while fn is queued): it then asks nothing, and
+	// a request it did register expires on its own (requestFrame), so an
+	// abandoned grab never holds a slot.
 	q, err := query(ctx, h, func() asked {
+		if err := ctx.Err(); err != nil {
+			return asked{nil, err}
+		}
 		p, err := h.requestFrame(a)
 		return asked{p, err}
 	})
@@ -283,11 +300,7 @@ func (h *Hub) grabScreen(ctx context.Context, a proto.ScreenGrabArgs) (proto.Scr
 	}
 	p := q.p
 	defer func() {
-		_ = h.do(context.Background(), func(context.Context) {
-			if h.screen.pending[p.id] == p {
-				delete(h.screen.pending, p.id)
-			}
-		})
+		_ = h.do(context.Background(), func(context.Context) { h.dropFrame(p) })
 	}()
 	timer := time.NewTimer(h.opts.ScreenTimeout)
 	defer timer.Stop()
@@ -321,6 +334,8 @@ func (h *Hub) grabScreen(ctx context.Context, a proto.ScreenGrabArgs) (proto.Scr
 }
 
 // requestFrame registers a grab and asks the sharing game (hub goroutine).
+// The request ends with frame_timeout after Options.ScreenTimeout even if
+// nobody waits for its answer any more.
 func (h *Hub) requestFrame(a proto.ScreenGrabArgs) (*framePending, error) {
 	if h.screen.frames == nil {
 		return nil, fmt.Errorf("internal: %w", h.screen.err)
@@ -339,6 +354,14 @@ func (h *Hub) requestFrame(a proto.ScreenGrabArgs) (*framePending, error) {
 		return nil, fmt.Errorf("%w: %d screen grabs are already waiting", errBusy, maxPendingFrames)
 	}
 	p := &framePending{id: randHex(16), c: c, surface: h.screen.games[c].surface, res: make(chan frameResult, 1)}
+	timeout := h.opts.ScreenTimeout
+	p.expire = time.AfterFunc(timeout, func() {
+		_ = h.do(context.Background(), func(context.Context) {
+			if h.screen.pending[p.id] == p {
+				h.finishFrame(p, frameResult{err: &codedError{proto.ErrFrameTimeout, fmt.Errorf("the game sent no frame within %s", timeout)}})
+			}
+		})
+	})
 	h.screen.pending[p.id] = p
 	h.deliver(c, mustJSON(proto.ScreenFrameRequest{T: proto.TScreenFrameRequest, ReqID: p.id}))
 	return p, nil
