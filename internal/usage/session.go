@@ -79,17 +79,29 @@ type Tap interface {
 }
 
 // Lines gets every line of the main transcript the session reads, from the
-// file's start (#57: the worker's ask is read from them), and Reset when the
-// lines it got are void: the file was replaced (it gets them all again) or
-// went.
+// file's start, with the byte offset it starts at (#57: the worker's ask is
+// read from them; #83: its wrap-up verdict), and Reset when the lines it got
+// are void: the file was replaced (it gets them all again) or went.
 type Lines interface {
-	Line(line []byte)
+	Line(off int64, line []byte)
 	Reset()
 }
 
 // SetLines sends the main transcript's lines to l (nil: none). Set it before
 // the first Poll, so l reads the file from its start.
 func (s *Session) SetLines(l Lines) { s.lines = l }
+
+// Delivered is where the next main transcript line the session hands out
+// starts (0 before it was found): every line before it was read already.
+func (s *Session) Delivered() int64 {
+	if s.main == nil {
+		return 0
+	}
+	return s.main.Delivered()
+}
+
+// Found reports whether the main transcript is found now (not gone).
+func (s *Session) Found() bool { return s.main != nil }
 
 func (s *Session) resetLines() {
 	if s.lines != nil {
@@ -203,7 +215,7 @@ func (s *Session) read(now time.Time) error {
 	if err := s.main.Next(func(off int64, b []byte) {
 		s.parse.line(true, b)
 		if s.lines != nil {
-			s.lines.Line(b)
+			s.lines.Line(off, b)
 		}
 		if s.tap != nil {
 			s.tap.Line(off, b)
