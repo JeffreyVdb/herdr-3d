@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,6 +41,7 @@ type wrapBridge struct {
 	claude, codex string // w1's and w2's transcript files
 	ids           map[string]string
 	armedAs       *proto.WrapUp // the last arm's upsert
+	heldCheck     chan struct{} // holdCleanCheck: a check is held
 }
 
 func wrapWorkers() []world.WorkerObs {
@@ -382,6 +384,111 @@ func TestWrapUpTakeover(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 	if calls := wb.fl.Calls(); len(calls) != 0 {
 		t.Fatalf("herdr after a takeover in herdr: %q", calls)
+	}
+}
+
+// #83 review: a person stepping in while a CLEAN's tree check runs (before
+// the send home starts) disarms it, and nothing is sent home: a
+// worker.prompt (its user line in the transcript too), worker.keys, a prompt
+// typed in herdr. A transcript that goes on decides again.
+func TestWrapUpTakeoverDuringCleanCheck(t *testing.T) {
+	cases := []struct {
+		name string
+		step func(t *testing.T, wb *wrapBridge, c *client, id, nonce string)
+	}{
+		{"worker.prompt", func(t *testing.T, wb *wrapBridge, c *client, id, _ string) {
+			evs, _ := c.mustAck(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: id, Text: "Wait, keep the dev server."})
+			appendTo(t, wb.claude, wrapUser("Wait, keep the dev server."))
+			wrapUpIn(c, evs, id, noWrapUp)
+		}},
+		{"worker.keys", func(t *testing.T, wb *wrapBridge, c *client, id, _ string) {
+			evs, _ := c.mustAck(proto.CmdWorkerKeys, proto.WorkerKeysArgs{ID: id, Input: []proto.InputItem{key("esc")}})
+			wrapUpIn(c, evs, id, noWrapUp)
+		}},
+		{"typed in herdr", func(t *testing.T, wb *wrapBridge, c *client, id, nonce string) {
+			appendTo(t, wb.claude, wrapUser("Do not send this worker home. Explain the line H3D-WRAPUP "+nonce+" CLEAN instead."))
+			wrapUpOf(c, id, noWrapUp)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wb := startWrapBridge(t, "", "", nil)
+			c := wb.connect(proto.Hello{})
+			c.snapshot()
+			id := wb.ids["w1"]
+			nonce := wb.arm(t, c, "w1", proto.FireDelete)
+			release := wb.holdCleanCheck(t)
+			text, _ := wb.prompted(t, "w1:p1")
+			wb.reply(t, text, "H3D-WRAPUP "+nonce+" CLEAN")
+			wb.waitHeld(t)
+			tc.step(t, wb, c, id, nonce)
+			release()
+			time.Sleep(300 * time.Millisecond)
+			if calls := wb.fl.Calls(); len(calls) != 0 {
+				t.Fatalf("herdr after a takeover during the check: %q", calls)
+			}
+			if got, _ := wb.st.WrapUps(context.Background()); len(got) != 0 {
+				t.Fatalf("stored = %+v", got)
+			}
+			if w := workersOf(wb.world(func(proto.World) bool { return true }), "s")["w1"]; w.ID != id || w.WrapUp != nil {
+				t.Fatalf("w1: %+v", w)
+			}
+			if log, _ := wb.st.AuditLog(context.Background()); slices.ContainsFunc(log, func(r store.AuditEntry) bool { return r.Cmd == proto.CmdWorkerFire }) {
+				t.Fatal("a send home was audited")
+			}
+		})
+	}
+	t.Run("the turn goes on", func(t *testing.T) {
+		wb := startWrapBridge(t, "", "", nil)
+		c := wb.connect(proto.Hello{})
+		c.snapshot()
+		id := wb.ids["w1"]
+		nonce := wb.arm(t, c, "w1", proto.FireDelete)
+		release := wb.holdCleanCheck(t)
+		text, _ := wb.prompted(t, "w1:p1")
+		wb.reply(t, text, "H3D-WRAPUP "+nonce+" CLEAN")
+		wb.waitHeld(t)
+		appendTo(t, wb.claude, wrapSay("m-more", "One more thing: the preview server is still up.", "end_turn")+wrapTurnEnd)
+		time.Sleep(150 * time.Millisecond) // read while the check runs
+		release()
+		w := wrapUpOf(c, id, wrapState(proto.WrapUpNeedsYou))
+		if w.WrapUp.Reason != "did not report a wrap-up result" {
+			t.Fatalf("needs you: %+v", w.WrapUp)
+		}
+		if calls := wb.fl.Calls(); len(calls) != 0 {
+			t.Fatalf("herdr calls = %q", calls)
+		}
+	})
+}
+
+// holdCleanCheck blocks the next tree check (after arming: a CLEAN's) until
+// the returned release is called; it returns once the check is held.
+func (wb *wrapBridge) holdCleanCheck(t *testing.T) (release func()) {
+	t.Helper()
+	held, gate := make(chan struct{}, 1), make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(gate) }) }
+	t.Cleanup(release)
+	wb.git.mu.Lock()
+	wb.git.onStatus = func(string) {
+		select {
+		case held <- struct{}{}:
+		default:
+		}
+		<-gate
+	}
+	wb.git.mu.Unlock()
+	wb.heldCheck = held
+	return release
+}
+
+// waitHeld waits for the CLEAN's check to be held.
+func (wb *wrapBridge) waitHeld(t *testing.T) {
+	t.Helper()
+	select {
+	case <-wb.heldCheck:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the CLEAN's tree check never ran")
 	}
 }
 

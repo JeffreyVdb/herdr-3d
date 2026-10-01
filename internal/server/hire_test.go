@@ -247,6 +247,7 @@ type fakeGit struct {
 	fetchErr error
 	def      string
 	sha      string
+	onStatus func(dir string) // called before each Status, outside mu
 }
 
 func newFakeGit() *fakeGit {
@@ -289,6 +290,12 @@ func (g *fakeGit) Commit(_ context.Context, dir, ref string) (string, time.Time,
 }
 
 func (g *fakeGit) Status(_ context.Context, dir string) ([]string, error) {
+	g.mu.Lock()
+	hook := g.onStatus
+	g.mu.Unlock()
+	if hook != nil {
+		hook(dir)
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if d, ok := g.dirty[dir]; ok {

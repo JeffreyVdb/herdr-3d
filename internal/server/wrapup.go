@@ -68,8 +68,9 @@ type wrapUp struct {
 	// The tracker's last look at the ended turn: its line count, since when.
 	lines   int
 	quietAt time.Time
-	// deciding: a CLEAN's check or send home runs.
-	deciding bool
+	// deciding: a CLEAN's check or send home runs; firing: its send home
+	// (beginFire) started. Until then a person stepping in disarms it.
+	deciding, firing bool
 }
 
 // wrapWatch is what the usage tracker needs of an armed wrap-up.
@@ -369,7 +370,18 @@ func (h *Hub) wrapUpSeen(ctx context.Context, u wrapUpdate) {
 	case wu.state == wrapArming:
 		h.armed(ctx, wu, u)
 		return
-	case wu.state != proto.WrapUpArmed || wu.deciding:
+	case wu.state != proto.WrapUpArmed || wu.firing:
+		return
+	case wu.deciding:
+		// A CLEAN's check runs: a person stepping in disarms it, and any
+		// other line means the turn is not over (the check's end decides
+		// again).
+		switch {
+		case u.state.TookOver:
+			h.dropWrapUp(ctx, wu, "a person took over")
+		case !u.state.Ended || u.state.Lines != wu.lines:
+			wu.lines = -1
+		}
 		return
 	}
 	w := h.workers[u.id]
@@ -467,7 +479,7 @@ func (h *Hub) needsYou(ctx context.Context, wu *wrapUp, reason string) {
 			reason = reason[:len(reason)-1]
 		}
 	}
-	wu.state, wu.reason, wu.deciding = proto.WrapUpNeedsYou, reason, false
+	wu.state, wu.reason, wu.deciding, wu.firing = proto.WrapUpNeedsYou, reason, false, false
 	if err := h.saveWrapUp(ctx, wu); err != nil {
 		h.log.Error("saving the wrap-up failed", "worker", wu.id, "err", err)
 	}
@@ -505,12 +517,13 @@ func (h *Hub) forgetWrapUp(ctx context.Context, id string) {
 }
 
 // tookOver disarms an armed wrap-up when a person prompts or types into the
-// worker (worker.prompt, worker.keys): the person took over. One that needs
-// you stays (a reply never re-arms it), and one whose send home runs goes on.
+// worker (worker.prompt, worker.keys): the person took over, also while a
+// CLEAN's check runs. One that needs you stays (a reply never re-arms it),
+// and one whose send home started goes on.
 func (h *Hub) tookOver(ctx context.Context, id string) {
 	wu := h.wrapups[id]
 	switch {
-	case wu == nil || wu.deciding || wu.state == proto.WrapUpNeedsYou:
+	case wu == nil || wu.firing || wu.state == proto.WrapUpNeedsYou:
 	case wu.state == wrapArming:
 		h.failArm(ctx, wu, nil, fmt.Errorf("%w: a prompt or keys came first", errInvalidState))
 	default:
@@ -553,9 +566,12 @@ func (h *Hub) wrapUpClean(ctx context.Context, wu *wrapUp) {
 		}
 		_ = h.doWait(ctx, func() {
 			if h.wrapups[wu.id] != wu || wu.state != proto.WrapUpArmed {
-				return // cancelled meanwhile
+				return // cancelled or taken over meanwhile
 			}
 			switch {
+			case wu.lines < 0:
+				wu.deciding = false // the transcript went on: decide again
+				return
 			case cerr != nil:
 				h.needsYou(ctx, wu, "it reported CLEAN, but reading the git state failed: "+cerr.Error())
 				return
@@ -583,6 +599,7 @@ func (h *Hub) wrapUpClean(ctx context.Context, wu *wrapUp) {
 				return
 			}
 			op.auditID = auditID
+			wu.firing = true
 			h.beginFire(ctx, op, f)
 			h.log.Info("send home after wrap-up started", "session", op.session, "worker", op.id, "worktree", op.choice)
 		})
@@ -618,7 +635,7 @@ func (h *Hub) startWrapUpCancel(ctx context.Context, c *Client, cmd proto.Comman
 	switch {
 	case wu == nil:
 		return fmt.Errorf("%w: %s is not wrapping up", errInvalidState, w.Name)
-	case wu.deciding:
+	case wu.firing:
 		return fmt.Errorf("%w: %s reported CLEAN and is being sent home", errBusy, w.Name)
 	case wu.state == wrapArming:
 		h.failArm(ctx, wu, nil, fmt.Errorf("%w: the wrap-up was cancelled", errInvalidState))
