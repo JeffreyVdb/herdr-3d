@@ -32,6 +32,8 @@ import { LimitsSim } from './fixture-limits.ts';
 import { TranscriptSim } from './fixture-transcript.ts';
 // #57: agents' structured questions (`sim.ask`, `worker.answer_ask`).
 import { AskSim } from './fixture-ask.ts';
+// M13: the screen share (`screen.share`, `screen.grab`, `screen.frame`; the frames on POST /screen/frame/<id>).
+import { ShareSim } from './fixture-share.ts';
 
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
@@ -208,6 +210,12 @@ export class SimWorld {
 
   /** M10: the plan limits (tools/fixture-limits.ts). */
   private readonly limits: LimitsSim;
+  /** M13: the screen share (tools/fixture-share.ts). */
+  private readonly share = new ShareSim(
+    (send, m) => this.emit(send, m),
+    (code, message) => new CmdError(code, message),
+    (session) => this.floors.has(session),
+  );
   private readonly transcripts: TranscriptSim;
 
   /** M7: boards, work items and opening a PR (tools/fixture-boards.ts). */
@@ -217,6 +225,7 @@ export class SimWorld {
   private readonly start6: StartSim;
 
   dispose(): void {
+    this.share.dispose();
     for (const t of this.timers) this.clearT(t);
     this.timers.clear();
   }
@@ -297,6 +306,7 @@ export class SimWorld {
     this.start6.decorate(world);
     this.boards.decorate(world as { workers?: Worker[] });
     this.limits.decorate(world);
+    this.share.decorate(world); // M13
     return { t: 'world.snapshot', seq: this.seq, world: structuredClone(world) };
   }
 
@@ -365,6 +375,7 @@ export class SimWorld {
       if (this.start6.handle(m.t, a, send, ack, fail)) return;
       if (this.boards.handle(m.t, a, send, ack, fail)) return;
       if (this.limits.handle(m.t, send, ack)) return;
+      if (this.share.handle(m.t, a, send, ack, fail)) return; // M13
       switch (m.t) {
         case 'building.create':
           return ack(this.create(a, send));

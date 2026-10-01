@@ -73,6 +73,10 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'pr.merge': 'merge pull requests',
   'worker.open_pr.prepare': 'open pull requests for workers',
   'worker.open_pr': 'open pull requests for workers',
+  // M13 screen
+  'screen.share': 'show a shared screen to agents',
+  'screen.frame': 'show a shared screen to agents',
+  'screen.grab': 'show a shared screen to agents',
 };
 
 export function failureText(t: CommandName | LogoAction, code: string, message: string, ctx: FailureContext = {}): string {

@@ -209,6 +209,11 @@ export class Hud {
     };
   }
 
+  /** M13: the screen share control, in the top bar before About; shown everywhere (a share is the game's, not a floor's). */
+  mountScreenShare(el: HTMLElement): void {
+    this.about.before(el);
+  }
+
   /** M3b: the sound control (mute + volume) in the top bar, before the battery toggle. */
   mountAudio(audio: GameAudio): { dispose(): void } {
     // M15: the Music credits panel, opened from the sound control.
@@ -460,6 +465,11 @@ export class Hud {
         keys.append(k);
       }
       this.prompt.setAttribute('aria-label', `${name} · E Open`);
+    } else if (t.kind === 'prop' && t.id === 'tv') {
+      // M13: the screen-share TV says whether it shows your screen; the top bar's control starts and stops it.
+      const info = this.propInfo.get('tv') ?? 'Off · Share screen in the top bar';
+      line.append(text('prompt-name', t.label), text('prompt-task', info));
+      this.prompt.setAttribute('aria-label', `${t.label}: ${info}`);
     } else if ((t.kind === 'board' || t.kind === 'prop') && t.milestone === null) {
       // M17: a prop that is only looked at (the clock): what it shows, no key.
       const info = this.propInfo.get(t.id) ?? '';

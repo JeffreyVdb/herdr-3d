@@ -561,6 +561,16 @@ export class OfficeView {
     this.props.radio?.set(display, playing);
   }
 
+  /** M13: what the screen-share TV shows: the share's texture (`w × h` video), or its sign (null). */
+  setScreen(tex: THREE.Texture | null, w: number, h: number, paused: boolean): void {
+    this.props.tv?.show(tex, w, h, paused);
+  }
+
+  /** M13: what the TV shows (test hook); null without one. */
+  screenInfo(): ReturnType<NonNullable<PropMeshes['tv']>['info']> | null {
+    return this.props.tv?.info() ?? null;
+  }
+
   setPlan(on: boolean): void {
     this.planOn = on;
     this.ceiling.visible = !on;
