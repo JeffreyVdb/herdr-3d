@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
+import { fullscreenChip } from '../laptop/fullscreen';
 import { SeatBar } from './seat';
 import { ViewPrefs } from './themePrefs';
 
@@ -80,3 +81,53 @@ describe('seat bar: the terminal’s preset and zoom (#59)', () => {
     expect(bar.focusLook()).toBe(false);
   });
 });
+
+describe('seat bar: the fullscreen chip (#74)', () => {
+  const chipOf = (hud: HTMLElement) => hud.querySelector<HTMLButtonElement>('.seat-fs')!;
+
+  it('is hidden until there is something to say, then states the fact and is a toggle', () => {
+    const hud = document.createElement('div');
+    const asked: string[] = [];
+    const bar = new SeatBar(hud, { ...noop, fullscreen: (a: string) => asked.push(a) }, new ViewPrefs(null));
+    const chip = chipOf(hud);
+    expect(chip.hidden).toBe(true);
+    expect(bar.summary().fullscreen).toBeNull();
+
+    bar.setFullscreen(fullscreenChip({ state: 'split', applied: false }, { cols: 60, rows: 40 }));
+    expect(chip.hidden).toBe(false);
+    expect(bar.summary().fullscreen).toEqual({ label: 'Split pane 60×40', pressed: false, unavailable: false });
+    expect(chip.getAttribute('aria-pressed')).toBe('false');
+    expect(chip.getAttribute('aria-label')).toBe('Fullscreen, off. Split pane 60 by 40');
+    chip.click();
+
+    bar.setFullscreen(fullscreenChip({ state: 'zoomed', applied: true }, { cols: 131, rows: 47 }));
+    expect(chip.getAttribute('aria-pressed')).toBe('true');
+    expect(bar.summary().fullscreen?.label).toBe('Fullscreen');
+    chip.click();
+    expect(asked).toEqual(['zoom', 'unzoom']);
+
+    // A zoom that could not widen the pane: its words stay, it does nothing and is marked aria-disabled, still focusable.
+    bar.setFullscreen(fullscreenChip({ state: 'zoomed', applied: true, headless: true }, { cols: 120, rows: 40 }));
+    expect(chip.getAttribute('aria-disabled')).toBe('true');
+    expect(chip.disabled).toBe(false);
+    expect(bar.summary().fullscreen).toEqual({ label: 'Fullscreen unavailable', pressed: false, unavailable: true });
+    chip.click();
+    expect(asked).toHaveLength(2);
+
+    bar.setFullscreen(null);
+    expect(chip.hidden).toBe(true);
+  });
+
+  it('is one of the bar’s controls: it owns its keys, and Ctrl+, reaches the controls it sits with', () => {
+    const hud = document.createElement('div');
+    const bar = new SeatBar(hud, noop, new ViewPrefs(null));
+    bar.setFullscreen(fullscreenChip({ state: 'split', applied: false }, { cols: 60, rows: 40 }));
+    const chip = chipOf(hud);
+    expect(bar.owns(chip)).toBe(true);
+    expect(bar.inLook(chip)).toBe(true);
+    // After the swatches and the zoom, in Tab order.
+    const order = [...hud.querySelectorAll('.seat-look button')];
+    expect(order.at(-1)).toBe(chip);
+  });
+});
+

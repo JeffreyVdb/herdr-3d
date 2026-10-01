@@ -510,6 +510,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	}
 	opts.Fresh = freshWorkers(cfg.Herdr)
 	opts.MaxWatches, opts.MaxObservers, opts.PaneSize = cfg.MaxWatches, cfg.MaxObservers, paneSize(cfg.Herdr) // M5 term
+	opts.PaneState = paneState(cfg.Herdr)                                                                     // #74
 	opts.MaxTranscriptWatches = cfg.MaxTranscriptWatches                                                      // M16 transcript
 	if cfg.Git != nil {
 		opts.Git = cfg.Git
@@ -587,20 +588,29 @@ func (f floorHerdr) Ping(ctx context.Context, socket string) error {
 	return err
 }
 
-// paneSize reads a pane's size from its session's layout (read only:
-// session.snapshot), the laptop observer's default size.
-func paneSize(read watch.Herdr) func(ctx context.Context, socket, pane string) (int, int, bool) {
-	return func(ctx context.Context, socket, pane string) (int, int, bool) {
+// paneState reads a pane's size and what its tab does with it (zoomed,
+// focused, how many panes) from its session's snapshot, read only (#74).
+func paneState(read watch.Herdr) func(ctx context.Context, socket, pane string) (herdr.PaneState, bool) {
+	return func(ctx context.Context, socket, pane string) (herdr.PaneState, bool) {
 		if read == nil || socket == "" {
-			return 0, 0, false
+			return herdr.PaneState{}, false
 		}
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		snap, err := read.Snapshot(ctx, socket)
 		if err != nil {
-			return 0, 0, false
+			return herdr.PaneState{}, false
 		}
-		return snap.PaneSize(pane)
+		return snap.PaneState(pane)
+	}
+}
+
+// paneSize is the laptop observer's default size: the size of paneState.
+func paneSize(read watch.Herdr) func(ctx context.Context, socket, pane string) (int, int, bool) {
+	state := paneState(read)
+	return func(ctx context.Context, socket, pane string) (int, int, bool) {
+		st, ok := state(ctx, socket, pane)
+		return st.Cols, st.Rows, ok
 	}
 }
 

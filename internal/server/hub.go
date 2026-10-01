@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
+	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -115,6 +116,12 @@ type Options struct {
 	// before the bridge closes a repository's idle main checkout. Nil: it
 	// cannot be checked and nothing is closed.
 	Fresh func(ctx context.Context, socket string) ([]world.WorkerObs, error)
+	// #74: PaneState is a pane's size and what its tab does with it (zoomed,
+	// focused, how many panes), read from the session's snapshot (nil: the
+	// size from PaneSize, and no fullscreen laptops). ZoomPoll is how often
+	// a followed watch looks again (default DefaultZoomPoll).
+	PaneState func(ctx context.Context, socket, pane string) (herdr.PaneState, bool)
+	ZoomPoll  time.Duration
 	// MaxWatches caps the watches of one connection, MaxObservers all of
 	// them (defaults DefaultMaxWatches, DefaultMaxObservers).
 	MaxWatches, MaxObservers int
@@ -222,6 +229,7 @@ type Hub struct {
 	usage map[string]*proto.Usage // M5 usage: by worker id, as last published
 	// M5 term
 	term      termWatches              // laptop screens being watched
+	zoom      zoomTabs                 // #74: the tabs zoomed for them
 	lanes     map[string]*inputLane    // worker id → its input commands, in order
 	questions map[string]questionState // worker id → what its blocked screen asks
 	asking    map[string]bool          // worker id → its screen reader runs
@@ -590,6 +598,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startWatch
 		case proto.CmdTerminalUnwatch:
 			start = h.startUnwatch
+		case proto.CmdTerminalZoom: // #74
+			start = h.startZoom
 		case proto.CmdWorkerKeys:
 			start = h.startKeys
 		case proto.CmdWorkerPrompt:

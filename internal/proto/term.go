@@ -10,15 +10,19 @@ const (
 	CmdWorkerKeys      = "worker.keys"
 	CmdWorkerPrompt    = "worker.prompt"
 	CmdWorkerAnswer    = "worker.answer"
+	CmdTerminalZoom    = "terminal.zoom" // #74
 
 	// TTerminalFrame and TTerminalClosed go only to the watching
 	// connection: no seq, not in the replay ring.
 	TTerminalFrame  = "terminal.frame"
 	TTerminalClosed = "terminal.closed"
+	// TTerminalState (#74) is a followed watch's zoom, focus or size
+	// changing: connection-scoped like the frames.
+	TTerminalState = "terminal.state"
 )
 
 func init() {
-	Commands = append(Commands, CmdTerminalWatch, CmdTerminalUnwatch, CmdWorkerKeys, CmdWorkerPrompt, CmdWorkerAnswer)
+	Commands = append(Commands, CmdTerminalWatch, CmdTerminalUnwatch, CmdWorkerKeys, CmdWorkerPrompt, CmdWorkerAnswer, CmdTerminalZoom)
 }
 
 // Error codes.
@@ -51,14 +55,57 @@ type TerminalWatchArgs struct {
 	Fps  int    `json:"fps,omitempty"`
 	Cols int    `json:"cols,omitempty"`
 	Rows int    `json:"rows,omitempty"`
+	// Fullscreen (#74) is a tri-state. true asks the bridge to zoom the
+	// pane's tab on the pane while it is watched, and to put the tab back
+	// after. false does not zoom. Both make the watch follow the pane's zoom,
+	// focus and size (terminal.state). Absent (nil): the watch of an old
+	// client, as before #74: no zoom, no state messages.
+	Fullscreen *bool `json:"fullscreen,omitempty"`
+}
+
+// Zoom states of a watched pane (ZoomInfo.State).
+const (
+	ZoomSingle = "single" // the tab has one pane
+	ZoomZoomed = "zoomed" // the tab is zoomed on this pane
+	ZoomSplit  = "split"  // the pane shows at its split size
+)
+
+// ZoomInfo (#74) is what a watched pane's tab does with it. Applied: the
+// bridge zoomed the tab and will put it back. Headless: the tab's area is
+// herdr's headless 120 × 40, so most likely no client is attached and a
+// zoom does not make the terminal any bigger.
+type ZoomInfo struct {
+	State    string `json:"state"`
+	Applied  bool   `json:"applied"`
+	Headless bool   `json:"headless,omitempty"`
 }
 
 // TerminalWatchResult is the ack data of terminal.watch: the pane watched
-// and the observer's size.
+// and the observer's size. Zoom is absent when the bridge could not read
+// the pane's tab.
 type TerminalWatchResult struct {
-	Pane string `json:"pane"`
-	Cols int    `json:"cols"`
-	Rows int    `json:"rows"`
+	Pane string    `json:"pane"`
+	Cols int       `json:"cols"`
+	Rows int       `json:"rows"`
+	Zoom *ZoomInfo `json:"zoom,omitempty"`
+}
+
+// TerminalZoomArgs are the args of terminal.zoom (#74): On is required.
+type TerminalZoomArgs struct {
+	ID string `json:"id"`
+	On *bool  `json:"on"`
+}
+
+// TerminalState is sent to a watch that follows its pane's zoom when the
+// zoom, the focus or the size changed. The next terminal.frame is a full
+// one at Cols × Rows.
+type TerminalState struct {
+	T    string   `json:"t"`
+	ID   string   `json:"id"`
+	Pane string   `json:"pane"`
+	Cols int      `json:"cols"`
+	Rows int      `json:"rows"`
+	Zoom ZoomInfo `json:"zoom"`
 }
 
 // TerminalFrame is a watched pane's screen: a full frame or an ANSI diff

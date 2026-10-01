@@ -402,6 +402,7 @@ export class App {
       paste: (t, files) => this.laptops.paste(t, files),
       stand: () => this.laptops.stand(),
       toggle: () => this.laptops.toggleTranscript(),
+      fullscreen: (a) => this.laptops.fullscreen(a),
     }, this.themes.prefs);
     this.laptops = new Laptops(
       {

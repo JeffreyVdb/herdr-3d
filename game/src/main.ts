@@ -116,7 +116,9 @@ export interface H3DDebug {
   /** M5: how much of a worker's frozen laptop screen is not black (0–1), null when it is not frozen. */
   frozenInk(workerId: string): number | null;
   /** M5: the seat bar (shown, its tape, its note, ok / busy / error / offline); M16: which mode it shows. */
-  seat(): { shown: boolean; tape: string; note: string; state: string; mode?: string; ask?: string | null };
+  seat(): { shown: boolean; tape: string; note: string; state: string; mode?: string; ask?: string | null; fullscreen?: { label: string; pressed: boolean; unavailable: boolean } | null };
+  /** #74: plays the human unzooming the watched pane's tab, in the fixture simulator (`simzoom=`): a `terminal.state` follows. */
+  simUnzoom(workerId: string): Promise<boolean>;
   /**
    * #59: the transcript's and the terminal's presets as picked, the one the terminal draws with (its fonts loaded),
    * each view's zoom, hidden tool calls, and the seated screen's font; `themeLoaded` settles when the latest picks'
@@ -349,6 +351,7 @@ const h3d: H3DDebug = {
     const r = await app.client.request('sim.watches' as CommandName, {} as never);
     return { game: app.laptops.watchCount, sim: r.ok ? ((r.data as { watches?: number }).watches ?? null) : null };
   },
+  simUnzoom: async (id) => (await app?.client.request('sim.unzoom' as CommandName, { id } as never))?.ok ?? false,
   reconnect: () => {
     app?.client.stop();
     app?.client.start();

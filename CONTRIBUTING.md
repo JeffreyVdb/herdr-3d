@@ -98,6 +98,12 @@ parts:
     `pane send-text <pane> <text>` (no control characters) and the fixed sequences of delete / home / end / pageup /
     pagedown, `agent prompt <pane> <text>` with `--wait --until working --until blocked --timeout 8000` or without
     (queued for an agent at work), and the hire's `pane read <pane> --source visible` (a blocked worker's question).
+    #74's fullscreen laptop adds exactly two: `pane zoom <pane> --on` and `pane zoom <pane> --off` (explicit modes,
+    never `--toggle`; `Control.SetZoom`), each write its own `pane.zoom` audit row (`{"session","pane","mode","why"}`).
+    The hub's zoom code (`internal/server/zoom.go`) has two locks: `zoomTabs.write` serialises the zoom writes and the
+    reads their decisions rest on (held across herdr calls, always taken first), `zoomTabs.mu` guards the refs and
+    flags (never held across a herdr call; the hub goroutine takes it). A ref is held only by a watch that wants the
+    tab fullscreen; `terminal.watch.fullscreen` is a `*bool` (absent: an old client, never followed).
     #57's `worker.answer_ask` uses these same shapes (digits, arrows, `tab`, `enter`, `esc`, `send-text`, `pane
     read` between steps): no new one.
     Typed text is never quoted in an error or the audit log. A herdr CLI call takes about 10 ms, so input goes through
@@ -357,6 +363,12 @@ both providers):
   permission prompt is a `permission` question that choice 1 approves (the command ran). About 30 s, a few haiku turns.
   The agent remembers the trust of the test's temporary directory.
 
+- `TestIntegrationFullscreenLaptop` (#74): a two-pane tab watched with `fullscreen` against the real herdr: without it
+  nothing is zoomed; headless the flag flips (`headless`, 120 × 40) and is put back on `terminal.unwatch`; with a TUI
+  attached (a `python3` pty client at 140 × 50, skipped without python3) the watch is the tab's whole content area,
+  a human unzooming is reported (`terminal.state`) and not undone, a tab the human zoomed is never put back, and the
+  audit log has one `pane.zoom` row per write. About 4 s, no agent. (The ownership rules, their races and the
+  error contract are pinned against a fake herdr floor in `internal/server/zoom_test.go`.)
 - `TestIntegrationRunStart` (M6 launch): `run.prepare` on a floor linked to a made-up repo (Build team by default), then
   `run.start` twice into worktrees of a local repository with a bare "origin": a Claude orchestrator
   (`claude-haiku-4-5-20251001`, `low`) on an issue and a Codex one (`gpt-6-luna`, `low`) on free text, both chosen in
@@ -565,7 +577,13 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   the last lines that say something, 22 columns × 5 lines, big, bold and lifted to 4.5:1, so it reads from the aisle;
   seated, the whole terminal), `keys.ts` maps a keydown to herdr
   keys and orders input (one command in flight, what is typed meanwhile goes in the next `worker.keys`), `index.ts`
-  plans and ties it together. #57: `askCard.ts` is the question card of the transcript view (the one pinned above the
+  plans and ties it together. #74: the seated watch asks for `fullscreen` (the bridge zooms the pane's herdr tab), `watches.ts`
+  keeps its zoom state (the ack's `zoom`, `terminal.state`, `terminal.zoom`; a bridge without them: no chip, no error),
+  `fullscreen.ts` (pure) turns it into the seat bar's chip (`Fullscreen` / `Split pane 60×40` / `Fullscreen unavailable`),
+  the preference is `h3d.term.fullscreen` (`themePrefs.ts`; off is sent as `fullscreen: false`, which only follows the
+  pane, and the ambient laptops send no field), and `paint.ts` `viewport` fits a pane much narrower than the
+  screen to its width (`widthFit`). The simulator plays the zoom with `simzoom=old|single|split|headless`
+  (`tools/fixture-screen.ts`; `sim.unzoom` is the human unzooming). #57: `askCard.ts` is the question card of the transcript view (the one pinned above the
   prompt box while the worker waits, and its timeline entry), styled in `transcript.css`. #59: `paint.ts` draws each
   glyph in its own cell (no ligatures, no fallback advance moving a column) in the preset's font and colours, box
   drawing / block elements / braille as shapes (`glyphs.ts`), and seated at the zoom (`viewport`: the letterbox below
@@ -999,6 +1017,9 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # Departure Mono on 11 / 22 px), keyboard reach; m59-{transcript,terminal}-<preset>,
                               # m59-transcript-<preset>-hidden, m59-mixed-{transcript,terminal} (Paper over
                               # Terminal), m59-zoom-{200,70}, m59-terminal-zoom-200.png
+                              # #74 fullscreen chip (h74-fullscreen.spec.ts, simzoom=): the seated watch asks for fullscreen, the chip
+                              # toggles it through terminal.zoom, the human unzooming reaches it, headless, single pane and older
+                              # bridges, keyboard, AA contrast at the three presets, the bar's height; h74-*.png
                               # M7 on demo-m6 with sim=1 (m7-boards.spec.ts, m7-actions.spec.ts, m7-perf.spec.ts): the
                               # corkboard and PR board (columns, paper, pins, holders, CI, verdict stamps), E and the
                               # top bar opening the overlays, no-project / no-repo / older-bridge floors, the watch

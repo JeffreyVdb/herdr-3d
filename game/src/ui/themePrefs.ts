@@ -14,8 +14,10 @@ export type ThemedView = 'transcript' | 'terminal';
 const THEME: Record<ThemedView, string> = { transcript: 'h3d.theme.transcript', terminal: 'h3d.theme.terminal' };
 const ZOOM_KEY: Record<ThemedView, string> = { transcript: 'h3d.zoom.transcript', terminal: 'h3d.zoom.terminal' };
 const HIDE_TOOLS = 'h3d.transcript.hideTools';
+/** #74: a laptop at a split pane zooms it to the whole herdr tab (on unless the player turned it off: stored as '0'). */
+const FULLSCREEN = 'h3d.term.fullscreen';
 
-export type ViewPref = 'transcriptTheme' | 'terminalTheme' | 'transcriptZoom' | 'terminalZoom' | 'hideTools';
+export type ViewPref = 'transcriptTheme' | 'terminalTheme' | 'transcriptZoom' | 'terminalZoom' | 'hideTools' | 'fullscreen';
 
 function defaultStorage(): Storage | null {
   try {
@@ -30,6 +32,7 @@ export class ViewPrefs {
   private readonly themes: Record<ThemedView, ThemeId>;
   private readonly zooms: Record<ThemedView, number>;
   private hide: boolean;
+  private full: boolean;
 
   constructor(private readonly storage: Storage | null = defaultStorage()) {
     const theme = (v: ThemedView): ThemeId => {
@@ -43,6 +46,7 @@ export class ViewPrefs {
     this.themes = { transcript: theme('transcript'), terminal: theme('terminal') };
     this.zooms = { transcript: zoom('transcript'), terminal: zoom('terminal') };
     this.hide = this.read(HIDE_TOOLS) === '1';
+    this.full = this.read(FULLSCREEN) !== '0';
   }
 
   private read(key: string): string | null {
@@ -99,6 +103,18 @@ export class ViewPrefs {
     this.hide = on;
     this.write(HIDE_TOOLS, on ? '1' : null);
     this.changed('hideTools');
+  }
+
+  /** #74: whether sitting at a split pane's laptop zooms the pane to its whole tab (default on). */
+  get fullscreen(): boolean {
+    return this.full;
+  }
+
+  set fullscreen(on: boolean) {
+    if (on === this.full) return;
+    this.full = on;
+    this.write(FULLSCREEN, on ? null : '0');
+    this.changed('fullscreen');
   }
 
   onChange(fn: (what: ViewPref) => void): () => void {

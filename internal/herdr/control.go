@@ -93,6 +93,12 @@ const (
 	opPromptQueued = "prompt-queued"
 )
 
+// #74: control operations of the fullscreen laptop (pane zoom).
+const (
+	opZoomOn  = "zoom-on"
+	opZoomOff = "zoom-off"
+)
+
 // controlShapes is the complete set of commands Control may run, as argv
 // templates. {herdr} and {systemd-run} are the configured executables;
 // {session}, {pane}, {id} and {home} are validated placeholders (see
@@ -161,6 +167,12 @@ var controlShapes = map[string][]string{
 	opPromptWait: {"{herdr}", "--session", "{session}", "agent", "prompt", "{pane}", "{message}",
 		"--wait", "--until", "working", "--until", "blocked", "--timeout", "8000"},
 	opPromptQueued: {"{herdr}", "--session", "{session}", "agent", "prompt", "{pane}", "{message}"},
+
+	// #74. Zoom a pane's tab to that pane (it also focuses the pane) and put
+	// the tab back. Explicit modes only: never --toggle, never no mode, so a
+	// repeated call cannot undo what the other one did.
+	opZoomOn:  {"{herdr}", "--session", "{session}", "pane", "zoom", "{pane}", "--on"},
+	opZoomOff: {"{herdr}", "--session", "{session}", "pane", "zoom", "{pane}", "--off"},
 }
 
 var (

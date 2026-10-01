@@ -139,7 +139,10 @@ MacBook (M2 Max)                                   devbox (Linux)
   shared `h3d_run`; reports at `~/.local/state/write-code/runs/<run_id>/<h3d_report>`. Fallback: label regex
   `^(ORCH|CODE|REVIEW|UX|GROUND)\|…`.
 - **Terminal screens**: `herdr terminal session observe` per watched pane only (on demand), bounded queues, kill stalled
-  observers (0.9.0 has no 30 s stall timeout), reconnect → request full frame.
+  observers (0.9.0 has no 30 s stall timeout), reconnect → request full frame. #74: a laptop of a split pane is fullscreen:
+  `terminal.watch{fullscreen}` zooms the pane's tab (herdr pane zoom, two allowlisted writes, audited) while it is
+  watched and puts it back when the last fullscreen watch of the tab ends; `terminal.state` / `terminal.zoom` keep the
+  seat bar true (docs/protocol.md "Fullscreen", docs/decisions.md 2026-10-01).
 - **Security**: bridge = shell as dev. Narrow typed commands only (no raw exec): `herdr.Control`'s allowlisted shapes
   for herdr and `gitops`' for git, every variable validated and its own argv element. Confirm destructive ones in UI,
   audit log (hire, fire and cleanup choices with every step).
@@ -153,7 +156,7 @@ MacBook (M2 Max)                                   devbox (Linux)
   snapshot); workers carry `work_item{provider, id}` next to `issue`.
 - Commands (each with `req_id`, ack/err): `building.create/rename/delete`, `floor.assign`, `floor.wake/sleep`,
   `worker.hire{floor, harness, model, effort, label, cwd}`, `worker.fire`, `worker.prompt`, `worker.keys`,
-  `terminal.watch/unwatch`, `terminal.open` (see below). M7: `board.watch/unwatch/refresh`, `issue.get/comment/close/
+  `terminal.watch/unwatch/zoom`, `terminal.open` (see below). M7: `board.watch/unwatch/refresh`, `issue.get/comment/close/
   set_status`, `pr.get/comment/merge`, `worker.open_pr.prepare/open_pr`; `run.prepare/start` take a `work_item`.
 - **Open in Ghostty (optional escape hatch, not needed to play)**: all normal interaction happens in-game —
   laptop screen = live read-only terminal via `observe`; prompts, approvals and keys via `worker.prompt` / `worker.keys`.
