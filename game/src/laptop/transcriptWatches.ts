@@ -190,7 +190,8 @@ export class TranscriptWatches {
     const items = itemsOf(m.items);
     const updates = itemsOf(m.updates);
     const head = typeof m.session === 'string' ? { harness: typeof m.harness === 'string' ? m.harness : '', session: m.session } : undefined;
-    if (items.length || updates.length) this.host.sink.push(m.id, items, updates, head);
+    // #58: a pending watch's first push names the session even with nothing in it yet (the transcript appeared empty).
+    if (items.length || updates.length || head) this.host.sink.push(m.id, items, updates, head);
   }
 
   closed(c: TranscriptClosed): void {

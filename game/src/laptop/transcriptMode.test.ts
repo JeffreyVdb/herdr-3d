@@ -699,6 +699,38 @@ describe('pending prompts', () => {
     expect(states(h)).toEqual(['queued']);
   });
 
+  it("a pending watch's first push may be empty and still name its session: a resync of that session keeps what its items took", async () => {
+    const h = harness();
+    const wsent: Array<{ t: string; resolve: (r: CommandResult) => void }> = [];
+    const tw = new TranscriptWatches({
+      send: (t) => new Promise((resolve) => wsent.push({ t, resolve })),
+      sink: { reset: (id, a) => h.tx.reset(id, a), push: (id, i, u, head) => h.tx.push(id, i, u, head), stop: () => {} },
+      failed: () => {},
+      closed: () => {},
+      now: () => 0,
+    });
+    h.tx.sit('a', 'Ada');
+    tw.sync(new Set(['a']));
+    wsent[0]?.resolve({ ok: true, data: { harness: 'claude', session: '', cursor: 'c:1', pending: true, items: [] } });
+    await flush();
+    h.tx.toggle();
+    await flush();
+    const host = (h.views[0] as FakeView).host;
+    h.tx.activity('working', 900);
+    await send(h, host, 'go', true);
+    await send(h, host, 'go', true);
+    // The transcript appeared with nothing in it yet: its head comes alone.
+    tw.items({ t: 'transcript.items', id: 'a', items: [], updates: [], harness: 'claude', session: 's3', version: '', cursor: 'c:1', has_more: false, pending: false });
+    expect(states(h)).toEqual(['queued', 'queued']);
+    tw.items({ t: 'transcript.items', id: 'a', items: [user('u1', 1, 'go')], updates: [] });
+    expect(states(h)).toEqual(['queued']);
+    tw.closed({ t: 'transcript.closed', id: 'a', reason: 'resync' });
+    expect(wsent.at(-1)?.t).toBe('transcript.watch');
+    wsent.at(-1)?.resolve({ ok: true, data: { harness: 'claude', session: 's3', cursor: 'c:1', items: [user('u1', 1, 'go')] } });
+    await flush();
+    expect(states(h)).toEqual(['queued']);
+  });
+
   it("the turn's mark is of the old session: after a switch the new session's items say what the turn does", async () => {
     const h = harness();
     await reading(h);
