@@ -1031,10 +1031,13 @@ is `worker.fire`'s, step by step, with the worktree choice made up front.
    H3D-WRAPUP <nonce> BLOCKED: <one-line reason>
    ```
    Clients never see the nonce or the footer.
-3. **Watch.** The bridge reads the transcript from the offset (the same tail as usage and `ask`), only after the user
-   line holding the nonce (the prompt itself; an earlier turn never counts), and only the **last non-empty line of the
-   final assistant message of a turn**, matched strictly: `^H3D-WRAPUP <nonce> (CLEAN|BLOCKED: .{1,200})$` (surrounding
-   spaces trimmed; no quotes, no markdown). The same marker anywhere else in that message makes it no result. A
+3. **Watch.** The bridge reads the transcript from the offset (the same tail as usage and `ask`), only after the
+   bridge's prompt (the first user prompt from the offset that ends with the nonce's footer; an earlier turn never
+   counts, and every later user prompt is a person's, even one quoting the marker), and only the **last non-empty line
+   of the final assistant message of a turn**, matched strictly against the line as it is (only a trailing `\r`
+   dropped): `^H3D-WRAPUP <nonce> (CLEAN|BLOCKED: .{1,200})$`. Leading or trailing whitespace, quotes, backticks, list
+   markers, an indented code block or a code fence left open make it no result, as does the same marker anywhere else
+   in that message. A
    Claude turn ends with an assistant message whose `stop_reason` is not `tool_use` (or `system/turn_duration`), a Codex
    one with `task_complete`.
 4. **Decide**, once the turn ended in the transcript, no line came since and herdr has said `idle` (or `done`), each for
@@ -1046,7 +1049,7 @@ is `worker.fire`'s, step by step, with the worktree choice made up front.
    | `BLOCKED: <reason>` | `needs_you` with the agent's reason. Nothing is touched. |
    | no result line, a malformed one, a wrong nonce, two markers | `needs_you`, `"did not report a wrap-up result"`. |
    | herdr says `blocked`, or the worker has an `ask` | keep waiting: the question shows as ever. |
-   | a person prompts or types into the worker (`worker.prompt`, `worker.keys`; or a prompt or interruption typed in herdr, seen in the transcript after the bridge's) | disarmed, `wrapup` gone: the person took over. |
+   | a person prompts or types into the worker (`worker.prompt`, `worker.keys`; or a prompt or interruption typed in herdr, seen in the transcript after the bridge's), also after a `CLEAN` while its tree check runs, until the send home starts | disarmed, `wrapup` gone: the person took over; nothing is sent home. |
    | no result within `--wrapup-timeout` (30 min) | `needs_you`, `"no wrap-up result within 30m0s"`. |
    | the transcript is gone or replaced, or the agent session changed | `needs_you`, `"its transcript is gone, …"`. |
    | the worker closed in herdr, or sent home | the wrap-up is forgotten. |
