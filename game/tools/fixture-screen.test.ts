@@ -242,6 +242,16 @@ describe('SimScreens: pane zoom (#74)', () => {
     expect(zoomOf(r.cmd('terminal.watch', { id: agent }).reply())).toEqual({ state: 'split', applied: false });
   });
 
+  it('a re-watch of a fullscreen watch does not zoom again after the human unzoomed; terminal.zoom on does', () => {
+    const r = rig(undefined, 'split');
+    r.cmd('terminal.watch', { id: agent, fps: 4, fullscreen: true });
+    r.cmd('sim.unzoom', { id: agent });
+    expect(zoomOf(r.cmd('terminal.watch', { id: agent, fps: 2, fullscreen: true }).reply())).toEqual({ state: 'split', applied: false });
+    expect(zoomOf(r.cmd('terminal.zoom', { id: agent, on: true }).reply())).toEqual({ state: 'zoomed', applied: true });
+    // false is a watch that follows without zooming.
+    expect(zoomOf(r.cmd('terminal.watch', { id: agent, fullscreen: false }).reply())).toEqual({ state: 'split', applied: false });
+  });
+
   it('terminal.zoom switches a watched pane, validates its arguments, and needs a watch', () => {
     const r = rig(undefined, 'split');
     expect(r.cmd('terminal.zoom', { id: agent, on: true }).reply()).toMatchObject({ code: 'bad_request' });

@@ -260,10 +260,16 @@
 
 /* #59: the terminal's preset (three tiny screens in its colours) and zoom, at the keys row's end. */
 .seat-look {
-  flex: none;
+  /* It shrinks to the row and wraps (the fullscreen chip, #74, made it wider than a phone): at a wide bar it is as
+     wide as its controls, as before. */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   margin-left: auto;
 }
 .seat-look-label {
@@ -346,6 +352,8 @@
    A dot says the state (filled: the pane fills its tab); a pane that cannot be widened keeps its words at full
    contrast and gets a dashed edge instead of fading, since the words are the information. */
 .seat-fs {
+  flex: 0 1 auto;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;

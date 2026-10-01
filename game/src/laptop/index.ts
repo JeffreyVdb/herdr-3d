@@ -978,10 +978,11 @@ export class Laptops {
     const want = new Map<string, number>();
     if (this.attached && !this.attached.isAsleep) for (const id of this.planner.live) want.set(id, this.cfg.fps);
     if (this.seat) want.set(this.seat.id, this.transcript.shown ? READING_FPS : this.cfg.seatedFps);
-    // #74: only the screen you sit at asks for fullscreen (the others show their panes as they are, and must not move
-    // the tab around); the player's preference says whether it does.
-    const fullscreen = new Set<string>();
-    if (this.seat && (this.host.themes?.prefs.fullscreen ?? true)) fullscreen.add(this.seat.id);
+    // #74: only the screen you sit at says anything about fullscreen (the others show their panes as they are, and must
+    // not move the tab around); the player's preference says whether it asks for the zoom (true) or only follows the
+    // pane, so the chip stays true when the human changes it (false).
+    const fullscreen = new Map<string, boolean>();
+    if (this.seat) fullscreen.set(this.seat.id, this.host.themes?.prefs.fullscreen ?? true);
     this.watches.sync(want, fullscreen);
     // M16: the transcript of the worker you sit at (not counted against the terminal watches), and a few items of the
     // desks that have prints (only their images matter).

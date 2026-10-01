@@ -125,7 +125,8 @@ describe('Watches', () => {
 
   describe('fullscreen (#74)', () => {
     const split = { pane: 'w1:p1', cols: 60, rows: 40, zoom: { state: 'split', applied: false } };
-    const fs = (...ids: string[]) => new Set(ids);
+    const fs = (...ids: string[]) => new Map(ids.map((id) => [id, true] as const));
+    const off = (...ids: string[]) => new Map(ids.map((id) => [id, false] as const));
 
     it('asks for fullscreen only for the watches that want it; a change restarts the watch', async () => {
       const h = harness();
@@ -135,6 +136,16 @@ describe('Watches', () => {
       expect(h.sent).toHaveLength(2);
       h.w.sync(want(['a', 4], ['b', 4]), fs());
       expect(h.sent.slice(2).map((s) => s.args)).toEqual([{ id: 'b', fps: 4 }]);
+    });
+
+    it('a watch told "no fullscreen" says so (false is not the same as saying nothing: the bridge follows it)', async () => {
+      const h = harness();
+      h.w.sync(want(['a', 4], ['b', 4]), off('b'));
+      expect(h.sent.map((s) => s.args)).toEqual([{ id: 'a', fps: 4 }, { id: 'b', fps: 4, fullscreen: false }]);
+      h.w.sync(want(['a', 4], ['b', 4]), off('b'));
+      expect(h.sent).toHaveLength(2);
+      h.w.sync(want(['a', 4], ['b', 4]), fs('b'));
+      expect(h.sent[2]?.args).toEqual({ id: 'b', fps: 4, fullscreen: true });
     });
 
     it('keeps the ack’s zoom state and size, and follows terminal.state', async () => {
@@ -203,6 +214,19 @@ describe('Watches', () => {
       h.w.frame(h.f('a', 5));
       expect(h.sent[1]?.args).toEqual({ id: 'a', fps: 4, fullscreen: true });
       expect(h.w.zoomOf('a')?.zoom.state).toBe('split');
+    });
+
+    it('a resync after the chip turned fullscreen off repeats "off", not nothing', async () => {
+      const h = harness();
+      h.w.sync(want(['a', 4]), fs('a'));
+      await h.answer(0, { ok: true, data: split });
+      const done = h.w.zoom('a', false);
+      await h.answer(1, { ok: true, data: { ...split, zoom: { state: 'split', applied: false } } });
+      await done;
+      h.w.frame(h.f('a', 1, true));
+      h.tick(3000);
+      h.w.frame(h.f('a', 5));
+      expect(h.sent[2]?.args).toEqual({ id: 'a', fps: 4, fullscreen: false });
     });
   });
 });

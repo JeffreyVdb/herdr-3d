@@ -142,6 +142,8 @@ export class SimScreens {
   readonly watches = new Map<string, Watch>();
   /** #74: the workers whose tab is zoomed (by a fullscreen watch or `terminal.zoom`), and so applied by the bridge. */
   private readonly zoomed = new Set<string>();
+  /** #74: the workers whose watch wants its tab fullscreen (the bridge's refs): a re-watch of one does not zoom again. */
+  private readonly held = new Set<string>();
   private readonly screens = new Map<string, Screen>();
   private readonly host: ScreenHost;
 
@@ -167,7 +169,7 @@ export class SimScreens {
         case 'terminal.unwatch':
           this.only(a, ['id']);
           this.stop(this.str(a, 'id'));
-          this.zoomed.delete(this.str(a, 'id'));
+          this.release(this.str(a, 'id'));
           ack();
           return true;
         case 'terminal.zoom':
@@ -238,9 +240,12 @@ export class SimScreens {
     const s = this.screen(w);
     const watch: Watch = { id, pane: w.pane_id as string, fps, n: 0, pending: [Buffer.concat(s.tape)], full: true, timer: null, lastSent: -Infinity, send, failAfterFirst: this.host.failNext('observer_failed') };
     this.watches.set(id, watch);
-    // #74: a watch that replaces another one takes over its zoom; fullscreen zooms, the others restore.
-    if (a.fullscreen === true) this.zoomed.add(id);
-    else this.zoomed.delete(id);
+    // #74: fullscreen true zooms, unless the watch it replaces held the tab already (a re-watch never zooms again);
+    // false and absent restore, as the bridge's stand-up does.
+    if (a.fullscreen === true) {
+      if (!this.held.has(id)) this.zoomed.add(id);
+      this.held.add(id);
+    } else this.release(id);
     const zoom = this.zoomState(id);
     ack({ pane: watch.pane, cols: s.rec.cols, rows: s.rec.rows, ...(zoom ? { zoom } : {}) });
     this.flush(watch);
@@ -270,8 +275,10 @@ export class SimScreens {
     this.target(id);
     const w = this.watches.get(id);
     if (!w) throw new ScreenError('bad_request', `bad args: this connection does not watch ${id}`);
-    if (a.on) this.zoomed.add(id);
-    else this.zoomed.delete(id);
+    if (a.on) {
+      this.zoomed.add(id);
+      this.held.add(id);
+    } else this.release(id);
     const s = this.screens.get(id);
     ack({ pane: w.pane, cols: s?.rec.cols ?? 120, rows: s?.rec.rows ?? 36, zoom: this.zoomState(id) });
   }
@@ -370,7 +377,7 @@ export class SimScreens {
     const w = this.watches.get(id);
     if (!w) return;
     this.stop(id);
-    this.zoomed.delete(id);
+    this.release(id);
     w.send({ t: 'terminal.closed', id, reason });
   }
 
@@ -440,6 +447,13 @@ export class SimScreens {
   dispose(): void {
     for (const id of [...this.watches.keys()]) this.stop(id);
     this.zoomed.clear();
+    this.held.clear();
+  }
+
+  /** #74: the watch no longer wants the tab fullscreen: it is put back (the sim's zoom is the bridge's). */
+  private release(id: string): void {
+    this.zoomed.delete(id);
+    this.held.delete(id);
   }
 }
 

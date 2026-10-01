@@ -70,6 +70,10 @@ test('with the preference off the seated watch asks for no zoom, and the chip of
   const id = await sitAt(page, 'split', 'Tofu', { 'h3d.term.fullscreen': '0' });
   await expect.poll(() => fs(page)).toMatchObject({ label: 'Split pane 120×36', pressed: false });
   expect((await log(page, 'terminal.watch')).some((w) => (w.args as { fullscreen?: boolean }).fullscreen === true)).toBe(false);
+  // The seated watch says "no" in so many words (the bridge then follows the pane for the chip); the ambient ones say nothing.
+  const watches = await log(page, 'terminal.watch');
+  expect(watches.filter((w) => (w.args as { fullscreen?: boolean }).fullscreen === false).map((w) => (w.args as { id: string }).id)).toEqual([id]);
+  expect(watches.filter((w) => (w.args as { id: string }).id !== id).every((w) => !('fullscreen' in (w.args as object)))).toBe(true);
   await chip(page).click();
   await expect.poll(() => fs(page)).toMatchObject({ label: 'Fullscreen', pressed: true });
   expect(await log(page, 'terminal.zoom')).toMatchObject([{ args: { id, on: true } }]);
@@ -170,6 +174,43 @@ test('the chip does not make the seat bar taller at 1280, and a narrow window ke
   }
   clean();
 });
+
+// U1: at a phone's width the chip used to run past the bar and the window (the look group did not wrap or shrink), so
+// the state and the switch were clipped. Every state, at a phone, a small phone and a wide window: the chip is inside
+// the bar, the bar inside the window, and what is at the chip's centre is the chip (a tap lands on it).
+for (const [state, zoom, init] of [
+  ['zoomed', 'split', {}],
+  ['split', 'split', { 'h3d.term.fullscreen': '0' }],
+  ['unavailable', 'headless', {}],
+] as const) {
+  test(`the ${state} chip stays inside the seat bar and the window at 320, 390 and 1280 px`, async ({ page }) => {
+    test.setTimeout(150_000);
+    const clean = watchErrors(page);
+    await sitAt(page, zoom, 'Tofu', init);
+    for (const width of [1280, 390, 320]) {
+      await page.setViewportSize({ width, height: 720 });
+      await frames(page, 3);
+      await expect(chip(page)).toBeVisible();
+      const m = await page.evaluate(() => {
+        const r = (e: Element) => e.getBoundingClientRect();
+        const seat = r(document.querySelector('.seat')!);
+        const c = document.querySelector<HTMLElement>('.seat .seat-fs')!;
+        const b = r(c);
+        const at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+        return { seat: [seat.left, seat.right], chip: [b.left, b.right, b.width], view: document.documentElement.clientWidth, hit: !!at && c.contains(at), text: c.textContent };
+      });
+      const why = `${state} at ${width}px: ${JSON.stringify(m)}`;
+      expect(m.seat[0], why).toBeGreaterThanOrEqual(0);
+      expect(m.seat[1], why).toBeLessThanOrEqual(m.view);
+      expect(m.chip[0], why).toBeGreaterThanOrEqual(m.seat[0] as number);
+      expect(m.chip[1], why).toBeLessThanOrEqual(m.seat[1] as number);
+      expect(m.chip[2], why).toBeGreaterThan(40);
+      expect(m.hit, why).toBe(true);
+      await shot(page, `h74-chip-${state}-${width}`);
+    }
+    clean();
+  });
+}
 
 test('the chip keeps AA contrast in every state at all three presets, and the bar stays one piece', async ({ page }) => {
   test.setTimeout(240_000);

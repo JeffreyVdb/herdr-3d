@@ -29,8 +29,11 @@ interface Watch {
   full: boolean;
   n: number;
   resyncAt: number;
-  /** #74: the watch asks the bridge to zoom the pane's tab (the seated screen). */
-  fullscreen: boolean;
+  /**
+   * #74: what the watch told the bridge: true asks it to zoom the pane's tab (the seated screen), false follows the
+   * pane without zooming it, undefined sent nothing (the ambient laptops: shown as they are, never followed).
+   */
+  fullscreen: boolean | undefined;
   /** #74: where the pane stands in its tab, and the size its screen is at; null before the ack (and on a bridge before #74). */
   zoom: ZoomInfo | null;
   size: { cols: number; rows: number } | null;
@@ -73,24 +76,25 @@ export class Watches {
   /** The zoom state of a watch (#74), null when it has none. */
   zoomOf(id: string): { zoom: ZoomInfo; size: { cols: number; rows: number } | null; fullscreen: boolean } | null {
     const w = this.on.get(id);
-    return w?.zoom ? { zoom: w.zoom, size: w.size, fullscreen: w.fullscreen } : null;
+    return w?.zoom ? { zoom: w.zoom, size: w.size, fullscreen: w.fullscreen === true } : null;
   }
 
   /**
-   * `fullscreen`: the watches that ask the bridge to zoom their pane's tab (the seated screen; the others show a pane
-   * at its own size and must not move the tab around). A change restarts the watch, as a new fps does.
+   * `fullscreen`: the watches that say what they want of their pane's tab (the seated screen: true zooms it, false
+   * only follows it; the others show a pane at its own size and must not move the tab around, so they are not in it).
+   * A change restarts the watch, as a new fps does.
    */
-  sync(want: ReadonlyMap<string, number>, fullscreen: ReadonlySet<string> = new Set()): void {
+  sync(want: ReadonlyMap<string, number>, fullscreen: ReadonlyMap<string, boolean> = new Map()): void {
     if (this.disabled) return;
     for (const id of [...this.on.keys()]) if (!want.has(id)) this.unwatch(id);
     for (const [id, fps] of want) {
-      const fs = fullscreen.has(id) && !this.noFullscreen;
+      const fs = this.noFullscreen ? undefined : fullscreen.get(id);
       const w = this.on.get(id);
       if (w?.fps !== fps || w.fullscreen !== fs) this.watch(id, fps, fs);
     }
   }
 
-  private watch(id: string, fps: number, fullscreen = false): void {
+  private watch(id: string, fps: number, fullscreen?: boolean): void {
     const gen = ++this.gen;
     // A watch that replaces another (a new fps, fullscreen on or off) keeps what the last one knew until its ack: the
     // seat bar's chip does not blink out and back in.
@@ -98,11 +102,11 @@ export class Watches {
     this.on.set(id, { fps, gen, full: false, n: 0, resyncAt: this.host.now() + RESYNC_MS, fullscreen, zoom: prev?.zoom ?? null, size: prev?.size ?? null });
     // No cols / rows: the bridge observes at the pane's own size (herdr's observer clips a smaller one, it does not
     // reflow), and each frame says the size the screen is drawn at.
-    void this.host.send('terminal.watch', { id, fps, ...(fullscreen ? { fullscreen: true } : {}) }).then((r) => {
+    void this.host.send('terminal.watch', { id, fps, ...(fullscreen === undefined ? {} : { fullscreen }) }).then((r) => {
       const w = this.on.get(id);
       if (!w || w.gen !== gen) return;
       if (r.ok) return this.acked(id, w, r.data);
-      if (fullscreen && r.code === 'bad_request') {
+      if (fullscreen !== undefined && r.code === 'bad_request') {
         // A bridge before #74 does not know the argument: watch without it, and never ask again.
         this.noFullscreen = true;
         this.watch(id, fps);
