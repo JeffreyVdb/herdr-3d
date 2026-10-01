@@ -36,7 +36,8 @@ func TestGitHubAllowlist(t *testing.T) {
 		t.Fatalf("argv = %q", argv)
 	}
 	want := []Doc{"add-comment", "add-project-item", "close-issue", "closed-issues-page", "create-pr", "feed", "issue-detail", "issue-node", "merge-pr",
-		"open-issues-page", "open-pr-for-head", "open-prs-page", "pr-detail", "pr-node", "pr-nodes", "prs-by-node", "set-status", "status-target"}
+		"open-issues-page", "open-pr-for-head", "open-prs-page", "pr-detail", "pr-node", "pr-nodes", "project-items-page", "prs-by-node", "set-position",
+		"set-status", "status-target"}
 	if got := Docs(); !slices.Equal(got, want) {
 		t.Fatalf("documents = %q", got)
 	}
@@ -44,6 +45,7 @@ func TestGitHubAllowlist(t *testing.T) {
 	mutations := map[Doc][]string{
 		"add-comment": {"addComment"}, "add-project-item": {"addProjectV2ItemById"}, "close-issue": {"closeIssue"},
 		"create-pr": {"createPullRequest"}, "merge-pr": {"mergePullRequest"}, "set-status": {"updateProjectV2ItemFieldValue"},
+		"set-position": {"updateProjectV2ItemPosition"},
 	}
 	inputRe := regexp.MustCompile(`(\w+)\(input:`)
 	for _, d := range Docs() {

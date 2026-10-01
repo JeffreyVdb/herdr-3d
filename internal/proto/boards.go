@@ -135,11 +135,14 @@ type IssueCloseArgs struct {
 	Confirm bool   `json:"confirm"`
 }
 
-// IssueSetStatusArgs are the args of issue.set_status.
+// IssueSetStatusArgs are the args of issue.set_status. After, when set,
+// places the card in the column too (the order capability): null is the
+// top, a card id of that column is right after it. Absent: the status only.
 type IssueSetStatusArgs struct {
-	Session string `json:"session"`
-	ID      string `json:"id"`
-	Column  string `json:"column"`
+	Session string           `json:"session"`
+	ID      string           `json:"id"`
+	Column  string           `json:"column"`
+	After   Optional[string] `json:"after,omitzero"`
 }
 
 // PRMergeArgs are the args of pr.merge. Override lets a pull request whose

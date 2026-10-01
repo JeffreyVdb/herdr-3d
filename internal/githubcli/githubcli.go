@@ -46,10 +46,12 @@ const (
 	DocClosedPage    Doc = "closed-issues-page"
 	DocPRNodes       Doc = "pr-nodes"
 	DocPRsByNode     Doc = "prs-by-node"
+	DocItemsPage     Doc = "project-items-page"
 
 	DocAddComment     Doc = "add-comment"
 	DocAddProjectItem Doc = "add-project-item"
 	DocSetStatus      Doc = "set-status"
+	DocSetPosition    Doc = "set-position"
 	DocCloseIssue     Doc = "close-issue"
 	DocMergePR        Doc = "merge-pr"
 	DocCreatePR       Doc = "create-pr"

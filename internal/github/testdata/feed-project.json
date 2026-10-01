@@ -651,6 +651,100 @@
        ]
       }
      ]
+    },
+    "items": {
+     "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": "o1"
+     },
+     "nodes": [
+      {
+       "id": "PVTI_7",
+       "content": {
+        "__typename": "Issue",
+        "id": "I_7"
+       },
+       "fieldValueByName": {
+        "optionId": "ccf5765b"
+       }
+      },
+      {
+       "id": "PVTI_draft",
+       "content": {
+        "__typename": "DraftIssue"
+       },
+       "fieldValueByName": {
+        "optionId": "49294ed0"
+       }
+      },
+      {
+       "id": "PVTI_30",
+       "content": {
+        "__typename": "Issue",
+        "id": "I_30"
+       },
+       "fieldValueByName": {
+        "optionId": "49294ed0"
+       }
+      },
+      {
+       "id": "PVTI_pr",
+       "content": {
+        "__typename": "PullRequest",
+        "id": "PR_31"
+       },
+       "fieldValueByName": {
+        "optionId": "ae6334b4"
+       }
+      },
+      {
+       "id": "PVTI_elsewhere",
+       "content": {
+        "__typename": "Issue",
+        "id": "I_elsewhere_9"
+       },
+       "fieldValueByName": {
+        "optionId": "ae6334b4"
+       }
+      },
+      {
+       "id": "PVTI_9",
+       "content": {
+        "__typename": "Issue",
+        "id": "I_9"
+       },
+       "fieldValueByName": {
+        "optionId": "ae6334b4"
+       }
+      },
+      {
+       "id": "PVTI_hidden",
+       "content": null,
+       "fieldValueByName": {
+        "optionId": "49294ed0"
+       }
+      },
+      {
+       "id": "PVTI_4",
+       "content": {
+        "__typename": "Issue",
+        "id": "I_4"
+       },
+       "fieldValueByName": {
+        "optionId": "ccf5765b"
+       }
+      },
+      {
+       "id": "PVTI_6",
+       "content": {
+        "__typename": "Issue",
+        "id": "I_6"
+       },
+       "fieldValueByName": {
+        "optionId": "ccf5765b"
+       }
+      }
+     ]
     }
    }
   },

@@ -123,6 +123,7 @@ type boardFloor struct {
 	lastErr   string
 
 	inflight  bool
+	writes    int // successful writes so far: a poll that began before the last one is not shown
 	lastStart time.Time
 	nextAt    time.Time
 }
@@ -350,13 +351,13 @@ func (h *Hub) tryPoll(ctx context.Context, bf *boardFloor, keys int) bool {
 	}
 	bf.inflight, bf.lastStart = true, now
 	prev := codehost.PrevState{OpenIDs: slices.Clone(bf.openIDs)}
-	set, key := bf.set, bf.set.Key
+	set, key, writes := bf.set, bf.set.Key, bf.writes
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
 		defer func() { <-h.boards.polls }()
 		res := pollProviders(ctx, set, prev)
-		if err := h.doWait(ctx, func() { h.finishPoll(ctx, bf, key, res) }); err != nil {
+		if err := h.doWait(ctx, func() { h.finishPoll(ctx, bf, key, writes, res) }); err != nil {
 			h.log.Debug("board poll abandoned", "session", bf.session, "err", err)
 		}
 	}()
@@ -418,13 +419,22 @@ func pollProviders(ctx context.Context, set BoardSet, prev codehost.PrevState) p
 	return res
 }
 
-// finishPoll applies a poll on the hub goroutine.
-func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, res pollResult) {
+// finishPoll applies a poll on the hub goroutine. writes is the floor's
+// count of writes when the poll began.
+func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes int, res pollResult) {
 	bf.inflight = false
 	if h.boards.floors[bf.session] != bf || bf.set.Key != key {
 		return // the floor's link changed meanwhile
 	}
 	now := h.opts.Now()
+	if writes != bf.writes {
+		// A write landed while this poll was in flight: what it read may be
+		// from before the write, and must not become the latest board (a
+		// card would jump back). The refresh the write asked for runs now.
+		bf.nextAt = now
+		h.tryPoll(ctx, bf, h.boardKeys())
+		return
+	}
 	g := h.boards.gates[bf.info.ID]
 	if g == nil {
 		g = &rateGate{}
@@ -550,6 +560,7 @@ func (h *Hub) queueBoard(ctx context.Context, session string) {
 	if bf == nil {
 		return
 	}
+	bf.writes++
 	bf.nextAt = h.opts.Now()
 	if !bf.inflight {
 		h.tryPoll(ctx, bf, h.boardKeys())

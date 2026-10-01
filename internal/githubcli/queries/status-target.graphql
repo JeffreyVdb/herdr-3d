@@ -1,8 +1,8 @@
-query StatusTarget($owner:String!, $repo:String!, $number:Int!, $projectOwner:String!, $projectNumber:Int!) {
+query StatusTarget($owner:String!, $repo:String!, $number:Int!, $projectOwner:String!, $projectNumber:Int!, $statusField:String!) {
   repository(owner:$owner,name:$repo) {
     issue(number:$number) {
       id number
-      projectItems(first:100) { pageInfo { hasNextPage endCursor } nodes { id project { id number } } }
+      projectItems(first:100) { pageInfo { hasNextPage endCursor } nodes { id project { id number } fieldValueByName(name:$statusField) { ... on ProjectV2ItemFieldSingleSelectValue { optionId } } } }
     }
   }
   repositoryOwner(login:$projectOwner) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -208,7 +209,15 @@ func TestBoardWithoutProject(t *testing.T) {
 	if v := gh.last(githubcli.DocFeed); v["hasProject"] != false || v["projectOwner"] != "JeffreyVdb" || v["projectNumber"] != 0.0 {
 		t.Fatalf("variables = %v", v)
 	}
-	err = tr.SetStatus(context.Background(), "JeffreyVdb/h3d-lab#1", "open")
+	for _, c := range b.Cards {
+		if c.Position != nil {
+			t.Fatalf("a card without a project has a position: %+v", c)
+		}
+	}
+	if tr.Info().Capabilities.Order {
+		t.Fatal("ordered without a project")
+	}
+	err = tr.SetStatus(context.Background(), "JeffreyVdb/h3d-lab#1", "open", nil)
 	if !errors.Is(err, provider.ErrUnsupported) {
 		t.Fatalf("SetStatus without a project: %v", err)
 	}
@@ -678,5 +687,119 @@ func TestRecentClosedPaging(t *testing.T) {
 				t.Fatalf("%d pages, %d cards (%d closed), truncated %v", pages, len(b.Cards), closed, b.Truncated)
 			}
 		})
+	}
+}
+
+func positions(b tracker.Board) map[string]int {
+	out := map[string]int{}
+	for _, c := range b.Cards {
+		if c.Position != nil {
+			out[c.Key] = *c.Position
+		}
+	}
+	return out
+}
+
+// The cards are ranked in the project's own order (items by POSITION): only
+// the issues that are cards of the board, matched by node id; drafts, pull
+// requests, content out of reach, another repository's issues and the
+// issues not on the board (closed before the window) are skipped. A card
+// that is not in the project has no position.
+func TestProjectOrder(t *testing.T) {
+	reg, gh := newRegistry(t, feedOnly(t, fixture(t, "feed-project.json")))
+	tr, _ := reg.For(projectCfg)
+	if !tr.Info().Capabilities.Order {
+		t.Fatal("a project's board is not ordered")
+	}
+	b, err := tr.Board(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := positions(b), map[string]int{"#7": 0, "#30": 1, "#9": 2, "#6": 3}; !maps.Equal(got, want) || b.Truncated {
+		t.Fatalf("positions = %v (truncated %v), want %v", got, b.Truncated, want)
+	}
+	// The order is read in the feed itself: one call.
+	if !slices.Equal(gh.docs(), []githubcli.Doc{githubcli.DocFeed}) {
+		t.Fatalf("calls = %v", gh.docs())
+	}
+}
+
+// orderNodes is a page of project items for issue nodes ("" a draft), each in column.
+func orderNodes(next bool, cursor string, column string, nodes ...string) string {
+	var items []string
+	for _, n := range nodes {
+		content := `{"__typename":"DraftIssue"}`
+		if n != "" {
+			content = `{"__typename":"Issue","id":"` + n + `"}`
+		}
+		items = append(items, `{"id":"PVTI_`+n+`","content":`+content+`,"fieldValueByName":{"optionId":"`+column+`"}}`)
+	}
+	return fmt.Sprintf(`{"pageInfo":{"hasNextPage":%v,"endCursor":%q},"nodes":[%s]}`, next, cursor, strings.Join(items, ","))
+}
+
+// More than 100 items are paged (after the cursor, POSITION ascending) and
+// ranked once they are all read; an item seen twice counts where it was
+// first. Past the page limit there is no order at all, never a partial one:
+// the board is truncated and the cards keep the client's fallback.
+func TestProjectOrderPaging(t *testing.T) {
+	ctx := context.Background()
+	withFirst := func(first string) string {
+		return edit(t, "feed-project.json", func(m map[string]any) {
+			var page map[string]any
+			_ = json.Unmarshal([]byte(first), &page)
+			dig(m, "data", "repositoryOwner", "projectV2")["items"] = page
+		})
+	}
+	pages := 0
+	reg, gh := newRegistry(t, func(doc githubcli.Doc, vars map[string]any) (string, error) {
+		switch doc {
+		case githubcli.DocFeed:
+			return withFirst(orderNodes(true, "o1", "ae6334b4", "I_9", "")), nil
+		case githubcli.DocItemsPage:
+			pages++
+			if vars["projectId"] != "PVT_kwHOAAplCs4Bk8CS" || vars["after"] != "o1" || vars["statusField"] != "Status" {
+				t.Errorf("page vars = %v", vars)
+			}
+			return `{"data":{"node":{"items":` + orderNodes(false, "o2", "49294ed0", "I_30", "I_9", "I_7") + `},"rateLimit":{"cost":1,"limit":5000,"remaining":4000,"resetAt":"2026-09-29T13:00:00Z"}}}`, nil
+		}
+		t.Errorf("unexpected %s", doc)
+		return "", nil
+	})
+	tr, _ := reg.For(projectCfg)
+	b, err := tr.Board(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := positions(b), map[string]int{"#9": 0, "#30": 1, "#7": 2}; !maps.Equal(got, want) || pages != 1 || b.Truncated {
+		t.Fatalf("positions = %v after %d pages (truncated %v), want %v", got, pages, b.Truncated, want)
+	}
+	if b.Rate == nil || b.Rate.Remaining != 4000 {
+		t.Fatalf("the rate of the last page: %+v", b.Rate)
+	}
+	_ = gh
+
+	// Never-ending: the page limit, then no positions.
+	pages = 0
+	reg, _ = newRegistry(t, func(doc githubcli.Doc, vars map[string]any) (string, error) {
+		switch doc {
+		case githubcli.DocFeed:
+			return withFirst(orderNodes(true, "c0", "ae6334b4", "I_9")), nil
+		case githubcli.DocItemsPage:
+			pages++
+			if want := fmt.Sprintf("c%d", pages-1); vars["after"] != want {
+				t.Errorf("page %d after %v", pages, vars["after"])
+			}
+			return `{"data":{"node":{"items":` + orderNodes(true, fmt.Sprintf("c%d", pages), "49294ed0", fmt.Sprintf("I_x%d", pages)) + `}}}`, nil
+		}
+		t.Errorf("unexpected %s", doc)
+		return "", nil
+	})
+	tr, _ = reg.For(projectCfg)
+	b, err = tr.Board(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := positions(b); len(got) != 0 || !b.Truncated || pages != pageLimit-1 {
+		t.Fatalf("positions = %v, truncated %v, %d pages", got, b.Truncated, pages)
 	}
 }

@@ -383,3 +383,110 @@ func TestPRGetComment(t *testing.T) {
 		t.Fatalf("audit = %+v", rows)
 	}
 }
+
+// issue.set_status's after: absent is the status only, null the top of the
+// column, a card id right after that card of the column; anything else is
+// refused before the provider is asked, and so is any after without the
+// order capability.
+func TestIssueSetStatusAfter(t *testing.T) {
+	bb := startBoardBridge(t, nil)
+	tr, _ := bb.fb.repo("JeffreyVdb/lab")
+	tr.caps.Order = true
+	tr.board.Cards = []tracker.Card{card("JeffreyVdb/lab#9", "#9", "Boards", "todo"), card("JeffreyVdb/lab#5", "#5", "Five", "todo"),
+		card("JeffreyVdb/lab#7", "#7", "Old", "done")}
+	bb.link("JeffreyVdb/lab")
+	bb.polled("s")
+	c := bb.c
+	last := func() string { calls := tr.Calls(); return calls[len(calls)-1] }
+	// No poll lands meanwhile: what the board knows of a move is the write's.
+	tr.set(func(f *fakeTracker) { f.gate = make(chan struct{}) })
+
+	c.mustAck(proto.CmdIssueSetStatus, proto.IssueSetStatusArgs{Session: "s", ID: "JeffreyVdb/lab#9", Column: "done"})
+	if got := last(); got != "set_status JeffreyVdb/lab#9 done" {
+		t.Fatalf("absent after: %q", got)
+	}
+	c.mustAck(proto.CmdIssueSetStatus, proto.IssueSetStatusArgs{Session: "s", ID: "JeffreyVdb/lab#9", Column: "done", After: proto.Null[string]()})
+	if got := last(); got != `set_status JeffreyVdb/lab#9 done after=""` {
+		t.Fatalf("null after: %q", got)
+	}
+	// #9 is in done now (the write said so, before any poll): #5 can land right after it.
+	c.mustAck(proto.CmdIssueSetStatus, proto.IssueSetStatusArgs{Session: "s", ID: "JeffreyVdb/lab#5", Column: "done", After: proto.Some("JeffreyVdb/lab#9")})
+	if got := last(); got != `set_status JeffreyVdb/lab#5 done after="JeffreyVdb/lab#9"` {
+		t.Fatalf("after a card: %q", got)
+	}
+	// A reorder within the card's own column is a move too.
+	c.mustAck(proto.CmdIssueSetStatus, proto.IssueSetStatusArgs{Session: "s", ID: "JeffreyVdb/lab#7", Column: "done", After: proto.Some("JeffreyVdb/lab#5")})
+	n := len(tr.Calls())
+	for name, after := range map[string]string{
+		"unknown":      "JeffreyVdb/lab#404",
+		"wrong column": "JeffreyVdb/lab#1",
+		"self":         "JeffreyVdb/lab#7",
+		"empty":        "",
+		"control":      "a\nb",
+	} {
+		args := proto.IssueSetStatusArgs{Session: "s", ID: "JeffreyVdb/lab#7", Column: "done", After: proto.Some(after)}
+		if name == "wrong column" {
+			args = proto.IssueSetStatusArgs{Session: "s", ID: "JeffreyVdb/lab#7", Column: "todo", After: proto.Some("JeffreyVdb/lab#9")}
+		}
+		c.mustError(proto.CmdIssueSetStatus, args, proto.ErrBadRequest)
+	}
+	c.mustError(proto.CmdIssueSetStatus, map[string]any{"session": "s", "id": "JeffreyVdb/lab#7", "column": "done", "after": 3}, proto.ErrBadRequest)
+	if len(tr.Calls()) != n {
+		t.Fatalf("a refused after reached the provider: %q", tr.Calls()[n:])
+	}
+	rows := auditRows(t, bb, proto.CmdIssueSetStatus)
+	if r := rows[2]; !r.OK || !strings.Contains(r.Result, `"after":"JeffreyVdb/lab#9"`) {
+		t.Fatalf("audit = %+v", r)
+	}
+
+	tr.set(func(f *fakeTracker) { close(f.gate); f.gate = nil })
+
+	// Without the order capability any after is unsupported; absent still works.
+	tr2, _ := bb.fb.repo("JeffreyVdb/reorder")
+	tr2.board.Cards = []tracker.Card{card("JeffreyVdb/reorder#1", "#1", "One", "todo"), card("JeffreyVdb/reorder#2", "#2", "Two", "todo")}
+	bb.link("JeffreyVdb/reorder")
+	eventually(t, "the poll of the new link", func() bool { return tr2.Polls() > 0 })
+	eventually(t, "its cache", func() bool {
+		cs, err := bb.st.BoardCaches(context.Background())
+		return err == nil && strings.Contains(string(cs["s"].Issues), "reorder#2")
+	})
+	c.mustError(proto.CmdIssueSetStatus, proto.IssueSetStatusArgs{Session: "s", ID: "JeffreyVdb/reorder#1", Column: "todo", After: proto.Null[string]()}, proto.ErrUnsupported)
+	c.mustError(proto.CmdIssueSetStatus, proto.IssueSetStatusArgs{Session: "s", ID: "JeffreyVdb/reorder#1", Column: "todo", After: proto.Some("JeffreyVdb/reorder#2")}, proto.ErrUnsupported)
+	c.mustAck(proto.CmdIssueSetStatus, proto.IssueSetStatusArgs{Session: "s", ID: "JeffreyVdb/reorder#1", Column: "done"})
+	if len(tr2.Calls()) != 1 {
+		t.Fatalf("calls = %q", tr2.Calls())
+	}
+}
+
+// A poll that was in flight when a write landed read the board from before
+// it: it never becomes the latest board, and the refresh the write asked for
+// follows.
+func TestBoardWriteDuringPoll(t *testing.T) {
+	bb := startBoardBridge(t, nil)
+	tr, _ := bb.fb.repo("JeffreyVdb/lab")
+	tr.board.Cards = []tracker.Card{card("JeffreyVdb/lab#9", "#9", "Boards", "todo")}
+	bb.link("JeffreyVdb/lab")
+	bb.polled("s")
+	w := bb.watcher()
+	w.watch("s")
+	w.pair()
+	// The next poll reads the board as it is now, then waits.
+	tr.set(func(f *fakeTracker) { f.gate, f.early = make(chan struct{}), true })
+	before := tr.Polls()
+	bb.clk.Advance(time.Minute)
+	eventually(t, "the poll in flight", func() bool { return tr.Polls() == before+1 })
+	// The write lands, and the provider has the card in done from now on.
+	bb.c.mustAck(proto.CmdIssueSetStatus, proto.IssueSetStatusArgs{Session: "s", ID: "JeffreyVdb/lab#9", Column: "done"})
+	tr.set(func(f *fakeTracker) {
+		f.board.Cards = []tracker.Card{card("JeffreyVdb/lab#9", "#9", "Boards", "done")}
+		close(f.gate)
+		f.gate, f.early = nil, false
+	})
+	is, _ := w.pair()
+	if len(is.Cards) != 1 || is.Cards[0].Column != "done" || is.Initial {
+		t.Fatalf("the first board after the write = %+v", is.Cards)
+	}
+	if tr.Polls() != before+2 {
+		t.Fatalf("%d polls after the write, want the one in flight and its refresh", tr.Polls()-before)
+	}
+}

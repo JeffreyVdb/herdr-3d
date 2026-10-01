@@ -49,6 +49,7 @@ type fakeTracker struct {
 	board tracker.Board
 	err   error
 	gate  chan struct{} // Board waits for it when set
+	early bool          // Board reads its answer before it waits (a poll that read before a write)
 	polls int
 	calls []string
 	// answers of the other calls
@@ -65,12 +66,17 @@ func (f *fakeTracker) Board(ctx context.Context) (tracker.Board, error) {
 	f.mu.Lock()
 	gate := f.gate
 	f.polls++
+	read, rerr := f.board, f.err
+	early := f.early
 	f.mu.Unlock()
 	if gate != nil {
 		select {
 		case <-gate:
 		case <-ctx.Done():
 		}
+	}
+	if early {
+		return read, rerr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -128,8 +134,27 @@ func (f *fakeTracker) Close(_ context.Context, id, reason string) error {
 	return f.record("close", "%s %s", id, reason)
 }
 
-func (f *fakeTracker) SetStatus(_ context.Context, id, column string) error {
-	return f.record("set_status", "%s %s", id, column)
+// SetStatus records the move and, unless it fails, makes it on the board
+// (like a provider: the next poll has the card in its new column).
+func (f *fakeTracker) SetStatus(_ context.Context, id, column string, at *tracker.Anchor) error {
+	var err error
+	if at == nil {
+		err = f.record("set_status", "%s %s", id, column)
+	} else {
+		err = f.record("set_status", "%s %s after=%q", id, column, at.After)
+	}
+	if err == nil {
+		f.mu.Lock()
+		cards := slices.Clone(f.board.Cards)
+		for i := range cards {
+			if cards[i].ID == id {
+				cards[i].Column = column
+			}
+		}
+		f.board.Cards = cards
+		f.mu.Unlock()
+	}
+	return err
 }
 
 func (f *fakeTracker) ItemFromRun(repo string, n int) (string, bool) {

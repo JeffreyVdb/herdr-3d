@@ -37,8 +37,49 @@ type feed struct {
 	keep      []string // open at the last poll, still open or unreadable, and not in requests
 	truncated bool
 	rate      *provider.Rate
-	watched   map[string]bool // request ids the merges were looked up for
-	project   *project        // the live project and its status field, project mode
+	watched   map[string]bool   // request ids the merges were looked up for
+	project   *project          // the live project and its status field, project mode
+	order     *order            // the project's order, project mode (nil when it was longer than the pages read)
+	cardNodes map[string]string // issue node id → card id, of the cards of this feed
+}
+
+// order is every item of the project in its manual order (GitHub's
+// position, the order of an unsorted board view), the ones that are no card
+// of this board too: other repositories' issues, drafts, pull requests.
+type order struct {
+	items []orderItem
+}
+
+type orderItem struct {
+	id     string // the project item
+	node   string // its issue's node id; "" for a draft, a pull request or content out of reach
+	card   string // the card id when the issue is a card of the board
+	column string // its status option id ("": none)
+}
+
+// itemOf is the project item of a card ("" when it has none).
+func (o *order) itemOf(card string) string {
+	for _, it := range o.items {
+		if it.card == card {
+			return it.id
+		}
+	}
+	return ""
+}
+
+// orderPage is one page of the project's items (the ProjectOrder fragment).
+type orderPage struct {
+	PageInfo pageInfo `json:"pageInfo"`
+	Nodes    []struct {
+		ID      string `json:"id"`
+		Content *struct {
+			Typename string `json:"__typename"`
+			ID       string `json:"id"`
+		} `json:"content"`
+		Value *struct {
+			OptionID string `json:"optionId"`
+		} `json:"fieldValueByName"`
+	} `json:"nodes"`
 }
 
 // project is the configured project as GitHub returned it.
@@ -162,8 +203,9 @@ type prNode struct {
 }
 
 type projectNode struct {
-	ID     string `json:"id"`
-	Number int    `json:"number"`
+	ID     string     `json:"id"`
+	Number int        `json:"number"`
+	Items  *orderPage `json:"items"`
 	Fields struct {
 		PageInfo pageInfo `json:"pageInfo"`
 		Nodes    []struct {
@@ -364,6 +406,15 @@ func (s *source) fetchFeed(ctx context.Context, watched []string) (*feed, error)
 			return nil, provider.Failed("GitHub project %d has no single-select field %q", s.cfg.ProjectNumber, s.statusField())
 		}
 		f.project = pr
+		ord, complete, err := s.readOrder(ctx, pr.ID, p.Items, f)
+		if err != nil {
+			return nil, err
+		}
+		if complete {
+			f.order = ord
+		} else { // never a partial order: the cards keep the old one
+			f.truncated = true
+		}
 		for _, o := range pr.Options {
 			columns = append(columns, tracker.Column{ID: o.ID, Name: o.Name, Done: strings.EqualFold(strings.TrimSpace(o.Name), "done")})
 		}
@@ -374,6 +425,7 @@ func (s *source) fetchFeed(ctx context.Context, watched []string) (*feed, error)
 	// Cards: the open issues, and the ones closed since the cut-off.
 	seen := map[int]bool{}
 	var cards []tracker.Card
+	cardNodes := map[string]string{} // issue node id → card id
 	noStatus := false
 	add := func(n *issueNode, closedOnly bool) {
 		if seen[n.Number] {
@@ -391,6 +443,7 @@ func (s *source) fetchFeed(ctx context.Context, watched []string) (*feed, error)
 			noStatus = true
 		}
 		s.remember(n.ID, card.ID)
+		cardNodes[n.ID] = card.ID
 		cards = append(cards, card)
 	}
 	for i := range issues {
@@ -402,6 +455,10 @@ func (s *source) fetchFeed(ctx context.Context, watched []string) (*feed, error)
 		}
 	}
 	sort.SliceStable(cards, func(i, j int) bool { return cards[i].UpdatedAt > cards[j].UpdatedAt })
+	f.cardNodes = cardNodes
+	if f.order != nil {
+		rankCards(f.order, cards, cardNodes)
+	}
 	if cards == nil {
 		cards = []tracker.Card{}
 	}
@@ -463,6 +520,92 @@ func (s *source) fetchFeed(ctx context.Context, watched []string) (*feed, error)
 		}
 	}
 	return f, nil
+}
+
+// readOrder reads the project's items in their order: first is the page the
+// feed brought (nil: none yet, the first page is read here), the rest is
+// read a page at a time up to the page limit. complete is false when there
+// were more. A repeated item (the order changed while it was paged) counts
+// where it was first seen. f takes the rate of the pages.
+func (s *source) readOrder(ctx context.Context, projectID string, first *orderPage, f *feed) (*order, bool, error) {
+	o := &order{}
+	seen := map[string]bool{}
+	page := first
+	cursor := ""
+	for n := 0; ; n++ {
+		if page == nil {
+			if n >= pageLimit {
+				return nil, false, nil
+			}
+			var more struct {
+				Node *struct {
+					Items *orderPage `json:"items"`
+				} `json:"node"`
+				RateLimit *rateNode `json:"rateLimit"`
+			}
+			vars := map[string]any{"projectId": projectID, "statusField": s.statusField()}
+			if cursor != "" {
+				vars["after"] = cursor
+			}
+			if err := s.query(ctx, githubcli.DocItemsPage, vars, &more); err != nil {
+				return nil, false, err
+			}
+			if r := more.RateLimit.rate(); r != nil && f != nil {
+				f.rate = r
+			}
+			if more.Node == nil || more.Node.Items == nil {
+				return nil, false, provider.Failed("GitHub: the project's items could not be read")
+			}
+			page = more.Node.Items
+		}
+		for _, it := range page.Nodes {
+			if it.ID == "" || seen[it.ID] {
+				continue
+			}
+			seen[it.ID] = true
+			item := orderItem{id: it.ID}
+			if it.Content != nil && it.Content.Typename == "Issue" {
+				item.node = it.Content.ID
+			}
+			if it.Value != nil {
+				item.column = it.Value.OptionID
+			}
+			o.items = append(o.items, item)
+		}
+		if !page.PageInfo.HasNextPage {
+			return o, true, nil
+		}
+		cursor, page = page.PageInfo.EndCursor, nil
+	}
+}
+
+// rankCards gives the cards their Position, 0 first, in the project's
+// order, and the order's items their card. Items are matched to cards by
+// the issue's node id (nodes: node id → card id), never by number (another
+// repository's issue may have the same one).
+func rankCards(o *order, cards []tracker.Card, nodes map[string]string) {
+	at := map[string]int{}
+	for i := range cards {
+		cards[i].Position = nil
+		at[cards[i].ID] = i
+	}
+	byNode := map[string]int{}
+	for node, id := range nodes {
+		if i, ok := at[id]; ok {
+			byNode[node] = i
+		}
+	}
+	rank := 0
+	for k := range o.items {
+		i, ok := byNode[o.items[k].node]
+		if o.items[k].node == "" || !ok || cards[i].Position != nil {
+			continue
+		}
+		r := rank
+		cards[i].Position = &r
+		o.items[k].card = cards[i].ID
+		rank++
+	}
 }
 
 // prior is a request of the last poll with its GraphQL node id.
