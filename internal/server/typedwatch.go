@@ -9,7 +9,10 @@ package server
 // prompt is kept, never its text.
 
 import (
+	"context"
 	"crypto/sha256"
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -92,4 +95,51 @@ func (p *pasteWatch) takeHits() int {
 	n := p.hits
 	p.hits = 0
 	return n
+}
+
+// eraseTimeout bounds the erase of a partly typed prompt (#95 R1); it has
+// a context of its own, so a prompt cut short by its context is erased
+// too.
+const eraseTimeout = 15 * time.Second
+
+// erasePartlyTyped erases what a failed TypePrompt (err) left in worker
+// id's input box, on its input lane before anything else is typed there
+// (#95 R1): a retry, or any later prompt, would be appended to it and
+// sent with it. An error that typed nothing erases nothing. When the
+// erase fails too, the worker's input is marked dirty (eraseDirty).
+func (h *Hub) erasePartlyTyped(ctx context.Context, id, session, pane string, err error,
+	erase func(ctx context.Context, session, pane string, n int) error) {
+	var part *herdr.PartlyTypedError
+	if !errors.As(err, &part) {
+		return
+	}
+	ectx, cancel := context.WithTimeout(context.WithoutCancel(ctx), eraseTimeout)
+	defer cancel()
+	if eerr := erase(ectx, session, pane, part.Erase); eerr != nil {
+		h.log.Warn("a partly typed prompt could not be erased", "worker", id, "err", eerr)
+		if derr := h.doWait(ectx, func() { h.dirty[id] = max(h.dirty[id], part.Erase) }); derr != nil {
+			h.log.Warn("a partly typed prompt not erased, not remembered", "worker", id, "err", derr)
+		}
+	}
+}
+
+// eraseDirty erases what an earlier prompt that could not be erased left
+// in worker id's input box (erasePartlyTyped), before a prompt is typed
+// there. While that fails the prompt is refused: it would be sent with
+// the leftover.
+func (h *Hub) eraseDirty(ctx context.Context, id, session, pane string,
+	erase func(ctx context.Context, session, pane string, n int) error) error {
+	n, err := query(ctx, h, func() int { return h.dirty[id] })
+	if err != nil || n == 0 {
+		return err
+	}
+	if err := erase(ctx, session, pane, n); err != nil {
+		return fmt.Errorf("%w: the worker's input box may still hold part of an earlier prompt, which could not be erased: %v",
+			errPromptFailed, err)
+	}
+	return h.doWait(ctx, func() {
+		if h.dirty[id] == n {
+			delete(h.dirty, id)
+		}
+	})
 }

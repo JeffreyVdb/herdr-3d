@@ -930,7 +930,8 @@ checkout herdr may open with it (step 1) is not a worker. Then, in order (each s
    apart (Claude Code v2.1.287 takes an input burst of more than 800 characters as a paste), then `herdr pane
    send-keys <pane> enter`. A typed line end is a new line in Claude's input, not Enter. It then waits up to 5 s for
    the worker to start (`working` or `blocked`); an agent just past its trust dialog can drop that Enter, so the bridge
-   presses `Enter` (up to 3 times) until it does. A prompt of 32 KiB takes about 2.5 s to type. **Codex**: `herdr
+   presses `Enter` (up to 3 times) until it does. A prompt of 32 KiB takes about 2.5 s to type. Typing that fails
+   part way is erased from Claude's input box (`ctrl+u backspace` pairs, as for `worker.prompt`). **Codex**: `herdr
    agent prompt <pane> <prompt> --wait --until working --until blocked --timeout 8000`, retried while herdr says the
    agent is not ready; when it took the text but dropped the Enter (herdr: `agent_prompt_stalled`) the bridge presses
    `Enter` (up to 3 times) until the worker is working. A prompt that fails does not undo the hire: the ack has
@@ -1701,6 +1702,10 @@ its length, never the text). 16 KiB takes about 1.3 s to type.
   failing: `prompt_failed`.
 - Any other state (`unknown`: herdr cannot tell yet): waited for up to 5 s to become one of those (text typed before
   Claude's input box is up is lost), else `prompt_failed`.
+- Typing that fails once it began (herdr failing between chunks, the bridge stopping): `prompt_failed`, and what was
+  typed is erased from Claude's input box first (`herdr pane send-keys <pane> ctrl+u backspace …`, on the input lane),
+  so a retry is not appended to it. When that fails too, the worker's next prompt erases first and is `prompt_failed`
+  with nothing typed while it cannot.
 
 **Codex**: `herdr agent prompt <pane> <text>` (bracketed paste, then Enter; Codex keeps a paste as typed text).
 

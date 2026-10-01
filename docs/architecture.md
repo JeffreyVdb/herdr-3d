@@ -95,7 +95,8 @@ MacBook (M2 Max)                                   devbox (Linux)
     `herdr agent prompt` is a bracketed paste, which Claude Code wraps in `<pasted_content>` (the model may then ask
     to confirm, and a slash command in it never runs). Once herdr sees the agent idle or done, `pane send-text` chunks
     of ≤ 700 characters, 50 ms apart (a burst over 800 is a paste to Claude Code v2.1.287), then `send-keys enter`,
-    on the worker's input lane. Codex keeps `agent prompt`.
+    on the worker's input lane. Codex keeps `agent prompt`. One that fails part way is erased (`ctrl+u backspace`
+    pairs) on the lane before anything else is typed.
 - **Fire (gentle)** ("Send home", M4, built): git state first (`status --porcelain`, `rev-list --count HEAD --not
   --remotes`; a worktree is deleted only when clean and pushed) → claude `/exit` (~1.3 s) / codex `/quit` + pause +
   Enter (~0.5 s) → confirm the agent released (pane back at its shell; Enter again, then Ctrl-C; still running →

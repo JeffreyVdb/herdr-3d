@@ -26,8 +26,10 @@ type TermHerdr interface {
 	SendSequence(ctx context.Context, session, pane, key string) error
 	SubmitPrompt(ctx context.Context, session, pane, text string) error
 	QueuePrompt(ctx context.Context, session, pane, text string) error
-	// #95: a prompt to Claude Code is typed (in chunks, then Enter).
+	// #95: a prompt to Claude Code is typed (in chunks, then Enter), and
+	// what a failed one left in its input box erased.
 	TypePrompt(ctx context.Context, session, pane, text string) error
+	EraseTyped(ctx context.Context, session, pane string, n int) error
 }
 
 // Bounds of worker.keys.
@@ -457,10 +459,15 @@ func (h *Hub) typePrompt(ctx context.Context, id, session, pane, text string, se
 		}
 		sleepCtx(ctx, answerPoll)
 	}
+	t := h.opts.Term
+	if err := h.eraseDirty(ctx, id, session, pane, t.EraseTyped); err != nil {
+		return nil, err
+	}
 	if err := h.doWait(ctx, func() { h.noteTyped(id, text) }); err != nil {
 		return nil, err
 	}
-	if err := h.opts.Term.TypePrompt(ctx, session, pane, text); err != nil {
+	if err := t.TypePrompt(ctx, session, pane, text); err != nil {
+		h.erasePartlyTyped(ctx, id, session, pane, err, t.EraseTyped)
 		return nil, fmt.Errorf("%w: %v", errPromptFailed, err)
 	}
 	if cur.status == statusWorking {

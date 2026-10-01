@@ -32,8 +32,10 @@ type HireHerdr interface {
 	ReadPane(ctx context.Context, session, pane string) (string, error)
 	SendKey(ctx context.Context, session, pane string, key herdr.Key) error
 	Prompt(ctx context.Context, session, pane, text string) error
-	// #95: a Claude hire's prompt is typed (in chunks, then Enter).
+	// #95: a Claude hire's prompt is typed (in chunks, then Enter), and
+	// what a failed one left in its input box erased.
 	TypePrompt(ctx context.Context, session, pane, text string) error
+	EraseTyped(ctx context.Context, session, pane string, n int) error
 	TypeExit(ctx context.Context, session, pane, harness string) error
 	CloseWorkspace(ctx context.Context, session, workspace string) error
 	RemoveWorktree(ctx context.Context, session, workspace string) error
@@ -846,6 +848,7 @@ func (h *Hub) typeHirePrompt(ctx context.Context, op *hireOp, pane string) (sent
 			return
 		}
 		if typedErr = h.opts.Hire.TypePrompt(ctx, op.session, pane, op.prompt); typedErr != nil {
+			h.erasePartlyTyped(ctx, op.id, op.session, pane, typedErr, h.opts.Hire.EraseTyped)
 			return
 		}
 		started, err := h.awaitStarted(ctx, op.id, cur.starts, h.opts.PromptAckWait)

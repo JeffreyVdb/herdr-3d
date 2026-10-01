@@ -239,6 +239,12 @@ func (f *fakeFloor) TypePrompt(_ context.Context, session, pane, text string) er
 	return err
 }
 
+// EraseTyped is #95 R1's erase of a partly typed prompt.
+func (f *fakeFloor) EraseTyped(_ context.Context, session, pane string, n int) error {
+	f.record("erase %s %d", pane, n)
+	return nil
+}
+
 func (f *fakeFloor) TypeExit(_ context.Context, session, pane, harness string) error {
 	f.record("exit %s", pane)
 	return nil
@@ -456,6 +462,9 @@ func (p hireProxy) Prompt(ctx context.Context, s, pane, text string) error {
 }
 func (p hireProxy) TypePrompt(ctx context.Context, s, pane, text string) error {
 	return p.get().TypePrompt(ctx, s, pane, text)
+}
+func (p hireProxy) EraseTyped(ctx context.Context, s, pane string, n int) error {
+	return p.get().EraseTyped(ctx, s, pane, n)
 }
 func (p hireProxy) TypeExit(ctx context.Context, s, pane, h string) error {
 	return p.get().TypeExit(ctx, s, pane, h)

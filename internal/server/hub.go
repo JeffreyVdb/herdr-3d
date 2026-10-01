@@ -267,6 +267,9 @@ type Hub struct {
 	// how often herdr saw it start working or get blocked.
 	typed  map[string][]typedNote
 	starts map[string]uint64
+	// #95 R1: worker id → EraseTyped's count for a prompt partly typed
+	// into its input box that could not be erased.
+	dirty map[string]int
 	// M6 launch
 	presets    map[string]store.Preset // by id (mirrors team_preset)
 	lastPreset map[string]string       // session → preset id (mirrors floor_preset_last)
@@ -980,6 +983,7 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 		delete(h.saved, id)
 		delete(h.typed, id) // #95
 		delete(h.starts, id)
+		delete(h.dirty, id)
 		if w != nil {
 			h.emit(proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: w.Session, WorkspaceID: w.WorkspaceID})
 		}
@@ -1128,6 +1132,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		delete(h.saved, id)
 		delete(h.typed, id) // #95
 		delete(h.starts, id)
+		delete(h.dirty, id)
 		if w == nil {
 			continue
 		}

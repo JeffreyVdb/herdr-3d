@@ -147,4 +147,133 @@ func TestTypePromptStopsAtAFailingChunk(t *testing.T) {
 	if !errors.As(err, &api) || api.Code != "pane_not_found" || !strings.Contains(err.Error(), "part 2 of 3") || calls != 2 {
 		t.Fatalf("err = %v after %d calls", err, calls)
 	}
+	// What may be in the input box: both parts, the failed one too (it
+	// may have landed). 1400 characters on one line: 1 + 1400/10.
+	var part *PartlyTypedError
+	if !errors.As(err, &part) || part.Erase != 141 {
+		t.Fatalf("err = %#v, want a PartlyTypedError erasing 141", err)
+	}
+}
+
+// R1: whatever stops a typed prompt once its first part is sent leaves a
+// PartlyTypedError (the input box may hold a prefix); a refusal before
+// anything is typed does not.
+func TestTypePromptPartlyTyped(t *testing.T) {
+	text := strings.Repeat("line\n", 300) // 1500 characters, 300 lines
+	fail := func(at int) func(context.Context, []string) ([]byte, []byte, error) {
+		calls := 0
+		return func(context.Context, []string) ([]byte, []byte, error) {
+			if calls++; calls == at {
+				return nil, nil, errors.New("exit status 1")
+			}
+			return nil, nil, nil
+		}
+	}
+	for name, tc := range map[string]struct {
+		run   func(context.Context, []string) ([]byte, []byte, error)
+		erase int
+	}{
+		"first part":  {fail(1), 141 + 70},  // it may have landed: 700 characters, 140 new lines
+		"third part":  {fail(3), 301 + 150}, // all of it
+		"enter fails": {fail(4), 301 + 150}, // typed, not sent
+	} {
+		c := &Control{TypeGap: time.Millisecond, Run: tc.run}
+		err := c.TypePrompt(context.Background(), "h3d-it-1", "w1:p1", text)
+		var part *PartlyTypedError
+		if !errors.As(err, &part) || part.Erase != tc.erase || strings.Contains(err.Error(), "line") {
+			t.Errorf("%s: err = %v, want a PartlyTypedError erasing %d", name, err, tc.erase)
+		}
+	}
+
+	// Cancelled between two parts: the parts typed so far.
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	c := &Control{TypeGap: 20 * time.Millisecond, Run: func(context.Context, []string) ([]byte, []byte, error) {
+		if calls++; calls == 2 {
+			cancel()
+		}
+		return nil, nil, nil
+	}}
+	err := c.TypePrompt(ctx, "h3d-it-1", "w1:p1", text)
+	var part *PartlyTypedError
+	if !errors.As(err, &part) || !errors.Is(err, context.Canceled) || part.Erase != 281+140 || calls != 2 {
+		t.Fatalf("cancelled: err = %v after %d calls", err, calls)
+	}
+
+	// Refused before typing: nothing to erase.
+	c = &Control{TypeGap: time.Millisecond, Run: fail(1)}
+	if err := c.TypePrompt(context.Background(), "h3d-it-1", "w1:p1", "a\x1bb"); errors.As(err, &part) {
+		t.Fatalf("refused prompt: %v", err)
+	}
+}
+
+// erasePairs bounds the ctrl+u/backspace pairs that empty Claude Code's
+// input box of the text: one per visual line (a narrow pane wraps every
+// eraseWidth characters), never more than one per character.
+func TestErasePairs(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want int
+	}{
+		{"x", 1},
+		{"short", 1},
+		{strings.Repeat("\n", 9) + "x", 10}, // never more than one per character
+		{strings.Repeat("y", 7000), 1 + 700},
+		{strings.Repeat("STALE 0000 yyyyyyyyy\n", 100), 101 + 210}, // 2100 characters, 100 new lines
+		{strings.Repeat("漢", 25), 1 + 2},
+		{strings.Repeat("\n", 50) + "x", 51},
+	} {
+		if got := erasePairs(tc.text); got != tc.want {
+			t.Errorf("erasePairs(%d characters) = %d, want %d", utf8.RuneCountInString(tc.text), got, tc.want)
+		}
+	}
+}
+
+// EraseTyped presses ctrl+u backspace n times, at most MaxKeys keys per
+// `pane send-keys` (the laptops' send-keys shape), then lets Claude Code
+// catch up.
+func TestEraseTyped(t *testing.T) {
+	var got [][]string
+	c := &Control{Herdr: "/opt/herdr", TypeGap: time.Millisecond,
+		Run: func(_ context.Context, argv []string) ([]byte, []byte, error) {
+			got = append(got, argv)
+			return nil, nil, nil
+		}}
+	if err := c.EraseTyped(context.Background(), "h3d-it-1", "w7:p1", 70); err != nil {
+		t.Fatal(err)
+	}
+	head := []string{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-keys", "w7:p1"}
+	pairs := func(n int) []string {
+		return append(slices.Clone(head), slices.Repeat([]string{"ctrl+u", "backspace"}, n)...)
+	}
+	if want := [][]string{pairs(32), pairs(32), pairs(6)}; !slices.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("argv =\n%q\nwant\n%q", got, want)
+	}
+
+	ran := false
+	c = &Control{Only: regexp.MustCompile(`^h3d-it-`), TypeGap: time.Millisecond,
+		Run: func(context.Context, []string) ([]byte, []byte, error) { ran = true; return nil, nil, nil }}
+	for name, call := range map[string]func() error{
+		"none":      func() error { return c.EraseTyped(context.Background(), "h3d-it-1", "w1:p1", 0) },
+		"too many":  func() error { return c.EraseTyped(context.Background(), "h3d-it-1", "w1:p1", MaxTyped+1) },
+		"unwatched": func() error { return c.EraseTyped(context.Background(), "herdr-3d", "w1:p1", 1) },
+		"bad pane":  func() error { return c.EraseTyped(context.Background(), "h3d-it-1", "--pane", 1) },
+	} {
+		if err := call(); !errors.Is(err, ErrNotAllowed) {
+			t.Errorf("%s: err = %v, want ErrNotAllowed", name, err)
+		}
+	}
+	if ran {
+		t.Fatal("a refused erase ran")
+	}
+
+	// A failing call stops it.
+	calls := 0
+	c = &Control{TypeGap: time.Millisecond, Run: func(context.Context, []string) ([]byte, []byte, error) {
+		calls++
+		return nil, nil, errors.New("exit status 1")
+	}}
+	if err := c.EraseTyped(context.Background(), "h3d-it-1", "w1:p1", 100); err == nil || calls != 1 {
+		t.Fatalf("err = %v after %d calls", err, calls)
+	}
 }

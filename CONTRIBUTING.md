@@ -98,7 +98,8 @@ parts:
     read-only `pane read <pane> --source visible` (trust dialog), `pane send-keys <pane> down|enter|ctrl+c`, `agent
     prompt <pane> <text> --wait --until working --until blocked --timeout 8000` (Codex), and for Claude (#95) the
     prompt typed: `pane send-text <pane> <chunk>` (`type-text`: at most 700 characters, `\n` its only control
-    character, 50 ms apart) then `pane send-keys <pane> enter` (`Control.TypePrompt`).
+    character, 50 ms apart) then `pane send-keys <pane> enter` (`Control.TypePrompt`); a prompt that fails part way
+    is erased with the laptops' `pane send-keys <pane> ctrl+u backspace …` (`Control.EraseTyped`).
   - Send home: `pane send-text <pane> /exit` / `/quit`, `workspace close <ws>`, `worktree remove --workspace <ws>`
     (never `--force`, never `--group`).
   - Laptops (M5, `terminal.watch`, `worker.keys` / `prompt` / `answer`): the read-only, long-running `terminal session

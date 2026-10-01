@@ -654,7 +654,7 @@ func (h *Hub) initTerm() {
 	h.asking = map[string]bool{}
 	h.asks = map[string]*proto.Ask{} // #57
 	h.askResolved = map[string]string{}
-	h.typed, h.starts = map[string][]typedNote{}, map[string]uint64{} // #95
+	h.typed, h.starts, h.dirty = map[string][]typedNote{}, map[string]uint64{}, map[string]int{} // #95
 }
 
 // afterObserve follows a change of the workers: watches whose worker went

@@ -82,6 +82,10 @@ type fakeTerm struct {
 	typeErrs []error
 	onTyped  func(pane string)
 	textGate chan struct{}
+	// #95 R1: typing, when set, is what TypePrompt does (its error is
+	// TypePrompt's); EraseTyped's results in turn.
+	typing    func(ctx context.Context) error
+	eraseErrs []error
 }
 
 func newFakeTerm() *fakeTerm { return &fakeTerm{screens: map[string]string{}} }
@@ -213,15 +217,18 @@ func (f *fakeTerm) QueuePrompt(_ context.Context, session, pane, text string) er
 	return nil
 }
 
-func (f *fakeTerm) TypePrompt(_ context.Context, session, pane, text string) error {
+func (f *fakeTerm) TypePrompt(ctx context.Context, session, pane, text string) error {
 	f.record("type %s %q", pane, text)
 	f.mu.Lock()
 	var err error
 	if len(f.typeErrs) > 0 {
 		err, f.typeErrs = f.typeErrs[0], f.typeErrs[1:]
 	}
-	on, typed := f.onPrompt, f.onTyped
+	on, typed, typing := f.onPrompt, f.onTyped, f.typing
 	f.mu.Unlock()
+	if typing != nil {
+		err = typing(ctx)
+	}
 	if err == nil {
 		if on != nil {
 			on(pane, "type")
@@ -229,6 +236,22 @@ func (f *fakeTerm) TypePrompt(_ context.Context, session, pane, text string) err
 		if typed != nil {
 			typed(pane)
 		}
+	}
+	return err
+}
+
+// EraseTyped records the erase, and whether its ctx was already done.
+func (f *fakeTerm) EraseTyped(ctx context.Context, session, pane string, n int) error {
+	if ctx.Err() != nil {
+		f.record("erase %s %d (ctx done)", pane, n)
+	} else {
+		f.record("erase %s %d", pane, n)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var err error
+	if len(f.eraseErrs) > 0 {
+		err, f.eraseErrs = f.eraseErrs[0], f.eraseErrs[1:]
 	}
 	return err
 }

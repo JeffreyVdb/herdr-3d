@@ -13,6 +13,7 @@ package herdr
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -90,7 +91,10 @@ func validTypedChunk(v string) bool {
 // apart), then `pane send-keys enter`. It does not wait: the caller makes
 // sure the agent is ready first (idle or done, else working to queue it;
 // text typed before its input box is up is lost) and watches it start.
-// Every chunk is validated before the first is typed.
+// Every chunk is validated before the first is typed. Once the first
+// chunk is sent, any failure (a chunk, ctx, the Enter) is a
+// *PartlyTypedError: Claude's input box may hold a prefix of the prompt,
+// which the caller erases (EraseTyped) before anything else is typed.
 func (c *Control) TypePrompt(ctx context.Context, session, pane, text string) error {
 	norm, ok := NormalizeTyped(text)
 	if !ok || len(norm) > MaxTyped {
@@ -109,16 +113,86 @@ func (c *Control) TypePrompt(ctx context.Context, session, pane, text string) er
 	if gap <= 0 {
 		gap = DefaultTypeGap
 	}
+	// sent: what may be in the input box (a chunk that failed may have
+	// landed).
+	sent := 0
+	partly := func(err error) error { return &PartlyTypedError{Erase: erasePairs(norm[:sent]), Err: err} }
 	for i, ch := range chunks {
+		sent += len(ch)
 		if _, err := c.run(ctx, opTypeText, vars(ch)); err != nil {
-			return fmt.Errorf("typing part %d of %d: %w", i+1, len(chunks), err)
+			return partly(fmt.Errorf("typing part %d of %d: %w", i+1, len(chunks), err))
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return partly(ctx.Err())
 		case <-time.After(gap):
 		}
 	}
-	_, err := c.run(ctx, opKeyEnter, map[string]string{"session": session, "pane": pane})
-	return err
+	if _, err := c.run(ctx, opKeyEnter, map[string]string{"session": session, "pane": pane}); err != nil {
+		return partly(err)
+	}
+	return nil
+}
+
+// PartlyTypedError is TypePrompt's error once it began typing: Claude
+// Code's input box may hold part of the prompt (never quoted here). Erase
+// is EraseTyped's count for it.
+type PartlyTypedError struct {
+	Erase int
+	Err   error
+}
+
+func (e *PartlyTypedError) Error() string { return e.Err.Error() }
+func (e *PartlyTypedError) Unwrap() error { return e.Err }
+
+// eraseWidth is the narrowest line, in characters, erasePairs assumes
+// Claude Code's input box wraps at (a 20-column box of wide characters).
+const eraseWidth = 10
+
+// erasePairs is how many ctrl+u backspace pairs empty Claude Code's input
+// box of text (#95 R1). On v2.1.287 ctrl+u deletes to the start of the
+// visual line (wrap-aware) and backspace then takes the line end or the
+// last character of the line before: a pair takes at least one
+// character, and a visual line. So one per character at most, and one per
+// line plus one per eraseWidth characters (wrapped lines) is enough.
+func erasePairs(text string) int {
+	runes := utf8.RuneCountInString(text)
+	return min(runes, strings.Count(text, "\n")+1+runes/eraseWidth)
+}
+
+// EraseTyped empties Claude Code's input box of a prompt TypePrompt left
+// in it (#95 R1, PartlyTypedError.Erase): ctrl+u backspace, n times, in
+// `pane send-keys` calls of at most MaxKeys keys (the laptops' send-keys
+// shape), then it waits for Claude to work through them (10 TypeGaps, and
+// one more per 100 pairs) so nothing typed next lands in one burst with
+// them. Measured on v2.1.287: neither key interrupts a working agent,
+// exits, or opens a dialog, and extra pairs on an empty box do nothing;
+// ctrl+c interrupts a working agent (and keeps the text), a second one
+// exits; Esc interrupts too, and twice on an empty box opens the rewind
+// menu; ctrl+l (chat:clearInput in the docs) clears nothing; backspaces
+// alone take ~12 s for 7000 characters, these pairs under a second for
+// 16 KiB. What precedes the prompt in the box (if anything) may go too:
+// it would have been sent with it.
+func (c *Control) EraseTyped(ctx context.Context, session, pane string, n int) error {
+	if n < 1 || n > MaxTyped {
+		return fmt.Errorf("%w: erase %d", ErrNotAllowed, n)
+	}
+	keys := slices.Repeat([]string{"ctrl+u", "backspace"}, n)
+	for len(keys) > 0 {
+		k := min(len(keys), MaxKeys)
+		if err := c.SendKeys(ctx, session, pane, keys[:k]...); err != nil {
+			return err
+		}
+		keys = keys[k:]
+	}
+	gap := c.TypeGap
+	if gap <= 0 {
+		gap = DefaultTypeGap
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(10*gap + time.Duration(n)*gap/100):
+		return nil
+	}
 }
