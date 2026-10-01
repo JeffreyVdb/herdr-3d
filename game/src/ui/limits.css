@@ -83,6 +83,12 @@
   border-radius: 10px;
   animation: lm-edge 180ms var(--ease);
 }
+.limits[data-dock='tab'][data-fit='snug'] {
+  /* A thin gutter (a seated laptop's glass leaves 27-47 px): the same tab, narrower and closer to the edge. */
+  inset: calc(var(--topbar-bottom, 64px) + 8px) 3px auto auto;
+  width: 22px;
+  border-radius: 8px;
+}
 .limits[data-dock='tab'][data-reached='true'] {
   animation: lm-pulse 1.8s ease-in-out infinite, lm-edge 180ms var(--ease);
 }
@@ -120,6 +126,18 @@
 }
 .lm-tab:hover {
   background: rgb(255 255 255 / 8%);
+}
+.limits[data-fit='snug'] .lm-tab {
+  gap: 6px;
+  padding: 9px 0 8px;
+  border-radius: 8px;
+}
+.limits[data-fit='snug'] .lm-tab-pct {
+  font-size: 9px;
+  letter-spacing: -0.04em;
+}
+.limits[data-fit='snug'] .lm-tab-bar {
+  width: 5px;
 }
 .lm-tab-pct {
   font-family: var(--font-mono);

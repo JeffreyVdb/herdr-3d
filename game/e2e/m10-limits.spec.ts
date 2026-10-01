@@ -688,15 +688,16 @@ async function glassBox(page: Page): Promise<Box> {
   return { x: b.left, y: b.top, width: b.width, height: b.height };
 }
 
-// The tab never covers the glass: it sits in the gutter right of the monitor when there is room (1600x700), else the plate is away
-// (1024x768 and 1280x900 leave 30 and 39 px; the tab needs 48), and a viewport in between does one or the other, never overlaps.
-for (const [w, h, dock] of [
-  [1024, 768, 'away'],
-  [1280, 900, 'away'],
-  [800, 600, null],
-  [1600, 700, 'tab'],
+// The tab never covers the glass, and it stays: in the gutter right of the monitor it is the full tab where that has room
+// (1600x700), else a snug one fitted to the thin gutter (1280x900, 1024x768 and 800x600 leave 39, 30 and 27 px). Clickable
+// in both views, peeking without touching the saved state, and a peeked plate hands back to the tab.
+for (const [w, h, want] of [
+  [1024, 768, 'snug'],
+  [1280, 900, 'snug'],
+  [800, 600, null], // the gutter depends on the seat's camera: snug or full, never away
+  [1600, 700, 'full'],
 ] as const) {
-  test(`seated at ${w}x${h} the limits tab ${dock === 'away' ? 'steps away' : dock === 'tab' ? 'sits beside the glass' : 'keeps clear of the glass'}, in the terminal and in the conversation`, async ({ page }) => {
+  test(`seated at ${w}x${h} the limits tab sits clear of the glass${want ? ` (${want})` : ''}, in the terminal and in the conversation`, async ({ page }) => {
     test.setTimeout(120_000);
     const clean = watchErrors(page);
     await page.setViewportSize({ width: w, height: h });
@@ -704,33 +705,63 @@ for (const [w, h, dock] of [
     await withReadings(page);
     await sitAtLaptop(page);
     const glass = await glassBox(page);
+    // The full tab needs 48 px right of the glass, the snug one 27 (limits.ts); the glass is measured independently of the widget.
+    const gutter = w - (glass.x + glass.width);
+    const fit = gutter >= 48 ? 'full' : 'snug';
+    test.info().annotations.push({ type: 'gutter', description: `${w}x${h}: glass ${JSON.stringify(glass)}, gutter ${gutter}px, fit ${fit}` });
+    expect(gutter, `gutter right of the glass ${JSON.stringify(glass)}`).toBeGreaterThanOrEqual(27);
+    if (want) expect(fit).toBe(want);
 
-    const keepsClear = async (view: string): Promise<void> => {
-      const at = await limits(page).getAttribute('data-dock');
-      expect(['tab', 'away'], `${view}: dock`).toContain(at);
-      if (dock) expect(at, `${view}: dock`).toBe(dock);
-      if (at === 'away') return expect(limits(page), `${view}: away`).toBeHidden();
-      await expect(limits(page)).toBeVisible();
-      const tab = (await limits(page).boundingBox())!;
-      expect(apart(tab, glass), `${view}: tab ${JSON.stringify(tab)} over glass ${JSON.stringify(glass)}`).toBe(true);
-      expect(tab.x + tab.width).toBeLessThanOrEqual(w);
+    const tabClearOfGlass = async (view: string): Promise<void> => {
+      await expect(limits(page), `${view}: dock`).toHaveAttribute('data-dock', 'tab');
+      await expect(limits(page), `${view}: fit`).toHaveAttribute('data-fit', fit);
+      await expect(page.locator('[data-key="limits-tab"]'), `${view}: tab`).toBeVisible();
+      await expect(page.locator('.lm-tab-pct'), `${view}: worst %`).toBeVisible();
+      await expect(page.locator('.lm-tab-bar'), `${view}: severity bar`).toBeVisible();
+      // (it fades in from the edge: measure once it has settled)
+      let tab!: Box;
+      await expect.poll(async () => {
+        tab = (await limits(page).boundingBox())!;
+        return tab.x + tab.width <= w && apart(tab, glass);
+      }, { message: `${view}: tab clear of glass ${JSON.stringify(glass)}` }).toBe(true);
+      expect(tab.width, `${view}: hit target`).toBeGreaterThanOrEqual(20);
+      const pct = (await page.locator('.lm-tab-pct').boundingBox())!;
+      expect(pct.x, `${view}: % inside the tab`).toBeGreaterThanOrEqual(tab.x - 0.5);
+      expect(pct.x + pct.width, `${view}: % inside the tab`).toBeLessThanOrEqual(tab.x + tab.width + 0.5);
     };
-    await keepsClear('terminal');
+
+    const peeks = async (view: string): Promise<void> => {
+      await page.locator('[data-key="limits-tab"]').click();
+      await expect(limits(page), `${view}: peek`).toHaveAttribute('data-peek', 'true');
+      await expect(page.locator('.lm-panel')).toBeVisible();
+      expect(await savedOpen(page)).toBeNull();
+      // The peeked plate is not a trap: its header hands back to the tab.
+      await page.locator('.lm-strip').click();
+      await expect(limits(page), `${view}: peek ended`).toHaveAttribute('data-peek', 'false');
+      await expect(limits(page)).toHaveAttribute('data-fit', fit);
+      expect(await savedOpen(page)).toBeNull();
+      await tabClearOfGlass(view);
+    };
+
+    await tabClearOfGlass('terminal');
+    await peeks('terminal');
 
     // The conversation is laid over the same glass.
     await page.keyboard.press('Control+Escape');
     await expect.poll(() => page.evaluate(() => window.__h3d.transcript()?.mode)).toBe('transcript');
     await frames(page, 10);
     expect(await page.evaluate(() => window.__h3d.transcript()!.box)).toMatchObject({ left: glass.x, top: glass.y, width: glass.width, height: glass.height });
-    await keepsClear('conversation');
+    await tabClearOfGlass('conversation');
+    await peeks('conversation');
 
-    // Away or not, Shift+L peeks from the conversation; the saved state is left alone, and standing up gives the plate back.
+    // Shift+L peeks from the conversation too, and a click outside ends it; standing up gives the plate back.
     await page.keyboard.press('Shift+L');
     await expect(limits(page)).toHaveAttribute('data-peek', 'true');
     await expect(page.locator('.lm-panel')).toBeVisible();
     expect(await savedOpen(page)).toBeNull();
     await standUp(page);
     await expect(limits(page)).toHaveAttribute('data-dock', '');
+    await expect(limits(page)).toHaveAttribute('data-fit', '');
     await expect(limits(page)).toHaveAttribute('data-peek', 'false');
     await expect(page.locator('.lm-strip')).toBeVisible();
     clean();

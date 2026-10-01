@@ -50,6 +50,9 @@ const SEATED = 'html[data-seated]';
 /** Free width the edge tab needs right of a screen dialog: its 32 px, 8 px from the edge, and 8 px clear of the dialog (limits.css). */
 const TAB_ROOM = 48;
 
+/** Free width the snug tab (22 px, 3 px from the edge, 2 px clear of the glass; data-fit='snug' in limits.css) needs where the full one does not fit. */
+const TAB_ROOM_SNUG = 27;
+
 export interface LimitsHost {
   now(): number;
   /** `limits.refresh`. */
@@ -216,14 +219,15 @@ export class LimitsWidget {
     return this.screenOpen();
   }
 
-  /** Room right of every open screen dialog, and of the seated laptop's glass, for the edge tab. */
-  private roomForTab(): boolean {
+  /** The edge tab that fits right of every open screen dialog and of the seated laptop's glass: the full one, a snug one in a thin gutter, or none. */
+  private tabFit(): 'full' | 'snug' | null {
     let right = 0;
     for (const d of document.querySelectorAll(`${SCREEN}, ${READING}`)) right = Math.max(right, d.getBoundingClientRect().right);
     const seated = document.querySelector(SEATED);
     // The glass's right edge (laptop/index.ts); not measured yet (or off screen): assume it fills the view.
     if (seated) right = Math.max(right, Number(seated.getAttribute('data-seated') || Infinity));
-    return document.documentElement.clientWidth - right >= TAB_ROOM;
+    const room = document.documentElement.clientWidth - right;
+    return room >= TAB_ROOM ? 'full' : room >= TAB_ROOM_SNUG ? 'snug' : null;
   }
 
   /**
@@ -317,7 +321,9 @@ export class LimitsWidget {
     const open = !this.root.hidden && !folded && (screen ? this.peek : this.prefs.open);
     this.place();
     this.root.dataset.folded = String(folded);
-    this.root.dataset.dock = screen && !this.peek ? (this.roomForTab() ? 'tab' : 'away') : '';
+    const fit = screen && !this.peek ? this.tabFit() : null;
+    this.root.dataset.dock = screen && !this.peek ? (fit ? 'tab' : 'away') : '';
+    this.root.dataset.fit = fit ?? '';
     this.root.dataset.peek = String(this.peek);
     this.panel.hidden = !open;
     this.strip.setAttribute('aria-expanded', String(open));
