@@ -51,6 +51,7 @@ type usageWorker struct {
 	cwd             string     // M16: its directory, a root of its transcript's path images
 	asking          bool       // #57: it has an ask now
 	wrap            *wrapWatch // #83: its armed wrap-up
+	typed           []typedSum // #95: the prompts the bridge typed into it lately
 }
 
 // usageUpdate is a worker's new usage, or (nil) its usage gone.
@@ -80,6 +81,8 @@ type usageTracker struct {
 	// this round's looks at the armed wrap-ups.
 	lines   map[string]*txLines
 	wrapUps []wrapUpdate
+	// #95: the workers a typed prompt reached as a paste this round.
+	pasted []string
 }
 
 // foundCodex is a Codex session found by a worker's cwd, and when.
@@ -160,8 +163,12 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 	for id, o := range tr.txOffers { // M16 transcript
 		h.tx.offer(id, o)
 	}
-	asks := tr.askUps   // #57
-	wraps := tr.wrapUps // #83
+	asks := tr.askUps              // #57
+	wraps := tr.wrapUps            // #83
+	for _, id := range tr.pasted { // #95
+		h.log.Warn("a prompt the bridge typed reached Claude Code as a paste: its paste threshold may have changed (#95)",
+			"worker", id)
+	}
 	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 {
 		_ = h.doWait(ctx, func() {
 			for _, u := range ups {
@@ -180,7 +187,7 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 // poll reads the workers' sessions and returns the updates to publish.
 func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	ws = tr.findCodex(ws, now)
-	tr.askUps, tr.wrapUps = nil, nil
+	tr.askUps, tr.wrapUps, tr.pasted = nil, nil, nil
 	var ups []usageUpdate
 	seen := map[string]bool{}
 	for _, w := range ws {
@@ -196,6 +203,9 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			}
 			if s := tr.sessions[w.id]; s != nil { // #57: the ask, from the same lines, the file's first included
 				l := &txLines{ask: transcript.NewAskTracker(w.harness)} // #83: and a wrap-up's
+				if w.harness == transcript.Claude {                     // #95: and typed prompts arriving as a paste
+					l.paste = newPasteWatch()
+				}
 				if l.ask != nil {
 					tr.asks[w.id] = l.ask
 				}
@@ -210,7 +220,10 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		}
 		s := tr.sessions[w.id]
 		tr.syncTranscript(w, s, tr.keys[w.id])
-		tr.wrapBefore(w) // #83
+		tr.wrapBefore(w)                                     // #83
+		if l := tr.lines[w.id]; l != nil && l.paste != nil { // #95
+			l.paste.sums = w.typed
+		}
 		if s == nil {
 			if w.shown { // no agent session any more: no usage
 				ups = append(ups, usageUpdate{id: w.id})
@@ -252,6 +265,11 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		if !seen[id] {
 			l.log.Close()
 			delete(tr.logs, id)
+		}
+	}
+	for id, l := range tr.lines { // #95
+		if l.paste != nil && l.paste.takeHits() > 0 {
+			tr.pasted = append(tr.pasted, id)
 		}
 	}
 	tr.txOffers = tr.offers(ws)
@@ -337,7 +355,7 @@ func (h *Hub) usageWorkers() []usageWorker {
 			harness = w.AgentKind
 		}
 		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, shown: w.Usage != nil, floor: w.Session,
-			watched: h.tx.watched(id), cwd: w.Cwd, asking: w.Ask != nil, wrap: h.wrapWatchOf(id)}
+			watched: h.tx.watched(id), cwd: w.Cwd, asking: w.Ask != nil, wrap: h.wrapWatchOf(id), typed: h.typedSums(id)}
 		if w.AgentSession == "" && w.AgentKind == usage.Codex && w.Cwd != "" {
 			uw.codexCwd = w.Cwd
 		}

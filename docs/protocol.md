@@ -884,7 +884,7 @@ remote-tracking refs) and is audited like any command.
 | `label` | 1–64 bytes, no control characters, not starting with `-`; default: the next generated name (`hire.prepare`'s `label`). The worker's name is the label when that is a free generated name, else the next generated name. |
 | `cwd` | absolute, existing directory; default as in `hire.prepare` |
 | `worktree` | `true`: hire into a new linked git worktree and branch of `cwd`'s repository (below); `cwd` must be in a git work tree with a known `origin/<default>` |
-| `prompt` | optional first task, 1–32768 bytes of UTF-8 without NUL, not starting with `--` (herdr's CLI would read it as a flag). Sent once the agent is ready. The game sends pasted images as `[Image #n: <absolute path>]` markers in the text, after uploading them (`POST /upload`, above). |
+| `prompt` | optional first task, 1–32768 bytes of UTF-8 without NUL, not starting with `--` (herdr's CLI would read it as a flag). Sent once the agent is ready. For Claude it is typed (#95, step 5): no control characters but line ends (`\r\n` and `\r` go as `\n`) and tabs (four spaces each), at most 32768 bytes as typed, else `bad_request`. The game sends pasted images as `[Image #n: <absolute path>]` markers in the text, after uploading them (`POST /upload`, above). |
 | `handoff`, `stop_services` | reserved (M9, #14); refused like any unknown field |
 
 Capacity: a hire that would put the floor above `--max-workers-per-floor` or the host above `--max-workers` is
@@ -921,10 +921,20 @@ checkout herdr may open with it (step 1) is not a worker. Then, in order (each s
    before the line end, whitespace or a quote: `/tmp/repo` does not match a dialog for `/tmp/repo-other`,
    `/tmp/repo/sub` or `/x/tmp/repo`. A screen that cannot be read that way is left for the player. `trust` in the ack is `approved` when it did, `none` when no dialog showed.
    (`avoided` is reserved for a later way of avoiding it.) Any other `blocked` state is left for the player.
-5. The optional `prompt`: `herdr agent prompt <pane> <prompt> --wait --until working --until blocked --timeout 8000`,
-   retried while herdr says the agent is not ready. An agent just past its trust dialog can take the text but drop the
-   Enter (herdr: `agent_prompt_stalled`); the bridge then presses `Enter` (up to 3 times) until the worker is working.
-   A prompt that fails does not undo the hire: the ack has `prompted: false` and `prompt_error`.
+5. The optional `prompt`. **Claude** (#95): typed, never pasted. `agent prompt` sends a bracketed paste, which Claude
+   Code wraps in `<pasted_content>` and tells the model may hold instructions the user did not write (a hired
+   orchestrator asked to confirm its run), and a slash command in a paste is never run. Once herdr sees the agent
+   `idle` or `done` (within the trust timeout, 10 s; text typed before its input box is up is lost), the bridge types
+   the prompt on the worker's input lane (no laptop key lands in between): normalized (`\r\n` and `\r` as `\n`, a
+   tab as four spaces), in chunks of at most 700 characters, one `herdr pane send-text <pane> <chunk>` each, 50 ms
+   apart (Claude Code v2.1.287 takes an input burst of more than 800 characters as a paste), then `herdr pane
+   send-keys <pane> enter`. A typed line end is a new line in Claude's input, not Enter. It then waits up to 5 s for
+   the worker to start (`working` or `blocked`); an agent just past its trust dialog can drop that Enter, so the bridge
+   presses `Enter` (up to 3 times) until it does. A prompt of 32 KiB takes about 2.5 s to type. **Codex**: `herdr
+   agent prompt <pane> <prompt> --wait --until working --until blocked --timeout 8000`, retried while herdr says the
+   agent is not ready; when it took the text but dropped the Enter (herdr: `agent_prompt_stalled`) the bridge presses
+   `Enter` (up to 3 times) until the worker is working. A prompt that fails does not undo the hire: the ack has
+   `prompted: false` and `prompt_error`.
 6. The choice is remembered for the floor, the audit row completed, and the ack sent (after the worker's
    `worker.upsert`).
 
@@ -1017,7 +1027,8 @@ is `worker.fire`'s, step by step, with the worktree choice made up front.
    bridge reads (`--claude-projects` / `--codex-sessions`; else `invalid_state`, or `internal` when this bridge reads
    none), it is not blocked and has no `ask` (`invalid_state`), and it is not armed already (`busy`; one that needs you
    may be armed again). For `delete` / `delete_branch` the tree must be clean and pushed now, as `worker.fire.prepare`
-   reports it (`not_clean`, nothing sent). `prompt` is 1 byte to 16 KiB minus the footer, without NUL (`bad_request`).
+   reports it (`not_clean`, nothing sent). `prompt` is 1 byte to 16 KiB minus the footer, without NUL, and for Claude
+   (typed, #95) with no control characters but line ends and tabs (`bad_request`).
    Then a fresh nonce (16 hex digits) is made, the transcript offset the bridge reads from is taken (where its tail
    of that transcript is now, within about 2 s), and `{worker, nonce, worktree, armed_at, transcript, offset}` is
    stored (SQLite `worker_wrapup`), so a restart resumes the watch.
@@ -1187,7 +1198,8 @@ left out too. (A pure function, `server.RunPrompt`.)
 
 It is the [`worker.hire`](#hire-and-send-home) hire, the same code path, events, rollback and audit: at `desk_index`,
 with `orch`'s harness, model and effort, the `label`, `worktree`, in the floor's effective default cwd, and the prompt
-as its first prompt (`herdr agent prompt` pastes it whole: a multi-line prompt arrives as one prompt). When the hire
+as its first prompt (typed into Claude, pasted into Codex with `herdr agent prompt`; either way a multi-line prompt
+arrives as one prompt, and Claude runs a leading `/write-code` as its slash command). When the hire
 succeeds the bridge records the launch (SQLite `run_launch`: launch id, session, the ticket's repo and issue number or
 text, the orchestrator's worker id, the preset's id and name) and remembers the preset as the floor's `last_preset`
 (`floor.upsert`), then acks: `worker.hire`'s ack plus `launch_id` (`l_<16 hex>`) and `prompt` (what was sent; see
@@ -1671,17 +1683,37 @@ for the same worker (`worker.keys`, `worker.prompt`, `worker.answer`) run one af
 arrived, so two quick `worker.keys` never interleave; at most 32 wait per worker (then `input_failed`). herdr
 refusing is `input_failed` (the message says which step and why).
 
-**`worker.prompt`** submits a prompt to the worker's agent (`herdr agent prompt <pane> <text>`: bracketed paste, then
-Enter). `text` is 1 byte to 16 KiB of UTF-8 without NUL (herdr 0.9.0 takes a leading `--` as text, too). Only for a
-worker with an agent (`agent_kind`); a plain shell is `invalid_state` (use `worker.keys`), and so is a `blocked`
-worker (answer its question first; herdr would refuse with `agent_blocked`). The game uses it for paste too.
+**`worker.prompt`** submits a prompt to the worker's agent. `text` is 1 byte to 16 KiB of UTF-8 without NUL (herdr
+0.9.0 takes a leading `--` as text, too). Only for a worker with an agent (`agent_kind`); a plain shell is
+`invalid_state` (use `worker.keys`), and so is a `blocked` worker (answer its question first; herdr would refuse with
+`agent_blocked`). The game uses it for paste too.
 
-- Worker `working`: the agent takes it for its next turn (Claude and Codex queue it). Sent without waiting; the ack
-  says `queued: true`.
+**Claude** (#95): the prompt is **typed**, as in the hire's step 5 (chunks of at most 700 characters via `herdr pane
+send-text`, 50 ms apart, then `herdr pane send-keys <pane> enter`; the whole of it on the worker's input lane), so
+Claude takes it as the user's own words: no `<pasted_content>` wrapper, and a leading `/command` runs. `text` must hold
+no control characters but line ends (`\r\n` and `\r` are typed as `\n`, a new line, not Enter) and tabs (Claude
+drops a typed tab: each goes as four spaces), and be at most 16 KiB as typed; else `bad_request` (the message gives
+its length, never the text). 16 KiB takes about 1.3 s to type.
+
+- Worker `working`: typed and Enter at once, without waiting: Claude queues it for its next turn (`queued: true`).
+- `idle` or `done`: typed, then the bridge waits up to 5 s for the worker to start (`working` or `blocked`, or a turn
+  it saw start and end). Not started: Enter **once** more and up to 5 s more: `retried: true`. Still not, or herdr
+  failing: `prompt_failed`.
+- Any other state (`unknown`: herdr cannot tell yet): waited for up to 5 s to become one of those (text typed before
+  Claude's input box is up is lost), else `prompt_failed`.
+
+**Codex**: `herdr agent prompt <pane> <text>` (bracketed paste, then Enter; Codex keeps a paste as typed text).
+
+- Worker `working`: the agent takes it for its next turn (Codex queues it). Sent without waiting; the ack says
+  `queued: true`.
 - Otherwise herdr waits (up to 8 s) until the worker is `working` or `blocked`. When the text is in the agent's input
   but its Enter was dropped (the known paste quirk; herdr: `agent_prompt_stalled` after 5 s), the bridge presses Enter
   **once** more and waits up to 5 s for `working` / `blocked`: `retried: true`. Still not submitted, or herdr failing
   otherwise: `prompt_failed`.
+
+The bridge's transcript reader (the usage tracker) warns in its log when a prompt it typed into Claude reaches the
+transcript wrapped as a paste anyway (Claude Code's paste threshold changed): it keeps a hash of each typed prompt's
+words for 10 minutes, never the text.
 
 #### Blocked workers: question, quick reply, approve / deny
 
@@ -2151,7 +2183,7 @@ questions as `tool.ask` (see below).
 numbers…], other?: <text>}` (a single-select question takes one choice or `other`; a multi-select one choices and/or
 `other`; `other` is 1–4096 bytes of one line without control characters, only where `other` is true), or `cancel: true`
 (Esc on its dialog), optionally with a `prompt` sent once the dialog is gone ("I want to talk about this first" in one
-action). It is `stale` when the worker has no ask or another `tool_use_id` (answered in the terminal meanwhile, or
+action; to Claude it is typed like `worker.prompt`'s, #95, once herdr no longer sees the agent `blocked`, within 5 s). It is `stale` when the worker has no ask or another `tool_use_id` (answered in the terminal meanwhile, or
 something else asked); `bad_request` for answers that do not fit the questions. On the worker's input lane (after its
 other input) it checks the ask again, then drives the dialog with the keys verified live (Claude Code 2.1.285, codex-cli
 0.159.2, herdr 0.9.0; the screens are in `internal/server/testdata/screens/claude-ask-*`, `codex-ask-*`), reading the

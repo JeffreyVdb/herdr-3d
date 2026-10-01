@@ -26,6 +26,8 @@ type TermHerdr interface {
 	SendSequence(ctx context.Context, session, pane, key string) error
 	SubmitPrompt(ctx context.Context, session, pane, text string) error
 	QueuePrompt(ctx context.Context, session, pane, text string) error
+	// #95: a prompt to Claude Code is typed (in chunks, then Enter).
+	TypePrompt(ctx context.Context, session, pane, text string) error
 }
 
 // Bounds of worker.keys.
@@ -39,6 +41,16 @@ const (
 // DefaultPromptRetryWait is how long worker.prompt waits after pressing
 // Enter again for an agent that dropped the first one.
 const DefaultPromptRetryWait = 5 * time.Second
+
+// #95: a prompt typed into Claude Code waits up to DefaultPromptReadyWait
+// for the agent to be ready (idle or done, or working to queue it: text
+// typed before its input box is up is lost), and up to
+// DefaultPromptAckWait for it to start working after Enter (as herdr's
+// `agent prompt --wait` does) before Enter is pressed once more.
+const (
+	DefaultPromptReadyWait = 5 * time.Second
+	DefaultPromptAckWait   = 5 * time.Second
+)
 
 var (
 	errInputFailed  = errors.New("input failed")
@@ -132,6 +144,25 @@ func (h *Hub) queueLane(ctx context.Context, id string, job func(context.Context
 		l.running = true
 		h.wg.Add(1)
 		go h.runLane(ctx, id)
+	}
+}
+
+// onLane runs work on worker id's input lane and waits for it to end (off
+// the hub goroutine, never from a job on a lane).
+func (h *Hub) onLane(ctx context.Context, id string, work func(context.Context)) error {
+	done := make(chan struct{})
+	if err := h.doWait(ctx, func() {
+		h.queueLane(ctx, id, func(ctx context.Context) { defer close(done); work(ctx) })
+	}); err != nil {
+		return err
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-h.done:
+		return errHubStopped
 	}
 }
 
@@ -256,6 +287,9 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	if w.AgentKind == "" {
 		return fmt.Errorf("%w: %s runs no agent (a plain shell: use worker.keys)", errInvalidState, w.Name)
 	}
+	if err := checkTyped(w.AgentKind, a.Text, herdr.MaxMessage, "text"); err != nil {
+		return err
+	}
 	if w.Ask != nil { // #57: its dialog would take the text
 		return fmt.Errorf("%w: %s waits on its question: answer it first (worker.answer_ask)", errInvalidState, w.Name)
 	}
@@ -271,25 +305,69 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	})
 }
 
+// typesPrompts reports whether prompts to an agent of this kind are typed
+// (#95: Claude Code), not pasted with `agent prompt` (Codex).
+func typesPrompts(kind string) bool { return kind == "claude" }
+
+// checkTyped refuses a prompt to an agent of this kind that cannot be
+// typed: a control character other than a line end or a tab, or longer
+// than limit as typed (each tab is four spaces). what names the argument.
+func checkTyped(kind, text string, limit int, what string) error {
+	if !typesPrompts(kind) {
+		return nil
+	}
+	norm, ok := herdr.NormalizeTyped(text)
+	switch {
+	case !ok:
+		return bad("%s for Claude is typed: it must not be blank or hold control characters other than line ends and tabs (%d bytes)",
+			what, len(text))
+	case len(norm) > limit:
+		return bad("%s for Claude is typed: it must be at most %d bytes as typed (a tab is four spaces), got %d", what, limit, len(norm))
+	}
+	return nil
+}
+
+// promptState is what a prompt needs of its worker now: its status
+// (statusAsking while it has an ask, #57), its agent's kind, and how often
+// herdr saw it start working or get blocked (#95).
+type promptState struct {
+	status, kind string
+	starts       uint64
+}
+
+// promptState reads worker id (hub goroutine).
+func (h *Hub) promptState(id string) promptState {
+	w := h.workers[id]
+	switch {
+	case w == nil:
+		return promptState{}
+	case w.Ask != nil:
+		return promptState{statusAsking, w.AgentKind, h.starts[id]}
+	}
+	return promptState{w.Status, w.AgentKind, h.starts[id]}
+}
+
+// started reports whether the worker started after since: working,
+// blocked or asking now, or it started (and maybe ended) meanwhile.
+func (p promptState) started(since uint64) bool {
+	return p.status == statusWorking || p.status == statusBlocked || p.status == statusAsking || p.starts != since
+}
+
 // prompt submits a prompt. To an agent at work it is queued for its next
 // turn; otherwise herdr waits for it to start working, and when the agent
 // took the text but dropped the Enter (agent_prompt_stalled) Enter is
-// pressed once more and the worker watched for PromptRetryWait.
+// pressed once more and the worker watched for PromptRetryWait. A prompt
+// to Claude is typed (typePrompt).
 func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pane string) (any, error) {
-	status, err := query(ctx, h, func() string {
-		if w := h.workers[a.ID]; w != nil {
-			if w.Ask != nil { // #57: asked meanwhile
-				return statusAsking
-			}
-			return w.Status
-		}
-		return ""
-	})
+	cur, err := query(ctx, h, func() promptState { return h.promptState(a.ID) })
 	if err != nil {
 		return nil, err
 	}
+	if typesPrompts(cur.kind) {
+		return h.typePrompt(ctx, a.ID, session, pane, a.Text, false)
+	}
 	t := h.opts.Term
-	switch status {
+	switch cur.status {
 	case statusAsking:
 		return nil, fmt.Errorf("%w: the worker waits on its question: answer it first", errInvalidState)
 	case statusBlocked:
@@ -308,27 +386,94 @@ func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pan
 	case !errors.As(err, &api) || api.Code != "agent_prompt_stalled":
 		return nil, fmt.Errorf("%w: %v", errPromptFailed, err)
 	}
-	if err := t.SendKeys(ctx, session, pane, "enter"); err != nil {
+	return h.retryEnter(ctx, a.ID, session, pane)
+}
+
+// retryEnter presses Enter once more for an agent that took a prompt's
+// text but dropped the Enter, and watches the worker for PromptRetryWait.
+func (h *Hub) retryEnter(ctx context.Context, id, session, pane string) (any, error) {
+	cur, err := query(ctx, h, func() promptState { return h.promptState(id) })
+	if err != nil {
+		return nil, err
+	}
+	if err := h.opts.Term.SendKeys(ctx, session, pane, "enter"); err != nil {
 		return nil, fmt.Errorf("%w: the agent dropped Enter, and pressing it again failed: %v", errPromptFailed, err)
 	}
-	for end := time.Now().Add(h.opts.PromptRetryWait); ; {
-		s, err := query(ctx, h, func() string {
-			if w := h.workers[a.ID]; w != nil {
-				return w.Status
-			}
-			return ""
-		})
+	started, err := h.awaitStarted(ctx, id, cur.starts, h.opts.PromptRetryWait)
+	switch {
+	case err != nil:
+		return nil, err
+	case !started:
+		return nil, fmt.Errorf("%w: the text is in the agent's input, but it did not start working, Enter pressed again", errPromptFailed)
+	}
+	return proto.PromptResult{Retried: true}, nil
+}
+
+// awaitStarted watches a worker for up to wait for it to start after since
+// (promptState.started).
+func (h *Hub) awaitStarted(ctx context.Context, id string, since uint64, wait time.Duration) (bool, error) {
+	for end := time.Now().Add(wait); ; {
+		cur, err := query(ctx, h, func() promptState { return h.promptState(id) })
 		if err != nil {
-			return nil, err
+			return false, err
 		}
-		if s == statusWorking || s == statusBlocked {
-			return proto.PromptResult{Retried: true}, nil
+		if cur.started(since) {
+			return true, nil
 		}
-		if time.Now().After(end) {
-			return nil, fmt.Errorf("%w: the text is in the agent's input, but it did not start working, Enter pressed again", errPromptFailed)
+		if time.Now().After(end) || ctx.Err() != nil {
+			return false, ctx.Err()
 		}
 		sleepCtx(ctx, answerPoll)
 	}
+}
+
+// typePrompt types a prompt into a Claude worker's pane (#95, on its input
+// lane, so nothing else is typed between two chunks). It waits up to
+// PromptReadyWait for the agent to be ready: idle or done, then the text
+// is typed and the worker watched for PromptAckWait to start working
+// (Enter pressed once more if not, as for a stalled `agent prompt`); or
+// working, then it is typed for Claude to queue, without waiting. A
+// blocked worker, or one with an ask, is refused, unless settling: then
+// (a dialog just answered) it is waited out like any other state.
+func (h *Hub) typePrompt(ctx context.Context, id, session, pane, text string, settling bool) (any, error) {
+	var cur promptState
+	for end := time.Now().Add(h.opts.PromptReadyWait); ; {
+		var err error
+		if cur, err = query(ctx, h, func() promptState { return h.promptState(id) }); err != nil {
+			return nil, err
+		}
+		s := cur.status
+		switch {
+		case s == statusAsking && !settling:
+			return nil, fmt.Errorf("%w: the worker waits on its question: answer it first", errInvalidState)
+		case s == statusBlocked && !settling:
+			return nil, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
+		}
+		if s == statusWorking || s == statusIdle || s == statusDone {
+			break
+		}
+		if time.Now().After(end) || ctx.Err() != nil {
+			return nil, fmt.Errorf("%w: the agent is not ready for a prompt (herdr says %q)", errPromptFailed, s)
+		}
+		sleepCtx(ctx, answerPoll)
+	}
+	if err := h.doWait(ctx, func() { h.noteTyped(id, text) }); err != nil {
+		return nil, err
+	}
+	if err := h.opts.Term.TypePrompt(ctx, session, pane, text); err != nil {
+		return nil, fmt.Errorf("%w: %v", errPromptFailed, err)
+	}
+	if cur.status == statusWorking {
+		return proto.PromptResult{Queued: true}, nil
+	}
+	started, err := h.awaitStarted(ctx, id, cur.starts, h.opts.PromptAckWait)
+	switch {
+	case err != nil:
+		return nil, err
+	case started:
+		return proto.PromptResult{}, nil
+	}
+	return h.retryEnter(ctx, id, session, pane)
 }
 
 // auditArgs is what the audit log keeps of a command's args: everything,

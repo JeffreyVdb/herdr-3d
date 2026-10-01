@@ -27,7 +27,7 @@ func TestWorkerPromptCarriesImageMarkers(t *testing.T) {
 	text := "Fix the header like this " + markerA + "\nand keep " + markerB + " in mind"
 	c.mustAck(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: id("w1"), Text: text})
 	c.mustAck(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: id("w2"), Text: markerA})
-	want := []string{"submit w1:p1 " + strconv.Quote(text), "queue w2:p1 " + strconv.Quote(markerA)}
+	want := []string{"type w1:p1 " + strconv.Quote(text), "queue w2:p1 " + strconv.Quote(markerA)}
 	if got := tb.term.Calls(); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
@@ -76,7 +76,7 @@ func TestRunPromptsCarryImageMarkers(t *testing.T) {
 		t.Fatalf("started prompt =\n%q\nwant\n%q", got.Prompt, wantPrompt)
 	}
 	calls := hb.fl.Calls()
-	if last := calls[len(calls)-1]; last != "prompt "+"w3:p1 "+strconv.Quote(wantPrompt) {
+	if last := calls[len(calls)-1]; last != "type "+"w3:p1 "+strconv.Quote(wantPrompt) {
 		t.Fatalf("herdr got %q", last)
 	}
 
@@ -86,7 +86,7 @@ func TestRunPromptsCarryImageMarkers(t *testing.T) {
 	_, m = c.command(proto.CmdRunStart, "rs2", proto.RunStartArgs{Session: "s", DeskIndex: &d, Text: "Tidy the lobby", Orch: &orch, Preset: seed, Prompt: edited})
 	got = ackData[proto.RunStartResult](t, m)
 	calls = hb.fl.Calls()
-	if got.Prompt != edited || calls[len(calls)-1] != "prompt w4:p1 "+strconv.Quote(edited) {
+	if got.Prompt != edited || calls[len(calls)-1] != "type w4:p1 "+strconv.Quote(edited) {
 		t.Fatalf("edited prompt: %s\n%q", m.raw, calls[len(calls)-1])
 	}
 	start := func(desk int, prompt string) map[string]any {

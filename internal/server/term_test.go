@@ -77,7 +77,11 @@ type fakeTerm struct {
 	onText    func(pane, text string) // #57
 	onPrompt  func(pane, how string)
 	submit    []error // SubmitPrompt results in turn
-	textGate  chan struct{}
+	// #95: TypePrompt's results in turn, and what the agent does once a
+	// prompt is typed (startTermBridge: it starts working).
+	typeErrs []error
+	onTyped  func(pane string)
+	textGate chan struct{}
 }
 
 func newFakeTerm() *fakeTerm { return &fakeTerm{screens: map[string]string{}} }
@@ -209,6 +213,26 @@ func (f *fakeTerm) QueuePrompt(_ context.Context, session, pane, text string) er
 	return nil
 }
 
+func (f *fakeTerm) TypePrompt(_ context.Context, session, pane, text string) error {
+	f.record("type %s %q", pane, text)
+	f.mu.Lock()
+	var err error
+	if len(f.typeErrs) > 0 {
+		err, f.typeErrs = f.typeErrs[0], f.typeErrs[1:]
+	}
+	on, typed := f.onPrompt, f.onTyped
+	f.mu.Unlock()
+	if err == nil {
+		if on != nil {
+			on(pane, "type")
+		}
+		if typed != nil {
+			typed(pane)
+		}
+	}
+	return err
+}
+
 // termBridge is a bridge with a running floor "s" and a fake laptop
 // herdr.
 type termBridge struct {
@@ -222,6 +246,7 @@ func startTermBridge(t *testing.T, tweak func(*server.Options), workers ...world
 	ft := newFakeTerm()
 	opts := server.Options{Term: ft, FirstFrame: 2 * time.Second, ObserverBackoff: 5 * time.Millisecond,
 		QuestionPoll: 20 * time.Millisecond, AnswerTimeout: time.Second, PromptRetryWait: 300 * time.Millisecond,
+		PromptReadyWait: 300 * time.Millisecond, PromptAckWait: 300 * time.Millisecond,
 		PaneSize: func(_ context.Context, socket, pane string) (int, int, bool) {
 			if socket != "sock-s" {
 				return 0, 0, false
@@ -232,6 +257,8 @@ func startTermBridge(t *testing.T, tweak func(*server.Options), workers ...world
 		tweak(&opts)
 	}
 	tb := &termBridge{bridge: startBridge(t, "", opts), term: ft, workers: workers}
+	// #95: an idle agent a prompt is typed into takes a (short) turn.
+	ft.onTyped = func(pane string) { tb.takeTurn(pane) }
 	tb.publishFloor(true)
 	// Wait until the hub has the floor, so later snapshots show it.
 	probe := tb.connect(proto.Hello{Client: "probe"})
@@ -244,6 +271,19 @@ func startTermBridge(t *testing.T, tweak func(*server.Options), workers ...world
 
 func (tb *termBridge) publishFloor(running bool) {
 	tb.publish(world.FloorObs{Session: "s", Running: running, Gen: world.NextGen(), Socket: "sock-s", Workers: slices.Clone(tb.workers)})
+}
+
+// takeTurn is the agent in pane taking a short turn: it works, then is
+// back to its status, unless it works already.
+func (tb *termBridge) takeTurn(pane string) {
+	ws, _, _ := strings.Cut(pane, ":")
+	for _, w := range tb.workers {
+		if w.WorkspaceID == ws && w.Status != "working" {
+			tb.setStatus(ws, "working")
+			tb.setStatus(ws, w.Status)
+			return
+		}
+	}
 }
 
 func (tb *termBridge) setStatus(ws, status string) {

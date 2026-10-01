@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -37,6 +38,9 @@ type fakeFloor struct {
 	startErr     error
 	markErr      error
 	promptErrs   []error
+	typeErrs     []error       // #95: TypePrompt's results in turn
+	typeDrops    int           // #95: typed prompts whose Enter the agent drops (it starts on the next one)
+	startStatus  string        // #95: the status a started agent has (default idle)
 	publishEarly bool          // publish a new workspace before CreateWorkspace returns
 	createGate   chan struct{} // CreateWorkspace waits for it when set
 	exitWorks    bool          // TypeExit + Enter bring the pane back to its shell
@@ -156,7 +160,10 @@ func (f *fakeFloor) MarkPane(_ context.Context, session, pane, marker string) er
 func (f *fakeFloor) StartAgent(_ context.Context, session, pane, name string, a herdr.Agent) error {
 	f.record("start-agent %s %s %s %s %s %s", pane, name, a.Harness, a.Model, a.Effort, a.Label)
 	f.setProcs(pane, running(a.Harness, ""))
-	f.update(wsOf(pane), func(w *world.WorkerObs) { w.AgentKind, w.Status, w.Harness = a.Harness, "idle", a.Harness })
+	f.mu.Lock()
+	status := cmp.Or(f.startStatus, "idle")
+	f.mu.Unlock()
+	f.update(wsOf(pane), func(w *world.WorkerObs) { w.AgentKind, w.Status, w.Harness = a.Harness, status, a.Harness })
 	return f.startErr
 }
 
@@ -202,6 +209,34 @@ func (f *fakeFloor) Prompt(_ context.Context, session, pane, text string) error 
 		return err
 	}
 	return nil
+}
+
+// takeTurn is the agent of workspace ws taking a short turn: it works,
+// then is back to its status.
+func (f *fakeFloor) takeTurn(ws string) {
+	var was string
+	f.update(ws, func(w *world.WorkerObs) { was, w.Status = w.Status, "working" })
+	f.update(ws, func(w *world.WorkerObs) { w.Status = was })
+}
+
+// TypePrompt is #95's typed prompt: the agent takes a turn, unless it
+// drops the Enter (typeDrops): then it stays as it is.
+func (f *fakeFloor) TypePrompt(_ context.Context, session, pane, text string) error {
+	f.record("type %s %q", pane, text)
+	f.mu.Lock()
+	var err error
+	if len(f.typeErrs) > 0 {
+		err, f.typeErrs = f.typeErrs[0], f.typeErrs[1:]
+	}
+	drop := err == nil && f.typeDrops > 0
+	if drop {
+		f.typeDrops--
+	}
+	f.mu.Unlock()
+	if err == nil && !drop {
+		f.takeTurn(wsOf(pane))
+	}
+	return err
 }
 
 func (f *fakeFloor) TypeExit(_ context.Context, session, pane, harness string) error {
@@ -369,6 +404,7 @@ func startHireBridgeAt(t *testing.T, db string, tweak func(*server.Options), wor
 	opts.StatDir = func(string) error { return nil }
 	opts.TrustTimeout, opts.SeenTimeout, opts.ExitTimeout = 2*time.Second, 2*time.Second, 300*time.Millisecond
 	opts.HirePoll, opts.ExitPause = 5*time.Millisecond, time.Millisecond
+	opts.PromptAckWait = 200 * time.Millisecond // #95
 	opts.Load = func() *proto.HostLoad { return &proto.HostLoad{Load1: 1.5, CPUs: 32, MemUsedPct: 40} }
 	opts.BranchOf = func(checkout string) string {
 		_, b, _ := strings.Cut(checkout, "/repo/")
@@ -417,6 +453,9 @@ func (p hireProxy) SendKey(ctx context.Context, s, pane string, k herdr.Key) err
 }
 func (p hireProxy) Prompt(ctx context.Context, s, pane, text string) error {
 	return p.get().Prompt(ctx, s, pane, text)
+}
+func (p hireProxy) TypePrompt(ctx context.Context, s, pane, text string) error {
+	return p.get().TypePrompt(ctx, s, pane, text)
 }
 func (p hireProxy) TypeExit(ctx context.Context, s, pane, h string) error {
 	return p.get().TypeExit(ctx, s, pane, h)
@@ -563,7 +602,7 @@ func TestHireAtDesk(t *testing.T) {
 		"create s /home/u/repo " + label,
 		"mark w2:p1 " + marker,
 		"start-agent w2:p1 " + agent + " claude claude-opus-5-5 medium " + label,
-		`prompt w2:p1 "Read CONTRIBUTING.md"`,
+		`type w2:p1 "Read CONTRIBUTING.md"`, // #95: typed into Claude
 	}
 	if calls := hb.fl.Calls(); !slices.Equal(calls, wantCalls) {
 		t.Fatalf("herdr calls =\n%q\nwant\n%q", calls, wantCalls)
@@ -582,7 +621,7 @@ func TestHireAtDesk(t *testing.T) {
 	}
 	row := auditRow(t, hb.bridge, proto.CmdWorkerHire)
 	if !row.OK || !row.Done || !strings.Contains(row.Result, `"desk":3`) || !strings.Contains(row.Result, marker) ||
-		!strings.Contains(row.Result, `"prompt":"sent (try 1)"`) {
+		!strings.Contains(row.Result, `"prompt":"typed"`) {
 		t.Fatalf("audit = %+v", row)
 	}
 
@@ -914,11 +953,13 @@ func TestWorktreeHireNeedsOneWorker(t *testing.T) {
 	}
 }
 
+// Codex (#95: only Codex's prompts are pasted with agent prompt).
 func TestHirePromptRetriesUntilReady(t *testing.T) {
 	hb := startHireBridge(t, nil)
 	notReady := &herdr.APIError{Code: "agent_not_ready", Message: "starting"}
 	hb.fl.promptErrs = []error{notReady, notReady}
 	a := hireArgs(0)
+	a.Harness, a.Model, a.Effort = "codex", "gpt-6-astra", "ultra"
 	a.Prompt = "hi"
 	_, m := hb.c.command(proto.CmdWorkerHire, "h", a)
 	if res := ackData[proto.HireResult](t, m); res.Prompted == nil || !*res.Prompted {
@@ -1209,9 +1250,9 @@ func TestHiredWorkerSurvivesRestarts(t *testing.T) {
 	}
 }
 
-// Claude just past its trust dialog takes the prompt's text but drops the
-// Enter: herdr reports agent_prompt_stalled, the bridge presses Enter
-// until the worker works.
+// An agent just past its trust dialog takes the prompt's text but drops
+// the Enter: herdr reports agent_prompt_stalled, the bridge presses Enter
+// until the worker works. Codex: agent prompt (#95).
 func TestHirePromptStalled(t *testing.T) {
 	hb := startHireBridge(t, nil)
 	hb.fl.promptErrs = []error{&herdr.APIError{Code: "agent_prompt_stalled", Message: "no working state within 5000 ms"}}
@@ -1225,6 +1266,7 @@ func TestHirePromptStalled(t *testing.T) {
 		}
 	}
 	a := hireArgs(0)
+	a.Harness, a.Model, a.Effort = "codex", "gpt-6-astra", "ultra"
 	a.Prompt = "hi"
 	_, m := hb.c.command(proto.CmdWorkerHire, "h", a)
 	if res := ackData[proto.HireResult](t, m); res.Prompted == nil || !*res.Prompted {

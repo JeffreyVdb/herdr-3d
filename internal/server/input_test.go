@@ -175,7 +175,7 @@ func TestPrompt(t *testing.T) {
 	if res = ackData(ack); !res.Queued || res.Retried {
 		t.Fatalf("working: %+v", res)
 	}
-	if want := []string{`submit w1:p1 "--help me\nplease"`, `queue w3:p1 "next, the docs"`}; !slices.Equal(tb.term.Calls(), want) {
+	if want := []string{`type w1:p1 "--help me\nplease"`, `queue w3:p1 "next, the docs"`}; !slices.Equal(tb.term.Calls(), want) {
 		t.Fatalf("calls = %q", tb.term.Calls())
 	}
 	// A plain shell, a blocked agent, bad text.
@@ -187,15 +187,16 @@ func TestPrompt(t *testing.T) {
 	c.mustAck(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: id("w1"), Text: strings.Repeat("x", 16<<10)})
 
 	// herdr failing the prompt otherwise is prompt_failed.
-	tb.term.submit = []error{&herdr.APIError{Code: "timeout", Message: "timed out"}}
+	tb.term.typeErrs = []error{&herdr.APIError{Code: "pane_not_found", Message: "gone"}}
 	c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: id("w1"), Text: "hi"}, proto.ErrPromptFailed)
 }
 
 // The known herdr paste quirk: the text is in the agent's input but Enter
 // was dropped (agent_prompt_stalled). One more Enter; submitted once the
-// worker is working, else prompt_failed.
+// worker is working, else prompt_failed. Codex (#95: a prompt to Claude is
+// typed, TestPromptTypedToClaude).
 func TestPromptRetriesADroppedEnter(t *testing.T) {
-	tb := startTermBridge(t, nil, agentW("w1", "claude", "idle"))
+	tb := startTermBridge(t, nil, agentW("w1", "codex", "idle"))
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
 	stalled := &herdr.APIError{Code: "agent_prompt_stalled", Message: "no working state within 5000ms"}

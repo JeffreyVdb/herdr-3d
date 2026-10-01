@@ -76,6 +76,7 @@ func startWrapBridge(t *testing.T, db, dir string, tweak func(*server.Options)) 
 			tweak(o)
 		}
 	}, wrapWorkers()...)
+	wb.term.onTyped = func(pane string) { wb.fl.takeTurn(wsOf(pane)) } // #95
 	for ws, wt := range map[string]string{"w1": wrapWT1, "w2": wrapWT2} {
 		wb.git.repos[wt] = wt
 		wb.fl.setProcs(ws+":p1", running(map[string]string{"w1": "claude", "w2": "codex"}[ws], ""))
@@ -137,7 +138,7 @@ var nonceRe = regexp.MustCompile(`H3D-WRAPUP ([0-9a-f]{16}) CLEAN`)
 func (wb *wrapBridge) prompted(t *testing.T, pane string) (text, nonce string) {
 	t.Helper()
 	for _, c := range slices.Backward(wb.term.Calls()) {
-		for _, how := range []string{"submit ", "queue "} {
+		for _, how := range []string{"type ", "submit ", "queue "} {
 			if q, ok := strings.CutPrefix(c, how+pane+" "); ok {
 				var s string
 				if err := json.Unmarshal([]byte(q), &s); err == nil {

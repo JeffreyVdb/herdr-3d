@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestControlAllowlist is the tripwire for the bridge's write path to herdr:
@@ -57,6 +58,8 @@ func TestControlAllowlist(t *testing.T) {
 		"prompt-wait": {"{herdr}", "--session", "{session}", "agent", "prompt", "{pane}", "{message}",
 			"--wait", "--until", "working", "--until", "blocked", "--timeout", "8000"},
 		"prompt-queued": {"{herdr}", "--session", "{session}", "agent", "prompt", "{pane}", "{message}"},
+		// #95
+		"type-text": {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "{chunk}"},
 
 		// #74
 		"zoom-on":  {"{herdr}", "--session", "{session}", "pane", "zoom", "{pane}", "--on"},
@@ -73,7 +76,8 @@ func TestControlAllowlist(t *testing.T) {
 	}
 	if w := []string{"CloseWorkspace", "CreateWorkspace", "CreateWorktree", "MarkPane", "Observe", "PaneProcesses", "Prompt",
 		"QueuePrompt", "ReadPane", "RemoveWorktree", "ReportCodexSession", "ResumeAgent", "SendKey", "SendKeys",
-		"SendSequence", "SendText", "SetZoom", "StartAgent", "StartSession", "StopSession", "SubmitPrompt", "TypeExit"}; !slices.Equal(methods, w) {
+		"SendSequence", "SendText", "SetZoom", "StartAgent", "StartSession", "StopSession", "SubmitPrompt", "TypeExit",
+		"TypePrompt"}; !slices.Equal(methods, w) {
 		t.Fatalf("Control methods = %v, want %v", methods, w)
 	}
 
@@ -136,6 +140,8 @@ func TestControlAllowlist(t *testing.T) {
 	must(c.QueuePrompt(ctx, "h3d-it-1", "w7:p1", "then run the tests"))
 	must(c.SetZoom(ctx, "h3d-it-1", "w7:p1", true)) // #74
 	must(c.SetZoom(ctx, "h3d-it-1", "w7:p1", false))
+	c.TypeGap = time.Nanosecond
+	must(c.TypePrompt(ctx, "h3d-it-1", "w7:p1", "--help\r\n/run it; rm -rf ~ $(id)")) // #95
 	wantArgv := [][]string{
 		{"/usr/bin/systemd-run", "--user", "--unit=herdr-s-h3d-it-1", "--collect", "-p", "KillMode=process",
 			"--working-directory=/home/u", "/bin/fish", "-l", "-c", "exec herdr --session 'h3d-it-1' server"},
@@ -176,6 +182,8 @@ func TestControlAllowlist(t *testing.T) {
 		{"/opt/herdr", "--session", "h3d-it-1", "agent", "prompt", "w7:p1", "then run the tests"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "zoom", "w7:p1", "--on"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "zoom", "w7:p1", "--off"},
+		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-text", "w7:p1", "--help\n/run it; rm -rf ~ $(id)"},
+		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-keys", "w7:p1", "enter"},
 	}
 	if !reflect.DeepEqual(got, wantArgv) {
 		t.Fatalf("argv =\n%q\nwant\n%q", got, wantArgv)
