@@ -19,11 +19,15 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
 
-// fullFloor is one worker per base name: a newcomer gets a suffixed name
-// unless a base name is free.
-func fullFloor() []world.WorkerObs {
+// fullFloor is one worker per name of the list: every name is owned.
+func fullFloor() []world.WorkerObs { return nearlyFullFloor(0) }
+
+// nearlyFullFloor is one worker per name of the list but spare: a newcomer
+// finds spare names free, so a held name is never recycled for it until
+// they are used up.
+func nearlyFullFloor(spare int) []world.WorkerObs {
 	var obs []world.WorkerObs
-	for i := range len(world.Names) {
+	for i := range len(world.Names) - spare {
 		obs = append(obs, agent(fmt.Sprintf("w%03d", i), "idle"))
 	}
 	return obs
@@ -77,7 +81,7 @@ func hasWorker(session, ws string) func(proto.World) bool {
 func TestLeaveAndJoinInOneObservation(t *testing.T) {
 	clk := newClock(1_790_000_000_000)
 	b := startBridge(t, "", server.Options{Now: clk.now, NameHold: time.Minute})
-	obs := fullFloor()
+	obs := nearlyFullFloor(3)
 	b.floor("s", true, obs...)
 	s := workersOf(b.world(hasWorkers("s", len(obs))), "s")
 	a, x := s["w000"], s["w001"]
@@ -114,7 +118,8 @@ func TestLeaveAndJoinInOneObservation(t *testing.T) {
 }
 
 // A worker back after its hold, whose name a newcomer took, gets a new
-// name: it must not take one another absent worker still holds.
+// name; with the list full that is the longest-released one, and the
+// worker it was taken from gets yet another.
 func TestExpiredReturnDoesNotTakeAHeldName(t *testing.T) {
 	const day = 24 * time.Hour
 	clk := newClock(1_790_000_000_000)
@@ -137,25 +142,28 @@ func TestExpiredReturnDoesNotTakeAHeldName(t *testing.T) {
 		t.Fatalf("claims after B took A's name: A %+v, B %+v", cs[a.ID], cs[bw.ID])
 	}
 
-	// B leaves; a day later A comes back, then B.
+	// B leaves; a day later A comes back. Every name is held, so A gets the
+	// one released longest ago, B's (its hold ends early), never a name of a
+	// worker on the floor; B, back a day into its hold, gets a new one.
 	b.floor("s", true, obs[1:]...)
 	b.world(hasWorkers("s", len(obs)-1))
 	clk.advance(day)
 	backA := worker("ra", "CODE|w000", "sess-w000", "idle")
 	b.floor("s", true, floorWith(obs[1:], backA)...)
 	ra := workersOf(b.world(hasWorker("s", "ra")), "s")["ra"]
-	if ra.ID != a.ID || ra.Name == bw.Name {
-		t.Fatalf("A came back as %+v; B holds %q", ra, bw.Name)
+	if ra.ID != a.ID || ra.Name != bw.Name {
+		t.Fatalf("A came back as %+v, want B's released name %q", ra, bw.Name)
 	}
 	backB := worker("rb", "CODE|b", "sess-b", "idle")
 	b.floor("s", true, floorWith(obs[1:], backA, backB)...)
 	w := b.world(hasWorkers("s", len(obs)+1))
 	s := workersOf(w, "s")
-	if rb := s["rb"]; rb.ID != bw.ID || rb.Name != bw.Name {
-		t.Fatalf("B came back one day into its hold as %+v, want %q", rb, bw.Name)
+	if rb := s["rb"]; rb.ID != bw.ID || rb.Name == ra.Name {
+		t.Fatalf("B came back as %+v, its name went to A (%q)", rb, ra.Name)
 	}
+	noDigits(t, s["rb"].Name)
 	if s["ra"].Name != ra.Name {
-		t.Fatalf("A's new name changed from %q to %q", ra.Name, s["ra"].Name)
+		t.Fatalf("A's name changed from %q to %q", ra.Name, s["ra"].Name)
 	}
 	checkClaims(t, b.st, w, "s")
 }
@@ -172,7 +180,7 @@ func TestUnchangedRunningFloorAcrossRestart(t *testing.T) {
 	b := startBridge(t, db, server.Options{Now: clk.now})
 	fake := herdrtest.Start(t, shortDir(t))
 	snap := &herdr.Snapshot{}
-	for _, o := range fullFloor() {
+	for _, o := range nearlyFullFloor(2) {
 		snap.Workspaces = append(snap.Workspaces, herdr.WorkspaceInfo{WorkspaceID: o.WorkspaceID, Label: o.Label})
 		snap.Panes = append(snap.Panes, herdr.PaneInfo{PaneID: o.PaneID, WorkspaceID: o.WorkspaceID, AgentStatus: o.Status,
 			Cwd: ptr(o.Cwd), AgentSession: &herdr.AgentSession{Value: o.AgentSession}})
@@ -192,7 +200,7 @@ func TestUnchangedRunningFloorAcrossRestart(t *testing.T) {
 			Resnapshot: 10 * time.Millisecond, Log: quietLog()})
 	}()
 	defer func() { cancel(); <-done }()
-	a := workersOf(b.world(hasWorkers("s", len(world.Names))), "s")["w000"]
+	a := workersOf(b.world(hasWorkers("s", len(world.Names)-2)), "s")["w000"]
 	snapshots := func() int {
 		n := 0
 		for _, m := range fake.Methods() {

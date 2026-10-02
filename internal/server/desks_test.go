@@ -159,8 +159,8 @@ func TestNamesUniqueOnABigFloor(t *testing.T) {
 }
 
 // A worker that left keeps its name while it may come back: within the
-// name hold a newcomer never gets it, even when that leaves only suffixed
-// names, and a bridge restart changes nothing. Past the hold a newcomer may
+// name hold a newcomer never gets it while another name is free, and a
+// bridge restart changes nothing. Past the hold a newcomer may
 // take it, and the worker then comes back under a new name.
 func TestReturningWorkerKeepsItsName(t *testing.T) {
 	const day = int64(24 * time.Hour / time.Millisecond)
@@ -169,7 +169,7 @@ func TestReturningWorkerKeepsItsName(t *testing.T) {
 	opts := server.Options{Now: clk.now, NameHold: 7 * 24 * time.Hour}
 	b := startBridge(t, db, opts)
 	var obs []world.WorkerObs
-	for i := range len(world.Names) {
+	for i := range len(world.Names) - 2 { // two spare names: a held one is not recycled
 		obs = append(obs, agent(fmt.Sprintf("w%03d", i), "idle"))
 	}
 	b.floor("s", true, obs...)
@@ -178,8 +178,8 @@ func TestReturningWorkerKeepsItsName(t *testing.T) {
 	for _, wk := range workersOf(w, "s") {
 		names[wk.AgentSession] = wk.Name
 	}
-	if len(names) != len(world.Names) {
-		t.Fatalf("the floor should hold every base name once: %v", names)
+	if len(names) != len(obs) {
+		t.Fatalf("every worker should have its own name: %v", names)
 	}
 	nameA := names["sess-w000"]
 	var others []world.WorkerObs // everyone but A
@@ -259,7 +259,7 @@ func TestNameHoldCountsFromDeparture(t *testing.T) {
 	clk := newClock(1_790_000_000_000)
 	opts := server.Options{Now: clk.now, NameHold: 7 * day}
 	b := startBridge(t, db, opts)
-	obs := fullFloor()
+	obs := nearlyFullFloor(2) // spare names, so a held one is not recycled
 	b.floor("s", true, obs...)
 	w := b.world(hasWorkers("s", len(obs)))
 	nameA, nameX := workersOf(w, "s")["w000"].Name, workersOf(w, "s")["w001"].Name
