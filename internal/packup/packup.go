@@ -35,7 +35,7 @@ import (
 )
 
 // GateQuestion is the yes/no question the classifier scores.
-const GateQuestion = "Does the prompt ask the AI coding agent to go home, stop working or end its session once the task is done?"
+const GateQuestion = "After the task, does the prompt tell the AI coding agent to wrap up and leave (go home, leave the office, clean up its worktree, end its session)?"
 
 // MaxPromptChars bounds what is sent of a prompt: its last 8000 characters
 // (a prompt is at most 16 KiB; the leaving part ends it).

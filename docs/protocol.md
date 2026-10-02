@@ -2524,8 +2524,9 @@ and bounded at **1.2 s** (so its answer has 0.3 s to reach the game):
 1. **Skip** (no call, `matched: false`): the feature not `ready`; a freelancer; a worker without a Claude or Codex
    agent (the wrap-up's rule: only those can be sent home after a task). Unknown worker: `unknown_worker`; an empty or
    over-16-KiB text: `bad_request`.
-2. **Gate**: the classifier scores `state {"prompt": <the text's last 8,000 characters>}` for "Does the prompt ask the
-   AI coding agent to go home, stop working or end its session once the task is done?". Under the threshold:
+2. **Gate**: the classifier scores `state {"prompt": <the text's last 8,000 characters>}` for "After the task, does the
+   prompt tell the AI coding agent to wrap up and leave (go home, leave the office, clean up its worktree, end its
+   session)?". Under the threshold:
    `matched: false`, no LLM call.
 3. **Cut**: the LLM (JSON mode) lists `{"remove": ["..."]}`, the **spans to remove**, never a rewrite. Each must be an
    exact substring of what the models saw, found in order (each after the one before), and 1–8 of them, each not blank.

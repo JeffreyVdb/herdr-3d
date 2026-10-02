@@ -28,7 +28,7 @@ export interface PackupHost {
   now(): number;
 }
 
-const GATE = 'Does the prompt ask the AI coding agent to go home, stop working or end its session once the task is done?';
+const GATE = 'After the task, does the prompt tell the AI coding agent to wrap up and leave (go home, leave the office, clean up its worktree, end its session)?';
 const FREELANCERS = ['code', 'review', 'ux', 'ground'];
 const DETECT_MS = 1200;
 const MAX_CHARS = 8000;
