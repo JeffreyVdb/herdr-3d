@@ -4,6 +4,12 @@ import { frames, openGame, shot, watchErrors } from './game';
 // M5 screen, on demo-m4 with the simulator (sim=1): herdr-3d is the top floor of Work (20 desks, two pods of
 // eight and four in the south pod). terminal.watch replays recorded herdr observe frames; worker.keys echoes.
 
+// #98: these are the terminal's live screens, so every monitor shows its terminal (Settings → Display → Desk monitors:
+// Terminal) rather than the activity cards idle and done agents rest on by default (e2e/m98-monitor.spec.ts).
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('h3d.monitors', 'terminal'));
+});
+
 type Layout = NonNullable<ReturnType<Window['__h3d']['layout']>>;
 type Screen = ReturnType<Window['__h3d']['screens']>[number];
 
