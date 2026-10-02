@@ -36,7 +36,7 @@ export interface FollowupHost {
 }
 
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
-const GATE = 'Is the agent asking the user for information, a decision, or an answer before it can continue?';
+const GATE = 'Does the message ask the user one or more questions that need their answer?';
 const SAMPLE_QUESTIONS =
   'I refactored the session loader and all tests pass.\n\n## Open questions for you\n- Does the legacy importer still need the v1 format?\n- Do you want to ship this already, or wait for the e2e-live run?';
 const SAMPLE_DONE = 'Done, PR merged. CI is green and the branch is deleted.';
