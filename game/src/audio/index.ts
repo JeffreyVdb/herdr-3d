@@ -24,6 +24,11 @@ export interface GameAudio {
    * clip starts only once it has loaded); callers that don't care ignore it.
    */
   playAt(clip: string, pos: { x: number; y: number; z: number }): Playback;
+  /**
+   * #100: a short non-positional UI sound (the inbox chime), under the master
+   * mute and volume; `volume` (0..1) is its own on top. Silent while locked.
+   */
+  playUi(sound: UiSound, volume?: number): void;
   /** Called once per frame with the camera (listener position + orientation). */
   setListener(camera: THREE.Camera): void;
   muted: boolean; // persisted per browser
@@ -44,6 +49,9 @@ export interface GameAudio {
   /** The office radio (M15): its own bus, volume, mute and genre. */
   readonly music: Music;
 }
+
+/** #100: the inbox chimes: someone needs you, and the softer one for finished work. */
+export type UiSound = 'needs' | 'finished';
 
 /** One `playAt`: when the clip really sounds, and when it's over. */
 export interface Playback {
@@ -321,6 +329,10 @@ class WebGameAudio implements GameAudio {
 
   duration(clip: string): number | null {
     return this.decoded.get(clip)?.duration ?? null;
+  }
+
+  playUi(_sound: UiSound, _volume = 1): void {
+    // #100 contract: synthesized by the chime round.
   }
 
   playAt(clip: string, pos: { x: number; y: number; z: number }): Playback {

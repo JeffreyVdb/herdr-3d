@@ -2419,16 +2419,28 @@ export class App {
     const item = nextNeed(this.inboxItems(), this.lastInbox);
     this.lastInbox = item?.id ?? null;
     if (!item) return null;
+    return (await this.goToWorker(item.id)) ? item : null;
+  }
+
+  /**
+   * #100: teleports you to a worker, from anywhere: straight onto its floor (no elevator panel), facing it, and sat at
+   * its laptop. False when it cannot be done (in a transition, the worker or its floor went). When the laptop cannot
+   * be sat at, you are left facing the worker with the reason (`sitAt`'s toast), and it is still true.
+   */
+  async goToWorker(id: string): Promise<boolean> {
+    if (this.transitioning) return false;
+    const session = this.store.workerView(id)?.worker.session;
+    if (!session) return false;
     if (this.laptops.seated) this.laptops.stand(null, true);
     this.walker.release();
     this.walker.stop();
     this.pendingNeed = null;
-    if (!(this.mode === 'floor' && this.place.area === 'floor' && this.office?.session === item.session)) await this.enterFloor(item.session);
-    if (this.mode !== 'floor' || this.office?.session !== item.session) return null; // the floor went meanwhile
+    if (!(this.mode === 'floor' && this.place.area === 'floor' && this.office?.session === session)) await this.enterFloor(session);
+    if (this.mode !== 'floor' || this.office?.session !== session) return false; // the floor went meanwhile
     if (this.planOpen) this.setPlan(false);
-    this.faceWorker(item.id);
-    this.sitAt(item.id);
-    return item;
+    this.faceWorker(id);
+    this.sitAt(id);
+    return true;
   }
 
   /**

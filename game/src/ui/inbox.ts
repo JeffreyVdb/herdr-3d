@@ -49,6 +49,12 @@ export class InboxChip {
     this.root.style.setProperty('--ib-lift', r.height > 0 ? `${(r.height + 6).toFixed(1)}px` : '0px');
   }
 
+  /** #100 contract: draws the eye to the chip (a new entry while the window is in front). */
+  pulse(): void {}
+
+  /** #100 contract: opens the chip's list (a collapsed notification's click). */
+  openList(): void {}
+
   /** What the chip shows (test hook). */
   summary(): { shown: boolean; count: number; blocked: boolean } {
     return { shown: !this.root.hidden, count: this.state?.count ?? 0, blocked: this.state?.blocked ?? false };
