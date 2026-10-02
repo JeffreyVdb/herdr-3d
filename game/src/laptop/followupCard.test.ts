@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CommandArgs, Followup } from '../net/protocol';
 import { FollowupCard, type FollowupResult } from './followupCard';
+import { mountTranscript, type TranscriptView } from './transcriptRender';
 
 // #90: the follow-up card: tabs per question, yes/no with a note, a choice with Other, an open textarea; Send answers
 // sends what is answered; an ack makes it go; the hint says it was detected automatically.
@@ -62,9 +63,15 @@ describe('FollowupCard (#90)', () => {
     expect(c.el.querySelector('.tx-ask-tab.is-active')?.textContent).toContain('Question 2');
     expect([...c.el.querySelectorAll('.tx-ask-opt-label')].map((x) => x.textContent)).toEqual(['Ship now', 'Wait', 'Other']);
     expect(c.el.querySelector('.tx-ask-hint-text')?.textContent).toBe('1 of 3 answered: the rest are left out');
-    press(c, 'Tab');
+    // ← → change question; Tab and Enter on the timeline are not the card's (the focus, the prompt box).
+    expect(press(c, 'Tab')).toBe(false);
+    expect(press(c, 'ArrowRight')).toBe(true);
     expect(c.el.querySelector('textarea.tx-fu-text')).not.toBeNull();
-    press(c, 'Enter');
+    expect(c.el.querySelector('.tx-ask-keys')?.textContent).toBe('← → question · Esc back');
+    expect(press(c, 'Enter')).toBe(false);
+    await flush();
+    expect(t.answers).toEqual([]);
+    c.el.querySelector<HTMLButtonElement>('.tx-ask-send')!.click();
     await flush();
     expect(t.answers).toEqual([{ id: '', turn_id: 't1', answers: [{ id: 'q1', value: 'No' }] }]);
     expect(c.shown).toBe(false); // acked: it goes, before its upsert
@@ -81,7 +88,7 @@ describe('FollowupCard (#90)', () => {
     c.set(followup());
     press(c, '1');
     t.setResult({ ok: false, code: 'prompt_failed', message: 'The prompt did not go through.' });
-    press(c, 'Enter');
+    c.el.querySelector<HTMLButtonElement>('.tx-ask-send')!.click();
     await flush();
     expect(c.shown).toBe(true);
     expect(c.el.querySelector('.tx-ask-note.is-error')?.textContent).toBe('The prompt did not go through.');
@@ -103,5 +110,107 @@ describe('FollowupCard (#90)', () => {
     expect(c.el.hidden).toBe(true);
     c.suppress(false);
     expect(c.el.hidden).toBe(false);
+  });
+});
+
+// The keyboard on the transcript view with a card up: Tab moves the focus through the card and on to the prompt box
+// (never cycles questions), ← → on the tab list change question, Enter on the timeline is the page's (the prompt box).
+describe('FollowupCard keyboard in the transcript (#90)', () => {
+  let view: TranscriptView | null = null;
+  let root: HTMLDivElement;
+  afterEach(() => {
+    view?.destroy();
+    view = null;
+    root.remove();
+  });
+
+  function mount() {
+    const answers: Array<CommandArgs['worker.answer_followup']> = [];
+    root = document.createElement('div');
+    document.body.append(root);
+    view = mountTranscript(root, {
+      images: null,
+      onPromptSubmit: () => Promise.resolve(true),
+      onAnswer: () => {},
+      onAnswerAsk: async () => ({ ok: true, resolved: true }),
+      onAnswerFollowup: (a) => (answers.push(a), Promise.resolve({ ok: true })),
+      onSwitchToTerminal: () => {},
+      loadSubagent: async () => [],
+    });
+    view.setFollowup(followup());
+    return { answers, $: <E extends Element = HTMLElement>(sel: string) => root.querySelector<E>(sel)! };
+  }
+  const key = (target: Element, k: string, shiftKey = false) => {
+    const e = new KeyboardEvent('keydown', { key: k, shiftKey, bubbles: true, cancelable: true });
+    target.dispatchEvent(e);
+    return e;
+  };
+  const activeTab = () => root.querySelector('.tx-ask-tab.is-active')?.textContent;
+  /** The Tab order (no positive tabindex here): enabled controls and tabindex 0, in document order. A browser puts
+   * the prompt box (contenteditable) in it; jsdom reports its tabIndex as -1. */
+  const tabbable = () =>
+    [...root.querySelectorAll<HTMLElement>('button, input, textarea, [contenteditable="true"], [tabindex]')].filter(
+      (el) => !(el as HTMLButtonElement).disabled && (el.tabIndex >= 0 || (el.getAttribute('contenteditable') === 'true' && !el.hasAttribute('tabindex'))) && !el.closest('[hidden]'),
+    );
+
+  it('Tab and Shift+Tab are never the card’s: not on the timeline, not in its texts, not on its buttons', () => {
+    const { $ } = mount();
+    for (const [sel, shift] of [['.tx-scroll', false], ['.tx-scroll', true], ['.tx-fu-text', false], ['.tx-fu-text', true], ['.tx-ask-opt', false], ['.tx-ask-dismiss', false]] as const) {
+      const e = key($(sel), 'Tab', shift);
+      expect(e.defaultPrevented, `${shift ? 'Shift+' : ''}Tab on ${sel}`).toBe(false);
+      expect(activeTab()).toContain('Question 1');
+    }
+    // Question 3 (open): its textarea lets Tab go too.
+    key($('.tx-scroll'), 'ArrowRight');
+    key($('.tx-scroll'), 'ArrowRight');
+    expect(activeTab()).toContain('Question 3');
+    expect(key($('textarea.tx-fu-text'), 'Tab').defaultPrevented).toBe(false);
+    expect(activeTab()).toContain('Question 3');
+  });
+
+  it('the Tab order runs through the card (one tab stop for the tab list) to Dismiss, Send and the prompt box', () => {
+    const { $ } = mount();
+    // One stop for the tab list: the active tab.
+    expect([...root.querySelectorAll<HTMLElement>('.tx-ask-tab')].map((t) => t.tabIndex)).toEqual([0, -1, -1]);
+    key($('.tx-scroll'), '1'); // Yes: Send is on
+    key($('.tx-scroll'), 'ArrowLeft');
+    const order = tabbable();
+    const at = (el: Element) => order.indexOf(el as HTMLElement);
+    const tab = at($('.tx-ask-tab.is-active'));
+    const note = at($('.tx-fu-text'));
+    const dismiss = at($('.tx-ask-dismiss'));
+    const send = at($('.tx-ask-send'));
+    const prompt = at($('.tx-input'));
+    expect(tab).toBeGreaterThanOrEqual(0);
+    expect([tab < note, note < dismiss, dismiss < send, send < prompt]).toEqual([true, true, true, true]);
+  });
+
+  it('← → on the tab list change question and keep the focus on the tabs; Home / End go to the ends', () => {
+    const { $ } = mount();
+    $('.tx-ask-tab.is-active').focus();
+    expect(key(document.activeElement!, 'ArrowRight').defaultPrevented).toBe(true);
+    expect(activeTab()).toContain('Question 2');
+    expect(document.activeElement).toBe($('.tx-ask-tab.is-active'));
+    expect($<HTMLElement>('.tx-ask-tab.is-active').tabIndex).toBe(0);
+    key(document.activeElement!, 'End');
+    expect(activeTab()).toContain('Question 3');
+    key(document.activeElement!, 'Home');
+    expect(activeTab()).toContain('Question 1');
+    key(document.activeElement!, 'ArrowLeft');
+    expect(activeTab()).toContain('Question 3');
+    expect(document.activeElement).toBe($('.tx-ask-tab.is-active'));
+  });
+
+  it('Enter on the timeline is not the card’s: nothing is sent, the page takes it to the prompt box', async () => {
+    const { $, answers } = mount();
+    key($('.tx-scroll'), '2'); // No
+    const e = key($('.tx-scroll'), 'Enter');
+    expect(e.defaultPrevented).toBe(false);
+    await Promise.resolve();
+    expect(answers).toEqual([]);
+    // In a text of the card it sends.
+    key($('.tx-fu-text'), 'Enter');
+    await Promise.resolve();
+    expect(answers.length).toBe(1);
   });
 });

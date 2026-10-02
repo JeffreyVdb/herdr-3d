@@ -2422,7 +2422,10 @@ game's Settings say so above the toggle. A self-hosted OpenAI-compatible endpoin
 The game ORs `followup` into needs-you (the counts, N, the desk's NEEDS YOU and its card: "N questions: answer at the
 laptop (E)"), and the transcript view pins a card above the prompt box, which stays on (typing a prompt there clears
 it): a tab per question, Yes / No and a note, a choice's options and Other, a text for an open one, Send answers and
-Dismiss, and "Detected automatically".
+Dismiss, and "Detected automatically". Keys: digits pick and ← → change question (on the timeline and the tab list,
+which is one Tab stop); Tab moves the focus through the card to Dismiss, Send and the prompt box; Enter sends from the
+card's options and texts, while on the timeline it goes to the prompt box as ever. On a very short screen (a phone's
+laptop) the timeline and the strip fold away while the card is up, and the card scrolls above a one-line prompt box.
 
 ### Errors
 

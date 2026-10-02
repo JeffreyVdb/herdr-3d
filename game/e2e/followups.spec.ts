@@ -22,6 +22,15 @@ const EXTRACTED = {
   ],
 };
 
+// A turn whose LLM answer has all three kinds, and one whose answer is not JSON (the fallback).
+const THREE_MARK = 'three kinds';
+const THREE = `Moved the loader over (${THREE_MARK}).\n\n## Open questions for you\n- Does the legacy importer still need the v1 format?\n- Ship now or wait for the e2e-live run?\n- What should the new flag be called?`;
+const EXTRACTED_THREE = {
+  questions: [...EXTRACTED.questions, { question: 'What should the new flag be called?', kind: 'open' }],
+};
+const FALLBACK_MARK = 'cannot be parsed';
+const FALLBACK = `The importer change is in, but its answer ${FALLBACK_MARK}.\n\nShould I keep the v1 reader around for another release, or drop it now?`;
+
 interface Fake {
   url: string;
   close(): Promise<void>;
@@ -69,7 +78,13 @@ function fakeOpenAI(): Promise<Fake> {
       if (req.url === '/v1/models') return void res.end('{"object":"list","data":[{"id":"mimo-v2.6-flash"}]}');
       if (req.url !== '/v1/chat/completions') return void res.writeHead(404).end('{}');
       void body(req).then((b) => {
-        const content = b.includes('Reply with exactly this JSON') ? '{"ok": true}' : JSON.stringify(EXTRACTED);
+        const content = b.includes('Reply with exactly this JSON')
+          ? '{"ok": true}'
+          : b.includes(THREE_MARK)
+            ? JSON.stringify(EXTRACTED_THREE)
+            : b.includes(FALLBACK_MARK)
+              ? '{"questions": ['
+              : JSON.stringify(EXTRACTED);
         res.end(JSON.stringify({ choices: [{ message: { content } }] }));
       });
     }),
@@ -206,5 +221,97 @@ test('switched off, a turn with questions flags nothing and sends nothing', asyn
   expect(turn).toMatchObject({ ok: true, data: { flagged: false } });
   await frames(page, 5);
   expect(await page.evaluate((id) => window.__h3d.needs().some((n) => n.id === id), w.id)).toBe(false);
+  clean();
+});
+
+// On a phone (360×800) the laptop's screen is short: the card takes the room the timeline leaves (collapsed to a
+// strip while it is up), so its question, options, text and a fallback's message tail are shown and usable, and the
+// prompt box stays reachable. In Quiet (dark) and Paper (light).
+test('on a phone the card has room for the question and its answers, and the prompt box stays reachable', async ({ page }) => {
+  const clean = watchErrors(page);
+  const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
+  try {
+    await page.setViewportSize({ width: 360, height: 800 });
+    await openGame(page, 'demo-m5', '', `play=none&sim=1&simms=300&simusage=0&simecho=200&simjev=${encodeURIComponent(jev.url)}`);
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Settings' });
+    const section = dialog.locator('[data-section="followups"]');
+    await setUpModels(dialog, llm);
+    await section.getByRole('button', { name: 'Test' }).click();
+    await expect(section).toContainText('Test passed');
+    await section.getByRole('checkbox', { name: 'Detect follow-up questions' }).check();
+    await expect(section).toContainText('On: each agent’s final message is checked');
+    await page.keyboard.press('Escape');
+
+    const w = demoWorker('Pebble');
+    await sitAtTranscript(page, w);
+    const tx = page.locator('.seat-transcript .tx');
+    const card = tx.locator('.tx-fu');
+    const box = async (l: Locator) => {
+      const b = await l.boundingBox();
+      expect(b, 'laid out').toBeTruthy();
+      return b as NonNullable<typeof b>;
+    };
+    /** Within the card's visible rectangle (it may scroll: then scrolled to first). */
+    const shown = async (l: Locator, what: string) => {
+      await l.scrollIntoViewIfNeeded();
+      const [c, b] = await Promise.all([box(card), box(l)]);
+      expect(b.height, `${what} has a height`).toBeGreaterThan(8);
+      expect(b.y, `${what} top`).toBeGreaterThanOrEqual(c.y - 0.5);
+      expect(b.y + b.height, `${what} bottom`).toBeLessThanOrEqual(c.y + c.height + 0.5);
+    };
+    const promptReachable = async () => {
+      const [c, p] = await Promise.all([box(card), box(tx.locator('.tx-input'))]);
+      expect(p.height, 'the prompt box has a line').toBeGreaterThanOrEqual(16);
+      expect(p.y, 'the prompt box below the card').toBeGreaterThanOrEqual(c.y + c.height - 1);
+      await expect(tx.locator('.tx-input')).toBeEnabled();
+    };
+
+    for (const theme of ['Quiet', 'Paper'] as const) {
+      await tx.getByRole('radio', { name: theme, exact: true }).click();
+      expect(await page.evaluate((a) => window.__h3d.simTurn(a), { id: w.id, text: THREE })).toMatchObject({ ok: true, data: { flagged: true } });
+      await expect(card).toBeVisible();
+      await expect(card.locator('.tx-ask-tab')).toHaveCount(3);
+      const body = await box(card.locator('.tx-ask-body'));
+      expect(body.height, 'the body has room for the question and an answer').toBeGreaterThanOrEqual(60);
+      await shot(page, `followup-phone-${theme.toLowerCase()}`);
+      await shown(card.locator('.tx-ask-question'), 'the question');
+      await shown(card.getByRole('radio', { name: 'No' }), 'No');
+      await shown(card.locator('.tx-fu-text'), 'the note');
+      await shown(card.locator('.tx-ask-send'), 'Send');
+      await shown(card.locator('.tx-ask-dismiss'), 'Dismiss');
+      await promptReachable();
+      // Answer all three with taps and send.
+      await card.getByRole('radio', { name: 'No' }).click();
+      await expect(card.locator('.tx-ask-question')).toHaveText('Ship this already, or wait for the e2e-live run?');
+      await card.getByRole('radio', { name: 'Wait for e2e-live' }).click();
+      await expect(card.locator('textarea.tx-fu-text')).toBeVisible();
+      await shown(card.locator('textarea.tx-fu-text'), 'the open answer');
+      await card.locator('textarea.tx-fu-text').fill('--legacy-v1');
+      await shown(card.locator('.tx-ask-send'), 'Send');
+      await card.locator('.tx-ask-send').click();
+      await expect(card).toBeHidden();
+      // The timeline is back once the card is gone.
+      expect((await box(tx.locator('.tx-main'))).height).toBeGreaterThan(40);
+    }
+    expect(await sent(page, 'worker.answer_followup')).toHaveLength(2);
+
+    // The fallback: the message's end and a free answer.
+    expect(await page.evaluate((a) => window.__h3d.simTurn(a), { id: w.id, text: FALLBACK })).toMatchObject({ ok: true, data: { flagged: true } });
+    await expect(card.locator('.tx-fu-tail')).toBeVisible();
+    await shot(page, 'followup-phone-fallback-paper');
+    // The tail may be longer than the card: it shows a good part of it, the rest scrolls.
+    await card.locator('.tx-fu-tail').scrollIntoViewIfNeeded();
+    const [c, tail] = await Promise.all([box(card), box(card.locator('.tx-fu-tail'))]);
+    expect(Math.min(c.y + c.height, tail.y + tail.height) - Math.max(c.y, tail.y), 'the message tail shown').toBeGreaterThanOrEqual(36);
+    await shown(card.locator('textarea.tx-fu-text'), 'the free answer');
+    await shown(card.locator('.tx-ask-send'), 'Send');
+    await promptReachable();
+    await card.locator('textarea.tx-fu-text').fill('Keep it one more release.');
+    await card.locator('.tx-ask-send').click();
+    await expect(card).toBeHidden();
+  } finally {
+    await Promise.all([jev.close(), llm.close()]);
+  }
   clean();
 });

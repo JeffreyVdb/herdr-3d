@@ -711,7 +711,11 @@ class Transcript implements TranscriptView {
       answer: (args) => (host.onAnswerFollowup ? host.onAnswerFollowup(args) : noFollowup()),
       dismiss: (turnId) => (host.onDismissFollowup ? host.onDismissFollowup(turnId) : noFollowup()),
       focusTimeline: () => this.focus(),
-      resized: () => this.stick(),
+      resized: () => {
+        // A very short screen gives the card the timeline's room while it is up (transcript.css).
+        this.root?.toggleAttribute('data-followup', this.followup.shown);
+        this.stick();
+      },
     });
     // The toggle sits on the left: the HUD's plan-limits widget can hang over the screen's top-right corner.
     this.titleEl = h('span', { class: 'tx-title' }, 'Transcript');
@@ -1483,6 +1487,7 @@ class Transcript implements TranscriptView {
       e.stopPropagation();
       return;
     }
+    // #90: and the follow-up card's digits and ← → (Tab and Enter stay the page's: the focus, the prompt box).
     if (!inFollowup && !this.ask.shown && this.followup.shown && this.followup.key(e)) {
       e.preventDefault();
       e.stopPropagation();

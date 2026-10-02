@@ -116,8 +116,11 @@ export class FollowupCard {
   // --- keys --------------------------------------------------------------------------------------------------
 
   /**
-   * A key on the transcript (not in a text box): digits pick, Tab / ← → change question, Enter sends. On the card
-   * itself (`inCard`) Esc goes back to the timeline. True: it was the card's.
+   * A key on the transcript (not in a text box): digits pick, ← → change question. On the card itself (`inCard`)
+   * Enter on an option or a tab sends and Esc goes back to the timeline. Tab is never the card's: it moves the focus
+   * through the card (the active tab, the options, the text, Dismiss, Send) and on to the prompt box. Enter on the
+   * timeline is not either: it goes to the prompt box, which a typed prompt clears the card from. True: it was the
+   * card's.
    */
   key(e: KeyboardEvent, inCard = false): boolean {
     const f = this.shownFollowup;
@@ -126,11 +129,11 @@ export class FollowupCard {
       this.host.focusTimeline();
       return true;
     }
-    if (inCard && e.key === 'Enter' && !(e.target as HTMLElement | null)?.closest?.('.tx-ask-opt, .tx-ask-tab')) return false;
+    const onTab = !!(e.target as HTMLElement | null)?.closest?.('.tx-ask-tab');
+    if (e.key === 'Enter' && (!inCard || !(e.target as HTMLElement | null)?.closest?.('.tx-ask-opt, .tx-ask-tab'))) return false;
     if (this.sending) return inCard && e.key === 'Enter';
     const q = f.questions[this.active];
     if (!q) return false;
-    const several = f.questions.length > 1;
     if (/^[1-9]$/.test(e.key) && !e.shiftKey) {
       const vals = valuesOf(q);
       const n = Number(e.key);
@@ -139,9 +142,10 @@ export class FollowupCard {
       else return false;
       return true;
     }
-    if (several && (e.key === 'Tab' || e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
-      const back = e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey);
-      this.go((this.active + (back ? f.questions.length - 1 : 1)) % f.questions.length);
+    const n = f.questions.length;
+    if (n > 1 && (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || (onTab && (e.key === 'Home' || e.key === 'End')))) {
+      const i = e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : (this.active + (e.key === 'ArrowLeft' ? n - 1 : 1)) % n;
+      this.go(i, onTab);
       return true;
     }
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -163,10 +167,12 @@ export class FollowupCard {
     this.render(next >= 0 ? next : null);
   }
 
-  private go(i: number): void {
+  /** Shows question i; the focus goes to its tab (from the tab list) or its answer. */
+  private go(i: number, toTab = false): void {
     this.active = i;
     this.render();
-    this.focus();
+    if (toTab) this.el.querySelector<HTMLElement>('.tx-ask-tab.is-active')?.focus({ preventScroll: true });
+    else this.focus();
   }
 
   private focusText(): void {
@@ -228,9 +234,6 @@ export class FollowupCard {
     } else if (e.key === 'Enter' && !e.isComposing && (!multiline || !e.shiftKey)) {
       e.preventDefault();
       void this.submit();
-    } else if (e.key === 'Tab' && f.questions.length > 1) {
-      e.preventDefault();
-      this.go((this.active + (e.shiftKey ? f.questions.length - 1 : 1)) % f.questions.length);
     }
   }
 
@@ -285,6 +288,8 @@ export class FollowupCard {
               class: `tx-ask-tab${i === this.active ? ' is-active' : ''}${done ? ' is-done' : ''}`,
               role: 'tab',
               'aria-selected': String(i === this.active),
+              // One stop in the Tab order: the active tab; ← → move between them.
+              tabindex: i === this.active ? '0' : '-1',
               title: qq.question,
               onclick: () => this.go(i),
             },
@@ -348,7 +353,7 @@ export class FollowupCard {
     const ready = followupAnswers(f, this.picks).length > 0;
     const send = h('button', { class: 'tx-ask-send', disabled: !ready || !!this.sent, onclick: () => void this.submit() }, sending ? 'Sending…' : f.questions.length > 1 ? 'Send answers' : 'Send answer');
     const pickKeys = vals.length ? `1–${vals.length + (q.kind === 'choice' ? 1 : 0)} pick · ` : '';
-    const keys = `${pickKeys}${f.questions.length > 1 ? 'Tab next question · ' : ''}Enter send · Esc back`;
+    const keys = `${pickKeys}${f.questions.length > 1 ? '← → question · ' : ''}Esc back`;
     parts.push(
       h(
         'div',
