@@ -91,6 +91,11 @@ const (
 // the panel's). While set it wins and the panel shows it read-only.
 const EnvFollowupsEnabled = "HERDR_WORLD_FOLLOWUPS_ENABLED"
 
+// #98 activity: the environment's "Classify unknown commands" toggle (true
+// or false; unset: the panel's). While set it wins and the panel shows it
+// read-only.
+const EnvActivityModel = "HERDR_WORLD_ACTIVITY_MODEL"
+
 // DefaultAIFile is ai.json next to the database.
 func DefaultAIFile(db string) string { return filepath.Join(filepath.Dir(db), "ai.json") }
 
@@ -373,6 +378,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	aiLLMKey := fs.String("ai-llm-key-file", os.Getenv(EnvAILLMKeyFile), "file holding the LLM's key; overrides the panel's ($"+EnvAILLMKeyFile+")")
 	aiLLMModel := fs.String("ai-llm-model", os.Getenv(EnvAILLMModel), "LLM model; overrides the panel's ($"+EnvAILLMModel+")")
 	followupsEnabled := fs.String("followups-enabled", os.Getenv(EnvFollowupsEnabled), "true or false: switch the follow-up questions on or off, overriding the panel's toggle ($"+EnvFollowupsEnabled+")") // #90
+	activityModel := fs.String("activity-model", os.Getenv(EnvActivityModel), "true or false: switch \"Classify unknown commands\" on or off, overriding the panel's toggle ($"+EnvActivityModel+")")       // #98
 	pricingFile := fs.String("pricing", os.Getenv(EnvPricing), "JSON file of model prices merged over the built-in table ($"+EnvPricing+")")
 	sessions := fs.String("sessions", os.Getenv(EnvSessions), "only watch sessions whose name matches this regexp ($"+EnvSessions+")")
 	fs.DurationVar(&poll, "poll", poll, "session discovery interval ($"+EnvPoll+")")
@@ -415,6 +421,14 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 			return fmt.Errorf("-followups-enabled must be true or false, got %q", *followupsEnabled)
 		}
 		followupsOn = &on
+	}
+	var activityOn *bool // #98
+	if *activityModel != "" {
+		on, err := strconv.ParseBool(*activityModel)
+		if err != nil {
+			return fmt.Errorf("-activity-model must be true or false, got %q", *activityModel)
+		}
+		activityOn = &on
 	}
 	images, err := upload.New(upload.Config{URL: *dropzoneURL}) // #51 upload
 	if err != nil {
@@ -490,6 +504,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		AI: &ai.Options{File: orDefault(*aiFile, DefaultAIFile(*db)), Env: ai.Overrides{ // #92 AI integration
 			ClassifierKeyFile: *aiClsKey, ClassifierModel: *aiClsModel, LLMBaseURL: *aiLLMBase, LLMKeyFile: *aiLLMKey, LLMModel: *aiLLMModel}},
 		FollowupsEnabled: followupsOn, // #90 follow-up questions
+		ActivityModel:    activityOn,  // #98 activity
 	})
 }
 
@@ -584,6 +599,9 @@ type ServeConfig struct {
 	AI *ai.Options
 	// #90 follow-up questions: the environment's toggle (nil: the panel's).
 	FollowupsEnabled *bool
+	// #98 activity: the environment's "Classify unknown commands" toggle
+	// (nil: the panel's).
+	ActivityModel *bool
 }
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
@@ -635,6 +653,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		opts.AI = svc
 	}
 	opts.FollowupsEnabled = cfg.FollowupsEnabled // #90
+	opts.ActivityModel = cfg.ActivityModel       // #98
 	opts.Caps, opts.HireOptions, opts.Load = cfg.Caps, cfg.HireOptions, server.HostLoad
 	opts.TrustTimeout, opts.SeenTimeout, opts.ExitTimeout = cfg.TrustTimeout, cfg.SeenTimeout, cfg.ExitTimeout
 	opts.WrapUpTimeout = cfg.WrapUpTimeout // #83

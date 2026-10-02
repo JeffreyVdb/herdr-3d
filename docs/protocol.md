@@ -177,6 +177,9 @@ bridge without the service, as by one from before #92: a client's Settings then 
 `followups` (#90) is the follow-up questions feature's state (see [Follow-up questions](#follow-up-questions)), left
 out by a bridge without the AI service or from before #90.
 
+`activity` (#98) is "Classify unknown commands"' state (see [Activity](#activity)), left out by a bridge without the AI
+service or from before #98; a worker's own `activity` is in the worker.
+
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
 
@@ -246,6 +249,7 @@ floor with no workers and an `error`).
 | `question` | object, optional | what the screen of a `blocked` worker asks, while it is blocked (see [Blocked workers](#blocked-workers-question-quick-reply-approve--deny)) |
 | `ask` | object, optional | #57: the structured question (Claude's AskUserQuestion, Codex's request_user_input) its agent's latest turn waits on, read from its transcript whatever `status` says (see [Laptops: asks](#laptops-asks)) |
 | `followup` | object, optional | #90: the open questions of its agent's final message, `{"turn_id", "questions": [{"id", "question", "kind": "yes_no" \| "choice" \| "open", "options"?}], "score", "source": "model" \| "fallback", "at", "tail"?}`, until answered, dismissed or moot (see [Follow-up questions](#follow-up-questions)) |
+| `activity` | object, optional | #98: what its agent is doing right now, `{"kind", "detail"?, "since", "source", "image"?, "tasks"?}`: while `status` is `working`, and while `idle` or `done` only as `waiting` on open background tasks; absent otherwise and for harnesses other than Claude and Codex (see [Activity](#activity)) |
 | `wrapup` | object, optional | #83: its wrap-up, `{"state": "armed" \| "needs_you", "worktree": "keep" \| "delete" \| "delete_branch", "armed_at": int, "reason"?: string}` (unix ms, bridge clock; `reason` with `needs_you`), while armed or needing you (see [Wrap up](#wrap-up)) |
 | `round` | int ≥ 1, optional | write-code round: the `h3d_round` token, else the label's trailing `\|r<N>` (see [Runs and freelancers](#runs-and-freelancers)) |
 | `ticket` | string ≤ 32 bytes, optional | the `h3d_ticket` token, else the label's ticket field (`CODE\|descr\|<ticket>\|r<N>`, likewise `REVIEW` and `UX`) |
@@ -375,6 +379,8 @@ and remember the last `seq` applied.
 | `limits.update` | `provider`, `plan`, `windows`, `at`, `stale`, `error`?, `source`?, `reached`?, `credits`? | a provider's plan limits were read (flat in the event, see [Plan limits](#plan-limits)); one per provider per read, about every 2 minutes while a client is connected |
 | `ai.update` | `classifier`, `llm`, `last_error`? | #92: the AI integration's state changed (a role saved or cleared, a test passed or failed, a key rejected); the whole state, flat in the event (see [AI integration](#ai-integration)) |
 | `followups.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `tested` | #90: the follow-up questions' state changed (a setting, a passing test, a model's state); the whole state, flat in the event (see [Follow-up questions](#follow-up-questions)) |
+| `worker.activity` | `id`, `session`, `workspace_id`, `activity`? | #98: the worker's `activity` changed (absent: cleared); only on a change, at most twice a second per worker. A change that comes with a status change is in that `worker.upsert` instead (see [Activity](#activity)) |
+| `activity.update` | `model_enabled`, `threshold`, `margin`, `daily_cap`, `calls_today`, `cache_size`, `state`, `classifier`, `env` | #98: "Classify unknown commands"' state changed (a setting, a call counted, the classifier's state); the whole state, flat in the event. Its `classifier` is a role's state (a string), not `ai.update`'s object: decode it by its `t` (see [Activity](#activity)) |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
@@ -479,6 +485,8 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `followups.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"name", "expect", "score", "flagged", "questions"?, "source"?, "error"?}], "latency_ms"}` | `followups.update` when it changes `tested` |
 | `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…]}` | `worker.prompt`'s | the worker's upsert without its `followup` |
 | `worker.dismiss_followup` | `{"id", "turn_id"}` | — | the worker's upsert without its `followup` (before the ack) |
+| `activity.get` | `{}` | "Classify unknown commands"' state (see [Activity](#activity)) | — |
+| `activity.set` | `{"model_enabled"?: bool, "threshold"?: 0.05–0.99, "margin"?: 0–0.9, "daily_cap"?: 1–100000}` | its state | `activity.update` (before the ack) |
 | `whiteboard.get` | `{"floor"}` | the board's state, `{"floor", "version", "author", "at", "render_version", "render", "stale", "stale_pins"}` (its content is HTTP, see [Whiteboard](#whiteboard)) | — |
 | `whiteboard.clear` | `{"floor", "confirm": true, "author"?}` | the new state | `whiteboard.updated` |
 | `whiteboard.pin` | `{"floor", "author", "note", "request_id"?}` (an image: `POST /whiteboard/{floor}/pin`) | the new state plus `{"elements": [id…], "repeated"?}` | `whiteboard.updated` (none for a repeated `request_id`) |
@@ -2199,6 +2207,11 @@ changed under its hash, gone) is `not_found`; `binary` never has bytes. `agent` 
 `transcript.page` does. A watch has at most 16 image reads in flight (`busy` above). Not audit-logged (a read of what the
 watch shows), and nothing of the image is ever logged.
 
+#98: the **thumbnail** of the image a worker's `activity` shows now (`kind: "image"`) is served without a watch, to a
+connection that stands on the worker's floor (see [Activity](#activity)): `{id, hash, size: "thumb"}` with `hash` equal
+to the worker's current `activity.image.hash`. Any other hash, `size: "full"`, or a connection not on that floor gets
+the rules above (no watch: `invalid_state`). At most 8 such reads are in flight over the bridge (`busy`).
+
 **`transcript.images`** `{id, before?, limit?}`: the images of the session, oldest first, as
 `{"images": [ImageRef…], "cursor"?, "has_more"?}`, from the index (the whole file, not only the watch's window; each
 item that has images is read back once and its images remembered). Without `before` the newest come; a page is whole
@@ -2427,6 +2440,115 @@ which is one Tab stop); Tab moves the focus through the card to Dismiss, Send an
 card's options and texts, while on the timeline it goes to the prompt box as ever. On a very short screen (a phone's
 laptop) the timeline and the strip fold away while the card is up, and the card scrolls above a one-line prompt box.
 
+### Activity
+
+#98. The desk monitor says what each agent is doing right now, in one word, with a short detail and, when the agent
+looks at an image, that image. The bridge works it out for **every** Claude and Codex worker (not only watched ones)
+from the transcript lines the usage tracker already reads (the same tap as the ask, wrap-up and follow-up trackers,
+parsed by the transcript parsers), and sends it in the worker:
+
+```json
+"activity":{"kind":"testing","detail":"pytest -n auto","since":1790881200500,"source":"rule"}
+"activity":{"kind":"image","detail":"needs-you-desk.png","since":1790909303541,"source":"rule","image":{"hash":"9f2c…","w":1280,"h":720}}
+"activity":{"kind":"waiting","detail":"Testing in the background","since":1790882452331,"source":"derived","tasks":5}
+```
+
+| field | |
+|---|---|
+| `kind` | `thinking`, `replying`, `writing`, `investigating`, `testing`, `building`, `shipping`, `researching`, `delegating`, `planning`, `waiting`, `image`, `working` (a client treats one it does not know as `working`) |
+| `detail` | short and safe, at most 32 characters (40 for waiting while idle): a file's basename (`a.ts +1` for more), a test runner (`pytest -n auto`), a command's head, clipped and scrubbed; never a whole command line, never a commit message. Waiting while idle: `<Kind> in the background`, `Running in the background`, `Monitor: <description>`, `Subagent: <description>`, `Wakes at 14:05` (the bridge's local time) |
+| `since` | when this label started, unix ms (bridge clock); waiting while idle: when the turn ended |
+| `source` | `rule` (the rules placed the tool call), `model` (the classification model placed its command), `derived` (the turn's state: thinking, replying, waiting while idle) |
+| `image` | `{hash, w, h}`, `kind: "image"` only: fetch its thumbnail with `transcript.image` (below) |
+| `tasks` | waiting while idle only: how many background tasks are open |
+
+**While `working`** (#58's policy, on the bridge; anything else but idle or done has no activity: `blocked` has its
+`question`, an `ask` its card):
+
+- Only the **current turn** counts: a prompt or Codex's `task_started` opens it, Claude's `system/turn_duration` or
+  Codex's `task_complete` closes it, and herdr reporting `working` after an `idle` or `done` that began once the turn had
+  opened starts a new one there (a turn with no prompt line, such as a wake by a task notification). The previous
+  turn's last tool never shows.
+- A **running** tool of the turn (the latest started: concurrent calls may be earlier than the last item) is its rule
+  label; a **finished** one keeps it 1.5 s, then **Thinking**. A prompt, a thinking or reasoning item, or nothing yet is
+  **Thinking**; assistant text is **Replying**; a synchronous subagent is **Delegating** (an `async_launched` one is
+  done at once). `Skill`, `ToolSearch` and other meta tools, and the ask tools, keep the current label.
+- A label stays at least **1.5 s**. An **image** a tool result of the turn viewed (`origin: agent`, `kind: viewed`: a
+  Claude `Read` of an image, a Codex `view_image`, a Codex code-mode `exec` with `tools.view_image`) or the agent
+  generated stays **6 s**, or until the next image or the turn's end.
+
+**The rules** (pure, local, nothing sent): the tool name first (`Write`/`Edit`/`MultiEdit`/`NotebookEdit`/`apply_patch`
+writing with the file's basename; `Read`/`Grep`/`Glob`/`LS` investigating; `WebSearch`/`WebFetch`/Codex `web*`
+researching; `Agent`/`Task`/`Workflow`/`spawn_agent` delegating; `TodoWrite`/`EnterPlanMode`/`update_plan` planning;
+`Monitor`/`TaskOutput`/`ScheduleWakeup`/`wait_agent` waiting), then the shell: Claude's `Bash` command, Codex's
+`exec_command` cmd and legacy `shell` argv (`bash -lc cmd` unwrapped), and in a Codex code-mode `exec` script **every**
+nested `tools.<name>(` call (`view_image` is an image, `apply_patch` writing, then the shell rules over every
+`exec_command`'s cmd; only `write_stdin`, `wait` or `sleep` is waiting). A command line is split on `&&`, `||`, `;`, `|`
+and line ends (quote aware, a heredoc's body with its command); `cd`, `export`, `VAR=val`, `env`, `time`, `timeout N`,
+`sudo`, `nice`, … and the runners `uv run`, `poetry run`, `pnpm exec`, `npx`, `bunx`, … are taken off; each command is
+placed by its head and arguments, and **the strongest wins**: testing > building > shipping > writing > investigating >
+waiting. A filter after a `|` says nothing, a redirect into a file (not `/dev/…`) writes, an inline script (`python3 -
+<<'PY'`, `python -c`, `node -e`, `node --input-type=module <<`) is writing when its body writes a file, else
+investigating; a polling loop (`until …; do sleep N; done`) is waiting, testing when it waits on a test log. Dev
+servers (`portlease run … -- npm run dev`, `npm run dev`, `vite`, `go run`, `make dev`) are building, `agent-browser`
+is testing. A Codex `write_stdin` poll of a session an `exec_command` started ("Process running with session ID N", a
+code-mode result's `session_id`) keeps that command's label; an unknown session keeps the current one. What the rules
+cannot place is **Working**.
+
+**Waiting while idle** (Claude). A turn often ends on purpose while a `Bash` `run_in_background`, a `Monitor` or an async
+subagent still runs, or after a `ScheduleWakeup`: herdr says `idle` or `done`, but the agent wakes up by itself. The
+bridge keeps each worker's open background tasks: opened by the call's result (`toolUseResult.backgroundTaskId`;
+`taskId` with `timeoutMs` and `persistent`; `isAsync` / `status: "async_launched"` with `agentId`; `scheduledFor`),
+closed by a `<task-notification>` with that `<task-id>` and a final `<status>` (`completed`, `failed`, `killed`,
+`stopped`, …; a Monitor's events have none and close nothing), in a `queue-operation`, a user line or a queued command,
+by `TaskStop` (`KillShell`), when a Monitor's `timeoutMs` passes (unless persistent) or the wakeup's time, and after
+2 hours. They are read from the whole transcript, so a bridge restart has them again. While herdr says `idle` or `done`
+and one is open, the activity is `waiting` with `tasks` and a detail of what is awaited (the strongest label first: a
+background `pytest` is "Testing in the background", a Monitor its description, a subagent its description, a wakeup its
+time). When `working`, they do not change the label. Codex has no equivalent.
+
+**Publishing.** The bridge publishes `activity` only on a change: in the worker's `worker.upsert` when its status
+changes (so status and activity always agree), else as a **`worker.activity`** event, at most twice a second per worker
+(a change in between goes out at the end of the half second). The snapshot's workers have it too.
+
+**The image.** `transcript.image {id, hash, size: "thumb"}` serves the thumbnail (480 px, as the transcript view's) of
+the hash in the worker's **current** `activity.image`, to a connection that stands on the worker's floor: it sent
+`board.watch` for that floor (the game does for the floor you stand on, whether or not it has a board; `board.unwatch`
+or a watch of another floor ends it), or it watches the laptop or the transcript of one of its workers. Nothing else:
+another hash, a connection elsewhere, never a path.
+
+**Classify unknown commands** (opt-in). The classification model (#92's classifier, Jev) can place the commands the
+rules cannot (a script, a CLI the rules do not know). Its settings are bridge-wide, in the database; `activity.get`
+answers them, the snapshot's `activity` holds them (absent without an AI integration), `activity.update` carries them
+flat:
+
+```json
+"activity":{"model_enabled":false,"threshold":0.6,"margin":0.2,"daily_cap":2000,"calls_today":0,"cache_size":0,"state":"off","classifier":"ready","env":[]}
+```
+
+- `model_enabled` is **off by default**: configuring the AI integration sends nothing. `HERDR_WORLD_ACTIVITY_MODEL` /
+  `--activity-model` (`true` / `false`) wins over the stored toggle and lists `model_enabled` in `env`; changing it then
+  is `env_locked`.
+- `state`: `off`, `incomplete` (on, the classifier not `ready`: nothing is sent), `ready`, `capped` (the `daily_cap`
+  reached: rules only until tomorrow, the bridge's local day; the count survives a restart). `classifier` is the
+  classifier role's state. Only `ready` makes calls; a cached answer shows while `ready` or `capped`.
+- A command is asked about **once**: normalised first (anything after a heredoc marker dropped, `VAR=` values,
+  absolute paths to their basenames, run ids, hex ids and numbers taken out, scrubbed of keys and tokens, at most 400
+  bytes), and its answer cached by the SHA-256 of the tool and that text (the newest 2,000, in the database: never the
+  command's text). The same normalised command again is the cache's answer, with no call.
+- One call asks all the kinds at once, `state {"tool", "command"}` (the normalised text: never the tool's output), one
+  `noul` question per kind (investigating, writing, testing, building, shipping, waiting, researching). The top score
+  wins when it is at least `threshold` (default 0.6) **and** beats the runner-up by `margin` (default 0.2); otherwise
+  it stays `working`. The answer shows as `source: "model"` while that call is still the worker's current one.
+- **Budget**: at most **one** call in flight (the AI integration has two slots for every feature, so #90 always finds
+  one), only for a worker that is `working` on a floor a client stands on, and a candidate that is no longer current
+  when the slot frees (its tool finished and a newer item replaced it) is never asked about.
+
+**Privacy.** Rules run locally and send nothing. With "Classify unknown commands" on, the text of shell commands the rules
+can't place goes to TypeSafe (Jev). After normalising and scrubbing it can still contain paths, hostnames or script
+names. It is opt-in, separate from configuring the AI integration, never includes tool output, and the Settings section
+says so above the toggle.
+
 ### Errors
 
 ```json
@@ -2436,7 +2558,7 @@ laptop) the timeline and the strip fold away while the card is up, and the card 
 | code | meaning |
 |---|---|
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
-| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` use `incomplete`, `test_required`, `env_locked` and, from `followups.test`'s calls, the `ai.*` ones |
+| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` use `incomplete`, `test_required`, `env_locked` and, from `followups.test`'s calls, the `ai.*` ones; #98 `activity.set` uses `env_locked` |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
 | `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
 | `name_taken` | another building, or another team preset, already has that name (ignoring case) |

@@ -188,6 +188,9 @@ type World struct {
 	// #90 follow-up questions: the feature's settings and state. nil (left
 	// out) when the bridge has no AI service.
 	Followups *Followups `json:"followups,omitempty"`
+	// #98 activity: "Classify unknown commands", its settings and state.
+	// nil (left out) when the bridge has no AI service.
+	Activity *ActivityState `json:"activity,omitempty"`
 }
 
 // HireOptions lists what can be hired, per harness.
@@ -327,6 +330,10 @@ type Worker struct {
 	// #90: Followup is the open questions of the agent's final message,
 	// until they are answered, dismissed or the agent is prompted again.
 	Followup *Followup `json:"followup,omitempty"`
+	// #98: Activity is what the agent is doing right now: while Status is
+	// working, and while idle or done only as waiting on background tasks.
+	// Absent otherwise, and for harnesses other than claude and codex.
+	Activity *Activity `json:"activity,omitempty"`
 
 	// M6 runs: the worker's place in a write-code run.
 	// Round is the h3d_round token, else the label's trailing |r<N>.
@@ -429,6 +436,8 @@ type Event struct {
 	Reason string `json:"reason,omitempty"`
 	// M5 usage: Usage is set on worker.usage.
 	Usage *Usage `json:"usage,omitempty"`
+	// #98: Activity is set on worker.activity (absent: cleared).
+	Activity *Activity `json:"activity,omitempty"`
 	// M6 launch: Preset is set on preset.upsert.
 	Preset *Preset `json:"preset,omitempty"`
 	// M10 limits: on limits.update the fields of Limits are flat in the

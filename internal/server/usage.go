@@ -47,9 +47,11 @@ type usageWorker struct {
 	// floor is its session; codexCwd the cwd of a Codex agent herdr knows
 	// no session of, to find its rollout by (else "").
 	floor, codexCwd string
-	watched         bool       // M16: a connection watches its transcript
-	cwd             string     // M16: its directory, a root of its transcript's path images
-	asking          bool       // #57: it has an ask now
+	watched         bool   // M16: a connection watches its transcript
+	cwd             string // M16: its directory, a root of its transcript's path images
+	asking          bool   // #57: it has an ask now
+	status          string // #98: herdr's status, and when its last idle or done began
+	idleAt          int64
 	wrap            *wrapWatch // #83: its armed wrap-up
 	typed           []typedSum // #95: the prompts the bridge typed into it lately
 }
@@ -88,6 +90,11 @@ type usageTracker struct {
 	fuOffered map[string]followupOffered
 	followUps []followupUpdate
 	fuPending bool
+	// #98: what was last offered of every worker's activity, this round's
+	// changes, and the bridge's clock (the trackers' holds).
+	actOffered map[string]activityOffered
+	actUps     []activityUpdate
+	now        func() time.Time
 }
 
 // foundCodex is a Codex session found by a worker's cwd, and when.
@@ -119,13 +126,14 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 		throttle: usageThrottle{every: cfg.Throttle, shown: map[string]proto.Usage{}, at: map[string]time.Time{}},
 		found:    map[string]foundCodex{}, logs: map[string]*txLog{},
 		asks: map[string]*transcript.AskTracker{}, askShown: map[string]askShown{}, lines: map[string]*txLines{},
-		fuOffered: map[string]followupOffered{}}
+		fuOffered: map[string]followupOffered{}, actOffered: map[string]activityOffered{}, now: time.Now}
 }
 
 // trackUsage runs the tracker until ctx is done.
 func (h *Hub) trackUsage(ctx context.Context) {
 	defer h.wg.Done()
 	tr := newUsageTracker(*h.opts.Usage)
+	tr.now = h.opts.Now
 	defer tr.closeLogs()
 	timer := time.NewTimer(tr.cfg.Interval)
 	defer timer.Stop()
@@ -172,11 +180,12 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 	asks := tr.askUps              // #57
 	wraps := tr.wrapUps            // #83
 	fus := tr.followUps            // #90
+	acts := tr.actUps              // #98
 	for _, id := range tr.pasted { // #95
 		h.log.Warn("a prompt the bridge typed reached Claude Code as a paste: its paste threshold may have changed (#95)",
 			"worker", id)
 	}
-	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 || len(fus) > 0 || tr.fuPending {
+	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 || len(fus) > 0 || tr.fuPending || len(acts) > 0 {
 		pending, err := query(ctx, h, func() bool {
 			for _, u := range ups {
 				h.setUsage(u.id, u.usage)
@@ -190,6 +199,12 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 			for _, u := range fus { // #90
 				h.followupSeen(ctx, u)
 			}
+			for _, u := range acts { // #98
+				h.activitySeen(u)
+			}
+			if len(acts) > 0 {
+				h.pumpActivity(ctx)
+			}
 			return h.sweepFollowups(ctx)
 		})
 		if err == nil {
@@ -201,7 +216,7 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 // poll reads the workers' sessions and returns the updates to publish.
 func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	ws = tr.findCodex(ws, now)
-	tr.askUps, tr.wrapUps, tr.pasted, tr.followUps = nil, nil, nil, nil
+	tr.askUps, tr.wrapUps, tr.pasted, tr.followUps, tr.actUps = nil, nil, nil, nil, nil
 	var ups []usageUpdate
 	seen := map[string]bool{}
 	for _, w := range ws {
@@ -217,7 +232,8 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			}
 			if s := tr.sessions[w.id]; s != nil { // #57: the ask, from the same lines, the file's first included
 				l := &txLines{harness: w.harness, ask: transcript.NewAskTracker(w.harness), // #83: and a wrap-up's
-					followup: transcript.NewFollowupTracker(w.harness)} // #90: and the turn's final message
+					followup: transcript.NewFollowupTracker(w.harness),                               // #90: and the turn's final message
+					activity: transcript.NewActivityTracker(w.harness, tr.cfg.Images, w.cwd, tr.now)} // #98: and what it does
 				if w.harness == transcript.Claude { // #95: and typed prompts arriving as a paste
 					l.paste = newPasteWatch()
 				}
@@ -246,18 +262,23 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			tr.throttle.forget(w.id)
 			tr.offerAsk(w)
 			tr.offerWrapUp(w)
-			tr.offerFollowup(w) // #90
+			tr.offerFollowup(w)      // #90
+			tr.offerActivity(w, now) // #98
 			continue
 		}
 		s.SetRescan(0)
 		if w.watched {
 			s.SetRescan(WatchedRescan)
 		}
+		if l := tr.lines[w.id]; l != nil && l.activity != nil { // #98: herdr's status before the round's lines
+			l.activity.Status(w.status, w.idleAt)
+		}
 		u, ok := s.Poll(now)
 		tr.syncTranscript(w, s, tr.keys[w.id])
 		tr.offerAsk(w)
 		tr.offerWrapUp(w)
-		tr.offerFollowup(w) // #90
+		tr.offerFollowup(w)      // #90
+		tr.offerActivity(w, now) // #98
 		if ok {
 			if pub, emit := tr.throttle.offer(w.id, u, now); emit {
 				ups = append(ups, usageUpdate{id: w.id, usage: &pub})
@@ -275,7 +296,8 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			delete(tr.asks, id)
 			delete(tr.askShown, id)
 			delete(tr.lines, id)
-			delete(tr.fuOffered, id) // #90
+			delete(tr.fuOffered, id)  // #90
+			delete(tr.actOffered, id) // #98
 			tr.throttle.forget(id)
 		}
 	}
@@ -373,7 +395,8 @@ func (h *Hub) usageWorkers() []usageWorker {
 			harness = w.AgentKind
 		}
 		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, shown: w.Usage != nil, floor: w.Session,
-			watched: h.tx.watched(id), cwd: w.Cwd, asking: w.Ask != nil, wrap: h.wrapWatchOf(id), typed: h.typedSums(id)}
+			watched: h.tx.watched(id), cwd: w.Cwd, asking: w.Ask != nil, wrap: h.wrapWatchOf(id), typed: h.typedSums(id),
+			status: w.Status, idleAt: h.act.idleAt[id]}
 		if w.AgentSession == "" && w.AgentKind == usage.Codex && w.Cwd != "" {
 			uw.codexCwd = w.Cwd
 		}
@@ -388,6 +411,16 @@ func (h *Hub) usageWorkers() []usageWorker {
 		if h.workers[id] == nil {
 			delete(h.asks, id)
 			delete(h.askResolved, id)
+		}
+	}
+	for id := range h.act.ws { // #98
+		if h.workers[id] == nil {
+			delete(h.act.ws, id)
+		}
+	}
+	for id := range h.act.idleAt {
+		if h.workers[id] == nil {
+			delete(h.act.idleAt, id)
 		}
 	}
 	return ws

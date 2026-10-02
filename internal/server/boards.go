@@ -587,6 +587,7 @@ func (h *Hub) startBoardWatch(ctx context.Context, c *Client, cmd proto.Command)
 	if _, err := h.floorFor(a.Session); err != nil {
 		return err
 	}
+	h.standsOn(ctx, c, a.Session)             // #98: the floor the connection stands on, board or not
 	if prev, ok := h.boards.watchers[c]; ok { // one floor per connection
 		delete(h.boards.watchers, c)
 		h.unwatched(prev)
@@ -625,6 +626,9 @@ func (h *Hub) startBoardUnwatch(ctx context.Context, c *Client, cmd proto.Comman
 	if h.boards.watchers[c] == a.Session {
 		delete(h.boards.watchers, c)
 		h.unwatched(a.Session)
+	}
+	if h.act.views[c] == a.Session { // #98
+		h.standsOn(ctx, c, "")
 	}
 	h.audit(ctx, c, cmd, nil)
 	h.reply(c, cmd, nil, nil)
