@@ -22,6 +22,7 @@ import { askOf } from './ask';
 // #83: wrap-ups
 import { wrapUpOf } from './wrapup';
 // M6 start
+import { AiBook } from './ai';
 import { LimitBook } from './limits';
 import { PresetBook } from './presets';
 // M6 crew: write-code roles, freelancer lifecycles, over-cap orchestrators.
@@ -147,6 +148,8 @@ export class WorldStore {
   readonly presets = new PresetBook();
   /** M10 limits: the plan limits (`known` false from an older bridge); the widget renders on `limits.version`. */
   readonly limits = new LimitBook();
+  /** #92: the AI integration's settings and state (`known` false from an older bridge); no part of the scene. */
+  readonly ai = new AiBook();
   private readonly localDesks = new Map<string, number>();
   private readonly since = new Map<string, number>();
   private readonly deskCache = new Map<string, Map<string, number>>();
@@ -176,6 +179,7 @@ export class WorldStore {
     this.hireOptions = hireOptionsOf(s.world.hire_options);
     this.presets.reset(s.world.presets);
     this.limits.reset(s.world.limits);
+    this.ai.reset(s.world.ai);
     this.seq = s.seq;
     this.snapshots++;
     this.structureVersion++;
@@ -278,6 +282,10 @@ export class WorldStore {
       // M10 limits: no part of the scene either.
       case 'limits.update':
         this.limits.upsert(e);
+        break;
+      // #92: no part of the scene either.
+      case 'ai.update':
+        this.ai.upsert(e);
         break;
     }
     if (c.structure) this.structureVersion++;

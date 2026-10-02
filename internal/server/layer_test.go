@@ -45,3 +45,23 @@ func TestBoardLayerIsProviderNeutral(t *testing.T) {
 		}
 	}
 }
+
+// #92: internal/ai is generic. It reaches no feature and no part of the
+// bridge: only the standard library. The server, the protocol and the app
+// carry its settings and its state; the features of later tickets take its
+// two interfaces.
+func TestAIIsFeatureAgnostic(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go tool")
+	}
+	const mod = "github.com/JeffreyVdb/herdr-3d/"
+	out, err := exec.Command("go", "list", "-deps", mod+"internal/ai").CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list -deps: %v\n%s", err, out)
+	}
+	for _, dep := range strings.Fields(string(out)) {
+		if strings.HasPrefix(dep, mod) && dep != mod+"internal/ai" {
+			t.Errorf("internal/ai depends on %s", dep)
+		}
+	}
+}

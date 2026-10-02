@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
 	"github.com/JeffreyVdb/herdr-3d/internal/githubcli"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
@@ -72,6 +73,22 @@ const (
 // M13 screen share: where grabbed frames are stored (default
 // screenshare.DefaultDir: $XDG_RUNTIME_DIR/herdr-world/screen, tmpfs).
 const EnvScreenDir = "HERDR_WORLD_SCREEN_DIR"
+
+// #92 AI integration: the settings the bridge environment fixes (read-only in
+// the game's panel). The keys are files, so a key never sits in the
+// environment; the stored settings and keys are one 0600 file next to the
+// database.
+const (
+	EnvAIFile              = "HERDR_WORLD_AI_FILE"
+	EnvAIClassifierKeyFile = "HERDR_WORLD_AI_CLASSIFIER_KEY_FILE"
+	EnvAIClassifierModel   = "HERDR_WORLD_AI_CLASSIFIER_MODEL"
+	EnvAILLMBaseURL        = "HERDR_WORLD_AI_LLM_BASE_URL"
+	EnvAILLMKeyFile        = "HERDR_WORLD_AI_LLM_KEY_FILE"
+	EnvAILLMModel          = "HERDR_WORLD_AI_LLM_MODEL"
+)
+
+// DefaultAIFile is ai.json next to the database.
+func DefaultAIFile(db string) string { return filepath.Join(filepath.Dir(db), "ai.json") }
 
 // M6 runs: write-code's runs directory (the contract names this variable).
 const EnvRunsDir = "H3D_RUNS_DIR"
@@ -223,6 +240,13 @@ func DefaultDB() string {
 	return filepath.Join(dir, "herdr-world", "world.db")
 }
 
+func orDefault(v, def string) string {
+	if v != "" {
+		return v
+	}
+	return def
+}
+
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -338,6 +362,12 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	imageCache := fs.String("image-cache", os.Getenv(EnvImageCache), "directory of the transcript image disk cache, \"-\" for none (default $XDG_CACHE_HOME/herdr-world/img) ($"+EnvImageCache+")")          // M16 images
 	screenDir := fs.String("screen-dir", os.Getenv(EnvScreenDir), "private directory (tmpfs) for screen-share frames (default $XDG_RUNTIME_DIR/herdr-world/screen) ($"+EnvScreenDir+")")                     // M13 screen
 	whiteboards := fs.String("whiteboards", envOr(EnvWhiteboards, whiteboard.DefaultRoot()), "directory of the floors' whiteboards, \"-\" for none ($"+EnvWhiteboards+")")                                   // M13 whiteboard
+	aiFile := fs.String("ai-file", os.Getenv(EnvAIFile), "file of the AI integration's settings and keys, 0600 (default ai.json next to the database) ($"+EnvAIFile+")")                                     // #92
+	aiClsKey := fs.String("ai-classifier-key-file", os.Getenv(EnvAIClassifierKeyFile), "file holding the classification model's key; overrides the panel's ($"+EnvAIClassifierKeyFile+")")
+	aiClsModel := fs.String("ai-classifier-model", os.Getenv(EnvAIClassifierModel), "classification model; overrides the panel's ($"+EnvAIClassifierModel+")")
+	aiLLMBase := fs.String("ai-llm-base-url", os.Getenv(EnvAILLMBaseURL), "OpenAI-compatible endpoint's base URL; overrides the panel's ($"+EnvAILLMBaseURL+")")
+	aiLLMKey := fs.String("ai-llm-key-file", os.Getenv(EnvAILLMKeyFile), "file holding the LLM's key; overrides the panel's ($"+EnvAILLMKeyFile+")")
+	aiLLMModel := fs.String("ai-llm-model", os.Getenv(EnvAILLMModel), "LLM model; overrides the panel's ($"+EnvAILLMModel+")")
 	pricingFile := fs.String("pricing", os.Getenv(EnvPricing), "JSON file of model prices merged over the built-in table ($"+EnvPricing+")")
 	sessions := fs.String("sessions", os.Getenv(EnvSessions), "only watch sessions whose name matches this regexp ($"+EnvSessions+")")
 	fs.DurationVar(&poll, "poll", poll, "session discovery interval ($"+EnvPoll+")")
@@ -444,6 +474,8 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		ScreenDir:        *screenDir,                                                        // M13 screen
 		Whiteboards:      *whiteboards,                                                      // M13 whiteboard
 		DropsRoot:        *dropzoneData,                                                     // M13 drops.list
+		AI: &ai.Options{File: orDefault(*aiFile, DefaultAIFile(*db)), Env: ai.Overrides{ // #92 AI integration
+			ClassifierKeyFile: *aiClsKey, ClassifierModel: *aiClsModel, LLMBaseURL: *aiLLMBase, LLMKeyFile: *aiLLMKey, LLMModel: *aiLLMModel}},
 	})
 }
 
@@ -533,6 +565,9 @@ type ServeConfig struct {
 	// Drop Zone's data directory, for drops.list ("": none).
 	Whiteboards string
 	DropsRoot   string
+	// #92 AI integration: the classification model and the LLM (nil: none,
+	// the ai.* commands answer unsupported).
+	AI *ai.Options
 }
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
@@ -576,6 +611,13 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		opts.Whiteboards = whiteboard.New(cfg.Whiteboards)
 	}
 	opts.DropsRoot = cfg.DropsRoot
+	if cfg.AI != nil { // #92 AI integration
+		svc, err := ai.New(*cfg.AI)
+		if err != nil {
+			return fmt.Errorf("ai integration: %w", err)
+		}
+		opts.AI = svc
+	}
 	opts.Caps, opts.HireOptions, opts.Load = cfg.Caps, cfg.HireOptions, server.HostLoad
 	opts.TrustTimeout, opts.SeenTimeout, opts.ExitTimeout = cfg.TrustTimeout, cfg.SeenTimeout, cfg.ExitTimeout
 	opts.WrapUpTimeout = cfg.WrapUpTimeout // #83

@@ -28,6 +28,8 @@ import { CrewSim } from './fixture-crew.ts';
 import { BoardSim } from './fixture-boards.ts';
 // M10: the plan limits (`limits.refresh`, `simlimits=<scenario>`, `simfail=no_m10`).
 import { LimitsSim } from './fixture-limits.ts';
+// #92: the AI integration (`ai.*`, `simjev=<url>`, `simai=off`, `simfail=no_ai`).
+import { AiSim } from './fixture-ai.ts';
 // M16: the transcript view (`transcript.watch`, `sim.transcript`, `simfail=no_m16`).
 import { TranscriptSim } from './fixture-transcript.ts';
 // #57: agents' structured questions (`sim.ask`, `worker.answer_ask`).
@@ -50,6 +52,9 @@ export interface SimOptions {
   usageMs?: number;
   /** M6: plays the scripted freelancer's lifecycle by itself, a step every `crewMs` (0 / absent: only on `sim.crew`). */
   crewMs?: number;
+  /** #92: where Jev is (`simjev=<url>`; default the real API) and whether the bridge has the service (`simai=off`). */
+  jev?: string;
+  ai?: 'on' | 'off';
   /** M10: which readings the plan limits show (tools/fixture-limits.ts; default `ok`). */
   limits?: string;
   /** #51: this many extra Claude models (`claude-lab-01`…) on top of the three, to see a long model list (`simmodels=<n>`). */
@@ -186,6 +191,7 @@ export class SimWorld {
       },
       o.fail !== 'no_m16',
     );
+    this.ai = new AiSim(o.jev ?? 'https://api.typesafe.ai', o.fail === 'no_ai' ? 'old' : (o.ai ?? 'on'), (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
     this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
     this.boards = new BoardSim(
       {
@@ -210,6 +216,8 @@ export class SimWorld {
 
   /** M10: the plan limits (tools/fixture-limits.ts). */
   private readonly limits: LimitsSim;
+  /** #92: the AI integration (tools/fixture-ai.ts). */
+  private readonly ai: AiSim;
   /** M13: the screen share (tools/fixture-share.ts). */
   private readonly share = new ShareSim(
     (send, m) => this.emit(send, m),
@@ -311,6 +319,7 @@ export class SimWorld {
     this.start6.decorate(world);
     this.boards.decorate(world as { workers?: Worker[] });
     this.limits.decorate(world);
+    this.ai.decorate(world); // #92
     this.share.decorate(world); // M13
     return { t: 'world.snapshot', seq: this.seq, world: structuredClone(world) };
   }
@@ -380,6 +389,7 @@ export class SimWorld {
       if (this.start6.handle(m.t, a, send, ack, fail)) return;
       if (this.boards.handle(m.t, a, send, ack, fail)) return;
       if (this.limits.handle(m.t, send, ack)) return;
+      if (this.ai.handle(m.t, a, send, ack, fail)) return; // #92
       if (this.share.handle(m.t, a, send, ack, fail)) return; // M13
       switch (m.t) {
         case 'building.create':

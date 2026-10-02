@@ -174,6 +174,8 @@ export interface World {
   limits?: Limits[];
   /** M13 screen: whether a game shares its screen (absent from an older bridge: it cannot grab frames). */
   screen?: ScreenState;
+  /** #92 AI integration: the classification model and the LLM (absent from an older bridge, or one without the service). Never a key. */
+  ai?: AiState;
 }
 
 export interface Hello {
@@ -263,6 +265,8 @@ export type WorldEvent =
   | LimitsUpdate
   // M13 screen
   | ScreenStateEvent
+  // #92 AI integration
+  | AiUpdate
   // M13 whiteboard
   | WhiteboardUpdated;
 
@@ -447,6 +451,12 @@ export interface CommandArgs {
   'board.refresh': { session: string };
   /** M10 limits: read the plan limits now (at most every 20 s). */
   'limits.refresh': Record<string, never>;
+  // #92 AI integration (docs/protocol.md "AI integration"). A key is sent here and nowhere else, and never comes back.
+  'ai.get': Record<string, never>;
+  'ai.models': AiFields;
+  'ai.test': AiFields;
+  'ai.set': AiFields;
+  'ai.clear': { role: AiRole };
   'issue.get': { session: string; id: string };
   'issue.comment': { session: string; id: string; body: string };
   'issue.close': { session: string; id: string; reason: CloseReason; confirm: true };
@@ -664,6 +674,7 @@ const EVENT_TYPES = new Set([
   'preset.upsert',
   'preset.removed',
   'limits.update',
+  'ai.update', // #92 AI integration
   'screen.state', // M13 screen
   // M13 whiteboard
   'whiteboard.updated',
@@ -728,6 +739,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // M10 limits: the fields of `Limits` flat in the event.
     case 'limits.update':
       return isStr(o.provider) && Array.isArray(o.windows);
+    // #92 AI integration: the fields of `AiState` flat in the event.
+    case 'ai.update':
+      return isObj(o.classifier) && isObj(o.llm);
     // M13 screen: the fields of `ScreenState` flat in the event.
     case 'screen.state':
       return typeof o.sharing === 'boolean';
@@ -1399,6 +1413,87 @@ export interface LimitsUpdate extends Limits {
 /** `limits.refresh` ack. */
 export interface LimitsRefreshAck {
   queued: boolean;
+}
+
+// #92 AI integration (docs/protocol.md "AI integration"): the bridge-wide classification model (Jev) and
+// OpenAI-compatible LLM. Features take them from the bridge; this is only their settings.
+
+export type AiRole = 'classifier' | 'llm';
+/** off: nothing configured; incomplete: a part is missing; invalid: the last test or call failed; ready. */
+export type AiRoleState = 'off' | 'incomplete' | 'invalid' | 'ready';
+
+export interface AiClassifier {
+  state: AiRoleState;
+  model: string;
+  key_set: boolean;
+  /** The last four characters of the key ('' when it is too short to show any). */
+  key_hint: string;
+  /** The fields the bridge's environment sets: read-only here. */
+  env: string[];
+}
+
+export interface AiLlm {
+  state: AiRoleState;
+  base_url: string;
+  model: string;
+  key_set: boolean;
+  key_hint: string;
+  /** Whether the endpoint takes response_format (null: not known yet). */
+  json_mode: boolean | null;
+  extra_body?: Record<string, unknown>;
+  env: string[];
+}
+
+export interface AiLastError {
+  role: AiRole;
+  kind: string;
+  message: string;
+  at: number;
+  /** A feature's call hit it (not a test or a model list). */
+  runtime?: boolean;
+}
+
+export interface AiState {
+  classifier: AiClassifier;
+  llm: AiLlm;
+  last_error?: AiLastError;
+}
+
+/** `ai.update`: the whole state, flat. */
+export interface AiUpdate extends AiState {
+  t: 'ai.update';
+  seq: number;
+}
+
+/**
+ * What ai.models, ai.test and ai.set name. A field left out is the current one; a blank or absent key is the
+ * current key. `extra_body`: left out keeps, null clears, an object sets (LLM only).
+ */
+export interface AiFields {
+  role: AiRole;
+  base_url?: string;
+  model?: string;
+  key?: string;
+  extra_body?: Record<string, unknown> | null;
+}
+
+export interface AiModel {
+  id: string;
+  description?: string;
+}
+
+export interface AiModelsAck {
+  models: AiModel[];
+  /** The LLM's base URL as the bridge resolved it. */
+  base_url?: string;
+}
+
+export interface AiTestAck {
+  ok: boolean;
+  latency_ms: number;
+  json_mode?: boolean;
+  base_url?: string;
+  score?: number;
 }
 
 // M13 screen share (docs/protocol.md "Screen share"): the TV shows the shared screen locally; the bridge asks this

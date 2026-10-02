@@ -28,7 +28,7 @@
   directory of 0600 files removed after 10 minutes; pure Go, the hub's `screen.grab` uses it), `whiteboard` (each
 floor's Excalidraw board: versioned scenes, the last 20 kept, image files once by sha256, each version's render, agents' pins as
 complete Excalidraw elements with valid fractional indices; files only, pure Go, the bridge's `/whiteboard/` routes and
-commands sit on it) and `drops` (Drop Zone's newest files, read only through imgcache's allowlist, for "Pin a drop");
+commands sit on it) and `drops` (Drop Zone's newest files, read only through imgcache's allowlist, for "Pin a drop"); #92: `ai` (the classification model and the OpenAI-compatible LLM behind feature-agnostic `Classifier` / `LLM` interfaces with fakes, their keys in a 0600 file, the shared timeouts, one retry and two-call limit; standard library only, `TestAIIsFeatureAgnostic`);
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
@@ -75,6 +75,10 @@ make e2e               # the full Playwright suite (e2e/*.spec.ts), H3D_WORKERS 
 - Never hardcode ports. Use `portlease run` / `portlease reserve`, and bind `127.0.0.1` only. Other agents run in
   parallel worktrees on the same host.
 - CI (`.github/workflows/ci.yml`) runs go vet/gofmt/test, the darwin cross-build, tsc and vitest. No Playwright in CI.
+- `go test ./internal/ai ./internal/server` never call a model (#92): `httptest` servers play Jev and an OpenAI-compatible
+  endpoint, and a feature's tests take `ai.FakeClassifier` / `ai.FakeLLM`. `game/e2e/ai-integration.spec.ts` starts its own
+  fake Jev and OpenAI servers on OS-leased loopback ports and the fixture bridge (`simjev=<url>`, `game/tools/fixture-ai.ts`)
+  calls them; no spec reaches a real provider.
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 
@@ -319,6 +323,9 @@ that directory.
 | `--dropzone-url` | `HERDR_WORLD_DROPZONE_URL` | `http://127.0.0.1:8080`: Drop Zone, where pasted images are uploaded (#51, [`docs/protocol.md` "Image upload"](docs/protocol.md#image-upload)); the bridge's only client of it |
 | `--screen-dir` | `HERDR_WORLD_SCREEN_DIR` | `$XDG_RUNTIME_DIR/herdr-world/screen` (else `/run/user/<uid>/…` when it exists): where `screen.grab` stores frames, 0700, 10 min each (M13, [`docs/protocol.md` "Screen share"](docs/protocol.md#screen-share)) |
 | `--whiteboards` | `HERDR_WORLD_WHITEBOARDS` | `$XDG_DATA_HOME/herdr-3d/whiteboards`, else `~/.local/share/herdr-3d/whiteboards`: the floors' whiteboards (M13, [`docs/protocol.md` "Whiteboard"](docs/protocol.md#whiteboard)); `-` for none |
+| `--ai-file` | `HERDR_WORLD_AI_FILE` | `ai.json` next to the database: the AI integration's settings and keys, 0600, never in the database (#92, [`docs/protocol.md` "AI integration"](docs/protocol.md#ai-integration)) |
+| `--ai-classifier-key-file`, `--ai-classifier-model` | `HERDR_WORLD_AI_CLASSIFIER_KEY_FILE`, `HERDR_WORLD_AI_CLASSIFIER_MODEL` | none: a file holding the classification model's (Jev) key, and its model. While set they win over the panel's and show there as "set by the bridge environment" |
+| `--ai-llm-base-url`, `--ai-llm-key-file`, `--ai-llm-model` | `HERDR_WORLD_AI_LLM_BASE_URL`, `HERDR_WORLD_AI_LLM_KEY_FILE`, `HERDR_WORLD_AI_LLM_MODEL` | none: the OpenAI-compatible LLM's base URL, the file holding its key, and its model; same rules |
 | `--pricing` | `HERDR_WORLD_PRICING` | none: a JSON file of model prices merged over the built-in table (`internal/usage/pricing.json`; format in [`docs/protocol.md` "Usage and cost"](docs/protocol.md#usage-and-cost)) |
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
 | `--warn-workers`, `--max-workers` | `HERDR_WORLD_WARN_WORKERS`, `HERDR_WORLD_MAX_WORKERS` | `48`, `96`: the same for all watched running floors together |

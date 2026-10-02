@@ -27,6 +27,8 @@
 // Claude models to the hire options (a long model list). #74: `simzoom=old|single|split|headless` plays the bridge's pane zoom
 // (tools/fixture-screen.ts). #58: `simecho=<ms>` writes a prompt's `user` item to its
 // worker's transcript watch that long after the turn takes it (tools/fixture-panels.ts; absent: never).
+// #92: `simjev=<url>` is where the simulated bridge calls Jev (the e2e's fake), `simai=off` a bridge without the AI service, `simfail=no_ai` one before it
+// (tools/fixture-ai.ts).
 // #51: `POST /upload` stores nothing and answers a fake Drop Zone path (tools/fixture-upload.ts); the query of the ws URL
 // carries `fail_upload=<N|all>&upload_key=<key>` to make uploads fail.
 import { readFileSync } from 'node:fs';
@@ -189,6 +191,9 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             // M6 crew: the scripted freelancer plays by itself (tools/fixture-crew.ts).
             // M10: the plan limits' readings (tools/fixture-limits.ts).
             ...(q.get('simlimits') ? { limits: q.get('simlimits') as string } : {}),
+            // #92: AI integration: Jev's address (the e2e's fake) and a bridge without the service.
+            ...(q.get('simjev') ? { jev: q.get('simjev') as string } : {}),
+            ...(q.get('simai') === 'off' ? { ai: 'off' as const } : {}),
             // #51: a long model list in the hire dialog.
             ...(q.get('simmodels') ? { models: Math.min(200, Math.max(0, Number(q.get('simmodels')) || 0)) } : {}),
             ...(q.get('simcrew') !== null ? { crewMs: Math.max(0, Number(q.get('simcrew')) || 0) } : {}),

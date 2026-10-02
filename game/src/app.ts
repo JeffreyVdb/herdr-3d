@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BridgeClient, type CommandResult, type ConnState, type SocketLike } from './net/client';
 import { bridgeUrl, takeToken } from './net/endpoint';
 import { postUpload } from './net/upload';
+import { loggedArgs } from './net/redact';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
 import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
@@ -59,6 +60,9 @@ import { OpenPrDialog } from './ui/boards/openPr';
 import { ScreenShareController } from './screen';
 // M10 limits
 import { LimitsWidget } from './ui/limits';
+// #92 AI integration
+import { aiSection } from './ui/aiSection';
+import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
 import type { SettingsDialog } from './ui/settings';
 import { displaySection, timeSection } from './ui/settingsSections';
@@ -274,6 +278,12 @@ export class App {
     this.settings = this.hud.mountSettings();
     this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
+    // #92: the bridge-wide AI models. A chip while one is set up but unusable, a toast when a call just stopped one.
+    this.settings.addSection('ai', 'AI integration', aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
+    this.store.ai.onChange((notice) => {
+      this.hud.setAiChip(aiChip(this.store.ai.state));
+      if (notice) this.hud.toast(notice, 7000, 'error');
+    });
     this.limitsWidget = new LimitsWidget(
       this.hud.root,
       this.store.limits,
@@ -789,7 +799,8 @@ export class App {
   }
 
   async send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult> {
-    const entry: (typeof this.sent)[number] = { t, args };
+    // The log (and window.__h3d.sent()) never holds a typed API key; the command goes out as it is.
+    const entry: (typeof this.sent)[number] = { t, args: loggedArgs(t, args) };
     this.sent.push(entry);
     const r = await this.client.request(t, args);
     entry.result = r;

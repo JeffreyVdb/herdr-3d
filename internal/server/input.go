@@ -577,6 +577,9 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			Worktree    string `json:"worktree,omitempty"`
 			PromptBytes int    `json:"prompt_bytes"`
 		}{a.ID, clip(a.Worktree), len(a.Prompt)})
+	// #92: the role and the fields named, never the key.
+	case proto.CmdAIModels, proto.CmdAITest, proto.CmdAISet, proto.CmdAIClear:
+		return auditAI(cmd)
 	// M16 transcript: the worker id only.
 	case proto.CmdTranscriptWatch, proto.CmdTranscriptUnwatch:
 		var a struct {

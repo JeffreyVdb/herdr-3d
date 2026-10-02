@@ -157,6 +157,9 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'pr.merge': 40_000,
   'worker.open_pr.prepare': 20_000,
   'worker.open_pr': 60_000,
+  // #92: a model list or a test is one provider call (15 s on the bridge); set writes a file.
+  'ai.models': 25_000,
+  'ai.test': 25_000,
 };
 
 interface Pending {

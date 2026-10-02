@@ -182,6 +182,38 @@ body {
   }
 }
 
+/* #92: the AI chip: a small plate like .conn, amber while a part is missing, red once a key was rejected. */
+.ai-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--ink-2);
+  color: var(--text-on-ink);
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ai-chip[hidden] {
+  display: none;
+}
+.ai-chip:hover {
+  border-color: rgb(255 255 255 / 30%);
+}
+.ai-chip i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--sun);
+}
+.ai-chip[data-level='error'] i {
+  background: #ff6058;
+}
+
 .count {
   display: inline-flex;
   align-items: center;
