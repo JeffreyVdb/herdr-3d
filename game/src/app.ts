@@ -61,8 +61,9 @@ import { ScreenShareController } from './screen';
 // M10 limits
 import { LimitsWidget } from './ui/limits';
 // #100 the inbox chip under them
-import { InboxChip } from './ui/inbox';
-import { inboxChip, inboxQueue, type InboxCandidate } from './world/inbox';
+import { InboxChip, type InboxEntry } from './ui/inbox';
+import { InboxPrefs } from './ui/inboxPrefs';
+import { inboxQueue, inboxReason, inboxWhere, type InboxCandidate } from './world/inbox';
 // #92 AI integration
 import { aiSection } from './ui/aiSection';
 // #90 follow-up questions
@@ -153,9 +154,9 @@ export class App {
   private nextRead = 0;
   private clockOffice: OfficeView | null = null;
   readonly limitsWidget: LimitsWidget;
-  /** #100: the inbox chip under the plate, and the worker its last click went to (the next goes on from there). */
+  /** #100: the inbox chip under the plate, its list, and what it remembers per browser. */
   readonly inbox: InboxChip;
-  private lastInbox: string | null = null;
+  readonly inboxPrefs = new InboxPrefs();
   readonly hud: Hud;
   readonly city: CityView;
   readonly client: BridgeClient;
@@ -288,7 +289,7 @@ export class App {
     this.hud.mountAudio(this.audio);
     if (o.buildInfo) this.hud.mountAbout(o.buildInfo);
     this.settings = this.hud.mountSettings();
-    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs), { store: 'browser' });
+    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
     // #92: the bridge-wide AI models. A chip while one is set up but unusable, a toast when a call just stopped one.
     this.settings.addSection(
@@ -321,7 +322,12 @@ export class App {
     );
     // Nothing re-renders it between readings but a reading turning stale.
     setInterval(() => this.limitsWidget.tick(), 30_000);
-    this.inbox = new InboxChip(this.hud.root, this.limitsWidget.root, () => void this.goInbox());
+    this.inbox = new InboxChip(this.hud.root, this.limitsWidget.root, { go: (id) => void this.goToWorker(id), now: () => Date.now() });
+    this.inbox.enabled = this.inboxPrefs.settings.show;
+    this.inboxPrefs.onChange(() => {
+      this.inbox.enabled = this.inboxPrefs.settings.show;
+      this.inbox.set(this.inboxEntries());
+    });
     this.reception = createReception({ audio: this.audio, overlay: this.hud.root, shadows: this.shadows });
     this.radio = new RadioLink({ music: this.audio.music, toast: (m, ms, soft) => this.hud.toast(m, ms, 'info', soft), hudRadio: (n) => this.hud.setRadio(n) });
     this.city = new CityView(
@@ -596,7 +602,7 @@ export class App {
     this.startRun.refresh();
     this.presetsPanel.refresh();
     this.limitsWidget.update();
-    this.inbox.set(inboxChip(this.inboxItems()));
+    this.inbox.set(this.inboxEntries());
     this.m6Buttons.sync();
     // M7: holders and verdict stamps on the boards follow the workers.
     if (c.structure || c.workers.size) this.pushBoards();
@@ -2404,28 +2410,24 @@ export class App {
     return needQueue(this.needCandidates().map(({ role: _, ...w }) => w), here);
   }
 
-  /** #100: who is in the inbox, in the order its clicks visit them (needs you, then done; no building first). */
+  /** #100: who is in the inbox, in its list's order (needs you, then done; no building first; freelancers' done per Settings). */
   inboxItems(): NeedItem[] {
-    return inboxQueue(this.needCandidates());
+    return inboxQueue(this.needCandidates(), { freelancers: this.inboxPrefs.settings.freelancers });
+  }
+
+  /** #100: the inbox list's rows. */
+  private inboxEntries(): InboxEntry[] {
+    return this.inboxItems().flatMap((item) => {
+      const v = this.store.workerView(item.id);
+      return v ? [{ id: item.id, name: item.name, harness: v.harness, where: inboxWhere(this.store, item.session), reason: inboxReason(v), blocked: item.reason === 'blocked', since: item.since }] : [];
+    });
   }
 
   /**
-   * #100: the inbox chip's click. Unlike N it teleports: straight onto the next inbox worker's floor (no elevator
-   * panel), facing it, and sat at its laptop, from anywhere. Repeated clicks walk along the inbox like N. When the
-   * laptop cannot be sat at, you are left facing the worker with the reason (`sitAt`'s toast).
-   */
-  async goInbox(): Promise<NeedItem | null> {
-    if (this.transitioning) return null;
-    const item = nextNeed(this.inboxItems(), this.lastInbox);
-    this.lastInbox = item?.id ?? null;
-    if (!item) return null;
-    return (await this.goToWorker(item.id)) ? item : null;
-  }
-
-  /**
-   * #100: teleports you to a worker, from anywhere: straight onto its floor (no elevator panel), facing it, and sat at
-   * its laptop. False when it cannot be done (in a transition, the worker or its floor went). When the laptop cannot
-   * be sat at, you are left facing the worker with the reason (`sitAt`'s toast), and it is still true.
+   * #100: an inbox row's (or a notification's) click. Unlike N it teleports: straight onto the worker's floor (no
+   * elevator panel), facing it, and sat at its laptop with its terminal on screen (not the conversation E remembers),
+   * from anywhere. False when it cannot be done (in a transition, the worker or its floor went). When the laptop
+   * cannot be sat at, you are left facing the worker with the reason (`sitAt`'s toast), and it is still true.
    */
   async goToWorker(id: string): Promise<boolean> {
     if (this.transitioning) return false;
@@ -2439,7 +2441,8 @@ export class App {
     if (this.mode !== 'floor' || this.office?.session !== session) return false; // the floor went meanwhile
     if (this.planOpen) this.setPlan(false);
     this.faceWorker(id);
-    this.sitAt(id);
+    // The terminal for this sit only: what E opens next time stays as you left it.
+    if (this.sitAt(id)) this.laptops.transcript.setMode('terminal', false);
     return true;
   }
 

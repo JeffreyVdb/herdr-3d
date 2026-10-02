@@ -1,12 +1,37 @@
 /*
- * #100: the inbox chip under the plan-limits plate (limits.css), top right: the same navy signage, small and quiet.
- * `--ib-lift` (inbox.ts) is the plate's height plus the gap, 0 while the plate is not drawn, so the chip takes its spot.
- * The number is the needs-you red while someone needs you, the plate's text colour when all are done.
+ * #100: the inbox under the plan-limits plate (limits.css), top right: the same navy signage, small and quiet.
+ * `--ib-lift` (inbox.ts) is the plate's height plus the gap, 0 while the plate is not drawn, so the inbox takes its spot.
+ * Shut, it is the chip `Inbox 3`; open, the same plate grown into a list (who, where, why as label-maker tape, how
+ * long). The number is the needs-you red while someone needs you, the plate's text colour when all are done.
  */
 .inbox {
+  --ib-red: #ff6058; /* the plate's high red: 5.4:1 on the navy (the chip red, --needs_you, is for white text on it) */
+  --ib-top: calc(var(--topbar-bottom, 64px) + 8px + var(--ib-lift, 0px));
   position: absolute;
-  top: calc(var(--topbar-bottom, 64px) + 8px + var(--ib-lift, 0px));
+  top: var(--ib-top);
   right: 12px;
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 24px);
+  border-radius: 10px;
+  background: var(--ink);
+  box-shadow: var(--shadow);
+  color: var(--text-on-ink);
+  font-size: 12px;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+  animation: ib-in 200ms var(--ease);
+}
+.inbox[hidden] {
+  display: none;
+}
+.inbox[data-open='true'] {
+  width: 340px;
+}
+
+.ib-chip {
+  position: relative;
   display: inline-flex;
   align-items: baseline;
   gap: 7px;
@@ -14,22 +39,23 @@
   padding: 5px 10px 5px 11px;
   border: 0;
   border-radius: 10px;
-  background: var(--ink);
-  box-shadow: var(--shadow);
+  background: transparent;
   color: var(--text-on-ink-2);
   font: inherit;
-  font-size: 12px;
-  line-height: 1.3;
-  font-variant-numeric: tabular-nums;
-  pointer-events: auto;
   cursor: pointer;
-  animation: ib-in 200ms var(--ease);
 }
-.inbox[hidden] {
-  display: none;
+/* Shut, the chip is a small target: its hit area reaches 44 px tall (not over the plate, which is in the top layer). */
+.inbox:not([data-open='true']) .ib-chip::after {
+  content: '';
+  position: absolute;
+  inset: -9px -6px;
 }
-.inbox:hover {
+.ib-chip:hover {
   background: var(--ink-2);
+  color: var(--text-on-ink);
+}
+.inbox[data-open='true'] .ib-chip {
+  border-radius: 10px 10px 0 0;
   color: var(--text-on-ink);
 }
 .ib-n {
@@ -38,9 +64,128 @@
   font-family: var(--font-mono);
   font-weight: 700;
 }
-/* #ff6058, the plate's high red: 5.4:1 on the navy (the chip red, --needs_you, is for white text on it). */
 .inbox[data-blocked='true'] .ib-n {
-  color: #ff6058;
+  color: var(--ib-red);
+}
+.ib-chev {
+  display: none;
+  width: 14px;
+  height: 14px;
+  align-self: center;
+  margin-left: auto;
+  color: var(--text-on-ink-2);
+  transform: rotate(180deg);
+}
+.inbox[data-open='true'] .ib-chev {
+  display: block;
+}
+
+/* The list: as tall as the room under it allows, then it scrolls. */
+.ib-list {
+  position: relative;
+  border-top: 1px solid var(--line);
+  max-height: min(460px, calc(100vh - var(--ib-top) - 52px));
+  max-height: min(460px, calc(100dvh - var(--ib-top) - 52px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 24%) transparent;
+  border-radius: 0 0 10px 10px;
+}
+.ib-list[hidden] {
+  display: none;
+}
+.ib-rows {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+}
+
+/*
+ * A row: the harness sticker, the name and why (tape) on top; where and how long under it.
+ *   [o] Chirp ............ [QUESTION]
+ *       Herdr 3D › h3d-sesame-3   4 min
+ */
+.ib-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-areas: 'stk name why' '. where age';
+  align-items: center;
+  gap: 2px 8px;
+  width: 100%;
+  margin: 0;
+  padding: 7px 8px 7px 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ib-row:hover {
+  background: rgb(255 255 255 / 7%);
+}
+.ib-row:focus-visible {
+  outline-offset: -2px;
+  background: rgb(255 255 255 / 7%);
+}
+.ib-stk {
+  grid-area: stk;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 22%);
+}
+.ib-name {
+  grid-area: name;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+}
+.ib-why {
+  grid-area: why;
+  justify-self: end;
+  font-size: 9.5px;
+  padding: 2px 6px 1px;
+  white-space: nowrap;
+}
+.ib-where {
+  grid-area: where;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-on-ink-2);
+  font-size: 11.5px;
+}
+.ib-age {
+  grid-area: age;
+  justify-self: end;
+  color: var(--text-on-ink-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* A new entry while you look: one soft ring round the chip, out and gone. */
+.inbox[data-pulse='true'] {
+  /* ib-in stays listed, so it does not run again when the pulse ends. */
+  animation: ib-in 200ms var(--ease), ib-pulse 1.2s var(--ease);
+}
+.inbox[data-pulse='true'][data-blocked='false'] {
+  --ib-ring: rgb(185 195 220 / 55%);
+}
+@keyframes ib-pulse {
+  0% {
+    box-shadow: var(--shadow), 0 0 0 0 var(--ib-ring, rgb(255 96 88 / 70%));
+  }
+  100% {
+    box-shadow: var(--shadow), 0 0 0 10px rgb(255 96 88 / 0%);
+  }
 }
 
 /* The Changes panel (m5.css) fills the right column: under the plate, to its left (limits.css does the same). */
@@ -55,6 +200,7 @@
 @media (max-width: 720px) {
   .inbox {
     right: 8px;
+    max-width: calc(100vw - 16px);
   }
 }
 
@@ -65,7 +211,12 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .inbox {
+  .inbox,
+  .inbox[data-pulse='true'] {
     animation: none;
+  }
+  /* Still marked, without the motion: the ring holds for the pulse's length. */
+  .inbox[data-pulse='true'] {
+    box-shadow: var(--shadow), 0 0 0 2px var(--ib-ring, var(--ib-red));
   }
 }
