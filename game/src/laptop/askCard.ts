@@ -14,19 +14,19 @@ import {
   waitingText,
   type AskPick,
 } from '../world/ask';
-import { h, icon } from '../ui/dom';
+import { h } from '../ui/dom';
+import { focusQuestion, foldedRow, isSendKey, mark, moveIn, openQuestion, reveal, SEND_KEY, type StackLine } from './askStack';
 import { zoomKey } from './keys';
 
-const CHECK = '<path d="M5.5 12.5l4 4 9-9"/>';
 /** An option's key cap: its digit, or a tick when a multi-select one is picked. */
-const keyCap = (n: number, ticked: boolean): Node => (ticked ? icon(CHECK) : document.createTextNode(String(n)));
+const keyCap = (n: number, ticked: boolean): Node => mark(n, ticked);
 
 /**
  * #57: an agent's structured question (Claude's AskUserQuestion, Codex's request_user_input) in the transcript view.
- * `AskCard` is the one you answer, pinned above the prompt box while the worker waits on it: its header chips as tabs
- * (several questions), the question, the options as rows with their key cap (round: pick one, square: pick several)
- * and description, "(Recommended)" as a quiet badge, a typed "Other" answer, and Send — off until every question has
- * an answer. `askItem` is its entry in the timeline: what it asked and, from the transcript's result, what was
+ * `AskCard` is the one you answer, pinned above the prompt box while the worker waits on it: its questions stacked
+ * (askStack.ts: the open one with its options, the others folded to their answer), the options as rows with their key
+ * cap (round: pick one, square: pick several) and description, "(Recommended)" as a quiet badge, a typed "Other"
+ * answer, and Send, which goes only once every question has an answer (before that it takes you to the one missing). `askItem` is its entry in the timeline: what it asked and, from the transcript's result, what was
  * answered (here or in the terminal).
  *
  * States: pending → sending (the bridge drives the dialog) → gone once the bridge says it is resolved (the timeline
@@ -113,6 +113,9 @@ export function askItem(it: TranscriptItem, card: TranscriptAsk): HTMLElement {
   return row;
 }
 
+/** Where the keyboard goes once the card is drawn: the open question, Send, an option's key (`opt:2`), or the first. */
+type FocusTo = 'q' | 'send' | 'first' | `opt:${number}`;
+
 /** The pinned card. */
 export class AskCard {
   readonly el: HTMLElement;
@@ -125,7 +128,13 @@ export class AskCard {
   /** Whose picks `picks` are (a tool_use_id). */
   private picksFor: string | null = null;
   private picks: AskPick[] = [];
+  /** The open question (-1: every one folded, all answered: Send is next). */
   private active = 0;
+  /** The open question got an Enter on itself: it says how to pick, louder. */
+  private nudged = false;
+  /** Send was tried without this question's answer: it flashes once. */
+  private flash = -1;
+  private focusTo: FocusTo | null = null;
   private note: { text: string; error: boolean } | null = null;
   private since = 0;
   private ticker: ReturnType<typeof setInterval> | null = null;
@@ -173,6 +182,7 @@ export class AskCard {
       this.picksFor = id;
       this.picks = a ? emptyPicks(a) : [];
       this.active = 0;
+      this.nudged = false;
       this.note = null;
     }
     this.render();
@@ -184,45 +194,70 @@ export class AskCard {
     this.el.remove();
   }
 
+  /** The keyboard on the card: the open question's picked option, else its first; all folded, Send. */
   focus(): void {
-    // The picked option, else the first (a selector list would take the first in the document either way).
-    const b = this.el.querySelector<HTMLElement>('button.tx-ask-opt[aria-checked="true"]:not(:disabled)') ?? this.el.querySelector<HTMLElement>('button.tx-ask-opt:not(:disabled)');
+    const q = this.el.querySelector<HTMLElement>('.tx-ask-q');
+    const b = q
+      ? (q.querySelector<HTMLElement>('button.tx-ask-opt[aria-checked="true"]:not(:disabled)') ?? q.querySelector<HTMLElement>('button.tx-ask-opt:not(:disabled)'))
+      : this.el.querySelector<HTMLElement>('.tx-ask-send:not(:disabled)');
     b?.focus({ preventScroll: true });
+    if (b) reveal(b);
   }
 
   // --- keys --------------------------------------------------------------------------------------------------
 
   /**
-   * A key on the transcript (not in a text box): digits pick, Tab / ← → change question, Enter sends. True: it was the
-   * card's. On the card itself (`inCard`: an option, a tab, a button) Esc goes back to the timeline, and Enter on an
-   * option or a tab sends too (Space picks the focused option, Enter on Dismiss or Send is that button's).
+   * A key on the transcript (not in a text box): digits pick on the open question, ← → open the question before /
+   * after, Enter takes the keyboard to the card (it never sends from here), Ctrl/⌘+Enter sends. True: it was the
+   * card's. On the card itself (`inCard`) also: ↑ ↓ move through the open question's options, Enter on the question
+   * itself only says how to pick, and Esc goes back to the timeline. Enter / Space on an option, a folded question,
+   * Dismiss or Send are that button's (its click): an option is picked, never sent.
    */
   key(e: KeyboardEvent, inCard = false): boolean {
     const a = this.shownAsk;
-    if (!a || e.ctrlKey || e.metaKey || e.altKey) return false;
+    if (!a) return false;
+    if (isSendKey(e)) {
+      if (!this.sent) this.trySend();
+      return true;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return false;
     if (inCard && e.key === 'Escape' && !e.shiftKey) {
       this.host.focusTimeline();
       return true;
     }
-    if (inCard && e.key === 'Enter' && !(e.target as HTMLElement | null)?.closest?.('.tx-ask-opt, .tx-ask-tab')) return false;
-    if (this.sending) return inCard && e.key === 'Enter'; // nothing to pick while it is sent
+    if (this.sending) return false; // nothing to pick while it is sent
+    const t = e.target as HTMLElement | null;
+    const open = this.el.querySelector<HTMLElement>('.tx-ask-q');
     const q = a.questions[this.active];
-    if (!q) return false;
-    const several = a.questions.length > 1;
     if (/^[1-9]$/.test(e.key) && !e.shiftKey) {
+      if (!q) return false;
       const n = Number(e.key);
       if (n <= q.options.length) this.choose(n);
       else if (n === q.options.length + 1 && q.other) this.focusOther();
       else return false;
       return true;
     }
-    if (several && (e.key === 'Tab' || e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
-      const back = e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey);
-      this.go((this.active + (back ? a.questions.length - 1 : 1)) % a.questions.length);
+    if (inCard && t && t === open && (e.key === 'Enter' || e.key === ' ')) {
+      this.nudged = true;
+      this.focusTo = 'q';
+      this.render();
       return true;
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      this.submitOrNext();
+    if (inCard && t && open?.contains(t) && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      moveIn(open, t, e.key === 'ArrowDown' ? 1 : -1);
+      return true;
+    }
+    const n = a.questions.length;
+    if (n > 1 && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      const back = e.key === 'ArrowLeft';
+      const from = this.active >= 0 ? this.active : back ? n : -1;
+      const to = from + (back ? -1 : 1);
+      if (to >= 0 && to < n) this.openAt(to);
+      return true;
+    }
+    if (!inCard && e.key === 'Enter' && !e.shiftKey) {
+      this.focusTo = this.active >= 0 ? 'q' : 'send';
+      this.render();
       return true;
     }
     return false;
@@ -231,18 +266,47 @@ export class AskCard {
   private choose(n: number): void {
     const a = this.shownAsk;
     if (!a || this.sending) return;
-    const q = a.questions[this.active] as AskQuestion;
+    const q = a.questions[this.active];
+    if (!q) return;
     this.picks = pickOption(a, this.picks, this.active, n);
     this.note = null;
-    // A single-select answer moves on to the next question without one, like the dialog does.
-    const next = !q.multi && a.questions.length > 1 ? firstUnanswered(a, this.picks) : -1;
-    this.render(next >= 0 ? next : null);
+    this.nudged = false;
+    if (q.multi) {
+      // Several may be picked: it stays, the keyboard on the option ticked.
+      this.focusTo = `opt:${n}`;
+      this.render();
+      return;
+    }
+    this.advance();
   }
 
-  private go(i: number): void {
-    this.active = i;
+  /** The open question is answered: on to the next one without an answer (the keyboard on it), else to Send. */
+  private advance(): void {
+    const a = this.shownAsk;
+    if (!a) return;
+    const n = a.questions.length;
+    let next = -1;
+    for (let k = 1; k <= n && next < 0; k++) {
+      const j = (this.active + k) % n;
+      if (!answered(a, this.picks, j)) next = j;
+    }
+    if (next >= 0) {
+      this.active = next;
+      this.focusTo = 'q';
+    } else {
+      if (n > 1) this.active = -1; // all folded: what you answered, one line each, over Send
+      this.focusTo = 'send';
+    }
+    this.nudged = false;
     this.render();
-    this.focus();
+  }
+
+  /** Opens question i, the keyboard on its picked option (or its first). */
+  private openAt(i: number): void {
+    this.active = i;
+    this.nudged = false;
+    this.focusTo = 'first';
+    this.render();
   }
 
   private focusOther(): void {
@@ -253,15 +317,21 @@ export class AskCard {
       this.render();
     }
     this.otherEl?.focus({ preventScroll: true });
+    if (this.otherEl) reveal(this.otherEl);
   }
 
-  private submitOrNext(): void {
+  /** Send (its click, Ctrl/⌘+Enter): sent once every question has an answer, else to the first one without. */
+  private trySend(): void {
     const a = this.shownAsk;
-    if (!a) return;
+    if (!a || this.sent) return;
     const gap = firstUnanswered(a, this.picks);
     if (gap >= 0) {
       this.note = { text: `Answer “${a.questions[gap]?.header || `question ${gap + 1}`}” first.`, error: false };
-      this.go(gap);
+      this.active = gap;
+      this.flash = gap;
+      this.nudged = false;
+      this.focusTo = 'q';
+      this.render();
       return;
     }
     void this.submit();
@@ -315,12 +385,16 @@ export class AskCard {
     return r;
   }
 
+  /** The Other text box: Enter takes the text and moves on (never sends), ↑ ↓ leave it for the options around it. */
   private onOtherKey(e: KeyboardEvent, input: HTMLInputElement): void {
     if (zoomKey(e)) return; // #59: the text zoom works from here too
     e.stopPropagation(); // what is typed here is the answer's, not the game's or the timeline's
     const a = this.shownAsk;
     if (!a) return;
-    if (e.key === 'Escape') {
+    if (isSendKey(e)) {
+      e.preventDefault();
+      this.trySend();
+    } else if (e.key === 'Escape') {
       e.preventDefault();
       if (!input.value.trim()) {
         this.picks = pickOther(a, this.picks, this.active, null);
@@ -329,10 +403,10 @@ export class AskCard {
       this.host.focusTimeline();
     } else if (e.key === 'Enter' && !e.isComposing) {
       e.preventDefault();
-      this.submitOrNext();
-    } else if (e.key === 'Tab' && a.questions.length > 1) {
+      if (answered(a, this.picks, this.active)) this.advance();
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault();
-      this.go((this.active + (e.shiftKey ? a.questions.length - 1 : 1)) % a.questions.length);
+      moveIn(input.closest<HTMLElement>('.tx-ask-q'), input, e.key === 'ArrowDown' ? 1 : -1);
     }
   }
 
@@ -347,7 +421,13 @@ export class AskCard {
 
   // --- drawing -----------------------------------------------------------------------------------------------
 
-  private render(goTo: number | null = null): void {
+  private line(a: Ask, i: number): StackLine {
+    const q = a.questions[i] as AskQuestion;
+    const done = answered(a, this.picks, i);
+    return { header: q.header || `Question ${i + 1}`, question: q.question, done, answer: done ? pickedText(a, this.picks, i) : '' };
+  }
+
+  private render(): void {
     const a = this.shownAsk;
     this.el.hidden = !a;
     if (!a) {
@@ -359,14 +439,15 @@ export class AskCard {
       this.host.resized();
       return;
     }
-    if (goTo !== null) this.active = goTo;
-    const hadFocus = this.el.contains(document.activeElement);
-    const focusedOther = !!this.otherEl && document.activeElement === this.otherEl;
-    const q = a.questions[this.active] as AskQuestion;
+    const focused = document.activeElement instanceof HTMLElement && this.el.contains(document.activeElement) ? document.activeElement : null;
+    const focusedKey = focused?.dataset.key ?? null;
+    const focusedOther = !!this.otherEl && focused === this.otherEl;
     const sending = this.sending;
     // Another answer still on its way (this ask came meanwhile): this one waits for its ack.
     const busy = sending || !!this.sent;
     const who = askAgent(a);
+    const several = a.questions.length > 1;
+    if (!several) this.active = 0;
     this.el.setAttribute('aria-busy', String(sending));
     this.el.dataset.phase = sending ? 'sending' : 'pending';
     this.since = a.since;
@@ -379,36 +460,79 @@ export class AskCard {
       h('span', { class: 'tx-spacer' }),
       h('button', { class: 'tx-link tx-to-term', disabled: sending, onclick: () => this.host.toTerminal() }, 'Answer in the terminal'),
     );
-    const parts: HTMLElement[] = [top];
-    if (a.questions.length > 1) {
-      const tabs = h('div', { class: 'tx-ask-tabs', role: 'tablist', 'aria-label': 'Questions' });
-      a.questions.forEach((qq, i) => {
-        const done = answered(a, this.picks, i);
-        tabs.append(
-          h(
-            'button',
-            {
-              class: `tx-ask-tab${i === this.active ? ' is-active' : ''}${done ? ' is-done' : ''}`,
-              role: 'tab',
-              'aria-selected': String(i === this.active),
-              title: done ? `${qq.question} → ${pickedText(a, this.picks, i)}` : qq.question,
-              onclick: () => this.go(i),
-            },
-            h('span', { class: 'tx-ask-tab-mark', 'aria-hidden': 'true' }, keyCap(i + 1, done)),
-            qq.header || `Question ${i + 1}`,
-          ),
-        );
-      });
-      parts.push(tabs);
-    } else if (q.header) {
-      parts.push(h('div', { class: 'tx-ask-tabs' }, h('span', { class: 'tx-ask-chip' }, q.header)));
+    this.otherEl = null;
+    const body = h('div', { class: 'tx-ask-body' });
+    if (several) {
+      const stack = h('div', { class: 'tx-ask-stack' });
+      a.questions.forEach((_, i) => stack.append(i === this.active ? this.openSection(a, i, sending) : foldedRow(i, this.line(a, i), () => this.openAt(i), sending)));
+      body.append(stack);
+    } else body.append(this.openSection(a, 0, sending));
+    const ready = complete(a, this.picks);
+    const send = h(
+      'button',
+      {
+        class: `tx-ask-send${ready ? '' : ' is-blocked'}`,
+        'data-key': 'send',
+        disabled: busy,
+        'aria-disabled': busy ? null : String(!ready),
+        onclick: () => this.trySend(),
+      },
+      sending ? 'Sending…' : several ? 'Send answers' : 'Send answer',
+      sending ? null : h('kbd', { class: 'tx-ask-kbd' }, SEND_KEY),
+    );
+    const q = a.questions[this.active];
+    const pickKeys = q ? `1–${q.options.length + (q.other ? 1 : 0)} or ↑↓ Enter pick · ` : '';
+    const keys = `${pickKeys}${several ? '← → question · ' : ''}${SEND_KEY} send · Esc back`;
+    const foot = h(
+      'div',
+      { class: 'tx-ask-foot' },
+      h('span', { class: 'tx-ask-hint' }, h('span', { class: 'tx-ask-hint-text' }, this.hint()), h('span', { class: 'tx-ask-keys' }, keys)),
+      h('button', { class: 'tx-link tx-ask-dismiss', 'data-key': 'dismiss', disabled: busy, title: 'Esc on its dialog: the agent is told you declined', onclick: () => void this.dismiss() }, 'Dismiss'),
+      send,
+    );
+    const parts: HTMLElement[] = [top, body, foot];
+    if (this.note) parts.push(h('div', { class: `tx-ask-note${this.note.error ? ' is-error' : ''}`, role: this.note.error ? 'alert' : 'status' }, this.note.text));
+    this.el.replaceChildren(...parts);
+    this.flash = -1;
+    this.tick();
+    // Where the keyboard goes: where the card sent it (it moved on), else back where it was (redrawn under it), else
+    // (the control it was on is gone) the open question's option. While it is sent its controls are off: the keyboard
+    // goes back to the timeline, not to <body> (Esc there stands you up).
+    const to = this.focusTo;
+    this.focusTo = null;
+    if (sending) {
+      if (focused) this.host.focusTimeline();
+    } else if (to) this.applyFocus(to);
+    else if (focusedOther) this.el.querySelector<HTMLInputElement>('.tx-ask-other-input')?.focus({ preventScroll: true });
+    else if (focused) {
+      const again = focusedKey ? this.el.querySelector<HTMLElement>(`[data-key="${focusedKey}"]`) : null;
+      if (again && !(again as HTMLButtonElement).disabled) again.focus({ preventScroll: true });
+      else this.focus();
+      if (!this.el.contains(document.activeElement)) this.host.focusTimeline();
     }
-    const body = h('div', { class: 'tx-ask-body' }, h('p', { class: 'tx-ask-question', id: 'tx-ask-q' }, q.question));
-    parts.push(body);
-    const pick = this.picks[this.active] as AskPick;
-    const list = h('div', { class: `tx-ask-opts${q.multi ? ' is-multi' : ''}`, role: q.multi ? 'group' : 'radiogroup', 'aria-labelledby': 'tx-ask-q' });
-    q.options.forEach((o, i) => {
-      const n = i + 1;
+    this.host.resized();
+  }
+
+  private applyFocus(to: FocusTo): void {
+    if (to === 'q') focusQuestion(this.el.querySelector<HTMLElement>('.tx-ask-q'));
+    else if (to === 'first') this.focus();
+    else {
+      const el = this.el.querySelector<HTMLElement>(`[data-key="${to}"]`);
+      el?.focus({ preventScroll: true });
+      if (el) reveal(el);
+    }
+    if (!this.el.contains(document.activeElement)) this.focus();
+  }
+
+  /** Question i, open: its options, its Other, and (several questions, pick several) Done. */
+  private openSection(a: Ask, i: number, sending: boolean): HTMLElement {
+    const q = a.questions[i] as AskQuestion;
+    const several = a.questions.length > 1;
+    const pick = this.picks[i] as AskPick;
+    const qid = 'tx-ask-q';
+    const list = h('div', { class: `tx-ask-opts${q.multi ? ' is-multi' : ''}`, role: q.multi ? 'group' : 'radiogroup', 'aria-labelledby': qid });
+    q.options.forEach((o, k) => {
+      const n = k + 1;
       const on = pick.choices.includes(n);
       const l = optionLabel(o.label);
       list.append(
@@ -420,6 +544,7 @@ export class AskCard {
             'aria-checked': String(on),
             disabled: sending,
             'data-n': String(n),
+            'data-key': `opt:${n}`,
             onclick: () => this.choose(n),
           },
           h('span', { class: 'tx-ask-key', 'aria-hidden': 'true' }, keyCap(n, on && q.multi)),
@@ -433,7 +558,6 @@ export class AskCard {
         ),
       );
     });
-    this.otherEl = null;
     if (q.other) {
       const n = q.options.length + 1;
       const on = pick.other !== null;
@@ -473,45 +597,15 @@ export class AskCard {
         ),
       );
     }
-    body.append(list);
-    const ready = complete(a, this.picks);
-    const send = h(
-      'button',
-      { class: 'tx-ask-send', disabled: !ready || busy, onclick: () => void this.submit() },
-      sending ? 'Sending…' : a.questions.length > 1 ? 'Send answers' : 'Send answer',
+    const done =
+      q.multi && several
+        ? h('button', { class: 'tx-ask-done', 'data-key': 'done', disabled: sending, onclick: () => this.advance() }, 'Done, next question', h('span', { 'aria-hidden': 'true' }, ' →'))
+        : null;
+    return openQuestion(
+      { index: i, line: this.line(a, i), several, kind: q.multi ? 'pick several' : null, options: q.options.length, nudged: this.nudged, flash: this.flash === i, qid },
+      list,
+      done,
     );
-    const keys = `1–${q.options.length + (q.other ? 1 : 0)} pick${a.questions.length > 1 ? ' · Tab next question' : ''} · Enter send · Esc back`;
-    parts.push(
-      h(
-        'div',
-        { class: 'tx-ask-foot' },
-        h('span', { class: 'tx-ask-hint' }, h('span', { class: 'tx-ask-hint-text' }, this.hint()), h('span', { class: 'tx-ask-keys' }, keys)),
-        h('button', { class: 'tx-link tx-ask-dismiss', disabled: busy, title: 'Esc on its dialog: the agent is told you declined', onclick: () => void this.dismiss() }, 'Dismiss'),
-        send,
-      ),
-    );
-    if (this.note) parts.push(h('div', { class: `tx-ask-note${this.note.error ? ' is-error' : ''}`, role: this.note.error ? 'alert' : 'status' }, this.note.text));
-    this.el.replaceChildren(...parts);
-    this.showActiveTab();
-    this.tick();
-    // Redrawn under the keyboard: it stays in the card (the text box, else the question's options).
-    // While it is sent its controls are off: the keyboard goes back to the timeline, not to <body> (Esc there stands you up).
-    if (focusedOther && !sending) this.otherEl?.focus({ preventScroll: true });
-    else if (hadFocus) {
-      this.focus();
-      if (!this.el.contains(document.activeElement)) this.host.focusTimeline();
-    }
-    this.host.resized();
-  }
-
-  /** On a narrow screen the tabs scroll sideways: the active one is brought into the strip. */
-  private showActiveTab(): void {
-    const strip = this.el.querySelector<HTMLElement>('.tx-ask-tabs');
-    const tab = strip?.querySelector<HTMLElement>('.tx-ask-tab.is-active');
-    if (!strip || !tab || strip.scrollWidth <= strip.clientWidth) return;
-    const s = strip.getBoundingClientRect();
-    const t = tab.getBoundingClientRect();
-    strip.scrollLeft += t.left - s.left - (s.width - t.width) / 2;
   }
 
   /** What the foot says: what is left to answer, or that it is being sent. */
@@ -521,7 +615,7 @@ export class AskCard {
     if (this.sending) return `${askAgent(a)}’s dialog is being answered in its terminal…`;
     if (this.sent) return 'The answer to the question before is still on its way…';
     const left = a.questions.filter((_, i) => !answered(a, this.picks, i)).length;
-    if (!left) return a.questions.length > 1 ? 'All answered: send them' : 'Ready to send';
+    if (!left) return a.questions.length > 1 ? 'All answered: Enter on Send' : 'Ready: Enter on Send';
     if (a.questions.length > 1) return `${left} of ${a.questions.length} still to answer`;
     return a.questions[0]?.multi ? 'Pick one or more' : 'Pick one';
   }
@@ -529,7 +623,7 @@ export class AskCard {
   /** Repaints what the picks show without redrawing the text box you type in. */
   private paintPicks(): void {
     const a = this.shownAsk;
-    if (!a) return;
+    if (!a || this.active < 0) return;
     const pick = this.picks[this.active] as AskPick;
     const q = a.questions[this.active] as AskQuestion;
     const other = this.el.querySelector('.tx-ask-other');
@@ -547,12 +641,14 @@ export class AskCard {
     }
     const ready = complete(a, this.picks);
     const send = this.el.querySelector<HTMLButtonElement>('.tx-ask-send');
-    if (send) send.disabled = !ready || !!this.sent;
-    this.el.querySelectorAll('.tx-ask-tab').forEach((t, i) => {
-      const done = answered(a, this.picks, i);
-      t.classList.toggle('is-done', done);
-      t.querySelector('.tx-ask-tab-mark')?.replaceChildren(keyCap(i + 1, done));
-    });
+    if (send && !this.sent) {
+      send.classList.toggle('is-blocked', !ready);
+      send.setAttribute('aria-disabled', String(!ready));
+    }
+    const done = answered(a, this.picks, this.active);
+    const m = this.el.querySelector('.tx-ask-q-head .tx-ask-mark');
+    m?.classList.toggle('is-done', done);
+    m?.replaceChildren(mark(this.active + 1, done));
     const hint = this.el.querySelector('.tx-ask-hint-text');
     if (hint) hint.textContent = this.hint();
   }

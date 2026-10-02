@@ -6,8 +6,9 @@ import { frames, openGame, seatMode, shot, watchErrors } from './game';
 
 // #57: an agent's structured question (Claude's AskUserQuestion, Codex's request_user_input) on demo-m5 with sim=1.
 // The simulator's `sim.ask` plays the bridge reading it from the transcript: the worker (idle, as herdr calls a
-// hire's question) needs you; at its laptop the transcript view pins a card above the prompt box, answered with the
-// keyboard or clicks; where you stand a one-pick question takes a digit; the terminal says T answers it.
+// hire's question) needs you; at its laptop the transcript view pins a card above the prompt box (its questions
+// stacked: the open one, the others folded to their answer), answered with the keyboard or clicks, where Enter never
+// sends: only Send or Ctrl+Enter does; where you stand a one-pick question takes a digit; the terminal says T answers it.
 
 const SIM = 'play=none&sim=1&simms=300&simusage=0';
 
@@ -98,11 +99,13 @@ test('a two-question ask: needs you while herdr says idle, a pinned card, answer
   await expect(tx.locator('.tx-input')).toBeDisabled();
   await expect(tx.locator('.tx-ask-item[data-outcome="pending"]')).toContainText('Which extras should be enabled?');
   await expect(tx.locator('.tx-ask-item .tx-ask-input > summary')).toHaveText('Input');
-  // Tabs for the two questions, checkboxes for the multi-select one, Send off until both are answered.
-  await expect(card.locator('.tx-ask-tab')).toHaveText(['1Extras', '2Color']);
+  // Stacked: Extras open (checkboxes, pick several), Color folded under it; Send off until both are answered.
+  await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Extras');
+  await expect(card.locator('.tx-ask-row .tx-ask-row-head')).toHaveText(['Color']);
+  await expect(card.locator('.tx-ask-row .tx-ask-row-text')).toHaveText(['Which color?']);
   await expect(card.locator('.tx-ask-opts')).toHaveClass(/is-multi/);
   await expect(card.locator('[role="checkbox"]')).toHaveCount(3);
-  await expect(card.locator('.tx-ask-send')).toBeDisabled();
+  await expect(card.locator('.tx-ask-send')).toHaveAttribute('aria-disabled', 'true');
   await expect(card.locator('.tx-ask-wait')).toHaveText(/^waiting \d+s$/);
   await shot(page, 'm16-ask-card');
   await tx.locator('.tx-scroll').focus(); // the bare screenshot hides the HUD, and that drops the focus
@@ -118,39 +121,48 @@ test('a two-question ask: needs you while herdr says idle, a pinned card, answer
   expect(await page.evaluate(() => window.__h3d.seated())).not.toBeNull(); // Esc in the card does not stand you up
   await page.keyboard.press('4');
   await page.keyboard.type('Custom dashboards');
-  // Enter with a question unanswered goes to it; Tab moves between them.
+  // Enter in the text takes it and moves on to Color (the question itself has the keyboard); nothing is sent.
   await page.keyboard.press('Enter');
-  await expect(card.locator('.tx-ask-tab.is-active')).toContainText('Color');
+  await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Color');
+  await expect(card.locator('.tx-ask-q')).toBeFocused();
+  await expect(card.locator('.tx-ask-row.is-done .tx-ask-row-text')).toHaveText('Logs, Traces, Custom dashboards');
   await expect(card.locator('.tx-ask-rec')).toHaveText('recommended');
   await expect(card.locator('.tx-ask-opt-label').first()).toContainText('Red');
   await expect(card.locator('[role="radio"]')).toHaveCount(2);
-  await page.keyboard.press('Tab');
-  await expect(card.locator('.tx-ask-tab.is-active')).toContainText('Extras');
+  // An Enter on the question itself picks nothing: it says how to pick.
+  await page.keyboard.press('Enter');
+  await expect(card.locator('.tx-ask-nudge.is-loud')).toContainText('Enter picks nothing here');
+  await expect(card.locator('[role="radio"][aria-checked="true"]')).toHaveCount(0);
+  // ← back to Extras (what was typed is kept), 2 ticks Metrics too, → on to Color again.
+  await page.keyboard.press('ArrowLeft');
+  await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Extras');
   await expect(card.locator('.tx-ask-other-input')).toHaveValue('Custom dashboards');
+  await page.keyboard.press('2');
+  await expect(card.locator('[role="checkbox"][aria-checked="true"]')).toHaveCount(3);
   await page.keyboard.press('ArrowRight');
-  await expect(card.locator('.tx-ask-tab.is-active')).toContainText('Color');
-  await page.keyboard.press('3');
+  await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Color');
+  // Opened with ← →, its first option has the keyboard: ↓ to the second, ↓ to Other; typed, Enter: every question
+  // answered, all folded, Send has the keyboard.
+  await expect(card.locator('button.tx-ask-opt[data-n="1"]')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(card.locator('button.tx-ask-opt[data-n="2"]')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(card.locator('.tx-ask-other-input')).toBeFocused();
   await page.keyboard.type('Green');
-  await expect(card.locator('.tx-ask-send')).toBeEnabled();
+  await page.keyboard.press('Enter');
+  await expect(card.locator('.tx-ask-q')).toHaveCount(0);
+  await expect(card.locator('.tx-ask-row .tx-ask-row-text')).toHaveText(['Logs, Metrics, Traces, Custom dashboards', 'Green']);
+  await expect(card.locator('.tx-ask-send')).toBeFocused();
+  await expect(card.locator('.tx-ask-send')).toHaveAttribute('aria-disabled', 'false');
   expect(await sent(page, 'worker.answer_ask')).toHaveLength(0);
   await shot(page, 'm16-ask-card-filled');
   await tx.locator('.tx-scroll').focus(); // the screenshot dropped the focus again
 
-  // On the card itself: Tab focuses the other question's option; Esc there goes back to the timeline, seated.
-  await page.keyboard.press('Tab');
-  await expect(card.locator('.tx-ask-tab.is-active')).toContainText('Extras');
-  await expect(card.locator('button.tx-ask-opt[data-n="1"]')).toBeFocused();
-  await page.keyboard.press('Escape');
-  await expect(tx.locator('.tx-scroll')).toBeFocused();
-  expect(await page.evaluate(() => window.__h3d.seated())).not.toBeNull();
-  // Tab, Tab (an option focused), a digit, Enter: sent from there.
-  await page.keyboard.press('Tab');
-  await page.keyboard.press('Tab');
-  await expect(card.locator('.tx-ask-tab.is-active')).toContainText('Extras');
-  await expect(card.locator('button.tx-ask-opt[data-n="1"]')).toBeFocused();
-  await page.keyboard.press('2');
-  await expect(card.locator('[role="checkbox"][aria-checked="true"]')).toHaveCount(3);
+  // From the timeline Enter takes the keyboard back to the card (to Send), and sends nothing; Enter on Send sends.
+  await page.keyboard.press('Enter');
+  await expect(card.locator('.tx-ask-send')).toBeFocused();
   expect(await sent(page, 'worker.answer_ask')).toHaveLength(0);
+  expect(await page.evaluate(() => window.__h3d.seated())).not.toBeNull();
   await page.keyboard.press('Enter');
 
   // Sending, then gone once the bridge says it is resolved; the timeline shows what the transcript recorded.
@@ -172,6 +184,48 @@ test('a two-question ask: needs you while herdr says idle, a pinned card, answer
   await expect(tx.locator('.tx-input')).toBeEnabled();
   await expect.poll(() => page.evaluate((id) => window.__h3d.needs().some((n) => n.id === id), w.id)).toBe(false);
   await shot(page, 'm16-ask-answered');
+  clean();
+});
+
+/** Two pick-one questions: the shape of the reported bug (#90's card had it: a click, then Enter sent one answer). */
+const twoPicks: Partial<Ask> = {
+  tool_use_id: 'toolu_e2e_picks',
+  agent: 'claude',
+  questions: [
+    { header: 'Where', question: 'Where did you see it?', multi: false, other: true, options: [{ label: 'Transcript view card' }, { label: 'Claude Code dialog' }] },
+    { header: 'Next', question: 'Build it or prototype first?', multi: false, other: true, options: [{ label: 'Build it' }, { label: 'Prototype first' }] },
+  ],
+};
+
+test('a click on the first question, then Enter, sends nothing: the next one has the keyboard, says how to pick, and Ctrl+Enter sends once both are answered', async ({ page }) => {
+  const clean = watchErrors(page);
+  const w = demoWorker('Pebble');
+  await openGame(page, 'demo-m5', '', SIM);
+  await sitAtTranscript(page, w);
+  const tx = page.locator('.seat-transcript .tx');
+  const card = tx.locator('.tx-ask');
+  await page.evaluate((a) => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: a }), twoPicks);
+  await expect(card).toBeVisible();
+  await card.locator('button.tx-ask-opt[data-n="1"]').click();
+  await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Next');
+  await expect(card.locator('.tx-ask-q')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  await frames(page, 5);
+  expect(await sent(page, 'worker.answer_ask')).toHaveLength(0);
+  await expect(card.locator('[role="radio"][aria-checked="true"]')).toHaveCount(0);
+  await expect(card.locator('.tx-ask-nudge.is-loud')).toBeVisible();
+  // Ctrl+Enter with Next unanswered: nothing sent, it says so.
+  await page.keyboard.press('Control+Enter');
+  await expect(card.locator('.tx-ask-note')).toContainText('Answer “Next” first');
+  expect(await sent(page, 'worker.answer_ask')).toHaveLength(0);
+  // A pick by its digit, then Ctrl+Enter: both go.
+  await page.keyboard.press('2');
+  await expect(card.locator('.tx-ask-send')).toBeFocused();
+  await page.keyboard.press('Control+Enter');
+  await expect.poll(async () => (await sent(page, 'worker.answer_ask')).length).toBe(1);
+  expect((await sent(page, 'worker.answer_ask'))[0]?.args).toEqual({ id: w.id, tool_use_id: 'toolu_e2e_picks', answers: [{ question: 0, choices: [1] }, { question: 1, choices: [2] }] });
+  await expect(card).toBeHidden();
   clean();
 });
 
@@ -281,12 +335,14 @@ for (const [width, height] of [
     const body = await card.locator('.tx-ask-body').boundingBox();
     expect(body && body.height, 'the question and options have room').toBeGreaterThanOrEqual(36);
     await shot(page, `m16-ask-fit-${width}x${height}`);
-    // Every question answered with clicks (each option scrolled to, not hidden under an edge), then Send.
-    for (let i = 0; i < 4; i++) {
-      await card.locator('.tx-ask-tab').nth(i).click();
-      await expect(card.locator('.tx-ask-question')).toContainText(['Storage', 'Delivery', 'Observability', 'Migration'][i] as string);
+    // Every question answered with clicks (each option scrolled to, not hidden under an edge), then Send: a single-pick
+    // answer moves on by itself, the pick-several one is left with a click on the next folded question.
+    for (const header of ['Storage', 'Delivery', 'Observability', 'Migration']) {
+      if ((await card.locator('.tx-ask-q .tx-ask-chip').textContent()) !== header) await card.locator('.tx-ask-row').filter({ hasText: header }).click();
+      await expect(card.locator('.tx-ask-question')).toContainText(header);
       await card.locator('button.tx-ask-opt[data-n="3"]').click();
     }
+    await expect(card.locator('.tx-ask-row.is-done')).toHaveCount(4);
     await card.locator('.tx-ask-send').click();
     await expect.poll(async () => (await sent(page, 'worker.answer_ask')).length).toBe(1);
     await expect(card).toBeHidden();

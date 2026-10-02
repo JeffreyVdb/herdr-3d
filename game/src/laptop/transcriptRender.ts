@@ -3,6 +3,7 @@ import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
 import type { Ask, CommandArgs, Followup, TranscriptDiff, TranscriptItem, Usage } from '../net/protocol';
 import { AskCard, askItem, type AskResult } from './askCard';
+import { isSendKey } from './askStack';
 import { FollowupCard, type FollowupResult } from './followupCard';
 import type { ImageFeed } from './imageFeed';
 import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, Thumbs } from './transcriptImages';
@@ -1518,18 +1519,27 @@ class Transcript implements TranscriptView {
 
   private onKey(e: KeyboardEvent): void {
     if (e.defaultPrevented || e.target === this.input) return;
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
     const target = e.target as HTMLElement | null;
-    // #57: on the pinned question its keys come first: Enter on an option or a tab sends, Esc goes back to the
-    // timeline (not up from the seat).
     const inCard = !!target && this.ask.el.contains(target);
+    const inFollowup = !!target && this.followup.el.contains(target);
+    // Ctrl/⌘+Enter sends the pinned card's answers, from the card or from the timeline (the ask's card goes first).
+    if (isSendKey(e)) {
+      const card = this.ask.shown ? (inFollowup ? null : this.ask) : this.followup.shown ? this.followup : null;
+      if (card?.key(e, card === this.ask ? inCard : inFollowup)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // #57: on the pinned question its keys come first: ↑ ↓ through the options, Esc back to the timeline (not up
+    // from the seat); Enter on an option is its click (it picks, never sends).
     if (inCard && this.ask.key(e, true)) {
       e.preventDefault();
       e.stopPropagation();
       return;
     }
     // #90: the same on the follow-up card.
-    const inFollowup = !!target && this.followup.el.contains(target);
     if (inFollowup && this.followup.key(e, true)) {
       e.preventDefault();
       e.stopPropagation();
@@ -1540,7 +1550,7 @@ class Transcript implements TranscriptView {
       e.stopPropagation();
       return;
     }
-    // #57: then, from the timeline, the pinned question's digits, Tab / ← →, Enter.
+    // #57: then, from the timeline, the pinned question's digits, ← →, Enter (to the card).
     if (!inCard && this.ask.shown && this.ask.key(e)) {
       e.preventDefault();
       e.stopPropagation();

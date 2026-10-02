@@ -3,6 +3,7 @@ import { waitingText } from '../world/ask';
 import {
   answeredFollowup,
   answerFollowupArgs,
+  answerOf,
   emptyFollowupPicks,
   followupAnswers,
   pickValue,
@@ -10,11 +11,9 @@ import {
   YES_NO,
   type FollowupPick,
 } from '../world/followup';
-import { h, icon } from '../ui/dom';
+import { h } from '../ui/dom';
+import { focusQuestion, foldedRow, isSendKey, mark, moveIn, openQuestion, reveal, SEND_KEY, type StackLine } from './askStack';
 import { zoomKey } from './keys';
-
-const CHECK = '<path d="M5.5 12.5l4 4 9-9"/>';
-const keyCap = (n: number, on: boolean): Node => (on ? icon(CHECK) : document.createTextNode(String(n)));
 
 export type FollowupResult = { ok: true } | { ok: false; code: string; message: string };
 
@@ -33,10 +32,13 @@ export interface FollowupCardHost {
  * #90: the open questions of the agent's final message, pinned above the prompt box while the worker has them. The
  * bridge found them with the AI integration's models (a classifier said the message asks you something, an LLM
  * listed the questions), so the card says it was detected automatically and stays out of the way: the prompt box
- * stays on, and a prompt typed there clears it. One tab per question; yes/no takes Yes or No and a note, a choice
- * its options or Other, an open question a text. Send answers sends what is answered as one prompt (the rest left
- * out); Dismiss drops it. Its look is the ask card's (#57), drawn dashed: inferred, not a dialog the agent waits on.
+ * stays on, and a prompt typed there clears it. Its questions stacked as on the ask card (askStack.ts): yes/no takes
+ * Yes or No and a note, a choice its options or Other, an open question a text. Send sends what is answered as one
+ * prompt (it says how many of them: the rest are left out, on purpose only); Dismiss drops it. Its look is the ask
+ * card's (#57), drawn dashed: inferred, not a dialog the agent waits on.
  */
+type FocusTo = 'q' | 'send' | 'first' | `opt:${number}`;
+
 export class FollowupCard {
   readonly el: HTMLElement;
   private followup: Followup | null = null;
@@ -46,7 +48,11 @@ export class FollowupCard {
   private gone: string | null = null;
   private picksFor: string | null = null;
   private picks: FollowupPick[] = [];
+  /** The open question (-1: every one folded, all answered: Send is next). */
   private active = 0;
+  private nudged = false;
+  private flash = -1;
+  private focusTo: FocusTo | null = null;
   private note: { text: string; error: boolean } | null = null;
   private suppressed = false;
   private ticker: ReturnType<typeof setInterval> | null = null;
@@ -95,6 +101,7 @@ export class FollowupCard {
       this.picksFor = id;
       this.picks = f ? emptyFollowupPicks(f) : [];
       this.active = 0;
+      this.nudged = false;
       this.note = null;
     }
     this.render();
@@ -106,35 +113,43 @@ export class FollowupCard {
     this.el.remove();
   }
 
+  /** The keyboard on the card: the open question's picked option, else its first (or its text); all folded, Send. */
   focus(): void {
-    const b =
-      this.el.querySelector<HTMLElement>('button.tx-ask-opt[aria-checked="true"]:not(:disabled)') ??
-      this.el.querySelector<HTMLElement>('button.tx-ask-opt:not(:disabled), .tx-fu-text:not(:disabled)');
+    const q = this.el.querySelector<HTMLElement>('.tx-ask-q');
+    const b = q
+      ? (q.querySelector<HTMLElement>('button.tx-ask-opt[aria-checked="true"]:not(:disabled)') ?? q.querySelector<HTMLElement>('button.tx-ask-opt:not(:disabled), .tx-fu-text:not(:disabled)'))
+      : this.el.querySelector<HTMLElement>('.tx-ask-send:not(:disabled)');
     b?.focus({ preventScroll: true });
+    if (b) reveal(b);
   }
 
   // --- keys --------------------------------------------------------------------------------------------------
 
   /**
-   * A key on the transcript (not in a text box): digits pick, ← → change question. On the card itself (`inCard`)
-   * Enter on an option or a tab sends and Esc goes back to the timeline. Tab is never the card's: it moves the focus
-   * through the card (the active tab, the options, the text, Dismiss, Send) and on to the prompt box. Enter on the
-   * timeline is not either: it goes to the prompt box, which a typed prompt clears the card from. True: it was the
-   * card's.
+   * A key on the transcript (not in a text box): digits pick on the open question, ← → open the question before /
+   * after, Ctrl/⌘+Enter sends. On the card itself (`inCard`) also: ↑ ↓ move through the open question's options,
+   * Enter on the question itself only says how to pick, Esc goes back to the timeline. Enter / Space on an option is
+   * its click: it picks, never sends. Tab is never the card's, nor is Enter on the timeline: it goes to the prompt
+   * box, which a typed prompt clears the card from. True: it was the card's.
    */
   key(e: KeyboardEvent, inCard = false): boolean {
     const f = this.shownFollowup;
-    if (!f || e.ctrlKey || e.metaKey || e.altKey) return false;
+    if (!f) return false;
+    if (isSendKey(e)) {
+      if (!this.sent) this.trySend();
+      return true;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return false;
     if (inCard && e.key === 'Escape' && !e.shiftKey) {
       this.host.focusTimeline();
       return true;
     }
-    const onTab = !!(e.target as HTMLElement | null)?.closest?.('.tx-ask-tab');
-    if (e.key === 'Enter' && (!inCard || !(e.target as HTMLElement | null)?.closest?.('.tx-ask-opt, .tx-ask-tab'))) return false;
-    if (this.sending) return inCard && e.key === 'Enter';
+    if (this.sending) return false;
+    const t = e.target as HTMLElement | null;
+    const open = this.el.querySelector<HTMLElement>('.tx-ask-q');
     const q = f.questions[this.active];
-    if (!q) return false;
     if (/^[1-9]$/.test(e.key) && !e.shiftKey) {
+      if (!q) return false;
       const vals = valuesOf(q);
       const n = Number(e.key);
       if (n <= vals.length) this.choose(vals[n - 1] as string);
@@ -142,14 +157,22 @@ export class FollowupCard {
       else return false;
       return true;
     }
-    const n = f.questions.length;
-    if (n > 1 && (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || (onTab && (e.key === 'Home' || e.key === 'End')))) {
-      const i = e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : (this.active + (e.key === 'ArrowLeft' ? n - 1 : 1)) % n;
-      this.go(i, onTab);
+    if (inCard && t && t === open && (e.key === 'Enter' || e.key === ' ')) {
+      this.nudged = true;
+      this.focusTo = 'q';
+      this.render();
       return true;
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      void this.submit();
+    if (inCard && t && open?.contains(t) && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      moveIn(open, t, e.key === 'ArrowDown' ? 1 : -1);
+      return true;
+    }
+    const n = f.questions.length;
+    if (n > 1 && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      const back = e.key === 'ArrowLeft';
+      const from = this.active >= 0 ? this.active : back ? n : -1;
+      const to = from + (back ? -1 : 1);
+      if (to >= 0 && to < n) this.openAt(to);
       return true;
     }
     return false;
@@ -162,32 +185,70 @@ export class FollowupCard {
     this.picks = pickValue(f, this.picks, this.active, v);
     if (q.kind === 'choice' && this.picks[this.active]?.value) this.picks = this.picks.map((p, i) => (i === this.active ? { ...p, text: '' } : p));
     this.note = null;
-    // A pick moves on to the next question without an answer, like the ask card.
-    const next = this.picks[this.active]?.value && f.questions.length > 1 ? f.questions.findIndex((_, i) => i > this.active && !answeredFollowup(f, this.picks, i)) : -1;
-    this.render(next >= 0 ? next : null);
+    this.nudged = false;
+    if (this.picks[this.active]?.value) {
+      this.advance();
+      return;
+    }
+    // The same again took it back: it stays, the keyboard on that option.
+    this.focusTo = `opt:${valuesOf(q).indexOf(v) + 1}`;
+    this.render();
   }
 
-  /** Shows question i; the focus goes to its tab (from the tab list) or its answer. */
-  private go(i: number, toTab = false): void {
-    this.active = i;
+  /** The open question is answered: on to the next one without an answer (the keyboard on it), else to Send. */
+  private advance(): void {
+    const f = this.shownFollowup;
+    if (!f) return;
+    const n = f.questions.length;
+    let next = -1;
+    for (let k = 1; k <= n && next < 0; k++) {
+      const j = (this.active + k) % n;
+      if (!answeredFollowup(f, this.picks, j)) next = j;
+    }
+    if (next >= 0) {
+      this.active = next;
+      this.focusTo = 'q';
+    } else {
+      if (n > 1) this.active = -1;
+      this.focusTo = 'send';
+    }
+    this.nudged = false;
     this.render();
-    if (toTab) this.el.querySelector<HTMLElement>('.tx-ask-tab.is-active')?.focus({ preventScroll: true });
-    else this.focus();
+  }
+
+  private openAt(i: number): void {
+    this.active = i;
+    this.nudged = false;
+    this.focusTo = 'first';
+    this.render();
   }
 
   private focusText(): void {
-    this.el.querySelector<HTMLElement>('.tx-fu-text')?.focus({ preventScroll: true });
+    const t = this.el.querySelector<HTMLElement>('.tx-fu-text');
+    t?.focus({ preventScroll: true });
+    if (t) reveal(t);
+  }
+
+  /** Send (its click, Ctrl/⌘+Enter): what is answered goes; with nothing answered, the open question says so. */
+  private trySend(): void {
+    const f = this.shownFollowup;
+    if (!f || this.sent) return;
+    if (!followupAnswers(f, this.picks).length) {
+      this.note = { text: 'Answer at least one question first.', error: false };
+      if (this.active < 0) this.active = 0;
+      this.flash = this.active;
+      this.focusTo = 'q';
+      this.render();
+      return;
+    }
+    void this.submit();
   }
 
   private async submit(): Promise<void> {
     const f = this.shownFollowup;
     if (!f || this.sent) return;
     const args = answerFollowupArgs('', f, this.picks);
-    if (!args) {
-      this.note = { text: 'Answer at least one question first.', error: false };
-      this.render();
-      return;
-    }
+    if (!args) return;
     const r = await this.send(f, () => this.host.answer(args));
     if (r && !r.ok) this.note = { text: r.message, error: true };
     this.render();
@@ -223,23 +284,42 @@ export class FollowupCard {
     return this.followup?.turn_id === f.turn_id ? r : null;
   }
 
+  /** The text box: Enter takes the text and moves on (never sends; Shift+Enter is a new line in an open answer). */
   private onTextKey(e: KeyboardEvent, multiline: boolean): void {
     if (zoomKey(e)) return; // #59: the text zoom works from here too
     e.stopPropagation(); // what is typed here is the answer's, not the game's or the timeline's
     const f = this.shownFollowup;
     if (!f) return;
-    if (e.key === 'Escape') {
+    if (isSendKey(e)) {
+      e.preventDefault();
+      this.trySend();
+    } else if (e.key === 'Escape') {
       e.preventDefault();
       this.host.focusTimeline();
     } else if (e.key === 'Enter' && !e.isComposing && (!multiline || !e.shiftKey)) {
       e.preventDefault();
-      void this.submit();
+      if (answeredFollowup(f, this.picks, this.active)) this.advance();
+    } else if (!multiline && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      moveIn((e.target as HTMLElement).closest<HTMLElement>('.tx-ask-q'), e.target as HTMLElement, e.key === 'ArrowDown' ? 1 : -1);
     }
   }
 
   // --- drawing -----------------------------------------------------------------------------------------------
 
-  private render(goTo: number | null = null): void {
+  private line(f: Followup, i: number): StackLine {
+    const q = f.questions[i] as FollowupQuestion;
+    const a = answerOf(f, this.picks, i);
+    const several = f.questions.length > 1;
+    return {
+      header: several ? `Question ${i + 1}` : '',
+      question: f.source === 'fallback' ? 'The agent asked you something. Your answer goes back as a prompt.' : q.question,
+      done: !!a,
+      answer: a ? (a.note ? `${a.value} (${a.note})` : a.value) : '',
+    };
+  }
+
+  private render(): void {
     const f = this.shownFollowup;
     this.el.hidden = !f;
     if (!f) {
@@ -251,12 +331,12 @@ export class FollowupCard {
       this.host.resized();
       return;
     }
-    if (goTo !== null) this.active = goTo;
-    const hadFocus = this.el.contains(document.activeElement);
-    const focusedText = document.activeElement?.classList.contains('tx-fu-text') ?? false;
-    const q = f.questions[this.active] as FollowupQuestion;
-    const pick = this.picks[this.active] as FollowupPick;
+    const focused = document.activeElement instanceof HTMLElement && this.el.contains(document.activeElement) ? document.activeElement : null;
+    const focusedKey = focused?.dataset.key ?? null;
+    const focusedText = !!focused?.classList.contains('tx-fu-text');
     const sending = this.sending;
+    const several = f.questions.length > 1;
+    if (!several) this.active = 0;
     this.el.setAttribute('aria-busy', String(sending));
     this.el.dataset.phase = sending ? 'sending' : 'pending';
     this.el.dataset.source = f.source;
@@ -264,7 +344,7 @@ export class FollowupCard {
     const top = h(
       'div',
       { class: 'tx-ask-top' },
-      h('span', { class: 'tx-banner-tag tx-ask-tag' }, f.questions.length > 1 ? `${f.questions.length} open questions` : 'Open question'),
+      h('span', { class: 'tx-banner-tag tx-ask-tag' }, several ? `${f.questions.length} open questions` : 'Open question'),
       this.waitEl,
       h('span', { class: 'tx-spacer' }),
       h(
@@ -276,53 +356,103 @@ export class FollowupCard {
         'Detected automatically',
       ),
     );
-    const parts: HTMLElement[] = [top];
-    if (f.questions.length > 1) {
-      const tabs = h('div', { class: 'tx-ask-tabs', role: 'tablist', 'aria-label': 'Questions' });
-      f.questions.forEach((qq, i) => {
-        const done = answeredFollowup(f, this.picks, i);
-        tabs.append(
-          h(
-            'button',
-            {
-              class: `tx-ask-tab${i === this.active ? ' is-active' : ''}${done ? ' is-done' : ''}`,
-              role: 'tab',
-              'aria-selected': String(i === this.active),
-              // One stop in the Tab order: the active tab; ← → move between them.
-              tabindex: i === this.active ? '0' : '-1',
-              title: qq.question,
-              onclick: () => this.go(i),
-            },
-            h('span', { class: 'tx-ask-tab-mark', 'aria-hidden': 'true' }, keyCap(i + 1, done)),
-            `Question ${i + 1}`,
-          ),
-        );
-      });
-      parts.push(tabs);
-    }
-    const qid = `tx-fu-q-${f.turn_id}`;
     const body = h('div', { class: 'tx-ask-body' });
     if (f.source === 'fallback' && f.tail) {
       body.append(h('blockquote', { class: 'tx-fu-tail', 'aria-label': 'The end of the agent’s message' }, f.tail));
     }
-    body.append(h('p', { class: 'tx-ask-question', id: qid }, f.source === 'fallback' ? 'The agent asked you something. Your answer goes back as a prompt.' : q.question));
+    if (several) {
+      const stack = h('div', { class: 'tx-ask-stack' });
+      f.questions.forEach((_, i) => stack.append(i === this.active ? this.openSection(f, i, sending) : foldedRow(i, this.line(f, i), () => this.openAt(i), sending)));
+      body.append(stack);
+    } else body.append(this.openSection(f, 0, sending));
+    const answeredN = followupAnswers(f, this.picks).length;
+    const ready = answeredN > 0;
+    const send = h(
+      'button',
+      {
+        class: `tx-ask-send${ready ? '' : ' is-blocked'}`,
+        'data-key': 'send',
+        disabled: !!this.sent,
+        'aria-disabled': this.sent ? null : String(!ready),
+        onclick: () => this.trySend(),
+      },
+      sending ? 'Sending…' : this.sendLabel(f, answeredN),
+      sending ? null : h('kbd', { class: 'tx-ask-kbd' }, SEND_KEY),
+    );
+    const q = f.questions[this.active];
+    const vals = q ? valuesOf(q) : [];
+    const pickKeys = vals.length ? `1–${vals.length + (q?.kind === 'choice' ? 1 : 0)} or ↑↓ Enter pick · ` : '';
+    const keys = `${pickKeys}${several ? '← → question · ' : ''}${SEND_KEY} send · Esc back`;
+    const parts: HTMLElement[] = [
+      top,
+      body,
+      h(
+        'div',
+        { class: 'tx-ask-foot' },
+        h('span', { class: 'tx-ask-hint' }, h('span', { class: 'tx-ask-hint-text' }, this.hint()), h('span', { class: 'tx-ask-keys' }, keys)),
+        h('button', { class: 'tx-link tx-ask-dismiss', 'data-key': 'dismiss', disabled: !!this.sent, title: 'Drop these questions: nothing is sent to the agent', onclick: () => void this.dismiss() }, 'Dismiss'),
+        send,
+      ),
+    ];
+    if (this.note) parts.push(h('div', { class: `tx-ask-note${this.note.error ? ' is-error' : ''}`, role: this.note.error ? 'alert' : 'status' }, this.note.text));
+    this.el.replaceChildren(...parts);
+    this.flash = -1;
+    this.tick();
+    const to = this.focusTo;
+    this.focusTo = null;
+    if (sending) {
+      if (focused) this.host.focusTimeline();
+    } else if (to) this.applyFocus(to);
+    else if (focusedText) (this.el.querySelector('.tx-fu-text') as HTMLElement | null)?.focus({ preventScroll: true });
+    else if (focused) {
+      const again = focusedKey ? this.el.querySelector<HTMLElement>(`[data-key="${focusedKey}"]`) : null;
+      if (again && !(again as HTMLButtonElement).disabled) again.focus({ preventScroll: true });
+      else this.focus();
+      if (!this.el.contains(document.activeElement)) this.host.focusTimeline();
+    }
+    this.host.resized();
+  }
+
+  private applyFocus(to: FocusTo): void {
+    if (to === 'q') focusQuestion(this.el.querySelector<HTMLElement>('.tx-ask-q'));
+    else if (to === 'first') this.focus();
+    else {
+      const el = this.el.querySelector<HTMLElement>(`[data-key="${to}"]`);
+      el?.focus({ preventScroll: true });
+      if (el) reveal(el);
+    }
+    if (!this.el.contains(document.activeElement)) this.focus();
+  }
+
+  /** Question i, open: its values as rows (Yes / No, a choice's options), then its text (a note, Other, the answer). */
+  private openSection(f: Followup, i: number, sending: boolean): HTMLElement {
+    const q = f.questions[i] as FollowupQuestion;
+    const pick = this.picks[i] as FollowupPick;
+    const qid = `tx-fu-q-${f.turn_id}`;
     const vals = valuesOf(q);
     let list: HTMLElement | null = null;
     if (vals.length) {
       const opts = h('div', { class: 'tx-ask-opts', role: 'radiogroup', 'aria-labelledby': qid });
       list = opts;
-      vals.forEach((v, i) => {
+      vals.forEach((v, k) => {
         const on = pick.value === v;
         opts.append(
           h(
             'button',
-            { class: `tx-ask-opt${on ? ' is-on' : ''}`, role: 'radio', 'aria-checked': String(on), disabled: sending, 'data-n': String(i + 1), onclick: () => this.choose(v) },
-            h('span', { class: 'tx-ask-key', 'aria-hidden': 'true' }, String(i + 1)),
+            {
+              class: `tx-ask-opt${on ? ' is-on' : ''}`,
+              role: 'radio',
+              'aria-checked': String(on),
+              disabled: sending,
+              'data-n': String(k + 1),
+              'data-key': `opt:${k + 1}`,
+              onclick: () => this.choose(v),
+            },
+            h('span', { class: 'tx-ask-key', 'aria-hidden': 'true' }, String(k + 1)),
             h('span', { class: 'tx-ask-opt-text' }, h('span', { class: 'tx-ask-opt-label' }, v)),
           ),
         );
       });
-      body.append(opts);
     }
     // yes/no: a note after the answer; a choice: Other; open: the answer itself.
     const multiline = q.kind === 'open';
@@ -348,30 +478,18 @@ export class FollowupCard {
         ? h('label', { class: `tx-ask-opt tx-ask-other${pick.value === null && pick.text.trim() ? ' is-on' : ''}`, 'data-n': String(vals.length + 1) }, h('span', { class: 'tx-ask-key', 'aria-hidden': 'true' }, String(vals.length + 1)), h('span', { class: 'tx-ask-opt-text' }, h('span', { class: 'tx-ask-opt-label' }, 'Other'), text))
         : h('div', { class: 'tx-fu-field' }, text);
     if (q.kind === 'choice' && list) list.append(textRow);
-    else body.append(textRow);
-    parts.push(body);
-    const ready = followupAnswers(f, this.picks).length > 0;
-    const send = h('button', { class: 'tx-ask-send', disabled: !ready || !!this.sent, onclick: () => void this.submit() }, sending ? 'Sending…' : f.questions.length > 1 ? 'Send answers' : 'Send answer');
-    const pickKeys = vals.length ? `1–${vals.length + (q.kind === 'choice' ? 1 : 0)} pick · ` : '';
-    const keys = `${pickKeys}${f.questions.length > 1 ? '← → question · ' : ''}Esc back`;
-    parts.push(
-      h(
-        'div',
-        { class: 'tx-ask-foot' },
-        h('span', { class: 'tx-ask-hint' }, h('span', { class: 'tx-ask-hint-text' }, this.hint()), h('span', { class: 'tx-ask-keys' }, keys)),
-        h('button', { class: 'tx-link tx-ask-dismiss', disabled: !!this.sent, title: 'Drop these questions: nothing is sent to the agent', onclick: () => void this.dismiss() }, 'Dismiss'),
-        send,
-      ),
+    return openQuestion(
+      { index: i, line: this.line(f, i), several: f.questions.length > 1, options: vals.length, nudged: this.nudged, flash: this.flash === i, qid },
+      list,
+      q.kind === 'choice' && list ? null : textRow,
     );
-    if (this.note) parts.push(h('div', { class: `tx-ask-note${this.note.error ? ' is-error' : ''}`, role: this.note.error ? 'alert' : 'status' }, this.note.text));
-    this.el.replaceChildren(...parts);
-    this.tick();
-    if (focusedText && !sending) (this.el.querySelector('.tx-fu-text') as HTMLElement | null)?.focus({ preventScroll: true });
-    else if (hadFocus) {
-      this.focus();
-      if (!this.el.contains(document.activeElement)) this.host.focusTimeline();
-    }
-    this.host.resized();
+  }
+
+  /** Send says how many go when some are left out. */
+  private sendLabel(f: Followup, answeredN: number): string {
+    const all = f.questions.length;
+    if (answeredN > 0 && answeredN < all) return `Send ${answeredN} of ${all}`;
+    return all > 1 ? 'Send answers' : 'Send answer';
   }
 
   /** What the foot says: what is answered, or that it is being sent. */
@@ -381,15 +499,15 @@ export class FollowupCard {
     if (this.sending) return 'Sending your answers as a prompt…';
     const n = followupAnswers(f, this.picks).length;
     const all = f.questions.length;
-    if (all === 1) return n ? 'Ready to send' : 'Not answered yet';
+    if (all === 1) return n ? 'Ready: Enter on Send' : 'Not answered yet';
     if (!n) return `None of ${all} answered yet`;
-    return n === all ? 'All answered: send them' : `${n} of ${all} answered: the rest are left out`;
+    return n === all ? 'All answered: Enter on Send' : `${n} of ${all} answered: the rest are left out`;
   }
 
   /** Repaints the picks without redrawing the text box you type in. */
   private paint(): void {
     const f = this.shownFollowup;
-    if (!f) return;
+    if (!f || this.active < 0) return;
     const pick = this.picks[this.active] as FollowupPick;
     for (const b of this.el.querySelectorAll<HTMLElement>('button.tx-ask-opt')) {
       const on = b.querySelector('.tx-ask-opt-label')?.textContent === pick.value;
@@ -397,13 +515,17 @@ export class FollowupCard {
       b.setAttribute('aria-checked', String(on));
     }
     this.el.querySelector('.tx-ask-other')?.classList.toggle('is-on', pick.value === null && !!pick.text.trim());
+    const n = followupAnswers(f, this.picks).length;
     const send = this.el.querySelector<HTMLButtonElement>('.tx-ask-send');
-    if (send) send.disabled = !followupAnswers(f, this.picks).length || !!this.sent;
-    this.el.querySelectorAll('.tx-ask-tab').forEach((t, i) => {
-      const done = answeredFollowup(f, this.picks, i);
-      t.classList.toggle('is-done', done);
-      t.querySelector('.tx-ask-tab-mark')?.replaceChildren(keyCap(i + 1, done));
-    });
+    if (send && !this.sent) {
+      send.classList.toggle('is-blocked', !n);
+      send.setAttribute('aria-disabled', String(!n));
+      send.firstChild?.replaceWith(document.createTextNode(this.sendLabel(f, n)));
+    }
+    const done = answeredFollowup(f, this.picks, this.active);
+    const m = this.el.querySelector('.tx-ask-q-head .tx-ask-mark');
+    m?.classList.toggle('is-done', done);
+    m?.replaceChildren(mark(this.active + 1, done));
     const hint = this.el.querySelector('.tx-ask-hint-text');
     if (hint) hint.textContent = this.hint();
   }

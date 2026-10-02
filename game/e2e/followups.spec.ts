@@ -187,16 +187,25 @@ test('switched on after a passing test, a turn ending in questions needs you and
     const [cb, pb] = await Promise.all([card.boundingBox(), tx.locator('.tx-prompt').boundingBox()]);
     expect(cb && pb && cb.y + cb.height <= pb.y + 1).toBe(true);
     await expect(tx.locator('.tx-input')).toBeEnabled();
-    await expect(card.locator('.tx-ask-tab')).toHaveText(['1Question 1', '2Question 2']);
+    // Stacked: question 1 open, question 2 folded under it.
+    await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Question 1');
+    await expect(card.locator('.tx-ask-row .tx-ask-row-text')).toHaveText(['Ship this already, or wait for the e2e-live run?']);
     await expect(card.locator('.tx-ask-question')).toHaveText('Does the legacy importer still need the v1 format?');
     await shot(page, 'followup-card');
     await tx.locator('.tx-scroll').focus(); // the bare screenshot hides the HUD, and that drops the focus
 
-    // No, then (it moves on) Wait for e2e-live with a note, Send answers.
+    // No, then (it moves on) the Enter after the click: picks nothing, sends nothing (the question says how to pick).
     await card.getByRole('radio', { name: 'No' }).click();
     await expect(card.locator('.tx-ask-question')).toHaveText('Ship this already, or wait for the e2e-live run?');
+    await expect(card.locator('.tx-ask-q')).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(card.locator('.tx-ask-nudge.is-loud')).toBeVisible();
+    await expect(card.getByRole('button', { name: /^Send 1 of 2/ })).toBeVisible();
+    expect(await sent(page, 'worker.answer_followup')).toHaveLength(0);
+    // Wait for e2e-live, then Send answers.
     await card.getByRole('radio', { name: 'Wait for e2e-live' }).click();
-    await expect(card.locator('.tx-ask-hint-text')).toHaveText('All answered: send them');
+    await expect(card.locator('.tx-ask-hint-text')).toHaveText('All answered: Enter on Send');
+    await expect(card.locator('.tx-ask-send')).toBeFocused();
     await card.getByRole('button', { name: 'Send answers' }).click();
     await expect(card).toBeHidden();
     const answers = await sent(page, 'worker.answer_followup');
@@ -272,7 +281,7 @@ test('on a phone the card has room for the question and its answers, and the pro
       await tx.getByRole('radio', { name: theme, exact: true }).click();
       expect(await page.evaluate((a) => window.__h3d.simTurn(a), { id: w.id, text: THREE })).toMatchObject({ ok: true, data: { flagged: true } });
       await expect(card).toBeVisible();
-      await expect(card.locator('.tx-ask-tab')).toHaveCount(3);
+      await expect(card.locator('.tx-ask-row')).toHaveCount(2); // the other two, folded
       const body = await box(card.locator('.tx-ask-body'));
       expect(body.height, 'the body has room for the question and an answer').toBeGreaterThanOrEqual(60);
       await shot(page, `followup-phone-${theme.toLowerCase()}`);

@@ -5,7 +5,8 @@ import { AskCard, type AskResult } from './askCard';
 import { mountTranscript, type TranscriptView } from './transcriptRender';
 
 // #57: the pinned question card: an answer's ack changes only the ask it was sent for (upserts that come meanwhile are
-// the worker's word), and its keys work from the card itself (Enter sends, Esc back to the timeline).
+// the worker's word), and its keys: Enter on an option picks it (never sends), the card moving on puts the keyboard on
+// the next question (an Enter there picks nothing), only Send or Ctrl+Enter sends, Esc back to the timeline.
 
 const ask = (id = 'a', question = 'Which color?'): Ask => ({
   tool_use_id: id,
@@ -34,7 +35,7 @@ function slowHost() {
 const flush = async () => {
   for (let i = 0; i < 4; i++) await Promise.resolve();
 };
-const press = (c: AskCard, key: string) => c.key(new KeyboardEvent('keydown', { key }));
+const press = (c: AskCard, key: string, opts: KeyboardEventInit = {}) => c.key(new KeyboardEvent('keydown', { key, ...opts }));
 
 describe('AskCard: an ack is about its own ask', () => {
   let card: AskCard | null = null;
@@ -51,7 +52,9 @@ describe('AskCard: an ack is about its own ask', () => {
     c.set(ask('a'));
     press(c, '1');
     press(c, '1');
-    press(c, 'Enter');
+    expect(press(c, 'Enter')).toBe(true); // into the card: not sent
+    expect(pending).toHaveLength(0);
+    press(c, 'Enter', { ctrlKey: true });
     expect(pending).toHaveLength(1);
     expect(c.el.dataset.phase).toBe('sending');
     return { c, pending };
@@ -152,45 +155,98 @@ describe('the card in the transcript view: keys', () => {
   /** A keydown on whatever has the keyboard, as the browser sends it; true: nothing took it (the default action runs). */
   const key = (k: string, opts: KeyboardEventInit = {}) => (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...opts }));
 
-  it('digits, Tab (an option focused), a digit, Enter: sent', async () => {
+  const open = () => document.querySelector('.tx-ask-q .tx-ask-chip')?.textContent;
+
+  it('digits pick and move on; ← back to a question; all answered, Send has the keyboard; Ctrl+Enter sends', async () => {
     const { root, sent } = mount();
     view?.setAsk(ask('a'));
     view?.focus();
-    key('1'); // Red, on to Extras
-    key('1'); // Logs
-    key('Tab'); // back to Color: its option focused
-    expect(document.activeElement?.classList.contains('tx-ask-opt')).toBe(true);
-    key('2'); // Blue instead
-    expect(key('Enter')).toBe(false); // the card's, not the focused option's click
+    key('1'); // Red, on to Extras: the question itself has the keyboard
+    expect(open()).toBe('Extras');
+    expect(document.activeElement?.classList.contains('tx-ask-q')).toBe(true);
+    expect(root.querySelector('.tx-ask-row.is-done .tx-ask-row-text')?.textContent).toBe('Red');
+    key('1'); // Logs (pick several: it stays)
+    expect(open()).toBe('Extras');
+    key('ArrowLeft'); // back to Color, its pick focused
+    expect(open()).toBe('Color');
+    expect(document.activeElement?.getAttribute('aria-checked')).toBe('true');
+    key('2'); // Blue instead: every question answered, all folded, Send next
+    expect(root.querySelector('.tx-ask-q')).toBeNull();
+    expect(document.activeElement?.classList.contains('tx-ask-send')).toBe(true);
+    expect(sent).toHaveLength(0);
+    expect(key('Enter', { ctrlKey: true })).toBe(false);
     await flush();
     expect(sent).toEqual([{ id: '', tool_use_id: 'a', answers: [{ question: 0, choices: [2] }, { question: 1, choices: [1] }] }]);
     expect(root.querySelector('.tx-ask')?.hasAttribute('hidden')).toBe(true);
   });
 
-  it('Enter on a focused option before every question has an answer: to the one missing, nothing sent', () => {
+  it('a click on the first question, then Enter: the next question has the keyboard, the Enter picks nothing and says how', async () => {
     const { root, sent } = mount();
     view?.setAsk(ask('a'));
     view?.focus();
-    key('Tab'); // Extras
-    key('Enter');
+    root.querySelector<HTMLButtonElement>('.tx-ask-opt[data-n="1"]')?.click(); // Red
+    expect(open()).toBe('Extras');
+    expect(document.activeElement?.classList.contains('tx-ask-q')).toBe(true);
+    expect(key('Enter')).toBe(false); // the card's: no option is clicked
+    await flush();
     expect(sent).toHaveLength(0);
-    expect(root.querySelector('.tx-ask-tab.is-active')?.textContent).toContain('Color');
-    expect(root.querySelector('.tx-ask-note')?.textContent).toContain('Answer “Color” first');
+    expect(root.querySelector('.tx-ask-opt.is-on')).toBeNull();
+    expect(root.querySelector('.tx-ask-nudge.is-loud')?.textContent).toContain('Enter picks nothing here');
+    expect(document.activeElement?.classList.contains('tx-ask-q')).toBe(true);
+    // ↓ goes to its first option.
+    key('ArrowDown');
+    expect((document.activeElement as HTMLElement | null)?.dataset.n).toBe('1');
   });
 
-  it('Space on a focused option picks it (its click)', () => {
-    const { root } = mount();
+  it('Enter on a focused option is its click (it picks), never a send; ↑ ↓ move through the options and the Other box', () => {
+    const { root, sent } = mount();
     view?.setAsk(ask('a'));
     view?.focus();
-    key('Tab');
-    key('Tab'); // Color again, Red focused
-    const opt = document.activeElement as HTMLButtonElement;
-    expect(key(' ')).toBe(true); // left to the button
-    opt.click();
-    expect(root.querySelector('.tx-ask-tab.is-done')?.textContent).toContain('Color'); // picked: on to Extras
+    root.querySelector<HTMLElement>('.tx-ask-opt[data-n="1"]')?.focus();
+    expect(key('Enter')).toBe(true); // left to the button
+    expect(sent).toHaveLength(0);
+    key('ArrowDown');
+    expect((document.activeElement as HTMLElement | null)?.dataset.n).toBe('2');
+    key('ArrowDown');
+    expect(document.activeElement?.classList.contains('tx-ask-other-input')).toBe(true);
+    key('ArrowUp');
+    expect((document.activeElement as HTMLElement | null)?.dataset.n).toBe('2');
   });
 
-  it('Esc on an option or a tab: the timeline has the keyboard, the seat is not left', () => {
+  it('Other: Enter takes the text and moves on (nothing sent); an empty one stays', async () => {
+    const { root, sent } = mount();
+    view?.setAsk(ask('a'));
+    view?.focus();
+    key('3'); // Color's Other
+    const input = document.activeElement as HTMLInputElement;
+    expect(input.classList.contains('tx-ask-other-input')).toBe(true);
+    key('Enter');
+    expect(open()).toBe('Color');
+    input.value = 'Teal';
+    input.dispatchEvent(new Event('input'));
+    key('Enter');
+    await flush();
+    expect(sent).toHaveLength(0);
+    expect(open()).toBe('Extras');
+    expect(root.querySelector('.tx-ask-row.is-done .tx-ask-row-text')?.textContent).toBe('Teal');
+  });
+
+  it('Send or Ctrl+Enter with a question unanswered: to it, nothing sent', () => {
+    const { root, sent } = mount();
+    view?.setAsk(ask('a'));
+    view?.focus();
+    key('ArrowRight'); // Extras
+    key('2'); // Metrics
+    key('Enter', { ctrlKey: true });
+    expect(sent).toHaveLength(0);
+    expect(open()).toBe('Color');
+    expect(root.querySelector('.tx-ask-q.is-flash')).not.toBeNull();
+    expect(root.querySelector('.tx-ask-note')?.textContent).toContain('Answer “Color” first');
+    root.querySelector<HTMLButtonElement>('.tx-ask-send')?.click();
+    expect(sent).toHaveLength(0);
+  });
+
+  it('Esc on an option or a folded question: the timeline has the keyboard, the seat is not left', () => {
     const { root } = mount();
     const stood: KeyboardEvent[] = [];
     const up = (e: KeyboardEvent) => {
@@ -200,11 +256,10 @@ describe('the card in the transcript view: keys', () => {
     try {
       view?.setAsk(ask('a'));
       view?.focus();
-      key('Tab');
-      expect(document.activeElement?.classList.contains('tx-ask-opt')).toBe(true);
+      root.querySelector<HTMLElement>('.tx-ask-opt')?.focus();
       expect(key('Escape')).toBe(false);
       expect(document.activeElement?.classList.contains('tx-scroll')).toBe(true);
-      root.querySelector<HTMLElement>('.tx-ask-tab')?.focus();
+      root.querySelector<HTMLElement>('.tx-ask-row')?.focus();
       key('Escape');
       expect(document.activeElement?.classList.contains('tx-scroll')).toBe(true);
       expect(stood).toHaveLength(0);
@@ -223,7 +278,7 @@ describe('the card in the transcript view: keys', () => {
     view?.focus();
     key('1');
     key('1');
-    key('Enter');
+    key('Enter', { ctrlKey: true });
     view?.setAsk(ask('b', 'NEW QUESTION: which color?'));
     done({ ok: false, code: 'stale', message: 'another question' });
     await flush();

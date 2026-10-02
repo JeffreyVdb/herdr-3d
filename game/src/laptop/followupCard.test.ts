@@ -4,8 +4,9 @@ import type { CommandArgs, Followup } from '../net/protocol';
 import { FollowupCard, type FollowupResult } from './followupCard';
 import { mountTranscript, type TranscriptView } from './transcriptRender';
 
-// #90: the follow-up card: tabs per question, yes/no with a note, a choice with Other, an open textarea; Send answers
-// sends what is answered; an ack makes it go; the hint says it was detected automatically.
+// #90: the follow-up card: its questions stacked (the open one, the others folded to their answer), yes/no with a note,
+// a choice with Other, an open textarea; only Send (or Ctrl+Enter) sends what is answered, saying how many of them;
+// an ack makes it go; the hint says it was detected automatically.
 
 const followup = (turn = 't1'): Followup => ({
   turn_id: turn,
@@ -39,7 +40,7 @@ function host() {
 const flush = async () => {
   for (let i = 0; i < 4; i++) await Promise.resolve();
 };
-const press = (c: FollowupCard, key: string, shiftKey = false) => c.key(new KeyboardEvent('keydown', { key, shiftKey }));
+const press = (c: FollowupCard, key: string, opts: KeyboardEventInit = {}) => c.key(new KeyboardEvent('keydown', { key, ...opts }));
 
 describe('FollowupCard (#90)', () => {
   let card: FollowupCard | null = null;
@@ -48,26 +49,30 @@ describe('FollowupCard (#90)', () => {
     card = null;
   });
 
-  it('shows the questions as tabs, says it was detected automatically, and sends what is answered', async () => {
+  it('stacks the questions, says it was detected automatically, and sends what is answered (saying how many)', async () => {
     const t = host();
     const c = (card = new FollowupCard(t.h));
     document.body.append(c.el);
     c.set(followup());
     expect(c.el.hidden).toBe(false);
     expect(c.el.querySelector('.tx-fu-auto')?.textContent).toBe('Detected automatically');
-    expect([...c.el.querySelectorAll('.tx-ask-tab')].map((x) => x.textContent)).toEqual(['1Question 1', '2Question 2', '3Question 3']);
+    // The first open, the others folded to their question.
+    expect(c.el.querySelector('.tx-ask-q .tx-ask-chip')?.textContent).toBe('Question 1');
+    expect([...c.el.querySelectorAll('.tx-ask-row-text')].map((x) => x.textContent)).toEqual(['Ship now or wait?', 'Anything else?']);
     expect([...c.el.querySelectorAll('.tx-ask-opt-label')].map((x) => x.textContent)).toEqual(['Yes', 'No']);
-    expect(c.el.querySelector<HTMLButtonElement>('.tx-ask-send')!.disabled).toBe(true);
-    // 2 picks No and moves on to the choice: its options and Other.
+    expect(c.el.querySelector('.tx-ask-send')?.getAttribute('aria-disabled')).toBe('true');
+    // 2 picks No and moves on to the choice: its options and Other; the first folds to its answer.
     expect(press(c, '2')).toBe(true);
-    expect(c.el.querySelector('.tx-ask-tab.is-active')?.textContent).toContain('Question 2');
+    expect(c.el.querySelector('.tx-ask-q .tx-ask-chip')?.textContent).toBe('Question 2');
     expect([...c.el.querySelectorAll('.tx-ask-opt-label')].map((x) => x.textContent)).toEqual(['Ship now', 'Wait', 'Other']);
+    expect(c.el.querySelector('.tx-ask-row.is-done .tx-ask-row-text')?.textContent).toBe('No');
     expect(c.el.querySelector('.tx-ask-hint-text')?.textContent).toBe('1 of 3 answered: the rest are left out');
+    expect(c.el.querySelector('.tx-ask-send')?.firstChild?.textContent).toBe('Send 1 of 3');
     // ← → change question; Tab and Enter on the timeline are not the card's (the focus, the prompt box).
     expect(press(c, 'Tab')).toBe(false);
     expect(press(c, 'ArrowRight')).toBe(true);
     expect(c.el.querySelector('textarea.tx-fu-text')).not.toBeNull();
-    expect(c.el.querySelector('.tx-ask-keys')?.textContent).toBe('← → question · Esc back');
+    expect(c.el.querySelector('.tx-ask-keys')?.textContent).toMatch(/^← → question · .+ send · Esc back$/);
     expect(press(c, 'Enter')).toBe(false);
     await flush();
     expect(t.answers).toEqual([]);
@@ -105,7 +110,7 @@ describe('FollowupCard (#90)', () => {
     document.body.append(c.el);
     c.set({ ...followup(), source: 'fallback', tail: 'Should I keep v1?', questions: [{ id: 'q1', question: 'The agent asked you something', kind: 'open' }] });
     expect(c.el.querySelector('.tx-fu-tail')?.textContent).toBe('Should I keep v1?');
-    expect(c.el.querySelector('.tx-ask-tab')).toBeNull();
+    expect(c.el.querySelector('.tx-ask-stack')).toBeNull();
     c.suppress(true);
     expect(c.el.hidden).toBe(true);
     c.suppress(false);
@@ -114,7 +119,8 @@ describe('FollowupCard (#90)', () => {
 });
 
 // The keyboard on the transcript view with a card up: Tab moves the focus through the card and on to the prompt box
-// (never cycles questions), ← → on the tab list change question, Enter on the timeline is the page's (the prompt box).
+// (never cycles questions), ← → change question, Enter on the timeline is the page's (the prompt box), Enter in the
+// card never sends: on an option it picks, in a text it moves on, on the question it says how to pick.
 describe('FollowupCard keyboard in the transcript (#90)', () => {
   let view: TranscriptView | null = null;
   let root: HTMLDivElement;
@@ -140,12 +146,12 @@ describe('FollowupCard keyboard in the transcript (#90)', () => {
     view.setFollowup(followup());
     return { answers, $: <E extends Element = HTMLElement>(sel: string) => root.querySelector<E>(sel)! };
   }
-  const key = (target: Element, k: string, shiftKey = false) => {
-    const e = new KeyboardEvent('keydown', { key: k, shiftKey, bubbles: true, cancelable: true });
+  const key = (target: Element, k: string, shiftKey = false, ctrlKey = false) => {
+    const e = new KeyboardEvent('keydown', { key: k, shiftKey, ctrlKey, bubbles: true, cancelable: true });
     target.dispatchEvent(e);
     return e;
   };
-  const activeTab = () => root.querySelector('.tx-ask-tab.is-active')?.textContent;
+  const activeTab = () => root.querySelector('.tx-ask-q .tx-ask-chip')?.textContent;
   /** The Tab order (no positive tabindex here): enabled controls and tabindex 0, in document order. A browser puts
    * the prompt box (contenteditable) in it; jsdom reports its tabIndex as -1. */
   const tabbable = () =>
@@ -168,37 +174,74 @@ describe('FollowupCard keyboard in the transcript (#90)', () => {
     expect(activeTab()).toContain('Question 3');
   });
 
-  it('the Tab order runs through the card (one tab stop for the tab list) to Dismiss, Send and the prompt box', () => {
+  it('the Tab order runs through the open question, the folded ones, Dismiss, Send and the prompt box', () => {
     const { $ } = mount();
-    // One stop for the tab list: the active tab.
-    expect([...root.querySelectorAll<HTMLElement>('.tx-ask-tab')].map((t) => t.tabIndex)).toEqual([0, -1, -1]);
-    key($('.tx-scroll'), '1'); // Yes: Send is on
-    key($('.tx-scroll'), 'ArrowLeft');
+    key($('.tx-scroll'), '1'); // Yes: on to question 2, Send is on
     const order = tabbable();
     const at = (el: Element) => order.indexOf(el as HTMLElement);
-    const tab = at($('.tx-ask-tab.is-active'));
-    const note = at($('.tx-fu-text'));
+    const opt = at($('.tx-ask-q .tx-ask-opt'));
+    const other = at($('.tx-fu-text'));
+    const rows = [...root.querySelectorAll('.tx-ask-row')].map(at);
     const dismiss = at($('.tx-ask-dismiss'));
     const send = at($('.tx-ask-send'));
     const prompt = at($('.tx-input'));
-    expect(tab).toBeGreaterThanOrEqual(0);
-    expect([tab < note, note < dismiss, dismiss < send, send < prompt]).toEqual([true, true, true, true]);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r >= 0)).toBe(true);
+    expect([opt < other, (rows[1] as number) < dismiss, dismiss < send, send < prompt]).toEqual([true, true, true, true]);
   });
 
-  it('← → on the tab list change question and keep the focus on the tabs; Home / End go to the ends', () => {
-    const { $ } = mount();
-    $('.tx-ask-tab.is-active').focus();
-    expect(key(document.activeElement!, 'ArrowRight').defaultPrevented).toBe(true);
-    expect(activeTab()).toContain('Question 2');
-    expect(document.activeElement).toBe($('.tx-ask-tab.is-active'));
-    expect($<HTMLElement>('.tx-ask-tab.is-active').tabIndex).toBe(0);
-    key(document.activeElement!, 'End');
-    expect(activeTab()).toContain('Question 3');
-    key(document.activeElement!, 'Home');
-    expect(activeTab()).toContain('Question 1');
-    key(document.activeElement!, 'ArrowLeft');
-    expect(activeTab()).toContain('Question 3');
-    expect(document.activeElement).toBe($('.tx-ask-tab.is-active'));
+  it('the bug: a click on question 1, then Enter, sends nothing (the next question has the keyboard and says how to pick)', async () => {
+    const { $, answers } = mount();
+    $<HTMLButtonElement>('.tx-ask-opt[data-n="2"]').click(); // No
+    expect(activeTab()).toBe('Question 2');
+    expect(document.activeElement).toBe($('.tx-ask-q'));
+    const e = key(document.activeElement!, 'Enter');
+    expect(e.defaultPrevented).toBe(true);
+    await flush();
+    expect(answers).toEqual([]);
+    expect($('.tx-ask-nudge.is-loud').textContent).toContain('Enter picks nothing here');
+    expect(root.querySelector('.tx-ask-q .tx-ask-opt.is-on')).toBeNull();
+  });
+
+  it('the bug: an answer typed in question 1, then Enter, moves on and sends nothing', async () => {
+    const { $, answers } = mount();
+    key($('.tx-scroll'), 'ArrowRight'); // the choice
+    const t = $<HTMLInputElement>('.tx-fu-text');
+    t.focus();
+    t.value = 'After lunch';
+    t.dispatchEvent(new Event('input'));
+    expect(key(t, 'Enter').defaultPrevented).toBe(true);
+    await flush();
+    expect(answers).toEqual([]);
+    expect(activeTab()).toBe('Question 3'); // the next one without an answer
+    expect(document.activeElement).toBe($('textarea.tx-fu-text'));
+  });
+
+  it('only Send or Ctrl+Enter sends, what is answered; Shift+Enter is a new line in an open answer', async () => {
+    const { $, answers } = mount();
+    key($('.tx-scroll'), 'ArrowRight');
+    key($('.tx-scroll'), 'ArrowRight');
+    const area = $<HTMLTextAreaElement>('textarea.tx-fu-text');
+    area.focus();
+    expect(key(area, 'Enter', true).defaultPrevented).toBe(false);
+    area.value = 'Nope';
+    area.dispatchEvent(new Event('input'));
+    // Enter takes it and moves on to the first question without an answer: still nothing sent.
+    key(area, 'Enter');
+    await flush();
+    expect(answers).toEqual([]);
+    expect(activeTab()).toBe('Question 1');
+    key(document.activeElement!, 'Enter', false, true);
+    await flush();
+    expect(answers).toEqual([{ id: '', turn_id: 't1', answers: [{ id: 'q3', value: 'Nope' }] }]);
+  });
+
+  it('Ctrl+Enter with nothing answered: nothing sent, the open question says why', async () => {
+    const { $, answers } = mount();
+    key($('.tx-scroll'), 'Enter', false, true);
+    await flush();
+    expect(answers).toEqual([]);
+    expect($('.tx-ask-note').textContent).toBe('Answer at least one question first.');
   });
 
   it('Enter on the timeline is not the card’s: nothing is sent, the page takes it to the prompt box', async () => {
@@ -206,11 +249,7 @@ describe('FollowupCard keyboard in the transcript (#90)', () => {
     key($('.tx-scroll'), '2'); // No
     const e = key($('.tx-scroll'), 'Enter');
     expect(e.defaultPrevented).toBe(false);
-    await Promise.resolve();
+    await flush();
     expect(answers).toEqual([]);
-    // In a text of the card it sends.
-    key($('.tx-fu-text'), 'Enter');
-    await Promise.resolve();
-    expect(answers.length).toBe(1);
   });
 });
