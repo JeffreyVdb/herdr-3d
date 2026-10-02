@@ -260,6 +260,8 @@ export interface H3DDebug {
   excalidraw(): unknown;
   /** M13: the `whiteboard.get`s the game sent by itself (`sent()` leaves them out). */
   wbLog(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
+  /** #100: the workers whose done is still settling before it pings. */
+  pendingPings(): string[];
 }
 
 declare global {
@@ -497,6 +499,7 @@ const h3d: H3DDebug = {
   openWhiteboard: () => app?.openWhiteboard(),
   excalidraw: () => app?.whiteboard.current?.excalidraw ?? null,
   wbLog: () => structuredClone(app?.wbLog ?? []),
+  pendingPings: () => app?.pendingPings() ?? [],
   openChanges: (id) => {
     if (app?.changes.worker !== id) app?.toggleChanges(id);
   },
