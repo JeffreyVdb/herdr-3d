@@ -49,7 +49,7 @@ export interface ElevatorRow {
   number: number | null;
   state: 'running' | 'asleep';
   transition: 'waking' | 'sleeping' | null;
-  counts: { working: number; needsYou: number; idle: number; total: number };
+  counts: { working: number; needsYou: number; idle: number; waiting: number; total: number };
   current: boolean;
   /** Wake / sleep button on this row. */
   action: 'wake' | 'sleep' | null;
@@ -78,13 +78,14 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 function countsText(v: FloorView): string {
   if (v.asleep) return `asleep, ${plural(v.counts.total, 'worker')}`;
-  return `${v.counts.working} working, ${v.counts.needsYou} need you, ${v.counts.idle} idle`;
+  const waiting = v.counts.waiting > 0 ? `, ${v.counts.waiting} waiting on background tasks` : '';
+  return `${v.counts.working} working, ${v.counts.needsYou} need you, ${v.counts.idle} idle${waiting}`;
 }
 
 function countChips(v: FloorView): HTMLElement {
   const c = v.counts;
   const item = (cls: string, n: number, label: string) => h('span', { class: `count count--${cls}` }, h('i'), h('b', {}, String(n)), h('span', {}, label));
-  return h('span', { class: 'lift-counts', 'aria-hidden': 'true' }, item('working', c.working, 'working'), item('needs_you', c.needsYou, 'need you'), item('idle', c.idle, 'idle'));
+  return h('span', { class: 'lift-counts', 'aria-hidden': 'true' }, item('working', c.working, 'working'), item('needs_you', c.needsYou, 'need you'), item('idle', c.idle, 'idle'), ...(c.waiting > 0 ? [item('waiting', c.waiting, 'waiting')] : []));
 }
 
 const TRANSITION_TAPE: Record<'waking' | 'sleeping', string> = { waking: 'Waking up', sleeping: 'Going to sleep' };
@@ -260,7 +261,7 @@ export class Panels {
       number: f.level?.number ?? null,
       state: stateOf(f),
       transition: f.transition,
-      counts: { working: f.counts.working, needsYou: f.counts.needsYou, idle: f.counts.idle, total: f.counts.total },
+      counts: { working: f.counts.working, needsYou: f.counts.needsYou, idle: f.counts.idle, waiting: f.counts.waiting, total: f.counts.total },
       current: f.session === here,
       action: f.transition ? null : f.asleep ? 'wake' : 'sleep',
       resume: f.resume,

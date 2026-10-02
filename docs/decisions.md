@@ -441,6 +441,8 @@ the issue (real panes, the agents' own transcripts compared byte for byte).
   beats the bridge's clearing event never leaves a finished turn's last word on the monitor; an unknown kind is Working.
 - **The HUD's waiting count shows only while someone waits**: most of the time it is zero, and a fourth always-on count
   would push the top bar's words out at 1280 px.
+- **So do the city badges and the elevator rows** (a teal fourth item, their aria labels and the dedupe key too): a worker
+  that waits is in none of working / need you / idle, so without it a floor's badge simply left it out.
 
 ## 2026-10-02 — #101: the context meter (what is in the window, and how big the window is)
 

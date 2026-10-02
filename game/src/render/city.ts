@@ -375,7 +375,7 @@ export class CityView {
     const doing = v.transition === 'waking' ? 'waking up, ' : v.transition === 'sleeping' ? 'going to sleep, ' : '';
     b.textContent = v.asleep
       ? `${v.session}: ${doing}asleep, ${c.total} workers. Enter floor`
-      : `${v.session}: ${doing}${c.working} working, ${c.needsYou} need you, ${c.idle} idle. Enter floor`;
+      : `${v.session}: ${doing}${c.working} working, ${c.needsYou} need you, ${c.idle} idle${c.waiting > 0 ? `, ${c.waiting} waiting on background tasks` : ''}. Enter floor`;
   }
 
   private paintBadge(f: FloorSlot): void {

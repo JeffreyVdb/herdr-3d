@@ -28,9 +28,10 @@ const same = (a: BadgeData | undefined, b: BadgeData) =>
   a.counts.working === b.counts.working &&
   a.counts.needsYou === b.counts.needsYou &&
   a.counts.idle === b.counts.idle &&
+  a.counts.waiting === b.counts.waiting &&
   a.counts.total === b.counts.total;
 
-/** Draws a floor badge (name + working · needs you · idle, or "asleep · n") into a cell. */
+/** Draws a floor badge (name + working · needs you · idle, plus waiting while any wait; or "asleep · n") into a cell. */
 function drawBadge(g: CanvasRenderingContext2D, x: number, y: number, b: BadgeData): void {
   g.clearRect(x, y, CELL_W, CELL_H);
   g.save();
@@ -45,6 +46,8 @@ function drawBadge(g: CanvasRenderingContext2D, x: number, y: number, b: BadgeDa
         [STATUS_CSS.working, String(b.counts.working)],
         [STATUS_CSS.needs_you, String(b.counts.needsYou)],
         [STATUS_CSS.idle, String(b.counts.idle)],
+        // #98: shown only while some wait on their background tasks, like the top bar's.
+        ...(b.counts.waiting > 0 ? ([[STATUS_CSS.waiting, String(b.counts.waiting)]] as Array<[string, string]>) : []),
       ];
   const itemsW = items.reduce((w, [, t]) => w + 30 + g.measureText(t).width + 18, 0);
   const w = Math.min(CELL_W - 8, 28 + 22 + nameW + 22 + itemsW + 8);
