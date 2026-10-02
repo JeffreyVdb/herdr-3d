@@ -180,6 +180,8 @@ export interface World {
   ai?: AiState;
   /** #90 follow-up questions: the feature's settings and state (absent from an older bridge, or one without the AI service). */
   followups?: FollowupsState;
+  /** #98 "Classify unknown commands": the activity classifier's settings and state (absent from an older bridge, or one without the AI service). */
+  activity?: ActivityState;
 }
 
 export interface Hello {
@@ -273,6 +275,8 @@ export type WorldEvent =
   | AiUpdate
   // #90 follow-up questions
   | FollowupsUpdate
+  // #98 activity settings ("Classify unknown commands")
+  | ActivityUpdate
   // M13 whiteboard
   | WhiteboardUpdated;
 
@@ -469,6 +473,9 @@ export interface CommandArgs {
   'followups.test': { threshold?: number };
   'worker.answer_followup': { id: string; turn_id: string; answers: FollowupAnswer[] };
   'worker.dismiss_followup': { id: string; turn_id: string };
+  // #98 activity settings ("Classify unknown commands", docs/protocol.md).
+  'activity.get': Record<string, never>;
+  'activity.set': { model_enabled?: boolean; threshold?: number; margin?: number; daily_cap?: number };
   'issue.get': { session: string; id: string };
   'issue.comment': { session: string; id: string; body: string };
   'issue.close': { session: string; id: string; reason: CloseReason; confirm: true };
@@ -688,6 +695,7 @@ const EVENT_TYPES = new Set([
   'limits.update',
   'ai.update', // #92 AI integration
   'followups.update', // #90 follow-up questions
+  'activity.update', // #98 activity settings
   'screen.state', // M13 screen
   // M13 whiteboard
   'whiteboard.updated',
@@ -758,6 +766,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #90 follow-up questions: the fields of `FollowupsState` flat in the event.
     case 'followups.update':
       return typeof o.enabled === 'boolean' && typeof o.state === 'string';
+    // #98 activity settings: the fields of `ActivityState` flat in the event.
+    case 'activity.update':
+      return typeof o.model_enabled === 'boolean' && typeof o.state === 'string';
     // M13 screen: the fields of `ScreenState` flat in the event.
     case 'screen.state':
       return typeof o.sharing === 'boolean';
@@ -1586,6 +1597,37 @@ export interface FollowupsTestAck {
   threshold: number;
   samples: FollowupsTestSample[];
   latency_ms: number;
+}
+
+// #98 activity settings (docs/protocol.md): "Classify unknown commands", the opt-in classification of the
+// shell commands the bridge's rules cannot place (the desk monitor's activity word), by the AI integration's classifier.
+
+/** off: switched off; incomplete: on, but the classifier is not ready (nothing is sent); ready: classifying; capped: the daily cap is reached, rules only today. */
+export type ActivityFeatureState = 'off' | 'incomplete' | 'ready' | 'capped';
+
+export interface ActivityState {
+  /** The "Classify unknown commands" switch (off by default). */
+  model_enabled: boolean;
+  /** The lowest top score the model's label needs (default 0.6). */
+  threshold: number;
+  /** How far the top score must beat the runner-up (default 0.2). */
+  margin: number;
+  /** The most classifier calls a day (default 2000). */
+  daily_cap: number;
+  calls_today: number;
+  /** Commands whose label is remembered (normalised), so asking again costs nothing. */
+  cache_size: number;
+  state: ActivityFeatureState;
+  /** The #92 classifier role's state. */
+  classifier: AiRoleState;
+  /** The fields the bridge's environment sets (`model_enabled`, HERDR_WORLD_ACTIVITY_MODEL): read-only here. */
+  env: string[];
+}
+
+/** `activity.update`: the whole state, flat. */
+export interface ActivityUpdate extends ActivityState {
+  t: 'activity.update';
+  seq: number;
 }
 
 // M13 screen share (docs/protocol.md "Screen share"): the TV shows the shared screen locally; the bridge asks this

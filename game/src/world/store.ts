@@ -25,6 +25,8 @@ import { wrapUpOf } from './wrapup';
 import { AiBook } from './ai';
 // #90: follow-up questions
 import { followupOf, FollowupsBook } from './followup';
+// #98: "Classify unknown commands" (the activity settings)
+import { ActivitySettingsBook } from './activitySettings';
 import { LimitBook } from './limits';
 import { PresetBook } from './presets';
 // M6 crew: write-code roles, freelancer lifecycles, over-cap orchestrators.
@@ -154,6 +156,8 @@ export class WorldStore {
   readonly ai = new AiBook();
   /** #90: the follow-up questions feature's settings and state (`known` false from an older bridge). */
   readonly followups = new FollowupsBook();
+  /** #98: the "Classify unknown commands" settings and state (`known` false from an older bridge). */
+  readonly activitySettings = new ActivitySettingsBook();
   private readonly localDesks = new Map<string, number>();
   private readonly since = new Map<string, number>();
   private readonly deskCache = new Map<string, Map<string, number>>();
@@ -185,6 +189,7 @@ export class WorldStore {
     this.limits.reset(s.world.limits);
     this.ai.reset(s.world.ai);
     this.followups.reset(s.world.followups);
+    this.activitySettings.reset(s.world.activity); // #98
     this.seq = s.seq;
     this.snapshots++;
     this.structureVersion++;
@@ -294,6 +299,9 @@ export class WorldStore {
         break;
       case 'followups.update': // #90
         this.followups.upsert(e);
+        break;
+      case 'activity.update': // #98 activity settings
+        this.activitySettings.upsert(e);
         break;
     }
     if (c.structure) this.structureVersion++;

@@ -64,6 +64,7 @@ import { LimitsWidget } from './ui/limits';
 import { aiSection } from './ui/aiSection';
 // #90 follow-up questions
 import { followupsSection } from './ui/followupsSection';
+import { activitySection } from './ui/activitySection';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
 import type { SettingsDialog } from './ui/settings';
@@ -284,7 +285,7 @@ export class App {
     this.settings.addSection(
       'ai',
       'AI integration',
-      aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args), usedBy: { classifier: ['Follow-up questions'], llm: ['Follow-up questions'] } }),
+      aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args), usedBy: { classifier: ['Follow-up questions', 'Classify unknown commands'], llm: ['Follow-up questions'] } }),
       { store: 'bridge' },
     );
     // #90: the first feature on those models: its own switch and threshold, under them.
@@ -292,6 +293,13 @@ export class App {
     settings.addSection('followups', 'Follow-up questions', followupsSection({ book: this.store.followups, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }), {
       store: 'bridge',
     });
+    // #98: the desk monitors' words for the commands the rules can't place, on the same classifier (absent without the service).
+    settings.addSection(
+      'activity',
+      'Classify unknown commands',
+      activitySection({ book: this.store.activitySettings, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }),
+      { store: 'bridge' },
+    );
     this.store.ai.onChange((notice) => {
       this.hud.setAiChip(aiChip(this.store.ai.state));
       if (notice) this.hud.toast(notice, 7000, 'error');
