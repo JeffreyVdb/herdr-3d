@@ -904,6 +904,7 @@ export class App {
           total.working += v.counts.working;
           total.needsYou += v.counts.needsYou;
           total.idle += v.counts.idle;
+          total.waiting += v.counts.waiting; // #98
           total.total += v.counts.total;
         }
         this.hud.setBuilding(ctx.name, p.area, ctx.floors.length, total);
@@ -920,6 +921,7 @@ export class App {
         total.working += f.counts.working;
         total.needsYou += f.counts.needsYou;
         total.idle += f.counts.idle;
+        total.waiting += f.counts.waiting; // #98
         total.total += f.counts.total;
       }
     this.hud.setCity(city.filter((b) => b.building).length, floors, total);
@@ -2612,7 +2614,7 @@ const LOBBY_TARGETS: Record<'reception' | 'elevator', Target> = {
 };
 
 function zero(): Counts {
-  return { working: 0, needsYou: 0, idle: 0, done: 0, total: 0 };
+  return { working: 0, needsYou: 0, idle: 0, done: 0, waiting: 0, total: 0 };
 }
 
 /** Durable, so an installed app can start without the #token= URL; the helper's token survives its restarts. */

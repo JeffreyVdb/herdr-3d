@@ -29,6 +29,8 @@ import { LimitBook } from './limits';
 import { PresetBook } from './presets';
 // M6 crew: write-code roles, freelancer lifecycles, over-cap orchestrators.
 import { CrewMemory, crewView, type CrewView } from './crew';
+// #98: what the agent is doing (the waiting display status).
+import { isWaiting } from './activity';
 
 export interface WorkerView {
   worker: Worker;
@@ -45,9 +47,11 @@ export interface WorkerView {
 export interface Counts {
   working: number;
   needsYou: number;
-  /** idle + done + plain shells */
+  /** idle + done + plain shells (#98: not those waiting on their background tasks) */
   idle: number;
   done: number;
+  /** #98: idle or done, waiting on their own background tasks (a count of its own, never idle). */
+  waiting: number;
   total: number;
 }
 
@@ -295,6 +299,18 @@ export class WorldStore {
       case 'followups.update': // #90
         this.followups.upsert(e);
         break;
+      // #98: what the agent is doing changed (absent: cleared); its status stays.
+      case 'worker.activity': {
+        const old = this.workers.get(e.id);
+        if (!old) break;
+        const next: Worker = { ...old };
+        if (e.activity && typeof e.activity === 'object') next.activity = e.activity;
+        else delete next.activity;
+        this.workers.set(e.id, next);
+        c.workers.add(e.id);
+        c.sessions.add(old.session);
+        break;
+      }
     }
     if (c.structure) this.structureVersion++;
     return c;
@@ -340,7 +356,8 @@ export class WorldStore {
       desk,
       harness: resolveHarness(w),
       since: ask ? ask.since : followup ? followup.at : (this.since.get(id) ?? this.loadedAt),
-      display: (crew?.needsYou || ask || followup || wrapStuck) && !asleep ? 'needs_you' : displayStatus(w.status, asleep),
+      // #98: an agent that ended its turn on purpose, waiting on its own background tasks, is not idle; needing you wins.
+      display: (crew?.needsYou || ask || followup || wrapStuck) && !asleep ? 'needs_you' : !asleep && isWaiting(w) ? 'waiting' : displayStatus(w.status, asleep),
       crew,
     };
   }
@@ -387,7 +404,7 @@ export class WorldStore {
     const seats: Array<WorkerView | null> = Array.from({ length: n }, () => null);
     for (const v of workers) seats[v.desk] = v;
     workers.sort((a, b) => a.desk - b.desk);
-    const counts: Counts = { working: 0, needsYou: 0, idle: 0, done: 0, total: workers.length };
+    const counts: Counts = { working: 0, needsYou: 0, idle: 0, done: 0, waiting: 0, total: workers.length };
     let resume: ResumeCounts | null = null;
     for (const v of workers) {
       const r = v.worker.resume;
@@ -402,6 +419,7 @@ export class WorldStore {
         counts.done++;
         counts.idle++;
       } else if (v.display === 'idle') counts.idle++;
+      else if (v.display === 'waiting') counts.waiting++;
     }
     return {
       session,

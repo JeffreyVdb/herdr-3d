@@ -18,10 +18,13 @@
   --needs_you: #e8413a;
   --idle: #7a8398;
   --asleep: #5a5fa8;
+  /* #98: idle or done, waiting on its own background tasks. */
+  --waiting: #1e9aa0;
   /* The same hues deepened for white text (tape chips): >= 4.5:1. Dots and glow keep the bright ones. */
   --done-chip: #0b8454;
   --needs_you-chip: #d8302c;
   --idle-chip: #6b7388;
+  --waiting-chip: #0f7378;
   --radius: 14px;
   --shadow: 0 10px 28px rgb(18 24 44 / 28%), 0 2px 6px rgb(18 24 44 / 18%);
   --font: 'Recursive Variable', system-ui, sans-serif;
@@ -148,9 +151,22 @@ body {
 .topbar-counts[data-n='1'] {
   min-width: 36px;
 }
+/* #98: with the waiting count. */
+.topbar-counts[data-n='4'] {
+  min-width: 172px;
+}
 /* With their words the three counts take up to ~310 px (three-digit numbers), the asleep one ~85 px. */
 @container (max-width: 312px) {
   .topbar-counts[data-n='3'] .count > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+@container (max-width: 410px) {
+  .topbar-counts[data-n='4'] .count > span {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -239,6 +255,7 @@ body {
 .count--idle { --c: var(--idle); }
 .count--done { --c: var(--done); }
 .count--asleep { --c: var(--asleep); }
+.count--waiting { --c: var(--waiting); }
 
 .btn {
   display: inline-flex;
@@ -329,6 +346,7 @@ body {
 .tape--needs_you { --c: var(--needs_you-chip); }
 .tape--idle { --c: var(--idle-chip); }
 .tape--asleep { --c: var(--asleep); }
+.tape--waiting { --c: var(--waiting-chip); }
 
 /* ---- centre reticle, prompt bar --------------------------------------------- */
 

@@ -72,6 +72,7 @@ const SCREEN: Record<Display, number> = {
   needs_you: 0xffb2aa,
   idle: 0x8a96b3,
   asleep: 0x161a26,
+  waiting: 0x9fe0dc,
 };
 /** A monitor with nothing plugged in (an empty desk, a laptop packed away). */
 const SCREEN_OFF = 0x0d1119;
@@ -400,8 +401,8 @@ export function deskGeometries(): Record<'top' | 'legs' | 'chair' | 'chairBase' 
 /** The "+" floats this high over an empty desk's centre (clear of the monitor). */
 export const PLUS_Y = 1.45;
 
-/** The worker holds its mug while idle or done (crowd.ts): then it is not on the desk. */
-const mugInHand = (d: Display | null) => d === 'idle' || d === 'done';
+/** The worker holds its mug while idle or done (crowd.ts), #98: or waiting on its background tasks: then it is not on the desk. */
+const mugInHand = (d: Display | null) => d === 'idle' || d === 'done' || d === 'waiting';
 
 /** Per desk: the fixed local matrices of its kit's parts (slot space). */
 interface DeskLocal {
