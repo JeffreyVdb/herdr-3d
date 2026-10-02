@@ -17,6 +17,7 @@ and `docs/decisions.md`. Where a verifier and a follow-up disagree, the one with
 | Building logo (entrance sign, reception wall, city sign) | an image the user picks for a building | bridge SQLite (`building_logo`: the normalised PNG); the building carries its hash |
 | Whiteboard (north wall of every floor) | an Excalidraw board shared by the floor, agents pin on it (M14) | bridge files, `~/.local/share/herdr-3d/whiteboards/<floor>/` (versioned scenes, images by sha256, the current render) |
 | Plan limits meter (top-right widget) | the Claude and Codex plan windows (5 h, week, per model) | the `claude` / `codex` CLIs, run as probes by the bridge (`internal/limits`), only while a client is connected |
+| Inbox chip (under the limits meter, #100) | the workers that need you, and the employees that are done, across every floor; a click sits you at the first one's laptop | derived in the game from the world (`world/inbox.ts`); nothing on the bridge |
 
 Worker states → animation:
 
