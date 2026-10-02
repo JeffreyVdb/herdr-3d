@@ -115,6 +115,36 @@ describe('sim.crew: the scripted freelancer', () => {
     expect((second.find((m) => m.t === 'worker.upsert') as { worker: Worker }).worker.desk_index).toBe(14);
   });
 
+  it('M6c: `corner: true` hires for the simulator’s orchestrator in the corner office (made once, working, flagged)', () => {
+    const { cmd, sim } = rig();
+    const first = cmd('sim.crew', { step: 'hire', corner: true });
+    const made = first.got().filter((m) => m.t === 'worker.upsert').map((m) => (m as { worker: Worker }).worker);
+    const corner = made.find((w) => w.role === 'orch')!;
+    expect(corner).toMatchObject({ corner: true, status: 'working', run: 'sim-corner', phase: 'review', session: 'lab' });
+    const hired = made.find((w) => w.role === 'code')!;
+    expect(hired.orch_id).toBe(corner.id);
+    expect(hired.desk_index).not.toBe(corner.desk_index);
+    // The same orchestrator for the next one; the other runs are untouched.
+    const second = cmd('sim.crew', { step: 'hire', corner: true }).got();
+    expect(second.some((m) => m.t === 'worker.upsert' && (m as { worker: Worker }).worker.role === 'orch')).toBe(false);
+    expect(((sim.snapshot() as { world: { workers: Worker[] } }).world.workers).filter((w) => w.corner === true)).toHaveLength(1);
+    expect(byLabel('ORCH|overcap').corner).toBeUndefined();
+    // Without it, the first orchestrator with a run, as ever.
+    const plain = cmd('sim.crew', { step: 'hire' }).got().find((m) => m.t === 'worker.upsert') as { worker: Worker };
+    expect(plain.worker.orch_id).toBe(byLabel('ORCH|overcap').id);
+  });
+
+  it('simcrew=<ms> plays the script by itself, every other round for the corner office', () => {
+    const { sim, out, advance } = rig(100);
+    sim.start((m) => out.push(m));
+    advance(1200);
+    const hires = out.filter((m) => m.t === 'worker.upsert' && (m as { worker: Worker }).worker.role === 'code' && (m as { worker: Worker }).worker.status === 'unknown').map((m) => (m as { worker: Worker }).worker);
+    expect(hires.length).toBeGreaterThanOrEqual(2);
+    expect(hires[0]!.orch_id).toBe(byLabel('ORCH|overcap').id);
+    expect(hires[1]!.orch_id).not.toBe(byLabel('ORCH|overcap').id);
+    expect(out.some((m) => m.t === 'worker.upsert' && (m as { worker: Worker }).worker.corner === true)).toBe(true);
+  });
+
   it('simcrew=<ms> plays the script by itself', () => {
     const { sim, out, advance } = rig(500);
     const send = (m: Msg) => out.push(m);

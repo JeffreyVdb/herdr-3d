@@ -67,14 +67,20 @@ test('freelancer looks, model cues, stamps, the input_required bubble and the ov
   expect(orch.parts).not.toContain('briefcase');
   const code = await member(page, 1);
   expect(code).toMatchObject({ role: 'code', life: 'reporting' });
-  expect(code.parts).toEqual(expect.arrayContaining(['hood', 'badge', 'briefcase', 'folder']));
+  // M6c: its orchestrator is on the floor and the report is already handed in (the folder is on the orchestrator's tray): empty-handed.
+  expect(code.parts).toEqual(expect.arrayContaining(['hood', 'badge', 'briefcase']));
+  expect(code.parts).not.toContain('folder');
   expect(code.parts).not.toContain('stamp');
   const review = await member(page, 2);
   expect(review).toMatchObject({ role: 'review', life: 'reporting', stamp: 'CHANGES · 2 BLOCKERS' });
-  expect(review.parts).toEqual(expect.arrayContaining(['bowtie', 'clipboard', 'folder', 'stamp', 'briefcase']));
+  expect(review.parts).toEqual(expect.arrayContaining(['bowtie', 'clipboard', 'briefcase']));
+  expect(review.parts).not.toContain('folder');
   const ux = await member(page, 3);
   expect(ux).toMatchObject({ role: 'ux', life: 'reporting', stamp: 'PASS' });
-  expect(ux.parts).toEqual(expect.arrayContaining(['scarf', 'tablet', 'folder', 'stamp']));
+  expect(ux.parts).toEqual(expect.arrayContaining(['scarf', 'tablet']));
+  expect(ux.parts).not.toContain('folder');
+  // Their folders lie in the orchestrator's in-tray, the verdict's colour on the edge: CODE (none), REVIEW changes, UX pass.
+  expect((await page.evaluate(() => window.__h3d.trays())).trays.find((t) => t.desk === 0)).toMatchObject({ folders: 3, edges: [0xc9a45a, 0xe03a33, 0x12a26a] });
   // One run, one badge colour; the other run has another.
   const runs = new Set(c.members.map((m) => m.run));
   expect(runs.size).toBe(2);
@@ -173,7 +179,10 @@ test('a freelancer drops in with its briefcase, onboards, works, reports and lea
   await expect.poll(async () => (await member(page, 13)).life).toBe('working');
   await page.evaluate(() => window.__h3d.simCrew({ step: 'report', verdict: 'CHANGES_REQUIRED', blockers: 1 }));
   await expect.poll(async () => (await member(page, 13)).stamp).toBe('CHANGES · 1 BLOCKER');
-  await expect.poll(async () => (await member(page, 13)).parts).toEqual(expect.arrayContaining(['folder', 'stamp']));
+  // M6c: it walks the folder over to the orchestrator's desk (a long way from desk 13, sped up), hands it over and sits again, empty-handed.
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivalLog())).some((l) => l.kind === 'deliver' && l.desk === 13 && l.played), { timeout: 60_000 }).toBe(true);
+  await expect.poll(async () => (await member(page, 13)).parts).not.toContain('folder');
+  expect((await page.evaluate(() => window.__h3d.trays())).trays.find((t) => t.desk === 0)?.folders).toBe(4);
 
   // Leaving: waves with the briefcase, walks out (not the M4 cardboard box).
   await faceFront(page, 13, 2.8, -0.1);

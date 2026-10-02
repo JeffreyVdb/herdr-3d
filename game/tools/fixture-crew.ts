@@ -5,20 +5,26 @@
 //
 // - `{"step":"hire"}` (optionally `session`, `orch`: an orchestrator's worker
 //   id; else the first orchestrator with a run on the first floor that has
-//   one): a `CODE|<descr>|<ticket>|r<N>` freelancer of that run shows up
+//   one; M6c: `corner: true` hires for the simulator's own orchestrator in the
+//   corner office, made on the first use: a `corner` worker sits up the
+//   mezzanine stair, see docs/decisions.md): a `CODE|<descr>|<ticket>|r<N>` freelancer of that run shows up
 //   (`worker.upsert`, no agent yet, a pending report) at the free desk
 //   nearest its orchestrator's (same pod of 4 first, then by pod distance,
 //   then lower index; the floor grows a desk when none is free).
 // - `onboard`: its agent is there (`claude`, idle): it reads its brief.
 // - `work`: it is `working`.
 // - `report`: its report is ready (`summary`, or `verdict` / `blockers` /
-//   `input_required` as given) and it is `done`.
+//   `input_required` as given) and it is `done`. The game then walks the
+//   folder over to the orchestrator's desk (M6c), hands it over, walks back
+//   and sits; `leave` any time after that (or during: it finishes the
+//   hand-over and walks out from where it stands).
 // - `leave`: its workspace closes (`worker.removed`, no reason): it waves
 //   and walks out with its briefcase.
 //
 // Every step but `hire` takes `id` (default: the last one hired) and acks
 // `{id, step}`. `simcrew=<ms>` plays hire → onboard → work → report → leave
-// by itself, one step every `<ms>`, over and over.
+// by itself, one step every `<ms>`, over and over (M6c: every other round for
+// the corner office's orchestrator).
 import type { Floor, Worker, WorkerReport } from '../src/net/protocol.ts';
 
 type Msg = Record<string, unknown>;
@@ -60,6 +66,8 @@ export class CrewSim {
   private last: string | null = null;
   private n = 0;
   private auto = 0;
+  /** M6c: which round the auto script is on (every other one is for the corner office's orchestrator). */
+  private round = 0;
 
   constructor(host: CrewHost) {
     this.h = host;
@@ -112,7 +120,7 @@ export class CrewSim {
   }
 
   private hire(a: Obj, send: Send): string {
-    const orch = this.orchOf(a);
+    const orch = this.orchOf(a, send);
     const f = this.h.floors.get(orch.session) as Floor;
     const taken = new Set(this.h.workers.filter((x) => x.session === orch.session && typeof x.desk_index === 'number').map((x) => x.desk_index as number));
     const desks = f.desks ?? 6;
@@ -154,7 +162,48 @@ export class CrewSim {
     return w.id;
   }
 
-  private orchOf(a: Obj): Worker {
+  /** M6c: the simulator's orchestrator in the corner office (made on first use, at the first free desk of the first running floor). */
+  private cornerOrch(send: Send): Worker {
+    const have = this.h.workers.find((x) => x.corner === true && x.role === 'orch');
+    if (have) return have;
+    const host = this.h.workers.find((x) => x.role === 'orch' && x.run && this.h.floors.get(x.session)?.state === 'running');
+    if (!host) throw this.h.error('invalid_state', 'invalid state: no running floor with a run to put a corner office on');
+    const f = this.h.floors.get(host.session) as Floor;
+    const taken = new Set(this.h.workers.filter((x) => x.session === host.session && typeof x.desk_index === 'number').map((x) => x.desk_index as number));
+    const desks = f.desks ?? 6;
+    const desk = nearestDesk(host.desk_index ?? 0, taken, desks);
+    if (desk >= desks) {
+      f.desks = desk + 1;
+      this.h.emit(send, { t: 'floor.upsert', floor: f });
+    }
+    const w: Worker = {
+      id: 'sim-orch-corner-4000-a000-000000000000',
+      session: host.session,
+      workspace_id: 'wcorner',
+      label: 'ORCH|corner|9',
+      cwd: host.cwd ?? '/home/dev/devel/lab',
+      pane_id: 'wcorner:p1',
+      status: 'working',
+      name: 'Corner',
+      desk_index: desk,
+      harness: 'claude',
+      model: 'claude-opus-5-5',
+      effort: 'medium',
+      status_since: this.h.now(),
+      role: 'orch',
+      run: 'sim-corner',
+      phase: 'review',
+      pass: 1,
+      corner: true,
+    };
+    if (host.issue) w.issue = host.issue;
+    this.h.workers.push(w);
+    this.h.emit(send, { t: 'worker.upsert', worker: w });
+    return w;
+  }
+
+  private orchOf(a: Obj, send?: Send): Worker {
+    if (a.corner === true && send) return this.cornerOrch(send);
     if (typeof a.orch === 'string') {
       const o = this.h.workers.find((x) => x.id === a.orch && x.role === 'orch');
       if (!o) throw this.h.error('unknown_worker', `unknown orchestrator: "${a.orch}"`);
@@ -172,7 +221,8 @@ export class CrewSim {
     const next = () => {
       const step = CREW_STEPS[this.auto++ % CREW_STEPS.length] as CrewStep;
       try {
-        this.handle({ step }, send);
+        this.handle(step === 'hire' ? { step, corner: this.round % 2 === 1 } : { step }, send);
+        if (step === 'leave') this.round++;
       } catch {
         // No orchestrator (yet): try again next time round.
         this.auto = 0;
