@@ -205,7 +205,7 @@ export interface IssueFace {
   /** `#rrggbb` pin. */
   pin: string;
   /** The live worker holding it: name, and the tint of its avatar. */
-  holder: { name: string; tint: string } | null;
+  holder: { id: string; name: string; tint: string } | null;
   done: boolean;
 }
 
@@ -222,11 +222,20 @@ export interface PrFace {
 }
 
 export function sameIssueFace(a: IssueFace | undefined, b: IssueFace): boolean {
-  return !!a && a.key === b.key && a.title === b.title && a.paper === b.paper && a.pin === b.pin && a.done === b.done && a.holder?.name === b.holder?.name && a.holder?.tint === b.holder?.tint;
+  return !!a && a.key === b.key && a.title === b.title && a.paper === b.paper && a.pin === b.pin && a.done === b.done && a.holder?.id === b.holder?.id && a.holder?.name === b.holder?.name && a.holder?.tint === b.holder?.tint;
 }
 
 export function samePrFace(a: PrFace | undefined, b: PrFace): boolean {
   return !!a && a.key === b.key && a.title === b.title && a.branch === b.branch && a.checks === b.checks && a.review === b.review && a.draft === b.draft && a.closes === b.closes && a.stamp?.text === b.stamp?.text && a.stamp?.tone === b.stamp?.tone;
+}
+
+/** Where the holder's tag sits on a note's cell (px, y down): `by` is its centre line, `bx`/`bw` its left edge and width. */
+export function holderPill(g: CanvasRenderingContext2D, holder: string): { name: string; bx: number; by: number; bw: number } {
+  g.font = `750 21px ${FONT}`;
+  const name = fit(g, holder, 118);
+  const bw = g.measureText(name).width + 46;
+  const m = 10;
+  return { name, bx: ISSUE_CELL.w - m - 10 - bw, by: m + 22, bw };
 }
 
 /** A sticky note: paper with a soft shadow, a pin, the key, the title in up to three lines, the holder's tag. */
@@ -285,12 +294,7 @@ export function drawIssueNote(g: CanvasRenderingContext2D, x: number, y: number,
   }
   // The holder: a tiny avatar and its name, top right (the next note covers the foot).
   if (f.holder) {
-    g.font = `750 21px ${FONT}`;
-    const name = fit(g, f.holder.name, 118);
-    const tw = g.measureText(name).width;
-    const bw = tw + 46;
-    const bx = W - m - 10 - bw;
-    const by = m + 22;
+    const { name, bx, by, bw } = holderPill(g, f.holder.name);
     g.fillStyle = 'rgba(255,255,255,0.86)';
     g.beginPath();
     g.roundRect(bx, by - 18, bw, 34, 17);
@@ -397,4 +401,10 @@ export function drawPrNote(g: CanvasRenderingContext2D, x: number, y: number, f:
   g.fillStyle = '#4a5570';
   g.fillText(fit(g, f.branch, Math.max(0, W - m - 12 - cx)), cx, cy);
   g.restore();
+}
+
+/** Whether a point of a note's cell (px, y down) is on the holder's tag. */
+export function onHolderPill(g: CanvasRenderingContext2D, holder: string, u: number, v: number): boolean {
+  const { bx, by, bw } = holderPill(g, holder);
+  return u >= bx && u <= bx + bw && v >= by - 18 && v <= by + 16;
 }

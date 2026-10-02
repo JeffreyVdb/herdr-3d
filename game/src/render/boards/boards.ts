@@ -8,7 +8,7 @@ import { BODY_TINTS } from '../palette';
 import { NoteFlights, type FlightInfo } from './flight';
 import { Gong } from './gong';
 import { NoteBoard, type NoteInfo } from './noteBoard';
-import { drawIssueNote, drawPrNote, ISSUE_CELL, PR_CELL, sameIssueFace, samePrFace, type Backdrop, type IssueFace, type PrFace } from './paint';
+import { drawIssueNote, drawPrNote, ISSUE_CELL, onHolderPill, PR_CELL, sameIssueFace, samePrFace, type Backdrop, type IssueFace, type PrFace } from './paint';
 
 /**
  * M7: the corkboard (issues), the pull request board and the merge gong on the board wall of a floor. Owns the two
@@ -55,6 +55,9 @@ export class BoardsView {
   /** What was shown last, to show again when a held note comes back. */
   private lastIssues: { s: BoardShown; workers: readonly WorkerView[] } | null = null;
   private issuesFilled = false;
+  /** The notes on the issue board (where they settle, and their faces), for a click to find the holder's tag. */
+  private shownIssues: Array<{ place: Placement; face: IssueFace }> = [];
+  private scratch: CanvasRenderingContext2D | null = null;
   private prsFilled = false;
   private readonly heightM: number;
   /** Notes held off their board (peeled) until the next poll or this time (ms). */
@@ -111,6 +114,7 @@ export class BoardsView {
         board.setBackdrop(d);
         board.setNotes([], now, false);
       }
+      this.shownIssues = [];
       this.issuesFilled = false;
     };
     if (!s.msg || s.off) return empty(s.off ? { kind: 'off', ...s.off } : { kind: 'loading', text: 'Waiting for the bridge…' });
@@ -143,17 +147,52 @@ export class BoardsView {
           title: card?.title ?? '',
           paper: card ? paperOf(card) : '#ffe27a',
           pin: card ? pinOf(card) : '#f4f4f0',
-          holder: h ? { name: h.name, tint: tintCss(h.id) } : null,
+          holder: h ? { id: h.id, name: h.name, tint: tintCss(h.id) } : null,
           done: col?.done ?? false,
         };
         return { id: p.id, place: p, face };
       });
+    this.shownIssues = entries;
     const key = JSON.stringify([back, entries]);
     if (key === this.keys.issues) return;
     this.keys.issues = key;
     board.setBackdrop(back);
     board.setNotes(entries, now, this.issuesFilled);
     this.issuesFilled = true;
+  }
+
+  /**
+   * A click on a note's holder tag on the issue wall: the worker's id (null: not on one). The ray is the world's; the
+   * board is a plane (its group's z = 0) and each note a rotated rectangle on it, the tag a rectangle of its cell.
+   */
+  pickHolder(ray: THREE.Ray): string | null {
+    const board = this.issues;
+    if (!board || !this.shownIssues.length) return null;
+    board.group.updateWorldMatrix(true, false);
+    const r = ray.clone().applyMatrix4(new THREE.Matrix4().copy(board.group.matrixWorld).invert());
+    if (Math.abs(r.direction.z) < 1e-6) return null;
+    const t = -r.origin.z / r.direction.z;
+    if (t < 0) return null;
+    const x = r.origin.x + r.direction.x * t;
+    const y = r.origin.y + r.direction.y * t;
+    this.scratch ??= document.createElement('canvas').getContext('2d');
+    const g = this.scratch;
+    if (!g) return null;
+    // Topmost first: the notes lie over one another, later ones over earlier.
+    for (let i = this.shownIssues.length - 1; i >= 0; i--) {
+      const { place: p, face } = this.shownIssues[i] as (typeof this.shownIssues)[number];
+      const dx = x - p.x;
+      const dy = y - p.y;
+      const c = Math.cos(p.rot);
+      const sn = Math.sin(p.rot);
+      const lx = dx * c + dy * sn;
+      const ly = -dx * sn + dy * c;
+      if (Math.abs(lx) > p.w / 2 || Math.abs(ly) > p.h / 2) continue;
+      // On this note: it is the one under the pointer whether or not the tag is.
+      if (!face.holder) return null;
+      return onHolderPill(g, face.holder.name, (lx / p.w + 0.5) * ISSUE_CELL.w, (0.5 - ly / p.h) * ISSUE_CELL.h) ? face.holder.id : null;
+    }
+    return null;
   }
 
   setPrs(s: PrsShown, workers: readonly WorkerView[], now: number): void {

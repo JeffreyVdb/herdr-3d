@@ -233,6 +233,15 @@
   font-weight: 750;
   color: var(--ink);
 }
+.bd-holder--go {
+  cursor: pointer;
+  border: 0;
+  font-family: inherit;
+}
+.bd-holder--go:hover,
+.bd-holder--go:focus-visible {
+  text-decoration: underline;
+}
 .bd-assignee {
   background: transparent;
   box-shadow: none;

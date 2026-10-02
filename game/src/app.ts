@@ -505,6 +505,7 @@ export class App {
       review: (session, pr) => this.reviewPr(session, pr),
       whyNoRun: (session) => this.whyNoRun(session),
       whyNoHire: (session) => this.whyNoHire(session),
+      goTo: (id) => void this.goToWorker(id, 'transcript'),
     });
     this.arrivals = new Arrivals(this.shadows);
     this.walk.scene.add(this.arrivals.group);
@@ -2313,6 +2314,7 @@ export class App {
     // M5: seated, a click keeps the keyboard on the laptop (no mouse look).
     if (this.laptops.seated) return this.laptops.focusSeat();
     if (!this.planOpen && this.clickPrints(e)) return;
+    if (!this.planOpen && this.clickBoardHolder(e)) return;
     if (!this.planOpen) this.walker.requestLock();
   }
 
@@ -2328,6 +2330,24 @@ export class App {
     const ray = new THREE.Raycaster();
     ray.setFromCamera(new THREE.Vector2(x, y), this.fpCam);
     return this.laptops.clickPrint(ray);
+  }
+
+  /** A click on the holder's tag of a note on the issue wall (from the crosshair while the mouse looks, else the pointer): its worker's transcript. */
+  private clickBoardHolder(e: PointerEvent): boolean {
+    const o = this.office;
+    if (this.mode !== 'floor' || this.place.area !== 'floor' || !o) return false;
+    const canvas = this.r.domElement;
+    const rect = canvas.getBoundingClientRect();
+    const locked = document.pointerLockElement === canvas;
+    const x = locked ? 0 : ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = locked ? 0 : -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    this.walker.applyTo(this.fpCam, this.walk.base);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(x, y), this.fpCam);
+    const id = o.boards.pickHolder(ray.ray);
+    if (!id) return false;
+    void this.goToWorker(id, 'transcript');
+    return true;
   }
 
   /** Test hook: a click on the print under a point of the viewport (NDC), as the pointer would. */
@@ -2832,10 +2852,10 @@ export class App {
   /**
    * #100: an inbox row's (or a notification's) click. Unlike N it teleports: straight onto the worker's floor (no
    * elevator panel), facing it, and sat at its laptop with its terminal on screen (not the conversation E remembers),
-   * from anywhere. False when it cannot be done (in a transition, the worker or its floor went). When the laptop
+   * from anywhere (`view`: 'transcript' puts the conversation on screen instead). False when it cannot be done (in a transition, the worker or its floor went). When the laptop
    * cannot be sat at, you are left facing the worker with the reason (`sitAt`'s toast), and it is still true.
    */
-  async goToWorker(id: string): Promise<boolean> {
+  async goToWorker(id: string, view: 'terminal' | 'transcript' = 'terminal'): Promise<boolean> {
     if (this.transitioning) return false;
     const was = this.store.workerView(id);
     if (!was) return false;
@@ -2855,7 +2875,7 @@ export class App {
     this.faceWorker(id);
     // The terminal for this sit only: what E opens next time stays as you left it.
     if (this.sitAt(id)) {
-      this.laptops.transcript.setMode('terminal', false);
+      this.laptops.transcript.setMode(view, false);
       this.laptops.focusSeat();
     }
     if (finished !== null) void this.send('inbox.dismiss', { id, status_since: finished }); // #106 (an older bridge just ignores it)

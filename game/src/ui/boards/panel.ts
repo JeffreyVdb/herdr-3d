@@ -45,6 +45,8 @@ export interface BoardsHost extends DialogHost {
   /** Why an action that starts a run or hires is off (null: it works). */
   whyNoRun(session: string): string | null;
   whyNoHire(session: string): string | null;
+  /** A holder's tag: take me to that worker, its transcript on screen. */
+  goTo(workerId: string): void;
 }
 
 type Which = 'issues' | 'prs';
@@ -336,17 +338,35 @@ export class BoardsPanel {
         h(
           'div',
           { class: 'bd-col-cards' },
-          ...(c.cards.length ? c.cards.map((card) => this.issueButton(card, holders.get(card.id)?.name ?? null)) : [h('p', { class: 'bd-empty' }, 'Nothing here')]),
+          ...(c.cards.length ? c.cards.map((card) => this.issueButton(card, holders.get(card.id) ?? null)) : [h('p', { class: 'bd-empty' }, 'Nothing here')]),
         ),
       ),
     );
     replaceKeepingFocus(this.body, [h('div', { class: 'bd-cols' }, ...nodes)]);
   }
 
-  private issueButton(card: IssueCard, holder: string | null): HTMLElement {
+  private issueButton(card: IssueCard, holder: { id: string; name: string } | null): HTMLElement {
     const meta = h('div', { class: 'bd-card-meta' });
     if (card.priority) meta.append(h('span', { class: `tape tape--prio tape--prio-${card.priority}` }, PRIORITY_WORD[card.priority]));
-    if (holder) meta.append(h('span', { class: 'bd-holder', title: `${holder} is working on it` }, holder));
+    // A button inside the card's button is not valid, so the tag is a link by role; the modal's is a real button (keyboard).
+    if (holder) {
+      meta.append(
+        h(
+          'span',
+          {
+            class: 'bd-holder bd-holder--go',
+            role: 'link',
+            'data-key': `holder:${card.id}`,
+            title: `${holder.name} is working on it: go to their transcript`,
+            onclick: (e: Event) => {
+              e.stopPropagation();
+              this.host.goTo(holder.id);
+            },
+          },
+          holder.name,
+        ),
+      );
+    }
     for (const a of card.assignees.slice(0, 2)) meta.append(h('span', { class: 'bd-assignee' }, a.name));
     const pending = this.moves.get(card.id);
     const b = h(
@@ -655,7 +675,11 @@ export class BoardsPanel {
     if (col) meta.append(h('span', { class: 'tape tape--note' }, col.name));
     if (card.priority) meta.append(h('span', { class: `tape tape--prio tape--prio-${card.priority}` }, PRIORITY_WORD[card.priority]));
     const holder = holdersOf([card], this.host.store.floorView(this.session)?.workers ?? []).get(card.id);
-    if (holder) meta.append(h('span', { class: 'bd-holder' }, `${holder.name} is on it`));
+    if (holder) {
+      meta.append(
+        h('button', { class: 'bd-holder bd-holder--go', type: 'button', 'data-key': 'holder', title: `Go to ${holder.name}'s transcript`, onclick: () => this.host.goTo(holder.id) }, `${holder.name} is on it`),
+      );
+    }
     for (const a of card.assignees) meta.append(h('span', { class: 'bd-assignee' }, `@${a.name}`));
     body.push(meta);
     const labels = this.labelsRow(card.labels);
