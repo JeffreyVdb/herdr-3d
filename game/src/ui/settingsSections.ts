@@ -30,8 +30,10 @@ export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs): (bo
     const label = el('label', 'settings-switch');
     label.htmlFor = box.id;
     label.append(box, el('span', '', 'Show plan limits (Claude and Codex) in the corner'));
-    body.append(label);
-    if (!monitors) return { dispose: off };
+    if (!monitors) {
+      body.append(label);
+      return { dispose: off };
+    }
     // #98: Desk monitors: Activity | Terminal.
     const field = el('div', 'settings-field');
     const pick = el('select');
@@ -54,7 +56,9 @@ export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs): (bo
     const l = el('label', 'settings-field-label', 'Desk monitors');
     l.htmlFor = pick.id;
     field.append(l, pick, hint);
-    body.append(field);
+    const grid = el('div', 'settings-grid');
+    grid.append(label, field);
+    body.append(grid);
     return {
       dispose: () => {
         off();

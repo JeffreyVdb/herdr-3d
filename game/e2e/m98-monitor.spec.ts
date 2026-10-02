@@ -245,6 +245,8 @@ test('Settings → Display → Desk monitors: Terminal brings the glance back ev
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   const pick = dialog.locator('[data-section="display"]').getByLabel('Desk monitors');
   await expect(pick).toHaveValue('activity');
+  await expect(dialog.locator('#settings-monitors-hint')).toHaveText('Sitting at a desk always shows its screen.');
+  await shot(page, 'm98-settings');
   await pick.selectOption('terminal');
   await page.keyboard.press('Escape');
   await expect.poll(async () => (await monitorsOf(page))?.desks.every((d) => d.mode === 'glance')).toBe(true);
