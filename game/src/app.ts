@@ -29,9 +29,9 @@ import { needsYouText, sentHomeText, wrapUpOf } from './world/wrapup';
 import { RADIUS, Walker } from './input/walk';
 import { Laptops, type WatchCommand } from './laptop';
 import { SeatBar } from './ui/seat';
-import { blocked, blocked3, groundAt, type WalkWorld } from './world/collide';
+import { blocked, blocked3, groundAt, nudgeClear, type WalkWorld } from './world/collide';
 import { buildingPlan, floorY, loadedFloor, placeAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
-import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, overlookReach, type Opening, type Outline } from './world/layout';
+import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, overlookReach, seatRect, type Opening, type Outline } from './world/layout';
 import { STAND_LIFT, type ArrivalKind } from './world/arrival';
 import { displayName, resolveHarness, type Display } from './world/derive';
 import { firstFreeDesk, freeDesks, isFreshHire, Reservations } from './world/hire';
@@ -1600,10 +1600,16 @@ export class App {
       }
       if (!this.office.apply(fv, ctx.outline)) this.rebuildOffice();
     }
-    // Anything moved under you (the fire escape changed shape, the room shrank): back to safety.
-    if (blocked3(this.walker, RADIUS, this.walkWorldNow())) {
+    // Something solid appeared under you (a hire's chair, a rebuilt layout): step out to the nearest free spot, keeping your floor.
+    // Only when there is none nearby (the fire escape changed shape, the room shrank): back to safety.
+    const world = this.walkWorldNow();
+    if (blocked3(this.walker, RADIUS, world)) {
+      // Out the back of the chair you stand in (into the aisle), if you stand in one.
+      const seat = this.office?.layout.slots.find((sl) => blocked(this.walker, 0, [seatRect(sl)]));
+      const free = nudgeClear(this.walker, RADIUS, world, seat && { x: -Math.sin(seat.yaw), z: -Math.cos(seat.yaw) });
       const L = this.office?.layout;
-      if (L && this.loaded !== null) this.walker.place(L.spawn.x, L.spawn.z, L.spawn.yaw, 0, floorY(this.loaded));
+      if (free) this.walker.place(free.x, free.z, this.walker.yaw, this.walker.pitch, free.y);
+      else if (L && this.loaded !== null) this.walker.place(L.spawn.x, L.spawn.z, L.spawn.yaw, 0, floorY(this.loaded));
       else this.walker.place(ctx.plan.lobby.spawn.x, ctx.plan.lobby.spawn.z, 0, 0, 0);
     }
     this.updatePlace(false, true);
