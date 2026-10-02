@@ -443,6 +443,8 @@ export class Arrivals {
     this.log.push({ id: a.spec.id, kind: a.spec.kind, played, session: a.spec.session, desk: a.spec.desk });
     if (this.log.length > 50) this.log.shift();
     this.endedIds.push(a.spec.id);
+    // M6c: a delivery cancelled with its freelancer's walk-out chained: that walk will never start, so the freelancer has left.
+    if (!played && a.then) this.endedIds.push(a.then.id);
   }
 
   /** Nobody walking: no draw calls for the props and the crowd. */
@@ -470,7 +472,8 @@ export class Arrivals {
         if (hand && at >= hand.t1) {
           const then = a.then;
           this.finish(i, true);
-          this.start(then, now);
+          // (A walk-out that cannot be shown is over at once: its freelancer has left all the same.)
+          if (!this.start(then, now)) this.endedIds.push(then.id);
           continue;
         }
       }

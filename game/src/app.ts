@@ -812,7 +812,11 @@ export class App {
 
   /** The reports on your floor stop: what is on their way lands on the tray. `keep`: the floor that stays in view. */
   private endDeliveries(keep: string | null): void {
-    for (const a of this.arrivals.info(performance.now() / 1000)) if (a.kind === 'deliver' && a.session !== keep) this.arrivals.cancel(a.id);
+    for (const a of this.arrivals.info(performance.now() / 1000)) {
+      if (a.kind !== 'deliver' || a.session === keep) continue;
+      this.arrivals.cancel(a.id); // (a freelancer leaving behind it is settled with it: `takeEnded`)
+      if (a.key) this.deliveryCtx.delete(a.key);
+    }
     for (const e of this.deliveries.pending()) if (e.session !== keep) this.deliveries.land(e.key);
   }
 

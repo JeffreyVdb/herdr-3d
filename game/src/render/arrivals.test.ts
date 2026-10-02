@@ -7,7 +7,7 @@ import { floorY } from '../world/building';
 import { deskKit } from '../world/deskKit';
 import { floorLayout, outlineOf } from '../world/layout';
 import { deskToDeskRoute, handOver, walkOutRoute } from '../world/route';
-import { trayFolderAt } from '../world/delivery';
+import { DeliveryBook, trayFolderAt } from '../world/delivery';
 import { Arrivals, type ArrivalSpec, type DeskAway, type DeliverSpec } from './arrivals';
 import { PEN_AT } from './desks';
 
@@ -323,6 +323,69 @@ describe('Arrivals: a report on its way (M6c)', () => {
     const out = a.update(t + 0.01, t);
     expect(onDesk(out)).toMatchObject({ away: null, out: null });
     expect(a.swivels).toEqual([{ session: 'f', desk: TO, swivel: null }]);
+  });
+
+  describe('a delivery with a walk-out chained that ends before the hand-over is done (#29)', () => {
+    /** w's report landed on the tray and its workspace closed: the walk-out waits behind the hand-over. */
+    function chained() {
+      const a = new Arrivals(false);
+      const book = new DeliveryBook();
+      book.add({ id: 'w', at: 1, session: 'f', desk: FROM, orch: 'o', tone: null }, true);
+      book.next('o');
+      a.start(delivery(true), 0);
+      const walkTo = STAND_S + a.info(0)[0]!.length / 2 / DELIVER_SPEED;
+      const t = walkTo + HAND_S * 0.9;
+      a.update(t, t);
+      for (const k of a.takeLanded()) book.land(k);
+      book.close('w', 'w@1');
+      expect(a.chain('deliver:w@1', spec('w', 'out', FROM, 'briefcase'))).toBe(true);
+      expect(book.get('w@1')).toMatchObject({ stage: 'tray', leaving: true });
+      return { a, book, t };
+    }
+    /** What the app does each frame with the ended walks. */
+    const settleEnded = (a: Arrivals, book: DeliveryBook) => {
+      for (const id of a.takeEnded()) book.settle(id);
+    };
+
+    it('cancelled (the floor is left): the freelancer is resolved too, its leaving folder goes', () => {
+      const { a, book, t } = chained();
+      a.cancel('deliver:w@1');
+      a.update(t + 1, t + 1);
+      settleEnded(a, book);
+      expect(a.count).toBe(0);
+      expect(book.get('w@1')).toBeUndefined();
+      expect(book.tray('o')).toEqual([]);
+    });
+
+    it('cleared (the building is left): same', () => {
+      const { a, book, t } = chained();
+      a.clear();
+      a.update(t + 1, t + 1);
+      settleEnded(a, book);
+      expect(book.get('w@1')).toBeUndefined();
+    });
+
+    it('the walk-out cannot be shown when the hand-over is done: same', () => {
+      const { a, book, t } = chained();
+      const bad = spec('w', 'out', FROM, 'briefcase');
+      bad.route = bad.route.slice(0, 1);
+      expect(a.chain('deliver:w@1', bad)).toBe(true);
+      a.update(t + HAND_S, t + HAND_S);
+      settleEnded(a, book);
+      expect(a.count).toBe(0);
+      expect(book.get('w@1')).toBeUndefined();
+    });
+
+    it('played to the end: the folder stays until the walk-out has finished', () => {
+      const { a, book, t } = chained();
+      a.update(t + HAND_S, t + HAND_S);
+      settleEnded(a, book);
+      expect(a.has('w')).toBe(true);
+      expect(book.get('w@1')).toMatchObject({ stage: 'tray', leaving: true });
+      a.update(t + 1000, t + 1000);
+      settleEnded(a, book);
+      expect(book.get('w@1')).toBeUndefined();
+    });
   });
 
   it('queued reports: two walkers at once never share a slot', () => {
