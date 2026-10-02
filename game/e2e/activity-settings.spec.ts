@@ -94,14 +94,15 @@ test('under AI integration, the privacy note above its switch: waiting without t
     expect(await page.evaluate(() => window.__h3d.activitySettings())).toMatchObject({ model_enabled: true, state: 'ready', classifier: 'ready' });
 
     // The numbers: checked here, saved one by one.
-    const threshold = section.getByLabel('Threshold');
+    const threshold = section.getByLabel('Minimum confidence');
+    await expect(threshold).toHaveAccessibleDescription(/Higher accepts fewer labels\. Default 0\.60\./);
     await threshold.fill('1.5');
     await threshold.press('Enter');
     await expect(threshold).toHaveAttribute('aria-invalid', 'true');
-    await expect(section.locator('.settings-status')).toHaveText('The threshold must be between 0.05 and 0.99.');
+    await expect(section.locator('.settings-status')).toHaveText('The minimum confidence must be between 0.05 and 0.99.');
     await threshold.fill('0.7');
     await threshold.press('Enter');
-    await expect(section.locator('.settings-status')).toHaveText('Threshold saved: 0.70.');
+    await expect(section.locator('.settings-status')).toHaveText('Minimum confidence saved: 0.70.');
     await section.getByLabel('Daily cap').fill('500');
     await section.getByLabel('Daily cap').press('Enter');
     await expect(section.locator('.settings-status')).toHaveText('Daily cap saved: 500.');
@@ -112,6 +113,7 @@ test('under AI integration, the privacy note above its switch: waiting without t
     await expect(state(section)).toHaveAttribute('data-state', 'capped');
     await expect(state(section)).toContainText('Daily cap reached, rules only today.');
     await expect(section.locator('.settings-act-figure')).toHaveText(['500 of 500', '214']);
+    await expect(section.locator('.settings-act-ledger')).toContainText('Cached classifications214Saved answers for distinct normalised commands');
     await expect(section.locator('.settings-act-bar')).toHaveAttribute('data-level', 'full');
     await section.scrollIntoViewIfNeeded();
     await shot(page, 'settings-activity-capped');
@@ -138,7 +140,7 @@ test('a switch set by the bridge environment is read-only and says so, on a phon
   await expect(section).toContainText('Set by the bridge environment (HERDR_WORLD_ACTIVITY_MODEL): read-only here.');
   // On, but the classifier is not set up: still waiting, and the numbers stay editable.
   await expect(state(section)).toHaveAttribute('data-state', 'incomplete');
-  await expect(section.getByLabel('Margin')).toBeEnabled();
+  await expect(section.getByLabel('Minimum score gap')).toBeEnabled();
   // Nothing overflows the phone's width.
   await section.scrollIntoViewIfNeeded();
   const wide = await section.evaluate((root) => [...root.querySelectorAll<HTMLElement>('*')].filter((e) => e.getBoundingClientRect().right > window.innerWidth + 0.5).map((e) => e.className));
