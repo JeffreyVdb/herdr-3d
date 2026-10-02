@@ -162,6 +162,8 @@ export class WorldStore {
   readonly followups = new FollowupsBook();
   /** #98: the "Classify unknown commands" settings and state (`known` false from an older bridge). */
   readonly activitySettings = new ActivitySettingsBook();
+  /** #106: the inbox's dismissed finished rows, worker id → the `status_since` of the done episode hidden. */
+  readonly inboxDismissed = new Map<string, number>();
   private readonly localDesks = new Map<string, number>();
   private readonly since = new Map<string, number>();
   private readonly deskCache = new Map<string, Map<string, number>>();
@@ -194,6 +196,8 @@ export class WorldStore {
     this.ai.reset(s.world.ai);
     this.followups.reset(s.world.followups);
     this.activitySettings.reset(s.world.activity); // #98
+    this.inboxDismissed.clear(); // #106
+    for (const [id, since] of Object.entries(s.world.inbox_dismissed ?? {})) if (Number.isInteger(since)) this.inboxDismissed.set(id, since);
     this.seq = s.seq;
     this.snapshots++;
     this.structureVersion++;
@@ -319,6 +323,16 @@ export class WorldStore {
       case 'activity.update': // #98 activity settings
         this.activitySettings.upsert(e);
         break;
+      // #106: the inbox hides that worker's done episode. Not part of the scene, but the inbox's pings follow it (a
+      // dismissed done must not ping when its settle delay ends), so the worker counts as changed.
+      case 'inbox.dismissed': {
+        this.inboxDismissed.set(e.id, e.status_since);
+        const w = this.workers.get(e.id);
+        if (!w) break;
+        c.workers.add(e.id);
+        c.sessions.add(w.session);
+        break;
+      }
     }
     if (c.structure) this.structureVersion++;
     return c;
@@ -326,6 +340,7 @@ export class WorldStore {
 
   private dropWorker(id: string): void {
     this.workers.delete(id);
+    this.inboxDismissed.delete(id);
     this.since.delete(id);
     this.localDesks.delete(id);
     this.crewSeen.forget(id);

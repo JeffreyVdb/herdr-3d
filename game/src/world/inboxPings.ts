@@ -17,6 +17,7 @@
  */
 
 import { isFreelancer, type CrewRole } from './crew';
+import { isDismissed, type InboxCandidate, type InboxDismissed } from './inbox';
 
 export type PingKind = 'needs' | 'finished';
 
@@ -29,6 +30,19 @@ export interface PingEntry {
   reason: 'blocked' | 'done';
   /** When the episode started (unix ms): a new `since` is a new episode. */
   since: number;
+}
+
+/**
+ * What `InboxPings.update` is fed: every worker needing you, and every done one that is not read or dismissed (#106:
+ * a dismissed done episode does not ping, so feeding it without that row cancels its pending settle).
+ */
+export function pingEntries(candidates: Iterable<InboxCandidate>, dismissed: InboxDismissed | undefined): PingEntry[] {
+  const out: PingEntry[] = [];
+  for (const w of candidates) {
+    if (w.display === 'done' && isDismissed(dismissed, w.id, w.since)) continue;
+    if (w.display === 'needs_you' || w.display === 'done') out.push({ id: w.id, name: w.name, session: w.session, role: w.role, reason: w.display === 'needs_you' ? 'blocked' : 'done', since: w.since });
+  }
+  return out;
 }
 
 /** Which pings are wanted (InboxSettings). */

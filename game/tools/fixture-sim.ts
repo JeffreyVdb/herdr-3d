@@ -34,6 +34,8 @@ import { AiSim } from './fixture-ai.ts';
 import { FollowupSim } from './fixture-followup.ts';
 // #98: "Classify unknown commands" (`activity.get` / `activity.set`, `sim.activity_settings`).
 import { ActivitySettingsSim } from './fixture-activity-settings.ts';
+// #106: the inbox's dismissals (`inbox.dismiss`, `sim.status`, `simfail=no_inbox`).
+import { InboxSim } from './fixture-inbox.ts';
 // M16: the transcript view (`transcript.watch`, `sim.transcript`, `simfail=no_m16`).
 import { TranscriptSim } from './fixture-transcript.ts';
 // #57: agents' structured questions (`sim.ask`, `worker.answer_ask`).
@@ -210,6 +212,7 @@ export class SimWorld {
       this.activitySettings.changed(send); // #98: the classifier's too
     };
     this.activitySettings = new ActivitySettingsSim({ ai: this.ai, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) });
+    this.inbox = new InboxSim({ workers: this.workers, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now() }, o.fail !== 'no_inbox');
     this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
     this.boards = new BoardSim(
       {
@@ -238,6 +241,7 @@ export class SimWorld {
   private readonly ai: AiSim;
   /** #98: "Classify unknown commands" (tools/fixture-activity-settings.ts). */
   private readonly activitySettings: ActivitySettingsSim;
+  private readonly inbox: InboxSim;
   /** M13: the screen share (tools/fixture-share.ts). */
   private readonly share = new ShareSim(
     (send, m) => this.emit(send, m),
@@ -344,6 +348,7 @@ export class SimWorld {
     this.ai.decorate(world); // #92
     this.followups.decorate(world); // #90
     this.activitySettings.decorate(world); // #98
+    this.inbox.decorate(world); // #106
     this.share.decorate(world); // M13
     return { t: 'world.snapshot', seq: this.seq, world: structuredClone(world) };
   }
@@ -419,6 +424,7 @@ export class SimWorld {
       if (this.limits.handle(m.t, send, ack)) return;
       if (this.ai.handle(m.t, a, send, ack, fail)) return; // #92
       if (this.activitySettings.handle(m.t, a, send, ack)) return; // #98
+      if (this.inbox.handle(m.t, a, send, ack)) return; // #106
       if (this.share.handle(m.t, a, send, ack, fail)) return; // M13
       switch (m.t) {
         case 'building.create':

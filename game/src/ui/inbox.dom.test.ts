@@ -8,18 +8,21 @@ import { displaySection } from './settingsSections';
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const NOW = 1_800_000_000_000;
 
-function mount(plateHeight = 40): { chip: InboxChip; go: ReturnType<typeof vi.fn<(id: string) => void>>; plate: HTMLElement; now: { t: number } } {
+function mount(plateHeight = 40): { chip: InboxChip; go: ReturnType<typeof vi.fn<(id: string) => void>>; dismiss: ReturnType<typeof vi.fn<(id: string) => void>>; plate: HTMLElement; now: { t: number } } {
   const plate = document.createElement('aside');
   // jsdom has no layout: the plate is as tall as the test says.
   plate.getBoundingClientRect = () => ({ left: 900, top: 72, right: 1268, bottom: 72 + plateHeight, width: plateHeight ? 368 : 0, height: plateHeight, x: 900, y: 72, toJSON: () => ({}) });
   document.body.append(plate);
   const go = vi.fn<(id: string) => void>();
+  const dismiss = vi.fn<(id: string) => void>();
   const now = { t: NOW };
-  const chip = new InboxChip(document.body, plate, { go, now: () => now.t });
-  return { chip, go, plate, now };
+  const chip = new InboxChip(document.body, plate, { go, dismiss, now: () => now.t });
+  return { chip, go, dismiss, plate, now };
 }
 
 const entry = (id: string, over: Partial<InboxEntry> = {}): InboxEntry => ({ id, name: id, harness: 'claude', where: 'Herdr 3D › h3d-sesame-3', reason: 'Needs you', blocked: true, since: NOW - 4 * 60_000, ...over });
+const done = (id: string, over: Partial<InboxEntry> = {}): InboxEntry => entry(id, { reason: 'Finished', blocked: false, dismissable: true, ...over });
+const xOf = (c: InboxChip) => [...c.root.querySelectorAll<HTMLButtonElement>('.ib-x')];
 const chipOf = (c: InboxChip) => c.root.querySelector<HTMLButtonElement>('.ib-chip')!;
 const rowsOf = (c: InboxChip) => [...c.root.querySelectorAll<HTMLButtonElement>('.ib-row')];
 const key = (el: Element, k: string) => {
@@ -83,6 +86,52 @@ describe('InboxChip', () => {
     rowsOf(chip)[1]!.querySelector('.ib-where')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(go).toHaveBeenCalledExactlyOnceWith('b');
     expect(chip.summary().open).toBe(false);
+  });
+
+  it('a finished row has a × (a real button, named for the worker); a row that needs you has none (#106)', () => {
+    const { chip } = mount();
+    chip.set([entry('Chirp'), done('Nutmeg')]);
+    chipOf(chip).click();
+    expect(rowsOf(chip)).toHaveLength(2);
+    expect(xOf(chip).map((x) => [x.tagName, x.type, x.dataset.id, x.getAttribute('aria-label')])).toEqual([['BUTTON', 'button', 'Nutmeg', 'Dismiss Nutmeg']]);
+    // Beside the row's button, not inside it (a button cannot hold one).
+    expect(xOf(chip)[0]!.closest('.ib-row')).toBeNull();
+    expect(chip.summary().rows.map((r) => r.dismissable)).toEqual([false, true]);
+  });
+
+  it('the × dismisses and does not go to the worker; the list stays open (#106)', () => {
+    const { chip, go, dismiss } = mount();
+    chip.set([done('a'), done('b')]);
+    chipOf(chip).click();
+    xOf(chip)[1]!.querySelector('svg')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(dismiss).toHaveBeenCalledExactlyOnceWith('b');
+    expect(go).not.toHaveBeenCalled();
+    expect(chip.summary().open).toBe(true);
+    // The row leaves when the host says so (the bridge's event), and the focus moves to a neighbour's ×.
+    xOf(chip)[1]!.focus();
+    xOf(chip)[1]!.click();
+    chip.set([done('a')]);
+    expect(rowsOf(chip).map((r) => r.dataset.id)).toEqual(['a']);
+    expect(document.activeElement).toBe(xOf(chip)[0]);
+  });
+
+  it('the arrows walk each row and then its × (#106)', () => {
+    const { chip } = mount();
+    chip.set([entry('a'), done('b'), done('c')]);
+    chipOf(chip).focus();
+    key(chipOf(chip), 'ArrowDown');
+    const at = () => (document.activeElement as HTMLElement).dataset.key;
+    expect(at()).toBe('row:a');
+    key(document.activeElement!, 'ArrowDown');
+    expect(at()).toBe('row:b');
+    key(document.activeElement!, 'ArrowDown');
+    expect(at()).toBe('x:b');
+    key(document.activeElement!, 'ArrowDown');
+    expect(at()).toBe('row:c');
+    key(document.activeElement!, 'End');
+    expect(at()).toBe('x:c');
+    key(document.activeElement!, 'ArrowUp');
+    expect(at()).toBe('row:c');
   });
 
   it('live: the open list follows the inbox, keeping focus on the same row', () => {

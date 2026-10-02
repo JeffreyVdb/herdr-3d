@@ -85,7 +85,7 @@ import { loadBoardTexture } from './render/whiteboardTexture';
 import type { WhiteboardState } from './net/protocol';
 // #100: the inbox's pings (desktop notifications, the chime)
 import { awayText, burstText, BURST_TAG, DesktopNotify, pingTitle } from './ui/desktopNotify';
-import { InboxPings, type PingEntry, type PingOut } from './world/inboxPings';
+import { InboxPings, pingEntries, type PingEntry, type PingOut } from './world/inboxPings';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
@@ -328,7 +328,7 @@ export class App {
     );
     // Nothing re-renders it between readings but a reading turning stale.
     setInterval(() => this.limitsWidget.tick(), 30_000);
-    this.inbox = new InboxChip(this.hud.root, this.limitsWidget.root, { go: (id) => void this.goToWorker(id), now: () => Date.now() });
+    this.inbox = new InboxChip(this.hud.root, this.limitsWidget.root, { go: (id) => void this.goToWorker(id), dismiss: (id) => void this.dismissInbox(id), now: () => Date.now() });
     this.inbox.enabled = this.inboxPrefs.settings.show;
     this.inboxPrefs.onChange(() => {
       this.inbox.enabled = this.inboxPrefs.settings.show;
@@ -679,10 +679,7 @@ export class App {
     const snapshot = this.store.snapshots !== this.pingSnapshots;
     this.pingSnapshots = this.store.snapshots;
     if (!snapshot && !c.structure && !c.workers.size && !c.sessions.size) return;
-    const entries: PingEntry[] = [];
-    for (const w of this.needCandidates()) {
-      if (w.display === 'needs_you' || w.display === 'done') entries.push({ id: w.id, name: w.name, session: w.session, role: w.role, reason: w.display === 'needs_you' ? 'blocked' : 'done', since: w.since });
-    }
+    const entries = pingEntries(this.needCandidates(), this.store.inboxDismissed);
     this.pings.update(entries, snapshot);
   }
 
@@ -700,7 +697,7 @@ export class App {
     if (p.t === 'burst') {
       text = burstText(p.entries, p.needs);
       this.notify.close(p.entries.map((e) => e.id));
-      shown = this.notify.show({ ...text, tag: BURST_TAG, onClick: () => this.inbox.openList() }, s.desktop);
+      shown = this.notify.show({ ...text, tag: BURST_TAG, onClick: () => void this.openInboxList() }, s.desktop);
     } else {
       const id = p.entry.id;
       text = this.pingText(p.entry);
@@ -2479,15 +2476,34 @@ export class App {
 
   /** #100: who is in the inbox, in its list's order (needs you, then done; no building first; freelancers' done per Settings). */
   inboxItems(): NeedItem[] {
-    return inboxQueue(this.needCandidates(), { freelancers: this.inboxPrefs.settings.freelancers });
+    return inboxQueue(this.needCandidates(), { freelancers: this.inboxPrefs.settings.freelancers, dismissed: this.store.inboxDismissed });
   }
 
   /** #100: the inbox list's rows. */
   private inboxEntries(): InboxEntry[] {
     return this.inboxItems().flatMap((item) => {
       const v = this.store.workerView(item.id);
-      return v ? [{ id: item.id, name: item.name, harness: v.harness, where: inboxWhere(this.store, item.session), reason: inboxReason(v), blocked: item.reason === 'blocked', since: item.since }] : [];
+      return v ? [{ id: item.id, name: item.name, harness: v.harness, where: inboxWhere(this.store, item.session), reason: inboxReason(v), blocked: item.reason === 'blocked', dismissable: item.reason === 'done', since: item.since }] : [];
     });
+  }
+
+  /**
+   * #106: a finished row's ×: the bridge hides it for every browser until that worker's next working → done (the row
+   * goes when `inbox.dismissed` comes back). Only a worker that is done now; a bridge from before #106 says so.
+   */
+  private async dismissInbox(id: string): Promise<void> {
+    const v = this.store.workerView(id);
+    if (v?.display !== 'done') return;
+    const r = await this.send('inbox.dismiss', { id, status_since: v.since });
+    if (!r.ok) this.hud.toast(r.code === 'unknown_command' ? 'This herdr-world can’t dismiss inbox rows yet. Update the bridge to use it.' : commandFailure('inbox.dismiss', r.code, r.message, { worker: v.name }), 5200, 'error');
+  }
+
+  /**
+   * #106: a collapsed burst notification's click: shuts whatever modal is up first (as a single worker's does, through
+   * `goToWorker`), then opens the inbox's list. Nothing when the whiteboard stays up asking about its changes.
+   */
+  private async openInboxList(): Promise<void> {
+    if (await this.dismissOverlays()) this.inbox.openList();
   }
 
   /**
@@ -2498,7 +2514,10 @@ export class App {
    */
   async goToWorker(id: string): Promise<boolean> {
     if (this.transitioning) return false;
-    if (!this.store.workerView(id)) return false;
+    const was = this.store.workerView(id);
+    if (!was) return false;
+    // #106: going to a finished worker reads it: the episode (its `since` now) leaves the inbox once you are there.
+    const finished = was.display === 'done' ? was.since : null;
     // A notification's click can come with any dialog up (the window was in the background): it goes first.
     if (!(await this.dismissOverlays()) || this.transitioning) return false;
     const session = this.store.workerView(id)?.worker.session;
@@ -2516,6 +2535,7 @@ export class App {
       this.laptops.transcript.setMode('terminal', false);
       this.laptops.focusSeat();
     }
+    if (finished !== null) void this.send('inbox.dismiss', { id, status_since: finished }); // #106 (an older bridge just ignores it)
     return true;
   }
 

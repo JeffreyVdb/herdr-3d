@@ -148,6 +148,8 @@ export interface H3DDebug {
   simAsk(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #83: the fixture simulator's `sim.wrapup`: an armed worker's transcript reports `clean`, `blocked` (with a reason) or `none`. */
   simWrapUp(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** #106: the simulator moves a worker to a status (`sim.status`, a `worker.status` with a new `status_since`; fixture server only). */
+  simStatus(id: string, status: string): Promise<boolean>;
   /** M16 phase 2: the simulator's `sim.image` (makes a PNG, answers its ImageRef, to push in `simTranscript` items). */
   simImage(args: Record<string, unknown>): Promise<Record<string, unknown> | null>;
   /** M16 phase 2: the image feeds alive (one per worker whose images are on screen) and the object URLs they hold. */
@@ -382,6 +384,7 @@ const h3d: H3DDebug = {
     const r = await app.client.request('sim.ask' as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
+  simStatus: async (id, status) => (await app?.client.request('sim.status' as CommandName, { id, status } as never))?.ok ?? false,
   simWrapUp: async (args) => {
     if (!app) return { ok: false, code: 'not_started' };
     // `sim.wrapup` is the fixture simulator's, not a bridge command.

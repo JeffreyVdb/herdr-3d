@@ -352,4 +352,17 @@ describe('WorldStore: building logos (M3d)', () => {
       expect(logoHashOf(s.buildings.get('b1'))).toBeNull();
     }
   });
+
+  it('keeps the inbox dismissals (#106): the snapshot sets them, an event adds one, an older bridge has none, a gone worker loses its own', () => {
+    const s = new WorldStore(1000);
+    s.applySnapshot(snap({ floors: [floor('top')], workers: [worker('a', 'top', { status: 'done', status_since: 500 }), worker('b', 'top', { status: 'done', status_since: 600 })], inbox_dismissed: { a: 500, junk: 'x' as never } }));
+    expect([...s.inboxDismissed]).toEqual([['a', 500]]);
+    s.applyEvent({ t: 'inbox.dismissed', seq: 11, id: 'b', status_since: 600 });
+    expect(Object.fromEntries(s.inboxDismissed)).toEqual({ a: 500, b: 600 });
+    s.applyEvent({ t: 'worker.removed', seq: 12, id: 'a', session: 'top', workspace_id: 'ws-a' });
+    expect(Object.fromEntries(s.inboxDismissed)).toEqual({ b: 600 });
+    // A reconnect's snapshot is the whole truth; a bridge from before #106 sends none.
+    s.applySnapshot(snap({ floors: [floor('top')], workers: [worker('b', 'top', { status: 'done', status_since: 600 })] }, 20));
+    expect(s.inboxDismissed.size).toBe(0);
+  });
 });

@@ -123,6 +123,49 @@
   text-align: left;
   cursor: pointer;
 }
+/*
+ * #106 the ×: a finished row's own button beside the row's (a button cannot hold one), a quiet label-maker mark at the
+ * row's right edge. Always drawn, never hover-only (touch, keyboard); it brightens with the row, and the row leaves it
+ * room so the tape never runs under it. 32 px square for the thumb, the glyph 12.
+ */
+.ib-item {
+  position: relative;
+}
+.ib-item[data-dismissable='true'] .ib-row {
+  padding-right: 38px;
+}
+.ib-x {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: -16px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-on-ink-2);
+  cursor: pointer;
+}
+.ib-x svg {
+  width: 12px;
+  height: 12px;
+}
+.ib-item:hover .ib-x,
+.ib-x:focus-visible {
+  color: var(--text-on-ink);
+}
+.ib-x:hover {
+  background: rgb(255 255 255 / 14%);
+  color: var(--text-on-ink);
+}
+.ib-x:focus-visible {
+  outline-offset: -2px;
+  background: rgb(255 255 255 / 14%);
+}
 .ib-row:hover {
   background: rgb(255 255 255 / 7%);
 }

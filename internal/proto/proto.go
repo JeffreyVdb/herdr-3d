@@ -191,6 +191,9 @@ type World struct {
 	// #98 activity: "Classify unknown commands", its settings and state.
 	// nil (left out) when the bridge has no AI service.
 	Activity *ActivityState `json:"activity,omitempty"`
+	// #106 inbox: the dismissed finished rows, worker id → the status_since
+	// of the done episode hidden. Always present ({} when none).
+	InboxDismissed map[string]int64 `json:"inbox_dismissed"`
 }
 
 // HireOptions lists what can be hired, per harness.
@@ -417,6 +420,7 @@ type Worktree struct {
 //	screen.state     the fields of ScreenState
 //	ai.update        the fields of AI (#92)
 //	followups.update the fields of Followups (#90)
+//	inbox.dismissed  id, status_since (#106)
 type Event struct {
 	T           string    `json:"t"`
 	Seq         uint64    `json:"seq"`

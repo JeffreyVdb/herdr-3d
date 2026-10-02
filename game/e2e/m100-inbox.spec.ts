@@ -163,3 +163,80 @@ test('the inbox takes the plate’s spot when the plate is switched off, and Set
   await expect.poll(() => inbox(page)).toMatchObject({ shown: true });
   clean();
 });
+
+test('dismiss: a finished row’s × hides it (via the bridge), a click on one reads it, a new done brings it back; needs-you rows have neither', async ({ page }) => {
+  test.setTimeout(180_000);
+  const clean = watchErrors(page);
+  const all = workers();
+  const setStatus = statuses(page);
+  await emptyInbox(page, all, setStatus);
+  const sim = (w: Worker, status: string) => page.evaluate(([id, st]) => window.__h3d.simStatus(id, st), [w.id, status] as const);
+  const dismissals = () => page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'inbox.dismiss'));
+  const since = (w: Worker) => page.evaluate((id) => window.__h3d.inboxItems().find((x) => x.id === id)?.since, w.id);
+
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await frames(page, 3);
+  const lot = pick(all, 'scratchpad', 'w3');
+  const here = pick(all, 'herdr-3d', 'w6');
+  const baker = pick(all, 'pastry', 'wb');
+  const marble = pick(all, 'pastry', 'w3');
+  expect(await sim(lot, 'blocked')).toBe(true);
+  for (const w of [here, baker, marble]) expect(await sim(w, 'done')).toBe(true);
+  await expect.poll(() => inbox(page)).toMatchObject({ shown: true, count: 4, blocked: true });
+  await page.locator('.ib-chip').click();
+  const rows = page.locator('.ib-row');
+  await expect(rows).toHaveCount(4);
+
+  // A × on every finished row and none on the row that needs you; a real, named button, drawn without hover.
+  expect((await inbox(page))!.rows.map((r) => [r.id, r.dismissable])).toEqual([[lot.id, false], [here.id, true], [baker.id, true], [marble.id, true]]);
+  await expect(page.locator('.ib-x')).toHaveCount(3);
+  await expect(page.locator(`.ib-item:has(.ib-row[data-id="${lot.id}"]) .ib-x`)).toHaveCount(0);
+  await expect(page.locator(`.ib-x[data-id="${here.id}"]`)).toHaveAttribute('aria-label', /^Dismiss \S+/);
+  await expect(page.locator(`.ib-x[data-id="${here.id}"]`)).toBeVisible();
+  console.log(`dismiss shot: ${await shot(page, 'm106-inbox-dismiss')}`);
+
+  // The × hides the row for good: the bridge records it, says so, the row and the count go; the click did not go to the worker.
+  const hereSince = (await since(here))!;
+  await page.locator(`.ib-x[data-id="${here.id}"]`).click();
+  await expect(rows).toHaveCount(3);
+  expect((await inbox(page))!.rows.map((r) => r.id)).toEqual([lot.id, baker.id, marble.id]);
+  await expect(page.locator('.ib-chip')).toHaveText('Inbox3');
+  expect(await dismissals()).toMatchObject([{ t: 'inbox.dismiss', args: { id: here.id, status_since: hereSince }, result: { ok: true, data: { dismissed: true } } }]);
+  expect(await page.evaluate(() => [window.__h3d.seated(), window.__h3d.where()?.loaded])).toEqual([null, 'herdr-3d']);
+  expect((await inbox(page))!.open).toBe(true);
+
+  // Another browser's dismissal arrives as an event: the row goes here too.
+  await page.evaluate(([id, st, n]) => window.__h3d.inject({ t: 'inbox.dismissed', seq: n, id, status_since: st }), [marble.id, (await since(marble))!, 3_000_000] as const);
+  await expect.poll(async () => (await inbox(page))!.rows.map((r) => r.id)).toEqual([lot.id, baker.id]);
+
+  // By keyboard: the arrows walk each row and then its ×; Enter dismisses; the focus lands on a neighbour, not the page.
+  await page.locator(`.ib-row[data-id="${baker.id}"]`).focus();
+  await page.keyboard.press('ArrowDown');
+  expect(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.key)).toBe(`x:${baker.id}`);
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await inbox(page))!.rows.map((r) => r.id)).toEqual([lot.id]);
+  expect(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.key)).toBe(`row:${lot.id}`);
+
+  // Its next working → done is a new episode: the row is back (and a × on it with a new since).
+  expect(await sim(here, 'working')).toBe(true);
+  expect(await sim(here, 'done')).toBe(true);
+  await expect.poll(async () => (await inbox(page))!.rows.map((r) => r.id)).toEqual([lot.id, here.id]);
+  expect((await since(here))!).toBeGreaterThan(hereSince);
+
+  // A needs-you row is not read by being gone to: it stays; a finished row is read: it goes.
+  await rows.first().click();
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated()), { timeout: 20_000 }).toBe(lot.id);
+  expect((await inbox(page))!.count).toBe(2);
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
+  await page.locator('.ib-chip').click();
+  await page.locator(`.ib-row[data-id="${here.id}"]`).click();
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated()), { timeout: 20_000 }).toBe(here.id);
+  await expect.poll(async () => (await inbox(page))!.count).toBe(1);
+  expect((await dismissals()).at(-1)).toMatchObject({ args: { id: here.id }, result: { ok: true } });
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
+  await page.locator('.ib-chip').click();
+  expect((await inbox(page))!.rows.map((r) => [r.id, r.reason])).toEqual([[lot.id, 'Needs you']]);
+  clean();
+});

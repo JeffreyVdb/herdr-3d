@@ -180,6 +180,10 @@ out by a bridge without the AI service or from before #90.
 `activity` (#98) is "Classify unknown commands"' state (see [Activity](#activity)), left out by a bridge without the AI
 service or from before #98; a worker's own `activity` is in the worker.
 
+`inbox_dismissed` (#106) holds the dismissed rows of the game's inbox: worker id → the `status_since` of the done episode
+that was dismissed (see [Inbox](#inbox)); `{}` when there are none. A bridge from before #106 leaves the key out: a
+client reads that as `{}`.
+
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
 
@@ -379,6 +383,7 @@ and remember the last `seq` applied.
 | `limits.update` | `provider`, `plan`, `windows`, `at`, `stale`, `error`?, `source`?, `reached`?, `credits`? | a provider's plan limits were read (flat in the event, see [Plan limits](#plan-limits)); one per provider per read, about every 2 minutes while a client is connected |
 | `ai.update` | `classifier`, `llm`, `last_error`? | #92: the AI integration's state changed (a role saved or cleared, a test passed or failed, a key rejected); the whole state, flat in the event (see [AI integration](#ai-integration)) |
 | `followups.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `tested` | #90: the follow-up questions' state changed (a setting, a passing test, a model's state); the whole state, flat in the event (see [Follow-up questions](#follow-up-questions)) |
+| `inbox.dismissed` | `id`, `status_since` | #106: a finished worker's inbox row was dismissed, by any client (see [Inbox](#inbox)); sent to every client, only when the dismissal is new |
 | `worker.activity` | `id`, `session`, `workspace_id`, `activity`? | #98: the worker's `activity` changed (absent: cleared); only on a change, at most twice a second per worker. A change that comes with a status change is in that `worker.upsert` instead (see [Activity](#activity)) |
 | `activity.update` | `model_enabled`, `threshold`, `margin`, `daily_cap`, `calls_today`, `cache_size`, `state`, `classifier`, `env` | #98: "Classify unknown commands"' state changed (a setting, a call counted, the classifier's state); the whole state, flat in the event. Its `classifier` is a role's state (a string), not `ai.update`'s object: decode it by its `t` (see [Activity](#activity)) |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
@@ -485,6 +490,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `followups.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"name", "expect", "score", "flagged", "questions"?, "source"?, "error"?}], "latency_ms"}` | `followups.update` when it changes `tested` |
 | `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…]}` | `worker.prompt`'s | the worker's upsert without its `followup` |
 | `worker.dismiss_followup` | `{"id", "turn_id"}` | — | the worker's upsert without its `followup` (before the ack) |
+| `inbox.dismiss` | `{"id", "status_since"}` | `{"dismissed": bool}` (see [Inbox](#inbox)) | `inbox.dismissed` (before the ack) when the dismissal is new |
 | `activity.get` | `{}` | "Classify unknown commands"' state (see [Activity](#activity)) | — |
 | `activity.set` | `{"model_enabled"?: bool, "threshold"?: 0.05–0.99, "margin"?: 0–0.9, "daily_cap"?: 1–100000}` | its state | `activity.update` (before the ack) |
 | `whiteboard.get` | `{"floor"}` | the board's state, `{"floor", "version", "author", "at", "render_version", "render", "stale", "stale_pins"}` (its content is HTTP, see [Whiteboard](#whiteboard)) | — |
@@ -2577,6 +2583,35 @@ flat:
 can't place goes to TypeSafe (Jev). After normalising and scrubbing it can still contain paths, hostnames or script
 names. It is opt-in, separate from configuring the AI integration, never includes tool output, and the Settings section
 says so above the toggle.
+
+### Inbox
+
+The game's inbox (#100) is derived in the client from the world: the workers that need you and the employees that are
+done. The bridge keeps one thing for it (#106): which **done** rows were dismissed, so a dismissal survives a reload, a
+bridge restart and a second browser.
+
+- **`inbox.dismiss {"id", "status_since"}`** hides a done worker's row until that worker's next working → done. It is
+  recorded only while the worker is `done` **and** its present `status_since` equals the one sent; otherwise it is
+  ignored: the ack is `{"dismissed": false}`, nothing is stored and no event is sent (the client's view was stale: the
+  worker went back to work, or it was dismissed from another browser and has moved on). An unknown worker is ignored
+  the same way. A missing `id`, or a `status_since` that is not positive, is `bad_request`. Dismissing an episode
+  twice acks `{"dismissed": true}` the second time and sends nothing.
+- **`inbox.dismissed {"id", "status_since"}`** goes to every client, the sender too, before its ack, when a dismissal
+  is new. A client hides that worker's row while its own `status_since` for the worker equals the event's.
+- **`inbox_dismissed`** in the snapshot is the whole map, `{<worker id>: <status_since>}`.
+- **Episode semantic**: a dismissal is the done episode's `status_since`, not "the worker". It holds while the worker
+  is `done` with that same `status_since`; when the worker works again its `status_since` moves, the bridge forgets the
+  dismissal (on that status change, on startup, when the worker's workspace closes, and with the worker's row in the
+  database), and the next working → done is a new episode that is listed again. A client applies the same rule to what
+  it holds, so it never needs a "removed" event: a dismissal whose `status_since` is not the worker's current one is
+  inert.
+- **Needs-you rows cannot be dismissed**: they leave when the need is answered. Only a `done` worker is accepted.
+- The game sends `inbox.dismiss` for the × on a Finished row, and also when a successful go-to (a row's click or its
+  desktop notification) reaches a worker whose display is `done`: going to it reads it (see `docs/decisions.md`
+  "#106: dismissing finished rows").
+
+Stored in SQLite `inbox_dismissed (worker_uuid PRIMARY KEY REFERENCES worker(id) ON DELETE CASCADE, status_since,
+dismissed_at)`.
 
 ### Errors
 
