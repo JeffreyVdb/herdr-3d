@@ -10,7 +10,7 @@ import { App, type LookAt, type Pose } from './app';
 import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
 import { runBench, type BenchOptions, type BenchResult } from './bench';
 import type { ScreenMeshInfo } from './laptop';
-import type { ActivityState, BoardMessage, CommandName, WorldEvent, FollowupsState } from './net/protocol';
+import type { ActivityState, BoardMessage, CommandName, WorldEvent, FollowupsState, Worker } from './net/protocol';
 import type { ArrivalInfo } from './render/arrivals';
 import type { CrewInfo } from './render/office';
 import type { HireSummary } from './ui/hire';
@@ -95,6 +95,8 @@ export interface H3DDebug {
   enterFloor(session: string, pose?: Pose): Promise<void>;
   /** Applies a protocol event as if the bridge had sent it (drives live updates deterministically). */
   inject(e: WorldEvent): void;
+  /** The world's worker as the bridge sent it (a copy; null: none). */
+  worker(id: string): Worker | null;
   leaveFloor(): Promise<void>;
   /** `y` (feet above the street) places you on any floor, landing, the street or in the lobby. */
   setPose(p: Pose): void;
@@ -190,7 +192,11 @@ export interface H3DDebug {
   /** M4: workers walking out (M6b: or dropping in) right now (phase, position, how far along, what their desk shows). */
   arrivals(): ArrivalInfo[];
   /** M4: walks that ended: `played` false when nobody could see it (it resolved at once). */
-  arrivalLog(): Array<{ id: string; kind: 'in' | 'out'; played: boolean; session: string; desk: number }>;
+  arrivalLog(): Array<{ id: string; kind: 'in' | 'out' | 'deliver'; played: boolean; session: string; desk: number }>;
+  /** M6c: how far the corner office's glass door is open (0..1; it opens for a walker up the stair like for you). */
+  mezzDoor(): number;
+  /** M6c: the in-trays of the floor with an interior: per orchestrator desk, the folders in it (edge colours, oldest first); `waiting`: reports queued behind a delivery; `pending`: deliveries not yet on a tray. */
+  trays(): { trays: Array<{ desk: number; worker: string; folders: number; edges: number[] }>; waiting: number[]; pending: number };
   /** M4: plays walks `k` times as fast (tests). */
   arrivalRate(k: number): void;
   /** M4: the desks of the floor with an interior: who sits there, whether its "+" shows, what a walk holds it as. */
@@ -345,6 +351,10 @@ const h3d: H3DDebug = {
   },
   leaveFloor: async () => app?.leaveFloor(),
   inject: (e) => app?.inject(e),
+  worker: (id) => {
+    const w = app?.store.workers.get(id);
+    return w ? (JSON.parse(JSON.stringify(w)) as Worker) : null;
+  },
   setPose: (p) => app?.setPose(p),
   pose: () => (app?.mode === 'floor' ? app.pose() : null),
   plan: (open) => app?.setPlan(open),
@@ -434,6 +444,8 @@ const h3d: H3DDebug = {
   arrivals: () => app?.arrivals.info(performance.now() / 1000) ?? [],
   arrivalLog: () => structuredClone(app?.arrivals.log ?? []),
   arrivalRate: (k) => app?.arrivals.setRate(k, performance.now() / 1000),
+  trays: () => app?.trayStates() ?? { trays: [], waiting: [], pending: 0 },
+  mezzDoor: () => app?.office?.mezzDoor01 ?? 0,
   desks: () => app?.deskStates() ?? [],
   deskArt: (d) => {
     const o = app?.office;

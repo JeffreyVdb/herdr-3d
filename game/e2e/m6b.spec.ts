@@ -49,7 +49,7 @@ test('a hire drops in at an empty desk, and you sit at its screen while it lands
   await page.keyboard.press('e');
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.state, { timeout: 15_000 }).toBe('ready');
   // Slowed down, so the sitting happens while the drop still plays (it is only for looks).
-  await page.evaluate(() => window.__h3d.arrivalRate(0.25));
+  await page.evaluate(() => window.__h3d.arrivalRate(0.1));
   await page.locator('#hire-task').focus();
   await page.keyboard.press('Enter');
   // As soon as the hire lands in the world (the next frame): sit at the new worker's screen, as E does.

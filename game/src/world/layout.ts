@@ -147,6 +147,12 @@ export interface Mezzanine {
   door: { x0: number; x1: number; z: number; height: number };
   /** Your desk: the seat (floor under the chair), the desk centre (its long side runs north-south), and the desk-art yaw. */
   desk: { seat: Vec2; desk: Vec2; yaw: number };
+  /**
+   * M6c: the orchestrator's desk up here (game-only "corner seat", see docs/decisions.md): the slot space of a
+   * floor desk (the worker faces +z at yaw 0, its desk SEAT_OFFSET ahead), the floor at `y`. Only a worker
+   * flagged `corner` sits at it.
+   */
+  orch: Pick<DeskSlot, 'desk' | 'seat' | 'chairIn' | 'yaw'>;
   /** A potted plant in the office's back corner. */
   plant: Vec2;
   /** Sitting at your desk: where the walker goes and which way it looks (at the floor, over the glass). */
@@ -476,6 +482,12 @@ function mezzanineFor(
 
   const plant = { x: r3(rect.x0 + 0.5), z: 0.5 };
 
+  // M6c: the orchestrator's desk by the north wall, east of yours, facing the floor desk (south). Its east side
+  // (towards the door) is the hand-over side; the way there from the door runs along the east wall.
+  const oSeat = { x: r3(width - 3), z: 0.9 };
+  const oDesk = { x: oSeat.x, z: r3(oSeat.z + SEAT_OFFSET) };
+  const orch = { desk: oDesk, seat: oSeat, chairIn: { x: oSeat.x, z: r3(oDesk.z - CHAIR_IN_OFFSET) }, yaw: 0 };
+
   const supports: Support[] = [{ ...rect, y }, ...treads.map((t) => ({ ...t.rect, y: t.y }))];
   const solid = (r: Rect, y0: number, y1: number): Solid => ({ x0: r.x0, z0: r.z0, x1: r.x1, z1: r.z1, y0, y1 });
   const solids: Solid[] = [
@@ -485,6 +497,8 @@ function mezzanineFor(
     solid({ x0: sx0, z0: rect.z1, x1: sx1, z1: bottom - STAIR_TREAD }, 0, 0.5),
     ...glass.map((g) => solid({ x0: g.min[0], z0: g.min[2], x1: g.max[0], z1: g.max[2] }, y, gy1)),
     solid(deskR, y, y + 1.1),
+    solid({ x0: oDesk.x - DESK_W / 2, z0: oDesk.z - DESK_D / 2, x1: oDesk.x + DESK_W / 2, z1: oDesk.z + DESK_D / 2 }, y, y + 1.1),
+    solid({ x0: oSeat.x - 0.3, z0: oSeat.z - 0.3, x1: oSeat.x + 0.3, z1: oSeat.z + 0.3 }, y, y + 1.1),
     solid({ x0: plant.x - 0.25, z0: plant.z - 0.25, x1: plant.x + 0.25, z1: plant.z + 0.25 }, y, y + 1.2),
   ];
   return {
@@ -496,6 +510,7 @@ function mezzanineFor(
     glass,
     door,
     desk: { seat, desk: deskC, yaw: Math.PI / 2 },
+    orch,
     plant,
     sit,
     slab: box(rect.x0, under, rect.z0, rect.x1, y, rect.z1),

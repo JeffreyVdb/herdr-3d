@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { attribute, mix, texture, uv, vec2 } from 'three/tsl';
-import { deskOwners, poseAt, timeline, type ArrivalKind, type ArrivalPose, type Carry, type DeskShow, type Timeline } from '../world/arrival';
+import { deliveryTimeline, deskOwners, poseAt, timeline, type ArrivalKind, type ArrivalPose, type Carry, type DeskShow, type Timeline } from '../world/arrival';
 import type { CrewLook } from './crewLook';
 import type { Display, ModelCue } from '../world/derive';
 import { deskKit, LAPTOP, PACK_BOX, STICKER_D, type DeskItem, type DeskKit, type ItemKind } from '../world/deskKit';
@@ -9,7 +9,9 @@ import type { Waypoint } from '../world/route';
 import { Crowd } from './crowd';
 import { stickerAtlas, stickerLogo, STICKER_LOGOS } from './deskArt';
 import { itemGeometry, itemMatrix, laptopGeometry, laptopMatrix, PEN_AT, penGeometry, tintMaterial } from './desks';
-import type { AwaySeat, DropPose } from './office';
+import type { AwaySeat, DropPose, OutPose, SwivelPose } from './office';
+import { edgeGeometry, folderGeometry } from './tray';
+import { TRAY_FOLDER_SCALE } from '../world/delivery';
 
 /**
  * M4: workers walking out (sent home: packs a cardboard box at the desk,
@@ -50,6 +52,27 @@ export interface ArrivalSpec {
   crew?: CrewLook;
   /** M6b: the harness on its laptop's sticker. */
   harness?: string | undefined;
+  /** M6c, `deliver`: the report's walk (`route`: seat → hand-over spot; it comes back the same way). Absolute building coordinates. */
+  deliver?: DeliverSpec;
+  /** M6c, `out`: it starts standing at `route[0]` (mid-delivery), not at its desk. */
+  standing?: boolean;
+}
+
+/** M6c: what a report's walk needs besides the route. */
+export interface DeliverSpec {
+  /** The delivery's key in the book (`world/delivery.ts`). */
+  key: string;
+  /** The facing at the hand-over spot. */
+  handYaw: number;
+  /** The orchestrator turns in its chair to take the folder (else the freelancer puts it on the tray). */
+  swivels: boolean;
+  /** The orchestrator's desk index (on the freelancer's floor), and how far its chair swivels to the spot (radians). */
+  orchDesk: number;
+  turn: number;
+  /** Where its hand takes the folder, where the folder lands on the tray, and that folder's turn; the verdict's colour on its edge. */
+  hand: { x: number; y: number; z: number };
+  tray: { x: number; y: number; z: number; yaw: number };
+  edge: number;
 }
 
 interface Active {
@@ -64,6 +87,10 @@ interface Active {
   yielded: boolean;
   /** M6b: the things in its box when it gave the desk up (null: as the packing goes). */
   kept: number | null;
+  /** M6c: a delivery whose folder has landed (reported once). */
+  landed: boolean;
+  /** M6c: a walk-out to start the moment this delivery's hand-over is done (its freelancer's workspace closed meanwhile). */
+  then: ArrivalSpec | null;
 }
 
 /** What the arrivals ask of the office: a desk shown as `away` (null: as the world says again); M6b: a worker dropping in (null: seated). */
@@ -72,6 +99,15 @@ export interface DeskAway {
   desk: number;
   away: AwaySeat | null;
   drop?: DropPose | null;
+  /** M6c: a freelancer out of its chair with a report (null: back in it). */
+  out?: OutPose | null;
+}
+
+/** M6c: an orchestrator swivelled to take a report (null: facing its desk again). */
+export interface SwivelOut {
+  session: string;
+  desk: number;
+  swivel: SwivelPose | null;
 }
 
 /** Test hook view of one walker. */
@@ -101,6 +137,13 @@ export interface ArrivalInfo {
   dy: number;
   /** M6b: gave its desk up to whoever sits there now (see `Arrivals.yieldDesk`). */
   yielded: boolean;
+  /** M6c, deliveries: the folder, how far the orchestrator has swivelled and reaches, the chair. */
+  folder: ArrivalPose['folder'];
+  swivel: number;
+  reach: number;
+  chair: number;
+  landed: boolean;
+  key: string | null;
 }
 
 const CAPACITY = 8;
@@ -113,8 +156,8 @@ const PUFFS = 10;
 const SHADOW_R = 0.3;
 
 /** The props' parts: one InstancedMesh each (`per` instances a walker). */
-type PropKey = 'body' | 'flaps' | 'tape' | 'photo' | 'mug' | 'plant' | 'notebook' | 'pens' | 'laptop' | 'sticker' | 'puff' | 'shadow';
-const PER: Record<PropKey, number> = { body: 1, flaps: 1, tape: 1, photo: 2, mug: 1, plant: 1, notebook: 1, pens: 2, laptop: 1, sticker: 1, puff: PUFFS, shadow: 1 };
+type PropKey = 'body' | 'flaps' | 'tape' | 'photo' | 'mug' | 'plant' | 'notebook' | 'pens' | 'laptop' | 'sticker' | 'puff' | 'shadow' | 'fold' | 'foldEdge';
+const PER: Record<PropKey, number> = { body: 1, flaps: 1, tape: 1, photo: 2, mug: 1, plant: 1, notebook: 1, pens: 2, laptop: 1, sticker: 1, puff: PUFFS, shadow: 1, fold: 1, foldEdge: 1 };
 
 /** Where each keepsake goes in the box (box space: origin at its base centre), poking out of the top. */
 function inBox(item: DeskItem): THREE.Matrix4 {
@@ -165,6 +208,15 @@ export class Arrivals {
   readonly log: Array<{ id: string; kind: ArrivalKind; played: boolean; session: string; desk: number }> = [];
   /** Desks the office should show as the world says again (arrivals that just ended). */
   private released: DeskAway[] = [];
+  /** M6c: orchestrators that swivelled for a walk that has ended, and those swivelled now. */
+  private swivelEnded: Array<{ session: string; desk: number }> = [];
+  private readonly swiveled = new Map<string, { session: string; desk: number }>();
+  /** M6c: orchestrator swivels as of the last `update` (null: facing its desk again). */
+  swivels: SwivelOut[] = [];
+  /** M6c: deliveries whose folder landed on the tray since the last `takeLanded` (their keys). */
+  private landedKeys: string[] = [];
+  /** M6c: the ids of the walks that ended since the last `takeEnded`. */
+  private endedIds: string[] = [];
   private readonly slotM = new THREE.Matrix4();
   private readonly boxM = new THREE.Matrix4();
   private readonly lapM = new THREE.Matrix4();
@@ -178,6 +230,7 @@ export class Arrivals {
   private readonly boxQ = new THREE.Quaternion();
   private readonly up = new THREE.Vector3(0, 1, 0);
   private readonly color = new THREE.Color();
+  private readonly eul = new THREE.Euler();
   private readonly a = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3() };
   private readonly b = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3() };
   private rate = 1;
@@ -199,6 +252,8 @@ export class Arrivals {
       sticker: new THREE.CircleGeometry(STICKER_D / 2, 18).rotateY(Math.PI / 2),
       puff: new THREE.IcosahedronGeometry(0.075, 1),
       shadow: new THREE.CircleGeometry(SHADOW_R, 24).rotateX(-Math.PI / 2),
+      fold: folderGeometry(),
+      foldEdge: edgeGeometry(),
     };
     this.tints = {
       photo: new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 2 * 3), 3),
@@ -227,16 +282,18 @@ export class Arrivals {
       sticker: stickerMat,
       puff: new THREE.MeshToonMaterial({ color: 0xf6f3ea }),
       shadow: new THREE.MeshBasicMaterial({ color: 0x1c2540, transparent: true, opacity: 0.3, depthWrite: false }),
+      fold: new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true }),
+      foldEdge: new THREE.MeshToonMaterial({ color: 0xffffff }),
     };
     const parts: Partial<Record<PropKey, THREE.InstancedMesh>> = {};
     for (const key of Object.keys(PER) as PropKey[]) {
       const mesh = new THREE.InstancedMesh(geo[key], mats[key], CAPACITY * PER[key]);
       mesh.name = `arrivals.${key}`;
       mesh.frustumCulled = false;
-      mesh.castShadow = shadows && (key === 'body' || key === 'flaps' || key === 'tape');
+      mesh.castShadow = shadows && (key === 'body' || key === 'flaps' || key === 'tape' || key === 'fold');
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       for (let i = 0; i < mesh.count; i++) mesh.setMatrixAt(i, ZERO);
-      if (key === 'mug' || key === 'pens') for (let i = 0; i < mesh.count; i++) mesh.setColorAt(i, this.color.set(0xffffff));
+      if (key === 'mug' || key === 'pens' || key === 'foldEdge') for (let i = 0; i < mesh.count; i++) mesh.setColorAt(i, this.color.set(0xffffff));
       this.props.add(mesh);
       parts[key] = mesh;
     }
@@ -265,14 +322,18 @@ export class Arrivals {
     // M6b: a new hire's desk is its own from the first frame, whatever a walk-out there still has to do (shown or not).
     if (spec.kind === 'in') this.yieldDesk(spec.session, spec.desk, spec.id, now);
     const slot = this.free.pop();
-    if (slot === undefined || spec.route.length < (spec.kind === 'in' ? 1 : 2)) {
+    if (slot === undefined || spec.route.length < (spec.kind === 'in' ? 1 : 2) || (spec.kind === 'deliver' && !spec.deliver)) {
       if (slot !== undefined) this.free.push(slot);
       this.skip(spec);
       return false;
     }
     const carry = spec.carry ?? 'box';
     const kit = spec.kind === 'out' && carry === 'box' ? deskKit({ index: spec.desk, yaw: spec.seatYaw }) : null;
-    const tl = timeline(spec.kind, spec.route, spec.seatYaw, carry, kit?.items.length ?? 0);
+    const d = spec.deliver;
+    const tl =
+      spec.kind === 'deliver' && d
+        ? deliveryTimeline(spec.route, spec.seatYaw, { handYaw: d.handYaw, swivels: d.swivels })
+        : timeline(spec.kind, spec.route, spec.seatYaw, carry, kit?.items.length ?? 0, spec.standing === true);
     this.color.set(spec.cue.color);
     this.rim.setXYZ(slot, this.color.r, this.color.g, this.color.b);
     this.logo.setX(slot, STICKER_LOGOS.indexOf(stickerLogo(spec.harness)));
@@ -285,7 +346,7 @@ export class Arrivals {
     });
     this.tints.photo.needsUpdate = this.tints.notebook.needsUpdate = true;
     if (this.parts.mug.instanceColor) this.parts.mug.instanceColor.needsUpdate = true;
-    this.active.push({ spec, tl, t0: now, slot, last: null, kit, yielded: false, kept: null });
+    this.active.push({ spec, tl, t0: now, slot, last: null, kit, yielded: false, kept: null, landed: false, then: null });
     this.showIfWalking();
     return true;
   }
@@ -309,10 +370,13 @@ export class Arrivals {
    */
   yieldDesk(session: string, desk: number, by: string, now: number): boolean {
     let any = false;
+    let out = false;
     for (const a of this.active) {
-      if (a.yielded || a.spec.id === by || a.spec.session !== session || a.spec.desk !== desk) continue;
+      // (`by` sitting at its own desk is no one else: a delivery's id is `deliver:<worker>@<report>`, its worker's is the key's head.)
+      if (a.yielded || a.spec.id === by || a.spec.deliver?.key.startsWith(`${by}@`) || a.spec.session !== session || a.spec.desk !== desk) continue;
       a.yielded = true;
       any = true;
+      if (a.spec.kind === 'deliver') out = true;
       if (a.spec.kind !== 'out') continue;
       const at = (now - a.t0) * this.rate;
       const p = poseAt(a.tl, at);
@@ -320,7 +384,8 @@ export class Arrivals {
       const walk = a.tl.stages.find((s) => s.phase === 'walk');
       if (walk && at < walk.t0) a.t0 = now - walk.t0 / this.rate;
     }
-    if (any) this.released.push({ session, desk, away: null, drop: null });
+    // M6c: a delivery's freelancer out of its chair gives the chair back too.
+    if (any) this.released.push({ session, desk, away: null, drop: null, ...(out ? { out: null } : {}) });
     return any;
   }
 
@@ -329,6 +394,31 @@ export class Arrivals {
     const i = this.active.findIndex((a) => a.spec.id === id);
     if (i < 0) return;
     this.finish(i, false);
+  }
+
+  /**
+   * M6c: delivery `id`'s freelancer is leaving (its workspace closed) while it is at the hand-over: when that is
+   * done (its folder on the tray), `then` (the walk-out, from where it stands) takes over.
+   */
+  chain(id: string, then: ArrivalSpec): boolean {
+    const a = this.active.find((x) => x.spec.id === id && x.spec.kind === 'deliver');
+    if (!a) return false;
+    a.then = then;
+    return true;
+  }
+
+  /** M6c: the ids of the walks that ended (finished or cancelled) since the last call. */
+  takeEnded(): string[] {
+    const out = this.endedIds;
+    this.endedIds = [];
+    return out;
+  }
+
+  /** M6c: the keys of the deliveries whose folder landed on the tray since the last call. */
+  takeLanded(): string[] {
+    const out = this.landedKeys;
+    this.landedKeys = [];
+    return out;
   }
 
   /** Ends every walk (you left the building or the view). */
@@ -344,9 +434,17 @@ export class Arrivals {
     for (const key of Object.keys(PER) as PropKey[]) for (let k = 0; k < PER[key]; k++) this.parts[key].setMatrixAt(a.slot * PER[key] + k, ZERO);
     this.flag();
     this.showIfWalking();
-    this.released.push({ session: a.spec.session, desk: a.spec.desk, away: null, drop: null });
+    // A delivery that ends before its folder landed (cancelled): it never will; the caller says where it went.
+    if (a.spec.kind === 'deliver' && a.spec.deliver) {
+      if (!a.landed && played) this.landedKeys.push(a.spec.deliver.key);
+      this.swivelEnded.push({ session: a.spec.session, desk: a.spec.deliver.orchDesk });
+    }
+    this.released.push({ session: a.spec.session, desk: a.spec.desk, away: null, drop: null, ...(a.spec.kind === 'deliver' ? { out: null } : {}) });
     this.log.push({ id: a.spec.id, kind: a.spec.kind, played, session: a.spec.session, desk: a.spec.desk });
     if (this.log.length > 50) this.log.shift();
+    this.endedIds.push(a.spec.id);
+    // M6c: a delivery cancelled with its freelancer's walk-out chained: that walk will never start, so the freelancer has left.
+    if (!played && a.then) this.endedIds.push(a.then.id);
   }
 
   /** Nobody walking: no draw calls for the props and the crowd. */
@@ -367,15 +465,39 @@ export class Arrivals {
   update(now: number, t: number): DeskAway[] {
     for (let i = this.active.length - 1; i >= 0; i--) {
       const a = this.active[i] as Active;
-      if ((now - a.t0) * this.rate >= a.tl.total) this.finish(i, true);
+      const at = (now - a.t0) * this.rate;
+      if (a.then) {
+        // M6c: its freelancer is leaving: once the hand-over is done, it goes on from where it stands.
+        const hand = a.tl.stages.find((x) => x.phase === 'hand');
+        if (hand && at >= hand.t1) {
+          const then = a.then;
+          this.finish(i, true);
+          // (A walk-out that cannot be shown is over at once: its freelancer has left all the same.)
+          if (!this.start(then, now)) this.endedIds.push(then.id);
+          continue;
+        }
+      }
+      if (at >= a.tl.total) this.finish(i, true);
     }
     const ended = this.released;
     this.released = [];
     const walking: DeskAway[] = [];
+    const swiveled = new Map<string, SwivelOut>();
     for (const a of this.active) {
       const p = poseAt(a.tl, (now - a.t0) * this.rate);
       a.last = p;
       const s = a.spec;
+      if (s.kind === 'deliver' && s.deliver) {
+        this.drawDeliver(a, p, s.deliver);
+        if (p.landed && !a.landed) {
+          a.landed = true;
+          this.landedKeys.push(s.deliver.key);
+        }
+        // Someone else sits at its desk now (`yieldDesk`): the walk goes on without the desk.
+        if (!a.yielded) walking.push({ session: s.session, desk: s.desk, away: null, out: { chair: p.chair } });
+        if (s.deliver.swivels && (p.swivel > 0 || p.reach > 0)) swiveled.set(`${s.session}:${s.deliver.orchDesk}`, { session: s.session, desk: s.deliver.orchDesk, swivel: { turn: p.swivel * s.deliver.turn, reach: p.reach } });
+        continue;
+      }
       if (s.kind === 'in') {
         this.drawDrop(a, p);
         if (!a.yielded) walking.push({ session: s.session, desk: s.desk, away: null, drop: { dy: p.dy, squash: p.squash } });
@@ -389,11 +511,19 @@ export class Arrivals {
     if (this.active.length) this.flag();
     this.crowd.update(t);
     const out = deskOwners(ended, walking);
-    // A drop that just ended hands its figure back to the chair even when an older walk still owns that desk.
+    // A drop that just ended hands its figure back to the chair even when an older walk still owns that desk; M6c: so does a delivery.
     for (const e of ended) {
       const o = out.find((d) => d.session === e.session && d.desk === e.desk);
       if (o && o.drop === undefined) o.drop = null;
+      if (o && e.out === null && o.out === undefined) o.out = null;
     }
+    // M6c: the orchestrators swivelled now, and those that were and are not any more.
+    this.swivels = [...swiveled.values()];
+    for (const key of this.swiveled.keys()) if (!swiveled.has(key)) this.swivels.push({ ...(this.swiveled.get(key) as { session: string; desk: number }), swivel: null });
+    for (const e of this.swivelEnded) if (!swiveled.has(`${e.session}:${e.desk}`) && !this.swivels.some((w) => w.session === e.session && w.desk === e.desk)) this.swivels.push({ ...e, swivel: null });
+    this.swivelEnded = [];
+    this.swiveled.clear();
+    for (const [k, w] of swiveled) this.swiveled.set(k, { session: w.session, desk: w.desk });
     return out;
   }
 
@@ -435,6 +565,65 @@ export class Arrivals {
       this.v.set(seat.x + Math.cos(ang) * r, seat.y + 0.4 + out * 0.2 + (k % 2) * 0.06, seat.z + Math.sin(ang) * r);
       puff.setMatrixAt(a.slot * PUFFS + k, this.m.compose(this.v, this.q.identity(), this.scl.setScalar(size)));
     }
+  }
+
+  /** M6c: a freelancer walking its report over: the walker with the folder, and the folder flying to the tray. */
+  private drawDeliver(a: Active, p: ArrivalPose, d: DeliverSpec): void {
+    const s = a.spec;
+    this.crowd.set(a.slot, {
+      x: p.x,
+      y: p.y,
+      z: p.z,
+      yaw: p.yaw,
+      scale: 1,
+      tint: s.tint,
+      cue: s.cue,
+      display: 'idle',
+      phase: s.phase,
+      ...(p.seated ? {} : { stride: p.stride ?? 0 }),
+      ...(s.crew ? { crew: { ...s.crew, life: null, turn: 0 } } : {}),
+      ...(p.folder === 'carry' || p.folder === 'out' ? { folder: p.folder } : {}),
+    });
+    const P = this.parts;
+    for (const key of Object.keys(PER) as PropKey[]) if (key !== 'fold' && key !== 'foldEdge') for (let k = 0; k < PER[key]; k++) P[key].setMatrixAt(a.slot * PER[key] + k, ZERO);
+    if (p.folder !== 'flight') {
+      P.fold.setMatrixAt(a.slot, ZERO);
+      P.foldEdge.setMatrixAt(a.slot, ZERO);
+      return;
+    }
+    // From the freelancer's hand (to the orchestrator's, if it takes it) to its place on the tray, on an arc, laying itself flat.
+    const u = p.flight;
+    const hand0 = { x: p.x + Math.sin(p.yaw) * 0.33 + Math.cos(p.yaw) * 0.265, y: p.y + 0.52, z: p.z + Math.cos(p.yaw) * 0.33 - Math.sin(p.yaw) * 0.265 };
+    const lerp = (a0: number, a1: number, k: number) => a0 + (a1 - a0) * k;
+    const e = (k: number) => k * k * (3 - 2 * k);
+    let k: number;
+    let from: { x: number; y: number; z: number } = hand0;
+    let to: { x: number; y: number; z: number } = d.tray;
+    let lift = 0.3;
+    if (d.swivels) {
+      if (u < 0.42) {
+        k = e(u / 0.42);
+        to = d.hand;
+        lift = 0.06;
+      } else {
+        k = e((u - 0.42) / 0.58);
+        from = d.hand;
+        lift = 0.12;
+      }
+    } else k = e(u);
+    const x = lerp(from.x, to.x, k);
+    const y = lerp(from.y, to.y, k) + Math.sin(k * Math.PI) * lift;
+    const z = lerp(from.z, to.z, k);
+    // Upright and tilted in the hand, flat on the tray; turning to the tray's yaw as it goes.
+    const flat = e(u);
+    const yaw = p.yaw + (((d.tray.yaw - p.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * flat;
+    this.q.setFromEuler(this.eul.set((Math.PI / 2 - 0.35) * (1 - flat), yaw, 0, 'YXZ'));
+    const size = lerp(1 / TRAY_FOLDER_SCALE, 1, flat);
+    this.m.compose(this.v.set(x, y, z), this.q, this.scl.setScalar(size));
+    P.fold.setMatrixAt(a.slot, this.m);
+    P.foldEdge.setMatrixAt(a.slot, this.m);
+    P.foldEdge.setColorAt(a.slot, this.color.set(d.edge));
+    if (P.foldEdge.instanceColor) P.foldEdge.instanceColor.needsUpdate = true;
   }
 
   private draw(a: Active, p: ArrivalPose): void {
@@ -532,6 +721,12 @@ export class Arrivals {
         wave: p.wave,
         dy: p.dy,
         yielded: a.yielded,
+        folder: p.folder,
+        swivel: p.swivel,
+        reach: p.reach,
+        chair: p.chair,
+        landed: p.landed,
+        key: a.spec.deliver?.key ?? null,
       };
     });
   }

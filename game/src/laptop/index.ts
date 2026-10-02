@@ -578,6 +578,7 @@ export class Laptops {
     if (office.isAsleep) return 'This floor is asleep: wake it from the elevator (L) to use its laptops.';
     if (!v.worker.pane_id) return `${v.name} has no terminal to sit at.`;
     if (office.awayDesks().has(v.desk)) return `${v.name} is not at the desk right now.`;
+    if (office.cornerDesks().includes(v.desk)) return `${v.name} sits up in the corner office.`;
     return null;
   }
 
@@ -990,7 +991,9 @@ export class Laptops {
     const cands: Candidate[] = [];
     const printCands: Candidate[] = [];
     const desks = new Map<string, number>();
-    const away = office.awayDesks();
+    // M6c: an orchestrator in the corner office has no screen on the floor slot it left.
+    const away = new Map(office.awayDesks());
+    for (const c of office.cornerDesks()) away.set(c, 'busy');
     const M = new THREE.Matrix4();
     for (let i = 0; i < office.desksCount; i++) {
       const w = office.seat(i);

@@ -10,8 +10,8 @@ import { LogoSync } from './render/logoSync';
 import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type IssueCard, type MergedPullRequest, type PullRequest, type Question, type WatchBoardAck, type WorldEvent } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
-import { Arrivals, type ArrivalSpec } from './render/arrivals';
-import { memberOf, OfficeView, REACH, type Target } from './render/office';
+import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec } from './render/arrivals';
+import { memberOf, OfficeView, REACH, seatOf, type Target } from './render/office';
 import { OutsideView } from './render/outside';
 import { BUILDING_TINTS, LOT_TINT } from './render/palette';
 import { WalkView } from './render/walk';
@@ -32,10 +32,13 @@ import { SeatBar } from './ui/seat';
 import { blocked, blocked3, groundAt, type WalkWorld } from './world/collide';
 import { buildingPlan, floorY, loadedFloor, placeAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
 import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, overlookReach, type Opening, type Outline } from './world/layout';
-import type { ArrivalKind } from './world/arrival';
+import { STAND_LIFT, type ArrivalKind } from './world/arrival';
 import { displayName, resolveHarness, type Display } from './world/derive';
 import { firstFreeDesk, freeDesks, isFreshHire, Reservations } from './world/hire';
-import { walkOutRoute } from './world/route';
+import { deskToDeskRoute, handOver, walkOutRoute, type Dest, type Waypoint } from './world/route';
+// M6c: reports walk over to the orchestrator's desk.
+import { DeliveryBook, reportArrived, reportFact, trayFolderAt, TRAY_CAP, type Entry, type ReportFact, type TrayPose } from './world/delivery';
+import { toneColor } from './render/tray';
 import { WorldStore, type Change, type Counts, type FloorView, type WorkerView } from './world/store';
 // M5: P prompt, C changes, N next, 1–9 / 0 quick replies.
 import { ChangesPanel } from './ui/changes';
@@ -50,7 +53,7 @@ import { m6StartButtons, type M6StartButtons } from './ui/startButtons';
 import { PresetsPanel } from './ui/presets';
 import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/startRun';
 // M6 crew: freelancers drop in (M6b) and walk out with their briefcase.
-import { crewRole, isFreelancer } from './world/crew';
+import { crewRole, inputRequired, isFreelancer } from './world/crew';
 // M7: the issues and pull request boards.
 import { askPrompt, BoardBook, nearestDesk, reviewPrompt } from './world/boards';
 import { BoardsPanel, type BoardOff, type BoardState } from './ui/boards/panel';
@@ -171,6 +174,10 @@ export class App {
   readonly hire: HireDialog;
   readonly sendHome: SendHomeDialog;
   readonly arrivals: Arrivals;
+  /** M6c: the reports on their way to an orchestrator's desk, and what is in its in-tray. */
+  private readonly deliveries = new DeliveryBook();
+  /** What each delivery on its way was built against (its key → the layout and orchestrator seat), to tell when the world moved under it. */
+  private readonly deliveryCtx = new Map<string, { layout: object; orchDesk: number; corner: boolean; leaving?: boolean }>();
   /** M4: hires on their way: their desks' "+" is hidden until the worker is there. */
   private readonly reserved = new Reservations();
   /** Commands sent to the bridge, in order (test hook). */
@@ -397,6 +404,7 @@ export class App {
         onSnapshot: (s) => {
           this.applyChange(this.store.applySnapshot(s));
           this.yieldTakenDesks(this.store.workers.keys());
+          this.syncDeliveries(); // M6c
         },
         onEvent: (e) => this.onWorldEvent(e),
         onConn: (m) => this.laptops.onConn(m),
@@ -622,6 +630,246 @@ export class App {
     this.pingInbox(c); // #100
   }
 
+  // ---- M6c: reports walk over to the orchestrator's desk ---------------------------
+
+  /** Every ready report (to an orchestrator, without a question) in the world as it is. */
+  private reportFacts(): ReportFact[] {
+    const out: ReportFact[] = [];
+    for (const id of this.store.workers.keys()) {
+      const v = this.store.workerView(id);
+      const f = v && reportFact(v);
+      if (f) out.push(f);
+    }
+    return out;
+  }
+
+  /** A snapshot (the first, or a reconnect's): every report is where it is, none plays. */
+  private syncDeliveries(): void {
+    for (const a of this.arrivals.info(performance.now() / 1000)) if (a.kind === 'deliver') this.arrivals.cancel(a.id);
+    this.deliveryCtx.clear();
+    this.deliveries.sync(this.reportFacts(), new Set(this.store.workers.keys()));
+    this.syncTrays();
+  }
+
+  /**
+   * A worker upsert was applied: a freelancer's report that just became ready (pending → ready, a new one, or its
+   * question answered) starts its walk to the orchestrator, once per report (world/delivery.ts); one already ready,
+   * or seen before, plays nothing.
+   */
+  private noticeReport(was: { report?: import('./net/protocol').WorkerReport } | undefined, id: string): void {
+    const v = this.store.workerView(id);
+    const f = v && reportFact(v);
+    if (!v || !f) return;
+    const now = v.worker.report;
+    const play = !!was && this.store.snapshots > 0 && (reportArrived(was.report, now) || (!!inputRequired(was.report) && !inputRequired(now)));
+    const r = this.deliveries.add(f, play);
+    if (r === 'queued') this.pumpDeliveries();
+    else if (r === 'tray') this.syncTrays();
+  }
+
+  /**
+   * Starts the next report in line on each floor that has no freelancer walking (one walk at a time on a floor: two
+   * walkers never share the aisles, whatever their routes); then the trays follow.
+   */
+  private pumpDeliveries(): void {
+    // (A walk is under way until its freelancer has sat down again, whatever the book says of its folder.)
+    const busy = this.deliveries.activeSessions();
+    for (const a of this.arrivals.info(performance.now() / 1000)) if (a.kind === 'deliver') busy.add(a.session);
+    for (const orch of this.deliveries.queuedOrchs()) {
+      for (;;) {
+        const e = this.deliveries.next(orch, busy);
+        if (!e) break;
+        if (this.startDelivery(e)) {
+          busy.add(e.session);
+          break;
+        }
+        // Nobody can see it (another floor, the city, a sleeping floor, no way): it resolves at once.
+        this.deliveries.land(e.key);
+        this.arrivals.skip({ id: `deliver:${e.key}`, kind: 'deliver', session: e.session, desk: e.desk });
+      }
+    }
+    this.syncTrays();
+  }
+
+  /** The destination of reports to this orchestrator, as the office seats it. */
+  private destOf(ov: WorkerView): Dest {
+    return ov.worker.corner === true && ov.crew?.role === 'orch' ? { corner: ov.desk } : { slot: ov.desk };
+  }
+
+  /** Starts a delivery's walk: false when it cannot be shown (the floor is not the one you see, it sleeps, the orchestrator is not on it, no way). */
+  private startDelivery(e: Entry): boolean {
+    const o = this.office;
+    const ctx = this.building;
+    const v = this.store.workerView(e.id);
+    const ov = this.store.workerView(e.orch);
+    const fv = this.store.floorView(e.session);
+    if (!o || !ctx || !v || !ov || !fv || this.mode !== 'floor' || o.session !== e.session || ov.worker.session !== e.session || fv.asleep) return false;
+    if (v.crew?.life !== 'reporting' || this.arrivals.has(e.id) || o.awayDesks().has(v.desk) || o.awayDesks().has(ov.desk)) return false;
+    const storey = ctx.floors.findIndex((f) => f.session === e.session);
+    const L = o.layout;
+    const slot = L.slots[v.desk];
+    const dest = this.destOf(ov);
+    const ho = handOver(L, dest);
+    if (storey < 0 || !slot || !ho) return false;
+    const route = deskToDeskRoute(L, storey, v.desk, dest);
+    if (route.length < 3) return false;
+    const fy = floorY(storey);
+    const m = memberOf(v);
+    const n = Math.min(this.deliveries.tray(e.orch).length, TRAY_CAP - 1);
+    const pose: TrayPose = { x: ho.seat.x, y: fy + ho.up, z: ho.seat.z, yaw: ho.seatYaw, side: o.kits[ov.desk]?.side ?? ho.side };
+    const land = trayFolderAt(pose, n);
+    const deliver: DeliverSpec = {
+      key: e.key,
+      handYaw: ho.yaw,
+      // Busy at its screen it turns and takes it; anyone else (waiting for you, asleep, idle, done) lets the freelancer put it on the tray.
+      swivels: ov.display === 'working',
+      orchDesk: ov.desk,
+      turn: ho.swivel,
+      hand: { x: ho.seat.x + (ho.x - ho.seat.x) * 0.55, y: fy + ho.up + 0.95, z: ho.seat.z },
+      tray: land,
+      edge: toneColor(e.tone),
+    };
+    const spec: ArrivalSpec = {
+      id: `deliver:${e.key}`,
+      kind: 'deliver',
+      session: e.session,
+      desk: v.desk,
+      name: v.name,
+      route,
+      seatYaw: slot.yaw,
+      tint: m.tint,
+      cue: m.cue,
+      display: m.display,
+      phase: m.phase,
+      harness: resolveHarness(v.worker),
+      deliver,
+    };
+    if (m.crew) spec.crew = m.crew;
+    if (!this.arrivals.start(spec, performance.now() / 1000)) return false;
+    this.deliveryCtx.set(e.key, { layout: L, orchDesk: ov.desk, corner: 'corner' in dest });
+    o.setOut(v.desk, { chair: 0 });
+    this.activity(true);
+    return true;
+  }
+
+  /**
+   * The world changed under the walks (a desk moved, a floor went to sleep, the office was rebuilt for a new layout, an
+   * orchestrator is gone, you are not looking any more): every delivery that no longer fits resolves at once, its folder
+   * on the tray and its freelancer seated where the world seats it now. The others go on; the queue follows.
+   */
+  private reconcileDeliveries(): void {
+    const live = new Set<string>();
+    for (const a of this.arrivals.info(performance.now() / 1000)) {
+      if (a.kind !== 'deliver' || !a.key) continue;
+      live.add(a.key);
+      if (this.deliveryStale(a)) this.resolveDelivery(a);
+    }
+    for (const key of [...this.deliveryCtx.keys()]) if (!live.has(key)) this.deliveryCtx.delete(key);
+    for (const e of this.deliveries.pending()) {
+      // A queued report waits at its freelancer's desk, wherever that is now; an "active" one with no walk is over.
+      const v = this.store.workerView(e.id);
+      if (v) Object.assign(e, { session: v.worker.session, desk: v.desk });
+      if (e.stage === 'active' && !live.has(e.key)) this.deliveries.land(e.key);
+    }
+    this.pumpDeliveries();
+  }
+
+  /** Whether a delivery on its way no longer fits the world: false for one whose freelancer is leaving (that walk is the walk-out's). */
+  private deliveryStale(a: ArrivalInfo): boolean {
+    const e = this.deliveries.get(a.key as string);
+    const c = this.deliveryCtx.get(a.key as string);
+    // (Its freelancer's workspace closed: the hand-over finishes and the walk-out follows, whatever the book still has of it.)
+    if (c?.leaving || e?.leaving) return false;
+    if (!e) return true;
+    const v = this.store.workerView(e.id);
+    if (!v) return false;
+    const ov = this.store.workerView(e.orch);
+    const fv = this.store.floorView(a.session);
+    const o = this.office;
+    if (!ov || !fv || !c || !o || fv.asleep || this.mode !== 'floor' || o.session !== a.session || o.layout !== c.layout) return true;
+    return v.worker.session !== a.session || v.desk !== a.desk || ov.worker.session !== a.session || ov.desk !== c.orchDesk || (ov.worker.corner === true && ov.crew?.role === 'orch') !== c.corner;
+  }
+
+  /** Ends a delivery where it stands: its folder is on the tray, its desk and the orchestrator's chair are as the world says. */
+  private resolveDelivery(a: ArrivalInfo): void {
+    const c = a.key ? this.deliveryCtx.get(a.key) : undefined;
+    this.arrivals.cancel(a.id);
+    if (a.key) {
+      this.deliveries.land(a.key);
+      this.deliveryCtx.delete(a.key);
+    }
+    const o = this.office;
+    if (o?.session !== a.session) return;
+    o.setOut(a.desk, null);
+    if (c) o.setSwivel(c.orchDesk, null);
+  }
+
+  /** The in-trays and the waiting reports of the floor with an interior, from the book. */
+  private syncTrays(): void {
+    const o = this.office;
+    if (!o) return;
+    const waiting: number[] = [];
+    for (const e of this.deliveries.pending()) if (e.stage === 'queued' && e.session === o.session) waiting.push(e.desk);
+    o.setWaiting(waiting);
+    for (let i = 0; i < o.desksCount; i++) {
+      const v = o.seat(i);
+      if (v?.crew?.role === 'orch') o.setTray(i, this.deliveries.tray(v.worker.id).map((e) => e.tone));
+    }
+  }
+
+  /** The reports on your floor stop: what is on their way lands on the tray. `keep`: the floor that stays in view. */
+  private endDeliveries(keep: string | null): void {
+    for (const a of this.arrivals.info(performance.now() / 1000)) {
+      if (a.kind !== 'deliver' || a.session === keep) continue;
+      this.arrivals.cancel(a.id); // (a freelancer leaving behind it is settled with it: `takeEnded`)
+      if (a.key) this.deliveryCtx.delete(a.key);
+    }
+    for (const e of this.deliveries.pending()) if (e.session !== keep) this.deliveries.land(e.key);
+  }
+
+  /**
+   * A freelancer's workspace closes: its folder leaves the tray; a delivery on its way lands first (a hand-over under way
+   * is finished, any other step ends where it stands) and it walks out from there. False: it was not on a delivery.
+   */
+  private leaveDelivery(id: string): boolean {
+    const now = performance.now() / 1000;
+    const d = this.arrivals.info(now).find((a) => a.kind === 'deliver' && a.key?.startsWith(`${id}@`));
+    const entry = d ? this.deliveries.get(d.key as string) : undefined;
+    this.deliveries.close(id, d?.key ?? undefined);
+    this.syncTrays();
+    // Queued or not on the way: nothing to finish here; a folder that landed with it stays until the freelancer has left.
+    if (!d) return false;
+    const ov = entry ? this.store.workerView(entry.orch) : null;
+    const corner = ov ? (this.destOf(ov) as { corner?: number }).corner : undefined;
+    const standing = d.phase === 'walk' || d.phase === 'hand';
+    const from = standing ? { x: d.x, y: d.y - STAND_LIFT, z: d.z, ...(corner !== undefined ? { corner } : {}) } : undefined;
+    const spec = this.arrivalSpec('out', id, from);
+    if (!spec) return false;
+    // At the hand-over spot it finishes handing over; anywhere else the delivery ends here and the walk-out takes over.
+    if (d.phase === 'hand' && this.arrivals.chain(d.id, spec)) {
+      const c = this.deliveryCtx.get(d.key as string);
+      if (c) c.leaving = true;
+      return true;
+    }
+    this.arrivals.cancel(d.id);
+    this.arrivals.cancel(id);
+    this.beginArrival(spec);
+    return true;
+  }
+
+  /** Test hook: the in-trays, waiting reports and walks not yet landed. */
+  trayStates(): { trays: Array<{ desk: number; worker: string; folders: number; edges: number[] }>; waiting: number[]; pending: number } {
+    const o = this.office;
+    const trays: Array<{ desk: number; worker: string; folders: number; edges: number[] }> = [];
+    if (o) {
+      for (let i = 0; i < o.desksCount; i++) {
+        const v = o.seat(i);
+        if (v?.crew?.role === 'orch') trays.push({ desk: i, worker: v.worker.id, ...o.trayInfo(i) });
+      }
+    }
+    return { trays: trays.map(({ desk, worker, folders, edges }) => ({ desk, worker, folders, edges })), waiting: this.deliveries.pending().filter((e) => e.stage === 'queued').map((e) => e.desk), pending: this.deliveries.pending().length };
+  }
+
   // ---- M4: hire, send home, dropping in and walking out ----------------------------
 
   /**
@@ -638,11 +886,17 @@ export class App {
       const id = e.worker.id;
       after = () => this.startArrival('in', id);
     } else if (e.t === 'worker.removed' && this.store.workers.has(e.id) && (e.reason === 'sent_home' || freelancer(this.store.workers.get(e.id)))) {
-      const spec = this.arrivalSpec('out', e.id);
-      const v = this.store.workerView(e.id);
-      this.arrivals.cancel(e.id);
-      if (spec) this.beginArrival(spec);
-      else if (v) this.arrivals.skip({ id: e.id, kind: 'out', session: v.worker.session, desk: v.desk });
+      // M6c: its folder leaves the tray with it; one on its way lands, and a walk in progress goes on as the walk-out.
+      if (!this.leaveDelivery(e.id)) {
+        const spec = this.arrivalSpec('out', e.id);
+        const v = this.store.workerView(e.id);
+        this.arrivals.cancel(e.id);
+        if (spec) this.beginArrival(spec);
+        else {
+          if (v) this.arrivals.skip({ id: e.id, kind: 'out', session: v.worker.session, desk: v.desk });
+          this.deliveries.settle(e.id);
+        }
+      }
     } else if (e.t === 'worker.removed' || e.t === 'floor.removed') {
       // Gone some other way: a drop-in stops where it is.
       if (e.t === 'worker.removed') this.arrivals.cancel(e.id);
@@ -651,8 +905,17 @@ export class App {
       if (old && (old.session !== e.worker.session || old.desk_index !== e.worker.desk_index)) this.arrivals.cancel(e.worker.id);
     }
     this.wrapUpToasts(e); // #83
+    const was = e.t === 'worker.upsert' ? this.store.workers.get(e.worker.id) : undefined;
     this.applyChange(this.store.applyEvent(e));
+    if (e.t === 'worker.removed') {
+      // M6c: an orchestrator that is gone takes its tray with it; a worker that is gone is forgotten.
+      this.deliveries.dropOrch(e.id);
+      this.deliveries.forget(e.id);
+      this.syncTrays();
+    }
+    if (e.t === 'worker.upsert' || e.t === 'worker.removed' || e.t === 'floor.upsert') this.reconcileDeliveries(); // M6c
     if (e.t === 'worker.upsert') this.yieldTakenDesks([e.worker.id]);
+    if (e.t === 'worker.upsert') this.noticeReport(was, e.worker.id); // M6c
     if (e.t === 'whiteboard.updated') this.onWhiteboard(e); // M13
     after?.();
   }
@@ -754,7 +1017,7 @@ export class App {
    * which only the floor with an interior shows; the walk-out goes down the
    * fire escape, which the whole building sees.
    */
-  private arrivalSpec(kind: ArrivalKind, id: string): ArrivalSpec | null {
+  private arrivalSpec(kind: ArrivalKind, id: string, from?: Waypoint & { corner?: number }): ArrivalSpec | null {
     const v = this.store.workerView(id);
     const ctx = this.building;
     if (!v || this.mode !== 'floor' || !ctx) return null;
@@ -765,7 +1028,7 @@ export class App {
     const L = this.office?.session === session ? this.office.layout : this.layoutOf(session);
     const slot = L?.slots[v.desk];
     if (!L || !slot) return null;
-    const route = kind === 'out' ? walkOutRoute(L, ctx.plan, storey, v.desk) : [{ x: slot.seat.x, y: floorY(storey), z: slot.seat.z }];
+    const route = kind === 'out' ? walkOutRoute(L, ctx.plan, storey, v.desk, from) : [{ x: slot.seat.x, y: floorY(storey), z: slot.seat.z }];
     const m = memberOf(v);
     const spec: ArrivalSpec = {
       id,
@@ -784,6 +1047,8 @@ export class App {
     // M6: a freelancer's briefcase and look.
     if (v.crew?.freelancer) spec.carry = 'briefcase';
     if (m.crew) spec.crew = m.crew;
+    // M6c: leaving from where it stands (mid-delivery), not from its desk.
+    if (from) spec.standing = true;
     return spec;
   }
 
@@ -799,7 +1064,7 @@ export class App {
   private beginArrival(spec: ArrivalSpec): void {
     if (!this.arrivals.start(spec, performance.now() / 1000)) return;
     // The desk changes at once (no "+" flash before the next frame); a hire is at its desk already (M6b), only its figure drops in.
-    if (this.office?.session === spec.session && spec.kind === 'out') this.office.setAway(spec.desk, { show: 'busy', display: spec.display, cue: spec.cue.color, harness: spec.harness, packed: 0 });
+    if (this.office?.session === spec.session && spec.kind === 'out' && !spec.standing) this.office.setAway(spec.desk, { show: 'busy', display: spec.display, cue: spec.cue.color, harness: spec.harness, packed: 0 });
     this.activity(true);
   }
 
@@ -1149,6 +1414,7 @@ export class App {
       this.unloadFloor();
       this.dropOutside();
       this.arrivals.clear();
+      this.endDeliveries(null); // M6c
       this.building = null;
       this.mode = 'city';
       this.setPlan(false);
@@ -1192,7 +1458,10 @@ export class App {
   private setBuilding(ctx: BuildingCtx): void {
     const prev = this.building;
     // Walks belong to their building: in another one they are over.
-    if (prev && prev.id !== ctx.id) this.arrivals.clear();
+    if (prev && prev.id !== ctx.id) {
+      this.arrivals.clear();
+      this.endDeliveries(null); // M6c
+    }
     this.building = ctx;
     let o = this.walk.outside;
     if (!o || !prev || prev.shape !== ctx.shape) {
@@ -1274,6 +1543,7 @@ export class App {
     const fv = view ?? (f ? this.store.floorView(f.session) : null);
     if (!ctx || !fv) return;
     const old = this.office;
+    this.endDeliveries(fv.session); // M6c: the reports on the floor you leave resolve at once
     this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner });
     this.loaded = storey;
     this.mezzDoor = 0;
@@ -1290,10 +1560,12 @@ export class App {
     this.syncBoardWatch();
     this.pushBoards();
     this.syncWhiteboard(); // M13
+    this.syncTrays(); // M6c
   }
 
   private unloadFloor(): void {
     if (!this.office) return;
+    this.endDeliveries(null); // M6c
     this.office.dispose();
     this.office = null;
     this.loaded = null;
@@ -1355,6 +1627,8 @@ export class App {
     this.cameraMoved = true;
     this.pushBoards();
     this.syncWhiteboard(); // M13
+    this.reconcileDeliveries(); // M6c: the walks were built for the old layout
+    this.syncTrays(); // M6c
   }
 
   /** What the walker touches now (rebuilt when the floor with an interior or its seats change). */
@@ -1428,7 +1702,9 @@ export class App {
       const m = o.layout.mezzanine;
       const dx = (m.door.x0 + m.door.x1) / 2;
       const up = this.walker.y - floorY(this.loaded);
-      const atDoor = up > m.y - 1.2 && up < m.y + 0.5 && Math.hypot(this.walker.x - dx, this.walker.z - m.door.z) < 1.9;
+      // M6c: it opens for a freelancer carrying a report up there (or coming down) the same way.
+      const walkerAtDoor = this.arrivals.count > 0 && this.arrivals.info(performance.now() / 1000).some((a) => a.session === o.session && a.y - floorY(this.loaded as number) > m.y - 1.2 && a.y - floorY(this.loaded as number) < m.y + 0.5 && Math.hypot(a.x - dx, a.z - m.door.z) < 1.9);
+      const atDoor = (up > m.y - 1.2 && up < m.y + 0.5 && Math.hypot(this.walker.x - dx, this.walker.z - m.door.z) < 1.9) || walkerAtDoor;
       const mWant = atDoor ? 1 : 0;
       if (this.mezzDoor !== mWant) {
         const k = 1 - Math.exp(-dt * 9);
@@ -2229,8 +2505,21 @@ export class App {
       if (o?.session !== d.session) continue;
       o.setAway(d.desk, d.away);
       if (d.drop !== undefined) o.setDrop(d.desk, d.drop);
+      if (d.out !== undefined) o.setOut(d.desk, d.out);
     }
+    for (const w of this.arrivals.swivels) if (o?.session === w.session) o.setSwivel(w.desk, w.swivel);
     this.applyReserve();
+    // M6c: folders that landed, freelancers that have left, and the next report in line.
+    let moved = false;
+    for (const key of this.arrivals.takeLanded()) {
+      this.deliveries.land(key);
+      moved = true;
+    }
+    for (const id of this.arrivals.takeEnded()) {
+      this.deliveries.settle(id);
+      moved = true;
+    }
+    if (moved || this.deliveries.queuedOrchs().length) this.pumpDeliveries();
   }
 
   render(): void {
@@ -2285,9 +2574,11 @@ export class App {
       const c = toScreen((p.box.min[0] + p.box.max[0]) / 2, 0, (p.box.min[2] + p.box.max[2]) / 2);
       labels.push({ ...c, text: p.label, kind: 'prop' });
     }
-    o.layout.slots.forEach((s, i) => {
+    o.layout.slots.forEach((slot, i) => {
       const v = o.seat(i);
-      if (v) labels.push({ ...toScreen(s.seat.x, 1.2, s.seat.z), text: v.name, kind: 'worker', display: v.display });
+      const at = seatOf(o.layout, i, v);
+      const s = at?.slot ?? slot;
+      if (v) labels.push({ ...toScreen(s.seat.x, 1.2 + (at?.y ?? 0), s.seat.z), text: v.name, kind: 'worker', display: v.display });
       else labels.push({ ...toScreen(s.desk.x, 0.8, s.desk.z), text: `+ ${i + 1}`, kind: 'desk' });
     });
     // #20: the corner office on its mezzanine, its stair, your desk.

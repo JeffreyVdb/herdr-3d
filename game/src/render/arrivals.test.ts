@@ -2,12 +2,13 @@ import '../test/fakeCanvas';
 import * as THREE from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
 import { buildingPlan } from '../world/building';
-import { DROP_S, FALL_S, PACK_S, PLUS_BACK_AFTER_M, STAND_S, WALK_SPEED, type Carry } from '../world/arrival';
+import { DELIVER_SPEED, DROP_S, FALL_S, HAND_FLY, HAND_S, PACK_S, PLUS_BACK_AFTER_M, SIT_S, STAND_S, WALK_SPEED, type Carry } from '../world/arrival';
 import { floorY } from '../world/building';
 import { deskKit } from '../world/deskKit';
 import { floorLayout, outlineOf } from '../world/layout';
-import { walkOutRoute } from '../world/route';
-import { Arrivals, type ArrivalSpec, type DeskAway } from './arrivals';
+import { deskToDeskRoute, handOver, walkOutRoute } from '../world/route';
+import { DeliveryBook, trayFolderAt } from '../world/delivery';
+import { Arrivals, type ArrivalSpec, type DeskAway, type DeliverSpec } from './arrivals';
 import { PEN_AT } from './desks';
 
 const counts = [12, 8];
@@ -177,7 +178,7 @@ describe('Arrivals', () => {
     expect(meshes.every((m) => m instanceof THREE.InstancedMesh)).toBe(true);
     expect(a.group.visible).toBe(false);
     const props = meshes.filter((m) => m.name.startsWith('arrivals.')) as THREE.InstancedMesh[];
-    expect(props.map((m) => m.name).sort()).toEqual(['body', 'flaps', 'laptop', 'mug', 'notebook', 'pens', 'photo', 'plant', 'puff', 'shadow', 'sticker', 'tape'].map((k) => `arrivals.${k}`).sort());
+    expect(props.map((m) => m.name).sort()).toEqual(['body', 'flaps', 'fold', 'foldEdge', 'laptop', 'mug', 'notebook', 'pens', 'photo', 'plant', 'puff', 'shadow', 'sticker', 'tape'].map((k) => `arrivals.${k}`).sort());
     for (let i = 0; i < 8; i++) a.start(spec(`w${i}`, 'out'), 0);
     // A ninth walker at once is skipped (the desk resolves at once), with no new objects.
     expect(a.start(spec('w8', 'out'), 0)).toBe(false);
@@ -192,5 +193,233 @@ describe('Arrivals', () => {
     a.clear();
     for (let i = 0; i < 8; i++) expect(zero(body, i)).toBe(true);
     expect(a.group.visible).toBe(false);
+  });
+});
+
+describe('Arrivals: a report on its way (M6c)', () => {
+  const L = floors[1]!;
+  const FROM = 5;
+  const TO = 2;
+  function delivery(swivels: boolean, id = 'deliver:w@1'): ArrivalSpec {
+    const slot = L.slots[FROM]!;
+    const ho = handOver(L, { slot: TO })!;
+    const route = deskToDeskRoute(L, 1, FROM, { slot: TO });
+    const deliver: DeliverSpec = {
+      key: 'w@1',
+      handYaw: ho.yaw,
+      swivels,
+      orchDesk: TO,
+      turn: ho.swivel,
+      hand: { x: ho.seat.x, y: floorY(1) + 0.95, z: ho.seat.z },
+      tray: trayFolderAt({ x: ho.seat.x, y: floorY(1), z: ho.seat.z, yaw: ho.seatYaw, side: ho.side }, 0),
+      edge: 0xe03a33,
+    };
+    return { id, kind: 'deliver', session: 'f', desk: FROM, name: 'w', route, seatYaw: slot.yaw, tint: 0x88aaff, cue: { family: 'opus', color: 0xff8844, hat: 'none' }, display: 'done', phase: 0, deliver };
+  }
+  const total = (a: Arrivals) => a.info(0)[0]!.total;
+
+  it('the freelancer stands up, walks, hands over, walks back and sits: the desk is its own the whole way (out of the chair only)', () => {
+    const a = new Arrivals(false);
+    expect(a.start(delivery(true), 0)).toBe(true);
+    const seen = new Set<string>();
+    const T = total(a);
+    for (let t = 0; t < T; t += 0.1) {
+      const out = a.update(t, t);
+      const i = a.info(t)[0]!;
+      seen.add(i.phase);
+      // Never `away`: the laptop screen stays live, the card stays, the desk is as the world says; only the chair moves.
+      expect(onDesk(out), `t=${t}`).toMatchObject({ away: null, out: { chair: expect.any(Number) } });
+    }
+    expect([...seen]).toEqual(['stand', 'walk', 'hand', 'sit']);
+    // Walking 2-3 s each way on a normal pod, about a second to hand over.
+    const info = a.info(0)[0]!;
+    expect(info.kind).toBe('deliver');
+    expect(HAND_S).toBeGreaterThanOrEqual(1);
+    expect(info.length / 2 / DELIVER_SPEED).toBeGreaterThan(1.5);
+    expect(info.length / 2 / DELIVER_SPEED).toBeLessThan(8);
+    expect(T).toBeCloseTo(STAND_S + info.length / DELIVER_SPEED + HAND_S + SIT_S, 6);
+    // Done: back in the chair, empty-handed; the desk hears it.
+    const end = a.update(T + 0.01, T);
+    expect(onDesk(end)).toMatchObject({ away: null, out: null });
+    expect(a.count).toBe(0);
+    expect(a.log.at(-1)).toMatchObject({ id: 'deliver:w@1', kind: 'deliver', played: true });
+  });
+
+  it('the folder lands on the tray in the middle of the hand-over (reported once), the orchestrator swivels there and back', () => {
+    const a = new Arrivals(false);
+    a.start(delivery(true), 0);
+    const walkTo = STAND_S + a.info(0)[0]!.length / 2 / DELIVER_SPEED;
+    expect(a.takeLanded()).toEqual([]);
+    a.update(walkTo + 0.02, 0);
+    // The chair has only started to turn.
+    expect(a.swivels[0]?.swivel?.turn ?? 0).toBeLessThan(0.1);
+    expect(a.info(walkTo + 0.02)[0]).toMatchObject({ phase: 'hand', folder: 'out', landed: false });
+    // Swivelled round and reaching, the folder in the air...
+    const mid = walkTo + HAND_S * ((HAND_FLY.from + HAND_FLY.to) / 2);
+    a.update(mid, mid);
+    expect(a.info(mid)[0]).toMatchObject({ folder: 'flight', swivel: 1 });
+    expect(a.swivels).toHaveLength(1);
+    expect(a.swivels[0]).toMatchObject({ session: 'f', desk: TO, swivel: { turn: expect.any(Number), reach: expect.any(Number) } });
+    expect(Math.abs(a.swivels[0]!.swivel!.turn)).toBeCloseTo(Math.PI / 2, 2);
+    expect(a.takeLanded()).toEqual([]);
+    // ...landed a little later: once...
+    const later = walkTo + HAND_S * (HAND_FLY.to + 0.02);
+    a.update(later, later);
+    expect(a.takeLanded()).toEqual(['w@1']);
+    a.update(later + 0.01, later);
+    expect(a.takeLanded()).toEqual([]);
+    // ...and the chair swings back to the desk by the end of the hand-over.
+    const done = walkTo + HAND_S + 0.01;
+    a.update(done, done);
+    expect(a.swivels).toEqual([{ session: 'f', desk: TO, swivel: null }]);
+    a.update(done + 0.01, done);
+    expect(a.swivels).toEqual([]);
+  });
+
+  it('an orchestrator that does not turn (waiting for you, asleep): no swivel, the freelancer puts the folder on the tray itself', () => {
+    const a = new Arrivals(false);
+    a.start(delivery(false), 0);
+    const walkTo = STAND_S + a.info(0)[0]!.length / 2 / DELIVER_SPEED;
+    let landedAt = -1;
+    for (let t = walkTo; t < walkTo + HAND_S; t += 0.02) {
+      a.update(t, t);
+      expect(a.swivels, `t=${t}`).toEqual([]);
+      if (landedAt < 0 && a.takeLanded().length) landedAt = t - walkTo;
+    }
+    expect(landedAt).toBeGreaterThan(0);
+    expect(landedAt).toBeLessThan(HAND_S);
+  });
+
+  it('a delivery with a walk-out to follow: when the hand-over is done it ends and the walk-out takes over, from where it stands', () => {
+    const a = new Arrivals(false);
+    a.start(delivery(true), 0);
+    const walkTo = STAND_S + a.info(0)[0]!.length / 2 / DELIVER_SPEED;
+    const spot = handOver(L, { slot: TO })!;
+    const out = spec('w', 'out', FROM, 'briefcase');
+    out.route = [{ x: spot.x, y: floorY(1), z: spot.z }, ...out.route.slice(3)];
+    out.standing = true;
+    expect(a.chain('deliver:w@1', out)).toBe(true);
+    a.update(walkTo + 0.3, 0);
+    expect(a.has('deliver:w@1')).toBe(true);
+    a.update(walkTo + HAND_S + 0.01, 0);
+    expect(a.has('deliver:w@1')).toBe(false);
+    expect(a.has('w')).toBe(true);
+    const i = a.info(walkTo + HAND_S + 0.011)[0]!;
+    expect(i).toMatchObject({ kind: 'out', phase: 'walk', desk_show: 'free' });
+    // Standing: no packing, no standing up, no wave; it starts at the spot.
+    expect(Math.hypot(i.x - spot.x, i.z - spot.z)).toBeLessThan(0.3);
+    expect(a.takeLanded()).toEqual(['w@1']);
+    expect(a.takeEnded()).toEqual(['deliver:w@1']);
+  });
+
+  it('cancelled halfway: the desk comes back at once and its swivel ends', () => {
+    const a = new Arrivals(false);
+    a.start(delivery(true), 0);
+    const walkTo = STAND_S + a.info(0)[0]!.length / 2 / DELIVER_SPEED;
+    const t = walkTo + HAND_S * 0.5;
+    a.update(t, t);
+    expect(a.swivels).toHaveLength(1);
+    a.cancel('deliver:w@1');
+    const out = a.update(t + 0.01, t);
+    expect(onDesk(out)).toMatchObject({ away: null, out: null });
+    expect(a.swivels).toEqual([{ session: 'f', desk: TO, swivel: null }]);
+  });
+
+  describe('a delivery with a walk-out chained that ends before the hand-over is done (#29)', () => {
+    /** w's report landed on the tray and its workspace closed: the walk-out waits behind the hand-over. */
+    function chained() {
+      const a = new Arrivals(false);
+      const book = new DeliveryBook();
+      book.add({ id: 'w', at: 1, session: 'f', desk: FROM, orch: 'o', tone: null }, true);
+      book.next('o');
+      a.start(delivery(true), 0);
+      const walkTo = STAND_S + a.info(0)[0]!.length / 2 / DELIVER_SPEED;
+      const t = walkTo + HAND_S * 0.9;
+      a.update(t, t);
+      for (const k of a.takeLanded()) book.land(k);
+      book.close('w', 'w@1');
+      expect(a.chain('deliver:w@1', spec('w', 'out', FROM, 'briefcase'))).toBe(true);
+      expect(book.get('w@1')).toMatchObject({ stage: 'tray', leaving: true });
+      return { a, book, t };
+    }
+    /** What the app does each frame with the ended walks. */
+    const settleEnded = (a: Arrivals, book: DeliveryBook) => {
+      for (const id of a.takeEnded()) book.settle(id);
+    };
+
+    it('cancelled (the floor is left): the freelancer is resolved too, its leaving folder goes', () => {
+      const { a, book, t } = chained();
+      a.cancel('deliver:w@1');
+      a.update(t + 1, t + 1);
+      settleEnded(a, book);
+      expect(a.count).toBe(0);
+      expect(book.get('w@1')).toBeUndefined();
+      expect(book.tray('o')).toEqual([]);
+    });
+
+    it('cleared (the building is left): same', () => {
+      const { a, book, t } = chained();
+      a.clear();
+      a.update(t + 1, t + 1);
+      settleEnded(a, book);
+      expect(book.get('w@1')).toBeUndefined();
+    });
+
+    it('the walk-out cannot be shown when the hand-over is done: same', () => {
+      const { a, book, t } = chained();
+      const bad = spec('w', 'out', FROM, 'briefcase');
+      bad.route = bad.route.slice(0, 1);
+      expect(a.chain('deliver:w@1', bad)).toBe(true);
+      a.update(t + HAND_S, t + HAND_S);
+      settleEnded(a, book);
+      expect(a.count).toBe(0);
+      expect(book.get('w@1')).toBeUndefined();
+    });
+
+    it('played to the end: the folder stays until the walk-out has finished', () => {
+      const { a, book, t } = chained();
+      a.update(t + HAND_S, t + HAND_S);
+      settleEnded(a, book);
+      expect(a.has('w')).toBe(true);
+      expect(book.get('w@1')).toMatchObject({ stage: 'tray', leaving: true });
+      a.update(t + 1000, t + 1000);
+      settleEnded(a, book);
+      expect(book.get('w@1')).toBeUndefined();
+    });
+  });
+
+  it('queued reports: two walkers at once never share a slot', () => {
+    const a = new Arrivals(false);
+    a.start(delivery(true, 'deliver:a@1'), 0);
+    a.start({ ...delivery(true, 'deliver:b@1'), desk: 6, name: 'b' }, 0);
+    expect(a.count).toBe(2);
+    expect(new Set(a.info(0).map((i) => i.id)).size).toBe(2);
+  });
+
+  it('someone else sits at its desk now (yieldDesk): the walk goes on without the desk, and does not hold the chair out', () => {
+    const a = new Arrivals(false);
+    a.start(delivery(true), 0);
+    const t = STAND_S + 1;
+    expect(onDesk(a.update(t, t))).toMatchObject({ out: { chair: expect.any(Number) } });
+    expect(a.yieldDesk('f', FROM, 'replacement', t)).toBe(true);
+    const out = a.update(t + 0.1, t + 0.1);
+    // The first update after the yield hands the desk back (out null), then it stays out of the walk's say.
+    expect(onDesk(out)).toMatchObject({ away: null, out: null });
+    expect(onDesk(a.update(t + 0.2, t + 0.2))).toBeUndefined();
+    expect(a.has('deliver:w@1')).toBe(true);
+    expect(a.info(t + 0.2)[0]).toMatchObject({ yielded: true });
+  });
+
+  it('the freelancer itself is no one else at its desk: an upsert of it yields nothing, and the figure stays out of the chair', () => {
+    const a = new Arrivals(false);
+    a.start(delivery(true), 0);
+    const t = STAND_S + 1;
+    a.update(t, t);
+    // `deliver:w@1` is worker `w`'s walk: `w` sitting at its own desk (a report update, a question appearing) is not a replacement.
+    expect(a.yieldDesk('f', FROM, 'w', t)).toBe(false);
+    expect(onDesk(a.update(t + 0.1, t + 0.1))).toMatchObject({ out: { chair: expect.any(Number) } });
+    expect(a.info(t + 0.1)[0]).toMatchObject({ yielded: false });
+    // Someone else still takes the desk from it.
+    expect(a.yieldDesk('f', FROM, 'replacement', t + 0.1)).toBe(true);
   });
 });
