@@ -93,9 +93,11 @@ type wrapUpdate struct {
 // txLines feeds a session's lines to the worker's ask tracker and, while a
 // wrap-up is armed, its wrap-up tracker (usage tracker goroutine).
 type txLines struct {
-	ask   *transcript.AskTracker
-	wrap  *transcript.WrapUpTracker
-	paste *pasteWatch // #95
+	harness  string
+	ask      *transcript.AskTracker
+	wrap     *transcript.WrapUpTracker
+	paste    *pasteWatch                 // #95
+	followup *transcript.FollowupTracker // #90
 }
 
 func (l *txLines) Line(off int64, b []byte) {
@@ -105,8 +107,16 @@ func (l *txLines) Line(off int64, b []byte) {
 	if l.paste != nil {
 		l.paste.line(b)
 	}
+	if l.wrap == nil && l.followup == nil {
+		return
+	}
+	// The turn boundaries and final message, read once for both.
+	evs := transcript.TurnEvents(l.harness, b)
 	if l.wrap != nil {
-		l.wrap.Line(off, b)
+		l.wrap.Events(off, evs)
+	}
+	if l.followup != nil {
+		l.followup.Events(evs)
 	}
 }
 
@@ -116,6 +126,9 @@ func (l *txLines) Reset() {
 	}
 	if l.wrap != nil {
 		l.wrap.Reset()
+	}
+	if l.followup != nil {
+		l.followup.Reset()
 	}
 }
 

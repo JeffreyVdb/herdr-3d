@@ -98,6 +98,7 @@ func (h *Hub) trackAI(ctx context.Context) {
 		case <-h.opts.AI.Changes():
 		}
 		_ = h.doWait(ctx, func() {
+			defer h.publishFollowups() // #90: a role's state is the feature's
 			v := h.opts.AI.View()
 			b, err := json.Marshal(v)
 			if err != nil || string(b) == string(last) {

@@ -327,6 +327,15 @@ func (s *Service) State(r Role) State {
 	return s.stateLocked(r)
 }
 
+// Fingerprint identifies a role's config in use (base URL, model, key and
+// extra_body, hashed: it never reveals the key). A feature that gates on a
+// test of its own remembers the fingerprints the test ran against.
+func (s *Service) Fingerprint(r Role) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.effectiveLocked(r).fingerprint(r)
+}
+
 // ---- failures ------------------------------------------------------------
 
 // fail records that a role's config failed (a test or a call): it is invalid

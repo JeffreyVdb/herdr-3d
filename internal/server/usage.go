@@ -83,6 +83,11 @@ type usageTracker struct {
 	wrapUps []wrapUpdate
 	// #95: the workers a typed prompt reached as a paste this round.
 	pasted []string
+	// #90: what was last offered of every worker's ended turn, this
+	// round's changes, and whether the hub still has turns to look at.
+	fuOffered map[string]followupOffered
+	followUps []followupUpdate
+	fuPending bool
 }
 
 // foundCodex is a Codex session found by a worker's cwd, and when.
@@ -113,7 +118,8 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 	return &usageTracker{cfg: cfg, keys: map[string]string{}, sessions: map[string]*usage.Session{},
 		throttle: usageThrottle{every: cfg.Throttle, shown: map[string]proto.Usage{}, at: map[string]time.Time{}},
 		found:    map[string]foundCodex{}, logs: map[string]*txLog{},
-		asks: map[string]*transcript.AskTracker{}, askShown: map[string]askShown{}, lines: map[string]*txLines{}}
+		asks: map[string]*transcript.AskTracker{}, askShown: map[string]askShown{}, lines: map[string]*txLines{},
+		fuOffered: map[string]followupOffered{}}
 }
 
 // trackUsage runs the tracker until ctx is done.
@@ -165,12 +171,13 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 	}
 	asks := tr.askUps              // #57
 	wraps := tr.wrapUps            // #83
+	fus := tr.followUps            // #90
 	for _, id := range tr.pasted { // #95
 		h.log.Warn("a prompt the bridge typed reached Claude Code as a paste: its paste threshold may have changed (#95)",
 			"worker", id)
 	}
-	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 {
-		_ = h.doWait(ctx, func() {
+	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 || len(fus) > 0 || tr.fuPending {
+		pending, err := query(ctx, h, func() bool {
 			for _, u := range ups {
 				h.setUsage(u.id, u.usage)
 			}
@@ -180,14 +187,21 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 			for _, u := range wraps {
 				h.wrapUpSeen(ctx, u)
 			}
+			for _, u := range fus { // #90
+				h.followupSeen(u)
+			}
+			return h.sweepFollowups(ctx)
 		})
+		if err == nil {
+			tr.fuPending = pending
+		}
 	}
 }
 
 // poll reads the workers' sessions and returns the updates to publish.
 func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	ws = tr.findCodex(ws, now)
-	tr.askUps, tr.wrapUps, tr.pasted = nil, nil, nil
+	tr.askUps, tr.wrapUps, tr.pasted, tr.followUps = nil, nil, nil, nil
 	var ups []usageUpdate
 	seen := map[string]bool{}
 	for _, w := range ws {
@@ -202,8 +216,9 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 				tr.sessions[w.id] = usage.NewSession(w.harness, w.session, tr.cfg.Roots, tr.cfg.Pricing)
 			}
 			if s := tr.sessions[w.id]; s != nil { // #57: the ask, from the same lines, the file's first included
-				l := &txLines{ask: transcript.NewAskTracker(w.harness)} // #83: and a wrap-up's
-				if w.harness == transcript.Claude {                     // #95: and typed prompts arriving as a paste
+				l := &txLines{harness: w.harness, ask: transcript.NewAskTracker(w.harness), // #83: and a wrap-up's
+					followup: transcript.NewFollowupTracker(w.harness)} // #90: and the turn's final message
+				if w.harness == transcript.Claude { // #95: and typed prompts arriving as a paste
 					l.paste = newPasteWatch()
 				}
 				if l.ask != nil {
@@ -231,6 +246,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			tr.throttle.forget(w.id)
 			tr.offerAsk(w)
 			tr.offerWrapUp(w)
+			tr.offerFollowup(w) // #90
 			continue
 		}
 		s.SetRescan(0)
@@ -241,6 +257,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		tr.syncTranscript(w, s, tr.keys[w.id])
 		tr.offerAsk(w)
 		tr.offerWrapUp(w)
+		tr.offerFollowup(w) // #90
 		if ok {
 			if pub, emit := tr.throttle.offer(w.id, u, now); emit {
 				ups = append(ups, usageUpdate{id: w.id, usage: &pub})
@@ -258,6 +275,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			delete(tr.asks, id)
 			delete(tr.askShown, id)
 			delete(tr.lines, id)
+			delete(tr.fuOffered, id) // #90
 			tr.throttle.forget(id)
 		}
 	}
