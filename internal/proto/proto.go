@@ -188,6 +188,9 @@ type World struct {
 	// #90 follow-up questions: the feature's settings and state. nil (left
 	// out) when the bridge has no AI service.
 	Followups *Followups `json:"followups,omitempty"`
+	// #110 pack up on request: the feature's settings and state. nil (left
+	// out) when the bridge has no AI service.
+	Packup *Packup `json:"packup,omitempty"`
 	// #98 activity: "Classify unknown commands", its settings and state.
 	// nil (left out) when the bridge has no AI service.
 	Activity *ActivityState `json:"activity,omitempty"`

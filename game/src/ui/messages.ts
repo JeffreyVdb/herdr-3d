@@ -76,6 +76,11 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'followups.test': 'test the follow-up questions',
   'worker.answer_followup': 'answer follow-up questions',
   'worker.dismiss_followup': 'dismiss follow-up questions',
+  // #110
+  'packup.get': 'keep pack up on request',
+  'packup.set': 'keep pack up on request',
+  'packup.test': 'test pack up on request',
+  'packup.detect': 'check prompts for pack up on request',
   // #106
   'inbox.dismiss': 'dismiss inbox rows',
   // #98

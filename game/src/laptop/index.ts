@@ -29,6 +29,7 @@ import { createSeatTabs, FLIP_KEY } from './seatTabs';
 import { hasTranscript, loadImagesTab, loadRenderer, TranscriptMode, type OverlayRect, type SeatMode } from './transcriptMode';
 import { TranscriptWatches, WATCH_LIMIT } from './transcriptWatches';
 import { Watches } from './watches';
+import type { PackupGate } from '../world/packup';
 
 export { screensParam };
 export type { ImageFeed };
@@ -70,6 +71,8 @@ export interface LaptopHost {
   themes?: ThemeLoader;
   /** #98: what the desk monitors show (Activity | Terminal); none: this browser's. */
   monitors?: MonitorPrefs;
+  /** #110: the pack-up check before the transcript's prompt box sends (none: it sends at once). */
+  packup?: PackupGate;
 }
 
 /** The HUD while you sit at a laptop. */
@@ -278,6 +281,7 @@ export class Laptops {
       storage: storage(),
       ...(this.host.upload ? { upload: this.host.upload } : {}),
       status: (kind, text) => this.host.seat.status(kind, text),
+      ...(host.packup ? { packup: host.packup } : {}),
       modeChanged: (mode) => this.onMode(mode),
       ...(host.themes ? { prefs: host.themes.prefs } : {}),
     });
@@ -785,7 +789,8 @@ export class Laptops {
     const mods = e.ctrlKey || e.metaKey || e.altKey || e.shiftKey;
     if (e.key === 'Escape' && !mods) {
       e.preventDefault();
-      this.stand();
+      // #110: Esc while the prompt is being checked cancels the send, nothing else.
+      if (!this.transcript.cancelCheck()) this.stand();
     } else if (e.key === 'Enter' && !mods && !this.transcriptOwns(e.target)) {
       e.preventDefault();
       this.transcript.focusPrompt();

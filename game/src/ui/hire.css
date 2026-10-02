@@ -808,3 +808,35 @@
   overflow-wrap: anywhere;
   color: #ffd9a8;
 }
+
+/* ---- #110 pack up on request: the send home's third mode ------------------------------- */
+
+/* The prompt as you sent it, in the porcelain's well: the leaving part struck through in the needs-you red and dimmed,
+ * so what is cut reads at a glance and what goes stays in full ink. Line breaks are the prompt's own. */
+.dd-pk-label {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-on-ink-2);
+}
+.dd-pk-original {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--well);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 9.5em;
+  overflow-y: auto;
+}
+.dd-pk-original del {
+  color: rgb(238 242 251 / 55%);
+  text-decoration: line-through;
+  text-decoration-color: #ff7b73;
+  text-decoration-thickness: 2px;
+}
+.dd-pk .field-hint b {
+  color: var(--text-on-ink);
+}

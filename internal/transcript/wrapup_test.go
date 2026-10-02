@@ -412,7 +412,7 @@ func TestWrapUpVerdict(t *testing.T) {
 func TestWrapUpFooter(t *testing.T) {
 	want := "When you are done, end your final message with exactly one line:\n" +
 		"H3D-WRAPUP " + wrapUpNonce + " CLEAN\n" +
-		"or, if anything could not be stopped or needs a decision:\n" +
+		"or, if the task did not complete, anything could not be stopped or needs a decision:\n" +
 		"H3D-WRAPUP " + wrapUpNonce + " BLOCKED: <one-line reason>"
 	if got := WrapUpFooter(wrapUpNonce); got != want {
 		t.Errorf("footer:\n%s", got)

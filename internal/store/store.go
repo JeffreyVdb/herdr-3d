@@ -169,6 +169,8 @@ var migrations = []string{
 	migrationActivity,
 	// #106: dismissed inbox rows (a finished worker's, until its next done).
 	migrationInbox,
+	// #110: pack up on request: the settings.
+	migrationPackup,
 }
 
 // Fingerprint kinds.

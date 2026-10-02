@@ -10,10 +10,13 @@ import { mountComposer, type Composer } from './composer/composer';
 import { Draft as PromptDraft, type Uploader } from './composer/draft';
 import { failedImagesText, hasContent, heldRefusalText, markedText, notSentText, PASTE_HINT } from './composer/field';
 import { WORKER_PROMPT_MAX_BYTES } from './composer/model';
+import type { PackupGate } from '../world/packup';
 
 /** The overlay's host: the dialogs' plus one image to Drop Zone through the bridge (#64). */
 export interface PromptHost extends DialogHost {
   upload: Uploader;
+  /** #110: the pack-up check before a prompt goes (none: it goes at once). */
+  packup?: PackupGate;
 }
 
 /**
@@ -26,9 +29,12 @@ export interface PromptHost extends DialogHost {
  * the agent gets `[Image #n: <path>]` in its place. Each worker keeps its own
  * unsent draft (text, images, their uploads) while the overlay is closed. The
  * note you write is a speech bubble like the workers' own cards: yours, to them.
+ *
+ * #110: with pack up on request on, Send first asks whether the prompt also tells the worker to leave ("checking…",
+ * the note kept and read-only, Esc cancels the send); a match opens its confirm over this overlay.
  */
 
-export type PromptState = 'ready' | 'sending' | 'sent' | 'failed';
+export type PromptState = 'ready' | 'checking' | 'sending' | 'sent' | 'failed';
 
 export interface PromptResult {
   queued: boolean;
@@ -80,6 +86,8 @@ export class PromptOverlay {
   /** The revision of the shown draft last seen: a change of the note (not an image's upload state) steps a result back. */
   private seen = 0;
   private gen = 0;
+  /** #110: the pack-up check of the prompt being sent (aborted: Esc, the overlay closed). */
+  private checking: AbortController | null = null;
   private headKey = '';
 
   constructor(
@@ -130,6 +138,14 @@ export class PromptOverlay {
     // Closing makes a send still on its way answer in a toast (and keep a newer draft). Esc and close() count at
     // once: the 'close' event comes a task later, when P may have opened the overlay again, so it counts, and
     // lets go of the focus, only while the overlay is still shut.
+    // #110: Esc while the prompt is being checked cancels the send and keeps the overlay (the first listener: the
+    // ones below would count it as a close).
+    this.dialog.addEventListener('cancel', (e) => {
+      if (!this.checking) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      this.cancelCheck();
+    });
     this.dialog.addEventListener('cancel', () => this.gen++);
     this.dialog.addEventListener('close', () => {
       if (!this.dialog.open) this.gen++;
@@ -170,7 +186,21 @@ export class PromptOverlay {
     return d;
   }
 
+  /** #110: drops the pack-up check under way: nothing is sent, the note stays. */
+  private cancelCheck(): void {
+    const c = this.checking;
+    if (!c) return;
+    c.abort();
+    this.checking = null;
+    if (this.state === 'checking') this.state = 'ready';
+    this.setStatus('Not sent: the prompt is still here.');
+    this.render();
+    this.composer.focus();
+  }
+
   close(): void {
+    this.checking?.abort();
+    this.checking = null;
     if (!this.dialog.open) return;
     if (this.dialog.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
     this.gen++;
@@ -256,26 +286,26 @@ export class PromptOverlay {
     );
     if (blocker) this.setStatus(blocker, true);
     else if (this.statusError && this.state !== 'failed') this.setStatus('');
-    this.composer.setBusy(this.state === 'sending');
+    this.composer.setBusy(this.state === 'sending' || this.state === 'checking');
     this.renderActions();
   }
 
   private renderActions(): void {
     const blocker = this.blocker();
-    const why = this.state === 'sending' ? 'On its way…' : blocker;
+    const why = this.state === 'sending' ? 'On its way…' : this.state === 'checking' ? 'Checking the prompt…' : blocker;
     const had = document.activeElement instanceof HTMLElement && this.actions.contains(document.activeElement) ? document.activeElement.dataset.key : null;
     const close = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, 'Close');
     const send = h(
       'button',
       { class: 'btn btn--primary', type: 'submit', form: 'prompt-form', 'data-key': 'send', 'aria-disabled': why ? 'true' : null, title: why },
-      this.state === 'sending' ? 'Sending…' : `Send to ${this.name}`,
+      this.state === 'sending' ? 'Sending…' : this.state === 'checking' ? 'Checking…' : `Send to ${this.name}`,
     );
     this.actions.replaceChildren(close, send);
     if (had) this.actions.querySelector<HTMLElement>(`[data-key="${had}"]`)?.focus();
   }
 
   private async send(): Promise<void> {
-    if (this.state === 'sending') return;
+    if (this.state === 'sending' || this.state === 'checking') return;
     const blocker = this.blocker();
     if (blocker) {
       this.setStatus(blocker, true);
@@ -316,6 +346,38 @@ export class PromptOverlay {
       this.render();
       this.composer.focus();
       return;
+    }
+    // #110: first whether it also tells the worker to leave.
+    const check = new AbortController();
+    const checked = stillHere() ? (this.host.packup?.(id, res.text, check.signal) ?? null) : null;
+    if (checked) {
+      this.checking = check;
+      this.state = 'checking';
+      this.setStatus('Checking the prompt…');
+      this.render();
+      const out = await checked;
+      if (this.checking === check) this.checking = null;
+      if (check.signal.aborted || !stillHere()) return; // Esc or closed: nothing is sent
+      if (out === 'cancel') {
+        this.state = 'ready';
+        this.setStatus('');
+        this.render();
+        this.composer.focus();
+        return;
+      }
+      if (out === 'done') {
+        draft.clearIf(res.revision);
+        this.state = 'sent';
+        this.result = { queued: false, retried: false };
+        this.seen = draft.revision;
+        this.setStatus(`Packing up: ${name} gets the task, then goes home once it reports CLEAN.`, false, { text: 'Packing up', kind: 'box' });
+        this.render();
+        this.composer.focus();
+        return;
+      }
+      this.state = 'sending';
+      this.setStatus(`Sending to ${name}…`);
+      this.render();
     }
     const r = await this.host.send('worker.prompt', { id, text: res.text });
     const still = stillHere();
