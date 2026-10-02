@@ -21,6 +21,44 @@ func rollout(t *testing.T, root, day, stamp, id, cwd string) {
 	}
 }
 
+// subRollout writes a subagent's rollout: its own id, the parent's cwd, and
+// the fields Codex marks it with.
+func subRollout(t *testing.T, root, day, stamp, id, parent, cwd string) {
+	t.Helper()
+	dir := filepath.Join(root, filepath.FromSlash(day))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"timestamp":"x","type":"session_meta","payload":{"id":"` + id + `","session_id":"` + parent +
+		`","forked_from_id":"` + parent + `","parent_thread_id":"` + parent + `","cwd":"` + cwd +
+		`","thread_source":"subagent","source":{"subagent":{"thread_spawn":{"parent_thread_id":"` + parent +
+		`","depth":1,"agent_path":"/root/spec"}}}}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "rollout-"+stamp+"-"+id+".jsonl"), []byte(meta), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A pane's Codex spawns subagents in its cwd, newer than the pane's own
+// rollout: another pane in that cwd must not take one for its session.
+func TestFindSessionSkipsSubagents(t *testing.T) {
+	root := t.TempDir()
+	rollout(t, root, "2026/10/02", "2026-10-02T08-38-16", "01a0-root", "/home/u/repo")
+	subRollout(t, root, "2026/10/02", "2026-10-02T08-39-17", "01a0-standards", "01a0-root", "/home/u/repo")
+	subRollout(t, root, "2026/10/02", "2026-10-02T08-39-28", "01a0-spec", "01a0-root", "/home/u/repo")
+
+	if got, err := FindSession(root, "/home/u/repo", nil); got != "01a0-root" || err != nil {
+		t.Errorf("newest = %q, %v; want the root", got, err)
+	}
+	// The root's own pane has it: the other pane has no session yet.
+	if got, _ := FindSession(root, "/home/u/repo", func(id string) bool { return id == "01a0-root" }); got != "" {
+		t.Errorf("only subagents left = %q; want none", got)
+	}
+	// Still reachable by id (a transcript of a subagent).
+	if p, _ := FindRollout(root, "01a0-spec"); p == "" {
+		t.Error("FindRollout lost the subagent's file")
+	}
+}
+
 func TestFindSession(t *testing.T) {
 	root := t.TempDir()
 	rollout(t, root, "2026/09/27", "2026-09-27T23-00-00", "01a0-old", "/home/u/repo")
