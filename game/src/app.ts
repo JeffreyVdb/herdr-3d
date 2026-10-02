@@ -68,6 +68,8 @@ import { inboxQueue, inboxReason, inboxWhere, type InboxCandidate } from './worl
 import { aiSection } from './ui/aiSection';
 // #90 follow-up questions
 import { followupsSection } from './ui/followupsSection';
+import { packupSection } from './ui/packupSection';
+import { packupApplies, packupVerdict, type PackupOutcome } from './world/packup';
 import { activitySection } from './ui/activitySection';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
@@ -301,12 +303,16 @@ export class App {
     this.settings.addSection(
       'ai',
       'AI integration',
-      aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args), usedBy: { classifier: ['Follow-up questions', 'Classify unknown commands'], llm: ['Follow-up questions'] } }),
+      aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args), usedBy: { classifier: ['Follow-up questions', 'Pack up on request', 'Classify unknown commands'], llm: ['Follow-up questions', 'Pack up on request'] } }),
       { store: 'bridge' },
     );
     // #90: the first feature on those models: its own switch and threshold, under them.
     const settings = this.settings;
     settings.addSection('followups', 'Follow-up questions', followupsSection({ book: this.store.followups, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }), {
+      store: 'bridge',
+    });
+    // #110: the second, on the prompts you send: strip a "then go home" and send the worker home after the task.
+    settings.addSection('packup', 'Pack up on request', packupSection({ book: this.store.packup, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }), {
       store: 'bridge',
     });
     // #98: the desk monitors' words for the commands the rules can't place, on the same classifier (absent without the service).
@@ -514,11 +520,12 @@ export class App {
         layer: this.hud.root,
         themes: this.themes,
         monitors: this.monitorPrefs,
+        packup: (id, text, signal) => this.packupCheck(id, text, signal), // #110
       },
       o.params,
     );
     // M5: the Changes panel sits in the HUD, under the top bar, and leaves the floor in view.
-    this.prompt = new PromptOverlay(o.host, { ...dialogHost, upload });
+    this.prompt = new PromptOverlay(o.host, { ...dialogHost, upload, packup: (id, text, signal) => this.packupCheck(id, text, signal) });
     this.openPr = new OpenPrDialog(o.host, {
       ...dialogHost,
       providerName: (session) => this.boardBook.get(session).prs?.provider_name ?? this.boardBook.get(session).issues?.provider_name ?? 'the provider',
@@ -909,6 +916,30 @@ export class App {
     if (!r.ok && r.code === 'unknown_command') this.unsupported.add(t);
     if (!r.ok && r.code === 'unknown_command') this.m6Buttons.sync();
     return r;
+  }
+
+  /**
+   * #110 pack up on request: the check before a prompt from the laptop's composer or the P overlay goes out. Only
+   * while the feature is ready and for a worker it applies to; any failure or a late answer sends it as written.
+   * A match opens the confirm (the send home's pack-up mode), nothing left of the prompt the plain send home.
+   */
+  private packupCheck(id: string, text: string, signal: AbortSignal): Promise<PackupOutcome> | null {
+    if (this.store.packup.state?.state !== 'ready' || this.unsupported.has('packup.detect') || !packupApplies(this.store.workers.get(id))) return null;
+    return this.packupRun(id, text, signal);
+  }
+
+  private async packupRun(id: string, text: string, signal: AbortSignal): Promise<PackupOutcome> {
+    const r = await this.send('packup.detect', { id, text });
+    if (signal.aborted) return 'cancel';
+    const v = r.ok ? packupVerdict(r.data, text) : ({ kind: 'send' } as const);
+    if (v.kind === 'send') return 'send';
+    if (v.kind === 'home') {
+      this.sendHome.open(id);
+      return 'cancel';
+    }
+    const c = await this.sendHome.openPackup(id, { original: text, task: v.task, removed: v.removed });
+    if (c === 'done') return 'done';
+    return c === 'stay' && !signal.aborted ? 'send' : 'cancel';
   }
 
   // ---- M6 start: starting a run, team presets ------------------------------------------

@@ -1,4 +1,5 @@
 import type { CommandResult } from '../net/client';
+import type { PackupGate } from '../world/packup';
 import type { AnswerAskAck, Ask, CommandArgs, Followup, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck, Usage } from '../net/protocol';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
@@ -74,7 +75,9 @@ export interface TranscriptModeHost {
   /** #64: one image to Drop Zone, for the prompt box (none: a pasted image says it cannot go up). */
   upload?: Uploader;
   /** The seat bar's note. */
-  status(kind: 'ok' | 'error', text: string | null): void;
+  status(kind: 'ok' | 'busy' | 'error', text: string | null): void;
+  /** #110: the pack-up check before a prompt goes (none: it goes at once). */
+  packup?: PackupGate;
   /** The mode changed (the seat bar's toggle, the terminal watch's fps, the monitor's frame). */
   modeChanged(mode: SeatMode): void;
   /** #59: the preset, hidden tool calls and the zoom (the view's top strip sets them). */
@@ -210,6 +213,8 @@ export class TranscriptMode {
   private pid = 0;
   /** An Esc for a queued prompt is on its way. */
   private escBusy = false;
+  /** #110: the pack-up check of the prompt being sent (aborted: Esc, standing up). */
+  private checking: AbortController | null = null;
 
   constructor(private readonly host: TranscriptModeHost) {}
 
@@ -274,6 +279,8 @@ export class TranscriptMode {
   stand(): void {
     const s = this.s;
     if (!s) return;
+    this.checking?.abort();
+    this.checking = null;
     this.s = null;
     this.rect = null;
     s.unsub?.();
@@ -293,6 +300,16 @@ export class TranscriptMode {
       s.box.remove();
       this.counts.removed++;
     }
+  }
+
+  /** #110: Esc while a prompt is being checked: the check is dropped and nothing is sent (the draft stays). False: none ran. */
+  cancelCheck(): boolean {
+    const c = this.checking;
+    if (!c) return false;
+    c.abort();
+    this.checking = null;
+    this.host.status('ok', 'Not sent: the prompt is still in the box.');
+    return true;
   }
 
   /** Ctrl+Esc: the terminal, or the view you read last. */
@@ -539,6 +556,35 @@ export class TranscriptMode {
     if (s.reveal) void this.revealNow(s);
   }
 
+  /** Sends a prompt from the view: its row is in the timeline at once. Resolves whether it went. */
+  private sendPrompt(s: Sitting, t: string): Promise<boolean> {
+    const live = () => this.s === s;
+    // #58: its row is in the timeline at once, until its `user` item comes; a refused one before it goes.
+    const p: PendingPrompt = { id: `p${++this.pid}`, text: t, state: 'sending', late: false, mark: topSeq(s.items), due: null };
+    s.pending = [...s.pending.filter((x) => x.state !== 'refused'), p];
+    // To a worker not at work it starts a turn: that turn's items come after this.
+    if (s.status !== 'working') s.sendMark = p.mark;
+    this.pendingChanged(s);
+    // Resolves whether it went: a refused prompt goes back in the box.
+    return this.host.send('worker.prompt', { id: s.id, text: t }).then((r) => {
+      if (!live()) return r.ok;
+      if (r.ok) this.host.status('ok', `Sent to ${s.name}`);
+      else this.host.status('error', failureText('worker.prompt', r.code, r.message, { worker: s.name }));
+      const queued = r.ok && ((r.data ?? {}) as Partial<PromptAck>).queued === true;
+      const now = this.now();
+      // Already shown by its item (it can come before the ack): nothing to change.
+      if (!s.pending.some((x) => x.id === p.id)) return r.ok;
+      s.pending = s.pending.map((x): PendingPrompt => {
+        if (x.id !== p.id) return x;
+        if (!r.ok) return { ...x, state: 'refused', reason: failureText('worker.prompt', r.code, r.message, { worker: s.name }), due: null };
+        // A queued prompt may wait for the whole turn: the hint only once the agent stopped working.
+        return { ...x, state: queued ? 'queued' : 'sent', due: queued && s.status === 'working' ? null : now + SENT_TIMEOUT_MS };
+      });
+      this.pendingChanged(s);
+      return r.ok;
+    });
+  }
+
   private renderHost(s: Sitting): TranscriptRenderHost {
     const live = () => this.s === s;
     return {
@@ -555,31 +601,27 @@ export class TranscriptMode {
           this.host.status('error', 'That prompt is over 16 KiB: send less at a time.');
           return Promise.resolve(false);
         }
-        // #58: one on its way at a time (a second Enter while it is sending sends nothing).
-        if (s.pending.some((p) => p.state === 'sending')) return Promise.resolve(false);
-        // #58: its row is in the timeline at once, until its `user` item comes; a refused one before it goes.
-        const p: PendingPrompt = { id: `p${++this.pid}`, text: t, state: 'sending', late: false, mark: topSeq(s.items), due: null };
-        s.pending = [...s.pending.filter((x) => x.state !== 'refused'), p];
-        // To a worker not at work it starts a turn: that turn's items come after this.
-        if (s.status !== 'working') s.sendMark = p.mark;
-        this.pendingChanged(s);
-        // Resolves whether it went: a refused prompt goes back in the box.
-        return this.host.send('worker.prompt', { id: s.id, text: t }).then((r) => {
-          if (!live()) return r.ok;
-          if (r.ok) this.host.status('ok', `Sent to ${s.name}`);
-          else this.host.status('error', failureText('worker.prompt', r.code, r.message, { worker: s.name }));
-          const queued = r.ok && ((r.data ?? {}) as Partial<PromptAck>).queued === true;
-          const now = this.now();
-          // Already shown by its item (it can come before the ack): nothing to change.
-          if (!s.pending.some((x) => x.id === p.id)) return r.ok;
-          s.pending = s.pending.map((x): PendingPrompt => {
-            if (x.id !== p.id) return x;
-            if (!r.ok) return { ...x, state: 'refused', reason: failureText('worker.prompt', r.code, r.message, { worker: s.name }), due: null };
-            // A queued prompt may wait for the whole turn: the hint only once the agent stopped working.
-            return { ...x, state: queued ? 'queued' : 'sent', due: queued && s.status === 'working' ? null : now + SENT_TIMEOUT_MS };
-          });
-          this.pendingChanged(s);
-          return r.ok;
+        // #58: one on its way at a time (a second Enter while it is sending sends nothing). #110: nor while one is checked.
+        if (s.pending.some((p) => p.state === 'sending') || this.checking) return Promise.resolve(false);
+        // #110: first whether it also tells the worker to leave. Meanwhile the box is read-only and keeps the draft.
+        const check = new AbortController();
+        const checked = this.host.packup?.(s.id, t, check.signal) ?? null;
+        if (!checked) return this.sendPrompt(s, t);
+        this.checking = check;
+        this.host.status('busy', 'Checking the prompt…');
+        return checked.then((out) => {
+          if (this.checking === check) this.checking = null;
+          if (check.signal.aborted || !live()) return false;
+          if (out === 'done') {
+            this.host.status('ok', `Sent the task to ${s.name}: it goes home once it reports CLEAN`);
+            return true;
+          }
+          if (out === 'cancel') {
+            this.host.status('ok', null);
+            return false;
+          }
+          this.host.status('ok', null);
+          return this.sendPrompt(s, t);
         });
       },
       onDismissPending: (id) => {

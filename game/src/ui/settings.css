@@ -1,6 +1,7 @@
-/* The Settings window (#91): the About panel's frame (credits.css `.credits`), then one block per section: heading, where it is kept, content. */
+/* The Settings window (#91): the About panel's frame (credits.css `.credits`), then one block per section: heading, where it is kept, content.
+ * #110: wide enough for the AI-backed sections (status line, threshold, test results); their rows reflow into it. */
 dialog.settings {
-  width: min(420px, calc(100vw - 32px));
+  width: min(640px, calc(100vw - 32px));
 }
 .settings .settings-body {
   padding-top: 14px;
@@ -56,6 +57,15 @@ dialog.settings {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+/* #110: past a phone the grid's switches and fields pair up side by side; a phone keeps the one column. */
+@media (min-width: 601px) {
+  .settings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px 24px;
+    align-items: start;
+  }
 }
 .settings-field {
   display: flex;
@@ -382,6 +392,35 @@ dialog.settings {
 }
 .settings-fu .settings-status {
   margin: -4px 0 0;
+}
+
+/* #110: pack up on request, on the follow-up section's classes. A sample is the prompt itself, quoted as typed, in
+ * the regular weight (it is content, not a label); the whole labelled set sits under a disclosure, its count first. */
+.settings-fu-samples dt.settings-pk-prompt {
+  font-weight: 400;
+  color: var(--text-on-ink);
+  overflow-wrap: anywhere;
+}
+.settings-pk-all {
+  margin-top: 10px;
+  font-size: 12.5px;
+}
+.settings-pk-all > summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--text-on-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.settings-pk-all > summary:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.settings-pk-all > .settings-fu-samples {
+  margin-top: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 /* #98: Classify unknown commands. The privacy note is the follow-up section's ruled aside, above the switch; the

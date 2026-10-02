@@ -25,6 +25,7 @@ import { wrapUpOf } from './wrapup';
 import { AiBook } from './ai';
 // #90: follow-up questions
 import { followupOf, FollowupsBook } from './followup';
+import { PackupBook } from './packup';
 // #98: "Classify unknown commands" (the activity settings)
 import { ActivitySettingsBook } from './activitySettings';
 import { LimitBook } from './limits';
@@ -160,6 +161,8 @@ export class WorldStore {
   readonly ai = new AiBook();
   /** #90: the follow-up questions feature's settings and state (`known` false from an older bridge). */
   readonly followups = new FollowupsBook();
+  /** #110: pack up on request's settings and state (`known` false from an older bridge). */
+  readonly packup = new PackupBook();
   /** #98: the "Classify unknown commands" settings and state (`known` false from an older bridge). */
   readonly activitySettings = new ActivitySettingsBook();
   /** #106: the inbox's dismissed finished rows, worker id → the `status_since` of the done episode hidden. */
@@ -195,6 +198,7 @@ export class WorldStore {
     this.limits.reset(s.world.limits);
     this.ai.reset(s.world.ai);
     this.followups.reset(s.world.followups);
+    this.packup.reset(s.world.packup); // #110
     this.activitySettings.reset(s.world.activity); // #98
     this.inboxDismissed.clear(); // #106
     for (const [id, since] of Object.entries(s.world.inbox_dismissed ?? {})) if (Number.isInteger(since)) this.inboxDismissed.set(id, since);
@@ -307,6 +311,9 @@ export class WorldStore {
         break;
       case 'followups.update': // #90
         this.followups.upsert(e);
+        break;
+      case 'packup.update': // #110
+        this.packup.upsert(e);
         break;
       // #98: what the agent is doing changed (absent: cleared); its status stays.
       case 'worker.activity': {

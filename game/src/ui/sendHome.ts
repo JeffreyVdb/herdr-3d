@@ -1,6 +1,7 @@
-import type { FireAck, FirePrepare, FireWorktree, WrapUp, WrapUpAck } from '../net/protocol';
+import type { FireAck, FirePrepare, FireWorktree, PackupRange, WrapUp, WrapUpAck } from '../net/protocol';
 import { fireArgs, fireBlocked, fireOptions, leftovers, type FireOptions } from '../world/hire';
 import { armedText, defaultChoice, WRAPUP_AGAIN_PROMPT, WRAPUP_PROMPT, worktreeFate, wrapUpOf } from '../world/wrapup';
+import { packupChoice, packupPrompt, struckParts } from '../world/packup';
 import { h, icon, ICON } from './dom';
 import type { DialogHost } from './hire';
 import { failureText } from './messages';
@@ -20,12 +21,27 @@ import { backdropPolicy } from './dismiss';
  * offers to cancel it; once it needs you, to wrap up again or dismiss it.
  * Enter never deletes at once: with a delete chosen it opens a confirm step
  * whose Cancel has the focus. Enter in the prompt adds a line.
+ *
+ * #110: pack up on request opens it in its third mode (`openPackup`), built on the wrap-up: the prompt you sent with
+ * the leaving part struck out, the task left in an editable box, the worktree choice (the worktree and its branch
+ * preselected when that is possible) with the same warnings. "Send and go home" is a `worker.wrapup` of the task
+ * and the cleanup request; "Send as written (stay)" and Cancel hand the choice back to the composer.
  */
 
 export type SendHomeState = 'preparing' | 'ready' | 'sending' | 'failed';
 
-/** #83: sending home now, or wrapping up first. */
-export type SendHomeMode = 'home' | 'wrapup';
+/** #83: sending home now, or wrapping up first. #110: or a prompt's task first (pack up on request). */
+export type SendHomeMode = 'home' | 'wrapup' | 'packup';
+
+/** #110: the prompt pack up on request looked at: as you sent it, the task left, and what was cut. */
+export interface PackupConfirm {
+  original: string;
+  task: string;
+  removed: PackupRange[];
+}
+
+/** #110: how the pack-up confirm ended: the task went and the worker goes home after it, send as written, or nothing. */
+export type PackupChoice = 'done' | 'stay' | 'cancel';
 
 export interface SendHomeSummary {
   kind: 'send-home';
@@ -48,6 +64,8 @@ export interface SendHomeSummary {
   prompt: string;
   /** The worker's wrap-up, armed or needing you. */
   wrapup: WrapUp | null;
+  /** #110: the prompt the pack-up confirm is about (null: not that mode). */
+  packup: PackupConfirm | null;
 }
 
 /** Room for "Handoff first" (M9, #11): nothing yet. */
@@ -102,6 +120,9 @@ export class SendHomeDialog {
   private confirming = false;
   /** The wrap-up the banner shows (to redraw it only when it changes). */
   private shownWrap = '';
+  /** #110: the pack-up confirm's prompt, and who waits for how it ends. */
+  private pk: PackupConfirm | null = null;
+  private settle: ((c: PackupChoice) => void) | null = null;
   private statusText = '';
   private statusError = false;
   private gen = 0;
@@ -114,6 +135,7 @@ export class SendHomeDialog {
     this.dialog.append(this.head, this.form, h('footer', { class: 'dd-foot' }, this.statusEl, this.alertEl, this.actions));
     this.dialog.addEventListener('close', () => {
       if (!this.dialog.open) this.gen++;
+      this.settleWith('cancel'); // #110: Esc, Cancel, the close button, the worker gone
     });
     // Esc in the confirm step steps back to the dialog; it does not close it.
     this.dialog.addEventListener('cancel', (e) => {
@@ -155,6 +177,31 @@ export class SendHomeDialog {
   }
 
   open(workerId: string): void {
+    this.settleWith('cancel');
+    this.pk = null;
+    this.start(workerId, 'home');
+  }
+
+  /**
+   * #110: the pack-up confirm for a prompt to `workerId`. Resolves `done` once the task went out as a wrap-up (the
+   * worker goes home on CLEAN), `stay` for "Send as written (stay)" (the composer sends it), `cancel` for nothing.
+   */
+  openPackup(workerId: string, pk: PackupConfirm): Promise<PackupChoice> {
+    this.settleWith('cancel');
+    if (!this.host.store.workerView(workerId)) return Promise.resolve('cancel');
+    const done = new Promise<PackupChoice>((resolve) => (this.settle = resolve));
+    this.pk = { original: pk.original, task: pk.task, removed: pk.removed.map((r) => ({ ...r })) };
+    this.start(workerId, 'packup');
+    return done;
+  }
+
+  private settleWith(c: PackupChoice): void {
+    const s = this.settle;
+    this.settle = null;
+    s?.(c);
+  }
+
+  private start(workerId: string, mode: SendHomeMode): void {
     const v = this.host.store.workerView(workerId);
     if (!v) return;
     this.id = workerId;
@@ -163,9 +210,9 @@ export class SendHomeDialog {
     this.session = v.worker.session;
     this.prep = null;
     this.choice = 'keep';
-    this.mode = 'home';
+    this.mode = mode;
     this.confirming = false;
-    this.promptEl.value = WRAPUP_PROMPT;
+    this.promptEl.value = mode === 'packup' && this.pk ? this.pk.task : WRAPUP_PROMPT;
     this.state = 'preparing';
     this.setStatus('Looking at what is on the desk…');
     this.render();
@@ -175,7 +222,13 @@ export class SendHomeDialog {
   }
 
   private title(): string {
+    if (this.mode === 'packup') return `Send the task, then send ${this.name} home`;
     return this.mode === 'wrapup' ? `Wrap up ${this.name}, then send home` : `Send ${this.name} home`;
+  }
+
+  /** #83, #110: a last prompt goes first (wrap up, or a prompt's task). */
+  private prompting(): boolean {
+    return this.mode !== 'home';
   }
 
   private wrap(): WrapUp | null {
@@ -206,7 +259,8 @@ export class SendHomeDialog {
     this.prep = r.data as FirePrepare;
     this.name = this.prep.name || this.name;
     // Delete is preselected whenever it is safe; the choice stays if the prepare is asked again and it still is.
-    if (!fireOptions(this.prep).enabled[this.choice] || this.choice === 'keep') this.choice = defaultChoice(this.prep);
+    // #110: pack up deletes the branch too whenever it may (the prompt asked to leave, not to keep anything).
+    if (!fireOptions(this.prep).enabled[this.choice] || this.choice === 'keep') this.choice = this.mode === 'packup' ? packupChoice(this.prep) : defaultChoice(this.prep);
     this.state = 'ready';
     this.setStatus('');
     this.render();
@@ -216,7 +270,7 @@ export class SendHomeDialog {
   /** Keyboard: on the chosen worktree (Enter: send home, or the confirm step for a delete), else on the action. */
   private focusFirst(): void {
     if (!this.prep) return;
-    if (this.mode === 'wrapup') {
+    if (this.prompting()) {
       this.promptEl.focus();
       return;
     }
@@ -268,7 +322,8 @@ export class SendHomeDialog {
       nodes.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i')));
     } else {
       const o = fireOptions(p);
-      if (this.mode === 'wrapup') {
+      if (this.mode === 'packup' && this.pk) nodes.push(...this.packupNodes(this.pk));
+      else if (this.mode === 'wrapup') {
         // The last prompt first: it is what this mode is for.
         this.promptEl.disabled = this.state === 'sending';
         nodes.push(
@@ -310,7 +365,7 @@ export class SendHomeDialog {
       nodes.push(desk);
 
       if (o.offered) {
-        const set = h('fieldset', { class: 'dd-choices' }, h('legend', {}, this.mode === 'wrapup' ? 'The worktree, once it reports CLEAN' : 'The worktree'));
+        const set = h('fieldset', { class: 'dd-choices' }, h('legend', {}, this.prompting() ? 'The worktree, once it reports CLEAN' : 'The worktree'));
         for (const c of CHOICES.filter((x) => o.choices.includes(x.v))) {
           const on = o.enabled[c.v];
           const input = h('input', { type: 'radio', name: 'home-worktree', value: c.v, id: `home-${c.v}`, 'data-key': `wt:${c.v}`, 'aria-describedby': `home-${c.v}-hint` });
@@ -351,6 +406,25 @@ export class SendHomeDialog {
     this.form.replaceChildren(...nodes);
     this.renderWrap();
     this.renderActions();
+  }
+
+  /** #110: the prompt as you sent it with the leaving part struck out, then the task it goes as, editable. */
+  private packupNodes(pk: PackupConfirm): Node[] {
+    this.promptEl.disabled = this.state === 'sending';
+    const original = h('p', { class: 'dd-pk-original', id: 'home-pk-original', 'data-key': 'pk-original' });
+    for (const part of struckParts(pk.original, pk.removed)) {
+      original.append(part.struck ? h('del', { title: 'Cut: not sent' }, part.text) : document.createTextNode(part.text));
+    }
+    return [
+      h('div', { class: 'dd-field dd-pk' }, h('p', { class: 'dd-pk-label', id: 'home-pk-label' }, 'Your prompt'), original, h('p', { class: 'field-hint' }, 'The struck part asks ', h('b', {}, this.name), ' to leave: it is not sent. herdr-world sends it home instead.')),
+      h(
+        'div',
+        { class: 'dd-field dd-wrap-prompt' },
+        h('label', { for: 'home-wrap-prompt' }, `What ${this.name} gets`),
+        this.promptEl,
+        h('p', { class: 'field-hint', id: 'home-wrap-hint' }, 'Then a request to stop what it started, and the line herdr-world reads the result from. On CLEAN it sends ', h('b', {}, this.name), ' home; if the task did not complete, it stays and needs you.'),
+      ),
+    ];
   }
 
   /** #83: the worker's wrap-up on top of the form: what it waits for, or why it needs you. */
@@ -396,12 +470,13 @@ export class SendHomeDialog {
   private why(): string | null {
     const ready = this.state === 'ready' && !!this.prep;
     const blocked = this.prep ? fireBlocked(this.prep) : null;
-    const cmd = this.mode === 'wrapup' ? 'worker.wrapup' : 'worker.fire';
-    if (!ready) return this.state === 'sending' ? (this.mode === 'wrapup' ? 'Sending the last prompt.' : 'On the way out.') : 'Waiting for herdr-world…';
+    const cmd = this.prompting() ? 'worker.wrapup' : 'worker.fire';
+    if (!ready) return this.state === 'sending' ? (this.prompting() ? 'Sending the last prompt.' : 'On the way out.') : 'Waiting for herdr-world…';
     if (this.host.unsupported(cmd)) return failureText(cmd, 'unknown_command', '');
     if (blocked) return `${this.name} can’t go home yet: ${blocked}.`;
-    if (this.mode === 'wrapup' && this.wrap()?.state === 'armed') return `${this.name} is wrapping up already: cancel it first.`;
+    if (this.prompting() && this.wrap()?.state === 'armed') return `${this.name} is wrapping up already: cancel it first.`;
     if (this.mode === 'wrapup' && !this.promptEl.value.trim()) return 'Write the last prompt first.';
+    if (this.mode === 'packup' && !this.promptEl.value.trim()) return 'Write the task first, or send the prompt as written.';
     return null;
   }
 
@@ -419,6 +494,10 @@ export class SendHomeDialog {
     const deleting = this.deleting();
     const wrapping = this.mode === 'wrapup';
     const sending = this.state === 'sending';
+    if (this.mode === 'packup') {
+      this.renderPackupActions(sending, had);
+      return;
+    }
     const text = sending
       ? wrapping
         ? 'Sending the prompt…'
@@ -444,15 +523,36 @@ export class SendHomeDialog {
     if (had) this.actions.querySelector<HTMLElement>(`[data-key="${had}"]`)?.focus();
   }
 
+  /** #110: Cancel, "Send as written (stay)", and "Send and go home" (the form's submit: Enter on it with a delete asks first). */
+  private renderPackupActions(sending: boolean, had: string | undefined | null): void {
+    const why = this.why();
+    const cancel = h('button', { type: 'button', class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, 'Cancel');
+    const stay = h(
+      'button',
+      { type: 'button', class: 'btn', 'data-key': 'stay', 'aria-disabled': sending ? 'true' : null, title: `Sends the prompt as you wrote it; ${this.name} stays`, onclick: () => this.stay() },
+      'Send as written (stay)',
+    );
+    const send = h('button', { class: 'btn btn--danger', type: 'submit', form: 'home-form', 'data-key': 'send', 'aria-disabled': why ? 'true' : null, title: why }, sending ? 'Sending the task…' : 'Send and go home');
+    this.actions.replaceChildren(cancel, stay, send);
+    if (had) this.actions.querySelector<HTMLElement>(`[data-key="${had}"]`)?.focus();
+  }
+
+  /** #110: send the prompt as written: the composer sends it, the worker stays. */
+  private stay(): void {
+    if (this.state === 'sending' || this.mode !== 'packup') return;
+    this.settleWith('stay');
+    this.close();
+  }
+
   /** The inline warning before a delete: Cancel focused, the danger button one Tab away. */
   private renderConfirm(path: string): void {
     this.actions.classList.add('dd-actions--confirm');
-    const wrapping = this.mode === 'wrapup';
+    const wrapping = this.prompting();
     const cancel = h('button', { type: 'button', class: 'btn', 'data-key': 'confirm-cancel', onclick: () => this.closeConfirm() }, 'Cancel');
     const go = h(
       'button',
       { type: 'button', class: 'btn btn--danger', 'data-key': 'confirm', onclick: () => this.confirmed() },
-      wrapping ? 'Wrap up and delete' : `Send ${this.name} home and delete`,
+      this.mode === 'packup' ? 'Send and delete' : wrapping ? 'Wrap up and delete' : `Send ${this.name} home and delete`,
     );
     this.actions.replaceChildren(
       h(
@@ -479,7 +579,7 @@ export class SendHomeDialog {
 
   private confirmed(): void {
     this.confirming = false;
-    void (this.mode === 'wrapup' ? this.wrapUp() : this.send());
+    void (this.prompting() ? this.wrapUp() : this.send());
   }
 
   /** Enter (`viaEnter`) with a delete chosen asks first; a click sends. */
@@ -488,18 +588,18 @@ export class SendHomeDialog {
     const why = this.why();
     if (why) {
       this.setStatus(why, true);
-      if (this.mode === 'wrapup' && !this.promptEl.value.trim()) this.promptEl.focus();
+      if (this.prompting() && !this.promptEl.value.trim()) this.promptEl.focus();
       return;
     }
     if (viaEnter && this.deleting() && this.prep.worktree) {
       this.openConfirm();
       return;
     }
-    void (this.mode === 'wrapup' ? this.wrapUp() : this.send());
+    void (this.prompting() ? this.wrapUp() : this.send());
   }
 
   private setMode(mode: SendHomeMode): void {
-    if (this.state === 'sending' || this.mode === mode) return;
+    if (this.state === 'sending' || this.mode === mode || this.mode === 'packup') return;
     this.mode = mode;
     this.confirming = false;
     this.setStatus('');
@@ -576,10 +676,11 @@ export class SendHomeDialog {
     const p = this.prep;
     if (this.state !== 'ready' || !p || this.why()) return;
     const choice = fireArgs(this.id, p, this.choice).worktree;
-    const prompt = this.promptEl.value;
+    const packing = this.mode === 'packup';
+    const prompt = packing ? packupPrompt(this.promptEl.value) : this.promptEl.value;
     const name = this.name;
     this.state = 'sending';
-    this.setStatus(`Sending ${name} its last prompt…`);
+    this.setStatus(packing ? `Sending ${name} the task…` : `Sending ${name} its last prompt…`);
     this.render();
     const gen = this.gen;
     const r = await this.host.send('worker.wrapup', { id: this.id, prompt, ...(choice ? { worktree: choice } : {}) });
@@ -588,8 +689,14 @@ export class SendHomeDialog {
     if (r.ok) {
       const queued = (r.data as WrapUpAck | undefined)?.queued === true;
       const fate = worktreeFate(choice ?? 'keep', !!p.worktree?.linked);
+      if (packing) this.settleWith('done');
       this.close();
-      this.host.toast(`${name} is wrapping up${queued ? ' after its current turn' : ''}. Once it reports CLEAN it goes home.${fate ? ` ${fate}` : ''}`, 'info');
+      this.host.toast(
+        packing
+          ? `Sent ${name} the task${queued ? ' for its next turn' : ''}. Once it reports CLEAN it goes home.${fate ? ` ${fate}` : ''}`
+          : `${name} is wrapping up${queued ? ' after its current turn' : ''}. Once it reports CLEAN it goes home.${fate ? ` ${fate}` : ''}`,
+        'info',
+      );
       return;
     }
     const msg = failureText('worker.wrapup', r.code, r.message, { worker: name, floor: this.session });
@@ -635,6 +742,7 @@ export class SendHomeDialog {
       confirming: this.confirming,
       prompt: this.promptEl.value,
       wrapup: this.wrap(),
+      packup: this.mode === 'packup' && this.pk ? { ...this.pk, removed: this.pk.removed.map((r) => ({ ...r })) } : null,
     };
   }
 }
