@@ -226,7 +226,8 @@ test('the P overlay: checking…, the confirm with the leaving part struck, an e
     expect(await page.evaluate(() => (window.__h3d.panel() as { text?: string } | null)?.text)).toBe('');
     // CLEAN: the existing send home takes it.
     expect(await page.evaluate((i) => window.__h3d.simWrapUp({ id: i, verdict: 'clean' }), id)).toMatchObject({ ok: true });
-    await expect.poll(() => page.evaluate((i) => window.__h3d.world().some((f) => f.workers.some((w) => w.id === i)), id)).toBe(false);
+    // (It packs a box and walks out first: give it the walk.)
+    await expect.poll(() => page.evaluate((i) => window.__h3d.world().some((f) => f.workers.some((w) => w.id === i)), id), { timeout: 20_000 }).toBe(false);
   } finally {
     await Promise.all([jev.close(), llm.close()]);
   }
