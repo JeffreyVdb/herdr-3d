@@ -1186,6 +1186,11 @@ export interface Worker {
   over_cap?: boolean;
   /** M6, freelancers with a report token. */
   report?: WorkerReport;
+  /**
+   * M6c, game-only: an orchestrator that sits in the corner office up the mezzanine stair instead of at its desk
+   * (see docs/decisions.md). The real bridge never sends it; fixtures, the simulator and tests do.
+   */
+  corner?: boolean;
   /** M7: the neutral form of `issue`: the board card the worker's run is about. */
   work_item?: WorkItem;
 }

@@ -73,6 +73,13 @@ export const CABLE_R = 0.0042;
 /** Where a freelancer's desk item and the orchestrator's pass board go (dock side +1; mirrored with the dock). */
 export const CREW_SPOTS = { item: { x: 0.5, z: SEAT_OFFSET - 0.17 }, passBoard: { x: -0.48, z: SEAT_OFFSET - 0.12 } } as const;
 /**
+ * M6c: the orchestrator's in-tray stands on the front corner on the dock's side (where the other workers keep a
+ * notebook: an orchestrator has none), a little in from the desk's edge. Slot space with the dock on side +1.
+ */
+export const TRAY_SPOT = { x: 0.5, z: SEAT_OFFSET - 0.16 } as const;
+export const TRAY_BOX = { w: 0.21, d: 0.17, h: 0.045 } as const;
+
+/**
  * The front corners they take (dock side +1): the pass board's stays clear on
  * every desk; a freelancer's item goes where everyone else keeps a notebook.
  */

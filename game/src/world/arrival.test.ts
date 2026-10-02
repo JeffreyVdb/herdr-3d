@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildingPlan, floorY, type BuildingPlan } from './building';
 import { floorLayout, outlineOf, type FloorLayout } from './layout';
-import { walkOutRoute } from './route';
+import { deskToDeskRoute, walkOutRoute } from './route';
 import {
   DROP_H,
   DROP_S,
@@ -16,7 +16,13 @@ import {
   TAKE_LAPTOP_AT,
   WAVE_S,
   WALK_SPEED,
+  DELIVER_SPEED,
+  HAND_FLY,
+  HAND_FLY_SELF,
+  HAND_S,
+  SIT_S,
   cumulative,
+  deliveryTimeline,
   deskOwners,
   itemAt,
   poseAt,
@@ -231,5 +237,100 @@ describe('the freelancer walks (M6)', () => {
     expect(poseAt(tl, TAKE_LAPTOP_AT - 0.1).items).toBeLessThanOrEqual(ITEMS);
     expect(poseAt(tl, 0.1).seated).toBe(true);
     expect(SEAT_LIFT).toBeGreaterThan(STAND_LIFT);
+  });
+});
+
+describe('deliveryTimeline (M6c)', () => {
+  const L = floors[0]!;
+  const desk = 3;
+  const to = 7;
+  const slot = L.slots[desk]!;
+  const there = deskToDeskRoute(L, 0, desk, { slot: to });
+  const tl = deliveryTimeline(there, slot.yaw, { handYaw: Math.PI / 2, swivels: true });
+  const half = tl.stages.find((s) => s.phase === 'walk')!.d1!;
+
+  it('stands up, walks there, hands over, walks back, sits: stages back to back, the way back is the way there reversed', () => {
+    expect(tl.stages.map((s) => s.phase)).toEqual(['stand', 'walk', 'hand', 'walk', 'sit']);
+    tl.stages.forEach((s, i) => {
+      expect(s.t1).toBeGreaterThan(s.t0);
+      if (i) expect(s.t0).toBe(tl.stages[i - 1]!.t1);
+    });
+    expect(tl.total).toBe(tl.stages.at(-1)!.t1);
+    expect(tl.length).toBeCloseTo(2 * half, 6);
+    expect(tl.total).toBeCloseTo(STAND_S + tl.length / DELIVER_SPEED + HAND_S + SIT_S, 6);
+    const spot = there.at(-1)!;
+    expect(tl.route.at(-1)).toEqual(there[0]);
+    expect(sampleRoute(tl.route, tl.at, half)).toMatchObject({ x: spot.x, z: spot.z });
+    // Brisk but not a parade: 2-3 s of walking each way on a normal pod, about a second to hand over.
+    expect(half / DELIVER_SPEED).toBeLessThan(6);
+    expect(HAND_S).toBeGreaterThanOrEqual(0.9);
+    expect(HAND_S).toBeLessThanOrEqual(1.3);
+  });
+
+  it('the chair is pushed back from the stand until the sit, the folder against the chest on the way and held out at the spot', () => {
+    const [stand, walk1, hand, walk2, sit] = tl.stages;
+    const at = (s: { t0: number; t1: number }, k: number) => poseAt(tl, s.t0 + (s.t1 - s.t0) * k);
+    expect(at(stand!, 0.01)).toMatchObject({ phase: 'stand', folder: 'carry', chair: expect.closeTo(0, 1), desk: 'free', seated: true });
+    expect(at(stand!, 0.99).chair).toBeCloseTo(1, 1);
+    expect(at(walk1!, 0.5)).toMatchObject({ phase: 'walk', folder: 'carry', chair: 1, desk: 'free', seated: false });
+    expect(at(walk1!, 0.5).stride).not.toBeNull();
+    expect(at(hand!, 0.02)).toMatchObject({ phase: 'hand', folder: 'out', chair: 1, stride: 0, landed: false, swivel: expect.any(Number) });
+    expect(at(walk2!, 0.5)).toMatchObject({ phase: 'walk', folder: 'none', landed: true });
+    expect(at(sit!, 0.99).chair).toBeLessThan(0.1);
+    expect(poseAt(tl, tl.total + 1)).toMatchObject({ phase: 'done', landed: true, desk: 'free', chair: 0 });
+    // Standing at the spot facing the orchestrator.
+    expect(at(hand!, 0.4).yaw).toBeCloseTo(Math.PI / 2, 6);
+    // Back at the seat, sitting down, facing the desk again.
+    expect(at(sit!, 0.99)).toMatchObject({ x: there[0]!.x, z: there[0]!.z });
+    expect(at(sit!, 0.99).yaw).toBeCloseTo(slot.yaw, 1);
+  });
+
+  it('the hand-over: the orchestrator swivels round, reaches, the folder flies, lands, the chair swings back', () => {
+    const hand = tl.stages[2]!;
+    const k = (x: number) => poseAt(tl, hand.t0 + (hand.t1 - hand.t0) * x);
+    expect(k(0.0).swivel).toBe(0);
+    expect(k(0.5)).toMatchObject({ folder: 'flight', swivel: 1, reach: expect.any(Number) });
+    expect(k(0.5).reach).toBeGreaterThan(0.5);
+    expect(k(0.5).flight).toBeGreaterThan(0);
+    expect(k(HAND_FLY.from - 0.02).folder).toBe('out');
+    expect(k(HAND_FLY.to + 0.02)).toMatchObject({ folder: 'none', landed: true });
+    expect(k(1).swivel).toBeCloseTo(0, 1);
+    // Monotone: the swivel never goes up after it started back.
+    let prev = 1;
+    for (let x = 0.8; x <= 1; x += 0.02) {
+      const s = k(x).swivel;
+      expect(s).toBeLessThanOrEqual(prev + 1e-9);
+      prev = s;
+    }
+  });
+
+  it('an orchestrator that does not turn: the freelancer puts the folder down itself, sooner', () => {
+    const t2 = deliveryTimeline(there, slot.yaw, { handYaw: 0, swivels: false });
+    const hand = t2.stages[2]!;
+    const k = (x: number) => poseAt(t2, hand.t0 + (hand.t1 - hand.t0) * x);
+    for (let x = 0; x <= 1; x += 0.05) expect(k(x)).toMatchObject({ swivel: 0, reach: 0 });
+    expect(HAND_FLY_SELF.to).toBeLessThan(HAND_FLY.to);
+    expect(k((HAND_FLY_SELF.from + HAND_FLY_SELF.to) / 2).folder).toBe('flight');
+    expect(k(HAND_FLY_SELF.to + 0.02)).toMatchObject({ folder: 'none', landed: true });
+  });
+
+  it('on a normal pod it is 2-3 s of walking each way (the same pod, 5.5 m on average)', () => {
+    const lens = [0, 1, 2, 3].flatMap((a) => [0, 1, 2, 3].filter((b) => b !== a).map((b) => cumulative(deskToDeskRoute(L, 0, a, { slot: b })).at(-1)!));
+    const avg = lens.reduce((x, y) => x + y, 0) / lens.length;
+    expect(avg / DELIVER_SPEED).toBeGreaterThan(2);
+    expect(avg / DELIVER_SPEED).toBeLessThan(3.4);
+    for (const l of lens) expect(l / DELIVER_SPEED).toBeLessThan(4.2);
+  });
+
+  it('a walk-out that starts on its feet: walk and vanish only, the desk the world’s at once', () => {
+    const spot = there.at(-1)!;
+    const route = walkOutRoute(L, plan, 0, desk, spot);
+    const out = timeline('out', route, slot.yaw, 'briefcase', 0, true);
+    expect(out.stages.map((s) => s.phase)).toEqual(['walk', 'vanish']);
+    expect(out.standing).toBe(true);
+    expect(poseAt(out, 0.01)).toMatchObject({ phase: 'walk', desk: 'free', briefcase: 'hand' });
+    expect(poseAt(out, 0.01).x).toBeCloseTo(spot.x, 1);
+    expect(poseAt(out, 0.01).z).toBeCloseTo(spot.z, 1);
+    expect(poseAt(out, out.total + 1)).toMatchObject({ phase: 'done', scale: 0 });
   });
 });

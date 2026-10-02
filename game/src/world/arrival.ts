@@ -16,8 +16,9 @@
 
 import type { Waypoint } from './route';
 
-export type ArrivalKind = 'in' | 'out';
-export type Phase = 'pack' | 'stand' | 'walk' | 'vanish' | 'drop' | 'done' | 'wave';
+/** M6c: `deliver`: a freelancer walks its report to the orchestrator's desk and back. */
+export type ArrivalKind = 'in' | 'out' | 'deliver';
+export type Phase = 'pack' | 'stand' | 'walk' | 'vanish' | 'drop' | 'done' | 'wave' | 'hand' | 'sit';
 
 /**
  * M6: what the walker carries. `box`: an employee (one sent home packs up).
@@ -52,6 +53,19 @@ export function itemAt(i: number, n: number): number {
 }
 /** The desk gets its "+" back once the worker is this far along the way out (out of the pod). */
 export const PLUS_BACK_AFTER_M = 2.2;
+/**
+ * M6c: the report's walk. Stand up with the folder (the chair pushed back), walk to the hand-over spot at a brisk
+ * pace (2 to 3 s on a normal pod), hand it over, walk back and sit down.
+ */
+export const DELIVER_SPEED = 1.9;
+export const HAND_S = 1.1;
+export const SIT_S = 0.5;
+/** Within the hand-over (0..1): when the orchestrator swivels round and back, reaches, and the folder flies to the tray (it lands at `LAND`). */
+export const HAND_SWIVEL_IN = 0.25;
+export const HAND_SWIVEL_OUT = 0.82;
+export const HAND_FLY = { from: 0.3, to: 0.78 } as const;
+/** An orchestrator that does not turn (busy elsewhere): the freelancer puts the folder on the tray itself, earlier. */
+export const HAND_FLY_SELF = { from: 0.18, to: 0.62 } as const;
 /** Stride length (m) for the leg swing. */
 export const STRIDE_M = 0.9;
 /** The worker's origin above its feet: seated (the chair seat) and standing. */
@@ -62,6 +76,9 @@ export interface Stage {
   phase: Exclude<Phase, 'done'>;
   t0: number;
   t1: number;
+  /** A walk: the stretch of the route it covers (m); the whole route when absent. */
+  d0?: number;
+  d1?: number;
 }
 
 export interface Timeline {
@@ -79,6 +96,10 @@ export interface Timeline {
   carry: Carry;
   /** M6b: the desk's items the packing puts in the box. */
   items: number;
+  /** M6c: a delivery: the facing at the hand-over spot, and whether the orchestrator turns to take the folder. */
+  deliver?: { handYaw: number; swivels: boolean };
+  /** M6c: a walk-out that starts on its feet away from the desk (mid-delivery): no packing, standing up or waving. */
+  standing?: boolean;
 }
 
 export function cumulative(route: readonly Waypoint[]): number[] {
@@ -93,7 +114,7 @@ export function cumulative(route: readonly Waypoint[]): number[] {
 }
 
 /** `route`: the walk-out route for `out`, the seat for `in` (only its first point counts). `items`: what the packing takes off the desk. */
-export function timeline(kind: ArrivalKind, route: Waypoint[], seatYaw: number, carry: Carry = 'box', items = ITEMS): Timeline {
+export function timeline(kind: ArrivalKind, route: Waypoint[], seatYaw: number, carry: Carry = 'box', items = ITEMS, standing = false): Timeline {
   if (kind === 'in') {
     const seat = route.at(-1) ?? { x: 0, y: 0, z: 0 };
     return { kind, route: [seat], at: [0], length: 0, seatYaw, stages: [{ phase: 'drop', t0: 0, t1: DROP_S }], total: DROP_S, carry, items: 0 };
@@ -107,7 +128,10 @@ export function timeline(kind: ArrivalKind, route: Waypoint[], seatYaw: number, 
     stages.push({ phase, t0: t, t1: t + d });
     t += d;
   };
-  if (kind === 'out' && carry === 'briefcase') {
+  if (kind === 'out' && standing) {
+    add('walk', walk);
+    add('vanish', VANISH_S);
+  } else if (kind === 'out' && carry === 'briefcase') {
     add('stand', STAND_S);
     add('wave', WAVE_S);
     add('walk', walk);
@@ -118,7 +142,32 @@ export function timeline(kind: ArrivalKind, route: Waypoint[], seatYaw: number, 
     add('walk', walk);
     add('vanish', VANISH_S);
   }
-  return { kind, route, at, length, seatYaw, stages, total: t, carry, items: carry === 'briefcase' ? 0 : Math.max(0, items) };
+  return { kind, route, at, length, seatYaw, stages, total: t, carry, items: carry === 'briefcase' ? 0 : Math.max(0, items), ...(standing ? { standing } : {}) };
+}
+
+/**
+ * M6c: a delivery. `route` goes from the seat to the hand-over spot; the way back is the same route reversed, so the
+ * timeline's own route is both, end to end. `handYaw`: the way the freelancer faces at the spot; `swivels`: the
+ * orchestrator turns in its chair to take the folder (else the freelancer puts it on the tray itself).
+ */
+export function deliveryTimeline(route: Waypoint[], seatYaw: number, o: { handYaw: number; swivels: boolean }): Timeline {
+  const there = route;
+  const full = [...there, ...[...there].reverse().slice(1)];
+  const at = cumulative(full);
+  const length = at[at.length - 1] ?? 0;
+  const half = (at[there.length - 1] as number | undefined) ?? 0;
+  const stages: Stage[] = [];
+  let t = 0;
+  const add = (phase: Stage['phase'], d: number, d0?: number, d1?: number) => {
+    stages.push({ phase, t0: t, t1: t + d, ...(d0 !== undefined ? { d0, d1: d1 as number } : {}) });
+    t += d;
+  };
+  add('stand', STAND_S);
+  add('walk', half / DELIVER_SPEED, 0, half);
+  add('hand', HAND_S);
+  add('walk', (length - half) / DELIVER_SPEED, half, length);
+  add('sit', SIT_S);
+  return { kind: 'deliver', route: full, at, length, seatYaw, stages, total: t, carry: 'briefcase', items: 0, deliver: o };
 }
 
 /** Facing along a direction in the xz plane (workers face +z at yaw 0). */
@@ -209,6 +258,17 @@ export interface ArrivalPose {
   /** M6b: the landing's dust puff, 0..1 of the way (null: none), and the landing shadow on the seat, 0..1 (0: none). */
   puff: number | null;
   shadow: number;
+  /**
+   * M6c, a delivery: the report folder (against the chest walking, held out at the hand-over, flying to the tray, or
+   * not there), how far along the flight it is, how far the orchestrator has swivelled to the spot and reaches (0..1),
+   * how far the freelancer's chair is pushed back (0..1), and whether the folder has landed on the tray.
+   */
+  folder: 'carry' | 'out' | 'flight' | 'none';
+  flight: number;
+  swivel: number;
+  reach: number;
+  chair: number;
+  landed: boolean;
 }
 
 function stageAt(tl: Timeline, t: number): { s: Stage; k: number } | null {
@@ -217,6 +277,7 @@ function stageAt(tl: Timeline, t: number): { s: Stage; k: number } | null {
 }
 
 export function poseAt(tl: Timeline, t: number): ArrivalPose {
+  if (tl.kind === 'deliver') return deliverPoseAt(tl, t);
   const p = boxPoseAt(tl, t);
   if (tl.carry !== 'briefcase') return p;
   // M6: the briefcase replaces the box and the laptop; it is in hand from standing up to sitting down.
@@ -224,23 +285,20 @@ export function poseAt(tl: Timeline, t: number): ArrivalPose {
   return { ...p, box: 'none', boxScale: 1, laptop: 'none', lift: 0, items: 0, itemLift: 0, briefcase: p.phase === 'done' ? 'none' : 'hand', wave: p.phase === 'wave' };
 }
 
-function boxPoseAt(tl: Timeline, t: number): ArrivalPose {
-  const route = tl.route;
-  const cur = stageAt(tl, t);
-  const seatEnd = tl.kind === 'out' ? route[0] : route[route.length - 1];
-  const seat = seatEnd ?? { x: 0, y: 0, z: 0 };
-  const base: ArrivalPose = {
+/** A pose with everything off: standing on the spot at `seat`, facing `yaw`. */
+function blankPose(seat: Waypoint, yaw: number, items: number): ArrivalPose {
+  return {
     phase: 'done',
     x: seat.x,
     y: seat.y + STAND_LIFT,
     z: seat.z,
-    yaw: tl.seatYaw,
+    yaw,
     seated: false,
     stride: null,
     scale: 1,
     box: 'none',
     boxScale: 1,
-    items: tl.items,
+    items,
     itemLift: 0,
     laptop: 'none',
     lift: 0,
@@ -252,7 +310,104 @@ function boxPoseAt(tl: Timeline, t: number): ArrivalPose {
     squash: 1,
     puff: null,
     shadow: 0,
+    folder: 'none',
+    flight: 0,
+    swivel: 0,
+    reach: 0,
+    chair: 0,
+    landed: false,
   };
+}
+
+/** 0 → 1 over `a`..`b`, eased. */
+const ramp = (k: number, a: number, b: number) => ease(clamp01((k - a) / Math.max(1e-6, b - a)));
+
+/**
+ * M6c: a delivery's pose. The desk stays the world's (`desk: 'free'`: the laptop screen stays live), only the
+ * figure is the walker's. The hand-over: the freelancer holds the folder out facing the orchestrator, who (if it
+ * turns at all) swivels round, reaches, takes it and drops it on the tray as the chair swings back; otherwise the
+ * freelancer drops it there itself.
+ */
+function deliverPoseAt(tl: Timeline, t: number): ArrivalPose {
+  const route = tl.route;
+  const seat = route[0] ?? { x: 0, y: 0, z: 0 };
+  const o = tl.deliver as NonNullable<Timeline['deliver']>;
+  const cur = stageAt(tl, t);
+  const firstYaw = sampleRoute(route, tl.at, 0).yaw;
+  const base: ArrivalPose = { ...blankPose(seat, tl.seatYaw, 0), y: seat.y + SEAT_LIFT, seated: true };
+  const walkAt = (d: number): Pick<ArrivalPose, 'x' | 'y' | 'z' | 'yaw' | 'walked'> => {
+    const p = sampleRoute(route, tl.at, d);
+    return { x: p.x, y: p.y + STAND_LIFT, z: p.z, yaw: p.yaw, walked: d };
+  };
+  if (!cur) return { ...base, phase: 'done', landed: true };
+  const { s, k } = cur;
+  const half = (tl.stages.find((x) => x.phase === 'hand') as Stage | undefined) ? ((tl.stages.find((x) => x.phase === 'walk') as Stage).d1 as number) : 0;
+  const lastYaw = sampleRoute(route, tl.at, Math.max(0, half - 1e-3)).yaw;
+  const backYaw = sampleRoute(route, tl.at, half + 1e-3).yaw;
+  switch (s.phase) {
+    case 'stand':
+      return {
+        ...base,
+        phase: 'stand',
+        y: seat.y + SEAT_LIFT + (STAND_LIFT - SEAT_LIFT) * ease(k),
+        yaw: turn(tl.seatYaw, firstYaw, ease(k)),
+        seated: k < 0.5,
+        folder: 'carry',
+        chair: ease(k),
+      };
+    case 'walk': {
+      const d = (s.d0 ?? 0) + ((s.d1 ?? tl.length) - (s.d0 ?? 0)) * k;
+      const p = walkAt(d);
+      // On the way back the folder is on the tray.
+      const back = (s.d0 ?? 0) > 0;
+      return { ...base, ...p, phase: 'walk', seated: false, stride: (d / STRIDE_M) * Math.PI * 2, folder: back ? 'none' : 'carry', chair: 1, landed: back };
+    }
+    case 'hand': {
+      const p = walkAt(half);
+      // Turns to face the orchestrator on arriving, and to the way back before leaving.
+      const yaw = k < 0.5 ? turn(lastYaw, o.handYaw, ramp(k, 0, 0.18)) : turn(o.handYaw, backYaw, ramp(k, 0.82, 1));
+      const fly = o.swivels ? HAND_FLY : HAND_FLY_SELF;
+      const flying = k >= fly.from && k < fly.to;
+      const gone = k >= fly.to;
+      return {
+        ...base,
+        ...p,
+        yaw,
+        phase: 'hand',
+        seated: false,
+        stride: 0,
+        folder: gone ? 'none' : flying ? 'flight' : 'out',
+        flight: clamp01((k - fly.from) / (fly.to - fly.from)),
+        swivel: o.swivels ? ramp(k, 0, HAND_SWIVEL_IN) * (1 - ramp(k, HAND_SWIVEL_OUT, 1)) : 0,
+        reach: o.swivels ? ramp(k, HAND_SWIVEL_IN - 0.05, HAND_SWIVEL_IN + 0.15) * (1 - ramp(k, HAND_FLY.to - 0.12, HAND_SWIVEL_OUT)) : 0,
+        chair: 1,
+        landed: gone,
+      };
+    }
+    case 'sit': {
+      const e = ease(k);
+      return {
+        ...base,
+        ...walkAt(tl.length),
+        phase: 'sit',
+        y: seat.y + STAND_LIFT + (SEAT_LIFT - STAND_LIFT) * e,
+        yaw: turn(sampleRoute(route, tl.at, tl.length).yaw, tl.seatYaw, e),
+        seated: k > 0.5,
+        stride: null,
+        chair: 1 - e,
+        landed: true,
+      };
+    }
+  }
+  return { ...base, landed: true };
+}
+
+function boxPoseAt(tl: Timeline, t: number): ArrivalPose {
+  const route = tl.route;
+  const cur = stageAt(tl, t);
+  const seatEnd = tl.kind === 'out' ? route[0] : route[route.length - 1];
+  const seat = seatEnd ?? { x: 0, y: 0, z: 0 };
+  const base = blankPose(seat, tl.seatYaw, tl.items);
   const walkAt = (d: number): Pick<ArrivalPose, 'x' | 'y' | 'z' | 'yaw' | 'walked'> => {
     const p = sampleRoute(route, tl.at, d);
     return { x: p.x, y: p.y + STAND_LIFT, z: p.z, yaw: p.yaw, walked: d };
@@ -312,7 +467,7 @@ function boxPoseAt(tl: Timeline, t: number): ArrivalPose {
     case 'walk': {
       const d = tl.length * k;
       const p = walkAt(d);
-      const deskShow: DeskShow = d >= PLUS_BACK_AFTER_M ? 'free' : 'empty';
+      const deskShow: DeskShow = d >= PLUS_BACK_AFTER_M || tl.standing ? 'free' : 'empty';
       return { ...base, ...p, phase: 'walk', stride: (d / STRIDE_M) * Math.PI * 2, box: 'carried', laptop: 'carried', desk: deskShow };
     }
     case 'vanish':
