@@ -232,6 +232,7 @@ export class PanelsSim {
       updated_at: this.h.now(),
     };
     if (typeof u.context_pct === 'number') next.context_pct = Math.min(99, Math.round((u.context_pct + (tokens / (u.context_window ?? 200_000)) * 100) * 10) / 10);
+    if (typeof u.context_tokens === 'number') next.context_tokens = u.context_tokens + tokens; // #101: the meter's count grows with it
     w.usage = next;
   }
 }

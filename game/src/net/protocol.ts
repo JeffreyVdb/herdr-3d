@@ -540,6 +540,10 @@ export interface Usage {
   /** 0–100, null when unknown. */
   context_pct?: number | null;
   context_window?: number;
+  /** #101: the main thread's context in use, in tokens (what the next turn starts with; 0 or absent: unknown). Absent from older bridges. */
+  context_tokens?: number;
+  /** #101: `context_window` was assumed (the model table or its family), not seen or reported. Absent from older bridges. */
+  context_window_estimated?: boolean;
   updated_at?: number;
 }
 

@@ -101,3 +101,73 @@ export function usageTotal(usages: ReadonlyArray<Usage | null | undefined>): Usa
   const title = `${text} on this floor: an API-equivalent estimate over ${who}${flagged ? ` (* ${flagged} ${UNKNOWN_MODEL_NOTE})` : ''}`;
   return { usd, priced, flagged: flagged > 0, text, title };
 }
+
+/** Codex keeps this much of its window for its own prompt; its percentage (and the bridge's) leaves it out. */
+export const CODEX_BASELINE = 12_000;
+
+export interface ContextMeter {
+  /** The share in use, finite and clamped to 0–100, unrounded (the fill, the colour and `aria-valuenow`). */
+  pct: number;
+  /** `48%`; a sliver above 0 reads `<1%`. */
+  pctText: string;
+  /** `477k`, or null when the bridge sent no count (an older one). */
+  usedText: string | null;
+  /** `1M`, or `~1M` when the window was assumed. */
+  windowText: string;
+  /** `48% · 477k / ~1M` (`48% of ~1M` without a count): what the bar says in words. */
+  label: string;
+  /** Colour step on the unrounded share; the number is always there too. */
+  level: 'ok' | 'warm' | 'hot';
+  /** The native tooltip. */
+  title: string;
+  /** `aria-valuetext`: the same facts, spoken. */
+  valueText: string;
+}
+
+/** From this share on the meter turns warm, then hot. */
+export const CONTEXT_WARM = 70;
+export const CONTEXT_HOT = 90;
+
+const exact = (n: number) => Math.round(n).toLocaleString('en-US');
+
+/**
+ * #101: the context meter of the transcript bar, from a worker's usage. Null (no meter) when the share or the
+ * window is unknown: a compact, no usage yet, an unknown model. Never a 0 from missing data. The count and the
+ * window are the bridge's; they are not derived from the cumulative `tokens`. Codex's share leaves out its 12k
+ * baseline, so the tooltip says so (a model that is not Claude's: the bridge's own rule for the harness).
+ */
+export function contextMeter(u: Usage | null | undefined): ContextMeter | null {
+  if (!u || typeof u !== 'object') return null;
+  const win = u.context_window;
+  if (!num(u.context_pct) || !num(win) || win <= 0) return null;
+  const pct = Math.min(100, Math.max(0, u.context_pct));
+  const used = num(u.context_tokens) && u.context_tokens > 0 ? Math.round(u.context_tokens) : null;
+  const estimated = u.context_window_estimated === true;
+  const codex = typeof u.model === 'string' && u.model !== '' && !u.model.startsWith('claude-');
+  const pctText = pct > 0 && pct < 0.5 ? '<1%' : `${Math.round(pct)}%`;
+  const usedText = used === null ? null : tokenCount(used);
+  const windowText = `${estimated ? '~' : ''}${tokenCount(win)}`;
+  const label = usedText === null ? `${pctText} of ${windowText}` : `${pctText} · ${usedText} / ${windowText}`;
+  const level = pct >= CONTEXT_HOT ? 'hot' : pct >= CONTEXT_WARM ? 'warm' : 'ok';
+
+  const share = `${pct.toFixed(1)}%`;
+  const assumed = estimated ? 'Window size assumed.' : '';
+  const baseline = codex ? `The percentage leaves out Codex's ${exact(CODEX_BASELINE)}-token baseline.` : '';
+  const title = [
+    used === null ? `Context in use: ${share} of ${exact(win)} tokens.` : `Context in use: ${exact(used)} of ${exact(win)} tokens (${share}).`,
+    'Estimate of what the next turn starts with, main thread only.',
+    assumed,
+    baseline,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const valueText = [
+    pct > 0 && pct < 0.5 ? 'under 1 percent' : `${Math.round(pct)} percent`,
+    used === null ? `of a ${exact(win)}-token window` : `${exact(used)} of ${exact(win)} tokens`,
+    estimated ? 'window size assumed' : '',
+    codex ? `excludes Codex's ${exact(CODEX_BASELINE)}-token baseline` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
+  return { pct, pctText, usedText, windowText, label, level, title, valueText };
+}

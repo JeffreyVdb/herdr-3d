@@ -1,7 +1,7 @@
 import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
-import type { Ask, CommandArgs, Followup, TranscriptDiff, TranscriptItem } from '../net/protocol';
+import type { Ask, CommandArgs, Followup, TranscriptDiff, TranscriptItem, Usage } from '../net/protocol';
 import { AskCard, askItem, type AskResult } from './askCard';
 import { FollowupCard, type FollowupResult } from './followupCard';
 import type { ImageFeed } from './imageFeed';
@@ -14,6 +14,7 @@ import { hasContent, heldRefusalText, notSentText, PASTE_HINT } from '../ui/comp
 import { WORKER_PROMPT_MAX_BYTES } from '../ui/composer/model';
 import { ViewPrefs, type ViewPref } from '../ui/themePrefs';
 import { THEMES, ZOOM, stepZoom, type ThemeId } from '../ui/themes';
+import { contextMeter } from '../world/usage';
 import { zoomKey } from './keys';
 import type { ActivityCue, PendingPrompt } from './transcriptActivity';
 
@@ -50,6 +51,8 @@ export interface TranscriptRenderHost {
   onDismissPending?(id: string): void;
   /** #59: the transcript's preset and zoom and hidden tool calls, shared by every view (none: this view's own, kept nowhere). */
   prefs?: ViewPrefs;
+  /** #101: the worker's usage when the view opens, for its context meter (`setUsage` follows it; none: no meter yet). */
+  usage?: Usage | null;
 }
 
 export interface BlockedQuestion {
@@ -75,6 +78,8 @@ export interface TranscriptView {
   hasItem(id: string): boolean;
   /** Scrolls to an item and flashes it; false when it is not loaded (the caller pages older items first). */
   scrollToItem(id: string): boolean;
+  /** #101: the worker's usage, for the context meter in the top strip (null, or a usage whose context is unknown: no meter). */
+  setUsage(usage: Usage | null): void;
   /** #58: the live cue at the bottom of the timeline ("Thinking…" / "Working…" and for how long; null: none). */
   setActivity(cue: ActivityCue | null): void;
   /** #58: the prompts you sent that the transcript does not show yet, after its last item. */
@@ -627,6 +632,13 @@ class Transcript implements TranscriptView {
   private readonly failedHidden = new Set<string>();
   private readonly revealed = new Set<string>();
   private readonly countEl: HTMLSpanElement;
+  /** #101: the context meter (a `role="meter"`, hidden while its share or window is unknown) and what it was last drawn from. */
+  private readonly ctxEl: HTMLDivElement;
+  private readonly ctxFill: HTMLSpanElement;
+  private readonly ctxPct: HTMLSpanElement;
+  private readonly ctxUsed: HTMLSpanElement;
+  private readonly ctxWin: HTMLSpanElement;
+  private ctxKey = '';
   private readonly titleEl: HTMLSpanElement;
   /** The prompt box: the composer's editor (#64). */
   private readonly input: HTMLElement;
@@ -750,12 +762,25 @@ class Transcript implements TranscriptView {
       in: h('button', { class: 'tx-zoom-btn', 'aria-label': 'Larger text', title: 'Larger text (Ctrl +)', onclick: () => this.prefs.setZoom('transcript', stepZoom(this.prefs.zoom('transcript'), 1)) }, 'A+'),
     };
     const zoom = h('div', { class: 'tx-zoom', role: 'group', 'aria-label': 'Transcript text size' }, this.zoomBtns.out, this.zoomBtns.reset, this.zoomBtns.in);
+    // #101: how much of the context window is in use. The fill is decoration (the number says it all); the meter's own text is
+    // its accessible value, so no live region chatters as it changes.
+    this.ctxFill = h('span', { class: 'tx-ctx-fill' });
+    this.ctxPct = h('span', { class: 'tx-ctx-pct' });
+    this.ctxUsed = h('span', { class: 'tx-ctx-used' });
+    this.ctxWin = h('span', { class: 'tx-ctx-win' });
+    this.ctxEl = h(
+      'div',
+      { class: 'tx-ctx', role: 'meter', 'aria-label': 'Context in use', 'aria-valuemin': '0', 'aria-valuemax': '100', hidden: true },
+      h('span', { class: 'tx-ctx-track', 'aria-hidden': 'true' }, this.ctxFill),
+      h('span', { class: 'tx-ctx-text' }, this.ctxPct, this.ctxUsed, this.ctxWin),
+    );
     // The preset and the zoom keep together at the strip's end; a narrow screen wraps them to a line of their own.
-    const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, this.busy, h('div', { class: 'tx-look' }, picker, zoom));
+    const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, this.busy, this.ctxEl, h('div', { class: 'tx-look' }, picker, zoom));
     this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, this.followup.el, form, this.live);
     this.unprefs = this.prefs.onChange((what) => this.applyPrefs(what));
     this.applyPrefs(null);
     this.updateCounts();
+    this.setUsage(host.usage ?? null);
 
     this.scroller.addEventListener('scroll', () => this.onScroll(), { passive: true });
     this.root.addEventListener('keydown', (e) => this.onKey(e));
@@ -816,6 +841,25 @@ class Transcript implements TranscriptView {
   setFollowup(f: Followup | null): void {
     if (this.destroyed) return;
     this.followup.set(f);
+  }
+
+  setUsage(usage: Usage | null): void {
+    if (this.destroyed) return;
+    const m = contextMeter(usage);
+    // Called every seated frame: the DOM is touched only when what it shows changed.
+    const key = m ? `${m.pct}|${m.level}|${m.label}|${m.title}|${m.valueText}` : '';
+    if (key === this.ctxKey) return;
+    this.ctxKey = key;
+    this.ctxEl.hidden = !m;
+    if (!m) return;
+    this.ctxEl.dataset.level = m.level;
+    this.ctxEl.title = m.title;
+    this.ctxEl.setAttribute('aria-valuenow', String(m.pct));
+    this.ctxEl.setAttribute('aria-valuetext', m.valueText);
+    this.ctxFill.style.width = `${m.pct}%`;
+    this.ctxPct.textContent = m.pctText;
+    this.ctxUsed.textContent = m.usedText === null ? '' : ` · ${m.usedText}`;
+    this.ctxWin.textContent = m.usedText === null ? ` of ${m.windowText}` : ` / ${m.windowText}`;
   }
 
   setActivity(cue: ActivityCue | null): void {

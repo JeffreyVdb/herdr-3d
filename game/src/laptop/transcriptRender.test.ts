@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TranscriptItem } from '../net/protocol';
+import type { TranscriptItem, Usage } from '../net/protocol';
 import { ViewPrefs } from '../ui/themePrefs';
 import { duration, loadHighlighter, mountTranscript, parseHunk, stripAnsi, type BlockedQuestion, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
 
@@ -1238,5 +1238,129 @@ describe('#58: the live cue and the prompts on their way', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('context meter (#101)', () => {
+  const usage = (over: Record<string, unknown> = {}): Usage =>
+    ({ tokens: 99_000, cost_usd_est: 1, priced: 'known', model: 'claude-opus-5-5', context_pct: 47.7, context_window: 1_000_000, context_tokens: 476_871, ...over }) as Usage;
+  const meter = () => $('.tx-bar .tx-ctx') as HTMLElement;
+  const shownText = () => (meter().textContent ?? '').replace(/\s+/g, ' ').trim();
+
+  it('is a labelled meter in the top strip, before the preset and zoom: the share, the count and the window, and the fill', () => {
+    mount();
+    view.setUsage(usage());
+    const m = meter();
+    expect(m.hidden).toBe(false);
+    expect(m.getAttribute('role')).toBe('meter');
+    expect(m.getAttribute('aria-label')).toBe('Context in use');
+    expect(m.getAttribute('aria-valuemin')).toBe('0');
+    expect(m.getAttribute('aria-valuemax')).toBe('100');
+    expect(m.getAttribute('aria-valuenow')).toBe('47.7');
+    expect(m.getAttribute('aria-valuetext')).toBe('48 percent, 476,871 of 1,000,000 tokens');
+    expect(m.title).toBe('Context in use: 476,871 of 1,000,000 tokens (47.7%). Estimate of what the next turn starts with, main thread only.');
+    expect(shownText()).toBe('48% · 477k / 1M');
+    expect(m.dataset.level).toBe('ok');
+    const fill = m.querySelector<HTMLElement>('.tx-ctx-fill')!;
+    expect(fill.style.width).toBe('47.7%');
+    // The track is decoration, and the meter is not a tab stop (nothing to operate).
+    expect(m.querySelector('.tx-ctx-track')?.getAttribute('aria-hidden')).toBe('true');
+    expect(m.hasAttribute('tabindex')).toBe(false);
+    // Between the strip's own controls and its right-hand group.
+    expect(m.nextElementSibling).toBe($('.tx-look'));
+    expect(m.parentElement).toBe($('.tx-bar'));
+    // It has no live region of its own.
+    expect(m.closest('[aria-live]')).toBeNull();
+    expect(m.querySelector('[aria-live]')).toBeNull();
+  });
+
+  it('shows an assumed window with ~ and the tooltip says so; Codex gets its baseline note', () => {
+    mount();
+    view.setUsage(usage({ context_window_estimated: true }));
+    expect(shownText()).toBe('48% · 477k / ~1M');
+    expect(meter().title).toContain('Window size assumed.');
+    expect(meter().getAttribute('aria-valuetext')).toContain('window size assumed');
+    view.setUsage(usage({ model: 'gpt-6.1-sol', context_pct: 15.4, context_window: 258_400, context_tokens: 50_000 }));
+    expect(shownText()).toBe('15% · 50k / 258k');
+    expect(meter().title).toContain("The percentage leaves out Codex's 12,000-token baseline.");
+    expect(meter().title).not.toContain('assumed');
+  });
+
+  it('steps warm at 70 and hot at 90, and the number stays', () => {
+    mount();
+    for (const [pct, level, label] of [
+      [69.9, 'ok', '70%'],
+      [70, 'warm', '70%'],
+      [89.9, 'warm', '90%'],
+      [90, 'hot', '90%'],
+      [100, 'hot', '100%'],
+    ] as const) {
+      view.setUsage(usage({ context_pct: pct }));
+      expect(meter().dataset.level).toBe(level);
+      expect(meter().querySelector('.tx-ctx-pct')?.textContent).toBe(label);
+    }
+  });
+
+  it('is hidden until there is a share and a window: no usage, a compact, an unknown model, junk — never a NaN or a 0%', () => {
+    mount();
+    expect(meter().hidden).toBe(true);
+    for (const bad of [null, usage({ context_pct: null, context_tokens: 0 }), usage({ context_window: 0, context_pct: null }), usage({ context_pct: Number.NaN }), usage({ context_window: Number.POSITIVE_INFINITY })]) {
+      view.setUsage(usage());
+      expect(meter().hidden).toBe(false);
+      view.setUsage(bad);
+      expect(meter().hidden).toBe(true);
+      expect(shownText()).not.toMatch(/NaN|Infinity/);
+    }
+    // A real zero is a real 0%.
+    view.setUsage(usage({ context_pct: 0, context_tokens: 5000 }));
+    expect(meter().hidden).toBe(false);
+    expect(shownText()).toBe('0% · 5k / 1M');
+    expect(meter().getAttribute('aria-valuenow')).toBe('0');
+  });
+
+  it('updates in place as the usage changes, drops after a compact and comes back; an unchanged usage touches nothing', () => {
+    mount();
+    view.setUsage(usage());
+    const m = meter();
+    const mutations: MutationRecord[] = [];
+    const watch = new MutationObserver((r) => mutations.push(...r));
+    watch.observe(m, { subtree: true, childList: true, attributes: true, characterData: true });
+    view.setUsage(usage()); // the same values, another object: a seated frame
+    view.setUsage({ ...usage() });
+    expect(watch.takeRecords()).toEqual([]);
+    view.setUsage(usage({ context_pct: 72.4, context_tokens: 724_000 }));
+    expect(meter()).toBe(m);
+    expect(shownText()).toBe('72% · 724k / 1M');
+    expect(m.dataset.level).toBe('warm');
+    expect(m.getAttribute('aria-valuenow')).toBe('72.4');
+    expect(m.querySelector<HTMLElement>('.tx-ctx-fill')?.style.width).toBe('72.4%');
+    // The count alone changing is shown too, at the same rounded share.
+    view.setUsage(usage({ context_pct: 72.4, context_tokens: 724_900 }));
+    expect(shownText()).toBe('72% · 725k / 1M');
+    expect(m.title).toContain('724,900');
+    // A /compact: no meter until the next measure.
+    view.setUsage(usage({ context_pct: null, context_tokens: 0 }));
+    expect(m.hidden).toBe(true);
+    view.setUsage(usage({ context_pct: 6.1, context_tokens: 61_000 }));
+    expect(m.hidden).toBe(false);
+    expect(shownText()).toBe('6% · 61k / 1M');
+    expect(m.dataset.level).toBe('ok');
+    watch.disconnect();
+  });
+
+  it('opens with the usage the host has, and an older bridge (no count) shows the share of the window only', () => {
+    const h = fakeHost();
+    h.usage = usage({ context_tokens: undefined, context_window_estimated: true });
+    mount(h);
+    expect(meter().hidden).toBe(false);
+    expect(shownText()).toBe('48% of ~1M');
+    expect(meter().title).toBe('Context in use: 47.7% of 1,000,000 tokens. Estimate of what the next turn starts with, main thread only. Window size assumed.');
+    expect(shownText()).not.toContain('99k');
+  });
+
+  it('is left alone once the view is gone', () => {
+    mount();
+    view.destroy();
+    expect(() => view.setUsage(usage())).not.toThrow();
   });
 });

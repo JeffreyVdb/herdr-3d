@@ -1,5 +1,5 @@
 import type { CommandResult } from '../net/client';
-import type { AnswerAskAck, Ask, CommandArgs, Followup, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck } from '../net/protocol';
+import type { AnswerAskAck, Ask, CommandArgs, Followup, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck, Usage } from '../net/protocol';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import type { ViewPrefs } from '../ui/themePrefs';
@@ -145,6 +145,9 @@ interface Sitting {
   /** #90: the worker's follow-up questions, and their turn + questions (a new one told from the same one). */
   followup: Followup | null;
   followupKey: string;
+  /** #101: the worker's usage (for the view's context meter), and the part of it the meter shows (so a frame that changed nothing is skipped). */
+  usage: Usage | null;
+  usageKey: string;
   box: HTMLElement | null;
   view: TranscriptView | null;
   /** The panes the two views are in (the overlay itself when the host makes none). */
@@ -256,7 +259,7 @@ export class TranscriptMode {
     // The way to read it last time (what the first Ctrl+Esc shows when it opens in the terminal).
     const last: ReadMode = canRead && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
     this.s = {
-      id, name, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', box: null, view: null,
+      id, name, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', usage: null, usageKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
       pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true,
@@ -540,6 +543,7 @@ export class TranscriptMode {
       images: this.host.feed(s.id),
       upload: this.host.upload ?? null,
       label: s.name,
+      usage: s.usage,
       ...(this.host.prefs ? { prefs: this.host.prefs } : {}),
       onPromptSubmit: (text) => {
         if (!live()) return Promise.resolve(false);
@@ -822,6 +826,17 @@ export class TranscriptMode {
     s.followupKey = key;
     s.followup = f;
     s.view?.setFollowup(f);
+  }
+
+  /** #101: the worker's usage (from the store; null when it has none), for the context meter: kept for a view still loading. */
+  usageSeen(u: Usage | null): void {
+    const s = this.s;
+    if (!s) return;
+    const key = u ? [u.context_pct, u.context_window, u.context_tokens, u.context_window_estimated, u.model].join('\u0000') : '';
+    if (key === s.usageKey) return;
+    s.usageKey = key;
+    s.usage = u;
+    s.view?.setUsage(u);
   }
 
   /** The seated worker's follow-up questions. */
