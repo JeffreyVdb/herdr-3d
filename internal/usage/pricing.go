@@ -162,6 +162,49 @@ func (p *Pricing) Lookup(harness, model string) (pr Price, known bool) {
 	return pr, false
 }
 
+// Claude windows: 200k is the base window; the current families run 1M
+// natively (a 200k plan or a gateway can still cap them).
+const (
+	claudeBaseWindow = 200_000
+	claudeLongWindow = 1_000_000
+)
+
+// claudeFamilyWindows are the windows assumed for a Claude model the table
+// does not list, by id prefix. Window only: the price stays unknown.
+var claudeFamilyWindows = []struct {
+	prefix string
+	window int64
+}{
+	{"claude-opus-", claudeLongWindow},
+	{"claude-sonnet-", claudeLongWindow},
+	{"claude-fable-", claudeLongWindow},
+	{"claude-haiku-", claudeBaseWindow},
+}
+
+// ClaudeWindow resolves the context window of a Claude session whose main
+// model is model, and whether it was assumed. In order: an explicit [1m]
+// on the model; observed, context seen above 200k (proves the long
+// window); the table's window for the model (an entry without one stays
+// unknown: an override's say); the model family's. 0: unknown.
+func (p *Pricing) ClaudeWindow(model string, observedOver200k bool) (window int64, estimated bool) {
+	base := strings.TrimSuffix(model, oneM)
+	switch {
+	case base != model, observedOver200k:
+		return claudeLongWindow, false
+	case model == "":
+		return 0, false
+	}
+	if pr, ok := p.models[base]; ok && pr.Harness == Claude {
+		return pr.ContextWindow, pr.ContextWindow > 0
+	}
+	for _, f := range claudeFamilyWindows {
+		if strings.HasPrefix(base, f.prefix) {
+			return f.window, true
+		}
+	}
+	return 0, false
+}
+
 // Models is the table: model → price.
 func (p *Pricing) Models() map[string]Price {
 	out := make(map[string]Price, len(p.models))
