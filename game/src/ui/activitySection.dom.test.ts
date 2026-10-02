@@ -126,12 +126,23 @@ describe('the “Classify unknown commands” section (#98)', () => {
     expect(hint.hidden).toBe(false);
     expect(hint.textContent).toContain('HERDR_WORLD_ACTIVITY_MODEL');
     // The numbers stay editable.
-    expect(m.field('Threshold').disabled).toBe(false);
+    expect(m.field('Minimum confidence').disabled).toBe(false);
   });
 
-  it('validates the threshold, margin and daily cap before sending, and saves each on its own', async () => {
+  it('says under each number what it does, and what the cached classifications are', () => {
     const m = mount(state());
-    expect([m.field('Threshold').value, m.field('Margin').value, m.field('Daily cap').value]).toEqual(['0.60', '0.20', '2000']);
+    const hint = (label: string) => document.getElementById(m.field(label).getAttribute('aria-describedby')!)!.textContent;
+    expect(hint('Minimum confidence')).toBe('Use the model’s label only when its score reaches this (0.05–0.99). Higher accepts fewer labels. Default 0.60.');
+    expect(hint('Minimum score gap')).toBe('The winning label must beat the next-best by at least this (0.00–0.99): 0.70 against 0.50 meets 0.20. Otherwise the monitor says Working. Default 0.20.');
+    expect(hint('Daily cap')).toBe('Most classification calls a day; then rules only until tomorrow. Default 2,000.');
+    const terms = [...m.root.querySelectorAll('.settings-act-ledger dt')].map((x) => x.textContent);
+    expect(terms).toEqual(['Calls today', 'Cached classifications']);
+    expect(m.text('.settings-act-ledger dt:last-of-type ~ .settings-act-note')).toBe('Saved answers for distinct normalised commands; a repeat reuses one without a model call.');
+  });
+
+  it('validates the minimum confidence, minimum score gap and daily cap before sending, and saves each on its own', async () => {
+    const m = mount(state());
+    expect([m.field('Minimum confidence').value, m.field('Minimum score gap').value, m.field('Daily cap').value]).toEqual(['0.60', '0.20', '2000']);
     const edit = (label: string, v: string) => {
       const input = m.field(label);
       input.value = v;
@@ -139,16 +150,18 @@ describe('the “Classify unknown commands” section (#98)', () => {
       input.dispatchEvent(new Event('change'));
       return input;
     };
-    expect(edit('Threshold', '1.4').getAttribute('aria-invalid')).toBe('true');
-    expect(m.text('.settings-status')).toBe('The threshold must be between 0.05 and 0.99.');
-    expect(edit('Margin', '-0.1').getAttribute('aria-invalid')).toBe('true');
+    expect(edit('Minimum confidence', '1.4').getAttribute('aria-invalid')).toBe('true');
+    expect(m.text('.settings-status')).toBe('The minimum confidence must be between 0.05 and 0.99.');
+    expect(edit('Minimum score gap', '-0.1').getAttribute('aria-invalid')).toBe('true');
+    expect(m.text('.settings-status')).toBe('The minimum score gap must be between 0.00 and 0.99.');
     expect(edit('Daily cap', '12.5').getAttribute('aria-invalid')).toBe('true');
     expect(m.text('.settings-status')).toContain('whole number');
     expect(edit('Daily cap', '').getAttribute('aria-invalid')).toBe('true');
     expect(m.sent).toEqual([]);
-    edit('Threshold', '0.654');
+    edit('Minimum confidence', '0.654');
     await m.flush();
-    edit('Margin', '0.25');
+    expect(m.text('.settings-status')).toBe('Minimum confidence saved: 0.65.');
+    edit('Minimum score gap', '0.25');
     await m.flush();
     edit('Daily cap', '500');
     await m.flush();

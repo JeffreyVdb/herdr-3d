@@ -449,13 +449,14 @@ dialog.settings {
 .settings-act-bar[data-level='full'] .settings-act-fill {
   background: #ff7b73;
 }
-.settings-act-tune {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+.settings-act-note {
+  grid-column: 1 / -1;
+  margin: 0;
 }
-.settings-act-tune + .settings-field-hint {
-  margin-top: -6px;
+.settings-act-tune {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 .settings-act .settings-status {
   margin: -4px 0 0;

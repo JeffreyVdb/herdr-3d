@@ -26,7 +26,13 @@ const NEAR_CAP = 0.8;
 
 type NumberField = 'threshold' | 'margin' | 'daily_cap';
 
-const NAME: Record<NumberField, string> = { threshold: 'Threshold', margin: 'Margin', daily_cap: 'Daily cap' };
+const NAME: Record<NumberField, string> = { threshold: 'Minimum confidence', margin: 'Minimum score gap', daily_cap: 'Daily cap' };
+/** What each number does, under its field (its range and default from ACTIVITY_LIMITS and the bridge's defaults). */
+const HINT: Record<NumberField, string> = {
+  threshold: `Use the model’s label only when its score reaches this (${ACTIVITY_LIMITS.threshold.min.toFixed(2)}–${ACTIVITY_LIMITS.threshold.max.toFixed(2)}). Higher accepts fewer labels. Default 0.60.`,
+  margin: `The winning label must beat the next-best by at least this (${ACTIVITY_LIMITS.margin.min.toFixed(2)}–${ACTIVITY_LIMITS.margin.max.toFixed(2)}): 0.70 against 0.50 meets 0.20. Otherwise the monitor says Working. Default 0.20.`,
+  daily_cap: 'Most classification calls a day; then rules only until tomorrow. Default 2,000.',
+};
 
 let serial = 0;
 
@@ -44,9 +50,9 @@ function button(text: string, cls = 'btn btn--sm'): HTMLButtonElement {
  * questions”. The desk monitors say what each agent is doing from rules on the bridge; this switch (off by default:
  * setting up the models does not turn it on) lets the classification model name the commands the rules can't place.
  * The privacy note sits above the switch; under it the feature's state (with the way to the AI section while the
- * classifier is not ready), today's calls against the cap and the commands remembered, then the threshold, the
- * margin and the daily cap. The bridge's environment can set the switch, and then it is read-only here. A bridge
- * without the feature has no section at all.
+ * classifier is not ready), today's calls against the cap and the cached classifications, then the minimum confidence
+ * (the threshold), the minimum score gap (the margin) and the daily cap, each with what it does under it. The bridge's
+ * environment can set the switch, and then it is read-only here. A bridge without the feature has no section at all.
  */
 export function activitySection(host: ActivitySectionHost): (body: HTMLElement, section: SectionControl) => SectionHandle {
   return (body, section) => {
@@ -79,7 +85,7 @@ export function activitySection(host: ActivitySectionHost): (body: HTMLElement, 
     toAi.addEventListener('click', () => host.showAi());
     stateRow.append(tag, stateText, toAi);
 
-    // Today's calls against the cap (a bar that warns near it) and the commands remembered.
+    // Today's calls against the cap (a bar that warns near it) and the cached classifications, with what they are.
     const ledger = el('dl', 'settings-act-ledger');
     const callsTerm = el('dt', '', 'Calls today');
     const callsValue = el('dd', 'settings-act-figure');
@@ -87,17 +93,12 @@ export function activitySection(host: ActivitySectionHost): (body: HTMLElement, 
     bar.setAttribute('aria-hidden', 'true');
     const fill = el('span', 'settings-act-fill');
     bar.append(fill);
-    const cacheTerm = el('dt', '', 'Commands remembered');
+    const cacheTerm = el('dt', '', 'Cached classifications');
     const cacheValue = el('dd', 'settings-act-figure');
-    ledger.append(callsTerm, callsValue, bar, cacheTerm, cacheValue);
+    const cacheHint = el('dd', 'settings-field-hint settings-act-note', 'Saved answers for distinct normalised commands; a repeat reuses one without a model call.');
+    ledger.append(callsTerm, callsValue, bar, cacheTerm, cacheValue, cacheHint);
 
-    // The three numbers, side by side; one hint says what they do together.
-    const tuneHint = el(
-      'p',
-      'settings-field-hint',
-      'The model’s word is used only when its score reaches the threshold and beats the runner-up by the margin; otherwise the monitor says Working. Over the daily cap, rules only until tomorrow. Defaults 0.60, 0.20 and 2,000.',
-    );
-    tuneHint.id = `${id}-tune-hint`;
+    // The three numbers, one under the other, each with what it does.
     const tune = el('div', 'settings-act-tune');
     const inputs = {} as Record<NumberField, HTMLInputElement>;
     const dirty: Record<NumberField, boolean> = { threshold: false, margin: false, daily_cap: false };
@@ -110,13 +111,13 @@ export function activitySection(host: ActivitySectionHost): (body: HTMLElement, 
       input.max = String(lim.max);
       input.step = f === 'daily_cap' ? '100' : '0.05';
       input.inputMode = f === 'daily_cap' ? 'numeric' : 'decimal';
-      const range = el('p', 'settings-field-hint', f === 'daily_cap' ? 'calls a day' : `${lim.min.toFixed(2)}–${lim.max.toFixed(2)}`);
-      range.id = `${id}-${f}-hint`;
-      input.setAttribute('aria-describedby', `${range.id} ${tuneHint.id}`);
+      const hint = el('p', 'settings-field-hint', HINT[f]);
+      hint.id = `${id}-${f}-hint`;
+      input.setAttribute('aria-describedby', hint.id);
       const label = el('label', 'settings-field-label', NAME[f]);
       label.htmlFor = input.id;
-      const field = el('div', 'settings-field');
-      field.append(label, input, range);
+      const field = el('div', 'settings-field settings-field--short');
+      field.append(label, input, hint);
       tune.append(field);
       inputs[f] = input;
     }
@@ -126,7 +127,7 @@ export function activitySection(host: ActivitySectionHost): (body: HTMLElement, 
     status.setAttribute('aria-live', 'polite');
 
     const controls = el('div', 'settings-act');
-    controls.append(privacy, toggle, toggleHint, stateRow, ledger, tune, tuneHint, status);
+    controls.append(privacy, toggle, toggleHint, stateRow, ledger, tune, status);
     body.append(lede, controls);
 
     let busy = false;

@@ -369,9 +369,12 @@ describe('glance view (M6b)', () => {
     const reply = ['● Bash(pnpm vitest run src/laptop)', '  ⎿  Tests  42 passed (1.2s)', '', '● Retries are in and the tests pass.'];
     const rows = grid([...reply, '', RULE, '❯ ', RULE, STATUS, MODE]);
     expect(text(rows, glanceView(rows, 60))).toEqual(reply.filter(Boolean));
-    // The default mode with a statusline has no hint line: the rows under the input still go; a typed prompt stays.
+    // The default mode with a statusline has no mode line: nothing says it is a footer, so the statusline stays (rules
+    // from edge to edge too), with the typed prompt.
     const typed = grid([...reply, RULE, '❯ fix the flaky test', RULE, STATUS]);
-    expect(text(typed, glanceView(typed, 60, 8))).toEqual([...reply.filter(Boolean), '❯ fix the flaky test']);
+    expect(text(typed, glanceView(typed, 60, 8))).toEqual([...reply.filter(Boolean), '❯ fix the flaky test', STATUS]);
+    const empty = grid(['● Done.', RULE, '❯ ', RULE, STATUS]);
+    expect(text(empty, glanceView(empty, 60, 8))).toEqual(['● Done.', STATUS]);
     // Hints alone: `? for shortcuts`, `esc to interrupt`.
     for (const hint of ['  ? for shortcuts', '  ⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt']) {
       const r = grid(['● Done.', RULE, '❯ ', RULE, hint]);
@@ -407,6 +410,57 @@ describe('glance view (M6b)', () => {
     // Rules with more rows under them than a footer has: output, kept.
     const many = grid([RULE, '> notes', RULE, 'one', 'two', 'three', 'four']);
     expect(text(many, glanceView(many, 60, 8))).toEqual(['> notes', 'one', 'two', 'three', 'four']);
+  });
+
+  it('drops only a footer it recognises: a separator, a quote or a test runner’s rules over the last rows are output', () => {
+    // As given (each row only as long as its text), and on a screen.
+    const both = (lines: string[]) => [lines.map((l) => Array.from(l)), grid(lines)];
+    const keeps = (lines: string[]) => {
+      for (const rows of both(lines)) expect(text(rows, glanceView(rows, 60, 8))).toEqual(lines.filter((l) => l && !/^[─━═]+$/.test(l)));
+    };
+    // A hint mentioned at the bottom, under a separator; a quote between two separators, a result under them.
+    keeps(['● Usage instructions', '──────────────', 'Run the command below.', 'Press esc to interrupt the running task.']);
+    keeps(['● Review summary', '──────────────', '> Result from the test runner', '──────────────', 'FAIL: expected 42, received 41']);
+    // Output quoting the hints: a mode line under a separator, or under rules with no prompt; a hint row with no input.
+    keeps(['● Usage', '──────────────', 'Type ? for shortcuts, then esc to interrupt.', '  ⏵⏵ accept edits on (shift+tab to cycle)']);
+    keeps([RULE, 'Footer example:', RULE, '  ? for shortcuts']);
+    keeps(['$ cat notes.md', '? for shortcuts', '  esc to interrupt']);
+    // Markdown horizontal rules in a reply: `---`, and rules around text that is not a prompt.
+    keeps(['● Plan', '', '---', '> Note: run make lint first', '---', 'Step 1: write the test', 'Step 2: make it pass']);
+    keeps(['## Summary', RULE, 'All 42 tests pass.', RULE, 'Next: ship it']);
+    // A test runner’s separators (thick, double) around a command it echoes.
+    keeps(['Running 42 tests', '━'.repeat(60), '> pnpm vitest run', '━'.repeat(60), '✓ 42 passed', 'Done in 1.2s']);
+    keeps(['═'.repeat(60), '> make e2e', '═'.repeat(60), '3 failed', '120 passed']);
+    keeps(['$ make test', RULE, ' FAIL  src/a.test.ts > adds', '> 12 |   expect(sum(1, 2)).toBe(4)', RULE, 'Tests  1 failed | 41 passed']);
+    // A box over Claude Code 2's input between rules is its welcome banner: what follows it is the conversation.
+    const banner = grid(['╭──────────────────────────╮', '│ ✻ Welcome to Claude Code │', '╰──────────────────────────╯', '> hi', '● Hello! What shall we do?', RULE, '❯ ', RULE]);
+    expect(text(banner, glanceView(banner, 60, 8))).toEqual(['│ ✻ Welcome to Claude Code │', '> hi', '● Hello! What shall we do?']);
+    // The footers themselves still go, rows as given: Claude Code’s under short rules (its mode line says so), Codex’s.
+    const claude = ['● Done.', '──────────────', '❯ ', '──────────────', 'dirty (8 added, 19 modified…', '▸▸ bypass permissions on (shift+tab to cycle) · ← 1 agent'].map((l) => Array.from(l));
+    expect(text(claude, glanceView(claude, 60, 8))).toEqual(['● Done.']);
+    const codex = ['• Done.', '› Write tests for @filename', '', '? for shortcuts · 91% context left'].map((l) => Array.from(l));
+    expect(text(codex, glanceView(codex, 60, 8))).toEqual(['• Done.', '› Write tests for @filename']);
+  });
+
+  it('keeps a result under an echoed `>` between rules from edge to edge, as given and on an 80×24 screen', async () => {
+    const wide = '─'.repeat(80);
+    const keeps = (lines: string[]) => {
+      const out = lines.filter((l) => l !== wide);
+      expect(text(lines.map((l) => Array.from(l)), glanceView(lines.map((l) => Array.from(l)), 100, 24))).toEqual(out);
+      const screen = grid([...lines, ...Array<string>(24 - lines.length).fill('')], 80);
+      expect(text(screen, glanceView(screen, 100, 24)).map((l) => l.trimEnd())).toEqual(out);
+    };
+    keeps(['● Review summary', wide, '> Result from the test runner', wide, 'FAIL: expected 42, received 41']);
+    keeps(['$ ./check-results', wide, '> checking the result', wide, 'FAIL: expected 42, received 41', 'Exit code: 1']);
+    // Claude Code's own statusline in its default mode looks the same: it stays too.
+    keeps(['● Done.', wide, '❯ fix the flaky test', wide, '  feat/98-seat dirty (8 added, 19 modified…)']);
+    // Through the terminal: the glance view paints the failure.
+    const t = new Terminal({ cols: 80, rows: 24, scrollback: 0 });
+    await write(t, ['● Review summary', wide, '> Result from the test runner', wide, 'FAIL: expected 42, received 41'].join('\r\n'));
+    const f = fakeCtx();
+    paintBuffer(f.g, t.buffer.active, { cols: 80, rows: 24, width: 768, height: 322, cursor: false, glance: true });
+    expect(f.texts.map((x) => x.text).join('')).toContain('FAIL');
+    t.dispose();
   });
 
   it('word-wraps long rows at the glance width, keeping the indent, and shows the last lines', () => {

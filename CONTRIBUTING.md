@@ -612,7 +612,9 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   screens off with the reason), `terminal.ts` is one xterm.js 6 terminal per live screen (never opened: only its VT
   parser and buffer) painted by `paint.ts` into a canvas that is the monitor's texture (M6b: standing, the glance view,
   the last lines that say something, 22 columns × 5 lines, big, bold and lifted to 4.5:1, so it reads from the aisle,
-  without the agent's footer: #98, the statusline and mode line under its input, its key hints;
+  without the agent's footer: #98, Claude Code's statusline and mode line under its input, Codex's hints under its
+  composer, each only in its own shape at the bottom and only under a mode line or hint row (a statusline alone, in
+  Claude Code's default mode, stays: it looks like output), so output that looks like a footer in part stays;
   seated, the whole terminal), `keys.ts` maps a keydown to herdr
   keys and orders input (one command in flight, what is typed meanwhile goes in the next `worker.keys`), `index.ts`
   plans and ties it together; #98: `monitors.ts` gives every desk its activity card, resting mascot or glance once per
