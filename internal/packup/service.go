@@ -22,9 +22,10 @@ const (
 	MaxThreshold = 0.99
 )
 
-// DetectTimeout bounds a whole detect, both models: past it the prompt goes
-// as written.
-const DetectTimeout = 1500 * time.Millisecond
+// DetectTimeout bounds a detect on the bridge, both models: past it the
+// prompt goes as written. The game's own bound is 1.5 s from Send (it drops
+// a later answer); this leaves the answer 0.3 s to reach it.
+const DetectTimeout = 1200 * time.Millisecond
 
 // testValidity is how long a passing packup.test allows enabling.
 const testValidity = 30 * time.Minute

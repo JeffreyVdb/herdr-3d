@@ -9,7 +9,9 @@
 // - `packup.detect {id, text}`: off, not ready, a freelancer or a worker without a Claude or Codex agent: no match,
 //   no call. Else the classifier scores the prompt (image markers masked to `[Image #n]`); at the threshold the LLM
 //   lists the spans to remove, each an exact substring found in order and never over an image, cut out with the
-//   joins tidied. Anything invalid, a failure, or 1.5 s gone by: `{matched: false}`.
+//   joins tidied. Anything invalid, a failure, or 1.2 s gone by (the bridge's bound; the game's is 1.5 s): `{matched: false}`;
+// - `sim.packup_lag {ms}` (the simulator's own, not a bridge command) holds every later detect's ack that long after its
+//   answer, as a slow link or a busy bridge would: past the game's 1.5 s its answer comes too late (0: no lag).
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { Worker } from '../src/net/protocol.ts';
@@ -28,7 +30,7 @@ export interface PackupHost {
 
 const GATE = 'Does the prompt ask the AI coding agent to go home, stop working or end its session once the task is done?';
 const FREELANCERS = ['code', 'review', 'ux', 'ground'];
-const DETECT_MS = 1500;
+const DETECT_MS = 1200;
 const MAX_CHARS = 8000;
 const SEPARATORS = ',;:–—-';
 
@@ -162,6 +164,8 @@ export class PackupSim {
   private threshold = 0.85;
   private passed: { fp: string; at: number } | null = null;
   private last = '';
+  /** `sim.packup_lag`: ms each detect ack is held after its answer. */
+  private lag = 0;
 
   constructor(private readonly h: PackupHost) {}
 
@@ -232,6 +236,12 @@ export class PackupSim {
   }
 
   handle(t: unknown, a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): boolean {
+    if (t === 'sim.packup_lag') {
+      if (typeof a.ms !== 'number' || !(a.ms >= 0)) throw this.h.error('bad_request', 'sim.packup_lag needs ms >= 0');
+      this.lag = a.ms;
+      ack();
+      return true;
+    }
     const ours = ['packup.get', 'packup.set', 'packup.test', 'packup.detect'];
     if (typeof t !== 'string' || !ours.includes(t)) return false;
     if (!this.h.ai.present) throw this.h.error('unsupported', 'unsupported: the bridge has no AI integration');
@@ -297,7 +307,9 @@ export class PackupSim {
           .catch((): Run => ({ score: 0, matched: false }))
           .then((r) => {
             clearTimeout(timer);
-            ack(r.matched ? { matched: true, ...(r.task ? { task: r.task } : {}), removed: r.removed, score: r.score } : { matched: false, score: r.score });
+            const answer = () => ack(r.matched ? { matched: true, ...(r.task ? { task: r.task } : {}), removed: r.removed, score: r.score } : { matched: false, score: r.score });
+            if (this.lag > 0) setTimeout(answer, this.lag);
+            else answer();
           });
         return true;
       }

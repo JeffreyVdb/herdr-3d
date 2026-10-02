@@ -219,7 +219,7 @@ type Options struct {
 	FollowupRoles    followup.Roles
 	// #110 pack up on request: PackupEnabled is the environment's toggle
 	// (HERDR_WORLD_PACKUP_ENABLED; nil: not set), PackupTimeout bounds a
-	// packup.detect (default packup.DetectTimeout), PackupRoles the models
+	// packup.detect's models (default packup.DetectTimeout), PackupRoles the models
 	// (default AI; tests pass fakes).
 	PackupEnabled *bool
 	PackupTimeout time.Duration

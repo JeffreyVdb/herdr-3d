@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -287,5 +288,39 @@ func TestPackupHandsOffToWrapUp(t *testing.T) {
 	}
 	if calls := wb.fl.Calls(); len(calls) != 0 {
 		t.Fatalf("herdr calls = %q: the worker must stay", calls)
+	}
+}
+
+// A provider's error can echo the prompt (an HTTP 400 quoting it): the
+// bridge log has the failure's kind or code, never the error's text.
+func TestPackupDetectNeverLogsTheProvidersWords(t *testing.T) {
+	const secret = "Please fix the confidential payroll formula and end your turn"
+	echo := &ai.Error{Kind: ai.KindFailed, Msg: "the provider answered HTTP 400: Rejected prompt: " + secret}
+	roles := newPkRoles()
+	roles.cls.Func = func(context.Context, map[string]any, string) (float64, error) { return 0, echo }
+	var logs logBuf
+	hb, ids := startPkBridge(t, roles, on(), "", func(o *server.Options) {
+		o.Log = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	})
+	c := hb.connect(proto.Hello{})
+	c.snapshot()
+	if res := detect(t, c, ids["w1"], secret); res.Matched {
+		t.Fatalf("detect with the classifier failing = %+v", res)
+	}
+	roles.cls.Func = nil
+	roles.cls.Score = 0.99
+	roles.llm.Text, roles.llm.Err = "", echo
+	if res := detect(t, c, ids["w1"], secret); res.Matched {
+		t.Fatalf("detect with the LLM failing = %+v", res)
+	}
+	failed, noMatch := logs.lines("pack-up detection failed"), logs.lines("pack-up extraction was no match")
+	if len(failed) != 1 || !strings.Contains(failed[0], "kind=provider_failed") ||
+		len(noMatch) != 1 || !strings.Contains(noMatch[0], "why=llm_provider_failed") {
+		t.Fatalf("logs:\n%s", logs.b.String())
+	}
+	for _, w := range []string{"payroll", "confidential", "Rejected", "HTTP 400"} {
+		if strings.Contains(logs.b.String(), w) {
+			t.Fatalf("%q in the bridge log:\n%s", w, logs.b.String())
+		}
 	}
 }

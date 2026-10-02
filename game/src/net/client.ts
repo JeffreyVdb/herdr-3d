@@ -166,8 +166,9 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'worker.answer_followup': 20_000,
   // #110: every labelled sample through the classifier (4 at a time), three extractions.
   'packup.test': 120_000,
-  // #110: the bridge bounds a detect at 1.5 s; past this the prompt goes as written.
-  'packup.detect': 2_500,
+  // #110: the whole detect, as the game sees it: past 1.5 s the prompt goes as written and a late ack is dropped (the
+  // bridge bounds its models at 1.2 s, so its answer has 0.3 s to get here).
+  'packup.detect': 1_500,
 };
 
 interface Pending {

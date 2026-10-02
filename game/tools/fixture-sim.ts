@@ -32,7 +32,7 @@ import { LimitsSim } from './fixture-limits.ts';
 import { AiSim } from './fixture-ai.ts';
 // #90: follow-up questions (`followups.*`, `worker.answer_followup`, `sim.turn`).
 import { FollowupSim } from './fixture-followup.ts';
-// #110: pack up on request (`packup.*`).
+// #110: pack up on request (`packup.*`, `sim.packup_lag`).
 import { PackupSim } from './fixture-packup.ts';
 // #98: "Classify unknown commands" (`activity.get` / `activity.set`, `sim.activity_settings`).
 import { ActivitySettingsSim } from './fixture-activity-settings.ts';

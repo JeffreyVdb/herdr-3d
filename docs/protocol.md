@@ -2517,8 +2517,9 @@ them, the snapshot's `packup` holds them, `packup.update` carries them flat (its
   **`packup.set {enabled: true}` needs one** (`test_required`).
 
 **Detection: `packup.detect {id, text}`.** The game sends it when you press Send in the laptop's prompt box or the P
-overlay, with the feature `ready` and the worker one it applies to; the prompt waits meanwhile. Then, on the bridge,
-off the hub goroutine and bounded at **1.5 s** in all:
+overlay, with the feature `ready` and the worker one it applies to; the prompt waits meanwhile, **1.5 s at most**: past
+that the game sends it as written and drops a later ack, a match included. Then, on the bridge, off the hub goroutine
+and bounded at **1.2 s** (so its answer has 0.3 s to reach the game):
 
 1. **Skip** (no call, `matched: false`): the feature not `ready`; a freelancer; a worker without a Claude or Codex
    agent (the wrap-up's rule: only those can be sent home after a task). Unknown worker: `unknown_worker`; an empty or
@@ -2532,11 +2533,13 @@ off the hub goroutine and bounded at **1.5 s** in all:
    before punctuation goes, and the pieces meet with one space or the line break one of them has. The task's own words
    never change. `removed` is the cut parts, `[start, end)` in **UTF-16 code units** of `text` (JavaScript's string
    indexes). Nothing left of the text: `matched: true` without `task` (the game opens the send-home dialog).
-4. **Fail open**: bad JSON, no span, a span not in the text or out of order, a classifier or LLM failure, the 1.5 s
+4. **Fail open**: bad JSON, no span, a span not in the text or out of order, a classifier or LLM failure, the 1.2 s
    gone: `matched: false`, and the game sends the prompt as written. **A failure never eats a prompt.**
 
 Image markers (`[Image #n: path]`, #64) are protected: the models see each as `[Image #n]`, never its path, and a span
-over one is invalid (no match). The prompt is never logged, and the audit log keeps only its length. The readiness is
+over one is invalid (no match). The prompt is never logged, nor is a model's error text (a provider may quote the
+prompt in it; the log has only a fixed code: the failure's kind, or `llm_<kind>`, `bad_answer`, `bad_part` for the cut),
+and the audit log keeps only its length. The readiness is
 checked again before the LLM: switched off or a model `invalid` meanwhile, the prompt never goes to it.
 
 **Confirm** (the game): a match always opens the send home's pack-up mode, "Send the task, then send <name> home": the

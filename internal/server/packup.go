@@ -6,7 +6,8 @@ package server
 // packup.DetectTimeout; the feature off or not ready, a worker the wrap-up
 // does not take (a freelancer, no Claude or Codex agent), any failure or a
 // timeout: matched false, the prompt goes as written. The prompt is never
-// logged nor audited (only its length). Sending the task and the worker
+// logged nor audited (only its length), nor is an error's text: a provider
+// may echo the prompt in it, so only fixed codes are logged. Sending the task and the worker
 // home is the game's next command: worker.wrapup (#83), nothing new here.
 
 import (
@@ -162,15 +163,15 @@ func (h *Hub) startPackup(ctx context.Context, c *Client, cmd proto.Command) err
 		work = func(ctx context.Context) (any, error) {
 			res, err := svc.Detect(ctx, a.Text)
 			if err != nil {
-				// Fail open: the prompt goes as written. ai's errors never
-				// carry a key, nor the prompt.
+				// Fail open: the prompt goes as written. Only the kind is
+				// logged: a provider's words in err can echo the prompt.
 				if !errors.Is(err, ai.ErrNotReady) && ctx.Err() == nil {
-					h.log.Warn("pack-up detection failed", "worker", id, "kind", ai.KindOf(err), "err", err)
+					h.log.Warn("pack-up detection failed", "worker", id, "kind", ai.KindOf(err))
 				}
 				return proto.PackupDetectResult{}, nil
 			}
-			if res.ExtractErr != "" {
-				h.log.Info("pack-up extraction was no match", "worker", id, "score", res.Score, "why", res.ExtractErr)
+			if res.ExtractCode != "" {
+				h.log.Info("pack-up extraction was no match", "worker", id, "score", res.Score, "why", res.ExtractCode)
 			}
 			h.log.Info("pack-up looked at", "worker", id, "score", res.Score, "matched", res.Matched, "task_runes", utf8.RuneCountInString(res.Task))
 			out := proto.PackupDetectResult{Matched: res.Matched, Score: res.Score}

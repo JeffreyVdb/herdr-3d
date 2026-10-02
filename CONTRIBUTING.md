@@ -810,7 +810,8 @@ transcript). `window.__h3d.followups()` is the feature's state. `e2e/followups.s
 
 #110 on the simulating server (`tools/fixture-packup.ts`, rules at its top): `packup.get` / `set` / `test` like the
 bridge (the test runs a part of the labelled samples through the AI integration's fakes), and `packup.detect` cuts the
-LLM's spans like `internal/packup` (exact substrings in order, never over an image, a 1.5 s bound, any failure no match).
+LLM's spans like `internal/packup` (exact substrings in order, never over an image, the bridge's 1.2 s bound, any failure no match); `sim.packup_lag {ms}` holds
+its detect acks to test the game's own 1.5 s bound.
 `window.__h3d.packup()` is the feature's state. `e2e/m110-packup.spec.ts` drives the settings, the P overlay and the
 laptop's prompt box through the confirm.
 

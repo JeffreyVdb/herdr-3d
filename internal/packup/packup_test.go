@@ -92,24 +92,30 @@ func TestRunBelowThresholdCallsNoLLM(t *testing.T) {
 // goes as written.
 func TestRunInvalidExtractionIsNoMatch(t *testing.T) {
 	const prompt = "Please make a PR and end your turn"
-	for name, llm := range map[string]*ai.FakeLLM{
-		"tampered span": {Text: spans(" and finish your turn")},
-		"reworded":      {Text: spans("and End your turn.")},
-		"out of order":  {Text: spans("end your turn", "Please")},
-		"nothing":       {Text: spans()},
-		"blank span":    {Text: spans("  ")},
-		"no list":       {Text: `{"task":"Please make a PR"}`},
-		"bad json":      {Text: `{"remove": [" and end`},
-		"no json":       {Text: "Remove: and end your turn"},
-		"too many":      {Text: spans("P", "l", "e", "a", "s", "e", " ", "m", "a")},
-		"failure":       {Err: &ai.Error{Kind: ai.KindFailed, Msg: "the provider failed"}},
-		"timeout":       {Err: &ai.Error{Kind: ai.KindTimeout, Msg: "the LLM timed out"}},
+	for name, tc := range map[string]struct {
+		llm  *ai.FakeLLM
+		code string
+	}{
+		"tampered span": {&ai.FakeLLM{Text: spans(" and finish your turn")}, "bad_part"},
+		"reworded":      {&ai.FakeLLM{Text: spans("and End your turn.")}, "bad_part"},
+		"out of order":  {&ai.FakeLLM{Text: spans("end your turn", "Please")}, "bad_part"},
+		"nothing":       {&ai.FakeLLM{Text: spans()}, "bad_answer"},
+		"blank span":    {&ai.FakeLLM{Text: spans("  ")}, "bad_answer"},
+		"no list":       {&ai.FakeLLM{Text: `{"task":"Please make a PR"}`}, "bad_answer"},
+		"bad json":      {&ai.FakeLLM{Text: `{"remove": [" and end`}, "bad_answer"},
+		"no json":       {&ai.FakeLLM{Text: "Remove: and end your turn"}, "bad_answer"},
+		"too many":      {&ai.FakeLLM{Text: spans("P", "l", "e", "a", "s", "e", " ", "m", "a")}, "bad_answer"},
+		"failure":       {&ai.FakeLLM{Err: &ai.Error{Kind: ai.KindFailed, Msg: "the provider failed"}}, "llm_provider_failed"},
+		"timeout":       {&ai.FakeLLM{Err: &ai.Error{Kind: ai.KindTimeout, Msg: "the LLM timed out"}}, "llm_timeout"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cls := &ai.FakeClassifier{Score: 0.95}
-			res, err := packup.Run(context.Background(), cls, llm, prompt, 0.85)
+			res, err := packup.Run(context.Background(), cls, tc.llm, prompt, 0.85)
 			if err != nil || res.Matched || res.Task != "" || res.Removed != nil || res.ExtractErr == "" {
 				t.Fatalf("Run = %+v, %v; want no match", res, err)
+			}
+			if res.ExtractCode != tc.code {
+				t.Fatalf("ExtractCode = %q, want %q", res.ExtractCode, tc.code)
 			}
 		})
 	}
@@ -533,7 +539,7 @@ func TestDetectTimesOut(t *testing.T) {
 			}
 		})
 	}
-	if packup.DetectTimeout != 1500*time.Millisecond {
+	if packup.DetectTimeout != 1200*time.Millisecond {
 		t.Fatalf("DetectTimeout = %v", packup.DetectTimeout)
 	}
 }

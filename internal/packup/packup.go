@@ -61,8 +61,14 @@ type Result struct {
 	Task    string
 	Removed []Range
 	// ExtractErr is why a passing gate is no match ("" when it is one, or
-	// the gate did not pass).
+	// the gate did not pass). It may carry the provider's words, which can
+	// echo the prompt: never log it, log ExtractCode.
 	ExtractErr string
+	// ExtractCode is ExtractErr as a fixed code, safe to log: "llm_<kind>"
+	// (the LLM's call failed, ai.Kind), "bad_answer" (its answer is not a
+	// list of parts) or "bad_part" (a part not in the prompt, or over an
+	// image).
+	ExtractCode string
 }
 
 // imageMarker is an image in a prompt: "[Image #n: path]" (#64), or a bare
@@ -154,11 +160,16 @@ func run(ctx context.Context, c ai.Classifier, l ai.LLM, prompt string, threshol
 		return nil, ai.ErrNotReady
 	}
 	spans, err := Extract(ctx, l, v.text)
+	code := "bad_answer"
+	if k := ai.KindOf(err); k != "" {
+		code = "llm_" + string(k)
+	}
 	if err == nil {
+		code = "bad_part"
 		res.Task, res.Removed, err = cut(prompt, v, spans)
 	}
 	if err != nil {
-		res.Task, res.Removed, res.ExtractErr = "", nil, err.Error()
+		res.Task, res.Removed, res.ExtractErr, res.ExtractCode = "", nil, err.Error(), code
 		return res, nil
 	}
 	res.Matched = true

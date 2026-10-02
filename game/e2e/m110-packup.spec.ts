@@ -246,7 +246,7 @@ async function sitAtTranscript(page: Page, name: string): Promise<string> {
   return id;
 }
 
-test('the laptop’s prompt box: send as written, cancel, nothing left, a tampered cut, Esc while checking, a timeout', async ({ page }) => {
+test('the laptop’s prompt box: send as written, cancel, nothing left, a tampered cut, Esc while checking, the timeouts', async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
@@ -316,13 +316,33 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     expect(await page.evaluate(() => window.__h3d.seated())).toBe(id);
     expect(await page.evaluate(() => window.__h3d.seat().note)).toBe('Not sent: the prompt is still in the box.');
 
-    // A model too slow: after 1.5 s it goes as written (fail open).
-    const t0 = Date.now();
+    // A model too slow: the bridge gives up after 1.2 s, its no match comes within the game's 1.5 s, and the prompt goes
+    // as written (fail open).
+    const lastDetect = async () => (await sent(page, 'packup.detect')).at(-1)?.result;
+    let t0 = Date.now();
     await input.click();
     await page.keyboard.press('Enter');
     await expect.poll(prompts, { timeout: 6000 }).toContain('SLOW: make a PR and end your turn');
     expect(Date.now() - t0).toBeLessThan(4500);
     expect(await home(page)).toBeNull();
+    expect(await lastDetect()).toMatchObject({ ok: true, data: { matched: false } });
+
+    // The game's own bound: an answer held 4 s on the way (a slow link, a busy bridge) is too late. 1.5 s after Send the
+    // prompt goes as written, for a slow model's no match and for a match alike, and the late match opens nothing.
+    expect(await page.evaluate(() => window.__h3d.simPackupLag(4000))).toBe(true);
+    for (const text of ['SLOW: fix the docs and end your turn', 'Fix the docs and stop working']) {
+      await write(text);
+      t0 = Date.now(); // Enter is pressed
+      await expect.poll(prompts, { timeout: 6000, intervals: [50] }).toContain(text);
+      expect(Date.now() - t0).toBeLessThan(2300);
+      expect(await lastDetect()).toMatchObject({ ok: false, code: 'timeout' });
+      await expect(input).toHaveText('');
+      await page.waitForTimeout(4500 - (Date.now() - t0)); // the held answer has come by now
+      expect(await home(page)).toBeNull();
+      await expect(confirm).toBeHidden();
+      expect((await prompts()).filter((p) => p === text)).toHaveLength(1);
+    }
+    expect(await sent(page, 'worker.wrapup')).toHaveLength(0);
     const detects = await sent(page, 'packup.detect');
     expect(detects.every((c) => (c.args as { id: string }).id === id)).toBe(true);
   } finally {
