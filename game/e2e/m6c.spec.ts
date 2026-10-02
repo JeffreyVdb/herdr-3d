@@ -328,6 +328,66 @@ test('its desk moves mid-delivery: the walk ends at once, the folder is on the t
   clean();
 });
 
+test('its own worker.upsert at the same desk mid-delivery (a report update): the walk goes on, the freelancer is drawn once', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', '', SIM);
+  await enter(page);
+  const lobby = await member(page, 4);
+  const { id, desk } = await hireAndWork(page, { orch: lobby.id });
+  const before = (await trayOf(page, 4))!.folders;
+  await page.evaluate(() => window.__h3d.arrivalRate(0.4));
+  await page.evaluate(() => window.__h3d.simCrew({ step: 'report', summary: 'Done.' }));
+  await walking(page);
+  await page.evaluate((wid) => {
+    const w = window.__h3d.worker(wid)!;
+    window.__h3d.inject({ t: 'worker.upsert', worker: { ...w, report: { ...w.report!, summary: 'Done, with a footnote.' } } } as never);
+  }, id);
+  await frames(page, 3);
+  // Still its walk; the seated figure is not back in the chair while the walker walks.
+  expect((await page.evaluate(() => window.__h3d.arrivals())).find((a) => a.kind === 'deliver')).toMatchObject({ yielded: false });
+  expect((await crew(page)).members.find((x) => x.id === id)).toMatchObject({ desk, out: true });
+  await page.evaluate(() => window.__h3d.arrivalRate(8));
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivals())).filter((a) => a.kind === 'deliver').length, { timeout: 60_000 }).toBe(0);
+  expect((await trayOf(page, 4))!.folders).toBe(before + 1);
+  expect((await crew(page)).members.find((x) => x.id === id)).toMatchObject({ desk, out: false });
+  clean();
+});
+
+test('its workspace closes at the hand-over after the folder landed: the hand-over finishes, the walk-out starts from the spot, the folder stays until it left', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', '', SIM);
+  await enter(page);
+  const lobby = await member(page, 4);
+  await page.evaluate((x) => window.__h3d.simStatus(x, 'working'), lobby.id);
+  const { id } = await hireAndWork(page, { orch: lobby.id });
+  const before = (await trayOf(page, 4))!.folders;
+  // Slow, so the window between the folder landing and the hand-over ending (the swing back) can be caught.
+  await page.evaluate(() => window.__h3d.arrivalRate(0.1));
+  await page.evaluate(() => window.__h3d.simCrew({ step: 'report', summary: 'Done.' }));
+  // (The folder is on the tray, in the book too: the tray counts it, and the swing back is still going.)
+  await expect
+    .poll(async () => ((await page.evaluate(() => window.__h3d.arrivals())).find((a) => a.kind === 'deliver' && a.phase === 'hand' && a.landed) ? (await trayOf(page, 4))!.folders : -1), { timeout: 60_000, intervals: [30] })
+    .toBe(before + 1);
+  await page.evaluate((wid) => window.__h3d.simCrew({ step: 'leave', id: wid }), id);
+  await frames(page, 3);
+  const at = (await page.evaluate(() => window.__h3d.arrivals())).find((a) => a.kind === 'deliver')!;
+  // The delivery is not cancelled; its folder is on the tray and stays there.
+  expect(at).toBeDefined();
+  expect((await trayOf(page, 4))!.folders).toBe(before + 1);
+  await page.evaluate(() => window.__h3d.arrivalRate(1));
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivals())).find((a) => a.id === id && a.kind === 'out')?.phase, { timeout: 30_000, intervals: [30] }).toBe('walk');
+  const out = (await page.evaluate(() => window.__h3d.arrivals())).find((a) => a.id === id && a.kind === 'out')!;
+  // From the hand-over spot, not from the seat.
+  expect(Math.hypot(out.x - at.x, out.z - at.z)).toBeLessThan(2);
+  expect((await trayOf(page, 4))!.folders).toBe(before + 1);
+  await page.evaluate(() => window.__h3d.arrivalRate(8));
+  await expect.poll(async () => (await trayOf(page, 4))!.folders, { timeout: 60_000 }).toBe(before);
+  expect((await crew(page)).members.some((m) => m.id === id)).toBe(false);
+  clean();
+});
+
 test('its floor falls asleep mid-delivery: the walk and the queue resolve at once, folders on the tray, freelancers seated', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);

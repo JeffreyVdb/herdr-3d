@@ -346,4 +346,17 @@ describe('Arrivals: a report on its way (M6c)', () => {
     expect(a.has('deliver:w@1')).toBe(true);
     expect(a.info(t + 0.2)[0]).toMatchObject({ yielded: true });
   });
+
+  it('the freelancer itself is no one else at its desk: an upsert of it yields nothing, and the figure stays out of the chair', () => {
+    const a = new Arrivals(false);
+    a.start(delivery(true), 0);
+    const t = STAND_S + 1;
+    a.update(t, t);
+    // `deliver:w@1` is worker `w`'s walk: `w` sitting at its own desk (a report update, a question appearing) is not a replacement.
+    expect(a.yieldDesk('f', FROM, 'w', t)).toBe(false);
+    expect(onDesk(a.update(t + 0.1, t + 0.1))).toMatchObject({ out: { chair: expect.any(Number) } });
+    expect(a.info(t + 0.1)[0]).toMatchObject({ yielded: false });
+    // Someone else still takes the desk from it.
+    expect(a.yieldDesk('f', FROM, 'replacement', t + 0.1)).toBe(true);
+  });
 });

@@ -150,13 +150,15 @@ export class DeliveryBook {
 
   /**
    * A freelancer's workspace closed. Its folders on the tray go; one still on its way lands and stays until the
-   * freelancer has left (`settle`). Returns the keys that landed.
+   * freelancer has left (`settle`). Returns the keys that landed. `walking`: the key of its delivery walk still going
+   * on (the hand-over finishing, or the walk back): its folder is on the tray already or not, and stays either way.
    */
-  close(id: string): string[] {
+  close(id: string, walking?: string): string[] {
     const landed: string[] = [];
     for (const [key, e] of this.entries) {
       if (e.id !== id) continue;
-      if (e.stage === 'tray') this.entries.delete(key);
+      if (e.stage === 'tray' && key === walking) e.leaving = true;
+      else if (e.stage === 'tray') this.entries.delete(key);
       else {
         e.stage = 'tray';
         e.leaving = true;

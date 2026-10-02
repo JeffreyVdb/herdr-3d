@@ -126,6 +126,20 @@ describe('DeliveryBook', () => {
     expect(b.busy('f1')).toBe(false);
   });
 
+  it('closed while its delivery walk goes on after the folder landed: the folder stays until the freelancer has left', () => {
+    const b = new DeliveryBook();
+    b.add(fact('f1', 10), true);
+    b.add(fact('f2', 11), false);
+    const e = b.next('o1')!;
+    b.land(e.key);
+    // The walk (key) is still going: its folder stays (a landed one goes at once, `close('f1')` without a walk).
+    expect(b.close('f1', e.key)).toEqual([]);
+    expect(b.tray('o1').map((x) => `${x.id}@${x.at}`)).toEqual(['f1@10', 'f2@11']);
+    expect(b.get(e.key)?.leaving).toBe(true);
+    b.settle('f1');
+    expect(b.tray('o1').map((x) => x.id)).toEqual(['f2']);
+  });
+
   it('a snapshot overtakes a walk and forgets the gone', () => {
     const b = new DeliveryBook();
     b.add(fact('f1', 10), true);

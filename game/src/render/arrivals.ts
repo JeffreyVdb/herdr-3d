@@ -372,7 +372,8 @@ export class Arrivals {
     let any = false;
     let out = false;
     for (const a of this.active) {
-      if (a.yielded || a.spec.id === by || a.spec.session !== session || a.spec.desk !== desk) continue;
+      // (`by` sitting at its own desk is no one else: a delivery's id is `deliver:<worker>@<report>`, its worker's is the key's head.)
+      if (a.yielded || a.spec.id === by || a.spec.deliver?.key.startsWith(`${by}@`) || a.spec.session !== session || a.spec.desk !== desk) continue;
       a.yielded = true;
       any = true;
       if (a.spec.kind === 'deliver') out = true;

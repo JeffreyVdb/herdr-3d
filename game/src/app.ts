@@ -175,7 +175,7 @@ export class App {
   /** M6c: the reports on their way to an orchestrator's desk, and what is in its in-tray. */
   private readonly deliveries = new DeliveryBook();
   /** What each delivery on its way was built against (its key → the layout and orchestrator seat), to tell when the world moved under it. */
-  private readonly deliveryCtx = new Map<string, { layout: object; orchDesk: number; corner: boolean }>();
+  private readonly deliveryCtx = new Map<string, { layout: object; orchDesk: number; corner: boolean; leaving?: boolean }>();
   /** M4: hires on their way: their desks' "+" is hidden until the worker is there. */
   private readonly reserved = new Reservations();
   /** Commands sent to the bridge, in order (test hook). */
@@ -770,13 +770,14 @@ export class App {
   /** Whether a delivery on its way no longer fits the world: false for one whose freelancer is leaving (that walk is the walk-out's). */
   private deliveryStale(a: ArrivalInfo): boolean {
     const e = this.deliveries.get(a.key as string);
+    const c = this.deliveryCtx.get(a.key as string);
+    // (Its freelancer's workspace closed: the hand-over finishes and the walk-out follows, whatever the book still has of it.)
+    if (c?.leaving || e?.leaving) return false;
     if (!e) return true;
-    if (e.leaving) return false;
     const v = this.store.workerView(e.id);
     if (!v) return false;
     const ov = this.store.workerView(e.orch);
     const fv = this.store.floorView(a.session);
-    const c = this.deliveryCtx.get(a.key as string);
     const o = this.office;
     if (!ov || !fv || !c || !o || fv.asleep || this.mode !== 'floor' || o.session !== a.session || o.layout !== c.layout) return true;
     return v.worker.session !== a.session || v.desk !== a.desk || ov.worker.session !== a.session || ov.desk !== c.orchDesk || (ov.worker.corner === true && ov.crew?.role === 'orch') !== c.corner;
@@ -822,11 +823,11 @@ export class App {
   private leaveDelivery(id: string): boolean {
     const now = performance.now() / 1000;
     const d = this.arrivals.info(now).find((a) => a.kind === 'deliver' && a.key?.startsWith(`${id}@`));
-    this.deliveries.close(id);
+    const entry = d ? this.deliveries.get(d.key as string) : undefined;
+    this.deliveries.close(id, d?.key ?? undefined);
     this.syncTrays();
     // Queued or not on the way: nothing to finish here; a folder that landed with it stays until the freelancer has left.
     if (!d) return false;
-    const entry = this.deliveries.get(d.key as string);
     const ov = entry ? this.store.workerView(entry.orch) : null;
     const corner = ov ? (this.destOf(ov) as { corner?: number }).corner : undefined;
     const standing = d.phase === 'walk' || d.phase === 'hand';
@@ -834,7 +835,11 @@ export class App {
     const spec = this.arrivalSpec('out', id, from);
     if (!spec) return false;
     // At the hand-over spot it finishes handing over; anywhere else the delivery ends here and the walk-out takes over.
-    if (d.phase === 'hand' && this.arrivals.chain(d.id, spec)) return true;
+    if (d.phase === 'hand' && this.arrivals.chain(d.id, spec)) {
+      const c = this.deliveryCtx.get(d.key as string);
+      if (c) c.leaving = true;
+      return true;
+    }
     this.arrivals.cancel(d.id);
     this.arrivals.cancel(id);
     this.beginArrival(spec);
