@@ -16,7 +16,9 @@
   their images as `ImageRef`s, decoded, hashed and resolved through the allowlist of path roots; #57: the agents'
   structured questions, `AskTracker` knowing the one a session's latest turn waits on, fed the usage tail's lines, and
   the question cards of their tool items; #83: `WrapUpTracker`, an armed wrap-up's result line, fed the same lines with
-  their byte offsets), `imgcache` (M16 phase 2:
+  their byte offsets; #98: `ActivityTracker`, what each worker is doing and its open background tasks, fed the same
+  lines), `activity` (#98: the pure rule classifier of tool calls and shell commands, and the opt-in model for the
+  commands it can't place: normalise, scrub, cache, budget), `imgcache` (M16 phase 2:
   the bounded content-addressed image cache, memory LRU plus an optional 0600/0700 disk cache; the type sniff, the
   thumbnails, the path allowlist; pure Go), `runs` (M6: write-code runs, the
   freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it), `limits` (M10: the Claude and
