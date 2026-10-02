@@ -4,6 +4,7 @@ import { pickNearest, rayBox, type Pickable, type V3 } from '../world/collide';
 import { hash32, modelCue, resolveHarness, type Display } from '../world/derive';
 import { deskKit, type DeskKit } from '../world/deskKit';
 import { DESK_H, floorLayout, MEZZ_Y, SEAT_OFFSET, seatRect, slotBoxes, wallPieces, type Box3, type DeskSlot, type FloorLayout, type Opening, type Outline, type Rect } from '../world/layout';
+import type { StampTone } from '../world/crew';
 import type { FloorView, WorkerView } from '../world/store';
 import { AtlasCards } from './cards/atlasCards';
 import { cardOf } from './cards/cardOf';
@@ -11,6 +12,7 @@ import { CARD_RANGE, cardWeight, OVERLOOK_CARD_RANGE } from './cards/select';
 import type { CardData } from './cards/types';
 import { Crowd, type Member } from './crowd';
 import { DeskSet } from './desks';
+import { TrayView } from './tray';
 import { MezzanineView } from './mezzanine';
 import { BODY_TINTS, OFFICE } from './palette';
 import { buildProps, signTexture, type PropMeshes } from './props';
@@ -40,6 +42,30 @@ export interface CrewInfo {
   run: string | null;
   display: Display;
   parts: string[];
+  /** M6c: out of its chair delivering a report (its desk and card stay). */
+  out: boolean;
+}
+
+/** M6c: a worker away from its chair with a report: how far its chair is pushed back (0..1). */
+export interface OutPose {
+  chair: number;
+}
+
+/** M6c: an orchestrator swivelled in its chair this far (radians) to the freelancer, reaching for the folder (0..1). */
+export interface SwivelPose {
+  turn: number;
+  reach: number;
+}
+
+/**
+ * M6c: the slot a worker sits at. An orchestrator flagged `corner` (game-only, docs/decisions.md) sits up in the
+ * corner office at the mezzanine's orchestrator desk, whatever its desk index says.
+ */
+export function seatOf(layout: FloorLayout, i: number, v: Pick<WorkerView, 'worker' | 'crew'> | null): { slot: DeskSlot; y: number; corner: boolean } | null {
+  const base = layout.slots[i];
+  if (!base) return null;
+  if (v?.worker.corner === true && v.crew?.role === 'orch') return { slot: { index: i, pod: base.pod, ...layout.mezzanine.orch }, y: MEZZ_Y, corner: true };
+  return { slot: base, y: 0, corner: false };
 }
 
 export const SEAT_Y = 0.45;
@@ -168,6 +194,13 @@ export class OfficeView {
   private readonly drops = new Map<number, DropPose>();
   /** M6b: each desk's things. */
   readonly kits: DeskKit[];
+  /** M6c: the in-trays, and what each orchestrator's holds (by desk, oldest first). */
+  private readonly tray: TrayView;
+  private readonly trayTones = new Map<number, ReadonlyArray<StampTone | null>>();
+  /** M6c: freelancers out of their chairs with a report, orchestrators swivelled to take one, reports waiting their turn. */
+  private readonly outs = new Map<number, OutPose>();
+  private readonly swivels = new Map<number, SwivelPose>();
+  private readonly waiting = new Set<number>();
   /** M5: the desk whose worker stands aside while you sit at its laptop. */
   private lean: number | null = null;
   private atLaptop = false;
@@ -316,7 +349,8 @@ export class OfficeView {
     this.kits = L.slots.map((s) => deskKit(s));
     this.desks = new DeskSet(L.desks, o.shadows, { plus: true, kits: this.kits });
     this.crowd = new Crowd(L.desks, o.shadows);
-    this.root.add(this.desks.group, this.crowd.group);
+    this.tray = new TrayView(L.desks, o.shadows);
+    this.root.add(this.desks.group, this.crowd.group, this.tray.group);
 
     const weight = (slot: number) => cardWeight(this.seats[slot]?.display === 'needs_you', this.overlook);
     // A card behind a wall (from the camera) is not shown.
@@ -431,10 +465,94 @@ export class OfficeView {
     if (cur === d || (cur && d && cur.dy === d.dy && cur.squash === d.squash)) return;
     if (d) this.drops.set(desk, d);
     else this.drops.delete(desk);
-    const s = this.layout.slots[desk];
+    const at = seatOf(this.layout, desk, this.seats[desk] ?? null);
     const v = this.seats[desk];
-    if (!s || !v || this.away.has(desk) || this.lean === desk) return;
-    this.crowd.set(desk, this.seated(desk, s, memberOf(v)));
+    if (!at || !v || this.away.has(desk) || this.lean === desk || this.outs.has(desk)) return;
+    this.crowd.set(desk, this.seated(desk, at.slot, memberOf(v), at.y));
+  }
+
+  /**
+   * M6c: the freelancer at `desk` is out of its chair with its report (null: back, or never left). Its desk is still
+   * its own: the laptop screen stays live, its card shows, picking it reaches it; only the figure is the walker's
+   * (drawn by the arrivals) and the chair is pushed back `chair` of the way.
+   */
+  setOut(desk: number, o: OutPose | null): void {
+    const cur = this.outs.get(desk) ?? null;
+    if (cur === o || (cur && o && cur.chair === o.chair)) return;
+    const toggled = !cur !== !o;
+    if (o) this.outs.set(desk, o);
+    else this.outs.delete(desk);
+    const v = this.seats[desk] ?? null;
+    if (toggled || !v) this.setSeat(desk, v);
+    else {
+      // Only the chair moved.
+      const d = this.desks.get(desk);
+      if (d) this.desks.set(desk, { ...d, chair: o?.chair ?? 0 });
+    }
+  }
+
+  /** M6c: the orchestrator at `desk` swivels in its chair to the freelancer at its side (null: facing its desk). */
+  setSwivel(desk: number, sw: SwivelPose | null): void {
+    const cur = this.swivels.get(desk) ?? null;
+    if (cur === sw || (cur && sw && cur.turn === sw.turn && cur.reach === sw.reach)) return;
+    if (sw) this.swivels.set(desk, sw);
+    else this.swivels.delete(desk);
+    const v = this.seats[desk];
+    const at = seatOf(this.layout, desk, v ?? null);
+    if (!at || !v || this.away.has(desk) || this.lean === desk) return;
+    this.crowd.set(desk, this.seated(desk, at.slot, memberOf(v), at.y));
+  }
+
+  /** M6c: reports waiting their turn to be handed in: these freelancers sit with the folder held out towards the orchestrator. */
+  setWaiting(desks: Iterable<number>): void {
+    const next = new Set(desks);
+    const changed = [...next, ...this.waiting].filter((d) => next.has(d) !== this.waiting.has(d));
+    this.waiting.clear();
+    for (const d of next) this.waiting.add(d);
+    for (const d of changed) this.setSeat(d, this.seats[d] ?? null);
+  }
+
+  /** M6c: what an orchestrator's in-tray holds (verdict tones, oldest first). */
+  setTray(desk: number, tones: ReadonlyArray<StampTone | null>): void {
+    const cur = this.trayTones.get(desk);
+    if (cur && cur.length === tones.length && cur.every((t, i) => t === tones[i])) return;
+    this.trayTones.set(desk, tones);
+    this.drawTray(desk);
+    // The freelancers of this desk's orchestrator hold nothing out any more once its tray is on this floor.
+    this.seats.forEach((w, i) => {
+      if (w?.crew?.life === 'reporting' && w.crew.orchId && w.crew.orchId === this.seats[desk]?.worker.id) this.setSeat(i, w);
+    });
+  }
+
+  /** M6c: the in-tray of the orchestrator seated at `desk` (none for anyone else). */
+  private drawTray(desk: number): void {
+    const v = this.seats[desk] ?? null;
+    const at = seatOf(this.layout, desk, v);
+    if (!v || !at || v.crew?.role !== 'orch') {
+      this.tray.set(desk, null);
+      return;
+    }
+    this.tray.set(desk, { x: at.slot.seat.x, y: at.y, z: at.slot.seat.z, yaw: at.slot.yaw, side: this.kits[desk]?.side ?? 1 }, this.trayTones.get(desk) ?? []);
+  }
+
+  /** M6c: the in-tray of desk `desk` (test hook). */
+  trayInfo(desk: number): ReturnType<TrayView['info']> {
+    return this.tray.info(desk);
+  }
+
+  /** M6c: the desks whose orchestrator sits in the corner office (their screens, cards and prints are not drawn on the floor slot). */
+  cornerDesks(): number[] {
+    return this.seats.flatMap((v, i) => (seatOf(this.layout, i, v)?.corner ? [i] : []));
+  }
+
+  /** M6c: the desks whose worker is out delivering a report (test hook). */
+  outDesks(): number[] {
+    return [...this.outs.keys()];
+  }
+
+  /** M6c: the desk (index) where this orchestrator worker sits on this floor, -1 when not here. */
+  deskOf(workerId: string): number {
+    return this.seats.findIndex((w) => w?.worker.id === workerId);
   }
 
   /** M6b: desks with a worker dropping in (test hook). */
@@ -442,11 +560,22 @@ export class OfficeView {
     return [...this.drops.keys()];
   }
 
-  /** A worker in its chair (dropping in, if it is). */
-  private seated(i: number, s: DeskSlot, mem: ReturnType<typeof memberOf>): Member {
+  /** A worker in its chair (dropping in, if it is; M6c: swivelled to take a report, if it is). `y`: the floor level (the corner office's). */
+  private seated(i: number, s: DeskSlot, mem: ReturnType<typeof memberOf>, y = 0): Member {
     const d = this.drops.get(i);
+    const sw = this.swivels.get(i);
     const side = this.kits[i]?.side ?? 1;
-    return { x: s.seat.x, y: SEAT_Y + (d?.dy ?? 0), z: s.seat.z, yaw: s.yaw, scale: 1, ...mem, deskSide: side, ...(d && d.squash !== 1 ? { squash: d.squash } : {}) };
+    return {
+      x: s.seat.x,
+      y: y + SEAT_Y + (d?.dy ?? 0),
+      z: s.seat.z,
+      yaw: s.yaw,
+      scale: 1,
+      ...mem,
+      deskSide: side,
+      ...(d && d.squash !== 1 ? { squash: d.squash } : {}),
+      ...(sw ? { swivel: sw.turn, reach: sw.reach } : {}),
+    };
   }
 
   /** M5: the worker at `desk` stands aside while you sit at its laptop (null: back in its chair). */
@@ -468,14 +597,19 @@ export class OfficeView {
   }
 
   private setSeat(i: number, v: WorkerView | null): void {
-    const s = this.layout.slots[i];
-    if (!s) return;
+    const at = seatOf(this.layout, i, v);
+    if (!at) return;
+    const { slot: s, y: y0 } = at;
     this.seats[i] = v;
     this.obstacleCache = this.targetCache = this.targetOwnCache = null;
     const mem = v ? memberOf(v) : null;
     if (mem?.crew && v?.crew?.life === 'reporting' && v.crew.orchId) {
       const o = this.seats.findIndex((x) => x?.worker.id === v.crew?.orchId);
-      mem.crew.turn = turnTowards(s, o >= 0 ? this.layout.slots[o] : undefined);
+      // M6c: its orchestrator is on this floor: the report was handed over (or is waiting its turn: held out towards the orchestrator).
+      // Otherwise (another floor) it keeps holding the folder out, as ever.
+      if (o < 0) mem.crew.turn = 0;
+      else if (this.waiting.has(i)) mem.crew.turn = turnTowards(s, seatOf(this.layout, o, this.seats[o] ?? null)?.slot);
+      else mem.crew = { ...mem.crew, life: 'idle', stamp: null };
     }
     const away = this.away.get(i);
     if (away) {
@@ -485,13 +619,15 @@ export class OfficeView {
       this.crowd.set(i, null);
       this.anchors[i] = null;
       this.cards.setCard(i, null);
+      this.tray.set(i, null);
       if (v) this.applied.set(v.worker.id, v.display);
       this.cardsDirty = true;
       return;
     }
+    const out = this.outs.get(i);
     this.desks.set(i, {
       x: s.seat.x,
-      y: 0,
+      y: y0,
       z: s.seat.z,
       yaw: s.yaw,
       scale: 1,
@@ -500,6 +636,9 @@ export class OfficeView {
       harness: v ? resolveHarness(v.worker) : undefined,
       // M6b: a freelancer brings its briefcase, no keepsakes.
       personal: !v?.crew?.freelancer,
+      // M6c: an orchestrator's in-tray stands where its notebook would.
+      ...(v?.crew?.role === 'orch' ? { notebook: false } : {}),
+      ...(out ? { chair: out.chair } : {}),
     });
     if (v && mem && this.lean === i) {
       // M5: you sit at its laptop; it stands beside the chair, turned to watch the screen.
@@ -508,13 +647,14 @@ export class OfficeView {
       const x = s.seat.x - fz * 0.62 + fx * 0.3;
       const z = s.seat.z + fx * 0.62 + fz * 0.3;
       const yaw = Math.atan2(s.seat.x + fx * SEAT_OFFSET - x, s.seat.z + fz * SEAT_OFFSET - z);
-      this.crowd.set(i, { x, y: 0, z, yaw, scale: 1, ...mem, stride: 0, deskSide: this.kits[i]?.side ?? 1 });
-      this.anchors[i] = new THREE.Vector3(x, CARD_Y + 0.25, z);
+      this.crowd.set(i, { x, y: y0, z, yaw, scale: 1, ...mem, stride: 0, deskSide: this.kits[i]?.side ?? 1 });
+      this.anchors[i] = new THREE.Vector3(x, y0 + CARD_Y + 0.25, z);
       this.cards.setCard(i, cardOf(v, v.worker.id === this.focusId));
       this.applied.set(v.worker.id, v.display);
     } else if (v && mem) {
-      this.crowd.set(i, this.seated(i, s, mem));
-      this.anchors[i] = new THREE.Vector3(s.seat.x, CARD_Y, s.seat.z);
+      // M6c: out of its chair with a report, only the walker is drawn; the desk, the card and the pick stay.
+      this.crowd.set(i, out ? null : this.seated(i, s, mem, y0));
+      this.anchors[i] = new THREE.Vector3(s.seat.x, y0 + CARD_Y, s.seat.z);
       this.cards.setCard(i, cardOf(v, v.worker.id === this.focusId));
       this.applied.set(v.worker.id, v.display);
     } else {
@@ -522,6 +662,7 @@ export class OfficeView {
       this.anchors[i] = null;
       this.cards.setCard(i, null);
     }
+    this.drawTray(i);
     this.cardsDirty = true;
   }
 
@@ -619,7 +760,9 @@ export class OfficeView {
       const out = [...this.layout.colliders];
       this.seats.forEach((v, i) => {
         const s = this.layout.slots[i];
-        if ((v || this.away.get(i)?.show === 'busy') && s) out.push(seatRect(s));
+        // M6c: a corner seat is up on the mezzanine, and the desk it left is not there to bump into.
+        if (seatOf(this.layout, i, v)?.corner) out[i] = { x0: -99, z0: -99, x1: -98, z1: -98 };
+        else if ((v || this.away.get(i)?.show === 'busy') && s) out.push(seatRect(s));
       });
       this.obstacleCache = out;
     }
@@ -630,9 +773,11 @@ export class OfficeView {
   pick(origin: V3, dir: V3, reach = REACH, ownDesk = true): Target | null {
     if (!this.targetCache) {
       const targets: Array<Pickable<Target>> = [...this.propTargets];
-      this.layout.slots.forEach((s, i) => {
-        const b = slotBoxes(s);
+      this.layout.slots.forEach((slot, i) => {
         const v = this.seats[i];
+        const at = seatOf(this.layout, i, v ?? null);
+        const s = at?.slot ?? slot;
+        const b = at?.y ? liftBoxes(slotBoxes(s), at.y) : slotBoxes(s);
         if (v) targets.push({ boxes: [b.seat, b.desk], value: { kind: 'worker', id: v.worker.id, name: v.name, label: v.worker.label, desk: i } });
         // A desk someone is packing up at, or a hire is on its way to, is not free to hire at.
         else if (!this.away.has(i)) targets.push({ boxes: [b.desk, b.plus], value: { kind: 'desk', id: `desk-${i}`, desk: i, label: `Desk ${i + 1}` } });
@@ -656,7 +801,7 @@ export class OfficeView {
   crewInfo(): { members: CrewInfo[]; shown: string[] } {
     const members = this.seats.flatMap((v, i) =>
       v?.crew
-        ? [{ id: v.worker.id, name: v.name, desk: i, role: v.crew.role, life: v.crew.life, overCap: v.crew.overCap, stamp: v.crew.stamp?.text ?? null, run: v.crew.run, display: v.display, parts: this.crowd.crewAt(i) }]
+        ? [{ id: v.worker.id, name: v.name, desk: i, role: v.crew.role, life: v.crew.life, overCap: v.crew.overCap, stamp: v.crew.stamp?.text ?? null, run: v.crew.run, display: v.display, parts: this.crowd.crewAt(i), out: this.outs.has(i) }]
         : [],
     );
     return { members, shown: this.crowd.crewShown() };
@@ -688,6 +833,7 @@ export class OfficeView {
     this.mezz.dispose();
     this.crowd.dispose();
     this.desks.dispose();
+    this.tray.dispose();
     this.boards.dispose();
     this.props.dispose();
     this.root.removeFromParent();
@@ -701,6 +847,11 @@ export class OfficeView {
       }
     });
   }
+}
+
+/** Pick boxes lifted `dy` (a desk up in the corner office). */
+function liftBoxes<T extends Record<string, Box3>>(b: T, dy: number): T {
+  return Object.fromEntries(Object.entries(b).map(([k, v]) => [k, { min: [v.min[0], v.min[1] + dy, v.min[2]], max: [v.max[0], v.max[1] + dy, v.max[2]] }])) as T;
 }
 
 function outlineKey(o: Outline | undefined): string {

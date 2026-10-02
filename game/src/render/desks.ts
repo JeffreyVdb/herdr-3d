@@ -43,6 +43,10 @@ export interface DeskState {
   personal?: boolean;
   /** M6b: this many of them are packed away already (the walk-out's box). */
   packed?: number;
+  /** M6c: an orchestrator has no notebook (its in-tray stands there). */
+  notebook?: boolean;
+  /** M6c: the chair pushed back this far (0..1) while its worker is out delivering a report. */
+  chair?: number;
 }
 
 type Key =
@@ -608,8 +612,9 @@ export class DeskSet {
       const B = this.base;
       const taken = d.display !== null;
       for (const k of ['top', 'legs', 'monitor', 'screen'] as const) this.put(k, i, B);
-      this.put('chairBase', i, taken ? B : this.chairIn());
-      this.put('chair', i, taken ? B : this.chairIn());
+      const seat = taken ? ((d.chair ?? 0) > 0 ? this.chairOut(d.chair as number) : B) : this.chairIn();
+      this.put('chairBase', i, seat);
+      this.put('chair', i, seat);
       M.screen?.setColorAt(i, this.c.set(d.display ? SCREEN[d.display] : SCREEN_OFF));
       if (d.display || d.plus === false) this.put('plus', i, null);
       const L = this.local[i];
@@ -659,7 +664,7 @@ export class DeskSet {
     const h = (i * 2654435761) >>> 0;
     L.items.forEach(({ item, m }, n) => {
       // Packing (`packed` set), the worker's hands are on the box: its mug is on the desk until it goes in.
-      const show = personal && n >= packed && !(item.kind === 'mug' && d.packed === undefined && mugInHand(d.display));
+      const show = personal && n >= packed && !(item.kind === 'mug' && d.packed === undefined && mugInHand(d.display)) && !(item.kind === 'notebook' && d.notebook === false);
       if (!show) return;
       this.c.set(item.tint);
       if (item.kind === 'photo') {
@@ -678,6 +683,11 @@ export class DeskSet {
       }
     });
     for (const a of this.attrs.values()) a.needsUpdate = true;
+  }
+
+  /** M6c: the chair pulled back from the desk, `k` of the way (0..1). */
+  private chairOut(k: number): THREE.Matrix4 {
+    return this.m.multiplyMatrices(this.base, new THREE.Matrix4().makeTranslation(0, 0, -0.34 * k));
   }
 
   private chairIn(): THREE.Matrix4 {

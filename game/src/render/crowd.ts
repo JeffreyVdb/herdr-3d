@@ -41,6 +41,11 @@ export interface Member {
   squash?: number;
   /** M6b: its desk's dock side (`world/deskKit.ts`): a crew member's desk things go on that desk's free corners. */
   deskSide?: 1 | -1;
+  /** M6c: carrying its report folder against the chest (walking), or holding it out (handing it over). */
+  folder?: 'carry' | 'out';
+  /** M6c: an orchestrator swivelled in its chair this far (radians) to the freelancer handing in a report, reaching for the folder (0..1). */
+  swivel?: number;
+  reach?: number;
 }
 
 interface CrewPart {
@@ -407,6 +412,28 @@ export class Crowd {
         armRz = -0.12;
       }
     }
+    if (m.swivel) turn = m.swivel;
+    if (m.reach) {
+      // Takes the folder: the right arm out towards the freelancer.
+      armR += (-1.5 - armR) * m.reach;
+      armRz += (0.05 - armRz) * m.reach;
+      lean *= 1 - m.reach;
+    }
+    if (m.folder === 'carry') {
+      lean = 0;
+      armL = armR = -1.15;
+      armLz = 0.16;
+      armRz = -0.16;
+      wave = 0;
+      mug = false;
+    } else if (m.folder === 'out') {
+      lean = 0.04;
+      armR = -1.45;
+      armRz = 0.12;
+      armL = -0.2;
+      wave = 0;
+      mug = false;
+    }
     if (turn) {
       this.q.setFromAxisAngle(this.v.set(0, 1, 0), m.yaw + turn);
       this.base.compose(this.v.set(m.x, m.y, m.z), this.q, this.s.set(wide, m.scale * sq, wide));
@@ -492,7 +519,7 @@ export class Crowd {
   private poseCrew(i: number, m: Member, t: number, life: CrewLook['life'], armLM: THREE.Matrix4, armRM: THREE.Matrix4): void {
     const c = m.crew;
     // Not a crew member and nothing of it drawn: nothing to do (most workers, every frame).
-    const any = !!c || !!m.briefcase;
+    const any = !!c || !!m.briefcase || !!m.folder;
     if (!any && !this.crewOn[i]) return;
     this.crewOn[i] = any;
     const seated = m.stride === undefined;
@@ -528,11 +555,16 @@ export class Crowd {
     // Onboarding: the brief held open in both hands, in front of the chest.
     if (life === 'onboarding') this.crewPut('scroll', i, this.body, this.rot(-0.5, 0, 0, 0, 0.3, 0.42));
     else this.crewHide('scroll', i);
-    // Reporting: the folder at the end of the outstretched right arm, its stamp on it.
-    if (life === 'reporting') {
+    // Reporting: the folder at the end of the outstretched right arm, its stamp on it. M6c: carried against the chest on the way.
+    if (life === 'reporting' || m.folder === 'out') {
       this.v.set(0, -0.3, 0.02).applyMatrix4(armRM);
       this.q.setFromEuler(this.e.set(-0.35, 0, 0));
       this.tmp2.compose(this.v.setComponent(1, this.v.y + 0.12), this.q, this.s.set(1, 1, 1));
+      this.crewPut('folder', i, this.body, this.tmp2);
+      if (c?.stamp != null) this.crewPut('stamp', i, this.body, this.tmp2);
+      else this.crewHide('stamp', i);
+    } else if (m.folder === 'carry') {
+      this.tmp2.copy(this.rot(-0.3, 0, 0, 0, 0.3, 0.37));
       this.crewPut('folder', i, this.body, this.tmp2);
       if (c?.stamp != null) this.crewPut('stamp', i, this.body, this.tmp2);
       else this.crewHide('stamp', i);

@@ -188,7 +188,11 @@ export interface H3DDebug {
   /** M4: workers walking out (M6b: or dropping in) right now (phase, position, how far along, what their desk shows). */
   arrivals(): ArrivalInfo[];
   /** M4: walks that ended: `played` false when nobody could see it (it resolved at once). */
-  arrivalLog(): Array<{ id: string; kind: 'in' | 'out'; played: boolean; session: string; desk: number }>;
+  arrivalLog(): Array<{ id: string; kind: 'in' | 'out' | 'deliver'; played: boolean; session: string; desk: number }>;
+  /** M6c: how far the corner office's glass door is open (0..1; it opens for a walker up the stair like for you). */
+  mezzDoor(): number;
+  /** M6c: the in-trays of the floor with an interior: per orchestrator desk, the folders in it (edge colours, oldest first); `waiting`: reports queued behind a delivery; `pending`: deliveries not yet on a tray. */
+  trays(): { trays: Array<{ desk: number; worker: string; folders: number; edges: number[] }>; waiting: number[]; pending: number };
   /** M4: plays walks `k` times as fast (tests). */
   arrivalRate(k: number): void;
   /** M4: the desks of the floor with an interior: who sits there, whether its "+" shows, what a walk holds it as. */
@@ -429,6 +433,8 @@ const h3d: H3DDebug = {
   arrivals: () => app?.arrivals.info(performance.now() / 1000) ?? [],
   arrivalLog: () => structuredClone(app?.arrivals.log ?? []),
   arrivalRate: (k) => app?.arrivals.setRate(k, performance.now() / 1000),
+  trays: () => app?.trayStates() ?? { trays: [], waiting: [], pending: 0 },
+  mezzDoor: () => app?.office?.mezzDoor01 ?? 0,
   desks: () => app?.deskStates() ?? [],
   deskArt: (d) => {
     const o = app?.office;
