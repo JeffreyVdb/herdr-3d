@@ -369,10 +369,12 @@ describe('glance view (M6b)', () => {
     const reply = ['● Bash(pnpm vitest run src/laptop)', '  ⎿  Tests  42 passed (1.2s)', '', '● Retries are in and the tests pass.'];
     const rows = grid([...reply, '', RULE, '❯ ', RULE, STATUS, MODE]);
     expect(text(rows, glanceView(rows, 60))).toEqual(reply.filter(Boolean));
-    // The default mode with a statusline has no mode line: the statusline still goes under rules from edge to edge; a
-    // typed prompt stays.
+    // The default mode with a statusline has no mode line: nothing says it is a footer, so the statusline stays (rules
+    // from edge to edge too), with the typed prompt.
     const typed = grid([...reply, RULE, '❯ fix the flaky test', RULE, STATUS]);
-    expect(text(typed, glanceView(typed, 60, 8))).toEqual([...reply.filter(Boolean), '❯ fix the flaky test']);
+    expect(text(typed, glanceView(typed, 60, 8))).toEqual([...reply.filter(Boolean), '❯ fix the flaky test', STATUS]);
+    const empty = grid(['● Done.', RULE, '❯ ', RULE, STATUS]);
+    expect(text(empty, glanceView(empty, 60, 8))).toEqual(['● Done.', STATUS]);
     // Hints alone: `? for shortcuts`, `esc to interrupt`.
     for (const hint of ['  ? for shortcuts', '  ⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt']) {
       const r = grid(['● Done.', RULE, '❯ ', RULE, hint]);
@@ -438,6 +440,27 @@ describe('glance view (M6b)', () => {
     expect(text(claude, glanceView(claude, 60, 8))).toEqual(['● Done.']);
     const codex = ['• Done.', '› Write tests for @filename', '', '? for shortcuts · 91% context left'].map((l) => Array.from(l));
     expect(text(codex, glanceView(codex, 60, 8))).toEqual(['• Done.', '› Write tests for @filename']);
+  });
+
+  it('keeps a result under an echoed `>` between rules from edge to edge, as given and on an 80×24 screen', async () => {
+    const wide = '─'.repeat(80);
+    const keeps = (lines: string[]) => {
+      const out = lines.filter((l) => l !== wide);
+      expect(text(lines.map((l) => Array.from(l)), glanceView(lines.map((l) => Array.from(l)), 100, 24))).toEqual(out);
+      const screen = grid([...lines, ...Array<string>(24 - lines.length).fill('')], 80);
+      expect(text(screen, glanceView(screen, 100, 24)).map((l) => l.trimEnd())).toEqual(out);
+    };
+    keeps(['● Review summary', wide, '> Result from the test runner', wide, 'FAIL: expected 42, received 41']);
+    keeps(['$ ./check-results', wide, '> checking the result', wide, 'FAIL: expected 42, received 41', 'Exit code: 1']);
+    // Claude Code's own statusline in its default mode looks the same: it stays too.
+    keeps(['● Done.', wide, '❯ fix the flaky test', wide, '  feat/98-seat dirty (8 added, 19 modified…)']);
+    // Through the terminal: the glance view paints the failure.
+    const t = new Terminal({ cols: 80, rows: 24, scrollback: 0 });
+    await write(t, ['● Review summary', wide, '> Result from the test runner', wide, 'FAIL: expected 42, received 41'].join('\r\n'));
+    const f = fakeCtx();
+    paintBuffer(f.g, t.buffer.active, { cols: 80, rows: 24, width: 768, height: 322, cursor: false, glance: true });
+    expect(f.texts.map((x) => x.text).join('')).toContain('FAIL');
+    t.dispose();
   });
 
   it('word-wraps long rows at the glance width, keeping the indent, and shows the last lines', () => {

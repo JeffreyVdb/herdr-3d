@@ -123,8 +123,6 @@ interface Screen {
   kind: RowKind[];
   /** A kept row's text, spaces collapsed. */
   text: Map<number, string>;
-  /** The rules of `─` as wide as the screen (Claude Code's, from edge to edge). */
-  wide: Set<number>;
 }
 
 /** A row's first non-blank cell, and its column. */
@@ -149,10 +147,12 @@ function ruledInput(s: Screen, bottom: number): { top: number; prompt: number } 
 }
 
 /**
- * #98: the rows of an agent's footer at the bottom of the screen, when its shape says it is one: Codex's hints under
- * its composer; Claude Code's mode line, and a statusline of a row or two over it, under its input (a box, a prompt
- * between rules, an empty prompt); or a statusline with no mode line under a prompt between two rules as wide as the
- * screen. Output that only looks like a footer in part (a separator, a quoted hint, a test runner's rules) is no footer.
+ * #98: the rows of an agent's footer at the bottom of the screen, anchored by a last row only a footer has, in its
+ * shape: Codex's hints under its composer; Claude Code's mode line, and a statusline of a row or two over it, under its
+ * input (a box, a prompt between rules, an empty prompt). With no such row there is no footer: a statusline alone
+ * (Claude Code's default mode) stays, as the screen does not say whose it is and a result under an echoed `>` between
+ * rules looks the same. Output that only looks like a footer in part (a separator, a quoted hint, a test runner's
+ * rules) is no footer.
  */
 function footer(s: Screen): number[] {
   let y = s.kind.length - 1;
@@ -172,6 +172,7 @@ function footer(s: Screen): number[] {
     hints.push(y--);
     up();
   }
+  if (!hints.length) return [];
   const status: number[] = [];
   while (y >= 0 && s.kind[y] === 'kept' && status.length <= MAX_STATUS) {
     status.push(y--);
@@ -179,14 +180,8 @@ function footer(s: Screen): number[] {
   }
   if (y < 0 || status.length > MAX_STATUS) return [];
   const k = s.kind[y];
-  if (hints.length) {
-    const input = k === 'corner' || (k === 'mark' && PROMPT.test(head(s.cells[y] as ReadonlyArray<string>)?.c ?? '')) || (k === 'rule' && ruledInput(s, y) !== undefined);
-    return input ? [...hints, ...status] : [];
-  }
-  // No mode line (Claude Code's default mode with a statusline): only under its own input, edge to edge.
-  if (!status.length || k !== 'rule' || !s.wide.has(y)) return [];
-  const input = ruledInput(s, y);
-  return input && s.wide.has(input.top) && (head(s.cells[input.prompt] as ReadonlyArray<string>)?.x ?? 99) <= 2 ? status : [];
+  const input = k === 'corner' || (k === 'mark' && PROMPT.test(head(s.cells[y] as ReadonlyArray<string>)?.c ?? '')) || (k === 'rule' && ruledInput(s, y) !== undefined);
+  return input ? [...hints, ...status] : [];
 }
 
 /**
@@ -201,14 +196,12 @@ function footer(s: Screen): number[] {
  */
 export function glanceView(rows: ReadonlyArray<ReadonlyArray<string>>, cols: number = GLANCE.cols, max: number = GLANCE.rows): Segment[] {
   const kept: Array<{ row: number; first: number; last: number }> = [];
-  const s: Screen = { cells: rows, kind: [], text: new Map(), wide: new Set() };
-  const width = Math.max(0, ...rows.map((cells) => cells.length));
+  const s: Screen = { cells: rows, kind: [], text: new Map() };
   rows.forEach((cells, row) => {
     let first = -1;
     let last = -1;
     let other = 0;
     let rule = true;
-    let thin = true;
     for (let x = 0; x < cells.length; x++) {
       const c = cells[x] as string;
       if (blank(c)) continue;
@@ -216,7 +209,6 @@ export function glanceView(rows: ReadonlyArray<ReadonlyArray<string>>, cols: num
       last = x;
       if (!FRAME.test(c)) other++;
       if (!RULE.test(c)) rule = false;
-      if (c !== '─') thin = false;
     }
     if (first >= 0 && other > 1) {
       kept.push({ row, first, last });
@@ -224,10 +216,8 @@ export function glanceView(rows: ReadonlyArray<ReadonlyArray<string>>, cols: num
       s.text.set(row, cells.slice(first, last + 1).join('').replace(/\s+/g, ' '));
     } else if (first < 0) s.kind[row] = 'blank';
     else if (cells[first] === '╰' || cells[first] === '└') s.kind[row] = 'corner';
-    else if (rule && last - first >= 7) {
-      s.kind[row] = 'rule';
-      if (thin && first <= 2 && last >= width - 3) s.wide.add(row);
-    } else s.kind[row] = 'mark';
+    else if (rule && last - first >= 7) s.kind[row] = 'rule';
+    else s.kind[row] = 'mark';
   });
   const drop = new Set(footer(s));
   // The footer under the last input box: one or two rows (a box with a rule under it is no input: Claude Code 2's
