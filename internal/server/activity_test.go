@@ -123,6 +123,26 @@ func activityOf(c *client, id string, ok func(*proto.Activity) bool) *proto.Acti
 	}
 }
 
+// workingWith reads events until worker id is working with an activity that
+// passes ok. herdr's status comes in a worker.upsert when the activity
+// changes with it, else (the tracker has not read the worker yet) in a
+// worker.status, the activity following in a worker.activity.
+func workingWith(c *client, id string, ok func(*proto.Activity) bool) {
+	c.t.Helper()
+	status, shown := "", false
+	var a *proto.Activity
+	for status != "working" || !shown || !ok(a) {
+		switch ev := c.event(); {
+		case ev.T == proto.EvWorkerStatus && ev.ID == id:
+			status = ev.Status
+		case ev.T == proto.EvWorkerUpsert && ev.Worker.ID == id:
+			status, a, shown = ev.Worker.Status, ev.Worker.Activity, true
+		case ev.T == proto.EvWorkerActivity && ev.ID == id:
+			a, shown = ev.Activity, true
+		}
+	}
+}
+
 func kindIs(k activity.Kind) func(*proto.Activity) bool {
 	return func(a *proto.Activity) bool { return a != nil && a.Kind == k }
 }
@@ -197,7 +217,7 @@ func TestActivityIsThrottled(t *testing.T) {
 	ab := startActBridge(t, nil)
 	w1 := ab.ids["w1"]
 	ab.status("w1", "working")
-	upsertFor(ab.c, w1, func(w *proto.Worker) bool { return w.Status == "working" })
+	workingWith(ab.c, w1, kindIs(activity.KindThinking))
 	// Read the events as they come, with when.
 	type seen struct {
 		at time.Time
