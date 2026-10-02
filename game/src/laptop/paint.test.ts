@@ -360,6 +360,55 @@ describe('glance view (M6b)', () => {
     expect(text(boxed, glanceView(boxed, 34))).toEqual(['│ hi │', 'one', 'two', 'three']);
   });
 
+  // #98: the footer of the screenshot in the ticket, and Codex's.
+  const RULE = '─'.repeat(58);
+  const STATUS = '  feat/98-seat  dirty (8 added, 19 modified…';
+  const MODE = '  ▸▸ bypass permissions on (shift+tab to cycle) · ← 1 agent';
+
+  it('drops Claude Code’s statusline and mode line under an input drawn between rules (no ╰ corner)', () => {
+    const reply = ['● Bash(pnpm vitest run src/laptop)', '  ⎿  Tests  42 passed (1.2s)', '', '● Retries are in and the tests pass.'];
+    const rows = grid([...reply, '', RULE, '❯ ', RULE, STATUS, MODE]);
+    expect(text(rows, glanceView(rows, 60))).toEqual(reply.filter(Boolean));
+    // The default mode with a statusline has no hint line: the rows under the input still go; a typed prompt stays.
+    const typed = grid([...reply, RULE, '❯ fix the flaky test', RULE, STATUS]);
+    expect(text(typed, glanceView(typed, 60, 8))).toEqual([...reply.filter(Boolean), '❯ fix the flaky test']);
+    // Hints alone: `? for shortcuts`, `esc to interrupt`.
+    for (const hint of ['  ? for shortcuts', '  ⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt']) {
+      const r = grid(['● Done.', RULE, '❯ ', RULE, hint]);
+      expect(text(r, glanceView(r, 60))).toEqual(['● Done.']);
+    }
+    // Without the rules: the mode line, and the statusline over it, under an empty prompt.
+    const bare = grid(['● Done.', '', '❯ ', STATUS, MODE]);
+    expect(text(bare, glanceView(bare, 60))).toEqual(['● Done.']);
+    // A two-line statusline over the hints, under a box (three rows: more than the box's own rule takes).
+    const boxed = grid(['● Done.', '╭────────╮', '│ >      │', '╰────────╯', STATUS, '  ctx 41% · $0.82', MODE]);
+    expect(text(boxed, glanceView(boxed, 60))).toEqual(['● Done.']);
+  });
+
+  it('drops Codex’s footer under its composer, and keeps the composer', () => {
+    const work = ['• Ran pnpm vitest run', '  └ Tests  42 passed', '', '• Working (12s • esc to interrupt)'];
+    for (const foot of ['  ? for shortcuts                                91% context left', '  ⏎ send   ⌃J newline   ⌃T transcript   ⌃C quit   24.1K tokens used   91% context left']) {
+      const rows = grid([...work, '', '› Write tests for @filename', '', foot]);
+      expect(text(rows, glanceView(rows, 60, 8))).toEqual([...work.filter(Boolean), '› Write tests for @filename']);
+    }
+  });
+
+  it('keeps output that only mentions a hint, and footer-like lines that are not under an input', () => {
+    // Mid-screen: not the bottom rows.
+    const mid = grid(['● Added “? for shortcuts” and “esc to interrupt” to the docs', '● bypass permissions on (shift+tab to cycle) is off', '', '❯ ', RULE]);
+    expect(text(mid, glanceView(mid, 60, 8))).toEqual(['● Added “? for shortcuts” and “esc to interrupt” to the docs', '● bypass permissions on (shift+tab to cycle) is off']);
+    // At the bottom of a shell, with no input above it.
+    const out = ['$ make test', 'ok  internal/server  4.1s', 'ok  internal/world   0.8s', '$ grep -rn "esc to interrupt" game/src'];
+    const shell = grid(out);
+    expect(text(shell, glanceView(shell, 60, 8))).toEqual(out);
+    // A question's last rows under a rule are its choices (the rule's input is not a prompt): they stay.
+    const ask = grid(['● AskUserQuestion', RULE, ' ☐ Discuss', 'Which approach?', '❯ 1. Simple', '  2. Detailed', RULE, '  3. Chat about this', 'Enter to select · ↑/↓ to navigate · Esc to cancel']);
+    expect(text(ask, glanceView(ask, 60, 8)).slice(-2)).toEqual(['  3. Chat about this', 'Enter to select · ↑/↓ to navigate · Esc to cancel']);
+    // Rules with more rows under them than a footer has: output, kept.
+    const many = grid([RULE, '> notes', RULE, 'one', 'two', 'three', 'four']);
+    expect(text(many, glanceView(many, 60, 8))).toEqual(['> notes', 'one', 'two', 'three', 'four']);
+  });
+
   it('word-wraps long rows at the glance width, keeping the indent, and shows the last lines', () => {
     const rows = grid(['    ● Retries are in and the tests pass (42 passed). Anything else?', '    ok'], 80);
     const segs = glanceView(rows, 20, 8);
