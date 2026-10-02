@@ -323,10 +323,16 @@ export class WorldStore {
       case 'activity.update': // #98 activity settings
         this.activitySettings.upsert(e);
         break;
-      // #106: the inbox hides that worker's done episode; not part of the scene.
-      case 'inbox.dismissed':
+      // #106: the inbox hides that worker's done episode. Not part of the scene, but the inbox's pings follow it (a
+      // dismissed done must not ping when its settle delay ends), so the worker counts as changed.
+      case 'inbox.dismissed': {
         this.inboxDismissed.set(e.id, e.status_since);
+        const w = this.workers.get(e.id);
+        if (!w) break;
+        c.workers.add(e.id);
+        c.sessions.add(w.session);
         break;
+      }
     }
     if (c.structure) this.structureVersion++;
     return c;

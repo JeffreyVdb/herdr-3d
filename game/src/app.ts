@@ -63,7 +63,7 @@ import { LimitsWidget } from './ui/limits';
 // #100 the inbox chip under them
 import { InboxChip, type InboxEntry } from './ui/inbox';
 import { InboxPrefs } from './ui/inboxPrefs';
-import { inboxQueue, inboxReason, inboxWhere, isDismissed, type InboxCandidate } from './world/inbox';
+import { inboxQueue, inboxReason, inboxWhere, type InboxCandidate } from './world/inbox';
 // #92 AI integration
 import { aiSection } from './ui/aiSection';
 // #90 follow-up questions
@@ -85,7 +85,7 @@ import { loadBoardTexture } from './render/whiteboardTexture';
 import type { WhiteboardState } from './net/protocol';
 // #100: the inbox's pings (desktop notifications, the chime)
 import { awayText, burstText, BURST_TAG, DesktopNotify, pingTitle } from './ui/desktopNotify';
-import { InboxPings, type PingEntry, type PingOut } from './world/inboxPings';
+import { InboxPings, pingEntries, type PingEntry, type PingOut } from './world/inboxPings';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
@@ -679,11 +679,7 @@ export class App {
     const snapshot = this.store.snapshots !== this.pingSnapshots;
     this.pingSnapshots = this.store.snapshots;
     if (!snapshot && !c.structure && !c.workers.size && !c.sessions.size) return;
-    const entries: PingEntry[] = [];
-    for (const w of this.needCandidates()) {
-      if (w.display === 'done' && isDismissed(this.store.inboxDismissed, w.id, w.since)) continue; // #106: read or dismissed, it does not ping
-      if (w.display === 'needs_you' || w.display === 'done') entries.push({ id: w.id, name: w.name, session: w.session, role: w.role, reason: w.display === 'needs_you' ? 'blocked' : 'done', since: w.since });
-    }
+    const entries = pingEntries(this.needCandidates(), this.store.inboxDismissed);
     this.pings.update(entries, snapshot);
   }
 
