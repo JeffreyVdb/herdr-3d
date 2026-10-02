@@ -135,4 +135,60 @@ describe('DeliveryBook', () => {
     expect(b.tray('o1').map((e) => e.id)).toEqual(['f1']);
     expect(b.busy('f1')).toBe(false);
   });
+
+  it('a floor with a delivery under way starts no other (one walk at a time on a floor); another floor’s is free', () => {
+    const b = new DeliveryBook();
+    b.add(fact('f1', 10), true);
+    b.add(fact('f2', 11, 'o2'), true);
+    b.add(fact('f3', 12, 'o3', { session: 'other' }), true);
+    const busy = b.activeSessions();
+    expect([...busy]).toEqual([]);
+    expect(b.next('o1', busy)?.id).toBe('f1');
+    busy.add('s');
+    expect(b.next('o2', busy)).toBeNull();
+    expect(b.next('o3', busy)?.id).toBe('f3');
+    expect(b.activeSessions()).toEqual(new Set(['s', 'other']));
+    // When the first has landed, the second goes; it was never lost.
+    b.land(deliveryKey('f1', 10));
+    expect(b.next('o2', b.activeSessions())?.id).toBe('f2');
+  });
+
+  it('a reconnect snapshot with the report pending, then ready again with the same time: it does not play again, its folder is back on the tray', () => {
+    const b = new DeliveryBook();
+    expect(b.add(fact('f1', 10), true)).toBe('queued');
+    b.next('o1');
+    b.land(deliveryKey('f1', 10));
+    // The snapshot has f1 in the world with a pending report: no ready facts.
+    b.sync([], new Set(['f1', 'o1']));
+    expect(b.tray('o1')).toEqual([]);
+    expect(b.add(fact('f1', 10), true)).toBe('tray');
+    expect(b.pending()).toEqual([]);
+    expect(b.tray('o1').map((e) => e.id)).toEqual(['f1']);
+    expect(b.next('o1')).toBeNull();
+    // A genuinely new report still plays.
+    expect(b.add(fact('f1', 20), true)).toBe('queued');
+    expect(b.next('o1')?.at).toBe(20);
+  });
+
+  it('an older report replaced by a newer one does not replay if its time comes round again', () => {
+    const b = new DeliveryBook();
+    b.add(fact('f1', 10), false);
+    b.add(fact('f1', 20), false);
+    expect(b.add(fact('f1', 10), true)).toBe('tray');
+    expect(b.pending()).toEqual([]);
+  });
+
+  it('what was played is forgotten with its worker: gone from a snapshot, or removed', () => {
+    const b = new DeliveryBook();
+    b.add(fact('f1', 10), true);
+    b.add(fact('f2', 11), true);
+    b.sync([], new Set(['f2']));
+    expect(b.add(fact('f2', 11), true)).toBe('tray');
+    expect(b.add(fact('f1', 10), true)).toBe('queued');
+    b.forget('f2');
+    expect(b.add(fact('f2', 11), true)).toBe('known');
+    b.close('f2');
+    b.forget('f2');
+    expect(b.add(fact('f2', 11), true)).toBe('queued');
+  });
 });

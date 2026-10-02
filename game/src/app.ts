@@ -10,7 +10,7 @@ import { LogoSync } from './render/logoSync';
 import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type IssueCard, type MergedPullRequest, type PullRequest, type Question, type WatchBoardAck, type WorldEvent } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
-import { Arrivals, type ArrivalSpec, type DeliverSpec } from './render/arrivals';
+import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec } from './render/arrivals';
 import { memberOf, OfficeView, REACH, seatOf, type Target } from './render/office';
 import { OutsideView } from './render/outside';
 import { BUILDING_TINTS, LOT_TINT } from './render/palette';
@@ -174,6 +174,8 @@ export class App {
   readonly arrivals: Arrivals;
   /** M6c: the reports on their way to an orchestrator's desk, and what is in its in-tray. */
   private readonly deliveries = new DeliveryBook();
+  /** What each delivery on its way was built against (its key → the layout and orchestrator seat), to tell when the world moved under it. */
+  private readonly deliveryCtx = new Map<string, { layout: object; orchDesk: number; corner: boolean }>();
   /** M4: hires on their way: their desks' "+" is hidden until the worker is there. */
   private readonly reserved = new Reservations();
   /** Commands sent to the bridge, in order (test hook). */
@@ -637,7 +639,8 @@ export class App {
   /** A snapshot (the first, or a reconnect's): every report is where it is, none plays. */
   private syncDeliveries(): void {
     for (const a of this.arrivals.info(performance.now() / 1000)) if (a.kind === 'deliver') this.arrivals.cancel(a.id);
-    this.deliveries.sync(this.reportFacts());
+    this.deliveryCtx.clear();
+    this.deliveries.sync(this.reportFacts(), new Set(this.store.workers.keys()));
     this.syncTrays();
   }
 
@@ -657,19 +660,22 @@ export class App {
     else if (r === 'tray') this.syncTrays();
   }
 
-  /** Starts the next report in line for each orchestrator that has no freelancer walking to it; then the trays follow. */
+  /**
+   * Starts the next report in line on each floor that has no freelancer walking (one walk at a time on a floor: two
+   * walkers never share the aisles, whatever their routes); then the trays follow.
+   */
   private pumpDeliveries(): void {
-    const busy = new Set<string>();
-    for (const a of this.arrivals.info(performance.now() / 1000)) {
-      const e = a.kind === 'deliver' && a.key ? this.deliveries.get(a.key) : undefined;
-      if (e) busy.add(e.orch);
-    }
+    // (A walk is under way until its freelancer has sat down again, whatever the book says of its folder.)
+    const busy = this.deliveries.activeSessions();
+    for (const a of this.arrivals.info(performance.now() / 1000)) if (a.kind === 'deliver') busy.add(a.session);
     for (const orch of this.deliveries.queuedOrchs()) {
-      if (busy.has(orch)) continue;
       for (;;) {
-        const e = this.deliveries.next(orch);
+        const e = this.deliveries.next(orch, busy);
         if (!e) break;
-        if (this.startDelivery(e)) break;
+        if (this.startDelivery(e)) {
+          busy.add(e.session);
+          break;
+        }
         // Nobody can see it (another floor, the city, a sleeping floor, no way): it resolves at once.
         this.deliveries.land(e.key);
         this.arrivals.skip({ id: `deliver:${e.key}`, kind: 'deliver', session: e.session, desk: e.desk });
@@ -733,9 +739,61 @@ export class App {
     };
     if (m.crew) spec.crew = m.crew;
     if (!this.arrivals.start(spec, performance.now() / 1000)) return false;
+    this.deliveryCtx.set(e.key, { layout: L, orchDesk: ov.desk, corner: 'corner' in dest });
     o.setOut(v.desk, { chair: 0 });
     this.activity(true);
     return true;
+  }
+
+  /**
+   * The world changed under the walks (a desk moved, a floor went to sleep, the office was rebuilt for a new layout, an
+   * orchestrator is gone, you are not looking any more): every delivery that no longer fits resolves at once, its folder
+   * on the tray and its freelancer seated where the world seats it now. The others go on; the queue follows.
+   */
+  private reconcileDeliveries(): void {
+    const live = new Set<string>();
+    for (const a of this.arrivals.info(performance.now() / 1000)) {
+      if (a.kind !== 'deliver' || !a.key) continue;
+      live.add(a.key);
+      if (this.deliveryStale(a)) this.resolveDelivery(a);
+    }
+    for (const key of [...this.deliveryCtx.keys()]) if (!live.has(key)) this.deliveryCtx.delete(key);
+    for (const e of this.deliveries.pending()) {
+      // A queued report waits at its freelancer's desk, wherever that is now; an "active" one with no walk is over.
+      const v = this.store.workerView(e.id);
+      if (v) Object.assign(e, { session: v.worker.session, desk: v.desk });
+      if (e.stage === 'active' && !live.has(e.key)) this.deliveries.land(e.key);
+    }
+    this.pumpDeliveries();
+  }
+
+  /** Whether a delivery on its way no longer fits the world: false for one whose freelancer is leaving (that walk is the walk-out's). */
+  private deliveryStale(a: ArrivalInfo): boolean {
+    const e = this.deliveries.get(a.key as string);
+    if (!e) return true;
+    if (e.leaving) return false;
+    const v = this.store.workerView(e.id);
+    if (!v) return false;
+    const ov = this.store.workerView(e.orch);
+    const fv = this.store.floorView(a.session);
+    const c = this.deliveryCtx.get(a.key as string);
+    const o = this.office;
+    if (!ov || !fv || !c || !o || fv.asleep || this.mode !== 'floor' || o.session !== a.session || o.layout !== c.layout) return true;
+    return v.worker.session !== a.session || v.desk !== a.desk || ov.worker.session !== a.session || ov.desk !== c.orchDesk || (ov.worker.corner === true && ov.crew?.role === 'orch') !== c.corner;
+  }
+
+  /** Ends a delivery where it stands: its folder is on the tray, its desk and the orchestrator's chair are as the world says. */
+  private resolveDelivery(a: ArrivalInfo): void {
+    const c = a.key ? this.deliveryCtx.get(a.key) : undefined;
+    this.arrivals.cancel(a.id);
+    if (a.key) {
+      this.deliveries.land(a.key);
+      this.deliveryCtx.delete(a.key);
+    }
+    const o = this.office;
+    if (o?.session !== a.session) return;
+    o.setOut(a.desk, null);
+    if (c) o.setSwivel(c.orchDesk, null);
   }
 
   /** The in-trays and the waiting reports of the floor with an interior, from the book. */
@@ -833,13 +891,15 @@ export class App {
     this.wrapUpToasts(e); // #83
     const was = e.t === 'worker.upsert' ? this.store.workers.get(e.worker.id) : undefined;
     this.applyChange(this.store.applyEvent(e));
-    if (e.t === 'worker.upsert') this.yieldTakenDesks([e.worker.id]);
-    if (e.t === 'worker.upsert') this.noticeReport(was, e.worker.id); // M6c
     if (e.t === 'worker.removed') {
-      // M6c: an orchestrator that is gone takes its tray with it.
+      // M6c: an orchestrator that is gone takes its tray with it; a worker that is gone is forgotten.
       this.deliveries.dropOrch(e.id);
+      this.deliveries.forget(e.id);
       this.syncTrays();
     }
+    if (e.t === 'worker.upsert' || e.t === 'worker.removed' || e.t === 'floor.upsert') this.reconcileDeliveries(); // M6c
+    if (e.t === 'worker.upsert') this.yieldTakenDesks([e.worker.id]);
+    if (e.t === 'worker.upsert') this.noticeReport(was, e.worker.id); // M6c
     if (e.t === 'whiteboard.updated') this.onWhiteboard(e); // M13
     after?.();
   }
@@ -1527,6 +1587,7 @@ export class App {
     this.cameraMoved = true;
     this.pushBoards();
     this.syncWhiteboard(); // M13
+    this.reconcileDeliveries(); // M6c: the walks were built for the old layout
     this.syncTrays(); // M6c
   }
 

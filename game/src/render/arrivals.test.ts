@@ -332,4 +332,18 @@ describe('Arrivals: a report on its way (M6c)', () => {
     expect(a.count).toBe(2);
     expect(new Set(a.info(0).map((i) => i.id)).size).toBe(2);
   });
+
+  it('someone else sits at its desk now (yieldDesk): the walk goes on without the desk, and does not hold the chair out', () => {
+    const a = new Arrivals(false);
+    a.start(delivery(true), 0);
+    const t = STAND_S + 1;
+    expect(onDesk(a.update(t, t))).toMatchObject({ out: { chair: expect.any(Number) } });
+    expect(a.yieldDesk('f', FROM, 'replacement', t)).toBe(true);
+    const out = a.update(t + 0.1, t + 0.1);
+    // The first update after the yield hands the desk back (out null), then it stays out of the walk's say.
+    expect(onDesk(out)).toMatchObject({ away: null, out: null });
+    expect(onDesk(a.update(t + 0.2, t + 0.2))).toBeUndefined();
+    expect(a.has('deliver:w@1')).toBe(true);
+    expect(a.info(t + 0.2)[0]).toMatchObject({ yielded: true });
+  });
 });

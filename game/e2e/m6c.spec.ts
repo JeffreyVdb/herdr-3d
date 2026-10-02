@@ -264,6 +264,124 @@ test('its workspace closes mid-delivery: the walk-out goes on from where it stan
   clean();
 });
 
+/** Waits for the delivery walk to be under way (the freelancer on its feet). */
+const walking = (page: Page, phase = 'walk') =>
+  expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivals())).find((a) => a.kind === 'deliver')?.phase, { timeout: 20_000, intervals: [50] }).toBe(phase);
+
+test('two orchestrators on one floor: their freelancers never walk at the same time (one walk at a time on a floor)', async ({ page }) => {
+  test.setTimeout(180_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', '', SIM);
+  await enter(page);
+  const lobby = await member(page, 4);
+  const a = await hireAndWork(page, { orch: lobby.id });
+  const b = await hireAndWork(page, { corner: true });
+  const before = [(await trayOf(page, 4))!.folders];
+  await page.evaluate(() => window.__h3d.arrivalRate(3));
+  await page.evaluate((x) => window.__h3d.simCrew({ step: 'report', id: x, verdict: 'PASS' }), a.id);
+  await page.evaluate((x) => window.__h3d.simCrew({ step: 'report', id: x, verdict: 'PASS' }), b.id);
+  // The second is waiting at its desk, folder out, while the first walks.
+  await expect.poll(async () => (await trays(page)).waiting.length).toBe(1);
+  const samples = await sample(page, 120_000);
+  expect(Math.max(...samples.map((s) => s.count))).toBe(1);
+  expect([...new Set(samples.map((s) => s.id))]).toHaveLength(2);
+  expect((await trayOf(page, 4))!.folders).toBe(before[0]! + 1);
+  expect((await trays(page)).waiting).toEqual([]);
+  expect((await trays(page)).pending).toBe(0);
+  clean();
+});
+
+test('its desk moves mid-delivery: the walk ends at once, the folder is on the tray, nobody is drawn twice', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', '', SIM);
+  await enter(page);
+  const lobby = await member(page, 4);
+  // Two free desks (pod 0's UX and REVIEW go home): the hire sits in one, the bridge moves it to the other.
+  await clearDesk(page, 3);
+  await clearDesk(page, 2);
+  const { id, desk } = await hireAndWork(page, { orch: lobby.id });
+  const before = (await trayOf(page, 4))!.folders;
+  await page.evaluate(() => window.__h3d.simCrew({ step: 'report', summary: 'Done.' }));
+  await walking(page);
+  // The bridge moves it to the first free desk of the floor.
+  const taken = new Set((await page.evaluate(() => window.__h3d.world().find((f) => f.session === 'lab')!.workers)).map((w) => w.desk));
+  const desks = (await page.evaluate(() => window.__h3d.world().find((f) => f.session === 'lab')!.desks)) as number;
+  const free = Array.from({ length: desks }, (_, i) => i).find((i) => !taken.has(i))!;
+  expect(free).toBeDefined();
+  await page.evaluate(
+    ([wid, to]) => {
+      const w = window.__h3d.worker(wid as string)!;
+      window.__h3d.inject({ t: 'worker.upsert', worker: { ...w, desk_index: to as number } } as never);
+    },
+    [id, free] as const,
+  );
+  await frames(page, 2);
+  expect((await page.evaluate(() => window.__h3d.arrivals())).filter((a) => a.kind === 'deliver')).toEqual([]);
+  expect((await trayOf(page, 4))!.folders).toBe(before + 1);
+  const m = await crew(page);
+  expect(m.members.filter((x) => x.id === id)).toHaveLength(1);
+  expect(m.members.find((x) => x.id === id)).toMatchObject({ desk: free, out: false });
+  // The old desk is nobody's, and nothing is out of its chair.
+  expect(m.members.find((x) => x.desk === desk)).toBeUndefined();
+  expect(m.members.some((x) => x.out)).toBe(false);
+  clean();
+});
+
+test('its floor falls asleep mid-delivery: the walk and the queue resolve at once, folders on the tray, freelancers seated', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', '', SIM);
+  await enter(page);
+  const lobby = await member(page, 4);
+  const a = await hireAndWork(page, { orch: lobby.id });
+  const b = await hireAndWork(page, { orch: lobby.id });
+  const before = (await trayOf(page, 4))!.folders;
+  await page.evaluate(() => window.__h3d.arrivalRate(0.4));
+  await page.evaluate((x) => window.__h3d.simCrew({ step: 'report', id: x, verdict: 'PASS' }), a.id);
+  await page.evaluate((x) => window.__h3d.simCrew({ step: 'report', id: x, verdict: 'PASS' }), b.id);
+  await walking(page);
+  await expect.poll(async () => (await trays(page)).waiting).toEqual([b.desk]);
+  await page.evaluate(() => window.__h3d.openElevator());
+  await page.getByRole('button', { name: 'Sleep floor lab' }).click();
+  await page.locator('dialog.confirm').getByRole('button', { name: 'Sleep floor' }).click();
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.view())).asleep, { timeout: 20_000 }).toBe(true);
+  await frames(page, 2);
+  expect((await page.evaluate(() => window.__h3d.arrivals())).filter((x) => x.kind === 'deliver')).toEqual([]);
+  expect((await trays(page)).pending).toBe(0);
+  expect((await trayOf(page, 4))!.folders).toBe(before + 2);
+  expect((await crew(page)).members.some((x) => x.out)).toBe(false);
+  clean();
+});
+
+test('the floor grows a desk mid-delivery: the pods re-flow, the walk ends at once (no hand-over at the old spot, no teleport)', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', '', SIM);
+  await enter(page);
+  const lobby = await member(page, 4);
+  const { id, desk } = await hireAndWork(page, { orch: lobby.id });
+  const before = (await trayOf(page, 4))!.folders;
+  await page.evaluate(() => window.__h3d.arrivalRate(0.4));
+  await page.evaluate(() => window.__h3d.simCrew({ step: 'report', summary: 'Done.' }));
+  await walking(page);
+  const desks = (await page.evaluate(() => window.__h3d.world().find((f) => f.session === 'lab')!.desks)) as number;
+  // Someone is hired at a desk past the end: the floor has one more.
+  await page.evaluate(
+    ([n, to]) => {
+      const w = window.__h3d.worker(window.__h3d.crew().members[0]!.id)!;
+      window.__h3d.inject({ t: 'worker.upsert', worker: { ...w, id: 'grow-extra', workspace_id: 'wgrow', pane_id: 'wgrow:p1', name: `Extra ${n as number}`, role: undefined, orch_id: undefined, report: undefined, status: 'idle', desk_index: to as number, hired_at: undefined } } as never);
+    },
+    [desks, desks] as const,
+  );
+  await frames(page, 2);
+  expect((await page.evaluate(() => window.__h3d.world().find((f) => f.session === 'lab')!.desks)) as number).toBe(desks + 1);
+  expect((await page.evaluate(() => window.__h3d.arrivals())).filter((x) => x.kind === 'deliver')).toEqual([]);
+  expect((await trayOf(page, 4))!.folders).toBe(before + 1);
+  expect((await crew(page)).members.find((x) => x.id === id)).toMatchObject({ desk, out: false });
+  clean();
+});
+
 test.describe('screenshots at the Mac’s resolution (1512 × 945 at 2×)', () => {
   test.use({ viewport: { width: 1512, height: 945 }, deviceScaleFactor: 2 });
 

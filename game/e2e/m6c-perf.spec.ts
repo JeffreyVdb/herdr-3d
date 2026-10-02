@@ -3,9 +3,9 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { frames, openGame, RESULTS } from './game';
 
-// M6c perf: a full floor (perf-floor60: 60 workers, shadows on) with two crews, and two reports on their way to two
-// orchestrators at once (stand-up, walks, hand-overs, folders in flight): the frame and its draw calls against the same floor
-// with the two crews seated. The walkers are the instanced crowd's and the arrivals' (one InstancedMesh per part, however many
+// M6c perf: a full floor (perf-floor60: 60 workers, shadows on) with two crews, and two reports to two orchestrators
+// at once: one walks (stand-up, walk, hand-over, folder in flight) and the other waits at its desk with its folder held
+// out (one walk at a time on a floor): the frame and its draw calls against the same floor with the two crews seated. The walkers are the instanced crowd's and the arrivals' (one InstancedMesh per part, however many
 // walk), so the draw calls must not grow with the walkers. The numbers go to test-results/m6c-perf.json (the server's
 // WebGL2 llvmpipe run; the Mac Metal run is the author's).
 
@@ -36,7 +36,7 @@ async function crews(page: Page): Promise<string[]> {
   });
 }
 
-test('two reports in flight on a full floor stay in the frame budget of the same floor seated', async ({ page }) => {
+test('two reports (one walking, one waiting) on a full floor stay in the frame budget of the same floor seated', async ({ page }) => {
   test.setTimeout(240_000);
   await openGame(page, 'perf-floor60', '', 'play=none');
   await page.evaluate(() => window.__h3d.enterFloor('perf-floor'));
@@ -50,7 +50,7 @@ test('two reports in flight on a full floor stay in the frame budget of the same
   const run = () => page.evaluate(() => window.__h3d.bench({ frames: 40, warm: 10, pipelined: false, raf: false }));
   const seated: Bench = await run();
   expect(await page.evaluate(() => window.__h3d.arrivals().filter((a) => a.kind === 'deliver').length)).toBe(0);
-  // Slowed right down, so both stay in flight for the whole run; the two reports come in.
+  // Slowed right down, so the walk stays in flight for the whole run; the two reports come in.
   await page.evaluate(() => window.__h3d.arrivalRate(0.05));
   await page.evaluate(
     ([oa, a, ob, b]) => {
@@ -62,10 +62,11 @@ test('two reports in flight on a full floor stay in the frame budget of the same
   );
   await frames(page, 5);
   const walking = await page.evaluate(() => window.__h3d.arrivals().filter((a) => a.kind === 'deliver').map((a) => a.phase));
-  expect(walking).toHaveLength(2);
+  expect(walking).toHaveLength(1);
+  expect((await page.evaluate(() => window.__h3d.trays())).waiting).toHaveLength(1);
   const flying: Bench = await run();
   const still = await page.evaluate(() => window.__h3d.arrivals().filter((a) => a.kind === 'deliver').length);
-  expect(still).toBe(2);
+  expect(still).toBe(1);
   const summary = {
     backend: seated.backend,
     workers: seated.workers,

@@ -4,8 +4,10 @@
  *
  * - A report plays once: keyed by the worker's id and the report's `at`. A report that is already `ready` in a
  *   snapshot plays nothing (`sync`): its folder is on the tray and the freelancer sits empty-handed.
- * - Reports to one orchestrator queue: one delivery at a time (`next`), the others wait at their desks, so walkers
- *   never overlap and never cross one another on the hand-over spot.
+ * - Reports queue: one delivery at a time on a floor (`next`), the others wait at their desks, so walkers never
+ *   overlap and never cross one another, on the hand-over spot or in the aisles.
+ * - A report that was seen is remembered (`played`) for as long as its freelancer is in the world, whatever the
+ *   tray holds: a report that goes pending and ready again with the same `at` (a reconnect) never plays twice.
  * - A delivery's folder lands on the tray when the hand-over is done (`land`); it goes when its freelancer's
  *   workspace closes (`close`), or, when it closed mid-delivery, once the freelancer has left (`settle`).
  * - The tray shows the last `TRAY_CAP` folders; the rest are under them.
@@ -60,14 +62,19 @@ export interface Entry extends ReportFact {
 
 export class DeliveryBook {
   private readonly entries = new Map<string, Entry>();
+  /** Every report seen (keys), whether its folder is on a tray now or not. */
+  private readonly played = new Set<string>();
 
   /**
    * A report: `play` (a live change somebody watches) queues its delivery, else its folder is on the tray at
-   * once. `known`: this report was seen already (it plays once).
+   * once. `known`: this report is in the book already; one played before whose folder is gone (a snapshot had it
+   * pending meanwhile) lands on the tray without playing again.
    */
   add(f: ReportFact, play: boolean): 'queued' | 'tray' | 'known' {
     const key = deliveryKey(f.id, f.at);
     if (this.entries.has(key)) return 'known';
+    if (this.played.has(key)) play = false;
+    this.played.add(key);
     // A newer report of the same freelancer takes the place of its older folder.
     for (const [k, e] of this.entries) if (e.id === f.id && e.stage === 'tray' && !e.leaving) this.entries.delete(k);
     this.entries.set(key, { ...f, key, stage: play ? 'queued' : 'tray', leaving: false });
@@ -78,7 +85,9 @@ export class DeliveryBook {
    * A snapshot (the first, or a reconnect's): `facts` are every ready report now. Each is on the tray, none plays;
    * what the book had of workers that are not there any more goes.
    */
-  sync(facts: readonly ReportFact[]): void {
+  sync(facts: readonly ReportFact[], alive?: ReadonlySet<string>): void {
+    // What was played is kept for every freelancer still in the world, even with its report pending right now.
+    if (alive) for (const key of this.played) if (!alive.has(key.slice(0, key.lastIndexOf('@')))) this.played.delete(key);
     const keys = new Set(facts.map((f) => deliveryKey(f.id, f.at)));
     for (const [key] of this.entries) if (!keys.has(key)) this.entries.delete(key);
     for (const f of facts) {
@@ -95,16 +104,25 @@ export class DeliveryBook {
     return this.entries.get(key);
   }
 
-  /** The next delivery to `orch` to start: the oldest queued one, unless one is under way. */
-  next(orch: string): Entry | null {
+  /**
+   * The next delivery to `orch` to start: the oldest queued one, unless one is under way for it or its floor is
+   * `busy` (the sessions with a delivery under way: one walk at a time on a floor).
+   */
+  next(orch: string, busy?: ReadonlySet<string>): Entry | null {
     let first: Entry | null = null;
     for (const e of this.entries.values()) {
       if (e.orch !== orch) continue;
       if (e.stage === 'active') return null;
       if (e.stage === 'queued' && !first) first = e;
     }
-    if (first) first.stage = 'active';
+    if (!first || busy?.has(first.session)) return null;
+    first.stage = 'active';
     return first;
+  }
+
+  /** The sessions with a delivery under way. */
+  activeSessions(): Set<string> {
+    return new Set([...this.entries.values()].filter((e) => e.stage === 'active').map((e) => e.session));
   }
 
   /** Returns `key`'s delivery to the queue's front (it could not be shown after all). */
@@ -151,6 +169,11 @@ export class DeliveryBook {
   /** The freelancer that closed mid-delivery has left: its folder goes. */
   settle(id: string): void {
     for (const [key, e] of this.entries) if (e.id === id && e.leaving) this.entries.delete(key);
+  }
+
+  /** The worker is gone from the world: its reports are forgotten. */
+  forget(id: string): void {
+    for (const key of this.played) if (key.startsWith(`${id}@`)) this.played.delete(key);
   }
 
   /** The orchestrator is gone: its tray and the deliveries to it go. */

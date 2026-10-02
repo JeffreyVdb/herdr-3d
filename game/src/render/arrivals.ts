@@ -370,10 +370,12 @@ export class Arrivals {
    */
   yieldDesk(session: string, desk: number, by: string, now: number): boolean {
     let any = false;
+    let out = false;
     for (const a of this.active) {
       if (a.yielded || a.spec.id === by || a.spec.session !== session || a.spec.desk !== desk) continue;
       a.yielded = true;
       any = true;
+      if (a.spec.kind === 'deliver') out = true;
       if (a.spec.kind !== 'out') continue;
       const at = (now - a.t0) * this.rate;
       const p = poseAt(a.tl, at);
@@ -381,7 +383,8 @@ export class Arrivals {
       const walk = a.tl.stages.find((s) => s.phase === 'walk');
       if (walk && at < walk.t0) a.t0 = now - walk.t0 / this.rate;
     }
-    if (any) this.released.push({ session, desk, away: null, drop: null });
+    // M6c: a delivery's freelancer out of its chair gives the chair back too.
+    if (any) this.released.push({ session, desk, away: null, drop: null, ...(out ? { out: null } : {}) });
     return any;
   }
 
@@ -486,7 +489,8 @@ export class Arrivals {
           a.landed = true;
           this.landedKeys.push(s.deliver.key);
         }
-        walking.push({ session: s.session, desk: s.desk, away: null, out: { chair: p.chair } });
+        // Someone else sits at its desk now (`yieldDesk`): the walk goes on without the desk.
+        if (!a.yielded) walking.push({ session: s.session, desk: s.desk, away: null, out: { chair: p.chair } });
         if (s.deliver.swivels && (p.swivel > 0 || p.reach > 0)) swiveled.set(`${s.session}:${s.deliver.orchDesk}`, { session: s.session, desk: s.deliver.orchDesk, swivel: { turn: p.swivel * s.deliver.turn, reach: p.reach } });
         continue;
       }
