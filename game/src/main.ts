@@ -220,6 +220,8 @@ export interface H3DDebug {
   simTurn(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #90: the follow-up questions feature's state as the bridge last sent it (null: none). */
   followups(): FollowupsState | null;
+  /** #110: pack up on request's settings and state as the bridge sent them (null: none). */
+  packup(): FollowupsState | null;
   /** #98: the "Classify unknown commands" settings as the bridge last sent them (null: none). */
   activitySettings(): ActivityState | null;
   /** #98: the fixture simulator's `sim.activity_settings {env?, calls_today?, cache_size?}` (`sim=1`, tools/fixture-activity-settings.ts). */
@@ -464,6 +466,7 @@ const h3d: H3DDebug = {
   boards: () => app?.boardsInfo() ?? null,
   limits: () => app?.limitsWidget.summary() ?? null,
   followups: () => app?.store.followups.state ?? null,
+  packup: () => app?.store.packup.state ?? null,
   activitySettings: () => app?.store.activitySettings.state ?? null,
   simActivitySettings: async (args) => {
     if (!app) return { ok: false, code: 'not_started' };

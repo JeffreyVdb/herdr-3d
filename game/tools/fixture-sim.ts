@@ -32,6 +32,8 @@ import { LimitsSim } from './fixture-limits.ts';
 import { AiSim } from './fixture-ai.ts';
 // #90: follow-up questions (`followups.*`, `worker.answer_followup`, `sim.turn`).
 import { FollowupSim } from './fixture-followup.ts';
+// #110: pack up on request (`packup.*`).
+import { PackupSim } from './fixture-packup.ts';
 // #98: "Classify unknown commands" (`activity.get` / `activity.set`, `sim.activity_settings`).
 import { ActivitySettingsSim } from './fixture-activity-settings.ts';
 // #106: the inbox's dismissals (`inbox.dismiss`, `sim.status`, `simfail=no_inbox`).
@@ -209,6 +211,7 @@ export class SimWorld {
     this.ai = new AiSim(o.jev ?? 'https://api.typesafe.ai', o.fail === 'no_ai' ? 'old' : (o.ai ?? 'on'), (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
     this.ai.onChange = (send) => {
       this.followups.changed(send); // #90: a model's state is the feature's
+      this.packup.changed(send); // #110: and pack up's
       this.activitySettings.changed(send); // #98: the classifier's too
     };
     this.activitySettings = new ActivitySettingsSim({ ai: this.ai, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) });
@@ -347,6 +350,7 @@ export class SimWorld {
     this.limits.decorate(world);
     this.ai.decorate(world); // #92
     this.followups.decorate(world); // #90
+    this.packup.decorate(world); // #110
     this.activitySettings.decorate(world); // #98
     this.inbox.decorate(world); // #106
     this.share.decorate(world); // M13
@@ -415,6 +419,7 @@ export class SimWorld {
       // #90: a prompt or keys make a worker's follow-up questions moot.
       if (m.t === 'worker.prompt' || m.t === 'worker.keys') this.followups.clear(a.id, send);
       if (this.followups.handle(m.t, a, send, ack, fail)) return;
+      if (this.packup.handle(m.t, a, send, ack, fail)) return; // #110
       if (this.transcripts.handle(m.t, a, send, ack, fail)) return;
       if (this.asks.handle(m.t, a, send, ack, fail)) return;
       if (this.activity.handle(m.t, a, send, ack, fail)) return; // #98
@@ -750,6 +755,21 @@ export class SimWorld {
       prompt: (a, send, ack, fail) => this.panels.prompt(a, send, ack, fail),
     });
     return this.followupSim;
+  }
+
+  // ---- #110: pack up on request (tools/fixture-packup.ts) ------
+
+  private packupSim: PackupSim | null = null;
+
+  private get packup(): PackupSim {
+    this.packupSim ??= new PackupSim({
+      workers: this.workers,
+      ai: this.ai,
+      emit: (send, m) => this.emit(send, m),
+      error: (code, message) => new CmdError(code, message),
+      now: () => this.now(),
+    });
+    return this.packupSim;
   }
 
   // ---- #57: asks (tools/fixture-ask.ts) ------

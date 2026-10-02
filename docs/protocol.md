@@ -177,6 +177,9 @@ bridge without the service, as by one from before #92: a client's Settings then 
 `followups` (#90) is the follow-up questions feature's state (see [Follow-up questions](#follow-up-questions)), left
 out by a bridge without the AI service or from before #90.
 
+`packup` (#110) is pack up on request's state (see [Pack up on request](#pack-up-on-request)), left out by a bridge
+without the AI service or from before #110.
+
 `activity` (#98) is "Classify unknown commands"' state (see [Activity](#activity)), left out by a bridge without the AI
 service or from before #98; a worker's own `activity` is in the worker.
 
@@ -392,6 +395,7 @@ and remember the last `seq` applied.
 | `ai.update` | `classifier`, `llm`, `last_error`? | #92: the AI integration's state changed (a role saved or cleared, a test passed or failed, a key rejected); the whole state, flat in the event (see [AI integration](#ai-integration)) |
 | `followups.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `tested` | #90: the follow-up questions' state changed (a setting, a passing test, a model's state); the whole state, flat in the event (see [Follow-up questions](#follow-up-questions)) |
 | `inbox.dismissed` | `id`, `status_since` | #106: a finished worker's inbox row was dismissed, by any client (see [Inbox](#inbox)); sent to every client, only when the dismissal is new |
+| `packup.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `tested` | #110: pack up on request's state changed (a setting, a passing test, a model's state); the whole state, flat in the event, the follow-up questions' fields: decode it by its `t` (see [Pack up on request](#pack-up-on-request)) |
 | `worker.activity` | `id`, `session`, `workspace_id`, `activity`? | #98: the worker's `activity` changed (absent: cleared); only on a change, at most twice a second per worker. A change that comes with a status change is in that `worker.upsert` instead (see [Activity](#activity)) |
 | `activity.update` | `model_enabled`, `threshold`, `margin`, `daily_cap`, `calls_today`, `cache_size`, `state`, `classifier`, `env` | #98: "Classify unknown commands"' state changed (a setting, a call counted, the classifier's state); the whole state, flat in the event. Its `classifier` is a role's state (a string), not `ai.update`'s object: decode it by its `t` (see [Activity](#activity)) |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
@@ -496,6 +500,10 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `followups.get` | `{}` | the follow-up questions' state (see [Follow-up questions](#follow-up-questions)) | — |
 | `followups.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | the follow-up questions' state | `followups.update` (before the ack) |
 | `followups.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"name", "expect", "score", "flagged", "questions"?, "source"?, "error"?}], "latency_ms"}` | `followups.update` when it changes `tested` |
+| `packup.get` | `{}` | pack up on request's state (see [Pack up on request](#pack-up-on-request)) | — |
+| `packup.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | its state | `packup.update` (before the ack) |
+| `packup.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"text", "expect", "core"?, "score", "matched", "task"?, "want_task"?, "right", "error"?}], "right", "total", "latency_ms"}` | `packup.update` when it changes `tested` |
+| `packup.detect` | `{"id", "text"}` | `{"matched", "task"?, "removed"?: [{"start", "end"}], "score"}`; `matched` false: send `text` as written | — |
 | `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…]}` | `worker.prompt`'s | the worker's upsert without its `followup` |
 | `worker.dismiss_followup` | `{"id", "turn_id"}` | — | the worker's upsert without its `followup` (before the ack) |
 | `inbox.dismiss` | `{"id", "status_since"}` | `{"dismissed": bool}` (see [Inbox](#inbox)) | `inbox.dismissed` (before the ack) when the dismissal is new |
@@ -1080,7 +1088,7 @@ is `worker.fire`'s, step by step, with the worktree choice made up front.
    ```
    When you are done, end your final message with exactly one line:
    H3D-WRAPUP <nonce> CLEAN
-   or, if anything could not be stopped or needs a decision:
+   or, if the task did not complete, anything could not be stopped or needs a decision:
    H3D-WRAPUP <nonce> BLOCKED: <one-line reason>
    ```
    Clients never see the nonce or the footer.
@@ -2477,6 +2485,76 @@ which is one Tab stop); Tab moves the focus through the card to Dismiss, Send an
 card's options and texts, while on the timeline it goes to the prompt box as ever. On a very short screen (a phone's
 laptop) the timeline and the strip fold away while the card is up, and the card scrolls above a one-line prompt box.
 
+### Pack up on request
+
+#110. A prompt you send a worker sometimes also tells it to leave once the task is done ("make a PR, then go home and
+clean up the worktree"). With the feature on, the game asks the bridge before such a prompt goes out; the leaving part
+is cut from what the agent reads, only the task is sent, and the worker is sent home after it. **You confirm, always.**
+Two models do it, both from the [AI integration](#ai-integration): the classifier answers one yes/no question, the LLM
+says which parts to remove. Nothing is sent to a model until the toggle is on and both models are `ready`.
+
+```json
+"packup":{"enabled":true,"threshold":0.85,"state":"ready","roles":{"classifier":"ready","llm":"ready"},"env":[],"tested":true}
+{"t":"packup.detect","req_id":"d1","args":{"id":"<worker>","text":"Please make a PR and end your turn"}}
+{"t":"ack","req_id":"d1","data":{"matched":true,"task":"Please make a PR","removed":[{"start":16,"end":34}],"score":0.97}}
+```
+
+**Settings** (bridge-wide, SQLite `packup_settings`): the follow-up questions' shape and rules. `packup.get` answers
+them, the snapshot's `packup` holds them, `packup.update` carries them flat (its own event type: the fields are
+`followups.update`'s).
+
+- `enabled` is off by default; configuring the AI integration does not switch it on. `HERDR_WORLD_PACKUP_ENABLED` /
+  `--packup-enabled` (`true` / `false`) wins over the stored toggle and lists `enabled` in `env` (`env_locked`).
+- `threshold` (default **0.85**, 0.05–0.99): high on purpose. A false positive costs one dismiss of the confirm, a
+  false negative is the behaviour without the feature. The default is a conservative pick, not yet calibrated against
+  the real models: run `packup.test` with them and move it with its results.
+- `state`: `off`, `incomplete` (`missing`), `ready`; only `ready` runs, a model `invalid` at runtime pauses it.
+- **`packup.test`** runs the labelled sample prompts (`internal/packup` `Samples`: the ticket's four examples, then
+  paraphrases, another language, and prompts that stop, end, clean up or leave something inside the task) through the
+  classifier at the threshold, and the core matches through the LLM too. It passes when the four core samples come out
+  as expected (each match cut to its exact task); `right` of `total` says how many of all came out as expected, for
+  choosing the threshold. A pass covers the models in use for 30 minutes, as `followups.test`'s does, and
+  **`packup.set {enabled: true}` needs one** (`test_required`).
+
+**Detection: `packup.detect {id, text}`.** The game sends it when you press Send in the laptop's prompt box or the P
+overlay, with the feature `ready` and the worker one it applies to; the prompt waits meanwhile. Then, on the bridge,
+off the hub goroutine and bounded at **1.5 s** in all:
+
+1. **Skip** (no call, `matched: false`): the feature not `ready`; a freelancer; a worker without a Claude or Codex
+   agent (the wrap-up's rule: only those can be sent home after a task). Unknown worker: `unknown_worker`; an empty or
+   over-16-KiB text: `bad_request`.
+2. **Gate**: the classifier scores `state {"prompt": <the text's last 8,000 characters>}` for "Does the prompt ask the
+   AI coding agent to go home, stop working or end its session once the task is done?". Under the threshold:
+   `matched: false`, no LLM call.
+3. **Cut**: the LLM (JSON mode) lists `{"remove": ["..."]}`, the **spans to remove**, never a rewrite. Each must be an
+   exact substring of what the models saw, found in order (each after the one before), and 1–8 of them, each not blank.
+   They are cut out of the text; at each join the spaces go, a separator (`, ; : – —`) left dangling before the end or
+   before punctuation goes, and the pieces meet with one space or the line break one of them has. The task's own words
+   never change. `removed` is the cut parts, `[start, end)` in **UTF-16 code units** of `text` (JavaScript's string
+   indexes). Nothing left of the text: `matched: true` without `task` (the game opens the send-home dialog).
+4. **Fail open**: bad JSON, no span, a span not in the text or out of order, a classifier or LLM failure, the 1.5 s
+   gone: `matched: false`, and the game sends the prompt as written. **A failure never eats a prompt.**
+
+Image markers (`[Image #n: path]`, #64) are protected: the models see each as `[Image #n]`, never its path, and a span
+over one is invalid (no match). The prompt is never logged, and the audit log keeps only its length. The readiness is
+checked again before the LLM: switched off or a model `invalid` meanwhile, the prompt never goes to it.
+
+**Confirm** (the game): a match always opens the send home's pack-up mode, "Send the task, then send <name> home": the
+prompt as you sent it with the cut parts struck out, the task in an editable box, the worktree choice preselected to
+the worktree and its branch (`delete_branch`), else the worktree (`delete`), else `keep`, with the send home's warnings
+(a dirty or unpushed tree, a branch herdr-world did not make). **Send and go home** is a `worker.wrapup` (see
+[Wrap up](#wrap-up)) with `prompt` = the task, a blank line, and the cleanup request ("Once that is done: Stop every
+server, background process, pane and freelancer you started in this session. Don’t touch anything else."); the bridge
+adds its footer, whose BLOCKED covers a task that did not complete, and on CLEAN sends the worker home through
+`worker.fire`'s strict teardown (a tree that changed meanwhile: `not_clean`, the worker stays). **Send as written
+(stay)** sends the original through `worker.prompt`. Cancel and Esc send nothing; the draft stays. While the check runs
+the composer shows "Checking the prompt…", keeps the draft read-only and sends nothing on another Enter; Esc then
+cancels the send. Prompts typed straight into herdr (the terminal) are not looked at.
+
+**Privacy.** With the feature on, every prompt you send a Claude or Codex worker from the game goes to TypeSafe (the
+classifier), and to the LLM endpoint when the classifier says yes, before it is sent. Images are never sent. That is
+why it is opt-in on its own toggle, and the game's Settings say so above it.
+
 ### Activity
 
 #98. The desk monitor says what each agent is doing right now, in one word, with a short detail and, when the agent
@@ -2630,7 +2708,7 @@ dismissed_at)`.
 | code | meaning |
 |---|---|
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
-| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` use `incomplete`, `test_required`, `env_locked` and, from `followups.test`'s calls, the `ai.*` ones; #98 `activity.set` uses `env_locked` |
+| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` and #110 `packup.*` use `incomplete`, `test_required`, `env_locked` and, from their tests' calls, the `ai.*` ones (`packup.detect` never fails on a model: no match); #98 `activity.set` uses `env_locked` |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
 | `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
 | `name_taken` | another building, or another team preset, already has that name (ignoring case) |

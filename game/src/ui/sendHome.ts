@@ -122,6 +122,8 @@ export class SendHomeDialog {
   private shownWrap = '';
   /** #110: the pack-up confirm's prompt, and who waits for how it ends. */
   private pk: PackupConfirm | null = null;
+  /** #110: opened by a pack-up check (its confirm, or the send home for a prompt with nothing left): you stay seated. */
+  private fromPackup = false;
   private settle: ((c: PackupChoice) => void) | null = null;
   private statusText = '';
   private statusError = false;
@@ -176,10 +178,16 @@ export class SendHomeDialog {
     if (this.dialog.open) this.dialog.close();
   }
 
-  open(workerId: string): void {
+  open(workerId: string, opts: { fromPackup?: boolean } = {}): void {
     this.settleWith('cancel');
     this.pk = null;
+    this.fromPackup = opts.fromPackup === true;
     this.start(workerId, 'home');
+  }
+
+  /** #110: open for a pack-up check, which keeps you at the laptop you sent the prompt from (its draft stays). */
+  get keepsSeat(): boolean {
+    return this.dialog.open && this.fromPackup;
   }
 
   /**
@@ -191,6 +199,7 @@ export class SendHomeDialog {
     if (!this.host.store.workerView(workerId)) return Promise.resolve('cancel');
     const done = new Promise<PackupChoice>((resolve) => (this.settle = resolve));
     this.pk = { original: pk.original, task: pk.task, removed: pk.removed.map((r) => ({ ...r })) };
+    this.fromPackup = true;
     this.start(workerId, 'packup');
     return done;
   }

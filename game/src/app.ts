@@ -934,7 +934,7 @@ export class App {
     const v = r.ok ? packupVerdict(r.data, text) : ({ kind: 'send' } as const);
     if (v.kind === 'send') return 'send';
     if (v.kind === 'home') {
-      this.sendHome.open(id);
+      this.sendHome.open(id, { fromPackup: true });
       return 'cancel';
     }
     const c = await this.sendHome.openPackup(id, { original: text, task: v.task, removed: v.removed });
@@ -2214,7 +2214,8 @@ export class App {
     }
     // M5: live laptop screens, and the camera at the laptop you sit at.
     const onFloor = this.mode === 'floor' && (this.place.area === 'floor' || this.place.area === 'fire-escape');
-    const blocked = this.planOpen || this.panels.open || this.dialogOpen || this.hud.sheetOpen || this.transitioning;
+    // #110: a pack-up check's dialog keeps you seated (the prompt box and its draft stay); it still owns the keys.
+    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat) || this.hud.sheetOpen || this.transitioning;
     this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
     if (this.laptops.animating) this.activity(true);
     this.cameraMoved = false;

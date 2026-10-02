@@ -75,7 +75,7 @@ export interface TranscriptModeHost {
   /** #64: one image to Drop Zone, for the prompt box (none: a pasted image says it cannot go up). */
   upload?: Uploader;
   /** The seat bar's note. */
-  status(kind: 'ok' | 'busy' | 'error', text: string | null): void;
+  status(kind: 'ok' | 'error', text: string | null): void;
   /** #110: the pack-up check before a prompt goes (none: it goes at once). */
   packup?: PackupGate;
   /** The mode changed (the seat bar's toggle, the terminal watch's fps, the monitor's frame). */
@@ -608,7 +608,7 @@ export class TranscriptMode {
         const checked = this.host.packup?.(s.id, t, check.signal) ?? null;
         if (!checked) return this.sendPrompt(s, t);
         this.checking = check;
-        this.host.status('busy', 'Checking the prompt…');
+        this.host.status('ok', 'Checking the prompt…');
         return checked.then((out) => {
           if (this.checking === check) this.checking = null;
           if (check.signal.aborted || !live()) return false;
@@ -618,6 +618,8 @@ export class TranscriptMode {
           }
           if (out === 'cancel') {
             this.host.status('ok', null);
+            // The confirm (or the send home) had the keyboard: back to the box, its draft still in it.
+            queueMicrotask(() => live() && this.focusPrompt());
             return false;
           }
           this.host.status('ok', null);

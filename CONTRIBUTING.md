@@ -31,7 +31,7 @@
   directory of 0600 files removed after 10 minutes; pure Go, the hub's `screen.grab` uses it), `whiteboard` (each
 floor's Excalidraw board: versioned scenes, the last 20 kept, image files once by sha256, each version's render, agents' pins as
 complete Excalidraw elements with valid fractional indices; files only, pure Go, the bridge's `/whiteboard/` routes and
-commands sit on it) and `drops` (Drop Zone's newest files, read only through imgcache's allowlist, for "Pin a drop"); #92: `ai` (the classification model and the OpenAI-compatible LLM behind feature-agnostic `Classifier` / `LLM` interfaces with fakes, their keys in a 0600 file, the shared timeouts, one retry and two-call limit; standard library only, `TestAIIsFeatureAgnostic`); #90: `followup` (the follow-up questions: the classifier gate, the LLM extraction and its strict validation, the fallback item, the feature's switch, threshold and `followups.test`; it takes only `ai`'s interfaces, `TestFollowupUsesOnlyAIInterfaces`), and `transcript`'s `TurnEvents` / `FollowupTracker` (a turn's final assistant message, one parse per line shared with `WrapUpTracker`);
+commands sit on it) and `drops` (Drop Zone's newest files, read only through imgcache's allowlist, for "Pin a drop"); #92: `ai` (the classification model and the OpenAI-compatible LLM behind feature-agnostic `Classifier` / `LLM` interfaces with fakes, their keys in a 0600 file, the shared timeouts, one retry and two-call limit; standard library only, `TestAIIsFeatureAgnostic`); #90: `followup` (the follow-up questions: the classifier gate, the LLM extraction and its strict validation, the fallback item, the feature's switch, threshold and `followups.test`; it takes only `ai`'s interfaces, `TestFollowupUsesOnlyAIInterfaces`), and `transcript`'s `TurnEvents` / `FollowupTracker` (a turn's final assistant message, one parse per line shared with `WrapUpTracker`); #110: `packup` (pack up on request: the classifier gate on a prompt you send, the LLM's spans to cut validated as exact substrings in order and never over an image, the tidied task, the labelled samples, the switch, threshold and `packup.test`; it takes only `ai`'s interfaces, `TestPackupUsesOnlyAIInterfaces`);
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
@@ -85,7 +85,8 @@ make e2e               # the full Playwright suite (e2e/*.spec.ts), H3D_WORKERS 
   fake Jev and OpenAI servers on OS-leased loopback ports and the fixture bridge (`simjev=<url>`, `game/tools/fixture-ai.ts`)
   calls them; no spec reaches a real provider. #90: `go test ./internal/followup ./internal/server` take the fakes too
   (the server's run the real transcript fixtures `internal/transcript/testdata/*/followup_*.jsonl` through the usage
-  tracker), and `game/e2e/followups.spec.ts` starts its own fake Jev and OpenAI servers the same way.
+  tracker), and `game/e2e/followups.spec.ts` starts its own fake Jev and OpenAI servers the same way. #110:
+  `go test ./internal/packup ./internal/server` take the fakes, and `game/e2e/m110-packup.spec.ts` its own fake servers.
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 
@@ -334,6 +335,7 @@ that directory.
 | `--ai-classifier-key-file`, `--ai-classifier-model` | `HERDR_WORLD_AI_CLASSIFIER_KEY_FILE`, `HERDR_WORLD_AI_CLASSIFIER_MODEL` | none: a file holding the classification model's (Jev) key, and its model. While set they win over the panel's and show there as "set by the bridge environment" |
 | `--ai-llm-base-url`, `--ai-llm-key-file`, `--ai-llm-model` | `HERDR_WORLD_AI_LLM_BASE_URL`, `HERDR_WORLD_AI_LLM_KEY_FILE`, `HERDR_WORLD_AI_LLM_MODEL` | none: the OpenAI-compatible LLM's base URL, the file holding its key, and its model; same rules |
 | `--followups-enabled` | `HERDR_WORLD_FOLLOWUPS_ENABLED` | none: `true` or `false` switches the follow-up questions on or off over the panel's toggle, which then shows it read-only (#90, [`docs/protocol.md` "Follow-up questions"](docs/protocol.md#follow-up-questions)); on, they still run only while both AI models are ready |
+| `--packup-enabled` | `HERDR_WORLD_PACKUP_ENABLED` | none: `true` or `false` switches pack up on request on or off over the panel's toggle, which then shows it read-only (#110, [`docs/protocol.md` "Pack up on request"](docs/protocol.md#pack-up-on-request)); on, it still runs only while both AI models are ready |
 | `--activity-model` | `HERDR_WORLD_ACTIVITY_MODEL` | none: `true` or `false` switches "Classify unknown commands" (the desk monitor's activity, the classification model for the commands the rules cannot place) on or off over the panel's toggle, which then shows it read-only (#98, [`docs/protocol.md` "Activity"](docs/protocol.md#activity)); on, it still calls only while the classifier is ready |
 | `--pricing` | `HERDR_WORLD_PRICING` | none: a JSON file of model prices merged over the built-in table (`internal/usage/pricing.json`; format in [`docs/protocol.md` "Usage and cost"](docs/protocol.md#usage-and-cost)) |
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
@@ -805,6 +807,12 @@ bridge (the test really calls the AI integration's fakes), `sim.turn {id, text}`
 worker's turn with that message and runs the pipeline when the feature is ready (a `followup` upsert), and
 `worker.answer_followup` sends the formatted answers as one `worker.prompt` (with `simecho=<ms>` it is echoed into the
 transcript). `window.__h3d.followups()` is the feature's state. `e2e/followups.spec.ts` drives the settings and the card.
+
+#110 on the simulating server (`tools/fixture-packup.ts`, rules at its top): `packup.get` / `set` / `test` like the
+bridge (the test runs a part of the labelled samples through the AI integration's fakes), and `packup.detect` cuts the
+LLM's spans like `internal/packup` (exact substrings in order, never over an image, a 1.5 s bound, any failure no match).
+`window.__h3d.packup()` is the feature's state. `e2e/m110-packup.spec.ts` drives the settings, the P overlay and the
+laptop's prompt box through the confirm.
 
 #98 on the simulating server (`tools/fixture-activity-settings.ts`, rules at its top): `activity.get` / `activity.set`
 like the bridge (Settings' "Classify unknown commands", `src/ui/activitySection.ts`: off by default, `incomplete` while
