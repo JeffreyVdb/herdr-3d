@@ -114,3 +114,36 @@ func TestIsName(t *testing.T) {
 		}
 	}
 }
+
+func TestPickNameTieGoesToTheEarlierName(t *testing.T) {
+	held, released := map[string]bool{}, map[string]time.Time{}
+	for _, n := range Names {
+		held[n] = true
+		released[n] = time.Unix(5, 0)
+	}
+	for _, id := range []string{"a", "b", "c", "d"} {
+		if got := PickName(id, held, released); got != Names[0] {
+			t.Fatalf("PickName(%q) = %q, want %q on a tie", id, got, Names[0])
+		}
+	}
+}
+
+func TestPickableRejectsDigits(t *testing.T) {
+	if Pickable("Pixel 2", map[string]bool{}, nil) {
+		t.Fatal("a legacy suffixed label must not be picked for a new hire")
+	}
+}
+
+func TestPickableOnlyTheNameThatWouldBeRecycled(t *testing.T) {
+	held, released := map[string]bool{}, map[string]time.Time{}
+	for _, n := range Names {
+		held[n] = true
+	}
+	released[Names[0]], released[Names[1]] = time.Unix(1, 0), time.Unix(2, 0)
+	if !Pickable(Names[0], held, released) || Pickable(Names[1], held, released) {
+		t.Fatal("only the longest released name may be requested")
+	}
+	if got := PickName("x", held, released); got != Names[0] {
+		t.Fatalf("PickName = %q", got)
+	}
+}

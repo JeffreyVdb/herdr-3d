@@ -54,15 +54,7 @@ func PickName(id string, held map[string]bool, released map[string]time.Time) st
 			return name
 		}
 	}
-	oldest := ""
-	var at time.Time
-	for i := range Names {
-		name := Names[(start+i)%n]
-		if t := released[name]; !t.IsZero() && (oldest == "" || t.Before(at)) {
-			oldest, at = name, t
-		}
-	}
-	if oldest != "" {
+	if oldest := recyclable(held, released); oldest != "" {
 		return oldest
 	}
 	first := ""
@@ -80,25 +72,37 @@ func PickName(id string, held map[string]bool, released map[string]time.Time) st
 	return first
 }
 
-// Pickable reports whether a worker may be given name now: a name of
-// Names or a compound that is not held, or, while every plain name is held,
-// one that PickName could recycle (its owner left).
+// recyclable returns the held name of Names released longest ago, ties to
+// the earlier entry of Names (so it does not depend on a worker id), or "" if
+// every one is owned by a worker.
+func recyclable(held map[string]bool, released map[string]time.Time) string {
+	oldest := ""
+	var at time.Time
+	for _, name := range Names {
+		if t := released[name]; held[name] && !t.IsZero() && (oldest == "" || t.Before(at)) {
+			oldest, at = name, t
+		}
+	}
+	return oldest
+}
+
+// Pickable reports whether a worker may be hired under the requested label
+// now: a name of Names or a compound that is not held, or the very name
+// PickName would recycle. A label with a digit (a legacy suffixed name) is
+// never pickable: IsName still accepts those for stored workers only.
 func Pickable(name string, held map[string]bool, released map[string]time.Time) bool {
-	if !IsName(name) {
+	if !IsName(name) || strings.ContainsAny(name, "0123456789") {
 		return false
 	}
 	if !held[name] {
 		return true
-	}
-	if released[name].IsZero() || !slices.Contains(Names, name) {
-		return false
 	}
 	for _, n := range Names {
 		if !held[n] {
 			return false
 		}
 	}
-	return true
+	return name == recyclable(held, released)
 }
 
 // IsName reports whether name is one this package hands out: an entry of
