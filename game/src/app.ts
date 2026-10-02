@@ -83,6 +83,9 @@ import { bannerVersion, type BuildInfo } from './version';
 import { WhiteboardOverlay } from './ui/whiteboard';
 import { loadBoardTexture } from './render/whiteboardTexture';
 import type { WhiteboardState } from './net/protocol';
+// #100: the inbox's pings (desktop notifications, the chime)
+import { awayText, burstText, BURST_TAG, DesktopNotify, pingTitle } from './ui/desktopNotify';
+import { InboxPings, type PingEntry, type PingOut } from './world/inboxPings';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
@@ -157,8 +160,8 @@ export class App {
   readonly limitsWidget: LimitsWidget;
   /** #100: the inbox chip under the plate, and the worker its last click went to (the next goes on from there). */
   readonly inbox: InboxChip;
-  private lastInbox: string | null = null;
   readonly inboxPrefs = new InboxPrefs();
+  private lastInbox: string | null = null;
   readonly hud: Hud;
   readonly city: CityView;
   readonly client: BridgeClient;
@@ -605,6 +608,7 @@ export class App {
     this.m6Buttons.sync();
     // M7: holders and verdict stamps on the boards follow the workers.
     if (c.structure || c.workers.size) this.pushBoards();
+    this.pingInbox(c); // #100
   }
 
   // ---- M4: hire, send home, dropping in and walking out ----------------------------
@@ -657,6 +661,67 @@ export class App {
       const now = wrapUpOf(e.worker);
       if (now?.state === 'needs_you') this.hud.toast(needsYouText(name, now), 6500, 'error');
     }
+  }
+
+  // ---- #100: the inbox's pings -------------------------------------------------
+
+  /** What pings for a new inbox entry (world/inboxPings.ts); the worker you sit at never does. */
+  private readonly pings = new InboxPings({ emit: (p) => this.onPing(p), focus: () => this.laptops.seated, gates: () => this.inboxPrefs.settings });
+  private readonly notify = new DesktopNotify();
+  /** The store's snapshot count the pings last saw: one more is a snapshot (the first or a reconnect's). */
+  private pingSnapshots = 0;
+
+  private pingInbox(c: Change): void {
+    const snapshot = this.store.snapshots !== this.pingSnapshots;
+    this.pingSnapshots = this.store.snapshots;
+    if (!snapshot && !c.structure && !c.workers.size && !c.sessions.size) return;
+    const entries: PingEntry[] = [];
+    for (const w of this.needCandidates()) {
+      if (w.display === 'needs_you' || w.display === 'done') entries.push({ id: w.id, name: w.name, session: w.session, role: w.role, reason: w.display === 'needs_you' ? 'blocked' : 'done', since: w.since });
+    }
+    this.pings.update(entries, snapshot);
+  }
+
+  /**
+   * A ping: the chime (once per burst), and a desktop notification with the game in the background (its click goes to
+   * the worker, a collapsed burst's opens the inbox's list), or the chip's pulse and a soft toast with it in front. A
+   * snapshot's new entries are one soft toast (the documented exception to "toasts only on a live change").
+   */
+  private onPing(p: PingOut): void {
+    const s = this.inboxPrefs.settings;
+    if (p.t === 'away') return this.hud.toast(awayText(p.needs, p.finished), 5200, 'info', true);
+    if (p.t === 'ping' && p.chime && s.chime) this.audio.playUi(p.kind, s.chimeVolume);
+    let text: { title: string; body: string };
+    let shown: ReturnType<DesktopNotify['show']>;
+    if (p.t === 'burst') {
+      text = burstText(p.entries, p.needs);
+      this.notify.close(p.entries.map((e) => e.id));
+      shown = this.notify.show({ ...text, tag: BURST_TAG, onClick: () => this.inbox.openList() }, s.desktop);
+    } else {
+      const id = p.entry.id;
+      text = this.pingText(p.entry);
+      shown = this.notify.show({ ...text, tag: id, onClick: () => void this.goToWorker(id) }, s.desktop);
+    }
+    if (shown !== 'focused') return;
+    this.inbox.pulse();
+    this.hud.toast(`${text.title} · ${text.body}`, 4200, 'info', true);
+  }
+
+  /**
+   * A ping's words: "Chirp needs you", `Building › Floor · reason`. A minimal local formatter; world/inbox.ts's
+   * `inboxWhere` / `inboxReason` replace it here.
+   */
+  private pingText(e: PingEntry): { title: string; body: string } {
+    const f = this.store.floorView(e.session);
+    const where = `${f?.building?.name ?? 'Unassigned'} › ${e.session}`;
+    const w = this.store.workers.get(e.id);
+    const why = e.reason === 'done' ? null : w && askOf(w) ? 'question' : 'needs you';
+    return { title: pingTitle(e.reason === 'blocked' ? 'needs' : 'finished', e.name), body: why ? `${where} · ${why}` : where };
+  }
+
+  /** Workers whose done is still settling before it pings (test hook). */
+  pendingPings(): string[] {
+    return this.pings.pending();
   }
 
   /**
