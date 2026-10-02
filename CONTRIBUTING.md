@@ -28,7 +28,7 @@
   directory of 0600 files removed after 10 minutes; pure Go, the hub's `screen.grab` uses it), `whiteboard` (each
 floor's Excalidraw board: versioned scenes, the last 20 kept, image files once by sha256, each version's render, agents' pins as
 complete Excalidraw elements with valid fractional indices; files only, pure Go, the bridge's `/whiteboard/` routes and
-commands sit on it) and `drops` (Drop Zone's newest files, read only through imgcache's allowlist, for "Pin a drop"); #92: `ai` (the classification model and the OpenAI-compatible LLM behind feature-agnostic `Classifier` / `LLM` interfaces with fakes, their keys in a 0600 file, the shared timeouts, one retry and two-call limit; standard library only, `TestAIIsFeatureAgnostic`);
+commands sit on it) and `drops` (Drop Zone's newest files, read only through imgcache's allowlist, for "Pin a drop"); #92: `ai` (the classification model and the OpenAI-compatible LLM behind feature-agnostic `Classifier` / `LLM` interfaces with fakes, their keys in a 0600 file, the shared timeouts, one retry and two-call limit; standard library only, `TestAIIsFeatureAgnostic`); #90: `followup` (the follow-up questions: the classifier gate, the LLM extraction and its strict validation, the fallback item, the feature's switch, threshold and `followups.test`; it takes only `ai`'s interfaces, `TestFollowupUsesOnlyAIInterfaces`), and `transcript`'s `TurnEvents` / `FollowupTracker` (a turn's final assistant message, one parse per line shared with `WrapUpTracker`);
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
@@ -78,7 +78,9 @@ make e2e               # the full Playwright suite (e2e/*.spec.ts), H3D_WORKERS 
 - `go test ./internal/ai ./internal/server` never call a model (#92): `httptest` servers play Jev and an OpenAI-compatible
   endpoint, and a feature's tests take `ai.FakeClassifier` / `ai.FakeLLM`. `game/e2e/ai-integration.spec.ts` starts its own
   fake Jev and OpenAI servers on OS-leased loopback ports and the fixture bridge (`simjev=<url>`, `game/tools/fixture-ai.ts`)
-  calls them; no spec reaches a real provider.
+  calls them; no spec reaches a real provider. #90: `go test ./internal/followup ./internal/server` take the fakes too
+  (the server's run the real transcript fixtures `internal/transcript/testdata/*/followup_*.jsonl` through the usage
+  tracker), and `game/e2e/followups.spec.ts` starts its own fake Jev and OpenAI servers the same way.
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 
@@ -326,6 +328,7 @@ that directory.
 | `--ai-file` | `HERDR_WORLD_AI_FILE` | `ai.json` next to the database: the AI integration's settings and keys, 0600, never in the database (#92, [`docs/protocol.md` "AI integration"](docs/protocol.md#ai-integration)) |
 | `--ai-classifier-key-file`, `--ai-classifier-model` | `HERDR_WORLD_AI_CLASSIFIER_KEY_FILE`, `HERDR_WORLD_AI_CLASSIFIER_MODEL` | none: a file holding the classification model's (Jev) key, and its model. While set they win over the panel's and show there as "set by the bridge environment" |
 | `--ai-llm-base-url`, `--ai-llm-key-file`, `--ai-llm-model` | `HERDR_WORLD_AI_LLM_BASE_URL`, `HERDR_WORLD_AI_LLM_KEY_FILE`, `HERDR_WORLD_AI_LLM_MODEL` | none: the OpenAI-compatible LLM's base URL, the file holding its key, and its model; same rules |
+| `--followups-enabled` | `HERDR_WORLD_FOLLOWUPS_ENABLED` | none: `true` or `false` switches the follow-up questions on or off over the panel's toggle, which then shows it read-only (#90, [`docs/protocol.md` "Follow-up questions"](docs/protocol.md#follow-up-questions)); on, they still run only while both AI models are ready |
 | `--pricing` | `HERDR_WORLD_PRICING` | none: a JSON file of model prices merged over the built-in table (`internal/usage/pricing.json`; format in [`docs/protocol.md` "Usage and cost"](docs/protocol.md#usage-and-cost)) |
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
 | `--warn-workers`, `--max-workers` | `HERDR_WORLD_WARN_WORKERS`, `HERDR_WORLD_MAX_WORKERS` | `48`, `96`: the same for all watched running floors together |
@@ -767,6 +770,12 @@ URL makes "Open in …" record the page instead of opening a window. E.g.
 hooks) makes a worker's agent ask (its card and the transcript's pending call), `{id, ask: null, answers?}` ends it as
 the terminal would; `worker.answer_ask` answers it like the bridge (`stale`, `bad_request`, the ask gone and the call's
 card answered before the ack); `simfail=answer_ask_failed` / `answer_unresolved`. `e2e/m16-ask.spec.ts` drives it.
+
+#90 on the simulating server (`tools/fixture-followup.ts`, rules at its top): `followups.get` / `set` / `test` like the
+bridge (the test really calls the AI integration's fakes), `sim.turn {id, text}` (`simTurn(args)` in the hooks) ends a
+worker's turn with that message and runs the pipeline when the feature is ready (a `followup` upsert), and
+`worker.answer_followup` sends the formatted answers as one `worker.prompt` (with `simecho=<ms>` it is echoed into the
+transcript). `window.__h3d.followups()` is the feature's state. `e2e/followups.spec.ts` drives the settings and the card.
 
 #83 on the simulating server (`tools/fixture-sim.ts`): `worker.wrapup` checks like `worker.fire` (a Claude or Codex
 agent, a delete only on a clean tree) and arms the worker; `sim.wrapup {id, verdict: "clean" | "blocked" | "none",

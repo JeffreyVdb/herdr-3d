@@ -10,7 +10,7 @@ import { App, type LookAt, type Pose } from './app';
 import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
 import { runBench, type BenchOptions, type BenchResult } from './bench';
 import type { ScreenMeshInfo } from './laptop';
-import type { BoardMessage, CommandName, WorldEvent } from './net/protocol';
+import type { BoardMessage, CommandName, WorldEvent, FollowupsState } from './net/protocol';
 import type { ArrivalInfo } from './render/arrivals';
 import type { CrewInfo } from './render/office';
 import type { HireSummary } from './ui/hire';
@@ -203,6 +203,10 @@ export interface H3DDebug {
   simCrew(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #92: the fixture simulator's `sim.ai {reject}`: a feature's call got the role's key rejected (`sim=1`). */
   simAi(args: Record<string, unknown>): Promise<{ ok: boolean; code?: string }>;
+  /** #90: the fixture simulator's `sim.turn {id, text}`: a worker's agent ends its turn with that message (`sim=1`). */
+  simTurn(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** #90: the follow-up questions feature's state as the bridge last sent it (null: none). */
+  followups(): FollowupsState | null;
   /** M7: the open Issues / Pull requests overlay (and its item modal), null when none is open. */
   board(): BoardSummary | null;
   /** M7: what the boards on the wall show: notes (with their atlas cell and pose), flights, gong rings, buffer writes. */
@@ -420,9 +424,15 @@ const h3d: H3DDebug = {
     const r = await app.client.request('sim.ai' as CommandName, args as never);
     return r.ok ? { ok: true } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
+  simTurn: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request('sim.turn' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
   board: () => app?.boardsPanel.summary() ?? null,
   boards: () => app?.boardsInfo() ?? null,
   limits: () => app?.limitsWidget.summary() ?? null,
+  followups: () => app?.store.followups.state ?? null,
   injectBoard: (m) => app?.injectBoard(m),
   boardMessage: (w) => {
     const s = app?.hereSession();

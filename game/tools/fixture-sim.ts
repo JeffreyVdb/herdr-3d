@@ -30,6 +30,8 @@ import { BoardSim } from './fixture-boards.ts';
 import { LimitsSim } from './fixture-limits.ts';
 // #92: the AI integration (`ai.*`, `simjev=<url>`, `simai=off`, `simfail=no_ai`).
 import { AiSim } from './fixture-ai.ts';
+// #90: follow-up questions (`followups.*`, `worker.answer_followup`, `sim.turn`).
+import { FollowupSim } from './fixture-followup.ts';
 // M16: the transcript view (`transcript.watch`, `sim.transcript`, `simfail=no_m16`).
 import { TranscriptSim } from './fixture-transcript.ts';
 // #57: agents' structured questions (`sim.ask`, `worker.answer_ask`).
@@ -192,6 +194,7 @@ export class SimWorld {
       o.fail !== 'no_m16',
     );
     this.ai = new AiSim(o.jev ?? 'https://api.typesafe.ai', o.fail === 'no_ai' ? 'old' : (o.ai ?? 'on'), (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
+    this.ai.onChange = (send) => this.followups.changed(send); // #90: a model's state is the feature's
     this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
     this.boards = new BoardSim(
       {
@@ -320,6 +323,7 @@ export class SimWorld {
     this.boards.decorate(world as { workers?: Worker[] });
     this.limits.decorate(world);
     this.ai.decorate(world); // #92
+    this.followups.decorate(world); // #90
     this.share.decorate(world); // M13
     return { t: 'world.snapshot', seq: this.seq, world: structuredClone(world) };
   }
@@ -383,6 +387,9 @@ export class SimWorld {
         plain(x);
         this.transcripts.onEvent(x);
       };
+      // #90: a prompt or keys make a worker's follow-up questions moot.
+      if (m.t === 'worker.prompt' || m.t === 'worker.keys') this.followups.clear(a.id, send);
+      if (this.followups.handle(m.t, a, send, ack, fail)) return;
       if (this.transcripts.handle(m.t, a, send, ack, fail)) return;
       if (this.asks.handle(m.t, a, send, ack, fail)) return;
       if (screens.handle(m.t, a, send, ack, (code, message) => send({ t: 'error', req_id: reqId, code, message }))) return;
@@ -697,6 +704,24 @@ export class SimWorld {
         ack();
       },
     ]);
+  }
+
+  // ---- #90: follow-up questions (tools/fixture-followup.ts) ------
+
+  private followupSim: FollowupSim | null = null;
+
+  private get followups(): FollowupSim {
+    this.followupSim ??= new FollowupSim({
+      workers: this.workers,
+      ai: this.ai,
+      emit: (send, m) => this.emit(send, m),
+      error: (code, message) => new CmdError(code, message),
+      now: () => this.now(),
+      push: (id, items, updates) => this.transcripts.push(id, items, updates),
+      nextSeq: (id) => this.transcripts.nextSeq(id),
+      prompt: (a, send, ack, fail) => this.panels.prompt(a, send, ack, fail),
+    });
+    return this.followupSim;
   }
 
   // ---- #57: asks (tools/fixture-ask.ts) ------

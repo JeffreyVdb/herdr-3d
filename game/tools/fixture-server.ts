@@ -28,7 +28,8 @@
 // (tools/fixture-screen.ts). #58: `simecho=<ms>` writes a prompt's `user` item to its
 // worker's transcript watch that long after the turn takes it (tools/fixture-panels.ts; absent: never).
 // #92: `simjev=<url>` is where the simulated bridge calls Jev (the e2e's fake), `simai=off` a bridge without the AI service, `simfail=no_ai` one before it
-// (tools/fixture-ai.ts).
+// (tools/fixture-ai.ts). #90: `sim.turn {id, text}` ends a worker's turn with that message, and follow-up questions
+// run on it once switched on (tools/fixture-followup.ts).
 // #51: `POST /upload` stores nothing and answers a fake Drop Zone path (tools/fixture-upload.ts); the query of the ws URL
 // carries `fail_upload=<N|all>&upload_key=<key>` to make uploads fail.
 import { readFileSync } from 'node:fs';

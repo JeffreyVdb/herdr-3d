@@ -8,6 +8,7 @@ import { ScreenMeshes } from '../render/screens';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import { askAgent, askOf } from '../world/ask';
+import { followupOf } from '../world/followup';
 import type { WorldStore } from '../world/store';
 import { DESK_H, SEAT_OFFSET } from '../world/layout';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
@@ -880,6 +881,7 @@ export class Laptops {
         this.transcript.blocked(v.worker.status === 'blocked' ? (v.worker.question ?? null) : null);
         this.transcript.activity(v.worker.status, v.worker.status_since ?? null); // #58
         this.syncAsk(askOf(v.worker)); // #57
+        this.transcript.followedUp(followupOf(v.worker)); // #90
       }
     }
     const meshes = this.meshes;

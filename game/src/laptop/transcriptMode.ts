@@ -1,5 +1,5 @@
 import type { CommandResult } from '../net/client';
-import type { AnswerAskAck, Ask, CommandArgs, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck } from '../net/protocol';
+import type { AnswerAskAck, Ask, CommandArgs, Followup, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck } from '../net/protocol';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import type { ViewPrefs } from '../ui/themePrefs';
@@ -53,7 +53,7 @@ export interface OverlayRect {
 }
 
 export interface TranscriptModeHost {
-  send<T extends 'worker.prompt' | 'worker.answer' | 'worker.answer_ask' | 'transcript.page'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
+  send<T extends 'worker.prompt' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'transcript.page'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list). */
   feed(id: string): ImageFeed | null;
   /** Loads the render module (`loadRenderer`; tests pass a fake). */
@@ -128,6 +128,9 @@ interface Sitting {
   /** #57: the worker's ask, and its tool_use_id + since (so a new one is told from the same one). */
   ask: Ask | null;
   askKey: string;
+  /** #90: the worker's follow-up questions, and their turn + questions (a new one told from the same one). */
+  followup: Followup | null;
+  followupKey: string;
   box: HTMLElement | null;
   view: TranscriptView | null;
   /** The panes the two views are in (the overlay itself when the host makes none). */
@@ -232,7 +235,7 @@ export class TranscriptMode {
     const wasReading = canRead && readModes(this.host.storage).includes(id);
     const last: ReadMode = wasReading && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
     this.s = {
-      id, name, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', box: null, view: null,
+      id, name, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
       pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true,
@@ -502,6 +505,7 @@ export class TranscriptMode {
     s.view.setItems([...s.items]);
     if (s.question) s.view.setBlocked(s.question);
     if (s.ask) s.view.setAsk(s.ask);
+    if (s.followup) s.view.setFollowup(s.followup);
     if (s.pending.length) s.view.setPending(s.pending);
     s.cueKey = '';
     this.cue(s, true);
@@ -576,6 +580,25 @@ export class TranscriptMode {
           return { ok: true, resolved: ack.resolved === true };
         }
         const message = failureText('worker.answer_ask', r.code, r.message, { worker: s.name });
+        if (live() && r.code !== 'stale') this.host.status('error', message);
+        return { ok: false, code: r.code, message };
+      },
+      onAnswerFollowup: async (args) => {
+        if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
+        const r = await this.host.send('worker.answer_followup', { ...args, id: s.id });
+        if (r.ok) {
+          if (live()) this.host.status('ok', `Answered ${s.name}`);
+          return { ok: true };
+        }
+        const message = failureText('worker.answer_followup', r.code, r.message, { worker: s.name });
+        if (live() && r.code !== 'stale') this.host.status('error', message);
+        return { ok: false, code: r.code, message };
+      },
+      onDismissFollowup: async (turnId) => {
+        if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
+        const r = await this.host.send('worker.dismiss_followup', { id: s.id, turn_id: turnId });
+        if (r.ok) return { ok: true };
+        const message = failureText('worker.dismiss_followup', r.code, r.message, { worker: s.name });
         if (live() && r.code !== 'stale') this.host.status('error', message);
         return { ok: false, code: r.code, message };
       },
@@ -767,6 +790,22 @@ export class TranscriptMode {
     s.ask = ask;
     s.view?.setAsk(ask);
     this.cue(s, true);
+  }
+
+  /** #90: the worker's follow-up questions (from the store; null when there are none). */
+  followedUp(f: Followup | null): void {
+    const s = this.s;
+    if (!s) return;
+    const key = f ? `${f.turn_id}\u0000${JSON.stringify(f.questions)}` : '';
+    if (key === s.followupKey) return;
+    s.followupKey = key;
+    s.followup = f;
+    s.view?.setFollowup(f);
+  }
+
+  /** The seated worker's follow-up questions. */
+  get followup(): Followup | null {
+    return this.s?.followup ?? null;
   }
 
   /** The seated worker's ask, while it waits on one. */

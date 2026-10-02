@@ -185,6 +185,9 @@ type World struct {
 	// #92 AI integration: the settings of the classification model and the
 	// LLM (never a key). nil (left out) when the bridge has no AI service.
 	AI *AI `json:"ai,omitempty"`
+	// #90 follow-up questions: the feature's settings and state. nil (left
+	// out) when the bridge has no AI service.
+	Followups *Followups `json:"followups,omitempty"`
 }
 
 // HireOptions lists what can be hired, per harness.
@@ -321,6 +324,9 @@ type Worker struct {
 	Ask *Ask `json:"ask,omitempty"`
 	// #83: WrapUp is the worker's wrap-up, armed or needing you.
 	WrapUp *WrapUp `json:"wrapup,omitempty"`
+	// #90: Followup is the open questions of the agent's final message,
+	// until they are answered, dismissed or the agent is prompted again.
+	Followup *Followup `json:"followup,omitempty"`
 
 	// M6 runs: the worker's place in a write-code run.
 	// Round is the h3d_round token, else the label's trailing |r<N>.
@@ -403,6 +409,7 @@ type Worktree struct {
 //	limits.update    the fields of Limits
 //	screen.state     the fields of ScreenState
 //	ai.update        the fields of AI (#92)
+//	followups.update the fields of Followups (#90)
 type Event struct {
 	T           string    `json:"t"`
 	Seq         uint64    `json:"seq"`
@@ -433,6 +440,9 @@ type Event struct {
 	// #92 AI integration: on ai.update the fields of AI are flat in the
 	// event.
 	*AI
+	// #90 follow-up questions: on followups.update the fields of Followups
+	// are flat in the event.
+	*Followups
 }
 
 // Command is a client request. Args depend on T (see the *Args types).

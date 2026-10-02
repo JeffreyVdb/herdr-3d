@@ -141,6 +141,8 @@ export interface Worker {
   ask?: Ask;
   /** #83: its wrap-up, while armed or needing you. */
   wrapup?: WrapUp;
+  /** #90: the open questions of its agent's final message, found by the AI integration's models, until answered or moot. */
+  followup?: Followup;
 }
 
 /**
@@ -176,6 +178,8 @@ export interface World {
   screen?: ScreenState;
   /** #92 AI integration: the classification model and the LLM (absent from an older bridge, or one without the service). Never a key. */
   ai?: AiState;
+  /** #90 follow-up questions: the feature's settings and state (absent from an older bridge, or one without the AI service). */
+  followups?: FollowupsState;
 }
 
 export interface Hello {
@@ -267,6 +271,8 @@ export type WorldEvent =
   | ScreenStateEvent
   // #92 AI integration
   | AiUpdate
+  // #90 follow-up questions
+  | FollowupsUpdate
   // M13 whiteboard
   | WhiteboardUpdated;
 
@@ -457,6 +463,12 @@ export interface CommandArgs {
   'ai.test': AiFields;
   'ai.set': AiFields;
   'ai.clear': { role: AiRole };
+  // #90 follow-up questions (docs/protocol.md "Follow-up questions").
+  'followups.get': Record<string, never>;
+  'followups.set': { enabled?: boolean; threshold?: number };
+  'followups.test': { threshold?: number };
+  'worker.answer_followup': { id: string; turn_id: string; answers: FollowupAnswer[] };
+  'worker.dismiss_followup': { id: string; turn_id: string };
   'issue.get': { session: string; id: string };
   'issue.comment': { session: string; id: string; body: string };
   'issue.close': { session: string; id: string; reason: CloseReason; confirm: true };
@@ -675,6 +687,7 @@ const EVENT_TYPES = new Set([
   'preset.removed',
   'limits.update',
   'ai.update', // #92 AI integration
+  'followups.update', // #90 follow-up questions
   'screen.state', // M13 screen
   // M13 whiteboard
   'whiteboard.updated',
@@ -742,6 +755,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #92 AI integration: the fields of `AiState` flat in the event.
     case 'ai.update':
       return isObj(o.classifier) && isObj(o.llm);
+    // #90 follow-up questions: the fields of `FollowupsState` flat in the event.
+    case 'followups.update':
+      return typeof o.enabled === 'boolean' && typeof o.state === 'string';
     // M13 screen: the fields of `ScreenState` flat in the event.
     case 'screen.state':
       return typeof o.sharing === 'boolean';
@@ -1494,6 +1510,82 @@ export interface AiTestAck {
   json_mode?: boolean;
   base_url?: string;
   score?: number;
+}
+
+// #90 follow-up questions (docs/protocol.md "Follow-up questions"): the open questions of an agent's final message,
+// detected by the AI integration's classifier and extracted by its LLM once the feature is switched on.
+
+export type FollowupKind = 'yes_no' | 'choice' | 'open';
+
+export interface FollowupQuestion {
+  id: string;
+  question: string;
+  kind: FollowupKind;
+  /** A choice's options (never on yes_no or open). */
+  options?: string[];
+}
+
+/** A worker's open questions (`Worker.followup`). */
+export interface Followup {
+  /** The turn they were asked in: an answer names it (another one is `stale`). */
+  turn_id: string;
+  questions: FollowupQuestion[];
+  /** The classifier's score. */
+  score: number;
+  /** model: the LLM listed them; fallback: it failed, one open item stands for them. */
+  source: 'model' | 'fallback';
+  /** Unix ms (bridge clock). */
+  at: number;
+  /** The end of the message (a fallback's), for the card. */
+  tail?: string;
+}
+
+/** off: switched off; incomplete: on, but a model is not ready (nothing runs); ready. */
+export type FollowupsFeatureState = 'off' | 'incomplete' | 'ready';
+
+export interface FollowupsState {
+  enabled: boolean;
+  threshold: number;
+  state: FollowupsFeatureState;
+  /** The models that are not ready. */
+  missing?: AiRole[];
+  roles: { classifier: AiRoleState; llm: AiRoleState };
+  /** The fields the bridge's environment sets (`enabled`): read-only here. */
+  env: string[];
+  /** A passing followups.test covers the models in use: it can be switched on. */
+  tested: boolean;
+}
+
+/** `followups.update`: the whole state, flat. */
+export interface FollowupsUpdate extends FollowupsState {
+  t: 'followups.update';
+  seq: number;
+}
+
+/** One answer of `worker.answer_followup`: yes_no "Yes" / "No", a choice's option or typed text, an open answer; a note after it. */
+export interface FollowupAnswer {
+  id: string;
+  value: string;
+  note?: string;
+}
+
+export interface FollowupsTestSample {
+  name: 'questions' | 'done';
+  expect: 'flag' | 'skip';
+  score: number;
+  flagged: boolean;
+  questions?: FollowupQuestion[];
+  source?: 'model' | 'fallback';
+  error?: string;
+}
+
+/** `followups.test` ack: ok false with `reason` when it ran but did not pass. */
+export interface FollowupsTestAck {
+  ok: boolean;
+  reason?: string;
+  threshold: number;
+  samples: FollowupsTestSample[];
+  latency_ms: number;
 }
 
 // M13 screen share (docs/protocol.md "Screen share"): the TV shows the shared screen locally; the bridge asks this

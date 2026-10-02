@@ -160,6 +160,10 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   // #92: a model list or a test is one provider call (15 s on the bridge); set writes a file.
   'ai.models': 25_000,
   'ai.test': 25_000,
+  // #90: two classifications and an extraction (3 s and 15 s per attempt on the bridge, one retry each).
+  'followups.test': 75_000,
+  // #90: one prompt on the worker's input lane, like worker.prompt.
+  'worker.answer_followup': 20_000,
 };
 
 interface Pending {

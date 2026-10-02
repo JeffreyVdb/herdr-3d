@@ -163,6 +163,8 @@ var migrations = []string{
 	migrationLogo,
 	// #83: armed wrap-ups (and those needing you), resumed after a restart.
 	migrationWrapUp,
+	// #90: follow-up questions: the settings and the messages looked at.
+	migrationFollowup,
 }
 
 // Fingerprint kinds.

@@ -252,7 +252,8 @@ func (h *Hub) startKeys(ctx context.Context, c *Client, cmd proto.Command) error
 	if _, _, err := h.termWorker(a.ID); err != nil {
 		return err
 	}
-	h.tookOver(ctx, a.ID) // #83: a person types: an armed wrap-up is off
+	h.tookOver(ctx, a.ID)      // #83: a person types: an armed wrap-up is off
+	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		t := h.opts.Term
 		for i, s := range steps {
@@ -295,7 +296,8 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	if w.Ask != nil { // #57: its dialog would take the text
 		return fmt.Errorf("%w: %s waits on its question: answer it first (worker.answer_ask)", errInvalidState, w.Name)
 	}
-	h.tookOver(ctx, a.ID) // #83: a person prompts: an armed wrap-up is off
+	h.tookOver(ctx, a.ID)      // #83: a person prompts: an armed wrap-up is off
+	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		res, err := h.prompt(ctx, a, session, pane)
 		if err == nil {
@@ -580,6 +582,9 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 	// #92: the role and the fields named, never the key.
 	case proto.CmdAIModels, proto.CmdAITest, proto.CmdAISet, proto.CmdAIClear:
 		return auditAI(cmd)
+	// #90: the answers by their lengths, never their text.
+	case proto.CmdWorkerAnswerFollowup:
+		return auditFollowup(cmd)
 	// M16 transcript: the worker id only.
 	case proto.CmdTranscriptWatch, proto.CmdTranscriptUnwatch:
 		var a struct {

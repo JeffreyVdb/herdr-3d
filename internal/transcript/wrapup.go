@@ -10,18 +10,11 @@ package transcript
 // turn, as it is (no trimming, but a trailing "\r"): a quoted or indented
 // marker, one in a code fence, a stale nonce, a marker mid-message or
 // followed by more text, or the prompt's own copy of the footer never match.
-// Every user prompt after the bridge's is a person's: they took over.
-//
-// Turn ends, checked against Claude Code 2.1.285 and codex-cli 0.159.2:
-// Claude's final message is the assistant message (one message id, its
-// blocks on several lines) whose stop_reason is not tool_use, and a
-// system/turn_duration line follows the turn; Codex's turn ends with
-// event_msg task_complete (last_agent_message: the final message's text),
-// turn_aborted when it was interrupted.
+// Every user prompt after the bridge's is a person's: they took over. The
+// turn ends and the final message are TurnEvents' (turn.go), shared with
+// #90's FollowupTracker.
 
 import (
-	"bytes"
-	"encoding/json"
 	"regexp"
 	"strings"
 )
@@ -236,10 +229,8 @@ type WrapUpTracker struct {
 	nonce   string
 	from    int64
 	st      WrapUpState
-	msgID   string          // Claude: the message the text is of
-	text    strings.Builder // the latest assistant message's text, this turn
-	hasText bool
-	asked   string // the bridge's prompt as read, once Prompted
+	msg     lastMessage // the latest assistant message's text, this turn
+	asked   string      // the bridge's prompt as read, once Prompted
 }
 
 // NewWrapUpTracker follows a harness's (claude or codex) transcript for
@@ -248,7 +239,7 @@ func NewWrapUpTracker(harness, nonce string, from int64) *WrapUpTracker {
 	if (harness != Claude && harness != Codex) || !ValidWrapUpNonce(nonce) || from < 0 {
 		return nil
 	}
-	return &WrapUpTracker{harness: harness, nonce: nonce, from: from}
+	return &WrapUpTracker{harness: harness, nonce: nonce, from: from, msg: lastMessage{harness: harness}}
 }
 
 // Nonce is the nonce it looks for.
@@ -267,23 +258,20 @@ func (t *WrapUpTracker) Reset() {
 	t.newTurn()
 }
 
+// Harness is the harness whose transcript it reads.
+func (t *WrapUpTracker) Harness() string { return t.harness }
+
 // Line reads one line starting at byte offset off.
 func (t *WrapUpTracker) Line(off int64, b []byte) {
 	if off < t.from || t.st.Void {
 		return
 	}
-	t.st.Lines++
-	if t.harness == Claude {
-		t.claudeLine(b)
-	} else {
-		t.codexLine(b)
-	}
+	t.Events(off, TurnEvents(t.harness, b))
 }
 
 func (t *WrapUpTracker) newTurn() {
 	t.st.Ended, t.st.Verdict, t.st.Reason = false, "", ""
-	t.msgID, t.hasText = "", false
-	t.text.Reset()
+	t.msg.reset()
 }
 
 // asking is a user prompt's text as the bridge's would read: without
@@ -322,167 +310,48 @@ func (t *WrapUpTracker) interrupted() {
 // end closes the turn with the latest message's text.
 func (t *WrapUpTracker) end() {
 	t.st.Ended = true
-	t.st.Verdict, t.st.Reason = WrapUpVerdict(t.text.String(), t.nonce)
+	t.st.Verdict, t.st.Reason = WrapUpVerdict(t.msg.String(), t.nonce)
 }
 
-type wrapUpClaudeLine struct {
-	Type             string          `json:"type"`
-	Subtype          string          `json:"subtype"`
-	IsSidechain      bool            `json:"isSidechain"`
-	IsMeta           bool            `json:"isMeta"`
-	IsCompactSummary bool            `json:"isCompactSummary"`
-	Attachment       json.RawMessage `json:"attachment"`
-	Message          *struct {
-		ID         string             `json:"id"`
-		StopReason *string            `json:"stop_reason"`
-		Content    strOr[claudeBlock] `json:"content"`
-	} `json:"message"`
-}
-
-func (t *WrapUpTracker) claudeLine(b []byte) {
-	var l wrapUpClaudeLine
-	if json.Unmarshal(b, &l) != nil || l.IsSidechain {
+// Events applies one line's events (TurnEvents) read at byte offset off:
+// txLines reads each line once for every tracker of its session.
+func (t *WrapUpTracker) Events(off int64, evs []TurnEvent) {
+	if off < t.from || t.st.Void {
 		return
 	}
-	switch l.Type {
-	case "system":
-		if l.Subtype == "turn_duration" && t.st.Prompted && !t.st.Ended {
-			t.end()
-		}
-		return
-	case "attachment":
-		// A prompt queued while the agent worked: the bridge's, or a
-		// person's.
-		var a claudeAttach
-		if json.Unmarshal(l.Attachment, &a) == nil && a.Type == "queued_command" && a.CommandMode == "prompt" &&
-			strings.TrimSpace(a.Prompt) != "" {
-			t.prompt(a.Prompt)
-		}
-		return
-	case "user", "assistant":
-	default:
-		return
-	}
-	if l.Message == nil {
-		return
-	}
-	blocks := l.Message.Content.list
-	if l.Message.Content.isStr {
-		blocks = []claudeBlock{{Type: "text", Text: l.Message.Content.str}}
-	}
-	if l.Type == "user" {
-		if l.IsMeta || l.IsCompactSummary {
-			return
-		}
-		for _, bl := range blocks {
-			switch {
-			case bl.Type == "tool_result":
-				if t.st.Prompted {
-					t.st.Ended = false // the turn goes on
-				}
-			case bl.Type != "text":
-			case strings.HasPrefix(strings.TrimSpace(bl.Text), interruptedText):
-				t.interrupted()
-			case genuinePrompt(bl.Text):
-				t.prompt(bl.Text)
+	t.st.Lines++
+	for _, ev := range evs {
+		switch ev.Kind {
+		case TurnPrompt:
+			t.prompt(ev.Text)
+		case TurnInterrupted:
+			t.interrupted()
+		case TurnToolResult:
+			if t.st.Prompted {
+				t.st.Ended = false // the turn goes on
 			}
-		}
-		return
-	}
-	if !t.st.Prompted {
-		return // the turn before the bridge's prompt
-	}
-	if l.Message.ID != t.msgID {
-		// The next message: only the final one's text counts.
-		t.msgID, t.hasText = l.Message.ID, false
-		t.text.Reset()
-	}
-	t.st.Ended, t.st.Verdict, t.st.Reason = false, "", "" // it goes on
-	for _, bl := range blocks {
-		if bl.Type == "text" {
-			if t.hasText {
-				t.text.WriteByte('\n')
-			}
-			t.text.WriteString(bl.Text)
-			t.hasText = true
-		}
-	}
-	if sr := l.Message.StopReason; sr != nil && *sr != "" && *sr != "tool_use" && t.hasText {
-		t.end()
-	}
-}
-
-type wrapUpCodexEvent struct {
-	Type             string `json:"type"`
-	LastAgentMessage string `json:"last_agent_message"`
-}
-
-func (t *WrapUpTracker) codexLine(b []byte) {
-	var l codexLine
-	if json.Unmarshal(b, &l) != nil {
-		return
-	}
-	switch l.Type {
-	case "response_item":
-		var it codexItem
-		if json.Unmarshal(l.Payload, &it) != nil || it.Type != "message" {
-			return
-		}
-		list := it.Content.list
-		if it.Content.isStr {
-			list = []codexPart{{Text: it.Content.str}}
-		}
-		switch it.Role {
-		case "user":
-			if !codexPrompt(it) {
-				return
-			}
-			var text strings.Builder
-			for _, p := range list {
-				text.WriteString(p.Text)
-				text.WriteByte('\n')
-			}
-			t.prompt(text.String())
-		case "assistant":
+		case TurnAssistant:
 			if !t.st.Prompted {
-				return
+				continue // the turn before the bridge's prompt
 			}
-			t.st.Ended, t.st.Verdict, t.st.Reason, t.hasText = false, "", "", false
-			t.text.Reset()
-			for _, p := range list {
-				if p.Type == "output_text" || p.Type == "text" || p.Type == "" {
-					if t.hasText {
-						t.text.WriteByte('\n')
-					}
-					t.text.WriteString(p.Text)
-					t.hasText = true
-				}
+			t.msg.assistant(ev)
+			t.st.Ended, t.st.Verdict, t.st.Reason = false, "", "" // it goes on
+			if ev.Final && t.msg.has {
+				t.end()
 			}
-		}
-	case "event_msg":
-		if !bytes.Contains(l.Payload, []byte(`"task_`)) && !bytes.Contains(l.Payload, []byte(`"turn_aborted"`)) {
-			return
-		}
-		var ev wrapUpCodexEvent
-		if json.Unmarshal(l.Payload, &ev) != nil {
-			return
-		}
-		switch ev.Type {
-		case "task_started":
+		case TurnDone:
+			if t.st.Prompted && !t.st.Ended {
+				t.end()
+			}
+		case TurnStarted:
 			if t.st.Prompted {
 				t.newTurn()
 			}
-		case "turn_aborted":
-			t.interrupted()
-		case "task_complete":
-			if !t.st.Prompted {
-				return
+		case TurnComplete:
+			if t.st.Prompted {
+				t.msg.complete(ev)
+				t.end()
 			}
-			if !t.hasText && ev.LastAgentMessage != "" {
-				t.text.WriteString(ev.LastAgentMessage)
-				t.hasText = true
-			}
-			t.end()
 		}
 	}
 }

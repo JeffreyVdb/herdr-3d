@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
+	"github.com/JeffreyVdb/herdr-3d/internal/followup"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
@@ -206,6 +207,14 @@ type Options struct {
 	// #92 AI integration: the classification model and the LLM (nil: the
 	// ai.* commands fail with unsupported, the snapshot has no ai).
 	AI *ai.Service
+	// #90 follow-up questions: FollowupsEnabled is the environment's toggle
+	// (HERDR_WORLD_FOLLOWUPS_ENABLED; nil: not set), FollowupDebounce how
+	// long an ended turn and herdr's not-working status hold before the
+	// message is looked at (default DefaultFollowupDebounce), FollowupRoles
+	// the models (default AI; tests pass fakes).
+	FollowupsEnabled *bool
+	FollowupDebounce time.Duration
+	FollowupRoles    followup.Roles
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -296,6 +305,8 @@ type Hub struct {
 	screen screenState // M13 screen share
 
 	wrapups map[string]*wrapUp // #83: by worker id
+
+	fu followupState // #90 follow-up questions
 }
 
 type floorState struct {
@@ -427,6 +438,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if opts.WrapUpDebounce <= 0 {
 		opts.WrapUpDebounce = DefaultWrapUpDebounce
 	}
+	if opts.FollowupDebounce <= 0 {
+		opts.FollowupDebounce = DefaultFollowupDebounce
+	}
 	if opts.HirePoll <= 0 {
 		opts.HirePoll = defaultHirePoll
 	}
@@ -484,6 +498,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		return nil, err
 	}
 	if err := h.loadWrapUps(ctx); err != nil { // #83
+		return nil, err
+	}
+	if err := h.initFollowups(ctx); err != nil { // #90
 		return nil, err
 	}
 	if err := h.initBoards(ctx); err != nil { // M7 boards
@@ -689,6 +706,12 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startLimitsRefresh
 		case proto.CmdAIGet, proto.CmdAIModels, proto.CmdAITest, proto.CmdAISet, proto.CmdAIClear: // #92
 			start = h.startAI
+		case proto.CmdFollowupsGet, proto.CmdFollowupsSet, proto.CmdFollowupsTest: // #90
+			start = h.startFollowups
+		case proto.CmdWorkerAnswerFollowup:
+			start = h.startAnswerFollowup
+		case proto.CmdWorkerDismissFollowup:
+			start = h.startDismissFollowup
 		// M7 boards
 		case proto.CmdBoardWatch:
 			start = h.startBoardWatch
@@ -776,6 +799,8 @@ func errorCode(err error) string {
 	switch {
 	case errors.As(err, &coded):
 		return coded.code
+	case followupErrorCode(err) != "": // #90
+		return followupErrorCode(err)
 	case aiErrorCode(err) != "": // #92
 		return aiErrorCode(err)
 	case boardCode(err) != "": // M7 boards
@@ -997,6 +1022,7 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 		delete(h.typed, id) // #95
 		delete(h.starts, id)
 		delete(h.dirty, id)
+		h.dropFollowup(context.Background(), id, true) // #90: gone
 		if w != nil {
 			h.emit(proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: w.Session, WorkspaceID: w.WorkspaceID})
 		}
@@ -1146,6 +1172,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		delete(h.typed, id) // #95
 		delete(h.starts, id)
 		delete(h.dirty, id)
+		h.dropFollowup(ctx, id, true) // #90: gone
 		if w == nil {
 			continue
 		}
@@ -1255,10 +1282,14 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		if w.Worktree != nil && w.Worktree.Linked && w.Worktree.CheckoutPath != "" {
 			next.Branch = h.branchOf(w.Worktree.CheckoutPath, at)
 		}
-		next.Usage = h.usage[id]       // M5 usage
-		next.Ask = h.asks[id]          // #57
-		next.WrapUp = h.wrapUpView(id) // #83
-		h.withQuestion(next)           // M5 term
+		next.Usage = h.usage[id]          // M5 usage
+		next.Ask = h.asks[id]             // #57
+		next.WrapUp = h.wrapUpView(id)    // #83
+		if next.Status == statusWorking { // #90: at work again: its questions are moot, and so is a look under way
+			h.dropFollowup(ctx, id, false)
+		}
+		next.Followup = h.followupView(id)
+		h.withQuestion(next) // M5 term
 		if op := f.hires[id]; op != nil && !op.seen {
 			op.seen = true
 			op.signal()
@@ -1636,8 +1667,9 @@ func (h *Hub) snapshot() proto.Snapshot {
 	hire := h.hireOptions()
 	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
 		HireOptions: &hire, Presets: h.presetViews(), Limits: h.limitsViews()} // M6 launch: presets; M10 limits
-	w.Screen = h.screenView() // M13 screen
-	w.AI = h.aiView()         // #92 AI integration
+	w.Screen = h.screenView()       // M13 screen
+	w.AI = h.aiView()               // #92 AI integration
+	w.Followups = h.followupsView() // #90
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

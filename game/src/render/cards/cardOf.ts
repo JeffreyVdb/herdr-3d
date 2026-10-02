@@ -9,6 +9,8 @@ import { withCrew } from './crewCard';
 // #83: wrap-ups.
 import { needsYouLine, WRAPPING_UP, wrapUpOf } from '../../world/wrapup';
 import { BOX_TAPE } from '../palette';
+// #90: follow-up questions.
+import { followupLine, followupOf, questionsCount } from '../../world/followup';
 
 /**
  * What a worker's speech bubble says: its name, status and task; M5: a
@@ -32,6 +34,9 @@ export function cardOf(v: WorkerView, focus = false): CardData {
     const about = questionAbout(q);
     if (text || choices.length) card.ask = { text, choices, selected: q.selected, ...(about.length ? { about } : {}) };
   }
+  // #90: open questions in its final message: like an ask of several questions, answered at the laptop.
+  const followup = v.display === 'needs_you' && !card.ask ? followupOf(v.worker) : null;
+  if (followup) card.ask = { text: followupLine(followup), choices: [], about: [`${questionsCount(followup)}: answer at the laptop (E)`] };
   if (focus) {
     const u = usageText(v.worker.usage).line;
     if (u) card.usage = u;
