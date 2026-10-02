@@ -412,7 +412,7 @@ export class Hud {
     if (w) shown.push(...crewBarKey(w));
     if (t?.id === 'radio') shown.push(this.radioName);
     if (t && this.propInfo.has(t.id)) shown.push(this.propInfo.get(t.id) ?? '');
-    const key = t ? JSON.stringify([t.kind, t.id, ...shown, ...(t.kind === 'board' ? [this.boardInfo.get(t.id) ?? null] : [])]) : '';
+    const key = t ? JSON.stringify([t.kind, t.id, ...shown, ...(t.kind === 'board' ? [this.boardInfo.get(t.id) ?? null, this.boardHolder] : [])]) : '';
     if (key === this.promptKey) return;
     this.promptKey = key;
     this.reticle.classList.toggle('is-target', !!t);
@@ -507,6 +507,12 @@ export class Hud {
       else {
         const k = el('span', 'key');
         k.append(el('kbd', '', 'E'), document.createTextNode('Open'));
+        keys.append(k);
+      }
+      // The crosshair is on a note's holder tag: a click goes to that worker.
+      if (t.id === 'board.issues' && this.boardHolder) {
+        const k = el('span', 'key');
+        k.append(el('kbd', '', 'Click'), document.createTextNode(`Go to ${this.boardHolder}`));
         keys.append(k);
       }
       this.prompt.setAttribute('aria-label', `${name} · E Open`);
@@ -655,6 +661,15 @@ export class Hud {
     if (info ? cur?.task === info.task && cur.live === info.live && cur.why === info.why : !cur) return;
     if (info) this.boardInfo.set(id, info);
     else this.boardInfo.delete(id);
+    this.promptKey = '';
+  }
+
+  /** Whose tag on an issue note is under the aim (null: none): the prompt on the board adds the click. */
+  private boardHolder: string | null = null;
+
+  setBoardHolder(name: string | null): void {
+    if (name === this.boardHolder) return;
+    this.boardHolder = name;
     this.promptKey = '';
   }
 

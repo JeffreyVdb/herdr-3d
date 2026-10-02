@@ -2142,7 +2142,9 @@ export class App {
     canvas.addEventListener('pointerdown', (e) => (this.down = { x: e.clientX, y: e.clientY }));
     canvas.addEventListener('pointermove', (e) => {
       if (this.mode === 'city' && !this.down) this.city.setHover(this.cityPick(e));
+      this.pointerAt = { clientX: e.clientX, clientY: e.clientY };
     });
+    canvas.addEventListener('pointerleave', () => (this.pointerAt = null));
     canvas.addEventListener('pointerup', (e) => {
       const d = this.down;
       this.down = null;
@@ -2338,22 +2340,41 @@ export class App {
     return this.laptops.clickPrint(ray);
   }
 
-  /** A click on the holder's tag of a note on the issue wall (from the crosshair while the mouse looks, else the pointer): its worker's transcript. */
-  private clickBoardHolder(e: PointerEvent): boolean {
+  /** Where the pointer last was over the scene (null: not over it); it aims when the mouse does not look. */
+  private pointerAt: { clientX: number; clientY: number } | null = null;
+
+  /** The worker whose tag on an issue-wall note is under the aim (the crosshair while the mouse looks, else the pointer). */
+  private holderUnderAim(e?: { clientX: number; clientY: number }): string | null {
     const o = this.office;
-    if (this.mode !== 'floor' || this.place.area !== 'floor' || !o) return false;
+    if (this.mode !== 'floor' || this.place.area !== 'floor' || !o || this.planOpen || this.laptops.seated) return null;
     const canvas = this.r.domElement;
+    const at = document.pointerLockElement === canvas ? null : (e ?? this.pointerAt);
+    if (!at && document.pointerLockElement !== canvas) return null;
     const rect = canvas.getBoundingClientRect();
-    const locked = document.pointerLockElement === canvas;
-    const x = locked ? 0 : ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    const y = locked ? 0 : -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    const x = at ? ((at.clientX - rect.left) / rect.width) * 2 - 1 : 0;
+    const y = at ? -((at.clientY - rect.top) / rect.height) * 2 + 1 : 0;
     this.walker.applyTo(this.fpCam, this.walk.base);
     const ray = new THREE.Raycaster();
     ray.setFromCamera(new THREE.Vector2(x, y), this.fpCam);
-    const id = o.boards.pickHolder(ray.ray);
+    return o.boards.pickHolder(ray.ray);
+  }
+
+  /** A click on a holder's tag on the issue wall: that worker's transcript. */
+  private clickBoardHolder(e: PointerEvent): boolean {
+    const id = this.holderUnderAim(e);
     if (!id) return false;
     void this.goToWorker(id, 'transcript');
     return true;
+  }
+
+  /** Test hook: the worker whose tag on an issue note is under a point of the viewport (NDC). */
+  holderAtNdc(ndcX: number, ndcY: number): string | null {
+    const o = this.office;
+    if (this.mode !== 'floor' || !o) return null;
+    this.walker.applyTo(this.fpCam, this.walk.base);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.fpCam);
+    return o.boards.pickHolder(ray.ray);
   }
 
   /** Test hook: a click on the print under a point of the viewport (NDC), as the pointer would. */
@@ -2628,8 +2649,13 @@ export class App {
     const why = w ? this.laptops.whyNot(w.worker.id, this.office) : null;
     this.hud.setKeyState('E', w ? (why ? { live: false, why } : { live: true }) : null);
     this.lookAtM5(this.planOpen ? null : w);
+    // A holder's tag of an issue note under the aim: the pointer turns to a hand, the crosshair's prompt offers the click.
+    const locked = document.pointerLockElement === this.r.domElement;
+    const aimed = locked ? (t?.kind === 'board' && t.id === 'board.issues' ? this.holderUnderAim() : null) : null;
+    this.hud.setBoardHolder(aimed ? (this.store.workerView(aimed)?.name ?? null) : null);
     // The plan has its own labels; the prompt bar belongs to first person.
     this.hud.setTarget(this.planOpen ? null : t, w);
+    this.r.domElement.style.cursor = !locked && this.holderUnderAim() ? 'pointer' : '';
   }
 
   private computeLookAt(): Target | null {

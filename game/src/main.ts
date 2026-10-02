@@ -143,6 +143,8 @@ export interface H3DDebug {
   printWorld(desk: number, index: number): { x: number; y: number; z: number } | null;
   /** M16 phase 2: clicks the print under a viewport point (NDC, -1..1) as the pointer would; true when one opened a lightbox. */
   clickPrint(ndcX: number, ndcY: number): boolean;
+  /** The worker whose tag on an issue-wall note is under a viewport point (NDC, -1..1); null: none. */
+  holderAt(ndcX: number, ndcY: number): string | null;
   /** M16: the fixture simulator's `sim.transcript` (push items to a watch, close it) and `sim.transcripts` (its watches). */
   simTranscript(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   simTranscripts(): Promise<{ watches: number; ids: string[] } | null>;
@@ -386,6 +388,7 @@ const h3d: H3DDebug = {
   },
   printWorld: (desk, index) => app?.laptops.printWorld(desk, index) ?? null,
   clickPrint: (x, y) => app?.clickPrintAt(x, y) ?? false,
+  holderAt: (x, y) => app?.holderAtNdc(x, y) ?? null,
   simTranscript: async (args) => {
     if (!app) return { ok: false, code: 'not_started' };
     // `sim.transcript` is the fixture simulator's, not a bridge command.

@@ -216,3 +216,31 @@ test('a board update animates by diff and never rebuilds the floor; a quiet poll
   expect((await columns(page)).QA).toContain('#5');
   clean();
 });
+
+test('a click on a holder’s tag on a wall note goes to that worker’s transcript', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', EXTRA, SIM);
+  await enter(page);
+  await waitNotes(page, 8, 2);
+  // Close in on the board: the tag is a few pixels, so find one by sweeping the viewport.
+  await faceBoard(page, 'lab', 'issues', 1.6);
+  const size = page.viewportSize() as { width: number; height: number };
+  const hit = await page.evaluate(() => {
+    for (let y = 1; y > -1; y -= 0.01) for (let x = -1; x < 1; x += 0.01) {
+      const id = window.__h3d.holderAt(x, y);
+      if (id) return { id, x, y };
+    }
+    return null;
+  });
+  expect(hit, 'a holder tag on screen').not.toBeNull();
+  const h = hit as { id: string; x: number; y: number };
+  const px = ((h.x + 1) / 2) * size.width;
+  const py = ((1 - h.y) / 2) * size.height;
+  await page.mouse.move(px, py);
+  await expect.poll(() => page.evaluate(() => document.querySelector('canvas')?.style.cursor)).toBe('pointer');
+  await page.mouse.click(px, py);
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated()), { timeout: 15_000 }).toBe(h.id);
+  expect((await page.evaluate(() => window.__h3d.seat())).mode).toBe('transcript');
+  clean();
+});
