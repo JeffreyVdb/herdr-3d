@@ -182,6 +182,8 @@ export interface World {
   followups?: FollowupsState;
   /** #98 "Classify unknown commands": the activity classifier's settings and state (absent from an older bridge, or one without the AI service). */
   activity?: ActivityState;
+  /** #106 the inbox's dismissed finished rows: worker id → the `status_since` of the done episode hidden (absent from an older bridge: none). */
+  inbox_dismissed?: Record<string, number>;
 }
 
 export interface Hello {
@@ -279,6 +281,8 @@ export type WorldEvent =
   | WorkerActivityEvent
   // #98 activity settings ("Classify unknown commands")
   | ActivityUpdate
+  // #106 the inbox: a finished row was dismissed
+  | InboxDismissed
   // M13 whiteboard
   | WhiteboardUpdated;
 
@@ -475,6 +479,8 @@ export interface CommandArgs {
   'followups.test': { threshold?: number };
   'worker.answer_followup': { id: string; turn_id: string; answers: FollowupAnswer[] };
   'worker.dismiss_followup': { id: string; turn_id: string };
+  // #106 the inbox: hide a done worker's row until its next working → done. Ack `{dismissed: boolean}`; false: ignored (no longer current).
+  'inbox.dismiss': { id: string; status_since: number };
   // #98 activity settings ("Classify unknown commands", docs/protocol.md).
   'activity.get': Record<string, never>;
   'activity.set': { model_enabled?: boolean; threshold?: number; margin?: number; daily_cap?: number };
@@ -703,6 +709,7 @@ const EVENT_TYPES = new Set([
   'followups.update', // #90 follow-up questions
   'worker.activity', // #98 what the agent is doing
   'activity.update', // #98 activity settings
+  'inbox.dismissed', // #106 the inbox: a finished row dismissed
   'screen.state', // M13 screen
   // M13 whiteboard
   'whiteboard.updated',
@@ -779,6 +786,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #98 activity settings: the fields of `ActivityState` flat in the event.
     case 'activity.update':
       return typeof o.model_enabled === 'boolean' && typeof o.state === 'string';
+    // #106: a dismissal of one done episode.
+    case 'inbox.dismissed':
+      return isStr(o.id) && isInt(o.status_since);
     // M13 screen: the fields of `ScreenState` flat in the event.
     case 'screen.state':
       return typeof o.sharing === 'boolean';
@@ -1632,6 +1642,14 @@ export interface ActivityState {
   classifier: AiRoleState;
   /** The fields the bridge's environment sets (`model_enabled`, HERDR_WORLD_ACTIVITY_MODEL): read-only here. */
   env: string[];
+}
+
+/** `inbox.dismissed`: the finished row of `id`, done since `status_since`, was dismissed (by any client). */
+export interface InboxDismissed {
+  t: 'inbox.dismissed';
+  seq: number;
+  id: string;
+  status_since: number;
 }
 
 /** `activity.update`: the whole state, flat. */

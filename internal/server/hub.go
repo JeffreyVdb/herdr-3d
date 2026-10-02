@@ -315,6 +315,8 @@ type Hub struct {
 
 	wrapups map[string]*wrapUp // #83: by worker id
 
+	dismissed map[string]int64 // #106: inbox dismissals, worker id → status_since
+
 	fu followupState // #90 follow-up questions
 
 	act activityHub // #98 activity
@@ -512,6 +514,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		return nil, err
 	}
 	if err := h.loadWrapUps(ctx); err != nil { // #83
+		return nil, err
+	}
+	if err := h.loadInbox(ctx); err != nil { // #106
 		return nil, err
 	}
 	if err := h.initFollowups(ctx); err != nil { // #90
@@ -726,6 +731,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startAI
 		case proto.CmdFollowupsGet, proto.CmdFollowupsSet, proto.CmdFollowupsTest: // #90
 			start = h.startFollowups
+		case proto.CmdInboxDismiss: // #106
+			start = h.startInboxDismiss
 		case proto.CmdWorkerAnswerFollowup:
 			start = h.startAnswerFollowup
 		case proto.CmdWorkerDismissFollowup:
@@ -1202,7 +1209,8 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			if err := h.st.CloseWorker(ctx, id); err != nil {
 				h.log.Error("recording closed worker failed", "worker", id, "err", err)
 			}
-			h.forgetWrapUp(ctx, id) // #83: closed in herdr
+			h.forgetWrapUp(ctx, id)    // #83: closed in herdr
+			h.forgetDismissed(ctx, id) // #106
 		}
 		ev := proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: session, WorkspaceID: w.WorkspaceID}
 		if op := f.fires[id]; op != nil && !rawWS[op.workspaceID] {
@@ -1319,6 +1327,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		}
 		prev := h.workers[id]
 		h.workers[id] = next
+		h.pruneDismissed(ctx, next) // #106
 		// #95: a typed prompt is acked by the worker starting, however short
 		// its turn.
 		if (next.Status == statusWorking || next.Status == statusBlocked) && (prev == nil || prev.Status != next.Status) {
@@ -1690,10 +1699,11 @@ func (h *Hub) snapshot() proto.Snapshot {
 	hire := h.hireOptions()
 	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
 		HireOptions: &hire, Presets: h.presetViews(), Limits: h.limitsViews()} // M6 launch: presets; M10 limits
-	w.Screen = h.screenView()       // M13 screen
-	w.AI = h.aiView()               // #92 AI integration
-	w.Followups = h.followupsView() // #90
-	w.Activity = h.activityView()   // #98
+	w.Screen = h.screenView()                 // M13 screen
+	w.AI = h.aiView()                         // #92 AI integration
+	w.Followups = h.followupsView()           // #90
+	w.Activity = h.activityView()             // #98
+	w.InboxDismissed = h.inboxDismissedView() // #106
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

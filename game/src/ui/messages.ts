@@ -76,6 +76,8 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'followups.test': 'test the follow-up questions',
   'worker.answer_followup': 'answer follow-up questions',
   'worker.dismiss_followup': 'dismiss follow-up questions',
+  // #106
+  'inbox.dismiss': 'dismiss inbox rows',
   // #98
   'activity.get': 'classify unknown commands',
   'activity.set': 'classify unknown commands',

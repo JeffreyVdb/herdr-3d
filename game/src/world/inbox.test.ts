@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Ask, Building, Floor, Followup, Worker } from '../net/protocol';
 import { crewView } from './crew';
 import type { Display } from './derive';
-import { inboxAge, inboxQueue, inboxReason, inboxWhere, type InboxCandidate } from './inbox';
+import { inboxAge, inboxQueue, inboxReason, inboxWhere, isDismissed, type InboxCandidate } from './inbox';
 import { nextNeed } from './next';
 
 const w = (id: string, display: Display, since: number, over: Partial<InboxCandidate> = {}): InboxCandidate => ({
@@ -55,6 +55,18 @@ describe('inboxQueue', () => {
     expect(q.map((x) => x.id)).toEqual(['lot-blocked', 'here-blocked', 'there-blocked', 'lot-done', 'here-done']);
   });
 
+  it('hides a finished row dismissed in this done episode (#106), and only while `since` is that episode', () => {
+    const all = [w('a', 'done', 100), w('b', 'done', 200), w('c', 'needs_you', 300)];
+    expect(inboxQueue(all, { dismissed: new Map([['a', 100]]) }).map((x) => x.id)).toEqual(['c', 'b']);
+    // The worker worked and finished again: a new `since`, listed again.
+    expect(inboxQueue(all, { dismissed: new Map([['a', 90]]) }).map((x) => x.id)).toEqual(['c', 'a', 'b']);
+    expect(inboxQueue(all, { dismissed: new Map() }).map((x) => x.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('never hides a row that needs you, whatever was dismissed', () => {
+    expect(inboxQueue([w('c', 'needs_you', 300)], { dismissed: new Map([['c', 300]]) }).map((x) => x.id)).toEqual(['c']);
+  });
+
   it('is empty with nobody in it', () => {
     expect(inboxQueue([])).toEqual([]);
   });
@@ -64,6 +76,16 @@ describe('inboxQueue', () => {
     expect(nextNeed(q, null)?.id).toBe('a');
     expect(nextNeed(q, 'a')?.id).toBe('b');
     expect(nextNeed(q, 'b')?.id).toBe('a');
+  });
+});
+
+describe('isDismissed', () => {
+  it('is the same episode only', () => {
+    const d = new Map([['a', 100]]);
+    expect(isDismissed(d, 'a', 100)).toBe(true);
+    expect(isDismissed(d, 'a', 101)).toBe(false);
+    expect(isDismissed(d, 'b', 100)).toBe(false);
+    expect(isDismissed(undefined, 'a', 100)).toBe(false);
   });
 });
 

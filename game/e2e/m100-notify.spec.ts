@@ -103,3 +103,27 @@ test('pings: none on load, one per live need, a settled finish, never a freelanc
   await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains('seat-input'))).toBe(true);
   clean();
 });
+
+test('a collapsed burst’s click shuts the modal that is up (Settings) and shows the inbox list', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  const all = workers();
+  const setStatus = statuses(page);
+  const at = (session: string, ws: string) => all.find((w) => w.session === session && w.workspace_id === ws)!;
+  await openGame(page, 'demo-m4', '', 'play=none&sim=1&simms=150');
+  await frames(page, 3);
+
+  // Four employees start needing you within the burst window: the fourth collapses them into one notification.
+  for (const ws of ['w7', 'w9', 'w8', 'wc']) await setStatus(at('herdr-3d', ws), 'blocked');
+  await expect.poll(() => page.evaluate(() => window.__notes.findLast((n) => n.tag === 'h3d-inbox')?.title)).toBe('4 agents need you');
+
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Settings' });
+  await expect(settings).toBeVisible();
+  expect((await page.evaluate(() => window.__h3d.inbox()))?.open).toBe(false);
+  await page.evaluate(() => window.__notes.findLast((n) => n.tag === 'h3d-inbox')?.click());
+  await expect(settings).toBeHidden();
+  await expect.poll(() => page.evaluate(() => window.__h3d.inbox()?.open)).toBe(true);
+  await expect(page.locator('.ib-list')).toBeVisible();
+  clean();
+});

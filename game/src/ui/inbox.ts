@@ -14,6 +14,8 @@ export interface InboxEntry {
   reason: InboxReason;
   /** It needs you (the red), else it is done. */
   blocked: boolean;
+  /** #106: a finished row has a ×, to dismiss it; a row that needs you has none. */
+  dismissable?: boolean;
   /** Unix ms, when it came in. */
   since: number;
 }
@@ -21,6 +23,8 @@ export interface InboxEntry {
 export interface InboxHost {
   /** A row's click: go to that worker (App.goToWorker). */
   go(id: string): void;
+  /** #106: a finished row's ×: dismiss it (App sends `inbox.dismiss`; the row goes when the bridge says so). */
+  dismiss(id: string): void;
   now(): number;
 }
 
@@ -66,8 +70,15 @@ export class InboxChip {
     this.root.hidden = true;
     this.chip.addEventListener('click', () => this.toggle(!this.open));
     this.rows.addEventListener('click', (e) => {
-      const row = e.target instanceof Element ? e.target.closest<HTMLElement>('.ib-row') : null;
-      const id = row?.dataset.id;
+      const t = e.target instanceof Element ? e.target : null;
+      // #106: the × is its own button beside the row's, so dismissing never goes to the worker.
+      const x = t?.closest<HTMLElement>('.ib-x');
+      if (x?.dataset.id) {
+        this.dismissing(x.dataset.id);
+        this.host.dismiss(x.dataset.id);
+        return;
+      }
+      const id = t?.closest<HTMLElement>('.ib-row')?.dataset.id;
       if (!id) return;
       this.toggle(false, false);
       this.host.go(id);
@@ -140,12 +151,22 @@ export class InboxChip {
     }
   }
 
+  /** Where the focus goes when the × just pressed takes its row away: the next row's ×, else the previous one's. */
+  private focusAfter: string | undefined;
+
+  private dismissing(id: string): void {
+    const i = this.entries.findIndex((e) => e.id === id);
+    const near = this.entries[i + 1] ?? this.entries[i - 1];
+    this.focusAfter = near ? (near.dismissable ? `x:${near.id}` : `row:${near.id}`) : undefined;
+  }
+
   private draw(): void {
     const now = this.host.now();
-    const key = this.entries.map((e) => [e.id, e.name, e.harness, e.where, e.reason, inboxAge(e.since, now)].join('\u0001')).join('\u0000');
+    const key = this.entries.map((e) => [e.id, e.name, e.harness, e.where, e.reason, e.dismissable, inboxAge(e.since, now)].join('\u0001')).join('\u0000');
     if (key === this.drawn) return;
     this.drawn = key;
-    replaceKeepingFocus(this.rows, this.entries.map((e) => row(e, now)));
+    replaceKeepingFocus(this.rows, this.entries.map((e) => row(e, now)), this.focusAfter);
+    this.focusAfter = undefined;
   }
 
   private sync(): void {
@@ -169,7 +190,7 @@ export class InboxChip {
         this.toggle(true, false);
       }
       e.preventDefault();
-      const all = [this.chip, ...this.rows.querySelectorAll<HTMLButtonElement>('.ib-row')];
+      const all = [this.chip, ...this.rows.querySelectorAll<HTMLButtonElement>('.ib-row, .ib-x')]; // #106: each ×, after its row
       const i = all.indexOf(document.activeElement as HTMLButtonElement);
       const to = k === 'Home' ? 1 : k === 'End' ? all.length - 1 : Math.min(all.length - 1, Math.max(0, i + (k === 'ArrowDown' ? 1 : -1)));
       all[to]?.focus();
@@ -192,13 +213,13 @@ export class InboxChip {
   };
 
   /** What the chip shows (test hook): shown, how many, whether someone needs you, the list open and its rows. */
-  summary(): { shown: boolean; count: number; blocked: boolean; open: boolean; rows: Array<{ id: string; name: string; where: string; reason: InboxReason }> } {
+  summary(): { shown: boolean; count: number; blocked: boolean; open: boolean; rows: Array<{ id: string; name: string; where: string; reason: InboxReason; dismissable: boolean }> } {
     return {
       shown: !this.root.hidden,
       count: this.entries.length,
       blocked: this.entries.some((e) => e.blocked),
       open: this.open,
-      rows: this.open ? this.entries.map(({ id, name, where, reason }) => ({ id, name, where, reason })) : [],
+      rows: this.open ? this.entries.map(({ id, name, where, reason, dismissable }) => ({ id, name, where, reason, dismissable: !!dismissable })) : [],
     };
   }
 
@@ -220,7 +241,7 @@ function row(e: InboxEntry, now: number): HTMLLIElement {
   const label = `${e.name}, ${agent}: ${e.reason}. ${e.where}, ${age === 'now' ? 'just now' : `${age} ago`}. Go to its laptop.`;
   return h(
     'li',
-    {},
+    { class: 'ib-item', 'data-dismissable': String(!!e.dismissable) },
     h(
       'button',
       { class: 'ib-row', 'data-id': e.id, 'data-key': `row:${e.id}`, 'data-blocked': String(e.blocked), 'aria-label': label, title: `${e.name} · ${agent} · ${e.where}` },
@@ -230,7 +251,13 @@ function row(e: InboxEntry, now: number): HTMLLIElement {
       h('span', { class: 'ib-where' }, e.where),
       h('span', { class: 'ib-age' }, age),
     ),
+    e.dismissable ? dismissButton(e) : null,
   );
+}
+
+/** #106: the × of a finished row, a sibling of the row's button (a button cannot hold one). */
+function dismissButton(e: InboxEntry): HTMLButtonElement {
+  return h('button', { class: 'ib-x', type: 'button', 'data-id': e.id, 'data-key': `x:${e.id}`, 'aria-label': `Dismiss ${e.name}`, title: 'Dismiss: hide until it finishes again' }, icon(ICON.close));
 }
 
 /** The laptop sticker (render/deskArt.ts): the Claude Code spark on cream, the Codex `>_` on ink, a plain disc for the rest. */

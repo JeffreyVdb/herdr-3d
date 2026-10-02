@@ -22,15 +22,27 @@ export interface InboxCandidate extends NeedCandidate {
   role: CrewRole | null;
 }
 
+/** #106: the dismissed finished rows, worker id → the `status_since` of the done episode hidden (`WorldStore.inboxDismissed`). */
+export type InboxDismissed = ReadonlyMap<string, number>;
+
+/** Whether a finished row is hidden: dismissed, and the worker's present done episode (`since`) is the one dismissed. */
+export function isDismissed(dismissed: InboxDismissed | undefined, id: string, since: number): boolean {
+  return dismissed?.get(id) === since;
+}
+
 export interface InboxOptions {
   /** Freelancers that are done are listed too (Settings → Notifications, `InboxSettings.freelancers`). */
   freelancers?: boolean;
+  /** #106: finished rows the bridge has dismissed; hidden while the worker's `since` is the dismissed episode's. Needs-you rows are never hidden. */
+  dismissed?: InboxDismissed;
 }
 
 /** The inbox in the order its list shows it. */
 export function inboxQueue(workers: Iterable<InboxCandidate>, opts: InboxOptions = {}): NeedItem[] {
   const keep: NeedCandidate[] = [];
-  for (const { role, ...w } of workers) if (w.display === 'needs_you' || (w.display === 'done' && (opts.freelancers || !isFreelancer(role)))) keep.push(w);
+  for (const { role, ...w } of workers) {
+    if (w.display === 'needs_you' || (w.display === 'done' && (opts.freelancers || !isFreelancer(role)) && !isDismissed(opts.dismissed, w.id, w.since))) keep.push(w);
+  }
   return needQueue(keep);
 }
 
