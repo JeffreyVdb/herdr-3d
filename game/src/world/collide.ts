@@ -189,3 +189,38 @@ export function moveWalker(pos: V3p, delta: Vec2, r: number, w: WalkWorld): V3p 
   }
   return { x, y, z };
 }
+
+/** Furthest a walker is nudged out of something that appeared under it (a hire's chair); beyond it, back to the entrance. */
+export const NUDGE_MAX = 1;
+
+/**
+ * The nearest spot to `p` where a walker stands free (same ground level, nothing
+ * overlapping), searched outwards in rings up to `max` away; null when there is
+ * none. For a collider that appeared under a standing walker (a seat that just
+ * got its worker): step out, don't send them back to the entrance. Of the spots
+ * in the nearest ring, the one most along `prefer` (a unit direction) wins: out
+ * the back of the chair into the aisle, not sideways between two seats.
+ */
+export function nudgeClear(p: V3p, r: number, w: WalkWorld, prefer?: Vec2, max = NUDGE_MAX, step = 0.05, dirs = 32): V3p | null {
+  const rings = Math.round(max / step);
+  for (let i = 1; i <= rings; i++) {
+    const d = i * step;
+    let best: V3p | null = null;
+    let bestDot = -Infinity;
+    for (let k = 0; k < dirs; k++) {
+      const a = (k / dirs) * Math.PI * 2;
+      const dx = Math.sin(a);
+      const dz = -Math.cos(a);
+      const x = p.x + dx * d;
+      const z = p.z + dz * d;
+      if (blocked3({ x, y: p.y, z }, r, w)) continue;
+      const dot = prefer ? dx * prefer.x + dz * prefer.z : 0;
+      if (dot > bestDot) {
+        bestDot = dot;
+        best = { x, y: groundAt(w.supports, x, z, p.y) ?? p.y, z };
+      }
+    }
+    if (best) return best;
+  }
+  return null;
+}

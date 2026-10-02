@@ -94,9 +94,9 @@ shot: game-build
 	rm -f game/test-results/shot.png
 	@( $(E2E_LOCKED); set -x; $(PORTLEASE) --name preview --service game-shot -- $(PNPM) exec playwright test e2e/shot.spec.ts 9>&- ) 9>"$(E2E_LOCK)"
 
-## e2e: the full headless Playwright suite (all e2e/*.spec.ts, H3D_WORKERS parallel workers; one run per host)
+## e2e: the full headless Playwright suite (all e2e/*.spec.ts, H3D_WORKERS parallel workers; one run per host); SPEC=e2e/x.spec.ts runs only that file
 e2e: game-build
-	@( $(E2E_LOCKED); set -x; $(PORTLEASE) --name preview --service game-e2e -- $(PNPM) exec playwright test 9>&- ) 9>"$(E2E_LOCK)"
+	@( $(E2E_LOCKED); set -x; $(PORTLEASE) --name preview --service game-e2e -- $(PNPM) exec playwright test $(SPEC) 9>&- ) 9>"$(E2E_LOCK)"
 
 ## setup: make a fresh worktree test-ready: toolchain check, game deps, Go module cache (idempotent, ~3 s warm)
 setup:

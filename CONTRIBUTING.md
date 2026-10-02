@@ -57,6 +57,7 @@ make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
 make dev               # Vite dev server on a portlease-leased port, 127.0.0.1 only
 make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check), seconds
 make e2e               # the full Playwright suite (e2e/*.spec.ts), H3D_WORKERS parallel workers, ~7.5 min, one run per host
+make e2e SPEC=e2e/m6b.spec.ts   # only that spec (same lock and portlease)
 ```
 
 - `make shot` (only `e2e/shot.spec.ts`) and `make e2e` (every spec) run Playwright against the **cached** Chromium in
