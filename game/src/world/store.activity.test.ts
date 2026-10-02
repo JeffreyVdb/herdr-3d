@@ -73,8 +73,8 @@ describe('the waiting display status', () => {
       worker('asks', {
         status: 'idle',
         activity: waiting,
-        ask: { tool_use_id: 't1', tool: 'AskUserQuestion', harness: 'claude', questions: [{ question: 'Ship it?', options: [{ label: 'Yes' }, { label: 'No' }] }], since: 5 },
-      } as Partial<Worker>),
+        ask: { tool_use_id: 't1', source: 'AskUserQuestion', agent: 'claude', questions: [{ question: 'Ship it?', options: [{ label: 'Yes' }, { label: 'No' }] }], since: 5 } as unknown as NonNullable<Worker['ask']>,
+      }),
       worker('blocked', { status: 'blocked', activity: waiting }),
     ]);
     const d = (id: string) => s.workerView(id)?.display;

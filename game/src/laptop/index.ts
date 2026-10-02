@@ -5,6 +5,10 @@ import { glassFrame, screenFrame } from '../render/desks';
 import type { OfficeView } from '../render/office';
 import { PrintMeshes } from '../render/prints';
 import { ScreenMeshes } from '../render/screens';
+// #98: the desk monitors' activity cards.
+import { MonitorCards } from '../render/monitorCards';
+import { MonitorPrefs } from '../ui/monitorPrefs';
+import { Monitors, type MonitorSeat } from './monitors';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import { askAgent, askOf } from '../world/ask';
@@ -64,6 +68,8 @@ export interface LaptopHost {
   layer: HTMLElement;
   /** #59: the transcript's and the terminal's presets and zooms, hidden tool calls; none: Quiet at 100% (tests). */
   themes?: ThemeLoader;
+  /** #98: what the desk monitors show (Activity | Terminal); none: this browser's. */
+  monitors?: MonitorPrefs;
 }
 
 /** The HUD while you sit at a laptop. */
@@ -175,6 +181,8 @@ export class Laptops {
   readonly feeds: ImageFeeds;
   /** M16 phase 2: the prints on the desks near you. */
   readonly prints: Prints;
+  /** #98: the desk monitors' activity cards and images. */
+  readonly monitors: Monitors;
   readonly mac = isMac();
   private readonly terms = new Map<string, LaptopTerminal>();
   private readonly pool: LaptopTerminal[] = [];
@@ -221,6 +229,8 @@ export class Laptops {
   private readonly camQuat = new THREE.Quaternion();
   /** Frames painted, for the bench. */
   paints = 0;
+  /** The camera of the last frame (#98's test hook projects a monitor with it). */
+  private lastCam: THREE.PerspectiveCamera | null = null;
 
   constructor(
     private readonly host: LaptopHost,
@@ -238,6 +248,9 @@ export class Laptops {
     });
     this.feeds = new ImageFeeds({ send: (t, args) => this.host.watch(t, args) });
     this.prints = new Prints({ feeds: this.feeds, ready: (id) => this.transcripts.ready(id), decode: decodeBitmap }, printsParam(params.get('prints')));
+    this.monitors = new Monitors({ send: (t, args) => this.host.watch(t, args), decode: decodeBitmap }, host.monitors ?? new MonitorPrefs());
+    // A new choice shows at the next plan.
+    this.monitors.prefs.onChange(() => (this.lastPlan = -Infinity));
     this.transcript = new TranscriptMode({
       send: (t, args) => this.host.send(t, args),
       feed: (id) => this.feeds.get(id),
@@ -353,6 +366,7 @@ export class Laptops {
       this.planner.clear();
       this.prints.clear();
       this.prints.planner.clear();
+      this.monitors.lost();
       if (this.seat) this.host.seat.status('offline', 'Not connected to herdr-world: what you type is not sent');
     } else {
       this.lastPlan = -Infinity;
@@ -849,6 +863,7 @@ export class Laptops {
     this.meshes?.dispose();
     this.meshes = null;
     this.prints.setMeshes(null);
+    this.monitors.setCards(null);
     this.attached = office;
     this.desks = new Map();
     this.liveAt.clear();
@@ -859,12 +874,16 @@ export class Laptops {
       const prints = new PrintMeshes(office.layout.slots);
       office.root.add(prints.group);
       this.prints.setMeshes(prints);
+      const cards = new MonitorCards(office.layout.slots);
+      office.root.add(cards.group);
+      this.monitors.setCards(cards);
     }
     this.syncWatches();
   }
 
   /** Once per rendered frame: keep seated, plan, paint, and move the camera when seated or gliding. */
   frame(f: LaptopFrame): void {
+    this.lastCam = f.camera;
     const office = f.onFloor ? f.office : null;
     this.attach(office);
     const s = this.seat;
@@ -890,6 +909,7 @@ export class Laptops {
       if (asleep !== this.asleep) {
         this.asleep = asleep;
         meshes.setVisible(!asleep);
+        this.monitors.setVisible(!asleep);
       }
       if (f.now - this.lastPlan >= PLAN_MS) {
         this.lastPlan = f.now;
@@ -920,6 +940,7 @@ export class Laptops {
         meshes.setLive(d, null);
       }
       meshes.update(f.now);
+      this.monitors.frame(f.now, Date.now());
     }
     this.moveCamera(f.camera, f.now);
     // Seated, the glass is what the plate keeps clear of in either view; the conversation is laid over exactly it.
@@ -983,7 +1004,20 @@ export class Laptops {
     const now = new Map([...desks].map(([id, d]) => [d, id]));
     for (const [id, d] of this.desks) if (now.get(d) !== id) meshes.unfreeze(d);
     this.desks = desks;
-    if (this.connected && !this.watches.disabled) this.planner.plan(f.now, cands, this.cfg.live);
+    // #98: the activity cards (not where you sit, nor where someone packs up); a covered desk's terminal is not watched.
+    const seats: MonitorSeat[] = [];
+    for (let i = 0; i < office.desksCount; i++) {
+      const v = office.seat(i);
+      if (v) seats.push({ desk: i, view: v });
+    }
+    const skip = new Set(away.keys());
+    if (this.seat) skip.add(this.seat.desk);
+    this.monitors.plan(f.now, Date.now(), seats, cands, skip, !office.isAsleep, this.connected);
+    for (let i = 0; i < office.desksCount; i++) {
+      const id = now.get(i);
+      meshes.setCovered(i, id !== undefined && this.monitors.covers(id));
+    }
+    if (this.connected && !this.watches.disabled) this.planner.plan(f.now, cands.filter((c) => !this.monitors.covers(c.id)), this.cfg.live);
     this.prints.update(f.now, printCands, desks, this.seat?.id ?? null, this.connected && !office.isAsleep && !this.whyNoTranscript());
     this.syncWatches();
   }
@@ -1127,6 +1161,46 @@ export class Laptops {
     return { desks: this.prints.info(), counts: this.prints.counts(), watches: this.transcripts.ids(), lightboxes: this.prints.lightboxes };
   }
 
+  /** #98: per worker of the floor, what its monitor shows; the cards' ledger, textures and motion (test hook). */
+  monitorsState(): { desks: ReturnType<Monitors['info']>; stats: ReturnType<Monitors['stats']> } {
+    return { desks: this.monitors.info(), stats: this.monitors.stats() };
+  }
+
+  /** #98: where a worker's monitor's terminal area is on the viewport (CSS px; null: not on this floor or behind you). */
+  monitorRect(id: string): OverlayRect | null {
+    const desk = this.desks.get(id);
+    const o = this.attached;
+    const cam = this.lastCam;
+    if (desk === undefined || !o || !cam || !this.meshes) return null;
+    o.root.updateMatrixWorld(true);
+    const M = this.m.multiplyMatrices(o.root.matrixWorld, this.meshes.slotMatrix(desk, new THREE.Matrix4()));
+    const center = SCREEN.center.clone().applyMatrix4(M);
+    const up = SCREEN.up.clone().transformDirection(M);
+    const right = new THREE.Vector3().crossVectors(up, SCREEN.normal.clone().transformDirection(M)).normalize();
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const [a, b] of [
+      [-1, -1],
+      [1, -1],
+      [1, 1],
+      [-1, 1],
+    ] as const) {
+      const p = center
+        .clone()
+        .addScaledVector(right, (a * SCREEN.width) / 2)
+        .addScaledVector(up, (b * SCREEN.height) / 2)
+        .project(cam);
+      if (p.z < -1 || p.z > 1) return null;
+      x0 = Math.min(x0, ((p.x + 1) / 2) * window.innerWidth);
+      x1 = Math.max(x1, ((p.x + 1) / 2) * window.innerWidth);
+      y0 = Math.min(y0, ((1 - p.y) / 2) * window.innerHeight);
+      y1 = Math.max(y1, ((1 - p.y) / 2) * window.innerHeight);
+    }
+    return { left: Math.round(x0), top: Math.round(y0), width: Math.round(x1 - x0), height: Math.round(y1 - y0) };
+  }
+
   /** M16 phase 2: where a print is in the world (test hook: aim a camera at it). */
   printWorld(desk: number, index: number): { x: number; y: number; z: number } | null {
     const m = this.prints.worldOf(desk, index);
@@ -1169,6 +1243,7 @@ export class Laptops {
     this.lanes.clear();
     this.attach(null);
     this.prints.dispose();
+    this.monitors.setCards(null);
     for (const t of [...this.terms.values(), ...this.pool]) t.dispose();
     this.terms.clear();
     this.pool.length = 0;

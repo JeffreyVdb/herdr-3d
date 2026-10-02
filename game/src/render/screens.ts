@@ -42,6 +42,8 @@ export class ScreenMeshes {
   private readonly cell: THREE.InstancedBufferAttribute;
   /** Desk → atlas cell, least recently frozen first. */
   private readonly frozen = new Map<number, number>();
+  /** #98: desks whose monitor shows the activity card (or an image): their screens are hidden, frozen copies kept. */
+  private readonly covered = new Set<number>();
   private atlasDirty = false;
   private lastUpload = -Infinity;
   private readonly m = new THREE.Matrix4();
@@ -107,6 +109,7 @@ export class ScreenMeshes {
     }
     const mesh = new THREE.Mesh(this.full === desk ? this.fullGeo : this.geo, new THREE.MeshBasicMaterial({ map: tex }));
     mesh.name = `screens.live.${desk}`;
+    mesh.visible = !this.covered.has(desk);
     mesh.matrixAutoUpdate = false;
     mesh.matrix.copy(this.slotMatrix(desk, new THREE.Matrix4()));
     mesh.frustumCulled = false;
@@ -153,9 +156,29 @@ export class ScreenMeshes {
     const H = this.canvas.height;
     this.cell.setXYZW(desk, x / this.canvas.width, 1 - (y + CELL_H) / H, CELL_W / this.canvas.width, CELL_H / H);
     this.cell.needsUpdate = true;
-    this.frozenMesh.setMatrixAt(desk, this.slotMatrix(desk));
+    this.frozenMesh.setMatrixAt(desk, this.covered.has(desk) ? ZERO : this.slotMatrix(desk));
     this.frozenMesh.instanceMatrix.needsUpdate = true;
     this.atlasDirty = true;
+  }
+
+  /**
+   * #98: a desk's monitor shows its activity card (true) or its screen (false): covered, its live and frozen screens are
+   * hidden (not dropped), so the card is the only thing on the glass and the screen comes back as it was.
+   */
+  setCovered(desk: number, on: boolean): void {
+    if (on === this.covered.has(desk)) return;
+    if (on) this.covered.add(desk);
+    else this.covered.delete(desk);
+    const live = this.live.get(desk);
+    if (live) live.visible = !on;
+    if (this.frozen.has(desk)) {
+      this.frozenMesh.setMatrixAt(desk, on ? ZERO : this.slotMatrix(desk));
+      this.frozenMesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  isCovered(desk: number): boolean {
+    return this.covered.has(desk);
   }
 
   private freeCell(): number {

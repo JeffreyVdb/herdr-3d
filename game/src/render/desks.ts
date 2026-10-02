@@ -722,6 +722,14 @@ export class DeskSet {
     return { logo: STICKER_LOGOS[logo.getX(i)] ?? 'plain', rim: this.c.setRGB(a.getX(i), a.getY(i), a.getZ(i)).getHex() };
   }
 
+  /** Test hook (#98): the status word the monitor's bar shows (null: no bar). */
+  band(i: number): string | null {
+    const d = this.states[i];
+    if (!d?.display || d.display === 'asleep' || !this.meshes.band) return null;
+    const w = this.attr('band', 'aWord');
+    return w ? (BAND_WORDS[w.getX(i)] ?? null) : null;
+  }
+
   /** Test hook: the parts drawn at desk `i` (instances with a non-zero matrix), photos and pens counted. */
   drawn(i: number): Partial<Record<Key, number>> {
     const out: Partial<Record<Key, number>> = {};

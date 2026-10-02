@@ -66,6 +66,7 @@ import { aiSection } from './ui/aiSection';
 import { followupsSection } from './ui/followupsSection';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
+import { MonitorPrefs } from './ui/monitorPrefs';
 import type { SettingsDialog } from './ui/settings';
 import { displaySection, timeSection } from './ui/settingsSections';
 import { ThemeLoader } from './ui/themeLoader';
@@ -131,6 +132,8 @@ export class App {
   readonly store = new WorldStore();
   /** M10 limits: the always-on plan limits widget and what it remembers. */
   private readonly limitsPrefs = new LimitsPrefs();
+  /** #98: what the desk monitors show while you stand: the agent's activity, or its terminal. */
+  readonly monitorPrefs = new MonitorPrefs();
   /** #59: the transcript's and the terminal's presets (fonts, colours) and zooms, and hidden tool calls. */
   readonly themes = new ThemeLoader(new ViewPrefs());
   /** M17: the time of day: the settings (Settings), the page's overrides, the eased light and the clock. */
@@ -278,7 +281,7 @@ export class App {
     this.hud.mountAudio(this.audio);
     if (o.buildInfo) this.hud.mountAbout(o.buildInfo);
     this.settings = this.hud.mountSettings();
-    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs), { store: 'browser' });
+    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
     // #92: the bridge-wide AI models. A chip while one is set up but unusable, a toast when a call just stopped one.
     this.settings.addSection(
@@ -483,6 +486,7 @@ export class App {
         insets: () => ({ top: parseFloat(this.hud.root.style.getPropertyValue('--topbar-bottom')) || 70, bottom: this.seatBar.el.getBoundingClientRect().height + 18 }),
         layer: this.hud.root,
         themes: this.themes,
+        monitors: this.monitorPrefs,
       },
       o.params,
     );
