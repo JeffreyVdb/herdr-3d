@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -46,9 +47,26 @@ func (m *memStore) LoadActivitySettings(context.Context) (Settings, bool, error)
 	}
 	return *m.set, true, nil
 }
+
+// SaveActivitySettings and SaveActivityCalls each save their own fields, as
+// the bridge's store does (all of them when nothing is stored yet).
 func (m *memStore) SaveActivitySettings(_ context.Context, s Settings) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.set != nil {
+		s.CallsDay, s.CallsToday = m.set.CallsDay, m.set.CallsToday
+	}
+	m.set = &s
+	return nil
+}
+func (m *memStore) SaveActivityCalls(_ context.Context, s Settings) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.set != nil {
+		c := *m.set
+		c.CallsDay, c.CallsToday = s.CallsDay, s.CallsToday
+		s = c
+	}
 	m.set = &s
 	return nil
 }
@@ -419,5 +437,229 @@ func TestActivityHoldsAtMostOneSlot(t *testing.T) {
 	wg.Wait()
 	if maxInflight.Load() != 1 || busy.Load() != 3 {
 		t.Fatalf("%d activity calls at once, %d refused busy", maxInflight.Load(), busy.Load())
+	}
+}
+
+// jevAnswering is a Jev that scores every question it is asked 0.5 and
+// counts the requests; hold (nil: none) decides which of them wait for
+// release first.
+func jevAnswering(t *testing.T, calls *atomic.Int32, hold func(n int32) bool, release <-chan struct{}, entered chan<- int32) *httptest.Server {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		if entered != nil {
+			entered <- n
+		}
+		if hold != nil && hold(n) {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+		}
+		var body struct {
+			Questions map[string]any `json:"questions"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		answers := map[string]any{}
+		for k := range body.Questions {
+			answers[k] = map[string]any{"noul": 0.5}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"answers": answers})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// readyAI is the AI integration with its classifier set by the environment
+// (a key file, which the test may take away) against srv.
+func readyAI(t *testing.T, srv *httptest.Server) (*ai.Service, string) {
+	t.Helper()
+	keyFile := filepath.Join(t.TempDir(), "jev.key")
+	if err := os.WriteFile(keyFile, []byte("jev-test-key-0123456789"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, err := ai.New(ai.Options{ClassifierURL: srv.URL, HTTP: srv.Client(), Env: ai.Overrides{ClassifierKeyFile: keyFile, ClassifierModel: "jev-latest"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.State(ai.RoleClassifier) != ai.StateReady {
+		t.Fatal("the classifier is not ready")
+	}
+	return a, keyFile
+}
+
+// Switched off while its call waits for one of the AI integration's slots
+// (both held by other features): the call is never sent, and Set returns
+// once it is over (review B-R1).
+func TestSwitchedOffWhileWaitingForASlotSendsNothing(t *testing.T) {
+	var calls atomic.Int32
+	release, entered := make(chan struct{}), make(chan int32, 8)
+	srv := jevAnswering(t, &calls, func(n int32) bool { return n <= 2 }, release, entered)
+	a, _ := readyAI(t, srv)
+	var others sync.WaitGroup
+	var once sync.Once
+	free := func() { once.Do(func() { close(release) }) }
+	defer others.Wait()
+	defer free()  // a failure frees the slots too
+	for range 2 { // #90's calls hold both slots
+		others.Add(1)
+		go func() {
+			defer others.Done()
+			_, _ = a.Classifier().Classify(context.Background(), nil, "asks?")
+		}()
+	}
+	<-entered
+	<-entered
+	s, err := NewService(context.Background(), Options{Roles: a, Store: &memStore{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	on(s, t)
+	res := make(chan error, 1)
+	go func() {
+		_, err := s.Classify(context.Background(), "Bash", "mystery-tool --flag")
+		res <- err
+	}()
+	// Wait for the call to be handed to the classifier: it waits for a slot.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		s.mu.Lock()
+		handed := s.call != nil
+		s.mu.Unlock()
+		if handed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the call was never handed to the classifier")
+		}
+	}
+	off := false
+	if err := s.Set(context.Background(), &off, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Set waited for the call: it is over before the slots free.
+	select {
+	case err := <-res:
+		if !errors.Is(err, ai.ErrNotReady) {
+			t.Fatalf("Classify: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Set returned with the call still waiting")
+	}
+	free()
+	others.Wait()
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("%d requests: the activity's was sent after it was switched off", n)
+	}
+}
+
+// slowCount is a store whose first save of a counted call (by whichever
+// method) returns only on resume.
+type slowCount struct {
+	memStore
+	held            atomic.Bool
+	entered, resume chan struct{}
+}
+
+func (m *slowCount) hold(s Settings) {
+	if s.CallsToday == 1 && m.held.CompareAndSwap(false, true) {
+		close(m.entered)
+		<-m.resume
+	}
+}
+
+func (m *slowCount) SaveActivitySettings(ctx context.Context, s Settings) error {
+	m.hold(s)
+	return m.memStore.SaveActivitySettings(ctx, s)
+}
+
+func (m *slowCount) SaveActivityCalls(ctx context.Context, s Settings) error {
+	m.hold(s)
+	return m.memStore.SaveActivityCalls(ctx, s)
+}
+
+// Switched off, and the threshold changed, while a call's count is being
+// saved: the call is not made, and the count saved after does not undo
+// either change, after a restart too (review B-R2).
+func TestSettingsChangedWhileACountIsSavedStay(t *testing.T) {
+	ctx := context.Background()
+	st := &slowCount{entered: make(chan struct{}), resume: make(chan struct{})}
+	fc := &ai.FakeClassifier{}
+	r := &roles{state: ai.StateReady, cls: fc}
+	s := newService(t, r, st, nil)
+	on(s, t)
+	res := make(chan error, 1)
+	go func() {
+		_, err := s.Classify(ctx, "Bash", "mystery-tool")
+		res <- err
+	}()
+	<-st.entered
+	off, th := false, 0.75
+	if err := s.Set(ctx, &off, &th, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	close(st.resume)
+	if err := <-res; !errors.Is(err, ai.ErrNotReady) {
+		t.Fatalf("Classify: %v", err)
+	}
+	if n := len(fc.Calls()); n != 0 {
+		t.Fatalf("%d calls after it was switched off", n)
+	}
+	again := newService(t, r, st, nil)
+	if v := again.View(); v.ModelEnabled || v.Threshold != 0.75 || v.CallsToday != 1 {
+		t.Fatalf("after a restart: %+v", v)
+	}
+}
+
+// The classifier's key file goes while its first attempt fails: the role is
+// incomplete, and the retry is never sent (review B-R3).
+func TestNoRetryOnceTheClassifierIsNotReady(t *testing.T) {
+	var calls atomic.Int32
+	var keyFile string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_ = os.Remove(keyFile)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	a, kf := readyAI(t, srv)
+	keyFile = kf
+	s, err := NewService(context.Background(), Options{Roles: a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	on(s, t)
+	if _, err := s.Classify(context.Background(), "Bash", "mystery-tool"); err == nil {
+		t.Fatal("no error")
+	}
+	if a.State(ai.RoleClassifier) != ai.StateIncomplete {
+		t.Fatalf("classifier %s", a.State(ai.RoleClassifier))
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("%d requests: retried with the key that is gone", n)
+	}
+}
+
+// Whatever the heredoc's delimiter, its body never reaches the model; a <<
+// that is no heredoc marker (a here-string, an open quote, a delimiter too
+// long to keep) drops all after it (review B-R4).
+func TestHeredocBodiesAreDropped(t *testing.T) {
+	cases := map[string]string{
+		"mystery <<'!'\nprivate customer contents\n!":                          "mystery <<'!'",
+		"mystery <<123\nprivate customer contents\n123":                        "mystery <<N",
+		"mystery <<-\"E O F\"\n\tprivate customer contents\n\tE O F":           `mystery <<-"E O F"`,
+		"mystery <<\\EOF\nprivate customer contents\nEOF":                      `mystery <<\EOF`,
+		"mystery << 'x-y.z'\nprivate customer contents\nx-y.z":                 "mystery << 'x-y.z'",
+		"mystery <<EOF > out.txt\nprivate customer contents\nEOF":              "mystery <<EOF",
+		"mystery <<'EOF\nprivate customer contents\nEOF":                       "mystery <<",
+		"mystery <<< 'private customer contents'":                              "mystery <<<",
+		"mystery <<" + strings.Repeat("A", 40) + "\nprivate customer contents": "mystery <<",
+		"mystery <<%%\nprivate customer contents\n%%":                          "mystery <<%%",
+	}
+	for in, want := range cases {
+		if got := Prepare(in); got != want {
+			t.Errorf("Prepare(%q)\n = %q\nwant %q", in, got, want)
+		}
+		if c := Analyze(Claude, "Bash", bash(in)); !c.OK && strings.Contains(Prepare(c.Command), "private") {
+			t.Errorf("%q: the body goes to the model: %q", in, Prepare(c.Command))
+		}
 	}
 }

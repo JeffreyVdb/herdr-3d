@@ -1617,8 +1617,9 @@ only calls the bridge makes by itself are `ai.models` (a model list) and `ai.tes
 - **`ai.clear`** `{role}` removes a role's settings and key.
 - **Bounds** (shared by every feature and both roles): a timeout per attempt (3 s classifier, 15 s LLM; model lists 15 s;
   tests use their role's bound), **at most one retry** (a network failure, a timeout or a 5xx; the `response_format` fallback is that one
-  retry; a 401/403 or a 429 is never retried), and **two calls in flight at most** over the whole bridge, model-list loads and tests included; a waiting
-  call gives up with its context and holds no slot.
+  retry; a 401/403 or a 429 is never retried; a classifier retry checks the role again first: no longer `ready`, it is
+  not sent, and it uses the config in use then), and **two calls in flight at most** over the whole bridge, model-list
+  loads and tests included; a waiting call gives up with its context, holds no slot and is not sent.
 - **Runtime 401/403** makes that role `invalid`, with `last_error {role, kind: "auth_failed", runtime: true}`, and
   every consumer pauses (they get `ErrNotReady`, no request goes out) until a passing `ai.test` of the config in use, an
   `ai.set` or an `ai.clear`. A rejection that comes back for a config no longer in use (the key was replaced while the
@@ -2532,7 +2533,9 @@ flat:
 - `state`: `off`, `incomplete` (on, the classifier not `ready`: nothing is sent), `ready`, `capped` (the `daily_cap`
   reached: rules only until tomorrow, the bridge's local day; the count survives a restart). `classifier` is the
   classifier role's state. Only `ready` makes calls; a cached answer shows while `ready` or `capped`.
-- A command is asked about **once**: normalised first (anything after a heredoc marker dropped, `VAR=` values,
+- A command is asked about **once**: normalised first (anything after the first `<<` dropped but a heredoc's
+  delimiter, whatever it is: quoted or not, digits and punctuation too; after a here-string's `<<<`, an open quote or
+  a delimiter over 24 bytes, all of it; `VAR=` values,
   absolute paths to their basenames, run ids, hex ids and numbers taken out, scrubbed of keys and tokens, at most 400
   bytes), and its answer cached by the SHA-256 of the tool and that text (the newest 2,000, in the database: never the
   command's text). The same normalised command again is the cache's answer, with no call.
@@ -2542,7 +2545,11 @@ flat:
   it stays `working`. The answer shows as `source: "model"` while that call is still the worker's current one.
 - **Budget**: at most **one** call in flight (the AI integration has two slots for every feature, so #90 always finds
   one), only for a worker that is `working` on a floor a client stands on, and a candidate that is no longer current
-  when the slot frees (its tool finished and a newer item replaced it) is never asked about.
+  when the slot frees (its tool finished and a newer item replaced it) is never asked about, nor one of a turn that is
+  over (herdr is working again and the new turn is not read yet).
+- **Switching it off** (`activity.set {"model_enabled": false}`) cancels a call still waiting for a slot or out, and
+  is acknowledged once that call is over: nothing is sent after the ack. The day's count is saved apart from the
+  settings, so a call counted meanwhile never undoes them (the toggle stays off after a restart).
 
 **Privacy.** Rules run locally and send nothing. With "Classify unknown commands" on, the text of shell commands the rules
 can't place goes to TypeSafe (Jev). After normalising and scrubbing it can still contain paths, hostnames or script

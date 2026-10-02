@@ -114,8 +114,16 @@ func (a activityStore) LoadActivitySettings(ctx context.Context) (activity.Setti
 }
 
 func (a activityStore) SaveActivitySettings(ctx context.Context, s activity.Settings) error {
-	return a.st.SaveActivitySettings(ctx, store.ActivitySettings{ModelEnabled: s.ModelEnabled, Threshold: s.Threshold,
-		Margin: s.Margin, DailyCap: s.DailyCap, CallsDay: s.CallsDay, CallsToday: s.CallsToday})
+	return a.st.SaveActivitySettings(ctx, storedActivity(s))
+}
+
+func (a activityStore) SaveActivityCalls(ctx context.Context, s activity.Settings) error {
+	return a.st.SaveActivityCalls(ctx, storedActivity(s))
+}
+
+func storedActivity(s activity.Settings) store.ActivitySettings {
+	return store.ActivitySettings{ModelEnabled: s.ModelEnabled, Threshold: s.Threshold, Margin: s.Margin, DailyCap: s.DailyCap,
+		CallsDay: s.CallsDay, CallsToday: s.CallsToday}
 }
 
 func (a activityStore) LoadActivityCache(ctx context.Context, limit int) ([]activity.CacheEntry, error) {
@@ -229,7 +237,7 @@ func (h *Hub) composeActivity(id string, w *proto.Worker) *proto.Activity {
 	switch w.Status {
 	case statusWorking:
 		a = aw.view.Working
-		if aw.view.TurnAt < h.act.idleAt[id] {
+		if h.turnOver(id, aw) {
 			// herdr is ahead of the tracker: a new turn, nothing of it read
 			// yet (the previous turn's tool must not show).
 			a = &activity.Activity{Kind: activity.KindThinking, Since: w.StatusSince, Source: activity.SourceDerived}
@@ -241,12 +249,26 @@ func (h *Hub) composeActivity(id string, w *proto.Worker) *proto.Activity {
 		return nil
 	}
 	out := *a
-	if c := aw.view.Candidate; w.Status == statusWorking && c != nil && h.act.svc != nil && h.act.svc.Applies() {
+	if c := h.candidate(id, aw); w.Status == statusWorking && c != nil && h.act.svc != nil && h.act.svc.Applies() {
 		if k, ok := h.act.svc.Cached(c.Tool, c.Command); ok && k != activity.KindWorking {
 			out.Kind, out.Source = k, activity.SourceModel
 		}
 	}
 	return &out
+}
+
+// turnOver reports whether the turn of a worker's tracker view is over:
+// herdr's idle or done began after it opened (the watermark).
+func (h *Hub) turnOver(id string, aw *actWorker) bool { return aw.view.TurnAt < h.act.idleAt[id] }
+
+// candidate is a worker's command the model may answer, shown or asked
+// about: none once its turn is over, the model's answer for the previous
+// turn's command must not show in the next, nor that command be sent.
+func (h *Hub) candidate(id string, aw *actWorker) *transcript.ActivityCandidate {
+	if h.turnOver(id, aw) {
+		return nil
+	}
+	return aw.view.Candidate
 }
 
 // publishActivity sends a worker's activity when it changed (hub
@@ -356,7 +378,7 @@ func (h *Hub) pumpActivity(ctx context.Context) {
 	pick := ""
 	var at time.Time
 	for id, aw := range h.act.ws {
-		c := aw.view.Candidate
+		c := h.candidate(id, aw)
 		w := h.workers[id]
 		if c == nil || w == nil || w.Status != statusWorking || aw.tried == c.Item || !h.floorViewed(w.Session) {
 			continue
@@ -372,7 +394,7 @@ func (h *Hub) pumpActivity(ctx context.Context) {
 		return
 	}
 	aw := h.act.ws[pick]
-	cand := *aw.view.Candidate
+	cand := *h.candidate(pick, aw)
 	aw.tried = cand.Item
 	h.act.inflight = true
 	h.wg.Add(1)

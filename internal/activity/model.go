@@ -122,7 +122,15 @@ type CacheEntry struct {
 // Store keeps the settings and the cache (the bridge's database).
 type Store interface {
 	LoadActivitySettings(ctx context.Context) (Settings, bool, error)
+	// SaveActivitySettings stores the settings (ModelEnabled, Threshold,
+	// Margin, DailyCap), never the call count: a count saved by a call
+	// still out is not undone. The count goes too only when nothing is
+	// stored yet.
 	SaveActivitySettings(ctx context.Context, s Settings) error
+	// SaveActivityCalls stores the call count (CallsDay, CallsToday), never
+	// the settings: a toggle switched off while a call was out stays off.
+	// The settings go too only when nothing is stored yet.
+	SaveActivityCalls(ctx context.Context, s Settings) error
 	// LoadActivityCache returns the newest entries, newest first.
 	LoadActivityCache(ctx context.Context, limit int) ([]CacheEntry, error)
 	// SaveActivityCache records an entry, keeping the newest limit.
@@ -148,7 +156,9 @@ type Options struct {
 // Service holds the settings, the cache and the budget, and asks the model:
 // at most one call at a time (ErrBusy), so the feature never takes both of
 // the AI integration's slots and #90's turn-end classification always finds
-// one. Safe for concurrent use.
+// one. Switching it off cancels a call still waiting for a slot or out, and
+// returns once that call is over: nothing is sent after. Safe for
+// concurrent use.
 type Service struct {
 	opts Options
 	busy chan struct{} // the one call in flight
@@ -157,6 +167,14 @@ type Service struct {
 	set   Settings
 	cache map[string]*list.Element
 	lru   *list.List // of CacheEntry, newest first
+	call  *call      // the call handed to the classifier, until it returns
+}
+
+// call is a call handed to the classifier: cancel stops it, done is closed
+// once it returned.
+type call struct {
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 // NewService loads the settings and the cache.
@@ -260,7 +278,8 @@ func (s *Service) Applies() bool {
 }
 
 // Set changes the settings (nil: kept). The environment's toggle cannot be
-// changed.
+// changed. Switched off, it returns once a call still waiting or out is
+// cancelled and over.
 func (s *Service) Set(ctx context.Context, enabled *bool, threshold, margin *float64, dailyCap *int) error {
 	switch {
 	case threshold != nil && !validThreshold(*threshold):
@@ -270,13 +289,28 @@ func (s *Service) Set(ctx context.Context, enabled *bool, threshold, margin *flo
 	case dailyCap != nil && (*dailyCap < 1 || *dailyCap > MaxDailyCap):
 		return &Error{CodeBadRequest, fmt.Sprintf("daily_cap must be 1-%d", MaxDailyCap)}
 	}
+	over, err := s.change(ctx, enabled, threshold, margin, dailyCap)
+	if err != nil || over == nil {
+		return err
+	}
+	select {
+	case <-over:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// change is Set's change. Switching the feature off with a call handed to
+// the classifier cancels the call: over is closed once it returned.
+func (s *Service) change(ctx context.Context, enabled *bool, threshold, margin *float64, dailyCap *int) (over <-chan struct{}, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.set
 	if enabled != nil {
 		if e := s.opts.EnvModel; e != nil {
 			if *enabled != *e {
-				return &Error{CodeEnvLocked, "classifying unknown commands is switched by the bridge environment (HERDR_WORLD_ACTIVITY_MODEL)"}
+				return nil, &Error{CodeEnvLocked, "classifying unknown commands is switched by the bridge environment (HERDR_WORLD_ACTIVITY_MODEL)"}
 			}
 		} else {
 			next.ModelEnabled = *enabled
@@ -293,11 +327,15 @@ func (s *Service) Set(ctx context.Context, enabled *bool, threshold, margin *flo
 	}
 	if s.opts.Store != nil {
 		if err := s.opts.Store.SaveActivitySettings(ctx, next); err != nil {
-			return fmt.Errorf("the settings could not be saved: %w", err)
+			return nil, fmt.Errorf("the settings could not be saved: %w", err)
 		}
 	}
 	s.set = next
-	return nil
+	if s.enabledLocked() || s.call == nil {
+		return nil, nil
+	}
+	s.call.cancel()
+	return s.call.done, nil
 }
 
 // Key is a command's cache key: the hex SHA-256 of the tool and the
@@ -336,9 +374,10 @@ func (s *Service) putLocked(e CacheEntry) {
 
 // Classify asks the model about a command the rules could not place, and
 // caches the answer: KindWorking when no kind wins. Unless the feature is
-// ready it makes no call (ai.ErrNotReady); a call counts toward the daily
-// cap whatever its outcome. Only the tool's name and the prepared command
-// are sent.
+// ready it makes no call (ai.ErrNotReady), nor once it is switched off while
+// the call waits for the AI integration's slot; a call counts toward the
+// daily cap whatever its outcome. Only the tool's name and the prepared
+// command are sent.
 func (s *Service) Classify(ctx context.Context, tool, command string) (Kind, error) {
 	text := Prepare(command)
 	key := Key(tool, command)
@@ -358,15 +397,14 @@ func (s *Service) Classify(ctx context.Context, tool, command string) (Kind, err
 		return "", ErrBusy
 	}
 	defer func() { <-s.busy }()
-	next := s.set
-	next.CallsToday, next.CallsDay = s.callsLocked()+1, s.day()
+	s.set.CallsToday, s.set.CallsDay = s.callsLocked()+1, s.day()
+	counted := s.set
 	th, margin := s.set.Threshold, s.set.Margin
-	s.set = next
 	s.mu.Unlock()
 	if s.opts.Store != nil {
-		_ = s.opts.Store.SaveActivitySettings(ctx, next) // the count is best effort
+		_ = s.opts.Store.SaveActivityCalls(ctx, counted) // the count is best effort
 	}
-	scores, err := s.opts.Roles.Classifier().ClassifyMany(ctx, map[string]any{"tool": tool, "command": text}, QuestionMap())
+	scores, err := s.ask(ctx, tool, text)
 	if err != nil {
 		return "", err
 	}
@@ -381,6 +419,31 @@ func (s *Service) Classify(ctx context.Context, tool, command string) (Kind, err
 		}
 	}
 	return kind, nil
+}
+
+// ask hands the call to the classifier unless the feature was switched off
+// meanwhile; from then until it returns, Set switching it off cancels it
+// (ai.ErrNotReady) and waits for it.
+func (s *Service) ask(ctx context.Context, tool, text string) (map[string]float64, error) {
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	c := &call{cancel: cancel, done: make(chan struct{})}
+	defer close(c.done)
+	s.mu.Lock()
+	if !s.enabledLocked() {
+		s.mu.Unlock()
+		return nil, ai.ErrNotReady
+	}
+	s.call = c
+	s.mu.Unlock()
+	scores, err := s.opts.Roles.Classifier().ClassifyMany(cctx, map[string]any{"tool": tool, "command": text}, QuestionMap())
+	s.mu.Lock()
+	s.call = nil
+	s.mu.Unlock()
+	if err != nil && cctx.Err() != nil && ctx.Err() == nil {
+		return nil, ai.ErrNotReady // switched off while it waited or was out
+	}
+	return scores, err
 }
 
 // QuestionMap is Questions as ClassifyMany takes them: kind → question.
@@ -419,8 +482,15 @@ func Decide(scores map[string]float64, threshold, margin float64) Kind {
 	return KindWorking
 }
 
+// maxHeredocMark is the longest heredoc marker kept (<<- and its
+// delimiter); a longer one is cut after its <<.
+const maxHeredocMark = 24
+
 var (
-	heredocRe = regexp.MustCompile(`<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?[^\n]*`)
+	// heredocMarkRe is a heredoc marker at the start: <<, or <<-, and its
+	// delimiter, any shell word (quoted or not, digits and punctuation too);
+	// or the <<< of a here-string. A quote left open ends it: the rest goes.
+	heredocMarkRe = regexp.MustCompile(`^<<(?:<|-?[ \t]*(?:'[^'\n]*'|"[^"\n]*"|\\[^\n]|[^\s|&;()<>'"\\])*)`)
 	// assignAnyRe is a VAR=value word anywhere in a command (its value goes).
 	assignAnyRe = regexp.MustCompile(`(^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=("(?:[^"\\]|\\.)*"|'[^']*'|[^\s;&|)]*)`)
 	absPathRe   = regexp.MustCompile(`(^|[\s='"(])((?:~|/)[^\s'"(),;|&<>]*)`)
@@ -433,13 +503,18 @@ var (
 )
 
 // Prepare is a command as the model may see it and the cache keys it:
-// anything after a heredoc marker dropped, VAR= values, absolute paths (to
-// their basenames), run ids, hex ids and numbers taken out, scrubbed, at
-// most MaxCommand bytes.
+// anything after the first << dropped but a heredoc's delimiter (all of it
+// after a here-string's <<<, an open quote or a delimiter too long to keep),
+// VAR= values, absolute paths (to their basenames), run ids, hex ids and
+// numbers taken out, scrubbed, at most MaxCommand bytes.
 func Prepare(cmd string) string {
 	s := cmd
-	if loc := heredocRe.FindStringIndex(s); loc != nil {
-		s = s[:loc[1]]
+	if i := strings.Index(s, "<<"); i >= 0 {
+		end := i + len("<<")
+		if m := heredocMarkRe.FindString(s[i:]); len(m) <= maxHeredocMark {
+			end = i + len(m)
+		}
+		s = s[:end]
 	}
 	s = assignAnyRe.ReplaceAllString(s, "$1$2=")
 	s = absPathRe.ReplaceAllStringFunc(s, func(m string) string {
