@@ -511,3 +511,13 @@ the issue (real panes, the agents' own transcripts compared byte for byte).
 | 5 | Pings | A done row that is dismissed does not ping either (a notification's click dismisses it, and a finish that settles after you have read it is not news). The snapshot's "while you were away" leaves dismissed rows out. |
 | 6 | The burst's click over a modal | A collapsed "N agents need you" notification's click shuts every modal and the whiteboard first (`dismissOverlays`, as a single worker's click does through `goToWorker`), then opens the list; nothing happens when the whiteboard stays up asking about its changes. Before, the list opened behind Settings or the elevator. |
 | 7 | Known limits | An older bridge (no `inbox.dismiss`) answers `unknown_command`: the × says so in a toast and the row stays; a click's go-to still works. A dismissal is not undone from the game. |
+
+## 2026-10-02 — #84: worker names never carry a number
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Out of names | **Recycle, never suffix.** When every name of the list is held, `world.PickName` takes the held name **released longest ago** (hold ended early; ties go to the earlier list entry). Its old owner's claim is overwritten (same path as "hold ran out and a newcomer took it"), so the old owner gets a new name if it ever returns. |
+| 2 | Every name owned by a live worker (more than 100 on one floor) | A name of a live worker is **never** recycled (names stay unique on a floor). The newcomer gets a **two-word name** of two list entries (`"Pixel Mochi"`), the first one not held from its start position. Chosen over an error: a hire or a returning worker must always get a name, and 100×99 compounds are far beyond the floor hard cap. `IsName` accepts them. |
+| 3 | Deliberate departures | A worker sent home (`worker.fire`, a wrap-up's send home: the `removed` event with reason `sent_home`) is released **as already held for the whole hold** (`released = now − name hold`), so its name is free at once and the first to be recycled. Crash, pane close, restart, sleep keep the full hold. |
+| 4 | Existing `X 2` / `X 3` names | Kept for the life of their worker; `IsName` still accepts the suffix, nothing hands one out. Not renamed. |
+| 5 | Not done | No new names (issue option 3) and the default name hold stays 7 days (option 4). |

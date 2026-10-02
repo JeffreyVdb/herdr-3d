@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -345,4 +347,133 @@ func TestNamesHeldAtStartup(t *testing.T) {
 		t.Fatalf("absent u2's claim = %+v, want Pixel released now", cl)
 	}
 	checkClaims(t, b.st, w, "s")
+}
+
+func noDigits(t *testing.T, name string) {
+	t.Helper()
+	if strings.ContainsAny(name, "0123456789") {
+		t.Fatalf("name %q has a digit", name)
+	}
+}
+
+// With every name held, a newcomer recycles the name released longest ago,
+// ends its hold early, and owns it in the store; a name of a live worker is
+// never taken.
+func TestHeldNamesAreRecycledOldestFirst(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "world.db")
+	clk := newClock(1_790_000_000_000)
+	b := startBridge(t, db, server.Options{Now: clk.now, NameHold: 7 * 24 * time.Hour})
+	obs := fullFloor()
+	b.floor("s", true, obs...)
+	w := b.world(hasWorkers("s", len(obs)))
+	byWS := workersOf(w, "s")
+
+	// w005, then w003, then w007 leave, an hour apart.
+	live := floorWith(obs)
+	for _, ws := range []string{"w005", "w003", "w007"} {
+		clk.advance(time.Hour)
+		live = slices.DeleteFunc(live, func(o world.WorkerObs) bool { return o.WorkspaceID == ws })
+		b.floor("s", true, live...)
+		b.world(hasWorkers("s", len(live)))
+	}
+	oldest := byWS["w005"]
+	for i, ws := range []string{"n1", "n2", "n3", "n4"} {
+		live = append(live, agent(ws, "idle"))
+		clk.advance(time.Minute)
+		b.floor("s", true, live...)
+		got := workersOf(b.world(hasWorkers("s", len(live))), "s")[ws]
+		noDigits(t, got.Name)
+		want := []string{byWS["w005"].Name, byWS["w003"].Name, byWS["w007"].Name}
+		if i < 3 && got.Name != want[i] {
+			t.Fatalf("newcomer %s = %q, want %q (released longest ago first)", ws, got.Name, want[i])
+		}
+		if i == 3 && slices.Contains(want, got.Name) {
+			t.Fatalf("every released name is back in use, yet newcomer %s got %q", ws, got.Name)
+		}
+	}
+	w = b.world(hasWorkers("s", len(live)))
+	checkClaims(t, b.st, w, "s")
+	if c := claims(t, b.st, "s")[oldest.ID]; c.Name != "" {
+		t.Fatalf("the recycled name's old owner still has a claim: %+v", c)
+	}
+	for _, wk := range workersOf(w, "s") {
+		noDigits(t, wk.Name)
+	}
+}
+
+// 250 workers come and go one after another on a floor, each leaving
+// inside the hold: names run out, and never grow a digit or repeat among
+// live workers.
+func TestNoDigitsAfterManyHires(t *testing.T) {
+	clk := newClock(1_790_000_000_000)
+	b := startBridge(t, "", server.Options{Now: clk.now, NameHold: 7 * 24 * time.Hour})
+	keep := []world.WorkerObs{agent("keep", "idle"), agent("keep2", "idle")}
+	for i := range 250 {
+		ws := fmt.Sprint("t", i)
+		live := floorWith(keep, agent(ws, "idle"))
+		clk.advance(time.Minute)
+		b.floor("s", true, live...)
+		w := b.world(func(w proto.World) bool {
+			_, ok := workersOf(w, "s")[ws]
+			return ok && len(workersOf(w, "s")) == len(live)
+		})
+		for _, wk := range workersOf(w, "s") {
+			noDigits(t, wk.Name)
+		}
+		if i == 249 {
+			checkClaims(t, b.st, w, "s")
+		}
+	}
+}
+
+// A name an agent left with a numeric suffix stays its name.
+func TestLegacySuffixedNameIsKept(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "world.db")
+	b := startBridge(t, db, server.Options{})
+	b.floor("s", true, agent("a", "idle"), agent("b", "idle"))
+	w := b.world(hasWorkers("s", 2))
+	id := workersOf(w, "s")["a"].ID
+	b.stop()
+
+	st, err := store.Open(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := world.Names[0] + " 2"
+	if err := st.ClaimName(context.Background(), "s", legacy, id); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	b = startBridge(t, db, server.Options{})
+	b.floor("s", true, agent("a", "idle"), agent("b", "idle"), agent("c", "idle"))
+	w = b.world(hasWorkers("s", 3))
+	s := workersOf(w, "s")
+	if s["a"].Name != legacy {
+		t.Fatalf("a = %q, want its stored %q", s["a"].Name, legacy)
+	}
+	noDigits(t, s["c"].Name)
+	checkClaims(t, b.st, w, "s")
+}
+
+// A worker that closes (crash, pane close) keeps its name for the hold; one
+// sent home does not.
+func TestSendHomeReleasesTheNameAtOnce(t *testing.T) {
+	clk := newClock(1_790_000_000_000)
+	hold := 7 * 24 * time.Hour
+	hb := startHireBridge(t, func(o *server.Options) { o.Now, o.NameHold = clk.now, hold },
+		claudeW("w1", "sess-1"), claudeW("w2", "sess-2"))
+	hb.fl.setProcs("w1:p1", running("claude", "sess-1"))
+	ws := workersOf(hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 2 }), "s")
+	home, other := ws["w1"], ws["w2"]
+
+	hb.c.command(proto.CmdWorkerFire, "fire", proto.WorkerFireArgs{ID: home.ID})
+	hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 1 })
+	c := claims(t, hb.st, "s")[home.ID]
+	if c.Name != home.Name || !c.Released.Equal(clk.now().Add(-hold)) {
+		t.Fatalf("sent home: claim %+v, want %q released a whole hold ago (free now)", c, home.Name)
+	}
+	if o := claims(t, hb.st, "s")[other.ID]; !o.Released.IsZero() {
+		t.Fatalf("the worker still on the floor was released: %+v", o)
+	}
 }

@@ -181,15 +181,20 @@ func (h *Hub) hireFloor(session string) (*floorState, error) {
 	return f, nil
 }
 
-// heldNames is every name of a floor no newcomer may take at at.
-func (h *Hub) heldNames(session string, at time.Time) map[string]bool {
-	held := map[string]bool{}
+// heldNames is every name of a floor no newcomer may take at at (owned, or
+// released less than the hold ago), and, of those, when the ones whose
+// owner left were released: the input of world.PickName.
+func (h *Hub) heldNames(session string, at time.Time) (held map[string]bool, released map[string]time.Time) {
+	held, released = map[string]bool{}, map[string]time.Time{}
 	for name, c := range h.names[session] {
 		if c.released.IsZero() || at.Sub(c.released) < h.opts.NameHold {
 			held[name] = true
+			if !c.released.IsZero() {
+				released[name] = c.released
+			}
 		}
 	}
-	return held
+	return held, released
 }
 
 // hireCwd is the directory a hire works in: the one asked for, else the
@@ -295,7 +300,8 @@ func (h *Hub) startHirePrepare(ctx context.Context, c *Client, cmd proto.Command
 	}
 	res := proto.HirePrepareResult{Cwd: cwd, Capacity: h.capacity(a.Session)}
 	res.Choice, res.ChoiceSource = h.choice(a.Session)
-	res.Label = world.PickName(uuid.NewString(), h.heldNames(a.Session, h.opts.Now()))
+	held, released := h.heldNames(a.Session, h.opts.Now())
+	res.Label = world.PickName(uuid.NewString(), held, released)
 	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
 		res.Git = h.gitInfo(ctx, cwd)
 		if h.opts.Load != nil {
@@ -374,9 +380,9 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 		return bad("cannot start harness %q", a.Harness)
 	}
 	at := h.opts.Now()
-	held := h.heldNames(a.Session, at)
+	held, released := h.heldNames(a.Session, at)
 	if a.Label == "" {
-		a.Label = world.PickName(uuid.NewString(), held)
+		a.Label = world.PickName(uuid.NewString(), held, released)
 	}
 	if !herdr.ValidLabel(a.Label) {
 		return bad("label must be 1-%d bytes without control characters, not starting with \"-\"", herdr.MaxLabel)
@@ -424,8 +430,8 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 	id := uuid.NewString()
 	hex := strings.ReplaceAll(id, "-", "")
 	name := a.Label
-	if held[name] || !world.IsName(name) {
-		name = world.PickName(id, held)
+	if !world.Pickable(name, held, released) {
+		name = world.PickName(id, held, released)
 	}
 	op := &hireOp{id: id, session: a.Session, desk: desk, name: name, label: a.Label, marker: "h3d-" + hex[:12],
 		agent: slug(name) + "-" + hex[:6], harness: a.Harness, model: a.Model, effort: a.Effort, cwd: cwd,

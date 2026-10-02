@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Names are the display names the bridge hands out to workers: original,
@@ -27,39 +28,96 @@ var Names = []string{
 	"Pesto", "Nutmeg", "Paprika", "Sesame",
 }
 
-// PickName chooses a name for a new worker that is not in taken. The start
-// position in Names is derived from the worker id, so the choice is stable
-// for the same id and floor contents, and floors don't all start with the
-// same name. When every name is taken it appends " 2", " 3", ….
-func PickName(id string, taken map[string]bool) string {
+// PickName chooses a name for a new worker. held is every name no newcomer
+// may take (owned by a worker, or released within the name hold);
+// released maps the held names whose owner left to when it left, so a
+// name missing from it (or with a zero time) is owned by a worker on the
+// floor. The start position in Names is derived from the worker id, so the
+// choice is stable for the same id and floor contents, and floors don't all
+// start with the same name.
+//
+// The result never has a digit. A free name of Names comes first. When
+// every one is held, the held name released least recently is recycled (its
+// hold ends early; ties go to the earlier entry of Names). A name of a live
+// worker is never recycled: when all of Names are owned (more live workers
+// on a floor than names), a newcomer gets a two-word name of two entries of
+// Names ("Pixel Mochi"), unique among held, found from the same start. The
+// compounds are len(Names)² many, far beyond any floor's worker cap; should
+// they run out anyway, the first one is returned.
+func PickName(id string, held map[string]bool, released map[string]time.Time) string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(id))
 	start := int(h.Sum32() % uint32(len(Names)))
-	for n := 1; ; n++ {
-		for i := range Names {
-			name := Names[(start+i)%len(Names)]
-			if n > 1 {
-				name += " " + strconv.Itoa(n)
+	n := len(Names)
+	for i := range Names {
+		if name := Names[(start+i)%n]; !held[name] {
+			return name
+		}
+	}
+	oldest := ""
+	var at time.Time
+	for i := range Names {
+		name := Names[(start+i)%n]
+		if t := released[name]; !t.IsZero() && (oldest == "" || t.Before(at)) {
+			oldest, at = name, t
+		}
+	}
+	if oldest != "" {
+		return oldest
+	}
+	first := ""
+	for i := range Names {
+		for k := 1; k < n; k++ {
+			name := Names[(start+i)%n] + " " + Names[(start+i+k)%n]
+			if first == "" {
+				first = name
 			}
-			if !taken[name] {
+			if !held[name] {
 				return name
 			}
 		}
 	}
+	return first
 }
 
-// IsName reports whether name is one PickName hands out: an entry of
-// Names, or one with a " <n>" suffix (n ≥ 2).
-func IsName(name string) bool {
-	base, suffix := name, ""
-	if i := strings.LastIndexByte(name, ' '); i > 0 {
-		base, suffix = name[:i], name[i+1:]
+// Pickable reports whether a worker may be given name now: a name of
+// Names or a compound that is not held, or, while every plain name is held,
+// one that PickName could recycle (its owner left).
+func Pickable(name string, held map[string]bool, released map[string]time.Time) bool {
+	if !IsName(name) {
+		return false
 	}
-	if suffix != "" {
-		n, err := strconv.Atoi(suffix)
-		if err != nil || n < 2 || strconv.Itoa(n) != suffix {
+	if !held[name] {
+		return true
+	}
+	if released[name].IsZero() || !slices.Contains(Names, name) {
+		return false
+	}
+	for _, n := range Names {
+		if !held[n] {
 			return false
 		}
 	}
-	return slices.Contains(Names, base)
+	return true
+}
+
+// IsName reports whether name is one this package hands out: an entry of
+// Names, two entries joined by a space (PickName's last resort), or, for
+// workers named before names stopped growing numbers, an entry with a
+// " <n>" suffix (n ≥ 2), which is kept for the life of its worker and never
+// handed out again.
+func IsName(name string) bool {
+	if slices.Contains(Names, name) {
+		return true
+	}
+	i := strings.LastIndexByte(name, ' ')
+	if i <= 0 {
+		return false
+	}
+	base, suffix := name[:i], name[i+1:]
+	if slices.Contains(Names, base) {
+		n, err := strconv.Atoi(suffix)
+		return slices.Contains(Names, suffix) || err == nil && n >= 2 && strconv.Itoa(n) == suffix
+	}
+	return false
 }
