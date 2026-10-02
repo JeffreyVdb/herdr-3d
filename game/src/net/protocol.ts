@@ -180,6 +180,8 @@ export interface World {
   ai?: AiState;
   /** #90 follow-up questions: the feature's settings and state (absent from an older bridge, or one without the AI service). */
   followups?: FollowupsState;
+  /** #110 pack up on request: the feature's settings and state (absent from an older bridge, or one without the AI service). */
+  packup?: PackupState;
   /** #98 "Classify unknown commands": the activity classifier's settings and state (absent from an older bridge, or one without the AI service). */
   activity?: ActivityState;
   /** #106 the inbox's dismissed finished rows: worker id → the `status_since` of the done episode hidden (absent from an older bridge: none). */
@@ -277,6 +279,8 @@ export type WorldEvent =
   | AiUpdate
   // #90 follow-up questions
   | FollowupsUpdate
+  // #110 pack up on request
+  | PackupUpdate
   // #98 what the agent is doing
   | WorkerActivityEvent
   // #98 activity settings ("Classify unknown commands")
@@ -479,6 +483,11 @@ export interface CommandArgs {
   'followups.test': { threshold?: number };
   'worker.answer_followup': { id: string; turn_id: string; answers: FollowupAnswer[] };
   'worker.dismiss_followup': { id: string; turn_id: string };
+  // #110 pack up on request (docs/protocol.md "Pack up on request"). `packup.detect` acks `PackupDetectAck`.
+  'packup.get': Record<string, never>;
+  'packup.set': { enabled?: boolean; threshold?: number };
+  'packup.test': { threshold?: number };
+  'packup.detect': { id: string; text: string };
   // #106 the inbox: hide a done worker's row until its next working → done. Ack `{dismissed: boolean}`; false: ignored (no longer current).
   'inbox.dismiss': { id: string; status_since: number };
   // #98 activity settings ("Classify unknown commands", docs/protocol.md).
@@ -707,6 +716,7 @@ const EVENT_TYPES = new Set([
   'limits.update',
   'ai.update', // #92 AI integration
   'followups.update', // #90 follow-up questions
+  'packup.update', // #110 pack up on request
   'worker.activity', // #98 what the agent is doing
   'activity.update', // #98 activity settings
   'inbox.dismissed', // #106 the inbox: a finished row dismissed
@@ -779,6 +789,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
       return isObj(o.classifier) && isObj(o.llm);
     // #90 follow-up questions: the fields of `FollowupsState` flat in the event.
     case 'followups.update':
+      return typeof o.enabled === 'boolean' && typeof o.state === 'string';
+    // #110 pack up on request: the fields of `PackupState` flat in the event.
+    case 'packup.update':
       return typeof o.enabled === 'boolean' && typeof o.state === 'string';
     // #98: `activity` absent (or null) clears it.
     case 'worker.activity':
@@ -1616,6 +1629,56 @@ export interface FollowupsTestAck {
   reason?: string;
   threshold: number;
   samples: FollowupsTestSample[];
+  latency_ms: number;
+}
+
+// #110 pack up on request (docs/protocol.md "Pack up on request"): before a prompt goes out, whether it also tells the
+// worker to leave once the task is done, and what to cut; the same settings shape as the follow-up questions'.
+
+/** The feature's settings and state: the same fields as the follow-up questions'. */
+export type PackupState = FollowupsState;
+
+/** `packup.update`: the whole state, flat. */
+export interface PackupUpdate extends PackupState {
+  t: 'packup.update';
+  seq: number;
+}
+
+/** A part `packup.detect` cut: [start, end) in UTF-16 code units of the text (JavaScript string indexes). */
+export interface PackupRange {
+  start: number;
+  end: number;
+}
+
+/** `packup.detect` ack. matched false: send the prompt as written. matched: `task` is what is left (absent or empty: nothing, the send-home dialog), `removed` what was cut. */
+export interface PackupDetectAck {
+  matched: boolean;
+  task?: string;
+  removed?: PackupRange[];
+  score: number;
+}
+
+export interface PackupTestSample {
+  text: string;
+  expect: 'match' | 'skip';
+  /** One of the four the test must get right (the cut included). */
+  core?: boolean;
+  score: number;
+  matched: boolean;
+  task?: string;
+  want_task?: string;
+  right: boolean;
+  error?: string;
+}
+
+/** `packup.test` ack: ok false with `reason` when it ran but did not pass; `right` of `total` came out as expected. */
+export interface PackupTestAck {
+  ok: boolean;
+  reason?: string;
+  threshold: number;
+  samples: PackupTestSample[];
+  right: number;
+  total: number;
   latency_ms: number;
 }
 

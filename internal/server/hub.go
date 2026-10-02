@@ -24,6 +24,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
+	"github.com/JeffreyVdb/herdr-3d/internal/packup"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/whiteboard"
@@ -216,6 +217,13 @@ type Options struct {
 	FollowupsEnabled *bool
 	FollowupDebounce time.Duration
 	FollowupRoles    followup.Roles
+	// #110 pack up on request: PackupEnabled is the environment's toggle
+	// (HERDR_WORLD_PACKUP_ENABLED; nil: not set), PackupTimeout bounds a
+	// packup.detect's models (default packup.DetectTimeout), PackupRoles the models
+	// (default AI; tests pass fakes).
+	PackupEnabled *bool
+	PackupTimeout time.Duration
+	PackupRoles   packup.Roles
 	// #98 activity: ActivityModel is the environment's "Classify unknown
 	// commands" toggle (HERDR_WORLD_ACTIVITY_MODEL; nil: not set),
 	// ActivityThrottle the least time between two worker.activity events of
@@ -318,6 +326,7 @@ type Hub struct {
 	dismissed map[string]int64 // #106: inbox dismissals, worker id → status_since
 
 	fu followupState // #90 follow-up questions
+	pk packupState   // #110 pack up on request
 
 	act activityHub // #98 activity
 }
@@ -520,6 +529,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		return nil, err
 	}
 	if err := h.initFollowups(ctx); err != nil { // #90
+		return nil, err
+	}
+	if err := h.initPackup(ctx); err != nil { // #110
 		return nil, err
 	}
 	if err := h.initActivity(ctx); err != nil { // #98
@@ -731,6 +743,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startAI
 		case proto.CmdFollowupsGet, proto.CmdFollowupsSet, proto.CmdFollowupsTest: // #90
 			start = h.startFollowups
+		case proto.CmdPackupGet, proto.CmdPackupSet, proto.CmdPackupTest, proto.CmdPackupDetect: // #110
+			start = h.startPackup
 		case proto.CmdInboxDismiss: // #106
 			start = h.startInboxDismiss
 		case proto.CmdWorkerAnswerFollowup:
@@ -828,6 +842,8 @@ func errorCode(err error) string {
 		return coded.code
 	case followupErrorCode(err) != "": // #90
 		return followupErrorCode(err)
+	case packupErrorCode(err) != "": // #110
+		return packupErrorCode(err)
 	case activityErrorCode(err) != "": // #98
 		return activityErrorCode(err)
 	case aiErrorCode(err) != "": // #92
@@ -1709,6 +1725,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.Screen = h.screenView()                 // M13 screen
 	w.AI = h.aiView()                         // #92 AI integration
 	w.Followups = h.followupsView()           // #90
+	w.Packup = h.packupView()                 // #110
 	w.Activity = h.activityView()             // #98
 	w.InboxDismissed = h.inboxDismissedView() // #106
 	placed := map[string]bool{}

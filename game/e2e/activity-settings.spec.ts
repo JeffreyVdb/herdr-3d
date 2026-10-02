@@ -49,10 +49,10 @@ test('under AI integration, the privacy note above its switch: waiting without t
     const { dialog, section } = await openSettings(page);
     await expect(section.getByRole('heading', { name: 'Classify unknown commands', level: 3 })).toBeVisible();
     await expect(section.locator('.settings-store')).toHaveText('Bridge');
-    // Below AI integration, next to Follow-up questions.
+    // Below AI integration, after the other features on its models (Follow-up questions, #110 Pack up on request).
     const order = await dialog.locator('.settings-section').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.section));
     expect(order.indexOf('activity')).toBeGreaterThan(order.indexOf('ai'));
-    expect(order.indexOf('activity')).toBe(order.indexOf('followups') + 1);
+    expect(order.indexOf('activity')).toBe(order.indexOf('packup') + 1);
     // The AI section says who uses the classifier.
     await expect(dialog.getByRole('group', { name: /Classification model/ })).toContainText('Classify unknown commands');
 

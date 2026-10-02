@@ -30,6 +30,7 @@
 // #92: `simjev=<url>` is where the simulated bridge calls Jev (the e2e's fake), `simai=off` a bridge without the AI service, `simfail=no_ai` one before it
 // (tools/fixture-ai.ts). #90: `sim.turn {id, text}` ends a worker's turn with that message, and follow-up questions
 // run on it once switched on (tools/fixture-followup.ts).
+// #110: `sim.packup_lag {ms}` holds each later `packup.detect` ack that long after its answer (tools/fixture-packup.ts).
 // #106: `inbox.dismiss` records a done episode's dismissal, `sim.status {id, status}` moves a worker's status, `simfail=no_inbox` plays a
 // bridge before it (tools/fixture-inbox.ts).
 // #51: `POST /upload` stores nothing and answers a fake Drop Zone path (tools/fixture-upload.ts); the query of the ws URL

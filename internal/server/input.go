@@ -585,6 +585,9 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 	// #90: the answers by their lengths, never their text.
 	case proto.CmdWorkerAnswerFollowup:
 		return auditFollowup(cmd)
+	// #110: the prompt by its length, never its text.
+	case proto.CmdPackupDetect:
+		return auditPackupDetect(cmd)
 	// M16 transcript: the worker id only.
 	case proto.CmdTranscriptWatch, proto.CmdTranscriptUnwatch:
 		var a struct {

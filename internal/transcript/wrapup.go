@@ -40,11 +40,13 @@ var (
 // ValidWrapUpNonce reports whether s can be a wrap-up nonce (lower-case hex).
 func ValidWrapUpNonce(s string) bool { return wrapUpNonceRe.MatchString(s) }
 
-// WrapUpFooter is what the bridge appends to a wrap-up prompt.
+// WrapUpFooter is what the bridge appends to a wrap-up prompt. A task
+// that did not complete is BLOCKED (#110: a prompt's task goes first, so a
+// failed task on a clean, pushed tree does not send the worker home).
 func WrapUpFooter(nonce string) string {
 	return "When you are done, end your final message with exactly one line:\n" +
 		WrapUpPrefix + " " + nonce + " CLEAN\n" +
-		"or, if anything could not be stopped or needs a decision:\n" +
+		"or, if the task did not complete, anything could not be stopped or needs a decision:\n" +
 		WrapUpPrefix + " " + nonce + " BLOCKED: <one-line reason>"
 }
 

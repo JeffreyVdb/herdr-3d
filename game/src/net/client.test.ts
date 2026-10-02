@@ -342,6 +342,18 @@ describe('BridgeClient.request', () => {
     expect(h.got).toEqual(['snap@5', 'worker.status@6']);
   });
 
+  it('#110: gives a packup.detect 1.5 s, then drops its late match', async () => {
+    const h = live();
+    const p = h.client.request('packup.detect', { id: 'w', text: 'Please make a PR and end your turn' });
+    const { req_id } = h.s.sent.at(-1) as { req_id: string };
+    expect(h.timers.queue.map((t) => t.ms)).toEqual([1_500]);
+    h.timers.fire();
+    expect(await p).toMatchObject({ ok: false, code: 'timeout' });
+    h.s.recv({ t: 'ack', req_id, data: { matched: true, task: 'Please make a PR', removed: [{ start: 16, end: 34 }], score: 0.97 } });
+    h.s.recv(status(6));
+    expect(h.got).toEqual(['snap@5', 'worker.status@6']);
+  });
+
   it('fails pending commands when the connection drops (they may still have run)', async () => {
     const h = live();
     const p = h.client.request('floor.sleep', { session: 's' });
