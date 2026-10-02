@@ -1,3 +1,4 @@
+import type { InboxPrefs } from './inboxPrefs';
 import type { LimitsPrefs } from './limitsPrefs';
 import type { MonitorPrefs } from './monitorPrefs';
 import type { TimePrefs } from './timePrefs';
@@ -17,8 +18,9 @@ let fieldSerial = 0;
 /**
  * M10: the plan limits widget is on by default; this is where it is switched off and on (moved from About, #91).
  * #98: and what the desk monitors show while you stand: what the agent is doing (the default) or its terminal.
+ * #100: and the inbox chip under the plan limits, on by default too.
  */
-export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs): (body: HTMLElement) => SectionHandle {
+export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs, inbox?: InboxPrefs): (body: HTMLElement) => SectionHandle {
   return (body) => {
     const box = el('input');
     box.type = 'checkbox';
@@ -30,9 +32,31 @@ export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs): (bo
     const label = el('label', 'settings-switch');
     label.htmlFor = box.id;
     label.append(box, el('span', '', 'Show plan limits (Claude and Codex) in the corner'));
+    // #100: Show inbox.
+    const switches: HTMLElement[] = [label];
+    let offInbox = () => {};
+    if (inbox) {
+      const ib = el('input');
+      ib.type = 'checkbox';
+      ib.id = 'settings-inbox';
+      const syncInbox = () => (ib.checked = inbox.settings.show);
+      syncInbox();
+      ib.addEventListener('change', () => inbox.set({ show: ib.checked }));
+      const unsub = inbox.onChange(syncInbox);
+      offInbox = () => void unsub();
+      const l = el('label', 'settings-switch');
+      l.htmlFor = ib.id;
+      l.append(ib, el('span', '', 'Show the inbox: who needs you or has finished'));
+      switches.push(l);
+    }
     if (!monitors) {
-      body.append(label);
-      return { dispose: off };
+      body.append(...switches);
+      return {
+        dispose: () => {
+          off();
+          offInbox();
+        },
+      };
     }
     // #98: Desk monitors: Activity | Terminal.
     const field = el('div', 'settings-field');
@@ -57,11 +81,12 @@ export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs): (bo
     l.htmlFor = pick.id;
     field.append(l, pick, hint);
     const grid = el('div', 'settings-grid');
-    grid.append(label, field);
+    grid.append(...switches, field);
     body.append(grid);
     return {
       dispose: () => {
         off();
+        offInbox();
         offMonitors();
       },
     };

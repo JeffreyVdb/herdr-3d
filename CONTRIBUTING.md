@@ -559,7 +559,8 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   the monitor, keyboard, mouse, the dock on the pod's outer side and its cables, the worker's photos, mug, plant and
   notebook, varied by the desk index; vitest keeps them on the desktop and clear of each other at every desk count). M5: the usage line and the floor total (`usage.ts`: `≈$0.09 · 37k tokens · ctx 4%`, only the known
   parts, a `*` for a cost priced as an unknown model, never a bare `$`), N's queue (`next.ts`: blocked before done, the
-  building you are in first, oldest `status_since` first, and where to stand facing a worker), quick replies
+  building you are in first, oldest `status_since` first, and where to stand facing a worker; #100's inbox, `inbox.ts`: the same
+  order without the building tier, a freelancer's done left out unless Settings says, and a row's reason, `Building › floor` and age), quick replies
   (`answer.ts`: digits → a question's choice; Approve = the choice that says Yes / Trust / Allow / Proceed, else the
   first; Deny = the "No" choice, else a cancel; #57: `ask.ts`, an agent's structured question: the picks per question,
 when they answer everything, the `worker.answer_ask` args, a recorded answer's lines, "waiting 3m"), the Changes panel's model (`changes.ts`: the diff split per file and
@@ -658,7 +659,12 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   rows and each one's licence file, which the build writes in full into `FONT_LICENSES.txt` next to the bundle); M5: the prompt overlay (`prompt.ts`, P: a modal like the M4
   dialogs, low on the screen), the Changes panel (`changes.ts`, C: a non-modal side panel in the HUD under the top bar,
   so the floor stays in view and walkable; its diff is drawn a window of lines at a time), the look-at bar's usage and
-  Approve / Deny (`promptBar.ts`), styled in `m5.css`, and the seat bar (`seat.ts`, `seat.css`). Hidden, named hooks
+  Approve / Deny (`promptBar.ts`), styled in `m5.css`, and the seat bar (`seat.ts`, `seat.css`); #100: the inbox chip under the plan-limits plate
+  that opens into its list (`inbox.ts`, `inbox.css`; a row's `App.goToWorker` teleports and sits you at that terminal) and the one rule of the corner
+  both follow (`corner.ts`: what makes them step aside), what it remembers (`inboxPrefs.ts`, `h3d.inbox`), Settings →
+  Notifications (`notifySection.ts`: desktop notifications and their permission, the chime and its Test) and its pings, the
+  desktop notification of a new entry with the game in the background (`desktopNotify.ts`; when one pings,
+  `world/inboxPings.ts`: settle delay, snapshot silence, burst cap). Hidden, named hooks
   wait for later tickets:
   `renderPlanLimits(harness)` (#12), `renderHandoff` (M9) and `renderServices` (#14), each returning null for now.
   `src/input` — first-person walking.
@@ -1293,7 +1299,9 @@ the quiet-building line, the desk line; no variant twice in a row; a 2-minute co
 never for the desk), covered by vitest. `src/reception/sequence.ts` says the lines of one event one after the other on
 the audio that actually plays (`playAt` returns a handle that resolves when the clip starts and ends): a bubble shows
 with its clip, the next line waits for that clip to end, a clip that takes over 1.5 s to load is dropped rather than
-played late, and muted or without sound the lines are timed by the lock's clip lengths.
+played late, and muted or without sound the lines are timed by the lock's clip lengths. #100's inbox chimes are
+`playUi('needs' | 'finished', volume)`: not positional and not files, two short tones synthesized per call (oscillator
+and gain envelope) under the master mute and volume.
 
 The lines are data: `game/voices/receptionist.json` (`id`, `kind`, `text`; a leading MiMo style tag such as
 `(Happy)` is allowed and never shown in the bubble) plus the voice settings. The clips are committed

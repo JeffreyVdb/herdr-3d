@@ -471,3 +471,169 @@ dialog.settings {
     transition: none;
   }
 }
+
+/* #100: Notifications. Each way of reaching you is one block: its switch, then what it depends on. Desktop
+ * notifications carry the browser's permission as the AI section's state tag (allowed, not asked, blocked) beside
+ * the switch; the chime's volume is the top bar's slider, its percentage in tabular figures, and Test beside it. */
+.settings-nt {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.settings-nt-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.settings-nt-block > .settings-field {
+  align-self: stretch;
+}
+.settings-nt .settings-switch {
+  font-weight: 700;
+}
+.settings-nt-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.settings-nt .settings-field-hint {
+  margin: 0;
+}
+.settings-nt .settings-switch + .settings-field-hint,
+.settings-nt-head + .settings-field-hint,
+.settings-nt-on .settings-field-hint {
+  padding-left: 26px;
+}
+.settings-nt-block > .btn,
+.settings-nt-block > .settings-field {
+  margin-left: 26px;
+}
+.settings-nt-block > .settings-field {
+  width: calc(100% - 26px);
+}
+.settings-nt .settings-field-hint[hidden],
+.settings-nt .btn[hidden] {
+  display: none;
+}
+.settings-nt .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.settings-nt-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* Not the text fields' box (`.settings-field input`): the bare track. */
+.settings-field .settings-nt-volume {
+  --fill: 60%;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.settings-nt-volume::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--text-on-ink) var(--fill), rgb(255 255 255 / 18%) var(--fill));
+}
+.settings-nt-volume::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--text-on-ink) var(--fill), rgb(255 255 255 / 18%) var(--fill));
+}
+.settings-nt-volume::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--paper);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 35%);
+  transition: transform 160ms var(--ease);
+  appearance: none;
+  -webkit-appearance: none;
+}
+.settings-nt-volume::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--paper);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 35%);
+}
+.settings-nt-volume:hover::-webkit-slider-thumb,
+.settings-nt-volume:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+.settings-nt-volume:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Chime off: the volume still sets what Test plays, quieter on the page. */
+.settings-nt-block:has(input[type='checkbox']:not(:checked)) .settings-nt-volume::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, var(--text-on-ink-2) var(--fill), rgb(255 255 255 / 12%) var(--fill));
+}
+.settings-nt-block:has(input[type='checkbox']:not(:checked)) .settings-nt-volume::-moz-range-track {
+  background: linear-gradient(to right, var(--text-on-ink-2) var(--fill), rgb(255 255 255 / 12%) var(--fill));
+}
+.settings-nt-figure {
+  flex: none;
+  min-width: 4ch;
+  font-size: 12.5px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.settings-nt-row .btn {
+  flex: none;
+}
+.settings-nt-on {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-nt-on .settings-field-label {
+  margin: 0;
+}
+.settings-nt-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+}
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.settings-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--sun);
+}
+.settings-nt .settings-switch input {
+  margin: 0;
+}
+@media (max-width: 600px) {
+  .settings-nt .btn--sm {
+    min-height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-nt-volume::-webkit-slider-thumb {
+    transition: none;
+  }
+}

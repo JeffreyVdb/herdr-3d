@@ -60,6 +60,10 @@ import { OpenPrDialog } from './ui/boards/openPr';
 import { ScreenShareController } from './screen';
 // M10 limits
 import { LimitsWidget } from './ui/limits';
+// #100 the inbox chip under them
+import { InboxChip, type InboxEntry } from './ui/inbox';
+import { InboxPrefs } from './ui/inboxPrefs';
+import { inboxQueue, inboxReason, inboxWhere, type InboxCandidate } from './world/inbox';
 // #92 AI integration
 import { aiSection } from './ui/aiSection';
 // #90 follow-up questions
@@ -70,6 +74,7 @@ import { LimitsPrefs } from './ui/limitsPrefs';
 import { MonitorPrefs } from './ui/monitorPrefs';
 import type { SettingsDialog } from './ui/settings';
 import { displaySection, timeSection } from './ui/settingsSections';
+import { notifySection } from './ui/notifySection';
 import { ThemeLoader } from './ui/themeLoader';
 import { ViewPrefs } from './ui/themePrefs';
 import { can } from './world/boards';
@@ -78,6 +83,9 @@ import { bannerVersion, type BuildInfo } from './version';
 import { WhiteboardOverlay } from './ui/whiteboard';
 import { loadBoardTexture } from './render/whiteboardTexture';
 import type { WhiteboardState } from './net/protocol';
+// #100: the inbox's pings (desktop notifications, the chime)
+import { awayText, burstText, BURST_TAG, DesktopNotify, pingTitle } from './ui/desktopNotify';
+import { InboxPings, type PingEntry, type PingOut } from './world/inboxPings';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
@@ -150,6 +158,9 @@ export class App {
   private nextRead = 0;
   private clockOffice: OfficeView | null = null;
   readonly limitsWidget: LimitsWidget;
+  /** #100: the inbox chip under the plate, its list, and what it remembers per browser. */
+  readonly inbox: InboxChip;
+  readonly inboxPrefs = new InboxPrefs();
   readonly hud: Hud;
   readonly city: CityView;
   readonly client: BridgeClient;
@@ -282,8 +293,10 @@ export class App {
     this.hud.mountAudio(this.audio);
     if (o.buildInfo) this.hud.mountAbout(o.buildInfo);
     this.settings = this.hud.mountSettings();
-    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs), { store: 'browser' });
+    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
+    // #100: how the inbox reaches you beyond its chip: desktop notifications and the chime.
+    this.settings.addSection('notifications', 'Notifications', notifySection({ prefs: this.inboxPrefs, audio: this.audio }), { store: 'browser' });
     // #92: the bridge-wide AI models. A chip while one is set up but unusable, a toast when a call just stopped one.
     this.settings.addSection(
       'ai',
@@ -315,6 +328,12 @@ export class App {
     );
     // Nothing re-renders it between readings but a reading turning stale.
     setInterval(() => this.limitsWidget.tick(), 30_000);
+    this.inbox = new InboxChip(this.hud.root, this.limitsWidget.root, { go: (id) => void this.goToWorker(id), now: () => Date.now() });
+    this.inbox.enabled = this.inboxPrefs.settings.show;
+    this.inboxPrefs.onChange(() => {
+      this.inbox.enabled = this.inboxPrefs.settings.show;
+      this.inbox.set(this.inboxEntries());
+    });
     this.reception = createReception({ audio: this.audio, overlay: this.hud.root, shadows: this.shadows });
     this.radio = new RadioLink({ music: this.audio.music, toast: (m, ms, soft) => this.hud.toast(m, ms, 'info', soft), hudRadio: (n) => this.hud.setRadio(n) });
     this.city = new CityView(
@@ -589,9 +608,11 @@ export class App {
     this.startRun.refresh();
     this.presetsPanel.refresh();
     this.limitsWidget.update();
+    this.inbox.set(this.inboxEntries());
     this.m6Buttons.sync();
     // M7: holders and verdict stamps on the boards follow the workers.
     if (c.structure || c.workers.size) this.pushBoards();
+    this.pingInbox(c); // #100
   }
 
   // ---- M4: hire, send home, dropping in and walking out ----------------------------
@@ -644,6 +665,66 @@ export class App {
       const now = wrapUpOf(e.worker);
       if (now?.state === 'needs_you') this.hud.toast(needsYouText(name, now), 6500, 'error');
     }
+  }
+
+  // ---- #100: the inbox's pings -------------------------------------------------
+
+  /** What pings for a new inbox entry (world/inboxPings.ts); the worker you sit at never does. */
+  private readonly pings = new InboxPings({ emit: (p) => this.onPing(p), focus: () => this.laptops.seated, gates: () => this.inboxPrefs.settings });
+  private readonly notify = new DesktopNotify();
+  /** The store's snapshot count the pings last saw: one more is a snapshot (the first or a reconnect's). */
+  private pingSnapshots = 0;
+
+  private pingInbox(c: Change): void {
+    const snapshot = this.store.snapshots !== this.pingSnapshots;
+    this.pingSnapshots = this.store.snapshots;
+    if (!snapshot && !c.structure && !c.workers.size && !c.sessions.size) return;
+    const entries: PingEntry[] = [];
+    for (const w of this.needCandidates()) {
+      if (w.display === 'needs_you' || w.display === 'done') entries.push({ id: w.id, name: w.name, session: w.session, role: w.role, reason: w.display === 'needs_you' ? 'blocked' : 'done', since: w.since });
+    }
+    this.pings.update(entries, snapshot);
+  }
+
+  /**
+   * A ping: the chime (once per burst), and a desktop notification with the game in the background (its click goes to
+   * the worker, a collapsed burst's opens the inbox's list), or the chip's pulse and a soft toast with it in front. A
+   * snapshot's new entries are one soft toast (the documented exception to "toasts only on a live change").
+   */
+  private onPing(p: PingOut): void {
+    const s = this.inboxPrefs.settings;
+    if (p.t === 'away') return this.hud.toast(awayText(p.needs, p.finished), 5200, 'info', true);
+    if (p.t === 'ping' && p.chime && s.chime) this.audio.playUi(p.kind, s.chimeVolume);
+    let text: { title: string; body: string };
+    let shown: ReturnType<DesktopNotify['show']>;
+    if (p.t === 'burst') {
+      text = burstText(p.entries, p.needs);
+      this.notify.close(p.entries.map((e) => e.id));
+      shown = this.notify.show({ ...text, tag: BURST_TAG, onClick: () => this.inbox.openList() }, s.desktop);
+    } else {
+      const id = p.entry.id;
+      text = this.pingText(p.entry);
+      shown = this.notify.show({ ...text, tag: id, onClick: () => void this.goToWorker(id) }, s.desktop);
+    }
+    if (shown !== 'focused') return;
+    this.inbox.pulse();
+    this.hud.toast(`${text.title} · ${text.body}`, 4200, 'info', true);
+  }
+
+  /**
+   * A ping's words: "Chirp needs you", `Building › Floor · reason`, in the list's own terms (world/inbox.ts's
+   * `inboxWhere` / `inboxReason`).
+   */
+  private pingText(e: PingEntry): { title: string; body: string } {
+    const where = inboxWhere(this.store, e.session);
+    const v = this.store.workerView(e.id);
+    const why = e.reason === 'done' || !v ? null : inboxReason(v).toLowerCase();
+    return { title: pingTitle(e.reason === 'blocked' ? 'needs' : 'finished', e.name), body: why ? `${where} · ${why}` : where };
+  }
+
+  /** Workers whose done is still settling before it pings (test hook). */
+  pendingPings(): string[] {
+    return this.pings.pending();
   }
 
   /**
@@ -2381,15 +2462,79 @@ export class App {
     this.hud.toast(r.code === 'unknown_command' ? 'This herdr-world can’t answer questions from here yet. Update the bridge to use it.' : commandFailure('worker.answer_ask', r.code, r.message, { worker: name }), 5200, 'error');
   }
 
+  /** Every worker of the city, as N's queue and the inbox take them. */
+  private needCandidates(): InboxCandidate[] {
+    return this.store.city().flatMap((b) =>
+      b.floors.flatMap((f) =>
+        f.workers.map((w) => ({ id: w.worker.id, session: f.session, building: b.building?.id ?? null, display: w.display, since: w.since, desk: w.desk, name: w.name, role: crewRole(w.worker) })),
+      ),
+    );
+  }
+
   /** Who needs you, in the order N visits them (blocked, then done; your building first). */
   needs(): NeedItem[] {
     const here = this.mode === 'floor' ? (this.building?.id ?? null) : undefined;
-    const all = this.store.city().flatMap((b) =>
-      b.floors.flatMap((f) =>
-        f.workers.map((w) => ({ id: w.worker.id, session: f.session, building: b.building?.id ?? null, display: w.display, since: w.since, desk: w.desk, name: w.name })),
-      ),
-    );
-    return needQueue(all, here);
+    return needQueue(this.needCandidates().map(({ role: _, ...w }) => w), here);
+  }
+
+  /** #100: who is in the inbox, in its list's order (needs you, then done; no building first; freelancers' done per Settings). */
+  inboxItems(): NeedItem[] {
+    return inboxQueue(this.needCandidates(), { freelancers: this.inboxPrefs.settings.freelancers });
+  }
+
+  /** #100: the inbox list's rows. */
+  private inboxEntries(): InboxEntry[] {
+    return this.inboxItems().flatMap((item) => {
+      const v = this.store.workerView(item.id);
+      return v ? [{ id: item.id, name: item.name, harness: v.harness, where: inboxWhere(this.store, item.session), reason: inboxReason(v), blocked: item.reason === 'blocked', since: item.since }] : [];
+    });
+  }
+
+  /**
+   * #100: an inbox row's (or a notification's) click. Unlike N it teleports: straight onto the worker's floor (no
+   * elevator panel), facing it, and sat at its laptop with its terminal on screen (not the conversation E remembers),
+   * from anywhere. False when it cannot be done (in a transition, the worker or its floor went). When the laptop
+   * cannot be sat at, you are left facing the worker with the reason (`sitAt`'s toast), and it is still true.
+   */
+  async goToWorker(id: string): Promise<boolean> {
+    if (this.transitioning) return false;
+    if (!this.store.workerView(id)) return false;
+    // A notification's click can come with any dialog up (the window was in the background): it goes first.
+    if (!(await this.dismissOverlays()) || this.transitioning) return false;
+    const session = this.store.workerView(id)?.worker.session;
+    if (!session) return false;
+    if (this.laptops.seated) this.laptops.stand(null, true);
+    this.walker.release();
+    this.walker.stop();
+    this.pendingNeed = null;
+    if (!(this.mode === 'floor' && this.place.area === 'floor' && this.office?.session === session)) await this.enterFloor(session);
+    if (this.mode !== 'floor' || this.office?.session !== session) return false; // the floor went meanwhile
+    if (this.planOpen) this.setPlan(false);
+    this.faceWorker(id);
+    // The terminal for this sit only: what E opens next time stays as you left it.
+    if (this.sitAt(id)) {
+      this.laptops.transcript.setMode('terminal', false);
+      this.laptops.focusSeat();
+    }
+    return true;
+  }
+
+  /**
+   * #100: shuts every modal dialog and the whiteboard, each the way its own close does (Settings' fields as on Esc, the
+   * elevator's pending confirm answered no, the whiteboard saved first), so a teleport never lands behind one. Resolves
+   * once their `close` handlers ran: one hands focus back to its opener, and that must come before the seat takes it.
+   * False when one stays up (the whiteboard asking what to do with changes it could not save).
+   */
+  private async dismissOverlays(): Promise<boolean> {
+    const open = [...document.querySelectorAll<HTMLDialogElement>('dialog:modal')];
+    // (A dialog torn down by its host's close may never say so: not waited for forever.)
+    const closed = open.map((d) => new Promise<void>((done) => (d.addEventListener('close', () => done(), { once: true }), setTimeout(done, 500))));
+    this.panels.close();
+    this.prompt.close();
+    for (const d of open) if (d.open) d.close();
+    await Promise.all(closed);
+    if (this.whiteboard.isOpen) await this.whiteboard.close();
+    return !this.whiteboard.isOpen;
   }
 
   /**

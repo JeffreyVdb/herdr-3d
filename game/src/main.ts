@@ -17,6 +17,7 @@ import type { HireSummary } from './ui/hire';
 import type { PanelSummary } from './ui/panels';
 import type { SendHomeSummary } from './ui/sendHome';
 import type { ChangesSummary } from './ui/changes';
+import type { InboxChip } from './ui/inbox';
 import type { PromptSummary } from './ui/prompt';
 // M6 start
 import type { PresetsSummary } from './ui/presets';
@@ -198,6 +199,10 @@ export interface H3DDebug {
   nextNeed(): NeedItem | null;
   /** M5: who needs you, in the order N visits them. */
   needs(): NeedItem[];
+  /** #100: the inbox chip (shown, count, whether someone needs you, its list open and the rows it shows), who is in it, and a row's teleport (resolves once you sit, or could not). */
+  inbox(): ReturnType<InboxChip['summary']> | null;
+  inboxItems(): NeedItem[];
+  goToWorker(workerId: string): Promise<boolean>;
   /** M5: P / C on a worker, as the keys do. */
   openPrompt(workerId: string): void;
   openChanges(workerId: string): void;
@@ -256,6 +261,8 @@ export interface H3DDebug {
   excalidraw(): unknown;
   /** M13: the `whiteboard.get`s the game sent by itself (`sent()` leaves them out). */
   wbLog(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
+  /** #100: the workers whose done is still settling before it pings. */
+  pendingPings(): string[];
 }
 
 declare global {
@@ -428,6 +435,9 @@ const h3d: H3DDebug = {
   screenMesh: (id) => app?.laptops.screenMesh(id) ?? null,
   nextNeed: () => app?.goNextNeed() ?? null,
   needs: () => app?.needs() ?? [],
+  inbox: () => app?.inbox.summary() ?? null,
+  inboxItems: () => app?.inboxItems() ?? [],
+  goToWorker: (id) => app?.goToWorker(id) ?? Promise.resolve(false),
   openPrompt: (id) => app?.openPrompt(id),
   face: (id) => app?.faceWorker(id) ?? false,
   crew: () => app?.office?.crewInfo() ?? { members: [], shown: [] },
@@ -490,6 +500,7 @@ const h3d: H3DDebug = {
   openWhiteboard: () => app?.openWhiteboard(),
   excalidraw: () => app?.whiteboard.current?.excalidraw ?? null,
   wbLog: () => structuredClone(app?.wbLog ?? []),
+  pendingPings: () => app?.pendingPings() ?? [],
   openChanges: (id) => {
     if (app?.changes.worker !== id) app?.toggleChanges(id);
   },

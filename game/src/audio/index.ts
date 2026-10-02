@@ -24,6 +24,12 @@ export interface GameAudio {
    * clip starts only once it has loaded); callers that don't care ignore it.
    */
   playAt(clip: string, pos: { x: number; y: number; z: number }): Playback;
+  /**
+   * #100: a short non-positional UI sound (the inbox chime), under the master
+   * mute and volume; `volume` (0..1) is its own on top. Synthesized (no file to load), so it sounds at once, in a
+   * background tab too; silent before the first gesture, while locked or muted. Never throws.
+   */
+  playUi(sound: UiSound, volume?: number): void;
   /** Called once per frame with the camera (listener position + orientation). */
   setListener(camera: THREE.Camera): void;
   muted: boolean; // persisted per browser
@@ -45,6 +51,9 @@ export interface GameAudio {
   readonly music: Music;
 }
 
+/** #100: the inbox chimes: someone needs you, and the softer one for finished work. */
+export type UiSound = 'needs' | 'finished';
+
 /** One `playAt`: when the clip really sounds, and when it's over. */
 export interface Playback {
   /** True once the clip starts sounding; false when it never will (muted, locked, stopped or cancelled first, failed to load). */
@@ -54,6 +63,27 @@ export interface Playback {
   /** Drops the clip while it loads, stops it while it plays. */
   cancel(): void;
 }
+
+/** One tone of a UI sound: when (s after the first), its pitch, how loud at its peak and how long it rings. */
+interface UiNote {
+  at: number;
+  hz: number;
+  wave: OscillatorType;
+  peak: number;
+  secs: number;
+}
+
+/**
+ * #100: synthesized, no files. `needs` is a clear rising fourth (E5 → A5) that asks for you; `finished` one
+ * quieter, rounder D5 that only says something is done.
+ */
+const UI_NOTES: Record<UiSound, readonly UiNote[]> = {
+  needs: [
+    { at: 0, hz: 659.25, wave: 'triangle', peak: 0.32, secs: 0.3 },
+    { at: 0.13, hz: 880, wave: 'triangle', peak: 0.32, secs: 0.55 },
+  ],
+  finished: [{ at: 0, hz: 587.33, wave: 'sine', peak: 0.2, secs: 0.5 }],
+};
 
 /** The handle of a clip that won't sound. */
 const SILENT: Playback = { started: Promise.resolve(false), ended: Promise.resolve(), cancel: () => undefined };
@@ -321,6 +351,45 @@ class WebGameAudio implements GameAudio {
 
   duration(clip: string): number | null {
     return this.decoded.get(clip)?.duration ?? null;
+  }
+
+  playUi(sound: UiSound, volume = 1): void {
+    const ctx = this.ctx;
+    const master = this.master;
+    // Before the first gesture, locked, muted or gone: nothing (and no context made for it).
+    if (this.disposed || this.prefs.muted || !ctx || !master || ctx.state !== 'running') return;
+    const v = Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 0;
+    if (v <= 0) return;
+    try {
+      const out = ctx.createGain();
+      out.gain.value = v;
+      out.connect(master);
+      const t0 = ctx.currentTime + 0.01;
+      const notes = UI_NOTES[sound];
+      let left = notes.length;
+      for (const n of notes) {
+        const at = t0 + n.at;
+        const osc = ctx.createOscillator();
+        osc.type = n.wave;
+        osc.frequency.setValueAtTime(n.hz, at);
+        const env = ctx.createGain();
+        // A struck note: a 10 ms attack, then a decay to silence (an exponential ramp can't reach 0).
+        env.gain.setValueAtTime(0, at);
+        env.gain.linearRampToValueAtTime(n.peak, at + 0.01);
+        env.gain.exponentialRampToValueAtTime(0.0001, at + n.secs);
+        osc.connect(env);
+        env.connect(out);
+        osc.onended = () => {
+          osc.disconnect();
+          env.disconnect();
+          if (--left === 0) out.disconnect();
+        };
+        osc.start(at);
+        osc.stop(at + n.secs + 0.02);
+      }
+    } catch {
+      // A closing context or a browser without some node: a chime is not worth an error.
+    }
   }
 
   playAt(clip: string, pos: { x: number; y: number; z: number }): Playback {
