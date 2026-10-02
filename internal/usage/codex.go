@@ -68,6 +68,9 @@ type codexUsage struct {
 	byModel map[string]codexTokens // sums to total
 	context int64                  // the last request's tokens
 	window  int64
+	// ctxOK: context is a measure. A compaction clears it until the next
+	// token_count, which counts the history that replaced the old.
+	ctxOK bool
 }
 
 func newCodexUsage() *codexUsage { return &codexUsage{byModel: map[string]codexTokens{}} }
@@ -75,10 +78,13 @@ func newCodexUsage() *codexUsage { return &codexUsage{byModel: map[string]codexT
 var (
 	tokenCountTag  = []byte(`"token_count"`)
 	turnContextTag = []byte(`"turn_context"`)
+	compactedTag   = []byte(`"compacted"`)
+	ctxCompactTag  = []byte(`"context_compacted"`)
 )
 
 func (c *codexUsage) line(_ bool, b []byte) {
-	if !bytes.Contains(b, tokenCountTag) && !bytes.Contains(b, turnContextTag) {
+	if !bytes.Contains(b, tokenCountTag) && !bytes.Contains(b, turnContextTag) && !bytes.Contains(b, compactedTag) &&
+		!bytes.Contains(b, ctxCompactTag) {
 		return
 	}
 	var l codexLine
@@ -86,6 +92,8 @@ func (c *codexUsage) line(_ bool, b []byte) {
 		return
 	}
 	switch {
+	case l.Type == "compacted" || l.Type == "event_msg" && l.Payload.Type == "context_compacted":
+		c.ctxOK = false
 	case l.Type == "turn_context":
 		if l.Payload.Model != "" {
 			c.model = l.Payload.Model
@@ -102,6 +110,7 @@ func (c *codexUsage) line(_ bool, b []byte) {
 		}
 		c.total = &cur
 		c.context, c.window = l.Payload.Info.Last.Total, l.Payload.Info.Window
+		c.ctxOK = c.context > 0
 	}
 }
 
@@ -120,12 +129,18 @@ func (c *codexUsage) usage(p *Pricing) proto.Usage {
 	case c.model != "" || c.total != nil:
 		u.Priced = proto.PricedKnown
 	}
-	if w := c.window; w > codexBaseline {
+	// The window is Codex's own (never assumed). The percentage leaves out
+	// Codex's baseline, as its TUI does; the count is the raw one.
+	if w := c.window; w > 0 {
 		u.ContextWindow = w
-		u.ContextPct = pct(float64(max(c.context-codexBaseline, 0)) / float64(w-codexBaseline))
-	} else if w > 0 {
-		u.ContextWindow = w
-		u.ContextPct = pct(float64(c.context) / float64(w))
+		if c.ctxOK {
+			u.ContextTokens = c.context
+			if w > codexBaseline {
+				u.ContextPct = pct(float64(max(c.context-codexBaseline, 0)) / float64(w-codexBaseline))
+			} else {
+				u.ContextPct = pct(float64(c.context) / float64(w))
+			}
+		}
 	}
 	return u
 }

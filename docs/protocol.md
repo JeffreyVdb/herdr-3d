@@ -1919,7 +1919,8 @@ Worker field **`usage`** (in snapshots and `worker.upsert`) and event **`worker.
 ```json
 "usage":{"tokens":37210,"input":1200,"output":9010,"cache_write":27000,"cache_read":812000,
          "cost_usd_est":0.4824,"priced":"known","model":"claude-opus-5-5",
-         "context_pct":4.2,"context_window":1000000,"updated_at":1790601900984}
+         "context_pct":4.2,"context_window":1000000,"context_tokens":42000,"context_window_estimated":true,
+         "updated_at":1790601900984}
 {"t":"worker.usage","seq":1200,"id":"a58752ea-6511-4318-be9a-59e41c09d7c5","session":"herdr-3d","usage":{…}}
 ```
 
@@ -1933,6 +1934,8 @@ Worker field **`usage`** (in snapshots and `worker.upsert`) and event **`worker.
 | `priced` | `known`; `unknown_model` when some tokens are of a model the table does not know (priced as the most expensive model of that harness, the game flags it) or Claude Code's own cost says so; `none` while no model was seen |
 | `model` | the model the transcript reports last (Claude: the main transcript's last message; Codex: the last `turn_context`) |
 | `context_pct`, `context_window` | how full the context window is (below), 0–100 with one decimal, and the window used; `null` and 0 when unknown |
+| `context_tokens` | #101: the main thread's context in use, in tokens: what the next turn starts with, the same definition for Claude and Codex (below). 0 when unknown (no usage read yet, or just after a `/compact`): never a measured 0. Not `tokens`, which is cumulative. Additive: an older bridge does not send it (the game then shows the share and the window only). |
+| `context_window_estimated` | #101: `true` when `context_window` was **assumed** (the model table's, or its family's), `false`/absent when it was seen (a `[1m]` on the model, context above 200K) or is the agent's own (Codex). Additive, as above. |
 | `updated_at` | when the bridge saw this usage change, unix ms (bridge clock) |
 
 - `worker.usage` is a world event (it has a `seq` and is replayed). It goes out when the usage changed (anything but
@@ -1969,9 +1972,21 @@ derived from the cwd) and its subagents' `<that directory>/<agent_session>/subag
   cache_read` (rates per million tokens); cache writes the 5m/1h split does not account for are priced as 1-hour
   writes (the dearer). On 36 real sessions using only models of the table this gives Claude Code's own `totalCostUSD`
   to the cent.
-- Context: the main transcript's last message's prompt (`input + cache_creation + cache_read`) over the model's window
-  (`context_window` in the table; a model id ending in `[1m]` has 1M; an unknown model's is unknown: `null`). An
-  estimate of what the next turn starts with, not Claude Code's own figure; subagents' contexts are not in it.
+- Context: the main transcript's last message's prompt (`input + cache_creation + cache_read`: `context_tokens`) over
+  the window. An estimate of what the next turn starts with, not Claude Code's own figure; subagents' contexts are not
+  in it. The transcript does not say how big the window is (`message.model` has no `[1m]` even in a 1M session), so it
+  is resolved, in this order: (1) a `[1m]` on the **main** transcript's model: 1M, not assumed; (2) the main context
+  seen above 200,000 at any time: 1M, not assumed (it proves the long window, and stays through a `/compact` for as
+  long as the main model does not change); (3) the model's `context_window` in the table: assumed; (4) the model's
+  **family**, by id prefix, for a model the table does not list: `claude-opus-`, `claude-sonnet-` and `claude-fable-`
+  1M, `claude-haiku-` 200K: assumed; (5) unknown (`null` share, 0 window). A subagent's `resolvedModel`, `settings.json`
+  and the environment are not consulted: they are not the main session's (a `/model` or a launch flag overrides them). A
+  table entry **with no window** (a `--pricing` override that leaves it out) is unknown at step 3, not the family's. The
+  family fallback is for the window only: the model's price stays unknown (`priced` `unknown_model`).
+- `/compact`: a `type: "system"`, `subtype: "compact_boundary"` line in the main transcript clears the context
+  (`context_tokens` 0, `context_pct` `null`: the summary's size is not known, and the line's `preTokens` is the old
+  context's) until the next main assistant message with usage; counts and cost carry on. `/clear` and `/new` start another
+  agent session: the worker's usage follows that session (above).
 
 **Codex** rollouts: `<--codex-sessions>/YYYY/MM/DD/rollout-*-<agent_session>.jsonl` whose first line's
 `session_meta.payload.id` is the session. Codex does not report its session to herdr, so a live Codex worker usually
@@ -1980,7 +1995,8 @@ backfill would: the newest whose `session_meta.payload.cwd` is the worker's `cwd
 its floor has (their own `agent_session`, or one picked this way first, in worker id order). It looks again every 30 s
 (a newer rollout there, e.g. after `/new`, takes over) and remembers each rollout's first line, so a lookup reads only
 new files. This is read-only and only for `usage`: herdr is not told, and the worker's `agent_session` stays empty.
-Two Codex agents started in the same folder can get each other's rollout.
+Two Codex agents started in the same folder can get each other's rollout (so the context meter of one can show the
+other's: a known limit, #101).
 
 - The last `event_msg` of `payload.type: "token_count"` with an `info` holds the totals: `info.total_token_usage` with
   `input_tokens` (cached input and cache writes included), `cached_input_tokens`, `cache_write_input_tokens`,
@@ -1990,7 +2006,11 @@ Two Codex agents started in the same folder can get each other's rollout.
 - Cost: per model, `(input − cached − cache writes) × input + cached × cache_read + cache writes × cache_write + output
   × output`. GPT-6's long-context rates (requests over 272K input tokens) never apply: Codex's window is 258,400.
 - Context: Codex's own formula, `(last_token_usage.total_tokens − 12000) / (model_context_window − 12000)` (12K is its
-  baseline), clamped to 0–100; `context_window` is `model_context_window`.
+  baseline), clamped to 0–100; `context_window` is `model_context_window` (never assumed: `context_window_estimated`
+  false) and `context_tokens` is the raw `last_token_usage.total_tokens`, so **`context_pct` is not
+  `context_tokens / context_window`** for Codex (50,000 of 258,400 is 15.4 %, not 19.4 %); the game's tooltip says so.
+  A token count with no request in it (0) is unknown, not 0 %. A compaction (a top-level `compacted` line, or an
+  `event_msg` `context_compacted`) clears the context until the next `token_count`.
 
 **Pricing table** (USD per million tokens, standard API rates, retrieved 2026-09-29; the built-in
 `internal/usage/pricing.json`):
@@ -2006,7 +2026,9 @@ Two Codex agents started in the same folder can get each other's rollout.
 | `gpt-6-luna` | codex | 0.10 | 0.50 | 0.125 | — | 0.01 | (rollout) |
 
 An unknown model is priced as the most expensive model of its harness (by output, then input price: Fable 5.1 for
-Claude, GPT-6 Astra for Codex) and flagged `unknown_model`. Older models seen in transcripts (`claude-opus-5`,
+Claude, GPT-6 Astra for Codex) and flagged `unknown_model`; a Claude one may still get a **window** from its family
+(above). `gpt-6.1-sol` is not in the table either (its window comes from the rollout; its price is not verified here, so
+it stays `unknown_model`). Older models seen in transcripts (`claude-opus-5`,
 `claude-fable-5`, `claude-opus-4-8`, `gpt-5.6-*`) are not in the table; add them with `--pricing`.
 
 `--pricing <file>` (`HERDR_WORLD_PRICING`) merges a file of the same format over the built-in table (a model of the same

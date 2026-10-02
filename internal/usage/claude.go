@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -36,9 +37,10 @@ func (a tokens) cost(p Price) float64 {
 }
 
 // claudeLine is what the bridge reads of a Claude Code transcript line:
-// assistant messages' usage and cost-state snapshots.
+// assistant messages' usage, cost-state snapshots and compact boundaries.
 type claudeLine struct {
 	Type      string `json:"type"`
+	Subtype   string `json:"subtype"`
 	Timestamp string `json:"timestamp"`
 	Message   *struct {
 		ID    string `json:"id"`
@@ -87,6 +89,14 @@ type claudeUsage struct {
 	model   string    // the main transcript's last model
 	any     string    // the last model anywhere
 	context int64     // the main transcript's last prompt (input, cache writes and reads)
+	// ctxOK: context is a measure. A /compact boundary clears it (the summary's
+	// size is not known, and preTokens is the old context's) until the next
+	// main assistant message.
+	ctxOK bool
+	// long: the main model's context was seen above 200k, which only the long
+	// window allows. Kept across a compact; dropped when the model changes.
+	long    bool
+	longFor string // the model (without [1m]) it was seen on
 }
 
 func newClaudeUsage() *claudeUsage {
@@ -94,12 +104,13 @@ func newClaudeUsage() *claudeUsage {
 }
 
 var (
-	assistantTag = []byte(`"assistant"`)
-	costStateTag = []byte(`"cost-state"`)
+	assistantTag       = []byte(`"assistant"`)
+	costStateTag       = []byte(`"cost-state"`)
+	compactBoundaryTag = []byte(`"compact_boundary"`)
 )
 
 func (c *claudeUsage) line(main bool, b []byte) {
-	if !bytes.Contains(b, assistantTag) && !bytes.Contains(b, costStateTag) {
+	if !bytes.Contains(b, assistantTag) && !bytes.Contains(b, costStateTag) && !bytes.Contains(b, compactBoundaryTag) {
 		return // most lines: skip without decoding
 	}
 	var l claudeLine
@@ -107,6 +118,10 @@ func (c *claudeUsage) line(main bool, b []byte) {
 		return
 	}
 	switch l.Type {
+	case "system":
+		if main && l.Subtype == "compact_boundary" {
+			c.ctxOK = false
+		}
 	case "cost-state":
 		if !main || l.TotalCostUSD == nil {
 			return
@@ -134,7 +149,13 @@ func (c *claudeUsage) line(main bool, b []byte) {
 			if ts.After(c.lastTS) {
 				c.lastTS = ts
 			}
-			c.model, c.context = m.Model, u.Input+u.CacheCreation+u.CacheRead
+			c.model, c.context, c.ctxOK = m.Model, u.Input+u.CacheCreation+u.CacheRead, true
+			if base := strings.TrimSuffix(m.Model, oneM); base != c.longFor {
+				c.long = false
+			}
+			if c.context > claudeBaseWindow {
+				c.long, c.longFor = true, strings.TrimSuffix(m.Model, oneM)
+			}
 		}
 		c.any = m.Model
 		post := c.snap != nil && ts.After(c.snap.at)
@@ -190,9 +211,12 @@ func (c *claudeUsage) usage(p *Pricing) proto.Usage {
 		u.Priced = proto.PricedKnown
 	}
 	if c.model != "" {
-		if pr, _ := p.Lookup(Claude, c.model); pr.ContextWindow > 0 {
-			u.ContextWindow = pr.ContextWindow
-			u.ContextPct = pct(float64(c.context) / float64(pr.ContextWindow))
+		u.ContextWindow, u.ContextWindowEstimated = p.ClaudeWindow(c.model, c.long)
+		if c.ctxOK {
+			u.ContextTokens = c.context
+			if u.ContextWindow > 0 {
+				u.ContextPct = pct(float64(c.context) / float64(u.ContextWindow))
+			}
 		}
 	}
 	return u

@@ -903,6 +903,7 @@ export class Laptops {
         this.transcript.activity(v.worker.status, v.worker.status_since ?? null); // #58
         this.syncAsk(askOf(v.worker)); // #57
         this.transcript.followedUp(followupOf(v.worker)); // #90
+        this.transcript.usageSeen(v.worker.usage ?? null); // #101: its context meter (the worker's usage is replaced, not edited, when it changes)
       }
     }
     const meshes = this.meshes;

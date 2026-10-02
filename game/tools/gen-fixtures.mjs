@@ -395,9 +395,14 @@ function demoM5() {
       context_window: win,
       updated_at: T0 - Math.floor(r() * 600_000),
     };
+    // #101: the count the share came from (Codex's leaves out its 12k baseline), and Claude's window is an assumption.
+    // After the literal: nothing here may draw from the random stream.
+    const pct = x.usage.context_pct;
+    x.usage.context_tokens = x.harness === 'codex' ? Math.round(12_000 + (pct / 100) * (win - 12_000)) : Math.round((pct / 100) * win);
+    if (x.harness !== 'codex') x.usage.context_window_estimated = true;
   }
   // Fixed numbers (not from the generator's random stream, so the others stay put).
-  byName('Waffle').usage = { tokens: 21_400, input: 900, output: 4100, cache_write: 14_000, cache_read: 210_000, cost_usd_est: 0.2511, priced: 'known', model: 'claude-opus-5-5', context_pct: 7.3, context_window: 200_000, updated_at: T0 };
+  byName('Waffle').usage = { tokens: 21_400, input: 900, output: 4100, cache_write: 14_000, cache_read: 210_000, cost_usd_est: 0.2511, priced: 'known', model: 'claude-opus-5-5', context_pct: 7.3, context_window: 200_000, context_tokens: 14_600, context_window_estimated: true, updated_at: T0 };
   return [snap];
 }
 

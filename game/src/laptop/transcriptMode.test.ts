@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
-import type { Ask, Followup, Question, TranscriptItem } from '../net/protocol';
+import type { Ask, Followup, Question, TranscriptItem, Usage } from '../net/protocol';
 import { ImageFeed } from './imageFeed';
 import { hasTranscript, subagentItems, TranscriptMode, type MountTranscript, type SeatMode, type TranscriptRenderHost } from './transcriptMode';
 import { TranscriptWatches, watchAck } from './transcriptWatches';
@@ -43,6 +43,9 @@ class FakeView {
   }
   setFollowup(f: Followup | null): void {
     this.calls.push(`followup ${f?.turn_id ?? 'null'}`);
+  }
+  setUsage(u: Usage | null): void {
+    this.calls.push(`usage ${u?.context_pct ?? 'null'}`);
   }
   cues: Array<ActivityCue | null> = [];
   setActivity(c: ActivityCue | null): void {
@@ -191,6 +194,41 @@ describe('TranscriptMode', () => {
     h.tx.blocked(null);
     h.tx.blocked(null);
     expect(h.views[0]?.calls.filter((c) => c.startsWith('blocked'))).toEqual(['blocked h1', 'blocked h1', 'blocked null']);
+  });
+
+  it('#101: the usage reaches the view once per change; one that came before the view loaded is on the host it mounts with', async () => {
+    const u = (pct: number | null, extra: Partial<Usage> = {}): Usage => ({
+      tokens: 1, cost_usd_est: 0, priced: 'known', model: 'claude-opus-5-5', context_pct: pct, context_window: 1_000_000, context_tokens: 10_000, ...extra,
+    });
+    const h = harness();
+    h.tx.usageSeen(u(1)); // nobody sits: nothing to keep
+    h.tx.sit('a', 'Ada');
+    h.tx.usageSeen(u(4.2)); // the view is still loading
+    h.tx.usageSeen(u(4.2));
+    await flush();
+    const view = h.views[0] as FakeView;
+    expect(view.host.usage).toEqual(u(4.2));
+    expect(view.calls.filter((c) => c.startsWith('usage'))).toEqual([]);
+    // The same usage again (a frame): nothing. The store replaces the worker's usage on a change: a new object, same values: nothing.
+    h.tx.usageSeen(u(4.2));
+    h.tx.usageSeen({ ...u(4.2) });
+    expect(view.calls.filter((c) => c.startsWith('usage'))).toEqual([]);
+    // A new count, or the window's flag, alone is a change; so is a compact dropping the share (null).
+    h.tx.usageSeen(u(4.2, { context_tokens: 10_400 }));
+    h.tx.usageSeen(u(4.2, { context_tokens: 10_400, context_window_estimated: true }));
+    h.tx.usageSeen(u(null, { context_tokens: 0 }));
+    h.tx.usageSeen(null);
+    expect(view.calls.filter((c) => c.startsWith('usage'))).toEqual(['usage 4.2', 'usage 4.2', 'usage null', 'usage null']);
+    // It survives the terminal and the conversation toggling (the view is kept).
+    h.tx.usageSeen(u(30));
+    h.tx.toggle();
+    h.tx.toggle();
+    expect(h.views).toHaveLength(1);
+    expect(view.calls.at(-1)).toBe('usage 30');
+    // Another seat starts without it.
+    h.tx.sit('b', 'Bo');
+    await flush();
+    expect((h.views[1] as FakeView).host.usage).toBeNull();
   });
 
   it('wires prompts, answers, the switch back and subagents to the bridge', async () => {

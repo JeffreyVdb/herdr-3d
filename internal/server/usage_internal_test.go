@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/usage"
 )
 
@@ -241,5 +242,45 @@ func TestUsageGoesWithItsSession(t *testing.T) {
 	ws[0].session = newID
 	if ups := tr.poll(ws, at.Add(time.Minute)); len(ups) != 1 || ups[0].usage == nil || ups[0].usage.Input != 7 {
 		t.Fatalf("switched past the throttle = %+v", ups)
+	}
+}
+
+// #101: a change of the context count or of the window's estimated flag goes
+// out even when everything else, the rounded percentage included, is the
+// same: the meter shows both.
+func TestUsageThrottleContextOnlyChange(t *testing.T) {
+	pct := func(v float64) *float64 { return &v }
+	base := proto.Usage{Tokens: 100, Priced: proto.PricedKnown, ContextPct: pct(4.2), ContextWindow: 1_000_000, ContextTokens: 42_000}
+	th := &usageThrottle{every: 5 * time.Second, shown: map[string]proto.Usage{}, at: map[string]time.Time{}}
+	t0 := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	if _, ok := th.offer("w", base, t0); !ok {
+		t.Fatal("first not offered")
+	}
+	same := base
+	same.ContextPct = pct(4.2) // another pointer, the same value
+	if _, ok := th.offer("w", same, t0.Add(time.Minute)); ok {
+		t.Fatal("an unchanged usage offered")
+	}
+	count := base
+	count.ContextTokens = 42_400 // 4.24 %: still 4.2
+	if u, ok := th.offer("w", count, t0.Add(2*time.Minute)); !ok || u.ContextTokens != 42_400 {
+		t.Fatalf("count-only change: %+v %v", u, ok)
+	}
+	est := count
+	est.ContextWindowEstimated = true
+	if u, ok := th.offer("w", est, t0.Add(3*time.Minute)); !ok || !u.ContextWindowEstimated {
+		t.Fatalf("flag-only change: %+v %v", u, ok)
+	}
+	// Still throttled: a change within 5 s of the last goes later.
+	next := est
+	next.ContextTokens = 42_500
+	if _, ok := th.offer("w", next, t0.Add(3*time.Minute+time.Second)); ok {
+		t.Fatal("offered within the throttle")
+	}
+	// A compact drops the count and the percentage: that is a change too.
+	cleared := est
+	cleared.ContextTokens, cleared.ContextPct = 0, nil
+	if u, ok := th.offer("w", cleared, t0.Add(4*time.Minute)); !ok || u.ContextPct != nil || u.ContextTokens != 0 {
+		t.Fatalf("cleared: %+v %v", u, ok)
 	}
 }

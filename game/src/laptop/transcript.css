@@ -69,6 +69,58 @@
   color: var(--tx-text-3);
   font-variant-numeric: tabular-nums;
 }
+/* #101: the context meter. A slim fill and the number in words; the colour steps (warm, hot) are an extra, the number is
+   always there. It does not zoom (a header control), wraps whole (never into the preset and zoom group) and keeps its
+   share on a narrow screen. Its colours are the preset's: neutral, then the sun, then the red, each 3:1 or better
+   on the track in Quiet, Terminal and Paper. */
+.tx-ctx {
+  --ctx: var(--tx-text-2);
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--tx-text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tx-ctx[hidden] {
+  display: none;
+}
+.tx-ctx[data-level='warm'] {
+  --ctx: var(--tx-sun-text);
+}
+.tx-ctx[data-level='hot'] {
+  --ctx: var(--tx-red);
+}
+.tx-ctx-track {
+  /* Short, so the meter fits the strip's first line beside the controls (the preset and zoom wrap when it does not);
+     longer where the screen is wide. */
+  flex: 0 1 40px;
+  min-width: 16px;
+  width: 40px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--tx-bg-3);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tx-text-3) 40%, transparent);
+}
+.tx-ctx-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--ctx);
+}
+.tx-ctx-text {
+  flex: none;
+}
+.tx-ctx-pct {
+  color: var(--ctx);
+  font-weight: 700;
+}
+.tx-ctx[data-level='ok'] .tx-ctx-pct {
+  color: var(--tx-text);
+}
 .tx-spacer {
   flex: 1;
 }
@@ -1648,7 +1700,17 @@
     display: none;
   }
 }
+@container tx (min-width: 1040px) {
+  .tx-ctx-track {
+    flex-basis: 72px;
+    width: 72px;
+  }
+}
 @container tx (max-width: 520px) {
+  /* #101: the meter keeps its share and the count, and drops the window. */
+  .tx-ctx-win {
+    display: none;
+  }
   /* Hide tools keeps its box (its name stays its label, for screen readers), the chip its dot. */
   .tx-check > span:not(.tx-check-n) {
     position: absolute;

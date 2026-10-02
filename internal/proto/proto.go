@@ -793,6 +793,13 @@ type Usage struct {
 	// unknown).
 	ContextPct    *float64 `json:"context_pct"`
 	ContextWindow int64    `json:"context_window"`
+	// ContextTokens is the main thread's latest context in use, in tokens
+	// (what the next turn starts with; the same definition for Claude and
+	// Codex; 0: unknown, e.g. just after a /compact). ContextWindowEstimated
+	// says ContextWindow was assumed (the model table or its family), not
+	// observed or reported. Both are additive: absent from older bridges.
+	ContextTokens          int64 `json:"context_tokens"`
+	ContextWindowEstimated bool  `json:"context_window_estimated,omitempty"`
 	// UpdatedAt is when the bridge saw it change, unix ms.
 	UpdatedAt int64 `json:"updated_at"`
 }
