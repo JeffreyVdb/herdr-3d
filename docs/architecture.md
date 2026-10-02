@@ -18,6 +18,7 @@ and `docs/decisions.md`. Where a verifier and a follow-up disagree, the one with
 | Whiteboard (north wall of every floor) | an Excalidraw board shared by the floor, agents pin on it (M14) | bridge files, `~/.local/share/herdr-3d/whiteboards/<floor>/` (versioned scenes, images by sha256, the current render) |
 | Plan limits meter (top-right widget) | the Claude and Codex plan windows (5 h, week, per model) | the `claude` / `codex` CLIs, run as probes by the bridge (`internal/limits`), only while a client is connected |
 | Inbox chip (under the limits meter, #100) | the workers that need you, and the employees that are done, across every floor; a click sits you at the first one's laptop | derived in the game from the world (`world/inbox.ts`); nothing on the bridge |
+| Inbox pings (#100) | a desktop notification and the chime when someone starts needing you or an employee finishes, with the game open (in front: the chip pulses, a toast) | the game, on live world changes (`world/inboxPings.ts`, `ui/desktopNotify.ts`: the page's `Notification`, no service worker or push server); nothing on the bridge |
 
 Worker states → animation:
 

@@ -659,7 +659,8 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   so the floor stays in view and walkable; its diff is drawn a window of lines at a time), the look-at bar's usage and
   Approve / Deny (`promptBar.ts`), styled in `m5.css`, and the seat bar (`seat.ts`, `seat.css`); #100: the inbox chip under the plan-limits plate
   (`inbox.ts`, `inbox.css`; `App.goInbox` teleports to the first one and sits at its laptop) and the one rule of the corner
-  both follow (`corner.ts`: what makes them step aside). Hidden, named hooks
+  both follow (`corner.ts`: what makes them step aside); its pings, the desktop notification of a new entry with the game in the
+  background (`desktopNotify.ts`; when one pings, `world/inboxPings.ts`: settle delay, snapshot silence, burst cap). Hidden, named hooks
   wait for later tickets:
   `renderPlanLimits(harness)` (#12), `renderHandoff` (M9) and `renderServices` (#14), each returning null for now.
   `src/input` — first-person walking.
