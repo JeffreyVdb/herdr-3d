@@ -100,6 +100,7 @@ func (h *Hub) trackAI(ctx context.Context) {
 		_ = h.doWait(ctx, func() {
 			defer h.publishActivityState(ctx) // #98: and the classifier's is the activity's
 			defer h.publishFollowups()        // #90: a role's state is the feature's
+			defer h.publishPackup()           // #110: and pack up's
 			v := h.opts.AI.View()
 			b, err := json.Marshal(v)
 			if err != nil || string(b) == string(last) {
