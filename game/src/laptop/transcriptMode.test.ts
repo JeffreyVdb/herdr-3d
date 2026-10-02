@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { Ask, Followup, Question, TranscriptItem } from '../net/protocol';
 import { ImageFeed } from './imageFeed';
-import { subagentItems, TranscriptMode, type MountTranscript, type SeatMode, type TranscriptRenderHost } from './transcriptMode';
+import { hasTranscript, subagentItems, TranscriptMode, type MountTranscript, type SeatMode, type TranscriptRenderHost } from './transcriptMode';
 import { TranscriptWatches, watchAck } from './transcriptWatches';
 import { activityCue, promptKey, reconcile, SENT_TIMEOUT_MS, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 
@@ -129,18 +129,15 @@ function harness(o: { storage?: unknown; renderer?: () => Promise<MountTranscrip
 const ack = (items: TranscriptItem[]) => watchAck({ harness: 'claude', session: 's', cursor: 'c:1', items });
 
 describe('TranscriptMode', () => {
-  it('keeps the transcript from the moment you sit; the first switch mounts the view with it', async () => {
+  it('opens the conversation as you sit (#98); the view mounts with what the watch sent meanwhile', async () => {
     const h = harness();
     h.tx.sit('a', 'Ada');
-    expect(h.tx.mode).toBe('terminal');
-    expect(h.layer).toHaveLength(0);
+    expect(h.tx.mode).toBe('transcript');
+    expect(h.modes).toEqual(['transcript']);
+    expect(h.layer).toHaveLength(1);
     h.tx.reset('a', ack([item('x1'), item('x2', 2)]));
     h.tx.push('a', [item('x3', 3)], [item('x1', 1, { kind: 'tool' })]);
     h.tx.push('b', [item('other')], []); // not the worker you sit at
-    h.tx.toggle();
-    expect(h.tx.mode).toBe('transcript');
-    expect(h.modes).toEqual(['terminal', 'transcript']);
-    expect(h.layer).toHaveLength(1);
     await flush();
     expect(h.views).toHaveLength(1);
     expect(h.views[0]?.calls).toEqual(['set x1,x2,x3']);
@@ -162,7 +159,6 @@ describe('TranscriptMode', () => {
   it('back to the terminal hides the overlay and keeps the view; switching again shows it at once', async () => {
     const h = harness();
     h.tx.sit('a', 'Ada');
-    h.tx.toggle();
     await flush();
     h.tx.toggle();
     expect(h.tx.shown).toBe(false);
@@ -177,7 +173,6 @@ describe('TranscriptMode', () => {
     const h = harness();
     h.tx.sit('a', 'Ada');
     h.tx.reset('a', ack([item('old')]));
-    h.tx.toggle();
     await flush();
     h.tx.reset('a', ack([item('new1'), item('new2', 2)]));
     expect(h.views[0]?.calls).toEqual(['set old', 'set new1,new2']);
@@ -190,7 +185,6 @@ describe('TranscriptMode', () => {
     const q: Question = { kind: 'permission', text: 'Allow?', excerpt: ['x'], choices: [{ n: 1, label: 'Yes' }], hash: 'h1' };
     h.tx.sit('a', 'Ada');
     h.tx.blocked(q);
-    h.tx.toggle();
     await flush();
     h.tx.blocked({ ...q });
     h.tx.blocked({ ...q, selected: 1 });
@@ -202,7 +196,6 @@ describe('TranscriptMode', () => {
   it('wires prompts, answers, the switch back and subagents to the bridge', async () => {
     const h = harness();
     h.tx.sit('a', 'Ada');
-    h.tx.toggle();
     await flush();
     const host = (h.views[0] as FakeView).host;
     const sentOk = host.onPromptSubmit('fix the test');
@@ -239,7 +232,6 @@ describe('TranscriptMode', () => {
     expect(subagentItems(null)).toEqual([]);
     const h = harness();
     h.tx.sit('a', 'Ada');
-    h.tx.toggle();
     await flush();
     const sub = (h.views[0] as FakeView).host.loadSubagent('a7');
     h.sent[0]?.resolve({ ok: false, code: 'not_found', message: 'no transcript for subagent "a7"' });
@@ -257,7 +249,6 @@ describe('TranscriptMode', () => {
     URL.createObjectURL = () => 'blob:sub';
     const h = harness({ feed });
     h.tx.sit('a', 'Ada');
-    h.tx.toggle();
     await flush();
     const image = { source: 'path', origin: 'agent', kind: 'viewed', hash: 'e'.repeat(64), mime: 'image/png', path: '/w/shot.png' } as const;
     const sub = (h.views[0] as FakeView).host.loadSubagent('a7');
@@ -269,22 +260,31 @@ describe('TranscriptMode', () => {
     expect(asked.at(-1)).toMatchObject({ id: 'a', hash: image.hash, size: 'thumb', agent: 'a7' });
   });
 
-  it('remembers the mode per worker; blocked storage breaks nothing', () => {
+  it('remembers who you left in the terminal; the conversation for everyone else; blocked storage breaks nothing', () => {
     const h = harness();
-    h.tx.sit('a', 'Ada');
-    h.tx.toggle();
-    h.tx.sit('b', 'Bo');
-    expect(h.tx.mode).toBe('terminal');
+    // Never seen: the conversation (#98).
     h.tx.sit('a', 'Ada');
     expect(h.tx.mode).toBe('transcript');
-    // Not while the bridge has no transcripts.
-    h.tx.sit('a', 'Ada', false);
+    h.tx.toggle(); // left in the terminal
+    h.tx.sit('b', 'Bo');
+    expect(h.tx.mode).toBe('transcript');
+    h.tx.sit('a', 'Ada');
     expect(h.tx.mode).toBe('terminal');
+    expect(JSON.parse(h.storage.getItem('h3d.seat.terminal') ?? '[]')).toEqual(['a']);
+    // No transcript to read (the bridge has none, the harness writes none): the terminal, and nothing remembered for it.
+    h.tx.sit('b', 'Bo', false);
+    expect(h.tx.mode).toBe('terminal');
+    expect(h.modes.at(-1)).toBe('terminal');
+    h.tx.sit('b', 'Bo');
+    expect(h.tx.mode).toBe('transcript');
+    // Back to the conversation: remembered too.
     h.tx.sit('a', 'Ada');
     h.tx.toggle();
     h.tx.sit('a', 'Ada');
-    expect(h.tx.mode).toBe('terminal');
+    expect(h.tx.mode).toBe('transcript');
+    expect(h.storage.getItem('h3d.seat.terminal')).toBeNull();
     // A new page (a new controller) reads the same storage.
+    h.tx.toggle();
     const again = harness({ storage: h.storage });
     again.tx.sit('a', 'Ada');
     expect(again.tx.mode).toBe('terminal');
@@ -295,37 +295,57 @@ describe('TranscriptMode', () => {
 
     const b = harness({ storage: throwing });
     b.tx.sit('a', 'Ada');
-    b.tx.toggle();
     expect(b.tx.mode).toBe('transcript');
-    b.tx.sit('a', 'Ada');
+    b.tx.toggle();
     expect(b.tx.mode).toBe('terminal');
+    b.tx.sit('a', 'Ada');
+    expect(b.tx.mode).toBe('transcript');
+  });
+
+  it('only Claude Code and Codex write a transcript to sit down to (#98)', () => {
+    expect(['claude', 'codex', 'pi', '', undefined].map(hasTranscript)).toEqual([true, true, false, false, false]);
+  });
+
+  it('ignores the list of before #98 (who was read in transcript mode), and removes it', () => {
+    const storage = new MemStorage();
+    storage.setItem('h3d.seat.transcript', JSON.stringify(['a', 'b']));
+    storage.setItem('h3d.seat.images', JSON.stringify(['b']));
+    const h = harness({ storage });
+    h.tx.sit('c', 'Cy');
+    expect(h.tx.mode).toBe('transcript');
+    expect(storage.getItem('h3d.seat.transcript')).toBeNull();
+    // Whoever was not in it was in the terminal then: the conversation now all the same.
+    h.tx.sit('a', 'Ada');
+    expect(h.tx.mode).toBe('transcript');
+    expect(storage.getItem('h3d.seat.terminal')).toBeNull();
   });
 
   it('a build without the render module falls back to the terminal and says so', async () => {
     const h = harness({ renderer: () => Promise.resolve(null) });
     h.tx.sit('a', 'Ada');
-    h.tx.toggle();
+    expect(h.tx.mode).toBe('transcript');
     await flush();
     expect(h.tx.mode).toBe('terminal');
     expect(h.status.at(-1)?.[0]).toBe('error');
+    // Not a choice of yours: the next sit tries the conversation again.
+    expect(h.storage.getItem('h3d.seat.terminal')).toBeNull();
   });
 
   it('the watch ending for good (worker_removed, asleep) goes back to the terminal', async () => {
     const h = harness();
     h.tx.sit('a', 'Ada');
-    h.tx.toggle();
     await flush();
     h.tx.stop('b');
     expect(h.tx.mode).toBe('transcript');
     h.tx.stop('a');
     expect(h.tx.mode).toBe('terminal');
+    expect(h.storage.getItem('h3d.seat.terminal')).toBeNull();
   });
 
   it('standing up while the render module loads mounts nothing', async () => {
     let done: (m: MountTranscript) => void = () => {};
     const h = harness({ renderer: () => new Promise((r) => (done = r)) });
     h.tx.sit('a', 'Ada');
-    h.tx.toggle();
     h.tx.stand();
     done(h.mount);
     await flush();
@@ -342,7 +362,6 @@ describe('TranscriptMode', () => {
   it('places the overlay over the monitor, hidden while it is off the view', () => {
     const h = harness();
     h.tx.sit('a', 'Ada');
-    h.tx.toggle();
     h.tx.place({ left: 10, top: 80, width: 900, height: 560 });
     const box = h.layer[0] as FakeBox;
     expect(box.style).toMatchObject({ left: '10px', top: '80px', width: '900px', height: '560px', visibility: '' });
@@ -449,7 +468,6 @@ describe('the live cue', () => {
   async function reading(h: ReturnType<typeof harness>, items: TranscriptItem[] = [item('a1', 1), item('a2', 2)]): Promise<FakeView> {
     h.tx.sit('a', 'Ada');
     h.tx.reset('a', ack(items));
-    h.tx.toggle();
     await flush();
     h.tx.place({ left: 0, top: 0, width: 800, height: 500 });
     return h.views[0] as FakeView;
@@ -556,7 +574,6 @@ describe('pending prompts', () => {
   async function reading(h: ReturnType<typeof harness>) {
     h.tx.sit('a', 'Ada');
     h.tx.reset('a', ack([item('a1', 1), item('a2', 2)]));
-    h.tx.toggle();
     await flush();
     h.tx.place({ left: 0, top: 0, width: 800, height: 500 });
     const v = h.views[0] as FakeView;
@@ -687,8 +704,6 @@ describe('pending prompts', () => {
     tw.sync(new Set(['a']));
     wsent[0]?.resolve({ ok: true, data: { harness: 'claude', session: '', cursor: 'c:1', pending: true, items: [] } });
     await flush();
-    h.tx.toggle();
-    await flush();
     const host = (h.views[0] as FakeView).host;
     h.tx.activity('working', 900);
     await send(h, host, 'go', true);
@@ -715,8 +730,6 @@ describe('pending prompts', () => {
     h.tx.sit('a', 'Ada');
     tw.sync(new Set(['a']));
     wsent[0]?.resolve({ ok: true, data: { harness: 'claude', session: '', cursor: 'c:1', pending: true, items: [] } });
-    await flush();
-    h.tx.toggle();
     await flush();
     const host = (h.views[0] as FakeView).host;
     h.tx.activity('working', 900);

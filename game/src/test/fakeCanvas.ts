@@ -3,7 +3,7 @@
  * `node`), so render classes that draw canvas atlases (cards, the desks'
  * status bars and stickers, signs) can be built. Its 2D context does nothing:
  * every method is a no-op, `measureText` is 10 px a character,
- * `getImageData` is black.
+ * `getImageData` is black, `createImageData` transparent.
  */
 
 type Ctx = Record<string | symbol, unknown>;
@@ -16,6 +16,7 @@ function context(canvas: { width: number; height: number }): Ctx {
       if (k === 'canvas') return canvas;
       if (k === 'measureText') return (s: string) => ({ width: s.length * 10, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2 });
       if (k === 'getImageData') return (_x: number, _y: number, w: number, h: number) => ({ width: w, height: h, data: new Uint8ClampedArray(Math.max(0, w * h * 4)) });
+      if (k === 'createImageData') return (w: number, h: number) => ({ width: w, height: h, data: new Uint8ClampedArray(Math.max(0, w * h * 4)) });
       if (k === 'createLinearGradient' || k === 'createRadialGradient' || k === 'createPattern') return () => ({ addColorStop() {} });
       return () => undefined;
     },

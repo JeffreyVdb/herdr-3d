@@ -10,7 +10,7 @@ import { App, type LookAt, type Pose } from './app';
 import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
 import { runBench, type BenchOptions, type BenchResult } from './bench';
 import type { ScreenMeshInfo } from './laptop';
-import type { BoardMessage, CommandName, WorldEvent, FollowupsState } from './net/protocol';
+import type { ActivityState, BoardMessage, CommandName, WorldEvent, FollowupsState } from './net/protocol';
 import type { ArrivalInfo } from './render/arrivals';
 import type { CrewInfo } from './render/office';
 import type { HireSummary } from './ui/hire';
@@ -130,6 +130,12 @@ export interface H3DDebug {
   transcript(): ReturnType<import('./laptop').Laptops['transcriptState']> | null;
   /** M16 phase 2: the prints on the desks near you (per desk: worker, prints with tray/blank/loaded/slot x,z), the textures' ledger, the transcript watches and lightboxes opened from prints. */
   prints(): ReturnType<import('./laptop').Laptops['printsState']> | null;
+  /** #98: per worker of the floor with an interior, what its desk monitor shows (card, rest, image, glance) and says; the cards' ledger. */
+  monitors(): ReturnType<import('./laptop').Laptops['monitorsState']> | null;
+  /** #98: where a worker's desk monitor's terminal area is on the viewport (CSS px), null when not on screen. */
+  monitorRect(workerId: string): { left: number; top: number; width: number; height: number } | null;
+  /** #98: the fixture simulator's `sim.activity` (a worker's activity, its status, an image it looks at). */
+  simActivity(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M16 phase 2: a print's world position (a debug camera aims at it). */
   printWorld(desk: number, index: number): { x: number; y: number; z: number } | null;
   /** M16 phase 2: clicks the print under a viewport point (NDC, -1..1) as the pointer would; true when one opened a lightbox. */
@@ -185,7 +191,7 @@ export interface H3DDebug {
   /** M4: the desks of the floor with an interior: who sits there, whether its "+" shows, what a walk holds it as. */
   desks(): Array<{ desk: number; worker: string | null; plus: boolean; away: 'busy' | 'empty' | null }>;
   /** M6b: what a desk of the floor with an interior draws: its parts (instances drawn), the docked laptop's sticker, the dock side; `dropping`: a hire dropping in. */
-  deskArt(desk: number): { parts: Record<string, number>; sticker: { logo: string; rim: number } | null; side: 1 | -1; dropping: boolean } | null;
+  deskArt(desk: number): { parts: Record<string, number>; sticker: { logo: string; rim: number } | null; side: 1 | -1; dropping: boolean; band?: string | null } | null;
   /** M6b: where a worker's live screen is drawn (world centre and size) against its desk monitor's terminal area; null when not live. */
   screenMesh(workerId: string): ScreenMeshInfo | null;
   /** M5: N, as the key does: who it went to (null: nobody needs you). */
@@ -207,6 +213,10 @@ export interface H3DDebug {
   simTurn(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #90: the follow-up questions feature's state as the bridge last sent it (null: none). */
   followups(): FollowupsState | null;
+  /** #98: the "Classify unknown commands" settings as the bridge last sent them (null: none). */
+  activitySettings(): ActivityState | null;
+  /** #98: the fixture simulator's `sim.activity_settings {env?, calls_today?, cache_size?}` (`sim=1`, tools/fixture-activity-settings.ts). */
+  simActivitySettings(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M7: the open Issues / Pull requests overlay (and its item modal), null when none is open. */
   board(): BoardSummary | null;
   /** M7: what the boards on the wall show: notes (with their atlas cell and pose), flights, gong rings, buffer writes. */
@@ -343,6 +353,14 @@ const h3d: H3DDebug = {
   themeLoaded: () => app?.themes.loading ?? Promise.resolve(),
   transcript: () => app?.laptops.transcriptState() ?? null,
   prints: () => app?.laptops.printsState() ?? null,
+  monitors: () => app?.laptops.monitorsState() ?? null,
+  monitorRect: (id) => app?.laptops.monitorRect(id) ?? null,
+  simActivity: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    // `sim.activity` is the fixture simulator's, not a bridge command.
+    const r = await app.client.request('sim.activity' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
   printWorld: (desk, index) => app?.laptops.printWorld(desk, index) ?? null,
   clickPrint: (x, y) => app?.clickPrintAt(x, y) ?? false,
   simTranscript: async (args) => {
@@ -433,6 +451,12 @@ const h3d: H3DDebug = {
   boards: () => app?.boardsInfo() ?? null,
   limits: () => app?.limitsWidget.summary() ?? null,
   followups: () => app?.store.followups.state ?? null,
+  activitySettings: () => app?.store.activitySettings.state ?? null,
+  simActivitySettings: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request('sim.activity_settings' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
   injectBoard: (m) => app?.injectBoard(m),
   boardMessage: (w) => {
     const s = app?.hereSession();

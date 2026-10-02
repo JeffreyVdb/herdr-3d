@@ -1,8 +1,14 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, leftInTerminal, openGame, shot, watchErrors } from './game';
 
 // M5 screen, on demo-m4 with the simulator (sim=1): herdr-3d is the top floor of Work (20 desks, two pods of
 // eight and four in the south pod). terminal.watch replays recorded herdr observe frames; worker.keys echoes.
+
+// #98: these are the terminal's live screens, so every monitor shows its terminal (Settings → Display → Desk monitors:
+// Terminal) rather than the activity cards idle and done agents rest on by default (e2e/m98-monitor.spec.ts).
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('h3d.monitors', 'terminal'));
+});
 
 type Layout = NonNullable<ReturnType<Window['__h3d']['layout']>>;
 type Screen = ReturnType<Window['__h3d']['screens']>[number];
@@ -224,6 +230,7 @@ test('paste into an agent’s laptop sends worker.prompt; a failed key shows in 
   const clean = watchErrors(page);
   const { L, ids } = await enter(page, '', '&simfail=input_failed');
   const nibble = ids.Nibble as string; // desk 0, claude
+  await leftInTerminal(page, nibble); // #98: the terminal, not the conversation
   await faceWorker(page, L, 0);
   expect(await page.evaluate(() => window.__h3d.sitAt(window.__h3d.lookAt()?.id ?? ''))).toBe(true);
   expect(await page.evaluate(() => window.__h3d.seated())).toBe(nibble);
@@ -251,6 +258,7 @@ test('standing up leaves the laptop showing its last frame, not a blank one (scr
   const clean = watchErrors(page);
   const { L, ids } = await enter(page, '&screens=0');
   const bean = ids.Bean as string;
+  await leftInTerminal(page, bean); // #98: the terminal, not the conversation
   const desk = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === FLOOR)?.workers.find((w) => w.id === bean)?.desk as number;
   await faceWorker(page, L, desk);
   await page.keyboard.press('KeyE');
@@ -273,6 +281,7 @@ test('standing up while a paste is on its way still sends what you typed after i
   if (!L) throw new Error('no layout');
   const zippy = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === FLOOR)?.workers.find((w) => w.name === 'Zippy');
   if (!zippy) throw new Error('no Zippy');
+  await leftInTerminal(page, zippy.id); // #98: the terminal, not the conversation
   await faceWorker(page, L, zippy.desk);
   await page.keyboard.press('KeyE');
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(zippy.id);
@@ -302,6 +311,7 @@ test('20 sit / stand cycles leave no watch behind (screens=0)', async ({ page })
   const clean = watchErrors(page);
   const { L, ids } = await enter(page, '&screens=0');
   const bean = ids.Bean as string;
+  await leftInTerminal(page, bean); // #98: the terminal, not the conversation
   const desk = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === FLOOR)?.workers.find((w) => w.id === bean)?.desk as number;
   await faceWorker(page, L, desk);
   for (let i = 0; i < 20; i++) {
@@ -383,6 +393,7 @@ test('bench: 4 live screens on perf-floor60 against none', async ({ page }) => {
     if (screensQ.endsWith('4')) await expect.poll(() => liveDesks(page), { timeout: 20_000 }).toHaveLength(4);
     if (sit) {
       const id = (await screens(page)).find((s) => s.state === 'live')?.id as string;
+      await leftInTerminal(page, id); // #98: the terminal, not the conversation
       expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);
       await expect.poll(async () => (await screens(page)).find((s) => s.id === id)?.fps).toBe(10);
       await page.waitForTimeout(1500);

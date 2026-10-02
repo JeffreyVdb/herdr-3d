@@ -71,7 +71,7 @@ describe('WorldStore snapshot', () => {
       ['label-b', 1, 'codex'],
       ['Worker', 2, null],
     ]);
-    expect(v?.counts).toEqual({ working: 0, needsYou: 1, idle: 2, done: 0, total: 3 });
+    expect(v?.counts).toEqual({ working: 0, needsYou: 1, idle: 2, done: 0, waiting: 0, total: 3 });
   });
 
   it('always leaves two free desks above six workers, capped at 96', () => {

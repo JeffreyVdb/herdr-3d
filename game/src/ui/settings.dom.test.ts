@@ -55,6 +55,24 @@ describe('SettingsDialog section registry (#91)', () => {
     expect(d.getAttribute('aria-labelledby')).toBe(d.querySelector('h2')!.id);
   });
 
+  it('a section can hide itself, heading and all; reveal skips it while hidden (#98)', () => {
+    const s = make();
+    let hide: (h: boolean) => void = () => {};
+    s.addSection('a', 'A', () => {}, { store: 'browser' });
+    s.addSection('b', 'B', (_body, section) => void (hide = section.setHidden), { store: 'bridge' });
+    hide(true);
+    const b = sections()[1]!;
+    expect(b.hidden).toBe(true);
+    expect(s.sectionIds).toEqual(['a', 'b']);
+    s.reveal('b');
+    expect(document.activeElement).not.toBe(b.querySelector('h3'));
+    hide(false);
+    expect(b.hidden).toBe(false);
+    b.scrollIntoView = () => {};
+    s.reveal('b');
+    expect(document.activeElement).toBe(b.querySelector('h3'));
+  });
+
   it('calls a section’s open hook each time the dialog opens', () => {
     const s = make();
     const open = vi.fn();

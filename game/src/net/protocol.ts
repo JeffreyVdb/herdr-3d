@@ -180,6 +180,8 @@ export interface World {
   ai?: AiState;
   /** #90 follow-up questions: the feature's settings and state (absent from an older bridge, or one without the AI service). */
   followups?: FollowupsState;
+  /** #98 "Classify unknown commands": the activity classifier's settings and state (absent from an older bridge, or one without the AI service). */
+  activity?: ActivityState;
 }
 
 export interface Hello {
@@ -273,6 +275,10 @@ export type WorldEvent =
   | AiUpdate
   // #90 follow-up questions
   | FollowupsUpdate
+  // #98 what the agent is doing
+  | WorkerActivityEvent
+  // #98 activity settings ("Classify unknown commands")
+  | ActivityUpdate
   // M13 whiteboard
   | WhiteboardUpdated;
 
@@ -469,6 +475,9 @@ export interface CommandArgs {
   'followups.test': { threshold?: number };
   'worker.answer_followup': { id: string; turn_id: string; answers: FollowupAnswer[] };
   'worker.dismiss_followup': { id: string; turn_id: string };
+  // #98 activity settings ("Classify unknown commands", docs/protocol.md).
+  'activity.get': Record<string, never>;
+  'activity.set': { model_enabled?: boolean; threshold?: number; margin?: number; daily_cap?: number };
   'issue.get': { session: string; id: string };
   'issue.comment': { session: string; id: string; body: string };
   'issue.close': { session: string; id: string; reason: CloseReason; confirm: true };
@@ -688,6 +697,8 @@ const EVENT_TYPES = new Set([
   'limits.update',
   'ai.update', // #92 AI integration
   'followups.update', // #90 follow-up questions
+  'worker.activity', // #98 what the agent is doing
+  'activity.update', // #98 activity settings
   'screen.state', // M13 screen
   // M13 whiteboard
   'whiteboard.updated',
@@ -758,6 +769,12 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #90 follow-up questions: the fields of `FollowupsState` flat in the event.
     case 'followups.update':
       return typeof o.enabled === 'boolean' && typeof o.state === 'string';
+    // #98: `activity` absent (or null) clears it.
+    case 'worker.activity':
+      return isStr(o.id) && (o.activity === undefined || o.activity === null || isObj(o.activity));
+    // #98 activity settings: the fields of `ActivityState` flat in the event.
+    case 'activity.update':
+      return typeof o.model_enabled === 'boolean' && typeof o.state === 'string';
     // M13 screen: the fields of `ScreenState` flat in the event.
     case 'screen.state':
       return typeof o.sharing === 'boolean';
@@ -1588,6 +1605,37 @@ export interface FollowupsTestAck {
   latency_ms: number;
 }
 
+// #98 activity settings (docs/protocol.md): "Classify unknown commands", the opt-in classification of the
+// shell commands the bridge's rules cannot place (the desk monitor's activity word), by the AI integration's classifier.
+
+/** off: switched off; incomplete: on, but the classifier is not ready (nothing is sent); ready: classifying; capped: the daily cap is reached, rules only today. */
+export type ActivityFeatureState = 'off' | 'incomplete' | 'ready' | 'capped';
+
+export interface ActivityState {
+  /** The "Classify unknown commands" switch (off by default). */
+  model_enabled: boolean;
+  /** The lowest top score the model's label needs (default 0.6). */
+  threshold: number;
+  /** How far the top score must beat the runner-up (default 0.2). */
+  margin: number;
+  /** The most classifier calls a day (default 2000). */
+  daily_cap: number;
+  calls_today: number;
+  /** Commands whose label is remembered (normalised), so asking again costs nothing. */
+  cache_size: number;
+  state: ActivityFeatureState;
+  /** The #92 classifier role's state. */
+  classifier: AiRoleState;
+  /** The fields the bridge's environment sets (`model_enabled`, HERDR_WORLD_ACTIVITY_MODEL): read-only here. */
+  env: string[];
+}
+
+/** `activity.update`: the whole state, flat. */
+export interface ActivityUpdate extends ActivityState {
+  t: 'activity.update';
+  seq: number;
+}
+
 // M13 screen share (docs/protocol.md "Screen share"): the TV shows the shared screen locally; the bridge asks this
 // game for one frame per `screen.grab` (`screen.frame_request`, on this connection only, never replayed) and tells it
 // who looked (`screen.grabbed`).
@@ -1693,4 +1741,55 @@ export interface Drop {
 
 export interface DropsListAck {
   drops: Drop[];
+}
+
+// #98 what the agent is doing (docs/protocol.md "Activity"): the bridge's label for a Claude or Codex worker's current
+// tool call (rules over the tool name and shell command, the classification model for the rest when switched on), sent in
+// the worker and on every change. The desk monitor shows it as a card (the word, the detail, a mascot); a client treats a
+// kind it does not know as `working`.
+
+export type ActivityKind =
+  | 'thinking'
+  | 'replying'
+  | 'writing'
+  | 'investigating'
+  | 'testing'
+  | 'building'
+  | 'shipping'
+  | 'researching'
+  | 'delegating'
+  | 'planning'
+  | 'waiting'
+  | 'image'
+  | 'working';
+
+export interface Activity {
+  kind: ActivityKind;
+  /**
+   * Short and safe: file basename(s), the test runner or the clipped command head (≤ 32 chars). Waiting while idle:
+   * what is awaited ("Testing in the background", "Monitor: e2e log", "Subagent: …", "Wakes at 14:05").
+   */
+  detail?: string;
+  /** Unix ms (bridge clock) when this label started (waiting while idle: the turn's end). */
+  since: number;
+  source: 'rule' | 'model' | 'derived';
+  /** Only for kind `image`: the viewed image, fetched with `transcript.image {id, hash, size: 'thumb'}`. */
+  image?: { hash: string; w: number; h: number };
+  /** Only for kind `waiting` while idle/done: the open background tasks. */
+  tasks?: number;
+}
+
+export interface Worker {
+  /** #98: present while working, and while idle/done for `waiting` on open background tasks; absent otherwise. */
+  activity?: Activity;
+}
+
+/** #98: a worker's activity changed (`activity` absent: cleared). At most 2 a second per worker. */
+export interface WorkerActivityEvent {
+  t: 'worker.activity';
+  seq: number;
+  id: string;
+  session?: string;
+  workspace_id?: string;
+  activity?: Activity | null;
 }

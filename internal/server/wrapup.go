@@ -98,6 +98,7 @@ type txLines struct {
 	wrap     *transcript.WrapUpTracker
 	paste    *pasteWatch                 // #95
 	followup *transcript.FollowupTracker // #90
+	activity *transcript.ActivityTracker // #98
 }
 
 func (l *txLines) Line(off int64, b []byte) {
@@ -107,16 +108,19 @@ func (l *txLines) Line(off int64, b []byte) {
 	if l.paste != nil {
 		l.paste.line(b)
 	}
-	if l.wrap == nil && l.followup == nil {
+	if l.wrap == nil && l.followup == nil && l.activity == nil {
 		return
 	}
-	// The turn boundaries and final message, read once for both.
+	// The turn boundaries and final message, read once for all.
 	evs := transcript.TurnEvents(l.harness, b)
 	if l.wrap != nil {
 		l.wrap.Events(off, evs)
 	}
 	if l.followup != nil {
 		l.followup.Events(evs)
+	}
+	if l.activity != nil {
+		l.activity.Line(off, b, evs)
 	}
 }
 
@@ -129,6 +133,9 @@ func (l *txLines) Reset() {
 	}
 	if l.followup != nil {
 		l.followup.Reset()
+	}
+	if l.activity != nil {
+		l.activity.Reset()
 	}
 }
 

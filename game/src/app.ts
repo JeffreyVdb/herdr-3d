@@ -64,8 +64,10 @@ import { LimitsWidget } from './ui/limits';
 import { aiSection } from './ui/aiSection';
 // #90 follow-up questions
 import { followupsSection } from './ui/followupsSection';
+import { activitySection } from './ui/activitySection';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
+import { MonitorPrefs } from './ui/monitorPrefs';
 import type { SettingsDialog } from './ui/settings';
 import { displaySection, timeSection } from './ui/settingsSections';
 import { ThemeLoader } from './ui/themeLoader';
@@ -131,6 +133,8 @@ export class App {
   readonly store = new WorldStore();
   /** M10 limits: the always-on plan limits widget and what it remembers. */
   private readonly limitsPrefs = new LimitsPrefs();
+  /** #98: what the desk monitors show while you stand: the agent's activity, or its terminal. */
+  readonly monitorPrefs = new MonitorPrefs();
   /** #59: the transcript's and the terminal's presets (fonts, colours) and zooms, and hidden tool calls. */
   readonly themes = new ThemeLoader(new ViewPrefs());
   /** M17: the time of day: the settings (Settings), the page's overrides, the eased light and the clock. */
@@ -278,13 +282,13 @@ export class App {
     this.hud.mountAudio(this.audio);
     if (o.buildInfo) this.hud.mountAbout(o.buildInfo);
     this.settings = this.hud.mountSettings();
-    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs), { store: 'browser' });
+    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
     // #92: the bridge-wide AI models. A chip while one is set up but unusable, a toast when a call just stopped one.
     this.settings.addSection(
       'ai',
       'AI integration',
-      aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args), usedBy: { classifier: ['Follow-up questions'], llm: ['Follow-up questions'] } }),
+      aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args), usedBy: { classifier: ['Follow-up questions', 'Classify unknown commands'], llm: ['Follow-up questions'] } }),
       { store: 'bridge' },
     );
     // #90: the first feature on those models: its own switch and threshold, under them.
@@ -292,6 +296,13 @@ export class App {
     settings.addSection('followups', 'Follow-up questions', followupsSection({ book: this.store.followups, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }), {
       store: 'bridge',
     });
+    // #98: the desk monitors' words for the commands the rules can't place, on the same classifier (absent without the service).
+    settings.addSection(
+      'activity',
+      'Classify unknown commands',
+      activitySection({ book: this.store.activitySettings, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }),
+      { store: 'bridge' },
+    );
     this.store.ai.onChange((notice) => {
       this.hud.setAiChip(aiChip(this.store.ai.state));
       if (notice) this.hud.toast(notice, 7000, 'error');
@@ -483,6 +494,7 @@ export class App {
         insets: () => ({ top: parseFloat(this.hud.root.style.getPropertyValue('--topbar-bottom')) || 70, bottom: this.seatBar.el.getBoundingClientRect().height + 18 }),
         layer: this.hud.root,
         themes: this.themes,
+        monitors: this.monitorPrefs,
       },
       o.params,
     );
@@ -904,6 +916,7 @@ export class App {
           total.working += v.counts.working;
           total.needsYou += v.counts.needsYou;
           total.idle += v.counts.idle;
+          total.waiting += v.counts.waiting; // #98
           total.total += v.counts.total;
         }
         this.hud.setBuilding(ctx.name, p.area, ctx.floors.length, total);
@@ -920,6 +933,7 @@ export class App {
         total.working += f.counts.working;
         total.needsYou += f.counts.needsYou;
         total.idle += f.counts.idle;
+        total.waiting += f.counts.waiting; // #98
         total.total += f.counts.total;
       }
     this.hud.setCity(city.filter((b) => b.building).length, floors, total);
@@ -2612,7 +2626,7 @@ const LOBBY_TARGETS: Record<'reception' | 'elevator', Target> = {
 };
 
 function zero(): Counts {
-  return { working: 0, needsYou: 0, idle: 0, done: 0, total: 0 };
+  return { working: 0, needsYou: 0, idle: 0, done: 0, waiting: 0, total: 0 };
 }
 
 /** Durable, so an installed app can start without the #token= URL; the helper's token survives its restarts. */

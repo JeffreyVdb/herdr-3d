@@ -282,7 +282,8 @@ dialog.settings {
 .settings-fu-link {
   margin-left: auto;
 }
-.settings-fu-privacy {
+.settings-fu-privacy,
+.settings-act-privacy {
   margin: 0;
   padding: 8px 10px;
   border: 1px solid rgb(255 255 255 / 12%);
@@ -293,17 +294,22 @@ dialog.settings {
   color: var(--text-on-ink-2);
   text-wrap: pretty;
 }
-.settings-fu .settings-switch {
+.settings-fu .settings-switch,
+.settings-act .settings-switch {
   font-weight: 700;
 }
 .settings-fu .settings-switch input:disabled,
-.settings-fu .settings-switch:has(input:disabled) {
+.settings-fu .settings-switch:has(input:disabled),
+.settings-act .settings-switch input:disabled,
+.settings-act .settings-switch:has(input:disabled) {
   cursor: not-allowed;
 }
-.settings-fu .settings-switch:has(input:disabled) span {
+.settings-fu .settings-switch:has(input:disabled) span,
+.settings-act .settings-switch:has(input:disabled) span {
   opacity: 0.6;
 }
-.settings-fu .settings-switch + .settings-field-hint {
+.settings-fu .settings-switch + .settings-field-hint,
+.settings-act .settings-switch + .settings-field-hint {
   margin-top: -6px;
   padding-left: 26px;
 }
@@ -376,4 +382,92 @@ dialog.settings {
 }
 .settings-fu .settings-status {
   margin: -4px 0 0;
+}
+
+/* #98: Classify unknown commands. The privacy note is the follow-up section's ruled aside, above the switch; the
+ * feature's state one line led by its tag (and the way to the AI section while the classifier is not ready); today's
+ * calls and the remembered commands a two-row ledger in tabular figures, the calls with a hairline of the cap that
+ * turns sun near it and red at it; the three numbers side by side, one hint under them for what they do together. */
+.settings-act {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-act-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+.settings-act-state-text {
+  flex: 1 1 200px;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.settings-act-link[hidden],
+.settings-act .settings-field-hint[hidden] {
+  display: none;
+}
+.settings-act-ledger {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  align-items: baseline;
+  margin: 0;
+  font-size: 12.5px;
+}
+.settings-act-ledger dt {
+  color: var(--text-on-ink-2);
+  font-weight: 700;
+}
+.settings-act-figure {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  text-align: right;
+}
+.settings-act-bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  margin: -1px 0 4px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 10%);
+  overflow: hidden;
+}
+.settings-act-fill {
+  display: block;
+  height: 100%;
+  background: #6fe0a0;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.settings-act-bar[data-level='near'] .settings-act-fill {
+  background: var(--sun);
+}
+.settings-act-bar[data-level='full'] .settings-act-fill {
+  background: #ff7b73;
+}
+.settings-act-note {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.settings-act-tune {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-act .settings-status {
+  margin: -4px 0 0;
+}
+@media (max-width: 600px) {
+  .settings-act .btn--sm {
+    min-height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-act-fill {
+    transition: none;
+  }
 }

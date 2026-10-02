@@ -53,7 +53,13 @@ const (
 // in [0,1]. Features take this interface, never a vendor client.
 type Classifier interface {
 	Classify(ctx context.Context, state map[string]any, question string) (float64, error)
+	// ClassifyMany asks several questions about one state in one call: each
+	// key of questions gets its score. One call, one slot, one retry.
+	ClassifyMany(ctx context.Context, state map[string]any, questions map[string]string) (map[string]float64, error)
 }
+
+// MaxQuestions bounds the questions of one ClassifyMany call.
+const MaxQuestions = 16
 
 // LLM completes a chat. Features take this interface, never a vendor client.
 type LLM interface {

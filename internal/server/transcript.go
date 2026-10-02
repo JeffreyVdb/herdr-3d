@@ -625,6 +625,12 @@ func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Comm
 			h.reply(c, cmd, nil, bad("size must be %q or %q", proto.ImageThumb, proto.ImageFull))
 			return nil
 		}
+		// #98: the image a worker's activity shows now, for a connection on
+		// its floor (its thumbnail only).
+		if load := h.activityImage(c, a.ID, a.Hash); load != nil && a.Size == proto.ImageThumb && a.Agent == "" {
+			h.readActivityImage(ctx, c, cmd, a.Hash, load)
+			return nil
+		}
 		id, agent = a.ID, a.Agent
 		work = func(w *txWatch, log *transcript.Log) (any, error) { return readImage(w, log, a) }
 	case proto.CmdTranscriptImages:

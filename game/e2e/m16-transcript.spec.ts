@@ -4,8 +4,9 @@ import { frames, openGame, shot, watchErrors } from './game';
 // M16: the transcript mode of the seated view, for real, on the WebGL2 path: demo-m5 with the simulating fixture server
 // (sim=1), which answers transcript.watch / page / item like herdr-world (tools/fixture-transcript.ts: a demo timeline
 // of every item kind, in the bridge's shape; the subagent's page is the bridge's own output for its fixture). You sit
-// at Tofu (a blocked claude, so the banner has a real question), Ctrl+Esc swaps the terminal for the conversation
-// drawn over the monitor, and Ctrl+Esc brings the terminal back.
+// at Tofu (a blocked claude, so the banner has a real question) and its conversation is drawn over the monitor (#98:
+// what you sit down to); Ctrl+Esc swaps it for the terminal and back, and a worker left in the terminal is found
+// there next time.
 
 const FLOOR = 'herdr-3d';
 const SIM = 'play=none&sim=1&simms=500&simusage=0';
@@ -136,30 +137,23 @@ async function imagesInTheConversation(page: Page, tx: ReturnType<Page['locator'
   expect((await watchLog(page)).filter((c) => c.t === 'transcript.image').every((c) => c.result?.ok)).toBe(true);
 }
 
-test('Ctrl+Esc at a seated laptop: the conversation over the monitor, fed by transcript.watch, and back', async ({ page }) => {
+test('sitting down opens the conversation over the monitor, fed by transcript.watch; Ctrl+Esc to the terminal and back', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   const worker = await sitAt(page, 'Tofu');
 
-  // Watched from the moment you sit (the first switch is instant), not counted as a terminal watch.
+  // #98: the transcript, over the monitor's glass, as you sit; watched from that moment, not counted as a terminal
+  // watch; the terminal behind it watched at 1 fps.
   await expect.poll(async () => (await txState(page)).items).toBeGreaterThan(10);
-  expect(await txState(page)).toMatchObject({ mode: 'terminal', watches: 1, box: null, mounted: false });
-  expect((await watchLog(page)).filter((c) => c.t === 'transcript.watch').map((c) => c.args)).toEqual([{ id: worker, limit: 200 }]);
-  const seatedFps = await termFps(page, worker);
-  expect(seatedFps).toBeGreaterThan(1);
-
-  // Ctrl+Esc: the transcript, over the monitor's glass; the terminal behind it frozen and watched at 1 fps.
-  await page.keyboard.press('Control+Escape');
   await expect.poll(async () => (await txState(page)).mounted).toBe(true);
-  const st = await txState(page);
-  expect(st.mode).toBe('transcript');
+  expect(await txState(page)).toMatchObject({ mode: 'transcript', watches: 1 });
   expect((await page.evaluate(() => window.__h3d.seat())).mode).toBe('transcript');
+  expect((await watchLog(page)).filter((c) => c.t === 'transcript.watch').map((c) => c.args)).toEqual([{ id: worker, limit: 200 }]);
   const tx = page.locator('.seat-transcript .tx');
   await expect(tx).toBeVisible();
   await expect.poll(() => termFps(page, worker)).toBe(1);
-  await expect.poll(async () => (await page.evaluate(() => window.__h3d.screens())).find((s) => s.id === worker)?.state).toBe('frozen');
 
-  // Right after Ctrl+Esc, with nothing clicked, the scroll keys work (the keyboard is on the timeline) and nothing
+  // Right after sitting down, with nothing clicked, the scroll keys work (the keyboard is on the timeline) and nothing
   // reaches the pane.
   const sentKeys = async () => (await sent(page)).filter((c) => c.t === 'worker.keys').length;
   const keysBefore = await sentKeys();
@@ -261,12 +255,19 @@ test('Ctrl+Esc at a seated laptop: the conversation over the monitor, fed by tra
   await expect(tx.locator('[data-id="toolu_demo_bash2"]')).toHaveAttribute('data-status', 'ok');
   await expect(tx.locator('[data-id="toolu_demo_bash2"]')).toHaveCount(1);
 
-  // Back to the terminal and again (Ctrl+Esc twice): the keyboard is on the timeline again, no click needed.
+  // Ctrl+Esc: the live terminal at the seated fps; Ctrl+Esc again: the transcript, the terminal behind it frozen at
+  // 1 fps, and the keyboard on the timeline again, no click needed.
   await page.keyboard.press('Control+Escape');
   await expect.poll(async () => (await txState(page)).mode).toBe('terminal');
+  await expect.poll(() => termFps(page, worker)).toBeGreaterThan(1);
+  const seatedFps = await termFps(page, worker);
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.screens())).find((s) => s.id === worker)?.state).toBe('live');
+  await expect.poll(() => page.evaluate((id) => (window.__h3d.screenText(id) ?? []).join('').trim().length, worker)).toBeGreaterThan(0);
   await page.keyboard.press('Control+Escape');
   await expect.poll(async () => (await txState(page)).mode).toBe('transcript');
   await expect(scroller).toBeFocused();
+  await expect.poll(() => termFps(page, worker)).toBe(1);
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.screens())).find((s) => s.id === worker)?.state).toBe('frozen');
   await page.keyboard.press('End');
   const end = await scrollTop();
   await page.keyboard.press('k');
@@ -340,6 +341,85 @@ test('Ctrl+Esc at a seated laptop: the conversation over the monitor, fed by tra
   clean();
 });
 
+/** Stands you up (Esc), then sits you at `id` again, facing it first. */
+async function sitAgain(page: Page, id: string): Promise<void> {
+  if (await page.evaluate(() => window.__h3d.seated())) {
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
+  }
+  expect(await page.evaluate((i) => window.__h3d.face(i), id)).toBe(true);
+  await frames(page, 3);
+  expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
+}
+
+const terminalList = (page: Page) => page.evaluate(() => localStorage.getItem('h3d.seat.terminal'));
+
+test('#98: a worker never sat at opens its conversation, one left in the terminal opens there, one with no transcript opens the terminal', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  // The list of before #98 (who was read in transcript mode) is not read, and it goes.
+  await page.addInitScript(() => localStorage.setItem('h3d.seat.transcript', JSON.stringify(['someone-else'])));
+  const nibble = await sitAt(page, 'Nibble');
+  expect((await txState(page)).mode).toBe('transcript');
+  await expect.poll(async () => (await txState(page)).mounted).toBe(true);
+  await expect(page.locator('.seat-transcript .tx .tx-scroll')).toBeFocused();
+  expect(await page.evaluate(() => localStorage.getItem('h3d.seat.transcript'))).toBeNull();
+  expect(await terminalList(page)).toBeNull();
+
+  // Ctrl+Esc to the terminal, stand up, sit again: the terminal, remembered for Nibble alone.
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(async () => (await txState(page)).mode).toBe('terminal');
+  await sitAgain(page, nibble);
+  expect((await txState(page)).mode).toBe('terminal');
+  expect((await page.evaluate(() => window.__h3d.seat())).mode).toBe('terminal');
+  await expect(page.locator('.seat-transcript')).toHaveCount(0);
+  expect(await terminalList(page)).toBe(JSON.stringify([nibble]));
+  // Keys go to its terminal.
+  await page.keyboard.type('x');
+  await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'worker.keys' && (c.args as { id: string }).id === nibble).length).toBeGreaterThan(0);
+
+  // Back to the conversation: that is remembered too.
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(async () => (await txState(page)).mode).toBe('transcript');
+  await sitAgain(page, nibble);
+  expect((await txState(page)).mode).toBe('transcript');
+  expect(await terminalList(page)).toBeNull();
+
+  // Another agent never sat at (Pixel, a codex): its conversation.
+  const id = (n: string) => page.evaluate((x) => window.__h3d.world().flatMap((f) => f.workers).find((w) => w.name === x)?.id ?? '', n);
+  await sitAgain(page, await id('Pixel'));
+  expect((await txState(page)).mode).toBe('transcript');
+
+  // A plain shell (Sprout) writes no transcript: the terminal, and nothing remembered for it.
+  const sprout = await id('Sprout');
+  await sitAgain(page, sprout);
+  expect((await txState(page)).mode).toBe('terminal');
+  expect((await page.evaluate(() => window.__h3d.seat())).mode).toBe('terminal');
+  await expect(page.locator('.seat-transcript')).toHaveCount(0);
+  expect(await terminalList(page)).toBeNull();
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
+  clean();
+});
+
+test('#98: a bridge without transcripts opens the terminal at every worker', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m5', '&prints=0', `${SIM}&simfail=no_m16`);
+  await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
+  await frames(page, 3);
+  const tofu = await page.evaluate(() => window.__h3d.world().flatMap((f) => f.workers).find((w) => w.name === 'Tofu')?.id ?? '');
+  await sitAgain(page, tofu);
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe('terminal');
+  await frames(page, 10);
+  expect((await txState(page)).mode).toBe('terminal');
+  // (The first sit may try the conversation before the bridge said it has none: its overlay is hidden then.)
+  await expect(page.locator('.seat-transcript')).toBeHidden();
+  expect(await terminalList(page)).toBeNull();
+  clean();
+});
+
 test('sit / toggle / stand cycles leave no transcript watches or overlays behind', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
@@ -350,8 +430,8 @@ test('sit / toggle / stand cycles leave no transcript watches or overlays behind
       await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(worker);
     }
     await expect.poll(async () => (await txState(page)).watches).toBe(1);
-    // The mode is remembered per worker: every other sit comes back in transcript mode.
-    if ((await txState(page)).mode === 'terminal') await page.keyboard.press('Control+Escape');
+    // #98: the conversation as you sit (Escape stands you up from it: nothing is left in the terminal).
+    expect((await txState(page)).mode).toBe('transcript');
     await expect.poll(async () => (await txState(page)).mounted).toBe(true);
     await page.keyboard.press('Escape');
     await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
@@ -382,9 +462,8 @@ for (const [w, h] of [
     expect(await page.evaluate((i) => window.__h3d.sitAt(i), id)).toBe(true);
     await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
     await frames(page, 20);
-    // The plate is open in the corner while you stand at the desk...
+    // The plate is open in the corner while you stand at the desk... (#98: the conversation is up as you sit)
     await expect(page.locator('.limits')).toBeVisible();
-    await page.keyboard.press('Control+Escape');
     const tx = page.locator('.seat-transcript .tx');
     await expect(tx.locator('.tx-user').first()).toBeVisible();
     await frames(page, 8);

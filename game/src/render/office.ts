@@ -667,10 +667,10 @@ export class OfficeView {
   }
 
   /** M6b: what desk `i` draws (test hook): its parts, and the docked laptop's sticker. */
-  deskInfo(i: number): { parts: Record<string, number>; sticker: { logo: string; rim: number } | null; side: 1 | -1 } | null {
+  deskInfo(i: number): { parts: Record<string, number>; sticker: { logo: string; rim: number } | null; side: 1 | -1; band: string | null } | null {
     const k = this.kits[i];
     if (!k) return null;
-    return { parts: this.desks.drawn(i) as Record<string, number>, sticker: this.desks.sticker(i), side: k.side };
+    return { parts: this.desks.drawn(i) as Record<string, number>, sticker: this.desks.sticker(i), side: k.side, band: this.desks.band(i) };
   }
 
   /** Animates and lays out cards; call once per rendered frame. */

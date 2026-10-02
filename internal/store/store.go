@@ -165,6 +165,8 @@ var migrations = []string{
 	migrationWrapUp,
 	// #90: follow-up questions: the settings and the messages looked at.
 	migrationFollowup,
+	// #98: "Classify unknown commands": the settings and the model's answers.
+	migrationActivity,
 }
 
 // Fingerprint kinds.

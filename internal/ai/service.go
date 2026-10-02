@@ -376,23 +376,30 @@ func (s *Service) acquire(ctx context.Context) (release func(), err error) {
 	}
 }
 
+// ready is a role's config in use and whether the role is ready.
+func (s *Service) ready(r Role) (config, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.effectiveLocked(r), s.stateLocked(r) == StateReady
+}
+
 // begin checks a role is ready and takes a slot; it then checks again, since
-// a call that waited may have been overtaken by a rejected key. It returns
-// the config to use.
+// a call that waited may have been overtaken by a rejected key or given up
+// (its ctx done while it waited: it is not sent). It returns the config to
+// use.
 func (s *Service) begin(ctx context.Context, r Role) (config, func(), error) {
-	ready := func() (config, bool) {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		return s.effectiveLocked(r), s.stateLocked(r) == StateReady
-	}
-	if _, ok := ready(); !ok {
+	if _, ok := s.ready(r); !ok {
 		return config{}, nil, ErrNotReady
 	}
 	release, err := s.acquire(ctx)
 	if err != nil {
 		return config{}, nil, err
 	}
-	c, ok := ready()
+	if err := ctx.Err(); err != nil {
+		release()
+		return config{}, nil, err
+	}
+	c, ok := s.ready(r)
 	if !ok {
 		release()
 		return config{}, nil, ErrNotReady
@@ -401,11 +408,15 @@ func (s *Service) begin(ctx context.Context, r Role) (config, func(), error) {
 }
 
 // attempts runs fn with a timeout per attempt, and once more when the first
-// failed in a way worth a second try. Never more than two.
-func attempts[T any](ctx context.Context, timeout time.Duration, fn func(context.Context, int) (T, error)) (T, error) {
+// failed in a way worth a second try and again (nil: always) allows it.
+// Never more than two.
+func attempts[T any](ctx context.Context, timeout time.Duration, again func() bool, fn func(context.Context, int) (T, error)) (T, error) {
 	var v T
 	var err error
 	for i := 0; i < 2; i++ {
+		if i > 0 && again != nil && !again() {
+			break
+		}
 		actx, cancel := context.WithTimeout(ctx, timeout)
 		v, err = fn(actx, i)
 		cancel()
@@ -419,23 +430,49 @@ func attempts[T any](ctx context.Context, timeout time.Duration, fn func(context
 type classifierHandle struct{ s *Service }
 
 func (h classifierHandle) Classify(ctx context.Context, state map[string]any, question string) (float64, error) {
-	s := h.s
-	c, release, err := s.begin(ctx, RoleClassifier)
+	scores, err := h.ask(ctx, state, map[string]string{questionKey: question})
 	if err != nil {
 		return 0, err
 	}
+	return scores[questionKey], nil
+}
+
+func (h classifierHandle) ClassifyMany(ctx context.Context, state map[string]any, questions map[string]string) (map[string]float64, error) {
+	if len(questions) == 0 || len(questions) > MaxQuestions {
+		return nil, newErr(KindBadConfig, fmt.Sprintf("a call asks 1-%d questions", MaxQuestions))
+	}
+	return h.ask(ctx, state, questions)
+}
+
+// ask is one call of the classifier, Classify's and ClassifyMany's. A retry
+// checks the role again and uses its config as it is then: a role no longer
+// ready (its key file gone, the config cleared or rejected by another call)
+// gets no second request, and the first attempt's error stands.
+func (h classifierHandle) ask(ctx context.Context, state map[string]any, questions map[string]string) (map[string]float64, error) {
+	s := h.s
+	c, release, err := s.begin(ctx, RoleClassifier)
+	if err != nil {
+		return nil, err
+	}
 	defer release()
-	score, err := attempts(ctx, s.opts.ClassifierTimeout, func(ctx context.Context, _ int) (float64, error) {
-		return s.jev.classify(ctx, c.key, c.model, state, question)
+	again := func() bool {
+		next, ok := s.ready(RoleClassifier)
+		if ok {
+			c = next
+		}
+		return ok
+	}
+	scores, err := attempts(ctx, s.opts.ClassifierTimeout, again, func(ctx context.Context, _ int) (map[string]float64, error) {
+		return s.jev.classifyMany(ctx, c.key, c.model, state, questions)
 	})
 	if err != nil {
 		err = s.scrubbed(err, c.key)
 		if KindOf(err) == KindAuthFailed {
 			s.fail(RoleClassifier, c, err, true)
 		}
-		return 0, err
+		return nil, err
 	}
-	return score, nil
+	return scores, nil
 }
 
 type llmHandle struct{ s *Service }
@@ -482,7 +519,7 @@ func (s *Service) complete(ctx context.Context, c config, req Request, timeout t
 	jsonMode := c.jsonMode == nil || *c.jsonMode
 	sent := req.JSON && jsonMode
 	fellBack := false
-	text, err := attempts(ctx, timeout, func(actx context.Context, i int) (string, error) {
+	text, err := attempts(ctx, timeout, nil, func(actx context.Context, i int) (string, error) {
 		t, rejected, err := s.openAI.complete(actx, c.baseURL, c.key, c.model, c.extra, req, jsonMode)
 		if rejected && i == 0 {
 			jsonMode, fellBack = false, true

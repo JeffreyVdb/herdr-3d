@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type CDPSession, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, RESULTS } from './game';
+import { frames, openGame, RESULTS, seatMode } from './game';
 
 // #58 perf: does the transcript view's live cue ("Thinking…", an opacity-only CSS animation) add paint, main-thread,
 // compositor or GPU work? Seated at Pebble (demo-m5, simulating server) in the conversation view, the same page is
@@ -156,7 +156,7 @@ test('the live cue adds no paint, main-thread or GPU work beyond its 1 Hz time',
   await frames(page, 3);
   expect(await page.evaluate((i) => window.__h3d.sitAt(i), w.id)).toBe(true);
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.transcript()))?.items ?? 0).toBeGreaterThan(10);
-  await page.keyboard.press('Control+Escape');
+  await seatMode(page, 'transcript'); // #98: up as you sit
   await expect(page.locator('.seat-transcript .tx')).toBeVisible();
   await frames(page, 30);
   const cdp = await page.context().newCDPSession(page);

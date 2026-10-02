@@ -56,8 +56,11 @@ export function assignDesks(
   return out;
 }
 
-/** What a worker's card and animation show. */
-export type Display = 'working' | 'done' | 'needs_you' | 'idle' | 'asleep';
+/**
+ * What a worker's card and animation show. #98: `waiting` is idle or done on purpose, its agent waiting on its own
+ * background tasks (the store derives it from `activity`; herdr never says it).
+ */
+export type Display = 'working' | 'done' | 'needs_you' | 'idle' | 'asleep' | 'waiting';
 
 export function displayStatus(status: string, floorAsleep: boolean): Display {
   if (floorAsleep) return 'asleep';
@@ -79,6 +82,7 @@ export const CHIP_TEXT: Record<Display, string> = {
   needs_you: 'NEEDS YOU',
   idle: 'IDLE',
   asleep: 'ASLEEP',
+  waiting: 'WAITING',
 };
 
 /** Words for the prompt bar, e.g. `Nibble · working · …`. */
@@ -88,6 +92,7 @@ export const STATUS_WORD: Record<Display, string> = {
   needs_you: 'needs you',
   idle: 'idle',
   asleep: 'asleep',
+  waiting: 'waiting',
 };
 
 export function displayName(w: Pick<Worker, 'name' | 'label'>): string {

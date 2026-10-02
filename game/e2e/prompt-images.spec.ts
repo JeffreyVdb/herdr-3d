@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { frames, openGame, RESULTS, watchErrors } from './game';
+import { frames, openGame, RESULTS, seatMode, watchErrors } from './game';
 
 // #64: a pasted screenshot in every field that prompts an agent, next to hire-composer.spec.ts (the hire dialog's First
 // task, the same shared composer). Built game, fixture server with sim=1 and the fixture POST /upload. Paste is a real
@@ -565,9 +565,9 @@ const txBox = (page: Page) => tx(page).locator('.tx-input');
 const txChips = (page: Page) => tx(page).locator('.cmp-chip');
 const seatNote = async (page: Page) => (await page.evaluate(() => window.__h3d.seat())).note;
 
+/** #98: the conversation is up as you sit (a Claude worker); the keyboard to its prompt box. */
 async function toTranscript(page: Page): Promise<void> {
-  await page.keyboard.press('Control+Escape');
-  await expect.poll(() => page.evaluate(() => window.__h3d.transcript()?.mode)).toBe('transcript');
+  await seatMode(page, 'transcript');
   await expect(tx(page)).toBeVisible();
   await page.keyboard.press('Enter');
   await expect(txBox(page)).toBeFocused();
@@ -679,6 +679,7 @@ test('terminal: an image pasted at an agent’s laptop is uploaded and pasted as
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   const { id } = await sitAt(page, 'Pebble');
+  await seatMode(page, 'terminal');
   await paste(page, '.seat-input', [{ name: 'shot-a.png' }, { name: 'shot-b.png', color: '#12a26a' }]);
   await expect.poll(async () => (await sentOf(page, 'worker.prompt')).map((c) => c.args)).toEqual([
     { id, text: `[Image #1: ${DROP}/h3d-terminal-pebble-1.png][Image #2: ${DROP}/h3d-terminal-pebble-2.png]` },
@@ -719,6 +720,7 @@ test('terminal: a failed upload (Drop Zone down), a refused file and a pending u
   test.setTimeout(120_000);
   const clean = scriptErrors(page);
   const { key } = await sitAt(page, 'Pebble', '&fail_upload=1&upload_delay=800');
+  await seatMode(page, 'terminal');
   await paste(page, '.seat-input', [{ name: 'huge.png', bytes: (25 << 20) + 1 }]);
   await expect.poll(() => seatNote(page)).toMatch(/huge\.png is 25\.0 MB.* Nothing was pasted\./);
   await paste(page, '.seat-input', [{ name: 'a.png' }]);

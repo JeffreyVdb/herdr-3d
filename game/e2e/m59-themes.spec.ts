@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, leftInTerminal, openGame, seatMode, shot, watchErrors } from './game';
 
 // #59: the three presets, picked apart for the transcript (fonts and colours; the limits widget's mono follows it) and
 // for the terminal (its canvas's font and colours), "Hide tools" and each view's text zoom, for real on the WebGL2 path: demo-m5 with the simulating fixture server (the demo
@@ -37,10 +37,13 @@ async function sitAt(page: Page, name = 'Tofu', init: Record<string, string> = {
   await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
   await frames(page, 3);
   const id = await page.evaluate((n) => window.__h3d.world().flatMap((f) => f.workers).find((w) => w.name === n)?.id ?? '', name);
+  // #98: these start at the terminal, as someone who left it there (else the conversation opens as you sit).
+  await leftInTerminal(page, id);
   expect(await page.evaluate((i) => window.__h3d.face(i), id)).toBe(true);
   await frames(page, 3);
   expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
+  await seatMode(page, 'terminal'); // (storage blocked: nothing was remembered)
   await expect.poll(() => page.evaluate(() => (window.__h3d.screenText(window.__h3d.seated() ?? '') ?? []).join('').trim().length)).toBeGreaterThan(0);
   await frames(page, 20);
   return id;

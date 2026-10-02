@@ -165,10 +165,11 @@ function harness(o: { feed?: ReturnType<typeof fakeFeed> | null; images?: boolea
 }
 
 describe('the images mode', () => {
-  it('mounts the tab on the first switch to it, next to the conversation, in one overlay', async () => {
+  it('mounts the tab when it first shows, next to the conversation, in one overlay', async () => {
     const h = harness();
+    // Last read in the images tab: you sit down to it.
+    h.storage.setItem('h3d.seat.images', JSON.stringify(['a']));
     h.tx.sit('a', 'Ada');
-    h.tx.setMode('images');
     expect(h.tx.mode).toBe('images');
     expect(h.tx.shown).toBe(true);
     expect(h.layer).toHaveLength(1);
@@ -190,13 +191,12 @@ describe('the images mode', () => {
     expect(h.panes.map((p) => p.hidden)).toEqual([false, true]);
     expect(h.tabs).toHaveLength(1); // not mounted twice
     expect(h.tabs[0]?.refreshed).toBeGreaterThan(0); // asked again when shown
-    expect(h.modes).toEqual(['terminal', 'images', 'transcript', 'images']);
+    expect(h.modes).toEqual(['images', 'transcript', 'images']);
   });
 
   it('Ctrl+Esc goes back to the view you read last', async () => {
     const h = harness();
     h.tx.sit('a', 'Ada');
-    h.tx.toggle();
     expect(h.tx.mode).toBe('transcript');
     h.tx.flip();
     h.tx.toggle();
@@ -218,10 +218,13 @@ describe('the images mode', () => {
     h.tx.sit('a', 'Ada');
     h.tx.setMode('images');
     h.tx.sit('b', 'Bo');
-    expect(h.tx.mode).toBe('terminal');
-    h.tx.setMode('transcript');
+    expect(h.tx.mode).toBe('transcript');
+    h.tx.toggle(); // Bo left in the terminal
     h.tx.sit('a', 'Ada');
     expect(h.tx.mode).toBe('images');
+    h.tx.sit('b', 'Bo');
+    expect(h.tx.mode).toBe('terminal');
+    h.tx.setMode('transcript');
     h.tx.sit('b', 'Bo');
     expect(h.tx.mode).toBe('transcript');
     // The bridge has no transcripts: the terminal.
@@ -231,11 +234,13 @@ describe('the images mode', () => {
     const again = harness({ storage: h.storage as MemStorage });
     again.tx.sit('a', 'Ada');
     expect(again.tx.mode).toBe('images');
-    // Terminal last: forgotten.
+    // Terminal last: the terminal next time, and Ctrl+Esc there goes to the images, read last.
     again.tx.toggle();
     const third = harness({ storage: h.storage as MemStorage });
     third.tx.sit('a', 'Ada');
     expect(third.tx.mode).toBe('terminal');
+    third.tx.toggle();
+    expect(third.tx.mode).toBe('images');
     const blocked = harness({
       storage: {
         getItem: () => {
@@ -250,6 +255,7 @@ describe('the images mode', () => {
       } as unknown as MemStorage,
     });
     blocked.tx.sit('a', 'Ada');
+    expect(blocked.tx.mode).toBe('transcript');
     blocked.tx.setMode('images');
     expect(blocked.tx.mode).toBe('images');
   });
@@ -387,6 +393,7 @@ describe('jump to message', () => {
 
   it('waits for the conversation to mount when the tab was the first view', async () => {
     const h = harness();
+    h.storage.setItem('h3d.seat.images', JSON.stringify(['a']));
     h.tx.sit('a', 'Ada');
     h.tx.reset('a', watchAck({ harness: 'claude', session: 's', cursor: 'c:1', has_more: false, items: [item('x1'), item('x2', 2)] }));
     h.tx.setMode('images');
@@ -425,8 +432,8 @@ describe('sit / read / stand cycles with the images tab', () => {
       tw.sync(new Set([id]));
       wsent.at(-1)?.resolve({ ok: true, data: { items: [item(`i${i}`)] } });
       await flush();
-      h.tx.toggle(); // the conversation
-      if (i % 2) h.tx.flip(); // the images
+      if (h.tx.mode === 'terminal') h.tx.toggle(); // the conversation (or the images, read last)
+      if (i % 2) h.tx.flip(); // the other one
       if (i % 4 === 0) h.tx.toggle(); // the terminal
       await flush();
       if (i % 3 === 0) {

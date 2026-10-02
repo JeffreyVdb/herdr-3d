@@ -53,7 +53,12 @@ func newJev(t *testing.T) *fakeJev {
 			f.mu.Lock()
 			f.last = body
 			f.mu.Unlock()
-			json.NewEncoder(w).Encode(map[string]any{"answers": map[string]any{"question": map[string]any{"noul": f.score}}})
+			answers := map[string]any{}
+			qs, _ := body["questions"].(map[string]any)
+			for k := range qs {
+				answers[k] = map[string]any{"noul": f.score}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"answers": answers})
 		default:
 			http.NotFound(w, r)
 		}
@@ -730,6 +735,109 @@ func TestAFeatureUsesTheInterfacesWithoutChangesToThePackage(t *testing.T) {
 	}
 	if _, err := llm2.Title(ctx, "text"); !errors.Is(err, ai.ErrNotReady) {
 		t.Fatalf("%v", err)
+	}
+}
+
+// #98: several questions in one call: one request, every key scored, and the
+// same bounds (not ready: no call; a missing answer: bad_response).
+func TestClassifyManyAsksAllQuestionsInOneCall(t *testing.T) {
+	ctx := context.Background()
+	jev := newJev(t)
+	s := newSvc(t, jev, ai.Options{})
+	qs := map[string]string{"testing": "runs tests?", "writing": "edits files?"}
+	if _, err := s.Classifier().ClassifyMany(ctx, nil, qs); !errors.Is(err, ai.ErrNotReady) || jev.hits.Load() != 0 {
+		t.Fatalf("not ready: %v, %d requests", err, jev.hits.Load())
+	}
+	configureClassifier(t, s)
+	before := jev.hits.Load()
+	jev.score = 0.42
+	got, err := s.Classifier().ClassifyMany(ctx, map[string]any{"tool": "Bash", "command": "make it"}, qs)
+	if err != nil || len(got) != 2 || got["testing"] != 0.42 || got["writing"] != 0.42 {
+		t.Fatalf("%v %v", got, err)
+	}
+	if n := jev.hits.Load() - before; n != 1 {
+		t.Fatalf("%d requests for two questions, want one", n)
+	}
+	jev.mu.Lock()
+	sent, _ := jev.last["questions"].(map[string]any)
+	jev.mu.Unlock()
+	if q, _ := sent["writing"].(map[string]any); len(sent) != 2 || q["type"] != "noul" || q["instructions"] != "edits files?" {
+		t.Fatalf("%v", sent)
+	}
+	if _, err := s.Classifier().ClassifyMany(ctx, nil, map[string]string{}); err == nil {
+		t.Fatal("no questions accepted")
+	}
+	// The fake classifier records the call with its questions.
+	fc := &ai.FakeClassifier{Score: 0.3}
+	if got, _ := fc.ClassifyMany(ctx, nil, qs); got["testing"] != 0.3 || len(fc.Calls()) != 1 || len(fc.Calls()[0].Questions) != 2 {
+		t.Fatalf("%v %+v", got, fc.Calls())
+	}
+}
+
+// #98 review B-R3: a retry checks the classifier again, for Classify (#90's
+// path) as for ClassifyMany. Its key file gone while the first attempt
+// failed: the role is incomplete and no second request goes. Its key
+// changed instead: the retry carries the key in use now.
+func TestClassifierRetryChecksTheRoleAgain(t *testing.T) {
+	ctx := context.Background()
+	calls := map[string]func(ai.Classifier) error{
+		"Classify": func(c ai.Classifier) error { _, err := c.Classify(ctx, nil, "asks?"); return err },
+		"ClassifyMany": func(c ai.Classifier) error {
+			_, err := c.ClassifyMany(ctx, nil, map[string]string{"a": "a?", "b": "b?"})
+			return err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			for _, gone := range []bool{true, false} {
+				keyFile := filepath.Join(t.TempDir(), "jev.key")
+				if err := os.WriteFile(keyFile, []byte("old-key-0123456789"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				var mu sync.Mutex
+				var keys []string
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					mu.Lock()
+					keys = append(keys, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+					first := len(keys) == 1
+					mu.Unlock()
+					if !first {
+						var body struct {
+							Questions map[string]any `json:"questions"`
+						}
+						json.NewDecoder(r.Body).Decode(&body)
+						answers := map[string]any{}
+						for k := range body.Questions {
+							answers[k] = map[string]any{"noul": 0.5}
+						}
+						json.NewEncoder(w).Encode(map[string]any{"answers": answers})
+						return
+					}
+					if gone {
+						os.Remove(keyFile)
+					} else {
+						os.WriteFile(keyFile, []byte("new-key-0123456789"), 0o600)
+					}
+					w.WriteHeader(http.StatusBadGateway)
+				}))
+				defer srv.Close()
+				s, err := ai.New(ai.Options{ClassifierURL: srv.URL, HTTP: srv.Client(),
+					Env: ai.Overrides{ClassifierKeyFile: keyFile, ClassifierModel: "jev-latest"}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = call(s.Classifier())
+				mu.Lock()
+				got := append([]string(nil), keys...)
+				mu.Unlock()
+				switch {
+				case gone && (err == nil || len(got) != 1 || s.State(ai.RoleClassifier) != ai.StateIncomplete):
+					t.Fatalf("key file gone: %v, requests with %v, role %s", err, got, s.State(ai.RoleClassifier))
+				case !gone && (err != nil || len(got) != 2 || got[1] != "new-key-0123456789"):
+					t.Fatalf("key changed: %v, requests with %v", err, got)
+				}
+			}
+		})
 	}
 }
 

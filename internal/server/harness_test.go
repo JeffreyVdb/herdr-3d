@@ -168,6 +168,9 @@ func (c *client) event() proto.Event {
 	c.t.Helper()
 	m := c.next()
 	var ev proto.Event
+	if m.env.T == proto.EvActivityUpdate { // #98: its flat fields are not Event's (classifier is a role's state)
+		return proto.Event{T: m.env.T, Seq: m.env.Seq}
+	}
 	if err := json.Unmarshal(m.raw, &ev); err != nil {
 		c.t.Fatal(err)
 	}

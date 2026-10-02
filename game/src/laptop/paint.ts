@@ -96,7 +96,93 @@ export interface Segment {
 
 /** Box drawing and block elements: a row of nothing else is a frame (an empty input box, a rule). */
 const FRAME = /^[\u2500-\u259f]$/;
+/** A horizontal rule's own characters (Claude Code draws its input between two of them). */
+const RULE = /^[─━═]$/;
+/** What Claude Code's input line starts with. */
+const PROMPT = /^[>❯]$/;
+/**
+ * #98: Claude Code's mode line, the last row of its footer: `⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1
+ * agent`, `⏸ plan mode on …`, `? for shortcuts`, `esc to interrupt`. Anchored at the row's start: a row that only
+ * mentions one is not it.
+ */
+const CLAUDE_HINT = /^(?:(?:⏵⏵|▸▸|⏸) [\w -]+? on|\? for shortcuts|esc to interrupt)(?: |$)/;
+/** #98: Codex's footer under its composer: `? for shortcuts … 91% context left`, `⏎ send   ⌃J newline …`. */
+const CODEX_HINT = /^(?:\? for shortcuts|⏎ send)(?: |$)|(?:^| )\d{1,3}% context left$/;
+/** At most this many mode lines, and this many rows of a statusline between them and the input. */
+const MAX_HINTS = 2;
+const MAX_STATUS = 2;
+/** An input (between two rules, Codex's composer) is at most this many rows high. */
+const MAX_INPUT = 12;
 const blank = (c: string | undefined) => !c || c === ' ';
+
+type RowKind = 'blank' | 'kept' | 'corner' | 'rule' | 'mark';
+
+/** #98: what the glance view knows of a screen's rows, to find an agent's footer. */
+interface Screen {
+  cells: ReadonlyArray<ReadonlyArray<string>>;
+  kind: RowKind[];
+  /** A kept row's text, spaces collapsed. */
+  text: Map<number, string>;
+}
+
+/** A row's first non-blank cell, and its column. */
+function head(cells: ReadonlyArray<string>): { c: string; x: number } | undefined {
+  const x = cells.findIndex((c) => !blank(c));
+  return x < 0 ? undefined : { c: cells[x] as string, x };
+}
+
+/**
+ * #98: the row of the prompt in the input that rule `bottom` closes (Claude Code 2's: a rule, a prompt `❯` or `>`
+ * then what is typed, at most MAX_INPUT rows, a rule), and the top rule's; undefined when it closes no input.
+ */
+function ruledInput(s: Screen, bottom: number): { top: number; prompt: number } | undefined {
+  let prompt = -1;
+  for (let y = bottom - 1; y >= 0 && bottom - y - 1 <= MAX_INPUT; y--) {
+    const k = s.kind[y];
+    if (k === 'rule') return prompt >= 0 && PROMPT.test(head(s.cells[prompt] as ReadonlyArray<string>)?.c ?? '') ? { top: y, prompt } : undefined;
+    if (k === 'corner') return undefined;
+    if (k !== 'blank') prompt = y;
+  }
+  return undefined;
+}
+
+/**
+ * #98: the rows of an agent's footer at the bottom of the screen, anchored by a last row only a footer has, in its
+ * shape: Codex's hints under its composer; Claude Code's mode line, and a statusline of a row or two over it, under its
+ * input (a box, a prompt between rules, an empty prompt). With no such row there is no footer: a statusline alone
+ * (Claude Code's default mode) stays, as the screen does not say whose it is and a result under an echoed `>` between
+ * rules looks the same. Output that only looks like a footer in part (a separator, a quoted hint, a test runner's
+ * rules) is no footer.
+ */
+function footer(s: Screen): number[] {
+  let y = s.kind.length - 1;
+  const up = () => {
+    while (y >= 0 && s.kind[y] === 'blank') y--;
+  };
+  up();
+  if (y < 0 || s.kind[y] !== 'kept') return [];
+  // Codex: one row of hints under its composer (`› …`, a few rows over it, maybe a blank between).
+  if (CODEX_HINT.test(s.text.get(y) as string)) {
+    let x = y - 1;
+    while (x >= 0 && s.kind[x] === 'blank') x--;
+    for (let n = 0; x >= 0 && n < MAX_INPUT && (s.kind[x] === 'kept' || s.kind[x] === 'mark'); x--, n++) if (head(s.cells[x] as ReadonlyArray<string>)?.c === '›') return [y];
+  }
+  const hints: number[] = [];
+  while (y >= 0 && hints.length < MAX_HINTS && s.kind[y] === 'kept' && CLAUDE_HINT.test(s.text.get(y) as string)) {
+    hints.push(y--);
+    up();
+  }
+  if (!hints.length) return [];
+  const status: number[] = [];
+  while (y >= 0 && s.kind[y] === 'kept' && status.length <= MAX_STATUS) {
+    status.push(y--);
+    up();
+  }
+  if (y < 0 || status.length > MAX_STATUS) return [];
+  const k = s.kind[y];
+  const input = k === 'corner' || (k === 'mark' && PROMPT.test(head(s.cells[y] as ReadonlyArray<string>)?.c ?? '')) || (k === 'rule' && ruledInput(s, y) !== undefined);
+  return input ? [...hints, ...status] : [];
+}
 
 /**
  * M6b: the glance view of a screen, given each row as its cells' characters
@@ -104,31 +190,44 @@ const blank = (c: string | undefined) => !c || c === ' ';
  * from the leftmost column any of them starts at, word-wrapped at `cols`, the
  * last `max` lines of that. A row says nothing when it is blank, or all frame
  * but at most one character (an empty prompt box `│ > │`); nor do the one or
- * two rows under an agent's input box (its footer: `? for shortcuts`, the
- * key hints).
+ * two rows under an agent's input box (its footer: `? for shortcuts`, the key
+ * hints), nor (#98) an agent's footer of another shape at the bottom (see
+ * `footer`: Claude Code 2's statusline and mode line, Codex's hints).
  */
 export function glanceView(rows: ReadonlyArray<ReadonlyArray<string>>, cols: number = GLANCE.cols, max: number = GLANCE.rows): Segment[] {
   const kept: Array<{ row: number; first: number; last: number }> = [];
-  let boxEnd = -1;
+  const s: Screen = { cells: rows, kind: [], text: new Map() };
   rows.forEach((cells, row) => {
     let first = -1;
     let last = -1;
     let other = 0;
+    let rule = true;
     for (let x = 0; x < cells.length; x++) {
       const c = cells[x] as string;
       if (blank(c)) continue;
       if (first < 0) first = x;
       last = x;
       if (!FRAME.test(c)) other++;
+      if (!RULE.test(c)) rule = false;
     }
-    if (first >= 0 && other > 1) kept.push({ row, first, last });
-    else if (first >= 0 && (cells[first] === '╰' || cells[first] === '└')) boxEnd = row;
+    if (first >= 0 && other > 1) {
+      kept.push({ row, first, last });
+      s.kind[row] = 'kept';
+      s.text.set(row, cells.slice(first, last + 1).join('').replace(/\s+/g, ' '));
+    } else if (first < 0) s.kind[row] = 'blank';
+    else if (cells[first] === '╰' || cells[first] === '└') s.kind[row] = 'corner';
+    else if (rule && last - first >= 7) s.kind[row] = 'rule';
+    else s.kind[row] = 'mark';
   });
-  // The footer under the last input box.
-  if (boxEnd >= 0) {
+  const drop = new Set(footer(s));
+  // The footer under the last input box: one or two rows (a box with a rule under it is no input: Claude Code 2's
+  // welcome banner, over its input between rules).
+  const boxEnd = s.kind.lastIndexOf('corner');
+  if (boxEnd >= 0 && !s.kind.includes('rule', boxEnd)) {
     const below = kept.filter((k) => k.row > boxEnd);
-    if (below.length && below.length <= 2) kept.splice(kept.length - below.length, below.length);
+    if (below.length && below.length <= 2) for (const k of below) drop.add(k.row);
   }
+  if (drop.size) kept.splice(0, kept.length, ...kept.filter((k) => !drop.has(k.row)));
   if (!kept.length) return [];
   const lead = Math.min(...kept.map((k) => k.first));
   const out: Segment[] = [];

@@ -420,3 +420,24 @@ the issue (real panes, the agents' own transcripts compared byte for byte).
 | 8 | Once per message | `followup_seen` (SQLite) by worker and the message's SHA-256: a restart or re-read never classifies it again. The open follow-up is stored with it, so a restart shows it again until it is answered or cleared; clearing marks the row. Only the last 20 messages per worker are kept. A classifier failure is not recorded, so a later restart may retry; an ended turn seen while the feature was off is not queued for later. `turn_id` is the message's hash prefix: the same message is the same turn. |
 | 9 | Answering | One prompt through `worker.prompt`'s lane (typed for Claude, #95), checked for staleness again on the lane, and the follow-up cleared once it went. Unanswered questions are left out (numbered as asked). A fallback's free answer goes as it is. The game's card keeps the prompt box on: typing a prompt is answering too, and clears it. |
 | 10 | Card look | The ask card's (#57) layout and tokens, drawn with a dashed border and a "Detected automatically" chip (its title gives the score): the bridge inferred it, the agent waits on no dialog. It hides behind an ask's card. |
+
+## 2026-10-02 — #98: the desk monitor's activity card (game side)
+
+- **One draw for every card on a floor.** The card (mascot, word, detail, counter) is one quad per desk in one
+  `InstancedMesh`. The mascots are one sprite sheet (crab and cloud × 14 poses × 6 frames of 32 px pixel art, drawn
+  once at load); the frame comes from a time uniform, the pose row and the desk's phase from instance attributes, so no
+  canvas is drawn while they animate. Reduced motion sets the uniform's multiplier to 0 (frame 0).
+- **The elapsed counter is glyphs, not text drawn per desk.** A static atlas of 16 glyphs (digits, `:`, `h`, `m`, `d`,
+  a clock); each card's 8 slots are glyph indexes in two vec4 attributes, written once a second (a few hundred bytes for
+  a whole floor). Redrawing the text cells each second instead would have meant a canvas draw and a texture upload of
+  the whole atlas per second for every visible floor; the shader digits keep every desk's counter live at no canvas
+  cost, and the format (`0:07`, `1h 05m`, `3d 04h`) stays a pure, tested function.
+- **The word and the detail are a text-atlas cell per desk**, drawn only when what they say changes (`faceKey`), and
+  the atlas is uploaded at most every 300 ms whatever changed.
+- **Images only near you.** Like the live screens: at most 4 desks in view within 9 m fetch their image
+  (`transcript.image {id, hash, size: 'thumb'}`), every other one, and a failed fetch, says "Looking at an image" with the
+  mascot holding a picture.
+- **A label that disagrees with the status is not shown** (only `waiting` while idle or done), so a status event that
+  beats the bridge's clearing event never leaves a finished turn's last word on the monitor; an unknown kind is Working.
+- **The HUD's waiting count shows only while someone waits**: most of the time it is zero, and a fourth always-on count
+  would push the top bar's words out at 1280 px.
