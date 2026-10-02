@@ -337,7 +337,9 @@ export class Crowd {
         break;
       }
       case 'idle':
-      case 'done': {
+      case 'done':
+      // #98: waiting on its background tasks, it leans back with its coffee too (the monitor says what it waits on).
+      case 'waiting': {
         lean = -0.2;
         mug = true;
         // Sip every few seconds.

@@ -130,6 +130,12 @@ export interface H3DDebug {
   transcript(): ReturnType<import('./laptop').Laptops['transcriptState']> | null;
   /** M16 phase 2: the prints on the desks near you (per desk: worker, prints with tray/blank/loaded/slot x,z), the textures' ledger, the transcript watches and lightboxes opened from prints. */
   prints(): ReturnType<import('./laptop').Laptops['printsState']> | null;
+  /** #98: per worker of the floor with an interior, what its desk monitor shows (card, rest, image, glance) and says; the cards' ledger. */
+  monitors(): ReturnType<import('./laptop').Laptops['monitorsState']> | null;
+  /** #98: where a worker's desk monitor's terminal area is on the viewport (CSS px), null when not on screen. */
+  monitorRect(workerId: string): { left: number; top: number; width: number; height: number } | null;
+  /** #98: the fixture simulator's `sim.activity` (a worker's activity, its status, an image it looks at). */
+  simActivity(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M16 phase 2: a print's world position (a debug camera aims at it). */
   printWorld(desk: number, index: number): { x: number; y: number; z: number } | null;
   /** M16 phase 2: clicks the print under a viewport point (NDC, -1..1) as the pointer would; true when one opened a lightbox. */
@@ -185,7 +191,7 @@ export interface H3DDebug {
   /** M4: the desks of the floor with an interior: who sits there, whether its "+" shows, what a walk holds it as. */
   desks(): Array<{ desk: number; worker: string | null; plus: boolean; away: 'busy' | 'empty' | null }>;
   /** M6b: what a desk of the floor with an interior draws: its parts (instances drawn), the docked laptop's sticker, the dock side; `dropping`: a hire dropping in. */
-  deskArt(desk: number): { parts: Record<string, number>; sticker: { logo: string; rim: number } | null; side: 1 | -1; dropping: boolean } | null;
+  deskArt(desk: number): { parts: Record<string, number>; sticker: { logo: string; rim: number } | null; side: 1 | -1; dropping: boolean; band?: string | null } | null;
   /** M6b: where a worker's live screen is drawn (world centre and size) against its desk monitor's terminal area; null when not live. */
   screenMesh(workerId: string): ScreenMeshInfo | null;
   /** M5: N, as the key does: who it went to (null: nobody needs you). */
@@ -343,6 +349,14 @@ const h3d: H3DDebug = {
   themeLoaded: () => app?.themes.loading ?? Promise.resolve(),
   transcript: () => app?.laptops.transcriptState() ?? null,
   prints: () => app?.laptops.printsState() ?? null,
+  monitors: () => app?.laptops.monitorsState() ?? null,
+  monitorRect: (id) => app?.laptops.monitorRect(id) ?? null,
+  simActivity: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    // `sim.activity` is the fixture simulator's, not a bridge command.
+    const r = await app.client.request('sim.activity' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
   printWorld: (desk, index) => app?.laptops.printWorld(desk, index) ?? null,
   clickPrint: (x, y) => app?.clickPrintAt(x, y) ?? false,
   simTranscript: async (args) => {

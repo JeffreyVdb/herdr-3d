@@ -568,7 +568,11 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   status, report and whether it worked since first seen, verdict stamps, the ORCH's phase / pass and over-cap; an
   over-cap ORCH and a freelancer whose report asks count as needing you); M17: the time of day (`daylight.ts`: an
   instant, a zone and an optional latitude to daylight, the sun and the zone's clock; `timeOfDay.ts`: which time and
-  zone, from the page's overrides, the settings and the browser; see "Day and night" below). Pure logic, covered by vitest.
+  zone, from the page's overrides, the settings and the browser; see "Day and night" below); #98: what a desk monitor shows
+  of its worker's `activity` (`activity.ts`: an unknown kind is `working`, a label that disagrees with the status is not
+  shown, which view a monitor is in (`glance` / `card` / `image` / `rest`), the card's word, detail, waiting badge and
+  pose, the elapsed counter's text and glyphs) and the `waiting` display status (idle or done, waiting on its own
+  background tasks: its own band row and HUD count, never idle, never in N's queue). Pure logic, covered by vitest.
 - `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy;
   M3b: the walk scene (`walk.ts`), the building and street from outside (`outside.ts`, baked into one mesh by
   `bake.ts`) and the lobby (`lobby.ts`). M3c: the corner office (`mezzanine.ts`: two merged vertex-coloured toon
@@ -594,6 +598,13 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   instanced batch (`cards/atlasCards.ts`; the per-desk atlas stays as it was; a tall card without a free cell shows
   compact with what its question is about and the question as the task line). The screens are `screens.ts` (below).
   M17: `daylook.ts` (the eased light and the colours and intensities it gives every scene) and `clock.ts` (the wall clock).
+  #98: the desk monitors' activity cards (`monitorCards.ts`: every card of a floor one instanced draw: the mascot from
+  one sprite sheet, its frame flipped in the shader from a time uniform and the desk's row / phase attributes, frame 0
+  under reduced motion; the word and detail a text atlas cell drawn only when they change, uploaded at most every
+  300 ms; the elapsed counter glyph indexes of a static atlas, written once a second; an image letterboxed over a
+  caption strip, its textures counted) and the mascots (`mascotArt.ts`: an orange crab for Claude, a white and teal
+  cloud with a `>_` face for Codex, a pose per kind and a resting one, 6 frames each, pure pixels drawn once;
+  `H3D_MASCOT_SHEET=1 pnpm -C game exec vitest run src/render/mascotArt.test.ts` writes `test-results/mascots.png`).
   #86: `toonSun.ts` (every toon material lights with it: faces turned away from the sun stay flat and take no shadow from the sun's
   shadow map; `normalBiasFor` sizes the suns' `shadow.normalBias`).
 - `src/laptop` — M5 screens and sitting at a worker's screen (M6b: on its desk monitor): `watches.ts` keeps the connection's
@@ -603,7 +614,10 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   the last lines that say something, 22 columns × 5 lines, big, bold and lifted to 4.5:1, so it reads from the aisle;
   seated, the whole terminal), `keys.ts` maps a keydown to herdr
   keys and orders input (one command in flight, what is typed meanwhile goes in the next `worker.keys`), `index.ts`
-  plans and ties it together. #74: the seated watch asks for `fullscreen` (the bridge zooms the pane's herdr tab), `watches.ts`
+  plans and ties it together; #98: `monitors.ts` gives every desk its activity card, resting mascot or glance once per
+  plan (a covered desk's terminal is not watched; seated and packing-up desks keep their screens) and fetches the
+  images of the few desks near you (`transcript.image` by hash, chosen like the live screens); the preference is
+  `h3d.monitors` (`ui/monitorPrefs.ts`, Settings → Display → Desk monitors: Activity | Terminal). #74: the seated watch asks for `fullscreen` (the bridge zooms the pane's herdr tab), `watches.ts`
   keeps its zoom state (the ack's `zoom`, `terminal.state`, `terminal.zoom`; a bridge without them: no chip, no error),
   `fullscreen.ts` (pure) turns it into the seat bar's chip (`Fullscreen` / `Split pane 60×40` / `Fullscreen unavailable`),
   the preference is `h3d.term.fullscreen` (`themePrefs.ts`; off is sent as `fullscreen: false`, which only follows the
@@ -786,6 +800,16 @@ reason?}` (`simWrapUp(args)` in the hooks) plays its transcript's result line: `
 `internal/server/wrapup_test.go` (real transcript files, the fake herdr floor: CLEAN to `worktree remove`, the decision
 table, strict delete, restart).
 
+#98 on the simulating server (`tools/fixture-activity.ts`, rules at its top): `sim.activity {id, activity?, status?,
+image?}` (`simActivity(args)` in the hooks) sets a worker's activity as the bridge would send it (`worker.activity`;
+null clears it), its status first when asked, or an image it looks at (a real PNG; `via: read | view_image | exec` for
+a Claude `Read`, Codex's `view_image` and a code-mode `exec` calling `tools.view_image`), whose hash `transcript.image`
+then serves without a watch; `simactivity=demo` labels every working agent on start (one idle Claude waits, one Codex
+looks at an image), `simactivity=all` every working one. `window.__h3d.monitors()` is what each monitor shows and the
+cards' ledger, `monitorRect(id)` where its terminal area is on screen. `e2e/m98-monitor.spec.ts` drives the card, the
+waiting state, the three image cases, reduced motion, the preference and perf-floor60's canvas and upload counts. E.g.
+`?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1%26simactivity%3Ddemo&floor=herdr-3d`.
+
 M16 on the simulating server (`tools/fixture-transcript.ts`, rules at its top): sit at any worker and press Ctrl+Esc
 for its conversation. `transcript.watch` answers a demo timeline of every item kind in the bridge's shape, the demo's
 Agent call pages the bridge's own output for its subagent fixture, and `sim.transcript` (`simTranscript(args)` in the
@@ -897,7 +921,13 @@ Screens (M5; M6b: on the desk monitors): the four nearest monitors you can see (
 worker's terminal live, at 4 fps, in the glance view (the last lines, big enough to read from the aisle) under the
 status bar; a monitor keeps its last frame when it stops being live (frozen), or its status glow if it never was;
 asleep, they are dark. A nearer one takes over only from one out of view or clearly farther, one at a time, so walking
-does not flicker. The worker's laptop stands closed in its dock, its sticker showing its harness. Look at a worker and
+does not flicker. #98: a Claude or Codex worker's monitor shows what its agent is doing instead: its mascot (a crab
+for Claude, a cloud for Codex) in a pose for the kind, the word (Testing, Writing, Thinking…), the detail
+(`pytest -n auto`, a file name) and how long it has been at it; WAITING (a band of its own, a count of its own in the top
+bar) when it ended its turn waiting on its background tasks, with what it waits on; the image it looks at on the desks
+near you; resting (the crab asleep, the cloud drifting) when idle or done. A worker that needs you, a plain shell, or one
+with nothing to say shows its terminal as before, and Settings → Display → Desk monitors: Terminal shows the terminal
+everywhere. The worker's laptop stands closed in its dock, its sticker showing its harness. Look at a worker and
 press **E** to sit at its screen: the worker steps aside, the camera glides in and the whole terminal fills the view,
 at 10 fps. Everything you type goes to its terminal (letters, Enter, Tab and Shift+Tab, arrows,
 Home / End / Page keys, F1–F12, Backspace, Delete, Ctrl+letter; the game's own keys too), **Cmd+V** (Ctrl+V off a Mac)
@@ -1063,6 +1093,12 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # Departure Mono on 11 / 22 px), keyboard reach; m59-{transcript,terminal}-<preset>,
                               # m59-transcript-<preset>-hidden, m59-mixed-{transcript,terminal} (Paper over
                               # Terminal), m59-zoom-{200,70}, m59-terminal-zoom-200.png
+                              # #98 desk monitors on demo-m5 with sim=1 (m98-monitor.spec.ts, sim.activity): the card
+                              # (crab / cloud, word, detail, counter; unknown kind, resting, glance), WAITING (band,
+                              # HUD count, not in N, badge), an image on a near monitor (Claude Read, Codex
+                              # view_image, Codex exec), far and failed images, reduced motion, Settings' Desk
+                              # monitors; perf-floor60 simactivity=all: no canvas draw, no upload, one draw;
+                              # m98-{card-claude,card-codex,waiting,image,image-failed,perf-floor60}.png
                               # #74 fullscreen chip (h74-fullscreen.spec.ts, simzoom=): the seated watch asks for fullscreen, the chip
                               # toggles it through terminal.zoom, the human unzooming reaches it, headless, single pane and older
                               # bridges, keyboard, AA contrast at the three presets, the bar's height; h74-*.png

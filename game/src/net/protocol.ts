@@ -273,6 +273,8 @@ export type WorldEvent =
   | AiUpdate
   // #90 follow-up questions
   | FollowupsUpdate
+  // #98 what the agent is doing
+  | WorkerActivityEvent
   // M13 whiteboard
   | WhiteboardUpdated;
 
@@ -688,6 +690,7 @@ const EVENT_TYPES = new Set([
   'limits.update',
   'ai.update', // #92 AI integration
   'followups.update', // #90 follow-up questions
+  'worker.activity', // #98 what the agent is doing
   'screen.state', // M13 screen
   // M13 whiteboard
   'whiteboard.updated',
@@ -758,6 +761,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #90 follow-up questions: the fields of `FollowupsState` flat in the event.
     case 'followups.update':
       return typeof o.enabled === 'boolean' && typeof o.state === 'string';
+    // #98: `activity` absent (or null) clears it.
+    case 'worker.activity':
+      return isStr(o.id) && (o.activity === undefined || o.activity === null || isObj(o.activity));
     // M13 screen: the fields of `ScreenState` flat in the event.
     case 'screen.state':
       return typeof o.sharing === 'boolean';
@@ -1693,4 +1699,55 @@ export interface Drop {
 
 export interface DropsListAck {
   drops: Drop[];
+}
+
+// #98 what the agent is doing (docs/protocol.md "Activity"): the bridge's label for a Claude or Codex worker's current
+// tool call (rules over the tool name and shell command, the classification model for the rest when switched on), sent in
+// the worker and on every change. The desk monitor shows it as a card (the word, the detail, a mascot); a client treats a
+// kind it does not know as `working`.
+
+export type ActivityKind =
+  | 'thinking'
+  | 'replying'
+  | 'writing'
+  | 'investigating'
+  | 'testing'
+  | 'building'
+  | 'shipping'
+  | 'researching'
+  | 'delegating'
+  | 'planning'
+  | 'waiting'
+  | 'image'
+  | 'working';
+
+export interface Activity {
+  kind: ActivityKind;
+  /**
+   * Short and safe: file basename(s), the test runner or the clipped command head (≤ 32 chars). Waiting while idle:
+   * what is awaited ("Testing in the background", "Monitor: e2e log", "Subagent: …", "Wakes at 14:05").
+   */
+  detail?: string;
+  /** Unix ms (bridge clock) when this label started (waiting while idle: the turn's end). */
+  since: number;
+  source: 'rule' | 'model' | 'derived';
+  /** Only for kind `image`: the viewed image, fetched with `transcript.image {id, hash, size: 'thumb'}`. */
+  image?: { hash: string; w: number; h: number };
+  /** Only for kind `waiting` while idle/done: the open background tasks. */
+  tasks?: number;
+}
+
+export interface Worker {
+  /** #98: present while working, and while idle/done for `waiting` on open background tasks; absent otherwise. */
+  activity?: Activity;
+}
+
+/** #98: a worker's activity changed (`activity` absent: cleared). At most 2 a second per worker. */
+export interface WorkerActivityEvent {
+  t: 'worker.activity';
+  seq: number;
+  id: string;
+  session?: string;
+  workspace_id?: string;
+  activity?: Activity | null;
 }

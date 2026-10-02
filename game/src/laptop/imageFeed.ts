@@ -188,6 +188,11 @@ export class ImageFeed {
     for (const fn of [...this.listeners]) fn();
   }
 
+  /** #98: a hash its worker's activity shows (`activity.image`): the bridge serves it to a connection on that floor. */
+  admit(hash: string): void {
+    if (!this.disposed && hash) this.sent.add(hash);
+  }
+
   canFetch(ref: Pick<ImageRef, 'hash' | 'mime' | 'unavailable'>): boolean {
     return !!ref.hash && !ref.unavailable && ref.mime !== 'binary' && this.sent.has(ref.hash);
   }

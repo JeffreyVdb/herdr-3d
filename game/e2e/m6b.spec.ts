@@ -88,6 +88,9 @@ test('a hire drops in at an empty desk, and you sit at its screen while it lands
 
 test('a live screen is on the desk monitor, big, in its glance view; the docked laptop’s sticker is the worker’s harness', async ({ page }) => {
   const clean = watchErrors(page);
+  // #98: the terminal glance on every monitor (Settings → Display → Desk monitors: Terminal), not the activity cards
+  // that idle and done agents rest on by default (e2e/m98-monitor.spec.ts).
+  await page.addInitScript(() => localStorage.setItem('h3d.monitors', 'terminal'));
   await openGame(page, 'demo-m4', '', SIM);
   const L = await enter(page, 'herdr-3d');
   // From the lobby side, looking north into the south pod: its monitors face you.

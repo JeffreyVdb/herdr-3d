@@ -292,13 +292,19 @@ export class Hud {
     // The words go when the bar is short (hud.css); the title keeps them on hover.
     const item = (cls: string, n: number, label: string, hint = '') =>
       `<span class="count count--${cls}" title="${n} ${label}${hint}"><i></i><b>${n}</b><span>${label}</span></span>`;
-    this.counts.dataset.n = asleep ? '1' : '3';
+    // #98: those waiting on their own background tasks have a count of their own (never idle, never in N), shown while any do.
+    const waiting = !asleep && c.waiting > 0;
+    this.counts.dataset.n = asleep ? '1' : waiting ? '4' : '3';
     // M5: N goes to the next one who needs you (the blocked, then the done).
     const need = c.needsYou === 1 ? 'needs you' : 'need you';
     const next = c.needsYou + c.done > 0 ? ` · N: go to the next${c.done ? ` (then ${c.done} done)` : ''}` : '';
     this.counts.innerHTML = asleep
       ? item('asleep', c.total, 'asleep')
-      : item('working', c.working, 'working') + item('needs_you', c.needsYou, need, next) + (next ? '<kbd class="topbar-key" title="N: go to the next who needs you">N</kbd>' : '') + item('idle', c.idle, 'idle');
+      : item('working', c.working, 'working') +
+        item('needs_you', c.needsYou, need, next) +
+        (next ? '<kbd class="topbar-key" title="N: go to the next who needs you">N</kbd>' : '') +
+        (waiting ? item('waiting', c.waiting, 'waiting', ' on their background tasks') : '') +
+        item('idle', c.idle, 'idle');
   }
 
   setCity(buildings: number, floors: number, c: Counts): void {

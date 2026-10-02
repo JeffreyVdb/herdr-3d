@@ -27,7 +27,9 @@ export interface NeedItem extends NeedCandidate {
 /**
  * Who needs you, in the order N visits them: blocked before done, the
  * building you are in (`here`, undefined: none, e.g. in the city) before any
- * other, then the longest wait first (ties: floor, desk).
+ * other, then the longest wait first (ties: floor, desk). #98: a worker
+ * waiting on its own background tasks (`waiting`, done or idle by herdr) is
+ * not in it: its agent picks up by itself when they report back.
  */
 export function needQueue(workers: Iterable<NeedCandidate>, here?: string | null): NeedItem[] {
   const out: NeedItem[] = [];

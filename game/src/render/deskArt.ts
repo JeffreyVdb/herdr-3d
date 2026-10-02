@@ -10,7 +10,9 @@ import { STATUS_CHIP_CSS } from './palette';
  *
  * - The monitor's status bar: one row per status, a dot and the word in
  *   white, big and heavy, on a transparent ground the bar's colour shows
- *   through (the card chips' deepened hues, so white reads at 4.5:1).
+ *   through (the card chips' deepened hues, so white reads at 4.5:1). #98:
+ *   WAITING (idle or done on purpose, on its own background tasks) is a row
+ *   of its own in a calm teal.
  * - The docked laptop's sticker: the Claude Code spark (a terracotta
  *   starburst on cream), the Codex prompt (a white `>_` on ink), and a plain
  *   one; the ring round each is transparent, where the model family's colour
@@ -19,8 +21,8 @@ import { STATUS_CHIP_CSS } from './palette';
 
 /** The statuses with a bar (asleep, the monitor is dark). */
 export type BandStatus = Exclude<Display, 'asleep'>;
-export const BAND_WORDS: readonly BandStatus[] = ['working', 'needs_you', 'done', 'idle'];
-const WORD: Record<BandStatus, string> = { working: 'WORKING', needs_you: 'NEEDS YOU', done: 'DONE', idle: 'IDLE' };
+export const BAND_WORDS: readonly BandStatus[] = ['working', 'needs_you', 'done', 'idle', 'waiting'];
+const WORD: Record<BandStatus, string> = { working: 'WORKING', needs_you: 'NEEDS YOU', done: 'DONE', idle: 'IDLE', waiting: 'WAITING' };
 /** The bar's colour per status (0xRRGGBB). */
 export const BAND_COLOR: Record<BandStatus, number> = Object.fromEntries(BAND_WORDS.map((d) => [d, Number.parseInt(STATUS_CHIP_CSS[d].slice(1), 16)])) as Record<BandStatus, number>;
 

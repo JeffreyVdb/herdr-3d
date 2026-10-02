@@ -15,6 +15,8 @@ export const STATUS_COLOR: Record<Display, number> = {
   needs_you: 0xe8413a,
   idle: 0x7a8398,
   asleep: 0x5a5fa8,
+  // #98: calm, cool and clearly not "done": the agent waits on its own background work.
+  waiting: 0x1e9aa0,
 };
 
 export const STATUS_CSS: Record<Display, string> = Object.fromEntries(
@@ -25,7 +27,7 @@ export const STATUS_CSS: Record<Display, string> = Object.fromEntries(
 /** #83: the cardboard tape of a worker wrapping up (white text on it: 4.9:1). */
 export const BOX_TAPE = '#94632f';
 
-export const STATUS_CHIP_CSS: Record<Display, string> = { ...STATUS_CSS, done: '#0b8454', needs_you: '#d8302c', idle: '#6b7388' };
+export const STATUS_CHIP_CSS: Record<Display, string> = { ...STATUS_CSS, done: '#0b8454', needs_you: '#d8302c', idle: '#6b7388', waiting: '#0f7378' };
 
 /** Body tints for workers: a sunny, varied crew. */
 export const BODY_TINTS = [0xffd84a, 0xffc98f, 0xa6e3c4, 0xcdb6ff, 0xa9d6ff, 0xfff0a0, 0xffb3c1];

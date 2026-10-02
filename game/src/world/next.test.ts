@@ -36,6 +36,11 @@ describe('needQueue', () => {
     expect(needQueue(all).map((x) => x.id)).toEqual(['lot-blocked', 'blocked-old', 'blocked-new', 'lot-done', 'done-old', 'done-new']);
   });
 
+  it('#98: leaves out those waiting on their own background tasks', () => {
+    const q = needQueue([w('waits', 'waiting', 1), w('done', 'done', 2), w('idle', 'idle', 0)], 'work');
+    expect(q.map((x) => x.id)).toEqual(['done']);
+  });
+
   it('breaks ties by floor, then desk', () => {
     const q = needQueue([w('b', 'needs_you', 5, { session: 'top', desk: 3 }), w('a', 'needs_you', 5, { session: 'top', desk: 1 }), w('c', 'needs_you', 5, { session: 'bottom', desk: 9 })], 'work');
     expect(q.map((x) => x.id)).toEqual(['c', 'a', 'b']);

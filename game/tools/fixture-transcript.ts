@@ -19,6 +19,7 @@
 //   image of the session (the demo has some older than any window). `sim.image {w?, h?, seed?, origin?, kind?,
 //   too_large?, unavailable?, reason?, path?}` makes an image (PNG bytes kept) and answers its ImageRef, to push in
 //   `sim.transcript` items. Every image is a real PNG, so screenshots show pictures.
+// - #98: a worker's current activity image (`activityHash`, tools/fixture-activity.ts) is served without a watch.
 // - `simfail=no_m16` plays a bridge before M16: every transcript command is `unknown_command`.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
@@ -115,6 +116,8 @@ export interface TranscriptHost {
   error(code: string, message: string): Error;
   /** #57: items the worker's timeline has on top of the demo (its ask calls, tools/fixture-ask.ts). */
   extra?(id: string): TranscriptItem[];
+  /** #98: the image its current activity shows (tools/fixture-activity.ts): served without a watch, like the bridge. */
+  activityHash?(id: string): string | undefined;
 }
 
 const FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'transcript');
@@ -330,13 +333,15 @@ export class TranscriptSim {
   }
 
   private image(a: Obj): Obj {
-    const w = this.watched(a);
     const hash = this.str(a, 'hash');
+    // #98: the worker's current activity image is served to a connection on its floor, watched or not.
+    const shown = !!hash && this.host.activityHash?.(this.str(a, 'id')) === hash;
+    const w = shown ? (this.worker(this.str(a, 'id')), null) : this.watched(a);
     const size = this.str(a, 'size');
     if (!/^[0-9a-f]{64}$/.test(hash)) throw this.host.error('bad_request', 'bad args: hash must be the sha256 of an image, in hex');
     if (size !== 'thumb' && size !== 'full') throw this.host.error('bad_request', 'bad args: size must be "thumb" or "full"');
     const img = IMAGES.get(hash);
-    if (!w.sent.has(hash) || !img) throw this.host.error('not_found', 'no image with that hash was sent on this connection');
+    if (!(shown || w?.sent.has(hash)) || !img) throw this.host.error('not_found', 'no image with that hash was sent on this connection');
     if (size === 'full' && img.tooLarge) throw this.host.error('too_large', 'the image is over 12 MiB of base64');
     let bytes = img.bytes;
     let width = img.width;

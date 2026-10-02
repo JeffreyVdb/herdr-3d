@@ -48,6 +48,18 @@ export interface Ledger {
   closed: number;
 }
 
+/** A texture of a thumbnail decoded upright for it (`decodeBitmap`): the desk prints' and (#98) the desk monitors'. */
+export function bitmapTexture(bitmap: ImageBitmap): THREE.Texture {
+  const t = new THREE.Texture(bitmap);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.generateMipmaps = false;
+  t.minFilter = THREE.LinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.flipY = false;
+  t.needsUpdate = true;
+  return t;
+}
+
 export class PrintMeshes {
   readonly group = new THREE.Group();
   readonly ledger: Ledger = { created: 0, disposed: 0, closed: 0 };
@@ -85,15 +97,8 @@ export class PrintMeshes {
 
   /** A texture of a decoded thumbnail; the caller hands it to `setTexture` (or `release`s it). */
   texture(bitmap: ImageBitmap): THREE.Texture {
-    const t = new THREE.Texture(bitmap);
-    t.colorSpace = THREE.SRGBColorSpace;
-    t.generateMipmaps = false;
-    t.minFilter = THREE.LinearFilter;
-    t.magFilter = THREE.LinearFilter;
-    t.flipY = false;
-    t.needsUpdate = true;
     this.ledger.created++;
-    return t;
+    return bitmapTexture(bitmap);
   }
 
   release(t: THREE.Texture): void {

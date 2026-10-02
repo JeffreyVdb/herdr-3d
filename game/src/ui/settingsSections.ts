@@ -1,4 +1,5 @@
 import type { LimitsPrefs } from './limitsPrefs';
+import type { MonitorPrefs } from './monitorPrefs';
 import type { TimePrefs } from './timePrefs';
 import { browserZone } from '../world/daylight';
 import type { TimeOfDay } from '../world/timeOfDay';
@@ -13,8 +14,11 @@ export interface TimeSettingsHost {
 
 let fieldSerial = 0;
 
-/** M10: the plan limits widget is on by default; this is where it is switched off and on (moved from About, #91). */
-export function displaySection(prefs: LimitsPrefs): (body: HTMLElement) => SectionHandle {
+/**
+ * M10: the plan limits widget is on by default; this is where it is switched off and on (moved from About, #91).
+ * #98: and what the desk monitors show while you stand: what the agent is doing (the default) or its terminal.
+ */
+export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs): (body: HTMLElement) => SectionHandle {
   return (body) => {
     const box = el('input');
     box.type = 'checkbox';
@@ -26,8 +30,41 @@ export function displaySection(prefs: LimitsPrefs): (body: HTMLElement) => Secti
     const label = el('label', 'settings-switch');
     label.htmlFor = box.id;
     label.append(box, el('span', '', 'Show plan limits (Claude and Codex) in the corner'));
-    body.append(label);
-    return { dispose: off };
+    if (!monitors) {
+      body.append(label);
+      return { dispose: off };
+    }
+    // #98: Desk monitors: Activity | Terminal.
+    const field = el('div', 'settings-field');
+    const pick = el('select');
+    pick.id = 'settings-monitors';
+    for (const [value, text] of [
+      ['activity', 'Activity: what the agent is doing'],
+      ['terminal', 'Terminal: its last lines'],
+    ] as const) {
+      const o = el('option', '', text);
+      o.value = value;
+      pick.append(o);
+    }
+    const hint = el('p', 'settings-field-hint', 'Sitting at a desk always shows its screen.');
+    hint.id = 'settings-monitors-hint';
+    pick.setAttribute('aria-describedby', hint.id);
+    const syncMonitors = () => (pick.value = monitors.monitors);
+    syncMonitors();
+    pick.addEventListener('change', () => (monitors.monitors = pick.value === 'terminal' ? 'terminal' : 'activity'));
+    const offMonitors = monitors.onChange(syncMonitors);
+    const l = el('label', 'settings-field-label', 'Desk monitors');
+    l.htmlFor = pick.id;
+    field.append(l, pick, hint);
+    const grid = el('div', 'settings-grid');
+    grid.append(label, field);
+    body.append(grid);
+    return {
+      dispose: () => {
+        off();
+        offMonitors();
+      },
+    };
   };
 }
 

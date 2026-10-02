@@ -38,6 +38,8 @@ import { TranscriptSim } from './fixture-transcript.ts';
 import { AskSim } from './fixture-ask.ts';
 // M13: the screen share (`screen.share`, `screen.grab`, `screen.frame`; the frames on POST /screen/frame/<id>).
 import { ShareSim } from './fixture-share.ts';
+// #98: what the agents are doing (`sim.activity`, `simactivity=demo|all`).
+import { ActivitySim } from './fixture-activity.ts';
 
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
@@ -65,6 +67,8 @@ export interface SimOptions {
   zoom?: 'old' | 'single' | 'split' | 'headless';
   /** #58: a prompt's `user` item goes to its worker's transcript watch this long after the agent took it (`simecho=<ms>`; absent: never). */
   echoMs?: number;
+  /** #98: seeds the workers' activities on start (`simactivity=demo|all`, tools/fixture-activity.ts). */
+  activity?: string;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -190,8 +194,13 @@ export class SimWorld {
         now: this.now,
         error: (code, message) => new CmdError(code, message),
         extra: (id) => this.asks.extra(id),
+        activityHash: (id) => this.activity.hash(id),
       },
       o.fail !== 'no_m16',
+    );
+    this.activity = new ActivitySim(
+      { workers: this.workers, floors: this.floors, emit: (send, m) => this.emit(send, m), now: this.now, error: (code, message) => new CmdError(code, message) },
+      o.activity,
     );
     this.ai = new AiSim(o.jev ?? 'https://api.typesafe.ai', o.fail === 'no_ai' ? 'old' : (o.ai ?? 'on'), (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
     this.ai.onChange = (send) => this.followups.changed(send); // #90: a model's state is the feature's
@@ -228,6 +237,8 @@ export class SimWorld {
     (session) => this.floors.has(session),
   );
   private readonly transcripts: TranscriptSim;
+  /** #98: the agents' activities (tools/fixture-activity.ts). */
+  private readonly activity: ActivitySim;
 
   /** M7: boards, work items and opening a PR (tools/fixture-boards.ts). */
   private readonly boards: BoardSim;
@@ -392,6 +403,7 @@ export class SimWorld {
       if (this.followups.handle(m.t, a, send, ack, fail)) return;
       if (this.transcripts.handle(m.t, a, send, ack, fail)) return;
       if (this.asks.handle(m.t, a, send, ack, fail)) return;
+      if (this.activity.handle(m.t, a, send, ack, fail)) return; // #98
       if (screens.handle(m.t, a, send, ack, (code, message) => send({ t: 'error', req_id: reqId, code, message }))) return;
       if (this.start6.handle(m.t, a, send, ack, fail)) return;
       if (this.boards.handle(m.t, a, send, ack, fail)) return;

@@ -202,6 +202,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             // #74: the bridge's pane zoom (tools/fixture-screen.ts).
             ...(['old', 'single', 'split', 'headless'].includes(q.get('simzoom') ?? '') ? { zoom: q.get('simzoom') as 'old' | 'single' | 'split' | 'headless' } : {}),
             ...(q.get('simecho') !== null ? { echoMs: Math.max(0, Number(q.get('simecho')) || 0) } : {}),
+            // #98: the agents' activities on the desk monitors (tools/fixture-activity.ts).
+            ...(q.get('simactivity') ? { activity: q.get('simactivity') as string } : {}),
           }
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {
