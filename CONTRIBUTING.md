@@ -558,7 +558,7 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   notebook, varied by the desk index; vitest keeps them on the desktop and clear of each other at every desk count). M5: the usage line and the floor total (`usage.ts`: `≈$0.09 · 37k tokens · ctx 4%`, only the known
   parts, a `*` for a cost priced as an unknown model, never a bare `$`), N's queue (`next.ts`: blocked before done, the
   building you are in first, oldest `status_since` first, and where to stand facing a worker; #100's inbox, `inbox.ts`: the same
-  order without the building tier, a freelancer's done left out), quick replies
+  order without the building tier, a freelancer's done left out unless Settings says, and a row's reason, `Building › floor` and age), quick replies
   (`answer.ts`: digits → a question's choice; Approve = the choice that says Yes / Trust / Allow / Proceed, else the
   first; Deny = the "No" choice, else a cancel; #57: `ask.ts`, an agent's structured question: the picks per question,
 when they answer everything, the `worker.answer_ask` args, a recorded answer's lines, "waiting 3m"), the Changes panel's model (`changes.ts`: the diff split per file and
@@ -658,7 +658,7 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   dialogs, low on the screen), the Changes panel (`changes.ts`, C: a non-modal side panel in the HUD under the top bar,
   so the floor stays in view and walkable; its diff is drawn a window of lines at a time), the look-at bar's usage and
   Approve / Deny (`promptBar.ts`), styled in `m5.css`, and the seat bar (`seat.ts`, `seat.css`); #100: the inbox chip under the plan-limits plate
-  (`inbox.ts`, `inbox.css`; `App.goInbox` teleports to the first one and sits at its laptop) and the one rule of the corner
+  that opens into its list (`inbox.ts`, `inbox.css`; a row's `App.goToWorker` teleports and sits you at that terminal) and the one rule of the corner
   both follow (`corner.ts`: what makes them step aside). Hidden, named hooks
   wait for later tickets:
   `renderPlanLimits(harness)` (#12), `renderHandoff` (M9) and `renderServices` (#14), each returning null for now.
