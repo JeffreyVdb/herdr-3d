@@ -44,11 +44,13 @@ M7 boards:
 ## Toolchain
 
 Go 1.27 (see `go.mod`), Node 24.18 (`game/.nvmrc`), pnpm 11.7 (`packageManager` in `game/package.json`),
-`portlease` for ports. CI uses the same pins.
+`portlease` for ports. CI uses the same pins. Working in a git worktree (the default here)? Follow
+[`docs/git-worktrees.md`](docs/git-worktrees.md): create, `make setup`, verify, teardown.
 
 ## Build and test
 
 ```sh
+make setup             # fresh worktree: toolchain check, game deps, Go modules (then make lint, make shot)
 make build test lint   # Go binaries -> bin/, game bundle -> game/dist/, go test + vitest, vet/gofmt/tsc
 make integration       # bridge against a real herdr (and systemd-run) in throwaway sessions (see below)
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
