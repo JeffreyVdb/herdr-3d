@@ -10,7 +10,8 @@
   WebSocket, wake/sleep, floor settings, hire/send home, M6 team presets and `run.start`), `proto` (protocol v1 types and client), `gitremote` (GitHub
   origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires, send-homes and the Changes
   panel), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
-  usage and cost from their transcripts, read incrementally, and the pricing table), `jsonl` (the shared reading of
+  usage and cost from their transcripts, read incrementally, and the pricing table; #101: the main thread's context in use
+  and its window, resolved from `[1m]`, observed context, the table and the model's family, cleared by a compaction), `jsonl` (the shared reading of
   those JSONL files: one tail per transcript, complete lines from byte offsets, no symlinks), `transcript` (M16: the
   Claude and Codex transcripts as one timeline of items, indexed by offset for the laptop's conversation view; phase 2:
   their images as `ImageRef`s, decoded, hashed and resolved through the allowlist of path roots; #57: the agents'
@@ -829,7 +830,7 @@ down with `leftInTerminal` / `seatMode` from `e2e/game.ts`). `transcript.watch` 
 kind in the bridge's shape, the demo's Agent call pages the bridge's own output for its subagent fixture, and `sim.transcript` (`simTranscript(args)` in the
 hooks) pushes items or updates to a watch (`{id, items, updates}`) or closes it (`{id, close: "session_changed"}`);
 `simfail=no_m16` plays a bridge before M16. The demo's `Read` of a PNG shows its two thumbnails under its collapsed header, and still does with Hide tools on (#70). #59: the view's top strip has the transcript's preset (three swatches:
-Terminal, Quiet, Paper), Hide tools and A− / 100% / A+; the seat bar has the terminal's own preset and zoom. Ctrl + = /
+Terminal, Quiet, Paper), Hide tools, the context meter (#101: `world/usage.ts` `contextMeter`, `TranscriptView.setUsage`, fed by `TranscriptMode.usageSeen`; `e2e/m101-context-meter.spec.ts`) and A− / 100% / A+; the seat bar has the terminal's own preset and zoom. Ctrl + = /
 − / 0 and Ctrl+wheel zoom the view that is up, while seated only; Ctrl+, puts the keyboard on the terminal's controls (Esc goes back). `e2e/m59-themes.spec.ts` drives them. The game's tests read what the bridge makes of its own fixtures from
 `game/fixtures/transcript/` (`H3D_UPDATE_FIXTURES=1 go test ./internal/transcript` writes them, and the Go test fails
 when they are stale). E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1&floor=herdr-3d`.
