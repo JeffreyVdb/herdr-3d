@@ -17,6 +17,7 @@ import type { HireSummary } from './ui/hire';
 import type { PanelSummary } from './ui/panels';
 import type { SendHomeSummary } from './ui/sendHome';
 import type { ChangesSummary } from './ui/changes';
+import type { InboxChip } from './ui/inbox';
 import type { PromptSummary } from './ui/prompt';
 // M6 start
 import type { PresetsSummary } from './ui/presets';
@@ -198,10 +199,10 @@ export interface H3DDebug {
   nextNeed(): NeedItem | null;
   /** M5: who needs you, in the order N visits them. */
   needs(): NeedItem[];
-  /** #100: the inbox chip (shown, count, whether someone needs you), who is in it, and its click (resolves once you sit, or could not). */
-  inbox(): { shown: boolean; count: number; blocked: boolean } | null;
+  /** #100: the inbox chip (shown, count, whether someone needs you, its list open and the rows it shows), who is in it, and a row's teleport (resolves once you sit, or could not). */
+  inbox(): ReturnType<InboxChip['summary']> | null;
   inboxItems(): NeedItem[];
-  goInbox(): Promise<NeedItem | null>;
+  goToWorker(workerId: string): Promise<boolean>;
   /** M5: P / C on a worker, as the keys do. */
   openPrompt(workerId: string): void;
   openChanges(workerId: string): void;
@@ -436,7 +437,7 @@ const h3d: H3DDebug = {
   needs: () => app?.needs() ?? [],
   inbox: () => app?.inbox.summary() ?? null,
   inboxItems: () => app?.inboxItems() ?? [],
-  goInbox: () => app?.goInbox() ?? Promise.resolve(null),
+  goToWorker: (id) => app?.goToWorker(id) ?? Promise.resolve(false),
   openPrompt: (id) => app?.openPrompt(id),
   face: (id) => app?.faceWorker(id) ?? false,
   crew: () => app?.office?.crewInfo() ?? { members: [], shown: [] },
