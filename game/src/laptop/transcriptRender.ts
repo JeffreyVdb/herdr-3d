@@ -1,8 +1,9 @@
 import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
-import type { Ask, CommandArgs, TranscriptDiff, TranscriptItem } from '../net/protocol';
+import type { Ask, CommandArgs, Followup, TranscriptDiff, TranscriptItem } from '../net/protocol';
 import { AskCard, askItem, type AskResult } from './askCard';
+import { FollowupCard, type FollowupResult } from './followupCard';
 import type { ImageFeed } from './imageFeed';
 import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, Thumbs } from './transcriptImages';
 import { h, icon } from '../ui/dom';
@@ -39,6 +40,10 @@ export interface TranscriptRenderHost {
   onAnswer(hash: string, choice: number | null, cancel?: boolean): void;
   /** #57: answers (or dismisses) the worker's ask; `id` is filled in by the host. */
   onAnswerAsk(args: CommandArgs['worker.answer_ask']): Promise<AskResult>;
+  /** #90: answers the worker's follow-up questions; `id` is filled in by the host (none: the card cannot send). */
+  onAnswerFollowup?(args: CommandArgs['worker.answer_followup']): Promise<FollowupResult>;
+  /** #90: dismisses them. */
+  onDismissFollowup?(turnId: string): Promise<FollowupResult>;
   onSwitchToTerminal(): void;
   loadSubagent(agentId: string): Promise<TranscriptItem[]>;
   /** #58: a refused prompt's row is dismissed. */
@@ -62,6 +67,8 @@ export interface TranscriptView {
   setBlocked(q: BlockedQuestion | null): void;
   /** #57: the worker's ask (null: none): a card pinned above the prompt box while it waits. */
   setAsk(ask: Ask | null): void;
+  /** #90: the open questions of the agent's final message (null: none): a card above the prompt box, which stays on. */
+  setFollowup(f: Followup | null): void;
   /** The mode's tab strip (Conversation | Images), put in the bar after the title. */
   attachTabs(tabs: HTMLElement): void;
   /** Is the item in the timeline (loaded)? */
@@ -638,6 +645,7 @@ class Transcript implements TranscriptView {
   private readonly thumbs: Thumbs;
   private blocked: BlockedQuestion | null = null;
   private readonly ask: AskCard;
+  private readonly followup: FollowupCard; // #90
   /** Whether the banner and the prompt box were last drawn with the card up. */
   private asking = false;
   private destroyed = false;
@@ -694,7 +702,16 @@ class Transcript implements TranscriptView {
         this.stick();
         // Shown or gone (also by itself, once its answer is recorded): the prompt box follows.
         if (this.asking !== this.ask.shown) this.renderBanner();
+        // #90: the follow-up card waits behind a question's.
+        this.followup?.suppress(this.ask.shown);
       },
+    });
+    const noFollowup = (): Promise<FollowupResult> => Promise.resolve({ ok: false, code: 'unsupported', message: 'Not available here.' });
+    this.followup = new FollowupCard({
+      answer: (args) => (host.onAnswerFollowup ? host.onAnswerFollowup(args) : noFollowup()),
+      dismiss: (turnId) => (host.onDismissFollowup ? host.onDismissFollowup(turnId) : noFollowup()),
+      focusTimeline: () => this.focus(),
+      resized: () => this.stick(),
     });
     // The toggle sits on the left: the HUD's plan-limits widget can hang over the screen's top-right corner.
     this.titleEl = h('span', { class: 'tx-title' }, 'Transcript');
@@ -731,7 +748,7 @@ class Transcript implements TranscriptView {
     const zoom = h('div', { class: 'tx-zoom', role: 'group', 'aria-label': 'Transcript text size' }, this.zoomBtns.out, this.zoomBtns.reset, this.zoomBtns.in);
     // The preset and the zoom keep together at the strip's end; a narrow screen wraps them to a line of their own.
     const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, this.busy, h('div', { class: 'tx-look' }, picker, zoom));
-    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, form, this.live);
+    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, this.followup.el, form, this.live);
     this.unprefs = this.prefs.onChange((what) => this.applyPrefs(what));
     this.applyPrefs(null);
     this.updateCounts();
@@ -789,6 +806,12 @@ class Transcript implements TranscriptView {
     // The card wins over the screen's question: it has the whole question, the descriptions and multi-select
     // (the banner and the prompt box are redrawn when it shows or goes, through its resized()).
     this.ask.set(ask);
+    this.followup.suppress(this.ask.shown);
+  }
+
+  setFollowup(f: Followup | null): void {
+    if (this.destroyed) return;
+    this.followup.set(f);
   }
 
   setActivity(cue: ActivityCue | null): void {
@@ -889,6 +912,7 @@ class Transcript implements TranscriptView {
     this.unprefs();
     this.thumbs.destroy();
     this.ask.destroy();
+    this.followup.destroy();
     // The composer's draft goes with the view: its uploads are cancelled, its object URLs revoked.
     this.composer.dispose();
     this.composer.getDraft().dispose();
@@ -1441,6 +1465,13 @@ class Transcript implements TranscriptView {
       e.stopPropagation();
       return;
     }
+    // #90: the same on the follow-up card.
+    const inFollowup = !!target && this.followup.el.contains(target);
+    if (inFollowup && this.followup.key(e, true)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     // A focused button keeps Enter / Space (it opens its row); the game does not see them.
     if ((e.key === 'Enter' || e.key === ' ') && target?.closest('button, a, summary')) {
       e.stopPropagation();
@@ -1448,6 +1479,11 @@ class Transcript implements TranscriptView {
     }
     // #57: then, from the timeline, the pinned question's digits, Tab / ← →, Enter.
     if (!inCard && this.ask.shown && this.ask.key(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (!inFollowup && !this.ask.shown && this.followup.shown && this.followup.key(e)) {
       e.preventDefault();
       e.stopPropagation();
       return;

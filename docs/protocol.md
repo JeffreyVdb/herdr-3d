@@ -174,6 +174,9 @@ before M10 does: a client shows no limits widget without it (and none inline in 
 `ai` (#92) is the AI integration's state, never a key (see [AI integration](#ai-integration)); the key is left out by a
 bridge without the service, as by one from before #92: a client's Settings then says the bridge has no AI integration.
 
+`followups` (#90) is the follow-up questions feature's state (see [Follow-up questions](#follow-up-questions)), left
+out by a bridge without the AI service or from before #90.
+
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
 
@@ -242,6 +245,7 @@ floor with no workers and an `error`).
 | `usage` | object, optional | its agent session's token counts and cost estimate (see [Usage and cost](#usage-and-cost)); absent without an `agent_session` (a running Codex excepted), or until the bridge found its transcript |
 | `question` | object, optional | what the screen of a `blocked` worker asks, while it is blocked (see [Blocked workers](#blocked-workers-question-quick-reply-approve--deny)) |
 | `ask` | object, optional | #57: the structured question (Claude's AskUserQuestion, Codex's request_user_input) its agent's latest turn waits on, read from its transcript whatever `status` says (see [Laptops: asks](#laptops-asks)) |
+| `followup` | object, optional | #90: the open questions of its agent's final message, `{"turn_id", "questions": [{"id", "question", "kind": "yes_no" \| "choice" \| "open", "options"?}], "score", "source": "model" \| "fallback", "at", "tail"?}`, until answered, dismissed or moot (see [Follow-up questions](#follow-up-questions)) |
 | `wrapup` | object, optional | #83: its wrap-up, `{"state": "armed" \| "needs_you", "worktree": "keep" \| "delete" \| "delete_branch", "armed_at": int, "reason"?: string}` (unix ms, bridge clock; `reason` with `needs_you`), while armed or needing you (see [Wrap up](#wrap-up)) |
 | `round` | int ≥ 1, optional | write-code round: the `h3d_round` token, else the label's trailing `\|r<N>` (see [Runs and freelancers](#runs-and-freelancers)) |
 | `ticket` | string ≤ 32 bytes, optional | the `h3d_ticket` token, else the label's ticket field (`CODE\|descr\|<ticket>\|r<N>`, likewise `REVIEW` and `UX`) |
@@ -370,6 +374,7 @@ and remember the last `seq` applied.
 | `whiteboard.updated` | `floor`, `version`, `author`, `at`, `render_version`, `render`, `stale`, `stale_pins` | M13: a floor's whiteboard has a new version (a save, a clear, an agent's pin; flat in the event, see [Whiteboard](#whiteboard)) |
 | `limits.update` | `provider`, `plan`, `windows`, `at`, `stale`, `error`?, `source`?, `reached`?, `credits`? | a provider's plan limits were read (flat in the event, see [Plan limits](#plan-limits)); one per provider per read, about every 2 minutes while a client is connected |
 | `ai.update` | `classifier`, `llm`, `last_error`? | #92: the AI integration's state changed (a role saved or cleared, a test passed or failed, a key rejected); the whole state, flat in the event (see [AI integration](#ai-integration)) |
+| `followups.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `tested` | #90: the follow-up questions' state changed (a setting, a passing test, a model's state); the whole state, flat in the event (see [Follow-up questions](#follow-up-questions)) |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
@@ -469,6 +474,11 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `ai.test` | `{"role", "key"?, "base_url"?, "model"?, "extra_body"?}` | `{"ok": true, "latency_ms", "json_mode"?, "base_url"?, "score"?}` | `ai.update` when it changes the role in use |
 | `ai.set` | `{"role", "key"?, "base_url"?, "model"?, "extra_body"?}` | the AI state | `ai.update` |
 | `ai.clear` | `{"role"}` | the AI state | `ai.update` |
+| `followups.get` | `{}` | the follow-up questions' state (see [Follow-up questions](#follow-up-questions)) | — |
+| `followups.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | the follow-up questions' state | `followups.update` (before the ack) |
+| `followups.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"name", "expect", "score", "flagged", "questions"?, "source"?, "error"?}], "latency_ms"}` | `followups.update` when it changes `tested` |
+| `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…]}` | `worker.prompt`'s | the worker's upsert without its `followup` |
+| `worker.dismiss_followup` | `{"id", "turn_id"}` | — | the worker's upsert without its `followup` (before the ack) |
 | `whiteboard.get` | `{"floor"}` | the board's state, `{"floor", "version", "author", "at", "render_version", "render", "stale", "stale_pins"}` (its content is HTTP, see [Whiteboard](#whiteboard)) | — |
 | `whiteboard.clear` | `{"floor", "confirm": true, "author"?}` | the new state | `whiteboard.updated` |
 | `whiteboard.pin` | `{"floor", "author", "note", "request_id"?}` (an image: `POST /whiteboard/{floor}/pin`) | the new state plus `{"elements": [id…], "repeated"?}` | `whiteboard.updated` (none for a repeated `request_id`) |
@@ -1543,7 +1553,7 @@ Unknown keys of the CLIs are ignored; the fields above are only ever added to.
 
 ### AI integration
 
-#92. Two bridge-wide models, configured once and used by features (none yet; #90 is the first): the **classifier**
+#92. Two bridge-wide models, configured once and used by features (#90 follow-up questions, see [Follow-up questions](#follow-up-questions)): the **classifier**
 (Jev, by TypeSafe: a score in [0,1] for a yes/no question about some state) and the **LLM** (any OpenAI-compatible
 endpoint: OpenRouter, LiteLLM, vLLM, Ollama, Xiaomi MiMo…). `internal/ai` holds them and knows no feature: a feature
 takes the `ai.Classifier` or `ai.LLM` interface (with fakes for its tests). **Configuring a model sends nothing.** The
@@ -2320,6 +2330,96 @@ The screen parser of `worker.question` reads these dialogs with the same parsers
 wraps, the options' labels without their descriptions or previews, and a Yes / No question is `choice`, not
 `permission`.
 
+### Follow-up questions
+
+#90. An agent often ends its turn with free text that asks you things ("## Open questions for you …"). That is no
+AskUserQuestion (#57 has no card for it) and herdr says `idle` or `done`, so the bridge looks at the final message of
+every turn, **once the feature is switched on and both AI models are `ready`** (see [AI integration](#ai-integration)),
+and flags the worker as needing you with the questions it found.
+
+```json
+"followups":{"enabled":true,"threshold":0.7,"state":"ready","roles":{"classifier":"ready","llm":"ready"},"env":[],"tested":true}
+"followup":{"turn_id":"3f9c1a7b2e4d6a80","score":0.96,"source":"model","at":1790859600000,
+  "questions":[{"id":"q1","question":"Does the legacy importer still need the v1 format?","kind":"yes_no"},
+               {"id":"q2","question":"Ship this already, or wait for the e2e-live run?","kind":"choice","options":["Ship now","Wait for e2e-live"]}]}
+```
+
+**Settings** (bridge-wide, in the database): `followups.get` answers them, the snapshot's `followups` holds them,
+`followups.update` carries them flat.
+
+- `enabled` is off by default: configuring the AI integration does **not** switch it on (a model set up for another
+  feature must not start sending every agent's final message anywhere). `HERDR_WORLD_FOLLOWUPS_ENABLED` /
+  `--followups-enabled` (`true` / `false`) wins over the stored toggle and lists `enabled` in `env`; changing it then is
+  `env_locked`.
+- `threshold` (default 0.7, 0.05–0.99): the classifier's score at which a message asks something.
+- `state`: `off` (switched off), `incomplete` (on, but a model is not `ready`: `missing` lists `classifier` / `llm`;
+  nothing runs), `ready`. **Only `ready` runs the pipeline**; with anything else there are zero calls on turn end. A
+  model that turns `invalid` at runtime (a rejected key) pauses it with the `ai.update` that says so (a
+  `followups.update` follows). `roles` are both models' states, for the panel's status line.
+- **`followups.test`** runs two sample messages (one ending in open questions, one "Done, PR merged.") through the
+  whole pipeline with the models in use: it passes when the first scores at or over the threshold and the LLM lists its
+  questions, and the second scores under it. A test that ran but did not pass is `ok: false` with `reason` (and the
+  scores); a call that failed is its error (`auth_failed`, `timeout`…; `incomplete` without both models `ready`).
+- **`followups.set {enabled: true}` needs a passing test** of the models in use (their config fingerprints, as `ai.set`
+  does) from the last 30 minutes, else `test_required` (`incomplete` while a model is not ready); `tested` says whether
+  one covers them now. Switching off and the threshold need none.
+
+**Detection.** The usage tracker's tail of every Claude and Codex worker's transcript (the same lines as the ask and
+wrap-up trackers, parsed once for both turn trackers) gives the latest turn's final assistant message: Claude's last
+assistant message id with text, ended by its `stop_reason` (not `tool_use`) or `system/turn_duration`; Codex's last
+assistant `response_item` (else `task_complete`'s `last_agent_message`). A new prompt (typed or queued), a tool result or
+`task_started` resets it; an interrupted turn (`[Request interrupted by user]`, `turn_aborted`) has none. Then:
+
+1. It waits until the ended turn and herdr's not-`working` status both held for 2 s.
+2. It skips (no call at all): the feature not `ready`; an `ask` pending (#57 covers it); the worker `blocked` (its
+   `question` covers it); a freelancer (`code`, `review`, `ux`, `ground`: their questions are for the orchestrator, and
+   a real need for a human comes through the report's `input_required`); a harness other than Claude or Codex; an
+   empty message. Orchestrators and regular workers are looked at.
+3. **Gate**: the classifier scores `state {"last_agent_message": <the message's last 96,000 characters, ~24k tokens at
+   4 characters a token>}` for "Is the agent asking the user for information, a decision, or an answer before it can
+   continue?". Under the threshold: nothing, and no LLM call.
+4. **Extract**: the LLM (JSON mode) lists `{"questions":[{"question","kind","options"}]}`, validated strictly: 1–8
+   questions, each 1–300 characters (whitespace folded), `kind` `yes_no`, `choice` (2–8 options of 1–120 characters)
+   or `open`; options of the other kinds are dropped. Anything else, or an LLM failure, is the **fallback**: one `open`
+   item ("The agent asked you something") with the message's last 1,200 characters as `tail`. A positive gate is never
+   dropped.
+5. **Once**: each message looked at is recorded by worker and SHA-256 (`followup_seen`, with its follow-up while it is
+   open, the last 20 per worker). A restart or a re-read never classifies it again; an open follow-up comes back as it
+   was, a cleared one never. A classifier failure is not recorded (logged; a later restart may try again).
+
+The calls run off the hub goroutine, under the AI integration's bounds (two calls in flight over the whole bridge).
+`turn_id` is the message's first 16 hex SHA-256 digits.
+
+**Clearing.** `followup` goes (the worker's upsert, the record cleared) when it is answered, dismissed, on any
+`worker.prompt`, `worker.keys` or answer to it, when herdr says `working` again, and when the worker is gone. A result
+that comes back after one of these (or after a new prompt was read) is recorded but not shown.
+
+**Answering.** **`worker.answer_followup {id, turn_id, answers: [{id, value, note?}]}`** is `stale` unless the worker's
+follow-up is of `turn_id` (answered, dismissed or a newer turn meanwhile), `bad_request` for an unknown or repeated
+question id, an empty answer, a `yes_no` value other than `Yes` / `No`, or a value or note over 4,000 bytes. It sends
+**exactly one prompt** through `worker.prompt`'s lane and rules (typed for Claude, #95; queued for an agent at work;
+`invalid_state` with an `ask`), checked again when its turn on the lane comes, and clears the follow-up once it went:
+
+```
+Answers to your open questions:
+1. Does the legacy importer still need the v1 format? → No
+2. Ship this already, or wait for the e2e-live run? → Wait for e2e-live <optional note>
+```
+
+Only the answered questions are listed, numbered as asked; a note follows its value after a space. A fallback's one
+free answer is sent as it is. **`worker.dismiss_followup {id, turn_id}`** clears it (`stale` likewise). The audit log
+keeps the ids and each answer's lengths, never the text.
+
+**Privacy.** With the feature on, every agent's final message goes to TypeSafe (the classifier), and to the configured
+LLM endpoint when the classifier says yes. Messages can contain code, paths and internal details: that is why it is
+opt-in on its own toggle, only the final assistant message is sent (never the transcript or tool output), and the
+game's Settings say so above the toggle. A self-hosted OpenAI-compatible endpoint keeps the extraction in-house.
+
+The game ORs `followup` into needs-you (the counts, N, the desk's NEEDS YOU and its card: "N questions: answer at the
+laptop (E)"), and the transcript view pins a card above the prompt box, which stays on (typing a prompt there clears
+it): a tab per question, Yes / No and a note, a choice's options and Other, a text for an open one, Send answers and
+Dismiss, and "Detected automatically".
+
 ### Errors
 
 ```json
@@ -2329,7 +2429,7 @@ wraps, the options' labels without their descriptions or previews, and a Yes / N
 | code | meaning |
 |---|---|
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
-| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too |
+| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` use `incomplete`, `test_required`, `env_locked` and, from `followups.test`'s calls, the `ai.*` ones |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
 | `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
 | `name_taken` | another building, or another team preset, already has that name (ignoring case) |
@@ -2350,7 +2450,7 @@ wraps, the options' labels without their descriptions or previews, and a Yes / N
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
 | `input_failed` | `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text (`terminal.zoom`: herdr refused the zoom), the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step, or still there after the last one; the message says why |
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
-| `stale` | `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
+| `stale` | #90 `worker.answer_followup` / `worker.dismiss_followup` for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
 | `confirmation_required` | `issue.close`, `pr.merge` or `worker.open_pr` without `confirm: true` (see [Boards](#boards-issues-and-pull-requests)) |

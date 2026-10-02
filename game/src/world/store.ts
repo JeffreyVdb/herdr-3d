@@ -23,6 +23,8 @@ import { askOf } from './ask';
 import { wrapUpOf } from './wrapup';
 // M6 start
 import { AiBook } from './ai';
+// #90: follow-up questions
+import { followupOf, FollowupsBook } from './followup';
 import { LimitBook } from './limits';
 import { PresetBook } from './presets';
 // M6 crew: write-code roles, freelancer lifecycles, over-cap orchestrators.
@@ -150,6 +152,8 @@ export class WorldStore {
   readonly limits = new LimitBook();
   /** #92: the AI integration's settings and state (`known` false from an older bridge); no part of the scene. */
   readonly ai = new AiBook();
+  /** #90: the follow-up questions feature's settings and state (`known` false from an older bridge). */
+  readonly followups = new FollowupsBook();
   private readonly localDesks = new Map<string, number>();
   private readonly since = new Map<string, number>();
   private readonly deskCache = new Map<string, Map<string, number>>();
@@ -180,6 +184,7 @@ export class WorldStore {
     this.presets.reset(s.world.presets);
     this.limits.reset(s.world.limits);
     this.ai.reset(s.world.ai);
+    this.followups.reset(s.world.followups);
     this.seq = s.seq;
     this.snapshots++;
     this.structureVersion++;
@@ -287,6 +292,9 @@ export class WorldStore {
       case 'ai.update':
         this.ai.upsert(e);
         break;
+      case 'followups.update': // #90
+        this.followups.upsert(e);
+        break;
     }
     if (c.structure) this.structureVersion++;
     return c;
@@ -324,13 +332,15 @@ export class WorldStore {
     const ask = asleep ? null : askOf(w);
     // #83: and a wrap-up that stopped without sending it home.
     const wrapStuck = wrapUpOf(w)?.state === 'needs_you';
+    // #90: and an agent whose final message asked you something, since the bridge found it.
+    const followup = asleep || ask ? null : followupOf(w);
     return {
       worker: w,
       name: displayName(w),
       desk,
       harness: resolveHarness(w),
-      since: ask ? ask.since : (this.since.get(id) ?? this.loadedAt),
-      display: (crew?.needsYou || ask || wrapStuck) && !asleep ? 'needs_you' : displayStatus(w.status, asleep),
+      since: ask ? ask.since : followup ? followup.at : (this.since.get(id) ?? this.loadedAt),
+      display: (crew?.needsYou || ask || followup || wrapStuck) && !asleep ? 'needs_you' : displayStatus(w.status, asleep),
       crew,
     };
   }

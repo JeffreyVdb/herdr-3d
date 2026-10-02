@@ -122,6 +122,18 @@ export class SettingsDialog {
     };
   }
 
+  /** Scrolls section `id` into view and puts the keyboard on its heading (a link from another section). */
+  reveal(id: string): void {
+    const sec = this.sections.find((x) => x.id === id);
+    if (!sec) return;
+    const h = sec.root.querySelector<HTMLElement>('.settings-title');
+    if (h) {
+      h.tabIndex = -1;
+      h.focus({ preventScroll: true });
+    }
+    sec.root.scrollIntoView({ block: 'start', behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }
+
   /** The ids of the sections, in the order they show. */
   get sectionIds(): string[] {
     return this.sections.map((s) => s.id);

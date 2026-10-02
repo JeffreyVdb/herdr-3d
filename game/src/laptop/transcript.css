@@ -1312,7 +1312,8 @@
  * banner, the options as rows led by their key cap (round: pick one; square: pick several; filled: picked), so the
  * digit you press is the one you see. In the timeline it is a quiet record of what was asked and answered.
  */
-.tx-ask {
+.tx-ask,
+.tx-fu {
   --tx-sun-soft: color-mix(in srgb, var(--tx-sun) 42%, transparent);
   flex: none;
   display: flex;
@@ -1327,7 +1328,8 @@
   background: var(--tx-ask-bg);
   box-shadow: 0 -8px 22px -6px rgb(0 0 0 / 55%);
 }
-.tx-ask[hidden] {
+.tx-ask[hidden],
+.tx-fu[hidden] {
   display: none;
 }
 .tx-ask-body {
@@ -1456,7 +1458,8 @@
   background: color-mix(in srgb, var(--tx-sun) 13%, transparent);
 }
 .tx-ask-opt:disabled,
-.tx-ask[data-phase='sending'] .tx-ask-opt {
+.tx-ask[data-phase='sending'] .tx-ask-opt,
+.tx-fu[data-phase='sending'] .tx-ask-opt {
   cursor: default;
   opacity: 0.6;
 }
@@ -1581,7 +1584,8 @@
   color: var(--tx-text-3);
   cursor: default;
 }
-.tx-ask[data-phase='sending'] .tx-ask-send:disabled {
+.tx-ask[data-phase='sending'] .tx-ask-send:disabled,
+.tx-fu[data-phase='sending'] .tx-ask-send:disabled {
   background: color-mix(in srgb, var(--tx-sun) 30%, transparent);
   color: var(--tx-text);
 }
@@ -1593,12 +1597,14 @@
 .tx-ask-note.is-error {
   color: var(--tx-red);
 }
-.tx .tx-ask button:disabled {
+.tx .tx-ask button:disabled,
+.tx .tx-fu button:disabled {
   cursor: default;
 }
 /* A short screen: a tighter card, descriptions to two lines, no previews' height to spare. */
 @container tx (max-height: 470px) {
-  .tx-ask {
+  .tx-ask,
+  .tx-fu {
     margin: 0 8px 6px;
     padding: 6px 9px 7px;
     max-height: 56%;
@@ -1707,7 +1713,8 @@
   .tx-zoom-btn {
     height: 18px;
   }
-  .tx-ask {
+  .tx-ask,
+  .tx-fu {
     flex: 0 1 auto;
     min-height: 0;
     max-height: none;
@@ -1715,7 +1722,8 @@
     padding: 5px 8px 6px;
   }
   /* Who asks and the tabs share the first line; the body's row takes what is left. */
-  .tx-ask {
+  .tx-ask,
+  .tx-fu {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto auto;
@@ -1834,5 +1842,53 @@
 @media (prefers-reduced-motion: reduce) {
   .tx-ask-opt {
     transition: none;
+  }
+}
+
+/*
+ * #90: the open questions of the agent's final message. The ask card's look, drawn dashed: the bridge inferred
+ * them (the agent waits on no dialog), so the card reads as a suggestion beside the prompt box, which stays on.
+ */
+.tx-fu {
+  border-style: dashed;
+  box-shadow: 0 -6px 18px -8px rgb(0 0 0 / 45%);
+}
+.tx-fu-auto {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px dashed var(--tx-sun-soft);
+  border-radius: 999px;
+  color: var(--tx-text-2);
+  font-size: calc(11px * var(--tx-k, 1));
+  font-weight: 600;
+  cursor: help;
+}
+.tx-fu-tail {
+  margin: 9px 0 0;
+  padding: 6px 10px;
+  max-height: 8.5em;
+  overflow: auto;
+  border-left: 1px solid var(--tx-sun-soft);
+  color: var(--tx-text-2);
+  font-size: calc(12.5px * var(--tx-k, 1));
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tx-fu-field {
+  margin-top: 6px;
+}
+.tx-ask-opts + .tx-fu-field {
+  margin-top: 8px;
+}
+.tx-fu-area {
+  display: block;
+  resize: vertical;
+  min-height: 4.2em;
+  line-height: 1.4;
+}
+@container tx (max-height: 470px) {
+  .tx-fu-tail {
+    max-height: 4.5em;
   }
 }

@@ -57,6 +57,33 @@ describe('WorldStore asks (#57)', () => {
   });
 });
 
+describe('WorldStore follow-up questions (#90)', () => {
+  const followup = { turn_id: 't1', score: 0.96, source: 'model' as const, at: 7000, questions: [{ id: 'q1', question: 'Ship it?', kind: 'yes_no' as const }] };
+  it('needs you while its final message has open questions, since they were found; the desk card says how many', async () => {
+    const { cardOf } = await import('../render/cards/cardOf');
+    const s = new WorldStore(0);
+    s.applySnapshot(snap(worker({ status: 'idle', status_since: 9000, followup })));
+    const v = s.workerView('a')!;
+    expect(v).toMatchObject({ display: 'needs_you', since: 7000 });
+    expect(s.floorView('top')?.counts).toMatchObject({ needsYou: 1, idle: 0 });
+    expect(cardOf(v).ask).toEqual({ text: 'Ship it?', choices: [], about: ['1 question: answer at the laptop (E)'] });
+    s.applyEvent({ t: 'worker.upsert', seq: 11, worker: worker({ status: 'working', status_since: 9800 }) });
+    expect(s.workerView('a')?.display).toBe('working');
+  });
+
+  it('keeps the feature’s state from the snapshot and followups.update', () => {
+    const s = new WorldStore(0);
+    const sn = snap(worker());
+    sn.world.followups = { enabled: false, threshold: 0.7, state: 'off', roles: { classifier: 'off', llm: 'off' }, env: [], tested: false };
+    s.applySnapshot(sn);
+    expect(s.followups.state?.state).toBe('off');
+    const m = parseMessage(JSON.stringify({ t: 'followups.update', seq: 11, enabled: true, threshold: 0.8, state: 'ready', roles: { classifier: 'ready', llm: 'ready' }, env: [], tested: true })) as ServerMessage;
+    expect(isWorldEvent(m)).toBe(true);
+    s.applyEvent(m as never);
+    expect(s.followups.state).toMatchObject({ enabled: true, threshold: 0.8, state: 'ready' });
+  });
+});
+
 describe('worker.usage on the wire', () => {
   it('is a world event (with a seq) the client applies', () => {
     const m = parseMessage(JSON.stringify({ t: 'worker.usage', seq: 1200, id: 'a', session: 'herdr-3d', usage: usage(37_210) })) as ServerMessage;

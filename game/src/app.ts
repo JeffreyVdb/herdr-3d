@@ -62,6 +62,8 @@ import { ScreenShareController } from './screen';
 import { LimitsWidget } from './ui/limits';
 // #92 AI integration
 import { aiSection } from './ui/aiSection';
+// #90 follow-up questions
+import { followupsSection } from './ui/followupsSection';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
 import type { SettingsDialog } from './ui/settings';
@@ -279,7 +281,17 @@ export class App {
     this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
     // #92: the bridge-wide AI models. A chip while one is set up but unusable, a toast when a call just stopped one.
-    this.settings.addSection('ai', 'AI integration', aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
+    this.settings.addSection(
+      'ai',
+      'AI integration',
+      aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args), usedBy: { classifier: ['Follow-up questions'], llm: ['Follow-up questions'] } }),
+      { store: 'bridge' },
+    );
+    // #90: the first feature on those models: its own switch and threshold, under them.
+    const settings = this.settings;
+    settings.addSection('followups', 'Follow-up questions', followupsSection({ book: this.store.followups, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }), {
+      store: 'bridge',
+    });
     this.store.ai.onChange((notice) => {
       this.hud.setAiChip(aiChip(this.store.ai.state));
       if (notice) this.hud.toast(notice, 7000, 'error');

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
-import type { Ask, Question, TranscriptItem } from '../net/protocol';
+import type { Ask, Followup, Question, TranscriptItem } from '../net/protocol';
 import { ImageFeed } from './imageFeed';
 import { subagentItems, TranscriptMode, type MountTranscript, type SeatMode, type TranscriptRenderHost } from './transcriptMode';
 import { TranscriptWatches, watchAck } from './transcriptWatches';
@@ -40,6 +40,9 @@ class FakeView {
   }
   setAsk(a: Ask | null): void {
     this.calls.push(`ask ${a?.tool_use_id ?? 'null'}`);
+  }
+  setFollowup(f: Followup | null): void {
+    this.calls.push(`followup ${f?.turn_id ?? 'null'}`);
   }
   cues: Array<ActivityCue | null> = [];
   setActivity(c: ActivityCue | null): void {

@@ -41,6 +41,7 @@ class FakeView {
   applyUpdates(): void {}
   setBlocked(): void {}
   setAsk(): void {}
+  setFollowup(): void {}
   setActivity(): void {}
   setPending(): void {}
   attachTabs(): void {

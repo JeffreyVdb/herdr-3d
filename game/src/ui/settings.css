@@ -244,3 +244,136 @@ dialog.settings {
     min-height: 44px;
   }
 }
+
+/* #90: follow-up questions. What it needs (both models, each with its state) as one quiet line, the privacy note
+ * as a ruled aside above the switch (it is what the switch agrees to), and the test's outcome as a short ledger:
+ * each sample's score in tabular figures beside whether it came out as expected, then the questions extracted. */
+.settings-fu {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-fu[hidden] {
+  display: none;
+}
+.settings-fu-needs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.settings-fu-needs-text {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-on-ink-2);
+}
+.settings-fu-roles {
+  display: contents;
+  list-style: none;
+}
+.settings-fu-role {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.settings-fu-link {
+  margin-left: auto;
+}
+.settings-fu-privacy {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 9px;
+  background: rgb(255 255 255 / 3%);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-on-ink-2);
+  text-wrap: pretty;
+}
+.settings-fu .settings-switch {
+  font-weight: 700;
+}
+.settings-fu .settings-switch input:disabled,
+.settings-fu .settings-switch:has(input:disabled) {
+  cursor: not-allowed;
+}
+.settings-fu .settings-switch:has(input:disabled) span {
+  opacity: 0.6;
+}
+.settings-fu .settings-switch + .settings-field-hint {
+  margin-top: -6px;
+  padding-left: 26px;
+}
+.settings-fu-result[hidden] {
+  display: none;
+}
+.settings-fu-samples {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
+  align-items: baseline;
+  margin: 0;
+  font-size: 12.5px;
+}
+.settings-fu-samples dt {
+  color: var(--text-on-ink-2);
+  font-weight: 700;
+}
+.settings-fu-samples dd {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+}
+.settings-fu-score {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+.settings-fu-samples dd.settings-fu-extracted {
+  grid-column: 1 / -1;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-fu-extracted .settings-field-hint {
+  margin: 0;
+}
+.settings-fu-questions {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.settings-fu-questions li + li {
+  margin-top: 4px;
+}
+.settings-fu-kind {
+  display: block;
+  color: var(--text-on-ink-2);
+  font-size: 11.5px;
+}
+@media (max-width: 600px) {
+  .settings-fu .btn--sm {
+    min-height: 44px;
+  }
+  .settings-fu-link {
+    margin-left: 0;
+  }
+}
+.settings-fu-link[hidden] {
+  display: none;
+}
+/* Its own row: panels.css's `.settings-actions` is the floor settings' sticky footer. */
+.settings-fu-actions {
+  display: flex;
+  gap: 8px;
+}
+.settings-fu-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.settings-fu .settings-status {
+  margin: -4px 0 0;
+}

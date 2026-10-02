@@ -43,6 +43,8 @@ export class AiSim {
   private llm: Llm | null = null;
   private readonly invalid = new Set<string>();
   private readonly passed = new Map<string, { fps: string[]; base_url: string; json_mode: boolean | null }>();
+  /** #90: told after every change of the state (the follow-up questions' own state follows it). */
+  onChange: ((send: Send) => void) | null = null;
 
   constructor(
     private readonly jev: string,
@@ -252,7 +254,10 @@ export class AiSim {
     if (typeof t !== 'string' || !t.startsWith('ai.') || !['ai.get', 'ai.models', 'ai.test', 'ai.set', 'ai.clear'].includes(t)) return false;
     if (this.mode === 'old') throw this.error('unknown_command', `unknown command: "${t}"`);
     if (this.mode === 'off') throw this.error('unsupported', 'unsupported: the bridge has no AI integration');
-    const changed = () => this.emit(send, { t: 'ai.update', ...this.view() });
+    const changed = () => {
+      this.emit(send, { t: 'ai.update', ...this.view() });
+      this.onChange?.(send);
+    };
     const run = async (): Promise<unknown> => {
       switch (t) {
         case 'ai.get':
@@ -291,5 +296,49 @@ export class AiSim {
   rejectKey(send: Send, role: 'classifier' | 'llm'): void {
     this.invalid.add(role);
     this.emit(send, { t: 'ai.update', ...this.view(), last_error: { role, kind: 'auth_failed', message: 'the key was rejected (HTTP 401)', at: Date.now(), runtime: true } });
+    this.onChange?.(send);
+  }
+
+  // ---- #90: what a feature calls (tools/fixture-followup.ts) ------------------------------------------
+
+  /** Whether the service exists and the role is ready (a role that is not makes no call). */
+  ready(role: 'classifier' | 'llm'): boolean {
+    return this.mode === 'on' && this.state(role) === 'ready';
+  }
+
+  /** The role's config in use, as a feature's test remembers it. */
+  fingerprint(role: 'classifier' | 'llm'): string {
+    return JSON.stringify(role === 'llm' ? this.llm : this.cls);
+  }
+
+  /** The classifier's score for a yes/no question about `state`. */
+  async classify(state: Obj, question: string): Promise<number> {
+    const c = this.cls;
+    if (!c || !this.ready('classifier')) throw new AiError('not_ready', 'the AI model is not ready');
+    const r = await this.call('POST', `${this.jev}/v1/systemone`, c.key, { model: c.model, state, questions: { question: { type: 'noul', instructions: question } } });
+    const score = isObj(r.json) && isObj(r.json.answers) && isObj(r.json.answers.question) ? r.json.answers.question.noul : undefined;
+    if (typeof score !== 'number' || score < 0 || score > 1) throw new AiError('bad_response', 'the answer has no score in [0,1]');
+    return score;
+  }
+
+  /** The LLM's completion (JSON mode where the endpoint takes it). */
+  async complete(messages: Array<{ role: string; content: string }>, json: boolean): Promise<string> {
+    const l = this.llm;
+    if (!l || !this.ready('llm')) throw new AiError('not_ready', 'the AI model is not ready');
+    const r = await this.call('POST', `${l.base_url}/chat/completions`, l.key, {
+      model: l.model,
+      messages,
+      ...(json && l.json_mode !== false ? { response_format: { type: 'json_object' } } : {}),
+      ...(l.extra ?? {}),
+    });
+    const choice = isObj(r.json) && Array.isArray(r.json.choices) ? r.json.choices[0] : undefined;
+    const text = isObj(choice) && isObj(choice.message) ? choice.message.content : undefined;
+    if (r.status !== 200 || typeof text !== 'string') throw new AiError('bad_response', `the provider answered HTTP ${r.status}`);
+    return text;
+  }
+
+  /** Whether the bridge has the service at all. */
+  get present(): boolean {
+    return this.mode === 'on';
   }
 }
