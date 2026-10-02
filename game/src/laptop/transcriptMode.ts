@@ -56,7 +56,7 @@ export interface OverlayRect {
 }
 
 export interface TranscriptModeHost {
-  send<T extends 'worker.prompt' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'transcript.page'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
+  send<T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'transcript.page'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list). */
   feed(id: string): ImageFeed | null;
   /** Loads the render module (`loadRenderer`; tests pass a fake). */
@@ -208,6 +208,8 @@ export class TranscriptMode {
   private rect: OverlayRect | null = null;
   /** Numbers the pending prompts. */
   private pid = 0;
+  /** An Esc for a queued prompt is on its way. */
+  private escBusy = false;
 
   constructor(private readonly host: TranscriptModeHost) {}
 
@@ -586,6 +588,20 @@ export class TranscriptMode {
         if (left.length === s.pending.length) return;
         s.pending = left;
         this.pendingChanged(s);
+      },
+      onSendNow: (id) => {
+        // Esc stops the turn and both CLIs send what is queued at once. One at a time: a second Esc on an empty
+        // Claude box opens its rewind menu.
+        if (!live() || this.escBusy || !s.pending.some((x) => x.id === id && x.state === 'queued')) return;
+        this.escBusy = true;
+        void this.host.send('worker.keys', { id: s.id, input: [{ key: 'esc' }] }).then((r) => {
+          this.escBusy = false;
+          if (!live() || r.ok) return;
+          this.host.status('error', failureText('worker.keys', r.code, r.message, { worker: s.name }));
+          // Not sent: the link comes back (rows are rebuilt, not reused).
+          s.view?.setPending([]);
+          s.view?.setPending(s.pending);
+        });
       },
       onAnswer: (hash, choice, cancel) => {
         if (!live()) return;

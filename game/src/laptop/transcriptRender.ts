@@ -49,6 +49,8 @@ export interface TranscriptRenderHost {
   loadSubagent(agentId: string): Promise<TranscriptItem[]>;
   /** #58: a refused prompt's row is dismissed. */
   onDismissPending?(id: string): void;
+  /** A queued prompt should go now: the host presses Esc (both CLIs stop the turn and send what is queued; none: no link). */
+  onSendNow?(id: string): void;
   /** #59: the transcript's preset and zoom and hidden tool calls, shared by every view (none: this view's own, kept nowhere). */
   prefs?: ViewPrefs;
   /** #101: the worker's usage when the view opens, for its context meter (`setUsage` follows it; none: no meter yet). */
@@ -898,7 +900,7 @@ class Transcript implements TranscriptView {
     const els: HTMLElement[] = [];
     let say = '';
     for (const p of this.pendingRows) {
-      const key = `${p.state}\u0000${p.late}\u0000${p.reason ?? ''}`;
+      const key = `${p.state}\u0000${p.late}\u0000${p.reason ?? ''}\u0000${p.due === null}`;
       let at = this.pendingEls.get(p.id);
       if (!at || at.key !== key) {
         at = { key, el: this.pendingRow(p) };
@@ -1090,6 +1092,19 @@ class Transcript implements TranscriptView {
     if (p.state === 'refused') {
       const why = 'The prompt is still in the box below: change it or send it again.';
       meta.append(h('button', { class: 'tx-link', title: why, onclick: () => this.host.onDismissPending?.(p.id) }, 'Dismiss'));
+    }
+    // Only while the agent is still busy with the turn it waits for (`due` is null then).
+    if (p.state === 'queued' && p.due === null && this.host.onSendNow) {
+      const why = `Stops ${this.agent}'s current turn (and any tool it is running) and sends the queued prompt now.`;
+      const now = h('button', {
+        class: 'tx-link tx-send-now',
+        title: why,
+        onclick: (e: Event) => {
+          (e.currentTarget as HTMLButtonElement).disabled = true;
+          this.host.onSendNow?.(p.id);
+        },
+      }, 'Send now (interrupts)');
+      meta.append(now);
     }
     return h('li', { class: 'tx-item tx-user tx-pending', 'data-state': p.state, 'data-late': String(p.late), 'data-pending': p.id }, h('div', { class: 'tx-bubble' }, md), meta);
   }

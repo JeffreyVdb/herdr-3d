@@ -848,6 +848,28 @@ describe('pending prompts', () => {
     expect(states(h)).toEqual(['sent+late']);
   });
 
+  it('send now: one Esc through worker.keys for a queued prompt, never two at once, and a failure says so', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    h.tx.activity('working', 50);
+    const sent = host.onPromptSubmit('hello');
+    h.sent[0]?.resolve({ ok: true, data: { queued: true } });
+    await sent;
+    const id = h.tx.pending[0]?.id ?? '';
+    host.onSendNow?.('nope');
+    expect(h.sent).toHaveLength(1);
+    host.onSendNow?.(id);
+    host.onSendNow?.(id);
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[1]?.t).toBe('worker.keys');
+    expect(h.sent[1]?.args).toEqual({ id: 'a', input: [{ key: 'esc' }] });
+    h.sent[1]?.resolve({ ok: false, code: 'input_failed', message: 'x' });
+    await Promise.resolve();
+    await Promise.resolve();
+    host.onSendNow?.(id);
+    expect(h.sent).toHaveLength(3);
+  });
+
   it('refused: an error row with the reason, the prompt kept (resolves false); the next send or Dismiss clears it', async () => {
     const h = harness();
     const { v, host } = await reading(h);

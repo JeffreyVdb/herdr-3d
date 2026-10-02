@@ -1120,7 +1120,7 @@ describe('#59: hide tool calls, the preset, the zoom', () => {
 });
 
 describe('#58: the live cue and the prompts on their way', () => {
-  const pend = (id: string, state: 'sending' | 'sent' | 'queued' | 'refused', extra: { late?: boolean; reason?: string; text?: string } = {}) => ({ id, text: extra.text ?? `prompt ${id}`, state, late: extra.late ?? false, mark: 0, due: null, ...(extra.reason ? { reason: extra.reason } : {}) });
+  const pend = (id: string, state: 'sending' | 'sent' | 'queued' | 'refused', extra: { due?: number | null; late?: boolean; reason?: string; text?: string } = {}) => ({ id, text: extra.text ?? `prompt ${id}`, state, late: extra.late ?? false, mark: 0, due: extra.due === undefined ? null : extra.due, ...(extra.reason ? { reason: extra.reason } : {}) });
 
   it('one flashing label at the end of the timeline, its time a sibling the ticker sets; gone from the DOM with the status', () => {
     vi.useFakeTimers({ now: T0 + 12_000 });
@@ -1203,6 +1203,22 @@ describe('#58: the live cue and the prompts on their way', () => {
     view.setPending([]);
     expect($$('.tx-pending')).toHaveLength(0);
     expect(($('.tx-empty') as HTMLElement).hidden).toBe(false);
+  });
+
+  it('a queued prompt the agent is still busy with has a Send now link; once its turn is over or it was clicked, not', () => {
+    const sent: string[] = [];
+    mount({ ...fakeHost(), label: 'Ada', onSendNow: (id) => sent.push(id) });
+    view.setPending([pend('p1', 'sent'), pend('p2', 'refused', { reason: 'x' })]);
+    expect($$('.tx-send-now')).toHaveLength(0);
+    view.setPending([pend('p1', 'queued', { due: null })]);
+    const btn = $('.tx-send-now') as HTMLButtonElement;
+    expect(btn.textContent).toBe('Send now (interrupts)');
+    btn.click();
+    expect(sent).toEqual(['p1']);
+    expect(btn.disabled).toBe(true);
+    // Its turn is over (a due time): the link goes.
+    view.setPending([pend('p1', 'queued', { due: 5 })]);
+    expect($$('.tx-send-now')).toHaveLength(0);
   });
 
   it('your own send goes to the bottom and follows again, even scrolled up', async () => {
