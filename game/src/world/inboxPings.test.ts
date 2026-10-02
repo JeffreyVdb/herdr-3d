@@ -82,6 +82,49 @@ describe('InboxPings', () => {
     expect(kinds(out)).toEqual(['finished:a!', 'finished:b!']);
   });
 
+  it('done cut short by a waiting interlude before its settle pings once it is done again, after the delay', () => {
+    const { pings, out, clock } = setup();
+    pings.update([], true);
+    pings.update([entry('a', 'done', 5)], false);
+    clock.advance(2_000);
+    pings.update([], false); // #98: waiting on its background tasks; the status (and its since) stays done
+    clock.advance(10_000);
+    expect(out).toEqual([]);
+    pings.update([entry('a', 'done', 5)], false); // the last task closed
+    expect(pings.pending()).toEqual(['a']);
+    clock.advance(4_999);
+    expect(out).toEqual([]);
+    clock.advance(1);
+    pings.update([entry('a', 'done', 5)], false);
+    clock.advance(10_000);
+    expect(kinds(out)).toEqual(['finished:a!']);
+  });
+
+  it('done that already pinged does not ping again after a waiting interlude', () => {
+    const { pings, out, clock } = setup();
+    pings.update([], true);
+    pings.update([entry('a', 'done', 5)], false);
+    clock.advance(5_000);
+    pings.update([], false); // waiting
+    clock.advance(20_000);
+    pings.update([entry('a', 'done', 5)], false);
+    clock.advance(10_000);
+    expect(kinds(out)).toEqual(['finished:a!']);
+    expect(pings.pending()).toEqual([]);
+  });
+
+  it('a snapshot lists a done cut short by a waiting interlude silently, as before', () => {
+    const { pings, out, clock } = setup();
+    pings.update([], true);
+    pings.update([entry('a', 'done', 5)], false);
+    pings.update([], false); // waiting
+    pings.update([entry('a', 'done', 5)], true); // a reconnect, done again
+    clock.advance(10_000);
+    pings.update([entry('a', 'done', 5)], false);
+    clock.advance(10_000);
+    expect(out).toEqual([]);
+  });
+
   it('done into needs you while settling pings the need only', () => {
     const { pings, out, clock } = setup();
     pings.update([], true);

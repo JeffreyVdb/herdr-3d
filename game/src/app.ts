@@ -2498,6 +2498,9 @@ export class App {
    */
   async goToWorker(id: string): Promise<boolean> {
     if (this.transitioning) return false;
+    if (!this.store.workerView(id)) return false;
+    // A notification's click can come with any dialog up (the window was in the background): it goes first.
+    if (!(await this.dismissOverlays()) || this.transitioning) return false;
     const session = this.store.workerView(id)?.worker.session;
     if (!session) return false;
     if (this.laptops.seated) this.laptops.stand(null, true);
@@ -2509,8 +2512,29 @@ export class App {
     if (this.planOpen) this.setPlan(false);
     this.faceWorker(id);
     // The terminal for this sit only: what E opens next time stays as you left it.
-    if (this.sitAt(id)) this.laptops.transcript.setMode('terminal', false);
+    if (this.sitAt(id)) {
+      this.laptops.transcript.setMode('terminal', false);
+      this.laptops.focusSeat();
+    }
     return true;
+  }
+
+  /**
+   * #100: shuts every modal dialog and the whiteboard, each the way its own close does (Settings' fields as on Esc, the
+   * elevator's pending confirm answered no, the whiteboard saved first), so a teleport never lands behind one. Resolves
+   * once their `close` handlers ran: one hands focus back to its opener, and that must come before the seat takes it.
+   * False when one stays up (the whiteboard asking what to do with changes it could not save).
+   */
+  private async dismissOverlays(): Promise<boolean> {
+    const open = [...document.querySelectorAll<HTMLDialogElement>('dialog:modal')];
+    // (A dialog torn down by its host's close may never say so: not waited for forever.)
+    const closed = open.map((d) => new Promise<void>((done) => (d.addEventListener('close', () => done(), { once: true }), setTimeout(done, 500))));
+    this.panels.close();
+    this.prompt.close();
+    for (const d of open) if (d.open) d.close();
+    await Promise.all(closed);
+    if (this.whiteboard.isOpen) await this.whiteboard.close();
+    return !this.whiteboard.isOpen;
   }
 
   /**

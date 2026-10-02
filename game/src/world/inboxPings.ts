@@ -4,7 +4,9 @@
  * (worker, reason, `since`) seen on a live change:
  * - into needs you (any role): at once;
  * - into done: an employee only (a freelancer with `freelancers` on), after a
- *   settle delay, and not when it went back to work meanwhile;
+ *   settle delay, and not when it went back to work meanwhile; a done that
+ *   left the inbox before it pinged (#98: waiting on its background tasks, its
+ *   status and `since` unchanged) settles again when it is back, once;
  * - never on a snapshot (the first or a reconnect's): what it lists is known
  *   silently, and what is new in it comes back as one "while you were away";
  * - never for the worker you are sat at (or reading);
@@ -77,6 +79,8 @@ export class InboxPings {
   private readonly seen = new Map<string, string>();
   /** Done workers settling: the episode and its cancel. */
   private readonly settling = new Map<string, { entry: PingEntry; cancel: () => void }>();
+  /** Done episodes that left the inbox while settling, not pinged yet: they settle again when back. */
+  private readonly unfired = new Map<string, string>();
   private burst: { start: number; entries: PingEntry[] } | null = null;
   private readonly clock: PingClock;
   private readonly settleMs: number;
@@ -96,13 +100,16 @@ export class InboxPings {
     for (const e of entries) now.set(e.id, e);
     for (const [id, s] of this.settling) {
       const e = now.get(id);
-      if (!e || episode(e) !== episode(s.entry)) this.unsettle(id);
+      if (e && episode(e) === episode(s.entry)) continue;
+      if (!e) this.unfired.set(id, episode(s.entry));
+      this.unsettle(id);
     }
     if (snapshot) return this.snapshot(now);
     for (const e of now.values()) {
       const key = episode(e);
-      if (this.seen.get(e.id) === key) continue;
+      if (this.seen.get(e.id) === key && this.unfired.get(e.id) !== key) continue;
       this.seen.set(e.id, key);
+      this.unfired.delete(e.id);
       if (e.reason === 'blocked') this.fire(e);
       else this.settling.set(e.id, { entry: e, cancel: this.clock.later(() => this.settled(e.id), this.settleMs) });
     }
@@ -124,6 +131,7 @@ export class InboxPings {
       const key = episode(e);
       const fresh = this.seen.get(e.id) !== key || this.settling.has(e.id);
       this.seen.set(e.id, key);
+      this.unfired.delete(e.id);
       this.unsettle(e.id);
       if (!fresh) continue;
       if (e.reason === 'blocked') needs++;
