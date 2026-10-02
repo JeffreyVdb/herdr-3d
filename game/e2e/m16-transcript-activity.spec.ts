@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, openGame, seatMode, shot, watchErrors } from './game';
 
 // #58: the transcript view says what the agent does and shows a prompt at once. demo-m5 with the simulating fixture
 // server: Pebble is an idle claude; a prompt starts its turn a step (2.5 s) later and the ack follows, it works three
@@ -34,7 +34,8 @@ async function sitAt(page: Page, name: string, sim = SIM): Promise<string> {
   expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
   await expect.poll(async () => (await txState(page)).items).toBeGreaterThan(10);
-  await page.keyboard.press('Control+Escape');
+  // #98: its conversation is up as you sit.
+  await seatMode(page, 'transcript');
   await expect.poll(async () => (await txState(page)).mounted).toBe(true);
   await expect(page.locator('.seat-transcript .tx')).toBeVisible();
   return id;

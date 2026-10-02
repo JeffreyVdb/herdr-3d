@@ -15,13 +15,13 @@ export type { ImagesTabHost, ImagesTabView, MountImagesTab, TranscriptRenderHost
 /** The render module's entry (`transcriptRender.ts`): what the seated view mounts in its overlay. */
 export type MountTranscript = typeof mountTranscript;
 
-/** The render module, loaded on the first switch to the transcript (it brings markdown, sanitising and highlighting along). */
+/** The render module, loaded when the transcript first shows (it brings markdown, sanitising and highlighting along). */
 export async function loadRenderer(): Promise<MountTranscript | null> {
   const mod = await import('./transcriptRender');
   return typeof mod.mountTranscript === 'function' ? mod.mountTranscript : null;
 }
 
-/** The images tab's module, loaded on the first switch to it. */
+/** The images tab's module, loaded when it first shows. */
 export async function loadImagesTab(): Promise<MountImagesTab | null> {
   const mod = await import('./imagesTab');
   return typeof mod.mountImagesTab === 'function' ? mod.mountImagesTab : null;
@@ -32,6 +32,9 @@ export async function loadImagesTab(): Promise<MountImagesTab | null> {
  * every image of the session, split into what you sent and what the agent viewed or made.
  */
 export type SeatMode = 'terminal' | 'transcript' | 'images';
+
+/** #98: the harnesses whose transcripts the bridge reads (Claude Code, Codex); a seat at any other opens in the terminal. */
+export const hasTranscript = (harness: string | undefined): boolean => harness === 'claude' || harness === 'codex';
 
 /** The two ways to read: the modes the overlay shows. */
 export type ReadMode = Exclude<SeatMode, 'terminal'>;
@@ -80,9 +83,11 @@ export interface TranscriptModeHost {
   now?(): number;
 }
 
-/** Remembered per worker: the ones last read in transcript mode (terminal is the default), newest last. */
-const MODES_KEY = 'h3d.seat.transcript';
-/** Remembered per worker: of those, the ones whose last view was the images tab. */
+/** Remembered per worker: the ones last left in terminal mode (#98: the conversation is the default), newest last. */
+const MODES_KEY = 'h3d.seat.terminal';
+/** Before #98, the ones last read in transcript mode (terminal was the default): not read, and removed. */
+const OLD_MODES_KEY = 'h3d.seat.transcript';
+/** Remembered per worker: the ones whose last way to read was the images tab (not the conversation). */
 const IMAGES_KEY = 'h3d.seat.images';
 /** Older pages read to find a message the images tab points at: 20 x 200 items. */
 const REVEAL_PAGES = 20;
@@ -108,6 +113,15 @@ function writeModes(s: Storage | null, ids: string[], key = MODES_KEY): void {
     else s?.removeItem(key);
   } catch {
     /* not remembered past this page */
+  }
+}
+
+/** #98: the list of before (who was read in transcript mode) says nothing now that the conversation is the default. */
+function dropOldModes(s: Storage | null): void {
+  try {
+    s?.removeItem(OLD_MODES_KEY);
+  } catch {
+    /* nothing to drop */
   }
 }
 
@@ -175,12 +189,13 @@ interface Sitting {
 }
 
 /**
- * M16: the seated view's second mode. Keeps the transcript of the worker you
- * sit at (fed by `TranscriptWatches` from the moment you sit, so the first
- * Ctrl+Esc shows it at once), mounts the render module in a DOM overlay over
- * the monitor on the first switch to it, and hides the overlay when you go
- * back to the terminal. Standing up destroys the view and removes the
- * overlay. The mode is remembered per worker (localStorage, guarded).
+ * M16: the seated view's two modes. Keeps the transcript of the worker you
+ * sit at (fed by `TranscriptWatches` from the moment you sit), mounts the
+ * render module in a DOM overlay over the monitor when it first shows, and
+ * hides the overlay when you go to the terminal (Ctrl+Esc). #98: the
+ * conversation is what you sit down to, unless the worker has none to read or
+ * you left it in the terminal last time (remembered per worker, localStorage,
+ * guarded). Standing up destroys the view and removes the overlay.
  */
 export class TranscriptMode {
   private s: Sitting | null = null;
@@ -201,6 +216,7 @@ export class TranscriptMode {
     return this.s?.id ?? null;
   }
 
+  /** Not seated: 'terminal' (no overlay); seated, the mode `sit` picked or you switched to. */
   get mode(): SeatMode {
     return this.s?.mode ?? 'terminal';
   }
@@ -229,18 +245,23 @@ export class TranscriptMode {
     return this.s?.imageCount ?? null;
   }
 
-  /** You sat at `id`: its last mode comes back (`canRead` false: the bridge has no transcripts, the terminal it is). */
+  /**
+   * You sat at `id`: its conversation (or its images, if you left it there), unless you left it in the terminal last
+   * time. `canRead` false (the bridge has no transcripts, the worker's harness writes none): the terminal it is.
+   */
   sit(id: string, name: string, canRead = true): void {
     this.stand();
-    const wasReading = canRead && readModes(this.host.storage).includes(id);
-    const last: ReadMode = wasReading && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
+    dropOldModes(this.host.storage);
+    const opens = canRead && !readModes(this.host.storage).includes(id);
+    // The way to read it last time (what the first Ctrl+Esc shows when it opens in the terminal).
+    const last: ReadMode = canRead && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
     this.s = {
       id, name, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
       pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true,
     };
-    if (wasReading) this.setMode(last, false);
+    if (opens) this.setMode(last, false);
     else this.host.modeChanged('terminal');
   }
 
@@ -291,7 +312,7 @@ export class TranscriptMode {
     if (mode !== 'terminal') s.reading = mode;
     if (remember) {
       const ids = readModes(this.host.storage).filter((x) => x !== s.id);
-      if (mode !== 'terminal') ids.push(s.id);
+      if (mode === 'terminal') ids.push(s.id);
       writeModes(this.host.storage, ids);
       if (mode !== 'terminal') {
         const imgs = readModes(this.host.storage, IMAGES_KEY).filter((x) => x !== s.id);

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, leftInTerminal, openGame, shot, watchErrors } from './game';
 
 // M10 (#12) on demo-m4 and the simulating fixture server (tools/fixture-limits.ts): the always-on plan limits widget in the
 // city, on a floor, over an overlay; its colours, panel, staleness, refresh and switch-off; and the limits inside the
@@ -662,6 +662,8 @@ async function sitAtLaptop(page: Page): Promise<void> {
   await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
   await frames(page, 3);
   const id = firstWorker();
+  // #98: these start in the terminal (sat down as someone who left it there; else its conversation opens).
+  await leftInTerminal(page, id);
   expect(await page.evaluate((w) => window.__h3d.face(w), id)).toBe(true);
   await frames(page, 3);
   await page.keyboard.press('e');

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, leftInTerminal, openGame, shot, watchErrors } from './game';
 
 // #74: a laptop at a split herdr pane shows it at its own (narrow) size. Sitting down asks the bridge to zoom the
 // pane's tab (`terminal.watch` with `fullscreen: true`), and the seat bar's chip states the pane's state and switches
@@ -14,6 +14,8 @@ async function sitAt(page: Page, zoom: string, name = 'Tofu', init: Record<strin
   await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
   await frames(page, 3);
   const id = await page.evaluate((n) => window.__h3d.world().flatMap((f) => f.workers).find((w) => w.name === n)?.id ?? '', name);
+  // #98: these are the terminal's: sit down as someone who left it in the terminal (else its conversation opens).
+  await leftInTerminal(page, id);
   expect(await page.evaluate((i) => window.__h3d.face(i), id)).toBe(true);
   await frames(page, 3);
   expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);

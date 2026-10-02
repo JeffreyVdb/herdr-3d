@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Ask, Worker } from '../src/net/protocol';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, openGame, seatMode, shot, watchErrors } from './game';
 
 // #57: an agent's structured question (Claude's AskUserQuestion, Codex's request_user_input) on demo-m5 with sim=1.
 // The simulator's `sim.ask` plays the bridge reading it from the transcript: the worker (idle, as herdr calls a
@@ -73,7 +73,8 @@ async function sitAtTranscript(page: Page, w: Worker): Promise<void> {
   await frames(page, 3);
   expect(await page.evaluate((id) => window.__h3d.sitAt(id), w.id)).toBe(true);
   await frames(page, 20);
-  await page.keyboard.press('Control+Escape');
+  // #98: its conversation is up as you sit.
+  await seatMode(page, 'transcript');
   await expect(page.locator('.seat-transcript .tx .tx-scroll')).toBeFocused();
   await expect.poll(() => page.evaluate(async () => (await window.__h3d.simTranscripts())?.watches ?? 0)).toBeGreaterThan(0);
 }

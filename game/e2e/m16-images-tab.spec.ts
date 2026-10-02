@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, openGame, seatMode, shot, watchErrors } from './game';
 
 // M16 phase 2: the Images tab, third mode of the seated view, for real on the WebGL2 path. demo-m5 with the simulating
 // fixture server (sim=1): its demo timeline has real PNGs (tools/fixture-transcript.ts): the user sends a screenshot
@@ -36,7 +36,8 @@ test('the lightbox fits a 390 x 844 screen: zoom, copy, jump and close are all i
   await sitAt(page, 'Tofu');
   await page.setViewportSize({ width: 390, height: 844 });
   await frames(page, 6);
-  await page.keyboard.press('Control+Escape');
+  // #98: the conversation is up as you sit.
+  await seatMode(page, 'transcript');
   await expect.poll(async () => (await txState(page)).mounted).toBe(true);
   const box = page.locator('.seat-transcript');
   await expect.poll(async () => (await txState(page)).imageCount).toBeGreaterThan(0);
@@ -81,8 +82,8 @@ test('the Images tab: Input and Agent, deduped, lightbox, jump to message, live,
   const worker = await sitAt(page, 'Tofu');
   await expect.poll(async () => (await txState(page)).items).toBeGreaterThan(10);
 
-  // Ctrl+Esc: the conversation, with its Conversation | Images strip; the strip's Images tab opens the tab.
-  await page.keyboard.press('Control+Escape');
+  // The conversation (#98: up as you sit), with its Conversation | Images strip; the strip's Images tab opens the tab.
+  await seatMode(page, 'transcript');
   await expect.poll(async () => (await txState(page)).mounted).toBe(true);
   const box = page.locator('.seat-transcript');
   await expect(box.locator('.tx .tx-bar .seat-tabs')).toBeVisible();
@@ -202,7 +203,7 @@ test('sit / images / stand cycles leave no views, tabs, feeds or watches behind'
       await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(worker);
     }
     await expect.poll(async () => (await txState(page)).watches).toBeGreaterThanOrEqual(1);
-    // The last view is remembered per worker: the first sit is the terminal, the others come back reading.
+    // The last view is remembered per worker: the first sit is the conversation (#98), the others come back to the images.
     if ((await txState(page)).mode === 'terminal') await page.keyboard.press('Control+Escape');
     await expect.poll(async () => (await txState(page)).mode).not.toBe('terminal');
     if ((await txState(page)).mode !== 'images') await page.keyboard.press('i');
