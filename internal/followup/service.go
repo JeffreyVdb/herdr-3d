@@ -224,12 +224,14 @@ func (s *Service) Set(ctx context.Context, enabled *bool, threshold *float64) er
 }
 
 // Detect runs the pipeline on a message. Unless the feature is ready it
-// makes no call at all (ai.ErrNotReady).
+// makes no call at all (ai.ErrNotReady), and readiness is checked again
+// before the extraction: switched off or a role invalid meanwhile, the
+// message never goes to the LLM.
 func (s *Service) Detect(ctx context.Context, text string) (*Result, error) {
 	if !s.Ready() {
 		return nil, ai.ErrNotReady
 	}
-	return Run(ctx, s.opts.Roles.Classifier(), s.opts.Roles.LLM(), text, s.Threshold())
+	return run(ctx, s.opts.Roles.Classifier(), s.opts.Roles.LLM(), text, s.Threshold(), s.Ready)
 }
 
 // The test's samples: the messages of the probe (#90 "API check").

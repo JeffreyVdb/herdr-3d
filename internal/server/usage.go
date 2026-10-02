@@ -188,7 +188,7 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 				h.wrapUpSeen(ctx, u)
 			}
 			for _, u := range fus { // #90
-				h.followupSeen(u)
+				h.followupSeen(ctx, u)
 			}
 			return h.sweepFollowups(ctx)
 		})

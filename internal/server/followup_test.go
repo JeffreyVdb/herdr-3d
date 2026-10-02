@@ -475,3 +475,62 @@ func TestFollowupsSettings(t *testing.T) {
 }
 
 func ptrTo[T any](v T) *T { return &v }
+
+// herdr seeing the worker at work while its message is being looked at: the
+// result is recorded, not shown, even when it is idle again by then with the
+// same transcript tail.
+func TestFollowupWorkingDropsTheLookUnderWay(t *testing.T) {
+	roles := newFuRoles()
+	entered, release := make(chan struct{}), make(chan struct{})
+	roles.cls.Func = func(context.Context, map[string]any, string) (float64, error) {
+		close(entered)
+		<-release
+		return 0.96, nil
+	}
+	fb := startFuBridge(t, "", "", roles, on(), "")
+	c := fb.connect(proto.Hello{})
+	c.snapshot()
+	fb.turn(t, "claude", "followup_questions.jsonl")
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the classifier was not called")
+	}
+	fb.fl.update("w1", func(w *world.WorkerObs) { w.Status = "working" })
+	fb.world(func(w proto.World) bool { return workersOf(w, "s")["w1"].Status == "working" })
+	fb.fl.update("w1", func(w *world.WorkerObs) { w.Status = "idle" })
+	fb.world(func(w proto.World) bool { return workersOf(w, "s")["w1"].Status == "idle" })
+	close(release)
+	fuQuiet()
+	fb.noFollowups(t)
+	if cls, llm := roles.calls(); cls != 1 || llm != 1 {
+		t.Fatalf("calls = %d, %d; want the one look, not another", cls, llm)
+	}
+}
+
+// A new prompt and turn in the transcript (too short for herdr to report it
+// working) clear the shown follow-up: its turn_id is stale, and the newer
+// message is looked at in its place.
+func TestFollowupNewTurnClearsIt(t *testing.T) {
+	roles := newFuRoles()
+	fb := startFuBridge(t, "", "", roles, on(), "")
+	c := fb.connect(proto.Hello{})
+	c.snapshot()
+	fb.turn(t, "claude", "followup_questions.jsonl")
+	f := followupOf(c, fb.ids["w1"]).Followup
+	fb.turn(t, "claude", "followup_summary.jsonl")
+	upsertFor(c, fb.ids["w1"], func(w *proto.Worker) bool { return w.Followup == nil })
+	waitFor(t, "the summary classified", func() bool { cls, _ := roles.calls(); return cls == 2 })
+	fuQuiet()
+	fb.noFollowups(t)
+	_, m := c.command(proto.CmdWorkerAnswerFollowup, "old", proto.WorkerAnswerFollowupArgs{ID: fb.ids["w1"], TurnID: f.TurnID,
+		Answers: []proto.FollowupAnswer{{ID: "q1", Value: "No"}}})
+	if !strings.Contains(string(m.raw), `"code":"stale"`) {
+		t.Fatalf("the old turn's answer: %s", m.raw)
+	}
+	for _, call := range fb.term.Calls() {
+		if strings.HasPrefix(call, "type w1:p1 ") {
+			t.Fatalf("typed: %s", call)
+		}
+	}
+}

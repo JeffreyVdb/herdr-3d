@@ -2391,14 +2391,18 @@ The calls run off the hub goroutine, under the AI integration's bounds (two call
 `turn_id` is the message's first 16 hex SHA-256 digits.
 
 **Clearing.** `followup` goes (the worker's upsert, the record cleared) when it is answered, dismissed, on any
-`worker.prompt`, `worker.keys` or answer to it, when herdr says `working` again, and when the worker is gone. A result
-that comes back after one of these (or after a new prompt was read) is recorded but not shown.
+`worker.prompt`, `worker.keys` or answer to it, when herdr says `working` again, when the transcript goes on to a new
+prompt or turn (however short: herdr may never report it `working`), and when the worker is gone. A result that comes
+back after one of these (or after a new prompt was read, or after herdr said `working` while it was being looked at,
+even when the worker is idle again by then) is recorded but not shown. The feature's state is checked again before the
+extraction: switched off or a model `invalid` while the classifier ran, the message never goes to the LLM.
 
 **Answering.** **`worker.answer_followup {id, turn_id, answers: [{id, value, note?}]}`** is `stale` unless the worker's
 follow-up is of `turn_id` (answered, dismissed or a newer turn meanwhile), `bad_request` for an unknown or repeated
-question id, an empty answer, a `yes_no` value other than `Yes` / `No`, or a value or note over 4,000 bytes. It sends
-**exactly one prompt** through `worker.prompt`'s lane and rules (typed for Claude, #95; queued for an agent at work;
-`invalid_state` with an `ask`), checked again when its turn on the lane comes, and clears the follow-up once it went:
+question id, an empty answer, a `yes_no` value other than `Yes` / `No` (any case), or a value or note over 4,000
+bytes. It sends **exactly one prompt** through `worker.prompt`'s lane and rules (typed for Claude, #95; queued for an
+agent at work; `invalid_state` with an `ask`), checked again when its turn on the lane comes, and clears the follow-up
+once it went:
 
 ```
 Answers to your open questions:

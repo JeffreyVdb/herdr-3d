@@ -1285,7 +1285,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		next.Usage = h.usage[id]          // M5 usage
 		next.Ask = h.asks[id]             // #57
 		next.WrapUp = h.wrapUpView(id)    // #83
-		if next.Status == statusWorking { // #90: at work again: its questions are moot
+		if next.Status == statusWorking { // #90: at work again: its questions are moot, and so is a look under way
 			h.dropFollowup(ctx, id, false)
 		}
 		next.Followup = h.followupView(id)

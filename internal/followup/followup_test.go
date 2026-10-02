@@ -349,3 +349,34 @@ func TestEnvLocksTheToggle(t *testing.T) {
 		t.Fatal("the environment's false does not win over the stored toggle")
 	}
 }
+
+// Switched off, or a role gone invalid, while the classifier ran: a positive
+// gate makes no LLM call and flags nothing.
+func TestDetectRechecksBeforeTheLLM(t *testing.T) {
+	for name, change := range map[string]func(s *followup.Service, r *roles){
+		"disabled": func(s *followup.Service, _ *roles) {
+			if err := s.Set(context.Background(), ptr(false), nil); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"classifier invalid": func(_ *followup.Service, r *roles) { r.state[ai.RoleClassifier] = ai.StateInvalid },
+		"llm invalid":        func(_ *followup.Service, r *roles) { r.state[ai.RoleLLM] = ai.StateInvalid },
+	} {
+		t.Run(name, func(t *testing.T) {
+			now := time.Unix(1_790_000_000, 0)
+			r := passingRoles()
+			s := newService(t, r, &memStore{enabled: true, threshold: 0.7, ok: true}, nil, &now)
+			r.cls.Func = func(context.Context, map[string]any, string) (float64, error) {
+				change(s, r)
+				return 0.96, nil
+			}
+			res, err := s.Detect(context.Background(), followup.SampleQuestions)
+			if !errors.Is(err, ai.ErrNotReady) || res != nil {
+				t.Fatalf("Detect = %+v, %v; want ai.ErrNotReady", res, err)
+			}
+			if c, l := r.calls(); c != 1 || l != 0 {
+				t.Fatalf("calls = %d classifier, %d llm; want 1, 0", c, l)
+			}
+		})
+	}
+}

@@ -106,6 +106,13 @@ func Tail(text string, n int) string {
 // extracts its questions with the LLM. Only a failure of the classifier is
 // an error: a failed extraction is the fallback item.
 func Run(ctx context.Context, c ai.Classifier, l ai.LLM, text string, threshold float64) (*Result, error) {
+	return run(ctx, c, l, text, threshold, nil)
+}
+
+// run is Run; with ready, a positive gate goes to the LLM only while ready
+// still holds (the feature may have been switched off, or a role gone
+// invalid, during the classification): else no call, ai.ErrNotReady.
+func run(ctx context.Context, c ai.Classifier, l ai.LLM, text string, threshold float64, ready func() bool) (*Result, error) {
 	tail := Tail(text, MaxMessageChars)
 	score, err := c.Classify(ctx, map[string]any{"last_agent_message": tail}, GateQuestion)
 	if err != nil {
@@ -114,6 +121,9 @@ func Run(ctx context.Context, c ai.Classifier, l ai.LLM, text string, threshold 
 	res := &Result{Score: score}
 	if score < threshold {
 		return res, nil
+	}
+	if ready != nil && !ready() {
+		return nil, ai.ErrNotReady
 	}
 	res.Flag = true
 	qs, err := Extract(ctx, l, tail)

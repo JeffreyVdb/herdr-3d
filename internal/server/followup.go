@@ -37,10 +37,12 @@ import (
 const DefaultFollowupDebounce = 2 * time.Second
 
 // followupUpdate is a worker's latest ended turn (nil: none now: a turn
-// runs, or a prompt came), from the usage tracker.
+// runs, or a prompt came), from the usage tracker. moved: the same
+// transcript went on (not another tracker: another agent session, or none).
 type followupUpdate struct {
-	id   string
-	turn *transcript.Turn
+	id    string
+	turn  *transcript.Turn
+	moved bool
 }
 
 // followupOffered is what the tracker last offered of a worker.
@@ -73,7 +75,7 @@ func (tr *usageTracker) offerFollowup(w usageWorker) {
 		c := *turn
 		turn = &c
 	}
-	tr.followUps = append(tr.followUps, followupUpdate{id: w.id, turn: turn})
+	tr.followUps = append(tr.followUps, followupUpdate{id: w.id, turn: turn, moved: ok && prev.t == ft && ft != nil})
 }
 
 // followupCand is a worker's ended turn waiting to be looked at.
@@ -151,14 +153,24 @@ func (h *Hub) followupView(id string) *proto.Followup {
 	return nil
 }
 
-// followupSeen takes a worker's latest ended turn from the tracker.
-func (h *Hub) followupSeen(u followupUpdate) {
+// followupSeen takes a worker's latest ended turn from the tracker. The
+// transcript gone on to a new prompt or turn (however short, herdr may never
+// have seen it working) makes the open follow-up moot: it is cleared, so its
+// turn_id is stale and a newer message is looked at in its place.
+func (h *Hub) followupSeen(ctx context.Context, u followupUpdate) {
+	s := h.fu.shown[u.id]
 	if u.turn == nil {
 		delete(h.fu.pending, u.id) // a prompt or a new turn: nothing to look at
+		if s != nil && u.moved {
+			h.clearFollowup(ctx, u.id)
+		}
 		return
 	}
-	if s := h.fu.shown[u.id]; s != nil && s.hash == u.turn.Hash {
+	if s != nil && s.hash == u.turn.Hash {
 		return // shown already
+	}
+	if s != nil {
+		h.clearFollowup(ctx, u.id) // a newer turn's message
 	}
 	h.fu.pending[u.id] = &followupCand{turn: *u.turn, at: h.opts.Now()}
 }
@@ -288,10 +300,13 @@ func (h *Hub) setFollowup(id string, f *proto.Followup, hash string) {
 }
 
 // dropFollowup forgets a worker's open follow-up for good (the record is
-// cleared) and, with pending, the turn waiting to be looked at; it reports
-// whether one was shown. The caller publishes the worker.
+// cleared) and, with pending, the turn waiting to be looked at; without, a
+// turn already handed to the pipeline still goes (its result is then
+// recorded, not shown: herdr saw the worker at work after it settled), while
+// one still waiting stays (herdr's status may lag the transcript's turn end).
+// It reports whether one was shown. The caller publishes the worker.
 func (h *Hub) dropFollowup(ctx context.Context, id string, pending bool) bool {
-	if pending {
+	if c := h.fu.pending[id]; c != nil && (pending || c.inflight) {
 		delete(h.fu.pending, id)
 	}
 	s := h.fu.shown[id]
