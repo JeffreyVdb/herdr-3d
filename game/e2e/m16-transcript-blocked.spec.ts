@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, watchErrors } from './game';
+import { frames, openGame, seatMode, watchErrors } from './game';
 
 // M16: a worker going from working to blocked while you type a prompt in its transcript view (demo-m5, sim=1).
 // The prompt box turns off (the bridge refuses prompts to a blocked worker) and the keyboard moves to the timeline
@@ -30,8 +30,8 @@ test('a question arriving while you type: the prompt turns off, its draft kept, 
   expect(await page.evaluate((id) => window.__h3d.sitAt(id), w.id)).toBe(true);
   await frames(page, 30);
 
-  // Answer the question it came with: it works again and takes a prompt.
-  await page.keyboard.press('Control+Escape');
+  // Answer the question it came with: it works again and takes a prompt. (#98: its conversation is up as you sit.)
+  await seatMode(page, 'transcript');
   const tx = page.locator('.seat-transcript .tx');
   await expect(tx.locator('.tx-scroll')).toBeFocused();
   await page.keyboard.press('1');

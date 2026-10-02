@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, openGame, seatMode, shot, watchErrors } from './game';
 
 // M16 phase 2: prints on the desk, for real on the WebGL2 path. demo-m5 with the simulating fixture server (sim=1): its
 // transcript has real PNGs (tools/fixture-transcript.ts): the user's two screenshots (one sent twice) and one outside the
@@ -142,8 +142,11 @@ test('walking away takes every print, texture and watch with it; 20 sit / stand 
     expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);
     await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
     await frames(page, 2);
-    // Sitting there: the conversation’s own watch (not a few items any more) and the same prints.
-    expect(((await printsOf(page)) as Prints).counts.alive).toBeLessThanOrEqual(12);
+    // Sitting there: the conversation’s own watch (not a few items any more) and the same prints: the seated desk's
+    // and the two nearest the seat at most (laptops/prints.ts), six pictures each.
+    const seated = (await printsOf(page)) as Prints;
+    expect(seated.desks.length).toBeLessThanOrEqual(3);
+    expect(seated.counts.alive).toBeLessThanOrEqual(6 * seated.desks.length);
     await page.keyboard.press('Escape');
     await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
     await away();
@@ -190,7 +193,8 @@ test('sitting again at a desk whose prints kept its watch shows the whole conver
   expect((await watchesOf()).at(-1)?.args).toEqual({ id, limit: 200 });
   await expect.poll(async () => (await watchesOf()).at(-1)?.result?.ok).toBe(true);
   await expect.poll(items).toBe(history);
-  await page.keyboard.press('Control+Escape');
+  // #98: the conversation is up as you sit.
+  await seatMode(page, 'transcript');
   const tx = page.locator('.seat-transcript');
   await expect(tx).toBeVisible();
   await expect(tx.locator('.tx-list:not(.tx-nested) > .tx-item')).toHaveCount(history);

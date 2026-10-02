@@ -26,7 +26,7 @@ import { ImageFeeds, type ImageFeed } from './imageFeed';
 import { decodeBitmap, Prints, printsParam, PRINT_WATCH_LIMIT } from './prints';
 import { LaptopTerminal, LIVE_SIZE } from './terminal';
 import { createSeatTabs, FLIP_KEY } from './seatTabs';
-import { loadImagesTab, loadRenderer, TranscriptMode, type OverlayRect, type SeatMode } from './transcriptMode';
+import { hasTranscript, loadImagesTab, loadRenderer, TranscriptMode, type OverlayRect, type SeatMode } from './transcriptMode';
 import { TranscriptWatches, WATCH_LIMIT } from './transcriptWatches';
 import { Watches } from './watches';
 
@@ -166,8 +166,9 @@ function isMac(): boolean {
  * sends what you type (`keys.ts`) until you stand up: Esc, a teleport, the
  * elevator, another floor, a panel, the worker leaving or its floor going to
  * sleep. Standing up ends the seated watch at once. M16: seated, Ctrl+Esc
- * swaps the terminal for the worker's conversation (`transcriptMode.ts`),
- * drawn in a DOM overlay over the monitor; its transcript is watched
+ * swaps the terminal and the worker's conversation (`transcriptMode.ts`),
+ * drawn in a DOM overlay over the monitor (#98: what you sit down to, unless
+ * you left that worker in the terminal); its transcript is watched
  * (`transcriptWatches.ts`) from the moment you sit, and the terminal stays
  * watched at 1 fps behind it (the monitor shows it frozen).
  */
@@ -615,8 +616,9 @@ export class Laptops {
     this.host.seat.status('ok', null);
     this.syncChip(id);
     this.host.seat.focus();
-    // M16: its transcript is watched from now on (the first Ctrl+Esc shows it at once); its last mode comes back.
-    this.transcript.sit(id, v.name, !this.whyNoTranscript());
+    // M16: its transcript is watched from now on. #98: you sit down to its conversation, unless you left it in the
+    // terminal, the bridge reads no transcripts or its harness writes none (a shell, another agent).
+    this.transcript.sit(id, v.name, !this.whyNoTranscript() && hasTranscript(v.harness));
     // Its view starts empty: a watch a desk print kept since you last sat here is made again, for its ack's history.
     this.transcripts.refresh(id);
     // With the seat bar up, the laptop fits between it and the top bar.

@@ -96,39 +96,107 @@ export interface Segment {
 
 /** Box drawing and block elements: a row of nothing else is a frame (an empty input box, a rule). */
 const FRAME = /^[\u2500-\u259f]$/;
+/** A horizontal rule's own characters (Claude Code draws its input between two of them). */
+const RULE = /^[─━═]$/;
+/** What an input line starts with: Claude Code's `>` / `❯`, Codex's `›`. */
+const PROMPT = /^[>❯›]$/;
+/**
+ * #98: an agent's key and mode hints, the footer under its input (Claude Code: `⏵⏵ bypass permissions on (shift+tab
+ * to cycle) · ← 1 agent`, `? for shortcuts`, `esc to interrupt`; Codex: `? for shortcuts · 91% context left`,
+ * `⏎ send   ⌃J newline …`). Only ever looked for in the bottom rows.
+ */
+const HINT = /\(shift\+tab to cycle\)|^(?:⏵⏵|▸▸|⏸)\s|(?:^|\s·\s)\? for shortcuts\b|\besc to interrupt\b|\b\d{1,3}% context left\b|^⏎ send\b/i;
+/** At most this many hint rows, and this many rows of a statusline between them and the input. */
+const MAX_HINTS = 2;
+const MAX_STATUS = 2;
+/** Rows below an input drawn between two rules (a statusline, a mode line) are its footer up to this many. */
+const MAX_BELOW_RULE = 3;
+/** An input between two rules is at most this many rows high. */
+const MAX_INPUT = 12;
 const blank = (c: string | undefined) => !c || c === ' ';
+
+type RowKind = 'blank' | 'kept' | 'corner' | 'rule' | 'mark';
 
 /**
  * M6b: the glance view of a screen, given each row as its cells' characters
  * (`''` for the second half of a wide one): the rows that say something,
  * from the leftmost column any of them starts at, word-wrapped at `cols`, the
  * last `max` lines of that. A row says nothing when it is blank, or all frame
- * but at most one character (an empty prompt box `│ > │`); nor do the one or
- * two rows under an agent's input box (its footer: `? for shortcuts`, the
- * key hints).
+ * but at most one character (an empty prompt box `│ > │`); nor does an
+ * agent's footer, the rows under its input: the one or two under a box, the
+ * statusline and mode line under one drawn between rules (Claude Code 2), and
+ * (#98) key and mode hints at the bottom (`? for shortcuts`, `bypass
+ * permissions on (shift+tab to cycle)`, `esc to interrupt`, Codex's `context
+ * left`) with a statusline between them and the input.
  */
 export function glanceView(rows: ReadonlyArray<ReadonlyArray<string>>, cols: number = GLANCE.cols, max: number = GLANCE.rows): Segment[] {
   const kept: Array<{ row: number; first: number; last: number }> = [];
-  let boxEnd = -1;
+  const kind: RowKind[] = [];
+  /** A kept row's text, spaces collapsed (for the hints). */
+  const lines = new Map<number, string>();
   rows.forEach((cells, row) => {
     let first = -1;
     let last = -1;
     let other = 0;
+    let rule = true;
     for (let x = 0; x < cells.length; x++) {
       const c = cells[x] as string;
       if (blank(c)) continue;
       if (first < 0) first = x;
       last = x;
       if (!FRAME.test(c)) other++;
+      if (!RULE.test(c)) rule = false;
     }
-    if (first >= 0 && other > 1) kept.push({ row, first, last });
-    else if (first >= 0 && (cells[first] === '╰' || cells[first] === '└')) boxEnd = row;
+    if (first >= 0 && other > 1) {
+      kept.push({ row, first, last });
+      kind[row] = 'kept';
+      lines.set(row, cells.slice(first, last + 1).join('').replace(/\s+/g, ' '));
+    } else if (first < 0) kind[row] = 'blank';
+    else if (cells[first] === '╰' || cells[first] === '└') kind[row] = 'corner';
+    else kind[row] = rule && last - first >= 7 ? 'rule' : 'mark';
   });
-  // The footer under the last input box.
-  if (boxEnd >= 0) {
-    const below = kept.filter((k) => k.row > boxEnd);
-    if (below.length && below.length <= 2) kept.splice(kept.length - below.length, below.length);
+  const drop = new Set<number>();
+  // #98: key and mode hints at the bottom, when they are a footer: right under the input (its box, its rules, an empty
+  // prompt), or under a statusline of a row or two that is; or under a Codex composer (`› …`, a blank between).
+  const hints: number[] = [];
+  let r = rows.length - 1;
+  for (; r >= 0 && hints.length < MAX_HINTS; r--) {
+    if (kind[r] === 'blank') continue;
+    if (kind[r] !== 'kept' || !HINT.test((lines.get(r) as string).trim())) break;
+    hints.push(r);
   }
+  if (hints.length) {
+    while (r >= 0 && kind[r] === 'blank') r--;
+    const status: number[] = [];
+    let s = r;
+    while (s >= 0 && kind[s] === 'kept' && status.length <= MAX_STATUS) status.push(s--);
+    const input = (k: RowKind | undefined) => k === 'corner' || k === 'rule' || k === 'mark';
+    const composer = r >= 0 && kind[r] === 'kept' && PROMPT.test((lines.get(r) as string).trim()[0] ?? '');
+    if (status.length <= MAX_STATUS && s >= 0 && input(kind[s]) && !composer) for (const x of [...hints, ...status]) drop.add(x);
+    else if (input(kind[r]) || composer) for (const x of hints) drop.add(x);
+  }
+  const left = () => kept.filter((k) => !drop.has(k.row));
+  // The footer under the last input box: one or two rows.
+  const boxEnd = kind.lastIndexOf('corner');
+  if (boxEnd >= 0) {
+    const below = left().filter((k) => k.row > boxEnd);
+    if (below.length && below.length <= 2) for (const k of below) drop.add(k.row);
+  }
+  // #98: the footer under an input drawn between two rules (Claude Code 2): `──` / `❯ …` / `──`, then a statusline
+  // and a mode line.
+  const bottom = kind.lastIndexOf('rule');
+  if (bottom > boxEnd) {
+    let top = bottom - 1;
+    while (top >= 0 && bottom - top <= MAX_INPUT + 1 && kind[top] !== 'rule') top--;
+    let inputRow = top + 1;
+    while (inputRow < bottom && kind[inputRow] === 'blank') inputRow++;
+    const head = inputRow < bottom ? (rows[inputRow] as ReadonlyArray<string>).find((c) => !blank(c)) : undefined;
+    if (top >= 0 && kind[top] === 'rule' && bottom - top - 1 <= MAX_INPUT && head !== undefined && PROMPT.test(head)) {
+      const below = left().filter((k) => k.row > bottom);
+      if (below.length && below.length <= MAX_BELOW_RULE) for (const k of below) drop.add(k.row);
+    }
+  }
+  if (drop.size) kept.splice(0, kept.length, ...kept.filter((k) => !drop.has(k.row)));
   if (!kept.length) return [];
   const lead = Math.min(...kept.map((k) => k.first));
   const out: Segment[] = [];

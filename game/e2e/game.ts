@@ -57,3 +57,24 @@ export async function shot(page: Page, name: string): Promise<string> {
   expect(stats.distinctColors, `${name} looks flat`).toBeGreaterThan(50);
   return path;
 }
+
+/**
+ * #98: sitting down at a Claude or Codex worker opens its conversation. A test of the terminal sits down as someone
+ * who left that worker in the terminal last time (the game remembers it per worker): call this before `sitAt`. With
+ * the page's storage blocked nothing is remembered (`seatMode` then).
+ */
+export async function leftInTerminal(page: Page, ...ids: string[]): Promise<void> {
+  await page.evaluate((list) => {
+    try {
+      localStorage.setItem('h3d.seat.terminal', JSON.stringify(list));
+    } catch {
+      /* blocked: the conversation opens */
+    }
+  }, ids);
+}
+
+/** Seated: switches to the terminal or the conversation with Ctrl+Esc, as a player would, when it is not up yet. */
+export async function seatMode(page: Page, mode: 'terminal' | 'transcript'): Promise<void> {
+  if ((await page.evaluate(() => window.__h3d.seat().mode)) !== mode) await page.keyboard.press('Control+Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe(mode);
+}

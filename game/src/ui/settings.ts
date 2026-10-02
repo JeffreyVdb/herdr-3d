@@ -41,8 +41,14 @@ export interface SectionHandle {
   dispose?(): void;
 }
 
+/** What a section may do to itself beyond its content. */
+export interface SectionControl {
+  /** Hides the whole section, heading and storage label too (#98: a bridge without the feature has nothing to show). */
+  setHidden(hidden: boolean): void;
+}
+
 /** Fills `body` (under the section's heading and storage label) once, when the section is added. */
-export type SectionRender = (body: HTMLElement) => SectionHandle | void;
+export type SectionRender = (body: HTMLElement, section: SectionControl) => SectionHandle | void;
 
 interface Section {
   id: string;
@@ -110,7 +116,7 @@ export class SettingsDialog {
     head.append(h, store);
     const content = el('div', 'settings-content');
     root.append(head, content);
-    const section: Section = { id, root, handle: render(content) ?? {} };
+    const section: Section = { id, root, handle: render(content, { setHidden: (hidden) => void (root.hidden = hidden) }) ?? {} };
     this.sections.push(section);
     this.body.append(root);
     return () => {
@@ -125,7 +131,7 @@ export class SettingsDialog {
   /** Scrolls section `id` into view and puts the keyboard on its heading (a link from another section). */
   reveal(id: string): void {
     const sec = this.sections.find((x) => x.id === id);
-    if (!sec) return;
+    if (!sec || sec.root.hidden) return;
     const h = sec.root.querySelector<HTMLElement>('.settings-title');
     if (h) {
       h.tabIndex = -1;

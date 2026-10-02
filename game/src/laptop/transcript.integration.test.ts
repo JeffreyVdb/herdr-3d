@@ -66,7 +66,7 @@ let layer: HTMLElement | null = null;
 afterEach(() => layer?.remove());
 
 describe('transcript mode with the real render module', () => {
-  it('Claude: sit, the watch acks, Ctrl+Esc mounts the view over the bridge’s items; a subagent loads as a page', async () => {
+  it('Claude: sit, the watch acks, the view mounts over the bridge’s items; a subagent loads as a page', async () => {
     const r = rig();
     layer = r.layer;
     r.mode.sit('w1', 'Ada');
@@ -76,7 +76,7 @@ describe('transcript mode with the real render module', () => {
     await Promise.resolve();
     expect(r.mode.itemCount).toBe(CLAUDE.length);
 
-    r.mode.toggle();
+    // #98: the conversation is up from the moment you sit.
     const box = r.mode.box as HTMLElement;
     await settle(() => !!box.querySelector('.tx'));
     expect(box.hidden).toBe(false);
@@ -131,7 +131,6 @@ describe('transcript mode with the real render module', () => {
     r.watches.sync(new Set(['w2']));
     r.last('transcript.watch').resolve({ ok: true, data: { harness: 'codex', session: 's2', version: '0.50.0', cursor: 'c:1', has_more: false, pending: false, items: CODEX } });
     await Promise.resolve();
-    r.mode.toggle();
     const box = r.mode.box as HTMLElement;
     await settle(() => !!box.querySelector('.tx'));
     const patch = CODEX.find((it) => it.tool?.name === 'apply_patch') as TranscriptItem;
@@ -170,7 +169,6 @@ describe('transcript mode with the real render module', () => {
       { id: 'w1', limit: 200 },
       { id: 'w1', limit: 200 },
     ]);
-    r.mode.toggle();
     const box = r.mode.box as HTMLElement;
     await settle(() => !!box.querySelector('.tx'));
     watches()[1]?.resolve(ack(CLAUDE));
@@ -210,7 +208,6 @@ describe('transcript mode with the real render module', () => {
     r.watches.sync(new Map([['w1', PRINT_WATCH_LIMIT]]));
     sit('w1');
     expect(watches()).toHaveLength(2);
-    r.mode.toggle();
     const box = r.mode.box as HTMLElement;
     await settle(() => !!box.querySelector('.tx'));
 
@@ -240,7 +237,6 @@ describe('transcript mode with the real render module', () => {
     r.watches.sync(new Set(['w3']));
     r.last('transcript.watch').resolve({ ok: true, data: { harness: 'claude', session: '', version: '', cursor: 'c:1', has_more: false, pending: true, items: [] } });
     await Promise.resolve();
-    r.mode.toggle();
     const box = r.mode.box as HTMLElement;
     await settle(() => !!box.querySelector('.tx'));
     expect((box.querySelector('.tx-empty') as HTMLElement).hidden).toBe(false);

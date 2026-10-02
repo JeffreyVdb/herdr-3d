@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, openGame, seatMode, shot, watchErrors } from './game';
 
 // M6b on demo-m4 with the simulator (sim=1): hires drop in to their chairs instead of walking in, and every desk
 // has a monitor (the live screen, big and in its glance view), a wireless keyboard and mouse, and a vertical dock
@@ -74,6 +74,8 @@ test('a hire drops in at an empty desk, and you sit at its screen while it lands
   const got = r as NonNullable<typeof r>;
   expect(got).toMatchObject({ ok: true, dropping: true, phase: 'drop', away: null, seated: got.id });
   expect(got.ms).toBeLessThan(1000);
+  // #98: a worker never sat at opens its conversation; the terminal is a Ctrl+Esc away.
+  await seatMode(page, 'terminal');
   // Seated at its monitor: watched at the seated fps, the whole terminal on the monitor (not the glance view).
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.screens())).find((s) => s.id === got.id)?.fps, { timeout: 10_000 }).toBe(10);
   await expect.poll(async () => (await page.evaluate((id) => window.__h3d.screenMesh(id), got.id))?.glance, { timeout: 10_000 }).toBe(false);

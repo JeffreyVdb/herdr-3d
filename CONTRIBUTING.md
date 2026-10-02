@@ -611,7 +611,8 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   `terminal.watch`es in step with what the game wants (a full frame first, a gap re-watches, `unknown_command` turns
   screens off with the reason), `terminal.ts` is one xterm.js 6 terminal per live screen (never opened: only its VT
   parser and buffer) painted by `paint.ts` into a canvas that is the monitor's texture (M6b: standing, the glance view,
-  the last lines that say something, 22 columns × 5 lines, big, bold and lifted to 4.5:1, so it reads from the aisle;
+  the last lines that say something, 22 columns × 5 lines, big, bold and lifted to 4.5:1, so it reads from the aisle,
+  without the agent's footer: #98, the statusline and mode line under its input, its key hints;
   seated, the whole terminal), `keys.ts` maps a keydown to herdr
   keys and orders input (one command in flight, what is typed meanwhile goes in the next `worker.keys`), `index.ts`
   plans and ties it together; #98: `monitors.ts` gives every desk its activity card, resting mascot or glance once per
@@ -792,6 +793,12 @@ worker's turn with that message and runs the pipeline when the feature is ready 
 `worker.answer_followup` sends the formatted answers as one `worker.prompt` (with `simecho=<ms>` it is echoed into the
 transcript). `window.__h3d.followups()` is the feature's state. `e2e/followups.spec.ts` drives the settings and the card.
 
+#98 on the simulating server (`tools/fixture-activity-settings.ts`, rules at its top): `activity.get` / `activity.set`
+like the bridge (Settings' "Classify unknown commands", `src/ui/activitySection.ts`: off by default, `incomplete` while
+the AI integration's classifier is not ready, `capped` at the daily cap; absent with `simai=off`), and
+`sim.activity_settings {env?, model_enabled?, calls_today?, cache_size?}` (`simActivitySettings(args)` in the hooks)
+plays the environment's switch, the day's calls and the cache. `e2e/activity-settings.spec.ts` drives the section.
+
 #83 on the simulating server (`tools/fixture-sim.ts`): `worker.wrapup` checks like `worker.fire` (a Claude or Codex
 agent, a delete only on a clean tree) and arms the worker; `sim.wrapup {id, verdict: "clean" | "blocked" | "none",
 reason?}` (`simWrapUp(args)` in the hooks) plays its transcript's result line: `clean` sends it home (`worker.removed`
@@ -810,9 +817,12 @@ cards' ledger, `monitorRect(id)` where its terminal area is on screen. `e2e/m98-
 waiting state, the three image cases, reduced motion, the preference and perf-floor60's canvas and upload counts. E.g.
 `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1%26simactivity%3Ddemo&floor=herdr-3d`.
 
-M16 on the simulating server (`tools/fixture-transcript.ts`, rules at its top): sit at any worker and press Ctrl+Esc
-for its conversation. `transcript.watch` answers a demo timeline of every item kind in the bridge's shape, the demo's
-Agent call pages the bridge's own output for its subagent fixture, and `sim.transcript` (`simTranscript(args)` in the
+M16 on the simulating server (`tools/fixture-transcript.ts`, rules at its top): sit at any agent for its conversation
+(#98: what you sit down to at a Claude or Codex worker; Ctrl+Esc swaps it for the terminal and back, and a worker you
+left in the terminal opens there next time, remembered per worker in `h3d.seat.terminal`; a plain shell, another
+harness, a bridge without transcripts or a view that does not load open the terminal; e2e specs of the terminal sit
+down with `leftInTerminal` / `seatMode` from `e2e/game.ts`). `transcript.watch` answers a demo timeline of every item
+kind in the bridge's shape, the demo's Agent call pages the bridge's own output for its subagent fixture, and `sim.transcript` (`simTranscript(args)` in the
 hooks) pushes items or updates to a watch (`{id, items, updates}`) or closes it (`{id, close: "session_changed"}`);
 `simfail=no_m16` plays a bridge before M16. The demo's `Read` of a PNG shows its two thumbnails under its collapsed header, and still does with Hide tools on (#70). #59: the view's top strip has the transcript's preset (three swatches:
 Terminal, Quiet, Paper), Hide tools and A− / 100% / A+; the seat bar has the terminal's own preset and zoom. Ctrl + = /
