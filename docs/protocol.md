@@ -296,12 +296,20 @@ at, which is reserved from the moment the hire is accepted. A desk is freed when
 asleep floor keep their desks.
 
 Each worker also gets a **name** from a built-in list of original names ("Nibble", "Pixel", "Mochi", …). Names are
-unique among the floor's workers; past the end of the list they get a suffix (`"Pixel 2"`). A name belongs to one
+unique among the floor's workers and never contain a digit. A name belongs to one
 worker of its floor at a time (SQLite `worker_name`), and comes back with it after a restart or when its workspace
 reopens. When the bridge sees the worker leave the floor (`worker.removed`: workspace closed, identity lost, session
 deleted), the name stays **held** for `--name-hold` (default 7 days) from that moment: no newcomer gets it, so a
 worker that returns within the hold always has its name. A worker that leaves while the bridge is down is seen leaving
 when the bridge next observes its floor, so the hold starts late, never early.
+
+The hold gives way when the list runs out. When every name is held, a newcomer takes the held name **released longest
+ago** (its hold ends early; its old owner gets a new name if it ever returns), so a name is never suffixed. A name of a
+worker on the floor is never taken; only if the floor has more workers than the list has names does a newcomer get a
+two-word name of two list entries (`"Pixel Mochi"`). A worker sent home on purpose (`worker.fire`, a wrap-up's send
+home) will not return, so its name is **free at once**, with no hold; closing a pane, a crash, a restart or sleep keep
+the hold. Workers named before this (`"Pixel 2"`) keep their stored name for as long as they live; none is handed out
+again.
 
 After the hold a newcomer may take the name. The worker that left then no longer owns it and gets a new name if it
 ever comes back: that is the one intended name change. A worker returning after its hold whose name nobody took keeps

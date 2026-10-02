@@ -1,8 +1,11 @@
 package world
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 )
 
@@ -36,35 +39,111 @@ func TestNamesList(t *testing.T) {
 }
 
 func TestPickName(t *testing.T) {
-	taken := map[string]bool{}
-	first := PickName("6db1905e-9e85-42f4-911c-b05e31b84c68", taken)
-	if again := PickName("6db1905e-9e85-42f4-911c-b05e31b84c68", taken); again != first {
+	held, released := map[string]bool{}, map[string]time.Time{}
+	first := PickName("6db1905e-9e85-42f4-911c-b05e31b84c68", held, released)
+	if again := PickName("6db1905e-9e85-42f4-911c-b05e31b84c68", held, released); again != first {
 		t.Fatalf("not stable: %q then %q", first, again)
 	}
-	// Fill a floor far past the list: every name stays unique.
-	for i := 0; i < 2*len(Names)+5; i++ {
-		n := PickName(strings.Repeat("x", i), taken)
-		if taken[n] {
-			t.Fatalf("%q handed out twice", n)
+	// Fill a floor: every name of the list is handed out once, plain.
+	for i := range len(Names) {
+		n := PickName(strings.Repeat("x", i), held, released)
+		if held[n] || !slices.Contains(Names, n) {
+			t.Fatalf("%q handed out twice or not a plain name", n)
 		}
-		taken[n] = true
+		held[n] = true
 	}
-	threes := 0
-	for n := range taken {
-		if strings.HasSuffix(n, " 3") {
-			threes++
+}
+
+func TestPickNameRecyclesTheOldestRelease(t *testing.T) {
+	base := time.Unix(1_790_000_000, 0)
+	held, released := map[string]bool{}, map[string]time.Time{}
+	for i, n := range Names {
+		held[n] = true
+		released[n] = base.Add(time.Duration(len(Names)-i) * time.Hour) // the last entry left first
+	}
+	for _, id := range []string{"a", "b", "c", "d"} {
+		if got := PickName(id, held, released); got != Names[len(Names)-1] {
+			t.Fatalf("PickName(%q) = %q, want the longest released %q", id, got, Names[len(Names)-1])
 		}
 	}
-	if !taken[Names[0]+" 2"] || threes != 5 {
-		t.Fatalf("exhausted list should suffix \" 2\", then \" 3\": %v", taken)
+	// A name of a live worker (no release time) is never recycled, however
+	// old the others are not.
+	released[Names[len(Names)-1]] = time.Time{}
+	delete(released, Names[len(Names)-2])
+	if got := PickName("a", held, released); got != Names[len(Names)-3] {
+		t.Fatalf("PickName = %q, want %q (the oldest release among names not owned)", got, Names[len(Names)-3])
+	}
+}
+
+func TestPickNameAllOwned(t *testing.T) {
+	held := map[string]bool{}
+	for _, n := range Names {
+		held[n] = true
+	}
+	seen := map[string]bool{}
+	for i := range 300 {
+		n := PickName(fmt.Sprint("w", i), held, nil)
+		if strings.ContainsAny(n, "0123456789") || held[n] || !IsName(n) || len(strings.Fields(n)) != 2 {
+			t.Fatalf("PickName = %q: want a new two-word name without digits", n)
+		}
+		held[n], seen[n] = true, true
+	}
+}
+
+func TestPickable(t *testing.T) {
+	held := map[string]bool{Names[0]: true}
+	released := map[string]time.Time{Names[0]: time.Unix(1, 0)}
+	if Pickable("nope", held, released) || Pickable(Names[0], held, released) || !Pickable(Names[1], held, released) {
+		t.Fatal("while a name is free: only free names of the list")
+	}
+	for _, n := range Names {
+		held[n] = true
+		released[n] = time.Unix(1, 0)
+	}
+	released[Names[2]] = time.Time{}
+	if !Pickable(Names[0], held, released) || Pickable(Names[2], held, released) {
+		t.Fatal("list full: a released name may be recycled, a live worker's never")
 	}
 }
 
 func TestIsName(t *testing.T) {
-	for name, want := range map[string]bool{"Pixel": true, "Pixel 2": true, "Pixel 12": true, "Pixel 1": false,
+	for name, want := range map[string]bool{"Pixel": true, "Pixel 2": true, "Pixel 12": true, "Pixel Mochi": true, "Pixel Pixel 2": false, "Pixel Zzz": false, "Pixel 1": false,
 		"Pixel 02": false, "Pixel x": false, "pixel": false, "CODE|x": false, "": false, "Pixel  2": false} {
 		if got := IsName(name); got != want {
 			t.Errorf("IsName(%q) = %v", name, got)
 		}
+	}
+}
+
+func TestPickNameTieGoesToTheEarlierName(t *testing.T) {
+	held, released := map[string]bool{}, map[string]time.Time{}
+	for _, n := range Names {
+		held[n] = true
+		released[n] = time.Unix(5, 0)
+	}
+	for _, id := range []string{"a", "b", "c", "d"} {
+		if got := PickName(id, held, released); got != Names[0] {
+			t.Fatalf("PickName(%q) = %q, want %q on a tie", id, got, Names[0])
+		}
+	}
+}
+
+func TestPickableRejectsDigits(t *testing.T) {
+	if Pickable("Pixel 2", map[string]bool{}, nil) {
+		t.Fatal("a legacy suffixed label must not be picked for a new hire")
+	}
+}
+
+func TestPickableOnlyTheNameThatWouldBeRecycled(t *testing.T) {
+	held, released := map[string]bool{}, map[string]time.Time{}
+	for _, n := range Names {
+		held[n] = true
+	}
+	released[Names[0]], released[Names[1]] = time.Unix(1, 0), time.Unix(2, 0)
+	if !Pickable(Names[0], held, released) || Pickable(Names[1], held, released) {
+		t.Fatal("only the longest released name may be requested")
+	}
+	if got := PickName("x", held, released); got != Names[0] {
+		t.Fatalf("PickName = %q", got)
 	}
 }

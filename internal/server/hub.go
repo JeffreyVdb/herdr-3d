@@ -1062,7 +1062,7 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 		h.log.Error("freeing desks failed", "session", u.Session, "err", err)
 	}
 	// Names stay held for the hold, should the session come back.
-	h.releaseNames(context.Background(), u.Session, nil, h.opts.Now())
+	h.releaseNames(context.Background(), u.Session, nil, nil, h.opts.Now())
 	h.log.Info("floor removed", "session", u.Session)
 	h.syncLayout()
 	h.relink()      // M6 runs
@@ -1191,6 +1191,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 	}
 	at := h.opts.Now()
 	var evs []proto.Event
+	sentHome := map[string]bool{} // deliberate departures: no hold for their names
 	for _, id := range f.order {
 		if present[id] {
 			continue
@@ -1216,6 +1217,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		if op := f.fires[id]; op != nil && !rawWS[op.workspaceID] {
 			ev.Reason = proto.RemovedSentHome
 			op.removed = true
+			sentHome[id] = true
 			op.signal()
 			h.forgetWrapUp(ctx, id) // #83: sent home
 		}
@@ -1223,7 +1225,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 	}
 	// Before anyone is named: whoever left (seen now, or while the bridge
 	// was down) holds its name from now on.
-	h.releaseNames(ctx, session, present, at)
+	h.releaseNames(ctx, session, present, sentHome, at)
 	// Desks are held by the floor's current workers only: this frees the
 	// desks of removed workers and of stored ones that did not come back.
 	desks := h.floorDesks(session)
@@ -1422,16 +1424,22 @@ func nextMeta(m workerMeta, w world.WorkerObs, now int64) workerMeta {
 // releaseNames records that the owners of a floor's names who are not
 // among present left it at at: each name stays held for the name hold from
 // then. A worker that left while the bridge was down is recorded at the
-// first observation after, so its hold starts late, never early.
-func (h *Hub) releaseNames(ctx context.Context, session string, present map[string]bool, at time.Time) {
+// first observation after, so its hold starts late, never early. A worker
+// in sentHome was sent home on purpose and will not come back: its name is
+// released as already held for the whole hold, so it is free at once (and
+// the first to be recycled should every name be held).
+func (h *Hub) releaseNames(ctx context.Context, session string, present, sentHome map[string]bool, at time.Time) {
 	claims := h.names[session]
 	for name, c := range claims {
 		if !c.released.IsZero() || present[c.owner] {
 			continue
 		}
 		c.released = at
+		if sentHome[c.owner] {
+			c.released = at.Add(-h.opts.NameHold)
+		}
 		claims[name] = c
-		if err := h.st.ReleaseName(ctx, c.owner, at); err != nil {
+		if err := h.st.ReleaseName(ctx, c.owner, c.released); err != nil {
 			h.log.Error("releasing worker name failed", "worker", c.owner, "name", name, "err", err)
 		}
 	}
@@ -1443,8 +1451,11 @@ func (h *Hub) releaseNames(ctx context.Context, session string, present map[stri
 // back after its hold ran out and a newcomer took its name) gets a name
 // that no worker on the floor owns and no worker that left less than the
 // hold ago still holds. Taking a name whose hold ran out takes it from its
-// owner, who gets a new name if it ever comes back. So names are unique on
-// a floor, and a worker that returns within its hold always has its name.
+// owner, who gets a new name if it ever comes back. When every name is
+// held, the one released longest ago is taken the same way (world.PickName):
+// a name is never suffixed, and one a worker on the floor owns is never
+// taken. So names are unique on a floor, and a worker that returns within
+// its hold has its name unless the floor ran out of names.
 func (h *Hub) nameWorkers(session string, ids []string, at time.Time) (names []string, claimed []bool) {
 	claims := h.floorNames(session)
 	owned := make(map[string]string, len(claims)) // worker id → name
@@ -1463,18 +1474,14 @@ func (h *Hub) nameWorkers(session string, ids []string, at time.Time) (names []s
 			claimed[i] = true
 		}
 	}
-	held := map[string]bool{}
-	for name, c := range claims {
-		if c.released.IsZero() || at.Sub(c.released) < h.opts.NameHold {
-			held[name] = true
-		}
-	}
+	held, released := h.heldNames(session, at)
 	for i, id := range ids {
 		if names[i] != "" {
 			continue
 		}
-		names[i] = world.PickName(id, held)
+		names[i] = world.PickName(id, held, released)
 		held[names[i]] = true
+		delete(released, names[i]) // owned now
 		claims[names[i]] = nameClaim{owner: id}
 		claimed[i] = true
 	}

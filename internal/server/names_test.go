@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,11 +19,15 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
 
-// fullFloor is one worker per base name: a newcomer gets a suffixed name
-// unless a base name is free.
-func fullFloor() []world.WorkerObs {
+// fullFloor is one worker per name of the list: every name is owned.
+func fullFloor() []world.WorkerObs { return nearlyFullFloor(0) }
+
+// nearlyFullFloor is one worker per name of the list but spare: a newcomer
+// finds spare names free, so a held name is never recycled for it until
+// they are used up.
+func nearlyFullFloor(spare int) []world.WorkerObs {
 	var obs []world.WorkerObs
-	for i := range len(world.Names) {
+	for i := range len(world.Names) - spare {
 		obs = append(obs, agent(fmt.Sprintf("w%03d", i), "idle"))
 	}
 	return obs
@@ -75,7 +81,7 @@ func hasWorker(session, ws string) func(proto.World) bool {
 func TestLeaveAndJoinInOneObservation(t *testing.T) {
 	clk := newClock(1_790_000_000_000)
 	b := startBridge(t, "", server.Options{Now: clk.now, NameHold: time.Minute})
-	obs := fullFloor()
+	obs := nearlyFullFloor(3)
 	b.floor("s", true, obs...)
 	s := workersOf(b.world(hasWorkers("s", len(obs))), "s")
 	a, x := s["w000"], s["w001"]
@@ -112,7 +118,8 @@ func TestLeaveAndJoinInOneObservation(t *testing.T) {
 }
 
 // A worker back after its hold, whose name a newcomer took, gets a new
-// name: it must not take one another absent worker still holds.
+// name; with the list full that is the longest-released one, and the
+// worker it was taken from gets yet another.
 func TestExpiredReturnDoesNotTakeAHeldName(t *testing.T) {
 	const day = 24 * time.Hour
 	clk := newClock(1_790_000_000_000)
@@ -135,25 +142,28 @@ func TestExpiredReturnDoesNotTakeAHeldName(t *testing.T) {
 		t.Fatalf("claims after B took A's name: A %+v, B %+v", cs[a.ID], cs[bw.ID])
 	}
 
-	// B leaves; a day later A comes back, then B.
+	// B leaves; a day later A comes back. Every name is held, so A gets the
+	// one released longest ago, B's (its hold ends early), never a name of a
+	// worker on the floor; B, back a day into its hold, gets a new one.
 	b.floor("s", true, obs[1:]...)
 	b.world(hasWorkers("s", len(obs)-1))
 	clk.advance(day)
 	backA := worker("ra", "CODE|w000", "sess-w000", "idle")
 	b.floor("s", true, floorWith(obs[1:], backA)...)
 	ra := workersOf(b.world(hasWorker("s", "ra")), "s")["ra"]
-	if ra.ID != a.ID || ra.Name == bw.Name {
-		t.Fatalf("A came back as %+v; B holds %q", ra, bw.Name)
+	if ra.ID != a.ID || ra.Name != bw.Name {
+		t.Fatalf("A came back as %+v, want B's released name %q", ra, bw.Name)
 	}
 	backB := worker("rb", "CODE|b", "sess-b", "idle")
 	b.floor("s", true, floorWith(obs[1:], backA, backB)...)
 	w := b.world(hasWorkers("s", len(obs)+1))
 	s := workersOf(w, "s")
-	if rb := s["rb"]; rb.ID != bw.ID || rb.Name != bw.Name {
-		t.Fatalf("B came back one day into its hold as %+v, want %q", rb, bw.Name)
+	if rb := s["rb"]; rb.ID != bw.ID || rb.Name == ra.Name {
+		t.Fatalf("B came back as %+v, its name went to A (%q)", rb, ra.Name)
 	}
+	noDigits(t, s["rb"].Name)
 	if s["ra"].Name != ra.Name {
-		t.Fatalf("A's new name changed from %q to %q", ra.Name, s["ra"].Name)
+		t.Fatalf("A's name changed from %q to %q", ra.Name, s["ra"].Name)
 	}
 	checkClaims(t, b.st, w, "s")
 }
@@ -170,7 +180,7 @@ func TestUnchangedRunningFloorAcrossRestart(t *testing.T) {
 	b := startBridge(t, db, server.Options{Now: clk.now})
 	fake := herdrtest.Start(t, shortDir(t))
 	snap := &herdr.Snapshot{}
-	for _, o := range fullFloor() {
+	for _, o := range nearlyFullFloor(2) {
 		snap.Workspaces = append(snap.Workspaces, herdr.WorkspaceInfo{WorkspaceID: o.WorkspaceID, Label: o.Label})
 		snap.Panes = append(snap.Panes, herdr.PaneInfo{PaneID: o.PaneID, WorkspaceID: o.WorkspaceID, AgentStatus: o.Status,
 			Cwd: ptr(o.Cwd), AgentSession: &herdr.AgentSession{Value: o.AgentSession}})
@@ -190,7 +200,7 @@ func TestUnchangedRunningFloorAcrossRestart(t *testing.T) {
 			Resnapshot: 10 * time.Millisecond, Log: quietLog()})
 	}()
 	defer func() { cancel(); <-done }()
-	a := workersOf(b.world(hasWorkers("s", len(world.Names))), "s")["w000"]
+	a := workersOf(b.world(hasWorkers("s", len(world.Names)-2)), "s")["w000"]
 	snapshots := func() int {
 		n := 0
 		for _, m := range fake.Methods() {
@@ -345,4 +355,133 @@ func TestNamesHeldAtStartup(t *testing.T) {
 		t.Fatalf("absent u2's claim = %+v, want Pixel released now", cl)
 	}
 	checkClaims(t, b.st, w, "s")
+}
+
+func noDigits(t *testing.T, name string) {
+	t.Helper()
+	if strings.ContainsAny(name, "0123456789") {
+		t.Fatalf("name %q has a digit", name)
+	}
+}
+
+// With every name held, a newcomer recycles the name released longest ago,
+// ends its hold early, and owns it in the store; a name of a live worker is
+// never taken.
+func TestHeldNamesAreRecycledOldestFirst(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "world.db")
+	clk := newClock(1_790_000_000_000)
+	b := startBridge(t, db, server.Options{Now: clk.now, NameHold: 7 * 24 * time.Hour})
+	obs := fullFloor()
+	b.floor("s", true, obs...)
+	w := b.world(hasWorkers("s", len(obs)))
+	byWS := workersOf(w, "s")
+
+	// w005, then w003, then w007 leave, an hour apart.
+	live := floorWith(obs)
+	for _, ws := range []string{"w005", "w003", "w007"} {
+		clk.advance(time.Hour)
+		live = slices.DeleteFunc(live, func(o world.WorkerObs) bool { return o.WorkspaceID == ws })
+		b.floor("s", true, live...)
+		b.world(hasWorkers("s", len(live)))
+	}
+	oldest := byWS["w005"]
+	for i, ws := range []string{"n1", "n2", "n3", "n4"} {
+		live = append(live, agent(ws, "idle"))
+		clk.advance(time.Minute)
+		b.floor("s", true, live...)
+		got := workersOf(b.world(hasWorkers("s", len(live))), "s")[ws]
+		noDigits(t, got.Name)
+		want := []string{byWS["w005"].Name, byWS["w003"].Name, byWS["w007"].Name}
+		if i < 3 && got.Name != want[i] {
+			t.Fatalf("newcomer %s = %q, want %q (released longest ago first)", ws, got.Name, want[i])
+		}
+		if i == 3 && slices.Contains(want, got.Name) {
+			t.Fatalf("every released name is back in use, yet newcomer %s got %q", ws, got.Name)
+		}
+	}
+	w = b.world(hasWorkers("s", len(live)))
+	checkClaims(t, b.st, w, "s")
+	if c := claims(t, b.st, "s")[oldest.ID]; c.Name != "" {
+		t.Fatalf("the recycled name's old owner still has a claim: %+v", c)
+	}
+	for _, wk := range workersOf(w, "s") {
+		noDigits(t, wk.Name)
+	}
+}
+
+// 250 workers come and go one after another on a floor, each leaving
+// inside the hold: names run out, and never grow a digit or repeat among
+// live workers.
+func TestNoDigitsAfterManyHires(t *testing.T) {
+	clk := newClock(1_790_000_000_000)
+	b := startBridge(t, "", server.Options{Now: clk.now, NameHold: 7 * 24 * time.Hour})
+	keep := []world.WorkerObs{agent("keep", "idle"), agent("keep2", "idle")}
+	for i := range 250 {
+		ws := fmt.Sprint("t", i)
+		live := floorWith(keep, agent(ws, "idle"))
+		clk.advance(time.Minute)
+		b.floor("s", true, live...)
+		w := b.world(func(w proto.World) bool {
+			_, ok := workersOf(w, "s")[ws]
+			return ok && len(workersOf(w, "s")) == len(live)
+		})
+		for _, wk := range workersOf(w, "s") {
+			noDigits(t, wk.Name)
+		}
+		if i == 249 {
+			checkClaims(t, b.st, w, "s")
+		}
+	}
+}
+
+// A name an agent left with a numeric suffix stays its name.
+func TestLegacySuffixedNameIsKept(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "world.db")
+	b := startBridge(t, db, server.Options{})
+	b.floor("s", true, agent("a", "idle"), agent("b", "idle"))
+	w := b.world(hasWorkers("s", 2))
+	id := workersOf(w, "s")["a"].ID
+	b.stop()
+
+	st, err := store.Open(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := world.Names[0] + " 2"
+	if err := st.ClaimName(context.Background(), "s", legacy, id); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	b = startBridge(t, db, server.Options{})
+	b.floor("s", true, agent("a", "idle"), agent("b", "idle"), agent("c", "idle"))
+	w = b.world(hasWorkers("s", 3))
+	s := workersOf(w, "s")
+	if s["a"].Name != legacy {
+		t.Fatalf("a = %q, want its stored %q", s["a"].Name, legacy)
+	}
+	noDigits(t, s["c"].Name)
+	checkClaims(t, b.st, w, "s")
+}
+
+// A worker that closes (crash, pane close) keeps its name for the hold; one
+// sent home does not.
+func TestSendHomeReleasesTheNameAtOnce(t *testing.T) {
+	clk := newClock(1_790_000_000_000)
+	hold := 7 * 24 * time.Hour
+	hb := startHireBridge(t, func(o *server.Options) { o.Now, o.NameHold = clk.now, hold },
+		claudeW("w1", "sess-1"), claudeW("w2", "sess-2"))
+	hb.fl.setProcs("w1:p1", running("claude", "sess-1"))
+	ws := workersOf(hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 2 }), "s")
+	home, other := ws["w1"], ws["w2"]
+
+	hb.c.command(proto.CmdWorkerFire, "fire", proto.WorkerFireArgs{ID: home.ID})
+	hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 1 })
+	c := claims(t, hb.st, "s")[home.ID]
+	if c.Name != home.Name || !c.Released.Equal(clk.now().Add(-hold)) {
+		t.Fatalf("sent home: claim %+v, want %q released a whole hold ago (free now)", c, home.Name)
+	}
+	if o := claims(t, hb.st, "s")[other.ID]; !o.Released.IsZero() {
+		t.Fatalf("the worker still on the floor was released: %+v", o)
+	}
 }

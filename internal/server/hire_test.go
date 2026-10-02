@@ -1516,3 +1516,17 @@ func TestWorktreeHireOnAnEmptyFloor(t *testing.T) {
 		t.Fatalf("herdr still has %d workspaces", open)
 	}
 }
+
+// A client label with a numeric suffix never becomes a worker's name.
+func TestHireLabelWithDigitsGetsAPlainName(t *testing.T) {
+	hb := startHireBridge(t, nil, worker("w1", "CODE|a", "", "idle"))
+	hb.world(func(w proto.World) bool { return len(w.Workers) == 1 })
+	args := hireArgs(3)
+	args.Label, args.Cwd = "Pixel 2", "/home/u/repo"
+	_, ack := hb.c.mustAck(proto.CmdWorkerHire, args)
+	id := ack.Data.(map[string]any)["id"].(string)
+	w := workersOf(hb.world(func(w proto.World) bool { return workersOf(w, "s")["w2"].ID == id }), "s")["w2"]
+	if strings.ContainsAny(w.Name, "0123456789") || !world.IsName(w.Name) {
+		t.Fatalf("hired name = %q", w.Name)
+	}
+}
