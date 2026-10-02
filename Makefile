@@ -27,7 +27,7 @@ EMBED_DIR := internal/webdist/game
 RELEASE_DIR := bin/release
 
 .PHONY: build go-build game-build test go-test game-test integration lint go-lint game-lint \
-	sh-test embed-game helper-darwin release-assets dev shot e2e deps clean
+	sh-test embed-game helper-darwin release-assets dev shot e2e setup toolchain deps clean
 
 ## build: Go binaries (bin/) + game bundle (game/dist/)
 build: go-build game-build
@@ -97,6 +97,39 @@ shot: game-build
 ## e2e: the full headless Playwright suite (all e2e/*.spec.ts, H3D_WORKERS parallel workers; one run per host)
 e2e: game-build
 	@( $(E2E_LOCKED); set -x; $(PORTLEASE) --name preview --service game-e2e -- $(PNPM) exec playwright test 9>&- ) 9>"$(E2E_LOCK)"
+
+## setup: make a fresh worktree test-ready: toolchain check, game deps, Go module cache (idempotent, ~3 s warm)
+setup:
+	@$(MAKE) --no-print-directory toolchain
+	@$(MAKE) --no-print-directory deps
+	go mod download
+	@echo "setup ok: next 'make lint' then 'make shot' (docs/git-worktrees.md)"
+
+# Pins are read from go.mod (minimum Go), game/.nvmrc and game/package.json (packageManager), the same files CI reads.
+GO_WANT   = $(shell sed -n 's/^go \([0-9]*\.[0-9]*\).*/\1/p' go.mod)
+NODE_WANT = $(shell sed 's/^v//' game/.nvmrc | cut -d. -f1,2)
+PNPM_WANT = $(shell sed -n 's/.*"packageManager": *"pnpm@\([0-9]*\.[0-9]*\).*/\1/p' game/package.json)
+
+## toolchain: fail with a clear message when go, node, pnpm, portlease or flock is missing or the wrong version
+toolchain:
+	@fail=0; \
+	miss() { echo "make setup: $$1 not found on PATH ($$2)" >&2; fail=1; }; \
+	wrong() { echo "make setup: $$1 $$2 found, need $$3 ($$4)" >&2; fail=1; }; \
+	if command -v go >/dev/null; then \
+		v=$$(go env GOVERSION | sed 's/^go//'); \
+		[ "$$(printf '%s\n%s\n' "$(GO_WANT)" "$$v" | sort -V | head -n1)" = "$(GO_WANT)" ] || wrong go "$$v" ">= $(GO_WANT)" "go.mod"; \
+	else miss go "need >= $(GO_WANT), see go.mod"; fi; \
+	if command -v node >/dev/null; then \
+		v=$$(node -v | sed 's/^v//' | cut -d. -f1,2); \
+		[ "$$v" = "$(NODE_WANT)" ] || wrong node "$$v" "$(NODE_WANT)" "game/.nvmrc"; \
+	else miss node "need $(NODE_WANT), see game/.nvmrc"; fi; \
+	if command -v pnpm >/dev/null; then \
+		v=$$(pnpm -v | cut -d. -f1,2); \
+		[ "$$v" = "$(PNPM_WANT)" ] || wrong pnpm "$$v" "$(PNPM_WANT)" "packageManager in game/package.json"; \
+	else miss pnpm "need $(PNPM_WANT), see packageManager in game/package.json"; fi; \
+	command -v portlease >/dev/null || miss portlease "ports are leased from it, never hardcoded"; \
+	command -v flock >/dev/null || miss flock "util-linux; needed for the e2e lock"; \
+	exit $$fail
 
 ## deps: install game dependencies from the lockfile
 deps: game/node_modules/.modules.yaml
