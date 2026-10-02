@@ -62,6 +62,7 @@ import { ScreenShareController } from './screen';
 import { LimitsWidget } from './ui/limits';
 // #100 the inbox chip under them
 import { InboxChip } from './ui/inbox';
+import { InboxPrefs } from './ui/inboxPrefs';
 import { inboxChip, inboxQueue, type InboxCandidate } from './world/inbox';
 // #92 AI integration
 import { aiSection } from './ui/aiSection';
@@ -73,6 +74,7 @@ import { LimitsPrefs } from './ui/limitsPrefs';
 import { MonitorPrefs } from './ui/monitorPrefs';
 import type { SettingsDialog } from './ui/settings';
 import { displaySection, timeSection } from './ui/settingsSections';
+import { notifySection } from './ui/notifySection';
 import { ThemeLoader } from './ui/themeLoader';
 import { ViewPrefs } from './ui/themePrefs';
 import { can } from './world/boards';
@@ -156,6 +158,7 @@ export class App {
   /** #100: the inbox chip under the plate, and the worker its last click went to (the next goes on from there). */
   readonly inbox: InboxChip;
   private lastInbox: string | null = null;
+  readonly inboxPrefs = new InboxPrefs();
   readonly hud: Hud;
   readonly city: CityView;
   readonly client: BridgeClient;
@@ -290,6 +293,8 @@ export class App {
     this.settings = this.hud.mountSettings();
     this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
+    // #100: how the inbox reaches you beyond its chip: desktop notifications and the chime.
+    this.settings.addSection('notifications', 'Notifications', notifySection({ prefs: this.inboxPrefs, audio: this.audio }), { store: 'browser' });
     // #92: the bridge-wide AI models. A chip while one is set up but unusable, a toast when a call just stopped one.
     this.settings.addSection(
       'ai',

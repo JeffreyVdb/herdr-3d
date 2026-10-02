@@ -22,6 +22,9 @@ class FakeParam {
     this.ramps.push({ to: v, secs: Math.round((t - this.from) * 1000) / 1000 });
     this.value = v;
   }
+  exponentialRampToValueAtTime(v: number) {
+    this.value = v;
+  }
   cancelScheduledValues() {}
 }
 
@@ -47,6 +50,21 @@ class FakeSource extends FakeNode {
   stop() {
     this.stopped++;
     this.onended?.();
+  }
+}
+
+/** #100: the chimes' tones. */
+class FakeOscillator extends FakeNode {
+  type = 'sine';
+  frequency = new FakeParam();
+  started: number[] = [];
+  stopped: number[] = [];
+  onended: (() => void) | null = null;
+  start(t = 0) {
+    this.started.push(t);
+  }
+  stop(t = 0) {
+    this.stopped.push(t);
   }
 }
 
@@ -82,6 +100,12 @@ class FakeContext {
   createMediaElementSource(_el: unknown) {
     this.mediaSources++;
     return new FakeNode();
+  }
+  oscillators: FakeOscillator[] = [];
+  createOscillator() {
+    const o = new FakeOscillator();
+    this.oscillators.push(o);
+    return o;
   }
   createPanner() {
     const p = new FakePanner();
@@ -459,6 +483,125 @@ describe('game audio', () => {
     await flush();
     expect(made[0]?.sources).toHaveLength(0);
     expect(audio.duration('receptionist/missing')).toBeNull();
+  });
+});
+
+// ---- the inbox chimes (#100) ---------------------------------------------------------------------------
+
+describe('playUi: the inbox chimes', () => {
+  /** The gain an oscillator sounds through, and the one after it (the chime's own volume). */
+  const route = (_ctx: FakeContext, o: FakeOscillator) => {
+    const env = o.connected[0] as FakeNode & { gain: FakeParam };
+    const out = env.connected[0] as FakeNode & { gain: FakeParam };
+    return { env, out };
+  };
+  /** The loudest point of an envelope: where its attack ramps to. */
+  const peakOf = (g: FakeParam) => Math.max(0, ...g.ramps.map((r) => r.to));
+
+  it('needs: two rising notes, non-positional, through its own volume into the master', async () => {
+    const { audio, made } = setup();
+    await audio.unlock();
+    const ctx = made[0]!;
+    audio.playUi('needs', 0.5);
+    expect(ctx.oscillators).toHaveLength(2);
+    expect(ctx.panners).toHaveLength(0);
+    const [a, b] = ctx.oscillators as [FakeOscillator, FakeOscillator];
+    expect(b.frequency.value).toBeGreaterThan(a.frequency.value);
+    expect(b.started[0]).toBeGreaterThan(a.started[0]!);
+    for (const o of [a, b]) {
+      expect(o.started).toHaveLength(1);
+      expect(o.stopped[0]).toBeGreaterThan(o.started[0]!);
+      const { out } = route(ctx, o);
+      expect(out.gain.value).toBe(0.5);
+      expect(out.connected[0]).toBe(ctx.gains[0]); // the master: mute and volume apply
+    }
+  });
+
+  it('finished: one softer note', async () => {
+    const { audio, made } = setup();
+    await audio.unlock();
+    const ctx = made[0]!;
+    audio.playUi('needs');
+    const needsPeak = peakOf(route(ctx, ctx.oscillators[0]!).env.gain);
+    audio.playUi('finished');
+    expect(ctx.oscillators).toHaveLength(3);
+    const fin = route(ctx, ctx.oscillators[2]!);
+    expect(fin.out.gain.value).toBe(1);
+    expect(peakOf(fin.env.gain)).toBeGreaterThan(0);
+    expect(peakOf(fin.env.gain)).toBeLessThan(needsPeak);
+  });
+
+  it('frees its nodes once a note has played out', async () => {
+    const { audio, made } = setup();
+    await audio.unlock();
+    const ctx = made[0]!;
+    audio.playUi('finished');
+    const o = ctx.oscillators[0]!;
+    const { env } = route(ctx, o);
+    o.onended?.();
+    expect(o.connected).toEqual([]);
+    expect(env.connected).toEqual([]);
+  });
+
+  it('clamps its volume to 0..1 and is silent at 0', async () => {
+    const { audio, made } = setup();
+    await audio.unlock();
+    const ctx = made[0]!;
+    audio.playUi('finished', 3);
+    expect(route(ctx, ctx.oscillators[0]!).out.gain.value).toBe(1);
+    audio.playUi('finished', 0);
+    audio.playUi('finished', -1);
+    audio.playUi('finished', Number.NaN);
+    expect(ctx.oscillators).toHaveLength(1);
+  });
+
+  it('is silent before the first gesture, while locked, muted, disposed or without Web Audio, and never throws', async () => {
+    const none = createGameAudio({ context: null, storage: null, events: null });
+    expect(() => none.playUi('needs')).not.toThrow();
+
+    const idle = setup();
+    idle.audio.playUi('needs');
+    expect(idle.made).toHaveLength(0); // no context made for it either
+
+    const locked = setup({
+      context: () => {
+        const c = new FakeContext();
+        c.refuse = true;
+        locked.made.push(c);
+        return c as unknown as AudioContext;
+      },
+    });
+    await locked.audio.unlock();
+    locked.audio.playUi('needs');
+    expect(locked.made[0]?.oscillators).toHaveLength(0);
+
+    const muted = setup();
+    await muted.audio.unlock();
+    muted.audio.muted = true;
+    muted.audio.playUi('needs');
+    expect(muted.made[0]?.oscillators).toHaveLength(0);
+
+    const gone = setup();
+    await gone.audio.unlock();
+    const ctx = gone.made[0]!;
+    gone.audio.dispose();
+    gone.audio.playUi('needs');
+    expect(ctx.oscillators).toHaveLength(0);
+
+    const broken = setup();
+    await broken.audio.unlock();
+    (broken.made[0] as unknown as { createOscillator: () => never }).createOscillator = () => {
+      throw new Error('InvalidStateError');
+    };
+    expect(() => broken.audio.playUi('needs')).not.toThrow();
+  });
+
+  it('stop() (the receptionist’s) does not cut a chime', async () => {
+    const { audio, made } = setup();
+    await audio.unlock();
+    audio.playUi('needs');
+    audio.stop();
+    expect(made[0]!.oscillators.every((o) => o.stopped.length === 1)).toBe(true);
   });
 });
 

@@ -226,7 +226,8 @@ MacBook (M2 Max)                                   devbox (Linux)
   browser", `localStorage` prefs; `'bridge'`: "Bridge", shared by every client), `render(body)` fills the body and may
   return `{ open, dispose }`. Sections show in the order they were added; a feature adds its own from `App` without
   touching the dialog (#90's follow-up questions are the first "Bridge" section). Display (the plan-limits switch) and
-  Day and night (`ui/settingsSections.ts`) are the first two. About (`ui/about.ts`) is read-only build info.
+  Day and night (`ui/settingsSections.ts`) are the first two; #100's Notifications (`ui/notifySection.ts`: desktop
+  notifications, the chime, which entries ping) is the third. About (`ui/about.ts`) is read-only build info.
 - **Day and night** (M17): the game follows the viewer's local time, in the browser, with no bridge or protocol part.
   `game/src/world/daylight.ts` (pure) turns an instant, an IANA zone and an optional latitude into a daylight value
   0…1, the sun's altitude and bearing, a dawn/dusk warmth and the zone's clock; with a latitude the sun comes from the

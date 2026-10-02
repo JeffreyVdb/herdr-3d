@@ -659,7 +659,8 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   so the floor stays in view and walkable; its diff is drawn a window of lines at a time), the look-at bar's usage and
   Approve / Deny (`promptBar.ts`), styled in `m5.css`, and the seat bar (`seat.ts`, `seat.css`); #100: the inbox chip under the plan-limits plate
   (`inbox.ts`, `inbox.css`; `App.goInbox` teleports to the first one and sits at its laptop) and the one rule of the corner
-  both follow (`corner.ts`: what makes them step aside). Hidden, named hooks
+  both follow (`corner.ts`: what makes them step aside), what it remembers (`inboxPrefs.ts`, `h3d.inbox`) and Settings →
+  Notifications (`notifySection.ts`: desktop notifications and their permission, the chime and its Test). Hidden, named hooks
   wait for later tickets:
   `renderPlanLimits(harness)` (#12), `renderHandoff` (M9) and `renderServices` (#14), each returning null for now.
   `src/input` — first-person walking.
@@ -1294,7 +1295,9 @@ the quiet-building line, the desk line; no variant twice in a row; a 2-minute co
 never for the desk), covered by vitest. `src/reception/sequence.ts` says the lines of one event one after the other on
 the audio that actually plays (`playAt` returns a handle that resolves when the clip starts and ends): a bubble shows
 with its clip, the next line waits for that clip to end, a clip that takes over 1.5 s to load is dropped rather than
-played late, and muted or without sound the lines are timed by the lock's clip lengths.
+played late, and muted or without sound the lines are timed by the lock's clip lengths. #100's inbox chimes are
+`playUi('needs' | 'finished', volume)`: not positional and not files, two short tones synthesized per call (oscillator
+and gain envelope) under the master mute and volume.
 
 The lines are data: `game/voices/receptionist.json` (`id`, `kind`, `text`; a leading MiMo style tag such as
 `(Happy)` is allowed and never shown in the bubble) plus the voice settings. The clips are committed
