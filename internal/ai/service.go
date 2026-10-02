@@ -438,6 +438,29 @@ func (h classifierHandle) Classify(ctx context.Context, state map[string]any, qu
 	return score, nil
 }
 
+func (h classifierHandle) ClassifyMany(ctx context.Context, state map[string]any, questions map[string]string) (map[string]float64, error) {
+	if len(questions) == 0 || len(questions) > MaxQuestions {
+		return nil, newErr(KindBadConfig, fmt.Sprintf("a call asks 1-%d questions", MaxQuestions))
+	}
+	s := h.s
+	c, release, err := s.begin(ctx, RoleClassifier)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	scores, err := attempts(ctx, s.opts.ClassifierTimeout, func(ctx context.Context, _ int) (map[string]float64, error) {
+		return s.jev.classifyMany(ctx, c.key, c.model, state, questions)
+	})
+	if err != nil {
+		err = s.scrubbed(err, c.key)
+		if KindOf(err) == KindAuthFailed {
+			s.fail(RoleClassifier, c, err, true)
+		}
+		return nil, err
+	}
+	return scores, nil
+}
+
 type llmHandle struct{ s *Service }
 
 func (h llmHandle) Complete(ctx context.Context, req Request) (string, error) {
