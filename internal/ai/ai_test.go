@@ -774,6 +774,73 @@ func TestClassifyManyAsksAllQuestionsInOneCall(t *testing.T) {
 	}
 }
 
+// #98 review B-R3: a retry checks the classifier again, for Classify (#90's
+// path) as for ClassifyMany. Its key file gone while the first attempt
+// failed: the role is incomplete and no second request goes. Its key
+// changed instead: the retry carries the key in use now.
+func TestClassifierRetryChecksTheRoleAgain(t *testing.T) {
+	ctx := context.Background()
+	calls := map[string]func(ai.Classifier) error{
+		"Classify": func(c ai.Classifier) error { _, err := c.Classify(ctx, nil, "asks?"); return err },
+		"ClassifyMany": func(c ai.Classifier) error {
+			_, err := c.ClassifyMany(ctx, nil, map[string]string{"a": "a?", "b": "b?"})
+			return err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			for _, gone := range []bool{true, false} {
+				keyFile := filepath.Join(t.TempDir(), "jev.key")
+				if err := os.WriteFile(keyFile, []byte("old-key-0123456789"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				var mu sync.Mutex
+				var keys []string
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					mu.Lock()
+					keys = append(keys, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+					first := len(keys) == 1
+					mu.Unlock()
+					if !first {
+						var body struct {
+							Questions map[string]any `json:"questions"`
+						}
+						json.NewDecoder(r.Body).Decode(&body)
+						answers := map[string]any{}
+						for k := range body.Questions {
+							answers[k] = map[string]any{"noul": 0.5}
+						}
+						json.NewEncoder(w).Encode(map[string]any{"answers": answers})
+						return
+					}
+					if gone {
+						os.Remove(keyFile)
+					} else {
+						os.WriteFile(keyFile, []byte("new-key-0123456789"), 0o600)
+					}
+					w.WriteHeader(http.StatusBadGateway)
+				}))
+				defer srv.Close()
+				s, err := ai.New(ai.Options{ClassifierURL: srv.URL, HTTP: srv.Client(),
+					Env: ai.Overrides{ClassifierKeyFile: keyFile, ClassifierModel: "jev-latest"}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = call(s.Classifier())
+				mu.Lock()
+				got := append([]string(nil), keys...)
+				mu.Unlock()
+				switch {
+				case gone && (err == nil || len(got) != 1 || s.State(ai.RoleClassifier) != ai.StateIncomplete):
+					t.Fatalf("key file gone: %v, requests with %v, role %s", err, got, s.State(ai.RoleClassifier))
+				case !gone && (err != nil || len(got) != 2 || got[1] != "new-key-0123456789"):
+					t.Fatalf("key changed: %v, requests with %v", err, got)
+				}
+			}
+		})
+	}
+}
+
 // ---- bounds ----------------------------------------------------------------
 
 func TestConcurrencyIsLimitedAcrossConsumersAndRoles(t *testing.T) {

@@ -49,13 +49,24 @@ func (s *Store) LoadActivitySettings(ctx context.Context) (ActivitySettings, boo
 	return a, err == nil, err
 }
 
-// SaveActivitySettings stores the settings.
+// SaveActivitySettings stores the settings, not the call count (the count
+// too only when no row is stored yet): a count saved meanwhile stays.
 func (s *Store) SaveActivitySettings(ctx context.Context, a ActivitySettings) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO activity_settings (id, model_enabled, threshold, margin, daily_cap, calls_day,
 		calls_today, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET model_enabled = excluded.model_enabled, threshold = excluded.threshold,
-		margin = excluded.margin, daily_cap = excluded.daily_cap, calls_day = excluded.calls_day,
-		calls_today = excluded.calls_today, updated_at = excluded.updated_at`,
+		margin = excluded.margin, daily_cap = excluded.daily_cap, updated_at = excluded.updated_at`,
+		a.ModelEnabled, a.Threshold, a.Margin, a.DailyCap, a.CallsDay, a.CallsToday, s.ts())
+	return err
+}
+
+// SaveActivityCalls stores the call count, not the settings (they too only
+// when no row is stored yet): settings saved meanwhile stay.
+func (s *Store) SaveActivityCalls(ctx context.Context, a ActivitySettings) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO activity_settings (id, model_enabled, threshold, margin, daily_cap, calls_day,
+		calls_today, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET calls_day = excluded.calls_day, calls_today = excluded.calls_today,
+		updated_at = excluded.updated_at`,
 		a.ModelEnabled, a.Threshold, a.Margin, a.DailyCap, a.CallsDay, a.CallsToday, s.ts())
 	return err
 }
