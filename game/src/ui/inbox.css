@@ -1,0 +1,71 @@
+/*
+ * #100: the inbox chip under the plan-limits plate (limits.css), top right: the same navy signage, small and quiet.
+ * `--ib-lift` (inbox.ts) is the plate's height plus the gap, 0 while the plate is not drawn, so the chip takes its spot.
+ * The number is the needs-you red while someone needs you, the plate's text colour when all are done.
+ */
+.inbox {
+  position: absolute;
+  top: calc(var(--topbar-bottom, 64px) + 8px + var(--ib-lift, 0px));
+  right: 12px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  margin: 0;
+  padding: 5px 10px 5px 11px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ink);
+  box-shadow: var(--shadow);
+  color: var(--text-on-ink-2);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+  cursor: pointer;
+  animation: ib-in 200ms var(--ease);
+}
+.inbox[hidden] {
+  display: none;
+}
+.inbox:hover {
+  background: var(--ink-2);
+  color: var(--text-on-ink);
+}
+.ib-n {
+  min-width: 1ch;
+  color: var(--text-on-ink);
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+/* #ff6058, the plate's high red: 5.4:1 on the navy (the chip red, --needs_you, is for white text on it). */
+.inbox[data-blocked='true'] .ib-n {
+  color: #ff6058;
+}
+
+/* The Changes panel (m5.css) fills the right column: under the plate, to its left (limits.css does the same). */
+.inbox[data-beside='changes'] {
+  right: calc(min(780px, 58vw) + 24px);
+}
+@media (max-width: 760px) {
+  .inbox[data-beside='changes'] {
+    right: 12px;
+  }
+}
+@media (max-width: 720px) {
+  .inbox {
+    right: 8px;
+  }
+}
+
+@keyframes ib-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .inbox {
+    animation: none;
+  }
+}

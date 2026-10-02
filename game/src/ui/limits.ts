@@ -2,6 +2,7 @@ import type { CommandResult } from '../net/client';
 import type { LimitBook, ProviderView, WindowView } from '../world/limits';
 import type { LimitTarget } from '../world/limits';
 import { harnessViews, limitsView, warningOf, windowName } from '../world/limits';
+import { CornerWatch, READING, SCREEN, SEATED } from './corner';
 import { h, icon, ICON } from './dom';
 import { LimitsPrefs } from './limitsPrefs';
 import './limits.css';
@@ -24,29 +25,6 @@ import './limits.css';
  * gives back the docked or open plate the prefs say. At the terminal Shift+L is an L for the pane (as in any text
  * box), so the tab is the way in there when it shows; in the conversation Shift+L peeks.
  */
-
-/** Below this width a dialog or the Changes panel spans the screen (limits.css follows the same line). */
-const NARROW = '(max-width: 760px)';
-
-/**
- * The dialogs that fill the screen (the M3 panels, the Issues / Pull requests boards and their item modal, and since
- * #51 the hire dialog, a near-full-screen sheet): at any viewport width the plate steps out of them. The confirm,
- * start-run, send-home, prompt, presets and open-PR dialogs are small and centred; they keep today's behaviour (the
- * plate stays above them in the top layer, and the start-run one shows the limits inline as well). The hire dialog
- * shows the chosen harness's limits inline too, so nothing is lost when the plate folds away over it.
- */
-// M13: the whiteboard overlay (a div, ui/whiteboard.ts) carries `open` while it is up, like a dialog.
-const SCREEN = 'dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open], .wb[open]';
-
-/**
- * The seated reading overlay (the conversation, the Images tab; laptop/index.ts marks the page with `data-reading`) is a
- * screen too, though not a dialog: it covers the plate's corner of the laptop, so the plate steps out of it the same
- * way (edge tab beside it when there is room, else away; Shift+L peeks).
- */
-const READING = '.seat-transcript:not([hidden])';
-
-/** #53: seated at a worker's laptop (laptop/index.ts marks the page with `data-seated`, the glass's right edge in px); the plate is its edge tab beside the glass, or away. */
-const SEATED = 'html[data-seated]';
 
 /** Free width the edge tab needs right of a screen dialog: its 32 px, 8 px from the edge, and 8 px clear of the dialog (limits.css). */
 const TAB_ROOM = 48;
@@ -163,10 +141,12 @@ export class LimitsWidget {
   private readonly foot: HTMLElement;
   /** Where the widget lives when no screen dialog holds it. */
   private readonly home: HTMLElement;
-  private watcher: MutationObserver | null = null;
-  /** Narrow viewports: a dialog or the Changes panel fills the screen, so the plate has no room beside it. */
-  private readonly narrow = typeof matchMedia === 'function' ? matchMedia(NARROW) : null;
-  private readonly onNarrow = () => this.update();
+  /** What takes the corner away (corner.ts): a change re-places the plate, and a dialog that opened puts it back on top. */
+  private readonly corner = new CornerWatch((opened) => {
+    this.root.dataset.beside = this.corner.beside;
+    this.update();
+    if (opened) this.raise();
+  });
   /** A screen dialog may have more or less room beside it after a resize. */
   private readonly onResize = () => {
     if (this.screenOpen()) this.update();
@@ -177,7 +157,7 @@ export class LimitsWidget {
 
   /** A dialog (modal, or the Changes panel) is open, and the viewport is too narrow to sit beside it: the plate is out of the way. */
   private get folded(): boolean {
-    return !!this.narrow?.matches && !!document.querySelector('dialog[open]');
+    return this.corner.folded;
   }
 
   /** Puts the widget on top of the top layer (again). */
@@ -206,13 +186,12 @@ export class LimitsWidget {
 
   /** The topmost open screen dialog (the last in the document, where a later one opens). */
   private topScreen(): Element | null {
-    const dialogs = document.querySelectorAll(SCREEN);
-    return dialogs[dialogs.length - 1] ?? null;
+    return this.corner.topScreen();
   }
 
   /** A screen-filling dialog is open, or you sit at a laptop (and the plate is on screen at all). */
   private screenOpen(): boolean {
-    return !this.root.hidden && !this.folded && (!!document.querySelector(SCREEN) || !!document.querySelector(READING) || !!document.querySelector(SEATED));
+    return !this.root.hidden && !this.folded && this.corner.screen;
   }
 
   /** The plate steps aside over a screen dialog or at a laptop (a peek excepted): Shift+L reaches it through the app even though the dialog or the laptop owns the keys. */
@@ -261,18 +240,7 @@ export class LimitsWidget {
    */
   private keepOnTop(): void {
     this.raise();
-    this.narrow?.addEventListener('change', this.onNarrow);
     window.addEventListener('resize', this.onResize);
-    if (typeof MutationObserver === 'undefined') return;
-    this.watcher = new MutationObserver((records) => {
-      // (The whiteboard overlay is a div with `open`, not a dialog: SCREEN lists it.)
-      const screen = (r: MutationRecord) => r.target instanceof HTMLDialogElement || (r.target instanceof Element && r.target.classList.contains('wb'));
-      if (!records.some((r) => screen(r) || r.attributeName === 'data-reading' || r.attributeName === 'data-seated')) return;
-      this.root.dataset.beside = document.querySelector('dialog.changes[open]') ? 'changes' : '';
-      this.update();
-      if (records.some((r) => r.target instanceof HTMLDialogElement && r.target.open)) this.raise();
-    });
-    this.watcher.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open', 'data-reading', 'data-seated'] });
   }
 
   get isOpen(): boolean {
@@ -346,10 +314,9 @@ export class LimitsWidget {
 
   dispose(): void {
     this.off();
-    this.watcher?.disconnect();
+    this.corner.dispose();
     this.watchOutside(false);
     window.removeEventListener('resize', this.onResize);
-    this.narrow?.removeEventListener('change', this.onNarrow);
     this.root.remove();
   }
 

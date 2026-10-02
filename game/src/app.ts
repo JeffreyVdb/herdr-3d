@@ -60,6 +60,9 @@ import { OpenPrDialog } from './ui/boards/openPr';
 import { ScreenShareController } from './screen';
 // M10 limits
 import { LimitsWidget } from './ui/limits';
+// #100 the inbox chip under them
+import { InboxChip } from './ui/inbox';
+import { inboxChip, inboxQueue, type InboxCandidate } from './world/inbox';
 // #92 AI integration
 import { aiSection } from './ui/aiSection';
 // #90 follow-up questions
@@ -150,6 +153,9 @@ export class App {
   private nextRead = 0;
   private clockOffice: OfficeView | null = null;
   readonly limitsWidget: LimitsWidget;
+  /** #100: the inbox chip under the plate, and the worker its last click went to (the next goes on from there). */
+  readonly inbox: InboxChip;
+  private lastInbox: string | null = null;
   readonly hud: Hud;
   readonly city: CityView;
   readonly client: BridgeClient;
@@ -315,6 +321,7 @@ export class App {
     );
     // Nothing re-renders it between readings but a reading turning stale.
     setInterval(() => this.limitsWidget.tick(), 30_000);
+    this.inbox = new InboxChip(this.hud.root, this.limitsWidget.root, () => void this.goInbox());
     this.reception = createReception({ audio: this.audio, overlay: this.hud.root, shadows: this.shadows });
     this.radio = new RadioLink({ music: this.audio.music, toast: (m, ms, soft) => this.hud.toast(m, ms, 'info', soft), hudRadio: (n) => this.hud.setRadio(n) });
     this.city = new CityView(
@@ -589,6 +596,7 @@ export class App {
     this.startRun.refresh();
     this.presetsPanel.refresh();
     this.limitsWidget.update();
+    this.inbox.set(inboxChip(this.inboxItems()));
     this.m6Buttons.sync();
     // M7: holders and verdict stamps on the boards follow the workers.
     if (c.structure || c.workers.size) this.pushBoards();
@@ -2381,15 +2389,46 @@ export class App {
     this.hud.toast(r.code === 'unknown_command' ? 'This herdr-world can’t answer questions from here yet. Update the bridge to use it.' : commandFailure('worker.answer_ask', r.code, r.message, { worker: name }), 5200, 'error');
   }
 
+  /** Every worker of the city, as N's queue and the inbox take them. */
+  private needCandidates(): InboxCandidate[] {
+    return this.store.city().flatMap((b) =>
+      b.floors.flatMap((f) =>
+        f.workers.map((w) => ({ id: w.worker.id, session: f.session, building: b.building?.id ?? null, display: w.display, since: w.since, desk: w.desk, name: w.name, role: crewRole(w.worker) })),
+      ),
+    );
+  }
+
   /** Who needs you, in the order N visits them (blocked, then done; your building first). */
   needs(): NeedItem[] {
     const here = this.mode === 'floor' ? (this.building?.id ?? null) : undefined;
-    const all = this.store.city().flatMap((b) =>
-      b.floors.flatMap((f) =>
-        f.workers.map((w) => ({ id: w.worker.id, session: f.session, building: b.building?.id ?? null, display: w.display, since: w.since, desk: w.desk, name: w.name })),
-      ),
-    );
-    return needQueue(all, here);
+    return needQueue(this.needCandidates().map(({ role: _, ...w }) => w), here);
+  }
+
+  /** #100: who is in the inbox, in the order its clicks visit them (needs you, then done; no building first). */
+  inboxItems(): NeedItem[] {
+    return inboxQueue(this.needCandidates());
+  }
+
+  /**
+   * #100: the inbox chip's click. Unlike N it teleports: straight onto the next inbox worker's floor (no elevator
+   * panel), facing it, and sat at its laptop, from anywhere. Repeated clicks walk along the inbox like N. When the
+   * laptop cannot be sat at, you are left facing the worker with the reason (`sitAt`'s toast).
+   */
+  async goInbox(): Promise<NeedItem | null> {
+    if (this.transitioning) return null;
+    const item = nextNeed(this.inboxItems(), this.lastInbox);
+    this.lastInbox = item?.id ?? null;
+    if (!item) return null;
+    if (this.laptops.seated) this.laptops.stand(null, true);
+    this.walker.release();
+    this.walker.stop();
+    this.pendingNeed = null;
+    if (!(this.mode === 'floor' && this.place.area === 'floor' && this.office?.session === item.session)) await this.enterFloor(item.session);
+    if (this.mode !== 'floor' || this.office?.session !== item.session) return null; // the floor went meanwhile
+    if (this.planOpen) this.setPlan(false);
+    this.faceWorker(item.id);
+    this.sitAt(item.id);
+    return item;
   }
 
   /**
