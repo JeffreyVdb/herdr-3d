@@ -85,6 +85,14 @@ describe('the overview page (#118)', () => {
     expect(rows[1]?.getAttribute('aria-level')).toBe('2');
   });
 
+  it('an orchestrator’s meta line: model, phase, round, pass and the over-cap chip', () => {
+    const { ov } = setup([worker('o1', { role: 'orch', desk_index: 0, phase: 'waiting_user', round: 2, pass: 3, harness: 'claude', model: 'claude-opus-5-5' })]);
+    ov.open('top');
+    const row = document.querySelector('.ov-row[data-key="o1"]') as HTMLElement;
+    expect(row.querySelector('.ov-meta')?.textContent).toMatch(/ · waiting for you · round 2 · pass 3 of 3$/);
+    expect(row.querySelector('.ov-cap')?.textContent).toBe('Over cap');
+  });
+
   it('a row’s click goes to that worker’s transcript and closes the page; a ticket’s opens the issue over it', () => {
     const { ov, host } = setup();
     ov.open('top');

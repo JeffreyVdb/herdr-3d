@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Floor, Snapshot, Worker } from '../net/protocol';
 import { WorldStore } from './store';
-import { buildOverview, countItems, sinceText, visibleRows, type OverviewWorkerRow } from './overview';
+import { buildOverview, countItems, orchWords, sinceText, visibleRows, type OverviewWorkerRow } from './overview';
 
 const NOW = 1_790_000_000_000;
 
@@ -120,10 +120,13 @@ describe('buildOverview: a row', () => {
     expect(sinceText(r.display, r.since, NOW)).toBe('working 4m');
   });
 
-  it('an orchestrator: role, phase, pass, over-cap and its ticket with the issue’s title', () => {
-    const s = store([orch('o', 'top', 0, { phase: 'waiting_user', pass: 3 })]);
+  it('an orchestrator: role, phase, round, pass, over-cap and its ticket with the issue’s title', () => {
+    const s = store([orch('o', 'top', 0, { phase: 'waiting_user', pass: 3, round: 2 })]);
     const r = row(s, 'o');
-    expect(r).toMatchObject({ role: 'orch', tag: 'ORCH', orch: { phase: 'waiting for you', pass: 'pass 3 of 3', overCap: true } });
+    expect(r).toMatchObject({ role: 'orch', tag: 'ORCH', orch: { phase: 'waiting for you', round: 2, pass: 'pass 3 of 3', overCap: true } });
+    expect(orchWords(r.orch)).toEqual(['waiting for you', 'round 2', 'pass 3 of 3']);
+    expect(orchWords(row(store([orch('o', 'top', 0)]), 'o').orch)).toEqual([]);
+    expect(orchWords(null)).toEqual([]);
     expect(r.ticket).toEqual({ key: '#118', title: 'Floor overview', item: { session: 'top', id: 'o/r#118' }, url: 'https://example.test/118' });
     expect(r.display).toBe('needs_you');
   });

@@ -52,7 +52,8 @@ export interface OverviewWorkerRow {
   /** The role chip: `ORCH`, `CODE r2`. */
   tag: string | null;
   runColor: number | null;
-  orch: { phase: string | null; pass: string | null; overCap: boolean } | null;
+  /** Orchestrators: the phase in words, the round, the pass in words (`pass 2 of 3`), over the pass cap. */
+  orch: { phase: string | null; round: number | null; pass: string | null; overCap: boolean } | null;
   ticket: OverviewTicket | null;
   /** One-off workers (no run): what they were asked to do. */
   task: OverviewLine | null;
@@ -158,13 +159,19 @@ export function overviewRow(v: WorkerView, floorTag: string | null): OverviewWor
     role: crew?.role ?? null,
     tag: crew?.tag ?? null,
     runColor: crew?.runColor ?? null,
-    orch: crew?.role === 'orch' ? { phase: crew.phase, pass: passWords(crew.pass ?? undefined), overCap: crew.overCap } : null,
+    orch: crew?.role === 'orch' ? { phase: crew.phase, round: crew.round, pass: passWords(crew.pass ?? undefined), overCap: crew.overCap } : null,
     ticket: crew ? ticketOf(w, crew.ticket) : null,
     task: crew ? null : line(d?.task, d?.task_source),
     now: nowOf(v),
     activity: act ? `${ACTIVITY_WORD[act.kind]}${act.detail ? ` · ${act.detail}` : ''}` : null,
     floor: floorTag,
   };
+}
+
+/** An orchestrator's run in words, for its meta line: `waiting for you`, `round 2`, `pass 3 of 3` (over cap is a chip). */
+export function orchWords(o: OverviewWorkerRow['orch']): string[] {
+  if (!o) return [];
+  return [o.phase, o.round ? `round ${o.round}` : null, o.pass].filter((x): x is string => !!x);
 }
 
 /** A floor's name beside a row: `Floor 2` in the overview's building, else its session (the project name you know). */

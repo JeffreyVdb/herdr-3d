@@ -14,7 +14,7 @@
  * status. Motion goes under `prefers-reduced-motion` and battery saver (`data-calm`): no cascade, flap or blink.
  */
 
-import { BLINK_MS, sinceText, visibleRows, type CountItem, type OverviewData, type OverviewRow, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
+import { BLINK_MS, orchWords, sinceText, visibleRows, type CountItem, type OverviewData, type OverviewRow, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
 import { h, icon, ICON } from './dom';
 import type { OverviewPrefs } from './overviewPrefs';
 import './overview.css';
@@ -364,7 +364,7 @@ export class OverviewOverlay {
           'span',
           { class: 'ov-meta' },
           r.model || r.harness || '',
-          ...(r.orch ? [r.orch.phase ? ` · ${r.orch.phase}` : '', r.orch.pass ? ` · ${r.orch.pass}` : ''] : []),
+          ...orchWords(r.orch).map((w) => ` · ${w}`),
         ),
         r.orch?.overCap ? h('span', { class: 'ov-cap' }, 'Over cap') : null,
       );
