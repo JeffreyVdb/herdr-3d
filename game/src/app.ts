@@ -1921,7 +1921,7 @@ export class App {
       if (o) o.setOverview(o.isAsleep ? null : this.overviewData(o.session), calm, Date.now());
       if (this.overview.isOpen) this.overview.refresh();
     }
-    o?.tickOverview(Date.now());
+    o?.tickOverview(Date.now(), this.fpCam);
   }
 
   /** #118: what the overview page and the wall screen show (test hook). */
@@ -2282,8 +2282,9 @@ export class App {
     else if (this.planOpen) this.hud.setHint('<strong>Click</strong> the floor to walk there · WASD walks · <strong>L</strong> elevator · <strong>Tab</strong> back to first person');
     else if (this.walker.locked) this.hud.setHint(null);
     else if (asleep) this.hud.setHint(`${asleep}<strong>Click</strong> to look around · WASD walks · <strong>← →</strong> turn`);
-    else if (!this.walker.lockAvailable) this.hud.setHint('WASD walks · <strong>← →</strong> turn · <strong>L</strong> elevator · <strong>Tab</strong> floor plan (mouse look is unavailable here)');
-    else this.hud.setHint('<strong>Click</strong> to look around · WASD walks · <strong>← →</strong> turn · <strong>L</strong> elevator · <strong>Tab</strong> floor plan · Esc releases the mouse');
+    // #118: O, the floor overview, is in the hint too (the top bar's button goes where the bar is short).
+    else if (!this.walker.lockAvailable) this.hud.setHint('WASD walks · <strong>← →</strong> turn · <strong>L</strong> elevator · <strong>O</strong> overview · <strong>Tab</strong> floor plan (mouse look is unavailable here)');
+    else this.hud.setHint('<strong>Click</strong> to look around · WASD walks · <strong>← →</strong> turn · <strong>L</strong> elevator · <strong>O</strong> overview · <strong>Tab</strong> floor plan · Esc releases the mouse');
   }
 
   // ---- input -------------------------------------------------------------------

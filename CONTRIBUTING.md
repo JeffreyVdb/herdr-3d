@@ -620,8 +620,8 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   `H3D_MASCOT_SHEET=1 pnpm -C game exec vitest run src/render/mascotArt.test.ts` writes `test-results/mascots.png`).
   #86: `toonSun.ts` (every toon material lights with it: faces turned away from the sun stay flat and take no shadow from the sun's
   shadow map; `normalBiasFor` sizes the suns' `shadow.normalBias`). #118: `overviewScreen.ts`, the lounge wall's
-  floor overview (two canvas drawings of the tree, lit and unlit, swapped for the blink; one line a row and pages when
-  the rows do not fit; `wallPlan` is pure).
+  floor overview (a header canvas and a tall board canvas seen through a scrolling window, a cover layer for the blink:
+  canvas work only when what it shows changes; `wallPlan` and `scrollAt` are pure).
 - `src/laptop` — M5 screens and sitting at a worker's screen (M6b: on its desk monitor): `watches.ts` keeps the connection's
   `terminal.watch`es in step with what the game wants (a full frame first, a gap re-watches, `unknown_command` turns
   screens off with the reason), `terminal.ts` is one xterm.js 6 terminal per live screen (never opened: only its VT

@@ -88,7 +88,7 @@ export class Hud {
   private readonly issues = el('button', 'btn', `${svg(ICON.issues)}<span>Issues</span>`);
   private readonly prs = el('button', 'btn', `${svg(ICON.prs)}<span>PRs</span>`);
   /** #118: the floor overview (O), next to Issues / PRs. */
-  private readonly overview = el('button', 'btn', `${svg(ICON.overview)}<span>Overview</span><kbd class="topbar-key">O</kbd>`);
+  private readonly overview = el('button', 'btn btn--overview', `${svg(ICON.overview)}<span>Overview</span><i class="topbar-key" data-key="O" aria-hidden="true"></i>`);
   private readonly battery = el('button', 'btn btn--icon', svg(ICON.leaf));
   private readonly settings = el('button', 'btn btn--icon', svg(ICON.gear));
   private readonly about = el('button', 'btn btn--icon', svg(ICON.info));
@@ -154,6 +154,7 @@ export class Hud {
     this.issues.title = 'Issues: this floor’s board as a list';
     this.prs.title = 'Pull requests: this floor’s open pull requests as a list';
     this.overview.title = 'Floor overview: everyone on this floor and what they are doing (O)';
+    this.overview.setAttribute('aria-label', 'Overview');
     this.overview.setAttribute('aria-keyshortcuts', 'O');
     this.overview.setAttribute('aria-haspopup', 'dialog');
     this.back.title = 'Back to the city (Backspace)';

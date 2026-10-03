@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { WALL_STATUS, wallPlan } from './overviewScreen';
+import { scrollAt, WALL_STATUS, wallPlan } from './overviewScreen';
 import { STATUS_CHIP_CSS, STATUS_CSS } from './palette';
 
 const lum = (hex: string) => {
@@ -14,15 +14,23 @@ const contrast = (a: string, b: string) => {
 };
 
 describe('the wall screen’s plan (#118)', () => {
-  it('two lines a row while they fit, then one line a row, then pages: never a row cut off', () => {
-    expect(wallPlan(5, 600, 80, 45)).toEqual({ compact: false, perPage: 7, pages: 1 });
-    expect(wallPlan(7, 600, 80, 45)).toEqual({ compact: false, perPage: 7, pages: 1 });
-    expect(wallPlan(8, 600, 80, 45)).toEqual({ compact: true, perPage: 13, pages: 1 });
-    expect(wallPlan(40, 600, 80, 45)).toEqual({ compact: true, perPage: 13, pages: 4 });
-    for (const n of [0, 1, 13, 14, 26, 27, 96]) {
-      const p = wallPlan(n, 600, 80, 45);
-      expect(p.perPage * p.pages, `${n} rows`).toBeGreaterThanOrEqual(n);
-    }
+  it('two lines a row while they fit, then one line a row, then a scrolling window: never a row cut off', () => {
+    expect(wallPlan(5, 600, 80, 45)).toEqual({ compact: false, fit: 7, scroll: false });
+    expect(wallPlan(7, 600, 80, 45)).toEqual({ compact: false, fit: 7, scroll: false });
+    expect(wallPlan(8, 600, 80, 45)).toEqual({ compact: true, fit: 13, scroll: false });
+    expect(wallPlan(40, 600, 80, 45)).toEqual({ compact: true, fit: 13, scroll: true });
+  });
+
+  it('the window rests at the top, glides down, rests at the bottom and jumps back; calm: no glide', () => {
+    expect(scrollAt(0, 0)).toBe(0);
+    expect(scrollAt(99_999, 0)).toBe(0);
+    // 6 rows past the window at 0.6 rows/s: a 10 s glide between two 4 s rests (an 18 s cycle).
+    expect(scrollAt(2_000, 6)).toBe(0);
+    expect(scrollAt(9_000, 6)).toBeCloseTo(0.5, 5);
+    expect(scrollAt(15_000, 6)).toBe(1);
+    expect(scrollAt(18_000 + 2_000, 6)).toBe(0);
+    expect(scrollAt(9_000, 6, false)).toBe(1);
+    expect(scrollAt(2_000, 6, false)).toBe(0);
   });
 });
 

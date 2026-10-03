@@ -82,7 +82,7 @@ test('O opens it from a desk, the top bar has Overview, and in the city or the l
   // The city.
   await page.keyboard.press('KeyO');
   await expect(page.locator('.toast')).toHaveText('Walk onto an office floor to see its overview.');
-  await expect(page.locator('.topbar button', { hasText: 'Overview' })).toBeHidden();
+  await expect(page.locator('.topbar .btn--overview')).toBeHidden();
   // The lobby.
   await page.evaluate(() => window.__h3d.enterLobby());
   await frames(page, 3);
@@ -103,10 +103,14 @@ test('O opens it from a desk, the top bar has Overview, and in the city or the l
   expect((await page_(page))?.from).toBeNull();
   await page.keyboard.press('Escape');
   await expect.poll(async () => (await page_(page))?.open).toBe(false);
-  // The top bar's button, with its key cap.
-  const btn = page.locator('.topbar button', { hasText: 'Overview' });
+  // The top bar's button, with its key cap (wide enough for it; at 1280 and under the hint line says O).
+  await expect(page.locator('.hint')).toContainText('O overview');
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await frames(page, 2);
+  const btn = page.getByRole('button', { name: 'Overview' });
   await expect(btn).toBeVisible();
-  await expect(btn.locator('kbd')).toHaveText('O');
+  await expect(btn.locator('.topbar-key')).toHaveAttribute('data-key', 'O');
+  await expect(btn).toHaveAttribute('aria-keyshortcuts', 'O');
   await btn.click();
   await expect.poll(async () => (await page_(page))?.open).toBe(true);
   clean();

@@ -427,7 +427,7 @@
   height: 22px;
   border-radius: 5px;
   color: var(--ov-text-2);
-  transition: transform 260ms cubic-bezier(0.34, 1.45, 0.64, 1);
+  transition: transform 260ms var(--ov-ease);
 }
 .ov-fold svg {
   width: 16px;

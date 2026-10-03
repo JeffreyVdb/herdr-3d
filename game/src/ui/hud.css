@@ -295,12 +295,29 @@ body {
 .btn--back {
   padding-left: 8px;
 }
-/* #118: a top bar button's own key (Overview's O); where the bar is short the title carries it. */
+/* #118: Overview's own key cap (O; drawn, so the button's text stays its name). Where the bar is short the word goes
+   with the cap (an icon button, the title says O); at 1280 px and under the button goes (the counts keep their words). The floor's hint line says O at
+   every width (the floor's name and counts keep their room). */
 .btn .topbar-key {
   margin-left: 0;
+  font-style: normal;
 }
-@media (max-width: 1100px) {
-  .btn .topbar-key {
+.btn .topbar-key::before {
+  content: attr(data-key);
+}
+@media (max-width: 1500px) {
+  .topbar .btn--overview {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+  .btn--overview > span,
+  .btn--overview .topbar-key {
+    display: none;
+  }
+}
+@media (max-width: 1280px) {
+  .topbar .btn--overview {
     display: none;
   }
 }
