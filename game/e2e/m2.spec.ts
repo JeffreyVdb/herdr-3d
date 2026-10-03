@@ -317,7 +317,7 @@ test('look-at HUD picks the right thing along a scripted camera path', async ({ 
   await page.evaluate((p) => window.__h3d.setPose(p), path[3]?.pose ?? l.spawn);
   await frames(page);
   await expect(page.locator('.prompt')).toHaveAttribute('aria-label', 'Mochi · working · Wire the look-at HUD to the prompt bar · claude opus-5-5 high');
-  await expect(page.locator('.prompt .key[aria-disabled="true"]')).toHaveText(['ELaptop', 'HHandoff']);
+  await expect(page.locator('.prompt .key[aria-disabled="true"]')).toHaveText(['ELaptop']);
   // M4: X sends the worker home; M5: C its changes, P a prompt.
   await expect(page.locator('.prompt .key:not([aria-disabled])')).toHaveText(['CChanges', 'PPrompt', 'XSend home']);
   // An upsert that only changes the effort still redraws the prompt.

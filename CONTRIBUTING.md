@@ -549,6 +549,18 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
   texture swap in the lobby, not a rebuild of it (the hash is not in the building's `shape` key), and only the city's signs
   are rebuilt for the city. A logo that cannot be fetched leaves the name.
   The Buildings panel has the control (`panels.ts` `logoRow`).
+- #124 keyboard: `src/input/shortcuts.ts` is the one table of the floor and city keys (chord, exact modifiers, the scopes it is
+  live in, what it does): `Game.onKey` dispatches from it (`findBinding` with the scopes `activeScopes()` says are live; a
+  handler for each id is a compiler-checked `Record`), `ui/shortcutsDialog.ts` (the `?` reference: groups, ⌘ or Ctrl, keys as
+  `navigator.keyboard.getLayoutMap()` labels them), `docs/shortcuts.md` (written from it by `shortcuts.test.ts`:
+  `H3D_WRITE_SHORTCUTS_DOC=1 make game-test` after a change) and the hint lines and top bar titles (`keyName(id)`) all read it. Add a key
+  there, not in `onKey`. `shortcuts.test.ts` fails on two bindings on one chord in overlapping scopes, a binding missing from the
+  reference, Alt or a browser-reserved chord, and a seated chord that drifted from `laptop/keys.ts`. Rules: single keys pause while a
+  field has focus (`input/typing.ts`, WCAG 2.1.4; `e2e/h124-fields.spec.ts` types every bound character into each kind of field),
+  only a modifier chord (Ctrl/⌘+/) fires from one, letters match `e.code` (WASD's choice) and `?` `,` `/` match `e.key`, nothing
+  fires on auto-repeat or during composition, and no seated key is a help key (Esc, then ?). T / Shift+T pick a worker, desk
+  or prop without aiming (`OfficeView.keyTargets`, `App.cycleTarget`: the walker turns to it and it stays the target until you
+  move, turn or press Esc); Page Up / Page Down / Home look up, down and level (`Walker`).
 - `src/world` — the world store (snapshot + events, fallbacks for an older bridge without `name`, `desk_index`,
   `harness`, `model`, `effort`, `status_since`, `floor.desks`, and M3's `transition`, `settings`, `suggested`,
   `resume`, `hire_options`), the deterministic office layout for a desk count in its building's outline, the building

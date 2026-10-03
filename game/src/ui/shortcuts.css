@@ -1,0 +1,99 @@
+/* #124: the shortcut reference: the credits frame (credits.css `.credits`), a list of what it does and the keys that do it. */
+.shortcuts {
+  width: min(660px, calc(100vw - 32px));
+}
+.sc-body {
+  padding-top: 4px;
+  scrollbar-gutter: stable;
+}
+.sc-body:focus-visible {
+  outline-offset: -3px;
+}
+.sc-intro {
+  margin: 10px 2px 2px;
+  color: var(--text-on-ink-2);
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 62ch;
+}
+.sc-intro .sc-chord {
+  vertical-align: baseline;
+}
+.sc-group {
+  margin-top: 6px;
+}
+.sc-title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 14px 2px 2px;
+  background: var(--ink);
+  font-size: 15px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+}
+.sc-note {
+  margin: 0 2px 6px;
+  color: var(--text-on-ink-2);
+  font-size: 12.5px;
+  max-width: 62ch;
+}
+.sc-list {
+  margin: 0;
+}
+.sc-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 4px 16px;
+  padding: 7px 2px;
+  border-top: 1px solid var(--line);
+}
+.sc-what {
+  min-width: 0;
+}
+.sc-keys {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 0;
+}
+.sc-chord {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.sc-plus,
+.sc-or {
+  color: var(--text-on-ink-2);
+  font-size: 11px;
+}
+.sc-or {
+  font-size: 12px;
+}
+.shortcuts kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: var(--ink-2);
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-bottom-width: 2px;
+  font: 700 12px/1 var(--font-mono);
+  font-variation-settings: normal;
+  white-space: nowrap;
+}
+@media (max-width: 520px) {
+  .sc-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sc-keys {
+    justify-content: flex-start;
+  }
+}

@@ -2,6 +2,7 @@ import type { InboxReason } from '../world/inbox';
 import { inboxAge } from '../world/inbox';
 import { CornerWatch } from './corner';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
+import { keyName } from '../input/shortcuts';
 import './inbox.css';
 
 /** One row of the list: who, on which harness, where, why and since when (App builds it from world/inbox.ts). */
@@ -100,7 +101,7 @@ export class InboxChip {
     if (n) {
       const why = blocked ? 'someone needs you' : 'finished work to look at';
       this.chip.setAttribute('aria-label', `Inbox: ${n}, ${why}.`);
-      this.chip.title = `Inbox: ${why}. Click for who and where.`;
+      this.chip.title = `Inbox: ${why}. Click for who and where (${keyName('inbox')}).`;
     }
     this.sync();
     if (this.open) this.draw();
@@ -126,8 +127,16 @@ export class InboxChip {
   }
 
   /** #100 contract: opens the chip's list (a collapsed notification's click); nothing while the chip is not shown. */
-  openList(): void {
-    if (!this.root.hidden) this.toggle(true, false);
+  openList(focus = false): void {
+    if (this.root.hidden) return;
+    this.toggle(true, false);
+    // #124: from the keyboard (Shift+N) the focus goes into the list, on the first row: arrows walk it, Enter goes there.
+    if (focus) (this.rows.querySelector<HTMLElement>('.ib-row') ?? this.chip).focus();
+  }
+
+  /** #124: shuts the list, the focus back on the chip when it was inside. */
+  closeList(): void {
+    this.toggle(false);
   }
 
   private toggle(open: boolean, focusChip = true): void {
