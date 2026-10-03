@@ -484,10 +484,14 @@ func (h *Hub) digestDone(ctx context.Context, c digestCand, gen int, endedAt tim
 		h.log.Debug("no floor overview line", "worker", c.id, "kind", c.in.Kind, "why", err)
 		return
 	case err != nil:
-		// ai's errors never carry a key; a provider's words may echo the
-		// input, so only the kind and the scrubbed message go to the log.
+		// A provider's words may echo the input (the transcript): only the
+		// error's kind goes to the log, as to the audit.
 		if ctx.Err() == nil {
-			h.log.Warn("floor overview summary failed", "worker", c.id, "kind", ai.KindOf(err), "err", clip(digest.Scrub(err.Error())))
+			kind := string(ai.KindOf(err))
+			if kind == "" {
+				kind = "failed"
+			}
+			h.log.Warn("floor overview summary failed", "worker", c.id, "kind", kind)
 		}
 		return
 	}
