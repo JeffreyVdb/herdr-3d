@@ -136,7 +136,6 @@ describe('untrusted text renders inert (marked + DOMPurify)', () => {
   it('assistant and user markdown: no script, no handler, javascript:/data: links neutralised', async () => {
     mount();
     view.setItems([item('assistant', { parts: [text(EVIL)] }), item('user', { parts: [text(EVIL)] }), item('thinking', { parts: [text(EVIL)] })]);
-    (row('i3').querySelector('button') as HTMLButtonElement).click();
     await loadHighlighter();
     await flush();
     const md = $$('.tx-md');
@@ -211,19 +210,20 @@ describe('rows per kind', () => {
     expect(pre.querySelector('.hljs-keyword')?.textContent).toBe('def');
   });
 
-  it('thinking is collapsed; encrypted reasoning is a bare chip', () => {
+  it('thinking shows inline, dimmed, with markdown; encrypted reasoning is a bare muted chip', () => {
     mount();
     view.setItems([item('thinking', { parts: [text('I should *check* the tests')] }), item('thinking', {})]);
-    const chip = row('i1').querySelector('button') as HTMLButtonElement;
+    expect(row('i1').querySelector('button')).toBeNull();
+    expect(row('i1').querySelector('[aria-expanded]')).toBeNull();
     const body = row('i1').querySelector('.tx-thinking-body') as HTMLElement;
-    expect(chip.getAttribute('aria-expanded')).toBe('false');
-    expect(body.hidden).toBe(true);
-    chip.click();
-    expect(chip.getAttribute('aria-expanded')).toBe('true');
     expect(body.hidden).toBe(false);
+    expect(body.textContent?.trim()).toBe('I should check the tests');
     expect(body.querySelector('em')?.textContent).toBe('check');
+    expect(row('i1').querySelector('.tx-thinking-tag')?.textContent).toBe('summary');
+    expect(row('i1').querySelector('.tx-chip')).toBeNull();
     expect(row('i2').querySelector('button')).toBeNull();
-    expect(row('i2').textContent).toContain('reasoning');
+    expect(row('i2').querySelector('.tx-thinking-body')).toBeNull();
+    expect(row('i2').querySelector('.tx-chip.tx-chip-mute')?.textContent).toContain('reasoning');
   });
 
   it('a tool row: icon, name, summary, status; expanded: ANSI-stripped output, truncation note, input', () => {
@@ -936,6 +936,18 @@ describe('#59: hide tool calls, the preset, the zoom', () => {
     withPrefs(new ViewPrefs(st));
     expect(($('.tx-check-box') as HTMLInputElement).checked).toBe(true);
     expect(($('.tx') as HTMLElement).dataset.tools).toBe('hidden');
+  });
+
+  it('thinking narration is not a tool row: it stays while tool calls are hidden', () => {
+    const prefs = new ViewPrefs(null);
+    prefs.hideTools = true;
+    withPrefs(prefs);
+    view.setItems([item('thinking', { parts: [text('No blockers, kicking off now')] }), item('thinking', {}), tool('ok')]);
+    expect(($('.tx') as HTMLElement).dataset.tools).toBe('hidden');
+    expect($$('.tx-thinking').map((r) => r.dataset.id)).toEqual(['i1', 'i2']);
+    expect($('.tx-thinking-body')?.textContent?.trim()).toBe('No blockers, kicking off now');
+    // Only tool rows are the ones the hide rule matches.
+    expect($$('.tx-toolrow').map((r) => r.dataset.id)).toEqual(['i3']);
   });
 
   it('the “new” chip does not count tool calls while they are hidden', () => {
