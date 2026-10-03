@@ -30,7 +30,7 @@ async function emptyInbox(page: Page, all: Worker[], setStatus: (w: Worker, s: s
   await expect.poll(() => inbox(page)).toMatchObject({ shown: false, count: 0 });
 }
 
-test('the inbox: the chip opens a list of who and where across the buildings, live; a row seats you at that terminal', async ({ page }) => {
+test('the inbox: the chip opens a list of who and where across the buildings, live; a row seats you at that laptop', async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   const all = workers();
@@ -106,17 +106,17 @@ test('the inbox: the chip opens a list of who and where across the buildings, li
   await expect.poll(() => inbox(page)).toMatchObject({ open: false });
   await page.evaluate(() => document.exitPointerLock());
 
-  // A row's click: straight to pastry (no elevator), seated at nutrition's laptop with its terminal on screen.
+  // A row's click: straight to pastry (no elevator), seated at nutrition's laptop with its conversation on screen.
   await chip.click();
   await rows.nth(1).click();
   await expect.poll(() => page.evaluate(() => window.__h3d.seated()), { timeout: 20_000 }).toBe(nutrition.id);
   expect(await page.evaluate(() => [window.__h3d.where()?.loaded, window.__h3d.pose()?.floor, window.__h3d.panel(), document.pointerLockElement])).toEqual(['pastry', 'pastry', null, null]);
-  await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe('terminal');
-  await expect(page.locator('.seat-transcript')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe('transcript');
+  await expect(page.locator('.seat-transcript')).toBeVisible();
   // Seated, the inbox is out of the way, like the plate.
   await expect(box).toBeHidden();
 
-  // Plain E still sits you down to its conversation (the inbox's terminal was for that sit only).
+  // Plain E still sits you down to its conversation (the inbox's view was for that sit only).
   await page.keyboard.press('Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
   expect(await page.evaluate((id) => window.__h3d.sitAt(id), nutrition.id)).toBe(true);
