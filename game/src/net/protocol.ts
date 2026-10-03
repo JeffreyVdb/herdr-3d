@@ -1881,8 +1881,8 @@ export interface Worker {
 }
 
 /**
- * #118: the floor overview's lines for a worker, from its transcript (docs/protocol.md "Floor overview digest"). Absent
- * until a turn of its agent was read (Claude and Codex only). `llm` is reserved for the summaries of a later phase.
+ * #118: the floor overview's lines for a worker, from its transcript (docs/protocol.md "Floor overview digest"). The
+ * task from its first prompt on; `now_source` only once a turn of its agent was read (Claude and Codex only). `llm` is reserved for the summaries of a later phase.
  */
 export interface WorkerDigest {
   /** What it was asked to do, one line (≤ 80). */

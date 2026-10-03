@@ -257,7 +257,7 @@ floor with no workers and an `error`).
 | `ask` | object, optional | #57: the structured question (Claude's AskUserQuestion, Codex's request_user_input) its agent's latest turn waits on, read from its transcript whatever `status` says (see [Laptops: asks](#laptops-asks)) |
 | `followup` | object, optional | #90: the open questions of its agent's final message, `{"turn_id", "questions": [{"id", "question", "kind": "yes_no" \| "choice" \| "open", "options"?}], "score", "source": "model" \| "fallback", "at", "tail"?}`, until answered, dismissed or moot (see [Follow-up questions](#follow-up-questions)) |
 | `activity` | object, optional | #98: what its agent is doing right now, `{"kind", "detail"?, "since", "source", "image"?, "tasks"?}`: while `status` is `working`, and while `idle` or `done` only as `waiting` on open background tasks; absent otherwise and for harnesses other than Claude and Codex (see [Activity](#activity)) |
-| `digest` | object, optional | #118: what the floor overview says of it, `{"task"?, "task_source"?, "now"?, "now_source", "now_at"?}`: its task and what it does now in words, each with its source; absent until its transcript has an assistant step, and for harnesses other than Claude and Codex (see [Floor overview digest](#floor-overview-digest)) |
+| `digest` | object, optional | #118: what the floor overview says of it, `{"task"?, "task_source"?, "now"?, "now_source", "now_at"?}`: its task and what it does now in words, each with its source; absent until its transcript has a prompt or an assistant step, and for harnesses other than Claude and Codex (see [Floor overview digest](#floor-overview-digest)) |
 | `wrapup` | object, optional | #83: its wrap-up, `{"state": "armed" \| "needs_you", "worktree": "keep" \| "delete" \| "delete_branch", "armed_at": int, "reason"?: string}` (unix ms, bridge clock; `reason` with `needs_you`), while armed or needing you (see [Wrap up](#wrap-up)) |
 | `round` | int ≥ 1, optional | write-code round: the `h3d_round` token, else the label's trailing `\|r<N>` (see [Runs and freelancers](#runs-and-freelancers)) |
 | `ticket` | string ≤ 32 bytes, optional | the `h3d_ticket` token, else the label's ticket field (`CODE\|descr\|<ticket>\|r<N>`, likewise `REVIEW` and `UX`) |
@@ -2680,18 +2680,19 @@ says so above the toggle.
 #118: every Claude and Codex worker's `digest` is what the floor overview (the lounge's wall screen and its page)
 says of it, on one line each. The bridge reads it from the worker's transcript, on the same tap as asks and activity
 (`transcript.DigestTracker`), and sends it in `worker.upsert` and the snapshot, only when a line or a source changed
-(a prompt, an ai-title, a recap, the first step: rarely). It is absent until the transcript has an assistant step,
-so a worker that never had a turn has none.
+(a prompt, an ai-title, a recap, the first step: rarely). The task goes out as soon as it is known (the first prompt
+is enough); the now line only once the transcript has an assistant step: before it, `now_source` is absent and a
+client shows no now line. A worker with neither a prompt nor a step has no digest.
 
 | field | | |
 |---|---|---|
 | `task`, `task_source` | string ≤ 80 chars, optional | what the worker was asked to do. `ai_title`: Claude Code's own `ai-title` metadata line (the latest); `prompt`: else the first genuine prompt (system reminders out, a paste unwrapped, `[image]` for an image marker) cut to its first sentence. Codex has no ai-title: `prompt` only. A slash command counts as the prompt `/name args` only when it has arguments. Absent when there is neither. |
-| `now`, `now_source` | string ≤ 100 chars, `now_source` always set | what it is doing now. `recap`: Claude Code's latest `system/away_summary` (without its "(disable recaps in /config)"), only while no prompt, turn start or assistant step came after it; `now_at` is its time (unix ms). `title`: no `now` text: the line is the worker's own `title`, which moves on the hot `worker.status` path and is never copied into the digest. |
+| `now`, `now_source` | string ≤ 100 chars, `now_source` set from the first assistant step | what it is doing now. `recap`: Claude Code's latest `system/away_summary` (without its "(disable recaps in /config)"), only while no prompt, turn start or assistant step came after it; `now_at` is its time (unix ms). `title`: no `now` text: the line is the worker's own `title`, which moves on the hot `worker.status` path and is never copied into the digest. |
 | `now_at` | int, optional | unix ms the `now` line was written (`recap` only) |
 
 `llm` is a reserved source of both lines: a model's summary (phase 2, opt-in). No bridge sends it yet; a client shows
 a line of that source as written by a model. `/clear` (and another agent session) starts the digest over: no task, no
-recap, absent again until the next assistant step. The bridge also keeps, per worker, the first prompt and a ring of
+recap, absent again until the next prompt or assistant step. The bridge also keeps, per worker, the first prompt and a ring of
 the last 5 assistant steps (their texts, and their tool calls as name and input summary; never a tool's output, never
 thinking) for phase 2's summaries; none of it is sent.
 

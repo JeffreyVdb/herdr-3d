@@ -14,10 +14,14 @@ import (
 func TestDigestOnTheWire(t *testing.T) {
 	fb := startFuBridge(t, "", "", newFuRoles(), nil, "")
 	c := fb.connect(proto.Hello{})
-	for _, w := range c.snapshot().World.Workers {
-		if w.Digest != nil { // a prompt, no assistant step yet (w1), nothing at all (w2)
-			t.Fatalf("%s has a digest before any step: %+v", w.WorkspaceID, w.Digest)
-		}
+	// Before any assistant step: the task as soon as it is known (w1's first
+	// prompt), never a now line; nothing at all without a prompt (w2).
+	before := workersOf(c.snapshot().World, "s")
+	if d := before["w1"].Digest; d == nil || *d != (proto.WorkerDigest{Task: "Hi.", TaskSource: proto.DigestPrompt}) {
+		t.Fatalf("w1 digest before any step = %+v", d)
+	}
+	if d := before["w2"].Digest; d != nil {
+		t.Fatalf("w2 has a digest without a prompt: %+v", d)
 	}
 	fb.turn(t, "claude", "digest_turns.jsonl")
 	w := upsertFor(c, fb.ids["w1"], func(w *proto.Worker) bool { return w.Digest != nil && w.Digest.NowSource == proto.DigestRecap })

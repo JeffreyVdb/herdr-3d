@@ -85,8 +85,10 @@ func (h *Hub) digestSeen(u digestUpdate) {
 	h.emit(proto.Event{T: proto.EvWorkerUpsert, Worker: &nw})
 }
 
-// composeDigest is the lines the overview shows of a tracker's digest: none
-// before the first assistant step.
+// composeDigest is the lines the overview shows of a tracker's digest: the
+// task as soon as it is known (the first prompt is enough), the now line only
+// from the first assistant step (no NowSource before it: the game shows no
+// now line, not the worker's title, until a turn of it was read).
 //
 // Phase 2 (internal/digest) plugs in here: a model's lines for this input
 // (the first prompt's hash for the task, the recent steps for now), when
@@ -94,11 +96,18 @@ func (h *Hub) digestSeen(u digestUpdate) {
 // proto.DigestLLM; the fallbacks stay for a model that is off, not ready or
 // failing.
 func composeDigest(d *transcript.Digest) *proto.WorkerDigest {
-	if d == nil || d.Steps == 0 {
+	if d == nil {
 		return nil
 	}
-	out := &proto.WorkerDigest{NowSource: proto.DigestTitle}
+	out := &proto.WorkerDigest{}
 	out.Task, out.TaskSource = d.Task()
+	if d.Steps == 0 {
+		if out.Task == "" {
+			return nil
+		}
+		return out
+	}
+	out.NowSource = proto.DigestTitle
 	if d.Recap != "" {
 		out.Now, out.NowSource, out.NowAt = d.Recap, proto.DigestRecap, d.RecapAt
 	}

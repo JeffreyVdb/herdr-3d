@@ -341,8 +341,8 @@ type Worker struct {
 	// Absent otherwise, and for harnesses other than claude and codex.
 	Activity *Activity `json:"activity,omitempty"`
 	// #118: Digest is what the floor overview says of the worker: its task
-	// and what it does now, in words. Absent until its transcript has an
-	// assistant step (Claude and Codex only).
+	// and what it does now, in words. The task from the first prompt on, the
+	// now line from the first assistant step (Claude and Codex only).
 	Digest *WorkerDigest `json:"digest,omitempty"`
 
 	// M6 runs: the worker's place in a write-code run.
