@@ -1,0 +1,784 @@
+/*
+ * #118: the floor overview. A station departures board crossed with mission control, on the top bar's navy taken
+ * deeper: the floor's name huge in condensed Archivo (the destination on the board), the counts as split-flap tiles,
+ * every worker a departure line: its light, its name, its ticket, what it does now in a lighter weight, and how long
+ * it has been at it in Departure Mono's tabular figures. Status colours are the shared palette's (hud.css `--working`
+ * etc.: working stays blue); the page defines no hue of its own beyond the game's sun for focus and the board's
+ * accent. Mounted outside .hud, above it and the top bar (the whiteboard's layer).
+ */
+
+@font-face {
+  font-family: 'H3D Overview Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  src: url('@fontsource-variable/archivo/files/archivo-latin-wdth-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'H3D Overview Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('../fonts/departure-mono/DepartureMono-Regular.woff2') format('woff2');
+}
+
+.ov {
+  /* The top bar's navy (#1c2540) taken down to a night board; every status light is >= 3:1 on it, text >= 4.5:1. */
+  --ov-ink: #0b1022;
+  --ov-ink-2: #111830;
+  --ov-ink-3: #1c2540;
+  --ov-rule: rgb(185 195 220 / 13%);
+  --ov-text: #eef2fb;
+  --ov-text-2: #b9c3dc;
+  --ov-text-3: #7d89ab;
+  --ov-accent: var(--sun, #ffc233);
+  --ov-display: 'H3D Overview Display', 'Archivo Variable', var(--font, system-ui), sans-serif;
+  --ov-mono: 'H3D Overview Mono', 'Departure Mono', ui-monospace, monospace;
+  --ov-blink: 1100ms;
+  --ov-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  background: var(--ov-ink);
+  color: var(--ov-text);
+  font-family: var(--font, system-ui, sans-serif);
+  font-size: 14px;
+  line-height: 1.35;
+  color-scheme: dark;
+}
+.ov[hidden] {
+  display: none;
+}
+.ov *,
+.ov *::before,
+.ov *::after {
+  box-sizing: border-box;
+}
+.ov ::selection {
+  background: var(--ov-accent);
+  color: var(--ov-ink);
+}
+.ov :focus-visible {
+  outline: 2px solid var(--ov-accent);
+  outline-offset: 2px;
+}
+
+.ov-frame {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: clamp(16px, 3vw, 40px) clamp(16px, 4vw, 56px) 14px;
+  /* A faint scanline weave: the board's glass, not decoration over the content (it sits behind it). */
+  background:
+    repeating-linear-gradient(to bottom, rgb(255 255 255 / 1.6%) 0 1px, transparent 1px 4px),
+    radial-gradient(120% 70% at 0% 0%, rgb(47 107 240 / 9%), transparent 60%),
+    var(--ov-ink);
+}
+
+/* ---- header: the destination and the flaps --------------------------------------------------------------- */
+
+.ov-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'title tools'
+    'counts counts';
+  align-items: end;
+  gap: 14px 24px;
+  padding-bottom: 18px;
+  border-bottom: 2px solid var(--ov-ink-3);
+}
+.ov-title {
+  grid-area: title;
+  min-width: 0;
+}
+.ov-floor {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ov-accent);
+  font-family: var(--ov-display);
+  font-size: clamp(44px, 8.5vw, 112px);
+  font-stretch: 62%;
+  font-weight: 860;
+  line-height: 0.86;
+  letter-spacing: -0.015em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.ov-where {
+  margin: 10px 0 0;
+  color: var(--ov-text-2);
+  font-family: var(--ov-mono);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+.ov-tools {
+  grid-area: tools;
+  display: flex;
+  align-self: start;
+  gap: 8px;
+}
+.ov-counts {
+  grid-area: counts;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+}
+
+/* A count: two split-flap tiles and its label with the status dot. */
+.ov-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.ov-flaps {
+  display: inline-flex;
+  gap: 3px;
+}
+.ov-flap {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 40px;
+  border-radius: 4px;
+  background: linear-gradient(to bottom, #1a2342 0 50%, #141c36 50% 100%);
+  box-shadow: 0 2px 4px rgb(0 0 0 / 45%), inset 0 1px 0 rgb(255 255 255 / 6%);
+  color: var(--ov-text);
+  font-family: var(--ov-mono);
+  font-size: 26px;
+  line-height: 1;
+}
+/* The flap's hinge. */
+.ov-flap::after {
+  content: '';
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 1px;
+  background: rgb(0 0 0 / 55%);
+}
+.ov-count-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ov-text-2);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+.ov-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--c);
+}
+.ov-count--working {
+  --c: var(--working);
+}
+.ov-count--needs_you {
+  --c: var(--needs_you);
+}
+.ov-count--waiting {
+  --c: var(--waiting);
+}
+.ov-count--idle {
+  --c: var(--idle);
+}
+.ov-count--asleep {
+  --c: var(--asleep);
+}
+.ov-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.ov-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 13px;
+  border: 1px solid var(--ov-rule);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ov-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 160ms var(--ov-ease),
+    border-color 160ms var(--ov-ease);
+}
+.ov-btn:hover {
+  border-color: rgb(185 195 220 / 32%);
+  background: var(--ov-ink-2);
+}
+.ov-btn svg {
+  width: 17px;
+  height: 17px;
+}
+.ov-btn--icon {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+.ov-btn--go {
+  height: 40px;
+  padding: 0 18px;
+  border-color: var(--plus, #2fc46a);
+  background: var(--plus, #2fc46a);
+  color: var(--ov-ink);
+}
+.ov-btn--go:hover {
+  border-color: #4bd884;
+  background: #4bd884;
+}
+
+/* ---- the board ------------------------------------------------------------------------------------------- */
+
+.ov-cols,
+.ov-row {
+  display: grid;
+  grid-template-columns: 34px minmax(190px, 1fr) minmax(0, 2.3fr) 118px;
+  column-gap: 18px;
+}
+.ov-cols {
+  padding: 12px 14px 8px 10px;
+  color: var(--ov-text-3);
+  font-family: var(--ov-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.ov-cols[hidden],
+.ov-board[hidden] {
+  display: none;
+}
+.ov-cols-since {
+  text-align: right;
+}
+.ov-board {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 4px 24px 0;
+  scrollbar-color: var(--ov-ink-3) transparent;
+  scrollbar-width: thin;
+}
+
+.ov-row {
+  position: relative;
+  align-items: start;
+  padding: 11px 14px 11px 10px;
+  border-bottom: 1px solid var(--ov-rule);
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+  transition:
+    background 180ms var(--ov-ease),
+    transform 180ms var(--ov-ease),
+    box-shadow 180ms var(--ov-ease);
+}
+.ov-row:hover,
+.ov-row:focus-visible {
+  z-index: 1;
+  background: var(--ov-ink-2);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 40%);
+  transform: translateY(-1px);
+}
+.ov-row:focus-visible {
+  box-shadow:
+    0 8px 20px rgb(0 0 0 / 40%),
+    inset 0 0 0 2px var(--ov-accent);
+}
+.ov-row--child .ov-who {
+  padding-left: 30px;
+}
+
+/* The light: a lamp in its housing. */
+.ov-light {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  margin: 6px 0 0 8px;
+  border-radius: 50%;
+  background: var(--lamp, var(--idle));
+}
+.ov-row[data-display='working'] {
+  --lamp: var(--working);
+}
+.ov-row[data-display='needs_you'] {
+  --lamp: var(--needs_you);
+}
+.ov-row[data-display='waiting'] {
+  --lamp: var(--waiting);
+}
+.ov-row[data-display='done'] {
+  --lamp: var(--done);
+}
+.ov-row[data-display='idle'] {
+  --lamp: var(--idle);
+}
+/*
+ * Asleep: an unlit lamp, its ring in the asleep colour (still >= 3:1 on the ink); the row's text steps down a tone with
+ * it. Its own text tokens, never an opacity over text: each stays >= 4.5:1 on the ink and the hover row (--ov-text-3
+ * is already the floor, so it stays; overviewScreen.test.ts checks them).
+ */
+.ov-row[data-display='asleep'] {
+  --ov-text: #9aa5c2;
+  --ov-text-2: #8390b0;
+  --ov-key-asleep: #b8954a;
+}
+.ov-row[data-display='asleep'] .ov-ticket-key {
+  color: var(--ov-key-asleep);
+}
+.ov-row[data-display='asleep'] .ov-tag {
+  background: color-mix(in srgb, var(--run, var(--ov-ink-3)) 55%, var(--ov-ink-3));
+}
+.ov-row[data-display='asleep'] .ov-light,
+.ov-light--ghost {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--asleep);
+}
+.ov-light--ghost {
+  box-shadow: inset 0 0 0 2px var(--idle);
+}
+.ov-row[data-display='working'] .ov-light {
+  animation: ov-blink var(--ov-blink) ease-in-out infinite;
+}
+.ov-row[data-display='needs_you'] .ov-light::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid var(--needs_you);
+  border-radius: 50%;
+  animation: ov-ring 1.6s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+}
+@keyframes ov-blink {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 3px rgb(47 107 240 / 22%), 0 0 14px 2px rgb(47 107 240 / 55%);
+  }
+  50% {
+    opacity: 0.32;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+@keyframes ov-ring {
+  from {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+/* Tree wires: the vertical runs from the orchestrator down, the elbow into each freelancer; drawn in on expand. */
+.ov-wire {
+  position: absolute;
+  top: 0;
+  left: 30px;
+  width: 24px;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.ov-wire line {
+  stroke: rgb(185 195 220 / 32%);
+  stroke-width: 1.5;
+  stroke-dasharray: 1;
+}
+/* The orchestrator's own stub, from its chevron down to its first freelancer. */
+.ov-row[aria-expanded='true']::after {
+  content: '';
+  position: absolute;
+  top: 31px;
+  bottom: -1px;
+  left: 39.25px;
+  width: 1.5px;
+  background: rgb(185 195 220 / 32%);
+  transform-origin: 50% 0;
+}
+.ov--enter .ov-wire line,
+.ov-row--new .ov-wire line {
+  animation: ov-draw 420ms var(--ov-ease) both;
+  animation-delay: calc(var(--i, 0) * 34ms + 120ms);
+}
+.ov-row--new .ov-wire line {
+  animation-delay: 60ms;
+}
+@keyframes ov-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+
+.ov-fold {
+  position: absolute;
+  top: 9px;
+  left: 30px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  color: var(--ov-text-2);
+  transition: transform 260ms var(--ov-ease);
+}
+.ov-fold svg {
+  width: 16px;
+  height: 16px;
+}
+.ov-fold:hover {
+  background: var(--ov-ink-3);
+  color: var(--ov-text);
+}
+.ov-row[aria-expanded='false'] .ov-fold {
+  transform: rotate(-90deg);
+}
+.ov-row[aria-expanded] .ov-who {
+  padding-left: 30px;
+}
+
+.ov-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 9px;
+  min-width: 0;
+}
+.ov-name {
+  font-family: var(--ov-display);
+  font-size: 22px;
+  font-stretch: 72%;
+  font-weight: 760;
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+.ov-tag {
+  padding: 2px 6px 1px;
+  border-radius: 3px;
+  background: var(--run, var(--ov-ink-3));
+  color: #fff;
+  font-family: var(--ov-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.ov-floortag {
+  padding: 1px 6px;
+  border: 1px solid var(--ov-rule);
+  border-radius: 3px;
+  color: var(--ov-text-2);
+  font-family: var(--ov-mono);
+  font-size: 11px;
+}
+.ov-meta {
+  flex-basis: 100%;
+  color: var(--ov-text-3);
+  font-family: var(--ov-mono);
+  font-size: 12px;
+}
+.ov-cap {
+  padding: 2px 6px 1px;
+  border-radius: 3px;
+  background: var(--needs_you-chip, #d8302c);
+  color: #fff;
+  font-family: var(--ov-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.ov-ghost-label {
+  color: var(--ov-text-3);
+  font-family: var(--ov-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.ov-row--ghost .ov-name,
+.ov-row--unlinked .ov-name {
+  color: var(--ov-text-2);
+}
+
+.ov-what {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding-top: 2px;
+}
+.ov-ticket {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ov-text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+.ov-ticket--plain {
+  cursor: inherit;
+}
+.ov-ticket-key {
+  flex: none;
+  color: var(--ov-accent);
+  font-family: var(--ov-mono);
+  font-size: 14px;
+  font-weight: 400;
+}
+.ov-ticket-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ov-ticket:not(.ov-ticket--plain):hover .ov-ticket-title {
+  text-decoration: underline;
+  text-decoration-color: var(--ov-accent);
+  text-underline-offset: 3px;
+}
+.ov-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  color: var(--ov-text-2);
+  font-size: 14px;
+  font-weight: 380;
+}
+.ov-line > b {
+  flex: none;
+  width: 34px;
+  color: var(--ov-text-3);
+  font-family: var(--ov-mono);
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: uppercase;
+}
+.ov-line > span:not(.ov-act, .ov-llm) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ov-task > span {
+  color: var(--ov-text);
+}
+.ov-quiet {
+  color: var(--ov-text-3);
+  font-style: italic;
+}
+.ov-act {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--working) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--working) 16%, transparent);
+  color: var(--ov-text);
+  font-family: var(--ov-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ov-llm {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--ov-text-3);
+  border-radius: 3px;
+  color: var(--ov-text-2);
+  font-family: var(--ov-mono);
+  font-size: 10px;
+}
+.ov-since {
+  padding-top: 4px;
+  color: var(--ov-text-2);
+  font-family: var(--ov-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.ov-hint {
+  position: absolute;
+  right: 14px;
+  bottom: 9px;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  color: var(--ov-accent);
+  font-family: var(--ov-mono);
+  font-size: 11px;
+}
+.ov-row:hover .ov-hint,
+.ov-row:focus-visible .ov-hint {
+  display: inline-flex;
+}
+.ov kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--ov-rule);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--ov-text);
+  font-family: var(--ov-mono);
+  font-size: 11px;
+}
+
+/* ---- motion ---------------------------------------------------------------------------------------------- */
+
+/* The rows cascade in when the page opens. */
+.ov--enter .ov-row {
+  animation: ov-in 380ms var(--ov-ease) both;
+  animation-delay: calc(var(--i, 0) * 34ms + 90ms);
+}
+@keyframes ov-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+/* A collapse: the group's rows fold up under it (ui/overview.ts animates their height, padding and opacity). */
+.ov-row--leaving {
+  overflow: hidden;
+  pointer-events: none;
+  transform-origin: 50% 0;
+}
+/* A status change: the row flashes its new colour once. */
+.ov-row--flash {
+  animation: ov-flash 900ms ease-out;
+}
+@keyframes ov-flash {
+  from {
+    background: color-mix(in srgb, var(--lamp, var(--idle)) 34%, transparent);
+  }
+}
+/* A new now line flips in like a flap. */
+.ov-flip-in {
+  transform-origin: 50% 0;
+  animation: ov-flip 420ms var(--ov-ease);
+}
+@keyframes ov-flip {
+  from {
+    opacity: 0;
+    transform: perspective(300px) rotateX(-80deg);
+  }
+}
+
+/* Reduced motion, or battery saver: no cascade, flap, flash or blink; steady lights. */
+.ov[data-calm] *,
+.ov[data-calm] *::before,
+.ov[data-calm] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* ---- empty and footer ------------------------------------------------------------------------------------ */
+
+.ov-empty {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 12px;
+  max-width: 560px;
+  padding: 40px 0 80px;
+}
+.ov-empty[hidden] {
+  display: none;
+}
+.ov-empty-title {
+  margin: 0;
+  color: var(--ov-text);
+  font-family: var(--ov-display);
+  font-size: clamp(30px, 4vw, 46px);
+  font-stretch: 72%;
+  font-weight: 760;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.ov-empty-text {
+  margin: 0 0 8px;
+  color: var(--ov-text-2);
+  font-size: 15px;
+}
+.ov-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ov-rule);
+  color: var(--ov-text-3);
+  font-size: 12px;
+}
+.ov-keys span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---- narrow ---------------------------------------------------------------------------------------------- */
+
+@media (max-width: 760px) {
+  .ov-head {
+    grid-template-areas:
+      'title tools'
+      'counts counts';
+  }
+  .ov-tools .ov-btn:not(.ov-btn--icon) {
+    display: none;
+  }
+  .ov-cols {
+    display: none;
+  }
+  .ov-row {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'light who since'
+      'light what what';
+    row-gap: 6px;
+  }
+  .ov-row > .ov-light {
+    grid-area: light;
+  }
+  .ov-row > .ov-who {
+    grid-area: who;
+  }
+  .ov-row > .ov-what {
+    grid-area: what;
+  }
+  .ov-row > .ov-since {
+    grid-area: since;
+  }
+  .ov-flap {
+    width: 24px;
+    height: 32px;
+    font-size: 20px;
+  }
+  .ov-keys {
+    display: none;
+  }
+}

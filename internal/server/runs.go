@@ -87,8 +87,8 @@ func runMeta(m workerMeta, w world.WorkerObs) workerMeta {
 // withRun fills a worker view's run fields.
 func (h *Hub) withRun(next *proto.Worker, w world.WorkerObs, m workerMeta, l runs.Link) {
 	next.Round, next.Ticket = w.RunInfo.Round, w.RunInfo.Ticket
-	next.OrchID, next.Issue = l.OrchID, l.Issue
-	next.WorkItem = h.workItemOf(next.Session, l.Issue) // M7 boards
+	next.OrchID = l.OrchID
+	next.Issue, next.WorkItem = h.ticketRefs(next.Session, l.Issue) // M7 boards; #118: with the ticket's title
 	if w.Role == "orch" {
 		next.Phase = m.phase
 		if m.passSet {
@@ -229,12 +229,12 @@ func (h *Hub) relink() {
 	ls := h.links(ms)
 	for _, m := range ms {
 		w, l := h.workers[m.ID], ls[m.ID]
-		item := h.workItemOf(w.Session, l.Issue) // M7 boards
-		if w.OrchID == l.OrchID && reflect.DeepEqual(w.Issue, l.Issue) && reflect.DeepEqual(w.WorkItem, item) {
+		issue, item := h.ticketRefs(w.Session, l.Issue) // M7 boards; #118: with the ticket's title
+		if w.OrchID == l.OrchID && reflect.DeepEqual(w.Issue, issue) && reflect.DeepEqual(w.WorkItem, item) {
 			continue
 		}
 		next := *w
-		next.OrchID, next.Issue, next.WorkItem = l.OrchID, l.Issue, item
+		next.OrchID, next.Issue, next.WorkItem = l.OrchID, issue, item
 		h.workers[m.ID] = &next
 		h.emit(proto.Event{T: proto.EvWorkerUpsert, Worker: &next})
 	}

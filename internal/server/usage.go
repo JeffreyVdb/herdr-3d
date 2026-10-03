@@ -94,7 +94,11 @@ type usageTracker struct {
 	// changes, and the bridge's clock (the trackers' holds).
 	actOffered map[string]activityOffered
 	actUps     []activityUpdate
-	now        func() time.Time
+	// #118: what was last offered of every worker's digest, this round's
+	// changes.
+	dgOffered map[string]digestOffered
+	dgUps     []digestUpdate
+	now       func() time.Time
 }
 
 // foundCodex is a Codex session found by a worker's cwd, and when.
@@ -126,7 +130,8 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 		throttle: usageThrottle{every: cfg.Throttle, shown: map[string]proto.Usage{}, at: map[string]time.Time{}},
 		found:    map[string]foundCodex{}, logs: map[string]*txLog{},
 		asks: map[string]*transcript.AskTracker{}, askShown: map[string]askShown{}, lines: map[string]*txLines{},
-		fuOffered: map[string]followupOffered{}, actOffered: map[string]activityOffered{}, now: time.Now}
+		fuOffered: map[string]followupOffered{}, actOffered: map[string]activityOffered{}, dgOffered: map[string]digestOffered{},
+		now: time.Now}
 }
 
 // trackUsage runs the tracker until ctx is done.
@@ -181,11 +186,12 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 	wraps := tr.wrapUps            // #83
 	fus := tr.followUps            // #90
 	acts := tr.actUps              // #98
+	dgs := tr.dgUps                // #118
 	for _, id := range tr.pasted { // #95
 		h.log.Warn("a prompt the bridge typed reached Claude Code as a paste: its paste threshold may have changed (#95)",
 			"worker", id)
 	}
-	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 || len(fus) > 0 || tr.fuPending || len(acts) > 0 {
+	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 || len(fus) > 0 || tr.fuPending || len(acts) > 0 || len(dgs) > 0 {
 		pending, err := query(ctx, h, func() bool {
 			for _, u := range ups {
 				h.setUsage(u.id, u.usage)
@@ -205,6 +211,9 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 			if len(acts) > 0 {
 				h.pumpActivity(ctx)
 			}
+			for _, u := range dgs { // #118
+				h.digestSeen(u)
+			}
 			return h.sweepFollowups(ctx)
 		})
 		if err == nil {
@@ -216,7 +225,7 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 // poll reads the workers' sessions and returns the updates to publish.
 func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	ws = tr.findCodex(ws, now)
-	tr.askUps, tr.wrapUps, tr.pasted, tr.followUps, tr.actUps = nil, nil, nil, nil, nil
+	tr.askUps, tr.wrapUps, tr.pasted, tr.followUps, tr.actUps, tr.dgUps = nil, nil, nil, nil, nil, nil
 	var ups []usageUpdate
 	seen := map[string]bool{}
 	for _, w := range ws {
@@ -233,7 +242,8 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			if s := tr.sessions[w.id]; s != nil { // #57: the ask, from the same lines, the file's first included
 				l := &txLines{harness: w.harness, ask: transcript.NewAskTracker(w.harness), // #83: and a wrap-up's
 					followup: transcript.NewFollowupTracker(w.harness),                               // #90: and the turn's final message
-					activity: transcript.NewActivityTracker(w.harness, tr.cfg.Images, w.cwd, tr.now)} // #98: and what it does
+					activity: transcript.NewActivityTracker(w.harness, tr.cfg.Images, w.cwd, tr.now), // #98: and what it does
+					digest:   transcript.NewDigestTracker(w.harness)}                                 // #118: and its digest
 				if w.harness == transcript.Claude { // #95: and typed prompts arriving as a paste
 					l.paste = newPasteWatch()
 				}
@@ -264,6 +274,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			tr.offerWrapUp(w)
 			tr.offerFollowup(w)      // #90
 			tr.offerActivity(w, now) // #98
+			tr.offerDigest(w)        // #118
 			continue
 		}
 		s.SetRescan(0)
@@ -279,6 +290,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		tr.offerWrapUp(w)
 		tr.offerFollowup(w)      // #90
 		tr.offerActivity(w, now) // #98
+		tr.offerDigest(w)        // #118
 		if ok {
 			if pub, emit := tr.throttle.offer(w.id, u, now); emit {
 				ups = append(ups, usageUpdate{id: w.id, usage: &pub})
@@ -298,6 +310,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			delete(tr.lines, id)
 			delete(tr.fuOffered, id)  // #90
 			delete(tr.actOffered, id) // #98
+			delete(tr.dgOffered, id)  // #118
 			tr.throttle.forget(id)
 		}
 	}

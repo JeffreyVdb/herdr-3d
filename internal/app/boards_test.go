@@ -28,6 +28,11 @@ func TestServeBoards(t *testing.T) {
 	// The fixture is dated for the day it was cut; the board runs on the real clock, so the issue it closed
 	// just inside the seven-day window is moved to just inside today's.
 	feed = []byte(strings.ReplaceAll(string(feed), "2026-09-22T12:00:01Z", time.Now().Add(-6*24*time.Hour).UTC().Format(time.RFC3339)))
+	// #118: the run's issue (#2, not on the board) is read once for its title.
+	detail, err := os.ReadFile(filepath.Join("..", "github", "testdata", "issue-detail.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var mu sync.Mutex
 	var mutations []map[string]any
 	gh := func(_ context.Context, argv []string, stdin []byte) ([]byte, []byte, error) {
@@ -41,6 +46,8 @@ func TestServeBoards(t *testing.T) {
 		switch req.Query {
 		case githubcli.Text(githubcli.DocFeed):
 			return feed, nil, nil
+		case githubcli.Text(githubcli.DocIssueDetail):
+			return detail, nil, nil
 		case githubcli.Text(githubcli.DocIssueNode):
 			return []byte(`{"data":{"repository":{"issue":{"id":"I_9","number":9,"state":"OPEN"}}}}`), nil, nil
 		case githubcli.Text(githubcli.DocAddComment):

@@ -257,11 +257,12 @@ floor with no workers and an `error`).
 | `ask` | object, optional | #57: the structured question (Claude's AskUserQuestion, Codex's request_user_input) its agent's latest turn waits on, read from its transcript whatever `status` says (see [Laptops: asks](#laptops-asks)) |
 | `followup` | object, optional | #90: the open questions of its agent's final message, `{"turn_id", "questions": [{"id", "question", "kind": "yes_no" \| "choice" \| "open", "options"?}], "score", "source": "model" \| "fallback", "at", "tail"?}`, until answered, dismissed or moot (see [Follow-up questions](#follow-up-questions)) |
 | `activity` | object, optional | #98: what its agent is doing right now, `{"kind", "detail"?, "since", "source", "image"?, "tasks"?}`: while `status` is `working`, and while `idle` or `done` only as `waiting` on open background tasks; absent otherwise and for harnesses other than Claude and Codex (see [Activity](#activity)) |
+| `digest` | object, optional | #118: what the floor overview says of it, `{"task"?, "task_source"?, "now"?, "now_source", "now_at"?}`: its task and what it does now in words, each with its source; absent until its transcript has a prompt or an assistant step, and for harnesses other than Claude and Codex (see [Floor overview digest](#floor-overview-digest)) |
 | `wrapup` | object, optional | #83: its wrap-up, `{"state": "armed" \| "needs_you", "worktree": "keep" \| "delete" \| "delete_branch", "armed_at": int, "reason"?: string}` (unix ms, bridge clock; `reason` with `needs_you`), while armed or needing you (see [Wrap up](#wrap-up)) |
 | `round` | int ≥ 1, optional | write-code round: the `h3d_round` token, else the label's trailing `\|r<N>` (see [Runs and freelancers](#runs-and-freelancers)) |
 | `ticket` | string ≤ 32 bytes, optional | the `h3d_ticket` token, else the label's ticket field (`CODE\|descr\|<ticket>\|r<N>`, likewise `REVIEW` and `UX`) |
-| `issue` | object, optional | `{"repo":"owner/name","number":7}`: the GitHub issue of the worker's run, when a repo is known |
-| `work_item` | object, optional | `{"provider":"github","id":"JeffreyVdb/herdr-3d#7"}`: `issue` in the neutral form, present whenever `issue` is and the floor has a board provider (see [Boards](#boards-issues-and-pull-requests)). The `id` is a board card's `id`. |
+| `issue` | object, optional | `{"repo":"owner/name","number":7,"title"?,"url"?}`: the GitHub issue of the worker's run, when a repo is known. #118: `title` and `url` come from the floor's board provider when it has them (see [Ticket titles](#ticket-titles)) |
+| `work_item` | object, optional | `{"provider":"github","id":"JeffreyVdb/herdr-3d#7","title"?,"url"?}`: `issue` in the neutral form, present whenever `issue` is and the floor has a board provider (see [Boards](#boards-issues-and-pull-requests)). The `id` is a board card's `id`; #118: `title` and `url` as on `issue`. |
 | `orch_id` | string, optional | freelancers: the worker id of their orchestrator |
 | `phase`, `pass` | string, int ≥ 0, optional | orchestrators: the `h3d_phase` / `h3d_pass` tokens (`research\|coding\|review\|fixing\|waiting_user\|pr\|done`, others passed through, ≤ 32 bytes), remembered like `harness` |
 | `over_cap` | bool, optional | orchestrators: `true` past write-code's review-pass cap (`pass > 3`, or `pass == 3` and `phase == "waiting_user"`); absent when false |
@@ -2673,6 +2674,36 @@ flat:
 can't place goes to TypeSafe (Jev). After normalising and scrubbing it can still contain paths, hostnames or script
 names. It is opt-in, separate from configuring the AI integration, never includes tool output, and the Settings section
 says so above the toggle.
+
+### Floor overview digest
+
+#118: every Claude and Codex worker's `digest` is what the floor overview (the lounge's wall screen and its page)
+says of it, on one line each. The bridge reads it from the worker's transcript, on the same tap as asks and activity
+(`transcript.DigestTracker`), and sends it in `worker.upsert` and the snapshot, only when a line or a source changed
+(a prompt, an ai-title, a recap, the first step: rarely). The task goes out as soon as it is known (the first prompt
+is enough); the now line only once the transcript has an assistant step: before it, `now_source` is absent and a
+client shows no now line. A worker with neither a prompt nor a step has no digest.
+
+| field | | |
+|---|---|---|
+| `task`, `task_source` | string ≤ 80 chars, optional | what the worker was asked to do. `ai_title`: Claude Code's own `ai-title` metadata line (the latest); `prompt`: else the first genuine prompt (system reminders out, a paste unwrapped, `[image]` for an image marker) cut to its first sentence. Codex has no ai-title: `prompt` only. A slash command counts as the prompt `/name args` only when it has arguments. Absent when there is neither. |
+| `now`, `now_source` | string ≤ 100 chars, `now_source` set from the first assistant step | what it is doing now. `recap`: Claude Code's latest `system/away_summary` (without its "(disable recaps in /config)"), only while no prompt, turn start or assistant step came after it; `now_at` is its time (unix ms). `title`: no `now` text: the line is the worker's own `title`, which moves on the hot `worker.status` path and is never copied into the digest. |
+| `now_at` | int, optional | unix ms the `now` line was written (`recap` only) |
+
+`llm` is a reserved source of both lines: a model's summary (phase 2, opt-in). No bridge sends it yet; a client shows
+a line of that source as written by a model. `/clear` (and another agent session) starts the digest over: no task, no
+recap, absent again until the next prompt or assistant step. The bridge also keeps, per worker, the first prompt and a ring of
+the last 5 assistant steps (their texts, and their tool calls as name and input summary; never a tool's output, never
+thinking) for phase 2's summaries; none of it is sent.
+
+### Ticket titles
+
+#118: a run's `issue` and `work_item` carry the item's `title` and `url` when the floor's board provider has them, so
+a client never builds a provider URL. They come from the floor's last good board (the card with the work item's id);
+on a miss (no board polled yet, or a card no longer on it, e.g. closed long ago) the bridge reads the item once with
+the provider (as `issue.get` does) and keeps the answer, hit or miss, for its lifetime: never asked again. The `url`
+falls back to the provider's own link of the item. A poll that changes a card's title or URL sends `worker.upsert`
+for every worker of that floor whose ticket it is. Without a board provider there is no title.
 
 ### Inbox
 

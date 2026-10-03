@@ -73,6 +73,8 @@ export interface LaptopHost {
   monitors?: MonitorPrefs;
   /** #110: the pack-up check before the transcript's prompt box sends (none: it sends at once). */
   packup?: PackupGate;
+  /** #118: O while you read the transcript: the floor overview over it (none: O is the transcript's). */
+  overview?(): void;
 }
 
 /** The HUD while you sit at a laptop. */
@@ -776,8 +778,9 @@ export class Laptops {
   /**
    * M16: a keydown while you read the transcript. Nothing goes to the pane:
    * Ctrl+Esc goes back to the terminal, Esc stands you up, Enter goes to the
-   * prompt box; every other key (scrolling, typing in the prompt box) is the
-   * transcript's own, as is a key it already took (`defaultPrevented`).
+   * prompt box, O opens the floor overview (#118); every other key
+   * (scrolling, typing in the prompt box) is the transcript's own, as is a key
+   * it already took (`defaultPrevented`).
    */
   private readingKey(e: KeyboardEvent, toggle: boolean): boolean {
     if (toggle) {
@@ -798,6 +801,10 @@ export class Laptops {
       // Conversation <-> Images. The prompt box (and any text field) keeps its letters.
       e.preventDefault();
       this.transcript.flip();
+    } else if (e.code === 'KeyO' && !mods && !inText(e.target) && this.host.overview) {
+      // #118: O brings the floor overview back over the conversation a row of it opened (Esc returns here).
+      e.preventDefault();
+      this.host.overview();
     }
     return true;
   }

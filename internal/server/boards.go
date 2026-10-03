@@ -93,11 +93,12 @@ type boardsState struct {
 	watchers map[*Client]string          // connection → the floor it watches
 	gates    map[string]*rateGate        // provider id → its rate state
 	polls    chan struct{}               // slots of the polls in flight
+	titles   map[string]*itemTitle       // #118: provider + item id → what one Get read of it
 }
 
 func (h *Hub) initBoards(ctx context.Context) error {
 	h.boards = boardsState{floors: map[string]*boardFloor{}, watchers: map[*Client]string{}, gates: map[string]*rateGate{},
-		polls: make(chan struct{}, maxBoardPolls)}
+		polls: make(chan struct{}, maxBoardPolls), titles: map[string]*itemTitle{}}
 	stored, err := h.st.BoardCaches(ctx)
 	if err != nil {
 		return err
@@ -335,6 +336,7 @@ func (h *Hub) boardTick(ctx context.Context) {
 	for _, bf := range due {
 		h.tryPoll(ctx, bf, len(keys))
 	}
+	h.fetchTitles(ctx) // #118
 }
 
 // tryPoll starts a poll of bf unless the provider's rate says wait or the
@@ -541,6 +543,7 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 		h.log.Error("saving a floor's board failed", "session", bf.session, "err", err)
 	}
 	h.fanOut(bf.session, is, ps)
+	h.refreshTickets(bf.session) // #118: a card's title may have changed
 }
 
 // briefError is a short message for a failed poll: never a token, at most
