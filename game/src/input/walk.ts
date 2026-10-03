@@ -2,8 +2,7 @@ import type * as THREE from 'three/webgpu';
 import { moveWalker, type WalkWorld } from '../world/collide';
 import { EYE_HEIGHT } from '../world/layout';
 
-const WALK = 2.3; // m/s
-const RUN = 4.6;
+const SPEED = 4.6; // m/s; there is no slower gait
 const LOOK = 0.0022; // rad per mouse count
 /** ms after an unlock before the browser takes a new pointer lock request. */
 const LOCK_COOLDOWN = 1300;
@@ -33,7 +32,7 @@ const TURN_KEYS: Record<string, number> = {
 
 /**
  * First-person walking: WASD / up-down arrows, left-right arrows to turn,
- * Shift to run, Pointer Lock mouse look, height-aware AABB collision (floors,
+ * Pointer Lock mouse look, height-aware AABB collision (floors,
  * landings, stair treads, the sidewalk). yaw 0 looks north (-z). `y` is the
  * feet above the street; the eye eases after it on stairs.
  */
@@ -59,7 +58,6 @@ export class Walker {
   private unlockedAt = -Infinity;
   private retry: ReturnType<typeof setTimeout> | undefined;
   private readonly keys = new Set<string>();
-  private run = false;
   private readonly ac = new AbortController();
 
   constructor(
@@ -94,10 +92,6 @@ export class Walker {
 
   /** Feed key events (the app routes them; returns true when consumed). */
   key(e: KeyboardEvent, down: boolean): boolean {
-    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
-      this.run = down;
-      return false;
-    }
     if (!(e.code in MOVE_KEYS) && !(e.code in TURN_KEYS)) return false;
     if (down) this.keys.add(e.code);
     else this.keys.delete(e.code);
@@ -127,7 +121,6 @@ export class Walker {
   /** Forgets held keys (leaving the floor, a hidden tab): nothing keeps walking. */
   stop(): void {
     this.keys.clear();
-    this.run = false;
   }
 
   requestLock(): void {
@@ -198,7 +191,7 @@ export class Walker {
     // Walking gets you up from your desk.
     this.sitting = false;
     const len = Math.hypot(f, r);
-    const d = (this.run ? RUN : WALK) * dt;
+    const d = SPEED * dt;
     const sy = Math.sin(this.yaw);
     const cy = Math.cos(this.yaw);
     // forward = (-sin, -cos), right = (cos, -sin)
