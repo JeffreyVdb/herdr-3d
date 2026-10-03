@@ -65,6 +65,8 @@ import { ScreenShareController } from './screen';
 import { LimitsWidget } from './ui/limits';
 // #100 the inbox chip under them
 import { InboxChip, type InboxEntry } from './ui/inbox';
+import { HirePrefs } from './ui/hirePrefs';
+import { onPlayerAct, waitForHire } from './ui/hireGoto';
 import { InboxPrefs } from './ui/inboxPrefs';
 import { inboxQueue, inboxReason, inboxWhere, type InboxCandidate } from './world/inbox';
 // #92 AI integration
@@ -166,6 +168,10 @@ export class App {
   /** #100: the inbox chip under the plate, its list, and what it remembers per browser. */
   readonly inbox: InboxChip;
   readonly inboxPrefs = new InboxPrefs();
+  readonly hirePrefs = new HirePrefs(); // #116
+  /** #116: cancels the go-to still waiting for its new hire. */
+  private stopHireGoto: (() => void) | null = null;
+  private hireGotoGen = 0;
   readonly hud: Hud;
   readonly city: CityView;
   readonly client: BridgeClient;
@@ -302,7 +308,7 @@ export class App {
     this.hud.mountAudio(this.audio);
     if (o.buildInfo) this.hud.mountAbout(o.buildInfo);
     this.settings = this.hud.mountSettings();
-    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs), { store: 'browser' });
+    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs, this.hirePrefs), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
     // #100: how the inbox reaches you beyond its chip: desktop notifications and the chime.
     this.settings.addSection('notifications', 'Notifications', notifySection({ prefs: this.inboxPrefs, audio: this.audio }), { store: 'browser' });
@@ -477,7 +483,7 @@ export class App {
     };
     const upload = (f: Blob, hint: { label?: string; n?: number }, signal?: AbortSignal) => postUpload(this.url, f, hint, signal);
     const hireHost = { ...dialogHost, upload, reserve: (s: string, d: number) => this.reserve(s, d), held: (s: string) => this.heldDesks(s) };
-    this.hire = new HireDialog(o.host, { ...hireHost, orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ session: s, desk: d }, true) } });
+    this.hire = new HireDialog(o.host, { ...hireHost, goTo: (id) => this.goToNewHire(id), orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ session: s, desk: d }, true) } });
     // M6 start
     this.presetsPanel = new PresetsPanel(o.host, dialogHost);
     this.startRun = new StartRunDialog(o.host, {
@@ -1252,6 +1258,41 @@ export class App {
     this.walker.stop();
     this.panels.close();
     this.presetsPanel.open(from);
+  }
+
+  /**
+   * #116: after a hire is acknowledged (the hire dialog was still its own), sits you at the new worker's laptop with its
+   * conversation on screen, if Settings → Display says so. The ack can come before the worker is in the store and
+   * `sitAt` fails while the hire is still dropping into its chair ("not at the desk right now"), so it waits, for at most
+   * `HIRE_GOTO_WAIT_MS`, for the worker and the end of its arrival; on timeout the toast stands alone. It never yanks: the
+   * moment you act (a key, a press, the wheel, a dialog taking `open`, or a pose that is no longer the one you had: moved,
+   * turned, sat) it is gone for good, whatever the state is by the next look; and a modal dialog (Settings, About: not in
+   * `dialogOpen`, but `dismissOverlays` would close them), a panel, a seat taken, a transition or a floor left drops it too.
+   */
+  private goToNewHire(id: string): void {
+    this.stopHireGoto?.(); // (a newer hire's go-to takes over)
+    if (!this.hirePrefs.goToNew) return;
+    const gen = ++this.hireGotoGen;
+    let acted = false;
+    const w = this.walker;
+    const pose = [w.x, w.z, w.yaw, w.sitting];
+    const stopActs = onPlayerAct(() => (acted = true));
+    const cancel = waitForHire({
+      acted: () => acted || w.x !== pose[0] || w.z !== pose[1] || w.yaw !== pose[2] || w.sitting !== pose[3],
+      check: () => {
+        const v = this.store.workerView(id);
+        const here = this.mode === 'floor' && this.place.area === 'floor' && (!v || this.office?.session === v.worker.session);
+        const busy = this.dialogOpen || this.panels.open || this.hud.sheetOpen || !!document.querySelector('dialog:modal') || this.transitioning || !!this.laptops.seated;
+        if (!this.hirePrefs.goToNew || !here || busy) return 'drop';
+        return v && !this.arrivals.has(id) && !this.office?.awayDesks().has(v.desk) ? 'go' : 'wait';
+      },
+      go: () => void this.goToWorker(id, 'transcript'), // (false, or facing only: the toast already says they are coming)
+      end: () => {
+        stopActs();
+        if (this.hireGotoGen === gen) this.stopHireGoto = null;
+      },
+    });
+    this.stopHireGoto = cancel;
   }
 
   /** A run started: you turn to its orchestrator's desk on the floor you are on, and watch it drop in. */

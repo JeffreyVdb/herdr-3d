@@ -182,6 +182,11 @@ test('E on an empty desk: the hire dialog from the keyboard, then the worker dro
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivalLog())).find((l) => l.id === w.id), { timeout: 10_000 }).toMatchObject({ kind: 'in', played: true });
   // Sitting at its desk, with its card; the desk is the world's.
   expect((await desks(page))[14]).toEqual({ desk: 14, worker: w.id, plus: false, away: null });
+  // #116: the drop-in over, you are taken to its laptop, its conversation on screen (e2e/h116-hire-goto.spec.ts has the rest); up again, for what follows.
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated()), { timeout: 20_000 }).toBe(w.id);
+  expect(await page.evaluate(() => window.__h3d.seat().mode)).toBe('transcript');
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
   const pastry = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === 'pastry');
   expect(pastry?.workers.find((x) => x.id === w.id)).toMatchObject({ name: 'Gumdrop', desk: 14 });
   await faceDesk(page, 'pastry', 14, 1.4, -0.2);

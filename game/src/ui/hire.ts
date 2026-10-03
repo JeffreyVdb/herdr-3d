@@ -56,6 +56,8 @@ export interface HireHost extends DialogHost {
   upload: Uploader;
   /** M6 start: the "Hire orchestrator" tab (ui/startRun.ts): why it is off, and opening it for the same desk. */
   orchestrate?: { off(): string | null; open(session: string, desk: number): void };
+  /** #116: a hire was acknowledged while this dialog was still the one that sent it: take the player to the new worker (the host decides whether, and when it is ready). */
+  goTo?(id: string): void;
 }
 
 /** M7: what "Ask a worker…" and "Review with a worker" start the dialog with. */
@@ -854,6 +856,8 @@ export class HireDialog {
         ack?.prompted === false ? `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P); the text stays in this desk’s hire dialog.` : '',
       ].filter(Boolean);
       if (still) this.close();
+      // #116: also when the first task was not sent (so it can be prompted); never from a late ack (`still`).
+      if (still && ack?.id) this.host.goTo?.(ack.id);
       this.host.toast([`Hired ${name} at Desk ${(w?.desk ?? desk) + 1}${branch}. Here they come.`, ...extra].join(' '), extra.length ? 'error' : 'info');
       return;
     }
