@@ -18,7 +18,8 @@
   structured questions, `AskTracker` knowing the one a session's latest turn waits on, fed the usage tail's lines, and
   the question cards of their tool items; #83: `WrapUpTracker`, an armed wrap-up's result line, fed the same lines with
   their byte offsets; #98: `ActivityTracker`, what each worker is doing and its open background tasks, fed the same
-  lines), `activity` (#98: the pure rule classifier of tool calls and shell commands, and the opt-in model for the
+  lines; #118: `DigestTracker`, the floor overview's task and recap lines, the first prompt and the last assistant
+  steps, fed the same lines), `activity` (#98: the pure rule classifier of tool calls and shell commands, and the opt-in model for the
   commands it can't place: normalise, scrub, cache, budget), `imgcache` (M16 phase 2:
   the bounded content-addressed image cache, memory LRU plus an optional 0600/0700 disk cache; the type sniff, the
   thumbnails, the path allowlist; pure Go), `runs` (M6: write-code runs, the
@@ -581,7 +582,10 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   of its worker's `activity` (`activity.ts`: an unknown kind is `working`, a label that disagrees with the status is not
   shown, which view a monitor is in (`glance` / `card` / `image` / `rest`), the card's word, detail, waiting badge and
   pose, the elapsed counter's text and glyphs) and the `waiting` display status (idle or done, waiting on its own
-  background tasks: its own band row and HUD count, never idle, never in N's queue). Pure logic, covered by vitest.
+  background tasks: its own band row and HUD count, never idle, never in N's queue); #118: the floor overview's tree
+  (`overview.ts`: orchestrators over their freelancers, ghost rows, Unlinked, the order that never follows a status,
+  each row's light, ticket, task, now and since, the top bar's counts as items; `layout.ts` `overviewScreenBox` sizes
+  the lounge wall's screen). Pure logic, covered by vitest.
 - `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy;
   M3b: the walk scene (`walk.ts`), the building and street from outside (`outside.ts`, baked into one mesh by
   `bake.ts`) and the lobby (`lobby.ts`). M3c: the corner office (`mezzanine.ts`: two merged vertex-coloured toon
@@ -615,7 +619,9 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   cloud with a `>_` face for Codex, a pose per kind and a resting one, 6 frames each, pure pixels drawn once;
   `H3D_MASCOT_SHEET=1 pnpm -C game exec vitest run src/render/mascotArt.test.ts` writes `test-results/mascots.png`).
   #86: `toonSun.ts` (every toon material lights with it: faces turned away from the sun stay flat and take no shadow from the sun's
-  shadow map; `normalBiasFor` sizes the suns' `shadow.normalBias`).
+  shadow map; `normalBiasFor` sizes the suns' `shadow.normalBias`). #118: `overviewScreen.ts`, the lounge wall's
+  floor overview (two canvas drawings of the tree, lit and unlit, swapped for the blink; one line a row and pages when
+  the rows do not fit; `wallPlan` is pure).
 - `src/laptop` — M5 screens and sitting at a worker's screen (M6b: on its desk monitor): `watches.ts` keeps the connection's
   `terminal.watch`es in step with what the game wants (a full frame first, a gap re-watches, `unknown_command` turns
   screens off with the reason), `terminal.ts` is one xterm.js 6 terminal per live screen (never opened: only its VT
@@ -665,7 +671,9 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   Approve / Deny (`promptBar.ts`), styled in `m5.css`, and the seat bar (`seat.ts`, `seat.css`); #100: the inbox chip under the plan-limits plate
   that opens into its list (`inbox.ts`, `inbox.css`; a row's `App.goToWorker` teleports and sits you at that terminal) and the one rule of the corner
   both follow (`corner.ts`: what makes them step aside), what it remembers (`inboxPrefs.ts`, `h3d.inbox`), Settings →
-  Notifications (`notifySection.ts`: desktop notifications and their permission, the chime and its Test) and its pings, the
+  Notifications (`notifySection.ts`: desktop notifications and their permission, the chime and its Test) and its pings; #118:
+  the floor overview page (`overview.ts`, `overview.css`: the `inset: 0` layer over everything, its grow out of the
+  wall screen, the tree's keys, live rows) and its collapsed groups (`overviewPrefs.ts`, `h3d.overview.collapsed`); the
   desktop notification of a new entry with the game in the background (`desktopNotify.ts`; when one pings,
   `world/inboxPings.ts`: settle delay, snapshot silence, burst cap). Hidden, named hooks
   wait for later tickets:
@@ -681,7 +689,8 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   priced as an unknown model, one with no model yet), `demo-m6` (demo-m5 with a `lab` floor on top of Work holding
   two write-code runs built from the synthetic run dirs in `fixtures/runs/` (see its README) the way the bridge reads
   them: the over-cap ORCH at pass 3 waiting for you with its pass-3 crew in its pod, REVIEW r3 `CHANGES_REQUIRED`
-  with 2 blockers; and a run with every other freelancer state, each verdict and an `input_required`), `perf-floor60`, `perf-floor96` (96
+  with 2 blockers; and a run with every other freelancer state, each verdict and an `input_required`), `demo-m118` (#118: demo-m6
+  with the overview's lines: the runs' issue titles and URLs, every agent's `digest`), `perf-floor60`, `perf-floor96` (96
   desks, every worker needs you: the corner office's worst case), `perf-city240`. `pnpm fixtures` regenerates them,
   `pnpm fixtures:check` flags stale files.
   Like the bridge, a building lists its floors top to bottom, which is `index` order (index 0 on top); vitest fails
