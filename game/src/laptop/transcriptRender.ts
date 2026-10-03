@@ -1004,7 +1004,7 @@ class Transcript implements TranscriptView {
       case 'assistant':
         return h('li', { class: isImageOnly(it) ? 'tx-item tx-assistant tx-imgonly' : 'tx-item tx-assistant' }, this.parts(it, 'tx-said'));
       case 'thinking':
-        return this.thinkingRow(it, scope);
+        return this.thinkingRow(it);
       case 'tool':
         if (it.tool?.ask && typeof it.tool.ask === 'object' && Array.isArray(it.tool.ask.questions)) return askItem(it, it.tool.ask);
         return it.tool ? this.toolRow(it, scope) : this.unknownRow(it, 'tool call without details');
@@ -1110,7 +1110,7 @@ class Transcript implements TranscriptView {
     return h('li', { class: 'tx-item tx-user tx-pending', 'data-state': p.state, 'data-late': String(p.late), 'data-pending': p.id }, h('div', { class: 'tx-bubble' }, md), meta);
   }
 
-  private thinkingRow(it: TranscriptItem, scope: string): HTMLElement {
+  private thinkingRow(it: TranscriptItem): HTMLElement {
     const text = (it.parts ?? [])
       .map((p) => (p && typeof p === 'object' && 'text' in p && typeof p.text === 'string' ? p.text : ''))
       .filter(Boolean)
