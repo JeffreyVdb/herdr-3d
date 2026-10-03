@@ -168,7 +168,7 @@ func (c *client) event() proto.Event {
 	c.t.Helper()
 	m := c.next()
 	var ev proto.Event
-	if m.env.T == proto.EvActivityUpdate || m.env.T == proto.EvPackupUpdate { // #98, #110: their flat fields are not Event's
+	if m.env.T == proto.EvActivityUpdate || m.env.T == proto.EvPackupUpdate || m.env.T == proto.EvDigestUpdate { // #98, #110, #118: their flat fields are not Event's
 		return proto.Event{T: m.env.T, Seq: m.env.Seq}
 	}
 	if err := json.Unmarshal(m.raw, &ev); err != nil {

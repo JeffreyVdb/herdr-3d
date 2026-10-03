@@ -194,6 +194,9 @@ type World struct {
 	// #98 activity: "Classify unknown commands", its settings and state.
 	// nil (left out) when the bridge has no AI service.
 	Activity *ActivityState `json:"activity,omitempty"`
+	// #118 phase 2: the floor overview summaries' settings and state. nil
+	// (left out) when the bridge has no AI service.
+	Digest *DigestState `json:"digest,omitempty"`
 	// #106 inbox: the dismissed finished rows, worker id → the status_since
 	// of the done episode hidden. Always present ({} when none).
 	InboxDismissed map[string]int64 `json:"inbox_dismissed"`
@@ -390,8 +393,8 @@ type WorkerDigest struct {
 	NowAt int64 `json:"now_at,omitempty"`
 }
 
-// Digest line sources. DigestLLM is phase 2's (a model's summary): defined,
-// never produced yet.
+// Digest line sources. DigestLLM is a line the configured LLM wrote (#118
+// phase 2, the floor overview summaries switched on).
 const (
 	DigestAITitle = "ai_title"
 	DigestPrompt  = "prompt"

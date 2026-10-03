@@ -61,6 +61,10 @@ type Digest struct {
 	// Steps counts the assistant steps read since the start (or /clear):
 	// the overview shows a worker's digest once it is at least 1.
 	Steps int
+	// Ended counts the turns that ended since the start (or /clear):
+	// Claude's turn_duration, Codex's task_complete. Phase 2 writes a now
+	// line after each.
+	Ended int
 	// Prompt is the first genuine prompt (cleaned: no system reminders, no
 	// paste wrapper, image markers as "[image]"), PromptHash its hex sha256.
 	Prompt, PromptHash string
@@ -159,6 +163,9 @@ func (t *DigestTracker) Line(off int64, b []byte, evs []TurnEvent) {
 		case TurnAssistant:
 			t.assistant(ev, tools)
 			tools = nil
+		case TurnDone, TurnComplete:
+			t.d.Ended++
+			t.seq++
 		}
 	}
 	if len(tools) > 0 && t.harness == Codex { // its calls are lines of their own (Claude's ride on their message)
