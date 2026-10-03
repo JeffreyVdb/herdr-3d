@@ -17,6 +17,7 @@ import { usageTotal, type UsageTotal } from '../world/usage';
 import type { GameAudio } from '../audio';
 import { backdropPolicy } from './dismiss';
 import { keyName, withKey } from '../input/shortcuts';
+import { countItems } from '../world/overview';
 
 /** Authored 24×24 stroke icons, one weight. */
 const ICON = {
@@ -32,6 +33,8 @@ const ICON = {
   stairs: '<path d="M4 19h4.5v-4.5H13V10h4.5V5.5H20"/>',
   door: '<path d="M6.5 20V5.2c0-.7.5-1.2 1.2-1.2h8.6c.7 0 1.2.5 1.2 1.2V20M4 20h16"/><circle cx="14.4" cy="12.4" r="1.1" fill="currentColor" stroke="none"/>',
   street: '<path d="M5 20 9.5 4M19 20 14.5 4M12 5.5v2M12 10.5v2.5M12 16.5v3"/>',
+  /** #118: the floor overview, a board of rows with their lights. */
+  overview: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="7.5" cy="9" r="1.1" fill="currentColor"/><circle cx="7.5" cy="12.5" r="1.1" fill="currentColor"/><circle cx="7.5" cy="16" r="1.1" fill="currentColor"/><path d="M10.5 9h6.5M10.5 12.5h5M10.5 16h6"/>',
   hire: '<circle cx="9.5" cy="8" r="3.2"/><path d="M3.8 19.5c.6-3.4 2.8-5.3 5.7-5.3 1.4 0 2.6.4 3.6 1.2"/><path d="M18 13.5v6M15 16.5h6"/>',
 };
 
@@ -59,7 +62,7 @@ const KEYS: Array<[string, string, boolean]> = [
   ['X', 'Send home', true],
 ];
 
-export type HudAction = 'city' | 'issues' | 'prs' | 'battery' | 'buildings' | 'elevator' | 'hire';
+export type HudAction = 'city' | 'issues' | 'prs' | 'overview' | 'battery' | 'buildings' | 'elevator' | 'hire';
 
 export interface PlanLabel {
   x: number;
@@ -84,6 +87,8 @@ export class Hud {
   private readonly back = el('button', 'btn btn--back', `${svg(ICON.back)}<span>City</span>`);
   private readonly issues = el('button', 'btn', `${svg(ICON.issues)}<span>Issues</span>`);
   private readonly prs = el('button', 'btn', `${svg(ICON.prs)}<span>PRs</span>`);
+  /** #118: the floor overview (O), next to Issues / PRs. */
+  private readonly overview = el('button', 'btn btn--overview', `${svg(ICON.overview)}<span>Overview</span><i class="topbar-key" aria-hidden="true"></i>`);
   private readonly battery = el('button', 'btn btn--icon', svg(ICON.leaf));
   private readonly settings = el('button', 'btn btn--icon', svg(ICON.gear));
   private readonly about = el('button', 'btn btn--icon', svg(ICON.info));
@@ -144,8 +149,10 @@ export class Hud {
     this.about.setAttribute('aria-label', 'About');
     this.about.setAttribute('aria-haspopup', 'dialog');
     this.about.type = 'button';
+    this.overview.setAttribute('aria-label', 'Overview');
+    this.overview.setAttribute('aria-haspopup', 'dialog');
     this.refreshKeyTitles();
-    actions.append(this.buildings, this.issues, this.prs, this.elevator, this.hire, this.aiChip, this.settings, this.about, this.battery, this.conn);
+    actions.append(this.buildings, this.issues, this.prs, this.overview, this.elevator, this.hire, this.aiChip, this.settings, this.about, this.battery, this.conn);
     bar.append(place, this.counts, actions);
     this.counts.after(this.usageEl);
     this.usageEl.hidden = true;
@@ -154,6 +161,7 @@ export class Hud {
       [this.back, 'city'],
       [this.issues, 'issues'],
       [this.prs, 'prs'],
+      [this.overview, 'overview'],
       [this.battery, 'battery'],
       [this.buildings, 'buildings'],
       [this.elevator, 'elevator'],
@@ -189,7 +197,7 @@ export class Hud {
     this.mode = mode;
     this.root.dataset.mode = mode;
     this.back.hidden = mode === 'city';
-    this.issues.hidden = this.prs.hidden = mode === 'city';
+    this.issues.hidden = this.prs.hidden = this.overview.hidden = mode === 'city';
     this.buildings.hidden = mode !== 'city';
     this.elevator.hidden = mode === 'city';
     this.hire.hidden = mode === 'city' || this.root.dataset.area !== 'floor';
@@ -289,16 +297,16 @@ export class Hud {
     const waiting = !asleep && c.waiting > 0;
     this.counts.dataset.n = asleep ? '1' : waiting ? '4' : '3';
     // M5: N goes to the next one who needs you (the blocked, then the done).
-    const need = c.needsYou === 1 ? 'needs you' : 'need you';
     const nk = keyName('next-need');
     const next = c.needsYou + c.done > 0 ? ` · ${nk}: go to the next${c.done ? ` (then ${c.done} done)` : ''}` : '';
-    this.counts.innerHTML = asleep
-      ? item('asleep', c.total, 'asleep')
-      : item('working', c.working, 'working') +
-        item('needs_you', c.needsYou, need, next) +
-        (next ? `<kbd class="topbar-key" title="${nk}: go to the next who needs you">${nk}</kbd>` : '') +
-        (waiting ? item('waiting', c.waiting, 'waiting', ' on their background tasks') : '') +
-        item('idle', c.idle, 'idle');
+    // #118: the same items the floor overview's header shows (`countItems`).
+    this.counts.innerHTML = countItems(c, asleep)
+      .map((x) =>
+        x.kind === 'needs_you'
+          ? item('needs_you', x.n, x.label, next) + (next ? `<kbd class="topbar-key" title="${nk}: go to the next who needs you">${nk}</kbd>` : '')
+          : item(x.kind, x.n, x.label, x.kind === 'waiting' ? ' on their background tasks' : ''),
+      )
+      .join('');
   }
 
   setCity(buildings: number, floors: number, c: Counts): void {
@@ -353,7 +361,7 @@ export class Hud {
   setArea(area: Area): void {
     this.root.dataset.area = area;
     const onFloor = area === 'floor';
-    this.issues.hidden = this.prs.hidden = this.hire.hidden = this.mode === 'city' || !onFloor;
+    this.issues.hidden = this.prs.hidden = this.overview.hidden = this.hire.hidden = this.mode === 'city' || !onFloor;
     this.syncExtras();
   }
 
@@ -515,6 +523,13 @@ export class Hud {
       const info = this.propInfo.get('tv') ?? 'Off · Share screen in the top bar';
       line.append(text('prompt-name', t.label), text('prompt-task', info));
       this.prompt.setAttribute('aria-label', `${t.label}: ${info}`);
+    } else if (t.kind === 'prop' && t.id === 'screen.overview') {
+      // #118: the lounge wall's big screen opens the floor overview (O does from anywhere on the floor).
+      line.append(text('prompt-name', 'Floor overview'), text('prompt-task', 'Everyone on this floor: who works, who waits on you, on which ticket'));
+      const k = el('span', 'key');
+      k.append(el('kbd', '', 'E'), document.createTextNode('Open'));
+      keys.append(k);
+      this.prompt.setAttribute('aria-label', `Floor overview · E Open · ${keyName('overview')} from anywhere on the floor`);
     } else if (t.kind === 'prop' && t.id === 'whiteboard') {
       // M13: the floor's whiteboard opens its editor.
       const info = this.propInfo.get('whiteboard') ?? 'Draw, paste a screenshot, pin a drop';
@@ -558,7 +573,7 @@ export class Hud {
 
   /** Keyboard route into the top bar: focuses its first visible control. */
   focusTopbar(): void {
-    const first = [this.back, this.buildings, this.issues, this.prs, this.elevator, this.hire, this.battery].find((b) => !b.hidden);
+    const first = [this.back, this.buildings, this.issues, this.prs, this.overview, this.elevator, this.hire, this.battery].find((b) => !b.hidden);
     first?.focus();
   }
 
@@ -675,6 +690,9 @@ export class Hud {
     this.buildings.title = withKey('Buildings: create, rename and arrange buildings and floors', 'buildings');
     this.elevator.title = withKey('Elevator: ride to another floor, wake or sleep floors, floor settings', 'elevator');
     this.hire.title = `Hire a worker at the first free desk on this floor (${keyName('hire')}), or look at a desk’s + and press E`;
+    this.overview.title = withKey('Floor overview: everyone on this floor and what they are doing', 'overview');
+    this.overview.setAttribute('aria-keyshortcuts', keyName('overview'));
+    this.overview.querySelector('.topbar-key')?.setAttribute('data-key', keyName('overview'));
     this.issues.title = this.boardWhy ?? withKey('Issues: this floor’s board as a list', 'issues');
     this.prs.title = this.boardWhy ?? withKey('Pull requests: this floor’s open pull requests as a list', 'prs');
   }

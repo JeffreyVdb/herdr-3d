@@ -15,8 +15,9 @@ export const NARROW = '(max-width: 760px)';
  * plate stays above them in the top layer, and the start-run one shows the limits inline as well). The hire dialog
  * shows the chosen harness's limits inline too, so nothing is lost when the plate folds away over it.
  */
-// M13: the whiteboard overlay (a div, ui/whiteboard.ts) carries `open` while it is up, like a dialog.
-export const SCREEN = 'dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open], dialog.shortcuts[open], .wb[open]';
+// M13: the whiteboard overlay (a div, ui/whiteboard.ts) carries `open` while it is up, like a dialog; so does #118's
+// floor overview (ui/overview.ts), which fills the viewport.
+export const SCREEN = 'dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open], dialog.shortcuts[open], .wb[open], .ov[open]';
 
 /**
  * The seated reading overlay (the conversation, the Images tab; laptop/index.ts marks the page with `data-reading`) is a
@@ -39,8 +40,8 @@ export class CornerWatch {
     this.narrow?.addEventListener('change', this.onNarrow);
     if (typeof MutationObserver === 'undefined') return;
     this.watcher = new MutationObserver((records) => {
-      // (The whiteboard overlay is a div with `open`, not a dialog: SCREEN lists it.)
-      const screen = (r: MutationRecord) => r.target instanceof HTMLDialogElement || (r.target instanceof Element && r.target.classList.contains('wb'));
+      // (The whiteboard overlay and the floor overview are divs with `open`, not dialogs: SCREEN lists them.)
+      const screen = (r: MutationRecord) => r.target instanceof HTMLDialogElement || (r.target instanceof Element && (r.target.classList.contains('wb') || r.target.classList.contains('ov')));
       if (!records.some((r) => screen(r) || r.attributeName === 'data-reading' || r.attributeName === 'data-seated')) return;
       this.changed(records.some((r) => r.target instanceof HTMLDialogElement && r.target.open));
     });

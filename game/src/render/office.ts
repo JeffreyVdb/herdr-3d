@@ -17,6 +17,10 @@ import { MezzanineView } from './mezzanine';
 import { BODY_TINTS, OFFICE } from './palette';
 import { buildProps, signTexture, type PropMeshes } from './props';
 import type { ClockFace } from './clock';
+import type { OverviewData } from '../world/overview';
+
+/** #118: the wall screen draws and pages only while it spans at least this share of the view's height (readable). */
+const OVERVIEW_READABLE = 0.3;
 import { lookOf, NOON, type Look } from './daylook';
 // M7: the corkboard, the pull request board and the merge gong.
 import { BoardsView } from './boards/boards';
@@ -72,7 +76,7 @@ export const SEAT_Y = 0.45;
 export const CARD_Y = 1.62;
 export const REACH = 3;
 /** #124: the props T can pick, in the order it goes through them. */
-const KEY_PROPS = ['board.issues', 'board.prs', 'whiteboard', 'radio', 'elevator'];
+const KEY_PROPS = ['board.issues', 'board.prs', 'whiteboard', 'radio', 'elevator', 'screen.overview'];
 
 export interface OfficeOptions {
   shadows: boolean;
@@ -722,6 +726,50 @@ export class OfficeView {
     return this.props.tv?.info() ?? null;
   }
 
+  /** #118: what the lounge wall's overview screen shows (null: the floor sleeps); `calm`: no blinking. */
+  setOverview(data: OverviewData | null, calm: boolean, now: number): void {
+    this.props.overview?.set(data, this.session, calm, now);
+  }
+
+  /** #118: the wall screen's blink and paging (only while `camera` sees it); true when its picture changed. */
+  tickOverview(now: number, camera: THREE.Camera): boolean {
+    const ov = this.props.overview;
+    if (!ov) return false;
+    const p = this.layout.props.find((x) => x.id === 'screen.overview');
+    let view = false;
+    if (p && this.root.visible) {
+      this.ovBox.min.fromArray(p.box.min);
+      this.ovBox.max.fromArray(p.box.max);
+      this.ovBox.applyMatrix4(this.root.matrixWorld);
+      this.ovFrustum.setFromProjectionMatrix(this.ovMat.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+      // In view and big enough to read: the share of the view's height its middle spans (a far glimpse pages nothing).
+      if (this.ovFrustum.intersectsBox(this.ovBox)) {
+        const c = this.ovBox.getCenter(this.ovV.set(0, 0, 0));
+        const h = (this.ovBox.max.y - this.ovBox.min.y) / 2;
+        const top = this.ovV2.set(c.x, c.y + h, c.z).project(camera).y;
+        const bottom = this.ovV.set(c.x, c.y - h, c.z).project(camera).y;
+        this.ovShare = Math.abs(top - bottom) / 2;
+        view = this.ovShare >= OVERVIEW_READABLE;
+      } else this.ovShare = 0;
+    }
+    return ov.tick(now, view);
+  }
+
+  /** #118: the share of the view's height the wall screen spans (test hook). */
+  ovShare = 0;
+  private readonly ovV = new THREE.Vector3();
+  private readonly ovV2 = new THREE.Vector3();
+
+  private readonly ovBox = new THREE.Box3();
+  private readonly ovFrustum = new THREE.Frustum();
+  private readonly ovMat = new THREE.Matrix4();
+
+  /** #118: what the wall screen shows (test hook); null without one. */
+  overviewInfo(): (ReturnType<NonNullable<PropMeshes['overview']>['info']> & { share: number }) | null {
+    const i = this.props.overview?.info();
+    return i ? { ...i, share: +this.ovShare.toFixed(3) } : null;
+  }
+
   setPlan(on: boolean): void {
     this.planOn = on;
     this.ceiling.visible = !on;
@@ -798,7 +846,7 @@ export class OfficeView {
 
   /**
    * #124: what the keyboard can pick (T) without aiming: every worker and free desk in desk order, then your desk (`ownDesk`),
-   * the Issues and Pull requests boards, the whiteboard, the radio and the elevator (the things E, P, C, X or R do
+   * the Issues and Pull requests boards, the whiteboard, the radio, the elevator and the lounge's overview screen (the things E, P, C, X or R do
    * something to), each with the point to turn to.
    */
   keyTargets(ownDesk: boolean): Array<{ target: Target; at: V3 }> {

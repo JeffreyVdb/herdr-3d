@@ -365,6 +365,7 @@ func (h *Hub) standsOn(ctx context.Context, c *Client, session string) {
 	}
 	h.act.views[c] = session
 	h.pumpActivity(ctx)
+	h.pumpDigest(ctx) // #118
 }
 
 // pumpActivity hands the model the oldest candidate it may ask about (hub

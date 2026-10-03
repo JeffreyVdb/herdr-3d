@@ -280,6 +280,8 @@ export interface H3DDebug {
   wbLog(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
   /** #100: the workers whose done is still settling before it pings. */
   pendingPings(): string[];
+  /** #118: the floor overview page and the lounge wall's screen (what each shows). */
+  overview(): ReturnType<import('./app').App['overviewInfo']> | null;
 }
 
 declare global {
@@ -530,6 +532,7 @@ const h3d: H3DDebug = {
   excalidraw: () => app?.whiteboard.current?.excalidraw ?? null,
   wbLog: () => structuredClone(app?.wbLog ?? []),
   pendingPings: () => app?.pendingPings() ?? [],
+  overview: () => (app ? structuredClone(app.overviewInfo()) : null),
   openChanges: (id) => {
     if (app?.changes.worker !== id) app?.toggleChanges(id);
   },

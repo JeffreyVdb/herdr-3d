@@ -18,6 +18,7 @@ Walking around an office, its lobby or the street.
 | `Shift` + `L` | Plan limits |
 | `B` | Battery saver |
 | `,` | Settings |
+| `O` | Floor overview: everyone on this floor and what they are doing |
 | `W A S D` or `↑ ← ↓ →` | Walk (the arrows turn left and right) |
 | `Page Up` or `Page Down` | Look up and down |
 | `Home` | Level the view |
@@ -44,6 +45,7 @@ The view from above, before you go inside.
 | `Shift` + `L` | Plan limits |
 | `B` | Battery saver |
 | `,` | Settings |
+| `O` | Floor overview: everyone on this floor and what they are doing |
 | `M` | Buildings |
 | `Tab` or `Enter` | Tab reaches the floors, then the buildings; Enter goes inside |
 | `Esc` | Let go of the focused building |
@@ -68,6 +70,7 @@ Look at it with the crosshair, or pick it without the mouse: T and Shift+T cycle
 | `E` | Elevator: ride |
 | `E` | Reception: the floor directory |
 | `E` | Whiteboard: draw |
+| `E` | Lounge screen: the floor overview, growing out of it |
 | `E` | Radio: next genre |
 | `R` | Radio: next track |
 
@@ -91,5 +94,6 @@ Every key goes to the terminal or the conversation, except these. Esc stands you
 | --- | --- |
 | `Esc` | Stand up |
 | `Ctrl` + `Esc` | Terminal or conversation |
+| `O` | The floor overview, over the conversation (Esc comes back) |
 | `Ctrl` + `,` | The terminal’s preset and zoom controls |
 | `Ctrl` + `+` or `Ctrl` + `−` or `Ctrl` + `0` | Zoom in, out and back to 100% |

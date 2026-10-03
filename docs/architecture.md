@@ -16,6 +16,7 @@ and `docs/decisions.md`. Where a verifier and a follow-up disagree, the one with
 | Board wall (issues Kanban, pull requests) | the floor's issue tracker and code host — GitHub today (Issues, Projects v2, PRs), later files in the repo or Monday.com | the provider, through the bridge's neutral `tracker` / `codehost` interfaces; last good boards, open PRs and announced merges cached in bridge SQLite |
 | Building logo (entrance sign, reception wall, city sign) | an image the user picks for a building | bridge SQLite (`building_logo`: the normalised PNG); the building carries its hash |
 | Whiteboard (north wall of every floor) | an Excalidraw board shared by the floor, agents pin on it (M14) | bridge files, `~/.local/share/herdr-3d/whiteboards/<floor>/` (versioned scenes, images by sha256, the current render) |
+| Floor overview screen (west wall of every floor's lounge) | the floor's workers as one tree: who works, who waits on you, orchestrators over their freelancers, each one's ticket, task and what it does now (#118) | derived in the game from the world (`world/overview.ts`); the task / now lines from the bridge's `digest` (each worker's transcript), the ticket titles from the floor's board provider |
 | Plan limits meter (top-right widget) | the Claude and Codex plan windows (5 h, week, per model) | the `claude` / `codex` CLIs, run as probes by the bridge (`internal/limits`), only while a client is connected |
 | Inbox chip (under the limits meter, #100) | the workers that need you, and the employees that are done, across every floor; a click opens the list (who, `Building › floor`, why, how long), a row sits you at that worker's laptop, on its conversation | derived in the game from the world (`world/inbox.ts`); the bridge keeps only the dismissed finished rows (#106: SQLite `inbox_dismissed`, `inbox.dismiss`, snapshot `inbox_dismissed`, event `inbox.dismissed`) |
 | Inbox pings (#100) | a desktop notification and the chime when someone starts needing you or an employee finishes, with the game open (in front: the chip pulses, a toast) | the game, on live world changes (`world/inboxPings.ts`, `ui/desktopNotify.ts`: the page's `Notification`, no service worker or push server); nothing on the bridge |
@@ -158,6 +159,17 @@ MacBook (M2 Max)                                   devbox (Linux)
   elements made in Go; until a client renders the board again the render is stale and the pins are listed beside it.
   A close whose save fails never drops the drawing: the board asks (retry, keep a draft in the browser, discard).
   `drops.list` reads Drop Zone's newest files for "Pin a drop".
+- **Floor overview** (#118, built; `decisions.md` "#118"): a big screen on the west wall of every floor's
+  lounge shows the floor as a departures board (`game/src/render/overviewScreen.ts`, one unlit canvas texture, no light
+  of its own); E at it, O anywhere on the floor or the top bar's Overview opens the page over the whole viewport
+  (`game/src/ui/overview.ts`). Both draw one tree built in the game from the world (`world/overview.ts`): orchestrators
+  over their freelancers, ghost rows for an orchestrator on another floor, an Unlinked group, then everyone else. Its
+  words come from the bridge: each worker's `digest` (task and now lines from its transcript, `transcript.DigestTracker`
+  on the usage tracker's line tap: Claude's ai-title, the first prompt, the away_summary recap, else the terminal title)
+  and the run's ticket title and URL (`issue` / `work_item`, from the board cache or one read of the item). Phase 2,
+  opt-in ("Floor overview summaries", `internal/digest`): the configured LLM writes a one-off worker's task and every
+  worker's now line from the same digest, after a settled turn, for viewed floors only, one call at a time, under a
+  daily cap and cached by input hash; the page and the wall mark those lines AI.
 - **Identity**: bridge-owned worker UUID; reconcile after restarts via persisted pane-label marker (written by the bridge
   on the workers it hires) → `agent_session` id → label+cwd → else new worker. Tokens vanish on herdr restart and workspace ids can be reused: re-apply tokens only
   after reconciliation.

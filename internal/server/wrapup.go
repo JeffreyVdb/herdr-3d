@@ -99,6 +99,7 @@ type txLines struct {
 	paste    *pasteWatch                 // #95
 	followup *transcript.FollowupTracker // #90
 	activity *transcript.ActivityTracker // #98
+	digest   *transcript.DigestTracker   // #118
 }
 
 func (l *txLines) Line(off int64, b []byte) {
@@ -108,7 +109,7 @@ func (l *txLines) Line(off int64, b []byte) {
 	if l.paste != nil {
 		l.paste.line(b)
 	}
-	if l.wrap == nil && l.followup == nil && l.activity == nil {
+	if l.wrap == nil && l.followup == nil && l.activity == nil && l.digest == nil {
 		return
 	}
 	// The turn boundaries and final message, read once for all.
@@ -121,6 +122,9 @@ func (l *txLines) Line(off int64, b []byte) {
 	}
 	if l.activity != nil {
 		l.activity.Line(off, b, evs)
+	}
+	if l.digest != nil {
+		l.digest.Line(off, b, evs)
 	}
 }
 
@@ -136,6 +140,9 @@ func (l *txLines) Reset() {
 	}
 	if l.activity != nil {
 		l.activity.Reset()
+	}
+	if l.digest != nil {
+		l.digest.Reset()
 	}
 }
 

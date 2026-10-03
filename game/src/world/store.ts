@@ -28,6 +28,7 @@ import { followupOf, FollowupsBook } from './followup';
 import { PackupBook } from './packup';
 // #98: "Classify unknown commands" (the activity settings)
 import { ActivitySettingsBook } from './activitySettings';
+import { DigestBook } from './digestSettings';
 import { LimitBook } from './limits';
 import { PresetBook } from './presets';
 // M6 crew: write-code roles, freelancer lifecycles, over-cap orchestrators.
@@ -165,6 +166,8 @@ export class WorldStore {
   readonly packup = new PackupBook();
   /** #98: the "Classify unknown commands" settings and state (`known` false from an older bridge). */
   readonly activitySettings = new ActivitySettingsBook();
+  /** #118: the floor overview summaries' settings and state. */
+  readonly digestSettings = new DigestBook();
   /** #106: the inbox's dismissed finished rows, worker id → the `status_since` of the done episode hidden. */
   readonly inboxDismissed = new Map<string, number>();
   private readonly localDesks = new Map<string, number>();
@@ -200,6 +203,7 @@ export class WorldStore {
     this.followups.reset(s.world.followups);
     this.packup.reset(s.world.packup); // #110
     this.activitySettings.reset(s.world.activity); // #98
+    this.digestSettings.reset(s.world.digest); // #118
     this.inboxDismissed.clear(); // #106
     for (const [id, since] of Object.entries(s.world.inbox_dismissed ?? {})) if (Number.isInteger(since)) this.inboxDismissed.set(id, since);
     this.seq = s.seq;
@@ -329,6 +333,9 @@ export class WorldStore {
       }
       case 'activity.update': // #98 activity settings
         this.activitySettings.upsert(e);
+        break;
+      case 'digest.update': // #118 floor overview summaries
+        this.digestSettings.upsert(e);
         break;
       // #106: the inbox hides that worker's done episode. Not part of the scene, but the inbox's pings follow it (a
       // dismissed done must not ping when its settle delay ends), so the worker counts as changed.

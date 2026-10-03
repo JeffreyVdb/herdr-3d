@@ -184,6 +184,8 @@ export interface World {
   packup?: PackupState;
   /** #98 "Classify unknown commands": the activity classifier's settings and state (absent from an older bridge, or one without the AI service). */
   activity?: ActivityState;
+  /** #118 floor overview summaries: the feature's settings and state (absent from an older bridge, or one without the AI service). */
+  digest?: DigestState;
   /** #106 the inbox's dismissed finished rows: worker id → the `status_since` of the done episode hidden (absent from an older bridge: none). */
   inbox_dismissed?: Record<string, number>;
 }
@@ -285,6 +287,8 @@ export type WorldEvent =
   | WorkerActivityEvent
   // #98 activity settings ("Classify unknown commands")
   | ActivityUpdate
+  // #118 floor overview summaries
+  | DigestUpdate
   // #106 the inbox: a finished row was dismissed
   | InboxDismissed
   // M13 whiteboard
@@ -493,6 +497,10 @@ export interface CommandArgs {
   // #98 activity settings ("Classify unknown commands", docs/protocol.md).
   'activity.get': Record<string, never>;
   'activity.set': { model_enabled?: boolean; threshold?: number; margin?: number; daily_cap?: number };
+  // #118 floor overview summaries (docs/protocol.md "Floor overview summaries"). `digest.test` acks `DigestTestAck`.
+  'digest.get': Record<string, never>;
+  'digest.set': { enabled?: boolean; daily_cap?: number };
+  'digest.test': Record<string, never>;
   'issue.get': { session: string; id: string };
   'issue.comment': { session: string; id: string; body: string };
   'issue.close': { session: string; id: string; reason: CloseReason; confirm: true };
@@ -719,6 +727,7 @@ const EVENT_TYPES = new Set([
   'packup.update', // #110 pack up on request
   'worker.activity', // #98 what the agent is doing
   'activity.update', // #98 activity settings
+  'digest.update', // #118 floor overview summaries
   'inbox.dismissed', // #106 the inbox: a finished row dismissed
   'screen.state', // M13 screen
   // M13 whiteboard
@@ -799,6 +808,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #98 activity settings: the fields of `ActivityState` flat in the event.
     case 'activity.update':
       return typeof o.model_enabled === 'boolean' && typeof o.state === 'string';
+    // #118 floor overview summaries: the fields of `DigestState` flat in the event.
+    case 'digest.update':
+      return typeof o.enabled === 'boolean' && typeof o.state === 'string';
     // #106: a dismissal of one done episode.
     case 'inbox.dismissed':
       return isStr(o.id) && isInt(o.status_since);
@@ -1161,6 +1173,9 @@ export interface WorkerIssue {
   /** `owner/name`. */
   repo: string;
   number: number;
+  /** #118: the issue's title and its page, from the floor's board (absent while unknown, or from an older bridge). The game never builds the URL. */
+  title?: string;
+  url?: string;
 }
 
 /** M6: a freelancer's report as the bridge read it (`<runs-dir>/<h3d_run>/<h3d_report>`). */
@@ -1214,6 +1229,9 @@ export interface Worker {
 export interface WorkItem {
   provider: string;
   id: string;
+  /** #118: on a worker's `work_item`, the card's title and page where the provider has them. */
+  title?: string;
+  url?: string;
 }
 
 export type CloseReason = 'completed' | 'not_planned' | 'duplicate';
@@ -1726,6 +1744,41 @@ export interface ActivityUpdate extends ActivityState {
   seq: number;
 }
 
+// #118 floor overview summaries (docs/protocol.md "Floor overview summaries"): the configured LLM writes the
+// overview's task and now lines (`WorkerDigest` sources `llm`), opt-in, gated on a passing `digest.test`.
+
+/** off: switched off; incomplete: on, but the LLM is not ready (nothing is sent); ready: lines are written (until the daily cap). */
+export type DigestFeatureState = 'off' | 'incomplete' | 'ready';
+
+export interface DigestState {
+  enabled: boolean;
+  state: DigestFeatureState;
+  /** The models that are not ready (`llm`). */
+  missing?: AiRole[];
+  roles: { llm: AiRoleState };
+  /** The fields the bridge's environment sets (`enabled`, HERDR_WORLD_DIGEST_ENABLED): read-only here. */
+  env: string[];
+  /** A passing digest.test covers the LLM in use: it can be switched on. */
+  tested: boolean;
+  /** The most LLM calls a day (default 300); past it no new calls until tomorrow, the lines written (and cached) stay. */
+  daily_cap: number;
+  calls_today: number;
+}
+
+/** `digest.update`: the whole state, flat. */
+export interface DigestUpdate extends DigestState {
+  t: 'digest.update';
+  seq: number;
+}
+
+/** `digest.test` ack: the two sample lines the LLM wrote; ok false with `reason` when one came back empty. */
+export interface DigestTestAck {
+  ok: boolean;
+  reason?: string;
+  samples: Array<{ kind: 'task' | 'now'; line?: string; error?: string }>;
+  latency_ms: number;
+}
+
 // M13 screen share (docs/protocol.md "Screen share"): the TV shows the shared screen locally; the bridge asks this
 // game for one frame per `screen.grab` (`screen.frame_request`, on this connection only, never replayed) and tells it
 // who looked (`screen.grabbed`).
@@ -1872,6 +1925,26 @@ export interface Activity {
 export interface Worker {
   /** #98: present while working, and while idle/done for `waiting` on open background tasks; absent otherwise. */
   activity?: Activity;
+}
+
+/**
+ * #118: the floor overview's lines for a worker, from its transcript (docs/protocol.md "Floor overview digest"). The
+ * task from its first prompt on; `now_source` only once a turn of its agent was read (Claude and Codex only). `llm`: the configured LLM wrote it (#118 floor overview summaries switched on).
+ */
+export interface WorkerDigest {
+  /** What it was asked to do, one line (≤ 80). */
+  task?: string;
+  task_source?: 'ai_title' | 'prompt' | 'llm' | string;
+  /** What it is doing now, one line (≤ 100); absent when `now_source` is `title`: the line is the worker's own `title`. */
+  now?: string;
+  now_source?: 'recap' | 'title' | 'llm' | string;
+  /** Unix ms (bridge clock) the `now` line was written. */
+  now_at?: number;
+}
+
+export interface Worker {
+  /** #118 */
+  digest?: WorkerDigest;
 }
 
 /** #98: a worker's activity changed (`activity` absent: cleared). At most 2 a second per worker. */

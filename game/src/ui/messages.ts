@@ -86,6 +86,10 @@ const DOES: Record<CommandName | LogoAction, string> = {
   // #98
   'activity.get': 'classify unknown commands',
   'activity.set': 'classify unknown commands',
+  // #118
+  'digest.get': 'keep the floor overview summaries',
+  'digest.set': 'keep the floor overview summaries',
+  'digest.test': 'test the floor overview summaries',
   'issue.get': 'read issues',
   'issue.comment': 'comment on issues',
   'issue.close': 'close issues',

@@ -81,6 +81,13 @@ type fuBridge struct {
 // environment's toggle (nil: the stored one), w1Role w1's run role.
 func startFuBridge(t *testing.T, db, dir string, roles *fuRoles, on *bool, w1Role string) *fuBridge {
 	t.Helper()
+	return startFuBridgeWith(t, db, dir, roles, on, w1Role, nil)
+}
+
+// startFuBridgeWith is startFuBridge with more options (tweak, after the
+// follow-up ones).
+func startFuBridgeWith(t *testing.T, db, dir string, roles *fuRoles, on *bool, w1Role string, tweak func(*server.Options)) *fuBridge {
+	t.Helper()
 	fresh := dir == ""
 	if fresh {
 		dir = t.TempDir()
@@ -103,6 +110,9 @@ func startFuBridge(t *testing.T, db, dir string, roles *fuRoles, on *bool, w1Rol
 		o.FollowupRoles = roles
 		o.FollowupsEnabled = on
 		o.FollowupDebounce = 40 * time.Millisecond
+		if tweak != nil {
+			tweak(o)
+		}
 	}, w1, w2)
 	fb.term.onTyped = func(pane string) { fb.fl.takeTurn(wsOf(pane)) }
 	ws := workersOf(fb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 2 }), "s")

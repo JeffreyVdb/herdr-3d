@@ -33,6 +33,7 @@ export type Scope =
   | 'aim:reception'
   | 'aim:whiteboard'
   | 'aim:radio'
+  | 'aim:overview'
   | 'dialog'
   | 'seated';
 
@@ -54,6 +55,7 @@ export const SCOPE_PARENT: Readonly<Record<Scope, Scope | null>> = {
   'aim:reception': 'floor',
   'aim:whiteboard': 'floor',
   'aim:radio': 'floor',
+  'aim:overview': 'floor',
   dialog: null,
   seated: null,
 };
@@ -121,6 +123,7 @@ export const BINDINGS = [
   { id: 'limits', group: ['floor', 'city'], scope: 'any', keys: [code('KeyL', { shift: true })], label: 'Plan limits' },
   { id: 'battery', group: ['floor', 'city'], scope: 'any', keys: [code('KeyB')], label: 'Battery saver', quiet: true },
   { id: 'settings', group: ['floor', 'city'], scope: 'any', keys: [{ key: ',' }], label: 'Settings' },
+  { id: 'overview', group: ['floor', 'city'], scope: 'any', keys: [code('KeyO')], label: 'Floor overview: everyone on this floor and what they are doing' },
   // ---- on a floor ----------------------------------------------------------------------------------
   { id: 'walk', group: 'floor', scope: 'floor', keys: [code('KeyW'), code('KeyA'), code('KeyS'), code('KeyD')], show: [['W A S D'], ['↑ ← ↓ →']], label: 'Walk (the arrows turn left and right)', repeat: true, readonly: true },
   { id: 'look', group: 'floor', scope: 'floor', keys: [code('PageUp'), code('PageDown')], show: [['Page Up'], ['Page Down']], label: 'Look up and down', repeat: true, readonly: true },
@@ -154,6 +157,7 @@ export const BINDINGS = [
   { id: 'elevator.open', group: 'aimed', scope: 'aim:elevator', keys: [code('KeyE')], label: 'Elevator: ride' },
   { id: 'reception.open', group: 'aimed', scope: 'aim:reception', keys: [code('KeyE')], label: 'Reception: the floor directory' },
   { id: 'whiteboard.open', group: 'aimed', scope: 'aim:whiteboard', keys: [code('KeyE')], label: 'Whiteboard: draw' },
+  { id: 'overview.open', group: 'aimed', scope: 'aim:overview', keys: [code('KeyE')], label: 'Lounge screen: the floor overview, growing out of it' },
   { id: 'radio.genre', group: 'aimed', scope: 'aim:radio', keys: [code('KeyE')], label: 'Radio: next genre' },
   { id: 'radio.track', group: 'aimed', scope: 'aim:radio', keys: [code('KeyR')], label: 'Radio: next track' },
   // ---- dialogs and fields (their own keys; listed so they are findable) ---------------------------
@@ -164,6 +168,7 @@ export const BINDINGS = [
   // ---- at a laptop (laptop/keys.ts; no help key here) ---------------------------------------------
   { id: 'seat.stand', group: 'laptop', scope: 'seated', keys: [code('Escape')], label: 'Stand up', readonly: true },
   { id: 'seat.view', group: 'laptop', scope: 'seated', keys: [code('Escape', { ctrl: true })], label: 'Terminal or conversation', readonly: true },
+  { id: 'seat.overview', group: 'laptop', scope: 'seated', keys: [code('KeyO')], label: 'The floor overview, over the conversation (Esc comes back)', readonly: true },
   { id: 'seat.look', group: 'laptop', scope: 'seated', keys: [{ key: ',', ctrl: true }], label: 'The terminal’s preset and zoom controls', readonly: true },
   { id: 'seat.zoom', group: 'laptop', scope: 'seated', keys: [{ key: '=', ctrl: true }, { key: '-', ctrl: true }, { key: '0', ctrl: true }], show: [['Ctrl', '+'], ['Ctrl', '−'], ['Ctrl', '0']], label: 'Zoom in, out and back to 100%', readonly: true },
 ] as const satisfies readonly Binding[];

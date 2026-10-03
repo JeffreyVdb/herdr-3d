@@ -5,6 +5,7 @@ import { FONT } from './cards/atlasCards';
 import { OFFICE } from './palette';
 import { buildClock, type ClockMesh } from './clock';
 import { buildRadio, type RadioMesh } from './radio';
+import { buildOverviewScreen, type OverviewScreenMesh } from './overviewScreen';
 import { buildTv, type TvMesh } from './tv';
 
 /** Static placeholder props (boards, lounge, cabinet, …): a few meshes per floor, textures drawn once. */
@@ -152,6 +153,8 @@ export interface PropMeshes {
   clock: ClockMesh | null;
   /** M13: the screen-share TV (null when the layout has none). */
   tv: TvMesh | null;
+  /** #118: the floor overview's wall screen (null when the layout has none). */
+  overview: OverviewScreenMesh | null;
   /** M13: puts the board's render on the whiteboard (null: back to the placeholder); the one it replaces is disposed. */
   setWhiteboard(tex: THREE.Texture | null): void;
   dispose(): void;
@@ -214,6 +217,11 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
   const tvProp = byId.get('tv');
   const tv = tvProp ? buildTv(tvProp.box) : null;
   if (tv) group.add(tv.group);
+
+  // #118: the floor overview on the lounge wall (render/overviewScreen.ts); the app feeds it the floor's tree.
+  const ovProp = byId.get('screen.overview');
+  const overview = ovProp ? buildOverviewScreen(ovProp.box) : null;
+  if (overview) group.add(overview.group);
 
   const filing = byId.get('filing');
   if (filing) {
@@ -395,8 +403,10 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
       wbFront.needsUpdate = true;
     },
     tv,
+    overview,
     dispose() {
       tv?.dispose(); // first: it lets go of the share's texture, which is not the floor's to dispose
+      overview?.dispose(); // its two canvas textures
       wbShown?.dispose();
       group.traverse((o) => {
         if (o instanceof THREE.Mesh) {

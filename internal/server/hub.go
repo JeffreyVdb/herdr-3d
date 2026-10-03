@@ -20,6 +20,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/activity"
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
+	"github.com/JeffreyVdb/herdr-3d/internal/digest"
 	"github.com/JeffreyVdb/herdr-3d/internal/followup"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
@@ -27,6 +28,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/packup"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
+	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/whiteboard"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
@@ -232,6 +234,16 @@ type Options struct {
 	ActivityModel    *bool
 	ActivityThrottle time.Duration
 	ActivityRoles    activity.Roles
+	// #118 phase 2 floor overview summaries: DigestEnabled is the
+	// environment's toggle (HERDR_WORLD_DIGEST_ENABLED; nil: not set),
+	// DigestSettle how long after a turn ended its now line is written
+	// (default DefaultDigestSettle), DigestGap the least time between two
+	// now lines of a worker (default DefaultDigestGap), DigestRoles the LLM
+	// (default AI; tests pass fakes).
+	DigestEnabled *bool
+	DigestSettle  time.Duration
+	DigestGap     time.Duration
+	DigestRoles   digest.Roles
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -329,6 +341,11 @@ type Hub struct {
 	pk packupState   // #110 pack up on request
 
 	act activityHub // #98 activity
+
+	// #118: worker id → its transcript's digest (the overview's lines come
+	// from it; phase 2's summarizer reads it).
+	dg  map[string]*transcript.Digest
+	dgs digestHub // #118 phase 2: floor overview summaries
 }
 
 type floorState struct {
@@ -466,6 +483,12 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if opts.ActivityThrottle <= 0 {
 		opts.ActivityThrottle = DefaultActivityThrottle
 	}
+	if opts.DigestSettle <= 0 { // #118
+		opts.DigestSettle = DefaultDigestSettle
+	}
+	if opts.DigestGap <= 0 {
+		opts.DigestGap = DefaultDigestGap
+	}
 	if opts.HirePoll <= 0 {
 		opts.HirePoll = defaultHirePoll
 	}
@@ -501,6 +524,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		usage:         map[string]*proto.Usage{},
 		limits:        map[string]proto.Limits{},
 		limitsPoller:  newLimitsPoller(opts.Limits),
+		dg:            map[string]*transcript.Digest{},
 	}
 	h.initTerm()        // M5 term
 	h.initTranscripts() // M16 transcript
@@ -535,6 +559,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		return nil, err
 	}
 	if err := h.initActivity(ctx); err != nil { // #98
+		return nil, err
+	}
+	if err := h.initDigest(ctx); err != nil { // #118
 		return nil, err
 	}
 	if err := h.initBoards(ctx); err != nil { // M7 boards
@@ -753,6 +780,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startDismissFollowup
 		case proto.CmdActivityGet, proto.CmdActivitySet: // #98
 			start = h.startActivity
+		case proto.CmdDigestGet, proto.CmdDigestSet, proto.CmdDigestTest: // #118
+			start = h.startDigest
 		// M7 boards
 		case proto.CmdBoardWatch:
 			start = h.startBoardWatch
@@ -846,6 +875,8 @@ func errorCode(err error) string {
 		return packupErrorCode(err)
 	case activityErrorCode(err) != "": // #98
 		return activityErrorCode(err)
+	case digestErrorCode(err) != "": // #118
+		return digestErrorCode(err)
 	case aiErrorCode(err) != "": // #92
 		return aiErrorCode(err)
 	case boardCode(err) != "": // M7 boards
@@ -1067,6 +1098,8 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 		delete(h.typed, id) // #95
 		delete(h.starts, id)
 		delete(h.dirty, id)
+		delete(h.dg, id)                               // #118
+		delete(h.dgs.ws, id)                           // #118 phase 2
 		h.dropFollowup(context.Background(), id, true) // #90: gone
 		if w != nil {
 			h.emit(proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: w.Session, WorkspaceID: w.WorkspaceID})
@@ -1218,6 +1251,8 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		delete(h.typed, id) // #95
 		delete(h.starts, id)
 		delete(h.dirty, id)
+		delete(h.dg, id)              // #118
+		delete(h.dgs.ws, id)          // #118 phase 2
 		h.dropFollowup(ctx, id, true) // #90: gone
 		if w == nil {
 			continue
@@ -1338,6 +1373,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		}
 		next.Followup = h.followupView(id)
 		next.Activity = h.activityFor(id, next, h.workers[id]) // #98: for its status, in the same event
+		next.Digest = h.workerDigest(id, next)                 // #118
 		h.withQuestion(next)                                   // M5 term
 		if op := f.hires[id]; op != nil && !op.seen {
 			op.seen = true
@@ -1727,6 +1763,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.Followups = h.followupsView()           // #90
 	w.Packup = h.packupView()                 // #110
 	w.Activity = h.activityView()             // #98
+	w.Digest = h.digestView()                 // #118
 	w.InboxDismissed = h.inboxDismissedView() // #106
 	placed := map[string]bool{}
 	var order []string

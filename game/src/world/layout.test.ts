@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blocked, moveWithCollision, pickNearest, rayBox } from './collide';
 import { assignDesks, deskCountFallback, displayStatus, modelCue, modelLabel, taskLine } from './derive';
-import { COUNTER_RECT, COUNTER_TOP, EYE_HEIGHT, floorLayout, outlineOf, podGrid, seatRect, slotBoxes, wallPieces, type Rect } from './layout';
+import { COUNTER_RECT, COUNTER_TOP, EYE_HEIGHT, HEAD, floorLayout, openingsFor, outlineOf, overviewScreenBox, podGrid, POST_W, ROOM_HEIGHT, seatRect, slotBoxes, wallPieces, type Rect } from './layout';
 
 describe('deskCountFallback', () => {
   it.each([
@@ -127,7 +127,7 @@ describe('floorLayout', () => {
   it('has every placeholder prop, labelled', () => {
     const ids = floorLayout(20).props.map((p) => p.id);
     expect(ids.sort()).toEqual(
-      ['board.issues', 'board.prs', 'board.services', 'clock', 'dropzone', 'elevator', 'filing', 'lounge', 'radio', 'tv', 'whiteboard'].sort(),
+      ['board.issues', 'board.prs', 'board.services', 'clock', 'dropzone', 'elevator', 'filing', 'lounge', 'radio', 'screen.overview', 'tv', 'whiteboard'].sort(),
     );
   });
 
@@ -176,6 +176,63 @@ describe('floorLayout', () => {
       expect(first([stand.x, EYE_HEIGHT, stand.z])).toBe('radio');
       // Every stand-off along the aisle in front of the counter can reach it.
       for (const z of [3.7, 4.1, 4.5, 4.8]) expect(first([1.3, EYE_HEIGHT, z]), `from z=${z}`).toBe('radio');
+    }
+  });
+
+  it('#118: hangs the floor overview screen on the lounge wall, as big as the blank stretch allows', () => {
+    // The depths the building outlines take (MIN_D, and the desk grid's rows).
+    for (const [depth, width] of [
+      [14, 7.35],
+      [17.8, 4.75],
+      [23.1, 6.85],
+      [28.4, 5.75],
+    ] as const) {
+      const b = overviewScreenBox(depth);
+      const at = `depth ${depth}`;
+      // A thin bezel box on the west wall, facing +x.
+      expect(b.min[0], at).toBe(0);
+      expect(b.max[0], at).toBeLessThanOrEqual(0.1);
+      // 0.4 m clear of the north-west corner, and of the frame (sill and jambs, 5 cm past the hole) of the northernmost west window.
+      expect(b.min[2], at).toBeCloseTo(0.4, 5);
+      const west = openingsFor(30, depth).filter((o) => o.wall === 'west' && o.kind === 'window');
+      expect(west.length, at).toBeGreaterThan(0);
+      const frame = Math.min(...west.map((o) => o.u0)) - 0.05;
+      expect(frame - b.max[2], at).toBeGreaterThanOrEqual(0.4 - 1e-9);
+      expect(b.max[2] - b.min[2], at).toBeCloseTo(width, 3);
+      // Over the counter's coffee machine, mugs and the radio's antenna (1.4 m), under the window heads and well under the ceiling.
+      expect(b.min[1], at).toBeGreaterThanOrEqual(1.55);
+      expect(b.max[1], at).toBeLessThan(HEAD);
+      expect(ROOM_HEIGHT - b.max[1], at).toBeGreaterThanOrEqual(0.8);
+      expect(b.max[1] - b.min[1], at).toBeCloseTo(4, 1);
+    }
+  });
+
+  it('#118: the screen is a prop of every floor, clear of the counter, the radio and the mezzanine posts; the radio stays the nearest pick', () => {
+    for (const n of [0, 6, 20, 62, 96]) {
+      const l = floorLayout(n);
+      const screen = l.props.find((p) => p.id === 'screen.overview');
+      expect(screen, `${n} desks`).toMatchObject({ label: 'Floor overview', solid: false });
+      const b = (screen as NonNullable<typeof screen>).box;
+      expect(b).toEqual(overviewScreenBox(l.depth));
+      const radio = l.props.find((p) => p.id === 'radio')?.box;
+      expect(b.min[1]).toBeGreaterThan(radio?.max[1] ?? Infinity);
+      expect(b.min[1]).toBeGreaterThan(COUNTER_TOP + 0.5);
+      for (const p of l.mezzanine.posts) {
+        const h = POST_W / 2;
+        const post = { x0: p.x - h, z0: p.z - h, x1: p.x + h, z1: p.z + h };
+        expect(post.x0 > b.max[0] + 0.5 || post.z1 < b.min[2] - 0.5 || post.z0 > b.max[2] + 0.5, `post at ${p.x},${p.z}`).toBe(true);
+      }
+      // Aimed at from the lounge, the screen is what you hit; aiming at the radio still hits the radio first.
+      const pick = (from: [number, number, number], to: [number, number, number]) => {
+        const d: [number, number, number] = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+        const len = Math.hypot(...d);
+        return pickNearest(from, [d[0] / len, d[1] / len, d[2] / len], l.props.map((p) => ({ boxes: [p.box], value: p.id })), 4)?.value;
+      };
+      const mid: [number, number, number] = [b.max[0], (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
+      expect(pick([2.6, EYE_HEIGHT, 2.6], mid)).toBe('screen.overview');
+      const r = radio as NonNullable<typeof radio>;
+      const rc: [number, number, number] = [(r.min[0] + r.max[0]) / 2, (r.min[1] + r.max[1]) / 2, (r.min[2] + r.max[2]) / 2];
+      for (const z of [3.7, 4.1, 4.5, 4.8]) expect(pick([1.3, EYE_HEIGHT, z], rc), `from z=${z}`).toBe('radio');
     }
   });
 
