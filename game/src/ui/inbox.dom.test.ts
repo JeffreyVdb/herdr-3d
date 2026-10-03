@@ -4,6 +4,7 @@ import { InboxChip, type InboxEntry } from './inbox';
 import { InboxPrefs } from './inboxPrefs';
 import { LimitsPrefs } from './limitsPrefs';
 import { displaySection } from './settingsSections';
+import { HirePrefs } from './hirePrefs';
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const NOW = 1_800_000_000_000;
@@ -309,6 +310,24 @@ describe('Settings → Display: Show inbox', () => {
     expect(box.checked).toBe(true);
     handle.dispose?.();
     prefs.set({ show: false });
+    expect(box.checked).toBe(true);
+  });
+});
+
+describe('Settings → Display: Go to a new hire after hiring (#116)', () => {
+  it('is bound to the hire prefs both ways', () => {
+    const prefs = new HirePrefs(null);
+    const body = document.createElement('div');
+    const handle = displaySection(new LimitsPrefs(null), undefined, undefined, prefs)(body);
+    const box = body.querySelector<HTMLInputElement>('#settings-hire-goto')!;
+    expect(box.checked).toBe(true);
+    box.checked = false;
+    box.dispatchEvent(new Event('change'));
+    expect(prefs.goToNew).toBe(false);
+    prefs.goToNew = true;
+    expect(box.checked).toBe(true);
+    handle.dispose?.();
+    prefs.goToNew = false;
     expect(box.checked).toBe(true);
   });
 });

@@ -629,7 +629,7 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   plans and ties it together; #98: `monitors.ts` gives every desk its activity card, resting mascot or glance once per
   plan (a covered desk's terminal is not watched; seated and packing-up desks keep their screens) and fetches the
   images of the few desks near you (`transcript.image` by hash, chosen like the live screens); the preference is
-  `h3d.monitors` (`ui/monitorPrefs.ts`, Settings → Display → Desk monitors: Activity | Terminal). #74: the seated watch asks for `fullscreen` (the bridge zooms the pane's herdr tab), `watches.ts`
+  `h3d.monitors` (`ui/monitorPrefs.ts`, Settings → Display → Desk monitors: Activity | Terminal). #116: `h3d.hire.goto` (`ui/hirePrefs.ts`, Settings → Display → Go to a new hire after hiring). #74: the seated watch asks for `fullscreen` (the bridge zooms the pane's herdr tab), `watches.ts`
   keeps its zoom state (the ack's `zoom`, `terminal.state`, `terminal.zoom`; a bridge without them: no chip, no error),
   `fullscreen.ts` (pure) turns it into the seat bar's chip (`Fullscreen` / `Split pane 60×40` / `Fullscreen unavailable`),
   the preference is `h3d.term.fullscreen` (`themePrefs.ts`; off is sent as `fullscreen: false`, which only follows the
@@ -915,7 +915,7 @@ with **Fetch again**, and hiring without a worktree still works. Warnings sit by
 without scrolling. Hire hides the desk's "+" at once (each hire in flight holds its own desk, so Esc and another hire
 meanwhile is fine: the top bar skips desks a hire is on its way to); the new
 worker drops in to its chair from above (under a second, M6b); its desk is its own at once, so you can look at it, sit
-at its screen and prompt it while it lands. Look at a worker and press **X** to send it home: its branch and folder, what is left on the desk (uncommitted
+at its screen and prompt it while it lands. #116: once its hire is acknowledged and the dialog is still the one that sent it, you are taken to the new worker (`App.goToNewHire` → `goToWorker(id, 'transcript')`): seated at its laptop, its conversation on screen, once it is in the store and its drop-in is over (6 s at most; never over an Esc'd dialog, another dialog or a seat you took); Settings → Display → "Go to a new hire after hiring" (`ui/hirePrefs.ts`, `h3d.hire.goto`, on by default) turns it off. Look at a worker and press **X** to send it home: its branch and folder, what is left on the desk (uncommitted
 changes, commits not on any remote) and, for a worker in a linked worktree of its own, keep / delete the worktree /
 delete the worktree and branch (delete only when the bridge says the tree is clean and pushed, else a warning says
 why; the branch too only when the bridge made it for this worker, `can_delete_branch`); a main checkout whose worktrees are still open cannot go yet. Focus starts on "keep", where Enter sends it home;

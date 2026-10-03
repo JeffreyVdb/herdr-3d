@@ -65,6 +65,7 @@ import { ScreenShareController } from './screen';
 import { LimitsWidget } from './ui/limits';
 // #100 the inbox chip under them
 import { InboxChip, type InboxEntry } from './ui/inbox';
+import { HirePrefs } from './ui/hirePrefs';
 import { InboxPrefs } from './ui/inboxPrefs';
 import { inboxQueue, inboxReason, inboxWhere, type InboxCandidate } from './world/inbox';
 // #92 AI integration
@@ -137,6 +138,8 @@ interface BuildingCtx {
 const CLIENT = 'herdr-3d-game/0.2';
 /** Gap between the gong rings of several PRs merged in one poll. */
 const GONG_GAP_MS = 450;
+/** #116: how long a new hire's go-to waits for the worker and its drop-in to finish. */
+const HIRE_GOTO_WAIT_MS = 6000;
 
 /** Everything between the renderer and the bridge: views, input, HUD, frame pacing. */
 /** A key aimed at a text field, an editable area (the prompt composer, #51) included: it types, the game does not take it. */
@@ -166,6 +169,7 @@ export class App {
   /** #100: the inbox chip under the plate, its list, and what it remembers per browser. */
   readonly inbox: InboxChip;
   readonly inboxPrefs = new InboxPrefs();
+  readonly hirePrefs = new HirePrefs(); // #116
   readonly hud: Hud;
   readonly city: CityView;
   readonly client: BridgeClient;
@@ -302,7 +306,7 @@ export class App {
     this.hud.mountAudio(this.audio);
     if (o.buildInfo) this.hud.mountAbout(o.buildInfo);
     this.settings = this.hud.mountSettings();
-    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs), { store: 'browser' });
+    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs, this.hirePrefs), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
     // #100: how the inbox reaches you beyond its chip: desktop notifications and the chime.
     this.settings.addSection('notifications', 'Notifications', notifySection({ prefs: this.inboxPrefs, audio: this.audio }), { store: 'browser' });
@@ -477,7 +481,7 @@ export class App {
     };
     const upload = (f: Blob, hint: { label?: string; n?: number }, signal?: AbortSignal) => postUpload(this.url, f, hint, signal);
     const hireHost = { ...dialogHost, upload, reserve: (s: string, d: number) => this.reserve(s, d), held: (s: string) => this.heldDesks(s) };
-    this.hire = new HireDialog(o.host, { ...hireHost, orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ session: s, desk: d }, true) } });
+    this.hire = new HireDialog(o.host, { ...hireHost, goTo: (id) => this.goToNewHire(id), orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ session: s, desk: d }, true) } });
     // M6 start
     this.presetsPanel = new PresetsPanel(o.host, dialogHost);
     this.startRun = new StartRunDialog(o.host, {
@@ -1252,6 +1256,26 @@ export class App {
     this.walker.stop();
     this.panels.close();
     this.presetsPanel.open(from);
+  }
+
+  /**
+   * #116: after a hire is acknowledged (the hire dialog was still its own), sits you at the new worker's laptop with its
+   * conversation on screen, if Settings → Display says so. The ack can come before the worker is in the store and
+   * `sitAt` fails while the hire is still dropping into its chair ("not at the desk right now"), so it waits, for at most
+   * `HIRE_GOTO_WAIT_MS`, for the worker and the end of its arrival; on timeout the toast stands alone. It never yanks: a
+   * dialog or panel that opened, a seat taken, a transition or a floor left while waiting all drop it.
+   */
+  private goToNewHire(id: string): void {
+    if (!this.hirePrefs.goToNew) return;
+    const until = performance.now() + HIRE_GOTO_WAIT_MS;
+    const wait = (): void => {
+      const v = this.store.workerView(id);
+      const here = this.mode === 'floor' && this.place.area === 'floor' && (!v || this.office?.session === v.worker.session);
+      if (!this.hirePrefs.goToNew || !here || this.dialogOpen || this.panels.open || this.hud.sheetOpen || this.transitioning || this.laptops.seated) return;
+      if (v && !this.arrivals.has(id) && !this.office?.awayDesks().has(v.desk)) void this.goToWorker(id, 'transcript'); // (false, or facing only: the toast already says they are coming)
+      else if (performance.now() < until) setTimeout(wait, 100);
+    };
+    wait();
   }
 
   /** A run started: you turn to its orchestrator's desk on the floor you are on, and watch it drop in. */

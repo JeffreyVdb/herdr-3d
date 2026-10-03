@@ -1,3 +1,4 @@
+import type { HirePrefs } from './hirePrefs';
 import type { InboxPrefs } from './inboxPrefs';
 import type { LimitsPrefs } from './limitsPrefs';
 import type { MonitorPrefs } from './monitorPrefs';
@@ -19,8 +20,9 @@ let fieldSerial = 0;
  * M10: the plan limits widget is on by default; this is where it is switched off and on (moved from About, #91).
  * #98: and what the desk monitors show while you stand: what the agent is doing (the default) or its terminal.
  * #100: and the inbox chip under the plan limits, on by default too.
+ * #116: and whether a new hire takes you to its desk, on by default as well.
  */
-export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs, inbox?: InboxPrefs): (body: HTMLElement) => SectionHandle {
+export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs, inbox?: InboxPrefs, hire?: HirePrefs): (body: HTMLElement) => SectionHandle {
   return (body) => {
     const box = el('input');
     box.type = 'checkbox';
@@ -49,12 +51,29 @@ export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs, inbo
       l.append(ib, el('span', '', 'Show the inbox: who needs you or has finished'));
       switches.push(l);
     }
+    // #116: Go to a new hire after hiring.
+    let offHire = () => {};
+    if (hire) {
+      const hb = el('input');
+      hb.type = 'checkbox';
+      hb.id = 'settings-hire-goto';
+      const syncHire = () => (hb.checked = hire.goToNew);
+      syncHire();
+      hb.addEventListener('change', () => (hire.goToNew = hb.checked));
+      const unsub = hire.onChange(syncHire);
+      offHire = () => void unsub();
+      const l = el('label', 'settings-switch');
+      l.htmlFor = hb.id;
+      l.append(hb, el('span', '', 'Go to a new hire after hiring: sit at its laptop, on its conversation'));
+      switches.push(l);
+    }
     if (!monitors) {
       body.append(...switches);
       return {
         dispose: () => {
           off();
           offInbox();
+          offHire();
         },
       };
     }
@@ -87,6 +106,7 @@ export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs, inbo
       dispose: () => {
         off();
         offInbox();
+        offHire();
         offMonitors();
       },
     };
