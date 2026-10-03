@@ -66,6 +66,7 @@ import { LimitsWidget } from './ui/limits';
 // #100 the inbox chip under them
 import { InboxChip, type InboxEntry } from './ui/inbox';
 import { HirePrefs } from './ui/hirePrefs';
+import { onPlayerAct, waitForHire } from './ui/hireGoto';
 import { InboxPrefs } from './ui/inboxPrefs';
 import { inboxQueue, inboxReason, inboxWhere, type InboxCandidate } from './world/inbox';
 // #92 AI integration
@@ -138,8 +139,6 @@ interface BuildingCtx {
 const CLIENT = 'herdr-3d-game/0.2';
 /** Gap between the gong rings of several PRs merged in one poll. */
 const GONG_GAP_MS = 450;
-/** #116: how long a new hire's go-to waits for the worker and its drop-in to finish. */
-const HIRE_GOTO_WAIT_MS = 6000;
 
 /** Everything between the renderer and the bridge: views, input, HUD, frame pacing. */
 /** A key aimed at a text field, an editable area (the prompt composer, #51) included: it types, the game does not take it. */
@@ -170,6 +169,9 @@ export class App {
   readonly inbox: InboxChip;
   readonly inboxPrefs = new InboxPrefs();
   readonly hirePrefs = new HirePrefs(); // #116
+  /** #116: cancels the go-to still waiting for its new hire. */
+  private stopHireGoto: (() => void) | null = null;
+  private hireGotoGen = 0;
   readonly hud: Hud;
   readonly city: CityView;
   readonly client: BridgeClient;
@@ -1262,20 +1264,35 @@ export class App {
    * #116: after a hire is acknowledged (the hire dialog was still its own), sits you at the new worker's laptop with its
    * conversation on screen, if Settings → Display says so. The ack can come before the worker is in the store and
    * `sitAt` fails while the hire is still dropping into its chair ("not at the desk right now"), so it waits, for at most
-   * `HIRE_GOTO_WAIT_MS`, for the worker and the end of its arrival; on timeout the toast stands alone. It never yanks: a
-   * dialog or panel that opened, a seat taken, a transition or a floor left while waiting all drop it.
+   * `HIRE_GOTO_WAIT_MS`, for the worker and the end of its arrival; on timeout the toast stands alone. It never yanks: the
+   * moment you act (a key, a press, the wheel, a dialog taking `open`, or a pose that is no longer the one you had: moved,
+   * turned, sat) it is gone for good, whatever the state is by the next look; and a modal dialog (Settings, About: not in
+   * `dialogOpen`, but `dismissOverlays` would close them), a panel, a seat taken, a transition or a floor left drops it too.
    */
   private goToNewHire(id: string): void {
+    this.stopHireGoto?.(); // (a newer hire's go-to takes over)
     if (!this.hirePrefs.goToNew) return;
-    const until = performance.now() + HIRE_GOTO_WAIT_MS;
-    const wait = (): void => {
-      const v = this.store.workerView(id);
-      const here = this.mode === 'floor' && this.place.area === 'floor' && (!v || this.office?.session === v.worker.session);
-      if (!this.hirePrefs.goToNew || !here || this.dialogOpen || this.panels.open || this.hud.sheetOpen || this.transitioning || this.laptops.seated) return;
-      if (v && !this.arrivals.has(id) && !this.office?.awayDesks().has(v.desk)) void this.goToWorker(id, 'transcript'); // (false, or facing only: the toast already says they are coming)
-      else if (performance.now() < until) setTimeout(wait, 100);
-    };
-    wait();
+    const gen = ++this.hireGotoGen;
+    let acted = false;
+    const w = this.walker;
+    const pose = [w.x, w.z, w.yaw, w.sitting];
+    const stopActs = onPlayerAct(() => (acted = true));
+    const cancel = waitForHire({
+      acted: () => acted || w.x !== pose[0] || w.z !== pose[1] || w.yaw !== pose[2] || w.sitting !== pose[3],
+      check: () => {
+        const v = this.store.workerView(id);
+        const here = this.mode === 'floor' && this.place.area === 'floor' && (!v || this.office?.session === v.worker.session);
+        const busy = this.dialogOpen || this.panels.open || this.hud.sheetOpen || !!document.querySelector('dialog:modal') || this.transitioning || !!this.laptops.seated;
+        if (!this.hirePrefs.goToNew || !here || busy) return 'drop';
+        return v && !this.arrivals.has(id) && !this.office?.awayDesks().has(v.desk) ? 'go' : 'wait';
+      },
+      go: () => void this.goToWorker(id, 'transcript'), // (false, or facing only: the toast already says they are coming)
+      end: () => {
+        stopActs();
+        if (this.hireGotoGen === gen) this.stopHireGoto = null;
+      },
+    });
+    this.stopHireGoto = cancel;
   }
 
   /** A run started: you turn to its orchestrator's desk on the floor you are on, and watch it drop in. */
