@@ -140,6 +140,33 @@ func TestScrubBeforeEverySend(t *testing.T) {
 	}
 }
 
+// Each piece is scrubbed whole before it is clipped: a step's text whose
+// credential label falls just outside its last MaxStepText bytes, a prompt
+// whose credential straddles MaxPrompt; and a tool's name is scrubbed too.
+func TestScrubBeforeClip(t *testing.T) {
+	const secret = "reviewSynthetic1"
+	text := "Authorization: Bearer " + secret + strings.Repeat(" x", 292)
+	if i := strings.Index(text, secret); len(text)-i != digest.MaxStepText {
+		t.Fatalf("the secret starts %d bytes from the end", len(text)-i)
+	}
+	prompt := strings.Repeat("y", digest.MaxPrompt-30) + " Authorization: Bearer " + secret + strings.Repeat("z", 40)
+	ins := []digest.Input{
+		{Kind: digest.KindTask, Prompt: prompt},
+		{Kind: digest.KindNow, Steps: []digest.Step{{Texts: []string{text},
+			Tools: []digest.Tool{{Name: "ghp_abcdefghijklmnop1234", Summary: "x"}, {Name: "Bash", Summary: "Bearer " + secret}}}}},
+	}
+	for _, in := range ins {
+		got := digest.Prepare(in)
+		noSecret(t, in.Kind, got)
+		if strings.Contains(got, "reviewSynth") {
+			t.Errorf("%s holds the bearer token: %s", in.Kind, got)
+		}
+	}
+	if got := digest.Prepare(ins[1]); !strings.Contains(got, "- tool [key]") {
+		t.Errorf("the tool's name was not scrubbed: %s", got)
+	}
+}
+
 // The request: the instruction in the system turn, the input as data between
 // delimiters in the user turn (a closing delimiter inside it defused),
 // MaxTokens set; the steps the last five, tool calls by name and summary.

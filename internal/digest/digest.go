@@ -9,8 +9,9 @@
 // ready (Service.Summarize): the first prompt, or the last steps' texts and
 // their tool calls as name and input summary (never a tool's output, never
 // thinking), with a short context line (a ticket's title, the task line).
-// Every piece is scrubbed (Scrub: the activity's token patterns and
-// ai.Scrub's) and clipped before it goes; the request marks it as data
+// Every piece (a tool's name too) is scrubbed whole (Scrub: the activity's
+// token patterns and ai.Scrub's), then clipped, then scrubbed again before it
+// goes; the request marks it as data
 // between delimiters, the instruction in its own (system) turn. The answer
 // is cleaned (Clean: one line, no quotes or markdown, clipped); an empty one
 // is no line, so the previous one stays.
@@ -102,13 +103,14 @@ func Scrub(s string) string {
 }
 
 // Prepare is the text of an input as it is sent (and as its cache key
-// hashes it): scrubbed and clipped, the steps the last MaxSteps.
+// hashes it): every piece scrubbed whole, then clipped, then scrubbed again
+// (scrubClip), the steps the last MaxSteps.
 func Prepare(in Input) string {
 	if in.Kind == KindTask {
-		return Scrub(head(strings.TrimSpace(in.Prompt), MaxPrompt))
+		return scrubClip(strings.TrimSpace(in.Prompt), func(s string) string { return head(s, MaxPrompt) })
 	}
 	var b strings.Builder
-	if c := oneLine(Scrub(in.Context), MaxContext); c != "" {
+	if c := scrubClip(in.Context, func(s string) string { return oneLine(s, MaxContext) }); c != "" {
 		b.WriteString("Context: " + c + "\n")
 	}
 	steps := in.Steps
@@ -121,15 +123,15 @@ func Prepare(in Input) string {
 		}
 		b.WriteString("Step " + strconv.Itoa(i+1) + ":\n")
 		if t := strings.TrimSpace(strings.Join(s.Texts, "\n")); t != "" {
-			b.WriteString(Scrub(tail(t, MaxStepText)) + "\n")
+			b.WriteString(scrubClip(t, func(s string) string { return tail(s, MaxStepText) }) + "\n")
 		}
 		tools := s.Tools
 		if len(tools) > MaxTools {
 			tools = tools[len(tools)-MaxTools:]
 		}
 		for _, t := range tools {
-			line := "- tool " + oneLine(t.Name, 40)
-			if sum := oneLine(Scrub(t.Summary), MaxToolSummary); sum != "" {
+			line := "- tool " + scrubClip(t.Name, func(s string) string { return oneLine(s, 40) })
+			if sum := scrubClip(t.Summary, func(s string) string { return oneLine(s, MaxToolSummary) }); sum != "" {
 				line += ": " + sum
 			}
 			b.WriteString(line + "\n")
@@ -137,6 +139,11 @@ func Prepare(in Input) string {
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// scrubClip is s scrubbed in full before cut clips it (a secret's label
+// cut off would let the secret through), and scrubbed again after (in case
+// the cut made a piece the patterns know).
+func scrubClip(s string, cut func(string) string) string { return Scrub(cut(Scrub(s))) }
 
 // Key is an input's cache key: the hex SHA-256 of its kind and its prepared
 // text. Only the key and the line are ever stored.
