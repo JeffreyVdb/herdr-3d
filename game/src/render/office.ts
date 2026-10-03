@@ -75,6 +75,8 @@ export function seatOf(layout: FloorLayout, i: number, v: Pick<WorkerView, 'work
 export const SEAT_Y = 0.45;
 export const CARD_Y = 1.62;
 export const REACH = 3;
+/** #124: the props T can pick, in the order it goes through them. */
+const KEY_PROPS = ['board.issues', 'board.prs', 'whiteboard', 'radio', 'elevator', 'screen.overview'];
 
 export interface OfficeOptions {
   shadows: boolean;
@@ -817,8 +819,8 @@ export class OfficeView {
     return this.obstacleCache;
   }
 
-  /** What the centre of the screen looks at, within reach; `ownDesk: false` leaves your desk out (#20). */
-  pick(origin: V3, dir: V3, reach = REACH, ownDesk = true): Target | null {
+  /** Everything a look can pick: the props, the workers and the free desks. */
+  private pickables(): Array<Pickable<Target>> {
     if (!this.targetCache) {
       const targets: Array<Pickable<Target>> = [...this.propTargets];
       this.layout.slots.forEach((slot, i) => {
@@ -832,8 +834,44 @@ export class OfficeView {
       });
       this.targetCache = targets;
     }
-    this.targetOwnCache ??= [...this.targetCache, this.ownDesk];
-    return pickNearest(origin, dir, ownDesk ? this.targetOwnCache : this.targetCache, reach, this.blockers)?.value ?? null;
+    return this.targetCache;
+  }
+
+  /** What the centre of the screen looks at, within reach; `ownDesk: false` leaves your desk out (#20). */
+  pick(origin: V3, dir: V3, reach = REACH, ownDesk = true): Target | null {
+    const targets = this.pickables();
+    this.targetOwnCache ??= [...targets, this.ownDesk];
+    return pickNearest(origin, dir, ownDesk ? this.targetOwnCache : targets, reach, this.blockers)?.value ?? null;
+  }
+
+  /**
+   * #124: what the keyboard can pick (T) without aiming: every worker and free desk in desk order, then your desk (`ownDesk`),
+   * the Issues and Pull requests boards, the whiteboard, the radio, the elevator and the lounge's overview screen (the things E, P, C, X or R do
+   * something to), each with the point to turn to.
+   */
+  keyTargets(ownDesk: boolean): Array<{ target: Target; at: V3 }> {
+    const centre = (b: Box3): V3 => [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
+    const all = ownDesk ? [...this.pickables(), this.ownDesk] : this.pickables();
+    const rank = (t: Target): number => {
+      if (t.kind === 'worker' || t.kind === 'desk') return 0;
+      if (t.kind === 'own-desk') return 1;
+      const i = KEY_PROPS.indexOf(t.id);
+      return i < 0 ? -1 : 2 + i;
+    };
+    return all
+      .flatMap((p) => {
+        const box = p.value.kind === 'desk' ? p.boxes[1] : p.boxes[0];
+        return box && rank(p.value) >= 0 ? [{ target: p.value, at: centre(box), r: rank(p.value), d: p.value.kind === 'worker' || p.value.kind === 'desk' ? p.value.desk : 0 }] : [];
+      })
+      .sort((x, y) => x.r - y.r || x.d - y.d)
+      .map(({ target, at }) => ({ target, at }));
+  }
+
+  /** Is this still there to act on (the worker still sits at that desk, the desk is still free)? */
+  stillPickable(t: Target): boolean {
+    if (t.kind === 'worker') return this.seats[t.desk]?.worker.id === t.id;
+    if (t.kind === 'desk') return !this.seats[t.desk] && !this.away.has(t.desk);
+    return true;
   }
 
   /** Cards on screen with what they say (tests); M5: `tall` when drawn with the question / usage room. */

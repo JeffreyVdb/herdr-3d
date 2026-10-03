@@ -58,6 +58,9 @@ export interface H3DDebug {
   };
   /** What the centre of the screen picks in first person (within 3 m; the whole floor up on the mezzanine), else null. */
   lookAt(): LookAt | null;
+  /** #124: what E, P, C, X and the digits act on right now (aimed at, or picked with T), and whether it was picked; the shortcut list's state. */
+  target(): { kind: string; id: string; label: string; picked: boolean } | null;
+  shortcutsOpen(): boolean;
   /** M3c: sits you at your desk (as E on it does); false unless you stand in your corner office. */
   sit(): boolean;
   /** Status shown on screen for a worker, and when (unix ms) it got there. */
@@ -309,6 +312,8 @@ const h3d: H3DDebug = {
   }),
   sit: () => app?.sit() ?? false,
   lookAt: () => app?.lookAt() ?? null,
+  target: () => app?.targetInfo() ?? null,
+  shortcutsOpen: () => app?.shortcuts.isOpen ?? false,
   status: (id) => app?.rendered.get(id) ?? null,
   world: () =>
     app

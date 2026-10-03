@@ -16,6 +16,7 @@ import { crewBarKey, crewLine } from './crewBar';
 import { usageTotal, type UsageTotal } from '../world/usage';
 import type { GameAudio } from '../audio';
 import { backdropPolicy } from './dismiss';
+import { keyName, withKey } from '../input/shortcuts';
 import { countItems } from '../world/overview';
 
 /** Authored 24×24 stroke icons, one weight. */
@@ -58,7 +59,6 @@ const KEYS: Array<[string, string, boolean]> = [
   ['E', 'Laptop', false],
   ['C', 'Changes', true],
   ['P', 'Prompt', true],
-  ['H', 'Handoff', false],
   ['X', 'Send home', true],
 ];
 
@@ -88,7 +88,7 @@ export class Hud {
   private readonly issues = el('button', 'btn', `${svg(ICON.issues)}<span>Issues</span>`);
   private readonly prs = el('button', 'btn', `${svg(ICON.prs)}<span>PRs</span>`);
   /** #118: the floor overview (O), next to Issues / PRs. */
-  private readonly overview = el('button', 'btn btn--overview', `${svg(ICON.overview)}<span>Overview</span><i class="topbar-key" data-key="O" aria-hidden="true"></i>`);
+  private readonly overview = el('button', 'btn btn--overview', `${svg(ICON.overview)}<span>Overview</span><i class="topbar-key" aria-hidden="true"></i>`);
   private readonly battery = el('button', 'btn btn--icon', svg(ICON.leaf));
   private readonly settings = el('button', 'btn btn--icon', svg(ICON.gear));
   private readonly about = el('button', 'btn btn--icon', svg(ICON.info));
@@ -137,10 +137,8 @@ export class Hud {
     title.append(this.name, this.sub);
     place.append(this.back, title);
     const actions = el('div', 'topbar-actions');
-    this.battery.title = 'Battery saver: lower frame rates (B)';
     this.battery.setAttribute('aria-pressed', 'false');
     this.battery.setAttribute('aria-label', 'Battery saver');
-    this.settings.title = 'Settings (,)';
     this.settings.setAttribute('aria-label', 'Settings');
     this.settings.setAttribute('aria-haspopup', 'dialog');
     this.settings.type = 'button';
@@ -151,16 +149,9 @@ export class Hud {
     this.about.setAttribute('aria-label', 'About');
     this.about.setAttribute('aria-haspopup', 'dialog');
     this.about.type = 'button';
-    this.issues.title = 'Issues: this floor’s board as a list';
-    this.prs.title = 'Pull requests: this floor’s open pull requests as a list';
-    this.overview.title = 'Floor overview: everyone on this floor and what they are doing (O)';
     this.overview.setAttribute('aria-label', 'Overview');
-    this.overview.setAttribute('aria-keyshortcuts', 'O');
     this.overview.setAttribute('aria-haspopup', 'dialog');
-    this.back.title = 'Back to the city (Backspace)';
-    this.buildings.title = 'Buildings: create, rename and arrange buildings and floors (M)';
-    this.elevator.title = 'Elevator: ride to another floor, wake or sleep floors, floor settings (L)';
-    this.hire.title = 'Hire a worker at the first free desk on this floor (or look at a desk’s + and press E)';
+    this.refreshKeyTitles();
     actions.append(this.buildings, this.issues, this.prs, this.overview, this.elevator, this.hire, this.aiChip, this.settings, this.about, this.battery, this.conn);
     bar.append(place, this.counts, actions);
     this.counts.after(this.usageEl);
@@ -306,12 +297,13 @@ export class Hud {
     const waiting = !asleep && c.waiting > 0;
     this.counts.dataset.n = asleep ? '1' : waiting ? '4' : '3';
     // M5: N goes to the next one who needs you (the blocked, then the done).
-    const next = c.needsYou + c.done > 0 ? ` · N: go to the next${c.done ? ` (then ${c.done} done)` : ''}` : '';
+    const nk = keyName('next-need');
+    const next = c.needsYou + c.done > 0 ? ` · ${nk}: go to the next${c.done ? ` (then ${c.done} done)` : ''}` : '';
     // #118: the same items the floor overview's header shows (`countItems`).
     this.counts.innerHTML = countItems(c, asleep)
       .map((x) =>
         x.kind === 'needs_you'
-          ? item('needs_you', x.n, x.label, next) + (next ? '<kbd class="topbar-key" title="N: go to the next who needs you">N</kbd>' : '')
+          ? item('needs_you', x.n, x.label, next) + (next ? `<kbd class="topbar-key" title="${nk}: go to the next who needs you">${nk}</kbd>` : '')
           : item(x.kind, x.n, x.label, x.kind === 'waiting' ? ' on their background tasks' : ''),
       )
       .join('');
@@ -537,7 +529,7 @@ export class Hud {
       const k = el('span', 'key');
       k.append(el('kbd', '', 'E'), document.createTextNode('Open'));
       keys.append(k);
-      this.prompt.setAttribute('aria-label', 'Floor overview · E Open · O from anywhere on the floor');
+      this.prompt.setAttribute('aria-label', `Floor overview · E Open · ${keyName('overview')} from anywhere on the floor`);
     } else if (t.kind === 'prop' && t.id === 'whiteboard') {
       // M13: the floor's whiteboard opens its editor.
       const info = this.propInfo.get('whiteboard') ?? 'Draw, paste a screenshot, pin a drop';
@@ -690,14 +682,31 @@ export class Hud {
     this.promptKey = '';
   }
 
+  /** #124: the top bar's buttons that have a key say which (their titles), as this keyboard labels it. */
+  refreshKeyTitles(): void {
+    this.battery.title = withKey('Battery saver: lower frame rates', 'battery');
+    this.settings.title = withKey('Settings', 'settings');
+    this.back.title = withKey('Back to the city', 'leave');
+    this.buildings.title = withKey('Buildings: create, rename and arrange buildings and floors', 'buildings');
+    this.elevator.title = withKey('Elevator: ride to another floor, wake or sleep floors, floor settings', 'elevator');
+    this.hire.title = `Hire a worker at the first free desk on this floor (${keyName('hire')}), or look at a desk’s + and press E`;
+    this.overview.title = withKey('Floor overview: everyone on this floor and what they are doing', 'overview');
+    this.overview.setAttribute('aria-keyshortcuts', keyName('overview'));
+    this.overview.querySelector('.topbar-key')?.setAttribute('data-key', keyName('overview'));
+    this.issues.title = this.boardWhy ?? withKey('Issues: this floor’s board as a list', 'issues');
+    this.prs.title = this.boardWhy ?? withKey('Pull requests: this floor’s open pull requests as a list', 'prs');
+  }
+
+  private boardWhy: string | null = null;
+
   /** M7: the top bar's Issues / PRs buttons say why they cannot show a board (an older bridge, no repo). */
   setBoardButtons(why: string | null): void {
     for (const b of [this.issues, this.prs]) {
       b.setAttribute('aria-disabled', why ? 'true' : 'false');
       b.classList.toggle('btn--off', !!why);
     }
-    this.issues.title = why ?? 'Issues: this floor’s board as a list';
-    this.prs.title = why ?? 'Pull requests: this floor’s open pull requests as a list';
+    this.boardWhy = why;
+    this.refreshKeyTitles();
   }
 
   /** M5: overrides a worker key's state from KEYS (null: as KEYS says); the prompt redraws on the next setTarget. */

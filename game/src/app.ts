@@ -27,6 +27,10 @@ import { Panels } from './ui/panels';
 import { SendHomeDialog } from './ui/sendHome';
 import { needsYouText, sentHomeText, wrapUpOf } from './world/wrapup';
 import { RADIUS, Walker } from './input/walk';
+// #124: the keyboard shortcuts, one table (dispatch, the ? reference, the hints and the top bar's titles).
+import { findBinding, keyName, loadLayout, pressesBinding, type DispatchedId, type Match, type Scope } from './input/shortcuts';
+import { typingIn } from './input/typing';
+import { ShortcutsDialog } from './ui/shortcutsDialog';
 import { Laptops, type WatchCommand } from './laptop';
 import { SeatBar } from './ui/seat';
 import { blocked, blocked3, groundAt, nudgeClear, type WalkWorld } from './world/collide';
@@ -146,9 +150,6 @@ const CLIENT = 'herdr-3d-game/0.2';
 const GONG_GAP_MS = 450;
 
 /** Everything between the renderer and the bridge: views, input, HUD, frame pacing. */
-/** A key aimed at a text field, an editable area (the prompt composer, #51) included: it types, the game does not take it. */
-const typingIn = (t: EventTarget | null): boolean => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || (t instanceof HTMLElement && t.isContentEditable);
-
 export class App {
   readonly store = new WorldStore();
   /** M10 limits: the always-on plan limits widget and what it remembers. */
@@ -235,6 +236,8 @@ export class App {
   /** M5: P, the prompt overlay; C, the Changes side panel. */
   readonly prompt: PromptOverlay;
   readonly changes: ChangesPanel;
+  /** #124: the `?` shortcut reference. */
+  readonly shortcuts: ShortcutsDialog;
   /** M5: the worker N went to last (the next N goes on from there), and one it rides the elevator to. */
   private lastNeed: string | null = null;
   private pendingNeed: NeedItem | null = null;
@@ -296,6 +299,8 @@ export class App {
   private focus: number | null = null;
   private tween: { from: [THREE.Vector3, THREE.Vector3]; to: [THREE.Vector3, THREE.Vector3]; t0: number; ms: number } | null = null;
   private target: Target | null = null;
+  /** #124: a worker, desk or prop picked with T instead of aimed at, and where the walker looked when it was: moving or turning lets it go. */
+  private keyTarget: { target: Target; session: string; pose: { x: number; z: number; yaw: number; pitch: number } } | null = null;
   private transitioning = false;
   private readonly fixture: boolean;
   private readonly vp = { width: 1, height: 1 };
@@ -318,6 +323,7 @@ export class App {
     this.hud.mountAudio(this.audio);
     if (o.buildInfo) this.hud.mountAbout(o.buildInfo);
     this.settings = this.hud.mountSettings();
+    this.shortcuts = new ShortcutsDialog(o.host);
     this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs, this.hirePrefs), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
     // #100: how the inbox reaches you beyond its chip: desktop notifications and the chime.
@@ -607,6 +613,12 @@ export class App {
     this.hud.on('overview', () => this.openOverview(false));
     this.m6Buttons = m6StartButtons(this.hud, { run: () => this.openStartRun(), presets: (b) => this.openPresets(b), off: () => runUnsupported(hireHost) });
     this.bindInput();
+    // #124: the keys' names as this keyboard labels them (Chromium's layout map), in the titles that name a key.
+    loadLayout(() => {
+      this.hud.refreshKeyTitles();
+      this.m6Buttons.sync();
+      this.inbox.set(this.inboxEntries());
+    });
     this.resize();
     this.hud.setCity(0, 0, zero());
     this.updateNotice();
@@ -2266,34 +2278,36 @@ export class App {
   }
 
   private updateHint(): void {
+    // #124: the keys come from the shortcut table; every line ends on the way to the rest of them.
+    const more = ` · <strong>${keyName('help')}</strong> all shortcuts`;
     this.hintSitting = this.walker.sitting;
     if (this.mode === 'city') {
-      this.hud.setHint(this.city.isEmpty ? null : 'Drag to orbit · Scroll to zoom · <strong>Click a floor</strong> to go inside');
+      this.hud.setHint(this.city.isEmpty ? null : `Drag to orbit · Scroll to zoom · <strong>Click a floor</strong> to go inside · <strong>${keyName('buildings')}</strong> buildings${more}`);
       return;
     }
     const area = this.place.area;
     const look = this.walker.locked ? '' : this.walker.lockAvailable ? '<strong>Click</strong> to look around · ' : '';
     if (area === 'lobby') {
-      this.hud.setHint(this.walker.locked ? null : `${look}WASD walks · <strong>E</strong> at the desk: the floor directory · <strong>L</strong> elevator · the glass doors lead outside`);
+      this.hud.setHint(this.walker.locked ? null : `${look}WASD walks · <strong>E</strong> at the desk: the floor directory · <strong>L</strong> elevator · the glass doors lead outside${more}`);
       return;
     }
     if (area === 'street') {
-      this.hud.setHint(this.walker.locked ? null : `${look}WASD walks · the glass doors lead into the lobby, the fire escape up the side · <strong>L</strong> elevator`);
+      this.hud.setHint(this.walker.locked ? null : `${look}WASD walks · the glass doors lead into the lobby, the fire escape up the side · <strong>L</strong> elevator${more}`);
       return;
     }
     if (area === 'fire-escape') {
-      this.hud.setHint(this.walker.locked ? null : `${look}WASD walks · a floor's door opens as you walk up to it · <strong>L</strong> elevator`);
+      this.hud.setHint(this.walker.locked ? null : `${look}WASD walks · a floor's door opens as you walk up to it · <strong>L</strong> elevator${more}`);
       return;
     }
     const fv = this.office ? this.store.floorView(this.office.session) : null;
     const asleep = fv?.asleep && !fv.transition ? 'This floor is asleep: the elevator (<strong>L</strong>) wakes it · ' : '';
-    if (this.walker.sitting && !this.planOpen) this.hud.setHint(this.walker.locked ? 'At your desk · <strong>WASD</strong> gets up' : `At your desk · ${look}<strong>WASD</strong> or <strong>Esc</strong> gets up`);
-    else if (this.planOpen) this.hud.setHint('<strong>Click</strong> the floor to walk there · WASD walks · <strong>L</strong> elevator · <strong>Tab</strong> back to first person');
+    if (this.walker.sitting && !this.planOpen) this.hud.setHint(this.walker.locked ? `At your desk · <strong>WASD</strong> gets up${more}` : `At your desk · ${look}<strong>WASD</strong> or <strong>Esc</strong> gets up${more}`);
+    else if (this.planOpen) this.hud.setHint(`<strong>Click</strong> the floor to walk there · WASD walks · <strong>L</strong> elevator · <strong>Tab</strong> back to first person${more}`);
     else if (this.walker.locked) this.hud.setHint(null);
-    else if (asleep) this.hud.setHint(`${asleep}<strong>Click</strong> to look around · WASD walks · <strong>← →</strong> turn`);
-    // #118: O, the floor overview, is in the hint too (the top bar's button goes where the bar is short).
-    else if (!this.walker.lockAvailable) this.hud.setHint('WASD walks · <strong>← →</strong> turn · <strong>L</strong> elevator · <strong>O</strong> overview · <strong>Tab</strong> floor plan (mouse look is unavailable here)');
-    else this.hud.setHint('<strong>Click</strong> to look around · WASD walks · <strong>← →</strong> turn · <strong>L</strong> elevator · <strong>O</strong> overview · <strong>Tab</strong> floor plan · Esc releases the mouse');
+    // #118: the floor overview is in the hint too (the top bar's button goes where the bar is short).
+    else if (asleep) this.hud.setHint(`${asleep}<strong>Click</strong> to look around · WASD walks · <strong>← →</strong> turn${more}`);
+    else if (!this.walker.lockAvailable) this.hud.setHint(`WASD walks · <strong>← →</strong> turn · <strong>${keyName('select.next')}</strong> pick · <strong>${keyName('hire')}</strong> hire · <strong>L</strong> elevator · <strong>${keyName('overview')}</strong> overview · <strong>Tab</strong> floor plan (mouse look is unavailable here)${more}`);
+    else this.hud.setHint(`<strong>Click</strong> to look around · WASD walks · <strong>← →</strong> turn · <strong>${keyName('select.next')}</strong> pick · <strong>${keyName('hire')}</strong> hire · <strong>L</strong> elevator · <strong>${keyName('overview')}</strong> overview · <strong>Tab</strong> floor plan · Esc releases the mouse${more}`);
   }
 
   // ---- input -------------------------------------------------------------------
@@ -2302,6 +2316,7 @@ export class App {
     const canvas = this.r.domElement;
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => this.onVisibility());
+    window.addEventListener('keydown', (e) => this.onHelpKey(e), true);
     window.addEventListener('keydown', (e) => this.onKey(e, true));
     window.addEventListener('keyup', (e) => this.onKey(e, false));
     canvas.addEventListener('pointerdown', (e) => (this.down = { x: e.clientX, y: e.clientY }));
@@ -2330,17 +2345,18 @@ export class App {
     // M13: the whiteboard's editor owns every key while it is open (its Esc closes it, ui/whiteboard.ts).
     if (this.whiteboard.isOpen) return;
     // M10 (#47): a screen-filling dialog hides the plan limits; Shift+L still peeks them over it (else the dialog owns the keys).
-    if (e.code === 'KeyL' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && this.limitsWidget.overScreen && !typingIn(e.target)) {
+    if (pressesBinding(e, 'limits') && this.limitsWidget.overScreen && !typingIn(e.target)) {
       e.preventDefault();
-      this.limitsWidget.toggleFromKey();
+      if (!e.repeat) this.limitsWidget.toggleFromKey(); // a held key does not re-toggle the peek
       return;
     }
     // Open dialogs (sheet, panels, confirmations, hire / send home) handle their own keys.
-    if (this.hud.sheetOpen || this.panels.open || this.dialogOpen) return;
+    // (#124: so does the shortcut list, even with the focus out on the page behind it: Tab there is not the floor plan.)
+    if (this.hud.sheetOpen || this.panels.open || this.dialogOpen || this.shortcuts.isOpen) return;
     // M5: at a worker's laptop every key goes to its terminal (Esc gets you up).
     if (this.laptops.key(e)) return;
-    const typing = typingIn(e.target);
-    if (typing) return;
+    // #124: a text field's keys are its own (the shortcut list from inside one is `onHelpKey`'s).
+    if (typingIn(e.target)) return;
     // M5: keys in the Changes panel are its own.
     if (this.changes.owns(e.target)) return;
     this.activity(true);
@@ -2348,108 +2364,146 @@ export class App {
       e.preventDefault();
       return;
     }
-    if (e.code === 'Tab' && this.mode === 'floor') {
-      // From the scene: Tab toggles the plan, Shift+Tab moves focus into the
-      // top bar (City, Issues, PRs, …). From a focused HUD control, or with
-      // another modifier, Tab moves focus as usual.
-      if (e.altKey || e.ctrlKey || e.metaKey || !this.sceneFocused()) return;
-      e.preventDefault();
-      if (!e.shiftKey && this.place.area !== 'floor') this.hud.toast('The floor plan is for office floors.', 1800);
-      else if (!e.shiftKey) this.setPlan(!this.planOpen);
-      else {
-        this.walker.release();
-        this.hud.focusTopbar();
-      }
-    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'elevator') {
-      e.preventDefault();
-      this.openElevator();
-    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'board' && (this.target.id === 'board.issues' || this.target.id === 'board.prs')) {
-      // M7: E looking at a wall board: its overlay.
-      e.preventDefault();
-      this.openBoard(this.target.id === 'board.issues' ? 'issues' : 'prs');
-    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'whiteboard') {
-      // M13: E looking at the whiteboard: its editor.
-      e.preventDefault();
-      this.openWhiteboard();
-    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'screen.overview') {
-      // #118: E at the lounge wall's screen: the overview grows out of it.
-      e.preventDefault();
-      this.openOverview(true);
-    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'radio') {
-      // M15: E on the radio: the next genre.
-      e.preventDefault();
-      this.radio.cycle();
-    } else if (e.code === 'KeyR' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !e.altKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'radio') {
-      // M15: R on the radio: the next track.
-      e.preventDefault();
-      this.radio.skip();
-    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'own-desk') {
-      e.preventDefault();
-      this.sit();
-    } else if (e.code === 'Escape' && this.mode === 'floor' && this.walker.sitting) {
-      this.standUp();
-    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && this.target?.kind === 'prop' && this.target.id === 'reception') {
+    const m = findBinding(e, this.activeScopes(), false);
+    if (!m) return;
+    const id = m.binding.id as DispatchedId;
+    // From a focused control Tab moves focus as usual; from the scene it is the floor plan / the way into the top bar.
+    if ((id === 'plan' || id === 'topbar') && !this.sceneFocused()) return;
+    if (!m.binding.quiet) e.preventDefault();
+    // A held key does not re-fire a toggle or an opener (B, Tab, H, I, ...).
+    if (e.repeat && !m.binding.repeat) return;
+    this.actions[id](m);
+  }
+
+  /**
+   * #124: the scopes the shortcut table is live in right now: where you are, what you aim at (or picked with T) and what
+   * is open. `findBinding` dispatches only from these.
+   */
+  private activeScopes(): Set<Scope> {
+    const s = new Set<Scope>(['any']);
+    if (this.mode === 'city') {
+      s.add('city');
+      if (this.focus !== null) s.add('city:focus');
+      return s;
+    }
+    s.add('floor');
+    const t = this.target;
+    if (this.keyTarget) s.add('selected');
+    if (this.planOpen) s.add('plan');
+    if (this.walker.sitting) s.add('sitting');
+    // C on a worker works under the plan too (it always did); the other aimed keys do not.
+    if (this.changes.isOpen || (this.planOpen && t?.kind === 'worker')) s.add('changes');
+    if (t && (!this.planOpen || (t.kind === 'prop' && t.id === 'reception'))) {
+      const a = aimScope(t);
+      if (a) s.add(a);
+    }
+    return s;
+  }
+
+  /** What each binding of the table does (the compiler wants one for every id that is not only listed). */
+  private readonly actions: Record<DispatchedId, (m: Match) => void> = {
+    help: () => this.openShortcuts(),
+    'help.field': () => this.openShortcuts(),
+    'next-need': () => {
+      if (!this.transitioning) this.goNextNeed();
+    },
+    inbox: () => this.openInboxKey(),
+    limits: () => this.limitsWidget.toggleFromKey(),
+    battery: () => this.toggleBattery(),
+    settings: () => this.settings.open(),
+    overview: () => {
+      // #118: the overview of the floor you are on, wherever you stand on it (the city and the lobby say where to go).
+      if (!this.transitioning) this.openOverview(false);
+    },
+    'look.level': () => this.walker.level(),
+    hire: () => this.openHire(),
+    issues: () => this.openBoard('issues'),
+    prs: () => this.openBoard('prs'),
+    run: () => this.openStartRun(),
+    elevator: () => {
+      // The elevator from anywhere on the floor (the top bar has it too).
+      if (!this.transitioning) this.openElevator();
+    },
+    plan: () => {
+      if (this.place.area !== 'floor') this.hud.toast('The floor plan is for office floors.', 1800);
+      else this.setPlan(!this.planOpen);
+    },
+    topbar: () => {
+      this.walker.release();
+      this.hud.focusTopbar();
+    },
+    leave: () => void this.leaveFloor(),
+    stand: () => this.standUp(),
+    'plan.close': () => this.setPlan(false),
+    buildings: () => this.openBuildings(),
+    'city.unfocus': () => this.focusBuilding(null),
+    'select.next': () => this.cycleTarget(1),
+    'select.prev': () => this.cycleTarget(-1),
+    'select.clear': () => this.clearKeyTarget(),
+    'worker.sit': () => this.aimed('worker', (t) => void this.sitAt(t.id)),
+    'worker.prompt': () => this.aimed('worker', (t) => this.openPrompt(t.id)),
+    'worker.changes': () => this.toggleChanges(this.target?.kind === 'worker' ? this.target.id : null),
+    'worker.home': () => this.aimed('worker', (t) => this.openSendHome(t.id)),
+    'worker.answer': (m) => this.aimed('worker', (t) => this.answerKey(t.id, Number(m.code.slice(-1)))),
+    'desk.hire': () => this.aimed('desk', (t) => this.openHire(t.desk)),
+    'own-desk.sit': () => this.sit(),
+    'board.open': () => this.aimed('board', (t) => this.openBoard(t.id === 'board.issues' ? 'issues' : 'prs')),
+    'elevator.open': () => this.openElevator(),
+    'reception.open': () => {
       // The receptionist answers, and the elevator panel is the building's floor directory.
-      e.preventDefault();
       this.receptionEvent('interact');
       this.openElevator();
-    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'desk') {
-      // M4: E on an empty desk's "+" hires someone there.
-      e.preventDefault();
-      this.openHire(this.target.desk);
-    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'worker') {
-      // M5: E looking at a worker: sit at its laptop.
-      e.preventDefault();
-      this.sitAt(this.target.id);
-    } else if (e.code === 'KeyX' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !e.altKey && !this.planOpen && this.target?.kind === 'worker') {
-      // M4: X looking at a worker: send it home.
-      e.preventDefault();
-      this.openSendHome(this.target.id);
-    } else if (e.code === 'KeyP' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !e.altKey && !this.planOpen && this.target?.kind === 'worker') {
-      // M5: P looking at a worker: the prompt overlay.
-      e.preventDefault();
-      this.openPrompt(this.target.id);
-    } else if (e.code === 'KeyC' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !e.altKey && (this.target?.kind === 'worker' || this.changes.isOpen)) {
-      // M5: C looking at a worker: its Changes panel (again: closes it).
-      e.preventDefault();
-      this.toggleChanges(this.target?.kind === 'worker' ? this.target.id : null);
-    } else if (e.code === 'KeyN' && !this.transitioning && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      // M5: N, the next worker who needs you.
-      e.preventDefault();
-      this.goNextNeed();
-    } else if (/^(Digit|Numpad)\d$/.test(e.code) && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !this.planOpen && this.target?.kind === 'worker') {
-      // M5: 1–9 answer the looked-at worker's question with that choice, 0 denies (Esc).
-      e.preventDefault();
-      this.answerKey(this.target.id, Number(e.code.slice(-1)));
-    } else if (e.code === 'KeyL' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      // M10: Shift+L, the plan limits panel (plain L is the elevator on a floor).
-      e.preventDefault();
-      this.limitsWidget.toggleFromKey();
-    } else if (e.code === 'KeyL' && this.mode === 'floor' && !this.transitioning && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      // The elevator from anywhere on the floor (the top bar has it too).
-      e.preventDefault();
-      this.openElevator();
-    } else if (e.code === 'KeyM' && this.mode === 'city' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      e.preventDefault();
-      this.openBuildings();
-    } else if (e.code === 'KeyO' && !this.transitioning && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      // #118: O, the overview of the floor you are on, wherever you stand on it (the city and the lobby say where to go).
-      e.preventDefault();
-      this.openOverview(false);
-    } else if (e.code === 'KeyB' && !e.metaKey && !e.ctrlKey) {
-      this.toggleBattery();
-    } else if (e.code === 'Comma' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
-      // #91: the Settings window (typing in a field never gets here: `typingIn` returns above).
-      e.preventDefault();
-      this.settings.open();
-    } else if (e.code === 'Backspace' && this.mode === 'floor') {
-      e.preventDefault();
-      void this.leaveFloor();
-    } else if (e.code === 'Escape' && this.mode === 'floor' && this.planOpen) {
-      this.setPlan(false);
-    } else if (e.code === 'Escape' && this.mode === 'city' && this.focus !== null) {
-      this.focusBuilding(null);
+    },
+    'whiteboard.open': () => this.openWhiteboard(),
+    'overview.open': () => this.openOverview(true),
+    'radio.genre': () => this.radio.cycle(),
+    'radio.track': () => this.radio.skip(),
+  };
+
+  /** Runs `fn` on the aimed target when it is of that kind (the binding's scope says it is; this narrows the type). */
+  private aimed<K extends Target['kind']>(kind: K, fn: (t: Target & { kind: K }) => void): void {
+    const t = this.target;
+    if (t?.kind === kind) fn(t as Target & { kind: K });
+  }
+
+  /**
+   * #124: `?` and Ctrl/Cmd+/, bound in the capture phase so they reach the game from under the dialogs that stop their
+   * keys (About, Settings, the music credits, a panel's rows). The rule, deliberately: the reference opens from any
+   * non-typing context but the seated terminal (no help key there: Esc, then ?) and the whiteboard (it owns every key);
+   * from inside a text field only the modifier chord does, and `?` types. A modal over a modal is fine: Esc closes the top one.
+   */
+  private onHelpKey(e: KeyboardEvent): void {
+    if (e.isComposing || this.whiteboard.isOpen || this.laptops.seated || this.shortcuts.isOpen) return;
+    const typing = typingIn(e.target);
+    if (!(pressesBinding(e, 'help.field') || (!typing && pressesBinding(e, 'help')))) return;
+    // The image previews and a card being dragged have their own capture-phase Esc: not over them.
+    if (document.querySelector('dialog.ilb[open], dialog.cmp-lightbox[open], .bd-dragging')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!e.repeat) this.openShortcuts();
+  }
+
+  /** The `?` reference: grouped, per platform, over whatever is up. */
+  openShortcuts(): void {
+    this.walker.release();
+    this.walker.stop();
+    this.shortcuts.open(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  }
+
+  /** Shift+N: the inbox's list, with the keyboard in it (again: closed). */
+  private openInboxKey(): void {
+    const s = this.inbox.summary();
+    if (s.open) {
+      this.inbox.closeList();
+      return;
     }
+    if (!s.shown) {
+      this.hud.toast('Nothing in the inbox: no one needs you and nothing is waiting to be read.', 2600);
+      return;
+    }
+    this.walker.release();
+    this.walker.stop();
+    this.inbox.openList(true);
   }
 
   /** Nothing but the scene has keyboard focus (no HUD control). */
@@ -2818,7 +2872,7 @@ export class App {
   }
 
   private updateLookAt(): void {
-    const t = this.computeLookAt();
+    const t = this.pickedTarget() ?? this.computeLookAt();
     this.target = t;
     const w = t?.kind === 'worker' ? this.store.workerView(t.id) : null;
     // M5: E sits at the worker's laptop, or says why it cannot.
@@ -2848,6 +2902,63 @@ export class App {
       return t ? LOBBY_TARGETS[t] : null;
     }
     return null;
+  }
+
+  // ---- #124: picking a target without aiming ------------------------------------------------
+
+  /** The worker, desk or prop picked with T, while it holds: you have not moved or turned since and it is still there. */
+  private pickedTarget(): Target | null {
+    const k = this.keyTarget;
+    if (!k) return null;
+    const w = this.walker;
+    const o = this.office;
+    const same = Math.abs(w.x - k.pose.x) < 1e-6 && Math.abs(w.z - k.pose.z) < 1e-6 && Math.abs(w.yaw - k.pose.yaw) < 1e-6 && Math.abs(w.pitch - k.pose.pitch) < 1e-6;
+    if (this.mode === 'floor' && this.place.area === 'floor' && o?.session === k.session && same && o.stillPickable(k.target)) return k.target;
+    this.keyTarget = null;
+    return null;
+  }
+
+  private clearKeyTarget(): void {
+    if (!this.keyTarget) return;
+    this.keyTarget = null;
+    this.updateLookAt();
+  }
+
+  /**
+   * T / Shift+T: picks the next / previous worker, desk or prop of the floor and turns to it, so the card, the prompt and the
+   * keys (E, P, C, X, the answer digits) are what aiming at it gives. From nothing picked or aimed it starts at the nearest
+   * one. Level, unlike aiming: a picked one does not need to be within reach, and look up and down (Page Up / Down) is only for aiming by hand.
+   */
+  private cycleTarget(dir: 1 | -1): void {
+    const o = this.office;
+    if (this.mode !== 'floor' || this.place.area !== 'floor' || !o) {
+      this.hud.toast('Workers, desks and props are on an office floor.', 2000);
+      return;
+    }
+    const list = o.keyTargets(this.inOffice() && !this.walker.sitting);
+    if (!list.length) return;
+    const same = (a: Target, b: Target) => a.kind === b.kind && a.id === b.id;
+    const here = this.target;
+    const at = here ? list.findIndex((x) => same(x.target, here)) : -1;
+    this.walker.applyTo(this.fpCam, this.walk.base);
+    const eye = this.fpCam.position;
+    let i = at >= 0 ? (at + dir + list.length) % list.length : 0;
+    if (at < 0) {
+      // Nothing aimed: the nearest, whichever way you cycle.
+      let best = Infinity;
+      list.forEach((x, n) => {
+        const d = Math.hypot(x.at[0] - eye.x, x.at[2] - eye.z);
+        if (d < best) [best, i] = [d, n];
+      });
+    }
+    const pick = list[i];
+    if (!pick) return;
+    this.walker.lookToward(pick.at[0] - eye.x, pick.at[1] - eye.y, pick.at[2] - eye.z);
+    this.walker.applyTo(this.fpCam, this.walk.base);
+    const w = this.walker;
+    this.keyTarget = { target: pick.target, session: o.session, pose: { x: w.x, z: w.z, yaw: w.yaw, pitch: w.pitch } };
+    this.activity(true);
+    this.updateLookAt();
   }
 
   // ---- M5: prompt, changes, quick replies, the next who needs you ----------------
@@ -3177,6 +3288,12 @@ export class App {
     this.onWorldEvent(e);
   }
 
+  /** What E, P, C, X and the digits act on now (test hook). */
+  targetInfo(): { kind: string; id: string; label: string; picked: boolean } | null {
+    const t = this.target;
+    return t ? { kind: t.kind, id: t.id, label: t.label, picked: this.keyTarget?.target === t } : null;
+  }
+
   lookAt(): LookAt | null {
     if (this.mode !== 'floor') return null;
     this.walker.applyTo(this.fpCam, this.walk.base);
@@ -3334,6 +3451,22 @@ export class App {
   /** Screen point (CSS px) of a floor's badge in the city view. */
   badgePoint(session: string): { x: number; y: number } | null {
     return this.mode === 'city' ? this.city.badgePoint(this.cityCam, session, this.vp) : null;
+  }
+}
+
+/** #124: the shortcut scope an aimed (or picked) target puts live: E means what you look at. */
+function aimScope(t: Target): Scope | null {
+  switch (t.kind) {
+    case 'worker':
+      return 'aim:worker';
+    case 'desk':
+      return 'aim:desk';
+    case 'own-desk':
+      return 'aim:own-desk';
+    case 'board':
+      return t.id === 'board.issues' || t.id === 'board.prs' ? 'aim:board' : null;
+    case 'prop':
+      return t.id === 'elevator' ? 'aim:elevator' : t.id === 'whiteboard' ? 'aim:whiteboard' : t.id === 'radio' ? 'aim:radio' : t.id === 'reception' ? 'aim:reception' : t.id === 'screen.overview' ? 'aim:overview' : null;
   }
 }
 

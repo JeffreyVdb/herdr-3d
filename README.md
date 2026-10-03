@@ -13,5 +13,6 @@ reached through an SSH tunnel to a Go bridge daemon.
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
 - Decisions: [`docs/decisions.md`](docs/decisions.md)
 - Bridge protocol: [`docs/protocol.md`](docs/protocol.md)
+- Keyboard shortcuts (press `?` in the game): [`docs/shortcuts.md`](docs/shortcuts.md), generated from `game/src/input/shortcuts.ts`
 - Research: [`docs/research/`](docs/research/)
 - Contributing / build & test: [`CONTRIBUTING.md`](CONTRIBUTING.md)

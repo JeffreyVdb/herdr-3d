@@ -490,6 +490,25 @@ for (const expanded of [false, true]) {
   });
 }
 
+test('over a board a held Shift+L peeks once: auto-repeat does not toggle it back (#124)', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 2000, height: 860 });
+  await openIssues(page);
+  await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+  await page.keyboard.down('Shift');
+  await page.keyboard.down('L');
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  for (let i = 0; i < 3; i++) await page.keyboard.down('L'); // the key held: Playwright sends these with repeat set
+  await frames(page, 3);
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true');
+  await page.keyboard.up('L');
+  await page.keyboard.up('Shift');
+  await frames(page, 2);
+  await expect(limits(page)).toHaveAttribute('data-peek', 'true'); // the release changes nothing either
+  clean();
+});
+
 test('over a board a click on the tab or Shift+L peeks the panel above it without touching the saved state', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);

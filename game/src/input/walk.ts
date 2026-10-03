@@ -7,6 +7,7 @@ const LOOK = 0.0022; // rad per mouse count
 /** ms after an unlock before the browser takes a new pointer lock request. */
 const LOCK_COOLDOWN = 1300;
 const TURN = 2; // rad/s with the arrow keys
+const PITCH_RATE = 1.2; // rad/s with Page Up / Page Down
 export const RADIUS = 0.28;
 export const PITCH_LIMIT = 1.35;
 /** Eye height follows the feet up and down stairs with this rate (1/s): smooth, not a pop per step. */
@@ -28,6 +29,12 @@ const MOVE_KEYS: Record<string, [number, number]> = {
 const TURN_KEYS: Record<string, number> = {
   ArrowLeft: 1,
   ArrowRight: -1,
+};
+
+/** #124: Page Up / Page Down look up and down (a keyboard alone could not reach the desks, the workers or the radio: the arrows only turn). */
+const PITCH_KEYS: Record<string, number> = {
+  PageUp: 1,
+  PageDown: -1,
 };
 
 /**
@@ -92,7 +99,10 @@ export class Walker {
 
   /** Feed key events (the app routes them; returns true when consumed). */
   key(e: KeyboardEvent, down: boolean): boolean {
-    if (!(e.code in MOVE_KEYS) && !(e.code in TURN_KEYS)) return false;
+    const pitchKey = e.code in PITCH_KEYS;
+    if (!(e.code in MOVE_KEYS) && !(e.code in TURN_KEYS) && !pitchKey) return false;
+    // Ctrl / Cmd + Page Up / Down switch the browser's tabs, Alt + them are the OS's: not ours (a release always counts, so no key stays held).
+    if (down && pitchKey && (e.ctrlKey || e.metaKey || e.altKey)) return false;
     if (down) this.keys.add(e.code);
     else this.keys.delete(e.code);
     this.onActivity();
@@ -101,6 +111,19 @@ export class Walker {
 
   get moving(): boolean {
     return this.keys.size > 0;
+  }
+
+  /** Looks level (Home): the view back to the horizon. */
+  level(): void {
+    this.pitch = 0;
+    this.onActivity();
+  }
+
+  /** Turns to look along a direction `d` (x, y, z from the eye): the yaw and pitch that put it in the centre of the view. */
+  lookToward(dx: number, dy: number, dz: number): void {
+    this.yaw = Math.atan2(-dx, -dz);
+    this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, Math.atan2(dy, Math.hypot(dx, dz))));
+    this.onActivity();
   }
 
   /** A walking key is held (turning alone is not walking). */
@@ -178,7 +201,9 @@ export class Walker {
     let f = 0;
     let r = 0;
     let turn = 0;
+    let look = 0;
     for (const k of this.keys) {
+      look += PITCH_KEYS[k] ?? 0;
       const m = MOVE_KEYS[k];
       if (m) {
         r += m[0];
@@ -187,7 +212,8 @@ export class Walker {
       turn += TURN_KEYS[k] ?? 0;
     }
     if (turn) this.yaw += turn * TURN * dt;
-    if (!f && !r) return turn !== 0 || easing;
+    if (look) this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch + look * PITCH_RATE * dt));
+    if (!f && !r) return turn !== 0 || look !== 0 || easing;
     // Walking gets you up from your desk.
     this.sitting = false;
     const len = Math.hypot(f, r);
@@ -202,7 +228,7 @@ export class Walker {
     this.x = p.x;
     this.z = p.z;
     this.y = p.y;
-    return moved || turn !== 0 || easing;
+    return moved || turn !== 0 || look !== 0 || easing;
   }
 
   private easeEye(dt: number): boolean {
