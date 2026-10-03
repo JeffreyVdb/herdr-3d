@@ -50,7 +50,8 @@ func (e *Error) Error() string { return e.Msg }
 // the follow-up questions and pack up.
 var ErrBusy = errors.New("a line is being written already")
 
-// ErrCapped is a Summarize past the daily cap: fallbacks until tomorrow.
+// ErrCapped is a Summarize past the daily cap: no call until tomorrow (or a
+// higher cap); the lines written and cached stay.
 var ErrCapped = errors.New("the daily cap of floor overview summaries is reached")
 
 // Roles is what the feature needs of the AI integration: *ai.Service.

@@ -151,3 +151,84 @@ func TestOfferDigestIdentity(t *testing.T) {
 		t.Fatalf("another session: epoch %d (was %d)", u.epoch, first.epoch)
 	}
 }
+
+// R4: past the daily cap no call goes and nothing is used up: the task and
+// the now line stay due (a completion that met the cap anyway gives them
+// back), tomorrow wakes the pump, and once the budget is back (a higher cap)
+// both are written.
+func TestDigestCapDefers(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Date(2026, 10, 3, 12, 0, 0, 0, time.Local)
+	h, llm := dgHubFor(t, &clock, true)
+	svc := h.dgs.svc
+	one := 1
+	if err := svc.Set(ctx, nil, &one); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Summarize(ctx, digest.Input{Kind: digest.KindTask, Prompt: "Something else"}); err != nil || !svc.Capped() {
+		t.Fatalf("spending the budget: %v, capped %v", err, svc.Capped())
+	}
+	h.digestSeen(ctx, digestUpdate{id: "w", epoch: 1, digest: dgView(0, "Reading the lift code")})
+	clock = clock.Add(time.Second)
+	runOp(t, h) // the settle's wake
+	l := h.dgs.ws["w"]
+	if h.dgs.inflight || len(llm.Calls()) != 1 || l.taskTried != "" || l.endedAt.IsZero() {
+		t.Fatalf("capped: inflight %v, calls %d, %+v", h.dgs.inflight, len(llm.Calls()), *l)
+	}
+	if want := time.Date(2026, 10, 4, 0, 0, 0, 0, time.Local); !h.dgs.wake.Equal(want) {
+		t.Fatalf("wake = %v, want tomorrow %v", h.dgs.wake, want)
+	}
+	// A call that met the cap anyway (it was reached meanwhile): both stay due.
+	endedAt := l.endedAt
+	l.taskTried, l.endedAt = "h1", time.Time{}
+	h.digestDone(ctx, digestCand{id: "w", in: digest.Input{Kind: digest.KindTask}, hash: "h1"}, l.gen, time.Time{}, digest.Result{}, digest.ErrCapped)
+	h.digestDone(ctx, digestCand{id: "w", in: digest.Input{Kind: digest.KindNow}}, l.gen, endedAt, digest.Result{}, digest.ErrCapped)
+	if l.taskTried != "" || !l.endedAt.Equal(endedAt) || !l.callAt.IsZero() || h.dgs.inflight {
+		t.Fatalf("after ErrCapped: %+v", *l)
+	}
+	// The budget is back: the task line, then the now line.
+	five := 5
+	if err := svc.Set(ctx, nil, &five); err != nil {
+		t.Fatal(err)
+	}
+	h.publishDigestState(ctx)
+	runOp(t, h)
+	runOp(t, h)
+	if l.task != "Fix the lift doors" || l.now != "Reading the lift code" || len(llm.Calls()) != 3 {
+		t.Fatalf("budget back: calls %d, %+v", len(llm.Calls()), *l)
+	}
+	if d := h.workers["w"].Digest; d == nil || d.TaskSource != proto.DigestLLM || d.NowSource != proto.DigestLLM {
+		t.Fatalf("digest = %+v", d)
+	}
+}
+
+// R4: tomorrow the budget is back by itself: the pump the day's wake runs
+// writes what waited.
+func TestDigestCapNextDay(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Date(2026, 10, 3, 23, 0, 0, 0, time.Local)
+	h, llm := dgHubFor(t, &clock, true)
+	svc := h.dgs.svc
+	two := 2
+	if err := svc.Set(ctx, nil, &two); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"Something else", "Something more"} {
+		if _, err := svc.Summarize(ctx, digest.Input{Kind: digest.KindTask, Prompt: p}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.digestSeen(ctx, digestUpdate{id: "w", epoch: 1, digest: dgView(0, "Reading the lift code")})
+	clock = clock.Add(time.Second)
+	runOp(t, h) // the settle's wake
+	if h.dgs.inflight || len(llm.Calls()) != 2 {
+		t.Fatalf("capped: %d calls", len(llm.Calls()))
+	}
+	clock = time.Date(2026, 10, 4, 0, 0, 1, 0, time.Local)
+	h.pumpDigest(ctx) // as tomorrow's wake does
+	runOp(t, h)
+	runOp(t, h)
+	if l := h.dgs.ws["w"]; l.task == "" || l.now == "" || len(llm.Calls()) != 4 {
+		t.Fatalf("next day: calls %d, %+v", len(llm.Calls()), *l)
+	}
+}

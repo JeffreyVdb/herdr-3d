@@ -361,7 +361,9 @@ func (h *Hub) digestInput(w *proto.Worker, d *transcript.Digest) digest.Input {
 // the feature ready, no call in flight, the worker on a floor a client
 // stands on; a one-off worker's task line first, then the now line of the
 // turn that ended longest ago, once settled and the worker's gap is over.
-// A line that waits for its settle or gap wakes it again then.
+// A line that waits for its settle or gap wakes it again then. Past the
+// daily cap only a cached line goes; the others wait, still due, for the
+// budget (tomorrow's wakes it; a higher cap or the toggle pumps).
 func (h *Hub) pumpDigest(ctx context.Context) {
 	svc := h.dgs.svc
 	if svc == nil || h.dgs.inflight || !svc.Ready() {
@@ -370,7 +372,14 @@ func (h *Hub) pumpDigest(ctx context.Context) {
 	now := h.opts.Now()
 	var pick *digestCand
 	var wake time.Time
+	capped, held := svc.Capped(), false
 	better := func(c digestCand) {
+		if capped {
+			if _, ok := svc.Cached(c.in); !ok {
+				held = true
+				return
+			}
+		}
 		if pick == nil || c.at.Before(pick.at) || (c.at.Equal(pick.at) && c.id < pick.id) {
 			pick = &c
 		}
@@ -397,6 +406,11 @@ func (h *Hub) pumpDigest(ctx context.Context) {
 			continue
 		}
 		better(digestCand{id: id, in: h.digestInput(w, d), at: l.endedAt})
+	}
+	if held {
+		if day := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location()); wake.IsZero() || day.Before(wake) {
+			wake = day
+		}
 	}
 	if pick == nil {
 		h.wakeDigest(ctx, wake)
@@ -442,7 +456,8 @@ func (h *Hub) wakeDigest(ctx context.Context, at time.Time) {
 // digestDone takes a line the model wrote (hub goroutine): shown when the
 // worker's tracker did not start over meanwhile. A failure keeps the
 // previous line (or the fallback); a call that could not go now (busy, the
-// feature switched off) is due again.
+// feature switched off, the daily cap reached) is due again: only a call
+// made counts its input as tried.
 func (h *Hub) digestDone(ctx context.Context, c digestCand, gen int, endedAt time.Time, res digest.Result, err error) {
 	h.dgs.inflight = false
 	defer h.pumpDigest(ctx)
@@ -456,7 +471,7 @@ func (h *Hub) digestDone(ctx context.Context, c digestCand, gen int, endedAt tim
 		l.callAt = now // a call went: the worker's gap starts
 	}
 	switch {
-	case errors.Is(err, digest.ErrBusy), errors.Is(err, ai.ErrNotReady):
+	case errors.Is(err, digest.ErrBusy), errors.Is(err, ai.ErrNotReady), errors.Is(err, digest.ErrCapped):
 		if l.gen == gen {
 			if c.in.Kind == digest.KindTask && l.taskTried == c.hash {
 				l.taskTried = ""
@@ -465,7 +480,7 @@ func (h *Hub) digestDone(ctx context.Context, c digestCand, gen int, endedAt tim
 			}
 		}
 		return
-	case errors.Is(err, digest.ErrCapped), errors.Is(err, digest.ErrNoLine):
+	case errors.Is(err, digest.ErrNoLine):
 		h.log.Debug("no floor overview line", "worker", c.id, "kind", c.in.Kind, "why", err)
 		return
 	case err != nil:
