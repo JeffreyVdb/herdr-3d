@@ -15,6 +15,7 @@ import type { Solid, Support } from './collide';
  *
  * The room is tall (#20): a mezzanine in the north-east corner carries your
  * corner office over the filing cabinet, with an open stair up the east wall.
+ * #118: the lounge's west wall carries the floor overview's big screen.
  */
 
 export interface Rect {
@@ -58,7 +59,8 @@ export type PropKind =
   | 'radio'
   | 'dropzone'
   | 'elevator'
-  | 'clock';
+  | 'clock'
+  | 'screen.overview';
 
 export interface Prop {
   id: PropKind;
@@ -285,6 +287,29 @@ export function openingsFor(width: number, depth: number): Opening[] {
   return out;
 }
 
+/** #118: the overview screen's clearance to the north-west corner and to the west window frame. */
+const OVERVIEW_GAP = 0.4;
+/** A window's frame (its sill and jambs, office.ts) reaches this far past the hole. */
+const FRAME_LIP = 0.05;
+/** Above what stands on the coffee counter (machine, mugs, the radio's antenna: 1.4 m), under the window heads. */
+const OVERVIEW_Y0 = 1.6;
+const OVERVIEW_Y1 = 5.6;
+/** The bezel box stands this far off the west wall. */
+const OVERVIEW_D = 0.08;
+
+/**
+ * #118: the floor overview screen on the lounge's west wall, over the coffee counter: from 0.4 m off the north-west
+ * corner to 0.4 m short of the frame of the northernmost west window, 1.6 to 5.6 m up. The west windows depend on the
+ * outline's depth alone (`openingsFor`), so this is a function of the depth: about 4.8 × 4 m at worst, 7.4 × 4 m at
+ * the smallest outline. A bezel box facing +x (into the lounge).
+ */
+export function overviewScreenBox(depth: number): Box3 {
+  const north = openingsFor(MIN_W, depth)
+    .filter((o) => o.wall === 'west')
+    .reduce((z, o) => Math.min(z, o.u0), depth);
+  return box(0, OVERVIEW_Y0, OVERVIEW_GAP, OVERVIEW_D, OVERVIEW_Y1, r3(north - FRAME_LIP - OVERVIEW_GAP));
+}
+
 export function floorLayout(deskCount: number, outline?: Outline): FloorLayout {
   const desks = Math.max(0, Math.floor(deskCount));
   const nat = naturalSize(desks);
@@ -359,6 +384,8 @@ export function floorLayout(deskCount: number, outline?: Outline): FloorLayout {
     { id: 'elevator', label: 'Elevator', milestone: 'M3', box: box(width / 2 - 1.1, 0, depth - 0.12, width / 2 + 1.1, 2.4, depth), solid: false },
     // M17: the wall clock, high on the board partition's north face, where the desks look.
     { id: 'clock', label: 'Clock', milestone: null, box: box(width / 2 - 0.55, 1.78, bz - 0.17, width / 2 + 0.55, 2.3, bz - 0.1), solid: false },
+    // #118: the floor overview, the lounge wall's big screen (E opens it; O from anywhere on the floor).
+    { id: 'screen.overview', label: 'Floor overview', milestone: '#118', box: overviewScreenBox(depth), solid: false },
   ];
   // Lounge furniture beyond the sofa: coffee table and the coffee counter.
   colliders.push(...props.filter((p) => p.solid).map((p) => rectOf(p.box)));

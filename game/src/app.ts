@@ -88,6 +88,10 @@ import { can } from './world/boards';
 import { bannerVersion, type BuildInfo } from './version';
 // M13: the whiteboard (Excalidraw, loaded on first use) and its render on the room's board.
 import { WhiteboardOverlay } from './ui/whiteboard';
+// #118: the floor overview (the lounge wall's screen and its page).
+import { OverviewOverlay, type ViewRect } from './ui/overview';
+import { OverviewPrefs } from './ui/overviewPrefs';
+import { buildOverview, countItems, type OverviewData } from './world/overview';
 import { loadBoardTexture } from './render/whiteboardTexture';
 import type { WhiteboardState } from './net/protocol';
 // #100: the inbox's pings (desktop notifications, the chime)
@@ -248,6 +252,11 @@ export class App {
   readonly boardLog: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
   /** M13: the whiteboard overlay, each floor's board as last heard of, and the `whiteboard.get`s the game sent by itself (test hook; not in `sent`). */
   readonly whiteboard: WhiteboardOverlay;
+  /** #118: the floor overview page, and when the wall screen and the page last had the world as it is. */
+  readonly overview: OverviewOverlay;
+  private overviewDirty = true;
+  private overviewAt = 0;
+  private overviewOffice: OfficeView | null = null;
   private readonly wbStates = new Map<string, WhiteboardState>();
   private readonly wbFetching = new Set<string>();
   private wbLoad: { office: OfficeView; key: string; abort: AbortController } | null = null;
@@ -557,6 +566,22 @@ export class App {
         this.activity(true);
       },
     });
+    this.overview = new OverviewOverlay(
+      o.host,
+      {
+        data: (session) => this.overviewData(session),
+        goTo: (id) => void this.goToWorker(id, 'transcript'),
+        openTicket: (session, id) => this.boardsPanel.openItem('issues', session, id),
+        hire: () => this.openHire(),
+        calm: () => this.batterySaver,
+        screenRect: (session) => this.overviewScreenRect(session),
+        closed: () => {
+          this.updateHint();
+          this.activity(true);
+        },
+      },
+      new OverviewPrefs(),
+    );
     this.changes = new ChangesPanel(this.hud.root, {
       ...dialogHost,
       blur: () => (document.activeElement as HTMLElement | null)?.blur?.(),
@@ -570,6 +595,7 @@ export class App {
     this.hud.on('battery', () => this.toggleBattery());
     this.hud.on('issues', () => this.openBoard('issues'));
     this.hud.on('prs', () => this.openBoard('prs'));
+    this.hud.on('overview', () => this.openOverview(false));
     this.m6Buttons = m6StartButtons(this.hud, { run: () => this.openStartRun(), presets: (b) => this.openPresets(b), off: () => runUnsupported(hireHost) });
     this.bindInput();
     this.resize();
@@ -635,6 +661,7 @@ export class App {
     // M7: holders and verdict stamps on the boards follow the workers.
     if (c.structure || c.workers.size) this.pushBoards();
     this.pingInbox(c); // #100
+    this.overviewDirty = true; // #118
   }
 
   // ---- M6c: reports walk over to the orchestrator's desk ---------------------------
@@ -1144,7 +1171,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen;
+    return this.hire.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -1812,7 +1839,94 @@ export class App {
   private toggleBattery(): void {
     this.batterySaver = !this.batterySaver;
     this.hud.setBattery(this.batterySaver);
+    this.overviewDirty = true; // #118: the lights stop (or start) blinking
     this.hud.toast(this.batterySaver ? 'Battery saver on: 60 fps moving, 30 fps idle' : 'Battery saver off: 120 fps moving, 60 fps idle', 2200);
+  }
+
+  // ---- #118: the floor overview -----------------------------------------------------------------------
+
+  /**
+   * E at the lounge wall's screen (`fromScreen`: the page grows out of it) or O / the top bar's Overview (out of the
+   * centre): the overview of the floor you are on.
+   */
+  openOverview(fromScreen: boolean): void {
+    const s = this.hereSession();
+    if (!s) {
+      this.hud.toast('Walk onto an office floor to see its overview.', 2400);
+      return;
+    }
+    this.walker.release();
+    this.walker.stop();
+    this.panels.close();
+    if (this.planOpen) this.setPlan(false);
+    this.updateHint();
+    this.overview.open(s, fromScreen ? this.overviewScreenRect(s) : null);
+  }
+
+  /** What the page and the wall screen show of a floor (null: no such floor). */
+  private overviewData(session: string): OverviewData | null {
+    const fv = this.store.floorView(session);
+    if (!fv) return null;
+    return {
+      tree: buildOverview(this.store, session),
+      where: fv.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot',
+      counts: countItems(fv.counts, fv.asleep),
+      asleep: fv.asleep,
+    };
+  }
+
+  /** Where the wall screen of a floor is on your view (CSS px), or null when that floor is not around you or it is out of view. */
+  private overviewScreenRect(session: string): ViewRect | null {
+    const o = this.office;
+    const p = o?.session === session ? o.layout.props.find((x) => x.id === 'screen.overview') : null;
+    if (!o || !p || this.mode !== 'floor') return null;
+    o.root.updateMatrixWorld(true);
+    this.fpCam.updateMatrixWorld();
+    const [x1, y0, z0] = [p.box.max[0], p.box.min[1], p.box.min[2]];
+    const [y1, z1] = [p.box.max[1], p.box.max[2]];
+    let l = Infinity;
+    let t = Infinity;
+    let r = -Infinity;
+    let b = -Infinity;
+    for (const [y, z] of [
+      [y0, z0],
+      [y0, z1],
+      [y1, z0],
+      [y1, z1],
+    ] as const) {
+      const v = o.root.localToWorld(new THREE.Vector3(x1, y, z)).project(this.fpCam);
+      if (v.z > 1 || v.z < -1) return null; // behind you
+      const px = ((v.x + 1) / 2) * this.vp.width;
+      const py = ((1 - v.y) / 2) * this.vp.height;
+      l = Math.min(l, px);
+      r = Math.max(r, px);
+      t = Math.min(t, py);
+      b = Math.max(b, py);
+    }
+    l = Math.max(0, l);
+    t = Math.max(0, t);
+    r = Math.min(this.vp.width, r);
+    b = Math.min(this.vp.height, b);
+    return r - l > 8 && b - t > 8 ? { left: l, top: t, width: r - l, height: b - t } : null;
+  }
+
+  /** The wall screen and the open page follow the world (at most 4 times a second); the screen's blink and paging. */
+  private stepOverview(now: number): void {
+    const o = this.office;
+    if ((this.overviewDirty || o !== this.overviewOffice) && now - this.overviewAt >= 250) {
+      this.overviewDirty = false;
+      this.overviewAt = now;
+      this.overviewOffice = o;
+      const calm = this.batterySaver || reducedMotionTest();
+      if (o) o.setOverview(o.isAsleep ? null : this.overviewData(o.session), calm, Date.now());
+      if (this.overview.isOpen) this.overview.refresh();
+    }
+    o?.tickOverview(Date.now());
+  }
+
+  /** #118: what the overview page and the wall screen show (test hook). */
+  overviewInfo(): { page: ReturnType<OverviewOverlay['info']>; wall: ReturnType<OfficeView['overviewInfo']> } {
+    return { page: this.overview.info(), wall: this.office?.overviewInfo() ?? null };
   }
 
   // ---- M13: whiteboard --------------------------------------------------------------------------------
@@ -2247,6 +2361,10 @@ export class App {
       // M13: E looking at the whiteboard: its editor.
       e.preventDefault();
       this.openWhiteboard();
+    } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'screen.overview') {
+      // #118: E at the lounge wall's screen: the overview grows out of it.
+      e.preventDefault();
+      this.openOverview(true);
     } else if (e.code === 'KeyE' && this.mode === 'floor' && !e.metaKey && !e.ctrlKey && !this.planOpen && this.target?.kind === 'prop' && this.target.id === 'radio') {
       // M15: E on the radio: the next genre.
       e.preventDefault();
@@ -2304,6 +2422,10 @@ export class App {
     } else if (e.code === 'KeyM' && this.mode === 'city' && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       this.openBuildings();
+    } else if (e.code === 'KeyO' && !this.transitioning && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      // #118: O, the overview of the floor you are on, wherever you stand on it (the city and the lobby say where to go).
+      e.preventDefault();
+      this.openOverview(false);
     } else if (e.code === 'KeyB' && !e.metaKey && !e.ctrlKey) {
       this.toggleBattery();
     } else if (e.code === 'Comma' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
@@ -2540,6 +2662,7 @@ export class App {
   step(dt: number, t: number): void {
     this.lastT = t;
     this.stepDaylight(dt);
+    this.stepOverview(performance.now()); // #118
     if (this.mode === 'floor' && this.building) {
       if (this.walker.step(dt, this.walkWorldNow())) {
         this.cameraMoved = true;
@@ -2658,7 +2781,8 @@ export class App {
     const labels: PlanLabel[] = [];
     for (const p of o.layout.props) {
       // M15: the radio is a thing on the counter, not a placeholder to label; M17: nor is a look-only prop (the clock on the partition).
-      if (p.id === 'radio' || p.milestone === null) continue;
+      // #118: nor is the overview's screen, on the lounge wall the Lounge label already marks.
+      if (p.id === 'radio' || p.id === 'screen.overview' || p.milestone === null) continue;
       const c = toScreen((p.box.min[0] + p.box.max[0]) / 2, 0, (p.box.min[2] + p.box.max[2]) / 2);
       labels.push({ ...c, text: p.label, kind: 'prop' });
     }
@@ -2967,6 +3091,7 @@ export class App {
     const closed = open.map((d) => new Promise<void>((done) => (d.addEventListener('close', () => done(), { once: true }), setTimeout(done, 500))));
     this.panels.close();
     this.prompt.close();
+    if (this.overview.isOpen) this.overview.closeNow(); // #118
     for (const d of open) if (d.open) d.close();
     await Promise.all(closed);
     if (this.whiteboard.isOpen) await this.whiteboard.close();

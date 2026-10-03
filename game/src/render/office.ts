@@ -17,6 +17,7 @@ import { MezzanineView } from './mezzanine';
 import { BODY_TINTS, OFFICE } from './palette';
 import { buildProps, signTexture, type PropMeshes } from './props';
 import type { ClockFace } from './clock';
+import type { OverviewData } from '../world/overview';
 import { lookOf, NOON, type Look } from './daylook';
 // M7: the corkboard, the pull request board and the merge gong.
 import { BoardsView } from './boards/boards';
@@ -718,6 +719,21 @@ export class OfficeView {
   /** M13: what the TV shows (test hook); null without one. */
   screenInfo(): ReturnType<NonNullable<PropMeshes['tv']>['info']> | null {
     return this.props.tv?.info() ?? null;
+  }
+
+  /** #118: what the lounge wall's overview screen shows (null: the floor sleeps); `calm`: no blinking. */
+  setOverview(data: OverviewData | null, calm: boolean, now: number): void {
+    this.props.overview?.set(data, this.session, calm, now);
+  }
+
+  /** #118: the wall screen's blink and paging; true when its picture changed. */
+  tickOverview(now: number): boolean {
+    return this.props.overview?.tick(now) ?? false;
+  }
+
+  /** #118: what the wall screen shows (test hook); null without one. */
+  overviewInfo(): ReturnType<NonNullable<PropMeshes['overview']>['info']> | null {
+    return this.props.overview?.info() ?? null;
   }
 
   setPlan(on: boolean): void {

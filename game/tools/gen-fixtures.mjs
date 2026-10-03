@@ -511,6 +511,38 @@ function demoM6() {
   return [snap];
 }
 
+// ---- demo-m118: demo-m6 with the floor overview's lines (#118) -----------------
+// The lab floor's runs with their issues' titles and pages (from the board, as the bridge fills them), and every agent
+// with a digest: a one-off worker's task (Claude's ai-title, a cut prompt), a now line (a recap, else the title).
+
+const ISSUE_TITLES = { 3: 'Port picker in the settings dialog', 4: 'Lobby directory with a floor map' };
+const RECAPS = {
+  Sprout: 'Pass 3 still has two blockers in the port picker; waiting for you to decide on the cap.',
+  Juniper: 'Round 1 of the lobby directory is out to code, review and UX; Walnut finished the map research.',
+};
+
+function demoM118() {
+  const [base] = demoM6();
+  const snap = structuredClone(base);
+  for (const w of snap.world.workers) {
+    if (w.issue && ISSUE_TITLES[w.issue.number]) {
+      const url = `https://github.com/${w.issue.repo}/issues/${w.issue.number}`;
+      w.issue = { ...w.issue, title: ISSUE_TITLES[w.issue.number], url };
+      w.work_item = { provider: 'github', id: `${w.issue.repo}#${w.issue.number}`, title: ISSUE_TITLES[w.issue.number], url };
+    }
+    if (!w.agent_kind && !w.title) continue;
+    const recap = RECAPS[w.name];
+    const d = recap ? { now: recap, now_source: 'recap', now_at: T0 - 120_000 } : { now_source: 'title' };
+    if (!w.role) {
+      d.task = w.name === 'Turnip' ? 'Tidy the README and the quick start' : (w.title ?? '').split(/[.:]/)[0].slice(0, 80) || undefined;
+      d.task_source = w.harness === 'codex' ? 'prompt' : 'ai_title';
+      if (!d.task) delete d.task, delete d.task_source;
+    }
+    w.digest = d;
+  }
+  return [snap];
+}
+
 // ---- perf: one floor with 60 workers ------------------------------------------
 
 const STATES = ['working', 'working', 'working', 'working', 'idle', 'done', 'blocked', 'working', 'idle', 'working'];
@@ -608,6 +640,8 @@ const FIXTURES = { demo, 'demo-m3': demoM3, 'demo-m3b': demoM3b, 'demo-m4': demo
 FIXTURES['demo-m5'] = demoM5;
 // M6 crew
 FIXTURES['demo-m6'] = demoM6;
+// #118 floor overview
+FIXTURES['demo-m118'] = demoM118;
 
 const check = process.argv.includes('--check');
 let stale = false;

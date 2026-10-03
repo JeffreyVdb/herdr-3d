@@ -1161,6 +1161,9 @@ export interface WorkerIssue {
   /** `owner/name`. */
   repo: string;
   number: number;
+  /** #118: the issue's title and its page, from the floor's board (absent while unknown, or from an older bridge). The game never builds the URL. */
+  title?: string;
+  url?: string;
 }
 
 /** M6: a freelancer's report as the bridge read it (`<runs-dir>/<h3d_run>/<h3d_report>`). */
@@ -1214,6 +1217,9 @@ export interface Worker {
 export interface WorkItem {
   provider: string;
   id: string;
+  /** #118: on a worker's `work_item`, the card's title and page where the provider has them. */
+  title?: string;
+  url?: string;
 }
 
 export type CloseReason = 'completed' | 'not_planned' | 'duplicate';
@@ -1872,6 +1878,26 @@ export interface Activity {
 export interface Worker {
   /** #98: present while working, and while idle/done for `waiting` on open background tasks; absent otherwise. */
   activity?: Activity;
+}
+
+/**
+ * #118: the floor overview's lines for a worker, from its transcript (docs/protocol.md "Floor overview digest"). Absent
+ * until a turn of its agent was read (Claude and Codex only). `llm` is reserved for the summaries of a later phase.
+ */
+export interface WorkerDigest {
+  /** What it was asked to do, one line (≤ 80). */
+  task?: string;
+  task_source?: 'ai_title' | 'prompt' | 'llm' | string;
+  /** What it is doing now, one line (≤ 100); absent when `now_source` is `title`: the line is the worker's own `title`. */
+  now?: string;
+  now_source?: 'recap' | 'title' | 'llm' | string;
+  /** Unix ms (bridge clock) the `now` line was written. */
+  now_at?: number;
+}
+
+export interface Worker {
+  /** #118 */
+  digest?: WorkerDigest;
 }
 
 /** #98: a worker's activity changed (`activity` absent: cleared). At most 2 a second per worker. */

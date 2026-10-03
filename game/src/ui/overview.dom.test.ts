@@ -1,0 +1,189 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Floor, Snapshot, Worker } from '../net/protocol';
+import { WorldStore } from '../world/store';
+import { buildOverview, countItems } from '../world/overview';
+import { OverviewOverlay, type OverviewHost } from './overview';
+import { OverviewPrefs } from './overviewPrefs';
+
+const NOW = 1_790_000_000_000;
+
+const worker = (id: string, over: Partial<Worker> = {}): Worker => ({ id, session: 'top', workspace_id: `ws-${id}`, label: id, name: id, status: 'idle', status_since: NOW - 60_000, ...over });
+
+function world(workers: Worker[]): WorldStore {
+  const s = new WorldStore(NOW);
+  const floors: Floor[] = [{ session: 'top', state: 'running', building: 'b1', index: 0 }];
+  const snap: Snapshot = { t: 'world.snapshot', seq: 1, world: { buildings: [{ id: 'b1', name: 'Work', sort: 0, floors: ['top'] }], unassigned: [], floors, workers } };
+  s.applySnapshot(snap, NOW);
+  return s;
+}
+
+const CREW = [
+  worker('o1', { role: 'orch', desk_index: 0, status: 'working', issue: { repo: 'o/r', number: 118, title: 'Floor overview' }, work_item: { provider: 'gh', id: 'o/r#118' } }),
+  worker('c1', { role: 'code', orch_id: 'o1', round: 1, desk_index: 1, issue: { repo: 'o/r', number: 118 }, work_item: { provider: 'gh', id: 'o/r#118' } }),
+  worker('r1', { role: 'review', orch_id: 'o1', round: 1, desk_index: 2 }),
+  worker('emp', { desk_index: 3, status: 'blocked', digest: { task: 'Fix the flaky test', task_source: 'prompt', now_source: 'title' }, title: 'Running vitest' }),
+];
+
+function setup(workers: Worker[] = CREW, over: Partial<OverviewHost> = {}) {
+  const store = world(workers);
+  const bg = document.body.appendChild(document.createElement('div'));
+  bg.className = 'hud';
+  const host: OverviewHost = {
+    data: (s) => {
+      const fv = store.floorView(s);
+      return fv ? { tree: buildOverview(store, s), where: 'Floor 1 of 1 · Work', counts: countItems(fv.counts, fv.asleep), asleep: fv.asleep } : null;
+    },
+    goTo: vi.fn(),
+    openTicket: vi.fn(),
+    hire: vi.fn(),
+    calm: () => false,
+    screenRect: () => null,
+    closed: vi.fn(),
+    now: () => NOW,
+    ...over,
+  };
+  const prefs = new OverviewPrefs(null);
+  const ov = new OverviewOverlay(document.body, host, prefs);
+  return { ov, host, bg, prefs, store };
+}
+
+const key = (k: string, o: KeyboardEventInit = {}) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }));
+const keys = (ov: OverviewOverlay) => ov.info().rows.map((r) => `${'  '.repeat(r.depth)}${r.key}`);
+
+afterEach(() => void (document.body.innerHTML = ''));
+
+describe('the overview page (#118)', () => {
+  it('opens over everything with the game behind it inert, and Esc closes it and gives the background back', async () => {
+    const { ov, host, bg } = setup();
+    ov.open('top');
+    expect(ov.isOpen).toBe(true);
+    const root = document.querySelector('.ov') as HTMLElement;
+    expect(root.hidden).toBe(false);
+    expect(root.hasAttribute('open')).toBe(true);
+    expect(bg.inert).toBe(true);
+    expect(document.querySelector('.ov-floor')?.textContent).toBe('top');
+    expect([...document.querySelectorAll('.ov-count')].map((c) => c.getAttribute('title'))).toEqual(['1 working', '1 needs you', '2 idle']);
+    key('Escape');
+    await vi.waitFor(() => expect(ov.isOpen).toBe(false));
+    expect(root.hidden).toBe(true);
+    expect(bg.inert).toBe(false);
+    expect(host.closed).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders the tree, its lights from the display, and the lines', () => {
+    const { ov } = setup();
+    ov.open('top');
+    expect(keys(ov)).toEqual(['o1', '  c1', '  r1', 'emp']);
+    const rows = [...document.querySelectorAll<HTMLElement>('.ov-row')];
+    expect(rows.map((r) => r.dataset.display)).toEqual(['working', 'idle', 'idle', 'needs_you']);
+    expect(rows[0]?.querySelector('.ov-ticket')?.textContent).toBe('#118Floor overview');
+    expect(rows[1]?.querySelector('.ov-ticket')).toBeNull(); // the orchestrator's own ticket
+    expect(rows[3]?.querySelector('.ov-task')?.textContent).toContain('Fix the flaky test');
+    expect(rows[3]?.querySelector('.ov-now')?.textContent).toContain('Running vitest');
+    expect(rows[0]?.getAttribute('aria-expanded')).toBe('true');
+    expect(rows[1]?.getAttribute('aria-level')).toBe('2');
+  });
+
+  it('a row’s click goes to that worker’s transcript and closes the page; a ticket’s opens the issue over it', () => {
+    const { ov, host } = setup();
+    ov.open('top');
+    (document.querySelector('.ov-row[data-key="o1"] .ov-ticket') as HTMLElement).click();
+    expect(host.openTicket).toHaveBeenCalledWith('top', 'o/r#118');
+    expect(ov.isOpen).toBe(true);
+    (document.querySelector('.ov-row[data-key="emp"] .ov-name') as HTMLElement).click();
+    expect(host.goTo).toHaveBeenCalledWith('emp');
+    expect(ov.isOpen).toBe(false);
+  });
+
+  it('keys: ↓ j ↑ k move, ← → fold and unfold, Space toggles, Shift+← / Shift+→ all, t the ticket, Enter the transcript', () => {
+    const { ov, host, prefs } = setup();
+    ov.open('top');
+    expect(ov.info().focused).toBe('o1');
+    key('ArrowDown');
+    key('j');
+    expect(ov.info().focused).toBe('r1');
+    key('k');
+    key('ArrowUp');
+    expect(ov.info().focused).toBe('o1');
+    key('ArrowLeft');
+    expect(keys(ov)).toEqual(['o1', 'emp']);
+    expect(prefs.collapsed('o1')).toBe(true);
+    key('ArrowRight');
+    expect(keys(ov)).toEqual(['o1', '  c1', '  r1', 'emp']);
+    key(' ');
+    expect(keys(ov)).toEqual(['o1', 'emp']);
+    key('ArrowRight', { shiftKey: true });
+    expect(keys(ov)).toEqual(['o1', '  c1', '  r1', 'emp']);
+    key('ArrowLeft', { shiftKey: true });
+    expect(keys(ov)).toEqual(['o1', 'emp']);
+    key('ArrowRight');
+    key('ArrowDown');
+    key('ArrowLeft'); // on a child: up to its orchestrator
+    expect(ov.info().focused).toBe('o1');
+    key('t');
+    expect(host.openTicket).toHaveBeenCalledWith('top', 'o/r#118');
+    key('ArrowDown');
+    key('Enter');
+    expect(host.goTo).toHaveBeenCalledWith('c1');
+  });
+
+  it('Expand all and Collapse all buttons', () => {
+    const { ov } = setup();
+    ov.open('top');
+    const btn = (t: string) => [...document.querySelectorAll<HTMLButtonElement>('.ov-btn')].find((b) => b.textContent === t) as HTMLButtonElement;
+    btn('Collapse all').click();
+    expect(keys(ov)).toEqual(['o1', 'emp']);
+    btn('Expand all').click();
+    expect(keys(ov)).toEqual(['o1', '  c1', '  r1', 'emp']);
+  });
+
+  it('stays live: a status change updates the row in place (same element), never its place', () => {
+    const { ov, store } = setup();
+    ov.open('top');
+    const el = document.querySelector('.ov-row[data-key="c1"]');
+    store.applyEvent({ t: 'worker.status', seq: 2, id: 'c1', session: 'top', workspace_id: 'ws-c1', status: 'working', prev_status: 'idle', status_since: NOW, title: 'Coding' }, NOW);
+    ov.refresh();
+    expect(keys(ov)).toEqual(['o1', '  c1', '  r1', 'emp']);
+    const now = document.querySelector<HTMLElement>('.ov-row[data-key="c1"]');
+    expect(now).toBe(el);
+    expect(now?.dataset.display).toBe('working');
+  });
+
+  it('an empty floor: Nobody’s here yet, and Hire', () => {
+    const { ov, host } = setup([]);
+    ov.open('top');
+    expect(ov.info().empty).toBe(true);
+    const empty = document.querySelector('.ov-empty') as HTMLElement;
+    expect(empty.hidden).toBe(false);
+    expect(empty.textContent).toContain('Nobody’s here yet');
+    (empty.querySelector('button') as HTMLButtonElement).click();
+    expect(host.hire).toHaveBeenCalled();
+    expect(ov.isOpen).toBe(false);
+  });
+
+  it('battery saver or reduced motion: calm (no blink, cascade or flap)', () => {
+    const calm = setup(CREW, { calm: () => true });
+    calm.ov.open('top');
+    expect(calm.ov.info().calm).toBe(true);
+    expect(document.querySelector('.ov')?.hasAttribute('data-calm')).toBe(true);
+    document.body.innerHTML = '';
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), media: q }) as MediaQueryList);
+    const reduced = setup();
+    reduced.ov.open('top');
+    expect(reduced.ov.info().calm).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it('a modal dialog over it (the issue window) gets the keys', () => {
+    const { ov } = setup();
+    ov.open('top');
+    const d = document.body.appendChild(document.createElement('dialog'));
+    // jsdom has no showModal top layer: `:modal` is what the page asks.
+    const qs = document.querySelector.bind(document);
+    vi.spyOn(document, 'querySelector').mockImplementation(((sel: string) => (sel === 'dialog:modal' ? d : qs(sel))) as typeof document.querySelector);
+    key('Escape');
+    expect(ov.isOpen).toBe(true);
+    vi.restoreAllMocks();
+  });
+});
