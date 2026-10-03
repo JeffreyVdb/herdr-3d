@@ -181,13 +181,33 @@ func parseCodex(off int64, b []byte) (cs []contrib, version string) {
 	return []contrib{unknownItem(id, raw, ts)}, ""
 }
 
-// execCmd is the first exec_command's cmd in a code-mode script.
+// execCmd is an exec_command's cmd in a code-mode script.
 var execCmd = regexp.MustCompile(`\bcmd:\s*"((?:[^"\\]|\\.)*)"`)
 
 // Injected context Codex sends as user messages (AGENTS.md, the
 // environment): not the user's words.
 var codexInjected = []string{"# AGENTS.md instructions", "<environment_context>", "<user_instructions>", "<INSTRUCTIONS>",
 	"<user_shell_command>", "<turn_aborted>"}
+
+// execSummary is a code-mode script's summary: its first exec_command's
+// cmd, plus how many more the script runs (Codex lists each as its own
+// row; the script is in the row's input). fallback if it has no cmd.
+func execSummary(code, fallback string) string {
+	var cmds []string
+	for _, m := range execCmd.FindAllStringSubmatch(code, -1) {
+		if cmd, err := strconv.Unquote(`"` + m[1] + `"`); err == nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if len(cmds) == 0 {
+		return fallback
+	}
+	more := ""
+	if len(cmds) > 1 {
+		more = " (+" + strconv.Itoa(len(cmds)-1) + " more)"
+	}
+	return clipSummaryWith(cmds[0], more)
+}
 
 func injected(s string) bool {
 	s = strings.TrimSpace(s)
@@ -241,11 +261,7 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 		if it.Name == "exec" { // code mode: a script; its first command says most
 			var code string
 			if json.Unmarshal(input, &code) == nil {
-				if m := execCmd.FindStringSubmatch(code); m != nil {
-					if cmd, err := strconv.Unquote(`"` + m[1] + `"`); err == nil {
-						summary = cmd
-					}
-				}
+				summary = execSummary(code, summary)
 			}
 		}
 		var diffs []proto.TranscriptDiff

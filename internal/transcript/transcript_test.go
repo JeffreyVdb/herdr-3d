@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
@@ -250,6 +251,9 @@ func TestCodexLines(t *testing.T) {
 			{kind: proto.ItemTool, tool: "exec", status: proto.ToolOK, text: "cat /home/dev/.local/state/write-code"},
 			{kind: proto.ItemTool, tool: "exec_command", status: proto.ToolOK, text: "cat /home/dev/.agents/skills"},
 		}},
+		{"tools: a script of several commands says how many more", []string{"exec_multi.jsonl"}, []want{
+			{kind: proto.ItemTool, tool: "exec", status: proto.ToolOK, text: "gitleaks git . --redact --no-banner (+2 more)"},
+		}},
 		{"apply_patch: a diff per file", []string{"apply_patch.jsonl"}, []want{
 			{kind: proto.ItemTool, tool: "apply_patch", status: proto.ToolOK, diff: "package.json", text: "package.json, tsconfig.json"},
 		}},
@@ -440,5 +444,24 @@ func TestParsePatch(t *testing.T) {
 	}
 	if parsePatch("not a patch") != nil {
 		t.Error("a diff from nothing")
+	}
+}
+
+func TestExecSummary(t *testing.T) {
+	for _, c := range []struct{ name, code, want string }{
+		{"one command", `text(await tools.exec_command({cmd:"ls"}));`, "ls"},
+		{"two commands", `tools.exec_command({cmd:"ls"}); tools.exec_command({cmd:"pwd"});`, "ls (+1 more)"},
+		{"stdin polls are not commands", `tools.write_stdin({session_id:1}); tools.exec_command({cmd:"ls"});`, "ls"},
+		{"first line only", `tools.exec_command({cmd:"a\nb"}); tools.exec_command({cmd:"c"});`, "a (+1 more)"},
+		{"no cmd", `text(await tools.write_stdin({session_id:1}));`, "fallback"},
+	} {
+		if got := execSummary(c.code, "fallback"); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+	long := strings.Repeat("x", 300)
+	got := execSummary(`tools.exec_command({cmd:"`+long+`"}); tools.exec_command({cmd:"y"});`, "")
+	if n := utf8.RuneCountInString(got); n != maxSummary || !strings.HasSuffix(got, "… (+1 more)") {
+		t.Errorf("long: %d runes, %q", n, got)
 	}
 }
