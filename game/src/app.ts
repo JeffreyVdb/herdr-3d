@@ -2813,8 +2813,11 @@ export class App {
     let i = at >= 0 ? (at + dir + list.length) % list.length : 0;
     if (at < 0) {
       // Nothing aimed: the nearest, whichever way you cycle.
-      const dist = (x: { at: readonly [number, number, number] }) => Math.hypot(x.at[0] - eye.x, x.at[2] - eye.z);
-      i = list.reduce((best, x, n) => (dist(x) < dist(list[best] as (typeof list)[number]) ? n : best), 0);
+      let best = Infinity;
+      list.forEach((x, n) => {
+        const d = Math.hypot(x.at[0] - eye.x, x.at[2] - eye.z);
+        if (d < best) [best, i] = [d, n];
+      });
     }
     const pick = list[i];
     if (!pick) return;
