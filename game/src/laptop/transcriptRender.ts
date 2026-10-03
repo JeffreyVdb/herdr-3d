@@ -1120,15 +1120,11 @@ class Transcript implements TranscriptView {
       row.append(h('span', { class: 'tx-chip tx-chip-mute', title: 'The reasoning is encrypted: nothing to show' }, icon(TX_ICON.brain), 'reasoning'));
       return row;
     }
+    // Often the agent's own narration (Claude Code writes it as a thinking block, Codex as a reasoning summary): shown
+    // as it is, dimmed, not behind a click. Not a tool row, so "Hide tool calls" leaves it.
     const body = h('div', { class: 'tx-thinking-body tx-md' });
-    const ex = this.expander(`${scope}/${it.id}`, (open) => {
-      if (open && !body.childNodes.length) setMarkdown(body, text);
-      body.hidden = !open;
-    });
-    const chip = h('button', { class: 'tx-chip', 'aria-expanded': String(ex.open), onclick: () => ex.toggle(chip) }, icon(TX_ICON.brain), 'reasoning', icon(TX_ICON.chevron));
-    body.hidden = !ex.open;
-    if (ex.open) setMarkdown(body, text);
-    row.append(chip, body);
+    setMarkdown(body, text);
+    row.append(h('span', { class: 'tx-thinking-tag' }, icon(TX_ICON.brain), 'summary'), body);
     return row;
   }
 

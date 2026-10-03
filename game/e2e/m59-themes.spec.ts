@@ -89,13 +89,13 @@ const pseudoFamily = (l: Locator) => l.first().evaluate((e) => getComputedStyle(
 /** Decision 5: what is mono and what is prose, by the computed font-family, in a preset. */
 async function checkFonts(page: Page, tx: Locator, id: Id): Promise<void> {
   const { mono, prose } = FAMILY[id];
-  // Open the Edit (its diff), the box-drawing Bash, and the reasoning.
-  for (const sel of ['[data-id="toolu_demo_edit"] .tx-tool-row', '[data-id="m59-box"] .tx-tool-row', '.tx-thinking .tx-chip']) {
+  // Open the Edit (its diff) and the box-drawing Bash.
+  for (const sel of ['[data-id="toolu_demo_edit"] .tx-tool-row', '[data-id="m59-box"] .tx-tool-row']) {
     const el = tx.locator(sel);
     if ((await el.getAttribute('aria-expanded')) !== 'true') await el.click();
   }
   const monoSel = ['.tx-md pre code', '.tx-md p code', '.tx-diff-body', '.tx-diff-path', '.tx-tool-name', '.tx-tool-sum', '.tx-out', '.tx-imgcard-path'];
-  const proseSel = ['.tx-assistant .tx-md p', '.tx-bubble', '.tx-thinking-body', '.tx-notice-text', '.tx-tool-status', '.tx-tool-dur', '.tx-chip', '.tx-count', '.tx-send', '.tx-banner-text', '.tx-choice', '.tx-diff-stat'];
+  const proseSel = ['.tx-assistant .tx-md p', '.tx-bubble', '.tx-thinking-body', '.tx-notice-text', '.tx-tool-status', '.tx-tool-dur', '.tx-thinking-tag', '.tx-count', '.tx-send', '.tx-banner-text', '.tx-choice', '.tx-diff-stat'];
   for (const s of monoSel) expect(await family(tx.locator(s)), `${id}: ${s} is mono`).toContain(mono);
   for (const s of proseSel) {
     const f = await pseudoFamily(tx.locator(s));

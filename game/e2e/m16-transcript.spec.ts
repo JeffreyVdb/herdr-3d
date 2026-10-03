@@ -197,11 +197,12 @@ test('sitting down opens the conversation over the monitor, fed by transcript.wa
   );
   expect(covered).toEqual([]);
 
-  // Rows: the bubble with the image placeholder, collapsed reasoning, tools, a divider; what the bridge hides waits
+  // Rows: the bubble with the image placeholder, the agent's thinking text shown inline, tools, a divider; what the bridge hides waits
   // for "show system", its other notices show.
   await expect(tx.locator('.tx-user .tx-bubble').first()).toContainText('HUD overlaps');
   await imagesInTheConversation(page, tx, worker);
-  await expect(tx.locator('.tx-thinking-body')).toBeHidden();
+  await expect(tx.locator('.tx-thinking-body').first()).toContainText('The seat pose uses');
+  await expect(tx.locator('.tx-thinking-body').first()).toBeVisible();
   await expect(tx.locator('.tx-compaction')).toBeVisible();
   await expect(tx.locator('.tx-notice', { hasText: 'Interrupted by user' })).toBeVisible();
   await expect(tx.locator('.tx-notice', { hasText: 'Turn took 41s' })).toBeHidden();
@@ -254,6 +255,24 @@ test('sitting down opens the conversation over the monitor, fed by transcript.wa
   );
   await expect(tx.locator('[data-id="toolu_demo_bash2"]')).toHaveAttribute('data-status', 'ok');
   await expect(tx.locator('[data-id="toolu_demo_bash2"]')).toHaveCount(1);
+
+  // Thinking with text is the agent talking: dimmed and visible with no click, no chevron or button. An encrypted one
+  // (no parts) is a muted chip that does not open.
+  await page.evaluate(() =>
+    window.__h3d.simTranscript({
+      id: window.__h3d.seated(),
+      items: [
+        { id: 'demo-97', seq: 97, ts: Date.now(), kind: 'thinking', parts: [{ text: 'No blockers: the *coder* is starting now.' }] },
+        { id: 'demo-98', seq: 98, ts: Date.now(), kind: 'thinking' },
+      ],
+    }),
+  );
+  const said = tx.locator('[data-id="demo-97"]');
+  await expect(said.locator('.tx-thinking-body')).toBeVisible();
+  await expect(said.locator('.tx-thinking-body em')).toHaveText('coder');
+  await expect(said.locator('.tx-thinking-tag')).toHaveText('summary');
+  await expect(tx.locator('.tx-thinking button, .tx-thinking [aria-expanded]')).toHaveCount(0);
+  await expect(tx.locator('[data-id="demo-98"] .tx-chip-mute')).toHaveText('reasoning');
 
   // Ctrl+Esc: the live terminal at the seated fps; Ctrl+Esc again: the transcript, the terminal behind it frozen at
   // 1 fps, and the keyboard on the timeline again, no click needed.

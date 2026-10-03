@@ -634,18 +634,24 @@
 .tx-chip-mute {
   opacity: 0.7;
 }
-.tx-chip[aria-expanded='true'] svg:last-child,
 [aria-expanded='true'] > .tx-caret svg {
   transform: rotate(90deg);
 }
+.tx-thinking-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--tx-text-3);
+  font-size: calc(10.5px * var(--tx-k, 1));
+  font-style: italic;
+}
 .tx-thinking-body {
-  margin: 6px 0 0 10px;
+  margin: 3px 0 0 4px;
   padding-left: 10px;
   border-left: 2px solid var(--tx-bg-3);
   color: var(--tx-text-2);
   font-style: italic;
 }
-.tx-thinking-body[hidden],
 .tx-tool-body[hidden],
 .tx-sub-body[hidden] {
   display: none;
