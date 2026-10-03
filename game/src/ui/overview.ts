@@ -21,6 +21,9 @@ import './overview.css';
 
 /** The grow out of the wall screen, and back. */
 const GROW_MS = 420;
+/** A collapsing group's rows fold away under it this long (each a little after the one below it). */
+const FOLD_MS = 300;
+const FOLD_STAGGER_MS = 22;
 
 /** A rectangle on the viewport, in CSS pixels. */
 export interface ViewRect {
@@ -89,6 +92,8 @@ export class OverviewOverlay {
   private readonly onKeyCapture = (e: KeyboardEvent) => this.keyCapture(e);
   /** How many rows each group holds (also while it is collapsed). */
   private sizes = new Map<string, number>();
+  /** Rows of a group just collapsed, folding away under it (inert, out of the tree): the group's key. */
+  private leaving = new Map<HTMLElement, string>();
 
   constructor(
     parent: HTMLElement,
@@ -169,6 +174,7 @@ export class OverviewOverlay {
     this.from = from;
     this.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.rows.clear();
+    this.leaving.clear();
     this.board.replaceChildren();
     this.focusKey = null;
     this.root.hidden = false;
@@ -259,6 +265,7 @@ export class OverviewOverlay {
     this.root.setAttribute('aria-label', `Floor overview · ${s}`);
     this.whereEl.textContent = `${d.where} · ${d.tree.total} ${d.tree.total === 1 ? 'worker' : 'workers'}`;
     this.renderCounts(d.counts);
+    const wasIn = new Map(this.visible.map((v) => [v.row.key, v.parent]));
     this.visible = visibleRows(d.tree, this.prefs.set);
     this.sizes = new Map(d.tree.nodes.map((n) => [n.row.key, n.children.length]));
     const empty = this.visible.length === 0;
@@ -299,21 +306,78 @@ export class OverviewOverlay {
       entry.el.setAttribute('aria-posinset', String(i + 1));
       order.push(entry.el);
     });
+    // A group that unfolds again takes its rows back at once: the ones still folding away go.
+    for (const [el, p] of this.leaving) {
+      if (!this.prefs.collapsed(p) || !this.rows.has(p)) this.drop(el);
+    }
+    const fold: HTMLElement[] = [];
     for (const [k, e] of this.rows) {
       if (!seen.has(k)) {
-        e.el.remove();
+        // A row of a group you just collapsed folds away under it; one that left the floor goes at once.
+        const p = wasIn.get(k);
+        if (!calm && p && seen.has(p) && this.prefs.collapsed(p) && typeof e.el.animate === 'function') {
+          this.leaving.set(e.el, p);
+          fold.push(e.el);
+        } else e.el.remove();
         this.rows.delete(k);
       }
     }
     // Moves only when the order changed (a new or departed row, a fold): a focused row keeps its focus.
-    const cur = [...this.board.children];
-    if (cur.length !== order.length || cur.some((c, i) => c !== order[i])) {
+    const cur = [...this.board.children].filter((c) => !this.leaving.has(c as HTMLElement));
+    if (cur.length !== order.length || cur.some((c, i) => c !== order[i]) || fold.length) {
       const a = document.activeElement;
       this.board.replaceChildren(...order);
-      if (a instanceof HTMLElement && this.board.contains(a) && document.activeElement !== a) a.focus({ preventScroll: true });
+      // The folding rows stay under their group (in their order) until they are gone.
+      const after = new Map<string, HTMLElement>();
+      for (const [el, p] of this.leaving) {
+        const anchor = after.get(p) ?? this.rows.get(p)?.el;
+        if (!anchor?.isConnected) {
+          this.drop(el);
+          continue;
+        }
+        anchor.after(el);
+        after.set(p, el);
+      }
+      if (a instanceof HTMLElement && this.board.contains(a) && !this.leaving.has(a) && document.activeElement !== a) a.focus({ preventScroll: true });
     }
+    this.foldAway(fold);
     if (!this.focusKey || !this.rows.has(this.focusKey)) this.setFocus(this.visible[0]?.row.key ?? null, false);
     else this.setFocus(this.focusKey, false);
+  }
+
+  /**
+   * A collapse: the group's rows fold up under it, the last one first: their height and padding go with a slight
+   * spring (a lift before they tuck away) as they fade, so the rows below glide up instead of jumping. Out of the tree
+   * and the tab order at once (inert, hidden from assistive tech); calm never gets here (they go at once).
+   */
+  private foldAway(els: HTMLElement[]): void {
+    els.forEach((el, i) => {
+      el.inert = true;
+      el.tabIndex = -1;
+      el.setAttribute('aria-hidden', 'true');
+      el.removeAttribute('role');
+      el.classList.remove('ov-row--new', 'ov-row--flash');
+      el.classList.add('ov-row--leaving');
+      const h = el.offsetHeight;
+      const cs = getComputedStyle(el);
+      const anim = el.animate(
+        [
+          { height: `${h}px`, paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom, opacity: 1, transform: 'translateY(0) scaleY(1)' },
+          { opacity: 0, offset: 0.62 },
+          { height: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0, transform: 'translateY(-6px) scaleY(0.96)' },
+        ],
+        { duration: FOLD_MS, delay: (els.length - 1 - i) * FOLD_STAGGER_MS, easing: 'cubic-bezier(0.45, -0.22, 0.3, 1)', fill: 'forwards' },
+      );
+      anim.finished.then(
+        () => this.drop(el),
+        () => this.drop(el),
+      );
+    });
+  }
+
+  private drop(el: HTMLElement): void {
+    this.leaving.delete(el);
+    el.remove();
   }
 
   private renderCounts(items: CountItem[]): void {

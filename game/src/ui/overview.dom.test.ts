@@ -136,6 +136,66 @@ describe('the overview page (#118)', () => {
     expect(host.goTo).toHaveBeenCalledWith('c1');
   });
 
+  it('a collapse folds the group’s rows away under it (height and opacity, a slight spring), out of the tree at once; calm: gone at once', async () => {
+    const anims: Array<{ el: Element; frames: Keyframe[]; opts: KeyframeAnimationOptions; done: () => void }> = [];
+    const proto = HTMLElement.prototype as unknown as { animate?: unknown };
+    const had = proto.animate;
+    proto.animate = function (this: Element, frames: Keyframe[], opts: KeyframeAnimationOptions) {
+      let done = () => {};
+      const finished = new Promise<void>((r) => (done = r));
+      anims.push({ el: this, frames, opts, done });
+      return { finished, cancel: () => done() } as unknown as Animation;
+    };
+    try {
+      const { ov } = setup();
+      ov.open('top');
+      const kids = ['c1', 'r1'].map((k) => document.querySelector(`.ov-row[data-key="${k}"]`) as HTMLElement);
+      key('ArrowLeft'); // o1 folds
+      expect(keys(ov)).toEqual(['o1', 'emp']);
+      expect(ov.info().focused).toBe('o1');
+      expect(document.activeElement?.getAttribute('data-key')).toBe('o1');
+      // Still on the board, under their group, folding: inert, not tree items, not focusable.
+      const order = [...document.querySelectorAll<HTMLElement>('.ov-board > *')];
+      expect(order.map((e) => e.dataset.key)).toEqual(['o1', 'c1', 'r1', 'emp']);
+      for (const el of kids) {
+        expect(el.classList.contains('ov-row--leaving')).toBe(true);
+        expect(el.inert).toBe(true);
+        expect(el.getAttribute('aria-hidden')).toBe('true');
+        expect(el.hasAttribute('role')).toBe(false);
+        expect(el.tabIndex).toBe(-1);
+      }
+      const fold = anims.filter((a) => kids.includes(a.el as HTMLElement));
+      expect(fold).toHaveLength(2);
+      for (const a of fold) {
+        expect(a.frames.at(-1)).toMatchObject({ height: '0px', opacity: 0 });
+        expect(a.opts.easing).toMatch(/cubic-bezier\(0\.45, -0\.22/); // the spring's lift
+      }
+      // A live refresh meanwhile keeps them folding where they are.
+      ov.refresh();
+      expect([...document.querySelectorAll<HTMLElement>('.ov-board > *')].map((e) => e.dataset.key)).toEqual(['o1', 'c1', 'r1', 'emp']);
+      for (const a of fold) a.done();
+      await vi.waitFor(() => expect(document.querySelectorAll('.ov-row--leaving')).toHaveLength(0));
+      expect([...document.querySelectorAll<HTMLElement>('.ov-board > *')].map((e) => e.dataset.key)).toEqual(['o1', 'emp']);
+      // Unfolding while they fold: they go at once and the group's rows come back.
+      key('ArrowRight');
+      key('ArrowLeft');
+      key('ArrowRight');
+      expect(document.querySelectorAll('.ov-row--leaving')).toHaveLength(0);
+      expect([...document.querySelectorAll<HTMLElement>('.ov-board > *')].map((e) => e.dataset.key)).toEqual(['o1', 'c1', 'r1', 'emp']);
+      ov.closeNow();
+      document.body.innerHTML = '';
+      // Calm: no fold, they are gone at once.
+      const calm = setup(CREW, { calm: () => true });
+      calm.ov.open('top');
+      anims.length = 0;
+      key('ArrowLeft');
+      expect(anims).toHaveLength(0);
+      expect([...document.querySelectorAll<HTMLElement>('.ov-board > *')].map((e) => e.dataset.key)).toEqual(['o1', 'emp']);
+    } finally {
+      proto.animate = had;
+    }
+  });
+
   it('Expand all and Collapse all buttons', () => {
     const { ov } = setup();
     ov.open('top');

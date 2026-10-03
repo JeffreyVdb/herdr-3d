@@ -122,4 +122,18 @@ describe('the overview’s colours (#118)', () => {
     }
     for (const [k, c] of Object.entries(STATUS_CHIP_CSS)) expect(contrast('#ffffff', c), `white on ${k}`).toBeGreaterThanOrEqual(4.5);
   });
+
+  it('AA on an asleep row as drawn: its own dimmer text tokens (no opacity over its text) stay >= 4.5:1', () => {
+    // Every rule for an asleep row, and the tokens it sets (the rest inherited from .ov).
+    const rules = [...css.matchAll(/([^{}]*data-display='asleep'[^{}]*)\{([^}]*)\}/g)];
+    expect(rules.length).toBeGreaterThan(0);
+    for (const [, sel, body] of rules) expect(body, `${sel?.trim()}`).not.toMatch(/(^|[\s;])(opacity|filter)\s*:/);
+    const own = /\.ov-row\[data-display='asleep'\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    const asleep = (name: string) => new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`).exec(own)?.[1] ?? token(name);
+    expect(asleep('ov-text')).not.toBe(token('ov-text')); // it does dim
+    const used = ['ov-text', 'ov-text-2', 'ov-text-3', 'ov-key-asleep'].map(asleep);
+    for (const bg of [token('ov-ink'), token('ov-ink-2')]) for (const t of used) expect(contrast(t, bg), `${t} on ${bg}`).toBeGreaterThanOrEqual(4.5);
+    // The ticket key uses its asleep colour.
+    expect(css).toMatch(/data-display='asleep'\] \.ov-ticket-key \{\s*color: var\(--ov-key-asleep\)/);
+  });
 });

@@ -331,7 +331,22 @@
 .ov-row[data-display='idle'] {
   --lamp: var(--idle);
 }
-/* Asleep: an unlit lamp, its ring in the asleep colour (still >= 3:1 on the ink); the row dims with it. */
+/*
+ * Asleep: an unlit lamp, its ring in the asleep colour (still >= 3:1 on the ink); the row's text steps down a tone with
+ * it. Its own text tokens, never an opacity over text: each stays >= 4.5:1 on the ink and the hover row (--ov-text-3
+ * is already the floor, so it stays; overviewScreen.test.ts checks them).
+ */
+.ov-row[data-display='asleep'] {
+  --ov-text: #9aa5c2;
+  --ov-text-2: #8390b0;
+  --ov-key-asleep: #b8954a;
+}
+.ov-row[data-display='asleep'] .ov-ticket-key {
+  color: var(--ov-key-asleep);
+}
+.ov-row[data-display='asleep'] .ov-tag {
+  background: color-mix(in srgb, var(--run, var(--ov-ink-3)) 55%, var(--ov-ink-3));
+}
 .ov-row[data-display='asleep'] .ov-light,
 .ov-light--ghost {
   background: transparent;
@@ -339,10 +354,6 @@
 }
 .ov-light--ghost {
   box-shadow: inset 0 0 0 2px var(--idle);
-}
-.ov-row[data-display='asleep'] .ov-who,
-.ov-row[data-display='asleep'] .ov-what {
-  opacity: 0.62;
 }
 .ov-row[data-display='working'] .ov-light {
   animation: ov-blink var(--ov-blink) ease-in-out infinite;
@@ -648,6 +659,12 @@
     opacity: 0;
     transform: translateY(8px);
   }
+}
+/* A collapse: the group's rows fold up under it (ui/overview.ts animates their height, padding and opacity). */
+.ov-row--leaving {
+  overflow: hidden;
+  pointer-events: none;
+  transform-origin: 50% 0;
 }
 /* A status change: the row flashes its new colour once. */
 .ov-row--flash {
