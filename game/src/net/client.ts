@@ -169,6 +169,9 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   // #110: the whole detect, as the game sees it: past 1.5 s the prompt goes as written and a late ack is dropped (the
   // bridge bounds its models at 1.2 s, so its answer has 0.3 s to get here).
   'packup.detect': 1_500,
+  // #118: two completions, one after the other (15 s per attempt on the bridge, one retry each), after any summary
+  // that is out.
+  'digest.test': 90_000,
 };
 
 interface Pending {

@@ -356,7 +356,7 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
 function face(v: VisibleRow, now: number): unknown[] {
   const r = v.row;
   if (r.kind !== 'worker') return [r.key, r.kind, v.depth, r.kind === 'ghost' ? [r.name, r.floor] : null];
-  return [r.key, v.depth, r.name, r.display, wallTag(r), r.runColor, metaLine(r), ticketLine(r), lineText(r), sinceText(r.display, r.since, now)];
+  return [r.key, v.depth, r.name, r.display, wallTag(r), r.runColor, metaLine(r), ticketLine(r), lineText(r), lineLLM(r), sinceText(r.display, r.since, now)];
 }
 
 let scanlines: HTMLCanvasElement | null = null;
@@ -495,21 +495,31 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     g.textAlign = 'left';
     const whatW = sinceRight - sinceW - u * 3 - colWhat;
     const [first, second] = whatLines(r, compact);
+    // The task and now line carries the page's AI mark when the LLM wrote a part of it (#118 phase 2).
+    const llm = lineLLM(r);
     if (first) {
-      g.font = `600 ${Math.round(u * 3.2)}px ${FONT}`;
+      const font = `600 ${Math.round(u * 3.2)}px ${FONT}`;
+      const mark = llm && !r.ticket ? aiMark(g, colWhat, base, u) : 0;
+      g.font = font;
       g.fillStyle = r.ticket ? TEXT : TEXT_2;
-      const w = fitText(g, first, colWhat, base, whatW);
+      const w = mark + fitText(g, first, colWhat + mark, base, whatW - mark);
       // One line a row: the ticket's key, then what it does now, never dropped for the ticket's title.
       if (compact && second) {
         g.fillStyle = TEXT_2;
-        fitText(g, ` · ${second}`, colWhat + w, base, whatW - w);
+        const sep = fitText(g, ' · ', colWhat + w, base, whatW - w);
+        const m2 = llm ? aiMark(g, colWhat + w + sep, base, u, whatW - w - sep) : 0;
+        g.font = font;
+        g.fillStyle = TEXT_2;
+        fitText(g, second, colWhat + w + sep + m2, base, whatW - w - sep - m2);
       }
     }
     if (!compact) {
       if (second) {
+        const y2 = base + u * 4.2;
+        const mark = llm ? aiMark(g, colWhat, y2, u) : 0;
         g.font = `400 ${Math.round(u * 2.9)}px ${FONT}`;
         g.fillStyle = TEXT_2;
-        fitText(g, second, colWhat, base + u * 4.2, whatW);
+        fitText(g, second, colWhat + mark, y2, whatW - mark);
       }
       const meta = metaLine(r);
       if (meta) {
@@ -556,6 +566,27 @@ function lineText(r: OverviewWorkerRow): string | null {
   if (r.task && !now) return r.task.text;
   if (r.task) return `${r.task.text} — ${now}`;
   return now || null;
+}
+
+/** Whether the LLM wrote a part of the row's task and now line (the page marks those lines AI). Pure (for its test). */
+export function lineLLM(r: OverviewWorkerRow): boolean {
+  return !!(r.task?.llm || r.now?.llm);
+}
+
+/** The page's AI mark on the wall: "AI" in an outlined box before a line on `base`; returns the width it takes with
+ * its gap (0 when `max` has no room for it). */
+function aiMark(g: CanvasRenderingContext2D, x: number, base: number, u: number, max = Infinity): number {
+  g.font = `400 ${Math.round(u * 2.2)}px ${MONO}`;
+  const w = g.measureText('AI').width + u * 1.2;
+  if (w + u > max) return 0;
+  g.strokeStyle = TEXT_3;
+  g.lineWidth = Math.max(1, u * 0.18);
+  g.beginPath();
+  g.roundRect(x, base - u * 2.6, w, u * 3.1, u * 0.4);
+  g.stroke();
+  g.fillStyle = TEXT_2;
+  g.fillText('AI', x + u * 0.6, base - u * 0.25);
+  return w + u;
 }
 
 /** Draws `s` from `x`, clipped with an ellipsis to `max` px; returns the width drawn. */

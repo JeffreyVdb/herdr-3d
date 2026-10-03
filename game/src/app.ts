@@ -74,6 +74,7 @@ import { aiSection } from './ui/aiSection';
 // #90 follow-up questions
 import { followupsSection } from './ui/followupsSection';
 import { packupSection } from './ui/packupSection';
+import { digestSection } from './ui/digestSection';
 import { packupApplies, packupVerdict, type PackupOutcome } from './world/packup';
 import { activitySection } from './ui/activitySection';
 import { aiChip } from './world/ai';
@@ -325,7 +326,7 @@ export class App {
     this.settings.addSection(
       'ai',
       'AI integration',
-      aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args), usedBy: { classifier: ['Follow-up questions', 'Pack up on request', 'Classify unknown commands'], llm: ['Follow-up questions', 'Pack up on request'] } }),
+      aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args), usedBy: { classifier: ['Follow-up questions', 'Pack up on request', 'Classify unknown commands'], llm: ['Follow-up questions', 'Pack up on request', 'Floor overview summaries'] } }),
       { store: 'bridge' },
     );
     // #90: the first feature on those models: its own switch and threshold, under them.
@@ -342,6 +343,13 @@ export class App {
       'activity',
       'Classify unknown commands',
       activitySection({ book: this.store.activitySettings, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }),
+      { store: 'bridge' },
+    );
+    // #118: the floor overview's task and now lines, written by the LLM for the floors someone is viewing.
+    settings.addSection(
+      'digest',
+      'Floor overview summaries',
+      digestSection({ book: this.store.digestSettings, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }),
       { store: 'bridge' },
     );
     this.store.ai.onChange((notice) => {

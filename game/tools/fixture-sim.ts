@@ -34,6 +34,8 @@ import { AiSim } from './fixture-ai.ts';
 import { FollowupSim } from './fixture-followup.ts';
 // #110: pack up on request (`packup.*`, `sim.packup_lag`).
 import { PackupSim } from './fixture-packup.ts';
+// #118: floor overview summaries (`digest.*`).
+import { DigestSim } from './fixture-digest.ts';
 // #98: "Classify unknown commands" (`activity.get` / `activity.set`, `sim.activity_settings`).
 import { ActivitySettingsSim } from './fixture-activity-settings.ts';
 // #106: the inbox's dismissals (`inbox.dismiss`, `sim.status`, `simfail=no_inbox`).
@@ -212,6 +214,7 @@ export class SimWorld {
     this.ai.onChange = (send) => {
       this.followups.changed(send); // #90: a model's state is the feature's
       this.packup.changed(send); // #110: and pack up's
+      this.digest.changed(send); // #118: and the summaries' (the LLM's)
       this.activitySettings.changed(send); // #98: the classifier's too
     };
     this.activitySettings = new ActivitySettingsSim({ ai: this.ai, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) });
@@ -351,6 +354,7 @@ export class SimWorld {
     this.ai.decorate(world); // #92
     this.followups.decorate(world); // #90
     this.packup.decorate(world); // #110
+    this.digest.decorate(world); // #118
     this.activitySettings.decorate(world); // #98
     this.inbox.decorate(world); // #106
     this.share.decorate(world); // M13
@@ -420,6 +424,7 @@ export class SimWorld {
       if (m.t === 'worker.prompt' || m.t === 'worker.keys') this.followups.clear(a.id, send);
       if (this.followups.handle(m.t, a, send, ack, fail)) return;
       if (this.packup.handle(m.t, a, send, ack, fail)) return; // #110
+      if (this.digest.handle(m.t, a, send, ack, fail)) return; // #118 (board.watch passes on to the boards)
       if (this.transcripts.handle(m.t, a, send, ack, fail)) return;
       if (this.asks.handle(m.t, a, send, ack, fail)) return;
       if (this.activity.handle(m.t, a, send, ack, fail)) return; // #98
@@ -770,6 +775,21 @@ export class SimWorld {
       now: () => this.now(),
     });
     return this.packupSim;
+  }
+
+  // ---- #118: floor overview summaries (tools/fixture-digest.ts) ------
+
+  private digestSim: DigestSim | null = null;
+
+  private get digest(): DigestSim {
+    this.digestSim ??= new DigestSim({
+      workers: this.workers,
+      ai: this.ai,
+      emit: (send, m) => this.emit(send, m),
+      error: (code, message) => new CmdError(code, message),
+      now: () => this.now(),
+    });
+    return this.digestSim;
   }
 
   // ---- #57: asks (tools/fixture-ask.ts) ------

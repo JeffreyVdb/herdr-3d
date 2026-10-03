@@ -71,6 +71,22 @@ describe('the overview page (#118)', () => {
     expect(host.closed).toHaveBeenCalledTimes(1);
   });
 
+  it('marks the lines the LLM wrote AI, and only those (#118 phase 2)', () => {
+    const { ov } = setup([
+      worker('a', { desk_index: 0, digest: { task: 'Fix the login test', task_source: 'llm', now: 'Running the e2e suite', now_source: 'llm', now_at: NOW } }),
+      worker('b', { desk_index: 1, digest: { task: 'Port the importer', task_source: 'prompt', now: 'Back after lunch', now_source: 'recap', now_at: NOW } }),
+      worker('c', { desk_index: 2, digest: { task: 'Tidy the docs', task_source: 'ai_title', now: 'Writing the changelog', now_source: 'llm', now_at: NOW } }),
+    ]);
+    ov.open('top');
+    const rows = [...document.querySelectorAll<HTMLElement>('.ov-row')];
+    const marked = (r: HTMLElement | undefined) => [...(r?.querySelectorAll('.ov-line') ?? [])].map((l) => !!l.querySelector('.ov-llm'));
+    expect(rows.map((r) => r.querySelector('.ov-task')?.textContent?.includes('AI') ?? false)).toEqual([true, false, false]);
+    expect(rows.map((r) => r.querySelectorAll('.ov-llm').length)).toEqual([2, 0, 1]);
+    expect(marked(rows[0]).every(Boolean)).toBe(true);
+    expect(rows[0]?.querySelector('.ov-llm')?.getAttribute('title')).toBe('Summarised by the AI model');
+    expect(rows[0]?.textContent).toContain('Running the e2e suite');
+  });
+
   it('renders the tree, its lights from the display, and the lines', () => {
     const { ov } = setup();
     ov.open('top');

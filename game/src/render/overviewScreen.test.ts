@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { metaLine, scrollAt, wallCycle, wallPages, WALL_STATUS, wallPlan, wallTag, whatLines } from './overviewScreen';
+import { lineLLM, metaLine, scrollAt, wallCycle, wallPages, WALL_STATUS, wallPlan, wallTag, whatLines } from './overviewScreen';
 import type { OverviewWorkerRow } from '../world/overview';
 import { STATUS_CHIP_CSS, STATUS_CSS } from './palette';
 
@@ -91,6 +91,13 @@ describe('the wall’s what column (#118)', () => {
     expect(whatLines(row({ ticket }), true)).toEqual(['#118 · Floor overview', null]);
     expect(whatLines(row({ now }), true)).toEqual(['Reviewing the wall', null]);
     expect(whatLines(row({ task: { text: 'Fix it', source: 'prompt', llm: false }, now }), true)).toEqual(['Fix it — Reviewing the wall', null]);
+  });
+
+  it('the AI mark follows the page’s: a line with a part the LLM wrote (#118 phase 2)', () => {
+    expect(lineLLM(row({ now }))).toBe(false);
+    expect(lineLLM(row({ now: { ...now, source: 'llm', llm: true } }))).toBe(true);
+    expect(lineLLM(row({ task: { text: 'Fix it', source: 'llm', llm: true }, now }))).toBe(true);
+    expect(lineLLM(row({ ticket }))).toBe(false);
   });
 
   it('an orchestrator’s round: in its chip (both modes) and its meta line with the phase and pass (two-line rows)', () => {
