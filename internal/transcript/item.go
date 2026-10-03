@@ -262,15 +262,19 @@ func cut(s string, n int) string {
 
 // clipSummary is a summary's first non-empty line, at most maxSummary
 // runes.
-func clipSummary(s string) string {
+func clipSummary(s string) string { return clipSummaryWith(s, "") }
+
+// clipSummaryWith is clipSummary with suffix after it, inside the cap: the
+// line gives way, the suffix does not.
+func clipSummaryWith(s, suffix string) string {
 	s = strings.TrimSpace(s)
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = strings.TrimSpace(s[:i])
 	}
-	if utf8.RuneCountInString(s) > maxSummary {
-		s = string([]rune(s)[:maxSummary-1]) + "…"
+	if room := maxSummary - utf8.RuneCountInString(suffix); utf8.RuneCountInString(s) > room {
+		s = string([]rune(s)[:room-1]) + "…"
 	}
-	return s
+	return s + suffix
 }
 
 // summarize describes a tool input: the first of its usual fields that is
