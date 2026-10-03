@@ -27,7 +27,7 @@ import (
 )
 
 // GateQuestion is the yes/no question the classifier scores.
-const GateQuestion = "Does the message ask the user one or more questions that need their answer?"
+const GateQuestion = "Does the message ask the user a direct question, or ask them to decide something, that the agent needs answered before it can continue? A statement such as 'say if you want X' or 'let me know if...' is an optional offer, not a question."
 
 // MaxMessageChars bounds what is sent of a message: its last ~24k tokens,
 // approximated as 4 characters per token (the end of a message is where its
