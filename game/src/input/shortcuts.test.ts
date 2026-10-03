@@ -199,6 +199,10 @@ describe('the shortcut table (#124)', () => {
   it('presses a binding by id (the plan limits over a dialog use it)', () => {
     expect(pressesBinding(ev('KeyL', { shiftKey: true }), 'limits', false)).toBe(true);
     expect(pressesBinding(ev('KeyL'), 'limits', false)).toBe(false);
+    // Never during a composition or a dead key (like `findBinding`).
+    expect(pressesBinding(ev('KeyL', { shiftKey: true, isComposing: true }), 'limits', false)).toBe(false);
+    expect(pressesBinding(ev('KeyL', { shiftKey: true, key: 'Process' }), 'limits', false)).toBe(false);
+    expect(pressesBinding(ev('KeyL', { shiftKey: true, key: 'Dead' }), 'limits', false)).toBe(false);
     expect(chordMatches(ev('Escape', { ctrlKey: true }), { code: 'Escape', ctrl: true }, true)).toBe(true);
   });
 });

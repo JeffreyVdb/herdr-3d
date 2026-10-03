@@ -2223,7 +2223,7 @@ export class App {
     // M10 (#47): a screen-filling dialog hides the plan limits; Shift+L still peeks them over it (else the dialog owns the keys).
     if (pressesBinding(e, 'limits') && this.limitsWidget.overScreen && !typingIn(e.target)) {
       e.preventDefault();
-      this.limitsWidget.toggleFromKey();
+      if (!e.repeat) this.limitsWidget.toggleFromKey(); // a held key does not re-toggle the peek
       return;
     }
     // Open dialogs (sheet, panels, confirmations, hire / send home) handle their own keys.

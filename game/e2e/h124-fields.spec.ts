@@ -16,7 +16,7 @@ const SIM = 'play=none&sim=1&simms=150&simusage=0';
 function bound(): Array<[string, string]> {
   const out = new Map<string, string>();
   for (const b of BINDINGS as readonly Binding[]) {
-    if (b.readonly) continue;
+    // Every binding counts, the readonly ones too (the walk keys W A S D are handled by the walker, not the dispatcher).
     for (const c of b.keys) {
       if (c.mod || c.ctrl) continue; // a modifier chord is not a character
       if (c.key !== undefined) out.set(c.key === '?' ? 'Shift+Slash' : c.key === ',' ? 'Comma' : c.key, c.key);
@@ -36,7 +36,7 @@ const TEXT = KEYS.map(([, t]) => t).join('');
 test('the table binds the letters and digits the field tests type', () => {
   expect(TEXT).toContain('?');
   expect(TEXT).toContain(',');
-  for (const ch of ['h', 'H', 'i', 'g', 'R', 'N', 'L', 'T', 'e', 'p', 'c', 'x', 'b', 'm', 'n', 'l', 'r', 't', '0', '1', '9']) expect(TEXT, ch).toContain(ch);
+  for (const ch of ['h', 'H', 'i', 'g', 'R', 'N', 'L', 'T', 'w', 'a', 's', 'd', 'W', 'A', 'S', 'D', 'e', 'p', 'c', 'x', 'b', 'm', 'n', 'l', 'r', 't', '0', '1', '9']) expect(TEXT, ch).toContain(ch);
 });
 
 const read = (field: Locator): Promise<string> => field.evaluate((e) => (e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement ? e.value : (e.textContent ?? '').replaceAll('\u200b', '')));  // (the composer keeps zero-width spaces around its chips)

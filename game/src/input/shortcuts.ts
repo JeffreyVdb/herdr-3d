@@ -223,7 +223,7 @@ export interface Match {
  * first binding in table order wins among the live ones; the unit test keeps overlapping scopes from sharing a chord.
  */
 export function findBinding(e: KeyEventLike, active: ReadonlySet<Scope>, typing: boolean, mac = isMac()): Match | null {
-  if (e.isComposing || e.key === 'Process' || e.key === 'Dead' || e.key === 'Unidentified') return null;
+  if (composing(e)) return null;
   for (const b of BINDINGS as readonly Binding[]) {
     if (b.readonly || !scopesOf(b).some((s) => active.has(s))) continue;
     for (const c of b.keys) {
@@ -234,8 +234,12 @@ export function findBinding(e: KeyEventLike, active: ReadonlySet<Scope>, typing:
   return null;
 }
 
-/** Does this keydown press the binding's key, whatever is live (for the few handlers that sit outside the dispatch)? */
+/** A keydown that is part of an IME composition or a dead key: no shortcut (the same everywhere a binding is read). */
+const composing = (e: KeyEventLike): boolean => !!e.isComposing || e.key === 'Process' || e.key === 'Dead' || e.key === 'Unidentified';
+
+/** Does this keydown press the binding's key, whatever is live (for the few handlers that sit outside the dispatch)? Never during a composition. */
 export function pressesBinding(e: KeyEventLike, id: ActionId, mac = isMac()): boolean {
+  if (composing(e)) return false;
   return binding(id).keys.some((c) => chordMatches(e, c, mac));
 }
 
