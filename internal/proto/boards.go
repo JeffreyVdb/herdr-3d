@@ -55,6 +55,10 @@ func init() {
 type WorkItemRef struct {
 	Provider string `json:"provider"`
 	ID       string `json:"id"`
+	// #118: the item's title and URL, on a worker's work_item, when the
+	// floor's provider has them.
+	Title string `json:"title,omitempty"`
+	URL   string `json:"url,omitempty"`
 }
 
 // BoardIssues is a floor's issues, as of FetchedAt (unix ms; 0: nothing

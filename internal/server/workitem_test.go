@@ -25,7 +25,7 @@ func TestWorkerWorkItem(t *testing.T) {
 	want := &proto.WorkItemRef{Provider: "fake", ID: "JeffreyVdb/lab#7"}
 	for _, id := range []string{"o", "c"} {
 		got := ws[id]
-		if got.WorkItem == nil || *got.WorkItem != *want || got.Issue == nil || got.Issue.Repo != "JeffreyVdb/lab" || got.Issue.Number != 7 {
+		if got.WorkItem == nil || got.WorkItem.Provider != want.Provider || got.WorkItem.ID != want.ID || got.Issue == nil || got.Issue.Repo != "JeffreyVdb/lab" || got.Issue.Number != 7 {
 			t.Errorf("%s: issue %+v, work_item %+v", id, got.Issue, got.WorkItem)
 		}
 	}
@@ -33,7 +33,9 @@ func TestWorkerWorkItem(t *testing.T) {
 		t.Errorf("a plain worker has a link: %+v", ws["p"])
 	}
 	raw, _ := json.Marshal(ws["c"])
-	if !strings.Contains(string(raw), `"work_item":{"provider":"fake","id":"JeffreyVdb/lab#7"}`) || !strings.Contains(string(raw), `"issue":{"repo":"JeffreyVdb/lab","number":7}`) {
+	// #118: the provider's link of the item rides along (its title once a board or a read has it).
+	if !strings.Contains(string(raw), `"work_item":{"provider":"fake","id":"JeffreyVdb/lab#7","url":"https://example.test/JeffreyVdb/lab/issues/7"`) ||
+		!strings.Contains(string(raw), `"issue":{"repo":"JeffreyVdb/lab","number":7,"url":"https://example.test/JeffreyVdb/lab/issues/7"`) {
 		t.Errorf("wire = %s", raw)
 	}
 	// A floor whose repo changes moves them: work_item follows issue.
@@ -89,7 +91,7 @@ func TestRunStartRelinksBeforeTheAck(t *testing.T) {
 		t.Fatalf("no worker.upsert of the orchestrator with its issue before the ack: %v", eventTypes(evs))
 	}
 	if linked.Issue.Repo != "JeffreyVdb/lab" || linked.Issue.Number != 3 || linked.WorkItem == nil ||
-		*linked.WorkItem != (proto.WorkItemRef{Provider: "fake", ID: "JeffreyVdb/lab#3"}) || linked.Role != "orch" {
+		linked.WorkItem.Provider != "fake" || linked.WorkItem.ID != "JeffreyVdb/lab#3" || linked.Role != "orch" {
 		t.Fatalf("linked = %+v", linked)
 	}
 }

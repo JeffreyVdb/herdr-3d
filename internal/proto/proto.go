@@ -340,6 +340,10 @@ type Worker struct {
 	// working, and while idle or done only as waiting on background tasks.
 	// Absent otherwise, and for harnesses other than claude and codex.
 	Activity *Activity `json:"activity,omitempty"`
+	// #118: Digest is what the floor overview says of the worker: its task
+	// and what it does now, in words. Absent until its transcript has an
+	// assistant step (Claude and Codex only).
+	Digest *WorkerDigest `json:"digest,omitempty"`
 
 	// M6 runs: the worker's place in a write-code run.
 	// Round is the h3d_round token, else the label's trailing |r<N>.
@@ -365,11 +369,36 @@ type Worker struct {
 
 // M6 runs
 
-// IssueRef is a GitHub issue.
+// IssueRef is a GitHub issue. #118: Title and URL come from the floor's
+// board (its cached card, else one issue read), when it has one.
 type IssueRef struct {
 	Repo   string `json:"repo"`
 	Number int    `json:"number"`
+	Title  string `json:"title,omitempty"`
+	URL    string `json:"url,omitempty"`
 }
+
+// WorkerDigest is #118's digest of a worker: the task line and its source,
+// and the now line and its source. NowSource "title" carries no Now: the
+// line is the worker's own Title (the hot worker.status path moves it).
+type WorkerDigest struct {
+	Task       string `json:"task,omitempty"`
+	TaskSource string `json:"task_source,omitempty"`
+	Now        string `json:"now,omitempty"`
+	NowSource  string `json:"now_source,omitempty"`
+	// NowAt is when Now was written, unix ms (a recap's line).
+	NowAt int64 `json:"now_at,omitempty"`
+}
+
+// Digest line sources. DigestLLM is phase 2's (a model's summary): defined,
+// never produced yet.
+const (
+	DigestAITitle = "ai_title"
+	DigestPrompt  = "prompt"
+	DigestRecap   = "recap"
+	DigestTitle   = "title"
+	DigestLLM     = "llm"
+)
 
 // Report states.
 const (

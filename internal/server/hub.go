@@ -27,6 +27,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/packup"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
+	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/whiteboard"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
@@ -329,6 +330,10 @@ type Hub struct {
 	pk packupState   // #110 pack up on request
 
 	act activityHub // #98 activity
+
+	// #118: worker id → its transcript's digest (the overview's lines come
+	// from it; phase 2's summarizer reads it).
+	dg map[string]*transcript.Digest
 }
 
 type floorState struct {
@@ -501,6 +506,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		usage:         map[string]*proto.Usage{},
 		limits:        map[string]proto.Limits{},
 		limitsPoller:  newLimitsPoller(opts.Limits),
+		dg:            map[string]*transcript.Digest{},
 	}
 	h.initTerm()        // M5 term
 	h.initTranscripts() // M16 transcript
@@ -1067,6 +1073,7 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 		delete(h.typed, id) // #95
 		delete(h.starts, id)
 		delete(h.dirty, id)
+		delete(h.dg, id)                               // #118
 		h.dropFollowup(context.Background(), id, true) // #90: gone
 		if w != nil {
 			h.emit(proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: w.Session, WorkspaceID: w.WorkspaceID})
@@ -1218,6 +1225,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		delete(h.typed, id) // #95
 		delete(h.starts, id)
 		delete(h.dirty, id)
+		delete(h.dg, id)              // #118
 		h.dropFollowup(ctx, id, true) // #90: gone
 		if w == nil {
 			continue
@@ -1338,6 +1346,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		}
 		next.Followup = h.followupView(id)
 		next.Activity = h.activityFor(id, next, h.workers[id]) // #98: for its status, in the same event
+		next.Digest = composeDigest(h.dg[id])                  // #118
 		h.withQuestion(next)                                   // M5 term
 		if op := f.hires[id]; op != nil && !op.seen {
 			op.seen = true
