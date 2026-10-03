@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { scrollAt, WALL_STATUS, wallPlan } from './overviewScreen';
+import { metaLine, scrollAt, wallCycle, wallPages, WALL_STATUS, wallPlan, wallTag, whatLines } from './overviewScreen';
+import type { OverviewWorkerRow } from '../world/overview';
 import { STATUS_CHIP_CSS, STATUS_CSS } from './palette';
 
 const lum = (hex: string) => {
@@ -31,6 +32,73 @@ describe('the wall screen’s plan (#118)', () => {
     expect(scrollAt(18_000 + 2_000, 6)).toBe(0);
     expect(scrollAt(9_000, 6, false)).toBe(1);
     expect(scrollAt(2_000, 6, false)).toBe(0);
+  });
+});
+
+describe('a floor bigger than one canvas (#118)', () => {
+  // The 4 m wall: a 695 px screen, one-line rows of 33.08 px, a 4096 px canvas: 123 rows a canvas, 17 a window.
+  const u = 6.95;
+  const rowH = 695 * 0.085 * 0.56;
+  const cap = Math.floor((4096 - u * 3) / rowH);
+  const fit = 17;
+
+  it('splits the rows into pages a canvas holds, each overlapping the next by a window: every row is on one', () => {
+    expect(cap).toBe(123);
+    expect(wallPages(100, cap, fit)).toEqual([{ start: 0, count: 100 }]);
+    for (const n of [124, 140, 300, 1000]) {
+      const pages = wallPages(n, cap, fit);
+      expect(pages.length, `${n}`).toBeGreaterThan(1);
+      const seen = new Set<number>();
+      for (const p of pages) {
+        expect(p.count * rowH + u * 3, `page of ${n}`).toBeLessThanOrEqual(4096);
+        for (let i = p.start; i < p.start + p.count; i++) seen.add(i);
+      }
+      expect(seen.size, `${n} rows`).toBe(n);
+      expect(Math.max(...seen)).toBe(n - 1);
+      // Consecutive pages share at least a window: the scroll's bottom is the next page's top.
+      for (let i = 1; i < pages.length; i++) expect((pages[i - 1] as { start: number; count: number }).start + cap - (pages[i] as { start: number }).start).toBeGreaterThanOrEqual(fit);
+    }
+    expect(wallPages(140, cap, fit)).toEqual([
+      { start: 0, count: 123 },
+      { start: 17, count: 123 },
+    ]);
+  });
+
+  it('the window scrolls a page, then the next one, then back to the first: the last rows come by every cycle', () => {
+    const extras = wallPages(140, cap, fit).map((p) => p.count - fit); // 106 rows past the window each
+    const page = 4_000 * 2 + (106 / 0.6) * 1000;
+    expect(wallCycle(0, extras)).toEqual({ page: 0, s: 0 });
+    expect(wallCycle(page - 1, extras)).toEqual({ page: 0, s: 1 });
+    expect(wallCycle(page + 1, extras)).toEqual({ page: 1, s: 0 });
+    expect(wallCycle(page * 2 - 1, extras)).toEqual({ page: 1, s: 1 }); // the 140th row in the window
+    expect(wallCycle(page * 2 + 1, extras)).toEqual({ page: 0, s: 0 });
+    // One page: the plain cycle.
+    expect(wallCycle(9_000, [6])).toEqual({ page: 0, s: scrollAt(9_000, 6) });
+  });
+});
+
+describe('the wall’s what column (#118)', () => {
+  const row = (over: Partial<OverviewWorkerRow>): OverviewWorkerRow => ({
+    kind: 'worker', key: 'w', id: 'w', session: 's', name: 'Sprout', display: 'working', since: 0, harness: 'claude', model: 'claude',
+    role: null, tag: null, runColor: null, orch: null, ticket: null, task: null, now: null, activity: null, floor: null, ...over,
+  });
+  const ticket = { key: '#118', title: 'Floor overview', item: null, url: null };
+  const now = { text: 'Reviewing the wall', source: 'recap' as const, llm: false };
+
+  it('one line a row keeps what it does now: the ticket’s key, then the now line (never the ticket alone)', () => {
+    expect(whatLines(row({ ticket, now }), true)).toEqual(['#118', 'Reviewing the wall']);
+    expect(whatLines(row({ ticket, now }), false)).toEqual(['#118 · Floor overview', 'Reviewing the wall']);
+    expect(whatLines(row({ ticket }), true)).toEqual(['#118 · Floor overview', null]);
+    expect(whatLines(row({ now }), true)).toEqual(['Reviewing the wall', null]);
+    expect(whatLines(row({ task: { text: 'Fix it', source: 'prompt', llm: false }, now }), true)).toEqual(['Fix it — Reviewing the wall', null]);
+  });
+
+  it('an orchestrator’s round: in its chip (both modes) and its meta line with the phase and pass (two-line rows)', () => {
+    const o = row({ role: 'orch', tag: 'ORCH', orch: { phase: 'waiting for you', round: 2, pass: 'pass 3 of 3', overCap: true } });
+    expect(wallTag(o)).toBe('ORCH r2');
+    expect(metaLine(o)).toBe('claude · waiting for you · round 2 · pass 3 of 3 · over cap');
+    expect(wallTag(row({ role: 'orch', tag: 'ORCH', orch: { phase: null, round: null, pass: null, overCap: false } }))).toBe('ORCH');
+    expect(wallTag(row({ tag: 'CODE r1' }))).toBe('CODE r1');
   });
 });
 

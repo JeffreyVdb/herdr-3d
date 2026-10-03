@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import type { Box3 } from '../world/layout';
-import { BLINK_MS, sinceText, visibleRows, type OverviewData, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
+import { BLINK_MS, orchWords, sinceText, visibleRows, type OverviewData, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
 import { STATUS_CSS, STATUS_CHIP_CSS } from './palette';
 import { FONT } from './cards/atlasCards';
 
@@ -12,8 +12,11 @@ import { FONT } from './cards/atlasCards';
  *
  * Canvas work happens only when what it shows changes (at most once a second, the since column once a minute, never
  * for the live activity chip, which is the page's); nothing is drawn or uploaded to blink or to scroll:
- * - the board is one tall canvas of every row, shown through a window (the texture's repeat and offset): more rows
+ * - the board is one tall canvas of the rows, shown through a window (the texture's repeat and offset): more rows
  *   than fit go one line a row, then the window scrolls down slowly and back to the top, so no row is cut off unsaid;
+ *   a floor with more rows than one canvas holds (WebGL2's 4096 px) is drawn a page of them at a time, each page
+ *   overlapping the next by a window: the window scrolls down a page, the next one is drawn where it ended, and after
+ *   the last it goes back to the first, so every row comes by in a cycle;
  * - the working lights blink by showing and hiding a second layer over the board, the same size, that holds only
  *   dark covers over those lights. Battery saver or reduced motion: steady lights, and the board jumps instead of
  *   gliding.
@@ -60,6 +63,47 @@ export function wallPlan(rows: number, avail: number, full: number, compact: num
   return { compact: true, fit, scroll: rows > fit };
 }
 
+/** A page of the board: the rows `start` to `start + count`. */
+export interface WallPage {
+  start: number;
+  count: number;
+}
+
+/**
+ * The board's pages: one while `rows` fit a canvas (`cap` rows), else pages of `cap` rows, each starting a window
+ * (`fit` rows) before the previous one ended, the last one ending at the last row: every row is on a page. Pure.
+ */
+export function wallPages(rows: number, cap: number, fit: number): WallPage[] {
+  cap = Math.max(1, Math.floor(cap));
+  if (rows <= cap) return [{ start: 0, count: rows }];
+  const step = Math.max(1, cap - Math.min(fit, cap - 1));
+  const out: WallPage[] = [];
+  for (let start = 0; ; start += step) {
+    const s = Math.min(start, rows - cap);
+    out.push({ start: s, count: cap });
+    if (s + cap >= rows) return out;
+  }
+}
+
+/** How long the window spends on a page of `extra` rows past it: the two rests and the glide. */
+const pageMs = (extra: number) => SCROLL_REST_MS * 2 + (Math.max(0, extra) / SCROLL_ROWS_PER_S) * 1000;
+
+/**
+ * Which page the window is on and where on it (`scrollAt`), `ms` into a cycle through pages that each have `extras[i]`
+ * rows past the window. One page: `scrollAt`'s cycle. Pure.
+ */
+export function wallCycle(ms: number, extras: readonly number[], glide = true): { page: number; s: number } {
+  if (extras.length <= 1) return { page: 0, s: scrollAt(ms, extras[0] ?? 0, glide) };
+  const total = extras.reduce((a, e) => a + pageMs(e), 0);
+  let t = ((ms % total) + total) % total;
+  for (let i = 0; i < extras.length; i++) {
+    const len = pageMs(extras[i] as number);
+    if (t < len || i === extras.length - 1) return { page: i, s: scrollAt(t, extras[i] as number, glide) };
+    t -= len;
+  }
+  return { page: 0, s: 0 };
+}
+
 /**
  * Where the window is (0 at the top, 1 at the bottom) `ms` into a scroll cycle of `extra` rows past the window: a
  * rest at the top, a slow scroll down, a rest at the bottom, a jump back (`glide` false: the scroll is a jump too). Pure.
@@ -80,7 +124,7 @@ export interface OverviewScreenMesh {
   set(data: OverviewData | null, floor: string, calm: boolean, now: number): void;
   /** The blink and the scroll; true when the picture changed (a frame is due). `view`: it is in view and readable. */
   tick(now: number, view: boolean): boolean;
-  info(): { lit: boolean; rows: number; compact: boolean; scroll: number; scrolling: boolean; draws: number; blinking: boolean; screenW: number; screenH: number };
+  info(): { lit: boolean; rows: number; compact: boolean; scroll: number; scrolling: boolean; draws: number; blinking: boolean; screenW: number; screenH: number; page: number; pages: WallPage[] };
   dispose(): void;
 }
 
@@ -158,6 +202,8 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
   let draws = 0;
   let plan: WallPlan = { compact: false, fit: 1, scroll: false };
   let rows: VisibleRow[] = [];
+  let pages: WallPage[] = [{ start: 0, count: 0 }];
+  let page = 0;
   let minute = 0;
   let pending = false;
   let drawnAt = -Infinity;
@@ -195,18 +241,20 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
     // Every row's since moves on the wall's own minute (not each row's), so a busy floor redraws once a minute.
     minute = Math.floor(now / 60_000);
     const at = minute * 60_000;
-    const k = JSON.stringify([floor, data?.where, data?.counts, rows.map((v) => face(v, at)), plan, data === null]);
+    const pg = pages[page] ?? { start: 0, count: rows.length };
+    const shown = rows.slice(pg.start, pg.start + pg.count);
+    const k = JSON.stringify([floor, data?.where, data?.counts, shown.map((v) => face(v, at)), plan, pg, data === null]);
     if (k === drawnKey) return false;
     drawnKey = k;
     draws++;
     const rowH = plan.compact ? compactRow : fullRow;
-    resize(Math.min(MAX_PX, Math.max(winH, Math.ceil(rows.length * rowH + u * 3))));
+    resize(Math.min(MAX_PX, Math.max(winH, Math.ceil(shown.length * rowH + u * 3))));
     const hg = headCanvas.getContext('2d');
     const bg = boardCanvas.getContext('2d');
     const cg = coverCanvas.getContext('2d');
     if (!hg || !bg || !cg) return false;
     paintHead(hg, W, headH, u, floor, data);
-    const lit = paintBoard(bg, W, boardCanvas.height, u, data, rows, plan.compact, rowH, at);
+    const lit = paintBoard(bg, W, boardCanvas.height, u, data, shown, plan.compact, rowH, at);
     // The cover: the working lights' unlit half of the blink, nothing else.
     cg.clearRect(0, 0, W, coverCanvas.height);
     for (const l of lit) {
@@ -246,6 +294,10 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
       calm = c;
       rows = d ? visibleRows(d.tree, new Set()) : [];
       plan = wallPlan(rows.length, winH - u * 3, fullRow, compactRow);
+      // The rows one canvas holds: more than that go in pages (wallPages), never cut off.
+      const cap = Math.floor((MAX_PX - u * 3) / (plan.compact ? compactRow : fullRow));
+      pages = wallPages(rows.length, cap, plan.fit);
+      if (page >= pages.length) page = 0;
       pending = true;
       flush(now, inView);
     },
@@ -257,7 +309,20 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
         scrollFrom = now; // a look starts at the top
         return changed;
       }
-      const s = scrollAt(now - scrollFrom, plan.scroll ? rows.length - plan.fit : 0, !calm);
+      const at = wallCycle(
+        now - scrollFrom,
+        pages.map((p) => (plan.scroll ? p.count - plan.fit : 0)),
+        !calm,
+      );
+      const s = at.s;
+      if (at.page !== page) {
+        // The next page: drawn now (a page turn is rare, a minute or more apart), where the window is on it.
+        page = at.page;
+        scroll = s;
+        pending = false;
+        drawnAt = now;
+        if (draw(now)) changed = true;
+      }
       if (s !== scroll) {
         scroll = s;
         setWindow(s);
@@ -271,7 +336,7 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
       }
       return changed;
     },
-    info: () => ({ lit: data !== null, rows: rows.length, compact: plan.compact, scroll: +scroll.toFixed(3), scrolling: plan.scroll, draws, blinking: !calm && lamps > 0, screenW, screenH }),
+    info: () => ({ lit: data !== null, rows: rows.length, compact: plan.compact, scroll: +scroll.toFixed(3), scrolling: plan.scroll, draws, blinking: !calm && lamps > 0, screenW, screenH, page, pages: pages.map((p) => ({ ...p })) }),
     dispose() {
       group.traverse((o) => {
         if (o instanceof THREE.Mesh) {
@@ -291,7 +356,7 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
 function face(v: VisibleRow, now: number): unknown[] {
   const r = v.row;
   if (r.kind !== 'worker') return [r.key, r.kind, v.depth, r.kind === 'ghost' ? [r.name, r.floor] : null];
-  return [r.key, v.depth, r.name, r.display, r.tag, r.runColor, r.model, ticketLine(r), lineText(r), sinceText(r.display, r.since, now)];
+  return [r.key, v.depth, r.name, r.display, wallTag(r), r.runColor, metaLine(r), ticketLine(r), lineText(r), sinceText(r.display, r.since, now)];
 }
 
 let scanlines: HTMLCanvasElement | null = null;
@@ -418,7 +483,8 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     const name = r.kind === 'worker' ? r.name : r.kind === 'ghost' ? `Orchestrator ${r.name} · ${r.floor}` : 'Unlinked';
     const base = mid + nameSize * 0.36;
     const nameW = fitText(g, name.toUpperCase(), colWho + indent, base, colWhat - colWho - indent - u * 9);
-    if (r.kind === 'worker' && r.tag) chip(g, r.tag, colWho + indent + nameW + u * 1.2, mid, u, r.runColor !== null ? `#${r.runColor.toString(16).padStart(6, '0')}` : INK_3);
+    const tag = r.kind === 'worker' ? wallTag(r) : null;
+    if (r.kind === 'worker' && tag) chip(g, tag, colWho + indent + nameW + u * 1.2, mid, u, r.runColor !== null ? `#${r.runColor.toString(16).padStart(6, '0')}` : INK_3);
     if (r.kind !== 'worker') return;
     g.font = `400 ${Math.round(u * 2.8)}px ${MONO}`;
     g.fillStyle = TEXT_2;
@@ -428,13 +494,16 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     const sinceW = g.measureText(since).width;
     g.textAlign = 'left';
     const whatW = sinceRight - sinceW - u * 3 - colWhat;
-    const ticket = ticketLine(r);
-    const first = ticket ?? lineText(r);
-    const second = ticket ? lineText(r) : null;
+    const [first, second] = whatLines(r, compact);
     if (first) {
       g.font = `600 ${Math.round(u * 3.2)}px ${FONT}`;
-      g.fillStyle = ticket ? TEXT : TEXT_2;
-      fitText(g, first, colWhat, base, whatW);
+      g.fillStyle = r.ticket ? TEXT : TEXT_2;
+      const w = fitText(g, first, colWhat, base, whatW);
+      // One line a row: the ticket's key, then what it does now, never dropped for the ticket's title.
+      if (compact && second) {
+        g.fillStyle = TEXT_2;
+        fitText(g, ` · ${second}`, colWhat + w, base, whatW - w);
+      }
     }
     if (!compact) {
       if (second) {
@@ -442,10 +511,11 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
         g.fillStyle = TEXT_2;
         fitText(g, second, colWhat, base + u * 4.2, whatW);
       }
-      if (r.model) {
+      const meta = metaLine(r);
+      if (meta) {
         g.font = `400 ${Math.round(u * 2.5)}px ${MONO}`;
         g.fillStyle = TEXT_3;
-        fitText(g, r.model, colWho + indent, base + u * 4.2, colWhat - colWho - indent - u * 3);
+        fitText(g, meta, colWho + indent, base + u * 4.2, colWhat - colWho - indent - u * 3);
       }
     }
   });
@@ -455,6 +525,29 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
 /** `#118 · Floor overview` (the wall shows the ticket in its row's first line). */
 function ticketLine(r: OverviewWorkerRow): string | null {
   return r.ticket ? `${r.ticket.key}${r.ticket.title ? ` · ${r.ticket.title}` : ''}` : null;
+}
+
+/**
+ * A row's what column on the wall: two lines, the ticket then the task and now line; one line (`compact`), the
+ * ticket's key alone then the task and now line (what it does now beats the ticket's title), else the ticket's line.
+ * Pure (exported for its test).
+ */
+export function whatLines(r: OverviewWorkerRow, compact: boolean): [string | null, string | null] {
+  const ticket = ticketLine(r);
+  const line = lineText(r);
+  if (!ticket) return [line, null];
+  if (compact && line) return [r.ticket?.key ?? ticket, line];
+  return [ticket, compact ? null : line];
+}
+
+/** The model under the name, and an orchestrator's run: `claude opus-5-5 high · waiting for you · round 2 · pass 3 of 3 · over cap`. */
+export function metaLine(r: OverviewWorkerRow): string {
+  return [r.model, ...orchWords(r.orch), r.orch?.overCap ? 'over cap' : null].filter(Boolean).join(' · ');
+}
+
+/** The role chip: an orchestrator's carries its round (`ORCH r2`), as a freelancer's does, for the one-line rows. */
+export function wallTag(r: OverviewWorkerRow): string | null {
+  return r.tag && r.orch?.round ? `${r.tag} r${r.orch.round}` : r.tag;
 }
 
 /** The task and the now line (the activity chip is the page's: it moves too often for a wall to redraw). */
