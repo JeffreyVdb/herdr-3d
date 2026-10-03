@@ -59,17 +59,21 @@ const (
 )
 
 // digestUpdate is a worker's tracker's digest now (nil: none: no
-// transcript, another harness).
+// transcript, another harness). epoch names the tracker (a new one for
+// another agent session); with the digest's Resets, it is the identity the
+// counts and the prompt are of.
 type digestUpdate struct {
 	id     string
+	epoch  int
 	digest *transcript.Digest
 }
 
 // digestOffered is what the usage tracker last offered of a worker: which
-// tracker, at which of its changes.
+// tracker (and its epoch), at which of its changes.
 type digestOffered struct {
-	t   *transcript.DigestTracker
-	seq int
+	t     *transcript.DigestTracker
+	epoch int
+	seq   int
 }
 
 // offerDigest queues worker w's digest when its tracker changed (usage
@@ -79,11 +83,15 @@ func (tr *usageTracker) offerDigest(w usageWorker) {
 	if l := tr.lines[w.id]; l != nil {
 		t = l.digest
 	}
-	o := digestOffered{t: t}
+	prev, ok := tr.dgOffered[w.id]
+	o := digestOffered{t: t, epoch: prev.epoch}
 	if t != nil {
 		o.seq = t.Seq()
+		if !ok || prev.t != t {
+			tr.dgEpoch++
+			o.epoch = tr.dgEpoch
+		}
 	}
-	prev, ok := tr.dgOffered[w.id]
 	if ok && prev == o {
 		return
 	}
@@ -91,7 +99,7 @@ func (tr *usageTracker) offerDigest(w usageWorker) {
 	if !ok && t == nil {
 		return
 	}
-	u := digestUpdate{id: w.id}
+	u := digestUpdate{id: w.id, epoch: o.epoch}
 	if t != nil {
 		d := t.View()
 		u.digest = &d
@@ -100,8 +108,9 @@ func (tr *usageTracker) offerDigest(w usageWorker) {
 }
 
 // digestSeen takes a worker's tracker digest (hub goroutine): a reset (a
-// /clear, another agent session) drops the model's now line, a turn that
-// ended makes one due.
+// /clear, another agent session: another tracker epoch or reset count, never
+// guessed from the counts) drops the model's lines and starts a new
+// generation, a turn that ended makes a now line due.
 func (h *Hub) digestSeen(ctx context.Context, u digestUpdate) {
 	w := h.workers[u.id]
 	if w == nil || u.digest == nil {
@@ -112,15 +121,16 @@ func (h *Hub) digestSeen(ctx context.Context, u digestUpdate) {
 		return
 	}
 	if u.digest != nil {
-		prev, d := h.dg[u.id], u.digest
+		d := u.digest
 		l := h.dgs.ws[u.id]
 		if l == nil {
-			l = &dgLLM{}
+			h.dgs.gen++
+			l = &dgLLM{gen: h.dgs.gen, epoch: u.epoch, resets: d.Resets}
 			h.dgs.ws[u.id] = l
 		}
-		if prev != nil && (d.Steps < prev.Steps || d.Ended < prev.Ended || (prev.PromptHash != "" && d.PromptHash != prev.PromptHash)) {
-			l.gen++
-			l.now, l.nowAt, l.endedAt, l.ended = "", 0, time.Time{}, 0
+		if l.epoch != u.epoch || l.resets != d.Resets {
+			h.dgs.gen++
+			*l = dgLLM{gen: h.dgs.gen, epoch: u.epoch, resets: d.Resets, callAt: l.callAt}
 		}
 		if d.Ended > l.ended {
 			l.ended, l.endedAt = d.Ended, h.opts.Now()
@@ -199,9 +209,11 @@ func composeDigest(d *transcript.Digest) *proto.WorkerDigest {
 
 // dgLLM is the model's part of one worker's digest (hub goroutine).
 type dgLLM struct {
-	// gen counts the tracker's resets: a line written for an older one is
-	// dropped.
-	gen int
+	// gen is the generation (digestHub.gen's, new at each reset of the
+	// tracker): a line written for another one is dropped. epoch and resets
+	// are the identity it is of (digestUpdate).
+	gen           int
+	epoch, resets int
 	// task is the model's task line of the prompt taskHash; taskTried the
 	// prompt hash last handed to it.
 	task, taskHash, taskTried string
@@ -222,6 +234,7 @@ type digestHub struct {
 	roles    digest.Roles
 	last     string // the view as last published (JSON)
 	ws       map[string]*dgLLM
+	gen      int // the last dgLLM.gen given
 	inflight bool
 	wake     time.Time // when a pump is armed (zero: none)
 }

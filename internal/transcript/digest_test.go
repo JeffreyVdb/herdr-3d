@@ -78,8 +78,15 @@ func TestDigestRecapGoesWithAStep(t *testing.T) {
 func TestDigestClearAndCommands(t *testing.T) {
 	d := NewDigestTracker(Claude)
 	feedDigest(t, d, Claude, "digest_turns.jsonl")
+	if v := d.View(); v.Resets != 0 {
+		t.Fatalf("resets before /clear = %d", v.Resets)
+	}
 	feedDigest(t, d, Claude, "digest_clear.jsonl")
 	v := d.View()
+	// The reset counts: the hub tells a /clear by it, whatever the counts.
+	if v.Resets == 0 {
+		t.Fatal("/clear did not count as a reset")
+	}
 	// /clear forgot the turn, its ai-title and recap; /model (no arguments) is no prompt; /implement with arguments is.
 	if v.AITitle != "" || v.Recap != "" || v.Prompt != "/implement Fix the elevator doors in the lobby. Then push." {
 		t.Fatalf("after /clear: %+v", v)
@@ -94,8 +101,8 @@ func TestDigestClearAndCommands(t *testing.T) {
 	// A /clear alone (the system line) starts over too.
 	l := []byte(`{"type":"system","subtype":"local_command","content":"<local-command-stdout></local-command-stdout>","commandRun":{"command":"clear","args":""}}`)
 	d.Line(200, l, TurnEvents(Claude, l))
-	if v := d.View(); v.Steps != 0 || v.Prompt != "" || len(v.Recent) != 0 {
-		t.Fatalf("after the clear line: %+v", v)
+	if w := d.View(); w.Steps != 0 || w.Prompt != "" || len(w.Recent) != 0 || w.Resets != v.Resets+1 {
+		t.Fatalf("after the clear line: %+v", w)
 	}
 }
 

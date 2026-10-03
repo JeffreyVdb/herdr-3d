@@ -98,6 +98,7 @@ type usageTracker struct {
 	// changes.
 	dgOffered map[string]digestOffered
 	dgUps     []digestUpdate
+	dgEpoch   int // the last tracker's epoch
 	now       func() time.Time
 }
 

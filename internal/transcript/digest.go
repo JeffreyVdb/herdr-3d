@@ -76,6 +76,10 @@ type Digest struct {
 	// assistant step came after it, RecapAt its time (unix ms).
 	Recap   string
 	RecapAt int64
+	// Resets counts the tracker's resets (a /clear, the transcript
+	// replaced): with the tracker itself, the identity of what the counts
+	// and the prompt are of.
+	Resets int
 }
 
 // Task is the phase-1 task line and its source (proto.Digest*): the
@@ -100,6 +104,7 @@ type DigestTracker struct {
 	msgID   string // Claude: the message the newest step is
 	open    bool   // Codex: the newest step takes the calls that follow (until a prompt)
 	seq     int
+	resets  int
 }
 
 // NewDigestTracker follows a harness's (claude or codex) transcript; nil for
@@ -114,6 +119,7 @@ func NewDigestTracker(harness string) *DigestTracker {
 // Reset forgets everything: the transcript was replaced (or went), or /clear.
 func (t *DigestTracker) Reset() {
 	t.d, t.ring, t.msgID, t.open = Digest{}, nil, "", false
+	t.resets++
 	t.seq++
 }
 
@@ -123,6 +129,7 @@ func (t *DigestTracker) Seq() int { return t.seq }
 // View is the digest now (a copy).
 func (t *DigestTracker) View() Digest {
 	d := t.d
+	d.Resets = t.resets
 	d.Recent = make([]DigestStep, len(t.ring))
 	for i, s := range t.ring {
 		d.Recent[i] = DigestStep{Texts: append([]string(nil), s.Texts...), Tools: append([]DigestTool(nil), s.Tools...)}
