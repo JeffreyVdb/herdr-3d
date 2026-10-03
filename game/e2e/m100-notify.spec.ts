@@ -89,7 +89,7 @@ test('pings: none on load, one per live need, a settled finish, never a freelanc
   await expect.poll(() => page.evaluate(() => window.__h3d.seated()), { timeout: 20_000 }).toBe(inky.id);
   expect(await page.evaluate(() => window.__h3d.where()?.loaded)).toBe('scratchpad');
 
-  // With Settings up (a modal), a click shuts it first: seated at the worker's terminal, the keyboard on its laptop.
+  // With Settings up (a modal), a click shuts it first: seated at the worker's conversation, the keyboard on its laptop.
   await page.keyboard.press('Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -99,8 +99,8 @@ test('pings: none on load, one per live need, a settled finish, never a freelanc
   await expect.poll(() => page.evaluate(() => window.__h3d.seated()), { timeout: 20_000 }).toBe(pip.id);
   await expect(settings).toBeHidden();
   expect(await page.evaluate(() => window.__h3d.where()?.loaded)).toBe('herdr-3d');
-  await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe('terminal');
-  await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains('seat-input'))).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe('transcript');
+  await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('.seat-transcript'))).toBe(true);
   clean();
 });
 

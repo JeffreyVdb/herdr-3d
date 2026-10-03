@@ -505,7 +505,7 @@ export class App {
       review: (session, pr) => this.reviewPr(session, pr),
       whyNoRun: (session) => this.whyNoRun(session),
       whyNoHire: (session) => this.whyNoHire(session),
-      goTo: (id) => void this.goToWorker(id, 'transcript'),
+      goTo: (id) => void this.goToWorker(id),
     });
     this.arrivals = new Arrivals(this.shadows);
     this.walk.scene.add(this.arrivals.group);
@@ -2363,7 +2363,7 @@ export class App {
   private clickBoardHolder(e: PointerEvent): boolean {
     const id = this.holderUnderAim(e);
     if (!id) return false;
-    void this.goToWorker(id, 'transcript');
+    void this.goToWorker(id);
     return true;
   }
 
@@ -2883,11 +2883,11 @@ export class App {
 
   /**
    * #100: an inbox row's (or a notification's) click. Unlike N it teleports: straight onto the worker's floor (no
-   * elevator panel), facing it, and sat at its laptop with its terminal on screen (not the conversation E remembers),
-   * from anywhere (`view`: 'transcript' puts the conversation on screen instead). False when it cannot be done (in a transition, the worker or its floor went). When the laptop
+   * elevator panel), facing it, and sat at its laptop with its conversation on screen (not the view E remembers),
+   * from anywhere (`view`: 'terminal' puts the terminal on screen instead). False when it cannot be done (in a transition, the worker or its floor went). When the laptop
    * cannot be sat at, you are left facing the worker with the reason (`sitAt`'s toast), and it is still true.
    */
-  async goToWorker(id: string, view: 'terminal' | 'transcript' = 'terminal'): Promise<boolean> {
+  async goToWorker(id: string, view: 'terminal' | 'transcript' = 'transcript'): Promise<boolean> {
     if (this.transitioning) return false;
     const was = this.store.workerView(id);
     if (!was) return false;
@@ -2905,7 +2905,7 @@ export class App {
     if (this.mode !== 'floor' || this.office?.session !== session) return false; // the floor went meanwhile
     if (this.planOpen) this.setPlan(false);
     this.faceWorker(id);
-    // The terminal for this sit only: what E opens next time stays as you left it.
+    // The conversation for this sit only: what E opens next time stays as you left it.
     if (this.sitAt(id)) {
       this.laptops.transcript.setMode(view, false);
       this.laptops.focusSeat();
