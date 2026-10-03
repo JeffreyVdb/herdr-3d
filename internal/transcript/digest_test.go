@@ -40,6 +40,9 @@ func TestDigestClaudeTurn(t *testing.T) {
 	if v.Steps != 3 || !reflect.DeepEqual(v.Recent, want) {
 		t.Fatalf("steps %d, recent = %+v", v.Steps, v.Recent)
 	}
+	if v.Ended != 1 { // its turn_duration
+		t.Fatalf("ended = %d", v.Ended)
+	}
 	if v.AITitle != "Floor overview on the lounge wall" {
 		t.Fatalf("ai-title = %q", v.AITitle)
 	}
@@ -75,15 +78,22 @@ func TestDigestRecapGoesWithAStep(t *testing.T) {
 func TestDigestClearAndCommands(t *testing.T) {
 	d := NewDigestTracker(Claude)
 	feedDigest(t, d, Claude, "digest_turns.jsonl")
+	if v := d.View(); v.Resets != 0 {
+		t.Fatalf("resets before /clear = %d", v.Resets)
+	}
 	feedDigest(t, d, Claude, "digest_clear.jsonl")
 	v := d.View()
+	// The reset counts: the hub tells a /clear by it, whatever the counts.
+	if v.Resets == 0 {
+		t.Fatal("/clear did not count as a reset")
+	}
 	// /clear forgot the turn, its ai-title and recap; /model (no arguments) is no prompt; /implement with arguments is.
 	if v.AITitle != "" || v.Recap != "" || v.Prompt != "/implement Fix the elevator doors in the lobby. Then push." {
 		t.Fatalf("after /clear: %+v", v)
 	}
 	want := []DigestStep{{Texts: []string{"Reading the elevator code."}, Tools: []DigestTool{{"Grep", "game/src"}}}}
-	if v.Steps != 1 || !reflect.DeepEqual(v.Recent, want) {
-		t.Fatalf("steps %d: %+v", v.Steps, v.Recent)
+	if v.Steps != 1 || v.Ended != 0 || !reflect.DeepEqual(v.Recent, want) {
+		t.Fatalf("steps %d, ended %d: %+v", v.Steps, v.Ended, v.Recent)
 	}
 	if task, src := v.Task(); task != "/implement Fix the elevator doors in the lobby." || src != proto.DigestPrompt {
 		t.Fatalf("task = %q (%s)", task, src)
@@ -91,8 +101,8 @@ func TestDigestClearAndCommands(t *testing.T) {
 	// A /clear alone (the system line) starts over too.
 	l := []byte(`{"type":"system","subtype":"local_command","content":"<local-command-stdout></local-command-stdout>","commandRun":{"command":"clear","args":""}}`)
 	d.Line(200, l, TurnEvents(Claude, l))
-	if v := d.View(); v.Steps != 0 || v.Prompt != "" || len(v.Recent) != 0 {
-		t.Fatalf("after the clear line: %+v", v)
+	if w := d.View(); w.Steps != 0 || w.Prompt != "" || len(w.Recent) != 0 || w.Resets != v.Resets+1 {
+		t.Fatalf("after the clear line: %+v", w)
 	}
 }
 
@@ -110,8 +120,8 @@ func TestDigestCodexTurns(t *testing.T) {
 		{Tools: []DigestTool{{"exec_command", "gh pr create --fill"}}}, // a new prompt: its calls are a step of their own
 		{Texts: []string{"PR opened."}},
 	}
-	if v.Steps != 5 || !reflect.DeepEqual(v.Recent, want) {
-		t.Fatalf("steps %d: %+v", v.Steps, v.Recent)
+	if v.Steps != 5 || v.Ended != 2 || !reflect.DeepEqual(v.Recent, want) { // two task_complete
+		t.Fatalf("steps %d, ended %d: %+v", v.Steps, v.Ended, v.Recent)
 	}
 	if task, src := v.Task(); task != "Port the importer to v2?" || src != proto.DigestPrompt {
 		t.Fatalf("task = %q (%s)", task, src)

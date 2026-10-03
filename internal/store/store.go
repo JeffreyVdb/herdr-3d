@@ -171,6 +171,9 @@ var migrations = []string{
 	migrationInbox,
 	// #110: pack up on request: the settings.
 	migrationPackup,
+	// #118 phase 2: floor overview summaries: the settings and the LLM's
+	// lines by input hash.
+	migrationDigest,
 }
 
 // Fingerprint kinds.

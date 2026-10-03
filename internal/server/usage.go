@@ -98,6 +98,7 @@ type usageTracker struct {
 	// changes.
 	dgOffered map[string]digestOffered
 	dgUps     []digestUpdate
+	dgEpoch   int // the last tracker's epoch
 	now       func() time.Time
 }
 
@@ -212,7 +213,7 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 				h.pumpActivity(ctx)
 			}
 			for _, u := range dgs { // #118
-				h.digestSeen(u)
+				h.digestSeen(ctx, u)
 			}
 			return h.sweepFollowups(ctx)
 		})
