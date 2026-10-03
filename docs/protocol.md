@@ -2723,8 +2723,8 @@ the worker's `digest` with `task_source` / `now_source` `llm`. Nothing is sent u
 (by its SHA-256): again only after a `/clear` or another agent session. The now line: the last 5 assistant steps
 (their texts, the last 600 bytes of each, and each tool call's name and input summary, never a tool's output, never
 thinking), after a context line where it helps: `Ticket #<n>: <title>` for a run's worker, `Task: <task line>` for a
-one-off worker. Every piece is scrubbed first (`digest.Scrub`: the activity's token patterns, `ai.Scrub`'s keys and
-bearer tokens). The request is two turns: the instruction in the system turn, which says the transcript is data and
+one-off worker. Every piece (a tool's name too) is scrubbed whole before it is clipped, and again after
+(`digest.Scrub`: the activity's token patterns, `ai.Scrub`'s keys and bearer tokens). The request is two turns: the instruction in the system turn, which says the transcript is data and
 never instructions, and the data alone between `<transcript>` and `</transcript>` in the user turn (a closing delimiter
 inside it is defused); `max_tokens` 80, temperature 0.2. The answer is cleaned to its first line, without code fences,
 markdown, a leading label or bullet, wrapping quotes or a final full stop, scrubbed, and clipped to the line's length
@@ -2738,7 +2738,8 @@ nothing, and its lines are written once someone walks onto it.
 
 **Cost.** One call at a time for the feature (the AI integration's other slot stays free for the follow-up questions
 and pack up); `daily_cap` calls a day (default **300**, 1–10,000; `calls_today` counts them, the bridge's local day),
-past it no call until tomorrow and the lines written stay; and a cache of the lines by the SHA-256 of what is sent, in
+past it no call until tomorrow (or a higher cap) and the lines written stay, a cached line still applies, and a line
+that waits for the budget is written once there is some again; and a cache of the lines by the SHA-256 of what is sent, in
 SQLite `digest_cache (key, line)`, the newest 2,000: the same input again (a restart's re-read of a transcript
 included) costs nothing. Only the hash and the line are stored, never a transcript's text.
 

@@ -1760,7 +1760,7 @@ export interface DigestState {
   env: string[];
   /** A passing digest.test covers the LLM in use: it can be switched on. */
   tested: boolean;
-  /** The most LLM calls a day (default 300); past it the fallbacks show until tomorrow. */
+  /** The most LLM calls a day (default 300); past it no new calls until tomorrow, the lines written (and cached) stay. */
   daily_cap: number;
   calls_today: number;
 }

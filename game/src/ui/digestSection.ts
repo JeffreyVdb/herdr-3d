@@ -90,7 +90,7 @@ export function digestSection(host: DigestSectionHost): (body: HTMLElement) => S
     cap.max = String(DIGEST_CAP.max);
     cap.step = '50';
     cap.inputMode = 'numeric';
-    const capHint = el('p', 'settings-field-hint', 'Most LLM calls a day; past it the overview shows its own lines until tomorrow. Default 300.');
+    const capHint = el('p', 'settings-field-hint', 'Most LLM calls a day; past it no new calls until tomorrow, and the lines already written stay. Default 300.');
     capHint.id = `${id}-cap-hint`;
     cap.setAttribute('aria-describedby', capHint.id);
     const capField = el('div', 'settings-field settings-field--short');
@@ -145,7 +145,7 @@ export function digestSection(host: DigestSectionHost): (body: HTMLElement) => S
           ? s.state !== 'ready'
             ? 'On, but paused: the LLM is not ready. Nothing is sent until it is.'
             : capped
-              ? 'On, but today’s cap is reached: the overview shows its own lines until tomorrow.'
+              ? 'On, but today’s cap is reached: no new calls until tomorrow. The lines already written stay, and an input seen before reuses its line.'
               : 'On: lines are written for the floors someone is viewing.'
           : !ready
             ? 'Set up the LLM first.'

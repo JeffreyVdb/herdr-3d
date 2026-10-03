@@ -51,6 +51,10 @@ describe('the floor overview summaries section (#118)', () => {
     expect(m.box().disabled).toBe(true);
     expect(m.body.textContent).toContain('Run the test below first');
     expect(m.cap().value).toBe('300');
+    // The cap stops new calls only: the lines written stay (no promise of fallbacks).
+    expect(document.getElementById(m.cap().getAttribute('aria-describedby')!)!.textContent).toBe(
+      'Most LLM calls a day; past it no new calls until tomorrow, and the lines already written stay. Default 300.',
+    );
     expect(m.body.querySelector('.settings-act-figure')!.textContent).toBe('0 of 300');
     m.book.upsert(state({ tested: true }));
     expect(m.box().disabled).toBe(false);
@@ -118,7 +122,8 @@ describe('the floor overview summaries section (#118)', () => {
     expect(m.body.textContent).toContain('Daily cap saved: 500.');
     m.book.upsert(state({ enabled: true, state: 'ready', tested: true, calls_today: 300 }));
     expect(m.body.querySelector<HTMLElement>('.settings-act-bar')!.dataset.level).toBe('full');
-    expect(m.body.textContent).toContain('today’s cap is reached');
+    expect(m.body.textContent).toContain('today’s cap is reached: no new calls until tomorrow. The lines already written stay, and an input seen before reuses its line.');
+    expect(m.body.textContent).not.toContain('own lines until tomorrow');
   });
 
   it('the environment’s switch is read-only here and says so', () => {
