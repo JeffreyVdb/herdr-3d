@@ -545,6 +545,7 @@ export class App {
         themes: this.themes,
         monitors: this.monitorPrefs,
         packup: (id, text, signal) => this.packupCheck(id, text, signal), // #110
+        overview: () => this.openOverview(false), // #118
       },
       o.params,
     );
@@ -2703,7 +2704,8 @@ export class App {
     // M5: live laptop screens, and the camera at the laptop you sit at.
     const onFloor = this.mode === 'floor' && (this.place.area === 'floor' || this.place.area === 'fire-escape');
     // #110: a pack-up check's dialog keeps you seated (the prompt box and its draft stay); it still owns the keys.
-    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat) || this.hud.sheetOpen || this.transitioning;
+    // #118: the overview opened from the transcript (O) keeps the seat: Esc closes it back onto the conversation.
+    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.overview.isOpen) || this.hud.sheetOpen || this.transitioning;
     this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
     if (this.laptops.animating) this.activity(true);
     this.cameraMoved = false;

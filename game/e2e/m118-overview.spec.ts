@@ -190,6 +190,21 @@ test('a row’s click ends seated at that laptop with its conversation on screen
   await expect.poll(async () => (await page_(page))?.open).toBe(false);
   await expect.poll(() => page.evaluate(() => window.__h3d.seated()), { timeout: 20_000 }).toBe(turnip);
   await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe('transcript');
+  // O from the conversation brings the page back over it, still seated; Esc closes it back onto the conversation.
+  await page.keyboard.press('KeyO');
+  await expect.poll(async () => (await page_(page))?.open).toBe(true);
+  expect((await page_(page))?.floor).toBe('lab');
+  expect(await page.evaluate(() => window.__h3d.seated())).toBe(turnip);
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => (await page_(page))?.open).toBe(false);
+  expect(await page.evaluate(() => window.__h3d.seated())).toBe(turnip);
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe('transcript');
+  // The prompt box keeps its letters: an o typed there is text, not the overview.
+  await page.locator('.tx-input').first().focus();
+  await page.keyboard.type('go on');
+  await frames(page, 2);
+  expect((await page_(page))?.open).toBe(false);
+  expect(await page.locator('.tx-input').first().evaluate((e) => (e as HTMLTextAreaElement).value ?? e.textContent)).toContain('go on');
   clean();
 });
 
