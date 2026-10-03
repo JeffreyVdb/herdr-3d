@@ -32,7 +32,7 @@
   directory of 0600 files removed after 10 minutes; pure Go, the hub's `screen.grab` uses it), `whiteboard` (each
 floor's Excalidraw board: versioned scenes, the last 20 kept, image files once by sha256, each version's render, agents' pins as
 complete Excalidraw elements with valid fractional indices; files only, pure Go, the bridge's `/whiteboard/` routes and
-commands sit on it) and `drops` (Drop Zone's newest files, read only through imgcache's allowlist, for "Pin a drop"); #92: `ai` (the classification model and the OpenAI-compatible LLM behind feature-agnostic `Classifier` / `LLM` interfaces with fakes, their keys in a 0600 file, the shared timeouts, one retry and two-call limit; standard library only, `TestAIIsFeatureAgnostic`); #90: `followup` (the follow-up questions: the classifier gate, the LLM extraction and its strict validation, the fallback item, the feature's switch, threshold and `followups.test`; it takes only `ai`'s interfaces, `TestFollowupUsesOnlyAIInterfaces`), and `transcript`'s `TurnEvents` / `FollowupTracker` (a turn's final assistant message, one parse per line shared with `WrapUpTracker`); #110: `packup` (pack up on request: the classifier gate on a prompt you send, the LLM's spans to cut validated as exact substrings in order and never over an image, the tidied task, the labelled samples, the switch, threshold and `packup.test`; it takes only `ai`'s interfaces, `TestPackupUsesOnlyAIInterfaces`);
+commands sit on it) and `drops` (Drop Zone's newest files, read only through imgcache's allowlist, for "Pin a drop"); #92: `ai` (the classification model and the OpenAI-compatible LLM behind feature-agnostic `Classifier` / `LLM` interfaces with fakes, their keys in a 0600 file, the shared timeouts, one retry and two-call limit; standard library only, `TestAIIsFeatureAgnostic`); #90: `followup` (the follow-up questions: the classifier gate, the LLM extraction and its strict validation, the fallback item, the feature's switch, threshold and `followups.test`; it takes only `ai`'s interfaces, `TestFollowupUsesOnlyAIInterfaces`), and `transcript`'s `TurnEvents` / `FollowupTracker` (a turn's final assistant message, one parse per line shared with `WrapUpTracker`); #110: `packup` (pack up on request: the classifier gate on a prompt you send, the LLM's spans to cut validated as exact substrings in order and never over an image, the tidied task, the labelled samples, the switch, threshold and `packup.test`; it takes only `ai`'s interfaces, `TestPackupUsesOnlyAIInterfaces`); #118 phase 2: `digest` (the floor overview summaries: the LLM's task and now lines from scrubbed, delimited input, their cleaning, the switch and `digest.test`, one call at a time, the daily cap and the cache by input hash; it takes only `ai`'s LLM interface, `TestDigestUsesOnlyAIInterfaces`);
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
@@ -88,7 +88,9 @@ make e2e SPEC=e2e/m6b.spec.ts   # only that spec (same lock and portlease)
   calls them; no spec reaches a real provider. #90: `go test ./internal/followup ./internal/server` take the fakes too
   (the server's run the real transcript fixtures `internal/transcript/testdata/*/followup_*.jsonl` through the usage
   tracker), and `game/e2e/followups.spec.ts` starts its own fake Jev and OpenAI servers the same way. #110:
-  `go test ./internal/packup ./internal/server` take the fakes, and `game/e2e/m110-packup.spec.ts` its own fake servers.
+  `go test ./internal/packup ./internal/server` take the fakes, and `game/e2e/m110-packup.spec.ts` its own fake servers. #118 phase 2: `go test ./internal/digest ./internal/server` take `ai.FakeLLM`
+  (the server's run the transcript fixtures `internal/transcript/testdata/*/digest_*.jsonl` through the usage tracker),
+  and `game/e2e/m118-digest.spec.ts` starts its own fake OpenAI server (`tools/fixture-digest.ts` calls it).
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 
@@ -673,7 +675,8 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   both follow (`corner.ts`: what makes them step aside), what it remembers (`inboxPrefs.ts`, `h3d.inbox`), Settings →
   Notifications (`notifySection.ts`: desktop notifications and their permission, the chime and its Test) and its pings; #118:
   the floor overview page (`overview.ts`, `overview.css`: the `inset: 0` layer over everything, its grow out of the
-  wall screen, the tree's keys, live rows) and its collapsed groups (`overviewPrefs.ts`, `h3d.overview.collapsed`); the
+  wall screen, the tree's keys, live rows) and its collapsed groups (`overviewPrefs.ts`, `h3d.overview.collapsed`), and
+  Settings → Floor overview summaries (`digestSection.ts`, its state in `world/digestSettings.ts`); the
   desktop notification of a new entry with the game in the background (`desktopNotify.ts`; when one pings,
   `world/inboxPings.ts`: settle delay, snapshot silence, burst cap). Hidden, named hooks
   wait for later tickets:

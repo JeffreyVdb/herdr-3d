@@ -180,6 +180,10 @@ out by a bridge without the AI service or from before #90.
 `packup` (#110) is pack up on request's state (see [Pack up on request](#pack-up-on-request)), left out by a bridge
 without the AI service or from before #110.
 
+`digest` (#118) is the floor overview summaries' state (see [Floor overview summaries](#floor-overview-summaries)),
+left out by a bridge without the AI service or from before #118 phase 2; a worker's own `digest` (its lines) is in the
+worker.
+
 `activity` (#98) is "Classify unknown commands"' state (see [Activity](#activity)), left out by a bridge without the AI
 service or from before #98; a worker's own `activity` is in the worker.
 
@@ -399,6 +403,7 @@ and remember the last `seq` applied.
 | `packup.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `tested` | #110: pack up on request's state changed (a setting, a passing test, a model's state); the whole state, flat in the event, the follow-up questions' fields: decode it by its `t` (see [Pack up on request](#pack-up-on-request)) |
 | `worker.activity` | `id`, `session`, `workspace_id`, `activity`? | #98: the worker's `activity` changed (absent: cleared); only on a change, at most twice a second per worker. A change that comes with a status change is in that `worker.upsert` instead (see [Activity](#activity)) |
 | `activity.update` | `model_enabled`, `threshold`, `margin`, `daily_cap`, `calls_today`, `cache_size`, `state`, `classifier`, `env` | #98: "Classify unknown commands"' state changed (a setting, a call counted, the classifier's state); the whole state, flat in the event. Its `classifier` is a role's state (a string), not `ai.update`'s object: decode it by its `t` (see [Activity](#activity)) |
+| `digest.update` | `enabled`, `state`, `missing`?, `roles`, `env`, `tested`, `daily_cap`, `calls_today` | #118: the floor overview summaries' state changed (a setting, a call counted, a passing test, the LLM's state); the whole state, flat in the event. Its `roles` has `llm` only: decode it by its `t` (see [Floor overview summaries](#floor-overview-summaries)) |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
@@ -510,6 +515,9 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `inbox.dismiss` | `{"id", "status_since"}` | `{"dismissed": bool}` (see [Inbox](#inbox)) | `inbox.dismissed` (before the ack) when the dismissal is new |
 | `activity.get` | `{}` | "Classify unknown commands"' state (see [Activity](#activity)) | — |
 | `activity.set` | `{"model_enabled"?: bool, "threshold"?: 0.05–0.99, "margin"?: 0–0.9, "daily_cap"?: 1–100000}` | its state | `activity.update` (before the ack) |
+| `digest.get` | `{}` | the floor overview summaries' state (see [Floor overview summaries](#floor-overview-summaries)) | — |
+| `digest.set` | `{"enabled"?: bool, "daily_cap"?: 1–10000}` | its state | `digest.update` (before the ack) |
+| `digest.test` | `{}` | `{"ok", "reason"?, "samples": [{"kind": "task"\|"now", "line"?, "error"?}], "latency_ms"}` | `digest.update` when it changes `tested` |
 | `whiteboard.get` | `{"floor"}` | the board's state, `{"floor", "version", "author", "at", "render_version", "render", "stale", "stale_pins"}` (its content is HTTP, see [Whiteboard](#whiteboard)) | — |
 | `whiteboard.clear` | `{"floor", "confirm": true, "author"?}` | the new state | `whiteboard.updated` |
 | `whiteboard.pin` | `{"floor", "author", "note", "request_id"?}` (an image: `POST /whiteboard/{floor}/pin`) | the new state plus `{"elements": [id…], "repeated"?}` | `whiteboard.updated` (none for a repeated `request_id`) |
@@ -2690,11 +2698,65 @@ client shows no now line. A worker with neither a prompt nor a step has no diges
 | `now`, `now_source` | string ≤ 100 chars, `now_source` set from the first assistant step | what it is doing now. `recap`: Claude Code's latest `system/away_summary` (without its "(disable recaps in /config)"), only while no prompt, turn start or assistant step came after it; `now_at` is its time (unix ms). `title`: no `now` text: the line is the worker's own `title`, which moves on the hot `worker.status` path and is never copied into the digest. |
 | `now_at` | int, optional | unix ms the `now` line was written (`recap` only) |
 
-`llm` is a reserved source of both lines: a model's summary (phase 2, opt-in). No bridge sends it yet; a client shows
-a line of that source as written by a model. `/clear` (and another agent session) starts the digest over: no task, no
+`llm` is the source of a line the configured LLM wrote, with [floor overview summaries](#floor-overview-summaries) on:
+it takes the place of `ai_title` / `prompt` (a one-off worker's task) or `recap` / `title` (the now line; `now_at` is
+when it was written), and a client marks it as written by a model. Off, not ready or failing, the lines above show.
+`/clear` (and another agent session) starts the digest over: no task, no
 recap, absent again until the next prompt or assistant step. The bridge also keeps, per worker, the first prompt and a ring of
 the last 5 assistant steps (their texts, and their tool calls as name and input summary; never a tool's output, never
-thinking) for phase 2's summaries; none of it is sent.
+thinking), what the summaries are written from; it is sent only with them on.
+
+### Floor overview summaries
+
+#118 phase 2. With the feature on, the configured LLM (the [AI integration](#ai-integration)'s `llm` role; the
+classifier is not used) writes the overview's lines: a one-off worker's (no `role`) **task** in one line of at most 80
+characters, and every Claude and Codex worker's **now** line in one present-tense line of at most 100. They go out in
+the worker's `digest` with `task_source` / `now_source` `llm`. Nothing is sent until the toggle is on and the LLM is
+`ready`.
+
+```json
+"digest":{"enabled":true,"state":"ready","roles":{"llm":"ready"},"env":[],"tested":true,"daily_cap":300,"calls_today":12}
+"digest":{"task":"Fix the flaky login test and open a PR","task_source":"llm","now":"Rerunning the login test 20 times","now_source":"llm","now_at":1791030000000}
+```
+
+**What is sent.** The task: the worker's first genuine prompt (the digest's, its first 4,000 bytes), once per prompt
+(by its SHA-256): again only after a `/clear` or another agent session. The now line: the last 5 assistant steps
+(their texts, the last 600 bytes of each, and each tool call's name and input summary, never a tool's output, never
+thinking), after a context line where it helps: `Ticket #<n>: <title>` for a run's worker, `Task: <task line>` for a
+one-off worker. Every piece is scrubbed first (`digest.Scrub`: the activity's token patterns, `ai.Scrub`'s keys and
+bearer tokens). The request is two turns: the instruction in the system turn, which says the transcript is data and
+never instructions, and the data alone between `<transcript>` and `</transcript>` in the user turn (a closing delimiter
+inside it is defused); `max_tokens` 80, temperature 0.2. The answer is cleaned to its first line, without code fences,
+markdown, a leading label or bullet, wrapping quotes or a final full stop, scrubbed, and clipped to the line's length
+with `…`; an answer with nothing left keeps the previous line (or the fallback).
+
+**When.** The now line after a turn ends (Claude's `turn_duration`, Codex's `task_complete`) and has settled **2 s**,
+at most once every **60 s** per worker (a later turn end within it waits for it, then summarizes the steps it finds).
+The task as soon as the prompt is known. **Only for a worker on a floor a client stands on** (its `board.watch`, or a
+laptop or transcript it watches there; the wall screen and the page are on that floor): a floor nobody is on costs
+nothing, and its lines are written once someone walks onto it.
+
+**Cost.** One call at a time for the feature (the AI integration's other slot stays free for the follow-up questions
+and pack up); `daily_cap` calls a day (default **300**, 1–10,000; `calls_today` counts them, the bridge's local day),
+past it no call until tomorrow and the lines written stay; and a cache of the lines by the SHA-256 of what is sent, in
+SQLite `digest_cache (key, line)`, the newest 2,000: the same input again (a restart's re-read of a transcript
+included) costs nothing. Only the hash and the line are stored, never a transcript's text.
+
+**Settings** (bridge-wide, SQLite `digest_settings`): `digest.get` answers them, the snapshot's `digest` holds them,
+`digest.update` carries them flat.
+
+- `enabled` is off by default; configuring the LLM does not switch it on. `HERDR_WORLD_DIGEST_ENABLED` /
+  `--digest-enabled` (`true` / `false`) wins over the stored toggle and lists `enabled` in `env` (`env_locked`); it
+  still needs the LLM `ready`.
+- `state`: `off`, `incomplete` (`missing: ["llm"]`), `ready`; a cap reached is `ready` with `calls_today` ≥
+  `daily_cap`.
+- **`digest.test`** has the LLM write a sample task line and a sample now line (one call at a time, not counted, not
+  cached). It passes when both come back with a line. A pass covers the LLM in use for 30 minutes, and
+  **`digest.set {enabled: true}` needs one** (`test_required`; the LLM not ready: `incomplete`).
+
+**Audit and logs.** Each call writes an audit row `digest.summarize` (client `bridge`) with the worker, the kind,
+`sent_bytes`, `answer_bytes`, the model and the endpoint's host; a failure's error is its kind only (`timeout`,
+`no_line`, …). Never the text sent or answered. The log has the failure's kind and its message through `digest.Scrub`.
 
 ### Ticket titles
 
@@ -2743,7 +2805,7 @@ dismissed_at)`.
 | code | meaning |
 |---|---|
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
-| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` and #110 `packup.*` use `incomplete`, `test_required`, `env_locked` and, from their tests' calls, the `ai.*` ones (`packup.detect` never fails on a model: no match); #98 `activity.set` uses `env_locked` |
+| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` and #110 `packup.*` use `incomplete`, `test_required`, `env_locked` and, from their tests' calls, the `ai.*` ones (`packup.detect` never fails on a model: no match); #98 `activity.set` uses `env_locked`; #118 `digest.*` use `incomplete`, `test_required`, `env_locked`, `bad_request` and, from its test's calls, the `ai.*` ones |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
 | `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
 | `name_taken` | another building, or another team preset, already has that name (ignoring case) |
