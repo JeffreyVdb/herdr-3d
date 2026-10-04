@@ -2029,7 +2029,7 @@ enough to ask on every keystroke (the composer's `@` mentions; either harness):
 | `kind` | `file` or `dir`. A symlink is a `file` (it is never followed, whatever it points at) |
 | `indices` | the positions in `path` of the matched query characters, ascending, one per query character: **Unicode code point offsets**, not UTF-16 or byte offsets. A JavaScript client highlights with `Array.from(path)` (`[...path]`), never `path[i]` or `path.slice`, which count UTF-16 units and split an emoji or other astral character. `[]` for an empty query |
 | `source` | what listed the checkout: `git`, `rg` (outside git) or `none` (outside git and no `rg`: `files` is `[]`) |
-| `reason` | `null`, or why the list is empty or may be incomplete or stale: no `rg`; the listing timed out (20 s) or passed its output cap (git 32 MiB, rg 20 MiB: the complete paths before that are searched); more than 500 000 files and directories (the first are searched); a refresh failed (the older index answers) |
+| `reason` | `null`, or why the list is empty or may be incomplete or stale, several joined with `; `: no `rg`; the checkout has no files to search (nothing listed: an empty checkout, everything ignored, every path dropped; for every query, `""` included); the listing timed out (20 s) or passed its output cap (git 32 MiB, rg 20 MiB: the complete paths before that are searched); more than 500 000 files and directories (the first are searched); a refresh failed (the older index answers). A query that matches nothing in a checkout with files is `files: []` with `reason: null`, the normal answer to a keystroke |
 
 The worker's checkout is `worktree.checkout_path`, else its `cwd` (a subdirectory of a repository lists only what is
 under it, relative to it).

@@ -304,7 +304,9 @@ describe('SimWorld worker.files (#137)', () => {
 
   it('outside git with no rg: empty with a reason', () => {
     const r = rig();
-    expect(files(r, 'Inky', { query: 'a' })).toEqual({ files: [], source: 'none', reason: expect.stringContaining('rg') });
+    const want = { files: [], source: 'none', reason: expect.stringMatching(/rg.*; the checkout has no files to search$/) };
+    expect(files(r, 'Inky', { query: 'a' })).toEqual(want);
+    expect(files(r, 'Inky', { query: '' })).toEqual(want);
   });
 
   it('fails like the bridge', () => {

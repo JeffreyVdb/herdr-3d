@@ -36,9 +36,13 @@ func validPath(p string) bool {
 	return true
 }
 
+// noFiles is the reason of an index with no entries: nothing was listed,
+// or nothing listed was valid.
+const noFiles = "the checkout has no files to search"
+
 // newSnapshot builds the index of the files listed: the valid ones, plus
 // every directory above them, at most max paths in all (reason says when
-// some were left out). Order (an empty query's answer): shallow first, a
+// some were left out, or when there are none). Order (an empty query's answer): shallow first, a
 // depth's directories before its files, then byte order.
 func newSnapshot(paths []string, source, reason string, max int) *snapshot {
 	type ent struct {
@@ -80,6 +84,9 @@ func newSnapshot(paths []string, source, reason string, max int) *snapshot {
 	if full {
 		reason = joinReason(reason, fmt.Sprintf("the checkout has more than %d files and directories; only %d are searched",
 			max, len(ents)))
+	}
+	if len(ents) == 0 {
+		reason = joinReason(reason, noFiles)
 	}
 	// A path listed as a file and needed as a directory (a tracked file
 	// replaced by a directory) is kept once, as the file.

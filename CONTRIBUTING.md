@@ -143,9 +143,8 @@ parts:
   and efforts, prompts not starting with `--`), every argument is its own argv element, sessions outside `--sessions`
   are refused, and commands run with the `HERDR_*`/`CLAUDE*` variables stripped. `TestControlAllowlist` pins the set,
   the argv and the exported methods; widening any needs review.
-- **git** (`gitops.Git`, hires, send-homes, `worker.changes` and, M7, `worker.open_pr`): exactly sixteen shapes (`shapes`,
-  pinned by `TestGitAllowlist`):
-  `git -C <dir>` `rev-parse --show-toplevel`, `fetch --quiet origin`, `symbolic-ref --quiet --short
+- **git** (`gitops.Git`, hires, send-homes, `worker.changes`, M7, `worker.open_pr` and #137 `worker.files`): exactly
+  eighteen shapes (`shapes`, pinned by `TestGitAllowlist`): `git -C <dir>` `rev-parse --show-toplevel`, `fetch --quiet origin`, `symbolic-ref --quiet --short
   refs/remotes/origin/HEAD`, `log -1 --format=%H %ct origin/<…> --`, `status --porcelain`, `symbolic-ref --quiet --short
   HEAD`, `rev-list --count HEAD --not --remotes`, `rev-list --count refs/heads/h3d/<…> --not --remotes`, `rev-parse
   --verify --quiet refs/heads/h3d/<…>`, `branch -D h3d/<…>`, and for the Changes panel (M5, read-only) `status
@@ -153,8 +152,9 @@ parts:
   --find-renames --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ <commit id | HEAD> --`, and for
   opening a pull request (M7) `push -u origin refs/heads/h3d/<…>:refs/heads/h3d/<…>` (the branch name is validated
   and is only ever the one the bridge recorded for that worker; the one shape that writes outside the checkout),
-  `rev-list --count HEAD --not origin/<…>` and `log --format=%s -n 20 HEAD --not origin/<…> --`. A
-  branch is deleted only when the bridge recorded
+  `rev-list --count HEAD --not origin/<…>` and `log --format=%s -n 20 HEAD --not origin/<…> --`, and for
+  `worker.files` (#137, read-only, neither writes the index) `rev-parse --path-format=absolute --git-path index` and
+  `ls-files -z --cached --others --exclude-standard --deduplicate`. A branch is deleted only when the bridge recorded
   making it for that worker (SQLite `hire_branch`, with its base commit; the name alone proves nothing) and either
   still points at that base (a hire's rollback, clean tree) or has all its commits on a remote (send home, the
   checkout still on it). Same clean environment, plus `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`.

@@ -29,7 +29,8 @@
 //   plain shell (no harness) is `invalid_state`.
 // - worker.files (#137): a fixed checkout (SIM_FILES and its directories)
 //   ranked by a simple matcher (simFiles), half a step later; a cwd with
-//   `/scratch` in it is outside git with no rg: empty, `source: "none"`.
+//   `/scratch` in it is outside git with no rg: empty, `source: "none"`,
+//   and a reason (no rg; no files to search).
 //   limit and query are checked like the bridge.
 // - worker.usage: every `usageMs` (default 5000, 0: off) each working agent
 //   with usage uses more tokens.
@@ -234,7 +235,7 @@ export class PanelsSim {
     const cwd = w.worktree?.checkout_path ?? w.cwd ?? '';
     if (!cwd) throw this.h.error('invalid_state', `invalid state: ${w.name ?? w.id} has no working directory`);
     const data: WorkerFiles = cwd.includes('/scratch')
-      ? { files: [], source: 'none', reason: 'not a git work tree, and rg is not installed to list it' }
+      ? { files: [], source: 'none', reason: 'not a git work tree, and rg is not installed to list it; the checkout has no files to search' }
       : { files: simFiles(query, limit === 0 ? 30 : Math.min(limit, 100)), source: 'git', reason: null };
     // A cached index: answered at once, after the round trip.
     this.h.after(Math.round(this.h.stepMs / 2), () => ack(data));

@@ -70,6 +70,46 @@ func TestSnapshot(t *testing.T) {
 	if got := paths(s.search("", 10)); !slices.Equal(got, []string{"a:file", "a/b:file"}) {
 		t.Fatalf("conflict = %q", got)
 	}
+
+	// Nothing listed (or nothing valid): a reason, joined to the lister's.
+	for _, listed := range [][]string{nil, {"../x", ".git/config"}} {
+		s = newSnapshot(listed, proto.FilesSourceGit, "", 10)
+		if s.reason != noFiles || len(s.search("", 10)) != 0 {
+			t.Fatalf("empty %q: reason %q", listed, s.reason)
+		}
+	}
+	if s = newSnapshot(nil, proto.FilesSourceRG, "the listing is incomplete: x", 10); s.reason != "the listing is incomplete: x; "+noFiles {
+		t.Fatalf("empty and cut: reason %q", s.reason)
+	}
+}
+
+// #137: an empty checkout says so for every query; one with files answers a
+// query nothing matches with files [] and no reason.
+func TestIndexEmptyCheckout(t *testing.T) {
+	gitEnv(t)
+	root := t.TempDir()
+	empty, ignored, full := filepath.Join(root, "empty"), filepath.Join(root, "ignored"), filepath.Join(root, "full")
+	for _, r := range []string{empty, ignored, full} {
+		run(t, root, "init", "-q", "-b", "main", r)
+	}
+	if err := os.WriteFile(filepath.Join(ignored, ".git", "info", "exclude"), []byte("*\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, ignored, "a.go", "src/b.go")
+	writeFiles(t, full, "a.go")
+
+	x := New(context.Background(), Options{Git: &gitops.Git{}})
+	for _, dir := range []string{empty, ignored} {
+		for _, q := range []string{"", "a"} {
+			res := query(t, x, dir, q, 10)
+			if len(res.Files) != 0 || res.Source != proto.FilesSourceGit || res.Reason == nil || *res.Reason != noFiles {
+				t.Fatalf("%s %q = %+v", filepath.Base(dir), q, res)
+			}
+		}
+	}
+	if res := query(t, x, full, "zzz", 10); len(res.Files) != 0 || res.Reason != nil {
+		t.Fatalf("no match = %+v", res)
+	}
 }
 
 // fakeClock is a settable clock.
@@ -372,7 +412,8 @@ func TestIndexOutsideGit(t *testing.T) {
 
 	x := New(context.Background(), Options{Git: &gitops.Git{}, RG: &RG{Bin: filepath.Join(dir, "no-such-rg")}})
 	res := query(t, x, dir, "", 10)
-	if len(res.Files) != 0 || res.Source != proto.FilesSourceNone || res.Reason == nil || !strings.Contains(*res.Reason, "rg") {
+	if len(res.Files) != 0 || res.Source != proto.FilesSourceNone || res.Reason == nil || !strings.Contains(*res.Reason, "rg") ||
+		!strings.HasSuffix(*res.Reason, "; "+noFiles) {
 		t.Fatalf("no rg = %+v", res)
 	}
 	x = New(context.Background(), Options{Git: &gitops.Git{}})
