@@ -19,7 +19,7 @@ const (
 	// failed probe the next one waits.
 	catalogTTL = 30 * time.Second
 	// catalogMax bounds the cached (harness, checkout) keys, but for keys
-	// with a probe in flight.
+	// with a probe in flight: the map exceeds it only while probes run.
 	catalogMax = 64
 )
 
@@ -140,13 +140,14 @@ func (c *Catalog) refresh(key catalogKey, e *catalogEntry, probe Probe) {
 		}
 		e.at, e.probing = c.now(), nil
 		close(done)
+		c.evict(key)
 	}()
 }
 
 // evict drops the least recently used keys beyond c.max, except keep and
 // keys with a probe in flight (c.mu held): dropping those would let the next
 // ask start a second probe for its key. The map can so exceed c.max while
-// probes run; a later ask trims it.
+// probes run; each probe trims it as it ends.
 func (c *Catalog) evict(keep catalogKey) {
 	for len(c.entries) > c.max {
 		var oldest *catalogKey

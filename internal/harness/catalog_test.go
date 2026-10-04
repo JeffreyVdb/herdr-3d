@@ -333,6 +333,40 @@ func TestCatalogEvictionKeepsProbeInFlight(t *testing.T) {
 	}
 }
 
+func TestCatalogTrimsWhenProbesEnd(t *testing.T) {
+	// A burst of first asks, all probes held open: more keys than fit.
+	p := newScripted()
+	ctx, cancel := context.WithCancel(context.Background())
+	c := NewCatalog(ctx, nil, map[string]Probe{"codex": p.probe}, map[string][]proto.CommandEntry{"codex": builtinRows})
+	t.Cleanup(cancel)
+	c.max = 2
+	dirs := []string{"/a", "/b", "/c", "/d"}
+	var res []<-chan *proto.WorkerCommands
+	for _, dir := range dirs {
+		res = append(res, async(c, context.Background(), dir))
+		<-p.dirs
+	}
+	c.mu.Lock()
+	if n := len(c.entries); n != len(dirs) {
+		c.mu.Unlock()
+		t.Fatalf("entries in flight = %d", n)
+	}
+	c.mu.Unlock()
+	for range dirs {
+		p.replies <- reply{list: listA}
+	}
+	for _, r := range res {
+		<-r
+	}
+	c.Wait()
+	// No further ask: the probes ending trimmed the cache back to c.max.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n := len(c.entries); n != 2 {
+		t.Fatalf("entries = %d, want 2", n)
+	}
+}
+
 func TestCatalogShutdownStopsProbes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	p := newScripted()
