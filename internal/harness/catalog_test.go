@@ -277,6 +277,62 @@ func TestCatalogEvictsLeastRecentlyUsed(t *testing.T) {
 	}
 }
 
+func TestCatalogEvictionKeepsProbeInFlight(t *testing.T) {
+	// /a's probe is held open; the others answer at once.
+	held := newScripted()
+	probe := func(ctx context.Context, dir string) ([]proto.CommandEntry, error) {
+		if dir == "/a" {
+			return held.probe(ctx, dir)
+		}
+		return listB, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	c := NewCatalog(ctx, nil, map[string]Probe{"codex": probe}, map[string][]proto.CommandEntry{"codex": builtinRows})
+	t.Cleanup(func() {
+		cancel()
+		c.Wait()
+	})
+	c.max = 2
+	first := async(c, context.Background(), "/a")
+	<-held.dirs
+	c.mu.Lock()
+	probing := c.entries[catalogKey{"codex", "/a"}].probing
+	c.mu.Unlock()
+	for _, dir := range []string{"/b", "/c", "/d"} { // more keys than fit
+		mustCommands(t, c, dir)
+	}
+	// An ask that ends at once still registers: it must join /a's probe.
+	done, stop := context.WithCancel(context.Background())
+	stop()
+	if _, err := c.Commands(done, "codex", "/a"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	c.mu.Lock()
+	e := c.entries[catalogKey{"codex", "/a"}]
+	c.mu.Unlock()
+	if e == nil || e.probing != probing {
+		t.Fatal("/a's probe in flight was evicted: a second probe started")
+	}
+	second := async(c, context.Background(), "/a")
+	held.replies <- reply{list: listA}
+	for _, res := range []<-chan *proto.WorkerCommands{first, second} {
+		if got := <-res; !reflect.DeepEqual(got, &proto.WorkerCommands{Commands: listA}) {
+			t.Fatalf("waiter = %+v", got)
+		}
+	}
+	c.Wait()
+	if n := held.calls.Load(); n != 1 {
+		t.Fatalf("probes for /a = %d, want 1", n)
+	}
+	// Once the probe ended, the next ask trims back to c.max.
+	mustCommands(t, c, "/a")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n := len(c.entries); n != 2 {
+		t.Fatalf("entries = %d", n)
+	}
+}
+
 func TestCatalogShutdownStopsProbes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	p := newScripted()

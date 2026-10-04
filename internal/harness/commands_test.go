@@ -114,6 +114,46 @@ func TestClaudeCommands(t *testing.T) {
 	}
 }
 
+func TestCommandFilesFollowSymlinks(t *testing.T) {
+	// As dotfile managers lay it out: the commands dir a symlink, with a
+	// symlinked subdir, another path to the same dir, a symlinked file, a
+	// cycle back to the root and a dangling link.
+	repo := realDir(t)
+	writeFile(t, filepath.Join(repo, ".git", "HEAD"))
+	cmds, other := realDir(t), realDir(t)
+	writeFile(t, filepath.Join(cmds, "top.md"))
+	writeFile(t, filepath.Join(cmds, "sub", "x.md"))
+	writeFile(t, filepath.Join(other, "y.md"))
+	writeFile(t, filepath.Join(other, "deep", "z.md"))
+	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for link, target := range map[string]string{
+		filepath.Join(repo, ".claude", "commands"): cmds,
+		filepath.Join(cmds, "linked"):              other,
+		filepath.Join(cmds, "alias"):               other,
+		filepath.Join(cmds, "file.md"):             filepath.Join(other, "y.md"),
+		filepath.Join(cmds, "sub", "loop"):         "..",
+		filepath.Join(other, "deep", "back"):       filepath.Join(repo, ".claude", "commands"),
+		filepath.Join(cmds, "gone.md"):             filepath.Join(cmds, "missing.md"),
+	} {
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := commandFiles(repo, []string{"HOME=" + realDir(t)})
+	// The cycles end where they re-enter a dir they are inside: back/ is
+	// the root seen from inside it, so it adds nothing.
+	want := map[string]bool{
+		"top": true, "sub:x": true, "file": true,
+		"linked:y": true, "linked:deep:z": true,
+		"alias:y": true, "alias:deep:z": true,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("names = %v, want %v", got, want)
+	}
+}
+
 func TestClaudeCommandsFailures(t *testing.T) {
 	for _, scenario := range []string{"claude-nocommands", "claude-error", "malformed", "oversize"} {
 		t.Run(scenario, func(t *testing.T) {

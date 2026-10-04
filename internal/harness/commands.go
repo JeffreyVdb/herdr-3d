@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -85,15 +86,18 @@ func claudeEntries(cmds []claudeCommand, custom map[string]bool) []proto.Command
 	return out
 }
 
-// maxCommandFiles bounds the files looked at in one commands dir.
+// maxCommandFiles bounds the entries looked at in one commands dir.
 const maxCommandFiles = 10000
 
 // commandFiles are the names of Claude's legacy command files seen from dir
 // with the probe's environment env: .claude/commands of dir and each
 // ancestor up to the git root (a dir holding .git, also a worktree's .git
 // file) or /, and the user's commands dir. A nested file is namespaced by its
-// dirs: sub/deeper/x.md is "sub:deeper:x" (checked against Claude Code
-// 2.1.289).
+// dirs: sub/deeper/x.md is "sub:deeper:x". Symlinked dirs are followed, the
+// commands dir itself and nested ones, and named by where they are linked
+// (checked against Claude Code 2.1.289). Claude lists a file reached by
+// several paths once, under the first it meets; every path's name is kept
+// here, so whichever Claude picks counts as custom.
 func commandFiles(dir string, env []string) map[string]bool {
 	names := map[string]bool{}
 	var roots []string
@@ -113,29 +117,45 @@ func commandFiles(dir string, env []string) map[string]bool {
 	}
 	for _, root := range roots {
 		seen := 0
-		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return nil // unreadable: skip it
-			}
-			if seen++; seen > maxCommandFiles {
-				return fs.SkipAll
-			}
-			if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
-				return nil
-			}
-			if d.Type()&fs.ModeSymlink != 0 {
-				if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
-					return nil
-				}
-			}
-			rel, err := filepath.Rel(root, strings.TrimSuffix(path, ".md"))
-			if err == nil {
-				names[strings.ReplaceAll(filepath.ToSlash(rel), "/", ":")] = true
-			}
-			return nil
-		})
+		walkCommands(root, "", nil, &seen, names)
 	}
 	return names
+}
+
+// walkCommands adds to names the command files under dir, prefixed by
+// dir's own namespace ("" for a root, else "sub:"). It does not enter a dir
+// it is already inside (inside: their real paths), so a symlink cycle ends,
+// and stops once *seen exceeds maxCommandFiles. Unreadable entries are
+// skipped.
+func walkCommands(dir, prefix string, inside []string, seen *int, names map[string]bool) {
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil || slices.Contains(inside, real) {
+		return
+	}
+	inside = append(inside, real)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, d := range entries {
+		if *seen++; *seen > maxCommandFiles {
+			return
+		}
+		path := filepath.Join(dir, d.Name())
+		isDir := d.IsDir()
+		if d.Type()&fs.ModeSymlink != 0 {
+			fi, err := os.Stat(path)
+			if err != nil || !fi.IsDir() && !fi.Mode().IsRegular() {
+				continue
+			}
+			isDir = fi.IsDir()
+		}
+		if isDir {
+			walkCommands(path, prefix+d.Name()+":", inside, seen, names)
+		} else if name, ok := strings.CutSuffix(d.Name(), ".md"); ok {
+			names[prefix+name] = true
+		}
+	}
 }
 
 // claudeConfigDir is Claude Code's config dir under env: $CLAUDE_CONFIG_DIR,

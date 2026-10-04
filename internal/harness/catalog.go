@@ -18,7 +18,8 @@ const (
 	// catalogTTL is how long a probed list is fresh, and how long after a
 	// failed probe the next one waits.
 	catalogTTL = 30 * time.Second
-	// catalogMax bounds the cached (harness, checkout) keys.
+	// catalogMax bounds the cached (harness, checkout) keys, but for keys
+	// with a probe in flight.
 	catalogMax = 64
 )
 
@@ -93,10 +94,10 @@ func (c *Catalog) Commands(ctx context.Context, harness, dir string) (*proto.Wor
 	}
 	c.tick++
 	e.used = c.tick
-	c.evict()
 	if e.probing == nil && (e.at.IsZero() || c.now().Sub(e.at) > c.ttl) {
 		c.refresh(key, e, probe)
 	}
+	c.evict(key)
 	if e.at.IsZero() { // never probed: wait for the first probe
 		wait := e.probing
 		c.mu.Unlock()
@@ -142,17 +143,22 @@ func (c *Catalog) refresh(key catalogKey, e *catalogEntry, probe Probe) {
 	}()
 }
 
-// evict drops the least recently used keys beyond c.max (c.mu held). A
-// probe in flight for a dropped key still ends; its result is dropped too.
-func (c *Catalog) evict() {
+// evict drops the least recently used keys beyond c.max, except keep and
+// keys with a probe in flight (c.mu held): dropping those would let the next
+// ask start a second probe for its key. The map can so exceed c.max while
+// probes run; a later ask trims it.
+func (c *Catalog) evict(keep catalogKey) {
 	for len(c.entries) > c.max {
-		var oldest catalogKey
+		var oldest *catalogKey
 		var used uint64
 		for k, e := range c.entries {
-			if used == 0 || e.used < used {
-				oldest, used = k, e.used
+			if k != keep && e.probing == nil && (oldest == nil || e.used < used) {
+				oldest, used = &k, e.used
 			}
 		}
-		delete(c.entries, oldest)
+		if oldest == nil {
+			return
+		}
+		delete(c.entries, *oldest)
 	}
 }
