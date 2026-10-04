@@ -435,6 +435,8 @@ export interface CommandArgs {
   /** #57: an answer for every question of the worker's ask, or `cancel` (Esc on its dialog) with an optional `prompt` sent after. */
   'worker.answer_ask': { id: string; tool_use_id: string; answers?: AskAnswerArg[]; cancel?: boolean; prompt?: string };
   'worker.changes': { id: string };
+  /** #136: the worker's slash commands and skills (ack `WorkerCommands`). */
+  'worker.commands': { id: string };
   /** #74: `fullscreen` asks the bridge to zoom the pane's herdr tab while the watch lasts (absent / false: as before). */
   'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number; fullscreen?: boolean };
   'terminal.unwatch': { id: string };
@@ -691,6 +693,24 @@ export interface Changes {
   truncated: boolean;
   /** Files whose diff was left out (the cap). */
   omitted: string[];
+}
+
+/** #136: a slash command or skill in `worker.commands`. */
+export interface CommandEntry {
+  /** No leading slash; keeps its namespace (`caveman:caveman-commit`). */
+  name: string;
+  description: string;
+  /** '' when there is none. */
+  argument_hint: string;
+  /** `command`: the harness's own; `custom`: a `.claude/commands` file; `skill`: anything else. */
+  kind: 'command' | 'skill' | 'custom';
+}
+
+/** #136: `worker.commands` ack. */
+export interface WorkerCommands {
+  commands: CommandEntry[];
+  /** No probe of the harness succeeded yet: `commands` holds only the bridge's static built-ins. */
+  partial: boolean;
 }
 
 export type CommandName = keyof CommandArgs;

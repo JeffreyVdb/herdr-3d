@@ -319,8 +319,8 @@ that directory.
 | `--socket` | `HERDR_WORLD_SOCKET` | `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` |
 | `--db` (serve) | `HERDR_WORLD_DB` | `$XDG_STATE_HOME/herdr-world/world.db`, else `~/.local/state/herdr-world/world.db` |
 | `--herdr` | `HERDR_WORLD_HERDR` | `herdr` on `PATH` (a woken server runs `herdr` from the login shell's `PATH`) |
-| `--codex-cli` | `HERDR_WORLD_CODEX_CLI` | `codex` on `PATH`, else `~/.local/bin/codex`: startup model discovery |
-| `--claude-cli` | `HERDR_WORLD_CLAUDE_CLI` | `claude` on `PATH`, else `~/.local/bin/claude`: startup model discovery |
+| `--codex-cli` | `HERDR_WORLD_CODEX_CLI` | `codex` on `PATH`, else `~/.local/bin/codex`: startup model discovery, `worker.commands` probes |
+| `--claude-cli` | `HERDR_WORLD_CLAUDE_CLI` | `claude` on `PATH`, else `~/.local/bin/claude`: startup model discovery, `worker.commands` probes |
 | `--systemd-run` | `HERDR_WORLD_SYSTEMD_RUN` | `systemd-run` on `PATH`: starts woken sessions |
 | `--sessions` | `HERDR_WORLD_SESSIONS` | all; a regexp limits which sessions are watched, and the only ones commands may wake, sleep, configure, hire into or send workers home from |
 | `--poll`, `--resnapshot` | `HERDR_WORLD_POLL`, `HERDR_WORLD_RESNAPSHOT` | `2s`, `30s` |

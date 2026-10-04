@@ -24,9 +24,12 @@
 //   unpushed commit, a `done` one pushed commits, anyone else a clean tree; a
 //   worker whose label starts with `perf` has a ~1.6 MiB diff (profile
 //   traces), cut at 256 KiB. `simfail=changes_failed` fails the next one.
+// - worker.commands (#136): a Claude or Codex worker's commands, skills and
+//   custom commands (simCommands), `partial: false`, half a step later; a
+//   plain shell (no harness) is `invalid_state`.
 // - worker.usage: every `usageMs` (default 5000, 0: off) each working agent
 //   with usage uses more tokens.
-import type { ChangeFile, Changes, Floor, Question, Usage, Worker } from '../src/net/protocol.ts';
+import type { ChangeFile, Changes, CommandEntry, Floor, Question, Usage, Worker, WorkerCommands } from '../src/net/protocol.ts';
 
 type Msg = Record<string, unknown>;
 type Send = (m: Msg) => void;
@@ -198,6 +201,17 @@ export class PanelsSim {
     }
     const data = simChanges(w);
     // Read-only git takes a moment.
+    this.h.after(Math.round(this.h.stepMs / 2), () => ack(data));
+  }
+
+  // ---- worker.commands (#136) ------------------------------------------------------
+
+  commands(a: Obj, ack: (d?: unknown) => void): void {
+    this.only(a, ['id']);
+    const w = this.worker(a);
+    const data = simCommands(w.harness ?? w.agent_kind ?? '');
+    if (!data) throw this.h.error('invalid_state', `invalid state: ${w.name ?? w.id} runs no Claude or Codex agent`);
+    // A cached catalog: answered at once, after the round trip.
     this.h.after(Math.round(this.h.stepMs / 2), () => ack(data));
   }
 
@@ -420,4 +434,40 @@ export function simQuestion(kind: string, text: string, choices: string[], excer
   const q: Question = { kind, text, excerpt, choices: choices.map((label, i) => ({ n: i + 1, label })), hash: sha(`${kind}|${text}|${choices.join('|')}`).slice(0, 16) };
   if (selected !== undefined) q.selected = selected;
   return q;
+}
+
+const cmd = (name: string, description: string, argument_hint = ''): CommandEntry => ({ name, description, argument_hint, kind: 'command' });
+const skill = (name: string, description: string, argument_hint = ''): CommandEntry => ({ name, description, argument_hint, kind: 'skill' });
+const custom = (name: string, description: string, argument_hint = ''): CommandEntry => ({ name, description, argument_hint, kind: 'custom' });
+
+/** #136: the simulated `worker.commands` ack of a harness (null: not Claude or Codex). */
+export function simCommands(harness: string): WorkerCommands | null {
+  if (harness === 'claude') {
+    return {
+      partial: false,
+      commands: [
+        cmd('compact', 'Free up context by summarizing the conversation so far', '<optional custom summarization instructions>'),
+        cmd('review', 'Review a pull request'),
+        cmd('usage', "Show session cost, plan usage, and what's contributing to your limits"),
+        skill('caveman:caveman-commit', '(caveman) Ultra-compressed commit message generator.'),
+        skill('handoff', 'Compact the current conversation into a handoff document for another agent to pick up. (user)', 'What will the next session be used for?'),
+        custom('deploy', 'Deploy the bridge to the test host (project)', '<host>'),
+        custom('release:notes', 'Draft the release notes (project)'),
+      ],
+    };
+  }
+  if (harness === 'codex') {
+    return {
+      partial: false,
+      commands: [
+        skill('humanizer:humanizer', 'Remove AI writing patterns from prose'),
+        skill('imagegen', 'Generate or edit images for websites, games, and more'),
+        cmd('init', 'create an AGENTS.md file with instructions for Codex'),
+        cmd('compact', 'summarize conversation to prevent hitting the context limit'),
+        cmd('review', 'review my current changes and find issues', '<instructions>'),
+        cmd('mcp', 'list configured MCP tools; use /mcp verbose for details', '[verbose]'),
+      ],
+    };
+  }
+  return null;
 }

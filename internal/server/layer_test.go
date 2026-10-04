@@ -273,3 +273,34 @@ func TestActivityUsesOnlyAIInterfaces(t *testing.T) {
 		})
 	}
 }
+
+// #136: worker.commands is provider-neutral: the server, the store and the
+// protocol reach no harness probe; only the app wires internal/harness in
+// through server.Options.Commands.
+func TestCommandCatalogIsProviderNeutral(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go tool")
+	}
+	const mod = "github.com/JeffreyVdb/herdr-3d/internal/"
+	deps := func(pkg string) []string {
+		out, err := exec.Command("go", "list", "-deps", mod+pkg).CombinedOutput()
+		if err != nil {
+			t.Fatalf("go list -deps %s: %v\n%s", pkg, err, out)
+		}
+		return strings.Fields(string(out))
+	}
+	for _, pkg := range []string{"server", "store", "proto"} {
+		for _, dep := range deps(pkg) {
+			if dep == mod+"harness" {
+				t.Errorf("internal/%s depends on %s", pkg, dep)
+			}
+		}
+	}
+	found := false
+	for _, dep := range deps("app") {
+		found = found || dep == mod+"harness"
+	}
+	if !found {
+		t.Error("internal/app does not wire internal/harness in")
+	}
+}

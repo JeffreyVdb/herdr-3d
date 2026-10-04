@@ -88,6 +88,9 @@ type Options struct {
 	// agent transcripts for their usage (nil: no usage).
 	Changes ChangesGit
 	Usage   *UsageConfig
+	// #136: Commands lists a worker's slash commands and skills for
+	// worker.commands (nil: it fails with internal).
+	Commands CommandCatalog
 	// Caps are the worker caps (zero: DefaultCaps).
 	Caps Caps
 	// HireOptions, if set, replaces what can be hired (the harness catalogs).
@@ -737,6 +740,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startWrapUpCancel
 		case proto.CmdWorkerChanges: // M5 usage
 			start = h.startChanges
+		case proto.CmdWorkerCommands: // #136
+			start = h.startCommands
 		// M5 term
 		case proto.CmdTerminalWatch:
 			start = h.startWatch

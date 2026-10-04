@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { Changes, Snapshot, WorldEvent } from '../src/net/protocol';
+import type { Changes, Snapshot, WorkerCommands, WorldEvent } from '../src/net/protocol';
 import { changesView } from '../src/world/changes';
 import { WorldStore } from '../src/world/store';
-import { SIM_DIFF_CAP, simChanges } from './fixture-panels';
+import { SIM_DIFF_CAP, simChanges, simCommands } from './fixture-panels';
 import { loadFixture } from './fixture-server';
 import { SimWorld, type SimOptions } from './fixture-sim';
 
@@ -239,5 +239,30 @@ describe('SimWorld worker.usage (M5)', () => {
     const r = rig(undefined, { usageMs: 0 });
     r.sim.start(r.send);
     expect(r.timers).toEqual([]);
+  });
+});
+
+describe('SimWorld worker.commands (#136)', () => {
+  it("answers each harness's commands, skills and custom commands", () => {
+    const r = rig();
+    for (const [name, harness] of [['Nibble', 'claude'], ['Pixel', 'codex']] as const) {
+      const c = r.cmd('worker.commands', { id: r.byName(name).id });
+      expect(c.got()).toEqual([]);
+      r.tick();
+      const m = r.reply(c.req_id);
+      expect(m).toMatchObject({ t: 'ack', data: { partial: false } });
+      const data = (m as { data: WorkerCommands }).data;
+      expect(data).toEqual(simCommands(harness));
+      for (const e of data.commands) expect(Object.keys(e).sort()).toEqual(['argument_hint', 'description', 'kind', 'name']);
+    }
+    expect(new Set(simCommands('claude')?.commands.map((e) => e.kind))).toEqual(new Set(['command', 'skill', 'custom']));
+  });
+
+  it('fails like the bridge', () => {
+    const r = rig();
+    expect(r.cmd('worker.commands', { id: r.byName('Sprout').id }).got()[0]).toMatchObject({ code: 'invalid_state' });
+    expect(r.cmd('worker.commands', { id: r.byName('Muffin').id }).got()[0]).toMatchObject({ code: 'invalid_state' });
+    expect(r.cmd('worker.commands', { id: 'nope' }).got()[0]).toMatchObject({ code: 'unknown_worker' });
+    expect(r.cmd('worker.commands', { id: r.byName('Nibble').id, cwd: '/etc' }).got()[0]).toMatchObject({ code: 'bad_request' });
   });
 });
