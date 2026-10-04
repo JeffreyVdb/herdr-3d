@@ -23,6 +23,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/githubcli"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitremote"
+	"github.com/JeffreyVdb/herdr-3d/internal/harness"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/imgcache"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
@@ -372,8 +373,8 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	noLimits := fs.Bool("no-limits", false, "do not read the Claude and Codex plan limits")                                     // M10 limits
 	codexSessions := fs.String("codex-sessions", envOr(EnvCodex, codex.DefaultSessionsDir()), "Codex rollout directory, for the sleep backfill and usage ($"+EnvCodex+")")
 	claudeProjects := fs.String("claude-projects", envOr(EnvClaudeProjects, usage.DefaultClaudeProjects()), "Claude Code transcript directory, for usage ($"+EnvClaudeProjects+")")
-	codexCLI := fs.String("codex-cli", envOr(EnvCodexCLI, "codex"), "Codex binary for model discovery ($"+EnvCodexCLI+")")
-	claudeCLI := fs.String("claude-cli", envOr(EnvClaudeCLI, "claude"), "Claude Code binary for model discovery ($"+EnvClaudeCLI+")")
+	codexCLI := fs.String("codex-cli", envOr(EnvCodexCLI, "codex"), "Codex binary for model and command discovery ($"+EnvCodexCLI+")")
+	claudeCLI := fs.String("claude-cli", envOr(EnvClaudeCLI, "claude"), "Claude Code binary for model and command discovery ($"+EnvClaudeCLI+")")
 	runsDir := fs.String("runs-dir", envOr(EnvRunsDir, DefaultRunsDir()), "write-code runs directory, for the freelancers' reports ($"+EnvRunsDir+")")                                                       // M6 runs
 	dropzoneURL := fs.String("dropzone-url", envOr(EnvDropzoneURL, DefaultDropzoneURL), "Drop Zone URL, where pasted images are uploaded ($"+EnvDropzoneURL+")")                                             // #51 upload
 	dropzoneData := fs.String("dropzone-data", envOr(EnvDropzoneData, DefaultDropzoneData()), "Drop Zone's data directory: a root a transcript's [Image #n: path] may be read under ($"+EnvDropzoneData+")") // M16 images
@@ -519,6 +520,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		WakeTimeout: wakeTimeout, ResumeTimeout: resumeTimeout, WrapUpTimeout: wrapUpTimeout, CodexSessions: *codexSessions,
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
 		ClaudeProjects: *claudeProjects, Pricing: pricing, HireOptions: &hireOptions,
+		ClaudeCLI: *claudeCLI, CodexCLI: *codexCLI, // #136 worker.commands
 		MaxWatches: maxWatches, MaxObservers: maxObservers, MaxTranscriptWatches: maxTxWatches,
 		RunsDir:          *runsDir,                                                          // M6 runs
 		Boards:           GitHubBoards(&githubcli.Client{Bin: *ghBin}),                      // M7 boards
@@ -561,6 +563,9 @@ type ServeConfig struct {
 	Caps server.Caps
 	// HireOptions, if set, replaces what can be hired (discovered at CLI startup).
 	HireOptions *proto.HireOptions
+	// #136: ClaudeCLI and CodexCLI are the harness binaries worker.commands
+	// probes (both empty: worker.commands is not configured).
+	ClaudeCLI, CodexCLI string
 	// TrustTimeout, SeenTimeout and ExitTimeout: see server.Options.
 	TrustTimeout, SeenTimeout, ExitTimeout time.Duration
 	// WakeTimeout and ResumeTimeout: see server.Options (0: defaults).
@@ -663,6 +668,15 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		opts.Git = cfg.Git
 		opts.Changes = cfg.Git // M5 usage
 		opts.PRGit = cfg.Git   // M7 boards
+	}
+	if cfg.ClaudeCLI != "" || cfg.CodexCLI != "" { // #136
+		cctx, cancel := context.WithCancel(ctx)
+		catalog := harness.NewCommandCatalog(cctx, log, cfg.ClaudeCLI, cfg.CodexCLI)
+		defer func() {
+			cancel()
+			catalog.Wait()
+		}()
+		opts.Commands = catalog
 	}
 	if cfg.ClaudeProjects != "" || cfg.CodexSessions != "" { // M5 usage
 		opts.Usage = &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: cfg.ClaudeProjects, CodexSessions: cfg.CodexSessions},

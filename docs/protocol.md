@@ -481,6 +481,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.wrapup` | `{"id": string, "prompt": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"queued"?: true}` | the worker's upsert with `wrapup` `armed` (before the ack); later, on CLEAN, `worker.removed` with `reason: "sent_home"` (see [Wrap up](#wrap-up)) |
 | `worker.wrapup.cancel` | `{"id": string}` | — | the worker's upsert without `wrapup` |
 | `worker.changes` | `{"id": string}` | the worker's git changes, `{"cwd", "branch", "head", "upstream", "ahead", "behind", "base", "files", "stat", "diff", "diff_bytes", "truncated", "omitted"}` (see [Changes](#changes)) | — |
+| `worker.commands` | `{"id": string}` | #136: the slash commands and skills of the worker's harness in its checkout, `{"commands": [{"name", "description", "argument_hint", "kind"}…], "partial": bool}` (see [Commands and skills](#commands-and-skills)) | — |
 | `terminal.watch` | `{"id": string, "fps"?: 1–30, "cols"?: 40–300, "rows"?: 10–100, "fullscreen"?: bool}` | `{"pane", "cols", "rows", "zoom"?}` | `terminal.frame`s to this connection only; with `fullscreen` (true or false), also `terminal.state` (see [Fullscreen](#fullscreen-74)) |
 | `terminal.unwatch` | `{"id": string}` | — | — |
 | `terminal.zoom` | `{"id": string, "on": bool}` | `{"pane", "cols", "rows", "zoom"}` | a `terminal.state` and, if the size changed, a full `terminal.frame` (see [Fullscreen](#fullscreen-74)) |
@@ -1943,6 +1944,67 @@ Errors: `unknown_worker` (unknown id, or a worker on an unwatched floor), `inval
 no directory), `not_a_repo` (its directory is not in a git work tree), `changes_failed`, `bad_request` (unknown `args`
 fields), `internal` (git not configured). Each call is one audit row.
 
+#### Commands and skills
+
+#136. **`worker.commands`** lists the slash commands and skills the worker's harness offers in the worker's checkout,
+read-only, for the composer to offer them:
+
+```json
+{"t":"worker.commands","req_id":"56","args":{"id":"a58752ea-6511-4318-be9a-59e41c09d7c5"}}
+{"t":"ack","req_id":"56","data":{"commands":[
+  {"name":"compact","description":"Free up context by summarizing the conversation so far","argument_hint":"<optional custom summarization instructions>","kind":"command"},
+  {"name":"caveman:caveman-commit","description":"(caveman) Ultra-compressed commit message generator. …","argument_hint":"","kind":"skill"},
+  {"name":"deploy","description":"Deploy to the test host (project)","argument_hint":"<host>","kind":"custom"}],
+  "partial":false}}
+```
+
+| field | |
+|---|---|
+| `commands` | never `null` (`[]` when there are none). One row per name and kind, in the harness's order. |
+| `name` | without the leading slash, with its namespace (`caveman:caveman-commit`, `humanizer:humanizer`). A Claude command is typed as `/name`, a Codex skill as `$name`, a Codex built-in as `/name`. |
+| `description` | the harness's description. Claude appends where a skill or command comes from (`(user)`, `(project)`, `(claude.ai sync)`); for a Codex skill it is its short description (`interface.shortDescription`, else the legacy `shortDescription`, else `description`) |
+| `argument_hint` | `""` when there is none; a required argument is `<…>`, an optional one `[…]` |
+| `kind` | `command`: the harness's own; `custom`: a legacy command file; `skill`: everything else |
+| `partial` | `true` while no probe of the harness has succeeded for this checkout: `commands` then holds only the bridge's static built-ins (Codex's, below; Claude has none: `[]`) |
+
+The worker's harness is its `harness` (else `agent_kind`), `claude` or `codex`; its checkout is
+`worktree.checkout_path`, else its `cwd`. The bridge asks the installed CLI (`--claude-cli`, `--codex-cli`; found on
+`PATH`, then `~/.local/bin`), **in the checkout** (project skills and `.claude/commands` are per project), with the
+hardening of the startup model discovery: only a protocol initialization (and a list), never a user or model turn;
+the clean environment of a herdr launch; at most 10 s, 8 MiB of output and 1 MiB per line; the process group is
+killed and reaped.
+
+- **Claude Code**: the `commands` of the SDK's `initialize` control reply (`supportedCommands()`), with the model
+  probe's flags (`--print`, stream-json in and out, `--no-session-persistence`, `--strict-mcp-config`, `--tools ""`,
+  hooks off; not `--setting-sources` or `--disable-slash-commands`, which would hide the user's and the project's
+  skills). Skills marked `user-invocable: false` are not listed. A row Claude marks `builtin` is a `command` (when a
+  name has several rows, the `builtin` one, the one `/name` runs; else the first); aliases are not rows. Claude does
+  not say where an unmarked row comes from, so it is `custom` when its name matches a `*.md` file under
+  `.claude/commands` of the checkout or an ancestor up to the git root (a directory with `.git`), or under
+  `~/.claude/commands` (nested directories namespace it: `sub/x.md` is `sub:x`), and a `skill` otherwise. **Known
+  limitation**: plugin commands, synced skills and MCP prompts are reported as `skill`, and a skill whose name equals
+  a command file's is reported as `custom`.
+- **Codex**: `codex app-server`, `initialize`, `initialized`, then `skills/list {"cwds": [checkout]}` (never
+  `forceReload`: each probe is a new app-server, with no cache to bypass). The checkout's group (or the only one);
+  `enabled: false` skills are dropped; every other one is a `skill` with `argument_hint` `""`. A skill that failed to
+  load (the group's `errors`) is left out and logged; the others are listed. Then Codex's **built-ins**, `kind:
+  "command"`, a static list in `internal/harness/codex_builtins.go` taken from `codex-rs/tui/src/slash_command.rs` at
+  `rust-v0.160.0` (checked 2026-10-04 against codex-cli 0.160.0), with upstream's descriptions: only the commands that
+  do their work when pasted as a prompt (`init`, `compact`, `recap`, `review <instructions>`, `rename <name>`, `plan
+  [prompt]`, `goal <objective|pause|resume|clear>`, `diff`, `status`, `pwd`, `mcp [verbose]`, `ps`, `stop`), none
+  that only opens a picker, ends or replaces the session, or is for debugging. A skill named like a built-in keeps
+  its own row (`$name` and `/name` differ).
+
+**Caching**, per harness and checkout (at most 64, the least recently used dropped): a list at most **30 s** old is
+answered at once. An older one is answered at once too, and one probe refreshes it in the background for the next
+ask. The first ask for a checkout waits for its probe; asks meanwhile share it. A failed or timed-out probe keeps the
+previous list (the next probe is 30 s later); with no previous list the answer is the built-ins with `partial:
+true`, and an ask 30 s later probes again (in the background: it answers the built-ins at once).
+
+Errors: `unknown_worker`, `invalid_state` (its floor is asleep, it has no directory, or it runs no Claude or Codex
+agent), `bad_request` (unknown `args` fields), `internal` (not configured). A failed probe is not an error (above).
+Each call is one audit row.
+
 #### Usage and cost
 
 Worker field **`usage`** (in snapshots and `worker.upsert`) and event **`worker.usage`**:
@@ -2813,7 +2875,7 @@ dismissed_at)`.
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
 | `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started |
-| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker or one with an `ask`, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
+| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker or one with an `ask`, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `whiteboard_conflict` | M13: a save whose `base` is not the board's current version (HTTP `409`, with the current `version`) |
 | `whiteboard_invalid`, `whiteboard_too_large`, `whiteboard_unsupported`, `whiteboard_hash_mismatch`, `whiteboard_missing_file` | M13: a scene, file, render or pin the bridge refuses (see [Whiteboard](#whiteboard)) |

@@ -55,6 +55,7 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'worker.answer': 'answer questions',
   'worker.answer_ask': 'answer questions from the transcript',
   'worker.changes': 'show changes',
+  'worker.commands': 'list slash commands and skills', // #136
   // M6 start
   'preset.create': 'keep team presets',
   'preset.update': 'keep team presets',

@@ -812,6 +812,41 @@ type ChangesStat struct {
 	Deletions  int `json:"deletions"`
 }
 
+// #136: the slash commands and skills a worker's harness offers in its
+// checkout (worker.commands, read-only, args WorkerArgs).
+
+// CmdWorkerCommands lists a worker's slash commands and skills.
+const CmdWorkerCommands = "worker.commands"
+
+// Kinds of a CommandEntry.
+const (
+	CommandKindBuiltin = "command" // the harness's own command
+	CommandKindSkill   = "skill"   // a skill (or a plugin / MCP command: see docs/protocol.md)
+	CommandKindCustom  = "custom"  // a legacy command file (.claude/commands/*.md)
+)
+
+func init() { Commands = append(Commands, CmdWorkerCommands) }
+
+// WorkerCommands is the ack data of worker.commands.
+type WorkerCommands struct {
+	// Commands is never null: [] when there are none.
+	Commands []CommandEntry `json:"commands"`
+	// Partial is true while no probe of the harness has succeeded for this
+	// checkout: Commands then holds only the bridge's static built-ins.
+	Partial bool `json:"partial"`
+}
+
+// CommandEntry is one slash command or skill.
+type CommandEntry struct {
+	// Name has no leading slash and keeps its namespace
+	// ("caveman:caveman-commit").
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// ArgumentHint is "" when there is none.
+	ArgumentHint string `json:"argument_hint"`
+	Kind         string `json:"kind"`
+}
+
 // Usage is a worker's agent session usage: token counts summed over the
 // session and its subagents, and an API-equivalent cost estimate.
 type Usage struct {

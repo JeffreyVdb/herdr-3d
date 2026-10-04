@@ -82,8 +82,35 @@ func fakeHarness(scenario string) {
 		}
 		write(map[string]any{"type": "system", "subtype": "unrelated"})
 		write(map[string]any{"type": "control_response", "response": map[string]any{"request_id": "unrelated", "subtype": "success"}})
+		response := map[string]any{"models": models, "commands": fakeClaudeCommands}
+		if scenario == "claude-nocommands" {
+			delete(response, "commands")
+		}
 		write(map[string]any{"type": "control_response", "response": map[string]any{"request_id": first["request_id"],
-			"subtype": subtype, "response": map[string]any{"models": models}}})
+			"subtype": subtype, "response": response}})
+	} else if scenario == "codex-skills" {
+		if first["method"] != "initialize" {
+			os.Exit(6)
+		}
+		write(map[string]any{"id": first["id"], "result": map[string]any{}})
+		if read()["method"] != "initialized" {
+			os.Exit(7)
+		}
+		req := read()
+		if req["method"] != "skills/list" {
+			os.Exit(8)
+		}
+		params := req["params"].(map[string]any)
+		cwds, _ := params["cwds"].([]any)
+		if _, force := params["forceReload"]; force || len(cwds) != 1 || cwds[0] != cwd {
+			os.Exit(9)
+		}
+		write(map[string]any{"method": "skills/changed", "params": map[string]any{}})
+		write(map[string]any{"id": 99, "result": map[string]any{"data": []any{}}})
+		write(map[string]any{"id": req["id"], "result": map[string]any{"data": []any{
+			map[string]any{"cwd": "/elsewhere", "skills": []any{fakeSkill("elsewhere", "not ours", true)}, "errors": []any{}},
+			map[string]any{"cwd": cwd, "skills": fakeCodexSkills, "errors": []any{map[string]any{"path": "/x/SKILL.md", "message": "bad frontmatter"}}},
+		}}})
 	} else {
 		if first["method"] != "initialize" {
 			os.Exit(6)
@@ -136,6 +163,42 @@ func fakeHarness(scenario string) {
 		_, _ = trace.Write(append(input.Bytes(), '\n'))
 	}
 }
+
+// fakeClaudeCommands is the commands field of the fake Claude's initialize
+// reply (the SDK's SlashCommand rows).
+var fakeClaudeCommands = []map[string]any{
+	{"name": "compact", "description": "Free up context", "argumentHint": "<optional custom summarization instructions>", "builtin": true},
+	{"name": "usage", "description": "Show session cost", "argumentHint": "", "aliases": []string{"cost", "stats"}, "builtin": true},
+	{"name": "review", "description": "a plugin's review", "argumentHint": ""},
+	{"name": "review", "description": "Review a pull request", "argumentHint": "", "builtin": true},
+	{"name": "handoff", "description": "Compact into a handoff document (user)", "argumentHint": "What next?"},
+	{"name": "handoff", "description": "a second handoff", "argumentHint": ""},
+	{"name": "topcmd", "description": "top cmd (project)", "argumentHint": "<fixture>"},
+	{"name": "sub:nested", "description": "nested cmd (project)", "argumentHint": ""},
+	{"name": "anccmd", "description": "ancestor cmd (project)", "argumentHint": ""},
+	{"name": "above", "description": "above the git root", "argumentHint": ""},
+	{"name": "usercmd", "description": "user cmd (user)", "argumentHint": ""},
+	{"name": "caveman:caveman-commit", "description": "(caveman) commit messages", "argumentHint": "", "aliases": []string{"caveman-commit"}},
+	{"name": "", "description": "nameless", "argumentHint": ""},
+}
+
+func fakeSkill(name, description string, enabled bool) map[string]any {
+	return map[string]any{"name": name, "description": description, "enabled": enabled, "path": "/s/" + name + "/SKILL.md", "scope": "user"}
+}
+
+// fakeCodexSkills is the checkout's group of the fake Codex's skills/list.
+var fakeCodexSkills = func() []any {
+	short := fakeSkill("ask-matt", "A router over the skills", true)
+	short["interface"] = map[string]any{"displayName": "Ask Matt", "shortDescription": "Find the right skill", "iconSmall": nil}
+	short["shortDescription"] = "legacy short"
+	legacy := fakeSkill("legacy", "long description", true)
+	legacy["shortDescription"] = "legacy short"
+	legacy["interface"] = map[string]any{"shortDescription": nil}
+	empty := fakeSkill("humanizer:humanizer", "Remove AI writing patterns", true)
+	empty["interface"] = map[string]any{"shortDescription": ""}
+	return []any{short, legacy, empty, fakeSkill("off", "disabled", false), fakeSkill("handoff", "first root", true),
+		fakeSkill("handoff", "second root", true), fakeSkill("review", "a skill named like a built-in", true)}
+}()
 
 func fakeBin(t *testing.T, scenario string) (string, string) {
 	t.Helper()
