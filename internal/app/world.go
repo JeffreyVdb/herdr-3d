@@ -20,6 +20,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
+	"github.com/JeffreyVdb/herdr-3d/internal/fileindex"
 	"github.com/JeffreyVdb/herdr-3d/internal/githubcli"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitremote"
@@ -58,6 +59,7 @@ const (
 	EnvCodex      = "HERDR_WORLD_CODEX_SESSIONS"
 	EnvGit        = "HERDR_WORLD_GIT"
 	EnvGH         = "HERDR_WORLD_GH"     // M7 boards
+	EnvRG         = "HERDR_WORLD_RG"     // #137 worker.files
 	EnvClaude     = "HERDR_WORLD_CLAUDE" // M10 limits
 	EnvCodexBin   = "HERDR_WORLD_CODEX"  // M10 limits
 	EnvFloorWarn  = "HERDR_WORLD_WARN_WORKERS_PER_FLOOR"
@@ -368,6 +370,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	systemdRun := fs.String("systemd-run", envOr(EnvSystemdRun, "systemd-run"), "systemd-run executable, to wake floors ($"+EnvSystemdRun+")")
 	gitBin := fs.String("git", envOr(EnvGit, "git"), "git executable, for worktree hires and send-home checks ($"+EnvGit+")")
 	ghBin := fs.String("gh", envOr(EnvGH, "gh"), "gh executable, for the issue and pull request boards ($"+EnvGH+")")           // M7 boards
+	rgBin := fs.String("rg", envOr(EnvRG, "rg"), "rg executable, to list a worker's files outside git ($"+EnvRG+")")            // #137 worker.files
 	claudeBin := fs.String("claude", envOr(EnvClaude, "claude"), "claude executable, to read the plan limits ($"+EnvClaude+")") // M10 limits
 	codexBin := fs.String("codex", envOr(EnvCodexBin, "codex"), "codex executable, to read the plan limits ($"+EnvCodexBin+")") // M10 limits
 	noLimits := fs.Bool("no-limits", false, "do not read the Claude and Codex plan limits")                                     // M10 limits
@@ -521,6 +524,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
 		ClaudeProjects: *claudeProjects, Pricing: pricing, HireOptions: &hireOptions,
 		ClaudeCLI: *claudeCLI, CodexCLI: *codexCLI, // #136 worker.commands
+		RG:         *rgBin, // #137 worker.files
 		MaxWatches: maxWatches, MaxObservers: maxObservers, MaxTranscriptWatches: maxTxWatches,
 		RunsDir:          *runsDir,                                                          // M6 runs
 		Boards:           GitHubBoards(&githubcli.Client{Bin: *ghBin}),                      // M7 boards
@@ -566,6 +570,9 @@ type ServeConfig struct {
 	// #136: ClaudeCLI and CodexCLI are the harness binaries worker.commands
 	// probes (both empty: worker.commands is not configured).
 	ClaudeCLI, CodexCLI string
+	// #137: RG is the rg executable worker.files lists a checkout outside
+	// git with (empty: "rg"). worker.files needs Git.
+	RG string
 	// TrustTimeout, SeenTimeout and ExitTimeout: see server.Options.
 	TrustTimeout, SeenTimeout, ExitTimeout time.Duration
 	// WakeTimeout and ResumeTimeout: see server.Options (0: defaults).
@@ -677,6 +684,15 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 			catalog.Wait()
 		}()
 		opts.Commands = catalog
+	}
+	if cfg.Git != nil { // #137
+		fctx, cancel := context.WithCancel(ctx)
+		files := fileindex.New(fctx, fileindex.Options{Git: cfg.Git, RG: &fileindex.RG{Bin: cfg.RG}, Log: log})
+		defer func() {
+			cancel()
+			files.Wait()
+		}()
+		opts.Files = files
 	}
 	if cfg.ClaudeProjects != "" || cfg.CodexSessions != "" { // M5 usage
 		opts.Usage = &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: cfg.ClaudeProjects, CodexSessions: cfg.CodexSessions},

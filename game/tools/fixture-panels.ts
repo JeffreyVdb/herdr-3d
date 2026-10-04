@@ -27,9 +27,13 @@
 // - worker.commands (#136): a Claude or Codex worker's commands, skills and
 //   custom commands (simCommands), `partial: false`, half a step later; a
 //   plain shell (no harness) is `invalid_state`.
+// - worker.files (#137): a fixed checkout (SIM_FILES and its directories)
+//   ranked by a simple matcher (simFiles), half a step later; a cwd with
+//   `/scratch` in it is outside git with no rg: empty, `source: "none"`.
+//   limit and query are checked like the bridge.
 // - worker.usage: every `usageMs` (default 5000, 0: off) each working agent
 //   with usage uses more tokens.
-import type { ChangeFile, Changes, CommandEntry, Floor, Question, Usage, Worker, WorkerCommands } from '../src/net/protocol.ts';
+import type { ChangeFile, Changes, CommandEntry, FileMatch, Floor, Question, Usage, Worker, WorkerCommands, WorkerFiles } from '../src/net/protocol.ts';
 
 type Msg = Record<string, unknown>;
 type Send = (m: Msg) => void;
@@ -212,6 +216,27 @@ export class PanelsSim {
     const data = simCommands(w.harness ?? w.agent_kind ?? '');
     if (!data) throw this.h.error('invalid_state', `invalid state: ${w.name ?? w.id} runs no Claude or Codex agent`);
     // A cached catalog: answered at once, after the round trip.
+    this.h.after(Math.round(this.h.stepMs / 2), () => ack(data));
+  }
+
+  // ---- worker.files (#137) ---------------------------------------------------------
+
+  files(a: Obj, ack: (d?: unknown) => void): void {
+    this.only(a, ['id', 'query', 'limit']);
+    const query = a.query ?? '';
+    if (typeof query !== 'string') throw this.bad('query must be a string');
+    const limit = a.limit ?? 0;
+    if (typeof limit !== 'number' || !Number.isInteger(limit)) throw this.bad('limit must be an integer');
+    if (limit < 0) throw this.bad(`limit ${limit} is negative`);
+    const n = Array.from(query).length;
+    if (n > 256) throw this.bad(`query is ${n} characters, the most is 256`);
+    const w = this.worker(a);
+    const cwd = w.worktree?.checkout_path ?? w.cwd ?? '';
+    if (!cwd) throw this.h.error('invalid_state', `invalid state: ${w.name ?? w.id} has no working directory`);
+    const data: WorkerFiles = cwd.includes('/scratch')
+      ? { files: [], source: 'none', reason: 'not a git work tree, and rg is not installed to list it' }
+      : { files: simFiles(query, limit === 0 ? 30 : Math.min(limit, 100)), source: 'git', reason: null };
+    // A cached index: answered at once, after the round trip.
     this.h.after(Math.round(this.h.stepMs / 2), () => ack(data));
   }
 
@@ -470,4 +495,79 @@ export function simCommands(harness: string): WorkerCommands | null {
     };
   }
   return null;
+}
+
+/** #137: the simulated checkout's files (its directories are derived), with the names the bridge must pass verbatim. */
+export const SIM_FILES = [
+  'README.md',
+  'go.mod',
+  'cmd/herdr-world/main.go',
+  'docs/my file #1?.md',
+  'docs/protocol.md',
+  'docs/école.md',
+  'docs/🚀 launch.md',
+  'game/src/net/client.ts',
+  'game/src/net/protocol.ts',
+  'game/src/ui/Button.ts',
+  'game/src/ui/composer.ts',
+  'internal/fileindex/index.go',
+  'internal/fuzzy/fuzzy.go',
+  'internal/server/files.go',
+  'internal/server/hub.go',
+];
+
+/** Every directory above a file, as the bridge derives them. */
+function simEntries(): FileMatch[] {
+  const dirs = new Set<string>();
+  for (const f of SIM_FILES) for (let i = f.lastIndexOf('/'); i > 0; i = f.lastIndexOf('/', i - 1)) dirs.add(f.slice(0, i));
+  return [
+    ...[...dirs].map((path): FileMatch => ({ path, kind: 'dir', indices: [] })),
+    ...SIM_FILES.map((path): FileMatch => ({ path, kind: 'file', indices: [] })),
+  ];
+}
+
+const depth = (p: string) => p.split('/').length;
+const byPath = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * #137: the simulated `worker.files` matches: the bridge's contract, not its scorer. A query is one literal pattern
+ * (spaces included), smart case, matched as a subsequence of code points at its leftmost greedy alignment; ranked by
+ * boundary, consecutive and basename characters matched, then the shorter path, then byte order. An empty query:
+ * shallow first, a depth's directories first, then byte order.
+ */
+export function simFiles(query: string, limit: number): FileMatch[] {
+  const all = simEntries();
+  if (query === '') {
+    return all
+      .sort((a, b) => depth(a.path) - depth(b.path) || (a.kind === b.kind ? 0 : a.kind === 'dir' ? -1 : 1) || byPath(a.path, b.path))
+      .slice(0, limit);
+  }
+  const sensitive = query !== query.toLowerCase();
+  const q = Array.from(sensitive ? query : query.toLowerCase());
+  const scored: Array<{ m: FileMatch; score: number; len: number }> = [];
+  for (const e of all) {
+    const chars = Array.from(e.path);
+    const text = sensitive ? chars : chars.map((c) => c.toLowerCase());
+    const base = e.path.lastIndexOf('/') < 0 ? 0 : Array.from(e.path.slice(0, e.path.lastIndexOf('/') + 1)).length;
+    const indices: number[] = [];
+    let j = 0;
+    for (const c of q) {
+      while (j < text.length && text[j] !== c) j++;
+      if (j === text.length) break;
+      indices.push(j++);
+    }
+    if (indices.length !== q.length) continue;
+    let score = 0;
+    for (const [k, i] of indices.entries()) {
+      const prev = chars[i - 1] ?? '/';
+      if (/[/\-_. ]/.test(prev) || (/[a-z]/.test(prev) && /[A-Z]/.test(chars[i] ?? ''))) score += 2;
+      if (k > 0 && indices[k - 1] === i - 1) score += 1;
+      if (i >= base) score += 1;
+    }
+    scored.push({ m: { ...e, indices }, score, len: chars.length });
+  }
+  return scored
+    .sort((a, b) => b.score - a.score || a.len - b.len || byPath(a.m.path, b.m.path))
+    .slice(0, limit)
+    .map((s) => s.m);
 }

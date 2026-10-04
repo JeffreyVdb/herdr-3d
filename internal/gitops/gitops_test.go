@@ -34,6 +34,9 @@ func TestGitAllowlist(t *testing.T) {
 		"push":     {"{git}", "-C", "{dir}", "push", "-u", "origin", "refs/heads/{branch}:refs/heads/{branch}"},
 		"ahead-of": {"{git}", "-C", "{dir}", "rev-list", "--count", "HEAD", "--not", "{ref}"},
 		"subjects": {"{git}", "-C", "{dir}", "log", "--format=%s", "-n", "20", "HEAD", "--not", "{ref}", "--"},
+		// #137: worker.files, read-only.
+		"index-path": {"{git}", "-C", "{dir}", "rev-parse", "--path-format=absolute", "--git-path", "index"},
+		"ls-files":   {"{git}", "-C", "{dir}", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--deduplicate"},
 	}
 	if !reflect.DeepEqual(shapes, want) {
 		t.Fatalf("shapes = %q", shapes)
@@ -44,7 +47,7 @@ func TestGitAllowlist(t *testing.T) {
 		methods = append(methods, typ.Method(i).Name)
 	}
 	if w := []string{"AheadOf", "BranchTip", "BranchUnpushed", "Changes", "Commit", "CurrentBranch", "DefaultBranch", "DeleteBranch",
-		"Fetch", "Push", "Status", "Subjects", "TopLevel", "Unpushed"}; !slices.Equal(methods, w) {
+		"Fetch", "IndexPath", "ListFiles", "Push", "Status", "Subjects", "TopLevel", "Unpushed"}; !slices.Equal(methods, w) {
 		t.Fatalf("Git methods = %v, want %v", methods, w)
 	}
 
@@ -66,6 +69,9 @@ func TestGitAllowlist(t *testing.T) {
 		"foreign ahead":     func() error { _, err := g.BranchUnpushed(ctx, "/r", "main"); return err },
 		"foreign tip":       func() error { _, err := g.BranchTip(ctx, "/r", "--all"); return err },
 		"changes relative":  func() error { _, err := g.Changes(ctx, "repo"); return err },
+		"list relative":     func() error { _, err := g.ListFiles(ctx, "repo"); return err },
+		"list flag dir":     func() error { _, err := g.ListFiles(ctx, "--output=/tmp/x"); return err },
+		"index relative":    func() error { _, err := g.IndexPath(ctx, "repo"); return err },
 		"diff option": func() error {
 			return g.pipe(ctx, opDiff, map[string]string{"dir": "/r", "rev": "--output=/tmp/x"}, nil)
 		},

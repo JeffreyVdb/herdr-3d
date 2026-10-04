@@ -304,3 +304,34 @@ func TestCommandCatalogIsProviderNeutral(t *testing.T) {
 		t.Error("internal/app does not wire internal/harness in")
 	}
 }
+
+// #137: worker.files: the server, the store and the protocol reach neither
+// the file index nor its scorer; only the app wires internal/fileindex in
+// through server.Options.Files.
+func TestFileIndexIsWiredByTheApp(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go tool")
+	}
+	const mod = "github.com/JeffreyVdb/herdr-3d/internal/"
+	deps := func(pkg string) []string {
+		out, err := exec.Command("go", "list", "-deps", mod+pkg).CombinedOutput()
+		if err != nil {
+			t.Fatalf("go list -deps %s: %v\n%s", pkg, err, out)
+		}
+		return strings.Fields(string(out))
+	}
+	for _, pkg := range []string{"server", "store", "proto"} {
+		for _, dep := range deps(pkg) {
+			if dep == mod+"fileindex" || dep == mod+"fuzzy" {
+				t.Errorf("internal/%s depends on %s", pkg, dep)
+			}
+		}
+	}
+	found := false
+	for _, dep := range deps("app") {
+		found = found || dep == mod+"fileindex"
+	}
+	if !found {
+		t.Error("internal/app does not wire internal/fileindex in")
+	}
+}

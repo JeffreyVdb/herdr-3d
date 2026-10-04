@@ -437,6 +437,8 @@ export interface CommandArgs {
   'worker.changes': { id: string };
   /** #136: the worker's slash commands and skills (ack `WorkerCommands`). */
   'worker.commands': { id: string };
+  /** #137: the worker's files and directories ranked against `query` (ack `WorkerFiles`). `limit` 1–100, default 30. */
+  'worker.files': { id: string; query: string; limit?: number };
   /** #74: `fullscreen` asks the bridge to zoom the pane's herdr tab while the watch lasts (absent / false: as before). */
   'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number; fullscreen?: boolean };
   'terminal.unwatch': { id: string };
@@ -711,6 +713,28 @@ export interface WorkerCommands {
   commands: CommandEntry[];
   /** No probe of the harness succeeded yet: `commands` holds only the bridge's static built-ins. */
   partial: boolean;
+}
+
+/** #137: a file or directory of a worker's checkout in `worker.files`. */
+export interface FileMatch {
+  /** Relative to the checkout, `/`-separated, no leading `./`, no trailing `/`; verbatim (spaces, `#`, `?` unquoted). */
+  path: string;
+  kind: 'file' | 'dir';
+  /**
+   * Code point offsets in `path` of the matched query characters, ascending (`[]` for an empty query). Not UTF-16
+   * indices: highlight with `Array.from(path)`, never `path[i]` / `path.slice`.
+   */
+  indices: number[];
+}
+
+/** #137: `worker.files` ack. */
+export interface WorkerFiles {
+  /** Best first; never null. */
+  files: FileMatch[];
+  /** What listed the checkout: `git ls-files`, `rg --files` outside git, or nothing (no rg: `files` is empty). */
+  source: 'git' | 'rg' | 'none';
+  /** Why `files` is empty or may be incomplete or stale; null when there is nothing to say. */
+  reason: string | null;
 }
 
 export type CommandName = keyof CommandArgs;

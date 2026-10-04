@@ -144,6 +144,9 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'worker.changes': 15_000,
   // #136: a first ask waits for the harness probe (10 s); later ones answer from the cache.
   'worker.commands': 15_000,
+  // #137: a first ask waits for the checkout's listing (git rev-parse 10 s, then git ls-files or rg 20 s); later ones
+  // answer from the index at once.
+  'worker.files': 35_000,
   // #57: an answer is a dialog driven step by step (each checked on the screen), then the transcript watched.
   'worker.answer_ask': 45_000,
   // M6 start: a run's prepare may `git fetch` like hire.prepare; its start is a hire.
