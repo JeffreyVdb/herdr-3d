@@ -144,8 +144,8 @@ parts:
   are refused, and commands run with the `HERDR_*`/`CLAUDE*` variables stripped. `TestControlAllowlist` pins the set,
   the argv and the exported methods; widening any needs review.
 - **git** (`gitops.Git`, hires, send-homes, `worker.changes`, M7, `worker.open_pr` and #137 `worker.files`): exactly
-  eighteen shapes (`shapes`, pinned by `TestGitAllowlist`): `git -C <dir>` `rev-parse --show-toplevel`, `fetch --quiet origin`, `symbolic-ref --quiet --short
-  refs/remotes/origin/HEAD`, `log -1 --format=%H %ct origin/<…> --`, `status --porcelain`, `symbolic-ref --quiet --short
+  eighteen shapes (`shapes`, pinned by `TestGitAllowlist`): `git -C <dir>` `rev-parse --show-toplevel`, `fetch
+  --quiet origin`, `symbolic-ref --quiet --short refs/remotes/origin/HEAD`, `log -1 --format=%H %ct origin/<…> --`, `status --porcelain`, `symbolic-ref --quiet --short
   HEAD`, `rev-list --count HEAD --not --remotes`, `rev-list --count refs/heads/h3d/<…> --not --remotes`, `rev-parse
   --verify --quiet refs/heads/h3d/<…>`, `branch -D h3d/<…>`, and for the Changes panel (M5, read-only) `status
   --porcelain=v2 --branch -z --untracked-files=all`, `merge-base HEAD origin/<…>` and `diff --numstat --patch -z
