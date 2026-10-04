@@ -1,5 +1,6 @@
-// Package harness reads model catalogs from the installed agent harnesses.
-// Probes only initialize a protocol connection; they never send a user turn.
+// Package harness reads model catalogs and command catalogs from the
+// installed agent harnesses. Probes only initialize a protocol connection
+// (and list); they never send a user turn.
 package harness
 
 import (
@@ -82,19 +83,27 @@ type stream struct {
 	read  *bufio.Scanner
 }
 
-// probe bounds startup, output and cleanup, including subprocesses. A private
-// cwd avoids loading a random project's config or instructions. It retains the
-// same clean environment used when herdr launches a worker.
-func probe(ctx context.Context, bin string, args []string, run func(*stream) (proto.HarnessOptions, error)) (proto.HarnessOptions, error) {
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
+// probe runs a model probe in a private temporary cwd, which avoids loading a
+// random project's config or instructions.
+func probe[T any](ctx context.Context, bin string, args []string, run func(*stream) (T, error)) (T, error) {
 	dir, err := os.MkdirTemp("", "h3d-models-")
 	if err != nil {
-		return proto.HarnessOptions{}, err
+		var zero T
+		return zero, err
 	}
 	defer os.RemoveAll(dir)
+	return probeIn(ctx, bin, dir, args, run)
+}
+
+// probeIn bounds startup, output and cleanup, including subprocesses, of a
+// harness CLI run in dir. It retains the same clean environment used when
+// herdr launches a worker.
+func probeIn[T any](ctx context.Context, bin, dir string, args []string, run func(*stream) (T, error)) (T, error) {
+	var zero T
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, execpath.Resolve(bin), args...)
-	cmd.Dir, cmd.Env = dir, herdr.CleanEnv(os.Environ())
+	cmd.Dir, cmd.Env = dir, probeEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
@@ -106,16 +115,16 @@ func probe(ctx context.Context, bin string, args []string, run func(*stream) (pr
 	cmd.WaitDelay = time.Second
 	in, err := cmd.StdinPipe()
 	if err != nil {
-		return proto.HarnessOptions{}, err
+		return zero, err
 	}
 	defer in.Close()
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		return proto.HarnessOptions{}, err
+		return zero, err
 	}
 	defer out.Close()
 	if err := cmd.Start(); err != nil {
-		return proto.HarnessOptions{}, err
+		return zero, err
 	}
 	defer func() {
 		cancel()
@@ -129,6 +138,9 @@ func probe(ctx context.Context, bin string, args []string, run func(*stream) (pr
 	}
 	return result, err
 }
+
+// probeEnv is a probe's environment.
+func probeEnv() []string { return herdr.CleanEnv(os.Environ()) }
 
 func (s *stream) next(v any) error {
 	if !s.read.Scan() {
@@ -163,17 +175,22 @@ func (s *stream) rpc(id int, method string, params any, result any) error {
 	}
 }
 
+// codexInit opens an app-server connection: initialize, then initialized.
+func (s *stream) codexInit() error {
+	var initialized json.RawMessage
+	if err := s.rpc(1, "initialize", map[string]any{"clientInfo": map[string]string{"name": "herdr_3d", "version": "1"}}, &initialized); err != nil {
+		return err
+	}
+	return s.write.Encode(map[string]any{"method": "initialized", "params": map[string]any{}})
+}
+
 // Codex queries app-server's picker-visible model/list, including all pages.
 func Codex(ctx context.Context, bin string) (proto.HarnessOptions, error) {
 	if bin == "" {
 		bin = "codex"
 	}
 	return probe(ctx, bin, []string{"app-server"}, func(s *stream) (proto.HarnessOptions, error) {
-		var initialized json.RawMessage
-		if err := s.rpc(1, "initialize", map[string]any{"clientInfo": map[string]string{"name": "herdr_3d", "version": "1"}}, &initialized); err != nil {
-			return proto.HarnessOptions{}, err
-		}
-		if err := s.write.Encode(map[string]any{"method": "initialized", "params": map[string]any{}}); err != nil {
+		if err := s.codexInit(); err != nil {
 			return proto.HarnessOptions{}, err
 		}
 		var models []model
@@ -220,60 +237,76 @@ func Codex(ctx context.Context, bin string) (proto.HarnessOptions, error) {
 	})
 }
 
+// claudeArgs start Claude Code's SDK control protocol over stdio without
+// hooks, tools, MCP servers or a saved session. No user turn is ever sent.
+var claudeArgs = []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+	"--no-session-persistence", "--strict-mcp-config", "--tools", "", "--settings", `{"disableAllHooks":true}`}
+
+// claudeInit sends the SDK's initialize control request and decodes the
+// response of its success reply into reply.
+func (s *stream) claudeInit(reply any) error {
+	const requestID = "h3d-models"
+	if err := s.write.Encode(map[string]any{"type": "control_request", "request_id": requestID, "request": map[string]string{"subtype": "initialize"}}); err != nil {
+		return err
+	}
+	for {
+		var msg struct {
+			Type     string `json:"type"`
+			Response struct {
+				RequestID string          `json:"request_id"`
+				Subtype   string          `json:"subtype"`
+				Response  json.RawMessage `json:"response"`
+			} `json:"response"`
+		}
+		if err := s.next(&msg); err != nil {
+			return err
+		}
+		if msg.Type != "control_response" || msg.Response.RequestID != requestID {
+			continue
+		}
+		if msg.Response.Subtype != "success" {
+			return errors.New("Claude Code SDK initialization failed")
+		}
+		if len(msg.Response.Response) == 0 {
+			return errors.New("Claude Code SDK initialization has no response")
+		}
+		return json.Unmarshal(msg.Response.Response, reply)
+	}
+}
+
 // Claude reads the SDK initialization response used by supportedModels(). No
 // SDK runtime is needed: Claude Code exposes that control protocol over stdio.
 func Claude(ctx context.Context, bin string) (proto.HarnessOptions, error) {
 	if bin == "" {
 		bin = "claude"
 	}
-	args := []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-		"--no-session-persistence", "--strict-mcp-config", "--tools", "", "--settings", `{"disableAllHooks":true}`}
-	return probe(ctx, bin, args, func(s *stream) (proto.HarnessOptions, error) {
-		const requestID = "h3d-models"
-		if err := s.write.Encode(map[string]any{"type": "control_request", "request_id": requestID, "request": map[string]string{"subtype": "initialize"}}); err != nil {
+	return probe(ctx, bin, claudeArgs, func(s *stream) (proto.HarnessOptions, error) {
+		var reply struct {
+			Models []struct {
+				Value    string   `json:"value"`
+				Resolved string   `json:"resolvedModel"`
+				Efforts  []string `json:"supportedEffortLevels"`
+			} `json:"models"`
+		}
+		if err := s.claudeInit(&reply); err != nil {
 			return proto.HarnessOptions{}, err
 		}
-		for {
-			var msg struct {
-				Type     string `json:"type"`
-				Response struct {
-					RequestID string `json:"request_id"`
-					Subtype   string `json:"subtype"`
-					Response  struct {
-						Models []struct {
-							Value    string   `json:"value"`
-							Resolved string   `json:"resolvedModel"`
-							Efforts  []string `json:"supportedEffortLevels"`
-						} `json:"models"`
-					} `json:"response"`
-				} `json:"response"`
+		var models []model
+		for _, entry := range reply.Models {
+			id := entry.Resolved
+			if !modelID.MatchString(id) {
+				// Older harnesses omit resolvedModel. A provider's resolved
+				// ID may also exceed our argument bounds while its alias fits.
+				id = entry.Value
 			}
-			if err := s.next(&msg); err != nil {
-				return proto.HarnessOptions{}, err
+			efforts := entry.Efforts
+			if efforts == nil {
+				// Older catalogs and models without a reasoning knob omit
+				// capability metadata; use the CLI's basic effort levels.
+				efforts = []string{"low", "medium", "high"}
 			}
-			if msg.Type != "control_response" || msg.Response.RequestID != requestID {
-				continue
-			}
-			if msg.Response.Subtype != "success" {
-				return proto.HarnessOptions{}, errors.New("Claude Code SDK initialization failed")
-			}
-			var models []model
-			for _, entry := range msg.Response.Response.Models {
-				id := entry.Resolved
-				if !modelID.MatchString(id) {
-					// Older harnesses omit resolvedModel. A provider's resolved
-					// ID may also exceed our argument bounds while its alias fits.
-					id = entry.Value
-				}
-				efforts := entry.Efforts
-				if efforts == nil {
-					// Older catalogs and models without a reasoning knob omit
-					// capability metadata; use the CLI's basic effort levels.
-					efforts = []string{"low", "medium", "high"}
-				}
-				models = append(models, model{id: id, efforts: efforts})
-			}
-			return options(models)
+			models = append(models, model{id: id, efforts: efforts})
 		}
+		return options(models)
 	})
 }
