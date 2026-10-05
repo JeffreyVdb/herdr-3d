@@ -165,6 +165,8 @@ export const BINDINGS = [
   { id: 'dialog.submit', group: 'dialogs', scope: 'dialog', keys: [code('Enter', { mod: true })], label: 'Submit: hire, Start Run, open a pull request, a board comment', readonly: true },
   { id: 'dialog.send', group: 'dialogs', scope: 'dialog', keys: [code('Enter')], label: 'Send, in the conversation’s prompt box', readonly: true },
   { id: 'dialog.newline', group: 'dialogs', scope: 'dialog', keys: [code('Enter', { shift: true })], label: 'A new line, in the hire task and the prompt boxes', readonly: true },
+  // #139: the composer's own keys while its suggestion list is open (ui/composer/completion.ts); Enter picks there too.
+  { id: 'dialog.complete', group: 'dialogs', scope: 'dialog', keys: [code('ArrowUp'), code('ArrowDown'), code('Tab')], show: [['↑ ↓'], ['Tab']], label: 'In a prompt box’s suggestion list (after / or @): ↑ ↓ choose, Tab or Enter picks, Esc closes only the list', readonly: true },
   // ---- at a laptop (laptop/keys.ts; no help key here) ---------------------------------------------
   { id: 'seat.stand', group: 'laptop', scope: 'seated', keys: [code('Escape')], label: 'Stand up', readonly: true },
   { id: 'seat.view', group: 'laptop', scope: 'seated', keys: [code('Escape', { ctrl: true })], label: 'Terminal or conversation', readonly: true },

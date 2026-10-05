@@ -1002,6 +1002,21 @@
   margin: 0.35em 0 0;
   font-size: 0.85em;
 }
+/* #139: the completion popup wears the preset's colours; the active row the view's focus blue. */
+.tx .cmp-pop {
+  --cmp-pop-bg: var(--tx-bg-2);
+  --cmp-pop-line: var(--tx-line);
+  --cmp-pop-text: var(--tx-text);
+  --cmp-pop-muted: var(--tx-text-2);
+  --cmp-pop-accent: var(--tx-blue);
+  box-shadow: 0 10px 28px -8px rgb(0 0 0 / 45%);
+}
+.tx .cmp-pop-opt:not([aria-disabled='true']):hover {
+  background: var(--tx-bg-3);
+}
+.tx .cmp-pop-list {
+  scrollbar-color: var(--tx-bg-3) transparent;
+}
 .tx .cmp-chip {
   color: var(--tx-text);
   background: var(--tx-bg-3);

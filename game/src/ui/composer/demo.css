@@ -35,3 +35,10 @@
   left: 12px;
   z-index: 3;
 }
+.cmp-demo-cmd {
+  display: flex;
+  gap: 10px;
+}
+.cmp-demo-cmd span {
+  color: var(--text-on-ink-2, #a3adca);
+}

@@ -85,6 +85,7 @@ Open dialogs and their fields own the keyboard.
 | `Ctrl/⌘` + `Enter` | Submit: hire, Start Run, open a pull request, a board comment |
 | `Enter` | Send, in the conversation’s prompt box |
 | `Shift` + `Enter` | A new line, in the hire task and the prompt boxes |
+| `↑ ↓` or `Tab` | In a prompt box’s suggestion list (after / or @): ↑ ↓ choose, Tab or Enter picks, Esc closes only the list |
 
 ## At a laptop
 

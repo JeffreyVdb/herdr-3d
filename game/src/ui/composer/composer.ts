@@ -17,6 +17,7 @@
 import './composer.css';
 import { postUpload } from '../../net/upload';
 import { h, ICON, icon } from '../dom';
+import { mountCompletion, type CompleteOptions, type Completion } from './completion';
 import { filesOf } from './field';
 import { Draft, type AddResult, type DraftEvent, type DraftOptions, type DraftSnapshot, type ResolveResult, type Uploader } from './draft';
 import { openPreview, type Preview } from './lightbox';
@@ -46,6 +47,11 @@ export interface ComposerOptions {
   onChange?: (snapshot: DraftSnapshot) => void;
   /** A message for the user, also shown under the editor. */
   onNotice?: (message: string, kind: 'error' | 'info') => void;
+  /**
+   * #139: a completion popup for `/` and `@` tokens (`completion.ts`), fed by these sources. Opt-in: without it the
+   * composer, its keys and its DOM are as they were.
+   */
+  complete?: CompleteOptions;
 }
 
 export interface Composer {
@@ -123,6 +129,20 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   // anything looking for the dialog's alert finds.
   const refusal = h('p', { class: 'cmp-refusal', hidden: true }, refusalText, dismiss);
   const element = h('div', { class: 'cmp' }, editor, notice, refusal, live);
+  const completion: Completion | null = o.complete
+    ? mountCompletion(
+        {
+          id,
+          editor,
+          element,
+          draft: () => draft,
+          selection: () => (focusInEditor() ? readSelection() : null),
+          blocked: () => dead || busy || composing,
+          announce: (text) => (live.textContent = text),
+        },
+        o.complete,
+      )
+    : null;
 
   // ---- notices -------------------------------------------------------------------------
 
@@ -297,11 +317,13 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     } else if (e.origin !== 'dom') {
       render();
       if (focusInEditor()) writeSelection(draft.selection);
+      completion?.update();
     }
     o.onChange?.(draft.snapshot());
   }
 
   function attach(d: Draft): void {
+    completion?.close();
     unsub();
     draft = d;
     unsub = d.subscribe(onDraft);
@@ -428,6 +450,8 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
       if (e.key === 'Enter') e.preventDefault();
       return;
     }
+    // #139: while the completion popup is open, its keys (arrows, Tab, Enter, Esc) are its own.
+    if (completion?.key(e)) return;
     const mod = e.ctrlKey || e.metaKey;
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -476,15 +500,20 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   });
 
   editor.addEventListener('input', () => {
-    if (!composing) reconcile();
+    if (composing) return;
+    reconcile();
+    completion?.typed();
   });
   editor.addEventListener('compositionstart', () => {
     composing = true;
+    completion?.close();
   });
   editor.addEventListener('compositionend', () => {
     composing = false;
     reconcile();
+    completion?.typed();
   });
+  if (completion) editor.addEventListener('blur', () => completion.close());
 
   editor.addEventListener('paste', (e) => {
     const dt = e.clipboardData;
@@ -594,6 +623,7 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     if (composing || dead || !focusInEditor()) return;
     const sel = readSelection();
     if (sel) draft.setSelection(sel);
+    completion?.update();
   };
   document.addEventListener('selectionchange', onSelectionChange);
 
@@ -604,6 +634,7 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     // Making the editor read-only takes focus from it: give it back when the host is done, if nothing else took it.
     if (changed && b) refocus = focusInEditor();
     busy = b;
+    if (b) completion?.close();
     editor.setAttribute('contenteditable', String(!b));
     editor.setAttribute('aria-busy', String(hostBusy));
     if (hostOff) editor.setAttribute('aria-disabled', 'true');
@@ -659,6 +690,7 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     dispose() {
       if (dead) return;
       closePreview();
+      completion?.dispose();
       dead = true;
       unsub();
       document.removeEventListener('selectionchange', onSelectionChange);
