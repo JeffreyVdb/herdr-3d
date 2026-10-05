@@ -18,6 +18,7 @@ const fixture = (name: string) => JSON.parse(readFileSync(join(import.meta.dirna
 const CLAUDE = fixture('claude.json');
 const SUBAGENT = fixture('claude-subagent.json');
 const CODEX = fixture('codex.json');
+const CODEX_MCP = fixture('codex-mcp.json');
 
 interface Sent {
   t: string;
@@ -139,6 +140,63 @@ describe('transcript mode with the real render module', () => {
     const files = (patch.tool?.diffs ?? [patch.tool?.diff]).map((d) => d?.path);
     expect([...row.querySelectorAll('.tx-diff-path')].map((e) => e.textContent)).toEqual(files);
     expect([...row.querySelectorAll('.tx-dl .tx-dn')].every((n) => n.textContent === '')).toBe(true);
+    r.mode.stand();
+  });
+
+  it('Codex #151: MCP calls the log holds only as events render as tool rows: server.tool, status, arguments and result behind a click', async () => {
+    const r = rig();
+    layer = r.layer;
+    r.mode.sit('w4', 'Di');
+    r.watches.sync(new Set(['w4']));
+    r.last('transcript.watch').resolve({ ok: true, data: { harness: 'codex', session: 's4', version: '0.50.0', cursor: 'c:1', has_more: false, pending: false, items: CODEX_MCP } });
+    await Promise.resolve();
+    const box = r.mode.box as HTMLElement;
+    await settle(() => !!box.querySelector('.tx'));
+    const row = (id: string) => box.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`) as HTMLElement;
+    const text = (el: HTMLElement, sel: string) => el.querySelector(sel)?.textContent;
+    // [id, "<server>.<tool>", data-status, status label, a string in the arguments, a string in the result ('' for none)]
+    const cases: Array<[string, string, string, string, string, string]> = [
+      ['exec-0001', 'alterlab.alterlab_search', 'ok', 'done', '"num_results": 2', '2. Blog https://example.com/blog'],
+      ['exec-0002', 'alterlab.alterlab_scrape', 'ok', 'done', '"formats"', '# Spec'],
+      ['exec-0101', 'alterlab.alterlab_search', 'error', 'error', '"query": "slow query"', 'Gateway timeout for slow query.'],
+      ['exec-0102', 'monday.all_api_read', 'error', 'error', 'items { id body }', 'Cannot query field "body" on type "Item".'],
+      ['exec-0103', 'team-search.list_repo_groups', 'error', 'error', '', 'user rejected MCP tool call'],
+      ['exec-0104', 'grafana.query', 'ok', 'done', '"expr": "up"', '{"rows":3}'],
+      // Deduped: the start and its completion are one row, the finished call's response item and event are one row.
+      ['exec-0201', 'alterlab.alterlab_search', 'ok', 'done', '"query": "dup query"', 'one result'],
+      ['exec-0202', 'alterlab.alterlab_scrape', 'running', 'running', '"url": "https://example.com/slow"', ''],
+      ['call_dup0001', 'mcp__alterlab.alterlab_search', 'ok', 'done', '"query": "both"', 'response text'],
+      ['call_dup0002', 'mcp__alterlab.alterlab_search', 'ok', 'done', '"query": "early"', 'early response text'],
+    ];
+    for (const [id] of cases) expect(box.querySelectorAll(`[data-id="${CSS.escape(id)}"]`)).toHaveLength(1);
+    for (const [id, name, status, label, args, result] of cases) {
+      const el = row(id);
+      expect(el.classList.contains('tx-tool'), id).toBe(true);
+      expect(el.getAttribute('data-status'), id).toBe(status);
+      expect(text(el, '.tx-tool-name'), id).toBe(name);
+      expect(text(el, '.tx-tool-status'), id).toBe(label);
+      // Collapsed by default: nothing of the arguments or the result is in the DOM until the header is clicked.
+      const head = el.querySelector('.tx-tool-row') as HTMLButtonElement;
+      const body = el.querySelector('.tx-tool-body') as HTMLElement;
+      expect(head.getAttribute('aria-expanded'), id).toBe('false');
+      expect(body.hidden, id).toBe(true);
+      expect(body.childNodes.length, id).toBe(0);
+      head.click();
+      expect(head.getAttribute('aria-expanded'), id).toBe('true');
+      expect(body.hidden, id).toBe(false);
+      if (args) expect(text(el, '.tx-input-json'), id).toContain(args);
+      if (result) {
+        expect(text(el, '.tx-out:not(.tx-input-json)'), id).toContain(result);
+      } else {
+        expect(text(el, '.tx-note'), id).toBe('Still running…');
+      }
+      head.click();
+      expect(body.hidden, id).toBe(true);
+    }
+    // The summary beside the name is the call's main argument.
+    expect(text(row('exec-0001'), '.tx-tool-sum')).toBe('model context protocol spec');
+    // The enclosing exec call stays its own row, and the events that are not MCP calls stay hidden notices.
+    expect(text(row('call_mcp_exec_a'), '.tx-tool-name')).toBe('exec');
     r.mode.stand();
   });
 
