@@ -14,7 +14,7 @@ import './limits.css';
  * the bridge sends a reading (`limits.update`) or a reading crosses into
  * stale; `tick` is that second check and does nothing else.
  *
- * Over a screen-filling dialog (SCREEN, #47, #51) the plate would hide its close button and first row, so it
+ * Over a screen-filling dialog (SCREEN, #47, #51; and since #147 the command palette, always the topmost modal) the plate would hide its close button and first row, so it
  * steps out of it, and so it does while you sit at a worker's laptop (#53, SEATED): into a slim edge tab (worst
  * percentage and a severity bar) when the viewport leaves a gutter right of the dialog for it, else away completely, like the narrow-viewport fold. Either way it
  * stays reachable: a click on the tab or Shift+L "peeks" the plate over the dialog (expanded, whatever the
@@ -201,13 +201,18 @@ export class LimitsWidget {
 
   /** The edge tab that fits right of every open screen dialog and of the seated laptop's glass: the full one, a snug one in a thin gutter, or none. */
   private tabFit(): 'full' | 'snug' | null {
+    const fit = (right: number) => {
+      const room = document.documentElement.clientWidth - right;
+      return room >= TAB_ROOM ? 'full' : room >= TAB_ROOM_SNUG ? 'snug' : null;
+    };
+    // #147: the command palette is a modal over whatever is up (a dimmed, inert hire sheet, the laptop's glass): the tab keeps clear of it and of what opened over it, and of nothing beneath.
+    if (this.corner.palette) return fit(Math.max(0, ...this.corner.clearOf().map((d) => d.getBoundingClientRect().right)));
     let right = 0;
     for (const d of document.querySelectorAll(`${SCREEN}, ${READING}`)) right = Math.max(right, d.getBoundingClientRect().right);
     const seated = document.querySelector(SEATED);
     // The glass's right edge (laptop/index.ts); not measured yet (or off screen): assume it fills the view.
     if (seated) right = Math.max(right, Number(seated.getAttribute('data-seated') || Infinity));
-    const room = document.documentElement.clientWidth - right;
-    return room >= TAB_ROOM ? 'full' : room >= TAB_ROOM_SNUG ? 'snug' : null;
+    return fit(right);
   }
 
   /**

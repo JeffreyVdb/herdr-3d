@@ -1,6 +1,6 @@
 import type { CommandEntry } from '../net/protocol';
 import type { Source } from '../ui/composer/complete';
-import { rankByName, type Ranked } from '../ui/composer/rank';
+import { rankByName, type Ranked } from '../world/rank';
 import { h } from '../ui/dom';
 import type { CommandsState } from './commandCatalog';
 

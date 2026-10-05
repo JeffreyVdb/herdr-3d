@@ -4,7 +4,7 @@
 
 Press **?** in the game for the same list, with the keys named as your keyboard labels them (⌘ on a Mac, where this page says Ctrl/⌘).
 
-Single keys work only when the scene has the keyboard: they pause while a text field, a list or a dialog has it (WCAG 2.1.4). **Ctrl/⌘+/** opens the list from inside a field. Seated at a laptop every key goes to the terminal except the few below, and there is no help key there: **Esc**, then **?**.
+Single keys work only when the scene has the keyboard: they pause while a text field, a list or a dialog has it (WCAG 2.1.4). **Ctrl/⌘+/** opens the list from inside a field, and **Ctrl/⌘+P** opens the command palette from every view (a laptop included). In it, type to find a command, or start with **@** to jump to a floor. Seated at a laptop every key goes to the terminal except the few below, and there is no help key there: **Esc**, then **?**.
 
 ## On a floor
 
@@ -13,6 +13,7 @@ Walking around an office, its lobby or the street.
 | Keys | Does |
 | --- | --- |
 | `?` | This shortcut list (over any dialog; not at a laptop or the whiteboard) |
+| `Ctrl/⌘` + `P` | The command palette: type to run a command, @ to jump to a floor (from every view, a text field and a laptop too) |
 | `N` | Next worker who needs you |
 | `Shift` + `N` | Inbox list: who needs you or is done |
 | `Shift` + `L` | Plan limits |
@@ -40,6 +41,7 @@ The view from above, before you go inside.
 | Keys | Does |
 | --- | --- |
 | `?` | This shortcut list (over any dialog; not at a laptop or the whiteboard) |
+| `Ctrl/⌘` + `P` | The command palette: type to run a command, @ to jump to a floor (from every view, a text field and a laptop too) |
 | `N` | Next worker who needs you |
 | `Shift` + `N` | Inbox list: who needs you or is done |
 | `Shift` + `L` | Plan limits |
@@ -80,6 +82,7 @@ Open dialogs and their fields own the keyboard.
 
 | Keys | Does |
 | --- | --- |
+| `Ctrl/⌘` + `P` | The command palette: type to run a command, @ to jump to a floor (from every view, a text field and a laptop too) |
 | `Ctrl/⌘` + `/` | The shortcut list, from inside a text field |
 | `Esc` | Close the dialog |
 | `Ctrl/⌘` + `Enter` | Submit: hire, Start Run, open a pull request, a board comment |
@@ -95,6 +98,7 @@ Every key goes to the terminal or the conversation, except these. Esc stands you
 | --- | --- |
 | `Esc` | Stand up |
 | `Ctrl` + `Esc` | Terminal or conversation |
+| `Ctrl/⌘` + `P` | The command palette (the terminal no longer gets Ctrl+P; ↑ is still previous history) |
 | `O` | The floor overview, over the conversation (Esc comes back) |
 | `Ctrl` + `,` | The terminal’s preset and zoom controls |
 | `Ctrl` + `+` or `Ctrl` + `−` or `Ctrl` + `0` | Zoom in, out and back to 100% |

@@ -631,7 +631,8 @@ export class OverviewOverlay {
     if (!on) return;
     for (let node: HTMLElement = this.root; node !== document.body && node.parentElement; node = node.parentElement) {
       for (const sib of node.parentElement.children) {
-        if (sib === node || !(sib instanceof HTMLElement) || sib.inert || sib instanceof HTMLScriptElement) continue;
+        // #147: the command palette is a modal of its own that opens over the page.
+        if (sib === node || !(sib instanceof HTMLElement) || sib.inert || sib instanceof HTMLScriptElement || sib.matches('dialog.palette')) continue;
         sib.inert = true;
         this.inerted.push(sib);
       }

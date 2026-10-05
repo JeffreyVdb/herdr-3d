@@ -1,0 +1,238 @@
+/* #147: the command palette (⌘/Ctrl+P): the credits frame (credits.css `.credits`), one field, a listbox, a footer. Rows are the
+   composer popup's (composer.css `.cmp-pop-opt`): the active one gets the sun, the matched letters are the sun's too; floors wear
+   the elevator's count colours as small pills. */
+/* Wide enough to read, never into the right gutter: the plan-limits plate steps out of the palette as its edge tab there (limits.ts
+   SCREEN, limits.css data-dock; the tab needs 48px right of the dialog), so centred it leaves 56px or more each side. Narrow, the
+   plate is away altogether (corner.ts NARROW) and the palette takes the width. */
+.palette {
+  width: min(640px, calc(100vw - 112px));
+  max-height: min(560px, 76vh);
+  margin-block: 11vh auto;
+}
+@media (max-width: 760px) {
+  .palette {
+    width: min(640px, calc(100vw - 32px));
+  }
+}
+.pal-head {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--line);
+  transition: border-color 120ms var(--ease);
+}
+.pal-head:focus-within {
+  border-bottom-color: var(--sun);
+}
+.pal-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 800;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  color: var(--sun);
+}
+.pal-title[hidden] {
+  display: none;
+}
+.pal-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-on-ink);
+  font: 600 18px/1.3 var(--font);
+  caret-color: var(--sun);
+}
+.pal-input::placeholder {
+  color: var(--text-on-ink-2);
+  opacity: 0.75;
+}
+.pal-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.pal-opt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.pal-opt:not([aria-disabled='true']):hover {
+  background: rgb(255 255 255 / 6%);
+}
+.pal-opt[aria-selected='true'] {
+  background: color-mix(in srgb, var(--sun) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sun) 55%, transparent);
+}
+.pal-opt[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.5;
+}
+.pal-opt[aria-disabled='true'] .pal-chip {
+  filter: grayscale(1);
+}
+.pal-name {
+  flex: 1 1 12ch;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pal-hit {
+  color: var(--sun);
+  font-weight: 800;
+}
+.pal-asks {
+  color: var(--text-on-ink-2);
+  font-size: 12px;
+}
+.pal-caps {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.pal-plus {
+  color: var(--text-on-ink-2);
+  font-size: 11px;
+}
+.palette kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: var(--ink-2);
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-bottom-width: 2px;
+  font: 700 12px/1 var(--font-mono);
+  font-variation-settings: normal;
+  white-space: nowrap;
+}
+.pal-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.pal-meta:empty {
+  display: none;
+}
+.pal-here {
+  color: var(--sun);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.pal-asleep-n {
+  color: var(--text-on-ink-2);
+  font-size: 12px;
+}
+.pal-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.pal-chip {
+  --c: var(--idle);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--c) 75%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c) 24%, transparent);
+  color: var(--text-on-ink);
+  font: 600 11.5px/1.3 var(--font-mono);
+  font-variation-settings: normal;
+  white-space: nowrap;
+}
+.pal-chip b {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.pal-chip--working {
+  --c: var(--working);
+}
+.pal-chip--waiting {
+  --c: var(--waiting);
+}
+.pal-chip--done {
+  --c: var(--done);
+}
+.pal-chip--needs_you {
+  --c: var(--needs_you-chip);
+  background: var(--needs_you-chip);
+  border-color: transparent;
+  color: #fff;
+}
+.pal-status,
+.pal-note {
+  margin: 0;
+  padding: 10px 16px;
+  color: var(--text-on-ink-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.pal-status[hidden],
+.pal-note[hidden] {
+  display: none;
+}
+.pal-note {
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.pal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-height: 20px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--text-on-ink-2);
+  font-size: 12px;
+}
+.pal-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  white-space: pre;
+}
+.pal-hint {
+  padding: 3px 8px 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-on-ink);
+  font: inherit;
+  cursor: pointer;
+}
+.pal-hint[hidden] {
+  display: none;
+}
+.pal-hint b {
+  color: color-mix(in srgb, var(--needs_you) 62%, #fff);
+  font-variant-numeric: tabular-nums;
+}
+.pal-hint:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+@media (max-width: 520px) {
+  .pal-keys {
+    display: none;
+  }
+}

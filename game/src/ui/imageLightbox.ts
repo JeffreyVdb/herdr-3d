@@ -2,6 +2,7 @@ import './imageLightbox.css';
 import type { ImageFeed } from '../laptop/imageFeed';
 import type { ImageRef } from '../net/protocol';
 import { h, ICON, icon } from './dom';
+import { inPalette } from './dismiss';
 
 /**
  * M16 phase 2: the click-to-enlarge view of a transcript image, shared by the conversation, the Images tab and the desk
@@ -324,7 +325,7 @@ export function openImageLightbox(o: LightboxOptions): Lightbox {
 
   // --- keys: the dialog's; the game underneath sees none of them ---
   const onKey = (e: KeyboardEvent): void => {
-    if (e.isComposing) return;
+    if (e.isComposing || inPalette(e)) return; // (#147: the palette over the preview owns its keys, Esc included)
     if (e.key === 'Escape') {
       if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
       e.preventDefault();

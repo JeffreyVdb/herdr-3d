@@ -227,6 +227,11 @@ export class BoardsPanel {
 
   // ---- opening ----------------------------------------------------------------------------------
 
+  /** A card being dragged goes back where it was, with no drop (the command palette opened over the board). */
+  cancelDrag(): void {
+    this.drag.cancel();
+  }
+
   open(which: Which, session: string): void {
     if (!this.dialog.open) {
       const a = document.activeElement;
