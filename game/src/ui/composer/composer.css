@@ -480,6 +480,22 @@
 .cmp-pop-status[data-kind='error'] {
   color: var(--cmp-err);
 }
+/* #140: the source's own note (a partial list, how a harness reads a pick), above the keys. */
+.cmp-pop-note {
+  flex: none;
+  margin: 4px 0 0;
+  padding: 4px 9px 0;
+  border-top: 1px solid var(--cmp-pop-line);
+  color: var(--cmp-pop-muted);
+  font-size: 0.86em;
+}
+.cmp-pop-note[hidden] {
+  display: none;
+}
+.cmp-pop-note:not([hidden]) + .cmp-pop-hint {
+  margin-top: 0;
+  border-top: 0;
+}
 .cmp-pop-hint {
   flex: none;
   margin: 4px 0 0;

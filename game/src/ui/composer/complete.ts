@@ -47,6 +47,11 @@ export interface ReplaceSpec {
  * Where completion items come from, one per trigger. `items` may answer at once (commands, filtered locally) or with a
  * promise (files from the bridge): the composer aborts `signal` when the query changes or the popup closes, and drops
  * a reply that is no longer the latest.
+ *
+ * #140: a source whose items live elsewhere (a list the bridge sends, cached) may also say whether it has anything
+ * here at all (`available`), hear that a session is opening (`opening`, to refresh what it knows), say that its items
+ * changed (`subscribe`: an open session asks its query again and keeps the active row by `key`) and add a note under
+ * the rows (`footer`).
  */
 export interface Source<T = unknown> {
   trigger: Trigger;
@@ -55,7 +60,18 @@ export interface Source<T = unknown> {
   items(query: string, signal: AbortSignal): Items<T> | Promise<Items<T>>;
   /** One row's content. */
   render(item: T): Node | string;
-  insert(item: T, token: Token): ReplaceSpec;
+  /** What a pick puts in; `text` is the draft's text. */
+  insert(item: T, token: Token, text: string): ReplaceSpec;
+  /** False: the trigger opens no popup (and an open one closes when the source says it changed). Default true. */
+  available?(): boolean;
+  /** Text was typed into a token of this trigger and no session of it is open: one may open (even when unavailable). */
+  opening?(): void;
+  /** `changed` is called when the items (or the availability, or the footer) changed; returns the unsubscribe. */
+  subscribe?(changed: () => void): () => void;
+  /** An item's identity across changes (default: none, the first row is active again). */
+  key?(item: T): string;
+  /** A short note under the rows (null or '': none), read on every draw. */
+  footer?(): string | null;
 }
 
 const isSpace = (c: string): boolean => /\s/.test(c);

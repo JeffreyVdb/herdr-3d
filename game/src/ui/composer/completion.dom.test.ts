@@ -598,3 +598,133 @@ describe('the same draft in a composer without completion (the hire dialog, the 
     expect(plain.submits).toBe(1);
   });
 });
+
+/** #140: a `/` source whose list lives elsewhere and changes: it may be unavailable, refreshes on open, says when it changed. */
+const live = () => {
+  let list = ['help', 'hello'];
+  let on = true;
+  let foot: string | null = null;
+  const subs = new Set<() => void>();
+  const opened: number[] = [];
+  const src: Source<string> = {
+    trigger: '/',
+    label: 'Commands',
+    available: () => on,
+    opening: () => opened.push(opened.length),
+    subscribe: (f) => {
+      subs.add(f);
+      return () => subs.delete(f);
+    },
+    footer: () => foot,
+    key: (c) => c,
+    items: (q) => list.filter((c) => c.includes(q)),
+    render: (c) => `/${c}`,
+    insert: (c, _t, text) => ({ text: `/${c} [${text.length}]` }),
+  };
+  return {
+    src,
+    opened,
+    subs,
+    set(next: string[]) {
+      list = next;
+      for (const f of subs) f();
+    },
+    off() {
+      on = false;
+      for (const f of subs) f();
+    },
+    on() {
+      on = true;
+    },
+    footer(t: string | null) {
+      foot = t;
+      for (const f of subs) f();
+    },
+  };
+};
+
+const note = (env: Env) => {
+  const n = env.c.element.querySelector<HTMLElement>('.cmp-pop-note');
+  return n && !n.hidden ? n.textContent : null;
+};
+
+describe('a live source (#140)', () => {
+  it('an unavailable source opens no popup and leaves the DOM as it was; it is still told a session would open', () => {
+    const l = live();
+    l.off();
+    const env = setup({ complete: { sources: [l.src] } });
+    type(env, '/he');
+    expect(pop(env)).toBeNull();
+    expect(env.c.element.className).toBe('cmp');
+    expect(l.opened.length).toBeGreaterThan(0);
+    key(env.editor, 'Enter');
+    expect(env.submits).toBe(1);
+  });
+
+  it('is told once per session that it opens, not per keystroke', () => {
+    const l = live();
+    const env = setup({ complete: { sources: [l.src] } });
+    type(env, '/h');
+    type(env, 'e');
+    type(env, 'l');
+    expect(l.opened).toEqual([0]);
+    key(env.editor, 'Escape');
+    type(env, ' /');
+    expect(l.opened).toEqual([0, 1]);
+  });
+
+  it('a change while open asks the current query again and keeps the active row by its key', () => {
+    const l = live();
+    const env = setup({ complete: { sources: [l.src] } });
+    type(env, '/hel');
+    key(env.editor, 'ArrowDown');
+    expect(active(env)).toBe('/hello');
+    l.set(['helium', 'help', 'hello', 'clear']);
+    expect(labels(env)).toEqual(['/helium', '/help', '/hello']);
+    expect(active(env)).toBe('/hello');
+    // Gone from the list: the first row.
+    l.set(['help', 'helium']);
+    expect(active(env)).toBe('/help');
+  });
+
+  it('a change while closed does nothing; dispose unsubscribes', () => {
+    const l = live();
+    const env = setup({ complete: { sources: [l.src] } });
+    l.set(['x']);
+    expect(pop(env)).toBeNull();
+    expect(l.subs.size).toBe(1);
+    env.c.dispose();
+    expect(l.subs.size).toBe(0);
+  });
+
+  it('turning unavailable while open closes the popup', () => {
+    const l = live();
+    const env = setup({ complete: { sources: [l.src] } });
+    type(env, '/h');
+    expect(open(env)).toBe(true);
+    l.off();
+    expect(open(env)).toBe(false);
+    expect(aria(env)).toEqual(Object.fromEntries(ARIA.map((a) => [a, null])));
+  });
+
+  it('shows the footer note when there is one and follows it', () => {
+    const l = live();
+    const env = setup({ complete: { sources: [l.src] } });
+    type(env, '/h');
+    expect(note(env)).toBeNull();
+    l.footer('Partial list');
+    expect(note(env)).toBe('Partial list');
+    l.footer(null);
+    expect(note(env)).toBeNull();
+  });
+
+  it('a pick gets the draft text', () => {
+    const l = live();
+    const env = setup({ complete: { sources: [l.src] } });
+    type(env, 'use /hel now');
+    moveTo(env, 8);
+    type(env, 'p');
+    key(env.editor, 'Enter');
+    expect(env.draft.doc.text).toBe('use /help [13] now');
+  });
+});

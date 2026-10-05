@@ -23,6 +23,10 @@
  * the popup (the transcript, the dialog and the seated view never see that Esc). With no row to pick (none, or only
  * the dimmed rows of an older query) the arrows and Tab are the editor's, and Enter closes the popup and sends nothing.
  * Every other key, and every key while it is closed, is the editor's as before.
+ *
+ * #140: a source may be unavailable (its trigger opens nothing), hears when a session of it is about to open, may say
+ * its items changed (an open session of it asks its query again, the active row kept by the source's `key`, or closes
+ * when the source is now unavailable) and may put a note under the rows (`footer`).
  */
 
 import { h } from '../dom';
@@ -72,6 +76,8 @@ interface Session {
   state: 'loading' | 'ready' | 'error';
   seq: number;
   ac: AbortController | null;
+  /** #140: the key of the row to keep active when the next reply comes (the source changed). */
+  keep: string | null;
 }
 
 const GAP = 4;
@@ -86,18 +92,20 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
   let pop: HTMLElement | null = null;
   let list: HTMLElement | null = null;
   let status: HTMLElement | null = null;
+  let note: HTMLElement | null = null;
   let said = '';
   let recheck = 0;
   const listId = `${id}-pop`;
   const optId = (i: number) => `${id}-opt-${i}`;
 
   /** Made on the first open: a composer that never completes keeps its DOM as it was. */
-  function popup(): { pop: HTMLElement; list: HTMLElement; status: HTMLElement } {
-    if (pop && list && status) return { pop, list, status };
+  function popup(): { pop: HTMLElement; list: HTMLElement; status: HTMLElement; note: HTMLElement } {
+    if (pop && list && status && note) return { pop, list, status, note };
     list = h('ul', { class: 'cmp-pop-list', id: listId, role: 'listbox' });
     status = h('p', { class: 'cmp-pop-status' });
+    note = h('p', { class: 'cmp-pop-note', hidden: true });
     const hint = h('p', { class: 'cmp-pop-hint', 'aria-hidden': 'true' }, 'Tab or Enter picks, Esc closes');
-    pop = h('div', { class: 'cmp-pop', hidden: true }, list, status, hint);
+    pop = h('div', { class: 'cmp-pop', hidden: true }, list, status, note, hint);
     // A press anywhere on it keeps the focus (and the caret) in the editor.
     pop.addEventListener('mousedown', (e) => e.preventDefault());
     pop.addEventListener('click', (e) => {
@@ -108,8 +116,19 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     });
     element.classList.add('cmp--complete');
     element.append(pop);
-    return { pop, list, status };
+    return { pop, list, status, note };
   }
+
+  /** #140: a source said its items changed: its open session asks again (or closes, the source now unavailable). */
+  function changed(src: Source): void {
+    const cur = s;
+    if (!cur || cur.source !== src) return;
+    if (src.available?.() === false) return close();
+    const item = cur.state === 'ready' ? cur.items[cur.active] : undefined;
+    cur.keep = item !== undefined && src.key ? src.key(item) : null;
+    query(cur, cur.query ?? cur.token.query);
+  }
+  const unsubs = o.sources.map((src) => src.subscribe?.(() => changed(src)));
 
   // ---- sessions --------------------------------------------------------------------------
 
@@ -123,7 +142,9 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     else if (opening) {
       close();
       const source = o.sources.find((x) => x.trigger === tok.trigger) as Source;
-      s = { token: tok, source, query: null, items: [], active: -1, state: 'loading', seq: 0, ac: null };
+      source.opening?.();
+      if (source.available?.() === false) return;
+      s = { token: tok, source, query: null, items: [], active: -1, state: 'loading', seq: 0, ac: null, keep: null };
       window.addEventListener('resize', follow);
       editor.addEventListener('scroll', follow);
     } else return close();
@@ -169,7 +190,10 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
 
   function show(cur: Session, items: readonly unknown[]): void {
     cur.items = [...items];
-    cur.active = cur.items.length > 0 ? 0 : -1;
+    const key = cur.source.key;
+    const kept = cur.keep !== null && key ? cur.items.findIndex((it) => key(it) === cur.keep) : -1;
+    cur.keep = null;
+    cur.active = kept >= 0 ? kept : cur.items.length > 0 ? 0 : -1;
     cur.state = 'ready';
     paint(true);
   }
@@ -202,6 +226,9 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     p.status.textContent = text;
     p.status.hidden = text === '';
     p.status.dataset.kind = s.state;
+    const foot = s.source.footer?.() ?? '';
+    p.note.textContent = foot;
+    p.note.hidden = foot === '';
     p.pop.hidden = false;
     editor.setAttribute('aria-autocomplete', 'list');
     editor.setAttribute('aria-controls', listId);
@@ -357,7 +384,7 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     const cur = s;
     if (!cur || cur.state !== 'ready' || i < 0 || i >= cur.items.length) return;
     const draft = host.draft();
-    const [a, b, text] = replaceRangeOf(cur.source.insert(cur.items[i], cur.token), cur.token, draft.doc.text.length);
+    const [a, b, text] = replaceRangeOf(cur.source.insert(cur.items[i], cur.token, draft.doc.text), cur.token, draft.doc.text.length);
     close();
     draft.replace(a, b, text);
   }
@@ -410,10 +437,11 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     editor.removeEventListener('scroll', follow);
     cancelFrame(recheck);
     for (const a of ['aria-autocomplete', 'aria-controls', 'aria-expanded', 'aria-activedescendant']) editor.removeAttribute(a);
-    if (pop && list && status) {
+    if (pop && list && status && note) {
       pop.hidden = true;
       list.replaceChildren();
       status.textContent = '';
+      note.textContent = '';
     }
     said = '';
   }
@@ -428,9 +456,10 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     close,
     dispose() {
       close();
+      for (const u of unsubs) u?.();
       pop?.remove();
       element.classList.remove('cmp--complete');
-      pop = list = status = null;
+      pop = list = status = note = null;
     },
   };
 }
