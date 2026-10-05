@@ -133,7 +133,7 @@ describe('opt-in', () => {
     expect(env.submits).toBe(1);
   });
 
-  it('with no sources (the transcript for now) no popup ever opens and the DOM stays as it was', () => {
+  it('with no sources no popup ever opens and the DOM stays as it was', () => {
     const env = setup({ complete: { sources: [] } });
     type(env, '/he @x');
     expect(pop(env)).toBeNull();

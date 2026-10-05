@@ -9,6 +9,7 @@ import type { mountTranscript, TranscriptRenderHost, TranscriptView } from './tr
 import type { ImageFeed } from './imageFeed';
 import type { ImagesTabHost, ImagesTabView, MountImagesTab } from './imagesTab';
 import { itemsOf, type TimelineOf } from './transcriptWatches';
+import { CommandCatalogs } from './commandCatalog';
 import { activityCue, reconcile, SENT_TIMEOUT_MS, topSeq, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 
 export type { ImagesTabHost, ImagesTabView, MountImagesTab, TranscriptRenderHost, TranscriptView };
@@ -57,7 +58,7 @@ export interface OverlayRect {
 }
 
 export interface TranscriptModeHost {
-  send<T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'transcript.page'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
+  send<T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'transcript.page' | 'worker.commands'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list). */
   feed(id: string): ImageFeed | null;
   /** Loads the render module (`loadRenderer`; tests pass a fake). */
@@ -134,6 +135,8 @@ const questionKey = (q: Question | null) => (q ? `${q.hash}\u0000${q.selected ??
 interface Sitting {
   id: string;
   name: string;
+  /** #140: its harness (`claude`, `codex`; '' unknown), for the prompt box's commands. */
+  harness: string;
   /** Tells a late answer (a render module loading, a prompt's ack) for an earlier seat from this one. */
   gen: number;
   mode: SeatMode;
@@ -215,6 +218,8 @@ export class TranscriptMode {
   private escBusy = false;
   /** #110: the pack-up check of the prompt being sent (aborted: Esc, standing up). */
   private checking: AbortController | null = null;
+  /** #140: each worker's slash commands and skills, kept across seats (the popup shows the last list at once). */
+  private readonly catalogs = new CommandCatalogs({ send: (t, args) => this.host.send(t, args) });
 
   constructor(private readonly host: TranscriptModeHost) {}
 
@@ -258,15 +263,16 @@ export class TranscriptMode {
   /**
    * You sat at `id`: its conversation (or its images, if you left it there), unless you left it in the terminal last
    * time. `canRead` false (the bridge has no transcripts, the worker's harness writes none): the terminal it is.
+   * `harness` (#140): the worker's, for its commands in the prompt box ('': none).
    */
-  sit(id: string, name: string, canRead = true): void {
+  sit(id: string, name: string, canRead = true, harness = ''): void {
     this.stand();
     dropOldModes(this.host.storage);
     const opens = canRead && !readModes(this.host.storage).includes(id);
     // The way to read it last time (what the first Ctrl+Esc shows when it opens in the terminal).
     const last: ReadMode = canRead && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
     this.s = {
-      id, name, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', usage: null, usageKey: '', box: null, view: null,
+      id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', usage: null, usageKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
       pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true,
@@ -540,6 +546,8 @@ export class TranscriptMode {
     if (s.viewPane) s.viewPane.hidden = s.mode !== 'transcript';
     s.view = mount(pane, this.renderHost(s));
     this.counts.mounted++;
+    // #140: the transcript opened: its commands are asked for (the popup asks again when it opens).
+    if (hasTranscript(s.harness)) void this.catalogs.get(s.id).refresh();
     const strip = this.tabsFor(s);
     if (strip) {
       s.view.attachTabs(strip.create());
@@ -601,6 +609,7 @@ export class TranscriptMode {
       label: s.name,
       usage: s.usage,
       ...(this.host.prefs ? { prefs: this.host.prefs } : {}),
+      commands: hasTranscript(s.harness) ? { list: this.catalogs.get(s.id), harness: s.harness } : null,
       onPromptSubmit: (text) => {
         if (!live()) return Promise.resolve(false);
         const t = text.replace(/\u0000/g, '');

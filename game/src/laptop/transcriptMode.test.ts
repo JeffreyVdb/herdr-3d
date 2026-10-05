@@ -950,3 +950,50 @@ describe('pending prompts', () => {
     expect(h.tx.pending).toEqual([]);
   });
 });
+
+describe('#140: the prompt box’s commands', () => {
+  const asks = (h: ReturnType<typeof harness>) => h.sent.filter((c) => c.t === 'worker.commands').map((c) => c.args.id);
+
+  it('a Claude or Codex transcript asks for the worker’s commands as it opens and hands the list to the view', async () => {
+    const h = harness();
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    expect(asks(h)).toEqual(['a']);
+    const c = h.views[0]?.host.commands;
+    expect(c?.harness).toBe('claude');
+    expect(c?.list.state.loading).toBe(true);
+    h.sent.find((x) => x.t === 'worker.commands')?.resolve({ ok: true, data: { commands: [{ name: 'compact', description: '', argument_hint: '', kind: 'command' }], partial: false } });
+    await flush();
+    expect(c?.list.state.commands?.map((x) => x.name)).toEqual(['compact']);
+    // Sitting down again: the same list (shown at once), asked again as the view opens.
+    h.tx.stand();
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    expect(h.views[1]?.host.commands?.list).toBe(c?.list);
+    expect(asks(h)).toEqual(['a', 'a']);
+    h.tx.stand();
+    h.tx.sit('b', 'Bo', true, 'codex');
+    await flush();
+    expect(h.views[2]?.host.commands?.harness).toBe('codex');
+    expect(asks(h)).toEqual(['a', 'a', 'b']);
+  });
+
+  it('a seat opened in the terminal asks nothing until the transcript opens', async () => {
+    const h = harness();
+    h.tx.sit('a', 'Ada', false, 'claude');
+    await flush();
+    expect(asks(h)).toEqual([]);
+  });
+
+  it('another harness (or none known): no commands, nothing asked', async () => {
+    const h = harness();
+    h.tx.sit('a', 'Ada');
+    await flush();
+    expect(h.views[0]?.host.commands).toBeNull();
+    h.tx.stand();
+    h.tx.sit('b', 'Bo', true, 'other');
+    await flush();
+    expect(h.views[1]?.host.commands).toBeNull();
+    expect(asks(h)).toEqual([]);
+  });
+});

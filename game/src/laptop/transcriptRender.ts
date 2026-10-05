@@ -16,6 +16,7 @@ import { WORKER_PROMPT_MAX_BYTES } from '../ui/composer/model';
 import { ViewPrefs, type ViewPref } from '../ui/themePrefs';
 import { THEMES, ZOOM, stepZoom, type ThemeId } from '../ui/themes';
 import { contextMeter } from '../world/usage';
+import { commandSource, type CommandList } from './slashCommands';
 import { zoomKey } from './keys';
 import type { ActivityCue, PendingPrompt } from './transcriptActivity';
 
@@ -56,6 +57,8 @@ export interface TranscriptRenderHost {
   prefs?: ViewPrefs;
   /** #101: the worker's usage when the view opens, for its context meter (`setUsage` follows it; none: no meter yet). */
   usage?: Usage | null;
+  /** #140: the worker's slash commands and skills, for the prompt box's `/` popup, and its harness (none: no popup). */
+  commands?: { list: CommandList; harness: string } | null;
 }
 
 export interface BlockedQuestion {
@@ -704,8 +707,8 @@ class Transcript implements TranscriptView {
       placeholder: PROMPT_HINT,
       submitPolicy: 'enter',
       onSubmit: () => this.submit(),
-      // #139: completion is on, with no source yet (commands and files come next): no popup opens until one is added.
-      complete: { sources: [], bounds: () => this.root },
+      // #139: completion is on; #140: `/` lists the worker's commands and skills (only here: no other composer has them).
+      complete: { sources: host.commands ? [commandSource(host.commands.list, host.commands.harness)] : [], bounds: () => this.root },
     });
     this.input = this.composer.editor;
     this.input.classList.add('tx-input');

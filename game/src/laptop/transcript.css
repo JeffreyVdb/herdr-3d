@@ -1017,6 +1017,65 @@
 .tx .cmp-pop-list {
   scrollbar-color: var(--tx-bg-3) transparent;
 }
+/*
+ * #140: a command or skill: `/name` as it is typed (mono, the matched letters in the preset's sun), its argument hint
+ * dimmed, the description's first line cut to the row, the kind last. A flex row on one line: the description gives
+ * way first, then the hint; the name only past 60% of the row.
+ */
+.tx .cmp-pop-opt:has(.tx-cmd) {
+  max-width: 46em;
+}
+.tx-cmd {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65em;
+  min-width: 0;
+}
+.tx-cmd-name,
+.tx-cmd-arg {
+  overflow: hidden;
+  font-family: var(--tx-mono);
+  font-size: var(--tx-mono-fs, 11.5px);
+  text-overflow: ellipsis;
+}
+.tx-cmd-name {
+  flex: none;
+  max-width: 60%;
+  color: var(--tx-text);
+}
+.tx-cmd-hit {
+  color: var(--tx-sun-text);
+  font-weight: 700;
+}
+.tx-cmd-arg {
+  flex: 0 1 auto;
+  max-width: 30%;
+  color: var(--tx-text-3);
+}
+.tx-cmd-desc {
+  overflow: hidden;
+  flex: 1 6 auto;
+  min-width: 4em;
+  color: var(--tx-text-2);
+  text-overflow: ellipsis;
+}
+.tx-cmd-kind {
+  flex: none;
+  padding: 0 0.45em;
+  border: 1px solid var(--tx-line);
+  border-radius: 4px;
+  color: var(--tx-text-3);
+  font-size: 0.8em;
+  line-height: 1.5;
+}
+.tx-cmd[data-kind='skill'] .tx-cmd-kind {
+  border-color: color-mix(in srgb, var(--tx-blue) 45%, transparent);
+  color: var(--tx-blue);
+}
+.tx-cmd[data-kind='custom'] .tx-cmd-kind {
+  border-color: color-mix(in srgb, var(--tx-green) 45%, transparent);
+  color: var(--tx-green);
+}
 .tx .cmp-chip {
   color: var(--tx-text);
   background: var(--tx-bg-3);
