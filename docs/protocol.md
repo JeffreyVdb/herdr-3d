@@ -1845,6 +1845,23 @@ its length, never the text). 16 KiB takes about 1.3 s to type.
   **once** more and waits up to 5 s for `working` / `blocked`: `retried: true`. Still not submitted, or herdr failing
   otherwise: `prompt_failed`.
 
+**The bridge rewrites a Codex prompt (#138).** The composer keeps harness-neutral text; for a worker whose agent is
+Codex the bridge rewrites these tokens on the worker's input lane, just before the text is sent (direct and queued;
+also `worker.answer_ask`'s `prompt`), and nothing else:
+
+| In `text` | Codex gets | Only when |
+|---|---|---|
+| `/name` | `$name` | `name` is a skill in the worker's `worker.commands` (never a built-in, `/compact` stays) and the `/` starts a word; `/usr/bin/env`, `http://x/y`, `a/b`, `/name/more` stay |
+| `@path` | `path` | the `@` starts a word and `path` is a file or directory inside the worker's checkout (symlinks and `..` that lead out do not count); `@someone`, `me@x.com` stay |
+| `@"a b/c.txt"` | `a b/c.txt` | as `@path`: a path with spaces is written in quotes (Claude only attaches it that way) |
+
+Text to Claude goes through untouched, so a client writes the mention for Claude itself: `@path`, or
+`@"path with spaces/file.txt"` when the path has spaces. `[Image #n: …]` markers are never touched. The 16 KiB limit is
+for the text **after** the rewrite (a rewrite only shortens it, so a Codex text up to 32 KiB is read before it is
+checked). When the catalog or the file check fails, the text goes as typed. A Codex prompt that ends in a `$skill`
+leaves Codex's skill popup open and its Enter is taken: the retry presses `esc` then `enter` instead of `enter` alone.
+The transcript view of a Codex worker shows the rewritten text (what Codex received).
+
 The bridge's transcript reader (the usage tracker) warns in its log when a prompt it typed into Claude reaches the
 transcript wrapped as a paste anyway (Claude Code's paste threshold changed): it keeps a hash of each typed prompt's
 words for 10 minutes, never the text.
