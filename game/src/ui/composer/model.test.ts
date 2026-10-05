@@ -412,6 +412,38 @@ describe('file chips (#141)', () => {
     expect(j('\n', { file: 'a.ts' }, '\n')).toBe('\n@a.ts\n');
     expect(j('x', { file: 'a.ts' }, '', '', 'y')).toBe('x @a.ts y');
   });
+  // Go's unicode.IsSpace is not JavaScript's \s: it reads NEL as a space but not U+FEFF (a BOM / zero-width no-break
+  // space), so a mention needs its separator next to U+FEFF and needs none next to NEL or an ideographic space.
+  it('joinMentions keeps a mention apart from U+FEFF on both sides', () => {
+    const j = (...p: (string | { file: string })[]) => joinMentions(p.map((x) => (typeof x === 'string' ? { text: x } : x)));
+    expect(j('hello\ufeff', { file: 'src/a.ts' })).toBe('hello\ufeff @src/a.ts');
+    expect(j({ file: 'src/a.ts' }, '\ufeffhello')).toBe('@src/a.ts \ufeffhello');
+    expect(j('\ufeff', { file: 'a.ts' }, '\ufeff')).toBe('\ufeff @a.ts \ufeff');
+  });
+  it.each([
+    ['NEL', '\u0085'],
+    ['a no-break space', '\u00a0'],
+    ['a vertical tab', '\v'],
+    ['an ogham space', '\u1680'],
+    ['an en quad', '\u2000'],
+    ['a hair space', '\u200a'],
+    ['a line separator', '\u2028'],
+    ['a narrow no-break space', '\u202f'],
+    ['an ideographic space', '\u3000'],
+  ])('joinMentions reads %s as the separator Go reads', (_n, ws) => {
+    expect(joinMentions([{ text: `see${ws}` }, { file: 'a.ts' }, { text: `${ws}now` }])).toBe(`see${ws}@a.ts${ws}now`);
+  });
+  it.each([
+    ['U+FEFF', '\ufeff'],
+    ['a zero-width space', '\u200b'],
+    ['a Mongolian vowel separator', '\u180e'],
+  ])('joinMentions does not read %s as whitespace (nor does Go)', (_n, ch) => {
+    expect(joinMentions([{ text: `see${ch}` }, { file: 'a.ts' }, { text: `${ch}now` }])).toBe(`see${ch} @a.ts ${ch}now`);
+  });
+  it('mentionOf quotes only on what Go reads as whitespace', () => {
+    expect(mentionOf('a\ufeffb')).toBe('@a\ufeffb');
+    expect(mentionOf('a\u3000b')).toBe('@"a\u3000b"');
+  });
   it('mentionText is a range as plain text with mentions, images left out', () => {
     const d = doc('see{src/a.ts}<a>{my d/b.md}.');
     expect(mentionText(d)).toBe('see @src/a.ts @"my d/b.md" .');

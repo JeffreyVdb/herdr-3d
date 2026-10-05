@@ -213,8 +213,12 @@ export function filePathProblem(path: string): string | null {
   return null;
 }
 
-/** What the bridge reads as whitespace (Go's `unicode.IsSpace`, a superset of JavaScript's `\s` with U+0085). */
-const WS = /[\s\u0085]/;
+/**
+ * What the bridge reads as whitespace: exactly Go's `unicode.IsSpace` (Latin-1's tab, LF, VT, FF, CR, space, NEL and
+ * no-break space, then the Unicode White_Space property). Not JavaScript's `\s`: that lacks NEL and adds U+FEFF, which
+ * Go reads as part of a word, so a mention beside one needs its space.
+ */
+const WS = /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/;
 /** Before a mention the bridge reads, besides whitespace: an opening bracket or quote (its `startsWord`). */
 const OPENERS = '([{"\'';
 
