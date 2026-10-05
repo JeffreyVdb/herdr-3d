@@ -152,12 +152,21 @@ describe('CommandCatalogs', () => {
         'c',
         { name: 'has space', description: '', argument_hint: '', kind: 'command' },
         { name: 'd', description: 'line one\nline two', argument_hint: '<x>', kind: 'custom' },
+        { name: 'usage', description: '', argument_hint: '', kind: 'command', terminal: 'always' },
+        { name: 'model', description: '', argument_hint: '', kind: 'command', terminal: 'bare' },
+        { name: 'e', description: '', argument_hint: '', kind: 'command', terminal: 'sometimes' },
+        { name: 'f', description: '', argument_hint: '', kind: 'command', terminal: '' },
       ]),
     );
     expect(w.state.commands).toEqual([
       entry('a'),
       { name: 'b', description: '', argument_hint: '', kind: 'skill' },
       { name: 'd', description: 'line one\nline two', argument_hint: '<x>', kind: 'custom' },
+      // #140: the terminal mark is kept when it is one the game knows.
+      { name: 'usage', description: '', argument_hint: '', kind: 'command', terminal: 'always' },
+      { name: 'model', description: '', argument_hint: '', kind: 'command', terminal: 'bare' },
+      { name: 'e', description: '', argument_hint: '', kind: 'command' },
+      { name: 'f', description: '', argument_hint: '', kind: 'command' },
     ]);
   });
 

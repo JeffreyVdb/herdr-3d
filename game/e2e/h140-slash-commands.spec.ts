@@ -42,7 +42,7 @@ for (const c of [
   {
     harness: 'claude',
     worker: 'Pebble',
-    all: ['/compact', '/review', '/usage', '/caveman:caveman-commit', '/handoff', '/deploy', '/release:notes'],
+    all: ['/compact', '/review', '/usage', '/model', '/caveman:caveman-commit', '/handoff', '/deploy', '/release:notes'],
     query: 'cav',
     picked: '/caveman:caveman-commit',
     note: null,
@@ -50,7 +50,7 @@ for (const c of [
   {
     harness: 'codex',
     worker: 'Dumpling',
-    all: ['/humanizer:humanizer', '/imagegen', '/init', '/compact', '/review', '/mcp'],
+    all: ['/humanizer:humanizer', '/imagegen', '/init', '/compact', '/review', '/mcp', '/status'],
     query: 'hum',
     picked: '/humanizer:humanizer',
     note: 'Codex: skills are sent as $name',
@@ -121,5 +121,43 @@ test('a worker waiting on a question: the box is disabled and / opens nothing', 
   await page.keyboard.type('/');
   await frames(page, 3);
   await expect(pop(page)).toHaveCount(0);
+  clean();
+});
+
+test('#140: a terminal-only built-in has a badge; sending it shows the terminal, /model with a model does not', async ({ page }) => {
+  const clean = watchErrors(page);
+  const w = demoWorker('Pebble');
+  await openGame(page, 'demo-m5', '', SIM);
+  await sitAtTranscript(page, w);
+  await input(page).click();
+
+  await page.keyboard.type('/us');
+  const usage = tx(page).locator('[role="option"]').first();
+  await expect(usage.locator('.tx-cmd-name')).toHaveText('/usage');
+  await expect(usage.locator('.tx-cmd-term')).toHaveText('terminal');
+  await expect(usage.locator('.tx-cmd-term')).toHaveAttribute('title', 'Shows in the worker’s terminal, not in the conversation');
+  await shot(page, 'h140-terminal-badge');
+
+  // With arguments, /model runs inline: it stays in the conversation.
+  await page.keyboard.press('Escape');
+  for (let i = 0; i < 3; i++) await page.keyboard.press('Backspace');
+  // (The space after /model ends its token: the popup is closed, so Enter sends.)
+  await page.keyboard.type('/model opus');
+  await expect(pop(page)).toBeHidden();
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await sent(page, 'worker.prompt')).map((x) => (x.args as { text: string }).text)).toEqual(['/model opus']);
+  await frames(page, 10);
+  expect(await page.evaluate(() => window.__h3d.seat().mode)).toBe('transcript');
+
+  // Picked from the popup and sent (Pebble works on the last prompt meanwhile): the bridge says it shows only in the
+  // terminal, so the terminal is shown.
+  await input(page).click();
+  await page.keyboard.type('/usa');
+  await page.keyboard.press('Enter');
+  await expect(input(page)).toHaveText('/usage ');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe('terminal');
+  expect((await sent(page, 'worker.prompt')).map((x) => (x.args as { text: string }).text)).toEqual(['/model opus', '/usage ']);
+  expect(await page.evaluate(() => window.__h3d.seated())).toBe(w.id);
   clean();
 });

@@ -318,6 +318,26 @@ describe('the list: cached, refreshed, and its states', () => {
   });
 });
 
+describe('#140: built-ins that show only in the terminal', () => {
+  const term = (name: string, terminal: 'always' | 'bare', hint = ''): CommandEntry => ({ ...cmd(name, `${name} it`, hint), terminal });
+
+  it('carry a "terminal" badge that says where the result shows; the others do not', async () => {
+    await ready('claude', [term('usage', 'always'), term('model', 'bare', '[model]'), cmd('context', 'Show context')]);
+    type('/');
+    const badge = (i: number) => rows()[i]?.querySelector<HTMLElement>('.tx-cmd-term') ?? null;
+    expect(badge(0)?.textContent).toBe('terminal');
+    expect(badge(0)?.title).toBe('Shows in the worker’s terminal, not in the conversation');
+    expect(badge(1)?.title).toBe('/model alone shows in the worker’s terminal; with arguments it runs here');
+    expect(badge(2)).toBeNull();
+    // Read with the row: the option's text says it too.
+    expect(rows()[0]?.textContent).toContain('shows in the worker’s terminal');
+    expect(rows()[2]?.textContent).not.toContain('terminal');
+    // Picked like any other: plain /name.
+    press('Enter');
+    expect(text()).toBe('/usage ');
+  });
+});
+
 describe('per harness', () => {
   it('Codex: skills keep the / label, with a hint that they are sent as $name', async () => {
     await ready('codex', CODEX);

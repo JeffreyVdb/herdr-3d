@@ -14,6 +14,9 @@ import type { CommandsState } from './commandCatalog';
  * answer), "Loading…" while the first ask is out, a failed first ask an error (the next popup asks again), a failed
  * refresh the old rows and a note, a partial list its built-ins and a note, and a worker the bridge has no list for
  * (no Claude or Codex agent) no popup at all.
+ *
+ * #140: a built-in whose output or dialog shows only in the worker's terminal (the bridge's `terminal` mark) has a
+ * "terminal" badge; sending one switches the seat to the terminal (`TranscriptMode`, on the prompt's ack).
  */
 
 /** What the source reads: one worker's list (`WorkerCommandList`). */
@@ -24,12 +27,6 @@ export interface CommandList {
 }
 
 export type CommandItem = Ranked<CommandEntry>;
-
-/**
- * Built-ins not offered, per harness (none yet): a command that only opens a dialog in the terminal (which the
- * transcript can neither show nor dismiss) would go here.
- */
-const HIDDEN: Readonly<Record<string, ReadonlySet<string>>> = {};
 
 const firstLine = (s: string): string => s.split('\n', 1)[0]?.trim() ?? '';
 
@@ -56,11 +53,9 @@ function nameOf(c: CommandItem): HTMLElement {
 }
 
 export function commandSource(list: CommandList, harness: string): Source<CommandItem> {
-  const hidden = HIDDEN[harness];
-  const offered = (all: readonly CommandEntry[]) => (hidden ? all.filter((c) => !(c.kind === 'command' && hidden.has(c.name))) : all);
   const ranked = (q: string): CommandItem[] | null => {
     const all = list.state.commands;
-    return all ? rankByName(offered(all), q, (c) => c.name) : null;
+    return all ? rankByName(all, q, (c) => c.name) : null;
   };
   return {
     trigger: '/',
@@ -81,8 +76,10 @@ export function commandSource(list: CommandList, harness: string): Source<Comman
       });
     },
     render(c) {
-      const { description, argument_hint: hint, kind } = c.item;
+      const { description, argument_hint: hint, kind, terminal } = c.item;
       const desc = firstLine(description);
+      // #140: its output or dialog shows only in the worker's terminal (the view switches there once it is sent).
+      const where = terminal === 'always' ? 'Shows in the worker’s terminal, not in the conversation' : terminal === 'bare' ? `/${c.item.name} alone shows in the worker’s terminal; with arguments it runs here` : '';
       return h(
         'span',
         { class: 'tx-cmd', 'data-kind': kind, title: description ? `/${c.item.name}: ${description}` : `/${c.item.name}` },
@@ -93,6 +90,10 @@ export function commandSource(list: CommandList, harness: string): Source<Comman
         ' ',
         h('span', { class: 'tx-cmd-desc' }, desc),
         ' ',
+        where ? h('span', { class: 'tx-cmd-term', title: where }, 'terminal') : null,
+        // Said with the row (the badge's tooltip is for the pointer only).
+        where ? h('span', { class: 'tx-cmd-sr' }, `: ${where.charAt(0).toLowerCase()}${where.slice(1)}`) : null,
+        where ? ' ' : null,
         h('span', { class: 'tx-cmd-kind' }, kind),
       );
     },

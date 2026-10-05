@@ -576,9 +576,19 @@ export class TranscriptMode {
     // Resolves whether it went: a refused prompt goes back in the box.
     return this.host.send('worker.prompt', { id: s.id, text: t }).then((r) => {
       if (!live()) return r.ok;
+      const ack = (r.ok ? (r.data ?? {}) : {}) as Partial<PromptAck>;
+      if (r.ok && ack.terminal === true) {
+        // #140: a built-in whose output or dialog shows only in the terminal (/usage, a bare /model): its transcript
+        // shows nothing of it, so no row waits for it, and the terminal is shown, where it can be read and closed. Not
+        // remembered as where you left this worker.
+        s.pending = s.pending.filter((x) => x.id !== p.id);
+        this.pendingChanged(s);
+        this.host.status('ok', `Sent to ${s.name}: it shows in the terminal`);
+        if (s.mode !== 'terminal') this.setMode('terminal', false);
+        return true;
+      }
       if (r.ok) this.host.status('ok', `Sent to ${s.name}`);
       else this.host.status('error', failureText('worker.prompt', r.code, r.message, { worker: s.name }));
-      const ack = (r.ok ? (r.data ?? {}) : {}) as Partial<PromptAck>;
       const queued = ack.queued === true;
       // #138: what the bridge sent, when it rewrote the text: the transcript shows that.
       const sent = typeof ack.sent === 'string' && ack.sent !== '' && ack.sent !== t ? ack.sent : undefined;

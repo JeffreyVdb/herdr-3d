@@ -652,6 +652,42 @@ describe('pending prompts', () => {
     expect(h.tx.itemCount).toBe(3);
   });
 
+  it('#140: a prompt the bridge says shows only in the terminal (/usage) switches to the terminal, not remembered; its row goes', async () => {
+    const h = harness();
+    const { v, host } = await reading(h);
+    h.tx.activity('idle', 100);
+    const sent = host.onPromptSubmit('/usage');
+    h.sent.find((c) => c.t === 'worker.prompt')?.resolve({ ok: true, data: { queued: false, retried: false, terminal: true } });
+    await expect(sent).resolves.toBe(true);
+    expect(h.tx.mode).toBe('terminal');
+    expect(h.modes.at(-1)).toBe('terminal');
+    // Its transcript will show nothing of it: no row waits for it.
+    expect(states(h)).toEqual([]);
+    expect(v.pending.at(-1)).toEqual([]);
+    expect(h.status.at(-1)).toEqual(['ok', 'Sent to Ada: it shows in the terminal']);
+    // Not where you left it: the next time you sit here it is the conversation again.
+    expect(h.storage.getItem('h3d.seat.terminal')).toBeNull();
+  });
+
+  it('#140: any other prompt (/model opus, no `terminal` in the ack) stays in the conversation', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    const sent = host.onPromptSubmit('/model opus');
+    h.sent.find((c) => c.t === 'worker.prompt')?.resolve({ ok: true, data: { queued: false, retried: false } });
+    await expect(sent).resolves.toBe(true);
+    expect(h.tx.mode).toBe('transcript');
+    expect(states(h)).toEqual(['sent']);
+  });
+
+  it('#140: a refused prompt never switches', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    const sent = host.onPromptSubmit('/usage');
+    h.sent.find((c) => c.t === 'worker.prompt')?.resolve({ ok: false, code: 'invalid_state', message: 'asleep' });
+    await expect(sent).resolves.toBe(false);
+    expect(h.tx.mode).toBe('transcript');
+  });
+
   it('two identical sends, one shown before a resync: the resync keeps the other until its own item comes', async () => {
     const h = harness();
     const { v, host } = await reading(h);

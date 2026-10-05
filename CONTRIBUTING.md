@@ -947,10 +947,18 @@ the footer says "Codex: skills are sent as $name". States: no list yet "Loadingâ
 matches." (the next popup asks again); a failed refresh keeps the rows with "Could not refresh: the list may be out of
 date"; `partial: true` the built-ins with "Partial list: only the built-in commands so far"; `invalid_state` /
 `unknown_worker` (no Claude or Codex agent, an asleep floor) no popup at all, asked again at most every 10 s; a worker
-waiting on a question disables the box, so no popup. `HIDDEN` there is where a built-in that only opens a terminal
-dialog would be left out per harness (none yet). The simulator answers `simCommands` (`tools/fixture-panels.ts`);
-`e2e/h140-slash-commands.spec.ts` drives a Claude and a Codex worker (mid-sentence pick, Esc closes only the popup,
-Enter sends when closed) and a blocked one.
+waiting on a question disables the box, so no popup. Terminal-only built-ins (the bridge's table,
+`internal/harness/terminal.go`: Claude's `/usage`, `/status`, `/config`, `/mcp`, `/help` and a bare `/model` open a
+dialog in the terminal and write nothing to the transcript; Codex's `/status`, `/diff`, `/pwd`, `/ps`, `/mcp` print
+there only) carry a "terminal" badge (`terminal` on the row; its tooltip and the row's text say where the result
+shows, and a bare-only one says that with arguments it runs here). When the ack of a sent prompt says `terminal: true`
+(the bridge decides from the typed text, so aliases like `/cost` and a prompt typed by hand count too, and `/model
+opus` does not), `TranscriptMode` drops its pending row (the transcript will show nothing of it), says "Sent to <name>:
+it shows in the terminal" and switches the seat to the terminal, not remembered as where you left that worker (Ctrl+Esc
+goes back). The simulator answers `simCommands` (`tools/fixture-panels.ts`, rows marked like the bridge's) and acks a
+terminal-only prompt (`simTerminalOnly`) with no turn; `e2e/h140-slash-commands.spec.ts` drives a Claude and a Codex
+worker (mid-sentence pick, Esc closes only the popup, Enter sends when closed), a blocked one, and the badge and the
+switch (`/usage` shows the terminal, `/model opus` does not).
 
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings

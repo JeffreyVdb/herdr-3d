@@ -34,7 +34,7 @@ export const RETRY_UNAVAILABLE_MS = 10_000;
 const KEEP = 64;
 const KINDS = new Set<CommandEntry['kind']>(['command', 'skill', 'custom']);
 
-/** The bridge's rows that can be offered: a name that is one word (no leading slash), strings, a known kind. */
+/** The bridge's rows that can be offered: a name that is one word (no leading slash), strings, a known kind (and terminal mark). */
 function rows(v: unknown): CommandEntry[] | null {
   if (!Array.isArray(v)) return null;
   const out: CommandEntry[] = [];
@@ -44,7 +44,10 @@ function rows(v: unknown): CommandEntry[] | null {
     const name = typeof o.name === 'string' ? o.name.replace(/^\/+/, '') : '';
     if (!name || /\s/.test(name)) continue;
     const kind = KINDS.has(o.kind as CommandEntry['kind']) ? (o.kind as CommandEntry['kind']) : 'skill';
-    out.push({ name, description: typeof o.description === 'string' ? o.description : '', argument_hint: typeof o.argument_hint === 'string' ? o.argument_hint : '', kind });
+    const e: CommandEntry = { name, description: typeof o.description === 'string' ? o.description : '', argument_hint: typeof o.argument_hint === 'string' ? o.argument_hint : '', kind };
+    // #140: a built-in that shows only in the terminal.
+    if (o.terminal === 'always' || o.terminal === 'bare') e.terminal = o.terminal;
+    out.push(e);
   }
   return out;
 }
