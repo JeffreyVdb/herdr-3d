@@ -589,6 +589,8 @@ export interface PromptAck {
   queued: boolean;
   /** herdr's paste needed one more Enter. */
   retried: boolean;
+  /** #138: the text the bridge sent, when it rewrote the typed one for the worker's harness (absent: as typed). */
+  sent?: string;
 }
 
 /** M5: `worker.answer` ack. */

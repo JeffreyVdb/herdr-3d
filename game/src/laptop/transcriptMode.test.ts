@@ -609,6 +609,18 @@ describe('pending prompts', () => {
     expect(reconcile(again, [user('u3', 3, 'go'), user('u5', 5, 'go')], taken)).toEqual([]);
   });
 
+  it('#138: a prompt the bridge rewrote matches its item by the text sent; either text takes it', () => {
+    const ps = [{ ...pending('p1', 'use /grill on @a.go'), sent: 'use $grill on a.go' }];
+    expect(reconcile(ps, [user('u', 1, 'use $grill on a.go')])).toEqual([]);
+    // The typed text still matches (a Claude-like echo), and so do the blanks.
+    expect(reconcile(ps, [user('u', 1, 'use /grill on @a.go')])).toEqual([]);
+    expect(reconcile(ps, [user('u', 1, ' use  $grill on a.go\n')])).toEqual([]);
+    expect(reconcile(ps, [user('u', 1, 'something else')])).toBe(ps);
+    // Without `sent` (not rewritten) the translated text matches nothing: unchanged.
+    const plain = [pending('p1', 'use /grill on @a.go')];
+    expect(reconcile(plain, [user('u', 1, 'use $grill on a.go')])).toBe(plain);
+  });
+
   async function reading(h: ReturnType<typeof harness>) {
     h.tx.sit('a', 'Ada');
     h.tx.reset('a', ack([item('a1', 1), item('a2', 2)]));
@@ -808,6 +820,52 @@ describe('pending prompts', () => {
     expect(states(h)).toEqual([]);
     h.sent[0]?.resolve({ ok: true, data: { queued: false, retried: false } });
     await sent;
+    expect(states(h)).toEqual([]);
+  });
+
+  it('#138: the ack says what the bridge sent: the item under that text takes the row', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    const sent = host.onPromptSubmit('use /grill on @a.go');
+    h.sent[0]?.resolve({ ok: true, data: { queued: false, retried: false, sent: 'use $grill on a.go' } });
+    await sent;
+    expect(states(h)).toEqual(['sent']);
+    h.tx.push('a', [user('u3', 3, 'use $grill on a.go')], []);
+    expect(states(h)).toEqual([]);
+  });
+
+  it('#138: the rewritten item before the ack: the ack takes the row', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    const sent = host.onPromptSubmit('use /grill on @a.go');
+    h.tx.push('a', [user('u3', 3, 'use $grill on a.go')], []);
+    expect(states(h)).toEqual(['sending']);
+    h.sent[0]?.resolve({ ok: true, data: { queued: false, retried: false, sent: 'use $grill on a.go' } });
+    await sent;
+    expect(states(h)).toEqual([]);
+  });
+
+  it('#138: a queued rewritten prompt is taken by its item under the text sent, before or after the ack', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    h.tx.activity('working', 900);
+    const sent = host.onPromptSubmit('use /grill on @a.go');
+    h.sent[0]?.resolve({ ok: true, data: { queued: true, retried: false, sent: 'use $grill on a.go' } });
+    await sent;
+    expect(states(h)).toEqual(['queued']);
+    h.tx.push('a', [user('u3', 3, 'use $grill on a.go')], []);
+    expect(states(h)).toEqual([]);
+  });
+
+  it('#138: an ack with no `sent` (not rewritten) is as before: the typed text only', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    const sent = host.onPromptSubmit('use /grill on @a.go');
+    h.sent[0]?.resolve({ ok: true, data: { queued: false, retried: false } });
+    await sent;
+    h.tx.push('a', [user('u3', 3, 'use $grill on a.go')], []);
+    expect(states(h)).toEqual(['sent']);
+    h.tx.push('a', [user('u4', 4, 'use /grill on @a.go')], []);
     expect(states(h)).toEqual([]);
   });
 

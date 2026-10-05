@@ -56,6 +56,9 @@ export function topSeq(items: readonly TranscriptItem[]): number {
 export interface PendingPrompt {
   id: string;
   text: string;
+  /** #138: what the bridge sent when it rewrote `text` for the worker's harness (Codex: `$skill`, a bare path): the ack's
+   * `sent`. The transcript shows this one, so an item matches either text. */
+  sent?: string;
   state: 'sending' | 'sent' | 'queued' | 'refused';
   late: boolean;
   /** Why it was refused. */
@@ -91,7 +94,7 @@ const marks = (it: TranscriptItem, key: string) => [`id:${it.id}`, `at:${it.seq}
 
 /**
  * The prompts that `items` (new or updated) show, removed: each `user` item after a prompt's mark takes the first
- * waiting prompt with its text (identical prompts in the order sent), else the first with the same words. Refused
+ * waiting prompt with its text, or the text the bridge sent for it (identical prompts in the order sent), else the first with the same words. Refused
  * prompts never match. `taken` holds the items that already took one, and gets the ones that take one now: an item
  * takes one prompt only, however often it comes again (an update, a resync's whole timeline). Returns the prompts still
  * waiting (the same array when nothing matched).
@@ -107,8 +110,9 @@ export function reconcile(pending: readonly PendingPrompt[], items: readonly Tra
     const known = marks(it, key);
     if (known.some((k) => taken.has(k))) continue;
     const open = (p: PendingPrompt) => p.state !== 'refused' && it.seq > p.mark;
-    let at = left.findIndex((p) => open(p) && promptKey(p.text) === key);
-    if (at < 0) at = left.findIndex((p) => open(p) && loose(promptKey(p.text)) === loose(key));
+    const texts = (p: PendingPrompt) => (p.sent === undefined ? [p.text] : [p.text, p.sent]).map(promptKey);
+    let at = left.findIndex((p) => open(p) && texts(p).includes(key));
+    if (at < 0) at = left.findIndex((p) => open(p) && texts(p).some((t) => loose(t) === loose(key)));
     if (at < 0) continue;
     left = left.filter((_, i) => i !== at);
     for (const k of known) taken.add(k);

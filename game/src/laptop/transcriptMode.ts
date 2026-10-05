@@ -570,7 +570,10 @@ export class TranscriptMode {
       if (!live()) return r.ok;
       if (r.ok) this.host.status('ok', `Sent to ${s.name}`);
       else this.host.status('error', failureText('worker.prompt', r.code, r.message, { worker: s.name }));
-      const queued = r.ok && ((r.data ?? {}) as Partial<PromptAck>).queued === true;
+      const ack = (r.ok ? (r.data ?? {}) : {}) as Partial<PromptAck>;
+      const queued = ack.queued === true;
+      // #138: what the bridge sent, when it rewrote the text: the transcript shows that.
+      const sent = typeof ack.sent === 'string' && ack.sent !== '' && ack.sent !== t ? ack.sent : undefined;
       const now = this.now();
       // Already shown by its item (it can come before the ack): nothing to change.
       if (!s.pending.some((x) => x.id === p.id)) return r.ok;
@@ -578,8 +581,13 @@ export class TranscriptMode {
         if (x.id !== p.id) return x;
         if (!r.ok) return { ...x, state: 'refused', reason: failureText('worker.prompt', r.code, r.message, { worker: s.name }), due: null };
         // A queued prompt may wait for the whole turn: the hint only once the agent stopped working.
-        return { ...x, state: queued ? 'queued' : 'sent', due: queued && s.status === 'working' ? null : now + SENT_TIMEOUT_MS };
+        return { ...x, ...(sent !== undefined ? { sent } : {}), state: queued ? 'queued' : 'sent', due: queued && s.status === 'working' ? null : now + SENT_TIMEOUT_MS };
       });
+      // Its item may have come before the ack, under the rewritten text: it takes the row now.
+      if (sent !== undefined) {
+        const left = reconcile(s.pending, s.items, s.taken);
+        if (left !== s.pending) s.pending = left;
+      }
       this.pendingChanged(s);
       return r.ok;
     });
