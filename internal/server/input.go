@@ -306,6 +306,9 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	if w.Ask != nil { // #57: its dialog would take the text
 		return fmt.Errorf("%w: %s waits on its question: answer it first (worker.answer_ask)", errInvalidState, w.Name)
 	}
+	// #140: a built-in whose output or dialog shows only in the terminal,
+	// as typed: it starts no turn, so it is sent without waiting for one.
+	terminal := h.opts.Prompts != nil && h.opts.Prompts.TerminalOnly(kind, a.Text)
 	h.tookOver(ctx, a.ID)      // #83: a person prompts: an armed wrap-up is off
 	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
@@ -317,7 +320,11 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 			}
 			a.Text = text
 		}
-		res, err := h.prompt(ctx, a, session, pane)
+		send := h.prompt
+		if terminal {
+			send = h.terminalPrompt
+		}
+		res, err := send(ctx, a, session, pane)
 		if err == nil {
 			// #58: its user line is read now, not on the tracker's next tick
 			// (a watched transcript's is a second away).
@@ -329,7 +336,7 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 				if a.Text != typed {
 					pr.Sent = a.Text
 				}
-				pr.Terminal = h.opts.Prompts != nil && h.opts.Prompts.TerminalOnly(kind, typed)
+				pr.Terminal = terminal
 				res = pr
 			}
 		}
@@ -421,6 +428,36 @@ func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pan
 	return h.retryEnter(ctx, a.ID, session, pane, cur.starts, h.retryKeys(cur.kind, a.Text)...)
 }
 
+// terminalPrompt sends a prompt that runs a terminal-only built-in (#140):
+// it opens a dialog or prints in the terminal, and starts no turn. It is
+// typed (Claude, typeIn) or pasted (Codex, `agent prompt` without waiting)
+// with its one Enter, and done once herdr delivered it: nothing waits for a
+// turn, and Enter is never pressed again, as it would act on the dialog. To
+// a working agent it goes as any prompt does (queued): the CLI runs it, or
+// refuses it, in its terminal.
+func (h *Hub) terminalPrompt(ctx context.Context, a proto.WorkerPromptArgs, session, pane string) (any, error) {
+	cur, err := query(ctx, h, func() promptState { return h.promptState(a.ID) })
+	if err != nil {
+		return nil, err
+	}
+	if typesPrompts(cur.kind) {
+		if cur, err = h.typeIn(ctx, a.ID, session, pane, a.Text, false); err != nil {
+			return nil, err
+		}
+		return proto.PromptResult{Queued: cur.status == statusWorking}, nil
+	}
+	switch cur.status {
+	case statusAsking:
+		return nil, fmt.Errorf("%w: the worker waits on its question: answer it first", errInvalidState)
+	case statusBlocked:
+		return nil, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
+	}
+	if err := h.opts.Term.QueuePrompt(ctx, session, pane, a.Text); err != nil {
+		return nil, fmt.Errorf("%w: %v", errPromptFailed, err)
+	}
+	return proto.PromptResult{Queued: cur.status == statusWorking}, nil
+}
+
 // retryEnter presses keys (Enter, or what a harness needs before it: #138)
 // once more for an agent that took a prompt's text but dropped the Enter,
 // and watches the worker for PromptRetryWait. since is the worker's start
@@ -475,37 +512,9 @@ func (h *Hub) awaitStarted(ctx context.Context, id string, since uint64, wait ti
 // blocked worker, or one with an ask, is refused, unless settling: then
 // (a dialog just answered) it is waited out like any other state.
 func (h *Hub) typePrompt(ctx context.Context, id, session, pane, text string, settling bool) (any, error) {
-	var cur promptState
-	for end := time.Now().Add(h.opts.PromptReadyWait); ; {
-		var err error
-		if cur, err = query(ctx, h, func() promptState { return h.promptState(id) }); err != nil {
-			return nil, err
-		}
-		s := cur.status
-		switch {
-		case s == statusAsking && !settling:
-			return nil, fmt.Errorf("%w: the worker waits on its question: answer it first", errInvalidState)
-		case s == statusBlocked && !settling:
-			return nil, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
-		}
-		if s == statusWorking || s == statusIdle || s == statusDone {
-			break
-		}
-		if time.Now().After(end) || ctx.Err() != nil {
-			return nil, fmt.Errorf("%w: the agent is not ready for a prompt (herdr says %q)", errPromptFailed, s)
-		}
-		sleepCtx(ctx, answerPoll)
-	}
-	t := h.opts.Term
-	if err := h.eraseDirty(ctx, id, session, pane, t.EraseTyped); err != nil {
+	cur, err := h.typeIn(ctx, id, session, pane, text, settling)
+	if err != nil {
 		return nil, err
-	}
-	if err := h.doWait(ctx, func() { h.noteTyped(id, text) }); err != nil {
-		return nil, err
-	}
-	if err := t.TypePrompt(ctx, session, pane, text); err != nil {
-		h.erasePartlyTyped(ctx, id, session, pane, err, t.EraseTyped)
-		return nil, fmt.Errorf("%w: %v", errPromptFailed, err)
 	}
 	if cur.status == statusWorking {
 		return proto.PromptResult{Queued: true}, nil
@@ -518,6 +527,44 @@ func (h *Hub) typePrompt(ctx context.Context, id, session, pane, text string, se
 		return proto.PromptResult{}, nil
 	}
 	return h.retryEnter(ctx, id, session, pane, cur.starts, "enter")
+}
+
+// typeIn is typePrompt up to its Enter: it waits for the agent to be ready
+// and types text, and returns the worker's state from before it typed.
+func (h *Hub) typeIn(ctx context.Context, id, session, pane, text string, settling bool) (promptState, error) {
+	var cur promptState
+	for end := time.Now().Add(h.opts.PromptReadyWait); ; {
+		var err error
+		if cur, err = query(ctx, h, func() promptState { return h.promptState(id) }); err != nil {
+			return cur, err
+		}
+		s := cur.status
+		switch {
+		case s == statusAsking && !settling:
+			return cur, fmt.Errorf("%w: the worker waits on its question: answer it first", errInvalidState)
+		case s == statusBlocked && !settling:
+			return cur, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
+		}
+		if s == statusWorking || s == statusIdle || s == statusDone {
+			break
+		}
+		if time.Now().After(end) || ctx.Err() != nil {
+			return cur, fmt.Errorf("%w: the agent is not ready for a prompt (herdr says %q)", errPromptFailed, s)
+		}
+		sleepCtx(ctx, answerPoll)
+	}
+	t := h.opts.Term
+	if err := h.eraseDirty(ctx, id, session, pane, t.EraseTyped); err != nil {
+		return cur, err
+	}
+	if err := h.doWait(ctx, func() { h.noteTyped(id, text) }); err != nil {
+		return cur, err
+	}
+	if err := t.TypePrompt(ctx, session, pane, text); err != nil {
+		h.erasePartlyTyped(ctx, id, session, pane, err, t.EraseTyped)
+		return cur, fmt.Errorf("%w: %v", errPromptFailed, err)
+	}
+	return cur, nil
 }
 
 // auditArgs is what the audit log keeps of a command's args: everything,

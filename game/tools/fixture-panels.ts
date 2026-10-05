@@ -149,9 +149,11 @@ export class PanelsSim {
       this.h.after(this.h.stepMs, () => fail(this.h.error('prompt_failed', `prompt_failed: ${w.name ?? 'the agent'} did not start working, even after one more Enter (simulated)`)));
       return;
     }
-    // #140: a built-in that shows only in the terminal opens there: no turn, nothing in the transcript.
+    // #140: a built-in that shows only in the terminal opens there: no turn, nothing in the transcript. Acked once
+    // delivered, as the bridge does: queued when the worker is at work.
     if (simTerminalOnly(w.harness ?? w.agent_kind ?? '', text)) {
-      this.h.after(Math.round(this.h.stepMs / 2), () => ack({ queued: false, retried: false, terminal: true }));
+      const queued = w.status === 'working';
+      this.h.after(Math.round(this.h.stepMs / 2), () => ack({ queued, retried: false, terminal: true }));
       return;
     }
     if (w.status === 'working') {

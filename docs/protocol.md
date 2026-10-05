@@ -1868,8 +1868,17 @@ The transcript view of a Codex worker shows the rewritten text (what Codex recei
 
 #140: the ack (direct or `queued`) has `"terminal": true` when the typed text runs a built-in whose output or dialog
 shows only in the worker's terminal (the table under [Commands and skills](#commands-and-skills): the text, trimmed,
-is `/name` or, for an `always` built-in, `/name args`; aliases count, so `/cost` is Claude's `/usage`); absent
-otherwise. The transcript will show nothing of it: a client shows the worker's terminal instead.
+is `/name` or, for an `always` built-in, `/name args`; the name ends at the first whitespace of any kind, so
+`/model\topus` has an argument; aliases count, so `/cost` is Claude's `/usage`); absent otherwise. The transcript will
+show nothing of it: a client shows the worker's terminal instead.
+
+Such a prompt starts no turn (a dialog opens, or a card prints, and herdr says `idle` / `done` meanwhile), so the bridge
+decides this **before** it sends, from the text as typed, and sends it differently: Claude's is typed with its Enter
+(after the same wait for the agent to be ready, and the same erase), Codex's pasted with `herdr agent prompt` without
+waiting. The ack comes as soon as herdr delivered it; nothing waits for `working`, and Enter is **never** pressed again
+(it would act on the open dialog), so `retried` is always false. herdr failing to deliver it is `prompt_failed`, as
+for any prompt. A worker `blocked` or with an ask refuses it (`invalid_state`); to a worker `working` it goes as any
+queued prompt (`queued: true`, with `terminal`): the CLI runs it, or refuses it, in its terminal when it takes it.
 
 The bridge's transcript reader (the usage tracker) warns in its log when a prompt it typed into Claude reaches the
 transcript wrapped as a paste anyway (Claude Code's paste threshold changed): it keeps a hash of each typed prompt's

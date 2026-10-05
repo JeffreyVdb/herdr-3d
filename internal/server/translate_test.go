@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -129,6 +130,50 @@ func TestTerminalOnlyPromptSaysSoInItsAck(t *testing.T) {
 	if got := terminal("w2", "/usage"); got != nil {
 		t.Errorf("/usage to codex: terminal %v", got)
 	}
+	if got := terminal("w3", "/status"); got != true {
+		t.Errorf("/status to working codex: terminal %v", got)
+	}
+}
+
+// #140 R1: a terminal-only built-in opens a dialog (Claude) or prints in the
+// terminal (Codex) and starts no turn. It is typed or pasted with its one
+// Enter and acked at once: nothing waits for a turn, and no Enter is pressed
+// again (it would act on the dialog).
+func TestTerminalOnlyPromptStartsNoTurnAndIsSentOnce(t *testing.T) {
+	fp := &fakePrompts{}
+	tb := startTermBridge(t, func(o *server.Options) {
+		o.Prompts = fp
+		o.PromptAckWait, o.PromptRetryWait = 3*time.Second, 3*time.Second
+	}, agentW("w1", "claude", "idle"), agentW("w2", "codex", "done"))
+	tb.term.onTyped = nil // no turn starts
+	c := tb.connect(proto.Hello{})
+	snap := c.snapshot()
+	for _, p := range []struct{ ws, text string }{{"w1", "/usage"}, {"w2", "/status"}} {
+		start := time.Now()
+		_, ack := c.mustAck(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: idOf(t, snap, p.ws), Text: p.text})
+		if d := time.Since(start); d > 2*time.Second {
+			t.Errorf("%s to %s: acked after %v: it waited for a turn", p.text, p.ws, d)
+		}
+		if m, _ := ack.Data.(map[string]any); m["terminal"] != true || m["queued"] == true || m["retried"] == true {
+			t.Errorf("%s to %s: ack %+v", p.text, p.ws, ack.Data)
+		}
+	}
+	want := []string{`type w1:p1 "/usage"`, `queue w2:p1 "/status"`}
+	if got := tb.term.Calls(); !slices.Equal(got, want) {
+		t.Fatalf("calls %q, want %q", got, want)
+	}
+}
+
+// #140 R1: a terminal-only built-in that herdr fails to deliver still fails.
+func TestTerminalOnlyPromptThatIsNotDeliveredFails(t *testing.T) {
+	tb := promptsBridge(t, &fakePrompts{})
+	tb.term.onTyped = nil
+	tb.term.typeErrs = []error{errors.New("herdr: pane gone")}
+	tb.term.queueErrs = []error{errors.New("herdr: pane gone")}
+	c := tb.connect(proto.Hello{})
+	snap := c.snapshot()
+	c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: idOf(t, snap, "w1"), Text: "/usage"}, proto.ErrPromptFailed)
+	c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: idOf(t, snap, "w2"), Text: "/status"}, proto.ErrPromptFailed)
 }
 
 // Two prompts to one worker are translated and sent in the order they came.
@@ -270,9 +315,16 @@ func TestBridgeBuiltPromptsAreNotTranslated(t *testing.T) {
 	})
 }
 
-// TerminalOnly plays harness.TerminalOnly for "/usage" and a bare "/model".
+// TerminalOnly plays harness.TerminalOnly for Claude's "/usage" and bare
+// "/model", and Codex's "/status".
 func (f *fakePrompts) TerminalOnly(harness, text string) bool {
-	return harness == "claude" && (text == "/usage" || text == "/model")
+	switch harness {
+	case "claude":
+		return text == "/usage" || text == "/model"
+	case "codex":
+		return text == "/status"
+	}
+	return false
 }
 
 func (f *fakePrompts) RetryKeys(harness, text string) []string {
