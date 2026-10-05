@@ -94,6 +94,9 @@ type Options struct {
 	// #137: Files ranks a worker's files for worker.files (nil: it fails
 	// with internal).
 	Files FileIndex
+	// #138: Prompts rewrites a composer prompt for its worker's harness
+	// (nil: prompts go as typed).
+	Prompts PromptTranslator
 	// Caps are the worker caps (zero: DefaultCaps).
 	Caps Caps
 	// HireOptions, if set, replaces what can be hired (the harness catalogs).

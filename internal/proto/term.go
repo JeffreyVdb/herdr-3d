@@ -153,6 +153,10 @@ type PromptResult struct {
 	Queued bool `json:"queued"`
 	// Retried: the first Enter was dropped and pressed again.
 	Retried bool `json:"retried"`
+	// Sent is the text the bridge sent, when it rewrote the typed one for the
+	// worker's harness (#138); absent when it sent the text as typed. The
+	// agent's transcript shows this text.
+	Sent string `json:"sent,omitempty"`
 }
 
 // Question is what a blocked worker's screen asks.

@@ -684,6 +684,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 			catalog.Wait()
 		}()
 		opts.Commands = catalog
+		opts.Prompts = harness.NewPrompts(catalog) // #138
 	}
 	if cfg.Git != nil { // #137
 		fctx, cancel := context.WithCancel(ctx)

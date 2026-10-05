@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -333,5 +334,42 @@ func TestFileIndexIsWiredByTheApp(t *testing.T) {
 	}
 	if !found {
 		t.Error("internal/app does not wire internal/fileindex in")
+	}
+}
+
+// #138: a prompt is rewritten for its harness by internal/harness's rules
+// table, wired in by the app through server.Options.Prompts: the server,
+// the store and the protocol reach no harness package, and the prompt path
+// holds no harness name of its own (translate.go and ask.go; input.go has
+// only the #95 typing rule).
+func TestPromptRulesAreInTheHarnessTable(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go tool")
+	}
+	const mod = "github.com/JeffreyVdb/herdr-3d/internal/"
+	deps := func(pkg string) []string {
+		out, err := exec.Command("go", "list", "-deps", mod+pkg).CombinedOutput()
+		if err != nil {
+			t.Fatalf("go list -deps %s: %v\n%s", pkg, err, out)
+		}
+		return strings.Fields(string(out))
+	}
+	for _, pkg := range []string{"server", "store", "proto"} {
+		for _, dep := range deps(pkg) {
+			if dep == mod+"harness" {
+				t.Errorf("internal/%s depends on %s", pkg, dep)
+			}
+		}
+	}
+	for _, file := range []string{"translate.go", "ask.go"} {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{`"codex"`, `"claude"`} {
+			if strings.Contains(string(src), name) {
+				t.Errorf("%s names the harness %s: the rules belong in internal/harness's table", file, name)
+			}
+		}
 	}
 }

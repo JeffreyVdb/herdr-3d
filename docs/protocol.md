@@ -487,7 +487,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `terminal.unwatch` | `{"id": string}` | — | — |
 | `terminal.zoom` | `{"id": string, "on": bool}` | `{"pane", "cols", "rows", "zoom"}` | a `terminal.state` and, if the size changed, a full `terminal.frame` (see [Fullscreen](#fullscreen-74)) |
 | `worker.keys` | `{"id": string, "input": [{"text": string} \| {"key": string}…]}` | — | — (see [Input](#input)) |
-| `worker.prompt` | `{"id": string, "text": string}` | `{"queued": bool, "retried": bool}` | the worker's statuses |
+| `worker.prompt` | `{"id": string, "text": string}` | `{"queued": bool, "retried": bool, "sent"?: string}` | the worker's statuses |
 | `worker.answer` | `{"id": string, "hash": string, "choice"?: 1–9, "cancel"?: true}` | `{"sent": [string…], "resolved": bool}` | the worker's upsert without its `question` when it moves on |
 | `worker.answer_ask` | `{"id": string, "tool_use_id": string, "answers"?: [{"question": int, "choices"?: [int…], "other"?: string}…], "cancel"?: true, "prompt"?: string}` | `{"sent": [string…], "resolved": bool, "prompted"?: bool}` | the worker's upsert without its `ask` once the transcript has the answer (before the ack) (see [Laptops: asks](#laptops-asks)) |
 | `transcript.watch` | `{"id": string, "limit"?: 1–500}` | `{"harness", "session", "version", "cursor", "has_more", "pending", "items"}` | `transcript.items` to this connection only (see [Laptops: transcript](#laptops-transcript)) |
@@ -1844,6 +1844,27 @@ its length, never the text). 16 KiB takes about 1.3 s to type.
   but its Enter was dropped (the known paste quirk; herdr: `agent_prompt_stalled` after 5 s), the bridge presses Enter
   **once** more and waits up to 5 s for `working` / `blocked`: `retried: true`. Still not submitted, or herdr failing
   otherwise: `prompt_failed`.
+
+**The bridge rewrites a Codex prompt (#138).** The composer keeps harness-neutral text; for a worker whose agent is
+Codex the bridge rewrites these tokens on the worker's input lane, just before the text is sent (direct and queued;
+also `worker.answer_ask`'s `prompt`), and nothing else:
+
+| In `text` | Codex gets | Only when |
+|---|---|---|
+| `/name` | `$name` | `name` is a skill in the worker's `worker.commands` (never a built-in, `/compact` stays) and the `/` starts a word; `/usr/bin/env`, `http://x/y`, `a/b`, `/name/more` stay |
+| `@path` | `path` | the `@` starts a word and `path` is a file or directory inside the worker's checkout (symlinks and `..` that lead out do not count); `@someone`, `me@x.com` stay |
+| `@"a b/c.txt"` | `a b/c.txt` | as `@path`: a path with spaces is written in quotes (Claude only attaches it that way) |
+
+Text to Claude goes through untouched, so a client writes the mention for Claude itself: `@path`, or
+`@"path with spaces/file.txt"` when the path has spaces. `[Image #n: …]` markers are never touched. The 16 KiB limit is
+for the text **after** the rewrite: a Codex text up to 64 KiB (4 x the limit: no rewrite shortens a text past a quarter)
+is read, translated and then checked, in `worker.prompt` and in `worker.answer_ask`'s `prompt` alike (the latter is
+refused before the dialog is touched). When the bridge changed the text, the ack of `worker.prompt` (direct or
+`queued`) has `sent`: the text it sent, which is what the agent's transcript shows; absent when it sent the text as
+typed. A client matches its pending row against the typed or the sent text. When the catalog or the file check fails, the text goes as typed. A Codex prompt that ends in a `$skill`
+leaves Codex's skill popup open and its Enter is taken: the retry presses `esc` then `enter` instead of `enter` alone,
+unless the worker started meanwhile (the prompt was only slow): then nothing is pressed, as Esc aborts a running turn.
+The transcript view of a Codex worker shows the rewritten text (what Codex received).
 
 The bridge's transcript reader (the usage tracker) warns in its log when a prompt it typed into Claude reaches the
 transcript wrapped as a paste anyway (Claude Code's paste threshold changed): it keeps a hash of each typed prompt's

@@ -165,8 +165,9 @@ func (h *Hub) startAnswerAsk(ctx context.Context, c *Client, cmd proto.Command) 
 		return bad("want answers (one per question) or cancel: true")
 	case a.Prompt != "" && !a.Cancel:
 		return bad("a prompt goes only with cancel")
-	case a.Prompt != "" && !herdr.ValidMessage(a.Prompt):
-		return bad("prompt must be 1-%d bytes of UTF-8 without NUL, got %d bytes", herdr.MaxMessage, len(a.Prompt))
+	case a.Prompt != "" && !h.promptSourceOK(a.Prompt):
+		// The limit is on the translated text (answerAsk checks it, #138).
+		return badPromptText("prompt", len(a.Prompt))
 	}
 	w, _, err := h.termWorker(a.ID)
 	if err != nil {
@@ -178,9 +179,15 @@ func (h *Hub) startAnswerAsk(ctx context.Context, c *Client, cmd proto.Command) 
 	case w.Ask.ToolUseID != a.ToolUseID:
 		return fmt.Errorf("%w: %s asks another question now (tool_use_id %s)", errStale, w.Name, w.Ask.ToolUseID)
 	}
-	if a.Prompt != "" && w.Ask.Agent == proto.AskClaude {
-		if err := checkTyped(proto.AskClaude, a.Prompt, herdr.MaxMessage, "prompt"); err != nil {
-			return err
+	if a.Prompt != "" && !h.rewrites(w.AgentKind) {
+		// Not translated: its limit and typing rules apply to it as it is.
+		if !herdr.ValidMessage(a.Prompt) {
+			return badPromptText("prompt", len(a.Prompt))
+		}
+		if w.Ask.Agent == proto.AskClaude {
+			if err := checkTyped(proto.AskClaude, a.Prompt, herdr.MaxMessage, "prompt"); err != nil {
+				return err
+			}
 		}
 	}
 	var answers []askAnswer
@@ -309,6 +316,14 @@ func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answer
 	case ask.ToolUseID != a.ToolUseID:
 		return nil, fmt.Errorf("%w: it asks another question now (tool_use_id %s)", errStale, ask.ToolUseID)
 	}
+	// #138: the composer's text, for its harness, and its limit checked now:
+	// a prompt that cannot be sent is refused before the dialog is touched.
+	var prompt string
+	if a.Prompt != "" {
+		if prompt, err = h.composerPrompt(ctx, a.ID, ask.Agent, a.Prompt, "prompt"); err != nil {
+			return nil, err
+		}
+	}
 	d := &askDriver{h: h, ctx: ctx, id: a.ID, toolUseID: a.ToolUseID, session: session, pane: pane}
 	switch {
 	case ask.Agent == proto.AskCodex && a.Cancel:
@@ -329,18 +344,51 @@ func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answer
 	}
 	if a.Prompt != "" && res.Resolved {
 		if ask.Agent == proto.AskClaude { // #95: typed, once the dismissed dialog is gone
-			if _, err := h.typePrompt(ctx, a.ID, session, pane, a.Prompt, true); err != nil {
+			if _, err := h.typePrompt(ctx, a.ID, session, pane, prompt, true); err != nil {
 				return nil, fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)
 			}
-		} else if err := h.opts.Term.SubmitPrompt(ctx, session, pane, a.Prompt); err != nil {
-			var api *herdr.APIError
-			if !errors.As(err, &api) || api.Code != "agent_prompt_stalled" {
-				return nil, fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)
-			}
+		} else if err := h.submitAfterAsk(ctx, a.ID, session, pane, ask.Agent, prompt); err != nil {
+			return nil, err
 		}
 		res.Prompted = true
 	}
 	return res, nil
+}
+
+// submitAfterAsk submits a Codex prompt once its dismissed dialog is gone.
+// A prompt that stalled gets the harness's retry keys when they are more
+// than a lone Enter (a popup the text left open took the Enter: close it,
+// submit), unless the worker started meanwhile (promptState.started, since
+// its start counter before the submit): the prompt was only slow, and an Esc
+// would abort its turn (#138).
+func (h *Hub) submitAfterAsk(ctx context.Context, id, session, pane, kind, prompt string) error {
+	before, err := query(ctx, h, func() promptState { return h.promptState(id) })
+	if err != nil {
+		return err
+	}
+	err = h.opts.Term.SubmitPrompt(ctx, session, pane, prompt)
+	if err == nil {
+		return nil
+	}
+	var api *herdr.APIError
+	if !errors.As(err, &api) || api.Code != "agent_prompt_stalled" {
+		return fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)
+	}
+	keys := h.retryKeys(kind, prompt)
+	if slices.Equal(keys, []string{"enter"}) {
+		return nil
+	}
+	cur, err := query(ctx, h, func() promptState { return h.promptState(id) })
+	switch {
+	case err != nil:
+		return fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)
+	case cur.started(before.starts):
+		return nil
+	}
+	if err := h.opts.Term.SendKeys(ctx, session, pane, keys...); err != nil {
+		return fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)
+	}
+	return nil
 }
 
 // waitAskResolved watches for the transcript to record the call's result
