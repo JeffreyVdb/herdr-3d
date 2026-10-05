@@ -69,13 +69,39 @@ describe('CornerWatch with the command palette (#147)', () => {
     corner.dispose();
   });
 
-  it('the palette is the topmost screen even when another screen dialog comes later in the document', () => {
+  it('the palette is the topmost screen over a dialog that opened before it, whatever their order in the document', async () => {
     const corner = new CornerWatch(() => undefined);
     const pal = dialog('credits palette', PAL_RIGHT);
     const hire = dialog('desk-dlg desk-dlg--hire', WIDTH - 16);
-    openIt(pal);
     openIt(hire);
+    await settle();
+    openIt(pal);
+    await settle();
     expect(corner.topScreen()).toBe(pal);
+    closeIt(pal);
+    await settle();
+    expect(corner.topScreen()).toBe(hire);
+    corner.dispose();
+  });
+
+  it('a dialog that opens after the palette is the topmost screen; the palette is again when it closes', async () => {
+    const corner = new CornerWatch(() => undefined);
+    const hire = dialog('desk-dlg desk-dlg--hire', WIDTH - 16);
+    const pal = dialog('credits palette', PAL_RIGHT);
+    const keys = dialog('shortcuts', 520);
+    openIt(hire);
+    openIt(pal);
+    await settle();
+    openIt(keys);
+    await settle();
+    expect(corner.topScreen()).toBe(keys);
+    expect(corner.clearOf()).toEqual([pal, keys]); // the sheet under the palette is not one to clear
+    closeIt(keys);
+    await settle();
+    expect(corner.topScreen()).toBe(pal);
+    openIt(keys); // and a dialog that opens again is above it again
+    await settle();
+    expect(corner.topScreen()).toBe(keys);
     corner.dispose();
   });
 
@@ -186,6 +212,47 @@ describe('the plan-limits plate over the command palette (#147)', () => {
     await settle();
     expect(w.root.dataset.peek).toBe('false');
     expect(w.root.dataset.dock).toBe('tab');
+    w.dispose();
+  });
+
+  it('a modal opened after the palette hosts the plate; a click on the tab there peeks, and closing it gives the plate back to the palette', async () => {
+    const { w, prefs } = widget();
+    const pal = dialog('credits palette', PAL_RIGHT);
+    const keys = dialog('shortcuts', 520);
+    openIt(pal);
+    await settle();
+    expect(w.root.parentElement).toBe(pal);
+    openIt(keys);
+    await settle();
+    expect(w.root.parentElement).toBe(keys); // the palette is inert now: the tab must live in the dialog that took its place
+    expect(w.root.dataset.dock).toBe('tab');
+    w.root.querySelector<HTMLButtonElement>('.lm-tab')?.click();
+    expect(w.root.dataset.peek).toBe('true');
+    expect(w.isOpen).toBe(true);
+    closeIt(keys);
+    await settle();
+    expect(w.root.parentElement).toBe(pal);
+    expect(w.root.dataset.peek).toBe('false'); // the peek was over the shortcut list
+    expect(w.root.dataset.dock).toBe('tab');
+    expect(prefs.open).toBe(false);
+    closeIt(pal);
+    await settle();
+    expect(w.root.dataset.dock).toBe('');
+    w.dispose();
+  });
+
+  it('measures the dialogs over the palette, not the ones under it', async () => {
+    const { w } = widget();
+    const hire = dialog('desk-dlg desk-dlg--hire', WIDTH - 16);
+    const pal = dialog('credits palette', PAL_RIGHT);
+    const keys = dialog('shortcuts', WIDTH - 30);
+    openIt(hire);
+    openIt(pal);
+    await settle();
+    expect([w.root.dataset.dock, w.root.dataset.fit]).toEqual(['tab', 'full']);
+    openIt(keys);
+    await settle();
+    expect([w.root.dataset.dock, w.root.dataset.fit]).toEqual(['tab', 'snug']);
     w.dispose();
   });
 });

@@ -384,6 +384,42 @@ for (const where of ['city', 'floor'] as const) {
   });
 }
 
+test('the shortcut list opened over the palette hosts the plan-limits tab: a click peeks and keeps the list open, and closing the list gives the tab back to the palette', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo', '', LIM);
+  await withReadings(page);
+  expect(await chord(page)).toBe(true);
+  await expectOpen(page);
+  await expectTab(page);
+  // A modal over the palette (Ctrl+/ works from its field): the palette is inert now, so the tab must live in the list.
+  await page.keyboard.press('Control+Slash');
+  await expect(page.locator('dialog.shortcuts')).toBeVisible();
+  await expect(plate(page)).toHaveAttribute('data-dock', 'tab');
+  expect(await page.evaluate(() => document.querySelector('.limits')?.parentElement?.matches('dialog.shortcuts'))).toBe(true);
+  const hit = await page.evaluate(() => {
+    const t = document.querySelector('.limits .lm-tab')?.getBoundingClientRect();
+    const at = t && document.elementFromPoint(t.left + t.width / 2, t.top + t.height / 2);
+    return { tab: !!at?.closest('.lm-tab'), why: `${at?.tagName}.${at?.className}` };
+  });
+  expect(hit.tab, `a click at the tab's middle reaches it: ${hit.why}`).toBe(true);
+  await plate(page).locator('.lm-tab').click();
+  await expect(plate(page)).toHaveAttribute('data-peek', 'true');
+  await expect(plate(page).locator('.lm-panel')).toBeVisible();
+  await expect(page.locator('dialog.shortcuts')).toBeVisible(); // the click was the tab's, not the list's
+  // Closing the list (Esc from the plate: the top modal) ends the peek and the palette hosts the tab again.
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog.shortcuts')).toBeHidden();
+  await expectOpen(page);
+  await expectTab(page);
+  expect(await page.evaluate(() => document.querySelector('.limits')?.parentElement?.matches('dialog.palette'))).toBe(true);
+  await plate(page).locator('.lm-tab').click(); // and it is clickable there again
+  await expect(plate(page)).toHaveAttribute('data-peek', 'true');
+  await page.keyboard.press('Escape');
+  await expectClosed(page);
+  await expectPlateBack(page);
+  clean();
+});
+
 test('seated at a terminal: the plan-limits plate is its edge tab over the palette, and back at the laptop after', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);

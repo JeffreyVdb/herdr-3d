@@ -37,6 +37,9 @@ export class CornerWatch {
   private readonly narrow = typeof matchMedia === 'function' ? matchMedia(NARROW) : null;
   private readonly onNarrow = () => this.changed(false);
   private watcher: MutationObserver | null = null;
+  /** When each screen opened (a monotonic count): the top layer stacks modals in the order they opened, so the later one is the topmost. */
+  private readonly opened = new WeakMap<Element, number>();
+  private count = 0;
 
   /** `changed(opened)`: a dialog, the reading overlay, the seat or the viewport's width changed; `opened`: a dialog opened. */
   constructor(private readonly changed: (opened: boolean) => void) {
@@ -45,10 +48,12 @@ export class CornerWatch {
     this.watcher = new MutationObserver((records) => {
       // (The whiteboard overlay and the floor overview are divs with `open`, not dialogs: SCREEN lists them.)
       const screen = (r: MutationRecord) => r.target instanceof HTMLDialogElement || (r.target instanceof Element && (r.target.classList.contains('wb') || r.target.classList.contains('ov')));
+      // Stamp in the order the changes happened, so a dialog opened over another one is known to be above it.
+      for (const r of records) if (r.attributeName === 'open' && r.oldValue === null && r.target instanceof Element && r.target.hasAttribute('open')) this.opened.set(r.target, ++this.count);
       if (!records.some((r) => screen(r) || r.attributeName === 'data-reading' || r.attributeName === 'data-seated')) return;
       this.changed(records.some((r) => r.target instanceof HTMLDialogElement && r.target.open));
     });
-    this.watcher.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open', 'data-reading', 'data-seated'] });
+    this.watcher.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open', 'data-reading', 'data-seated'], attributeOldValue: true });
   }
 
   /** A dialog (modal, or the Changes panel) is open, and the viewport is too narrow to sit beside it. */
@@ -66,12 +71,37 @@ export class CornerWatch {
     return document.querySelector('dialog.changes[open]') ? 'changes' : '';
   }
 
-  /** The topmost open screen dialog: the palette when it is up (a modal over any other), else the last in the document, where a later one opens. */
+  /**
+   * The open screens from the bottom of the stack to the top. The whiteboard and the overview are plain divs and sit
+   * under every modal dialog; the dialogs stack in the order they opened (`opened`). One that opened since the last
+   * mutation callback has no stamp yet: it is newer than the stamped ones, and the palette, a modal over anything
+   * that was already up, is the newest of those.
+   */
+  private stack(): Element[] {
+    const open = [...document.querySelectorAll(SCREEN)];
+    const dialogs = open.filter((e) => e instanceof HTMLDialogElement);
+    for (const d of [...dialogs.filter((e) => !e.matches(PALETTE)), ...dialogs.filter((e) => e.matches(PALETTE))]) if (!this.opened.has(d)) this.opened.set(d, ++this.count);
+    return [...open.filter((e) => !(e instanceof HTMLDialogElement)), ...dialogs.sort((a, b) => this.opened.get(a)! - this.opened.get(b)!)];
+  }
+
+  /** The topmost open screen dialog: the one that opened last (the palette is a modal over any view, but another modal can open over it, e.g. the shortcut list). */
   topScreen(): Element | null {
-    const palette = document.querySelector(PALETTE);
-    if (palette) return palette;
-    const dialogs = document.querySelectorAll(SCREEN);
-    return dialogs[dialogs.length - 1] ?? null;
+    return this.stack().pop() ?? null;
+  }
+
+  /**
+   * The screens the plate's edge tab has to keep clear of: all of them, but with the palette up only the palette and
+   * what opened over it (what is under the palette is dimmed behind it, as is the seated laptop's glass).
+   */
+  clearOf(): Element[] {
+    const stack = this.stack();
+    const palette = stack.findIndex((e) => e.matches(PALETTE));
+    return palette < 0 ? stack : stack.slice(palette);
+  }
+
+  /** The palette is open: the plate steps out into the tab beside it (and beside what opened over it). */
+  get palette(): boolean {
+    return !!document.querySelector(PALETTE);
   }
 
   dispose(): void {

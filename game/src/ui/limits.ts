@@ -2,7 +2,7 @@ import type { CommandResult } from '../net/client';
 import type { LimitBook, ProviderView, WindowView } from '../world/limits';
 import type { LimitTarget } from '../world/limits';
 import { harnessViews, limitsView, warningOf, windowName } from '../world/limits';
-import { CornerWatch, PALETTE, READING, SCREEN, SEATED } from './corner';
+import { CornerWatch, READING, SCREEN, SEATED } from './corner';
 import { h, icon, ICON } from './dom';
 import { LimitsPrefs } from './limitsPrefs';
 import './limits.css';
@@ -205,9 +205,8 @@ export class LimitsWidget {
       const room = document.documentElement.clientWidth - right;
       return room >= TAB_ROOM ? 'full' : room >= TAB_ROOM_SNUG ? 'snug' : null;
     };
-    // #147: the command palette is a modal over whatever is up (a dimmed, inert hire sheet, the laptop's glass): it alone is what the tab keeps clear of.
-    const palette = document.querySelector(PALETTE);
-    if (palette) return fit(palette.getBoundingClientRect().right);
+    // #147: the command palette is a modal over whatever is up (a dimmed, inert hire sheet, the laptop's glass): the tab keeps clear of it and of what opened over it, and of nothing beneath.
+    if (this.corner.palette) return fit(Math.max(0, ...this.corner.clearOf().map((d) => d.getBoundingClientRect().right)));
     let right = 0;
     for (const d of document.querySelectorAll(`${SCREEN}, ${READING}`)) right = Math.max(right, d.getBoundingClientRect().right);
     const seated = document.querySelector(SEATED);
