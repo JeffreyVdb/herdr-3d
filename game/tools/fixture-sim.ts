@@ -477,6 +477,8 @@ export class SimWorld {
           return this.panels.changes(a, ack, fail);
         case 'worker.commands': // #136
           return this.panels.commands(a, ack);
+        case 'worker.files': // #137
+          return this.panels.files(a, ack);
         // M6 crew (tools/fixture-crew.ts): the simulator's own, not a bridge command.
         case 'sim.crew':
           return ack(this.crew.handle(a, send));

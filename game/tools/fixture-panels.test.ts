@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { Changes, Snapshot, WorkerCommands, WorldEvent } from '../src/net/protocol';
+import type { Changes, Snapshot, WorkerCommands, WorkerFiles, WorldEvent } from '../src/net/protocol';
 import { changesView } from '../src/world/changes';
 import { WorldStore } from '../src/world/store';
-import { SIM_DIFF_CAP, simChanges, simCommands } from './fixture-panels';
+import { SIM_DIFF_CAP, SIM_FILES, simChanges, simCommands, simFiles } from './fixture-panels';
 import { loadFixture } from './fixture-server';
 import { SimWorld, type SimOptions } from './fixture-sim';
 
@@ -264,5 +264,58 @@ describe('SimWorld worker.commands (#136)', () => {
     expect(r.cmd('worker.commands', { id: r.byName('Muffin').id }).got()[0]).toMatchObject({ code: 'invalid_state' });
     expect(r.cmd('worker.commands', { id: 'nope' }).got()[0]).toMatchObject({ code: 'unknown_worker' });
     expect(r.cmd('worker.commands', { id: r.byName('Nibble').id, cwd: '/etc' }).got()[0]).toMatchObject({ code: 'bad_request' });
+  });
+});
+
+describe('SimWorld worker.files (#137)', () => {
+  const files = (r: ReturnType<typeof rig>, name: string, args: Record<string, unknown>) => {
+    const c = r.cmd('worker.files', { id: r.byName(name).id, ...args });
+    expect(c.got()).toEqual([]);
+    r.tick();
+    const m = r.reply(c.req_id);
+    expect(m).toMatchObject({ t: 'ack' });
+    return (m as { data: WorkerFiles }).data;
+  };
+
+  it('answers ranked matches with code point indices, verbatim paths and derived directories', () => {
+    const r = rig();
+    const d = files(r, 'Nibble', { query: 'my file' });
+    expect(d).toMatchObject({ source: 'git', reason: null });
+    expect(d.files[0]).toEqual({ path: 'docs/my file #1?.md', kind: 'file', indices: [5, 6, 7, 8, 9, 10, 11] });
+    for (const m of d.files) expect(Object.keys(m).sort()).toEqual(['indices', 'kind', 'path']);
+    // Code points, not UTF-16 units: the rocket is one.
+    const [rocket] = files(r, 'Nibble', { query: 'launch' }).files;
+    expect(rocket).toEqual({ path: 'docs/🚀 launch.md', kind: 'file', indices: [7, 8, 9, 10, 11, 12] });
+    expect(Array.from(rocket?.path ?? '').slice(7, 13).join('')).toBe('launch');
+    // A directory: `@game/src/ui` picks the folder.
+    expect(files(r, 'Nibble', { query: 'src/ui' }).files[0]).toMatchObject({ path: 'game/src/ui', kind: 'dir' });
+    // Smart case.
+    expect(files(r, 'Nibble', { query: 'button' }).files.map((m) => m.path)).toEqual(['game/src/ui/Button.ts']);
+    expect(files(r, 'Nibble', { query: 'BUTTON' }).files).toEqual([]);
+    // An empty query: shallow first, directories first; limit default, 0, cap.
+    const all = files(r, 'Nibble', { query: '' });
+    expect(all.files.slice(0, 6).map((m) => `${m.path}:${m.kind}`)).toEqual(['cmd:dir', 'docs:dir', 'game:dir', 'internal:dir', 'README.md:file', 'go.mod:file']);
+    expect(all.files.every((m) => m.indices.length === 0)).toBe(true);
+    expect(files(r, 'Nibble', { query: '', limit: 3 }).files).toHaveLength(3);
+    expect(files(r, 'Nibble', { query: 'o', limit: 0 }).files.length).toBeLessThanOrEqual(30);
+    expect(simFiles('', 1000).length).toBe(SIM_FILES.length + 11);
+    expect(files(r, 'Pixel', { query: '', limit: 1000 }).files).toHaveLength(SIM_FILES.length + 11);
+  });
+
+  it('outside git with no rg: empty with a reason', () => {
+    const r = rig();
+    const want = { files: [], source: 'none', reason: expect.stringMatching(/rg.*; the checkout has no files to search$/) };
+    expect(files(r, 'Inky', { query: 'a' })).toEqual(want);
+    expect(files(r, 'Inky', { query: '' })).toEqual(want);
+  });
+
+  it('fails like the bridge', () => {
+    const r = rig();
+    const id = r.byName('Nibble').id;
+    expect(r.cmd('worker.files', { id, query: 'a', limit: -1 }).got()[0]).toMatchObject({ code: 'bad_request' });
+    expect(r.cmd('worker.files', { id, query: 'é'.repeat(257) }).got()[0]).toMatchObject({ code: 'bad_request' });
+    expect(r.cmd('worker.files', { id, query: 'a', cwd: '/etc' }).got()[0]).toMatchObject({ code: 'bad_request' });
+    expect(r.cmd('worker.files', { id: r.byName('Muffin').id, query: 'a' }).got()[0]).toMatchObject({ code: 'invalid_state' });
+    expect(r.cmd('worker.files', { id: 'nope', query: 'a' }).got()[0]).toMatchObject({ code: 'unknown_worker' });
   });
 });

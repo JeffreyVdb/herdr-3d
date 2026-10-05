@@ -80,6 +80,9 @@ const (
 	opPush     = "push"
 	opAheadOf  = "ahead-of"
 	opSubjects = "subjects"
+	// #137 worker.files (read-only): a checkout's index file and its files.
+	opIndexPath = "index-path"
+	opListFiles = "ls-files"
 )
 
 // shapes is the complete set of git commands the bridge runs. {git} is
@@ -112,6 +115,12 @@ var shapes = map[string][]string{
 	opPush:     {"{git}", "-C", "{dir}", "push", "-u", "origin", "refs/heads/{branch}:refs/heads/{branch}"},
 	opAheadOf:  {"{git}", "-C", "{dir}", "rev-list", "--count", "HEAD", "--not", "{ref}"},
 	opSubjects: {"{git}", "-C", "{dir}", "log", "--format=%s", "-n", "20", "HEAD", "--not", "{ref}", "--"},
+	// #137 worker.files: where the checkout's index file is (a linked
+	// worktree has its own), and the tracked plus untracked-not-ignored
+	// files under the checkout, relative to it, NUL-terminated and unquoted.
+	// Neither writes the index (and GIT_OPTIONAL_LOCKS=0 besides).
+	opIndexPath: {"{git}", "-C", "{dir}", "rev-parse", "--path-format=absolute", "--git-path", "index"},
+	opListFiles: {"{git}", "-C", "{dir}", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--deduplicate"},
 }
 
 var placeholders = map[string]func(string) bool{
@@ -197,6 +206,8 @@ func (g *Git) exec(ctx context.Context, op string, vars map[string]string,
 			timeout = 20 * time.Second
 		case opPush:
 			timeout = 60 * time.Second
+		case opListFiles:
+			timeout = ListFilesTimeout
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -207,7 +218,7 @@ func (g *Git) exec(ctx context.Context, op string, vars map[string]string,
 		if ctx.Err() != nil {
 			msg = "timed out after " + timeout.String()
 		}
-		return &Error{Op: op, Err: err, Stderr: msg}
+		return &Error{Op: op, Err: err, Stderr: msg, TimedOut: ctx.Err() != nil}
 	}
 	return nil
 }
@@ -217,6 +228,9 @@ type Error struct {
 	Op     string
 	Err    error
 	Stderr string
+	// TimedOut is set when the command was stopped by its timeout (or its
+	// caller's context).
+	TimedOut bool
 }
 
 func (e *Error) Error() string {
@@ -233,8 +247,7 @@ func (e *Error) Unwrap() error { return e.Err }
 func (g *Git) TopLevel(ctx context.Context, dir string) (string, error) {
 	out, err := g.run(ctx, opTopLevel, map[string]string{"dir": dir})
 	if err != nil {
-		var ge *Error
-		if errors.As(err, &ge) && strings.Contains(ge.Stderr, "not a git repository") {
+		if notRepo(err) {
 			return "", ErrNotRepo
 		}
 		return "", err
@@ -244,6 +257,12 @@ func (g *Git) TopLevel(ctx context.Context, dir string) (string, error) {
 		return "", fmt.Errorf("git rev-parse --show-toplevel: unexpected %q", top)
 	}
 	return top, nil
+}
+
+// notRepo reports whether err is git's "not a git repository".
+func notRepo(err error) bool {
+	var ge *Error
+	return errors.As(err, &ge) && strings.Contains(ge.Stderr, "not a git repository")
 }
 
 // Fetch runs `git fetch origin` in dir.

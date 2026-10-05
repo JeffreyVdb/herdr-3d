@@ -847,6 +847,70 @@ type CommandEntry struct {
 	Kind         string `json:"kind"`
 }
 
+// #137: the files and directories of a worker's checkout ranked against a
+// query, for the composer's @-mentions (worker.files, read-only).
+
+// CmdWorkerFiles ranks a worker's files against a query.
+const CmdWorkerFiles = "worker.files"
+
+// ErrFilesFailed is worker.files whose listing failed with no earlier index
+// to answer from.
+const ErrFilesFailed = "files_failed"
+
+// Limits of worker.files.
+const (
+	FilesDefaultLimit = 30  // limit absent or 0
+	FilesMaxLimit     = 100 // a larger limit is clamped to it
+	FilesMaxQuery     = 256 // runes; a longer query is bad_request
+)
+
+// Kinds of a FileMatch.
+const (
+	FileKindFile = "file"
+	FileKindDir  = "dir"
+)
+
+// Sources of a WorkerFiles: what listed the checkout.
+const (
+	FilesSourceGit  = "git"  // git ls-files: tracked and untracked, not ignored
+	FilesSourceRG   = "rg"   // rg --files, outside a git work tree
+	FilesSourceNone = "none" // nothing could list it (no rg): Files is empty, Reason says why
+)
+
+func init() { Commands = append(Commands, CmdWorkerFiles) }
+
+// WorkerFilesArgs are the args of worker.files.
+type WorkerFilesArgs struct {
+	ID string `json:"id"`
+	// Query is one pattern: every character literal, spaces included.
+	Query string `json:"query"`
+	// Limit is the most matches (0: FilesDefaultLimit; at most
+	// FilesMaxLimit; negative: bad_request).
+	Limit int `json:"limit,omitempty"`
+}
+
+// WorkerFiles is the ack data of worker.files.
+type WorkerFiles struct {
+	// Files is never null, best first.
+	Files  []FileMatch `json:"files"`
+	Source string      `json:"source"`
+	// Reason says why Files is empty or may be incomplete or stale (no rg,
+	// the listing timed out or was capped, a refresh failed); null when
+	// there is nothing to say.
+	Reason *string `json:"reason"`
+}
+
+// FileMatch is one file or directory of a worker's checkout.
+type FileMatch struct {
+	// Path is relative to the checkout, '/'-separated, without a leading
+	// "./" or (for a directory) a trailing '/'.
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+	// Indices are the rune (code point) offsets in Path of the matched
+	// query characters, ascending; [] for an empty query.
+	Indices []int `json:"indices"`
+}
+
 // Usage is a worker's agent session usage: token counts summed over the
 // session and its subagents, and an API-equivalent cost estimate.
 type Usage struct {

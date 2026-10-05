@@ -482,6 +482,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.wrapup.cancel` | `{"id": string}` | — | the worker's upsert without `wrapup` |
 | `worker.changes` | `{"id": string}` | the worker's git changes, `{"cwd", "branch", "head", "upstream", "ahead", "behind", "base", "files", "stat", "diff", "diff_bytes", "truncated", "omitted"}` (see [Changes](#changes)) | — |
 | `worker.commands` | `{"id": string}` | #136: the slash commands and skills of the worker's harness in its checkout, `{"commands": [{"name", "description", "argument_hint", "kind"}…], "partial": bool}` (see [Commands and skills](#commands-and-skills)) | — |
+| `worker.files` | `{"id": string, "query": string, "limit"?: 1–100}` (default 30) | #137: the files and directories of the worker's checkout ranked against `query`, `{"files": [{"path", "kind", "indices"}…], "source", "reason"}` (see [Files](#files)) | — |
 | `terminal.watch` | `{"id": string, "fps"?: 1–30, "cols"?: 40–300, "rows"?: 10–100, "fullscreen"?: bool}` | `{"pane", "cols", "rows", "zoom"?}` | `terminal.frame`s to this connection only; with `fullscreen` (true or false), also `terminal.state` (see [Fullscreen](#fullscreen-74)) |
 | `terminal.unwatch` | `{"id": string}` | — | — |
 | `terminal.zoom` | `{"id": string, "on": bool}` | `{"pane", "cols", "rows", "zoom"}` | a `terminal.state` and, if the size changed, a full `terminal.frame` (see [Fullscreen](#fullscreen-74)) |
@@ -2005,6 +2006,70 @@ Errors: `unknown_worker`, `invalid_state` (its floor is asleep, it has no direct
 agent), `bad_request` (unknown `args` fields), `internal` (not configured). A failed probe is not an error (above).
 Each call is one audit row.
 
+#### Files
+
+#137. **`worker.files`** ranks the files and directories of the worker's checkout against a query, read-only, fast
+enough to ask on every keystroke (the composer's `@` mentions; either harness):
+
+```json
+{"t":"worker.files","req_id":"57","args":{"id":"a58752ea-6511-4318-be9a-59e41c09d7c5","query":"my fi","limit":3}}
+{"t":"ack","req_id":"57","data":{"files":[
+  {"path":"docs/my files","kind":"dir","indices":[5,6,7,8,9]},
+  {"path":"notes/my first.txt","kind":"file","indices":[6,7,8,9,10]},
+  {"path":"docs/my file #1?.md","kind":"file","indices":[5,6,7,8,9]}],
+  "source":"git","reason":null}}
+```
+
+| field | |
+|---|---|
+| `query` | one pattern, every character literal: **a space is a character to match**, not fzf's "AND" (`my file` matches `docs/my file.md`, with the space highlighted). Smart case: case-insensitive unless it has an uppercase letter. At most 256 characters (code points). `""`: the shallowest paths (below) |
+| `limit` | the most matches: absent or `0` is 30, above 100 is 100, negative is `bad_request` |
+| `files` | never `null`, best first |
+| `path` | relative to the worker's checkout, `/`-separated, no leading `./`, a directory without a trailing `/` (its `kind` says so). Returned verbatim as a plain string: spaces, `#`, `?`, `%` and non-ASCII are not quoted or escaped (quoting it for a prompt or a link is the client's job). Paths that are not valid UTF-8 are not listed |
+| `kind` | `file` or `dir`. A symlink is a `file` (it is never followed, whatever it points at) |
+| `indices` | the positions in `path` of the matched query characters, ascending, one per query character: **Unicode code point offsets**, not UTF-16 or byte offsets. A JavaScript client highlights with `Array.from(path)` (`[...path]`), never `path[i]` or `path.slice`, which count UTF-16 units and split an emoji or other astral character. `[]` for an empty query |
+| `source` | what listed the checkout: `git`, `rg` (outside git) or `none` (outside git and no `rg`: `files` is `[]`) |
+| `reason` | `null`, or why the list is empty or may be incomplete or stale, several joined with `; `: no `rg`; the checkout has no files to search (nothing listed: an empty checkout, everything ignored, every path dropped; for every query, `""` included); the listing timed out (20 s) or passed its output cap (git 32 MiB, rg 20 MiB: the complete paths before that are searched); more than 500 000 files and directories (the first are searched); a refresh failed (the older index answers). A query that matches nothing in a checkout with files is `files: []` with `reason: null`, the normal answer to a keystroke |
+
+The worker's checkout is `worktree.checkout_path`, else its `cwd` (a subdirectory of a repository lists only what is
+under it, relative to it).
+
+**Listing.** Inside git: `git ls-files -z --cached --others --exclude-standard --deduplicate`, run in the checkout:
+tracked files plus untracked files that are not ignored (`.gitignore`, `.git/info/exclude`, the global excludes); an
+ignored file never appears. A submodule is its own path; a tracked file deleted from disk is still listed until the
+index forgets it. Outside a git work tree (not an error): `rg --no-config --files --null --no-require-git` (what rg
+would search: its ignore files honored, hidden files skipped, symlinks not followed); without `rg` (`--rg`) the answer
+is empty with `source: "none"` and a `reason`. The bridge never walks the disk itself, and never stats or opens a listed
+path. Both run argv-only in the clean environment of a herdr launch (`GIT_OPTIONAL_LOCKS=0`: listing never writes git's
+index), at most 20 s each (rg gets SIGTERM, then SIGKILL 2 s later). Every path is checked: relative, clean, no `..`
+or `.git` component; anything else is dropped. Every directory above a listed file is added as a `dir`, so `@src/ui`
+can pick a folder.
+
+**Ranking** (fzf's path scheme, adapted): the query must be a subsequence of the path. Each matched character scores,
+with bonuses for a match at a boundary (the path's start, after `/`, after `-` `_` `.` or a space, a camelCase hump, a
+letter-to-digit step) and for consecutive characters (a run keeps its first character's bonus), and penalties for gaps
+(the first skipped character −3, each next one −1); the first query character's bonus counts double. A character matched
+in the **basename** scores a little more, so a basename hit beats the same hit in a directory (`foo` ranks
+`src/foo.go` above `foo/bar.go`) while a boundary hit in a directory still beats a mid-word one in the basename (`ui`
+ranks `src/ui/index.ts` above `src/build.ts`, and the folder `src/ui` above both). Of the possible alignments the best
+scoring one is highlighted. Ties: the shorter path (in code points), then byte order.
+
+**Empty query**: the shallowest paths first (fewest `/`), a depth's directories before its files, then byte order; no
+file is stat'ed.
+
+**Index and refresh**, per checkout (at most 32, the least recently asked dropped, and any not asked for 10 minutes):
+the first ask for a checkout waits for its listing; every later ask answers at once from the current index. A rebuild
+starts in the background (asks meanwhile answer from the old index; one rebuild per checkout at a time), at most every
+**5 s** (from the end of the last), when git's index file of the checkout changed (its mtime or size; a linked worktree's
+own, found once with `git rev-parse --path-format=absolute --git-path index`), or when the index is **30 s** old (new
+untracked files and ignore-rule changes do not touch git's index file; an `rg` listing has none). A failed rebuild keeps
+the previous index and says so in `reason`; a failed first listing is `files_failed`, retried by an ask 5 s later.
+
+Errors: `unknown_worker`, `invalid_state` (its floor is asleep, or it has no directory), `bad_request` (unknown `args`
+fields, a negative `limit`, a `query` over 256 characters), `files_failed` (the listing failed and there is no earlier
+index; the message says why), `internal` (not configured). Not being in a git work tree is not an error (above). Each
+call is one audit row.
+
 #### Usage and cost
 
 Worker field **`usage`** (in snapshots and `worker.upsert`) and event **`worker.usage`**:
@@ -2892,6 +2957,7 @@ dismissed_at)`.
 | `stale` | #90 `worker.answer_followup` / `worker.dismiss_followup` for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
+| `files_failed` | #137 `worker.files` whose listing failed (git's error, rg's, or the listing could not start) with no earlier index of that checkout to answer from |
 | `confirmation_required` | `issue.close`, `pr.merge` or `worker.open_pr` without `confirm: true` (see [Boards](#boards-issues-and-pull-requests)) |
 | `unsupported` | the floor has no board (no repo linked, no provider), or the provider or the card cannot do it (a capability is off); `worker.open_pr*` on a floor that cannot open pull requests |
 | `provider_failed` | the provider call failed (`gh` missing, not logged in, the network, GitHub's refusal, a failed `git push`); the message is short and never has a token |

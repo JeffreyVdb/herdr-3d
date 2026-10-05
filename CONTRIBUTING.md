@@ -9,7 +9,10 @@
   (floors/workers from snapshots and `session.json`, identity matching, worker names), `store` (SQLite), `server` (hub +
   WebSocket, wake/sleep, floor settings, hire/send home, M6 team presets and `run.start`), `proto` (protocol v1 types and client), `gitremote` (GitHub
   origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires, send-homes and the Changes
-  panel), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
+  panel; #137: a checkout's file listing), `fileindex` (#137 `worker.files`: an index of each worker checkout's files
+  and directories from `git ls-files` or `rg --files`, cached per checkout and rebuilt in the background when git's
+  index file changes or it grows old; never walks the disk), `fuzzy` (#137: the pure fzf-style path scorer and bounded
+  top-N search `fileindex` ranks with; `server`, `store` and `proto` import neither, `TestFileIndexIsWiredByTheApp`), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
   usage and cost from their transcripts, read incrementally, and the pricing table; #101: the main thread's context in use
   and its window, resolved from `[1m]`, observed context, the table and the model's family, cleared by a compaction), `jsonl` (the shared reading of
   those JSONL files: one tail per transcript, complete lines from byte offsets, no symlinks), `transcript` (M16: the
@@ -140,18 +143,18 @@ parts:
   and efforts, prompts not starting with `--`), every argument is its own argv element, sessions outside `--sessions`
   are refused, and commands run with the `HERDR_*`/`CLAUDE*` variables stripped. `TestControlAllowlist` pins the set,
   the argv and the exported methods; widening any needs review.
-- **git** (`gitops.Git`, hires, send-homes, `worker.changes` and, M7, `worker.open_pr`): exactly sixteen shapes (`shapes`,
-  pinned by `TestGitAllowlist`):
-  `git -C <dir>` `rev-parse --show-toplevel`, `fetch --quiet origin`, `symbolic-ref --quiet --short
-  refs/remotes/origin/HEAD`, `log -1 --format=%H %ct origin/<…> --`, `status --porcelain`, `symbolic-ref --quiet --short
+- **git** (`gitops.Git`, hires, send-homes, `worker.changes`, M7, `worker.open_pr` and #137 `worker.files`): exactly
+  eighteen shapes (`shapes`, pinned by `TestGitAllowlist`): `git -C <dir>` `rev-parse --show-toplevel`, `fetch
+  --quiet origin`, `symbolic-ref --quiet --short refs/remotes/origin/HEAD`, `log -1 --format=%H %ct origin/<…> --`, `status --porcelain`, `symbolic-ref --quiet --short
   HEAD`, `rev-list --count HEAD --not --remotes`, `rev-list --count refs/heads/h3d/<…> --not --remotes`, `rev-parse
   --verify --quiet refs/heads/h3d/<…>`, `branch -D h3d/<…>`, and for the Changes panel (M5, read-only) `status
   --porcelain=v2 --branch -z --untracked-files=all`, `merge-base HEAD origin/<…>` and `diff --numstat --patch -z
   --find-renames --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ <commit id | HEAD> --`, and for
   opening a pull request (M7) `push -u origin refs/heads/h3d/<…>:refs/heads/h3d/<…>` (the branch name is validated
   and is only ever the one the bridge recorded for that worker; the one shape that writes outside the checkout),
-  `rev-list --count HEAD --not origin/<…>` and `log --format=%s -n 20 HEAD --not origin/<…> --`. A
-  branch is deleted only when the bridge recorded
+  `rev-list --count HEAD --not origin/<…>` and `log --format=%s -n 20 HEAD --not origin/<…> --`, and for
+  `worker.files` (#137, read-only, neither writes the index) `rev-parse --path-format=absolute --git-path index` and
+  `ls-files -z --cached --others --exclude-standard --deduplicate`. A branch is deleted only when the bridge recorded
   making it for that worker (SQLite `hire_branch`, with its base commit; the name alone proves nothing) and either
   still points at that base (a hire's rollback, clean tree) or has all its commits on a remote (send home, the
   checkout still on it). Same clean environment, plus `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`.
@@ -345,6 +348,7 @@ that directory.
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |
 | `--warn-workers`, `--max-workers` | `HERDR_WORLD_WARN_WORKERS`, `HERDR_WORLD_MAX_WORKERS` | `48`, `96`: the same for all watched running floors together |
 | `--git` | `HERDR_WORLD_GIT` | `git` on `PATH`: worktree hires, send-home checks and the repo suggestion |
+| `--rg` | `HERDR_WORLD_RG` | `rg` on `PATH`: `worker.files` lists a checkout outside git with it (#137); without it such a checkout lists no files, with a reason |
 | `--gh` | `HERDR_WORLD_GH` | `gh` on `PATH`: the issue and pull request boards (M7); without it boards say `gh not found` |
 | `--max-watches` | `HERDR_WORLD_MAX_WATCHES` | `6`: laptop screens (`terminal.watch`) one connection may watch at once (`capacity` above) |
 | `--max-observers` | `HERDR_WORLD_MAX_OBSERVERS` | `16`: laptop screens watched at once over all connections, one `terminal session observe` each |
@@ -363,7 +367,7 @@ journalctl --user -u herdr-world -f
 
 `go test ./...` never touches herdr or systemd (fake socket server + recorded fixtures; `herdr.Control` gets a fake
 `Runner` that plays herdr and systemd-run; hires and send-homes run against an in-memory herdr floor and git). Only
-`internal/gitops` runs the real `git`, on repositories in a temp dir (M5: `worker.changes` is checked against `git
+`internal/gitops` and `internal/fileindex` (#137, which also runs the real `rg` when installed) run the real `git`, on repositories in a temp dir (M5: `worker.changes` is checked against `git
 status` and `git diff --stat` there, byte for byte against `git diff`). `internal/usage` reads synthetic transcripts
 (`testdata/`, no real content) and temp files; `internal/runs` and the M6 hub tests read temp run directories and a
 synthetic over-cap run (`game/fixtures/runs/20260928-1400-overcap`, the very run the game's `demo-m6` floor is built
