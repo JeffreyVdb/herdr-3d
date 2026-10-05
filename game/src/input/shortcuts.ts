@@ -125,6 +125,8 @@ export interface PaletteEntry {
   name: string;
   aliases?: readonly string[];
   where?: 'anywhere' | 'floor';
+  /** The question the floor list asks when Enter on a `floor` row finds you off an office floor ("Hire on which floor?"). */
+  pick?: string;
 }
 
 /** #147: palette rows with no key of their own (the table says no more of them: they are not shortcuts). */
@@ -148,15 +150,15 @@ export const BINDINGS = [
   { id: 'limits', group: ['floor', 'city'], scope: 'any', keys: [code('KeyL', { shift: true })], label: 'Plan limits', palette: { name: 'Plan limits', aliases: ['limits', 'usage', 'quota'] } },
   { id: 'battery', group: ['floor', 'city'], scope: 'any', keys: [code('KeyB')], label: 'Battery saver', quiet: true, palette: { name: 'Battery saver', aliases: ['power', 'fps'] } },
   { id: 'settings', group: ['floor', 'city'], scope: 'any', keys: [{ key: ',' }], label: 'Settings', palette: { name: 'Settings', aliases: ['preferences', 'options', 'config'] } },
-  { id: 'overview', group: ['floor', 'city'], scope: 'any', keys: [code('KeyO')], label: 'Floor overview: everyone on this floor and what they are doing', palette: { name: 'Overview', aliases: ['floor overview', 'everyone', 'summary'], where: 'floor' } },
+  { id: 'overview', group: ['floor', 'city'], scope: 'any', keys: [code('KeyO')], label: 'Floor overview: everyone on this floor and what they are doing', palette: { name: 'Overview', aliases: ['floor overview', 'everyone', 'summary'], pick: 'See the overview of which floor?', where: 'floor' } },
   // ---- on a floor ----------------------------------------------------------------------------------
   { id: 'walk', group: 'floor', scope: 'floor', keys: [code('KeyW'), code('KeyA'), code('KeyS'), code('KeyD')], show: [['W A S D'], ['↑ ← ↓ →']], label: 'Walk (the arrows turn left and right)', repeat: true, readonly: true },
   { id: 'look', group: 'floor', scope: 'floor', keys: [code('PageUp'), code('PageDown')], show: [['Page Up'], ['Page Down']], label: 'Look up and down', repeat: true, readonly: true },
   { id: 'look.level', group: 'floor', scope: 'floor', keys: [code('Home')], label: 'Level the view', palette: { name: 'Level the view', aliases: ['look straight', 'reset view'] } },
-  { id: 'hire', group: 'floor', scope: 'floor', keys: [code('KeyH')], label: 'Hire a worker at the first free desk', palette: { name: 'Hire', aliases: ['new worker', 'add worker', 'hire a worker'], where: 'floor' } },
-  { id: 'issues', group: 'floor', scope: 'floor', keys: [code('KeyI')], label: 'Issues board', palette: { name: 'Issues', aliases: ['issue board', 'tickets'], where: 'floor' } },
-  { id: 'prs', group: 'floor', scope: 'floor', keys: [code('KeyG')], label: 'Pull requests board', palette: { name: 'Pull requests', aliases: ['pr', 'prs', 'review'], where: 'floor' } },
-  { id: 'run', group: 'floor', scope: 'floor', keys: [code('KeyR', { shift: true })], label: 'Start a run at the first free desk', palette: { name: 'Start a run', aliases: ['run', 'team', 'write-code'], where: 'floor' } },
+  { id: 'hire', group: 'floor', scope: 'floor', keys: [code('KeyH')], label: 'Hire a worker at the first free desk', palette: { name: 'Hire', aliases: ['new worker', 'add worker', 'hire a worker'], pick: 'Hire on which floor?', where: 'floor' } },
+  { id: 'issues', group: 'floor', scope: 'floor', keys: [code('KeyI')], label: 'Issues board', palette: { name: 'Issues', aliases: ['issue board', 'tickets'], pick: 'Open the issues board on which floor?', where: 'floor' } },
+  { id: 'prs', group: 'floor', scope: 'floor', keys: [code('KeyG')], label: 'Pull requests board', palette: { name: 'Pull requests', aliases: ['pr', 'prs', 'review'], pick: 'Open the pull requests board on which floor?', where: 'floor' } },
+  { id: 'run', group: 'floor', scope: 'floor', keys: [code('KeyR', { shift: true })], label: 'Start a run at the first free desk', palette: { name: 'Start a run', aliases: ['run', 'team', 'write-code'], pick: 'Start a run on which floor?', where: 'floor' } },
   { id: 'elevator', group: 'floor', scope: 'floor', keys: [code('KeyL')], label: 'Elevator', palette: { name: 'Elevator', aliases: ['lift', 'floors', 'ride'] } },
   { id: 'plan', group: 'floor', scope: 'floor', keys: [code('Tab')], label: 'Floor plan', palette: { name: 'Floor plan', aliases: ['map', 'layout'] } },
   { id: 'topbar', group: 'floor', scope: 'floor', keys: [code('Tab', { shift: true })], label: 'Into the top bar (then Tab and Enter)' },
