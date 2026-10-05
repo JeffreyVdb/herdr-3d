@@ -29,7 +29,7 @@ import { backdropPolicy } from './dismiss';
 // #51 composer
 import { mountComposer, type Composer } from './composer/composer';
 import { Draft as PromptDraft, type DraftSnapshot, type FailedImage, type ResolveResult, type Uploader } from './composer/draft';
-import { HIRE_PROMPT_MAX_BYTES, serializeErrorText } from './composer/model';
+import { HIRE_PROMPT_MAX_BYTES, mentionOf, serializeErrorText } from './composer/model';
 
 /**
  * The hire dialog (M4): E on an empty desk's "+", or the top bar's Hire for
@@ -167,7 +167,7 @@ function uploadFailedText(failed: FailedImage[]): string {
 /** The prompt as the form sees it: the text, each image a bare `[Image #n]` (the paths only exist once uploaded, at send time). */
 function promptText(s: DraftSnapshot): string {
   let n = 0;
-  return s.segments.map((g) => (g.kind === 'text' ? g.text : `[Image #${++n}]`)).join('');
+  return s.segments.map((g) => (g.kind === 'text' ? g.text : g.kind === 'image' ? `[Image #${++n}]` : mentionOf(g.path))).join('');
 }
 
 /**
@@ -772,7 +772,7 @@ export class HireDialog {
     const doc = this.editor.draft;
     const from = this.draftKey();
     this.desk = desk;
-    if (mine.text.trim() || mine.fields || doc.doc.images.length > 0) {
+    if (mine.text.trim() || mine.fields || doc.doc.chips.length > 0) {
       const there = this.docs.get(this.draftKey());
       this.docs.delete(from);
       this.docs.set(this.draftKey(), doc);

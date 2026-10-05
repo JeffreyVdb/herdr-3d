@@ -380,9 +380,11 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     const cur = s;
     if (!cur || cur.state !== 'ready' || i < 0 || i >= cur.items.length) return;
     const draft = host.draft();
-    const [a, b, text] = replaceRangeOf(cur.source.insert(cur.items[i], cur.token, draft.doc.text), cur.token, draft.doc.text.length);
+    const spec = cur.source.insert(cur.items[i], cur.token, draft.doc.text);
+    const [a, b, text] = replaceRangeOf(spec, cur.token, draft.doc.text.length);
     close();
-    draft.replace(a, b, text);
+    if (spec.chip) draft.insertParts(a, b, [spec.chip, text]);
+    else draft.replace(a, b, text);
   }
 
   function move(by: number): void {

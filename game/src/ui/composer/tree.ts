@@ -63,7 +63,7 @@ export function linearize(root: HTMLElement): { items: Item[]; foreign: boolean 
 export function readDoc(root: HTMLElement, known: ReadonlyMap<string, Occurrence>): { doc: Doc; foreign: boolean } {
   const { items, foreign } = linearize(root);
   let text = '';
-  const images: Occurrence[] = [];
+  const chips: Occurrence[] = [];
   let bad = foreign;
   for (const it of items) {
     if (it.kind === 'text') text += it.text;
@@ -75,27 +75,27 @@ export function readDoc(root: HTMLElement, known: ReadonlyMap<string, Occurrence
         continue;
       }
       text += IMG;
-      images.push(o);
+      chips.push(o);
     }
   }
   // Two chips for one occurrence (a copy the browser made) are one.
   const seen = new Set<string>();
   let dupText = '';
-  const dupImages: Occurrence[] = [];
+  const dupChips: Occurrence[] = [];
   let k = 0;
   for (const ch of text) {
     if (ch === IMG) {
-      const o = images[k++] as Occurrence;
+      const o = chips[k++] as Occurrence;
       if (seen.has(o.occ)) {
         bad = true;
         continue;
       }
       seen.add(o.occ);
-      dupImages.push(o);
+      dupChips.push(o);
     }
     dupText += ch;
   }
-  return { doc: { text: dupText, images: dupImages }, foreign: bad };
+  return { doc: { text: dupText, chips: dupChips }, foreign: bad };
 }
 
 /**

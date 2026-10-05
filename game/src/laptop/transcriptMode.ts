@@ -9,6 +9,7 @@ import type { mountTranscript, TranscriptRenderHost, TranscriptView } from './tr
 import type { ImageFeed } from './imageFeed';
 import type { ImagesTabHost, ImagesTabView, MountImagesTab } from './imagesTab';
 import { itemsOf, type TimelineOf } from './transcriptWatches';
+import { TranscriptDrafts } from './transcriptDrafts';
 import { CommandCatalogs } from './commandCatalog';
 import { activityCue, reconcile, SENT_TIMEOUT_MS, topSeq, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 
@@ -58,7 +59,7 @@ export interface OverlayRect {
 }
 
 export interface TranscriptModeHost {
-  send<T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'transcript.page' | 'worker.commands'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
+  send<T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'transcript.page' | 'worker.commands' | 'worker.files'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list). */
   feed(id: string): ImageFeed | null;
   /** Loads the render module (`loadRenderer`; tests pass a fake). */
@@ -220,8 +221,17 @@ export class TranscriptMode {
   private checking: AbortController | null = null;
   /** #140: each worker's slash commands and skills, kept across seats (the popup shows the last list at once). */
   private readonly catalogs = new CommandCatalogs({ send: (t, args) => this.host.send(t, args) });
+  /** #141: each worker's unsent prompt, kept across seats (and its text and file chips across a reload). */
+  private readonly drafts: TranscriptDrafts;
+  /**
+   * #141: the workers a prompt is on its way to (until the bridge answered it). A sitting's pending rows go when you
+   * stand up but the send does not, nor does the draft it came from: sitting there again must not send it twice.
+   */
+  private readonly prompting = new Set<string>();
 
-  constructor(private readonly host: TranscriptModeHost) {}
+  constructor(private readonly host: TranscriptModeHost) {
+    this.drafts = new TranscriptDrafts({ ...(host.upload ? { upload: host.upload } : {}), storage: host.storage });
+  }
 
   private now(): number {
     return this.host.now?.() ?? Date.now();
@@ -573,8 +583,11 @@ export class TranscriptMode {
     // To a worker not at work it starts a turn: that turn's items come after this.
     if (s.status !== 'working') s.sendMark = p.mark;
     this.pendingChanged(s);
+    this.prompting.add(s.id);
     // Resolves whether it went: a refused prompt goes back in the box.
     return this.host.send('worker.prompt', { id: s.id, text: t }).then((r) => {
+      // Answered (the client never rejects; it times out): this worker takes the next one, from whichever seat.
+      this.prompting.delete(s.id);
       if (!live()) return r.ok;
       const ack = (r.ok ? (r.data ?? {}) : {}) as Partial<PromptAck>;
       if (r.ok && ack.terminal === true) {
@@ -620,6 +633,10 @@ export class TranscriptMode {
       usage: s.usage,
       ...(this.host.prefs ? { prefs: this.host.prefs } : {}),
       commands: hasTranscript(s.harness) ? { list: this.catalogs.get(s.id), harness: s.harness } : null,
+      // #141: the worker's own draft, back from its last seat (or a reload); `@` searches the worker's checkout.
+      draft: this.drafts.get(s.id, s.name),
+      sending: this.drafts.sending(s.id),
+      files: { id: s.id, search: { send: (t, args) => this.host.send(t, args) } },
       onPromptSubmit: (text) => {
         if (!live()) return Promise.resolve(false);
         const t = text.replace(/\u0000/g, '');
@@ -629,7 +646,8 @@ export class TranscriptMode {
           return Promise.resolve(false);
         }
         // #58: one on its way at a time (a second Enter while it is sending sends nothing). #110: nor while one is checked.
-        if (s.pending.some((p) => p.state === 'sending') || this.checking) return Promise.resolve(false);
+        // #141: nor while one from an earlier seat at this worker is.
+        if (s.pending.some((p) => p.state === 'sending') || this.prompting.has(s.id) || this.checking) return Promise.resolve(false);
         // #110: first whether it also tells the worker to leave. Meanwhile the box is read-only and keeps the draft.
         const check = new AbortController();
         const checked = this.host.packup?.(s.id, t, check.signal) ?? null;

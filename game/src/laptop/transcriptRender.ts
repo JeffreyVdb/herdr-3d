@@ -17,6 +17,8 @@ import { ViewPrefs, type ViewPref } from '../ui/themePrefs';
 import { THEMES, ZOOM, stepZoom, type ThemeId } from '../ui/themes';
 import { contextMeter } from '../world/usage';
 import { commandSource, type CommandList } from './slashCommands';
+import { fileSource, type FileSearchHost } from './fileSearch';
+import { SendGate } from './transcriptDrafts';
 import { zoomKey } from './keys';
 import type { ActivityCue, PendingPrompt } from './transcriptActivity';
 
@@ -59,6 +61,18 @@ export interface TranscriptRenderHost {
   usage?: Usage | null;
   /** #140: the worker's slash commands and skills, for the prompt box's `/` popup, and its harness (none: no popup). */
   commands?: { list: CommandList; harness: string } | null;
+  /**
+   * #141: the worker's unsent prompt, kept by the host across views (`TranscriptDrafts`): the view shows it and leaves
+   * it alone when it goes. None: the view makes its own, which goes with it.
+   */
+  draft?: PromptDraft;
+  /**
+   * #141: whether a prompt from that draft is on its way, kept with it: a view made meanwhile is busy until it is
+   * answered and sends nothing. None: the view keeps its own.
+   */
+  sending?: SendGate;
+  /** #141: the worker's checkout, for the prompt box's `@` file search (none: no popup). */
+  files?: { id: string; search: FileSearchHost } | null;
 }
 
 export interface BlockedQuestion {
@@ -652,8 +666,9 @@ class Transcript implements TranscriptView {
   private readonly sendBtn: HTMLButtonElement;
   /** The box cannot take a prompt now (the worker waits on a question). */
   private promptOff = false;
-  /** A prompt is on its way (uploading, then sent): the box is read-only until it is answered. */
-  private sending = false;
+  /** A prompt is on its way (uploading, then sent): the box is read-only until it is answered (#141: in any view of it). */
+  private readonly sending: SendGate;
+  private readonly offSending: () => void;
   private readonly empty: HTMLDivElement;
 
   private following = true;
@@ -702,16 +717,24 @@ class Transcript implements TranscriptView {
     this.thumbs = new Thumbs({ feed: host.images, root: this.scroller });
     this.jump = h('button', { class: 'tx-jump', hidden: true, onclick: () => this.toBottom() });
     this.composer = mountComposer({
-      draft: new PromptDraft({ upload: host.upload ?? NO_UPLOAD, label: `transcript-${host.label ?? 'worker'}`, maxPromptBytes: WORKER_PROMPT_MAX_BYTES, holdRefused: true }),
+      draft: host.draft ?? new PromptDraft({ upload: host.upload ?? NO_UPLOAD, label: `transcript-${host.label ?? 'worker'}`, maxPromptBytes: WORKER_PROMPT_MAX_BYTES, holdRefused: true }),
       ariaLabel: 'Prompt',
       placeholder: PROMPT_HINT,
       submitPolicy: 'enter',
       onSubmit: () => this.submit(),
-      // #139: completion is on; #140: `/` lists the worker's commands and skills (only here: no other composer has them).
-      complete: { sources: host.commands ? [commandSource(host.commands.list, host.commands.harness)] : [], bounds: () => this.root },
+      // #139: completion is on; #140: `/` lists the worker's commands and skills, #141: `@` its files (only here: no
+      // other composer has them).
+      complete: {
+        sources: [...(host.commands ? [commandSource(host.commands.list, host.commands.harness)] : []), ...(host.files ? [fileSource(host.files.id, host.files.search)] : [])],
+        bounds: () => this.root,
+      },
     });
     this.input = this.composer.editor;
     this.input.classList.add('tx-input');
+    // #141: a send from an earlier view of this draft may still be on its way: busy until it is answered.
+    this.sending = host.sending ?? new SendGate();
+    this.offSending = this.sending.subscribe(() => this.composer.setBusy(this.sending.busy));
+    if (this.sending.busy) this.composer.setBusy(true);
     this.sendBtn = h('button', { class: 'tx-send', title: 'Send', onclick: () => this.submit() }, 'Send');
     const form = h('div', { class: 'tx-prompt' }, this.composer.element, this.sendBtn);
     this.ask = new AskCard({
@@ -969,9 +992,11 @@ class Transcript implements TranscriptView {
     this.thumbs.destroy();
     this.ask.destroy();
     this.followup.destroy();
-    // The composer's draft goes with the view: its uploads are cancelled, its object URLs revoked.
+    // The composer's own draft goes with the view: its uploads are cancelled, its object URLs revoked. The host's
+    // (#141) stays for the next view of this worker.
+    this.offSending();
     this.composer.dispose();
-    this.composer.getDraft().dispose();
+    if (!this.host.draft) this.composer.getDraft().dispose();
     this.root.remove();
   }
 
@@ -1609,7 +1634,7 @@ class Transcript implements TranscriptView {
   }
 
   private submit(): void {
-    if (this.promptOff || this.sending) return;
+    if (this.promptOff || this.sending.busy) return;
     const draft = this.composer.getDraft();
     // A file the box refused stays held until dismissed: the prompt does not go without the picture meant for it.
     const held = heldRefusalText(draft.snapshot(), { nothing: 'sent', again: 'send' });
@@ -1618,8 +1643,7 @@ class Transcript implements TranscriptView {
       return;
     }
     if (!hasContent(draft.snapshot())) return;
-    this.sending = true;
-    this.composer.setBusy(true);
+    this.sending.set(true);
     // #58: your own send brings you to the bottom, where its row goes, and follows from there.
     this.toBottom();
     void this.send(draft);
@@ -1630,22 +1654,23 @@ class Transcript implements TranscriptView {
    * Retry), then the prompt. Not sent (refused, too long, an image failed): the box keeps what was written.
    */
   private async send(draft: PromptDraft): Promise<void> {
-    const r = await draft.resolve({ maxBytes: WORKER_PROMPT_MAX_BYTES });
-    if (this.destroyed) return;
-    if (!r.ok) {
-      this.sending = false;
-      this.composer.setBusy(false);
-      const why = notSentText(r, { nothing: 'sent', again: 'send' });
-      if (why) this.composer.notice(why, 'error');
-      return;
+    try {
+      const r = await draft.resolve({ maxBytes: WORKER_PROMPT_MAX_BYTES });
+      if (this.destroyed) return;
+      if (!r.ok) {
+        const why = notSentText(r, { nothing: 'sent', again: 'send' });
+        if (why) this.composer.notice(why, 'error');
+        return;
+      }
+      this.composer.clearNotice();
+      const sent = await Promise.resolve(this.host.onPromptSubmit(r.text)).catch(() => false);
+      // Sent: the box is empty again (an edit made meanwhile is impossible while it is read-only, but a draft swap is
+      // not). #141: also when the view went meanwhile: the host keeps the worker's draft for its next view.
+      if (sent !== false) draft.clearIf(r.revision);
+    } finally {
+      // #141: the gate is the draft's, not this view's: it opens whether this view, a later one or none is up.
+      this.sending.set(false);
     }
-    this.composer.clearNotice();
-    const sent = await Promise.resolve(this.host.onPromptSubmit(r.text)).catch(() => false);
-    if (this.destroyed) return;
-    this.sending = false;
-    this.composer.setBusy(false);
-    // Sent: the box is empty again (an edit made meanwhile is impossible while it is read-only, but a draft swap is not).
-    if (sent !== false) draft.clearIf(r.revision);
   }
 
   // --- blocked banner ---

@@ -786,18 +786,18 @@ upload to look at).
 #139 completion: `mountComposer({ complete: { sources, bounds? } })` turns on a suggestion popup under the caret
 (`complete.ts`: token detection and the source interface, pure; `completion.ts`: the popup and its keys). Opt-in: without
 `complete` the composer, its keys and its DOM are unchanged; the popup's DOM is made on its first open. Only the transcript's
-prompt box opts in: #140 gives it the `/` source (the worker's commands and skills, see the transcript section); `@`
-(files) is the next ticket. A
-token is a trigger (`/` or `@`) at the start of the text, after whitespace or right after an image chip (`/usr/bin`,
+prompt box opts in: #140 gives it the `/` source (the worker's commands and skills, see the transcript section), #141
+the `@` source (the worker's files, see below). A
+token is a trigger (`/` or `@`) at the start of the text, after whitespace or right after a chip (`/usr/bin`,
 `a/b`, URLs and emails never open one), up to the caret: a `/` query has no whitespace; an `@` query may hold spaces
 (file names) but ends at a newline, a chip or 80 characters. The nearest trigger before the caret decides; a pick
 replaces the trigger and the whole word the caret is in. A source is `{ trigger, label?, items(query, signal), render(item),
 insert(item, token, text) }` (`text`: the draft's text): `items` returns the rows or a promise of them (each new query aborts the previous `signal`
 and a reply that is not the latest is dropped; pending shows "Loading…" or keeps the rows dimmed, `aria-disabled`,
 none active and none pickable by key or click until the reply, empty "No match", a rejection "Could not load
-matches."); `render` returns a Node or a string; `insert` returns a `ReplaceSpec` `{ text, start?, end? }` (default
-range: the token), applied with one `Draft.replace`, so one undo takes the pick
-back and the caret lands after it. #140, optional, for a source whose items live elsewhere: `available()` false opens
+matches."); `render` returns a Node or a string; `insert` returns a `ReplaceSpec` `{ text, chip?, start?, end? }` (default
+range: the token), applied with one `Draft.replace` (with `chip`, #141: one `Draft.insertParts` of the atomic chip then
+`text`), so one undo takes the pick back and the caret lands after it. #140, optional, for a source whose items live elsewhere: `available()` false opens
 no popup (and closes an open one when the source says it changed), `opening()` hears that a session would open (to
 refresh), `subscribe(changed)` says the items changed (an open session asks its query again, the active row kept by
 `key(item)`), `footer()` is a note under the rows (`.cmp-pop-note`). `world/rank.ts` `rankByName` is the filter
@@ -817,6 +817,26 @@ in a `role=listbox`, never focusable (a press on the popup keeps the editor's fo
 below, inside `bounds()` (default: the composer's dialog, else the window; the transcript passes its root).
 `/?composer-demo` mounts it with stub sources (`/` commands at once; `@` files after `stub.delayMs`, per query
 `stub.delays[q]` for a late reply, `stub.fail` to reject) for `e2e/composer-complete.spec.ts`.
+#141 file chips: a chip is an image or a file (`model.ts` `Occurrence = ImageOccurrence | FileOccurrence`, `Doc.chips`;
+both are one U+FFFC in `Doc.text`, so offsets, ranges, the arrows, Backspace/Delete beside a chip and undo/redo treat
+them alike). A file chip holds its checkout path (relative, `/`-separated, a folder without a trailing `/`) and no
+resource: nothing uploads, and image numbering (`[Image #n]`, `numberOf`, the failed-upload numbers), `MAX_IMAGES` and
+`resourcesOf` count images only. Drawn as `.cmp-chip.cmp-file` (`data-kind=file|dir`): the file or folder icon and the
+basename, `title` the full path, `role=img` named "File <path>" / "Folder <path>", nothing to press; removing one says
+"File <path> removed.". `Draft.insertParts(start, end, parts)` puts text and file chips (`{ kind: 'file', path, dir }`,
+fresh occurrence ids) in as one undo step; `Draft.hydrate(parts)` makes them the whole document with no history.
+Serialised (`serializePrompt`, `Draft.resolve()`) as `@path`, or `@"path"` when the path holds whitespace (Go's
+`unicode.IsSpace` exactly: NEL included, U+FEFF not, unlike JavaScript's `\s`), the same for every harness (the bridge strips it for Codex, #138, and leaves a path it
+cannot find as it is: a deleted file still goes as text, no error); `joinMentions` puts a space before a mention that
+would start mid-word (anything but whitespace or `([{"'` before it) and after one that text follows without a space.
+Those bytes count toward the cap (`maxBytes`: 16 KiB for `worker.prompt`). A path with `"`, CR, LF or NUL cannot be
+written so the bridge reads it back (no quote escaping, no line break in a quoted mention): `filePathProblem` keeps it
+out of the popup, storage and paste. Clipboard: a copy or cut writes `text/plain` (the text with `@path` mentions,
+images left out) and, when the selection holds a file chip, `application/x-h3d-composer+json` (`CLIP_TYPE`,
+`{ v: 1, parts }` of `SavedPart`s); a paste reads that type first (validated with `readSavedParts`; anything off falls
+back on the text), so file chips paste back as chips, one undo step. Images are not carried (as before).
+`field.ts`: `hasContent` counts file chips, `markedText` writes their mentions; the hire dialog and the P overlay have
+no `@` source and are unchanged.
 
 M5 on the simulating server (`ws=…?sim=1…`): `simusage=<ms>` sends working agents' `worker.usage` that often
 (default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|changes_failed` for the next prompt,
@@ -960,6 +980,22 @@ goes back). The simulator answers `simCommands` (`tools/fixture-panels.ts`, rows
 terminal-only prompt (`simTerminalOnly`) with no turn; `e2e/h140-slash-commands.spec.ts` drives a Claude and a Codex
 worker (mid-sentence pick, Esc closes only the popup, Enter sends when closed), a blocked one, and the badge and the
 switch (`/usage` shows the terminal, `/model opus` does not).
+#141: `@` in the view's prompt box searches the worker's checkout (`laptop/fileSearch.ts` `fileSource`, label "Files and
+folders"): each query goes to `worker.files` (#137, `limit` 30) after a `DEBOUNCE_MS` (40 ms) pause that an aborted
+query never outlives, and the popup keeps the last rows dimmed until the latest reply; the bridge's order is kept. A
+row is the icon, the basename bold (a folder's with `/`) and its folder dimmed, the bridge's `indices` (code points of
+the whole path) marked `.tx-file-hit`. A pick inserts a file chip and a space (consuming one already there). The
+bridge's `reason`, or "No file list for this checkout" for `source: 'none'`, is the footer; an error is "Could not load
+matches."; nothing turns the source off. Drafts: `TranscriptMode` keeps one composer `Draft` per worker
+(`laptop/transcriptDrafts.ts`, the 24 most recent live) and hands it to the view (`TranscriptRenderHost.draft`; the view
+does not dispose a host's draft), so a desk switch gives back text, chips, caret and history; every change writes the
+text and the file chips to `Drafts` (`h3d.draft.transcript.<worker id>`, `segments` typed and validated on read), so a
+reload brings those back (images do not survive one). A sent prompt clears the draft by revision (`clearIf`, also when
+the ack comes after the view went) and the stored copy with it. Its send gate (`SendGate`, `TranscriptRenderHost.sending`,
+one per worker) is kept with it: a view made while a send is on its way is busy and sends nothing until the ack, and
+`TranscriptMode` refuses a second `worker.prompt` to a worker that has one unanswered. The simulator answers `simFiles` (`SIM_FILES` in
+`tools/fixture-panels.ts`); `e2e/h141-file-chips.spec.ts` drives a Claude and a Codex worker (`@comp`, a folder, a
+quoted path, Backspace and undo, the sent `@path` text) and the copy/paste, desk switch and reload of a draft.
 #147: ⌘P (Mac) / Ctrl+P (elsewhere) opens the command palette from every view: `Game.onPaletteKey`, a window **capture-phase**
 listener next to `onHelpKey` that always `preventDefault`s the chord (no print dialog, repeats and the previews included),
 calls `stopImmediatePropagation` (the seated terminal, the whiteboard's editor and the dialogs under it never see it) and

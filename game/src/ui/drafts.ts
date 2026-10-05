@@ -2,17 +2,21 @@
  * Unsent writing that survives closing a dialog (#51): kept in memory, and in localStorage where it is allowed.
  *
  * A draft is `{ text, fields?, segments? }` under a caller-chosen key. Today's dialogs store the text and a few typed
- * fields; the shared composer (#13) stores its richer document in `segments` under the same key, so nothing above
- * this file changes when it lands. All storage access is try/catch'ed: blocked, full or corrupt storage leaves the
- * in-memory copy, and typing, closing and hiring never notice.
+ * fields; the transcript's prompt box (#141) stores its document in `segments` too: its text runs and file chips in
+ * order (`SavedPart`; images do not survive a reload). What storage gives back is read as untrusted: segments that are
+ * not a list are dropped, a part that is not one (a path no chip may hold) is left out. All storage access is
+ * try/catch'ed: blocked, full or corrupt storage leaves the in-memory copy, and typing, closing and hiring never
+ * notice.
  */
+
+import { readSavedParts, type SavedPart } from './composer/model';
 
 export interface Draft {
   text: string;
   /** Other typed fields of the form (label, folder), by name. */
   fields?: Record<string, string>;
-  /** Reserved for the composer's document (text runs and image chips in order). */
-  segments?: unknown[];
+  /** The composer's document: its text runs and file chips in order. */
+  segments?: SavedPart[];
 }
 
 interface Stored extends Draft {
@@ -44,7 +48,8 @@ function parse(raw: string | null): Draft | null {
     if (!o || o.v !== 1 || typeof o.text !== 'string') return null;
     const d: Draft = { text: o.text };
     if (o.fields && typeof o.fields === 'object') d.fields = Object.fromEntries(Object.entries(o.fields).filter((e): e is [string, string] => typeof e[1] === 'string'));
-    if (Array.isArray(o.segments)) d.segments = o.segments;
+    const segs = readSavedParts(o.segments);
+    if (segs) d.segments = segs;
     return d;
   } catch {
     return null;

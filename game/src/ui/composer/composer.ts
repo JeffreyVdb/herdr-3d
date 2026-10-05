@@ -1,13 +1,16 @@
 /**
- * The shared prompt composer: a `contenteditable` with plain text and atomic image chips, for every place a prompt
- * is typed (the hire dialog's first task; later the P overlay and the start-run instructions).
+ * The shared prompt composer: a `contenteditable` with plain text and atomic chips (images; #141 files of the worker's
+ * checkout, from the `@` popup), for every place a prompt is typed (the hire dialog's first task; later the P overlay
+ * and the start-run instructions).
  *
  * The document lives in a `Draft` (`draft.ts`), not in the DOM: the DOM is drawn from it, and read back on `input`
  * (typing, an IME commit, a native delete), so the browser edits text natively while everything the browser cannot
  * be trusted with goes through the model: chips, paste, drop, Enter, delete next to a chip, undo/redo. One history
- * (the draft's) covers text and images; the browser's own undo is never used. Rich text never gets in: paste is
- * `text/plain` or image files, drop is image files, and anything else the browser puts in is read as text and the
- * editor is drawn again in its canonical shape (`tree.ts`).
+ * (the draft's) covers text and chips; the browser's own undo is never used. Rich text never gets in: paste is
+ * `text/plain`, image files or (#141) the composer's own copy (`CLIP_TYPE`: text and file chips, so a copied file chip
+ * pastes back as a chip), drop is image files, and anything else the browser puts in is read as text and the editor is
+ * drawn again in its canonical shape (`tree.ts`). A copy or cut writes `text/plain` too: the text with each file chip
+ * as its `@path` mention (images left out).
  *
  * The host owns what happens with the prompt (`onSubmit` is only a request), the draft object (keep it to keep
  * text, images and paths across a closed dialog) and the layout: the editor is a flex child that fills its parent
@@ -21,7 +24,7 @@ import { mountCompletion, type CompleteOptions, type Completion } from './comple
 import { filesOf } from './field';
 import { Draft, type AddResult, type DraftEvent, type DraftOptions, type DraftSnapshot, type ResolveResult, type Uploader } from './draft';
 import { openPreview, type Preview } from './lightbox';
-import { caret, IMG, type Occurrence, rangeOf, type Selection, ZWSP } from './model';
+import { caret, chipAt, type FileOccurrence, fromSaved, IMG, imagesOf, isFileOcc, mentionText, type Occurrence, rangeOf, readSavedParts, savedParts, type Selection, ZWSP } from './model';
 import { CHIP, isCanonical, offsetToPoint, pointToOffset, readDoc, TAIL } from './tree';
 
 export interface ComposerOptions {
@@ -86,6 +89,13 @@ export interface Composer {
 }
 
 const STATE_TEXT = { pending: 'Waiting…', uploading: 'Uploading…', ready: 'Uploaded', error: 'Failed' } as const;
+
+/** #141: the clipboard type of a copy out of the composer: `{ v: 1, parts: SavedPart[] }` (text and file chips). */
+export const CLIP_TYPE = 'application/x-h3d-composer+json';
+
+/** A file chip's words for a screen reader and its announcements: "File src/a.ts", "Folder src". */
+export const fileWord = (f: { path: string; dir: boolean }): string => `${f.dir ? 'Folder' : 'File'} ${f.path}`;
+const baseName = (path: string): string => path.slice(path.lastIndexOf('/') + 1) || path;
 
 let uid = 0;
 
@@ -173,7 +183,23 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
 
   const imageWord = (n: number, name: string): string => `image ${n}, ${name}`;
 
+  /**
+   * #141: a file chip: the icon and the basename, the whole path in its tooltip and its accessible name. Nothing in it
+   * acts: a click puts nothing in motion, Backspace and Delete take it whole, the arrows step over it.
+   */
+  function makeFileChip(occ: FileOccurrence): HTMLElement {
+    const el = h(
+      'span',
+      { class: `${CHIP} cmp-file`, contenteditable: 'false', draggable: 'false', 'data-occ': occ.occ, 'data-kind': occ.dir ? 'dir' : 'file', role: 'img', 'aria-label': fileWord(occ), title: occ.path },
+      icon(occ.dir ? ICON.folder : ICON.file),
+      h('span', { class: 'cmp-file-name', 'aria-hidden': 'true' }, baseName(occ.path)),
+    );
+    chips.set(occ.occ, el);
+    return el;
+  }
+
   function makeChip(occ: Occurrence): HTMLElement {
+    if (isFileOcc(occ)) return makeFileChip(occ);
     const thumb = h('button', { class: 'cmp-thumb', tabindex: '0' }, h('img', { alt: '', draggable: 'false' }));
     const badge = h('span', { class: 'cmp-num', 'aria-hidden': 'true' });
     const name = h('span', { class: 'cmp-name' });
@@ -196,6 +222,7 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
 
   /** Brings a chip's number, name, state and buttons up to date with the draft. */
   function paintChip(el: HTMLElement): void {
+    if (el.classList.contains('cmp-file')) return; // a file chip has no state to show
     const occ = el.dataset.occ ?? '';
     const r = draft.resource(el.dataset.res ?? '');
     const n = draft.numberOf(occ);
@@ -240,7 +267,7 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     const live = new Set<string>();
     parts.forEach((t, i) => {
       nodes.push(document.createTextNode(t === '' ? ZWSP : t));
-      const occ = d.images[i];
+      const occ = d.chips[i];
       if (occ && i < parts.length - 1) {
         live.add(occ.occ);
         nodes.push(chips.get(occ.occ) ?? makeChip(occ));
@@ -282,7 +309,7 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   // ---- reading back --------------------------------------------------------------------
 
   function known(): Map<string, Occurrence> {
-    return new Map(draft.doc.images.map((im) => [im.occ, im]));
+    return new Map(draft.doc.chips.map((c) => [c.occ, c]));
   }
 
   /** The browser edited the DOM: take the document out of it. */
@@ -350,17 +377,19 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     } else if (r.errors.length > 0) say(r.errors.join(' '), 'error');
     else clearNotice();
     if (r.added > 0) {
-      say(`${r.added === 1 ? 'Image' : `${r.added} images`} added. ${draft.doc.images.length} in the prompt.`);
+      say(`${r.added === 1 ? 'Image' : `${r.added} images`} added. ${imagesOf(draft.doc).length} in the prompt.`);
     }
     return r;
   }
 
   function removeAt(occ: string): void {
     if (busy) return;
+    const chip = draft.doc.chips.find((c) => c.occ === occ);
+    if (!chip) return;
     const n = draft.numberOf(occ);
-    draft.removeImage(occ);
+    draft.removeChip(occ);
     clearNotice();
-    say(`Image ${n} removed.`);
+    say(isFileOcc(chip) ? `${fileWord(chip)} removed.` : `Image ${n} removed.`);
     focusEditor();
   }
 
@@ -492,10 +521,10 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
       const sel = readSelection();
       if (!sel || sel.anchor !== sel.focus) return;
       const at = t === 'deleteContentBackward' ? sel.focus - 1 : sel.focus;
-      if (draft.doc.text[at] !== IMG) return;
+      const occ = chipAt(draft.doc, at);
+      if (!occ) return;
       e.preventDefault();
-      const occ = draft.doc.images[draft.doc.text.slice(0, at).split(IMG).length - 1];
-      if (occ) removeAt(occ.occ);
+      removeAt(occ.occ);
     }
   });
 
@@ -520,6 +549,13 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     if (!dt) return;
     e.preventDefault();
     if (busy) return;
+    // #141: our own copy first: its file chips come back as chips (one edit, one undo step).
+    const own = ownClip(dt);
+    if (own) {
+      const [a, b] = rangeOf(where());
+      draft.insertParts(a, b, fromSaved(own));
+      return;
+    }
     const files = filesOf(dt);
     if (files.length > 0) {
       insertFiles(files);
@@ -529,24 +565,49 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     if (text) insertText(text);
   });
 
-  const selectedText = (): { a: number; b: number; text: string } | null => {
+  /** The composer's own clipboard data, read as untrusted (another page can put anything under any type), or null. */
+  function ownClip(dt: DataTransfer): ReturnType<typeof readSavedParts> {
+    let raw = '';
+    try {
+      raw = dt.getData(CLIP_TYPE);
+    } catch {
+      return null;
+    }
+    if (!raw) return null;
+    try {
+      const o = JSON.parse(raw) as { v?: unknown; parts?: unknown } | null;
+      const parts = o && o.v === 1 ? readSavedParts(o.parts) : null;
+      return parts && parts.length > 0 ? parts : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** A copy of the selection: text with `@path` for each file chip, and (with any file chip in it) our own type. */
+  function copyOut(dt: DataTransfer, a: number, b: number): void {
+    const parts = savedParts(draft.doc, a, b);
+    dt.setData('text/plain', mentionText(draft.doc, a, b));
+    if (parts.some((p) => p.kind === 'file')) dt.setData(CLIP_TYPE, JSON.stringify({ v: 1, parts }));
+  }
+
+  const selected = (): { a: number; b: number } | null => {
     const sel = readSelection();
     if (!sel || sel.anchor === sel.focus) return null;
     const [a, b] = rangeOf(sel);
-    return { a, b, text: draft.doc.text.slice(a, b).split(IMG).join('') };
+    return { a, b };
   };
   editor.addEventListener('copy', (e) => {
-    const s = selectedText();
+    const s = selected();
     if (!s || !e.clipboardData) return;
     e.preventDefault();
-    e.clipboardData.setData('text/plain', s.text);
+    copyOut(e.clipboardData, s.a, s.b);
   });
   editor.addEventListener('cut', (e) => {
-    const s = selectedText();
+    const s = selected();
     if (!s || !e.clipboardData) return;
     e.preventDefault();
     if (busy) return;
-    e.clipboardData.setData('text/plain', s.text);
+    copyOut(e.clipboardData, s.a, s.b);
     draft.replace(s.a, s.b, '');
   });
 

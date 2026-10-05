@@ -6,14 +6,28 @@ import {
   EMPTY_DOC,
   IMAGE_HINT,
   IMG,
-  imagesIn,
-  moveImage,
+  chipsIn,
+  moveChip,
   splitMarkers,
+  chipAt,
+  type FileOccurrence,
+  filePathProblem,
+  imagesIn,
+  imagesOf,
+  joinMentions,
+  mentionOf,
+  mentionText,
   type Occurrence,
-  offsetOfImage,
+  partsLength,
+  replaceParts,
+  sameChips,
+  savedParts,
+  readSavedParts,
+  fromSaved,
+  offsetOfChip,
   pathProblem,
   plainText,
-  removeImage,
+  removeChip,
   replaceRange,
   resourcesOf,
   segments,
@@ -27,19 +41,25 @@ const a = o('a');
 const b = o('b');
 const c = o('c');
 
-/** A document from text with `<a>` `<b>` `<c>` where images stand. */
+let fid = 0;
+const f = (path: string, dir = false): FileOccurrence => ({ kind: 'file', occ: `f-${++fid}`, path, dir });
+
+/** A document from text with `<a>` `<b>` `<c>` where images stand and `{path}` (`{path/}`: a folder) where files do. */
 function doc(src: string): Doc {
-  const images: Occurrence[] = [];
-  const text = src.replace(/<([abc])>/g, (_m, k: string) => {
-    images.push(o(k));
+  const chips: Occurrence[] = [];
+  const text = src.replace(/<([abc])>|\{([^}]+)\}/g, (_m, k: string | undefined, p: string | undefined) => {
+    chips.push(k ? o(k) : p?.endsWith('/') ? f(p.slice(0, -1), true) : f(p as string));
     return IMG;
   });
-  return { text, images };
+  return { text, chips };
 }
 /** The other way, for readable expectations. */
 const show = (d: Doc): string => {
   let k = 0;
-  return d.text.replace(new RegExp(IMG, 'g'), () => `<${d.images[k++]?.res}>`);
+  return d.text.replace(new RegExp(IMG, 'g'), () => {
+    const c = d.chips[k++];
+    return !c ? '<?>' : c.kind === 'file' ? `{${c.path}${c.dir ? '/' : ''}}` : `<${c.res}>`;
+  });
 };
 
 describe('cleanText', () => {
@@ -79,7 +99,7 @@ describe('replaceRange', () => {
   it('cleans what it inserts, so the document invariant holds', () => {
     const d = replaceRange(doc('a'), 1, 1, `${IMG}\u200B\r\nz`);
     expect(d.text).toBe('a\nz');
-    expect(d.images).toEqual([]);
+    expect(d.chips).toEqual([]);
   });
   it('does not touch the document it was given', () => {
     const d = doc('a<a>b');
@@ -91,7 +111,7 @@ describe('replaceRange', () => {
     let d = doc('ab<a>cd<b>ef');
     for (const [s, e, t, add] of [[0, 3, 'x', [c]], [2, 2, '', [a, b]], [1, 8, '', []], [0, 0, 'q', [c]]] as const) {
       d = replaceRange(d, s, e, t, add);
-      expect(imagesIn(d.text)).toBe(d.images.length);
+      expect(chipsIn(d.text)).toBe(d.chips.length);
     }
   });
 });
@@ -104,30 +124,30 @@ describe('caretAfter', () => {
   });
 });
 
-describe('removeImage / moveImage', () => {
+describe('removeChip / moveChip', () => {
   it('removes one image and joins the text around it', () => {
-    expect(show(removeImage(doc('a<a>b<b>c'), 0))).toBe('ab<b>c');
-    expect(show(removeImage(doc('a<a>b<b>c'), 1))).toBe('a<a>bc');
-    expect(show(removeImage(doc('<a><b>'), 0))).toBe('<b>');
+    expect(show(removeChip(doc('a<a>b<b>c'), 0))).toBe('ab<b>c');
+    expect(show(removeChip(doc('a<a>b<b>c'), 1))).toBe('a<a>bc');
+    expect(show(removeChip(doc('<a><b>'), 0))).toBe('<b>');
   });
   it('ignores an index that is not there', () => {
     const d = doc('a<a>');
-    expect(removeImage(d, 5)).toBe(d);
-    expect(removeImage(d, -1)).toBe(d);
+    expect(removeChip(d, 5)).toBe(d);
+    expect(removeChip(d, -1)).toBe(d);
   });
   it('moves an image forward and backward among the text, keeping the occurrence', () => {
-    expect(show(moveImage(doc('<a>xy<b>z'), 0, 3))).toBe('xy<a><b>z');
-    expect(show(moveImage(doc('<a>xy<b>z'), 1, 0))).toBe('<b><a>xy' + 'z');
-    expect(show(moveImage(doc('x<a>yz'), 0, 3))).toBe('xy<a>z');
-    expect(moveImage(doc('x<a>yz'), 0, 3).images[0]).toEqual(a);
+    expect(show(moveChip(doc('<a>xy<b>z'), 0, 3))).toBe('xy<a><b>z');
+    expect(show(moveChip(doc('<a>xy<b>z'), 1, 0))).toBe('<b><a>xy' + 'z');
+    expect(show(moveChip(doc('x<a>yz'), 0, 3))).toBe('xy<a>z');
+    expect(moveChip(doc('x<a>yz'), 0, 3).chips[0]).toEqual(a);
   });
   it('renumbers by position only: after a move the images are in the new order', () => {
-    const d = moveImage(doc('<a>x<b>'), 1, 0);
-    expect(d.images.map((i) => i.res)).toEqual(['b', 'a']);
+    const d = moveChip(doc('<a>x<b>'), 1, 0);
+    expect(imagesOf(d).map((i) => i.res)).toEqual(['b', 'a']);
   });
   it('a move to where it already is changes nothing', () => {
-    expect(show(moveImage(doc('x<a>y'), 0, 1))).toBe('x<a>y');
-    expect(show(moveImage(doc('x<a>y'), 0, 2))).toBe('x<a>y');
+    expect(show(moveChip(doc('x<a>y'), 0, 1))).toBe('x<a>y');
+    expect(show(moveChip(doc('x<a>y'), 0, 2))).toBe('x<a>y');
   });
 });
 
@@ -143,9 +163,9 @@ describe('segments / helpers', () => {
   });
   it('finds an image by index and lists distinct resources', () => {
     const d = doc('x<a>y<b>z');
-    expect(offsetOfImage(d, 1)).toBe(3);
-    expect(offsetOfImage(d, 2)).toBe(-1);
-    const twice: Doc = { text: `${IMG}${IMG}`, images: [{ occ: '1', res: 'r' }, { occ: '2', res: 'r' }] };
+    expect(offsetOfChip(d, 1)).toBe(3);
+    expect(offsetOfChip(d, 2)).toBe(-1);
+    const twice: Doc = { text: `${IMG}${IMG}`, chips: [{ occ: '1', res: 'r' }, { occ: '2', res: 'r' }] };
     expect(resourcesOf(twice)).toEqual(['r']);
   });
   it('plainText leaves the images out', () => {
@@ -210,7 +230,7 @@ describe('serializePrompt (research-upload §5, table-driven)', () => {
     ['no whitespace is added', doc('before<a>after'), 'before[Image #1: /d/a.png]after'],
     ['adjacent images', doc('<a><b>'), '[Image #1: /d/a.png][Image #2: /d/b.webp]'],
     ['a typed marker stays text, the real chip is #1 too', doc('[Image #1: user typed] <a>'), '[Image #1: user typed] [Image #1: /d/a.png]'],
-    ['the same resource twice is two occurrences with one path', { text: `${IMG}${IMG}`, images: [o('1', 'a'), o('2', 'a')] }, '[Image #1: /d/a.png][Image #2: /d/a.png]'],
+    ['the same resource twice is two occurrences with one path', { text: `${IMG}${IMG}`, chips: [o('1', 'a'), o('2', 'a')] }, '[Image #1: /d/a.png][Image #2: /d/a.png]'],
     ['literal brackets, backslashes and edge newlines are kept', doc('\n[a][b]\\n <a>\n'), '\n[a][b]\\n [Image #1: /d/a.png]\n'],
     ['empty', EMPTY_DOC, ''],
   ])('%s', (_name, d, want) => {
@@ -224,7 +244,7 @@ describe('serializePrompt (research-upload §5, table-driven)', () => {
   });
 
   it('numbers by what is left after a removal', () => {
-    expect(text(ser(removeImage(doc('<a> and <b>'), 0)))).toBe(' and [Image #1: /d/b.webp]');
+    expect(text(ser(removeChip(doc('<a> and <b>'), 0)))).toBe(' and [Image #1: /d/b.webp]');
   });
 
   it('keeps spaces and non-ASCII in the path exactly', () => {
@@ -290,7 +310,7 @@ describe('serializePrompt (research-upload §5, table-driven)', () => {
 describe('serializeErrorText', () => {
   it('says what to do', () => {
     expect(serializeErrorText({ kind: 'unresolved', res: 'a' }, 'shot.png')).toBe('shot.png has not been uploaded yet.');
-    expect(serializeErrorText({ kind: 'too_long', bytes: 33000, max: 32768 })).toBe('The prompt is 32.2 KB with the image paths. The limit is 32 KB: shorten the text.');
+    expect(serializeErrorText({ kind: 'too_long', bytes: 33000, max: 32768 })).toBe('The prompt is 32.2 KB with the image and file paths. The limit is 32 KB: shorten the text.');
     expect(serializeErrorText({ kind: 'bad_path', res: 'a', path: 'x', reason: 'the path is not absolute' })).toMatch(/not absolute/);
   });
 });
@@ -307,5 +327,207 @@ describe('splitMarkers (#64)', () => {
   it('leaves what is not a marker as text', () => {
     expect(splitMarkers('[Image #x: /a] [Image #1 /a] [Image #1: /a\n]')).toEqual([{ kind: 'text', text: '[Image #x: /a] [Image #1 /a] [Image #1: /a\n]' }]);
     expect(splitMarkers('')).toEqual([]);
+  });
+});
+
+describe('file chips (#141)', () => {
+  it('sit in the text as one placeholder each, next to images and to each other', () => {
+    const d = doc('see {src/a.ts}{src/b.ts}<a>{lib/}!');
+    expect(chipsIn(d.text)).toBe(d.chips.length);
+    expect(show(d)).toBe('see {src/a.ts}{src/b.ts}<a>{lib/}!');
+    expect(chipAt(d, 4)).toMatchObject({ kind: 'file', path: 'src/a.ts' });
+    expect(chipAt(d, 6)).toMatchObject({ res: 'a' });
+    expect(chipAt(d, 0)).toBeNull();
+  });
+  it('replaceParts puts text and chips in their order as one edit, removing the chips of the range', () => {
+    const d = doc('x <a> y');
+    const r = replaceParts(d, 2, 3, [f('a.ts'), ' and ', f('b c.md'), ' ']);
+    expect(show(r)).toBe('x {a.ts} and {b c.md}  y');
+    expect(chipsIn(r.text)).toBe(r.chips.length);
+    expect(partsLength([f('a.ts'), ' and\r\n', f('b')])).toBe(7);
+  });
+  it('counts images only where the image limit asks', () => {
+    const d = doc('{a.ts}<a>{b.ts}<b>');
+    expect(imagesIn(d)).toBe(2);
+    expect(imagesIn(d, 0, 2)).toBe(1);
+    expect(imagesIn(d, 2, 3)).toBe(0);
+    expect(resourcesOf(d)).toEqual(['a', 'b']);
+  });
+  it('segments says file chips with their path, plainText leaves them out', () => {
+    const d = doc('see {src/a.ts} and {lib/}');
+    expect(segments(d)).toEqual([
+      { kind: 'text', text: 'see ' },
+      { kind: 'file', occ: d.chips[0]?.occ, path: 'src/a.ts', dir: false },
+      { kind: 'text', text: ' and ' },
+      { kind: 'file', occ: d.chips[1]?.occ, path: 'lib', dir: true },
+    ]);
+    expect(plainText(d)).toBe('see  and ');
+  });
+  it('removes and moves a file chip like an image', () => {
+    expect(show(removeChip(doc('a{x.ts}b<a>'), 0))).toBe('ab<a>');
+    expect(show(moveChip(doc('{x.ts}ab<a>'), 0, 3))).toBe('ab{x.ts}<a>');
+  });
+  it('sameChips tells a file chip from another path under the same occurrence', () => {
+    const a1: Doc = { text: IMG, chips: [{ kind: 'file', occ: 'o1', path: 'a', dir: false }] };
+    expect(sameChips(a1, { text: IMG, chips: [{ kind: 'file', occ: 'o1', path: 'a', dir: false }] })).toBe(true);
+    expect(sameChips(a1, { text: IMG, chips: [{ kind: 'file', occ: 'o1', path: 'b', dir: false }] })).toBe(false);
+    expect(sameChips(a1, { text: IMG, chips: [{ kind: 'file', occ: 'o1', path: 'a', dir: true }] })).toBe(false);
+    expect(sameChips(a1, { text: IMG, chips: [{ occ: 'o1', res: 'a' }] })).toBe(false);
+  });
+
+  it.each([
+    ['a plain path', 'src/ui/composer/draft.ts', '@src/ui/composer/draft.ts'],
+    ['a space', 'my docs/a b.txt', '@"my docs/a b.txt"'],
+    ['a tab', 'a\tb', '@"a\tb"'],
+    ['a no-break space', 'a\u00a0b', '@"a\u00a0b"'],
+    ['NEL (Go reads it as a space)', 'a\u0085b', '@"a\u0085b"'],
+    ['non-ASCII, astral', 'dé/🙂.md', '@dé/🙂.md'],
+    ['a folder (no trailing slash)', 'src/ui', '@src/ui'],
+  ])('mentionOf: %s', (_n, path, want) => {
+    expect(mentionOf(path)).toBe(want);
+  });
+
+  it.each([
+    ['a quote', 'a"b.ts'],
+    ['LF', 'a\nb'],
+    ['CR', 'a\rb'],
+    ['NUL', 'a\0b'],
+    ['nothing', ''],
+  ])('filePathProblem refuses %s', (_n, path) => {
+    expect(filePathProblem(path)).not.toBeNull();
+  });
+  it('filePathProblem lets spaces, # ? and Unicode through', () => {
+    expect(filePathProblem('my dir/#1 ?é 🙂.md')).toBeNull();
+  });
+
+  it('joinMentions puts a mention at a word start and keeps it apart from what follows', () => {
+    const j = (...p: (string | { file: string })[]) => joinMentions(p.map((x) => (typeof x === 'string' ? { text: x } : x)));
+    expect(j({ file: 'a.ts' })).toBe('@a.ts');
+    expect(j('see', { file: 'a.ts' })).toBe('see @a.ts');
+    expect(j('see ', { file: 'a.ts' }, ' now')).toBe('see @a.ts now');
+    expect(j({ file: 'a.ts' }, ', please')).toBe('@a.ts , please');
+    expect(j({ file: 'a.ts' }, { file: 'b.ts' })).toBe('@a.ts @b.ts');
+    expect(j('(', { file: 'a.ts' }, ')')).toBe('(@a.ts )');
+    expect(j('"', { file: 'a b' })).toBe('"@"a b"');
+    expect(j('\n', { file: 'a.ts' }, '\n')).toBe('\n@a.ts\n');
+    expect(j('x', { file: 'a.ts' }, '', '', 'y')).toBe('x @a.ts y');
+  });
+  // Go's unicode.IsSpace is not JavaScript's \s: it reads NEL as a space but not U+FEFF (a BOM / zero-width no-break
+  // space), so a mention needs its separator next to U+FEFF and needs none next to NEL or an ideographic space.
+  it('joinMentions keeps a mention apart from U+FEFF on both sides', () => {
+    const j = (...p: (string | { file: string })[]) => joinMentions(p.map((x) => (typeof x === 'string' ? { text: x } : x)));
+    expect(j('hello\ufeff', { file: 'src/a.ts' })).toBe('hello\ufeff @src/a.ts');
+    expect(j({ file: 'src/a.ts' }, '\ufeffhello')).toBe('@src/a.ts \ufeffhello');
+    expect(j('\ufeff', { file: 'a.ts' }, '\ufeff')).toBe('\ufeff @a.ts \ufeff');
+  });
+  it.each([
+    ['NEL', '\u0085'],
+    ['a no-break space', '\u00a0'],
+    ['a vertical tab', '\v'],
+    ['an ogham space', '\u1680'],
+    ['an en quad', '\u2000'],
+    ['a hair space', '\u200a'],
+    ['a line separator', '\u2028'],
+    ['a narrow no-break space', '\u202f'],
+    ['an ideographic space', '\u3000'],
+  ])('joinMentions reads %s as the separator Go reads', (_n, ws) => {
+    expect(joinMentions([{ text: `see${ws}` }, { file: 'a.ts' }, { text: `${ws}now` }])).toBe(`see${ws}@a.ts${ws}now`);
+  });
+  it.each([
+    ['U+FEFF', '\ufeff'],
+    ['a zero-width space', '\u200b'],
+    ['a Mongolian vowel separator', '\u180e'],
+  ])('joinMentions does not read %s as whitespace (nor does Go)', (_n, ch) => {
+    expect(joinMentions([{ text: `see${ch}` }, { file: 'a.ts' }, { text: `${ch}now` }])).toBe(`see${ch} @a.ts ${ch}now`);
+  });
+  it('mentionOf quotes only on what Go reads as whitespace', () => {
+    expect(mentionOf('a\ufeffb')).toBe('@a\ufeffb');
+    expect(mentionOf('a\u3000b')).toBe('@"a\u3000b"');
+  });
+  it('mentionText is a range as plain text with mentions, images left out', () => {
+    const d = doc('see{src/a.ts}<a>{my d/b.md}.');
+    expect(mentionText(d)).toBe('see @src/a.ts @"my d/b.md" .');
+    expect(mentionText(d, 3, 4)).toBe('@src/a.ts');
+    expect(mentionText(d, 4, 6)).toBe('@"my d/b.md"');
+  });
+});
+
+describe('serializePrompt with file chips (#141)', () => {
+  const paths = new Map([
+    ['a', '/d/a.png'],
+    ['b', '/d/b.webp'],
+  ]);
+  const ser = (d: Doc, maxBytes = 32768) => serializePrompt(d, paths, { maxBytes });
+  const text = (r: ReturnType<typeof ser>) => (r.ok ? r.text : `ERR:${r.error.kind}`);
+
+  it.each([
+    ['a file chip alone', doc('{src/ui/composer/draft.ts}'), '@src/ui/composer/draft.ts'],
+    ['in a sentence', doc('look at {a.ts} please'), 'look at @a.ts please'],
+    ['glued to the text before and after', doc('see{a.ts}now'), 'see @a.ts now'],
+    ['adjacent file chips', doc('{a.ts}{b.ts}'), '@a.ts @b.ts'],
+    ['a path with spaces', doc('read {my docs/a b.txt}'), 'read @"my docs/a b.txt"'],
+    ['a folder', doc('{src/ui/}'), '@src/ui'],
+    ['images numbered among images only', doc('<a>{x.ts}<b>'), '[Image #1: /d/a.png] @x.ts [Image #2: /d/b.webp]'],
+    ['an image right after a file', doc('{x.ts}<a>'), '@x.ts [Image #1: /d/a.png]'],
+    ['after an opening bracket', doc('({x.ts})'), '(@x.ts )'],
+  ])('%s', (_n, d, want) => {
+    expect(text(ser(d))).toBe(want);
+  });
+
+  it('reports the images with their numbers, files between them not counted', () => {
+    expect(ser(doc('{x.ts}<b>{y.ts}<a>'))).toMatchObject({ ok: true, images: [{ n: 1, res: 'b' }, { n: 2, res: 'a' }] });
+  });
+  it('refuses a file chip whose path could not be read back', () => {
+    const d: Doc = { text: IMG, chips: [{ kind: 'file', occ: 'o1', path: 'a"b', dir: false }] };
+    expect(ser(d)).toMatchObject({ ok: false, error: { kind: 'bad_file', path: 'a"b' } });
+  });
+  it('counts the mention, its quotes and the spaces put in toward the cap', () => {
+    const d = doc('x{a b}y'); // 'x @"a b" y' = 10 bytes
+    expect(ser(d, 10).ok).toBe(true);
+    expect(ser(d, 9)).toEqual({ ok: false, error: { kind: 'too_long', bytes: 10, max: 9 } });
+    const e = doc('{é.ts}'); // '@é.ts' = 6 bytes
+    expect(ser(e, 6).ok).toBe(true);
+    expect(ser(e, 5).ok).toBe(false);
+  });
+});
+
+describe('saved parts (#141: storage and clipboard)', () => {
+  it('keeps text and file chips in order, drops images and joins the text around them', () => {
+    const d = doc('a<a>b{src/x.ts}c{lib/}');
+    expect(savedParts(d)).toEqual([
+      { kind: 'text', text: 'ab' },
+      { kind: 'file', path: 'src/x.ts', dir: false },
+      { kind: 'text', text: 'c' },
+      { kind: 'file', path: 'lib', dir: true },
+    ]);
+    expect(savedParts(d, 3, 4)).toEqual([{ kind: 'file', path: 'src/x.ts', dir: false }]);
+    expect(savedParts(EMPTY_DOC)).toEqual([]);
+  });
+  it('round-trips through JSON and back into a document', () => {
+    const d = doc('see {my d/a b.md} and {src/}');
+    const back = readSavedParts(JSON.parse(JSON.stringify(savedParts(d))));
+    expect(back).toEqual(savedParts(d));
+    const parts = fromSaved(back ?? []).map((p) => (typeof p === 'string' ? p : f(p.path, p.dir)));
+    expect(show(replaceParts(EMPTY_DOC, 0, 0, parts))).toBe('see {my d/a b.md} and {src/}');
+  });
+  it('reads untrusted data: not a list is null, a bad part is left out', () => {
+    expect(readSavedParts(null)).toBeNull();
+    expect(readSavedParts({ kind: 'text' })).toBeNull();
+    expect(
+      readSavedParts([
+        { kind: 'text', text: 'ok' },
+        { kind: 'text', text: 3 },
+        { kind: 'file', path: 'a"b', dir: false },
+        { kind: 'file', path: 'a\nb', dir: false },
+        { kind: 'file', path: 'x.ts' },
+        { kind: 'image', occ: 'o1', res: 'r1' },
+        'nope',
+        null,
+        { kind: 'file', path: 'y.ts', dir: false },
+      ]),
+    ).toEqual([
+      { kind: 'text', text: 'ok' },
+      { kind: 'file', path: 'y.ts', dir: false },
+    ]);
   });
 });

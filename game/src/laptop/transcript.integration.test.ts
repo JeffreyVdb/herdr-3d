@@ -245,4 +245,41 @@ describe('transcript mode with the real render module', () => {
     expect((box.querySelector('.tx-empty') as HTMLElement).hidden).toBe(true);
     r.mode.stand();
   });
+
+  it('#141: sitting again while a prompt is on its way shows it sending and sends it once; the ack clears it', async () => {
+    const r = rig();
+    layer = r.layer;
+    const prompts = () => r.sent.filter((s) => s.t === 'worker.prompt');
+    const input = () => r.layer.querySelector('.tx-input') as HTMLElement;
+    const sendBtn = () => r.layer.querySelector('.tx-send') as HTMLButtonElement;
+    const sit = async () => {
+      r.mode.sit('w1', 'Ada', true, 'claude');
+      await settle(() => !!r.layer.querySelector('.tx-input'));
+    };
+    await sit();
+    input().replaceChildren(document.createTextNode('go'));
+    document.getSelection()?.setBaseAndExtent(input().firstChild as Text, 2, input().firstChild as Text, 2);
+    input().dispatchEvent(new Event('input', { bubbles: true }));
+    sendBtn().click();
+    await settle(() => prompts().length === 1);
+    expect(prompts()[0]?.args).toEqual({ id: 'w1', text: 'go' });
+
+    // Up and back down at the same desk before the bridge answers: the draft is still the one on its way.
+    r.mode.stand();
+    await sit();
+    expect(input().textContent).toBe('go');
+    expect(input().getAttribute('contenteditable')).toBe('false');
+    expect(input().getAttribute('aria-busy')).toBe('true');
+    sendBtn().click();
+    input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await new Promise((res) => setTimeout(res, 20));
+    expect(prompts()).toHaveLength(1);
+
+    // The first send's ack lands with the second view up: the box empties and takes a prompt again.
+    prompts()[0]?.resolve({ ok: true, data: {} });
+    await settle(() => input().getAttribute('contenteditable') === 'true');
+    expect((input().textContent ?? '').replace(/\u200B/g, '')).toBe('');
+    expect(input().getAttribute('aria-busy')).toBe('false');
+    r.mode.stand();
+  });
 });

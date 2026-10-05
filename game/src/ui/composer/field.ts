@@ -5,26 +5,28 @@
  */
 
 import type { DraftSnapshot, FailedImage, ImageInfo, ResolveResult } from './draft';
-import { pathProblem, serializeErrorText } from './model';
+import { joinMentions, type MentionPart, pathProblem, serializeErrorText } from './model';
 
 /** The line every field says under itself. */
 export const PASTE_HINT = 'paste a screenshot to add it';
 
 /**
  * The draft as text with each image a marker: `[Image #n: <path>]` once it is uploaded (and its path fit for a
- * marker), a bare `[Image #n]` until then. For what a form shows or previews while typing; what is *sent* comes from
- * `Draft.resolve()`, which waits for the uploads and never returns a bare marker.
+ * marker), a bare `[Image #n]` until then, and (#141) each file chip its `@path` mention, spaced as it is sent. For
+ * what a form shows or previews while typing; what is *sent* comes from `Draft.resolve()`, which waits for the uploads
+ * and never returns a bare marker.
  */
 export function markedText(s: DraftSnapshot): string {
   const byOcc = new Map<string, ImageInfo>(s.images.map((i) => [i.occ, i]));
-  return s.segments
-    .map((g) => {
-      if (g.kind === 'text') return g.text;
+  return joinMentions(
+    s.segments.map((g): MentionPart => {
+      if (g.kind === 'text') return { text: g.text };
+      if (g.kind === 'file') return { file: g.path };
       const im = byOcc.get(g.occ);
-      if (!im) return '';
-      return im.status === 'ready' && im.path !== null && pathProblem(im.path) === null ? `[Image #${im.n}: ${im.path}]` : `[Image #${im.n}]`;
-    })
-    .join('');
+      if (!im) return { text: '' };
+      return { text: im.status === 'ready' && im.path !== null && pathProblem(im.path) === null ? `[Image #${im.n}: ${im.path}]` : `[Image #${im.n}]` };
+    }),
+  );
 }
 
 const names = (failed: FailedImage[]): string => failed.map((f) => `image ${f.numbers.join(' and ') || '?'} (${f.name})`).join(', ');
@@ -61,8 +63,8 @@ export function failedImagesText(s: DraftSnapshot): string | null {
   return `${list} did not upload${bad[0]?.error ? ` (${bad[0].error})` : ''}: retry ${bad.length === 1 ? 'it' : 'them'} on the picture, or remove ${bad.length === 1 ? 'it' : 'them'}.`;
 }
 
-/** A prompt is worth sending: some text, or at least one image. */
-export const hasContent = (s: DraftSnapshot): boolean => s.text.trim() !== '' || s.images.length > 0;
+/** A prompt is worth sending: some text, or at least one chip (an image or a file). */
+export const hasContent = (s: DraftSnapshot): boolean => s.text.trim() !== '' || s.images.length > 0 || s.files.length > 0;
 
 /**
  * The files a clipboard or a drag carries: file items first, the file list only if there were none (never both:

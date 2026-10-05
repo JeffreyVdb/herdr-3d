@@ -20,19 +20,27 @@ import {
   clampSel,
   type Doc,
   EMPTY_DOC,
+  type FileRef,
   HIRE_PROMPT_MAX_BYTES,
   IMG,
   imagesIn,
+  imagesOf,
   indexOfOcc,
+  isFileOcc,
+  isImageOcc,
   MAX_IMAGES,
-  moveImage,
+  moveChip,
   type Occurrence,
-  offsetOfImage,
+  offsetOfChip,
+  type Part,
+  partsLength,
   plainText,
   rangeOf,
-  removeImage,
+  removeChip,
+  replaceParts,
   replaceRange,
   resourcesOf,
+  sameChips,
   type Segment,
   type SerializeError,
   serializePrompt,
@@ -110,14 +118,26 @@ export interface ImageInfo {
   url: string;
 }
 
+/** #141: a file chip, for what a host shows or keeps of a draft. */
+export interface FileInfo {
+  occ: string;
+  path: string;
+  dir: boolean;
+}
+
+/** What `insertParts` and `hydrate` take: text, and file chips by their content (the draft gives them their ids). */
+export type DraftPart = string | FileRef;
+
 export interface DraftSnapshot {
   revision: number;
   doc: Doc;
   selection: Selection;
   segments: Segment[];
-  /** The text without the images. */
+  /** The text without the chips. */
   text: string;
   images: ImageInfo[];
+  /** #141: the file chips, in order. */
+  files: FileInfo[];
   /** Any image not uploaded yet (pending or uploading). */
   uploading: boolean;
   /** Any image whose upload failed. */
@@ -238,13 +258,13 @@ export class Draft {
     return this.res.size;
   }
 
-  /** The place of an occurrence among the images of the document (1-based), or 0. */
+  /** The place of an image occurrence among the images of the document (1-based), or 0 (a file chip has none). */
   numberOf(occ: string): number {
-    return indexOfOcc(this.cur, occ) + 1;
+    return imagesOf(this.cur).findIndex((o) => o.occ === occ) + 1;
   }
 
   snapshot(): DraftSnapshot {
-    const images = this.cur.images.map((o, i): ImageInfo => {
+    const images = imagesOf(this.cur).map((o, i): ImageInfo => {
       const r = this.res.get(o.res);
       return {
         n: i + 1,
@@ -266,6 +286,7 @@ export class Draft {
       segments: segments(this.cur),
       text: plainText(this.cur),
       images,
+      files: this.cur.chips.filter(isFileOcc).map((o) => ({ occ: o.occ, path: o.path, dir: o.dir })),
       uploading: images.some((i) => i.status === 'pending' || i.status === 'uploading'),
       failed: images.some((i) => i.status === 'error'),
       refusal: this.refused,
@@ -303,13 +324,38 @@ export class Draft {
   }
 
   /**
+   * #141: replaces `[start, end)` with text and file chips in their order (a picked file and the space after it, a
+   * paste) and puts the caret after them; one undo step. Each file chip is a new occurrence.
+   */
+  insertParts(start: number, end: number, parts: readonly DraftPart[]): void {
+    const [a, b] = start <= end ? [start, end] : [end, start];
+    const mine = this.own(parts);
+    this.apply(replaceParts(this.cur, a, b, mine), caret(a + partsLength(mine)), 'api', false);
+  }
+
+  private own(parts: readonly DraftPart[]): Part[] {
+    return parts.map((p) => (typeof p === 'string' ? p : { kind: 'file', occ: `o${++this.ids}`, path: p.path, dir: p.dir }));
+  }
+
+  /**
+   * #141: makes `parts` the whole document with no undo history behind it (a draft kept from an earlier visit coming
+   * back), the caret at the end. False (and no event) when the document is already that.
+   */
+  hydrate(parts: readonly DraftPart[]): boolean {
+    const doc = replaceParts(EMPTY_DOC, 0, 0, this.own(parts));
+    if (doc.text === this.cur.text && contentOf(doc) === contentOf(this.cur)) return false;
+    this.reset(doc, caret(doc.text.length));
+    return true;
+  }
+
+  /**
    * Puts image files into the document at `range` (default: the caret), replacing what was selected there, as one
    * step, in the files' order. Every file that cannot go is refused with a message; the rest go.
    */
   addImages(files: readonly File[], range?: readonly [number, number]): AddResult {
     const [start, end] = range ?? rangeOf(this.sel);
     const errors: string[] = [];
-    const room = this.opts.maxImages - (this.cur.images.length - imagesIn(this.cur.text, Math.min(start, end), Math.max(start, end)));
+    const room = this.opts.maxImages - (imagesIn(this.cur) - imagesIn(this.cur, Math.min(start, end), Math.max(start, end)));
     const accepted: File[] = [];
     let overflow = false;
     for (const f of files) {
@@ -355,18 +401,19 @@ export class Draft {
     return r;
   }
 
-  removeImage(occ: string): void {
+  /** Removes one chip (an image or a file), the caret where it was; one undo step. */
+  removeChip(occ: string): void {
     const i = indexOfOcc(this.cur, occ);
     if (i < 0) return;
-    const at = offsetOfImage(this.cur, i);
-    this.apply(removeImage(this.cur, i), caret(at), 'api', false);
+    const at = offsetOfChip(this.cur, i);
+    this.apply(removeChip(this.cur, i), caret(at), 'api', false);
   }
 
-  /** Moves an image to another place in the text (a reorder along with the text). */
-  moveImage(occ: string, to: number): void {
+  /** Moves a chip to another place in the text (a reorder along with the text). */
+  moveChip(occ: string, to: number): void {
     const i = indexOfOcc(this.cur, occ);
     if (i < 0) return;
-    const next = moveImage(this.cur, i, to);
+    const next = moveChip(this.cur, i, to);
     if (next === this.cur) return;
     this.apply(next, caret(Math.max(0, Math.min(next.text.length, to))), 'api', false);
   }
@@ -393,7 +440,7 @@ export class Draft {
   }
 
   private apply(doc: Doc, sel: Selection, origin: 'dom' | 'api', typing: boolean): boolean {
-    if (doc.text === this.cur.text && sameImages(doc, this.cur)) {
+    if (doc.text === this.cur.text && sameChips(doc, this.cur)) {
       this.sel = clampSel(sel, this.cur);
       return false;
     }
@@ -491,13 +538,18 @@ export class Draft {
       occs.push({ occ: `o${++this.ids}`, res });
       out += IMG;
     }
-    const paths = (d: Doc) => d.images.map((o) => this.res.get(o.res)?.path ?? '');
-    const doc: Doc = { text: out, images: occs };
+    const paths = (d: Doc) => d.chips.map((o) => (isImageOcc(o) ? (this.res.get(o.res)?.path ?? '') : `@${o.path}`));
+    const doc: Doc = { text: out, chips: occs };
     if (doc.text === this.cur.text && paths(doc).join('\n') === paths(this.cur).join('\n')) {
       this.gc();
       return false;
     }
-    const sel = caret(out.length);
+    this.reset(doc, caret(out.length));
+    return true;
+  }
+
+  /** `doc` is the whole document now, with no history behind it. */
+  private reset(doc: Doc, sel: Selection): void {
     this.hist = [{ doc, sel }];
     this.at = 0;
     this.cur = doc;
@@ -505,7 +557,6 @@ export class Draft {
     this.rev++;
     this.lastTypeAt = -Infinity;
     this.afterChange('api');
-    return true;
   }
 
   /** After a successful send: nothing of the draft is kept. */
@@ -553,7 +604,7 @@ export class Draft {
   // ---- uploads ------------------------------------------------------------------------
 
   private wanted(id: string): boolean {
-    return this.wants.has(id) || this.cur.images.some((o) => o.res === id);
+    return this.wants.has(id) || imagesOf(this.cur).some((o) => o.res === id);
   }
 
   /** Cancels an upload in flight; the resource goes back to pending and any late answer is ignored. */
@@ -675,7 +726,7 @@ export class Draft {
       failed.push({
         res: id,
         name: r?.name ?? 'An image',
-        numbers: doc.images.flatMap((im, i) => (im.res === id ? [i + 1] : [])),
+        numbers: imagesOf(doc).flatMap((im, i) => (im.res === id ? [i + 1] : [])),
         message: r?.error ?? 'the image is no longer in the draft',
         code: r?.code ?? 'gone',
       });
@@ -704,4 +755,5 @@ export class Draft {
   }
 }
 
-const sameImages = (a: Doc, b: Doc): boolean => a.images.length === b.images.length && a.images.every((o, i) => o.occ === b.images[i]?.occ && o.res === b.images[i]?.res);
+/** A document's chips by what they are, not by their occurrence ids. */
+const contentOf = (d: Doc): string => d.chips.map((c) => (isFileOcc(c) ? `f${c.dir ? '/' : ''}:${c.path}` : `i:${c.res}`)).join('\n');
