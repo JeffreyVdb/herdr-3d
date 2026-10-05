@@ -48,6 +48,12 @@ describe('rankByName', () => {
     expect(hits(['caveman:caveman-commit'], 'man-co')).toEqual([['caveman:caveman-commit', [12, 13, 14, 15, 16, 17]]]);
   });
 
+  it('a space and the › of "Building › floor" start a word too (#147)', () => {
+    expect(hits(['Next who needs you'], 'who')).toEqual([['Next who needs you', [5, 6, 7]]]);
+    expect(names(['Herdr 3D › sesame', 'sesame-x › Herdr', 'xsesame'], 'ses')).toEqual(['sesame-x › Herdr', 'Herdr 3D › sesame', 'xsesame']);
+    expect(hits(['Herdr 3D › sesame'], 'ses')).toEqual([['Herdr 3D › sesame', [11, 12, 13]]]);
+  });
+
   it('a few hundred items rank well inside a frame', () => {
     const many = Array.from({ length: 600 }, (_, i) => `plugin-${i % 17}:skill-${i}-name`);
     const t = performance.now();

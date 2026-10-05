@@ -1,7 +1,8 @@
 /**
- * #140: the completion popup's filter for named items (slash commands and skills), pure. An item matches when its
+ * #140: the filter for named items (the completion popup's slash commands and skills, #147: the command palette's
+ * commands and floors), pure. An item matches when its
  * name holds the query, ignoring case, and ranks in one of three tiers: the name starts with the query, then a word
- * of it does (a word starts after `:`, `-` or `_`: `caveman:caveman-commit` has words at 8 and 16), then the query is
+ * of it does (a word starts after `:`, `-`, `_`, a space or `›`: `caveman:caveman-commit` has words at 8 and 16), then the query is
  * anywhere in it. Within a tier the items keep their order (the harness's own). An empty query keeps every item.
  *
  * Each match says which characters of the name it is (`hits`, UTF-16 offsets), for the row to highlight: the prefix,
@@ -15,7 +16,7 @@ export interface Ranked<T> {
   hits: number[];
 }
 
-const WORD = new Set([':', '-', '_']);
+const WORD = new Set([':', '-', '_', ' ', '›']);
 
 /** Lower case, unless that changes the length (offsets must stay the name's). */
 const fold = (s: string): string => {
