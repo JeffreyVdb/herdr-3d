@@ -27,6 +27,16 @@ func TestTerminalOnly(t *testing.T) {
 		{"claude", "/model   ", true},
 		{"claude", "/model opus", false},
 		{"claude", "/model\nopus", false},
+		// R2: the name ends at its first whitespace, of any kind; all of
+		// what follows is the argument.
+		{"claude", "/model\t opus", false},
+		{"claude", "/model \topus", false},
+		{"claude", "/model\topus", false},
+		{"claude", "/model\r\nopus", false},
+		{"claude", "/model\u00a0opus", false},
+		{"claude", "/model\u3000opus", false},
+		{"claude", "/model\t \n", true},
+		{"claude", "/usage\tnow", true},
 		// Inline or prose: not terminal-only.
 		{"claude", "/context", false},
 		{"claude", "/compact", false},

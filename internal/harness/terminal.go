@@ -63,7 +63,9 @@ func TerminalOnly(kind, text string) bool {
 	if !strings.HasPrefix(t, "/") {
 		return false
 	}
-	name, rest, _ := strings.Cut(t[1:], " ")
+	// The name ends at the first whitespace of any kind (a tab, a line
+	// end): all of what follows is the argument.
+	name, rest := t[1:], ""
 	if i := strings.IndexFunc(name, unicode.IsSpace); i >= 0 {
 		name, rest = name[:i], name[i:]
 	}
