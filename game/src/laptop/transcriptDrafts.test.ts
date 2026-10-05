@@ -53,6 +53,28 @@ describe('TranscriptDrafts (#141)', () => {
     expect(t.sending('w0')).toBe(g);
   });
 
+  it('never lets the asked-for draft go: with every other one sending it holds more for now, and trims once a send is answered', async () => {
+    const t = new TranscriptDrafts({ storage: null });
+    const busy = Array.from({ length: 24 }, (_, i) => {
+      const d = t.get(`w${i}`, `w${i}`);
+      d.replace(0, 0, `p${i}`);
+      t.sending(`w${i}`).set(true);
+      return d;
+    });
+    const next = t.get('w24', 'w24');
+    expect(next.disposed).toBe(false);
+    expect(t.peek('w24')).toBe(next);
+    next.replace(0, 0, 'go');
+    expect(await next.resolve()).toMatchObject({ ok: true });
+    expect(busy.some((d) => d.disposed)).toBe(false);
+    const [oldest, ...rest] = busy;
+    t.sending('w0').set(false);
+    expect(oldest?.disposed).toBe(true);
+    expect(t.peek('w0')).toBeNull();
+    expect(next.disposed).toBe(false);
+    expect(rest.some((d) => d.disposed)).toBe(false);
+  });
+
   it('dispose lets every live draft go and keeps what storage has', () => {
     const s = new Mem();
     const t = new TranscriptDrafts({ storage: s });

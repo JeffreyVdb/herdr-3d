@@ -11,7 +11,8 @@ import { Drafts, type DraftStorage } from '../ui/drafts';
  * sent prompt clears the draft (`Draft.clearIf`, the send's revision), and with it what storage kept.
  *
  * At most `KEEP` drafts are held live; the least recently used one goes (disposed: its uploads stop), and comes back
- * from storage when it is asked for again. One with a send on its way stays.
+ * from storage when it is asked for again. One with a send on its way stays, and so does the one last asked for: when
+ * every other one is sending, more are held for now, and the extra go once a send is answered (or at the next ask).
  *
  * Each worker's `SendGate` is kept here too, for the same reason: a send outlives the view that started it, so the
  * next view of the worker's draft must know it is still on its way (busy, no second send of the same prompt).
@@ -54,6 +55,8 @@ export class TranscriptDrafts {
   private readonly live = new Map<string, { draft: PromptDraft; off: () => void; label: string }>();
   private readonly gates = new Map<string, SendGate>();
   private readonly store: Drafts;
+  /** The worker whose draft was asked for last (never the one to go). */
+  private last: string | null = null;
 
   constructor(private readonly o: TranscriptDraftsOptions = {}) {
     this.store = o.storage !== undefined ? new Drafts('transcript', o.storage) : new Drafts('transcript');
@@ -61,12 +64,14 @@ export class TranscriptDrafts {
 
   /** The worker's draft (its live one, else the one storage kept, else a new one); `label` names its uploads. */
   get(id: string, label: string): PromptDraft {
+    this.last = id;
     const had = this.live.get(id);
     if (had) {
       had.label = label;
       // The most recently used goes last.
       this.live.delete(id);
       this.live.set(id, had);
+      this.trim();
       return had.draft;
     }
     const entry = { draft: null as unknown as PromptDraft, off: () => {}, label };
@@ -77,23 +82,34 @@ export class TranscriptDrafts {
       if (e.kind === 'doc') this.save(id, entry.draft);
     });
     this.live.set(id, entry);
-    for (const [k, v] of this.live) {
-      if (this.live.size <= KEEP) break;
-      if (!this.gates.get(k)?.busy) this.drop(k, v);
-    }
+    this.trim();
     return entry.draft;
   }
 
   /** The worker's send gate (the same one for every view of its draft). */
   sending(id: string): SendGate {
     let g = this.gates.get(id);
-    if (!g) this.gates.set(id, (g = new SendGate()));
+    if (!g) {
+      const gate = (g = new SendGate());
+      this.gates.set(id, gate);
+      gate.subscribe(() => {
+        if (!gate.busy) this.trim();
+      });
+    }
     return g;
   }
 
   /** The draft held for `id` now, if any (tests). */
   peek(id: string): PromptDraft | null {
     return this.live.get(id)?.draft ?? null;
+  }
+
+  /** Down to `KEEP` live, least recently used first, passing over the last asked for and any with a send on its way. */
+  private trim(): void {
+    for (const [k, v] of this.live) {
+      if (this.live.size <= KEEP) break;
+      if (k !== this.last && !this.gates.get(k)?.busy) this.drop(k, v);
+    }
   }
 
   private save(id: string, d: PromptDraft): void {
