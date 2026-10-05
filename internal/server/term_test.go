@@ -78,6 +78,7 @@ type fakeTerm struct {
 	onPrompt  func(pane, how string)
 	onStalled func(pane string) // #138: SubmitPrompt fails (its error), what the agent does meanwhile
 	submit    []error           // SubmitPrompt results in turn
+	queueErrs []error           // QueuePrompt results in turn
 	// #95: TypePrompt's results in turn, and what the agent does once a
 	// prompt is typed (startTermBridge: it starts working).
 	typeErrs []error
@@ -218,7 +219,13 @@ func (f *fakeTerm) SubmitPrompt(_ context.Context, session, pane, text string) e
 
 func (f *fakeTerm) QueuePrompt(_ context.Context, session, pane, text string) error {
 	f.record("queue %s %q", pane, text)
-	return nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var err error
+	if len(f.queueErrs) > 0 {
+		err, f.queueErrs = f.queueErrs[0], f.queueErrs[1:]
+	}
+	return err
 }
 
 func (f *fakeTerm) TypePrompt(ctx context.Context, session, pane, text string) error {

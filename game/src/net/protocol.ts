@@ -591,6 +591,8 @@ export interface PromptAck {
   retried: boolean;
   /** #138: the text the bridge sent, when it rewrote the typed one for the worker's harness (absent: as typed). */
   sent?: string;
+  /** #140: the prompt runs a built-in whose output or dialog shows only in the worker's terminal (absent: no). */
+  terminal?: boolean;
 }
 
 /** M5: `worker.answer` ack. */
@@ -708,6 +710,11 @@ export interface CommandEntry {
   argument_hint: string;
   /** `command`: the harness's own; `custom`: a `.claude/commands` file; `skill`: anything else. */
   kind: 'command' | 'skill' | 'custom';
+  /**
+   * #140, a `command` only: `always` when its output or dialog shows only in the worker's terminal, `bare` when only
+   * `/name` alone does (with arguments it is inline), '' otherwise. Absent from a bridge before #140.
+   */
+  terminal?: 'always' | 'bare' | '';
 }
 
 /** #136: `worker.commands` ack. */

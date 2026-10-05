@@ -652,6 +652,42 @@ describe('pending prompts', () => {
     expect(h.tx.itemCount).toBe(3);
   });
 
+  it('#140: a prompt the bridge says shows only in the terminal (/usage) switches to the terminal, not remembered; its row goes', async () => {
+    const h = harness();
+    const { v, host } = await reading(h);
+    h.tx.activity('idle', 100);
+    const sent = host.onPromptSubmit('/usage');
+    h.sent.find((c) => c.t === 'worker.prompt')?.resolve({ ok: true, data: { queued: false, retried: false, terminal: true } });
+    await expect(sent).resolves.toBe(true);
+    expect(h.tx.mode).toBe('terminal');
+    expect(h.modes.at(-1)).toBe('terminal');
+    // Its transcript will show nothing of it: no row waits for it.
+    expect(states(h)).toEqual([]);
+    expect(v.pending.at(-1)).toEqual([]);
+    expect(h.status.at(-1)).toEqual(['ok', 'Sent to Ada: it shows in the terminal']);
+    // Not where you left it: the next time you sit here it is the conversation again.
+    expect(h.storage.getItem('h3d.seat.terminal')).toBeNull();
+  });
+
+  it('#140: any other prompt (/model opus, no `terminal` in the ack) stays in the conversation', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    const sent = host.onPromptSubmit('/model opus');
+    h.sent.find((c) => c.t === 'worker.prompt')?.resolve({ ok: true, data: { queued: false, retried: false } });
+    await expect(sent).resolves.toBe(true);
+    expect(h.tx.mode).toBe('transcript');
+    expect(states(h)).toEqual(['sent']);
+  });
+
+  it('#140: a refused prompt never switches', async () => {
+    const h = harness();
+    const { host } = await reading(h);
+    const sent = host.onPromptSubmit('/usage');
+    h.sent.find((c) => c.t === 'worker.prompt')?.resolve({ ok: false, code: 'invalid_state', message: 'asleep' });
+    await expect(sent).resolves.toBe(false);
+    expect(h.tx.mode).toBe('transcript');
+  });
+
   it('two identical sends, one shown before a resync: the resync keeps the other until its own item comes', async () => {
     const h = harness();
     const { v, host } = await reading(h);
@@ -948,5 +984,52 @@ describe('pending prompts', () => {
     // Standing up forgets them.
     h.tx.stand();
     expect(h.tx.pending).toEqual([]);
+  });
+});
+
+describe('#140: the prompt box’s commands', () => {
+  const asks = (h: ReturnType<typeof harness>) => h.sent.filter((c) => c.t === 'worker.commands').map((c) => c.args.id);
+
+  it('a Claude or Codex transcript asks for the worker’s commands as it opens and hands the list to the view', async () => {
+    const h = harness();
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    expect(asks(h)).toEqual(['a']);
+    const c = h.views[0]?.host.commands;
+    expect(c?.harness).toBe('claude');
+    expect(c?.list.state.loading).toBe(true);
+    h.sent.find((x) => x.t === 'worker.commands')?.resolve({ ok: true, data: { commands: [{ name: 'compact', description: '', argument_hint: '', kind: 'command' }], partial: false } });
+    await flush();
+    expect(c?.list.state.commands?.map((x) => x.name)).toEqual(['compact']);
+    // Sitting down again: the same list (shown at once), asked again as the view opens.
+    h.tx.stand();
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    expect(h.views[1]?.host.commands?.list).toBe(c?.list);
+    expect(asks(h)).toEqual(['a', 'a']);
+    h.tx.stand();
+    h.tx.sit('b', 'Bo', true, 'codex');
+    await flush();
+    expect(h.views[2]?.host.commands?.harness).toBe('codex');
+    expect(asks(h)).toEqual(['a', 'a', 'b']);
+  });
+
+  it('a seat opened in the terminal asks nothing until the transcript opens', async () => {
+    const h = harness();
+    h.tx.sit('a', 'Ada', false, 'claude');
+    await flush();
+    expect(asks(h)).toEqual([]);
+  });
+
+  it('another harness (or none known): no commands, nothing asked', async () => {
+    const h = harness();
+    h.tx.sit('a', 'Ada');
+    await flush();
+    expect(h.views[0]?.host.commands).toBeNull();
+    h.tx.stand();
+    h.tx.sit('b', 'Bo', true, 'other');
+    await flush();
+    expect(h.views[1]?.host.commands).toBeNull();
+    expect(asks(h)).toEqual([]);
   });
 });

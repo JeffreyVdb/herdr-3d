@@ -625,7 +625,7 @@ export class Laptops {
     this.host.seat.focus();
     // M16: its transcript is watched from now on. #98: you sit down to its conversation, unless you left it in the
     // terminal, the bridge reads no transcripts or its harness writes none (a shell, another agent).
-    this.transcript.sit(id, v.name, !this.whyNoTranscript() && hasTranscript(v.harness));
+    this.transcript.sit(id, v.name, !this.whyNoTranscript() && hasTranscript(v.harness), v.harness ?? '');
     // Its view starts empty: a watch a desk print kept since you last sat here is made again, for its ack's history.
     this.transcripts.refresh(id);
     // With the seat bar up, the laptop fits between it and the top bar.

@@ -786,17 +786,23 @@ upload to look at).
 #139 completion: `mountComposer({ complete: { sources, bounds? } })` turns on a suggestion popup under the caret
 (`complete.ts`: token detection and the source interface, pure; `completion.ts`: the popup and its keys). Opt-in: without
 `complete` the composer, its keys and its DOM are unchanged; the popup's DOM is made on its first open. Only the transcript's
-prompt box opts in, with no source yet (commands and files are the next tickets), so nothing opens in the game today. A
+prompt box opts in: #140 gives it the `/` source (the worker's commands and skills, see the transcript section); `@`
+(files) is the next ticket. A
 token is a trigger (`/` or `@`) at the start of the text, after whitespace or right after an image chip (`/usr/bin`,
 `a/b`, URLs and emails never open one), up to the caret: a `/` query has no whitespace; an `@` query may hold spaces
 (file names) but ends at a newline, a chip or 80 characters. The nearest trigger before the caret decides; a pick
 replaces the trigger and the whole word the caret is in. A source is `{ trigger, label?, items(query, signal), render(item),
-insert(item, token) }`: `items` returns the rows or a promise of them (each new query aborts the previous `signal`
+insert(item, token, text) }` (`text`: the draft's text): `items` returns the rows or a promise of them (each new query aborts the previous `signal`
 and a reply that is not the latest is dropped; pending shows "Loading…" or keeps the rows dimmed, `aria-disabled`,
 none active and none pickable by key or click until the reply, empty "No match", a rejection "Could not load
 matches."); `render` returns a Node or a string; `insert` returns a `ReplaceSpec` `{ text, start?, end? }` (default
 range: the token), applied with one `Draft.replace`, so one undo takes the pick
-back and the caret lands after it. A session opens only when text is typed (an `input`, an IME commit) into a token;
+back and the caret lands after it. #140, optional, for a source whose items live elsewhere: `available()` false opens
+no popup (and closes an open one when the source says it changed), `opening()` hears that a session would open (to
+refresh), `subscribe(changed)` says the items changed (an open session asks its query again, the active row kept by
+`key(item)`), `footer()` is a note under the rows (`.cmp-pop-note`). `ui/composer/rank.ts` `rankByName` is the filter
+for named items: prefix, then word start (after `:`, `-`, `_`), then substring, stable within a tier, with the matched
+characters for the row to highlight. A session opens only when text is typed (an `input`, an IME commit) into a token;
 it follows the caret inside the token and closes when the caret leaves it or is scrolled out of the editor's visible
 box or the bounds (no clamped popup pointing at nothing; scrolling back does not reopen it, and text typed out of view
 gets one frame for the browser to scroll the caret back), on a pick, Esc, blur, `setBusy` /
@@ -929,6 +935,30 @@ writes a prompt's user item to the watch that long after the agent took it (a qu
 without it prompts never show. `e2e/m16-transcript-activity.spec.ts` drives it (`getAnimations()`: one running
 animation, opacity only, none in terminal mode or once idle); `e2e/m58-activity-perf.spec.ts` (opt-in, `H3D_PERF=1`,
 ~4 min) traces 60 s idle / cue / idle for paints, layouts, long tasks, thread time and the label layer's paint count.
+#140: `/` in the view's prompt box (at the start or mid-sentence, after whitespace) lists the worker's slash commands
+and skills (`worker.commands`, #136). `laptop/commandCatalog.ts` keeps one list per worker for the page's life (at most
+64): asked when the transcript view mounts (`TranscriptMode.sit(id, name, canRead, harness)`, a Claude or Codex harness
+only) and again when the popup opens, one ask at a time; the last list shows at once and the rows follow the refresh.
+`laptop/slashCommands.ts` is the source: `rankByName` on the name as you type; a row is `/name` (mono, matched letters
+in the preset's sun), the argument hint dimmed, the description's first line cut with an ellipsis (its whole text is
+the tooltip), and the kind (`command`, `skill`, `custom`); a pick puts `/name ` in as plain text (a space already after
+the word is taken instead of adding one). A Codex skill is offered as `/name` too (the bridge sends `$name`, #138), and
+the footer says "Codex: skills are sent as $name". States: no list yet "Loading…"; a failed first ask "Could not load
+matches." (the next popup asks again); a failed refresh keeps the rows with "Could not refresh: the list may be out of
+date"; `partial: true` the built-ins with "Partial list: only the built-in commands so far"; `invalid_state` /
+`unknown_worker` (no Claude or Codex agent, an asleep floor) no popup at all, asked again at most every 10 s; a worker
+waiting on a question disables the box, so no popup. Terminal-only built-ins (the bridge's table,
+`internal/harness/terminal.go`: Claude's `/usage`, `/status`, `/config`, `/mcp`, `/help` and a bare `/model` open a
+dialog in the terminal and write nothing to the transcript; Codex's `/status`, `/diff`, `/pwd`, `/ps`, `/mcp` print
+there only) carry a "terminal" badge (`terminal` on the row; its tooltip and the row's text say where the result
+shows, and a bare-only one says that with arguments it runs here). When the ack of a sent prompt says `terminal: true`
+(the bridge decides from the typed text, so aliases like `/cost` and a prompt typed by hand count too, and `/model
+opus` does not), `TranscriptMode` drops its pending row (the transcript will show nothing of it), says "Sent to <name>:
+it shows in the terminal" and switches the seat to the terminal, not remembered as where you left that worker (Ctrl+Esc
+goes back). The simulator answers `simCommands` (`tools/fixture-panels.ts`, rows marked like the bridge's) and acks a
+terminal-only prompt (`simTerminalOnly`) with no turn; `e2e/h140-slash-commands.spec.ts` drives a Claude and a Codex
+worker (mid-sentence pick, Esc closes only the popup, Enter sends when closed), a blocked one, and the badge and the
+switch (`/usage` shows the terminal, `/model opus` does not).
 
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings

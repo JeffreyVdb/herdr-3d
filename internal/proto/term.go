@@ -157,6 +157,9 @@ type PromptResult struct {
 	// worker's harness (#138); absent when it sent the text as typed. The
 	// agent's transcript shows this text.
 	Sent string `json:"sent,omitempty"`
+	// Terminal (#140): the prompt is a built-in whose output or dialog shows
+	// only in the worker's terminal (harness.TerminalOnly); absent otherwise.
+	Terminal bool `json:"terminal,omitempty"`
 }
 
 // Question is what a blocked worker's screen asks.

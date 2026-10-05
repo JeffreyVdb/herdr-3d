@@ -26,7 +26,10 @@
 //   traces), cut at 256 KiB. `simfail=changes_failed` fails the next one.
 // - worker.commands (#136): a Claude or Codex worker's commands, skills and
 //   custom commands (simCommands), `partial: false`, half a step later; a
-//   plain shell (no harness) is `invalid_state`.
+//   plain shell (no harness) is `invalid_state`. #140: the bridge's
+//   terminal-only built-ins are marked (`terminal`), and a worker.prompt that
+//   runs one (simTerminalOnly, the bridge's table) is acked `terminal: true`
+//   half a step later, with no turn and nothing in the transcript.
 // - worker.files (#137): a fixed checkout (SIM_FILES and its directories)
 //   ranked by a simple matcher (simFiles), half a step later; a cwd with
 //   `/scratch` in it is outside git with no rg: empty, `source: "none"`,
@@ -144,6 +147,13 @@ export class PanelsSim {
     if (!text || bytes(text) > 16 * 1024 || text.includes('\0')) throw this.bad('text must be 1 byte to 16 KiB, without NUL');
     if (this.h.takeFail('prompt_failed')) {
       this.h.after(this.h.stepMs, () => fail(this.h.error('prompt_failed', `prompt_failed: ${w.name ?? 'the agent'} did not start working, even after one more Enter (simulated)`)));
+      return;
+    }
+    // #140: a built-in that shows only in the terminal opens there: no turn, nothing in the transcript. Acked once
+    // delivered, as the bridge does: queued when the worker is at work.
+    if (simTerminalOnly(w.harness ?? w.agent_kind ?? '', text)) {
+      const queued = w.status === 'working';
+      this.h.after(Math.round(this.h.stepMs / 2), () => ack({ queued, retried: false, terminal: true }));
       return;
     }
     if (w.status === 'working') {
@@ -462,9 +472,9 @@ export function simQuestion(kind: string, text: string, choices: string[], excer
   return q;
 }
 
-const cmd = (name: string, description: string, argument_hint = ''): CommandEntry => ({ name, description, argument_hint, kind: 'command' });
-const skill = (name: string, description: string, argument_hint = ''): CommandEntry => ({ name, description, argument_hint, kind: 'skill' });
-const custom = (name: string, description: string, argument_hint = ''): CommandEntry => ({ name, description, argument_hint, kind: 'custom' });
+const cmd = (name: string, description: string, argument_hint = '', terminal: CommandEntry['terminal'] = ''): CommandEntry => ({ name, description, argument_hint, kind: 'command', terminal });
+const skill = (name: string, description: string, argument_hint = ''): CommandEntry => ({ name, description, argument_hint, kind: 'skill', terminal: '' });
+const custom = (name: string, description: string, argument_hint = ''): CommandEntry => ({ name, description, argument_hint, kind: 'custom', terminal: '' });
 
 /** #136: the simulated `worker.commands` ack of a harness (null: not Claude or Codex). */
 export function simCommands(harness: string): WorkerCommands | null {
@@ -474,7 +484,8 @@ export function simCommands(harness: string): WorkerCommands | null {
       commands: [
         cmd('compact', 'Free up context by summarizing the conversation so far', '<optional custom summarization instructions>'),
         cmd('review', 'Review a pull request'),
-        cmd('usage', "Show session cost, plan usage, and what's contributing to your limits"),
+        cmd('usage', "Show session cost, plan usage, and what's contributing to your limits", '', 'always'),
+        cmd('model', 'Set the AI model for Claude Code', '[model]', 'bare'),
         skill('caveman:caveman-commit', '(caveman) Ultra-compressed commit message generator.'),
         skill('handoff', 'Compact the current conversation into a handoff document for another agent to pick up. (user)', 'What will the next session be used for?'),
         custom('deploy', 'Deploy the bridge to the test host (project)', '<host>'),
@@ -491,11 +502,26 @@ export function simCommands(harness: string): WorkerCommands | null {
         cmd('init', 'create an AGENTS.md file with instructions for Codex'),
         cmd('compact', 'summarize conversation to prevent hitting the context limit'),
         cmd('review', 'review my current changes and find issues', '<instructions>'),
-        cmd('mcp', 'list configured MCP tools; use /mcp verbose for details', '[verbose]'),
+        cmd('mcp', 'list configured MCP tools; use /mcp verbose for details', '[verbose]', 'always'),
+        cmd('status', 'show current session configuration and token usage', '', 'always'),
       ],
     };
   }
   return null;
+}
+
+/** #140: the bridge's terminal-only built-ins (internal/harness/terminal.go), aliases included. */
+const SIM_TERMINAL: Record<string, Record<string, 'always' | 'bare'>> = {
+  claude: { usage: 'always', cost: 'always', stats: 'always', status: 'always', config: 'always', mcp: 'always', help: 'always', model: 'bare' },
+  codex: { status: 'always', diff: 'always', pwd: 'always', ps: 'always', mcp: 'always' },
+};
+
+/** #140: whether a prompt runs one of them, as the bridge's `harness.TerminalOnly` decides. */
+export function simTerminalOnly(harness: string, text: string): boolean {
+  const m = /^\/(\S+)([\s\S]*)$/.exec(text.trim());
+  if (!m) return false;
+  const mode = SIM_TERMINAL[harness]?.[m[1] as string];
+  return mode === 'always' || (mode === 'bare' && (m[2] as string).trim() === '');
 }
 
 /** #137: the simulated checkout's files (its directories are derived), with the names the bridge must pass verbatim. */

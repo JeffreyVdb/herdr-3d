@@ -55,7 +55,7 @@ func TestWorkerCommands(t *testing.T) {
 	if len(got.Commands) != 1 || got.Commands[0].Name != "claude-skill" || got.Partial {
 		t.Fatalf("claude ack = %+v", got)
 	}
-	if !strings.Contains(string(m.raw), `"commands":[{"name":"claude-skill","description":"","argument_hint":"","kind":"skill"}],"partial":false`) {
+	if !strings.Contains(string(m.raw), `"commands":[{"name":"claude-skill","description":"","argument_hint":"","kind":"skill","terminal":""}],"partial":false`) {
 		t.Errorf("shape: %s", m.raw)
 	}
 	_, m = c.command(proto.CmdWorkerCommands, "c2", proto.WorkerArgs{ID: ids["w2"]})

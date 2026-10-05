@@ -83,7 +83,7 @@ func TestClaudeCommands(t *testing.T) {
 	}
 	want := []proto.CommandEntry{
 		{Name: "compact", Description: "Free up context", ArgumentHint: "<optional custom summarization instructions>", Kind: "command"},
-		{Name: "usage", Description: "Show session cost", Kind: "command"},
+		{Name: "usage", Description: "Show session cost", Kind: "command", Terminal: "always"},
 		{Name: "review", Description: "Review a pull request", Kind: "command"},
 		{Name: "handoff", Description: "Compact into a handoff document (user)", ArgumentHint: "What next?", Kind: "skill"},
 		{Name: "topcmd", Description: "top cmd (project)", ArgumentHint: "<fixture>", Kind: "custom"},

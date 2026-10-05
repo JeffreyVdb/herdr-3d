@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Changes, Snapshot, WorkerCommands, WorkerFiles, WorldEvent } from '../src/net/protocol';
 import { changesView } from '../src/world/changes';
 import { WorldStore } from '../src/world/store';
-import { SIM_DIFF_CAP, SIM_FILES, simChanges, simCommands, simFiles } from './fixture-panels';
+import { SIM_DIFF_CAP, SIM_FILES, simChanges, simCommands, simFiles, simTerminalOnly } from './fixture-panels';
 import { loadFixture } from './fixture-server';
 import { SimWorld, type SimOptions } from './fixture-sim';
 
@@ -58,6 +58,30 @@ describe('SimWorld worker.prompt (M5)', () => {
     expect(r.reply(c.req_id)).toEqual({ t: 'ack', req_id: c.req_id, data: { queued: false, retried: false } });
     r.tick();
     expect(r.byName('Pebble').status).toBe('done');
+  });
+
+  it('#140: a terminal-only built-in is acked `terminal: true` with no turn; with arguments a bare one is a prompt', () => {
+    const r = rig();
+    const pebble = r.byName('Pebble');
+    const c = r.cmd('worker.prompt', { id: pebble.id, text: ' /usage ' });
+    r.tick();
+    expect(r.reply(c.req_id)).toEqual({ t: 'ack', req_id: c.req_id, data: { queued: false, retried: false, terminal: true } });
+    expect(r.byName('Pebble').status).toBe('idle');
+    const m = r.cmd('worker.prompt', { id: pebble.id, text: '/model opus' });
+    r.tick();
+    expect(r.reply(m.req_id)).toEqual({ t: 'ack', req_id: m.req_id, data: { queued: false, retried: false } });
+    expect(r.byName('Pebble').status).toBe('working');
+  });
+
+  it('#140: simTerminalOnly follows the bridge table', () => {
+    expect(simTerminalOnly('claude', '/cost')).toBe(true);
+    expect(simTerminalOnly('claude', '/model')).toBe(true);
+    expect(simTerminalOnly('claude', '/model opus')).toBe(false);
+    expect(simTerminalOnly('claude', 'run /usage')).toBe(false);
+    expect(simTerminalOnly('claude', '/context')).toBe(false);
+    expect(simTerminalOnly('codex', '/mcp verbose')).toBe(true);
+    expect(simTerminalOnly('codex', '/usage')).toBe(false);
+    expect(simTerminalOnly('', '/usage')).toBe(false);
   });
 
   it('queues a prompt for a working agent and runs it when the turn ends', () => {
@@ -253,7 +277,7 @@ describe('SimWorld worker.commands (#136)', () => {
       expect(m).toMatchObject({ t: 'ack', data: { partial: false } });
       const data = (m as { data: WorkerCommands }).data;
       expect(data).toEqual(simCommands(harness));
-      for (const e of data.commands) expect(Object.keys(e).sort()).toEqual(['argument_hint', 'description', 'kind', 'name']);
+      for (const e of data.commands) expect(Object.keys(e).sort()).toEqual(['argument_hint', 'description', 'kind', 'name', 'terminal']);
     }
     expect(new Set(simCommands('claude')?.commands.map((e) => e.kind))).toEqual(new Set(['command', 'skill', 'custom']));
   });

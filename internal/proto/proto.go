@@ -845,7 +845,17 @@ type CommandEntry struct {
 	// ArgumentHint is "" when there is none.
 	ArgumentHint string `json:"argument_hint"`
 	Kind         string `json:"kind"`
+	// Terminal (#140) says a built-in's output or dialog shows only in the
+	// worker's terminal, never in its transcript: TerminalAlways,
+	// TerminalBare (only when sent without arguments), or "".
+	Terminal string `json:"terminal"`
 }
+
+// Values of CommandEntry.Terminal.
+const (
+	TerminalAlways = "always" // whatever follows the name
+	TerminalBare   = "bare"   // only "/name" alone; with arguments it is inline
+)
 
 // #137: the files and directories of a worker's checkout ranked against a
 // query, for the composer's @-mentions (worker.files, read-only).

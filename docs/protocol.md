@@ -487,7 +487,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `terminal.unwatch` | `{"id": string}` | — | — |
 | `terminal.zoom` | `{"id": string, "on": bool}` | `{"pane", "cols", "rows", "zoom"}` | a `terminal.state` and, if the size changed, a full `terminal.frame` (see [Fullscreen](#fullscreen-74)) |
 | `worker.keys` | `{"id": string, "input": [{"text": string} \| {"key": string}…]}` | — | — (see [Input](#input)) |
-| `worker.prompt` | `{"id": string, "text": string}` | `{"queued": bool, "retried": bool, "sent"?: string}` | the worker's statuses |
+| `worker.prompt` | `{"id": string, "text": string}` | `{"queued": bool, "retried": bool, "sent"?: string, "terminal"?: true}` | the worker's statuses |
 | `worker.answer` | `{"id": string, "hash": string, "choice"?: 1–9, "cancel"?: true}` | `{"sent": [string…], "resolved": bool}` | the worker's upsert without its `question` when it moves on |
 | `worker.answer_ask` | `{"id": string, "tool_use_id": string, "answers"?: [{"question": int, "choices"?: [int…], "other"?: string}…], "cancel"?: true, "prompt"?: string}` | `{"sent": [string…], "resolved": bool, "prompted"?: bool}` | the worker's upsert without its `ask` once the transcript has the answer (before the ack) (see [Laptops: asks](#laptops-asks)) |
 | `transcript.watch` | `{"id": string, "limit"?: 1–500}` | `{"harness", "session", "version", "cursor", "has_more", "pending", "items"}` | `transcript.items` to this connection only (see [Laptops: transcript](#laptops-transcript)) |
@@ -1866,6 +1866,20 @@ leaves Codex's skill popup open and its Enter is taken: the retry presses `esc` 
 unless the worker started meanwhile (the prompt was only slow): then nothing is pressed, as Esc aborts a running turn.
 The transcript view of a Codex worker shows the rewritten text (what Codex received).
 
+#140: the ack (direct or `queued`) has `"terminal": true` when the typed text runs a built-in whose output or dialog
+shows only in the worker's terminal (the table under [Commands and skills](#commands-and-skills): the text, trimmed,
+is `/name` or, for an `always` built-in, `/name args`; the name ends at the first whitespace of any kind, so
+`/model\topus` has an argument; aliases count, so `/cost` is Claude's `/usage`); absent otherwise. The transcript will
+show nothing of it: a client shows the worker's terminal instead.
+
+Such a prompt starts no turn (a dialog opens, or a card prints, and herdr says `idle` / `done` meanwhile), so the bridge
+decides this **before** it sends, from the text as typed, and sends it differently: Claude's is typed with its Enter
+(after the same wait for the agent to be ready, and the same erase), Codex's pasted with `herdr agent prompt` without
+waiting. The ack comes as soon as herdr delivered it; nothing waits for `working`, and Enter is **never** pressed again
+(it would act on the open dialog), so `retried` is always false. herdr failing to deliver it is `prompt_failed`, as
+for any prompt. A worker `blocked` or with an ask refuses it (`invalid_state`); to a worker `working` it goes as any
+queued prompt (`queued: true`, with `terminal`): the CLI runs it, or refuses it, in its terminal when it takes it.
+
 The bridge's transcript reader (the usage tracker) warns in its log when a prompt it typed into Claude reaches the
 transcript wrapped as a paste anyway (Claude Code's paste threshold changed): it keeps a hash of each typed prompt's
 words for 10 minutes, never the text.
@@ -1974,9 +1988,10 @@ read-only, for the composer to offer them:
 ```json
 {"t":"worker.commands","req_id":"56","args":{"id":"a58752ea-6511-4318-be9a-59e41c09d7c5"}}
 {"t":"ack","req_id":"56","data":{"commands":[
-  {"name":"compact","description":"Free up context by summarizing the conversation so far","argument_hint":"<optional custom summarization instructions>","kind":"command"},
-  {"name":"caveman:caveman-commit","description":"(caveman) Ultra-compressed commit message generator. …","argument_hint":"","kind":"skill"},
-  {"name":"deploy","description":"Deploy to the test host (project)","argument_hint":"<host>","kind":"custom"}],
+  {"name":"compact","description":"Free up context by summarizing the conversation so far","argument_hint":"<optional custom summarization instructions>","kind":"command","terminal":""},
+  {"name":"usage","description":"Show session cost, plan usage, and what's contributing to your limits","argument_hint":"","kind":"command","terminal":"always"},
+  {"name":"caveman:caveman-commit","description":"(caveman) Ultra-compressed commit message generator. …","argument_hint":"","kind":"skill","terminal":""},
+  {"name":"deploy","description":"Deploy to the test host (project)","argument_hint":"<host>","kind":"custom","terminal":""}],
   "partial":false}}
 ```
 
@@ -1987,6 +2002,7 @@ read-only, for the composer to offer them:
 | `description` | the harness's description. Claude appends where a skill or command comes from (`(user)`, `(project)`, `(claude.ai sync)`); for a Codex skill it is its short description (`interface.shortDescription`, else the legacy `shortDescription`, else `description`) |
 | `argument_hint` | `""` when there is none; a required argument is `<…>`, an optional one `[…]` |
 | `kind` | `command`: the harness's own; `custom`: a legacy command file; `skill`: everything else |
+| `terminal` | #140, a `command` only: `always` when its output or dialog shows only in the worker's terminal, never in its transcript; `bare` when that is so only for `/name` alone (with arguments it works inline); `""` otherwise (below) |
 | `partial` | `true` while no probe of the harness has succeeded for this checkout: `commands` then holds only the bridge's static built-ins (Codex's, below; Claude has none: `[]`) |
 
 The worker's harness is its `harness` (else `agent_kind`), `claude` or `codex`; its checkout is
@@ -2022,6 +2038,18 @@ answered at once. An older one is answered at once too, and one probe refreshes 
 ask. The first ask for a checkout waits for its probe; asks meanwhile share it. A failed or timed-out probe keeps the
 previous list (the next probe is 30 s later); with no previous list the answer is the built-ins with `partial:
 true`, and an ask 30 s later probes again (in the background: it answers the built-ins at once).
+
+**Terminal-only built-ins** (#140): a static table per harness in `internal/harness/terminal.go`, since neither CLI
+says which commands these are (Claude's `supportedCommands()` rows have no such field) and herdr reports the agent
+`done` while such a dialog is open. Observed on Claude Code 2.1.289 and codex-cli 0.160.0:
+
+| harness | `always` | `bare` |
+|---|---|---|
+| `claude` | `usage` (aliases `cost`, `stats`), `status`, `config`, `mcp`, `help`: a modal window (Esc closes it), nothing in the JSONL | `model`: the picker; `/model <name>` switches inline |
+| `codex` | `status` (an inline card), `pwd`, `ps`, `mcp` (inline lines), `diff` (a full-screen viewer: `q` closes it, and it takes the prompts typed meanwhile): nothing in the rollout | |
+
+Claude's `context` prints inline and is transcribed: not in the table. The mark is on the harness's own row only (a
+skill named `status` is not the dialog). `worker.prompt`'s ack says when a sent prompt is one of these (above).
 
 Errors: `unknown_worker`, `invalid_state` (its floor is asleep, it has no directory, or it runs no Claude or Codex
 agent), `bad_request` (unknown `args` fields), `internal` (not configured). A failed probe is not an error (above).
