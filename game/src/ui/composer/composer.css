@@ -458,12 +458,16 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.cmp-pop-opt:hover {
+.cmp-pop-opt:not([aria-disabled='true']):hover {
   background: rgb(255 255 255 / 6%);
 }
 .cmp-pop-opt[aria-selected='true'] {
   background: color-mix(in srgb, var(--cmp-pop-accent) 16%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cmp-pop-accent) 55%, transparent);
+}
+/* An older query's rows, kept while the current one loads: nothing to pick. */
+.cmp-pop-opt[aria-disabled='true'] {
+  cursor: default;
 }
 .cmp-pop-status {
   margin: 0;

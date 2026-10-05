@@ -238,3 +238,78 @@ test('an image chip before the token: it still opens and picks', async ({ page }
   await expect(page.locator('.cmp-chip')).toHaveCount(1);
   expect(await page.evaluate(() => (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).composer.getSnapshot().doc.text)).toBe('￼/help ');
 });
+
+test('rows kept from an older query while the next one loads cannot be picked by a click, Enter or Tab', async ({ page }) => {
+  await open(page);
+  const stub = (delayMs: number) => page.evaluate((ms) => ((window.__h3dComposer as NonNullable<Window['__h3dComposer']>).stub.delayMs = ms), delayMs);
+  await page.keyboard.type('@');
+  await expect(selected(page)).toHaveText('src/main.ts');
+  await stub(10000);
+  await page.keyboard.type('zz');
+  await expect(list(page)).toHaveAttribute('aria-busy', 'true');
+  await expect(options(page).first()).toHaveText('src/main.ts'); // still shown, dimmed
+  await expect(selected(page)).toHaveCount(0);
+  await expect(ed(page)).not.toHaveAttribute('aria-activedescendant', /.*/);
+  await options(page).first().click({ force: true });
+  expect(await text(page)).toBe('@zz');
+  await expect(pop(page)).toBeVisible();
+  // Enter: nothing of this query's to pick, so it only closes.
+  await page.keyboard.press('Enter');
+  await expect(pop(page)).toBeHidden();
+  expect(await text(page)).toBe('@zz');
+  expect(await events(page)).toEqual([]);
+
+  await stub(150);
+  await page.keyboard.type(' @');
+  await expect(selected(page)).toHaveText('src/main.ts');
+  await stub(10000);
+  await page.keyboard.type('q');
+  await expect(list(page)).toHaveAttribute('aria-busy', 'true');
+  await page.keyboard.press('Tab');
+  expect(await text(page)).toBe('@zz @q');
+});
+
+test('scrolling the caret out of the editor closes the popup; the keys are the editor’s again', async ({ page }) => {
+  await open(page);
+  const inDialog = () =>
+    page.evaluate(() => {
+      const p = (document.querySelector('.cmp-pop') as HTMLElement).getBoundingClientRect();
+      const d = (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).dialog.getBoundingClientRect();
+      return p.height > 0 && p.top >= d.top && p.bottom <= d.bottom;
+    });
+  await page.evaluate(() => {
+    const d = (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).composer.getDraft();
+    d.replace(0, 0, Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join('\n') + '\n');
+  });
+  await ed(page).focus();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type('/');
+  // The editor is scrolled to the caret at the bottom: open, inside the dialog.
+  await expect(pop(page)).toBeVisible();
+  expect(await inDialog()).toBe(true);
+  await page.evaluate(() => ((document.querySelector('.cmp-editor') as HTMLElement).scrollTop = 0));
+  await expect(pop(page)).toBeHidden();
+  await expect(ed(page)).not.toHaveAttribute('aria-expanded', /.*/);
+  // Scrolled back to the caret, it stays closed; Enter sends the draft as typed.
+  await page.evaluate(() => {
+    const e = document.querySelector('.cmp-editor') as HTMLElement;
+    e.scrollTop = e.scrollHeight;
+  });
+  await page.waitForTimeout(100);
+  await expect(pop(page)).toBeHidden();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => events(page)).toContain('submit');
+  expect(await text(page)).toMatch(/line 50\n\/$/);
+
+  // Typing with the caret scrolled out of view: the browser brings it back and the popup opens there.
+  await page.evaluate(() => {
+    const d = (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).composer.getDraft();
+    d.replace(0, d.doc.text.length, Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join('\n') + '\n');
+  });
+  await ed(page).focus();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.evaluate(() => ((document.querySelector('.cmp-editor') as HTMLElement).scrollTop = 0));
+  await page.keyboard.type('/');
+  await expect(pop(page)).toBeVisible();
+  expect(await inDialog()).toBe(true);
+});

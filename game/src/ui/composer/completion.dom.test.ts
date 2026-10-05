@@ -362,6 +362,53 @@ describe('closing', () => {
     expect(el.querySelector('.cmp-pop')).toBeNull();
   });
 
+  it('when the editor scrolls the caret out of view; the keys are the editor’s again', () => {
+    const env = setup({ complete: { sources: [slash()] } });
+    // jsdom lays nothing out: an editor 60px tall at y=100, its first line 18px, scrolled by `scroll`.
+    let scroll = 0;
+    Object.defineProperty(env.editor, 'clientHeight', { configurable: true, value: 60 });
+    Object.defineProperty(env.editor, 'clientWidth', { configurable: true, value: 300 });
+    Object.defineProperty(env.editor, 'scrollTop', { configurable: true, get: () => scroll, set: (v: number) => (scroll = v) });
+    env.editor.getBoundingClientRect = () => new DOMRect(0, 100, 300, 60);
+    type(env, '/he');
+    expect(open(env)).toBe(true);
+    env.editor.dispatchEvent(new Event('scroll'));
+    expect(open(env)).toBe(true);
+    scroll = 200;
+    env.editor.dispatchEvent(new Event('scroll'));
+    expect(open(env)).toBe(false);
+    expect(aria(env)).toEqual(Object.fromEntries(ARIA.map((a) => [a, null])));
+    expect(key(env.editor, 'ArrowDown').defaultPrevented).toBe(false);
+    // Scrolled back, it stays closed (typing opens one); Enter sends.
+    scroll = 0;
+    env.editor.dispatchEvent(new Event('scroll'));
+    expect(open(env)).toBe(false);
+    key(env.editor, 'Enter');
+    expect(env.draft.doc.text).toBe('/he');
+    expect(env.submits).toBe(1);
+  });
+
+  it('text typed out of view gets a frame for the browser to scroll the caret back, then closes if it did not', async () => {
+    const env = setup({ complete: { sources: [slash()] } });
+    let scroll = 200;
+    Object.defineProperty(env.editor, 'clientHeight', { configurable: true, value: 60 });
+    Object.defineProperty(env.editor, 'clientWidth', { configurable: true, value: 300 });
+    Object.defineProperty(env.editor, 'scrollTop', { configurable: true, get: () => scroll, set: (v: number) => (scroll = v) });
+    env.editor.getBoundingClientRect = () => new DOMRect(0, 100, 300, 60);
+    const frame = () => new Promise((r) => setTimeout(r, 40));
+    type(env, '/he');
+    expect(open(env)).toBe(true);
+    // The browser reveals the caret: it stays.
+    scroll = 0;
+    await frame();
+    expect(open(env)).toBe(true);
+    // It does not: closed.
+    scroll = 200;
+    type(env, 'l');
+    await frame();
+    expect(open(env)).toBe(false);
+  });
+
   it('survives a redraw of the draft that keeps the caret in the token', () => {
     const env = setup({ complete: { sources: [slash()] } });
     type(env, '/he');
@@ -423,6 +470,48 @@ describe('an async source', () => {
     expect(labels(env)).toEqual(['a.ts']);
     expect(env.c.element.querySelector('[role="listbox"]')!.hasAttribute('data-loading')).toBe(true);
     expect(status(env)).toBeNull();
+  });
+
+  it('the rows kept while the next query loads are not its rows: no active row, a click and Tab pick nothing', async () => {
+    const src = at();
+    const env = setup({ complete: { sources: [src] } });
+    type(env, '@a');
+    src.pending[0]!.resolve(['a.ts', 'ab.ts']);
+    await flush();
+    expect(active(env)).toBe('a.ts');
+    type(env, 'zz');
+    expect(labels(env)).toEqual(['a.ts', 'ab.ts']);
+    expect(active(env)).toBeNull();
+    expect(env.editor.hasAttribute('aria-activedescendant')).toBe(false);
+    expect(rows(env).map((r) => r.getAttribute('aria-disabled'))).toEqual(['true', 'true']);
+    rows(env)[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(env.draft.doc.text).toBe('@azz');
+    expect(open(env)).toBe(true);
+    // No row to move to or pick: the arrows and Tab are the editor's.
+    expect(key(env.editor, 'ArrowDown').defaultPrevented).toBe(false);
+    expect(key(env.editor, 'Tab').defaultPrevented).toBe(false);
+    expect(env.draft.doc.text).toBe('@azz');
+    // The reply's rows are the query's own: pickable.
+    src.pending[1]!.resolve(['azz.ts']);
+    await flush();
+    expect(active(env)).toBe('azz.ts');
+    expect(rows(env)[0]!.hasAttribute('aria-disabled')).toBe(false);
+    key(env.editor, 'Tab');
+    expect(env.draft.doc.text).toBe('@azz.ts ');
+  });
+
+  it('Enter while the next query loads picks no stale row: it closes the popup and sends nothing', async () => {
+    const src = at();
+    const env = setup({ complete: { sources: [src] } });
+    type(env, '@a');
+    src.pending[0]!.resolve(['a.ts']);
+    await flush();
+    type(env, 'zz');
+    expect(key(env.editor, 'Enter').defaultPrevented).toBe(true);
+    expect(env.draft.doc.text).toBe('@azz');
+    expect(env.submits).toBe(0);
+    expect(open(env)).toBe(false);
+    expect(src.pending[1]!.signal.aborted).toBe(true);
   });
 
   it('a rejected reply says so and is not stuck loading; Enter then sends nothing', async () => {

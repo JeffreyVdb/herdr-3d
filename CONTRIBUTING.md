@@ -792,14 +792,18 @@ token is a trigger (`/` or `@`) at the start of the text, after whitespace or ri
 (file names) but ends at a newline, a chip or 80 characters. The nearest trigger before the caret decides; a pick
 replaces the trigger and the whole word the caret is in. A source is `{ trigger, label?, items(query, signal), render(item),
 insert(item, token) }`: `items` returns the rows or a promise of them (each new query aborts the previous `signal`
-and a reply that is not the latest is dropped; pending shows "Loading…" or keeps the rows dimmed, empty "No match", a
-rejection "Could not load matches."); `render` returns a Node or a string; `insert` returns a `ReplaceSpec`
-`{ text, start?, end? }` (default range: the token), applied with one `Draft.replace`, so one undo takes the pick
+and a reply that is not the latest is dropped; pending shows "Loading…" or keeps the rows dimmed, `aria-disabled`,
+none active and none pickable by key or click until the reply, empty "No match", a rejection "Could not load
+matches."); `render` returns a Node or a string; `insert` returns a `ReplaceSpec` `{ text, start?, end? }` (default
+range: the token), applied with one `Draft.replace`, so one undo takes the pick
 back and the caret lands after it. A session opens only when text is typed (an `input`, an IME commit) into a token;
-it follows the caret inside the token and closes when the caret leaves it, on a pick, Esc, blur, `setBusy` /
+it follows the caret inside the token and closes when the caret leaves it or is scrolled out of the editor's visible
+box or the bounds (no clamped popup pointing at nothing; scrolling back does not reopen it, and text typed out of view
+gets one frame for the browser to scroll the caret back), on a pick, Esc, blur, `setBusy` /
 `setDisabled`, `setDraft`, `dispose`, and while an IME composes (`compositionend` re-evaluates). Keys while open: ↑ ↓
-move (wrapping), Tab and Enter pick, Enter with nothing to pick only closes, Esc closes the popup and is stopped there (the
-dialog, the transcript and the seat never see it); Shift+Enter and every other key are the editor's as before, as is
+move (wrapping), Tab and Enter pick; with nothing to pick (no rows, or an older query's dimmed rows) the arrows and Tab
+are the editor's and Enter only closes; Esc closes the popup and is stopped there (the dialog, the transcript and the
+seat never see it); Shift+Enter and every other key are the editor's as before, as is
 every key while it is closed (`dialog.complete` in `input/shortcuts.ts` lists them). The rows are `role=option`
 in a `role=listbox`, never focusable (a press on the popup keeps the editor's focus); the editor stays a multiline
 `role=textbox` and, while open only, has `aria-autocomplete=list`, `aria-controls`, `aria-expanded` and

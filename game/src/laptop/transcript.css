@@ -1011,7 +1011,7 @@
   --cmp-pop-accent: var(--tx-blue);
   box-shadow: 0 10px 28px -8px rgb(0 0 0 / 45%);
 }
-.tx .cmp-pop-opt:hover {
+.tx .cmp-pop-opt:not([aria-disabled='true']):hover {
   background: var(--tx-bg-3);
 }
 .tx .cmp-pop-list {

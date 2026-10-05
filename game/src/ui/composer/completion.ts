@@ -10,12 +10,19 @@
  * back into a token does not open it again: typing does.
  *
  * Every query aborts the previous one's signal and gets a sequence number: a reply that is not the latest is dropped.
- * A pending reply shows "Loading…" (or keeps the rows already shown, dimmed), an empty one "No match", a rejected one
- * says so: the popup is never stuck loading.
+ * A pending reply shows "Loading…" (or keeps the rows already shown, dimmed: they answer an older query, so none is
+ * active and none can be picked until the reply comes), an empty one "No match", a rejected one says so: the popup is
+ * never stuck loading.
+ *
+ * It is placed under the caret, so it lives only while the caret is in view: when the editor scrolls the caret out of
+ * its visible box (or out of the bounds) the session closes rather than float beside nothing, and it does not come back
+ * when the caret is scrolled back (typing opens one). Text typed with the caret out of view is not that: the browser
+ * scrolls the caret into view only after the `input`, so the caret gets until the next frame to be back in view.
  *
  * Keys while it is open: ↑ ↓ move the active row and wrap around; Tab and Enter pick it; Esc closes the popup and only
- * the popup (the transcript, the dialog and the seated view never see that Esc). Enter with no row to pick closes the
- * popup and sends nothing. Every other key, and every key while it is closed, is the editor's as before.
+ * the popup (the transcript, the dialog and the seated view never see that Esc). With no row to pick (none, or only
+ * the dimmed rows of an older query) the arrows and Tab are the editor's, and Enter closes the popup and sends nothing.
+ * Every other key, and every key while it is closed, is the editor's as before.
  */
 
 import { h } from '../dom';
@@ -69,6 +76,8 @@ interface Session {
 
 const GAP = 4;
 const PAD = 6;
+const frame = (f: () => void): number => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(f) : window.setTimeout(f, 16));
+const cancelFrame = (id: number): void => (typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame(id) : window.clearTimeout(id));
 
 export function mountCompletion(host: CompletionHost, o: CompleteOptions): Completion {
   const { editor, element, id } = host;
@@ -78,6 +87,7 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
   let list: HTMLElement | null = null;
   let status: HTMLElement | null = null;
   let said = '';
+  let recheck = 0;
   const listId = `${id}-pop`;
   const optId = (i: number) => `${id}-opt-${i}`;
 
@@ -114,11 +124,11 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
       close();
       const source = o.sources.find((x) => x.trigger === tok.trigger) as Source;
       s = { token: tok, source, query: null, items: [], active: -1, state: 'loading', seq: 0, ac: null };
-      window.addEventListener('resize', place);
-      editor.addEventListener('scroll', place);
+      window.addEventListener('resize', follow);
+      editor.addEventListener('scroll', follow);
     } else return close();
     if (s.query !== tok.query) query(s, tok.query);
-    else place();
+    else place(true);
   }
 
   function query(cur: Session, q: string): void {
@@ -135,7 +145,9 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
       return fail(cur);
     }
     if (!Array.isArray(r)) {
+      // The rows shown, if any, are the previous query's: dimmed, none active, none to pick.
       cur.state = 'loading';
+      cur.active = -1;
       paint(false);
       Promise.resolve(r).then(
         (items) => {
@@ -181,6 +193,10 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     const loading = s.state === 'loading';
     p.list.toggleAttribute('data-loading', loading);
     p.list.setAttribute('aria-busy', String(loading));
+    for (const row of p.list.children) {
+      if (loading) row.setAttribute('aria-disabled', 'true');
+      else row.removeAttribute('aria-disabled');
+    }
     const none = s.items.length === 0;
     const text = s.state === 'error' ? 'Could not load matches.' : loading ? (none ? 'Loading…' : '') : none ? 'No match' : '';
     p.status.textContent = text;
@@ -197,7 +213,7 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
       if (msg !== said) host.announce(msg);
       said = msg;
     }
-    place();
+    place(true);
   }
 
   function paintActive(): void {
@@ -273,8 +289,28 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     return b.width === 0 && b.height === 0 ? null : b;
   }
 
-  /** Under the caret (above it when there is no room below), inside the bounds, against the composer's box. */
-  function place(): void {
+  /** The caret is inside the editor's visible box (its padding box, past any scroll) and inside the bounds. */
+  function inView(at: DOMRect, b: { left: number; top: number; right: number; bottom: number }, k: number): boolean {
+    // An editor with no box (not laid out): nothing to tell.
+    if (editor.clientHeight === 0 || editor.clientWidth === 0) return true;
+    const e = editor.getBoundingClientRect();
+    const eTop = e.top + editor.clientTop * k;
+    const eLeft = e.left + editor.clientLeft * k;
+    const top = Math.max(b.top, eTop);
+    const left = Math.max(b.left, eLeft);
+    const bottom = Math.min(b.bottom, eTop + editor.clientHeight * k);
+    const right = Math.min(b.right, eLeft + editor.clientWidth * k);
+    return at.top >= top - 1 && at.bottom <= bottom + 1 && at.left >= left - 1 && at.left <= right + 1;
+  }
+
+  /** The editor scrolled or the window resized: placed again, or closed when the caret is out of view. */
+  const follow = (): void => place(false);
+
+  /**
+   * Under the caret (above it when there is no room below), inside the bounds, against the composer's box. `soon`: the
+   * caret may not be revealed yet (text typed, the caret moved, rows drawn): out of view, it is looked at again next frame.
+   */
+  function place(soon: boolean): void {
     if (!s || !pop || pop.hidden) return;
     const sel = host.selection();
     const at = liveCaret() ?? caretBox(sel ? sel.focus : s.token.end);
@@ -288,6 +324,12 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     const vh = window.innerHeight || document.documentElement.clientHeight;
     const bb = bEl?.getBoundingClientRect();
     const b = { left: Math.max(0, bb?.left ?? 0), top: Math.max(0, bb?.top ?? 0), right: Math.min(vw, bb?.right ?? vw), bottom: Math.min(vh, bb?.bottom ?? vh) };
+    if (!inView(at, b, k)) {
+      if (!soon) return close();
+      cancelFrame(recheck);
+      recheck = frame(follow);
+      return;
+    }
     pop.style.maxHeight = '';
     pop.style.maxWidth = `${Math.max(0, b.right - b.left - 2 * PAD) / k}px`;
     const w = pop.offsetWidth * k;
@@ -313,7 +355,7 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
 
   function pick(i: number): void {
     const cur = s;
-    if (!cur || i < 0 || i >= cur.items.length) return;
+    if (!cur || cur.state !== 'ready' || i < 0 || i >= cur.items.length) return;
     const draft = host.draft();
     const [a, b, text] = replaceRangeOf(cur.source.insert(cur.items[i], cur.token), cur.token, draft.doc.text.length);
     close();
@@ -329,9 +371,11 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
 
   function key(e: KeyboardEvent): boolean {
     if (!s || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return false;
-    const can = s.active >= 0 && s.active < s.items.length;
+    // The rows of an older query, kept while the current one loads, are not there to move to or pick.
+    const rows = s.state === 'ready' && s.items.length > 0;
+    const can = rows && s.active >= 0 && s.active < s.items.length;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      if (s.items.length === 0) return false;
+      if (!rows) return false;
       e.preventDefault();
       move(e.key === 'ArrowDown' ? 1 : -1);
       return true;
@@ -362,8 +406,9 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     if (!s) return;
     s.ac?.abort();
     s = null;
-    window.removeEventListener('resize', place);
-    editor.removeEventListener('scroll', place);
+    window.removeEventListener('resize', follow);
+    editor.removeEventListener('scroll', follow);
+    cancelFrame(recheck);
     for (const a of ['aria-autocomplete', 'aria-controls', 'aria-expanded', 'aria-activedescendant']) editor.removeAttribute(a);
     if (pop && list && status) {
       pop.hidden = true;
