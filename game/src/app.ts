@@ -28,9 +28,11 @@ import { SendHomeDialog } from './ui/sendHome';
 import { needsYouText, sentHomeText, wrapUpOf } from './world/wrapup';
 import { RADIUS, Walker } from './input/walk';
 // #124: the keyboard shortcuts, one table (dispatch, the ? reference, the hints and the top bar's titles).
-import { findBinding, keyName, loadLayout, pressesBinding, type DispatchedId, type Match, type Scope } from './input/shortcuts';
+import { binding, findBinding, keyName, loadLayout, pressesBinding, type DispatchedId, type Match, type Scope } from './input/shortcuts';
 import { typingIn } from './input/typing';
 import { ShortcutsDialog } from './ui/shortcutsDialog';
+import { Palette } from './ui/palette';
+import { paletteCommands, type PaletteCommand } from './world/palette';
 import { Laptops, type WatchCommand } from './laptop';
 import { SeatBar } from './ui/seat';
 import { blocked, blocked3, groundAt, nudgeClear, type WalkWorld } from './world/collide';
@@ -238,6 +240,8 @@ export class App {
   readonly changes: ChangesPanel;
   /** #124: the `?` shortcut reference. */
   readonly shortcuts: ShortcutsDialog;
+  /** #147: the command palette (⌘/Ctrl+P), from every view. */
+  readonly palette: Palette;
   /** M5: the worker N went to last (the next N goes on from there), and one it rides the elevator to. */
   private lastNeed: string | null = null;
   private pendingNeed: NeedItem | null = null;
@@ -324,6 +328,14 @@ export class App {
     if (o.buildInfo) this.hud.mountAbout(o.buildInfo);
     this.settings = this.hud.mountSettings();
     this.shortcuts = new ShortcutsDialog(o.host);
+    this.palette = new Palette(o.host, {
+      commands: () => paletteCommands(this.activeScopes()),
+      store: this.store,
+      here: () => this.hereSession(),
+      online: () => this.conn.phase === 'live',
+      run: (c, floor) => void this.runPaletteCommand(c, floor),
+      goTo: (s) => void this.goToFloor(s),
+    });
     this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs, this.hirePrefs), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
     // #100: how the inbox reaches you beyond its chip: desktop notifications and the chime.
@@ -455,6 +467,7 @@ export class App {
           this.laptops.setConnected(s.phase === 'live');
           this.screen.setConnected(s.phase === 'live'); // M13: a new connection is told whether this game shares
           this.hud.setConn(s, this.fixture, Date.now());
+          this.palette.refresh(); // #147: the floors grey out without a connection
           this.updateNotice();
         },
       },
@@ -672,6 +685,7 @@ export class App {
     this.prompt.refresh();
     this.changes.refresh();
     this.panels.refresh();
+    this.palette.refresh(); // #147
     this.hire.refresh();
     this.sendHome.refresh();
     this.startRun.refresh();
@@ -2316,6 +2330,7 @@ export class App {
     const canvas = this.r.domElement;
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => this.onVisibility());
+    window.addEventListener('keydown', (e) => this.onPaletteKey(e), true);
     window.addEventListener('keydown', (e) => this.onHelpKey(e), true);
     window.addEventListener('keydown', (e) => this.onKey(e, true));
     window.addEventListener('keyup', (e) => this.onKey(e, false));
@@ -2402,7 +2417,7 @@ export class App {
 
   /** What each binding of the table does (the compiler wants one for every id that is not only listed). */
   private readonly actions: Record<DispatchedId, (m: Match) => void> = {
-    palette: () => undefined, // #147: opened by onPaletteKey, in the capture phase
+    palette: () => this.togglePalette(), // #147: `onPaletteKey` takes the chord in the capture phase; this is the table's own entry
     help: () => this.openShortcuts(),
     'help.field': () => this.openShortcuts(),
     'next-need': () => {
@@ -2482,6 +2497,61 @@ export class App {
     e.preventDefault();
     e.stopPropagation();
     if (!e.repeat) this.openShortcuts();
+  }
+
+  /**
+   * #147: ⌘/Ctrl+P, in the capture phase, so it reaches the game from every view: under a dialog, in a field, seated at a
+   * laptop (the terminal does not get it) and on the whiteboard (Excalidraw does not either). It is always cancelled
+   * (no print dialog, even on a repeat or where the palette will not open); it opens the palette, or closes it when it
+   * is up. Not during an IME composition, and not over the image previews and a card being dragged, which have their
+   * own capture-phase Esc (as `?` does not).
+   */
+  private onPaletteKey(e: KeyboardEvent): void {
+    if (e.isComposing || !pressesBinding(e, 'palette')) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.repeat) return;
+    if (!this.palette.isOpen && document.querySelector('dialog.ilb[open], dialog.cmp-lightbox[open], .bd-dragging')) return;
+    this.togglePalette();
+  }
+
+  togglePalette(): void {
+    if (this.palette.isOpen) this.palette.close();
+    else this.openPalette();
+  }
+
+  openPalette(): void {
+    this.walker.release();
+    this.walker.stop();
+    this.palette.open(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  }
+
+  /**
+   * #147: the palette picked `command` (`floor`: the floor chosen for it when it acts on one and you were not on one).
+   * The modals and the whiteboard go first (as for a teleport) and a seat is left; then the floor, by the elevator;
+   * then the very action its key would run.
+   */
+  private async runPaletteCommand(command: PaletteCommand, floor: string | null): Promise<void> {
+    if (this.transitioning || !(await this.dismissOverlays()) || this.transitioning) return;
+    if (this.laptops.seated) this.laptops.stand(null, true);
+    if (floor !== null && this.hereSession() !== floor) {
+      await this.enterFloor(floor);
+      if (this.hereSession() !== floor) return; // the floor went meanwhile
+    }
+    if (command.id === 'presets') return this.openPresets();
+    if (command.id === 'about') return this.hud.openAbout();
+    const b = binding(command.id);
+    const chord = b.keys[0];
+    this.actions[command.id as DispatchedId]({ binding: b, chord: chord ?? {}, code: chord?.code ?? '' });
+  }
+
+  /** #147: a floor picked from the palette's `@` list: the modals go, you get up from a seat, the elevator takes you there. */
+  private async goToFloor(session: string): Promise<void> {
+    if (this.transitioning || !(await this.dismissOverlays()) || this.transitioning) return;
+    if (this.laptops.seated) this.laptops.stand(null, true);
+    this.walker.release();
+    this.walker.stop();
+    await this.enterFloor(session);
   }
 
   /** The `?` reference: grouped, per platform, over whatever is up. */

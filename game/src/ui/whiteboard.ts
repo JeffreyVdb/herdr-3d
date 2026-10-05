@@ -237,7 +237,8 @@ export class WhiteboardOverlay {
     if (!on) return;
     for (let node: HTMLElement = this.root; node !== document.body && node.parentElement; node = node.parentElement) {
       for (const sib of node.parentElement.children) {
-        if (sib === node || !(sib instanceof HTMLElement) || sib.inert || sib instanceof HTMLScriptElement) continue;
+        // #147: the command palette is a modal of its own that opens over the board.
+        if (sib === node || !(sib instanceof HTMLElement) || sib.inert || sib instanceof HTMLScriptElement || sib.matches('dialog.palette')) continue;
         sib.inert = true;
         this.inerted.push(sib);
       }
@@ -263,6 +264,8 @@ export class WhiteboardOverlay {
 
   private keyCapture(e: KeyboardEvent): void {
     if (e.key !== 'Escape' || !this.isOpen) return;
+    // #147: Esc in the command palette over the board closes the palette, not the board.
+    if (e.target instanceof Element && e.target.closest('dialog.palette')) return;
     if (!this.picker.hidden || !this.confirmEl.hidden) {
       e.preventDefault();
       e.stopPropagation();
