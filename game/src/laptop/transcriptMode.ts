@@ -9,6 +9,7 @@ import type { mountTranscript, TranscriptRenderHost, TranscriptView } from './tr
 import type { ImageFeed } from './imageFeed';
 import type { ImagesTabHost, ImagesTabView, MountImagesTab } from './imagesTab';
 import { itemsOf, type TimelineOf } from './transcriptWatches';
+import { TranscriptDrafts } from './transcriptDrafts';
 import { CommandCatalogs } from './commandCatalog';
 import { activityCue, reconcile, SENT_TIMEOUT_MS, topSeq, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 
@@ -220,8 +221,12 @@ export class TranscriptMode {
   private checking: AbortController | null = null;
   /** #140: each worker's slash commands and skills, kept across seats (the popup shows the last list at once). */
   private readonly catalogs = new CommandCatalogs({ send: (t, args) => this.host.send(t, args) });
+  /** #141: each worker's unsent prompt, kept across seats (and its text and file chips across a reload). */
+  private readonly drafts: TranscriptDrafts;
 
-  constructor(private readonly host: TranscriptModeHost) {}
+  constructor(private readonly host: TranscriptModeHost) {
+    this.drafts = new TranscriptDrafts({ ...(host.upload ? { upload: host.upload } : {}), storage: host.storage });
+  }
 
   private now(): number {
     return this.host.now?.() ?? Date.now();
@@ -620,7 +625,8 @@ export class TranscriptMode {
       usage: s.usage,
       ...(this.host.prefs ? { prefs: this.host.prefs } : {}),
       commands: hasTranscript(s.harness) ? { list: this.catalogs.get(s.id), harness: s.harness } : null,
-      // #141: `@` searches the worker's checkout.
+      // #141: the worker's own draft, back from its last seat (or a reload); `@` searches the worker's checkout.
+      draft: this.drafts.get(s.id, s.name),
       files: { id: s.id, search: { send: (t, args) => this.host.send(t, args) } },
       onPromptSubmit: (text) => {
         if (!live()) return Promise.resolve(false);

@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TranscriptItem, Usage } from '../net/protocol';
+import { Draft as PromptDraft } from '../ui/composer/draft';
+import { WORKER_PROMPT_MAX_BYTES } from '../ui/composer/model';
 import { ViewPrefs } from '../ui/themePrefs';
 import { duration, loadHighlighter, mountTranscript, parseHunk, stripAnsi, type BlockedQuestion, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
 
@@ -1390,5 +1392,36 @@ describe('context meter (#101)', () => {
     mount();
     view.destroy();
     expect(() => view.setUsage(usage())).not.toThrow();
+  });
+});
+
+describe('#141: the host’s draft', () => {
+  const draft = () => new PromptDraft({ upload: () => Promise.resolve({ ok: false, code: 'x', message: 'x' }), maxPromptBytes: WORKER_PROMPT_MAX_BYTES });
+
+  it('shows the draft the host keeps and leaves it alone when the view goes; the next view shows it again', () => {
+    const d = draft();
+    d.insertParts(0, 0, ['see ', { kind: 'file', path: 'src/a.ts', dir: false }]);
+    mount({ ...fakeHost(), draft: d });
+    expect($('.tx-input .cmp-file')?.getAttribute('aria-label')).toBe('File src/a.ts');
+    view.destroy();
+    expect(d.disposed).toBe(false);
+    mount({ ...fakeHost(), draft: d });
+    expect($$('.tx-input .cmp-file')).toHaveLength(1);
+    view.destroy();
+  });
+
+  it('a prompt whose ack comes after the view went still clears the host’s draft', async () => {
+    const d = draft();
+    d.replace(0, 0, 'go');
+    let ack: (ok: boolean) => void = () => {};
+    const h = { ...fakeHost(), draft: d, onPromptSubmit: () => new Promise<boolean>((r) => (ack = r)) };
+    mount(h);
+    view.focusPrompt();
+    $('.tx-send')?.click();
+    await flush();
+    view.destroy();
+    ack(true);
+    await flush();
+    expect(d.doc.text).toBe('');
   });
 });

@@ -1033,3 +1033,77 @@ describe('#140: the prompt box’s commands', () => {
     expect(asks(h)).toEqual([]);
   });
 });
+
+describe('#141: the prompt box’s draft and file search', () => {
+  const file = (path: string, dir = false) => ({ kind: 'file' as const, path, dir });
+
+  it('each worker keeps its own draft across seats: the next view of it shows the same draft object', async () => {
+    const h = harness();
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    const d = h.views[0]?.host.draft;
+    d?.insertParts(0, 0, ['see ', file('src/a.ts')]);
+    h.tx.stand();
+    h.tx.sit('b', 'Bo', true, 'claude');
+    await flush();
+    expect(h.views[1]?.host.draft).not.toBe(d);
+    expect(h.views[1]?.host.draft?.doc.text).toBe('');
+    h.tx.stand();
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    expect(h.views[2]?.host.draft).toBe(d);
+    expect(d?.disposed).toBe(false);
+    expect(d?.snapshot().files.map((f) => f.path)).toEqual(['src/a.ts']);
+  });
+
+  it('a reload brings back the text and the file chips (images do not survive it)', async () => {
+    const storage = new MemStorage();
+    const h = harness({ storage });
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    h.views[0]?.host.draft?.insertParts(0, 0, ['see ', file('my d/a b.ts'), ' and ', file('src', true)]);
+    expect(JSON.parse(storage.getItem('h3d.draft.transcript.a') ?? 'null')).toMatchObject({ v: 1, text: 'see  and ' });
+    const again = harness({ storage });
+    again.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    const d = again.views[0]?.host.draft;
+    expect(d?.snapshot().segments.map((g) => (g.kind === 'file' ? `{${g.path}${g.dir ? '/' : ''}}` : g.kind === 'text' ? g.text : '<img>'))).toEqual(['see ', '{my d/a b.ts}', ' and ', '{src/}']);
+    expect(d?.canUndo).toBe(false);
+  });
+
+  it('a sent prompt clears the draft, and what storage kept; an edit made after the send survives it', async () => {
+    const storage = new MemStorage();
+    const h = harness({ storage });
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    const d = h.views[0]!.host.draft!;
+    d.insertParts(0, 0, [file('a.ts')]);
+    const rev = d.revision;
+    expect(d.clearIf(rev)).toBe(true);
+    expect(storage.getItem('h3d.draft.transcript.a')).toBeNull();
+    d.insertParts(0, 0, ['new']);
+    expect(d.clearIf(rev)).toBe(false);
+    expect(storage.getItem('h3d.draft.transcript.a')).not.toBeNull();
+  });
+
+  it('blocked storage leaves the drafts in memory', async () => {
+    const h = harness({ storage: throwing });
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    h.views[0]?.host.draft?.replace(0, 0, 'still here');
+    h.tx.stand();
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    expect(h.views[1]?.host.draft?.doc.text).toBe('still here');
+  });
+
+  it('hands the view a file search over the worker’s checkout, which asks the bridge for it', async () => {
+    const h = harness();
+    h.tx.sit('a', 'Ada', true, 'codex');
+    await flush();
+    const f = h.views[0]?.host.files;
+    expect(f?.id).toBe('a');
+    void f?.search.send('worker.files', { id: 'a', query: 'comp', limit: 30 });
+    expect(h.sent.at(-1)).toMatchObject({ t: 'worker.files', args: { id: 'a', query: 'comp', limit: 30 } });
+  });
+});

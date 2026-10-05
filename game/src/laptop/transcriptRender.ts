@@ -60,6 +60,11 @@ export interface TranscriptRenderHost {
   usage?: Usage | null;
   /** #140: the worker's slash commands and skills, for the prompt box's `/` popup, and its harness (none: no popup). */
   commands?: { list: CommandList; harness: string } | null;
+  /**
+   * #141: the worker's unsent prompt, kept by the host across views (`TranscriptDrafts`): the view shows it and leaves
+   * it alone when it goes. None: the view makes its own, which goes with it.
+   */
+  draft?: PromptDraft;
   /** #141: the worker's checkout, for the prompt box's `@` file search (none: no popup). */
   files?: { id: string; search: FileSearchHost } | null;
 }
@@ -705,7 +710,7 @@ class Transcript implements TranscriptView {
     this.thumbs = new Thumbs({ feed: host.images, root: this.scroller });
     this.jump = h('button', { class: 'tx-jump', hidden: true, onclick: () => this.toBottom() });
     this.composer = mountComposer({
-      draft: new PromptDraft({ upload: host.upload ?? NO_UPLOAD, label: `transcript-${host.label ?? 'worker'}`, maxPromptBytes: WORKER_PROMPT_MAX_BYTES, holdRefused: true }),
+      draft: host.draft ?? new PromptDraft({ upload: host.upload ?? NO_UPLOAD, label: `transcript-${host.label ?? 'worker'}`, maxPromptBytes: WORKER_PROMPT_MAX_BYTES, holdRefused: true }),
       ariaLabel: 'Prompt',
       placeholder: PROMPT_HINT,
       submitPolicy: 'enter',
@@ -976,9 +981,10 @@ class Transcript implements TranscriptView {
     this.thumbs.destroy();
     this.ask.destroy();
     this.followup.destroy();
-    // The composer's draft goes with the view: its uploads are cancelled, its object URLs revoked.
+    // The composer's own draft goes with the view: its uploads are cancelled, its object URLs revoked. The host's
+    // (#141) stays for the next view of this worker.
     this.composer.dispose();
-    this.composer.getDraft().dispose();
+    if (!this.host.draft) this.composer.getDraft().dispose();
     this.root.remove();
   }
 
@@ -1648,11 +1654,12 @@ class Transcript implements TranscriptView {
     }
     this.composer.clearNotice();
     const sent = await Promise.resolve(this.host.onPromptSubmit(r.text)).catch(() => false);
+    // Sent: the box is empty again (an edit made meanwhile is impossible while it is read-only, but a draft swap is not).
+    // #141: also when the view went meanwhile: the host keeps the worker's draft for its next view.
+    if (sent !== false) draft.clearIf(r.revision);
     if (this.destroyed) return;
     this.sending = false;
     this.composer.setBusy(false);
-    // Sent: the box is empty again (an edit made meanwhile is impossible while it is read-only, but a draft swap is not).
-    if (sent !== false) draft.clearIf(r.revision);
   }
 
   // --- blocked banner ---

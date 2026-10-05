@@ -43,13 +43,23 @@ describe('Drafts', () => {
     d.set('k', { text: '  ', fields: { label: '' } });
     expect(d.get('k')).toBeNull();
     expect(s.data.size).toBe(0);
-    expect(isEmptyDraft({ text: '', segments: [{ image: 1 }] })).toBe(false);
+    expect(isEmptyDraft({ text: '', segments: [{ kind: 'file', path: 'a.ts', dir: false }] })).toBe(false);
   });
 
-  it('carries the composer’s segments under the same key', () => {
-    const d = new Drafts('hire', fake());
-    d.set('k', { text: '', segments: [{ t: 'text', v: 'a' }, { t: 'image', n: 1 }] });
-    expect(d.get('k')?.segments).toHaveLength(2);
+  it('carries the composer’s segments under the same key, across a reload', () => {
+    const s = fake();
+    const segments = [{ kind: 'text' as const, text: 'see ' }, { kind: 'file' as const, path: 'my d/a b.ts', dir: false }];
+    new Drafts('transcript', s).set('k', { text: 'see ', segments });
+    expect(new Drafts('transcript', s).get('k')?.segments).toEqual(segments);
+  });
+
+  it('reads stored segments as untrusted: a bad part is left out, a bad list dropped (#141)', () => {
+    const s = fake();
+    s.setItem('h3d.draft.transcript.a', JSON.stringify({ v: 1, text: 'x', segments: [{ kind: 'text', text: 'x' }, { kind: 'file', path: 'a"b', dir: false }, { t: 'image', n: 1 }] }));
+    s.setItem('h3d.draft.transcript.b', JSON.stringify({ v: 1, text: 'y', segments: 'nope' }));
+    const d = new Drafts('transcript', s);
+    expect(d.get('a')?.segments).toEqual([{ kind: 'text', text: 'x' }]);
+    expect(d.get('b')).toEqual({ text: 'y' });
   });
 
   it('survives blocked, full and corrupt storage', () => {
