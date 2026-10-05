@@ -30,6 +30,7 @@
  */
 
 import { h } from '../dom';
+import { listKey, paintActiveRow, wrapIndex } from '../listbox';
 import { findToken, replaceRangeOf, type Source, type Token, type Trigger } from './complete';
 import type { Draft } from './draft';
 import type { Selection } from './model';
@@ -245,14 +246,9 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
 
   function paintActive(): void {
     if (!s || !list) return;
-    const rows = list.children;
-    for (let i = 0; i < rows.length; i++) rows[i]?.setAttribute('aria-selected', String(i === s.active));
-    const row = rows[s.active] as HTMLElement | undefined;
-    if (row) {
-      editor.setAttribute('aria-activedescendant', row.id);
-      if (row.offsetTop < list.scrollTop) list.scrollTop = row.offsetTop;
-      else if (row.offsetTop + row.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = row.offsetTop + row.offsetHeight - list.clientHeight;
-    } else editor.removeAttribute('aria-activedescendant');
+    const row = paintActiveRow(list, s.active);
+    if (row) editor.setAttribute('aria-activedescendant', row.id);
+    else editor.removeAttribute('aria-activedescendant');
   }
 
   /** The viewport box of a collapsed caret at `offset`, with a fallback where the browser gives none (an empty line, beside a chip). */
@@ -391,42 +387,25 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
 
   function move(by: number): void {
     if (!s) return;
-    const n = s.items.length;
-    s.active = (s.active + by + n) % n;
+    s.active = wrapIndex(s.active, s.items.length, by);
     paintActive();
   }
 
   function key(e: KeyboardEvent): boolean {
-    if (!s || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return false;
+    if (!s) return false;
     // The rows of an older query, kept while the current one loads, are not there to move to or pick.
     const rows = s.state === 'ready' && s.items.length > 0;
-    const can = rows && s.active >= 0 && s.active < s.items.length;
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      if (!rows) return false;
-      e.preventDefault();
-      move(e.key === 'ArrowDown' ? 1 : -1);
-      return true;
-    }
-    if (e.key === 'Tab') {
-      if (!can) return false;
-      e.preventDefault();
-      pick(s.active);
-      return true;
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (can) pick(s.active);
-      else close();
-      return true;
-    }
-    if (e.key === 'Escape') {
-      // Only the popup: not the dialog (its cancel is this key's default action), not the transcript or the seat.
-      e.preventDefault();
-      e.stopPropagation();
+    const k = listKey(e, { rows, can: rows && s.active >= 0 && s.active < s.items.length, tab: true });
+    if (!k) return false;
+    e.preventDefault();
+    if (k === 'next' || k === 'prev') move(k === 'next' ? 1 : -1);
+    else if (k === 'pick') pick(s.active);
+    else {
+      // Esc: only the popup, not the dialog (its cancel is this key's default action), the transcript or the seat.
+      if (k === 'close') e.stopPropagation();
       close();
-      return true;
     }
-    return false;
+    return true;
   }
 
   function close(): void {
