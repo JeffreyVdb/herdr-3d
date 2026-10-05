@@ -34,6 +34,22 @@ describe('markedText', () => {
   });
 });
 
+describe('file chips in the fields (#141)', () => {
+  it('markedText writes a file chip as its mention, an image after it still #1', async () => {
+    const d = draftWith([up('/drops/a.png')]);
+    d.insertParts(0, 0, ['see', { kind: 'file', path: 'my d/x.ts', dir: false }]);
+    d.addImages([png('a.png')]);
+    await tick();
+    expect(markedText(d.snapshot())).toBe('see @"my d/x.ts" [Image #1: /drops/a.png]');
+  });
+  it('hasContent counts a file chip alone', () => {
+    const d = draftWith([]);
+    expect(hasContent(d.snapshot())).toBe(false);
+    d.insertParts(0, 0, [{ kind: 'file', path: 'a.ts', dir: false }]);
+    expect(hasContent(d.snapshot())).toBe(true);
+  });
+});
+
 describe('the words for a failure', () => {
   const failed = [{ res: 'r1', name: 'a.png', numbers: [1], message: 'Drop Zone is down', code: 'dropzone_unavailable' }];
   it('says nothing was sent, why, and what to do', () => {
