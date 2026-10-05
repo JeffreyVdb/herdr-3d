@@ -4,6 +4,7 @@ import type { TranscriptItem, Usage } from '../net/protocol';
 import { Draft as PromptDraft } from '../ui/composer/draft';
 import { WORKER_PROMPT_MAX_BYTES } from '../ui/composer/model';
 import { ViewPrefs } from '../ui/themePrefs';
+import { SendGate } from './transcriptDrafts';
 import { duration, loadHighlighter, mountTranscript, parseHunk, stripAnsi, type BlockedQuestion, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
 
 interface FakeHost extends TranscriptRenderHost {
@@ -1408,6 +1409,62 @@ describe('#141: the host’s draft', () => {
     mount({ ...fakeHost(), draft: d });
     expect($$('.tx-input .cmp-file')).toHaveLength(1);
     view.destroy();
+  });
+
+  it('a view of a draft whose send is on its way starts busy, sends nothing, and takes prompts once the send is done', async () => {
+    const d = draft();
+    d.replace(0, 0, 'go');
+    let ack: (ok: boolean) => void = () => {};
+    const sending = new SendGate();
+    const h = { ...fakeHost(), draft: d, sending, onPromptSubmit: (t: string) => (h.prompts.push(t), new Promise<boolean>((r) => (ack = r))) };
+    mount(h);
+    view.focusPrompt();
+    $('.tx-send')?.click();
+    await flush();
+    expect(h.prompts).toEqual(['go']);
+    expect(sending.busy).toBe(true);
+    view.destroy();
+    // The next view of the same draft: busy from the start, its Send and Enter do nothing.
+    mount(h);
+    expect(box().getAttribute('contenteditable')).toBe('false');
+    expect(box().getAttribute('aria-busy')).toBe('true');
+    $('.tx-send')?.click();
+    press(box(), 'Enter');
+    await flush();
+    expect(h.prompts).toEqual(['go']);
+    ack(true);
+    await flush();
+    expect(sending.busy).toBe(false);
+    expect(d.doc.text).toBe('');
+    expect(box().getAttribute('contenteditable')).toBe('true');
+    write('next');
+    $('.tx-send')?.click();
+    await flush();
+    expect(h.prompts).toEqual(['go', 'next']);
+    view.destroy();
+  });
+
+  it('the gate opens when the view goes before its images resolved (nothing was sent)', async () => {
+    const d = draft();
+    d.replace(0, 0, 'go');
+    const sending = new SendGate();
+    let resolve: () => void = () => {};
+    const gated = new Promise<void>((r) => (resolve = r));
+    const real = d.resolve.bind(d);
+    d.resolve = async (o) => {
+      await gated;
+      return real(o);
+    };
+    const h = { ...fakeHost(), draft: d, sending };
+    mount(h);
+    $('.tx-send')?.click();
+    expect(sending.busy).toBe(true);
+    view.destroy();
+    resolve();
+    await flush();
+    expect(sending.busy).toBe(false);
+    expect(h.prompts).toEqual([]);
+    expect(d.doc.text).toBe('go');
   });
 
   it('a prompt whose ack comes after the view went still clears the host’s draft', async () => {

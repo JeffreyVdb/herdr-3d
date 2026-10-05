@@ -11,7 +11,10 @@ import { Drafts, type DraftStorage } from '../ui/drafts';
  * sent prompt clears the draft (`Draft.clearIf`, the send's revision), and with it what storage kept.
  *
  * At most `KEEP` drafts are held live; the least recently used one goes (disposed: its uploads stop), and comes back
- * from storage when it is asked for again.
+ * from storage when it is asked for again. One with a send on its way stays.
+ *
+ * Each worker's `SendGate` is kept here too, for the same reason: a send outlives the view that started it, so the
+ * next view of the worker's draft must know it is still on its way (busy, no second send of the same prompt).
  */
 
 export interface TranscriptDraftsOptions {
@@ -26,8 +29,30 @@ const KEEP = 24;
 
 const NO_UPLOAD: Uploader = () => Promise.resolve({ ok: false, code: 'unavailable', message: 'images cannot be uploaded from here' });
 
+/** #141: whether a prompt from one draft is on its way (from the send until the bridge answered it), for every view of it. */
+export class SendGate {
+  private on = false;
+  private readonly subs = new Set<() => void>();
+
+  get busy(): boolean {
+    return this.on;
+  }
+
+  set(on: boolean): void {
+    if (on === this.on) return;
+    this.on = on;
+    for (const fn of [...this.subs]) fn();
+  }
+
+  subscribe(fn: () => void): () => void {
+    this.subs.add(fn);
+    return () => this.subs.delete(fn);
+  }
+}
+
 export class TranscriptDrafts {
   private readonly live = new Map<string, { draft: PromptDraft; off: () => void; label: string }>();
+  private readonly gates = new Map<string, SendGate>();
   private readonly store: Drafts;
 
   constructor(private readonly o: TranscriptDraftsOptions = {}) {
@@ -54,9 +79,16 @@ export class TranscriptDrafts {
     this.live.set(id, entry);
     for (const [k, v] of this.live) {
       if (this.live.size <= KEEP) break;
-      this.drop(k, v);
+      if (!this.gates.get(k)?.busy) this.drop(k, v);
     }
     return entry.draft;
+  }
+
+  /** The worker's send gate (the same one for every view of its draft). */
+  sending(id: string): SendGate {
+    let g = this.gates.get(id);
+    if (!g) this.gates.set(id, (g = new SendGate()));
+    return g;
   }
 
   /** The draft held for `id` now, if any (tests). */

@@ -40,6 +40,19 @@ describe('TranscriptDrafts (#141)', () => {
     expect(back.doc.text).toBe('kept');
   });
 
+  it('keeps one send gate per worker, and does not let a draft go while its send is on its way', () => {
+    const t = new TranscriptDrafts({ storage: new Mem() });
+    const g = t.sending('w0');
+    expect(t.sending('w0')).toBe(g);
+    expect(t.sending('w1')).not.toBe(g);
+    const first = t.get('w0', 'w0');
+    g.set(true);
+    for (let i = 1; i <= 30; i++) t.get(`w${i}`, `w${i}`);
+    expect(first.disposed).toBe(false);
+    expect(t.get('w0', 'w0')).toBe(first);
+    expect(t.sending('w0')).toBe(g);
+  });
+
   it('dispose lets every live draft go and keeps what storage has', () => {
     const s = new Mem();
     const t = new TranscriptDrafts({ storage: s });

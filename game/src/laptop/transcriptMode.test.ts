@@ -1097,6 +1097,39 @@ describe('#141: the prompt box’s draft and file search', () => {
     expect(h.views[1]?.host.draft?.doc.text).toBe('still here');
   });
 
+  it('a prompt on its way blocks a second one for the worker from its next seat too, until its ack comes', async () => {
+    const h = harness();
+    const prompts = () => h.sent.filter((s) => s.t === 'worker.prompt');
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    const first = h.views[0]!.host;
+    void first.onPromptSubmit('go');
+    expect(prompts()).toHaveLength(1);
+    h.tx.stand();
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    const second = h.views[1]!.host;
+    // The view's send gate is the worker's, like its draft: the next view starts with it shut.
+    expect(second.sending).toBe(first.sending);
+    await expect(second.onPromptSubmit('go')).resolves.toBe(false);
+    expect(prompts()).toHaveLength(1);
+    // Another worker is not held up by it.
+    h.tx.stand();
+    h.tx.sit('b', 'Bo', true, 'claude');
+    await flush();
+    expect(h.views[2]!.host.sending).not.toBe(first.sending);
+    void h.views[2]!.host.onPromptSubmit('hi');
+    expect(prompts().map((s) => s.args)).toEqual([{ id: 'a', text: 'go' }, { id: 'b', text: 'hi' }]);
+    // Once the bridge answered the first, the worker takes the next.
+    prompts()[0]!.resolve({ ok: true, data: {} });
+    await flush();
+    h.tx.stand();
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    void h.views[3]!.host.onPromptSubmit('again');
+    expect(prompts().map((s) => s.args)).toEqual([{ id: 'a', text: 'go' }, { id: 'b', text: 'hi' }, { id: 'a', text: 'again' }]);
+  });
+
   it('hands the view a file search over the worker’s checkout, which asks the bridge for it', async () => {
     const h = harness();
     h.tx.sit('a', 'Ada', true, 'codex');
