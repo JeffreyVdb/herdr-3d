@@ -339,6 +339,12 @@ func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answer
 			if !errors.As(err, &api) || api.Code != "agent_prompt_stalled" {
 				return nil, fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)
 			}
+			// #138: a popup the text left open took the Enter: close it, submit.
+			if keys := h.retryKeys(ask.Agent, prompt); !slices.Equal(keys, []string{"enter"}) {
+				if err := h.opts.Term.SendKeys(ctx, session, pane, keys...); err != nil {
+					return nil, fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)
+				}
+			}
 		}
 		res.Prompted = true
 	}

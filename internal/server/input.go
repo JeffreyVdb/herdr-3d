@@ -409,17 +409,18 @@ func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pan
 	case !errors.As(err, &api) || api.Code != "agent_prompt_stalled":
 		return nil, fmt.Errorf("%w: %v", errPromptFailed, err)
 	}
-	return h.retryEnter(ctx, a.ID, session, pane)
+	return h.retryEnter(ctx, a.ID, session, pane, h.retryKeys(cur.kind, a.Text)...)
 }
 
-// retryEnter presses Enter once more for an agent that took a prompt's
-// text but dropped the Enter, and watches the worker for PromptRetryWait.
-func (h *Hub) retryEnter(ctx context.Context, id, session, pane string) (any, error) {
+// retryEnter presses keys (Enter, or what a harness needs before it: #138)
+// once more for an agent that took a prompt's text but dropped the Enter,
+// and watches the worker for PromptRetryWait.
+func (h *Hub) retryEnter(ctx context.Context, id, session, pane string, keys ...string) (any, error) {
 	cur, err := query(ctx, h, func() promptState { return h.promptState(id) })
 	if err != nil {
 		return nil, err
 	}
-	if err := h.opts.Term.SendKeys(ctx, session, pane, "enter"); err != nil {
+	if err := h.opts.Term.SendKeys(ctx, session, pane, keys...); err != nil {
 		return nil, fmt.Errorf("%w: the agent dropped Enter, and pressing it again failed: %v", errPromptFailed, err)
 	}
 	started, err := h.awaitStarted(ctx, id, cur.starts, h.opts.PromptRetryWait)
@@ -501,7 +502,7 @@ func (h *Hub) typePrompt(ctx context.Context, id, session, pane, text string, se
 	case started:
 		return proto.PromptResult{}, nil
 	}
-	return h.retryEnter(ctx, id, session, pane)
+	return h.retryEnter(ctx, id, session, pane, "enter")
 }
 
 // auditArgs is what the audit log keeps of a command's args: everything,

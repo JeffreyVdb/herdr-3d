@@ -237,3 +237,36 @@ func TestBridgeBuiltPromptsAreNotTranslated(t *testing.T) {
 		}
 	})
 }
+
+func (f *fakePrompts) RetryKeys(harness, text string) []string {
+	if harness == "codex" && strings.HasSuffix(strings.TrimRight(text, "."), "$grill") {
+		return []string{"esc", "enter"}
+	}
+	return []string{"enter"}
+}
+
+// #138: a Codex prompt that ends in a $skill leaves its popup open, which
+// takes the Enter (agent_prompt_stalled): the retry closes it first. Other
+// stalled prompts get a lone Enter, as before.
+func TestStalledPromptEndingInASkillPressesEscThenEnter(t *testing.T) {
+	fp := &fakePrompts{}
+	tb := promptsBridge(t, fp)
+	c := tb.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w2")
+	stalled := &herdr.APIError{Code: "agent_prompt_stalled", Message: "no working state within 5000ms"}
+	tb.term.onKeys = func(pane string, keys []string) { go tb.setStatus("w2", "working") }
+
+	tb.term.submit = []error{stalled}
+	c.mustAck(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: id, Text: "use /grill."})
+	if want := []string{`submit w2:p1 "use $grill."`, "keys w2:p1 esc enter"}; !slices.Equal(tb.term.Calls(), want) {
+		t.Fatalf("calls = %q, want %q", tb.term.Calls(), want)
+	}
+
+	tb.setStatus("w2", "idle")
+	c.until(proto.EvWorkerStatus)
+	tb.term.submit = []error{stalled}
+	c.mustAck(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: id, Text: "run /grill now"})
+	if calls := tb.term.Calls(); calls[len(calls)-1] != "keys w2:p1 enter" {
+		t.Fatalf("calls = %q: a prompt not ending in a skill gets a lone Enter", calls)
+	}
+}

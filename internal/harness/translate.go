@@ -21,6 +21,9 @@ type promptRules struct {
 	skillSigil string
 	// bareFiles drops the "@" of a file mention that resolves.
 	bareFiles bool
+	// retryKeys are the keys to press, for a prompt whose submit stalled,
+	// instead of a lone Enter (nil: Enter).
+	retryKeys func(text string) []string
 }
 
 // harnessRules is keyed by harness kind. Add a row here, not an `if kind`
@@ -28,7 +31,46 @@ type promptRules struct {
 var harnessRules = map[string]promptRules{
 	// Codex runs a skill from "$name" and reads a path as plain text; a
 	// pasted "/name" is a built-in or an unknown command to it.
-	"codex": {skillSigil: "$", bareFiles: true},
+	//
+	// A prompt that ends in a "$skill" token (even "use $skill.") leaves
+	// Codex's skill popup open, which takes the submitting Enter: Esc closes
+	// it, then Enter submits (checked on codex-cli 0.160.0, #138).
+	"codex": {skillSigil: "$", bareFiles: true, retryKeys: func(text string) []string {
+		if endsInSkillToken(text, "$") {
+			return []string{"esc", "enter"}
+		}
+		return nil
+	}},
+}
+
+// RetryKeys are the keys that press submit again for a prompt to harness
+// whose Enter was dropped: a lone Enter, unless the harness's rules know
+// the text needs more (a popup to close first).
+func RetryKeys(kind, text string) []string {
+	if r, ok := harnessRules[kind]; ok && r.retryKeys != nil {
+		if keys := r.retryKeys(text); keys != nil {
+			return keys
+		}
+	}
+	return []string{"enter"}
+}
+
+// endsInSkillToken reports whether the last word of text is a sigil+name
+// token, with the prose punctuation after it that Translate leaves outside
+// a name: "$zzprobe", "(use $zzprobe.", "and $caveman:caveman-commit!".
+func endsInSkillToken(text, sigil string) bool {
+	word := text[strings.LastIndexFunc(text, unicode.IsSpace)+1:]
+	word = strings.TrimRight(word, trailingProse)
+	i := strings.LastIndex(word, sigil)
+	if i < 0 || i+len(sigil) == len(word) || (i > 0 && !startsWord(word, i)) {
+		return false
+	}
+	for _, r := range word[i+len(sigil):] {
+		if !nameRune(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // Rewrites reports whether Translate may change a prompt for this harness

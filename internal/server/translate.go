@@ -28,9 +28,13 @@ import (
 // PromptTranslator rewrites a prompt for a worker's harness (the agent kind
 // of the worker) in its checkout. Rewrites says whether the harness has any
 // rules, so a prompt to one without is not held for lookups. Translate may
-// do I/O; on an error the bridge sends the text as typed.
+// do I/O; on an error the bridge sends the text as typed. A harness with no
+// rules (or no translator) retries with a lone Enter.
 type PromptTranslator interface {
 	Rewrites(harness string) bool
+	// RetryKeys are the keys that submit a prompt again when its Enter was
+	// dropped (a lone "enter", or more: a popup to close first).
+	RetryKeys(harness, text string) []string
 	Translate(ctx context.Context, harness, dir, text string) (string, error)
 }
 
@@ -84,4 +88,13 @@ func (h *Hub) translatePrompt(ctx context.Context, id, text string) string {
 // 16 KiB of UTF-8 without NUL.
 func badPromptText(n int) error {
 	return bad("text must be 1-%d bytes of UTF-8 without NUL, got %d bytes", herdr.MaxMessage, n)
+}
+
+// retryKeys are the keys that press submit again for a stalled prompt of
+// text to an agent of this kind.
+func (h *Hub) retryKeys(kind, text string) []string {
+	if h.opts.Prompts == nil {
+		return []string{"enter"}
+	}
+	return h.opts.Prompts.RetryKeys(kind, text)
 }

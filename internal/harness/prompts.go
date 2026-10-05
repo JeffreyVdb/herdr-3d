@@ -87,3 +87,6 @@ func within(root, path string) bool {
 
 // Rewrites reports whether harness has translation rules.
 func (p *Prompts) Rewrites(harness string) bool { return Rewrites(harness) }
+
+// RetryKeys is RetryKeys for the server.
+func (p *Prompts) RetryKeys(harness, text string) []string { return RetryKeys(harness, text) }

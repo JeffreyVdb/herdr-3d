@@ -3,6 +3,7 @@ package harness
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -176,5 +177,29 @@ func TestInCheckout(t *testing.T) {
 	must(os.Symlink(root, link))
 	if !InCheckout(link)("src/a.go") {
 		t.Error("a symlinked checkout does not resolve its files")
+	}
+}
+
+func TestRetryKeys(t *testing.T) {
+	for _, tc := range []struct {
+		kind, text string
+		want       []string
+	}{
+		{"codex", "$zzprobe", []string{"esc", "enter"}},
+		{"codex", "use $zzprobe.", []string{"esc", "enter"}},
+		{"codex", "(see $caveman:caveman-commit!)", []string{"esc", "enter"}},
+		{"codex", "line one\nthen $grill", []string{"esc", "enter"}},
+		{"codex", "please run $zzprobe now", []string{"enter"}},
+		{"codex", "costs 5$", []string{"enter"}},
+		{"codex", "a$b", []string{"enter"}},
+		{"codex", "$", []string{"enter"}},
+		{"codex", "price $5/mo", []string{"enter"}},
+		{"codex", "", []string{"enter"}},
+		{"claude", "$zzprobe", []string{"enter"}},
+		{"", "$zzprobe", []string{"enter"}},
+	} {
+		if got := RetryKeys(tc.kind, tc.text); !slices.Equal(got, tc.want) {
+			t.Errorf("RetryKeys(%q, %q) = %q, want %q", tc.kind, tc.text, got, tc.want)
+		}
 	}
 }
