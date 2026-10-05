@@ -275,13 +275,16 @@ func (h *Hub) startKeys(ctx context.Context, c *Client, cmd proto.Command) error
 }
 
 // startPrompt validates worker.prompt and queues it on the worker's lane.
+// For a harness whose text is rewritten (#138) the text is translated on the
+// lane, just before it is sent, and the limit and typing rules apply to the
+// translated text.
 func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) error {
 	var a proto.WorkerPromptArgs
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	if !herdr.ValidMessage(a.Text) {
-		return bad("text must be 1-%d bytes of UTF-8 without NUL, got %d bytes", herdr.MaxMessage, len(a.Text))
+	if !herdr.ValidMessage(a.Text) && !(h.opts.Prompts != nil && validPromptSource(a.Text)) {
+		return badPromptText(len(a.Text))
 	}
 	w, _, err := h.termWorker(a.ID)
 	if err != nil {
@@ -290,8 +293,15 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	if w.AgentKind == "" {
 		return fmt.Errorf("%w: %s runs no agent (a plain shell: use worker.keys)", errInvalidState, w.Name)
 	}
-	if err := checkTyped(w.AgentKind, a.Text, herdr.MaxMessage, "text"); err != nil {
-		return err
+	kind := w.AgentKind
+	rewrites := h.rewrites(kind)
+	if !rewrites {
+		if !herdr.ValidMessage(a.Text) {
+			return badPromptText(len(a.Text))
+		}
+		if err := checkTyped(kind, a.Text, herdr.MaxMessage, "text"); err != nil {
+			return err
+		}
 	}
 	if w.Ask != nil { // #57: its dialog would take the text
 		return fmt.Errorf("%w: %s waits on its question: answer it first (worker.answer_ask)", errInvalidState, w.Name)
@@ -299,6 +309,15 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	h.tookOver(ctx, a.ID)      // #83: a person prompts: an armed wrap-up is off
 	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
+		if rewrites {
+			a.Text = h.translatePrompt(ctx, a.ID, a.Text)
+			if !herdr.ValidMessage(a.Text) {
+				return nil, badPromptText(len(a.Text))
+			}
+			if err := checkTyped(kind, a.Text, herdr.MaxMessage, "text"); err != nil {
+				return nil, err
+			}
+		}
 		res, err := h.prompt(ctx, a, session, pane)
 		if err == nil {
 			// #58: its user line is read now, not on the tracker's next tick

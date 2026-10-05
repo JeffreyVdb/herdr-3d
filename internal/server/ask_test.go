@@ -31,6 +31,12 @@ type askBridge struct {
 
 func startAskBridge(t *testing.T, status string) *askBridge {
 	t.Helper()
+	return startAskBridgeWith(t, status, nil)
+}
+
+// startAskBridgeWith is startAskBridge with a tweak of the options.
+func startAskBridgeWith(t *testing.T, status string, tweak func(*server.Options)) *askBridge {
+	t.Helper()
 	dir := t.TempDir()
 	w1 := agentW("w1", "claude", status)
 	w1.AgentSession, w1.Harness = askSess, world.HarnessClaude
@@ -44,6 +50,9 @@ func startAskBridge(t *testing.T, status string) *askBridge {
 		o.Usage = &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: filepath.Join(dir, "claude"), CodexSessions: filepath.Join(dir, "codex")},
 			Interval: 20 * time.Millisecond}
 		o.AskStepTimeout, o.AskResolveTimeout = 400*time.Millisecond, 2*time.Second
+		if tweak != nil {
+			tweak(o)
+		}
 	}, w1, w2)
 	return ab
 }

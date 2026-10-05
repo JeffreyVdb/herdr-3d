@@ -84,3 +84,6 @@ func InCheckout(dir string) func(path string) bool {
 func within(root, path string) bool {
 	return path == root || strings.HasPrefix(path, strings.TrimSuffix(root, string(filepath.Separator))+string(filepath.Separator))
 }
+
+// Rewrites reports whether harness has translation rules.
+func (p *Prompts) Rewrites(harness string) bool { return Rewrites(harness) }

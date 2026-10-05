@@ -328,11 +328,13 @@ func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answer
 		return nil, err
 	}
 	if a.Prompt != "" && res.Resolved {
+		// #138: the composer's text, for its harness.
+		prompt := h.translatePrompt(ctx, a.ID, a.Prompt)
 		if ask.Agent == proto.AskClaude { // #95: typed, once the dismissed dialog is gone
-			if _, err := h.typePrompt(ctx, a.ID, session, pane, a.Prompt, true); err != nil {
+			if _, err := h.typePrompt(ctx, a.ID, session, pane, prompt, true); err != nil {
 				return nil, fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)
 			}
-		} else if err := h.opts.Term.SubmitPrompt(ctx, session, pane, a.Prompt); err != nil {
+		} else if err := h.opts.Term.SubmitPrompt(ctx, session, pane, prompt); err != nil {
 			var api *herdr.APIError
 			if !errors.As(err, &api) || api.Code != "agent_prompt_stalled" {
 				return nil, fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)
