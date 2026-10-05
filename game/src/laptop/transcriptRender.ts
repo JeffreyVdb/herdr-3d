@@ -17,6 +17,7 @@ import { ViewPrefs, type ViewPref } from '../ui/themePrefs';
 import { THEMES, ZOOM, stepZoom, type ThemeId } from '../ui/themes';
 import { contextMeter } from '../world/usage';
 import { commandSource, type CommandList } from './slashCommands';
+import { fileSource, type FileSearchHost } from './fileSearch';
 import { zoomKey } from './keys';
 import type { ActivityCue, PendingPrompt } from './transcriptActivity';
 
@@ -59,6 +60,8 @@ export interface TranscriptRenderHost {
   usage?: Usage | null;
   /** #140: the worker's slash commands and skills, for the prompt box's `/` popup, and its harness (none: no popup). */
   commands?: { list: CommandList; harness: string } | null;
+  /** #141: the worker's checkout, for the prompt box's `@` file search (none: no popup). */
+  files?: { id: string; search: FileSearchHost } | null;
 }
 
 export interface BlockedQuestion {
@@ -707,8 +710,12 @@ class Transcript implements TranscriptView {
       placeholder: PROMPT_HINT,
       submitPolicy: 'enter',
       onSubmit: () => this.submit(),
-      // #139: completion is on; #140: `/` lists the worker's commands and skills (only here: no other composer has them).
-      complete: { sources: host.commands ? [commandSource(host.commands.list, host.commands.harness)] : [], bounds: () => this.root },
+      // #139: completion is on; #140: `/` lists the worker's commands and skills, #141: `@` its files (only here: no
+      // other composer has them).
+      complete: {
+        sources: [...(host.commands ? [commandSource(host.commands.list, host.commands.harness)] : []), ...(host.files ? [fileSource(host.files.id, host.files.search)] : [])],
+        bounds: () => this.root,
+      },
     });
     this.input = this.composer.editor;
     this.input.classList.add('tx-input');

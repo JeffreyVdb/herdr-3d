@@ -58,7 +58,7 @@ export interface OverlayRect {
 }
 
 export interface TranscriptModeHost {
-  send<T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'transcript.page' | 'worker.commands'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
+  send<T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'transcript.page' | 'worker.commands' | 'worker.files'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list). */
   feed(id: string): ImageFeed | null;
   /** Loads the render module (`loadRenderer`; tests pass a fake). */
@@ -620,6 +620,8 @@ export class TranscriptMode {
       usage: s.usage,
       ...(this.host.prefs ? { prefs: this.host.prefs } : {}),
       commands: hasTranscript(s.harness) ? { list: this.catalogs.get(s.id), harness: s.harness } : null,
+      // #141: `@` searches the worker's checkout.
+      files: { id: s.id, search: { send: (t, args) => this.host.send(t, args) } },
       onPromptSubmit: (text) => {
         if (!live()) return Promise.resolve(false);
         const t = text.replace(/\u0000/g, '');
