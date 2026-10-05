@@ -826,7 +826,7 @@ basename, `title` the full path, `role=img` named "File <path>" / "Folder <path>
 "File <path> removed.". `Draft.insertParts(start, end, parts)` puts text and file chips (`{ kind: 'file', path, dir }`,
 fresh occurrence ids) in as one undo step; `Draft.hydrate(parts)` makes them the whole document with no history.
 Serialised (`serializePrompt`, `Draft.resolve()`) as `@path`, or `@"path"` when the path holds whitespace (Go's
-`unicode.IsSpace`, NEL included), the same for every harness (the bridge strips it for Codex, #138, and leaves a path it
+`unicode.IsSpace` exactly: NEL included, U+FEFF not, unlike JavaScript's `\s`), the same for every harness (the bridge strips it for Codex, #138, and leaves a path it
 cannot find as it is: a deleted file still goes as text, no error); `joinMentions` puts a space before a mention that
 would start mid-word (anything but whitespace or `([{"'` before it) and after one that text follows without a space.
 Those bytes count toward the cap (`maxBytes`: 16 KiB for `worker.prompt`). A path with `"`, CR, LF or NUL cannot be
@@ -990,7 +990,9 @@ matches."; nothing turns the source off. Drafts: `TranscriptMode` keeps one comp
 does not dispose a host's draft), so a desk switch gives back text, chips, caret and history; every change writes the
 text and the file chips to `Drafts` (`h3d.draft.transcript.<worker id>`, `segments` typed and validated on read), so a
 reload brings those back (images do not survive one). A sent prompt clears the draft by revision (`clearIf`, also when
-the ack comes after the view went) and the stored copy with it. The simulator answers `simFiles` (`SIM_FILES` in
+the ack comes after the view went) and the stored copy with it. Its send gate (`SendGate`, `TranscriptRenderHost.sending`,
+one per worker) is kept with it: a view made while a send is on its way is busy and sends nothing until the ack, and
+`TranscriptMode` refuses a second `worker.prompt` to a worker that has one unanswered. The simulator answers `simFiles` (`SIM_FILES` in
 `tools/fixture-panels.ts`); `e2e/h141-file-chips.spec.ts` drives a Claude and a Codex worker (`@comp`, a folder, a
 quoted path, Backspace and undo, the sent `@path` text) and the copy/paste, desk switch and reload of a draft.
 
