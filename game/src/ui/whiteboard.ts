@@ -21,6 +21,7 @@ import { ago, pinsText, statusText, type BoardStatus } from '../whiteboard/model
 import { loadEditor } from '../whiteboard/load';
 import type { BoardSession } from '../whiteboard/editor';
 import { h, icon, ICON } from './dom';
+import { inPalette } from './dismiss';
 import './whiteboard.css';
 
 const PIN = '<path d="M9 4h6l-1 5 3 3H7l3-3z"/><path d="M12 12v8"/>';
@@ -265,7 +266,7 @@ export class WhiteboardOverlay {
   private keyCapture(e: KeyboardEvent): void {
     if (e.key !== 'Escape' || !this.isOpen) return;
     // #147: Esc in the command palette over the board closes the palette, not the board.
-    if (e.target instanceof Element && e.target.closest('dialog.palette')) return;
+    if (inPalette(e)) return;
     if (!this.picker.hidden || !this.confirmEl.hidden) {
       e.preventDefault();
       e.stopPropagation();

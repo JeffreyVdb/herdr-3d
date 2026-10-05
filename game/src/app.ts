@@ -2503,15 +2503,14 @@ export class App {
    * #147: ⌘/Ctrl+P, in the capture phase, so it reaches the game from every view: under a dialog, in a field, seated at a
    * laptop (the terminal does not get it) and on the whiteboard (Excalidraw does not either). It is always cancelled
    * (no print dialog, even on a repeat or where the palette will not open); it opens the palette, or closes it when it
-   * is up. Not during an IME composition, and not over the image previews and a card being dragged, which have their
-   * own capture-phase Esc (as `?` does not).
+   * is up. Not during an IME composition. Over the image previews it opens (the palette is the topmost modal and gets
+   * Esc first: `inPalette` keeps the previews' own capture-phase Esc away from it); a card being dragged is let go first.
    */
   private onPaletteKey(e: KeyboardEvent): void {
     if (e.isComposing || !pressesBinding(e, 'palette')) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     if (e.repeat) return;
-    if (!this.palette.isOpen && document.querySelector('dialog.ilb[open], dialog.cmp-lightbox[open], .bd-dragging')) return;
     this.togglePalette();
   }
 
@@ -2521,6 +2520,7 @@ export class App {
   }
 
   openPalette(): void {
+    this.boardsPanel.cancelDrag(); // a card in the air is put back: the palette is modal, the drop would land under it
     this.walker.release();
     this.walker.stop();
     this.palette.open(document.activeElement instanceof HTMLElement ? document.activeElement : null);

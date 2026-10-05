@@ -71,6 +71,17 @@ describe('the overview page (#118)', () => {
     expect(host.closed).toHaveBeenCalledTimes(1);
   });
 
+  it('leaves the command palette out of what it makes inert, so the palette over the page is live (#147)', () => {
+    const { ov, bg } = setup();
+    const pal = document.body.appendChild(document.createElement('dialog'));
+    pal.className = 'credits palette';
+    ov.open('top');
+    expect(bg.inert).toBe(true);
+    expect(pal.inert).toBeFalsy(); // (jsdom: the property is only there once something sets it)
+    ov.closeNow();
+    expect(bg.inert).toBe(false);
+  });
+
   it('marks the lines the LLM wrote AI, and only those (#118 phase 2)', () => {
     const { ov } = setup([
       worker('a', { desk_index: 0, digest: { task: 'Fix the login test', task_source: 'llm', now: 'Running the e2e suite', now_source: 'llm', now_at: NOW } }),

@@ -186,10 +186,9 @@ test('the floor plan and a lobby: the chord opens it and is cancelled', async ({
   clean();
 });
 
-test('seated at a terminal: the chord is the game’s, the pane gets no Ctrl+P, Esc gives the keyboard back', async ({ page }) => {
-  test.setTimeout(150_000);
-  const clean = watchErrors(page);
-  await openGame(page, 'demo-m4', '', SIM);
+/** Seats the player at Sprout's laptop on the herdr-3d floor of demo-m4, the terminal up and its input focused. */
+async function sitAtSprout(page: Page, extra = SIM): Promise<string> {
+  await openGame(page, 'demo-m4', '', extra);
   await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
   await frames(page, 3);
   const L = await page.evaluate((s) => window.__h3d.layout(s), FLOOR);
@@ -208,13 +207,20 @@ test('seated at a terminal: the chord is the game’s, the pane gets no Ctrl+P, 
   expect(await page.evaluate((id) => window.__h3d.sitAt(id), sprout.id)).toBe(true);
   await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe('terminal');
   await expect(page.locator('.seat-input')).toBeFocused();
+  return sprout.id;
+}
+
+test('seated at a terminal: the chord is the game’s, the pane gets no Ctrl+P, Esc gives the keyboard back', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  const sproutId = await sitAtSprout(page);
   await page.keyboard.type('ls');
   await page.keyboard.press('Control+KeyP');
   await expectOpen(page);
   await page.keyboard.press('Escape');
   await expectClosed(page);
   // Esc closed the palette only: still seated, and the keyboard is the terminal's again.
-  expect(await page.evaluate(() => window.__h3d.seated())).toBe(sprout.id);
+  expect(await page.evaluate(() => window.__h3d.seated())).toBe(sproutId);
   await expect(page.locator('.seat-input')).toBeFocused();
   expect(await chord(page)).toBe(true);
   await expectOpen(page);
@@ -300,5 +306,244 @@ test('on the whiteboard: the chord opens it over the board, Esc closes only the 
   await expectClosed(page);
   await expect(page.locator('.wb')).toBeHidden({ timeout: 30_000 });
   await expect(page.locator('dialog[open]', { hasText: 'Settings' }).first()).toBeVisible();
+  clean();
+});
+
+// ---- the plan-limits plate: it steps out of the palette as its edge tab, on every view (#147, the user's requirement) ----------------
+// `simlimits=ok`: Claude team 5h 11 % / week 61 %, Codex week 19 % (the tab shows the worst, 61 %).
+
+const LIM = `${SIM}&simlimits=ok`;
+const plate = (page: Page) => page.locator('.limits');
+
+async function withReadings(page: Page): Promise<void> {
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.limits()))?.lines.length ?? 0, { message: 'readings arrived', timeout: 15_000 }).toBe(2);
+}
+
+/** While the palette is open: the plate is its small edge tab (not the full plate), clear of the palette, and a click at its middle reaches it. */
+async function expectTab(page: Page): Promise<void> {
+  await expect(plate(page)).toHaveAttribute('data-dock', 'tab');
+  await expect(plate(page).locator('.lm-tab')).toBeVisible();
+  await expect(plate(page).locator('.lm-tab-pct')).toHaveText('61%');
+  await expect(plate(page).locator('.lm-strip')).toBeHidden();
+  await expect(plate(page).locator('.lm-panel')).toBeHidden();
+  const hit = await page.evaluate(() => {
+    const t = document.querySelector('.limits .lm-tab')?.getBoundingClientRect();
+    const p = document.querySelector('dialog.palette')?.getBoundingClientRect();
+    if (!t || !p) return { reached: false, clear: false, why: 'no box' };
+    const at = document.elementFromPoint(t.left + t.width / 2, t.top + t.height / 2);
+    return { reached: !!at?.closest('.lm-tab'), clear: t.left >= p.right, why: `${at?.tagName}.${at?.className} ${JSON.stringify([t.left, p.right])}` };
+  });
+  expect(hit.reached, `a click at the tab's middle reaches it: ${hit.why}`).toBe(true);
+  expect(hit.clear, `the tab sits right of the palette: ${hit.why}`).toBe(true);
+}
+
+/** The saved plate is back: not docked, the strip shows, the tab does not. */
+async function expectPlateBack(page: Page): Promise<void> {
+  await expect(plate(page)).toHaveAttribute('data-dock', '');
+  await expect(plate(page).locator('.lm-strip')).toBeVisible();
+  await expect(plate(page).locator('.lm-tab')).toBeHidden();
+}
+
+for (const where of ['city', 'floor'] as const) {
+  test(`${where}: the plan-limits plate is its edge tab while the palette is open, a click on it peeks, and the plate is back when it closes`, async ({ page }) => {
+    const clean = watchErrors(page);
+    await openGame(page, 'demo', '', LIM);
+    await withReadings(page);
+    if (where === 'floor') {
+      await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
+      await frames(page, 3);
+    }
+    await expectPlateBack(page);
+    expect(await chord(page)).toBe(true);
+    await expectOpen(page);
+    await expectTab(page);
+    await page.screenshot({ path: resolve(RESULTS, `palette-limits-tab-${where}.png`) });
+    // The tab is clickable: it peeks the plate over the palette (the saved state is untouched) ...
+    await plate(page).locator('.lm-tab').click();
+    await expect(plate(page)).toHaveAttribute('data-peek', 'true');
+    await expect(plate(page).locator('.lm-panel')).toBeVisible();
+    await expect(palette(page)).toBeVisible();
+    // ... and typing in the field is still the field's: Shift+L is an L there.
+    await input(page).focus();
+    await page.keyboard.type('L');
+    await expect(input(page)).toHaveValue('L');
+    // The chord closes the palette (the keyboard is wherever it is); the peek ends, the plate is what it was.
+    expect(await chord(page)).toBe(true);
+    await expectClosed(page);
+    await expect(plate(page)).toHaveAttribute('data-peek', 'false');
+    await expectPlateBack(page);
+    expect(await page.evaluate(() => localStorage.getItem('h3d.limits.open'))).not.toBe('true');
+    // Opened again: the tab again, then Esc gives the plate back.
+    await chord(page);
+    await expectOpen(page);
+    await expectTab(page);
+    await page.keyboard.press('Escape');
+    await expectClosed(page);
+    await expectPlateBack(page);
+    clean();
+  });
+}
+
+test('seated at a terminal: the plan-limits plate is its edge tab over the palette, and back at the laptop after', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await sitAtSprout(page, LIM);
+  await withReadings(page);
+  // Seated the plate was already docked as the tab beside the glass: it stays a tab, now clear of the palette and clickable.
+  expect(await chord(page)).toBe(true);
+  await expectOpen(page);
+  await expectTab(page);
+  await page.keyboard.press('Escape');
+  await expectClosed(page);
+  await expect(plate(page)).toHaveAttribute('data-dock', /tab|away/);
+  await expect(page.locator('.seat-input')).toBeFocused();
+  clean();
+});
+
+test('over the hire dialog: the plate (away under the sheet) is the edge tab over the palette, and clickable', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m4', '', LIM);
+  await withReadings(page);
+  await page.evaluate(() => window.__h3d.enterFloor('pastry'));
+  await frames(page, 3);
+  await page.evaluate(() => window.__h3d.openHire(14));
+  await expect.poll(() => page.evaluate(() => window.__h3d.dialog()?.kind === 'hire' && window.__h3d.dialog()?.state), { timeout: 10_000 }).toBe('ready');
+  await expect(plate(page)).toHaveAttribute('data-dock', 'away'); // the sheet leaves no gutter of its own
+  expect(await chord(page)).toBe(true);
+  await expectOpen(page);
+  await expectTab(page);
+  await plate(page).locator('.lm-tab').click();
+  await expect(plate(page)).toHaveAttribute('data-peek', 'true');
+  await expect(plate(page).locator('.lm-panel')).toBeVisible();
+  await page.keyboard.press('Escape'); // from the plate: the palette (the topmost modal) closes
+  await expectClosed(page);
+  expect((await dialog(page))?.kind).toBe('hire');
+  await expect(plate(page)).toHaveAttribute('data-dock', 'away'); // the sheet's own again
+  clean();
+});
+
+const ovOpen = async (page: Page) => (await page.evaluate(() => window.__h3d.overview()))?.page.open ?? false;
+
+// ---- over the floor overview (the page marks its siblings inert: the palette is not one of them) -----------------------------------
+
+test('over the floor overview: the field has the keyboard, typing, ↑ ↓ and Enter work, and a command closes the overview and runs', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo', '', LIM);
+  await withReadings(page);
+  await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
+  await frames(page, 3);
+  await page.keyboard.press('KeyO');
+  await expect.poll(() => ovOpen(page)).toBe(true);
+  expect(await chord(page)).toBe(true);
+  await expectOpen(page); // visible, and the field focused (an inert palette would not take the focus)
+  await expectTab(page); // a clickable tab over the overview too
+  await page.keyboard.type('is');
+  await expect(rows(page).first()).toHaveText('Issues');
+  await page.keyboard.press('ArrowDown');
+  await expect(palette(page).locator('.pal-opt[aria-selected="true"] .pal-name')).not.toHaveText('Issues');
+  await page.keyboard.press('ArrowUp');
+  await expect(palette(page).locator('.pal-opt[aria-selected="true"] .pal-name')).toHaveText('Issues');
+  // A click lands in the palette too (the page behind is the one that is inert).
+  await input(page).click();
+  await expect(input(page)).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expectClosed(page);
+  await expect.poll(() => ovOpen(page)).toBe(false);
+  await expect(page.locator('dialog.desk-dlg--board')).toBeVisible({ timeout: 30_000 }); // Issues ran, on this floor
+  clean();
+});
+
+test('over the floor overview: Esc closes only the palette, and the overview keeps its keys', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo', '', SIM);
+  await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
+  await frames(page, 3);
+  await page.keyboard.press('KeyO');
+  await expect.poll(() => ovOpen(page)).toBe(true);
+  await chord(page);
+  await expectOpen(page);
+  await page.keyboard.press('Escape');
+  await expectClosed(page);
+  expect(await ovOpen(page)).toBe(true);
+  // The overview is live again: Esc now closes it.
+  await page.keyboard.press('Escape');
+  await expect.poll(() => ovOpen(page)).toBe(false);
+  clean();
+});
+
+// ---- over an image preview, and with a card in the air ------------------------------------------------------------------------------
+
+test('over the enlarged image of the hire composer: the chord opens the palette on top, Esc closes only it, the next Esc the preview', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  const key = `pal${Date.now().toString(36)}`;
+  await openGame(page, 'demo-m4', '', `${SIM}&upload_key=${key}`);
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await frames(page, 3);
+  await page.evaluate(() => window.__h3d.openHire(5));
+  await expect.poll(() => page.evaluate(() => window.__h3d.dialog()?.kind === 'hire' && window.__h3d.dialog()?.state), { timeout: 10_000 }).toBe('ready');
+  await expect(page.locator('#hire-task')).toBeFocused();
+  await page.evaluate(async () => {
+    const c = document.createElement('canvas');
+    c.width = 640;
+    c.height = 360;
+    (c.getContext('2d') as CanvasRenderingContext2D).fillRect(0, 0, 640, 360);
+    const blob = await new Promise<Blob>((r) => c.toBlob((b) => r(b as Blob), 'image/png'));
+    const dt = new DataTransfer();
+    dt.items.add(new File([blob], 'shot-a.png', { type: 'image/png' }));
+    (document.querySelector('#hire-task') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  const lightbox = page.locator('dialog.cmp-lightbox[open]');
+  await page.locator('#hire-task .cmp-thumb').first().click();
+  await expect(lightbox).toBeVisible();
+  expect(await chord(page)).toBe(true);
+  await expectOpen(page);
+  // The preview is still up under it. Keys in the field are the field's (↓ must not zoom or go anywhere else).
+  await page.keyboard.type('sett');
+  await page.keyboard.press('ArrowDown');
+  await expect(lightbox).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expectClosed(page);
+  await expect(lightbox).toBeVisible();
+  // Chord again and again: it opens and closes over the preview; the next Esc then closes the preview and leaves the dialog.
+  await chord(page);
+  await expectOpen(page);
+  expect(await chord(page)).toBe(true);
+  await expectClosed(page);
+  await page.keyboard.press('Escape');
+  await expect(lightbox).toHaveCount(0);
+  expect((await dialog(page))?.kind).toBe('hire');
+  clean();
+});
+
+test('with a card in the air over the Issues board: the chord opens the palette, the card goes back, nothing is dropped', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', '&open=none', 'play=none&sim=1&simms=150&simusage=0');
+  await page.evaluate(() => window.__h3d.enterFloor('lab'));
+  await frames(page, 3);
+  await page.evaluate(() => window.__h3d.openBoard('issues'));
+  const board = page.locator('dialog.desk-dlg--board');
+  await expect(board).toBeVisible();
+  const card = board.locator('.bd-card[data-drag="true"]').first();
+  await expect(card).toBeVisible();
+  await board.evaluate((d) => Promise.all(d.getAnimations({ subtree: true }).map((a) => a.finished)));
+  const b = (await card.boundingBox())!;
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width / 2 + 8, b.y + b.height / 2 + 8, { steps: 3 });
+  await expect(page.locator('.bd-card--lifted')).toHaveCount(1);
+  expect(await chord(page)).toBe(true);
+  await expectOpen(page);
+  await expect(page.locator('.bd-card--lifted')).toHaveCount(0);
+  await expect(page.locator('.bd-dragging')).toHaveCount(0);
+  await page.mouse.up();
+  await frames(page, 3);
+  expect((await page.evaluate(() => window.__h3d.sent())).filter((c) => c.t === 'issue.set_status')).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expectClosed(page);
+  await expect(board).toBeVisible();
   clean();
 });

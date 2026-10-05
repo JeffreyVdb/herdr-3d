@@ -16,8 +16,11 @@ export const NARROW = '(max-width: 760px)';
  * shows the chosen harness's limits inline too, so nothing is lost when the plate folds away over it.
  */
 // M13: the whiteboard overlay (a div, ui/whiteboard.ts) carries `open` while it is up, like a dialog; so does #118's
-// floor overview (ui/overview.ts), which fills the viewport.
-export const SCREEN = 'dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open], dialog.shortcuts[open], .wb[open], .ov[open]';
+// floor overview (ui/overview.ts), which fills the viewport. #147: the command palette is a small dialog but always the topmost
+// modal (it opens over any view, any other dialog): the plate steps out of it into the edge tab (the palette keeps the gutter
+// the tab needs, palette.css), and the tab, which lives inside the topmost screen, is the palette's own, so it stays clickable.
+export const PALETTE = 'dialog.palette[open]';
+export const SCREEN = `dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open], dialog.shortcuts[open], .wb[open], .ov[open], ${PALETTE}`;
 
 /**
  * The seated reading overlay (the conversation, the Images tab; laptop/index.ts marks the page with `data-reading`) is a
@@ -63,8 +66,10 @@ export class CornerWatch {
     return document.querySelector('dialog.changes[open]') ? 'changes' : '';
   }
 
-  /** The topmost open screen dialog (the last in the document, where a later one opens). */
+  /** The topmost open screen dialog: the palette when it is up (a modal over any other), else the last in the document, where a later one opens. */
   topScreen(): Element | null {
+    const palette = document.querySelector(PALETTE);
+    if (palette) return palette;
     const dialogs = document.querySelectorAll(SCREEN);
     return dialogs[dialogs.length - 1] ?? null;
   }

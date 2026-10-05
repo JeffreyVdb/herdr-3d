@@ -56,6 +56,12 @@ export class BackdropPress {
 }
 
 /**
+ * #147: a key event from inside the command palette, a modal of its own on top of whatever else is up (the image previews, the
+ * whiteboard, the floor overview): what is under it leaves the key alone, Esc above all, so Esc closes only the palette.
+ */
+export const inPalette = (e: Event): boolean => e.target instanceof Element && !!e.target.closest('dialog.palette');
+
+/**
  * Installs a backdrop policy on a dialog. `sheet` needs `close`; `none` needs nothing and only marks the dialog
  * `closedby="closerequest"` (Esc and the close controls; browsers without the attribute already do that for a modal).
  */

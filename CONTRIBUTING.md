@@ -800,7 +800,7 @@ range: the token), applied with one `Draft.replace`, so one undo takes the pick
 back and the caret lands after it. #140, optional, for a source whose items live elsewhere: `available()` false opens
 no popup (and closes an open one when the source says it changed), `opening()` hears that a session would open (to
 refresh), `subscribe(changed)` says the items changed (an open session asks its query again, the active row kept by
-`key(item)`), `footer()` is a note under the rows (`.cmp-pop-note`). `ui/composer/rank.ts` `rankByName` is the filter
+`key(item)`), `footer()` is a note under the rows (`.cmp-pop-note`). `world/rank.ts` `rankByName` is the filter
 for named items: prefix, then word start (after `:`, `-`, `_`), then substring, stable within a tier, with the matched
 characters for the row to highlight. A session opens only when text is typed (an `input`, an IME commit) into a token;
 it follows the caret inside the token and closes when the caret leaves it or is scrolled out of the editor's visible
@@ -840,7 +840,8 @@ dialog closes the plate is exactly as it was. The small centred dialogs (confirm
 plate as it was, above them. Seated at a worker's laptop (E, #53) it is the same, measured against the monitor's glass (the
 terminal's and the conversation's alike): the edge tab in the gutter right of the glass (the full 32 px one from 48 px of gutter, a snug 22 px one down to 27 px, which is what 800x600 to 1280x900 leave), else away (a phone-width glass fills the view); a
 click on the tab (or Shift+L, anywhere but the terminal's own input, where it types an L; with no tab, Shift+L from the
-conversation) peeks the panel, and standing up gives back the docked or open plate the saved state says. The Changes panel still makes it step left.
+conversation) peeks the panel, and standing up gives back the docked or open plate the saved state says. The #147 command palette is a small
+dialog but gets the same treatment on any view (`dialog.palette[open]` is in `SCREEN`; it keeps a 56 px gutter; the tab is measured against the palette alone, so it shows over the hire sheet and the glass too, and Shift+L there is an L in the palette's field: click the tab). The Changes panel still makes it step left.
 
 M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
 `simfail=no_m6` plays a bridge without them. E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simms%3D300`.
@@ -962,14 +963,16 @@ switch (`/usage` shows the terminal, `/model opus` does not).
 #147: ⌘P (Mac) / Ctrl+P (elsewhere) opens the command palette from every view: `Game.onPaletteKey`, a window **capture-phase**
 listener next to `onHelpKey` that always `preventDefault`s the chord (no print dialog, repeats and the previews included),
 calls `stopImmediatePropagation` (the seated terminal, the whiteboard's editor and the dialogs under it never see it) and
-opens `ui/palette.ts`, or closes it when it is up (not during an IME composition, and not over the image previews or a
-card being dragged, which keep their own capture-phase Esc). It is the `palette` binding of the shortcut table
+opens `ui/palette.ts`, or closes it when it is up (not during an IME composition). It opens over the image previews too
+(`dialog.ilb`, `dialog.cmp-lightbox`): the palette is the topmost modal, and the previews' window capture-phase Esc / key handlers
+leave a key from inside it alone (`inPalette` in `ui/dismiss.ts`, the same check the whiteboard's Esc uses), so Esc closes only the
+palette and the preview stays up under it. A card being dragged is put back (`BoardsPanel.cancelDrag`, no drop) as it opens. It is the `palette` binding of the shortcut table
 (`mod`+P, scope `any`, `typing`), and `seatedKey` (`laptop/keys.ts`) gives the chord to the game: Ctrl+P is no longer
 readline's previous history in a seated terminal (↑ is; `docs/decisions.md`), and the table's `seat.palette` row and
-`shortcuts.test.ts` keep the two in step. The window is a modal `<dialog>` (`.palette`, the credits frame) with a
+`shortcuts.test.ts` keep the two in step. The window is a modal `<dialog>` (`.palette`, the credits frame; centred, 640 px, never into the right gutter) with a
 `role=combobox` `<input>` and a `role=listbox`; the listbox keys and the active-row paint are `ui/listbox.ts`, shared with the
 composer's popup (`completion.ts`): ↑ ↓ wrap, Enter picks, Esc closes only the palette and puts the keyboard back where it
-was (the seat's input, a dialog's field; the whiteboard ignores Esc from inside it and leaves it out of its inert set). What it lists is
+was (the seat's input, a dialog's field; the whiteboard and the floor overview leave it out of their inert set, and the whiteboard ignores Esc from inside it). The plan-limits plate steps out of it into its edge tab like it does over a screen dialog: `dialog.palette[open]` is in `SCREEN` (`ui/corner.ts`), `topScreen()` is the palette whenever it is up (the widget lives inside the topmost modal, so the modal's inertness never reaches the tab), and `tabFit()` measures the palette alone (what is under it is dimmed and inert). Shift+L is a typed L in the palette's field; a click on the tab peeks, and closing the palette gives the plate back as it was. What it lists is
 `world/palette.ts` (pure): plain text ranks **commands** with `world/rank.ts` (the #140 ranker, now in `world/`, where a
 space and `›` start a word too) over the name and then the aliases; a leading `@` lists **floors**, "Building › floor" with
 count pills in the badge colours (needs you, working, waiting, idle, done; zero hidden), "You are here" and an Asleep tape.
@@ -988,7 +991,7 @@ footer (a button: click types the `@`). Without a connection the floor rows grey
 from a seat, rides to the picked floor (`enterFloor`, the elevator doors) and calls the same `actions[id]` its key would; a
 floor pick without a command is `dismissOverlays()` then `enterFloor`, and on the floor you are on it only closes. Tests:
 `world/palette.test.ts`, `ui/palette.dom.test.ts`, `ui/listbox.test.ts`, the chord cases of `input/shortcuts.test.ts`, and
-`e2e/palette.spec.ts` (city, floor, plan, lobby, seated terminal, whiteboard, over the hire dialog, ⌘P on a Mac; each view
+`e2e/palette.spec.ts` (city, floor, plan, lobby, seated terminal, whiteboard, floor overview, image preview, over the hire dialog, ⌘P on a Mac, the limits tab on each; each view
 asserts the chord's keydown is `defaultPrevented`, since Playwright cannot see the print dialog).
 
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a

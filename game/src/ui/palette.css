@@ -1,12 +1,18 @@
 /* #147: the command palette (⌘/Ctrl+P): the credits frame (credits.css `.credits`), one field, a listbox, a footer. Rows are the
    composer popup's (composer.css `.cmp-pop-opt`): the active one gets the sun, the matched letters are the sun's too; floors wear
    the elevator's count colours as small pills. */
-/* Under the top bar and the plan-limits plate (limits.css keeps the plate above a small dialog: it must not sit on the field). */
+/* Wide enough to read, never into the right gutter: the plan-limits plate steps out of the palette as its edge tab there (limits.ts
+   SCREEN, limits.css data-dock; the tab needs 48px right of the dialog), so centred it leaves 56px or more each side. Narrow, the
+   plate is away altogether (corner.ts NARROW) and the palette takes the width. */
 .palette {
-  --pal-top: max(11vh, 140px);
-  width: min(640px, calc(100vw - 32px));
-  max-height: min(560px, calc(100vh - var(--pal-top) - 16px));
-  margin-block: var(--pal-top) auto;
+  width: min(640px, calc(100vw - 112px));
+  max-height: min(560px, 76vh);
+  margin-block: 11vh auto;
+}
+@media (max-width: 760px) {
+  .palette {
+    width: min(640px, calc(100vw - 32px));
+  }
 }
 .pal-head {
   padding: 14px 16px 10px;
@@ -226,9 +232,6 @@
   text-underline-offset: 3px;
 }
 @media (max-width: 520px) {
-  .palette {
-    --pal-top: 76px;
-  }
   .pal-keys {
     display: none;
   }
