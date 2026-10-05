@@ -959,6 +959,37 @@ goes back). The simulator answers `simCommands` (`tools/fixture-panels.ts`, rows
 terminal-only prompt (`simTerminalOnly`) with no turn; `e2e/h140-slash-commands.spec.ts` drives a Claude and a Codex
 worker (mid-sentence pick, Esc closes only the popup, Enter sends when closed), a blocked one, and the badge and the
 switch (`/usage` shows the terminal, `/model opus` does not).
+#147: ⌘P (Mac) / Ctrl+P (elsewhere) opens the command palette from every view: `Game.onPaletteKey`, a window **capture-phase**
+listener next to `onHelpKey` that always `preventDefault`s the chord (no print dialog, repeats and the previews included),
+calls `stopImmediatePropagation` (the seated terminal, the whiteboard's editor and the dialogs under it never see it) and
+opens `ui/palette.ts`, or closes it when it is up (not during an IME composition, and not over the image previews or a
+card being dragged, which keep their own capture-phase Esc). It is the `palette` binding of the shortcut table
+(`mod`+P, scope `any`, `typing`), and `seatedKey` (`laptop/keys.ts`) gives the chord to the game: Ctrl+P is no longer
+readline's previous history in a seated terminal (↑ is; `docs/decisions.md`), and the table's `seat.palette` row and
+`shortcuts.test.ts` keep the two in step. The window is a modal `<dialog>` (`.palette`, the credits frame) with a
+`role=combobox` `<input>` and a `role=listbox`; the listbox keys and the active-row paint are `ui/listbox.ts`, shared with the
+composer's popup (`completion.ts`): ↑ ↓ wrap, Enter picks, Esc closes only the palette and puts the keyboard back where it
+was (the seat's input, a dialog's field; the whiteboard ignores Esc from inside it and leaves it out of its inert set). What it lists is
+`world/palette.ts` (pure): plain text ranks **commands** with `world/rank.ts` (the #140 ranker, now in `world/`, where a
+space and `›` start a word too) over the name and then the aliases; a leading `@` lists **floors**, "Building › floor" with
+count pills in the badge colours (needs you, working, waiting, idle, done; zero hidden), "You are here" and an Asleep tape.
+The commands are the table's: a binding with `palette: { name, aliases, where?, pick? }` is a row (names and keys cannot
+drift; `COMMAND_ORDER` orders the empty palette and a test keeps it complete), `PALETTE_ONLY` adds the keyless Team presets
+and About, and the aimed, Esc and read-only rows are left out. A row shows when one of its scopes is live (`activeScopes()`),
+or always with `where: 'anywhere'` (Buildings) or `'floor'`: Hire, Issues, Pull requests, Start a run and Overview act on
+`hereSession()`, so off an office floor Enter turns the list into the floor list under the question ("Hire on which
+floor?") and the pick travels there and runs it. **Floor order**: floors with `counts.needsYou > 0` first, then the rest, each
+by name without regard to case; a query filters and never reorders; the order is fixed when the palette opens and when the
+query changes (`floorList`), while `refresh()` (the game's world events and connection changes) re-reads each listed row's
+counts (`floorRow`), so a count moves and the row stays (the rule of `world/overview.ts`); a floor that goes drops its row,
+a new one waits for the next query. An empty palette with floors that need you says "N floors need you · type @" in its
+footer (a button: click types the `@`). Without a connection the floor rows grey out and cannot be picked; commands run. A command
+(`runPaletteCommand`) closes the palette, then `dismissOverlays()` (the modals and the whiteboard, saved first), stands you up
+from a seat, rides to the picked floor (`enterFloor`, the elevator doors) and calls the same `actions[id]` its key would; a
+floor pick without a command is `dismissOverlays()` then `enterFloor`, and on the floor you are on it only closes. Tests:
+`world/palette.test.ts`, `ui/palette.dom.test.ts`, `ui/listbox.test.ts`, the chord cases of `input/shortcuts.test.ts`, and
+`e2e/palette.spec.ts` (city, floor, plan, lobby, seated terminal, whiteboard, over the hire dialog, ⌘P on a Mac; each view
+asserts the chord's keydown is `defaultPrevented`, since Playwright cannot see the print dialog).
 
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings
