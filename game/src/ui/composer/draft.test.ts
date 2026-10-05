@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../../net/client';
 import { UPLOAD_MAX_BYTES } from '../../net/upload';
 import { Draft, type DraftOptions, type ResolveResult } from './draft';
-import { caret, IMG } from './model';
+import { caret, IMG, imagesOf } from './model';
 
 /** An upload the test finishes by hand. */
 interface Call {
@@ -90,7 +90,7 @@ describe('adding images', () => {
     expect(r.errors).toEqual(['You can attach up to 3 images to one prompt.']);
     // Selecting two images and pasting two: they replace them.
     expect(draft.addImages([png(), png()], [0, 2]).added).toBe(2);
-    expect(draft.doc.images).toHaveLength(3);
+    expect(draft.doc.chips).toHaveLength(3);
   });
 
   it('names an unnamed clipboard image', () => {
@@ -175,7 +175,7 @@ describe('the upload queue', () => {
     const { draft, calls } = harness();
     draft.addImages([png()]);
     const im = draft.snapshot().images[0];
-    draft.removeImage(im?.occ as string);
+    draft.removeChip(im?.occ as string);
     expect(calls[0]?.signal.aborted).toBe(true);
     calls[0]?.ok('/late.png');
     await tick();
@@ -189,7 +189,7 @@ describe('the upload queue', () => {
     const { draft, calls } = harness();
     draft.addImages([png()]);
     const im = draft.snapshot().images[0];
-    draft.removeImage(im?.occ as string);
+    draft.removeChip(im?.occ as string);
     draft.undo();
     expect(draft.snapshot().images[0]?.status).toBe('uploading');
     expect(calls).toHaveLength(2);
@@ -255,7 +255,7 @@ describe('resolve', () => {
     expect(r).toMatchObject({ ok: false, reason: 'upload', failed: [{ name: 'b.png', numbers: [2], message: 'over 25 MB', code: 'upload_too_large' }] });
     expect('text' in r).toBe(false);
     // The draft is untouched: both images still there.
-    expect(draft.doc.images).toHaveLength(2);
+    expect(draft.doc.chips).toHaveLength(2);
   });
 
   it('does not try a failed image again by itself: the user retries it, then resolve goes through', async () => {
@@ -305,7 +305,7 @@ describe('resolve', () => {
     draft.addImages([png()]);
     const im = draft.snapshot().images[0];
     // The same resource twice (what undoing a delete of a duplicated chip looks like): build the doc by hand.
-    draft.fromEditor({ text: `${IMG}-${IMG}`, images: [{ occ: 'x1', res: im?.res as string }, { occ: 'x2', res: im?.res as string }] }, caret(3));
+    draft.fromEditor({ text: `${IMG}-${IMG}`, chips: [{ occ: 'x1', res: im?.res as string }, { occ: 'x2', res: im?.res as string }] }, caret(3));
     const p = draft.resolve();
     calls[0]?.ok('/d/a.png');
     expect(ok(await p).text).toBe('[Image #1: /d/a.png]-[Image #2: /d/a.png]');
@@ -347,7 +347,7 @@ describe('resolve', () => {
     const { draft, calls } = harness();
     draft.addImages([png()]);
     const p = draft.resolve();
-    draft.removeImage(draft.snapshot().images[0]?.occ as string);
+    draft.removeChip(draft.snapshot().images[0]?.occ as string);
     expect(calls[0]?.signal.aborted).toBe(false);
     calls[0]?.ok('/d/a.png');
     expect(ok(await p).text).toBe('[Image #1: /d/a.png]');
@@ -395,13 +395,13 @@ describe('history', () => {
   it('typing within the coalescing window is one step; a pause or another kind of edit starts a new one', () => {
     let t = 0;
     const { draft } = harness({ now: () => t, coalesceMs: 1000 });
-    draft.fromEditor({ text: 'h', images: [] }, caret(1));
+    draft.fromEditor({ text: 'h', chips: [] }, caret(1));
     t = 100;
-    draft.fromEditor({ text: 'he', images: [] }, caret(2));
+    draft.fromEditor({ text: 'he', chips: [] }, caret(2));
     t = 200;
-    draft.fromEditor({ text: 'hel', images: [] }, caret(3));
+    draft.fromEditor({ text: 'hel', chips: [] }, caret(3));
     t = 5000;
-    draft.fromEditor({ text: 'help', images: [] }, caret(4));
+    draft.fromEditor({ text: 'help', chips: [] }, caret(4));
     draft.undo();
     expect(draft.doc.text).toBe('hel');
     draft.undo();
@@ -412,7 +412,7 @@ describe('history', () => {
     t = 6000;
     draft.addImages([png()]);
     t = 6100;
-    draft.fromEditor({ text: `help${IMG}!`, images: draft.doc.images }, caret(6));
+    draft.fromEditor({ text: `help${IMG}!`, chips: draft.doc.chips }, caret(6));
     draft.undo();
     expect(draft.doc.text).toBe(`help${IMG}`);
     draft.undo();
@@ -445,8 +445,8 @@ describe('history', () => {
     draft.addImages([png()]);
     calls[0]?.ok('/d/a.png');
     await tick();
-    draft.removeImage(draft.snapshot().images[0]?.occ as string);
-    expect(draft.doc.images).toHaveLength(0);
+    draft.removeChip(draft.snapshot().images[0]?.occ as string);
+    expect(draft.doc.chips).toHaveLength(0);
     draft.undo();
     expect(draft.snapshot().images[0]).toMatchObject({ status: 'ready', path: '/d/a.png' });
     expect(calls).toHaveLength(1);
@@ -459,7 +459,7 @@ describe('lifetime of the bytes', () => {
     draft.addImages([png()]);
     const im = draft.snapshot().images[0];
     expect(urls.size).toBe(1);
-    draft.removeImage(im?.occ as string);
+    draft.removeChip(im?.occ as string);
     expect(urls.size).toBe(1); // undo can restore it
     const unpin = draft.pin(im?.res as string);
     draft.replace(0, 0, 'a');
@@ -477,7 +477,7 @@ describe('lifetime of the bytes', () => {
     const res = draft.snapshot().images[0]?.res as string;
     const a = draft.pin(res);
     const b = draft.pin(res);
-    draft.removeImage(draft.snapshot().images[0]?.occ as string);
+    draft.removeChip(draft.snapshot().images[0]?.occ as string);
     draft.replace(0, 0, 'x');
     a();
     a();
@@ -491,7 +491,7 @@ describe('lifetime of the bytes', () => {
     draft.addImages([png(), png()]);
     const rev = draft.revision;
     expect(draft.clearIf(rev + 1)).toBe(false);
-    expect(draft.doc.images).toHaveLength(2);
+    expect(draft.doc.chips).toHaveLength(2);
     expect(draft.clearIf(rev)).toBe(true);
     expect(draft.doc.text).toBe('');
     expect(urls.size).toBe(0);
@@ -532,7 +532,7 @@ describe('subscribe', () => {
     const { draft, calls } = harness();
     const seen: string[] = [];
     const off = draft.subscribe((e) => seen.push(e.kind === 'doc' ? `doc:${e.origin}` : 'res'));
-    draft.fromEditor({ text: 'a', images: [] }, caret(1));
+    draft.fromEditor({ text: 'a', chips: [] }, caret(1));
     draft.addImages([png()]);
     calls[0]?.ok();
     await tick();
@@ -592,8 +592,8 @@ describe('replaceAll (#64: a generated prompt with the markers of images already
     await tick();
     const { draft } = harness();
     draft.replaceAll('[Image #1: /drops/a.png] [Image #2: /drops/a.png] [Image #3: /drops/b.png]', src.draft);
-    expect(draft.doc.images).toHaveLength(2);
-    expect(draft.doc.images[0]!.res).toBe(draft.doc.images[1]!.res);
+    expect(draft.doc.chips).toHaveLength(2);
+    expect(imagesOf(draft.doc)[0]!.res).toBe(imagesOf(draft.doc)[1]!.res);
     expect(draft.doc.text).toBe(`${IMG} ${IMG} [Image #3: /drops/b.png]`);
   });
 
@@ -695,5 +695,98 @@ describe('holdRefused (#64: a refused file holds the prompt until the user dismi
     plain.draft.addImages([pdf()]);
     expect(plain.draft.refusal).toBeNull();
     expect(ok(await plain.draft.resolve()).text).toBe('hire');
+  });
+});
+
+describe('file chips (#141)', () => {
+  const file = (path: string, dir = false) => ({ kind: 'file' as const, path, dir });
+
+  it('insertParts puts a chip and the text after it in one step, the caret after both', () => {
+    const { draft } = harness();
+    draft.replace(0, 0, 'see @comp now');
+    draft.insertParts(4, 9, [file('game/src/ui/composer.ts'), ' ']);
+    expect(draft.doc.text).toBe(`see ${IMG}  now`);
+    expect(draft.selection).toEqual(caret(6));
+    expect(draft.snapshot().files).toEqual([{ occ: draft.doc.chips[0]?.occ, path: 'game/src/ui/composer.ts', dir: false }]);
+    draft.undo();
+    expect(draft.doc.text).toBe('see @comp now');
+    draft.redo();
+    expect(draft.snapshot().files.map((f) => f.path)).toEqual(['game/src/ui/composer.ts']);
+  });
+
+  it('numbers images among images only and counts only images toward the limit', () => {
+    const { draft } = harness({ maxImages: 2 });
+    draft.insertParts(0, 0, [file('a.ts'), file('b.ts'), file('c.ts')]);
+    draft.addImages([png('one.png')]);
+    draft.insertParts(4, 4, [file('d.ts')]);
+    expect(draft.addImages([png('two.png'), png('three.png')]).added).toBe(1);
+    const s = draft.snapshot();
+    expect(s.images.map((i) => [i.n, i.name])).toEqual([[1, 'one.png'], [2, 'two.png']]);
+    expect(draft.numberOf(s.images[1]!.occ)).toBe(2);
+    expect(draft.numberOf(s.files[0]!.occ)).toBe(0);
+    // Replacing a selection that holds an image frees its room; one that holds only files does not.
+    expect(draft.addImages([png('x.png')], [0, 1]).added).toBe(0);
+    expect(draft.addImages([png('y.png')], [3, 4]).added).toBe(1);
+  });
+
+  it('removeChip takes a file chip out as one step; the images keep uploading', async () => {
+    const { draft, calls } = harness();
+    draft.addImages([png()]);
+    draft.insertParts(1, 1, [' ', file('a.ts')]);
+    await tick();
+    draft.removeChip(draft.snapshot().files[0]!.occ);
+    expect(draft.doc.text).toBe(`${IMG} `);
+    expect(calls[0]?.signal.aborted).toBe(false);
+    draft.undo();
+    expect(draft.snapshot().files).toHaveLength(1);
+  });
+
+  it('a file chip has no resource: nothing to upload, and resolve sends its mention at once', async () => {
+    const { draft, calls } = harness();
+    draft.insertParts(0, 0, ['fix ', file('my docs/a b.md'), 'please']);
+    expect(draft.resourceCount).toBe(0);
+    const r = ok(await draft.resolve({ maxBytes: 100 }));
+    expect(r.text).toBe('fix @"my docs/a b.md" please');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('a failed image is numbered among images, whatever file chips come before it', async () => {
+    const { draft, calls } = harness();
+    draft.insertParts(0, 0, [file('a.ts')]);
+    draft.addImages([png('bad.png')]);
+    const p = draft.resolve();
+    await tick();
+    calls[0]?.fail();
+    const r = await p;
+    expect(r).toMatchObject({ ok: false, reason: 'upload', failed: [{ name: 'bad.png', numbers: [1] }] });
+  });
+
+  it('the cap counts the mentions', async () => {
+    const { draft } = harness();
+    draft.insertParts(0, 0, ['x', file('abc')]); // 'x @abc' = 6 bytes
+    expect((await draft.resolve({ maxBytes: 6 })).ok).toBe(true);
+    expect(await draft.resolve({ maxBytes: 5 })).toMatchObject({ ok: false, reason: 'serialize', error: { kind: 'too_long', bytes: 6 } });
+  });
+
+  it('an edit that only changes a chip’s path is an edit (history sees it)', () => {
+    const { draft } = harness();
+    draft.insertParts(0, 0, [file('a.ts')]);
+    const occ = draft.doc.chips[0]!.occ;
+    expect(draft.fromEditor({ text: IMG, chips: [{ kind: 'file', occ, path: 'b.ts', dir: false }] }, caret(1))).toBe(true);
+    draft.undo();
+    expect(draft.snapshot().files[0]?.path).toBe('a.ts');
+  });
+
+  it('hydrate makes the parts the document, no history behind it, the caret at the end', () => {
+    const { draft } = harness();
+    const events: string[] = [];
+    draft.subscribe((e) => events.push(e.kind));
+    expect(draft.hydrate(['see ', file('src/ui', true), ' now'])).toBe(true);
+    expect(draft.doc.text).toBe(`see ${IMG} now`);
+    expect(draft.selection).toEqual(caret(9));
+    expect(draft.canUndo).toBe(false);
+    expect(events).toEqual(['doc']);
+    expect(draft.hydrate(['see ', file('src/ui', true), ' now'])).toBe(false);
+    expect(draft.hydrate(['see ', file('src/ui', false), ' now'])).toBe(true);
   });
 });

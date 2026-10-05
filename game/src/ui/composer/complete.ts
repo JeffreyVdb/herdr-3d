@@ -3,7 +3,7 @@
  * (the popup and its keys are `completion.ts`).
  *
  * A token starts with a trigger character (`/` or `@`) that stands at the start of the text, after whitespace
- * (a space, a tab, a newline) or right after an image chip (a chip is a word of its own), so `/usr/bin`, `a/b`, URLs
+ * (a space, a tab, a newline) or right after a chip (an image or a file: a chip is a word of its own), so `/usr/bin`, `a/b`, URLs
  * and emails never open one. The query is the text from after the trigger to the caret:
  * - `/` (commands): no whitespace; the token ends at the first space, newline or chip.
  * - `@` (files): may contain spaces (file names have them), but not a newline or a chip, and at most `AT_QUERY_MAX`
@@ -14,7 +14,7 @@
  * A selection that is not collapsed has no token.
  */
 
-import { IMG, type Selection } from './model';
+import { type FileRef, IMG, type Selection } from './model';
 
 export type Trigger = '/' | '@';
 
@@ -36,9 +36,13 @@ export type Items<T> = readonly T[];
 /**
  * What a pick puts into the draft: `text` replaces `[start, end)`, by default the token's own range (the trigger and
  * its word). The caret lands after `text`. One `Draft.replace`, so one undo takes the pick back.
+ *
+ * #141: with `chip`, an atomic file chip goes in first and `text` after it (the space after a picked file), still one
+ * edit (`Draft.insertParts`), the caret after both.
  */
 export interface ReplaceSpec {
   text: string;
+  chip?: FileRef;
   start?: number;
   end?: number;
 }

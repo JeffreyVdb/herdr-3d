@@ -1,8 +1,8 @@
 /*
  * The prompt composer (#51): a text area that also holds pictures. It borrows the desk dialogs' look (the navy well,
  * the sun-yellow caret and focus ring) and keeps their signage: each pasted image sits in the text as a chip with a
- * numbered label-maker tag, and the number is the one the agent will read ("Image #2"). It works inside any dark
- * panel; the host sets its size (the editor fills its parent and scrolls inside).
+ * numbered label-maker tag, and the number is the one the agent will read ("Image #2"); a file (#141) sits as a slim
+ * one-line tag. It works inside any dark panel; the host sets its size (the editor fills its parent and scrolls inside).
  */
 
 .cmp {
@@ -305,6 +305,36 @@
   to {
     background-position: 160% 0;
   }
+}
+
+/*
+ * #141: a file of the worker's checkout, picked from the `@` popup. The image chip's tag, cut down to one line of text:
+ * the file (or folder) glyph in the sun, the basename in the code face, the whole path in its tooltip. It has nothing
+ * to press: it is a word of the prompt that goes as `@path`.
+ */
+.cmp-chip.cmp-file {
+  gap: 4px;
+  max-width: min(100%, 24ch);
+  margin: 0 2px;
+  padding: 0 7px 0 5px;
+  border-radius: 6px;
+  line-height: 1.5;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+.cmp-file svg {
+  flex: none;
+  width: 1.05em;
+  height: 1.05em;
+  color: var(--sun, #ffc233);
+}
+.cmp-file-name {
+  overflow: hidden;
+  min-width: 0;
+  font-family: var(--font-mono, 'JetBrains Mono Variable', ui-monospace, monospace);
+  font-size: 0.9em;
+  font-weight: 600;
+  text-overflow: ellipsis;
 }
 
 /* ---- the enlarged view ---------------------------------------------------------------------- */

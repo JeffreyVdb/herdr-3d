@@ -124,7 +124,7 @@ const PATHLESS_IMAGE = /\[Image #(\d+)\]/g;
 
 /** The part of the Extra instructions' draft that tells its images from its prose (a `DraftSnapshot` has it). */
 export interface ExtraImages {
-  segments: readonly ({ kind: 'text'; text: string } | { kind: 'image' })[];
+  segments: readonly ({ kind: 'text'; text: string } | { kind: 'image' } | { kind: 'file' })[];
   images: readonly { n: number }[];
 }
 

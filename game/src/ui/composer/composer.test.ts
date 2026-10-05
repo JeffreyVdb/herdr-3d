@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CommandResult } from '../../net/client';
-import { mountComposer, type Composer, type ComposerOptions } from './composer';
+import { CLIP_TYPE, mountComposer, type Composer, type ComposerOptions } from './composer';
+import { hasContent } from './field';
 import { Draft } from './draft';
 import { caret, IMG, segments } from './model';
 import { isCanonical, offsetToPoint, pointToOffset } from './tree';
@@ -445,7 +446,7 @@ describe('DOM to model', () => {
     typeAt(env, 0, 'X');
     typeAt(env, 4, 'Y');
     expect(env.draft.doc.text).toBe(`Xa${IMG}bY`);
-    expect(env.draft.doc.images).toHaveLength(1);
+    expect(env.draft.doc.chips).toHaveLength(1);
   });
 
   it('ignores whatever is inside a chip: its name, its status, its buttons, its thumbnail', () => {
@@ -477,7 +478,7 @@ describe('DOM to model', () => {
     chipsOf(env)[0]?.remove();
     env.editor.dispatchEvent(new Event('input', { bubbles: true }));
     expect(env.draft.doc.text).toBe('a');
-    expect(env.draft.doc.images).toEqual([]);
+    expect(env.draft.doc.chips).toEqual([]);
   });
 
   it('turns a <br> or <div> the browser adds into text and draws the editor again in its own shape', () => {
@@ -644,6 +645,175 @@ describe('deleting and moving around chips', () => {
     Object.defineProperty(cut, 'clipboardData', { value: clip });
     env.editor.dispatchEvent(cut);
     expect(env.draft.doc.text).toBe('');
+  });
+});
+
+describe('file chips (#141)', () => {
+  const before = (t: string) => new InputEvent('beforeinput', { inputType: t, bubbles: true, cancelable: true });
+  const at = (env: Env, o: number) => {
+    const p = offsetToPoint(env.editor, o);
+    document.getSelection()?.setBaseAndExtent(p.node, p.offset, p.node, p.offset);
+    env.draft.setSelection(caret(o));
+  };
+  /** `see ` FILE(src/ui/composer/draft.ts) ` ` IMG(a.png) ` ` FOLDER(src/ui) */
+  function mixed(): Env {
+    const env = setup();
+    env.draft.insertParts(0, 0, ['see ', { kind: 'file', path: 'src/ui/composer/draft.ts', dir: false }, ' ']);
+    env.c.insertFiles([png('a.png')]);
+    env.draft.insertParts(7, 7, [' ', { kind: 'file', path: 'src/ui', dir: true }]);
+    return env;
+  }
+  const files = (env: Env) => [...env.editor.querySelectorAll<HTMLElement>('.cmp-file')];
+  /** A clipboard event with a store behind it, for copy, cut and paste. */
+  function clip(type: 'copy' | 'cut' | 'paste', el: Element, data = new Map<string, string>()): { e: Event; data: Map<string, string> } {
+    const e = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(e, 'clipboardData', { value: { items: [], files: [], setData: (t: string, v: string) => data.set(t, v), getData: (t: string) => data.get(t) ?? '' } });
+    el.dispatchEvent(e);
+    return { e, data };
+  }
+
+  it('draws a file chip as its icon and basename, the full path its tooltip and its accessible name', () => {
+    const env = mixed();
+    const [f, d] = files(env);
+    expect(f?.getAttribute('contenteditable')).toBe('false');
+    expect(f?.getAttribute('aria-label')).toBe('File src/ui/composer/draft.ts');
+    expect(f?.title).toBe('src/ui/composer/draft.ts');
+    expect(f?.textContent).toBe('draft.ts');
+    expect(f?.querySelector('svg')).not.toBeNull();
+    expect(f?.querySelector('button, img')).toBeNull();
+    expect(d?.getAttribute('aria-label')).toBe('Folder src/ui');
+    expect(d?.dataset.kind).toBe('dir');
+    expect(d?.textContent).toBe('ui');
+    expect(isCanonical(env.editor)).toBe(true);
+  });
+
+  it('numbers the image among images only: the file chip before it does not count', () => {
+    const env = mixed();
+    expect(env.editor.querySelector('.cmp-num')?.textContent).toBe('#1');
+    expect(env.notices.at(-1)?.[0]).toBe('Image added. 1 in the prompt.');
+  });
+
+  it('a click on it changes nothing', () => {
+    const env = mixed();
+    const text = env.draft.doc.text;
+    files(env)[0]?.click();
+    files(env)[0]?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    expect(env.draft.doc.text).toBe(text);
+    expect(env.draft.doc.chips).toHaveLength(3);
+  });
+
+  it('Backspace after it and Delete before it remove it whole, and say which', () => {
+    const env = mixed();
+    at(env, 5);
+    const e = before('deleteContentBackward');
+    env.editor.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+    expect(files(env)).toHaveLength(1);
+    expect(env.draft.doc.text).toBe(`see  ${IMG} ${IMG}`);
+    expect(env.notices.at(-1)).toEqual(['File src/ui/composer/draft.ts removed.', 'info']);
+    at(env, 7);
+    env.editor.dispatchEvent(before('deleteContentForward'));
+    expect(files(env)).toHaveLength(0);
+    expect(env.notices.at(-1)).toEqual(['Folder src/ui removed.', 'info']);
+    expect(env.draft.snapshot().images).toHaveLength(1);
+  });
+
+  it('the arrows step over it in one press', () => {
+    const env = mixed();
+    at(env, 4);
+    expect(key(env.editor, 'ArrowRight').defaultPrevented).toBe(true);
+    expect(env.draft.selection).toEqual(caret(5));
+    at(env, 5);
+    expect(key(env.editor, 'ArrowLeft').defaultPrevented).toBe(true);
+    expect(env.draft.selection).toEqual(caret(4));
+  });
+
+  it('undo and redo take it out and put it back as a chip', () => {
+    const env = setup();
+    env.c.insertText('x ');
+    env.draft.insertParts(2, 2, [{ kind: 'file', path: 'a b/c.md', dir: false }, ' ']);
+    expect(files(env)).toHaveLength(1);
+    key(env.editor, 'z', { ctrlKey: true });
+    expect(files(env)).toHaveLength(0);
+    expect(env.draft.doc.text).toBe('x ');
+    key(env.editor, 'y', { ctrlKey: true });
+    expect(files(env)[0]?.getAttribute('aria-label')).toBe('File a b/c.md');
+    expect(env.draft.doc.text).toBe(`x ${IMG} `);
+  });
+
+  it('survives a redraw the browser forced, and a read back of the DOM keeps it', () => {
+    const env = mixed();
+    typeAt(env, 0, 'Oh, ');
+    expect(files(env)).toHaveLength(2);
+    expect(env.draft.snapshot().files.map((f) => f.path)).toEqual(['src/ui/composer/draft.ts', 'src/ui']);
+  });
+
+  it('copy writes the text with @path mentions and our own type; a paste of that gives the chips back, one undo step', () => {
+    const env = mixed();
+    document.getSelection()?.setBaseAndExtent(env.editor.firstChild!, 0, env.editor.lastChild!, 0);
+    const { e, data } = clip('copy', env.editor);
+    expect(e.defaultPrevented).toBe(true);
+    expect(data.get('text/plain')).toBe('see @src/ui/composer/draft.ts  @src/ui');
+    expect(JSON.parse(data.get(CLIP_TYPE) ?? 'null')).toEqual({
+      v: 1,
+      parts: [
+        { kind: 'text', text: 'see ' },
+        { kind: 'file', path: 'src/ui/composer/draft.ts', dir: false },
+        { kind: 'text', text: '  ' },
+        { kind: 'file', path: 'src/ui', dir: true },
+      ],
+    });
+    const other = setup();
+    other.c.insertText('>');
+    at(other, 1);
+    clip('paste', other.editor, data);
+    expect(segments(other.draft.doc).map((g) => (g.kind === 'file' ? `{${g.path}}` : g.kind === 'text' ? g.text : '<img>'))).toEqual(['>see ', '{src/ui/composer/draft.ts}', '  ', '{src/ui}']);
+    const occs = other.draft.doc.chips.map((c) => c.occ);
+    expect(new Set(occs).size).toBe(2);
+    key(other.editor, 'z', { ctrlKey: true });
+    expect(other.draft.doc.text).toBe('>');
+  });
+
+  it('pasting the same copy twice gives two chips of their own', () => {
+    const env = setup();
+    const data = new Map([[CLIP_TYPE, JSON.stringify({ v: 1, parts: [{ kind: 'file', path: 'a.ts', dir: false }] })]]);
+    clip('paste', env.editor, data);
+    clip('paste', env.editor, data);
+    expect(files(env)).toHaveLength(2);
+    expect(new Set(env.draft.doc.chips.map((c) => c.occ)).size).toBe(2);
+  });
+
+  it('cut takes the selection out and puts it on the clipboard', () => {
+    const env = mixed();
+    document.getSelection()?.setBaseAndExtent(env.editor.firstChild!, 0, env.editor.lastChild!, 0);
+    const { data } = clip('cut', env.editor);
+    expect(data.get('text/plain')).toBe('see @src/ui/composer/draft.ts  @src/ui');
+    expect(env.draft.doc.text).toBe('');
+  });
+
+  it('a copy without file chips writes plain text only', () => {
+    const env = setup();
+    env.c.insertText('hello');
+    document.getSelection()?.setBaseAndExtent(env.editor.firstChild!, 0, env.editor.firstChild!, 5);
+    const { data } = clip('copy', env.editor);
+    expect([...data.keys()]).toEqual(['text/plain']);
+  });
+
+  it('reads our type as untrusted: bad JSON, a wrong version or bad parts fall back on the text', () => {
+    for (const raw of ['{', JSON.stringify({ v: 2, parts: [{ kind: 'file', path: 'a.ts', dir: false }] }), JSON.stringify({ v: 1, parts: [{ kind: 'file', path: 'a"b', dir: false }] }), JSON.stringify({ v: 1, parts: 'x' })]) {
+      const env = setup();
+      clip('paste', env.editor, new Map([[CLIP_TYPE, raw], ['text/plain', '@a.ts']]));
+      expect(env.draft.doc.text).toBe('@a.ts');
+      expect(files(env)).toHaveLength(0);
+    }
+  });
+
+  it('a draft with only a file chip has something to send, and resolves to its mention', async () => {
+    const env = setup();
+    env.draft.insertParts(0, 0, [{ kind: 'file', path: 'src/a.ts', dir: false }]);
+    expect(env.c.getSnapshot().text).toBe('');
+    expect(hasContent(env.c.getSnapshot())).toBe(true);
+    await expect(env.c.resolve()).resolves.toMatchObject({ ok: true, text: '@src/a.ts' });
   });
 });
 
@@ -871,7 +1041,7 @@ describe('the preview', () => {
     const env = setup({ draft }, dialog);
     env.c.insertFiles([png()]);
     open(env);
-    env.draft.removeImage(env.draft.snapshot().images[0]!.occ);
+    env.draft.removeChip(env.draft.snapshot().images[0]!.occ);
     env.draft.replace(0, 0, 'a');
     expect(revoked).toEqual([]);
     env.c.closePreview();

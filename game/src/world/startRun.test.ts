@@ -142,7 +142,7 @@ describe('an image of the Extra instructions that has no path yet (#64)', () => 
     let p = generated(extra);
     expect(p.text).toContain('[Image #1]');
     expect(previewLocked(p, extra.snapshot())).toBe(true);
-    extra.removeImage(extra.snapshot().images[0]!.occ);
+    extra.removeChip(extra.snapshot().images[0]!.occ);
     p = generated(extra);
     expect(previewLocked(p, extra.snapshot())).toBe(false);
   });
