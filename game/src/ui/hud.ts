@@ -92,6 +92,7 @@ export class Hud {
   private readonly battery = el('button', 'btn btn--icon', svg(ICON.leaf));
   private readonly settings = el('button', 'btn btn--icon', svg(ICON.gear));
   private readonly about = el('button', 'btn btn--icon', svg(ICON.info));
+  private openAboutDialog: (() => void) | null = null;
   /** #92: shown while an AI model is set up but cannot be used (a rejected key, a missing part); a click opens Settings. */
   private readonly aiChip = el('button', 'ai-chip', '<i></i><span></span>');
   private readonly buildings = el('button', 'btn', `${svg(ICON.building)}<span>Buildings</span>`);
@@ -211,12 +212,19 @@ export class Hud {
   }
 
   /** The About panel (build versions), opened from the top bar's info button. */
+  /** #147: the About dialog from the command palette (the same as the top bar's button). */
+  openAbout(): void {
+    this.openAboutDialog?.();
+  }
+
   mountAbout(info: BuildInfo): { dispose(): void } {
     const about = new AboutDialog(this.root.parentElement ?? this.root, info);
     const open = () => about.open(this.about);
+    this.openAboutDialog = open;
     this.about.addEventListener('click', open);
     return {
-      dispose() {
+      dispose: () => {
+        this.openAboutDialog = null;
         about.dispose();
       },
     };

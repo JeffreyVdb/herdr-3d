@@ -82,8 +82,9 @@ describe('the shortcut table (#124)', () => {
   });
 
   it('never asks for Alt, and takes none of the chords the browser keeps', () => {
-    // Ctrl/Cmd + T N W L R K D S P F and Ctrl+Tab: a page cannot have them. Ctrl+Esc and Ctrl+, (seated) are not on the list.
-    const reserved = new Set(['KeyT', 'KeyN', 'KeyW', 'KeyL', 'KeyR', 'KeyK', 'KeyD', 'KeyS', 'KeyP', 'KeyF', 'Tab']);
+    // Ctrl/Cmd + T N W L R K D S F and Ctrl+Tab: a page cannot have them. Ctrl+Esc and Ctrl+, (seated) are not on the list.
+    // (#147: P is not one: a page can cancel the print dialog, so ⌘/Ctrl+P is the command palette.)
+    const reserved = new Set(['KeyT', 'KeyN', 'KeyW', 'KeyL', 'KeyR', 'KeyK', 'KeyD', 'KeyS', 'KeyF', 'Tab']);
     for (const b of ALL) {
       for (const c of b.keys) {
         expect(Object.keys(c)).not.toContain('alt');
@@ -218,7 +219,7 @@ describe('the "At a laptop" group follows laptop/keys.ts (#124: seated keys are 
     expect(zoomKey(kd('-', { ctrlKey: true }))).toBe('zoom-out');
     expect(zoomKey(kd('0', { ctrlKey: true }))).toBe('zoom-reset');
     const seated = ALL.filter((b) => scopesOf(b).includes('seated'));
-    expect(seated.map((b) => b.id)).toEqual(['seat.stand', 'seat.view', 'seat.overview', 'seat.look', 'seat.zoom']);
+    expect(seated.map((b) => b.id)).toEqual(['seat.stand', 'seat.view', 'seat.palette', 'seat.overview', 'seat.look', 'seat.zoom']);
     expect(seated.every((b) => b.readonly)).toBe(true);
     expect(seated.find((b) => b.id === 'seat.look')?.keys[0]).toMatchObject({ key: LOOK_KEY.key, ctrl: true });
     expect(bindingCaps(seated.find((b) => b.id === 'seat.look') as Binding, false)).toEqual([LOOK_KEY.label]);
@@ -230,6 +231,54 @@ describe('the "At a laptop" group follows laptop/keys.ts (#124: seated keys are 
       expect(q.items).toEqual([{ text: '?' }]);
       expect(q.action).toBeUndefined();
       expect(seatedKey(kd('/', { code: 'Slash', ctrlKey: true }), mac).action).toBeUndefined();
+    }
+  });
+});
+
+describe('the command palette chord (#147)', () => {
+  const kd = (key: string, o: Partial<KeyLike> = {}): KeyLike => ({ key, code: o.code ?? key, ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, ...o });
+  const any = new Set<Scope>(['any']);
+
+  it('is ⌘P on a Mac and Ctrl+P elsewhere, and fires from a text field too', () => {
+    expect(findBinding(ev('KeyP', { metaKey: true }), any, false, true)?.binding.id).toBe('palette');
+    expect(findBinding(ev('KeyP', { ctrlKey: true }), any, false, false)?.binding.id).toBe('palette');
+    expect(findBinding(ev('KeyP', { metaKey: true }), any, true, true)?.binding.id).toBe('palette');
+    expect(findBinding(ev('KeyP', { ctrlKey: true }), any, true, false)?.binding.id).toBe('palette');
+    // Not the other platform's modifier, not with Shift (Firefox's private window) or Alt, and plain P stays the prompt key.
+    expect(findBinding(ev('KeyP', { ctrlKey: true }), any, false, true)).toBeNull();
+    expect(findBinding(ev('KeyP', { metaKey: true }), any, false, false)).toBeNull();
+    expect(findBinding(ev('KeyP', { ctrlKey: true, shiftKey: true }), any, false, false)).toBeNull();
+    expect(findBinding(ev('KeyP', { ctrlKey: true, altKey: true }), any, false, false)).toBeNull();
+    expect(findBinding(ev('KeyP'), new Set<Scope>(['any', 'floor', 'aim:worker']), false, false)?.binding.id).toBe('worker.prompt');
+    expect(pressesBinding(ev('KeyP', { metaKey: true }), 'palette', true)).toBe(true);
+    expect(pressesBinding(ev('KeyP', { ctrlKey: true, isComposing: true }), 'palette', false)).toBe(false);
+    expect(keyName('palette', true)).toBe('⌘+P');
+    expect(keyName('palette', false)).toBe('Ctrl+P');
+  });
+
+  it('is taken from the seated terminal, and the table says so', () => {
+    for (const mac of [false, true]) {
+      const e = mac ? { metaKey: true } : { ctrlKey: true };
+      expect(seatedKey(kd('p', { code: 'KeyP', ...e }), mac), `mac ${mac}`).toEqual({ items: [], action: 'palette', prevent: true });
+    }
+    // Ctrl+P on a Mac, and other modified Ps, are not it: Ctrl+P is the pane's there, as it was.
+    expect(seatedKey(kd('p', { code: 'KeyP', ctrlKey: true }), true).items).toEqual([{ key: 'ctrl+p' }]);
+    expect(seatedKey(kd('P', { code: 'KeyP', ctrlKey: true, shiftKey: true }), false).items).toEqual([{ key: 'ctrl+p' }]);
+    expect(seatedKey(kd('p', { code: 'KeyP' }), false).items).toEqual([{ text: 'p' }]);
+    const row = ALL.find((b) => b.id === 'seat.palette') as Binding;
+    expect(row.readonly).toBe(true);
+    expect(row.keys).toEqual((ALL.find((b) => b.id === 'palette') as Binding).keys.map(({ typing: _t, ...c }) => c));
+  });
+
+  it('names the palette rows from the table: each has a name no other row has', () => {
+    const rows = ALL.filter((b) => b.palette);
+    const names = rows.map((b) => (b.palette as { name: string }).name.toLowerCase());
+    expect(new Set(names).size).toBe(names.length);
+    for (const b of rows) expect(b.readonly, `${b.id} is dispatched`).not.toBe(true);
+    // The aimed and the Esc rows need something in front of you: none is a palette row.
+    for (const b of rows) {
+      expect(b.keys.some((c) => c.code === 'Escape'), b.id).toBe(false);
+      expect(scopesOf(b).some((s) => s.startsWith('aim:')), b.id).toBe(false);
     }
   });
 });

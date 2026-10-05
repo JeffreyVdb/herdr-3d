@@ -12,6 +12,7 @@
  */
 
 import { h, ICON, icon } from '../dom';
+import { inPalette } from '../dismiss';
 
 let open = 0;
 
@@ -99,7 +100,7 @@ export function openPreview(host: HTMLElement, img: PreviewImage, release: () =>
   let downAt = { x: 0, y: 0 };
 
   const onKey = (e: KeyboardEvent): void => {
-    if (e.key !== 'Escape' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing) return;
+    if (e.key !== 'Escape' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing || inPalette(e)) return; // (#147: the palette over the preview has its own Esc)
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();

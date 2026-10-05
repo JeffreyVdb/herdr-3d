@@ -12,6 +12,8 @@
  *   chord the browser and the field leave alone) fires from inside one.
  * - Two bindings may not have the same chord in overlapping scopes (`SCOPE_PARENT`: a scope overlaps itself and its
  *   ancestors). Scopes of one level (`aim:worker`, `aim:desk`) may reuse a key: E means what you aim at.
+ * - ⌘/Ctrl+P opens the command palette (#147) from every view, a field and a laptop included; `palette` on a binding
+ *   makes it a row of that palette.
  * - Seated at a laptop every key but a few chords belongs to the terminal; those are listed (`readonly`, scope
  *   `seated`, kept in step with laptop/keys.ts by a test) and no seated key is a help key.
  */
@@ -109,38 +111,63 @@ export interface Binding {
   quiet?: boolean;
   /** Documented here, handled elsewhere (the walker, a dialog, the seated terminal): never dispatched. */
   readonly?: boolean;
+  /** #147: it is a row of the command palette (⌘/Ctrl+P): its name and the other words that find it. The rows lead the palette in table order. */
+  palette?: PaletteEntry;
 }
+
+/**
+ * #147: how a binding shows in the command palette, which is drawn from the table so names and keys cannot drift.
+ * `where` says when the row is there: by default when one of the binding's scopes is live (Back to the city is a floor's
+ * row, not the city's); `anywhere`: always; `floor`: always, and when you are not on an office floor Enter asks which
+ * floor first (the action works on the floor you are on: Hire, Issues, Pull requests, Start a run, Overview).
+ */
+export interface PaletteEntry {
+  name: string;
+  aliases?: readonly string[];
+  where?: 'anywhere' | 'floor';
+  /** The question the floor list asks when Enter on a `floor` row finds you off an office floor ("Hire on which floor?"). */
+  pick?: string;
+}
+
+/** #147: palette rows with no key of their own (the table says no more of them: they are not shortcuts). */
+export const PALETTE_ONLY = [
+  { id: 'presets', name: 'Team presets', aliases: ['presets', 'crew', 'run presets'] },
+  { id: 'about', name: 'About', aliases: ['version', 'build', 'credits'] },
+] as const satisfies readonly (PaletteEntry & { id: string })[];
+
+export type PaletteOnlyId = (typeof PALETTE_ONLY)[number]['id'];
 
 const code = (c: string, o: Omit<Chord, 'code'> = {}): Chord => ({ code: c, ...o });
 const DIGITS: Chord[] = [...'0123456789'].flatMap((d) => [code(`Digit${d}`), code(`Numpad${d}`)]);
 
 export const BINDINGS = [
   // ---- on a floor or in the city ------------------------------------------------------------------
-  { id: 'help', group: ['floor', 'city'], scope: 'any', keys: [{ key: '?' }], label: 'This shortcut list (over any dialog; not at a laptop or the whiteboard)' },
+  { id: 'help', group: ['floor', 'city'], scope: 'any', keys: [{ key: '?' }], label: 'This shortcut list (over any dialog; not at a laptop or the whiteboard)', palette: { name: 'Keyboard shortcuts', aliases: ['help', 'keys', 'keyboard'] } },
+  { id: 'palette', group: ['floor', 'city', 'dialogs'], scope: 'any', keys: [code('KeyP', { mod: true, typing: true })], label: 'The command palette: type to run a command, @ to jump to a floor (from every view, a text field and a laptop too)' },
   { id: 'help.field', group: 'dialogs', scope: 'any', keys: [{ key: '/', mod: true, typing: true }], label: 'The shortcut list, from inside a text field' },
-  { id: 'next-need', group: ['floor', 'city'], scope: 'any', keys: [code('KeyN')], label: 'Next worker who needs you' },
-  { id: 'inbox', group: ['floor', 'city'], scope: 'any', keys: [code('KeyN', { shift: true })], label: 'Inbox list: who needs you or is done' },
-  { id: 'limits', group: ['floor', 'city'], scope: 'any', keys: [code('KeyL', { shift: true })], label: 'Plan limits' },
-  { id: 'battery', group: ['floor', 'city'], scope: 'any', keys: [code('KeyB')], label: 'Battery saver', quiet: true },
-  { id: 'settings', group: ['floor', 'city'], scope: 'any', keys: [{ key: ',' }], label: 'Settings' },
-  { id: 'overview', group: ['floor', 'city'], scope: 'any', keys: [code('KeyO')], label: 'Floor overview: everyone on this floor and what they are doing' },
+  { id: 'next-need', group: ['floor', 'city'], scope: 'any', keys: [code('KeyN')], label: 'Next worker who needs you', palette: { name: 'Next who needs you', aliases: ['next', 'needs you', 'blocked'] } },
+  { id: 'inbox', group: ['floor', 'city'], scope: 'any', keys: [code('KeyN', { shift: true })], label: 'Inbox list: who needs you or is done', palette: { name: 'Inbox', aliases: ['needs you', 'done', 'finished'] } },
+  { id: 'limits', group: ['floor', 'city'], scope: 'any', keys: [code('KeyL', { shift: true })], label: 'Plan limits', palette: { name: 'Plan limits', aliases: ['limits', 'usage', 'quota'] } },
+  { id: 'battery', group: ['floor', 'city'], scope: 'any', keys: [code('KeyB')], label: 'Battery saver', quiet: true, palette: { name: 'Battery saver', aliases: ['power', 'fps'] } },
+  { id: 'settings', group: ['floor', 'city'], scope: 'any', keys: [{ key: ',' }], label: 'Settings', palette: { name: 'Settings', aliases: ['preferences', 'options', 'config'] } },
+  { id: 'overview', group: ['floor', 'city'], scope: 'any', keys: [code('KeyO')], label: 'Floor overview: everyone on this floor and what they are doing', palette: { name: 'Overview', aliases: ['floor overview', 'everyone', 'summary'], pick: 'See the overview of which floor?', where: 'floor' } },
   // ---- on a floor ----------------------------------------------------------------------------------
   { id: 'walk', group: 'floor', scope: 'floor', keys: [code('KeyW'), code('KeyA'), code('KeyS'), code('KeyD')], show: [['W A S D'], ['↑ ← ↓ →']], label: 'Walk (the arrows turn left and right)', repeat: true, readonly: true },
   { id: 'look', group: 'floor', scope: 'floor', keys: [code('PageUp'), code('PageDown')], show: [['Page Up'], ['Page Down']], label: 'Look up and down', repeat: true, readonly: true },
-  { id: 'look.level', group: 'floor', scope: 'floor', keys: [code('Home')], label: 'Level the view' },
-  { id: 'hire', group: 'floor', scope: 'floor', keys: [code('KeyH')], label: 'Hire a worker at the first free desk' },
-  { id: 'issues', group: 'floor', scope: 'floor', keys: [code('KeyI')], label: 'Issues board' },
-  { id: 'prs', group: 'floor', scope: 'floor', keys: [code('KeyG')], label: 'Pull requests board' },
-  { id: 'run', group: 'floor', scope: 'floor', keys: [code('KeyR', { shift: true })], label: 'Start a run at the first free desk' },
-  { id: 'elevator', group: 'floor', scope: 'floor', keys: [code('KeyL')], label: 'Elevator' },
-  { id: 'plan', group: 'floor', scope: 'floor', keys: [code('Tab')], label: 'Floor plan' },
+  { id: 'look.level', group: 'floor', scope: 'floor', keys: [code('Home')], label: 'Level the view', palette: { name: 'Level the view', aliases: ['look straight', 'reset view'] } },
+  { id: 'hire', group: 'floor', scope: 'floor', keys: [code('KeyH')], label: 'Hire a worker at the first free desk', palette: { name: 'Hire', aliases: ['new worker', 'add worker', 'hire a worker'], pick: 'Hire on which floor?', where: 'floor' } },
+  { id: 'issues', group: 'floor', scope: 'floor', keys: [code('KeyI')], label: 'Issues board', palette: { name: 'Issues', aliases: ['issue board', 'tickets'], pick: 'Open the issues board on which floor?', where: 'floor' } },
+  { id: 'prs', group: 'floor', scope: 'floor', keys: [code('KeyG')], label: 'Pull requests board', palette: { name: 'Pull requests', aliases: ['pr', 'prs', 'review'], pick: 'Open the pull requests board on which floor?', where: 'floor' } },
+  { id: 'run', group: 'floor', scope: 'floor', keys: [code('KeyR', { shift: true })], label: 'Start a run at the first free desk', palette: { name: 'Start a run', aliases: ['run', 'team', 'write-code'], pick: 'Start a run on which floor?', where: 'floor' } },
+  { id: 'elevator', group: 'floor', scope: 'floor', keys: [code('KeyL')], label: 'Elevator', palette: { name: 'Elevator', aliases: ['lift', 'floors', 'ride'] } },
+  { id: 'plan', group: 'floor', scope: 'floor', keys: [code('Tab')], label: 'Floor plan', palette: { name: 'Floor plan', aliases: ['map', 'layout'] } },
   { id: 'topbar', group: 'floor', scope: 'floor', keys: [code('Tab', { shift: true })], label: 'Into the top bar (then Tab and Enter)' },
-  { id: 'leave', group: 'floor', scope: 'floor', keys: [code('Backspace')], label: 'Back to the city' },
+  { id: 'leave', group: 'floor', scope: 'floor', keys: [code('Backspace')], label: 'Back to the city', palette: { name: 'Back to the city', aliases: ['leave', 'exit', 'city', 'outside'] } },
   { id: 'select.clear', group: 'aimed', scope: 'selected', keys: [code('Escape')], label: 'Let go of what you picked (moving or turning does too)', quiet: true },
   { id: 'stand', group: 'floor', scope: 'sitting', keys: [code('Escape')], label: 'Get up from your desk', quiet: true },
   { id: 'plan.close', group: 'floor', scope: 'plan', keys: [code('Escape')], label: 'Close the floor plan', quiet: true },
   // ---- in the city ---------------------------------------------------------------------------------
-  { id: 'buildings', group: 'city', scope: 'city', keys: [code('KeyM')], label: 'Buildings' },
+  { id: 'buildings', group: 'city', scope: 'city', keys: [code('KeyM')], label: 'Buildings', palette: { name: 'Buildings', aliases: ['city', 'building list'], where: 'anywhere' } },
   { id: 'city.tab', group: 'city', scope: 'city', keys: [code('Tab')], show: [['Tab'], ['Enter']], label: 'Tab reaches the floors, then the buildings; Enter goes inside', readonly: true },
   { id: 'city.unfocus', group: 'city', scope: 'city:focus', keys: [code('Escape')], label: 'Let go of the focused building', quiet: true },
   // ---- aimed at something (or picked with T) ------------------------------------------------------
@@ -170,6 +197,7 @@ export const BINDINGS = [
   // ---- at a laptop (laptop/keys.ts; no help key here) ---------------------------------------------
   { id: 'seat.stand', group: 'laptop', scope: 'seated', keys: [code('Escape')], label: 'Stand up', readonly: true },
   { id: 'seat.view', group: 'laptop', scope: 'seated', keys: [code('Escape', { ctrl: true })], label: 'Terminal or conversation', readonly: true },
+  { id: 'seat.palette', group: 'laptop', scope: 'seated', keys: [code('KeyP', { mod: true })], label: 'The command palette (the terminal no longer gets Ctrl+P; ↑ is still previous history)', readonly: true },
   { id: 'seat.overview', group: 'laptop', scope: 'seated', keys: [code('KeyO')], label: 'The floor overview, over the conversation (Esc comes back)', readonly: true },
   { id: 'seat.look', group: 'laptop', scope: 'seated', keys: [{ key: ',', ctrl: true }], label: 'The terminal’s preset and zoom controls', readonly: true },
   { id: 'seat.zoom', group: 'laptop', scope: 'seated', keys: [{ key: '=', ctrl: true }, { key: '-', ctrl: true }, { key: '0', ctrl: true }], show: [['Ctrl', '+'], ['Ctrl', '−'], ['Ctrl', '0']], label: 'Zoom in, out and back to 100%', readonly: true },
@@ -352,7 +380,7 @@ export function shortcutsMarkdown(): string {
     '',
     'Press **?** in the game for the same list, with the keys named as your keyboard labels them (⌘ on a Mac, where this page says Ctrl/⌘).',
     '',
-    'Single keys work only when the scene has the keyboard: they pause while a text field, a list or a dialog has it (WCAG 2.1.4). **Ctrl/⌘+/** opens the list from inside a field. Seated at a laptop every key goes to the terminal except the few below, and there is no help key there: **Esc**, then **?**.',
+    'Single keys work only when the scene has the keyboard: they pause while a text field, a list or a dialog has it (WCAG 2.1.4). **Ctrl/⌘+/** opens the list from inside a field, and **Ctrl/⌘+P** opens the command palette from every view (a laptop included). In it, type to find a command, or start with **@** to jump to a floor. Seated at a laptop every key goes to the terminal except the few below, and there is no help key there: **Esc**, then **?**.',
     '',
   ];
   for (const g of reference('both')) {
