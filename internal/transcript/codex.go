@@ -130,6 +130,25 @@ type codexEvent struct {
 	CallID    string `json:"call_id"`
 	Result    string `json:"result"`
 	SavedPath string `json:"saved_path"`
+	// Item is item_started / item_completed's item (#151); only an
+	// McpToolCall is read.
+	Item json.RawMessage `json:"item"`
+}
+
+// codexMCPCall is the McpToolCall item of an item_started / item_completed
+// event: a call an exec script (code mode) made, which has no response
+// item of its own (#151). codex-cli 0.160.0.
+type codexMCPCall struct {
+	Type      string          `json:"type"`
+	ID        string          `json:"id"`
+	Server    string          `json:"server"`
+	Tool      string          `json:"tool"`
+	Arguments json.RawMessage `json:"arguments"`
+	Status    string          `json:"status"`
+	// Result is the MCP result: {content: [parts], isError, structuredContent}.
+	Result json.RawMessage `json:"result"`
+	// Error is a call that failed with no result: {message} (or a string).
+	Error json.RawMessage `json:"error"`
 }
 
 // parseCodex reads one line of a Codex rollout.
@@ -444,11 +463,109 @@ func codexEventItem(ev *codexEvent, id string, ts int64, pc *parseCtx) contrib {
 		return noticeItem(id, src, note, ts)
 	case "error", "stream_error", "warning":
 		return noticeItem(id, src, ev.Message, ts)
+	case "item_started", "item_completed":
+		if c, ok := codexMCPEvent(ev, ts); ok {
+			return c
+		}
 	}
 	if codexHiddenEvents[ev.Type] {
 		return hiddenNotice(id, src, ev.Message, ts)
 	}
 	return unknownItem(id, src, ts)
+}
+
+// codexMCPEvent is the tool row of an McpToolCall item event: the call
+// (running) of an item_started, the call and its result of an
+// item_completed. A completion alone is enough; the row's id is the item's,
+// so a start joins it, and a response item with the same call id too. Other
+// item types repeat response items: not ok.
+func codexMCPEvent(ev *codexEvent, ts int64) (contrib, bool) {
+	var m codexMCPCall
+	if !bytes.Contains(ev.Item, []byte(`"McpToolCall"`)) || json.Unmarshal(ev.Item, &m) != nil || m.Type != "McpToolCall" || m.ID == "" ||
+		(m.Server == "" && m.Tool == "") {
+		return contrib{}, false
+	}
+	name := m.Tool
+	if m.Server != "" {
+		name = m.Server + "." + name
+	}
+	input := callArguments(m.Arguments)
+	summary := summarize(input)
+	call := func(b *builder) {
+		// A response item of the same call (its id the item's) names it.
+		t := b.tool()
+		if t.Name == "" {
+			t.Name, t.Input, t.InputSummary = name, input, clipSummary(summary)
+		}
+		if t.Status == "" {
+			t.Status = proto.ToolRunning
+		}
+	}
+	if ev.Type == "item_started" {
+		return contrib{id: m.ID, kind: proto.ItemTool, ts: ts, apply: call}, true
+	}
+	status, text := codexMCPResult(&m)
+	return contrib{link: linkResult, id: m.ID, kind: proto.ItemTool, ts: ts, apply: func(b *builder) {
+		call(b)
+		if status == proto.ToolRunning {
+			return
+		}
+		out := text
+		if b.tool().OutputText != "" { // the response item's output came first
+			out = ""
+		}
+		b.result(status, out, nil)
+	}}, true
+}
+
+// codexMCPResult is an McpToolCall's status (running while the item says it
+// is in progress) and result text: the text parts of the result's content,
+// else its structuredContent, else the error's message.
+func codexMCPResult(m *codexMCPCall) (status, text string) {
+	status = proto.ToolOK
+	switch m.Status {
+	case "", "completed":
+	case "inProgress", "in_progress", "running":
+		status = proto.ToolRunning
+	default: // failed, declined, …
+		status = proto.ToolError
+	}
+	var r struct {
+		Content           []codexPart     `json:"content"`
+		IsError           bool            `json:"isError"`
+		StructuredContent json.RawMessage `json:"structuredContent"`
+	}
+	if len(m.Result) > 0 && json.Unmarshal(m.Result, &r) == nil {
+		var ss []string
+		for _, p := range r.Content {
+			if p.Text != "" {
+				ss = append(ss, p.Text)
+			}
+		}
+		text = strings.Join(ss, "\n")
+		if text == "" && len(r.StructuredContent) > 0 && string(r.StructuredContent) != "null" {
+			text = string(r.StructuredContent)
+		}
+		if r.IsError {
+			status = proto.ToolError
+		}
+	}
+	if e := bytes.TrimSpace(m.Error); len(e) > 0 && string(e) != "null" {
+		status = proto.ToolError
+		var v struct {
+			Message string `json:"message"`
+		}
+		var s string
+		switch {
+		case json.Unmarshal(e, &s) == nil:
+			text = s
+		case json.Unmarshal(e, &v) == nil && v.Message != "":
+			text = v.Message
+		default:
+			text = string(e)
+		}
+	}
+	return status, text
 }
 
 // parsePatch reads apply_patch's patch format ("*** Begin Patch", "***

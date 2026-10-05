@@ -293,6 +293,58 @@ func TestCodexLines(t *testing.T) {
 	}
 }
 
+// #151: an exec script's MCP calls are only item_completed / item_started
+// events (McpToolCall), no response items: tool rows named server.tool.
+func TestCodexMCPCalls(t *testing.T) {
+	hidden := want{kind: proto.ItemNotice, hidden: true, source: "event_msg/item_completed"}
+	mcp := func(id, name, status, text string) want {
+		return want{kind: proto.ItemTool, id: id, tool: name, status: status, text: text}
+	}
+	t.Run("completions alone, the enclosing exec and the other item types stay", func(t *testing.T) {
+		got := items(t, Codex, "mcp_exec.jsonl")
+		check(t, "mcp_exec", got, []want{
+			{kind: proto.ItemTool, id: "call_mcp_exec_a", tool: "exec", status: proto.ToolOK, text: "tools.mcp__alterlab"},
+			hidden, // Reasoning
+			mcp("exec-0001", "alterlab.alterlab_search", proto.ToolOK, "1. Spec https://example.com/spec\n2. Blog"),
+			mcp("exec-0002", "alterlab.alterlab_scrape", proto.ToolOK, "# Spec\n\nExample page."),
+			hidden, // CommandExecution
+		})
+		search, scrape := got[2].Tool, got[3].Tool
+		if string(search.Input) != `{"query":"model context protocol spec","num_results":2}` || search.InputSummary != "model context protocol spec" {
+			t.Errorf("search input: %s / %q", search.Input, search.InputSummary)
+		}
+		if scrape.InputSummary != "https://example.com/spec" || !strings.Contains(string(scrape.Input), `"formats":["markdown"]`) {
+			t.Errorf("scrape input: %s / %q", scrape.Input, scrape.InputSummary)
+		}
+	})
+	t.Run("failed: isError, an error message, no content", func(t *testing.T) {
+		got := items(t, Codex, "mcp_failed.jsonl")
+		check(t, "mcp_failed", got, []want{
+			mcp("exec-0101", "alterlab.alterlab_search", proto.ToolError, "Gateway timeout for slow query."),
+			mcp("exec-0102", "monday.all_api_read", proto.ToolError, `Cannot query field "body"`),
+			mcp("exec-0103", "team-search.list_repo_groups", proto.ToolError, "user rejected MCP tool call"),
+			mcp("exec-0104", "grafana.query", proto.ToolOK, `{"rows":3}`), // structuredContent when no text
+		})
+		if got[2].Tool.InputSummary != "{}" {
+			t.Errorf("no arguments: summary %q", got[2].Tool.InputSummary)
+		}
+	})
+	t.Run("one row per call, whatever represents it", func(t *testing.T) {
+		got := items(t, Codex, "mcp_dup.jsonl")
+		check(t, "mcp_dup", got, []want{
+			mcp("exec-0201", "alterlab.alterlab_search", proto.ToolOK, "one result"), // start + completion
+			mcp("exec-0202", "alterlab.alterlab_scrape", proto.ToolRunning, ""),      // start only
+			mcp("call_dup0001", "mcp__alterlab.alterlab_search", proto.ToolOK, "response text"),
+			mcp("call_dup0002", "mcp__alterlab.alterlab_search", proto.ToolOK, "early response text"),
+		})
+		for _, it := range got[2:] {
+			if strings.Contains(it.Tool.OutputText, "event text") || string(it.Tool.Input) == "" {
+				t.Errorf("%s: %+v", it.ID, it.Tool)
+			}
+		}
+	})
+}
+
 func TestVersion(t *testing.T) {
 	for _, c := range []struct{ harness, file, want string }{
 		{Claude, "message.jsonl", "2.1.285"},
