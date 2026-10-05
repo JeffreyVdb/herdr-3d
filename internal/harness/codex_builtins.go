@@ -24,6 +24,13 @@ import "github.com/JeffreyVdb/herdr-3d/internal/proto"
 //
 // review, rename and goal open a picker, an editor or a menu without
 // arguments, so their hints say the argument is required.
+//
+// #140: diff opens a full-screen viewer (q closes it, Esc does not, and it
+// takes the prompts typed meanwhile), unlike the rule above. It is kept: it
+// does its work from a pasted prompt, and its row is marked terminal-only
+// (terminal.go), so the game shows the worker's terminal once it is sent.
+// status, pwd, ps and mcp print inline but write nothing to the rollout:
+// marked terminal-only too.
 var codexBuiltins = []proto.CommandEntry{
 	{Name: "init", Description: "create an AGENTS.md file with instructions for Codex"},
 	{Name: "compact", Description: "summarize conversation to prevent hitting the context limit"},
@@ -46,6 +53,7 @@ func CodexBuiltins() []proto.CommandEntry {
 	out := make([]proto.CommandEntry, len(codexBuiltins))
 	for i, c := range codexBuiltins {
 		c.Kind = proto.CommandKindBuiltin
+		c.Terminal = terminalMode("codex", c.Name)
 		out[i] = c
 	}
 	return out

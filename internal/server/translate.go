@@ -36,6 +36,9 @@ type PromptTranslator interface {
 	// dropped (a lone "enter", or more: a popup to close first).
 	RetryKeys(harness, text string) []string
 	Translate(ctx context.Context, harness, dir, text string) (string, error)
+	// TerminalOnly reports whether text, typed as a prompt, runs a built-in
+	// whose output shows only in the worker's terminal (#140).
+	TerminalOnly(harness, text string) bool
 }
 
 // maxShrink is how many times shorter a rewrite can make a prompt: the

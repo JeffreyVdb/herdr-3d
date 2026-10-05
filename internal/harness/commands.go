@@ -74,6 +74,9 @@ func claudeEntries(cmds []claudeCommand, custom map[string]bool) []proto.Command
 			kind = proto.CommandKindCustom
 		}
 		e := proto.CommandEntry{Name: name, Description: c.Description, ArgumentHint: c.ArgumentHint, Kind: kind}
+		if c.Builtin {
+			e.Terminal = terminalMode("claude", name)
+		}
 		if i, ok := at[name]; ok {
 			if c.Builtin && out[i].Kind != proto.CommandKindBuiltin {
 				out[i] = e

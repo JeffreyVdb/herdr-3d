@@ -101,6 +101,36 @@ func TestPromptIsTranslatedForCodexOnly(t *testing.T) {
 	}
 }
 
+// #140: a prompt that runs a terminal-only built-in (the harness's table,
+// asked with what was typed) says so in its ack, direct or queued; any other
+// prompt's ack has no "terminal".
+func TestTerminalOnlyPromptSaysSoInItsAck(t *testing.T) {
+	fp := &fakePrompts{}
+	tb := promptsBridge(t, fp)
+	c := tb.connect(proto.Hello{})
+	snap := c.snapshot()
+	id := func(ws string) string { return idOf(t, snap, ws) }
+	terminal := func(ws, text string) any {
+		t.Helper()
+		_, ack := c.mustAck(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: id(ws), Text: text})
+		m, _ := ack.Data.(map[string]any)
+		return m["terminal"]
+	}
+	if got := terminal("w1", "/usage"); got != true {
+		t.Errorf("/usage to idle claude: terminal %v", got)
+	}
+	tb.term.onTyped = nil
+	if got := terminal("w4", "/model"); got != true {
+		t.Errorf("/model to working claude: terminal %v", got)
+	}
+	if got := terminal("w4", "/model opus"); got != nil {
+		t.Errorf("/model opus: terminal %v", got)
+	}
+	if got := terminal("w2", "/usage"); got != nil {
+		t.Errorf("/usage to codex: terminal %v", got)
+	}
+}
+
 // Two prompts to one worker are translated and sent in the order they came.
 func TestTranslatedPromptsKeepTheirOrder(t *testing.T) {
 	fp := &fakePrompts{block: make(chan struct{})}
@@ -238,6 +268,11 @@ func TestBridgeBuiltPromptsAreNotTranslated(t *testing.T) {
 			t.Fatalf("the translator was asked: %q", asks)
 		}
 	})
+}
+
+// TerminalOnly plays harness.TerminalOnly for "/usage" and a bare "/model".
+func (f *fakePrompts) TerminalOnly(harness, text string) bool {
+	return harness == "claude" && (text == "/usage" || text == "/model")
 }
 
 func (f *fakePrompts) RetryKeys(harness, text string) []string {

@@ -323,9 +323,13 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 			// (a watched transcript's is a second away).
 			h.kickUsage()
 			// #138: the transcript shows what was sent: say so when it is not
-			// what was typed.
-			if pr, ok := res.(proto.PromptResult); ok && a.Text != typed {
-				pr.Sent = a.Text
+			// what was typed. #140: and when the transcript will show nothing
+			// of it, so the game can show the terminal.
+			if pr, ok := res.(proto.PromptResult); ok {
+				if a.Text != typed {
+					pr.Sent = a.Text
+				}
+				pr.Terminal = h.opts.Prompts != nil && h.opts.Prompts.TerminalOnly(kind, typed)
 				res = pr
 			}
 		}

@@ -88,5 +88,8 @@ func within(root, path string) bool {
 // Rewrites reports whether harness has translation rules.
 func (p *Prompts) Rewrites(harness string) bool { return Rewrites(harness) }
 
+// TerminalOnly is TerminalOnly for the server.
+func (p *Prompts) TerminalOnly(harness, text string) bool { return TerminalOnly(harness, text) }
+
 // RetryKeys is RetryKeys for the server.
 func (p *Prompts) RetryKeys(harness, text string) []string { return RetryKeys(harness, text) }
