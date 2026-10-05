@@ -2402,6 +2402,7 @@ export class App {
 
   /** What each binding of the table does (the compiler wants one for every id that is not only listed). */
   private readonly actions: Record<DispatchedId, (m: Match) => void> = {
+    palette: () => undefined, // #147: opened by onPaletteKey, in the capture phase
     help: () => this.openShortcuts(),
     'help.field': () => this.openShortcuts(),
     'next-need': () => {

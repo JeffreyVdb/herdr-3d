@@ -741,6 +741,11 @@ export class Laptops {
       this.zoomBy(k.action);
       return true;
     }
+    // #147: the palette's chord is the game's (its capture-phase listener opens it): nothing is sent to the pane.
+    if (k.action === 'palette') {
+      e.preventDefault();
+      return true;
+    }
     // #59: Ctrl+, from any view: the terminal's preset and zoom on the seat bar (works without a transcript, leaves the
     // pane its Tab); Esc there hands the keyboard back to the view that is up instead of standing you up.
     if (k.action === 'look') {
