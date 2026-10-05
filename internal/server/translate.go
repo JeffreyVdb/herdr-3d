@@ -38,14 +38,29 @@ type PromptTranslator interface {
 	Translate(ctx context.Context, harness, dir, text string) (string, error)
 }
 
+// maxShrink is how many times shorter a rewrite can make a prompt: the
+// shortest thing a rule shortens is a quoted one-byte path, @"p" (4 bytes)
+// becoming p (1 byte); a "/name" never gets shorter. A harness's rules must
+// stay within it (harness's TestTranslateNeverShrinksPastAQuarter).
+const maxShrink = 4
+
 // maxPromptSource bounds a prompt before it is translated, for a harness
-// that rewrites it: the limit (herdr.MaxMessage) applies to the translated
-// text, and a rewrite only ever shortens it.
-const maxPromptSource = 2 * herdr.MaxMessage
+// that rewrites it. The limit (herdr.MaxMessage) applies to the translated
+// text, so this is the source that can still fit: nothing a rewrite shrinks
+// under the limit is refused, and a text beyond it is never translated.
+const maxPromptSource = maxShrink * herdr.MaxMessage
 
 // validPromptSource is herdr.ValidMessage with the larger bound.
 func validPromptSource(text string) bool {
 	return text != "" && len(text) <= maxPromptSource && utf8.ValidString(text) && !strings.ContainsRune(text, 0)
+}
+
+// promptSourceOK reports whether text may be queued for a prompt route,
+// before translating: the 16 KiB limit, or for a harness that rewrites (the
+// worker's kind) the source bound. Worker.prompt and worker.answer_ask both
+// ask this.
+func (h *Hub) promptSourceOK(text string) bool {
+	return herdr.ValidMessage(text) || (h.opts.Prompts != nil && validPromptSource(text))
 }
 
 // rewrites reports whether a prompt to w is translated (hub goroutine).
@@ -85,9 +100,23 @@ func (h *Hub) translatePrompt(ctx context.Context, id, text string) string {
 }
 
 // badPromptText is the refusal of a prompt whose text is not 1 byte to
-// 16 KiB of UTF-8 without NUL.
-func badPromptText(n int) error {
-	return bad("text must be 1-%d bytes of UTF-8 without NUL, got %d bytes", herdr.MaxMessage, n)
+// 16 KiB of UTF-8 without NUL. what names the argument.
+func badPromptText(what string, n int) error {
+	return bad("%s must be 1-%d bytes of UTF-8 without NUL, got %d bytes", what, herdr.MaxMessage, n)
+}
+
+// composerPrompt is a composer's text as worker id's harness (kind) takes
+// it, checked: the limit and the typing rules apply to the translated text,
+// for worker.prompt and worker.answer_ask alike. what names the argument.
+func (h *Hub) composerPrompt(ctx context.Context, id, kind, text, what string) (string, error) {
+	text = h.translatePrompt(ctx, id, text)
+	if !herdr.ValidMessage(text) {
+		return "", badPromptText(what, len(text))
+	}
+	if err := checkTyped(kind, text, herdr.MaxMessage, what); err != nil {
+		return "", err
+	}
+	return text, nil
 }
 
 // retryKeys are the keys that press submit again for a stalled prompt of

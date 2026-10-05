@@ -203,3 +203,30 @@ func TestRetryKeys(t *testing.T) {
 		}
 	}
 }
+
+// The server bounds a prompt's source at 4 x the limit (server.maxShrink):
+// no rewrite may make a text shorter than a quarter of itself. The worst is a
+// quoted one-byte path, @"a" (4 bytes) to a (1).
+func TestTranslateNeverShrinksPastAQuarter(t *testing.T) {
+	const maxShrink = 4
+	resolve := func(p string) bool { return true }
+	for _, in := range []string{
+		`@"a"`, `@"a"@"a"@"a"`, `@"a" @"b" @"c"`, `("@"a"`, "@a @b", `@"é"`, `@"a b" /grill`, "/grill/grill", "/zzprobe /zzprobe.",
+		`@"a".@"a",`, `@a. @a) @a!`,
+	} {
+		for n := 1; n <= 3; n++ {
+			text := ""
+			for range n {
+				text += in + " "
+			}
+			out := Translate("codex", text, translateCmds, resolve)
+			if len(out)*maxShrink < len(text) {
+				t.Errorf("%q (%d bytes) became %q (%d bytes): more than %dx shorter", text, len(text), out, len(out), maxShrink)
+			}
+		}
+	}
+	// The worst case is reached, so the bound cannot be lower.
+	if out := Translate("codex", `@"a"@"a"`, nil, resolve); len(out)*maxShrink != len(`@"a"@"a"`) {
+		t.Fatalf("worst case: %q", out)
+	}
+}

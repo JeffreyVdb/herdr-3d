@@ -283,8 +283,8 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	if !herdr.ValidMessage(a.Text) && !(h.opts.Prompts != nil && validPromptSource(a.Text)) {
-		return badPromptText(len(a.Text))
+	if !h.promptSourceOK(a.Text) {
+		return badPromptText("text", len(a.Text))
 	}
 	w, _, err := h.termWorker(a.ID)
 	if err != nil {
@@ -297,7 +297,7 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	rewrites := h.rewrites(kind)
 	if !rewrites {
 		if !herdr.ValidMessage(a.Text) {
-			return badPromptText(len(a.Text))
+			return badPromptText("text", len(a.Text))
 		}
 		if err := checkTyped(kind, a.Text, herdr.MaxMessage, "text"); err != nil {
 			return err
@@ -309,20 +309,25 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	h.tookOver(ctx, a.ID)      // #83: a person prompts: an armed wrap-up is off
 	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
+		typed := a.Text
 		if rewrites {
-			a.Text = h.translatePrompt(ctx, a.ID, a.Text)
-			if !herdr.ValidMessage(a.Text) {
-				return nil, badPromptText(len(a.Text))
-			}
-			if err := checkTyped(kind, a.Text, herdr.MaxMessage, "text"); err != nil {
+			text, err := h.composerPrompt(ctx, a.ID, kind, a.Text, "text")
+			if err != nil {
 				return nil, err
 			}
+			a.Text = text
 		}
 		res, err := h.prompt(ctx, a, session, pane)
 		if err == nil {
 			// #58: its user line is read now, not on the tracker's next tick
 			// (a watched transcript's is a second away).
 			h.kickUsage()
+			// #138: the transcript shows what was sent: say so when it is not
+			// what was typed.
+			if pr, ok := res.(proto.PromptResult); ok && a.Text != typed {
+				pr.Sent = a.Text
+				res = pr
+			}
 		}
 		return res, err
 	})
@@ -409,16 +414,22 @@ func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pan
 	case !errors.As(err, &api) || api.Code != "agent_prompt_stalled":
 		return nil, fmt.Errorf("%w: %v", errPromptFailed, err)
 	}
-	return h.retryEnter(ctx, a.ID, session, pane, h.retryKeys(cur.kind, a.Text)...)
+	return h.retryEnter(ctx, a.ID, session, pane, cur.starts, h.retryKeys(cur.kind, a.Text)...)
 }
 
 // retryEnter presses keys (Enter, or what a harness needs before it: #138)
 // once more for an agent that took a prompt's text but dropped the Enter,
-// and watches the worker for PromptRetryWait.
-func (h *Hub) retryEnter(ctx context.Context, id, session, pane string, keys ...string) (any, error) {
+// and watches the worker for PromptRetryWait. since is the worker's start
+// counter when the prompt began: if the worker has started meanwhile (the
+// prompt was only slow), nothing is pressed, as the keys may hold an Esc
+// that would abort its turn, and the prompt counts as started.
+func (h *Hub) retryEnter(ctx context.Context, id, session, pane string, since uint64, keys ...string) (any, error) {
 	cur, err := query(ctx, h, func() promptState { return h.promptState(id) })
 	if err != nil {
 		return nil, err
+	}
+	if cur.started(since) {
+		return proto.PromptResult{}, nil
 	}
 	if err := h.opts.Term.SendKeys(ctx, session, pane, keys...); err != nil {
 		return nil, fmt.Errorf("%w: the agent dropped Enter, and pressing it again failed: %v", errPromptFailed, err)
@@ -502,7 +513,7 @@ func (h *Hub) typePrompt(ctx context.Context, id, session, pane, text string, se
 	case started:
 		return proto.PromptResult{}, nil
 	}
-	return h.retryEnter(ctx, id, session, pane, "enter")
+	return h.retryEnter(ctx, id, session, pane, cur.starts, "enter")
 }
 
 // auditArgs is what the audit log keeps of a command's args: everything,

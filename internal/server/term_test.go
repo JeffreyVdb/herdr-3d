@@ -76,7 +76,8 @@ type fakeTerm struct {
 	onKeys    func(pane string, keys []string)
 	onText    func(pane, text string) // #57
 	onPrompt  func(pane, how string)
-	submit    []error // SubmitPrompt results in turn
+	onStalled func(pane string) // #138: SubmitPrompt fails (its error), what the agent does meanwhile
+	submit    []error           // SubmitPrompt results in turn
 	// #95: TypePrompt's results in turn, and what the agent does once a
 	// prompt is typed (startTermBridge: it starts working).
 	typeErrs []error
@@ -204,10 +205,13 @@ func (f *fakeTerm) SubmitPrompt(_ context.Context, session, pane, text string) e
 	if len(f.submit) > 0 {
 		err, f.submit = f.submit[0], f.submit[1:]
 	}
-	on := f.onPrompt
+	on, stalled := f.onPrompt, f.onStalled
 	f.mu.Unlock()
 	if on != nil && err == nil {
 		on(pane, "submit")
+	}
+	if stalled != nil && err != nil {
+		stalled(pane)
 	}
 	return err
 }

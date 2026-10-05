@@ -40,6 +40,8 @@ func (f *fakePrompts) Translate(ctx context.Context, harness, dir, text string) 
 	if err != nil {
 		return text, err
 	}
+	// A quoted mention loses its marker and both quotes, as the real rule does.
+	text = strings.ReplaceAll(text, `@"a"`, "a")
 	return strings.ReplaceAll(strings.ReplaceAll(text, "/grill", "$grill"), "@", ""), nil
 }
 
@@ -164,7 +166,7 @@ func TestPromptLimitAppliesToTheTranslatedText(t *testing.T) {
 	}
 	n := len(tb.term.Calls())
 	c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: codex, Text: shrinks}, proto.ErrBadRequest)
-	c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: codex, Text: strings.Repeat("x", 2*herdr.MaxMessage+1)}, proto.ErrBadRequest)
+	c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: codex, Text: strings.Repeat("x", 4*herdr.MaxMessage+1)}, proto.ErrBadRequest)
 	c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: codex, Text: "a\x00b"}, proto.ErrBadRequest)
 	c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: claude, Text: fits}, proto.ErrBadRequest) // never translated
 	c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: claude, Text: "x\x1b[2J"}, proto.ErrBadRequest)
@@ -269,4 +271,181 @@ func TestStalledPromptEndingInASkillPressesEscThenEnter(t *testing.T) {
 	if calls := tb.term.Calls(); calls[len(calls)-1] != "keys w2:p1 enter" {
 		t.Fatalf("calls = %q: a prompt not ending in a skill gets a lone Enter", calls)
 	}
+}
+
+// The limit is on the translated text, so the bound before translating must
+// not refuse a text whose translation fits: a quoted mention shrinks to a
+// quarter of itself (@"a" is a). Worker.prompt takes what fits at the bound,
+// and refuses, without translating, what is beyond it.
+func TestPromptSourceBoundNeverRefusesWhatFitsTranslated(t *testing.T) {
+	fp := &fakePrompts{}
+	tb := promptsBridge(t, fp)
+	c := tb.connect(proto.Hello{})
+	codex := idOf(t, c.snapshot(), "w2")
+
+	quoted := strings.Repeat(`@"a" `, 7000)                           // 35000 bytes, 14000 translated
+	atBound := strings.Repeat(`@"a"`, 4*herdr.MaxMessage/len(`@"a"`)) // exactly 4 x the limit, a quarter of it translated
+	if len(quoted) <= 2*herdr.MaxMessage || len(atBound) != 4*herdr.MaxMessage {
+		t.Fatalf("test texts: %d, %d bytes", len(quoted), len(atBound))
+	}
+	for _, text := range []string{quoted, atBound} {
+		c.mustAck(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: codex, Text: text})
+	}
+	want := []string{
+		"submit w2:p1 " + strconv.Quote(strings.Repeat("a ", 7000)),
+		"submit w2:p1 " + strconv.Quote(strings.Repeat("a", herdr.MaxMessage)),
+	}
+	if got := tb.term.Calls(); !slices.Equal(got, want) {
+		t.Fatalf("calls: %d, want the two translated texts", len(got))
+	}
+	// One byte beyond the bound: refused, and the translator is not asked.
+	asks := len(fp.Asks())
+	c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: codex, Text: atBound + "a"}, proto.ErrBadRequest)
+	if got := len(fp.Asks()); got != asks || len(tb.term.Calls()) != len(want) {
+		t.Fatalf("a text beyond the bound was translated or sent: %d asks (was %d), calls %q", got, asks, tb.term.Calls())
+	}
+}
+
+// codexAsk is a Codex worker (w2) with a request_user_input dialog that a
+// Cancel dismisses with esc.
+func codexAsk(t *testing.T, fp *fakePrompts) (*askBridge, *client, string, string) {
+	t.Helper()
+	ab := startAskBridgeWith(t, "idle", func(o *server.Options) { o.Prompts = fp })
+	c := ab.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w2")
+	lines := strings.SplitAfter(fixture(t, "codex", "ask.jsonl"), "\n")
+	const three = "call_xQd1gbep11m9OuznwGJRfYFx"
+	playDialog(ab.termBridge, "w2:p1", "q", map[string]string{"q": readScreen(t, "codex-ask-multi-first"), "gone": "• DONE\n"},
+		map[string]map[string]string{"q": {"esc": "gone"}}, map[string]func(){"gone": func() { appendLine(t, ab.codex, lines[3]) }})
+	appendLine(t, ab.codex, lines[2])
+	askOf(c, id, pendingID(three))
+	return ab, c, id, three
+}
+
+// worker.answer_ask applies the same limit to the translated prompt as
+// worker.prompt: a source over 16 KiB that translates under it is sent; one
+// that does not fit translated, or is beyond the source bound, is refused
+// before the dialog is touched.
+func TestAnswerAskPromptLimitAppliesToTheTranslatedText(t *testing.T) {
+	for name, text := range map[string]string{
+		"4000 quoted mentions":   strings.Repeat(`@"a" `, 4000),
+		"7000 quoted mentions":   strings.Repeat(`@"a" `, 7000),
+		"exactly the bound":      strings.Repeat(`@"a"`, 4*herdr.MaxMessage/len(`@"a"`)),
+		"over 16 KiB, shrinking": strings.Repeat("@a ", 6000),
+	} {
+		t.Run(name, func(t *testing.T) {
+			fp := &fakePrompts{}
+			ab, c, id, three := codexAsk(t, fp)
+			r := answerAsk(t, c, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: three, Cancel: true, Prompt: text})
+			if !r.Resolved || !r.Prompted {
+				t.Fatalf("result %+v", r)
+			}
+			sent, _ := fp.Translate(context.Background(), "codex", "", text)
+			calls := ab.term.Calls()
+			if len(calls) != 2 || calls[0] != "keys w2:p1 esc" || calls[1] != "submit w2:p1 "+strconv.Quote(sent) {
+				t.Fatalf("%d calls, want esc then the translated text", len(calls))
+			}
+		})
+	}
+	for name, text := range map[string]string{
+		"beyond the bound":          strings.Repeat("x", 4*herdr.MaxMessage+1),
+		"too long once translated":  strings.Repeat("xxxx ", 5000),
+		"beyond the bound, shrinks": strings.Repeat(`@"a" `, 14000),
+	} {
+		t.Run("refused: "+name, func(t *testing.T) {
+			fp := &fakePrompts{}
+			ab, c, id, three := codexAsk(t, fp)
+			c.mustError(proto.CmdWorkerAnswerAsk, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: three, Cancel: true, Prompt: text}, proto.ErrBadRequest)
+			if calls := ab.term.Calls(); len(calls) != 0 {
+				t.Fatalf("a refused prompt touched the dialog: %q", calls)
+			}
+		})
+	}
+}
+
+// A Codex prompt ending in a $skill that stalled: when the worker started
+// meanwhile (it was only slow), the retry's Esc is not pressed: it would
+// abort the turn that is running. When it did not, esc, enter go as before.
+func TestStalledPromptRetryKeysAreSkippedOnceTheWorkerStarted(t *testing.T) {
+	stalled := &herdr.APIError{Code: "agent_prompt_stalled", Message: "no working state within 5000ms"}
+	for name, statuses := range map[string][]string{
+		"working":                {"working"},
+		"started and done again": {"working", "idle"},
+		"blocked":                {"blocked"},
+	} {
+		t.Run("late start: "+name, func(t *testing.T) {
+			fp := &fakePrompts{}
+			tb := promptsBridge(t, fp)
+			c := tb.connect(proto.Hello{})
+			id := idOf(t, c.snapshot(), "w2")
+			watch := tb.connect(proto.Hello{})
+			watch.snapshot()
+			tb.term.submit = []error{stalled}
+			tb.term.onStalled = func(string) { // herdr's start comes after its timeout
+				for _, st := range statuses {
+					tb.setStatus("w2", st)
+					watch.until(proto.EvWorkerStatus)
+				}
+			}
+			_, ack := c.mustAck(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: id, Text: "use /grill."})
+			if want := []string{`submit w2:p1 "use $grill."`}; !slices.Equal(tb.term.Calls(), want) {
+				t.Fatalf("calls = %q, want %q: no key after a late start", tb.term.Calls(), want)
+			}
+			if m, _ := ack.Data.(map[string]any); m["retried"] == true {
+				t.Fatalf("ack %+v: nothing was pressed again", ack.Data)
+			}
+		})
+	}
+	t.Run("no late start", func(t *testing.T) {
+		fp := &fakePrompts{}
+		tb := promptsBridge(t, fp)
+		c := tb.connect(proto.Hello{})
+		id := idOf(t, c.snapshot(), "w2")
+		tb.term.submit = []error{stalled}
+		tb.term.onKeys = func(pane string, keys []string) { go tb.setStatus("w2", "working") }
+		c.mustAck(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: id, Text: "use /grill."})
+		if want := []string{`submit w2:p1 "use $grill."`, "keys w2:p1 esc enter"}; !slices.Equal(tb.term.Calls(), want) {
+			t.Fatalf("calls = %q, want %q", tb.term.Calls(), want)
+		}
+	})
+}
+
+// The same guard on the dismiss-and-prompt route.
+func TestAnswerAskStalledPromptRetryKeysAreSkippedOnceTheWorkerStarted(t *testing.T) {
+	stalled := &herdr.APIError{Code: "agent_prompt_stalled", Message: "no working state within 5000ms"}
+	t.Run("late start", func(t *testing.T) {
+		fp := &fakePrompts{}
+		ab, c, id, three := codexAsk(t, fp)
+		ab.term.submit = []error{stalled}
+		watch := ab.connect(proto.Hello{})
+		watch.snapshot()
+		ab.term.onStalled = func(string) {
+			ab.setStatus("w2", "working")
+			for { // a status event, or an upsert (the ask went)
+				ev := watch.event()
+				if (ev.T == proto.EvWorkerStatus && ev.Status == "working") || (ev.T == proto.EvWorkerUpsert && ev.Worker.Status == "working") {
+					break
+				}
+			}
+		}
+		r := answerAsk(t, c, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: three, Cancel: true, Prompt: "run /grill"})
+		if !r.Prompted {
+			t.Fatalf("result %+v: it started, so it was prompted", r)
+		}
+		if want := []string{"keys w2:p1 esc", `submit w2:p1 "run $grill"`}; !slices.Equal(ab.term.Calls(), want) {
+			t.Fatalf("calls = %q, want %q: no retry keys after a late start", ab.term.Calls(), want)
+		}
+	})
+	t.Run("no late start", func(t *testing.T) {
+		fp := &fakePrompts{}
+		ab, c, id, three := codexAsk(t, fp)
+		ab.term.submit = []error{stalled}
+		r := answerAsk(t, c, proto.WorkerAnswerAskArgs{ID: id, ToolUseID: three, Cancel: true, Prompt: "run /grill"})
+		if !r.Prompted {
+			t.Fatalf("result %+v", r)
+		}
+		if want := []string{"keys w2:p1 esc", `submit w2:p1 "run $grill"`, "keys w2:p1 esc enter"}; !slices.Equal(ab.term.Calls(), want) {
+			t.Fatalf("calls = %q, want %q", ab.term.Calls(), want)
+		}
+	})
 }
