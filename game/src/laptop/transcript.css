@@ -1050,7 +1050,7 @@
 .tx-cmd-arg {
   flex: 0 1 auto;
   max-width: 30%;
-  color: var(--tx-text-3);
+  color: var(--tx-text-2);
 }
 .tx-cmd-desc {
   overflow: hidden;
@@ -1064,7 +1064,7 @@
   padding: 0 0.45em;
   border: 1px solid var(--tx-line);
   border-radius: 4px;
-  color: var(--tx-text-3);
+  color: var(--tx-text-2);
   font-size: 0.8em;
   line-height: 1.5;
 }
