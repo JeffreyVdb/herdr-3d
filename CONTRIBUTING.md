@@ -783,6 +783,30 @@ image is up (it waits for one that is uploading) and not at all when one failed 
 them (chips, markers sent, failed / pending / refused images, the desk drafts, the terminal and the plain shell); the
 fixture's upload adds `fail_code=upload_busy` (the failures are the bridge's `429`) and `upload_delay=<ms>` (a pending
 upload to look at).
+#139 completion: `mountComposer({ complete: { sources, bounds? } })` turns on a suggestion popup under the caret
+(`complete.ts`: token detection and the source interface, pure; `completion.ts`: the popup and its keys). Opt-in: without
+`complete` the composer, its keys and its DOM are unchanged; the popup's DOM is made on its first open. Only the transcript's
+prompt box opts in, with no source yet (commands and files are the next tickets), so nothing opens in the game today. A
+token is a trigger (`/` or `@`) at the start of the text, after whitespace or right after an image chip (`/usr/bin`,
+`a/b`, URLs and emails never open one), up to the caret: a `/` query has no whitespace; an `@` query may hold spaces
+(file names) but ends at a newline, a chip or 80 characters. The nearest trigger before the caret decides; a pick
+replaces the trigger and the whole word the caret is in. A source is `{ trigger, label?, items(query, signal), render(item),
+insert(item, token) }`: `items` returns the rows or a promise of them (each new query aborts the previous `signal`
+and a reply that is not the latest is dropped; pending shows "Loading…" or keeps the rows dimmed, empty "No match", a
+rejection "Could not load matches."); `render` returns a Node or a string; `insert` returns a `ReplaceSpec`
+`{ text, start?, end? }` (default range: the token), applied with one `Draft.replace`, so one undo takes the pick
+back and the caret lands after it. A session opens only when text is typed (an `input`, an IME commit) into a token;
+it follows the caret inside the token and closes when the caret leaves it, on a pick, Esc, blur, `setBusy` /
+`setDisabled`, `setDraft`, `dispose`, and while an IME composes (`compositionend` re-evaluates). Keys while open: ↑ ↓
+move (wrapping), Tab and Enter pick, Enter with nothing to pick only closes, Esc closes the popup and is stopped there (the
+dialog, the transcript and the seat never see it); Shift+Enter and every other key are the editor's as before, as is
+every key while it is closed (`dialog.complete` in `input/shortcuts.ts` lists them). The rows are `role=option`
+in a `role=listbox`, never focusable (a press on the popup keeps the editor's focus); the editor stays a multiline
+`role=textbox` and, while open only, has `aria-autocomplete=list`, `aria-controls`, `aria-expanded` and
+`aria-activedescendant`. Placed against `.cmp` at the trigger, under the caret's line or above it when there is no room
+below, inside `bounds()` (default: the composer's dialog, else the window; the transcript passes its root).
+`/?composer-demo` mounts it with stub sources (`/` commands at once; `@` files after `stub.delayMs`, per query
+`stub.delays[q]` for a late reply, `stub.fail` to reject) for `e2e/composer-complete.spec.ts`.
 
 M5 on the simulating server (`ws=…?sim=1…`): `simusage=<ms>` sends working agents' `worker.usage` that often
 (default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|changes_failed` for the next prompt,
@@ -929,7 +953,8 @@ top bar's **Hire** (on an office floor; Shift+Tab, then Tab past Elevator) for t
 bridge first (`hire.prepare`), then offers: an optional first task (**Enter** hires, **Shift+Enter** adds a line; paste a screenshot and it goes into the text as a
 thumbnail at the caret, click it to see it enlarged (**Esc** closes only that), the agent gets `[Image #n: <path>]` in its place (#64: the same in
 Start Run's Extra instructions and First prompt, the P overlay and the transcript view's prompt box, and a screenshot pasted at an agent's laptop;
-a prompt is sent once its images are uploaded, and not at all when one failed);
+a prompt is sent once its images are uploaded, and not at all when one failed; #139: the hire task has no suggestion
+popup, only the transcript's prompt box can complete `/` and `@`, see the composer section);
 the dialog is a near-full-screen sheet, #51: the task editor takes the space and grows with the window, the options
 sit beside it, or under it on a phone, and Hire / Cancel stay on screen; what you typed for a desk stays until a hire
 is acknowledged),
