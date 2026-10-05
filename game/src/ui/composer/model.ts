@@ -252,9 +252,8 @@ export function joinMentions(parts: readonly MentionPart[]): string {
 
 /** A selection's text and file chips as plain text (images left out): what a copy puts on the clipboard as text. */
 export function mentionText(doc: Doc, from = 0, to = doc.text.length): string {
-  const first = chipsIn(doc.text, 0, from);
   const out: MentionPart[] = [];
-  let k = first;
+  let k = chipsIn(doc.text, 0, from);
   for (const piece of doc.text.slice(from, to).split(/(\uFFFC)/)) {
     if (piece !== IMG) {
       out.push({ text: piece });

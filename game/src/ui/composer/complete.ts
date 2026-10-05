@@ -3,8 +3,8 @@
  * (the popup and its keys are `completion.ts`).
  *
  * A token starts with a trigger character (`/` or `@`) that stands at the start of the text, after whitespace
- * (a space, a tab, a newline) or right after a chip (an image or a file: a chip is a word of its own), so `/usr/bin`, `a/b`, URLs
- * and emails never open one. The query is the text from after the trigger to the caret:
+ * (a space, a tab, a newline) or right after a chip (an image or a file: a chip is a word of its own), so `/usr/bin`,
+ * `a/b`, URLs and emails never open one. The query is the text from after the trigger to the caret:
  * - `/` (commands): no whitespace; the token ends at the first space, newline or chip.
  * - `@` (files): may contain spaces (file names have them), but not a newline or a chip, and at most `AT_QUERY_MAX`
  *   characters, so it cannot swallow a paragraph.
