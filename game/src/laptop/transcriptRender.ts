@@ -704,6 +704,8 @@ class Transcript implements TranscriptView {
       placeholder: PROMPT_HINT,
       submitPolicy: 'enter',
       onSubmit: () => this.submit(),
+      // #139: completion is on, with no source yet (commands and files come next): no popup opens until one is added.
+      complete: { sources: [], bounds: () => this.root },
     });
     this.input = this.composer.editor;
     this.input.classList.add('tx-input');
