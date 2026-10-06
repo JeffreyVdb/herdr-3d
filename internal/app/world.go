@@ -527,7 +527,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		RG:         *rgBin, // #137 worker.files
 		MaxWatches: maxWatches, MaxObservers: maxObservers, MaxTranscriptWatches: maxTxWatches,
 		RunsDir:          *runsDir,                                                          // M6 runs
-		Boards:           GitHubBoards(&githubcli.Client{Bin: *ghBin}),                      // M7 boards
+		Boards:           GitHubBoards(&githubcli.Client{Bin: *ghBin}, nil),                 // M7 boards
 		Limits:           lim,                                                               // M10 limits
 		Uploads:          images,                                                            // #51 upload
 		TranscriptImages: transcriptImages(log, *dropzoneData, *imageCache, *codexSessions), // M16 images

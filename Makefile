@@ -26,7 +26,7 @@ E2E_LOCKED = command -v flock >/dev/null || { echo "make: flock not found (util-
 EMBED_DIR := internal/webdist/game
 RELEASE_DIR := bin/release
 
-.PHONY: build go-build game-build test go-test game-test integration lint go-lint game-lint \
+.PHONY: build go-build game-build test go-test game-test integration codex-shared-tui lint go-lint game-lint \
 	sh-test embed-game helper-darwin release-assets dev shot e2e setup toolchain deps clean
 
 ## build: Go binaries (bin/) + game bundle (game/dist/)
@@ -55,6 +55,11 @@ sh-test:
 ## integration: bridge against a real herdr, in a throwaway session it creates and deletes (h3d-it-*)
 integration:
 	go test -tags integration -count=1 -run Integration -v ./internal/app/ ./internal/limits/
+
+## codex-shared-tui: #154 fixture: the real Codex TUI (codex-cli 0.160.1) beside a second app-server client, in
+## throwaway herdr sessions (h3d-it-154-*), temp CODEX_HOMEs and mock inference; EVIDENCE=<dir> keeps screens/messages
+codex-shared-tui:
+	H3D_CODEXSHARE_EVIDENCE="$(EVIDENCE)" go test -tags integration -count=1 -timeout 30m -run CodexShare -v ./internal/codexshare/
 
 ## lint: go vet, gofmt, tsc --noEmit
 lint: go-lint game-lint
