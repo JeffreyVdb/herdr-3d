@@ -24,7 +24,7 @@ export interface AsyncCardHost {
 
 type FocusTo = 'q' | 'send' | 'first' | `opt:${number}` | `fold:${string}`;
 
-/** A question's state as its signature: a guard holds while the question still looks the way it did when it was sent. */
+/** A question's state as its signature: each change of it is a step the bridge took (see `gens`). */
 const sigOf = (q: CodexQuestion) => `${q.state}|${q.undelivered ? 1 : 0}|${q.error ?? ''}`;
 /** A value inside a `[data-key="…"]` selector (batch ids are plain: `[A-Za-z0-9_.:-]`). */
 const attr = (s: string) => s.replace(/["\\]/g, '\\$&');
@@ -78,8 +78,16 @@ export class AsyncCard {
   private note: { key: string; text: string; error: boolean } | null = null;
   /** Batches with a send or a hide on its way (no ack yet), and the questions it is for. */
   private readonly busy = new Map<string, Set<number>>();
-  /** Questions an acked send was for, with the signature they had then: not answerable again until the bridge moves them. */
-  private readonly guard = new Map<string, string>();
+  /**
+   * Each question's last signature and how many times it changed while this card watched: the bridge's steps. A
+   * return to an earlier state (sent again, or pending after a bridge restart) is a step too, never the old one.
+   */
+  private readonly gens = new Map<string, { sig: string; gen: number }>();
+  /**
+   * Questions an acked send was for, with their step at the send: not answerable again until the bridge moves them.
+   * The bridge says sending / sent before it acks, so a send whose questions moved meanwhile leaves no guard.
+   */
+  private readonly guard = new Map<string, number>();
   /** Each listed question's reply phase as last drawn, for the announcements. */
   private phases = new Map<string, ReplyPhase>();
   private ticker: ReturnType<typeof setInterval> | null = null;
@@ -102,18 +110,32 @@ export class AsyncCard {
       this.active = 0;
       this.note = null;
       this.busy.clear();
+      this.gens.clear();
       this.guard.clear();
       this.phases = new Map();
     }
     this.codex = codex;
+    // No launch for a moment (a reconnect): what comes back is the bridge's word, not a send of ours still on its way.
+    if (!codex) this.guard.clear();
     if (worker && codex) {
       this.drafts.prune(worker, codex);
       for (const b of asyncBatches({ codex })) if (b.questions.some(unresolved)) this.drafts.sawOpen(worker, b.key);
+      const seen = new Set<string>();
       for (const b of asyncBatches({ codex })) {
         for (const q of b.questions) {
           const k = this.qkey(b, q);
-          if (this.guard.has(k) && this.guard.get(k) !== sigOf(q)) this.guard.delete(k);
+          seen.add(k);
+          const was = this.gens.get(k);
+          const sig = sigOf(q);
+          if (!was) this.gens.set(k, { sig, gen: 0 });
+          else if (was.sig !== sig) this.gens.set(k, { sig, gen: was.gen + 1 });
+          if (this.guard.has(k) && this.guard.get(k) !== this.gen(k)) this.guard.delete(k);
         }
+      }
+      for (const k of [...this.gens.keys()]) {
+        if (seen.has(k)) continue;
+        this.gens.delete(k);
+        this.guard.delete(k);
       }
     }
     this.announce(same);
@@ -142,6 +164,10 @@ export class AsyncCard {
 
   private qkey(b: Pick<AsyncCardBatch, 'key'>, q: Pick<CodexQuestion, 'index'>): string {
     return `${b.key}\u0000${q.index}`;
+  }
+
+  private gen(k: string): number {
+    return this.gens.get(k)?.gen ?? 0;
   }
 
   /** A batch's questions as the card lists them: not the hidden ones, unless you asked to see them. */
@@ -176,7 +202,8 @@ export class AsyncCard {
   }
 
   private inFlight(b: AsyncCardBatch, q: CodexQuestion): boolean {
-    return !!this.busy.get(b.key)?.has(q.index) || this.guard.get(this.qkey(b, q)) === sigOf(q);
+    const k = this.qkey(b, q);
+    return !!this.busy.get(b.key)?.has(q.index) || this.guard.get(k) === this.gen(k);
   }
 
   /** It can take an answer from here now. */
@@ -270,9 +297,10 @@ export class AsyncCard {
       this.render();
       return;
     }
-    const sigs = new Map(answers.map((a) => [this.qkey(b, a.q), sigOf(a.q)]));
+    // Acked: each question that has not moved since (no sending / sent seen yet) waits for the bridge's next step.
+    const at = new Map(answers.map((a) => [this.qkey(b, a.q), this.gen(this.qkey(b, a.q))]));
     void this.run(b, new Set(answers.map((a) => a.index)), () => this.host.answer(answerAsyncArgs(w, b, answers)), (ok) => {
-      if (ok) for (const [k, sig] of sigs) this.guard.set(k, sig);
+      if (ok) for (const [k, g] of at) if (this.gen(k) === g) this.guard.set(k, g);
     });
   }
 

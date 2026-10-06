@@ -152,6 +152,61 @@ describe('AsyncCard (#157)', () => {
     expect(c.shown).toBe(false);
   });
 
+  // The bridge says sending and sent before it acks (internal/server/codexquestions.go, then input.go acks); a send
+  // whose questions moved meanwhile leaves no guard, so a later return to the state they had (not delivered again, or
+  // pending after a bridge restart) takes Send again. Acked before any move, it still sends once.
+  describe('a second send once the bridge moved the question', () => {
+    const undelivered = (over: Partial<CodexQuestion> = {}) => context({ index: 0, state: 'sent', undelivered: true, ...over });
+    const returns = {
+      'not delivered again': { from: undelivered(), back: undelivered() },
+      'pending after a bridge restart': { from: context({ index: 0 }), back: context({ index: 0 }) },
+    };
+    for (const [name, { from, back }] of Object.entries(returns)) {
+      for (const order of ['the upserts before the ack', 'the ack before the upserts'] as const) {
+        it(`${name}, ${order}`, async () => {
+          const t = host();
+          const c = mount(t);
+          const at = (q: CodexQuestion) => c.set(W, codex([batch('call_3', [q])]));
+          at(from);
+          type(c, 'Keep v1 for now.');
+          let release!: () => void;
+          t.hold(new Promise<void>((r) => (release = r)));
+          send(c)!.click();
+          send(c)!.click(); // a double click: one send
+          await flush();
+          expect(t.answers).toHaveLength(1);
+          if (order === 'the upserts before the ack') {
+            at(context({ index: 0, state: 'sending' }));
+            at(context({ index: 0, state: 'sent' }));
+            release();
+            await flush();
+          } else {
+            release();
+            await flush();
+            // Acked, nothing moved yet: still not sent again.
+            sendKey(c);
+            await flush();
+            expect(t.answers).toHaveLength(1);
+            expect(c.el.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(true);
+            at(context({ index: 0, state: 'sending' }));
+            at(context({ index: 0, state: 'sent' }));
+          }
+          expect(send(c)?.disabled).toBe(true); // sent: nothing to answer
+          t.hold(null);
+          at(back);
+          expect(c.el.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
+          expect(c.el.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Keep v1 for now.');
+          expect(send(c)?.disabled).toBe(false);
+          sendKey(c);
+          sendKey(c); // queued twice: one send
+          await flush();
+          expect(t.answers).toHaveLength(2);
+          expect(t.answers[1]?.answers).toEqual([{ index: 0, answer: 'Keep v1 for now.' }]);
+        });
+      }
+    }
+  });
+
   it('keeps the answer when the bridge refuses it, says why, and lets it go again', async () => {
     const t = host();
     const c = mount(t);
