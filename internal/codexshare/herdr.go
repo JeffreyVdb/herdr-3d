@@ -170,9 +170,10 @@ type Agent struct {
 	InteractiveReady bool   `json:"interactive_ready"`
 	Cwd              string `json:"cwd"`
 	Title            string `json:"terminal_title"`
-	SessionID        string `json:"agent_session_id"`
-	Session          *struct {
-		ID string `json:"id"`
+	// Session is the identity Herdr's Codex hook reported for the pane.
+	Session *struct {
+		Source string `json:"source"`
+		Value  string `json:"value"`
 	} `json:"agent_session"`
 }
 
