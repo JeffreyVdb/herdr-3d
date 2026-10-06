@@ -237,3 +237,191 @@ test('a blocking ask still wins: the async card waits behind it, and its digits 
   await expect(tx.locator('.tx-aq [role="radio"][aria-checked="true"]')).toHaveCount(0);
   clean();
 });
+
+/**
+ * What `l` is drawn, in plain sight on its card: inside it, clear of a sticky top line and foot (unless it is in the
+ * foot), and nothing over its middle. The faults found, none when it is in sight.
+ */
+async function inSight(card: Locator, l: Locator): Promise<string[]> {
+  const c = await card.elementHandle();
+  return l.evaluate((el, cardEl) => {
+    const bad: string[] = [];
+    if (!cardEl) return ['no card'];
+    const r = el.getBoundingClientRect();
+    const box = cardEl.getBoundingClientRect();
+    const inFoot = !!el.closest('.tx-ask-foot');
+    const top = Math.max(box.top, cardEl.querySelector('.tx-ask-top')?.getBoundingClientRect().bottom ?? box.top);
+    const foot = cardEl.querySelector('.tx-ask-foot')?.getBoundingClientRect().top ?? box.bottom;
+    const bottom = inFoot ? box.bottom : Math.min(box.bottom, foot);
+    if (r.height < 8) bad.push(`${r.height}px high`);
+    if (r.top < top - 0.5) bad.push(`top ${r.top.toFixed(1)} over ${top.toFixed(1)}`);
+    if (r.bottom > bottom + 0.5) bad.push(`bottom ${r.bottom.toFixed(1)} under ${bottom.toFixed(1)}`);
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 12));
+    if (!hit || !el.contains(hit)) bad.push(`covered by .${String(hit?.className ?? 'nothing')}`);
+    return bad;
+  }, c);
+}
+
+/** The height the card shows its questions in: inside it, between its top line and its foot (when they show). */
+async function room(card: Locator): Promise<number> {
+  return card.evaluate((c) => {
+    const box = c.getBoundingClientRect();
+    const top = c.querySelector('.tx-ask-top')?.getBoundingClientRect();
+    const foot = c.querySelector('.tx-ask-foot')?.getBoundingClientRect();
+    return Math.min(box.bottom, foot?.height ? foot.top : box.bottom) - Math.max(box.top, top?.height ? top.bottom : box.top);
+  });
+}
+
+// The review's phone (390×844): the laptop's screen is under 300 px tall, so the card scrolls as one under a sticky
+// top line and over a sticky foot. Where the keyboard lands (→ to a question, or the card moving on after a pick) is
+// scrolled into plain sight, never left under the foot.
+test('on a phone the keyboard lands in plain sight: → to a question, and the next one after a pick', async ({ page }) => {
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const w = pixel();
+  await openGame(page, 'demo-m5', '', SIM);
+  const tx = await sitAtTranscript(page, w);
+  const card = tx.locator('.tx-aq');
+  await expect(card).toBeVisible();
+  const text = card.locator('textarea.tx-aq-text');
+
+  await page.keyboard.press('ArrowRight');
+  await expect(text).toBeFocused();
+  expect(await inSight(card, text), 'question 2’s text box after →').toEqual([]);
+
+  // Back on question 1 (its first option has the keyboard), 1 picks Green and the card moves on to question 2.
+  await page.keyboard.press('Escape');
+  await expect(tx.locator('.tx-scroll')).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  const green = card.getByRole('radio', { name: 'Green' });
+  await expect(green).toBeFocused();
+  expect(await inSight(card, green), 'question 1’s option after ←').toEqual([]);
+  await page.keyboard.press('1');
+  await expect(text).toBeFocused();
+  expect(await inSight(card, text), 'question 2’s text box after a pick').toEqual([]);
+  await page.keyboard.type('Typed where it can be seen.');
+  expect(await inSight(card, text)).toEqual([]);
+  expect(await inSight(card, card.locator('.tx-ask-send'))).toEqual([]);
+  expect(await sent(page, 'worker.answer_async')).toHaveLength(0);
+  await shot(page, 'h157-async-phone-keyboard'); // last: the shot hides the HUD for a moment, and the focus with it
+  clean();
+});
+
+/** Codex's turn ended (its async questions stay, docs/protocol.md) and the bridge found open questions in its last message. */
+async function idleWithFollowup(page: Page, w: Worker): Promise<void> {
+  await page.evaluate((id) => {
+    const x = window.__h3d.worker(id);
+    if (!x?.codex) throw new Error('no Codex launch on Pixel');
+    window.__h3d.inject({
+      t: 'worker.upsert',
+      seq: 0,
+      worker: {
+        ...x,
+        status: 'idle',
+        codex: { ...x.codex, turn: '', async_blocked: false },
+        followup: {
+          turn_id: 'h157-followup',
+          source: 'model',
+          score: 0.96,
+          at: Date.now(),
+          questions: [
+            { id: 'q1', kind: 'yes_no', question: 'Ship this release?' },
+            { id: 'q2', kind: 'open', question: 'Any release context?' },
+          ],
+        },
+      },
+    } as never);
+  }, w.id);
+}
+
+// An idle shared Codex worker keeps the async questions its last turn asked, and a follow-up can come as well
+// (docs/protocol.md: a turn's end answers none of them). On a phone there is no room for two cards: one is open, the
+// other a tab away; each, when open, has its question, its answers and Send in plain sight, and what was written on
+// each survives the switches.
+test('on a phone the follow-up and the async questions take turns: one open, the other a tab away, both drafts kept', async ({ page }) => {
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const w = pixel();
+  await openGame(page, 'demo-m5', '', SIM);
+  const tx = await sitAtTranscript(page, w);
+  const aq = tx.locator('.tx-aq');
+  const fu = tx.locator('.tx-fu');
+  await expect(aq).toBeVisible();
+  await idleWithFollowup(page, w);
+  const tabs = tx.getByRole('tablist', { name: 'Questions for you' });
+  const fuTab = tabs.getByRole('tab', { name: /^Open questions/ });
+  const aqTab = tabs.getByRole('tab', { name: /^Codex asked/ });
+  await expect(tabs).toBeVisible();
+  // The card that was up stays open; the follow-up waits behind its tab.
+  await expect(aqTab).toHaveAttribute('aria-selected', 'true');
+  await expect(fuTab).toHaveAttribute('aria-selected', 'false');
+  await expect(fu).toBeHidden();
+  await expect(aq).toBeVisible();
+  await expect(tx.locator('.tx-input')).toBeEnabled();
+  // The open card keeps the room a lone one has (the review measured 3 px with both drawn): a question and an answer.
+  expect(await room(aq), 'the async card’s room for its questions').toBeGreaterThanOrEqual(64);
+  expect(await inSight(aq, aq.locator('.tx-ask-question'))).toEqual([]);
+  expect(await inSight(aq, aq.locator('.tx-ask-send'))).toEqual([]);
+  // Its draft: question 2's text, from the keyboard (→ from the timeline), in sight.
+  await tx.locator('.tx-scroll').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(aq.locator('textarea.tx-aq-text')).toBeFocused();
+  expect(await inSight(aq, aq.locator('textarea.tx-aq-text'))).toEqual([]);
+  await page.keyboard.type('async draft');
+
+  // The follow-up's tab: its card opens, the keyboard on it, everything in sight.
+  await fuTab.click();
+  await expect(fu).toBeVisible();
+  await expect(aq).toBeHidden();
+  await expect(fuTab).toHaveAttribute('aria-selected', 'true');
+  await expect(fu.getByRole('radio', { name: 'Yes' })).toBeFocused();
+  expect(await room(fu), 'the follow-up card’s room for its questions').toBeGreaterThanOrEqual(64);
+  expect(await inSight(fu, fu.getByRole('radio', { name: 'Yes' }))).toEqual([]);
+  expect(await inSight(fu, fu.locator('.tx-ask-send'))).toEqual([]);
+  await fu.getByRole('radio', { name: 'No' }).click();
+  await expect(fu.locator('.tx-ask-question')).toHaveText('Any release context?');
+  const note = fu.locator('textarea.tx-fu-text');
+  await note.fill('follow-up draft');
+  expect(await inSight(fu, note)).toEqual([]);
+
+  // Back and forth from the keyboard (← → on the tabs): both drafts are where they were.
+  await fuTab.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(aqTab).toBeFocused();
+  await expect(aq).toBeVisible();
+  await expect(aq.locator('textarea.tx-aq-text')).toHaveValue('async draft');
+  await page.keyboard.press('ArrowLeft');
+  await expect(fuTab).toBeFocused();
+  await expect(fu).toBeVisible();
+  await expect(note).toHaveValue('follow-up draft');
+  await expect(fu.locator('.tx-ask-row').first()).toContainText('No');
+  expect(await sent(page, 'worker.answer_async')).toHaveLength(0);
+  expect(await sent(page, 'worker.answer_followup')).toHaveLength(0);
+  await shot(page, 'h157-phone-both-followup');
+  await aqTab.click();
+  await shot(page, 'h157-phone-both-async');
+  clean();
+});
+
+// On a laptop's screen the two take turns as well: the open card whole (its top line too), the timeline keeps room.
+test('on a laptop the follow-up and the async questions take turns too, and the conversation keeps its room', async ({ page }) => {
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const w = pixel();
+  await openGame(page, 'demo-m5', '', SIM);
+  const tx = await sitAtTranscript(page, w);
+  const aq = tx.locator('.tx-aq');
+  await expect(aq).toBeVisible();
+  await idleWithFollowup(page, w);
+  const tabs = tx.getByRole('tablist', { name: 'Questions for you' });
+  await expect(tabs).toBeVisible();
+  await expect(aq.locator('.tx-ask-top')).toBeVisible();
+  await expect(tx.locator('.tx-fu')).toBeHidden();
+  expect((await tx.locator('.tx-main').boundingBox())?.height ?? 0, 'the conversation’s room').toBeGreaterThanOrEqual(80);
+  await tabs.getByRole('tab', { name: /^Open questions/ }).click();
+  await expect(tx.locator('.tx-fu .tx-ask-top')).toBeVisible();
+  await expect(aq).toBeHidden();
+  expect((await tx.locator('.tx-main').boundingBox())?.height ?? 0, 'the conversation’s room').toBeGreaterThanOrEqual(70);
+  await shot(page, 'h157-laptop-both-followup');
+  clean();
+});
