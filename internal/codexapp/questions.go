@@ -22,6 +22,11 @@ import (
 //   - The server does not deduplicate: the same envelope twice is two
 //     deliveries. A question is therefore sent at most once (pending →
 //     sending → sent) and never re-sent by itself.
+//   - A steered input is delivered with the turn's next model request, as a
+//     user message of that turn. A turn that ends first (interrupted) drops
+//     it: it is not delivered and not carried into the next turn
+//     (TestCodexShareAsyncAnswers). Such a question is sent and undelivered,
+//     and only then may the user send it again.
 
 // ThreadItem types and the async delivery the bridge reads.
 const (
@@ -126,9 +131,14 @@ type Question struct {
 	// Unconfirmed: the bridge sent the answer but got no response, so it
 	// cannot tell whether the server took it (QSent). It is not sent again.
 	Unconfirmed bool
+	// Undelivered: the turn the bridge's answer went to ended without its
+	// user message (QSent): Codex dropped it. It may be answered again.
+	Undelivered bool
 	// Error: why the bridge's last answer was refused, nothing delivered
 	// (QPending).
 	Error string
+	// reached is the turn the bridge's answer went to (QSent).
+	reached string
 }
 
 // Batch is one async-question message.
@@ -153,8 +163,12 @@ type Batch struct {
 // (else the oldest) goes first.
 const MaxBatches = 32
 
-// maxEarly bounds the envelopes kept for batches not seen yet.
-const maxEarly = 64
+// maxEarly bounds the envelopes kept for batches not seen yet, maxEnded the
+// turns remembered as ended.
+const (
+	maxEarly = 64
+	maxEnded = 16
+)
 
 // Errors of answering and dismissing.
 var (
@@ -192,6 +206,7 @@ type Questions struct {
 	batches map[string]*Batch
 	order   []string
 	early   map[qkey]early
+	ended   []string // the last turns seen ending, newest last
 }
 
 // NewQuestions starts the reconciler of a thread.
@@ -276,6 +291,35 @@ func (q *Questions) Hydrate(turns []Turn) bool {
 		for _, it := range t.Items {
 			if it.Type == ItemUserMessage {
 				changed = q.Observe(t.ID, it, OriginHistory) || changed
+			}
+		}
+	}
+	for _, t := range turns {
+		if t.Status != "" && t.Status != TurnInProgress {
+			changed = q.TurnEnded(t.ID) || changed
+		}
+	}
+	return changed
+}
+
+// TurnEnded takes the end of a turn (turn/completed, whatever its status;
+// or an ended turn of the history): the bridge's answers that went to it
+// and whose user message never came are undelivered.
+func (q *Questions) TurnEnded(turn string) bool {
+	if turn == "" {
+		return false
+	}
+	if !slices.Contains(q.ended, turn) {
+		if q.ended = append(q.ended, turn); len(q.ended) > maxEnded {
+			q.ended = q.ended[1:]
+		}
+	}
+	changed := false
+	for _, id := range q.order {
+		for i := range q.batches[id].Questions {
+			x := &q.batches[id].Questions[i]
+			if x.State == QSent && !x.Unconfirmed && !x.Undelivered && x.reached == turn {
+				x.Undelivered, changed = true, true
 			}
 		}
 	}
@@ -383,7 +427,8 @@ type Reply struct {
 }
 
 // Begin checks replies against a batch and marks their questions sending:
-// each names a distinct question that is pending, a question with options
+// each names a distinct question that is pending (or sent and undelivered:
+// the user sends it again), a question with options
 // takes one of them exactly, one without takes any text that is not blank.
 // It returns the answers to put in the envelope, in the replies' order.
 func (q *Questions) Begin(batch string, replies []Reply) ([]Answer, error) {
@@ -394,7 +439,7 @@ func (q *Questions) Begin(batch string, replies []Reply) ([]Answer, error) {
 	b := q.batches[batch]
 	for _, r := range replies {
 		x := &b.Questions[r.Index]
-		x.State, x.Error = QSending, ""
+		x.State, x.Error, x.Undelivered, x.reached = QSending, "", false, ""
 	}
 	return answers, nil
 }
@@ -421,7 +466,7 @@ func (q *Questions) Check(batch string, replies []Reply) ([]Answer, error) {
 		}
 		seen[r.Index] = true
 		x := b.Questions[r.Index]
-		if x.State != QPending {
+		if x.State != QPending && !(x.State == QSent && x.Undelivered) {
 			return nil, fmt.Errorf("%w: question %d of %s is %s", ErrNotPending, r.Index, batch, x.State)
 		}
 		if len(x.Options) > 0 && !slices.Contains(x.Options, r.Text) {
@@ -435,13 +480,15 @@ func (q *Questions) Check(batch string, replies []Reply) ([]Answer, error) {
 	return answers, nil
 }
 
-// Sent records that the server accepted the bridge's answer (unconfirmed:
-// no response came, so whether it did is unknown). Only questions still
-// sending change.
-func (q *Questions) Sent(batch string, indexes []int, unconfirmed bool) {
+// Sent records that the server accepted the bridge's answer into turn
+// reached (unconfirmed: no response came, so whether it did is unknown, and
+// reached is ""). Only questions still sending change; one whose turn
+// already ended is undelivered at once.
+func (q *Questions) Sent(batch string, indexes []int, reached string, unconfirmed bool) {
 	q.each(batch, indexes, func(x *Question) {
 		if x.State == QSending {
-			x.State, x.Unconfirmed = QSent, unconfirmed
+			x.State, x.Unconfirmed, x.reached = QSent, unconfirmed, reached
+			x.Undelivered = !unconfirmed && reached != "" && slices.Contains(q.ended, reached)
 		}
 	})
 }

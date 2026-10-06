@@ -203,7 +203,7 @@ func TestQuestionsAnswerFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	cid := NewClientID()
-	q.Sent("call_3", []int{0}, false)
+	q.Sent("call_3", []int{0}, "t1", false)
 	if b := q.Batch("call_3").Questions[0]; b.State != QSent || b.Error != "" {
 		t.Fatalf("after the send: %+v", b)
 	}
@@ -216,7 +216,7 @@ func TestQuestionsAnswerFlow(t *testing.T) {
 		t.Fatalf("after its envelope: %+v", b)
 	}
 	// Late results never move an answered question back.
-	q.Sent("call_3", []int{0}, false)
+	q.Sent("call_3", []int{0}, "t1", false)
 	q.Failed("call_3", []int{0}, "late")
 	if b := q.Batch("call_3").Questions[0]; b.State != QAnswered || b.Error != "" {
 		t.Fatalf("after late results: %+v", b)
@@ -236,7 +236,7 @@ func TestQuestionsUnconfirmedSendStaysSent(t *testing.T) {
 	if _, err := q.Begin("call_3", []Reply{{Index: 0, Text: "x"}}); err != nil {
 		t.Fatal(err)
 	}
-	q.Sent("call_3", []int{0}, true)
+	q.Sent("call_3", []int{0}, "", true)
 	if b := q.Batch("call_3").Questions[0]; b.State != QSent || !b.Unconfirmed {
 		t.Fatalf("unconfirmed: %+v", b)
 	}
@@ -287,5 +287,60 @@ func TestQuestionsAreBounded(t *testing.T) {
 	}
 	if q.Batch("call_aa") != nil {
 		t.Fatal("the oldest batch was kept")
+	}
+}
+
+// A turn that ends without the bridge's user message dropped its answer
+// (interrupted before the next model request): the question is sent and
+// undelivered, and may be answered again; nothing re-sends it by itself.
+func TestQuestionsUndelivered(t *testing.T) {
+	q := NewQuestions("th")
+	q.Observe("t1", asyncItem("call_3", contextQ, contextQ), OriginLive)
+	if _, err := q.Begin("call_3", []Reply{{Index: 0, Text: "a"}, {Index: 1, Text: "b"}}); err != nil {
+		t.Fatal(err)
+	}
+	q.Sent("call_3", []int{0, 1}, "t1", false)
+	// Index 1 is delivered (its user message comes before the turn ends).
+	q.Observe("t1", userItem("u", NewClientID(), ReplyEnvelope(Answer{MessageID: "call_3", Index: 1, Answer: "b"})), OriginLive)
+	if q.TurnEnded("t0") || !q.TurnEnded("t1") {
+		t.Fatal("TurnEnded reported the wrong change")
+	}
+	b := q.Batch("call_3")
+	if x := b.Questions[0]; x.State != QSent || !x.Undelivered {
+		t.Fatalf("dropped answer = %+v", x)
+	}
+	if x := b.Questions[1]; x.State != QAnswered || x.Undelivered {
+		t.Fatalf("delivered answer = %+v", x)
+	}
+	if _, err := q.Begin("call_3", []Reply{{Index: 1, Text: "b"}}); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("re-answering an answered question: %v", err)
+	}
+	if _, err := q.Begin("call_3", []Reply{{Index: 0, Text: "again"}}); err != nil {
+		t.Fatalf("re-answering an undelivered question: %v", err)
+	}
+	if x := q.Batch("call_3").Questions[0]; x.State != QSending || x.Undelivered {
+		t.Fatalf("re-sent = %+v", x)
+	}
+	// Accepted into a turn that has already ended: undelivered at once.
+	q.Sent("call_3", []int{0}, "t1", false)
+	if x := q.Batch("call_3").Questions[0]; !x.Undelivered {
+		t.Fatalf("sent into an ended turn = %+v", x)
+	}
+	// An unconfirmed send is never undelivered (its turn is unknown).
+	q.Observe("t2", asyncItem("call_5", contextQ), OriginLive)
+	q.Begin("call_5", []Reply{{Index: 0, Text: "x"}})
+	q.Sent("call_5", []int{0}, "", true)
+	q.TurnEnded("t2")
+	if x := q.Batch("call_5").Questions[0]; x.Undelivered {
+		t.Fatalf("unconfirmed = %+v", x)
+	}
+	// The history: the turn it went to ended without it.
+	h := NewQuestions("th")
+	h.Observe("t4", asyncItem("call_7", contextQ), OriginLive)
+	h.Begin("call_7", []Reply{{Index: 0, Text: "x"}})
+	h.Sent("call_7", []int{0}, "t4", false)
+	h.Hydrate([]Turn{{ID: "t4", Status: "interrupted", Items: []Item{asyncItem("call_7", contextQ)}}})
+	if x := h.Batch("call_7").Questions[0]; !x.Undelivered {
+		t.Fatalf("after hydration = %+v", x)
 	}
 }

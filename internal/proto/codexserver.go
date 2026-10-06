@@ -128,6 +128,9 @@ type CodexQuestion struct {
 	AnsweredBy string `json:"answered_by,omitempty"`
 	// Unconfirmed: sent, but no response came from the server.
 	Unconfirmed bool `json:"unconfirmed,omitempty"`
+	// Undelivered: sent, but the turn it went to ended without it (Codex
+	// dropped it); worker.answer_async may send it again.
+	Undelivered bool `json:"undelivered,omitempty"`
 	// Error: why the bridge's last answer was refused (pending again).
 	Error string `json:"error,omitempty"`
 	// Truncated: the title, an option or the answer was cut for the wire.

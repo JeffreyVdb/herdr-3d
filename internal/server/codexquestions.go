@@ -96,6 +96,9 @@ func (h *Hub) codexNotification(id string, cw *codexWatch, method string, params
 		if cw.turn == n.Turn.ID {
 			cw.turn = ""
 		}
+		// An answer the turn never delivered is undelivered (an interrupt
+		// before the next model request drops a steered input).
+		h.threadQuestions(id, cw.thread).TurnEnded(n.Turn.ID)
 	case "thread/status/changed":
 		if n.Status.Type != codexapp.ThreadActive {
 			cw.turn = ""
@@ -127,7 +130,8 @@ func (h *Hub) questionsView(id string) []proto.CodexBatch {
 		v := proto.CodexBatch{Batch: b.ID, Turn: b.Turn, Seen: b.Seen, Twin: b.Twin, Conflict: b.Conflict, At: b.At.UnixMilli(),
 			Questions: make([]proto.CodexQuestion, 0, len(b.Questions))}
 		for i, x := range b.Questions {
-			cq := proto.CodexQuestion{Index: i, State: string(x.State), AnsweredBy: x.AnsweredBy, Unconfirmed: x.Unconfirmed}
+			cq := proto.CodexQuestion{Index: i, State: string(x.State), AnsweredBy: x.AnsweredBy, Unconfirmed: x.Unconfirmed,
+				Undelivered: x.Undelivered}
 			var cut [4]bool
 			cq.Title, cut[0] = cutBytes(x.Title, maxAsyncTitle)
 			cq.Answer, cut[1] = cutBytes(x.Answer, maxAsyncAnswer)
@@ -312,9 +316,12 @@ func (h *Hub) answerAsync(ctx context.Context, a proto.WorkerAnswerAsyncArgs, re
 		if h.cx.questions[a.ID] != s.q { // the thread changed meanwhile
 			return
 		}
-		if err == nil || unconfirmed {
-			s.q.Sent(a.Batch, s.indexes, unconfirmed)
-		} else {
+		switch {
+		case err == nil:
+			s.q.Sent(a.Batch, s.indexes, res.Turn, false)
+		case unconfirmed:
+			s.q.Sent(a.Batch, s.indexes, "", true)
+		default:
 			s.q.Failed(a.Batch, s.indexes, err.Error())
 		}
 		h.refreshCodex(a.ID)

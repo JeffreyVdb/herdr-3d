@@ -479,3 +479,41 @@ func TestSharedCodexRejoinsAfterGivingUp(t *testing.T) {
 		t.Fatalf("a join refused for good was tried again: %d joins", n)
 	}
 }
+
+// An answer steered into a turn that ended before delivering it (an
+// interrupt before the next model request drops it,
+// TestCodexShareAsyncAnswers) is undelivered: sent, never re-sent by
+// itself, and the user may send it again. One that came back stays
+// answered.
+func TestAsyncAnswerUndeliveredMayBeSentAgain(t *testing.T) {
+	sb, a := asyncWorker(t)
+	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", contextQ, contextQ)))
+	sb.stateIs(t, "call_3", 1, proto.AsyncPending)
+	sb.c.mustAck(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "dropped")))
+	sb.c.mustAck(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(1, "delivered")))
+	sends := sb.sent()
+	sb.emit(itemDone("t1", userItem("u", sends[1].cid, sends[1].text)), turnCompleted("t1"))
+	c := sb.codexWorker(t, func(c *proto.WorkerCodex) bool {
+		b := batchOf(*c, "call_3")
+		return b != nil && b.Questions[0].Undelivered
+	})
+	if q := batchOf(c, "call_3").Questions; q[0].State != proto.AsyncSent || q[1].State != proto.AsyncAnswered || q[1].Undelivered {
+		t.Fatalf("questions = %+v", q)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := len(sb.sent()); n != 2 {
+		t.Fatalf("re-sent by itself: %d sends", n)
+	}
+	sb.c.mustError(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(1, "again")), proto.ErrStale)
+	_, m := sb.c.command(proto.CmdWorkerAnswerAsync, "again", answerArgs(a.ID, "call_3", ans(0, "again")))
+	if res := ackData[proto.AsyncAnswerResult](t, m); res.Via != "turn/start" {
+		t.Fatalf("ack = %+v", res)
+	}
+	c = sb.stateIs(t, "call_3", 0, proto.AsyncSent)
+	if batchOf(c, "call_3").Questions[0].Undelivered {
+		t.Fatalf("still undelivered after the second send: %+v", batchOf(c, "call_3").Questions[0])
+	}
+	if n := len(sb.sent()); n != 3 {
+		t.Fatalf("%d sends", n)
+	}
+}
