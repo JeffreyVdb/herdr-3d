@@ -941,6 +941,7 @@ export class Laptops {
         this.syncAsk(askOf(v.worker)); // #57
         this.syncCodex(codexNotice(v.worker)); // #155
         this.transcript.followedUp(followupOf(v.worker)); // #90
+        this.transcript.codexSeen(v.worker.codex ?? null); // #157: its async questions
         this.transcript.usageSeen(v.worker.usage ?? null); // #101: its context meter (the worker's usage is replaced, not edited, when it changes)
       }
     }

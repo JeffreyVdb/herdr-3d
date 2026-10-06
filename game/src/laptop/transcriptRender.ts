@@ -1,8 +1,10 @@
 import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
-import type { Ask, CommandArgs, Followup, TranscriptDiff, TranscriptItem, Usage } from '../net/protocol';
+import type { Ask, CommandArgs, Followup, TranscriptDiff, TranscriptItem, Usage, WorkerCodex } from '../net/protocol';
 import { AskCard, askItem, type AskResult } from './askCard';
+import { AsyncCard, type AsyncResult } from './asyncCard';
+import { AsyncDrafts } from './asyncDrafts';
 import { isSendKey } from './askStack';
 import { FollowupCard, type FollowupResult } from './followupCard';
 import type { ImageFeed } from './imageFeed';
@@ -49,6 +51,12 @@ export interface TranscriptRenderHost {
   onAnswerFollowup?(args: CommandArgs['worker.answer_followup']): Promise<FollowupResult>;
   /** #90: dismisses them. */
   onDismissFollowup?(turnId: string): Promise<FollowupResult>;
+  /** #157: answers a Codex worker's async questions (none: the card cannot send). */
+  onAnswerAsync?(args: CommandArgs['worker.answer_async']): Promise<AsyncResult>;
+  /** #157: hides them in the bridge. */
+  onDismissAsync?(args: CommandArgs['worker.dismiss_async']): Promise<AsyncResult>;
+  /** #157: what you wrote for them, kept by the host across views (none: this view's own, which goes with it). */
+  asyncDrafts?: AsyncDrafts;
   onSwitchToTerminal(): void;
   loadSubagent(agentId: string): Promise<TranscriptItem[]>;
   /** #58: a refused prompt's row is dismissed. */
@@ -92,6 +100,8 @@ export interface TranscriptView {
   setAsk(ask: Ask | null): void;
   /** #90: the open questions of the agent's final message (null: none): a card above the prompt box, which stays on. */
   setFollowup(f: Followup | null): void;
+  /** #157: the worker's Codex launch (null: none): its async questions, on a card above the prompt box, which stays on. */
+  setCodex(worker: string, codex: WorkerCodex | null): void;
   /** The mode's tab strip (Conversation | Images), put in the bar after the title. */
   attachTabs(tabs: HTMLElement): void;
   /** Is the item in the timeline (loaded)? */
@@ -679,6 +689,7 @@ class Transcript implements TranscriptView {
   private blocked: BlockedQuestion | null = null;
   private readonly ask: AskCard;
   private readonly followup: FollowupCard; // #90
+  private readonly asyncq: AsyncCard; // #157
   /** Whether the banner and the prompt box were last drawn with the card up. */
   private asking = false;
   private destroyed = false;
@@ -745,8 +756,9 @@ class Transcript implements TranscriptView {
         this.stick();
         // Shown or gone (also by itself, once its answer is recorded): the prompt box follows.
         if (this.asking !== this.ask.shown) this.renderBanner();
-        // #90: the follow-up card waits behind a question's.
+        // #90: the follow-up card waits behind a question's; #157: so does the async questions'.
         this.followup?.suppress(this.ask.shown);
+        this.asyncq?.suppress(this.ask.shown);
       },
     });
     const noFollowup = (): Promise<FollowupResult> => Promise.resolve({ ok: false, code: 'unsupported', message: 'Not available here.' });
@@ -757,6 +769,19 @@ class Transcript implements TranscriptView {
       resized: () => {
         // A very short screen gives the card the timeline's room while it is up (transcript.css).
         this.root?.toggleAttribute('data-followup', this.followup.shown);
+        this.stick();
+      },
+    });
+    const noAsync = (): Promise<AsyncResult> => Promise.resolve({ ok: false, code: 'unsupported', message: 'Not available here.' });
+    this.asyncq = new AsyncCard({
+      answer: (args) => (host.onAnswerAsync ? host.onAnswerAsync(args) : noAsync()),
+      dismiss: (args) => (host.onDismissAsync ? host.onDismissAsync(args) : noAsync()),
+      toTerminal: () => host.onSwitchToTerminal(),
+      focusTimeline: () => this.focus(),
+      drafts: host.asyncDrafts ?? new AsyncDrafts(null),
+      resized: () => {
+        // A very short screen gives the card the timeline's room while it is up (transcript.css), as the follow-up's.
+        this.root?.toggleAttribute('data-asyncq', this.asyncq.shown);
         this.stick();
       },
     });
@@ -807,7 +832,7 @@ class Transcript implements TranscriptView {
     );
     // The preset and the zoom keep together at the strip's end; a narrow screen wraps them to a line of their own.
     const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, this.busy, this.ctxEl, h('div', { class: 'tx-look' }, picker, zoom));
-    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, this.followup.el, form, this.live);
+    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, this.followup.el, this.asyncq.el, this.asyncq.live, form, this.live);
     this.unprefs = this.prefs.onChange((what) => this.applyPrefs(what));
     this.applyPrefs(null);
     this.updateCounts();
@@ -867,11 +892,17 @@ class Transcript implements TranscriptView {
     // (the banner and the prompt box are redrawn when it shows or goes, through its resized()).
     this.ask.set(ask);
     this.followup.suppress(this.ask.shown);
+    this.asyncq.suppress(this.ask.shown);
   }
 
   setFollowup(f: Followup | null): void {
     if (this.destroyed) return;
     this.followup.set(f);
+  }
+
+  setCodex(worker: string, codex: WorkerCodex | null): void {
+    if (this.destroyed) return;
+    this.asyncq.set(worker, codex);
   }
 
   setUsage(usage: Usage | null): void {
@@ -992,6 +1023,7 @@ class Transcript implements TranscriptView {
     this.thumbs.destroy();
     this.ask.destroy();
     this.followup.destroy();
+    this.asyncq.destroy();
     // The composer's own draft goes with the view: its uploads are cancelled, its object URLs revoked. The host's
     // (#141) stays for the next view of this worker.
     this.offSending();
@@ -1548,10 +1580,12 @@ class Transcript implements TranscriptView {
     const target = e.target as HTMLElement | null;
     const inCard = !!target && this.ask.el.contains(target);
     const inFollowup = !!target && this.followup.el.contains(target);
-    // Ctrl/⌘+Enter sends the pinned card's answers, from the card or from the timeline (the ask's card goes first).
+    const inAsync = !!target && this.asyncq.el.contains(target); // #157
+    // Ctrl/⌘+Enter sends the pinned card's answers, from the card or from the timeline (the ask's card goes first, then
+    // the follow-up's, then the async questions': the card you are on, if any).
     if (isSendKey(e)) {
-      const card = this.ask.shown ? (inFollowup ? null : this.ask) : this.followup.shown ? this.followup : null;
-      if (card?.key(e, card === this.ask ? inCard : inFollowup)) {
+      const card = inAsync ? this.asyncq : this.ask.shown ? (inFollowup ? null : this.ask) : this.followup.shown ? this.followup : this.asyncq.shown ? this.asyncq : null;
+      if (card?.key(e, card === this.ask ? inCard : card === this.followup ? inFollowup : inAsync)) {
         e.preventDefault();
         e.stopPropagation();
       }
@@ -1565,8 +1599,13 @@ class Transcript implements TranscriptView {
       e.stopPropagation();
       return;
     }
-    // #90: the same on the follow-up card.
+    // #90: the same on the follow-up card; #157: and on the async questions'.
     if (inFollowup && this.followup.key(e, true)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (inAsync && this.asyncq.key(e, true)) {
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -1584,6 +1623,13 @@ class Transcript implements TranscriptView {
     }
     // #90: and the follow-up card's digits and ← → (Tab and Enter stay the page's: the focus, the prompt box).
     if (!inFollowup && !this.ask.shown && this.followup.shown && this.followup.key(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    // #157: then the async questions' digits and ← → (behind the ask's and the follow-up's; never the screen
+    // question's digits, which the banner of a real block keeps).
+    if (!inAsync && !this.ask.shown && !this.followup.shown && !this.blocked && this.asyncq.shown && this.asyncq.key(e)) {
       e.preventDefault();
       e.stopPropagation();
       return;

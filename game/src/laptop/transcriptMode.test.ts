@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
-import type { Ask, Followup, Question, TranscriptItem, Usage } from '../net/protocol';
+import type { Ask, Followup, Question, TranscriptItem, Usage, WorkerCodex } from '../net/protocol';
 import { ImageFeed } from './imageFeed';
 import { hasTranscript, subagentItems, TranscriptMode, type MountTranscript, type SeatMode, type TranscriptRenderHost } from './transcriptMode';
 import { TranscriptWatches, watchAck } from './transcriptWatches';
@@ -43,6 +43,9 @@ class FakeView {
   }
   setFollowup(f: Followup | null): void {
     this.calls.push(`followup ${f?.turn_id ?? 'null'}`);
+  }
+  setCodex(worker: string, c: WorkerCodex | null): void {
+    this.calls.push(`codex ${worker} ${c?.questions?.map((b) => b.batch).join(',') ?? 'null'}`);
   }
   setUsage(u: Usage | null): void {
     this.calls.push(`usage ${u?.context_pct ?? 'null'}`);
@@ -229,6 +232,48 @@ describe('TranscriptMode', () => {
     h.tx.sit('b', 'Bo');
     await flush();
     expect((h.views[1] as FakeView).host.usage).toBeNull();
+  });
+
+  it('#157: a Codex worker’s async questions reach the view once per change and on mount; answers go to the bridge, refusals in words', async () => {
+    const shared = (state: 'pending' | 'sent', extra: Partial<WorkerCodex> = {}): WorkerCodex => ({
+      mode: 'shared',
+      server: 'running',
+      attached: true,
+      thread: 'th1',
+      turn: 't1',
+      questions: [{ batch: 'call_3', turn: 't1', seen: ['live'], at: 1, questions: [{ index: 0, title: 'Color?', state }] }],
+      ...extra,
+    });
+    const h = harness();
+    h.tx.sit('a', 'Ada');
+    h.tx.codexSeen(shared('pending')); // the view is still loading: replayed on mount
+    await flush();
+    const view = h.views[0] as FakeView;
+    expect(view.calls.filter((c) => c.startsWith('codex'))).toEqual(['codex a call_3']);
+    expect(view.host.asyncDrafts).toBeDefined();
+    // The same again (a frame, another field of the launch): nothing; a state, the thread or the turn: a change.
+    h.tx.codexSeen(shared('pending'));
+    h.tx.codexSeen(shared('pending', { server: 'down', note: 'x' }));
+    h.tx.codexSeen(shared('sent'));
+    h.tx.codexSeen(shared('sent', { turn: '' }));
+    // A legacy launch has no card: none.
+    h.tx.codexSeen({ mode: 'legacy' });
+    h.tx.codexSeen(null);
+    expect(view.calls.filter((c) => c.startsWith('codex'))).toEqual(['codex a call_3', 'codex a call_3', 'codex a call_3', 'codex a null']);
+    const answered = view.host.onAnswerAsync?.({ id: '', thread: 'th1', batch: 'call_3', answers: [{ index: 0, answer: 'Green' }] });
+    const hidden = view.host.onDismissAsync?.({ id: '', thread: 'th1', batch: 'call_3' });
+    expect(h.sent.map((x) => [x.t, x.args])).toEqual([
+      ['worker.answer_async', { id: 'a', thread: 'th1', batch: 'call_3', answers: [{ index: 0, answer: 'Green' }] }],
+      ['worker.dismiss_async', { id: 'a', thread: 'th1', batch: 'call_3' }],
+    ]);
+    h.sent[0]?.resolve({ ok: true, data: { state: 'sent', via: 'turn/steer' } });
+    h.sent[1]?.resolve({ ok: false, code: 'stale', message: 'stale: unknown batch' });
+    await expect(answered).resolves.toEqual({ ok: true });
+    await expect(hidden).resolves.toEqual({ ok: false, code: 'stale', message: 'Not hidden: the question changed meanwhile. The card shows it as it is now.' });
+    expect(h.status).toEqual([
+      ['ok', 'Sent your answer to Ada'],
+      ['error', 'Not hidden: the question changed meanwhile. The card shows it as it is now.'],
+    ]);
   });
 
   it('wires prompts, answers, the switch back and subagents to the bridge', async () => {
