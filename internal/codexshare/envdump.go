@@ -28,7 +28,7 @@ func dumpKey(k string) bool {
 	case "PATH", "HOME", "SHELL", "HERDR_PANE_ID", "CODEX_HOME", "DIRENV_DIR":
 		return true
 	}
-	return strings.HasPrefix(k, "H3D_") && k != EnvDumpVar
+	return strings.HasPrefix(k, "H3D_") && k != EnvDumpVar && k != OwnerVar
 }
 
 // Snapshot records the current process's cwd and recorded variables.

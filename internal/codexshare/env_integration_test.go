@@ -180,7 +180,7 @@ func TestCodexShareEnvironment(t *testing.T) {
 		th := f.tuiThread(c).ID
 		c.Close()
 		f.exitTUI(panes["ws-b"])
-		for _, pid := range ownedPIDs("app-server --listen unix://" + filepath.Join(f.root, "own-ws-b.sock")) {
+		for _, pid := range f.owned("app-server --listen unix://" + filepath.Join(f.root, "own-ws-b.sock")) {
 			_ = syscall.Kill(pid, syscall.SIGTERM)
 		}
 		time.Sleep(time.Second)
@@ -242,7 +242,7 @@ func TestCodexShareEnvironment(t *testing.T) {
 // daemon runs `codex app-server daemon <verb>` for the fixture's home only.
 func (f *fx) daemon(verb string) string {
 	cmd := exec.Command("codex", "app-server", "daemon", verb)
-	cmd.Env = CleanEnv(os.Environ(), "CODEX_HOME="+f.home)
+	cmd.Env = CleanEnv(os.Environ(), "CODEX_HOME="+f.home, OwnerVar+"="+f.owner)
 	out, _ := cmd.CombinedOutput()
 	return scrub(f, string(out))
 }
@@ -254,7 +254,7 @@ func (f *fx) daemonStop() { f.record("daemon-stop.txt", f.daemon("stop")) }
 // daemonPID is the fixture home's managed daemon process.
 func (f *fx) daemonPID() int {
 	f.t.Helper()
-	pids := ownedPIDs(filepath.Join(f.home, "packages"))
+	pids := f.owned(filepath.Join(f.home, "packages") + "/")
 	for _, pid := range pids {
 		raw, _ := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
 		if strings.Contains(string(raw), "app-server") {

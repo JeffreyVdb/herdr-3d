@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -41,6 +40,7 @@ type fx struct {
 	t      *testing.T
 	ctx    context.Context
 	root   string
+	owner  string // OwnerVar's value in every process the fixture starts
 	home   string
 	xdg    string // XDG_CONFIG_HOME of the panes: the fixture's fish config
 	data   string // XDG_DATA_HOME of the panes: direnv's allow list
@@ -82,7 +82,7 @@ func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fx{t: t, ctx: ctx, root: root, home: filepath.Join(root, "home"), xdg: filepath.Join(root, "xdg"),
+	f := &fx{t: t, ctx: ctx, root: root, owner: NewOwner(), home: filepath.Join(root, "home"), xdg: filepath.Join(root, "xdg"),
 		data: filepath.Join(root, "data"), mcpDir: filepath.Join(root, "mcp")}
 	t.Cleanup(func() {
 		f.killOwned()
@@ -149,14 +149,16 @@ func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
 			t.Fatal(err)
 		}
 		extra += "\n[mcp_servers.envdump]\ncommand = " + TOMLString(exe) + "\n" +
-			"env_vars = [\"H3D_DIRENV_SENTINEL\", \"H3D_PANE_SENTINEL\", \"H3D_WRAPPER_SENTINEL\", \"H3D_FISH_SENTINEL\", \"HERDR_PANE_ID\"]\n" +
+			"env_vars = [\"H3D_DIRENV_SENTINEL\", \"H3D_PANE_SENTINEL\", \"H3D_WRAPPER_SENTINEL\", \"H3D_FISH_SENTINEL\", \"HERDR_PANE_ID\", \"" + OwnerVar + "\"]\n" +
 			"startup_timeout_sec = 20\n" +
 			"[mcp_servers.envdump.env]\n" + EnvDumpVar + " = " + TOMLString(f.mcpDir) + "\n"
 	}
 	if err := WriteHome(f.home, HomeOptions{MockURL: f.mock.URL(), Trusted: trusted, ApprovalPolicy: o.approval, Sandbox: o.sandbox, Top: o.top, Extra: extra}); err != nil {
 		t.Fatal(err)
 	}
-	f.h, err = StartHerdr(ctx, root, os.Environ(), "CODEX_HOME="+f.home)
+	// The session server's environment reaches its panes, so the marker
+	// reaches everything they run: TUIs, app-servers, daemons, tools.
+	f.h, err = StartHerdr(ctx, root, os.Environ(), "CODEX_HOME="+f.home, OwnerVar+"="+f.owner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,42 +255,24 @@ func (f *fx) waitSocket(sock string) {
 // serverPID finds the app-server process listening on sock.
 func (f *fx) serverPID(sock string) int {
 	f.t.Helper()
-	pids := ownedPIDs("app-server --listen unix://" + sock)
+	pids := f.owned("app-server --listen unix://" + sock)
 	if len(pids) == 0 {
 		f.t.Fatalf("no app-server process for %s", sock)
 	}
 	return pids[len(pids)-1]
 }
 
-// ownedPIDs lists processes whose command line contains substr.
-func ownedPIDs(substr string) []int {
-	entries, _ := os.ReadDir("/proc")
-	var out []int
-	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil || pid == os.Getpid() {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
-		if err != nil {
-			continue
-		}
-		if strings.Contains(strings.ReplaceAll(string(raw), "\x00", " "), substr) {
-			out = append(out, pid)
-		}
-	}
-	return out
+// owned lists the fixture's own processes (OwnerVar=f.owner) whose command
+// line contains substr ("" for all of them).
+func (f *fx) owned(substr string) []int {
+	return OwnedPIDs(f.owner, substr)
 }
 
-// killOwned ends every process the test left whose command line names its
-// root (worker-owned app-servers, MCP children, temp-home daemons).
+// killOwned ends every process the test left (worker-owned app-servers,
+// MCP children, temp-home daemons): only those carrying its owner marker.
 func (f *fx) killOwned() {
-	for _, pid := range ownedPIDs(f.root) {
-		_ = syscall.Kill(pid, syscall.SIGTERM)
-	}
-	time.Sleep(300 * time.Millisecond)
-	for _, pid := range ownedPIDs(f.root) {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
+	if left := KillOwned(f.owner); len(left) != 0 {
+		f.t.Errorf("processes %v survived SIGKILL", left)
 	}
 }
 
