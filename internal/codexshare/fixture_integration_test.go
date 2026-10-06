@@ -205,21 +205,23 @@ func (f *fx) pane(ws string) string {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	f.shell(pane, "echo READY-"+ws, "READY-"+ws)
+	f.shell(pane, "true")
 	return pane
 }
 
-// shell runs a fish command line in an idle pane and waits for marker.
-func (f *fx) shell(pane, command, marker string) {
+// shell runs a fish command line in an idle pane and waits until it has
+// finished: it prints a marker the typed command line itself does not
+// contain (wait-output also sees the echoed command).
+func (f *fx) shell(pane, command string) {
 	f.t.Helper()
-	if err := f.h.PaneRun(f.ctx, pane, command); err != nil {
+	f.n++
+	id := strconv.Itoa(f.n)
+	if err := f.h.PaneRun(f.ctx, pane, command+"; printf '%s-%s\\n' H3DDONE "+id); err != nil {
 		f.t.Fatal(err)
 	}
-	if marker != "" {
-		if err := f.h.WaitOutput(f.ctx, pane, marker, 20*time.Second); err != nil {
-			screen, _ := f.h.Read(f.ctx, pane, "recent-unwrapped", 40)
-			f.t.Fatalf("waiting for %q: %v\n%s", marker, err, screen)
-		}
+	if err := f.h.WaitOutput(f.ctx, pane, "H3DDONE-"+id, 60*time.Second); err != nil {
+		screen, _ := f.h.Read(f.ctx, pane, "recent-unwrapped", 40)
+		f.t.Fatalf("waiting for %q: %v\n%s", command, err, screen)
 	}
 }
 
@@ -230,7 +232,7 @@ func (f *fx) startServer(pane, name string) string {
 	f.t.Helper()
 	sock := filepath.Join(f.root, name+".sock")
 	log := filepath.Join(f.root, name+".log")
-	f.shell(pane, fmt.Sprintf("setsid -f fish -c 'codex app-server --listen unix://%s' </dev/null >%s 2>&1; echo LAUNCHED-%s", sock, log, name), "LAUNCHED-"+name)
+	f.shell(pane, fmt.Sprintf("setsid -f fish -c 'codex app-server --listen unix://%s' </dev/null >%s 2>&1", sock, log))
 	f.waitSocket(sock)
 	return sock
 }

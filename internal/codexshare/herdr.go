@@ -28,6 +28,7 @@ type Herdr struct {
 	Name string
 	Env  []string // the server's and the CLI's environment
 
+	dir    string
 	srv    *exec.Cmd
 	exited chan struct{}
 }
@@ -41,37 +42,51 @@ func StartHerdr(ctx context.Context, dir string, env []string) (*Herdr, error) {
 	}
 	var rnd [4]byte
 	_, _ = rand.Read(rnd[:])
-	h := &Herdr{Bin: bin, Name: SessionPrefix + hex.EncodeToString(rnd[:]), Env: CleanEnv(env, "SHELL=/bin/fish"), exited: make(chan struct{})}
-	logf, err := os.Create(filepath.Join(dir, "herdr-server.log"))
+	h := &Herdr{Bin: bin, Name: SessionPrefix + hex.EncodeToString(rnd[:]), Env: CleanEnv(env, "SHELL=/bin/fish"), dir: dir}
+	return h, h.start(ctx)
+}
+
+// start runs the session's server and waits until it answers.
+func (h *Herdr) start(ctx context.Context) error {
+	logf, err := os.OpenFile(filepath.Join(h.dir, "herdr-server.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	h.srv = exec.Command(bin, "--session", h.Name, "server")
-	h.srv.Env, h.srv.Dir = h.Env, dir
+	h.exited = make(chan struct{})
+	h.srv = exec.Command(h.Bin, "--session", h.Name, "server")
+	h.srv.Env, h.srv.Dir = h.Env, h.dir
 	h.srv.Stdout, h.srv.Stderr = logf, logf
 	h.srv.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := h.srv.Start(); err != nil {
 		logf.Close()
-		return nil, err
+		return err
 	}
-	go func() { _ = h.srv.Wait(); logf.Close(); close(h.exited) }()
+	exited := h.exited
+	go func() { _ = h.srv.Wait(); logf.Close(); close(exited) }()
 	for {
 		if _, err := h.Run(ctx, "workspace", "list"); err == nil {
-			return h, nil
+			return nil
 		}
 		select {
 		case <-ctx.Done():
 			h.Close()
-			return nil, fmt.Errorf("herdr session %s did not come up: %w", h.Name, ctx.Err())
-		case <-h.exited:
-			return nil, fmt.Errorf("herdr session %s exited at startup", h.Name)
+			return fmt.Errorf("herdr session %s did not come up: %w", h.Name, ctx.Err())
+		case <-exited:
+			return fmt.Errorf("herdr session %s exited at startup", h.Name)
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
 }
 
-// Close stops and deletes the session (only this session, by name).
-func (h *Herdr) Close() {
+// Restart stops the session the way herdr-3d's floor sleep does (Herdr
+// saves it and ends its panes) and starts it again, so Herdr restores its
+// workspaces and resumes their agents.
+func (h *Herdr) Restart(ctx context.Context) error {
+	h.stop()
+	return h.start(ctx)
+}
+
+func (h *Herdr) stop() {
 	h.cli("session", "stop", h.Name, "--json")
 	select {
 	case <-h.exited:
@@ -83,6 +98,11 @@ func (h *Herdr) Close() {
 			_ = h.srv.Process.Kill()
 		}
 	}
+}
+
+// Close stops and deletes the session (only this session, by name).
+func (h *Herdr) Close() {
+	h.stop()
 	h.cli("session", "delete", h.Name, "--json")
 }
 
