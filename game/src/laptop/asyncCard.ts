@@ -1,6 +1,6 @@
 import type { CodexQuestion, CommandArgs, WorkerCodex } from '../net/protocol';
 import { h } from '../ui/dom';
-import { answerAsyncArgs, answerProblem, asyncBatches, phaseAnnouncement, phaseText, questionWord, replyPhase, wantsAnswer, type AsyncCardBatch, type ReplyPhase } from '../world/codexQuestions';
+import { answerAsyncArgs, answerProblem, asyncBatches, cutOptions, phaseAnnouncement, phaseText, questionWord, replyPhase, wantsAnswer, type AsyncCardBatch, type ReplyPhase } from '../world/codexQuestions';
 import { focusQuestion, isSendKey, mark, moveIn, openQuestion, reveal, SEND_KEY } from './askStack';
 import type { AsyncDrafts } from './asyncDrafts';
 import { zoomKey } from './keys';
@@ -218,9 +218,14 @@ export class AsyncCard {
     return !!this.busy.get(b.key)?.has(q.index) || this.guard.get(k) === this.gen(k);
   }
 
-  /** It can take an answer from here now. */
+  /** It can take an answer from here now (not one whose suggested answers came cut: the terminal has them whole). */
   private answerable(b: AsyncCardBatch, q: CodexQuestion): boolean {
-    return !b.readOnly && wantsAnswer(q) && !this.inFlight(b, q);
+    return !b.readOnly && wantsAnswer(q) && !cutOptions(q) && !this.inFlight(b, q);
+  }
+
+  /** Waits for an answer that only the terminal can give: one of its suggested answers came cut. */
+  private termOnly(b: AsyncCardBatch, q: CodexQuestion): boolean {
+    return !b.readOnly && wantsAnswer(q) && cutOptions(q);
   }
 
   /** What would go for question q (null: nothing yet). */
@@ -721,6 +726,7 @@ export class AsyncCard {
     }
     const { phase, text: said } = this.phaseOf(b, q);
     const state = said ? h('div', { class: 'tx-aq-state', 'data-phase': phase }, said) : null;
+    const cut = this.termOnly(b, q) ? h('p', { class: 'tx-aq-ro' }, 'One of its suggested answers was shortened on its way here, so this card cannot send it. Answer this question in the terminal.') : null;
     const el = openQuestion(
       {
         index: pos,
@@ -732,6 +738,7 @@ export class AsyncCard {
         qid,
       },
       state,
+      cut,
       list,
       text,
     );
@@ -746,7 +753,8 @@ export class AsyncCard {
     const opts = q && this.answerable(b, q) ? (q.options ?? []).length : 0;
     const several = this.batches().reduce((n, x) => n + this.listed(x).length, 0) > 1;
     const keys = `${opts ? `1–${opts} or ↑↓ Enter pick · ` : ''}${several ? '← → question · ' : ''}${answerableN ? `${SEND_KEY} send · ` : ''}Esc back`;
-    const hint = b.readOnly
+    const termOnly = !answerableN && qs.some((x) => this.termOnly(b, x));
+    const hint = b.readOnly || termOnly
       ? 'Answer it in the terminal'
       : sending
         ? 'Sending your answers to Codex…'
@@ -768,18 +776,20 @@ export class AsyncCard {
       const hideable = qs.some((x) => (x.state === 'pending' || x.state === 'sent') && !this.inFlight(b, x));
       actions.push(
         h('button', { class: 'tx-link tx-ask-dismiss tx-aq-hide', 'data-key': 'hide', disabled: sending || !hideable, title: 'Hide these questions on this card. Codex still has them: nothing is sent to it.', onclick: () => this.hide() }, 'Hide'),
-        h(
-          'button',
-          {
-            class: `tx-ask-send${readyN ? '' : ' is-blocked'}`,
-            'data-key': 'send',
-            disabled: sending || !answerableN,
-            'aria-disabled': sending || !answerableN ? null : String(!readyN),
-            onclick: () => this.trySend(),
-          },
-          sending ? 'Sending…' : this.sendLabel(readyN, answerableN),
-          sending ? null : h('kbd', { class: 'tx-ask-kbd' }, SEND_KEY),
-        ),
+        termOnly
+          ? h('button', { class: 'tx-ask-send tx-aq-act', 'data-key': 'term', onclick: () => this.host.toTerminal() }, 'Answer in the terminal')
+          : h(
+              'button',
+              {
+                class: `tx-ask-send${readyN ? '' : ' is-blocked'}`,
+                'data-key': 'send',
+                disabled: sending || !answerableN,
+                'aria-disabled': sending || !answerableN ? null : String(!readyN),
+                onclick: () => this.trySend(),
+              },
+              sending ? 'Sending…' : this.sendLabel(readyN, answerableN),
+              sending ? null : h('kbd', { class: 'tx-ask-kbd' }, SEND_KEY),
+            ),
       );
     }
     return h('div', { class: 'tx-ask-foot' }, h('span', { class: 'tx-ask-hint' }, h('span', { class: 'tx-ask-hint-text' }, hint), h('span', { class: 'tx-ask-keys' }, keys)), ...actions);

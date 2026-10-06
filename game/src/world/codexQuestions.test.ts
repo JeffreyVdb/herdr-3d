@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CodexBatch, CodexQuestion, WorkerCodex } from '../net/protocol';
-import { answerAsyncArgs, answerProblem, askingText, asyncAttention, asyncBatches, asyncBlockedOnly, effectiveStatus, phaseAnnouncement, phaseText, replyPhase, sharedCodex, wantsAnswer } from './codexQuestions';
+import { answerAsyncArgs, answerProblem, askingText, asyncAttention, asyncBatches, asyncBlockedOnly, cutOptions, effectiveStatus, phaseAnnouncement, phaseText, replyPhase, sharedCodex, wantsAnswer } from './codexQuestions';
 
 const q = (index: number, over: Partial<CodexQuestion> = {}): CodexQuestion => ({ index, title: `Question ${index}?`, state: 'pending', ...over });
 const batch = (id: string, questions: CodexQuestion[], over: Partial<CodexBatch> = {}): CodexBatch => ({ batch: id, turn: 't1', seen: ['live'], at: 1000, questions, ...over });
@@ -112,6 +112,14 @@ describe('what a reply’s state says', () => {
 });
 
 describe('an answer, checked as the bridge does', () => {
+  it('knows a suggested answer the bridge cut (1000 bytes, cut on a character): the terminal answers that question', () => {
+    expect(cutOptions({ options: ['Green', 'x'.repeat(1000)], truncated: true })).toBe(true);
+    expect(cutOptions({ options: ['Green', `${'x'.repeat(997)}é`], truncated: true })).toBe(true); // 999 bytes
+    expect(cutOptions({ options: ['Green', 'x'.repeat(1000)] })).toBe(false); // whole: exactly the limit
+    expect(cutOptions({ options: ['Green', 'Blue'], truncated: true })).toBe(false); // the title was cut
+    expect(cutOptions({ truncated: true })).toBe(false);
+  });
+
   it('takes one of the suggested answers exactly when there are some', () => {
     const withOpts = { options: ['Green', 'Blue'] };
     expect(answerProblem(withOpts, 'Green')).toBeNull();

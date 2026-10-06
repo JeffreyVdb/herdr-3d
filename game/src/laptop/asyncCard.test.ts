@@ -348,6 +348,24 @@ describe('AsyncCard (#157)', () => {
     expect(c.el.querySelector('[data-key="term"]')?.textContent).toBe('Answer in the terminal');
   });
 
+  it('sends the terminal a question whose suggested answer was shortened on its way here', () => {
+    const t = host();
+    const c = mount(t);
+    const long = 'x'.repeat(1000);
+    c.set(W, codex([batch('call_3', [color({ options: ['Green', long], truncated: true })])]));
+    expect(c.el.querySelector('.tx-ask-q .tx-aq-ro')?.textContent).toMatch(/^One of its suggested answers was shortened on its way here/);
+    expect([...c.el.querySelectorAll<HTMLButtonElement>('[role="radio"]')].every((r) => r.disabled)).toBe(true);
+    expect(press(c, '1')).toBe(false);
+    expect(send(c)).toBeNull();
+    expect(c.el.querySelector('.tx-ask-hint-text')?.textContent).toBe('Answer it in the terminal');
+    c.el.querySelector<HTMLButtonElement>('[data-key="term"]')!.click();
+    expect(t.terminal()).toBe(1);
+    expect(t.answers).toEqual([]);
+    // Beside a question it can answer: that one still goes from here.
+    c.set(W, codex([batch('call_3', [color({ options: ['Green', long], truncated: true }), context()])]));
+    expect(send(c)).not.toBeNull();
+  });
+
   it('shows nothing for a legacy worker', () => {
     const c = mount(host());
     c.set(W, { mode: 'legacy', questions: [batch('call_3', [color()])] });

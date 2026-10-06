@@ -196,6 +196,20 @@ export function phaseAnnouncement(q: CodexQuestion): string | null {
 /** The bridge's limit of one answer (bytes of UTF-8). */
 export const ASYNC_ANSWER_MAX = 4096;
 
+/** The bridge's limit of one suggested answer on the wire (bytes of UTF-8): a longer one comes cut to it, `truncated`. */
+export const ASYNC_OPTION_MAX = 1000;
+
+/**
+ * Was one of q's suggested answers cut on its way here? The question says one of its texts was (`truncated`), and an
+ * option is as long as a cut one can be (within a character of the limit). The bridge checks a reply against the
+ * whole option, which the game never saw: such a question is answered in the terminal.
+ */
+export function cutOptions(q: Pick<CodexQuestion, 'options' | 'truncated'>): boolean {
+  if (!q.truncated) return false;
+  const enc = new TextEncoder();
+  return (q.options ?? []).some((o) => enc.encode(o).length > ASYNC_OPTION_MAX - 4);
+}
+
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 // What Go's unicode.IsControl calls a control character (C0, DEL, C1), but the line end and the tab.
 const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
