@@ -7,10 +7,12 @@ tag `rust-v0.160.1`. Parent epic: #153.
 messages are in [`codex-shared-tui-evidence/`](codex-shared-tui-evidence/), one directory per test, with files numbered
 in capture order. The text cites a file by test and label, for example `Questions/active-after-steer-not-yet-delivered`.
 **[S]** marks a claim that rests on reading the source only. **[R-live]** marks a read-only observation of the user's real
-machine.
+machine. **[R-real]** marks a claim from the real-model smoke test (§9), whose evidence is in
+[`codex-shared-tui-evidence/RealModelSmoke/`](codex-shared-tui-evidence/RealModelSmoke/).
 
-All tests use mock inference. The one real-model smoke test against the user's shared daemon was **skipped for safety**
-(§9).
+The fixture tests use mock inference. One bounded real-model smoke test (§9) ran the phase-2 launch, a per-worker
+server on the user's real `~/.codex`, with `gpt-6.1-sol` at low effort, through Herdr only. The user's shared daemon was
+left alone; the test never connected to it.
 
 ## 0. The answer: does the terminal still work with a shared app server?
 
@@ -20,6 +22,13 @@ unix://…` and (b) the managed daemon mechanism (`codex app-server daemon start
 throwaway home). It holds **provided that the server is started from the worker's own initialized pane**. The shared
 daemon breaks the worker's environment and its Herdr identity. Phase 2 must also own lifecycle and resume, because
 Herdr's resume does not keep `--remote`.
+
+**With a real model too [R-real].** On a per-worker server started from the test pane, with herdr-3d's hire args, Herdr
+saw working → idle on every real turn, including across a shell tool call and a 25 s command, and `agent read` showed
+the answer (`OK`). Ctrl+C interrupted a running turn, and the session id reached the test pane. `codex resume ID
+--remote` brought the history back. The real model behaved as the mock did, with two new breaks (B9, B10) in the launch
+and resume arguments, not in the terminal. Interrupting while a model-run command is executing was not covered with the
+real model (§9).
 
 What works [R], mock model, real TUI in a Herdr pane:
 
@@ -31,7 +40,7 @@ What works [R], mock model, real TUI in a Herdr pane:
 | Ctrl+C interrupts a running turn (`turn/completed status:"interrupted"`); Herdr goes back to done | `Lifecycle/ctrlc*` |
 | Slash commands (`/status` names the shared server and the thread, makes no model request) and skills (`$h3d-fixture` injects its SKILL.md) | `Lifecycle/slash-status`, `Lifecycle/skill-turn` |
 | Approvals reach the TUI and every subscribed client; the TUI answers; Herdr shows blocked meanwhile | `Approvals/*` |
-| Exiting the TUI (idle Ctrl+C ×2) and `codex resume ID --remote … -C …` reopen the thread with its history | `Lifecycle/tui-resumed` |
+| Exiting the TUI (idle Ctrl+C; one press is enough, §9) and `codex resume ID --remote … -C …` reopen the thread with its history | `Lifecycle/tui-resumed` |
 | The bridge disconnecting during a turn, reconnecting and rejoining leave the terminal untouched | `Lifecycle/terminal-after-bridge-left` |
 | The server restarting: the TUI shows "Reconnecting to server…", and works again after `resume --remote` | `Lifecycle/tui-after-server-killed`, `Lifecycle/after-server-restart` |
 | The session id reaches Herdr through its SessionStart hook when the server was started from the TUI's own pane | `Identity/same-pane-agent`, `MixedHarness/agent-get` |
@@ -49,6 +58,8 @@ What breaks, and the fix for each:
 | B6 | **Herdr shows a TUI that lost its server as `working`** ("Reconnecting to server…"), so `agent wait` runs until its timeout | [R] `Lifecycle/herdr-after-server-killed` | The bridge watches server liveness (pid and socket) and reports it. Orchestrator waits keep their timeouts |
 | B7 | **Herdr shows an unanswered async question as `blocked`** (OSC title "Action Required"), so `agent prompt` is refused with `agent_blocked` while the worker is still working | [R] `Questions/idle-question-herdr-state-at-prompt-return` | Answer through the app-server (`turn/steer`, not refused) or `send-keys`. Document this for orchestrators. Probably not specific to `--remote` (the title is drawn by the TUI) [S] |
 | B8 | **Codex's "Hooks need review" startup dialog reads as `idle`/`interactive_ready`**, so a prompt sent then stalls | [R] `Identity/*-herdr-state-during-hook-review` | Hooks are trusted once per CODEX_HOME (`[hooks.state]` in config.toml, `Identity/config-after-hook-trust`). The launcher checks the screen for the dialog, as hire already does for the trust dialog |
+| B9 | **`codex resume ID --remote …` refuses hire's `--dangerously-bypass-approvals-and-sandbox`**: "Error: Permission overrides are not supported when resuming a remote task." Codex exits at once, but `herdr agent start` waits for its full `--timeout` (60 s) and then reports `timeout`, not the exit | [R-real] `RealModelSmoke/18-*`, `19-tui-resumed` | The resume launcher drops the bypass flag (and any other permission override). The thread keeps the permissions it was started with: the resumed TUI still shows `permissions: YOLO mode`. `-m` and `-c model_reasoning_effort=…` are accepted (`20-*`, `21-tui-resumed`) |
+| B10 | **A fresh, untrusted cwd shows Codex's "Trust this folder?" dialog even with the bypass flag**, and `herdr agent start` fails with `agent_not_ready` ("blocked during startup"). Accepting saves the decision into the server's `config.toml`. Ctrl+C on it (and Esc, by the dialog's own `esc back` label) opens Codex's **Agent command center**, which lists the threads of the server's CODEX_HOME, the user's other workers' threads included; a second Ctrl+C quits | [R-real] `RealModelSmoke/00-first-attempt-trust-dialog` | Keep hire's existing trust handling (the dialog is the same with `--remote`), or start the server with an in-memory override for that one cwd, `codex app-server -c 'projects={"<cwd>"={trust_level="trusted"}}' …`. That override suppressed the dialog and left `config.toml` unchanged. It replaces the `projects` table for that server only. Launchers must not send Esc or Ctrl+C to a dialog they did not expect |
 
 **User's machine, today [R-live].** The running `~/.codex` daemon (pid file `~/.codex/app-server-daemon/app-server.pid`)
 has `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_SESSION` and `HERDR_SOCKET_PATH` in its environment. Its cwd is a herdr
@@ -183,11 +194,11 @@ claude`, unchanged.
 
 | # | Question | Decision |
 |---|---|---|
-| D1 | Server ownership | **One app-server per Codex worker**, started from the worker's pane after its shell and direnv are initialized, immediately before the TUI and in the same pane: `setsid -f fish -c 'codex app-server --listen unix://$SOCK' </dev/null >$LOG 2>&1`, then `herdr agent start … -- --remote unix://$SOCK -C $CWD <model args>`. The `fish -c` keeps wrapper functions; `setsid -f` keeps the server off the pane's foreground job. A server typed with `&` left the pane `agent_pane_busy` in the ground probe. Socket: a short per-worker path under `$XDG_RUNTIME_DIR` (the 108-byte limit). Before starting, the launcher checks `direnv status` for the cwd and refuses or reports a blocked `.envrc`. Never use the CODEX_HOME daemon (B1, B2). |
+| D1 | Server ownership | **One app-server per Codex worker**, started from the worker's pane after its shell and direnv are initialized, immediately before the TUI and in the same pane: `setsid -f fish -c 'codex app-server --listen unix://$SOCK' </dev/null >$LOG 2>&1`, then `herdr agent start … -- --remote unix://$SOCK -C $CWD <model args>`. The `fish -c` keeps wrapper functions; `setsid -f` keeps the server off the pane's foreground job. A server typed with `&` left the pane `agent_pane_busy` in the ground probe. Socket: a short per-worker path under `$XDG_RUNTIME_DIR` (the 108-byte limit). In the real-model run, Codex made the `--listen` path a symlink to a socket of its own, `/tmp/codex-daemon-1000/<hash>` [R-real]; whether that lifts the limit is unverified. A new worker cwd needs trust before the TUI starts (B10). Before starting, the launcher checks `direnv status` for the cwd and refuses or reports a blocked `.envrc`. Never use the CODEX_HOME daemon (B1, B2). |
 | D2 | Server lifetime | The bridge records each worker's socket and server pid. It stops the server when the worker is sent home or fired and before a floor sleeps, because a detached server survives its pane and `herdr session stop` (B5). On wake it starts the server again from the pane (D5). The bridge reports a dead server; Herdr would show "working" (B6). |
-| D3 | Subscription lifetime | The bridge joins with `thread/resume {threadId}`, never with overrides, while it has a reason to watch (transcript open, question pending), and leaves with `thread/unsubscribe`. Reconnecting uses Herdr's `agent_session.value` as the thread id. Among loaded threads it skips ephemeral ones and never guesses the newest by cwd. The 60 s unload does not matter: the TUI keeps the thread subscribed. |
+| D3 | Subscription lifetime | The bridge joins with `thread/resume {threadId}`, never with overrides, while it has a reason to watch (transcript open, question pending), and leaves with `thread/unsubscribe`. Reconnecting uses Herdr's `agent_session.value` as the thread id. Herdr clears that value when the TUI exits, and after a resume it is only reported again with the first turn [R-real] (`RealModelSmoke/17-*`, `22-*`, `28-*`). The bridge therefore keeps the id it last saw and does not read a missing value as a new thread. Among loaded threads it skips ephemeral ones and never guesses the newest by cwd. The 60 s unload does not matter: the TUI keeps the thread subscribed. |
 | D4 | Approvals | **The bridge is passive.** It never answers `requestApproval`, the blocking `requestUserInput`, or any other server request. It only reads `serverRequest/resolved` to update its view. Any answer would win the race (§3). |
-| D5 | Session id and resume | The same-pane launch makes Herdr's hook report to the right pane (B3). Herdr's native resume cannot express `--remote` and calls Codex by absolute path (B4). Shared-mode Codex workers are therefore **resumed by herdr-3d**: the wake fallback (`floorops.go`) becomes the launcher, server first, then `codex resume ID --remote unix://$SOCK -C $CWD`, in place of `codex resume ID`. Herdr's own resume must not run first for such a pane. **Unverified:** whether `herdr pane release-agent`, or leaving the session unreported at sleep, stops it while the bridge keeps the id. Verify that first in phase 2. If neither does, the fallback is to stop the worker's server before sleep. Herdr's resume would then still attach the CODEX_HOME daemon (B2), so the bridge must exit that TUI and relaunch. |
+| D5 | Session id and resume | The same-pane launch makes Herdr's hook report to the right pane (B3). Herdr's native resume cannot express `--remote` and calls Codex by absolute path (B4). Shared-mode Codex workers are therefore **resumed by herdr-3d**: the wake fallback (`floorops.go`) becomes the launcher, server first, then `codex resume ID --remote unix://$SOCK -C $CWD <model args>`, in place of `codex resume ID`. The model args **leave out `--dangerously-bypass-approvals-and-sandbox`**, which a remote resume refuses; the thread keeps its permissions (B9). Herdr's own resume must not run first for such a pane. **Unverified:** whether `herdr pane release-agent`, or leaving the session unreported at sleep, stops it while the bridge keeps the id. Verify that first in phase 2. If neither does, the fallback is to stop the worker's server before sleep. Herdr's resume would then still attach the CODEX_HOME daemon (B2), so the bridge must exit that TUI and relaunch. |
 | D6 | Rollouts | Worker servers run with the user's normal `CODEX_HOME`, so rollouts stay under `~/.codex/sessions` and the readers need no change (§4). |
 | D7 | Orchestrator-created workers | Orchestrators start workers through the Herdr CLI and bypass the bridge, so the launch must be Herdr CLI calls too. It is: `pane run <pane> '<server start>'`, then `agent start … --kind codex -- --remote unix://SOCK -C CWD` ([R] `MixedHarness`). herdr-3d's hire and the write-code skill's Codex start step use the same two calls, best through one shared script on PATH that picks the socket and checks direnv. Until the skill adopts it, orchestrator-created Codex workers stay embedded: the right environment, but no transcript answers. |
 | D8 | Opt-in | The epic's opt-in switch stays. The terminal stays the default. Changes apply to new or restarted workers only. |
@@ -225,7 +236,7 @@ tests only, so CI is unaffected):
 - `envdump.go`: the env-dumping MCP server (the test binary in that role).
 - `herdr.go`: a throwaway `h3d-it-154-<rand>` Herdr session. Every call names it, and the session is stopped and
   deleted at the end. Its server gets the fixture's `CODEX_HOME` too, because Herdr restores panes without their
-  `--env`; in one development run a restored pane reached `~/.codex` that way (§9).
+  `--env`; in one development run a restored pane reached `~/.codex` that way (§10).
 - `*_integration_test.go`: the suites cited above. Each test kills the processes it left (anything naming its temp
   root) and stops temp-home daemons.
 
@@ -239,13 +250,54 @@ herdr agent start <name> --kind codex --pane <pane> -- --remote unix:///run/…/
 codex resume <thread-id> --remote unix:///run/…/w.sock -C <cwd>
 ```
 
-## 9. Not verified, and the skipped smoke test
+## 9. Real-model smoke test
 
-- **The real-model smoke test against the user's daemon was not run.** The live daemon carries a live pane's
-  `HERDR_PANE_ID`, and `~/.codex` has Herdr's SessionStart hook (§0). A new thread there would report its session id
-  into that pane and could change that worker's identity and resume. The brief forbids affecting live workers. Every
-  terminal and Herdr check above ran on mock inference. The TUI and Herdr side does not depend on the model, but
-  real-model turn timing is not covered.
+[R-real], evidence in [`codex-shared-tui-evidence/RealModelSmoke/`](codex-shared-tui-evidence/RealModelSmoke/). Five
+short turns; the TUI's exit summary reported `total=31,038` tokens (`16-tui-exit`).
+
+**Setup.** A throwaway Herdr session `h3d-it-154-smoke-44a259`, its server started with every `HERDR_*`, `CODEX_*`,
+`OPENAI_*` and `CLAUDE*` variable removed. One workspace in a fresh temp dir, not a git repository. The user's real
+`~/.codex` (auth, config, hooks); no `CODEX_HOME` set. The server was started as D1 proposes, typed into the test pane
+with `herdr pane run`: `setsid -f fish <script>`, where the script holds `codex app-server -c
+'projects={"<cwd>"={trust_level="trusted"}}' --listen unix://<tmp>/w.sock` (`00-start-server.fish`). A script instead
+of `fish -c '…'` only to keep the TOML quoting simple; fish loads its config and functions either way. The server's
+environment had the test pane's `HERDR_PANE_ID`, `HERDR_SESSION` and `HERDR_SOCKET_PATH`, so Herdr's SessionStart
+hook could only report into the test session. The TUI was started with hire's args: `herdr agent start smoke --kind
+codex --pane w1:p1 -- --remote unix://<tmp>/w.sock -C <cwd> -m gpt-6.1-sol -c model_reasoning_effort=low
+--dangerously-bypass-approvals-and-sandbox`.
+
+Every Herdr state below comes from `agent get` polled every ~0.27 s (`*-status-poll.txt`). Turn start and end times come
+from the thread's rollout (`32-rollout-events`).
+
+| Step | Result |
+|---|---|
+| First start, no trust override | `agent start` failed after 3.65 s with `agent_not_ready` on the "Trust this folder?" dialog (B10). The dialog was not answered; Ctrl+C twice quit, through the Agent command center (`00-first-attempt-trust-dialog`). The server was restarted with the override |
+| `agent start` | 3.75 s, `interactive_ready:true`, `idle`; the TUI shows `permissions: YOLO mode`, `GPT-6.1-Sol low` (`01-*`, `02-tui-started`) |
+| Turn 1, "Reply with the single word OK." | `agent prompt --wait` returned `idle` after 4.23 s. Herdr went `working` 0.48 s after the turn started and `idle` within 0.81 s of its end. `agent read` shows `• OK` (`03-*`, `04-turn1-agent-read`). Herdr then had the session id, `agent_session.source:"herdr:codex"`, in the test pane (`05-*`) |
+| Turn 2, run `echo h3d-smoke-$PWD` | The model ran the command (`• Ran echo h3d-smoke-$PWD └ h3d-smoke-/tmp/…/ws`) and replied with the output. 7.93 s, `working` without a gap across the tool call, `idle` 0.26 s after the end (`06-*`, `07-turn2`) |
+| Turn 3, "Run `sleep 20` … then reply", Ctrl+C after 3.4 s | The Ctrl+C reached the model phase, before the command started. `■ Conversation interrupted`, rollout `turn_aborted reason:"interrupted"`, Herdr `idle` 0.32 s after the Ctrl+C (`08-*` to `11-*`) |
+| Turn 4, "Run `sleep 25; echo h3d-slept` …" | Herdr stayed `working` for the whole 32 s turn, the 25 s command included, and the reply was `h3d-slept`. The Ctrl+C meant for this turn arrived as it completed (`task_complete` and the key within 1 ms) (`12-*` to `15-*`) |
+| One Ctrl+C on the idle remote TUI | **Exits at once**, with no second press: "Disconnected from this task. Any running work continues. To reconnect, run: codex --remote unix://… resume ID. Stop the current turn: run codex --remote unix://… agents, select this task, and press x." Herdr then has no agent on the pane and no `agent_session` (`15-*`, `16-tui-exit`, `17-pane-get-after-exit`). Seen twice (also `29-*`). The fixture's two presses were more than needed |
+| `agent start … -- resume ID --remote … <hire args>` | Refused: "Permission overrides are not supported when resuming a remote task." `agent start` returned `timeout` only after its 60 s (B9; `18-*`, `19-*`) |
+| The same without the bypass flag | 3.85 s, `idle`, `interactive_ready`. The history is there: all four turns, the interruption, "Worked for 32s" (`20-*`, `21-tui-resumed`). No `agent_session` until a turn ran (`22-*`) |
+| Turn 5 on the resumed TUI, "Run `sleep 30; …`", Ctrl+C after 2.5 s | The screen showed `• Working (2s • esc to interrupt)`, still the model phase. Interrupted, `idle` 0.22 s after the Ctrl+C. Herdr had the same session id again (`23-*` to `28-*`) |
+| Exit, archive, stop | One Ctrl+C exited (`29-*`). `codex archive ID --remote unix://<tmp>/w.sock`, run in the test pane while the server was up, printed "Archived session …" and moved the rollout to `~/.codex/archived_sessions/` (`30-archive`). The server was stopped by pid; no process was left in the temp dir |
+| Shared daemon | Before and after: the same pid 2255710, the same start ticks (83085313) in the pid file and in `/proc`, `daemon version` `running`/0.160.1. `~/.codex/config.toml` and `hooks.json` have the same md5 (`00-baseline-before`, `31-shared-daemon-after`). Every `codex` call named `--remote` with the test socket, so `daemon_auto_start` never applied |
+
+Left behind on purpose: Codex's own `~/.codex/tui-thread-reference-capabilities/<test thread id>`, the archived
+rollout, and whatever Codex logs to its state database. The test Herdr session was stopped and deleted and the temp
+dir removed.
+
+## 10. Not verified
+
+- **Interrupting a model-run command while it executes, with the real model.** Both attempts landed in the model phase
+  (turns 3 and 5), and turn 4's Ctrl+C came as the turn ended; the five-turn budget was used up. The mock-model fixture
+  covers interrupting a held model response (`Lifecycle/ctrlc*`), not a running command either.
+- Herdr reported `idle`, never `done`, at the end of each real turn. The pane was focused, and the fixture's runs saw
+  `done`. Whether focus decides this is unverified; orchestrators wait with both `--until idle --until done`.
+- **No real-model run on the shared managed daemon.** The live daemon carries a live pane's `HERDR_PANE_ID`, and
+  `~/.codex` has Herdr's SessionStart hook (§0). A new thread there would report its session id into that pane and
+  could change that worker's identity and resume. The smoke test therefore used the phase-2 launch only.
 - **Side effect in development:** before the fixture pinned `CODEX_HOME` on its Herdr server, one Herdr session
   restart restored a pane without its `--env` and ran `codex resume <fixture id>` against `~/.codex`. It failed ("No
   saved session found"). No thread was created, `~/.codex/config.toml` was not changed, and the daemon was not
