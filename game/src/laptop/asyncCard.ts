@@ -68,6 +68,8 @@ export class AsyncCard {
   readonly live: HTMLElement;
   private worker: string | null = null;
   private codex: WorkerCodex | null = null;
+  /** The worker works on (its effective status, not herdr's `blocked` for an async question): "still working". */
+  private working = false;
   private suppressed = false;
   private openKey: string | null = null;
   /** The open question: its position among the open batch's listed questions. */
@@ -101,8 +103,11 @@ export class AsyncCard {
     return this.host.drafts;
   }
 
-  /** The worker's Codex launch now (null: none, or another worker's seat). Another worker starts afresh; drafts stay. */
-  set(worker: string | null, codex: WorkerCodex | null): void {
+  /**
+   * The worker's Codex launch now (null: none, or another worker's seat), and whether the worker works on (a real
+   * block, an approval, is not working). Another worker starts afresh; drafts stay.
+   */
+  set(worker: string | null, codex: WorkerCodex | null, working = false): void {
     const same = worker === this.worker;
     if (!same) {
       this.worker = worker;
@@ -115,6 +120,7 @@ export class AsyncCard {
       this.phases = new Map();
     }
     this.codex = codex;
+    this.working = working;
     // No launch for a moment (a reconnect): what comes back is the bridge's word, not a send of ours still on its way.
     if (!codex) this.guard.clear();
     if (worker && codex) {
@@ -525,7 +531,7 @@ export class AsyncCard {
     const done = !qs.some(unresolved);
     this.el.dataset.phase = sending ? 'sending' : b.readOnly ? 'readonly' : done ? 'done' : 'open';
     this.el.setAttribute('aria-busy', String(sending));
-    const working = !!this.codex?.turn;
+    const working = this.working;
     const hidden = this.hiddenCount();
     const showingHidden = !!this.worker && this.drafts.hiddenShown(this.worker);
     const top = h(

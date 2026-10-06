@@ -44,8 +44,8 @@ class FakeView {
   setFollowup(f: Followup | null): void {
     this.calls.push(`followup ${f?.turn_id ?? 'null'}`);
   }
-  setCodex(worker: string, c: WorkerCodex | null): void {
-    this.calls.push(`codex ${worker} ${c?.questions?.map((b) => b.batch).join(',') ?? 'null'}`);
+  setCodex(worker: string, c: WorkerCodex | null, working: boolean): void {
+    this.calls.push(`codex ${worker} ${c?.questions?.map((b) => b.batch).join(',') ?? 'null'}${working ? ' working' : ''}`);
   }
   setUsage(u: Usage | null): void {
     this.calls.push(`usage ${u?.context_pct ?? 'null'}`);
@@ -256,10 +256,12 @@ describe('TranscriptMode', () => {
     h.tx.codexSeen(shared('pending', { server: 'down', note: 'x' }));
     h.tx.codexSeen(shared('sent'));
     h.tx.codexSeen(shared('sent', { turn: '' }));
+    // The worker works on again (its effective status): the card's "still working" follows.
+    h.tx.codexSeen(shared('sent', { turn: '' }), true);
     // A legacy launch has no card: none.
     h.tx.codexSeen({ mode: 'legacy' });
     h.tx.codexSeen(null);
-    expect(view.calls.filter((c) => c.startsWith('codex'))).toEqual(['codex a call_3', 'codex a call_3', 'codex a call_3', 'codex a null']);
+    expect(view.calls.filter((c) => c.startsWith('codex'))).toEqual(['codex a call_3', 'codex a call_3', 'codex a call_3', 'codex a call_3 working', 'codex a null']);
     const answered = view.host.onAnswerAsync?.({ id: '', thread: 'th1', batch: 'call_3', answers: [{ index: 0, answer: 'Green' }] });
     const hidden = view.host.onDismissAsync?.({ id: '', thread: 'th1', batch: 'call_3' });
     expect(h.sent.map((x) => [x.t, x.args])).toEqual([

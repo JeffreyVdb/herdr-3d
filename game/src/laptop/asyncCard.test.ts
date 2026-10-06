@@ -74,13 +74,19 @@ describe('AsyncCard (#157)', () => {
   it('shows a batch while Codex works on, picks and types without sending, and sends once on Send', async () => {
     const t = host();
     const c = mount(t);
-    c.set(W, codex([batch('call_3', [color(), context()])]));
+    c.set(W, codex([batch('call_3', [color(), context()])]), true);
     expect(c.shown).toBe(true);
     expect(c.el.getAttribute('role')).toBe('region');
     expect(c.el.getAttribute('aria-label')).toBe('Codex’s questions');
     expect(c.el.querySelector('.tx-aq-tag')?.textContent).toBe('Codex asked');
     expect(c.el.querySelector('.tx-aq-work')?.textContent).toBe('still working');
     expect(c.el.querySelector('.tx-aq-ago')?.textContent).toMatch(/^asked \ds ago$/);
+    // A real block (an approval waits in the terminal: the bridge's async_blocked is off, the worker needs you): the
+    // turn still runs, but the card does not say Codex works on.
+    c.set(W, codex([batch('call_3', [color(), context()])], { async_blocked: false }), false);
+    expect(c.el.querySelector('.tx-aq-work')).toBeNull();
+    c.set(W, codex([batch('call_3', [color(), context()])]), true);
+    expect(c.el.querySelector('.tx-aq-work')?.textContent).toBe('still working');
     // Suggested answers as radios, no free text beside them (the bridge takes one of them exactly).
     expect([...c.el.querySelectorAll('[role="radio"]')].map((x) => x.textContent)).toEqual(['1Green', '2Blue']);
     expect(c.el.querySelector('textarea')).toBeNull();
@@ -370,7 +376,7 @@ describe('the transcript view with async questions (#157)', () => {
     const box = document.createElement('div');
     document.body.append(box);
     view = mountTranscript(box, { images: null, onPromptSubmit: () => {}, onAnswer: () => {}, onAnswerAsk: () => Promise.resolve({ ok: true, resolved: true }), onSwitchToTerminal: () => {}, loadSubagent: () => Promise.resolve([]) });
-    view.setCodex(W, codex([batch('call_3', [color()])]));
+    view.setCodex(W, codex([batch('call_3', [color()])]), true);
     const tx = box.querySelector<HTMLElement>('.tx')!;
     expect(tx.querySelector<HTMLElement>('.tx-aq')?.hidden).toBe(false);
     expect(tx.hasAttribute('data-asyncq')).toBe(true);
@@ -403,7 +409,7 @@ describe('the transcript view with async questions (#157)', () => {
       ],
     };
     // The async questions alone: no tabs.
-    view.setCodex(W, codex([batch('call_3', [context({ index: 0 })])], { turn: '' }));
+    view.setCodex(W, codex([batch('call_3', [context({ index: 0 })])], { turn: '' }), false);
     expect(tabs.hidden).toBe(true);
     expect(tx.dataset.front).toBeUndefined();
     tx.querySelector<HTMLTextAreaElement>('textarea.tx-aq-text')!.value = 'async draft';

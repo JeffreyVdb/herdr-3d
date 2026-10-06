@@ -157,6 +157,8 @@ interface Sitting {
   followupKey: string;
   /** #157: the worker's Codex launch (its async questions), and what of it the card shows (a new one told from the same one). */
   codex: WorkerCodex | null;
+  /** #157: the worker works on (its effective status): the async card's "still working". */
+  codexWorking: boolean;
   codexKey: string;
   /** #101: the worker's usage (for the view's context meter), and the part of it the meter shows (so a frame that changed nothing is skipped). */
   usage: Usage | null;
@@ -291,7 +293,7 @@ export class TranscriptMode {
     // The way to read it last time (what the first Ctrl+Esc shows when it opens in the terminal).
     const last: ReadMode = canRead && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
     this.s = {
-      id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', codex: null, codexKey: '', usage: null, usageKey: '', box: null, view: null,
+      id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', codex: null, codexWorking: false, codexKey: '', usage: null, usageKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
       pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true,
@@ -576,7 +578,7 @@ export class TranscriptMode {
     if (s.question) s.view.setBlocked(s.question);
     if (s.ask) s.view.setAsk(s.ask);
     if (s.followup) s.view.setFollowup(s.followup);
-    if (s.codex) s.view.setCodex(s.id, s.codex);
+    if (s.codex) s.view.setCodex(s.id, s.codex, s.codexWorking);
     if (s.pending.length) s.view.setPending(s.pending);
     s.cueKey = '';
     this.cue(s, true);
@@ -965,17 +967,19 @@ export class TranscriptMode {
   }
 
   /**
-   * #157: the worker's Codex launch (from the store; null when it has none): its async questions' card. Only its mode,
+   * #157: the worker's Codex launch (from the store; null when it has none): its async questions' card, and whether the
+   * worker works on (its effective status: not a real block, not idle) for the card's "still working". Only its mode,
    * attachment, thread, turn and questions matter to the card: a change elsewhere draws nothing.
    */
-  codexSeen(c: WorkerCodex | null): void {
+  codexSeen(c: WorkerCodex | null, working = false): void {
     const s = this.s;
     if (!s) return;
-    const key = c?.mode === 'shared' ? JSON.stringify([c.attached === true, c.thread ?? '', c.turn ?? '', c.questions ?? []]) : '';
+    const key = c?.mode === 'shared' ? JSON.stringify([c.attached === true, c.thread ?? '', c.turn ?? '', working, c.questions ?? []]) : '';
     if (key === s.codexKey) return;
     s.codexKey = key;
     s.codex = key ? c : null;
-    s.view?.setCodex(s.id, s.codex);
+    s.codexWorking = working;
+    s.view?.setCodex(s.id, s.codex, working);
   }
 
   /** #101: the worker's usage (from the store; null when it has none), for the context meter: kept for a view still loading. */

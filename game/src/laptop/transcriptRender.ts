@@ -100,8 +100,11 @@ export interface TranscriptView {
   setAsk(ask: Ask | null): void;
   /** #90: the open questions of the agent's final message (null: none): a card above the prompt box, which stays on. */
   setFollowup(f: Followup | null): void;
-  /** #157: the worker's Codex launch (null: none): its async questions, on a card above the prompt box, which stays on. */
-  setCodex(worker: string, codex: WorkerCodex | null): void;
+  /**
+   * #157: the worker's Codex launch (null: none): its async questions, on a card above the prompt box, which stays on;
+   * `working`: the worker works on (its effective status, not a real block), the card's "still working".
+   */
+  setCodex(worker: string, codex: WorkerCodex | null, working: boolean): void;
   /** The mode's tab strip (Conversation | Images), put in the bar after the title. */
   attachTabs(tabs: HTMLElement): void;
   /** Is the item in the timeline (loaded)? */
@@ -931,9 +934,10 @@ class Transcript implements TranscriptView {
     this.followup.set(f);
   }
 
-  setCodex(worker: string, codex: WorkerCodex | null): void {
+  /** #157: the worker's Codex launch, and whether it works on (its effective status: the card's "still working"). */
+  setCodex(worker: string, codex: WorkerCodex | null, working: boolean): void {
     if (this.destroyed) return;
-    this.asyncq.set(worker, codex);
+    this.asyncq.set(worker, codex, working);
   }
 
   /** #157: the pinned card the timeline's keys go to after the ask's: the follow-up's or the async questions', the open one. */
