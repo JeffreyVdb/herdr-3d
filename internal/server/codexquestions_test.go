@@ -615,3 +615,17 @@ func TestAsyncBlockedFlagFollowsThePredicate(t *testing.T) {
 		t.Fatalf("detached: %+v", c)
 	}
 }
+
+// #157: a /new in the terminal is another thread: the old one's questions
+// go, and with them async_blocked (an upsert).
+func TestAsyncBlockedFlagGoesWithTheThread(t *testing.T) {
+	sb, a := asyncWorker(t)
+	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", contextQ)))
+	upsertFor(sb.c, a.ID, func(w *proto.Worker) bool { return w.Codex != nil && w.Codex.AsyncBlocked })
+	const next = "01a11172-ac09-7aa0-ab6b-84485199adb4"
+	sb.fl.update("w1", func(w *world.WorkerObs) { w.AgentSession = next })
+	c := upsertFor(sb.c, a.ID, func(w *proto.Worker) bool { return w.Codex != nil && w.Codex.Thread == next }).Codex
+	if c.AsyncBlocked || len(c.Questions) != 0 {
+		t.Fatalf("another thread: %+v", c)
+	}
+}
