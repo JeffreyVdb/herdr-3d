@@ -1,0 +1,368 @@
+//go:build integration
+
+// Integration fixture for #154: the real Codex TUI (SupportedCodex) in an
+// isolated named Herdr session, a second app-server client, mock inference.
+// Nothing here touches ~/.codex, the user's Herdr sessions or the shared
+// daemon: every Codex runs with a throwaway CODEX_HOME, every Herdr call
+// names the throwaway session, and every port is OS-leased on 127.0.0.1.
+// Run with `make codex-shared-tui`. With H3D_CODEXSHARE_EVIDENCE=<dir> the
+// screens and protocol messages the tests capture are written there.
+package codexshare
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+)
+
+func TestMain(m *testing.M) {
+	// The test binary stands in for the env-dump MCP server Codex starts.
+	if dir := os.Getenv(EnvDumpVar); dir != "" {
+		if err := ServeEnvDump(dir, os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// fx is one test's world: a temp root, an isolated CODEX_HOME, the mock,
+// a fish configuration, workspaces and a throwaway Herdr session.
+type fx struct {
+	t      *testing.T
+	ctx    context.Context
+	root   string
+	home   string
+	xdg    string // XDG_CONFIG_HOME of the panes: the fixture's fish config
+	data   string // XDG_DATA_HOME of the panes: direnv's allow list
+	mcpDir string
+	mock   *Mock
+	h      *Herdr
+	ev     string // evidence dir, "" when not recording
+	marks  map[*Client]int
+	n      int
+}
+
+type fxOptions struct {
+	approval string
+	sandbox  string
+	extra    string
+	noMCP    bool
+}
+
+func requireTools(t *testing.T) {
+	t.Helper()
+	for _, bin := range []string{"codex", "herdr", "fish", "direnv", "setsid"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s is not installed", bin)
+		}
+	}
+	out, err := exec.Command("codex", "--version").Output()
+	if err != nil || strings.TrimSpace(string(out)) != SupportedCodex {
+		t.Skipf("codex --version = %q (%v), fixture verified against %s", strings.TrimSpace(string(out)), err, SupportedCodex)
+	}
+}
+
+func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
+	requireTools(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	t.Cleanup(cancel)
+	// A short root: unix socket paths are limited to 108 bytes.
+	root, err := os.MkdirTemp("", "h3d154-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fx{t: t, ctx: ctx, root: root, home: filepath.Join(root, "home"), xdg: filepath.Join(root, "xdg"),
+		data: filepath.Join(root, "data"), mcpDir: filepath.Join(root, "mcp")}
+	t.Cleanup(func() {
+		f.killOwned()
+		_ = os.RemoveAll(root)
+	})
+	if dir := os.Getenv("H3D_CODEXSHARE_EVIDENCE"); dir != "" {
+		f.ev = filepath.Join(dir, t.Name())
+		_ = os.RemoveAll(f.ev)
+		if err := os.MkdirAll(f.ev, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, d := range []string{f.home, filepath.Join(f.xdg, "fish"), f.data, f.mcpDir, filepath.Join(root, "bin")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.mock, err = StartMock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(f.mock.Close)
+	// Model-like latency: Herdr reports a turn only once it saw it working.
+	f.mock.SetDelay(1500 * time.Millisecond)
+
+	// The panes' fish: PATH gets the fixture's tool, an exported config
+	// sentinel, direnv's hook (interactive, like the user's config), a
+	// `codex` wrapper function that exports a sentinel (like a real
+	// credential wrapper) and a fish-only function.
+	fish := strings.Join([]string{
+		"set -g fish_greeting",
+		"fish_add_path -g " + filepath.Join(root, "bin"),
+		"set -gx H3D_FISH_SENTINEL fish-config",
+		"if status is-interactive",
+		"    direnv hook fish | source",
+		"end",
+		"function codex --wraps codex",
+		"    set -lx H3D_WRAPPER_SENTINEL wrapper",
+		"    command codex $argv",
+		"end",
+		"function h3d_fish_fn",
+		"    echo fish-function-ran",
+		"end",
+		"",
+	}, "\n")
+	f.write(filepath.Join(f.xdg, "fish", "config.fish"), fish, 0o644)
+	f.write(filepath.Join(root, "bin", "h3d-tool"), "#!/bin/sh\necho \"h3d-tool:$0:direnv=$H3D_DIRENV_SENTINEL\"\n", 0o755)
+
+	var trusted []string
+	for _, ws := range workspaces {
+		trusted = append(trusted, f.workspace(ws))
+	}
+	extra := o.extra
+	if !o.noMCP {
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		extra += "\n[mcp_servers.envdump]\ncommand = " + TOMLString(exe) + "\n" +
+			"env_vars = [\"H3D_DIRENV_SENTINEL\", \"H3D_PANE_SENTINEL\", \"H3D_WRAPPER_SENTINEL\", \"H3D_FISH_SENTINEL\", \"HERDR_PANE_ID\"]\n" +
+			"startup_timeout_sec = 20\n" +
+			"[mcp_servers.envdump.env]\n" + EnvDumpVar + " = " + TOMLString(f.mcpDir) + "\n"
+	}
+	if err := WriteHome(f.home, HomeOptions{MockURL: f.mock.URL(), Trusted: trusted, ApprovalPolicy: o.approval, Sandbox: o.sandbox, Extra: extra}); err != nil {
+		t.Fatal(err)
+	}
+	f.h, err = StartHerdr(ctx, root, os.Environ())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(f.h.Close)
+	t.Logf("herdr session %s, root %s, mock %s", f.h.Name, root, f.mock.URL())
+	return f
+}
+
+func (f *fx) write(path, content string, mode os.FileMode) {
+	f.t.Helper()
+	if err := os.WriteFile(path, []byte(content), mode); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// workspace makes root/<name> with a .envrc exporting a per-workspace
+// sentinel. Names starting "blocked" are left unallowed; others are allowed
+// in the fixture's own direnv allow list (XDG_DATA_HOME).
+func (f *fx) workspace(name string) string {
+	f.t.Helper()
+	dir := filepath.Join(f.root, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	f.write(filepath.Join(dir, ".envrc"), "export H3D_DIRENV_SENTINEL=direnv-"+name+"\n", 0o644)
+	if !strings.HasPrefix(name, "blocked") {
+		cmd := exec.Command("direnv", "allow", dir)
+		cmd.Env = CleanEnv(os.Environ(), "XDG_DATA_HOME="+f.data, "XDG_CONFIG_HOME="+f.xdg)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			f.t.Fatalf("direnv allow: %v: %s", err, out)
+		}
+	}
+	return dir
+}
+
+// paneEnv is what a fixture workspace's shell gets from Herdr.
+func (f *fx) paneEnv(ws string) []string {
+	return []string{"CODEX_HOME=" + f.home, "XDG_CONFIG_HOME=" + f.xdg, "XDG_DATA_HOME=" + f.data, "H3D_PANE_SENTINEL=pane-" + ws}
+}
+
+// pane creates a Herdr workspace in root/<ws> and waits for its fish prompt
+// (and direnv's first export).
+func (f *fx) pane(ws string) string {
+	f.t.Helper()
+	pane, err := f.h.CreateWorkspace(f.ctx, filepath.Join(f.root, ws), ws, f.paneEnv(ws)...)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.shell(pane, "echo READY-"+ws, "READY-"+ws)
+	return pane
+}
+
+// shell runs a fish command line in an idle pane and waits for marker.
+func (f *fx) shell(pane, command, marker string) {
+	f.t.Helper()
+	if err := f.h.PaneRun(f.ctx, pane, command); err != nil {
+		f.t.Fatal(err)
+	}
+	if marker != "" {
+		if err := f.h.WaitOutput(f.ctx, pane, marker, 20*time.Second); err != nil {
+			screen, _ := f.h.Read(f.ctx, pane, "recent-unwrapped", 40)
+			f.t.Fatalf("waiting for %q: %v\n%s", marker, err, screen)
+		}
+	}
+}
+
+// startServer starts a worker-owned app-server from the pane's initialized
+// fish (the candidate launcher): a detached session leader running fish so
+// the `codex` wrapper function applies, listening on root/<name>.sock.
+func (f *fx) startServer(pane, name string) string {
+	f.t.Helper()
+	sock := filepath.Join(f.root, name+".sock")
+	log := filepath.Join(f.root, name+".log")
+	f.shell(pane, fmt.Sprintf("setsid -f fish -c 'codex app-server --listen unix://%s' </dev/null >%s 2>&1; echo LAUNCHED-%s", sock, log, name), "LAUNCHED-"+name)
+	f.waitSocket(sock)
+	return sock
+}
+
+func (f *fx) waitSocket(sock string) {
+	f.t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if c, err := Dial(f.ctx, sock); err == nil {
+			c.Close()
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	f.t.Fatalf("app-server socket %s never answered", sock)
+}
+
+// serverPID finds the app-server process listening on sock.
+func (f *fx) serverPID(sock string) int {
+	f.t.Helper()
+	pids := ownedPIDs("app-server --listen unix://" + sock)
+	if len(pids) == 0 {
+		f.t.Fatalf("no app-server process for %s", sock)
+	}
+	return pids[len(pids)-1]
+}
+
+// ownedPIDs lists processes whose command line contains substr.
+func ownedPIDs(substr string) []int {
+	entries, _ := os.ReadDir("/proc")
+	var out []int
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid == os.Getpid() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		if err != nil {
+			continue
+		}
+		if strings.Contains(strings.ReplaceAll(string(raw), "\x00", " "), substr) {
+			out = append(out, pid)
+		}
+	}
+	return out
+}
+
+// killOwned ends every process the test left whose command line names its
+// root (worker-owned app-servers, MCP children, temp-home daemons).
+func (f *fx) killOwned() {
+	for _, pid := range ownedPIDs(f.root) {
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+	}
+	time.Sleep(300 * time.Millisecond)
+	for _, pid := range ownedPIDs(f.root) {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+}
+
+// startTUI runs the real Codex TUI in pane through `herdr agent start`.
+func (f *fx) startTUI(name, pane string, args ...string) Agent {
+	f.t.Helper()
+	a, err := f.h.AgentStart(f.ctx, name, pane, 60*time.Second, args...)
+	if err != nil {
+		screen, _ := f.h.Read(f.ctx, pane, "visible", 0)
+		f.t.Fatalf("agent start: %v\n%s", err, screen)
+	}
+	f.snap("tui-started-"+name, pane)
+	return a
+}
+
+// snap records the pane's visible screen as evidence and returns it.
+func (f *fx) snap(label, pane string) string {
+	f.t.Helper()
+	screen, err := f.h.Read(f.ctx, pane, "visible", 0)
+	if err != nil {
+		f.t.Logf("read %s: %v", pane, err)
+	}
+	f.record(label+".screen.txt", screen)
+	return screen
+}
+
+// record writes one evidence file (and logs it).
+func (f *fx) record(name, content string) {
+	f.n++
+	f.t.Logf("── %s ──\n%s", name, content)
+	if f.ev != "" {
+		_ = os.WriteFile(filepath.Join(f.ev, fmt.Sprintf("%02d-%s", f.n, name)), []byte(scrub(f, content)), 0o644)
+	}
+}
+
+// recordJSON writes v as indented JSON evidence.
+func (f *fx) recordJSON(name string, v any) {
+	b, _ := json.MarshalIndent(v, "", "  ")
+	f.record(name+".json", string(b))
+}
+
+// scrub replaces the run's temp root and home in evidence.
+func scrub(f *fx, s string) string {
+	s = strings.ReplaceAll(s, f.root, "$ROOT")
+	if h, err := os.UserHomeDir(); err == nil {
+		s = strings.ReplaceAll(s, h, "$HOME")
+	}
+	return s
+}
+
+// client is a second app-server client on sock.
+func (f *fx) client(sock, name string) *Client {
+	f.t.Helper()
+	c, err := Dial(f.ctx, sock)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if _, err := c.Initialize(f.ctx, name); err != nil {
+		f.t.Fatal(err)
+	}
+	f.t.Cleanup(c.Close)
+	return c
+}
+
+// within returns a context bounded by d.
+func (f *fx) within(d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(f.ctx, d)
+}
+
+// waitScreen polls the visible screen until ok, recording it as label.
+func (f *fx) waitScreen(label, pane string, d time.Duration, ok func(string) bool) string {
+	f.t.Helper()
+	deadline := time.Now().Add(d)
+	var screen string
+	for {
+		screen, _ = f.h.Read(f.ctx, pane, "visible", 0)
+		if ok(screen) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	f.record(label+".screen.txt", screen)
+	if !ok(screen) {
+		f.t.Fatalf("screen %s never matched", label)
+	}
+	return screen
+}
