@@ -342,3 +342,23 @@ func TestAskItems(t *testing.T) {
 		}
 	}
 }
+
+// #156: Codex's async questions (request_user_input_async) are not a
+// blocking ask: the worker keeps working and its composer stays usable, so
+// neither the call, its immediate {"accepted":true} nor the agentMessage
+// that carries the questions makes an ask.
+func TestAskTrackerIgnoresCodexAsyncQuestions(t *testing.T) {
+	tr := NewAskTracker(Codex)
+	for _, l := range []string{
+		`{"type":"response_item","payload":{"type":"function_call","name":"request_user_input_async","call_id":"call_3",` +
+			`"arguments":"{\"questions\":[{\"title\":\"Which fixture color?\",\"options\":[\"Green\",\"Blue\"]},{\"title\":\"Any context?\"}]}"}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_3","output":"{\"accepted\":true}"}}`,
+		`{"type":"event_msg","payload":{"type":"item_completed","thread_id":"th","turn_id":"t1","item":{"type":"AgentMessage","id":"call_3",` +
+			`"delivery":"async","questions":[{"title":"Which fixture color?","options":["Green","Blue"]}]}}}`,
+	} {
+		tr.Line([]byte(l))
+		if a := tr.Pending(); a != nil {
+			t.Fatalf("an async question is an ask: %+v", a)
+		}
+	}
+}

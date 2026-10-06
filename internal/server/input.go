@@ -410,6 +410,11 @@ func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pan
 	case statusAsking:
 		return nil, fmt.Errorf("%w: the worker waits on its question: answer it first", errInvalidState)
 	case statusBlocked:
+		// #156: blocked only by a shared Codex worker's async question:
+		// through its app-server (herdr would refuse it).
+		if res, ok, err := h.promptViaServer(ctx, a.ID, a.Text); ok {
+			return res, err
+		}
 		return nil, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
 	case statusWorking:
 		if err := t.QueuePrompt(ctx, session, pane, a.Text); err != nil {
@@ -610,6 +615,26 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			TextBytes int    `json:"text_bytes"`
 			TextRunes int    `json:"text_runes"`
 		}{a.ID, len(a.Text), utf8.RuneCountInString(a.Text)})
+	// #156: the question ids and the answers' lengths, never the answers.
+	case proto.CmdWorkerAnswerAsync:
+		var a proto.WorkerAnswerAsyncArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		type answer struct {
+			Index       *int `json:"index"`
+			AnswerBytes int  `json:"answer_bytes"`
+		}
+		out := struct {
+			ID      string   `json:"id"`
+			Thread  string   `json:"thread"`
+			Batch   string   `json:"batch"`
+			Answers []answer `json:"answers,omitempty"`
+		}{ID: a.ID, Thread: clip(a.Thread), Batch: clip(a.Batch)}
+		for _, x := range a.Answers {
+			out.Answers = append(out.Answers, answer{x.Index, len(x.Answer)})
+		}
+		return mustJSON(out)
 	// #57: the picks and the typed texts' lengths, never the texts.
 	case proto.CmdWorkerAnswerAsk:
 		var a proto.WorkerAnswerAskArgs

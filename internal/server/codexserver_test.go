@@ -36,18 +36,53 @@ type fakeCodexHost struct {
 	dead     map[int]bool
 	stopped  []codexapp.Launch
 	watches  []*fakeCodexWatch
+	// #156: what a watch's Steer and StartTurn answer (nil: accepted, turn
+	// "t-steered" / "t-started"), and every send, in order.
+	steer func(turn, text, cid string) (string, error)
+	start func(text, cid string) (string, error)
+	sends []fakeSend
+}
+
+// fakeSend is one Steer or StartTurn of a fake watch.
+type fakeSend struct {
+	method, turn, text, cid string
 }
 
 type fakeCodexWatch struct {
 	o      codexapp.Options
 	closed bool
 	mu     *sync.Mutex
+	host   *fakeCodexHost
 }
 
 func (w *fakeCodexWatch) Close() {
 	w.mu.Lock()
 	w.closed = true
 	w.mu.Unlock()
+}
+
+func (w *fakeCodexWatch) Steer(_ context.Context, turn, text, cid string) (string, error) {
+	f := w.host
+	f.mu.Lock()
+	f.sends = append(f.sends, fakeSend{"turn/steer", turn, text, cid})
+	fn := f.steer
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(turn, text, cid)
+	}
+	return turn, nil
+}
+
+func (w *fakeCodexWatch) StartTurn(_ context.Context, text, cid string) (string, error) {
+	f := w.host
+	f.mu.Lock()
+	f.sends = append(f.sends, fakeSend{"turn/start", "", text, cid})
+	fn := f.start
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(text, cid)
+	}
+	return "t-started", nil
 }
 
 func newFakeCodexHost() *fakeCodexHost {
@@ -109,7 +144,7 @@ func (f *fakeCodexHost) Stop(l codexapp.Launch) []int {
 
 func (f *fakeCodexHost) Watch(o codexapp.Options) (server.CodexWatch, error) {
 	f.record("watch %s %s", o.Socket, o.Thread)
-	w := &fakeCodexWatch{o: o, mu: &f.mu}
+	w := &fakeCodexWatch{o: o, mu: &f.mu, host: f}
 	f.mu.Lock()
 	f.watches = append(f.watches, w)
 	f.mu.Unlock()
@@ -126,6 +161,7 @@ func (f *fakeCodexHost) kill(pid int) {
 type sharedBridge struct {
 	*hireBridge
 	host *fakeCodexHost
+	term *fakeTerm
 }
 
 // startSharedBridge is a hire bridge that can launch shared Codex servers,
@@ -133,15 +169,17 @@ type sharedBridge struct {
 func startSharedBridge(t *testing.T, on bool, workers ...world.WorkerObs) *sharedBridge {
 	t.Helper()
 	host := newFakeCodexHost()
+	term := newFakeTerm()
 	sessions := t.TempDir()
 	hb := startHireBridge(t, func(o *server.Options) {
 		o.CodexRun, o.CodexHost, o.CodexPoll = codexRun, host, 20*time.Millisecond
+		o.Term, o.CodexRejoin = term, 150*time.Millisecond
 		o.Usage = &server.UsageConfig{Roots: usage.Roots{CodexSessions: sessions}, Interval: 20 * time.Millisecond}
 	}, workers...)
 	if on {
 		hb.c.mustAck(proto.CmdCodexServerSet, proto.CodexServerSetArgs{Enabled: ptr(true)})
 	}
-	return &sharedBridge{hireBridge: hb, host: host}
+	return &sharedBridge{hireBridge: hb, host: host, term: term}
 }
 
 func codexHire(desk int) proto.WorkerHireArgs {
@@ -518,22 +556,21 @@ func TestSharedCodexServerDown(t *testing.T) {
 
 // While a shared worker's transcript is open the bridge joins its thread
 // (thread id and socket only), and leaves when it closes.
-func TestSharedCodexJoinsWhileWatched(t *testing.T) {
+// #156: the bridge joins a shared worker's thread once herdr reported it
+// and while its server runs, whether or not its transcript is open (so an
+// async question asked meanwhile is seen and can be answered); the
+// transcript closing leaves the join as it is.
+func TestSharedCodexJoinsWithoutTheTranscript(t *testing.T) {
 	sb := startSharedBridge(t, true)
 	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
 	a := ackData[proto.HireResult](t, m)
 	const th = "01a11172-ac09-7aa0-ab6b-84485199ada3"
 	sb.fl.update("w1", func(w *world.WorkerObs) { w.AgentSession = th })
-	time.Sleep(100 * time.Millisecond)
-	if len(sb.host.watches) != 0 {
-		t.Fatal("joined without a reason to watch")
-	}
-	sb.c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: a.ID})
 	w := workersOf(sb.world(func(w proto.World) bool {
 		x := workersOf(w, "s")["w1"]
 		return x.Codex != nil && x.Codex.Attached
 	}), "s")["w1"]
-	if w.Codex.Server != proto.CodexServerRunning {
+	if w.Codex.Server != proto.CodexServerRunning || w.Codex.Thread != th {
 		t.Fatalf("worker codex = %+v", w.Codex)
 	}
 	sb.host.mu.Lock()
@@ -542,21 +579,17 @@ func TestSharedCodexJoinsWhileWatched(t *testing.T) {
 	if joined.Thread != th || joined.Socket != codexRun+"/"+sb.launches(t)[a.ID].Name+".sock" {
 		t.Fatalf("joined %+v", joined)
 	}
+	sb.c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: a.ID})
 	sb.c.mustAck(proto.CmdTranscriptUnwatch, proto.WorkerArgs{ID: a.ID})
-	sb.world(func(w proto.World) bool {
-		x := workersOf(w, "s")["w1"]
-		return x.Codex != nil && !x.Codex.Attached
-	})
-	for end := time.Now().Add(2 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		sb.host.mu.Lock()
-		closed := sb.host.watches[0].closed
-		sb.host.mu.Unlock()
-		if closed {
-			break
-		}
-		if time.Now().After(end) {
-			t.Fatal("the join was not closed")
-		}
+	time.Sleep(100 * time.Millisecond) // several CodexPoll ticks
+	sb.host.mu.Lock()
+	n, closed := len(sb.host.watches), sb.host.watches[0].closed
+	sb.host.mu.Unlock()
+	if n != 1 || closed {
+		t.Fatalf("the transcript's watch changed the join: %d joins, closed %v", n, closed)
+	}
+	if x := workersOf(sb.world(func(proto.World) bool { return true }), "s")["w1"]; x.Codex == nil || !x.Codex.Attached {
+		t.Fatalf("worker codex = %+v", x.Codex)
 	}
 }
 

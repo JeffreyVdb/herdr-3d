@@ -160,6 +160,10 @@ type PromptResult struct {
 	// Terminal (#140): the prompt is a built-in whose output or dialog shows
 	// only in the worker's terminal (harness.TerminalOnly); absent otherwise.
 	Terminal bool `json:"terminal,omitempty"`
+	// Via (#156): "app_server" when the prompt went through a shared Codex
+	// worker's app-server (herdr refuses a prompt while Codex's async
+	// question shows the worker as blocked); absent when herdr sent it.
+	Via string `json:"via,omitempty"`
 }
 
 // Question is what a blocked worker's screen asks.

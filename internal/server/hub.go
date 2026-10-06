@@ -260,11 +260,14 @@ type Options struct {
 	// protocol adapter (NewCodexHost; tests pass a fake), CodexPoll how
 	// often the shared servers and the bridge's joins are looked at
 	// (default DefaultCodexPoll), CodexStartTimeout how long a started
-	// server has to answer (default DefaultCodexStartTimeout).
+	// server has to answer (default DefaultCodexStartTimeout). #156:
+	// CodexRejoin is how long a join that gave up after its retries waits
+	// before it is tried again (default DefaultCodexRejoin).
 	CodexRun          string
 	CodexHost         CodexHost
 	CodexPoll         time.Duration
 	CodexStartTimeout time.Duration
+	CodexRejoin       time.Duration
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -590,6 +593,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if opts.CodexStartTimeout <= 0 {
 		h.opts.CodexStartTimeout = DefaultCodexStartTimeout
 	}
+	if opts.CodexRejoin <= 0 { // #156
+		h.opts.CodexRejoin = DefaultCodexRejoin
+	}
 	if err := h.initCodex(ctx); err != nil { // #155
 		return nil, err
 	}
@@ -818,6 +824,10 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startPackup
 		case proto.CmdCodexServerGet, proto.CmdCodexServerSet: // #155
 			start = h.startCodexServer
+		case proto.CmdWorkerAnswerAsync: // #156
+			start = h.startAnswerAsync
+		case proto.CmdWorkerDismissAsync:
+			start = h.startDismissAsync
 		case proto.CmdInboxDismiss: // #106
 			start = h.startInboxDismiss
 		case proto.CmdWorkerAnswerFollowup:

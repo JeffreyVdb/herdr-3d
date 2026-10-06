@@ -17,8 +17,15 @@ const (
 	CmdCodexServerSet = "codex_server.set"
 )
 
+// #156: answering and dismissing a shared Codex worker's async questions
+// (docs/protocol.md "Codex async questions").
+const (
+	CmdWorkerAnswerAsync  = "worker.answer_async"
+	CmdWorkerDismissAsync = "worker.dismiss_async"
+)
+
 func init() {
-	Commands = append(Commands, CmdCodexServerGet, CmdCodexServerSet)
+	Commands = append(Commands, CmdCodexServerGet, CmdCodexServerSet, CmdWorkerAnswerAsync, CmdWorkerDismissAsync)
 }
 
 // CodexServer is the switch: codex_server.get's and codex_server.set's
@@ -71,6 +78,95 @@ type WorkerCodex struct {
 	// went wrong with its server.
 	Note string `json:"note,omitempty"`
 	// Attached: the bridge has joined the worker's thread as a second
-	// client (while its transcript is open).
+	// client (#156: whenever its server runs and its thread is known).
 	Attached bool `json:"attached,omitempty"`
+	// #156: Thread is the worker's thread as the bridge keeps it (what
+	// worker.answer_async names); Turn its running turn while attached
+	// ("" when idle or not attached).
+	Thread string `json:"thread,omitempty"`
+	Turn   string `json:"turn,omitempty"`
+	// Questions are the thread's async question batches, oldest first.
+	Questions []CodexBatch `json:"questions,omitempty"`
+}
+
+// Async question states (CodexQuestion.State).
+const (
+	AsyncPending   = "pending"
+	AsyncSending   = "sending"
+	AsyncSent      = "sent"
+	AsyncAnswered  = "answered"
+	AsyncDismissed = "dismissed"
+)
+
+// CodexBatch is one async question message of a shared Codex worker's
+// thread.
+type CodexBatch struct {
+	// Batch is the message's id, Codex's function call_id.
+	Batch string `json:"batch"`
+	Turn  string `json:"turn"`
+	// Seen: live, history, or both, in the order seen.
+	Seen []string `json:"seen"`
+	// Twin: another batch of the same turn with the same questions seen
+	// only the other way under another id. Conflict: live and history gave
+	// this id different questions (it cannot be answered).
+	Twin     string `json:"twin,omitempty"`
+	Conflict bool   `json:"conflict,omitempty"`
+	// At is when the bridge first saw it (unix ms, bridge clock).
+	At        int64           `json:"at"`
+	Questions []CodexQuestion `json:"questions"`
+}
+
+// CodexQuestion is one question of a batch.
+type CodexQuestion struct {
+	Index int    `json:"index"`
+	Title string `json:"title"`
+	// Options are the suggested answers; none: free text.
+	Options []string `json:"options,omitempty"`
+	State   string   `json:"state"`
+	// Answer, AnsweredBy ("bridge" | "other"): answered's envelope.
+	Answer     string `json:"answer,omitempty"`
+	AnsweredBy string `json:"answered_by,omitempty"`
+	// Unconfirmed: sent, but no response came from the server.
+	Unconfirmed bool `json:"unconfirmed,omitempty"`
+	// Error: why the bridge's last answer was refused (pending again).
+	Error string `json:"error,omitempty"`
+	// Truncated: the title, an option or the answer was cut for the wire.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// WorkerAnswerAsyncArgs are the args of worker.answer_async.
+type WorkerAnswerAsyncArgs struct {
+	ID      string           `json:"id"`
+	Thread  string           `json:"thread"`
+	Batch   string           `json:"batch"`
+	Answers []AsyncAnswerArg `json:"answers"`
+}
+
+// AsyncAnswerArg answers one question of the batch.
+type AsyncAnswerArg struct {
+	Index  *int   `json:"index"`
+	Answer string `json:"answer"`
+}
+
+// AsyncAnswerResult is worker.answer_async's ack: the server took the
+// answer (sent), which is not yet answered.
+type AsyncAnswerResult struct {
+	State string `json:"state"`
+	// Via is turn/steer (the running turn) or turn/start (none ran).
+	Via  string `json:"via"`
+	Turn string `json:"turn,omitempty"`
+	// Fallback: turn/steer was refused (the turn had ended), so a turn was
+	// started instead.
+	Fallback bool `json:"fallback,omitempty"`
+	// Unconfirmed: no response came; it is not sent again.
+	Unconfirmed bool `json:"unconfirmed,omitempty"`
+}
+
+// WorkerDismissAsyncArgs are the args of worker.dismiss_async: indexes of
+// the batch's questions, none for every one that can be.
+type WorkerDismissAsyncArgs struct {
+	ID      string `json:"id"`
+	Thread  string `json:"thread"`
+	Batch   string `json:"batch"`
+	Indexes []int  `json:"indexes,omitempty"`
 }
