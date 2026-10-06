@@ -12,7 +12,9 @@
   panel; #137: a checkout's file listing), `fileindex` (#137 `worker.files`: an index of each worker checkout's files
   and directories from `git ls-files` or `rg --files`, cached per checkout and rebuilt in the background when git's
   index file changes or it grows old; never walks the disk), `fuzzy` (#137: the pure fzf-style path scorer and bounded
-  top-N search `fileindex` ranks with; `server`, `store` and `proto` import neither, `TestFileIndexIsWiredByTheApp`), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `usage` (M5: agents' token
+  top-N search `fileindex` ranks with; `server`, `store` and `proto` import neither, `TestFileIndexIsWiredByTheApp`), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `codexshare` (#154: test fixture only,
+  imported by nothing: an isolated CODEX_HOME, a scripted Responses mock, an app-server client over its unix socket and a
+  throwaway herdr session driver for the real Codex TUI; `docs/research/codex-shared-tui.md`), `usage` (M5: agents' token
   usage and cost from their transcripts, read incrementally, and the pricing table; #101: the main thread's context in use
   and its window, resolved from `[1m]`, observed context, the table and the model's family, cleared by a compaction), `jsonl` (the shared reading of
   those JSONL files: one tail per transcript, complete lines from byte offsets, no symlinks), `transcript` (M16: the
@@ -57,6 +59,7 @@ Go 1.27 (see `go.mod`), Node 24.18 (`game/.nvmrc`), pnpm 11.7 (`packageManager` 
 make setup             # fresh worktree: toolchain check, game deps, Go modules (then make lint, make shot)
 make build test lint   # Go binaries -> bin/, game bundle -> game/dist/, go test + vitest, vet/gofmt/tsc
 make integration       # bridge against a real herdr (and systemd-run) in throwaway sessions (see below)
+make codex-shared-tui  # #154: real Codex TUI (codex-cli 0.160.1) + a second app-server client, mock model, throwaway herdr sessions
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
 make dev               # Vite dev server on a portlease-leased port, 127.0.0.1 only
 make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check), seconds
