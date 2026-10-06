@@ -143,12 +143,20 @@ func TestCodexShareEnvironment(t *testing.T) {
 		for _, ws := range []string{"ws-a", "ws-b", "blocked-c"} {
 			pane := f.pane(ws)
 			panes[ws] = pane
+			if strings.HasPrefix(ws, "blocked") {
+				// How a blocked .envrc surfaces: only direnv's line at the prompt.
+				out, _ := f.h.Read(f.ctx, pane, "recent-unwrapped", 20)
+				f.record("blocked-pane-before-launch.txt", out)
+			}
 			// The candidate launch: the server from this pane's
 			// initialized shell, then the TUI in the same pane.
 			sock := f.startServer(pane, "own-"+ws)
 			f.startTUI("own-"+ws, pane, "--remote", "unix://"+sock, "-C", filepath.Join(f.root, ws))
 		}
 		f.snap("blocked-pane-at-launch", panes["blocked-c"])
+		if log, err := os.ReadFile(filepath.Join(f.root, "own-blocked-c.log")); err == nil {
+			f.record("blocked-server-log.txt", string(log))
+		}
 		for _, ws := range []string{"ws-a", "ws-b", "blocked-c"} {
 			p := f.probe("owned-"+ws, "own-"+ws)
 			expectWorkspace(t, "owned "+ws, p, ws, true)

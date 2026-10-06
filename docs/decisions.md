@@ -633,3 +633,19 @@ the issue (real panes, the agents' own transcripts compared byte for byte).
 | 6 | Over the image previews and a card in the air | **It opens**: the issue's "every view" has no exception, and the previews' own Esc is not what the chord asked about. The palette is the topmost modal; the previews' (and the whiteboard's) window capture-phase handlers skip any key from inside `dialog.palette` (`inPalette`), so Esc closes only the palette and the preview stays up. A card mid-drag is put back with no drop (`BoardsPanel.cancelDrag`) as the palette opens: a drop landing under a modal would surprise. (The `?` help key keeps its own exception for these.) |
 | 7 | The plan-limits plate | **Its edge tab over the palette**, as over any screen dialog (the user's call): `dialog.palette[open]` joins `SCREEN`, the palette is `topScreen()`, and `tabFit()` measures it alone, so even over the hire sheet (no gutter of its own) the tab shows, inside the topmost modal and clickable. The palette is 640 px at most and never nearer than 56 px to the right edge; it needs no top offset any more. Shift+L is not a peek key there: it types an L. |
 
+
+## 2026-10-06 — #154 (phase 1): the Codex terminal beside a second app-server client
+
+Findings, evidence and the fixture: [`docs/research/codex-shared-tui.md`](research/codex-shared-tui.md)
+(`make codex-shared-tui`, `internal/codexshare`). Codex 0.160.1, Herdr 0.9.0, mock inference.
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Does the terminal still work with a shared server? | **Yes**: the native TUI with `--remote unix://…` keeps typing, slash commands, skills, Ctrl+C, approvals, exit and `codex resume ID --remote` working, and Herdr's start/prompt/read/wait/send-keys and working → idle/done detection with it. A second client shares the thread, and its async-question replies are rendered and resolved natively (per question, on delivery). |
+| 2 | Server ownership | **One app-server per Codex worker, started from the worker's own pane** after fish and direnv have run, then the TUI in that pane (`setsid -f fish -c 'codex app-server --listen unix://SOCK'`). The CODEX_HOME daemon is never used: it runs every thread's tools and MCP children in the environment of whoever started it, and plain `codex` already auto-starts it (`daemon_auto_start`). Starting from the same pane is also what routes Herdr's session-id hook, which runs in the server, to the right pane. |
+| 3 | Lifetime | The bridge owns each worker's server: it records socket and pid and stops the server on send-home, fire and floor sleep (it outlives its pane and `herdr session stop`). It reports a dead server, which Herdr shows as `working`. |
+| 4 | Subscriptions | `thread/resume {threadId}` without overrides, only while watching; `thread/unsubscribe` after. The thread id comes from Herdr's `agent_session`; ephemeral side threads are skipped. |
+| 5 | Approvals | The bridge stays passive and never answers a server request: the first answer wins. |
+| 6 | Resume | Herdr's own resume drops `--remote` and the workspace env. herdr-3d resumes shared-mode Codex workers itself: server first, then `codex resume ID --remote … -C …`. How to keep Herdr's native resume off such a pane is phase 2's first check. |
+| 7 | Questions | Reply with the native envelope: `turn/steer` (with `expectedTurnId`) during the asking turn, `turn/start` after it. The terminal can no longer answer once that turn has ended, and Herdr shows a pending question as `blocked`. The server does not deduplicate, so the bridge must. |
+| 8 | Terminal-free mode | Documentation only: a separate, persisted Settings opt-in with its gaps (no Herdr agent control, no TUI commands, the bridge answering approvals). The terminal stays the default. |
