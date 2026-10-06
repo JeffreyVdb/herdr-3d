@@ -274,7 +274,7 @@ floor with no workers and an `error`).
 | `phase`, `pass` | string, int ≥ 0, optional | orchestrators: the `h3d_phase` / `h3d_pass` tokens (`research\|coding\|review\|fixing\|waiting_user\|pr\|done`, others passed through, ≤ 32 bytes), remembered like `harness` |
 | `over_cap` | bool, optional | orchestrators: `true` past write-code's review-pass cap (`pass > 3`, or `pass == 3` and `phase == "waiting_user"`); absent when false |
 | `report` | object, optional | freelancers: their write-code report (see [Runs and freelancers](#runs-and-freelancers)) |
-| `codex` | object, optional | #155: how a Codex worker the bridge hired was launched, `{"mode": "shared" \| "legacy", "server"?: "starting" \| "running" \| "down" \| "stopped", "note"?, "attached"?, "thread"?, "turn"?, "questions"?}` (see [Shared Codex server](#shared-codex-server); #156: `thread`, `turn` and `questions` in [Codex async questions](#codex-async-questions)); absent for other workers, and for Codex hires made with the switch off |
+| `codex` | object, optional | #155: how a Codex worker the bridge hired was launched, `{"mode": "shared" \| "legacy", "server"?: "starting" \| "running" \| "down" \| "stopped", "note"?, "attached"?, "thread"?, "turn"?, "questions"?, "async_blocked"?}` (see [Shared Codex server](#shared-codex-server); #156: `thread`, `turn` and `questions` in [Codex async questions](#codex-async-questions); #157: `async_blocked` there too); absent for other workers, and for Codex hires made with the switch off |
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
 none, so the bridge keeps the last known value until a new one shows up. They are absent when never known.
@@ -3066,7 +3066,8 @@ after it ended (then only the bridge can: the terminal drops its pending questio
 "codex":{"mode":"shared","server":"running","attached":true,"thread":"01a1112a-85b8-7bf2-…","turn":"01a1112a-9c23-…",
   "questions":[{"batch":"call_3","turn":"01a1112a-9c23-…","seen":["live","history"],"at":1790766523807,
     "questions":[{"index":0,"title":"Which fixture color?","options":["Green","Blue"],"state":"sent"},
-                 {"index":1,"title":"Any context for the fixture?","state":"answered","answer":"typed-in-terminal","answered_by":"other"}]}]}
+                 {"index":1,"title":"Any context for the fixture?","state":"answered","answer":"typed-in-terminal","answered_by":"other"}]}],
+  "async_blocked":true}
 {"t":"worker.answer_async","req_id":"a1","args":{"id":"6db1905e-…","thread":"01a1112a-85b8-7bf2-…","batch":"call_3",
   "answers":[{"index":0,"answer":"Green"}]}}
 {"t":"ack","req_id":"a1","data":{"state":"sent","via":"turn/steer","turn":"01a1112a-9c23-…"}}
@@ -3138,6 +3139,15 @@ so the fallback never starts a second delivery path.
 **`worker.dismiss_async`** `{id, thread, batch, indexes?}` puts `pending` or `sent` questions away (no `indexes`:
 every one that can be); `stale` for an unknown batch or another state, `invalid_state` for a worker that is not
 shared. Nothing goes to Codex.
+
+**`async_blocked`** (#157): `true` while the bridge would take a prompt through the app-server (below): attached, the
+thread's running turn asked a question Codex still holds (not `answered`; a `dismissed` one counts, Codex still has
+it), and **no server request open**. It says whether a `blocked` herdr shows is only an async question's; absent
+(false) with an approval or a blocking question open, while idle, while not attached, and for legacy workers. It is
+part of the worker's `codex`, so each flip is a `worker.upsert`: a question asked, a server request opened or resolved,
+the envelope seen, the turn's start or end, a join or its loss, another thread. It does not depend on `status`: the
+game reads `status: "blocked"` with `async_blocked: true` as working (its prompts are queued, nothing waits on a key),
+and `blocked` without it as a real block, as before.
 
 **Prompts stay usable.** herdr refuses `agent prompt` while it shows the worker `blocked` (B7), and the asking turn
 is still running then. A `worker.prompt` to a shared worker that is `blocked`, attached, with a running turn that asked
