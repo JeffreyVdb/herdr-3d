@@ -5,7 +5,7 @@ import type { Ask, CommandArgs, Followup, TranscriptDiff, TranscriptItem, Usage,
 import { AskCard, askItem, type AskResult } from './askCard';
 import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
-import { isSendKey } from './askStack';
+import { isSendKey, reveal } from './askStack';
 import { FollowupCard, type FollowupResult } from './followupCard';
 import type { ImageFeed } from './imageFeed';
 import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, Thumbs } from './transcriptImages';
@@ -214,6 +214,10 @@ const HL_CONFIG: Config = {
 type PinnedCard = 'followup' | 'asyncq';
 /** Ids for the cards the tabs control (one transcript per seat, but each mount anew). */
 let cardIds = 0;
+/** #157: a screen this short (a phone's laptop) has no room for a pinned card beside the timeline (`fit()`). */
+const SHORT_SCREEN = 300;
+/** #157: the least room a pinned card's questions keep beside the timeline (a question and an answer): less, it takes the timeline's. */
+const QUESTION_ROOM = 64;
 
 let mdPurifier: Purifier | null | undefined;
 let hlPurifier: Purifier | null | undefined;
@@ -706,6 +710,11 @@ class Transcript implements TranscriptView {
   private readonly tabs: Record<PinnedCard, HTMLButtonElement>;
   /** Which of the two is open while both are up (the one that was up first stays; both at once: the follow-up). */
   private front: PinnedCard | null = null;
+  /** The timeline's box (the scroller and the jump chip) and the prompt box: what `fit()` measures. */
+  private readonly main: HTMLDivElement;
+  private readonly form: HTMLDivElement;
+  /** #157: the transcript's size when `fit()` last ran (another one puts the keyboard's place in a card back in sight). */
+  private fitted = '';
   /** Whether the banner and the prompt box were last drawn with the card up. */
   private asking = false;
   private destroyed = false;
@@ -765,7 +774,7 @@ class Transcript implements TranscriptView {
     this.offSending = this.sending.subscribe(() => this.composer.setBusy(this.sending.busy));
     if (this.sending.busy) this.composer.setBusy(true);
     this.sendBtn = h('button', { class: 'tx-send', title: 'Send', onclick: () => this.submit() }, 'Send');
-    const form = h('div', { class: 'tx-prompt' }, this.composer.element, this.sendBtn);
+    this.form = h('div', { class: 'tx-prompt' }, this.composer.element, this.sendBtn);
     this.ask = new AskCard({
       answer: (args) => host.onAnswerAsk(args),
       toTerminal: () => host.onSwitchToTerminal(),
@@ -866,7 +875,8 @@ class Transcript implements TranscriptView {
     );
     // The preset and the zoom keep together at the strip's end; a narrow screen wraps them to a line of their own.
     const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, this.busy, this.ctxEl, h('div', { class: 'tx-look' }, picker, zoom));
-    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, this.cardTabs, this.followup.el, this.asyncq.el, this.asyncq.live, form, this.pendingLive, this.live);
+    this.main = h('div', { class: 'tx-main' }, this.scroller, this.jump);
+    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, this.main, this.ask.el, this.cardTabs, this.followup.el, this.asyncq.el, this.asyncq.live, this.form, this.pendingLive, this.live);
     this.unprefs = this.prefs.onChange((what) => this.applyPrefs(what));
     this.applyPrefs(null);
     this.updateCounts();
@@ -879,7 +889,13 @@ class Transcript implements TranscriptView {
     document.addEventListener('visibilitychange', this.onVisibility);
     this.onVisibility();
     if (typeof ResizeObserver !== 'undefined') {
-      this.resize = new ResizeObserver(() => this.stick());
+      this.resize = new ResizeObserver((seen) => {
+        // #157: the screen's size (the window resized) fits a pinned card to it first. The view's own size is its
+        // screen's whatever it holds, so what fit() changes inside never calls this again for the root.
+        if (seen.some((e) => e.target === this.root)) this.fit();
+        this.stick();
+      });
+      this.resize.observe(this.root);
       this.resize.observe(this.scroller);
     }
     container.append(this.root);
@@ -918,6 +934,7 @@ class Transcript implements TranscriptView {
     if (this.destroyed) return;
     this.blocked = q && typeof q === 'object' ? q : null;
     this.renderBanner();
+    this.fit(); // the banner takes room too
   }
 
   setAsk(ask: Ask | null): void {
@@ -972,6 +989,53 @@ class Transcript implements TranscriptView {
         n.hidden = !counts[k];
       }
     }
+    this.fit();
+  }
+
+  /**
+   * #157: the open pinned card (the follow-up's, or the async questions') takes the timeline's room, the top strip's
+   * and half the prompt box's (`data-tight`, transcript.css) when it does not fit beside them: always on a very short
+   * screen (a phone's), and otherwise whenever the layout without it leaves the conversation less than a line, pushes
+   * the prompt box off the screen, or squeezes the card's questions under QUESTION_ROOM. No height says that (the strip
+   * wraps to two rows on a narrower screen, the zoom grows the card but not the strip, two cards bring their tabs), so
+   * it is measured, on the layout without it: the answer never depends on itself, nothing goes back and forth. A new
+   * size, or the other layout, puts the keyboard's place in a card back in sight.
+   */
+  private fit(): void {
+    const root = this.root;
+    if (!root || this.destroyed) return;
+    const height = root.clientHeight;
+    if (!height) return; // not laid out: a screen not shown (the terminal is up), a test's DOM
+    const card = this.pinned()?.el ?? null;
+    const was = root.hasAttribute('data-tight');
+    let tight = !!card && height <= SHORT_SCREEN;
+    if (card && !tight) {
+      // Drawn without it for a moment (no frame shows it); the scroll positions it would clamp are put back.
+      const kept = [card, this.scroller].map((e) => [e, e.scrollTop] as const);
+      root.removeAttribute('data-tight');
+      tight = !this.fitsBeside(card);
+      if (tight) {
+        root.setAttribute('data-tight', '');
+        if (was) for (const [e, top] of kept) e.scrollTop = top;
+      }
+    }
+    root.toggleAttribute('data-tight', tight);
+    const size = `${root.clientWidth}x${height}`;
+    if (tight !== was || size !== this.fitted) {
+      const a = document.activeElement;
+      if (a instanceof HTMLElement && root.contains(a) && a.closest('.tx-fu, .tx-aq, .tx-ask')) reveal(a);
+    }
+    this.fitted = size;
+  }
+
+  /** As laid out now: a line of the conversation, the prompt box on the screen, and the card's questions their room. */
+  private fitsBeside(card: HTMLElement): boolean {
+    if (this.form.getBoundingClientRect().bottom > this.root.getBoundingClientRect().bottom + 0.5) return false;
+    const s = getComputedStyle(this.scroller);
+    const line = parseFloat(s.lineHeight) || 1.5 * parseFloat(s.fontSize);
+    if (this.main.getBoundingClientRect().height < parseFloat(s.paddingTop) + parseFloat(s.paddingBottom) + line) return false;
+    const body = card.querySelector<HTMLElement>('.tx-ask-body');
+    return !body || body.clientHeight >= QUESTION_ROOM || body.scrollHeight <= body.clientHeight + 1;
   }
 
   /** #157: opens card k of the two (a click, Enter: the keyboard on it; ← → on the tabs: the keyboard stays there). */
@@ -1570,7 +1634,9 @@ class Transcript implements TranscriptView {
     this.zoomBtns.in.disabled = zoom >= ZOOM.max;
     this.renderBusy();
     this.renderJump();
-    // New sizes (a zoom, another preset's fonts) move the bottom: a view that followed it keeps following.
+    // New sizes (a zoom, another preset's fonts) move the bottom: a view that followed it keeps following. #157: and
+    // may take a pinned card's room.
+    if (what === 'transcriptZoom' || what === 'transcriptTheme') this.fit();
     if (what === 'transcriptZoom' || what === 'transcriptTheme' || what === 'hideTools') this.stick();
   }
 

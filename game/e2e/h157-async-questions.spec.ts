@@ -422,6 +422,134 @@ test('on a laptop the follow-up and the async questions take turns too, and the 
   await expect(tx.locator('.tx-fu .tx-ask-top')).toBeVisible();
   await expect(aq).toBeHidden();
   expect((await tx.locator('.tx-main').boundingBox())?.height ?? 0, 'the conversation’s room').toBeGreaterThanOrEqual(70);
+  // Room for both: the card stays beside the conversation, the strip on top.
+  await expect(tx).not.toHaveAttribute('data-tight');
+  await expect(tx.locator('.tx-bar')).toBeVisible();
+  expect(await faults(tx)).toEqual([]);
   await shot(page, 'h157-laptop-both-followup');
   clean();
 });
+
+/**
+ * What is wrong with the pinned card's layout as drawn: a tab not hit where it is drawn (the timeline painting over
+ * it), the timeline running into the card, the prompt box pushed off the screen or covered, the open card's questions
+ * under 64 px. None when it holds.
+ */
+async function faults(tx: Locator): Promise<string[]> {
+  return tx.evaluate((root) => {
+    const bad: string[] = [];
+    const hits = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 12));
+      return hit && el.contains(hit) ? null : `.${String(hit?.className ?? 'nothing')}`;
+    };
+    for (const t of root.querySelectorAll('.tx-qtabs:not([hidden]) .tx-qtab')) {
+      const by = hits(t);
+      if (by) bad.push(`tab “${t.querySelector('.tx-qtab-name')?.textContent}” covered by ${by}`);
+    }
+    const box = root.getBoundingClientRect();
+    const main = root.querySelector('.tx-main')!.getBoundingClientRect();
+    if (main.height < 0) bad.push(`timeline ${main.height}px`);
+    const card = [...root.querySelectorAll<HTMLElement>('.tx-fu, .tx-aq')].find((c) => !c.hidden && getComputedStyle(c).display !== 'none');
+    if (!card) return [...bad, 'no open card'];
+    const c = card.getBoundingClientRect();
+    if (main.bottom > c.top + 0.5) bad.push(`timeline ends at ${main.bottom}, the card starts at ${c.top}`);
+    const top = card.querySelector('.tx-ask-top')?.getBoundingClientRect();
+    const foot = card.querySelector('.tx-ask-foot')?.getBoundingClientRect();
+    const room = Math.min(c.bottom, foot?.height ? foot.top : c.bottom) - Math.max(c.top, top?.height ? top.bottom : c.top);
+    if (room < 64) bad.push(`question room ${room}px`);
+    const prompt = root.querySelector('.tx-prompt')!.getBoundingClientRect();
+    if (prompt.bottom > box.bottom + 0.5) bad.push(`prompt box ends at ${prompt.bottom}, the screen at ${box.bottom}`);
+    const input = root.querySelector('.tx-input');
+    const by = input && hits(input);
+    if (by) bad.push(`prompt box covered by ${by}`);
+    return bad;
+  });
+}
+
+// #157 (review round 2): seated on a phone with both cards, then the window made a short laptop's. The screen comes
+// out about 303 px tall, just above a phone's: the strip, the tabs, a card and the prompt box do not fit together
+// there, so the open card takes the timeline's room as on a phone (measured, not a height), the tabs clickable, and
+// the answer field that had the keyboard is in sight.
+test('a seated resize from a phone to a short laptop keeps the tabs clickable and the focused answer in sight', async ({ page }) => {
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const w = pixel();
+  await openGame(page, 'demo-m5', '', SIM);
+  const tx = await sitAtTranscript(page, w);
+  const aq = tx.locator('.tx-aq');
+  const fu = tx.locator('.tx-fu');
+  await expect(aq).toBeVisible();
+  await idleWithFollowup(page, w);
+  const tabs = tx.getByRole('tablist', { name: 'Questions for you' });
+  const fuTab = tabs.getByRole('tab', { name: /^Open questions/ });
+  const aqTab = tabs.getByRole('tab', { name: /^Codex asked/ });
+  await fuTab.click();
+  await fu.getByRole('radio', { name: 'No' }).click();
+  const note = fu.locator('textarea.tx-fu-text');
+  await note.fill('resize draft');
+  await expect(note).toBeFocused();
+
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await frames(page, 6);
+  const height = await tx.evaluate((e) => e.clientHeight);
+  expect(height, 'a short laptop’s screen, just above a phone’s').toBeGreaterThan(300);
+  expect(height).toBeLessThan(380);
+  await expect(tx).toHaveAttribute('data-tight', '');
+  expect(await faults(tx)).toEqual([]);
+  await expect(note).toBeFocused();
+  expect(await inSight(fu, note), 'the focused answer after the resize').toEqual([]);
+  await shot(page, 'h157-resized-short-followup');
+
+  // The mouse switches: the other card opens, and back, the draft kept.
+  await aqTab.click();
+  await expect(aqTab).toHaveAttribute('aria-selected', 'true');
+  await expect(aq).toBeVisible();
+  await expect(fu).toBeHidden();
+  expect(await faults(tx)).toEqual([]);
+  await fuTab.click();
+  await expect(fu).toBeVisible();
+  await expect(note).toHaveValue('resize draft');
+
+  // Back to a roomy window: the card goes back beside the conversation, the strip with it.
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await frames(page, 6);
+  await expect(tx).not.toHaveAttribute('data-tight');
+  await expect(tx.locator('.tx-bar')).toBeVisible();
+  expect(await faults(tx)).toEqual([]);
+  expect(await sent(page, 'worker.answer_followup')).toHaveLength(0);
+  clean();
+});
+
+// #157 (review round 2): fresh loads across a phone's height and just above it (the screen's height for a 1024-wide
+// window is its height less about 197 px). Wherever the open card does not fit beside the conversation it takes its
+// room; the tabs, the card's questions and the prompt box hold at every height, for either card.
+for (const [vh, want, tight] of [
+  [487, 290, true],
+  [500, 303, true],
+  [517, 320, true],
+  [537, 340, true],
+  [1080, 883, false],
+] as const) {
+  test(`both cards on a ${want} px screen: the tabs, the questions and the prompt box hold`, async ({ page }) => {
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width: vh === 1080 ? 1920 : 1024, height: vh });
+    const w = pixel();
+    await openGame(page, 'demo-m5', '', SIM);
+    const tx = await sitAtTranscript(page, w);
+    expect(Math.abs((await tx.evaluate((e) => e.clientHeight)) - want), 'the screen’s height').toBeLessThanOrEqual(8);
+    await expect(tx.locator('.tx-aq')).toBeVisible();
+    await idleWithFollowup(page, w);
+    const tabs = tx.getByRole('tablist', { name: 'Questions for you' });
+    await expect(tabs).toBeVisible();
+    if (tight) await expect(tx).toHaveAttribute('data-tight', '');
+    else await expect(tx).not.toHaveAttribute('data-tight');
+    expect(await faults(tx), 'the async card open').toEqual([]);
+    await tabs.getByRole('tab', { name: /^Open questions/ }).click();
+    await expect(tx.locator('.tx-fu')).toBeVisible();
+    expect(await faults(tx), 'the follow-up open').toEqual([]);
+    await tabs.getByRole('tab', { name: /^Codex asked/ }).click();
+    await expect(tx.locator('.tx-aq')).toBeVisible();
+    clean();
+  });
+}

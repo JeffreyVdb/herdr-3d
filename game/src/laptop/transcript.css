@@ -454,6 +454,9 @@
   flex: 1;
   min-height: 0;
   display: flex;
+  /* #157: never painted past its box (the scroller's padding outlasts a timeline squeezed to nothing): the tabs and
+     the cards below stay clear to click. */
+  overflow: clip;
 }
 .tx-scroll {
   flex: 1;
@@ -2239,86 +2242,84 @@
   }
 }
 /*
- * A very short screen (a phone's laptop): the ask's grid leaves the body no room here, since the prompt box stays on
- * beside the card. While the card is up it takes the room of the timeline and of the strip (folded away, both back
- * when the card goes; the seat bar below has Terminal / Transcript / Images, Ctrl +/- the zoom) and of the prompt
- * box's second half (one slim line, still there to type in). The card scrolls as one under its first line (the
- * tabs, or what it is), Dismiss and Send kept in view at its foot. #157: the same for the async questions' card.
+ * No room for a pinned card (the follow-up's, or the async questions') beside the timeline: a phone's laptop, or a
+ * screen whose strip, tabs, card and prompt box do not fit together (`data-tight`, measured by the view: see `fit()`
+ * in transcriptRender.ts). While the card is up it takes the room of the timeline and of the strip (folded away,
+ * both back when the card goes; the seat bar below has Terminal / Transcript / Images, Ctrl +/- the zoom) and of the
+ * prompt box's second half (one slim line, still there to type in). The card scrolls as one under its first line
+ * (the tabs, or what it is), Dismiss and Send kept in view at its foot. On a very short screen it is also the ask's
+ * tighter grid (above); above that, the card's own column.
  */
-@container tx (max-height: 300px) {
-  .tx[data-followup] .tx-main,
-  .tx[data-asyncq] .tx-main {
-    flex: 0 0 0;
-    overflow: hidden;
-  }
-  .tx[data-followup] .tx-bar,
-  .tx[data-asyncq] .tx-bar {
-    display: none;
-  }
-  .tx[data-followup] .tx-fu,
-  .tx[data-asyncq] .tx-aq {
-    flex: 1 1 auto;
-    grid-template-rows: auto auto auto auto;
-    align-content: start;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--tx-sun) 35%, transparent) transparent;
-    /* What is scrolled to (a picked option, the focused text) clears the first line and the foot kept in view. */
-    scroll-padding-block: 30px 36px;
-    margin-top: 6px;
-    padding-top: 0;
-    padding-bottom: 0;
-  }
-  .tx[data-followup] .tx-fu .tx-ask-top,
-  .tx[data-asyncq] .tx-aq .tx-ask-top {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    align-self: stretch;
-    padding-top: 4px;
-    padding-bottom: 1px;
-    background: var(--tx-ask-bg);
-  }
-  .tx[data-followup] .tx-fu .tx-ask-body,
-  .tx[data-asyncq] .tx-aq .tx-ask-body {
-    min-height: auto;
-    max-height: none;
-    overflow: visible;
-  }
-  .tx[data-followup] .tx-fu-tail,
-  .tx[data-asyncq] .tx-aq-sent {
-    max-height: none;
-    margin-top: 4px;
-    padding: 2px 8px;
-  }
-  .tx[data-followup] .tx-fu-area,
-  .tx[data-asyncq] .tx-aq-text {
-    height: 2.9em;
-    min-height: 2.9em;
-  }
-  .tx[data-followup] .tx-fu .tx-ask-foot,
-  .tx[data-asyncq] .tx-aq .tx-ask-foot {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
-    margin-top: 2px;
-    padding: 3px 0 4px;
-    background: var(--tx-ask-bg);
-  }
-  .tx[data-followup] .tx-prompt,
-  .tx[data-asyncq] .tx-prompt {
-    align-items: center;
-    padding-block: 4px;
-  }
-  .tx[data-followup] .cmp,
-  .tx[data-asyncq] .cmp {
-    --cmp-min-height: 1.6em;
-  }
-  .tx[data-followup] .tx-send,
-  .tx[data-asyncq] .tx-send {
-    height: calc(24px * var(--tx-k, 1));
-  }
+.tx[data-tight] .tx-main {
+  flex: 0 0 0;
+}
+.tx[data-tight] .tx-bar {
+  display: none;
+}
+.tx[data-tight] .tx-fu,
+.tx[data-tight] .tx-aq {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  grid-template-rows: auto auto auto auto;
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--tx-sun) 35%, transparent) transparent;
+  /* What is scrolled to (a picked option, the focused text) clears the first line and the foot kept in view. */
+  scroll-padding-block: 30px 36px;
+  margin-top: 6px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.tx[data-tight] .tx-fu .tx-ask-top,
+.tx[data-tight] .tx-aq .tx-ask-top {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  align-self: stretch;
+  padding-top: 4px;
+  padding-bottom: 1px;
+  background: var(--tx-ask-bg);
+}
+.tx[data-tight] .tx-fu .tx-ask-body,
+.tx[data-tight] .tx-aq .tx-ask-body {
+  /* The card's column (above a very short screen): the questions take what they leave, so the foot sits at its bottom. */
+  flex: 1 0 auto;
+  min-height: auto;
+  max-height: none;
+  overflow: visible;
+}
+.tx[data-tight] .tx-fu-tail,
+.tx[data-tight] .tx-aq-sent {
+  max-height: none;
+  margin-top: 4px;
+  padding: 2px 8px;
+}
+.tx[data-tight] .tx-fu-area,
+.tx[data-tight] .tx-aq-text {
+  height: 2.9em;
+  min-height: 2.9em;
+}
+.tx[data-tight] .tx-fu .tx-ask-foot,
+.tx[data-tight] .tx-aq .tx-ask-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: 2px;
+  padding: 3px 0 4px;
+  background: var(--tx-ask-bg);
+}
+.tx[data-tight] .tx-prompt {
+  align-items: center;
+  padding-block: 4px;
+}
+.tx[data-tight] .cmp {
+  --cmp-min-height: 1.6em;
+}
+.tx[data-tight] .tx-send {
+  height: calc(24px * var(--tx-k, 1));
 }
 
 /*
