@@ -2337,6 +2337,9 @@
   --tx-on-sun: var(--tx-on-accent);
   /* Its own ground (the sticky top and foot of a short screen paint it too). */
   --tx-ask-bg: color-mix(in srgb, var(--tx-blue) 7%, var(--tx-bg-2));
+  /* The theme's red and third text lose a little against the blue ground (Paper's red 4.4:1, Quiet's keys 3.8:1): each
+   * a step toward the text, at least 4.8:1 in every theme. */
+  --tx-aq-red: color-mix(in srgb, var(--tx-red) 85%, var(--tx-text));
   box-shadow: 0 -6px 18px -8px rgb(0 0 0 / 45%);
 }
 .tx-aq-work {
@@ -2413,8 +2416,12 @@
 .tx-aq-state[data-phase='undelivered'] {
   color: var(--tx-aq-warn);
 }
-.tx-aq-state[data-phase='failed'] {
-  color: var(--tx-red);
+.tx-aq-state[data-phase='failed'],
+.tx-aq .tx-ask-note.is-error {
+  color: var(--tx-aq-red);
+}
+.tx-aq .tx-ask-keys {
+  color: color-mix(in srgb, var(--tx-text-3) 50%, var(--tx-text-2));
 }
 .tx-aq-state[data-phase='answered'] {
   color: var(--tx-green);
@@ -2427,7 +2434,7 @@
   color: var(--tx-aq-warn);
 }
 .tx-ask-row[data-phase='failed'] .tx-ask-row-act {
-  color: var(--tx-red);
+  color: var(--tx-aq-red);
 }
 @media (prefers-reduced-motion: reduce) {
   .tx-aq-state[data-phase='sending'] {
@@ -2491,7 +2498,7 @@
 .tx-qtab[aria-selected='true'] {
   border-color: var(--tx-sun);
   background: color-mix(in srgb, var(--tx-sun) 14%, var(--tx-bg-2));
-  color: var(--tx-sun-text);
+  color: var(--tx-text);
   cursor: default;
 }
 .tx-qtab-n {
