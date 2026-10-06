@@ -64,6 +64,19 @@ func TestControlAllowlist(t *testing.T) {
 		// #74
 		"zoom-on":  {"{herdr}", "--session", "{session}", "pane", "zoom", "{pane}", "--on"},
 		"zoom-off": {"{herdr}", "--session", "{session}", "pane", "zoom", "{pane}", "--off"},
+
+		// #155
+		"start-codex-server": {"{herdr}", "--session", "{session}", "pane", "run", "{pane}",
+			"setsid -f fish {launcher} </dev/null >/dev/null 2>&1"},
+		"start-codex-remote": {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "codex",
+			"--pane", "{pane}", "--timeout", "30000", "--", "--remote", "unix://{socket}", "-C", "{cwd}",
+			"-m", "{model}", "-c", "model_reasoning_effort={effort}", "--dangerously-bypass-approvals-and-sandbox"},
+		"resume-codex-remote": {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "codex",
+			"--pane", "{pane}", "--timeout", "30000", "--", "resume", "{id}", "--remote", "unix://{socket}", "-C", "{cwd}",
+			"-m", "{model}", "-c", "model_reasoning_effort={effort}"},
+		"resume-codex-embedded": {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "codex",
+			"--pane", "{pane}", "--timeout", "30000", "--", "resume", "{id}",
+			"-m", "{model}", "-c", "model_reasoning_effort={effort}", "--dangerously-bypass-approvals-and-sandbox"},
 	}
 	if !reflect.DeepEqual(controlShapes, want) {
 		t.Fatalf("controlShapes = %q", controlShapes)
@@ -75,14 +88,14 @@ func TestControlAllowlist(t *testing.T) {
 		methods = append(methods, typ.Method(i).Name)
 	}
 	if w := []string{"CloseWorkspace", "CreateWorkspace", "CreateWorktree", "EraseTyped", "MarkPane", "Observe", "PaneProcesses", "Prompt",
-		"QueuePrompt", "ReadPane", "RemoveWorktree", "ReportCodexSession", "ResumeAgent", "SendKey", "SendKeys",
-		"SendSequence", "SendText", "SetZoom", "StartAgent", "StartSession", "StopSession", "SubmitPrompt", "TypeExit",
-		"TypePrompt"}; !slices.Equal(methods, w) {
+		"QueuePrompt", "ReadPane", "RemoveWorktree", "ReportCodexSession", "ResumeAgent", "ResumeCodexEmbedded", "ResumeCodexRemote", "SendKey", "SendKeys",
+		"SendSequence", "SendText", "SetZoom", "StartAgent", "StartCodexRemote", "StartCodexServer", "StartSession", "StopSession",
+		"SubmitPrompt", "TypeExit", "TypePrompt"}; !slices.Equal(methods, w) {
 		t.Fatalf("Control methods = %v, want %v", methods, w)
 	}
 
 	var got [][]string
-	c := &Control{Herdr: "/opt/herdr", SystemdRun: "/usr/bin/systemd-run", Home: "/home/u",
+	c := &Control{Herdr: "/opt/herdr", SystemdRun: "/usr/bin/systemd-run", Home: "/home/u", CodexRun: "/run/user/7/herdr-world/codex",
 		Run: func(_ context.Context, argv []string) ([]byte, []byte, error) {
 			got = append(got, argv)
 			if slices.Contains(argv, "create") {
@@ -143,6 +156,14 @@ func TestControlAllowlist(t *testing.T) {
 	c.TypeGap = time.Nanosecond
 	must(c.TypePrompt(ctx, "h3d-it-1", "w7:p1", "--help\r\n/run it; rm -rf ~ $(id)")) // #95
 	must(c.EraseTyped(ctx, "h3d-it-1", "w7:p1", 2))                                   // #95 R1
+	// #155
+	run := "/run/user/7/herdr-world/codex/"
+	remote := Remote{Socket: run + "a58752ea6511.sock", Cwd: "/home/u/.herdr/worktrees/r/h3d-mochi-a58752"}
+	codex := Agent{Harness: "codex", Model: "gpt-6-sol", Effort: "low"}
+	must(c.StartCodexServer(ctx, "h3d-it-1", "w7:p1", run+"a58752ea6511.fish"))
+	must(c.StartCodexRemote(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", codex, remote))
+	must(c.ResumeCodexRemote(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", id, codex, remote))
+	must(c.ResumeCodexEmbedded(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", id, codex))
 	wantArgv := [][]string{
 		{"/usr/bin/systemd-run", "--user", "--unit=herdr-s-h3d-it-1", "--collect", "-p", "KillMode=process",
 			"--working-directory=/home/u", "/bin/fish", "-l", "-c", "exec herdr --session 'h3d-it-1' server"},
@@ -186,6 +207,18 @@ func TestControlAllowlist(t *testing.T) {
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-text", "w7:p1", "--help\n/run it; rm -rf ~ $(id)"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-keys", "w7:p1", "enter"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-keys", "w7:p1", "ctrl+u", "backspace", "ctrl+u", "backspace"},
+		{"/opt/herdr", "--session", "h3d-it-1", "pane", "run", "w7:p1",
+			"setsid -f fish /run/user/7/herdr-world/codex/a58752ea6511.fish </dev/null >/dev/null 2>&1"},
+		{"/opt/herdr", "--session", "h3d-it-1", "agent", "start", "mochi-a58752", "--kind", "codex", "--pane", "w7:p1",
+			"--timeout", "30000", "--", "--remote", "unix:///run/user/7/herdr-world/codex/a58752ea6511.sock",
+			"-C", "/home/u/.herdr/worktrees/r/h3d-mochi-a58752", "-m", "gpt-6-sol", "-c", "model_reasoning_effort=low",
+			"--dangerously-bypass-approvals-and-sandbox"},
+		{"/opt/herdr", "--session", "h3d-it-1", "agent", "start", "mochi-a58752", "--kind", "codex", "--pane", "w7:p1",
+			"--timeout", "30000", "--", "resume", id, "--remote", "unix:///run/user/7/herdr-world/codex/a58752ea6511.sock",
+			"-C", "/home/u/.herdr/worktrees/r/h3d-mochi-a58752", "-m", "gpt-6-sol", "-c", "model_reasoning_effort=low"},
+		{"/opt/herdr", "--session", "h3d-it-1", "agent", "start", "mochi-a58752", "--kind", "codex", "--pane", "w7:p1",
+			"--timeout", "30000", "--", "resume", id, "-m", "gpt-6-sol", "-c", "model_reasoning_effort=low",
+			"--dangerously-bypass-approvals-and-sandbox"},
 	}
 	if !reflect.DeepEqual(got, wantArgv) {
 		t.Fatalf("argv =\n%q\nwant\n%q", got, wantArgv)
@@ -398,5 +431,85 @@ func TestControlAPIErrors(t *testing.T) {
 	c.Run = func(context.Context, []string) ([]byte, []byte, error) { return []byte(`{"result":{}}`), nil, nil }
 	if _, err := c.CreateWorkspace(context.Background(), "s", "/r", "x"); err == nil {
 		t.Fatal("missing ids accepted")
+	}
+}
+
+// #155: the shared Codex launch's paths and working directory are typed
+// into a shell (or the TUI's command line): each is refused before anything
+// runs unless it is plain, and the launcher and socket sit directly in
+// CodexRun.
+func TestControlRefusesUnsafeCodexLaunch(t *testing.T) {
+	ran := false
+	run := "/run/user/7/herdr-world/codex"
+	c := &Control{CodexRun: run, Run: func(context.Context, []string) ([]byte, []byte, error) { ran = true; return nil, nil, nil }}
+	ctx := context.Background()
+	codex := Agent{Harness: "codex", Model: "gpt-6-sol", Effort: "low"}
+	sock := run + "/a1.sock"
+	id := "01a0663b-61cd-73a0-a3a0-034ca9fc6c48"
+	for name, call := range map[string]func() error{
+		"launcher outside run": func() error { return c.StartCodexServer(ctx, "s", "w1:p1", "/tmp/a1.fish") },
+		"launcher in a subdir": func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/x/a1.fish") },
+		"launcher not fish":    func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/a1.sh") },
+		"launcher with space":  func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/a 1.fish") },
+		"launcher with ;":      func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/a;rm.fish") },
+		"launcher with $":      func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/$(id).fish") },
+		"launcher dotdot":      func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/../a1.fish") },
+		"launcher too long":    func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/"+strings.Repeat("a", 80)+".fish") },
+		"no run dir":           func() error { return (&Control{Run: c.Run}).StartCodexServer(ctx, "s", "w1:p1", run+"/a1.fish") },
+		"socket outside run": func() error {
+			return c.StartCodexRemote(ctx, "s", "w1:p1", "x", codex, Remote{Socket: "/tmp/a1.sock", Cwd: "/r"})
+		},
+		"socket not sock": func() error {
+			return c.StartCodexRemote(ctx, "s", "w1:p1", "x", codex, Remote{Socket: run + "/a1.fish", Cwd: "/r"})
+		},
+		"cwd with space": func() error {
+			return c.StartCodexRemote(ctx, "s", "w1:p1", "x", codex, Remote{Socket: sock, Cwd: "/r/a b"})
+		},
+		"cwd with quote": func() error {
+			return c.StartCodexRemote(ctx, "s", "w1:p1", "x", codex, Remote{Socket: sock, Cwd: "/r/a'b"})
+		},
+		"cwd with backtick": func() error {
+			return c.StartCodexRemote(ctx, "s", "w1:p1", "x", codex, Remote{Socket: sock, Cwd: "/r/`id`"})
+		},
+		"cwd relative": func() error { return c.StartCodexRemote(ctx, "s", "w1:p1", "x", codex, Remote{Socket: sock, Cwd: "r"}) },
+		"cwd unclean": func() error {
+			return c.StartCodexRemote(ctx, "s", "w1:p1", "x", codex, Remote{Socket: sock, Cwd: "/r/../etc"})
+		},
+		"cwd newline": func() error {
+			return c.StartCodexRemote(ctx, "s", "w1:p1", "x", codex, Remote{Socket: sock, Cwd: "/r\n/x"})
+		},
+		"remote claude": func() error {
+			return c.StartCodexRemote(ctx, "s", "w1:p1", "x", Agent{Harness: "claude", Model: "m", Effort: "low"}, Remote{Socket: sock, Cwd: "/r"})
+		},
+		"resume flag id": func() error {
+			return c.ResumeCodexRemote(ctx, "s", "w1:p1", "x", "--yolo", codex, Remote{Socket: sock, Cwd: "/r"})
+		},
+		"resume shell id": func() error {
+			return c.ResumeCodexRemote(ctx, "s", "w1:p1", "x", id+";rm", codex, Remote{Socket: sock, Cwd: "/r"})
+		},
+		"embedded flag id":  func() error { return c.ResumeCodexEmbedded(ctx, "s", "w1:p1", "x", "--yolo", codex) },
+		"embedded shell id": func() error { return c.ResumeCodexEmbedded(ctx, "s", "w1:p1", "x", id+";rm", codex) },
+		"embedded no id":    func() error { return c.ResumeCodexEmbedded(ctx, "s", "w1:p1", "x", "", codex) },
+		"embedded effort override": func() error {
+			return c.ResumeCodexEmbedded(ctx, "s", "w1:p1", "x", id, Agent{Harness: "codex", Model: "m", Effort: "low -c x"})
+		},
+		"embedded claude": func() error {
+			return c.ResumeCodexEmbedded(ctx, "s", "w1:p1", "x", id, Agent{Harness: "claude", Model: "m", Effort: "low"})
+		},
+		"resume effort override": func() error {
+			return c.ResumeCodexRemote(ctx, "s", "w1:p1", "x", id, Agent{Harness: "codex", Model: "m", Effort: "low -c x"}, Remote{Socket: sock, Cwd: "/r"})
+		},
+	} {
+		if err := call(); !errors.Is(err, ErrNotAllowed) {
+			t.Errorf("%s: err = %v, want ErrNotAllowed", name, err)
+		}
+	}
+	if ran {
+		t.Fatal("a refused command ran")
+	}
+	for _, ok := range []string{"/home/u/repo", "/home/u/.herdr/worktrees/r/h3d-mochi-a58752", "/srv/a+b@c,d=e:f"} {
+		if !ValidPlainDir(ok) {
+			t.Errorf("!ValidPlainDir(%q)", ok)
+		}
 	}
 }

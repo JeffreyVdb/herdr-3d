@@ -284,6 +284,7 @@ func (h *Hub) startTranscriptWatch(ctx context.Context, c *Client, cmd proto.Com
 	h.wg.Add(1)
 	go h.runTranscriptWatch(ctx, wctx, w, cmd)
 	h.kickUsage()
+	h.syncCodexWatches(ctx) // #155: a shared Codex worker's thread is joined now
 	return nil
 }
 
@@ -317,6 +318,7 @@ func (h *Hub) startTranscriptUnwatch(ctx context.Context, c *Client, cmd proto.C
 	if w := h.tx.get(c, a.ID); w != nil && h.tx.remove(w) {
 		w.cancel()
 	}
+	h.syncCodexWatches(ctx) // #155
 	h.audit(ctx, c, cmd, nil)
 	h.reply(c, cmd, nil, nil)
 	return nil

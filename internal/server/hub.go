@@ -253,6 +253,18 @@ type Options struct {
 	DigestSettle  time.Duration
 	DigestGap     time.Duration
 	DigestRoles   digest.Roles
+
+	// #155 shared Codex server: CodexRun is the private directory of the
+	// shared launches' launchers and sockets ("" or no CodexHost: the switch
+	// cannot be turned on), CodexHost their checks, files, processes and
+	// protocol adapter (NewCodexHost; tests pass a fake), CodexPoll how
+	// often the shared servers and the bridge's joins are looked at
+	// (default DefaultCodexPoll), CodexStartTimeout how long a started
+	// server has to answer (default DefaultCodexStartTimeout).
+	CodexRun          string
+	CodexHost         CodexHost
+	CodexPoll         time.Duration
+	CodexStartTimeout time.Duration
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -355,6 +367,8 @@ type Hub struct {
 	// from it; phase 2's summarizer reads it).
 	dg  map[string]*transcript.Digest
 	dgs digestHub // #118 phase 2: floor overview summaries
+
+	cx codexState // #155 shared Codex server
 }
 
 type floorState struct {
@@ -570,6 +584,15 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if err := h.initActivity(ctx); err != nil { // #98
 		return nil, err
 	}
+	if opts.CodexPoll <= 0 { // #155
+		h.opts.CodexPoll = DefaultCodexPoll
+	}
+	if opts.CodexStartTimeout <= 0 {
+		h.opts.CodexStartTimeout = DefaultCodexStartTimeout
+	}
+	if err := h.initCodex(ctx); err != nil { // #155
+		return nil, err
+	}
 	if err := h.initDigest(ctx); err != nil { // #118
 		return nil, err
 	}
@@ -635,6 +658,12 @@ func (h *Hub) Run(ctx context.Context) error {
 		h.wg.Add(1)
 		go h.trackAI(ctx)
 	}
+	var codexC <-chan time.Time // #155
+	if h.codexAvailable() || len(h.cx.launches) > 0 {
+		t := time.NewTicker(h.opts.CodexPoll)
+		defer t.Stop()
+		codexC = t.C
+	}
 	var boardC <-chan time.Time // M7 boards
 	if h.opts.Boards != nil {
 		t := time.NewTicker(h.opts.BoardTick)
@@ -647,6 +676,8 @@ func (h *Hub) Run(ctx context.Context) error {
 			return nil
 		case <-boardC:
 			h.boardTick(ctx)
+		case <-codexC:
+			h.codexTick(ctx)
 		case u := <-h.updates:
 			switch u := u.(type) {
 			case world.FloorObs:
@@ -785,6 +816,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startFollowups
 		case proto.CmdPackupGet, proto.CmdPackupSet, proto.CmdPackupTest, proto.CmdPackupDetect: // #110
 			start = h.startPackup
+		case proto.CmdCodexServerGet, proto.CmdCodexServerSet: // #155
+			start = h.startCodexServer
 		case proto.CmdInboxDismiss: // #106
 			start = h.startInboxDismiss
 		case proto.CmdWorkerAnswerFollowup:
@@ -1387,7 +1420,9 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		next.Followup = h.followupView(id)
 		next.Activity = h.activityFor(id, next, h.workers[id]) // #98: for its status, in the same event
 		next.Digest = h.workerDigest(id, next)                 // #118
-		h.withQuestion(next)                                   // M5 term
+		h.noteCodexThread(ctx, id, next.AgentSession)          // #155
+		next.Codex = h.codexWorkerView(id)
+		h.withQuestion(next) // M5 term
 		if op := f.hires[id]; op != nil && !op.seen {
 			op.seen = true
 			op.signal()
@@ -1778,6 +1813,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.Activity = h.activityView()             // #98
 	w.Digest = h.digestView()                 // #118
 	w.InboxDismissed = h.inboxDismissedView() // #106
+	w.CodexServer = h.codexServerView()       // #155
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

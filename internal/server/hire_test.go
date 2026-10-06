@@ -167,6 +167,16 @@ func (f *fakeFloor) StartAgent(_ context.Context, session, pane, name string, a 
 	return f.startErr
 }
 
+// StartCodexRemote is StartAgent for a shared-server Codex hire (#155).
+func (f *fakeFloor) StartCodexRemote(ctx context.Context, session, pane, name string, a herdr.Agent, r herdr.Remote) error {
+	f.fakeHerdr.StartCodexRemote(ctx, session, pane, name, a, r)
+	f.mu.Lock()
+	status := cmp.Or(f.startStatus, "idle")
+	f.mu.Unlock()
+	f.update(wsOf(pane), func(w *world.WorkerObs) { w.AgentKind, w.Status, w.Harness = "codex", status, "codex" })
+	return f.startErr
+}
+
 func (f *fakeFloor) ReadPane(_ context.Context, session, pane string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -468,6 +478,12 @@ func (p hireProxy) EraseTyped(ctx context.Context, s, pane string, n int) error 
 }
 func (p hireProxy) TypeExit(ctx context.Context, s, pane, h string) error {
 	return p.get().TypeExit(ctx, s, pane, h)
+}
+func (p hireProxy) StartCodexServer(ctx context.Context, s, pane, l string) error {
+	return p.get().StartCodexServer(ctx, s, pane, l)
+}
+func (p hireProxy) StartCodexRemote(ctx context.Context, s, pane, n string, a herdr.Agent, r herdr.Remote) error {
+	return p.get().StartCodexRemote(ctx, s, pane, n, a, r)
 }
 func (p hireProxy) CloseWorkspace(ctx context.Context, s, ws string) error {
 	return p.get().CloseWorkspace(ctx, s, ws)

@@ -53,6 +53,11 @@ type Control struct {
 	// #95: TypeGap is the pause after each chunk of a typed prompt
 	// (default DefaultTypeGap).
 	TypeGap time.Duration
+
+	// #155: CodexRun is the private directory the shared Codex launch's
+	// launcher scripts and sockets live in. A launcher or socket outside it
+	// is refused; empty refuses them all.
+	CodexRun string
 }
 
 // Runner runs one command and returns its stdout and stderr.
@@ -97,6 +102,15 @@ const (
 	opPromptQueued = "prompt-queued"
 	// #95: one chunk of a prompt typed into Claude Code.
 	opTypeText = "type-text"
+)
+
+// #155: control operations of a shared-server Codex worker.
+const (
+	opStartCodexServer  = "start-codex-server"
+	opStartCodexRemote  = "start-codex-remote"
+	opResumeCodexRemote = "resume-codex-remote"
+	// #155 round 2: a shared worker's wake when its server does not start.
+	opResumeCodexEmbedded = "resume-codex-embedded"
 )
 
 // #74: control operations of the fullscreen laptop (pane zoom).
@@ -183,6 +197,27 @@ var controlShapes = map[string][]string{
 	// repeated call cannot undo what the other one did.
 	opZoomOn:  {"{herdr}", "--session", "{session}", "pane", "zoom", "{pane}", "--on"},
 	opZoomOff: {"{herdr}", "--session", "{session}", "pane", "zoom", "{pane}", "--off"},
+
+	// #155. A shared-server Codex worker: its own app-server, started from
+	// its pane's initialized shell (the bridge-written launcher script under
+	// CodexRun; setsid keeps it off the pane's foreground job), then the
+	// TUI attached to it, and on wake the remote resume, which takes no
+	// permission override (a remote resume refuses one and exits).
+	opStartCodexServer: {"{herdr}", "--session", "{session}", "pane", "run", "{pane}",
+		"setsid -f fish {launcher} </dev/null >/dev/null 2>&1"},
+	opStartCodexRemote: {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "codex",
+		"--pane", "{pane}", "--timeout", "30000", "--", "--remote", "unix://{socket}", "-C", "{cwd}",
+		"-m", "{model}", "-c", "model_reasoning_effort={effort}", "--dangerously-bypass-approvals-and-sandbox"},
+	opResumeCodexRemote: {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "codex",
+		"--pane", "{pane}", "--timeout", "30000", "--", "resume", "{id}", "--remote", "unix://{socket}", "-C", "{cwd}",
+		"-m", "{model}", "-c", "model_reasoning_effort={effort}"},
+	// The wake of a shared worker whose server did not start: its thread
+	// resumed on Codex's embedded server, with hire's model arguments (any
+	// -c keeps a plain codex off the CODEX_HOME daemon) and hire's
+	// permissions, never as an argument-free `codex resume`.
+	opResumeCodexEmbedded: {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "codex",
+		"--pane", "{pane}", "--timeout", "30000", "--", "resume", "{id}",
+		"-m", "{model}", "-c", "model_reasoning_effort={effort}", "--dangerously-bypass-approvals-and-sandbox"},
 }
 
 var (
@@ -197,6 +232,10 @@ var (
 	modelRe       = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,63}$`)
 	effortRe      = regexp.MustCompile(`^[a-z]{1,16}$`)
 	placeholderRe = regexp.MustCompile(`\{[a-z-]+\}`)
+	// #155: what a path typed into a shell, or into the TUI's command line,
+	// may hold: no space, quote, glob, $ or other shell metacharacter.
+	plainPathRe = regexp.MustCompile(`^/[A-Za-z0-9._/+@,=:-]{1,255}$`)
+	runFileRe   = regexp.MustCompile(`^/[A-Za-z0-9._/-]{1,90}$`)
 )
 
 // ValidSessionName reports whether name may be passed to Control: herdr's
@@ -277,6 +316,21 @@ func ValidAgentName(name string) bool { return agentNameRe.MatchString(name) && 
 
 func validModel(m string) bool  { return modelRe.MatchString(m) }
 func validEffort(e string) bool { return effortRe.MatchString(e) }
+
+// ValidPlainDir reports whether dir may be typed as a working directory
+// (#155: the shared Codex launch's -C and its trust override): an absolute,
+// clean path of letters, digits and ._/+@,=:- only.
+func ValidPlainDir(dir string) bool {
+	return plainPathRe.MatchString(dir) && filepath.Clean(dir) == dir && !strings.Contains(dir, "/../")
+}
+
+// validRunFile reports whether path may name a shared Codex launch file:
+// absolute, clean, short (a unix socket path is limited to 108 bytes) and
+// of the plain characters, ending in ext.
+func validRunFile(path, ext string) bool {
+	return runFileRe.MatchString(path) && filepath.Clean(path) == path && strings.HasSuffix(path, ext) &&
+		!strings.Contains(path, "..")
+}
 
 // ValidWorkspaceID reports whether id looks like a herdr workspace id ("w1").
 func ValidWorkspaceID(id string) bool { return workspaceIDRe.MatchString(id) }
@@ -416,6 +470,11 @@ var placeholders = map[string]func(string) bool{
 
 	// #95
 	"chunk": validTypedChunk,
+
+	// #155
+	"launcher": func(s string) bool { return validRunFile(s, ".fish") },
+	"socket":   func(s string) bool { return validRunFile(s, ".sock") },
+	"cwd":      ValidPlainDir,
 }
 
 // secretPlaceholders are what a person typed: a refused value is never
@@ -436,7 +495,7 @@ func (c *Control) run(ctx context.Context, op string, vars map[string]string) ([
 		switch op {
 		case opStop:
 			timeout = 45 * time.Second
-		case opStartClaude, opStartCodex, opWorktreeCreate, opWorktreeRemove:
+		case opStartClaude, opStartCodex, opStartCodexRemote, opResumeCodexRemote, opResumeCodexEmbedded, opWorktreeCreate, opWorktreeRemove:
 			timeout = 40 * time.Second // agent start waits up to 30 s itself
 		}
 	}

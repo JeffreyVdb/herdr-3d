@@ -11,6 +11,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
 
@@ -24,6 +25,17 @@ type FloorHerdr interface {
 	PaneProcesses(ctx context.Context, session, pane string) (*herdr.ProcessInfo, error)
 	ResumeAgent(ctx context.Context, session, pane, harness, agentSession string) error
 	ReportCodexSession(ctx context.Context, session, pane, agentSession string) error
+	// #155: a shared-server Codex worker's TUI exits at sleep (so herdr
+	// keeps no session to resume it with), and on wake its server starts
+	// from its pane again and the bridge resumes its thread attached to it.
+	TypeExit(ctx context.Context, session, pane, harness string) error
+	SendKey(ctx context.Context, session, pane string, key herdr.Key) error
+	StartCodexServer(ctx context.Context, session, pane, launcher string) error
+	ResumeCodexRemote(ctx context.Context, session, pane, name, thread string, a herdr.Agent, r herdr.Remote) error
+	// A shared worker that slept before it had a thread starts afresh; one
+	// whose server does not start resumes on Codex's embedded server.
+	StartCodexRemote(ctx context.Context, session, pane, name string, a herdr.Agent, r herdr.Remote) error
+	ResumeCodexEmbedded(ctx context.Context, session, pane, name, thread string, a herdr.Agent) error
 }
 
 // Defaults of the wake/sleep Options.
@@ -67,6 +79,7 @@ type resumeWait struct {
 	state                       string // proto.Resume*
 	fallback                    bool   // the bridge ran the resume command itself
 	note                        string // what happened, for the audit log
+	shared                      bool   // #155: the bridge resumes it attached to its own server
 }
 
 func (op *floorOp) signal() {
@@ -160,6 +173,14 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 		h.syncLayout() // the transition first, then the workers
 		for _, id := range f.order {
 			w := h.workers[id]
+			if l, ok := h.cx.launches[id]; ok && w != nil && l.Mode == store.CodexShared { // #155
+				// Also without a thread (it slept before herdr reported
+				// one): sleep quit its TUI, so it is launched afresh.
+				op.waits[id] = &resumeWait{pane: w.PaneID, harness: "codex", agentSession: l.Thread,
+					state: proto.ResumePending, shared: true}
+				h.setResume(id, proto.ResumePending)
+				continue
+			}
 			if w == nil || w.AgentSession == "" {
 				continue
 			}
@@ -178,10 +199,21 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 	h.syncLayout()
 	known := map[string]bool{}
 	var backfills []backfill
+	var shared []sharedSleep
 	for _, id := range f.order {
 		h.setResume(id, "")
 		w := h.workers[id]
 		if w == nil {
+			continue
+		}
+		if l, ok := h.cx.launches[id]; ok && l.Mode == store.CodexShared { // #155: never backfilled
+			if l.Thread != "" {
+				known[l.Thread] = true
+			}
+			if w.AgentSession != "" {
+				known[w.AgentSession] = true
+			}
+			shared = append(shared, sharedSleep{Worker: id, Pane: w.PaneID})
 			continue
 		}
 		if w.AgentSession != "" {
@@ -191,7 +223,7 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 		}
 	}
 	h.wg.Add(1)
-	go h.runSleep(ctx, op, backfills, known)
+	go h.runSleep(ctx, op, shared, backfills, known)
 	return nil
 }
 
@@ -206,7 +238,7 @@ func (h *Hub) agentDetected(u world.AgentDetected) {
 	}
 	for id, w := range f.op.waits {
 		cur := h.workers[id]
-		if w.state == proto.ResumePending && (w.harness == "" || w.harness == u.Agent) &&
+		if w.state == proto.ResumePending && !w.shared && (w.harness == "" || w.harness == u.Agent) &&
 			(w.pane == u.PaneID || (cur != nil && cur.PaneID == u.PaneID)) {
 			h.resolveWait(f.op, id, "pane.agent_detected")
 		}
@@ -245,7 +277,7 @@ func (h *Hub) pendingWaits(ctx context.Context, op *floorOp) []pendingWait {
 	out, _ := query(ctx, h, func() []pendingWait {
 		var out []pendingWait
 		for _, id := range h.floorOrder(op) {
-			if w := op.waits[id]; w != nil && w.state == proto.ResumePending {
+			if w := op.waits[id]; w != nil && w.state == proto.ResumePending && !w.shared {
 				out = append(out, pendingWait{id: id, pane: w.pane, harness: w.harness, agentSession: w.agentSession})
 			}
 		}
@@ -351,8 +383,10 @@ func (h *Hub) runWake(ctx context.Context, op *floorOp, socket string) {
 			errWakeFailed, op.session, h.opts.WakeTimeout), report)
 		return
 	}
+	sharedDone := h.resumeSharedAll(ctx, op) // #155: alongside herdr's own resumes
 	h.resumePhase(ctx, op, nil)
 	h.resumePhase(ctx, op, h.fallback)
+	sharedDone()
 	h.finishOp(ctx, op, nil, report)
 }
 
@@ -509,7 +543,10 @@ type backfill struct {
 
 // sleepReport is the audit-log result of a floor.sleep.
 type sleepReport struct {
-	Backfills []backfill `json:"backfills"`
+	// Shared are the shared-server Codex workers (#155): their TUI exited
+	// and their server stopped before the session.
+	Shared    []sharedSleep `json:"shared,omitempty"`
+	Backfills []backfill    `json:"backfills"`
 	// Stop is herdr's `session stop` output (JSON when it is JSON).
 	Stop       any  `json:"stop,omitempty"`
 	SeenAsleep bool `json:"seen_asleep"`
@@ -518,9 +555,13 @@ type sleepReport struct {
 // runSleep backfills Codex session ids, stops the session the way herdr
 // does (agents keep their resume link) and acks once the floor is seen
 // asleep; a floor not seen asleep in time is sleep_failed.
-func (h *Hub) runSleep(ctx context.Context, op *floorOp, backfills []backfill, known map[string]bool) {
+func (h *Hub) runSleep(ctx context.Context, op *floorOp, shared []sharedSleep, backfills []backfill, known map[string]bool) {
 	defer h.wg.Done()
 	report := &sleepReport{Backfills: []backfill{}}
+	for _, s := range shared { // #155
+		s.Note = h.sleepShared(ctx, op.session, s)
+		report.Shared = append(report.Shared, s)
+	}
 	for _, b := range backfills {
 		switch id, err := h.codexSession(b.cwd, known); {
 		case err != nil:

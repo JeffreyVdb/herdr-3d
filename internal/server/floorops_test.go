@@ -32,7 +32,11 @@ type fakeHerdr struct {
 	onStart  func()
 	onStop   func()
 	onResume func(pane string)
-	gate     chan struct{} // StartSession waits for it when set
+	onQuit   func(pane string) // #155: a TUI quit with /quit + Enter
+	// #155: ResumeCodexRemote fails with it (the pane stays at its shell),
+	// and ResumeCodexEmbedded with embeddedErr (after starting Codex).
+	remoteErr, embeddedErr error
+	gate                   chan struct{} // StartSession waits for it when set
 }
 
 func newFakeHerdr() *fakeHerdr {
@@ -121,6 +125,72 @@ func (f *fakeHerdr) ResumeAgent(_ context.Context, session, pane, harness, id st
 func (f *fakeHerdr) ReportCodexSession(_ context.Context, session, pane, id string) error {
 	f.record("report %s %s %s", session, pane, id)
 	return nil
+}
+
+// #155: a shared-server Codex worker's floor calls.
+func (f *fakeHerdr) TypeExit(_ context.Context, session, pane, harness string) error {
+	f.record("exit %s", pane)
+	return nil
+}
+
+func (f *fakeHerdr) SendKey(_ context.Context, session, pane string, key herdr.Key) error {
+	f.record("key %s %s", pane, key)
+	f.mu.Lock()
+	quit := key == herdr.KeyEnter && slices.Contains(f.calls, "exit "+pane) && f.procs[pane] != nil && !f.procs[pane].AtShell()
+	f.mu.Unlock()
+	if quit {
+		f.setProcs(pane, atShell())
+		if f.onQuit != nil {
+			f.onQuit(pane)
+		}
+	}
+	return nil
+}
+
+func (f *fakeHerdr) StartCodexServer(_ context.Context, session, pane, launcher string) error {
+	f.record("codex-server %s %s", pane, launcher)
+	return nil
+}
+
+func (f *fakeHerdr) StartCodexRemote(_ context.Context, session, pane, name string, a herdr.Agent, r herdr.Remote) error {
+	f.record("codex-remote %s %s %s %s %s %s", pane, name, a.Model, a.Effort, r.Socket, r.Cwd)
+	f.setProcs(pane, remoteCodex(r.Socket, ""))
+	return nil
+}
+
+func (f *fakeHerdr) ResumeCodexRemote(_ context.Context, session, pane, name, thread string, a herdr.Agent, r herdr.Remote) error {
+	f.record("codex-resume %s %s %s %s %s %s %s", pane, name, thread, a.Model, a.Effort, r.Socket, r.Cwd)
+	f.mu.Lock()
+	err := f.remoteErr
+	f.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	f.setProcs(pane, remoteCodex(r.Socket, thread))
+	if f.onResume != nil {
+		f.onResume(pane)
+	}
+	return nil
+}
+
+func (f *fakeHerdr) ResumeCodexEmbedded(_ context.Context, session, pane, name, thread string, a herdr.Agent) error {
+	f.record("codex-resume-embedded %s %s %s %s %s", pane, name, thread, a.Model, a.Effort)
+	f.setProcs(pane, running("codex", thread))
+	if f.onResume != nil {
+		f.onResume(pane)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.embeddedErr
+}
+
+func remoteCodex(sock, thread string) *herdr.ProcessInfo {
+	shell, fg := 100, 300
+	cmd := "codex --remote unix://" + sock
+	if thread != "" {
+		cmd = "codex resume " + thread + " --remote unix://" + sock
+	}
+	return &herdr.ProcessInfo{ShellPID: &shell, ForegroundPGID: &fg, Foreground: []herdr.Process{{PID: fg, Name: "codex", Cmdline: cmd}}}
 }
 
 func atShell() *herdr.ProcessInfo {

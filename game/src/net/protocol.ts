@@ -143,6 +143,34 @@ export interface Worker {
   wrapup?: WrapUp;
   /** #90: the open questions of its agent's final message, found by the AI integration's models, until answered or moot. */
   followup?: Followup;
+  /** #155: how a Codex worker the bridge hired was launched (absent for other workers). */
+  codex?: WorkerCodex;
+}
+
+/**
+ * #155: a Codex worker's launch. `shared`: its terminal runs against a Codex app-server of its own, which the bridge
+ * owns (`server` says how that server is); `legacy`: Codex's embedded server, as before the switch (`note` says why a
+ * hire asked for shared runs legacy). `attached`: the bridge has joined its thread (while its transcript is open).
+ */
+export interface WorkerCodex {
+  mode: 'shared' | 'legacy';
+  server?: 'starting' | 'running' | 'down' | 'stopped';
+  note?: string;
+  attached?: boolean;
+}
+
+/** #155: the shared Codex server switch (`codex_server` in the snapshot, `codex_server.update`). */
+export interface CodexServerState {
+  /** New Codex workers get their own app-server. */
+  enabled: boolean;
+  /** The bridge can launch them; without it the switch cannot be turned on. */
+  available: boolean;
+}
+
+/** #155: `codex_server.update`: the switch, flat. */
+export interface CodexServerUpdate extends CodexServerState {
+  t: 'codex_server.update';
+  seq: number;
 }
 
 /**
@@ -188,6 +216,8 @@ export interface World {
   digest?: DigestState;
   /** #106 the inbox's dismissed finished rows: worker id → the `status_since` of the done episode hidden (absent from an older bridge: none). */
   inbox_dismissed?: Record<string, number>;
+  /** #155 the shared Codex server switch (absent from an older bridge). */
+  codex_server?: CodexServerState;
 }
 
 export interface Hello {
@@ -291,6 +321,8 @@ export type WorldEvent =
   | DigestUpdate
   // #106 the inbox: a finished row was dismissed
   | InboxDismissed
+  // #155 the shared Codex server switch
+  | CodexServerUpdate
   // M13 whiteboard
   | WhiteboardUpdated;
 
@@ -363,6 +395,8 @@ export interface HireAck {
   /** Whether the first task was sent (absent without one). */
   prompted?: boolean;
   prompt_error?: string;
+  /** #155: how a Codex hire was launched: shared, or legacy and why (absent for other hires, or with the switch off). */
+  codex?: WorkerCodex;
 }
 
 /** M4: `worker.fire.prepare` ack: what the send-home dialog shows. */
@@ -500,6 +534,8 @@ export interface CommandArgs {
   'inbox.dismiss': { id: string; status_since: number };
   // #98 activity settings ("Classify unknown commands", docs/protocol.md).
   'activity.get': Record<string, never>;
+  'codex_server.get': Record<string, never>; // #155
+  'codex_server.set': { enabled: boolean };
   'activity.set': { model_enabled?: boolean; threshold?: number; margin?: number; daily_cap?: number };
   // #118 floor overview summaries (docs/protocol.md "Floor overview summaries"). `digest.test` acks `DigestTestAck`.
   'digest.get': Record<string, never>;
@@ -782,6 +818,7 @@ const EVENT_TYPES = new Set([
   'activity.update', // #98 activity settings
   'digest.update', // #118 floor overview summaries
   'inbox.dismissed', // #106 the inbox: a finished row dismissed
+  'codex_server.update', // #155 the shared Codex server switch
   'screen.state', // M13 screen
   // M13 whiteboard
   'whiteboard.updated',
@@ -864,6 +901,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #118 floor overview summaries: the fields of `DigestState` flat in the event.
     case 'digest.update':
       return typeof o.enabled === 'boolean' && typeof o.state === 'string';
+    // #155: the shared Codex server switch, flat.
+    case 'codex_server.update':
+      return typeof o.enabled === 'boolean' && typeof o.available === 'boolean';
     // #106: a dismissal of one done episode.
     case 'inbox.dismissed':
       return isStr(o.id) && isInt(o.status_since);

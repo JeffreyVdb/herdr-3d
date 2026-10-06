@@ -88,6 +88,8 @@ const DOES: Record<CommandName | LogoAction, string> = {
   // #98
   'activity.get': 'classify unknown commands',
   'activity.set': 'classify unknown commands',
+  'codex_server.get': 'give Codex workers their own server', // #155
+  'codex_server.set': 'give Codex workers their own server',
   // #118
   'digest.get': 'keep the floor overview summaries',
   'digest.set': 'keep the floor overview summaries',

@@ -174,6 +174,8 @@ var migrations = []string{
 	// #118 phase 2: floor overview summaries: the settings and the LLM's
 	// lines by input hash.
 	migrationDigest,
+	// #155: the shared Codex server switch and each Codex worker's launch.
+	migrationCodexLaunch,
 }
 
 // Fingerprint kinds.

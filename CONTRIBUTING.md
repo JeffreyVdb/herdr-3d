@@ -12,9 +12,14 @@
   panel; #137: a checkout's file listing), `fileindex` (#137 `worker.files`: an index of each worker checkout's files
   and directories from `git ls-files` or `rg --files`, cached per checkout and rebuilt in the background when git's
   index file changes or it grows old; never walks the disk), `fuzzy` (#137: the pure fzf-style path scorer and bounded
-  top-N search `fileindex` ranks with; `server`, `store` and `proto` import neither, `TestFileIndexIsWiredByTheApp`), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `codexshare` (#154: test fixture only,
-  imported by nothing: an isolated CODEX_HOME, a scripted Responses mock, an app-server client over its unix socket and a
-  throwaway herdr session driver for the real Codex TUI; `docs/research/codex-shared-tui.md`), `usage` (M5: agents' token
+  top-N search `fileindex` ranks with; `server`, `store` and `proto` import neither, `TestFileIndexIsWiredByTheApp`), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `codexapp` (#155: the bridge's side
+  of a shared-server Codex worker's own app-server: the passive protocol adapter `Watcher` (initialize, `thread/resume`
+  by id only, bounded reconnect, `thread/unsubscribe`, never answers a server request), the fish launcher, the
+  processes it may stop (only those carrying the launch's marker token), and the checks before a launch; every Codex
+  protocol detail the bridge knows; `server` uses it), `codexshare` (#154: test fixture only, imported by nothing; it
+  imports `codexapp` (its dial, and #155's launch and adapter in the real-TUI suites): an isolated CODEX_HOME, a
+  scripted Responses mock, an app-server client over its unix socket and a throwaway herdr session driver for the real
+  Codex TUI; `docs/research/codex-shared-tui.md`), `usage` (M5: agents' token
   usage and cost from their transcripts, read incrementally, and the pricing table; #101: the main thread's context in use
   and its window, resolved from `[1m]`, observed context, the table and the model's family, cleared by a compaction), `jsonl` (the shared reading of
   those JSONL files: one tail per transcript, complete lines from byte offsets, no symlinks), `transcript` (M16: the
@@ -59,7 +64,8 @@ Go 1.27 (see `go.mod`), Node 24.18 (`game/.nvmrc`), pnpm 11.7 (`packageManager` 
 make setup             # fresh worktree: toolchain check, game deps, Go modules (then make lint, make shot)
 make build test lint   # Go binaries -> bin/, game bundle -> game/dist/, go test + vitest, vet/gofmt/tsc
 make integration       # bridge against a real herdr (and systemd-run) in throwaway sessions (see below)
-make codex-shared-tui  # #154: real Codex TUI (codex-cli 0.160.1) + a second app-server client, mock model, throwaway herdr sessions
+make codex-shared-tui  # #154/#155: real Codex TUI (codex-cli 0.160.1) + a second app-server client, mock model, throwaway herdr sessions
+                       # (H3D_CODEXSHARE_REAL=1 adds #155's two-turn real-model smoke on ~/.codex: costs inference)
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
 make dev               # Vite dev server on a portlease-leased port, 127.0.0.1 only
 make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check), seconds
@@ -124,6 +130,17 @@ parts:
     is erased with the laptops' `pane send-keys <pane> ctrl+u backspace …` (`Control.EraseTyped`).
   - Send home: `pane send-text <pane> /exit` / `/quit`, `workspace close <ws>`, `worktree remove --workspace <ws>`
     (never `--force`, never `--group`).
+  - #155 shared Codex server (a Codex hire with the `codex_server` switch on, its sleep and wake): `pane run <pane>
+    "setsid -f fish <launcher> </dev/null >/dev/null 2>&1"` (the launcher the bridge wrote), `agent start <name> --kind
+    codex --pane <pane> --timeout 30000 -- --remote unix://<socket> -C <dir> -m <m> -c model_reasoning_effort=<e>
+    --dangerously-bypass-approvals-and-sandbox`, and on wake the same with `resume <id>` first and **no** bypass flag
+    (a remote resume refuses permission overrides); a wake whose server does not start resumes on the embedded server
+    with `agent start <name> --kind codex --pane <pane> --timeout 30000 -- resume <id> -m <m> -c
+    model_reasoning_effort=<e> --dangerously-bypass-approvals-and-sandbox` (never an argument-free `codex resume`).
+    The launcher and socket must sit directly in `Control.CodexRun`
+    (`--codex-run`, default `$XDG_RUNTIME_DIR/herdr-world/codex`), with only `[A-Za-z0-9._/-]` and a `.fish` / `.sock`
+    name; `-C`'s directory only plain path characters (`ValidPlainDir`). Sleep quits the TUI with the send home's
+    `/quit` + Enter, never Esc or Ctrl-C; a shared worker's send home sends no Ctrl-C either.
   - Laptops (M5, `terminal.watch`, `worker.keys` / `prompt` / `answer`): the read-only, long-running `terminal session
     observe <pane> --cols <40–300> --rows <10–100>` (its own process group; SIGTERM, SIGKILL after 1 s, always reaped),
     `pane send-keys <pane> <key>…` (only the key names in `docs/protocol.md` "Input", and the digits 1–9 of a menu),
@@ -143,7 +160,7 @@ parts:
 
   Every variable is validated (session names, pane/workspace ids, agent session ids, absolute clean directories,
   labels without control characters or a leading `-`, `h3d/…` branches, `origin/…` bases, `h3d-<hex>` markers, models
-  and efforts, prompts not starting with `--`), every argument is its own argv element, sessions outside `--sessions`
+  and efforts, prompts not starting with `--`, #155's launcher and socket paths and plain directories), every argument is its own argv element, sessions outside `--sessions`
   are refused, and commands run with the `HERDR_*`/`CLAUDE*` variables stripped. `TestControlAllowlist` pins the set,
   the argv and the exported methods; widening any needs review.
 - **git** (`gitops.Git`, hires, send-homes, `worker.changes`, M7, `worker.open_pr` and #137 `worker.files`): exactly
@@ -171,6 +188,12 @@ parts:
   is connected. Lookup prefers `PATH`, then `~/.local/bin`, as model discovery does. `--claude` / `--codex` name
   the executables, `--no-limits` turns it off (protocol: "Plan limits").
   `make integration` runs the live check that ten probes leave no Claude project and no Codex rollout behind.
+- **codex / direnv before a shared launch** (#155, `codexapp.Preflight`, only for a Codex hire with the switch on):
+  `codex --version` (in a temp directory) and `direnv status --json` in the hire's directory, with the `HERDR_*` /
+  `CLAUDE*` variables removed, 5 s each. The bridge itself then only connects to the worker's own socket (its
+  `Watcher`) and signals processes whose environment carries the launch's `H3D_CODEX_SERVER` token; it never starts,
+  connects to or stops the CODEX_HOME daemon, and every `codex` it has the pane run names `--remote` with the worker's
+  socket or is that server.
 - **gh** (`githubcli.Client`, M7 boards): exactly one shape, `gh api graphql --method POST --input -`, with the request
   as JSON on stdin: `{"query": <one of the embedded documents in internal/githubcli/queries>, "variables": {…}}`.
   Never a query, a field or an argument from a client. `gh` keeps its own authentication (the bridge stores no

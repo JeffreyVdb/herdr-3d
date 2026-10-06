@@ -258,6 +258,53 @@
   margin-left: -2px;
 }
 
+/* #155: the worker's own Codex server stopped (or it runs without one): a line in the question's place, while no
+   question shows. */
+.seat[data-codex]:not([data-asking]) {
+  grid-template-areas:
+    'ask ask ask'
+    'line mode stand'
+    'keys keys keys';
+}
+.seat-codex {
+  grid-area: ask;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: -2px 0 0;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 650;
+}
+.seat-codex[hidden],
+.seat[data-asking] .seat-codex {
+  display: none;
+}
+.seat-codex-tag {
+  flex: none;
+  padding: 2px 8px 1px;
+  font-size: 10.5px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--needs_you-chip, #d8302c);
+  border-radius: 2px;
+  transform: rotate(-1.5deg);
+}
+.seat-codex[data-tone='note'] .seat-codex-tag {
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  transform: none;
+}
+.seat-codex[data-tone='note'] {
+  font-weight: 500;
+}
+
 /* #59: the terminal's preset (three tiny screens in its colours) and zoom, at the keys row's end. */
 .seat-look {
   /* It shrinks to the row and wraps (the fullscreen chip, #74, made it wider than a phone): at a wide bar it is as
@@ -416,7 +463,9 @@
       'mode mode'
       'keys keys';
   }
-  .seat[data-asking] {
+  /* #155: a Codex notice takes the question's row here too (its selector, not the bare .seat, sets the wide map). */
+  .seat[data-asking],
+  .seat[data-codex]:not([data-asking]) {
     grid-template-areas:
       'ask ask'
       'line stand'

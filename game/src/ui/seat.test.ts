@@ -131,3 +131,22 @@ describe('seat bar: the fullscreen chip (#74)', () => {
   });
 });
 
+
+describe('seat bar: the worker’s own Codex server (#155)', () => {
+  it('a line in the question’s place that says what to do, gone when there is nothing to say', () => {
+    const hud = document.createElement('div');
+    const bar = new SeatBar(hud, noop);
+    const line = hud.querySelector('.seat-codex') as HTMLElement;
+    const seat = hud.querySelector('.seat') as HTMLElement;
+    expect(line.hidden).toBe(true);
+    bar.codexNote({ tone: 'down', text: 'Its Codex server stopped: the terminal is waiting to reconnect.' });
+    expect(line.hidden).toBe(false);
+    expect(seat.hasAttribute('data-codex')).toBe(true);
+    expect(line.dataset.tone).toBe('down');
+    expect(line.textContent).toBe('Codex serverIts Codex server stopped: the terminal is waiting to reconnect.');
+    expect(line.getAttribute('role')).toBe('status');
+    bar.codexNote(null);
+    expect(line.hidden).toBe(true);
+    expect(seat.hasAttribute('data-codex')).toBe(false);
+  });
+});

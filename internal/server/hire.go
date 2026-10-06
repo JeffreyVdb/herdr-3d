@@ -37,6 +37,10 @@ type HireHerdr interface {
 	TypePrompt(ctx context.Context, session, pane, text string) error
 	EraseTyped(ctx context.Context, session, pane string, n int) error
 	TypeExit(ctx context.Context, session, pane, harness string) error
+	// #155: a shared-server Codex hire's server, typed into its pane, and
+	// its TUI attached to it.
+	StartCodexServer(ctx context.Context, session, pane, launcher string) error
+	StartCodexRemote(ctx context.Context, session, pane, name string, a herdr.Agent, r herdr.Remote) error
 	CloseWorkspace(ctx context.Context, session, workspace string) error
 	RemoveWorktree(ctx context.Context, session, workspace string) error
 	PaneProcesses(ctx context.Context, session, pane string) (*herdr.ProcessInfo, error)
@@ -106,6 +110,7 @@ type hireOp struct {
 	harness, model, effort     string
 	cwd, prompt, branch, repo  string
 	worktree                   bool
+	shared                     bool // #155: a Codex hire with its own app-server
 	hiredAt                    int64
 	client                     *Client
 	cmd                        proto.Command
@@ -436,7 +441,7 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 	op := &hireOp{id: id, session: a.Session, desk: desk, name: name, label: a.Label, marker: "h3d-" + hex[:12],
 		agent: slug(name) + "-" + hex[:6], harness: a.Harness, model: a.Model, effort: a.Effort, cwd: cwd,
 		prompt: a.Prompt, worktree: a.Worktree, hiredAt: at.UnixMilli(), client: c, cmd: cmd,
-		notify: make(chan struct{}, 1), launched: launched}
+		notify: make(chan struct{}, 1), launched: launched, shared: a.Harness == "codex" && h.cx.enabled}
 	if a.Worktree {
 		op.branch = "h3d/" + op.agent
 	}
@@ -494,6 +499,7 @@ type hireReport struct {
 	Trust       string   `json:"trust,omitempty"`
 	Prompt      string   `json:"prompt,omitempty"`
 	Launch      string   `json:"launch,omitempty"` // run.start's launch id
+	Codex       string   `json:"codex,omitempty"`  // #155: shared, or legacy and why
 	Rollback    []string `json:"rollback,omitempty"`
 	Steps       []string `json:"steps"`
 }
@@ -515,6 +521,12 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	var created herdr.Created
 	var repo string
 	fail := func(err error) {
+		if op.shared { // #155: its server (if one started) goes with it
+			if note := h.stopSharedServer(ctx, op.id); note != "" {
+				rep.Rollback = append(rep.Rollback, note)
+			}
+			_ = h.doWait(ctx, func() { h.forgetCodex(ctx, op.id) })
+		}
 		if created.WorkspaceID != "" {
 			if kept := h.rollbackHire(ctx, op, created, repo, rep); kept != "" {
 				err = fmt.Errorf("%w; rolling back, %s", err, kept)
@@ -602,8 +614,17 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	}
 	rep.step("marked %s %s", created.PaneID, op.marker)
 
+	dir := op.cwd
+	if created.CheckoutPath != "" {
+		dir = created.CheckoutPath
+	}
 	agent := herdr.Agent{Harness: op.harness, Model: op.model, Effort: op.effort, Label: op.label}
-	startErr := hh.StartAgent(ctx, op.session, created.PaneID, op.agent, agent)
+	var startErr error
+	if op.shared {
+		startErr = h.hireShared(ctx, op, created.PaneID, dir, agent, rep, &res)
+	} else {
+		startErr = hh.StartAgent(ctx, op.session, created.PaneID, op.agent, agent)
+	}
 	var api *herdr.APIError
 	switch {
 	case startErr == nil:
@@ -616,15 +637,12 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	}
 	rep.step("herdr agent start %s: %s", op.agent, rep.Start)
 
-	dir := op.cwd
-	if created.CheckoutPath != "" {
-		dir = created.CheckoutPath
-	}
 	trust, note := h.answerTrust(ctx, op, created.PaneID, dir)
 	res.Trust, rep.Trust = trust, trust
 	if note != "" {
 		rep.step("%s", note)
 	}
+	hooks := op.shared && h.hooksReviewShows(ctx, op, created.PaneID, rep) // #155 (B8)
 
 	if !h.awaitHire(ctx, op, time.Now().Add(h.opts.SeenTimeout), func() bool { return op.seen }) {
 		if ctx.Err() != nil {
@@ -634,7 +652,11 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 		return
 	}
 
-	if op.prompt != "" {
+	if op.prompt != "" && hooks {
+		sent := false
+		res.Prompted, res.PromptError = &sent, "Codex asks to review its hooks: answer it in the terminal, then send the prompt"
+		rep.Prompt = "not sent: " + res.PromptError
+	} else if op.prompt != "" {
 		sent, how, perr := h.sendPrompt(ctx, op, created.PaneID)
 		res.Prompted = &sent
 		if perr != nil {
@@ -1485,6 +1507,15 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 		h.finishFire(ctx, op, nil, fmt.Errorf("%w: cannot tell whether %s's agent is still running (%s): nothing was closed or removed",
 			errFireFailed, op.name, rep.Exit), rep)
 		return
+	case exitHeld:
+		h.finishFire(ctx, op, nil, fmt.Errorf("%w: %s's agent is still running (%s; no Ctrl-C to its shared Codex terminal, "+
+			"which could open Codex's agent command center: quit it there and send it home again): nothing was closed or removed",
+			errFireFailed, op.name, rep.Exit), rep)
+		return
+	}
+	// #155: a shared worker's server outlives its pane: it goes now.
+	if note := h.stopSharedServer(ctx, op.id); note != "" {
+		rep.step("%s", note)
 	}
 
 	if remove {
@@ -1612,12 +1643,14 @@ const (
 	exitedByItself   exitResult = iota // it exited gracefully, or none ran
 	exitedAfterCtrlC                   // it left after Ctrl-C
 	exitStuck                          // it is still running
+	exitHeld                           // #155: a shared Codex worker's is still running, and gets no Ctrl-C
 	exitUnknown                        // its pane's processes cannot be read
 )
 
 // exitAgent exits the pane's agent the way a person would (claude /exit,
 // codex /quit, then Enter) and waits for the pane to be back at its shell;
-// Ctrl-C twice when it is not (or the agent has no graceful exit).
+// Ctrl-C twice when it is not (or the agent has no graceful exit), except
+// for a shared Codex worker (#155), which is left as it is.
 func (h *Hub) exitAgent(ctx context.Context, op *fireOp, rep *fireReport) exitResult {
 	hh := h.opts.Hire
 	if op.pane == "" || !herdr.ValidPaneID(op.pane) {
@@ -1636,6 +1669,16 @@ func (h *Hub) exitAgent(ctx context.Context, op *fireOp, rep *fireReport) exitRe
 	start := time.Now()
 	if h.exitGracefully(ctx, op, rep) {
 		return exitedByItself
+	}
+	// #155: never Ctrl-C into a shared worker's Codex. Its terminal may be on
+	// a dialog the bridge did not expect, where Ctrl-C opens the agent
+	// command center listing the user's other threads (B10). Its server
+	// stays up: a TUI whose server is gone waits to reconnect (B6), and the
+	// terminal stays usable to quit by hand.
+	if shared, err := query(ctx, h, func() bool { return h.isShared(op.id) }); shared || err != nil {
+		rep.step("agent still running after %s: no Ctrl-C to a shared Codex worker's terminal, nothing closed",
+			time.Since(start).Round(time.Millisecond))
+		return exitHeld
 	}
 	for range 2 {
 		if err := hh.SendKey(ctx, op.session, op.pane, herdr.KeyCtrlC); err != nil {
@@ -1719,6 +1762,9 @@ func (h *Hub) finishFire(ctx context.Context, op *fireOp, res *proto.FireResult,
 		}
 		if aerr := h.st.AuditEnd(ctx, op.auditID, opErr, rep); aerr != nil {
 			h.log.Error("audit log write failed", "err", aerr)
+		}
+		if opErr == nil { // #155: gone, and so is its server
+			h.forgetCodex(ctx, op.id)
 		}
 		if op.wrapup != nil { // #83
 			h.wrapUpFired(ctx, op, opErr)

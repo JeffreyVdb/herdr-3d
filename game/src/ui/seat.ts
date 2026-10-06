@@ -1,3 +1,4 @@
+import type { CodexNotice } from '../world/codexServer';
 import './seat.css';
 import type { SeatView } from '../laptop';
 import { LOOK_KEY } from '../laptop/keys';
@@ -44,6 +45,8 @@ export class SeatBar implements SeatView {
   private readonly modeBtn = el('button', 'seat-mode');
   /** #57: the line that says the agent asks a question (terminal mode). */
   private readonly askLine = el('div', 'seat-ask');
+  /** #155: the line about the worker's own Codex server (in the ask line's place while no question shows). */
+  private readonly codexLine = el('div', 'seat-codex');
   private readonly modeOpts: Record<SeatMode, HTMLSpanElement> = { terminal: el('span', 'seat-mode-opt', 'Terminal'), transcript: el('span', 'seat-mode-opt', 'Transcript'), images: el('span', 'seat-mode-opt', 'Images') };
   /** #59: the terminal's preset and zoom. */
   private readonly look = el('div', 'seat-look');
@@ -103,7 +106,9 @@ export class SeatBar implements SeatView {
     });
     this.askLine.hidden = true;
     this.askLine.setAttribute('role', 'status');
-    this.el.append(this.askLine, line, this.keys, this.modeBtn, this.standBtn, this.input);
+    this.codexLine.hidden = true;
+    this.codexLine.setAttribute('role', 'status');
+    this.el.append(this.askLine, this.codexLine, line, this.keys, this.modeBtn, this.standBtn, this.input);
     if (prefs) {
       this.zoomBtns = this.buildLook(prefs, handlers.fullscreen);
       // At the end of the keys row (renderMode puts it back after the keys): the bar keeps its two rows.
@@ -300,6 +305,18 @@ export class SeatBar implements SeatView {
     const k = el('span', 'key');
     for (const part of keys) k.append(el('kbd', '', part));
     this.askLine.replaceChildren(el('span', 'seat-ask-tag', 'Question'), el('span', 'seat-ask-text', `${ask.who} is asking a question.`), k, el('span', 'seat-ask-text', 'to answer in the transcript view.'));
+  }
+
+  /** #155: what the worker's Codex launch has to tell you (null: nothing): its own server stopped, or it runs without one. */
+  codexNote(n: CodexNotice | null): void {
+    this.codexLine.hidden = !n;
+    this.el.toggleAttribute('data-codex', !!n);
+    if (!n) {
+      this.codexLine.replaceChildren();
+      return;
+    }
+    this.codexLine.dataset.tone = n.tone;
+    this.codexLine.replaceChildren(el('span', 'seat-codex-tag', 'Codex server'), el('span', 'seat-codex-text', n.text));
   }
 
   hide(): void {

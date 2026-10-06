@@ -200,6 +200,8 @@ type World struct {
 	// #106 inbox: the dismissed finished rows, worker id → the status_since
 	// of the done episode hidden. Always present ({} when none).
 	InboxDismissed map[string]int64 `json:"inbox_dismissed"`
+	// #155: the shared Codex server switch. Always present.
+	CodexServer *CodexServer `json:"codex_server,omitempty"`
 }
 
 // HireOptions lists what can be hired, per harness.
@@ -347,6 +349,9 @@ type Worker struct {
 	// and what it does now, in words. The task from the first prompt on, the
 	// now line from the first assistant step (Claude and Codex only).
 	Digest *WorkerDigest `json:"digest,omitempty"`
+	// #155: Codex is how a Codex worker the bridge hired was launched
+	// (absent for other workers).
+	Codex *WorkerCodex `json:"codex,omitempty"`
 
 	// M6 runs: the worker's place in a write-code run.
 	// Round is the h3d_round token, else the label's trailing |r<N>.
@@ -634,6 +639,9 @@ type HireResult struct {
 	// Prompted is set when a prompt was asked for: whether it was sent.
 	Prompted    *bool  `json:"prompted,omitempty"`
 	PromptError string `json:"prompt_error,omitempty"`
+	// #155: Codex is how a Codex hire was launched (absent otherwise):
+	// shared or legacy, and why a hire asked for shared runs legacy.
+	Codex *WorkerCodex `json:"codex,omitempty"`
 }
 
 // WorkerArgs are the args of worker.fire.prepare.

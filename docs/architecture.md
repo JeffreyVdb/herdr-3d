@@ -102,8 +102,8 @@ MacBook (M2 Max)                                   devbox (Linux)
     pairs) on the lane before anything else is typed.
 - **Fire (gentle)** ("Send home", M4, built): git state first (`status --porcelain`, `rev-list --count HEAD --not
   --remotes`; a worktree is deleted only when clean and pushed) → claude `/exit` (~1.3 s) / codex `/quit` + pause +
-  Enter (~0.5 s) → confirm the agent released (pane back at its shell; Enter again, then Ctrl-C; still running →
-  `fire_failed`, nothing closed) → `workspace close` (or `worktree remove`, + `git branch -D` of the branch recorded
+  Enter (~0.5 s) → confirm the agent released (pane back at its shell; Enter again, then Ctrl-C, never for a #155
+  shared Codex worker; still running → `fire_failed`, nothing closed) → `workspace close` (or `worktree remove`, + `git branch -D` of the branch recorded
   for that worker, only while the checkout is on it and its commits are on a remote) → `worker.removed` with
   `reason: "sent_home"`. Never for sleep: a
   graceful exit drops `agent_session` so it can't resume. herdr closes a main checkout with open linked worktrees only
@@ -241,6 +241,13 @@ MacBook (M2 Max)                                   devbox (Linux)
   touching the dialog (#90's follow-up questions are the first "Bridge" section). Display (the plan-limits switch) and
   Day and night (`ui/settingsSections.ts`) are the first two; #100's Notifications (`ui/notifySection.ts`: desktop
   notifications, the chime, which entries ping) is the third. About (`ui/about.ts`) is read-only build info.
+  #155's **Codex workers** (`ui/codexServerSection.ts`, "Bridge") is one switch, off by default: "Give new Codex workers
+  their own Codex server". On, a Codex worker hired from then on runs its usual terminal against a Codex app-server of
+  its own, started from its pane, which herdr-world can join to follow the same conversation (approvals stay in the
+  terminal); workers already at their desks keep the way they were started. A hire that could not get its own server
+  (an unsupported Codex, a blocked `.envrc`, a server that did not answer) starts the usual way and says why in its
+  toast and on the laptop's seat bar, which also says when such a worker's server stopped. Disabled, with why, on a
+  bridge without its `--codex-run` directory. Protocol: [Shared Codex server](protocol.md#shared-codex-server).
 - **Day and night** (M17): the game follows the viewer's local time, in the browser, with no bridge or protocol part.
   `game/src/world/daylight.ts` (pure) turns an instant, an IANA zone and an optional latitude into a daylight value
   0…1, the sun's altitude and bearing, a dawn/dusk warmth and the zone's clock; with a latitude the sun comes from the

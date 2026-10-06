@@ -191,6 +191,9 @@ service or from before #98; a worker's own `activity` is in the worker.
 that was dismissed (see [Inbox](#inbox)); `{}` when there are none. A bridge from before #106 leaves the key out: a
 client reads that as `{}`.
 
+`codex_server` (#155) is the shared Codex server switch, `{"enabled", "available"}` (see
+[Shared Codex server](#shared-codex-server)); a bridge from before #155 leaves it out.
+
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
 
@@ -271,6 +274,7 @@ floor with no workers and an `error`).
 | `phase`, `pass` | string, int ≥ 0, optional | orchestrators: the `h3d_phase` / `h3d_pass` tokens (`research\|coding\|review\|fixing\|waiting_user\|pr\|done`, others passed through, ≤ 32 bytes), remembered like `harness` |
 | `over_cap` | bool, optional | orchestrators: `true` past write-code's review-pass cap (`pass > 3`, or `pass == 3` and `phase == "waiting_user"`); absent when false |
 | `report` | object, optional | freelancers: their write-code report (see [Runs and freelancers](#runs-and-freelancers)) |
+| `codex` | object, optional | #155: how a Codex worker the bridge hired was launched, `{"mode": "shared" \| "legacy", "server"?: "starting" \| "running" \| "down" \| "stopped", "note"?, "attached"?}` (see [Shared Codex server](#shared-codex-server)); absent for other workers, and for Codex hires made with the switch off |
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
 none, so the bridge keeps the last known value until a new one shows up. They are absent when never known.
@@ -407,6 +411,7 @@ and remember the last `seq` applied.
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
+| `codex_server.update` | `enabled`, `available` | #155: the shared Codex server switch changed (flat in the event, see [Shared Codex server](#shared-codex-server)) |
 
 ```json
 {"t":"floor.upsert","seq":1043,"floor":{"session":"herdr-3d","state":"running","building":null,"index":null,"desks":7}}
@@ -517,6 +522,8 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `inbox.dismiss` | `{"id", "status_since"}` | `{"dismissed": bool}` (see [Inbox](#inbox)) | `inbox.dismissed` (before the ack) when the dismissal is new |
 | `activity.get` | `{}` | "Classify unknown commands"' state (see [Activity](#activity)) | — |
 | `activity.set` | `{"model_enabled"?: bool, "threshold"?: 0.05–0.99, "margin"?: 0–0.9, "daily_cap"?: 1–100000}` | its state | `activity.update` (before the ack) |
+| `codex_server.get` | `{}` | `{"enabled", "available"}`, the shared Codex server switch (see [Shared Codex server](#shared-codex-server)) | — |
+| `codex_server.set` | `{"enabled": bool}` | the switch; switching on without `available` is `unsupported` | `codex_server.update` (before the ack) when it changes |
 | `digest.get` | `{}` | the floor overview summaries' state (see [Floor overview summaries](#floor-overview-summaries)) | — |
 | `digest.set` | `{"enabled"?: bool, "daily_cap"?: 1–10000}` | its state | `digest.update` (before the ack) |
 | `digest.test` | `{}` | `{"ok", "reason"?, "samples": [{"kind": "task"\|"now", "line"?, "error"?}], "latency_ms"}` | `digest.update` when it changes `tested` |
@@ -1046,7 +1053,7 @@ back, the branch h3d/… is kept (it has commits since …)`) and in the audit r
    short pause (its command popup takes the first Enter otherwise), `Enter`. The bridge waits up to 8 s for the pane to
    be back at its shell (`herdr pane process-info`), pressing `Enter` again up to 3 times on the way (an agent still
    starting up drops it), then tries `Ctrl-C` twice (an agent the bridge has no exit command for gets only the
-   `Ctrl-C`s); `released` says whether the agent left by itself. **The workspace is closed only once the agent is
+   `Ctrl-C`s; a shared Codex worker, #155, gets none); `released` says whether the agent left by itself. **The workspace is closed only once the agent is
    gone**: if it is still running after all that, or its pane's processes cannot be read, nothing is closed or
    removed and the answer is `fire_failed` (the message says the agent is still running; audited with the keys
    sent). The worker stays; send it home again, or deal with it in herdr. A graceful exit ends the agent's resume
@@ -2950,6 +2957,96 @@ on a miss (no board polled yet, or a card no longer on it, e.g. closed long ago)
 the provider (as `issue.get` does) and keeps the answer, hit or miss, for its lifetime: never asked again. The `url`
 falls back to the provider's own link of the item. A poll that changes a card's title or URL sends `worker.upsert`
 for every worker of that floor whose ticket it is. Without a board provider there is no title.
+
+### Shared Codex server
+
+#155 (epic #153, phase 2). With the switch on, a Codex worker hired from then on runs Codex's own terminal against a
+Codex app-server **of its own**, started from its pane, which the bridge can join as a second client. The terminal
+stays the place you work: herdr's start, prompt, read, wait and send-keys work on it as before. Off by default.
+
+```json
+"codex_server":{"enabled":false,"available":true}
+{"t":"codex_server.set","req_id":"c1","args":{"enabled":true}}
+{"t":"codex_server.update","seq":2210,"enabled":true,"available":true}
+{"t":"ack","req_id":"c1","data":{"enabled":true,"available":true}}
+```
+
+**The switch** (bridge-wide, SQLite `codex_server_settings`): `codex_server.get` answers it, the snapshot's
+`codex_server` holds it (always present), `codex_server.update` carries it flat. `codex_server.set {enabled}` needs
+`enabled` (`bad_request`); switching on a bridge whose `available` is false (no `--codex-run` directory) is
+`unsupported`. It applies to **new hires only**: every Codex worker keeps the mode it was launched with (SQLite
+`codex_launch`), so switching never migrates, interrupts or relaunches a running worker, and a worker launched the
+old way keeps today's exact resume. Claude hires are not affected.
+
+**A shared hire** (`worker.hire` with `harness: "codex"` while the switch is on), in place of step 3's `agent start`:
+
+1. Checks: `codex --version` is `codex-cli 0.160.x` (the release line #154 verified), the hire's directory (the
+   worktree's checkout for a worktree hire) passes the launch's path rule (letters, digits and `._/+@,=:-`), and its
+   `.envrc`, if any, is allowed (`direnv status --json`; a blocked one would leave the server without its variables
+   and Codex would say nothing).
+2. The bridge writes the worker's launcher, `<--codex-run>/<marker hex>.fish` (0600, directory 0700), and types
+   `setsid -f fish <launcher> </dev/null >/dev/null 2>&1` into the pane (`pane run`): the server starts from the
+   pane's initialized fish, so it has the pane's direnv exports, the user's `codex` wrapper function and herdr's
+   `HERDR_PANE_ID` (whose session-id hook then reports to this pane). The launcher marks every process of the server
+   with a random token, records its pid, and runs `codex app-server -c 'projects={"<dir>"={trust_level="trusted"}}'
+   --listen unix://<--codex-run>/<marker hex>.sock` (the directory is trusted in memory; `config.toml` is not written).
+3. The socket must answer within 20 s with a supported server (`initialize`'s `userAgent`, `…/0.160.x`); its process
+   is found by its token and recorded with its start time.
+4. `agent start <name> --kind codex --pane <pane> --timeout 30000 -- --remote unix://<socket> -C <dir> -m <model> -c
+   model_reasoning_effort=<effort> --dangerously-bypass-approvals-and-sandbox`.
+
+Any failure before step 4 starts the worker **the usual way** (step 3's `agent start`), stopping whatever of the server
+started; the hire then succeeds with `codex: {"mode": "legacy", "note": "shared Codex server: <why>; started the usual
+way"}` in its ack, and the worker carries the same `codex`. A step 4 that fails stops the server and falls back too when
+the pane is back at its shell, else the hire fails (and rolls back). A successful one acks with
+`codex: {"mode": "shared", "server": "running"}`. Codex's "Hooks need review" startup dialog (herdr reads it as idle) is
+left for you: the hire's first prompt is then not sent (`prompted: false`, `prompt_error` says so).
+
+**The thread.** The bridge keeps the thread id herdr's `agent_session` reports for the worker's pane. herdr forgets it
+when the TUI exits and reports it again only after a resumed thread's first turn, so an empty one changes nothing, and
+an id that is another worker's is never taken: two workers never share or swap a thread.
+
+**The bridge's join.** While a shared worker's transcript is open (`transcript.watch`) and its server runs, the bridge
+joins its thread as a second app-server client: `initialize` (client `herdr_3d`, the experimental API on, the server's
+version checked), then `thread/resume` with the thread id **and nothing else** (no model, cwd, sandbox, approval or
+instruction override: joining starts no turn and changes no setting), and `thread/unsubscribe` when the transcript
+closes. A lost connection is retried with a bounded backoff (0.25 s doubling to 5 s, 8 attempts). The bridge is
+**passive**: it never answers a server request (command approvals, Codex's blocking questions); the terminal does, and
+the first answer wins. `worker.codex.attached` says whether it is joined. A join that failed (its retries spent, or
+refused: an ephemeral thread, another thread, an unsupported server) is not tried again until the transcript is
+reopened, the thread changes or the worker has a new server. This phase only joins; the transcript still
+comes from the rollout under `~/.codex/sessions`, as before.
+
+**Lifecycle.** The server outlives its pane and herdr's `session stop`, so the bridge owns it:
+
+- **Send home** stops it once the agent exited (only its token's processes, then its files), and forgets the launch.
+  A shared worker's terminal that does not quit after `/quit` and the Enters gets **no** `Ctrl-C` (on a dialog the
+  bridge did not expect it opens Codex's agent command center, which lists your other threads): the send home is
+  `fire_failed`, nothing is closed and the server keeps running; quit it in its terminal and send it home again.
+- **`floor.sleep`** quits each shared worker's TUI (`/quit`, Enter), waits until herdr no longer names its session
+  (herdr forgets it a moment after the quit; a session stopped before would save the id and resume the pane its own
+  way, without the server), stops the server, and only then stops the session. Shared workers are never backfilled
+  (`report-agent-session`). The sleep's audit result lists them under `shared`.
+- **`floor.wake`** resumes them itself, alongside herdr's own resumes: the pane back at its shell (a Codex herdr
+  resumed its own way anyway is quit first), the server started again as above (a fresh token), then `agent start
+  <name> … -- resume <thread> --remote unix://<socket> -C <dir> -m <model> -c model_reasoning_effort=<effort>`,
+  **without** `--dangerously-bypass-approvals-and-sandbox` (a remote resume refuses any permission override; the thread
+  keeps the permissions it was started with). Their `resume` is `fallback` ("relaunched"). A worker that slept
+  before herdr reported its thread gets a **new** terminal attached to its server instead (the hire's `agent start …
+  -- --remote …`); no thread is resumed or guessed.
+- When the server does not start on wake (or the terminal does not attach and the pane is at its shell), the worker
+  resumes its thread **on Codex's built-in server**: `agent start <name> --kind codex --pane <pane> --timeout 30000 --
+  resume <thread> -m <model> -c model_reasoning_effort=<effort> --dangerously-bypass-approvals-and-sandbox` (never an
+  argument-free `codex resume`, which would join the CODEX_HOME daemon), or starts the usual way when it has no
+  thread; a "Trust this folder?" dialog is answered as a hire answers it. It stays shared, `server: "stopped"`, with
+  `note: "shared Codex server: <why>; resumed without its own server, on Codex's built-in one"` (or `started …`); its
+  next sleep and wake treat it as any shared worker and try its server again.
+- The bridge checks each shared server every 3 s: one that died is `server: "down"` (herdr would still show the TUI as
+  working: it waits to reconnect). Sleeping and waking the floor starts it again.
+
+Orchestrators that start Codex workers through the herdr CLI (write-code) bypass the bridge; such a worker is
+launched the same way with the same two calls, `pane run <pane> '<server start>'` then `agent start … -- --remote
+unix://<socket> -C <dir> …` (findings §8, D7). Until the skill adopts it, those workers stay embedded.
 
 ### Inbox
 

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
+	"github.com/JeffreyVdb/herdr-3d/internal/execpath"
 	"github.com/JeffreyVdb/herdr-3d/internal/fileindex"
 	"github.com/JeffreyVdb/herdr-3d/internal/githubcli"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
@@ -76,6 +78,16 @@ const (
 // M13 screen share: where grabbed frames are stored (default
 // screenshare.DefaultDir: $XDG_RUNTIME_DIR/herdr-world/screen, tmpfs).
 const EnvScreenDir = "HERDR_WORLD_SCREEN_DIR"
+
+// EnvCodexRun names the private directory of the shared Codex servers'
+// launchers and sockets (#155).
+const EnvCodexRun = "HERDR_WORLD_CODEX_RUN"
+
+// DefaultCodexRun is $XDG_RUNTIME_DIR/herdr-world/codex (#155): short, so a
+// worker's socket path stays under the 108-byte limit.
+func DefaultCodexRun() string {
+	return filepath.Join(filepath.Dir(DefaultSocket()), "codex")
+}
 
 // #92 AI integration: the settings the bridge environment fixes (read-only in
 // the game's panel). The keys are files, so a key never sits in the
@@ -261,6 +273,14 @@ func DefaultDB() string {
 	return filepath.Join(dir, "herdr-world", "world.db")
 }
 
+// orNone is v, "" for "-".
+func orNone(v string) string {
+	if v == "-" {
+		return ""
+	}
+	return v
+}
+
 func orDefault(v, def string) string {
 	if v != "" {
 		return v
@@ -382,9 +402,10 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	dropzoneURL := fs.String("dropzone-url", envOr(EnvDropzoneURL, DefaultDropzoneURL), "Drop Zone URL, where pasted images are uploaded ($"+EnvDropzoneURL+")")                                             // #51 upload
 	dropzoneData := fs.String("dropzone-data", envOr(EnvDropzoneData, DefaultDropzoneData()), "Drop Zone's data directory: a root a transcript's [Image #n: path] may be read under ($"+EnvDropzoneData+")") // M16 images
 	imageCache := fs.String("image-cache", os.Getenv(EnvImageCache), "directory of the transcript image disk cache, \"-\" for none (default $XDG_CACHE_HOME/herdr-world/img) ($"+EnvImageCache+")")          // M16 images
-	screenDir := fs.String("screen-dir", os.Getenv(EnvScreenDir), "private directory (tmpfs) for screen-share frames (default $XDG_RUNTIME_DIR/herdr-world/screen) ($"+EnvScreenDir+")")                     // M13 screen
-	whiteboards := fs.String("whiteboards", envOr(EnvWhiteboards, whiteboard.DefaultRoot()), "directory of the floors' whiteboards, \"-\" for none ($"+EnvWhiteboards+")")                                   // M13 whiteboard
-	aiFile := fs.String("ai-file", os.Getenv(EnvAIFile), "file of the AI integration's settings and keys, 0600 (default ai.json next to the database) ($"+EnvAIFile+")")                                     // #92
+	codexRun := fs.String("codex-run", envOr(EnvCodexRun, DefaultCodexRun()), "private directory of the shared Codex servers' launchers and sockets, \"-\" for none (#155) ($"+EnvCodexRun+")")
+	screenDir := fs.String("screen-dir", os.Getenv(EnvScreenDir), "private directory (tmpfs) for screen-share frames (default $XDG_RUNTIME_DIR/herdr-world/screen) ($"+EnvScreenDir+")") // M13 screen
+	whiteboards := fs.String("whiteboards", envOr(EnvWhiteboards, whiteboard.DefaultRoot()), "directory of the floors' whiteboards, \"-\" for none ($"+EnvWhiteboards+")")               // M13 whiteboard
+	aiFile := fs.String("ai-file", os.Getenv(EnvAIFile), "file of the AI integration's settings and keys, 0600 (default ai.json next to the database) ($"+EnvAIFile+")")                 // #92
 	aiClsKey := fs.String("ai-classifier-key-file", os.Getenv(EnvAIClassifierKeyFile), "file holding the classification model's key; overrides the panel's ($"+EnvAIClassifierKeyFile+")")
 	aiClsModel := fs.String("ai-classifier-model", os.Getenv(EnvAIClassifierModel), "classification model; overrides the panel's ($"+EnvAIClassifierModel+")")
 	aiLLMBase := fs.String("ai-llm-base-url", os.Getenv(EnvAILLMBaseURL), "OpenAI-compatible endpoint's base URL; overrides the panel's ($"+EnvAILLMBaseURL+")")
@@ -519,7 +540,8 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	return Serve(ctx, ServeConfig{
 		Socket: *socket, DB: *db, Herdr: &herdr.Client{Bin: *herdrBin}, Only: only,
 		Poll: poll, Resnapshot: resnap, MaxDesks: maxDesks, NameHold: nameHold, Log: log, Name: name,
-		Control:     &herdr.Control{Herdr: *herdrBin, SystemdRun: *systemdRun, Only: only},
+		Control:     &herdr.Control{Herdr: *herdrBin, SystemdRun: *systemdRun, Only: only, CodexRun: orNone(*codexRun)},
+		CodexRun:    orNone(*codexRun), // #155 shared Codex server
 		WakeTimeout: wakeTimeout, ResumeTimeout: resumeTimeout, WrapUpTimeout: wrapUpTimeout, CodexSessions: *codexSessions,
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
 		ClaudeProjects: *claudeProjects, Pricing: pricing, HireOptions: &hireOptions,
@@ -627,6 +649,11 @@ type ServeConfig struct {
 	// described but not kept, no path is read).
 	TranscriptImages *transcript.Images
 
+	// #155 shared Codex server: the private directory of its launchers and
+	// sockets ("": the switch cannot be turned on); the version check runs
+	// CodexCLI.
+	CodexRun string
+
 	// M13 screen share: where grabbed frames are stored ("": none, and
 	// screen.grab fails); ScreenTimeout and ScreenTTL: see server.Options.
 	ScreenDir                string
@@ -705,6 +732,10 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		cfg.BoardWatchPoll, cfg.BoardIdlePoll, cfg.BoardRefreshMin, cfg.BoardTick
 	opts.Limits = cfg.Limits                                                                             // M10 limits
 	opts.ScreenDir, opts.ScreenTimeout, opts.ScreenTTL = cfg.ScreenDir, cfg.ScreenTimeout, cfg.ScreenTTL // M13 screen
+	if cfg.CodexRun != "" && cfg.Control != nil {                                                        // #155
+		opts.CodexRun = cfg.CodexRun
+		opts.CodexHost = server.NewCodexHost(execpath.Resolve(cmp.Or(cfg.CodexCLI, "codex")), execpath.Resolve("direnv"))
+	}
 
 	if cfg.Whiteboards != "" && cfg.Whiteboards != "-" { // M13 whiteboard
 		opts.Whiteboards = whiteboard.New(cfg.Whiteboards)

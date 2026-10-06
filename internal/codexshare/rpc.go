@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"net/http"
 	"strconv"
 	"sync"
 
 	"github.com/coder/websocket"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
 )
 
 // Message is one JSON-RPC message of the Codex app-server protocol (which
@@ -43,7 +43,9 @@ func (e *RPCError) Error() string { return fmt.Sprintf("app-server error %d: %s"
 // Client is a second app-server client: a WebSocket over the server's unix
 // socket, as the remote TUI connects (ws://localhost/rpc, rust-v0.160.1
 // app-server-client/src/remote.rs). Every notification and server request
-// is kept, so a wait can match one that arrived earlier.
+// is kept, so a wait can match one that arrived earlier. Unlike the
+// bridge's passive codexapp.Watcher, it can answer server requests (the
+// fixture's "bridge answers first" checks).
 type Client struct {
 	conn *websocket.Conn
 	ctx  context.Context
@@ -57,19 +59,13 @@ type Client struct {
 	err     error // set once the read loop ends
 }
 
-// Dial connects to the app-server listening on the unix socket path.
+// Dial connects to the app-server listening on the unix socket path, the
+// way the bridge's adapter does (codexapp.DialWS).
 func Dial(ctx context.Context, sock string) (*Client, error) {
-	hc := &http.Client{Transport: &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", sock)
-		},
-	}}
-	conn, _, err := websocket.Dial(ctx, "ws://localhost/rpc", &websocket.DialOptions{HTTPClient: hc})
+	conn, err := codexapp.DialWS(ctx, sock)
 	if err != nil {
-		return nil, fmt.Errorf("dial %s: %w", sock, err)
+		return nil, err
 	}
-	conn.SetReadLimit(64 << 20)
 	cctx, stop := context.WithCancel(context.Background())
 	c := &Client{conn: conn, ctx: cctx, stop: stop, pending: map[string]chan Message{}, changed: make(chan struct{})}
 	go c.readLoop()

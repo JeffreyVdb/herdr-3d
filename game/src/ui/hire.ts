@@ -1,3 +1,4 @@
+import { codexNotice } from '../world/codexServer';
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, CommandName, HireAck, HireGit, HirePrepare } from '../net/protocol';
 import {
@@ -852,8 +853,10 @@ export class HireDialog {
       const branch = ack?.branch ? ` on ${ack.branch}` : '';
       // The worker exists but never got the task (`prompted: false`): the text stays, so it can be copied or sent by hand.
       if (ack?.prompted !== false) this.clearSent(doc, revision, sent);
+      const fallback = codexNotice({ codex: ack?.codex }); // #155: asked for its own Codex server, runs the built-in one
       const extra = [
         ack?.prompted === false ? `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P); the text stays in this desk’s hire dialog.` : '',
+        fallback ? fallback.text : '',
       ].filter(Boolean);
       if (still) this.close();
       // #116: also when the first task was not sent (so it can be prompted); never from a late ack (`still`).

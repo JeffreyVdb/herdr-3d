@@ -1,3 +1,4 @@
+import { codexNotice, type CodexNotice } from '../world/codexServer';
 import * as THREE from 'three/webgpu';
 import type { CommandResult } from '../net/client';
 import type { Ask, CommandArgs, CommandName, ConnMessage, KeyItem } from '../net/protocol';
@@ -90,6 +91,8 @@ export interface SeatView {
    * in the transcript view (`key`: T while you have not typed into the terminal since, else Ctrl+Esc).
    */
   asking?(ask: { who: string; key: 'T' | 'Ctrl+Esc' } | null): void;
+  /** #155: what the seated worker's Codex launch has to tell you (null: nothing). */
+  codexNote?(n: CodexNotice | null): void;
   /** #59: one of the bar's own controls has the keyboard (the terminal's preset and zoom). */
   owns?(t: EventTarget | null): boolean;
   /** #59: the keyboard to the terminal's preset and zoom (Ctrl+,); false when there are none. */
@@ -203,6 +206,8 @@ export class Laptops {
   private askId: string | null = null;
   private askArmed = false;
   private askShown = '';
+  /** #155: the Codex server line the seat bar shows ('' none). */
+  private codexShown = '';
   /** The camera gliding back after you stood up. */
   private leaving: { t0: number; from: { pos: THREE.Vector3; quat: THREE.Quaternion } } | null = null;
   private input: InputQueue | null = null;
@@ -661,6 +666,8 @@ export class Laptops {
     this.askId = null;
     this.askShown = '';
     this.host.seat.asking?.(null);
+    this.codexShown = '';
+    this.host.seat.codexNote?.(null);
     this.host.seat.setFullscreen?.(null);
     this.host.seat.hide();
     this.leaving = snap ? null : { t0: performance.now(), from: { pos: this.camPos.clone(), quat: this.camQuat.clone() } };
@@ -730,6 +737,14 @@ export class Laptops {
     if (key === this.askShown) return;
     this.askShown = key;
     this.host.seat.asking?.(line);
+  }
+
+  /** #155: the seat bar's line about the seated worker's own Codex server, set when it changes. */
+  private syncCodex(n: CodexNotice | null): void {
+    const key = n ? `${n.tone}\u0000${n.text}` : '';
+    if (key === this.codexShown) return;
+    this.codexShown = key;
+    this.host.seat.codexNote?.(n);
   }
 
   /** A keydown while seated: true when it was consumed (nothing else sees it). */
@@ -920,6 +935,7 @@ export class Laptops {
         this.transcript.blocked(v.worker.status === 'blocked' ? (v.worker.question ?? null) : null);
         this.transcript.activity(v.worker.status, v.worker.status_since ?? null); // #58
         this.syncAsk(askOf(v.worker)); // #57
+        this.syncCodex(codexNotice(v.worker)); // #155
         this.transcript.followedUp(followupOf(v.worker)); // #90
         this.transcript.usageSeen(v.worker.usage ?? null); // #101: its context meter (the worker's usage is replaced, not edited, when it changes)
       }

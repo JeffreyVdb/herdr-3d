@@ -83,6 +83,7 @@ import { packupSection } from './ui/packupSection';
 import { digestSection } from './ui/digestSection';
 import { packupApplies, packupVerdict, type PackupOutcome } from './world/packup';
 import { activitySection } from './ui/activitySection';
+import { codexServerSection } from './ui/codexServerSection';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
 import { MonitorPrefs } from './ui/monitorPrefs';
@@ -370,6 +371,8 @@ export class App {
       digestSection({ book: this.store.digestSettings, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }),
       { store: 'bridge' },
     );
+    // #155: whether new Codex workers get a Codex server of their own (the bridge's switch, off by default).
+    settings.addSection('codex', 'Codex workers', codexServerSection({ book: this.store.codexServer, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
     this.store.ai.onChange((notice) => {
       this.hud.setAiChip(aiChip(this.store.ai.state));
       if (notice) this.hud.toast(notice, 7000, 'error');

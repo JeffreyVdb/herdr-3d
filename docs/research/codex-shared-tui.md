@@ -308,6 +308,6 @@ dir removed.
   restarted (its pid file is unchanged). Codex may have written to its log/state SQLite in `~/.codex`.
 - Ctrl+C, slash commands and approvals were checked on the worker-owned server only. On the managed daemon, the TUI
   uses the same remote client [S].
-- D5's suppression of Herdr's native resume (`pane release-agent`) is unverified.
+- D5's suppression of Herdr's native resume (`pane release-agent`) is unverified. **Resolved by #155**: `release-agent` does not keep Herdr from resuming the pane; the TUI's own exit does (`TestCodexShareResumeSuppression`, decisions.md #155 row 1).
 - Real Claude worker in the reverse mixed-harness direction (needs inference).
 - Images in the composer and terminal/transcript switching in the game (phase 5).
