@@ -156,7 +156,7 @@ func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
 	if err := WriteHome(f.home, HomeOptions{MockURL: f.mock.URL(), Trusted: trusted, ApprovalPolicy: o.approval, Sandbox: o.sandbox, Top: o.top, Extra: extra}); err != nil {
 		t.Fatal(err)
 	}
-	f.h, err = StartHerdr(ctx, root, os.Environ())
+	f.h, err = StartHerdr(ctx, root, os.Environ(), "CODEX_HOME="+f.home)
 	if err != nil {
 		t.Fatal(err)
 	}

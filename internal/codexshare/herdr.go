@@ -34,15 +34,17 @@ type Herdr struct {
 }
 
 // StartHerdr starts a fresh session whose panes run fish (as herdr-3d's
-// supervised server does) with env (CleanEnv applied). Its log goes to dir.
-func StartHerdr(ctx context.Context, dir string, env []string) (*Herdr, error) {
+// supervised server does) with env (CleanEnv applied, then set). Its log
+// goes to dir. Pass the fixture's CODEX_HOME in set: Herdr restores a
+// workspace without its --env, so a restored pane only has the server's.
+func StartHerdr(ctx context.Context, dir string, env []string, set ...string) (*Herdr, error) {
 	bin, err := exec.LookPath("herdr")
 	if err != nil {
 		return nil, err
 	}
 	var rnd [4]byte
 	_, _ = rand.Read(rnd[:])
-	h := &Herdr{Bin: bin, Name: SessionPrefix + hex.EncodeToString(rnd[:]), Env: CleanEnv(env, "SHELL=/bin/fish"), dir: dir}
+	h := &Herdr{Bin: bin, Name: SessionPrefix + hex.EncodeToString(rnd[:]), Env: CleanEnv(env, append([]string{"SHELL=/bin/fish"}, set...)...), dir: dir}
 	return h, h.start(ctx)
 }
 
