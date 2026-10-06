@@ -26,6 +26,7 @@ type HomeOptions struct {
 	Trusted        []string // project directories to pre-trust
 	ApprovalPolicy string   // default "never"
 	Sandbox        string   // default "danger-full-access"
+	Top            string   // raw top-level TOML keys, written before any table
 	Extra          string   // raw TOML appended (MCP servers, shell policy, …)
 }
 
@@ -51,7 +52,11 @@ func WriteHome(dir string, o HomeOptions) error {
 	fmt.Fprintf(&b, "model = \"mock\"\nmodel_provider = \"mock\"\nmodel_catalog_json = %s\n", tomlString(cat))
 	b.WriteString("check_for_update_on_startup = false\n")
 	fmt.Fprintf(&b, "approval_policy = %s\nsandbox_mode = %s\n", tomlString(o.ApprovalPolicy), tomlString(o.Sandbox))
-	b.WriteString("web_search = \"disabled\"\n\n")
+	b.WriteString("web_search = \"disabled\"\n")
+	if o.Top != "" {
+		b.WriteString(o.Top + "\n")
+	}
+	b.WriteString("\n")
 	b.WriteString("[model_providers.mock]\nname = \"Local mock\"\n")
 	fmt.Fprintf(&b, "base_url = %s\n", tomlString(o.MockURL))
 	b.WriteString("wire_api = \"responses\"\nrequires_openai_auth = false\nsupports_websockets = false\n\n")

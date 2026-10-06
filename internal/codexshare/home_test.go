@@ -13,12 +13,16 @@ func TestWriteHomeIsSelfContained(t *testing.T) {
 	err := WriteHome(dir, HomeOptions{
 		MockURL: "http://127.0.0.1:1234/v1",
 		Trusted: []string{"/tmp/ws \"a\""},
+		Top:     `developer_instructions = "dev"`,
 		Extra:   "[shell_environment_policy]\ninherit = \"all\"",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
+	if top, _, _ := strings.Cut(string(cfg), "["); !strings.Contains(top, `developer_instructions = "dev"`) {
+		t.Errorf("top-level keys must precede the first table:\n%s", cfg)
+	}
 	for _, want := range []string{
 		`model_provider = "mock"`,
 		`model_catalog_json = "` + filepath.Join(dir, "catalog.json") + `"`,

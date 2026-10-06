@@ -55,6 +55,7 @@ type fx struct {
 type fxOptions struct {
 	approval string
 	sandbox  string
+	top      string
 	extra    string
 	noMCP    bool
 }
@@ -130,6 +131,13 @@ func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
 	f.write(filepath.Join(f.xdg, "fish", "config.fish"), fish, 0o644)
 	f.write(filepath.Join(root, "bin", "h3d-tool"), "#!/bin/sh\necho \"h3d-tool:$0:direnv=$H3D_DIRENV_SENTINEL\"\n", 0o755)
 
+	// A user skill, to check skills reach the model through the shared server.
+	skill := filepath.Join(f.home, "skills", "h3d-fixture")
+	if err := os.MkdirAll(skill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.write(filepath.Join(skill, "SKILL.md"), "---\nname: h3d-fixture\ndescription: Fixture skill for the #154 shared TUI checks.\n---\n\nH3D_SKILL_BODY: follow the fixture.\n", 0o644)
+
 	var trusted []string
 	for _, ws := range workspaces {
 		trusted = append(trusted, f.workspace(ws))
@@ -145,7 +153,7 @@ func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
 			"startup_timeout_sec = 20\n" +
 			"[mcp_servers.envdump.env]\n" + EnvDumpVar + " = " + TOMLString(f.mcpDir) + "\n"
 	}
-	if err := WriteHome(f.home, HomeOptions{MockURL: f.mock.URL(), Trusted: trusted, ApprovalPolicy: o.approval, Sandbox: o.sandbox, Extra: extra}); err != nil {
+	if err := WriteHome(f.home, HomeOptions{MockURL: f.mock.URL(), Trusted: trusted, ApprovalPolicy: o.approval, Sandbox: o.sandbox, Top: o.top, Extra: extra}); err != nil {
 		t.Fatal(err)
 	}
 	f.h, err = StartHerdr(ctx, root, os.Environ())
