@@ -701,7 +701,7 @@ class Transcript implements TranscriptView {
   private ticker: ReturnType<typeof setInterval> | null = null;
   private resize: ResizeObserver | null = null;
   private readonly onHighlighted = () => this.stick();
-  /** #58: after the timeline, the prompts on their way and the live cue; a polite live region says when either changes. */
+  /** #58: after the timeline, the prompts on their way and the live cue; each has its own polite live region. */
   private readonly pendingList: HTMLOListElement;
   private readonly pendingEls = new Map<string, { key: string; el: HTMLElement }>();
   private pendingRows: readonly PendingPrompt[] = [];
@@ -709,6 +709,7 @@ class Transcript implements TranscriptView {
   private activity: ActivityCue | null = null;
   private activityRow: HTMLElement | null = null;
   private readonly live: HTMLDivElement;
+  private readonly pendingLive: HTMLDivElement;
   /** A hidden tab pauses the cue's flash (the browser still runs a CSS animation there). */
   private readonly onVisibility = () => this.root.toggleAttribute('data-page-hidden', document.visibilityState === 'hidden');
 
@@ -724,6 +725,7 @@ class Transcript implements TranscriptView {
     this.pendingList = h('ol', { class: 'tx-list tx-pending-list', 'aria-label': 'Prompts on their way' });
     this.tail = h('div', { class: 'tx-tail' }, this.pendingList);
     this.live = h('div', { class: 'tx-live', role: 'status', 'aria-live': 'polite' });
+    this.pendingLive = h('div', { class: 'tx-pending-live', role: 'status', 'aria-live': 'polite' });
     this.scroller = h('div', { class: 'tx-scroll', tabindex: '-1', 'aria-label': 'Conversation' }, this.empty, this.timeline.el, this.tail);
     this.thumbs = new Thumbs({ feed: host.images, root: this.scroller });
     this.jump = h('button', { class: 'tx-jump', hidden: true, onclick: () => this.toBottom() });
@@ -832,7 +834,7 @@ class Transcript implements TranscriptView {
     );
     // The preset and the zoom keep together at the strip's end; a narrow screen wraps them to a line of their own.
     const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, this.busy, this.ctxEl, h('div', { class: 'tx-look' }, picker, zoom));
-    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, this.followup.el, this.asyncq.el, this.asyncq.live, form, this.live);
+    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, this.followup.el, this.asyncq.el, this.asyncq.live, form, this.pendingLive, this.live);
     this.unprefs = this.prefs.onChange((what) => this.applyPrefs(what));
     this.applyPrefs(null);
     this.updateCounts();
@@ -973,7 +975,8 @@ class Transcript implements TranscriptView {
     const ids = new Set(this.pendingRows.map((p) => p.id));
     for (const id of this.pendingEls.keys()) if (!ids.has(id)) this.pendingEls.delete(id);
     this.pendingList.replaceChildren(...els);
-    if (say) this.announce(say);
+    // A status event can render a cue before the prompt ack: neither announcement overwrites the other.
+    if (say) this.pendingLive.textContent = say;
     this.updateCounts();
     this.stick();
   }

@@ -5,11 +5,12 @@ import type { Worker } from '../src/net/protocol';
 import { frames, openGame, seatMode, shot, watchErrors } from './game';
 
 // #58: the transcript view says what the agent does and shows a prompt at once. demo-m5 with the simulating fixture
-// server: Pebble is an idle claude; a prompt starts its turn a step (2.5 s) later and the ack follows, it works three
-// steps, and `simecho` writes the prompt's user item to the watch 1.5 s after the agent took it (a queued one mid-turn).
+// server: Pebble is an idle claude; a prompt starts its turn one step later and the ack follows, it works three
+// steps, and `simecho` writes the prompt's user item 1.5 s after the agent took it (a queued one mid-turn).
+// The sim clock advances only after each state is observed: screenshots and browser load cannot consume a step.
 
 const FLOOR = 'herdr-3d';
-const SIM = 'play=none&sim=1&simms=2500&simusage=0&simecho=1500';
+const SIM = 'play=none&sim=1&simms=2500&simusage=0&simecho=1500&simclock=manual';
 
 /** Pebble as the demo-m5 fixture has it: an idle claude. */
 function pebble(): Worker {
@@ -22,6 +23,7 @@ function pebble(): Worker {
 type Tx = NonNullable<ReturnType<Window['__h3d']['transcript']>>;
 const txState = (page: Page) => page.evaluate(() => window.__h3d.transcript()) as Promise<Tx>;
 const prompts = (page: Page) => page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.prompt').map((c) => (c.args as { text: string }).text));
+const advance = async (page: Page, ms: number) => expect(await page.evaluate((n) => window.__h3d.simAdvance(n), ms)).toBe(true);
 const status = (page: Page, id: string) => page.evaluate((i) => window.__h3d.status(i)?.status ?? null, id);
 
 async function sitAt(page: Page, name: string, sim = SIM): Promise<string> {
@@ -93,6 +95,7 @@ test('a prompt shows at once, Sending → Sent → its real item; the agent thin
   expect(await prompts(page)).toEqual(['Add a test for the seat bar']);
   await shot(page, 'm58-sending');
 
+  await advance(page, 2500);
   // The ack: Sent; the turn starts and nothing explains it yet: Thinking…, with a live elapsed time.
   await expect(pending.locator('.tx-pending-state')).toHaveText('Sent', { timeout: 10_000 });
   await expect.poll(() => status(page, id)).toBe('working');
@@ -103,7 +106,9 @@ test('a prompt shows at once, Sending → Sent → its real item; the agent thin
   expect(await cue.locator('.tx-activity-label').evaluate((e) => getComputedStyle(e).willChange)).toBe('opacity');
   expect(await tx.locator('.tx-live').getAttribute('aria-live')).toBe('polite');
   await expect(tx.locator('.tx-live')).toHaveText('Pebble is thinking');
+  await expect(tx.locator('.tx-pending-live')).toHaveText('Sent');
 
+  await advance(page, 1500);
   // Its user item arrives: the pending row is replaced, not doubled.
   await expect(pending).toHaveCount(0, { timeout: 10_000 });
   await expect(tx.locator('.tx-user:not(.tx-pending)', { hasText: 'Add a test for the seat bar' })).toHaveCount(1);
@@ -116,6 +121,7 @@ test('a prompt shows at once, Sending → Sent → its real item; the agent thin
   await page.keyboard.press('Enter');
   await expect(pending.locator('.tx-pending-state')).toHaveText('Queued · Pebble takes it when it can');
   await shot(page, 'm58-queued');
+  await advance(page, 1500);
   await expect(pending).toHaveCount(0, { timeout: 10_000 });
   await expect(tx.locator('.tx-user:not(.tx-pending)', { hasText: 'and the docs' })).toHaveCount(1);
 
@@ -154,6 +160,7 @@ test('a refused prompt leaves its reason and the draft; with reduced motion the 
   await tx.locator('.tx-input').click();
   await page.keyboard.type('this one fails');
   await page.keyboard.press('Enter');
+  await advance(page, 2500);
   await expect(pending).toHaveAttribute('data-state', 'refused', { timeout: 10_000 });
   await expect(pending.locator('.tx-pending-state')).toContainText('Not sent:');
   await expect(tx.locator('.tx-input')).toHaveText('this one fails');
@@ -163,6 +170,7 @@ test('a refused prompt leaves its reason and the draft; with reduced motion the 
   await tx.locator('.tx-input').click();
   await page.keyboard.press('Enter');
   await expect(pending.locator('.tx-pending-state')).toHaveText('Sending…');
+  await advance(page, 2500);
   await expect.poll(() => status(page, id), { timeout: 10_000 }).toBe('working');
   const cue = tx.locator('.tx-activity');
   await expect(cue.locator('.tx-activity-label')).toHaveText('Thinking…');

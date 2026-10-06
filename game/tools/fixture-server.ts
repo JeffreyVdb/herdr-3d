@@ -18,6 +18,7 @@
 // and `simfail=wake_failed|sleep_failed` makes the next wake/sleep fail (M4:
 // `hire_failed|fire_failed` the next hire / send-home; `fetch_failed` makes
 // origin unreachable for the run: no fetch works, worktree hires are refused);
+// `simclock=manual` holds scripted timers until `sim.advance {ms}` (e2e observes each step before advancing).
 // `simcap=<session>:<soft>:<hard>[,…]` sets floors' worker caps. M5: `simusage=<ms>` sends working agents'
 // `worker.usage` that often (default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|
 // changes_failed` for the next prompt / answer / changes (tools/fixture-panels.ts).
@@ -193,6 +194,7 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
       o.simulate || q.get('sim') === '1'
         ? {
             stepMs: Math.max(20, Number(q.get('simms')) || 600),
+            ...(q.get('simclock') === 'manual' ? { manualClock: true } : {}),
             ...(q.get('simfail') ? { fail: q.get('simfail') as string } : {}),
             ...(q.get('simcap') ? { caps: parseCaps(q.get('simcap') as string) } : {}),
             ...(q.get('simusage') !== null ? { usageMs: Math.max(0, Number(q.get('simusage')) || 0) } : {}),

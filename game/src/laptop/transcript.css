@@ -1361,8 +1361,9 @@
     will-change: auto;
   }
 }
-/* What the live region says is for screen readers only (#157: the async questions' card has one of its own). */
+/* Separate announcements for activity, pending prompts and async questions: screen readers only. */
 .tx-live,
+.tx-pending-live,
 .tx-aq-live {
   position: absolute;
   width: 1px;

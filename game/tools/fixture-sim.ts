@@ -55,6 +55,8 @@ import { CodexQuestionsSim } from './fixture-codex-questions.ts';
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
   stepMs?: number;
+  /** `simclock=manual`: scripted timers run only when `sim.advance {ms}` releases them. */
+  manualClock?: boolean;
   /**
    * `wake_failed` / `sleep_failed`: the next wake / sleep fails after its transition;
    * M4: `hire_failed` / `fire_failed` the next hire / send-home; `fetch_failed`: origin is unreachable for the
@@ -161,6 +163,8 @@ export class SimWorld {
   private readonly now: () => number;
   private readonly setT: (fn: () => void, ms: number) => unknown;
   private readonly clearT: (h: unknown) => void;
+  private manualTime: number | null = null;
+  private readonly manualTimers = new Map<object, { at: number; fn: () => void }>();
 
   constructor(snapshot: { seq: number; world: Obj }, o: SimOptions = {}) {
     const w = structuredClone(snapshot.world) as { buildings: Building[]; floors: Floor[]; workers: Worker[]; hire_options?: HireOptions };
@@ -181,6 +185,15 @@ export class SimWorld {
     this.now = o.now ?? (() => Date.now());
     this.setT = o.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearT = o.clearTimeout ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+    if (o.manualClock) {
+      this.manualTime = 0;
+      this.setT = (fn, ms) => {
+        const h = {};
+        this.manualTimers.set(h, { at: (this.manualTime ?? 0) + ms, fn });
+        return h;
+      };
+      this.clearT = (h) => this.manualTimers.delete(h as object);
+    }
     if (o.usageMs !== undefined) this.usageMs = o.usageMs;
     // M6 start (tools/fixture-start.ts): `simfail=no_m6` plays an M5 bridge.
     this.start6 = new StartSim(
@@ -277,6 +290,24 @@ export class SimWorld {
     this.share.dispose();
     for (const t of this.timers) this.clearT(t);
     this.timers.clear();
+  }
+
+  /** Release timers in deadline order, including timers scheduled by another step. The wall clock still dates events. */
+  private advance(a: Obj): void {
+    onlyKeys(a, ['ms']);
+    if (this.manualTime === null) throw new CmdError('invalid_state', 'sim.advance needs simclock=manual');
+    const ms = a.ms;
+    if (typeof ms !== 'number' || !Number.isSafeInteger(ms) || ms < 0 || ms > 60_000) throw bad('ms must be an integer from 0 to 60000');
+    const until = this.manualTime + ms;
+    for (;;) {
+      let next: [object, { at: number; fn: () => void }] | null = null;
+      for (const entry of this.manualTimers) if (entry[1].at <= until && (!next || entry[1].at < next[1].at)) next = entry;
+      if (!next) break;
+      this.manualTimers.delete(next[0]);
+      this.manualTime = next[1].at;
+      next[1].fn();
+    }
+    this.manualTime = until;
   }
 
   // ---- world ---------------------------------------------------------------
@@ -449,6 +480,9 @@ export class SimWorld {
       if (this.inbox.handle(m.t, a, send, ack)) return; // #106
       if (this.share.handle(m.t, a, send, ack, fail)) return; // M13
       switch (m.t) {
+        case 'sim.advance':
+          this.advance(a);
+          return ack();
         case 'building.create':
           return ack(this.create(a, send));
         case 'building.rename':

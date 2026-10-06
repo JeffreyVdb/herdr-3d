@@ -60,6 +60,49 @@ describe('SimWorld worker.prompt (M5)', () => {
     expect(r.byName('Pebble').status).toBe('done');
   });
 
+  it('manual clock holds the prompt ack, echo and turn end until each is advanced', () => {
+    const r = rig(undefined, { manualClock: true, echoMs: 50 });
+    const id = r.byName('Pebble').id;
+    r.cmd('transcript.watch', { id });
+    const prompt = r.cmd('worker.prompt', { id, text: 'first' });
+    // No wall-clock timers: a slow browser/screenshot cannot advance the sim.
+    expect(r.timers).toEqual([]);
+    r.cmd('sim.advance', { ms: 99 });
+    expect(r.reply(prompt.req_id)).toBeUndefined();
+    r.cmd('sim.advance', { ms: 1 });
+    expect(r.reply(prompt.req_id)).toMatchObject({ data: { queued: false } });
+    expect(r.byName('Pebble').status).toBe('working');
+    const echoes = () => r.out.filter((m) => m.t === 'transcript.items');
+    r.cmd('sim.advance', { ms: 49 });
+    expect(echoes()).toEqual([]);
+    r.cmd('sim.advance', { ms: 1 });
+    expect(echoes()).toHaveLength(1);
+    expect(echoes()[0]?.items).toEqual([expect.objectContaining({ kind: 'user', parts: [{ text: 'first' }] })]);
+    // A queued prompt is acked at once and echoed mid-turn, before the 300 ms turn ends.
+    const queued = r.cmd('worker.prompt', { id, text: 'second' });
+    expect(r.reply(queued.req_id)).toMatchObject({ data: { queued: true } });
+    r.cmd('sim.advance', { ms: 49 });
+    expect(echoes()).toHaveLength(1);
+    expect(r.byName('Pebble').status).toBe('working');
+    r.cmd('sim.advance', { ms: 1 });
+    expect(echoes()).toHaveLength(2);
+    expect(r.byName('Pebble').status).toBe('working');
+    r.cmd('sim.advance', { ms: 200 }); // First turn ends and takes the queued prompt.
+    expect(r.byName('Pebble').status).toBe('working');
+    r.cmd('sim.advance', { ms: 299 });
+    expect(r.byName('Pebble').status).toBe('working');
+    r.cmd('sim.advance', { ms: 1 });
+    expect(r.byName('Pebble').status).toBe('done');
+    // Dispose cancels held timers as it does real ones.
+    const cancelled = r.cmd('worker.prompt', { id, text: 'third' });
+    r.sim.dispose();
+    r.cmd('sim.advance', { ms: 1000 });
+    expect(r.reply(cancelled.req_id)).toBeUndefined();
+    expect(r.byName('Pebble').status).toBe('done');
+    expect(rig().cmd('sim.advance', { ms: 1 }).got()[0]).toMatchObject({ code: 'invalid_state' });
+    for (const ms of [-1, 0.5, '1', 60_001]) expect(r.cmd('sim.advance', { ms }).got()[0]).toMatchObject({ code: 'bad_request' });
+  });
+
   it('#140: a terminal-only built-in is acked `terminal: true` with no turn; with arguments a bare one is a prompt', () => {
     const r = rig();
     const pebble = r.byName('Pebble');
