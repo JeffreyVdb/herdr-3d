@@ -295,7 +295,6 @@ func (h *Hub) answerAsync(ctx context.Context, a proto.WorkerAnswerAsyncArgs, re
 		if err != nil {
 			return asyncSend{err: asyncError(err)}
 		}
-		h.cx.questions[a.ID] = q
 		h.refreshCodex(a.ID)
 		s := asyncSend{w: cw.w, q: q, turn: cw.turn, text: codexapp.ReplyEnvelope(answers...), cid: codexapp.NewClientID()}
 		for _, r := range replies {

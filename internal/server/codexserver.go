@@ -389,7 +389,7 @@ func (h *Hub) codexEvent(id string, cw *codexWatch, e codexapp.Event) {
 	case codexapp.EvNotification:
 		h.codexNotification(id, cw, e.Method, e.Params)
 	case codexapp.EvServerRequest:
-		cw.requests[string(e.RequestID)] = true
+		cw.requests[compactJSON(e.RequestID)] = true
 	case codexapp.EvDisconnected, codexapp.EvClosed:
 		cw.attached, cw.turn = false, ""
 		clear(cw.requests)
