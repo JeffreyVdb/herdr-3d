@@ -240,10 +240,16 @@ export class BoardsPanel {
     this.drag.cancel();
     if (session !== this.session) this.moves.clear();
     if (session !== this.session || which !== this.which) this.alert.replaceChildren();
+    const fresh = !this.dialog.open || session !== this.session || which !== this.which;
     this.which = which;
     this.session = session;
     if (this.item.open) this.item.close();
     this.render();
+    // Another list starts at its top; a redraw of the same one (refresh) keeps where it was scrolled to.
+    if (fresh) {
+      this.body.scrollTop = 0;
+      this.body.scrollLeft = 0;
+    }
     if (!this.dialog.open) this.dialog.showModal();
     (this.body.querySelector<HTMLElement>('.bd-card, .bd-pr') ?? this.head.querySelector<HTMLElement>('[data-key="close"]'))?.focus();
   }
@@ -284,7 +290,15 @@ export class BoardsPanel {
 
   // ---- the overlay ---------------------------------------------------------------------------------
 
+  /** Redraws the lists; the scroller keeps its place (an emptied scroller may clamp to 0, a refocused card may scroll itself into view). */
   private render(): void {
+    const { scrollTop, scrollLeft } = this.body;
+    this.draw();
+    this.body.scrollTop = scrollTop;
+    this.body.scrollLeft = scrollLeft;
+  }
+
+  private draw(): void {
     const st = this.state();
     const m = this.message();
     const name = m?.provider_name ?? '';
@@ -347,7 +361,7 @@ export class BoardsPanel {
         ),
       ),
     );
-    replaceKeepingFocus(this.body, [h('div', { class: 'bd-cols' }, ...nodes)]);
+    replaceKeepingFocus(this.body, [h('div', { class: 'bd-cols' }, ...nodes)], undefined, { keepScroll: true });
   }
 
   private issueButton(card: IssueCard, holder: { id: string; name: string } | null): HTMLElement {
@@ -471,7 +485,7 @@ export class BoardsPanel {
     const rows = m.prs.length
       ? m.prs.map((pr) => this.prRow(pr, closesText(pr.closes, keys), verdictOf(pr, workers)))
       : [h('div', { class: 'bd-off' }, h('h3', {}, 'No open pull requests'), h('p', {}, `${m.provider_name} has none for this floor’s repository right now.`))];
-    replaceKeepingFocus(this.body, [h('div', { class: 'bd-prs' }, ...rows)]);
+    replaceKeepingFocus(this.body, [h('div', { class: 'bd-prs' }, ...rows)], undefined, { keepScroll: true });
   }
 
   private prRow(pr: PullRequest, closes: string, stamp: { tone: string; text: string } | null): HTMLElement {
@@ -555,14 +569,20 @@ export class BoardsPanel {
 
   private renderItem(): void {
     // A poll may redraw while a comment is being typed: the box is kept, and so is the caret.
+    // The item's own scroll is kept too, and the box's (a detached textarea loses it).
     const typing = document.activeElement === this.commentBox;
     const at = [this.commentBox.selectionStart, this.commentBox.selectionEnd] as const;
+    const { scrollTop, scrollLeft } = this.itemBody;
+    const boxTop = this.commentBox.scrollTop;
     if (this.which === 'issues') this.renderIssueItem();
     else this.renderPrItem();
+    this.itemBody.scrollTop = scrollTop;
+    this.itemBody.scrollLeft = scrollLeft;
     if (typing && this.commentBox.isConnected) {
-      this.commentBox.focus();
+      this.commentBox.focus({ preventScroll: true });
       this.commentBox.setSelectionRange(at[0], at[1]);
     }
+    this.commentBox.scrollTop = boxTop;
   }
 
   private detailState(): 'loading' | 'ready' | 'error' {
