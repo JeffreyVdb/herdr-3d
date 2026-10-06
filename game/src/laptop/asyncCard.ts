@@ -176,7 +176,7 @@ export class AsyncCard {
   }
 
   private inFlight(b: AsyncCardBatch, q: CodexQuestion): boolean {
-    return !!this.busy.get(b.key)?.has(q.index) || this.guard.has(this.qkey(b, q));
+    return !!this.busy.get(b.key)?.has(q.index) || this.guard.get(this.qkey(b, q)) === sigOf(q);
   }
 
   /** It can take an answer from here now. */
@@ -450,6 +450,7 @@ export class AsyncCard {
   /** The text box: Enter takes the text and moves on (never sends; Shift+Enter is a new line). */
   private onTextKey(e: KeyboardEvent): void {
     if (zoomKey(e)) return; // #59: the text zoom works from here too
+    if (e.key === 'Escape' && (e.ctrlKey || e.metaKey)) return; // the terminal toggle (Ctrl/⌘+Esc) is the seat's
     e.stopPropagation(); // what is typed here is the answer's, not the game's or the timeline's
     if (isSendKey(e)) {
       e.preventDefault();

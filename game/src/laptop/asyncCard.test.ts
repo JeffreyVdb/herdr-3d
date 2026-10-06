@@ -173,6 +173,27 @@ describe('AsyncCard (#157)', () => {
     expect(t.answers[1]?.answers).toEqual([{ index: 0, answer: 'Retry me' }]);
   });
 
+  it('leaves the terminal toggle (Ctrl+Esc) to the seat from its text box; a bare Esc goes back to the timeline', () => {
+    const t = host();
+    let back = 0;
+    const c = (card = new AsyncCard({ ...t.h, focusTimeline: () => void back++ }));
+    document.body.append(c.el, c.live);
+    c.set(W, codex([batch('call_3', [context({ index: 0 })])]));
+    const seen: string[] = [];
+    const onKey = (e: KeyboardEvent) => seen.push(`${e.ctrlKey ? 'Ctrl+' : ''}${e.key}`);
+    window.addEventListener('keydown', onKey);
+    try {
+      const area = c.el.querySelector('textarea')!;
+      area.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', ctrlKey: true, bubbles: true }));
+      area.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      area.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }));
+    } finally {
+      window.removeEventListener('keydown', onKey);
+    }
+    expect(seen).toEqual(['Ctrl+Escape']);
+    expect(back).toBe(1);
+  });
+
   it('checks the answer as the bridge does before sending', async () => {
     const t = host();
     const c = mount(t);
