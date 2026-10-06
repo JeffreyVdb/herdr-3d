@@ -237,8 +237,12 @@ tests only, so CI is unaffected):
 - `herdr.go`: a throwaway `h3d-it-154-<rand>` Herdr session. Every call names it, and the session is stopped and
   deleted at the end. Its server gets the fixture's `CODEX_HOME` too, because Herdr restores panes without their
   `--env`; in one development run a restored pane reached `~/.codex` that way (§10).
-- `*_integration_test.go`: the suites cited above. Each test kills the processes it left (anything naming its temp
-  root) and stops temp-home daemons.
+- `procs.go`: process ownership. Each test gets a random `H3D_CODEXSHARE_OWNER` marker, set in its Herdr session
+  server's environment (so its panes, TUIs, app-servers, daemons and tools inherit it) and passed to its MCP children.
+  Cleanup signals only this user's processes whose environment carries that exact marker; naming the temp root does not
+  make a process the test's (`TestOwnedPIDsNeedTheMarker`, `TestKillOwnedSparesStrangers`).
+- `*_integration_test.go`: the suites cited above. Each test kills the processes it left (those with its marker) and
+  stops temp-home daemons.
 
 Launch and attach procedure used throughout:
 
