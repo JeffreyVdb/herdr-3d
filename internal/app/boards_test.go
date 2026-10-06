@@ -26,8 +26,10 @@ func TestServeBoards(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The fixture is dated for the day it was cut; the board runs on the real clock, so the issue it closed
-	// just inside the seven-day window is moved to just inside today's.
+	// just inside the seven-day window is moved to just inside today's, and the one closed a week later
+	// (#7, which has to stay on the board) is moved to an hour ago.
 	feed = []byte(strings.ReplaceAll(string(feed), "2026-09-22T12:00:01Z", time.Now().Add(-6*24*time.Hour).UTC().Format(time.RFC3339)))
+	feed = []byte(strings.ReplaceAll(string(feed), "2026-09-29T09:19:01Z", time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)))
 	// #118: the run's issue (#2, not on the board) is read once for its title.
 	detail, err := os.ReadFile(filepath.Join("..", "github", "testdata", "issue-detail.json"))
 	if err != nil {
