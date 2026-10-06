@@ -11,6 +11,8 @@ import { needsYouLine, WRAPPING_UP, wrapUpOf } from '../../world/wrapup';
 import { BOX_TAPE } from '../palette';
 // #90: follow-up questions.
 import { followupLine, followupOf, questionsCount } from '../../world/followup';
+// #157: a shared Codex worker's async questions.
+import { askingText, asyncLine } from '../../world/codexQuestions';
 
 /**
  * What a worker's speech bubble says: its name, status and task; M5: a
@@ -37,6 +39,9 @@ export function cardOf(v: WorkerView, focus = false): CardData {
   // #90: open questions in its final message: like an ask of several questions, answered at the laptop.
   const followup = v.display === 'needs_you' && !card.ask ? followupOf(v.worker) : null;
   if (followup) card.ask = { text: followupLine(followup), choices: [], about: [`${questionsCount(followup)}: answer at the laptop (E)`] };
+  // #157: a Codex worker's async questions: it works on (its status stays), the card says what it asks.
+  const asks = !card.ask && v.display !== 'asleep' ? (v.asks ?? 0) : 0;
+  if (asks) card.ask = { text: asyncLine(v.worker), choices: [], about: [`Codex ${askingText(asks)} · answer at the laptop (E)`] };
   if (focus) {
     const u = usageText(v.worker.usage).line;
     if (u) card.usage = u;

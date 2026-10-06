@@ -1,5 +1,6 @@
 import { answerable, answerKeys } from '../world/answer';
 import { askOf, isSimple, optionLabel, quickReplyBlocker, waitingText } from '../world/ask';
+import { askingText, asyncBatches, wantsAnswer } from '../world/codexQuestions';
 import type { WorkerView } from '../world/store';
 import { usageText } from '../world/usage';
 import { h } from './dom';
@@ -16,12 +17,19 @@ export function promptBarKey(w: WorkerView): string[] {
   const q = w.display === 'needs_you' ? answerable(w.worker.question) : null;
   const ask = w.display === 'needs_you' ? askOf(w.worker) : null;
   // The ask's waiting time, to the minute (the bar is redrawn when it changes).
-  return [usageText(w.worker.usage).line, q?.hash ?? '', ask ? `${ask.tool_use_id} ${waitingText(ask.since, Date.now()).replace(/ \d+s$/, ' <1m')}` : ''];
+  return [usageText(w.worker.usage).line, q?.hash ?? '', ask ? `${ask.tool_use_id} ${waitingText(ask.since, Date.now()).replace(/ \d+s$/, ' <1m')}` : '', String(w.asks ?? 0)];
 }
 
-/** #57: "asks · waiting 3m" on the bar of a worker whose agent waits on its question. */
+/**
+ * #57: "asks · waiting 3m" on the bar of a worker whose agent waits on its question. #157: "asks 2 questions" on a
+ * Codex worker's whose async questions want an answer while it works on.
+ */
 export function askChip(w: WorkerView, now = Date.now()): HTMLElement | null {
   const ask = w.display === 'needs_you' ? askOf(w.worker) : null;
+  if (!ask && w.asks) {
+    const titles = asyncBatches(w.worker).flatMap((b) => b.questions.filter(wantsAnswer).map((q) => q.title));
+    return h('span', { class: 'prompt-ask prompt-ask--async', title: `Codex works on. Answer at its laptop (E):\n${titles.join('\n')}` }, askingText(w.asks));
+  }
   if (!ask) return null;
   const wait = waitingText(ask.since, now).replace(/ \d+s$/, ' <1m');
   return h('span', { class: 'prompt-ask', title: ask.questions.map((q) => q.question).join('\n') }, `asks · ${wait}`);
@@ -62,6 +70,7 @@ export function promptBarAria(w: WorkerView): string {
   const parts: string[] = [];
   const u = usageText(w.worker.usage).line;
   if (u) parts.push(u.replace('≈$', 'about $'));
+  if (w.asks && !(w.display === 'needs_you' && askOf(w.worker))) parts.push(`Codex ${askingText(w.asks)}`); // #157
   for (const el of answerKeyEls(w)) parts.push(el.textContent ?? '');
   return parts.map((p) => p.replace(/^(\d)(\D)/, '$1 $2')).join(' · ');
 }

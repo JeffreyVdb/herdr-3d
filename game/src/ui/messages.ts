@@ -118,6 +118,10 @@ const DOES: Record<CommandName | LogoAction, string> = {
 export function failureText(t: CommandName | LogoAction, code: string, message: string, ctx: FailureContext = {}): string {
   const floor = ctx.floor ?? 'This floor';
   const why = message.trim();
+  if (t === 'worker.answer_async' || t === 'worker.dismiss_async') {
+    const asyncWhy = asyncFailure(t, code, why);
+    if (asyncWhy) return asyncWhy;
+  }
   switch (code) {
     case 'offline':
       return 'Not connected to herdr-world, so nothing was sent. Try again once it reconnects.';
@@ -214,3 +218,26 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
 }
 
 const isBoardCommand = (t: CommandName | LogoAction): boolean => t.startsWith('issue.') || t.startsWith('pr.') || t.startsWith('worker.open_pr') || t.startsWith('board.');
+
+/**
+ * #157: a Codex async question's answer or hiding refused by the bridge (docs/protocol.md "Codex async questions"):
+ * nothing reached Codex. The card keeps the answer; these say why and what to do.
+ */
+function asyncFailure(t: 'worker.answer_async' | 'worker.dismiss_async', code: string, why: string): string | null {
+  const answer = t === 'worker.answer_async';
+  switch (code) {
+    case 'stale':
+      return answer
+        ? 'Not sent: the question was answered, sent or hidden meanwhile, or Codex moved to another thread. The card shows it as it is now.'
+        : 'Not hidden: the question changed meanwhile. The card shows it as it is now.';
+    case 'invalid_state':
+      return answer
+        ? 'Not sent: herdr-3d is not connected to this Codex thread right now (or the question cannot be answered from here). Answer in the terminal.'
+        : 'Not hidden: this is not a Codex worker with its own server.';
+    case 'input_failed':
+      return `Not sent: Codex refused it${why ? ` (${why.replace(/^input_failed:\s*/, '')})` : ''}. Send it again.`;
+    case 'bad_request':
+      return `Not sent: ${why.replace(/^bad (request|args):\s*/, '') || 'herdr-world refused the answer'}.`;
+  }
+  return null;
+}

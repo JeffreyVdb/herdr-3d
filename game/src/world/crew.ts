@@ -9,6 +9,7 @@
  */
 
 import type { Worker, WorkerIssue, WorkerReport } from '../net/protocol';
+import { effectiveStatus } from './codexQuestions';
 
 export type CrewRole = 'orch' | 'code' | 'review' | 'ux' | 'ground';
 
@@ -40,8 +41,9 @@ export function inputRequired(r: WorkerReport | undefined): string | null {
 }
 
 /** Whether a worker counts as having worked: seen `working` or `done`, or it handed in a report. */
-export function hasWorked(w: Pick<Worker, 'status' | 'report'>): boolean {
-  return w.status === 'working' || w.status === 'done' || w.report?.state === 'ready';
+export function hasWorked(w: Pick<Worker, 'status' | 'report' | 'codex'>): boolean {
+  const status = effectiveStatus(w); // #157: blocked only by a Codex async question, it works
+  return status === 'working' || status === 'done' || w.report?.state === 'ready';
 }
 
 /**
@@ -49,14 +51,16 @@ export function hasWorked(w: Pick<Worker, 'status' | 'report'>): boolean {
  * first appeared (see `CrewMemory`). Blocked (its agent, or its report asks)
  * wins, then a ready report, then working; no agent yet is `hired`, an
  * agent that has not worked yet is `onboarding` (reading its brief), and one
- * that worked and waits without a report is `idle`.
+ * that worked and waits without a report is `idle`. #157: a Codex worker herdr calls blocked only because of an async
+ * question works (`effectiveStatus`).
  */
-export function lifecycle(w: Pick<Worker, 'status' | 'agent_kind' | 'report'>, worked: boolean): Lifecycle {
-  if (w.status === 'blocked' || inputRequired(w.report)) return 'blocked';
+export function lifecycle(w: Pick<Worker, 'status' | 'agent_kind' | 'report' | 'codex'>, worked: boolean): Lifecycle {
+  const status = effectiveStatus(w);
+  if (status === 'blocked' || inputRequired(w.report)) return 'blocked';
   if (w.report?.state === 'ready') return 'reporting';
-  if (w.status === 'working') return 'working';
-  if (!w.agent_kind || w.status === 'unknown') return 'hired';
-  if (!worked && w.status !== 'done') return 'onboarding';
+  if (status === 'working') return 'working';
+  if (!w.agent_kind || status === 'unknown') return 'hired';
+  if (!worked && status !== 'done') return 'onboarding';
   return 'idle';
 }
 
@@ -208,11 +212,11 @@ export function crewView(w: Worker, worked: boolean): CrewView | null {
 export class CrewMemory {
   private readonly worked = new Set<string>();
 
-  observe(w: Pick<Worker, 'id' | 'status' | 'report'>): void {
+  observe(w: Pick<Worker, 'id' | 'status' | 'report' | 'codex'>): void {
     if (hasWorked(w)) this.worked.add(w.id);
   }
 
-  snapshot(workers: Iterable<Pick<Worker, 'id' | 'status' | 'report'>>): void {
+  snapshot(workers: Iterable<Pick<Worker, 'id' | 'status' | 'report' | 'codex'>>): void {
     const keep = new Set<string>();
     for (const w of workers) {
       if (this.worked.has(w.id) || hasWorked(w)) keep.add(w.id);
