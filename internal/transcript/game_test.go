@@ -23,6 +23,8 @@ var gameFixtures = []struct {
 	{"claude-ask.json", Claude, []string{"ask.jsonl", "ask_pending.jsonl"}},
 	{"codex-ask.json", Codex, []string{"ask.jsonl", "ask_pending.jsonl"}},
 	{"codex.json", Codex, []string{"session.jsonl", "tools.jsonl", "apply_patch.jsonl", "image.jsonl", "view_image.jsonl", "generated.jsonl", "aborted.jsonl", "compacted.jsonl", "unknown.jsonl"}},
+	// #151: MCP calls that are events only, a failed one and the deduped ones.
+	{"codex-mcp.json", Codex, []string{"mcp_exec.jsonl", "mcp_failed.jsonl", "mcp_dup.jsonl"}},
 }
 
 func TestGameFixtures(t *testing.T) {

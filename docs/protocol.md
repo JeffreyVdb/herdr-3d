@@ -2367,6 +2367,13 @@ item, so drift shows up instead of being lost.
 - **Codex.** `response_item`s: `message` (`user` / `assistant`; the `<image …>` wrapper text around a pasted image is
   dropped), `reasoning` (its summary), `function_call` / `custom_tool_call` / `local_shell_call` and their `_output`
   (paired by `call_id`; an output `{"success": false}` is `error`), `agent_message` (a notice: sender → recipient).
+  #151: the MCP calls an `exec` script makes have no response item, only `event_msg` `item_started` /
+  `item_completed` with an `McpToolCall` item (`id` `exec-<uuid>`, `server`, `tool`, `arguments`, `status`, `result`
+  `{content, isError, structuredContent}` or `error {message}`, `duration`): a `tool` item named `server.tool` whose
+  id is the item's (a completion alone is enough; a start is `running`, and one id is one row, also when a response
+  item has it). `failed`, `isError` and `error` are `error`; the output is the result's text parts (else its
+  `structuredContent`, else the error's message). The duration is not shown. The other item types (`Reasoning`,
+  `CommandExecution`, `AgentMessage`, …) stay hidden.
   `compacted` is a `compaction` (its `replacement_history` is never read). `event_msg` `turn_aborted` is a notice and
   interrupts every call still running; `task_complete` a notice ("Turn took 13.8s"); `error` a notice.
 
@@ -2377,7 +2384,7 @@ item, so drift shows up instead of being lost.
 | every `attachment` line (reminders, hook context, tool lists, dates…), **except** a prompt the user queued while the agent worked (`queued_command` from a human): that is a `user` item | `message` of role `developer` (or `system`) |
 | `isMeta` user lines (skill bodies, caveats) and user text that is only `<system-reminder>` wrappers (wrappers are cut from other text) | the injected user context: `# AGENTS.md instructions…`, `<environment_context>`, `<user_instructions>` |
 | metadata lines: `last-prompt`, `mode`, `permission-mode`, `bridge-session`, `atis-latch`, `ai-title`, `custom-title`, `agent-name`, `cost-state`, `pr-link`, `file-history-*`, `queue-operation`, `frame-link`, `artifact-*`, `summary`, `progress`, `tag` | `session_meta`, `turn_context`, `world_state`, `token_usage_record`, `inter_agent_communication_metadata` |
-| `system` `stop_hook_summary`, and a `local_command` with no output | `event_msg`s that repeat response items or keep books: `token_count`, `item_completed`, `thread_settings_applied`, `task_started`, `user_message`, `agent_message`, `agent_reasoning*`, `exec_command_*`, `patch_apply_*`, … |
+| `system` `stop_hook_summary`, and a `local_command` with no output | `event_msg`s that repeat response items or keep books: `token_count`, `item_completed` (but an `McpToolCall`'s, a `tool` item), `thread_settings_applied`, `task_started`, `user_message`, `agent_message`, `agent_reasoning*`, `exec_command_*`, `patch_apply_*`, … |
 
 Shown as notices: Claude `system` `turn_duration` ("Turn took 9m 52s"), `away_summary`, `informational`, `api_error`,
 `local_command` output; Codex `task_complete`, `turn_aborted`, `error`.

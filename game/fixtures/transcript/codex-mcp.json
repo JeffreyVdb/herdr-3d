@@ -1,0 +1,188 @@
+[
+  {
+    "id": "call_mcp_exec_a",
+    "seq": 1,
+    "ts": 1791229100100,
+    "kind": "tool",
+    "tool": {
+      "name": "exec",
+      "input_summary": "const s = await tools.mcp__alterlab__alterlab_search({query:\"model context protocol spec\"});",
+      "input": "const s = await tools.mcp__alterlab__alterlab_search({query:\"model context protocol spec\"});\nconst p = await tools.mcp__alterlab__alterlab_scrape({url:\"https://example.com/spec\", formats:[\"markdown\"]});\ntext(p.markdown)",
+      "status": "ok",
+      "output_text": "Script completed"
+    }
+  },
+  {
+    "id": "o:415",
+    "seq": 2,
+    "ts": 1791229101000,
+    "kind": "notice",
+    "hidden": true,
+    "notice": {
+      "text": "",
+      "source": "event_msg/item_completed"
+    }
+  },
+  {
+    "id": "exec-0001",
+    "seq": 3,
+    "ts": 1791229104642,
+    "kind": "tool",
+    "tool": {
+      "name": "alterlab.alterlab_search",
+      "input_summary": "model context protocol spec",
+      "input": {
+        "query": "model context protocol spec",
+        "num_results": 2
+      },
+      "status": "ok",
+      "output_text": "1. Spec https://example.com/spec\n2. Blog https://example.com/blog"
+    }
+  },
+  {
+    "id": "exec-0002",
+    "seq": 4,
+    "ts": 1791229106557,
+    "kind": "tool",
+    "tool": {
+      "name": "alterlab.alterlab_scrape",
+      "input_summary": "https://example.com/spec",
+      "input": {
+        "url": "https://example.com/spec",
+        "formats": [
+          "markdown"
+        ]
+      },
+      "status": "ok",
+      "output_text": "# Spec\n\nExample page."
+    }
+  },
+  {
+    "id": "o:1852",
+    "seq": 5,
+    "ts": 1791229107000,
+    "kind": "notice",
+    "hidden": true,
+    "notice": {
+      "text": "",
+      "source": "event_msg/item_completed"
+    }
+  },
+  {
+    "id": "exec-0101",
+    "seq": 6,
+    "ts": 1791229200000,
+    "kind": "tool",
+    "tool": {
+      "name": "alterlab.alterlab_search",
+      "input_summary": "slow query",
+      "input": {
+        "query": "slow query"
+      },
+      "status": "error",
+      "output_text": "Gateway timeout for slow query."
+    }
+  },
+  {
+    "id": "exec-0102",
+    "seq": 7,
+    "ts": 1791229201000,
+    "kind": "tool",
+    "tool": {
+      "name": "monday.all_api_read",
+      "input_summary": "query { items { id body } }",
+      "input": {
+        "query": "query { items { id body } }"
+      },
+      "status": "error",
+      "output_text": "Error: Cannot query field \"body\" on type \"Item\"."
+    }
+  },
+  {
+    "id": "exec-0103",
+    "seq": 8,
+    "ts": 1791229202000,
+    "kind": "tool",
+    "tool": {
+      "name": "team-search.list_repo_groups",
+      "input_summary": "{}",
+      "input": {},
+      "status": "error",
+      "output_text": "user rejected MCP tool call"
+    }
+  },
+  {
+    "id": "exec-0104",
+    "seq": 9,
+    "ts": 1791229203000,
+    "kind": "tool",
+    "tool": {
+      "name": "grafana.query",
+      "input_summary": "{\"expr\":\"up\"}",
+      "input": {
+        "expr": "up"
+      },
+      "status": "ok",
+      "output_text": "{\"rows\":3}"
+    }
+  },
+  {
+    "id": "exec-0201",
+    "seq": 10,
+    "ts": 1791229260000,
+    "kind": "tool",
+    "tool": {
+      "name": "alterlab.alterlab_search",
+      "input_summary": "dup query",
+      "input": {
+        "query": "dup query"
+      },
+      "status": "ok",
+      "output_text": "one result"
+    }
+  },
+  {
+    "id": "exec-0202",
+    "seq": 11,
+    "ts": 1791229263000,
+    "kind": "tool",
+    "tool": {
+      "name": "alterlab.alterlab_scrape",
+      "input_summary": "https://example.com/slow",
+      "input": {
+        "url": "https://example.com/slow"
+      },
+      "status": "running"
+    }
+  },
+  {
+    "id": "call_dup0001",
+    "seq": 12,
+    "ts": 1791229264000,
+    "kind": "tool",
+    "tool": {
+      "name": "mcp__alterlab.alterlab_search",
+      "input_summary": "both",
+      "input": {
+        "query": "both"
+      },
+      "status": "ok",
+      "output_text": "Wall time: 0.1 seconds\nOutput:\nresponse text"
+    }
+  },
+  {
+    "id": "call_dup0002",
+    "seq": 13,
+    "ts": 1791229266000,
+    "kind": "tool",
+    "tool": {
+      "name": "mcp__alterlab.alterlab_search",
+      "input_summary": "early",
+      "input": {
+        "query": "early"
+      },
+      "status": "ok",
+      "output_text": "early response text"
+    }
+  }
+]

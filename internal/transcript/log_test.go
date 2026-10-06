@@ -219,6 +219,92 @@ func TestFollowSharesTheTail(t *testing.T) {
 	}
 }
 
+// #151: Codex's nested MCP calls are events only. Live, a start is a new
+// running row, its completion an update of it, and a completion alone a new
+// finished row, each after the lines before it; paging gives the same rows.
+func TestCodexMCPLive(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.jsonl")
+	call := func(id, status, extra string) string {
+		typ := "item_completed"
+		if status == "inProgress" {
+			typ = "item_started"
+		}
+		return fmt.Sprintf(`{"timestamp":"2026-10-05T19:38:2%s.000Z","type":"event_msg","payload":{"type":"%s","item":{"type":"McpToolCall","id":"exec-%s","server":"alterlab","tool":"alterlab_search","arguments":{"query":"q %s"},"status":"%s"%s}}}`+"\n",
+			id, typ, id, id, status, extra)
+	}
+	done := `,"result":{"content":[{"type":"text","text":"found it"}]},"duration":{"secs":1,"nanos":0}`
+	writeLines(t, path, `{"timestamp":"2026-10-05T19:38:20.000Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"call_x","name":"exec","input":"run"}}`+"\n")
+	tail := jsonl.NewTail(path)
+	if err := tail.Next(func(int64, []byte) {}); err != nil {
+		t.Fatal(err)
+	}
+	l, err := follow(Codex, path, tail.File(), tail.Delivered(), func(r io.ReaderAt) io.ReaderAt { return r })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	ready(t, l)
+	s, _, err := l.Subscribe(200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	take := func(wantNews, wantUps int) ([]proto.TranscriptItem, []proto.TranscriptItem) {
+		t.Helper()
+		if err := tail.Next(l.Line); err != nil {
+			t.Fatal(err)
+		}
+		<-s.Wake()
+		news, ups, err := s.Take()
+		if err != nil || len(news) != wantNews || len(ups) != wantUps {
+			t.Fatalf("take: %+v %+v %v", news, ups, err)
+		}
+		return news, ups
+	}
+	writeLines(t, path, call("1", "inProgress", ""))
+	news, _ := take(1, 0)
+	if it := news[0]; it.ID != "exec-1" || it.Seq != 2 || it.Tool.Name != "alterlab.alterlab_search" || it.Tool.Status != proto.ToolRunning {
+		t.Fatalf("start: %+v", it)
+	}
+	writeLines(t, path, call("1", "completed", done))
+	_, ups := take(0, 1)
+	if it := ups[0]; it.ID != "exec-1" || it.Seq != 2 || it.Tool.Status != proto.ToolOK || it.Tool.OutputText != "found it" {
+		t.Fatalf("completion: %+v", it.Tool)
+	}
+	writeLines(t, path, call("2", "completed", done)) // no start event
+	news, _ = take(1, 0)
+	if it := news[0]; it.ID != "exec-2" || it.Seq != 3 || it.Tool.Status != proto.ToolOK || it.Tool.InputSummary != "q 2" {
+		t.Fatalf("completion alone: %+v", it)
+	}
+	writeLines(t, path, call("3", "failed", `,"error":{"message":"rejected"}`))
+	news, _ = take(1, 0)
+	if it := news[0]; it.Seq != 4 || it.Tool.Status != proto.ToolError || it.Tool.OutputText != "rejected" {
+		t.Fatalf("failed: %+v", it.Tool)
+	}
+	// Paging, one at a time from the newest, finds the same rows in order.
+	var ids []string
+	for seq := int64(0); ; {
+		p, err := l.Before(seq, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := len(p.Items) - 1; i >= 0; i-- {
+			ids = append([]string{p.Items[i].ID}, ids...)
+		}
+		if !p.HasMore {
+			break
+		}
+		seq, _ = ParseCursor(p.Cursor)
+	}
+	if strings.Join(ids, " ") != "call_x exec-1 exec-2 exec-3" {
+		t.Fatalf("paged ids: %v", ids)
+	}
+	it, ok, err := l.Item("exec-2")
+	if err != nil || !ok || it.Tool.Name != "alterlab.alterlab_search" || it.Tool.OutputText != "found it" {
+		t.Fatalf("item: %+v %v %v", it, ok, err)
+	}
+}
+
 // A log whose file the tail found replaced or gone ends; its subscribers
 // learn why.
 func TestVoid(t *testing.T) {
