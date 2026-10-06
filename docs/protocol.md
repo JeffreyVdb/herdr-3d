@@ -274,7 +274,7 @@ floor with no workers and an `error`).
 | `phase`, `pass` | string, int ≥ 0, optional | orchestrators: the `h3d_phase` / `h3d_pass` tokens (`research\|coding\|review\|fixing\|waiting_user\|pr\|done`, others passed through, ≤ 32 bytes), remembered like `harness` |
 | `over_cap` | bool, optional | orchestrators: `true` past write-code's review-pass cap (`pass > 3`, or `pass == 3` and `phase == "waiting_user"`); absent when false |
 | `report` | object, optional | freelancers: their write-code report (see [Runs and freelancers](#runs-and-freelancers)) |
-| `codex` | object, optional | #155: how a Codex worker the bridge hired was launched, `{"mode": "shared" \| "legacy", "server"?: "starting" \| "running" \| "down" \| "stopped", "note"?, "attached"?}` (see [Shared Codex server](#shared-codex-server)); absent for other workers, and for Codex hires made with the switch off |
+| `codex` | object, optional | #155: how a Codex worker the bridge hired was launched, `{"mode": "shared" \| "legacy", "server"?: "starting" \| "running" \| "down" \| "stopped", "note"?, "attached"?, "thread"?, "turn"?, "questions"?}` (see [Shared Codex server](#shared-codex-server); #156: `thread`, `turn` and `questions` in [Codex async questions](#codex-async-questions)); absent for other workers, and for Codex hires made with the switch off |
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
 none, so the bridge keeps the last known value until a new one shows up. They are absent when never known.
@@ -1817,13 +1817,14 @@ in one command) or `{"key": string}`, one of:
 Anything else (digits and letters are text) is `bad_request`. Consecutive keys go to herdr as one `pane send-keys`,
 consecutive texts as one `pane send-text` (a herdr call takes about 10 ms). Input to one worker is serialized: commands
 for the same worker (`worker.keys`, `worker.prompt`, `worker.answer`) run one after the other in the order they
-arrived, so two quick `worker.keys` never interleave; at most 32 wait per worker (then `input_failed`). herdr
+arrived, so two quick `worker.keys` never interleave (#156: `worker.answer_async` too); at most 32 wait per worker (then `input_failed`). herdr
 refusing is `input_failed` (the message says which step and why).
 
 **`worker.prompt`** submits a prompt to the worker's agent. `text` is 1 byte to 16 KiB of UTF-8 without NUL (herdr
 0.9.0 takes a leading `--` as text, too). Only for a worker with an agent (`agent_kind`); a plain shell is
 `invalid_state` (use `worker.keys`), and so is a `blocked` worker (answer its question first; herdr would refuse with
-`agent_blocked`). The game uses it for paste too.
+`agent_blocked`), except a shared Codex worker blocked only by an async question (#156: sent through its app-server,
+see [Codex async questions](#codex-async-questions)). The game uses it for paste too.
 
 **Claude** (#95): the prompt is **typed**, as in the hire's step 5 (chunks of at most 700 characters via `herdr pane
 send-text`, 50 ms apart, then `herdr pane send-keys <pane> enter`; the whole of it on the worker's input lane), so
@@ -3006,16 +3007,20 @@ left for you: the hire's first prompt is then not sent (`prompted: false`, `prom
 when the TUI exits and reports it again only after a resumed thread's first turn, so an empty one changes nothing, and
 an id that is another worker's is never taken: two workers never share or swap a thread.
 
-**The bridge's join.** While a shared worker's transcript is open (`transcript.watch`) and its server runs, the bridge
-joins its thread as a second app-server client: `initialize` (client `herdr_3d`, the experimental API on, the server's
-version checked), then `thread/resume` with the thread id **and nothing else** (no model, cwd, sandbox, approval or
-instruction override: joining starts no turn and changes no setting), and `thread/unsubscribe` when the transcript
-closes. A lost connection is retried with a bounded backoff (0.25 s doubling to 5 s, 8 attempts). The bridge is
-**passive**: it never answers a server request (command approvals, Codex's blocking questions); the terminal does, and
-the first answer wins. `worker.codex.attached` says whether it is joined. A join that failed (its retries spent, or
-refused: an ephemeral thread, another thread, an unsupported server) is not tried again until the transcript is
-reopened, the thread changes or the worker has a new server. This phase only joins; the transcript still
-comes from the rollout under `~/.codex/sessions`, as before.
+**The bridge's join.** While a shared worker's server runs and its thread is known, the bridge joins the thread as a
+second app-server client (#156: whether or not its transcript is open, so an async question asked meanwhile is seen and
+can be answered; #155 joined only while `transcript.watch` was open): `initialize` (client `herdr_3d`, the
+experimental API on, the server's version checked), then `thread/resume` with the thread id **and nothing else** (no
+model, cwd, sandbox, approval or instruction override: joining starts no turn and changes no setting), and
+`thread/unsubscribe` when it leaves (the server stops, the thread changes, the worker is sent home). The join reads
+the thread's history from the `thread/resume` response, and for a paginated thread one more page of up to 50 older
+turns (`thread/turns/list`). A lost connection is retried with a bounded backoff (0.25 s doubling to 5 s, 8 attempts).
+The bridge is **passive** towards server requests: it never answers one (command approvals, Codex's blocking
+questions); the terminal does, and the first answer wins. Its only sends are `turn/steer` and `turn/start`, each on a
+command of yours ([Codex async questions](#codex-async-questions)). `worker.codex.attached` says whether it is joined.
+A join refused for good (an ephemeral thread, another thread, an unsupported server) is not tried again until the
+transcript is opened, the thread changes or the worker has a new server; one that only spent its retries is tried again
+after 60 s too. The transcript still comes from the rollout under `~/.codex/sessions`, as before.
 
 **Lifecycle.** The server outlives its pane and herdr's `session stop`, so the bridge owns it:
 
@@ -3047,6 +3052,104 @@ comes from the rollout under `~/.codex/sessions`, as before.
 Orchestrators that start Codex workers through the herdr CLI (write-code) bypass the bridge; such a worker is
 launched the same way with the same two calls, `pane run <pane> '<server start>'` then `agent start … -- --remote
 unix://<socket> -C <dir> …` (findings §8, D7). Until the skill adopts it, those workers stay embedded.
+
+#### Codex async questions
+
+#156 (epic #153, phase 3). Codex asks **async** questions with `request_user_input_async` and goes on working: the
+terminal shows them as "Queued follow-up inputs · N questions", herdr shows the worker as `blocked` while the asking
+turn runs ("Action Required"), and the tool's `{"accepted":true}` result only means the question was scheduled. This
+is **not** a blocking ask: no `ask` ([Laptops: asks](#laptops-asks)), no screen `question`, and prompts keep working.
+For a shared worker the bridge's join sees each question and can answer it in the same thread, while the turn runs or
+after it ended (then only the bridge can: the terminal drops its pending questions when the asking turn ends).
+
+```json
+"codex":{"mode":"shared","server":"running","attached":true,"thread":"01a1112a-85b8-7bf2-…","turn":"01a1112a-9c23-…",
+  "questions":[{"batch":"call_3","turn":"01a1112a-9c23-…","seen":["live","history"],"at":1790766523807,
+    "questions":[{"index":0,"title":"Which fixture color?","options":["Green","Blue"],"state":"sent"},
+                 {"index":1,"title":"Any context for the fixture?","state":"answered","answer":"typed-in-terminal","answered_by":"other"}]}]}
+{"t":"worker.answer_async","req_id":"a1","args":{"id":"6db1905e-…","thread":"01a1112a-85b8-7bf2-…","batch":"call_3",
+  "answers":[{"index":0,"answer":"Green"}]}}
+{"t":"ack","req_id":"a1","data":{"state":"sent","via":"turn/steer","turn":"01a1112a-9c23-…"}}
+{"t":"worker.dismiss_async","req_id":"a2","args":{"id":"6db1905e-…","thread":"01a1112a-85b8-7bf2-…","batch":"call_3","indexes":[1]}}
+{"t":"ack","req_id":"a2"}
+```
+
+**The model.** `worker.codex.questions` lists the batches of the worker's thread (its `thread`; a `/new` in the
+terminal is another thread, and the old one's questions go), oldest first, at most 32 (the oldest whose questions are
+all answered or dismissed goes first, else the oldest). A **batch** is one async question message: `batch` is its id,
+Codex's function `call_id`, the same live, in the history and after a cold resume; `turn` the turn that asked it; `seen`
+how it was seen (`live`: the join's `item/completed`; `history`: the thread's turns read on a join), in order; `at` when
+the bridge first saw it. Each question has its `index` in the batch, its `title`, and its `options` (suggested answers;
+none: free text). `turn` on `codex` is the thread's running turn while attached ("" or absent: idle). Caps: a title
+2000 bytes, 16 options of 1000 bytes, an answer 4096 bytes; `truncated` says one was cut.
+
+| `state` | |
+|---|---|
+| `pending` | asked, not answered; `error` says why the bridge's last answer was refused, nothing delivered |
+| `sending` | the bridge's answer is on the worker's input lane, its request in flight |
+| `sent` | the server **accepted** the bridge's answer (`turn/steer` or `turn/start` returned). Not answered yet: a steered input is delivered with the turn's next model request. `unconfirmed: true`: no response came, so whether the server took it is unknown; it is **not** sent again (the server does not deduplicate: a second envelope is a second answer). `undelivered: true`: the turn it went to ended without it (below); it may be answered again |
+| `answered` | a user message holding the reply envelope for this `(batch, index)` was seen, live or in the history: the bridge's, the terminal's or any client's. `answer` is the envelope's text, `answered_by` `bridge` (the user message carries a client id the bridge made, `clientUserMessageId` `herdr_3d-<hex>`) or `other` |
+| `dismissed` | put away with `worker.dismiss_async`, in the bridge only: Codex still holds it, and a later envelope still makes it `answered` |
+
+Only the envelope answers a question. The tool's `{"accepted":true}`, the turn ending and any other user message
+(an ordinary prompt included) change nothing. What the protocol cannot prove stays a flag (`unconfirmed`,
+`undelivered`, `twin`, `conflict`): `twin` names another batch
+of the same turn with the same questions seen only the other way under another id (both kept: in every observed case
+the ids were equal); `conflict: true` is an id whose live and history questions differ (the first ones are kept, and
+it cannot be answered). A bridge restart forgets `sending`, `sent` and `dismissed`: the next join reads the history
+again, where only `answered` (the envelope, with `answered_by` from its client id) is visible, and everything else is
+`pending`.
+
+**Recovery.** The bridge joins every shared worker's thread while its server runs (above), so a question asked while
+the transcript is closed is seen live. Every (re)join reconciles the history (the turns `thread/resume` returns, and
+one more page of up to 50 older turns for a paginated thread) with what the bridge knew: new batches are added, known
+ones keep their state, envelopes there answer theirs. Questions are kept per worker and thread, not per join: a lost
+connection, a sleep and a wake keep them; send home forgets them.
+
+**`worker.answer_async`** `{id, thread, batch, answers: [{index, answer}]}` answers one or more questions of one batch
+in one envelope (the native format, which the terminal shows as an answer, not as raw text, and the transcript as the
+user's input). Each `index` once; a question with `options` takes one of them exactly, one without any text that is not
+blank (1–4096 bytes of UTF-8 without control characters but line ends and tabs). Refused before anything is queued:
+`bad_request` (the answer does not fit), `unknown_worker`, `invalid_state` (not a shared worker, the batch is a
+`conflict`, or the bridge is **not attached** to the thread: never queued blind), `stale` (`thread` is not the worker's
+thread now, the batch is unknown, or a question is not `pending`: `sending`, `sent` (unless `undelivered`),
+`answered` or `dismissed`). It
+runs on the worker's input lane ([Input](#input)) and is **checked again** there, then marked `sending` in the same
+step (any other answer to the same question submitted before that one is `stale` from then on, whatever comes of
+it: queued duplicates send once), and sent:
+
+- a turn runs: `turn/steer` with `expectedTurnId` (the running turn as the join last saw it);
+- none runs: `turn/start` with the input only (no override: the thread's settings stay).
+- **The completion race**: the server refusing the steer (the turn ended between the bridge's view and the server's)
+  delivered nothing, so the bridge sends `turn/start` **once** instead (`fallback: true`). A `turn/start` refused too
+  is `input_failed`, the questions `pending` again with `error`. A send that got no response is `sent` with
+  `unconfirmed: true` in the ack and on the question, and is not sent again.
+
+The ack is `{state: "sent", via: "turn/steer" | "turn/start", turn?, fallback?, unconfirmed?}`: the server took it.
+`answered` comes later, as a `worker.upsert`, when the envelope's user message is seen: Codex records a steered input
+as a user message only when it delivers it, with the turn's next model request. Checked with the real terminal
+(`TestCodexShareAsyncAnswers`, docs/research/codex-shared-tui.md §11): a steer the server accepted whose turn then
+ends before that request (an interrupt) is **dropped**: no user message, nothing reaches the model, and the next turn
+does not carry it. Such a question stays `sent` with **`undelivered: true`** (set when the turn the answer went to ends
+without its user message, live or in the history), is never sent again by itself, and `worker.answer_async` may send it
+again (it then counts as `pending`): a submission made after it went undelivered, not one queued before. A `turn/start` while a turn runs is accepted into that turn (its id comes back),
+so the fallback never starts a second delivery path.
+
+**`worker.dismiss_async`** `{id, thread, batch, indexes?}` puts `pending` or `sent` questions away (no `indexes`:
+every one that can be); `stale` for an unknown batch or another state, `invalid_state` for a worker that is not
+shared. Nothing goes to Codex.
+
+**Prompts stay usable.** herdr refuses `agent prompt` while it shows the worker `blocked` (B7), and the asking turn
+is still running then. A `worker.prompt` to a shared worker that is `blocked`, attached, with a running turn that asked
+a question Codex still holds (not `answered`) and **no server request open** (an approval or a blocking question is a
+real block: the terminal answers it, and the prompt is `invalid_state` as before) goes through the app-server:
+`turn/steer` into the running turn, as Codex's own composer queues a message during a turn ("Messages to be submitted
+after next tool call"), with the same one `turn/start` fallback. Its ack has `queued: true` (steered) and
+`via: "app_server"`. Such a worker's screen is not read as a `question` either (there is nothing to answer with keys).
+A prompt never answers a question. A terminal-only built-in (`/status`, #140) to such a worker stays `invalid_state`:
+it has to be typed into the terminal, which herdr refuses while it says `blocked`.
+
+The audit log keeps the ids, the indexes and each answer's length (`answer_bytes`), never the text.
 
 ### Inbox
 
@@ -3093,7 +3196,7 @@ dismissed_at)`.
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
 | `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started |
-| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker or one with an `ask`, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
+| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `whiteboard_conflict` | M13: a save whose `base` is not the board's current version (HTTP `409`, with the current `version`) |
 | `whiteboard_invalid`, `whiteboard_too_large`, `whiteboard_unsupported`, `whiteboard_hash_mismatch`, `whiteboard_missing_file` | M13: a scene, file, render or pin the bridge refuses (see [Whiteboard](#whiteboard)) |
@@ -3105,9 +3208,9 @@ dismissed_at)`.
 | `hire_failed`, `fire_failed` | herdr or git failed during a hire / send-home; the message says which step and why. `fire_failed` also when the agent did not exit (still running, or its processes could not be read): then nothing was closed or removed. `hire_failed` names what its rollback kept. |
 | `wake_failed` | the server did not start, did not answer `ping` or was not seen running within `--wake-timeout`; the message says why |
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
-| `input_failed` | `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text (`terminal.zoom`: herdr refused the zoom), the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step, or still there after the last one; the message says why |
+| `input_failed` | #156 `worker.answer_async`: the worker's app-server refused the answer (nothing delivered; the question is `pending` again with its `error`); `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text (`terminal.zoom`: herdr refused the zoom), the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step, or still there after the last one; the message says why |
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
-| `stale` | #90 `worker.answer_followup` / `worker.dismiss_followup` for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
+| `stale` | #156 `worker.answer_async` / `worker.dismiss_async` for a `thread` that is not the worker's now, an unknown batch, or a question not in a state it can take (answered, dismissed, sending, sent; checked again on the input lane); #90 `worker.answer_followup` / `worker.dismiss_followup` for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
 | `files_failed` | #137 `worker.files` whose listing failed (git's error, rg's, or the listing could not start) with no earlier index of that checkout to answer from |

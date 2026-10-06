@@ -284,6 +284,7 @@ func (h *Hub) startTranscriptWatch(ctx context.Context, c *Client, cmd proto.Com
 	h.wg.Add(1)
 	go h.runTranscriptWatch(ctx, wctx, w, cmd)
 	h.kickUsage()
+	h.retryCodexJoin(a.ID)  // #156: a failed join is tried again when the player looks
 	h.syncCodexWatches(ctx) // #155: a shared Codex worker's thread is joined now
 	return nil
 }

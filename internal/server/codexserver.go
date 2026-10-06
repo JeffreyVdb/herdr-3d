@@ -6,9 +6,11 @@ package server
 // server: it records it (store.CodexLaunch), stops it on send home, fire
 // and sleep (it outlives its pane and herdr's session stop), resumes the
 // worker itself on wake (herdr's own resume drops --remote), reports a dead
-// one, and joins the worker's thread as a passive second client while its
-// transcript is open (codexapp.Watcher). Workers keep the mode they were
-// launched with: the switch never touches a running worker.
+// one, and joins the worker's thread as a second client while its server
+// runs (codexapp.Watcher; #156: whether or not its transcript is open, so
+// its async questions are seen and can be answered: codexquestions.go).
+// Workers keep the mode they were launched with: the switch never touches
+// a running worker.
 
 import (
 	"context"
@@ -48,13 +50,19 @@ type CodexHost interface {
 	Watch(o codexapp.Options) (CodexWatch, error)
 }
 
-// CodexWatch is a running codexapp.Watcher.
-type CodexWatch interface{ Close() }
+// CodexWatch is a running codexapp.Watcher: its two sends (#156), each on
+// an explicit request, and leaving.
+type CodexWatch interface {
+	Steer(ctx context.Context, expectedTurn, text, clientID string) (string, error)
+	StartTurn(ctx context.Context, text, clientID string) (string, error)
+	Close()
+}
 
 // Defaults of the shared Codex server's Options.
 const (
 	DefaultCodexPoll         = 3 * time.Second
 	DefaultCodexStartTimeout = 20 * time.Second
+	DefaultCodexRejoin       = 60 * time.Second
 	defaultCodexStopGrace    = 2 * time.Second
 	// codexResumeTimeout bounds one shared worker's resume on wake: its pane
 	// back at its shell, its server up, the TUI resumed (agent start waits up
@@ -97,22 +105,34 @@ type codexState struct {
 	watches  map[string]*codexWatch          // worker id → the bridge's join of its thread
 	busy     map[string]bool                 // worker id → a launch, resume or stop is under way
 	events   map[string]func(codexapp.Event) // test hook: a worker's adapter events
+	// #156: worker id → its thread's async questions. Not the join's: they
+	// outlive it (a reconnect, a sleep) and go with the thread.
+	questions map[string]*codexapp.Questions
 }
 
 // codexWatch is the bridge joined (or joining) a worker's thread on one
 // server (its launch's token). A failed one stays, so it is not tried again
-// while that target is unchanged: the transcript reopened, another thread
-// or a new server (a wake, a relaunch) replace it.
+// while that target is unchanged: the transcript opened, another thread or
+// a new server (a wake, a relaunch) replace it, and (#156) one that only
+// gave up after its retries is tried again after CodexRejoin.
 type codexWatch struct {
 	w             CodexWatch
 	thread, token string
 	attached      bool
+	// #156, while attached: the running turn ("" when idle) and the server
+	// requests (approvals, blocking questions) not resolved yet.
+	turn     string
+	requests map[string]bool
+	// failed: the join ended for good (permanent: refused, not just out of
+	// retries) at failedAt.
+	failed, permanent bool
+	failedAt          time.Time
 }
 
 // initCodex loads the switch and the launches (NewHub).
 func (h *Hub) initCodex(ctx context.Context) error {
 	h.cx = codexState{launches: map[string]store.CodexLaunch{}, server: map[string]string{},
-		watches: map[string]*codexWatch{}, busy: map[string]bool{}}
+		watches: map[string]*codexWatch{}, busy: map[string]bool{}, questions: map[string]*codexapp.Questions{}}
 	en, _, err := h.st.LoadCodexServerSettings(ctx)
 	if err != nil {
 		return err
@@ -204,9 +224,11 @@ func (h *Hub) codexWorkerView(id string) *proto.WorkerCodex {
 	v := &proto.WorkerCodex{Mode: l.Mode, Note: l.Note}
 	if l.Mode == store.CodexShared {
 		v.Server = h.cx.server[id]
-		if w := h.cx.watches[id]; w != nil {
-			v.Attached = w.attached
+		v.Thread = l.Thread
+		if w := h.cx.watches[id]; w != nil && w.attached {
+			v.Attached, v.Turn = true, w.turn
 		}
+		v.Questions = h.questionsView(id)
 	}
 	return v
 }
@@ -273,6 +295,7 @@ func (h *Hub) noteCodexThread(ctx context.Context, id, thread string) {
 			return
 		}
 	}
+	delete(h.cx.questions, id) // #156: the old thread's questions go with it
 	h.updateLaunch(ctx, id, func(l *store.CodexLaunch) { l.Thread = thread })
 }
 
@@ -284,7 +307,7 @@ func (h *Hub) isShared(id string) bool {
 
 // codexTick checks the shared workers' servers and the bridge's joins
 // (hub goroutine): a server that died is reported (herdr shows such a
-// worker as working), and a worker whose transcript is open is joined.
+// worker as working), and a worker whose server runs is joined.
 func (h *Hub) codexTick(ctx context.Context) {
 	if h.opts.CodexHost == nil {
 		return
@@ -305,12 +328,15 @@ func (h *Hub) codexTick(ctx context.Context) {
 	h.syncCodexWatches(ctx)
 }
 
-// syncCodexWatches joins each shared worker's thread while its transcript
-// is open and its server runs, and leaves it otherwise (D3).
+// syncCodexWatches joins each shared worker's thread while its server runs,
+// and leaves it otherwise (D3; #156: the transcript need not be open, see
+// docs/decisions.md). A join that gave up after its retries is tried again
+// after CodexRejoin; one refused for good is kept.
 func (h *Hub) syncCodexWatches(ctx context.Context) {
 	for id, cw := range h.cx.watches {
 		l := h.cx.launches[id]
-		if !h.wantsCodexWatch(id) || l.Thread != cw.thread || l.Token != cw.token {
+		retry := cw.failed && !cw.permanent && time.Since(cw.failedAt) >= h.opts.CodexRejoin
+		if retry || !h.wantsCodexWatch(id) || l.Thread != cw.thread || l.Token != cw.token {
 			delete(h.cx.watches, id)
 			go cw.w.Close() // never on the hub goroutine: its events go through do
 			h.refreshCodex(id)
@@ -320,7 +346,7 @@ func (h *Hub) syncCodexWatches(ctx context.Context) {
 		if h.cx.watches[id] != nil || !h.wantsCodexWatch(id) {
 			continue
 		}
-		cw := &codexWatch{thread: l.Thread, token: l.Token}
+		cw := &codexWatch{thread: l.Thread, token: l.Token, requests: map[string]bool{}}
 		w, err := h.opts.CodexHost.Watch(codexapp.Options{Socket: launchOf(l).Socket(), Thread: cw.thread,
 			ClientVersion: version.Version, OnEvent: func(e codexapp.Event) {
 				_ = h.do(ctx, func(context.Context) { h.codexEvent(id, cw, e) })
@@ -337,12 +363,21 @@ func (h *Hub) syncCodexWatches(ctx context.Context) {
 func (h *Hub) wantsCodexWatch(id string) bool {
 	l, ok := h.cx.launches[id]
 	return ok && l.Mode == store.CodexShared && l.Thread != "" && !h.cx.busy[id] &&
-		h.cx.server[id] == proto.CodexServerRunning && h.workers[id] != nil && h.tx.watched(id)
+		h.cx.server[id] == proto.CodexServerRunning && h.workers[id] != nil
+}
+
+// retryCodexJoin drops a worker's failed join, so the next sync tries
+// again (a transcript opened: the player is looking at it now).
+func (h *Hub) retryCodexJoin(id string) {
+	if cw := h.cx.watches[id]; cw != nil && cw.failed {
+		delete(h.cx.watches, id)
+		go cw.w.Close()
+	}
 }
 
 // codexEvent is one event of the bridge's join of a worker's thread (hub
-// goroutine). This phase only keeps whether it is joined; the questions
-// and approvals it observes are for the transcript's later phases.
+// goroutine): whether it is joined, and (#156) its thread's async
+// questions, running turn and open server requests.
 func (h *Hub) codexEvent(id string, cw *codexWatch, e codexapp.Event) {
 	if h.cx.watches[id] != cw { // a join that was left or replaced
 		return
@@ -350,12 +385,23 @@ func (h *Hub) codexEvent(id string, cw *codexWatch, e codexapp.Event) {
 	switch e.Kind {
 	case codexapp.EvJoined:
 		cw.attached = true
+		h.codexJoined(id, cw, e.Thread)
+	case codexapp.EvNotification:
+		h.codexNotification(id, cw, e.Method, e.Params)
+	case codexapp.EvServerRequest:
+		cw.requests[compactJSON(e.RequestID)] = true
 	case codexapp.EvDisconnected, codexapp.EvClosed:
-		cw.attached = false
+		cw.attached, cw.turn = false, ""
+		clear(cw.requests)
 	case codexapp.EvFailed:
-		// Kept: its retries are spent, or the server refused the thread
-		// for good; not tried again while the target is unchanged.
-		cw.attached = false
+		// Kept: refused for good (not tried again while the target is
+		// unchanged), or its retries are spent (tried again after
+		// CodexRejoin).
+		cw.attached, cw.turn = false, ""
+		clear(cw.requests)
+		cw.failed, cw.failedAt = true, time.Now()
+		cw.permanent = errors.Is(e.Err, codexapp.ErrUnsupported) || errors.Is(e.Err, codexapp.ErrEphemeral) ||
+			errors.Is(e.Err, codexapp.ErrWrongThread)
 		h.log.Warn("the bridge's join of a codex thread failed", "worker", id, "thread", cw.thread, "err", e.Err)
 	}
 	if fn := h.cx.events[id]; fn != nil {
@@ -477,6 +523,7 @@ func (h *Hub) forgetCodex(ctx context.Context, id string) {
 	if err := h.st.ForgetCodexLaunch(ctx, id); err != nil {
 		h.log.Error("forgetting the codex launch failed", "worker", id, "err", err)
 	}
+	delete(h.cx.questions, id)
 	delete(h.cx.launches, id)
 	delete(h.cx.server, id)
 	delete(h.cx.busy, id)

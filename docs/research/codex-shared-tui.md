@@ -311,3 +311,37 @@ dir removed.
 - D5's suppression of Herdr's native resume (`pane release-agent`) is unverified. **Resolved by #155**: `release-agent` does not keep Herdr from resuming the pane; the TUI's own exit does (`TestCodexShareResumeSuppression`, decisions.md #155 row 1).
 - Real Claude worker in the reverse mixed-harness direction (needs inference).
 - Images in the composer and terminal/transcript switching in the game (phase 5).
+- Whether a steered input survives its turn ending before the next model request. **Resolved by #156**: it is
+  dropped (§11).
+- Whether the terminal's question editor accepts free text on a question that has options (#156 is strict: one of the
+  options).
+
+## 11. Phase 3: the bridge's answers (#156)
+
+`TestCodexShareAsyncAnswers` [R], mock model, real TUI in a Herdr pane, the production `codexapp.Watcher` (its
+`Steer` and `StartTurn`) and `codexapp.Questions` (the reconciler the hub runs). Evidence in
+[`codex-shared-tui-evidence/TestCodexShareAsyncAnswers/`](codex-shared-tui-evidence/TestCodexShareAsyncAnswers/),
+cited as `AsyncAnswers/<label>`.
+
+- **A steered input is an item only once delivered.** Right after `turn/steer` returned (with the asking turn's id,
+  `AsyncAnswers/a-steer-result`) the join had no user message for it (`a-user-items-before-delivery`: none), and the
+  terminal still showed its badge (`a-after-steer`). With the next model request came `item/started` and
+  `item/completed` of a `userMessage` in the asking turn, carrying the envelope and **the bridge's
+  `clientUserMessageId` as `clientId`** (`a-user-items-after-delivery`). The reconciler then read the question as
+  answered by the bridge (`a-question-state`).
+- **Refusals deliver nothing.** `turn/steer` on an idle thread: `-32600 no active turn to steer`; with a stale id while
+  another turn runs: `-32600 expected active turn id … but found …`, naming both ids (`b-steer-idle-error`, `b-steer-stale-error`).
+  Neither made a model request.
+- **`turn/start` while a turn runs joins that turn.** It was accepted and returned the running turn's id; the input
+  became a user message of that turn and the model got it with the turn's next request, no second turn
+  (`b-start-while-active`, `b-user-items`, `b-requests`).
+- **The race: a steer accepted, then the turn ends before the next model request.** The asking turn's model request
+  held, the bridge steered its answer (accepted), and the turn was interrupted (`turn/interrupt`; `c-turn-completed`:
+  `interrupted`). The steered input was **dropped**: no user message on the join or in `thread/read` history, no model
+  request after the interrupt (`c-user-items-after-turn-end`, `c-history-after-turn-end`,
+  `c-requests-after-turn-end`), and the next turn did not carry it (`c-next-turn`, `c-requests-next-turn`). The
+  terminal showed "Conversation interrupted" and no badge (`c-after-turn-end`). The reconciler kept the question `sent`
+  and marked it `undelivered` (`c-question-state`); sending it again (`turn/start`, the thread idle) answered it
+  (`c-resent-question-state`, `c-resent-answer`).
+- **A new join recovers every batch's state from the history** (`d-hydrated`): the batch the bridge answered is
+  `answered` by `bridge` from the history alone (the `clientId` is persisted), the same as the live view.

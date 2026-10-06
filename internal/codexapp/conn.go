@@ -61,8 +61,8 @@ func DialWS(ctx context.Context, sock string) (*websocket.Conn, error) {
 
 // conn is one connection to an app-server. It only ever sends requests
 // with ids of its own and notifications: it has no way to answer a server
-// request (D4: the terminal answers approvals and questions, the first
-// answer wins).
+// request (D4: the terminal answers approvals and blocking questions, the
+// first answer wins).
 type conn struct {
 	ws       *websocket.Conn
 	incoming func(Message) // notifications and server requests, on the read goroutine
@@ -85,6 +85,11 @@ func dial(ctx context.Context, sock string, incoming func(Message)) (*conn, erro
 }
 
 var errClosed = errors.New("connection closed")
+
+// ErrNoResponse: a request was written but no response came (the
+// connection ended, or the call timed out), so whether the server acted on
+// it is unknown.
+var ErrNoResponse = errors.New("no response")
 
 func (c *conn) readLoop() {
 	defer close(c.done)
@@ -136,12 +141,13 @@ func (c *conn) call(ctx context.Context, method string, params, out any) error {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
-		return fmt.Errorf("%s: %w", method, err)
+		// Part of it may have gone out: unknown, as for a lost response.
+		return fmt.Errorf("%s: %w: %w", method, ErrNoResponse, err)
 	}
 	select {
 	case m, ok := <-ch:
 		if !ok {
-			return fmt.Errorf("%s: %w", method, errClosed)
+			return fmt.Errorf("%s: %w: %w", method, ErrNoResponse, errClosed)
 		}
 		if m.Error != nil {
 			return fmt.Errorf("%s: %w", method, m.Error)
@@ -154,7 +160,7 @@ func (c *conn) call(ctx context.Context, method string, params, out any) error {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
-		return fmt.Errorf("%s: %w", method, ctx.Err())
+		return fmt.Errorf("%s: %w: %w", method, ErrNoResponse, ctx.Err())
 	}
 }
 

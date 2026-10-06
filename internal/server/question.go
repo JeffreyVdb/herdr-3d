@@ -435,7 +435,10 @@ func (h *Hub) questionLoop(ctx context.Context, id, session, pane string) {
 				return false
 			}
 			var q *proto.Question
-			if readErr == nil {
+			// #156: a shared Codex worker blocked only by an async question
+			// asks nothing on its screen to answer with keys: its questions
+			// are on worker.codex, and a prompt still reaches it.
+			if _, async := h.asyncBlocked(id); readErr == nil && !async {
 				sq := parseQuestion(screen, w.StatusSince)
 				q = &sq.q
 			}

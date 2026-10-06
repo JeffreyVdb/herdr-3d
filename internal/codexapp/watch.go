@@ -78,7 +78,9 @@ type Event struct {
 	Method    string
 	Params    json.RawMessage
 	RequestID json.RawMessage
-	// Thread is the joined thread (EvJoined).
+	// Thread is the joined thread (EvJoined), with its history: the turns
+	// thread/resume returned, and one more page of older ones when the
+	// thread is paginated (HistoryPage).
 	Thread *Thread
 	// UserAgent is the server's (EvJoined).
 	UserAgent string
@@ -92,7 +94,30 @@ type Thread struct {
 	Cwd       string `json:"cwd"`
 	Path      string `json:"path"`
 	Ephemeral bool   `json:"ephemeral"`
+	Status    struct {
+		Type string `json:"type"` // notLoaded, idle, systemError, active
+	} `json:"status"`
+	Turns []Turn `json:"turns"`
 }
+
+// ActiveTurn is the thread's turn in progress ("" when none runs).
+func (t *Thread) ActiveTurn() string {
+	if t == nil || t.Status.Type != ThreadActive {
+		return ""
+	}
+	for i := len(t.Turns) - 1; i >= 0; i-- {
+		if t.Turns[i].Status == TurnInProgress {
+			return t.Turns[i].ID
+		}
+	}
+	return ""
+}
+
+// HistoryPage is how many older turns a join reads with thread/turns/list
+// when thread/resume says there are more (a paginated thread): one page, so
+// a join stays bounded. Batches older than the turns read are not
+// recovered.
+const HistoryPage = 50
 
 // State is where a Watcher is.
 type State string
@@ -118,9 +143,10 @@ type Watcher struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	mu    sync.Mutex
-	state State
-	cur   *conn
+	mu     sync.Mutex
+	state  State
+	cur    *conn
+	joined bool // cur has joined the thread
 }
 
 // Watch validates o and starts watching in the background.
@@ -248,7 +274,7 @@ func (w *Watcher) session(ctx context.Context) error {
 	w.mu.Unlock()
 	defer func() {
 		w.mu.Lock()
-		w.cur = nil
+		w.cur, w.joined = nil, false
 		w.mu.Unlock()
 		c.close()
 	}()
@@ -257,6 +283,9 @@ func (w *Watcher) session(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	w.mu.Lock()
+	w.joined = true
+	w.mu.Unlock()
 	w.setState(StateJoined)
 	w.o.OnEvent(Event{Kind: EvJoined, Thread: th, UserAgent: ua})
 	for {
@@ -307,7 +336,8 @@ func (w *Watcher) join(ctx context.Context, c *conn) (*Thread, string, error) {
 	// The thread id and nothing else: no model, cwd, sandbox, approval or
 	// instruction override, so joining changes nothing (D3).
 	var res struct {
-		Thread *Thread `json:"thread"`
+		Thread *Thread         `json:"thread"`
+		Older  json.RawMessage `json:"turnsBackwardsCursor"`
 	}
 	if err := c.call(cctx, "thread/resume", map[string]any{"threadId": w.o.Thread}, &res); err != nil {
 		return nil, init.UserAgent, err
@@ -322,7 +352,99 @@ func (w *Watcher) join(ctx context.Context, c *conn) (*Thread, string, error) {
 	case res.Thread.Ephemeral:
 		return nil, init.UserAgent, fmt.Errorf("%w: %s", ErrEphemeral, w.o.Thread)
 	}
+	if cur := string(res.Older); cur != "" && cur != "null" {
+		w.olderTurns(cctx, c, res.Thread, res.Older)
+	}
 	return res.Thread, init.UserAgent, nil
+}
+
+// olderTurns reads one page of turns before those thread/resume returned
+// (thread/turns/list, newest first, from its cursor) and puts the ones it
+// did not have in front of th.Turns. A failure leaves the history as it is.
+func (w *Watcher) olderTurns(ctx context.Context, c *conn, th *Thread, cursor json.RawMessage) {
+	var page struct {
+		Data []Turn `json:"data"`
+	}
+	if err := c.call(ctx, "thread/turns/list", map[string]any{"threadId": w.o.Thread, "cursor": cursor,
+		"sortDirection": "desc", "itemsView": "full", "limit": HistoryPage}, &page); err != nil {
+		return
+	}
+	have := map[string]bool{}
+	for _, t := range th.Turns {
+		have[t.ID] = true
+	}
+	var older []Turn
+	for i := len(page.Data) - 1; i >= 0; i-- { // oldest first
+		if t := page.Data[i]; !have[t.ID] {
+			older = append(older, t)
+		}
+	}
+	th.Turns = append(older, th.Turns...)
+}
+
+// Errors of the watcher's sends.
+var (
+	// ErrNotAttached: the watcher has not joined the thread now (it is
+	// connecting, retrying, failed or closed); nothing was sent.
+	ErrNotAttached = errors.New("not attached to the thread")
+)
+
+// Refused reports whether a send's error is the server refusing the
+// request (a JSON-RPC error response): nothing was delivered. A send that
+// failed otherwise was either not sent (ErrNotAttached) or has an unknown
+// outcome (ErrNoResponse).
+func Refused(err error) bool {
+	var e *RPCError
+	return errors.As(err, &e)
+}
+
+// Steer adds user input to the thread's running turn expectedTurn
+// (turn/steer): the server refuses it when that is not the turn running.
+// The input is delivered with the turn's next model request. clientID is
+// the input's clientUserMessageId (NewClientID). This and StartTurn are the
+// only things the watcher sends besides joining and leaving, each on an
+// explicit request: it never answers a server request (D4).
+func (w *Watcher) Steer(ctx context.Context, expectedTurn, text, clientID string) (string, error) {
+	var res struct {
+		TurnID string `json:"turnId"`
+	}
+	err := w.send(ctx, "turn/steer", map[string]any{"threadId": w.o.Thread, "expectedTurnId": expectedTurn,
+		"clientUserMessageId": clientID, "input": textInput(text)}, &res)
+	return res.TurnID, err
+}
+
+// StartTurn starts a turn on the thread with user input (turn/start, no
+// override: the thread's settings stay) and returns its id.
+func (w *Watcher) StartTurn(ctx context.Context, text, clientID string) (string, error) {
+	var res struct {
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	err := w.send(ctx, "turn/start", map[string]any{"threadId": w.o.Thread, "clientUserMessageId": clientID,
+		"input": textInput(text)}, &res)
+	return res.Turn.ID, err
+}
+
+func textInput(text string) []any {
+	return []any{map[string]any{"type": "text", "text": text, "text_elements": []any{}}}
+}
+
+// send makes one request on the joined connection, bounded by CallTimeout.
+func (w *Watcher) send(ctx context.Context, method string, params, out any) error {
+	w.mu.Lock()
+	c, joined := w.cur, w.joined
+	w.mu.Unlock()
+	if c == nil || !joined {
+		return fmt.Errorf("%s: %w", method, ErrNotAttached)
+	}
+	cctx, cancel := context.WithTimeout(ctx, w.o.CallTimeout)
+	defer cancel()
+	err := c.call(cctx, method, params, out)
+	if errors.Is(err, errClosed) && !errors.Is(err, ErrNoResponse) {
+		return fmt.Errorf("%s: %w", method, ErrNotAttached) // closed before it was written
+	}
+	return err
 }
 
 // leave unsubscribes this client from the thread, bounded by CallTimeout.
