@@ -221,14 +221,15 @@ const isBoardCommand = (t: CommandName | LogoAction): boolean => t.startsWith('i
 
 /**
  * #157: a Codex async question's answer or hiding refused by the bridge (docs/protocol.md "Codex async questions"):
- * nothing reached Codex. The card keeps the answer; these say why and what to do.
+ * nothing reached Codex. The card keeps the answer; these say why and what to do. `stale` is no failure: the question
+ * had moved on already (often a send of ours the card was not shown yet), and the card shows where it is now.
  */
 function asyncFailure(t: 'worker.answer_async' | 'worker.dismiss_async', code: string, why: string): string | null {
   const answer = t === 'worker.answer_async';
   switch (code) {
     case 'stale':
       return answer
-        ? 'Not sent: the question was answered, sent or hidden meanwhile, or Codex moved to another thread. The card shows it as it is now.'
+        ? 'Already sent, answered or hidden — nothing more went to Codex. The card shows where it is now.'
         : 'Not hidden: the question changed meanwhile. The card shows it as it is now.';
     case 'invalid_state':
       return answer

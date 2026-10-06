@@ -116,7 +116,9 @@ describe('AsyncCard (#157)', () => {
     expect(send(c)?.textContent).toBe('Sending…');
     release();
     await flush();
-    // Acked, before the upsert: still not sent again.
+    // Acked: the bridge said sending and sent before it, and the next frame shows them. Nothing left to send.
+    c.set(W, codex([batch('call_3', [color({ state: 'sent' }), context({ state: 'sent' })])]), true);
+    expect(send(c)?.disabled).toBe(true);
     sendKey(c);
     await flush();
     expect(t.answers).toHaveLength(1);
@@ -158,10 +160,11 @@ describe('AsyncCard (#157)', () => {
     expect(c.shown).toBe(false);
   });
 
-  // The bridge says sending and sent before it acks (internal/server/codexquestions.go, then input.go acks); a send
-  // whose questions moved meanwhile leaves no guard, so a later return to the state they had (not delivered again, or
-  // pending after a bridge restart) takes Send again. Acked before any move, it still sends once.
-  describe('a second send once the bridge moved the question', () => {
+  // Only a send on its way holds Send (a double click, a queued double Ctrl+Enter: one send). Once acked, the card shows
+  // the state it is given, whichever order the bridge's upserts and its ack come in: a return to an answerable state
+  // (not delivered again, or pending after a bridge restart) takes Send again, the answer kept. asyncCard.retry.test.ts
+  // runs the same against the store and the transcript, with the steps between two frames.
+  describe('a second send once the bridge let the question go again', () => {
     const undelivered = (over: Partial<CodexQuestion> = {}) => context({ index: 0, state: 'sent', undelivered: true, ...over });
     const returns = {
       'not delivered again': { from: undelivered(), back: undelivered() },
@@ -179,8 +182,10 @@ describe('AsyncCard (#157)', () => {
           t.hold(new Promise<void>((r) => (release = r)));
           send(c)!.click();
           send(c)!.click(); // a double click: one send
+          sendKey(c); // and a Ctrl+Enter queued behind it
           await flush();
           expect(t.answers).toHaveLength(1);
+          expect(c.el.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(true);
           if (order === 'the upserts before the ack') {
             at(context({ index: 0, state: 'sending' }));
             at(context({ index: 0, state: 'sent' }));
@@ -189,11 +194,6 @@ describe('AsyncCard (#157)', () => {
           } else {
             release();
             await flush();
-            // Acked, nothing moved yet: still not sent again.
-            sendKey(c);
-            await flush();
-            expect(t.answers).toHaveLength(1);
-            expect(c.el.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(true);
             at(context({ index: 0, state: 'sending' }));
             at(context({ index: 0, state: 'sent' }));
           }
@@ -211,6 +211,33 @@ describe('AsyncCard (#157)', () => {
         });
       }
     }
+  });
+
+  // The ack can come before the card is shown the bridge's step (the store's latest is drawn once a frame): what it
+  // shows is still answerable, and a press goes. The bridge marked the question sending first, so it refuses that one
+  // as stale: not a failure, said calmly, the answer kept.
+  it('lets a send acked before its step showed go again, and says the bridge’s stale calmly', async () => {
+    const t = host();
+    const c = mount(t);
+    c.set(W, codex([batch('call_3', [context({ index: 0 })])]));
+    type(c, 'Keep v1');
+    send(c)!.click();
+    await flush();
+    expect(t.answers).toHaveLength(1);
+    expect(send(c)?.disabled).toBe(false);
+    t.setResult({ ok: false, code: 'stale', message: 'Already sent, answered or hidden — nothing more went to Codex. The card shows where it is now.' });
+    send(c)!.click();
+    await flush();
+    expect(t.answers).toHaveLength(2);
+    const note = c.el.querySelector('.tx-ask-note');
+    expect(note?.textContent).toBe('Already sent, answered or hidden — nothing more went to Codex. The card shows where it is now.');
+    expect(note?.classList.contains('is-error')).toBe(false);
+    expect(note?.getAttribute('role')).toBe('status');
+    expect(c.el.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Keep v1');
+    // The bridge's step shows: sent, nothing to send.
+    c.set(W, codex([batch('call_3', [context({ index: 0, state: 'sent' })])]));
+    expect(state(c)).toBe('Sent — Codex will read it with its next step');
+    expect(send(c)?.disabled).toBe(true);
   });
 
   it('keeps the answer when the bridge refuses it, says why, and lets it go again', async () => {

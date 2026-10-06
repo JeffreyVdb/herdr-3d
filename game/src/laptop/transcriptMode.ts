@@ -745,7 +745,8 @@ export class TranscriptMode {
         if (live() && r.code !== 'stale') this.host.status('error', message);
         return { ok: false, code: r.code, message };
       },
-      // #157: a Codex worker's async questions. Refused, the card keeps the answer and says why (the seat bar too).
+      // #157: a Codex worker's async questions. Refused, the card keeps the answer and says why (the seat bar too, but
+      // not for `stale`: the question had moved on already, which the card says calmly).
       onAnswerAsync: async (args) => {
         if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
         const r = await this.host.send('worker.answer_async', { ...args, id: s.id });
@@ -754,7 +755,7 @@ export class TranscriptMode {
           return { ok: true };
         }
         const message = failureText('worker.answer_async', r.code, r.message, { worker: s.name });
-        if (live()) this.host.status('error', message);
+        if (live() && r.code !== 'stale') this.host.status('error', message);
         return { ok: false, code: r.code, message };
       },
       onDismissAsync: async (args) => {
@@ -762,7 +763,7 @@ export class TranscriptMode {
         const r = await this.host.send('worker.dismiss_async', { ...args, id: s.id });
         if (r.ok) return { ok: true };
         const message = failureText('worker.dismiss_async', r.code, r.message, { worker: s.name });
-        if (live()) this.host.status('error', message);
+        if (live() && r.code !== 'stale') this.host.status('error', message);
         return { ok: false, code: r.code, message };
       },
       onSwitchToTerminal: () => {

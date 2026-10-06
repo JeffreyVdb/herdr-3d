@@ -272,10 +272,8 @@ describe('TranscriptMode', () => {
     h.sent[1]?.resolve({ ok: false, code: 'stale', message: 'stale: unknown batch' });
     await expect(answered).resolves.toEqual({ ok: true });
     await expect(hidden).resolves.toEqual({ ok: false, code: 'stale', message: 'Not hidden: the question changed meanwhile. The card shows it as it is now.' });
-    expect(h.status).toEqual([
-      ['ok', 'Sent your answer to Ada'],
-      ['error', 'Not hidden: the question changed meanwhile. The card shows it as it is now.'],
-    ]);
+    // A stale refusal is no failure (the question moved on already): the card says so, not the seat bar.
+    expect(h.status).toEqual([['ok', 'Sent your answer to Ada']]);
   });
 
   it('wires prompts, answers, the switch back and subagents to the bridge', async () => {

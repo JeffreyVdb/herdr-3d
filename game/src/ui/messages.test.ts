@@ -90,7 +90,7 @@ describe('failureText: logos (M3d)', () => {
 
 describe('failureText: Codex async questions (#157)', () => {
   it('says nothing reached Codex, and what to do', () => {
-    expect(failureText('worker.answer_async', 'stale', 'stale: question 0 of call_3 is sent')).toMatch(/^Not sent: the question was answered, sent or hidden meanwhile/);
+    expect(failureText('worker.answer_async', 'stale', 'stale: question 0 of call_3 is sent')).toBe('Already sent, answered or hidden — nothing more went to Codex. The card shows where it is now.');
     expect(failureText('worker.answer_async', 'invalid_state', 'invalid state: the bridge is not attached')).toMatch(/Answer in the terminal\.$/);
     expect(failureText('worker.answer_async', 'input_failed', 'input_failed: turn/start refused the answer: busy')).toBe('Not sent: Codex refused it (turn/start refused the answer: busy). Send it again.');
     expect(failureText('worker.answer_async', 'bad_request', 'bad args: answers[0].answer must be at most 4096 bytes')).toBe('Not sent: answers[0].answer must be at most 4096 bytes.');

@@ -24,8 +24,6 @@ export interface AsyncCardHost {
 
 type FocusTo = 'q' | 'send' | 'first' | `opt:${number}` | `fold:${string}`;
 
-/** A question's state as its signature: each change of it is a step the bridge took (see `gens`). */
-const sigOf = (q: CodexQuestion) => `${q.state}|${q.undelivered ? 1 : 0}|${q.error ?? ''}`;
 /** A value inside a `[data-key="…"]` selector (batch ids are plain: `[A-Za-z0-9_.:-]`). */
 const attr = (s: string) => s.replace(/["\\]/g, '\\$&');
 const unresolved = (q: CodexQuestion) => q.state === 'pending' || q.state === 'sending' || q.state === 'sent';
@@ -78,18 +76,13 @@ export class AsyncCard {
   private flash = -1;
   private focusTo: FocusTo | null = null;
   private note: { key: string; text: string; error: boolean } | null = null;
-  /** Batches with a send or a hide on its way (no ack yet), and the questions it is for. */
+  /**
+   * Batches with a send or a hide on its way (no ack yet), and the questions it is for: the card's only guard. Once
+   * acked, the card shows the state it is given (the store's latest, once a frame: it may never see sending or sent)
+   * and an answerable question takes Send again. The bridge is the duplicate guard: it marks the question sending on
+   * the worker's input lane before it acks, and refuses any other answer to it as `stale` (said calmly, see `run`).
+   */
   private readonly busy = new Map<string, Set<number>>();
-  /**
-   * Each question's last signature and how many times it changed while this card watched: the bridge's steps. A
-   * return to an earlier state (sent again, or pending after a bridge restart) is a step too, never the old one.
-   */
-  private readonly gens = new Map<string, { sig: string; gen: number }>();
-  /**
-   * Questions an acked send was for, with their step at the send: not answerable again until the bridge moves them.
-   * The bridge says sending / sent before it acks, so a send whose questions moved meanwhile leaves no guard.
-   */
-  private readonly guard = new Map<string, number>();
   /** Each listed question's reply phase as last drawn, for the announcements. */
   private phases = new Map<string, ReplyPhase>();
   private ticker: ReturnType<typeof setInterval> | null = null;
@@ -115,34 +108,13 @@ export class AsyncCard {
       this.active = 0;
       this.note = null;
       this.busy.clear();
-      this.gens.clear();
-      this.guard.clear();
       this.phases = new Map();
     }
     this.codex = codex;
     this.working = working;
-    // No launch for a moment (a reconnect): what comes back is the bridge's word, not a send of ours still on its way.
-    if (!codex) this.guard.clear();
     if (worker && codex) {
       this.drafts.prune(worker, codex);
       for (const b of asyncBatches({ codex })) if (b.questions.some(unresolved)) this.drafts.sawOpen(worker, b.key);
-      const seen = new Set<string>();
-      for (const b of asyncBatches({ codex })) {
-        for (const q of b.questions) {
-          const k = this.qkey(b, q);
-          seen.add(k);
-          const was = this.gens.get(k);
-          const sig = sigOf(q);
-          if (!was) this.gens.set(k, { sig, gen: 0 });
-          else if (was.sig !== sig) this.gens.set(k, { sig, gen: was.gen + 1 });
-          if (this.guard.has(k) && this.guard.get(k) !== this.gen(k)) this.guard.delete(k);
-        }
-      }
-      for (const k of [...this.gens.keys()]) {
-        if (seen.has(k)) continue;
-        this.gens.delete(k);
-        this.guard.delete(k);
-      }
     }
     this.announce(same);
     this.render();
@@ -178,10 +150,6 @@ export class AsyncCard {
     return `${b.key}\u0000${q.index}`;
   }
 
-  private gen(k: string): number {
-    return this.gens.get(k)?.gen ?? 0;
-  }
-
   /** A batch's questions as the card lists them: not the hidden ones, unless you asked to see them. */
   private listed(b: AsyncCardBatch): CodexQuestion[] {
     const all = !!this.worker && this.drafts.hiddenShown(this.worker);
@@ -214,8 +182,7 @@ export class AsyncCard {
   }
 
   private inFlight(b: AsyncCardBatch, q: CodexQuestion): boolean {
-    const k = this.qkey(b, q);
-    return !!this.busy.get(b.key)?.has(q.index) || this.guard.get(k) === this.gen(k);
+    return !!this.busy.get(b.key)?.has(q.index);
   }
 
   /** It can take an answer from here now (not one whose suggested answers came cut: the terminal has them whole). */
@@ -314,11 +281,7 @@ export class AsyncCard {
       this.render();
       return;
     }
-    // Acked: each question that has not moved since (no sending / sent seen yet) waits for the bridge's next step.
-    const at = new Map(answers.map((a) => [this.qkey(b, a.q), this.gen(this.qkey(b, a.q))]));
-    void this.run(b, new Set(answers.map((a) => a.index)), () => this.host.answer(answerAsyncArgs(w, b, answers)), (ok) => {
-      if (ok) for (const [k, g] of at) if (this.gen(k) === g) this.guard.set(k, g);
-    });
+    void this.run(b, new Set(answers.map((a) => a.index)), () => this.host.answer(answerAsyncArgs(w, b, answers)));
   }
 
   /** Hide: the open batch's questions that can be put away, in the bridge only. */
@@ -333,8 +296,12 @@ export class AsyncCard {
     void this.run(b, new Set(indexes), () => this.host.dismiss({ id: w, thread: b.thread, batch: b.batch, indexes }));
   }
 
-  /** Runs one command about batch b; refused, the note says why and the answers stay. */
-  private async run(b: AsyncCardBatch, indexes: Set<number>, cmd: () => Promise<AsyncResult>, done?: (ok: boolean) => void): Promise<void> {
+  /**
+   * Runs one command about batch b; refused, the note says why and the answers stay. A `stale` refusal is no failure:
+   * the bridge had the question move already (a send of ours, acked before the card was shown its step; an answer
+   * elsewhere; a hide), so nothing more went, and the card shows where it is now.
+   */
+  private async run(b: AsyncCardBatch, indexes: Set<number>, cmd: () => Promise<AsyncResult>): Promise<void> {
     const worker = this.worker;
     this.busy.set(b.key, indexes);
     this.note = null;
@@ -348,9 +315,8 @@ export class AsyncCard {
     }
     if (this.worker !== worker) return;
     this.busy.delete(b.key);
-    done?.(r.ok);
     if (!r.ok) {
-      this.note = { key: b.key, text: r.message, error: true };
+      this.note = { key: b.key, text: r.message, error: r.code !== 'stale' };
       this.say(r.message);
     }
     if (hadFocus && !this.el.contains(document.activeElement)) this.focusTo = 'first';
