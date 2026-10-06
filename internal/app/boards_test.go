@@ -27,7 +27,7 @@ func TestServeBoards(t *testing.T) {
 	}
 	// The fixture is dated for the day it was cut, so the board runs on a clock of that day: an hour before the
 	// github tests' 12:00, which keeps #6 (closed 2026-09-22 12:00:01) an hour inside the seven-day window while
-	// the clock still moves for the feed's age, and #5 (closed 09:00) outside it.
+	// the clock still moves for the feed's age, and #4 (closed 09:00) outside it.
 	base, start := time.Date(2026, 9, 29, 11, 0, 0, 0, time.UTC), time.Now()
 	now := func() time.Time { return base.Add(time.Since(start)) }
 	// #118: the run's issue (#2, not on the board) is read once for its title.
