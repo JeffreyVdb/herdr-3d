@@ -405,6 +405,59 @@ func TestAsyncAnswerSerializedOnTheLane(t *testing.T) {
 	}
 }
 
+// Two answers for one question queued while it is pending, behind other
+// input: the first is steered, and its turn ends before it is delivered
+// (sent and undelivered). The second was submitted before that, so it is
+// stale, not a retry: one send.
+func TestAsyncAnswerQueuedTwiceIsNotARetry(t *testing.T) {
+	sb, a := asyncWorker(t)
+	gate := make(chan struct{})
+	sb.term.mu.Lock()
+	sb.term.textGate = gate
+	sb.term.mu.Unlock()
+	sb.host.steer = func(turn, _, _ string) (string, error) {
+		sb.emit(turnCompleted(turn))
+		sb.codexWorker(t, func(c *proto.WorkerCodex) bool { return c.Turn == "" })
+		return turn, nil
+	}
+	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", contextQ)))
+	sb.stateIs(t, "call_3", 0, proto.AsyncPending)
+	raw, _ := json.Marshal(proto.WorkerKeysArgs{ID: a.ID, Input: []proto.InputItem{text("slow hold")}})
+	sb.c.send(proto.Command{T: proto.CmdWorkerKeys, ReqID: "hold", Args: raw})
+	raw, _ = json.Marshal(answerArgs(a.ID, "call_3", ans(0, "duplicate")))
+	sb.c.send(proto.Command{T: proto.CmdWorkerAnswerAsync, ReqID: "one", Args: raw})
+	sb.c.send(proto.Command{T: proto.CmdWorkerAnswerAsync, ReqID: "two", Args: raw})
+	sb.c.command(proto.CmdCodexServerGet, "barrier", struct{}{}) // both answers are queued
+	close(gate)
+	codes := map[string]string{}
+	for len(codes) < 2 {
+		m := sb.c.next()
+		if m.env.ReqID == "one" || m.env.ReqID == "two" {
+			var e proto.Error
+			_ = json.Unmarshal(m.raw, &e)
+			codes[m.env.ReqID] = m.env.T + " " + e.Code
+		}
+	}
+	if codes["one"] != proto.TAck+" " || codes["two"] != proto.TError+" "+proto.ErrStale {
+		t.Fatalf("replies = %v", codes)
+	}
+	if n := len(sb.sent()); n != 1 {
+		t.Fatalf("%d sends: %+v", n, sb.sent())
+	}
+	c := sb.stateIs(t, "call_3", 0, proto.AsyncSent)
+	if !batchOf(c, "call_3").Questions[0].Undelivered {
+		t.Fatalf("questions = %+v", c.Questions)
+	}
+	// A retry submitted now is the user's: it is sent.
+	_, m := sb.c.command(proto.CmdWorkerAnswerAsync, "retry", answerArgs(a.ID, "call_3", ans(0, "duplicate")))
+	if m.env.T != proto.TAck {
+		t.Fatalf("retry = %s", m.raw)
+	}
+	if n := len(sb.sent()); n != 2 {
+		t.Fatalf("%d sends after the retry", n)
+	}
+}
+
 // B7: herdr shows a worker with an async question as blocked, and refuses
 // `agent prompt`. Its prompt goes through the app-server instead (steered
 // into the running turn); its screen is not a question to answer with keys.

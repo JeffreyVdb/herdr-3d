@@ -253,14 +253,15 @@ func (h *Hub) startAnswerAsync(ctx context.Context, c *Client, cmd proto.Command
 	if err != nil {
 		return err
 	}
-	if _, err := q.Check(a.Batch, replies); err != nil {
+	t, err := q.Admit(a.Batch, replies)
+	if err != nil {
 		return asyncError(err)
 	}
 	if _, err := h.attachedWatch(a.ID, a.Thread); err != nil {
 		return err
 	}
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, _, _ string) (any, error) {
-		return h.answerAsync(ctx, a, replies)
+		return h.answerAsync(ctx, a, t)
 	})
 }
 
@@ -276,12 +277,13 @@ type asyncSend struct {
 
 // answerAsync sends an answer on the worker's input lane: the worker, its
 // thread, the join and the questions checked again and marked sending in
-// one step (a second submission for them is stale from then on), then one
-// turn/steer into the running turn, or turn/start when none runs. A steer
+// one step (an answer to them submitted before is stale from then on, a
+// retry of an undelivered one included: it must be submitted after), then
+// one turn/steer into the running turn, or turn/start when none runs. A steer
 // the server refuses delivered nothing (the turn ended meanwhile): a turn
 // is started instead, once. An answer is never sent twice: a send with no
 // response is sent, unconfirmed, and a refused one is pending again.
-func (h *Hub) answerAsync(ctx context.Context, a proto.WorkerAnswerAsyncArgs, replies []codexapp.Reply) (any, error) {
+func (h *Hub) answerAsync(ctx context.Context, a proto.WorkerAnswerAsyncArgs, t codexapp.Ticket) (any, error) {
 	s, err := query(ctx, h, func() asyncSend {
 		q, err := h.asyncThread(a.ID, a.Thread)
 		if err != nil {
@@ -291,14 +293,14 @@ func (h *Hub) answerAsync(ctx context.Context, a proto.WorkerAnswerAsyncArgs, re
 		if err != nil {
 			return asyncSend{err: err}
 		}
-		answers, err := q.Begin(a.Batch, replies)
+		answers, err := q.BeginAdmitted(t)
 		if err != nil {
 			return asyncSend{err: asyncError(err)}
 		}
 		h.refreshCodex(a.ID)
 		s := asyncSend{w: cw.w, q: q, turn: cw.turn, text: codexapp.ReplyEnvelope(answers...), cid: codexapp.NewClientID()}
-		for _, r := range replies {
-			s.indexes = append(s.indexes, r.Index)
+		for _, x := range answers {
+			s.indexes = append(s.indexes, x.Index)
 		}
 		return s
 	})

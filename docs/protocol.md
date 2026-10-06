@@ -3115,7 +3115,8 @@ blank (1–4096 bytes of UTF-8 without control characters but line ends and tabs
 thread now, the batch is unknown, or a question is not `pending`: `sending`, `sent` (unless `undelivered`),
 `answered` or `dismissed`). It
 runs on the worker's input lane ([Input](#input)) and is **checked again** there, then marked `sending` in the same
-step (a second submission for the same question is `stale` from then on), and sent:
+step (any other answer to the same question submitted before that one is `stale` from then on, whatever comes of
+it: queued duplicates send once), and sent:
 
 - a turn runs: `turn/steer` with `expectedTurnId` (the running turn as the join last saw it);
 - none runs: `turn/start` with the input only (no override: the thread's settings stay).
@@ -3131,7 +3132,7 @@ as a user message only when it delivers it, with the turn's next model request. 
 ends before that request (an interrupt) is **dropped**: no user message, nothing reaches the model, and the next turn
 does not carry it. Such a question stays `sent` with **`undelivered: true`** (set when the turn the answer went to ends
 without its user message, live or in the history), is never sent again by itself, and `worker.answer_async` may send it
-again (it then counts as `pending`). A `turn/start` while a turn runs is accepted into that turn (its id comes back),
+again (it then counts as `pending`): a submission made after it went undelivered, not one queued before. A `turn/start` while a turn runs is accepted into that turn (its id comes back),
 so the fallback never starts a second delivery path.
 
 **`worker.dismiss_async`** `{id, thread, batch, indexes?}` puts `pending` or `sent` questions away (no `indexes`:

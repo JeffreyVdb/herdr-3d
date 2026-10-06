@@ -139,6 +139,8 @@ type Question struct {
 	Error string
 	// reached is the turn the bridge's answer went to (QSent).
 	reached string
+	// begun is the Questions.begun of the last answer begun for it.
+	begun uint64
 }
 
 // Batch is one async-question message.
@@ -207,6 +209,7 @@ type Questions struct {
 	order   []string
 	early   map[qkey]early
 	ended   []string // the last turns seen ending, newest last
+	begun   uint64   // counts the answers begun (Begin)
 }
 
 // NewQuestions starts the reconciler of a thread.
@@ -432,14 +435,54 @@ type Reply struct {
 // takes one of them exactly, one without takes any text that is not blank.
 // It returns the answers to put in the envelope, in the replies' order.
 func (q *Questions) Begin(batch string, replies []Reply) ([]Answer, error) {
-	answers, err := q.Check(batch, replies)
+	t, err := q.Admit(batch, replies)
 	if err != nil {
 		return nil, err
 	}
-	b := q.batches[batch]
-	for _, r := range replies {
+	return q.BeginAdmitted(t)
+}
+
+// Ticket is an answer admitted (Admit) to be begun later (BeginAdmitted).
+type Ticket struct {
+	q       *Questions
+	begun   uint64
+	batch   string
+	replies []Reply
+}
+
+// Admit checks an answer when the user submits it, for BeginAdmitted to
+// begin later (on the worker's input lane, after the answers queued before
+// it).
+func (q *Questions) Admit(batch string, replies []Reply) (Ticket, error) {
+	if _, err := q.Check(batch, replies); err != nil {
+		return Ticket{}, err
+	}
+	return Ticket{q: q, begun: q.begun, batch: batch, replies: replies}, nil
+}
+
+// BeginAdmitted is Begin of an admitted answer, checked again: it is stale
+// (ErrNotPending) for a question another answer began after it was
+// admitted, whatever came of that one. Two submissions of one pending
+// question send it once: the second does not become a retry when the
+// first goes undelivered; only an answer admitted after that is one.
+func (q *Questions) BeginAdmitted(t Ticket) ([]Answer, error) {
+	if t.q != q {
+		return nil, fmt.Errorf("%w: the questions of batch %s were reset after this answer was submitted", ErrNotPending, t.batch)
+	}
+	answers, err := q.Check(t.batch, t.replies)
+	if err != nil {
+		return nil, err
+	}
+	b := q.batches[t.batch]
+	for _, r := range t.replies {
+		if b.Questions[r.Index].begun > t.begun {
+			return nil, fmt.Errorf("%w: another answer to question %d of %s was sent after this one was submitted", ErrNotPending, r.Index, t.batch)
+		}
+	}
+	q.begun++
+	for _, r := range t.replies {
 		x := &b.Questions[r.Index]
-		x.State, x.Error, x.Undelivered, x.reached = QSending, "", false, ""
+		x.State, x.Error, x.Undelivered, x.reached, x.begun = QSending, "", false, "", q.begun
 	}
 	return answers, nil
 }

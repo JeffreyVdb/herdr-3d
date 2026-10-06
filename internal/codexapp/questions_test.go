@@ -230,6 +230,58 @@ func TestQuestionsAnswerFlow(t *testing.T) {
 	}
 }
 
+// Two answers admitted while a question is pending send it once, even
+// when the first goes undelivered before the second is begun: only an
+// answer admitted after that is the user's retry.
+func TestQuestionsAdmittedAnswerIsStaleOnceAnotherBegan(t *testing.T) {
+	q := NewQuestions("th")
+	q.Observe("t1", asyncItem("call_3", contextQ, contextQ), OriginLive)
+	one, err := q.Admit("call_3", []Reply{{Index: 0, Text: "a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := q.Admit("call_3", []Reply{{Index: 0, Text: "a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := q.Admit("call_3", []Reply{{Index: 1, Text: "b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.BeginAdmitted(one); err != nil {
+		t.Fatal(err)
+	}
+	q.Sent("call_3", []int{0}, "t1", false)
+	q.TurnEnded("t1")
+	if x := q.Batch("call_3").Questions[0]; x.State != QSent || !x.Undelivered {
+		t.Fatalf("dropped answer = %+v", x)
+	}
+	if _, err := q.BeginAdmitted(two); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("a duplicate admitted before the send: %v", err)
+	}
+	// Another question of the batch is not affected.
+	if _, err := q.BeginAdmitted(other); err != nil {
+		t.Fatalf("another question: %v", err)
+	}
+	// Refused (nothing delivered) and pending again: still stale.
+	q.Failed("call_3", []int{1}, "no active turn")
+	if _, err := q.BeginAdmitted(other); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("an answer begun twice: %v", err)
+	}
+	// Admitted after the answer went undelivered: the user's retry.
+	retry, err := q.Admit("call_3", []Reply{{Index: 0, Text: "a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.BeginAdmitted(retry); err != nil {
+		t.Fatalf("a retry: %v", err)
+	}
+	// A ticket of other questions (the thread's were reset) is stale.
+	if _, err := NewQuestions("th").BeginAdmitted(retry); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("another reconciler: %v", err)
+	}
+}
+
 func TestQuestionsUnconfirmedSendStaysSent(t *testing.T) {
 	q := NewQuestions("th")
 	q.Observe("t1", asyncItem("call_3", contextQ), OriginLive)
