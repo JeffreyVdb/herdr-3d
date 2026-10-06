@@ -207,6 +207,11 @@ const HL_CONFIG: Config = {
   ALLOW_ARIA_ATTR: false,
 };
 
+/** #157: the two pinned cards that share the room below the timeline (the ask's goes over both). */
+type PinnedCard = 'followup' | 'asyncq';
+/** Ids for the cards the tabs control (one transcript per seat, but each mount anew). */
+let cardIds = 0;
+
 let mdPurifier: Purifier | null | undefined;
 let hlPurifier: Purifier | null | undefined;
 
@@ -690,6 +695,14 @@ class Transcript implements TranscriptView {
   private readonly ask: AskCard;
   private readonly followup: FollowupCard; // #90
   private readonly asyncq: AsyncCard; // #157
+  /**
+   * #157: the follow-up's card and the async questions' both up (an idle Codex worker keeps the questions its last turn
+   * asked): one is open, the other one tab away, so the open one has the room (a phone's screen has none for two).
+   */
+  private readonly cardTabs: HTMLElement;
+  private readonly tabs: Record<PinnedCard, HTMLButtonElement>;
+  /** Which of the two is open while both are up (the one that was up first stays; both at once: the follow-up). */
+  private front: PinnedCard | null = null;
   /** Whether the banner and the prompt box were last drawn with the card up. */
   private asking = false;
   private destroyed = false;
@@ -771,6 +784,7 @@ class Transcript implements TranscriptView {
       resized: () => {
         // A very short screen gives the card the timeline's room while it is up (transcript.css).
         this.root?.toggleAttribute('data-followup', this.followup.shown);
+        this.syncCards();
         this.stick();
       },
     });
@@ -784,9 +798,24 @@ class Transcript implements TranscriptView {
       resized: () => {
         // A very short screen gives the card the timeline's room while it is up (transcript.css), as the follow-up's.
         this.root?.toggleAttribute('data-asyncq', this.asyncq.shown);
+        this.syncCards();
         this.stick();
       },
     });
+    const tab = (k: PinnedCard, name: string, title: string, card: HTMLElement) => {
+      card.id = `tx-${k}-${++cardIds}`;
+      return h(
+        'button',
+        { class: 'tx-qtab', role: 'tab', 'data-card': k, 'aria-selected': 'false', 'aria-controls': card.id, tabindex: '-1', title, onclick: () => this.pickCard(k, true) },
+        h('span', { class: 'tx-qtab-name' }, name),
+        h('span', { class: 'tx-qtab-n' }),
+      );
+    };
+    this.tabs = {
+      followup: tab('followup', 'Open questions', 'The open questions in the agent’s last message', this.followup.el),
+      asyncq: tab('asyncq', 'Codex asked', 'The questions Codex asked while it worked', this.asyncq.el),
+    };
+    this.cardTabs = h('div', { class: 'tx-qtabs', role: 'tablist', 'aria-label': 'Questions for you', hidden: true }, this.tabs.followup, this.tabs.asyncq);
     // The toggle sits on the left: the HUD's plan-limits widget can hang over the screen's top-right corner.
     this.titleEl = h('span', { class: 'tx-title' }, 'Transcript');
     // #59: hide tool calls, the working chip, the preset and the zoom. The preset's swatch is drawn in its colours only:
@@ -834,7 +863,7 @@ class Transcript implements TranscriptView {
     );
     // The preset and the zoom keep together at the strip's end; a narrow screen wraps them to a line of their own.
     const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, this.busy, this.ctxEl, h('div', { class: 'tx-look' }, picker, zoom));
-    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, this.followup.el, this.asyncq.el, this.asyncq.live, form, this.pendingLive, this.live);
+    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, h('div', { class: 'tx-main' }, this.scroller, this.jump), this.ask.el, this.cardTabs, this.followup.el, this.asyncq.el, this.asyncq.live, form, this.pendingLive, this.live);
     this.unprefs = this.prefs.onChange((what) => this.applyPrefs(what));
     this.applyPrefs(null);
     this.updateCounts();
@@ -905,6 +934,50 @@ class Transcript implements TranscriptView {
   setCodex(worker: string, codex: WorkerCodex | null): void {
     if (this.destroyed) return;
     this.asyncq.set(worker, codex);
+  }
+
+  /** #157: the pinned card the timeline's keys go to after the ask's: the follow-up's or the async questions', the open one. */
+  private pinned(): FollowupCard | AsyncCard | null {
+    const fu = this.followup.shown;
+    const aq = this.asyncq.shown;
+    if (fu && aq) return this.front === 'asyncq' ? this.asyncq : this.followup;
+    return fu ? this.followup : aq ? this.asyncq : null;
+  }
+
+  /** #157: with both cards up, the open one shows and the other waits behind its tab (its picks and text kept). */
+  private syncCards(): void {
+    if (!this.root) return; // a card drawn while the view is built
+    const fu = this.followup.shown;
+    const aq = this.asyncq.shown;
+    if (fu !== aq) this.front = fu ? 'followup' : 'asyncq';
+    else if (fu) this.front ??= 'followup';
+    else if (!this.ask.shown) this.front = null; // both gone (not just behind an ask): the next pair starts afresh
+    const both = fu && aq;
+    this.cardTabs.hidden = !both;
+    if (both && this.front) this.root.dataset.front = this.front;
+    else delete this.root.dataset.front;
+    const counts: Record<PinnedCard, number> = { followup: this.followup.count, asyncq: this.asyncq.toAnswer };
+    for (const k of ['followup', 'asyncq'] as const) {
+      const t = this.tabs[k];
+      const on = both && this.front === k;
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+      const n = t.querySelector<HTMLElement>('.tx-qtab-n');
+      if (n) {
+        n.textContent = counts[k] ? String(counts[k]) : '';
+        n.hidden = !counts[k];
+      }
+    }
+  }
+
+  /** #157: opens card k of the two (a click, Enter: the keyboard on it; ← → on the tabs: the keyboard stays there). */
+  private pickCard(k: PinnedCard, into: boolean): void {
+    if (!this.followup.shown || !this.asyncq.shown) return;
+    this.front = k;
+    this.syncCards();
+    if (into) (k === 'followup' ? this.followup : this.asyncq).focus();
+    else this.tabs[k].focus({ preventScroll: true });
+    this.stick();
   }
 
   setUsage(usage: Usage | null): void {
@@ -1584,10 +1657,11 @@ class Transcript implements TranscriptView {
     const inCard = !!target && this.ask.el.contains(target);
     const inFollowup = !!target && this.followup.el.contains(target);
     const inAsync = !!target && this.asyncq.el.contains(target); // #157
+    const pinned = this.pinned();
     // Ctrl/⌘+Enter sends the pinned card's answers, from the card or from the timeline (the ask's card goes first, then
-    // the follow-up's, then the async questions': the card you are on, if any).
+    // the follow-up's or the async questions', the open one: the card you are on, if any).
     if (isSendKey(e)) {
-      const card = inAsync ? this.asyncq : this.ask.shown ? (inFollowup ? null : this.ask) : this.followup.shown ? this.followup : this.asyncq.shown ? this.asyncq : null;
+      const card = inAsync ? this.asyncq : this.ask.shown ? (inFollowup ? null : this.ask) : inFollowup ? this.followup : pinned;
       if (card?.key(e, card === this.ask ? inCard : card === this.followup ? inFollowup : inAsync)) {
         e.preventDefault();
         e.stopPropagation();
@@ -1595,6 +1669,13 @@ class Transcript implements TranscriptView {
       return;
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // #157: ← → on the two cards' tabs open the other one (the keyboard stays on the tabs).
+    if (target && this.cardTabs.contains(target) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      this.pickCard(this.front === 'followup' ? 'asyncq' : 'followup', false);
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     // #57: on the pinned question its keys come first: ↑ ↓ through the options, Esc back to the timeline (not up
     // from the seat); Enter on an option is its click (it picks, never sends).
     if (inCard && this.ask.key(e, true)) {
@@ -1624,15 +1705,16 @@ class Transcript implements TranscriptView {
       e.stopPropagation();
       return;
     }
-    // #90: and the follow-up card's digits and ← → (Tab and Enter stay the page's: the focus, the prompt box).
-    if (!inFollowup && !this.ask.shown && this.followup.shown && this.followup.key(e)) {
+    // #90: and the follow-up card's digits and ← → (Tab and Enter stay the page's: the focus, the prompt box); #157:
+    // while it is the open one of the two.
+    if (!inFollowup && !this.ask.shown && pinned === this.followup && this.followup.key(e)) {
       e.preventDefault();
       e.stopPropagation();
       return;
     }
-    // #157: then the async questions' digits and ← → (behind the ask's and the follow-up's; never the screen
+    // #157: or the async questions' digits and ← → when theirs is the open card (behind the ask's; never the screen
     // question's digits, which the banner of a real block keeps).
-    if (!inAsync && !this.ask.shown && !this.followup.shown && !this.blocked && this.asyncq.shown && this.asyncq.key(e)) {
+    if (!inAsync && !this.ask.shown && pinned === this.asyncq && !this.blocked && this.asyncq.key(e)) {
       e.preventDefault();
       e.stopPropagation();
       return;

@@ -2439,3 +2439,100 @@
     max-height: 4.5em;
   }
 }
+
+/*
+ * #157: the follow-up's card and the async questions' both up (an idle Codex worker keeps what its last turn asked):
+ * one is open, the other a tab away, so the open one keeps the room a single card has (a phone's screen has none for
+ * two). Each tab in its card's colours (the follow-up's sun, dashed; Codex's blue, solid), the open one filled like
+ * its card. The card behind keeps everything (its picks, its text): it is only not drawn.
+ */
+.tx-qtabs {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 10px 6px;
+}
+.tx-qtabs[hidden],
+.tx[data-front='asyncq'] .tx-fu,
+.tx[data-front='followup'] .tx-aq {
+  display: none;
+}
+.tx-qtab {
+  --tx-sun-soft: color-mix(in srgb, var(--tx-sun) 42%, transparent);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 3px 10px;
+  border: 1px dashed var(--tx-sun-soft);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--tx-text-2);
+  font-size: calc(11px * var(--tx-k, 1));
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease-out,
+    background-color 120ms ease-out;
+}
+.tx-qtab[data-card='asyncq'] {
+  --tx-sun: var(--tx-blue);
+  --tx-sun-text: var(--tx-blue);
+  --tx-on-sun: var(--tx-on-accent);
+  border-style: solid;
+}
+.tx-qtab:hover {
+  border-color: var(--tx-sun);
+}
+.tx-qtab[aria-selected='true'] {
+  border-color: var(--tx-sun);
+  background: color-mix(in srgb, var(--tx-sun) 14%, var(--tx-bg-2));
+  color: var(--tx-sun-text);
+  cursor: default;
+}
+.tx-qtab-n {
+  min-width: 1.7em;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--tx-sun-soft);
+  color: var(--tx-text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-align: center;
+}
+.tx-qtab-n[hidden] {
+  display: none;
+}
+.tx-qtab[aria-selected='true'] .tx-qtab-n {
+  background: var(--tx-sun);
+  color: var(--tx-on-sun);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tx-qtab {
+    transition: none;
+  }
+}
+@container tx (max-height: 300px) {
+  .tx-qtabs {
+    gap: 4px;
+    margin: 4px 6px 0;
+  }
+  .tx-qtab {
+    padding: 1px 8px;
+  }
+  /* The open tab names the card: its own top line goes, and its questions keep the room a lone card has. */
+  .tx[data-front] .tx-fu,
+  .tx[data-front] .tx-aq {
+    margin-top: 4px;
+    padding-top: 4px;
+    scroll-padding-top: 4px;
+  }
+  .tx[data-front] .tx-fu > .tx-ask-top,
+  .tx[data-front] .tx-aq > .tx-ask-top {
+    display: none;
+  }
+}

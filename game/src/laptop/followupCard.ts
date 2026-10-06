@@ -72,6 +72,11 @@ export class FollowupCard {
     return !!this.shownFollowup;
   }
 
+  /** How many questions it asks (0 while it is not shown). */
+  get count(): number {
+    return this.shownFollowup?.questions.length ?? 0;
+  }
+
   get turnId(): string | null {
     return this.shownFollowup?.turn_id ?? null;
   }

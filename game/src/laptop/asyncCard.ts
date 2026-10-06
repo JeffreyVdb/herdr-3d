@@ -153,6 +153,12 @@ export class AsyncCard {
     return !this.suppressed && this.batches().length > 0;
   }
 
+  /** How many of its questions still want an answer (0 while it is not shown). */
+  get toAnswer(): number {
+    if (!this.shown) return 0;
+    return this.batches().reduce((n, b) => n + this.listed(b).filter(wantsAnswer).length, 0);
+  }
+
   destroy(): void {
     if (this.ticker) clearInterval(this.ticker);
     this.ticker = null;
