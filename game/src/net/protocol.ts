@@ -150,13 +150,59 @@ export interface Worker {
 /**
  * #155: a Codex worker's launch. `shared`: its terminal runs against a Codex app-server of its own, which the bridge
  * owns (`server` says how that server is); `legacy`: Codex's embedded server, as before the switch (`note` says why a
- * hire asked for shared runs legacy). `attached`: the bridge has joined its thread (while its transcript is open).
+ * hire asked for shared runs legacy). `attached`: the bridge has joined its thread (#156: whenever its server runs).
+ * #156: `thread` is the thread `worker.answer_async` names, `turn` its running turn while attached, `questions` its
+ * async question batches, oldest first (docs/protocol.md "Codex async questions").
  */
 export interface WorkerCodex {
   mode: 'shared' | 'legacy';
   server?: 'starting' | 'running' | 'down' | 'stopped';
   note?: string;
   attached?: boolean;
+  thread?: string;
+  turn?: string;
+  questions?: CodexBatch[];
+}
+
+/** #156: one async question message of a shared Codex worker's thread; `batch` is Codex's call_id. */
+export interface CodexBatch {
+  batch: string;
+  turn: string;
+  seen: ('live' | 'history')[];
+  /** Another batch of the same turn with the same questions, seen only the other way under another id. */
+  twin?: string;
+  /** Live and history gave this id different questions: it cannot be answered. */
+  conflict?: boolean;
+  /** When the bridge first saw it, unix ms. */
+  at: number;
+  questions: CodexQuestion[];
+}
+
+/**
+ * #156: one async question. `sent`: the server accepted the bridge's answer (`unconfirmed`: no response came;
+ * `undelivered`: its turn ended without it, it may be answered again); `answered`: its reply envelope was seen.
+ */
+export interface CodexQuestion {
+  index: number;
+  title: string;
+  /** Suggested answers; none: free text. */
+  options?: string[];
+  state: 'pending' | 'sending' | 'sent' | 'answered' | 'dismissed';
+  answer?: string;
+  answered_by?: 'bridge' | 'other';
+  unconfirmed?: boolean;
+  undelivered?: boolean;
+  error?: string;
+  truncated?: boolean;
+}
+
+/** #156: `worker.answer_async`'s ack: sent, not yet answered. */
+export interface AsyncAnswerAck {
+  state: 'sent';
+  via: 'turn/steer' | 'turn/start';
+  turn?: string;
+  fallback?: boolean;
+  unconfirmed?: boolean;
 }
 
 /** #155: the shared Codex server switch (`codex_server` in the snapshot, `codex_server.update`). */
@@ -536,6 +582,9 @@ export interface CommandArgs {
   'activity.get': Record<string, never>;
   'codex_server.get': Record<string, never>; // #155
   'codex_server.set': { enabled: boolean };
+  // #156 Codex async questions. `worker.answer_async` acks `AsyncAnswerAck`.
+  'worker.answer_async': { id: string; thread: string; batch: string; answers: { index: number; answer: string }[] };
+  'worker.dismiss_async': { id: string; thread: string; batch: string; indexes?: number[] };
   'activity.set': { model_enabled?: boolean; threshold?: number; margin?: number; daily_cap?: number };
   // #118 floor overview summaries (docs/protocol.md "Floor overview summaries"). `digest.test` acks `DigestTestAck`.
   'digest.get': Record<string, never>;
@@ -629,6 +678,8 @@ export interface PromptAck {
   sent?: string;
   /** #140: the prompt runs a built-in whose output or dialog shows only in the worker's terminal (absent: no). */
   terminal?: boolean;
+  /** #156: sent through a shared Codex worker's app-server (herdr refused it: blocked by an async question). */
+  via?: 'app_server';
 }
 
 /** M5: `worker.answer` ack. */
