@@ -24,6 +24,11 @@ type fakeServer struct {
 	ua   string
 	// thread is what thread/resume answers with (nil: an error).
 	thread map[string]any
+	// older is thread/resume's turnsBackwardsCursor (nil: none).
+	older any
+	// respond, when set, answers any other request: its result or its
+	// JSON-RPC error, or nothing at all (silent).
+	respond func(method string, params map[string]any) (res, rpcErr any, silent bool)
 
 	mu    sync.Mutex
 	got   []map[string]any // every message received, across connections
@@ -90,10 +95,18 @@ func (f *fakeServer) serve(w http.ResponseWriter, r *http.Request) {
 			if f.thread == nil {
 				rpcErr = map[string]any{"code": -32600, "message": "no rollout found"}
 			} else {
-				res = map[string]any{"thread": f.thread, "model": "mock", "cwd": "/w"}
+				res = map[string]any{"thread": f.thread, "model": "mock", "cwd": "/w", "turnsBackwardsCursor": f.older}
 			}
 		case "thread/unsubscribe":
 			res = map[string]any{"status": "unsubscribed"}
+		default:
+			if f.respond != nil {
+				params, _ := m["params"].(map[string]any)
+				var silent bool
+				if res, rpcErr, silent = f.respond(method, params); silent {
+					continue
+				}
+			}
 		}
 		out := map[string]any{"id": id, "result": res}
 		if rpcErr != nil {
