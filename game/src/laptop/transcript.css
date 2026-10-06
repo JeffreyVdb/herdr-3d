@@ -1531,7 +1531,8 @@
  * was asked and answered.
  */
 .tx-ask,
-.tx-fu {
+.tx-fu,
+.tx-aq {
   --tx-sun-soft: color-mix(in srgb, var(--tx-sun) 42%, transparent);
   flex: none;
   display: flex;
@@ -1547,7 +1548,8 @@
   box-shadow: 0 -8px 22px -6px rgb(0 0 0 / 55%);
 }
 .tx-ask[hidden],
-.tx-fu[hidden] {
+.tx-fu[hidden],
+.tx-aq[hidden] {
   display: none;
 }
 .tx-ask-body {
@@ -1769,7 +1771,8 @@
 }
 .tx-ask-opt:disabled,
 .tx-ask[data-phase='sending'] .tx-ask-opt,
-.tx-fu[data-phase='sending'] .tx-ask-opt {
+.tx-fu[data-phase='sending'] .tx-ask-opt,
+.tx-aq[data-phase='sending'] .tx-ask-opt {
   cursor: default;
   opacity: 0.6;
 }
@@ -1912,7 +1915,8 @@
   background: transparent;
 }
 .tx-ask[data-phase='sending'] .tx-ask-send:disabled,
-.tx-fu[data-phase='sending'] .tx-ask-send:disabled {
+.tx-fu[data-phase='sending'] .tx-ask-send:disabled,
+.tx-aq[data-phase='sending'] .tx-ask-send:disabled {
   background: color-mix(in srgb, var(--tx-sun) 30%, transparent);
   color: var(--tx-text);
 }
@@ -1925,13 +1929,15 @@
   color: var(--tx-red);
 }
 .tx .tx-ask button:disabled,
-.tx .tx-fu button:disabled {
+.tx .tx-fu button:disabled,
+.tx .tx-aq button:disabled {
   cursor: default;
 }
 /* A short screen: a tighter card, descriptions to two lines, no previews' height to spare. */
 @container tx (max-height: 470px) {
   .tx-ask,
-  .tx-fu {
+  .tx-fu,
+  .tx-aq {
     margin: 0 8px 6px;
     padding: 6px 9px 7px;
     max-height: 56%;
@@ -2041,7 +2047,8 @@
     height: 18px;
   }
   .tx-ask,
-  .tx-fu {
+  .tx-fu,
+  .tx-aq {
     flex: 0 1 auto;
     min-height: 0;
     max-height: none;
@@ -2050,7 +2057,8 @@
   }
   /* Who asks is the first line; the body's row takes what is left. */
   .tx-ask,
-  .tx-fu {
+  .tx-fu,
+  .tx-aq {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto auto;
@@ -2318,8 +2326,13 @@
  * questions are Codex's own, not inferred), blue, not sun (nothing waits on you): `--tx-sun` is the card's accent, so
  * every shared rule takes the blue. A reply's state says what the bridge has seen, in its own colour.
  */
+/* The theme's sun text, taken before the card makes its own blue: a reply not delivered is a warning still. */
+.tx {
+  --tx-aq-warn: var(--tx-sun-text);
+}
 .tx-aq {
   --tx-sun: var(--tx-blue);
+  --tx-sun-text: var(--tx-blue);
   --tx-on-sun: var(--tx-on-accent);
   /* Its own ground (the sticky top and foot of a short screen paint it too). */
   --tx-ask-bg: color-mix(in srgb, var(--tx-blue) 7%, var(--tx-bg-2));
@@ -2382,7 +2395,7 @@
   overflow-wrap: anywhere;
 }
 .tx-aq-state {
-  margin-top: 7px;
+  margin: -2px 0 8px;
   color: var(--tx-text-2);
   font-size: calc(12px * var(--tx-k, 1));
   font-weight: 650;
@@ -2397,7 +2410,7 @@
   font-style: italic;
 }
 .tx-aq-state[data-phase='undelivered'] {
-  color: var(--tx-sun-text);
+  color: var(--tx-aq-warn);
 }
 .tx-aq-state[data-phase='failed'] {
   color: var(--tx-red);
@@ -2410,7 +2423,7 @@
   font-weight: 500;
 }
 .tx-ask-row[data-phase='undelivered'] .tx-ask-row-act {
-  color: var(--tx-sun-text);
+  color: var(--tx-aq-warn);
 }
 .tx-ask-row[data-phase='failed'] .tx-ask-row-act {
   color: var(--tx-red);

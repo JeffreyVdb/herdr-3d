@@ -85,7 +85,7 @@ export class AsyncCard {
   private ticker: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly host: AsyncCardHost) {
-    this.el = h('section', { class: 'tx-ask tx-aq', hidden: true, role: 'region', 'aria-label': 'Codex’s questions' });
+    this.el = h('section', { class: 'tx-aq', hidden: true, role: 'region', 'aria-label': 'Codex’s questions' });
     this.live = h('div', { class: 'tx-aq-live', role: 'status', 'aria-live': 'polite' });
   }
 
@@ -622,7 +622,7 @@ export class AsyncCard {
     );
   }
 
-  /** The open question: its options (a pick) or its text box, what was sent or answered, and what its reply says. */
+  /** The open question: what its reply says (first: a short screen shows it), then its options or its text box (or what went). */
   private openQuestion(b: AsyncCardBatch, q: CodexQuestion, pos: number, n: number, sending: boolean): HTMLElement {
     const can = this.answerable(b, q) && !sending;
     const d = this.draft(b, q);
@@ -690,9 +690,9 @@ export class AsyncCard {
         flash: this.flash === pos,
         qid,
       },
+      state,
       list,
       text,
-      state,
     );
     el.dataset.index = String(q.index);
     el.dataset.phase = phase;
