@@ -361,7 +361,7 @@ export class BoardsPanel {
         ),
       ),
     );
-    replaceKeepingFocus(this.body, [h('div', { class: 'bd-cols' }, ...nodes)]);
+    replaceKeepingFocus(this.body, [h('div', { class: 'bd-cols' }, ...nodes)], undefined, { keepScroll: true });
   }
 
   private issueButton(card: IssueCard, holder: { id: string; name: string } | null): HTMLElement {
@@ -485,7 +485,7 @@ export class BoardsPanel {
     const rows = m.prs.length
       ? m.prs.map((pr) => this.prRow(pr, closesText(pr.closes, keys), verdictOf(pr, workers)))
       : [h('div', { class: 'bd-off' }, h('h3', {}, 'No open pull requests'), h('p', {}, `${m.provider_name} has none for this floor’s repository right now.`))];
-    replaceKeepingFocus(this.body, [h('div', { class: 'bd-prs' }, ...rows)]);
+    replaceKeepingFocus(this.body, [h('div', { class: 'bd-prs' }, ...rows)], undefined, { keepScroll: true });
   }
 
   private prRow(pr: PullRequest, closes: string, stamp: { tone: string; text: string } | null): HTMLElement {

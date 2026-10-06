@@ -51,11 +51,13 @@ export function icon(paths: string): SVGSVGElement {
 /**
  * Replaces `parent`'s children and, when focus was inside, puts it back on the
  * element with the same `data-key` (else `fallback`'s, else the first
- * control), so a live re-render does not throw the user out of a list. The same
- * element comes back without scrolling to it (a redraw never moves a scrolled
- * list); a different one is a new place for the focus, so it is brought into view.
+ * control), so a live re-render does not throw the user out of a list. The
+ * focus scrolls into view, as `focus()` does, so a control that moved stays
+ * visible. `keepScroll` is for a scroller that a redraw must not move: the same
+ * element comes back without scrolling to it (it was in view when it had the
+ * focus); a different one is a new place for the focus, so it is brought into view.
  */
-export function replaceKeepingFocus(parent: HTMLElement, children: Node[], fallback?: string): void {
+export function replaceKeepingFocus(parent: HTMLElement, children: Node[], fallback?: string, opts: { keepScroll?: boolean } = {}): void {
   const a = document.activeElement;
   const had = a instanceof HTMLElement && parent.contains(a);
   const key = had ? a.dataset.key : undefined;
@@ -63,6 +65,6 @@ export function replaceKeepingFocus(parent: HTMLElement, children: Node[], fallb
   if (!had) return;
   const find = (k: string | undefined) => (k ? parent.querySelector<HTMLElement>(`[data-key="${CSS.escape(k)}"]`) : null);
   const same = find(key);
-  if (same) same.focus({ preventScroll: true });
-  else (find(fallback) ?? parent.querySelector<HTMLElement>('button, input, select'))?.focus();
+  if (same && opts.keepScroll) same.focus({ preventScroll: true });
+  else (same ?? find(fallback) ?? parent.querySelector<HTMLElement>('button, input, select'))?.focus();
 }

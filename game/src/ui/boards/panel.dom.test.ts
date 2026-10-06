@@ -63,6 +63,7 @@ function setup() {
 
 describe('BoardsPanel: scroll position across a refresh (#160)', () => {
   const focus = HTMLElement.prototype.focus;
+  const focused: Array<boolean | undefined> = [];
   beforeEach(() => {
     // jsdom has no modal dialogs.
     HTMLDialogElement.prototype.showModal = function () {
@@ -74,6 +75,7 @@ describe('BoardsPanel: scroll position across a refresh (#160)', () => {
     };
     // A browser scrolls the focused element into view unless told not to; the first card is at the top.
     HTMLElement.prototype.focus = function (this: HTMLElement, o?: FocusOptions) {
+      focused.push(o?.preventScroll);
       focus.call(this, o);
       if (!o?.preventScroll) {
         const s = this.closest<HTMLElement>('.bd-body');
@@ -84,6 +86,7 @@ describe('BoardsPanel: scroll position across a refresh (#160)', () => {
   });
   afterEach(() => {
     HTMLElement.prototype.focus = focus;
+    focused.length = 0;
     document.body.replaceChildren();
     vi.unstubAllGlobals();
   });
@@ -96,7 +99,10 @@ describe('BoardsPanel: scroll position across a refresh (#160)', () => {
         expect(document.activeElement?.matches(card)).toBe(true);
         at.top = 700;
         at.left = 40;
+        focused.length = 0;
         panel.refresh();
+        // The board opts out of the scroll-into-view of the refocus (a browser may scroll before render() puts the offset back).
+        expect(focused).toEqual([true]);
         expect(at).toEqual({ top: 700, left: 40 });
         expect(document.activeElement?.matches(card)).toBe(true);
         expect(body.contains(document.activeElement)).toBe(true);
@@ -183,24 +189,68 @@ describe('replaceKeepingFocus', () => {
   });
 
   const btn = (key: string) => h('button', { 'data-key': key });
+  const list = (...keys: string[]) => {
+    const el = document.createElement('div');
+    document.body.append(el);
+    el.append(...keys.map(btn));
+    return el;
+  };
 
-  it('puts focus back on the same element without scrolling to it', () => {
-    const list = document.createElement('div');
-    document.body.append(list);
-    list.append(btn('a'), btn('b'));
-    list.querySelector<HTMLElement>('[data-key="b"]')?.focus();
+  it('by default puts focus back on the same element with a plain focus(), which scrolls to it', () => {
+    const el = list('a', 'b');
+    el.querySelector<HTMLElement>('[data-key="b"]')?.focus();
     calls.length = 0;
-    replaceKeepingFocus(list, [btn('a'), btn('b')]);
+    replaceKeepingFocus(el, [btn('a'), btn('b')]);
+    expect(calls).toEqual([['b', undefined]]);
+  });
+
+  it('with keepScroll puts focus back on the same element without scrolling to it', () => {
+    const el = list('a', 'b');
+    el.querySelector<HTMLElement>('[data-key="b"]')?.focus();
+    calls.length = 0;
+    replaceKeepingFocus(el, [btn('a'), btn('b')], undefined, { keepScroll: true });
     expect(calls).toEqual([['b', true]]);
   });
 
-  it('brings a different element into view when the focused one is gone', () => {
-    const list = document.createElement('div');
-    document.body.append(list);
-    list.append(btn('a'), btn('b'));
-    list.querySelector<HTMLElement>('[data-key="b"]')?.focus();
+  it('brings a different element into view when the focused one is gone, keepScroll or not', () => {
+    for (const keepScroll of [false, true]) {
+      const el = list('a', 'b');
+      el.querySelector<HTMLElement>('[data-key="b"]')?.focus();
+      calls.length = 0;
+      replaceKeepingFocus(el, [btn('a')], undefined, { keepScroll });
+      expect(calls).toEqual([['a', undefined]]);
+      el.remove();
+    }
+  });
+
+  it('uses the fallback key before the first control', () => {
+    const el = list('a', 'b');
+    el.querySelector<HTMLElement>('[data-key="a"]')?.focus();
     calls.length = 0;
-    replaceKeepingFocus(list, [btn('a')]);
-    expect(calls).toEqual([['a', undefined]]);
+    replaceKeepingFocus(el, [btn('x'), btn('new')], 'new');
+    expect(calls).toEqual([['new', undefined]]);
+  });
+
+  // A shared caller (Buildings reorder): the same-key control moves, e.g. below a tall block; focus must follow it into view.
+  it('default mode scrolls a moved same-key control into view; keepScroll leaves the scroller alone', () => {
+    const offset: Record<string, number> = { 'bdown:A': 1000 };
+    HTMLElement.prototype.focus = function (this: HTMLElement, o?: FocusOptions) {
+      calls.push([this.dataset.key, o?.preventScroll]);
+      focus.call(this, o);
+      if (!o?.preventScroll) {
+        const s = this.parentElement as HTMLElement;
+        s.scrollTop = offset[this.dataset.key ?? ''] ?? 0;
+      }
+    };
+    for (const [keepScroll, scrollTop] of [[false, 1000], [true, 0]] as const) {
+      const el = list('bdown:A', 'bdown:B', 'bdown:C');
+      el.scrollTop = 0;
+      el.querySelector<HTMLElement>('[data-key="bdown:A"]')?.focus();
+      el.scrollTop = 0;
+      replaceKeepingFocus(el, [btn('bdown:B'), btn('bdown:A'), btn('bdown:C')], undefined, keepScroll ? { keepScroll } : undefined);
+      expect((document.activeElement as HTMLElement).dataset.key).toBe('bdown:A');
+      expect(el.scrollTop).toBe(scrollTop);
+      el.remove();
+    }
   });
 });
