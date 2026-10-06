@@ -49,6 +49,8 @@ import { AskSim } from './fixture-ask.ts';
 import { ShareSim } from './fixture-share.ts';
 // #98: what the agents are doing (`sim.activity`, `simactivity=demo|all`).
 import { ActivitySim } from './fixture-activity.ts';
+// #157: shared Codex workers' async questions (`sim.codex*`, `worker.answer_async`, `simcodex=ask`).
+import { CodexQuestionsSim } from './fixture-codex-questions.ts';
 
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
@@ -78,6 +80,8 @@ export interface SimOptions {
   echoMs?: number;
   /** #98: seeds the workers' activities on start (`simactivity=demo|all`, tools/fixture-activity.ts). */
   activity?: string;
+  /** #157: seeds a shared Codex worker's async questions on start (`simcodex=ask`, tools/fixture-codex-questions.ts). */
+  codex?: string;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -219,6 +223,7 @@ export class SimWorld {
       this.activitySettings.changed(send); // #98: the classifier's too
     };
     this.activitySettings = new ActivitySettingsSim({ ai: this.ai, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) });
+    if (o.codex) this.codexq.seed(o.codex); // #157
     this.codexServer = new CodexServerSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) }, o.fail !== 'no_codex_run'); // #155
     this.inbox = new InboxSim({ workers: this.workers, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now() }, o.fail !== 'no_inbox');
     this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
@@ -432,6 +437,7 @@ export class SimWorld {
       if (this.digest.handle(m.t, a, send, ack, fail)) return; // #118 (board.watch passes on to the boards)
       if (this.transcripts.handle(m.t, a, send, ack, fail)) return;
       if (this.asks.handle(m.t, a, send, ack, fail)) return;
+      if (this.codexq.handle(m.t, a, send, ack, fail)) return; // #157
       if (this.activity.handle(m.t, a, send, ack, fail)) return; // #98
       if (screens.handle(m.t, a, send, ack, (code, message) => send({ t: 'error', req_id: reqId, code, message }))) return;
       if (this.start6.handle(m.t, a, send, ack, fail)) return;
@@ -831,6 +837,34 @@ export class SimWorld {
       work: (send, w, title) => this.panels.work(send, w, title),
     });
     return this.askSim;
+  }
+
+  // ---- #157: Codex async questions (tools/fixture-codex-questions.ts) ------
+
+  private codexqSim: CodexQuestionsSim | null = null;
+
+  private get codexq(): CodexQuestionsSim {
+    this.codexqSim ??= new CodexQuestionsSim({
+      workers: this.workers,
+      floors: this.floors,
+      stepMs: this.stepMs,
+      emit: (send, m) => this.emit(send, m),
+      after: (ms, fn) => {
+        const h = this.setT(() => {
+          this.timers.delete(h);
+          fn();
+        }, ms);
+        this.timers.add(h);
+      },
+      now: () => this.now(),
+      takeFail: (code) => {
+        if (this.fail !== code) return false;
+        this.fail = undefined;
+        return true;
+      },
+      error: (code, message) => new CmdError(code, message),
+    });
+    return this.codexqSim;
   }
 
   // ---- M5: prompt, answer, changes, usage (tools/fixture-panels.ts) ------

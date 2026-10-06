@@ -5,7 +5,8 @@
 // - worker.prompt: an idle / done agent starts `working` one step later (the
 //   ack follows), then is `done` three steps after that; a `working` one gets
 //   the ack at once with `queued: true` and takes the prompt when its turn
-//   ends. A `blocked` one or one with an `ask` (answer its question first), a plain shell (no
+//   ends. #157: a shared Codex worker blocked only by an async question (`codex.async_blocked`) is acked half a step
+//   later `queued: true, via: "app_server"`. A `blocked` one or one with an `ask` (answer its question first), a plain shell (no
 //   `agent_kind`) or an asleep floor is `invalid_state`. `simfail=prompt_failed` fails the next prompt
 //   (`prompt_failed`), `simfail=prompt_retried` acks it `retried: true`. #58: with `simecho=<ms>` the prompt's
 //   `user` item reaches the worker's transcript watch that long after its turn starts, or, queued, after the ack (both
@@ -142,6 +143,13 @@ export class PanelsSim {
     if (typeof text !== 'string') throw this.bad('text must be a string');
     const w = this.worker(a);
     if (!w.agent_kind) throw this.h.error('invalid_state', `invalid state: ${w.name ?? w.id} is a plain shell (use worker.keys)`);
+    // #157: a shared Codex worker blocked only by an async question takes it through its app-server, steered (queued).
+    if (w.status === 'blocked' && w.codex?.mode === 'shared' && w.codex.async_blocked === true && !w.ask) {
+      if (!text || bytes(text) > 16 * 1024 || text.includes('\0')) throw this.bad('text must be 1 byte to 16 KiB, without NUL');
+      this.h.after(Math.round(this.h.stepMs / 2), () => ack({ queued: true, retried: false, via: 'app_server' }));
+      this.h.echo?.(w, text);
+      return;
+    }
     if (w.status === 'blocked') throw this.h.error('invalid_state', `invalid state: ${w.name ?? w.id} is blocked (answer its question with worker.answer)`);
     if (w.ask) throw this.h.error('invalid_state', `invalid state: ${w.name ?? w.id} waits on its question: answer it first (worker.answer_ask)`);
     if (!text || bytes(text) > 16 * 1024 || text.includes('\0')) throw this.bad('text must be 1 byte to 16 KiB, without NUL');
