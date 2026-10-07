@@ -48,12 +48,14 @@ commands sit on it) and `drops` (Drop Zone's newest files, read only through img
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
-  repository and project, the writes) and `githubcli` (the typed `gh` runner); #184: `kaneo` (the Kaneo client and its
-  `tracker.Tracker`) and `kaneoconf` (the bridge-wide Kaneo connection: instance, key in its own 0600 file, default
-  workspace, the test that gates a save, the generation; it reaches Kaneo only through its `Connector` interface and
-  imports nothing of the module but `provider`, `TestKaneoSettingsIsProviderNeutral`; `kaneoconf.FakeConnector` for
-  tests). `server`, `store` and `proto` never import `github`, `githubcli` or `kaneo` (`TestBoardLayerIsProviderNeutral`):
-  `app` wires the providers in (`app.Boards`, `kaneoConnector`, `kaneoTrackers`). Helper: `helper` (ssh tunnel
+  repository and project, the writes) and `githubcli` (the typed `gh` runner); #184: `kaneo` (the Kaneo provider of
+  `tracker`: the instance URL's normalization, the REST client with its key, the settings' read-only calls and one
+  project's board and writes; the standard library, `provider` and `tracker` only, `TestKaneoIsAProviderLeaf`) and
+  `kaneoconf` (the bridge-wide Kaneo connection: instance, key in its own 0600 file, default workspace, the test that
+  gates a save, the generation; it reaches Kaneo only through its `Connector` interface and imports nothing of the
+  module but `provider`, `TestKaneoSettingsIsProviderNeutral`; `kaneoconf.FakeConnector` for tests). `server`, `store`
+  and `proto` never import `github`, `githubcli` or `kaneo` (`TestBoardLayerIsProviderNeutral`): `app` wires the
+  providers in (`app.Boards`, `kaneoConnector`, `kaneoTrackers`). Helper: `helper` (ssh tunnel
   supervisor, game server, `/ws` proxy). `app` holds both command lines.
 - `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).
 - `game/` — the game: Vite + strict TypeScript + three.js (`three/webgpu`), pnpm.

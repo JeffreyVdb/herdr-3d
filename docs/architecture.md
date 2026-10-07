@@ -206,7 +206,10 @@ MacBook (M2 Max)                                   devbox (Linux)
   `Connector` interface; `internal/kaneo` (the HTTP client and the `tracker.Tracker`) is wired in by `app` alone, like
   `github` (`TestBoardLayerIsProviderNeutral`). `server.BoardSource` names the tracker, the instance and generation,
   the workspace, the project and the repo (never the key), and the factory picks the tracker and the code host apart:
-  a Kaneo floor has its issues board without a repo and GitHub's PR board with one. A new generation drops a Kaneo
+  a Kaneo floor has its issues board without a repo and GitHub's PR board with one. The Kaneo tracker reads one
+  project: its workflow columns between the virtual Planned and Archived ones, every task up to 500 (no closed window:
+  Kaneo gives no completion time), at most 12 calls a read; set status is `PUT /task/status` and an anchored move one
+  `POST /task/reorder` checked against the board it was computed from. A new generation drops a Kaneo
   floor's board, its cache and any late poll. A run-time 401 (maybe the key's quota) pauses every Kaneo floor's polling
   for 5 minutes, ended by a passing re-test; a 403 is a permission problem. Kaneo's virtual `planned` and `archived`
   statuses are columns with a `kind`; `close` is off (completion is a final column; a task is never deleted). Runs on

@@ -1,0 +1,4 @@
+[
+ {"id":"act_1","taskId":"task_1","userId":"user_1","content":"Ready for review.","createdAt":"2026-10-07T12:00:00.000Z","updatedAt":"2026-10-07T12:00:00.000Z","user":{"name":"Alex","image":"https://img.example.invalid/alex.png"}},
+ {"id":"act_3","taskId":"task_1","userId":"user_1","content":"Picked up by a worker.","createdAt":"2026-10-07T14:00:00.000Z","updatedAt":"2026-10-07T14:00:00.000Z","user":{"name":"Alex","image":"https://img.example.invalid/alex.png"}}
+]
