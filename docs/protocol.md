@@ -1781,7 +1781,9 @@ settings has no `kaneo` key (a bridge before #184: every `kaneo.*` is `unknown_c
   board until a connection is saved again).
 - **`kaneo.workspaces`** `{}` and **`kaneo.projects`** `{workspace_id}` (archived projects left out) use the saved
   connection (`not_configured` without one), for a floor's dropdowns; a list is answered from memory for 30 s per
-  generation (switching back and forth calls Kaneo once).
+  generation (switching back and forth calls Kaneo once). A list's `generation` is the connection's that read it: a
+  client drops one whose `generation` is not the connection it shows, and asks again on the `kaneo.update` of a new
+  one.
 - **Bounds**: 15 s per call, two calls in flight at most (a waiting one gives up with its client's request), every call
   off the bridge's main loop.
 - **Error codes**: `bad_url`, `key_required`, `test_required`, `not_configured`, `unauthorized` (401: a wrong or revoked

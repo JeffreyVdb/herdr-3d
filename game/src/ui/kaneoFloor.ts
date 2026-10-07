@@ -19,7 +19,10 @@ type ListState<T> = { s: 'idle' } | { s: 'loading' } | { s: 'ready'; items: T[] 
  * at the floor's own (else the bridge's default); changing it clears the project and asks for the new list, and only
  * the newest list lands (an earlier workspace's late answer never restores its project). A project is never picked
  * for you. Loading, empty, access denied and failed lists each say so, a failed one with Retry. Nothing is asked of
- * Kaneo until the floor is switched to Kaneo (`activate`).
+ * Kaneo until the floor is switched to Kaneo (`activate`). The lists belong to the connection they were read with
+ * (its `generation`): a connection saved, replaced or cleared meanwhile drops them and any answer still on its way,
+ * and an active picker asks the new one (so a form opened before Kaneo was connected loads once it is). A list whose
+ * `generation` is not the shown connection's is dropped too.
  */
 export class KaneoPicker {
   readonly el: HTMLElement;
@@ -39,6 +42,8 @@ export class KaneoPicker {
   private readonly projSeq = new LatestOnly();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private active = false;
+  /** The connection the lists are of ('' while there is none). */
+  private conn: string;
   private readonly off: () => void;
 
   constructor(
@@ -72,8 +77,14 @@ export class KaneoPicker {
       if (this.workspaces.s !== 'ready') this.loadWorkspaces();
       else this.loadProjects(0);
     });
+    this.conn = this.connection();
     this.off = host.book.onChange(() => {
-      if (this.active && host.book.connected && this.workspaces.s === 'error' && this.workspaces.code === 'not_configured') this.loadWorkspaces();
+      const conn = this.connection();
+      if (conn !== this.conn) {
+        this.conn = conn;
+        this.reset();
+        if (this.active && conn) this.loadWorkspaces();
+      } else if (this.active && conn && this.workspaces.s === 'error' && this.workspaces.code === 'not_configured') this.loadWorkspaces();
       this.render();
     });
     this.render();
@@ -96,9 +107,29 @@ export class KaneoPicker {
 
   dispose(): void {
     this.off();
+    this.reset();
+  }
+
+  /** The saved connection's identity: its generation while there is one, else ''. */
+  private connection(): string {
+    const b = this.host.book;
+    return b.connected ? String(b.state?.generation ?? 0) : '';
+  }
+
+  /** An answer is of the shown connection (one without a generation is taken as it). */
+  private ofConnection(data: unknown): boolean {
+    const g = (data as { generation?: unknown } | null)?.generation;
+    return typeof g !== 'number' || String(g) === this.conn;
+  }
+
+  /** Forgets the lists and every request on its way (the connection they were of is gone). */
+  private reset(): void {
     if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
     this.wsSeq.cancel();
     this.projSeq.cancel();
+    this.workspaces = { s: 'idle' };
+    this.projects = { s: 'idle' };
   }
 
   private pickWorkspace(id: string): void {
@@ -122,6 +153,7 @@ export class KaneoPicker {
         this.workspaces = { s: 'error', code: r.code, message: r.message };
         return this.render();
       }
+      if (!this.ofConnection(r.data)) return; // another connection's: the kaneo.update that says so asks again
       const d = r.data as { workspaces?: unknown };
       const items = Array.isArray(d?.workspaces) ? d.workspaces.filter((w): w is KaneoWorkspace => typeof w?.id === 'string' && typeof w?.name === 'string') : [];
       this.workspaces = { s: 'ready', items };
@@ -146,6 +178,7 @@ export class KaneoPicker {
           this.projects = { s: 'error', code: r.code, message: r.message };
           return this.render();
         }
+        if (!this.ofConnection(r.data)) return;
         const d = r.data as { projects?: unknown };
         const items = Array.isArray(d?.projects) ? d.projects.filter((p): p is KaneoProject => typeof p?.id === 'string' && typeof p?.name === 'string') : [];
         this.projects = { s: 'ready', items };

@@ -126,6 +126,50 @@ describe('a floor’s Kaneo pickers (#184)', () => {
     expect(m.p.workspaceSelect.disabled).toBe(true);
   });
 
+  it('a new connection resets the lists and asks again; a list of the old one never lands', async () => {
+    const m = mount(connected, { ws: 'ws1', project: 'p1' });
+    m.p.activate();
+    await m.answer('kaneo.workspaces');
+    expect(m.pending.map((x) => x.t)).toEqual(['kaneo.projects']); // ws1's, of the old connection: held
+    m.book.upsert({ ...connected, url: 'https://other.test', api_base: 'https://other.test/api', web_origin: 'https://other.test', default_workspace: null, generation: 2 });
+    expect(m.options(m.p.workspaceSelect)).toEqual(['Loading workspaces…']);
+    // The old connection's answers land late: nothing of them shows.
+    await m.answer('kaneo.projects', 'ws1', { ok: true, data: { workspace_id: 'ws1', projects: [{ id: 'p-old', name: 'Old instance project', workspace_id: 'ws1' }], generation: 1 } });
+    expect(m.options(m.p.projectSelect)).not.toContain('Old instance project');
+    await m.answer('kaneo.workspaces', undefined, { ok: true, data: { workspaces: [{ id: 'ws1', name: 'New studio' }], generation: 2 } });
+    expect(m.options(m.p.workspaceSelect)).toEqual(['Choose a workspace', 'New studio']);
+    await m.answer('kaneo.projects', 'ws1', { ok: true, data: { workspace_id: 'ws1', projects: [{ id: 'p9', name: 'New project', workspace_id: 'ws1' }], generation: 2 } });
+    expect(m.options(m.p.projectSelect)).toEqual(['Choose a project', 'New project']);
+    expect(m.p.projectId).toBe(''); // the old connection's project is not one of the new
+    expect(m.p.projectSelect.disabled).toBe(false);
+  });
+
+  it('a list that answers for another connection than the one shown is dropped', async () => {
+    const m = mount();
+    m.p.activate();
+    await m.answer('kaneo.workspaces', undefined, { ok: true, data: { workspaces: [{ id: 'ws1', name: 'Elsewhere' }], generation: 2 } });
+    expect(m.options(m.p.workspaceSelect)).toEqual(['Loading workspaces…']);
+    m.book.upsert({ ...connected, generation: 2 }); // the update that says so: asked again
+    expect(m.pending.map((x) => x.t)).toEqual(['kaneo.workspaces']);
+    await m.answer('kaneo.workspaces', undefined, { ok: true, data: { workspaces: WORKSPACES, generation: 2 } });
+    expect(m.options(m.p.workspaceSelect)).toEqual(['Choose a workspace', 'Studio', 'Home', 'Empty']);
+  });
+
+  it('opened before Kaneo was connected, it loads once the connection is ready', async () => {
+    const m = mount({ ...connected, state: 'off', key_set: false, default_workspace: null, generation: 0 });
+    m.p.activate();
+    expect(m.pending).toHaveLength(0);
+    m.book.upsert(connected);
+    expect(m.pending.map((x) => x.t)).toEqual(['kaneo.workspaces']);
+    await m.answer('kaneo.workspaces');
+    expect(m.p.workspaceSelect.disabled).toBe(false);
+    expect(m.p.el.querySelector<HTMLButtonElement>('[data-key="kaneo-retry"]')!.hidden).toBe(true);
+    // Disconnected again: the lists go, and nothing is asked.
+    m.book.upsert({ ...connected, state: 'off', key_set: false, generation: 2 });
+    expect(m.p.workspaceSelect.disabled).toBe(true);
+    expect(m.pending.filter((x) => x.t === 'kaneo.workspaces')).toHaveLength(0);
+  });
+
   it('a failed workspace list says why and retries', async () => {
     const m = mount();
     m.p.activate();

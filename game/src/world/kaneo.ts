@@ -106,7 +106,7 @@ export function kaneoFailureText(code: string, message: string): string {
     case 'not_found':
       return why || 'Kaneo does not know it any more (deleted, or not visible to this key).';
     case 'stale':
-      return 'The floor changed while this was saved. Save again.';
+      return 'The floor or the Kaneo connection changed while this was saved. Check the workspace and project, then save again.';
     case 'bad_request':
       return why.replace(/^bad args:\s*/, '') || 'Kaneo did not accept that.';
     case 'unknown_command':
