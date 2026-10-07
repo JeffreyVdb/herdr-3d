@@ -3102,15 +3102,39 @@ Only the envelope answers a question. The tool's `{"accepted":true}`, the turn e
 `undelivered`, `twin`, `conflict`): `twin` names another batch
 of the same turn with the same questions seen only the other way under another id (both kept: in every observed case
 the ids were equal); `conflict: true` is an id whose live and history questions differ (the first ones are kept, and
-it cannot be answered). A bridge restart forgets `sending`, `sent` and `dismissed`: the next join reads the history
-again, where only `answered` (the envelope, with `answered_by` from its client id) is visible, and everything else is
-`pending`.
+it cannot be answered). A bridge restart forgets `dismissed` (the bridge's only) and rebuilds the rest from the
+history, where only `answered` is visible (the envelope, with `answered_by` from its client id), **and from the
+bridge's own record of its answers** (below), so an answer Codex may still deliver stays `sent`.
 
 **Recovery.** The bridge joins every shared worker's thread while its server runs (above), so a question asked while
 the transcript is closed is seen live. Every (re)join reconciles the history (the turns `thread/resume` returns, and
 one more page of up to 50 older turns for a paginated thread) with what the bridge knew: new batches are added, known
-ones keep their state, envelopes there answer theirs. Questions are kept per worker and thread, not per join: a lost
-connection, a sleep and a wake keep them; send home forgets them.
+ones keep their state, envelopes there answer theirs. `thread/resume` gives a client that was not subscribed the
+thread's newest turn (running or interrupted) under its legacy item ids (`item-1`, `item-2`, …), not the question's
+`call_id`; the join reads such turns again with `thread/turns/list`, which has the `call_id` (if that read fails the
+batch shows under its `item-N` id until the turn is read again). Questions are kept per worker and thread, not per
+join: a lost connection, a sleep and a wake keep them; send home forgets them.
+
+**Across a bridge restart** (#158). Codex holds a steered answer in the running turn until its next model request, and
+the history shows it only then, so the history alone would make such a question `pending` again and a retry would be
+a second answer the model sees. The bridge therefore records every answer it sends, per question, in its store: the
+`clientUserMessageId`, the turn it is steered into (none for a `turn/start`) **before the request goes out**, then the
+turn it reached, or that no response came. On the next join, after the history, a question the history leaves
+`pending` that has such a record becomes:
+
+| Record | After the restart |
+|---|---|
+| the turn it went to is the thread's running turn | `sent`: a retry is `stale`; `undelivered` once that turn ends without it |
+| the turn it went to is not running (it ended meanwhile) | `sent`, `undelivered`: it may be answered again, once |
+| no response came | `sent`, `unconfirmed`, as before the restart: never sent again by the bridge |
+| a `turn/start` the server never confirmed | `pending`: its user message would be in the history had it been taken |
+
+A question the history shows `answered` keeps that state, and its record goes; records also go when the server
+refuses the answer, the batch is no longer known, the thread changes, and on send home. A dismissed question's record
+is kept (the dismissal itself is not), so after a restart it shows `sent`, not `pending`. What remains: a bridge that
+stops after recording an answer and before its request goes out shows it `sent` until that turn ends (then
+`undelivered`): a wait, never a second answer. A record the store failed to write is logged and lasts only until the
+bridge stops.
 
 **`worker.answer_async`** `{id, thread, batch, answers: [{index, answer}]}` answers one or more questions of one batch
 in one envelope (the native format, which the terminal shows as an answer, not as raw text, and the transcript as the

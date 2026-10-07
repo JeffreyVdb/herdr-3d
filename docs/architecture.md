@@ -160,7 +160,12 @@ MacBook (M2 Max)                                   devbox (Linux)
     any other client). The terminal's own badge clears a question at the same moment, delivery, and only that
     question. The tool's `{"accepted":true}`, the turn ending and unrelated messages never count as answers. One
     reply from the transcript is one model-visible answer: a second submission for a question already sending, sent
-    or answered is refused `stale`, and the server, which does not deduplicate, is never sent the same answer twice.
+    or answered is refused `stale`, and the server, which does not deduplicate, is never sent the same answer twice,
+    **also across a herdr-world restart**: the history does not show an answer still queued in the running turn, so
+    the bridge records each answer it sends (SQLite `codex_async_send`, before the request goes out) and a restarted
+    bridge keeps such a question `sent` while its turn runs, `undelivered` (one resend) once that turn ended without
+    it (#158, findings §12.1a; protocol "Across a bridge restart"). A restarted bridge reads the thread's newest turns
+    with `thread/turns/list`, because `thread/resume` gives them under legacy item ids, not the question's call id.
     Known limits (findings §12): the terminal and the transcript both answering one question before delivery reach the
     model twice (the bridge cannot see the terminal's queued answer), approvals and Codex's blocking questions stay
     in the terminal, images reach Codex as their path in the text (as for any Codex worker).

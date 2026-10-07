@@ -112,7 +112,11 @@ call id) (`Questions/*-question-live-item`).
   `thread/read` with `includeTurns`, a rejoining `thread/resume`, and a **cold resume after the 60 s unload** (history
   rebuilt from the rollout): `Lifecycle/cold-resume-question-id` says "live id call_3; present in cold resume: yes".
   The legacy history builder's `item-N` ids [S] did not show up on any of these paths. Phase 3 still takes the id from
-  the representation it renders.
+  the representation it renders. **Corrected by #158 [R]:** to a client that was **not subscribed** (a restarted
+  bridge), `thread/resume` gives the thread's **newest turn, running or interrupted**, with the legacy builder's ids
+  (`item-1`, `item-2`); `thread/read` and `thread/turns/list` give the same turn with the `call_id`
+  (`BridgeRestartSent/*-raw-history-active-*`, `*-raw-history-interrupted-*`). The join now reads such turns again
+  with `thread/turns/list` (§12.1a).
 - **Double submit [R]:** the same envelope sent twice idle makes two turns, two model requests and two rendered
   answers. Bridge and terminal answering one question in one active turn deliver **both** answers into one model
   request (`double-submit*`, `both-*`). The server does not deduplicate, so phase 3 must, per question id.
@@ -313,15 +317,16 @@ dir removed.
 - Real Claude worker in the reverse mixed-harness direction (needs inference).
 - Images in the composer and terminal/transcript switching in the game (phase 5). **Partly resolved by #158**: an
   image marker reaches a shared worker as its path in the text, typed or steered, as for any Codex worker, and the
-  transcript of a shared worker is its thread (§12.2). Not verified: Codex's own image input, and the game's toggle
-  against a real TUI (§12.6).
+  transcript of a shared worker is its thread (§12.2). The game's terminal/transcript toggle against a real TUI:
+  **resolved by #158's UX review** (§12.5a). Not verified: Codex's own image input (§12.6).
 - Whether a steered input survives its turn ending before the next model request. **Resolved by #156**: it is
   dropped (§11).
 - Whether the terminal's question editor accepts free text on a question that has options (#156 is strict: one of the
   options). Still open after #158.
 - **#158** resolved: a reply from either view reaching the model once through the bridge, retries and reconnects, the
-  bridge restarted, resume and the server killed and recovered, all through herdr-world itself (§12). Its own open
-  points are in §12.6.
+  bridge restarted (also with an answer still queued in the turn, §12.1a), resume and the server killed and
+  recovered, all through herdr-world itself (§12); the real game against the real TUI and the real model reading the
+  bridge's answers (§12.5a). Its own open points are in §12.6.
 
 ## 11. Phase 3: the bridge's answers (#156)
 
@@ -369,9 +374,12 @@ answer" is counted in the **model's whole input** (a model request carries the c
 [`TestCodexShareBridgeQuestions/`](codex-shared-tui-evidence/TestCodexShareBridgeQuestions/),
 [`TestCodexShareBridgeRegression/`](codex-shared-tui-evidence/TestCodexShareBridgeRegression/),
 [`TestCodexShareBridgeWorkers/`](codex-shared-tui-evidence/TestCodexShareBridgeWorkers/),
-[`TestCodexShareBridgeRollout/`](codex-shared-tui-evidence/TestCodexShareBridgeRollout/) and
+[`TestCodexShareBridgeRollout/`](codex-shared-tui-evidence/TestCodexShareBridgeRollout/),
+[`TestCodexShareBridgeRestartSent/`](codex-shared-tui-evidence/TestCodexShareBridgeRestartSent/) and
 [`TestCodexShareBridgeRealModelSmoke/`](codex-shared-tui-evidence/TestCodexShareBridgeRealModelSmoke/), cited as
-`BridgeQuestions/<label>` and so on. **[R]** below is this full stack with the mock model.
+`BridgeQuestions/<label>` and so on. **[R]** below is this full stack with the mock model. The UX review's run of the
+real game against the real TUI and model is in
+[`RealGameWalkthrough/`](codex-shared-tui-evidence/RealGameWalkthrough/), cited as `RealGame/<file>` (§12.5a).
 
 **Where the fixture differs from production**, and why:
 
@@ -406,9 +414,42 @@ needs it active.
 | 5b | Terminal **and** transcript answer one question in the asking turn | Both are delivered with the turn's next model request: the model's input holds **two** answers to that question (findings §2: the server does not deduplicate, and the bridge cannot see the terminal's queued answer before it is delivered). The bridge reports the question `answered` with the one delivered **last**: `answered_by: other`, `from-the-terminal` (its own ack had said `sent`). A known limit, below | `5b-bridge-answer-ack`, `5b-terminal-submitted`, `5b-tui-delivered-turn-active`, `5b-answered`, `5b-both-answers` |
 | 6 | The `undelivered` race and its retry | Steered (`sent`, `turn/steer`), then Ctrl+C from the game's terminal before the next model request: the turn was interrupted and the view says `sent` + **`undelivered`**; the mock got no reply. The player's second send went `via: turn/start` and was `answered`; a third was `stale` ("… is answered"). **One** reply request in all, one answer in the model's input | `6-answer-ack`, `6-undelivered`, `6-tui-interrupted`, `6-retry-ack`, `6-answered`, `6-answer-after-answered`, `6-mock-requests` |
 | — | Dismiss | `worker.dismiss_async`: `dismissed` in the bridge only, nothing sent; an answer to it afterwards `stale` ("… is dismissed") | `d-dismissed`, `d-answer-after-dismiss` |
-| 7 | herdr-world goes away and comes back with a question pending | The game's connection dropped, then herdr-world stopped. The worker's server kept running (its token's process and files: `7-server-while-bridge-gone`), the badge stayed, the turn finished and a prompt typed into the terminal ran, all without the bridge. Restarted on the same store, the new join rebuilt the **same seven batches in the same order**, no duplicate: the answered ones `answered` with the same `answered_by` (bridge or other, from the history), the pending one `pending`. The dismissal came back `pending` (dismissals are the bridge's only, #156 row 5). The pending question was then answered (`turn/start`), one reply | `7-view-before`, `7-tui-bridge-gone`, `7-tui-terminal-turn-bridge-gone`, `7-view-after`, `7-batches`, `7-answer-after-restart-ack`, `7-answered` |
+| 7 | herdr-world goes away and comes back with a question pending | The game's connection dropped, then herdr-world stopped. The worker's server kept running (its token's process and files: `7-server-while-bridge-gone`), the badge stayed, the turn finished and a prompt typed into the terminal ran, all without the bridge. Restarted on the same store, the new join rebuilt the **same seven batches in the same order**, no duplicate: the answered ones `answered` with the same `answered_by` (bridge or other, from the history), the pending one `pending`. The dismissal came back `pending` (dismissals are the bridge's only, #156 row 5). The pending question was then answered (`turn/start`), one reply. Here the asking turn had ended before the restart and the bridge had sent nothing for it; an answer still queued in a running turn across a restart is §12.1a | `7-view-before`, `7-tui-bridge-gone`, `7-tui-terminal-turn-bridge-gone`, `7-view-after`, `7-batches`, `7-answer-after-restart-ack`, `7-answered` |
 | 8 | The native composer and badge | Read off the TUI at every step above: the badge counts the questions Codex still holds, clears each one at its delivery (not when the bridge's send is accepted, not at the turn's end while active), and goes when the asking turn ends | the `*-tui*` screens |
 | — | One reply, one model-visible answer | In the model's last input: one answer to each question answered once (from either view, retried, after a restart), two to the question both views answered | `4-model-visible-answers` |
+
+### 12.1a A sent answer across a herdr-world restart [R]
+
+Found by #158's review (R1): the bridge answered with `turn/steer` (`sent`), herdr-world restarted before the turn's
+next model request delivered it, and the player's retry was taken: a steered input is not a user message in the
+history until delivery, so the restarted bridge's reconciler, rebuilt from the history, saw the question `pending`,
+and the server does not deduplicate (`BridgeQuestions/5b-both-answers`). The fix records the bridge's sends in its
+store and restores them on the join (decisions.md #158 rows 11–13; protocol.md "Across a bridge restart"). Finding
+it end to end showed a second defect: to the restarted bridge, `thread/resume` gave the running turn under legacy ids,
+so the batch came back as `item-2`, `pending`, not as `call_3` (the same suite run against the unfixed `7dcaedb`:
+"after the restart the question is … absent", the view listing `item-2` pending, so a retry would have gone out under
+an id Codex does not know). `thread/read` and `thread/turns/list` give the `call_id`; the join now reads such turns
+again with `thread/turns/list`.
+
+`TestCodexShareBridgeRestartSent`, one shared worker, the asking turn's next model request held by the mock:
+
+| # | Scenario | Result | Evidence |
+|---|---|---|---|
+| 1 | Steered, herdr-world restarts before delivery | The answer acked `sent` `via: turn/steer`; the game's connection and herdr-world went away (the worker's server and TUI stayed). The thread as a new client reads it: `thread/resume` has the running turn as `item-1`, `item-2`; `thread/read` and `thread/turns/list` as `call_3`. After the restart the view shows `call_3` **`sent`** (not `pending`, not `undelivered`); two retries (`Green`, then `Blue`) **`stale`** ("question 0 of call_3 is sent"). Released: the badge cleared while the turn still ran, `answered`, `answered_by: bridge`, `Green`; **one** reply request carrying one envelope | `BridgeRestartSent/1-answer-ack`, `1-sent`, `1-tui-bridge-gone`, `1-raw-history-active-thread-resume`, `1-raw-history-active-thread-read`, `1-raw-history-active-thread-turns-list`, `1-view-after-restart`, `1-retry-1-after-restart`, `1-retry-2-after-restart`, `1-tui-delivered-turn-active`, `1-answered`, `1-mock-requests` |
+| 2 | Steered, the turn interrupted while herdr-world is gone | Ctrl+C in the terminal with herdr-world down: "Conversation interrupted", the steered answer dropped. After the restart the question is **`sent`, `undelivered`** (its interrupted turn read again with `thread/turns/list`: resume had it as `item-N`); the resend went `via: turn/start` and was `answered`, a third answer `stale`; one reply request | `2-answer-ack`, `2-tui-interrupted-bridge-gone`, `2-raw-history-interrupted-*`, `2-view-after-restart`, `2-resend-ack`, `2-third-answer`, `2-answered`, `2-mock-requests` |
+| — | What the model saw | In the model's last input: one answer to each question; the dropped first answer to the second is not there | `model-visible-answers` |
+
+Unit tests (each fails without the fix): `codexapp.TestQuestionsRestoreASendAcrossARestart` (a live reconciler
+refuses the duplicate, a fresh one hydrated from the same running-turn history admits it, and no longer once the send
+is restored; the ended-turn, delivered, unconfirmed and unconfirmed-`turn/start` cases),
+`TestWatcherJoinReadsLegacyTurnsAgain`, and in `internal/server` `TestAsyncAnswerSentSurvivesARestart`,
+`TestAsyncAnswerUndeliveredAcrossARestart`, `TestAsyncAnswerRecordedBeforeTheResponse` (recorded before the steer
+returns) and `TestAsyncAnswerSendsGoWithTheWorker`; `store.TestCodexAsyncSends`.
+
+What remains is a wait, never a second answer: a bridge that stops after recording an answer and before its request
+goes out shows it `sent` until that turn ends (then `undelivered`); a record the store failed to write (logged) lasts
+only until the bridge stops; if `thread/turns/list` fails on the join, the newest turn keeps resume's `item-N` ids
+until the next join.
 
 ### 12.2 A shared worker's regressions [R]
 
@@ -484,7 +525,32 @@ checksums of `config.toml` and `hooks.json` were the same before and after (`bas
 herdr's `idle` before that turn had begun, so the archive ran 0.26 s into it and interrupted it (`turn_aborted`,
 `18-rollout-read-after-the-run`, read from the archived rollout afterwards). The answer was in the thread's input when
 the turn started; the run does not show the model acting on it. The suite now waits for the turn's end in the join's
-view; the one allowed run was not repeated. Two turns were used of the five allowed.
+view; the one allowed run was not repeated. Two turns were used of the five allowed. **Closed by §12.5a**: in the UX
+review's run the real model read and used the bridge's answers, during the asking turn and after an idle
+`turn/start`.
+
+### 12.5a The real game, the real TUI and the real model [R-real]
+
+#158's UX review drove the **real game** in a browser (agent-browser) against the **real herdr-world** (built from
+`7dcaedb`) and the **real Codex 0.160.1 TUI**, with **three `gpt-6.1-sol` low turns**, in a throwaway Herdr session
+with its own database, run directory and a **private CODEX_HOME**; the user's `~/.codex` daemon and files were the
+same before and after (`RealGame/baseline-before.txt`, `baseline-after.txt`, `cleanup.json`). Verdict: pass. Its
+write-up, curated: [`RealGameWalkthrough/README.md`](codex-shared-tui-evidence/RealGameWalkthrough/README.md). The
+run predates §12.1a's fix, which it does not exercise (no restart).
+
+| Check | Result | Evidence |
+|---|---|---|
+| The switch | Off by default with the "new workers only" hint; on; disabled with the reason when herdr-world has no run directory | `RealGame/02-settings-off.png`, `03-settings-on.png`, `29-settings-unavailable.png`, `settings-unavailable.json` |
+| Hire from the game | `mode: shared`, `server: running`; the server carried only the throwaway pane's Herdr variables and the private CODEX_HOME | `04-hire.png`, `hires.json`, `server-isolation.json` |
+| Active turn, the card answers | The model queued Red/Blue + free text and kept working ("still working" on the card). Red from the card: Sending → Sent → Answered, `via: turn/steer`; the terminal's badge went from 2 questions to 1 with the turn still running | `07-pending-working.png`, `card-phases.json`, `card-sent-worker.json`, `08-terminal-two-pending.png`, `12-terminal-one-pending.png`, `tui-two-pending.txt`, `tui-one-pending.txt` |
+| The terminal answers | `shift+←`, `ux-terminal-158`, Enter in the TUI: queued natively; the card showed **Answered elsewhere** (`answered_by: other`) and sent nothing | `15-native-queued.png`, `17-answered-elsewhere.png`, `tui-both-delivered.txt`, `final-worker.json` |
+| **The real model reads the answers** | "I received Red for the color" during the turn; the turn ended with `Red` / `ux-terminal-158`; after the idle `turn/start`, turn 3 ended with `ux-idle-158`. One reply envelope per answered question in the rollout | `model-read-values.txt`, `model-evidence.json`, `25-idle-model-value-terminal.png` |
+| Toggle, reload, reconnect | A draft kept across terminal ↔ transcript, a reload and a reconnect; one batch, one card | `08-terminal-two-pending.png`, `09-phone-reloaded.png` |
+| An answered card cannot submit again | Radios disabled, Send replaced by Clear; Ctrl+Enter sent no `worker.answer_async` | `18-answered-no-resend.png`, `duplicate-submit-check.json`, `answers-all.json` |
+| An ordinary prompt while a question is pending | `queued: true, via: app_server`; the turn took it without it answering the question | `11-ordinary-prompt-pending.png`, `sends-active.json` |
+| Idle question | After the asking turn ended: no badge, `shift+←` opened nothing, the card kept it; its answer `via: turn/start` | `21-idle-pending-card.png`, `22-idle-terminal-no-question.png`, `idle-terminal.txt`, `23-idle-answer-sent.png`, `24-idle-answered.png` |
+| Phone, keyboard | 390 × 844: the card stays in the viewport and scrolls; Space, Enter, Ctrl+Enter, Ctrl+Esc without the pointer. **Advisory**: Clear 59.56 × 26.25 px and the folded batch button 28.25 px tall, below a 44 px touch target (`game/src/laptop/transcript.css:2114`, `game/src/laptop/asyncCard.ts:740`); not changed | `09-phone-reloaded.png`, `10-card-sent-phone.png`, `26-phone-final-card.png`, `phone-targets.json` |
+| Rollback, send home | Switched off with the worker running: still shared and attached. Sent home from the game: no agent, the server's pid gone, the run directory empty | `19-rollback-live-worker.png`, `rollback-worker.json`, `27-send-home.png`, `28-worker-gone.png`, `send-home-check.json` |
 
 ### 12.6 Limitations after #158
 
@@ -497,9 +563,13 @@ view; the one allowed run was not repeated. Two turns were used of the five allo
   directly; the bridge never reads it).
 - **The wake's safety net** for a pane herdr resumed its own way failed in development (§12.4); after the fix it is
   reached only when a live-server terminal does not quit at sleep.
-- **The game's own views were not driven against the real TUI**: the suites use the game's protocol, not its
-  browser. The cards and the terminal/transcript toggle are #157's vitest and e2e against the fixture server.
-- **The real-model run did not show the model's reply to the bridge's answer** (§12.5).
+- ~~The game's own views were not driven against the real TUI~~ and ~~the real-model run did not show the model's
+  reply to the bridge's answer~~: **closed** by the UX review's run (§12.5a).
+- **Phone touch targets** (advisory, §12.5a): the card's Clear and folded batch buttons are under 44 px tall at
+  390 × 844. Not changed in #158.
+- **Across a restart** (§12.1a): an answer recorded but not yet sent when herdr-world stopped shows `sent` until its
+  turn ends (a wait); a record the store failed to write lasts only until the bridge stops; a failed
+  `thread/turns/list` on a join leaves the newest turn under resume's `item-N` ids until the next join.
 - Codex releases other than 0.160.x, and orchestrator-created (write-code) workers, which stay embedded (D7).
 - Whether the terminal's editor takes free text on a question with options (the terminal answers here were free-text
   questions; the bridge stays strict).
@@ -517,20 +587,20 @@ The default stays **off**: the switch is opt-in (#158's decision).
 | … interrupts | verified [R] | `9d-tui-interrupted`, `BridgeQuestions/6-tui-interrupted` |
 | … approvals | limitation | never asked with hire's arguments (`9e-tui`); approvals reach the terminal and the bridge stays passive: #155 [R] `TestCodexShareSharedApprovals` (adapter level) |
 | … images | verified as today [R], with limits | path in the text on both paths, the transcript shows it as an image (`9f-image`, `9g-transcript`); no `input_image`; upload not exercised |
-| … terminal/transcript switching | partly | the transcript of a shared worker is its thread and opening it changes nothing (`9g-transcript`); the game's toggle itself: #157's e2e, not against a real TUI |
+| … terminal/transcript switching | verified [R], [R-real] | the transcript of a shared worker is its thread and opening it changes nothing (`9g-transcript`); the game's toggle against the real TUI, a draft kept across it, a reload and a reconnect (`RealGame/08-terminal-two-pending.png`, `09-phone-reloaded.png`, §12.5a) |
 | #153: both views refer to the same worker and conversation; opening the transcript starts no turn and overrides no setting | verified [R] | `9-settings`, `9g-transcript`, `9g-after-watch`; #155 [R-real] (the join started no turn) |
-| #153: async questions can be answered while the worker still works; they do not disable the composer or make it a blocking ask | verified [R] | `BridgeQuestions/1-*` (answered during the turn); `BridgeRegression/9b-*` (a prompt while `blocked` is steered); #157 counts such a worker as working |
+| #153: async questions can be answered while the worker still works; they do not disable the composer or make it a blocking ask | verified [R], [R-real] | `BridgeQuestions/1-*` (answered during the turn); `BridgeRegression/9b-*` (a prompt while `blocked` is steered); #157 counts such a worker as working; the real game and model: `RealGame/07-pending-working.png`, `12-terminal-one-pending.png`, `11-ordinary-prompt-pending.png`, `model-read-values.txt` |
 | #153: suggested answers and free text | verified [R] | `BridgeQuestions/1-*` (option), `3-*`, `2-*` (free text) |
 | #153: multiple pending questions | verified [R] | `1-batch` (two in one batch), `4-batches` (seven batches), `BridgeWorkers/*` |
-| #153: retries | verified [R] | `6-*` (undelivered, resent once, then `stale`) |
-| #153: reconnects | verified [R] | `7-*` (game disconnect and bridge restart, no duplicate batch); `10-*` (sleep and wake) |
+| #153: retries | verified [R] | `6-*` (undelivered, resent once, then `stale`); across a restart `BridgeRestartSent/1-retry-*` (`stale` while the first may still be delivered), `2-*` (undelivered, resent once) |
+| #153: reconnects | verified [R], [R-real] | `7-*` (game disconnect and bridge restart, no duplicate batch); `BridgeRestartSent/*` (a restart with an answer still queued in the running turn: `sent`, not `pending`, §12.1a); `10-*` (sleep and wake); `RealGame/09-phone-reloaded.png` (page reload and reconnect) |
 | #153: answers submitted from the terminal | verified [R], with a limit | `2-*` (`answered_by: other`); both views on one question reach the model twice (`5b-*`) |
 | #153: "Sent" means accepted; "Answered" needs a verified association | verified [R] | `1-sent` then `1-answered`, `6-undelivered`; architecture.md "Delivered input vs verified native question resolution" |
 | #153: preserve the Claude and blocking-question flows | verified [R] | `BridgeRollout/14-claude-*`; `ask_test.go`, `TestAskTrackerIgnoresCodexAsyncQuestions`; `make integration` |
 | #153: the Codex connection change behind an opt-in switch | verified [R] | `14-switch-default`, `14-l1-*` |
-| #158: real-TUI evidence: answers from both views, active and idle turns, native question-state reconciliation | verified [R]; [R-real] for one bridge answer | §12.1 rows 1, 2, 3, 8; §12.5 |
+| #158: real-TUI evidence: answers from both views, active and idle turns, native question-state reconciliation | verified [R], [R-real] | §12.1 rows 1, 2, 3, 8; §12.5; the real game, TUI and model, both views, active and idle, the model reading each answer: §12.5a |
 | #158: normal terminal and transcript workflows, bridge disconnect and worker resume | verified [R], approvals a limitation | §12.2; §12.1 row 7 |
-| #158: one reply, one model-visible answer with retries and reconnects; a handled card cannot submit again | verified [R], with the 5b limit | `4-model-visible-answers`, `5-*`, `6-*`, `7-*` (`stale` for sending, sent, answered, dismissed) |
+| #158: one reply, one model-visible answer with retries and reconnects; a handled card cannot submit again | verified [R], [R-real], with the 5b limit | `4-model-visible-answers`, `5-*`, `6-*`, `7-*` (`stale` for sending, sent, answered, dismissed); across a herdr-world restart before delivery `BridgeRestartSent/model-visible-answers`, `1-retry-*` (§12.1a; what remains there is a wait, never a second answer); the game's answered card: `RealGame/18-answered-no-resend.png`, `duplicate-submit-check.json` |
 | #158: opt-in rollout, actionable unsupported-version behaviour, rollback: documented and verified | verified [R] | §12.3; architecture.md "Shared Codex workers" |
 | #158: repo docs explain the architecture and distinguish delivered input from verified resolution | done | architecture.md "Shared Codex workers"; protocol.md "Codex async questions" |
 | #158: all epic requirements verified or recorded as limitations | done | this table; §12.6 |
