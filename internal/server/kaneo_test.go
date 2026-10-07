@@ -314,6 +314,39 @@ func TestKaneoBoardWithAndWithoutRepo(t *testing.T) {
 	kb.noKey(kaneoKey)
 }
 
+// A Kaneo floor's pull requests are GitHub's: their rate reading is shown
+// with them (not Kaneo's, which has none), and a refusal of the code host
+// is not Kaneo refusing its key: no pause.
+func TestKaneoFloorPullRequestsKeepTheirOwnGate(t *testing.T) {
+	kb := startKaneoBridge(t)
+	tr := kb.fb.kaneoTracker("p1", 1)
+	tr.board.Cards = []tracker.Card{card("t1", "HRD-1", "First", "to-do")}
+	_, host := kb.fb.repo("JeffreyVdb/lab")
+	reset := kb.clk.Now().Add(time.Hour).UnixMilli()
+	host.board.Requests = []codehost.Request{request("JeffreyVdb/lab#31", "#31", "Kaneo boards", "feat/184", "success")}
+	host.board.Rate = &provider.Rate{Remaining: 4000, Limit: 5000, ResetAt: reset, Cost: 1}
+	kb.saveConnection(kaneoKey)
+	kb.c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", Tracker: proto.Some(proto.TrackerKaneo),
+		Kaneo: proto.Some(proto.KaneoLinkArgs{WorkspaceID: "ws1", ProjectID: "p1"}), Repo: proto.Some("JeffreyVdb/lab")})
+	w := kb.watcher()
+	w.watch("s")
+	is, ps := w.pair()
+	for is.FetchedAt == 0 || ps.FetchedAt == 0 {
+		is, ps = w.pair()
+	}
+	if is.Rate != nil || ps.Rate == nil || ps.Rate.Remaining != 4000 {
+		t.Fatalf("rates: issues %+v, pull requests %+v", is.Rate, ps.Rate)
+	}
+	host.set(func(f *fakeHost) { f.err = provider.Errorf(provider.ErrUnauthorized, "gh: not logged in") })
+	kb.clk.Advance(61 * time.Second)
+	for !is.Stale {
+		is, _ = w.pair()
+	}
+	if is.PausedUntil != 0 || kb.svc.View().State != kaneoconf.StateReady {
+		t.Fatalf("the code host's refusal paused Kaneo: %+v, %s", is, kb.svc.View().State)
+	}
+}
+
 // A new key (a new generation) drops the floor's board: a poll that was in
 // flight with the old one is never shown, and the store keeps the new one.
 func TestKaneoNewConnectionDropsBoardAndLateResults(t *testing.T) {

@@ -471,6 +471,9 @@ type pollResult struct {
 	issues tracker.Board
 	prs    *codehost.Board
 	err    error
+	// hostErr: err is the code host's (#184: a Kaneo floor's pull requests
+	// are GitHub's, whose limits and refusals are not Kaneo's).
+	hostErr bool
 }
 
 // pollProviders reads a floor's boards (off the hub goroutine): the change
@@ -481,7 +484,7 @@ func pollProviders(ctx context.Context, set BoardSet, prev codehost.PrevState) p
 	if set.Host != nil {
 		b, err := set.Host.Board(ctx, prev)
 		if err != nil {
-			return pollResult{err: err}
+			return pollResult{err: err, hostErr: true}
 		}
 		res.prs = &b
 	}
@@ -518,6 +521,10 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 	}
 	g := h.gate(bf.info.ID)
 	if res.err != nil {
+		eg := g // the gate of the provider that failed
+		if res.hostErr && bf.host != nil && bf.host.ID != bf.info.ID {
+			eg = h.gate(bf.host.ID)
+		}
 		bf.stale, bf.lastErr, bf.lastCode = true, briefError(res.err), boardCode(res.err)
 		if bf.lastCode == "" {
 			bf.lastCode = proto.ErrProviderFailed
@@ -525,15 +532,15 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 		var rl *provider.RateLimitError
 		if errors.As(res.err, &rl) {
 			if rl.ResetAt.After(now) {
-				g.until = rl.ResetAt
+				eg.until = rl.ResetAt
 			} else { // a secondary limit: no reset was named
-				g.backoff = min(max(g.backoff*2, secondaryWait), secondaryMax)
-				g.until = now.Add(g.backoff)
+				eg.backoff = min(max(eg.backoff*2, secondaryWait), secondaryMax)
+				eg.until = now.Add(eg.backoff)
 			}
-			g.rate = &provider.Rate{Remaining: 0, ResetAt: max(rl.ResetAt.UnixMilli(), g.until.UnixMilli())}
+			eg.rate = &provider.Rate{Remaining: 0, ResetAt: max(rl.ResetAt.UnixMilli(), eg.until.UnixMilli())}
 		}
 		bf.nextAt = now.Add(h.boardInterval(bf.session))
-		if errors.Is(res.err, provider.ErrUnauthorized) && bf.src.Tracker == TrackerKaneo {
+		if errors.Is(res.err, provider.ErrUnauthorized) && bf.src.Tracker == TrackerKaneo && !res.hostErr {
 			// #184: Kaneo refused the key, which may be its request quota:
 			// every Kaneo floor stops polling for the cooldown (a re-test or a
 			// new key ends it sooner), never hammering it.
@@ -553,6 +560,9 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 		if bf.set.Host != nil {
 			p := bf.prsMsg(false)
 			p.Rate = g.rate
+			if bf.host != nil && bf.host.ID != bf.info.ID {
+				p.Rate = h.gate(bf.host.ID).rate
+			}
 			ps = &p
 		}
 		h.fanOut(bf.session, is, ps)
@@ -560,10 +570,13 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 	}
 	g.backoff, g.until = 0, time.Time{}
 	rate := res.issues.Rate
+	prRate := rate
 	if res.prs != nil && bf.host != nil && bf.host.ID != bf.info.ID {
-		h.gate(bf.host.ID).rate = res.prs.Rate // #184: a Kaneo floor's pull requests are GitHub's
+		hg := h.gate(bf.host.ID) // #184: a Kaneo floor's pull requests are GitHub's
+		hg.rate, hg.backoff, hg.until = res.prs.Rate, 0, time.Time{}
+		prRate = res.prs.Rate
 	} else if rate == nil && res.prs != nil {
-		rate = res.prs.Rate
+		rate, prRate = res.prs.Rate, res.prs.Rate
 	}
 	g.rate = rate
 	bf.stale, bf.lastErr, bf.lastCode, bf.paused = false, "", "", time.Time{}
@@ -596,7 +609,7 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 	var prPayload []byte
 	if res.prs != nil {
 		p := proto.BoardPRs{T: proto.TBoardPRs, Session: bf.session, Provider: bf.host.ID, ProviderName: bf.host.Name,
-			FetchedAt: now.UnixMilli(), Truncated: res.prs.Truncated, Rate: rate, Capabilities: bf.host.Capabilities,
+			FetchedAt: now.UnixMilli(), Truncated: res.prs.Truncated, Rate: prRate, Capabilities: bf.host.Capabilities,
 			PRs: res.prs.Requests, Merged: []codehost.Merged{}}
 		if p.PRs == nil {
 			p.PRs = []codehost.Request{}
