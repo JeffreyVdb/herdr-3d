@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
 
@@ -627,5 +629,175 @@ func TestAsyncBlockedFlagGoesWithTheThread(t *testing.T) {
 	c := upsertFor(sb.c, a.ID, func(w *proto.Worker) bool { return w.Codex != nil && w.Codex.Thread == next }).Codex
 	if c.AsyncBlocked || len(c.Questions) != 0 {
 		t.Fatalf("another thread: %+v", c)
+	}
+}
+
+// restartWith stops the bridge and starts it again on the same store and
+// floor, the join reading history; it waits until the bridge joined.
+func (sb *sharedBridge) restartWith(t *testing.T, history *codexapp.Thread) *sharedBridge {
+	t.Helper()
+	sb.fl.mu.Lock()
+	workers := slices.Clone(sb.fl.workers)
+	sb.fl.mu.Unlock()
+	sb.stop()
+	history.Status.Type = "active"
+	if history.ActiveTurn() == "" {
+		history.Status.Type = "idle"
+	}
+	sb.host.mu.Lock()
+	sb.host.history = history
+	sb.host.mu.Unlock()
+	next := startSharedBridgeAt(t, sb.db, sb.host, false, workers...)
+	next.codexWorker(t, func(c *proto.WorkerCodex) bool { return c.Attached })
+	return next
+}
+
+// #158 R1: herdr-world restarts while its steered answer waits in the
+// running turn (Codex delivers it with the turn's next model request; the
+// history does not show it yet). The answer it recorded keeps the question
+// sent: a retry is stale, nothing is sent twice. When the turn ends
+// without it, it is undelivered and may be sent once more.
+func TestAsyncAnswerSentSurvivesARestart(t *testing.T) {
+	sb, a := asyncWorker(t)
+	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", colorQ, contextQ)))
+	sb.stateIs(t, "call_3", 0, proto.AsyncPending)
+	sb.c.mustAck(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "Green")))
+	sb.stateIs(t, "call_3", 0, proto.AsyncSent)
+	recorded, err := sb.st.CodexAsyncSends(context.Background())
+	if err != nil || len(recorded[a.ID]) != 1 || recorded[a.ID][0].Turn != "t1" || !recorded[a.ID][0].Confirmed ||
+		recorded[a.ID][0].ClientID != sb.sent()[0].cid {
+		t.Fatalf("recorded sends = %+v, %v", recorded, err)
+	}
+
+	// The same running turn, its history without the queued answer.
+	sb = sb.restartWith(t, &codexapp.Thread{Turns: []codexapp.Turn{
+		{ID: "t1", Status: codexapp.TurnInProgress, Items: []codexapp.Item{asyncItem("call_3", colorQ, contextQ)}}}})
+	c := sb.stateIs(t, "call_3", 0, proto.AsyncSent)
+	if q := batchOf(c, "call_3").Questions; q[0].Undelivered || q[1].State != proto.AsyncPending || c.Turn != "t1" {
+		t.Fatalf("after the restart = %+v (turn %q)", q, c.Turn)
+	}
+	sb.c.mustError(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "Green")), proto.ErrStale)
+	if n := len(sb.sent()); n != 1 {
+		t.Fatalf("%d sends, want the one before the restart", n)
+	}
+	// The turn ends without delivering it: undelivered, one resend.
+	sb.emit(turnCompleted("t1"))
+	sb.codexWorker(t, func(c *proto.WorkerCodex) bool {
+		b := batchOf(*c, "call_3")
+		return b != nil && b.Questions[0].Undelivered
+	})
+	_, m := sb.c.command(proto.CmdWorkerAnswerAsync, "again", answerArgs(a.ID, "call_3", ans(0, "Green")))
+	if res := ackData[proto.AsyncAnswerResult](t, m); res.Via != "turn/start" {
+		t.Fatalf("resend ack = %+v", res)
+	}
+	sb.c.mustError(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "Green")), proto.ErrStale)
+	sends := sb.sent()
+	if len(sends) != 2 {
+		t.Fatalf("%d sends, want 2", len(sends))
+	}
+	// Delivered: answered by the bridge, and its record goes.
+	sb.emit(itemDone("t-started", userItem("u", sends[1].cid, sends[1].text)))
+	sb.stateIs(t, "call_3", 0, proto.AsyncAnswered)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		recorded, _ = sb.st.CodexAsyncSends(context.Background())
+		if len(recorded[a.ID]) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("an answered question's send is still recorded: %+v", recorded)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// #158 R1: the turn the answer was steered into ended while herdr-world
+// was gone, without it: undelivered after the restart, one resend allowed.
+// An answer that was delivered meanwhile is answered, and goes.
+func TestAsyncAnswerUndeliveredAcrossARestart(t *testing.T) {
+	sb, a := asyncWorker(t)
+	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", contextQ)), itemDone("t1", asyncItem("call_4", contextQ)))
+	sb.stateIs(t, "call_4", 0, proto.AsyncPending)
+	sb.c.mustAck(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "dropped")))
+	sb.c.mustAck(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_4", ans(0, "delivered")))
+	sends := sb.sent()
+
+	sb = sb.restartWith(t, &codexapp.Thread{Turns: []codexapp.Turn{
+		{ID: "t1", Status: "interrupted", Items: []codexapp.Item{asyncItem("call_3", contextQ), asyncItem("call_4", contextQ),
+			userItem("u", sends[1].cid, sends[1].text)}}}})
+	c := sb.stateIs(t, "call_4", 0, proto.AsyncAnswered)
+	if q := batchOf(c, "call_3").Questions[0]; q.State != proto.AsyncSent || !q.Undelivered {
+		t.Fatalf("after the restart call_3 = %+v", q)
+	}
+	if q := batchOf(c, "call_4").Questions[0]; q.AnsweredBy != codexapp.AnsweredByBridge {
+		t.Fatalf("call_4 = %+v", q)
+	}
+	recorded, _ := sb.st.CodexAsyncSends(context.Background())
+	if len(recorded[a.ID]) != 1 || recorded[a.ID][0].Batch != "call_3" {
+		t.Fatalf("recorded = %+v", recorded)
+	}
+	sb.c.mustAck(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "again")))
+	sb.c.mustError(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "again")), proto.ErrStale)
+	if n := len(sb.sent()); n != 3 {
+		t.Fatalf("%d sends, want 3", n)
+	}
+}
+
+// #158 R1: a send recorded before its response came (herdr-world stopped
+// in between) counts as sent into the turn it was steered into.
+func TestAsyncAnswerRecordedBeforeTheResponse(t *testing.T) {
+	sb, a := asyncWorker(t)
+	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", contextQ)))
+	sb.stateIs(t, "call_3", 0, proto.AsyncPending)
+	release := make(chan struct{})
+	seen := make(chan struct{})
+	sb.host.mu.Lock()
+	sb.host.steer = func(turn, _, _ string) (string, error) {
+		close(seen)
+		<-release
+		return turn, nil
+	}
+	sb.host.mu.Unlock()
+	go sb.c.command(proto.CmdWorkerAnswerAsync, "ans", answerArgs(a.ID, "call_3", ans(0, "x")))
+	<-seen
+	recorded, err := sb.st.CodexAsyncSends(context.Background())
+	if err != nil || len(recorded[a.ID]) != 1 || recorded[a.ID][0].Turn != "t1" || recorded[a.ID][0].Confirmed {
+		t.Fatalf("recorded while the steer is in flight = %+v, %v", recorded, err)
+	}
+	close(release)
+	sb.stateIs(t, "call_3", 0, proto.AsyncSent)
+	if err := sb.st.RecordCodexAsyncSends(context.Background(), []store.CodexAsyncSend{{WorkerID: a.ID, Thread: asyncThread,
+		Batch: "call_3", ClientID: "herdr_3d-00", Turn: "t1"}}); err != nil {
+		t.Fatal(err)
+	}
+	sb.host.mu.Lock()
+	sb.host.steer = nil
+	sb.host.mu.Unlock()
+	sb = sb.restartWith(t, &codexapp.Thread{Turns: []codexapp.Turn{
+		{ID: "t1", Status: codexapp.TurnInProgress, Items: []codexapp.Item{asyncItem("call_3", contextQ)}}}})
+	sb.stateIs(t, "call_3", 0, proto.AsyncSent)
+	sb.c.mustError(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "x")), proto.ErrStale)
+}
+
+// #158: sending a worker home forgets its recorded sends.
+func TestAsyncAnswerSendsGoWithTheWorker(t *testing.T) {
+	sb, a := asyncWorker(t)
+	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", contextQ)))
+	sb.stateIs(t, "call_3", 0, proto.AsyncPending)
+	sb.c.mustAck(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "x")))
+	if recorded, _ := sb.st.CodexAsyncSends(context.Background()); len(recorded[a.ID]) != 1 {
+		t.Fatalf("recorded = %+v", recorded)
+	}
+	sb.c.mustAck(proto.CmdWorkerFire, proto.WorkerFireArgs{ID: a.ID})
+	deadline := time.Now().Add(5 * time.Second)
+	var recorded map[string][]store.CodexAsyncSend
+	for {
+		if recorded, _ = sb.st.CodexAsyncSends(context.Background()); len(recorded) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("sent home, still recorded: %+v", recorded)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

@@ -396,3 +396,124 @@ func TestQuestionsUndelivered(t *testing.T) {
 		t.Fatalf("after hydration = %+v", x)
 	}
 }
+
+// #158 R1: the bridge restarts while its steered answer waits in the
+// running turn. The live reconciler refuses a second answer; a fresh one
+// hydrated from the same history sees the question pending (the queued
+// steer is not a user message yet) and would admit it, unless the send the
+// bridge recorded is restored.
+func TestQuestionsRestoreASendAcrossARestart(t *testing.T) {
+	history := []Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("call_3", colorQ, contextQ)}}}
+	reply := []Reply{{Index: 0, Text: "Green"}}
+	live := NewQuestions("th")
+	live.Hydrate(history)
+	if _, err := live.Begin("call_3", reply); err != nil {
+		t.Fatal(err)
+	}
+	live.Sent("call_3", []int{0}, "t1", false)
+	if _, err := live.Check("call_3", reply); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("live reconciler: %v", err)
+	}
+	fresh := func() *Questions {
+		q := NewQuestions("th")
+		q.Hydrate(history)
+		return q
+	}
+	if _, err := fresh().Check("call_3", reply); err != nil {
+		t.Fatalf("a fresh reconciler refuses the answer by itself (%v): the restore is not what this tests", err)
+	}
+
+	// Steered into the turn still running: sent, a second answer stale.
+	q := fresh()
+	if !q.Restore(PriorSend{Batch: "call_3", Index: 0, Turn: "t1", Confirmed: true}, "t1") {
+		t.Fatal("the send no longer matters")
+	}
+	if _, err := q.Check("call_3", reply); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("restored, running: %v", err)
+	}
+	if x := q.Batch("call_3").Questions[0]; x.State != QSent || x.Undelivered || x.Unconfirmed {
+		t.Fatalf("restored, running = %+v", x)
+	}
+	if x := q.Batch("call_3").Questions[1]; x.State != QPending {
+		t.Fatalf("the other question = %+v", x)
+	}
+	// Recorded before the response came (the bridge stopped in between):
+	// the same while the turn it went to runs.
+	q = fresh()
+	q.Restore(PriorSend{Batch: "call_3", Index: 0, Turn: "t1"}, "t1")
+	if _, err := q.Check("call_3", reply); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("restored before the response: %v", err)
+	}
+	// The turn ends afterwards without delivering it: undelivered, one
+	// resend.
+	q.TurnEnded("t1")
+	if x := q.Batch("call_3").Questions[0]; !x.Undelivered {
+		t.Fatalf("after the turn ended = %+v", x)
+	}
+	if _, err := q.Begin("call_3", reply); err != nil {
+		t.Fatalf("resend: %v", err)
+	}
+	if _, err := q.Check("call_3", reply); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("a second resend: %v", err)
+	}
+
+	// The turn ended while the bridge was gone: undelivered, a resend
+	// allowed.
+	ended := []Turn{{ID: "t1", Status: "interrupted", Items: []Item{asyncItem("call_3", colorQ, contextQ)}}}
+	q = NewQuestions("th")
+	q.Hydrate(ended)
+	q.Restore(PriorSend{Batch: "call_3", Index: 0, Turn: "t1", Confirmed: true}, "")
+	if x := q.Batch("call_3").Questions[0]; x.State != QSent || !x.Undelivered {
+		t.Fatalf("restored, turn ended = %+v", x)
+	}
+	if _, err := q.Check("call_3", reply); err != nil {
+		t.Fatalf("resend after the turn ended: %v", err)
+	}
+
+	// Delivered meanwhile: the history's envelope wins.
+	answered := []Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("call_3", colorQ, contextQ),
+		userItem("u", NewClientID(), ReplyEnvelope(Answer{MessageID: "call_3", Index: 0, Answer: "Green"}))}}}
+	q = NewQuestions("th")
+	q.Hydrate(answered)
+	if q.Restore(PriorSend{Batch: "call_3", Index: 0, Turn: "t1", Confirmed: true}, "t1") {
+		t.Fatal("an answered question's send still matters")
+	}
+	if x := q.Batch("call_3").Questions[0]; x.State != QAnswered || x.AnsweredBy != AnsweredByBridge {
+		t.Fatalf("answered = %+v", x)
+	}
+
+	// Unconfirmed: sent and unconfirmed, never resent by itself.
+	q = fresh()
+	q.Restore(PriorSend{Batch: "call_3", Index: 0, Unconfirmed: true}, "t1")
+	if x := q.Batch("call_3").Questions[0]; x.State != QSent || !x.Unconfirmed {
+		t.Fatalf("unconfirmed = %+v", x)
+	}
+	q.TurnEnded("t1")
+	if _, err := q.Check("call_3", reply); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("unconfirmed after the turn: %v", err)
+	}
+
+	// A turn/start that got no confirmation: its user message would be in
+	// the history, so nothing was delivered; pending.
+	q = NewQuestions("th")
+	q.Hydrate(ended)
+	if q.Restore(PriorSend{Batch: "call_3", Index: 0}, "") {
+		t.Fatal("an unconfirmed-by-response turn/start still matters")
+	}
+	if x := q.Batch("call_3").Questions[0]; x.State != QPending {
+		t.Fatalf("turn/start before its response = %+v", x)
+	}
+
+	// A batch the reconciler no longer has, a question out of range.
+	if q.Restore(PriorSend{Batch: "call_9", Turn: "t1"}, "t1") || q.Restore(PriorSend{Batch: "call_3", Index: 5, Turn: "t1"}, "t1") {
+		t.Fatal("a send to nothing still matters")
+	}
+
+	// The live reconciler (a rejoin, not a restart): nothing changes.
+	if !live.Restore(PriorSend{Batch: "call_3", Index: 0, Turn: "t0", Confirmed: true}, "t1") {
+		t.Fatal("the live send no longer matters")
+	}
+	if x := live.Batch("call_3").Questions[0]; x.State != QSent || x.Undelivered {
+		t.Fatalf("live after restore = %+v", x)
+	}
+}

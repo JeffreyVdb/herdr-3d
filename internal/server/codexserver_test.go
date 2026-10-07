@@ -41,6 +41,8 @@ type fakeCodexHost struct {
 	steer func(turn, text, cid string) (string, error)
 	start func(text, cid string) (string, error)
 	sends []fakeSend
+	// #158: the thread a new join reads (nil: an empty one).
+	history *codexapp.Thread
 }
 
 // fakeSend is one Steer or StartTurn of a fake watch.
@@ -148,7 +150,12 @@ func (f *fakeCodexHost) Watch(o codexapp.Options) (server.CodexWatch, error) {
 	f.mu.Lock()
 	f.watches = append(f.watches, w)
 	f.mu.Unlock()
-	go o.OnEvent(codexapp.Event{Kind: codexapp.EvJoined, Thread: &codexapp.Thread{ID: o.Thread}})
+	th := &codexapp.Thread{ID: o.Thread}
+	if f.history != nil {
+		c := *f.history
+		c.ID, th = o.Thread, &c
+	}
+	go o.OnEvent(codexapp.Event{Kind: codexapp.EvJoined, Thread: th})
 	return w, nil
 }
 
@@ -168,10 +175,16 @@ type sharedBridge struct {
 // with the switch on unless off.
 func startSharedBridge(t *testing.T, on bool, workers ...world.WorkerObs) *sharedBridge {
 	t.Helper()
-	host := newFakeCodexHost()
+	return startSharedBridgeAt(t, "", newFakeCodexHost(), on, workers...)
+}
+
+// startSharedBridgeAt is startSharedBridge on the database at db ("": a new
+// one) and host, for a test that restarts the bridge.
+func startSharedBridgeAt(t *testing.T, db string, host *fakeCodexHost, on bool, workers ...world.WorkerObs) *sharedBridge {
+	t.Helper()
 	term := newFakeTerm()
 	sessions := t.TempDir()
-	hb := startHireBridge(t, func(o *server.Options) {
+	hb := startHireBridgeAt(t, db, func(o *server.Options) {
 		o.CodexRun, o.CodexHost, o.CodexPoll = codexRun, host, 20*time.Millisecond
 		o.Term, o.CodexRejoin = term, 150*time.Millisecond
 		o.Usage = &server.UsageConfig{Roots: usage.Roots{CodexSessions: sessions}, Interval: 20 * time.Millisecond}

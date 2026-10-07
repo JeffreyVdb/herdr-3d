@@ -23,6 +23,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
 
 // Bounds of the async questions on the wire (they are in every snapshot)
@@ -58,13 +59,22 @@ func (h *Hub) threadQuestions(id, thread string) *codexapp.Questions {
 }
 
 // codexJoined takes a join's thread: its running turn, and its history
-// reconciled with what the bridge already knew of its questions.
-func (h *Hub) codexJoined(id string, cw *codexWatch, th *codexapp.Thread) {
+// reconciled with what the bridge already knew of its questions, its
+// recorded sends included (#158: after a restart they are all it knows of
+// an answer still waiting in the running turn).
+func (h *Hub) codexJoined(ctx context.Context, id string, cw *codexWatch, th *codexapp.Thread) {
 	if th == nil || h.cx.launches[id].Thread != cw.thread {
 		return
 	}
 	cw.turn = th.ActiveTurn()
-	h.threadQuestions(id, cw.thread).Hydrate(th.Turns)
+	q := h.threadQuestions(id, cw.thread)
+	q.Hydrate(th.Turns)
+	for k, x := range h.cx.sends[id] {
+		if x.Thread != cw.thread || !q.Restore(codexapp.PriorSend{Batch: x.Batch, Index: x.Index, Turn: x.Turn,
+			Confirmed: x.Confirmed, Unconfirmed: x.Unconfirmed}, cw.turn) {
+			h.forgetSend(ctx, id, k)
+		}
+	}
 }
 
 // codexNote is the part of the notifications the bridge reads.
@@ -82,14 +92,16 @@ type codexNote struct {
 }
 
 // codexNotification is one notification of the join (hub goroutine).
-func (h *Hub) codexNotification(id string, cw *codexWatch, method string, params json.RawMessage) {
+func (h *Hub) codexNotification(ctx context.Context, id string, cw *codexWatch, method string, params json.RawMessage) {
 	var n codexNote
 	if json.Unmarshal(params, &n) != nil || n.ThreadID != cw.thread || h.cx.launches[id].Thread != cw.thread {
 		return
 	}
 	switch method {
 	case "item/started", "item/completed":
-		h.threadQuestions(id, cw.thread).Observe(n.TurnID, n.Item, codexapp.OriginLive)
+		if h.threadQuestions(id, cw.thread).Observe(n.TurnID, n.Item, codexapp.OriginLive) {
+			h.pruneSends(ctx, id)
+		}
 	case "turn/started":
 		cw.turn = n.Turn.ID
 	case "turn/completed":
@@ -302,6 +314,9 @@ func (h *Hub) answerAsync(ctx context.Context, a proto.WorkerAnswerAsyncArgs, t 
 		for _, x := range answers {
 			s.indexes = append(s.indexes, x.Index)
 		}
+		// Recorded before it goes out (#158): the turn it is steered into,
+		// or none for a turn it starts.
+		h.recordSends(ctx, a.ID, a.Thread, a.Batch, s.indexes, store.CodexAsyncSend{ClientID: s.cid, Turn: s.turn})
 		return s
 	})
 	if err != nil {
@@ -320,11 +335,17 @@ func (h *Hub) answerAsync(ctx context.Context, a proto.WorkerAnswerAsyncArgs, t 
 		switch {
 		case err == nil:
 			s.q.Sent(a.Batch, s.indexes, res.Turn, false)
+			h.recordSends(ctx, a.ID, a.Thread, a.Batch, s.indexes, store.CodexAsyncSend{ClientID: s.cid, Turn: res.Turn, Confirmed: true})
 		case unconfirmed:
 			s.q.Sent(a.Batch, s.indexes, "", true)
+			h.recordSends(ctx, a.ID, a.Thread, a.Batch, s.indexes, store.CodexAsyncSend{ClientID: s.cid, Unconfirmed: true})
 		default:
 			s.q.Failed(a.Batch, s.indexes, err.Error())
+			for _, i := range s.indexes {
+				h.forgetSend(ctx, a.ID, sendKey{a.Batch, i})
+			}
 		}
+		h.pruneSends(ctx, a.ID) // delivered before the response came
 		h.refreshCodex(a.ID)
 	})
 	switch {
@@ -432,4 +453,102 @@ func (h *Hub) promptViaServer(ctx context.Context, id, text string) (any, bool, 
 		return nil, true, fmt.Errorf("%w: %v", errPromptFailed, err)
 	}
 	return proto.PromptResult{Queued: via == viaSteer, Via: viaAppServer}, true, nil
+}
+
+// #158: the bridge's answers Codex accepted, or may have, whose question is
+// not answered yet, kept in the store (codex_async_send) and in
+// codexState.sends. Codex holds a steered answer in the running turn until
+// its next model request, and the thread's history shows it only then; a
+// restarted bridge rebuilds its questions from that history, so without
+// these it would take, and send, a second answer the model then sees too.
+// A send is recorded before its request goes out and updated with the
+// response; it goes once its question is answered (or its batch is gone),
+// when its answer is refused, when the thread changes and when the worker is
+// sent home. A dismissal keeps it: the bridge forgets dismissals on a
+// restart, and the answer may still be on its way.
+
+// sendKey is a question of a worker's thread.
+type sendKey struct {
+	batch string
+	index int
+}
+
+// loadSends reads the recorded sends (initCodex).
+func (h *Hub) loadSends(ctx context.Context) error {
+	all, err := h.st.CodexAsyncSends(ctx)
+	if err != nil {
+		return err
+	}
+	for id, xs := range all {
+		for _, x := range xs {
+			h.sendsOf(id)[sendKey{x.Batch, x.Index}] = x
+		}
+	}
+	return nil
+}
+
+func (h *Hub) sendsOf(id string) map[sendKey]store.CodexAsyncSend {
+	m := h.cx.sends[id]
+	if m == nil {
+		m = map[sendKey]store.CodexAsyncSend{}
+		h.cx.sends[id] = m
+	}
+	return m
+}
+
+// recordSends records the questions of one answer as x says (hub
+// goroutine). A store that fails is logged: that answer is then known only
+// until the bridge stops.
+func (h *Hub) recordSends(ctx context.Context, id, thread, batch string, indexes []int, x store.CodexAsyncSend) {
+	xs := make([]store.CodexAsyncSend, 0, len(indexes))
+	for _, i := range indexes {
+		x.WorkerID, x.Thread, x.Batch, x.Index = id, thread, batch, i
+		xs = append(xs, x)
+		h.sendsOf(id)[sendKey{batch, i}] = x
+	}
+	if err := h.st.RecordCodexAsyncSends(context.WithoutCancel(ctx), xs); err != nil {
+		h.log.Error("recording an async answer failed: a restart may take it again", "worker", id, "batch", batch, "err", err)
+	}
+}
+
+// forgetSend drops one question's send (hub goroutine).
+func (h *Hub) forgetSend(ctx context.Context, id string, k sendKey) {
+	if _, ok := h.cx.sends[id][k]; !ok {
+		return
+	}
+	delete(h.cx.sends[id], k)
+	if err := h.st.ForgetCodexAsyncSend(context.WithoutCancel(ctx), id, k.batch, k.index); err != nil {
+		h.log.Error("forgetting an async answer failed", "worker", id, "batch", k.batch, "err", err)
+	}
+}
+
+// forgetSends drops a worker's sends (hub goroutine).
+func (h *Hub) forgetSends(ctx context.Context, id string) {
+	if len(h.cx.sends[id]) == 0 {
+		return
+	}
+	delete(h.cx.sends, id)
+	if err := h.st.ForgetCodexAsyncSends(context.WithoutCancel(ctx), id); err != nil {
+		h.log.Error("forgetting the async answers failed", "worker", id, "err", err)
+	}
+}
+
+// pruneSends drops a worker's sends whose question is answered or gone
+// from its thread's questions (hub goroutine). Before the bridge has
+// joined the thread (its questions not read yet) it keeps them.
+func (h *Hub) pruneSends(ctx context.Context, id string) {
+	q := h.cx.questions[id]
+	thread := h.cx.launches[id].Thread
+	for k, x := range h.cx.sends[id] {
+		if x.Thread != thread {
+			h.forgetSend(ctx, id, k)
+			continue
+		}
+		if q == nil || q.Thread != thread {
+			continue
+		}
+		if st, ok := q.StateOf(k.batch, k.index); !ok || st == codexapp.QAnswered {
+			h.forgetSend(ctx, id, k)
+		}
+	}
 }

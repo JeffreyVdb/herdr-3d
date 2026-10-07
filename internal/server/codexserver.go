@@ -108,6 +108,9 @@ type codexState struct {
 	// #156: worker id → its thread's async questions. Not the join's: they
 	// outlive it (a reconnect, a sleep) and go with the thread.
 	questions map[string]*codexapp.Questions
+	// #158: worker id → the bridge's answers Codex may still hold
+	// (codex_async_send): they outlive a restart (codexquestions.go).
+	sends map[string]map[sendKey]store.CodexAsyncSend
 }
 
 // codexWatch is the bridge joined (or joining) a worker's thread on one
@@ -132,9 +135,13 @@ type codexWatch struct {
 // initCodex loads the switch and the launches (NewHub).
 func (h *Hub) initCodex(ctx context.Context) error {
 	h.cx = codexState{launches: map[string]store.CodexLaunch{}, server: map[string]string{},
-		watches: map[string]*codexWatch{}, busy: map[string]bool{}, questions: map[string]*codexapp.Questions{}}
+		watches: map[string]*codexWatch{}, busy: map[string]bool{}, questions: map[string]*codexapp.Questions{},
+		sends: map[string]map[sendKey]store.CodexAsyncSend{}}
 	en, _, err := h.st.LoadCodexServerSettings(ctx)
 	if err != nil {
+		return err
+	}
+	if err := h.loadSends(ctx); err != nil {
 		return err
 	}
 	h.cx.enabled = en && h.codexAvailable()
@@ -297,6 +304,7 @@ func (h *Hub) noteCodexThread(ctx context.Context, id, thread string) {
 		}
 	}
 	delete(h.cx.questions, id) // #156: the old thread's questions go with it
+	h.forgetSends(ctx, id)
 	h.updateLaunch(ctx, id, func(l *store.CodexLaunch) { l.Thread = thread })
 }
 
@@ -350,7 +358,7 @@ func (h *Hub) syncCodexWatches(ctx context.Context) {
 		cw := &codexWatch{thread: l.Thread, token: l.Token, requests: map[string]bool{}}
 		w, err := h.opts.CodexHost.Watch(codexapp.Options{Socket: launchOf(l).Socket(), Thread: cw.thread,
 			ClientVersion: version.Version, OnEvent: func(e codexapp.Event) {
-				_ = h.do(ctx, func(context.Context) { h.codexEvent(id, cw, e) })
+				_ = h.do(ctx, func(ctx context.Context) { h.codexEvent(ctx, id, cw, e) })
 			}})
 		if err != nil {
 			h.log.Warn("joining the codex thread failed", "worker", id, "err", err)
@@ -379,16 +387,16 @@ func (h *Hub) retryCodexJoin(id string) {
 // codexEvent is one event of the bridge's join of a worker's thread (hub
 // goroutine): whether it is joined, and (#156) its thread's async
 // questions, running turn and open server requests.
-func (h *Hub) codexEvent(id string, cw *codexWatch, e codexapp.Event) {
+func (h *Hub) codexEvent(ctx context.Context, id string, cw *codexWatch, e codexapp.Event) {
 	if h.cx.watches[id] != cw { // a join that was left or replaced
 		return
 	}
 	switch e.Kind {
 	case codexapp.EvJoined:
 		cw.attached = true
-		h.codexJoined(id, cw, e.Thread)
+		h.codexJoined(ctx, id, cw, e.Thread)
 	case codexapp.EvNotification:
-		h.codexNotification(id, cw, e.Method, e.Params)
+		h.codexNotification(ctx, id, cw, e.Method, e.Params)
 	case codexapp.EvServerRequest:
 		cw.requests[compactJSON(e.RequestID)] = true
 	case codexapp.EvDisconnected, codexapp.EvClosed:
@@ -525,6 +533,7 @@ func (h *Hub) forgetCodex(ctx context.Context, id string) {
 		h.log.Error("forgetting the codex launch failed", "worker", id, "err", err)
 	}
 	delete(h.cx.questions, id)
+	h.forgetSends(ctx, id)
 	delete(h.cx.launches, id)
 	delete(h.cx.server, id)
 	delete(h.cx.busy, id)

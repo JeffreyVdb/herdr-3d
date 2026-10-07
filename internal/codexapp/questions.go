@@ -227,6 +227,16 @@ func (q *Questions) Batch(id string) *Batch {
 	return &c
 }
 
+// StateOf is a question's state; ok is false when its batch or the
+// question is unknown.
+func (q *Questions) StateOf(batch string, index int) (QuestionState, bool) {
+	b := q.batches[batch]
+	if b == nil || index < 0 || index >= len(b.Questions) {
+		return "", false
+	}
+	return b.Questions[index].State, true
+}
+
 // Batches returns copies of the batches, oldest first.
 func (q *Questions) Batches() []Batch {
 	out := make([]Batch, 0, len(q.order))
@@ -544,6 +554,55 @@ func (q *Questions) Failed(batch string, indexes []int, reason string) {
 			x.State, x.Error = QPending, reason
 		}
 	})
+}
+
+// PriorSend is the bridge's answer to one question as it recorded it before
+// a restart (#158). A steered answer waits in the running turn until its
+// next model request, where the thread's history does not show it, so the
+// history alone would make the question pending again.
+type PriorSend struct {
+	Batch string
+	Index int
+	// Turn is the turn the answer was steered into ("" for one starting a
+	// turn) or, Confirmed, the turn it reached.
+	Turn string
+	// Confirmed: the server accepted it. Unconfirmed: no response came.
+	Confirmed, Unconfirmed bool
+}
+
+// Restore takes a prior send after the history (Hydrate), running being the
+// thread's running turn ("" idle); it reports whether the send still
+// matters. It only ever turns a pending question into a sent one:
+//
+//   - its batch is gone, or the question is answered: it no longer matters;
+//   - the question is not pending (this reconciler saw the send itself, or
+//     a dismissal): unchanged;
+//   - unconfirmed: sent and unconfirmed, as before the restart;
+//   - steered into the running turn: sent (Codex may still deliver it);
+//   - steered into, or started, a turn that is not running: sent and
+//     undelivered (that turn ended without its user message);
+//   - a turn/start never confirmed: not delivered either (its user message
+//     would be in the history): pending, and it no longer matters.
+func (q *Questions) Restore(s PriorSend, running string) bool {
+	b := q.batches[s.Batch]
+	if b == nil || s.Index < 0 || s.Index >= len(b.Questions) {
+		return false
+	}
+	x := &b.Questions[s.Index]
+	switch {
+	case x.State == QAnswered:
+		return false
+	case x.State != QPending:
+		return true
+	case s.Unconfirmed:
+		x.State, x.Unconfirmed, x.Error = QSent, true, ""
+	case s.Turn == "":
+		return false
+	default:
+		x.State, x.reached, x.Error = QSent, s.Turn, ""
+		x.Undelivered = s.Turn != running
+	}
+	return true
 }
 
 func (q *Questions) each(batch string, indexes []int, fn func(*Question)) {
