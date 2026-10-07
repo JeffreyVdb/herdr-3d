@@ -132,13 +132,18 @@ describe('the Kaneo section (#184)', () => {
   });
 
   it('an empty workspace list is a working key that cannot link a floor yet', async () => {
-    const m = mount(off(), { 'kaneo.test': () => passed([]) });
+    const m = mount(off(), { 'kaneo.test': () => passed([]), 'kaneo.set': () => ({ ok: true, data: saved({ default_workspace: null }) }) });
     m.type(m.input('Instance address'), 'https://tasks.example.test');
     m.type(m.input('API key'), 'secret-key-0001');
     m.btn('Test connection').click();
     await m.flush();
     expect(m.status()).toContain('reaches no workspace');
     expect(m.body.textContent).toContain('no floor can be linked');
+    // Saved all the same: the warning stays, never "floors can now use Kaneo".
+    m.btn('Save').click();
+    await m.flush();
+    expect(m.status()).toContain('still reaches no workspace');
+    expect(m.status()).not.toContain('can now use Kaneo');
   });
 
   it('Disconnect asks twice', async () => {

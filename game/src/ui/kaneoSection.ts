@@ -226,6 +226,7 @@ export function kaneoSection(host: KaneoSectionHost): (body: HTMLElement) => Sec
       const args: CommandArgs['kaneo.set'] = { url: url.value.trim(), default_workspace: ws.value || null };
       if (key.value.trim()) args.key = key.value.trim();
       note = { text: 'Saving…', error: false };
+      const noWorkspace = tested?.res.workspaces.length === 0;
       const r = await run(() => host.send('kaneo.set', args));
       if (!r.ok) {
         if (r.code === 'test_required') tested = null;
@@ -233,7 +234,9 @@ export function kaneoSection(host: KaneoSectionHost): (body: HTMLElement) => Sec
       }
       host.book.upsert(r.data); // the ack is the saved state: show it even before kaneo.update
       dirty = false;
-      note = { text: 'Saved. Floors can now use Kaneo as their issue board.', error: false };
+      note = noWorkspace
+        ? { text: 'Connection saved, but this key still reaches no workspace: no floor can be linked yet. Ask for access in Kaneo, then test again.', error: true }
+        : { text: 'Saved. Floors can now use Kaneo as their issue board.', error: false };
       refresh(true);
     }
 
