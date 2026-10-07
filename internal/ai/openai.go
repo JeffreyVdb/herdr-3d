@@ -78,6 +78,10 @@ func (o openAI) models(ctx context.Context, base, key string) ([]ModelInfo, erro
 	var body struct {
 		Data []struct {
 			ID string `json:"id"`
+			// OpenRouter's catalog (#174): the model's reasoning controls and
+			// the parameters it takes. Other endpoints list the id only.
+			Reasoning           json.RawMessage `json:"reasoning"`
+			SupportedParameters []string        `json:"supported_parameters"`
 		} `json:"data"`
 	}
 	if json.Unmarshal(r.body, &body) != nil || body.Data == nil {
@@ -85,9 +89,15 @@ func (o openAI) models(ctx context.Context, base, key string) ([]ModelInfo, erro
 	}
 	out := make([]ModelInfo, 0, len(body.Data))
 	for _, m := range body.Data {
-		if m.ID != "" {
-			out = append(out, ModelInfo{ID: m.ID})
+		if m.ID == "" {
+			continue
 		}
+		mi := ModelInfo{ID: m.ID}
+		if r := reasoningOf(m.Reasoning, m.SupportedParameters); r.Support != SupportUnknown {
+			r.Model = m.ID
+			mi.Reasoning = &r
+		}
+		out = append(out, mi)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
@@ -96,7 +106,11 @@ func (o openAI) models(ctx context.Context, base, key string) ([]ModelInfo, erro
 // complete runs one chat completion. jsonMode says whether to send
 // response_format (false: it is known not to work). It returns the text and
 // whether response_format was what the endpoint rejected (a 400), so the
-// caller can remember and try again without it.
+// caller can remember and try again without it. #174: an answer cut off at
+// the token limit is KindTruncated (with no text at all, always; with some,
+// when req.NoPartial), one with no text KindEmpty, a 400 to a request that
+// set a reasoning effort KindBadConfig; req.Report gets each answer's
+// Diagnostics.
 func (o openAI) complete(ctx context.Context, base, key, model string, extra json.RawMessage, req Request, jsonMode bool) (text string, formatRejected bool, err error) {
 	body := map[string]any{"model": model, "messages": req.Messages}
 	if req.Temperature != nil {
@@ -116,29 +130,71 @@ func (o openAI) complete(ctx context.Context, base, key, model string, extra jso
 			}
 		}
 	}
+	if req.ReasoningEffort != "" {
+		// One effort control, the setting's: the extra_body's own are dropped.
+		delete(body, "reasoning")
+		body["reasoning_effort"] = req.ReasoningEffort
+	}
+	if _, ok := body["max_completion_tokens"]; ok {
+		delete(body, "max_tokens") // the endpoint's own name for the budget wins; never both
+	}
 	r, err := do(ctx, o.hc, http.MethodPost, base+"/chat/completions", key, body, maxAnswerBytes)
 	if err != nil {
 		return "", false, err
 	}
+	report := func(d Diagnostics) {
+		if req.Report != nil {
+			req.Report(d)
+		}
+	}
 	if r.status == http.StatusBadRequest && req.JSON && jsonMode {
+		report(Diagnostics{Status: r.status, Content: ContentAbsent})
 		return "", true, statusErr(r, key)
 	}
 	if err := statusErr(r, key); err != nil {
+		report(Diagnostics{Status: r.status, Content: ContentAbsent})
+		if r.status == http.StatusBadRequest && req.ReasoningEffort != "" {
+			return "", false, newErr(KindBadConfig, fmt.Sprintf("the provider rejected the request (HTTP 400) with reasoning effort %q: the model may not take it; choose another effort or the provider default%s", req.ReasoningEffort, detail(r.body, key)))
+		}
 		return "", false, err
 	}
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if json.Unmarshal(r.body, &out) != nil || len(out.Choices) == 0 {
+	d, content, ok := diagnose(r.status, r.body)
+	report(d)
+	if !ok {
 		return "", false, newErr(KindBadResponse, "the answer has no choices")
 	}
-	var content string
-	if json.Unmarshal(out.Choices[0].Message.Content, &content) != nil || strings.TrimSpace(content) == "" {
-		return "", false, newErr(KindBadResponse, "the answer has no text")
+	cut := d.FinishReason == "length"
+	switch {
+	case d.Content != ContentNonempty && cut:
+		return "", false, newErr(KindTruncated, "the model used its whole completion budget"+spent(d, req.MaxTokens)+" before writing any text: raise the completion budget or lower the reasoning effort")
+	case d.Content != ContentNonempty:
+		why := ""
+		if d.FinishReason != "" {
+			why = " (finish_reason " + d.FinishReason + ")"
+		}
+		return "", false, newErr(KindEmpty, "the model returned no text"+why)
+	case cut && req.NoPartial:
+		return "", false, newErr(KindTruncated, "the answer was cut off at the completion budget"+spent(d, req.MaxTokens)+": raise the budget or lower the reasoning effort")
 	}
 	return content, false, nil
+}
+
+// spent is " (N of M tokens, R of them reasoning)" from what is known.
+func spent(d Diagnostics, budget int) string {
+	var parts []string
+	switch {
+	case d.CompletionTokens != nil && budget > 0:
+		parts = append(parts, fmt.Sprintf("%d of %d tokens", *d.CompletionTokens, budget))
+	case d.CompletionTokens != nil:
+		parts = append(parts, fmt.Sprintf("%d tokens", *d.CompletionTokens))
+	case budget > 0:
+		parts = append(parts, fmt.Sprintf("%d tokens", budget))
+	}
+	if d.ReasoningTokens != nil {
+		parts = append(parts, fmt.Sprintf("%d of them reasoning", *d.ReasoningTokens))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }

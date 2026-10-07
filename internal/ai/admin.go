@@ -140,7 +140,7 @@ func (s *Service) Models(ctx context.Context, r Role, f Fields) (*ModelsResult, 
 	}
 	// A provider's ids and descriptions are its words: they never carry the key.
 	for i, m := range res.Models {
-		res.Models[i] = ModelInfo{ID: redact(m.ID, c.key), Description: redact(m.Description, c.key)}
+		res.Models[i] = ModelInfo{ID: redact(m.ID, c.key), Description: redact(m.Description, c.key), Reasoning: m.Reasoning}
 	}
 	return &res, nil
 }

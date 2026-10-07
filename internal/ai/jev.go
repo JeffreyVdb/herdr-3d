@@ -25,6 +25,9 @@ type jev struct {
 type ModelInfo struct {
 	ID          string `json:"id"`
 	Description string `json:"description,omitempty"`
+	// Reasoning is what the endpoint's catalog says of the model's
+	// reasoning effort (#174; the LLM's list only, nil when it says nothing).
+	Reasoning *Reasoning `json:"reasoning,omitempty"`
 }
 
 func (j jev) models(ctx context.Context, key string) ([]ModelInfo, error) {

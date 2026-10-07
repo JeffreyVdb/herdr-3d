@@ -81,6 +81,19 @@ type Request struct {
 	// that rejects it is called again without it, once, and remembered; the
 	// text then holds the object among other text (FirstJSONObject).
 	JSON bool
+	// ReasoningEffort is the reasoning effort to ask for ("none", "low",
+	// "high" …), sent as the one control `reasoning_effort`; "": the
+	// provider's default, nothing sent. It replaces any reasoning control of
+	// the endpoint's extra_body. (#174)
+	ReasoningEffort string
+	// NoPartial: an answer the provider cut off at the token limit
+	// (finish_reason "length") is the error KindTruncated, never returned as
+	// text, even with some text in it.
+	NoPartial bool
+	// Report, when set, is called with the sanitized account of every HTTP
+	// answer of the call (Diagnostics): after a retry, the last is the
+	// call's. It never sees text.
+	Report func(Diagnostics)
 }
 
 // Kind classifies an error. The values are also the protocol's error codes.
@@ -92,6 +105,8 @@ const (
 	KindUnreachable     Kind = "unreachable"        // connect, TLS, DNS, redirect
 	KindTimeout         Kind = "timeout"
 	KindBadResponse     Kind = "bad_response"
+	KindTruncated       Kind = "truncated"    // #174: cut off at the token limit (finish_reason length)
+	KindEmpty           Kind = "empty_answer" // #174: a well-formed answer with no text
 	KindRateLimited     Kind = "rate_limited"
 	KindFailed          Kind = "provider_failed" // any other failure of the provider
 	KindNotReady        Kind = "not_ready"       // the role is off, incomplete or invalid: no call was made
