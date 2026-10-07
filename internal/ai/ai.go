@@ -78,6 +78,14 @@ type Request struct {
 	Messages    []Message
 	Temperature *float64 // nil: the endpoint's default
 	MaxTokens   int      // 0: the endpoint's default
+	// BudgetWins makes MaxTokens the budget sent even when the endpoint's
+	// extra_body names one (in the field the extra_body chose, never both).
+	// Only a call whose budget is a user setting shown as "in use" (the digest
+	// summaries, #174) sets it. Every other call defers to an extra_body's
+	// budget, so a user can size a reasoning model's budget for the connection
+	// test and the follow-up/pack-up features; MaxTokens then applies only when
+	// the extra_body names none.
+	BudgetWins bool
 	// JSON asks for a JSON object (response_format json_object). An endpoint
 	// that rejects it is called again without it, once, and remembered; the
 	// text then holds the object among other text (FirstJSONObject).

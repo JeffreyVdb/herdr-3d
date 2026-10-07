@@ -133,16 +133,23 @@ func (o openAI) complete(ctx context.Context, base, key, model string, extra jso
 		delete(body, "reasoning")
 		body["reasoning_effort"] = req.ReasoningEffort
 	}
-	// The budget: the request's own bound wins over an extra_body's of the same
-	// kind (it states what this call may spend, and what the settings and the
-	// audit show), in the field the extra_body chose (max_completion_tokens is
-	// the native OpenAI name), else max_tokens; never both.
-	if _, ok := body["max_completion_tokens"]; ok {
+	// The budget. An extra_body's own wins (max_completion_tokens, the native
+	// OpenAI name, over max_tokens; never both) and the request's MaxTokens
+	// applies only when it names none, unless req.BudgetWins: then the
+	// request's is sent, in the field the extra_body chose.
+	_, hasMCT := body["max_completion_tokens"]
+	_, hasMT := body["max_tokens"]
+	switch {
+	case hasMCT:
 		delete(body, "max_tokens")
-		if req.MaxTokens > 0 {
+		if req.BudgetWins && req.MaxTokens > 0 {
 			body["max_completion_tokens"] = req.MaxTokens
 		}
-	} else if req.MaxTokens > 0 {
+	case hasMT:
+		if req.BudgetWins && req.MaxTokens > 0 {
+			body["max_tokens"] = req.MaxTokens
+		}
+	case req.MaxTokens > 0:
 		body["max_tokens"] = req.MaxTokens
 	}
 	r, err := do(ctx, o.hc, http.MethodPost, base+"/chat/completions", key, body, maxAnswerBytes)

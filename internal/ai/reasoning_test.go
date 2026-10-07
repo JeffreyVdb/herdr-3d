@@ -132,9 +132,10 @@ func TestReasoningEffortAndBudgetReachTheRequestBody(t *testing.T) {
 	}
 }
 
-// #174: the request's own budget is what is sent, in the field the extra_body
-// names (never both): a stale extra_body value does not shadow the setting.
-func TestRequestBudgetWinsOverExtraBodyBudget(t *testing.T) {
+// #174: a call that opts in (BudgetWins: the digest summaries) sends its own
+// budget, in the field the extra_body names (never both): a stale extra_body
+// value does not shadow the setting.
+func TestBudgetWinsCallerSendsItsBudget(t *testing.T) {
 	for _, c := range []struct {
 		name, extra string
 		budget      int
@@ -149,7 +150,7 @@ func TestRequestBudgetWinsOverExtraBodyBudget(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			f := newReasoningLLM(t)
 			s := f.service(t, "openai/gpt-6-luna", json.RawMessage(c.extra))
-			if _, err := complete(s, ai.Request{MaxTokens: c.budget}); err != nil {
+			if _, err := complete(s, ai.Request{MaxTokens: c.budget, BudgetWins: true}); err != nil {
 				t.Fatal(err)
 			}
 			if b := f.last(); b[c.field] != float64(c.budget) || b[c.gone] != nil {
@@ -159,15 +160,79 @@ func TestRequestBudgetWinsOverExtraBodyBudget(t *testing.T) {
 	}
 }
 
-// A request that sets no bound leaves the extra_body's own.
-func TestExtraBodyBudgetStandsWithoutRequestBudget(t *testing.T) {
-	f := newReasoningLLM(t)
-	s := f.service(t, "openai/gpt-6-luna", json.RawMessage(`{"max_completion_tokens":500}`))
-	if _, err := complete(s, ai.Request{}); err != nil {
-		t.Fatal(err)
+// #174: every other caller (follow-up 1200, pack up 600, the connection
+// test's 64, classification) keeps the extra_body's budget over its own, as
+// before: the request's MaxTokens applies only when the extra_body names none.
+func TestDefaultCallerDefersToExtraBodyBudget(t *testing.T) {
+	for _, c := range []struct {
+		name, extra string
+		budget      int
+		field, gone string
+		want        float64
+	}{
+		{"probe, max_completion_tokens", `{"max_completion_tokens":1024}`, 64, "max_completion_tokens", "max_tokens", 1024},
+		{"probe, max_tokens", `{"max_tokens":1024}`, 64, "max_tokens", "max_completion_tokens", 1024},
+		{"follow-up", `{"max_completion_tokens":4000}`, 1200, "max_completion_tokens", "max_tokens", 4000},
+		{"pack up", `{"max_tokens":3000}`, 600, "max_tokens", "max_completion_tokens", 3000},
+		{"both named", `{"max_tokens":80,"max_completion_tokens":90}`, 64, "max_completion_tokens", "max_tokens", 90},
+		{"neither", `{"top_k":3}`, 600, "max_tokens", "max_completion_tokens", 600},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newReasoningLLM(t)
+			s := f.service(t, "openai/gpt-6-luna", json.RawMessage(c.extra))
+			if _, err := complete(s, ai.Request{MaxTokens: c.budget}); err != nil {
+				t.Fatal(err)
+			}
+			if b := f.last(); b[c.field] != c.want || b[c.gone] != nil {
+				t.Fatalf("want %s=%v only: %v", c.field, c.want, b)
+			}
+		})
 	}
-	if b := f.last(); b["max_completion_tokens"] != float64(500) || b["max_tokens"] != nil {
-		t.Fatalf("%v", b)
+}
+
+// A request that sets no bound leaves the extra_body's own, opted in or not.
+func TestExtraBodyBudgetStandsWithoutRequestBudget(t *testing.T) {
+	for _, wins := range []bool{false, true} {
+		f := newReasoningLLM(t)
+		s := f.service(t, "openai/gpt-6-luna", json.RawMessage(`{"max_completion_tokens":500}`))
+		if _, err := complete(s, ai.Request{BudgetWins: wins}); err != nil {
+			t.Fatal(err)
+		}
+		if b := f.last(); b["max_completion_tokens"] != float64(500) || b["max_tokens"] != nil {
+			t.Fatalf("BudgetWins %v: %v", wins, b)
+		}
+	}
+}
+
+// #174 regression (review of round 2): a reasoning model whose shared extra_body
+// sets a budget big enough for its reasoning must still pass the connection
+// test (a 64-token probe) and save, in either field name.
+func TestConnectionTestHonoursExtraBodyBudgetForReasoningModels(t *testing.T) {
+	for _, field := range []string{"max_tokens", "max_completion_tokens"} {
+		t.Run(field, func(t *testing.T) {
+			f := newReasoningLLM(t)
+			var wire []any
+			f.answer = func(body map[string]any) (int, string) {
+				wire = append(wire, body[field])
+				if b, _ := body[field].(float64); b < 334 { // the reasoning eats the budget
+					return 200, `{"choices":[{"finish_reason":"length","message":{"content":""}}],"usage":{"completion_tokens":64,"completion_tokens_details":{"reasoning_tokens":64}}}`
+				}
+				return 200, `{"choices":[{"finish_reason":"stop","message":{"content":"{\"ok\":true}"}}]}`
+			}
+			s := newSvc(t, nil, ai.Options{})
+			fl := ai.Fields{BaseURL: str(f.URL), Key: str(llmKey), Model: str("reasoning-model"), ExtraBody: json.RawMessage(`{"` + field + `":1024}`)}
+			if _, err := s.Test(context.Background(), ai.RoleLLM, fl); err != nil {
+				t.Fatalf("the extra_body's budget was overridden by the probe's (wire %v): %v", wire, err)
+			}
+			if err := s.Set(ai.RoleLLM, fl); err != nil {
+				t.Fatal(err)
+			}
+			for _, w := range wire {
+				if w != float64(1024) {
+					t.Fatalf("probe wire %v", wire)
+				}
+			}
+		})
 	}
 }
 

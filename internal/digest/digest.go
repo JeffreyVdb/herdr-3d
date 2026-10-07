@@ -218,6 +218,7 @@ func RequestWith(in Input, p Params) ai.Request {
 		},
 		Temperature:     &temp,
 		MaxTokens:       p.MaxTokens,
+		BudgetWins:      true, // the summaries' budget is a setting shown as in use
 		ReasoningEffort: p.ReasoningEffort,
 		NoPartial:       true,
 	}
