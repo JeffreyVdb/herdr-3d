@@ -175,7 +175,7 @@ describe('filterOverview: active only', () => {
     ]);
     const { tree, hidden } = filterOverview(buildOverview(s, 'top'));
     expect(keys(tree)).toEqual(['o1', '  c1', 'o2', 'emp']);
-    expect(hidden).toEqual({ idle: 4, asleep: 0, floors: 0, asleepFloors: 0 });
+    expect(hidden).toEqual({ idle: 4, asleep: 0, floors: 0, asleepFloors: 0, asleepOnFloors: 0 });
     expect(tree.total).toBe(8); // the header's numbers are never filtered
     expect(hiddenText(hidden, 'floor')).toBe('4 idle hidden');
   });
@@ -194,17 +194,38 @@ describe('filterOverview: active only', () => {
     );
     const { tree, hidden } = filterOverview(buildCityOverview(s));
     expect(keys(tree)).toEqual(['floor:top', '  o1', '    far', 'floor:lot', '  l1']);
-    expect(hidden).toEqual({ idle: 2, asleep: 1, floors: 2, asleepFloors: 1 });
+    expect(hidden).toEqual({ idle: 2, asleep: 1, floors: 2, asleepFloors: 1, asleepOnFloors: 1 });
     expect(hiddenText(hidden, 'city')).toBe('2 idle hidden · 1 floor asleep');
   });
 
   it('the hidden summary says what it hides, and nothing when nothing is', () => {
-    expect(hiddenText({ idle: 12, asleep: 30, floors: 4, asleepFloors: 3 }, 'city')).toBe('12 idle hidden · 3 floors asleep');
-    expect(hiddenText({ idle: 0, asleep: 8, floors: 1, asleepFloors: 1 }, 'city')).toBe('1 floor asleep');
-    expect(hiddenText({ idle: 0, asleep: 0, floors: 1, asleepFloors: 0 }, 'city')).toBe('1 quiet floor hidden');
-    expect(hiddenText({ idle: 0, asleep: 8, floors: 0, asleepFloors: 0 }, 'floor')).toBe('8 asleep hidden');
-    expect(hiddenText({ idle: 1, asleep: 0, floors: 0, asleepFloors: 0 }, 'floor')).toBe('1 idle hidden');
-    expect(hiddenText({ idle: 0, asleep: 0, floors: 0, asleepFloors: 0 }, 'city')).toBe('');
+    expect(hiddenText({ idle: 12, asleep: 30, floors: 4, asleepFloors: 3, asleepOnFloors: 30 }, 'city')).toBe('12 idle hidden · 3 floors asleep');
+    expect(hiddenText({ idle: 0, asleep: 8, floors: 1, asleepFloors: 1, asleepOnFloors: 8 }, 'city')).toBe('1 floor asleep');
+    expect(hiddenText({ idle: 0, asleep: 0, floors: 1, asleepFloors: 0, asleepOnFloors: 0 }, 'city')).toBe('1 quiet floor hidden');
+    expect(hiddenText({ idle: 0, asleep: 8, floors: 0, asleepFloors: 0, asleepOnFloors: 0 }, 'floor')).toBe('8 asleep hidden');
+    expect(hiddenText({ idle: 1, asleep: 0, floors: 0, asleepFloors: 0, asleepOnFloors: 0 }, 'floor')).toBe('1 idle hidden');
+    expect(hiddenText({ idle: 0, asleep: 0, floors: 0, asleepFloors: 0, asleepOnFloors: 0 }, 'city')).toBe('');
+    // Asleep workers whose floor still shows (an active freelancer keeps their orchestrator's asleep floor up).
+    expect(hiddenText({ idle: 0, asleep: 1, floors: 0, asleepFloors: 0, asleepOnFloors: 0 }, 'city')).toBe('1 asleep hidden');
+    expect(hiddenText({ idle: 2, asleep: 5, floors: 2, asleepFloors: 1, asleepOnFloors: 3 }, 'city')).toBe('2 idle hidden · 2 asleep hidden · 1 floor asleep');
+  });
+
+  it('city: an asleep worker hidden under a floor that still shows is said, and the summary is never empty while anything is hidden', () => {
+    const s = store(
+      [
+        orch('o', 'top', 0), // asleep, kept: its freelancer on another floor is working
+        free('r', 'top', 1, 'review', 'o'), // asleep, hidden
+        free('c', 'bottom', 0, 'code', 'o', { status: 'working' }),
+        worker('b', 'bottom', { desk_index: 1, status: 'working' }),
+        worker('d', 'den', { status: 'working' }),
+        worker('l', 'lot', { status: 'working' }),
+      ],
+      { top: { state: 'asleep' } },
+    );
+    const { tree, hidden } = filterOverview(buildCityOverview(s));
+    expect(keys(tree)).toEqual(['floor:top', '  o', '    c', 'floor:bottom', '  b', 'floor:den', '  d', 'floor:lot', '  l']);
+    expect(hidden).toEqual({ idle: 0, asleep: 1, floors: 0, asleepFloors: 0, asleepOnFloors: 0 });
+    expect(hiddenText(hidden, 'city')).toBe('1 asleep hidden');
   });
 
   it('never reorders: the filtered rows keep the tree’s order', () => {

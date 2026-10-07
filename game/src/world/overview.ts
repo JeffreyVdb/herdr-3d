@@ -380,6 +380,8 @@ export interface HiddenCounts {
   asleep: number;
   floors: number;
   asleepFloors: number;
+  /** The asleep workers (of `asleep`) whose whole floor went with them: the `floors asleep` part says them. */
+  asleepOnFloors: number;
 }
 
 function filterNodes(nodes: readonly OverviewNode[], h: HiddenCounts): OverviewNode[] {
@@ -406,15 +408,19 @@ function filterNodes(nodes: readonly OverviewNode[], h: HiddenCounts): OverviewN
  * with anyone active); the rest go and are counted. The order is the tree's, and `total` stays the unfiltered one.
  */
 export function filterOverview<T extends OverviewTree | CityOverviewTree>(t: T): { tree: T; hidden: HiddenCounts } {
-  const hidden: HiddenCounts = { idle: 0, asleep: 0, floors: 0, asleepFloors: 0 };
+  const hidden: HiddenCounts = { idle: 0, asleep: 0, floors: 0, asleepFloors: 0, asleepOnFloors: 0 };
   if (!('floors' in t)) return { tree: { ...t, nodes: filterNodes(t.nodes, hidden) }, hidden };
   const floors: CityFloorNode[] = [];
   for (const f of t.floors) {
+    const asleep = hidden.asleep;
     const nodes = filterNodes(f.nodes, hidden);
     if (nodes.length) floors.push({ row: f.row, nodes });
     else {
       hidden.floors++;
-      if (f.row.asleep) hidden.asleepFloors++;
+      if (f.row.asleep) {
+        hidden.asleepFloors++;
+        hidden.asleepOnFloors += hidden.asleep - asleep;
+      }
     }
   }
   return { tree: { ...t, floors }, hidden };
@@ -430,10 +436,13 @@ export function hiddenText(h: HiddenCounts, view: 'city' | 'floor'): string {
     if (h.asleep) parts.push(`${h.asleep} asleep hidden`);
     return parts.join(' · ');
   }
+  // Asleep workers under a floor that still shows (an active freelancer keeps their orchestrator's asleep floor up).
+  const asleep = h.asleep - h.asleepOnFloors;
+  if (asleep) parts.push(`${asleep} asleep hidden`);
   if (h.asleepFloors) parts.push(plural(h.asleepFloors, 'floor asleep', 'floors asleep'));
-  // Floors with nobody on them: said only when no idle worker already explains a hidden floor.
+  // Floors with nobody on them: said only when no idle or asleep worker already explains a hidden floor.
   const quiet = h.floors - h.asleepFloors;
-  if (quiet && !h.idle) parts.push(plural(quiet, 'quiet floor hidden', 'quiet floors hidden'));
+  if (quiet && !h.idle && !asleep) parts.push(plural(quiet, 'quiet floor hidden', 'quiet floors hidden'));
   return parts.join(' · ');
 }
 
