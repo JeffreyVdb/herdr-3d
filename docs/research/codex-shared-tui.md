@@ -7,8 +7,9 @@ tag `rust-v0.160.1`. Parent epic: #153.
 messages are in [`codex-shared-tui-evidence/`](codex-shared-tui-evidence/), one directory per test, with files numbered
 in capture order. The text cites a file by test and label, for example `Questions/active-after-steer-not-yet-delivered`.
 **[S]** marks a claim that rests on reading the source only. **[R-live]** marks a read-only observation of the user's real
-machine. **[R-real]** marks a claim from the real-model smoke test (§9), whose evidence is in
-[`codex-shared-tui-evidence/RealModelSmoke/`](codex-shared-tui-evidence/RealModelSmoke/).
+machine. **[R-real]** marks a claim from a real-model run: the smoke test of §9, whose evidence is in
+[`codex-shared-tui-evidence/RealModelSmoke/`](codex-shared-tui-evidence/RealModelSmoke/), or #158's run through
+herdr-world (§12.5).
 
 The fixture tests use mock inference. One bounded real-model smoke test (§9) ran the phase-2 launch, a per-worker
 server on the user's real `~/.codex`, with `gpt-6.1-sol` at low effort, through Herdr only. The user's shared daemon was
