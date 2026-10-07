@@ -6,7 +6,6 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/github"
 	"github.com/JeffreyVdb/herdr-3d/internal/githubcli"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitremote"
-	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/tracker"
 )
@@ -15,7 +14,7 @@ import (
 // saved connection's instance and generation, the floor's workspace and
 // project) and names its fetch (instance, workspace and project, never the
 // key); ok false: none (not connected, or the generation is not the saved
-// one any more).
+// one any more). KaneoFloors is internal/kaneo's.
 type KaneoTrackers func(src server.BoardSource) (tr tracker.Tracker, key string, ok bool)
 
 // Boards is the one place the bridge is wired to its providers. #184: a
@@ -58,25 +57,4 @@ func Boards(cli *githubcli.Client, now func() time.Time, kaneo KaneoTrackers) se
 // GitHubBoards is Boards without Kaneo floors.
 func GitHubBoards(cli *githubcli.Client, now func() time.Time) server.BoardFactory {
 	return Boards(cli, now, nil)
-}
-
-// kaneoConnector is the Kaneo client behind the settings' Connector.
-//
-// ROUND 2 (#184): adapt internal/kaneo's client here (URL normalization,
-// the connection test, the workspace and project lists, one project); a
-// network failure wraps kaneoconf.ErrUnreachable. nil until then: the
-// settings load and show, and kaneo.test answers unsupported.
-func kaneoConnector() kaneoconf.Connector { return nil }
-
-// kaneoTrackers builds a Kaneo floor's tracker from the saved connection.
-//
-// ROUND 2 (#184): svc.Credentials(src.KaneoGeneration) gives the instance
-// and key while that generation is the saved one; build internal/kaneo's
-// tracker for (src.KaneoWorkspace, src.KaneoProject, the web origin) and
-// return its identity (instance, workspace, project) with the generation
-// appended. nil until then: a Kaneo floor's board.watch says it cannot read
-// Kaneo boards.
-func kaneoTrackers(svc *kaneoconf.Service) KaneoTrackers {
-	_ = svc
-	return nil
 }

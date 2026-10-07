@@ -546,7 +546,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	kaneo, err := kaneoconf.New(kaneoconf.Options{File: orDefault(*kaneoFile, DefaultKaneoFile(*db)), Connector: kaneoConnector()}) // #184
+	kaneo, kaneoFloors, err := Kaneo(kaneoconf.Options{File: orDefault(*kaneoFile, DefaultKaneoFile(*db))}) // #184
 	if err != nil {
 		return fmt.Errorf("kaneo settings: %w", err)
 	}
@@ -562,7 +562,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		RG:         *rgBin, // #137 worker.files
 		MaxWatches: maxWatches, MaxObservers: maxObservers, MaxTranscriptWatches: maxTxWatches,
 		RunsDir:          *runsDir,                                                          // M6 runs
-		Boards:           Boards(&githubcli.Client{Bin: *ghBin}, nil, kaneoTrackers(kaneo)), // M7 boards; #184 Kaneo floors
+		Boards:           Boards(&githubcli.Client{Bin: *ghBin}, nil, kaneoFloors),          // M7 boards; #184 Kaneo floors
 		Kaneo:            kaneo,                                                             // #184
 		Limits:           lim,                                                               // M10 limits
 		Uploads:          images,                                                            // #51 upload

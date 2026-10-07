@@ -34,12 +34,19 @@ func TestBoardLayerIsProviderNeutral(t *testing.T) {
 			}
 		}
 	}
-	found := false
+	found, kaneo := false, false
 	for _, dep := range deps("app") {
 		found = found || dep == mod+"github"
+		kaneo = kaneo || dep == mod+"kaneo"
+		if strings.HasSuffix(dep, "test") && strings.HasPrefix(dep, mod) {
+			t.Errorf("internal/app depends on the test fake %s", dep)
+		}
 	}
 	if !found {
 		t.Error("internal/app does not wire the GitHub provider in")
+	}
+	if !kaneo {
+		t.Error("internal/app does not wire the Kaneo provider in") // #184
 	}
 	// The neutral packages do not know each other's provider either.
 	for _, pkg := range []string{"tracker", "codehost"} {
