@@ -15,7 +15,10 @@ import (
 //
 //   - A batch is an agentMessage item with delivery "async" and a questions
 //     array; its id is the function call_id, the same in live events, in
-//     thread/resume and thread/read history and after a cold resume.
+//     thread/read and thread/turns/list history and after a cold resume.
+//     thread/resume gives a client that was not subscribed the newest turn
+//     under legacy ids (item-1, …): the join reads it again
+//     (Watcher.legacyTurns, #158).
 //   - The tool's {"accepted":true} only schedules it. A question is answered
 //     only by a user message whose text is the reply envelope naming its
 //     (call_id, index), whoever sent it: the bridge or the terminal.

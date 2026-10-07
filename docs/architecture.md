@@ -133,7 +133,7 @@ MacBook (M2 Max)                                   devbox (Linux)
     question shows as blocked).
   - **Supported Codex: 0.160.x** (verified with codex-cli 0.160.1 and herdr 0.9.0), checked twice: `codex --version`
     before anything starts, and the server's `userAgent` before the TUI attaches. Capabilities relied on:
-    `app-server --listen unix://`, the TUI's `--remote`, `thread/resume` by id, `turn/steer` with `expectedTurnId`,
+    `app-server --listen unix://`, the TUI's `--remote`, `thread/resume` by id, `thread/turns/list` (the newest turns' real ids after a restart), `turn/steer` with `expectedTurnId`,
     `turn/start`, `clientUserMessageId` echoed as the user message's `clientId`, and `request_user_input_async` items
     (`agentMessage`, `delivery: "async"`, `questions`, id = the call id). Any other version: the hire starts **the
     usual way** with `codex: {mode: "legacy", note}` in its ack, on its toast and on the laptop's seat bar, e.g.
