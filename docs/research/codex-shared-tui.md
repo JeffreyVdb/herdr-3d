@@ -446,10 +446,31 @@ is restored; the ended-turn, delivered, unconfirmed and unconfirmed-`turn/start`
 `TestAsyncAnswerUndeliveredAcrossARestart`, `TestAsyncAnswerRecordedBeforeTheResponse` (recorded before the steer
 returns) and `TestAsyncAnswerSendsGoWithTheWorker`; `store.TestCodexAsyncSends`.
 
-What remains is a wait, never a second answer: a bridge that stops after recording an answer and before its request
-goes out shows it `sent` until that turn ends (then `undelivered`); a record the store failed to write (logged) lasts
-only until the bridge stops; if `thread/turns/list` fails on the join, the newest turn keeps resume's `item-N` ids
-until the next join.
+**When reading the legacy ids again fails** (review round 2, decisions #158 row 15). If `thread/turns/list` fails on
+the join, or has nothing for the turn, that turn keeps resume's `item-N` ids, and the round-2 code then dropped the
+record of `call_3` (its batch was unknown to that history): a later join that read `call_3` made it `pending` and
+admitted the same answer again, two envelopes in one turn (the reviewer's `TestReviewFailedLegacyRepairLosesSendProtection`).
+Now a history that still has a batch under an `item-N` id is **unresolved**: a record whose batch it does not show is
+kept (on the join and on every later change), an answer to the `item-N` batch is refused `invalid_state` (Codex does
+not know that id; the message says to answer in the terminal or wait), and the bridge joins again after
+`CodexRejoin` (60 s) while it stays so; each join drops the last one's `item-N` batches. Once a join reads `call_3`
+the record makes it `sent` again and a retry is `stale`. Unit tests (each fails without the fix):
+`codexapp.TestQuestionsLegacyIDsAreUnresolved`, `server.TestAsyncAnswerKeptThroughAFailedLegacyRepair` (the
+reviewer's scenario: record kept, `item-2` refused, a live change keeps it, the canonical join restores `sent`, the
+retry `stale`, no second send) and `TestAsyncAnswerKeptThroughAnUnmatchedLegacyRepair` (older turns read, the newest
+not: the same, the next join coming from the rejoin timer, which stops once resolved).
+
+What remains, exactly:
+
+- A bridge that stops after recording an answer and before its request goes out shows it `sent` until that turn ends
+  (then `undelivered`): a wait, never a second answer.
+- While the history stays unresolved the `item-N` batch cannot be answered from the transcript (the terminal can);
+  the bridge joins again every 60 s for as long as the read keeps failing. A wait, never a second answer.
+- A batch the bridge no longer keeps (32 per thread, or older than the turns a join reads) loses its record on a
+  resolved join; it cannot be answered from the bridge either (unknown batch: `stale`), so nothing is sent.
+- **A record the store failed to write** (logged as an error) lasts only until the bridge stops: if herdr-world
+  restarts before that answer is delivered, a retry is admitted and **the model can see the answer twice**. This is
+  the one restart window that can still duplicate; it needs a failing SQLite write.
 
 ### 12.2 A shared worker's regressions [R]
 
@@ -608,7 +629,7 @@ The default stays **off**: the switch is opt-in (#158's decision).
 | #153: the Codex connection change behind an opt-in switch | verified [R] | `14-switch-default`, `14-l1-*` |
 | #158: real-TUI evidence: answers from both views, active and idle turns, native question-state reconciliation | verified [R], [R-real] | §12.1 rows 1, 2, 3, 8; §12.5; the real game, TUI and model, both views, active and idle, the model reading each answer: §12.5a |
 | #158: normal terminal and transcript workflows, bridge disconnect and worker resume | verified [R], approvals a limitation | §12.2; §12.1 row 7 |
-| #158: one reply, one model-visible answer with retries and reconnects; a handled card cannot submit again | verified [R], [R-real], with the 5b limit | `4-model-visible-answers`, `5-*`, `6-*`, `7-*` (`stale` for sending, sent, answered, dismissed); across a herdr-world restart before delivery `BridgeRestartSent/model-visible-answers`, `1-retry-*` (§12.1a; what remains there is a wait, never a second answer); the game's answered card: `RealGame/18-answered-no-resend.png`, `duplicate-submit-check.json` |
+| #158: one reply, one model-visible answer with retries and reconnects; a handled card cannot submit again | verified [R], [R-real], with the 5b limit | `4-model-visible-answers`, `5-*`, `6-*`, `7-*` (`stale` for sending, sent, answered, dismissed); across a herdr-world restart before delivery `BridgeRestartSent/model-visible-answers`, `1-retry-*`, and when re-reading the legacy ids fails the unit tests of §12.1a (what remains there are waits, except an answer whose record the store failed to write, §12.1a); the game's answered card: `RealGame/18-answered-no-resend.png`, `duplicate-submit-check.json` |
 | #158: opt-in rollout, actionable unsupported-version behaviour, rollback: documented and verified | verified [R] | §12.3; architecture.md "Shared Codex workers" |
 | #158: repo docs explain the architecture and distinguish delivered input from verified resolution | done | architecture.md "Shared Codex workers"; protocol.md "Codex async questions" |
 | #158: all epic requirements verified or recorded as limitations | done | this table; §12.6 |

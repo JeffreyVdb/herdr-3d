@@ -3111,8 +3111,11 @@ the transcript is closed is seen live. Every (re)join reconciles the history (th
 one more page of up to 50 older turns for a paginated thread) with what the bridge knew: new batches are added, known
 ones keep their state, envelopes there answer theirs. `thread/resume` gives a client that was not subscribed the
 thread's newest turn (running or interrupted) under its legacy item ids (`item-1`, `item-2`, …), not the question's
-`call_id`; the join reads such turns again with `thread/turns/list`, which has the `call_id` (if that read fails the
-batch shows under its `item-N` id until the turn is read again). Questions are kept per worker and thread, not per
+`call_id`; the join reads such turns again with `thread/turns/list`, which has the `call_id`. If that read fails, or
+has nothing for the turn, the batch shows under its `item-N` id and the join is **unresolved**: that batch cannot be
+answered (`invalid_state`: Codex does not know the id; answer in the terminal or wait), the bridge's records of its
+answers are kept (below), and the bridge joins again after a minute (`CodexRejoin`) for as long as it stays so. Each
+join replaces the last one's `item-N` batches: those ids are one join's. Questions are kept per worker and thread, not per
 join: a lost connection, a sleep and a wake keep them; send home forgets them.
 
 **Across a bridge restart** (#158). Codex holds a steered answer in the running turn until its next model request, and
@@ -3130,18 +3133,24 @@ turn it reached, or that no response came. On the next join, after the history, 
 | a `turn/start` the server never confirmed | `pending`: its user message would be in the history had it been taken |
 
 A question the history shows `answered` keeps that state, and its record goes; records also go when the server
-refuses the answer, the batch is no longer known, the thread changes, and on send home. A dismissed question's record
-is kept (the dismissal itself is not), so after a restart it shows `sent`, not `pending`. What remains: a bridge that
-stops after recording an answer and before its request goes out shows it `sent` until that turn ends (then
-`undelivered`): a wait, never a second answer. A record the store failed to write is logged and lasts only until the
-bridge stops.
+refuses the answer, the thread changes, on send home (or when the worker is no longer shared at startup), and when
+the batch is unknown to a **resolved** history (one without `item-N` batches; an unresolved one keeps them: the batch
+may be under such an id). Nothing else drops a record, so there is at most one per question the bridge answered. A
+dismissed question's record is kept (the dismissal itself is not), so after a restart it shows `sent`, not `pending`.
+What remains: a bridge that stops after recording an answer and before its request goes out shows it `sent` until that
+turn ends (then `undelivered`), and an unresolved join keeps its `item-N` batch unanswerable until a join reads it:
+waits, never a second answer. A batch the bridge no longer keeps (32 per thread, or older than the turns read) loses
+its record on a resolved join, and cannot be answered from the bridge either (`stale`). A record the store failed to
+write is logged and lasts only until the bridge stops: a restart before that answer is delivered admits a retry, and
+the model can see the answer twice.
 
 **`worker.answer_async`** `{id, thread, batch, answers: [{index, answer}]}` answers one or more questions of one batch
 in one envelope (the native format, which the terminal shows as an answer, not as raw text, and the transcript as the
 user's input). Each `index` once; a question with `options` takes one of them exactly, one without any text that is not
 blank (1–4096 bytes of UTF-8 without control characters but line ends and tabs). Refused before anything is queued:
 `bad_request` (the answer does not fit), `unknown_worker`, `invalid_state` (not a shared worker, the batch is a
-`conflict`, or the bridge is **not attached** to the thread: never queued blind), `stale` (`thread` is not the worker's
+`conflict` or under a legacy `item-N` id (Recovery), or the bridge is **not attached** to the thread: never queued
+blind), `stale` (`thread` is not the worker's
 thread now, the batch is unknown, or a question is not `pending`: `sending`, `sent` (unless `undelivered`),
 `answered` or `dismissed`). It
 runs on the worker's input lane ([Input](#input)) and is **checked again** there, then marked `sending` in the same
@@ -3235,7 +3244,7 @@ dismissed_at)`.
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
 | `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started |
-| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
+| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a batch under a legacy `item-N` id or a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `whiteboard_conflict` | M13: a save whose `base` is not the board's current version (HTTP `409`, with the current `version`) |
 | `whiteboard_invalid`, `whiteboard_too_large`, `whiteboard_unsupported`, `whiteboard_hash_mismatch`, `whiteboard_missing_file` | M13: a scene, file, render or pin the bridge refuses (see [Whiteboard](#whiteboard)) |

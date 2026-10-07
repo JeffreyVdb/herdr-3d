@@ -165,7 +165,11 @@ MacBook (M2 Max)                                   devbox (Linux)
     the bridge records each answer it sends (SQLite `codex_async_send`, before the request goes out) and a restarted
     bridge keeps such a question `sent` while its turn runs, `undelivered` (one resend) once that turn ended without
     it (#158, findings §12.1a; protocol "Across a bridge restart"). A restarted bridge reads the thread's newest turns
-    with `thread/turns/list`, because `thread/resume` gives them under legacy item ids, not the question's call id.
+    with `thread/turns/list`, because `thread/resume` gives them under legacy item ids, not the question's call id;
+    when that read fails, the join is unresolved: records are kept, an answer to an `item-N` batch is refused (the
+    terminal can answer), and the bridge joins again every minute until a join reads the call ids. The one restart
+    window that can still duplicate an answer is a record SQLite failed to write (logged): it is lost with the
+    process.
     Known limits (findings §12): the terminal and the transcript both answering one question before delivery reach the
     model twice (the bridge cannot see the terminal's queued answer), approvals and Codex's blocking questions stay
     in the terminal, images reach Codex as their path in the text (as for any Codex worker).
