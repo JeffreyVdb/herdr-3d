@@ -740,3 +740,44 @@ func TestKaneoTicketTitleFollowsTheConnection(t *testing.T) {
 		kb.itemTitled(id, "New instance title")
 	})
 }
+
+// A run.start whose task is still being read from Kaneo when the floor
+// switches tracker (or connection) starts nothing: the task is of a board
+// the floor no longer has.
+func TestKaneoRunStartAfterTheFloorChangedIsStale(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(kb *kaneoBridge)
+	}{
+		{"to GitHub", func(kb *kaneoBridge) {
+			kb.c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", Tracker: proto.Some(proto.TrackerGitHub)})
+		}},
+		{"another key", func(kb *kaneoBridge) {
+			kb.conn.Set(func(f *kaneoconf.FakeConnector) { f.Key = kaneoKey2 })
+			kb.saveConnection(kaneoKey2)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kb := startKaneoBridge(t)
+			kb.kaneoRun()
+			tr := kb.fb.kaneoTracker("p1", 1)
+			gate := make(chan struct{})
+			tr.set(func(f *fakeTracker) { f.getGate = gate })
+			preset := kb.connect(proto.Hello{}).snapshot().World.Presets[0].ID
+			c := kb.connect(proto.Hello{})
+			c.snapshot()
+			desk := 2
+			c.send(proto.Command{T: proto.CmdRunStart, ReqID: "late", Args: mustMarshal(t, proto.RunStartArgs{Session: "s", DeskIndex: &desk,
+				WorkItem: &proto.WorkItemRef{Provider: "kaneo", ID: "t1"}, Orch: &buildTeam.Orch, Preset: preset})})
+			eventually(t, "the held read", func() bool { return gets(tr, "t1") >= 2 })
+			tc.change(kb)
+			close(gate)
+			c.staleReply("late")
+			for _, w := range kb.connect(proto.Hello{}).snapshot().World.Workers {
+				if w.DeskIndex == desk {
+					t.Fatalf("a worker started on the old board's task: %+v", w)
+				}
+			}
+		})
+	}
+}

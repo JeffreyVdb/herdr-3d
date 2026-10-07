@@ -269,6 +269,14 @@ func (h *Hub) boardOf(session string) *boardFloor {
 	return bf
 }
 
+// boardKey is the source of a floor's board (BoardSet.Key; "": none).
+func (h *Hub) boardKey(session string) string {
+	if bf := h.boardOf(session); bf != nil {
+		return bf.set.Key
+	}
+	return ""
+}
+
 // adopt takes the stored cache of the same link, and schedules the next
 // poll from its age.
 func (bf *boardFloor) adopt(c store.BoardCache, idle time.Duration) {

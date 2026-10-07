@@ -416,7 +416,9 @@ func (h *Hub) startRunStart(ctx context.Context, c *Client, cmd proto.Command) e
 
 // runStart is startRunStart after the args are read. A work_item that the
 // floor's provider must vouch for or describe (see runTicketOf) is resolved
-// off the hub goroutine, then the start goes on from here with its ticket.
+// off the hub goroutine, then the start goes on from here with its ticket:
+// stale when the floor's board source changed meanwhile (#184: another
+// tracker, Kaneo connection or project), the item being of the old one.
 func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a proto.RunStartArgs, resolved *proto.RunTicket) error {
 	f, err := h.hireFloor(a.Session)
 	if err != nil {
@@ -430,11 +432,15 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 		return err
 	}
 	if resolve != nil {
+		source := h.boardKey(a.Session)
 		h.wg.Add(1)
 		go func() {
 			defer h.wg.Done()
 			t, err := resolve(ctx)
 			if derr := h.doWait(ctx, func() {
+				if err == nil && h.boardKey(a.Session) != source {
+					err = fmt.Errorf("%w: the floor's issue board changed while its item was read: pick the item again", errStale)
+				}
 				if err == nil {
 					err = h.runStart(ctx, c, cmd, a, t)
 				}
