@@ -298,7 +298,8 @@ export class Laptops {
       },
       storage: storage(),
       ...(this.host.upload ? { upload: this.host.upload } : {}),
-      status: (kind, text) => this.host.seat.status(kind, text),
+      // #187: while its worker is away the bar keeps saying so (a late ack of a send would say "Sent").
+      status: (kind, text) => (this.seat?.away ? this.restStatus(this.seat) : this.host.seat.status(kind, text)),
       ...(host.packup ? { packup: host.packup } : {}),
       modeChanged: (mode) => this.onMode(mode),
       ...(host.themes ? { prefs: host.themes.prefs } : {}),
@@ -730,6 +731,8 @@ export class Laptops {
       return;
     }
     const name = this.seat.name;
+    // An ack that comes after the worker went away: the bar keeps saying so.
+    if (this.seat.away) return this.restStatus(this.seat);
     if (r.ok) {
       if (kind === 'prompt') this.host.seat.status('ok', `Pasted into ${name}’s terminal`);
       else this.host.seat.status('ok', null);
@@ -986,7 +989,7 @@ export class Laptops {
    */
   rebase(walker: Seat['walker']): void {
     const s = this.seat;
-    if (!s) return;
+    if (!s || (s.walker.x === walker.x && s.walker.y === walker.y && s.walker.z === walker.z && s.walker.yaw === walker.yaw)) return;
     s.walker = { ...walker };
     s.office.root.updateMatrixWorld(true);
     s.from = null;
