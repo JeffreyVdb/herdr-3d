@@ -738,7 +738,9 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   two write-code runs built from the synthetic run dirs in `fixtures/runs/` (see its README) the way the bridge reads
   them: the over-cap ORCH at pass 3 waiting for you with its pass-3 crew in its pod, REVIEW r3 `CHANGES_REQUIRED`
   with 2 blockers; and a run with every other freelancer state, each verdict and an `input_required`), `demo-m118` (#118: demo-m6
-  with the overview's lines: the runs' issue titles and URLs, every agent's `digest`), `perf-floor60`, `perf-floor96` (96
+  with the overview's lines: the runs' issue titles and URLs, every agent's `digest`), `demo-m188` (#188: demo-m118 with
+  a run across two floors, Juniper's working coder Poppy on pastry, and Quince in the scratchpad whose orchestrator is
+  gone), `perf-floor60`, `perf-floor96` (96
   desks, every worker needs you: the corner office's worst case), `perf-city240`. `pnpm fixtures` regenerates them,
   `pnpm fixtures:check` flags stale files.
   Like the bridge, a building lists its floors top to bottom, which is `index` order (index 0 on top); vitest fails
