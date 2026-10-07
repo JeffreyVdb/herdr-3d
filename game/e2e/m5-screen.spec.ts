@@ -226,7 +226,7 @@ test('E sits at a worker’s laptop: typed input echoes in its terminal, game ke
   clean();
 });
 
-test('paste into an agent’s laptop sends worker.prompt; a failed key shows in the seat bar; the worker leaving stands you up', async ({ page }) => {
+test('paste into an agent’s laptop sends worker.prompt; a failed key shows in the seat bar; the worker leaving keeps you seated, away', async ({ page }) => {
   const clean = watchErrors(page);
   const { L, ids } = await enter(page, '', '&simfail=input_failed');
   const nibble = ids.Nibble as string; // desk 0, claude
@@ -246,11 +246,18 @@ test('paste into an agent’s laptop sends worker.prompt; a failed key shows in 
     document.querySelector('.seat-input')?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   });
   await expect.poll(async () => (await sentOf(page, 'worker.prompt')).map((c) => c.args)).toEqual([{ id: nibble, text: 'Run the tests.' }]);
-  // Nibble goes home: you get up, with a word why.
+  // Nibble goes home (#187): you stay at the laptop, and the bar says nothing more will be sent.
   await page.evaluate((id) => window.__h3d.inject({ t: 'worker.removed', seq: 1_000_000, id, session: 'herdr-3d', workspace_id: 'w1' }), nibble);
   await frames(page, 3);
-  expect(await page.evaluate(() => window.__h3d.seated())).toBeNull();
-  await expect(page.locator('.toast')).toContainText(/no longer on the floor|went home/);
+  expect(await page.evaluate(() => window.__h3d.seated())).toBe(nibble);
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.seat())).state).toBe('offline');
+  expect((await page.evaluate(() => window.__h3d.seat())).note).toMatch(/Nibble is no longer on the floor/);
+  const typed = (await sentOf(page, 'worker.keys')).length;
+  await page.keyboard.type('z');
+  await frames(page, 3);
+  expect((await sentOf(page, 'worker.keys')).length).toBe(typed);
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
   clean();
 });
 

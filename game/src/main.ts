@@ -132,6 +132,8 @@ export interface H3DDebug {
    */
   theme(): { transcript: string; terminal: string; ready: string; transcriptZoom: number; terminalZoom: number; hideTools: boolean; terminalFont: string | null };
   themeLoaded(): Promise<void>;
+  /** #187: how many times the floor's scene was rebuilt (a desk count or building outline change) since the page opened. */
+  officeRebuilds(): number;
   /** M16: the seated view's mode, its transcript watches and items, the overlay's box (null: hidden) and whether the view is mounted. */
   transcript(): ReturnType<import('./laptop').Laptops['transcriptState']> | null;
   /** M16 phase 2: the prints on the desks near you (per desk: worker, prints with tray/blank/loaded/slot x,z), the textures' ledger, the transcript watches and lightboxes opened from prints. */
@@ -379,6 +381,7 @@ const h3d: H3DDebug = {
   badgePoint: (s) => app?.badgePoint(s) ?? null,
   screens: () => app?.laptops.screens() ?? [],
   seated: () => app?.laptops.seated ?? null,
+  officeRebuilds: () => app?.rebuilds ?? 0,
   sitAt: (id) => app?.sitAt(id) ?? false,
   screenText: (id) => app?.laptops.text(id) ?? null,
   frozenInk: (id) => app?.laptops.frozenInk(id) ?? null,

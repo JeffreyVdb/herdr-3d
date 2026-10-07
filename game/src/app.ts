@@ -291,6 +291,8 @@ export class App {
   /** Storey of the floor with an interior (null: none, e.g. in the lobby). */
   private loaded: number | null = null;
   private worldCache: { key: unknown[]; world: WalkWorld } | null = null;
+  /** #187: how often the floor's scene was rebuilt (a desk count or outline change), for the tests. */
+  rebuilds = 0;
   private fireDoor = 0;
   private mezzDoor = 0;
   /** Whether the hint on screen is the seated one. */
@@ -1724,6 +1726,8 @@ export class App {
       else if (L && this.loaded !== null) this.walker.place(L.spawn.x, L.spawn.z, L.spawn.yaw, 0, floorY(this.loaded));
       else this.walker.place(ctx.plan.lobby.spawn.x, ctx.plan.lobby.spawn.z, 0, 0, 0);
     }
+    // #187: the world moved you (the floor's storey, a nudge out of a new chair), not your feet: a seat stays.
+    this.laptops.rebase(this.walker);
     this.updatePlace(false, true);
     this.cameraMoved = true;
   }
@@ -1734,6 +1738,7 @@ export class App {
     const fv = this.store.floorView(this.office.session);
     if (!fv) return;
     const old = this.office;
+    this.rebuilds++;
     this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner });
     this.walk.setOffice(this.office, floorY(this.loaded));
     old.dispose();

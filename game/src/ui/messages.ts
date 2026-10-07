@@ -126,6 +126,9 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
   switch (code) {
     case 'offline':
       return 'Not connected to herdr-world, so nothing was sent. Try again once it reconnects.';
+    case 'unavailable':
+      // #187: the game's own refusal for a seat whose worker is away: its message says why.
+      return why;
     case 'timeout':
       return 'herdr-world did not answer in time. The change may still go through: check before you retry.';
     case 'disconnected':

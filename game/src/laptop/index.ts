@@ -21,6 +21,7 @@ import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type Scree
 import { InputLanes, InputQueue, seatedKey, textItems, type ZoomAction } from './keys';
 import { fullscreenChip, type FullscreenChip } from './fullscreen';
 import { pasteImages } from './pasteImages';
+import { awayNote, whyAway } from './seatAway';
 import { screenTheme } from './paint';
 import type { ThemeLoader } from '../ui/themeLoader';
 import { stepZoom, ZOOM, type ThemePreset } from '../ui/themes';
@@ -131,6 +132,10 @@ interface Seat {
   to: { pos: THREE.Vector3; quat: THREE.Quaternion };
   /** The view the pose was fitted to (a resize fits it again). */
   view: string;
+  /** #187: why its worker cannot be reached (gone, its floor asleep, no terminal), or null. The view stays; only sending and watching wait. */
+  away: string | null;
+  /** #187: the seat's own watch was refused: not asked for again before this time (performance.now), 0 for none. */
+  retryAt: number;
 }
 
 /** Sitting down and getting up glide the camera this long (ms); with reduced motion it cuts. */
@@ -146,6 +151,10 @@ const PRINT_SPOT = new THREE.Vector3(0, DESK_H, SEAT_OFFSET - 0.28);
 const GLASS = glassFrame();
 /** The seated terminal's watch while you read the transcript: kept alive, so switching back shows it at once. */
 const READING_FPS = 1;
+/** #187: how long the seat waits before asking for a watch the bridge refused. */
+const SEAT_RETRY_MS = 5000;
+/** The seat bar's line while the connection is down. */
+const OFFLINE_NOTE = 'Not connected to herdr-world: what you type is not sent';
 const viewKey = (cam: THREE.PerspectiveCamera) => `${cam.aspect.toFixed(4)}:${window.innerHeight}`;
 const smooth = (k: number) => k * k * (3 - 2 * k);
 
@@ -264,7 +273,8 @@ export class Laptops {
     // A new choice shows at the next plan.
     this.monitors.prefs.onChange(() => (this.lastPlan = -Infinity));
     this.transcript = new TranscriptMode({
-      send: (t, args) => this.host.send(t, args),
+      // #187: the conversation stays while its worker is away; its prompt box keeps the draft and a send is refused.
+      send: (t, args) => (this.seat?.away ? Promise.resolve({ ok: false, code: 'unavailable', message: this.seat.away }) : this.host.send(t, args)),
       feed: (id) => this.feeds.get(id),
       renderer: loadRenderer,
       imagesRenderer: loadImagesTab,
@@ -380,10 +390,10 @@ export class Laptops {
       this.prints.clear();
       this.prints.planner.clear();
       this.monitors.lost();
-      if (this.seat) this.host.seat.status('offline', 'Not connected to herdr-world: what you type is not sent');
+      if (this.seat) this.host.seat.status('offline', OFFLINE_NOTE);
     } else {
       this.lastPlan = -Infinity;
-      if (this.seat) this.host.seat.status('ok', null);
+      if (this.seat) this.restStatus(this.seat);
     }
   }
 
@@ -401,6 +411,12 @@ export class Laptops {
       this.terms.set(id, t);
     }
     t.frame(f);
+    const s = this.seat;
+    if (s?.id === id && s.retryAt) {
+      // The refused watch of the seat came back (a retry): the bar stops saying it did not.
+      s.retryAt = 0;
+      if (!s.away) this.restStatus(s);
+    }
   }
 
   /** A watch ended: its laptop keeps the last frame (frozen), the terminal goes back to the pool. */
@@ -423,7 +439,9 @@ export class Laptops {
   private onFailed(id: string, code: string, message: string): void {
     this.planner.failed(id, performance.now());
     if (this.seat?.id === id && code !== 'observer_failed') {
-      this.stand(this.watchFailure(code, message), true);
+      // #187: the view stays (its draft too); the bar says why, and the watch is asked for again in a while.
+      this.seat.retryAt = performance.now() + SEAT_RETRY_MS;
+      this.host.seat.status('error', this.watchFailure(code, message));
     }
   }
 
@@ -431,9 +449,8 @@ export class Laptops {
     this.planner.forget(id);
     if (this.seat?.id !== id) return;
     const name = this.seat.name;
-    if (reason === 'worker_removed') this.stand(`${name} went home, so you got up.`, true);
-    else if (reason === 'asleep') this.stand(`${name}’s floor went to sleep, so you got up.`, true);
-    else if (reason === 'observer_failed') this.host.seat.status('error', `${name}’s screen stopped updating. It comes back when herdr-world restarts the observer.`);
+    // #187: `worker_removed` and `asleep` are no news to the seat: the frame loop finds the worker away from the store.
+    if (reason === 'observer_failed') this.host.seat.status('error', `${name}’s screen stopped updating. It comes back when herdr-world restarts the observer.`);
     // pane_changed: the next sync watches the new pane.
   }
 
@@ -479,19 +496,22 @@ export class Laptops {
 
   private onMode(mode: SeatMode): void {
     this.host.seat.setMode(mode);
-    const s = this.seat;
-    if (s && this.meshes) {
-      const t = this.terms.get(s.id);
-      if (mode !== 'terminal') {
-        // The monitor behind the overlay holds the screen as it was ("reading"); the watch goes on at 1 fps.
-        const at = this.liveAt.get(s.id);
-        if (at !== undefined) this.meshes.setLive(at, null);
-        this.liveAt.delete(s.id);
-        if (t?.painted) this.meshes.freeze(s.desk, t.canvas);
-      } else this.meshes.unfreeze(s.desk);
-    }
+    if (this.seat) this.holdScreen(this.seat, mode);
     if (mode === 'terminal') this.host.seat.focus();
     this.syncWatches();
+  }
+
+  /** The monitor of the seat follows the view: frozen behind the conversation or the images, live behind the terminal. */
+  private holdScreen(s: Seat, mode: SeatMode = this.transcript.mode): void {
+    if (!this.meshes) return;
+    const t = this.terms.get(s.id);
+    if (mode !== 'terminal') {
+      // The monitor behind the overlay holds the screen as it was ("reading"); the watch goes on at 1 fps.
+      const at = this.liveAt.get(s.id);
+      if (at !== undefined) this.meshes.setLive(at, null);
+      this.liveAt.delete(s.id);
+      if (t?.painted) this.meshes.freeze(s.desk, t.canvas);
+    } else this.meshes.unfreeze(s.desk);
   }
 
   private onTranscriptFailed(id: string, code: string, message: string): void {
@@ -509,9 +529,8 @@ export class Laptops {
   private onTranscriptClosed(id: string, reason: string): void {
     this.prints.forget(id);
     if (this.seat?.id !== id) return;
-    // The terminal's own close (or the frame loop) stands you up; the overlay goes back to the terminal meanwhile.
-    if (reason === 'worker_removed' || reason === 'asleep') this.transcript.stop(id);
-    else if (reason === 'session_changed' && this.transcript.mode !== 'terminal') this.host.seat.status('ok', `${this.seat.name} started a new session`);
+    // #187: a worker that left or a floor asleep keeps the conversation up (see `whyAway`); the watch waits for it.
+    if (reason === 'session_changed' && this.transcript.mode !== 'terminal') this.host.seat.status('ok', `${this.seat.name} started a new session`);
   }
 
   /** Where the monitor's glass is on the viewport (CSS px), between the top bar and the seat bar. */
@@ -608,6 +627,8 @@ export class Laptops {
       from: { pos: camera.position.clone(), quat: camera.quaternion.clone() },
       to: { pos: camera.position.clone(), quat: camera.quaternion.clone() },
       view: '',
+      away: null,
+      retryAt: 0,
     };
     this.leaving = null;
     document.documentElement.setAttribute('data-seated', '');
@@ -714,9 +735,10 @@ export class Laptops {
       else this.host.seat.status('ok', null);
       return;
     }
-    if (r.code === 'unknown_worker') return this.stand(`${name} is no longer on the floor, so you got up.`, true);
-    if (r.code === 'invalid_state' && kind === 'keys') return this.stand(`${name} has no terminal any more (${r.message.replace(/^invalid state:\s*/, '')}), so you got up.`, true);
-    if (r.code === 'offline' || r.code === 'disconnected') return this.host.seat.status('offline', 'Not connected to herdr-world: what you type is not sent');
+    // #187: you stay seated: the bar says it, and the frame loop finds the worker away from the store.
+    if (r.code === 'unknown_worker') return this.host.seat.status('offline', awayNote(`${name} is no longer on the floor.`));
+    if (r.code === 'invalid_state' && kind === 'keys') return this.host.seat.status('offline', awayNote(`${name} has no terminal any more (${r.message.replace(/^invalid state:\s*/, '')}).`));
+    if (r.code === 'offline' || r.code === 'disconnected') return this.host.seat.status('offline', OFFLINE_NOTE);
     if (r.code === 'unknown_command') return this.host.seat.status('error', kind === 'keys' ? 'This herdr-world can’t take typing yet: update the bridge. The screen still shows.' : 'This herdr-world can’t take a paste yet: update the bridge.');
     const why = r.message.replace(/^(input_failed|prompt_failed|bad args|bad_request):\s*/, '') || r.code;
     this.host.seat.status('error', kind === 'keys' ? `${name}’s terminal didn’t take that: ${why}` : `The paste didn’t reach ${name}: ${why}`);
@@ -850,7 +872,7 @@ export class Laptops {
   }
 
   private type(items: KeyItem[]): void {
-    if (!this.seat || !this.input || !items.length || this.transcript.shown) return;
+    if (!this.seat || this.seat.away || !this.input || !items.length || this.transcript.shown) return;
     this.host.seat.status('busy', null);
     this.input.keys(items);
   }
@@ -861,7 +883,7 @@ export class Laptops {
    * agent to read a picture, so it is told so and nothing is typed.
    */
   paste(text: string, files: readonly File[] = []): void {
-    if (!this.seat || !this.input || this.transcript.shown) return;
+    if (!this.seat || this.seat.away || !this.input || this.transcript.shown) return;
     if (files.length > 0) {
       this.pasteImages(files);
       return;
@@ -894,8 +916,10 @@ export class Laptops {
   /** Screens for the floor you are on: made when the floor changes. */
   private attach(office: OfficeView | null): void {
     if (office === this.attached) return;
-    // A floor's screens are its own: the old floor's watches go, and a seat there ends.
-    if (this.seat && this.seat.office !== office) this.stand(null, true);
+    // A floor's screens are its own: the old floor's watches go, and a seat there ends. #187: not when the floor is
+    // the same one in a new OfficeView (its desks or outline changed, so the scene was rebuilt): the seat moves over.
+    const keep = this.seat && office && this.seat.office.session === office.session ? this.seat : null;
+    if (this.seat && !keep) this.stand(null, true);
     this.meshes?.dispose();
     this.meshes = null;
     this.prints.setMeshes(null);
@@ -914,7 +938,59 @@ export class Laptops {
       office.root.add(cards.group);
       this.monitors.setCards(cards);
     }
+    if (keep && office) this.rebind(keep, office);
     this.syncWatches();
+  }
+
+  /**
+   * #187: the seat on a rebuilt scene: its desk follows the worker, the chair and the monitor are set again and the
+   * camera refits (no glide). The transcript, its draft and its focus do not depend on the scene and are not touched.
+   */
+  private rebind(s: Seat, office: OfficeView): void {
+    const v = this.host.store.workerView(s.id);
+    this.meshes?.unfreeze(s.desk);
+    s.office.setLean(null);
+    s.office.setAtLaptop(false);
+    if (v && v.worker.session === office.session) s.desk = v.desk;
+    s.office = office;
+    // The new scene has not been drawn yet: the pose and the glass are read from its matrices.
+    office.root.updateMatrixWorld(true);
+    office.setLean(s.desk);
+    office.setAtLaptop(true);
+    this.meshes?.setFull(s.desk);
+    this.holdScreen(s);
+    s.from = null;
+    s.view = '';
+    this.lastPlan = -Infinity;
+  }
+
+  /** The seat bar's line when nothing else has been said: the connection down, the worker away, or nothing. */
+  private restStatus(s: Seat): void {
+    if (!this.connected) this.host.seat.status('offline', OFFLINE_NOTE);
+    else if (s.away) this.host.seat.status('offline', awayNote(s.away));
+    else this.host.seat.status('ok', null);
+  }
+
+  /** #187: the seat's worker is away (or back): the bar says so, and its watches stop (or start again). */
+  private syncAway(s: Seat, why: string | null): void {
+    if (why === s.away) return;
+    s.away = why;
+    this.restStatus(s);
+    this.lastPlan = -Infinity;
+    this.syncWatches();
+  }
+
+  /**
+   * #187: the world moved the walker (the floor changed storey, a nudge out of a new chair): not a step of yours, so
+   * the seat takes the new feet as its own and refits the camera instead of standing you up.
+   */
+  rebase(walker: Seat['walker']): void {
+    const s = this.seat;
+    if (!s) return;
+    s.walker = { ...walker };
+    s.office.root.updateMatrixWorld(true);
+    s.from = null;
+    s.view = '';
   }
 
   /** Once per rendered frame: keep seated, plan, paint, and move the camera when seated or gliding. */
@@ -928,21 +1004,22 @@ export class Laptops {
       const moved = Math.abs(w.x - s.walker.x) > 1e-4 || Math.abs(w.z - s.walker.z) > 1e-4 || Math.abs(w.y - s.walker.y) > 1e-4;
       const v = this.host.store.workerView(s.id);
       if (moved || f.blocked) this.stand(null, true);
-      else if (!v || v.worker.session !== s.office.session) this.stand(`${s.name} is no longer on the floor, so you got up.`, true);
-      else if (s.office.isAsleep) this.stand(`${s.name}’s floor went to sleep, so you got up.`, true);
-      else if (!v.worker.pane_id) this.stand(`${s.name} has no terminal any more, so you got up.`, true);
-      else if (v.desk !== s.desk) this.stand(`${s.name} moved desks, so you got up.`, true);
       else {
-        // #157: a Codex worker herdr calls blocked only because of an async question works on: no screen question
-        // (its prompt box stays on), and its transcript's cue goes on saying what it does.
-        const status = effectiveStatus(v.worker);
-        this.transcript.blocked(status === 'blocked' ? (v.worker.question ?? null) : null);
-        this.transcript.activity(status, v.worker.status_since ?? null); // #58
-        this.syncAsk(askOf(v.worker)); // #57
-        this.syncCodex(codexNotice(v.worker)); // #155
-        this.transcript.followedUp(followupOf(v.worker)); // #90
-        this.transcript.codexSeen(v.worker.codex ?? null, status === 'working'); // #157: its async questions
-        this.transcript.usageSeen(v.worker.usage ?? null); // #101: its context meter (the worker's usage is replaced, not edited, when it changes)
+        // #187: a worker that left, a floor asleep or a pane gone does not get you up: the view stays, away.
+        this.syncAway(s, whyAway(s.name, v, s.office.session, s.office.isAsleep));
+        if (v && !s.away && v.desk !== s.desk) this.rebind(s, s.office); // the desk moved under you (a floor reshuffle): the seat follows
+        if (v) {
+          // #157: a Codex worker herdr calls blocked only because of an async question works on: no screen question
+          // (its prompt box stays on), and its transcript's cue goes on saying what it does.
+          const status = effectiveStatus(v.worker);
+          this.transcript.blocked(status === 'blocked' ? (v.worker.question ?? null) : null);
+          this.transcript.activity(status, v.worker.status_since ?? null); // #58
+          this.syncAsk(askOf(v.worker)); // #57
+          this.syncCodex(codexNotice(v.worker)); // #155
+          this.transcript.followedUp(followupOf(v.worker)); // #90
+          this.transcript.codexSeen(v.worker.codex ?? null, status === 'working'); // #157: its async questions
+          this.transcript.usageSeen(v.worker.usage ?? null); // #101: its context meter (the worker's usage is replaced, not edited, when it changes)
+        }
       }
     }
     const meshes = this.meshes;
@@ -1071,19 +1148,21 @@ export class Laptops {
     if (!this.connected) return;
     const want = new Map<string, number>();
     if (this.attached && !this.attached.isAsleep) for (const id of this.planner.live) want.set(id, this.cfg.fps);
-    if (this.seat) want.set(this.seat.id, this.transcript.shown ? READING_FPS : this.cfg.seatedFps);
+    // #187: not while its worker is away (the bridge would refuse it), nor right after it refused (a retry later).
+    const watched = this.seat && !this.seat.away && performance.now() >= this.seat.retryAt ? this.seat : null;
+    if (watched) want.set(watched.id, this.transcript.shown ? READING_FPS : this.cfg.seatedFps);
     // #74: only the screen you sit at says anything about fullscreen (the others show their panes as they are, and must
     // not move the tab around); the player's preference says whether it asks for the zoom (true) or only follows the
     // pane, so the chip stays true when the human changes it (false).
     const fullscreen = new Map<string, boolean>();
-    if (this.seat) fullscreen.set(this.seat.id, this.host.themes?.prefs.fullscreen ?? true);
+    if (watched) fullscreen.set(watched.id, this.host.themes?.prefs.fullscreen ?? true);
     this.watches.sync(want, fullscreen);
     // M16: the transcript of the worker you sit at (not counted against the terminal watches), and a few items of the
     // desks that have prints (only their images matter).
     const tx = new Map<string, number>();
     if (!this.whyNoTranscript()) {
       for (const id of this.prints.wants()) tx.set(id, PRINT_WATCH_LIMIT);
-      if (this.seat) tx.set(this.seat.id, WATCH_LIMIT);
+      if (this.seat && !this.seat.away) tx.set(this.seat.id, WATCH_LIMIT);
     }
     this.transcripts.sync(tx);
   }
