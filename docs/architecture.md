@@ -13,7 +13,7 @@ and `docs/decisions.md`. Where a verifier and a follow-up disagree, the one with
 | Worker at a desk | herdr workspace (its agent pane) | `session.snapshot` + `events.subscribe` |
 | Laptop screen | agent pane terminal | `herdr terminal session observe <pane>` (read-only ANSI frames) |
 | Freelancer | write-code worker (`GROUND/CODE/REVIEW/UX`) | `h3d_*` workspace tokens + `~/.local/state/write-code/runs/<run_id>/` |
-| Board wall (issues Kanban, pull requests) | the floor's issue tracker and code host — GitHub today (Issues, Projects v2, PRs), later files in the repo or Monday.com | the provider, through the bridge's neutral `tracker` / `codehost` interfaces; last good boards, open PRs and announced merges cached in bridge SQLite |
+| Board wall (issues Kanban, pull requests) | the floor's issue tracker and code host, chosen apart — GitHub (Issues, Projects v2, PRs) or, #184, a Kaneo project for the issues with GitHub's PRs when the floor has a repo; later files in the repo or Monday.com | the provider, through the bridge's neutral `tracker` / `codehost` interfaces; last good boards, open PRs and announced merges cached in bridge SQLite |
 | Building logo (entrance sign, reception wall, city sign) | an image the user picks for a building | bridge SQLite (`building_logo`: the normalised PNG); the building carries its hash |
 | Whiteboard (north wall of every floor) | an Excalidraw board shared by the floor, agents pin on it (M14) | bridge files, `~/.local/share/herdr-3d/whiteboards/<floor>/` (versioned scenes, images by sha256, the current render) |
 | Floor overview screen (west wall of every floor's lounge) | the floor's workers as one tree: who works, who waits on you, orchestrators over their freelancers, each one's ticket, task and what it does now (#118) | derived in the game from the world (`world/overview.ts`); the task / now lines from the bridge's `digest` (each worker's transcript), the ticket titles from the floor's board provider |
@@ -200,6 +200,19 @@ MacBook (M2 Max)                                   devbox (Linux)
   `updateProjectV2ItemPosition`). A poll that was in flight when a write landed never becomes the latest board (a
   write that failed halfway, `provider.ErrPartial`, counts as one and refreshes too), and the game holds a drop's
   placement until a board polled after the write shows it; a failed drop says why inside the board.
+  #184 **Kaneo**: a floor's settings choose its issue tracker (`tracker`: GitHub, or Kaneo with a workspace and
+  project) apart from its repo. The bridge-wide Kaneo connection (instance, key in its own `0600` `kaneo.json`, default
+  workspace, the test that gates a save, a generation) is `internal/kaneoconf`, which reaches Kaneo only through a
+  `Connector` interface; `internal/kaneo` (the HTTP client and the `tracker.Tracker`) is wired in by `app` alone, like
+  `github` (`TestBoardLayerIsProviderNeutral`). `server.BoardSource` names the tracker, the instance and generation,
+  the workspace, the project and the repo (never the key), and the factory picks the tracker and the code host apart:
+  a Kaneo floor has its issues board without a repo and GitHub's PR board with one. A new generation drops a Kaneo
+  floor's board, its cache and any late poll. A run-time 401 (maybe the key's quota) pauses every Kaneo floor's polling
+  for 5 minutes, ended by a passing re-test; a 403 is a permission problem. Kaneo's virtual `planned` and `archived`
+  statuses are columns with a `kind`; `close` is off (completion is a final column; a task is never deleted). Runs on
+  a Kaneo task keep `{provider, id}` in `run_launch` and inline the task in the prompt (an agent cannot read Kaneo).
+  "Open in Kaneo" from the Mac helper works for the saved instance's host only, which the bridge names on its own
+  `/healthz` for the helper.
 - **Building logos** (M3d, built; details in `protocol.md` "Building logos"): a building can carry a logo, stored by the
   bridge itself (no remote URL, so the game never loads an image from a third-party host, it works offline and through
   the helper). Upload, clear and fetch are HTTP on the bridge socket, `PUT|DELETE|GET /logo/{building}`, not WebSocket
@@ -262,11 +275,13 @@ MacBook (M2 Max)                                   devbox (Linux)
 - Events: `building.*`, `floor.upsert/removed`, `worker.upsert/removed`, `worker.status`, `freelancer.report`,
   `terminal.frame{pane, full|diff, ansi_b64}`. M7: `board.issues` / `board.prs{provider, initial, fetched_at, stale,
   columns, cards | prs, merged}` are connection-scoped like `terminal.frame` (no `seq`, not in the replay ring or the
-  snapshot); workers carry `work_item{provider, id}` next to `issue`.
+  snapshot); workers carry `work_item{provider, id}` next to `issue` (#184: alone, with its `key`, for a Kaneo task).
+  #184: `kaneo.update` (the Kaneo connection, never a key) and `world.snapshot`'s `kaneo`.
 - Commands (each with `req_id`, ack/err): `building.create/rename/delete`, `floor.assign`, `floor.wake/sleep`,
   `worker.hire{floor, harness, model, effort, label, cwd}`, `worker.fire`, `worker.prompt`, `worker.keys`,
   `terminal.watch/unwatch/zoom`, `terminal.open` (see below). M7: `board.watch/unwatch/refresh`, `issue.get/comment/close/
   set_status`, `pr.get/comment/merge`, `worker.open_pr.prepare/open_pr`; `run.prepare/start` take a `work_item`.
+  #184: `kaneo.get/test/set/clear/workspaces/projects`; `floor.settings.set` takes `tracker` and `kaneo`.
 - **Open in Ghostty (optional escape hatch, not needed to play)**: all normal interaction happens in-game —
   laptop screen = live read-only terminal via `observe`; prompts, approvals and keys via `worker.prompt` / `worker.keys`.
   herdr servers run headless on the server; nothing on the Mac needs a terminal. Only for "let me type in the raw

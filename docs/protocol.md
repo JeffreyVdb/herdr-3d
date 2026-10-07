@@ -80,7 +80,11 @@ The helper also answers one request of its own, for the game's "Open in <provide
 bodies (M7): `POST /api/open` with `{"url":"https://github.com/…"}` opens that page in the Mac's default browser
 (`open <url>`). It needs the same `Host` and `Origin`, the token in an `X-H3D-Token` header (never in a URL) and
 `Content-Type: application/json`, and accepts only an `https://` URL on a host of its allowlist (`github.com`; every
-provider the bridge learns adds its own host), without credentials or a port. `204` opened; `400` a refused URL;
+provider the bridge learns adds its own host), without credentials or a port. #184: a self-hosted provider's host
+(the saved [Kaneo](#kaneo) instance's web host) is not built in: the bridge names it on its own `GET /healthz`, in the
+`X-H3D-Open-Hosts` header (comma-separated host names; absent: none), which the helper reads through its ssh tunnel on
+every 5 s check and adds to the allowlist while it is there (a save or a disconnect reaches the helper within one
+check). No client can set it: the helper does not proxy `/healthz`. `204` opened; `400` a refused URL;
 `403` a failed check; `502` the Mac's `open` failed. A game not served by the helper has no such endpoint (it has no
 token either) and opens a new window itself (`https://` only); a game the helper serves opens nothing the helper
 refuses and says so.
@@ -194,6 +198,9 @@ client reads that as `{}`.
 `codex_server` (#155) is the shared Codex server switch, `{"enabled", "available"}` (see
 [Shared Codex server](#shared-codex-server)); a bridge from before #155 leaves it out.
 
+`kaneo` (#184) is the Kaneo connection, never a key (see [Kaneo](#kaneo)); a bridge without the settings, or from
+before #184, leaves it out.
+
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
 
@@ -269,7 +276,7 @@ floor with no workers and an `error`).
 | `round` | int ≥ 1, optional | write-code round: the `h3d_round` token, else the label's trailing `\|r<N>` (see [Runs and freelancers](#runs-and-freelancers)) |
 | `ticket` | string ≤ 32 bytes, optional | the `h3d_ticket` token, else the label's ticket field (`CODE\|descr\|<ticket>\|r<N>`, likewise `REVIEW` and `UX`) |
 | `issue` | object, optional | `{"repo":"owner/name","number":7,"title"?,"url"?}`: the GitHub issue of the worker's run, when a repo is known. #118: `title` and `url` come from the floor's board provider when it has them (see [Ticket titles](#ticket-titles)) |
-| `work_item` | object, optional | `{"provider":"github","id":"JeffreyVdb/herdr-3d#7","title"?,"url"?}`: `issue` in the neutral form, present whenever `issue` is and the floor has a board provider (see [Boards](#boards-issues-and-pull-requests)). The `id` is a board card's `id`; #118: `title` and `url` as on `issue`. |
+| `work_item` | object, optional | `{"provider":"github","id":"JeffreyVdb/herdr-3d#7","title"?,"url"?,"key"?}`: `issue` in the neutral form, present whenever `issue` is and the floor has a board provider (see [Boards](#boards-issues-and-pull-requests)). The `id` is a board card's `id`; #118: `title` and `url` as on `issue`. #184: a run started on an item of a provider that numbers no GitHub issues (a Kaneo task) has `work_item` **without** `issue`: `{"provider":"kaneo","id":"<task id>","key":"HRD-12","title"?,"url"?}`, from its launch record (kept across restarts), for the orchestrator and its crew; a Kaneo floor's numeric `ticket`s are never read as GitHub issues. |
 | `orch_id` | string, optional | freelancers: the worker id of their orchestrator |
 | `phase`, `pass` | string, int ≥ 0, optional | orchestrators: the `h3d_phase` / `h3d_pass` tokens (`research\|coding\|review\|fixing\|waiting_user\|pr\|done`, others passed through, ≤ 32 bytes), remembered like `harness` |
 | `over_cap` | bool, optional | orchestrators: `true` past write-code's review-pass cap (`pass > 3`, or `pass == 3` and `phase == "waiting_user"`); absent when false |
@@ -412,6 +419,7 @@ and remember the last `seq` applied.
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
 | `codex_server.update` | `enabled`, `available` | #155: the shared Codex server switch changed (flat in the event, see [Shared Codex server](#shared-codex-server)) |
+| `kaneo.update` | the fields of the Kaneo state | #184: the Kaneo connection changed (saved, cleared, paused by a refused key, resumed); flat in the event, never a key (see [Kaneo](#kaneo)). Like `packup.update`, decode it by its `t`: its `state` and `last_error` are not `ai.update`'s |
 
 ```json
 {"t":"floor.upsert","seq":1043,"floor":{"session":"herdr-3d","state":"running","building":null,"index":null,"desks":7}}
@@ -510,6 +518,12 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `ai.test` | `{"role", "key"?, "base_url"?, "model"?, "extra_body"?}` | `{"ok": true, "latency_ms", "json_mode"?, "base_url"?, "score"?}` | `ai.update` when it changes the role in use |
 | `ai.set` | `{"role", "key"?, "base_url"?, "model"?, "extra_body"?}` | the AI state | `ai.update` |
 | `ai.clear` | `{"role"}` | the AI state | `ai.update` |
+| `kaneo.get` | `{}` | the Kaneo state | — |
+| `kaneo.test` | `{"url"?, "key"?}` | `{"ok": true, "latency_ms", "url", "api_base", "web_origin", "workspaces": [{id, name, slug?}], "user"?}` | `kaneo.update` when it ends a pause |
+| `kaneo.set` | `{"url"?, "key"?, "default_workspace"?: string \| null}` | the Kaneo state | `kaneo.update` |
+| `kaneo.clear` | `{}` | the Kaneo state | `kaneo.update` |
+| `kaneo.workspaces` | `{}` | `{"workspaces", "generation"}` | — |
+| `kaneo.projects` | `{"workspace_id"}` | `{"workspace_id", "projects": [{id, workspace_id, name, slug?}], "generation"}` | — |
 | `followups.get` | `{}` | the follow-up questions' state (see [Follow-up questions](#follow-up-questions)) | — |
 | `followups.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | the follow-up questions' state | `followups.update` (before the ack) |
 | `followups.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"name", "expect", "score", "flagged", "questions"?, "source"?, "error"?}], "latency_ms"}` | `followups.update` when it changes `tested` |
@@ -825,8 +839,18 @@ later; with `?backend=webgl2` and without, check the TV's colours and letterboxi
 | `status_field` | `{"name": string, "options": [string…]}` | name 1–64 bytes; 1–20 options, each 1–64 bytes, unique (not blank). A client may pre-fill `{"name":"Status","options":["Todo","Doing","QA","Done"]}`. The issue board (M7) uses only the `name`, as the project field its columns come from (default `Status`); the columns are that field's live options, not these. |
 | `default_cwd` | absolute path | an existing directory on the bridge host; stored cleaned (no trailing `/`) |
 | `default_hire` | `{"harness", "model", "effort"}` | one of `hire_options`: a model of that harness, an effort of it or an `extra_efforts` entry of that model |
+| `tracker` | `"github"` \| `"kaneo"` | #184: the floor's issue tracker; `null` and `"github"` are GitHub, which every floor from before is (absent in `settings`). `"kaneo"` needs a `kaneo` link (stored or in the same call) |
+| `kaneo` | `{"workspace_id", "project_id"}` | #184: ids 1–200 bytes; the bridge asks Kaneo (the saved connection: `not_configured` without one) that the project is a live project of that workspace before it saves (`not_found`: deleted or invisible to the key; `bad_request`: another workspace's, or archived; `unauthorized`, `forbidden`, `unreachable`, `timeout` as Kaneo answered). Settings show it as `{"workspace_id", "workspace_name"?, "project_id", "project_name"?}` (the names as they were at the save) |
 
 Objects must not have other keys. Settings live in SQLite `floor_repo`.
+
+#184: the issue tracker and the repository are chosen apart. A Kaneo floor's `repo` stays its code (checkouts, pull
+requests); its issues come from the Kaneo project. The inactive tracker's settings are kept: a Kaneo floor keeps its
+`project` and `status_field`, and a floor switched back to GitHub keeps its `kaneo` link (`settings.kaneo` without
+`tracker`), so switching back finds them. A save that stores a new link, or switches to Kaneo, is checked with Kaneo off
+the bridge's main loop (the ack follows the check; settings that changed meanwhile so the link is not the one checked
+are `stale`); one that does not touch the link asks Kaneo nothing. The bridge's default workspace is only a prefill: a
+saved floor keeps its own `(workspace_id, project_id)` whatever the default becomes.
 
 `suggested` is computed by the bridge, never stored:
 
@@ -1214,7 +1238,7 @@ high, researchers codex sol low; the orchestrator claude opus medium), once: del
 |---|---|
 | `prompt` | the orchestrator's first prompt, composed as below |
 | `label` | the orchestrator's workspace label, write-code's `ORCH\|<descr>`: `ORCH\|issue-<n>`, or `ORCH\|` and the first words of the text as lower-case words joined by `-`; the descr is at most 10 bytes (a long issue number is cut: `ORCH\|issue-1234` for 123456) |
-| `ticket` | `{"kind":"issue","repo","number","url"}` or `{"kind":"text","text"}` (trimmed) |
+| `ticket` | `{"kind":"issue","repo","number","url"}` or `{"kind":"text","text"}` (trimmed); #184: `{"kind":"item","url","item":{"provider","id","key","title","url"},"provider_name"}` for an item of a provider that numbers no GitHub issues (a Kaneo task) |
 | `preset`, `orch` | the defaults above, as used for `prompt` |
 | `cwd`, `git`, `capacity` | as in `hire.prepare` without a `cwd` (the floor's effective default cwd): where the orchestrator will work |
 
@@ -1242,6 +1266,14 @@ one. The placement line (#74: a laptop shows a pane at its own size, so every ag
 never in a split) is always there. The status line is there for an issue ticket only (the orchestrator then moves the issue's status:
 a pull request means QA, its merge means Done); a free-text ticket has none. With no `extra`, the blank line before it is
 left out too. (A pure function, `server.RunPrompt`.)
+
+#184: an `item` ticket (a Kaneo task) is one an agent cannot read where it lives (no `gh`, and the integration key never
+reaches an agent), so the prompt carries what the provider gave: `/write-code Kaneo task HRD-12: <title>`, the task's
+URL on the next line, then its description (the first 6000 bytes, then "[The description goes on in Kaneo; this is its
+first part.]"); in place of the status line, "This ticket is a Kaneo task, not a GitHub issue: everything the bridge
+read of it is above. Don't look it up with gh, and leave its status on the Kaneo board to people." The label is
+`ORCH|<key>` in lower case (`ORCH|hrd-12`). (`server.TicketPrompt`; the issue and text prompts are `RunPrompt`'s, byte for
+byte.) The game's "Ask a worker…" on a Kaneo task likewise puts the title and the description in the first prompt.
 
 **`run.start`** hires the orchestrator and gives it the prompt:
 
@@ -1282,7 +1314,8 @@ the issue provider: the skill itself moves the ticket.
 ### Boards: issues and pull requests
 
 Every floor with an effective repo (`settings.repo ?? suggested.repo`) has two boards: its **issues**, as a Kanban of
-status columns, and its **pull requests**. They come from a provider behind two neutral interfaces (the bridge's
+status columns, and its **pull requests**. #184: a floor whose `tracker` is `kaneo` has its issues board from its Kaneo
+project (no repo needed) and the pull requests board only when it has a repo (GitHub's); see "Kaneo boards" below. They come from a provider behind two neutral interfaces (the bridge's
 `internal/tracker` for issues, `internal/codehost` for pull requests): **GitHub** (Issues, with Projects v2 for the
 columns) is the one implemented. Nothing on the wire is GitHub's: items are addressed by an opaque `id`, scoped by the
 `provider` (clients never parse an id, they show its `key`, `"#9"`); status columns have opaque ids; no GraphQL node ids,
@@ -1328,15 +1361,16 @@ connection watches one floor at a time; a new `board.watch` replaces the old one
 | `initial` | `true`: the replay of the cache on `board.watch`; **never ring the gong for it** |
 | `fetched_at` | unix ms of the data's poll; `0`: nothing fetched yet |
 | `stale`, `error` | the last poll failed: this is the previous good data again (never emptied), with a short `error` (never a token). A failed poll is never a merge. |
+| `error_code`, `paused_until` | #184, `board.issues` only, while `stale`: the failed poll's error code (`unauthorized`, `forbidden`, `rate_limited`, `provider_failed`, …), and, when the provider refused the key (`unauthorized`), when polling resumes (unix ms) |
 | `truncated` | the provider hit its paging limit (500 open issues or pull requests, or a nested list past 100): the board is incomplete |
 | `rate` | optional, `{remaining, reset_at}` (unix ms) of the provider's rate limit, to show "rate limit: next refresh 14:05" |
 | `capabilities` | the board's; a card may carry its own `capabilities` that replace them (a closed issue: `close: false`). `comment`, `close`, `set_status`, and `order` (#52): `issue.set_status` can also place the card in its column, and the cards carry `position`. GitHub: `set_status` and `order` with a project, neither without one. |
-| `columns` | in order. GitHub project: the Status field's options as they are now, `done: true` for the option named "Done" (ignoring case). No project: `open`, and `closed` (done). Issues with no status in the project go to a leading `{"id":"","name":"No status"}` column that is there only when it has cards. |
+| `columns` | in order. GitHub project: the Status field's options as they are now, `done: true` for the option named "Done" (ignoring case). No project: `open`, and `closed` (done). Issues with no status in the project go to a leading `{"id":"","name":"No status"}` column that is there only when it has cards. #184: a column may carry `kind`: `planned` or `archived`, a provider's virtual status rather than a workflow column (Kaneo's); archived is never done. GitHub never sets it. |
 | card `state` | `open` \| `closed`; the cards are the open issues and the ones closed in the last 7 days (exact cut-off) of this repo |
 | card `column` | a column `id` |
 | card `labels` | `{name, color: "#rrggbb"}`, in the provider's order, priority labels included |
 | card `priority` | optional `urgent` \| `high` \| `medium` \| `low` from the labels (ignoring case): `p0`, `critical`, `urgent` → urgent; `p1`, `high`; `p2`, `medium`; `p3`, `p4`, `low`; also as `priority: x`, `priority/x`, `priority-x`; the most urgent one wins |
-| card `closed_at`, `updated_at` | unix ms, `closed_at` null while open |
+| card `closed_at`, `updated_at` | unix ms, `closed_at` null while open. #184: `updated_at` `0` is unknown (Kaneo gives none) and `closed_at` stays null: a client shows no time and no "closed recently" from them |
 | card `position` | optional (#52): the card's rank in the provider's own order, `0` first, across all columns; absent for a card that has none (GitHub: an issue that is not in the project). A column lists its cards by `position`, done columns too; the ones without one come after them (most urgent, then most recently updated; done columns: latest closed). A provider without an order sends none, and that old sort is the whole order. GitHub: the project's items in manual position order (`items(orderBy: POSITION)`, the order of an unsorted board view, which GitHub shares between all statuses), paged 100 at a time up to 500; a project with more items sends no position at all (never a partial order) and the board is `truncated`. Drafts, pull requests, items of other repositories and issues that are not on the board are skipped; the ranks are those of the cards. |
 | PR `checks` | `success` \| `failure` \| `pending` \| `none` (no checks at all is `none`, never green) |
 | PR `review` | `approved` \| `changes_requested` \| `review_required` \| `none` |
@@ -1369,7 +1403,7 @@ on a floor with no board (no repo, no provider) is `unsupported`.
 
 | `t` | args | `ack.data` |
 |---|---|---|
-| `board.watch` | `{session}` | `{"enabled": bool, "reason"?}`: `enabled: false` with a `reason` (`"no repo linked"`, `"boards are not configured"`) and no messages; else the two messages follow |
+| `board.watch` | `{session}` | `{"enabled": bool, "reason"?}`: `enabled: false` with a `reason` (`"no repo linked"`, `"boards are not configured"`; #184, a Kaneo floor: `"Kaneo is not connected: connect it in Settings"`, `"no Kaneo project linked"`, `"this bridge has no Kaneo settings"`, `"this bridge cannot read Kaneo boards"`) and no messages; else the messages follow (`board.prs` only with a code host) |
 | `board.unwatch` | `{session}` | — |
 | `board.refresh` | `{session}` | `{"queued": bool}`; `unsupported` on a floor with no board |
 | `issue.get` | `{session, id}` | `{"card", "body": markdown, "author": {name, avatar_url}, "created_at", "comments": [{id, author, body, created_at}], "comments_truncated"}`: the first 100 comments; the body is raw markdown, **the client sanitises** |
@@ -1410,7 +1444,27 @@ dropped as after a successful write), so it shows what GitHub has. An anchor the
 - **Run tickets**: `run.prepare` and `run.start` accept `work_item: {provider, id}` (a card's) as a third, exclusive
   alternative to `issue` and `text`. The bridge resolves it through the floor's issue provider (GitHub: to the M6 issue
   path, the URL in the prompt) and stores the launch as M6 does. A provider other than the floor's, an id that is not an
-  item of the floor's board (not on the last board, once one was read): `not_found`.
+  item of the floor's board (not on the last board, once one was read): `not_found`. #184: an item of a provider that
+  numbers no GitHub issues (Kaneo) is read with the provider's `issue.get` (its key, title, URL and description) into an
+  `item` ticket, and the launch keeps `{provider, id}` and the key (never a repo or a number); see [Team presets and
+  starting a run](#team-presets-and-starting-a-run).
+
+**Kaneo boards** (#184). A Kaneo floor's `board.issues` has `provider: "kaneo"`, `provider_name: "Kaneo"`, the
+project's workflow columns in order (`done: true` for every final column: a task in one is `closed`, the one meaning
+of completion) between a leading `planned` and a trailing `archived` column (`kind`, always present, also empty;
+archived tasks are `open`), cards keyed `<project slug>-<number>` with the task's canonical page as `url`, priority,
+labels and assignees, and `updated_at: 0`, `closed_at: null`, `author: ""`. Capabilities: `comment`, `set_status` and
+`order`; never `close` (`issue.close` is `unsupported`: a task is done by moving it to a final column, and is never
+deleted). A board read is bounded (pages of tasks and of their related metadata up to a budget): one that stopped early
+is `truncated`, and a placed move (`after`) on it is `unsupported` (the status-only move works). A description the list
+left out (over 64 KiB) is read by `issue.get`. `issue.set_status` with `after` sends Kaneo the board it read: a board
+that changed since is `stale` (refresh, then move again). A poll that Kaneo refuses with a **401** (a bad or revoked key,
+**or the key's request quota**) pauses every Kaneo floor's polling for 5 minutes (`paused_until`; `board.refresh` does
+not poll meanwhile) and pauses the connection (`kaneo.update` `state: "paused"`); a passing `kaneo.test` of the saved
+connection, or a new connection, resumes at once. A **403** is `forbidden` (a permission problem in Kaneo, not an
+outage). The fetch is named by the instance, the connection's generation, the workspace, the project and the repo (never
+the key): a new key, instance, workspace or project drops the floor's board and its cache, and a poll that was in flight
+for the old one is never shown. The pull request board of a Kaneo floor with a repo is GitHub's, on GitHub's rate limit.
 - **Errors** (also in [Errors](#errors)): `confirmation_required`, `unsupported`, `provider_failed`, `rate_limited`,
   `checks_not_green`, `not_mergeable`, and `not_found` (an id that is not on this floor's provider), `stale`,
   `bad_request`, `unknown_session`, `unknown_worker`, `invalid_state`, `busy`.
@@ -1673,6 +1727,62 @@ only calls the bridge makes by itself are `ai.models` (a model list) and `ai.tes
   `rate_limited`, `provider_failed`, `incomplete`, `test_required`, `env_locked`; and (#174), from a feature's call,
   `truncated` (the answer was cut off at the token limit: with no text at all, or, for a feature that asks for it, with
   some) and `empty_answer` (a well-formed answer with no text), both of which were `bad_response` before.
+
+### Kaneo
+
+#184. One bridge-wide connection to a [Kaneo](https://kaneo.app) instance (self-hosted or not), which a floor can use as
+its issue tracker instead of GitHub (`floor.settings.set` `tracker: "kaneo"` with a `kaneo` link, see [Floor
+settings](#floor-settings) and [Boards](#boards-issues-and-pull-requests)). `internal/kaneoconf` holds it; the bridge
+reaches Kaneo only through its `Connector` interface (the app adapts the Kaneo client to it), with every call a read
+(`GET`) except the board writes. **Testing and configuring change nothing on Kaneo.**
+
+```json
+{"state":"ready","available":true,"url":"https://tasks.example.com","api_base":"https://tasks.example.com/api",
+ "web_origin":"https://tasks.example.com","key_set":true,"default_workspace":{"id":"…","name":"Studio","slug":"studio"},
+ "generation":3}
+```
+
+`kaneo.get` answers it, `world.snapshot`'s `kaneo` holds it, `kaneo.update` carries it flat. A bridge without the
+settings has no `kaneo` key (a bridge before #184: every `kaneo.*` is `unknown_command`).
+
+- **`state`**: `off` (nothing saved), `ready`, `paused` (Kaneo refused the saved key at run time: `paused_until` (unix
+  ms) is when the Kaneo floors poll again, `last_error {kind: "unauthorized", message, at, runtime: true}`).
+  `available: false`: the bridge has no Kaneo client, nothing can be tested (saved settings still show).
+- **The key** is sent by the game in `kaneo.test` and `kaneo.set` and nowhere else; the bridge never sends it back (only
+  `key_set`, no hint). It lives in one `0600` file next to the database (`kaneo.json`, `--kaneo-file` /
+  `HERDR_WORLD_KANEO_FILE`; not the AI integration's file), written atomically (a temporary file, synced, renamed); a
+  file others can read is tightened, a malformed one stops the bridge and is never overwritten. Errors are scrubbed of
+  it; the audit log has the address and whether a key was given (`key_given`), never a key; the game's command log
+  (`window.__h3d.sent()`) records `key` as `[redacted]`. It is in no board cache key, event or prompt.
+- **`url`** is the instance as entered: its origin (`https://tasks.example.com`) or its API base (`…/api`, never
+  doubled); `api_base` and `web_origin` are what it resolved to. https only (plain http only to a loopback host), no
+  credentials, query or fragment (`bad_url`).
+- **A blank or absent `key` is the saved key, and only for the saved instance**: a draft whose address resolves to
+  another API base without a key typed is `key_required`, before anything is sent, so the saved key never goes to
+  another host, not even in a test.
+- **`kaneo.test`** `{url?, key?}` (absent fields are the saved ones) lists the workspaces the key reaches (Kaneo's
+  authenticated `GET /auth/organization/list`; never a public health check): `workspaces: []` is a working key that
+  cannot link a floor yet. A pass is remembered (the instance and the key's hash, in memory) for 30 minutes, with its
+  workspaces. A pass of the saved connection ends a pause. A failure changes nothing saved.
+- **`kaneo.set`** `{url?, key?, default_workspace?}` is `test_required` unless that very instance and key passed a test
+  within 30 minutes; `default_workspace` must be one that test found (`bad_request`), `null` clears it, absent keeps the
+  saved one while the test found it. The answer comes after the file is written (a failed write is `internal` and
+  changes nothing). `generation` moves when the instance or the key changes (or on `kaneo.clear`): every Kaneo floor's
+  board and cache of the older one is dropped. The default workspace is a prefill for floors not yet linked; it never
+  moves a saved floor.
+- **`kaneo.clear`** `{}` disconnects: the address, the key and the default go (Kaneo floors keep their link and show no
+  board until a connection is saved again).
+- **`kaneo.workspaces`** `{}` and **`kaneo.projects`** `{workspace_id}` (archived projects left out) use the saved
+  connection (`not_configured` without one), for a floor's dropdowns; a list is answered from memory for 30 s per
+  generation (switching back and forth calls Kaneo once).
+- **Bounds**: 15 s per call, two calls in flight at most (a waiting one gives up with its client's request), every call
+  off the bridge's main loop.
+- **Error codes**: `bad_url`, `key_required`, `test_required`, `not_configured`, `unauthorized` (401: a wrong or revoked
+  key, **or its request quota**: try again after a minute), `forbidden` (403), `unreachable`, `timeout`, `rate_limited`,
+  `provider_failed`, `not_found`, `bad_request`, `unsupported` (no Kaneo client).
+
+The saved instance's web host is what the Mac helper may open "Open in Kaneo" links on (see [Through
+`h3d-helper`](#through-h3d-helper-the-mac)).
 
 ### Laptops: screens, input, changes and usage
 
@@ -3298,6 +3408,7 @@ dismissed_at)`.
 |---|---|
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
 | `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `truncated`, `empty_answer`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` and #110 `packup.*` use `incomplete`, `test_required`, `env_locked` and, from their tests' calls, the `ai.*` ones (`packup.detect` never fails on a model: no match); #98 `activity.set` uses `env_locked`; #118 `digest.*` use `incomplete`, `test_required`, `env_locked`, `bad_request` (#174: also a reasoning effort or budget the model or the range refuses; `digest.retry` also `unknown_worker`) and, from its test's calls, the `ai.*` ones (`truncated`, `empty_answer`) |
+| `bad_url`, `key_required`, `not_configured`, `unauthorized`, `forbidden` | #184 `kaneo.*` and a floor's Kaneo link (see [Kaneo](#kaneo)); `unauthorized` (the provider refused the key, HTTP 401, maybe its quota) and `forbidden` (a permission problem, HTTP 403) also from the board commands of a provider that tells them apart; `unreachable`, `timeout`, `test_required`, `rate_limited` and `provider_failed` are used there too |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
 | `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
 | `name_taken` | another building, or another team preset, already has that name (ignoring case) |
@@ -3318,7 +3429,7 @@ dismissed_at)`.
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
 | `input_failed` | #156 `worker.answer_async`: the worker's app-server refused the answer (nothing delivered; the question is `pending` again with its `error`); `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text (`terminal.zoom`: herdr refused the zoom), the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step, or still there after the last one; the message says why |
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
-| `stale` | #156 `worker.answer_async` / `worker.dismiss_async` for a `thread` that is not the worker's now, an unknown batch, or a question not in a state it can take (answered, dismissed, sending, sent; checked again on the input lane); #90 `worker.answer_followup` / `worker.dismiss_followup` for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
+| `stale` | #184 `issue.set_status` with `after` on a Kaneo board that changed since it was read (Kaneo's 409), and `floor.settings.set` whose Kaneo link changed while it was checked; #156 `worker.answer_async` / `worker.dismiss_async` for a `thread` that is not the worker's now, an unknown batch, or a question not in a state it can take (answered, dismissed, sending, sent; checked again on the input lane); #90 `worker.answer_followup` / `worker.dismiss_followup` for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
 | `files_failed` | #137 `worker.files` whose listing failed (git's error, rg's, or the listing could not start) with no earlier index of that checkout to answer from |
