@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -107,6 +108,7 @@ type client struct {
 	conn    *proto.Conn
 	welcome proto.Welcome
 	seq     uint64
+	heard   bytes.Buffer // every message read, one a line (#184: what may never hold a key)
 }
 
 func (b *bridge) connect(hello proto.Hello) *client {
@@ -141,6 +143,8 @@ func (c *client) next() msg {
 	if err != nil {
 		c.t.Fatalf("read: %v", err)
 	}
+	c.heard.Write(raw)
+	c.heard.WriteByte('\n')
 	if env.Seq != 0 && env.T != proto.TSnapshot {
 		if env.Seq != c.seq+1 {
 			c.t.Fatalf("seq %d after %d: %s", env.Seq, c.seq, raw)
