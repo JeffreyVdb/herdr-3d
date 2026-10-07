@@ -95,6 +95,80 @@ func TestRunExtracts(t *testing.T) {
 	}
 }
 
+// The gate's wording is part of the classifier's behaviour: a change shows in
+// review here. This one was measured against jev-latest (#166): 0.82 on a
+// grill round, 0.94 on SampleQuestions, 0.03 on SampleDone.
+func TestGateQuestion(t *testing.T) {
+	const want = "Does the message ask the user one or more questions or decisions they are expected to answer, " +
+		"even when the agent proposes a recommended answer for each?"
+	if followup.GateQuestion != want {
+		t.Fatalf("GateQuestion = %q", followup.GateQuestion)
+	}
+}
+
+// grillRound ends a grilling turn (#166): each question is followed by the
+// agent's recommended answer, which the user is to confirm or override.
+const grillRound = `I read the config loader and the deploy scripts. Before I write the model, a first round.
+
+## Round 1
+❓ **Q1** — **What is a Project?** Candidates: (a) a git repository (b) a named entity in config (c) a deploy target (d) a named entity in config, seeded from the repository
+➡️ **(d), seeded from (b).** Project = a named entity in config, created from the repository on first sight.
+❓ **Q2** — **What is an Environment?** (a) a cloud account (b) a Kubernetes namespace (c) a KENV, with the account derived from it
+➡️ **(c).** KENV primary; the account and namespace hang off it.
+❓ **Q3** — **Who owns a Project?** (a) a team (b) a person (c) nobody, it is shared
+➡️ **(a).** A team, with a person as its contact.
+❓ **Q4** — **Can a Project span environments?** (a) yes, one Project many environments (b) no, one Project per environment
+➡️ **(a).** Otherwise staging and production become two Projects.
+❓ **Q5** — **Where does a Project's cost live?** (a) on the Project (b) on the Environment (c) on both, split by tag
+➡️ **(c).** The bill is per account; tags split it.
+❓ **Q6** — **When is a Project deleted?** (a) when its repository is archived (b) only by hand (c) after 90 days without a deploy (d) never, only hidden
+➡️ **(b).** Anything automatic will delete something someone still needs.
+
+Answer each with a letter, or say "go" to take every recommendation.`
+
+// What the LLM made of grillRound in the issue's replay: six choices.
+const grillQuestions = `{"questions":[
+	{"question":"What is a Project?","kind":"choice","options":["A git repository","A named entity in config","A deploy target","A named entity in config, seeded from the repository"]},
+	{"question":"What is an Environment?","kind":"choice","options":["A cloud account","A Kubernetes namespace","A KENV, with the account derived from it"]},
+	{"question":"Who owns a Project?","kind":"choice","options":["A team","A person","Nobody, it is shared"]},
+	{"question":"Can a Project span environments?","kind":"choice","options":["Yes, one Project many environments","No, one Project per environment"]},
+	{"question":"Where does a Project's cost live?","kind":"choice","options":["On the Project","On the Environment","On both, split by tag"]},
+	{"question":"When is a Project deleted?","kind":"choice","options":["When its repository is archived","Only by hand","After 90 days without a deploy","Never, only hidden"]}]}`
+
+// A grill round goes through as a card of six choices, and the extraction
+// prompt says a question with a recommended answer is still one. The fakes
+// pin the plumbing and Parse, not what a real model makes of it (#166).
+func TestRunExtractsAGrillRound(t *testing.T) {
+	r := newRoles()
+	r.cls.Score = 0.82
+	r.llm.Text = grillQuestions
+	res, err := followup.Run(context.Background(), r.cls, r.llm, grillRound, 0.82)
+	if err != nil || !res.Flag || res.Source != followup.SourceModel || res.ExtractErr != "" {
+		t.Fatalf("Run = %+v, %v", res, err)
+	}
+	if len(res.Questions) != 6 {
+		t.Fatalf("%d questions; want 6", len(res.Questions))
+	}
+	for i, q := range res.Questions {
+		if q.ID != fmt.Sprintf("q%d", i+1) || q.Kind != followup.KindChoice || len(q.Options) < 2 || len(q.Options) > 4 {
+			t.Fatalf("question %d = %+v; want a choice of 2-4 options", i+1, q)
+		}
+	}
+	if q := res.Questions[1]; q.Question != "What is an Environment?" || q.Options[2] != "A KENV, with the account derived from it" {
+		t.Fatalf("question 2 = %+v", q)
+	}
+	if call := r.cls.Calls()[0]; call.Question != followup.GateQuestion || call.State["last_agent_message"] != grillRound {
+		t.Fatalf("classify call = %+v", call)
+	}
+	req := r.llm.Calls()[0]
+	if !req.JSON || len(req.Messages) != 2 || !strings.Contains(req.Messages[1].Content, "➡️ **(c).** KENV primary") {
+		t.Fatalf("LLM request = %+v", req)
+	}
+	if sys := req.Messages[0].Content; !strings.Contains(sys, "a question the agent gives a recommended answer to, for the user to confirm or override, is one") {
+		t.Fatalf("the extraction prompt does not keep recommended answers as questions:\n%s", sys)
+	}
+}
+
 func TestRunFallsBack(t *testing.T) {
 	for name, llm := range map[string]*ai.FakeLLM{
 		"error":        {Err: &ai.Error{Kind: ai.KindTimeout, Msg: "the LLM timed out"}},

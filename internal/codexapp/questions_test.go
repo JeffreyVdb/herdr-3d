@@ -3,6 +3,7 @@ package codexapp
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -394,5 +395,226 @@ func TestQuestionsUndelivered(t *testing.T) {
 	h.Hydrate([]Turn{{ID: "t4", Status: "interrupted", Items: []Item{asyncItem("call_7", contextQ)}}})
 	if x := h.Batch("call_7").Questions[0]; !x.Undelivered {
 		t.Fatalf("after hydration = %+v", x)
+	}
+}
+
+// #158 R1: the bridge restarts while its steered answer waits in the
+// running turn. The live reconciler refuses a second answer; a fresh one
+// hydrated from the same history sees the question pending (the queued
+// steer is not a user message yet) and would admit it, unless the send the
+// bridge recorded is restored.
+func TestQuestionsRestoreASendAcrossARestart(t *testing.T) {
+	history := []Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("call_3", colorQ, contextQ)}}}
+	reply := []Reply{{Index: 0, Text: "Green"}}
+	live := NewQuestions("th")
+	live.Hydrate(history)
+	if _, err := live.Begin("call_3", reply); err != nil {
+		t.Fatal(err)
+	}
+	live.Sent("call_3", []int{0}, "t1", false)
+	if _, err := live.Check("call_3", reply); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("live reconciler: %v", err)
+	}
+	fresh := func() *Questions {
+		q := NewQuestions("th")
+		q.Hydrate(history)
+		return q
+	}
+	if _, err := fresh().Check("call_3", reply); err != nil {
+		t.Fatalf("a fresh reconciler refuses the answer by itself (%v): the restore is not what this tests", err)
+	}
+
+	// Steered into the turn still running: sent, a second answer stale.
+	q := fresh()
+	if !q.Restore(PriorSend{Batch: "call_3", Index: 0, Turn: "t1", Confirmed: true}, "t1") {
+		t.Fatal("the send no longer matters")
+	}
+	if _, err := q.Check("call_3", reply); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("restored, running: %v", err)
+	}
+	if x := q.Batch("call_3").Questions[0]; x.State != QSent || x.Undelivered || x.Unconfirmed {
+		t.Fatalf("restored, running = %+v", x)
+	}
+	if x := q.Batch("call_3").Questions[1]; x.State != QPending {
+		t.Fatalf("the other question = %+v", x)
+	}
+	// Recorded before the response came (the bridge stopped in between):
+	// the same while the turn it went to runs.
+	q = fresh()
+	q.Restore(PriorSend{Batch: "call_3", Index: 0, Turn: "t1"}, "t1")
+	if _, err := q.Check("call_3", reply); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("restored before the response: %v", err)
+	}
+	// The turn ends afterwards without delivering it: undelivered, one
+	// resend.
+	q.TurnEnded("t1")
+	if x := q.Batch("call_3").Questions[0]; !x.Undelivered {
+		t.Fatalf("after the turn ended = %+v", x)
+	}
+	if _, err := q.Begin("call_3", reply); err != nil {
+		t.Fatalf("resend: %v", err)
+	}
+	if _, err := q.Check("call_3", reply); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("a second resend: %v", err)
+	}
+
+	// The turn ended while the bridge was gone: undelivered, a resend
+	// allowed.
+	ended := []Turn{{ID: "t1", Status: "interrupted", Items: []Item{asyncItem("call_3", colorQ, contextQ)}}}
+	q = NewQuestions("th")
+	q.Hydrate(ended)
+	q.Restore(PriorSend{Batch: "call_3", Index: 0, Turn: "t1", Confirmed: true}, "")
+	if x := q.Batch("call_3").Questions[0]; x.State != QSent || !x.Undelivered {
+		t.Fatalf("restored, turn ended = %+v", x)
+	}
+	if _, err := q.Check("call_3", reply); err != nil {
+		t.Fatalf("resend after the turn ended: %v", err)
+	}
+
+	// Delivered meanwhile: the history's envelope wins.
+	answered := []Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("call_3", colorQ, contextQ),
+		userItem("u", NewClientID(), ReplyEnvelope(Answer{MessageID: "call_3", Index: 0, Answer: "Green"}))}}}
+	q = NewQuestions("th")
+	q.Hydrate(answered)
+	if q.Restore(PriorSend{Batch: "call_3", Index: 0, Turn: "t1", Confirmed: true}, "t1") {
+		t.Fatal("an answered question's send still matters")
+	}
+	if x := q.Batch("call_3").Questions[0]; x.State != QAnswered || x.AnsweredBy != AnsweredByBridge {
+		t.Fatalf("answered = %+v", x)
+	}
+
+	// Unconfirmed: sent and unconfirmed, never resent by itself.
+	q = fresh()
+	q.Restore(PriorSend{Batch: "call_3", Index: 0, Unconfirmed: true}, "t1")
+	if x := q.Batch("call_3").Questions[0]; x.State != QSent || !x.Unconfirmed {
+		t.Fatalf("unconfirmed = %+v", x)
+	}
+	q.TurnEnded("t1")
+	if _, err := q.Check("call_3", reply); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("unconfirmed after the turn: %v", err)
+	}
+
+	// No response recorded, and the history lacks the envelope: a
+	// turn/start (or a steer into a turn that ended since, then its
+	// fallback turn/start) Codex may hold in a turn the terminal started at
+	// the same instant, delivered with that turn's next model request. Sent
+	// and unconfirmed: never resent by the bridge.
+	for _, c := range []struct {
+		name          string
+		turn, running string
+	}{{"turn/start, a turn running", "", "t2"}, {"turn/start, idle", "", ""},
+		{"steer, its turn ended, another running", "t1", "t2"}, {"steer, its turn ended, idle", "t1", ""}} {
+		q = NewQuestions("th")
+		q.Hydrate(ended)
+		if !q.Restore(PriorSend{Batch: "call_3", Index: 0, Turn: c.turn}, c.running) {
+			t.Fatalf("%s: the send no longer matters", c.name)
+		}
+		if x := q.Batch("call_3").Questions[0]; x.State != QSent || !x.Unconfirmed || x.Undelivered {
+			t.Fatalf("%s: before its response = %+v", c.name, x)
+		}
+		q.TurnEnded("t2")
+		if _, err := q.Check("call_3", reply); !errors.Is(err, ErrNotPending) {
+			t.Fatalf("%s: a resend: %v", c.name, err)
+		}
+	}
+
+	// A batch the reconciler no longer has, a question out of range.
+	if q.Restore(PriorSend{Batch: "call_9", Turn: "t1"}, "t1") || q.Restore(PriorSend{Batch: "call_3", Index: 5, Turn: "t1"}, "t1") {
+		t.Fatal("a send to nothing still matters")
+	}
+
+	// The live reconciler (a rejoin, not a restart): nothing changes.
+	if !live.Restore(PriorSend{Batch: "call_3", Index: 0, Turn: "t0", Confirmed: true}, "t1") {
+		t.Fatal("the live send no longer matters")
+	}
+	if x := live.Batch("call_3").Questions[0]; x.State != QSent || x.Undelivered {
+		t.Fatalf("live after restore = %+v", x)
+	}
+}
+
+// #158: a batch under a legacy id (item-N: thread/resume's, when reading
+// the turn again failed or found nothing) is not answerable, and a join
+// whose history still has one is unresolved. The next join's history
+// replaces it: item-N ids are one join's.
+func TestQuestionsLegacyIDsAreUnresolved(t *testing.T) {
+	reply := []Reply{{Index: 0, Text: "Green"}}
+	q := NewQuestions("th")
+	legacy := []Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("item-2", colorQ)}}}
+	q.Hydrate(legacy)
+	if !LegacyHistory(legacy) {
+		t.Fatal("a legacy history: resolved")
+	}
+	if _, err := q.Check("item-2", reply); !errors.Is(err, ErrUnresolved) {
+		t.Fatalf("answering item-2: %v", err)
+	}
+	if _, err := q.Begin("item-2", reply); !errors.Is(err, ErrUnresolved) {
+		t.Fatalf("beginning item-2: %v", err)
+	}
+	if !q.Unanswered("t1") {
+		t.Fatal("Codex still holds it: unanswered")
+	}
+	if err := q.Dismiss("item-2", nil); err != nil {
+		t.Fatalf("dismissing it, in the bridge only: %v", err)
+	}
+
+	// The next join reads it under its call_id: the alias goes.
+	canonical := []Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("call_3", colorQ)}}}
+	q.DropLegacy()
+	q.Hydrate(canonical)
+	if LegacyHistory(canonical) || q.Batch("item-2") != nil || len(q.Batches()) != 1 {
+		t.Fatalf("after a canonical join: batches %+v", q.Batches())
+	}
+	if _, err := q.Check("call_3", reply); err != nil {
+		t.Fatalf("call_3: %v", err)
+	}
+
+	// A twin of a live batch loses its twin with it.
+	q = NewQuestions("th")
+	q.Observe("t1", asyncItem("call_3", colorQ), OriginLive)
+	q.Hydrate([]Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("item-2", colorQ)}}})
+	if q.Batch("call_3").Twin != "item-2" {
+		t.Fatalf("twins: %+v", q.Batches())
+	}
+	q.DropLegacy()
+	if b := q.Batch("call_3"); b == nil || b.Twin != "" || q.Batch("item-2") != nil {
+		t.Fatalf("after DropLegacy: %+v", q.Batches())
+	}
+}
+
+// #158: a batch the view drops for room is never one whose answer is on its
+// way (sending): the oldest other one goes.
+func TestQuestionsKeepABatchWhileItsAnswerIsSending(t *testing.T) {
+	q := NewQuestions("th")
+	q.Observe("t1", asyncItem("call_0", contextQ), OriginLive)
+	if _, err := q.Begin("call_0", []Reply{{Index: 0, Text: "x"}}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= MaxBatches; i++ {
+		q.Observe("t1", asyncItem(fmt.Sprintf("call_%d", i), contextQ), OriginLive)
+	}
+	if q.Batch("call_0") == nil || q.Batch("call_1") != nil || len(q.Batches()) != MaxBatches {
+		t.Fatalf("batches: call_0 %v, call_1 %v, %d in all", q.Batch("call_0") != nil, q.Batch("call_1") != nil, len(q.Batches()))
+	}
+	// Sent: no longer protected (its record, the server's, outlives it).
+	q.Sent("call_0", []int{0}, "t1", false)
+	q.Observe("t1", asyncItem("call_x", contextQ), OriginLive)
+	if q.Batch("call_0") != nil {
+		t.Fatal("a sent batch kept past MaxBatches")
+	}
+}
+
+// #158: what a join's history says on its own, whatever the view kept.
+func TestHistoryHelpers(t *testing.T) {
+	turns := []Turn{{ID: "t1", Items: []Item{asyncItem("call_3", colorQ),
+		{Type: ItemUserMessage, ID: "item-4", Content: []UserInput{{Type: "text",
+			Text: ReplyEnvelope(Answer{MessageID: "call_3", Index: 0, Answer: "Green"})}}}}}}
+	if !InHistory(turns, "call_3") || InHistory(turns, "call_9") || !LegacyHistory(turns) {
+		t.Fatal("InHistory / LegacyHistory")
+	}
+	if a := Answers(turns[0].Items[1]); len(a) != 1 || a[0].MessageID != "call_3" || a[0].Index != 0 {
+		t.Fatalf("Answers = %+v", a)
+	}
+	if a := Answers(turns[0].Items[0]); a != nil {
+		t.Fatalf("Answers of a batch = %+v", a)
 	}
 }

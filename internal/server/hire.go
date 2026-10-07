@@ -1674,8 +1674,11 @@ func (h *Hub) exitAgent(ctx context.Context, op *fireOp, rep *fireReport) exitRe
 	// a dialog the bridge did not expect, where Ctrl-C opens the agent
 	// command center listing the user's other threads (B10). Its server
 	// stays up: a TUI whose server is gone waits to reconnect (B6), and the
-	// terminal stays usable to quit by hand.
-	if shared, err := query(ctx, h, func() bool { return h.isShared(op.id) }); shared || err != nil {
+	// terminal stays usable to quit by hand. #158: except when its server
+	// is already gone, the one state where /quit does nothing and Ctrl-C is
+	// what that TUI offers (codexQuitGone): it goes as a legacy worker goes.
+	shared, err := query(ctx, h, func() bool { return h.isShared(op.id) })
+	if (shared || err != nil) && !(err == nil && h.codexServerGone(ctx, op.id)) {
 		rep.step("agent still running after %s: no Ctrl-C to a shared Codex worker's terminal, nothing closed",
 			time.Since(start).Round(time.Millisecond))
 		return exitHeld

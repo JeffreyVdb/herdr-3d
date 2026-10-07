@@ -15,7 +15,12 @@ import (
 //
 //   - A batch is an agentMessage item with delivery "async" and a questions
 //     array; its id is the function call_id, the same in live events, in
-//     thread/resume and thread/read history and after a cold resume.
+//     thread/read and thread/turns/list history and after a cold resume.
+//     thread/resume gives a client that was not subscribed the newest turn
+//     under legacy ids (item-1, …): the join reads it again
+//     (Watcher.legacyTurns, #158). A batch still under one when that read
+//     fails or finds nothing cannot be answered (ErrUnresolved), and the
+//     join is unresolved (LegacyHistory) until a join reads its call_id.
 //   - The tool's {"accepted":true} only schedules it. A question is answered
 //     only by a user message whose text is the reply envelope naming its
 //     (call_id, index), whoever sent it: the bridge or the terminal.
@@ -177,7 +182,10 @@ var (
 	ErrUnknownBatch = errors.New("no such question batch")
 	ErrNotPending   = errors.New("the question is not pending")
 	ErrConflict     = errors.New("live and history disagree on this batch")
-	ErrBadAnswer    = errors.New("invalid answer")
+	// ErrUnresolved: the batch is under a legacy id (#158), which Codex
+	// does not know it by: an answer naming it would answer nothing.
+	ErrUnresolved = errors.New("the question's id is not known yet")
+	ErrBadAnswer  = errors.New("invalid answer")
 )
 
 // BatchOf reads an item as an async-question batch of turn.
@@ -225,6 +233,16 @@ func (q *Questions) Batch(id string) *Batch {
 	}
 	c := b.clone()
 	return &c
+}
+
+// StateOf is a question's state; ok is false when its batch or the
+// question is unknown.
+func (q *Questions) StateOf(batch string, index int) (QuestionState, bool) {
+	b := q.batches[batch]
+	if b == nil || index < 0 || index >= len(b.Questions) {
+		return "", false
+	}
+	return b.Questions[index].State, true
 }
 
 // Batches returns copies of the batches, oldest first.
@@ -380,14 +398,25 @@ func (q *Questions) addBatch(b Batch, origin string) bool {
 }
 
 // drop forgets the oldest resolved batch (every question answered or
-// dismissed), else the oldest.
+// dismissed), else the oldest that has no answer on its way (sending: its
+// request in flight, #158: a join must still see it as the bridge's own).
+// A dropped batch's recorded send (the bridge's, codex_async_send) stays:
+// the batch is gone from the view only, not from the thread.
 func (q *Questions) drop() {
-	at := 0
+	at := -1
 	for i, id := range q.order {
 		if q.batches[id].resolved() {
 			at = i
 			break
 		}
+	}
+	for i := 0; at < 0 && i < len(q.order); i++ {
+		if !q.batches[q.order[i]].sending() {
+			at = i
+		}
+	}
+	if at < 0 {
+		return
 	}
 	id := q.order[at]
 	q.order = slices.Delete(q.order, at, at+1)
@@ -395,6 +424,10 @@ func (q *Questions) drop() {
 		q.batches[tw].Twin = ""
 	}
 	delete(q.batches, id)
+}
+
+func (b *Batch) sending() bool {
+	return slices.ContainsFunc(b.Questions, func(x Question) bool { return x.State == QSending })
 }
 
 func (b *Batch) resolved() bool {
@@ -495,6 +528,9 @@ func (q *Questions) Check(batch string, replies []Reply) ([]Answer, error) {
 		return nil, fmt.Errorf("%w: %s", ErrUnknownBatch, batch)
 	case b.Conflict:
 		return nil, fmt.Errorf("%w: %s", ErrConflict, batch)
+	case legacyItemID.MatchString(batch):
+		return nil, fmt.Errorf("%w: %s is the id Codex's thread/resume gave it, and reading its turn again failed; "+
+			"the bridge reads it again on its next join: answer then, or in the terminal", ErrUnresolved, batch)
 	case len(replies) == 0:
 		return nil, fmt.Errorf("%w: no answer", ErrBadAnswer)
 	}
@@ -544,6 +580,111 @@ func (q *Questions) Failed(batch string, indexes []int, reason string) {
 			x.State, x.Error = QPending, reason
 		}
 	})
+}
+
+// PriorSend is the bridge's answer to one question as it recorded it before
+// a restart (#158). A steered answer waits in the running turn until its
+// next model request, where the thread's history does not show it, so the
+// history alone would make the question pending again.
+type PriorSend struct {
+	Batch string
+	Index int
+	// Turn is the turn the answer was steered into ("" for one starting a
+	// turn) or, Confirmed, the turn it reached.
+	Turn string
+	// Confirmed: the server accepted it. Unconfirmed: no response came.
+	Confirmed, Unconfirmed bool
+}
+
+// LegacyHistory reports whether a join's history has an item under a
+// legacy id (#158): it did not give every item its own id, so a batch it
+// does not show under its call_id may be one of those. It is the join's,
+// not the reconciler's: batches the view dropped since do not change it.
+func LegacyHistory(turns []Turn) bool {
+	for _, t := range turns {
+		if slices.ContainsFunc(t.Items, func(it Item) bool { return legacyItemID.MatchString(it.ID) }) {
+			return true
+		}
+	}
+	return false
+}
+
+// InHistory reports whether a history has an item with id.
+func InHistory(turns []Turn, id string) bool {
+	for _, t := range turns {
+		if slices.ContainsFunc(t.Items, func(it Item) bool { return it.ID == id }) {
+			return true
+		}
+	}
+	return false
+}
+
+// Answers is the answers a user message's reply envelope carries (none for
+// any other item), read from its text alone: a question named there is
+// answered whether or not the reconciler still holds its batch, and
+// whatever id the item itself has.
+func Answers(it Item) []Answer {
+	if it.Type != ItemUserMessage {
+		return nil
+	}
+	answers, _ := ParseReply(it.UserText())
+	return answers
+}
+
+// DropLegacy forgets the batches under a legacy id, before a join's
+// history is taken: those ids are one join's (thread/resume numbers its
+// items each time), so the next history gives them again or under their
+// call_id. They were never answerable, so nothing was sent for them.
+func (q *Questions) DropLegacy() {
+	q.order = slices.DeleteFunc(q.order, func(id string) bool {
+		if !legacyItemID.MatchString(id) {
+			return false
+		}
+		if tw := q.batches[id].Twin; tw != "" && q.batches[tw] != nil {
+			q.batches[tw].Twin = ""
+		}
+		delete(q.batches, id)
+		return true
+	})
+}
+
+// Restore takes a prior send after the history (Hydrate), running being the
+// thread's running turn ("" idle); it reports whether the send still
+// matters. It only ever turns a pending question into a sent one:
+//
+//   - its batch is unknown, or the question is answered: it no longer
+//     matters here (the caller decides on an unknown batch from the
+//     history itself: the view may have dropped it);
+//   - the question is not pending (this reconciler saw the send itself, or
+//     a dismissal): unchanged;
+//   - unconfirmed: sent and unconfirmed, as before the restart;
+//   - steered into the running turn (confirmed or not): sent (Codex may
+//     still deliver it), undelivered once that turn ends without it;
+//   - confirmed into a turn that is not running: sent and undelivered (that
+//     turn ended without its user message);
+//   - never confirmed otherwise (a turn/start, or a steer into a turn that
+//     ended since, then its fallback turn/start): sent and unconfirmed. The
+//     history lacking its envelope is no evidence it was not taken: a turn
+//     the terminal started at the same instant takes a turn/start's input
+//     and shows it only with its next model request (review round 4).
+func (q *Questions) Restore(s PriorSend, running string) bool {
+	b := q.batches[s.Batch]
+	if b == nil || s.Index < 0 || s.Index >= len(b.Questions) {
+		return false
+	}
+	x := &b.Questions[s.Index]
+	switch {
+	case x.State == QAnswered:
+		return false
+	case x.State != QPending:
+		return true
+	case s.Unconfirmed, !s.Confirmed && (s.Turn == "" || s.Turn != running):
+		x.State, x.Unconfirmed, x.Error = QSent, true, ""
+	default:
+		x.State, x.reached, x.Error = QSent, s.Turn, ""
+		x.Undelivered = s.Turn != running
+	}
+	return true
 }
 
 func (q *Questions) each(batch string, indexes []int, fn func(*Question)) {

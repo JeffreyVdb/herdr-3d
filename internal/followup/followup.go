@@ -27,7 +27,7 @@ import (
 )
 
 // GateQuestion is the yes/no question the classifier scores.
-const GateQuestion = "Does the message ask the user a direct question, or ask them to decide something, that the agent needs answered before it can continue? A statement such as 'say if you want X' or 'let me know if...' is an optional offer, not a question."
+const GateQuestion = "Does the message ask the user one or more questions or decisions they are expected to answer, even when the agent proposes a recommended answer for each?"
 
 // MaxMessageChars bounds what is sent of a message: its last ~24k tokens,
 // approximated as 4 characters per token (the end of a message is where its
@@ -151,7 +151,7 @@ Rules:
 - kind "yes_no": it can be answered with yes or no. No options.
 - kind "choice": the agent offers or clearly implies alternatives. List them in "options": 2 to 8 short labels (at most 120 characters each). A choice between doing something now or later counts.
 - kind "open": anything else. No options.
-- Rhetorical questions, offers like "let me know if you need anything", and questions the agent answers itself are not questions.`
+- Rhetorical questions, offers like "let me know if you need anything", and questions the agent asks only to answer itself are not questions; a question the agent gives a recommended answer to, for the user to confirm or override, is one.`
 
 // Extract asks the LLM for the questions of text and validates them.
 func Extract(ctx context.Context, l ai.LLM, text string) ([]Question, error) {

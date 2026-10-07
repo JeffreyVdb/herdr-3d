@@ -33,6 +33,8 @@ type fakeHerdr struct {
 	onStop   func()
 	onResume func(pane string)
 	onQuit   func(pane string) // #155: a TUI quit with /quit + Enter
+	// #158: the TUIs ignore /quit and quit on Ctrl-C (their server is gone).
+	quitOnCtrlC bool
 	// #155: ResumeCodexRemote fails with it (the pane stays at its shell),
 	// and ResumeCodexEmbedded with embeddedErr (after starting Codex).
 	remoteErr, embeddedErr error
@@ -136,7 +138,9 @@ func (f *fakeHerdr) TypeExit(_ context.Context, session, pane, harness string) e
 func (f *fakeHerdr) SendKey(_ context.Context, session, pane string, key herdr.Key) error {
 	f.record("key %s %s", pane, key)
 	f.mu.Lock()
-	quit := key == herdr.KeyEnter && slices.Contains(f.calls, "exit "+pane) && f.procs[pane] != nil && !f.procs[pane].AtShell()
+	running := f.procs[pane] != nil && !f.procs[pane].AtShell()
+	quit := running && (key == herdr.KeyEnter && slices.Contains(f.calls, "exit "+pane) && !f.quitOnCtrlC ||
+		key == herdr.KeyCtrlC && f.quitOnCtrlC)
 	f.mu.Unlock()
 	if quit {
 		f.setProcs(pane, atShell())
