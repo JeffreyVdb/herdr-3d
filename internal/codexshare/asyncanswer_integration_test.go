@@ -355,6 +355,77 @@ func TestCodexShareAsyncAnswers(t *testing.T) {
 	f.recordJSON("mock-requests", summarize(f.mock.Requests()))
 }
 
+// #158 R1 (review round 4, first run by the reviewer): a turn/start whose
+// response the bridge never recorded, taken into a turn already running
+// (the terminal's). A new join's history has the question and the running
+// turn but not the envelope (Codex holds it until the turn's next model
+// request), so Restore must keep the question sent, unconfirmed: a retry is
+// refused, and the model sees the answer once.
+func TestCodexShareAsyncStartIntoARunningTurn(t *testing.T) {
+	f := newFx(t, fxOptions{}, "ws-a")
+	w := f.sharedWorker("ws-a", "worker")
+	watcher, ev := watch(t, w.sock, w.thread.ID)
+	ev.wait(t, codexapp.EvJoined, 20*time.Second)
+	from := ev.len()
+	f.promptWorking(w.name, "MOCK:ask-free hold=e-start")
+	f.held("e-start")
+	qe, _ := ev.waitFrom(t, from, 30*time.Second, "async batch", asyncBatch)
+	n := decodeNote(qe)
+	cid := codexapp.NewClientID()
+	text := codexapp.ReplyEnvelope(codexapp.Answer{MessageID: n.Item.ID, Index: 0, Question: n.Item.Questions[0].Title,
+		Answer: "e-start-answer"})
+	reached, err := watcher.StartTurn(f.ctx, text, cid)
+	f.record("e-start-result.txt", "turn "+reached+" (asking turn "+n.TurnID+") err "+rpcText(err)+"\n")
+	if err != nil || reached != n.TurnID {
+		t.Fatalf("turn/start: turn %s, asking turn %s, err %v", reached, n.TurnID, err)
+	}
+
+	// The restarted bridge's join: the question, the running turn, no envelope.
+	_, rejoined := watch(t, w.sock, w.thread.ID)
+	th := rejoined.wait(t, codexapp.EvJoined, 20*time.Second).Thread
+	f.recordJSON("e-join-before-delivery", th)
+	if !codexapp.InHistory(th.Turns, n.Item.ID) || th.ActiveTurn() != reached || th.Partial || codexapp.LegacyHistory(th.Turns) {
+		t.Fatalf("join: question %v, running %q, partial %v", codexapp.InHistory(th.Turns, n.Item.ID), th.ActiveTurn(), th.Partial)
+	}
+	for _, tu := range th.Turns {
+		for _, it := range tu.Items {
+			if len(codexapp.Answers(it)) > 0 {
+				t.Fatalf("the envelope is already in the history: %+v", it)
+			}
+		}
+	}
+	q := codexapp.NewQuestions(w.thread.ID)
+	q.Hydrate(th.Turns)
+	if !q.Restore(codexapp.PriorSend{Batch: n.Item.ID, Index: 0}, th.ActiveTurn()) {
+		t.Fatal("the turn/start no longer matters")
+	}
+	x := q.Batch(n.Item.ID).Questions[0]
+	f.recordJSON("e-restored", x)
+	if x.State != codexapp.QSent || !x.Unconfirmed {
+		t.Fatalf("restored = %+v", x)
+	}
+	if _, err := q.Begin(n.Item.ID, []codexapp.Reply{{Index: 0, Text: "e-start-answer"}}); !errors.Is(err, codexapp.ErrNotPending) {
+		t.Fatalf("a retry: %v", err)
+	}
+
+	_ = f.mock.Release("e-start")
+	ev.waitFrom(t, from, 30*time.Second, "the started user message", userWith(cid))
+	f.settle(w.name)
+	f.recordJSON("e-user-items", ev.userItems(from))
+	seen := 0
+	for _, r := range f.mock.Requests() {
+		if r.Kind == KindReply && strings.Contains(string(r.Body), "e-start-answer") {
+			if c := strings.Count(string(r.Body), "e-start-answer"); c > seen {
+				seen = c
+			}
+		}
+	}
+	f.recordJSON("e-requests", summarize(f.mock.Requests()))
+	if seen != 1 {
+		t.Fatalf("the model saw the answer %d times in one request, want 1", seen)
+	}
+}
+
 func rpcText(err error) string {
 	if err == nil {
 		return "<nil>"
