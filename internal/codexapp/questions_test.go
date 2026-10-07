@@ -618,3 +618,29 @@ func TestHistoryHelpers(t *testing.T) {
 		t.Fatalf("Answers of a batch = %+v", a)
 	}
 }
+
+// #183: the reconciler and the transcript share one rule, and it is all or
+// nothing: an envelope with an entry missing its question or answer (or with a
+// null) answers nothing, not even its well-formed entries, exactly as the
+// transcript shows it as the user's own text.
+func TestQuestionsIgnoreAnIncompleteEnvelope(t *testing.T) {
+	q := NewQuestions("th")
+	q.Observe("t1", asyncItem("call_3", colorQ, contextQ), OriginLive)
+	good := `{"questionItemId":"[\"request_user_input_async\",\"call_3\",0]","question":"Which fixture color?","answer":"Green"}`
+	for name, entry := range map[string]string{
+		"missing answer": `{"questionItemId":"[\"request_user_input_async\",\"call_3\",1]","question":"Any context for the fixture?"}`,
+		"null question":  `{"questionItemId":"[\"request_user_input_async\",\"call_3\",1]","question":null,"answer":"x"}`,
+		"null index":     `{"questionItemId":"[\"request_user_input_async\",\"call_3\",null]","question":"q","answer":"x"}`,
+	} {
+		env := "<send_user_message_question_reply>\n[" + good + "," + entry + "]\n</send_user_message_question_reply>"
+		if q.Observe("t1", userItem("u-"+name, "", env), OriginLive) {
+			t.Errorf("%s: the envelope changed something", name)
+		}
+		if got := states(t, q, "call_3"); got[0] != QPending || got[1] != QPending {
+			t.Errorf("%s: states = %v", name, got)
+		}
+	}
+	if len(Answers(userItem("u", "", "<send_user_message_question_reply>[{\"questionItemId\":\"[\\\"request_user_input_async\\\",\\\"call_3\\\",0]\"}]</send_user_message_question_reply>"))) != 0 {
+		t.Error("Answers read an id-only entry")
+	}
+}

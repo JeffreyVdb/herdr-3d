@@ -64,3 +64,66 @@ func TestParseReplyRefusesWhatIsNotAnEnvelope(t *testing.T) {
 		t.Error("an envelope with surrounding whitespace was refused")
 	}
 }
+
+// #183 fix round 2: every entry needs a questionItemId string, "question" and
+// "answer" keys that are JSON strings, and a non-null integer index; one entry
+// that fails makes the whole envelope not an answer.
+func TestParseReplyNeedsEveryFieldOfEveryEntry(t *testing.T) {
+	const id = `"[\"request_user_input_async\",\"call_1\",0]"`
+	env := func(entries ...string) string {
+		return "<send_user_message_question_reply>\n[" + strings.Join(entries, ",") + "]\n</send_user_message_question_reply>"
+	}
+	good := `{"questionItemId":` + id + `,"question":"q","answer":"a"}`
+	for name, text := range map[string]string{
+		"missing question":     env(`{"questionItemId":` + id + `,"answer":"a"}`),
+		"missing answer":       env(`{"questionItemId":` + id + `,"question":"q"}`),
+		"missing id":           env(`{"question":"q","answer":"a"}`),
+		"null question":        env(`{"questionItemId":` + id + `,"question":null,"answer":"a"}`),
+		"null answer":          env(`{"questionItemId":` + id + `,"question":"q","answer":null}`),
+		"null id":              env(`{"questionItemId":null,"question":"q","answer":"a"}`),
+		"number question":      env(`{"questionItemId":` + id + `,"question":1,"answer":"a"}`),
+		"number answer":        env(`{"questionItemId":` + id + `,"question":"q","answer":2}`),
+		"bool answer":          env(`{"questionItemId":` + id + `,"question":"q","answer":true}`),
+		"array answer":         env(`{"questionItemId":` + id + `,"question":"q","answer":["a"]}`),
+		"object question":      env(`{"questionItemId":` + id + `,"question":{"x":1},"answer":"a"}`),
+		"id not a string":      env(`{"questionItemId":["request_user_input_async","call_1",0],"question":"q","answer":"a"}`),
+		"null index":           env(`{"questionItemId":"[\"request_user_input_async\",\"call_1\",null]","question":"q","answer":"a"}`),
+		"string index":         env(`{"questionItemId":"[\"request_user_input_async\",\"call_1\",\"0\"]","question":"q","answer":"a"}`),
+		"missing index":        env(`{"questionItemId":"[\"request_user_input_async\",\"call_1\"]","question":"q","answer":"a"}`),
+		"null message id":      env(`{"questionItemId":"[\"request_user_input_async\",null,0]","question":"q","answer":"a"}`),
+		"number message id":    env(`{"questionItemId":"[\"request_user_input_async\",7,0]","question":"q","answer":"a"}`),
+		"null tool":            env(`{"questionItemId":"[null,\"call_1\",0]","question":"q","answer":"a"}`),
+		"null entry":           env(`null`),
+		"entry is a string":    env(`"nope"`),
+		"bad one, good first":  env(good, `{"questionItemId":`+id+`,"question":"q"}`),
+		"bad one, good second": env(`{"questionItemId":`+id+`,"answer":"a"}`, good),
+		"null among good":      env(good, `null`),
+	} {
+		if got, ok := ParseReply(text); ok {
+			t.Errorf("%s: parsed %+v", name, got)
+		}
+	}
+}
+
+func TestParseReplyKeepsEmptyStringsAndIgnoresExtraKeys(t *testing.T) {
+	const id = `"[\"request_user_input_async\",\"call_1\",2]"`
+	env := func(entry string) string {
+		return "<send_user_message_question_reply>[" + entry + "]</send_user_message_question_reply>"
+	}
+	// An empty answer (or question) is a string, so a valid answer.
+	got, ok := ParseReply(env(`{"questionItemId":` + id + `,"question":"","answer":""}`))
+	if want := []Answer{{MessageID: "call_1", Index: 2}}; !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("empty strings: %+v, %v", got, ok)
+	}
+	// A key beyond the three is ignored, as the TUI does, in either key order.
+	for name, entry := range map[string]string{
+		"extra last":   `{"questionItemId":` + id + `,"question":"q","answer":"a","note":{"x":null}}`,
+		"extra first":  `{"extra":1,"answer":"a","question":"q","questionItemId":` + id + `}`,
+		"terminal one": `{"answer":"a","question":"q","questionItemId":` + id + `,"z":[1]}`,
+	} {
+		got, ok := ParseReply(env(entry))
+		if want := []Answer{{MessageID: "call_1", Index: 2, Question: "q", Answer: "a"}}; !ok || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %+v, %v", name, got, ok)
+		}
+	}
+}

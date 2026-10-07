@@ -69,6 +69,23 @@ test('#183: an async answer reads as a question and its answer, wraps at a narro
   }
   await expect(one.locator('details summary')).toHaveText('Raw reply');
 
+  // The label and the disclosure are secondary but readable: WCAG AA (4.5:1) on the bubble they sit in.
+  const contrast = (row: typeof one, sel: string) =>
+    row.evaluate((r, selector) => {
+      const lum = (c: string) => {
+        const [R, G, B] = (c.match(/[\d.]+/g) ?? ['0', '0', '0']).slice(0, 3).map((v) => {
+          const x = Number(v) / 255;
+          return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+        }) as [number, number, number];
+        return 0.2126 * R + 0.7152 * G + 0.0722 * B;
+      };
+      const fg = lum(getComputedStyle(r.querySelector(selector) as HTMLElement).color);
+      const bg = lum(getComputedStyle(r.querySelector('.tx-bubble') as HTMLElement).backgroundColor);
+      return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
+    }, sel);
+  expect(await contrast(one, '.tx-ans-label')).toBeGreaterThanOrEqual(4.5);
+  expect(await contrast(one, '.tx-ans-raw summary')).toBeGreaterThanOrEqual(4.5);
+
   const layout = (z: number) =>
     tx.evaluate((root, zoom) => {
       const scroller = root.querySelector('.tx-scroll') as HTMLElement;

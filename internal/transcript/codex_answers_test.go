@@ -86,6 +86,15 @@ func TestCodexReplyLookalikesStayPrompts(t *testing.T) {
 		"negative index":  envOpen + "\n[" + replyEntry("call_1", -1, "q", "a") + "]\n" + envClose,
 		"one bad of two":  envOpen + "\n[" + replyEntry("call_1", 0, "q", "a") + `,{"questionItemId":"x","question":"q","answer":"a"}]` + "\n" + envClose,
 		"tags, no fields": envOpen + envClose,
+		// #183 fix round 2: a tagged array whose entries lack fields is not an answer.
+		"id only":          envOpen + "\n" + `[{"questionItemId":"[\"request_user_input_async\",\"call_1\",0]"}]` + "\n" + envClose,
+		"missing question": envOpen + "\n" + `[{"questionItemId":"[\"request_user_input_async\",\"call_1\",0]","answer":"a"}]` + "\n" + envClose,
+		"missing answer":   envOpen + "\n" + `[{"questionItemId":"[\"request_user_input_async\",\"call_1\",0]","question":"q"}]` + "\n" + envClose,
+		"null question":    envOpen + "\n" + `[{"questionItemId":"[\"request_user_input_async\",\"call_1\",0]","question":null,"answer":"a"}]` + "\n" + envClose,
+		"null answer":      envOpen + "\n" + `[{"questionItemId":"[\"request_user_input_async\",\"call_1\",0]","question":"q","answer":null}]` + "\n" + envClose,
+		"number answer":    envOpen + "\n" + `[{"questionItemId":"[\"request_user_input_async\",\"call_1\",0]","question":"q","answer":5}]` + "\n" + envClose,
+		"null index":       envOpen + "\n" + `[{"questionItemId":"[\"request_user_input_async\",\"call_1\",null]","question":"q","answer":"a"}]` + "\n" + envClose,
+		"good then bad":    envOpen + "\n[" + replyEntry("call_1", 0, "q", "a") + `,{"questionItemId":"[\"request_user_input_async\",\"call_1\",1]","question":"q"}]` + "\n" + envClose,
 	} {
 		got := itemsOf(t, Codex, codexUserLine(1, inputText(text)))
 		if len(got) != 1 || got[0].Kind != proto.ItemUser || got[0].Answers != nil {
@@ -142,5 +151,18 @@ func TestCodexAnswersAreCapped(t *testing.T) {
 	full, ok, err := l.Item("msg_2")
 	if err != nil || !ok || full.Truncated || full.Answers[0].Answer != big {
 		t.Errorf("item: ok %v err %v truncated %v", ok, err, full.Truncated)
+	}
+}
+
+// An empty answer is still a string: the entry is an answer, not a fallback. A
+// key beyond the three is ignored (the TUI's own tolerance), and what the
+// envelope held stays in Parts.
+func TestCodexReplyEmptyAnswerAndExtraKeysAreAnswers(t *testing.T) {
+	env := envOpen + "\n[" + replyEntry("call_1", 0, "q", "") + "," +
+		`{"extra":true,"answer":"b","question":"","questionItemId":"[\"request_user_input_async\",\"call_1\",1]"}` + "]\n" + envClose
+	got := itemsOf(t, Codex, codexUserLine(1, inputText(env)))
+	want := []proto.TranscriptAnswer{{Question: "q"}, {Answer: "b"}}
+	if len(got) != 1 || !reflect.DeepEqual(got[0].Answers, want) || textOf(got[0]) != env {
+		t.Fatalf("items = %+v", got)
 	}
 }

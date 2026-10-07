@@ -520,7 +520,7 @@
   gap: 6px;
 }
 .tx-ans-label {
-  color: var(--tx-text-3);
+  color: var(--tx-text-2);
   font-size: calc(10.5px * var(--tx-k, 1));
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -550,7 +550,7 @@
   overflow-wrap: anywhere;
 }
 .tx-ans-raw {
-  color: var(--tx-text-3);
+  color: var(--tx-text-2);
   font-size: calc(11px * var(--tx-k, 1));
 }
 .tx-ans-raw summary {

@@ -424,6 +424,29 @@ describe('#183: your answer to a Codex async question', () => {
     expect(row(none.id).textContent?.trim()).toBe('plain prompt');
     expect(row(none.id).querySelector('.tx-ans')).toBeNull();
   });
+
+  it('an entry missing its question or answer, or holding null or another type, is the ordinary bubble with the content shown', () => {
+    mount();
+    const bad = (answers: unknown) => item('user', { parts: [text(ENVELOPE)], answers: answers as NonNullable<TranscriptItem['answers']> });
+    const cases = {
+      noQuestion: bad([{ answer: 'a' }]),
+      noAnswer: bad([{ question: 'q' }]),
+      nullQuestion: bad([{ question: null, answer: 'a' }]),
+      nullAnswer: bad([{ question: 'q', answer: null }]),
+      numberAnswer: bad([{ question: 'q', answer: 3 }]),
+      nullEntry: bad([null]),
+      oneBadOfTwo: bad([{ question: 'q', answer: 'a' }, { question: 'q' }]),
+    };
+    view.setItems(Object.values(cases));
+    for (const [name, it] of Object.entries(cases)) {
+      expect(row(it.id).querySelector('.tx-ans'), name).toBeNull();
+      expect(row(it.id).textContent, name).toContain('send_user_message_question_reply');
+    }
+    // An empty answer string is a valid answer: it is still the entry, not a fallback.
+    const empty = answered([{ question: 'q', answer: '' }]);
+    view.setItems([empty]);
+    expect(row(empty.id).querySelector('.tx-ans')).not.toBeNull();
+  });
 });
 
 describe('live updates', () => {
