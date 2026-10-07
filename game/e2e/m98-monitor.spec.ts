@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import { frames, openGame, RESULTS, shot, watchErrors } from './game';
+import { frames, openGame, RESULTS, shot, watchErrors, openMenu } from './game';
 
 // #98: the desk monitor shows what the agent is doing. demo-m5 with the simulating fixture server (sim=1): `sim.activity`
 // (tools/fixture-activity.ts) gives a worker an activity, a status and an image as the bridge would send them. A
@@ -241,6 +241,7 @@ test('Settings → Display → Desk monitors: Terminal brings the glance back ev
   await sim(page, { id: nibble.id, activity: { kind: 'testing', detail: 'go test ./...' } });
   await expect.poll(async () => (await deskOf(page, nibble.id))?.mode).toBe('card');
   await lookAtMonitor(page, nibble.desk);
+  await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   const pick = dialog.locator('[data-section="display"]').getByLabel('Desk monitors');
@@ -259,6 +260,7 @@ test('Settings → Display → Desk monitors: Terminal brings the glance back ev
   await frames(page, 3);
   await expect.poll(async () => (await monitorsOf(page))?.desks.length ?? 0).toBeGreaterThan(0);
   expect((await monitorsOf(page))?.desks.every((d) => d.mode === 'glance')).toBe(true);
+  await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('dialog', { name: 'Settings' }).locator('[data-section="display"]').getByLabel('Desk monitors').selectOption('activity');
   await page.keyboard.press('Escape');
@@ -313,6 +315,7 @@ test('a floor of 60 desks animates every card with no canvas drawn and no textur
   expect(after.m?.meshes).toBe(1);
   const bench = () => page.evaluate(() => window.__h3d.bench({ frames: 8, warm: 3, pipelined: false, raf: false }));
   const on = await bench();
+  await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('dialog', { name: 'Settings' }).locator('[data-section="display"]').getByLabel('Desk monitors').selectOption('terminal');
   await page.keyboard.press('Escape');

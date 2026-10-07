@@ -368,25 +368,3 @@
     padding: 0 8px;
   }
 }
-
-/*
- * ---- the top bar's Hire and Run: only their icons when the bar is short of room ------
- * Both keep their word for screen readers (and their tooltip), so the floor’s name and the counts’ words keep their room up to 1440 wide.
- */
-
-@media (max-width: 1439px) {
-  .topbar .btn--run,
-  .topbar .btn--hire {
-    width: 34px;
-    padding: 0;
-    justify-content: center;
-  }
-  .topbar .btn--run span,
-  .topbar .btn--hire span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-}

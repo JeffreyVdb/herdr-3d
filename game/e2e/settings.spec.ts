@@ -1,16 +1,19 @@
 import { expect, test } from '@playwright/test';
-import { openGame, shot, watchErrors } from './game';
+import { openGame, openMenu, shot, watchErrors } from './game';
 
 // #91: the Settings window (the gear in the top bar, `,`): Display and Day and night, each labelled with where it is
 // kept. The limits switch and the time fields themselves are exercised in m10-limits and m17-daynight.
 
-const gear = (page: import('@playwright/test').Page) => page.getByRole('button', { name: 'Settings', exact: true });
+// The gear became a row of the top bar's Menu: open the menu, then the row.
+const gear = (page: import('@playwright/test').Page) => page.locator('.topbar-menu button[aria-label="Settings"]');
+const menuButton = (page: import('@playwright/test').Page) => page.locator('.btn--menu');
 
 test('the gear opens Settings with its sections, each saying where it is kept; Esc and Close shut it', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page);
   const button = gear(page);
   await expect(button).toHaveAttribute('title', /Settings/);
+  await openMenu(page);
   await button.click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
@@ -26,23 +29,25 @@ test('the gear opens Settings with its sections, each saying where it is kept; E
   await expect(time.getByLabel('Latitude')).toBeVisible();
   await shot(page, 'settings');
 
-  // Esc: shut, and the gear has focus again.
+  // Esc: shut, and the Menu button (which the gear is a row of) has focus again.
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
-  await expect(button).toBeFocused();
+  await expect(menuButton(page)).toBeFocused();
 
   // The Close button does the same.
+  await openMenu(page);
   await button.click();
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: 'Close' }).click();
   await expect(dialog).toBeHidden();
-  await expect(button).toBeFocused();
+  await expect(menuButton(page)).toBeFocused();
   clean();
 });
 
 test('a click on the backdrop never closes Settings, not even a real press and release there', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page);
+  await openMenu(page);
   await gear(page).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
@@ -84,7 +89,7 @@ test('"," opens Settings from the scene and from a focused button, and types a c
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   // From a focused top-bar button (not a field) the comma still opens it.
-  await gear(page).focus();
+  await menuButton(page).focus();
   await page.keyboard.press(',');
   await expect(dialog).toBeVisible();
   clean();
@@ -94,6 +99,7 @@ test('Settings fits a narrow screen', async ({ page }) => {
   const clean = watchErrors(page);
   await page.setViewportSize({ width: 360, height: 640 });
   await openGame(page);
+  await openMenu(page);
   await gear(page).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
@@ -105,20 +111,24 @@ test('Settings fits a narrow screen', async ({ page }) => {
   clean();
 });
 
-test('on a floor at 360 px every top-bar button is on screen and a real click on the gear opens Settings', async ({ page }) => {
+test('on a floor at 360 px every top-bar button is on screen and a real click on the menu’s Settings row opens Settings', async ({ page }) => {
   const clean = watchErrors(page);
   await page.setViewportSize({ width: 360, height: 640 });
   await openGame(page);
   await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
   await expect(page.locator('.hud')).toHaveAttribute('data-mode', 'floor');
   const buttons = page.locator('.topbar button:visible');
-  expect(await buttons.count()).toBeGreaterThan(4);
+  expect(await buttons.count()).toBeGreaterThanOrEqual(3); // City, the floor plate, Menu
   for (const [i, box] of (await buttons.evaluateAll((bs) => bs.map((b) => ({ label: b.getAttribute('aria-label') ?? b.textContent, r: b.getBoundingClientRect().toJSON() })))).entries()) {
     expect(box.r.x, `button ${i} (${box.label}) left edge`).toBeGreaterThanOrEqual(0);
     expect(box.r.x + box.r.width, `button ${i} (${box.label}) right edge`).toBeLessThanOrEqual(360);
     expect(box.r.y + box.r.height, `button ${i} (${box.label}) bottom edge`).toBeLessThanOrEqual(640);
   }
-  // A real pointer click at the gear's centre (not a scrolled-into-view or keyboard shortcut open).
+  // A real pointer click at the Settings row's centre (not a scrolled-into-view or keyboard shortcut open), the menu inside the screen.
+  await menuButton(page).click();
+  const menu = (await page.locator('.topbar-menu').boundingBox())!;
+  expect(menu.x).toBeGreaterThanOrEqual(0);
+  expect(menu.x + menu.width).toBeLessThanOrEqual(360);
   const g = (await gear(page).boundingBox())!;
   await page.mouse.click(g.x + g.width / 2, g.y + g.height / 2);
   await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();

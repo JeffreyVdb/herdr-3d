@@ -50,8 +50,10 @@ async function push(page: Page, x: number, z: number, ms: number): Promise<Pose>
   return pose(page);
 }
 
+/** The top bar's words: the plate says the floor (or the place: Lobby, Outside) and the sub line the building. */
 const topbar = async (page: Page) => ({
   name: await page.locator('.topbar-name').textContent(),
+  plate: ((await page.locator('.floor-plate:visible').getAttribute('aria-label')) ?? '').replace('. Open the elevator', ''),
   sub: await page.locator('.topbar-sub').textContent(),
 });
 
@@ -92,7 +94,7 @@ test('fire escape: out of the top floor, in and out of the middle one, down to t
   let p = await walkTo(page, xi, dz, 'out the top floor door');
   expect(p).toMatchObject({ area: 'fire-escape', storey: 2, floor: 'herdr-3d' });
   expect(p.y).toBeCloseTo(floorY(b, 2), 3);
-  expect(await topbar(page)).toEqual({ name: 'herdr-3d', sub: 'Fire escape · Floor 3 of 3 · Work' });
+  expect(await topbar(page)).toEqual({ name: 'herdr-3d', plate: 'Floor 3 of 3', sub: 'Fire escape · Work' });
 
   // Down to the middle floor's landing: the top bar and the interior switch to it.
   await downOne(page, b, 'top to middle');
@@ -106,7 +108,7 @@ test('fire escape: out of the top floor, in and out of the middle one, down to t
   p = await walkTo(page, 2.2, dz, 'in at the middle floor');
   expect(p).toMatchObject({ area: 'floor', storey: 1, floor: 'depot-manager' });
   expect(await page.evaluate(() => window.__h3d.view())).toMatchObject({ mode: 'floor', floor: 'depot-manager', asleep: true, area: 'floor' });
-  expect(await topbar(page)).toEqual({ name: 'depot-manager', sub: 'Floor 2 of 3 · Work · asleep' });
+  expect(await topbar(page)).toEqual({ name: 'depot-manager', plate: 'Floor 2 of 3', sub: 'Work · asleep' });
   await page.evaluate((z) => window.__h3d.setPose({ x: 2.2, z: z - 3, yaw: -Math.PI / 2 - 0.35, pitch: -0.1 }), dz);
   await frames(page, 4);
   const names = new Set(world.find((f) => f.session === 'depot-manager')?.workers.map((w) => w.name));
@@ -128,7 +130,7 @@ test('fire escape: out of the top floor, in and out of the middle one, down to t
   p = await pose(page);
   expect(p).toMatchObject({ area: 'street', storey: null });
   expect(p.y).toBe(0);
-  expect(await topbar(page)).toEqual({ name: 'Work', sub: 'Outside · 3 floors' });
+  expect(await topbar(page)).toEqual({ name: 'Work', plate: 'Outside', sub: '3 floors' });
   p = await walkTo(page, xi, b.depth + 1.6, 'out from under the fire escape to the front sidewalk');
   expect(p).toMatchObject({ area: 'street', y: 0 });
 
@@ -160,7 +162,7 @@ test('fire escape: out of the top floor, in and out of the middle one, down to t
   expect(p).toMatchObject({ area: 'floor', storey: 0, floor: 'pastry' });
   expect(p.y).toBeCloseTo(floorY(b, 0), 3);
   expect(await page.evaluate(() => window.__h3d.view())).toMatchObject({ floor: 'pastry', asleep: false });
-  expect(await topbar(page)).toEqual({ name: 'pastry', sub: 'Floor 1 of 3 · Work' });
+  expect(await topbar(page)).toEqual({ name: 'pastry', plate: 'Floor 1 of 3', sub: 'Work' });
   clean();
 });
 
@@ -178,7 +180,7 @@ test('lobby: in from the sidewalk through the front door, the reception desk, th
 
   let p = await walkTo(page, fx, b.depth - 2.4, 'in through the front door');
   expect(p).toMatchObject({ area: 'lobby', y: 0, storey: null });
-  expect(await topbar(page)).toEqual({ name: 'Work', sub: 'Lobby · 3 floors' });
+  expect(await topbar(page)).toEqual({ name: 'Work', plate: 'Lobby', sub: '3 floors' });
   // Walking in from the street is what the receptionist greets; the lobby needs no floor interior.
   expect((await page.evaluate(() => window.__h3d.receptionEvents())).map((r) => r.ev)).toEqual(['arrive-street']);
   expect(await page.evaluate(() => window.__h3d.view())).toMatchObject({ area: 'lobby', floor: null });
@@ -250,7 +252,7 @@ test('lobby: in from the sidewalk through the front door, the reception desk, th
   clean();
 });
 
-test('top bar: same floor numbers with sim=1; at 1024 wide the counts drop their words and the name stays whole', async ({ page }) => {
+test('top bar: same floor numbers with sim=1; the counts are numbers (their words are the titles) and the name stays whole at 1024 and 1280', async ({ page }) => {
   const clean = watchErrors(page);
   await page.setViewportSize({ width: 1024, height: 640 });
   await openGame(page, 'demo-m3b', '', 'sim=1');
@@ -264,15 +266,15 @@ test('top bar: same floor numbers with sim=1; at 1024 wide the counts drop their
         titles: counts.map((c) => c.title),
       };
     });
-  for (const [floor, sub] of [['pastry', 'Floor 1 of 3 · Work'], ['herdr-3d', 'Floor 3 of 3 · Work']] as const) {
+  for (const [floor, plate] of [['pastry', 'Floor 1 of 3'], ['herdr-3d', 'Floor 3 of 3']] as const) {
     await page.evaluate((s) => window.__h3d.enterFloor(s), floor);
     await frames(page, 2);
-    expect(await topbar(page)).toEqual({ name: floor, sub });
+    expect(await topbar(page)).toEqual({ name: floor, plate, sub: 'Work' });
   }
   expect(await bar()).toEqual({ cut: false, words: [false, false, false], titles: ['9 working', '3 need you · N: go to the next (then 2 done)', '6 idle'] });
   await page.setViewportSize({ width: 1280, height: 720 });
   await frames(page, 2);
-  expect(await bar()).toMatchObject({ cut: false, words: [true, true, true] });
+  expect(await bar()).toMatchObject({ cut: false, words: [false, false, false] });
   clean();
 });
 

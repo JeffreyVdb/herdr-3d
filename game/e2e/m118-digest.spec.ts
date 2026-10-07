@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type Locator } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, openGame, shot, watchErrors, openMenu } from './game';
 
 // #118 phase 2, floor overview summaries, against the fixture bridge (`sim=1`, tools/fixture-digest.ts) on demo-m118,
 // whose AI integration calls a fake OpenAI-compatible server started here on an OS-leased loopback port: no spec
@@ -77,6 +77,7 @@ test('summaries: off until a test passed, then the LLM writes the floor’s line
   const llm = await fakeOpenAI();
   try {
     await openGame(page, 'demo-m118', '', 'play=none&sim=1&simms=150');
+    await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Settings' });
     const section = dialog.locator('[data-section="digest"]');

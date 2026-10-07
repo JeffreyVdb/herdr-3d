@@ -78,3 +78,14 @@ export async function seatMode(page: Page, mode: 'terminal' | 'transcript'): Pro
   if ((await page.evaluate(() => window.__h3d.seat().mode)) !== mode) await page.keyboard.press('Control+Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe(mode);
 }
+
+/**
+ * The top bar keeps only state; its commands are rows of the Menu button's popover. Opens it (when it is not open) so a
+ * row can be clicked: the menu closes itself when a row does something.
+ */
+export async function openMenu(page: Page): Promise<void> {
+  const menu = page.locator('.topbar-menu');
+  if (await menu.evaluate((e) => e.matches(':popover-open'))) return;
+  await page.locator('.btn--menu').click();
+  await expect(menu).toBeVisible();
+}

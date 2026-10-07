@@ -86,24 +86,3 @@
     animation: none;
   }
 }
-
-/* Short bars: the tape and Stop stay, the words go (the group's title still says what is shared). */
-@media (max-width: 1500px) {
-  .share-what,
-  .share-start span {
-    display: none;
-  }
-  .share-start {
-    width: 34px;
-    padding: 0;
-    justify-content: center;
-  }
-  /* The share's icon takes the room of the connection's word: its dot stays and its title says the rest, so the
-     counts keep their words at 1280 px and the floor's name stays whole at 1024. */
-  .conn {
-    padding: 0 9px;
-  }
-  .conn span {
-    display: none;
-  }
-}

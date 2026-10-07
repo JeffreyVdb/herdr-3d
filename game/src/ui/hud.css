@@ -72,13 +72,13 @@ body {
   right: 12px;
   display: flex;
   align-items: center;
-  gap: 18px;
-  padding: 8px 10px 8px 12px;
+  gap: 14px;
+  padding: 5px 10px 5px 12px;
   background: var(--ink);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   pointer-events: auto;
-  min-height: 52px;
+  min-height: 44px;
   box-sizing: border-box;
 }
 .topbar-place {
@@ -89,11 +89,12 @@ body {
 }
 .topbar-title {
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
+  gap: 10px;
   min-width: 0;
 }
 .topbar-name {
-  font-size: 19px;
+  font-size: 16px;
   font-weight: 800;
   font-variation-settings: 'CASL' 1, 'MONO' 0;
   letter-spacing: -0.01em;
@@ -129,16 +130,14 @@ body {
   flex: none;
 }
 /*
- * The name comes first: the counts get only the room the name and the buttons leave (as a size container their
- * own width never pushes on the name), and drop their words when that room is short. The auto margin keeps
- * them at the right and never goes negative, so a count that still doesn't fit is cut at the buttons' side.
+ * The name comes first: the counts get only the room the name and the buttons leave, and say their words only to
+ * screen readers and the pointer's titles. The auto margin keeps them at the right and never goes negative, so a count that still doesn't fit is cut at the buttons' side.
  */
 .topbar-counts {
   flex: 1 1 0;
   display: flex;
   gap: 14px;
   overflow: hidden;
-  container-type: inline-size;
   font-variant-numeric: tabular-nums;
 }
 .topbar-counts > :first-child {
@@ -146,58 +145,15 @@ body {
 }
 /* Room for the counts without words (two-digit numbers), however long the name. */
 .topbar-counts[data-n='3'] {
-  min-width: 130px;
+  min-width: 110px;
 }
 .topbar-counts[data-n='1'] {
   min-width: 36px;
 }
 /* #98: with the waiting count. */
 .topbar-counts[data-n='4'] {
-  min-width: 172px;
+  min-width: 150px;
 }
-/* With their words the three counts take up to ~310 px (three-digit numbers), the asleep one ~85 px. */
-@container (max-width: 312px) {
-  .topbar-counts[data-n='3'] .count > span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-}
-@container (max-width: 410px) {
-  .topbar-counts[data-n='4'] .count > span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-}
-@container (max-width: 90px) {
-  .topbar-counts[data-n='1'] .count > span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-}
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-/* #91: the Settings gear is one more button; where the bar is short (the share's words are gone too, screenShare.css) tighter gaps and padding keep the counts' words at 1280 px and the floor's name whole at 1024 (see also audio.css's shorter slider). */
-@media (max-width: 1500px) {
-  .topbar-actions {
-    gap: 4px;
-  }
-  .topbar-actions .btn:not(.btn--icon) {
-    padding: 0 9px;
-  }
-}
-
 /* #92: the AI chip: a small plate like .conn, amber while a part is missing, red once a key was rejected. */
 .ai-chip {
   display: inline-flex;
@@ -295,33 +251,6 @@ body {
 .btn--back {
   padding-left: 8px;
 }
-/* #118: Overview's own key cap (O; drawn, so the button's text stays its name). Where the bar is short the word goes
-   with the cap (an icon button, the title says O); at 1280 px and under the button goes (the counts keep their words). The floor's hint line says O at
-   every width (the floor's name and counts keep their room). */
-.btn .topbar-key {
-  margin-left: 0;
-  font-style: normal;
-}
-.btn .topbar-key::before {
-  content: attr(data-key);
-}
-@media (max-width: 1500px) {
-  .topbar .btn--overview {
-    width: 34px;
-    padding: 0;
-    justify-content: center;
-  }
-  .btn--overview > span,
-  .btn--overview .topbar-key {
-    display: none;
-  }
-}
-@media (max-width: 1280px) {
-  .topbar .btn--overview {
-    display: none;
-  }
-}
-
 .conn {
   display: inline-flex;
   align-items: center;
@@ -726,10 +655,13 @@ body {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .topbar {
     flex-wrap: wrap;
     gap: 8px 12px;
+  }
+  .topbar-place {
+    flex: 1 1 0;
   }
   .topbar-counts {
     order: 3;
@@ -741,13 +673,27 @@ body {
   .topbar-counts .count span {
     display: none;
   }
-  /* #91: the actions drop to their own row under the counts and wrap, so every button (the Settings gear last of the pointer-reachable ones) stays on screen at 360 px. */
-  .topbar-actions {
-    order: 4;
-    flex: 0 0 100%;
-    flex-wrap: wrap;
-    justify-content: flex-end;
+}
+@media (max-width: 1100px) {
+  .share-what,
+  .btn--menu > span,
+  .btn--back > span {
+    display: none;
   }
+  .btn--menu,
+  .btn--back {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+  .conn span {
+    display: none;
+  }
+  .conn {
+    padding: 0 9px;
+  }
+}
+@media (max-width: 760px) {
   .prompt-model {
     display: none;
   }
@@ -799,4 +745,271 @@ body {
 /* Author display rules above would otherwise beat the hidden attribute. */
 .hud [hidden]:not(.prompt):not(.toast) {
   display: none !important;
+}
+
+/* ---- top bar redesign  -------------------------------------------
+ * The bar keeps what is state: where you are (the floor plate), the counts, the cost, a share going out, the
+ * connection, an AI part that stopped. Every command moved into the menu, drawn with its key. */
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+/* The floor plate: a yellow elevator-indicator sign. The one thing the bar must say, so it is the loudest thing on it. */
+.floor-plate {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--sun);
+  /* Deeper than the bar's navy: 11.7:1 on the sun (the plate must read at a glance); the "/N" is full strength too (no opacity), 13px bold. */
+  color: #0b1022;
+  cursor: pointer;
+  line-height: 1;
+  transition: background 160ms var(--ease), transform 160ms var(--ease);
+}
+.floor-plate:hover {
+  background: #ffd25e;
+}
+.floor-plate:active {
+  transform: translateY(1px);
+}
+.floor-plate small {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.floor-plate-n {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.floor-plate-n b {
+  font-size: 20px;
+  font-weight: 850;
+  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  letter-spacing: -0.03em;
+}
+.floor-plate-n i {
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 800;
+}
+/* A lobby, the street, a fire escape with no floor of its own: the place's glyph and name, in the sun colour on navy. */
+.floor-plate[data-kind='where'] {
+  background: var(--ink-2);
+  color: var(--sun);
+}
+.floor-plate[data-kind='where']:hover {
+  background: #354270;
+}
+.floor-plate[data-kind='where'] svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.2;
+}
+/* The floor's own word is the plate's label for screen readers only (the number says the rest). */
+.floor-plate[data-kind='floor'] small {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+/* The words that the bar's compact controls drop stay for screen readers (their titles say them to a pointer). */
+.topbar-counts .count > span,
+.conn span,
+.btn--menu > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.btn--menu {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+/* The menu button, and the menu: a popover under the bar (light dismiss, Esc and the top layer from the browser). */
+.btn--menu[aria-expanded='true'] {
+  background: rgb(255 255 255 / 14%);
+  border-color: rgb(255 255 255 / 30%);
+}
+.topbar-menu {
+  position: fixed;
+  inset: auto;
+  top: calc(var(--topbar-bottom, 64px) + 8px);
+  right: 12px;
+  margin: 0;
+  width: 296px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - var(--topbar-bottom, 64px) - 28px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--ink);
+  color: var(--text-on-ink);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+  font: 14px/1.3 var(--font);
+  font-variation-settings: 'CASL' 0, 'MONO' 0;
+}
+.topbar-menu:popover-open {
+  display: flex;
+  flex-direction: column;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .topbar-menu:popover-open {
+    animation: topbar-menu-in 180ms var(--ease);
+  }
+  @keyframes topbar-menu-in {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+  }
+}
+.menu-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 0 6px;
+}
+.menu-sec + .menu-sec {
+  border-top: 1px solid var(--line);
+}
+.menu-sec:not(:has(> :not([hidden]))) {
+  display: none;
+}
+.menu-sec::before {
+  content: attr(data-title);
+  padding: 2px 10px 4px;
+  color: var(--text-on-ink-2);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.topbar-menu .btn {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  justify-content: flex-start;
+  gap: 10px;
+}
+.topbar-menu .btn:hover,
+.topbar-menu .btn:focus-visible {
+  background: rgb(255 255 255 / 10%);
+}
+.topbar-menu .btn:focus-visible {
+  outline-offset: -2px;
+}
+.topbar-menu .btn svg {
+  color: var(--text-on-ink-2);
+}
+.topbar-menu .btn > span {
+  flex: 1;
+  text-align: left;
+}
+/* A row says its key as a cap, drawn from the shortcut table (data-key). */
+.topbar-menu .btn[data-key]:not(.btn--overview)::after,
+.topbar-menu .btn--overview .topbar-key::before,
+.menu-key::before {
+  content: attr(data-key);
+}
+.topbar-menu .btn[data-key]:not(.btn--overview)::after,
+.topbar-menu .btn--overview .topbar-key,
+.menu-key {
+  flex: none;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 6%);
+  color: var(--text-on-ink-2);
+  font: 700 12px/1 var(--font);
+  font-style: normal;
+  font-variation-settings: 'CASL' 0, 'MONO' 1;
+}
+.topbar-menu .btn--overview .topbar-key {
+  margin-left: 0;
+}
+.menu-all {
+  border-top: 1px solid var(--line);
+  margin-top: 2px;
+  border-radius: 0 0 8px 8px;
+  height: 40px;
+}
+.menu-all .menu-key {
+  order: 3;
+}
+.topbar-menu .btn--off,
+.topbar-menu [aria-disabled='true'] {
+  opacity: 0.5;
+}
+/* Battery saver is a toggle: on, its leaf turns green and the row says so (it is not a green button here). */
+.topbar-menu .btn--battery[aria-pressed='true'] {
+  background: transparent;
+  color: var(--text-on-ink);
+}
+.topbar-menu .btn--battery[aria-pressed='true'] svg {
+  color: var(--plus);
+}
+.topbar-menu .btn--battery[aria-pressed='true'] > span::after {
+  content: ' · on';
+  color: var(--plus);
+  font-weight: 700;
+}
+/* The sound control, as a row of the menu: mute, volume and Music across its width. */
+.topbar-menu .audio-ctl {
+  width: 100%;
+  height: 40px;
+  padding: 0 4px 0 2px;
+  border: 0;
+  justify-content: flex-start;
+  gap: 4px;
+}
+.topbar-menu .audio-ctl .audio-vol {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+.topbar-menu .audio-ctl .btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  justify-content: center;
+}
+.topbar-menu .audio-ctl .btn::after {
+  display: none;
+}
+
+/* The share, going out: the LIVE tape and Stop stay in the bar (screenShare.css); starting it is the menu's row. */
+.share-what {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

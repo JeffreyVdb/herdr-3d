@@ -621,6 +621,7 @@ export class App {
 
     this.hud.on('city', () => void this.leaveFloor());
     this.hud.on('hire', () => this.openHire());
+    this.hud.on('palette', () => this.togglePalette());
     this.hud.on('buildings', () => this.openBuildings());
     this.hud.on('elevator', () => !this.transitioning && this.openElevator());
     this.hud.on('battery', () => this.toggleBattery());

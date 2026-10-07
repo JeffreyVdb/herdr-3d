@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, openGame, shot, watchErrors, openMenu } from './game';
 
 // M6 start on demo-m4 with the simulating fixture server (tools/fixture-sim.ts,
 // tools/fixture-start.ts): herdr-3d (top floor of Work, repo JeffreyVdb/herdr-3d
@@ -154,6 +154,7 @@ test('the top bar’s Run: the first free desk (changeable), free text, and Esc 
   await openGame(page, 'demo-m4', '', SIM);
   await enter(page, 'herdr-3d');
   const run = page.locator('.topbar [data-action="run"]');
+  await openMenu(page);
   await expect(run).toBeVisible();
   await expect(run).toHaveAttribute('aria-disabled', 'false');
   await run.focus();
@@ -176,10 +177,10 @@ test('the top bar’s Run: the first free desk (changeable), free text, and Esc 
   await page.locator('#run-extra').fill('Keep the diff small.');
   d = await settled(page);
   expect(d.preview.text).toBe(['/write-code Add a dark mode\nto the settings panel', '', ...TEAM, '', 'Keep the diff small.'].join('\n'));
-  // Esc closes; focus comes back to Run.
+  // Esc closes; focus comes back to the Menu button (Run is a row of it).
   await page.keyboard.press('Escape');
   await expect.poll(() => dialog(page)).toBeNull();
-  await expect.poll(() => focusedKey(page)).toBe('run');
+  await expect(page.locator('.btn--menu')).toBeFocused();
   // On a floor with no linked repo a bare number says so; a URL works.
   await enter(page, 'pastry');
   await page.evaluate(() => window.__h3d.openStartRun());
@@ -319,6 +320,7 @@ test('team presets: create, edit and delete from the start-run dialog, live in i
   await page.evaluate(() => window.__h3d.leaveFloor());
   await frames(page, 2);
   const btn = page.locator('.topbar [data-action="presets"]');
+  await openMenu(page);
   await expect(btn).toBeVisible();
   await btn.click();
   await presetsPanel(page);
@@ -345,6 +347,7 @@ test('an M5 bridge (unknown_command): the orchestrator tab, Run and presets are 
   expect((await dialog(page))?.kind).toBe('hire');
   await page.keyboard.press('Escape');
   // Run opens the dialog, which says why and sends nothing.
+  await openMenu(page);
   await run.click({ force: true });
   const d = await runDialog(page, 'failed');
   expect(d.status).toBe(why);

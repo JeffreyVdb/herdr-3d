@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PNG } from 'pngjs';
-import { frames, openGame, RESULTS } from './game';
+import { frames, openGame, RESULTS, openMenu } from './game';
 
 // M13 (#15) screen share: the top bar's Share screen, the LIVE badge and Stop, the TV showing the share, and the
 // bridge's frame requests answered with a JPEG. The browser's picker and macOS cannot run here: getDisplayMedia is
@@ -97,7 +97,10 @@ test('Share → LIVE and the TV plays it; a frame request gets a JPEG and a toas
   // The game told the bridge it is a game that does not share.
   await expect.poll(() => shares(page)).toEqual([{ sharing: false }]);
   expect((await screen(page))?.tv).toMatchObject({ live: false });
+  await openMenu(page);
   await expect(page.locator('.share-start')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.topbar-menu')).toBeHidden();
   // Looking at the TV: its bar says it is off and where to start.
   await facingTv(page, 2.4);
   await expect(page.locator('.prompt')).toContainText('Screen-share TV');
@@ -105,6 +108,7 @@ test('Share → LIVE and the TV plays it; a frame request gets a JPEG and a toas
   await facingTv(page);
   await page.screenshot({ path: resolve(EVIDENCE, '01-share-button.png') });
 
+  await openMenu(page);
   await page.locator('.share-start').click();
   await expect(page.locator('.share-live')).toBeVisible();
   await expect(page.locator('.share-start')).toBeHidden();
@@ -135,12 +139,13 @@ test('Share → LIVE and the TV plays it; a frame request gets a JPEG and a toas
   }
   expect(blue / (tvShot.width * tvShot.height)).toBeGreaterThan(0.4);
   await page.screenshot({ path: resolve(EVIDENCE, '02-live-tv.png') });
-  // On a wide bar the badge also says what is shared (under 1500 px only the tape and Stop: the words are its title).
+  // On a wide bar the badge also says what is shared (under 1100 px only the tape and Stop: the words are its title).
   await page.setViewportSize({ width: 1600, height: 900 });
   await expect(page.locator('.share-what')).toBeVisible();
   await page.locator('.topbar').screenshot({ path: resolve(EVIDENCE, '03-live-badge.png') });
-  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.setViewportSize({ width: 1000, height: 720 });
   await expect(page.locator('.share-what')).toBeHidden();
+  await page.setViewportSize({ width: 1280, height: 720 });
   await expect(page.locator('.share-live')).toHaveAttribute('title', /^Sharing a window\./);
   await facingTv(page);
 
@@ -160,6 +165,7 @@ test('Share → LIVE and the TV plays it; a frame request gets a JPEG and a toas
 
   // Stop: the badge goes, the TV shows its sign again, every track is released, the bridge is told.
   await page.locator('.share-stop').click();
+  await openMenu(page);
   await expect(page.locator('.share-start')).toBeVisible();
   await expect(page.locator('.share-live')).toBeHidden();
   const off = await screen(page);
@@ -175,6 +181,7 @@ test('Share → LIVE and the TV plays it; a frame request gets a JPEG and a toas
 
 test("Chrome's own Stop sharing (the track ends) clears the share; sharing again works", async ({ page }) => {
   await onFloor(page);
+  await openMenu(page);
   await page.locator('.share-start').click();
   await expect.poll(async () => (await screen(page))?.phase).toBe('live');
   await page.evaluate(() => {
@@ -182,11 +189,13 @@ test("Chrome's own Stop sharing (the track ends) clears the share; sharing again
     t.stop();
     t.dispatchEvent(new Event('ended')); // what Chrome's bar does; stop() alone fires nothing
   });
+  await openMenu(page);
   await expect(page.locator('.share-start')).toBeVisible();
   await expect(page.locator('.toast')).toHaveText('Screen sharing stopped');
   expect(await screen(page)).toMatchObject({ phase: 'off', texture: null, tv: { live: false } });
   await expect.poll(async () => (await shares(page)).at(-1)).toEqual({ sharing: false });
   // A second share is a fresh capture, and its frames are its own.
+  await openMenu(page);
   await page.locator('.share-start').click();
   await expect.poll(async () => (await screen(page))?.phase).toBe('live');
   expect(await page.evaluate(() => window.__screenMock.tracks.length)).toBe(2);
@@ -197,13 +206,16 @@ test("Chrome's own Stop sharing (the track ends) clears the share; sharing again
 test('a cancelled picker changes nothing and says nothing; a refusal by the browser says what to do', async ({ page }) => {
   await onFloor(page);
   await page.evaluate(() => (window.__screenMock.fail = 'NotAllowedError'));
+  await openMenu(page);
   await page.locator('.share-start').click();
   await expect.poll(() => page.evaluate(() => window.__screenMock.calls.length)).toBe(1);
   await frames(page, 3);
   expect((await screen(page))?.phase).toBe('off');
+  await openMenu(page);
   await expect(page.locator('.share-start')).toBeVisible();
   await expect(page.locator('.toast')).toHaveAttribute('hidden', ''); // no toast was shown
   await page.evaluate(() => (window.__screenMock.fail = 'NotReadableError'));
+  await openMenu(page);
   await page.locator('.share-start').click();
   await expect(page.locator('.toast')).toContainText('could not be captured');
   expect((await screen(page))?.phase).toBe('off');
@@ -217,6 +229,7 @@ test('the macOS denial is read in full: the toast stays clear of the plan limits
   await page.evaluate(() => Object.assign(window.__screenMock, { fail: 'NotAllowedError', failMessage: 'Permission denied by system' }));
   for (const width of [1920, 1280]) {
     await page.setViewportSize({ width, height: width === 1920 ? 1080 : 720 });
+    await openMenu(page);
     await page.locator('.share-start').click();
     const toast = page.locator('.toast');
     await expect(toast).toContainText('record the screen');

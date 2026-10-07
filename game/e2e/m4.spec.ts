@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, openGame, shot, watchErrors, openMenu } from './game';
 
 // M4 on the demo-m4 fixture and the simulating fixture server
 // (tools/fixture-sim.ts): Work holds herdr-3d (top), depot-manager (asleep)
@@ -335,10 +335,14 @@ test('the top bar’s Hire opens the first free desk; a worker with no worktree 
   await enter(page, 'herdr-3d');
   expect(await focusedKey(page)).toBe('BODY');
   await page.keyboard.press('Shift+Tab');
-  for (const want of ['Issues', 'PRs', 'Elevator', 'Hire']) {
-    await page.keyboard.press('Tab');
-    expect(await page.evaluate(() => document.activeElement?.textContent?.trim())).toBe(want);
-  }
+  const label = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.textContent?.trim());
+  await page.keyboard.press('Tab');
+  expect(await label()).toMatch(/^Floor \d+ of \d+\. Open the elevator$/);
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => document.activeElement?.className)).toContain('btn--menu');
+  // Hire leads the menu, which focuses its first row when it opens.
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.btn--hire')).toBeFocused();
   await page.keyboard.press('Enter');
   const d = await hireDialog(page);
   // Desks 5 and 12 are free: the first.
@@ -420,6 +424,7 @@ test('two hires at once: Esc on a pending hire, then another; each keeps its own
   await openGame(page, 'demo-m4', '', 'play=none&sim=1&simms=2500');
   await enter(page, 'pastry');
   const hireButton = page.locator('.btn--hire');
+  await openMenu(page);
   await hireButton.click();
   let d = await hireDialog(page);
   expect(d.desk).toBe(14);
@@ -432,6 +437,7 @@ test('two hires at once: Esc on a pending hire, then another; each keeps its own
   await expect(page.locator('.toast')).toHaveText('The hire is still on its way; the worker shows up at the desk when it is done.');
   expect((await desks(page))[14]).toMatchObject({ plus: false, away: 'empty' });
   // The top bar's Hire skips the desk the first hire holds.
+  await openMenu(page);
   await hireButton.click();
   d = await hireDialog(page);
   expect(d).toMatchObject({ desk: 15, state: 'ready', blocker: null });

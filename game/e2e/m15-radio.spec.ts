@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, openGame, shot, watchErrors, openMenu } from './game';
 
 // M15, the office radio, on the demo-m3b fixture (three floors in one building, herdr-3d on top). The tracks are
 // not the real ones: every request for /music/<genre>/<id>.ogg is answered with a tiny generated clip of that genre
@@ -168,6 +168,7 @@ test('the sound control has a music popover with a slider and mute of its own, a
   const clean = watchErrors(page);
   await serveClips(page);
   await openGame(page, 'demo-m3b');
+  await openMenu(page);
   const group = page.getByRole('group', { name: 'Sound' });
   await expect(group).toBeVisible();
   const master = group.getByRole('slider', { name: 'Sound volume' });
@@ -249,7 +250,7 @@ test('the sound control has a music popover with a slider and mute of its own, a
   expect((await radio(page)).genre).toBe(g);
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
-  await expect(trigger).toBeFocused();
+  await expect(page.locator('.btn--menu')).toBeFocused();
   clean();
 });
 

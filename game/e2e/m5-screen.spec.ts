@@ -205,7 +205,7 @@ test('E sits at a worker’s laptop: typed input echoes in its terminal, game ke
   expect(await page.evaluate(() => [window.__h3d.view().plan, window.__h3d.view().mode, window.__h3d.panel(), window.__h3d.dialog()])).toEqual([false, 'floor', null, null]);
   const still = await page.evaluate(() => window.__h3d.pose());
   expect([still?.x, still?.z, still?.yaw]).toEqual([standing?.x, standing?.z, standing?.yaw]);
-  expect(await page.locator('.btn--icon[aria-label="Battery saver"]').getAttribute('aria-pressed')).toBe('false');
+  expect(await page.locator('.btn--battery').getAttribute('aria-pressed')).toBe('false');
 
   // Paste (the browser's paste event) goes to the pane as typed keys for a plain shell.
   await page.evaluate(() => {
