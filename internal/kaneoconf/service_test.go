@@ -327,17 +327,17 @@ func TestProjectsAndVerify(t *testing.T) {
 	if _, _, err := s.Projects(context.Background(), "ws1"); err != nil || len(f.Calls()) != n+1 {
 		t.Fatal("an old list was not asked again")
 	}
-	if p, err := s.VerifyProject(context.Background(), "ws1", "p1"); err != nil || p.Name != "Herdr" {
-		t.Fatalf("verify = %+v, %v", p, err)
+	if p, gen, err := s.VerifyProject(context.Background(), "ws1", "p1"); err != nil || p.Name != "Herdr" || gen != s.View().Generation {
+		t.Fatalf("verify = %+v (generation %d), %v", p, gen, err)
 	}
-	_, err = s.VerifyProject(context.Background(), "ws2", "p1")
+	_, _, err = s.VerifyProject(context.Background(), "ws2", "p1")
 	kind(t, err, kaneoconf.KindBadInput)
-	_, err = s.VerifyProject(context.Background(), "ws1", "p3")
+	_, _, err = s.VerifyProject(context.Background(), "ws1", "p3")
 	kind(t, err, kaneoconf.KindBadInput)
-	_, err = s.VerifyProject(context.Background(), "ws1", "gone")
+	_, _, err = s.VerifyProject(context.Background(), "ws1", "gone")
 	kind(t, err, kaneoconf.KindNotFound)
 	f.Set(func(f *kaneoconf.FakeConnector) { f.Err = provider.Errorf(provider.ErrForbidden, "403") })
-	_, err = s.VerifyProject(context.Background(), "ws1", "p1")
+	_, _, err = s.VerifyProject(context.Background(), "ws1", "p1")
 	kind(t, err, kaneoconf.KindForbidden)
 }
 

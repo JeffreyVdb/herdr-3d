@@ -523,32 +523,33 @@ func (s *Service) Projects(ctx context.Context, workspaceID string) ([]Project, 
 
 // VerifyProject checks with the saved key, freshly, that project is a live
 // project of workspace (a floor's save): not_found when it is gone,
-// bad_request when it is archived or another workspace's.
-func (s *Service) VerifyProject(ctx context.Context, workspaceID, projectID string) (Project, error) {
+// bad_request when it is archived or another workspace's. The generation
+// is the connection's that vouched for it.
+func (s *Service) VerifyProject(ctx context.Context, workspaceID, projectID string) (Project, int64, error) {
 	if !validID(workspaceID) || !validID(projectID) {
-		return Project{}, newErr(KindBadInput, "workspace and project ids must be 1-200 bytes without control characters")
+		return Project{}, 0, newErr(KindBadInput, "workspace and project ids must be 1-200 bytes without control characters")
 	}
-	in, key, _, err := s.saved()
+	in, key, gen, err := s.saved()
 	if err != nil {
-		return Project{}, err
+		return Project{}, 0, err
 	}
 	p, err := call(s, ctx, key, func(ctx context.Context) (Project, error) {
 		return s.opts.Connector.Project(ctx, in, key, projectID)
 	})
 	if err != nil {
 		if KindOf(err) == KindNotFound {
-			return Project{}, newErr(KindNotFound, "That Kaneo project is gone (deleted, or this key cannot see it): pick another.")
+			return Project{}, 0, newErr(KindNotFound, "That Kaneo project is gone (deleted, or this key cannot see it): pick another.")
 		}
-		return Project{}, err
+		return Project{}, 0, err
 	}
 	switch {
 	case p.WorkspaceID != workspaceID:
-		return Project{}, newErr(KindBadInput, "That Kaneo project belongs to another workspace: pick the project again.")
+		return Project{}, 0, newErr(KindBadInput, "That Kaneo project belongs to another workspace: pick the project again.")
 	case p.Archived:
-		return Project{}, newErr(KindBadInput, "That Kaneo project is archived: pick another.")
+		return Project{}, 0, newErr(KindBadInput, "That Kaneo project is archived: pick another.")
 	}
 	p.Name = clip(p.Name)
-	return p, nil
+	return p, gen, nil
 }
 
 func cleanWorkspaces(ws []Workspace) []Workspace {

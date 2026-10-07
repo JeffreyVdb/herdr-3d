@@ -68,11 +68,11 @@ func TestKaneoConnectorThroughTheSettings(t *testing.T) {
 	if err != nil || len(ps) != 1 || ps[0] != (kaneoconf.Project{ID: "pr_1", WorkspaceID: "ws_1", Name: "Bridge", Slug: "KAN"}) {
 		t.Fatalf("projects = %+v, %v", ps, err)
 	}
-	if p, err := svc.VerifyProject(ctx, "ws_1", "pr_1"); err != nil || p.Name != "Bridge" {
+	if p, _, err := svc.VerifyProject(ctx, "ws_1", "pr_1"); err != nil || p.Name != "Bridge" {
 		t.Fatalf("verify = %+v, %v", p, err)
 	}
 	for project, want := range map[string]kaneoconf.Kind{"pr_old": kaneoconf.KindBadInput, "pr_x": kaneoconf.KindBadInput, "pr_gone": kaneoconf.KindNotFound} {
-		if _, err := svc.VerifyProject(ctx, "ws_1", project); kind(err) != want {
+		if _, _, err := svc.VerifyProject(ctx, "ws_1", project); kind(err) != want {
 			t.Errorf("verify %s = %v, want %s", project, err, want)
 		}
 	}

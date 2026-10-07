@@ -118,18 +118,24 @@ func (f *FakeConnector) Projects(ctx context.Context, in Instance, key, workspac
 	return out, nil
 }
 
+// Project answers from the projects there were when it was called: a Gate
+// only holds the answer back (an instance that answered, then was replaced).
 func (f *FakeConnector) Project(ctx context.Context, in Instance, key, projectID string) (Project, error) {
+	f.mu.Lock()
+	var found *Project
+	for _, p := range f.ProjectList {
+		if p.ID == projectID {
+			found = &p
+		}
+	}
+	f.mu.Unlock()
 	if err := f.enter(ctx, "project", in, key, projectID); err != nil {
 		return Project{}, err
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, p := range f.ProjectList {
-		if p.ID == projectID {
-			return p, nil
-		}
+	if found == nil {
+		return Project{}, provider.Errorf(provider.ErrNotFound, "kaneo: 404 project")
 	}
-	return Project{}, provider.Errorf(provider.ErrNotFound, "kaneo: 404 project")
+	return *found, nil
 }
 
 // Unreachable is the error a fake answers for a network failure.

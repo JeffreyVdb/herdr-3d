@@ -553,3 +553,108 @@ func TestKaneoOpenHostOnHealthz(t *testing.T) {
 		t.Fatalf("open hosts after clear = %q", h)
 	}
 }
+
+// heldLink sends a floor.settings.set linking "s" to ws1/p1 on a fresh
+// connection and holds Kaneo's (successful) answer to its project check
+// until the returned gate is closed.
+func (kb *kaneoBridge) heldLink(reqID string) (*client, chan struct{}) {
+	kb.t.Helper()
+	c := kb.connect(proto.Hello{})
+	c.snapshot()
+	gate := make(chan struct{})
+	kb.conn.Set(func(f *kaneoconf.FakeConnector) { f.Gate = gate })
+	c.send(proto.Command{T: proto.CmdFloorSettings, ReqID: reqID, Args: mustMarshal(kb.t, proto.FloorSettingsArgs{Session: "s",
+		Tracker: proto.Some(proto.TrackerKaneo), Kaneo: proto.Some(proto.KaneoLinkArgs{WorkspaceID: "ws1", ProjectID: "p1"})})})
+	eventually(kb.t, "the project check", func() bool {
+		for _, call := range kb.conn.Calls() {
+			if call.Op == "project" && call.Arg == "p1" {
+				return true
+			}
+		}
+		return false
+	})
+	kb.conn.Set(func(f *kaneoconf.FakeConnector) { f.Gate = nil })
+	return c, gate
+}
+
+// staleReply fails unless reqID's reply is a stale error.
+func (c *client) staleReply(reqID string) {
+	c.t.Helper()
+	m := c.reply(reqID)
+	var e proto.Error
+	_ = json.Unmarshal(m.raw, &e)
+	if m.env.T != proto.TError || e.Code != proto.ErrStale {
+		c.t.Fatalf("%s: got %s, want error stale", reqID, m.raw)
+	}
+}
+
+// A floor's project checked with a connection that was replaced (another
+// instance, or none) before the save landed is not saved: it is a project
+// of the old connection.
+func TestKaneoLinkCheckedWithAReplacedConnectionIsStale(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		replace func(kb *kaneoBridge)
+	}{
+		{"another instance", func(kb *kaneoBridge) {
+			kb.conn.Set(func(f *kaneoconf.FakeConnector) {
+				f.ProjectList = []kaneoconf.Project{{ID: "p2", WorkspaceID: "ws2", Name: "Other"}}
+			})
+			other := "https://other.example.test"
+			kb.c.mustAck(proto.CmdKaneoTest, proto.KaneoTestArgs{URL: ptr(other), Key: ptr(kaneoKey)})
+			kb.c.mustAck(proto.CmdKaneoSet, proto.KaneoSetArgs{URL: ptr(other), Key: ptr(kaneoKey)})
+		}},
+		{"cleared", func(kb *kaneoBridge) { kb.c.mustAck(proto.CmdKaneoClear, nil) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kb := startKaneoBridge(t)
+			kb.saveConnection(kaneoKey)
+			c, gate := kb.heldLink("old")
+			tc.replace(kb)
+			close(gate)
+			c.staleReply("old")
+			fs, err := kb.st.FloorSettings(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s := fs["s"]; s.Tracker == proto.TrackerKaneo || s.KaneoProjectID != "" {
+				t.Fatalf("saved %+v", s)
+			}
+		})
+	}
+}
+
+// An older save whose check answers last does not undo a newer link; a
+// save of another setting meanwhile does not stop it.
+func TestKaneoLinkSavesAnswerInOrder(t *testing.T) {
+	kb := startKaneoBridge(t)
+	kb.saveConnection(kaneoKey)
+	c, gate := kb.heldLink("old")
+	kb.c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", Tracker: proto.Some(proto.TrackerKaneo),
+		Kaneo: proto.Some(proto.KaneoLinkArgs{WorkspaceID: "ws2", ProjectID: "p2"})})
+	close(gate)
+	c.staleReply("old")
+	fs, err := kb.st.FloorSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := fs["s"]; s.KaneoProjectID != "p2" {
+		t.Fatalf("saved %+v", s)
+	}
+
+	kb2 := startKaneoBridge(t)
+	kb2.saveConnection(kaneoKey)
+	c, gate = kb2.heldLink("link")
+	kb2.c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", DefaultCwd: proto.Some("/home/u")})
+	close(gate)
+	if m := c.reply("link"); m.env.T != proto.TAck {
+		t.Fatalf("another setting's save made the link stale: %s", m.raw)
+	}
+	fs, err = kb2.st.FloorSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := fs["s"]; s.KaneoProjectID != "p1" || s.DefaultCwd != "/home/u" {
+		t.Fatalf("saved %+v", s)
+	}
+}
