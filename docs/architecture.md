@@ -295,15 +295,15 @@ MacBook (M2 Max)                                   devbox (Linux)
   rest of the city; the textures are not reloaded, the cache holds them by hash). One mipmapped, premultiplied texture per hash in a
   shared cache, one instanced draw for the city's plates and one quad per logo. A failed fetch leaves the name. Accent
   colours taken from the logo for a canopy stripe were left out.
-- **Fonts** (#59): the HUD, panels and dialogs are Recursive. Three hard-coded presets (Terminal: Departure Mono +
-  Archivo; Quiet, the default: JetBrains Mono + Atkinson Hyperlegible Next; Paper: Space Mono + Newsreader), each a
-  mono font, a prose font and colours, picked apart for the laptop's transcript (its fonts and colours, and every
+- **Fonts** (#59): the HUD, panels and dialogs are Recursive. Two hard-coded presets (Ubuntu, #172: the classic
+  Ubuntu terminal purple `#300A24` with Ubuntu orange, Ubuntu Mono + Ubuntu; Quiet, the default: JetBrains Mono +
+  Atkinson Hyperlegible Next), each a mono font, a prose font and colours, picked apart for the laptop's transcript (its fonts and colours, and every
   `--font-mono` on the page) and for its terminal canvas (font and screen colours). Only Quiet's fonts come with the
-  app: another preset's stylesheet (Latin-only `@font-face`s, split by Vite) loads when it is first picked, and the
-  canvas repaints once its faces have loaded. Each view has its own font zoom (70–200 %); the HUD does not zoom.
+  app: Ubuntu's stylesheet (Latin and Latin Extended `@font-face`s, split by Vite) loads when it is first picked, and the
+  canvas repaints once its faces have loaded. Ubuntu Mono's missing glyphs (box drawing, arrows, shapes, check marks, braille) come from size-adjusted `local()` fallback faces, so a table with one stays aligned where the host has a monospace font with that glyph (a missing glyph shows as a box of the same width; `fonts/ubuntu.css`). Each view has its own font zoom (70–200 %); the HUD does not zoom.
   Every shipped font's licence goes with the build in full (`FONT_LICENSES.txt` next to the bundle, from
-  `src/ui/fontCredits.ts`; the OFL and the Bitstream Vera licence ask it), linked from the credits panel, which keeps
-  each font's copyright line.
+  `src/ui/fontCredits.ts`; the OFL, the Ubuntu Font Licence (the Ubuntu pair's, not OFL) and the Bitstream Vera licence ask it), linked from the credits panel, which keeps
+  each font's copyright line. A stored `terminal` or `paper` preset (#59's, replaced in #172) opens as Ubuntu or Quiet.
 - **Settings window** (#91): the gear in the top bar (or `,`) opens `game/src/ui/settings.ts`, `SettingsDialog`: everything
   the player can change, as sections in the About panel's frame. A section is
   `addSection(id, title, render, { store })`: the dialog draws the heading and the storage label (`'browser'`: "This

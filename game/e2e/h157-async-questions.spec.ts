@@ -103,8 +103,8 @@ test('answered from the transcript while Codex works on: picks never send, Send 
     ],
   });
   await expect(card.locator('.tx-ask-q .tx-aq-state')).toHaveText('Sent — Codex will read it with its next step');
-  await tx.getByRole('radio', { name: 'Paper', exact: true }).click(); // a light preset: the card keeps its blue
-  await shot(page, 'h157-async-sent-paper');
+  await tx.getByRole('radio', { name: 'Ubuntu', exact: true }).click(); // the Ubuntu orange: the card keeps its accent, not the waiting sun
+  await shot(page, 'h157-async-sent-ubuntu');
   // Then Codex reads it: answered, said politely; the worker no longer asks.
   await expect(card.locator('.tx-ask-q .tx-aq-state')).toHaveText('Answered');
   await expect(tx.locator('.tx-aq-live')).toHaveText('Question answered.');

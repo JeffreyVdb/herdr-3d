@@ -7,7 +7,7 @@ import { ViewPrefs } from './themePrefs';
 const noop = { text() {}, paste() {}, stand() {}, toggle() {} };
 
 describe('seat bar: the terminal’s preset and zoom (#59)', () => {
-  it('a radio group of the three presets and A− / level / A+, for the terminal only', () => {
+  it('a radio group of the two presets and A− / level / A+, for the terminal only', () => {
     const hud = document.createElement('div');
     const prefs = new ViewPrefs(null);
     const bar = new SeatBar(hud, noop, prefs);
@@ -15,18 +15,17 @@ describe('seat bar: the terminal’s preset and zoom (#59)', () => {
     expect(group.getAttribute('aria-label')).toBe('Terminal theme');
     const radios = [...hud.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
     expect(radios.map((r) => [r.getAttribute('aria-label'), r.getAttribute('aria-checked'), r.tabIndex])).toEqual([
-      ['Terminal', 'false', -1],
+      ['Ubuntu', 'false', -1],
       ['Quiet', 'true', 0],
-      ['Paper', 'false', -1],
     ]);
-    radios[2]!.click();
-    expect([prefs.theme('terminal'), prefs.theme('transcript')]).toEqual(['paper', 'quiet']);
-    expect(radios[2]!.getAttribute('aria-checked')).toBe('true');
+    radios[0]!.click();
+    expect([prefs.theme('terminal'), prefs.theme('transcript')]).toEqual(['ubuntu', 'quiet']);
+    expect(radios[0]!.getAttribute('aria-checked')).toBe('true');
     // Arrows move and pick, and stay out of the game and the pane.
     let reached = 0;
     hud.addEventListener('keydown', () => reached++);
-    radios[2]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
-    expect(prefs.theme('terminal')).toBe('terminal');
+    radios[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    expect(prefs.theme('terminal')).toBe('quiet');
     expect(reached).toBe(0);
     // The zoom: its level always shown, steps of 10, reset on the middle one; the transcript's zoom stays.
     const zoom = hud.querySelector('[aria-label="Terminal text size"]') as HTMLElement;
@@ -54,7 +53,7 @@ describe('seat bar: the terminal’s preset and zoom (#59)', () => {
     const hud = document.createElement('div');
     document.body.append(hud);
     const prefs = new ViewPrefs(null);
-    prefs.setTheme('terminal', 'paper');
+    prefs.setTheme('terminal', 'ubuntu');
     const bar = new SeatBar(hud, noop, prefs);
     bar.show('Tofu', false);
     bar.focus();
@@ -63,9 +62,9 @@ describe('seat bar: the terminal’s preset and zoom (#59)', () => {
     const group = hud.querySelector('[role="radiogroup"]') as HTMLElement;
     expect(group.getAttribute('aria-keyshortcuts')).toBe('Control+,');
     expect(bar.focusLook()).toBe(true);
-    const paper = hud.querySelector('[data-theme-id="paper"]') as HTMLButtonElement;
-    expect(document.activeElement).toBe(paper);
-    expect(bar.inLook(paper)).toBe(true);
+    const ubuntu = hud.querySelector('[data-theme-id="ubuntu"]') as HTMLButtonElement;
+    expect(document.activeElement).toBe(ubuntu);
+    expect(bar.inLook(ubuntu)).toBe(true);
     expect(bar.inLook(hud.querySelector('.seat-stand'))).toBe(false);
     expect(bar.inLook(bar.input)).toBe(false);
     // Back to the pane's keyboard.

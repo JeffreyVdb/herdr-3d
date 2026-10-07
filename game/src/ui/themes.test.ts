@@ -1,13 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { canvasFaces, clampZoom, DEFAULT_THEME, isThemeId, monoPx, prosePx, stepZoom, themeById, THEMES, themeVars, ZOOM } from './themes';
+import { canvasFaces, clampZoom, DEFAULT_THEME, isThemeId, monoPx, prosePx, stepZoom, SYSTEM_MONO, themeById, THEMES, themeVars, ZOOM } from './themes';
 
-describe('the three presets (#59)', () => {
-  it('are exactly three, Quiet the default, each with its own mono font, prose font and colours', () => {
-    expect(THEMES.map((t) => t.id)).toEqual(['terminal', 'quiet', 'paper']);
+/** WCAG 2.x contrast ratio of two `#rrggbb` colours (an `rgb(r g b / a%)` is laid over `under`). */
+function ratio(fg: string, bg: string, under = '#000000'): number {
+  const rgb = (c: string, base?: number[]): number[] => {
+    const m = /^rgb\((\d+) (\d+) (\d+) \/ (\d+)%\)$/.exec(c);
+    if (m && base) return [1, 2, 3].map((i) => Math.round(Number(m[i]) * (Number(m[4]) / 100) + base[i - 1]! * (1 - Number(m[4]) / 100)));
+    return [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+  };
+  const lum = (c: number[]) => {
+    const [r, g, b] = c.map((v) => (v / 255 <= 0.03928 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+  };
+  const back = rgb(bg, rgb(under));
+  const [hi, lo] = [lum(rgb(fg, back)), lum(back)].sort((x, y) => y - x);
+  return (hi! + 0.05) / (lo! + 0.05);
+}
+
+describe('the two presets (#59, #172)', () => {
+  it('are exactly two, Ubuntu then Quiet (the default), each with its own mono font, prose font and colours', () => {
+    expect(THEMES.map((t) => t.id)).toEqual(['ubuntu', 'quiet']);
+    expect(THEMES.map((t) => t.label)).toEqual(['Ubuntu', 'Quiet']);
     expect(DEFAULT_THEME).toBe('quiet');
-    for (const key of ['mono', 'prose'] as const) expect(new Set(THEMES.map((t) => t[key].family)).size).toBe(3);
-    expect(new Set(THEMES.map((t) => t.palette.bg)).size).toBe(3);
-    expect(new Set(THEMES.map((t) => t.screen.bg)).size).toBe(3);
+    for (const key of ['mono', 'prose'] as const) expect(new Set(THEMES.map((t) => t[key].family)).size).toBe(2);
+    expect(new Set(THEMES.map((t) => t.palette.bg)).size).toBe(2);
+    expect(new Set(THEMES.map((t) => t.screen.bg)).size).toBe(2);
     // Every preset sets every colour, and every mono stack ends in the system's box-drawing monospace faces.
     const keys = Object.keys(themeById('quiet').palette).sort();
     for (const t of THEMES) {
@@ -15,24 +32,68 @@ describe('the three presets (#59)', () => {
       expect(t.mono.stack.startsWith(`"${t.mono.family}"`)).toBe(true);
       expect(t.mono.stack).toMatch(/Menlo, "DejaVu Sans Mono".*monospace$/);
     }
-    expect(themeById('paper').prose.size).toBeGreaterThan(themeById('quiet').prose.size);
   });
 
-  it('knows no fourth: a stored id that is not one of them is not a theme', () => {
-    expect(['terminal', 'quiet', 'paper'].every(isThemeId)).toBe(true);
-    for (const v of ['', 'dark', 'Quiet', null, 3, 'terminal ']) expect(isThemeId(v)).toBe(false);
+  it('Ubuntu is the classic purple with white text and the Ubuntu palette anchors, in Ubuntu and Ubuntu Mono', () => {
+    const u = themeById('ubuntu');
+    expect(u.blurb).toBe('Classic Ubuntu purple, Ubuntu and Ubuntu Mono');
+    expect(u.palette.bg).toBe('#300a24');
+    expect(u.palette.text).toBe('#ffffff');
+    expect(u.palette.blue).toBe('#e95420');
+    expect(u.palette['code-bg']).toBe('#2c001e');
+    expect(u.palette['bg-3']).toBe('#5e2750');
+    expect(u.screen).toMatchObject({ bg: 0x300a24, fg: 0xffffff });
+    expect(u.mono.stack).toBe(`"Ubuntu Mono", "H3D Box Ubuntu", "H3D Symbols Ubuntu", "H3D Symbols Ubuntu 2", "H3D Symbols Ubuntu Consolas", ${SYSTEM_MONO}`);
+    expect(u.prose.stack).toBe('"Ubuntu", system-ui, sans-serif');
+    // Four faces of Ubuntu Mono for the terminal: nothing is synthesised.
+    expect(canvasFaces(u)).toEqual(['400 16px "Ubuntu Mono"', '700 16px "Ubuntu Mono"', 'italic 400 16px "Ubuntu Mono"', 'italic 700 16px "Ubuntu Mono"']);
+  });
+
+  it('Ubuntu’s text is 4.5:1 on every surface it sits on, its accent and sun 3:1 as a fill or a ring', () => {
+    const { palette: p } = themeById('ubuntu');
+    const surfaces = [p.bg, p['bg-2'], p['bg-3'], p['code-bg'], p['banner-bg'], p['ask-bg']];
+    const texts = [p.text, p['text-2'], p['text-3'], p['blue-text'], p.green, p.red, p['sun-text']];
+    for (const s of surfaces) for (const t of texts) expect(ratio(t, s), `${t} on ${s}`).toBeGreaterThanOrEqual(4.5);
+    // The ask card's ground: 7% of the accent over bg-2; its red steps toward the text (transcript.css .tx-aq).
+    const ask = '#47182f';
+    expect(ratio(p['blue-text'], ask)).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(p['text-3'], ask)).toBeGreaterThanOrEqual(4.5);
+    expect(ratio('#ff9c93', ask)).toBeGreaterThanOrEqual(4.5);
+    // Text on the fills: white on the orange is 3.65:1, so the dark aubergine carries it.
+    expect(ratio(p['on-accent'], p.blue)).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(p['on-sun'], p.sun)).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(p['on-sun'], p.green)).toBeGreaterThanOrEqual(4.5);
+    // The diffs, each over the screen, and the code and its highlighting on the code ground.
+    expect(ratio(p['add-text'], p['add-bg'], p.bg)).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(p['del-text'], p['del-bg'], p.bg)).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(p['text'], p['add-bg'], p.bg)).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(p['text'], p['del-bg'], p.bg)).toBeGreaterThanOrEqual(4.5);
+    for (const k of ['code-text', 'hl-comment', 'hl-keyword', 'hl-string', 'hl-number', 'hl-title', 'hl-attr', 'hl-meta'] as const) expect(ratio(p[k], p['code-bg']), k).toBeGreaterThanOrEqual(4.5);
+    // Focus rings, the Send fill and the waiting tape against the surfaces they touch.
+    for (const s of [p.bg, p['bg-2'], p['bg-3'], p['code-bg']]) {
+      expect(ratio(p.blue, s), `accent on ${s}`).toBeGreaterThanOrEqual(3);
+      expect(ratio(p.sun, s), `sun on ${s}`).toBeGreaterThanOrEqual(3);
+    }
+    // Waiting, success and error read apart, and so does the accent from the waiting sun.
+    expect(new Set([p.sun, p.green, p.red, p.blue]).size).toBe(4);
+    expect(p['add-bg']).not.toBe(p['del-bg']);
+  });
+
+  it('knows no third: a stored id that is not one of them is not a theme (the retired ones migrate in themePrefs)', () => {
+    expect(['ubuntu', 'quiet'].every(isThemeId)).toBe(true);
+    for (const v of ['', 'dark', 'Quiet', null, 3, 'ubuntu ', 'terminal', 'paper']) expect(isThemeId(v)).toBe(false);
   });
 
   it('puts its fonts, sizes and colours on the page as custom properties', () => {
-    const v = themeVars(themeById('paper'), 100);
-    expect(v['--font-mono']).toBe(themeById('paper').mono.stack);
-    expect(v['--tx-prose']).toContain('Newsreader Variable');
-    expect(v['--tx-bg']).toBe('#f2ead8');
-    expect(v['--tx-fs']).toBe('15px');
-    expect(v['--tx-mono-fs']).toBe('12px');
-    expect(Number(v['--tx-k'])).toBeCloseTo(15 / 13.5, 3);
+    const v = themeVars(themeById('ubuntu'), 100);
+    expect(v['--font-mono']).toBe(themeById('ubuntu').mono.stack);
+    expect(v['--tx-prose']).toContain('"Ubuntu"');
+    expect(v['--tx-bg']).toBe('#300a24');
+    expect(v['--tx-blue-text']).toBe(themeById('ubuntu').palette['blue-text']);
+    expect(v['--tx-fs']).toBe('13.5px');
+    expect(v['--tx-mono-fs']).toBe('14px');
+    expect(Number(v['--tx-k'])).toBe(1);
     expect(themeVars(themeById('quiet'), 200)['--tx-fs']).toBe('27px');
-    expect(canvasFaces(themeById('terminal'))).toEqual(['400 16px "Departure Mono"']);
     expect(canvasFaces(themeById('quiet'))).toHaveLength(4);
   });
 });
@@ -57,25 +118,22 @@ describe('zoom (#59)', () => {
 
   it('100% is the preset’s own size, and switching preset at a zoom keeps the zoom', () => {
     for (const t of THEMES) expect(prosePx(t, 100)).toBe(t.prose.size);
-    expect(prosePx(themeById('paper'), 150)).toBe(22.5);
+    expect(prosePx(themeById('ubuntu'), 150)).toBe(20.25);
     expect(prosePx(themeById('quiet'), 150)).toBe(20.25);
   });
 
-  it('never gives Departure Mono a size off its 11px grid, at any step', () => {
-    const terminal = themeById('terminal');
-    const sizes = new Set<number>();
-    for (let z = ZOOM.min; z <= ZOOM.max; z += ZOOM.step) {
-      const px = monoPx(terminal, z);
-      expect(px % 11, `${z}%`).toBe(0);
-      expect(px).toBeGreaterThanOrEqual(11);
-      sizes.add(px);
-    }
-    expect([...sizes].sort((a, b) => a - b)).toEqual([11, 22]);
-    // It still grows with the zoom, never shrinks as the zoom grows.
-    for (let z = ZOOM.min; z < ZOOM.max; z += ZOOM.step) expect(monoPx(terminal, z + ZOOM.step)).toBeGreaterThanOrEqual(monoPx(terminal, z));
-    // The others follow the zoom on half pixels.
+  it('follows the zoom on half pixels, at every step, and never shrinks as the zoom grows', () => {
     expect(monoPx(themeById('quiet'), 100)).toBe(11.5);
     expect(monoPx(themeById('quiet'), 200)).toBe(23);
     expect(monoPx(themeById('quiet'), 70)).toBe(8);
+    // #172: Ubuntu has no pixel grid (Departure Mono's 11 px one went with the Terminal preset).
+    const u = themeById('ubuntu');
+    expect([70, 100, 150, 200].map((z) => monoPx(u, z))).toEqual([10, 14, 21, 28]);
+    for (const t of THEMES) {
+      for (let z = ZOOM.min; z <= ZOOM.max; z += ZOOM.step) {
+        expect((monoPx(t, z) * 2) % 1).toBe(0);
+        if (z < ZOOM.max) expect(monoPx(t, z + ZOOM.step)).toBeGreaterThanOrEqual(monoPx(t, z));
+      }
+    }
   });
 });

@@ -1,17 +1,18 @@
 /**
- * #59: the three presets, picked apart for the two seated views. For the transcript a preset sets the monospace
+ * #59 (#172): the two presets, picked apart for the two seated views. For the transcript a preset sets the monospace
  * font (its code and tool rows, and every other `--font-mono` in the DOM: the limits widget, the boards, the HUD's
  * numbers), the prose font and size and the colours (the `--tx-*` set); for the terminal it sets the canvas's font,
  * background, text and cursor. The 16 ANSI colours stay (agents' TUIs keep their meaning), and the HUD, panels and
  * dialogs keep Recursive (`--font`).
  *
- * Exactly three, hard-coded: nothing creates, edits or imports another. Quiet is the default and today's navy screen.
+ * Exactly two, hard-coded: nothing creates, edits or imports another. Quiet is the default and today's navy screen;
+ * Ubuntu (#172) is the classic Ubuntu terminal purple with Ubuntu's own fonts (it replaced the Terminal and Paper presets).
  */
 
 /** What every mono stack falls back to: system monospace faces that have the box-drawing set (DejaVu, Menlo). */
 export const SYSTEM_MONO = 'ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace';
 
-export type ThemeId = 'terminal' | 'quiet' | 'paper';
+export type ThemeId = 'ubuntu' | 'quiet';
 
 /** The transcript's colours, as `--tx-<name>` custom properties. */
 export type TxToken =
@@ -22,8 +23,10 @@ export type TxToken =
   | 'text'
   | 'text-2'
   | 'text-3'
-  /** The accent: links, focus, Send, running tools, hunk headers. */
+  /** The accent: focus, Send, the fill of an active control, running tools, hunk headers. */
   | 'blue'
+  /** The accent as text on the screen's surfaces (links, running tools, hunk headers): a lighter one where the fill's own colour is short of 4.5:1. */
+  | 'blue-text'
   /** Text on the accent. */
   | 'on-accent'
   /** Text on the sun (and the green of a done step). */
@@ -69,8 +72,6 @@ export interface ThemePreset {
     readonly stack: string;
     /** The transcript's mono size at 100% (px). */
     readonly size: number;
-    /** A pixel font's grid (px): its sizes are whole multiples of it, or it blurs (Departure Mono: 11). */
-    readonly grid?: number;
     /** The faces the terminal draws with (bold and italic are the browser's where the font has none). */
     readonly faces: readonly FontFaceSpec[];
   };
@@ -107,6 +108,7 @@ const QUIET: ThemePreset = {
     'text-2': '#9aa5c3',
     'text-3': '#76819f',
     blue: '#6f9bff',
+    'blue-text': '#6f9bff',
     'on-accent': '#0b1020',
     'on-sun': '#1c2540',
     green: '#4cd88a',
@@ -133,96 +135,66 @@ const QUIET: ThemePreset = {
   screen: { bg: 0x10162a, fg: 0xdde4f3, cursor: 0xffc233 },
 };
 
-const TERMINAL: ThemePreset = {
-  id: 'terminal',
-  label: 'Terminal',
-  blurb: 'Phosphor green on black, Departure Mono and Archivo',
-  // Departure Mono has one weight: bold and italic are synthesised (the canvas asks for them all the same).
-  mono: { family: 'Departure Mono', stack: `"Departure Mono", ${SYSTEM_MONO}`, size: 11, grid: 11, faces: [{ weight: 400, italic: false }] },
-  prose: { family: 'Archivo Variable', stack: '"Archivo Variable", system-ui, sans-serif', size: 13.5 },
+/**
+ * #172: the classic Ubuntu terminal: its purple (`#300A24`, the terminal's own RGB 48, 10, 36, not a brand swatch) with
+ * white text, Ubuntu orange (`#E95420`) for the accent and Ubuntu's dark and mid aubergine (`#2C001E`, `#5E2750`) for
+ * the surfaces. Every text / surface pairing is 4.5:1 or better and the accent as a fill or focus ring 3:1 on the
+ * surfaces it sits on, except the orange as text on the raised surfaces, which is why links use the lighter
+ * `blue-text`; white on the orange fill is 3.65:1, so `on-accent` is the dark aubergine (5.1:1).
+ * Ubuntu Mono has an advance of 0.5 em, narrower than JetBrains Mono's 0.6, and a small x-height: at 12 px it read as
+ * small print beside the 13.5 px prose. 14 px gives it the prose's x-height and a whole 7 px cell (Quiet's is 6.9 px);
+ * a half-pixel advance (13 px: 6.5) is rounded per font on platforms without subpixel text, and the box fallback
+ * rounded the other way.
+ */
+const UBUNTU: ThemePreset = {
+  id: 'ubuntu',
+  label: 'Ubuntu',
+  blurb: 'Classic Ubuntu purple, Ubuntu and Ubuntu Mono',
+  mono: { family: 'Ubuntu Mono', stack: `"Ubuntu Mono", "H3D Box Ubuntu", "H3D Symbols Ubuntu", "H3D Symbols Ubuntu 2", "H3D Symbols Ubuntu Consolas", ${SYSTEM_MONO}`, size: 14, faces: REGULAR_BOLD_ITALIC },
+  prose: { family: 'Ubuntu', stack: '"Ubuntu", system-ui, sans-serif', size: 13.5 },
   palette: {
-    bg: '#050b07',
-    'bg-2': '#0a1510',
-    'bg-3': '#12281c',
-    line: 'rgb(120 255 170 / 13%)',
-    text: '#c2f7d0',
-    'text-2': '#7fd39c',
-    'text-3': '#5a9c72',
-    blue: '#ffb000',
-    'on-accent': '#0a0700',
-    'on-sun': '#0a0700',
-    green: '#39ff88',
-    red: '#ff5f4a',
-    sun: '#ffb000',
-    'sun-text': '#ffb000',
-    'add-bg': 'rgb(57 255 136 / 12%)',
-    'del-bg': 'rgb(255 95 74 / 15%)',
-    'add-text': '#a8ffc6',
-    'del-text': '#ffb8ab',
-    'code-bg': '#020604',
-    'code-text': '#a9efbd',
-    tint: '160 255 190',
-    'banner-bg': '#1d1604',
-    'ask-bg': '#171204',
-    'hl-comment': '#5a9c72',
-    'hl-keyword': '#ffb000',
-    'hl-string': '#9dff5c',
-    'hl-number': '#ffd166',
-    'hl-title': '#5cffd6',
-    'hl-attr': '#e6ff7a',
-    'hl-meta': '#ff8a6b',
+    bg: '#300a24',
+    'bg-2': '#3b1330',
+    'bg-3': '#5e2750',
+    line: 'rgb(255 255 255 / 14%)',
+    text: '#ffffff',
+    'text-2': '#e8d5e2',
+    'text-3': '#cdb1c6',
+    blue: '#e95420',
+    'blue-text': '#ff9b76',
+    'on-accent': '#2c001e',
+    'on-sun': '#2c001e',
+    green: '#6be08f',
+    red: '#ff8a80',
+    sun: '#ffc83d',
+    'sun-text': '#ffc83d',
+    'add-bg': 'rgb(47 196 106 / 20%)',
+    'del-bg': 'rgb(232 65 58 / 22%)',
+    'add-text': '#b8f5cb',
+    'del-text': '#ffc9c4',
+    'code-bg': '#2c001e',
+    'code-text': '#f3e6ef',
+    tint: '255 255 255',
+    'banner-bg': '#3f2312',
+    'ask-bg': '#3a1a24',
+    'hl-comment': '#c9a8c0',
+    'hl-keyword': '#ff9b76',
+    'hl-string': '#a6e887',
+    'hl-number': '#ffcb6b',
+    'hl-title': '#8ec9ff',
+    'hl-attr': '#f7e27a',
+    'hl-meta': '#ff9ac1',
   },
-  screen: { bg: 0x050b07, fg: 0xc2f7d0, cursor: 0xffb000 },
+  screen: { bg: 0x300a24, fg: 0xffffff, cursor: 0xe95420 },
 };
 
-const PAPER: ThemePreset = {
-  id: 'paper',
-  label: 'Paper',
-  blurb: 'Ink on warm paper, Space Mono and Newsreader',
-  mono: { family: 'Space Mono', stack: `"Space Mono", "H3D Box Paper", ${SYSTEM_MONO}`, size: 12, faces: REGULAR_BOLD_ITALIC },
-  prose: { family: 'Newsreader Variable', stack: '"Newsreader Variable", Georgia, serif', size: 15 },
-  palette: {
-    bg: '#f2ead8',
-    'bg-2': '#e9dfc7',
-    'bg-3': '#dccfb0',
-    line: 'rgb(58 40 12 / 16%)',
-    text: '#231d14',
-    'text-2': '#54493a',
-    'text-3': '#6c604d',
-    blue: '#274b96',
-    'on-accent': '#fbf6ea',
-    'on-sun': '#231d14',
-    green: '#2d7240',
-    red: '#ae3226',
-    sun: '#e7ad2e',
-    'sun-text': '#865400',
-    'add-bg': 'rgb(45 114 64 / 13%)',
-    'del-bg': 'rgb(174 50 38 / 12%)',
-    'add-text': '#1f5a31',
-    'del-text': '#8a261c',
-    'code-bg': '#faf5e9',
-    'code-text': '#2a2319',
-    tint: '58 40 12',
-    'banner-bg': '#f7e3ad',
-    'ask-bg': '#f5e6bf',
-    'hl-comment': '#7a6d57',
-    'hl-keyword': '#7b2d8b',
-    'hl-string': '#2d6b1f',
-    'hl-number': '#a4460f',
-    'hl-title': '#274b96',
-    'hl-attr': '#8a5a00',
-    'hl-meta': '#ae3226',
-  },
-  screen: { bg: 0xf2ead8, fg: 0x231d14, cursor: 0x274b96 },
-};
-
-/** The three presets, in the picker's order. */
-export const THEMES: readonly [ThemePreset, ThemePreset, ThemePreset] = [TERMINAL, QUIET, PAPER];
+/** The two presets, in the picker's order. */
+export const THEMES: readonly [ThemePreset, ThemePreset] = [UBUNTU, QUIET];
 
 export const DEFAULT_THEME: ThemeId = 'quiet';
 
 export function isThemeId(v: unknown): v is ThemeId {
-  return v === 'terminal' || v === 'quiet' || v === 'paper';
+  return v === 'ubuntu' || v === 'quiet';
 }
 
 export function themeById(id: ThemeId): ThemePreset {
@@ -247,15 +219,9 @@ export function stepZoom(z: number, dir: 1 | -1): number {
   return clampZoom(clampZoom(z) + dir * ZOOM.step);
 }
 
-/**
- * The transcript's mono size (px) for a preset at a zoom: its size times the zoom, and for a pixel font the nearest
- * whole multiple of its grid, never under one grid (Departure Mono: 11, 22 or 33 px; 16.5 would blur).
- */
+/** The transcript's mono size (px) for a preset at a zoom: its size times the zoom, to the half pixel. */
 export function monoPx(t: ThemePreset, zoom: number): number {
-  const px = t.mono.size * (clampZoom(zoom) / 100);
-  const g = t.mono.grid;
-  if (!g) return Math.round(px * 2) / 2;
-  return Math.max(g, Math.round(px / g) * g);
+  return Math.round(t.mono.size * (clampZoom(zoom) / 100) * 2) / 2;
 }
 
 /** The transcript's body size (px) for a preset at a zoom. */

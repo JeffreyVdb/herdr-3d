@@ -706,7 +706,7 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   send-home dialog (`sendHome.ts`), styled in `hire.css`; M6: the start-run dialog (`startRun.ts`, the empty desk's
   "Hire orchestrator" tab from `deskTabs.ts`, the top bar's Run and Presets from `startButtons.ts`) and the team presets
   panel (`presets.ts`), styled in `start.css`, and the prompt bar's crew line (`crewBar.ts`, `crew.css`); #59: the
-  three presets (`themes.ts`: typed constants, the zoom's clamp / step / reset, Departure Mono's 11 px grid), what the
+  two presets (`themes.ts`: typed constants, the zoom's clamp / step / reset; #172: Ubuntu and Quiet, a stored `terminal` or `paper` migrates in `themePrefs.ts` to `ubuntu` or `quiet`; the accent as text is its own `blue-text` token, `blue` is for fills and rings); Ubuntu's mono stack is Ubuntu Mono, H3D Box Ubuntu and three `H3D Symbols Ubuntu` `local()` faces sized to its 0.5 em advance (`fonts/ubuntu.css`; `e2e/h172-ubuntu.spec.ts` measures a symbol row against a row of letters at 70 to 200 %), and a filled control's colour rule must out-rank `.tx button`, so it sits under `.tx`, what the
   seated views remember (`themePrefs.ts`: the transcript's and the terminal's preset and zoom apart,
   `h3d.theme.{transcript,terminal}`, `h3d.zoom.{transcript,terminal}`, and `h3d.transcript.hideTools`, guarded like
   `limitsPrefs.ts`; M17's `timePrefs.ts` too: the timezone and latitude of About's Day and night) and the loader (`themeLoader.ts`: the transcript's preset as custom properties on the root, fonts
@@ -959,8 +959,8 @@ harness, a bridge without transcripts or a view that does not load open the term
 down with `leftInTerminal` / `seatMode` from `e2e/game.ts`). `transcript.watch` answers a demo timeline of every item
 kind in the bridge's shape, the demo's Agent call pages the bridge's own output for its subagent fixture, and `sim.transcript` (`simTranscript(args)` in the
 hooks) pushes items or updates to a watch (`{id, items, updates}`) or closes it (`{id, close: "session_changed"}`);
-`simfail=no_m16` plays a bridge before M16. The demo's `Read` of a PNG shows its two thumbnails under its collapsed header, and still does with Hide tools on (#70). #59: the view's top strip has the transcript's preset (three swatches:
-Terminal, Quiet, Paper), Hide tools, the context meter (#101: `world/usage.ts` `contextMeter`, `TranscriptView.setUsage`, fed by `TranscriptMode.usageSeen`; `e2e/m101-context-meter.spec.ts`) and A− / 100% / A+; the seat bar has the terminal's own preset and zoom. Ctrl + = /
+`simfail=no_m16` plays a bridge before M16. The demo's `Read` of a PNG shows its two thumbnails under its collapsed header, and still does with Hide tools on (#70). #59: the view's top strip has the transcript's preset (two swatches:
+Ubuntu, Quiet), Hide tools, the context meter (#101: `world/usage.ts` `contextMeter`, `TranscriptView.setUsage`, fed by `TranscriptMode.usageSeen`; `e2e/m101-context-meter.spec.ts`) and A− / 100% / A+; the seat bar has the terminal's own preset and zoom. Ctrl + = /
 − / 0 and Ctrl+wheel zoom the view that is up, while seated only; Ctrl+, puts the keyboard on the terminal's controls (Esc goes back). `e2e/m59-themes.spec.ts` drives them. The game's tests read what the bridge makes of its own fixtures from
 `game/fixtures/transcript/` (`H3D_UPDATE_FIXTURES=1 go test ./internal/transcript` writes them, and the Go test fails
 when they are stale). E.g. `?ws=%2Ffixture%2Fdemo-m5%3Fsim%3D1&floor=herdr-3d`.
@@ -1306,12 +1306,12 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # #59 transcript presets on demo-m5 with sim=1 (m59-themes.spec.ts): the font files a
                               # fresh load fetches (Quiet's only; a stored preset's only), each transcript preset
                               # from its strip (computed fonts: mono vs prose; the limits widget; a box in tool
-                              # output lined up) and the terminal's from the seat bar, apart (the terminal in Paper
-                              # fetches no Newsreader), Hide tools and its chip, blocked storage, each view's zoom
+                              # output lined up) and the terminal's from the seat bar, apart (the terminal in Ubuntu
+                              # fetches Ubuntu Mono, no Ubuntu), Hide tools and its chip, blocked storage, each view's zoom
                               # (keys, buttons, the prompt box, 200 % and 70 % laid out, Ctrl+wheel on the terminal,
-                              # Departure Mono on 11 / 22 px), keyboard reach; m59-{transcript,terminal}-<preset>,
-                              # m59-transcript-<preset>-hidden, m59-mixed-{transcript,terminal} (Paper over
-                              # Terminal), m59-zoom-{200,70}, m59-terminal-zoom-200.png
+                              # Ubuntu Mono on 14 / 28 px), keyboard reach; m59-{transcript,terminal}-<preset>,
+                              # m59-transcript-<preset>-hidden, m59-mixed-{transcript,terminal} (Ubuntu over
+                              # Quiet), m59-zoom-{200,70}, m59-terminal-zoom-200.png
                               # #98 desk monitors on demo-m5 with sim=1 (m98-monitor.spec.ts, sim.activity): the card
                               # (crab / cloud, word, detail, counter; unknown kind, resting, glance), WAITING (band,
                               # HUD count, not in N, badge), an image on a near monitor (Claude Read, Codex

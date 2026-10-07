@@ -237,7 +237,7 @@ test('switched off, a turn with questions flags nothing and sends nothing', asyn
 
 // On a phone (360×800) the laptop's screen is short: the card takes the room the timeline leaves (collapsed to a
 // strip while it is up), so its question, options, text and a fallback's message tail are shown and usable, and the
-// prompt box stays reachable. In Quiet (dark) and Paper (light).
+// prompt box stays reachable. In Quiet (navy) and Ubuntu (purple).
 test('on a phone the card has room for the question and its answers, and the prompt box stays reachable', async ({ page }) => {
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
@@ -279,7 +279,7 @@ test('on a phone the card has room for the question and its answers, and the pro
       await expect(tx.locator('.tx-input')).toBeEnabled();
     };
 
-    for (const theme of ['Quiet', 'Paper'] as const) {
+    for (const theme of ['Quiet', 'Ubuntu'] as const) {
       await tx.getByRole('radio', { name: theme, exact: true }).click();
       expect(await page.evaluate((a) => window.__h3d.simTurn(a), { id: w.id, text: THREE })).toMatchObject({ ok: true, data: { flagged: true } });
       await expect(card).toBeVisible();
@@ -311,7 +311,7 @@ test('on a phone the card has room for the question and its answers, and the pro
     // The fallback: the message's end and a free answer.
     expect(await page.evaluate((a) => window.__h3d.simTurn(a), { id: w.id, text: FALLBACK })).toMatchObject({ ok: true, data: { flagged: true } });
     await expect(card.locator('.tx-fu-tail')).toBeVisible();
-    await shot(page, 'followup-phone-fallback-paper');
+    await shot(page, 'followup-phone-fallback-ubuntu');
     // The tail may be longer than the card: it shows a good part of it, the rest scrolls.
     await card.locator('.tx-fu-tail').scrollIntoViewIfNeeded();
     const [c, tail] = await Promise.all([box(card), box(card.locator('.tx-fu-tail'))]);

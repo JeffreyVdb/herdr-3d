@@ -1,13 +1,13 @@
 /**
  * #59: the fonts the game ships, for the credits panel (`credits.ts`) and for `FONT_LICENSES.txt`, which the build
- * writes next to the bundle (vite.config.ts) with each font's licence file in full: the OFL and the Bitstream Vera
- * licence ask that their text go with every copy of the fonts. Pure data (the build imports it).
+ * writes next to the bundle (vite.config.ts) with each font's licence file in full: the OFL, the Ubuntu Font Licence
+ * and the Bitstream Vera licence ask that their text go with every copy of the fonts. Pure data (the build imports it).
  */
 
 /** Where the licence texts ship, next to index.html (the credits panel links it). */
 export const FONT_LICENSES_FILE = 'FONT_LICENSES.txt';
 
-/** A font the game ships, its copyright line and licence (the SIL Open Font License 1.1 unless it says otherwise). */
+/** A font the game ships, its copyright line and licence (the SIL Open Font License 1.1 unless it says otherwise: #172, the Ubuntu fonts' is the Ubuntu Font Licence 1.0, not the OFL). */
 export interface FontCredit {
   name: string;
   /** Its licence file, from the game's directory (the npm package's, or the vendored copy's): the build ships its text. */
@@ -21,19 +21,27 @@ export interface FontCredit {
 }
 
 export const OFL = { name: 'SIL OFL 1.1', url: 'https://openfontlicense.org/open-font-license-official-text/' };
+/** #172: the licence of the Ubuntu and Ubuntu Mono files (their packages' LICENSE is its full text). */
+export const UFL = { name: 'Ubuntu Font Licence 1.0', url: 'https://ubuntu.com/legal/font-licence' };
 
-/** #59: the fonts: Recursive for the HUD, then each transcript preset's mono and prose faces (ui/themes.ts). */
+/** #59: the fonts: Recursive for the HUD, then each transcript preset's mono and prose faces (ui/themes.ts; Departure Mono and Archivo stay for the floor overview). */
 export const FONT_CREDITS: readonly FontCredit[] = [
   { name: 'Recursive', licenseFile: 'node_modules/@fontsource-variable/recursive/LICENSE', role: 'The HUD, panels and dialogs', copyright: 'Copyright 2019 The Recursive Project Authors', source: 'https://github.com/arrowtype/recursive' },
-  { name: 'Departure Mono', licenseFile: 'src/fonts/departure-mono/LICENSE', role: 'Terminal preset, monospace; the floor overview’s figures', copyright: 'Copyright 2022–2024 Helena Zhang (helenazhang.com)', source: 'https://github.com/rektdeckard/departure-mono' },
-  { name: 'Archivo', licenseFile: 'node_modules/@fontsource-variable/archivo/LICENSE', role: 'Terminal preset, text; the floor overview’s names (condensed)', copyright: 'Copyright 2020 The Archivo Project Authors', source: 'https://github.com/Omnibus-Type/Archivo' },
+  { name: 'Departure Mono', licenseFile: 'src/fonts/departure-mono/LICENSE', role: 'The floor overview’s figures (ids, times, counts)', copyright: 'Copyright 2022–2024 Helena Zhang (helenazhang.com)', source: 'https://github.com/rektdeckard/departure-mono' },
+  { name: 'Archivo', licenseFile: 'node_modules/@fontsource-variable/archivo/LICENSE', role: 'The floor overview’s names (condensed)', copyright: 'Copyright 2020 The Archivo Project Authors', source: 'https://github.com/Omnibus-Type/Archivo' },
   { name: 'JetBrains Mono', licenseFile: 'node_modules/@fontsource-variable/jetbrains-mono/LICENSE', role: 'Quiet preset, monospace', copyright: 'Copyright 2020 The JetBrains Mono Project Authors', source: 'https://github.com/JetBrains/JetBrainsMono' },
   { name: 'Atkinson Hyperlegible Next', licenseFile: 'node_modules/@fontsource-variable/atkinson-hyperlegible-next/LICENSE', role: 'Quiet preset, text', copyright: 'Copyright 2020–2024 The Atkinson Hyperlegible Next Project Authors', source: 'https://github.com/googlefonts/atkinson-hyperlegible-next' },
-  { name: 'Space Mono', licenseFile: 'node_modules/@fontsource/space-mono/LICENSE', role: 'Paper preset, monospace', copyright: 'Copyright 2016 The Space Mono Project Authors', source: 'https://github.com/googlefonts/spacemono' },
-  { name: 'Newsreader', licenseFile: 'node_modules/@fontsource-variable/newsreader/LICENSE', role: 'Paper preset, text', copyright: 'Copyright 2020 The Newsreader Project Authors', source: 'https://github.com/productiontype/Newsreader' },
+  {
+    name: 'Ubuntu', licenseFile: 'node_modules/@fontsource/ubuntu/LICENSE', role: 'Ubuntu preset, text (the classic family, 0.83, not Ubuntu Sans)',
+    copyright: 'Copyright 2011 Canonical Ltd.', source: 'https://design.ubuntu.com/font', license: UFL,
+  },
+  {
+    name: 'Ubuntu Mono', licenseFile: 'node_modules/@fontsource/ubuntu-mono/LICENSE', role: 'Ubuntu preset, monospace (the classic family, 0.80, not Ubuntu Sans Mono)',
+    copyright: 'Copyright 2011 Canonical Ltd.', source: 'https://design.ubuntu.com/font', license: UFL,
+  },
   {
     name: 'H3D Box (DejaVu Sans Mono)', licenseFile: 'src/fonts/h3d-box/LICENSE',
-    role: 'Box drawing in tool output, Quiet and Paper presets',
+    role: 'Box drawing in tool output, Quiet and Ubuntu presets',
     copyright: 'Copyright 2003 Bitstream, Inc.; DejaVu changes are in the public domain; subset and renamed',
     source: 'https://github.com/dejavu-fonts/dejavu-fonts',
     license: { name: 'Bitstream Vera licence', url: 'https://dejavu-fonts.github.io/License.html' },
@@ -85,8 +93,10 @@ export function fontLicensesText(read: (file: string) => string, fonts: readonly
   const head = [
     'herdr-3d: the fonts this build ships and their licences, in full.',
     'Each font file is the upstream one, unmodified, except H3D Box: a renamed subset of DejaVu Sans Mono (see its entry).',
+    'The Ubuntu and Ubuntu Mono files are Fontsource’s copies of the classic Ubuntu font family (0.83 and 0.80), unmodified:',
+    'Copyright 2011 Canonical Ltd., licensed under the Ubuntu Font Licence 1.0 (its text is in their entries).',
   ];
-  const parts = fonts.map((f) => [rule, `${f.name}: ${f.role}`, `Source: ${f.source}`, `Licence: ${(f.license ?? OFL).name}`, rule, '', read(f.licenseFile).trim()].join('\n'));
+  const parts = fonts.map((f) => [rule, `${f.name}: ${f.role}`, `Source: ${f.source}`, `Copyright: ${f.copyright}`, `Licence: ${(f.license ?? OFL).name}`, rule, '', read(f.licenseFile).trim()].join('\n'));
   // M13: the editor whose package ships the whiteboard's fonts (MIT asks for its notice with every copy).
   const n = EXCALIDRAW_NOTICE;
   if (fonts.some((f) => EXCALIDRAW_FONT_CREDITS.includes(f))) parts.push([rule, n.name, `Source: ${n.source}`, `Licence: ${n.license.name}`, rule, '', read(n.licenseFile).trim()].join('\n'));

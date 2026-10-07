@@ -8,16 +8,15 @@ import type { ViewPrefs } from './themePrefs';
  * cannot swap by itself: `ready` fires once the faces it draws with have loaded (or failed: then the system's
  * monospace draws it) and the screens repaint with them.
  *
- * Fonts load on first use: Quiet's stylesheet comes with the app (`main.ts`), the other two are split out by Vite and
- * fetched the first time either view picks them. A stylesheet only declares its faces; a file is fetched when text
- * uses it, so the terminal in Paper fetches Space Mono and never Newsreader.
+ * Fonts load on first use: Quiet's stylesheet comes with the app (`main.ts`), the other is split out by Vite and
+ * fetched the first time either view picks it. A stylesheet only declares its faces; a file is fetched when text
+ * uses it, so the terminal in Ubuntu fetches Ubuntu Mono and never Ubuntu.
  */
 
 /** Each preset's font stylesheet: a literal import, so Vite splits each one into its own CSS and font files. */
 const LOADERS: Record<ThemeId, () => Promise<unknown>> = {
   quiet: () => Promise.resolve(),
-  terminal: () => import('../fonts/terminal.css'),
-  paper: () => import('../fonts/paper.css'),
+  ubuntu: () => import('../fonts/ubuntu.css'),
 };
 
 /** What `document.fonts` offers here (a fake in vitest). */

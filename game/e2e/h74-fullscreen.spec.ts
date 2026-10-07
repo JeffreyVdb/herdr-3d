@@ -247,7 +247,7 @@ test('the chip keeps AA contrast in every state at all three presets, and the ba
     await chip(page).click();
     await expect.poll(() => fs(page)).toMatchObject({ pressed: true });
   };
-  for (const t of ['Paper', 'Quiet', 'Terminal']) {
+  for (const t of ['Ubuntu', 'Quiet']) {
     await page.locator(`.seat [role="radio"][aria-label="${t}"]`).click();
     await page.evaluate(() => window.__h3d.themeLoaded());
     await checkStates(t);
@@ -257,7 +257,7 @@ test('the chip keeps AA contrast in every state at all three presets, and the ba
       return { inside: c.left >= seat.left && c.right <= seat.right && c.top >= seat.top && c.bottom <= seat.bottom, h: seat.height };
     });
     expect(box.inside, t).toBe(true);
-    if (t === 'Paper') await shot(page, 'h74-fullscreen-paper');
+    if (t === 'Ubuntu') await shot(page, 'h74-fullscreen-ubuntu');
   }
   // The bar's height does not depend on the chip's state or wording.
   const heights: number[] = [];
