@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +15,9 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr/herdrtest"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
+	"github.com/JeffreyVdb/herdr-3d/internal/tracker"
 )
 
 // The whole board path, with gh played by a fake: a floor linked to a repository
@@ -149,3 +152,39 @@ func TestServeBoards(t *testing.T) {
 		t.Fatal("no audit row of the comment")
 	}
 }
+
+// #184: the factory picks the issue tracker and the code host apart. A
+// Kaneo floor gets the Kaneo tracker the hook builds and, with a repo, that
+// repo's GitHub pull requests; without the hook (or a connection) it has no
+// board; a GitHub floor is as before.
+func TestBoardsPicksTrackerAndHostApart(t *testing.T) {
+	cli := &githubcli.Client{Bin: "gh-that-is-never-run"}
+	gh := GitHubBoards(cli, nil)
+	src := server.BoardSource{Session: "s", Repo: "JeffreyVdb/lab", Tracker: server.TrackerGitHub}
+	set, ok := gh(src)
+	if !ok || set.Tracker.Info().ID != "github" || set.Host == nil {
+		t.Fatalf("github floor = %+v, %v", set, ok)
+	}
+	kaneoSrc := server.BoardSource{Session: "s", Tracker: server.TrackerKaneo, KaneoAPIBase: "https://tasks.example.test/api",
+		KaneoGeneration: 4, KaneoWorkspace: "ws1", KaneoProject: "p1"}
+	if _, ok := gh(kaneoSrc); ok {
+		t.Fatal("a Kaneo floor got a board without the Kaneo hook")
+	}
+	var fake tracker.Tracker = fakeKaneoTracker{}
+	withKaneo := Boards(cli, nil, func(src server.BoardSource) (tracker.Tracker, string, bool) {
+		return fake, fmt.Sprintf("%s|%s|%s|g%d", src.KaneoAPIBase, src.KaneoWorkspace, src.KaneoProject, src.KaneoGeneration), true
+	})
+	set, ok = withKaneo(kaneoSrc)
+	if !ok || set.Tracker != fake || set.Host != nil || !strings.Contains(set.Key, "g4") {
+		t.Fatalf("kaneo floor without a repo = %+v, %v", set, ok)
+	}
+	kaneoSrc.Repo = "JeffreyVdb/lab"
+	withRepo, ok := withKaneo(kaneoSrc)
+	if !ok || withRepo.Tracker != fake || withRepo.Host == nil || withRepo.Host.Info().ID != "github" || withRepo.Key == set.Key {
+		t.Fatalf("kaneo floor with a repo = %+v, %v", withRepo, ok)
+	}
+}
+
+type fakeKaneoTracker struct{ tracker.Tracker }
+
+func (fakeKaneoTracker) Info() tracker.Info { return tracker.Info{ID: "kaneo", Name: "Kaneo"} }

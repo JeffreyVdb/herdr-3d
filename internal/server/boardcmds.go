@@ -55,6 +55,10 @@ func boardCode(err error) string {
 		return proto.ErrStale
 	case errors.Is(err, provider.ErrBadInput):
 		return proto.ErrBadRequest
+	case errors.Is(err, provider.ErrUnauthorized): // #184
+		return proto.ErrUnauthorized
+	case errors.Is(err, provider.ErrForbidden):
+		return proto.ErrForbidden
 	case errors.Is(err, provider.ErrFailed):
 		return proto.ErrProviderFailed
 	}
@@ -102,7 +106,7 @@ func (h *Hub) boardCmdFloor(session string) (*boardFloor, error) {
 	}
 	bf := h.boardOf(session)
 	if bf == nil {
-		return nil, fmt.Errorf("%w: the floor has no board (no repo linked)", errUnsupported)
+		return nil, fmt.Errorf("%w: the floor has no board (%s)", errUnsupported, h.noBoard(session))
 	}
 	return bf, nil
 }

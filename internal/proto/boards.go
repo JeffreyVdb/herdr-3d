@@ -56,22 +56,29 @@ type WorkItemRef struct {
 	Provider string `json:"provider"`
 	ID       string `json:"id"`
 	// #118: the item's title and URL, on a worker's work_item, when the
-	// floor's provider has them.
+	// floor's provider has them; #184: and its readable key ("HRD-12").
 	Title string `json:"title,omitempty"`
 	URL   string `json:"url,omitempty"`
+	Key   string `json:"key,omitempty"`
 }
 
 // BoardIssues is a floor's issues, as of FetchedAt (unix ms; 0: nothing
 // fetched yet). Initial marks the replay of the cache on board.watch.
 type BoardIssues struct {
-	T            string               `json:"t"`
-	Session      string               `json:"session"`
-	Provider     string               `json:"provider"`
-	ProviderName string               `json:"provider_name"`
-	Initial      bool                 `json:"initial"`
-	FetchedAt    int64                `json:"fetched_at"`
-	Stale        bool                 `json:"stale"`
-	Error        string               `json:"error,omitempty"`
+	T            string `json:"t"`
+	Session      string `json:"session"`
+	Provider     string `json:"provider"`
+	ProviderName string `json:"provider_name"`
+	Initial      bool   `json:"initial"`
+	FetchedAt    int64  `json:"fetched_at"`
+	Stale        bool   `json:"stale"`
+	Error        string `json:"error,omitempty"`
+	// #184: ErrorCode is the failed poll's error code (unauthorized,
+	// forbidden, rate_limited, provider_failed, …) and PausedUntil (unix
+	// ms) when polling resumes after the provider refused the key; both
+	// absent unless stale.
+	ErrorCode    string               `json:"error_code,omitempty"`
+	PausedUntil  int64                `json:"paused_until,omitempty"`
 	Truncated    bool                 `json:"truncated"`
 	Rate         *provider.Rate       `json:"rate,omitempty"`
 	Capabilities tracker.Capabilities `json:"capabilities"`

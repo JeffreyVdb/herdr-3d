@@ -689,6 +689,9 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 	// #92: the role and the fields named, never the key.
 	case proto.CmdAIModels, proto.CmdAITest, proto.CmdAISet, proto.CmdAIClear:
 		return auditAI(cmd)
+	// #184: the instance and whether a key was given, never the key.
+	case proto.CmdKaneoTest, proto.CmdKaneoSet:
+		return auditKaneo(cmd)
 	// #90: the answers by their lengths, never their text.
 	case proto.CmdWorkerAnswerFollowup:
 		return auditFollowup(cmd)
