@@ -605,7 +605,7 @@ export class App {
         cityData: () => this.cityOverviewData(), // #188
         goToFloor: (session) => void this.goToFloor(session),
         goTo: (id) => void this.goToWorker(id, 'transcript'),
-        openTicket: (session, id) => this.boardsPanel.openItem('issues', session, id),
+        openTicket: (session, id) => this.boardsPanel.openItem('issues', session, id, { pin: true }),
         retrySummary: (id) =>
           void this.send('digest.retry', { id }).then((r) => {
             if (!r.ok) this.hud.toast(digestFailureText(r.code, r.message), 6500, 'error');

@@ -105,6 +105,42 @@ test('Enter on a worker on another floor sits you at its laptop; Enter on a floo
   clean();
 });
 
+test('a ticket opened with t from the all-floors page in the city stays open across an unrelated live update', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m188', '', SIM);
+  expect((await view(page)).mode).toBe('city');
+  await page.keyboard.press('KeyO');
+  await expect.poll(async () => (await page_(page))?.open).toBe(true);
+  // Sprout the orchestrator (waiting on you, so shown under Active only), with its ticket.
+  const sprout = page.locator('.ov-row').filter({ has: page.locator('.ov-name', { hasText: /^Sprout$/ }) }).filter({ has: page.locator('[data-ticket]') });
+  await expect(sprout).toHaveCount(1);
+  await sprout.focus();
+  await page.keyboard.press('KeyT');
+  const board = page.locator('dialog.desk-dlg--board');
+  const item = page.locator('dialog.desk-dlg--item');
+  await expect(board).toBeVisible();
+  await expect(item).toBeVisible();
+  const title = await page.locator('#item-title').textContent();
+  // Turnip, on another floor, changes status: the boards redraw (no floor is under you here), the ticket stays.
+  await page.evaluate(() => {
+    const id = window.__h3d.world().flatMap((f) => f.workers).find((x) => x.name === 'Turnip')?.id;
+    const w = id ? window.__h3d.worker(id) : null;
+    if (!w) throw new Error('no Turnip');
+    const status = w.status === 'working' ? 'idle' : 'working';
+    window.__h3d.inject({ t: 'worker.status', seq: 3_000_000, id: w.id, session: w.session, workspace_id: w.workspace_id, status, prev_status: w.status, status_since: Date.now(), title: '' } as never);
+  });
+  await frames(page, 6);
+  await expect(board).toBeVisible();
+  await expect(item).toBeVisible();
+  await expect(page.locator('#item-title')).toHaveText(title ?? '');
+  // The viewer closes it: Esc closes the ticket, then the board, then the page.
+  await page.keyboard.press('Escape');
+  await expect(item).toBeHidden();
+  await expect(board).toBeVisible();
+  clean();
+});
+
 test('a floor’s page: All by default, F hides the idle, A switches to every floor; the City menu and the palette open it', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);

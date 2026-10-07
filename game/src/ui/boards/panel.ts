@@ -145,6 +145,8 @@ export class BoardsPanel {
   /** Kept between renders: what is typed is never lost to a poll. */
   private readonly commentBox = h('textarea', { id: 'bd-comment', 'data-key': 'comment-text', rows: 3, spellcheck: 'true', placeholder: 'Write a comment (Markdown)…', 'aria-label': 'Comment' });
   private returnTo: HTMLElement | null = null;
+  /** #188: opened from the overview: the board keeps its own floor until closed, wherever the viewer stands. */
+  private pinned = false;
   /** #52: dragging cards; the moves it made that the board does not show yet, and the writes in order. */
   private readonly drag: CardDrag;
   private readonly moves = new Map<string, Move>();
@@ -182,6 +184,7 @@ export class BoardsPanel {
     backdropPolicy(this.item, 'none');
     this.dialog.addEventListener('close', () => {
       if (this.dialog.open) return;
+      this.pinned = false;
       this.drag.cancel();
       this.alert.replaceChildren();
       this.item.close();
@@ -237,6 +240,7 @@ export class BoardsPanel {
       const a = document.activeElement;
       this.returnTo = a instanceof HTMLElement && a !== document.body ? a : null;
     }
+    this.pinned = false;
     this.drag.cancel();
     if (session !== this.session) this.moves.clear();
     if (session !== this.session || which !== this.which) this.alert.replaceChildren();
@@ -257,7 +261,7 @@ export class BoardsPanel {
   /** The board's data changed (a poll, a world event): the lists redraw; an open item follows its card. */
   refresh(): void {
     if (!this.dialog.open) return;
-    if (!this.host.session() || this.host.session() !== this.session) {
+    if (!this.pinned && (!this.host.session() || this.host.session() !== this.session)) {
       // The floor is not the one you are on any more.
       const s = this.host.session();
       if (!s) {
@@ -531,9 +535,13 @@ export class BoardsPanel {
     void this.loadPr(id);
   }
 
-  /** Opens an item's modal directly (from a note on the wall, or a test). */
-  openItem(which: Which, session: string, id: string): void {
+  /**
+   * Opens an item's modal directly (from a note on the wall, or a test). `pin` (#188, the overview's `t`): the board
+   * keeps this floor across refreshes until it is closed, though the viewer stands in the city, a lobby or elsewhere.
+   */
+  openItem(which: Which, session: string, id: string, o: { pin?: boolean } = {}): void {
     this.open(which, session);
+    this.pinned = !!o.pin;
     if (which === 'issues') this.openIssue(id);
     else this.openPr(id);
   }

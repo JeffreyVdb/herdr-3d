@@ -25,12 +25,16 @@ const base = { session: 'floor', provider: 'github', provider_name: 'GitHub', in
 const issues = (n: number): BoardIssues => ({ ...base, t: 'board.issues', columns: [{ id: 'todo', name: 'Todo' }], cards: Array.from({ length: n }, (_, i) => card(i + 1)) });
 const prs = (n: number): BoardPrs => ({ ...base, t: 'board.prs', prs: Array.from({ length: n }, (_, i) => pr(i + 1)), merged: [] });
 
-function setup() {
+function setup(here: () => string | null = () => 'floor') {
   let state: BoardState = { issues: issues(40), prs: prs(40), off: null };
+  const read: string[] = [];
   const host = {
     store: { floorView: () => ({ workers: [] }) },
-    session: () => 'floor',
-    state: () => state,
+    session: here,
+    state: (session: string) => {
+      read.push(session);
+      return state;
+    },
     refresh: () => {},
     external: () => {},
     send: async (t: string) => (t === 'issue.get' ? { ok: true, data: { card: card(1), body: 'Body', author: { name: 'ann' }, created_at: 1000, comments: [] } } : { ok: true, data: { pr: pr(1), body: 'Body', author: { name: 'ann' }, created_at: 1000, comments: [], checks: [], files: [] } }),
@@ -58,7 +62,7 @@ function setup() {
     itemAt.top = 0;
     itemAt.left = 0;
   };
-  return { panel, body, item, at, itemAt, set: (s: Partial<BoardState>) => (state = { ...state, ...s }) };
+  return { panel, body, item, at, itemAt, read, set: (s: Partial<BoardState>) => (state = { ...state, ...s }) };
 }
 
 describe('BoardsPanel: scroll position across a refresh (#160)', () => {
@@ -252,5 +256,63 @@ describe('replaceKeepingFocus', () => {
       expect(el.scrollTop).toBe(scrollTop);
       el.remove();
     }
+  });
+});
+
+// #188: a ticket opened from the overview (the all-floors page in the city or a lobby, or another floor's row) is
+// pinned to its own floor: a live update neither closes it nor retargets it to where the viewer stands.
+describe('BoardsPanel: a pinned ticket across a refresh (#188)', () => {
+  beforeEach(() => {
+    HTMLDialogElement.prototype.showModal = function () {
+      this.setAttribute('open', '');
+    };
+    HTMLDialogElement.prototype.close = function () {
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    };
+    vi.stubGlobal('CSS', { escape: (s: string) => s });
+  });
+  afterEach(() => {
+    document.body.replaceChildren();
+    vi.unstubAllGlobals();
+  });
+
+  const dialogs = () => [...document.querySelectorAll('dialog')].filter((d) => d.open).length;
+
+  it('stays open on its own floor while the viewer stands on none, or on another', async () => {
+    let here: string | null = null;
+    const { panel, read } = setup(() => here);
+    panel.openItem('issues', 'floor', 'i1', { pin: true });
+    await tick();
+    expect(dialogs()).toBe(2);
+    read.length = 0;
+    panel.refresh();
+    expect(panel.isOpen).toBe(true);
+    expect(dialogs()).toBe(2);
+    here = 'elsewhere';
+    panel.refresh();
+    expect(dialogs()).toBe(2);
+    expect(read.length).toBeGreaterThan(0);
+    expect(new Set(read)).toEqual(new Set(['floor']));
+    // Closed by the viewer: the pin goes with it; a board opened normally follows the floor again.
+    panel.close();
+    expect(panel.isOpen).toBe(false);
+    here = null;
+    panel.open('issues', 'floor');
+    panel.refresh();
+    expect(panel.isOpen).toBe(false);
+  });
+
+  it('opened normally (unpinned), it still closes off a floor and follows the floor you stand on', () => {
+    let here: string | null = 'floor';
+    const { panel, read } = setup(() => here);
+    panel.openItem('issues', 'floor', 'i1');
+    here = 'elsewhere';
+    read.length = 0;
+    panel.refresh();
+    expect(read).toContain('elsewhere');
+    here = null;
+    panel.refresh();
+    expect(panel.isOpen).toBe(false);
   });
 });
