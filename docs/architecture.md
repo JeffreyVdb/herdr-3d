@@ -300,7 +300,7 @@ MacBook (M2 Max)                                   devbox (Linux)
   Atkinson Hyperlegible Next), each a mono font, a prose font and colours, picked apart for the laptop's transcript (its fonts and colours, and every
   `--font-mono` on the page) and for its terminal canvas (font and screen colours). Only Quiet's fonts come with the
   app: Ubuntu's stylesheet (Latin and Latin Extended `@font-face`s, split by Vite) loads when it is first picked, and the
-  canvas repaints once its faces have loaded. Ubuntu Mono's missing glyphs (box drawing, arrows, shapes, check marks, braille) come from size-adjusted `local()` fallback faces so a table with one stays aligned (`fonts/ubuntu.css`). Each view has its own font zoom (70–200 %); the HUD does not zoom.
+  canvas repaints once its faces have loaded. Ubuntu Mono's missing glyphs (box drawing, arrows, shapes, check marks, braille) come from size-adjusted `local()` fallback faces, so a table with one stays aligned where the host has a monospace font with that glyph (a missing glyph shows as a box of the same width; `fonts/ubuntu.css`). Each view has its own font zoom (70–200 %); the HUD does not zoom.
   Every shipped font's licence goes with the build in full (`FONT_LICENSES.txt` next to the bundle, from
   `src/ui/fontCredits.ts`; the OFL, the Ubuntu Font Licence (the Ubuntu pair's, not OFL) and the Bitstream Vera licence ask it), linked from the credits panel, which keeps
   each font's copyright line. A stored `terminal` or `paper` preset (#59's, replaced in #172) opens as Ubuntu or Quiet.
