@@ -18,7 +18,9 @@ import (
 //     thread/read and thread/turns/list history and after a cold resume.
 //     thread/resume gives a client that was not subscribed the newest turn
 //     under legacy ids (item-1, …): the join reads it again
-//     (Watcher.legacyTurns, #158).
+//     (Watcher.legacyTurns, #158). A batch still under one when that read
+//     fails or finds nothing cannot be answered (ErrUnresolved), and the
+//     join is unresolved (Unresolved) until a join reads its call_id.
 //   - The tool's {"accepted":true} only schedules it. A question is answered
 //     only by a user message whose text is the reply envelope naming its
 //     (call_id, index), whoever sent it: the bridge or the terminal.
@@ -180,7 +182,10 @@ var (
 	ErrUnknownBatch = errors.New("no such question batch")
 	ErrNotPending   = errors.New("the question is not pending")
 	ErrConflict     = errors.New("live and history disagree on this batch")
-	ErrBadAnswer    = errors.New("invalid answer")
+	// ErrUnresolved: the batch is under a legacy id (#158), which Codex
+	// does not know it by: an answer naming it would answer nothing.
+	ErrUnresolved = errors.New("the question's id is not known yet")
+	ErrBadAnswer  = errors.New("invalid answer")
 )
 
 // BatchOf reads an item as an async-question batch of turn.
@@ -508,6 +513,9 @@ func (q *Questions) Check(batch string, replies []Reply) ([]Answer, error) {
 		return nil, fmt.Errorf("%w: %s", ErrUnknownBatch, batch)
 	case b.Conflict:
 		return nil, fmt.Errorf("%w: %s", ErrConflict, batch)
+	case legacyItemID.MatchString(batch):
+		return nil, fmt.Errorf("%w: %s is the id Codex's thread/resume gave it, and reading its turn again failed; "+
+			"the bridge reads it again on its next join: answer then, or in the terminal", ErrUnresolved, batch)
 	case len(replies) == 0:
 		return nil, fmt.Errorf("%w: no answer", ErrBadAnswer)
 	}
@@ -573,11 +581,37 @@ type PriorSend struct {
 	Confirmed, Unconfirmed bool
 }
 
+// Unresolved reports whether a batch is under a legacy id (#158): the
+// join's history did not give every question its call_id, so a batch the
+// bridge does not know may be one of those.
+func (q *Questions) Unresolved() bool {
+	return slices.ContainsFunc(q.order, legacyItemID.MatchString)
+}
+
+// DropLegacy forgets the batches under a legacy id, before a join's
+// history is taken: those ids are one join's (thread/resume numbers its
+// items each time), so the next history gives them again or under their
+// call_id. They were never answerable, so nothing was sent for them.
+func (q *Questions) DropLegacy() {
+	q.order = slices.DeleteFunc(q.order, func(id string) bool {
+		if !legacyItemID.MatchString(id) {
+			return false
+		}
+		if tw := q.batches[id].Twin; tw != "" && q.batches[tw] != nil {
+			q.batches[tw].Twin = ""
+		}
+		delete(q.batches, id)
+		return true
+	})
+}
+
 // Restore takes a prior send after the history (Hydrate), running being the
 // thread's running turn ("" idle); it reports whether the send still
 // matters. It only ever turns a pending question into a sent one:
 //
-//   - its batch is gone, or the question is answered: it no longer matters;
+//   - its batch is unknown, or the question is answered: it no longer
+//     matters (the caller keeps a send whose batch is unknown while the
+//     history is Unresolved: it may be under a legacy id);
 //   - the question is not pending (this reconciler saw the send itself, or
 //     a dismissal): unchanged;
 //   - unconfirmed: sent and unconfirmed, as before the restart;

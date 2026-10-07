@@ -517,3 +517,50 @@ func TestQuestionsRestoreASendAcrossARestart(t *testing.T) {
 		t.Fatalf("live after restore = %+v", x)
 	}
 }
+
+// #158: a batch under a legacy id (item-N: thread/resume's, when reading
+// the turn again failed or found nothing) is not answerable, and a join
+// whose history still has one is unresolved. The next join's history
+// replaces it: item-N ids are one join's.
+func TestQuestionsLegacyIDsAreUnresolved(t *testing.T) {
+	reply := []Reply{{Index: 0, Text: "Green"}}
+	q := NewQuestions("th")
+	q.Hydrate([]Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("item-2", colorQ)}}})
+	if !q.Unresolved() {
+		t.Fatal("a legacy batch: resolved")
+	}
+	if _, err := q.Check("item-2", reply); !errors.Is(err, ErrUnresolved) {
+		t.Fatalf("answering item-2: %v", err)
+	}
+	if _, err := q.Begin("item-2", reply); !errors.Is(err, ErrUnresolved) {
+		t.Fatalf("beginning item-2: %v", err)
+	}
+	if !q.Unanswered("t1") {
+		t.Fatal("Codex still holds it: unanswered")
+	}
+	if err := q.Dismiss("item-2", nil); err != nil {
+		t.Fatalf("dismissing it, in the bridge only: %v", err)
+	}
+
+	// The next join reads it under its call_id: the alias goes.
+	q.DropLegacy()
+	q.Hydrate([]Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("call_3", colorQ)}}})
+	if q.Unresolved() || q.Batch("item-2") != nil || len(q.Batches()) != 1 {
+		t.Fatalf("after a canonical join: unresolved %v, batches %+v", q.Unresolved(), q.Batches())
+	}
+	if _, err := q.Check("call_3", reply); err != nil {
+		t.Fatalf("call_3: %v", err)
+	}
+
+	// A twin of a live batch loses its twin with it.
+	q = NewQuestions("th")
+	q.Observe("t1", asyncItem("call_3", colorQ), OriginLive)
+	q.Hydrate([]Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("item-2", colorQ)}}})
+	if q.Batch("call_3").Twin != "item-2" {
+		t.Fatalf("twins: %+v", q.Batches())
+	}
+	q.DropLegacy()
+	if b := q.Batch("call_3"); b == nil || b.Twin != "" || q.Batch("item-2") != nil || q.Unresolved() {
+		t.Fatalf("after DropLegacy: %+v", q.Batches())
+	}
+}
