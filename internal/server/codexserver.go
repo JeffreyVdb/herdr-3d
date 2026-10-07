@@ -141,11 +141,11 @@ func (h *Hub) initCodex(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := h.loadSends(ctx); err != nil {
-		return err
-	}
 	h.cx.enabled = en && h.codexAvailable()
 	if h.cx.launches, err = h.st.CodexLaunches(ctx); err != nil {
+		return err
+	}
+	if err := h.loadSends(ctx); err != nil {
 		return err
 	}
 	for id, l := range h.cx.launches {

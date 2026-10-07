@@ -473,13 +473,20 @@ type sendKey struct {
 	index int
 }
 
-// loadSends reads the recorded sends (initCodex).
+// loadSends reads the recorded sends (initCodex, after the launches): a
+// worker that is no longer a shared one has none.
 func (h *Hub) loadSends(ctx context.Context) error {
 	all, err := h.st.CodexAsyncSends(ctx)
 	if err != nil {
 		return err
 	}
 	for id, xs := range all {
+		if !h.isShared(id) {
+			if err := h.st.ForgetCodexAsyncSends(ctx, id); err != nil {
+				return err
+			}
+			continue
+		}
 		for _, x := range xs {
 			h.sendsOf(id)[sendKey{x.Batch, x.Index}] = x
 		}

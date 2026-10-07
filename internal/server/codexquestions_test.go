@@ -766,8 +766,10 @@ func TestAsyncAnswerRecordedBeforeTheResponse(t *testing.T) {
 	}
 	close(release)
 	sb.stateIs(t, "call_3", 0, proto.AsyncSent)
+	// The answer's response never recorded; and a worker that is gone.
 	if err := sb.st.RecordCodexAsyncSends(context.Background(), []store.CodexAsyncSend{{WorkerID: a.ID, Thread: asyncThread,
-		Batch: "call_3", ClientID: "herdr_3d-00", Turn: "t1"}}); err != nil {
+		Batch: "call_3", ClientID: "herdr_3d-00", Turn: "t1"}, {WorkerID: "gone", Thread: asyncThread, Batch: "call_1",
+		ClientID: "herdr_3d-01", Turn: "t0", Confirmed: true}}); err != nil {
 		t.Fatal(err)
 	}
 	sb.host.mu.Lock()
@@ -777,6 +779,9 @@ func TestAsyncAnswerRecordedBeforeTheResponse(t *testing.T) {
 		{ID: "t1", Status: codexapp.TurnInProgress, Items: []codexapp.Item{asyncItem("call_3", contextQ)}}}})
 	sb.stateIs(t, "call_3", 0, proto.AsyncSent)
 	sb.c.mustError(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "x")), proto.ErrStale)
+	if recorded, _ := sb.st.CodexAsyncSends(context.Background()); len(recorded["gone"]) != 0 || len(recorded[a.ID]) != 1 {
+		t.Fatalf("recorded after the restart = %+v", recorded)
+	}
 }
 
 // #158: sending a worker home forgets its recorded sends.
