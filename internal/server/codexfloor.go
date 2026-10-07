@@ -35,7 +35,7 @@ type sharedSleep struct {
 func (h *Hub) sleepShared(ctx context.Context, session string, s sharedSleep) string {
 	var notes []string
 	if herdr.ValidPaneID(s.Pane) {
-		if ok, note := h.exitCodexTUI(ctx, session, s.Pane); !ok {
+		if ok, note := h.exitCodexTUI(ctx, session, s.Pane, s.Worker); !ok {
 			notes = append(notes, note+": herdr may resume it its own way on wake, the bridge relaunches it then")
 		} else {
 			if note != "" {
@@ -74,7 +74,9 @@ func (h *Hub) awaitReleased(ctx context.Context, id string) bool {
 // Enter again up to twice while it is not gone) and waits for the pane's
 // shell. Never Esc or Ctrl-C: on a dialog the bridge did not expect they
 // open Codex's agent command center, which lists the user's other threads.
-func (h *Hub) exitCodexTUI(ctx context.Context, session, pane string) (bool, string) {
+// The one exception (#158) is the TUI of a shared worker (id) whose own
+// server is gone (codexQuitGone).
+func (h *Hub) exitCodexTUI(ctx context.Context, session, pane, id string) (bool, string) {
 	fh := h.opts.Herdr
 	info, err := h.paneProcesses(ctx, session, pane)
 	switch {
@@ -106,7 +108,40 @@ func (h *Hub) exitCodexTUI(ctx context.Context, session, pane string) (bool, str
 			sleepCtx(ctx, h.opts.HirePoll)
 		}
 	}
+	if id != "" && h.codexServerGone(ctx, id) {
+		return h.codexQuitGone(ctx, session, pane)
+	}
 	return false, "its terminal did not quit"
+}
+
+// codexServerGone reports whether a shared worker's recorded server has
+// died (its pid gone, or another process under it).
+func (h *Hub) codexServerGone(ctx context.Context, id string) bool {
+	l, err := query(ctx, h, func() store.CodexLaunch { return h.cx.launches[id] })
+	return err == nil && l.Mode == store.CodexShared && l.ServerPID > 0 && h.opts.CodexHost != nil &&
+		!h.opts.CodexHost.Alive(launchOf(l), serverOf(l))
+}
+
+// codexQuitGone quits the TUI of a shared worker whose server is gone with
+// one Ctrl-C (#158). Such a TUI only waits to reconnect (B6) and ignores
+// /quit; its own footer then says "ctrl+c quit", and one Ctrl-C exits it
+// at once (TestCodexShareBridgeRegression, "the server killed"). With its
+// server gone there is no turn left to interrupt. Without that quit herdr
+// keeps the pane's session and resumes it its own way on wake.
+func (h *Hub) codexQuitGone(ctx context.Context, session, pane string) (bool, string) {
+	if err := h.opts.Herdr.SendKey(ctx, session, pane, herdr.KeyCtrlC); err != nil {
+		return false, "its codex server is gone and pressing Ctrl-C failed: " + err.Error()
+	}
+	deadline := time.Now().Add(h.opts.ExitTimeout)
+	for {
+		if info, err := h.paneProcesses(ctx, session, pane); err == nil && info.AtShell() {
+			return true, "its codex server was gone: its terminal quit on Ctrl-C"
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return false, "its codex server is gone and its terminal did not quit, not even on Ctrl-C"
+		}
+		sleepCtx(ctx, h.opts.HirePoll)
+	}
 }
 
 // resumeSharedAll resumes the woken floor's shared workers, each on its
@@ -178,7 +213,7 @@ func (h *Hub) resumeShared(ctx context.Context, session, id, pane, thread string
 				return fail("a Codex attached to a server already runs in the pane")
 			}
 			// herdr resumed it its own way (plain `codex resume`): quit it.
-			ok, note := h.exitCodexTUI(ctx, session, pane)
+			ok, note := h.exitCodexTUI(ctx, session, pane, "")
 			notes = append(notes, "herdr had resumed it without its server; "+note)
 			if !ok {
 				return fail("the Codex herdr resumed did not quit")
