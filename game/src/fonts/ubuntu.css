@@ -140,13 +140,16 @@
  * elements (none of the heavy, dashed and rounded ones), and the Fontsource subsets none, so a table's frame would
  * come from whichever system font each glyph fell to, each with its own advance. H3D Box is those 160 glyphs of DejaVu
  * Sans Mono 2.37 (renamed, as its Bitstream Vera licence asks of a changed font: h3d-box/LICENSE), sized so their
- * advance (1233/2048 em) is Ubuntu Mono's (500/1000: 500 / 602.05 = 83.05%): a table's corners meet. Braille, arrows,
+ * advance (1233/2048 em) is Ubuntu Mono's (500/1000: 500 / 602.05 = 83.05%): a table's corners meet. Set 0.4% above
+ * that, 83.35%: where text is laid out on whole pixels (Linux without subpixel positioning) a half-pixel advance
+ * (13 px: 6.5) is rounded per font, and at exactly 83.05% the box glyphs landed on 6 while Ubuntu Mono's own went to
+ * 7 (measured in headless Chromium: rows of a table 126 and 144 px wide); the nudge makes every tie round up for both. Braille, arrows,
  * geometric shapes and check marks are in neither: the system's monospace faces (SYSTEM_MONO) draw them. 2.5 KB,
  * inlined by Vite.
  */
 @font-face {
   font-family: 'H3D Box Ubuntu';
   src: url('./h3d-box/h3d-box.woff2') format('woff2');
-  size-adjust: 83.05%;
+  size-adjust: 83.35%;
   unicode-range: U+2500-259F;
 }

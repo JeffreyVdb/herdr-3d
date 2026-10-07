@@ -88,7 +88,7 @@ describe('theme loader (#59)', () => {
     expect(root.style.getPropertyValue('--tx-fs')).toBe('13.5px');
     t.prefs.setZoom('transcript', 200);
     expect(root.style.getPropertyValue('--tx-fs')).toBe('27px');
-    expect(root.style.getPropertyValue('--tx-mono-fs')).toBe('24px');
+    expect(root.style.getPropertyValue('--tx-mono-fs')).toBe('28px');
     t.prefs.setZoom('terminal', 70);
     expect(root.style.getPropertyValue('--tx-fs')).toBe('27px');
     t.prefs.setTheme('transcript', 'quiet');

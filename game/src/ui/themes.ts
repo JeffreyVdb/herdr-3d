@@ -141,13 +141,16 @@ const QUIET: ThemePreset = {
  * the surfaces. Every text / surface pairing is 4.5:1 or better and the accent as a fill or focus ring 3:1 on the
  * surfaces it sits on, except the orange as text on the raised surfaces, which is why links use the lighter
  * `blue-text`; white on the orange fill is 3.65:1, so `on-accent` is the dark aubergine (5.1:1).
- * Ubuntu Mono has an advance of 0.5 em, narrower than JetBrains Mono's 0.6, hence the size.
+ * Ubuntu Mono has an advance of 0.5 em, narrower than JetBrains Mono's 0.6, and a small x-height: at 12 px it read as
+ * small print beside the 13.5 px prose. 14 px gives it the prose's x-height and a whole 7 px cell (Quiet's is 6.9 px);
+ * a half-pixel advance (13 px: 6.5) is rounded per font on platforms without subpixel text, and the box fallback
+ * rounded the other way.
  */
 const UBUNTU: ThemePreset = {
   id: 'ubuntu',
   label: 'Ubuntu',
   blurb: 'Classic Ubuntu purple, Ubuntu and Ubuntu Mono',
-  mono: { family: 'Ubuntu Mono', stack: `"Ubuntu Mono", "H3D Box Ubuntu", ${SYSTEM_MONO}`, size: 12, faces: REGULAR_BOLD_ITALIC },
+  mono: { family: 'Ubuntu Mono', stack: `"Ubuntu Mono", "H3D Box Ubuntu", ${SYSTEM_MONO}`, size: 14, faces: REGULAR_BOLD_ITALIC },
   prose: { family: 'Ubuntu', stack: '"Ubuntu", system-ui, sans-serif', size: 13.5 },
   palette: {
     bg: '#300a24',

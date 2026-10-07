@@ -1309,7 +1309,7 @@ make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS 
                               # output lined up) and the terminal's from the seat bar, apart (the terminal in Ubuntu
                               # fetches Ubuntu Mono, no Ubuntu), Hide tools and its chip, blocked storage, each view's zoom
                               # (keys, buttons, the prompt box, 200 % and 70 % laid out, Ctrl+wheel on the terminal,
-                              # Ubuntu Mono on 12 / 24 px), keyboard reach; m59-{transcript,terminal}-<preset>,
+                              # Ubuntu Mono on 14 / 28 px), keyboard reach; m59-{transcript,terminal}-<preset>,
                               # m59-transcript-<preset>-hidden, m59-mixed-{transcript,terminal} (Ubuntu over
                               # Quiet), m59-zoom-{200,70}, m59-terminal-zoom-200.png
                               # #98 desk monitors on demo-m5 with sim=1 (m98-monitor.spec.ts, sim.activity): the card

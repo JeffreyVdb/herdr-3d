@@ -357,7 +357,7 @@ test('each view has its own zoom: A− / 100% / A+ and the Ctrl keys in the tran
   await expect(termLevel).toHaveText('110%');
   expect((await theme(page)).transcriptZoom).toBe(110);
 
-  // Levels survive a reload; switching the transcript's preset keeps its zoom (Ubuntu Mono on 24px at 200%).
+  // Levels survive a reload; switching the transcript's preset keeps its zoom (Ubuntu Mono on 28px at 200%).
   await page.reload();
   await page.waitForFunction(() => window.__h3d?.ready && window.__h3d.frames >= 3);
   expect(await theme(page)).toMatchObject({ transcriptZoom: 110, terminalZoom: 110 });
@@ -368,9 +368,9 @@ test('each view has its own zoom: A− / 100% / A+ and the Ctrl keys in the tran
   await tx2.locator('[role="radio"][data-theme-id="ubuntu"]').click();
   await page.evaluate(() => window.__h3d.themeLoaded());
   expect((await theme(page)).transcriptZoom).toBe(200);
-  expect(await tx2.locator('.tx-md pre code').first().evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBe(24);
+  expect(await tx2.locator('.tx-md pre code').first().evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBe(28);
   await tx2.getByRole('button', { name: /Text size 200%/ }).click();
-  expect(await tx2.locator('.tx-md pre code').first().evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBe(12);
+  expect(await tx2.locator('.tx-md pre code').first().evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBe(14);
   expect((await theme(page)).terminalZoom).toBe(110);
   clean();
 });
@@ -528,7 +528,7 @@ for (const [w, h] of [
     await frames(page, 5);
     const term = await controlsInside(page, '.seat', '.seat');
     expect(term.outside, 'seat bar controls outside the bar or the window (terminal mode)').toEqual([]);
-    expect(term.count).toBeGreaterThanOrEqual(8);
+    expect(term.count).toBeGreaterThanOrEqual(7); // (#172: two swatches, not three)
     await expect(page.locator('.seat-zoom-level')).toHaveText('100%');
     await expect(page.locator('.seat-zoom-level')).toBeVisible();
     await page.locator('.seat [aria-label="Larger terminal text"]').click();

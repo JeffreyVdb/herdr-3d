@@ -91,7 +91,7 @@ describe('the two presets (#59, #172)', () => {
     expect(v['--tx-bg']).toBe('#300a24');
     expect(v['--tx-blue-text']).toBe(themeById('ubuntu').palette['blue-text']);
     expect(v['--tx-fs']).toBe('13.5px');
-    expect(v['--tx-mono-fs']).toBe('12px');
+    expect(v['--tx-mono-fs']).toBe('14px');
     expect(Number(v['--tx-k'])).toBe(1);
     expect(themeVars(themeById('quiet'), 200)['--tx-fs']).toBe('27px');
     expect(canvasFaces(themeById('quiet'))).toHaveLength(4);
@@ -128,7 +128,7 @@ describe('zoom (#59)', () => {
     expect(monoPx(themeById('quiet'), 70)).toBe(8);
     // #172: Ubuntu has no pixel grid (Departure Mono's 11 px one went with the Terminal preset).
     const u = themeById('ubuntu');
-    expect([70, 100, 150, 200].map((z) => monoPx(u, z))).toEqual([8.5, 12, 18, 24]);
+    expect([70, 100, 150, 200].map((z) => monoPx(u, z))).toEqual([10, 14, 21, 28]);
     for (const t of THEMES) {
       for (let z = ZOOM.min; z <= ZOOM.max; z += ZOOM.step) {
         expect((monoPx(t, z) * 2) % 1).toBe(0);
