@@ -13,7 +13,8 @@ import (
 // openAI is the client of an OpenAI-compatible endpoint: POST
 // {base}/chat/completions, GET {base}/models. Nothing is vendor specific:
 // what an endpoint needs beyond the standard body (MiMo's thinking:disabled)
-// is the config's extra_body.
+// is the config's extra_body. The model list also reads, when present,
+// OpenRouter's per-model reasoning metadata (read-only parsing, #174).
 type openAI struct {
 	hc *http.Client
 }

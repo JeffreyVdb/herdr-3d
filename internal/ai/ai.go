@@ -13,8 +13,9 @@
 // that is not ready, or whose key was rejected, makes no call at all).
 //
 // Nothing is sent by configuring a role. The only calls this package makes on
-// its own are the model-list loads (Service.Models) and the explicit tests
-// (Service.Test). Keys live in one 0600 file, never leave the bridge, and are
+// its own are the model-list loads (Service.Models), the explicit tests
+// (Service.Test) and, for a feature that asks for a reasoning effort, the read
+// of its model's catalog entry (Service.ModelReasoning, kept for a while). Keys live in one 0600 file, never leave the bridge, and are
 // scrubbed from every error (Scrub).
 //
 // It imports only the standard library (TestAIIsFeatureAgnostic).

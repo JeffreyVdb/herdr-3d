@@ -341,13 +341,9 @@ func TestDigestReasoningSettingsThroughTheProtocol(t *testing.T) {
 		c.mustError(proto.CmdDigestSet, bad, proto.ErrBadRequest)
 	}
 	none, tokens := "none", 4000
-	evs, ack := c.mustAck(proto.CmdDigestSet, proto.DigestSetArgs{ReasoningEffort: &none, MaxTokens: &tokens})
+	_, ack := c.mustAck(proto.CmdDigestSet, proto.DigestSetArgs{ReasoningEffort: &none, MaxTokens: &tokens})
 	if got := mustJSONString(t, ack.Data); !strings.Contains(got, `"reasoning_effort":"none"`) || !strings.Contains(got, `"max_tokens":4000`) {
 		t.Fatalf("ack %s", got)
-	}
-	if len(evs) == 0 || evs[len(evs)-1].T != proto.EvDigestUpdate && evs[0].T != proto.EvDigestUpdate {
-		// the update goes before the ack: only its presence matters here
-		t.Logf("events %+v", evs)
 	}
 	c.mustAck(proto.CmdBoardWatch, proto.BoardArgs{Session: "s"})
 	fb.dgTurn(t, "claude", "digest_turns.jsonl")
