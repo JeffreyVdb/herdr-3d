@@ -29,7 +29,7 @@ func TestBoardLayerIsProviderNeutral(t *testing.T) {
 	}
 	for _, pkg := range []string{"server", "store", "proto", "tracker", "codehost", "provider"} {
 		for _, dep := range deps(pkg) {
-			if dep == mod+"github" || dep == mod+"githubcli" {
+			if dep == mod+"github" || dep == mod+"githubcli" || dep == mod+"kaneo" {
 				t.Errorf("internal/%s depends on %s", pkg, dep)
 			}
 		}
@@ -47,6 +47,27 @@ func TestBoardLayerIsProviderNeutral(t *testing.T) {
 			if dep == mod+"server" || dep == mod+"store" || dep == mod+"proto" {
 				t.Errorf("internal/%s depends on %s", pkg, dep)
 			}
+		}
+	}
+}
+
+// #184: the Kaneo settings (internal/kaneoconf) reach Kaneo only through
+// their Connector interface: they import nothing of the module but the
+// provider error kinds, so the hub, the protocol and the store that carry
+// them stay away from the Kaneo client (internal/kaneo), which only the app
+// wires in.
+func TestKaneoSettingsIsProviderNeutral(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go tool")
+	}
+	const mod = "github.com/JeffreyVdb/herdr-3d/internal/"
+	out, err := exec.Command("go", "list", "-deps", mod+"kaneoconf").CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list -deps: %v\n%s", err, out)
+	}
+	for _, dep := range strings.Fields(string(out)) {
+		if strings.HasPrefix(dep, mod) && dep != mod+"kaneoconf" && dep != mod+"provider" {
+			t.Errorf("internal/kaneoconf depends on %s", dep)
 		}
 	}
 }
