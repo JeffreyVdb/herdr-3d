@@ -19,7 +19,9 @@
   protocol detail the bridge knows; `server` uses it), `codexshare` (#154: test fixture only, imported by nothing; it
   imports `codexapp` (its dial, and #155's launch and adapter in the real-TUI suites): an isolated CODEX_HOME, a
   scripted Responses mock, an app-server client over its unix socket and a throwaway herdr session driver for the real
-  Codex TUI; `docs/research/codex-shared-tui.md`), `usage` (M5: agents' token
+  Codex TUI; #158: its full-stack suites, under the `integration` tag only, also boot herdr-world through `app.Serve`
+  and drive it with `proto`'s client, which keeps the rule: test imports are not in any package's graph;
+  `docs/research/codex-shared-tui.md`), `usage` (M5: agents' token
   usage and cost from their transcripts, read incrementally, and the pricing table; #101: the main thread's context in use
   and its window, resolved from `[1m]`, observed context, the table and the model's family, cleared by a compaction), `jsonl` (the shared reading of
   those JSONL files: one tail per transcript, complete lines from byte offsets, no symlinks), `transcript` (M16: the
@@ -65,7 +67,8 @@ make setup             # fresh worktree: toolchain check, game deps, Go modules 
 make build test lint   # Go binaries -> bin/, game bundle -> game/dist/, go test + vitest, vet/gofmt/tsc
 make integration       # bridge against a real herdr (and systemd-run) in throwaway sessions (see below)
 make codex-shared-tui  # #154/#155: real Codex TUI (codex-cli 0.160.1) + a second app-server client, mock model, throwaway herdr sessions
-                       # (H3D_CODEXSHARE_REAL=1 adds #155's two-turn real-model smoke on ~/.codex: costs inference)
+                       # (H3D_CODEXSHARE_REAL=1 adds #155's and #158's real-model smokes on ~/.codex: costs inference)
+make codex-shared-bridge  # #158 only: herdr-world itself (app.Serve) driven over its WebSocket against that fixture
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
 make dev               # Vite dev server on a portlease-leased port, 127.0.0.1 only
 make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check), seconds

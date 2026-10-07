@@ -126,3 +126,95 @@ func (s *Store) ForgetCodexLaunch(ctx context.Context, workerID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM codex_launch WHERE worker_uuid = ?`, workerID)
 	return err
 }
+
+// migrationCodexAsyncSend creates codex_async_send (#158): the bridge's
+// answers to a shared worker's async questions that Codex accepted (or may
+// have) and that are not answered yet, one row per question. Codex keeps a
+// steered input queued in the running turn until its next model request,
+// where the thread's history does not show it, so a restarted bridge reads
+// these to refuse a second answer while the first may still be delivered.
+const migrationCodexAsyncSend = `CREATE TABLE codex_async_send (
+		worker_uuid    TEXT NOT NULL,
+		thread_id      TEXT NOT NULL,
+		batch_id       TEXT NOT NULL,
+		question_index INTEGER NOT NULL,
+		client_id      TEXT NOT NULL,
+		turn_id        TEXT NOT NULL DEFAULT '',
+		confirmed      INTEGER NOT NULL DEFAULT 0,
+		unconfirmed    INTEGER NOT NULL DEFAULT 0,
+		created_at     TEXT NOT NULL,
+		PRIMARY KEY (worker_uuid, batch_id, question_index)
+	);`
+
+// CodexAsyncSend is one question of an answer the bridge sent a shared
+// worker (#158): recorded before the request goes out, then updated with
+// the server's response.
+type CodexAsyncSend struct {
+	WorkerID, Thread, Batch string
+	Index                   int
+	// ClientID is the clientUserMessageId the answer carries.
+	ClientID string
+	// Turn is the turn it was steered into ("" for a turn it starts) until
+	// the server responds, then the turn it reached.
+	Turn string
+	// Confirmed: the server accepted it (Turn is the turn it reached).
+	// Unconfirmed: no response came, whether it took it is unknown.
+	Confirmed, Unconfirmed bool
+}
+
+// RecordCodexAsyncSends stores (or replaces: a question's latest answer is
+// the one that counts) the questions of one answer.
+func (s *Store) RecordCodexAsyncSends(ctx context.Context, sends []CodexAsyncSend) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := s.ts()
+	for _, x := range sends {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO codex_async_send (worker_uuid, thread_id, batch_id, question_index,
+			client_id, turn_id, confirmed, unconfirmed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(worker_uuid, batch_id, question_index) DO UPDATE SET thread_id = excluded.thread_id,
+				client_id = excluded.client_id, turn_id = excluded.turn_id, confirmed = excluded.confirmed,
+				unconfirmed = excluded.unconfirmed, created_at = excluded.created_at`,
+			x.WorkerID, x.Thread, x.Batch, x.Index, x.ClientID, x.Turn, x.Confirmed, x.Unconfirmed, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// CodexAsyncSends returns every recorded send, by worker id.
+func (s *Store) CodexAsyncSends(ctx context.Context) (map[string][]CodexAsyncSend, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT worker_uuid, thread_id, batch_id, question_index, client_id, turn_id,
+		confirmed, unconfirmed FROM codex_async_send ORDER BY worker_uuid, batch_id, question_index`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]CodexAsyncSend{}
+	for rows.Next() {
+		var x CodexAsyncSend
+		if err := rows.Scan(&x.WorkerID, &x.Thread, &x.Batch, &x.Index, &x.ClientID, &x.Turn, &x.Confirmed,
+			&x.Unconfirmed); err != nil {
+			return nil, err
+		}
+		out[x.WorkerID] = append(out[x.WorkerID], x)
+	}
+	return out, rows.Err()
+}
+
+// ForgetCodexAsyncSend drops one question's send (answered, refused, or
+// its batch is gone).
+func (s *Store) ForgetCodexAsyncSend(ctx context.Context, workerID, batch string, index int) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM codex_async_send WHERE worker_uuid = ? AND batch_id = ? AND question_index = ?`,
+		workerID, batch, index)
+	return err
+}
+
+// ForgetCodexAsyncSends drops a worker's sends (its thread changed, or it
+// was sent home).
+func (s *Store) ForgetCodexAsyncSends(ctx context.Context, workerID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM codex_async_send WHERE worker_uuid = ?`, workerID)
+	return err
+}

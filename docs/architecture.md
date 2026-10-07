@@ -103,11 +103,82 @@ MacBook (M2 Max)                                   devbox (Linux)
 - **Fire (gentle)** ("Send home", M4, built): git state first (`status --porcelain`, `rev-list --count HEAD --not
   --remotes`; a worktree is deleted only when clean and pushed) → claude `/exit` (~1.3 s) / codex `/quit` + pause +
   Enter (~0.5 s) → confirm the agent released (pane back at its shell; Enter again, then Ctrl-C, never for a #155
-  shared Codex worker; still running → `fire_failed`, nothing closed) → `workspace close` (or `worktree remove`, + `git branch -D` of the branch recorded
+  shared Codex worker unless its server is already gone, #158; still running → `fire_failed`, nothing closed) → `workspace close` (or `worktree remove`, + `git branch -D` of the branch recorded
   for that worker, only while the checkout is on it and its commits are on a remote) → `worker.removed` with
   `reason: "sent_home"`. Never for sleep: a
   graceful exit drops `agent_session` so it can't resume. herdr closes a main checkout with open linked worktrees only
   as a group; the bridge refuses that instead (for a main checkout with an agent: an agentless one is hidden). When the last bridge-hired worktree of a repository is sent home, its idle main checkout is closed too (`workspace close`, best effort).
+- **Shared Codex workers** (epic #153: #154 research, #155 launch, #156 questions, #157 cards, #158 validation and
+  rollout; protocol: "Shared Codex server", "Codex async questions"; evidence and limits:
+  `docs/research/codex-shared-tui.md` §12). A Codex worker that runs Codex's own terminal against an app-server of
+  its own, so herdr-world can join the same conversation and answer Codex's async questions from the transcript.
+  - **Configuration and rollout: opt-in, off by default.** One bridge-wide switch, persisted (SQLite
+    `codex_server_settings`): Settings → Codex workers ("Give new Codex workers their own Codex server"), on the wire
+    `codex_server.set {enabled}`. It needs herdr-world's private run directory, `--codex-run`
+    (`HERDR_WORLD_CODEX_RUN`, default `$XDG_RUNTIME_DIR/herdr-world/codex`, `-` for none: the switch then reports
+    `available: false` and cannot be turned on). It applies to **hires made while it is on**; each such hire records
+    its launch (`codex_launch`, shared or legacy and why) and keeps that mode for its whole life (sleep, wake, send
+    home). A Codex hire made with it off writes no record and starts byte-for-byte as before; Claude hires never look
+    at it. Orchestrator-created Codex workers (write-code, through the herdr CLI) bypass the bridge and stay embedded.
+  - **Server ownership.** One `codex app-server` per worker, never the CODEX_HOME daemon (findings B1–B3). The bridge
+    writes a launcher into the run directory and types `setsid -f fish <launcher>` into the worker's pane, so the
+    server has that pane's fish, direnv and herdr environment; the launcher marks its processes with a per-launch
+    token, records the pid and listens on `unix://<run>/<marker hex>.sock` with the cwd trusted in memory. Then the
+    TUI: `agent start … -- --remote unix://<socket> -C <dir> -m … -c model_reasoning_effort=…
+    --dangerously-bypass-approvals-and-sandbox`. The bridge owns the server: send home and sleep stop it (only the
+    token's processes, then its files), wake starts a new one from the pane and resumes the thread
+    (`codex resume <thread> --remote … -C …`, without the bypass flag), and a dead one is reported. The bridge joins
+    the thread as a passive second client (`thread/resume` with the id only): it never answers approvals or blocking
+    questions, and sends only on a player's command (`worker.answer_async`, or `worker.prompt` to a worker an async
+    question shows as blocked).
+  - **Supported Codex: 0.160.x** (verified with codex-cli 0.160.1 and herdr 0.9.0), checked twice: `codex --version`
+    before anything starts, and the server's `userAgent` before the TUI attaches. Capabilities relied on:
+    `app-server --listen unix://`, the TUI's `--remote`, `thread/resume` by id, `thread/turns/list` (the newest turns' real ids after a restart), `turn/steer` with `expectedTurnId`,
+    `turn/start`, `clientUserMessageId` echoed as the user message's `clientId`, and `request_user_input_async` items
+    (`agentMessage`, `delivery: "async"`, `questions`, id = the call id). Any other version: the hire starts **the
+    usual way** with `codex: {mode: "legacy", note}` in its ack, on its toast and on the laptop's seat bar, e.g.
+    `shared Codex server: unsupported Codex version: "codex-cli 0.161.0" (supported: codex-cli 0.160.x); started the
+    usual way`. The fix is to install 0.160.x, or to leave the switch off until a later release is verified.
+  - **Failures and recovery** (each leaves the worker usable): a blocked `.envrc` (the note says to run `direnv allow`
+    there), a path the launch cannot pass, a server that does not answer in 20 s, or a TUI that does not
+    attach while the pane is back at its shell: started the usual way, with the reason. Codex's "Hooks need review"
+    dialog: left for the player, the hire's first prompt not sent. A server that dies: `server: "down"` on the worker
+    and its seat bar (herdr still says working); recovery is sleeping and waking the floor (the sleep quits the
+    waiting terminal, #158). A wake whose server does not start: the thread resumes on Codex's built-in server, the
+    worker stays shared with a note, and the next wake tries its server again. A shared terminal that does not quit
+    on send home (and whose server still runs): `fire_failed`, nothing closed.
+  - **Rollback.** Switch it off: only **later** hires change. Running shared workers are not terminated, migrated or
+    relaunched: they keep their server, their join and their answers (verified, #158). To take one worker back to
+    the usual launch, send it home and hire it again with the switch off. Switching on again affects only hires made
+    after it.
+  - **Delivered input vs verified native question resolution.** The bridge never reports more than it has seen.
+    `sent` (ack `state: "sent"`, `via: turn/steer|turn/start`) means **Codex's server accepted the input**, nothing
+    more: a steered answer reaches the model only with the turn's next model request, and is dropped if the turn ends
+    first (`undelivered`: the player may send it again). `answered` is **verified resolution**: a user message whose
+    whole text is the native reply envelope naming that question, seen live or in the thread's history, with
+    `answered_by: "bridge"` only when it carries the bridge's own `clientUserMessageId`, else `other` (the terminal, or
+    any other client). The terminal's own badge clears a question at the same moment, delivery, and only that
+    question. The tool's `{"accepted":true}`, the turn ending and unrelated messages never count as answers. One
+    reply from the transcript is one model-visible answer: a second submission for a question already sending, sent
+    or answered is refused `stale`, and the server, which does not deduplicate, is never sent the same answer twice,
+    **also across a herdr-world restart**: the history does not show an answer still queued in the running turn, so
+    the bridge records each answer it sends (SQLite `codex_async_send`, before the request goes out) and a restarted
+    bridge keeps such a question `sent` while its turn runs, `undelivered` (one resend) once that turn ended without
+    it, and `sent`, `unconfirmed` (never resent) when the bridge stopped before the server's response to a
+    `turn/start` (or to a steer whose turn ended meanwhile, which falls back to one): a turn the terminal starts at
+    the same instant takes that input and shows it only with its next model request (#158, findings §12.1a; protocol
+    "Across a bridge restart"). A restarted bridge reads the thread's newest turns with `thread/turns/list`, because
+    `thread/resume` gives them under legacy item ids, not the question's call id; when that read fails, the join is
+    unresolved: records are kept, an answer to an `item-N` batch is refused (the terminal can answer), and the bridge
+    joins again every minute until a join reads the call ids. A record goes
+    only on evidence that its answer cannot be delivered or was (its envelope seen, the answer refused, the thread
+    changed, send home, or its batch absent from a whole, resolved history), never because the bridge's view (32
+    batches per thread, dismissable) no longer shows its batch: the record outlives the batch's eviction and comes
+    back with it. The one restart window that can still duplicate an answer is a record SQLite failed to write
+    (logged): it is lost with the process.
+    Known limits (findings §12): the terminal and the transcript both answering one question before delivery reach the
+    model twice (the bridge cannot see the terminal's queued answer), approvals and Codex's blocking questions stay
+    in the terminal, images reach Codex as their path in the text (as for any Codex worker).
 - **Boards** (M7, built; details in `protocol.md` "Boards: issues and pull requests"): a floor with an effective repo
   has an issue board and a pull request board. The bridge talks to them only through two small neutral interfaces
   (`internal/tracker`, `internal/codehost`; opaque item ids, provider-defined columns, capability flags, optional URL

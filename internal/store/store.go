@@ -176,6 +176,9 @@ var migrations = []string{
 	migrationDigest,
 	// #155: the shared Codex server switch and each Codex worker's launch.
 	migrationCodexLaunch,
+	// #158: the bridge's async answers a shared worker's turn may still
+	// hold, so a restart does not take them again.
+	migrationCodexAsyncSend,
 }
 
 // Fingerprint kinds.

@@ -41,6 +41,8 @@ type fakeCodexHost struct {
 	steer func(turn, text, cid string) (string, error)
 	start func(text, cid string) (string, error)
 	sends []fakeSend
+	// #158: the thread a new join reads (nil: an empty one).
+	history *codexapp.Thread
 }
 
 // fakeSend is one Steer or StartTurn of a fake watch.
@@ -148,7 +150,12 @@ func (f *fakeCodexHost) Watch(o codexapp.Options) (server.CodexWatch, error) {
 	f.mu.Lock()
 	f.watches = append(f.watches, w)
 	f.mu.Unlock()
-	go o.OnEvent(codexapp.Event{Kind: codexapp.EvJoined, Thread: &codexapp.Thread{ID: o.Thread}})
+	th := &codexapp.Thread{ID: o.Thread}
+	if f.history != nil {
+		c := *f.history
+		c.ID, th = o.Thread, &c
+	}
+	go o.OnEvent(codexapp.Event{Kind: codexapp.EvJoined, Thread: th})
 	return w, nil
 }
 
@@ -168,10 +175,16 @@ type sharedBridge struct {
 // with the switch on unless off.
 func startSharedBridge(t *testing.T, on bool, workers ...world.WorkerObs) *sharedBridge {
 	t.Helper()
-	host := newFakeCodexHost()
+	return startSharedBridgeAt(t, "", newFakeCodexHost(), on, workers...)
+}
+
+// startSharedBridgeAt is startSharedBridge on the database at db ("": a new
+// one) and host, for a test that restarts the bridge.
+func startSharedBridgeAt(t *testing.T, db string, host *fakeCodexHost, on bool, workers ...world.WorkerObs) *sharedBridge {
+	t.Helper()
 	term := newFakeTerm()
 	sessions := t.TempDir()
-	hb := startHireBridge(t, func(o *server.Options) {
+	hb := startHireBridgeAt(t, db, func(o *server.Options) {
 		o.CodexRun, o.CodexHost, o.CodexPoll = codexRun, host, 20*time.Millisecond
 		o.Term, o.CodexRejoin = term, 150*time.Millisecond
 		o.Usage = &server.UsageConfig{Roots: usage.Roots{CodexSessions: sessions}, Interval: 20 * time.Millisecond}
@@ -856,5 +869,68 @@ func TestSharedCodexSendHomeSendsNoCtrlC(t *testing.T) {
 	sb.c.mustAck(proto.CmdWorkerFire, proto.WorkerFireArgs{ID: a.ID})
 	if len(sb.host.stopped) != 1 || len(sb.launches(t)) != 0 {
 		t.Fatalf("stopped = %+v, launches %+v", sb.host.stopped, sb.launches(t))
+	}
+}
+
+// #158: a shared worker whose server died has a TUI that only waits to
+// reconnect and ignores /quit. The sleep quits it with one Ctrl-C (what
+// that TUI offers), so herdr forgets its session and the wake relaunches
+// it attached; a TUI whose server still runs never gets one.
+func TestSharedCodexSleepQuitsATerminalWhoseServerDied(t *testing.T) {
+	for _, dead := range []bool{true, false} {
+		t.Run(fmt.Sprintf("server dead %v", dead), func(t *testing.T) {
+			sb := startSharedBridge(t, true)
+			_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
+			a := ackData[proto.HireResult](t, m)
+			fh := sb.fl.fakeHerdr
+			fh.quitOnCtrlC = true
+			fh.onQuit = func(pane string) {
+				sb.fl.update(wsOf(pane), func(w *world.WorkerObs) { w.AgentSession, w.AgentKind, w.Status = "", "", "unknown" })
+			}
+			fh.onStop = func() { sb.floorAt("s", false, nil) }
+			if dead {
+				sb.host.kill(sb.launches(t)[a.ID].ServerPID)
+			}
+			before := len(fh.Calls())
+			sb.c.mustAck(proto.CmdFloorSleep, proto.FloorArgs{Session: "s"})
+			calls := fh.Calls()[before:]
+			want := []string{"exit w1:p1", "key w1:p1 enter", "key w1:p1 enter", "key w1:p1 enter"}
+			if dead {
+				want = append(want, "key w1:p1 ctrl+c")
+			}
+			if !slices.Equal(calls, append(want, "stop s")) {
+				t.Fatalf("sleep calls = %q", calls)
+			}
+			row := auditRow(t, sb.bridge, proto.CmdFloorSleep)
+			if dead != strings.Contains(row.Result, "its terminal quit on Ctrl-C") ||
+				dead == strings.Contains(row.Result, "its terminal did not quit") {
+				t.Fatalf("sleep audit = %+v", row)
+			}
+		})
+	}
+}
+
+// #158: send home quits a shared worker whose server died the way it quits
+// a legacy one (Ctrl-C after /quit), then stops what is left of its server.
+func TestSharedCodexSendHomeWhenItsServerDied(t *testing.T) {
+	sb := startSharedBridge(t, true)
+	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
+	a := ackData[proto.HireResult](t, m)
+	l := sb.launches(t)[a.ID]
+	sb.host.kill(l.ServerPID)
+	sb.fl.exitWorks = false
+	sb.fl.onKey = func(pane string, key herdr.Key) {
+		if key == herdr.KeyCtrlC {
+			sb.fl.setProcs(pane, atShell())
+		}
+	}
+	before := len(sb.fl.Calls())
+	sb.c.mustAck(proto.CmdWorkerFire, proto.WorkerFireArgs{ID: a.ID})
+	calls := sb.fl.Calls()[before:]
+	if !slices.Contains(calls, "key w1:p1 ctrl+c") || calls[len(calls)-1] != "close w1" {
+		t.Fatalf("send home calls = %q", calls)
+	}
+	if st := sb.host.stopped; len(st) != 1 || st[0].Token != l.Token || len(sb.launches(t)) != 0 {
+		t.Fatalf("stopped = %+v, launches %+v", st, sb.launches(t))
 	}
 }

@@ -176,12 +176,17 @@ func (f *fx) write(path, content string, mode os.FileMode) {
 
 // workspace makes root/<name> with a .envrc exporting a per-workspace
 // sentinel. Names starting "blocked" are left unallowed; others are allowed
-// in the fixture's own direnv allow list (XDG_DATA_HOME).
+// in the fixture's own direnv allow list (XDG_DATA_HOME). Names starting
+// "bare" get no .envrc (#158: the bridge's own preflight reads the user's
+// allow list, not the fixture's).
 func (f *fx) workspace(name string) string {
 	f.t.Helper()
 	dir := filepath.Join(f.root, name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		f.t.Fatal(err)
+	}
+	if strings.HasPrefix(name, "bare") {
+		return dir
 	}
 	f.write(filepath.Join(dir, ".envrc"), "export H3D_DIRENV_SENTINEL=direnv-"+name+"\n", 0o644)
 	if !strings.HasPrefix(name, "blocked") {

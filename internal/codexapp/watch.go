@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +100,9 @@ type Thread struct {
 		Type string `json:"type"` // notLoaded, idle, systemError, active
 	} `json:"status"`
 	Turns []Turn `json:"turns"`
+	// Partial: the thread has older turns than Turns (#158): a batch
+	// missing from them may still be in the thread.
+	Partial bool `json:"-"`
 }
 
 // ActiveTurn is the thread's turn in progress ("" when none runs).
@@ -353,21 +358,63 @@ func (w *Watcher) join(ctx context.Context, c *conn) (*Thread, string, error) {
 		return nil, init.UserAgent, fmt.Errorf("%w: %s", ErrEphemeral, w.o.Thread)
 	}
 	if cur := string(res.Older); cur != "" && cur != "null" {
-		w.olderTurns(cctx, c, res.Thread, res.Older)
+		res.Thread.Partial = !w.olderTurns(cctx, c, res.Thread, res.Older)
 	}
+	w.legacyTurns(cctx, c, res.Thread)
 	return res.Thread, init.UserAgent, nil
 }
+
+// legacyTurns reads again, with thread/turns/list, the turns thread/resume
+// gave with its legacy history builder's item ids (item-1, item-2, …) and
+// puts them in place (#158). Codex 0.160.1 does so for the thread's newest
+// turn, running or interrupted, to a client that was not subscribed: an
+// async question there is not under its call_id, which the live events,
+// thread/read and thread/turns/list give it
+// (TestCodexShareBridgeRestartSent/*-raw-history-*). A failure leaves the
+// turns as they are.
+func (w *Watcher) legacyTurns(ctx context.Context, c *conn, th *Thread) {
+	first := -1
+	for i, t := range th.Turns {
+		if first < 0 && slices.ContainsFunc(t.Items, func(it Item) bool { return legacyItemID.MatchString(it.ID) }) {
+			first = i
+		}
+	}
+	if first < 0 {
+		return
+	}
+	var page struct {
+		Data []Turn `json:"data"`
+	}
+	if err := c.call(ctx, "thread/turns/list", map[string]any{"threadId": w.o.Thread, "sortDirection": "desc",
+		"itemsView": "full", "limit": min(len(th.Turns)-first, HistoryPage)}, &page); err != nil {
+		return
+	}
+	for _, t := range page.Data {
+		for i := first; i < len(th.Turns); i++ {
+			if th.Turns[i].ID == t.ID {
+				th.Turns[i] = t
+			}
+		}
+	}
+}
+
+// legacyItemID is an item id of Codex's legacy history builder.
+var legacyItemID = regexp.MustCompile(`^item-\d+$`)
 
 // olderTurns reads one page of turns before those thread/resume returned
 // (thread/turns/list, newest first, from its cursor) and puts the ones it
 // did not have in front of th.Turns. A failure leaves the history as it is.
-func (w *Watcher) olderTurns(ctx context.Context, c *conn, th *Thread, cursor json.RawMessage) {
+// It reports whether the history is whole now: the page read, and no
+// cursor to older turns after it (nextCursor, as Codex 0.160.1 gives it:
+// TestCodexShareBridgeRestartSent/*-thread-turns-list).
+func (w *Watcher) olderTurns(ctx context.Context, c *conn, th *Thread, cursor json.RawMessage) bool {
 	var page struct {
-		Data []Turn `json:"data"`
+		Data []Turn          `json:"data"`
+		Next json.RawMessage `json:"nextCursor"`
 	}
 	if err := c.call(ctx, "thread/turns/list", map[string]any{"threadId": w.o.Thread, "cursor": cursor,
 		"sortDirection": "desc", "itemsView": "full", "limit": HistoryPage}, &page); err != nil {
-		return
+		return false
 	}
 	have := map[string]bool{}
 	for _, t := range th.Turns {
@@ -380,6 +427,8 @@ func (w *Watcher) olderTurns(ctx context.Context, c *conn, th *Thread, cursor js
 		}
 	}
 	th.Turns = append(older, th.Turns...)
+	next := string(page.Next)
+	return next == "" || next == "null"
 }
 
 // Errors of the watcher's sends.

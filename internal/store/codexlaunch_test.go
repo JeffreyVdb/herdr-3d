@@ -64,3 +64,41 @@ func TestCodexLaunch(t *testing.T) {
 		t.Fatalf("after forget %+v", all)
 	}
 }
+
+// #158: the bridge's async answers outlive a restart; a question's latest
+// answer replaces the one before.
+func TestCodexAsyncSends(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "world.db")
+	st := open(t, path)
+	a := store.CodexAsyncSend{WorkerID: "w1", Thread: "th", Batch: "call_3", Index: 0, ClientID: "herdr_3d-aa", Turn: "t1"}
+	b := a
+	b.Index = 1
+	c := store.CodexAsyncSend{WorkerID: "w2", Thread: "th2", Batch: "call_9", ClientID: "herdr_3d-bb", Unconfirmed: true}
+	if err := st.RecordCodexAsyncSends(ctx, []store.CodexAsyncSend{a, b}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordCodexAsyncSends(ctx, []store.CodexAsyncSend{c}); err != nil {
+		t.Fatal(err)
+	}
+	a.Turn, a.Confirmed, a.ClientID = "t2", true, "herdr_3d-cc" // sent again after it went undelivered
+	if err := st.RecordCodexAsyncSends(ctx, []store.CodexAsyncSend{a}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	st = open(t, path)
+	all, err := st.CodexAsyncSends(ctx)
+	if err != nil || len(all) != 2 || len(all["w1"]) != 2 || all["w1"][0] != a || all["w1"][1] != b || len(all["w2"]) != 1 ||
+		all["w2"][0] != c {
+		t.Fatalf("sends = %+v, %v", all, err)
+	}
+	if err := st.ForgetCodexAsyncSend(ctx, "w1", "call_3", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ForgetCodexAsyncSends(ctx, "w2"); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ = st.CodexAsyncSends(ctx); len(all) != 1 || len(all["w1"]) != 1 || all["w1"][0] != a {
+		t.Fatalf("after forget %+v", all)
+	}
+}

@@ -1053,7 +1053,7 @@ back, the branch h3d/… is kept (it has commits since …)`) and in the audit r
    short pause (its command popup takes the first Enter otherwise), `Enter`. The bridge waits up to 8 s for the pane to
    be back at its shell (`herdr pane process-info`), pressing `Enter` again up to 3 times on the way (an agent still
    starting up drops it), then tries `Ctrl-C` twice (an agent the bridge has no exit command for gets only the
-   `Ctrl-C`s; a shared Codex worker, #155, gets none); `released` says whether the agent left by itself. **The workspace is closed only once the agent is
+   `Ctrl-C`s; a shared Codex worker, #155, gets none unless its own server is already gone, #158); `released` says whether the agent left by itself. **The workspace is closed only once the agent is
    gone**: if it is still running after all that, or its pane's processes cannot be read, nothing is closed or
    removed and the answer is `fire_failed` (the message says the agent is still running; audited with the keys
    sent). The worker stays; send it home again, or deal with it in herdr. A graceful exit ends the agent's resume
@@ -3028,7 +3028,11 @@ after 60 s too. The transcript still comes from the rollout under `~/.codex/sess
   A shared worker's terminal that does not quit after `/quit` and the Enters gets **no** `Ctrl-C` (on a dialog the
   bridge did not expect it opens Codex's agent command center, which lists your other threads): the send home is
   `fire_failed`, nothing is closed and the server keeps running; quit it in its terminal and send it home again.
-- **`floor.sleep`** quits each shared worker's TUI (`/quit`, Enter), waits until herdr no longer names its session
+  #158: the one exception is a worker whose server is already gone (its pid gone or another process under it). Its
+  terminal only waits to reconnect, ignores `/quit` and offers "ctrl+c quit"; it gets the `Ctrl-C`s a legacy worker
+  gets, and with its server gone there is no turn to interrupt.
+- **`floor.sleep`** quits each shared worker's TUI (`/quit`, Enter; #158: one `Ctrl-C` after them when its server is
+  already gone, as above, else herdr would keep its session and resume it its own way on wake), waits until herdr no longer names its session
   (herdr forgets it a moment after the quit; a session stopped before would save the id and resume the pane its own
   way, without the server), stops the server, and only then stops the session. Shared workers are never backfilled
   (`report-agent-session`). The sleep's audit result lists them under `shared`.
@@ -3047,7 +3051,8 @@ after 60 s too. The transcript still comes from the rollout under `~/.codex/sess
   `note: "shared Codex server: <why>; resumed without its own server, on Codex's built-in one"` (or `started …`); its
   next sleep and wake treat it as any shared worker and try its server again.
 - The bridge checks each shared server every 3 s: one that died is `server: "down"` (herdr would still show the TUI as
-  working: it waits to reconnect). Sleeping and waking the floor starts it again.
+  working: it waits to reconnect). Sleeping and waking the floor starts it again (verified through the bridge, #158:
+  the sleep quits the waiting terminal with `Ctrl-C`, the wake resumes the thread attached to a new server).
 
 Orchestrators that start Codex workers through the herdr CLI (write-code) bypass the bridge; such a worker is
 launched the same way with the same two calls, `pane run <pane> '<server start>'` then `agent start … -- --remote
@@ -3097,22 +3102,64 @@ Only the envelope answers a question. The tool's `{"accepted":true}`, the turn e
 `undelivered`, `twin`, `conflict`): `twin` names another batch
 of the same turn with the same questions seen only the other way under another id (both kept: in every observed case
 the ids were equal); `conflict: true` is an id whose live and history questions differ (the first ones are kept, and
-it cannot be answered). A bridge restart forgets `sending`, `sent` and `dismissed`: the next join reads the history
-again, where only `answered` (the envelope, with `answered_by` from its client id) is visible, and everything else is
-`pending`.
+it cannot be answered). A bridge restart forgets `dismissed` (the bridge's only) and rebuilds the rest from the
+history, where only `answered` is visible (the envelope, with `answered_by` from its client id), **and from the
+bridge's own record of its answers** (below), so an answer Codex may still deliver stays `sent`.
 
 **Recovery.** The bridge joins every shared worker's thread while its server runs (above), so a question asked while
 the transcript is closed is seen live. Every (re)join reconciles the history (the turns `thread/resume` returns, and
 one more page of up to 50 older turns for a paginated thread) with what the bridge knew: new batches are added, known
-ones keep their state, envelopes there answer theirs. Questions are kept per worker and thread, not per join: a lost
+ones keep their state, envelopes there answer theirs. `thread/resume` gives a client that was not subscribed the
+thread's newest turn (running or interrupted) under its legacy item ids (`item-1`, `item-2`, …), not the question's
+`call_id`; the join reads such turns again with `thread/turns/list`, which has the `call_id`. If that read fails, or
+has nothing for the turn, the batch shows under its `item-N` id and the join is **unresolved**: that batch cannot be
+answered (`invalid_state`: Codex does not know the id; answer in the terminal or wait), the bridge's records of its
+answers are kept (below), and the bridge joins again after a minute (`CodexRejoin`) for as long as it stays so.
+Unresolved is the join's (the history it read), not the questions shown: dismissing or dropping the `item-N` batch does
+not clear it, only a join that reads every id does. Each join replaces the last one's `item-N` batches: those ids are
+one join's. At most 32 batches are kept per thread (dismissed and answered ones dropped first, never one whose answer
+is `sending`); a join reading more keeps the newest. Questions are kept per worker and thread, not per join: a lost
 connection, a sleep and a wake keep them; send home forgets them.
+
+**Across a bridge restart** (#158). Codex holds a steered answer in the running turn until its next model request, and
+the history shows it only then, so the history alone would make such a question `pending` again and a retry would be
+a second answer the model sees. The bridge therefore records every answer it sends, per question, in its store: the
+`clientUserMessageId`, the turn it is steered into (none for a `turn/start`) **before the request goes out**, then the
+turn it reached, or that no response came. On the next join, after the history, a question the history leaves
+`pending` that has such a record becomes:
+
+| Record | After the restart |
+|---|---|
+| the turn it went to is the thread's running turn | `sent`: a retry is `stale`; `undelivered` once that turn ends without it |
+| the server confirmed it into a turn that is not running (it ended meanwhile) | `sent`, `undelivered`: it may be answered again, once |
+| no response came | `sent`, `unconfirmed`, as before the restart: never sent again by the bridge |
+| recorded, its response never recorded (the bridge stopped in between): a `turn/start`, or a steer into a turn that is not running | `sent`, `unconfirmed`: never sent again by the bridge. The history lacking its envelope is no evidence it was not taken: a turn the terminal starts at the same instant takes a `turn/start`'s input (the steer's fallback included) and shows it only with its next model request |
+
+A record goes only on evidence that its answer can no longer be delivered, or was: an envelope naming its question
+(live or in a join's history, whether or not the bridge still shows the batch), the server refusing the answer, the
+thread changing, send home (or the worker no longer shared at startup), and, on a join, its batch missing from a
+history that is the **whole** thread (no older turns left unread) with no `item-N` id. What the bridge shows is not
+evidence: a batch dropped from the view (32 per thread, dismissed and answered ones first; never one whose answer is in
+flight), dismissed, or under an `item-N` id keeps its record, and a join or live event that shows the batch again makes
+it `sent` again. Nor is a history without the envelope of a send whose response never came (the table's last
+row). So there is at most one record per
+question the bridge answered, kept until one of those causes. A dismissed question's record is kept (the dismissal
+itself is not), so after a restart it shows `sent`, not `pending`. What remains: a bridge that stops after recording
+an answer and before its response is recorded shows it `sent` until the turn it was steered into ends (then
+`undelivered`), or, for a `turn/start` or a steer into a turn no longer running, `sent`, `unconfirmed` until its
+envelope shows (the terminal can answer it; the bridge never sends it again, even if the request never went out), and
+an unresolved join keeps its `item-N` batch unanswerable until a join reads it: waits, never a second answer. A batch
+the bridge no longer shows cannot be answered from the bridge (`stale`, unknown batch; the terminal can). A record the
+store failed to write is logged and lasts only until the bridge stops: a restart before that answer is delivered
+admits a retry, and the model can see the answer twice (the one window left).
 
 **`worker.answer_async`** `{id, thread, batch, answers: [{index, answer}]}` answers one or more questions of one batch
 in one envelope (the native format, which the terminal shows as an answer, not as raw text, and the transcript as the
 user's input). Each `index` once; a question with `options` takes one of them exactly, one without any text that is not
 blank (1–4096 bytes of UTF-8 without control characters but line ends and tabs). Refused before anything is queued:
 `bad_request` (the answer does not fit), `unknown_worker`, `invalid_state` (not a shared worker, the batch is a
-`conflict`, or the bridge is **not attached** to the thread: never queued blind), `stale` (`thread` is not the worker's
+`conflict` or under a legacy `item-N` id (Recovery), or the bridge is **not attached** to the thread: never queued
+blind), `stale` (`thread` is not the worker's
 thread now, the batch is unknown, or a question is not `pending`: `sending`, `sent` (unless `undelivered`),
 `answered` or `dismissed`). It
 runs on the worker's input lane ([Input](#input)) and is **checked again** there, then marked `sending` in the same
@@ -3206,7 +3253,7 @@ dismissed_at)`.
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
 | `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started |
-| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
+| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a batch under a legacy `item-N` id or a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `whiteboard_conflict` | M13: a save whose `base` is not the board's current version (HTTP `409`, with the current `version`) |
 | `whiteboard_invalid`, `whiteboard_too_large`, `whiteboard_unsupported`, `whiteboard_hash_mismatch`, `whiteboard_missing_file` | M13: a scene, file, render or pin the bridge refuses (see [Whiteboard](#whiteboard)) |
