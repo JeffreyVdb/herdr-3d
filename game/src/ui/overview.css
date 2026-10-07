@@ -669,6 +669,14 @@
 .ov-row:focus-visible .ov-hint {
   display: inline-flex;
 }
+/* #174: the hint is only a label for the row: it never takes a pointer from a control (Retry) and steps aside while one is
+   hovered or focused, and on a phone (no hover; the row is narrow) it is not shown at all. */
+.ov-hint {
+  pointer-events: none;
+}
+.ov-row:has(.ov-retry:hover, .ov-retry:focus-visible) .ov-hint {
+  display: none;
+}
 .ov kbd {
   display: inline-grid;
   place-items: center;
@@ -779,6 +787,9 @@
 /* ---- narrow ---------------------------------------------------------------------------------------------- */
 
 @media (max-width: 760px) {
+  .ov-hint {
+    display: none !important;
+  }
   .ov-head {
     grid-template-areas:
       'title tools'
@@ -816,5 +827,19 @@
   }
   .ov-keys {
     display: none;
+  }
+}
+
+/* #174: on a phone the chip and Retry go under the line they are about, so a long fallback keeps the whole width. */
+@media (max-width: 480px) {
+  .ov-line--status {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .ov-line--status > span:not(.ov-act, .ov-llm, .ov-ai-state) {
+    flex: 1 1 calc(100% - 42px);
+  }
+  .ov-line--status > .ov-ai-state {
+    margin-left: 42px; /* the label's 34px and the gap: under the line's text */
   }
 }

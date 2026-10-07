@@ -482,7 +482,7 @@ export class OverviewOverlay {
   }
 
   private nowEl(r: OverviewWorkerRow): HTMLElement {
-    const p = h('p', { class: 'ov-line ov-now' }, h('b', {}, 'Now'));
+    const p = h('p', { class: `ov-line ov-now${r.now?.status && !r.now.llm ? ' ov-line--status' : ''}` }, h('b', {}, 'Now'));
     if (r.now) p.append(h('span', { class: 'ov-now-text' }, r.now.text));
     if (r.now?.llm) p.append(h('span', { class: 'ov-llm', title: 'Summarised by the AI model' }, 'AI'));
     else if (r.now) p.append(...statusEls(r.now, 'now'));
@@ -529,6 +529,8 @@ export class OverviewOverlay {
     // A dialog over the page (the issue window) owns the keys, Esc included.
     if (document.querySelector('dialog:modal')) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // #174: Enter and Space on the focused Retry button press it (a native click), not the row's open or fold.
+    if ((e.key === 'Enter' || e.key === ' ') && e.target instanceof Element && e.target.closest('.ov-retry')) return;
     const v = this.focused();
     const i = v ? this.visible.indexOf(v) : -1;
     const go = (j: number) => {
@@ -669,7 +671,7 @@ export class OverviewOverlay {
 }
 
 function lineEl(cls: string, label: string, line: OverviewLine, kind: 'task' | 'now'): HTMLElement {
-  return h('p', { class: `ov-line ${cls}` }, h('b', {}, label), h('span', {}, line.text), line.llm ? h('span', { class: 'ov-llm', title: 'Summarised by the AI model' }, 'AI') : null, ...statusEls(line, kind));
+  return h('p', { class: `ov-line ${cls}${line.status ? ' ov-line--status' : ''}` }, h('b', {}, label), h('span', {}, line.text), line.llm ? h('span', { class: 'ov-llm', title: 'Summarised by the AI model' }, 'AI') : null, ...statusEls(line, kind));
 }
 
 /** #174: where the AI badge would be, what became of the model's line: a chip (its words in the title and for a screen reader), and Retry when it helps. */

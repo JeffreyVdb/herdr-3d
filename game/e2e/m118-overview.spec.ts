@@ -217,3 +217,87 @@ test('reduced motion: no blink, cascade or flap; steady lights on the page', asy
   expect(anim).toBe('none');
   expect((await info(page))?.wall?.blinking).toBe(false);
 });
+
+// #174: a worker whose TASK line is waiting for an AI retry gets a Retry on the overview. The fixture bridge never
+// fails a summary, so Turnip's digest is given the status on its way to the page (the frames the game sends are kept).
+test('Retry on a failed summary works by pointer at a phone width and by Enter and Space, and never opens the transcript', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  const sent: Array<{ t: string; args?: { id?: string } }> = [];
+  const status = { state: 'retrying', reason: 'bad_response', attempts: 1, retry_at: Date.parse('2026-09-30T12:05:00Z') };
+  const patch = (w: { label?: string; name?: string; digest?: Record<string, unknown> }) => {
+    if ((w.label === 'Turnip' || w.name === 'Turnip') && w.digest) Object.assign(w.digest, { task_status: status, now_status: status });
+  };
+  await page.routeWebSocket(/\/fixture\//, (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((m) => {
+      if (typeof m === 'string') sent.push(JSON.parse(m));
+      server.send(m);
+    });
+    server.onMessage((m) => {
+      if (typeof m !== 'string') return ws.send(m);
+      const f = JSON.parse(m);
+      if (f.t === 'world.snapshot') for (const w of f.world.workers) patch(w);
+      if (f.t === 'worker.upsert') patch(f.worker);
+      ws.send(JSON.stringify(f));
+    });
+  });
+  const retries = () => sent.filter((f) => f.t === 'digest.retry');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await onToy(page);
+  await page.keyboard.press('KeyO');
+  await expect.poll(async () => (await page_(page))?.open).toBe(true);
+  const retry = () => page.locator('.ov-row', { hasText: 'Turnip' }).locator('.ov-now .ov-retry'); // the last line of the row: where the hint sits
+  await expect(retry()).toBeVisible();
+  await expect(page.locator('.ov')).not.toHaveClass(/ov--enter/, { timeout: 5000 }); // the grow is over: nothing moves under the pointer
+
+  // Pointer, narrow: the whole button is the topmost thing at its centre, even with the row hovered.
+  const center = async () => {
+    await retry().scrollIntoViewIfNeeded();
+    const b = await retry().boundingBox();
+    if (!b) throw new Error('no retry');
+    return { x: b.x + b.width / 2, y: b.y + b.height / 2, b };
+  };
+  const topmost = (x: number, y: number) => page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.className ?? null, [x, y] as const);
+  let c = await center();
+  await page.mouse.move(c.x, c.y);
+  const points: Array<[number, number]> = [
+    [c.x, c.y],
+    [c.b.x + 2, c.b.y + 2],
+    [c.b.x + c.b.width - 2, c.b.y + c.b.height - 2],
+  ];
+  for (const [x, y] of points) expect(await topmost(x, y)).toBe('ov-retry');
+  await shot(page, 'm174-retry-narrow');
+  await page.mouse.click(c.x, c.y);
+  await expect.poll(() => retries().length).toBe(1);
+  expect(retries()[0]?.args?.id).toBeTruthy();
+  expect((await page_(page))?.open).toBe(true); // not the transcript
+
+  // Keyboard: Enter, then Space, on the focused button.
+  await retry().focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => retries().length).toBe(2);
+  expect((await page_(page))?.open).toBe(true);
+  await retry().focus();
+  await page.keyboard.press('Space');
+  await expect.poll(() => retries().length).toBe(3);
+  expect((await page_(page))?.open).toBe(true);
+  await page.waitForTimeout(300);
+  expect(retries()).toHaveLength(3); // exactly once each
+
+  // Desktop: the hint steps aside from a hovered Retry.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await frames(page, 2);
+  c = await center();
+  await page.mouse.move(c.x, c.y);
+  expect(await topmost(c.x, c.y)).toBe('ov-retry');
+  expect(await page.locator('.ov-row', { hasText: 'Turnip' }).locator('.ov-hint').evaluate((e) => getComputedStyle(e).display)).toBe('none');
+  // R on the row and Enter on the row itself keep working.
+  await page.locator('.ov-row', { hasText: 'Turnip' }).focus();
+  await page.keyboard.press('KeyR');
+  await expect.poll(() => retries().length).toBe(4);
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await page_(page))?.open).toBe(false);
+  expect(retries()).toHaveLength(4);
+  clean();
+});

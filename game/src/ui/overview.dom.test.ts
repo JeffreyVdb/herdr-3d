@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Floor, Snapshot, Worker } from '../net/protocol';
 import { WorldStore } from '../world/store';
@@ -145,6 +147,52 @@ describe('the overview page (#118)', () => {
     press('ArrowDown'); // the model's own line has nothing to retry
     press('r');
     expect(host.retrySummary).toHaveBeenCalledTimes(2);
+  });
+
+  it('Enter and Space on the focused Retry button are the button’s own: not the row’s open or fold; R and Enter on the row still work (#174)', () => {
+    const { ov, host } = setup(STATUSED);
+    ov.open('top');
+    const btn = document.querySelector<HTMLButtonElement>('.ov-row[data-key="t1"] .ov-task .ov-retry');
+    expect(btn).not.toBeNull();
+    btn?.focus();
+    // The capture handler leaves the event alone (not prevented, not stopped), so the browser clicks the button.
+    for (const k of ['Enter', ' ']) {
+      const e = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true });
+      btn?.dispatchEvent(e);
+      expect(e.defaultPrevented).toBe(false);
+    }
+    expect(host.goTo).not.toHaveBeenCalled();
+    expect(ov.isOpen).toBe(true);
+    btn?.click(); // what the browser does for either key
+    expect(host.retrySummary).toHaveBeenCalledTimes(1);
+    expect(host.goTo).not.toHaveBeenCalled();
+    // Other keys from the button still drive the page (Esc closes it), and the row keeps its keys.
+    const r = new KeyboardEvent('keydown', { key: 'r', bubbles: true, cancelable: true });
+    btn?.dispatchEvent(r);
+    expect(r.defaultPrevented).toBe(true);
+    expect(host.retrySummary).toHaveBeenCalledTimes(2);
+    const row = document.querySelector<HTMLElement>('.ov-row[data-key="t1"]');
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    row?.dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(true);
+    expect(host.goTo).toHaveBeenCalledWith('t1');
+  });
+
+  it('the row’s Open transcript hint never takes a pointer: it is not a hit target, so Retry’s whole area is (#174)', () => {
+    const { ov } = setup(STATUSED);
+    ov.open('top');
+    const css = readFileSync(resolve(import.meta.dirname, 'overview.css'), 'utf8');
+    expect(css).toMatch(/\.ov-hint\s*\{[^}]*pointer-events:\s*none/);
+    expect(css).toMatch(/@media \(max-width: 760px\)\s*\{\s*\.ov-hint\s*\{\s*display:\s*none/);
+    expect(document.querySelector('.ov-row .ov-hint')?.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('a line with a status wraps its chip and Retry under the text on a phone (#174)', () => {
+    const { ov } = setup(STATUSED);
+    ov.open('top');
+    expect(document.querySelectorAll('.ov-ai-state').length).toBeGreaterThan(0);
+    expect(document.querySelectorAll('.ov-line--status')).toHaveLength(document.querySelectorAll('.ov-ai-state').length);
+    expect(document.querySelector('.ov-row[data-key="t3"] .ov-line--status')).toBeNull();
   });
 
   it('renders the tree, its lights from the display, and the lines', () => {
