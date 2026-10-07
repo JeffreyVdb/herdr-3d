@@ -59,7 +59,8 @@ test('picking a floor badge enters the floor in first person, at the entrance fa
   await page.mouse.click(badge.x, badge.y);
   await page.waitForFunction(() => window.__h3d.view().mode === 'floor' && !window.__h3d.view().busy);
   await expect(page.locator('.topbar-name')).toHaveText('herdr-3d');
-  await expect(page.locator('.topbar-sub')).toHaveText('Floor 2 of 2 · Work');
+  await expect(page.locator('.floor-plate')).toHaveAttribute('aria-label', 'Floor 2 of 2. Open the elevator');
+  await expect(page.locator('.topbar-sub')).toHaveText('Work');
   const l = await layout(page, 'herdr-3d');
   const pose = await page.evaluate(() => window.__h3d.pose());
   expect(pose).toMatchObject({ x: l.spawn.x, z: l.spawn.z, yaw: l.spawn.yaw });
@@ -77,7 +78,8 @@ test('picking a floor badge enters the floor in first person, at the entrance fa
   await page.locator('.floor-list button[data-session="pastry"]').focus();
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.__h3d.view().floor === 'pastry' && !window.__h3d.view().busy);
-  await expect(page.locator('.topbar-sub')).toHaveText('Floor 1 of 1 · Personal');
+  await expect(page.locator('.floor-plate')).toHaveAttribute('aria-label', 'Floor 1 of 1. Open the elevator');
+  await expect(page.locator('.topbar-sub')).toHaveText('Personal');
   clean();
 });
 
@@ -99,12 +101,18 @@ test('keyboard on a floor: Shift+Tab reaches the top bar, Tab there moves focus,
   expect(await focused()).toBe('City');
   // Inside the top bar Tab / Shift+Tab traverse it natively and leave the plan alone.
   await page.keyboard.press('Tab');
-  expect(await focused()).toBe('Issues');
+  expect(await focused()).toBe('Floor 2 of 2. Open the elevator');
   await page.keyboard.press('Tab');
-  expect(await focused()).toBe('PRs');
+  expect(await focused()).toBe('Menu');
   await page.keyboard.press('Shift+Tab');
-  expect(await focused()).toBe('Issues');
+  expect(await focused()).toBe('Floor 2 of 2. Open the elevator');
+  await page.keyboard.press('Tab');
   expect(await plan()).toBe(false);
+  // Enter opens the menu with its first row focused; the arrows walk its rows.
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.btn--hire')).toBeFocused();
+  for (let i = 0; i < 8 && (await focused()) !== 'Issues'; i++) await page.keyboard.press('ArrowDown');
+  expect(await focused()).toBe('Issues');
   await page.keyboard.press('Enter');
   await expect(page.locator('dialog.desk-dlg--board h2')).toHaveText('Issues · herdr-3d');
   await page.keyboard.press('Escape');

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, watchErrors } from './game';
+import { frames, openGame, watchErrors, openMenu } from './game';
 
 // #100 on demo-m4 with the simulator (laptops to sit at): the inbox's desktop notifications. The page's Notification is a recorder with the permission
 // granted, and the window says it is not in front, so every ping is a notification. demo-m4 starts with blocked and
@@ -92,6 +92,7 @@ test('pings: none on load, one per live need, a settled finish, never a freelanc
   // With Settings up (a modal), a click shuts it first: seated at the worker's conversation, the keyboard on its laptop.
   await page.keyboard.press('Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
+  await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const settings = page.getByRole('dialog', { name: 'Settings' });
   await expect(settings).toBeVisible();
@@ -117,6 +118,7 @@ test('a collapsed burst’s click shuts the modal that is up (Settings) and show
   for (const ws of ['w7', 'w9', 'w8', 'wc']) await setStatus(at('herdr-3d', ws), 'blocked');
   await expect.poll(() => page.evaluate(() => window.__notes.findLast((n) => n.tag === 'h3d-inbox')?.title)).toBe('4 agents need you');
 
+  await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const settings = page.getByRole('dialog', { name: 'Settings' });
   await expect(settings).toBeVisible();

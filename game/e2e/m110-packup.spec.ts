@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { frames, openGame, seatMode, shot, watchErrors } from './game';
+import { frames, openGame, seatMode, shot, watchErrors, openMenu } from './game';
 
 // #110 pack up on request against the fixture bridge (`sim=1`, tools/fixture-packup.ts), whose AI integration calls
 // fake Jev and OpenAI-compatible servers started here on OS-leased loopback ports: no spec reaches a real provider.
@@ -107,6 +107,7 @@ async function setUpModels(dialog: Locator, llm: Fake): Promise<void> {
 
 /** Settings: the models, the pack-up test, the switch on. Returns the section. */
 async function switchOn(page: Page, llm: Fake): Promise<Locator> {
+  await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   const section = dialog.locator('[data-section="packup"]');
@@ -140,6 +141,7 @@ test('Settings: the switch is off until a test passed, beside the follow-up ques
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
     await openGame(page, 'demo-m4', '', `play=none&sim=1&simms=150&simjev=${encodeURIComponent(jev.url)}`);
+    await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Settings' });
     // About 640 px wide on a desktop.

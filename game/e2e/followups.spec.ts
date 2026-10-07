@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, seatMode, shot, watchErrors } from './game';
+import { frames, openGame, seatMode, shot, watchErrors, openMenu } from './game';
 
 // #90: follow-up questions against the fixture bridge (`sim=1`, tools/fixture-followup.ts), whose AI integration
 // calls fake Jev and OpenAI-compatible servers started here on OS-leased loopback ports. Set up both models, pass
@@ -138,6 +138,7 @@ test('switched on after a passing test, a turn ending in questions needs you and
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
     await openGame(page, 'demo-m5', '', `play=none&sim=1&simms=300&simusage=0&simecho=200&simjev=${encodeURIComponent(jev.url)}`);
+    await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Settings' });
     const section = dialog.locator('[data-section="followups"]');
@@ -243,6 +244,7 @@ test('on a phone the card has room for the question and its answers, and the pro
   try {
     await page.setViewportSize({ width: 360, height: 800 });
     await openGame(page, 'demo-m5', '', `play=none&sim=1&simms=300&simusage=0&simecho=200&simjev=${encodeURIComponent(jev.url)}`);
+    await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Settings' });
     const section = dialog.locator('[data-section="followups"]');

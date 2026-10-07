@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, watchErrors } from './game';
+import { frames, openGame, watchErrors, openMenu } from './game';
 
 // #124: keyboard-only play on demo-m5 with the simulator: the shortcut list (?), a key each for Hire, Issues, Pull
 // requests, Start Run and the Inbox list, picking a worker without the mouse (T), looking up and down, and the whole
@@ -408,6 +408,7 @@ test('? opens over About, Settings and the elevator panel (not a field of them),
   await page.keyboard.press('Escape');
   await expect(settings).toBeHidden();
   // About (the info button).
+  await openMenu(page);
   await page.getByRole('button', { name: 'About', exact: true }).click();
   const about = page.getByRole('dialog', { name: 'About' });
   await expect(about).toBeVisible();
@@ -465,7 +466,7 @@ test('a held key does not re-fire a toggle (B, Tab, H): one press, one change', 
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   await onFloor(page);
-  const battery = page.getByRole('button', { name: 'Battery saver' });
+  const battery = page.locator('.btn--battery');
   await expect(battery).toHaveAttribute('aria-pressed', 'false');
   // Playwright sends auto-repeat for a key pressed again with no release in between.
   for (let i = 0; i < 4; i++) await page.keyboard.down('KeyB');

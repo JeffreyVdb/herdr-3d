@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, openGame, shot, watchErrors, openMenu } from './game';
 
 // The demo-m3 fixture on the simulating fixture server (tools/fixture-sim.ts):
 // Work = herdr-3d (floor 2, running: 9 working, 3 need you, 6 idle) +
@@ -210,7 +210,8 @@ test('elevator: E at the elevator lists the building’s floors with state and c
   await page.keyboard.press('Enter');
   await expect(page.locator('dialog.panel')).toBeHidden();
   await page.waitForFunction(() => window.__h3d.view().floor === 'depot-manager' && !window.__h3d.view().busy);
-  await expect(page.locator('.topbar-sub')).toHaveText('Floor 1 of 2 · Work · asleep');
+  await expect(page.locator('.floor-plate')).toHaveAttribute('aria-label', 'Floor 1 of 2. Open the elevator');
+  await expect(page.locator('.topbar-sub')).toHaveText('Work · asleep');
   expect(await page.evaluate(() => window.__h3d.view().asleep)).toBe(true);
   await expect(page.locator('.hint')).toContainText('This floor is asleep');
 
@@ -358,11 +359,16 @@ test('keyboard only on a floor: the top bar, L and the arrow keys reach the elev
   expect(await focused(page)).toBe('BODY');
   await page.keyboard.press('Shift+Tab');
   expect(await focused(page)).toBe('City');
-  for (const want of ['Issues', 'PRs', 'Elevator']) {
-    await page.keyboard.press('Tab');
-    expect(await focused(page)).toBe(want);
-  }
+  await page.keyboard.press('Tab');
+  expect(await focused(page)).toBe('Floor 2 of 2. Open the elevator');
+  await page.keyboard.press('Tab');
+  expect(await focused(page)).toBe('Menu');
   await expect(page.locator('.hint')).toContainText('L elevator');
+  // The menu's rows are reached with the arrows; Elevator is a row (and the plate is the elevator too).
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.btn--hire')).toBeFocused();
+  for (let i = 0; i < 8 && (await focused(page)) !== 'Elevator'; i++) await page.keyboard.press('ArrowDown');
+  expect(await focused(page)).toBe('Elevator');
   await page.keyboard.press('Enter');
   await expect(page.locator('dialog.panel h2')).toHaveText('Work');
   await expect(page.locator('.lift-go[aria-current="location"]')).toBeFocused();
@@ -402,8 +408,8 @@ test('keyboard only on a floor: the top bar, L and the arrow keys reach the elev
     ['floor.sleep', true],
   ]);
 
-  // Closed, the panel hands focus back to the top bar's Elevator.
-  expect(await focused(page)).toBe('Elevator');
+  // Closed, the panel hands focus back to the top bar's Menu button (the Elevator row is in it).
+  expect(await focused(page)).toBe('Menu');
   await shot(page, 'm3-topbar-elevator');
 
   // 3. The arrow keys turn on the spot: face the elevator, E opens it.
@@ -594,7 +600,8 @@ test('sleep asks first; the floor falls asleep and wakes up live around you, wor
   expect(await desks(page, 'herdr-3d')).toEqual(seated);
   expect(await page.evaluate(() => window.__h3d.world().find((f) => f.session === 'herdr-3d')?.asleep)).toBe(true);
   await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText('herdr-3d is asleep. Its agents resume when you wake it.');
-  await expect(page.locator('.topbar-sub')).toHaveText('Floor 2 of 2 · Work · asleep');
+  await expect(page.locator('.floor-plate')).toHaveAttribute('aria-label', 'Floor 2 of 2. Open the elevator');
+  await expect(page.locator('.topbar-sub')).toHaveText('Work · asleep');
 
   // Wake: the transition, then each agent's resume, then running again.
   await page.getByRole('button', { name: 'Wake floor herdr-3d' }).click();
@@ -602,7 +609,8 @@ test('sleep asks first; the floor falls asleep and wakes up live around you, wor
   await expect(page.locator('.lift-row[data-session="herdr-3d"] .lift-progress p')).toContainText('Resuming agents:');
   await expect(page.locator('.lift-row[data-session="herdr-3d"] .resume--confirmed').first()).toContainText('resumed');
   await expect(page.locator('.lift-row[data-session="herdr-3d"] .resume--pending').first()).toContainText('waiting');
-  await expect(page.locator('.topbar-sub')).toHaveText('Floor 2 of 2 · Work · waking up…');
+  await expect(page.locator('.floor-plate')).toHaveAttribute('aria-label', 'Floor 2 of 2. Open the elevator');
+  await expect(page.locator('.topbar-sub')).toHaveText('Work · waking up…');
   await shot(page, 'm3-wake-progress');
   await until(page, (p) => p.kind === 'elevator' && p.rows[0]?.transition === null && p.rows[0].state === 'running', 'awake');
   await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText(/^herdr-3d is awake: \d+ resumed, \d+ relaunched\.$/);
@@ -634,6 +642,7 @@ test('an older bridge: the M2 world still works, the new buttons explain what is
   const clean = watchErrors(page);
   await openGame(page); // demo fixture, read-only: every command gets unknown_command
   await expect(page.locator('.topbar-sub')).toHaveText('2 buildings · 3 floors');
+  await openMenu(page);
   await page.getByRole('button', { name: 'Buildings' }).click();
   await page.locator('#dir-new-name').fill('Lab');
   await page.keyboard.press('Enter');

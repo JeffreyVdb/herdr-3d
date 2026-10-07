@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { tint, paperOf } from '../src/world/boards';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, openGame, shot, watchErrors, openMenu } from './game';
 import { board, columns, enter, faceBoard, wall, waitNotes, type Wall } from './m7';
 
 // M7: the issues corkboard, the pull request board and the merge gong, on demo-m6 with the simulating fixture server
@@ -100,11 +100,13 @@ test('the Issues and PRs buttons open the overlays from anywhere on the floor', 
     if (s) window.__h3d.setPose({ x: s.seat.x, z: s.seat.z - 1, yaw: 0, pitch: 0 });
   });
   await frames(page, 3);
+  await openMenu(page);
   await page.locator('.topbar button', { hasText: 'Issues' }).click();
   await expect.poll(async () => (await board(page))?.kind).toBe('issues');
   await expect(page.locator('dialog.desk-dlg--board h2')).toHaveText('Issues · lab');
   await page.keyboard.press('Escape');
   await expect.poll(async () => await board(page)).toBeNull();
+  await openMenu(page);
   await page.locator('.topbar button', { hasText: 'PRs' }).click();
   await expect.poll(async () => (await board(page))?.kind).toBe('prs');
   await expect(page.locator('dialog.desk-dlg--board h2')).toHaveText('Pull requests · lab');
@@ -119,6 +121,7 @@ test('a floor without a project shows Open and Closed, and a floor without a rep
   await openGame(page, 'demo-m6', EXTRA, SIM);
   await enter(page, 'depot-manager');
   await waitNotes(page, 4, 1);
+  await openMenu(page);
   await page.locator('.topbar button', { hasText: 'Issues' }).click();
   await expect.poll(async () => (await board(page))?.kind).toBe('issues');
   expect(await columns(page)).toEqual({ Open: ['#2', '#1', '#3'], Closed: ['#4'] });
@@ -128,6 +131,7 @@ test('a floor without a project shows Open and Closed, and a floor without a rep
   await expect.poll(async () => (await wall(page))?.off).toBe('No board on this floor');
   await faceBoard(page, 'pastry', 'issues');
   await shot(page, 'm7-no-repo');
+  await openMenu(page);
   await page.locator('.topbar button', { hasText: 'Issues' }).click();
   await expect(page.locator('dialog.desk-dlg--board .bd-off h3')).toHaveText('No board on this floor');
   await expect(page.locator('dialog.desk-dlg--board .bd-off p')).toContainText('No repo linked');
@@ -148,6 +152,7 @@ test('an older bridge: boards say “Update the bridge to use boards”, the but
   const issues = page.locator('.topbar button', { hasText: 'Issues' });
   await expect(issues).toHaveAttribute('aria-disabled', 'true');
   // aria-disabled, not disabled: it stays clickable to say why.
+  await openMenu(page);
   await issues.click({ force: true });
   await expect(page.locator('.toast')).toContainText('Update the bridge to use boards');
   expect(await board(page)).toBeNull();
@@ -211,6 +216,7 @@ test('a board update animates by diff and never rebuilds the floor; a quiet poll
   // A stale poll keeps every card and says so.
   await page.evaluate(() => window.__h3d.simBoards({ fail: 'GitHub auth' }));
   await expect.poll(async () => (await wall(page))?.issues.length).toBe(8);
+  await openMenu(page);
   await page.locator('.topbar button', { hasText: 'Issues' }).click();
   await expect.poll(async () => (await board(page))?.notice).toContain('GitHub did not answer (GitHub auth)');
   expect((await columns(page)).QA).toContain('#5');

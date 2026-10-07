@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, openGame, shot, watchErrors, openMenu } from './game';
 import { pixelStats } from './pixels';
 
 // M17 (#50): day and night follow the operator's local time; the office has a wall clock. Nothing here reads the wall
@@ -158,6 +158,7 @@ test.describe('the real clock (page.clock, Brussels)', () => {
     await page.goto(`/?backend=webgl2&ws=${encodeURIComponent('/fixture/demo-m3b?play=none')}`);
     await page.waitForFunction(() => window.__h3d?.ready && window.__h3d.frames >= 3, undefined, { timeout: 60_000 });
     expect(await clock(page)).toBe('14:05 · Wed 30 Sep');
+    await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Settings' });
     const zone = dialog.getByLabel('Timezone');

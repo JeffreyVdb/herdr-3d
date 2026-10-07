@@ -35,6 +35,8 @@ const ICON = {
   street: '<path d="M5 20 9.5 4M19 20 14.5 4M12 5.5v2M12 10.5v2.5M12 16.5v3"/>',
   /** #118: the floor overview, a board of rows with their lights. */
   overview: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="7.5" cy="9" r="1.1" fill="currentColor"/><circle cx="7.5" cy="12.5" r="1.1" fill="currentColor"/><circle cx="7.5" cy="16" r="1.1" fill="currentColor"/><path d="M10.5 9h6.5M10.5 12.5h5M10.5 16h6"/>',
+  menu: '<path d="M4.5 7h15M4.5 12h15M4.5 17h15"/>',
+  palette: '<circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4.5 4.5"/>',
   hire: '<circle cx="9.5" cy="8" r="3.2"/><path d="M3.8 19.5c.6-3.4 2.8-5.3 5.7-5.3 1.4 0 2.6.4 3.6 1.2"/><path d="M18 13.5v6M15 16.5h6"/>',
 };
 
@@ -62,7 +64,7 @@ const KEYS: Array<[string, string, boolean]> = [
   ['X', 'Send home', true],
 ];
 
-export type HudAction = 'city' | 'issues' | 'prs' | 'overview' | 'battery' | 'buildings' | 'elevator' | 'hire';
+export type HudAction = 'city' | 'issues' | 'prs' | 'overview' | 'battery' | 'buildings' | 'elevator' | 'hire' | 'palette';
 
 export interface PlanLabel {
   x: number;
@@ -89,9 +91,17 @@ export class Hud {
   private readonly prs = el('button', 'btn', `${svg(ICON.prs)}<span>PRs</span>`);
   /** #118: the floor overview (O), next to Issues / PRs. */
   private readonly overview = el('button', 'btn btn--overview', `${svg(ICON.overview)}<span>Overview</span><i class="topbar-key" aria-hidden="true"></i>`);
-  private readonly battery = el('button', 'btn btn--icon', svg(ICON.leaf));
-  private readonly settings = el('button', 'btn btn--icon', svg(ICON.gear));
-  private readonly about = el('button', 'btn btn--icon', svg(ICON.info));
+  private readonly battery = el('button', 'btn btn--battery', `${svg(ICON.leaf)}<span>Battery saver</span>`);
+  private readonly settings = el('button', 'btn', `${svg(ICON.gear)}<span>Settings</span>`);
+  private readonly about = el('button', 'btn', `${svg(ICON.info)}<span>About</span>`);
+  /** The floor you are on, as a plate: the one thing the bar must always say. A click opens the elevator. */
+  private readonly plate = el('button', 'floor-plate');
+  private readonly menuBtn = el('button', 'btn btn--menu', `${svg(ICON.menu)}<span>Menu</span>`);
+  private readonly menu = el('div', 'topbar-menu');
+  private readonly menuFloor = el('div', 'menu-sec');
+  private readonly menuCity = el('div', 'menu-sec');
+  private readonly menuGame = el('div', 'menu-sec');
+  private readonly paletteRow = el('button', 'btn menu-all', `${svg(ICON.palette)}<span>All commands…</span><i class="menu-key" aria-hidden="true"></i>`);
   private openAboutDialog: (() => void) | null = null;
   /** #92: shown while an AI model is set up but cannot be used (a rejected key, a missing part); a click opens Settings. */
   private readonly aiChip = el('button', 'ai-chip', '<i></i><span></span>');
@@ -136,7 +146,8 @@ export class Hud {
     const place = el('div', 'topbar-place');
     const title = el('div', 'topbar-title');
     title.append(this.name, this.sub);
-    place.append(this.back, title);
+    this.plate.type = 'button';
+    place.append(this.back, this.plate, title);
     const actions = el('div', 'topbar-actions');
     this.battery.setAttribute('aria-pressed', 'false');
     this.battery.setAttribute('aria-label', 'Battery saver');
@@ -152,8 +163,51 @@ export class Hud {
     this.about.type = 'button';
     this.overview.setAttribute('aria-label', 'Overview');
     this.overview.setAttribute('aria-haspopup', 'dialog');
+    // The menu: everything that is a command (each also has a key), in groups; the bar keeps what carries state.
+    this.menuFloor.dataset.title = 'This floor';
+    this.menuCity.dataset.title = 'City';
+    this.menuGame.dataset.title = 'Game';
+    this.menuFloor.append(this.hire, this.issues, this.prs, this.overview, this.elevator);
+    this.menuCity.append(this.buildings);
+    this.menuGame.append(this.settings, this.about, this.battery);
+    this.menu.append(this.menuFloor, this.menuCity, this.menuGame, this.paletteRow);
     this.refreshKeyTitles();
-    actions.append(this.buildings, this.issues, this.prs, this.overview, this.elevator, this.hire, this.aiChip, this.settings, this.about, this.battery, this.conn);
+    this.menu.id = 'topbar-menu';
+    this.menu.setAttribute('popover', 'auto');
+    this.menu.setAttribute('role', 'group');
+    this.menu.setAttribute('aria-label', 'Menu');
+    this.menuBtn.type = 'button';
+    this.menuBtn.popoverTargetElement = this.menu;
+    this.menuBtn.setAttribute('aria-haspopup', 'true');
+    this.menuBtn.setAttribute('aria-expanded', 'false');
+    this.paletteRow.type = 'button';
+    this.paletteRow.addEventListener('click', () => this.emit('palette'));
+    this.menu.addEventListener('toggle', (e) => {
+      const open = (e as ToggleEvent).newState === 'open';
+      this.menuBtn.setAttribute('aria-expanded', String(open));
+      if (open) this.menuRows().find((b) => b.getAttribute('aria-disabled') !== 'true')?.focus();
+    });
+    // A row that does something closes the menu first (in the capture phase, so what the row opens takes the focus and hands it back to the Menu button, not to a row that is no longer on screen); the sound control keeps it open (its sliders are adjusted, not pressed).
+    this.menu.addEventListener(
+      'click',
+      (e) => {
+        const b = (e.target as HTMLElement).closest('button');
+        if (!b || b.closest('.audio-ctl')) return;
+        this.menuBtn.focus();
+        this.menu.hidePopover();
+      },
+      true,
+    );
+    this.menu.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      const rows = this.menuRows();
+      const i = rows.indexOf(document.activeElement as HTMLButtonElement);
+      if (i < 0 && !rows.length) return;
+      e.preventDefault();
+      rows[(i + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length]?.focus();
+    });
+    this.plate.addEventListener('click', () => this.emit('elevator'));
+    actions.append(this.aiChip, this.conn, this.menuBtn, this.menu);
     bar.append(place, this.counts, actions);
     this.counts.after(this.usageEl);
     this.usageEl.hidden = true;
@@ -219,7 +273,7 @@ export class Hud {
 
   mountAbout(info: BuildInfo): { dispose(): void } {
     const about = new AboutDialog(this.root.parentElement ?? this.root, info);
-    const open = () => about.open(this.about);
+    const open = () => about.open(this.menuBtn);
     this.openAboutDialog = open;
     this.about.addEventListener('click', open);
     return {
@@ -233,7 +287,7 @@ export class Hud {
   /** #91: the Settings window, opened from the top bar's gear (or `,`). The caller adds its sections; see `SettingsDialog`. */
   mountSettings(): SettingsDialog {
     const settings = new SettingsDialog(this.root.parentElement ?? this.root);
-    this.settings.addEventListener('click', () => settings.open(this.settings));
+    this.settings.addEventListener('click', () => settings.open(this.menuBtn));
     this.aiChip.addEventListener('click', () => settings.open(this.aiChip));
     return settings;
   }
@@ -251,14 +305,17 @@ export class Hud {
 
   /** M13: the screen share control, in the top bar before Settings and About; shown everywhere (a share is the game's, not a floor's). */
   mountScreenShare(el: HTMLElement): void {
-    this.settings.before(el);
+    // Starting a share is a command (the menu); the LIVE tape and Stop are state (the bar, where they cannot be missed).
+    const start = el.querySelector('.share-start');
+    if (start) this.menuGame.prepend(start);
+    this.aiChip.before(el);
   }
 
   /** M3b: the sound control (mute + volume) in the top bar, before the battery toggle. */
   mountAudio(audio: GameAudio): { dispose(): void } {
     // M15: the Music credits panel, opened from the sound control.
     const credits = new MusicCredits(this.root.parentElement ?? this.root);
-    const controls = mountAudioControls(this.battery.parentElement ?? this.root, audio, this.battery, { openCredits: (from) => credits.open(from) });
+    const controls = mountAudioControls(this.battery.parentElement ?? this.root, audio, this.battery, { openCredits: () => credits.open(this.menuBtn) });
     return {
       dispose() {
         controls.dispose();
@@ -319,15 +376,38 @@ export class Hud {
 
   setCity(buildings: number, floors: number, c: Counts): void {
     this.name.textContent = 'City';
+    this.setPlate(null);
     this.setSub(null, `${buildings} ${buildings === 1 ? 'building' : 'buildings'} · ${floors} ${floors === 1 ? 'floor' : 'floors'}`);
     this.setCounts(c);
     this.setUsageTotal(null);
   }
 
+  /** The plate: the floor's number out of the building's floors, a place's glyph, or (null) nothing. */
+  private setPlate(p: { floor: number; of: number } | { where: Exclude<Area, 'floor'> } | null): void {
+    const key = p ? ('floor' in p ? `f${p.floor}/${p.of}` : p.where) : '';
+    if (this.plate.dataset.key === key) return;
+    this.plate.dataset.key = key;
+    this.plate.hidden = !p;
+    if (!p) return;
+    if ('floor' in p) {
+      this.plate.dataset.kind = 'floor';
+      this.plate.innerHTML = `<small aria-hidden="true">Floor</small><span class="floor-plate-n" aria-hidden="true"><b>${p.floor}</b><i>/${p.of}</i></span>`;
+      this.plate.setAttribute('aria-label', `Floor ${p.floor} of ${p.of}. Open the elevator`);
+      this.plate.title = withKey(`Floor ${p.floor} of ${p.of}: open the elevator`, 'elevator');
+    } else {
+      const w = WHERE[p.where];
+      this.plate.dataset.kind = 'where';
+      this.plate.innerHTML = `${svg(w.icon)}<small aria-hidden="true">${w.label}</small>`;
+      this.plate.setAttribute('aria-label', `${w.label}. Open the elevator`);
+      this.plate.title = withKey(`${w.label}: open the elevator`, 'elevator');
+    }
+  }
+
   /** A floor: the one you are on, or (`fire-escape`) the one whose landing you stand on. */
   setFloor(v: FloorView, at: 'floor' | 'fire-escape' = 'floor'): void {
     this.name.textContent = v.session;
-    const where = v.level ? `Floor ${v.level.number} of ${v.level.count} · ${v.building?.name ?? ''}` : 'Unassigned lot';
+    this.setPlate(v.level ? { floor: v.level.number, of: v.level.count } : null);
+    const where = v.level ? (v.building?.name ?? '') : 'Unassigned lot';
     const state = v.transition === 'waking' ? ' · waking up…' : v.transition === 'sleeping' ? ' · going to sleep…' : v.asleep ? ' · asleep' : '';
     this.setSub(at === 'fire-escape' ? 'fire-escape' : null, where + state);
     this.setCounts(v.counts, v.asleep);
@@ -337,7 +417,8 @@ export class Hud {
   /** In the lobby, on the street or on the stairs between landings: the building. */
   setBuilding(name: string, area: Area, floors: number, c: Counts): void {
     this.name.textContent = name;
-    this.setSub(area === 'floor' ? null : area, `${floors} ${floors === 1 ? 'floor' : 'floors'}`);
+    this.setPlate(area === 'floor' ? null : { where: area });
+    this.setSub(null, `${floors} ${floors === 1 ? 'floor' : 'floors'}`);
     this.setCounts(c);
     this.setUsageTotal(null);
   }
@@ -382,6 +463,7 @@ export class Hud {
     const prev = this.extras.filter((x) => x.b.previousElementSibling === (after === 'hire' ? this.hire : this.buildings)).at(-1)?.b;
     (prev ?? (after === 'hire' ? this.hire : this.buildings)).after(b);
     b.type = 'button';
+    if (b.dataset.action === 'run') b.dataset.key = keyName('run');
     this.extras.push({ b, show });
     this.syncExtras();
   }
@@ -579,10 +661,14 @@ export class Hud {
     if (h) h.textContent = `Floor plan · ${title}`;
   }
 
-  /** Keyboard route into the top bar: focuses its first visible control. */
+  /** Keyboard route into the top bar: focuses its first control (Back on a floor, else the floor plate, else the menu button); Enter on the menu opens it. */
   focusTopbar(): void {
-    const first = [this.back, this.buildings, this.issues, this.prs, this.overview, this.elevator, this.hire, this.battery].find((b) => !b.hidden);
-    first?.focus();
+    [this.back, this.plate, this.menuBtn].find((b) => !b.hidden)?.focus();
+  }
+
+  /** The menu's rows that can be reached, in order (a hidden row, or a group with none, is skipped). */
+  private menuRows(): HTMLButtonElement[] {
+    return [...this.menu.querySelectorAll<HTMLButtonElement>('button')].filter((b) => !b.closest('[hidden]') && !b.hidden && b.offsetParent !== null && !b.closest('.audio-pop'));
   }
 
   get planElement(): HTMLDivElement {
@@ -701,6 +787,10 @@ export class Hud {
     this.overview.title = withKey('Floor overview: everyone on this floor and what they are doing', 'overview');
     this.overview.setAttribute('aria-keyshortcuts', keyName('overview'));
     this.overview.querySelector('.topbar-key')?.setAttribute('data-key', keyName('overview'));
+    // The caps the menu draws beside each row (the table's, as this keyboard labels them).
+    for (const [b, id] of [[this.hire, 'hire'], [this.issues, 'issues'], [this.prs, 'prs'], [this.elevator, 'elevator'], [this.buildings, 'buildings'], [this.settings, 'settings'], [this.battery, 'battery']] as const) b.dataset.key = keyName(id);
+    this.paletteRow.querySelector('.menu-key')?.setAttribute('data-key', keyName('palette'));
+    this.menuBtn.title = `Menu: everything you can do here (${keyName('palette')} searches it)`;
     this.issues.title = this.boardWhy ?? withKey('Issues: this floor’s board as a list', 'issues');
     this.prs.title = this.boardWhy ?? withKey('Pull requests: this floor’s open pull requests as a list', 'prs');
   }

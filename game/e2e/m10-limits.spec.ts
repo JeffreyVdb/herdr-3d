@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import { frames, leftInTerminal, openGame, shot, watchErrors } from './game';
+import { frames, leftInTerminal, openGame, shot, watchErrors, openMenu } from './game';
 
 // M10 (#12) on demo-m4 and the simulating fixture server (tools/fixture-limits.ts): the always-on plan limits widget in the
 // city, on a floor, over an overlay; its colours, panel, staleness, refresh and switch-off; and the limits inside the
@@ -108,7 +108,7 @@ test('it stays on a floor, while walking and over an open overlay', async ({ pag
   await enter(page, 'herdr-3d');
   await expect(limits(page)).toBeVisible();
   await page.keyboard.down('KeyW');
-  await frames(page, 6);
+  await frames(page, 3); // (the slim top bar: a longer walk ends at the board's bare cork, which the shot calls blank)
   await page.keyboard.up('KeyW');
   expect(await onTop(page)).toBe(true);
   await shot(page, 'm10-walk');
@@ -168,6 +168,7 @@ test('it can be hidden from the panel, comes back in Settings and with Shift+L, 
   expect(await page.evaluate(() => localStorage.getItem('h3d.limits.hidden'))).toBe('1');
   await expect(page.locator('.toast')).toHaveText('Plan limits hidden. Show them again in Settings.');
   // Settings has the switch (Display).
+  await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const box = page.locator('#settings-limits');
   await expect(box).not.toBeChecked();
@@ -335,10 +336,10 @@ test('the panel opens and closes when browser storage is unavailable', async ({ 
 
 const inViewport = (b: { x: number; y: number; width: number; height: number }, vp: { width: number; height: number }) => b.x >= 0 && b.y >= 0 && b.x + b.width <= vp.width + 0.5 && b.y + b.height <= vp.height + 0.5;
 
-test('at 320x480 the open panel stays inside the viewport: its body scrolls, Refresh and Hide stay clickable', async ({ page }) => {
+test('at 320x400 the open panel stays inside the viewport: its body scrolls, Refresh and Hide stay clickable', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
-  const vp = { width: 320, height: 480 };
+  const vp = { width: 320, height: 400 };
   await page.setViewportSize(vp);
   await openGame(page, 'demo-m4', '', SIM());
   await withReadings(page);

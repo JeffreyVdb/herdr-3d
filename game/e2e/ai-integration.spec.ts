@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { openGame, shot, watchErrors } from './game';
+import { openGame, shot, watchErrors, openMenu } from './game';
 
 // #92: the "AI integration" section of Settings, against the fixture bridge (`sim=1`, tools/fixture-ai.ts) which calls
 // fake Jev and OpenAI-compatible servers started here on OS-leased loopback ports. Keys are typed once, sent to the
@@ -60,6 +60,7 @@ function fakeOpenAI(): Promise<Fake> {
 
 async function setup(page: Page, jev: Fake): Promise<{ dialog: Locator; classifier: Locator; llm: Locator }> {
   await openGame(page, 'demo', '', `play=none&sim=1&simms=150&simjev=${encodeURIComponent(jev.url)}`);
+  await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
@@ -106,6 +107,7 @@ test('configure both models through the panel: each is ready, the bridge keeps t
 
     // Close and reopen: what the bridge holds is shown, with no key in any field or in the page.
     await page.keyboard.press('Escape');
+    await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(llmBox.getByLabel('Model')).toHaveValue('mimo-v2.6-flash');
     await expect(llmBox).toContainText('ending in cdef');

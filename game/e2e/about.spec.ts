@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { openGame, watchErrors } from './game';
+import { openGame, watchErrors, openMenu } from './game';
 
 test('build versions are not on the canvas; the About panel has them, and only them', async ({ page }) => {
   const clean = watchErrors(page);
@@ -9,6 +9,7 @@ test('build versions are not on the canvas; the About panel has them, and only t
   await expect(page.locator('#versions')).toHaveCount(0);
 
   const button = page.getByRole('button', { name: 'About' });
+  await openMenu(page);
   await button.click();
   const dialog = page.getByRole('dialog', { name: 'About' });
   await expect(dialog).toBeVisible();
@@ -21,6 +22,6 @@ test('build versions are not on the canvas; the About panel has them, and only t
   await expect(dialog.getByText('Day and night')).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
-  await expect(button).toBeFocused();
+  await expect(page.locator('.btn--menu')).toBeFocused();
   clean();
 });

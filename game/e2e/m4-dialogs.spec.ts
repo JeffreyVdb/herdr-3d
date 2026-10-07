@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { frames, openGame, watchErrors } from './game';
+import { frames, openGame, watchErrors, openMenu } from './game';
 
 // #51 on demo-m4 and the simulating fixture server: dialogs never close by accident (a press inside released on the
 // backdrop, a plain backdrop click), the hire dialog keeps what was typed until a hire is acknowledged, and it is a
@@ -200,6 +200,7 @@ test('a read-only sheet (About) closes on a real backdrop click, not on a drag t
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   await openGame(page);
+  await openMenu(page);
   await page.getByRole('button', { name: 'About' }).click();
   const about = page.getByRole('dialog', { name: 'About' });
   await expect(about).toBeVisible();

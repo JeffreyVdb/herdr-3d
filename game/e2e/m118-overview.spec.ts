@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, openGame, shot, watchErrors, openMenu } from './game';
 
 // #118 on demo-m118 (demo-m6 with the overview's lines: issue titles, digests): the lab floor on top of Work holds
 // two write-code runs (Sprout over Clementine, Fig and Pretzel; Juniper over eight freelancers) and Turnip, a one-off
@@ -103,10 +103,9 @@ test('O opens it from a desk, the top bar has Overview, and in the city or the l
   expect((await page_(page))?.from).toBeNull();
   await page.keyboard.press('Escape');
   await expect.poll(async () => (await page_(page))?.open).toBe(false);
-  // The top bar's button, with its key cap (wide enough for it; at 1280 and under the hint line says O).
+  // The menu's row, with its key cap.
   await expect(page.locator('.hint')).toContainText('O overview');
-  await page.setViewportSize({ width: 1600, height: 900 });
-  await frames(page, 2);
+  await openMenu(page);
   const btn = page.getByRole('button', { name: 'Overview' });
   await expect(btn).toBeVisible();
   await expect(btn.locator('.topbar-key')).toHaveAttribute('data-key', 'O');

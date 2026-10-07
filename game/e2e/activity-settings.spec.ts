@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { openGame, shot, watchErrors } from './game';
+import { openGame, shot, watchErrors, openMenu } from './game';
 
 // #98: the Settings window's “Classify unknown commands” against the fixture bridge (`sim=1`,
 // tools/fixture-activity-settings.ts), whose AI integration calls a fake Jev started here on an OS-leased loopback
@@ -33,6 +33,7 @@ function fakeJev(): Promise<Fake> {
 }
 
 async function openSettings(page: Page): Promise<{ dialog: Locator; section: Locator }> {
+  await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
