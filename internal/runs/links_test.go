@@ -8,7 +8,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/runs"
 )
 
-func noLaunch(string) (proto.IssueRef, bool) { return proto.IssueRef{}, false }
+func noLaunch(string) (runs.Launch, bool) { return runs.Launch{}, false }
 
 func repos(m map[string]string) func(string) string { return func(f string) string { return m[f] } }
 
@@ -95,7 +95,7 @@ func TestLinksIssue(t *testing.T) {
 		t.Fatalf("issues = %v", got)
 	}
 	// The launch record wins.
-	launched := func(id string) (proto.IssueRef, bool) { return proto.IssueRef{Repo: "x/y", Number: 3}, id == "o" }
+	launched := func(id string) (runs.Launch, bool) { return runs.Launch{Issue: issue("x/y", 3)}, id == "o" }
 	got = runs.Links(ms, repos(map[string]string{"a": "o/r"}), launched)
 	if *got["o"].Issue != *issue("x/y", 3) || *got["g"].Issue != *issue("x/y", 3) || *got["c2"].Issue != *issue("o/r", 7) {
 		t.Fatalf("launched issues = %v", got)
@@ -134,5 +134,27 @@ func TestNearestDesk(t *testing.T) {
 	}
 	if !runs.Nearer(4, 0, 5) || runs.Nearer(8, 4, 5) || !runs.Nearer(0, 8, 5) {
 		t.Fatal("Nearer: same pod, then pod distance, then index")
+	}
+}
+
+// #184: a run launched on a Kaneo task links its orchestrator and its
+// freelancers to that item, never to a GitHub issue of the floor's
+// numeric tickets (a Kaneo floor has no repo for them).
+func TestLinksOfALaunchedItem(t *testing.T) {
+	ms := []runs.Member{
+		{ID: "o", Floor: "k", Role: "orch", Run: "r", RunToken: true, Ticket: "12"},
+		{ID: "c", Floor: "k", Role: "code", Run: "r", RunToken: true, Ticket: "12"},
+		{ID: "g", Floor: "k", Role: "ground", Run: "r", RunToken: true},
+	}
+	item := &proto.WorkItemRef{Provider: "kaneo", ID: "task-01", Key: "HRD-12"}
+	launched := func(id string) (runs.Launch, bool) { return runs.Launch{Item: item}, id == "o" }
+	got := runs.Links(ms, repos(nil), launched)
+	for _, id := range []string{"o", "c", "g"} {
+		if l := got[id]; l.Issue != nil || l.Item == nil || *l.Item != *item {
+			t.Fatalf("%s = %+v", id, l)
+		}
+	}
+	if got["c"].OrchID != "o" || got["c"].Item == got["o"].Item {
+		t.Fatalf("freelancer link = %+v (it must be its own copy)", got["c"])
 	}
 }

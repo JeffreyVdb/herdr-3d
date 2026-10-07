@@ -49,9 +49,9 @@ type reportState struct {
 }
 
 type launchLookup struct {
-	issue proto.IssueRef
-	ok    bool
-	at    time.Time
+	launch runs.Launch
+	ok     bool
+	at     time.Time
 }
 
 type seatState struct {
@@ -88,7 +88,7 @@ func runMeta(m workerMeta, w world.WorkerObs) workerMeta {
 func (h *Hub) withRun(next *proto.Worker, w world.WorkerObs, m workerMeta, l runs.Link) {
 	next.Round, next.Ticket = w.RunInfo.Round, w.RunInfo.Ticket
 	next.OrchID = l.OrchID
-	next.Issue, next.WorkItem = h.ticketRefs(next.Session, l.Issue) // M7 boards; #118: with the ticket's title
+	next.Issue, next.WorkItem = h.ticketRefs(next.Session, l.Issue, l.Item) // M7 boards; #118: with the ticket's title
 	if w.Role == "orch" {
 		next.Phase = m.phase
 		if m.passSet {
@@ -168,7 +168,17 @@ func (h *Hub) members(session string, obs []world.WorkerObs, ids []string) []run
 }
 
 func (h *Hub) links(ms []runs.Member) map[string]runs.Link {
-	return runs.Links(ms, h.repoOf, h.launched)
+	return runs.Links(ms, h.issueRepoOf, h.launched)
+}
+
+// issueRepoOf is the repo a floor's numeric run tickets are issues of: its
+// effective repo, unless its issues are not GitHub's (#184: a Kaneo floor's
+// "12" is no GitHub issue, whatever repo it works on).
+func (h *Hub) issueRepoOf(floor string) string {
+	if h.settings[floor].Tracker == TrackerKaneo {
+		return ""
+	}
+	return h.repoOf(floor)
 }
 
 // repoOf is a floor's effective repo: its setting, else the suggestion.
@@ -182,37 +192,42 @@ func (h *Hub) repoOf(floor string) string {
 	return ""
 }
 
-// launched is the issue of an orchestrator the game started (its
+// launched is the ticket of an orchestrator the game started (its
 // run_launch record), looked up again a while after a miss.
-func (h *Hub) launched(id string) (proto.IssueRef, bool) {
+func (h *Hub) launched(id string) (runs.Launch, bool) {
 	now := h.opts.Now()
 	if l, ok := h.runs.launches[id]; ok && (l.ok || (now.Sub(l.at) < launchRetry && !now.Before(l.at))) {
-		return l.issue, l.ok
+		return l.launch, l.ok
 	}
 	var l launchLookup
 	if h.opts.RunLaunch != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		l.issue, l.ok = h.opts.RunLaunch(ctx, id)
+		l.launch, l.ok = h.opts.RunLaunch(ctx, id)
 		cancel()
 	}
 	l.at = now
 	h.runs.launches[id] = l
-	return l.issue, l.ok
+	return l.launch, l.ok
 }
 
 // storeRunLaunch is the default Options.RunLaunch: the store's run_launch
-// record of an orchestrator, when it names an issue.
-func storeRunLaunch(st *store.Store, log *slog.Logger) func(context.Context, string) (proto.IssueRef, bool) {
-	return func(ctx context.Context, id string) (proto.IssueRef, bool) {
+// record of an orchestrator, when it names an issue or (#184) an item.
+func storeRunLaunch(st *store.Store, log *slog.Logger) func(context.Context, string) (runs.Launch, bool) {
+	return func(ctx context.Context, id string) (runs.Launch, bool) {
 		l, ok, err := st.RunLaunchByWorker(ctx, id)
 		if err != nil {
 			log.Error("loading run launch failed", "worker", id, "err", err)
-			return proto.IssueRef{}, false
+			return runs.Launch{}, false
 		}
-		if !ok || l.Repo == "" || l.IssueNumber < 1 {
-			return proto.IssueRef{}, false
+		switch {
+		case !ok:
+			return runs.Launch{}, false
+		case l.ItemProvider != "" && l.ItemID != "":
+			return runs.Launch{Item: &proto.WorkItemRef{Provider: l.ItemProvider, ID: l.ItemID, Key: l.ItemKey}}, true
+		case l.Repo != "" && l.IssueNumber >= 1:
+			return runs.Launch{Issue: &proto.IssueRef{Repo: l.Repo, Number: l.IssueNumber}}, true
 		}
-		return proto.IssueRef{Repo: l.Repo, Number: l.IssueNumber}, true
+		return runs.Launch{}, false
 	}
 }
 
@@ -229,7 +244,7 @@ func (h *Hub) relink() {
 	ls := h.links(ms)
 	for _, m := range ms {
 		w, l := h.workers[m.ID], ls[m.ID]
-		issue, item := h.ticketRefs(w.Session, l.Issue) // M7 boards; #118: with the ticket's title
+		issue, item := h.ticketRefs(w.Session, l.Issue, l.Item) // M7 boards; #118: with the ticket's title
 		if w.OrchID == l.OrchID && reflect.DeepEqual(w.Issue, issue) && reflect.DeepEqual(w.WorkItem, item) {
 			continue
 		}

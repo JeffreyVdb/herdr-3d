@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
@@ -30,6 +31,60 @@ const placementLine = "Start every agent you hire in its own herdr workspace or 
 // telling it to move the status, and the extra instructions (trimmed; with the blank line before them left
 // out when empty).
 func RunPrompt(orchHarness, ticket string, isIssue bool, roles proto.PresetRoles, extra string) string {
+	status := ""
+	if isIssue {
+		status = issueStatusLine
+	}
+	return runPrompt(orchHarness, ticket, status, roles, extra)
+}
+
+// maxItemBody bounds how much of an item's description goes into a prompt
+// (#184); the rest stays with the provider.
+const maxItemBody = 6000
+
+// ItemTicket is how a prompt names an item of a provider that numbers no
+// GitHub issues (#184): an agent cannot read it there (the bridge's key
+// never reaches an agent), so the ticket carries what the provider gave:
+// "<Provider> task <key>: <title>", its URL, and its description (its
+// first maxItemBody bytes).
+func ItemTicket(t *proto.RunTicket) string {
+	it := t.Item
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s task %s: %s", t.ProviderName, it.Key, strings.TrimSpace(it.Title))
+	if it.URL != "" {
+		b.WriteString("\n" + it.URL)
+	}
+	if body := strings.TrimSpace(t.Body); body != "" {
+		if len(body) > maxItemBody {
+			n := maxItemBody
+			for n > 0 && !utf8.RuneStart(body[n]) {
+				n--
+			}
+			body = strings.TrimSpace(body[:n]) + "\n\n[The description goes on in " + t.ProviderName + "; this is its first part.]"
+		}
+		b.WriteString("\n\n" + body)
+	}
+	return b.String()
+}
+
+// itemLine tells the orchestrator that the ticket is no GitHub issue
+// (#184): no gh lookups, and the status is not its to move.
+func itemLine(provider string) string {
+	return "This ticket is a " + provider + " task, not a GitHub issue: everything the bridge read of it is above. " +
+		"Don't look it up with gh, and leave its status on the " + provider + " board to people."
+}
+
+// TicketPrompt is RunPrompt for a run ticket: an issue or a text as before,
+// an item (#184) with its text inlined and the item line in place of the
+// status line.
+func TicketPrompt(orchHarness string, t *proto.RunTicket, roles proto.PresetRoles, extra string) string {
+	if t.Kind == proto.TicketItem && t.Item != nil {
+		return runPrompt(orchHarness, ItemTicket(t), itemLine(t.ProviderName), roles, extra)
+	}
+	return RunPrompt(orchHarness, ticketRef(t), t.Kind == proto.TicketIssue, roles, extra)
+}
+
+func runPrompt(orchHarness, ticket, status string, roles proto.PresetRoles, extra string) string {
 	skill := "/write-code"
 	if orchHarness == "codex" {
 		skill = "$write-code"
@@ -52,8 +107,8 @@ func RunPrompt(orchHarness, ticket string, isIssue bool, roles proto.PresetRoles
 		fmt.Fprintf(&b, "\n- %s: %s %s, %s %s", r.what, r.hire.Harness, r.hire.Model, knob, r.hire.Effort)
 	}
 	b.WriteString("\n\n" + placementLine)
-	if isIssue {
-		b.WriteString("\n\n" + issueStatusLine)
+	if status != "" {
+		b.WriteString("\n\n" + status)
 	}
 	if extra = strings.TrimSpace(extra); extra != "" {
 		b.WriteString("\n\n" + extra)

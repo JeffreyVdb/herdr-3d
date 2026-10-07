@@ -17,6 +17,16 @@ type Member struct {
 type Link struct {
 	OrchID string          // freelancers: their orchestrator
 	Issue  *proto.IssueRef // the run's GitHub issue, when a repo is known
+	// Item (#184) is the run's item of a provider that numbers no GitHub
+	// issues (a Kaneo task), from its launch record; never with Issue.
+	Item *proto.WorkItemRef
+}
+
+// Launch is the ticket of an orchestrator the game started (its launch
+// record): a GitHub issue, or a provider's item.
+type Launch struct {
+	Issue *proto.IssueRef
+	Item  *proto.WorkItemRef
 }
 
 // Links links every freelancer to its orchestrator and finds the issue of
@@ -26,9 +36,13 @@ type Link struct {
 // freelancer's issue is its own numeric ticket with its floor's repo, else
 // its orchestrator's. An orchestrator's is its launch record's (launched),
 // else its own numeric ticket, else the most common numeric ticket of its
-// freelancers (ties: the lowest), each with its floor's repo. Members come
-// in a stable order (floors, then sidebar order), which breaks other ties.
-func Links(ms []Member, repoOf func(floor string) string, launched func(orchID string) (proto.IssueRef, bool)) map[string]Link {
+// freelancers (ties: the lowest), each with its floor's repo. A launch
+// record's item (#184) is the orchestrator's, and its freelancers' when
+// they have no issue of their own. Members come in a stable order (floors,
+// then sidebar order), which breaks other ties. repoOf is the repo a
+// numeric ticket is an issue of ("": none, also for a floor whose issues are
+// not GitHub's).
+func Links(ms []Member, repoOf func(floor string) string, launched func(orchID string) (Launch, bool)) map[string]Link {
 	byRun := map[string][]int{}   // run → orchestrators
 	byFloor := map[string][]int{} // floor → orchestrators
 	for i, m := range ms {
@@ -78,8 +92,13 @@ func Links(ms []Member, repoOf func(floor string) string, launched func(orchID s
 			continue
 		}
 		var issue *proto.IssueRef
-		if l, ok := launched(m.ID); ok {
-			issue = &l
+		if l, ok := launched(m.ID); ok && l.Item != nil {
+			item := *l.Item
+			out[m.ID] = Link{Item: &item}
+			continue
+		} else if ok && l.Issue != nil {
+			c := *l.Issue
+			issue = &c
 		} else if issue = own(m); issue == nil {
 			counts := map[int]int{}
 			best := 0
@@ -111,6 +130,9 @@ func Links(ms []Member, repoOf func(floor string) string, launched func(orchID s
 				if oi := out[ms[o].ID].Issue; oi != nil {
 					c := *oi
 					l.Issue = &c
+				} else if it := out[ms[o].ID].Item; it != nil {
+					c := *it
+					l.Item = &c
 				}
 			}
 		}

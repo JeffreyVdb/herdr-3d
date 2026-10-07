@@ -23,23 +23,36 @@ const titleTimeout = 15 * time.Second
 
 // itemTitle is what the bridge read of an item off its board (hub goroutine).
 type itemTitle struct {
-	session    string
-	fetching   bool
-	done       bool // read (or given up): never asked again
-	title, url string
+	session         string
+	fetching        bool
+	done            bool // read (or given up): never asked again
+	title, url, key string
 }
 
-// ticketRefs is a worker's issue and work item for its run's issue on a
-// floor (nil, nil without one): copies, the title and URL filled in when
-// the floor's provider has them. A miss is asked about once (fetchTitles).
-func (h *Hub) ticketRefs(session string, issue *proto.IssueRef) (*proto.IssueRef, *proto.WorkItemRef) {
+// ticketRefs is a worker's issue and work item for its run's issue (or
+// #184 its run's item of a provider that numbers no GitHub issues) on a
+// floor (nil, nil without one): copies, the title and URL (and an item's
+// key) filled in when the floor's provider has them. A miss is asked about
+// once (fetchTitles).
+func (h *Hub) ticketRefs(session string, issue *proto.IssueRef, runItem *proto.WorkItemRef) (*proto.IssueRef, *proto.WorkItemRef) {
 	if issue == nil {
-		return nil, nil
+		if runItem == nil {
+			return nil, nil
+		}
+		item := &proto.WorkItemRef{Provider: runItem.Provider, ID: runItem.ID, Key: runItem.Key}
+		if bf := h.boardOf(session); bf != nil && bf.info.ID == item.Provider {
+			var key string
+			item.Title, item.URL, key = h.titleOf(session, item.ID)
+			if key != "" {
+				item.Key = key
+			}
+		}
+		return nil, item
 	}
 	out := &proto.IssueRef{Repo: issue.Repo, Number: issue.Number}
 	item := h.workItemOf(session, out)
 	if item != nil {
-		item.Title, item.URL = h.titleOf(session, item.ID)
+		item.Title, item.URL, _ = h.titleOf(session, item.ID)
 		out.Title, out.URL = item.Title, item.URL
 	}
 	return out, item
@@ -47,43 +60,43 @@ func (h *Hub) ticketRefs(session string, issue *proto.IssueRef) (*proto.IssueRef
 
 func titleKey(provider, id string) string { return provider + "\x00" + id }
 
-// titleOf is an item's title and URL: its card on the floor's board, else
-// what one Get found (an item not read yet is queued for it). The URL
+// titleOf is an item's title, URL and key: its card on the floor's board,
+// else what one Get found (an item not read yet is queued for it). The URL
 // falls back to the provider's own link of the item.
-func (h *Hub) titleOf(session, id string) (string, string) {
+func (h *Hub) titleOf(session, id string) (string, string, string) {
 	bf := h.boardOf(session)
 	if bf == nil {
-		return "", ""
+		return "", "", ""
 	}
-	title, url, ok := cardTitle(bf, id)
+	title, url, key, ok := cardTitle(bf, id)
 	if !ok {
-		key := titleKey(bf.info.ID, id)
-		e := h.boards.titles[key]
+		k := titleKey(bf.info.ID, id)
+		e := h.boards.titles[k]
 		if e == nil {
 			e = &itemTitle{session: session}
-			h.boards.titles[key] = e
+			h.boards.titles[k] = e
 		}
-		title, url = e.title, e.url
+		title, url, key = e.title, e.url, e.key
 	}
 	if url == "" {
 		if rl, ok := bf.set.Tracker.(tracker.RunLinker); ok {
 			_, _, url, _ = rl.RunFromItem(id)
 		}
 	}
-	return title, url
+	return title, url, key
 }
 
 // cardTitle is an item's card on the floor's last good board.
-func cardTitle(bf *boardFloor, id string) (string, string, bool) {
+func cardTitle(bf *boardFloor, id string) (string, string, string, bool) {
 	if bf.issues == nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	for _, c := range bf.issues.Cards {
 		if c.ID == id {
-			return c.Title, c.URL, true
+			return c.Title, c.URL, c.Key, true
 		}
 	}
-	return "", "", false
+	return "", "", "", false
 }
 
 // fetchTitles reads the items a worker's ticket needs that no board had,
@@ -99,7 +112,7 @@ func (h *Hub) fetchTitles(ctx context.Context) {
 			e.done = true
 			continue
 		}
-		if _, _, ok := cardTitle(bf, id); ok {
+		if _, _, _, ok := cardTitle(bf, id); ok {
 			e.done = true // the board has it meanwhile
 			continue
 		}
@@ -117,7 +130,7 @@ func (h *Hub) fetchTitles(ctx context.Context) {
 					h.log.Info("reading a ticket's title failed", "session", e.session, "item", id, "err", briefError(err))
 					return
 				}
-				e.title, e.url = d.Card.Title, d.Card.URL
+				e.title, e.url, e.key = d.Card.Title, d.Card.URL, d.Card.Key
 				h.refreshTickets(e.session)
 			})
 		}()
@@ -125,8 +138,8 @@ func (h *Hub) fetchTitles(ctx context.Context) {
 }
 
 // refreshTickets puts the current title and URL on every worker of a floor
-// whose run has an issue (a poll or a read changed them): a worker.upsert
-// for each one that moved.
+// whose run has an issue or (#184) an item (a poll or a read changed them):
+// a worker.upsert for each one that moved.
 func (h *Hub) refreshTickets(session string) {
 	f := h.floors[session]
 	if f == nil {
@@ -134,10 +147,14 @@ func (h *Hub) refreshTickets(session string) {
 	}
 	for _, id := range f.order {
 		w := h.workers[id]
-		if w == nil || w.Issue == nil {
+		if w == nil || (w.Issue == nil && w.WorkItem == nil) {
 			continue
 		}
-		issue, item := h.ticketRefs(session, w.Issue)
+		var runItem *proto.WorkItemRef
+		if w.Issue == nil {
+			runItem = w.WorkItem
+		}
+		issue, item := h.ticketRefs(session, w.Issue, runItem)
 		if reflect.DeepEqual(issue, w.Issue) && reflect.DeepEqual(item, w.WorkItem) {
 			continue
 		}

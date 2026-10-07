@@ -324,8 +324,10 @@ func (fb *fakeBoards) factory(src server.BoardSource) (server.BoardSet, bool) {
 		if tr == nil {
 			return server.BoardSet{}, false
 		}
+		// Only the Tracker interface: Kaneo is no RunLinker (its items are
+		// no numbered issues of a repository).
 		set := server.BoardSet{Key: fmt.Sprintf("kaneo:%s:%s:%s:g%d", src.KaneoAPIBase, src.KaneoWorkspace, src.KaneoProject, src.KaneoGeneration),
-			Tracker: tr}
+			Tracker: struct{ tracker.Tracker }{tr}}
 		if host != nil {
 			set.Host, set.Key = host, set.Key+"|fake:"+src.Repo
 		}

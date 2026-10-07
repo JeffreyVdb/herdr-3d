@@ -427,3 +427,62 @@ func TestKaneoForbiddenCommand(t *testing.T) {
 	kb.c.mustError(proto.CmdIssueComment, proto.CommentArgs{Session: "s", ID: "t1", Body: "hi"}, proto.ErrForbidden)
 	kb.c.mustError(proto.CmdIssueClose, proto.IssueCloseArgs{Session: "s", ID: "t1", Reason: "completed", Confirm: true}, proto.ErrUnsupported)
 }
+
+// "Hand to a worker" on a Kaneo task: the run's ticket is the item
+// resolved through the tracker (key, title, URL, description), its prompt
+// inlines them and sends nobody to gh, the launch record keeps
+// {provider, id} (never a repo or number), and the orchestrator and its
+// crew carry the item, not a GitHub issue.
+func TestKaneoRunWorkItem(t *testing.T) {
+	kb := startKaneoBridge(t)
+	tr := kb.fb.kaneoTracker("p1", 1)
+	url := kaneoURL + "/dashboard/workspace/ws1/project/p1/task/t1"
+	c1 := card("t1", "HRD-12", "Kaneo boards", "to-do")
+	c1.URL = url
+	tr.board.Cards = []tracker.Card{c1}
+	tr.detail = tracker.Detail{Card: c1, Body: "Make the floor read Kaneo.\n\n" + strings.Repeat("Details. ", 1000)}
+	kb.git.repos["/home/u/lab"] = "/home/u/lab"
+	kb.saveConnection(kaneoKey)
+	kb.c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", Tracker: proto.Some(proto.TrackerKaneo),
+		Kaneo: proto.Some(proto.KaneoLinkArgs{WorkspaceID: "ws1", ProjectID: "p1"}), DefaultCwd: proto.Some("/home/u/lab")})
+	kb.polled("s")
+	decorateRoles(kb.boardBridge)
+	item := &proto.WorkItemRef{Provider: "kaneo", ID: "t1"}
+
+	_, m := kb.c.command(proto.CmdRunPrepare, "p", proto.RunPrepareArgs{Session: "s", WorkItem: item})
+	res := ackData[proto.RunPrepareResult](t, m)
+	if res.Ticket == nil || res.Ticket.Kind != proto.TicketItem || res.Ticket.Item == nil || res.Ticket.Item.Key != "HRD-12" ||
+		res.Ticket.Item.URL != url || res.Ticket.Repo != "" || res.Ticket.Number != 0 || res.Label != "ORCH|hrd-12" {
+		t.Fatalf("prepare = %+v (ticket %+v)", res, res.Ticket)
+	}
+	for _, want := range []string{"/write-code Kaneo task HRD-12: Kaneo boards\n" + url + "\n\nMake the floor read Kaneo.",
+		"[The description goes on in Kaneo; this is its first part.]", "not a GitHub issue", "Don't look it up with gh"} {
+		if !strings.Contains(res.Prompt, want) {
+			t.Errorf("the prompt lacks %q", want)
+		}
+	}
+	if strings.Contains(res.Prompt, statusLine) || strings.Contains(res.Prompt, "github.com") || strings.Contains(string(m.raw), kaneoKey) {
+		t.Fatalf("prompt = %q", res.Prompt)
+	}
+	kb.c.mustError(proto.CmdRunPrepare, proto.RunPrepareArgs{Session: "s", WorkItem: &proto.WorkItemRef{Provider: "kaneo", ID: "elsewhere"}}, proto.ErrNotFound)
+	kb.c.mustError(proto.CmdRunPrepare, proto.RunPrepareArgs{Session: "s", WorkItem: &proto.WorkItemRef{Provider: "github", ID: "t1"}}, proto.ErrNotFound)
+
+	preset := kb.connect(proto.Hello{}).snapshot().World.Presets[0].ID
+	desk := 1
+	evs, m := kb.c.command(proto.CmdRunStart, "rs", proto.RunStartArgs{Session: "s", DeskIndex: &desk, WorkItem: item, Orch: &buildTeam.Orch, Preset: preset})
+	start := ackData[proto.RunStartResult](t, m)
+	l, ok, err := kb.st.RunLaunchByWorker(t.Context(), start.ID)
+	if err != nil || !ok || l.ItemProvider != "kaneo" || l.ItemID != "t1" || l.ItemKey != "HRD-12" || l.Repo != "" || l.IssueNumber != 0 || l.TicketText != "" {
+		t.Fatalf("run_launch = %+v %v %v", l, ok, err)
+	}
+	var orch *proto.Worker
+	for _, ev := range evs {
+		if ev.T == proto.EvWorkerUpsert && ev.Worker.ID == start.ID && ev.Worker.WorkItem != nil {
+			orch = ev.Worker
+		}
+	}
+	if orch == nil || orch.Issue != nil || *orch.WorkItem != (proto.WorkItemRef{Provider: "kaneo", ID: "t1", Key: "HRD-12", Title: "Kaneo boards", URL: url}) {
+		t.Fatalf("the orchestrator's link before the ack: %+v", orch)
+	}
+	kb.noKey(kaneoKey)
+}

@@ -28,6 +28,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
 	"github.com/JeffreyVdb/herdr-3d/internal/packup"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/runs"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/whiteboard"
@@ -181,9 +182,10 @@ type Options struct {
 	// ReportPoll how often they are looked at (default DefaultReportPoll).
 	RunsDir    string
 	ReportPoll time.Duration
-	// RunLaunch finds the issue of an orchestrator the game started, from
-	// its run_launch record (default: the store's).
-	RunLaunch func(ctx context.Context, workerID string) (proto.IssueRef, bool)
+	// RunLaunch finds the ticket of an orchestrator the game started (an
+	// issue, or #184 a provider's item), from its run_launch record
+	// (default: the store's).
+	RunLaunch func(ctx context.Context, workerID string) (runs.Launch, bool)
 
 	// M7 boards.
 	// Boards finds the issue tracker and the code host of a floor's link
