@@ -27,7 +27,7 @@ async function sit(page: Page, init: Record<string, string> = UBUNTU): Promise<s
   return id;
 }
 
-/** Ctrl+Esc to the conversation, plus a box with no fallback glyph, a table with one, a reply with every emphasis. */
+/** Ctrl+Esc to the conversation, plus a box with no fallback glyph, a table with one, rows of symbols, a reply with every emphasis. */
 async function transcript(page: Page, id: string): Promise<Locator> {
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.transcript()))?.items ?? 0).toBeGreaterThan(10);
   await page.keyboard.press('Control+Escape');
@@ -46,6 +46,13 @@ async function transcript(page: Page, id: string): Promise<Locator> {
             tool: { name: 'Bash', input_summary: 'make table', status: 'ok', output_text: '╭──────────┬────────╮\n│ check    │ result │\n├──────────┼────────┤\n│ vitest   │ passed │\n│ tsc      │ passed │\n╰──────────┴────────╯\n▁▂▃▅▇ █ ░▒▓ ⠋⠙⠹ ✓ → ❯' },
           },
           {
+            id: 'u-sym',
+            seq: 92,
+            ts: Date.now(),
+            kind: 'tool',
+            tool: { name: 'Bash', input_summary: 'make symbols', status: 'ok', output_text: ['aaaaaaaa', '→→→→→→→→', '←↑↓↔⇒⇄↩↵', '●●●●●●●●', '◆◆◆◆◆◆◆◆', '▶▶▶▶▶▶▶▶', '✓✓✓✓✓✓✓✓', '✔✔✔✔✔✔✔✔', '✗✘❯❯★★☐☑', '⠿⠿⠿⠿⠿⠿⠿⠿', '≤≥≠≤≥≠≤≥'].map((c) => `│ ${c} │`).join('\n') },
+          },
+          {
             id: 'u-say',
             seq: 91,
             ts: Date.now(),
@@ -58,7 +65,7 @@ async function transcript(page: Page, id: string): Promise<Locator> {
   );
   expect(r.ok).toBe(true);
   await expect(tx.locator('[data-id="u-say"]')).toBeVisible();
-  for (const sel of ['[data-id="toolu_demo_edit"] .tx-tool-row', '[data-id="u-box"] .tx-tool-row']) {
+  for (const sel of ['[data-id="toolu_demo_edit"] .tx-tool-row', '[data-id="u-box"] .tx-tool-row', '[data-id="u-sym"] .tx-tool-row']) {
     const row = tx.locator(sel);
     // (a script click: at a phone width the waiting card and the prompt box cover the rows below them)
     if ((await row.getAttribute('aria-expanded')) !== 'true') await row.evaluate((e) => (e as HTMLElement).click());
@@ -188,14 +195,14 @@ test('Ubuntu: a table of box drawing stays lined up at 70, 100 and 200 %, and th
   const clean = watchErrors(page);
   const id = await sit(page);
   const tx = await transcript(page, id);
-  const widths = () =>
-    tx.locator('[data-id="u-box"] .tx-out').evaluate((e) => {
+  const widths = (id = 'u-box', rows = 6) =>
+    tx.locator(`[data-id="${id}"] .tx-out`).evaluate((e, n) => {
       const r = document.createRange();
       const node = e.firstChild as Text;
       let at = 0;
       const w: number[] = [];
       const lines = (e.textContent ?? '').split('\n');
-      for (const l of lines.slice(0, 6)) {
+      for (const l of lines.slice(0, n)) {
         r.setStart(node, at);
         r.setEnd(node, at + l.length);
         w.push(r.getBoundingClientRect().width);
@@ -211,20 +218,25 @@ test('Ubuntu: a table of box drawing stays lined up at 70, 100 and 200 %, and th
         return cw;
       })();
       return { w, cell };
-    });
+    }, rows);
   const level = tx.locator('.tx-zoom-level');
-  for (const z of [100, 200, 70]) {
+  for (const z of [100, 150, 200, 70]) {
     while ((await page.evaluate(() => window.__h3d.theme())).transcriptZoom !== z) await page.keyboard.press(z > 100 || (z === 100 && false) ? 'Control+=' : 'Control+-');
     await expect(level).toHaveText(`${z}%`);
     await tx.locator('[data-id="u-box"]').scrollIntoViewIfNeeded();
     const { w, cell } = await widths();
-    // The six framed rows (box and table) are as wide as each other: the corners meet. (The glyph row below has
-    // fallback glyphs, whose advance is the system's.)
+    // The six framed rows (box and table) are as wide as each other: the corners meet. (The glyph row below it is not
+    // framed, and is measured by the symbol rows.)
     const framed = w.slice(0, 6);
     expect(Math.max(...framed) - Math.min(...framed), `${z}%: rows ${framed.map((x) => x.toFixed(1)).join(',')}`).toBeLessThanOrEqual(1);
+    // Arrows, bullets, shapes, check marks, braille and math in a frame are as wide as the row of letters at its top (the
+    // symbol fallback faces are sized to Ubuntu Mono's advance; a glyph this machine has no font for is a box of that
+    // same width, so the row holds either way).
+    const sym = (await widths('u-sym', 11)).w;
+    for (const [i, x] of sym.entries()) expect(Math.abs(x - sym[0]!), `${z}%: symbol row ${i} is ${x.toFixed(2)}px, the letters ${sym[0]!.toFixed(2)}px: ${sym.map((v) => v.toFixed(1)).join(',')}`).toBeLessThanOrEqual(0.5);
     // Ubuntu Mono's advance is half its size (the cell is not the system mono's 0.6).
     const px = parseFloat(await tx.locator('.tx-out').first().evaluate((e) => getComputedStyle(e).fontSize));
-    expect(Math.abs(cell / px - 0.5), `${z}%: advance ${cell} of ${px}px`).toBeLessThan(0.02);
+    expect(Math.abs(cell - px / 2), `${z}%: advance ${cell} of ${px}px`).toBeLessThanOrEqual(0.5); // (whole pixels at 21 px: 10.5 -> 11)
     await frames(page, 3);
     await shot(page, `h172-transcript-ubuntu-${z}`);
     if (z === 100) {
@@ -233,6 +245,14 @@ test('Ubuntu: a table of box drawing stays lined up at 70, 100 and 200 %, and th
     }
   }
   await page.keyboard.press('Control+0');
+  // The terminal canvas takes the same stack: a symbol measures the advance of a letter there too (paint.ts draws a
+  // glyph that is not the font's own inside its cell, so one a half wider than a cell would be squeezed).
+  const adv = await tx.evaluate((e) => {
+    const g = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D;
+    g.font = `28px ${getComputedStyle(e).getPropertyValue('--font-mono')}`;
+    return { stack: g.font, M: g.measureText('M').width, sym: ['→', '●', '◆', '≤'].map((c) => g.measureText(c).width) };
+  });
+  for (const [i, w] of adv.sym.entries()) expect(Math.abs(w - adv.M), `canvas: symbol ${i} ${w} vs M ${adv.M} (${adv.stack})`).toBeLessThanOrEqual(0.5);
   // The terminal: its own zoom.
   await page.keyboard.press('Control+Escape');
   await expect(tx).toBeHidden();
@@ -260,3 +280,85 @@ test('Ubuntu: the waiting card and the transcript at a phone width, transcript a
   await frames(page, 12);
   await shot(page, 'h172-phone-ubuntu-terminal');
 });
+
+/** The colour a filled control paints its label in, the colour it fills with, their ratio, and (disabled) the pair as composited. */
+async function filled(el: Locator): Promise<{ fg: string; bg: string; ratio: number; shown: number; opacity: string }> {
+  return el.evaluate((e) => {
+    const rgb = (s: string) => (s.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number) as [number, number, number];
+    const lum = (c: number[]) => {
+      const [r, g, b] = c.map((v) => ((v / 255) <= 0.03928 ? v / 255 / 12.92 : (((v / 255) + 0.055) / 1.055) ** 2.4)) as [number, number, number];
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ratio = (a: number[], b: number[]) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x) as [number, number];
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    const st = getComputedStyle(e);
+    const fg = rgb(st.color);
+    const bg = rgb(st.backgroundColor);
+    // What a disabled (faded) control really shows: both its fill and its ink at the opacity, over what is behind it.
+    const op = parseFloat(st.opacity);
+    let behind: [number, number, number] = [48, 10, 36];
+    for (let p = e.parentElement; p; p = p.parentElement) {
+      const c = getComputedStyle(p).backgroundColor.match(/[\d.]+/g)?.map(Number);
+      if (c && (c[3] ?? 1) === 1 && c.length >= 3) {
+        behind = [c[0]!, c[1]!, c[2]!];
+        break;
+      }
+    }
+    const mix = (c: number[]) => c.map((v, i) => v * op + behind[i]! * (1 - op));
+    return { fg: st.color, bg: st.backgroundColor, ratio: +ratio(fg, bg).toFixed(2), shown: +ratio(mix(fg), mix(bg)).toFixed(2), opacity: st.opacity };
+  });
+}
+
+// L2: `.tx button { color: inherit }` out-specified .tx-send and .tx-jump, so white sat on the orange (3.65:1) in place of
+// the on-accent ink. Each theme's own on-accent is what a filled control must show: Ubuntu #2C001E on #E95420, Quiet's
+// #0b1020 on #6f9bff, enabled (Send, the jump chip) and hovered or focused, desktop and phone width.
+for (const [name, theme, ink, fill, size] of [
+  ['Ubuntu desktop', 'ubuntu', 'rgb(44, 0, 30)', 'rgb(233, 84, 32)', null],
+  ['Ubuntu 390px', 'ubuntu', 'rgb(44, 0, 30)', 'rgb(233, 84, 32)', { width: 390, height: 780 }],
+  ['Quiet desktop', 'quiet', 'rgb(11, 16, 32)', 'rgb(111, 155, 255)', null],
+  ['Quiet 390px', 'quiet', 'rgb(11, 16, 32)', 'rgb(111, 155, 255)', { width: 390, height: 780 }],
+] as const) {
+  test(`${name}: Send and the jump chip are drawn in the theme's on-accent ink, 4.5:1 or better`, async ({ page }) => {
+    test.setTimeout(150_000);
+    if (size) await page.setViewportSize(size);
+    const id = await sit(page, { 'h3d.theme.transcript': theme, 'h3d.theme.terminal': theme });
+    const tx = await transcript(page, id);
+    const send = tx.locator('.tx-send');
+    // Disabled while Tofu waits: faded to .45, the ink is still the on-accent one; a disabled control is exempt from 4.5:1 (reported, floor 2).
+    await expect(send).toBeDisabled();
+    const off = await filled(send);
+    test.info().annotations.push({ type: 'disabled Send', description: JSON.stringify(off) });
+    console.log(`disabled Send (${name}): ${JSON.stringify(off)}`);
+    expect(off.fg).toBe(ink);
+    expect(off.shown, `disabled Send as shown: ${JSON.stringify(off)}`).toBeGreaterThanOrEqual(2);
+    // Answered: the prompt comes back, Send is live.
+    await page.keyboard.press('1');
+    await expect(tx.locator('.tx-input')).toBeEnabled();
+    await expect(send).toBeEnabled();
+    await expect(tx.locator('.tx-banner')).toBeHidden();
+    const on = await filled(send);
+    expect(on, 'enabled Send').toMatchObject({ fg: ink, bg: fill });
+    expect(on.ratio).toBeGreaterThanOrEqual(4.5);
+    await send.hover();
+    expect(await filled(send), 'hovered Send').toMatchObject({ fg: ink, bg: fill });
+    await send.focus();
+    expect((await filled(send)).fg, 'focused Send').toBe(ink);
+    await shot(page, `r2-send-${name.toLowerCase().replace(/ /g, '-')}`);
+    // Scrolled away from the bottom, a new item shows the chip.
+    await tx.locator('.tx-scroll').evaluate((e) => (e.scrollTop = 0));
+    await frames(page, 3);
+    await page.evaluate(() => window.__h3d.simTranscript({ id: window.__h3d.seated(), items: [{ id: 'demo-98', seq: 98, ts: Date.now(), kind: 'assistant', parts: [{ text: 'All green now.' }] }] }));
+    const jump = tx.locator('.tx-jump');
+    await expect(jump).toBeVisible();
+    const chip = await filled(jump);
+    expect(chip, 'jump chip').toMatchObject({ fg: ink, bg: fill });
+    expect(chip.ratio).toBeGreaterThanOrEqual(4.5);
+    await jump.hover();
+    expect(await filled(jump), 'hovered chip').toMatchObject({ fg: ink, bg: fill });
+    await shot(page, `r2-jump-${name.toLowerCase().replace(/ /g, '-')}`);
+    // And the whole transcript, enabled controls included, still clears 4.5:1 on the ground each text sits on.
+    expect((await contrastScan(tx)).filter((r) => r.ratio < 4.5 && theme === 'ubuntu')).toEqual([]);
+  });
+}

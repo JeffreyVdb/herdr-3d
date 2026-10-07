@@ -706,7 +706,7 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   send-home dialog (`sendHome.ts`), styled in `hire.css`; M6: the start-run dialog (`startRun.ts`, the empty desk's
   "Hire orchestrator" tab from `deskTabs.ts`, the top bar's Run and Presets from `startButtons.ts`) and the team presets
   panel (`presets.ts`), styled in `start.css`, and the prompt bar's crew line (`crewBar.ts`, `crew.css`); #59: the
-  two presets (`themes.ts`: typed constants, the zoom's clamp / step / reset; #172: Ubuntu and Quiet, a stored `terminal` or `paper` migrates in `themePrefs.ts` to `ubuntu` or `quiet`; the accent as text is its own `blue-text` token, `blue` is for fills and rings), what the
+  two presets (`themes.ts`: typed constants, the zoom's clamp / step / reset; #172: Ubuntu and Quiet, a stored `terminal` or `paper` migrates in `themePrefs.ts` to `ubuntu` or `quiet`; the accent as text is its own `blue-text` token, `blue` is for fills and rings); Ubuntu's mono stack is Ubuntu Mono, H3D Box Ubuntu and three `H3D Symbols Ubuntu` `local()` faces sized to its 0.5 em advance (`fonts/ubuntu.css`; `e2e/h172-ubuntu.spec.ts` measures a symbol row against a row of letters at 70 to 200 %), and a filled control's colour rule must out-rank `.tx button`, so it sits under `.tx`, what the
   seated views remember (`themePrefs.ts`: the transcript's and the terminal's preset and zoom apart,
   `h3d.theme.{transcript,terminal}`, `h3d.zoom.{transcript,terminal}`, and `h3d.transcript.hideTools`, guarded like
   `limitsPrefs.ts`; M17's `timePrefs.ts` too: the timezone and latitude of About's Day and night) and the loader (`themeLoader.ts`: the transcript's preset as custom properties on the root, fonts
