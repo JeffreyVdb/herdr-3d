@@ -258,6 +258,12 @@ pages:
 			break
 		}
 	}
+	// Every task Kaneo counts is in one of the page's columns, so a whole
+	// read has seen each. Fewer is a board that moved under the read with
+	// the total unchanged (a reorder between pages), more one that grew.
+	if total >= 0 && len(acc.order) != total {
+		truncated = true
+	}
 	s, b := t.build(cols, &acc)
 	s.truncated, b.Truncated = truncated, truncated
 	return s, b, nil

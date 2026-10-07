@@ -181,7 +181,7 @@ func TestBoardIsBounded(t *testing.T) {
 			f.on("GET", "/task/tasks/pr_1", func(w http.ResponseWriter, r *http.Request) {
 				var p int
 				fmt.Sscanf(r.URL.Query().Get("page"), "%d", &p)
-				total := 500
+				total := tc.totalPages
 				if tc.changing {
 					total += p
 				}
@@ -195,6 +195,32 @@ func TestBoardIsBounded(t *testing.T) {
 				t.Fatalf("%d calls, %d cards, truncated %v", n, len(b.Cards), b.Truncated)
 			}
 		})
+	}
+}
+
+// Tasks reordered between pages with the total unchanged: page 2 repeats
+// page 1's last task and one task is never seen. The board is incomplete
+// though every page agrees on the total.
+func TestBoardMissingTasksAreTruncated(t *testing.T) {
+	f := newFake(t)
+	f.json("GET", "/column/pr_1", 200, fixture(t, "columns.json"))
+	f.on("GET", "/task/tasks/pr_1", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") == "1" {
+			io.WriteString(w, page(1, 100, 101, 2, 1, "to-do"))
+		} else {
+			io.WriteString(w, page(100, 1, 101, 2, 1, "to-do"))
+		}
+	})
+	tr := newTracker(t, f)
+	b, err := tr.Board(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Cards) != 100 || !b.Truncated {
+		t.Fatalf("%d cards, truncated %v: 101 tasks on the board", len(b.Cards), b.Truncated)
+	}
+	if !tr.last.truncated {
+		t.Fatal("the snapshot of an incomplete read is not truncated")
 	}
 }
 
