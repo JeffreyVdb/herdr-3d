@@ -3,6 +3,7 @@ package codexapp
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -525,9 +526,10 @@ func TestQuestionsRestoreASendAcrossARestart(t *testing.T) {
 func TestQuestionsLegacyIDsAreUnresolved(t *testing.T) {
 	reply := []Reply{{Index: 0, Text: "Green"}}
 	q := NewQuestions("th")
-	q.Hydrate([]Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("item-2", colorQ)}}})
-	if !q.Unresolved() {
-		t.Fatal("a legacy batch: resolved")
+	legacy := []Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("item-2", colorQ)}}}
+	q.Hydrate(legacy)
+	if !LegacyHistory(legacy) {
+		t.Fatal("a legacy history: resolved")
 	}
 	if _, err := q.Check("item-2", reply); !errors.Is(err, ErrUnresolved) {
 		t.Fatalf("answering item-2: %v", err)
@@ -543,10 +545,11 @@ func TestQuestionsLegacyIDsAreUnresolved(t *testing.T) {
 	}
 
 	// The next join reads it under its call_id: the alias goes.
+	canonical := []Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("call_3", colorQ)}}}
 	q.DropLegacy()
-	q.Hydrate([]Turn{{ID: "t1", Status: TurnInProgress, Items: []Item{asyncItem("call_3", colorQ)}}})
-	if q.Unresolved() || q.Batch("item-2") != nil || len(q.Batches()) != 1 {
-		t.Fatalf("after a canonical join: unresolved %v, batches %+v", q.Unresolved(), q.Batches())
+	q.Hydrate(canonical)
+	if LegacyHistory(canonical) || q.Batch("item-2") != nil || len(q.Batches()) != 1 {
+		t.Fatalf("after a canonical join: batches %+v", q.Batches())
 	}
 	if _, err := q.Check("call_3", reply); err != nil {
 		t.Fatalf("call_3: %v", err)
@@ -560,7 +563,45 @@ func TestQuestionsLegacyIDsAreUnresolved(t *testing.T) {
 		t.Fatalf("twins: %+v", q.Batches())
 	}
 	q.DropLegacy()
-	if b := q.Batch("call_3"); b == nil || b.Twin != "" || q.Batch("item-2") != nil || q.Unresolved() {
+	if b := q.Batch("call_3"); b == nil || b.Twin != "" || q.Batch("item-2") != nil {
 		t.Fatalf("after DropLegacy: %+v", q.Batches())
+	}
+}
+
+// #158: a batch the view drops for room is never one whose answer is on its
+// way (sending): the oldest other one goes.
+func TestQuestionsKeepABatchWhileItsAnswerIsSending(t *testing.T) {
+	q := NewQuestions("th")
+	q.Observe("t1", asyncItem("call_0", contextQ), OriginLive)
+	if _, err := q.Begin("call_0", []Reply{{Index: 0, Text: "x"}}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= MaxBatches; i++ {
+		q.Observe("t1", asyncItem(fmt.Sprintf("call_%d", i), contextQ), OriginLive)
+	}
+	if q.Batch("call_0") == nil || q.Batch("call_1") != nil || len(q.Batches()) != MaxBatches {
+		t.Fatalf("batches: call_0 %v, call_1 %v, %d in all", q.Batch("call_0") != nil, q.Batch("call_1") != nil, len(q.Batches()))
+	}
+	// Sent: no longer protected (its record, the server's, outlives it).
+	q.Sent("call_0", []int{0}, "t1", false)
+	q.Observe("t1", asyncItem("call_x", contextQ), OriginLive)
+	if q.Batch("call_0") != nil {
+		t.Fatal("a sent batch kept past MaxBatches")
+	}
+}
+
+// #158: what a join's history says on its own, whatever the view kept.
+func TestHistoryHelpers(t *testing.T) {
+	turns := []Turn{{ID: "t1", Items: []Item{asyncItem("call_3", colorQ),
+		{Type: ItemUserMessage, ID: "item-4", Content: []UserInput{{Type: "text",
+			Text: ReplyEnvelope(Answer{MessageID: "call_3", Index: 0, Answer: "Green"})}}}}}}
+	if !InHistory(turns, "call_3") || InHistory(turns, "call_9") || !LegacyHistory(turns) {
+		t.Fatal("InHistory / LegacyHistory")
+	}
+	if a := Answers(turns[0].Items[1]); len(a) != 1 || a[0].MessageID != "call_3" || a[0].Index != 0 {
+		t.Fatalf("Answers = %+v", a)
+	}
+	if a := Answers(turns[0].Items[0]); a != nil {
+		t.Fatalf("Answers of a batch = %+v", a)
 	}
 }

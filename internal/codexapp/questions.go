@@ -20,7 +20,7 @@ import (
 //     under legacy ids (item-1, …): the join reads it again
 //     (Watcher.legacyTurns, #158). A batch still under one when that read
 //     fails or finds nothing cannot be answered (ErrUnresolved), and the
-//     join is unresolved (Unresolved) until a join reads its call_id.
+//     join is unresolved (LegacyHistory) until a join reads its call_id.
 //   - The tool's {"accepted":true} only schedules it. A question is answered
 //     only by a user message whose text is the reply envelope naming its
 //     (call_id, index), whoever sent it: the bridge or the terminal.
@@ -398,14 +398,25 @@ func (q *Questions) addBatch(b Batch, origin string) bool {
 }
 
 // drop forgets the oldest resolved batch (every question answered or
-// dismissed), else the oldest.
+// dismissed), else the oldest that has no answer on its way (sending: its
+// request in flight, #158: a join must still see it as the bridge's own).
+// A dropped batch's recorded send (the bridge's, codex_async_send) stays:
+// the batch is gone from the view only, not from the thread.
 func (q *Questions) drop() {
-	at := 0
+	at := -1
 	for i, id := range q.order {
 		if q.batches[id].resolved() {
 			at = i
 			break
 		}
+	}
+	for i := 0; at < 0 && i < len(q.order); i++ {
+		if !q.batches[q.order[i]].sending() {
+			at = i
+		}
+	}
+	if at < 0 {
+		return
 	}
 	id := q.order[at]
 	q.order = slices.Delete(q.order, at, at+1)
@@ -413,6 +424,10 @@ func (q *Questions) drop() {
 		q.batches[tw].Twin = ""
 	}
 	delete(q.batches, id)
+}
+
+func (b *Batch) sending() bool {
+	return slices.ContainsFunc(b.Questions, func(x Question) bool { return x.State == QSending })
 }
 
 func (b *Batch) resolved() bool {
@@ -581,11 +596,39 @@ type PriorSend struct {
 	Confirmed, Unconfirmed bool
 }
 
-// Unresolved reports whether a batch is under a legacy id (#158): the
-// join's history did not give every question its call_id, so a batch the
-// bridge does not know may be one of those.
-func (q *Questions) Unresolved() bool {
-	return slices.ContainsFunc(q.order, legacyItemID.MatchString)
+// LegacyHistory reports whether a join's history has an item under a
+// legacy id (#158): it did not give every item its own id, so a batch it
+// does not show under its call_id may be one of those. It is the join's,
+// not the reconciler's: batches the view dropped since do not change it.
+func LegacyHistory(turns []Turn) bool {
+	for _, t := range turns {
+		if slices.ContainsFunc(t.Items, func(it Item) bool { return legacyItemID.MatchString(it.ID) }) {
+			return true
+		}
+	}
+	return false
+}
+
+// InHistory reports whether a history has an item with id.
+func InHistory(turns []Turn, id string) bool {
+	for _, t := range turns {
+		if slices.ContainsFunc(t.Items, func(it Item) bool { return it.ID == id }) {
+			return true
+		}
+	}
+	return false
+}
+
+// Answers is the answers a user message's reply envelope carries (none for
+// any other item), read from its text alone: a question named there is
+// answered whether or not the reconciler still holds its batch, and
+// whatever id the item itself has.
+func Answers(it Item) []Answer {
+	if it.Type != ItemUserMessage {
+		return nil
+	}
+	answers, _ := ParseReply(it.UserText())
+	return answers
 }
 
 // DropLegacy forgets the batches under a legacy id, before a join's
@@ -610,8 +653,8 @@ func (q *Questions) DropLegacy() {
 // matters. It only ever turns a pending question into a sent one:
 //
 //   - its batch is unknown, or the question is answered: it no longer
-//     matters (the caller keeps a send whose batch is unknown while the
-//     history is Unresolved: it may be under a legacy id);
+//     matters here (the caller decides on an unknown batch from the
+//     history itself: the view may have dropped it);
 //   - the question is not pending (this reconciler saw the send itself, or
 //     a dismissal): unchanged;
 //   - unconfirmed: sent and unconfirmed, as before the restart;

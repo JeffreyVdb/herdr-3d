@@ -62,10 +62,12 @@ func (h *Hub) threadQuestions(id, thread string) *codexapp.Questions {
 // codexJoined takes a join's thread: its running turn, and its history
 // reconciled with what the bridge already knew of its questions, its
 // recorded sends included (#158: after a restart they are all it knows of
-// an answer still waiting in the running turn). A history that still has
-// legacy item ids (the Watcher could not read them again) is unresolved: a
-// send whose batch it does not show is kept, as it may be one of those, and
-// the bridge joins again after CodexRejoin (syncCodexWatches).
+// an answer still waiting in the running turn). Each recorded send is
+// decided on the history itself, never on what the view kept (it holds
+// MaxBatches, and drops some while it reads a long history): see sendKey.
+// A history that still has legacy item ids (the Watcher could not read
+// them again) is unresolved, and the bridge joins again after CodexRejoin
+// (syncCodexWatches).
 func (h *Hub) codexJoined(ctx context.Context, id string, cw *codexWatch, th *codexapp.Thread) {
 	if th == nil || h.cx.launches[id].Thread != cw.thread {
 		return
@@ -74,21 +76,32 @@ func (h *Hub) codexJoined(ctx context.Context, id string, cw *codexWatch, th *co
 	q := h.threadQuestions(id, cw.thread)
 	q.DropLegacy()
 	q.Hydrate(th.Turns)
-	if cw.unresolved = q.Unresolved(); cw.unresolved {
+	if cw.unresolved = codexapp.LegacyHistory(th.Turns); cw.unresolved {
 		cw.unresolvedAt = time.Now()
 		h.log.Warn("the codex thread's history has legacy item ids: joining again later", "worker", id, "thread", cw.thread)
 	}
+	answered := map[sendKey]bool{}
+	for _, t := range th.Turns {
+		for _, it := range t.Items {
+			for _, a := range codexapp.Answers(it) {
+				answered[sendKey{a.MessageID, a.Index}] = true
+			}
+		}
+	}
 	for k, x := range h.cx.sends[id] {
-		if x.Thread != cw.thread {
+		switch {
+		case x.Thread != cw.thread, answered[k]:
 			h.forgetSend(ctx, id, k)
-			continue
-		}
-		if _, known := q.StateOf(x.Batch, x.Index); !known && cw.unresolved {
-			continue
-		}
-		if !q.Restore(codexapp.PriorSend{Batch: x.Batch, Index: x.Index, Turn: x.Turn,
-			Confirmed: x.Confirmed, Unconfirmed: x.Unconfirmed}, cw.turn) {
-			h.forgetSend(ctx, id, k)
+		case !codexapp.InHistory(th.Turns, x.Batch):
+			// Gone from the thread only if the history is all of it, every
+			// item under its own id.
+			if !cw.unresolved && !th.Partial {
+				h.forgetSend(ctx, id, k)
+			}
+		default:
+			if _, known := q.StateOf(x.Batch, x.Index); known && !q.Restore(priorSend(x), cw.turn) {
+				h.forgetSend(ctx, id, k)
+			}
 		}
 	}
 }
@@ -117,6 +130,10 @@ func (h *Hub) codexNotification(ctx context.Context, id string, cw *codexWatch, 
 	case "item/started", "item/completed":
 		if h.threadQuestions(id, cw.thread).Observe(n.TurnID, n.Item, codexapp.OriginLive) {
 			h.pruneSends(ctx, id)
+		}
+		// #158: an envelope answers what it names, kept in the view or not.
+		for _, a := range codexapp.Answers(n.Item) {
+			h.forgetSend(ctx, id, sendKey{a.MessageID, a.Index})
 		}
 	case "turn/started":
 		cw.turn = n.Turn.ID
@@ -478,15 +495,27 @@ func (h *Hub) promptViaServer(ctx context.Context, id, text string) (any, bool, 
 // restarted bridge rebuilds its questions from that history, so without
 // these it would take, and send, a second answer the model then sees too.
 // A send is recorded before its request goes out and updated with the
-// response; it goes once its question is answered (live or in the history),
-// when its answer is refused, when the thread changes, when the worker is
-// sent home or is no longer shared, and when its batch is unknown to a
-// thread whose history is resolved (no legacy item ids: an unknown batch
-// there is not an id the join could not read). Nothing else drops it, so a
-// worker has at most one per question it answered. A dismissal keeps it:
-// the bridge forgets dismissals on a restart, and the answer may still be
-// on its way.
-
+// response. It goes only on evidence that its answer can no longer be
+// delivered, or was:
+//
+//   - an envelope naming its question, seen live or in a join's history
+//     (read from the envelope's text: whoever sent it, whatever the view
+//     kept of its batch);
+//   - its question answered in the view (pruneSends);
+//   - its answer refused (answerAsync: nothing delivered);
+//   - the thread changed (noteCodexThread), the worker sent home
+//     (forgetCodex) or no longer shared when the bridge starts (loadSends);
+//   - on a join: a turn/start never confirmed whose envelope the history
+//     does not show (Restore: a started turn's user message is its first
+//     item, and the newest turns are always read), or its batch missing
+//     from a history that is the whole thread (not Partial) with every
+//     item under its own id (not LegacyHistory).
+//
+// The view is no evidence: a batch dropped for room (MaxBatches), dismissed
+// (the bridge forgets dismissals on a restart, and the answer may still be
+// on its way) or under a legacy id keeps its record, and a join that reads
+// the batch again restores it (Restore). Nothing else drops one, so a
+// worker has at most one per question of its thread it answered.
 // sendKey is a question of a worker's thread.
 type sendKey struct {
 	batch string
@@ -560,13 +589,18 @@ func (h *Hub) forgetSends(ctx context.Context, id string) {
 	}
 }
 
-// pruneSends drops a worker's sends whose question is answered or gone
-// from its thread's questions (hub goroutine). Before the bridge has
-// joined the thread (its questions not read yet), or while its history is
-// unresolved (legacy item ids), it keeps those it does not know.
+// pruneSends drops a worker's sends of another thread, and those whose
+// question its thread's questions show answered (hub goroutine). One whose
+// batch they do not show is kept (see sendKey), and one whose question
+// they show pending again (its batch seen again after the view dropped
+// it) makes it sent again: only a join's history may drop it.
 func (h *Hub) pruneSends(ctx context.Context, id string) {
 	q := h.cx.questions[id]
 	thread := h.cx.launches[id].Thread
+	running := ""
+	if cw := h.cx.watches[id]; cw != nil && cw.attached && cw.thread == thread {
+		running = cw.turn
+	}
 	for k, x := range h.cx.sends[id] {
 		if x.Thread != thread {
 			h.forgetSend(ctx, id, k)
@@ -575,8 +609,16 @@ func (h *Hub) pruneSends(ctx context.Context, id string) {
 		if q == nil || q.Thread != thread {
 			continue
 		}
-		if st, ok := q.StateOf(k.batch, k.index); (!ok && !q.Unresolved()) || st == codexapp.QAnswered {
+		switch st, _ := q.StateOf(k.batch, k.index); st {
+		case codexapp.QAnswered:
 			h.forgetSend(ctx, id, k)
+		case codexapp.QPending:
+			q.Restore(priorSend(x), running)
 		}
 	}
+}
+
+// priorSend is a recorded send as the reconciler takes it.
+func priorSend(x store.CodexAsyncSend) codexapp.PriorSend {
+	return codexapp.PriorSend{Batch: x.Batch, Index: x.Index, Turn: x.Turn, Confirmed: x.Confirmed, Unconfirmed: x.Unconfirmed}
 }
