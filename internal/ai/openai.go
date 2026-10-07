@@ -117,9 +117,6 @@ func (o openAI) complete(ctx context.Context, base, key, model string, extra jso
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
 	}
-	if req.MaxTokens > 0 {
-		body["max_tokens"] = req.MaxTokens
-	}
 	if req.JSON && jsonMode {
 		body["response_format"] = map[string]string{"type": "json_object"}
 	}
@@ -136,8 +133,17 @@ func (o openAI) complete(ctx context.Context, base, key, model string, extra jso
 		delete(body, "reasoning")
 		body["reasoning_effort"] = req.ReasoningEffort
 	}
+	// The budget: the request's own bound wins over an extra_body's of the same
+	// kind (it states what this call may spend, and what the settings and the
+	// audit show), in the field the extra_body chose (max_completion_tokens is
+	// the native OpenAI name), else max_tokens; never both.
 	if _, ok := body["max_completion_tokens"]; ok {
-		delete(body, "max_tokens") // the endpoint's own name for the budget wins; never both
+		delete(body, "max_tokens")
+		if req.MaxTokens > 0 {
+			body["max_completion_tokens"] = req.MaxTokens
+		}
+	} else if req.MaxTokens > 0 {
+		body["max_tokens"] = req.MaxTokens
 	}
 	r, err := do(ctx, o.hc, http.MethodPost, base+"/chat/completions", key, body, maxAnswerBytes)
 	if err != nil {
@@ -160,6 +166,7 @@ func (o openAI) complete(ctx context.Context, base, key, model string, extra jso
 		return "", false, err
 	}
 	d, content, ok := diagnose(r.status, r.body)
+	d.FinishReason, d.NativeFinishReason = Scrub(d.FinishReason, key), Scrub(d.NativeFinishReason, key)
 	report(d)
 	if !ok {
 		return "", false, newErr(KindBadResponse, "the answer has no choices")

@@ -132,14 +132,76 @@ func TestReasoningEffortAndBudgetReachTheRequestBody(t *testing.T) {
 	}
 }
 
-func TestMaxCompletionTokensInExtraBodyReplacesMaxTokens(t *testing.T) {
+// #174: the request's own budget is what is sent, in the field the extra_body
+// names (never both): a stale extra_body value does not shadow the setting.
+func TestRequestBudgetWinsOverExtraBodyBudget(t *testing.T) {
+	for _, c := range []struct {
+		name, extra string
+		budget      int
+		field, gone string
+	}{
+		{"max_completion_tokens 1024", `{"max_completion_tokens":80}`, 1024, "max_completion_tokens", "max_tokens"},
+		{"max_completion_tokens 2048", `{"max_completion_tokens":80}`, 2048, "max_completion_tokens", "max_tokens"},
+		{"max_tokens", `{"max_tokens":80}`, 1024, "max_tokens", "max_completion_tokens"},
+		{"both named", `{"max_tokens":80,"max_completion_tokens":80}`, 1024, "max_completion_tokens", "max_tokens"},
+		{"neither", `{"top_k":3}`, 1024, "max_tokens", "max_completion_tokens"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newReasoningLLM(t)
+			s := f.service(t, "openai/gpt-6-luna", json.RawMessage(c.extra))
+			if _, err := complete(s, ai.Request{MaxTokens: c.budget}); err != nil {
+				t.Fatal(err)
+			}
+			if b := f.last(); b[c.field] != float64(c.budget) || b[c.gone] != nil {
+				t.Fatalf("want %s=%d only: %v", c.field, c.budget, b)
+			}
+		})
+	}
+}
+
+// A request that sets no bound leaves the extra_body's own.
+func TestExtraBodyBudgetStandsWithoutRequestBudget(t *testing.T) {
 	f := newReasoningLLM(t)
 	s := f.service(t, "openai/gpt-6-luna", json.RawMessage(`{"max_completion_tokens":500}`))
-	if _, err := complete(s, ai.Request{MaxTokens: 1024}); err != nil {
+	if _, err := complete(s, ai.Request{}); err != nil {
 		t.Fatal(err)
 	}
 	if b := f.last(); b["max_completion_tokens"] != float64(500) || b["max_tokens"] != nil {
-		t.Fatalf("never both: %v", b)
+		t.Fatalf("%v", b)
+	}
+}
+
+// #174: a provider that echoes the configured key, or a key-shaped token, in
+// its finish reasons gets none of it kept: only a known reason is, else "other".
+func TestFinishReasonsNeverRetainProviderText(t *testing.T) {
+	f := newReasoningLLM(t)
+	s := f.service(t, "openai/gpt-6-luna", nil)
+	f.answer = func(map[string]any) (int, string) {
+		return 200, `{"choices":[{"finish_reason":"` + llmKey + `","native_finish_reason":"Bearer sk-abcdefghijklmnopqrstuvwx","message":{"content":"Fix the login test"}}]}`
+	}
+	var d ai.Diagnostics
+	if _, err := complete(s, ai.Request{Report: func(x ai.Diagnostics) { d = x }}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(d)
+	for _, bad := range []string{llmKey, "sk-", "Bearer"} {
+		if strings.Contains(string(b), bad) {
+			t.Fatalf("%q kept in %s", bad, b)
+		}
+	}
+	if d.FinishReason != "other" || d.NativeFinishReason != "other" {
+		t.Fatalf("%+v", d)
+	}
+	for in, want := range map[string]string{"STOP": "stop", "length": "length", "MAX_TOKENS": "max_tokens", "end_turn": "end_turn", "content_filter": "content_filter"} {
+		f.answer = func(map[string]any) (int, string) {
+			return 200, `{"choices":[{"finish_reason":"` + in + `","native_finish_reason":"` + in + `","message":{"content":"Fix"}}]}`
+		}
+		if _, err := complete(s, ai.Request{Report: func(x ai.Diagnostics) { d = x }}); err != nil {
+			t.Fatal(err)
+		}
+		if d.FinishReason != want || d.NativeFinishReason != want {
+			t.Fatalf("%s: %+v", in, d)
+		}
 	}
 }
 

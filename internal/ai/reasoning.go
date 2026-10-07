@@ -172,7 +172,8 @@ type Diagnostics struct {
 	// Status is the HTTP status.
 	Status int `json:"status"`
 	// FinishReason and NativeFinishReason are the first choice's (the
-	// gateway's, then the provider's own), as plain tokens.
+	// gateway's, then the provider's own): a known one (finishReasons), else
+	// "other".
 	FinishReason       string `json:"finish_reason,omitempty"`
 	NativeFinishReason string `json:"native_finish_reason,omitempty"`
 	PromptTokens       *int   `json:"prompt_tokens,omitempty"`
@@ -194,24 +195,40 @@ const (
 	ContentNonempty = "nonempty"
 )
 
-var plainTokenRe = regexp.MustCompile(`[^A-Za-z0-9_.:-]`)
-
-// plainToken is a provider's word (a finish reason) as a plain token: no
-// text a provider could stuff into it, at most 40 characters.
-func plainToken(s string) string {
-	s = plainTokenRe.ReplaceAllString(strings.TrimSpace(s), "")
-	if len(s) > 40 {
-		s = s[:40]
-	}
-	return s
+// finishReasons are the finish reasons kept in a Diagnostics: the gateway's
+// normalized set (OpenAI/OpenRouter) and the common native ones, lowercase.
+// Anything else is kept as finishOther: a provider's word is never retained
+// as it came, since a reflecting or malformed one could put a key in it.
+var finishReasons = map[string]bool{
+	"stop": true, "length": true, "tool_calls": true, "content_filter": true, "error": true, "function_call": true,
+	"end_turn": true, "max_tokens": true, "max_output_tokens": true, "stop_sequence": true, "tool_use": true,
+	"safety": true, "recitation": true, "refusal": true, "pause_turn": true, "complete": true, "eos": true,
+	"model_length": true, "blocklist": true, "prohibited_content": true, "spii": true, "malformed_function_call": true,
+	"other": true, "unknown": true, "finish_reason_unspecified": true,
 }
 
-func rawToken(raw json.RawMessage) string {
+// finishOther stands for a finish reason that is not in finishReasons.
+const finishOther = "other"
+
+// finishReason is a provider's finish reason, canonicalized (lowercase) when
+// it is a known one, else finishOther; "" for none.
+func finishReason(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch {
+	case s == "":
+		return ""
+	case finishReasons[s]:
+		return s
+	}
+	return finishOther
+}
+
+func rawFinish(raw json.RawMessage) string {
 	var s string
 	if json.Unmarshal(raw, &s) != nil {
 		return ""
 	}
-	return plainToken(s)
+	return finishReason(s)
 }
 
 // diagnose reads an answer's body. content is the first choice's message
@@ -249,7 +266,7 @@ func diagnose(status int, body []byte) (d Diagnostics, content string, hasChoice
 		return d, "", false
 	}
 	c := out.Choices[0]
-	d.FinishReason, d.NativeFinishReason = rawToken(c.FinishReason), rawToken(c.NativeFinishReason)
+	d.FinishReason, d.NativeFinishReason = rawFinish(c.FinishReason), rawFinish(c.NativeFinishReason)
 	if len(c.Message.Content) > 0 && string(c.Message.Content) != "null" && json.Unmarshal(c.Message.Content, &content) == nil {
 		d.ContentChars = utf8.RuneCountInString(content)
 		d.Content = ContentNonempty

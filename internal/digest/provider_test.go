@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -190,5 +192,85 @@ func TestEffortNoneAtASmallBudgetAndUnlistedEffortsRefused(t *testing.T) {
 	}
 	if p.count() != before {
 		t.Fatal("a refused setting made a call")
+	}
+}
+
+// echoProvider is an endpoint that reflects the configured key in its finish
+// reasons and keeps the body of the last chat request.
+func echoProvider(t *testing.T, key string) (srv *httptest.Server, last func() map[string]any) {
+	var mu sync.Mutex
+	var body map[string]any
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		var b map[string]any
+		json.NewDecoder(r.Body).Decode(&b)
+		mu.Lock()
+		body = b
+		mu.Unlock()
+		text := "Fix the flaky login test"
+		if b["response_format"] != nil {
+			text = `{"ok": true}`
+		}
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
+			"finish_reason": key, "native_finish_reason": "Bearer sk-abcdefghijklmnopqrstuvwx",
+			"message": map[string]any{"content": text}}}})
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() map[string]any { mu.Lock(); defer mu.Unlock(); return body }
+}
+
+// #174: the summaries budget is what is sent even when the LLM's extra_body
+// names a budget of its own (in the field it chose), and a provider that
+// echoes the key (and a bearer token) in its finish reasons leaves none of it
+// in the result's diagnostics, which is what the audit row holds.
+func TestBudgetBeatsExtraBodyAndEchoedKeysAreNotKept(t *testing.T) {
+	const key = "sk-not-a-real-key-0123456789"
+	srv, last := echoProvider(t, key)
+	svc, err := ai.New(ai.Options{File: filepath.Join(t.TempDir(), "ai.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := ai.Fields{BaseURL: str(srv.URL), Model: str("m"), Key: str(key), ExtraBody: json.RawMessage(`{"max_completion_tokens":80}`)}
+	if _, err := svc.Test(context.Background(), ai.RoleLLM, f); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Set(ai.RoleLLM, f); err != nil {
+		t.Fatal(err)
+	}
+	s, err := digest.New(context.Background(), digest.Options{Roles: svc, Now: func() time.Time { return noon }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if res, err := s.Test(ctx); err != nil || !res.OK {
+		t.Fatalf("test = %+v, %v", res, err)
+	}
+	on := true
+	if err := s.Set(ctx, &on, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, budget := range []int{1024, 2048} {
+		if err := s.Apply(ctx, digest.Update{MaxTokens: num(budget)}); err != nil {
+			t.Fatal(err)
+		}
+		res, err := s.Summarize(ctx, digest.Input{Kind: digest.KindTask, Prompt: "Fix the flaky login test " + strconv.Itoa(budget)})
+		if err != nil || res.MaxTokens != budget {
+			t.Fatalf("%d: %+v %v", budget, res, err)
+		}
+		if b := last(); b["max_completion_tokens"] != float64(budget) || b["max_tokens"] != nil {
+			t.Fatalf("%d: wire shows %v", budget, b)
+		}
+		blob, _ := json.Marshal(res.Diag)
+		for _, bad := range []string{key, "sk-", "Bearer"} {
+			if strings.Contains(string(blob), bad) {
+				t.Fatalf("%q kept in the diagnostics %s", bad, blob)
+			}
+		}
+		if res.Diag.FinishReason != "other" || res.Diag.NativeFinishReason != "other" {
+			t.Fatalf("%+v", res.Diag)
+		}
 	}
 }

@@ -2972,7 +2972,7 @@ included) costs nothing. Only the hash and the line are stored, never a transcri
   spends it all thinking answers with no text and `finish_reason` `length`. The bridge sends **one** effort control, the
   top-level `reasoning_effort` (OpenRouter, OpenAI, LiteLLM, vLLM and Ollama accept it); the endpoint's `extra_body`
   `reasoning` object is dropped from a request that carries an effort, and left alone when none is chosen. An
-  `extra_body` with `max_completion_tokens` replaces `max_tokens` (never both). `reasoning` in the state is what the
+  The budget sent is always this setting's, in the field the `extra_body` names: with `max_completion_tokens` there it is sent as `max_completion_tokens` (and no `max_tokens`), with `max_tokens` there it replaces that value, with neither it is `max_tokens`; the `extra_body`'s own number never shadows it. `reasoning` in the state is what the
   model's catalog says (`{"support": "supported"\|"unsupported"\|"unknown", "model"?, "efforts": [...lowest first],
   "listed", "default_effort"?, "mandatory"?}`, read from OpenRouter's `GET {base}/models` entry: `reasoning.supported_efforts`,
   `default_effort`, `mandatory`, else `supported_parameters`; other endpoints list ids only: `unknown`, offered the
@@ -2994,7 +2994,8 @@ included) costs nothing. Only the hash and the line are stored, never a transcri
 `sent_bytes`, `answer_bytes`, the model and the endpoint's host, `reasoning_effort` and `max_tokens` as sent, and,
 when an answer came back, its sanitized `diag` (#174): `{status, finish_reason?, native_finish_reason?, prompt_tokens?,
 completion_tokens?, total_tokens?, reasoning_tokens?, content: "absent"\|"empty"\|"nonempty", content_chars}`; a count
-the provider did not report is absent, a zero is a zero. A failure's error is its kind only (`truncated`, `empty_answer`,
+the provider did not report is absent, a zero is a zero. The finish reasons are a known one (lowercase: `stop`, `length`,
+`tool_calls`, `content_filter`, `error`, `end_turn`, `max_tokens`, …) or `other`: the provider's own text is never kept. A failure's error is its kind only (`truncated`, `empty_answer`,
 `bad_response`, `timeout`, `no_line`, …): `truncated` is an answer the provider cut off at the token limit (an
 empty `length` answer says how much of the budget went on reasoning), `empty_answer` one with no text, and
 `bad_response` a malformed answer. Never the text sent or answered, nor any reasoning, nor a key. The log has the
