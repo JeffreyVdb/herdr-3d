@@ -1151,8 +1151,11 @@ press **E** to sit at its screen: the worker steps aside, the camera glides in a
 at 10 fps. Everything you type goes to its terminal (letters, Enter, Tab and Shift+Tab, arrows,
 Home / End / Page keys, F1–F12, Backspace, Delete, Ctrl+letter; the game's own keys too), **Cmd+V** (Ctrl+V off a Mac)
 pastes (as a prompt to an agent, typed into a plain shell; a screenshot goes to an agent as `[Image #n: <path>]` markers once uploaded, a plain shell says it cannot take one and types nothing), **Shift+Esc** sends Esc, **Esc** (or the seat bar's Stand
-up) gets you up; so do the elevator, another floor, a panel, the plan or a teleport, and the worker leaving or its floor
-going to sleep (a toast says why). Typing that fails shows in the seat bar. Getting up drops nothing you typed: what is
+up) gets you up; so do the elevator, another floor, a panel, the plan or a teleport. The world never does (#187): other
+workers finishing, leaving or arriving, a floor's desk count or the building's outline changing, even the worker you sit at
+leaving, its floor going to sleep or being removed, keep you seated with the conversation and your draft; the seat bar then
+says it is offline ("… is no longer on the floor. Nothing you type is sent."), nothing is sent to it, and it recovers by itself
+when the worker is back. Typing that fails shows in the seat bar. Getting up drops nothing you typed: what is
 still on its way (behind a slow paste, say) goes on, in order, and a failure then is a toast. E is disabled, with the reason, on an asleep
 floor, for a worker without a pane, and against a bridge without `terminal.watch`.
 

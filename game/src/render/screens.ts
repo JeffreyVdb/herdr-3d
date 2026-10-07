@@ -80,6 +80,11 @@ export class ScreenMeshes {
     this.group.add(this.frozenMesh);
   }
 
+  /** Whether the desk has a slot (a floor that shrank has fewer). */
+  has(desk: number): boolean {
+    return !!this.slots[desk];
+  }
+
   /** A desk's slot transform (the same as its desk art). */
   slotMatrix(desk: number, out = this.m): THREE.Matrix4 {
     const s = this.slots[desk];

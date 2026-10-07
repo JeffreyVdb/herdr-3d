@@ -41,11 +41,12 @@ async function workers(page: Page): Promise<W[]> {
 }
 
 /** Enters the lab floor and sits at the worker of `desk` in `mode`. */
-async function sitAt(page: Page, desk: number, mode: 'terminal' | 'transcript'): Promise<W> {
+async function sitAt(page: Page, desk: number | 'last', mode: 'terminal' | 'transcript'): Promise<W> {
   await openGame(page, 'demo-m6', '&prints=0', SIM);
   await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
   await frames(page, 4);
-  const w = (await workers(page)).find((x) => x.desk === desk);
+  const all = await workers(page);
+  const w = desk === 'last' ? all.reduce<W | undefined>((a, x) => (!a || x.desk > a.desk ? x : a), undefined) : all.find((x) => x.desk === desk);
   if (!w) throw new Error(`no worker at desk ${desk}`);
   if (mode === 'terminal') await leftInTerminal(page, w.id);
   expect(await page.evaluate((id) => window.__h3d.face(id), w.id), `facing ${w.name}`).toBe(true);
@@ -74,11 +75,12 @@ const promptState = (page: Page) =>
   });
 
 /** Still seated at `id`, in `mode`: the view up and mounted, the seat bar shown. */
-async function stillThere(page: Page, id: string, mode: 'terminal' | 'transcript'): Promise<void> {
+async function stillThere(page: Page, id: string, mode: 'terminal' | 'transcript', away = false): Promise<void> {
   expect(await seated(page)).toBe(id);
   const t = await tstate(page);
   expect(t?.mode).toBe(mode);
-  if (mode === 'transcript') expect({ mounted: t?.mounted, watches: t?.watches }).toEqual({ mounted: true, watches: 1 });
+  // (An away worker's conversation is not watched until it is back.)
+  if (mode === 'transcript') expect({ mounted: t?.mounted, watches: t?.watches }).toEqual({ mounted: true, watches: away ? 0 : 1 });
   await expect(page.locator('.seat')).toBeVisible();
 }
 
@@ -360,5 +362,139 @@ test('your floor moving to another storey of the building moves you with it, sti
   expect((await page.evaluate(() => window.__h3d.pose()))?.y, 'the floor moved').not.toBe(y0);
   await stillThere(page, w.id, 'transcript');
   expect(await promptState(page)).toMatchObject({ text: 'a floor up', focused: true });
+  clean();
+});
+
+const removeFloor = (page: Page, session = FLOOR) => page.evaluate((x) => window.__h3d.inject({ t: 'floor.removed', seq: 1_000_000, session: x } as never), session);
+const mode = (page: Page) => page.evaluate(() => window.__h3d.view().mode);
+const seatBar = (page: Page) => page.evaluate(() => window.__h3d.seat());
+
+test('the worker you sit at leaves and the floor shrinks past its desk: the view, the draft and the keyboard stay', async ({ page }) => {
+  const clean = watchErrors(page);
+  const w = await sitAt(page, 'last', 'transcript');
+  expect(w.desk, 'a desk to trim away').toBeGreaterThan(0);
+  await draft(page, 'still here');
+  const before = (await tstate(page))?.box;
+  expect(before).toBeTruthy();
+  const built = await rebuilds(page);
+  await gone(page, w.id);
+  // The bridge sizes the floor from its workers: the desk of the one that left is trimmed away.
+  await upsert(page, FLOOR, w.desk);
+  await frames(page, 8);
+  expect(await rebuilds(page), 'the scene was rebuilt without the desk').toBeGreaterThan(built);
+  expect(await seated(page)).toBe(w.id);
+  expect((await tstate(page))?.mounted).toBe(true);
+  // The glass is where it was: the conversation is still laid over it, visible and under the caret.
+  const after = (await tstate(page))?.box;
+  expect(after).toBeTruthy();
+  // (The bar says why on more lines now, so the glass is refitted a little smaller, but it is the same place.)
+  const mid = (b: typeof before) => ({ x: (b?.left ?? 0) + (b?.width ?? 0) / 2, y: (b?.top ?? 0) + (b?.height ?? 0) / 2 });
+  expect(Math.abs(mid(after).x - mid(before).x)).toBeLessThan(30);
+  expect(Math.abs(mid(after).y - mid(before).y)).toBeLessThan(30);
+  expect(after?.width ?? 0).toBeGreaterThan((before?.width ?? 0) * 0.8);
+  await expect(box(page)).toBeVisible();
+  expect(await promptState(page)).toMatchObject({ text: 'still here', focused: true });
+  await expect.poll(async () => (await seatBar(page)).state).toBe('offline');
+  await page.keyboard.type(' and more');
+  await expect(box(page)).toHaveText('still here and more');
+  // A window resize refits the camera to the glass it has kept.
+  await page.setViewportSize({ width: 1100, height: 700 });
+  await frames(page, 6);
+  await expect(box(page)).toBeVisible();
+  expect((await tstate(page))?.box).toBeTruthy();
+  await page.keyboard.press('Escape');
+  await expect.poll(() => seated(page)).toBeNull();
+  clean();
+});
+
+for (const view of ['transcript', 'terminal'] as const) {
+  test(`${view}: the floor you sit on being removed keeps you seated, offline, with your draft; Esc then leaves cleanly`, async ({ page }) => {
+    const clean = watchErrors(page);
+    const w = await sitAt(page, 0, view);
+    if (view === 'transcript') await draft(page, 'typed while it went');
+    const keys = await sentOf(page, 'worker.keys');
+    const prompts = await sentOf(page, 'worker.prompt');
+    await removeFloor(page);
+    await frames(page, 10);
+    // Nothing took you from it: still on the floor, still at the laptop, in the view you had.
+    expect(await mode(page)).toBe('floor');
+    await stillThere(page, w.id, view, true);
+    await expect.poll(async () => (await seatBar(page)).state).toBe('offline');
+    expect((await seatBar(page)).note).toContain('Nothing you type is sent');
+    if (view === 'transcript') {
+      expect(await promptState(page)).toMatchObject({ text: 'typed while it went', focused: true });
+      await page.keyboard.type('!');
+      await page.keyboard.press('Enter');
+      await frames(page, 4);
+      await expect(box(page)).toContainText('typed while it went!');
+      expect(await sentOf(page, 'worker.prompt')).toBe(prompts);
+    } else {
+      await page.keyboard.type('xyz');
+      await frames(page, 4);
+      expect(await sentOf(page, 'worker.keys')).toBe(keys);
+    }
+    // Esc is yours: it gets you up, and then the floor that is gone is left for the city.
+    await page.keyboard.press('Escape');
+    await expect.poll(() => seated(page)).toBeNull();
+    await expect.poll(() => mode(page)).toBe('city');
+    expect(await page.evaluate(() => window.__h3d.view().floor)).toBeNull();
+    expect(await page.evaluate(() => window.__h3d.where())).toBeNull();
+    await expect(page.locator('.seat')).toBeHidden();
+    expect((await tstate(page))?.mounted).toBe(false);
+    // The city and the other floors work as usual.
+    await expect
+      .poll(async () => {
+        await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+        return page.evaluate(() => window.__h3d.view().floor);
+      })
+      .toBe('herdr-3d');
+    await frames(page, 4);
+    clean();
+  });
+}
+
+test('the floor coming back while you still sit at it brings the worker back too', async ({ page }) => {
+  const clean = watchErrors(page);
+  const w = await sitAt(page, 0, 'transcript');
+  await draft(page, 'back soon');
+  const worker = await page.evaluate((id) => window.__h3d.worker(id), w.id);
+  const where = await page.evaluate(() => window.__h3d.where());
+  if (!worker || !where) throw new Error('nothing to restore');
+  await removeFloor(page);
+  await frames(page, 6);
+  await expect.poll(async () => (await seatBar(page)).state).toBe('offline');
+  await page.evaluate(
+    ([f, b, i, n]) => window.__h3d.inject({ t: 'floor.upsert', seq: 0, floor: { session: f, state: 'running', building: b, index: i, desks: n } } as never),
+    [FLOOR, where.building, where.floors.indexOf(FLOOR), 12] as const,
+  );
+  await page.evaluate((x) => window.__h3d.inject({ t: 'worker.upsert', seq: 0, worker: x } as never), worker);
+  await expect.poll(async () => (await seatBar(page)).state).toBe('ok');
+  await stillThere(page, w.id, 'transcript');
+  expect(await promptState(page)).toMatchObject({ text: 'back soon', focused: true });
+  clean();
+});
+
+test('Ctrl+Esc while the worker is away: the bar keeps saying so in the terminal view and back, and never promises your keys', async ({ page }) => {
+  const clean = watchErrors(page);
+  const w = await sitAt(page, 0, 'transcript');
+  await gone(page, w.id);
+  await expect.poll(async () => (await seatBar(page)).state).toBe('offline');
+  const keys = await sentOf(page, 'worker.keys');
+  for (const to of ['terminal', 'transcript', 'terminal'] as const) {
+    await seatMode(page, to);
+    await frames(page, 4);
+    const bar = await seatBar(page);
+    expect(bar.state, `bar in ${to}`).toBe('offline');
+    expect(bar.note).toContain(`${w.name} is no longer on the floor.`);
+    expect(bar.note).not.toContain('Your keys go to');
+  }
+  await page.keyboard.type('xyz');
+  await frames(page, 4);
+  expect(await sentOf(page, 'worker.keys')).toBe(keys);
+  // The reason is readable at a glance: the note wraps instead of ending in an ellipsis.
+  const note = page.locator('.seat-note');
+  const fit = await note.evaluate((e) => ({ sw: e.scrollWidth, cw: e.clientWidth, sh: e.scrollHeight, ch: e.clientHeight, text: e.textContent, lh: parseFloat(getComputedStyle(e).lineHeight) }));
+  expect(fit.sw, JSON.stringify(fit)).toBeLessThanOrEqual(fit.cw + 1);
+  expect(fit.sh, JSON.stringify(fit)).toBeLessThanOrEqual(fit.ch + 1);
   clean();
 });

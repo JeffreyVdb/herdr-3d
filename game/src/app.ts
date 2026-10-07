@@ -293,6 +293,8 @@ export class App {
   private worldCache: { key: unknown[]; world: WalkWorld } | null = null;
   /** #187: how often the floor's scene was rebuilt (a desk count or outline change), for the tests. */
   rebuilds = 0;
+  /** #187: the floor you sit at is gone from the world; the seat keeps its last scene until you get up. */
+  private orphaned = false;
   private fireDoor = 0;
   private mezzDoor = 0;
   /** Whether the hint on screen is the seated one. */
@@ -1697,6 +1699,13 @@ export class App {
     const ctx = session ? this.buildingFor(session) : this.building ? this.buildingById(this.building.id) : null;
     const fv = session ? this.store.floorView(session) : null;
     if (!ctx || (session && !fv)) {
+      // #187: not while you sit at a laptop of it: the floor you were reading stays as it was (its worker is away, see
+      // `Laptops.whyAway`) until you get up yourself; `step` then comes back here and leaves.
+      if (this.laptops.seated) {
+        this.orphaned = true;
+        return;
+      }
+      this.orphaned = false;
       this.hud.toast(`${session ?? this.building?.name ?? 'That building'} is gone.`);
       void this.leaveFloor();
       return;
@@ -2854,6 +2863,10 @@ export class App {
     // #118: the overview opened from the transcript (O) keeps the seat: Esc closes it back onto the conversation.
     const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.overview.isOpen) || this.hud.sheetOpen || this.transitioning;
     this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
+    if (this.orphaned && !this.laptops.seated) {
+      this.orphaned = false;
+      if (this.mode === 'floor') this.syncWalk();
+    }
     if (this.laptops.animating) this.activity(true);
     this.cameraMoved = false;
   }

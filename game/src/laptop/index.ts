@@ -134,6 +134,8 @@ interface Seat {
   view: string;
   /** #187: why its worker cannot be reached (gone, its floor asleep, no terminal), or null. The view stays; only sending and watching wait. */
   away: string | null;
+  /** #187: where its desk's slot is in the world, as last seen: what the seat keeps to when its desk is gone from a rebuilt scene (the floor shrank). */
+  anchor: THREE.Matrix4;
   /** #187: the seat's own watch was refused: not asked for again before this time (performance.now), 0 for none. */
   retryAt: number;
 }
@@ -244,6 +246,7 @@ export class Laptops {
   private seatedSize = { width: 1280, height: 826 };
   private readonly v = new THREE.Vector3();
   private readonly m = new THREE.Matrix4();
+  private readonly slotTmp = new THREE.Matrix4();
   private readonly frustum = new THREE.Frustum();
   private readonly sphere = new THREE.Sphere(new THREE.Vector3(), 0.4);
   private readonly normal = new THREE.Vector3();
@@ -499,6 +502,8 @@ export class Laptops {
 
   private onMode(mode: SeatMode): void {
     this.host.seat.setMode(mode);
+    // #187: the bar's setMode says "ok"; an away worker or a lost connection is still the case in the other view.
+    if (this.seat && (this.seat.away || !this.connected)) this.restStatus(this.seat);
     if (this.seat) this.holdScreen(this.seat, mode);
     if (mode === 'terminal') this.host.seat.focus();
     this.syncWatches();
@@ -540,7 +545,7 @@ export class Laptops {
   private glassRect(cam: THREE.PerspectiveCamera): OverlayRect | null {
     const s = this.seat;
     if (!s || !this.meshes) return null;
-    const M = this.m.multiplyMatrices(s.office.root.matrixWorld, this.meshes.slotMatrix(s.desk, new THREE.Matrix4()));
+    const M = this.seatMatrix(s);
     const center = this.v.copy(GLASS.center).applyMatrix4(M);
     const normal = GLASS.normal.clone().transformDirection(M);
     const up = GLASS.up.clone().transformDirection(M);
@@ -579,6 +584,16 @@ export class Laptops {
     y1 = Math.min(H - ins.bottom, y1);
     if (x1 - x0 < 40 || y1 - y0 < 40) return null;
     return { left: Math.round(x0), top: Math.round(y0), width: Math.round(x1 - x0), height: Math.round(y1 - y0) };
+  }
+
+  /**
+   * The seat's slot in world space. #187: a desk the rebuilt scene no longer has (its worker left and the floor shrank)
+   * keeps the place it had, so the glass, the camera and the conversation laid over it stay where you read them.
+   */
+  private seatMatrix(s: Seat): THREE.Matrix4 {
+    const m = this.meshes;
+    if (m?.has(s.desk)) s.anchor.multiplyMatrices(s.office.root.matrixWorld, m.slotMatrix(s.desk, this.slotTmp));
+    return s.anchor;
   }
 
   private watchFailure(code: string, message: string): string {
@@ -630,6 +645,7 @@ export class Laptops {
       from: { pos: camera.position.clone(), quat: camera.quaternion.clone() },
       to: { pos: camera.position.clone(), quat: camera.quaternion.clone() },
       view: '',
+      anchor: new THREE.Matrix4(),
       away: null,
       retryAt: 0,
     };
@@ -659,7 +675,7 @@ export class Laptops {
     // Its view starts empty: a watch a desk print kept since you last sat here is made again, for its ack's history.
     this.transcripts.refresh(id);
     // With the seat bar up, the laptop fits between it and the top bar.
-    this.seat.to = this.seatPose(office, v.desk, camera);
+    this.seat.to = this.seatPose(this.seatMatrix(this.seat), camera);
     this.seat.view = viewKey(camera);
     this.lastPlan = -Infinity;
     this.syncWatches();
@@ -701,9 +717,7 @@ export class Laptops {
   }
 
   /** Where the camera goes to have the monitor's terminal fill the view: square on to the screen, from the chair's side. */
-  private seatPose(office: OfficeView, desk: number, camera: THREE.PerspectiveCamera): { pos: THREE.Vector3; quat: THREE.Quaternion } {
-    const meshes = this.meshes as ScreenMeshes;
-    const M = this.m.multiplyMatrices(office.root.matrixWorld, meshes.slotMatrix(desk, new THREE.Matrix4()));
+  private seatPose(M: THREE.Matrix4, camera: THREE.PerspectiveCamera): { pos: THREE.Vector3; quat: THREE.Quaternion } {
     const center = GLASS.center.clone().applyMatrix4(M);
     const normal = GLASS.normal.clone().transformDirection(M);
     const up = GLASS.up.clone().transformDirection(M);
@@ -1176,7 +1190,7 @@ export class Laptops {
     const s = this.seat;
     if (s && s.view !== viewKey(cam)) {
       // The window changed size: fit the laptop to the new view.
-      s.to = this.seatPose(s.office, s.desk, cam);
+      s.to = this.seatPose(this.seatMatrix(s), cam);
       s.view = viewKey(cam);
     }
     const glide = glideMs();
