@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/codexreply"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
@@ -372,6 +373,15 @@ func codexMessage(it *codexItem, id string, ts int64, pc *parseCtx) contrib {
 	if it.Content.isStr {
 		list = []codexPart{{Type: "input_text", Text: it.Content.str}}
 	}
+	if it.Role == "user" {
+		if answers, raw, ok := codexAnswers(list); ok {
+			// #183: the reply to an async question. Parts keep the envelope as sent (a plain part: an
+			// "[Image #n: path]" inside an answer is not an image), Answers are what the view shows.
+			return contrib{id: id, kind: proto.ItemUser, ts: ts, apply: func(b *builder) {
+				b.it.Parts, b.it.Answers = []proto.TranscriptPart{{Text: raw}}, answers
+			}}
+		}
+	}
 	for _, p := range list {
 		switch p.Type {
 		case "input_image", "output_image", "image":
@@ -414,6 +424,33 @@ func codexMessage(it *codexItem, id string, ts int64, pc *parseCtx) contrib {
 		return hiddenNotice(id, "message/"+it.Role, partsText(parts), ts)
 	}
 	return unknownItem(id, "message/"+it.Role, ts)
+}
+
+// codexAnswers reads a user message as the reply to Codex's async questions
+// (#183): its text parts, joined as the bridge joins a user message's text
+// inputs (codexapp.Item.UserText), are one complete validated envelope
+// (codexreply.ParseReply: nothing before or after it, every id the async
+// tool's). A message with an image, a prompt that quotes an envelope and a
+// malformed or cut one are not answers: the caller shows them as the text
+// they are.
+func codexAnswers(list []codexPart) (answers []proto.TranscriptAnswer, raw string, ok bool) {
+	var b strings.Builder
+	for _, p := range list {
+		switch p.Type {
+		case "input_image", "output_image", "image":
+			return nil, "", false
+		}
+		b.WriteString(p.Text)
+	}
+	raw = b.String()
+	as, ok := codexreply.ParseReply(raw)
+	if !ok {
+		return nil, "", false
+	}
+	for _, a := range as {
+		answers = append(answers, proto.TranscriptAnswer{Question: a.Question, Answer: a.Answer})
+	}
+	return answers, raw, true
 }
 
 // callArguments is a function call's arguments: a JSON string holding JSON

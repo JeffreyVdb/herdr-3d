@@ -511,6 +511,64 @@
   background: var(--tx-bg-3);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tx-blue) 18%, transparent);
 }
+/* #183: your answer to a Codex async question: your bubble, a small label, each question as quiet context and the
+   answer as the entry. The text is plain: line breaks kept, long words and URLs wrap at any width and zoom. */
+.tx-ans {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tx-ans-label {
+  color: var(--tx-text-2);
+  font-size: calc(10.5px * var(--tx-k, 1));
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.tx-ans-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tx-ans-pair + .tx-ans-pair {
+  padding-top: 6px;
+  border-top: 1px solid var(--tx-line);
+}
+.tx-ans-q {
+  color: var(--tx-text-2);
+  font-size: calc(12px * var(--tx-k, 1));
+  line-height: 1.4;
+}
+.tx-ans-a {
+  color: var(--tx-text);
+  font-weight: 600;
+}
+.tx-ans-q,
+.tx-ans-a {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tx-ans-raw {
+  color: var(--tx-text-2);
+  font-size: calc(11px * var(--tx-k, 1));
+}
+.tx-ans-raw summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.tx-ans-raw pre {
+  margin: 4px 0 0;
+  max-height: 10em;
+  overflow: auto;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--tx-code-bg) 70%, transparent);
+  color: var(--tx-text-2);
+  font: var(--tx-mono-fs, 11.5px)/1.4 var(--tx-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .tx-said {
   padding: 0 2px;
 }
