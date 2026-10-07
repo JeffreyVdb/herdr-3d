@@ -150,7 +150,7 @@ const UBUNTU: ThemePreset = {
   id: 'ubuntu',
   label: 'Ubuntu',
   blurb: 'Classic Ubuntu purple, Ubuntu and Ubuntu Mono',
-  mono: { family: 'Ubuntu Mono', stack: `"Ubuntu Mono", "H3D Box Ubuntu", ${SYSTEM_MONO}`, size: 14, faces: REGULAR_BOLD_ITALIC },
+  mono: { family: 'Ubuntu Mono', stack: `"Ubuntu Mono", "H3D Box Ubuntu", "H3D Symbols Ubuntu", "H3D Symbols Ubuntu 2", "H3D Symbols Ubuntu Consolas", ${SYSTEM_MONO}`, size: 14, faces: REGULAR_BOLD_ITALIC },
   prose: { family: 'Ubuntu', stack: '"Ubuntu", system-ui, sans-serif', size: 13.5 },
   palette: {
     bg: '#300a24',

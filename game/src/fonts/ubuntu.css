@@ -143,13 +143,47 @@
  * advance (1233/2048 em) is Ubuntu Mono's (500/1000: 500 / 602.05 = 83.05%): a table's corners meet. Set 0.4% above
  * that, 83.35%: where text is laid out on whole pixels (Linux without subpixel positioning) a half-pixel advance
  * (13 px: 6.5) is rounded per font, and at exactly 83.05% the box glyphs landed on 6 while Ubuntu Mono's own went to
- * 7 (measured in headless Chromium: rows of a table 126 and 144 px wide); the nudge makes every tie round up for both. Braille, arrows,
- * geometric shapes and check marks are in neither: the system's monospace faces (SYSTEM_MONO) draw them. 2.5 KB,
- * inlined by Vite.
+ * 7 (measured in headless Chromium: rows of a table 126 and 144 px wide); the nudge makes every tie round up for both.
+ * 2.5 KB, inlined by Vite.
  */
 @font-face {
   font-family: 'H3D Box Ubuntu';
   src: url('./h3d-box/h3d-box.woff2') format('woff2');
   size-adjust: 83.35%;
   unicode-range: U+2500-259F;
+}
+/*
+ * Arrows, math operators, geometric shapes, check marks and other dingbats, braille and the symbol blocks of tool output
+ * (U+2190-23FF, 25A0-25FF, 2600-297F, 2B00-2BFF) are in neither Ubuntu Mono's Fontsource subsets nor H3D Box. They would
+ * fall to SYSTEM_MONO, whose faces advance 0.6 em against Ubuntu Mono's 0.5, so a row of eight arrows came out 1.6
+ * cells wider than a row of letters and broke every table and column that held one. These faces take those ranges from
+ * the monospace fonts a machine already has (local(), nothing shipped) and size them to Ubuntu Mono's 0.5 em advance:
+ * size-adjust is per face, so one family per advance. DejaVu Sans Mono and Menlo (1233/2048 = 0.602 em) take H3D Box's
+ * 83.35%. The 0.6 em faces take 83.5%: 0.5 / 0.6 is 83.33%, and swept over 10-32 px in headless Chromium (whole-pixel
+ * text, an eight-glyph row against eight letters) 83.35% still let Nimbus Mono's half-pixel advances round down at
+ * odd sizes (11, 13, 17, 21, 23 ... px: 8 px short a row) where 83.5% holds at every one; the same sweep with H3D Box
+ * (DejaVu's advance) holds from 83.35% to 85%. Consolas is 0.55 em (1126/2048): 0.5 / 0.5498 plus the same nudge. The
+ * families are tried in this order after Ubuntu Mono and H3D Box, per character: a font that is not installed, or has
+ * not the glyph, passes it to the next family and finally to SYSTEM_MONO, so what a machine lacks is only left
+ * unaligned and what it has is lined up. Regular only: a synthesised
+ * bold or oblique keeps the advance (measured). Proportional symbol fonts (Segoe UI Symbol, Apple Symbols, Noto Sans
+ * Symbols 2) cannot be lined up by a size: a glyph that only they have still falls to the system, with its own advance.
+ */
+@font-face {
+  font-family: 'H3D Symbols Ubuntu';
+  src: local('DejaVu Sans Mono'), local('DejaVuSansMono'), local('Menlo Regular'), local('Menlo-Regular'), local('Menlo');
+  size-adjust: 83.35%;
+  unicode-range: U+2190-23FF, U+25A0-25FF, U+2600-297F, U+2B00-2BFF;
+}
+@font-face {
+  font-family: 'H3D Symbols Ubuntu 2';
+  src: local('Noto Sans Mono'), local('NotoSansMono-Regular'), local('SF Mono Regular'), local('SFMono-Regular'), local('Liberation Mono'), local('LiberationMono'), local('Nimbus Mono PS'), local('NimbusMonoPS-Regular');
+  size-adjust: 83.5%;
+  unicode-range: U+2190-23FF, U+25A0-25FF, U+2600-297F, U+2B00-2BFF;
+}
+@font-face {
+  font-family: 'H3D Symbols Ubuntu Consolas';
+  src: local('Consolas');
+  size-adjust: 91.3%;
+  unicode-range: U+2190-23FF, U+25A0-25FF, U+2600-297F, U+2B00-2BFF;
 }

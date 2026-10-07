@@ -43,7 +43,7 @@ describe('the two presets (#59, #172)', () => {
     expect(u.palette['code-bg']).toBe('#2c001e');
     expect(u.palette['bg-3']).toBe('#5e2750');
     expect(u.screen).toMatchObject({ bg: 0x300a24, fg: 0xffffff });
-    expect(u.mono.stack).toBe(`"Ubuntu Mono", "H3D Box Ubuntu", ${SYSTEM_MONO}`);
+    expect(u.mono.stack).toBe(`"Ubuntu Mono", "H3D Box Ubuntu", "H3D Symbols Ubuntu", "H3D Symbols Ubuntu 2", "H3D Symbols Ubuntu Consolas", ${SYSTEM_MONO}`);
     expect(u.prose.stack).toBe('"Ubuntu", system-ui, sans-serif');
     // Four faces of Ubuntu Mono for the terminal: nothing is synthesised.
     expect(canvasFaces(u)).toEqual(['400 16px "Ubuntu Mono"', '700 16px "Ubuntu Mono"', 'italic 400 16px "Ubuntu Mono"', 'italic 700 16px "Ubuntu Mono"']);
