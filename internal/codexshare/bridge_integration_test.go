@@ -48,9 +48,10 @@ const fixtureSystemdRun = "h3d-fixture-systemd-run"
 
 // bridgeOptions are what a suite changes in the bridge.
 type bridgeOptions struct {
-	codexCLI string // the codex the preflight and the command catalog run ("": "codex", herdr-world's default)
-	sessions string // the Codex rollout directory ("": the fixture's CODEX_HOME/sessions)
-	db       string // the store ("": a new one under the fixture's root)
+	codexCLI string   // the codex the preflight and the command catalog run ("": "codex", herdr-world's default)
+	sessions string   // the Codex rollout directory ("": the fixture's CODEX_HOME/sessions)
+	db       string   // the store ("": a new one under the fixture's root)
+	models   []string // Codex models hire accepts besides herdr-world's own list ("mock" always)
 }
 
 // bridge is one herdr-world run aimed at the fixture's session.
@@ -104,7 +105,7 @@ func (b *bridge) start() {
 	only := regexp.MustCompile("^" + regexp.QuoteMeta(f.h.Name) + "$")
 	b.ctl = &herdr.Control{Herdr: f.h.Bin, SystemdRun: fixtureSystemdRun, Only: only, CodexRun: b.run, Run: b.runner()}
 	opts := server.HireOptions()
-	opts.Codex.Models = append(opts.Codex.Models, "mock")
+	opts.Codex.Models = append(append(opts.Codex.Models, "mock"), b.o.models...)
 	ctx, cancel := context.WithCancel(context.Background())
 	ready, served := make(chan struct{}), make(chan error, 1)
 	logf, err := os.OpenFile(filepath.Join(f.root, "bridge.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
@@ -211,7 +212,11 @@ func (b *bridge) dial(name string) *bclient {
 	}
 	go c.read()
 	f.t.Cleanup(c.close)
-	c.wait("the snapshot", 15*time.Second, func() bool { return c.server != nil })
+	c.wait("the snapshot", 15*time.Second, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.server != nil
+	})
 	return c
 }
 
@@ -333,6 +338,13 @@ func (c *bclient) waitWorker(what, id string, d time.Duration, ok func(proto.Wor
 		return found && ok(w)
 	})
 	return got
+}
+
+// codexServer is the switch as the client last heard it.
+func (c *bclient) codexServer() proto.CodexServer {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return *c.server
 }
 
 // floor is the latest view of a floor.
