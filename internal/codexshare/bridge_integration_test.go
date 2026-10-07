@@ -48,7 +48,7 @@ const fixtureSystemdRun = "h3d-fixture-systemd-run"
 
 // bridgeOptions are what a suite changes in the bridge.
 type bridgeOptions struct {
-	codexCLI string // the codex the preflight and the command catalog run ("": codex on PATH)
+	codexCLI string // the codex the preflight and the command catalog run ("": "codex", herdr-world's default)
 	sessions string // the Codex rollout directory ("": the fixture's CODEX_HOME/sessions)
 	db       string // the store ("": a new one under the fixture's root)
 }
@@ -73,9 +73,28 @@ func (f *fx) startBridge(o bridgeOptions) *bridge {
 	if o.sessions == "" {
 		o.sessions = filepath.Join(f.home, "sessions")
 	}
+	if o.codexCLI == "" {
+		o.codexCLI = "codex"
+	}
+	if f.home != "" {
+		// What herdr-world runs itself (the preflight's `codex --version`,
+		// the command catalog's `codex app-server` over stdio, which #138's
+		// prompt translation asks for a text with a "/") runs in its own
+		// environment: the fixture's CODEX_HOME, never ~/.codex.
+		f.t.Setenv("CODEX_HOME", f.home)
+	}
 	b := &bridge{f: f, o: o, run: filepath.Join(f.root, "run"), sock: filepath.Join(f.root, "bridge", "w.sock")}
 	b.start()
-	f.t.Cleanup(b.stop)
+	f.t.Cleanup(func() {
+		b.stop()
+		if f.t.Failed() {
+			log, _ := os.ReadFile(filepath.Join(f.root, "bridge.log"))
+			if len(log) > 64<<10 {
+				log = log[len(log)-64<<10:]
+			}
+			f.t.Logf("herdr-world's log (tail):\n%s", log)
+		}
+	})
 	return b
 }
 
@@ -98,7 +117,7 @@ func (b *bridge) start() {
 			Socket: b.sock, DB: b.o.db, Herdr: &herdr.Client{Bin: f.h.Bin}, Only: only,
 			Log:  slog.New(slog.NewTextHandler(logf, &slog.HandlerOptions{Level: slog.LevelDebug})),
 			Name: "herdr-world", Ready: func() { close(ready) },
-			Control: b.ctl, Git: &gitops.Git{}, CodexRun: b.run, CodexCLI: b.o.codexCLI, CodexSessions: b.o.sessions,
+			Control: b.ctl, Git: &gitops.Git{}, CodexRun: b.run, ClaudeCLI: "claude", CodexCLI: b.o.codexCLI, CodexSessions: b.o.sessions,
 			Caps: server.Caps{FloorSoft: 10, FloorHard: 20, HostSoft: 100, HostHard: 200}, HireOptions: &opts,
 			ExitTimeout: 10 * time.Second,
 		})
@@ -423,6 +442,14 @@ func (c *bclient) hire(label, ws string, desk int) *hired {
 	return h
 }
 
+// settle waits until herdr and then the bridge (which polls herdr) see the
+// worker idle or done.
+func (c *bclient) settle(h *hired) {
+	c.t.Helper()
+	c.f.settle(h.pane)
+	c.waitWorker("idle", h.id, 15*time.Second, func(w proto.Worker) bool { return w.Status == "idle" || w.Status == "done" })
+}
+
 // view records the worker's codex view and returns it.
 func (c *bclient) view(label, id string) proto.WorkerCodex {
 	c.t.Helper()
@@ -555,6 +582,29 @@ func (b *bridge) launchOf(id string) (store.CodexLaunch, bool) {
 	}
 	l, ok := all[id]
 	return l, ok
+}
+
+// audit records the audit rows of cmds (their steps and notes) from index
+// from, and returns how many rows there are.
+func (b *bridge) audit(label string, from int, cmds ...string) int {
+	b.f.t.Helper()
+	st, err := store.Open(b.f.ctx, b.o.db)
+	if err != nil {
+		b.f.t.Fatal(err)
+	}
+	defer st.Close()
+	rows, err := st.AuditLog(b.f.ctx)
+	if err != nil {
+		b.f.t.Fatal(err)
+	}
+	var out []string
+	for _, e := range rows[min(from, len(rows)):] {
+		if slices.Contains(cmds, e.Cmd) {
+			out = append(out, fmt.Sprintf("%s ok=%v %s %s", e.Cmd, e.OK, e.Error, e.Result))
+		}
+	}
+	b.f.record(label+".txt", strings.Join(out, "\n")+"\n")
+	return len(rows)
 }
 
 // launchFiles lists which of a launch's files exist.

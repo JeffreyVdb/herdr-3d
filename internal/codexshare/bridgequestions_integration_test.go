@@ -36,7 +36,7 @@ func TestCodexShareBridgeQuestions(t *testing.T) {
 		t.Fatalf("hire with the switch on: %+v", w.res.Codex)
 	}
 	c.prompt("first", w.id, "MOCK:say worker-ready")
-	f.settle(w.pane)
+	c.settle(w)
 	thread := c.attached("joined", w.id).Thread
 	f.snap("tui-ready", w.pane)
 
@@ -55,7 +55,7 @@ func TestCodexShareBridgeQuestions(t *testing.T) {
 	// stays active) and returns the bridge's new batch.
 	ask := func(label, directive, hold string, n int) proto.CodexBatch {
 		t.Helper()
-		f.settle(w.pane)
+		c.settle(w)
 		c.prompt(label, w.id, "MOCK:"+directive+" hold="+hold)
 		f.held(hold)
 		batch := c.batchWith(label+"-batch", w.id, n, batches...)
@@ -77,7 +77,7 @@ func TestCodexShareBridgeQuestions(t *testing.T) {
 		if err := f.mock.Release(hold + "-reply"); err != nil {
 			t.Fatal(err)
 		}
-		f.settle(w.pane)
+		c.settle(w)
 	}
 	// terminalAnswer answers the TUI's open question from the game's
 	// seated terminal (worker.keys): shift+← opens Codex's question
@@ -134,7 +134,7 @@ func TestCodexShareBridgeQuestions(t *testing.T) {
 		if b1.Batch == "" {
 			t.Skip("no batch")
 		}
-		f.settle(w.pane)
+		c.settle(w)
 		v := c.view("3-idle-view", w.id)
 		if q := c.question(w.id, b1.Batch, 1); q.State != proto.AsyncPending || v.Turn != "" || v.AsyncBlocked {
 			t.Fatalf("after the asking turn ended: question %s, turn %q, async_blocked %v", q.State, v.Turn, v.AsyncBlocked)
@@ -158,7 +158,7 @@ func TestCodexShareBridgeQuestions(t *testing.T) {
 		q := c.waitQuestion("3-answered", w.id, b1.Batch, 1, 30*time.Second, func(q proto.CodexQuestion) bool {
 			return q.State == proto.AsyncAnswered
 		})
-		f.settle(w.pane)
+		c.settle(w)
 		screen = f.waitScreen("3-tui-answer-rendered", w.pane, 15*time.Second, func(s string) bool {
 			return strings.Contains(s, "MOCK_REPLY_SEEN context-from-the-transcript")
 		})
@@ -256,7 +256,7 @@ func TestCodexShareBridgeQuestions(t *testing.T) {
 			return q.State == proto.AsyncAnswered
 		})
 		replies := f.repliesSince(before, 1)
-		f.settle(w.pane)
+		c.settle(w)
 		f.recordJSON("5b-mock-requests", summarize(f.mock.Requests()[before:]))
 		n := answersIn(f.lastModelRequest(), b6.Batch, 0)
 		f.record("5b-both-answers.txt", fmt.Sprintf("bridge view: state %s answered_by %s answer %q\nreply requests: %d\nanswers to %s/0 in the model's last input: %d\n",
@@ -285,7 +285,7 @@ func TestCodexShareBridgeQuestions(t *testing.T) {
 		q := c.waitQuestion("6-undelivered", w.id, b7.Batch, 0, 30*time.Second, func(q proto.CodexQuestion) bool {
 			return q.Undelivered
 		})
-		f.settle(w.pane)
+		c.settle(w)
 		f.snap("6-tui-interrupted", w.pane)
 		if q.State != proto.AsyncSent || len(f.replyRequests(before)) != 0 {
 			t.Fatalf("after the interrupt: %+v, %d reply requests", q, len(f.replyRequests(before)))
@@ -299,7 +299,7 @@ func TestCodexShareBridgeQuestions(t *testing.T) {
 		c.waitQuestion("6-answered", w.id, b7.Batch, 0, 30*time.Second, func(q proto.CodexQuestion) bool {
 			return q.State == proto.AsyncAnswered
 		})
-		f.settle(w.pane)
+		c.settle(w)
 		again := c.answer(w.id, thread, b7.Batch, 0, "Blue")
 		f.record("6-answer-after-answered.json", string(again))
 		if errCode(again) != proto.ErrStale {
@@ -315,10 +315,10 @@ func TestCodexShareBridgeQuestions(t *testing.T) {
 	})
 
 	t.Run("dismiss: put away in the bridge, nothing sent, Codex keeps it", func(t *testing.T) {
-		f.settle(w.pane)
+		c.settle(w)
 		before := len(f.mock.Requests())
 		c.prompt("d", w.id, "MOCK:ask-free")
-		f.settle(w.pane)
+		c.settle(w)
 		bd := c.batchWith("d-batch", w.id, 1, batches...)
 		batches, dismissed = append(batches, bd.Batch), bd.Batch
 		c.ack(proto.CmdWorkerDismissAsync, proto.WorkerDismissAsyncArgs{ID: w.id, Thread: thread, Batch: bd.Batch}, 10*time.Second, nil)
@@ -360,7 +360,7 @@ func TestCodexShareBridgeQuestions(t *testing.T) {
 		if err := f.mock.Release("a8"); err != nil {
 			t.Fatal(err)
 		}
-		f.settle(w.pane)
+		c.settle(w)
 		f.prompt(w.pane, "MOCK:say typed-while-the-bridge-was-gone")
 		f.snap("7-tui-terminal-turn-bridge-gone", w.pane)
 
@@ -406,9 +406,9 @@ func TestCodexShareBridgeQuestions(t *testing.T) {
 	})
 
 	t.Run("4 distinct batches, and what the model saw of each answer", func(t *testing.T) {
-		f.settle(w.pane)
+		c.settle(w)
 		c.prompt("end", w.id, "MOCK:say the-end")
-		f.settle(w.pane)
+		c.settle(w)
 		last := f.lastModelRequest()
 		var lines []string
 		for _, x := range wants {
