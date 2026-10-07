@@ -2634,7 +2634,7 @@ assistant `response_item` (else `task_complete`'s `last_agent_message`). A new p
    a real need for a human comes through the report's `input_required`); a harness other than Claude or Codex; an
    empty message. Orchestrators and regular workers are looked at.
 3. **Gate**: the classifier scores `state {"last_agent_message": <the message's last 96,000 characters, ~24k tokens at
-   4 characters a token>}` for "Does the message ask the user a direct question, or ask them to decide something, that the agent needs answered before it can continue? A statement such as 'say if you want X' or 'let me know if...' is an optional offer, not a question.". Under the
+   4 characters a token>}` for "Does the message ask the user one or more questions or decisions they are expected to answer, even when the agent proposes a recommended answer for each?". Under the
    threshold: nothing, and no LLM call.
 4. **Extract**: the LLM (JSON mode) lists `{"questions":[{"question","kind","options"}]}`, validated strictly: 1–8
    questions, each 1–300 characters (whitespace folded), `kind` `yes_no`, `choice` (2–8 options of 1–120 characters)
