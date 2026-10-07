@@ -597,8 +597,10 @@ run predates §12.1a's fix, which it does not exercise (no restart).
   is #155's (`internal/server/codexfloor.go`) and was not changed here; a retry while the pane comes back is follow-up
   work.
 - **Across a restart** (§12.1a): an answer recorded but not yet sent when herdr-world stopped shows `sent` until its
-  turn ends (a wait); a record the store failed to write lasts only until the bridge stops; a failed
-  `thread/turns/list` on a join leaves the newest turn under resume's `item-N` ids until the next join.
+  turn ends (a wait); a failed or empty `thread/turns/list` on a join leaves the newest turn's batch under resume's
+  `item-N` id, unanswerable from the transcript, the records kept and the bridge joining again every 60 s until a join
+  reads its call id (a wait); **a record the store failed to write** (logged) lasts only until the bridge stops, so a
+  restart before that answer is delivered admits a retry the model also sees (the one duplicate window left).
 - Codex releases other than 0.160.x, and orchestrator-created (write-code) workers, which stay embedded (D7).
 - Whether the terminal's editor takes free text on a question with options (the terminal answers here were free-text
   questions; the bridge stays strict).
