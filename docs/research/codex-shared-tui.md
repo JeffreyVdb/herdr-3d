@@ -567,6 +567,14 @@ run predates §12.1a's fix, which it does not exercise (no restart).
   reply to the bridge's answer~~: **closed** by the UX review's run (§12.5a).
 - **Phone touch targets** (advisory, §12.5a): the card's Clear and folded batch buttons are under 44 px tall at
   390 × 844. Not changed in #158.
+- **A wake's resume is flaky in the fixture** (found re-running #158's suites, not changed): now and then the wake's
+  resume fails at once, `resume: "failed"`, "the terminal did not attach (herdr control resume-codex-remote: herdr:
+  agent_pane_busy: agent target pane w1:p1 is not an available shell); starting it without its own server failed
+  too", so `BridgeRegression` step 10 or 11 times out waiting for the join. Seen in 1 of 3 runs at `7dcaedb`
+  (before this round's changes, step 10) and 2 of 5 runs after them (steps 10 and 11); the other runs, and
+  `make codex-shared-tui`, passed. The wake typed into a pane herdr did not yet count as a free shell. The wake path
+  is #155's (`internal/server/codexfloor.go`) and was not changed here; a retry while the pane comes back is follow-up
+  work.
 - **Across a restart** (§12.1a): an answer recorded but not yet sent when herdr-world stopped shows `sent` until its
   turn ends (a wait); a record the store failed to write lasts only until the bridge stops; a failed
   `thread/turns/list` on a join leaves the newest turn under resume's `item-N` ids until the next join.
