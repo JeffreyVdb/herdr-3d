@@ -68,3 +68,30 @@ func TestDigestSettingsAndCache(t *testing.T) {
 		t.Fatalf("digest_cache columns = %v", cols)
 	}
 }
+
+// #174: the reasoning effort and the completion budget are saved with the
+// settings (never by the call count's save), and a row from before them reads
+// as the provider's default effort and the default budget (0).
+func TestDigestReasoningSettings(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "world.db")
+	st := open(t, path)
+	if err := st.SaveDigestSettings(ctx, store.DigestSettings{Enabled: true, DailyCap: 300, ReasoningEffort: "none", MaxTokens: 2048}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveDigestCalls(ctx, store.DigestSettings{DailyCap: 300, CallsDay: "2026-10-07", CallsToday: 4}); err != nil {
+		t.Fatal(err) // the count's save leaves the settings alone
+	}
+	st.Close()
+	st = open(t, path)
+	want := store.DigestSettings{Enabled: true, DailyCap: 300, ReasoningEffort: "none", MaxTokens: 2048, CallsDay: "2026-10-07", CallsToday: 4}
+	if got, ok, err := st.LoadDigestSettings(ctx); !ok || err != nil || got != want {
+		t.Fatalf("after reopen = %+v %v %v", got, ok, err)
+	}
+	if err := st.SaveDigestSettings(ctx, store.DigestSettings{Enabled: true, DailyCap: 300}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := st.LoadDigestSettings(ctx); got.ReasoningEffort != "" || got.MaxTokens != 0 {
+		t.Fatalf("back to the defaults = %+v", got)
+	}
+}

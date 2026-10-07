@@ -248,11 +248,14 @@ type Options struct {
 	// DigestSettle how long after a turn ended its now line is written
 	// (default DefaultDigestSettle), DigestGap the least time between two
 	// now lines of a worker (default DefaultDigestGap), DigestRoles the LLM
-	// (default AI; tests pass fakes).
+	// (default AI; tests pass fakes). #174: DigestRetry is how long after a
+	// task line's n-th failed attempt the next goes (default
+	// digest.RetryDelay: growing, ok false once the attempts are used up).
 	DigestEnabled *bool
 	DigestSettle  time.Duration
 	DigestGap     time.Duration
 	DigestRoles   digest.Roles
+	DigestRetry   func(n int) (time.Duration, bool)
 
 	// #155 shared Codex server: CodexRun is the private directory of the
 	// shared launches' launchers and sockets ("" or no CodexHost: the switch
@@ -511,6 +514,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	}
 	if opts.DigestSettle <= 0 { // #118
 		opts.DigestSettle = DefaultDigestSettle
+	}
+	if opts.DigestRetry == nil {
+		opts.DigestRetry = digest.RetryDelay
 	}
 	if opts.DigestGap <= 0 {
 		opts.DigestGap = DefaultDigestGap
@@ -836,7 +842,7 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startDismissFollowup
 		case proto.CmdActivityGet, proto.CmdActivitySet: // #98
 			start = h.startActivity
-		case proto.CmdDigestGet, proto.CmdDigestSet, proto.CmdDigestTest: // #118
+		case proto.CmdDigestGet, proto.CmdDigestSet, proto.CmdDigestTest, proto.CmdDigestRetry: // #118, #174
 			start = h.startDigest
 		// M7 boards
 		case proto.CmdBoardWatch:
