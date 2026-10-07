@@ -1926,7 +1926,7 @@ export class App {
   private cityOverviewData(): CityOverviewData {
     const city = this.store.city();
     const floors = city.flatMap((b) => b.floors);
-    const buildings = city.filter((b) => b.building).length;
+    const buildings = city.filter((b) => b.building && b.floors.length).length; // an empty building holds nobody
     const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
     return {
       tree: buildCityOverview(this.store),

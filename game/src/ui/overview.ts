@@ -782,8 +782,10 @@ export class OverviewOverlay {
     const view = this.view;
     if (!view || this.filter.activeOnly(view.kind) === active) return;
     this.filter.setActiveOnly(view.kind, active);
+    const onRow = !!(document.activeElement as Element | null)?.closest?.('.ov-row');
     this.refresh();
-    if (this.focusKey) this.setFocus(this.focusKey);
+    // From a row (f): focus stays on the board; from the switch or the hidden line, where you pressed it.
+    if (this.focusKey && (onRow || !this.root.contains(document.activeElement))) this.setFocus(this.focusKey);
   }
 
   /** #188: from a floor's page to every floor's (`a`, the All floors button). Esc then closes the page. */
