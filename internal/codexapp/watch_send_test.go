@@ -117,12 +117,46 @@ func TestWatcherReadsOnePageOfOlderTurns(t *testing.T) {
 	for _, tu := range j.Thread.Turns {
 		ids = append(ids, tu.ID)
 	}
-	if len(ids) != 3 || ids[0] != "t1" || ids[1] != "t2" || ids[2] != "t3" {
-		t.Fatalf("turns %v", ids)
+	if len(ids) != 3 || ids[0] != "t1" || ids[1] != "t2" || ids[2] != "t3" || j.Thread.Partial {
+		t.Fatalf("turns %v (partial %v)", ids, j.Thread.Partial)
 	}
 	b, _ := json.Marshal(asked)
 	if string(b) != `{"cursor":{"rolloutOrdinal":118},"itemsView":"full","limit":50,"sortDirection":"desc","threadId":"th1"}` {
 		t.Fatalf("thread/turns/list %s", b)
+	}
+}
+
+// #158: a history is Partial when the thread has older turns than the
+// join read: the page of older turns had more after it, or failed.
+func TestWatcherHistoryPartial(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		older   any
+		page    any // thread/turns/list's result, nil: an error
+		partial bool
+	}{
+		{"not paginated", nil, nil, false},
+		{"older page read to the start", map[string]any{"rolloutOrdinal": 3}, map[string]any{"data": []any{}, "nextCursor": nil}, false},
+		{"more after the page", map[string]any{"rolloutOrdinal": 300}, map[string]any{"data": []any{},
+			"nextCursor": `{"rolloutOrdinal":16}`}, true},
+		{"the page failed", map[string]any{"rolloutOrdinal": 300}, nil, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFakeServer(t)
+			f.thread["turns"] = []any{map[string]any{"id": "t9", "status": "completed", "items": []any{}}}
+			f.older = c.older
+			f.respond = func(string, map[string]any) (any, any, bool) {
+				if c.page == nil {
+					return nil, map[string]any{"code": -32603, "message": "no"}, false
+				}
+				return c.page, nil, false
+			}
+			r := newRecorder()
+			watch(t, f, r, nil)
+			if th := r.wait(t, EvJoined).Thread; th.Partial != c.partial {
+				t.Fatalf("partial = %v, want %v", th.Partial, c.partial)
+			}
+		})
 	}
 }
 
