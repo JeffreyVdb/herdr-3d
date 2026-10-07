@@ -188,6 +188,14 @@ func (b *builder) finish(full bool) proto.TranscriptItem {
 			p.Text, it.Truncated = cut(p.Text, MaxText), true
 		}
 	}
+	if len(it.Answers) > 0 {
+		it.Answers = slices.Clone(it.Answers)
+		for i := range it.Answers {
+			if a := &it.Answers[i]; len(a.Question) > MaxText || len(a.Answer) > MaxText {
+				a.Question, a.Answer, it.Truncated = cut(a.Question, MaxText), cut(a.Answer, MaxText), true
+			}
+		}
+	}
 	if n := it.Notice; n != nil {
 		limit := MaxText
 		if it.Hidden {

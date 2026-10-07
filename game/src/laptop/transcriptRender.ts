@@ -472,6 +472,9 @@ function renderDiff(diff: TranscriptDiff): HTMLElement {
 
 /** Shown only with "show system": what the bridge marks hidden (dropped lines, as notices) and unknown entries. A notice
  * it does not hide (an interrupt, a turn's error, command output) is part of the conversation. */
+/** #183: a usable `answers` list (the bridge's, but a malformed entry falls back to the plain bubble, never throws). */
+const isAnswers = (a: unknown): a is Array<{ question: string; answer: string }> =>
+  Array.isArray(a) && a.length > 0 && a.every((e) => !!e && typeof e === 'object' && typeof (e as { question?: unknown }).question === 'string' && typeof (e as { answer?: unknown }).answer === 'string');
 const isSystem = (it: TranscriptItem) => it.hidden === true || it.kind === 'unknown';
 /** #59: what "Hide tool calls" hides: tool rows (not subagents, not an agent's question, which is part of the conversation). */
 export const isToolRow = (it: TranscriptItem) => it.kind === 'tool' && !!it.tool && !(it.tool.ask && typeof it.tool.ask === 'object' && Array.isArray(it.tool.ask.questions));
@@ -1206,6 +1209,7 @@ class Transcript implements TranscriptView {
   private build(it: TranscriptItem, scope: string): HTMLElement {
     switch (it.kind) {
       case 'user':
+        if (isAnswers(it.answers)) return this.answerRow(it, it.answers);
         return h('li', { class: isImageOnly(it) ? 'tx-item tx-user tx-imgonly' : 'tx-item tx-user' }, this.parts(it, 'tx-bubble'));
       case 'assistant':
         return h('li', { class: isImageOnly(it) ? 'tx-item tx-assistant tx-imgonly' : 'tx-item tx-assistant' }, this.parts(it, 'tx-said'));
@@ -1223,6 +1227,20 @@ class Transcript implements TranscriptView {
       default:
         return this.unknownRow(it, null);
     }
+  }
+
+  /**
+   * #183: your answer to a Codex async question, in your bubble: a small label, each question as context and the answer
+   * as the entry. Plain text (an answer's `<b>` or `**x**` is what you typed), several answers in order. Neutral: it says
+   * what you answered, not that Codex read it. The native envelope (`parts`) is behind a collapsed "Raw reply".
+   */
+  private answerRow(it: TranscriptItem, answers: ReadonlyArray<{ question: string; answer: string }>): HTMLElement {
+    const pairs = answers.map((a) => h('div', { class: 'tx-ans-pair' }, a.question.trim() ? h('div', { class: 'tx-ans-q' }, a.question) : null, h('div', { class: 'tx-ans-a' }, a.answer)));
+    const raw = (Array.isArray(it.parts) ? it.parts : []).map((p) => (p && typeof p === 'object' && 'text' in p && typeof p.text === 'string' ? p.text : '')).join('');
+    const bubble = h('div', { class: 'tx-bubble tx-ans' }, h('div', { class: 'tx-ans-label' }, 'Your answer'), ...pairs);
+    if (raw) bubble.append(h('details', { class: 'tx-ans-raw' }, h('summary', {}, 'Raw reply'), h('pre', {}, raw)));
+    if (it.truncated) bubble.append(h('div', { class: 'tx-note' }, 'Truncated: only the start is shown.'));
+    return h('li', { class: 'tx-item tx-user tx-answer' }, bubble);
   }
 
   private unknownRow(it: TranscriptItem, why: string | null): HTMLElement {

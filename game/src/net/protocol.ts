@@ -1214,6 +1214,9 @@ export interface TranscriptItem {
   hidden?: boolean;
   /** user / assistant / thinking: markdown text and images, in order. */
   parts?: Array<{ text: string } | ImagePart | ImageOmittedPart>;
+  /** #183, user: the reply to Codex's async questions (`parts` holds the native envelope as sent): one entry per answer, in
+   * order. Plain text, not markdown. */
+  answers?: Array<{ question: string; answer: string }>;
   /** A part's text was cut (`transcript.item` has it all). */
   truncated?: boolean;
   /** A tool call and its result (the result may arrive later, as an update); a subagent's call has one too. */
