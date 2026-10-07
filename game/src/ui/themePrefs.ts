@@ -2,11 +2,14 @@ import { clampZoom, DEFAULT_THEME, isThemeId, ZOOM, type ThemeId } from './theme
 
 /**
  * #59: what the seated views remember per browser, for every worker alike. The transcript and the terminal each have
- * their own preset and their own zoom (the same three presets); the transcript also remembers whether tool calls are
+ * their own preset and their own zoom (the same two presets); the transcript also remembers whether tool calls are
  * hidden. Guarded like `limitsPrefs.ts`: localStorage can be missing or throw (private windows, blocked site data), so
  * the values live here and storage only carries them to the next page load. A stored value that is not one of ours is
  * ignored (a zoom is clamped onto its steps).
  */
+
+/** #172: the presets this build dropped, by the id a browser may still have stored, and what each one opens as now. */
+const RETIRED: Readonly<Record<string, ThemeId>> = { terminal: 'ubuntu', paper: 'quiet' };
 
 /** The two seated views a preset and a zoom are chosen for. */
 export type ThemedView = 'transcript' | 'terminal';
@@ -37,7 +40,11 @@ export class ViewPrefs {
   constructor(private readonly storage: Storage | null = defaultStorage()) {
     const theme = (v: ThemedView): ThemeId => {
       const t = this.read(THEME[v]);
-      return isThemeId(t) ? t : DEFAULT_THEME;
+      if (isThemeId(t)) return t;
+      // A retired preset opens as its successor, and the stored value follows (the default is stored as nothing).
+      const next = t === null || !Object.hasOwn(RETIRED, t) ? DEFAULT_THEME : RETIRED[t]!;
+      if (t !== null && Object.hasOwn(RETIRED, t)) this.write(THEME[v], next === DEFAULT_THEME ? null : next);
+      return next;
     };
     const zoom = (v: ThemedView): number => {
       const z = this.read(ZOOM_KEY[v]);

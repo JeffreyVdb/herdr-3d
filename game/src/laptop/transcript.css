@@ -439,7 +439,7 @@
   padding: 2px 6px;
   border: 0;
   background: transparent;
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
   font-size: calc(12px * var(--tx-k, 1));
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -559,7 +559,7 @@
   font-size: 1.12em;
 }
 .tx-md a {
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
 }
 .tx-md blockquote {
   padding-left: 10px;
@@ -880,7 +880,7 @@
 }
 .tx-dh {
   background: color-mix(in srgb, var(--tx-blue) 10%, transparent);
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
 }
 .tx-meta .tx-dt {
   color: var(--tx-text-3);
@@ -1094,7 +1094,7 @@
 }
 .tx-cmd[data-kind='skill'] .tx-cmd-kind {
   border-color: color-mix(in srgb, var(--tx-blue) 45%, transparent);
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
 }
 .tx-cmd[data-kind='custom'] .tx-cmd-kind {
   border-color: color-mix(in srgb, var(--tx-green) 45%, transparent);
@@ -1348,7 +1348,7 @@
   will-change: opacity;
 }
 .tx-activity-label svg {
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
 }
 .tx-activity-time {
   color: var(--tx-text-3);
@@ -1697,7 +1697,7 @@
   font-weight: 650;
 }
 .tx-ask-row-act {
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
   font-size: calc(12px * var(--tx-k, 1));
 }
 .tx-ask-done {
@@ -2334,7 +2334,7 @@
 }
 .tx-aq {
   --tx-sun: var(--tx-blue);
-  --tx-sun-text: var(--tx-blue);
+  --tx-sun-text: var(--tx-blue-text);
   --tx-on-sun: var(--tx-on-accent);
   /* Its own ground (the sticky top and foot of a short screen paint it too). */
   --tx-ask-bg: color-mix(in srgb, var(--tx-blue) 7%, var(--tx-bg-2));
@@ -2409,7 +2409,7 @@
   animation: tx-pulse 1.2s ease-in-out infinite;
 }
 .tx-aq-state[data-phase='sent'] {
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
 }
 .tx-aq-state[data-phase='unconfirmed'] {
   font-style: italic;
@@ -2489,7 +2489,7 @@
 }
 .tx-qtab[data-card='asyncq'] {
   --tx-sun: var(--tx-blue);
-  --tx-sun-text: var(--tx-blue);
+  --tx-sun-text: var(--tx-blue-text);
   --tx-on-sun: var(--tx-on-accent);
   border-style: solid;
 }

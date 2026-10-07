@@ -297,7 +297,7 @@
   padding: 0;
   border: 0;
   background: none;
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
   text-decoration: underline;
   text-underline-offset: 2px;
 }

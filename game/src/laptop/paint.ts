@@ -336,6 +336,9 @@ export const PAD = 0.025;
 /** Cell width / height the grid keeps: a monospace cell, squeezed or stretched no further. */
 export const CELL_ASPECT = { min: 0.42, max: 0.7 };
 
+/** #172: the most a narrow monospace's em is grown by (Ubuntu Mono: 0.6 / 0.5 = 1.2), so a glyph is never stretched wide. */
+const NARROW_EM_GROW = 1.25;
+
 /**
  * The cell grid inside the padding: cell size and origin. The pane's own size decides cols × rows (the observer
  * does not reflow), so a wide or tall pane is letterboxed on the laptop's screen rather than distorted.
@@ -452,13 +455,23 @@ export function paintBuffer(g: Paint2D, buf: IBuffer, o: PaintOptions, cell: IBu
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.fillStyle = hex(t.bg);
   g.fillRect(0, 0, o.width, o.height);
-  const size = Math.max(4, Math.round(ch * 0.8));
   // Glance: heavier strokes, so the letters survive being small on screen.
   const w = o.glance ? ['600 ', '800 '] : ['400 ', '700 '];
-  const fonts = [0, 1, 2, 3].map((f) => `${f & ITALIC ? 'italic ' : ''}${f & BOLD ? w[1] : w[0]}${size}px ${font}`);
+  const fontsAt = (px: number) => [0, 1, 2, 3].map((f) => `${f & ITALIC ? 'italic ' : ''}${f & BOLD ? w[1] : w[0]}${px}px ${font}`);
+  let size = Math.max(4, Math.round(ch * 0.8));
+  let fonts = fontsAt(size);
   g.font = fonts[0] as string;
   // The font's advance, squeezed or stretched to the cell (CELL_ASPECT keeps that within a monospace's range).
-  const adv = g.measureText('M').width || size * 0.6;
+  let adv = g.measureText('M').width || size * 0.6;
+  // #172: a narrow monospace (Ubuntu Mono's advance is 0.5 em, the others' 0.6) is drawn larger rather than stretched
+  // wide to the cell: its em grows toward the 0.6 the cells are shaped for, never past the cell's height.
+  const grow = Math.min(NARROW_EM_GROW, 0.6 / (adv / size));
+  if (grow > 1.02) {
+    size = Math.max(size, Math.min(Math.floor(ch), Math.ceil(ch * 0.8 * grow)));
+    fonts = fontsAt(size);
+    g.font = fonts[0] as string;
+    adv = g.measureText('M').width || size * 0.6;
+  }
   const sx = cw / adv;
   g.textBaseline = 'middle';
   const cur = { x: buf.cursorX, y: buf.cursorY, show: showCursor };

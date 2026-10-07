@@ -94,7 +94,7 @@ test('every preset: the number reads, and the steps (neutral, warm, hot) differ 
   await sitAt(page, 'Tofu');
   const tx = page.locator('.tx');
   const meter = tx.locator('.tx-bar .tx-ctx');
-  for (const pick of ['quiet', 'terminal', 'paper']) {
+  for (const pick of ['quiet', 'ubuntu']) {
     await tx.locator(`[role="radio"][data-theme-id="${pick}"]`).click();
     await page.evaluate(() => window.__h3d.themeLoaded());
     await expect(tx).toHaveAttribute('data-theme', pick);

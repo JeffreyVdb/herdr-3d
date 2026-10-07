@@ -38,7 +38,7 @@ function closeIcon(): SVGSVGElement {
 function fontRow(f: FontCredit): HTMLLIElement {
   const li = el('li', 'credits-row credits-font');
   const who = el('div', 'credits-who');
-  who.append(el('span', 'credits-title', f.name), el('span', 'credits-artist', `${f.role}. ${f.copyright}.`));
+  who.append(el('span', 'credits-title', f.name), el('span', 'credits-artist', `${f.role}. ${f.copyright}${f.copyright.endsWith('.') ? '' : '.'}`));
   const meta = el('div', 'credits-meta');
   const lic = f.license ?? OFL;
   meta.append(link(lic.url, lic.name, `${f.name}: license, ${lic === OFL ? 'SIL Open Font License 1.1' : lic.name}`), link(f.source, 'Source', `${f.name}: source`));
@@ -110,7 +110,7 @@ export class MusicCredits {
     fontsTitle.setAttribute('aria-label', `Fonts, ${FONT_CREDITS.length}`);
     const fontList = el('ul', 'credits-list');
     fontList.append(...FONT_CREDITS.map(fontRow));
-    // The licences' full texts ship with the game (the OFL and the Bitstream Vera licence ask it): a local file.
+    // The licences' full texts ship with the game (the OFL, the Ubuntu Font Licence and the Bitstream Vera licence ask it): a local file.
     const texts = el('p', 'credits-fonts-texts');
     const local = el('a', 'credits-link', FONT_LICENSES_FILE);
     local.href = FONT_LICENSES_FILE;

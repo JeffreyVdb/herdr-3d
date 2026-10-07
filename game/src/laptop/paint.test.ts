@@ -135,7 +135,7 @@ describe('paintBuffer', () => {
 });
 
 /** #59: each preset's mono font, by its advance at 1px (measured from the files: `M`'s advance / units per em). */
-const ADVANCE: Record<string, number> = { terminal: 350 / 550, quiet: 600 / 1000, paper: 612 / 1000 };
+const ADVANCE: Record<string, number> = { ubuntu: 500 / 1000, quiet: 600 / 1000 };
 
 describe('paintBuffer with the presets (#59)', () => {
   it('draws every glyph in its own cell, never wider or taller than it, in each preset’s font, at every zoom and cell shape', async () => {
@@ -164,7 +164,11 @@ describe('paintBuffer with the presets (#59)', () => {
             expect(g.font).toContain(preset.mono.stack);
           }
           // The squeeze or stretch that fits a glyph to its cell stays within what reads as the font.
-          const scale = v.cw / (Math.round(v.ch * 0.8) * (ADVANCE[preset.id] as number));
+          // (A narrow font's em is grown toward the cell's width: Ubuntu Mono is drawn at up to 1.2 times the size.)
+          const drawnPx = Number(/(\d+)px/.exec(f.texts[0]?.font ?? '')?.[1]);
+          expect(drawnPx).toBeGreaterThanOrEqual(Math.round(v.ch * 0.8));
+          expect(drawnPx).toBeLessThanOrEqual(preset.id === 'ubuntu' ? Math.floor(v.ch) : Math.round(v.ch * 0.8));
+          const scale = v.cw / (drawnPx * (ADVANCE[preset.id] as number));
           expect(scale).toBeGreaterThan(0.8);
           expect(scale).toBeLessThan(1.5);
           expect(f.rects[0]?.style).toBe(css(preset.screen.bg));
@@ -204,8 +208,9 @@ describe('paintBuffer with the presets (#59)', () => {
     t.dispose();
   });
 
-  it('keeps the preset’s text readable on an agent’s own backgrounds, and any colour on Paper’s light screen', async () => {
-    const paper = screenTheme(THEMES[2].screen);
+  it('keeps the preset’s text readable on an agent’s own backgrounds, and any colour on a light screen', async () => {
+    // (No preset is light any more, but a screen's own colours still decide: the rule holds for whatever a preset sets.)
+    const paper = screenTheme({ bg: 0xf2ead8, fg: 0x231d14, cursor: 0x274b96 });
     const t = new Terminal({ cols: 20, rows: 2, scrollback: 0 });
     await write(t, '\x1b[41m-old\x1b[0m \x1b[97mwhite\x1b[0m\r\n\x1b[2mdim\x1b[0m');
     const f = fakeCtx();

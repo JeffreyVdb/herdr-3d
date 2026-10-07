@@ -213,11 +213,11 @@ test('the sound control has a music popover with a slider and mute of its own, a
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('.credits-row:not(.credits-font)')).toHaveCount(total);
   expect(total).toBeGreaterThanOrEqual(25);
-  // The genres, then (#59) the fonts: Recursive, each transcript preset's two (all OFL), and the box-drawing subset;
+  // The genres, then (#59) the fonts: Recursive, each transcript preset's two (the Ubuntu pair under the Ubuntu Font Licence, the rest OFL), and the box-drawing subset;
   // M13: then the whiteboard editor's (Excalidraw's) nine families.
   await expect(dialog.getByRole('heading', { level: 3 })).toHaveCount(6);
   await expect(dialog.locator('.credits-font .credits-title')).toHaveText([
-    'Recursive', 'Departure Mono', 'Archivo', 'JetBrains Mono', 'Atkinson Hyperlegible Next', 'Space Mono', 'Newsreader', 'H3D Box (DejaVu Sans Mono)',
+    'Recursive', 'Departure Mono', 'Archivo', 'JetBrains Mono', 'Atkinson Hyperlegible Next', 'Ubuntu', 'Ubuntu Mono', 'H3D Box (DejaVu Sans Mono)',
     'Excalifont', 'Virgil', 'Xiaolai', 'Nunito', 'Lilita One', 'Assistant', 'Comic Shanns', 'Cascadia Code', 'Liberation Sans 1.05',
   ]);
   for (const link of await dialog.locator('.credits-font').getByRole('link', { name: /license, SIL Open Font License 1\.1/ }).all()) await expect(link).toHaveAttribute('href', /openfontlicense\.org/);
@@ -229,8 +229,16 @@ test('the sound control has a music popover with a slider and mute of its own, a
     return { ok: r.ok, text: await r.text() };
   }, await local.evaluate((a) => (a as HTMLAnchorElement).href));
   expect(licences.ok).toBe(true);
-  // Seven of the game's, and seven of the whiteboard's (six OFL fonts and Cascadia's repository licence).
-  expect(licences.text.match(/SIL OPEN FONT LICENSE Version 1\.1 - 26 February 2007/g)?.length).toBe(14);
+  // Five of the game's, and seven of the whiteboard's (six OFL fonts and Cascadia's repository licence).
+  expect(licences.text.match(/SIL OPEN FONT LICENSE Version 1\.1 - 26 February 2007/g)?.length).toBe(12);
+  // #172: the Ubuntu fonts are under the Ubuntu Font Licence, in full, with their copyright; not the OFL.
+  expect(licences.text.match(/UBUNTU FONT LICENCE Version 1\.0/g)?.length).toBe(2);
+  expect(licences.text.match(/Copyright: Copyright 2011 Canonical Ltd\./g)?.length).toBe(2);
+  for (const name of ['Ubuntu', 'Ubuntu Mono']) {
+    const row = dialog.locator('.credits-font', { has: page.locator('.credits-title', { hasText: new RegExp(`^${name}$`) }) });
+    await expect(row.getByRole('link', { name: `${name}: license, Ubuntu Font Licence 1.0` })).toHaveAttribute('href', /ubuntu\.com\/legal\/font-licence/);
+    await expect(row).toContainText('Copyright 2011 Canonical Ltd.');
+  }
   expect(licences.text).toContain('Copyright (c) 2018 Shannon Miwa');
   expect(licences.text).toContain('GNU GENERAL PUBLIC LICENSE');
   expect(licences.text).toContain('Bitstream Vera is');
