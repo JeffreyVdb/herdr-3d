@@ -480,7 +480,7 @@ the envelope, the server's response, the launch or the join's own history.
 | `pruneSends` (a live change; a send's response) | the record's thread is not the worker's; its question shows `answered` | thread changed; answered |
 | `answerAsync` | the server refused the answer (JSON-RPC error, after the steer → start fallback) | nothing was delivered |
 | a join (`codexJoined`) | the record's thread is not the join's; an envelope in the history names its question | thread changed; answered |
-| a join, its batch in the history and in the view | `Restore` says it no longer matters: the question answered, or a `turn/start` recorded but never confirmed whose envelope the history lacks | answered; not taken (a started turn's user message is its first item, and a join always reads the newest turns) |
+| a join, its batch in the history and in the view | `Restore` says it no longer matters: the question answered | answered |
 | a join, its batch not in the history | only if that history is the whole thread (`Thread.Partial` false: no older turns left unread) **and** has no `item-N` id (`codexapp.LegacyHistory` of the join's own turns) | the batch is not in the thread |
 | `noteCodexThread` | herdr reports another thread for the worker | thread changed |
 | `forgetCodex` | the worker is sent home | it is gone |
@@ -490,9 +490,11 @@ Kept, because none of these is evidence: the batch evicted from the view (the re
 a batch whose answer is in flight, `sending`); dismissed, and dismissed then evicted; a join whose history has an
 `item-N` id (unresolved is now a property of that join, cleared only by a later join that reads every id; eviction,
 dismissal and live events do not change it); a partial history; a batch the join's hydration itself evicts (the view
-keeps the newest 32 of what it reads); an unrelated live item; the turn ending without the answer (`undelivered`).
-Re-admission is gated the same way: a batch seen again, by a join or live, gets its record back (`sent`, or `sent,
-undelivered` when its turn ended), so only a refusal or an ended turn makes the bridge's own answer answerable again.
+keeps the newest 32 of what it reads); an unrelated live item; the turn ending without the answer (`undelivered`); a
+send whose response never came and whose envelope the history lacks (`sent`, `unconfirmed`: below).
+Re-admission is gated the same way: a batch seen again, by a join or live, gets its record back (`sent`, `sent,
+undelivered` when the turn it is known to have gone to ended, or `sent, unconfirmed`), so only a refusal, or the end of
+a turn the answer was confirmed into or steered into while it ran, makes the bridge's own answer answerable again.
 
 Tests (red before the fix, green after): `server.TestAsyncAnswerKeptThroughAnEvictedLegacyBatch` (the reviewer's
 scenario), `TestAsyncAnswerKeptThroughAnEvictedBatch` (no legacy id: evicted by 32 newer questions, seen live again,
@@ -503,10 +505,37 @@ eviction and "answered in an unresolved history" rows failed). In `codexapp`: `T
 `TestHistoryHelpers`, `TestWatcherHistoryPartial`. Mutations: dropping the `Partial` gate fails the partial row;
 dropping the live envelope check fails "answered live after its batch was evicted" and the eviction test.
 
+**When the terminal starts a turn at the same instant** (review round 4, decisions #158 row 17). The bridge chose
+`turn/start` from its idle view while the terminal started `t1`; Codex took the bridge's input into `t1` and held its
+envelope until `t1`'s next model request (§11 `b-start-while-active`). herdr-world stopped after recording the send (no
+turn, not confirmed) and before the response: the restarted bridge's join had the question and `t1` running but no
+envelope, `Restore` read that as "not taken" and dropped the record, the question went `pending`, and a retry put a
+second identical envelope into `t1` (the reviewer's `TestReviewStartQueuedIntoConcurrentTurnLosesProtection`, and on
+Codex 0.160.1 with the mock model `TestReviewRealStartIntoActiveTurnHistory`: both envelopes in one model request,
+reviewer-run). The same holds for a steer into a turn that ended meanwhile: refused, it falls back to `turn/start`
+(`sendToThread`), recorded under the steered turn. The rule "a started turn's user message is its first item" holds only
+when Codex opens a new turn. **A send recorded but never answered by the server, whose envelope the history lacks, is
+now `sent`, `unconfirmed` and keeps its record** (`Questions.Restore`): the bridge never sends it again, the terminal
+can answer it, and its envelope, once delivered, drops the record. A steer recorded into the turn still running keeps
+its rule (`sent`, `undelivered` once that turn ends without it): a fallback `turn/start`, if any, went into that same
+running turn (a `turn/start` while a turn runs joins it). Tests (red before, green after):
+`server.TestAsyncAnswerQueuedIntoAConcurrentTurnSurvivesARestart` (the reviewer's scenario, and its steer → start
+fallback: `sent`, `unconfirmed`, a retry `stale`, no new send, the delivered envelope dropping the record), the
+`TestAsyncSendRecordInvariant` rows "a turn/start never confirmed, not in the history" (was a drop, now kept) and "a
+steer never confirmed, its turn ended, not in the history" (22 rows), and the never-confirmed cases of
+`codexapp.TestQuestionsRestoreASendAcrossARestart`. On real Codex 0.160.1 with the mock model,
+`codexshare.TestCodexShareAsyncStartIntoARunningTurn` (the reviewer's probe, ported; in the `codex-shared-tui` suite,
+run alone with `-tags integration -run TestCodexShareAsyncStartIntoARunningTurn`): `turn/start` during the asking turn
+returns that turn, a new join's history is whole and resolved but has no envelope, `Restore` keeps the question `sent`,
+`unconfirmed`, a retry is refused, and after the release the model sees the answer once.
+
 What remains, exactly:
 
-- A bridge that stops after recording an answer and before its request goes out shows it `sent` until that turn ends
-  (then `undelivered`): a wait, never a second answer.
+- A bridge that stops after recording an answer and before its response is recorded shows it `sent` until the turn
+  it was steered into ends (then `undelivered`), or, for a `turn/start` or a steer into a turn no longer running,
+  `sent`, `unconfirmed` until its envelope shows: a wait, never a second answer. Such a send whose request never went
+  out (or that Codex dropped) is never sent again by the bridge; the terminal answers it, and its record stays until
+  the thread changes, the worker is sent home or it is no longer shared at startup.
 - While a join's history is unresolved the `item-N` batch cannot be answered from the transcript (the terminal can).
   The bridge joins again once per `CodexRejoin` (60 s) per worker for as long as the read keeps failing, and stops
   once a join reads every id, the thread changes, the server stops or the worker is sent home. A wait.
@@ -646,13 +675,16 @@ run predates §12.1a's fix, which it does not exercise (no restart).
   `make codex-shared-tui`, passed. The wake typed into a pane herdr did not yet count as a free shell. The wake path
   is #155's (`internal/server/codexfloor.go`) and was not changed here; a retry while the pane comes back is follow-up
   work.
-- **Across a restart** (§12.1a): an answer recorded but not yet sent when herdr-world stopped shows `sent` until its
-  turn ends (a wait); a failed or empty `thread/turns/list` on a join leaves the newest turn's batch under resume's
-  `item-N` id, unanswerable from the transcript, the records kept and the bridge joining again every 60 s until a join
-  reads its call id (a wait); a batch the view no longer holds (32 per thread) is not shown and cannot be answered from
-  the bridge, its record kept (the terminal answers it); **a record the store failed to write** (logged) lasts only
-  until the bridge stops, so a restart before that answer is delivered admits a retry the model also sees (the one
-  duplicate window left). A record is dropped only on evidence, never because the view lacks its batch (§12.1a table).
+- **Across a restart** (§12.1a): an answer recorded but without a recorded response when herdr-world stopped shows
+  `sent` until the turn it was steered into ends, or `sent`, `unconfirmed` (a `turn/start`, or a steer into a turn no
+  longer running: Codex may hold it in a turn the terminal started at the same instant) until its envelope shows, the
+  terminal answering it otherwise (a wait); a failed or empty `thread/turns/list` on a join leaves the newest turn's
+  batch under resume's `item-N` id, unanswerable from the transcript, the records kept and the bridge joining again
+  every 60 s until a join reads its call id (a wait); a batch the view no longer holds (32 per thread) is not shown and
+  cannot be answered from the bridge, its record kept (the terminal answers it); **a record the store failed to write**
+  (logged) lasts only until the bridge stops, so a restart before that answer is delivered admits a retry the model also
+  sees (the one duplicate window left). A record is dropped only on evidence, never because the view lacks its batch
+  (§12.1a table).
 - Codex releases other than 0.160.x, and orchestrator-created (write-code) workers, which stay embedded (D7).
 - Whether the terminal's editor takes free text on a question with options (the terminal answers here were free-text
   questions; the bridge stays strict).
@@ -683,7 +715,7 @@ The default stays **off**: the switch is opt-in (#158's decision).
 | #153: the Codex connection change behind an opt-in switch | verified [R] | `14-switch-default`, `14-l1-*` |
 | #158: real-TUI evidence: answers from both views, active and idle turns, native question-state reconciliation | verified [R], [R-real] | §12.1 rows 1, 2, 3, 8; §12.5; the real game, TUI and model, both views, active and idle, the model reading each answer: §12.5a |
 | #158: normal terminal and transcript workflows, bridge disconnect and worker resume | verified [R], approvals a limitation | §12.2; §12.1 row 7 |
-| #158: one reply, one model-visible answer with retries and reconnects; a handled card cannot submit again | verified [R], [R-real], with the 5b limit | `4-model-visible-answers`, `5-*`, `6-*`, `7-*` (`stale` for sending, sent, answered, dismissed); across a herdr-world restart before delivery `BridgeRestartSent/model-visible-answers`, `1-retry-*`, and when re-reading the legacy ids fails or the view drops the batch the unit tests of §12.1a, `TestAsyncSendRecordInvariant` driving every record path (what remains there are waits and limits, except an answer whose record the store failed to write, §12.1a); the game's answered card: `RealGame/18-answered-no-resend.png`, `duplicate-submit-check.json` |
+| #158: one reply, one model-visible answer with retries and reconnects; a handled card cannot submit again | verified [R], [R-real], with the 5b limit | `4-model-visible-answers`, `5-*`, `6-*`, `7-*` (`stale` for sending, sent, answered, dismissed); across a herdr-world restart before delivery `BridgeRestartSent/model-visible-answers`, `1-retry-*`, and when re-reading the legacy ids fails or the view drops the batch the unit tests of §12.1a, `TestAsyncSendRecordInvariant` driving every record path, `TestAsyncAnswerQueuedIntoAConcurrentTurnSurvivesARestart` and `TestCodexShareAsyncStartIntoARunningTurn` (a `turn/start` taken into the terminal's turn) (what remains there are waits and limits, except an answer whose record the store failed to write, §12.1a); the game's answered card: `RealGame/18-answered-no-resend.png`, `duplicate-submit-check.json` |
 | #158: opt-in rollout, actionable unsupported-version behaviour, rollback: documented and verified | verified [R] | §12.3; architecture.md "Shared Codex workers" |
 | #158: repo docs explain the architecture and distinguish delivered input from verified resolution | done | architecture.md "Shared Codex workers"; protocol.md "Codex async questions" |
 | #158: all epic requirements verified or recorded as limitations | done | this table; §12.6 |

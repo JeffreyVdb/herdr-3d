@@ -164,10 +164,13 @@ MacBook (M2 Max)                                   devbox (Linux)
     **also across a herdr-world restart**: the history does not show an answer still queued in the running turn, so
     the bridge records each answer it sends (SQLite `codex_async_send`, before the request goes out) and a restarted
     bridge keeps such a question `sent` while its turn runs, `undelivered` (one resend) once that turn ended without
-    it (#158, findings §12.1a; protocol "Across a bridge restart"). A restarted bridge reads the thread's newest turns
-    with `thread/turns/list`, because `thread/resume` gives them under legacy item ids, not the question's call id;
-    when that read fails, the join is unresolved: records are kept, an answer to an `item-N` batch is refused (the
-    terminal can answer), and the bridge joins again every minute until a join reads the call ids. A record goes
+    it, and `sent`, `unconfirmed` (never resent) when the bridge stopped before the server's response to a
+    `turn/start` (or to a steer whose turn ended meanwhile, which falls back to one): a turn the terminal starts at
+    the same instant takes that input and shows it only with its next model request (#158, findings §12.1a; protocol
+    "Across a bridge restart"). A restarted bridge reads the thread's newest turns with `thread/turns/list`, because
+    `thread/resume` gives them under legacy item ids, not the question's call id; when that read fails, the join is
+    unresolved: records are kept, an answer to an `item-N` batch is refused (the terminal can answer), and the bridge
+    joins again every minute until a join reads the call ids. A record goes
     only on evidence that its answer cannot be delivered or was (its envelope seen, the answer refused, the thread
     changed, send home, or its batch absent from a whole, resolved history), never because the bridge's view (32
     batches per thread, dismissable) no longer shows its batch: the record outlives the batch's eviction and comes

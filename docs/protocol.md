@@ -3131,22 +3131,25 @@ turn it reached, or that no response came. On the next join, after the history, 
 | Record | After the restart |
 |---|---|
 | the turn it went to is the thread's running turn | `sent`: a retry is `stale`; `undelivered` once that turn ends without it |
-| the turn it went to is not running (it ended meanwhile) | `sent`, `undelivered`: it may be answered again, once |
+| the server confirmed it into a turn that is not running (it ended meanwhile) | `sent`, `undelivered`: it may be answered again, once |
 | no response came | `sent`, `unconfirmed`, as before the restart: never sent again by the bridge |
-| a `turn/start` the server never confirmed | `pending`: its user message would be in the history had it been taken |
+| recorded, its response never recorded (the bridge stopped in between): a `turn/start`, or a steer into a turn that is not running | `sent`, `unconfirmed`: never sent again by the bridge. The history lacking its envelope is no evidence it was not taken: a turn the terminal starts at the same instant takes a `turn/start`'s input (the steer's fallback included) and shows it only with its next model request |
 
 A record goes only on evidence that its answer can no longer be delivered, or was: an envelope naming its question
 (live or in a join's history, whether or not the bridge still shows the batch), the server refusing the answer, the
-thread changing, send home (or the worker no longer shared at startup), a `turn/start` never confirmed whose envelope
-the history lacks, and, on a join, its batch missing from a history that is the **whole** thread (no older turns left
-unread) with no `item-N` id. What the bridge shows is not evidence: a batch dropped from the view (32 per thread,
-dismissed and answered ones first; never one whose answer is in flight), dismissed, or under an `item-N` id keeps its
-record, and a join or live event that shows the batch again makes it `sent` again. So there is at most one record per
+thread changing, send home (or the worker no longer shared at startup), and, on a join, its batch missing from a
+history that is the **whole** thread (no older turns left unread) with no `item-N` id. What the bridge shows is not
+evidence: a batch dropped from the view (32 per thread, dismissed and answered ones first; never one whose answer is in
+flight), dismissed, or under an `item-N` id keeps its record, and a join or live event that shows the batch again makes
+it `sent` again. Nor is a history without the envelope of a send whose response never came (the table's last
+row). So there is at most one record per
 question the bridge answered, kept until one of those causes. A dismissed question's record is kept (the dismissal
 itself is not), so after a restart it shows `sent`, not `pending`. What remains: a bridge that stops after recording
-an answer and before its request goes out shows it `sent` until that turn ends (then `undelivered`), and an
-unresolved join keeps its `item-N` batch unanswerable until a join reads it: waits, never a second answer. A batch the
-bridge no longer shows cannot be answered from the bridge (`stale`, unknown batch; the terminal can). A record the
+an answer and before its response is recorded shows it `sent` until the turn it was steered into ends (then
+`undelivered`), or, for a `turn/start` or a steer into a turn no longer running, `sent`, `unconfirmed` until its
+envelope shows (the terminal can answer it; the bridge never sends it again, even if the request never went out), and
+an unresolved join keeps its `item-N` batch unanswerable until a join reads it: waits, never a second answer. A batch
+the bridge no longer shows cannot be answered from the bridge (`stale`, unknown batch; the terminal can). A record the
 store failed to write is logged and lasts only until the bridge stops: a restart before that answer is delivered
 admits a retry, and the model can see the answer twice (the one window left).
 
