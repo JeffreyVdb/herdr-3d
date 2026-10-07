@@ -52,7 +52,7 @@ func (m *memStore) LoadDigestSettings(context.Context) (digest.Settings, bool, e
 func (m *memStore) SaveDigestSettings(_ context.Context, s digest.Settings) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.set.Enabled, m.set.DailyCap, m.ok = s.Enabled, s.DailyCap, true
+	m.set.Enabled, m.set.DailyCap, m.set.ReasoningEffort, m.set.MaxTokens, m.ok = s.Enabled, s.DailyCap, s.ReasoningEffort, s.MaxTokens, true
 	return nil
 }
 func (m *memStore) SaveDigestCalls(_ context.Context, s digest.Settings) error {
@@ -194,7 +194,7 @@ func TestRequestShape(t *testing.T) {
 	if !strings.Contains(data, "Context: Ticket: #118 Floor overview") || !strings.Contains(data, "- tool Edit: internal/server/digest.go") {
 		t.Fatalf("data = %s", data)
 	}
-	if req.MaxTokens <= 0 || req.MaxTokens > 200 || req.JSON {
+	if req.MaxTokens != digest.DefaultMaxTokens || req.JSON || req.ReasoningEffort != "" || !req.NoPartial {
 		t.Fatalf("max tokens %d, json %v", req.MaxTokens, req.JSON)
 	}
 	task := digest.Request(digest.Input{Kind: digest.KindTask, Prompt: "Fix the bug"})

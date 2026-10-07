@@ -13,8 +13,9 @@
 // that is not ready, or whose key was rejected, makes no call at all).
 //
 // Nothing is sent by configuring a role. The only calls this package makes on
-// its own are the model-list loads (Service.Models) and the explicit tests
-// (Service.Test). Keys live in one 0600 file, never leave the bridge, and are
+// its own are the model-list loads (Service.Models), the explicit tests
+// (Service.Test) and, for a feature that asks for a reasoning effort, the read
+// of its model's catalog entry (Service.ModelReasoning, kept for a while). Keys live in one 0600 file, never leave the bridge, and are
 // scrubbed from every error (Scrub).
 //
 // It imports only the standard library (TestAIIsFeatureAgnostic).
@@ -77,10 +78,31 @@ type Request struct {
 	Messages    []Message
 	Temperature *float64 // nil: the endpoint's default
 	MaxTokens   int      // 0: the endpoint's default
+	// BudgetWins makes MaxTokens the budget sent even when the endpoint's
+	// extra_body names one (in the field the extra_body chose, never both).
+	// Only a call whose budget is a user setting shown as "in use" (the digest
+	// summaries, #174) sets it. Every other call defers to an extra_body's
+	// budget, so a user can size a reasoning model's budget for the connection
+	// test and the follow-up/pack-up features; MaxTokens then applies only when
+	// the extra_body names none.
+	BudgetWins bool
 	// JSON asks for a JSON object (response_format json_object). An endpoint
 	// that rejects it is called again without it, once, and remembered; the
 	// text then holds the object among other text (FirstJSONObject).
 	JSON bool
+	// ReasoningEffort is the reasoning effort to ask for ("none", "low",
+	// "high" …), sent as the one control `reasoning_effort`; "": the
+	// provider's default, nothing sent. It replaces any reasoning control of
+	// the endpoint's extra_body. (#174)
+	ReasoningEffort string
+	// NoPartial: an answer the provider cut off at the token limit
+	// (finish_reason "length") is the error KindTruncated, never returned as
+	// text, even with some text in it.
+	NoPartial bool
+	// Report, when set, is called with the sanitized account of every HTTP
+	// answer of the call (Diagnostics): after a retry, the last is the
+	// call's. It never sees text.
+	Report func(Diagnostics)
 }
 
 // Kind classifies an error. The values are also the protocol's error codes.
@@ -92,6 +114,8 @@ const (
 	KindUnreachable     Kind = "unreachable"        // connect, TLS, DNS, redirect
 	KindTimeout         Kind = "timeout"
 	KindBadResponse     Kind = "bad_response"
+	KindTruncated       Kind = "truncated"    // #174: cut off at the token limit (finish_reason length)
+	KindEmpty           Kind = "empty_answer" // #174: a well-formed answer with no text
 	KindRateLimited     Kind = "rate_limited"
 	KindFailed          Kind = "provider_failed" // any other failure of the provider
 	KindNotReady        Kind = "not_ready"       // the role is off, incomplete or invalid: no call was made

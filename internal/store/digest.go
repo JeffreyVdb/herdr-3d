@@ -26,19 +26,27 @@ const migrationDigest = `CREATE TABLE digest_settings (
 		used_at TEXT NOT NULL
 	);`
 
+// migrationDigestReasoning adds the summaries' reasoning effort ("": the
+// provider's default, nothing sent) and completion budget (0: the default).
+const migrationDigestReasoning = `ALTER TABLE digest_settings ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT '';
+	ALTER TABLE digest_settings ADD COLUMN max_tokens INTEGER NOT NULL DEFAULT 0;`
+
 // DigestSettings are the feature's settings and the day's call count.
 type DigestSettings struct {
-	Enabled    bool
-	DailyCap   int
-	CallsDay   string
-	CallsToday int
+	Enabled  bool
+	DailyCap int
+	// ReasoningEffort and MaxTokens: #174.
+	ReasoningEffort string
+	MaxTokens       int
+	CallsDay        string
+	CallsToday      int
 }
 
 // LoadDigestSettings returns the stored settings (ok false: none yet).
 func (s *Store) LoadDigestSettings(ctx context.Context) (DigestSettings, bool, error) {
 	var d DigestSettings
-	err := s.db.QueryRowContext(ctx, `SELECT enabled, daily_cap, calls_day, calls_today FROM digest_settings WHERE id = 1`).
-		Scan(&d.Enabled, &d.DailyCap, &d.CallsDay, &d.CallsToday)
+	err := s.db.QueryRowContext(ctx, `SELECT enabled, daily_cap, reasoning_effort, max_tokens, calls_day, calls_today FROM digest_settings WHERE id = 1`).
+		Scan(&d.Enabled, &d.DailyCap, &d.ReasoningEffort, &d.MaxTokens, &d.CallsDay, &d.CallsToday)
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, false, nil
 	}
@@ -48,21 +56,22 @@ func (s *Store) LoadDigestSettings(ctx context.Context) (DigestSettings, bool, e
 // SaveDigestSettings stores the settings, not the call count (the count too
 // only when no row is stored yet): a count saved meanwhile stays.
 func (s *Store) SaveDigestSettings(ctx context.Context, d DigestSettings) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO digest_settings (id, enabled, daily_cap, calls_day, calls_today, updated_at)
-		VALUES (1, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled, daily_cap = excluded.daily_cap, updated_at = excluded.updated_at`,
-		d.Enabled, d.DailyCap, d.CallsDay, d.CallsToday, s.ts())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO digest_settings (id, enabled, daily_cap, reasoning_effort, max_tokens, calls_day, calls_today, updated_at)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled, daily_cap = excluded.daily_cap,
+		reasoning_effort = excluded.reasoning_effort, max_tokens = excluded.max_tokens, updated_at = excluded.updated_at`,
+		d.Enabled, d.DailyCap, d.ReasoningEffort, d.MaxTokens, d.CallsDay, d.CallsToday, s.ts())
 	return err
 }
 
 // SaveDigestCalls stores the call count, not the settings (they too only
 // when no row is stored yet): settings saved meanwhile stay.
 func (s *Store) SaveDigestCalls(ctx context.Context, d DigestSettings) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO digest_settings (id, enabled, daily_cap, calls_day, calls_today, updated_at)
-		VALUES (1, ?, ?, ?, ?, ?)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO digest_settings (id, enabled, daily_cap, reasoning_effort, max_tokens, calls_day, calls_today, updated_at)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET calls_day = excluded.calls_day, calls_today = excluded.calls_today,
 		updated_at = excluded.updated_at`,
-		d.Enabled, d.DailyCap, d.CallsDay, d.CallsToday, s.ts())
+		d.Enabled, d.DailyCap, d.ReasoningEffort, d.MaxTokens, d.CallsDay, d.CallsToday, s.ts())
 	return err
 }
 

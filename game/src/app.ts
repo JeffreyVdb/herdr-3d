@@ -81,6 +81,7 @@ import { aiSection } from './ui/aiSection';
 import { followupsSection } from './ui/followupsSection';
 import { packupSection } from './ui/packupSection';
 import { digestSection } from './ui/digestSection';
+import { digestFailureText } from './world/digestSettings';
 import { packupApplies, packupVerdict, type PackupOutcome } from './world/packup';
 import { activitySection } from './ui/activitySection';
 import { codexServerSection } from './ui/codexServerSection';
@@ -603,6 +604,10 @@ export class App {
         data: (session) => this.overviewData(session),
         goTo: (id) => void this.goToWorker(id, 'transcript'),
         openTicket: (session, id) => this.boardsPanel.openItem('issues', session, id),
+        retrySummary: (id) =>
+          void this.send('digest.retry', { id }).then((r) => {
+            if (!r.ok) this.hud.toast(digestFailureText(r.code, r.message), 6500, 'error');
+          }),
         hire: () => this.openHire(),
         calm: () => this.batterySaver,
         screenRect: (session) => this.overviewScreenRect(session),

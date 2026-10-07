@@ -96,6 +96,7 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'digest.get': 'keep the floor overview summaries',
   'digest.set': 'keep the floor overview summaries',
   'digest.test': 'test the floor overview summaries',
+  'digest.retry': 'retry the floor overview summary',
   'issue.get': 'read issues',
   'issue.comment': 'comment on issues',
   'issue.close': 'close issues',

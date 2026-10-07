@@ -356,6 +356,16 @@ dialog.settings {
 .settings-fu-extracted .settings-field-hint {
   margin: 0;
 }
+/* #174: a sample's spent tokens, under its line; the scope and timing notes are plain hints. */
+.settings-fu-samples dd.settings-dg-usage {
+  grid-column: 1 / -1;
+  margin: -2px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+.settings-dg-scope,
+.settings-dg-timing {
+  margin: 0;
+}
 .settings-fu-questions {
   margin: 0;
   padding-left: 18px;

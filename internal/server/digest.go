@@ -26,6 +26,15 @@ package server
 // fallback's place (source "llm") while the feature is ready; off, not
 // ready or failing, the fallbacks show. Each call is audited with its sizes,
 // the model and the endpoint's host, never its text.
+//
+// #174: a failed task line is asked for again, a bounded number of times
+// with growing delays (digest.RetryDelay, per prompt hash; no retry on a
+// poll), and the digest says what became of the model's line while a
+// fallback shows (WorkerDigest.TaskStatus / NowStatus: pending, retrying with
+// its time, failed with the reason). The failures are forgiven when the
+// config of the feature changes (digest.Service.ConfigKey: the LLM, the
+// effort, the budget, a passing test, the switch) and by digest.retry; a
+// call that could not go (busy, off, capped) never counts as an attempt.
 
 import (
 	"context"
@@ -174,7 +183,59 @@ func (h *Hub) workerDigest(id string, w *proto.Worker) *proto.WorkerDigest {
 	if l.now != "" && d.Steps > 0 && (d.Recap == "" || d.RecapAt <= l.nowAt) {
 		out.Now, out.NowSource, out.NowAt = l.now, proto.DigestLLM, l.nowAt
 	}
+	if out.TaskSource != proto.DigestLLM && oneOff(w) {
+		out.TaskStatus = h.taskStatus(id, l, d)
+	}
+	if out.NowSource != proto.DigestLLM && d.Steps > 0 {
+		out.NowStatus = h.nowStatus(id, l)
+	}
 	return out
+}
+
+// taskStatus is what became of a task line the model is to write (#174):
+// nil when it is not awaited (no prompt, no fallback shown in its place).
+func (h *Hub) taskStatus(id string, l *dgLLM, d *transcript.Digest) *proto.DigestLineStatus {
+	if d.PromptHash == "" || l.taskHash == d.PromptHash {
+		return nil
+	}
+	f := l.taskFail
+	if f != nil && f.hash != d.PromptHash {
+		f = nil
+	}
+	attempts := 0
+	if f != nil {
+		attempts = f.attempts
+	}
+	fl := h.dgs.flight
+	switch {
+	case fl != nil && fl.id == id && fl.in.Kind == digest.KindTask && fl.hash == d.PromptHash:
+		return &proto.DigestLineStatus{State: proto.LinePending, Attempts: attempts}
+	case f != nil && !f.retryAt.IsZero() && !f.retryAt.After(h.opts.Now()) && h.dgs.svc.Capped():
+		// Due, but the day's budget is spent: it goes when there is one.
+		return &proto.DigestLineStatus{State: proto.LinePending, Reason: "daily_cap", Attempts: f.attempts}
+	case f != nil && !f.retryAt.IsZero():
+		return &proto.DigestLineStatus{State: proto.LineRetrying, Reason: f.reason, Attempts: f.attempts, RetryAt: f.retryAt.UnixMilli()}
+	case f != nil:
+		return &proto.DigestLineStatus{State: proto.LineFailed, Reason: f.reason, Attempts: f.attempts}
+	case h.dgs.svc.Capped():
+		return &proto.DigestLineStatus{State: proto.LinePending, Reason: "daily_cap"}
+	}
+	return &proto.DigestLineStatus{State: proto.LinePending}
+}
+
+// nowStatus is the same for the now line, which is asked for after a turn
+// ended: nil while none is due.
+func (h *Hub) nowStatus(id string, l *dgLLM) *proto.DigestLineStatus {
+	fl := h.dgs.flight
+	switch {
+	case fl != nil && fl.id == id && fl.in.Kind == digest.KindNow:
+		return &proto.DigestLineStatus{State: proto.LinePending}
+	case l.nowFail != nil:
+		return &proto.DigestLineStatus{State: proto.LineFailed, Reason: l.nowFail.reason, Attempts: l.nowFail.attempts}
+	case !l.endedAt.IsZero():
+		return &proto.DigestLineStatus{State: proto.LinePending}
+	}
+	return nil
 }
 
 // oneOff reports whether a worker is a one-off worker (an employee outside
@@ -217,6 +278,9 @@ type dgLLM struct {
 	// task is the model's task line of the prompt taskHash; taskTried the
 	// prompt hash last handed to it.
 	task, taskHash, taskTried string
+	// taskFail is the failed attempts of taskTried's line, nowFail those of
+	// the now line since its last success (#174).
+	taskFail, nowFail *dgFail
 	// now is the model's now line, written at nowAt (unix ms).
 	now   string
 	nowAt int64
@@ -228,6 +292,15 @@ type dgLLM struct {
 	callAt time.Time
 }
 
+// dgFail is a line's failed attempts: how many, the last one's reason, and
+// when the next goes (zero: none by itself).
+type dgFail struct {
+	hash     string // the prompt the attempts are of (a task's)
+	attempts int
+	reason   string
+	retryAt  time.Time
+}
+
 // digestHub is the hub's part of the feature (hub goroutine).
 type digestHub struct {
 	svc      *digest.Service
@@ -236,7 +309,11 @@ type digestHub struct {
 	ws       map[string]*dgLLM
 	gen      int // the last dgLLM.gen given
 	inflight bool
-	wake     time.Time // when a pump is armed (zero: none)
+	// flight is the line the call in flight is for (nil: none).
+	flight *digestCand
+	wake   time.Time // when a pump is armed (zero: none)
+	// cfgKey is the feature's config the failures are of (Service.ConfigKey).
+	cfgKey string
 }
 
 // digestStore adapts the bridge's store to internal/digest's.
@@ -244,7 +321,8 @@ type digestStore struct{ st *store.Store }
 
 func (a digestStore) LoadDigestSettings(ctx context.Context) (digest.Settings, bool, error) {
 	s, ok, err := a.st.LoadDigestSettings(ctx)
-	return digest.Settings{Enabled: s.Enabled, DailyCap: s.DailyCap, CallsDay: s.CallsDay, CallsToday: s.CallsToday}, ok, err
+	return digest.Settings{Enabled: s.Enabled, DailyCap: s.DailyCap, ReasoningEffort: s.ReasoningEffort, MaxTokens: s.MaxTokens,
+		CallsDay: s.CallsDay, CallsToday: s.CallsToday}, ok, err
 }
 
 func (a digestStore) SaveDigestSettings(ctx context.Context, s digest.Settings) error {
@@ -256,7 +334,8 @@ func (a digestStore) SaveDigestCalls(ctx context.Context, s digest.Settings) err
 }
 
 func storedDigest(s digest.Settings) store.DigestSettings {
-	return store.DigestSettings{Enabled: s.Enabled, DailyCap: s.DailyCap, CallsDay: s.CallsDay, CallsToday: s.CallsToday}
+	return store.DigestSettings{Enabled: s.Enabled, DailyCap: s.DailyCap, ReasoningEffort: s.ReasoningEffort, MaxTokens: s.MaxTokens,
+		CallsDay: s.CallsDay, CallsToday: s.CallsToday}
 }
 
 func (a digestStore) LoadDigestCache(ctx context.Context, limit int) ([]digest.CacheEntry, error) {
@@ -288,6 +367,7 @@ func (h *Hub) initDigest(ctx context.Context) error {
 		return fmt.Errorf("floor overview summaries: %w", err)
 	}
 	h.dgs.svc, h.dgs.roles = svc, roles
+	h.dgs.cfgKey = svc.ConfigKey()
 	if b, err := json.Marshal(svc.View()); err == nil {
 		h.dgs.last = string(b)
 	}
@@ -314,6 +394,9 @@ func (h *Hub) publishDigestState(ctx context.Context) {
 	v := h.dgs.svc.View()
 	b, err := json.Marshal(v)
 	if err != nil || string(b) == h.dgs.last {
+		if h.digestConfigSeen() { // a passing test moves no field of the view
+			h.pumpDigest(ctx)
+		}
 		return
 	}
 	h.dgs.last = string(b)
@@ -366,7 +449,11 @@ func (h *Hub) digestInput(w *proto.Worker, d *transcript.Digest) digest.Input {
 // budget (tomorrow's wakes it; a higher cap or the toggle pumps).
 func (h *Hub) pumpDigest(ctx context.Context) {
 	svc := h.dgs.svc
-	if svc == nil || h.dgs.inflight || !svc.Ready() {
+	if svc == nil {
+		return
+	}
+	h.digestConfigSeen()
+	if h.dgs.inflight || !svc.Ready() {
 		return
 	}
 	now := h.opts.Now()
@@ -389,8 +476,23 @@ func (h *Hub) pumpDigest(ctx context.Context) {
 		if w == nil || d == nil || !h.floorViewed(w.Session) {
 			continue
 		}
-		if oneOff(w) && d.PromptHash != "" && l.taskHash != d.PromptHash && l.taskTried != d.PromptHash {
-			better(digestCand{id: id, in: digest.Input{Kind: digest.KindTask, Prompt: d.Prompt}, hash: d.PromptHash})
+		if oneOff(w) && d.PromptHash != "" && l.taskHash != d.PromptHash {
+			switch f := l.taskFail; {
+			case l.taskTried != d.PromptHash:
+				better(digestCand{id: id, in: digest.Input{Kind: digest.KindTask, Prompt: d.Prompt}, hash: d.PromptHash})
+			case f != nil && f.hash == d.PromptHash && !f.retryAt.IsZero():
+				// A failed attempt is asked again, once its delay is over.
+				if f.retryAt.After(now) {
+					if wake.IsZero() || f.retryAt.Before(wake) {
+						wake = f.retryAt
+					}
+				} else {
+					if capped {
+						h.refreshDigest(id) // due, but the budget is spent: the status says so
+					}
+					better(digestCand{id: id, in: digest.Input{Kind: digest.KindTask, Prompt: d.Prompt}, hash: d.PromptHash})
+				}
+			}
 		}
 		if l.endedAt.IsZero() || d.Steps == 0 {
 			continue
@@ -423,7 +525,8 @@ func (h *Hub) pumpDigest(ctx context.Context) {
 	} else {
 		l.endedAt = time.Time{}
 	}
-	h.dgs.inflight = true
+	h.dgs.inflight, h.dgs.flight = true, &c
+	h.refreshDigest(c.id) // pending
 	model, host := h.llmEndpoint()
 	h.wg.Add(1)
 	go func() {
@@ -459,13 +562,14 @@ func (h *Hub) wakeDigest(ctx context.Context, at time.Time) {
 // feature switched off, the daily cap reached) is due again: only a call
 // made counts its input as tried.
 func (h *Hub) digestDone(ctx context.Context, c digestCand, gen int, endedAt time.Time, res digest.Result, err error) {
-	h.dgs.inflight = false
+	h.dgs.inflight, h.dgs.flight = false, nil
 	defer h.pumpDigest(ctx)
 	defer h.publishDigestState(ctx) // the day's count
 	l := h.dgs.ws[c.id]
 	if l == nil {
 		return
 	}
+	defer h.refreshDigest(c.id) // pending is over, whatever came of it
 	now := h.opts.Now()
 	if c.in.Kind == digest.KindNow && !res.Cached && !errors.Is(err, digest.ErrBusy) && !errors.Is(err, ai.ErrNotReady) && !errors.Is(err, digest.ErrCapped) {
 		l.callAt = now // a call went: the worker's gap starts
@@ -480,18 +584,17 @@ func (h *Hub) digestDone(ctx context.Context, c digestCand, gen int, endedAt tim
 			}
 		}
 		return
-	case errors.Is(err, digest.ErrNoLine):
-		h.log.Debug("no floor overview line", "worker", c.id, "kind", c.in.Kind, "why", err)
-		return
 	case err != nil:
-		// A provider's words may echo the input (the transcript): only the
-		// error's kind goes to the log, as to the audit.
-		if ctx.Err() == nil {
-			kind := string(ai.KindOf(err))
-			if kind == "" {
-				kind = "failed"
-			}
-			h.log.Warn("floor overview summary failed", "worker", c.id, "kind", kind)
+		reason := digest.Reason(err)
+		if errors.Is(err, digest.ErrNoLine) {
+			h.log.Debug("no floor overview line", "worker", c.id, "kind", c.in.Kind, "why", err)
+		} else if ctx.Err() == nil {
+			// A provider's words may echo the input (the transcript): only the
+			// error's kind goes to the log, as to the audit.
+			h.log.Warn("floor overview summary failed", "worker", c.id, "kind", reason)
+		}
+		if l.gen == gen {
+			h.digestFailed(l, c, reason, now)
 		}
 		return
 	}
@@ -499,12 +602,76 @@ func (h *Hub) digestDone(ctx context.Context, c digestCand, gen int, endedAt tim
 		return
 	}
 	if c.in.Kind == digest.KindTask {
-		l.task, l.taskHash = res.Line, c.hash
+		l.task, l.taskHash, l.taskFail = res.Line, c.hash, nil
 	} else {
-		l.now, l.nowAt = res.Line, now.UnixMilli()
+		l.now, l.nowAt, l.nowFail = res.Line, now.UnixMilli(), nil
 	}
 	h.log.Debug("floor overview line written", "worker", c.id, "kind", c.in.Kind, "cached", res.Cached)
-	h.refreshDigest(c.id)
+}
+
+// digestFailed records a failed attempt of a line (hub goroutine): a task
+// line's is asked again after a growing delay, up to digest.MaxAttempts; a
+// now line's waits for its next turn (or a retry). The previous line, or the
+// fallback, stays.
+func (h *Hub) digestFailed(l *dgLLM, c digestCand, reason string, now time.Time) {
+	if c.in.Kind == digest.KindNow {
+		n := 1
+		if l.nowFail != nil {
+			n = l.nowFail.attempts + 1
+		}
+		l.nowFail = &dgFail{attempts: n, reason: reason}
+		return
+	}
+	f := l.taskFail
+	if f == nil || f.hash != c.hash {
+		f = &dgFail{hash: c.hash}
+	}
+	f.attempts++
+	f.reason, f.retryAt = reason, time.Time{}
+	if d, ok := h.opts.DigestRetry(f.attempts); ok {
+		f.retryAt = now.Add(d)
+	}
+	l.taskFail = f
+}
+
+// digestForgive makes the lines whose attempts failed due again (hub
+// goroutine): the task line is asked for at once with its attempts counted
+// anew, the now line as if its turn had just ended. id "" is every worker.
+// It returns how many lines.
+func (h *Hub) digestForgive(id string) int {
+	n := 0
+	for wid, l := range h.dgs.ws {
+		if id != "" && wid != id {
+			continue
+		}
+		if l.taskFail != nil {
+			l.taskFail, l.taskTried = nil, ""
+			n++
+		}
+		if l.nowFail != nil {
+			l.nowFail, l.callAt = nil, time.Time{}
+			if l.endedAt.IsZero() {
+				l.endedAt = h.opts.Now()
+			}
+			n++
+		}
+		h.refreshDigest(wid)
+	}
+	return n
+}
+
+// digestConfigSeen forgives every failure when the feature's config changed
+// since the last time (the LLM, the effort, the budget, a passing test, the
+// switch): what failed under the old one may work under the new (hub
+// goroutine).
+func (h *Hub) digestConfigSeen() bool {
+	k := h.dgs.svc.ConfigKey()
+	if k == h.dgs.cfgKey {
+		return false
+	}
+	h.dgs.cfgKey = k
+	h.digestForgive("")
+	return true
 }
 
 // llmEndpoint is the model and the endpoint's host in use, for the audit
@@ -522,25 +689,26 @@ func (h *Hub) llmEndpoint() (model, host string) {
 }
 
 // auditDigest records a call to the model: the worker, the kind, the sizes
-// sent and answered, the model and the endpoint's host; never the text,
-// and of a failure only its kind.
+// sent and answered, the model and the endpoint's host, the reasoning effort
+// and completion budget the request carried and, when an answer came back,
+// its sanitized diagnostics (HTTP status, finish reasons, token counts, the
+// content's state and length); never the text, nor any reasoning, and of a
+// failure only its kind.
 func (h *Hub) auditDigest(ctx context.Context, c digestCand, res digest.Result, err error, model, host string) {
 	args := mustJSON(struct {
-		ID          string `json:"id"`
-		Kind        string `json:"kind"`
-		SentBytes   int    `json:"sent_bytes"`
-		AnswerBytes int    `json:"answer_bytes"`
-		Model       string `json:"model"`
-		Host        string `json:"host"`
-	}{c.id, c.in.Kind, res.Sent, res.Answer, clip(model), clip(host)})
+		ID          string          `json:"id"`
+		Kind        string          `json:"kind"`
+		SentBytes   int             `json:"sent_bytes"`
+		AnswerBytes int             `json:"answer_bytes"`
+		Model       string          `json:"model"`
+		Host        string          `json:"host"`
+		Effort      string          `json:"reasoning_effort,omitempty"`
+		MaxTokens   int             `json:"max_tokens,omitempty"`
+		Diag        *ai.Diagnostics `json:"diag,omitempty"`
+	}{c.id, c.in.Kind, res.Sent, res.Answer, clip(model), clip(host), res.Effort, res.MaxTokens, res.Diag})
 	var aerr error
-	switch k := ai.KindOf(err); {
-	case k != "":
-		aerr = errors.New(string(k))
-	case errors.Is(err, digest.ErrNoLine):
-		aerr = errors.New("no_line")
-	case err != nil:
-		aerr = errors.New("failed")
+	if err != nil {
+		aerr = errors.New(digest.Reason(err))
 	}
 	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
@@ -559,18 +727,25 @@ func (h *Hub) startDigest(ctx context.Context, c *Client, cmd proto.Command) err
 	}
 	var work func(context.Context) (any, error)
 	switch cmd.T {
+	case proto.CmdDigestRetry:
+		return h.startDigestRetry(ctx, c, cmd)
 	case proto.CmdDigestGet:
 		if err := decodeArgs(cmd.Args, &struct{}{}); err != nil {
 			return err
 		}
-		work = func(context.Context) (any, error) { return svc.View(), nil }
+		// The settings window asks as it opens: the model's reasoning is read
+		// from its catalog then, when it has not been lately (#174).
+		work = func(ctx context.Context) (any, error) {
+			svc.Refresh(ctx)
+			return svc.View(), nil
+		}
 	case proto.CmdDigestSet:
 		var a proto.DigestSetArgs
 		if err := decodeArgs(cmd.Args, &a); err != nil {
 			return err
 		}
 		work = func(ctx context.Context) (any, error) {
-			if err := svc.Set(ctx, a.Enabled, a.DailyCap); err != nil {
+			if err := svc.Apply(ctx, digest.Update{Enabled: a.Enabled, DailyCap: a.DailyCap, ReasoningEffort: a.ReasoningEffort, MaxTokens: a.MaxTokens}); err != nil {
 				return nil, err
 			}
 			_ = h.doWait(ctx, func() { h.publishDigestState(ctx) })
@@ -590,6 +765,29 @@ func (h *Hub) startDigest(ctx context.Context, c *Client, cmd proto.Command) err
 		}
 	}
 	h.startAsync(ctx, c, cmd, work)
+	return nil
+}
+
+// startDigestRetry answers digest.retry on the hub goroutine: the lines of a
+// worker (or every worker) whose summary failed are due again, their
+// attempts counted anew (#174). Nothing is retried while the feature is not
+// ready.
+func (h *Hub) startDigestRetry(ctx context.Context, c *Client, cmd proto.Command) error {
+	var a proto.DigestRetryArgs
+	if err := decodeArgs(cmd.Args, &a); err != nil {
+		return err
+	}
+	svc := h.dgs.svc
+	if a.ID != "" && h.workers[a.ID] == nil {
+		return fmt.Errorf("%w: %s", errUnknownWorker, a.ID)
+	}
+	if !svc.Ready() {
+		return &digest.Error{Code: digest.CodeIncomplete, Msg: "floor overview summaries are off or the LLM is not ready: nothing to retry"}
+	}
+	n := h.digestForgive(a.ID)
+	h.audit(ctx, c, cmd, nil)
+	h.reply(c, cmd, proto.DigestRetryResult{Retried: n}, nil)
+	h.pumpDigest(ctx)
 	return nil
 }
 

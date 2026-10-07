@@ -264,7 +264,7 @@ floor with no workers and an `error`).
 | `ask` | object, optional | #57: the structured question (Claude's AskUserQuestion, Codex's request_user_input) its agent's latest turn waits on, read from its transcript whatever `status` says (see [Laptops: asks](#laptops-asks)) |
 | `followup` | object, optional | #90: the open questions of its agent's final message, `{"turn_id", "questions": [{"id", "question", "kind": "yes_no" \| "choice" \| "open", "options"?}], "score", "source": "model" \| "fallback", "at", "tail"?}`, until answered, dismissed or moot (see [Follow-up questions](#follow-up-questions)) |
 | `activity` | object, optional | #98: what its agent is doing right now, `{"kind", "detail"?, "since", "source", "image"?, "tasks"?}`: while `status` is `working`, and while `idle` or `done` only as `waiting` on open background tasks; absent otherwise and for harnesses other than Claude and Codex (see [Activity](#activity)) |
-| `digest` | object, optional | #118: what the floor overview says of it, `{"task"?, "task_source"?, "now"?, "now_source", "now_at"?}`: its task and what it does now in words, each with its source; absent until its transcript has a prompt or an assistant step, and for harnesses other than Claude and Codex (see [Floor overview digest](#floor-overview-digest)) |
+| `digest` | object, optional | #118: what the floor overview says of it, `{"task"?, "task_source"?, "now"?, "now_source", "now_at"?, "task_status"?, "now_status"?}`: its task and what it does now in words, each with its source, and (#174) what became of a model line that is awaited or failed; absent until its transcript has a prompt or an assistant step, and for harnesses other than Claude and Codex (see [Floor overview digest](#floor-overview-digest)) |
 | `wrapup` | object, optional | #83: its wrap-up, `{"state": "armed" \| "needs_you", "worktree": "keep" \| "delete" \| "delete_branch", "armed_at": int, "reason"?: string}` (unix ms, bridge clock; `reason` with `needs_you`), while armed or needing you (see [Wrap up](#wrap-up)) |
 | `round` | int ≥ 1, optional | write-code round: the `h3d_round` token, else the label's trailing `\|r<N>` (see [Runs and freelancers](#runs-and-freelancers)) |
 | `ticket` | string ≤ 32 bytes, optional | the `h3d_ticket` token, else the label's ticket field (`CODE\|descr\|<ticket>\|r<N>`, likewise `REVIEW` and `UX`) |
@@ -407,7 +407,7 @@ and remember the last `seq` applied.
 | `packup.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `tested` | #110: pack up on request's state changed (a setting, a passing test, a model's state); the whole state, flat in the event, the follow-up questions' fields: decode it by its `t` (see [Pack up on request](#pack-up-on-request)) |
 | `worker.activity` | `id`, `session`, `workspace_id`, `activity`? | #98: the worker's `activity` changed (absent: cleared); only on a change, at most twice a second per worker. A change that comes with a status change is in that `worker.upsert` instead (see [Activity](#activity)) |
 | `activity.update` | `model_enabled`, `threshold`, `margin`, `daily_cap`, `calls_today`, `cache_size`, `state`, `classifier`, `env` | #98: "Classify unknown commands"' state changed (a setting, a call counted, the classifier's state); the whole state, flat in the event. Its `classifier` is a role's state (a string), not `ai.update`'s object: decode it by its `t` (see [Activity](#activity)) |
-| `digest.update` | `enabled`, `state`, `missing`?, `roles`, `env`, `tested`, `daily_cap`, `calls_today` | #118: the floor overview summaries' state changed (a setting, a call counted, a passing test, the LLM's state); the whole state, flat in the event. Its `roles` has `llm` only: decode it by its `t` (see [Floor overview summaries](#floor-overview-summaries)) |
+| `digest.update` | `enabled`, `state`, `missing`?, `roles`, `env`, `tested`, `daily_cap`, `calls_today`, `reasoning_effort`, `max_tokens`, `reasoning`, `effort_stale` | #118: the floor overview summaries' state changed (a setting, a call counted, a passing test, the LLM's state); the whole state, flat in the event. Its `roles` has `llm` only: decode it by its `t` (see [Floor overview summaries](#floor-overview-summaries)) |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
@@ -524,9 +524,10 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `activity.set` | `{"model_enabled"?: bool, "threshold"?: 0.05–0.99, "margin"?: 0–0.9, "daily_cap"?: 1–100000}` | its state | `activity.update` (before the ack) |
 | `codex_server.get` | `{}` | `{"enabled", "available"}`, the shared Codex server switch (see [Shared Codex server](#shared-codex-server)) | — |
 | `codex_server.set` | `{"enabled": bool}` | the switch; switching on without `available` is `unsupported` | `codex_server.update` (before the ack) when it changes |
-| `digest.get` | `{}` | the floor overview summaries' state (see [Floor overview summaries](#floor-overview-summaries)) | — |
-| `digest.set` | `{"enabled"?: bool, "daily_cap"?: 1–10000}` | its state | `digest.update` (before the ack) |
-| `digest.test` | `{}` | `{"ok", "reason"?, "samples": [{"kind": "task"\|"now", "line"?, "error"?}], "latency_ms"}` | `digest.update` when it changes `tested` |
+| `digest.get` | `{}` | the floor overview summaries' state (see [Floor overview summaries](#floor-overview-summaries)); it reads the LLM model's reasoning from its catalog when that was not read lately (#174) | — |
+| `digest.set` | `{"enabled"?: bool, "daily_cap"?: 1–10000, "reasoning_effort"?: string, "max_tokens"?: 64–16384}` | its state; `reasoning_effort` `""` is the provider's default, else one the model's catalog lists (`bad_request` otherwise) (#174) | `digest.update` (before the ack) |
+| `digest.test` | `{}` | `{"ok", "reason"?, "samples": [{"kind": "task"\|"now", "line"?, "error"?, "diag"?}], "latency_ms"}` (`diag`: the call's sanitized [diagnostics](#floor-overview-summaries)) | `digest.update` when it changes `tested` |
+| `digest.retry` | `{"id"?: worker id}` | `{"retried": n}`: the failed lines of that worker (every worker without an id) are due again, their attempts counted anew; `incomplete` while the feature is off or the LLM not ready; `unknown_worker` (#174) | `worker.upsert` of the workers whose line status changed |
 | `whiteboard.get` | `{"floor"}` | the board's state, `{"floor", "version", "author", "at", "render_version", "render", "stale", "stale_pins"}` (its content is HTTP, see [Whiteboard](#whiteboard)) | — |
 | `whiteboard.clear` | `{"floor", "confirm": true, "author"?}` | the new state | `whiteboard.updated` |
 | `whiteboard.pin` | `{"floor", "author", "note", "request_id"?}` (an image: `POST /whiteboard/{floor}/pin`) | the new state plus `{"elements": [id…], "repeated"?}` | `whiteboard.updated` (none for a repeated `request_id`) |
@@ -1638,7 +1639,10 @@ only calls the bridge makes by itself are `ai.models` (a model list) and `ai.tes
   (trailing slash removed; `/v1` added **only** if `{base}/models` is 404 and `{base}/v1/models` works, the result's
   `base_url` says what was used); no `/models` at all is `no_models_endpoint` and the client lets the user type a model
   id. A base URL is `http(s)://host…` without credentials, query or fragment; redirects are never followed. A load takes
-  one of the two global call slots like a feature's call.
+  one of the two global call slots like a feature's call. An LLM model's entry may carry `reasoning` (#174): what the
+  endpoint's catalog says of its reasoning effort (OpenRouter's per-model `reasoning` metadata and
+  `supported_parameters`; see [Floor overview summaries](#floor-overview-summaries)); absent when the catalog lists the
+  id only. The model's entry is also read, and kept for 30 minutes, by `digest.get` and when a feature sends an effort.
 - **`ai.test`** `{role, key?, base_url?, model?, extra_body?}` (fields left out are the current ones). The classifier
   gets a trivial yes/no question and must answer a score in [0,1] (`score`). The LLM gets a one-line JSON request with
   `response_format: {"type":"json_object"}`; on a 400 it is repeated without, and `json_mode` says which works. A
@@ -1666,7 +1670,9 @@ only calls the bridge makes by itself are `ai.models` (a model list) and `ai.tes
   request was out) is ignored. The game shows a toast ("AI integration paused: classification key rejected") on
   the `ai.update` that carries it, and a chip in the top bar while a role is configured but not `ready`.
 - Error codes besides the usual: `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`,
-  `rate_limited`, `provider_failed`, `incomplete`, `test_required`, `env_locked`.
+  `rate_limited`, `provider_failed`, `incomplete`, `test_required`, `env_locked`; and (#174), from a feature's call,
+  `truncated` (the answer was cut off at the token limit: with no text at all, or, for a feature that asks for it, with
+  some) and `empty_answer` (a well-formed answer with no text), both of which were `bad_response` before.
 
 ### Laptops: screens, input, changes and usage
 
@@ -2885,9 +2891,10 @@ client shows no now line. A worker with neither a prompt nor a step has no diges
 
 | field | | |
 |---|---|---|
-| `task`, `task_source` | string ≤ 80 chars, optional | what the worker was asked to do. `ai_title`: Claude Code's own `ai-title` metadata line (the latest); `prompt`: else the first genuine prompt (system reminders out, a paste unwrapped, `[image]` for an image marker) cut to its first sentence. Codex has no ai-title: `prompt` only. A slash command counts as the prompt `/name args` only when it has arguments. Absent when there is neither. |
+| `task`, `task_source` | string ≤ 80 chars, optional | what the worker was asked to do. `ai_title`: Claude Code's own `ai-title` metadata line (the latest); `prompt`: else the first genuine prompt (system reminders out, a paste unwrapped, `[image]` for an image marker) cut to its first sentence, or (#174), when that sentence says nothing of the task ("Please investigate.", "Please create a ticket."), joined with the sentences after it up to and including the first that does (greetings left out, a leading "please" dropped), at most 80 characters. Codex has no ai-title: `prompt` only. A slash command counts as the prompt `/name args` only when it has arguments. Absent when there is neither. |
 | `now`, `now_source` | string ≤ 100 chars, `now_source` set from the first assistant step | what it is doing now. `recap`: Claude Code's latest `system/away_summary` (without its "(disable recaps in /config)"), only while no prompt, turn start or assistant step came after it; `now_at` is its time (unix ms). `title`: no `now` text: the line is the worker's own `title`, which moves on the hot `worker.status` path and is never copied into the digest. |
 | `now_at` | int, optional | unix ms the `now` line was written (`recap` only) |
+| `task_status`, `now_status` | object, optional | #174: what became of the model's line while a fallback is shown in its place (never with source `llm`; absent while nothing is awaited or the feature is off or not ready): `{"state": "pending"\|"retrying"\|"failed", "reason"?, "attempts"?, "retry_at"?}`. `pending`: a call is out, or it waits for the daily budget (`reason` `daily_cap`); `retrying`: the last attempt failed and the next goes at `retry_at` (unix ms); `failed`: it failed and nothing is scheduled by itself (the task: its attempts are used up; the now line: it waits for the next turn). `reason` is the failure's kind: `truncated`, `empty_answer`, `bad_response`, `provider_failed`, `timeout`, `rate_limited`, `auth_failed`, `unreachable`, `bad_config`, `no_line` (the answer held no line) or `failed`; `attempts` how many calls failed. A client shows it beside the line and offers `digest.retry` |
 
 `llm` is the source of a line the configured LLM wrote, with [floor overview summaries](#floor-overview-summaries) on:
 it takes the place of `ai_title` / `prompt` (a one-off worker's task) or `recap` / `title` (the now line; `now_at` is
@@ -2906,8 +2913,9 @@ the worker's `digest` with `task_source` / `now_source` `llm`. Nothing is sent u
 `ready`.
 
 ```json
-"digest":{"enabled":true,"state":"ready","roles":{"llm":"ready"},"env":[],"tested":true,"daily_cap":300,"calls_today":12}
+"digest":{"enabled":true,"state":"ready","roles":{"llm":"ready"},"env":[],"tested":true,"daily_cap":300,"calls_today":12,"reasoning_effort":"","max_tokens":1024,"reasoning":{"support":"supported","model":"openai/gpt-6-luna","efforts":["none","low","medium","high","xhigh","max"],"listed":true,"default_effort":"medium"},"effort_stale":false}
 "digest":{"task":"Fix the flaky login test and open a PR","task_source":"llm","now":"Rerunning the login test 20 times","now_source":"llm","now_at":1791030000000}
+"digest":{"task":"Investigate. Missing transcript diffs.","task_source":"prompt","now_source":"title","task_status":{"state":"retrying","reason":"truncated","attempts":1,"retry_at":1791030060000}}
 ```
 
 **What is sent.** The task: the worker's first genuine prompt (the digest's, its first 4,000 bytes), once per prompt
@@ -2917,15 +2925,29 @@ thinking), after a context line where it helps: `Ticket #<n>: <title>` for a run
 one-off worker. Every piece (a tool's name too) is scrubbed whole before it is clipped, and again after
 (`digest.Scrub`: the activity's token patterns, `ai.Scrub`'s keys and bearer tokens). The request is two turns: the instruction in the system turn, which says the transcript is data and
 never instructions, and the data alone between `<transcript>` and `</transcript>` in the user turn (a closing delimiter
-inside it is defused); `max_tokens` 80, temperature 0.2. The answer is cleaned to its first line, without code fences,
+inside it is defused); `max_tokens` the **completion budget** (default 1,024, below), temperature 0.2, and the
+**reasoning effort** when one is chosen (below). The answer is cleaned to its first line, without code fences,
 markdown, a leading label or bullet, wrapping quotes or a final full stop, scrubbed, and clipped to the line's length
-with `…`; an answer with nothing left keeps the previous line (or the fallback).
+with `…`; an answer with nothing left keeps the previous line (or the fallback). An answer the provider cut off at the
+token limit (`finish_reason` `length`) is never a line, even with some text in it (#174).
 
 **When.** The now line after a turn ends (Claude's `turn_duration`, Codex's `task_complete`) and has settled **2 s**,
 at most once every **60 s** per worker (a later turn end within it waits for it, then summarizes the steps it finds).
 The task as soon as the prompt is known. **Only for a worker on a floor a client stands on** (its `board.watch`, or a
 laptop or transcript it watches there; the wall screen and the page are on that floor): a floor nobody is on costs
 nothing, and its lines are written once someone walks onto it.
+
+**Retries** (#174). A task line whose call failed (any failure of a call that went out: `truncated`, `empty_answer`,
+`bad_response`, a timeout, a provider error, an answer with no line) is asked again by the bridge itself, **4 attempts
+in all** per prompt (its hash), after **1, 5 and 15 minutes** (an armed timer; nothing retries on a poll or a turn).
+Then its `task_status` is `failed` and nothing more goes by itself. The count starts again (a forgiven failure) on: a
+new prompt (another hash), a `/clear` or another agent session, a change of the feature's config (the LLM's base URL,
+model, key or `extra_body`, the reasoning effort, the completion budget, a passing `digest.test`, the toggle), and
+`digest.retry`. A call that could not go (the daily cap reached, the feature off or the LLM not ready, another call
+of the feature out) is **no attempt**: nothing was sent and nothing counted. A failed call is a call: it counts
+toward `daily_cap`, its input is not cached, and a cached input still costs nothing. The now line is asked after each
+turn (the timing above); a failed one shows `now_status` `failed` until the next turn or `digest.retry`. A retry,
+like every call, is one at a time and for a floor someone is viewing.
 
 **Cost.** One call at a time for the feature (the AI integration's other slot stays free for the follow-up questions
 and pack up); `daily_cap` calls a day (default **300**, 1–10,000; `calls_today` counts them, the bridge's local day),
@@ -2942,13 +2964,42 @@ included) costs nothing. Only the hash and the line are stored, never a transcri
   still needs the LLM `ready`.
 - `state`: `off`, `incomplete` (`missing: ["llm"]`), `ready`; a cap reached is `ready` with `calls_today` ≥
   `daily_cap`.
+- **`reasoning_effort`** (#174; `""`, the **provider's default**, nothing sent, unless chosen) and **`max_tokens`**
+  (the **completion budget**, 64–16,384, default **1,024**) are this feature's own settings: the follow-up
+  questions, pack up and classification keep their own limits and send no effort, and the AI integration's
+  `extra_body` stays what it is. The budget is the provider's `max_tokens`: the most the model may generate for one
+  line, **reasoning included**; it is not the line's length (task 80, now 100 characters). A reasoning model that
+  spends it all thinking answers with no text and `finish_reason` `length`. The bridge sends **one** effort control, the
+  top-level `reasoning_effort` (OpenRouter, OpenAI, LiteLLM, vLLM and Ollama accept it); the endpoint's `extra_body`
+  `reasoning` object is dropped from a request that carries an effort, and left alone when none is chosen. An
+  The budget sent for the **summaries** is always this setting's, in the field the `extra_body` names: with `max_completion_tokens` there it is sent as `max_completion_tokens` (and no `max_tokens`), with `max_tokens` there it replaces that value, with neither it is `max_tokens`; the `extra_body`'s own number never shadows it. This holds for the summaries only: the connection test (`ai.test`'s 64-token probe), the follow-up questions and pack up keep deferring to a budget in the `extra_body` (`max_completion_tokens` over `max_tokens`), their own limit applying only when it names none. `reasoning` in the state is what the
+  model's catalog says (`{"support": "supported"\|"unsupported"\|"unknown", "model"?, "efforts": [...lowest first],
+  "listed", "default_effort"?, "mandatory"?}`, read from OpenRouter's `GET {base}/models` entry: `reasoning.supported_efforts`,
+  `default_effort`, `mandatory`, else `supported_parameters`; other endpoints list ids only: `unknown`, offered the
+  generic `low`, `medium`, `high`, and any effort the gateway knows is accepted by `digest.set`). `listed` says the
+  efforts are the catalog's own allowlist: another is `bad_request`, as is any effort for a model with no reasoning
+  and `none` for a mandatory one. A saved effort the model no longer takes is `effort_stale`: it is shown, **not
+  sent** (the provider's default applies). A model the provider answers 400 to with an effort set is `bad_request`
+  (`bad_config` in the audit), never silent. The test and the state's `tested` cover the LLM in use **and** the
+  effort and budget it ran with: changing either needs a new test before switching on.
 - **`digest.test`** has the LLM write a sample task line and a sample now line (one call at a time, not counted, not
   cached). It passes when both come back with a line. A pass covers the LLM in use for 30 minutes, and
-  **`digest.set {enabled: true}` needs one** (`test_required`; the LLM not ready: `incomplete`).
+  **`digest.set {enabled: true}` needs one** (`test_required`; the LLM not ready: `incomplete`). A sample's `diag`
+  says how its call ended and what it spent (below), never any text.
+- **`digest.retry`** (#174) makes a worker's failed lines due again (every worker's without an `id`): the task's
+  attempts start anew and it is asked at once, the now line as if its turn had just ended. The ack's `retried` counts the
+  lines; the feature off or the LLM not ready is `incomplete`.
 
 **Audit and logs.** Each call writes an audit row `digest.summarize` (client `bridge`) with the worker, the kind,
-`sent_bytes`, `answer_bytes`, the model and the endpoint's host; a failure's error is its kind only (`timeout`,
-`no_line`, …). Never the text sent or answered. The log has the failure's kind and its message through `digest.Scrub`.
+`sent_bytes`, `answer_bytes`, the model and the endpoint's host, `reasoning_effort` and `max_tokens` as sent, and,
+when an answer came back, its sanitized `diag` (#174): `{status, finish_reason?, native_finish_reason?, prompt_tokens?,
+completion_tokens?, total_tokens?, reasoning_tokens?, content: "absent"\|"empty"\|"nonempty", content_chars}`; a count
+the provider did not report is absent, a zero is a zero. The finish reasons are a known one (lowercase: `stop`, `length`,
+`tool_calls`, `content_filter`, `error`, `end_turn`, `max_tokens`, …) or `other`: the provider's own text is never kept. A failure's error is its kind only (`truncated`, `empty_answer`,
+`bad_response`, `timeout`, `no_line`, …): `truncated` is an answer the provider cut off at the token limit (an
+empty `length` answer says how much of the budget went on reasoning), `empty_answer` one with no text, and
+`bad_response` a malformed answer. Never the text sent or answered, nor any reasoning, nor a key. The log has the
+failure's kind only.
 
 ### Ticket titles
 
@@ -3246,7 +3297,7 @@ dismissed_at)`.
 | code | meaning |
 |---|---|
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
-| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` and #110 `packup.*` use `incomplete`, `test_required`, `env_locked` and, from their tests' calls, the `ai.*` ones (`packup.detect` never fails on a model: no match); #98 `activity.set` uses `env_locked`; #118 `digest.*` use `incomplete`, `test_required`, `env_locked`, `bad_request` and, from its test's calls, the `ai.*` ones |
+| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `truncated`, `empty_answer`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` and #110 `packup.*` use `incomplete`, `test_required`, `env_locked` and, from their tests' calls, the `ai.*` ones (`packup.detect` never fails on a model: no match); #98 `activity.set` uses `env_locked`; #118 `digest.*` use `incomplete`, `test_required`, `env_locked`, `bad_request` (#174: also a reasoning effort or budget the model or the range refuses; `digest.retry` also `unknown_worker`) and, from its test's calls, the `ai.*` ones (`truncated`, `empty_answer`) |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
 | `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
 | `name_taken` | another building, or another team preset, already has that name (ignoring case) |

@@ -27,6 +27,9 @@ type dgRoles struct {
 	mu    sync.Mutex
 	state ai.State
 	llm   *ai.FakeLLM
+	// reason is what the model's catalog says of its reasoning (#174; nil:
+	// nothing known).
+	reason *ai.Reasoning
 }
 
 const (
@@ -53,6 +56,15 @@ func (r *dgRoles) State(ai.Role) ai.State {
 func (r *dgRoles) set(s ai.State)             { r.mu.Lock(); r.state = s; r.mu.Unlock() }
 func (r *dgRoles) Fingerprint(ai.Role) string { return "llm-fp" }
 func (r *dgRoles) LLM() ai.LLM                { return r.llm }
+func (r *dgRoles) KnownReasoning() ai.Reasoning {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.reason == nil {
+		return ai.UnknownReasoning()
+	}
+	return *r.reason
+}
+func (r *dgRoles) ModelReasoning(context.Context) ai.Reasoning { return r.KnownReasoning() }
 func (r *dgRoles) View() ai.View {
 	return ai.View{LLM: ai.LLMView{BaseURL: "https://llm.example:8443/v1", Model: "mimo-v2.6-flash"}}
 }

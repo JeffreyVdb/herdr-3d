@@ -71,6 +71,7 @@ type Service struct {
 	invalid map[Role]*LastError
 	last    *LastError
 	passed  map[Role]passedTest
+	reason  map[string]reasonEntry // #174: the LLM's models' reasoning, by base URL and model
 }
 
 // passedTest is the last passing test of a role: what it tested (the
@@ -119,6 +120,7 @@ func New(opts Options) (*Service, error) {
 		change:  make(chan struct{}, 1),
 		invalid: map[Role]*LastError{},
 		passed:  map[Role]passedTest{},
+		reason:  map[string]reasonEntry{},
 	}
 	st, err := s.file.load()
 	if err != nil {
@@ -556,4 +558,106 @@ func (s *Service) rememberJSONMode(on bool) {
 	if err == nil {
 		s.notify()
 	}
+}
+
+// ---- #174: what the catalog says of the LLM's reasoning ---------------------
+
+const (
+	// reasoningTTL is how long a catalog read is trusted, reasoningRetry how
+	// long before a failed one (no /models, a timeout) is tried again.
+	reasoningTTL   = 30 * time.Minute
+	reasoningRetry = 2 * time.Minute
+)
+
+// reasonEntry is one model's reasoning as last read.
+type reasonEntry struct {
+	r  Reasoning
+	at time.Time
+	ok bool // a read that worked
+}
+
+func reasonKey(c config) string { return c.baseURL + "\x00" + c.model }
+
+// KnownReasoning is what is known of the LLM in use's reasoning effort, from
+// the last catalog read and with no call (Support unknown until one was made).
+func (s *Service) KnownReasoning() Reasoning {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.knownLocked(s.effectiveLocked(RoleLLM))
+}
+
+func (s *Service) knownLocked(c config) Reasoning {
+	r := UnknownReasoning()
+	if e, ok := s.reason[reasonKey(c)]; ok {
+		r = e.r
+	}
+	r.Model = c.model
+	return r
+}
+
+// ModelReasoning is the LLM in use's reasoning effort: the last catalog read
+// while it is fresh, else the catalog read again ({base}/models, one call
+// under one slot). A catalog that cannot be read, or has no entry of the
+// model, is Support unknown (tried again after a while). It is called by a
+// feature that asks for an effort, and by its settings.
+func (s *Service) ModelReasoning(ctx context.Context) Reasoning {
+	s.mu.Lock()
+	c := s.effectiveLocked(RoleLLM)
+	ready := s.stateLocked(RoleLLM) == StateReady
+	e, have := s.reason[reasonKey(c)]
+	ttl := reasoningRetry
+	if e.ok {
+		ttl = reasoningTTL
+	}
+	fresh := have && s.opts.Now().Sub(e.at) < ttl
+	known := s.knownLocked(c)
+	s.mu.Unlock()
+	if fresh || !ready {
+		return known
+	}
+	r, ok := s.readReasoning(ctx, c)
+	s.mu.Lock()
+	prev, had := s.reason[reasonKey(c)]
+	s.reason[reasonKey(c)] = reasonEntry{r: r, at: s.opts.Now(), ok: ok}
+	changed := !had || prev.r.Support != r.Support || prev.r.Default != r.Default || prev.r.Mandatory != r.Mandatory || prev.r.Listed != r.Listed || !equalStrings(prev.r.Efforts, r.Efforts)
+	s.mu.Unlock()
+	if changed {
+		s.notify()
+	}
+	r.Model = c.model
+	return r
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// readReasoning reads the catalog's entry of c's model; ok false when the
+// catalog could not be read.
+func (s *Service) readReasoning(ctx context.Context, c config) (Reasoning, bool) {
+	release, err := s.acquire(ctx)
+	if err != nil {
+		return UnknownReasoning(), false
+	}
+	defer release()
+	lctx, cancel := context.WithTimeout(ctx, s.opts.ListTimeout)
+	defer cancel()
+	_, models, err := s.resolveBase(lctx, c.baseURL, c.key, 0)
+	if err != nil {
+		return UnknownReasoning(), false
+	}
+	for _, m := range models {
+		if m.ID == c.model && m.Reasoning != nil {
+			return *m.Reasoning, true
+		}
+	}
+	return UnknownReasoning(), true // a catalog that does not describe the model
 }

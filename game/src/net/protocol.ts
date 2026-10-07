@@ -591,8 +591,11 @@ export interface CommandArgs {
   'activity.set': { model_enabled?: boolean; threshold?: number; margin?: number; daily_cap?: number };
   // #118 floor overview summaries (docs/protocol.md "Floor overview summaries"). `digest.test` acks `DigestTestAck`.
   'digest.get': Record<string, never>;
-  'digest.set': { enabled?: boolean; daily_cap?: number };
+  /** #174: `reasoning_effort` "" is the provider's default (nothing sent); `max_tokens` the completion budget, reasoning included. */
+  'digest.set': { enabled?: boolean; daily_cap?: number; reasoning_effort?: string; max_tokens?: number };
   'digest.test': Record<string, never>;
+  /** #174: try the failed summary lines of a worker (every worker without an id) again; acks `{ retried }`. */
+  'digest.retry': { id?: string };
   'issue.get': { session: string; id: string };
   'issue.comment': { session: string; id: string; body: string };
   'issue.close': { session: string; id: string; reason: CloseReason; confirm: true };
@@ -1910,6 +1913,36 @@ export interface DigestState {
   /** The most LLM calls a day (default 300); past it no new calls until tomorrow, the lines written (and cached) stay. */
   daily_cap: number;
   calls_today: number;
+  /** #174: the reasoning effort chosen ('': the provider's default, nothing sent) and the completion budget in effect (default 1024). Both are this feature's only. */
+  reasoning_effort: string;
+  max_tokens: number;
+  /** What the model's catalog says of its reasoning; `support` is `unknown` until it was read. */
+  reasoning: DigestReasoning;
+  /** The chosen effort is one the model does not take: it is not sent. */
+  effort_stale: boolean;
+}
+
+/** #174: a model's reasoning effort as its catalog lists it. `efforts` (lowest first) is what to offer; `listed`: it is the catalog's own list. */
+export interface DigestReasoning {
+  support: 'supported' | 'unsupported' | 'unknown';
+  model?: string;
+  efforts: string[];
+  listed: boolean;
+  default_effort?: string;
+  mandatory?: boolean;
+}
+
+/** #174: how a call ended and what it spent: never any text. */
+export interface CallDiagnostics {
+  status: number;
+  finish_reason?: string;
+  native_finish_reason?: string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  reasoning_tokens?: number;
+  content: 'absent' | 'empty' | 'nonempty';
+  content_chars: number;
 }
 
 /** `digest.update`: the whole state, flat. */
@@ -1922,7 +1955,7 @@ export interface DigestUpdate extends DigestState {
 export interface DigestTestAck {
   ok: boolean;
   reason?: string;
-  samples: Array<{ kind: 'task' | 'now'; line?: string; error?: string }>;
+  samples: Array<{ kind: 'task' | 'now'; line?: string; error?: string; diag?: CallDiagnostics }>;
   latency_ms: number;
 }
 
@@ -2087,6 +2120,23 @@ export interface WorkerDigest {
   now_source?: 'recap' | 'title' | 'llm' | string;
   /** Unix ms (bridge clock) the `now` line was written. */
   now_at?: number;
+  /** #174: what became of the model's line while a fallback shows in its place (absent: nothing awaited). */
+  task_status?: DigestLineStatus;
+  now_status?: DigestLineStatus;
+}
+
+/**
+ * #174: `pending` (a call is out, or it waits for the daily budget: reason `daily_cap`), `retrying` (the last attempt
+ * failed, the next is at `retry_at`) or `failed` (nothing is scheduled: a retry, a new prompt, a setting or, for the now
+ * line, the next turn starts it again). `reason` is an `ai.*` error kind (truncated, empty_answer, bad_response,
+ * provider_failed, timeout, rate_limited, auth_failed, unreachable, bad_config), `no_line` or `failed`.
+ */
+export interface DigestLineStatus {
+  state: 'pending' | 'retrying' | 'failed';
+  reason?: string;
+  attempts?: number;
+  /** Unix ms of the next attempt (`retrying` only). */
+  retry_at?: number;
 }
 
 export interface Worker {

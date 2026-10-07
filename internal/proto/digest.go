@@ -16,9 +16,11 @@ const (
 	CmdDigestGet  = "digest.get"
 	CmdDigestSet  = "digest.set"
 	CmdDigestTest = "digest.test"
+	// CmdDigestRetry asks for the lines whose summary failed to be tried again (#174).
+	CmdDigestRetry = "digest.retry"
 )
 
-func init() { Commands = append(Commands, CmdDigestGet, CmdDigestSet, CmdDigestTest) }
+func init() { Commands = append(Commands, CmdDigestGet, CmdDigestSet, CmdDigestTest, CmdDigestRetry) }
 
 // DigestState is the feature's settings and state: digest.get's and
 // digest.set's ack, World.Digest, and flat in digest.update.
@@ -40,9 +42,24 @@ type DigestUpdate struct {
 }
 
 // DigestSetArgs are the args of digest.set (a field left out is kept).
+// reasoning_effort "" is the provider's default (nothing sent); max_tokens is
+// the completion budget, reasoning included (#174).
 type DigestSetArgs struct {
-	Enabled  *bool `json:"enabled,omitempty"`
-	DailyCap *int  `json:"daily_cap,omitempty"`
+	Enabled         *bool   `json:"enabled,omitempty"`
+	DailyCap        *int    `json:"daily_cap,omitempty"`
+	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
+	MaxTokens       *int    `json:"max_tokens,omitempty"`
+}
+
+// DigestRetryArgs are the args of digest.retry: one worker's id, or none for
+// every worker whose line failed.
+type DigestRetryArgs struct {
+	ID string `json:"id,omitempty"`
+}
+
+// DigestRetryResult is digest.retry's ack: how many lines will be tried again.
+type DigestRetryResult struct {
+	Retried int `json:"retried"`
 }
 
 // DigestTestResult is digest.test's ack.

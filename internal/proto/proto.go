@@ -396,7 +396,34 @@ type WorkerDigest struct {
 	NowSource  string `json:"now_source,omitempty"`
 	// NowAt is when Now was written, unix ms (a recap's line).
 	NowAt int64 `json:"now_at,omitempty"`
+	// TaskStatus and NowStatus (#174): while the model's line is awaited or
+	// its attempt failed, and the line shown is a fallback; absent otherwise.
+	TaskStatus *DigestLineStatus `json:"task_status,omitempty"`
+	NowStatus  *DigestLineStatus `json:"now_status,omitempty"`
 }
+
+// DigestLineStatus is what became of the model's line (#174), while the
+// overview shows a fallback in its place: State "pending" (a call is out),
+// "retrying" (the last attempt failed, the next is at RetryAt) or "failed"
+// (it failed and nothing is scheduled: a retry, a new prompt, a setting or
+// the next turn starts it again). Reason is the failure's code: an `ai.*`
+// error kind (truncated, empty_answer, bad_response, provider_failed,
+// timeout, rate_limited, auth_failed, unreachable, bad_config …), "no_line"
+// or "failed".
+type DigestLineStatus struct {
+	State    string `json:"state"`
+	Reason   string `json:"reason,omitempty"`
+	Attempts int    `json:"attempts,omitempty"`
+	// RetryAt is when the next attempt goes, unix ms ("retrying" only).
+	RetryAt int64 `json:"retry_at,omitempty"`
+}
+
+// States of a DigestLineStatus.
+const (
+	LinePending  = "pending"
+	LineRetrying = "retrying"
+	LineFailed   = "failed"
+)
 
 // Digest line sources. DigestLLM is a line the configured LLM wrote (#118
 // phase 2, the floor overview summaries switched on).

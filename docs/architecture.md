@@ -240,7 +240,7 @@ MacBook (M2 Max)                                   devbox (Linux)
   and the run's ticket title and URL (`issue` / `work_item`, from the board cache or one read of the item). Phase 2,
   opt-in ("Floor overview summaries", `internal/digest`): the configured LLM writes a one-off worker's task and every
   worker's now line from the same digest, after a settled turn, for viewed floors only, one call at a time, under a
-  daily cap and cached by input hash; the page and the wall mark those lines AI.
+  daily cap and cached by input hash; the page and the wall mark those lines AI. #174: the feature's own reasoning effort (from the model's catalog) and completion budget (default 1,024), a bounded retry of a failed task line, per-call sanitized diagnostics (`truncated` / `empty_answer` apart from `bad_response`), and a status on the page's line while a fallback shows (`decisions.md` "#174").
 - **Identity**: bridge-owned worker UUID; reconcile after restarts via persisted pane-label marker (written by the bridge
   on the workers it hires) → `agent_session` id → label+cwd → else new worker. Tokens vanish on herdr restart and workspace ids can be reused: re-apply tokens only
   after reconciliation.

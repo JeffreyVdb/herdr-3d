@@ -179,6 +179,9 @@ var migrations = []string{
 	// #158: the bridge's async answers a shared worker's turn may still
 	// hold, so a restart does not take them again.
 	migrationCodexAsyncSend,
+	// #174: the floor overview summaries' reasoning effort and completion
+	// budget.
+	migrationDigestReasoning,
 }
 
 // Fingerprint kinds.

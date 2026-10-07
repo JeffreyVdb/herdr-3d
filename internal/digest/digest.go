@@ -61,8 +61,16 @@ const (
 	MaxToolSummary = 120
 	// MaxContext is the most of the context line sent.
 	MaxContext = 200
-	// MaxTokens bounds the answer.
-	MaxTokens = 80
+)
+
+// The completion budget (#174): the most tokens the model may generate for
+// one line, its reasoning included. It is not the line's length (TaskMax and
+// NowMax, in characters, are that): a reasoning model spends most of it
+// thinking, and a budget it exhausts answers with no text at all.
+const (
+	DefaultMaxTokens = 1024
+	MinMaxTokens     = 64
+	MaxMaxTokens     = 16384
 )
 
 // Tool is a tool call of an assistant step: its name and input summary.
@@ -178,9 +186,25 @@ const nowSystem = `You write the status line of an AI coding agent for a status 
 
 Say what the agent is doing now, as one line of at most 100 characters in the present tense (for example "Running the e2e suite after fixing the session loader"). Reply with the line only: no quotes, no markdown, no preamble, no full stop at the end.`
 
-// Request is the completion for an input: the instruction in the system
-// turn, the prepared text as delimited data in the user turn.
-func Request(in Input) ai.Request {
+// Params are what a completion's request takes of the feature's settings:
+// the completion budget and the reasoning effort to send ("": the provider's
+// default, nothing sent).
+type Params struct {
+	MaxTokens       int
+	ReasoningEffort string
+}
+
+// Request is the completion for an input under the default settings.
+func Request(in Input) ai.Request { return RequestWith(in, Params{}) }
+
+// RequestWith is the completion for an input: the instruction in the system
+// turn, the prepared text as delimited data in the user turn. A budget left
+// zero is DefaultMaxTokens. A line is never a text the provider cut off
+// (NoPartial).
+func RequestWith(in Input, p Params) ai.Request {
+	if p.MaxTokens <= 0 {
+		p.MaxTokens = DefaultMaxTokens
+	}
 	sys := nowSystem
 	if in.Kind == KindTask {
 		sys = taskSystem
@@ -192,8 +216,11 @@ func Request(in Input) ai.Request {
 			{Role: "system", Content: sys},
 			{Role: "user", Content: openData + "\n" + data + "\n" + closeData},
 		},
-		Temperature: &temp,
-		MaxTokens:   MaxTokens,
+		Temperature:     &temp,
+		MaxTokens:       p.MaxTokens,
+		BudgetWins:      true, // the summaries' budget is a setting shown as in use
+		ReasoningEffort: p.ReasoningEffort,
+		NoPartial:       true,
 	}
 }
 

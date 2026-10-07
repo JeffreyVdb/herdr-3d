@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,10 +64,26 @@ type Roles interface {
 	LLM() ai.LLM
 }
 
+// Reasoner is what a Roles may also be (*ai.Service is): what the LLM
+// model's catalog says of its reasoning effort (#174). Without it the model's
+// reasoning is unknown: any effort the gateway knows may be tried.
+type Reasoner interface {
+	// ModelReasoning reads it, the catalog at most once in a while.
+	ModelReasoning(ctx context.Context) ai.Reasoning
+	// KnownReasoning is what the last read said, with no call.
+	KnownReasoning() ai.Reasoning
+}
+
 // Settings are what the store keeps.
 type Settings struct {
 	Enabled  bool
 	DailyCap int
+	// ReasoningEffort is the effort sent with each line's request ("": the
+	// provider's default, nothing sent); MaxTokens the completion budget
+	// (0: DefaultMaxTokens). (#174) They are this feature's only: the other
+	// features of the LLM keep their own.
+	ReasoningEffort string
+	MaxTokens       int
 	// CallsDay (YYYY-MM-DD, the bridge's local time) and CallsToday count
 	// the calls of that day.
 	CallsDay   string
@@ -82,7 +99,8 @@ type CacheEntry struct {
 // Store keeps the settings and the cache (the bridge's database).
 type Store interface {
 	LoadDigestSettings(ctx context.Context) (Settings, bool, error)
-	// SaveDigestSettings stores Enabled and DailyCap, never the call count
+	// SaveDigestSettings stores Enabled, DailyCap, ReasoningEffort and
+	// MaxTokens, never the call count
 	// (it too only when nothing is stored yet).
 	SaveDigestSettings(ctx context.Context, s Settings) error
 	// SaveDigestCalls stores the call count, never the settings (they too
@@ -119,13 +137,17 @@ type Service struct {
 	cache  map[string]*list.Element
 	lru    *list.List // of CacheEntry, newest first
 	call   *call
+	// tests counts the passing tests (ConfigKey).
+	tests int
 }
 
-// passedTest is the last passing digest.test: the LLM config it ran with,
-// and when.
+// passedTest is the last passing digest.test: what it ran with (the LLM's
+// config, the reasoning effort and the completion budget), and when.
 type passedTest struct {
-	llm string
-	at  time.Time
+	llm    string
+	effort string
+	tokens int
+	at     time.Time
 }
 
 // call is a call handed to the LLM: cancel stops it, done is closed once it
@@ -154,6 +176,12 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 		if validCap(st.DailyCap) {
 			s.set.DailyCap = st.DailyCap
 		}
+		if ai.ValidEffort(st.ReasoningEffort) {
+			s.set.ReasoningEffort = st.ReasoningEffort
+		}
+		if validTokens(st.MaxTokens) {
+			s.set.MaxTokens = st.MaxTokens
+		}
 	}
 	es, err := opts.Store.LoadDigestCache(ctx, CacheSize)
 	if err != nil {
@@ -166,6 +194,16 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 }
 
 func validCap(n int) bool { return n >= 1 && n <= MaxDailyCap }
+
+func validTokens(n int) bool { return n >= MinMaxTokens && n <= MaxMaxTokens }
+
+// tokens is the completion budget in effect.
+func (st Settings) tokens() int {
+	if validTokens(st.MaxTokens) {
+		return st.MaxTokens
+	}
+	return DefaultMaxTokens
+}
 
 // RoleStates is the LLM's state, for the status line.
 type RoleStates struct {
@@ -187,6 +225,16 @@ type View struct {
 	Tested     bool `json:"tested"`
 	DailyCap   int  `json:"daily_cap"`
 	CallsToday int  `json:"calls_today"`
+	// ReasoningEffort is the effort chosen ("": the provider's default,
+	// nothing sent), MaxTokens the completion budget in effect (the default
+	// when none was chosen). (#174) Both are the feature's only.
+	ReasoningEffort string `json:"reasoning_effort"`
+	MaxTokens       int    `json:"max_tokens"`
+	// Reasoning is what the LLM model's catalog says of its reasoning effort
+	// (Support "unknown" until it was read); EffortStale: the chosen effort is
+	// one the model does not take, so it is not sent.
+	Reasoning   ai.Reasoning `json:"reasoning"`
+	EffortStale bool         `json:"effort_stale"`
 }
 
 func (s *Service) day() string { return s.opts.Now().Format("2006-01-02") }
@@ -212,15 +260,63 @@ func (s *Service) llmState() ai.State {
 	return s.opts.Roles.State(ai.RoleLLM)
 }
 
+// testedLocked: a passing test covers what is in use: the LLM's config, the
+// effort and the budget it ran with.
 func (s *Service) testedLocked() bool {
 	p := s.passed
-	return p != nil && s.opts.Now().Sub(p.at) <= testValidity && p.llm == s.opts.Roles.Fingerprint(ai.RoleLLM)
+	return p != nil && s.opts.Now().Sub(p.at) <= testValidity && p.llm == s.opts.Roles.Fingerprint(ai.RoleLLM) &&
+		p.effort == s.set.ReasoningEffort && p.tokens == s.set.tokens()
+}
+
+// known is what is known of the LLM model's reasoning, with no call.
+func (s *Service) known() ai.Reasoning {
+	if rs, ok := s.opts.Roles.(Reasoner); ok && rs != nil {
+		return rs.KnownReasoning()
+	}
+	return ai.UnknownReasoning()
+}
+
+// reasoning reads the model's reasoning (the catalog, when it was not read
+// lately), with no lock held.
+func (s *Service) reasoning(ctx context.Context) ai.Reasoning {
+	if rs, ok := s.opts.Roles.(Reasoner); ok && rs != nil {
+		return rs.ModelReasoning(ctx)
+	}
+	return ai.UnknownReasoning()
+}
+
+// sent is the effort a request carries: the chosen one, unless the model is
+// known not to take it.
+func sent(effort string, r ai.Reasoning) string {
+	if effort == "" || !r.Allows(effort) {
+		return ""
+	}
+	return effort
+}
+
+// ConfigKey names what a line's success or failure was of: the LLM's config,
+// the effort, the budget, whether the feature is on, and the passing tests so
+// far. When it changes the failures a line had no longer count: the next
+// attempt may succeed.
+func (s *Service) ConfigKey() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fp := ""
+	if s.opts.Roles != nil {
+		fp = s.opts.Roles.Fingerprint(ai.RoleLLM)
+	}
+	return fmt.Sprintf("%s|%s|%d|%v|%d", fp, s.set.ReasoningEffort, s.set.tokens(), s.enabledLocked(), s.tests)
 }
 
 func (s *Service) viewLocked() View {
 	llm := s.llmState()
+	r := ai.UnknownReasoning()
+	if s.opts.Roles != nil {
+		r = s.known()
+	}
 	v := View{Enabled: s.enabledLocked(), Roles: RoleStates{LLM: string(llm)}, Env: []string{}, Tested: s.testedLocked(),
-		DailyCap: s.set.DailyCap, CallsToday: s.callsLocked()}
+		DailyCap: s.set.DailyCap, CallsToday: s.callsLocked(), ReasoningEffort: s.set.ReasoningEffort, MaxTokens: s.set.tokens(),
+		Reasoning: r, EffortStale: s.set.ReasoningEffort != "" && sent(s.set.ReasoningEffort, r) == ""}
 	if llm != ai.StateReady {
 		v.Missing = []string{string(ai.RoleLLM)}
 	}
@@ -256,15 +352,43 @@ func (s *Service) Capped() bool {
 	return s.callsLocked() >= s.set.DailyCap
 }
 
-// Set changes the settings (nil: kept). Switching it on needs the LLM ready
-// and a passing digest.test of it; the environment's toggle cannot be
-// changed. Switched off, it returns once a call that is out is cancelled and
-// over.
+// Update is a change of the settings: a nil field is kept.
+type Update struct {
+	Enabled  *bool
+	DailyCap *int
+	// ReasoningEffort: "" is the provider's default (nothing sent), else one
+	// of the model's efforts. MaxTokens is the completion budget.
+	ReasoningEffort *string
+	MaxTokens       *int
+}
+
+// Set changes the switch and the cap (nil: kept); see Apply.
 func (s *Service) Set(ctx context.Context, enabled *bool, dailyCap *int) error {
-	if dailyCap != nil && !validCap(*dailyCap) {
+	return s.Apply(ctx, Update{Enabled: enabled, DailyCap: dailyCap})
+}
+
+// Apply changes the settings (nil: kept). Switching it on needs the LLM
+// ready and a passing digest.test of it, with the effort and budget then in
+// use; the environment's toggle cannot be changed. An effort must be one the
+// model takes: the model's catalog is read for it (an unlisted one is
+// bad_request, as is any for a model without reasoning). Switched off, it
+// returns once a call that is out is cancelled and over.
+func (s *Service) Apply(ctx context.Context, u Update) error {
+	if u.DailyCap != nil && !validCap(*u.DailyCap) {
 		return &Error{CodeBadRequest, fmt.Sprintf("daily_cap must be 1-%d", MaxDailyCap)}
 	}
-	over, err := s.change(ctx, enabled, dailyCap)
+	if u.MaxTokens != nil && !validTokens(*u.MaxTokens) {
+		return &Error{CodeBadRequest, fmt.Sprintf("max_tokens must be %d-%d", MinMaxTokens, MaxMaxTokens)}
+	}
+	if e := u.ReasoningEffort; e != nil && *e != "" {
+		if !ai.ValidEffort(*e) {
+			return &Error{CodeBadRequest, fmt.Sprintf("reasoning_effort %q is not an effort: use one of none, minimal, low, medium, high, xhigh, max, or \"\" for the provider's default", *e)}
+		}
+		if r := s.reasoning(ctx); !r.Allows(*e) {
+			return &Error{CodeBadRequest, effortRefusal(*e, r)}
+		}
+	}
+	over, err := s.change(ctx, u)
 	if err != nil || over == nil {
 		return err
 	}
@@ -276,11 +400,22 @@ func (s *Service) Set(ctx context.Context, enabled *bool, dailyCap *int) error {
 	}
 }
 
-func (s *Service) change(ctx context.Context, enabled *bool, dailyCap *int) (<-chan struct{}, error) {
+// effortRefusal says why a model does not take an effort.
+func effortRefusal(e string, r ai.Reasoning) string {
+	switch {
+	case r.Support == ai.SupportNo:
+		return "this model has no reasoning effort: use the provider's default"
+	case r.Mandatory && e == "none":
+		return "this model's reasoning cannot be turned off: choose " + strings.Join(r.Efforts, ", ") + ", or the provider's default"
+	}
+	return fmt.Sprintf("this model does not take the reasoning effort %q: it takes %s, or the provider's default", e, strings.Join(r.Efforts, ", "))
+}
+
+func (s *Service) change(ctx context.Context, u Update) (<-chan struct{}, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.set
-	if enabled != nil {
+	if enabled := u.Enabled; enabled != nil {
 		if e := s.opts.EnvEnabled; e != nil {
 			if *enabled != *e {
 				return nil, &Error{CodeEnvLocked, "floor overview summaries are switched by the bridge environment (HERDR_WORLD_DIGEST_ENABLED)"}
@@ -297,8 +432,14 @@ func (s *Service) change(ctx context.Context, enabled *bool, dailyCap *int) (<-c
 			next.Enabled = *enabled
 		}
 	}
-	if dailyCap != nil {
-		next.DailyCap = *dailyCap
+	if u.DailyCap != nil {
+		next.DailyCap = *u.DailyCap
+	}
+	if u.ReasoningEffort != nil {
+		next.ReasoningEffort = *u.ReasoningEffort
+	}
+	if u.MaxTokens != nil {
+		next.MaxTokens = *u.MaxTokens
 	}
 	if s.opts.Store != nil {
 		if err := s.opts.Store.SaveDigestSettings(ctx, next); err != nil {
@@ -311,6 +452,14 @@ func (s *Service) change(ctx context.Context, enabled *bool, dailyCap *int) (<-c
 	}
 	s.call.cancel()
 	return s.call.done, nil
+}
+
+// Refresh reads the LLM model's reasoning from its catalog unless that was
+// done lately (the settings window's open): the next View carries it.
+func (s *Service) Refresh(ctx context.Context) {
+	if s.llmState() == ai.StateReady {
+		s.reasoning(ctx)
+	}
 }
 
 // Cached is the line known for an input.
@@ -352,6 +501,43 @@ type Result struct {
 	// Sent and Answer are the sizes (bytes) of what went and came back,
 	// for the audit.
 	Sent, Answer int
+	// Diag is the sanitized account of the call's last HTTP answer (nil: no
+	// call, or none came back); Effort the reasoning effort the request
+	// carried ("": none), MaxTokens its completion budget. (#174)
+	Diag      *ai.Diagnostics
+	Effort    string
+	MaxTokens int
+}
+
+// Reason is a failure of a line as a short code, for the overview and the
+// audit: the AI error's kind (truncated, empty_answer, bad_response,
+// provider_failed, timeout, rate_limited, auth_failed, unreachable,
+// bad_config …), "no_line" for an answer that holds no line, "failed" for
+// anything else.
+func Reason(err error) string {
+	switch k := ai.KindOf(err); {
+	case k != "":
+		return string(k)
+	case errors.Is(err, ErrNoLine):
+		return "no_line"
+	}
+	return "failed"
+}
+
+// Attempts bounds the retries of a failed task line (#174): a prompt's line
+// is asked for at most MaxAttempts times, the next after the delay RetryDelay
+// says; a manual retry, a new prompt, a changed setting or a passing test
+// start the count again. A failed call costs the daily cap like any call.
+const MaxAttempts = 4
+
+// RetryDelay is how long after its n-th failed attempt (n from 1) the next
+// goes; ok false when n reached MaxAttempts: no more by itself.
+func RetryDelay(n int) (d time.Duration, ok bool) {
+	delays := [...]time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute}
+	if n < 1 || n >= MaxAttempts {
+		return 0, false
+	}
+	return delays[n-1], true
 }
 
 // lineMax is the line's bound for an input's kind.
@@ -403,8 +589,9 @@ func (s *Service) Summarize(ctx context.Context, in Input) (Result, error) {
 	if s.opts.Store != nil {
 		_ = s.opts.Store.SaveDigestCalls(ctx, counted) // the count is best effort
 	}
-	req := Request(in)
-	res := Result{Sent: len(req.Messages[1].Content)}
+	req := s.request(ctx, in)
+	res := Result{Sent: len(req.Messages[1].Content), Effort: req.ReasoningEffort, MaxTokens: req.MaxTokens}
+	req.Report = func(d ai.Diagnostics) { res.Diag = &d }
 	out, err := s.ask(ctx, req)
 	res.Answer = len(out)
 	if err != nil {
@@ -423,6 +610,19 @@ func (s *Service) Summarize(ctx context.Context, in Input) (Result, error) {
 		_ = s.opts.Store.SaveDigestCache(ctx, e, CacheSize) // kept in memory; the next restart asks again
 	}
 	return res, nil
+}
+
+// request is an input's completion under the settings now: the budget, and
+// the chosen effort unless the model is known not to take it (a stale
+// choice: it is shown as such, and not sent).
+func (s *Service) request(ctx context.Context, in Input) ai.Request {
+	s.mu.Lock()
+	effort, tokens := s.set.ReasoningEffort, s.set.tokens()
+	s.mu.Unlock()
+	if effort != "" {
+		effort = sent(effort, s.reasoning(ctx))
+	}
+	return RequestWith(in, Params{MaxTokens: tokens, ReasoningEffort: effort})
 }
 
 // ask hands the request to the LLM unless the feature was switched off
@@ -462,11 +662,13 @@ var SampleSteps = []Step{
 	{Tools: []Tool{{Name: "Bash", Summary: "pnpm exec playwright test e2e/auth.spec.ts --repeat-each 20"}}},
 }
 
-// Sample is one sample's outcome.
+// Sample is one sample's outcome. Diag is how the call ended and what it
+// spent (never any text), for tuning the budget.
 type Sample struct {
-	Kind  string `json:"kind"`
-	Line  string `json:"line,omitempty"`
-	Error string `json:"error,omitempty"`
+	Kind  string          `json:"kind"`
+	Line  string          `json:"line,omitempty"`
+	Error string          `json:"error,omitempty"`
+	Diag  *ai.Diagnostics `json:"diag,omitempty"`
 }
 
 // TestResult is digest.test's answer. A test that ran but did not pass (an
@@ -494,14 +696,20 @@ func (s *Service) Test(ctx context.Context) (*TestResult, error) {
 	}
 	defer func() { <-s.busy }()
 	fp := s.opts.Roles.Fingerprint(ai.RoleLLM)
+	s.mu.Lock()
+	effort, tokens := s.set.ReasoningEffort, s.set.tokens()
+	s.mu.Unlock()
 	start := s.opts.Now()
 	res := &TestResult{}
 	for _, in := range []Input{{Kind: KindTask, Prompt: SampleTaskPrompt}, {Kind: KindNow, Context: "Task: Fix the flaky login test", Steps: SampleSteps}} {
-		out, err := s.opts.Roles.LLM().Complete(ctx, Request(in))
+		req := s.request(ctx, in)
+		var diag *ai.Diagnostics
+		req.Report = func(d ai.Diagnostics) { diag = &d }
+		out, err := s.opts.Roles.LLM().Complete(ctx, req)
 		if err != nil {
 			return nil, err
 		}
-		smp := Sample{Kind: in.Kind}
+		smp := Sample{Kind: in.Kind, Diag: diag}
 		if line, err := Clean(out, lineMax(in.Kind)); err != nil {
 			smp.Error = err.Error()
 			if res.Reason == "" {
@@ -516,7 +724,8 @@ func (s *Service) Test(ctx context.Context) (*TestResult, error) {
 	res.OK = res.Reason == ""
 	if res.OK {
 		s.mu.Lock()
-		s.passed = &passedTest{llm: fp, at: s.opts.Now()}
+		s.passed = &passedTest{llm: fp, effort: effort, tokens: tokens, at: s.opts.Now()}
+		s.tests++
 		s.mu.Unlock()
 	}
 	return res, nil
