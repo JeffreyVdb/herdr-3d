@@ -497,10 +497,14 @@ func pollProviders(ctx context.Context, set BoardSet, prev codehost.PrevState) p
 // count of writes when the poll began.
 func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes int, res pollResult) {
 	bf.inflight = false
-	// The floor's link changed meanwhile (its settings, the Kaneo
-	// connection's generation): boardOf drops the old board first, so a late
-	// result never lands on the new one.
-	if h.boardOf(bf.session) != bf || bf.set.Key != key {
+	if h.boards.floors[bf.session] != bf || bf.set.Key != key {
+		return // the floor's link changed meanwhile
+	}
+	// #184: a live floor's link may have changed without a tick since (its
+	// settings, the Kaneo connection's generation): boardOf drops the old
+	// board first, so a late result never lands on the new one. A floor that
+	// is gone keeps its board, as boardOf does.
+	if h.floors[bf.session] != nil && h.boardOf(bf.session) != bf {
 		return
 	}
 	now := h.opts.Now()

@@ -441,6 +441,11 @@ export class KaneoSim {
 
   private board(t: string, a: Obj, send: Send, ack: (d?: unknown) => void): void {
     const session = a.session as string;
+    if (t === 'board.unwatch') {
+      if (this.watching?.session === session) this.watching = null;
+      return ack();
+    }
+    if (t === 'board.refresh' && !this.state) return ack({ queued: false });
     if (!this.state) {
       if (t === 'board.watch') {
         this.watching = null;
