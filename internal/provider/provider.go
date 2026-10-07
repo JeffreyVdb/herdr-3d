@@ -55,6 +55,13 @@ var (
 	// landed, so the provider's state changed anyway. It goes with the
 	// failure's own kind (see Partial): the caller still refreshes.
 	ErrPartial = errors.New("partial")
+	// ErrUnauthorized: the provider refused the credentials (HTTP 401). It
+	// can be an exhausted key quota as well as a bad key: re-test after a
+	// cooldown rather than treating the key as permanently invalid.
+	ErrUnauthorized = errors.New("unauthorized")
+	// ErrForbidden: the credentials are valid but may not reach this
+	// workspace, project or item (HTTP 403).
+	ErrForbidden = errors.New("forbidden")
 )
 
 // RateLimitError is a rate limit: the provider will answer again at
