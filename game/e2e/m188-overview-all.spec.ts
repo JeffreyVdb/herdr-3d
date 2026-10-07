@@ -121,7 +121,8 @@ test('a ticket opened with t from the all-floors page in the city stays open acr
   const item = page.locator('dialog.desk-dlg--item');
   await expect(board).toBeVisible();
   await expect(item).toBeVisible();
-  const title = await page.locator('#item-title').textContent();
+  const title = 'Overcap: review passes never end'; // Sprout's ticket, once loaded
+  await expect(page.locator('#item-title')).toHaveText(title);
   // Turnip, on another floor, changes status: the boards redraw (no floor is under you here), the ticket stays.
   await page.evaluate(() => {
     const id = window.__h3d.world().flatMap((f) => f.workers).find((x) => x.name === 'Turnip')?.id;
@@ -133,7 +134,7 @@ test('a ticket opened with t from the all-floors page in the city stays open acr
   await frames(page, 6);
   await expect(board).toBeVisible();
   await expect(item).toBeVisible();
-  await expect(page.locator('#item-title')).toHaveText(title ?? '');
+  await expect(page.locator('#item-title')).toHaveText(title);
   // The viewer closes it: Esc closes the ticket, then the board, then the page.
   await page.keyboard.press('Escape');
   await expect(item).toBeHidden();
