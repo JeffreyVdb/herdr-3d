@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -61,16 +62,31 @@ func (h *Hub) threadQuestions(id, thread string) *codexapp.Questions {
 // codexJoined takes a join's thread: its running turn, and its history
 // reconciled with what the bridge already knew of its questions, its
 // recorded sends included (#158: after a restart they are all it knows of
-// an answer still waiting in the running turn).
+// an answer still waiting in the running turn). A history that still has
+// legacy item ids (the Watcher could not read them again) is unresolved: a
+// send whose batch it does not show is kept, as it may be one of those, and
+// the bridge joins again after CodexRejoin (syncCodexWatches).
 func (h *Hub) codexJoined(ctx context.Context, id string, cw *codexWatch, th *codexapp.Thread) {
 	if th == nil || h.cx.launches[id].Thread != cw.thread {
 		return
 	}
 	cw.turn = th.ActiveTurn()
 	q := h.threadQuestions(id, cw.thread)
+	q.DropLegacy()
 	q.Hydrate(th.Turns)
+	if cw.unresolved = q.Unresolved(); cw.unresolved {
+		cw.unresolvedAt = time.Now()
+		h.log.Warn("the codex thread's history has legacy item ids: joining again later", "worker", id, "thread", cw.thread)
+	}
 	for k, x := range h.cx.sends[id] {
-		if x.Thread != cw.thread || !q.Restore(codexapp.PriorSend{Batch: x.Batch, Index: x.Index, Turn: x.Turn,
+		if x.Thread != cw.thread {
+			h.forgetSend(ctx, id, k)
+			continue
+		}
+		if _, known := q.StateOf(x.Batch, x.Index); !known && cw.unresolved {
+			continue
+		}
+		if !q.Restore(codexapp.PriorSend{Batch: x.Batch, Index: x.Index, Turn: x.Turn,
 			Confirmed: x.Confirmed, Unconfirmed: x.Unconfirmed}, cw.turn) {
 			h.forgetSend(ctx, id, k)
 		}
@@ -204,7 +220,7 @@ func asyncError(err error) error {
 		return bad("%v", err)
 	case errors.Is(err, codexapp.ErrUnknownBatch), errors.Is(err, codexapp.ErrNotPending):
 		return fmt.Errorf("%w: %v", errStale, err)
-	case errors.Is(err, codexapp.ErrConflict):
+	case errors.Is(err, codexapp.ErrConflict), errors.Is(err, codexapp.ErrUnresolved):
 		return fmt.Errorf("%w: %v", errInvalidState, err)
 	}
 	return err
@@ -462,10 +478,14 @@ func (h *Hub) promptViaServer(ctx context.Context, id, text string) (any, bool, 
 // restarted bridge rebuilds its questions from that history, so without
 // these it would take, and send, a second answer the model then sees too.
 // A send is recorded before its request goes out and updated with the
-// response; it goes once its question is answered (or its batch is gone),
-// when its answer is refused, when the thread changes and when the worker is
-// sent home. A dismissal keeps it: the bridge forgets dismissals on a
-// restart, and the answer may still be on its way.
+// response; it goes once its question is answered (live or in the history),
+// when its answer is refused, when the thread changes, when the worker is
+// sent home or is no longer shared, and when its batch is unknown to a
+// thread whose history is resolved (no legacy item ids: an unknown batch
+// there is not an id the join could not read). Nothing else drops it, so a
+// worker has at most one per question it answered. A dismissal keeps it:
+// the bridge forgets dismissals on a restart, and the answer may still be
+// on its way.
 
 // sendKey is a question of a worker's thread.
 type sendKey struct {
@@ -542,7 +562,8 @@ func (h *Hub) forgetSends(ctx context.Context, id string) {
 
 // pruneSends drops a worker's sends whose question is answered or gone
 // from its thread's questions (hub goroutine). Before the bridge has
-// joined the thread (its questions not read yet) it keeps them.
+// joined the thread (its questions not read yet), or while its history is
+// unresolved (legacy item ids), it keeps those it does not know.
 func (h *Hub) pruneSends(ctx context.Context, id string) {
 	q := h.cx.questions[id]
 	thread := h.cx.launches[id].Thread
@@ -554,7 +575,7 @@ func (h *Hub) pruneSends(ctx context.Context, id string) {
 		if q == nil || q.Thread != thread {
 			continue
 		}
-		if st, ok := q.StateOf(k.batch, k.index); !ok || st == codexapp.QAnswered {
+		if st, ok := q.StateOf(k.batch, k.index); (!ok && !q.Unresolved()) || st == codexapp.QAnswered {
 			h.forgetSend(ctx, id, k)
 		}
 	}

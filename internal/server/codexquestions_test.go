@@ -806,3 +806,120 @@ func TestAsyncAnswerSendsGoWithTheWorker(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// recordedBatches is the batches of a worker's recorded sends.
+func (sb *sharedBridge) recordedBatches(t *testing.T, id string) []string {
+	t.Helper()
+	recorded, err := sb.st.CodexAsyncSends(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, x := range recorded[id] {
+		out = append(out, x.Batch)
+	}
+	return out
+}
+
+// #158 R1 (review round 2): the bridge restarts while its steered answer
+// waits in the running turn, and the join's reading of resume's legacy ids
+// (item-N) fails, so its history has item-2, not call_3. The recorded send
+// is kept (the batch is unknown only because its id is), item-2 cannot be
+// answered, and once a join reads call_3 the question is sent again: a
+// retry is stale, one envelope in all.
+func TestAsyncAnswerKeptThroughAFailedLegacyRepair(t *testing.T) {
+	sb, a := asyncWorker(t)
+	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", colorQ)))
+	sb.stateIs(t, "call_3", 0, proto.AsyncPending)
+	sb.c.mustAck(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "Green")))
+	sb.stateIs(t, "call_3", 0, proto.AsyncSent)
+
+	sb = sb.restartWith(t, &codexapp.Thread{Turns: []codexapp.Turn{
+		{ID: "t1", Status: codexapp.TurnInProgress, Items: []codexapp.Item{asyncItem("item-2", colorQ)}}}})
+	sb.stateIs(t, "item-2", 0, proto.AsyncPending)
+	if got := sb.recordedBatches(t, a.ID); !slices.Equal(got, []string{"call_3"}) {
+		t.Fatalf("recorded after the failed repair = %v", got)
+	}
+	_, m := sb.c.command(proto.CmdWorkerAnswerAsync, "legacy", answerArgs(a.ID, "item-2", ans(0, "Green")))
+	var refusal proto.Error
+	_ = json.Unmarshal(m.raw, &refusal)
+	if refusal.Code != proto.ErrInvalidState || !strings.Contains(refusal.Message, "item-2") ||
+		!strings.Contains(refusal.Message, "terminal") {
+		t.Fatalf("answering item-2: %s", m.raw)
+	}
+	sb.c.mustError(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "Green")), proto.ErrStale)
+	// A live change meanwhile (pruneSends) keeps it too.
+	sb.emit(itemDone("t1", asyncItem("call_4", contextQ)))
+	sb.stateIs(t, "call_4", 0, proto.AsyncPending)
+	if got := sb.recordedBatches(t, a.ID); !slices.Equal(got, []string{"call_3"}) {
+		t.Fatalf("recorded after a live change = %v", got)
+	}
+
+	// A join reads the turn under its call ids; the worker still holds the
+	// first steer.
+	sb.emit(joined(&codexapp.Thread{Status: struct {
+		Type string `json:"type"`
+	}{codexapp.ThreadActive}, Turns: []codexapp.Turn{{ID: "t1", Status: codexapp.TurnInProgress,
+		Items: []codexapp.Item{asyncItem("call_3", colorQ), asyncItem("call_4", contextQ)}}}}))
+	c := sb.stateIs(t, "call_3", 0, proto.AsyncSent)
+	if batchOf(c, "item-2") != nil || batchOf(c, "call_3").Questions[0].Undelivered {
+		t.Fatalf("after the canonical join = %+v", c.Questions)
+	}
+	sb.c.mustError(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "Green")), proto.ErrStale)
+	if n := len(sb.sent()); n != 1 {
+		t.Fatalf("%d sends, want the one before the restart", n)
+	}
+}
+
+// #158 R1: the same when thread/turns/list answered but had nothing for
+// the newest turn (its older turns read, the newest still item-N): the
+// record is kept and the bridge joins again after CodexRejoin, which reads
+// call_3.
+func TestAsyncAnswerKeptThroughAnUnmatchedLegacyRepair(t *testing.T) {
+	sb, a := asyncWorker(t)
+	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", colorQ)))
+	sb.stateIs(t, "call_3", 0, proto.AsyncPending)
+	sb.c.mustAck(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "Green")))
+	sb.stateIs(t, "call_3", 0, proto.AsyncSent)
+	earlier := codexapp.Turn{ID: "t0", Status: "completed", Items: []codexapp.Item{asyncItem("call_1", contextQ),
+		userItem("u0", "", codexapp.ReplyEnvelope(codexapp.Answer{MessageID: "call_1", Answer: "x"}))}}
+
+	sb = sb.restartWith(t, &codexapp.Thread{Turns: []codexapp.Turn{earlier,
+		{ID: "t1", Status: codexapp.TurnInProgress, Items: []codexapp.Item{asyncItem("item-2", colorQ)}}}})
+	sb.stateIs(t, "item-2", 0, proto.AsyncPending)
+	if got := sb.recordedBatches(t, a.ID); !slices.Equal(got, []string{"call_3"}) {
+		t.Fatalf("recorded after the unmatched repair = %v", got)
+	}
+	sb.c.mustError(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "item-2", ans(0, "Green")), proto.ErrInvalidState)
+
+	// The next join (CodexRejoin) reads the turn under its call ids.
+	watches := func() int {
+		sb.host.mu.Lock()
+		defer sb.host.mu.Unlock()
+		return len(sb.host.watches)
+	}
+	before := watches()
+	sb.host.mu.Lock()
+	sb.host.history = &codexapp.Thread{Status: struct {
+		Type string `json:"type"`
+	}{codexapp.ThreadActive}, Turns: []codexapp.Turn{earlier,
+		{ID: "t1", Status: codexapp.TurnInProgress, Items: []codexapp.Item{asyncItem("call_3", colorQ)}}}}
+	sb.host.mu.Unlock()
+	c := sb.codexWorker(t, func(c *proto.WorkerCodex) bool {
+		b := batchOf(*c, "call_3")
+		return c.Attached && b != nil && b.Questions[0].State == proto.AsyncSent
+	})
+	if watches() <= before || batchOf(c, "item-2") != nil {
+		t.Fatalf("after the rejoin: %d joins (were %d), batches %+v", watches(), before, c.Questions)
+	}
+	sb.c.mustError(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "Green")), proto.ErrStale)
+	if n := len(sb.sent()); n != 1 {
+		t.Fatalf("%d sends, want the one before the restart", n)
+	}
+	// Resolved: the bridge stays joined.
+	n := watches()
+	time.Sleep(400 * time.Millisecond) // past CodexRejoin
+	if watches() != n {
+		t.Fatalf("a resolved join was joined again: %d joins, were %d", watches(), n)
+	}
+}

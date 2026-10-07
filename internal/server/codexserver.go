@@ -130,6 +130,10 @@ type codexWatch struct {
 	// retries) at failedAt.
 	failed, permanent bool
 	failedAt          time.Time
+	// #158: the join's history kept legacy item ids (unresolvedAt): it is
+	// joined again after CodexRejoin, to read them again.
+	unresolved   bool
+	unresolvedAt time.Time
 }
 
 // initCodex loads the switch and the launches (NewHub).
@@ -340,11 +344,13 @@ func (h *Hub) codexTick(ctx context.Context) {
 // syncCodexWatches joins each shared worker's thread while its server runs,
 // and leaves it otherwise (D3; #156: the transcript need not be open, see
 // docs/decisions.md). A join that gave up after its retries is tried again
-// after CodexRejoin; one refused for good is kept.
+// after CodexRejoin; one refused for good is kept. So is (#158) a join whose
+// history is unresolved, while it stays so.
 func (h *Hub) syncCodexWatches(ctx context.Context) {
 	for id, cw := range h.cx.watches {
 		l := h.cx.launches[id]
-		retry := cw.failed && !cw.permanent && time.Since(cw.failedAt) >= h.opts.CodexRejoin
+		retry := cw.failed && !cw.permanent && time.Since(cw.failedAt) >= h.opts.CodexRejoin ||
+			cw.attached && cw.unresolved && time.Since(cw.unresolvedAt) >= h.opts.CodexRejoin
 		if retry || !h.wantsCodexWatch(id) || l.Thread != cw.thread || l.Token != cw.token {
 			delete(h.cx.watches, id)
 			go cw.w.Close() // never on the hub goroutine: its events go through do
