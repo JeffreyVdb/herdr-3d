@@ -1,0 +1,15 @@
+{"data":{"id":"pr_1","name":"Bridge","slug":"KAN","icon":null,"description":null,"isPublic":false,"workspaceId":"ws_1","backgroundVersion":null,
+ "columns":[
+  {"id":"to-do","slug":"to-do","name":"To Do","icon":null,"isFinal":false,"position":0,"tasks":[
+   {"id":"task_1","projectId":"pr_1","position":0,"number":1,"userId":"user_1","title":"Connect Kaneo","description":"Add the tracker client.","status":"to-do","priority":"medium","startDate":null,"dueDate":null,"createdAt":"2026-10-07T12:00:00.000Z","assigneeName":"Alex","assigneeId":"user_1","assigneeImage":"https://img.example.invalid/alex.png","subtaskCounts":{"completed":0,"total":0},"labels":[{"id":"label_1","name":"Integration","color":"#3366FF"}],"externalLinks":[],"someNewField":{"x":1}},
+   {"id":"task_2","projectId":"pr_1","position":1,"number":2,"userId":null,"title":"Write docs","description":null,"descriptionDeferred":true,"status":"to-do","priority":"no-priority","startDate":null,"dueDate":null,"createdAt":"2026-10-07T12:00:00.000Z","assigneeName":null,"assigneeId":null,"assigneeImage":null,"subtaskCounts":{"completed":0,"total":0},"labels":[],"externalLinks":[]}
+  ]},
+  {"id":"done","slug":"done","name":"Done","icon":null,"isFinal":true,"position":3,"tasks":[
+   {"id":"task_3","projectId":"pr_1","position":0,"number":3,"userId":null,"title":"Research","description":"Done.","status":"done","priority":"urgent","startDate":null,"dueDate":null,"createdAt":"2026-10-06T12:00:00.000Z","assigneeName":null,"assigneeId":null,"assigneeImage":null,"subtaskCounts":{"completed":0,"total":0},"labels":[{"id":"label_9","name":"bad colour","color":"teal"}],"externalLinks":[]}
+  ]}
+ ],
+ "plannedTasks":[
+  {"id":"task_4","projectId":"pr_1","position":null,"number":4,"userId":null,"title":"Someday","description":"","status":"planned","priority":"low","startDate":null,"dueDate":null,"createdAt":"2026-10-07T12:00:00.000Z","assigneeName":null,"assigneeId":null,"assigneeImage":null,"subtaskCounts":{"completed":0,"total":0},"labels":[],"externalLinks":[]}
+ ],
+ "archivedTasks":[]},
+ "pagination":{"total":7,"page":1,"pageSize":100,"totalPages":2,"relatedPage":1,"relatedPageSize":100,"relatedTotalPages":2}}

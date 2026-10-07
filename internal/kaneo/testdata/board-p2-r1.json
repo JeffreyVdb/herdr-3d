@@ -1,0 +1,14 @@
+{"data":{"id":"pr_1","name":"Bridge","slug":"KAN","icon":null,"description":null,"isPublic":false,"workspaceId":"ws_1","backgroundVersion":null,
+ "columns":[
+  {"id":"to-do","slug":"to-do","name":"To Do","icon":null,"isFinal":false,"position":0,"tasks":[
+   {"id":"task_7","projectId":"pr_1","position":2,"number":7,"userId":null,"title":"Third in To Do","description":"x","status":"to-do","priority":"high","startDate":null,"dueDate":null,"createdAt":"2026-10-07T12:00:00.000Z","assigneeName":null,"assigneeId":null,"assigneeImage":null,"subtaskCounts":{"completed":0,"total":0},"labels":[],"externalLinks":[]}
+  ]},
+  {"id":"in-progress","slug":"in-progress","name":"In Progress","icon":null,"isFinal":false,"position":1,"tasks":[
+   {"id":"task_5","projectId":"pr_1","position":0,"number":5,"userId":"user_2","title":"Wire it","description":"y","status":"in-progress","priority":"high","startDate":null,"dueDate":null,"createdAt":"2026-10-07T12:00:00.000Z","assigneeName":"Sam","assigneeId":"user_2","assigneeImage":null,"subtaskCounts":{"completed":0,"total":0},"labels":[],"externalLinks":[]}
+  ]}
+ ],
+ "plannedTasks":[],
+ "archivedTasks":[
+  {"id":"task_6","projectId":"pr_1","position":0,"number":6,"userId":null,"title":"Old idea","description":"z","status":"archived","priority":"medium","startDate":null,"dueDate":null,"createdAt":"2026-10-01T12:00:00.000Z","assigneeName":null,"assigneeId":null,"assigneeImage":null,"subtaskCounts":{"completed":0,"total":0},"labels":[],"externalLinks":[]}
+ ]},
+ "pagination":{"total":7,"page":2,"pageSize":100,"totalPages":2,"relatedPage":1,"relatedPageSize":100,"relatedTotalPages":1}}
