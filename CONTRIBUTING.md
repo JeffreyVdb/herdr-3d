@@ -16,7 +16,7 @@
   of a shared-server Codex worker's own app-server: the passive protocol adapter `Watcher` (initialize, `thread/resume`
   by id only, bounded reconnect, `thread/unsubscribe`, never answers a server request), the fish launcher, the
   processes it may stop (only those carrying the launch's marker token), and the checks before a launch; every Codex
-  protocol detail the bridge knows; `server` uses it), `codexshare` (#154: test fixture only, imported by nothing; it
+  protocol detail the bridge knows; `server` uses it), `codexreply` (#183: the native reply to Codex's async questions, its envelope built and recognised by one rule; standard library only, `codexapp` re-exports it and `transcript` reads the readable answer entries with it), `codexshare` (#154: test fixture only, imported by nothing; it
   imports `codexapp` (its dial, and #155's launch and adapter in the real-TUI suites): an isolated CODEX_HOME, a
   scripted Responses mock, an app-server client over its unix socket and a throwaway herdr session driver for the real
   Codex TUI; #158: its full-stack suites, under the `integration` tag only, also boot herdr-world through `app.Serve`

@@ -62,13 +62,25 @@ type TranscriptItem struct {
 	Kind string `json:"kind"`
 	// Hidden is noise the game shows only with "show system": dropped
 	// lines (as notices) and unknown ones.
-	Hidden    bool                `json:"hidden,omitempty"`
-	Parts     []TranscriptPart    `json:"parts,omitempty"`
+	Hidden bool             `json:"hidden,omitempty"`
+	Parts  []TranscriptPart `json:"parts,omitempty"`
+	// Answers (#183, user): the item is the reply to Codex's async questions,
+	// Parts holding the native envelope's text as it was sent; one entry per
+	// answer, in the envelope's order, for the view to show instead of Parts.
+	Answers   []TranscriptAnswer  `json:"answers,omitempty"`
 	Truncated bool                `json:"truncated,omitempty"` // a part's text was cut (transcript.item has it all)
 	Tool      *TranscriptTool     `json:"tool,omitempty"`
 	Subagent  *TranscriptSubagent `json:"subagent,omitempty"`
 	Notice    *TranscriptNotice   `json:"notice,omitempty"`
 	RawType   string              `json:"raw_type,omitempty"` // unknown: the line or block type not recognised
+}
+
+// TranscriptAnswer is one answer of a Codex async-question reply: the
+// question's title and the answer text, both plain text (not markdown), never
+// the question's id.
+type TranscriptAnswer struct {
+	Question string `json:"question"`
+	Answer   string `json:"answer"`
 }
 
 // TranscriptPart is text (markdown) or an image.

@@ -343,6 +343,89 @@ describe('rows per kind', () => {
   });
 });
 
+describe('#183: your answer to a Codex async question', () => {
+  const ENVELOPE = '<send_user_message_question_reply>\n[{"questionItemId":"[\\"request_user_input_async\\",\\"call_1\\",0]","question":"Which board?","answer":"GitHub"}]\n</send_user_message_question_reply>';
+  const answered = (answers: Array<{ question: string; answer: string }>, extra: Partial<TranscriptItem> = {}) => item('user', { parts: [text(ENVELOPE)], answers, ...extra });
+  /** What the default view shows: the row's text without the collapsed raw reply. */
+  const visible = (el: HTMLElement) => {
+    const c = el.cloneNode(true) as HTMLElement;
+    c.querySelectorAll('details').forEach((d) => d.remove());
+    return c.textContent ?? '';
+  };
+
+  it('is a labelled bubble: the question as context, the answer as the entry, no envelope syntax or ids', () => {
+    mount();
+    const it = answered([{ question: 'Which board should receive the Shift Plan template ticket?', answer: 'GitHub: Fomra/shift-plan' }]);
+    view.setItems([it]);
+    const r = row(it.id);
+    expect(r.classList.contains('tx-user')).toBe(true);
+    expect(r.querySelector('.tx-ans-label')?.textContent).toBe('Your answer');
+    expect(r.querySelector('.tx-ans-q')?.textContent).toBe('Which board should receive the Shift Plan template ticket?');
+    expect(r.querySelector('.tx-ans-a')?.textContent).toBe('GitHub: Fomra/shift-plan');
+    const t = visible(r);
+    for (const bad of ['send_user_message_question_reply', 'questionItemId', 'request_user_input_async', 'call_1', '[{', '"answer"']) expect(t).not.toContain(bad);
+    // Neutral: it says what you answered, not what the model did with it.
+    expect(t).not.toMatch(/seen|read|acknowledged|received|delivered|sent/i);
+  });
+
+  it('several answers keep their order; an empty question shows its answer alone', () => {
+    mount();
+    const it = answered([
+      { question: 'First?', answer: 'one' },
+      { question: '', answer: 'two' },
+      { question: 'Third?', answer: 'three' },
+    ]);
+    view.setItems([it]);
+    const r = row(it.id);
+    expect([...r.querySelectorAll('.tx-ans-pair')].map((p) => p.textContent)).toEqual(['First?one', 'two', 'Third?three']);
+  });
+
+  it('text stays text: quotes, Unicode, line breaks and literal markup keep their meaning, nothing is injected', () => {
+    mount();
+    const answer = '**bold?** <img src=x onerror=alert(1)> [link](javascript:alert(1)) "quoted" – naïve 日本語 🙂\nsecond line';
+    const it = answered([{ question: '<script>alert(1)</script> `code`?', answer }]);
+    view.setItems([it]);
+    const r = row(it.id);
+    expect(r.querySelector('.tx-ans-a')?.textContent).toBe(answer);
+    expect(r.querySelector('.tx-ans-q')?.textContent).toBe('<script>alert(1)</script> `code`?');
+    expect(r.querySelector('img, script, a, strong, code')).toBeNull();
+  });
+
+  it('the raw reply is behind a collapsed, secondary disclosure', () => {
+    mount();
+    const it = answered([{ question: 'Which board?', answer: 'GitHub' }]);
+    view.setItems([it]);
+    const d = row(it.id).querySelector('details') as HTMLDetailsElement;
+    expect(d.open).toBe(false);
+    expect(d.querySelector('summary')?.textContent).toBe('Raw reply');
+    expect(d.querySelector('pre')?.textContent).toBe(ENVELOPE);
+  });
+
+  it('keeps its place in the conversation, also when older history is merged in after it, and an update does not duplicate it', () => {
+    mount();
+    const later = { ...answered([{ question: 'Which board?', answer: 'GitHub' }]), seq: 20 };
+    const after: TranscriptItem = { id: 'after', seq: 21, ts: T0, kind: 'assistant', parts: [text('thanks')] };
+    view.setItems([later, after]);
+    // An older page, then the same entry again (a resync or an update).
+    view.applyUpdates([{ id: 'older', seq: 3, ts: T0, kind: 'user', parts: [text('start')] }, { ...later }]);
+    expect($$('.tx-list > .tx-item').map((e) => e.dataset.id)).toEqual(['older', later.id, 'after']);
+    expect($$('.tx-ans-label').length).toBe(1);
+  });
+
+  it('a truncated entry says so; an item whose answers are malformed (or none) is the ordinary bubble, content kept', () => {
+    mount();
+    const cut = answered([{ question: 'q', answer: 'a' }], { truncated: true });
+    const odd = item('user', { parts: [text('quoted: ' + ENVELOPE)], answers: [{ question: 1, answer: null }] as unknown as NonNullable<TranscriptItem['answers']> });
+    const none = item('user', { parts: [text('plain prompt')], answers: [] });
+    view.setItems([cut, odd, none]);
+    expect(row(cut.id).querySelector('.tx-note')?.textContent).toContain('Truncated');
+    expect(row(odd.id).querySelector('.tx-ans')).toBeNull();
+    expect(row(odd.id).textContent).toContain('send_user_message_question_reply');
+    expect(row(none.id).textContent?.trim()).toBe('plain prompt');
+    expect(row(none.id).querySelector('.tx-ans')).toBeNull();
+  });
+});
+
 describe('live updates', () => {
   it('a running tool flips to ok in place (an update, not a duplicate) and shows how long it took', () => {
     mount();

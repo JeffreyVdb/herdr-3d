@@ -595,6 +595,9 @@ func approxSize(it *proto.TranscriptItem) int {
 	for _, p := range it.Parts {
 		n += len(p.Text) + 16
 	}
+	for _, a := range it.Answers {
+		n += len(a.Question) + len(a.Answer) + 32
+	}
 	if t := it.Tool; t != nil {
 		n += len(t.Name) + len(t.InputSummary) + len(t.Input) + len(t.OutputText) + 16*len(t.Images)
 		for _, d := range t.Diffs {
