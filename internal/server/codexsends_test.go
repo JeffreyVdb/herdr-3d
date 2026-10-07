@@ -17,10 +17,11 @@ import (
 // record goes only on positive evidence that its answer can no longer be
 // delivered or already was: an envelope naming its question seen (live or
 // in a join's history), the send refused, the thread changed, the worker
-// sent home or no longer shared, a turn/start never confirmed whose
-// envelope a join's history does not show, or its batch absent from a
-// join's whole, resolved history. Absence from the bridge's bounded view
-// (evicted, dismissed, a legacy id) is never evidence.
+// sent home or no longer shared, or its batch absent from a join's whole,
+// resolved history. Absence from the bridge's bounded view (evicted,
+// dismissed, a legacy id) is never evidence, and neither is a history
+// without the envelope of a send whose response never came (review round
+// 4: Codex may hold it in a turn the terminal started meanwhile).
 
 // sentAnswer is a shared worker whose answer to call_3 (colorQ) was
 // steered, and accepted, into the running turn t1.
@@ -191,6 +192,86 @@ func TestAsyncAnswerKeptThroughADismissedEvictedBatch(t *testing.T) {
 	}
 }
 
+// #158 R1 (review round 4): the terminal starts t1 at the instant the
+// bridge sends its answer, and Codex takes the bridge's input into t1,
+// holding its envelope until t1's next model request (b-start-while-active
+// in the findings). herdr-world stops after recording the send and before
+// its response: the history shows t1 running without the envelope, which
+// is no evidence it was not taken. The question is sent, unconfirmed: a
+// retry is stale, one envelope in all, and its delivery drops the record.
+// The bridge chose turn/start from its idle view, or steered into t0 and
+// fell back to turn/start when the steer was refused (t0 had ended).
+func TestAsyncAnswerQueuedIntoAConcurrentTurnSurvivesARestart(t *testing.T) {
+	for _, steered := range []bool{false, true} {
+		t.Run(map[bool]string{false: "turn/start", true: "turn/steer refused, then turn/start"}[steered], func(t *testing.T) {
+			sb, a := asyncWorker(t)
+			sb.emit(turnStarted("t0"), itemDone("t0", asyncItem("call_3", colorQ)))
+			if !steered {
+				sb.emit(turnCompleted("t0"))
+			}
+			sb.codexWorker(t, func(c *proto.WorkerCodex) bool {
+				return c.Turn == map[bool]string{false: "", true: "t0"}[steered] && batchOf(*c, "call_3") != nil
+			})
+			seen, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			sb.host.mu.Lock()
+			sb.host.steer = func(string, string, string) (string, error) {
+				sb.emit(turnCompleted("t0"))
+				return "", &codexapp.RPCError{Code: -32600, Message: "no active turn to steer"}
+			}
+			sb.host.start = func(string, string) (string, error) {
+				sb.emit(turnStarted("t1")) // the terminal's
+				close(seen)
+				<-release
+				return "t1", nil // the running turn: no new one
+			}
+			sb.host.mu.Unlock()
+			go func() {
+				sb.c.command(proto.CmdWorkerAnswerAsync, "first", answerArgs(a.ID, "call_3", ans(0, "Green")))
+				close(done)
+			}()
+			<-seen
+			recorded, err := sb.st.CodexAsyncSends(context.Background())
+			if err != nil || len(recorded[a.ID]) != 1 {
+				t.Fatalf("recorded while the start is in flight = %+v, %v", recorded, err)
+			}
+			pre := recorded[a.ID][0]
+			if pre.Confirmed || pre.Unconfirmed || pre.Turn != map[bool]string{false: "", true: "t0"}[steered] {
+				t.Fatalf("recorded before the response = %+v", pre)
+			}
+			close(release)
+			<-done
+			sb.stateIs(t, "call_3", 0, proto.AsyncSent)
+			before := sb.sent() // the refused steer delivered nothing
+
+			// herdr-world stopped before the response was recorded.
+			if err := sb.st.RecordCodexAsyncSends(context.Background(), []store.CodexAsyncSend{pre}); err != nil {
+				t.Fatal(err)
+			}
+			sb.host.mu.Lock()
+			sb.host.steer, sb.host.start = nil, nil
+			sb.host.mu.Unlock()
+			sb = sb.restartWith(t, &codexapp.Thread{Turns: []codexapp.Turn{
+				{ID: "t0", Status: "completed", Items: []codexapp.Item{asyncItem("call_3", colorQ)}},
+				runningTurn("t1", userItem("u-terminal", "", "go on"))}})
+			c := sb.stateIs(t, "call_3", 0, proto.AsyncSent)
+			if q := batchOf(c, "call_3").Questions[0]; !q.Unconfirmed || q.Undelivered {
+				t.Fatalf("after the restart = %+v", q)
+			}
+			sb.recordedIs(t, a.ID, []string{"call_3"})
+			sb.c.mustError(proto.CmdWorkerAnswerAsync, answerArgs(a.ID, "call_3", ans(0, "Green")), proto.ErrStale)
+			if n := len(sb.sent()); n != len(before) {
+				t.Fatalf("%d sends, want the %d before the restart", n, len(before))
+			}
+
+			// t1's next model request delivers it: answered, the record goes.
+			last := before[len(before)-1]
+			sb.emit(itemDone("t1", userItem("u", last.cid, last.text)))
+			sb.stateIs(t, "call_3", 0, proto.AsyncAnswered)
+			sb.recordedIs(t, a.ID, nil)
+		})
+	}
+}
+
 // Every way a record can go, and every way it must not: one row per path
 // of the audit (docs/research/codex-shared-tui.md §12.1a). Each row starts
 // from call_3's answer steered into the running turn t1, and gives the
@@ -262,14 +343,6 @@ func TestAsyncSendRecordInvariant(t *testing.T) {
 			sb.recordedIs(t, "gone", nil)
 			return sb
 		}, []string{"call_3"}},
-		{"a turn/start never confirmed, not in the history", func(t *testing.T, sb *sharedBridge, a proto.HireResult) *sharedBridge {
-			if err := sb.st.RecordCodexAsyncSends(context.Background(), []store.CodexAsyncSend{{WorkerID: a.ID,
-				Thread: asyncThread, Batch: "call_4", ClientID: "herdr_3d-02"}}); err != nil {
-				t.Fatal(err)
-			}
-			return sb.restartWith(t, &codexapp.Thread{Turns: []codexapp.Turn{
-				runningTurn("t1", asyncItem("call_3", colorQ), asyncItem("call_4", contextQ))}})
-		}, []string{"call_3"}},
 		{"its batch absent from a whole, resolved history", func(t *testing.T, sb *sharedBridge, _ proto.HireResult) *sharedBridge {
 			return sb.restartWith(t, &codexapp.Thread{Turns: []codexapp.Turn{runningTurn("t2", asyncItem("call_9", contextQ))}})
 		}, nil},
@@ -305,6 +378,23 @@ func TestAsyncSendRecordInvariant(t *testing.T) {
 		{"a partial history without its batch", func(t *testing.T, sb *sharedBridge, _ proto.HireResult) *sharedBridge {
 			return sb.restartWith(t, &codexapp.Thread{Partial: true, Turns: []codexapp.Turn{runningTurn("t2", asyncItem("call_9", contextQ))}})
 		}, []string{"call_3"}},
+		{"a turn/start never confirmed, not in the history", func(t *testing.T, sb *sharedBridge, a proto.HireResult) *sharedBridge {
+			if err := sb.st.RecordCodexAsyncSends(context.Background(), []store.CodexAsyncSend{{WorkerID: a.ID,
+				Thread: asyncThread, Batch: "call_4", ClientID: "herdr_3d-02"}}); err != nil {
+				t.Fatal(err)
+			}
+			return sb.restartWith(t, &codexapp.Thread{Turns: []codexapp.Turn{
+				runningTurn("t1", asyncItem("call_3", colorQ), asyncItem("call_4", contextQ))}})
+		}, []string{"call_3", "call_4"}},
+		{"a steer never confirmed, its turn ended, not in the history", func(t *testing.T, sb *sharedBridge, a proto.HireResult) *sharedBridge {
+			if err := sb.st.RecordCodexAsyncSends(context.Background(), []store.CodexAsyncSend{{WorkerID: a.ID,
+				Thread: asyncThread, Batch: "call_4", ClientID: "herdr_3d-02", Turn: "t0"}}); err != nil {
+				t.Fatal(err)
+			}
+			return sb.restartWith(t, &codexapp.Thread{Turns: []codexapp.Turn{
+				{ID: "t0", Status: "completed", Items: []codexapp.Item{asyncItem("call_4", contextQ)}},
+				runningTurn("t1", asyncItem("call_3", colorQ))}})
+		}, []string{"call_3", "call_4"}},
 		{"evicted while a join reads the history", func(t *testing.T, sb *sharedBridge, _ proto.HireResult) *sharedBridge {
 			items := append([]codexapp.Item{asyncItem("call_3", colorQ)}, newerBatches("t1", codexapp.MaxBatches)...)
 			return sb.restartWith(t, &codexapp.Thread{Turns: []codexapp.Turn{runningTurn("t1", items...)}})

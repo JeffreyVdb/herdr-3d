@@ -505,17 +505,18 @@ func (h *Hub) promptViaServer(ctx context.Context, id, text string) (any, bool, 
 //   - its answer refused (answerAsync: nothing delivered);
 //   - the thread changed (noteCodexThread), the worker sent home
 //     (forgetCodex) or no longer shared when the bridge starts (loadSends);
-//   - on a join: a turn/start never confirmed whose envelope the history
-//     does not show (Restore: a started turn's user message is its first
-//     item, and the newest turns are always read), or its batch missing
-//     from a history that is the whole thread (not Partial) with every
-//     item under its own id (not LegacyHistory).
+//   - on a join: its batch missing from a history that is the whole thread
+//     (not Partial) with every item under its own id (not LegacyHistory).
 //
 // The view is no evidence: a batch dropped for room (MaxBatches), dismissed
 // (the bridge forgets dismissals on a restart, and the answer may still be
 // on its way) or under a legacy id keeps its record, and a join that reads
-// the batch again restores it (Restore). Nothing else drops one, so a
-// worker has at most one per question of its thread it answered.
+// the batch again restores it (Restore). Nor is a history without the
+// envelope of a send whose response never came: a turn the terminal
+// started at the same instant takes a turn/start's input and shows it only
+// with its next model request, so Restore makes it sent, unconfirmed.
+// Nothing else drops one, so a worker has at most one per question of its
+// thread it answered.
 
 // sendKey is a question of a worker's thread.
 type sendKey struct {

@@ -494,15 +494,28 @@ func TestQuestionsRestoreASendAcrossARestart(t *testing.T) {
 		t.Fatalf("unconfirmed after the turn: %v", err)
 	}
 
-	// A turn/start that got no confirmation: its user message would be in
-	// the history, so nothing was delivered; pending.
-	q = NewQuestions("th")
-	q.Hydrate(ended)
-	if q.Restore(PriorSend{Batch: "call_3", Index: 0}, "") {
-		t.Fatal("an unconfirmed-by-response turn/start still matters")
-	}
-	if x := q.Batch("call_3").Questions[0]; x.State != QPending {
-		t.Fatalf("turn/start before its response = %+v", x)
+	// No response recorded, and the history lacks the envelope: a
+	// turn/start (or a steer into a turn that ended since, then its
+	// fallback turn/start) Codex may hold in a turn the terminal started at
+	// the same instant, delivered with that turn's next model request. Sent
+	// and unconfirmed: never resent by the bridge.
+	for _, c := range []struct {
+		name          string
+		turn, running string
+	}{{"turn/start, a turn running", "", "t2"}, {"turn/start, idle", "", ""},
+		{"steer, its turn ended, another running", "t1", "t2"}, {"steer, its turn ended, idle", "t1", ""}} {
+		q = NewQuestions("th")
+		q.Hydrate(ended)
+		if !q.Restore(PriorSend{Batch: "call_3", Index: 0, Turn: c.turn}, c.running) {
+			t.Fatalf("%s: the send no longer matters", c.name)
+		}
+		if x := q.Batch("call_3").Questions[0]; x.State != QSent || !x.Unconfirmed || x.Undelivered {
+			t.Fatalf("%s: before its response = %+v", c.name, x)
+		}
+		q.TurnEnded("t2")
+		if _, err := q.Check("call_3", reply); !errors.Is(err, ErrNotPending) {
+			t.Fatalf("%s: a resend: %v", c.name, err)
+		}
 	}
 
 	// A batch the reconciler no longer has, a question out of range.

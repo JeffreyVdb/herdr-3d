@@ -658,11 +658,15 @@ func (q *Questions) DropLegacy() {
 //   - the question is not pending (this reconciler saw the send itself, or
 //     a dismissal): unchanged;
 //   - unconfirmed: sent and unconfirmed, as before the restart;
-//   - steered into the running turn: sent (Codex may still deliver it);
-//   - steered into, or started, a turn that is not running: sent and
-//     undelivered (that turn ended without its user message);
-//   - a turn/start never confirmed: not delivered either (its user message
-//     would be in the history): pending, and it no longer matters.
+//   - steered into the running turn (confirmed or not): sent (Codex may
+//     still deliver it), undelivered once that turn ends without it;
+//   - confirmed into a turn that is not running: sent and undelivered (that
+//     turn ended without its user message);
+//   - never confirmed otherwise (a turn/start, or a steer into a turn that
+//     ended since, then its fallback turn/start): sent and unconfirmed. The
+//     history lacking its envelope is no evidence it was not taken: a turn
+//     the terminal started at the same instant takes a turn/start's input
+//     and shows it only with its next model request (review round 4).
 func (q *Questions) Restore(s PriorSend, running string) bool {
 	b := q.batches[s.Batch]
 	if b == nil || s.Index < 0 || s.Index >= len(b.Questions) {
@@ -674,10 +678,8 @@ func (q *Questions) Restore(s PriorSend, running string) bool {
 		return false
 	case x.State != QPending:
 		return true
-	case s.Unconfirmed:
+	case s.Unconfirmed, !s.Confirmed && (s.Turn == "" || s.Turn != running):
 		x.State, x.Unconfirmed, x.Error = QSent, true, ""
-	case s.Turn == "":
-		return false
 	default:
 		x.State, x.reached, x.Error = QSent, s.Turn, ""
 		x.Undelivered = s.Turn != running
