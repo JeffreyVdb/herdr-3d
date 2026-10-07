@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
@@ -163,10 +164,56 @@ func TestDigestPromptCleaning(t *testing.T) {
 			t.Errorf("promptText(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
-	if got := firstSentence("   \n"+strings.Repeat("word ", 40), DigestTaskMax); len([]rune(got)) != DigestTaskMax || !strings.HasSuffix(got, "…") {
+	if got := taskFallback("   \n"+strings.Repeat("word ", 40), DigestTaskMax); len([]rune(got)) != DigestTaskMax || !strings.HasSuffix(got, "…") {
 		t.Errorf("long first sentence = %q", got)
 	}
 	if NewDigestTracker("other") != nil {
 		t.Error("a tracker for another harness")
+	}
+}
+
+// #174: a prompt whose first sentence says nothing of the task ("Please
+// investigate.") gets a line from the sentences after it, bounded; one that
+// says something keeps its first sentence alone.
+func TestTaskFallbackSkipsFiller(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"the first sentence says it", "Fix the flaky login test. Then open a PR.", "Fix the flaky login test."},
+		{"the ticket's Puffin shape", "Please investigate. The transcript view no longer shows diffs for edited files. Please create a ticket.",
+			"Investigate. The transcript view no longer shows diffs for edited files."},
+		{"the ticket's Sparky shape", "Please create a ticket.\n\nReplace Hacker with Ubuntu transcript styling and remove Paper from the list.",
+			"Create a ticket. Replace Hacker with Ubuntu transcript styling and remove Paper…"},
+		{"a greeting opens nothing", "Hi there! Thanks. Port the importer to v2 and keep the CLI flags.", "Port the importer to v2 and keep the CLI flags."},
+		{"a lone greeting stays", "Hi.", "Hi."},
+		{"an identifier is information", "Update README.md.", "Update README.md."},
+		{"a ticket number is information", "Please fix #174.", "Please fix #174."},
+		{"only filler: the first sentences", "Please investigate. Please create a ticket.", "Investigate. Please create a ticket."},
+		{"a path says it", "Look at internal/server/digest.go. It is slow.", "Look at internal/server/digest.go."},
+		{"headings and bullets", "## Task\n- Please investigate.\n- Flaky e2e login test on CI.", "Task Please investigate. Flaky e2e login test on CI."},
+		{"empty", "  \n ", ""},
+	} {
+		got := taskFallback(tc.in, DigestTaskMax)
+		if got != tc.want {
+			t.Errorf("%s: taskFallback(%q)\n got  %q\n want %q", tc.name, tc.in, got, tc.want)
+		}
+		if n := utf8.RuneCountInString(got); n > DigestTaskMax {
+			t.Errorf("%s: %d runes", tc.name, n)
+		}
+	}
+	// A long run of thin sentences stays bounded.
+	long := strings.Repeat("Please investigate. ", 30)
+	if got := taskFallback(long, DigestTaskMax); utf8.RuneCountInString(got) > DigestTaskMax {
+		t.Errorf("unbounded: %q", got)
+	}
+}
+
+// The phase-1 task line is that fallback, and the ai-title still wins.
+func TestDigestTaskUsesTheFallback(t *testing.T) {
+	d := Digest{Prompt: "Please investigate. Missing transcript diffs in the viewer. Please create a ticket."}
+	if task, src := d.Task(); task != "Investigate. Missing transcript diffs in the viewer." || src != proto.DigestPrompt {
+		t.Fatalf("%q %q", task, src)
+	}
+	d.AITitle = "Transcript diffs"
+	if task, src := d.Task(); task != "Transcript diffs" || src != proto.DigestAITitle {
+		t.Fatalf("%q %q", task, src)
 	}
 }

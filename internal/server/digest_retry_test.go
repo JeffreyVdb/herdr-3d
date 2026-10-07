@@ -34,7 +34,9 @@ func startDgRetryBridge(t *testing.T, roles *dgRoles, gap time.Duration, retry f
 	})
 }
 
-func isTaskRequest(r ai.Request) bool { return strings.Contains(r.Messages[0].Content, "label the task") }
+func isTaskRequest(r ai.Request) bool {
+	return strings.Contains(r.Messages[0].Content, "label the task")
+}
 
 // failFirst makes the first call of each input of a kind (by what is sent)
 // fail as the provider did in the ticket, after reporting its diagnostics.

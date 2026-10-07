@@ -23,7 +23,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -83,12 +85,13 @@ type Digest struct {
 }
 
 // Task is the phase-1 task line and its source (proto.Digest*): the
-// ai-title, else the prompt's first sentence; "" when there is neither.
+// ai-title, else the prompt's first informative sentence (taskFallback); ""
+// when there is neither.
 func (d Digest) Task() (string, string) {
 	if t := oneLine(d.AITitle, DigestTaskMax); t != "" {
 		return t, proto.DigestAITitle
 	}
-	if t := firstSentence(d.Prompt, DigestTaskMax); t != "" {
+	if t := taskFallback(d.Prompt, DigestTaskMax); t != "" {
 		return t, proto.DigestPrompt
 	}
 	return "", ""
@@ -355,23 +358,124 @@ func promptText(text string) (string, bool) {
 	return s, s != ""
 }
 
-// firstSentence is a prompt's first sentence (its first non-empty line, up
-// to the first ". ", "? " or "! "), on one line, at most max runes.
-func firstSentence(s string, max int) string {
+// taskFallback is the task line taken from a prompt without a model (#174):
+// its first sentence, on one line, at most max runes; when that sentence says
+// nothing of the task ("Please investigate.", "Please create a ticket."), it
+// is joined with the sentences after it up to and including the first that
+// does, greetings and thanks left out, a leading "please" dropped. A prompt
+// with no sentence that says more gives its first one, as before.
+func taskFallback(s string, max int) string {
+	sentences := promptSentences(s)
+	if len(sentences) == 0 {
+		return ""
+	}
+	var parts []string
+	runes := 0
+	for _, sen := range sentences {
+		w := wordsOf(sen)
+		if w.empty() && len(parts) == 0 && len(sentences) > 1 {
+			continue // a greeting opens nothing
+		}
+		parts = append(parts, sen)
+		runes += utf8.RuneCountInString(sen) + 1
+		if !w.thin() || runes > max {
+			break
+		}
+	}
+	if len(parts) == 0 { // nothing but greetings: the first sentence, as it was
+		parts = sentences[:1]
+	}
+	line := strings.Join(parts, " ")
+	if len(parts) > 1 { // a joined line is a task, not a request: no "please"
+		line = strings.TrimSpace(politeLead.ReplaceAllString(line, ""))
+		if r, n := utf8.DecodeRuneInString(line); n > 0 && unicode.IsLower(r) {
+			line = string(unicode.ToUpper(r)) + line[n:]
+		}
+	}
+	return oneLine(line, max)
+}
+
+// politeLead is the "please" a task line does not need.
+var politeLead = regexp.MustCompile(`(?i)^(?:please|kindly)[,:]?\s+`)
+
+// The most of a prompt looked at for its sentences.
+const (
+	taskScanLines = 12
+	taskScanBytes = 1500
+)
+
+// promptSentences are a prompt's first sentences, in order: each line split
+// after ".", "?" or "!" followed by a space or the line's end, a bullet or
+// heading mark dropped.
+func promptSentences(s string) []string {
+	var out []string
+	lines, n := 0, 0
 	for _, l := range strings.Split(s, "\n") {
-		l = strings.TrimSpace(l)
+		l = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(l), "#>"))
+		l = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(l, "- "), "* "))
 		if l == "" {
 			continue
 		}
-		for i := 0; i+1 < len(l); i++ {
-			if (l[i] == '.' || l[i] == '?' || l[i] == '!') && l[i+1] == ' ' {
-				l = l[:i+1]
-				break
+		if lines++; lines > taskScanLines || n > taskScanBytes {
+			break
+		}
+		n += len(l)
+		start := 0
+		for i := 0; i < len(l); i++ {
+			if (l[i] == '.' || l[i] == '?' || l[i] == '!') && (i+1 == len(l) || l[i+1] == ' ') {
+				if sen := strings.TrimSpace(l[start : i+1]); sen != "" {
+					out = append(out, sen)
+				}
+				start = i + 1
 			}
 		}
-		return oneLine(l, max)
+		if rest := strings.TrimSpace(l[start:]); rest != "" {
+			out = append(out, rest)
+		}
 	}
-	return ""
+	return out
+}
+
+// sentenceWords counts what a sentence says: the words that are not filler,
+// and whether one looks like an identifier (a path, a file, a number, a
+// ticket).
+type sentenceWords struct {
+	content    int
+	identifier bool
+}
+
+// thin: it says too little to be the task (two content words or fewer, none
+// an identifier).
+func (w sentenceWords) thin() bool { return w.content <= 2 && !w.identifier }
+
+// empty: nothing but filler, a greeting or thanks.
+func (w sentenceWords) empty() bool { return w.content == 0 && !w.identifier }
+
+var taskFiller = func() map[string]bool {
+	m := map[string]bool{}
+	for _, w := range strings.Fields(`please kindly could can you would will me we us i to the a an this that it these those
+		now just also then and or for of in on at with help there here is are do so my our your some any one go ahead
+		hi hello hey thanks thank ok okay yes sure`) {
+		m[w] = true
+	}
+	return m
+}()
+
+func wordsOf(sen string) sentenceWords {
+	var w sentenceWords
+	for _, f := range strings.Fields(sen) {
+		bare := strings.Trim(f, ".,;:!?\"'()[]")
+		if bare == "" {
+			continue
+		}
+		if strings.ContainsAny(bare, "/\\_#@.") || strings.ContainsFunc(bare, unicode.IsDigit) {
+			w.identifier = true
+		}
+		if !taskFiller[strings.ToLower(bare)] {
+			w.content++
+		}
+	}
+	return w
 }
 
 // oneLine is s on one line (runs of whitespace as one space), at most max
