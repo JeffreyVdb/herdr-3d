@@ -75,21 +75,24 @@ test('the lounge wall shows the floor: lit, every row, and E at it grows the pag
   clean();
 });
 
-test('O opens it from a desk, the top bar has Overview, and in the city or the lobby O says where to go', async ({ page }) => {
+test('O opens it from a desk, the top bar has Overview, and in the city or the lobby O opens every floor’s (#188)', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   await openGame(page, 'demo-m118');
-  // The city.
+  // The city: every floor's overview (e2e/m188-overview-all.spec.ts), not this floor's.
   await page.keyboard.press('KeyO');
-  await expect(page.locator('.toast')).toHaveText('Walk onto an office floor to see its overview.');
-  await expect(page.locator('.topbar .btn--overview')).toBeHidden();
+  await expect.poll(async () => (await page_(page))?.view).toBe('city');
+  expect((await page_(page))?.floor).toBeNull();
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => (await page_(page))?.open).toBe(false);
+  await expect(page.locator('.topbar .btn--overview:not(.btn--overview-all)')).toBeHidden();
   // The lobby.
   await page.evaluate(() => window.__h3d.enterLobby());
   await frames(page, 3);
-  await page.locator('.toast').evaluate((e) => ((e as HTMLElement).hidden = true));
   await page.keyboard.press('KeyO');
-  await expect(page.locator('.toast')).toHaveText('Walk onto an office floor to see its overview.');
-  expect((await page_(page))?.open).toBe(false);
+  await expect.poll(async () => (await page_(page))?.view).toBe('city');
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => (await page_(page))?.open).toBe(false);
   // A desk of the lab floor, far from the lounge: O, from the centre.
   await page.evaluate(() => window.__h3d.enterFloor('lab'));
   await frames(page, 3);

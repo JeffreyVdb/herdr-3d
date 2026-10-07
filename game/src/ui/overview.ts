@@ -166,9 +166,9 @@ export class OverviewOverlay {
     const close = h('button', { class: 'ov-btn ov-btn--icon', 'aria-label': 'Close the overview (Esc)', title: 'Close (Esc)', onclick: () => void this.close() }, icon(ICON.close));
     this.allFloorsBtn = h(
       'button',
-      { class: 'ov-btn ov-btn--floors', title: 'Every floor’s workers (A)', 'aria-keyshortcuts': 'A', onclick: () => this.showCity() },
+      { class: 'ov-btn ov-btn--floors', title: 'Every floor’s workers (A)', 'aria-label': 'All floors', 'aria-keyshortcuts': 'A', onclick: () => this.showCity() },
       icon('<rect x="5" y="3.5" width="14" height="17" rx="1.5"/><path d="M5 9.2h14M5 14.8h14"/>'),
-      'All floors',
+      h('span', { class: 'ov-btn-label' }, 'All floors'),
       h('kbd', { 'aria-hidden': 'true' }, 'A'),
     );
     // Active only / All: a two-position switch (each a pressed button), and what it hides, which shows them all.
@@ -394,6 +394,7 @@ export class OverviewOverlay {
     this.renderFilter(active, hiddenLine);
     this.allFloorsBtn.hidden = city;
     this.keysEl?.querySelector<HTMLElement>('[data-k="a"]')?.toggleAttribute('hidden', city);
+    this.keysEl?.querySelector<HTMLElement>('[data-k="↵"]')?.lastChild?.replaceWith(city ? 'open transcript · go to floor' : 'open transcript');
     // What the tree holds, filter or not: a row of it that is no longer shown folds away; one that left goes at once.
     const nodes = 'floors' in full ? full.floors.flatMap((f) => f.nodes) : full.nodes;
     const present = new Set<string>(nodes.flatMap((n) => [n.row.key, ...n.children.map((c) => c.key)]));
@@ -638,6 +639,7 @@ export class OverviewOverlay {
     el.toggleAttribute('data-asleep', r.asleep);
     const counts = r.counts.map((c) => `${c.n} ${c.label}`).join(', ');
     el.setAttribute('aria-label', `${r.session}${r.label !== r.session ? ` · ${r.label}` : ''}${r.asleep ? ' · asleep' : ''} · ${counts}: go to this floor`);
+    el.title = 'Go to this floor (↵)';
     el.replaceChildren(
       h('span', { class: 'ov-floor-fold' }, fold ?? ''),
       h(
@@ -652,7 +654,6 @@ export class OverviewOverlay {
         { class: 'ov-chips' },
         ...r.counts.map((c) => h('span', { class: `ov-chip ov-count--${c.kind}${c.n ? '' : ' ov-chip--zero'}` }, h('i', { class: 'ov-dot' }), h('b', {}, String(c.n)), c.label)),
       ),
-      h('span', { class: 'ov-hint', 'aria-hidden': 'true' }, 'Go to floor ', h('kbd', {}, '↵')),
     );
   }
 
