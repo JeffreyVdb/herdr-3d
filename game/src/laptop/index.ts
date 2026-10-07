@@ -153,6 +153,8 @@ const GLASS = glassFrame();
 const READING_FPS = 1;
 /** #187: how long the seat waits before asking for a watch the bridge refused. */
 const SEAT_RETRY_MS = 5000;
+/** #187: the commands that put something into a worker: refused while it is away. */
+const TO_WORKER: ReadonlySet<string> = new Set(['worker.prompt', 'worker.keys', 'worker.answer', 'worker.answer_ask', 'worker.answer_followup', 'worker.dismiss_followup', 'worker.answer_async', 'worker.dismiss_async']);
 /** The seat bar's line while the connection is down. */
 const OFFLINE_NOTE = 'Not connected to herdr-world: what you type is not sent';
 const viewKey = (cam: THREE.PerspectiveCamera) => `${cam.aspect.toFixed(4)}:${window.innerHeight}`;
@@ -273,8 +275,8 @@ export class Laptops {
     // A new choice shows at the next plan.
     this.monitors.prefs.onChange(() => (this.lastPlan = -Infinity));
     this.transcript = new TranscriptMode({
-      // #187: the conversation stays while its worker is away; its prompt box keeps the draft and a send is refused.
-      send: (t, args) => (this.seat?.away ? Promise.resolve({ ok: false, code: 'unavailable', message: this.seat.away }) : this.host.send(t, args)),
+      // #187: the conversation stays while its worker is away; its prompt box keeps the draft and what goes to the worker is refused (reading older items is not).
+      send: (t, args) => (this.seat?.away && TO_WORKER.has(t) ? Promise.resolve({ ok: false, code: 'unavailable', message: this.seat.away }) : this.host.send(t, args)),
       feed: (id) => this.feeds.get(id),
       renderer: loadRenderer,
       imagesRenderer: loadImagesTab,
