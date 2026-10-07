@@ -26,7 +26,7 @@ E2E_LOCKED = command -v flock >/dev/null || { echo "make: flock not found (util-
 EMBED_DIR := internal/webdist/game
 RELEASE_DIR := bin/release
 
-.PHONY: build go-build game-build test go-test game-test integration codex-shared-tui lint go-lint game-lint \
+.PHONY: build go-build game-build test go-test game-test integration codex-shared-tui codex-shared-bridge lint go-lint game-lint \
 	sh-test embed-game helper-darwin release-assets dev shot e2e setup toolchain deps clean
 
 ## build: Go binaries (bin/) + game bundle (game/dist/)
@@ -58,8 +58,14 @@ integration:
 
 ## codex-shared-tui: #154 fixture: the real Codex TUI (codex-cli 0.160.1) beside a second app-server client, in
 ## throwaway herdr sessions (h3d-it-154-*), temp CODEX_HOMEs and mock inference; EVIDENCE=<dir> keeps screens/messages
+## (#158's full-stack suites, codex-shared-bridge, included)
 codex-shared-tui:
-	H3D_CODEXSHARE_EVIDENCE="$(EVIDENCE)" go test -tags integration -count=1 -timeout 30m -run CodexShare -v ./internal/codexshare/
+	H3D_CODEXSHARE_EVIDENCE="$(EVIDENCE)" go test -tags integration -count=1 -timeout 50m -run CodexShare -v ./internal/codexshare/
+
+## codex-shared-bridge: #158 full stack only: herdr-world itself (app.Serve) driven over its WebSocket as the game
+## drives it, against the same fixture; EVIDENCE=<dir> as above
+codex-shared-bridge:
+	H3D_CODEXSHARE_EVIDENCE="$(EVIDENCE)" go test -tags integration -count=1 -timeout 20m -run CodexShareBridge -v ./internal/codexshare/
 
 ## lint: go vet, gofmt, tsc --noEmit
 lint: go-lint game-lint

@@ -360,7 +360,7 @@ func TestCodexShareBridgeQuestions(t *testing.T) {
 		if err := f.mock.Release("a8"); err != nil {
 			t.Fatal(err)
 		}
-		c.settle(w)
+		f.settle(w.pane) // herdr's view: there is no bridge
 		f.prompt(w.pane, "MOCK:say typed-while-the-bridge-was-gone")
 		f.snap("7-tui-terminal-turn-bridge-gone", w.pane)
 
