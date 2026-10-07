@@ -72,7 +72,7 @@
 /* #101: the context meter. A slim fill and the number in words; the colour steps (warm, hot) are an extra, the number is
    always there. It does not zoom (a header control), wraps whole (never into the preset and zoom group) and keeps its
    share on a narrow screen. Its colours are the preset's: neutral, then the sun, then the red, each 3:1 or better
-   on the track in Quiet, Terminal and Paper. */
+   on the track in Quiet and Ubuntu. */
 .tx-ctx {
   --ctx: var(--tx-text-2);
   flex: 0 1 auto;
@@ -1292,7 +1292,7 @@
   align-items: flex-end;
   gap: 3px;
 }
-/* Dimmed no further than keeps its text at 4.5:1 or more on every preset (Paper, the lowest, 5:1). */
+/* Dimmed no further than keeps its text at 4.5:1 or more on every preset. */
 .tx-pending > .tx-bubble {
   opacity: 0.72;
 }
@@ -2338,7 +2338,7 @@
   --tx-on-sun: var(--tx-on-accent);
   /* Its own ground (the sticky top and foot of a short screen paint it too). */
   --tx-ask-bg: color-mix(in srgb, var(--tx-blue) 7%, var(--tx-bg-2));
-  /* The theme's red and third text lose a little against the blue ground (Paper's red 4.4:1, Quiet's keys 3.8:1): each
+  /* The theme's red and third text lose a little against the blue ground (Quiet's keys 3.8:1; Ubuntu's are above 4.5 already): each
    * a step toward the text, at least 4.8:1 in every theme. */
   --tx-aq-red: color-mix(in srgb, var(--tx-red) 85%, var(--tx-text));
   box-shadow: 0 -6px 18px -8px rgb(0 0 0 / 45%);

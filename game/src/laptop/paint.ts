@@ -520,7 +520,7 @@ export function paintBuffer(g: Paint2D, buf: IBuffer, o: PaintOptions, cell: IBu
       const isCursor = cur.show && cur.y === y && cur.x === start;
       const cellBg = isCursor ? t.cursor : bg;
       // #59: the preset's text on an agent's own background (a diff's red and green lines), or any colour on a light
-      // screen (Paper: ANSI white on cream), is kept to 3:1; the glance view lifts everything to 4.5:1 as before.
+      // screen (ANSI white on cream: no preset is light now, the rule stays), is kept to 3:1; the glance view lifts everything to 4.5:1 as before.
       const cellFg = isCursor ? t.bg : o.glance ? readable(fg, bg) : bg !== t.bg || lightScreen ? readable(fg, bg, 3) : fg;
       if (cellBg !== t.bg) {
         g.fillStyle = hex(cellBg);
