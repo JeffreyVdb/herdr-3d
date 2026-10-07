@@ -24,7 +24,8 @@
 // (with the snapshot it acts on: a stale one is provider.ErrStale) and POST
 // /comment; nothing here ever sends a DELETE. Errors are the provider
 // package's kinds (401 provider.ErrUnauthorized, 403 provider.ErrForbidden,
-// 429 a *provider.RateLimitError) and never hold the key. This package
+// 429 a *provider.RateLimitError, a network failure ErrUnreachable besides
+// provider.ErrFailed) and never hold the key. This package
 // imports only provider, tracker and the standard library; the app wires it
 // in.
 package kaneo

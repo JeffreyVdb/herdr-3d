@@ -126,8 +126,15 @@ func (c *Client) call(ctx context.Context, method, path string, q url.Values, bo
 	return nil
 }
 
+// ErrUnreachable marks a call that never reached Kaneo (DNS, a refused
+// connection, TLS): a provider.ErrFailed whose cause the caller can tell
+// apart from Kaneo's own failures (errors.Is; the network error is there for
+// errors.As too). Its message is the call's, never the cause's.
+var ErrUnreachable = errors.New("unreachable")
+
 // callError is an error kind with a message and, for a canceled or timed
-// out call, the context's error (errors.Is finds both).
+// out call, the context's error, for an unreachable one ErrUnreachable and
+// the network error (errors.Is finds both).
 type callError struct {
 	kind  error
 	msg   string
@@ -157,7 +164,8 @@ func (c *Client) transportErr(ctx, cctx context.Context, what string, err error)
 	if errors.As(err, &ue) && ue.Err != nil {
 		err = ue.Err
 	}
-	return provider.Failed("Kaneo: %s: cannot be reached: %s", what, clip(c.scrub(err.Error())))
+	return &callError{kind: provider.ErrFailed, msg: "Kaneo: " + what + ": cannot be reached: " + clip(c.scrub(err.Error())),
+		cause: fmt.Errorf("%w: %w", ErrUnreachable, err)}
 }
 
 // statusErr maps an answer's status to an error kind (nil for 2xx), with

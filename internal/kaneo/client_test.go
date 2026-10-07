@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -211,14 +212,16 @@ func TestUnreachableAndUnreadable(t *testing.T) {
 	f.srv.Close()
 	c, _ := New(url, testKey, Options{Timeout: time.Second})
 	_, err := c.Workspaces(context.Background())
-	if !errors.Is(err, provider.ErrFailed) {
+	var ne net.Error
+	if !errors.Is(err, provider.ErrFailed) || !errors.Is(err, ErrUnreachable) || !errors.As(err, &ne) || ne.Timeout() ||
+		!strings.Contains(err.Error(), "cannot be reached") {
 		t.Fatalf("unreachable = %v", err)
 	}
 	noKey(t, err.Error())
 
 	f = newFake(t)
 	f.json("GET", "/auth/organization/list", 200, `{"not":"an array"}`)
-	if _, err := f.client(t).Workspaces(context.Background()); !errors.Is(err, provider.ErrFailed) {
+	if _, err := f.client(t).Workspaces(context.Background()); !errors.Is(err, provider.ErrFailed) || errors.Is(err, ErrUnreachable) {
 		t.Fatalf("unreadable = %v", err)
 	}
 	f.on("GET", "/auth/organization/list", func(w http.ResponseWriter, r *http.Request) {
