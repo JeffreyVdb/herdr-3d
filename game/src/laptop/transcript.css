@@ -933,8 +933,8 @@
   color: var(--tx-text-2);
 }
 
-/* Follow chip */
-.tx-jump {
+/* Follow chip. Under .tx: its button reset (`.tx button`: the colour inherited) would win over a bare class, light text on the accent. */
+.tx .tx-jump {
   position: absolute;
   left: 50%;
   bottom: 10px;
@@ -948,7 +948,7 @@
   font-weight: 700;
   box-shadow: 0 4px 14px rgb(0 0 0 / 40%);
 }
-.tx-jump[hidden] {
+.tx .tx-jump[hidden] {
   display: none;
 }
 
@@ -1206,7 +1206,8 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
-.tx-send {
+/* Under .tx, like .tx-jump: `.tx button { color: inherit }` would otherwise paint white on the accent. */
+.tx .tx-send {
   flex: none;
   height: calc(32px * var(--tx-k, 1));
   padding: 0 14px;
