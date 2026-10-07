@@ -5,13 +5,16 @@ package server
 // cards of the floor you stand on. Both come from the floor's issue
 // provider, never from the game: the card in the board cache, else (a board
 // not polled yet, a card no longer on it) one Tracker.Get of the item,
-// remembered for the bridge's life, hit or miss, so it is never asked again.
-// A poll that changes a card's title moves its workers' too.
+// remembered, hit or miss, so it is never asked again of that board's
+// source. A poll that changes a card's title moves its workers' too. #184:
+// what one Get read belongs to the board source (BoardSet.Key: for Kaneo
+// the instance, the key's generation and the project) it was read from: a
+// floor whose source changed reads it again, and a read that lands after
+// the change is dropped.
 
 import (
 	"context"
 	"reflect"
-	"strings"
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -24,6 +27,7 @@ const titleTimeout = 15 * time.Second
 // itemTitle is what the bridge read of an item off its board (hub goroutine).
 type itemTitle struct {
 	session         string
+	source, id      string // the board's BoardSet.Key and the item
 	fetching        bool
 	done            bool // read (or given up): never asked again
 	title, url, key string
@@ -58,7 +62,8 @@ func (h *Hub) ticketRefs(session string, issue *proto.IssueRef, runItem *proto.W
 	return out, item
 }
 
-func titleKey(provider, id string) string { return provider + "\x00" + id }
+// titleKey is an item's entry: the board source's key and the item's id.
+func titleKey(source, id string) string { return source + "\x00\x00" + id }
 
 // titleOf is an item's title, URL and key: its card on the floor's board,
 // else what one Get found (an item not read yet is queued for it). The URL
@@ -70,10 +75,10 @@ func (h *Hub) titleOf(session, id string) (string, string, string) {
 	}
 	title, url, key, ok := cardTitle(bf, id)
 	if !ok {
-		k := titleKey(bf.info.ID, id)
+		k := titleKey(bf.set.Key, id)
 		e := h.boards.titles[k]
 		if e == nil {
-			e = &itemTitle{session: session}
+			e = &itemTitle{session: session, source: bf.set.Key, id: id}
 			h.boards.titles[k] = e
 		}
 		title, url, key = e.title, e.url, e.key
@@ -106,10 +111,10 @@ func (h *Hub) fetchTitles(ctx context.Context) {
 		if e.done || e.fetching {
 			continue
 		}
-		provider, id, _ := strings.Cut(key, "\x00")
+		id := e.id
 		bf := h.boardOf(e.session)
-		if bf == nil || bf.info.ID != provider {
-			e.done = true
+		if bf == nil || bf.set.Key != e.source {
+			delete(h.boards.titles, key) // of a source the floor has no more
 			continue
 		}
 		if _, _, _, ok := cardTitle(bf, id); ok {
@@ -126,6 +131,9 @@ func (h *Hub) fetchTitles(ctx context.Context) {
 			cancel()
 			_ = h.do(ctx, func(context.Context) {
 				e.fetching, e.done = false, true
+				if bf := h.boardOf(e.session); bf == nil || bf.set.Key != e.source || h.boards.titles[key] != e {
+					return // the floor's source changed meanwhile: a read of the old one
+				}
 				if err != nil {
 					h.log.Info("reading a ticket's title failed", "session", e.session, "item", id, "err", briefError(err))
 					return

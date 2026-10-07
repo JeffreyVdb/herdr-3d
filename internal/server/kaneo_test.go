@@ -658,3 +658,85 @@ func TestKaneoLinkSavesAnswerInOrder(t *testing.T) {
 		t.Fatalf("saved %+v", s)
 	}
 }
+
+// kaneoRun starts a run of floor "s"'s Kaneo task t1 (on the board of p1
+// with the first connection) and returns its orchestrator's id.
+func (kb *kaneoBridge) kaneoRun() string {
+	kb.t.Helper()
+	c1 := card("t1", "HRD-12", "Kaneo boards", "to-do")
+	c1.URL = kaneoURL + "/task/t1"
+	kb.fb.kaneoTracker("p1", 1).set(func(f *fakeTracker) {
+		f.board.Cards, f.detail = []tracker.Card{c1}, tracker.Detail{Card: c1, Body: "Make the floor read Kaneo."}
+	})
+	kb.git.repos["/home/u/lab"] = "/home/u/lab"
+	kb.saveConnection(kaneoKey)
+	kb.c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", Tracker: proto.Some(proto.TrackerKaneo),
+		Kaneo: proto.Some(proto.KaneoLinkArgs{WorkspaceID: "ws1", ProjectID: "p1"}), DefaultCwd: proto.Some("/home/u/lab")})
+	kb.polled("s")
+	decorateRoles(kb.boardBridge)
+	preset := kb.connect(proto.Hello{}).snapshot().World.Presets[0].ID
+	desk := 1
+	_, m := kb.c.command(proto.CmdRunStart, "rs", proto.RunStartArgs{Session: "s", DeskIndex: &desk,
+		WorkItem: &proto.WorkItemRef{Provider: "kaneo", ID: "t1"}, Orch: &buildTeam.Orch, Preset: preset})
+	return ackData[proto.RunStartResult](kb.t, m).ID
+}
+
+// itemTitled waits (polling the boards on) until worker id's run item has
+// title.
+func (kb *kaneoBridge) itemTitled(id, title string) {
+	kb.t.Helper()
+	kb.world(func(w proto.World) bool {
+		kb.clk.Advance(11 * time.Minute)
+		for _, wk := range w.Workers {
+			if wk.ID == id && wk.WorkItem != nil && wk.WorkItem.Title == title {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// offBoard takes t1 off the board of p1 for generation gen; Get still
+// finds it, with title.
+func (kb *kaneoBridge) offBoard(gen int64, title string) *fakeTracker {
+	c := card("t1", "HRD-12", title, "done")
+	c.URL = kaneoURL + "/task/t1"
+	tr := kb.fb.kaneoTracker("p1", gen)
+	tr.set(func(f *fakeTracker) { f.board.Cards, f.detail = nil, tracker.Detail{Card: c} })
+	return tr
+}
+
+// A run's ticket title read off the board belongs to the connection that
+// read it: a new instance or key reads it again, and a read of the old one
+// that lands after the switch is dropped.
+func TestKaneoTicketTitleFollowsTheConnection(t *testing.T) {
+	t.Run("read before the switch", func(t *testing.T) {
+		kb := startKaneoBridge(t)
+		id := kb.kaneoRun()
+		kb.offBoard(1, "Old instance title")
+		kb.itemTitled(id, "Old instance title")
+		kb.offBoard(2, "New instance title")
+		kb.conn.Set(func(f *kaneoconf.FakeConnector) { f.Key = kaneoKey2 })
+		kb.saveConnection(kaneoKey2)
+		kb.itemTitled(id, "New instance title")
+	})
+	t.Run("read landing after the switch", func(t *testing.T) {
+		kb := startKaneoBridge(t)
+		id := kb.kaneoRun()
+		old := kb.offBoard(1, "Old instance title")
+		gate := make(chan struct{})
+		old.set(func(f *fakeTracker) { f.getGate = gate })
+		kb.clk.Advance(11 * time.Minute)
+		eventually(t, "the held read", func() bool { return gets(old, "t1") >= 2 }) // (run.start read it once)
+		fresh := kb.offBoard(2, "New instance title")
+		fresh.set(func(f *fakeTracker) { f.getGate = gate })
+		kb.conn.Set(func(f *kaneoconf.FakeConnector) { f.Key = kaneoKey2 })
+		kb.saveConnection(kaneoKey2)
+		kb.clk.Advance(11 * time.Minute)
+		eventually(t, "the new connection's read", func() bool { return gets(fresh, "t1") >= 1 })
+		close(gate)
+		kb.itemTitled(id, "New instance title")
+		time.Sleep(50 * time.Millisecond)
+		kb.itemTitled(id, "New instance title")
+	})
+}

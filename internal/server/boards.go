@@ -127,7 +127,7 @@ type boardsState struct {
 	watchers map[*Client]string          // connection → the floor it watches
 	gates    map[string]*rateGate        // provider id → its rate state
 	polls    chan struct{}               // slots of the polls in flight
-	titles   map[string]*itemTitle       // #118: provider + item id → what one Get read of it
+	titles   map[string]*itemTitle       // #118: board source + item id → what one Get read of it
 }
 
 func (h *Hub) initBoards(ctx context.Context) error {
@@ -287,10 +287,15 @@ func (bf *boardFloor) adopt(c store.BoardCache, idle time.Duration) {
 	}
 }
 
-// dropBoard forgets a floor's board (its link changed or went) and what
-// the store kept of it.
+// dropBoard forgets a floor's board (its link changed or went), what the
+// store kept of it and the titles read off it.
 func (h *Hub) dropBoard(bf *boardFloor) {
 	delete(h.boards.floors, bf.session)
+	for k, e := range h.boards.titles {
+		if e.session == bf.session {
+			delete(h.boards.titles, k)
+		}
+	}
 	if err := h.st.ClearBoard(context.Background(), bf.session); err != nil {
 		h.log.Error("clearing a floor's board failed", "session", bf.session, "err", err)
 	}

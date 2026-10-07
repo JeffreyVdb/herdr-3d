@@ -57,6 +57,7 @@ type fakeTracker struct {
 	detail  tracker.Detail
 	failOn  map[string]error // by method name
 	missing map[string]bool  // ids that Get does not find
+	getGate chan struct{}    // Get answers (what it read when called) when it is closed
 }
 
 func (f *fakeTracker) Info() tracker.Info {
@@ -115,16 +116,24 @@ func (f *fakeTracker) set(fn func(f *fakeTracker)) {
 	f.mu.Unlock()
 }
 
-func (f *fakeTracker) Get(_ context.Context, id string) (tracker.Detail, error) {
+func (f *fakeTracker) Get(ctx context.Context, id string) (tracker.Detail, error) {
 	if err := f.record("get", "%s", id); err != nil {
 		return tracker.Detail{}, err
 	}
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.missing[id] {
+	gate, missing, d := f.getGate, f.missing[id], f.detail
+	f.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return tracker.Detail{}, ctx.Err()
+		}
+	}
+	if missing {
 		return tracker.Detail{}, provider.Errorf(provider.ErrNotFound, "%s is not on %s", id, f.repo)
 	}
-	return f.detail, nil
+	return d, nil
 }
 
 func (f *fakeTracker) Comment(_ context.Context, id, body string) (provider.Comment, error) {
