@@ -72,7 +72,7 @@
 /* #101: the context meter. A slim fill and the number in words; the colour steps (warm, hot) are an extra, the number is
    always there. It does not zoom (a header control), wraps whole (never into the preset and zoom group) and keeps its
    share on a narrow screen. Its colours are the preset's: neutral, then the sun, then the red, each 3:1 or better
-   on the track in Quiet, Terminal and Paper. */
+   on the track in Quiet and Ubuntu. */
 .tx-ctx {
   --ctx: var(--tx-text-2);
   flex: 0 1 auto;
@@ -439,7 +439,7 @@
   padding: 2px 6px;
   border: 0;
   background: transparent;
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
   font-size: calc(12px * var(--tx-k, 1));
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -559,7 +559,7 @@
   font-size: 1.12em;
 }
 .tx-md a {
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
 }
 .tx-md blockquote {
   padding-left: 10px;
@@ -880,7 +880,7 @@
 }
 .tx-dh {
   background: color-mix(in srgb, var(--tx-blue) 10%, transparent);
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
 }
 .tx-meta .tx-dt {
   color: var(--tx-text-3);
@@ -933,8 +933,8 @@
   color: var(--tx-text-2);
 }
 
-/* Follow chip */
-.tx-jump {
+/* Follow chip. Under .tx: its button reset (`.tx button`: the colour inherited) would win over a bare class, light text on the accent. */
+.tx .tx-jump {
   position: absolute;
   left: 50%;
   bottom: 10px;
@@ -948,7 +948,7 @@
   font-weight: 700;
   box-shadow: 0 4px 14px rgb(0 0 0 / 40%);
 }
-.tx-jump[hidden] {
+.tx .tx-jump[hidden] {
   display: none;
 }
 
@@ -1094,7 +1094,7 @@
 }
 .tx-cmd[data-kind='skill'] .tx-cmd-kind {
   border-color: color-mix(in srgb, var(--tx-blue) 45%, transparent);
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
 }
 .tx-cmd[data-kind='custom'] .tx-cmd-kind {
   border-color: color-mix(in srgb, var(--tx-green) 45%, transparent);
@@ -1206,7 +1206,8 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
-.tx-send {
+/* Under .tx, like .tx-jump: `.tx button { color: inherit }` would otherwise paint white on the accent. */
+.tx .tx-send {
   flex: none;
   height: calc(32px * var(--tx-k, 1));
   padding: 0 14px;
@@ -1292,7 +1293,7 @@
   align-items: flex-end;
   gap: 3px;
 }
-/* Dimmed no further than keeps its text at 4.5:1 or more on every preset (Paper, the lowest, 5:1). */
+/* Dimmed no further than keeps its text at 4.5:1 or more on every preset. */
 .tx-pending > .tx-bubble {
   opacity: 0.72;
 }
@@ -1348,7 +1349,7 @@
   will-change: opacity;
 }
 .tx-activity-label svg {
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
 }
 .tx-activity-time {
   color: var(--tx-text-3);
@@ -1697,7 +1698,7 @@
   font-weight: 650;
 }
 .tx-ask-row-act {
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
   font-size: calc(12px * var(--tx-k, 1));
 }
 .tx-ask-done {
@@ -2334,11 +2335,11 @@
 }
 .tx-aq {
   --tx-sun: var(--tx-blue);
-  --tx-sun-text: var(--tx-blue);
+  --tx-sun-text: var(--tx-blue-text);
   --tx-on-sun: var(--tx-on-accent);
   /* Its own ground (the sticky top and foot of a short screen paint it too). */
   --tx-ask-bg: color-mix(in srgb, var(--tx-blue) 7%, var(--tx-bg-2));
-  /* The theme's red and third text lose a little against the blue ground (Paper's red 4.4:1, Quiet's keys 3.8:1): each
+  /* The theme's red and third text lose a little against the blue ground (Quiet's keys 3.8:1; Ubuntu's are above 4.5 already): each
    * a step toward the text, at least 4.8:1 in every theme. */
   --tx-aq-red: color-mix(in srgb, var(--tx-red) 85%, var(--tx-text));
   box-shadow: 0 -6px 18px -8px rgb(0 0 0 / 45%);
@@ -2409,7 +2410,7 @@
   animation: tx-pulse 1.2s ease-in-out infinite;
 }
 .tx-aq-state[data-phase='sent'] {
-  color: var(--tx-blue);
+  color: var(--tx-blue-text);
 }
 .tx-aq-state[data-phase='unconfirmed'] {
   font-style: italic;
@@ -2489,7 +2490,7 @@
 }
 .tx-qtab[data-card='asyncq'] {
   --tx-sun: var(--tx-blue);
-  --tx-sun-text: var(--tx-blue);
+  --tx-sun-text: var(--tx-blue-text);
   --tx-on-sun: var(--tx-on-accent);
   border-style: solid;
 }

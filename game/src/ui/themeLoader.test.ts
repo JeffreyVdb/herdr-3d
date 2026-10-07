@@ -44,12 +44,12 @@ describe('theme loader (#59)', () => {
     expect(ready).toEqual(['quiet']);
     expect(f.asked).toEqual(['400 16px "JetBrains Mono Variable"', '700 16px "JetBrains Mono Variable"', 'italic 400 16px "JetBrains Mono Variable"', 'italic 700 16px "JetBrains Mono Variable"']);
 
-    // The transcript in Paper: the page's colours, fonts (the limits widget's mono too) change; the terminal does not.
-    t.prefs.setTheme('transcript', 'paper');
-    expect(root.dataset.theme).toBe('paper');
-    expect(root.style.getPropertyValue('--tx-bg')).toBe('#f2ead8');
-    expect(root.style.getPropertyValue('--tx-prose')).toContain('Newsreader');
-    expect(root.style.getPropertyValue('--font-mono')).toContain('Space Mono');
+    // The transcript in Ubuntu: the page's colours, fonts (the limits widget's mono too) change; the terminal does not.
+    t.prefs.setTheme('transcript', 'ubuntu');
+    expect(root.dataset.theme).toBe('ubuntu');
+    expect(root.style.getPropertyValue('--tx-bg')).toBe('#300a24');
+    expect(root.style.getPropertyValue('--tx-prose')).toContain('"Ubuntu"');
+    expect(root.style.getPropertyValue('--font-mono')).toContain('Ubuntu Mono');
     await drain(t, f);
     expect(ready).toEqual(['quiet']);
     expect(t.ready.id).toBe('quiet');
@@ -62,12 +62,12 @@ describe('theme loader (#59)', () => {
     await drain(t, f);
     f.asked.length = 0;
     const before = root.getAttribute('style');
-    t.prefs.setTheme('terminal', 'paper');
-    // The canvas keeps drawing with Quiet's font until Space Mono is in.
+    t.prefs.setTheme('terminal', 'ubuntu');
+    // The canvas keeps drawing with Quiet's font until Ubuntu Mono is in.
     expect(t.ready.id).toBe('quiet');
     await drain(t, f);
-    expect(t.ready.id).toBe('paper');
-    expect(f.asked.every((x) => x.endsWith('"Space Mono"'))).toBe(true);
+    expect(t.ready.id).toBe('ubuntu');
+    expect(f.asked.every((x) => x.endsWith('"Ubuntu Mono"'))).toBe(true);
     expect(f.asked).toHaveLength(4);
     expect(root.getAttribute('style')).toBe(before);
     expect(root.dataset.theme).toBe('quiet');
@@ -79,29 +79,30 @@ describe('theme loader (#59)', () => {
     const t = new ThemeLoader(new ViewPrefs(null), root, f);
     const ready: string[] = [];
     t.onReady((p) => ready.push(p.id));
-    t.prefs.setTheme('terminal', 'terminal');
-    t.prefs.setTheme('terminal', 'paper');
-    t.prefs.setTheme('transcript', 'paper');
+    t.prefs.setTheme('terminal', 'ubuntu');
+    t.prefs.setTheme('terminal', 'quiet');
+    t.prefs.setTheme('terminal', 'ubuntu');
+    t.prefs.setTheme('transcript', 'ubuntu');
     await drain(t, f);
-    expect(ready).toEqual(['paper']);
-    expect(root.style.getPropertyValue('--tx-fs')).toBe('15px');
+    expect(ready).toEqual(['ubuntu']);
+    expect(root.style.getPropertyValue('--tx-fs')).toBe('13.5px');
     t.prefs.setZoom('transcript', 200);
-    expect(root.style.getPropertyValue('--tx-fs')).toBe('30px');
-    expect(root.style.getPropertyValue('--tx-mono-fs')).toBe('24px');
+    expect(root.style.getPropertyValue('--tx-fs')).toBe('27px');
+    expect(root.style.getPropertyValue('--tx-mono-fs')).toBe('28px');
     t.prefs.setZoom('terminal', 70);
-    expect(root.style.getPropertyValue('--tx-fs')).toBe('30px');
-    t.prefs.setTheme('transcript', 'terminal');
-    expect(root.style.getPropertyValue('--tx-mono-fs')).toBe('22px');
+    expect(root.style.getPropertyValue('--tx-fs')).toBe('27px');
+    t.prefs.setTheme('transcript', 'quiet');
+    expect(root.style.getPropertyValue('--tx-mono-fs')).toBe('23px');
     expect(t.prefs.zoom('transcript')).toBe(200);
-    expect(ready).toEqual(['paper']);
+    expect(ready).toEqual(['ubuntu']);
   });
 
   it('a font that fails to load still switches the terminal (to the stack’s system faces)', async () => {
     const root = document.createElement('div');
     const f = fonts(true);
     const t = new ThemeLoader(new ViewPrefs(null), root, f);
-    t.prefs.setTheme('terminal', 'terminal');
+    t.prefs.setTheme('terminal', 'ubuntu');
     await drain(t, f);
-    expect(t.ready.id).toBe('terminal');
+    expect(t.ready.id).toBe('ubuntu');
   });
 });
