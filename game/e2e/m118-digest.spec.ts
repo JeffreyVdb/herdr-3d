@@ -119,6 +119,8 @@ test('summaries: off until a test passed, then the LLM writes the floor’s line
     await expect(section).toContainText('On: lines are written for the floors someone is viewing.');
     await section.scrollIntoViewIfNeeded();
     await shot(page, 'settings-digest');
+    await section.getByRole('button', { name: 'Retry failed' }).scrollIntoViewIfNeeded();
+    await shot(page, 'settings-digest-reasoning');
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
 
