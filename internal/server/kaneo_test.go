@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -485,4 +487,36 @@ func TestKaneoRunWorkItem(t *testing.T) {
 		t.Fatalf("the orchestrator's link before the ack: %+v", orch)
 	}
 	kb.noKey(kaneoKey)
+}
+
+// healthzOpenHosts reads the open-hosts header of the bridge's /healthz.
+func healthzOpenHosts(t *testing.T, sock string) string {
+	t.Helper()
+	hc := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "unix", sock)
+	}}}
+	resp, err := hc.Get("http://herdr-world/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.Header.Get(proto.OpenHostsHeader)
+}
+
+// The bridge names its Kaneo instance's web host to the Mac helper on
+// /healthz (its own socket, never a client), only while one is saved.
+func TestKaneoOpenHostOnHealthz(t *testing.T) {
+	kb := startKaneoBridge(t)
+	if h := healthzOpenHosts(t, kb.sock); h != "" {
+		t.Fatalf("open hosts before a connection = %q", h)
+	}
+	kb.saveConnection(kaneoKey)
+	if h := healthzOpenHosts(t, kb.sock); h != "tasks.example.test" {
+		t.Fatalf("open hosts = %q", h)
+	}
+	kb.c.mustAck(proto.CmdKaneoClear, nil)
+	if h := healthzOpenHosts(t, kb.sock); h != "" {
+		t.Fatalf("open hosts after clear = %q", h)
+	}
 }

@@ -14,6 +14,13 @@ const Version = 1
 // stays "ok" so a helper from an older release still reads it as healthy.
 const VersionHeader = "X-H3D-Version"
 
+// OpenHostsHeader (#184) carries, on GET /healthz, the hosts besides the
+// built-in ones whose https pages a Mac helper may open for the game
+// (comma separated; absent: none): the saved Kaneo instance's web host. It
+// only travels on the bridge's own socket, which the helper reaches through
+// its ssh tunnel; no client can set it.
+const OpenHostsHeader = "X-H3D-Open-Hosts"
+
 // Message types.
 const (
 	THello    = "hello"

@@ -162,3 +162,58 @@ func TestOpenHostsListAndOpenerFailure(t *testing.T) {
 		t.Fatalf("empty allowlist: %d, opened %q", got, f2.opened())
 	}
 }
+
+// trustingBridge is a bridge whose last /healthz trusted some open hosts.
+type trustingBridge struct {
+	socketBridge
+	mu    sync.Mutex
+	hosts []string
+}
+
+func (b *trustingBridge) Status() Status {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return Status{State: StateUp, OpenHosts: append([]string(nil), b.hosts...)}
+}
+
+func (b *trustingBridge) set(hosts ...string) {
+	b.mu.Lock()
+	b.hosts = hosts
+	b.mu.Unlock()
+}
+
+// #184: "Open in Kaneo" opens the self-hosted instance the bridge names
+// (through the tunnel), and only while it names it; the URL checks stay
+// (https, no port, no credentials), and other hosts are still refused.
+func TestOpenBridgeTrustedHost(t *testing.T) {
+	f := &fakeOpener{}
+	br := &trustingBridge{}
+	s := NewServer(ServerConfig{Port: testPort, ListenHost: "127.0.0.1", Token: testToken, Bridge: br,
+		Bundle: writeBundle(t), Log: quietLog(), Open: f.open})
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	task := `{"url":"https://tasks.example.test/dashboard/workspace/w/project/p/task/t"}`
+	if got := doOpen(t, ts, goodOpen(task)); got != http.StatusBadRequest {
+		t.Fatalf("before the bridge names it: %d", got)
+	}
+	br.set("tasks.example.test")
+	if got := doOpen(t, ts, goodOpen(task)); got != http.StatusNoContent {
+		t.Fatalf("named by the bridge: %d", got)
+	}
+	for _, bad := range []string{`{"url":"http://tasks.example.test/x"}`, `{"url":"https://tasks.example.test:8443/x"}`,
+		`{"url":"https://user:pw@tasks.example.test/x"}`, `{"url":"https://evil.example.test/x"}`} {
+		if got := doOpen(t, ts, goodOpen(bad)); got != http.StatusBadRequest {
+			t.Errorf("%s: %d, want 400", bad, got)
+		}
+	}
+	if got := doOpen(t, ts, goodOpen(`{"url":"https://github.com/a/b/issues/1"}`)); got != http.StatusNoContent {
+		t.Fatalf("github with a bridge host: %d", got)
+	}
+	br.set() // disconnected on the bridge
+	if got := doOpen(t, ts, goodOpen(task)); got != http.StatusBadRequest {
+		t.Fatalf("after the bridge dropped it: %d", got)
+	}
+	if n := len(f.opened()); n != 2 {
+		t.Fatalf("opened %d URLs, want 2", n)
+	}
+}
