@@ -516,6 +516,7 @@ func (h *Hub) promptViaServer(ctx context.Context, id, text string) (any, bool, 
 // on its way) or under a legacy id keeps its record, and a join that reads
 // the batch again restores it (Restore). Nothing else drops one, so a
 // worker has at most one per question of its thread it answered.
+
 // sendKey is a question of a worker's thread.
 type sendKey struct {
 	batch string
