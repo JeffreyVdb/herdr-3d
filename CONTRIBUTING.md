@@ -48,7 +48,10 @@ commands sit on it) and `drops` (Drop Zone's newest files, read only through img
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
-  repository and project, the writes) and `githubcli` (the typed `gh` runner). `server`, `store` and `proto` never import
+  repository and project, the writes) and `githubcli` (the typed `gh` runner); #184: `kaneo` (the Kaneo provider of
+  `tracker`: the instance URL's normalization, the REST client with its key, the settings' read-only calls and one
+  project's board and writes; the standard library, `provider` and `tracker` only, `TestKaneoIsAProviderLeaf`).
+  `server`, `store` and `proto` never import
   `github` or `githubcli` (`TestBoardLayerIsProviderNeutral`): `app` wires the provider in. Helper: `helper` (ssh tunnel
   supervisor, game server, `/ws` proxy). `app` holds both command lines.
 - `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).

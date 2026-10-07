@@ -200,6 +200,10 @@ MacBook (M2 Max)                                   devbox (Linux)
   `updateProjectV2ItemPosition`). A poll that was in flight when a write landed never becomes the latest board (a
   write that failed halfway, `provider.ErrPartial`, counts as one and refreshes too), and the game holds a drop's
   placement until a board polled after the write shows it; a failed drop says why inside the board.
+  #184: **Kaneo** (`internal/kaneo`, REST with an API key, standard library only) is a second `tracker`: one project of
+  a workspace, its workflow columns between the virtual Planned and Archived ones, every task up to 500 (no closed
+  window: Kaneo gives no completion time), at most 12 calls a read; no close (completion is a final column), set status
+  as `PUT /task/status` and an anchored move as one `POST /task/reorder` checked against the board it was computed from.
 - **Building logos** (M3d, built; details in `protocol.md` "Building logos"): a building can carry a logo, stored by the
   bridge itself (no remote URL, so the game never loads an image from a third-party host, it works offline and through
   the helper). Upload, clear and fetch are HTTP on the bridge socket, `PUT|DELETE|GET /logo/{building}`, not WebSocket
