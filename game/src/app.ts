@@ -77,6 +77,7 @@ import { InboxPrefs } from './ui/inboxPrefs';
 import { inboxQueue, inboxReason, inboxWhere, type InboxCandidate } from './world/inbox';
 // #92 AI integration
 import { aiSection } from './ui/aiSection';
+import { kaneoSection } from './ui/kaneoSection';
 // #90 follow-up questions
 import { followupsSection } from './ui/followupsSection';
 import { packupSection } from './ui/packupSection';
@@ -374,6 +375,8 @@ export class App {
     );
     // #155: whether new Codex workers get a Codex server of their own (the bridge's switch, off by default).
     settings.addSection('codex', 'Codex workers', codexServerSection({ book: this.store.codexServer, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
+    // #184: the Kaneo instance a floor can use as its issue board instead of GitHub.
+    settings.addSection('kaneo', 'Kaneo', kaneoSection({ book: this.store.kaneo, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
     this.store.ai.onChange((notice) => {
       this.hud.setAiChip(aiChip(this.store.ai.state));
       if (notice) this.hud.toast(notice, 7000, 'error');

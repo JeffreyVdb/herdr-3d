@@ -5,7 +5,7 @@
  * it is covered by vitest.
  */
 
-import type { FloorSettings, FloorSuggested, GithubProject, Hire, HireOptions, SettingsPatch, StatusField } from '../net/protocol';
+import type { FloorSettings, FloorSuggested, GithubProject, Hire, HireOptions, SettingsPatch, StatusField, Tracker } from '../net/protocol';
 
 /**
  * A status row: the text in its input, and the stored label the row was
@@ -31,6 +31,10 @@ export interface SettingsForm {
   harness: string;
   model: string;
   effort: string;
+  /** #184: the floor's issue tracker, and its Kaneo workspace and project ids ('' = none chosen). */
+  tracker: Tracker;
+  kaneoWorkspace: string;
+  kaneoProject: string;
 }
 
 export type FieldKey = keyof SettingsForm;
@@ -42,6 +46,8 @@ export interface SettingsValue {
   status_field: StatusField | null;
   default_cwd: string | null;
   default_hire: Hire | null;
+  tracker: Tracker;
+  kaneo: { workspace_id: string; project_id: string } | null;
 }
 
 export const DEFAULT_STATUS_FIELD: StatusField = { name: 'Status', options: ['Todo', 'Doing', 'QA', 'Done'] };
@@ -60,6 +66,7 @@ const bytes = (s: string) => new TextEncoder().encode(s).length;
 export function formFrom(
   settings: FloorSettings,
   suggested: FloorSuggested,
+  kaneoDefault: string | null = null,
 ): { form: SettingsForm; repoSuggested: boolean; statusDefault: boolean; cwdPlaceholder: string } {
   const stored = settings.status_field;
   const status = stored ?? DEFAULT_STATUS_FIELD;
@@ -75,6 +82,10 @@ export function formFrom(
       harness: hire?.harness ?? '',
       model: hire?.model ?? '',
       effort: hire?.effort ?? '',
+      // #184: a floor without a Kaneo link starts from the bridge's default workspace; a linked one keeps its own.
+      tracker: settings.tracker === 'kaneo' ? 'kaneo' : 'github',
+      kaneoWorkspace: settings.kaneo?.workspace_id ?? kaneoDefault ?? '',
+      kaneoProject: settings.kaneo?.project_id ?? '',
     },
     repoSuggested: !settings.repo && !!suggested.repo,
     statusDefault: !settings.status_field,
@@ -116,7 +127,7 @@ export function parseForm(
   stored: FloorSettings = {},
 ): { value: SettingsValue; errors: Partial<Record<FieldKey, string>>; badOption: number | null } {
   const errors: Partial<Record<FieldKey, string>> = {};
-  const value: SettingsValue = { repo: null, project: null, status_field: null, default_cwd: null, default_hire: null };
+  const value: SettingsValue = { repo: null, project: null, status_field: null, default_cwd: null, default_hire: null, tracker: f.tracker, kaneo: null };
   let badOption: number | null = null;
 
   if (f.repo.trim()) {
@@ -172,6 +183,13 @@ export function parseForm(
       if (!errors.model && !errors.effort) value.default_hire = { harness: f.harness, model: f.model, effort: f.effort };
     }
   }
+  // #184: a Kaneo floor needs its workspace and project. On a GitHub floor an unfinished pick keeps the stored link.
+  const stored184 = stored.kaneo ? { workspace_id: stored.kaneo.workspace_id, project_id: stored.kaneo.project_id } : null;
+  if (f.kaneoWorkspace && f.kaneoProject) value.kaneo = { workspace_id: f.kaneoWorkspace, project_id: f.kaneoProject };
+  else if (f.tracker === 'kaneo') {
+    if (!f.kaneoWorkspace) errors.kaneoWorkspace = 'Choose the Kaneo workspace.';
+    errors.kaneoProject = 'Choose the project whose tasks this floor shows.';
+  } else value.kaneo = stored184;
   return { value, errors, badOption };
 }
 
@@ -203,5 +221,9 @@ export function settingsPatch(stored: FloorSettings, want: SettingsValue): Setti
     if (k === 'status_field' && have === null && same(want[k], DEFAULT_STATUS_FIELD)) continue;
     patch[k] = want[k];
   }
+  // #184: absent tracker is GitHub; the Kaneo link compares by its ids (the names are the bridge's).
+  if ((stored.tracker ?? 'github') !== want.tracker) patch.tracker = want.tracker === 'kaneo' ? 'kaneo' : null;
+  const have = stored.kaneo ? { workspace_id: stored.kaneo.workspace_id, project_id: stored.kaneo.project_id } : null;
+  if (!same(have, want.kaneo)) patch.kaneo = want.kaneo;
   return patch as SettingsPatch;
 }
