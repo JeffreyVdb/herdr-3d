@@ -61,7 +61,7 @@ import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/start
 // M6 crew: freelancers drop in (M6b) and walk out with their briefcase.
 import { crewRole, inputRequired, isFreelancer } from './world/crew';
 // M7: the issues and pull request boards.
-import { askPrompt, BoardBook, nearestDesk, reviewPrompt } from './world/boards';
+import { askItemPrompt, askPrompt, BoardBook, nearestDesk, reviewPrompt } from './world/boards';
 import { BoardsPanel, type BoardOff, type BoardState } from './ui/boards/panel';
 import { openExternal } from './ui/boards/external';
 import { OpenPrDialog } from './ui/boards/openPr';
@@ -550,7 +550,7 @@ export class App {
       refresh: (session) => void this.sendBoard('board.refresh', { session }),
       external: (url) => this.external(url),
       handTo: (session, card, provider) => this.handTo(session, card, provider),
-      ask: (session, card) => this.askAbout(session, card),
+      ask: (session, card, provider, body) => this.askAbout(session, card, provider, body),
       review: (session, pr) => this.reviewPr(session, pr),
       whyNoRun: (session) => this.whyNoRun(session),
       whyNoHire: (session) => this.whyNoHire(session),
@@ -2263,11 +2263,16 @@ export class App {
     this.openPr.open(id);
   }
 
-  /** "Ask a worker…": the hire dialog at the nearest free desk with a first prompt to look into it. */
-  private askAbout(session: string, card: IssueCard): void {
+  /**
+   * "Ask a worker…": the hire dialog at the nearest free desk with a first prompt to look into it. #184: a GitHub
+   * issue goes by its link (the worker can read it with gh); a Kaneo task carries its title and description, which
+   * the worker could not read itself.
+   */
+  private askAbout(session: string, card: IssueCard, provider: string, body: string | null): void {
     const desk = this.nearestFreeDesk(session);
     this.boardsPanel.close();
-    this.openHire(desk ?? undefined, { prompt: askPrompt(card.key, card.url) });
+    const prompt = provider === 'kaneo' ? askItemPrompt(this.boardsPanel.providerLabel(), card, body) : askPrompt(card.key, card.url);
+    this.openHire(desk ?? undefined, { prompt });
   }
 
   /** "Review with a worker": the hire dialog with the last team's reviewer and the code-review prompt for the PR. */

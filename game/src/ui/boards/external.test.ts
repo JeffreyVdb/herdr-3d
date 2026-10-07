@@ -54,4 +54,15 @@ describe('openExternal', () => {
     expect(await openExternal('javascript:alert(1)', { token: null, open: (u) => opened.push(u) })).toBe('refused');
     expect(opened).toEqual([]);
   });
+
+  // #184: "Open in Kaneo" goes through the helper like GitHub's links; the helper decides (it trusts the bridge's
+  // saved instance only), and a refusal is never turned into a window.
+  it('sends a self-hosted Kaneo task through the helper and honours its answer', async () => {
+    const task = 'https://tasks.example.test/dashboard/workspace/w/project/p/task/t';
+    const opened: string[] = [];
+    expect(await openExternal(task, { token: 'tok', fetch: async () => ({ status: 204 }), open: (u) => opened.push(u) })).toBe('helper');
+    expect(await openExternal(task, { token: 'tok', fetch: async () => ({ status: 400 }), open: (u) => opened.push(u) })).toBe('refused');
+    expect(await openExternal('http://tasks.example.test/x', { token: 'tok', fetch: async () => ({ status: 204 }), open: (u) => opened.push(u) })).toBe('refused');
+    expect(opened).toEqual([]);
+  });
 });
