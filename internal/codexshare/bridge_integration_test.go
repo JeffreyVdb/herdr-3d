@@ -596,8 +596,21 @@ func (f *fx) replyRequests(from int) []Request {
 	return out
 }
 
-// answersIn counts the reply envelopes in a request's whole input that
-// answer (batch, index): what the model can see of them.
-func answersIn(r Request, batch string, index int) int {
-	return strings.Count(string(r.Body), `\\\"request_user_input_async\\\",\\\"`+batch+`\\\",`+strconv.Itoa(index)+`]`)
+// repliesSince waits until the mock got n reply requests from index from
+// (a bridge's question is answered once Codex records the user message,
+// a moment before the model request), then a little longer for a stray
+// one, and returns them all.
+func (f *fx) repliesSince(from, n int) []Request {
+	f.t.Helper()
+	for end := time.Now().Add(30 * time.Second); len(f.replyRequests(from)) < n && time.Now().Before(end); {
+		time.Sleep(100 * time.Millisecond)
+	}
+	time.Sleep(2 * time.Second)
+	return f.replyRequests(from)
+}
+
+// answersIn counts the reply envelopes in a request body (the model's
+// whole input) that answer (batch, index): what the model can see of them.
+func answersIn(body, batch string, index int) int {
+	return strings.Count(body, `\\\"request_user_input_async\\\",\\\"`+batch+`\\\",`+strconv.Itoa(index)+`]`)
 }
