@@ -310,11 +310,17 @@ dir removed.
   uses the same remote client [S].
 - D5's suppression of Herdr's native resume (`pane release-agent`) is unverified. **Resolved by #155**: `release-agent` does not keep Herdr from resuming the pane; the TUI's own exit does (`TestCodexShareResumeSuppression`, decisions.md #155 row 1).
 - Real Claude worker in the reverse mixed-harness direction (needs inference).
-- Images in the composer and terminal/transcript switching in the game (phase 5).
+- Images in the composer and terminal/transcript switching in the game (phase 5). **Partly resolved by #158**: an
+  image marker reaches a shared worker as its path in the text, typed or steered, as for any Codex worker, and the
+  transcript of a shared worker is its thread (§12.2). Not verified: Codex's own image input, and the game's toggle
+  against a real TUI (§12.6).
 - Whether a steered input survives its turn ending before the next model request. **Resolved by #156**: it is
   dropped (§11).
 - Whether the terminal's question editor accepts free text on a question that has options (#156 is strict: one of the
-  options).
+  options). Still open after #158.
+- **#158** resolved: a reply from either view reaching the model once through the bridge, retries and reconnects, the
+  bridge restarted, resume and the server killed and recovered, all through herdr-world itself (§12). Its own open
+  points are in §12.6.
 
 ## 11. Phase 3: the bridge's answers (#156)
 
@@ -345,3 +351,185 @@ cited as `AsyncAnswers/<label>`.
   (`c-resent-question-state`, `c-resent-answer`).
 - **A new join recovers every batch's state from the history** (`d-hydrated`): the batch the bridge answered is
   `answered` by `bridge` from the history alone (the `clientId` is persisted), the same as the live view.
+
+## 12. Phase 5: full-stack validation (#158)
+
+Every suite before this one drove a protocol client (`rpc.go`) or, at most, `codexapp.Watcher` in-process. #158's
+suites drive **herdr-world itself**: `app.Serve` (the hub, its `herdr.Control`, its `CodexHost`, the store) aimed at
+the fixture's throwaway Herdr session, driven over its own WebSocket with `proto`'s client exactly as the game drives
+it (`codex_server.set`, `worker.hire`, `transcript.watch`, `worker.answer_async`, `worker.dismiss_async`,
+`worker.prompt`, `worker.keys`, `floor.sleep` / `floor.wake`, `worker.fire`), against the real Codex TUI (codex-cli
+0.160.1, Herdr 0.9.0) and the mock model. The assertions are the bridge's acks, events and `worker.codex` view, the
+TUI's screen (its queued-question badge, the rendered answer) and the mock's classified requests. "One model-visible
+answer" is counted in the **model's whole input** (a model request carries the conversation so far), not in acks.
+
+`make codex-shared-bridge` (or `make codex-shared-tui`, which includes it), `EVIDENCE=<dir>` as before:
+`internal/codexshare/bridge*_integration_test.go`. Evidence in
+[`TestCodexShareBridgeQuestions/`](codex-shared-tui-evidence/TestCodexShareBridgeQuestions/),
+[`TestCodexShareBridgeRegression/`](codex-shared-tui-evidence/TestCodexShareBridgeRegression/),
+[`TestCodexShareBridgeWorkers/`](codex-shared-tui-evidence/TestCodexShareBridgeWorkers/),
+[`TestCodexShareBridgeRollout/`](codex-shared-tui-evidence/TestCodexShareBridgeRollout/) and
+[`TestCodexShareBridgeRealModelSmoke/`](codex-shared-tui-evidence/TestCodexShareBridgeRealModelSmoke/), cited as
+`BridgeQuestions/<label>` and so on. **[R]** below is this full stack with the mock model.
+
+**Where the fixture differs from production**, and why:
+
+- The package rule holds: `internal/codexshare` stays imported by nothing. Its full-stack suites import `internal/app`
+  and `internal/proto` only in `integration`-tagged test files, which are in no package's import graph, so every
+  `layer_test.go` tripwire (`go list -deps`) is unchanged and CI is unaffected.
+- Workspaces are `bare-*`: no `.envrc`. The bridge's preflight runs `direnv status` in **its own** environment, whose
+  allow list is the user's, not the fixture's (the blocked-`.envrc` fallback is #155's unit-tested path).
+- herdr-world's own processes (the preflight's `codex --version`, the command catalog's stdio `codex app-server`,
+  which #138's prompt translation runs for a text with a `/`) get the fixture's `CODEX_HOME`, never `~/.codex`.
+- A floor wake starts the session through `systemd-run` with a login environment in production. The suite's
+  `herdr.Control` runs every command as production does except that one, which starts the fixture's own session
+  server instead (the same herdr, the same session name, the fixture's pinned `CODEX_HOME` and owner marker), so a
+  woken pane can never reach `~/.codex`.
+- Panes run the user's real fish configuration (hire creates its workspaces without `--env`); the fixture's session
+  server carries the throwaway `CODEX_HOME`.
+- Codex's "Hooks need review" dialog (B8) shows on each fixture's first hire (a fresh CODEX_HOME with Herdr's hook).
+  The bridge leaves it, as designed; the suite answers it as the player would (`*-startup`, `*-after-trust`).
+
+### 12.1 Async questions through the bridge [R]
+
+`TestCodexShareBridgeQuestions`: one shared worker the bridge hired; the asking turn held by the mock where a step
+needs it active.
+
+| # | Scenario | Result | Evidence |
+|---|---|---|---|
+| 1 | Active turn, answer from the transcript side | `worker.answer_async` acked `sent` `via: turn/steer`; the badge stays at 2 until delivery, then shows 1 while the turn is still running (the reply request held): only the answered question cleared. The view goes `sent` → `answered`, `answered_by: bridge`; the other question stays `pending`. The mock got **one** reply request carrying one envelope | `BridgeQuestions/1-batch`, `1-answer-ack`, `1-sent`, `1-tui-after-send-not-yet-delivered`, `1-tui-delivered-turn-active`, `1-answered`, `1-mock-requests` |
+| 3 | Idle turn | The asking turn's end cleared the TUI's badge; the bridge still had the other question `pending` (`turn: ""`, `async_blocked` false). `shift+←` from the game's seated terminal opened nothing. The bridge's answer went `via: turn/start`, the terminal rendered it as an answer (`› > Any context for the fixture?` / the text, then `MOCK_REPLY_SEEN …`), `answered` by `bridge`, one reply request | `3-idle-view`, `3-tui-idle`, `3-tui-idle-shift-left`, `3-answer-ack`, `3-tui-answer-rendered`, `3-answered` |
+| 2 | Active turn, answer from the terminal | `shift+←`, the text and Enter through `worker.keys`: Codex's editor queued it; the bridge kept the question `pending` until delivery, then `answered`, **`answered_by: other`**, answer `typed-in-terminal`. The bridge sent nothing (no `answer_async`; the user message is not the bridge's `clientId`) | `2-terminal-editor`, `2-terminal-submitted`, `2-tui-delivered-turn-active`, `2-answered`, `2-mock-requests` |
+| 4 | Suggested-answer and free-text questions, several batches | `ask-both` (options + free text in one batch), `ask-options`, `ask-free`: seven batches, seven distinct ids (the call ids), each answered or kept on its own | `1-batch`, `2-batch`, `4-batches`, `final-view` |
+| 5 | Two clients answer at once | Two WebSocket clients sent `worker.answer_async` for the same question in the same instant: one `sent`, the other **`stale`** ("question 0 of call_15 is sent"); a third while it was on its way `stale`, one after it was answered `stale` ("… is answered"). The mock got **one** reply request | `5-concurrent-replies`, `5-third-answer-while-sent`, `5-answer-after-answered`, `5-mock-requests` |
+| 5b | Terminal **and** transcript answer one question in the asking turn | Both are delivered with the turn's next model request: the model's input holds **two** answers to that question (findings §2: the server does not deduplicate, and the bridge cannot see the terminal's queued answer before it is delivered). The bridge reports the question `answered` with the one delivered **last**: `answered_by: other`, `from-the-terminal` (its own ack had said `sent`). A known limit, below | `5b-bridge-answer-ack`, `5b-terminal-submitted`, `5b-tui-delivered-turn-active`, `5b-answered`, `5b-both-answers` |
+| 6 | The `undelivered` race and its retry | Steered (`sent`, `turn/steer`), then Ctrl+C from the game's terminal before the next model request: the turn was interrupted and the view says `sent` + **`undelivered`**; the mock got no reply. The player's second send went `via: turn/start` and was `answered`; a third was `stale` ("… is answered"). **One** reply request in all, one answer in the model's input | `6-answer-ack`, `6-undelivered`, `6-tui-interrupted`, `6-retry-ack`, `6-answered`, `6-answer-after-answered`, `6-mock-requests` |
+| — | Dismiss | `worker.dismiss_async`: `dismissed` in the bridge only, nothing sent; an answer to it afterwards `stale` ("… is dismissed") | `d-dismissed`, `d-answer-after-dismiss` |
+| 7 | herdr-world goes away and comes back with a question pending | The game's connection dropped, then herdr-world stopped. The worker's server kept running (its token's process and files: `7-server-while-bridge-gone`), the badge stayed, the turn finished and a prompt typed into the terminal ran, all without the bridge. Restarted on the same store, the new join rebuilt the **same seven batches in the same order**, no duplicate: the answered ones `answered` with the same `answered_by` (bridge or other, from the history), the pending one `pending`. The dismissal came back `pending` (dismissals are the bridge's only, #156 row 5). The pending question was then answered (`turn/start`), one reply | `7-view-before`, `7-tui-bridge-gone`, `7-tui-terminal-turn-bridge-gone`, `7-view-after`, `7-batches`, `7-answer-after-restart-ack`, `7-answered` |
+| 8 | The native composer and badge | Read off the TUI at every step above: the badge counts the questions Codex still holds, clears each one at its delivery (not when the bridge's send is accepted, not at the turn's end while active), and goes when the asking turn ends | the `*-tui*` screens |
+| — | One reply, one model-visible answer | In the model's last input: one answer to each question answered once (from either view, retried, after a restart), two to the question both views answered | `4-model-visible-answers` |
+
+### 12.2 A shared worker's regressions [R]
+
+`TestCodexShareBridgeRegression` (one worker), `TestCodexShareBridgeWorkers` (two).
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 9 | A typed prompt (`worker.prompt`) | Typed by herdr (`via` absent); the join, which came after the first turn, made no model request; the next model request had the same model, the same instructions (hash) and the cwd | `BridgeRegression/9-typed-prompt-ack`, `9-settings` |
+| 9 | A prompt while an async question shows the worker `blocked` (#156 row 10) | Bridge status `blocked`, `async_blocked: true`; the prompt acked `queued: true, via: "app_server"`, and the turn's next model request was it | `9b-blocked-view`, `9b-steered-prompt-ack`, `9b-mock-requests` |
+| 9 | `/status` | Acked `terminal: true` (#140); the terminal shows the worker's own server (`unix://…/<marker>.sock (v0.160.1)`), the session and the model; no model request | `9c-status-prompt-ack`, `9c-tui-status` |
+| 9 | A skill (`$h3d-fixture`) | Its SKILL.md reached the model | `9c-tui-skill` |
+| 9 | Ctrl+C (`worker.keys`) | "Conversation interrupted", the worker back to idle | `9d-tui-interrupted` |
+| 9 | An approval | **Never asked on a hired worker**: hire starts Codex with `--dangerously-bypass-approvals-and-sandbox` (approval policy never), so an escalation is refused by Codex itself ("approval policy is Never; reject command") and no approval reaches the terminal or the bridge. The bridge's passivity with approvals on is #155's adapter-level check (`TestCodexShareSharedApprovals`) | `9e-tui` |
+| 9 | An image (`[Image #1: <path>]` in `worker.prompt`, #64) | Not rewritten (`sent` absent). Typed by herdr and steered through the app-server alike, the model gets the **path in the text**, no `input_image`: the same as any Codex worker today. The transcript shows the marker as an input image on both (`unavailable` here: the fixture's file is outside the transcript's image roots, which hold Drop Zone's directory) | `9f-image`, `9g-transcript` |
+| 9 | The transcript subscription | `transcript.watch` names the worker's thread (`harness: codex`, `session` = the thread) and holds the turns typed in the terminal and steered through the bridge; opening it made no model request and left the join as it was | `9g-transcript`, `9g-after-watch` |
+| 10 | Sleep, then wake | Sleep: the TUI quit, the server stopped (no marked process, no files), `server: "stopped"`, herdr's `session.json` without the thread. Wake: `resume: "fallback"`, the pane runs `codex resume <thread> --remote unix://… -C … -m mock -c model_reasoning_effort=low` (no bypass flag), the same thread, attached, and the question left pending before the sleep is still `pending` and was answered after the wake | `10-asleep`, `10-wake-ack`, `10-resumed-argv`, `10-tui-resumed`, `10-answered` |
+| 11 | The server killed | `server: "down"` within the 3 s tick while herdr still said `working` and the TUI showed "Reconnecting to server…" (B6). Recovery by sleep and wake: the sleep quit the terminal with Ctrl-C (**the fix in §12.4**), the wake started a new server and resumed the thread attached; the next turn ran | `11-down-view`, `11-herdr-status`, `11-tui-server-down`, `11-audit`, `11-tui-recovered` |
+| 12 | Send home | The worker removed; no marked process, no launcher, socket, pid file or log; the `codex_launch` record gone | `12-fire-ack`, `12-after-send-home` |
+| 13 | Two shared workers | Two servers (two pids, two sockets), two threads. One worker's batch named on the other is `stale` ("no such question batch"), the other's thread `stale` too; each answer reached only its own worker's model input | `BridgeWorkers/servers-and-threads`, `crossed-answers`, `mock-replies` |
+
+### 12.3 Unchanged paths, rollout and rollback [R]
+
+`TestCodexShareBridgeRollout`.
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 14 | The switch on a fresh store | `enabled: false`, `available: true` | `BridgeRollout/14-switch-default` |
+| 14 | A Codex hire with the switch off | No `codex` in the ack or on the worker, no `codex_launch` record, argv exactly `codex -m mock -c model_reasoning_effort=low --dangerously-bypass-approvals-and-sandbox` | `14-l1-record`, `14-l1-argv` |
+| 14 | A Claude hire with the switch on | No `codex`, no record, argv `claude --model … --effort low --permission-mode bypassPermissions --name …` (no prompt, so no inference) | `14-claude-hire-ack`, `14-claude-argv` |
+| 14 | Claude's and the legacy blocking question paths | Unchanged code; their bridge-level tests pass (`internal/server/ask_test.go`: `TestAskFromTheTranscript`, `TestAnswerAskCodex`, …; `TestAskTrackerIgnoresCodexAsyncQuestions`), and `make integration` hires real Claude and Codex workers | — |
+| 16 | Rollback | Switched off with a shared worker running: it stayed `shared`, `server: running`, attached, its token's process alive, and its pending question was answered afterwards. The next Codex hire was legacy (no record, the legacy argv). Switched on again: the shared worker kept its launch (same token), the legacy one stayed legacy, and the next hire was shared | `16-switch-off`, `16-s1-after-rollback`, `16-s1-server-after-rollback`, `16-s1-answered`, `16-l2-record`, `16-l2-argv`, `16-switch-on-again`, `16-l2-after-on-argv`, `16-s2-hire-ack` |
+| 15 | An unsupported Codex | herdr-world restarted with a `codex` that prints `codex-cli 0.161.0` (the pane keeps the real one, so the fallback can run): the switch survived the restart; the hire acked `mode: legacy` with `shared Codex server: unsupported Codex version: "codex-cli 0.161.0" (supported: codex-cli 0.160.x); started the usual way`, the same note on the worker (the seat bar), the legacy argv, and a turn ran. The note names the version found, the supported line and what happened: left as it is | `15-note`, `15-u-view`, `15-u-argv`, `15-u-tui` |
+
+### 12.4 Found and fixed: a terminal whose server died could not be put to sleep
+
+Scenario 11 first failed [R]. A TUI whose own server died **ignores `/quit`**: it only waits to reconnect, and its
+footer says "ctrl+c quit" (`BridgeRegression/11-tui-server-down`). So the floor's sleep could not quit it and noted
+"its terminal did not quit"; herdr then kept the pane's session and, on wake, ran **its own** resume: it typed `codex
+resume <thread>` into the restored pane before fish was ready, the bridge saw the pane at its shell and typed its
+launcher line, which fish appended to herdr's unexecuted line (the screen showed ` codex resume <thread>setsid -f fish
+<launcher> …`, exit status 2). The server never started, and the embedded fallback was refused with `agent_name_taken`
+(herdr had restored the pane's agent). The wake's audit: `resume: "failed"`, "the app-server … did not answer … ;
+starting it without its own server failed too: … agent_name_taken". In production that herdr resume is a plain
+`codex resume`, which starts the user's CODEX_HOME daemon (B2).
+
+One Ctrl-C exits such a TUI at once ("Disconnected from this task…"), and with its server gone there is no turn to
+interrupt. **Fix** (`internal/server/codexfloor.go`, `hire.go`): the sleep presses Ctrl-C **once**, after `/quit` and
+the Enters failed, and **only** when the worker's recorded server is gone (pid gone, or another process under it);
+send home treats such a worker like a legacy one (its Ctrl-Cs). A TUI whose server runs still never gets Ctrl-C (#155
+R1). Unit tests: `TestSharedCodexSleepQuitsATerminalWhoseServerDied` (dead and alive), `TestSharedCodexSendHomeWhenItsServerDied`.
+With the fix the sleep notes "its codex server was gone: its terminal quit on Ctrl-C" and the wake resumes attached
+(`11-audit`).
+
+What remains: the wake's **safety net** for a pane herdr resumed its own way (#155 decisions row 1, "quit, then
+relaunched") did not hold in this run. The bridge read the pane as at its shell while herdr's resume line was still
+unexecuted, and herdr's restored agent kept the name. It is only reached now when a shared terminal does not quit at
+sleep while its server runs (a dialog left open, for instance); the sleep's note says so. Recorded as a limitation.
+
+### 12.5 The real-model run [R-real]
+
+`TestCodexShareBridgeRealModelSmoke` (`H3D_CODEXSHARE_REAL=1`), once, `gpt-6.1-sol` at low effort. herdr-world
+(`app.Serve`) aimed at a throwaway Herdr session on the user's real `~/.codex`, the switch on, a hire into a fresh
+directory: `mode: shared`, its own server from the pane (`BridgeRealModelSmoke/hire-ack`, `launch`); no trust or
+hooks dialog. Turn 1 asked the model to queue one async question: it called `request_user_input_async` ("Pick a color",
+Red / Blue) and replied `ASKED` (`turn1-ask`). The bridge saw the batch, `call_1c19…`, and answered `Red` (`turn/start`,
+the thread idle); the view went `answered`, `answered_by: bridge` (`answer-ack`, `answered`). The thread's rollout has
+**one** user message carrying that envelope (`model-visible`). Tokens: **34,218** in all (the asking turn's
+`token_count`; the answer's turn recorded none). Then the thread was archived through the worker's own socket and the
+worker sent home: no marked process, no files left. The CODEX_HOME daemon's pid file and start ticks and the
+checksums of `config.toml` and `hooks.json` were the same before and after (`baseline-before`, `baseline-after`).
+
+**Not shown with the real model: the model's reply to the answer.** The test's wait for the answer's turn returned on
+herdr's `idle` before that turn had begun, so the archive ran 0.26 s into it and interrupted it (`turn_aborted`,
+`18-rollout-read-after-the-run`, read from the archived rollout afterwards). The answer was in the thread's input when
+the turn started; the run does not show the model acting on it. The suite now waits for the turn's end in the join's
+view; the one allowed run was not repeated. Two turns were used of the five allowed.
+
+### 12.6 Limitations after #158
+
+- **Both views answering one question before delivery reach the model twice**, and the bridge then shows the one
+  delivered last (§12.1 5b). The bridge cannot see an answer queued in the terminal until Codex delivers it.
+- **Approvals never occur on a hired worker** (hire's bypass flag); the bridge's passivity towards approvals is shown
+  at the adapter level only (#155).
+- **Images** reach a shared worker as their path in the text, as for every Codex worker; Codex's own image input
+  (`input_image`) is not used on either path. Drop Zone's upload was not part of the suite (the marker was built
+  directly; the bridge never reads it).
+- **The wake's safety net** for a pane herdr resumed its own way failed in development (§12.4); after the fix it is
+  reached only when a live-server terminal does not quit at sleep.
+- **The game's own views were not driven against the real TUI**: the suites use the game's protocol, not its
+  browser. The cards and the terminal/transcript toggle are #157's vitest and e2e against the fixture server.
+- **The real-model run did not show the model's reply to the bridge's answer** (§12.5).
+- Codex releases other than 0.160.x, and orchestrator-created (write-code) workers, which stay embedded (D7).
+- Whether the terminal's editor takes free text on a question with options (the terminal answers here were free-text
+  questions; the bridge stays strict).
+
+### 12.7 Epic requirement ledger
+
+Every product requirement of #153 and every acceptance item of #158, verified (with evidence) or a limitation.
+The default stays **off**: the switch is opt-in (#158's decision).
+
+| Requirement | Status | Evidence / reason |
+|---|---|---|
+| #153: the terminal remains Codex's own UI: typing | verified [R] | `BridgeRegression/9-typed-prompt-ack`, `9-tui-typed` |
+| … slash commands | verified [R] | `9c-status-prompt-ack`, `9c-tui-status` |
+| … skills | verified [R] | `9c-tui-skill` |
+| … interrupts | verified [R] | `9d-tui-interrupted`, `BridgeQuestions/6-tui-interrupted` |
+| … approvals | limitation | never asked with hire's arguments (`9e-tui`); approvals reach the terminal and the bridge stays passive: #155 [R] `TestCodexShareSharedApprovals` (adapter level) |
+| … images | verified as today [R], with limits | path in the text on both paths, the transcript shows it as an image (`9f-image`, `9g-transcript`); no `input_image`; upload not exercised |
+| … terminal/transcript switching | partly | the transcript of a shared worker is its thread and opening it changes nothing (`9g-transcript`); the game's toggle itself: #157's e2e, not against a real TUI |
+| #153: both views refer to the same worker and conversation; opening the transcript starts no turn and overrides no setting | verified [R] | `9-settings`, `9g-transcript`, `9g-after-watch`; #155 [R-real] (the join started no turn) |
+| #153: async questions can be answered while the worker still works; they do not disable the composer or make it a blocking ask | verified [R] | `BridgeQuestions/1-*` (answered during the turn); `BridgeRegression/9b-*` (a prompt while `blocked` is steered); #157 counts such a worker as working |
+| #153: suggested answers and free text | verified [R] | `BridgeQuestions/1-*` (option), `3-*`, `2-*` (free text) |
+| #153: multiple pending questions | verified [R] | `1-batch` (two in one batch), `4-batches` (seven batches), `BridgeWorkers/*` |
+| #153: retries | verified [R] | `6-*` (undelivered, resent once, then `stale`) |
+| #153: reconnects | verified [R] | `7-*` (game disconnect and bridge restart, no duplicate batch); `10-*` (sleep and wake) |
+| #153: answers submitted from the terminal | verified [R], with a limit | `2-*` (`answered_by: other`); both views on one question reach the model twice (`5b-*`) |
+| #153: "Sent" means accepted; "Answered" needs a verified association | verified [R] | `1-sent` then `1-answered`, `6-undelivered`; architecture.md "Delivered input vs verified native question resolution" |
+| #153: preserve the Claude and blocking-question flows | verified [R] | `BridgeRollout/14-claude-*`; `ask_test.go`, `TestAskTrackerIgnoresCodexAsyncQuestions`; `make integration` |
+| #153: the Codex connection change behind an opt-in switch | verified [R] | `14-switch-default`, `14-l1-*` |
+| #158: real-TUI evidence: answers from both views, active and idle turns, native question-state reconciliation | verified [R]; [R-real] for one bridge answer | §12.1 rows 1, 2, 3, 8; §12.5 |
+| #158: normal terminal and transcript workflows, bridge disconnect and worker resume | verified [R], approvals a limitation | §12.2; §12.1 row 7 |
+| #158: one reply, one model-visible answer with retries and reconnects; a handled card cannot submit again | verified [R], with the 5b limit | `4-model-visible-answers`, `5-*`, `6-*`, `7-*` (`stale` for sending, sent, answered, dismissed) |
+| #158: opt-in rollout, actionable unsupported-version behaviour, rollback: documented and verified | verified [R] | §12.3; architecture.md "Shared Codex workers" |
+| #158: repo docs explain the architecture and distinguish delivered input from verified resolution | done | architecture.md "Shared Codex workers"; protocol.md "Codex async questions" |
+| #158: all epic requirements verified or recorded as limitations | done | this table; §12.6 |

@@ -1053,7 +1053,7 @@ back, the branch h3d/… is kept (it has commits since …)`) and in the audit r
    short pause (its command popup takes the first Enter otherwise), `Enter`. The bridge waits up to 8 s for the pane to
    be back at its shell (`herdr pane process-info`), pressing `Enter` again up to 3 times on the way (an agent still
    starting up drops it), then tries `Ctrl-C` twice (an agent the bridge has no exit command for gets only the
-   `Ctrl-C`s; a shared Codex worker, #155, gets none); `released` says whether the agent left by itself. **The workspace is closed only once the agent is
+   `Ctrl-C`s; a shared Codex worker, #155, gets none unless its own server is already gone, #158); `released` says whether the agent left by itself. **The workspace is closed only once the agent is
    gone**: if it is still running after all that, or its pane's processes cannot be read, nothing is closed or
    removed and the answer is `fire_failed` (the message says the agent is still running; audited with the keys
    sent). The worker stays; send it home again, or deal with it in herdr. A graceful exit ends the agent's resume
@@ -3028,7 +3028,11 @@ after 60 s too. The transcript still comes from the rollout under `~/.codex/sess
   A shared worker's terminal that does not quit after `/quit` and the Enters gets **no** `Ctrl-C` (on a dialog the
   bridge did not expect it opens Codex's agent command center, which lists your other threads): the send home is
   `fire_failed`, nothing is closed and the server keeps running; quit it in its terminal and send it home again.
-- **`floor.sleep`** quits each shared worker's TUI (`/quit`, Enter), waits until herdr no longer names its session
+  #158: the one exception is a worker whose server is already gone (its pid gone or another process under it). Its
+  terminal only waits to reconnect, ignores `/quit` and offers "ctrl+c quit"; it gets the `Ctrl-C`s a legacy worker
+  gets, and with its server gone there is no turn to interrupt.
+- **`floor.sleep`** quits each shared worker's TUI (`/quit`, Enter; #158: one `Ctrl-C` after them when its server is
+  already gone, as above, else herdr would keep its session and resume it its own way on wake), waits until herdr no longer names its session
   (herdr forgets it a moment after the quit; a session stopped before would save the id and resume the pane its own
   way, without the server), stops the server, and only then stops the session. Shared workers are never backfilled
   (`report-agent-session`). The sleep's audit result lists them under `shared`.
@@ -3047,7 +3051,8 @@ after 60 s too. The transcript still comes from the rollout under `~/.codex/sess
   `note: "shared Codex server: <why>; resumed without its own server, on Codex's built-in one"` (or `started …`); its
   next sleep and wake treat it as any shared worker and try its server again.
 - The bridge checks each shared server every 3 s: one that died is `server: "down"` (herdr would still show the TUI as
-  working: it waits to reconnect). Sleeping and waking the floor starts it again.
+  working: it waits to reconnect). Sleeping and waking the floor starts it again (verified through the bridge, #158:
+  the sleep quits the waiting terminal with `Ctrl-C`, the wake resumes the thread attached to a new server).
 
 Orchestrators that start Codex workers through the herdr CLI (write-code) bypass the bridge; such a worker is
 launched the same way with the same two calls, `pane run <pane> '<server start>'` then `agent start … -- --remote

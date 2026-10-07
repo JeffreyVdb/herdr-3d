@@ -187,6 +187,42 @@ func TestCodexShareBridgeRegression(t *testing.T) {
 		}
 	})
 
+	t.Run("9 the transcript subscription: the same conversation, no turn, the image marker as an image", func(t *testing.T) {
+		models := f.mock.ModelRequests()
+		v := c.view("9g-before-watch", w.id)
+		var tr proto.TranscriptWatchResult
+		raw := c.ack(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: w.id, Limit: 200}, 30*time.Second, &tr)
+		var lines []string
+		images := 0
+		for _, it := range tr.Items {
+			text := ""
+			for _, p := range it.Parts {
+				if p.Image != nil {
+					images++
+					text += fmt.Sprintf("[image origin %s unavailable %v] ", p.Image.Origin, p.Image.Unavailable)
+				}
+				text += p.Text
+			}
+			if !it.Hidden && (it.Kind == proto.ItemUser || it.Kind == proto.ItemAssistant) {
+				lines = append(lines, it.Kind+": "+oneLine(text, 120))
+			}
+		}
+		f.record("9g-transcript.txt", scrub(f, fmt.Sprintf("head: harness %s session %s pending %v (thread %s)\n%s\n",
+			tr.Harness, tr.Session, tr.Pending, v.Thread, strings.Join(lines, "\n"))))
+		_ = raw
+		time.Sleep(2 * time.Second)
+		after := c.view("9g-after-watch", w.id)
+		joined := strings.Join(lines, "\n")
+		if tr.Harness != "codex" || tr.Session != v.Thread || !strings.Contains(joined, "typed-through-the-bridge") ||
+			!strings.Contains(joined, "steered-while-blocked") || images == 0 {
+			t.Errorf("the transcript is not the worker's conversation (or lost the image marker)")
+		}
+		if n := f.mock.ModelRequests(); n != models || !after.Attached || after.Thread != v.Thread {
+			t.Errorf("opening the transcript: %d model requests, attached %v", n-models, after.Attached)
+		}
+		c.ack(proto.CmdTranscriptUnwatch, proto.WorkerArgs{ID: w.id}, 10*time.Second, nil)
+	})
+
 	var pending proto.CodexBatch
 	t.Run("10 sleep and wake: the thread resumes attached, a pending question recovered", func(t *testing.T) {
 		seen := batchIDs(c, w.id, 1)
