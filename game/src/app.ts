@@ -61,7 +61,7 @@ import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/start
 // M6 crew: freelancers drop in (M6b) and walk out with their briefcase.
 import { crewRole, inputRequired, isFreelancer } from './world/crew';
 // M7: the issues and pull request boards.
-import { askItemPrompt, askPrompt, BoardBook, nearestDesk, reviewPrompt } from './world/boards';
+import { askInlinesItem, askItemPrompt, askPrompt, BoardBook, nearestDesk, reviewPrompt } from './world/boards';
 import { BoardsPanel, type BoardOff, type BoardState } from './ui/boards/panel';
 import { openExternal } from './ui/boards/external';
 import { OpenPrDialog } from './ui/boards/openPr';
@@ -2269,9 +2269,10 @@ export class App {
    * the worker could not read itself.
    */
   private askAbout(session: string, card: IssueCard, provider: string, body: string | null): void {
+    if (askInlinesItem(provider) && body === null) return; // the board offers it only once the description is read
     const desk = this.nearestFreeDesk(session);
     this.boardsPanel.close();
-    const prompt = provider === 'kaneo' ? askItemPrompt(this.boardsPanel.providerLabel(), card, body) : askPrompt(card.key, card.url);
+    const prompt = askInlinesItem(provider) ? askItemPrompt(this.boardsPanel.providerLabel(), card, body) : askPrompt(card.key, card.url);
     this.openHire(desk ?? undefined, { prompt });
   }
 

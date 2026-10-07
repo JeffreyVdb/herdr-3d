@@ -41,7 +41,10 @@ const board = (over: Partial<BoardIssues> = {}): BoardIssues => ({
   ...over,
 });
 
-function setup(issues: BoardIssues) {
+type Answer = { ok: true; data: unknown } | { ok: false; code: string; message: string };
+
+/** `get`, when given, answers issue.get (the test resolves it when it likes). */
+function setup(issues: BoardIssues, get?: () => Promise<Answer>) {
   const state: BoardState = { issues, prs: null, off: null };
   const sent: Array<{ t: string; args: Record<string, unknown> }> = [];
   const asked: unknown[][] = [];
@@ -54,7 +57,7 @@ function setup(issues: BoardIssues) {
     external: (u: string) => opened.push(u),
     send: async (t: string, args: Record<string, unknown>) => {
       sent.push({ t, args });
-      if (t === 'issue.get') return { ok: true, data: { card: issues.cards[0], body: 'The **description**', author: { name: '' }, created_at: 0, comments: [] } };
+      if (t === 'issue.get') return get ? get() : { ok: true, data: { card: issues.cards[0], body: 'The **description**', author: { name: '' }, created_at: 0, comments: [] } };
       return { ok: true, data: {} };
     },
     toast: () => {},
@@ -116,6 +119,32 @@ describe('a Kaneo board (#184)', () => {
     expect(opened).toEqual(['https://tasks.example.test/dashboard/workspace/w/project/p/task/t1']);
     foot.querySelector<HTMLButtonElement>('[data-key="ask"]')!.click();
     expect(asked[0]?.slice(2)).toEqual(['kaneo', 'The **description**']);
+  });
+
+  it('asks a worker only once the task’s description is read: not while it loads, not after it failed', async () => {
+    let answer: (a: Answer) => void = () => {};
+    const { panel, asked } = setup(board(), () => new Promise<Answer>((r) => (answer = r)));
+    panel.openItem('issues', 'floor', 't1');
+    await tick();
+    const ask = () => document.querySelector<HTMLButtonElement>('[data-key="ask"]')!;
+    expect(ask().getAttribute('aria-disabled')).toBe('true');
+    expect(ask().title).toContain('Reading');
+    ask().click();
+    expect(asked).toHaveLength(0);
+    expect(document.querySelector('.dd-status--error')!.textContent).toContain('description');
+    answer({ ok: false, code: 'timeout', message: '' });
+    await tick();
+    expect(ask().getAttribute('aria-disabled')).toBe('true');
+    ask().click();
+    expect(asked).toHaveLength(0);
+    // Try again reads it, and then the ask carries it.
+    document.querySelector<HTMLButtonElement>('[data-key="retry"]')!.click();
+    await tick();
+    answer({ ok: true, data: { card: task('t1', 'to-do'), body: 'Read at last', author: { name: '' }, created_at: 0, comments: [] } });
+    await tick();
+    expect(ask().getAttribute('aria-disabled')).toBeNull();
+    ask().click();
+    expect(asked[0]?.slice(2)).toEqual(['kaneo', 'Read at last']);
   });
 
   it('says a truncated board is incomplete, and a drop there moves only the status', async () => {

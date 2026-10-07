@@ -380,6 +380,9 @@ export const askPrompt = (key: string, url: string | undefined): string => `Inve
 /** #184: how much of a description "Ask a worker…" hands over (the worker cannot read the provider itself). */
 const ASK_BODY_MAX = 4000;
 
+/** #184: whether "Ask a worker…" hands the item's description over (an agent cannot read the provider's items). */
+export const askInlinesItem = (provider: string | undefined): boolean => provider === 'kaneo';
+
 /**
  * #184: "Ask a worker…" for a provider whose items an agent cannot read (no GitHub issue to `gh issue view`, and the
  * bridge's key never reaches an agent): the key, title, link and the description it was given (its start), then the

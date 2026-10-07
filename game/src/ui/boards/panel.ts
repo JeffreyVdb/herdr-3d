@@ -1,6 +1,6 @@
 import type { CommandResult } from '../../net/client';
 import type { BoardComment, BoardIssues, BoardLabel, BoardPrs, IssueCard, IssueDetail, PrDetail, PullRequest, CloseReason, MergeMethod, CommentAck } from '../../net/protocol';
-import { can, CHECKS_WORD, CLOSE_REASONS, closedWord, columnViews, itemWord, type ColumnView, closesText, freshness, holdersOf, keysById, MERGEABLE_WORD, mergeBlocker, paperOf, pinOf, PRIORITY_WORD, readableInk, REVIEW_WORD, timeAgo, verdictOf } from '../../world/boards';
+import { askInlinesItem, can, CHECKS_WORD, CLOSE_REASONS, closedWord, columnViews, itemWord, type ColumnView, closesText, freshness, holdersOf, keysById, MERGEABLE_WORD, mergeBlocker, paperOf, pinOf, PRIORITY_WORD, readableInk, REVIEW_WORD, timeAgo, verdictOf } from '../../world/boards';
 import type { WorkerView } from '../../world/store';
 import { h, icon, ICON, replaceKeepingFocus } from '../dom';
 import { failureText } from '../messages';
@@ -764,7 +764,23 @@ export class BoardsPanel {
         label,
       );
     if (open) actions.push(btn('hand', 'Hand to a worker', () => this.host.handTo(session, card, board?.provider ?? ''), { cls: 'btn--primary', why: noRun, title: `Start a run on this ${itemWord(board?.provider)} at the free desk nearest to you` }));
-    if (open) actions.push(btn('ask', 'Ask a worker…', () => this.host.ask(session, card, board?.provider ?? '', this.issueDetail.state === 'ready' ? this.issueDetail.data.body : null), { why: noHire, title: 'Hire a worker to look into it and report back, without changing code' }));
+    if (open) {
+      // #184: a worker cannot read a Kaneo task, so its prompt carries the description: not until it is read.
+      const d = this.issueDetail;
+      const noBody = !askInlinesItem(board?.provider)
+        ? null
+        : d.state === 'loading'
+          ? `Reading the ${itemWord(board?.provider)} from ${name}: ask once its description is in.`
+          : d.state === 'error'
+            ? `The ${itemWord(board?.provider)}’s description could not be read, and the worker needs it: try again first.`
+            : null;
+      actions.push(
+        btn('ask', 'Ask a worker…', () => this.host.ask(session, card, board?.provider ?? '', d.state === 'ready' ? d.data.body : null), {
+          why: noHire ?? noBody,
+          title: 'Hire a worker to look into it and report back, without changing code',
+        }),
+      );
+    }
     if (can(board, card, 'set_status') && board) {
       const cols = board.columns.filter((c) => c.id !== '' && c.id !== card.column);
       if (cols.length) {
