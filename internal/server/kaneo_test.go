@@ -202,8 +202,8 @@ func TestKaneoFloorSettings(t *testing.T) {
 	kb.saveConnection(kaneoKey)
 	c.mustError(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", Tracker: proto.Some(proto.TrackerKaneo)}, proto.ErrBadRequest)
 	c.mustError(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", Tracker: proto.Some("jira")}, proto.ErrBadRequest)
-	c.mustError(proto.CmdFloorSettings, link("ws1", "p2"), proto.ErrBadRequest)  // another workspace's project
-	c.mustError(proto.CmdFloorSettings, link("ws1", "p3"), proto.ErrBadRequest)  // archived
+	c.mustError(proto.CmdFloorSettings, link("ws1", "p2"), proto.ErrBadRequest) // another workspace's project
+	c.mustError(proto.CmdFloorSettings, link("ws1", "p3"), proto.ErrBadRequest) // archived
 	c.mustError(proto.CmdFloorSettings, link("ws1", "gone"), proto.ErrNotFound) // deleted
 
 	// A GitHub floor first: its repo and project stay through the switch.

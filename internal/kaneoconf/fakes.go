@@ -133,4 +133,6 @@ func (f *FakeConnector) Project(ctx context.Context, in Instance, key, projectID
 }
 
 // Unreachable is the error a fake answers for a network failure.
-func Unreachable() error { return errors.Join(ErrUnreachable, errors.New("dial tcp: connection refused")) }
+func Unreachable() error {
+	return errors.Join(ErrUnreachable, errors.New("dial tcp: connection refused"))
+}
