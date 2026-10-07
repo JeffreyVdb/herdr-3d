@@ -460,14 +460,64 @@ reviewer's scenario: record kept, `item-2` refused, a live change keeps it, the 
 retry `stale`, no second send) and `TestAsyncAnswerKeptThroughAnUnmatchedLegacyRepair` (older turns read, the newest
 not: the same, the next join coming from the rejoin timer, which stops once resolved).
 
+**When the view drops the batch** (review round 3, decisions #158 row 16). Round 2's "unresolved" was read from the
+batches the bridge keeps, not from the join, and a record whose batch the view did not show was deleted on any live
+change once no `item-N` batch was left in it. The view holds 32 batches per thread and drops dismissed (and answered)
+ones first: with 31 older unanswered batches, dismissing `item-2` and one more question evicted it, the view looked
+resolved, the record of `call_3` went while its answer still waited in `t1`, and the canonical rejoin (the
+`CodexRejoin` timer) made `call_3` `pending` and admitted the same answer into `t1` again (the reviewer's
+`TestReviewEvictedLegacyRepairLosesSendProtection`; without any legacy id the same follows from a `sent` batch
+evicted by 32 newer questions of its turn). The claims made with that fix, that an evicted batch cannot be answered
+later and that only a failed SQLite write can duplicate, were wrong.
+
+**The invariant.** A record goes only on positive evidence that its answer can no longer be delivered, or already was.
+The bridge's view (bounded, evictable, dismissable, under legacy ids) is never evidence: each path below decides from
+the envelope, the server's response, the launch or the join's own history.
+
+| Path (code) | Drops a record when | Evidence |
+|---|---|---|
+| a live user message (`codexNotification`) | an envelope names its question | answered: read from the envelope's text, so it holds whatever the view kept of the batch and whatever id the item has |
+| `pruneSends` (a live change; a send's response) | the record's thread is not the worker's; its question shows `answered` | thread changed; answered |
+| `answerAsync` | the server refused the answer (JSON-RPC error, after the steer → start fallback) | nothing was delivered |
+| a join (`codexJoined`) | the record's thread is not the join's; an envelope in the history names its question | thread changed; answered |
+| a join, its batch in the history and in the view | `Restore` says it no longer matters: the question answered, or a `turn/start` recorded but never confirmed whose envelope the history lacks | answered; not taken (a started turn's user message is its first item, and a join always reads the newest turns) |
+| a join, its batch not in the history | only if that history is the whole thread (`Thread.Partial` false: no older turns left unread) **and** has no `item-N` id (`codexapp.LegacyHistory` of the join's own turns) | the batch is not in the thread |
+| `noteCodexThread` | herdr reports another thread for the worker | thread changed |
+| `forgetCodex` | the worker is sent home | it is gone |
+| `loadSends` | the worker is no longer a shared one when the bridge starts | no bridge path answers it |
+
+Kept, because none of these is evidence: the batch evicted from the view (the record outlives it; eviction never drops
+a batch whose answer is in flight, `sending`); dismissed, and dismissed then evicted; a join whose history has an
+`item-N` id (unresolved is now a property of that join, cleared only by a later join that reads every id; eviction,
+dismissal and live events do not change it); a partial history; a batch the join's hydration itself evicts (the view
+keeps the newest 32 of what it reads); an unrelated live item; the turn ending without the answer (`undelivered`).
+Re-admission is gated the same way: a batch seen again, by a join or live, gets its record back (`sent`, or `sent,
+undelivered` when its turn ended), so only a refusal or an ended turn makes the bridge's own answer answerable again.
+
+Tests (red before the fix, green after): `server.TestAsyncAnswerKeptThroughAnEvictedLegacyBatch` (the reviewer's
+scenario), `TestAsyncAnswerKeptThroughAnEvictedBatch` (no legacy id: evicted by 32 newer questions, seen live again,
+a rejoin and a restart that evict it again while reading, the envelope removing the record of a batch the view no
+longer has), `TestAsyncAnswerKeptThroughADismissedEvictedBatch`, and `TestAsyncSendRecordInvariant`, one row per path
+of the table and per kept case (21 rows; before the fix the eviction, dismissal-then-eviction, partial, hydration
+eviction and "answered in an unresolved history" rows failed). In `codexapp`: `TestQuestionsKeepABatchWhileItsAnswerIsSending`,
+`TestHistoryHelpers`, `TestWatcherHistoryPartial`. Mutations: dropping the `Partial` gate fails the partial row;
+dropping the live envelope check fails "answered live after its batch was evicted" and the eviction test.
+
 What remains, exactly:
 
 - A bridge that stops after recording an answer and before its request goes out shows it `sent` until that turn ends
   (then `undelivered`): a wait, never a second answer.
-- While the history stays unresolved the `item-N` batch cannot be answered from the transcript (the terminal can);
-  the bridge joins again every 60 s for as long as the read keeps failing. A wait, never a second answer.
-- A batch the bridge no longer keeps (32 per thread, or older than the turns a join reads) loses its record on a
-  resolved join; it cannot be answered from the bridge either (unknown batch: `stale`), so nothing is sent.
+- While a join's history is unresolved the `item-N` batch cannot be answered from the transcript (the terminal can).
+  The bridge joins again once per `CodexRejoin` (60 s) per worker for as long as the read keeps failing, and stops
+  once a join reads every id, the thread changes, the server stops or the worker is sent home. A wait.
+- A batch the bridge no longer shows (32 per thread, or older than the turns a join reads) cannot be answered from the
+  bridge (`stale`, unknown batch); its record stays. Answering it is the terminal's; so is resending an answer of such
+  a batch that went `undelivered`. A limit, never a second answer.
+- Records that never resolve (an answer never delivered and never retried, a batch outside a partial history) stay
+  until the thread changes, the worker is sent home, or it is no longer shared at startup: at most one per question
+  of the thread the bridge answered, no age cap.
+- A record the store failed to delete (logged) stays: it can only keep a question `sent`, and the next join drops it
+  again if the history shows the answer.
 - **A record the store failed to write** (logged as an error) lasts only until the bridge stops: if herdr-world
   restarts before that answer is delivered, a retry is admitted and **the model can see the answer twice**. This is
   the one restart window that can still duplicate; it needs a failing SQLite write.
@@ -599,8 +649,10 @@ run predates §12.1a's fix, which it does not exercise (no restart).
 - **Across a restart** (§12.1a): an answer recorded but not yet sent when herdr-world stopped shows `sent` until its
   turn ends (a wait); a failed or empty `thread/turns/list` on a join leaves the newest turn's batch under resume's
   `item-N` id, unanswerable from the transcript, the records kept and the bridge joining again every 60 s until a join
-  reads its call id (a wait); **a record the store failed to write** (logged) lasts only until the bridge stops, so a
-  restart before that answer is delivered admits a retry the model also sees (the one duplicate window left).
+  reads its call id (a wait); a batch the view no longer holds (32 per thread) is not shown and cannot be answered from
+  the bridge, its record kept (the terminal answers it); **a record the store failed to write** (logged) lasts only
+  until the bridge stops, so a restart before that answer is delivered admits a retry the model also sees (the one
+  duplicate window left). A record is dropped only on evidence, never because the view lacks its batch (§12.1a table).
 - Codex releases other than 0.160.x, and orchestrator-created (write-code) workers, which stay embedded (D7).
 - Whether the terminal's editor takes free text on a question with options (the terminal answers here were free-text
   questions; the bridge stays strict).
@@ -631,7 +683,7 @@ The default stays **off**: the switch is opt-in (#158's decision).
 | #153: the Codex connection change behind an opt-in switch | verified [R] | `14-switch-default`, `14-l1-*` |
 | #158: real-TUI evidence: answers from both views, active and idle turns, native question-state reconciliation | verified [R], [R-real] | §12.1 rows 1, 2, 3, 8; §12.5; the real game, TUI and model, both views, active and idle, the model reading each answer: §12.5a |
 | #158: normal terminal and transcript workflows, bridge disconnect and worker resume | verified [R], approvals a limitation | §12.2; §12.1 row 7 |
-| #158: one reply, one model-visible answer with retries and reconnects; a handled card cannot submit again | verified [R], [R-real], with the 5b limit | `4-model-visible-answers`, `5-*`, `6-*`, `7-*` (`stale` for sending, sent, answered, dismissed); across a herdr-world restart before delivery `BridgeRestartSent/model-visible-answers`, `1-retry-*`, and when re-reading the legacy ids fails the unit tests of §12.1a (what remains there are waits, except an answer whose record the store failed to write, §12.1a); the game's answered card: `RealGame/18-answered-no-resend.png`, `duplicate-submit-check.json` |
+| #158: one reply, one model-visible answer with retries and reconnects; a handled card cannot submit again | verified [R], [R-real], with the 5b limit | `4-model-visible-answers`, `5-*`, `6-*`, `7-*` (`stale` for sending, sent, answered, dismissed); across a herdr-world restart before delivery `BridgeRestartSent/model-visible-answers`, `1-retry-*`, and when re-reading the legacy ids fails or the view drops the batch the unit tests of §12.1a, `TestAsyncSendRecordInvariant` driving every record path (what remains there are waits and limits, except an answer whose record the store failed to write, §12.1a); the game's answered card: `RealGame/18-answered-no-resend.png`, `duplicate-submit-check.json` |
 | #158: opt-in rollout, actionable unsupported-version behaviour, rollback: documented and verified | verified [R] | §12.3; architecture.md "Shared Codex workers" |
 | #158: repo docs explain the architecture and distinguish delivered input from verified resolution | done | architecture.md "Shared Codex workers"; protocol.md "Codex async questions" |
 | #158: all epic requirements verified or recorded as limitations | done | this table; §12.6 |

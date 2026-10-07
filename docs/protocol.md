@@ -3114,9 +3114,12 @@ thread's newest turn (running or interrupted) under its legacy item ids (`item-1
 `call_id`; the join reads such turns again with `thread/turns/list`, which has the `call_id`. If that read fails, or
 has nothing for the turn, the batch shows under its `item-N` id and the join is **unresolved**: that batch cannot be
 answered (`invalid_state`: Codex does not know the id; answer in the terminal or wait), the bridge's records of its
-answers are kept (below), and the bridge joins again after a minute (`CodexRejoin`) for as long as it stays so. Each
-join replaces the last one's `item-N` batches: those ids are one join's. Questions are kept per worker and thread, not per
-join: a lost connection, a sleep and a wake keep them; send home forgets them.
+answers are kept (below), and the bridge joins again after a minute (`CodexRejoin`) for as long as it stays so.
+Unresolved is the join's (the history it read), not the questions shown: dismissing or dropping the `item-N` batch does
+not clear it, only a join that reads every id does. Each join replaces the last one's `item-N` batches: those ids are
+one join's. At most 32 batches are kept per thread (dismissed and answered ones dropped first, never one whose answer
+is `sending`); a join reading more keeps the newest. Questions are kept per worker and thread, not per join: a lost
+connection, a sleep and a wake keep them; send home forgets them.
 
 **Across a bridge restart** (#158). Codex holds a steered answer in the running turn until its next model request, and
 the history shows it only then, so the history alone would make such a question `pending` again and a retry would be
@@ -3132,17 +3135,20 @@ turn it reached, or that no response came. On the next join, after the history, 
 | no response came | `sent`, `unconfirmed`, as before the restart: never sent again by the bridge |
 | a `turn/start` the server never confirmed | `pending`: its user message would be in the history had it been taken |
 
-A question the history shows `answered` keeps that state, and its record goes; records also go when the server
-refuses the answer, the thread changes, on send home (or when the worker is no longer shared at startup), and when
-the batch is unknown to a **resolved** history (one without `item-N` batches; an unresolved one keeps them: the batch
-may be under such an id). Nothing else drops a record, so there is at most one per question the bridge answered. A
-dismissed question's record is kept (the dismissal itself is not), so after a restart it shows `sent`, not `pending`.
-What remains: a bridge that stops after recording an answer and before its request goes out shows it `sent` until that
-turn ends (then `undelivered`), and an unresolved join keeps its `item-N` batch unanswerable until a join reads it:
-waits, never a second answer. A batch the bridge no longer keeps (32 per thread, or older than the turns read) loses
-its record on a resolved join, and cannot be answered from the bridge either (`stale`). A record the store failed to
-write is logged and lasts only until the bridge stops: a restart before that answer is delivered admits a retry, and
-the model can see the answer twice.
+A record goes only on evidence that its answer can no longer be delivered, or was: an envelope naming its question
+(live or in a join's history, whether or not the bridge still shows the batch), the server refusing the answer, the
+thread changing, send home (or the worker no longer shared at startup), a `turn/start` never confirmed whose envelope
+the history lacks, and, on a join, its batch missing from a history that is the **whole** thread (no older turns left
+unread) with no `item-N` id. What the bridge shows is not evidence: a batch dropped from the view (32 per thread,
+dismissed and answered ones first; never one whose answer is in flight), dismissed, or under an `item-N` id keeps its
+record, and a join or live event that shows the batch again makes it `sent` again. So there is at most one record per
+question the bridge answered, kept until one of those causes. A dismissed question's record is kept (the dismissal
+itself is not), so after a restart it shows `sent`, not `pending`. What remains: a bridge that stops after recording
+an answer and before its request goes out shows it `sent` until that turn ends (then `undelivered`), and an
+unresolved join keeps its `item-N` batch unanswerable until a join reads it: waits, never a second answer. A batch the
+bridge no longer shows cannot be answered from the bridge (`stale`, unknown batch; the terminal can). A record the
+store failed to write is logged and lasts only until the bridge stops: a restart before that answer is delivered
+admits a retry, and the model can see the answer twice (the one window left).
 
 **`worker.answer_async`** `{id, thread, batch, answers: [{index, answer}]}` answers one or more questions of one batch
 in one envelope (the native format, which the terminal shows as an answer, not as raw text, and the transcript as the

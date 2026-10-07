@@ -167,9 +167,12 @@ MacBook (M2 Max)                                   devbox (Linux)
     it (#158, findings §12.1a; protocol "Across a bridge restart"). A restarted bridge reads the thread's newest turns
     with `thread/turns/list`, because `thread/resume` gives them under legacy item ids, not the question's call id;
     when that read fails, the join is unresolved: records are kept, an answer to an `item-N` batch is refused (the
-    terminal can answer), and the bridge joins again every minute until a join reads the call ids. The one restart
-    window that can still duplicate an answer is a record SQLite failed to write (logged): it is lost with the
-    process.
+    terminal can answer), and the bridge joins again every minute until a join reads the call ids. A record goes
+    only on evidence that its answer cannot be delivered or was (its envelope seen, the answer refused, the thread
+    changed, send home, or its batch absent from a whole, resolved history), never because the bridge's view (32
+    batches per thread, dismissable) no longer shows its batch: the record outlives the batch's eviction and comes
+    back with it. The one restart window that can still duplicate an answer is a record SQLite failed to write
+    (logged): it is lost with the process.
     Known limits (findings §12): the terminal and the transcript both answering one question before delivery reach the
     model twice (the bridge cannot see the terminal's queued answer), approvals and Codex's blocking questions stay
     in the terminal, images reach Codex as their path in the text (as for any Codex worker).
