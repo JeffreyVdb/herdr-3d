@@ -14,7 +14,8 @@
  * status. Motion goes under `prefers-reduced-motion` and battery saver (`data-calm`): no cascade, flap or blink.
  */
 
-import { BLINK_MS, orchWords, sinceText, visibleRows, type CountItem, type OverviewData, type OverviewRow, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
+import { lineStatusText } from '../world/digestSettings';
+import { BLINK_MS, orchWords, sinceText, visibleRows, type CountItem, type OverviewData, type OverviewLine, type OverviewRow, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
 import { h, icon, ICON } from './dom';
 import type { OverviewPrefs } from './overviewPrefs';
 import './overview.css';
@@ -40,6 +41,8 @@ export interface OverviewHost {
   goTo(id: string): void;
   /** A ticket: the in-game issue window over the page. */
   openTicket(session: string, id: string): void;
+  /** #174: ask again for a worker's summary lines that failed (`digest.retry`). */
+  retrySummary(id: string): void;
   /** The empty floor's Hire. */
   hire(): void;
   /** Battery saver (B): no blinking. */
@@ -64,6 +67,9 @@ export interface OverviewInfo {
 }
 
 const reducedMotion = () => globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+
+/** A worker row has a failed AI line that a retry can try again (#174). */
+const retriable = (r: OverviewWorkerRow): boolean => [r.task, r.now].some((l) => l?.status && l.status.state !== 'pending');
 
 /** The row's own signature: it is rebuilt only when this changes. */
 function rowSig(v: VisibleRow): string {
@@ -137,6 +143,7 @@ export class OverviewOverlay {
           ['↵', 'open transcript'],
           ['→ ←', 'expand · collapse'],
           ['t', 'open ticket'],
+          ['r', 'retry AI line'],
           ['Esc', 'close'],
         ] as const
       ).map(([k, t]) => h('span', {}, h('kbd', {}, k), t)),
@@ -414,7 +421,7 @@ export class OverviewOverlay {
     if (r.kind === 'worker') {
       el.dataset.display = r.display;
       el.style.setProperty('--run', r.runColor !== null ? `#${r.runColor.toString(16).padStart(6, '0')}` : 'transparent');
-      const label = [r.name, r.tag, r.model, r.ticket ? `${r.ticket.key}${r.ticket.title ? ` ${r.ticket.title}` : ''}` : null, r.task ? `Task: ${r.task.text}` : null, r.now ? `Now: ${r.now.text}` : null, sinceText(r.display, r.since, now)]
+      const label = [r.name, r.tag, r.model, r.ticket ? `${r.ticket.key}${r.ticket.title ? ` ${r.ticket.title}` : ''}` : null, r.task ? `Task: ${r.task.text}${statusLabel(r.task, 'task')}` : null, r.now ? `Now: ${r.now.text}${statusLabel(r.now, 'now')}` : null, sinceText(r.display, r.since, now)]
         .filter(Boolean)
         .join(' · ');
       el.setAttribute('aria-label', label);
@@ -436,7 +443,7 @@ export class OverviewOverlay {
         'div',
         { class: 'ov-what' },
         r.ticket ? this.ticketEl(r) : null,
-        r.task ? lineEl('ov-task', 'Task', r.task.text, r.task.llm) : null,
+        r.task ? lineEl('ov-task', 'Task', r.task, 'task') : null,
         r.now || r.activity ? this.nowEl(r) : null,
         !r.ticket && !r.task && !r.now && !r.activity ? h('p', { class: 'ov-line ov-quiet' }, 'No turn yet') : null,
       );
@@ -478,6 +485,7 @@ export class OverviewOverlay {
     const p = h('p', { class: 'ov-line ov-now' }, h('b', {}, 'Now'));
     if (r.now) p.append(h('span', { class: 'ov-now-text' }, r.now.text));
     if (r.now?.llm) p.append(h('span', { class: 'ov-llm', title: 'Summarised by the AI model' }, 'AI'));
+    else if (r.now) p.append(...statusEls(r.now, 'now'));
     if (r.activity) p.append(h('span', { class: 'ov-act' }, r.activity));
     return p;
   }
@@ -549,6 +557,7 @@ export class OverviewOverlay {
       if (document.activeElement instanceof HTMLButtonElement && !document.activeElement.closest('.ov-row')) handled = false;
       else this.activate(v.row);
     } else if (k === 't' && v?.row.kind === 'worker') this.ticket(v.row);
+    else if (k === 'r' && v?.row.kind === 'worker' && retriable(v.row)) this.host.retrySummary(v.row.id);
     else handled = false;
     if (handled) {
       e.preventDefault();
@@ -565,6 +574,7 @@ export class OverviewOverlay {
     this.setFocus(v.row.key, false);
     if (t.closest('[data-fold]')) this.toggle(v.row.key, v.expanded);
     else if (t.closest('[data-ticket]') && v.row.kind === 'worker') this.ticket(v.row);
+    else if (t.closest('[data-retry]') && v.row.kind === 'worker') this.host.retrySummary(v.row.id);
     else this.activate(v.row);
   }
 
@@ -658,8 +668,21 @@ export class OverviewOverlay {
   }
 }
 
-function lineEl(cls: string, label: string, text: string, llm: boolean): HTMLElement {
-  return h('p', { class: `ov-line ${cls}` }, h('b', {}, label), h('span', {}, text), llm ? h('span', { class: 'ov-llm', title: 'Summarised by the AI model' }, 'AI') : null);
+function lineEl(cls: string, label: string, line: OverviewLine, kind: 'task' | 'now'): HTMLElement {
+  return h('p', { class: `ov-line ${cls}` }, h('b', {}, label), h('span', {}, line.text), line.llm ? h('span', { class: 'ov-llm', title: 'Summarised by the AI model' }, 'AI') : null, ...statusEls(line, kind));
+}
+
+/** #174: where the AI badge would be, what became of the model's line: a chip (its words in the title and for a screen reader), and Retry when it helps. */
+function statusEls(line: OverviewLine, kind: 'task' | 'now'): HTMLElement[] {
+  if (!line.status) return [];
+  const t = lineStatusText(line.status, kind);
+  const chip = h('span', { class: `ov-ai-state ov-ai-state--${line.status.state}`, title: t.detail, role: 'img', 'aria-label': t.detail }, t.chip);
+  return t.retry ? [chip, h('button', { class: 'ov-retry', tabindex: '-1', 'data-retry': '1', title: 'Try the AI summary again (R)' }, 'Retry')] : [chip];
+}
+
+/** The row's spoken label gets the chip's short words: the rest is on the chip. */
+function statusLabel(line: OverviewLine, kind: 'task' | 'now'): string {
+  return line.status ? ` (${lineStatusText(line.status, kind).chip})` : '';
 }
 
 function svgEl(markup: string): SVGSVGElement {

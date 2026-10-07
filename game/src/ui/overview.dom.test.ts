@@ -36,6 +36,7 @@ function setup(workers: Worker[] = CREW, over: Partial<OverviewHost> = {}) {
     },
     goTo: vi.fn(),
     openTicket: vi.fn(),
+    retrySummary: vi.fn(),
     hire: vi.fn(),
     calm: () => false,
     screenRect: () => null,
@@ -96,6 +97,54 @@ describe('the overview page (#118)', () => {
     expect(marked(rows[0]).every(Boolean)).toBe(true);
     expect(rows[0]?.querySelector('.ov-llm')?.getAttribute('title')).toBe('Summarised by the AI model');
     expect(rows[0]?.textContent).toContain('Running the e2e suite');
+  });
+
+  // #174
+  const STATUSED = [
+    worker('t1', { desk_index: 0, status: 'working', title: 'Reading hub.go', digest: { task: 'Investigate. Missing transcript diffs.', task_source: 'prompt', now_source: 'title', task_status: { state: 'retrying', reason: 'bad_response', attempts: 1, retry_at: NOW + 60_000 }, now_status: { state: 'failed', reason: 'truncated', attempts: 1 } } }),
+    worker('t2', { desk_index: 1, digest: { task: 'Replace Hacker with Ubuntu styling', task_source: 'prompt', now_source: 'title', task_status: { state: 'pending' } }, title: 'idle' }),
+    worker('t3', { desk_index: 2, digest: { task: 'Fine', task_source: 'llm', now_source: 'title', task_status: { state: 'failed', reason: 'timeout' } }, title: 'x' }),
+  ];
+
+  it('says what became of the model’s line where the AI badge would be, and how to recover (#174)', () => {
+    const { ov } = setup(STATUSED);
+    ov.open('top');
+    const rows = [...document.querySelectorAll<HTMLElement>('.ov-row')];
+    const task = (i: number) => rows[i]?.querySelector('.ov-task .ov-ai-state');
+    const now = (i: number) => rows[i]?.querySelector('.ov-now .ov-ai-state');
+    expect(task(0)?.textContent).toMatch(/^AI retry \d\d:\d\d/);
+    expect(task(0)?.getAttribute('title')).toContain('failed: the model’s answer was not usable');
+    expect(task(0)?.getAttribute('title')).toContain('tries again at');
+    expect(now(0)?.textContent).toBe('AI failed');
+    expect(now(0)?.getAttribute('aria-label')).toContain('token budget');
+    expect(now(0)?.getAttribute('title')).toContain('after the next turn');
+    expect(rows[0]?.querySelectorAll('.ov-retry')).toHaveLength(2);
+    // Pending: a quiet chip, no retry; the model's own line carries the badge and no status.
+    expect(task(1)?.textContent).toBe('AI pending');
+    expect(rows[1]?.querySelector('.ov-retry')).toBeNull();
+    expect(rows[2]?.querySelector('.ov-ai-state')).toBeNull();
+    expect(rows[2]?.querySelector('.ov-llm')).not.toBeNull();
+    // The row's spoken label has the words too.
+    expect(rows[0]?.getAttribute('aria-label')).toContain('Task: Investigate. Missing transcript diffs. (AI retry');
+    expect(rows[0]?.getAttribute('aria-label')).toContain('(AI failed)');
+  });
+
+  it('Retry (the button, and R on the focused row) asks the host to try that worker’s summary again', () => {
+    const { ov, host } = setup(STATUSED);
+    ov.open('top');
+    const rows = [...document.querySelectorAll<HTMLElement>('.ov-row')];
+    rows[0]?.querySelector<HTMLButtonElement>('.ov-retry')?.click();
+    expect(host.retrySummary).toHaveBeenLastCalledWith('t1');
+    expect(host.goTo).not.toHaveBeenCalled(); // not an open of the row
+    const press = (key: string) => window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    expect(ov.info().focused).toBe('t1');
+    press('r');
+    expect(host.retrySummary).toHaveBeenCalledTimes(2);
+    press('ArrowDown'); // a pending line is not retried
+    press('r');
+    press('ArrowDown'); // the model's own line has nothing to retry
+    press('r');
+    expect(host.retrySummary).toHaveBeenCalledTimes(2);
   });
 
   it('renders the tree, its lights from the display, and the lines', () => {

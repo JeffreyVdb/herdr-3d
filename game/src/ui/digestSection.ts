@@ -1,7 +1,7 @@
 import type { AiRoleState, CommandArgs, CommandName, DigestState, DigestTestAck } from '../net/protocol';
 import type { CommandResult } from '../net/client';
 import { AI_ROLE_NAME } from '../world/ai';
-import { DIGEST_CAP, digestFailureText, type DigestBook } from '../world/digestSettings';
+import { DIGEST_CAP, DIGEST_TOKENS, digestFailureText, effortChoices, effortNote, usageText, type DigestBook } from '../world/digestSettings';
 import { el } from './settings';
 import type { SectionHandle } from './settings';
 
@@ -16,6 +16,14 @@ export interface DigestSectionHost {
 /** What is sent and where, shown above the switch (#118 "Opt-in"): it is what the switch agrees to. */
 export const DIGEST_PRIVACY =
   'With this on, the bridge sends your configured LLM endpoint, for the floors someone is viewing: the first prompt of each one-off worker, and the last 5 assistant turns of every worker (their text, and each tool call’s name and input summary), with the ticket title or task line as context. Tool output and thinking are never sent, and anything shaped like a key or token is scrubbed first. Prompts and turns can contain code, paths and internal details; a self-hosted OpenAI-compatible endpoint keeps them in-house.';
+
+/** Which AI features the reasoning effort and the completion budget reach (#174): these summaries only. */
+export const DIGEST_SCOPE =
+  'These two settings apply to floor overview summaries only. The other AI features (follow-up questions, pack up, command classification) keep their own limits and send no reasoning effort.';
+
+/** When the lines are written, and when a failed one is tried again (#174; the timing itself is unchanged). */
+export const DIGEST_TIMING =
+  'A task line is written once per prompt for each one-off worker. A now line is written after a turn ends and settles for 2 seconds, at most once a minute per worker. Both only for a floor someone is viewing. A task line that fails is tried again up to 4 times in all, 1, 5 and 15 minutes apart; “Retry failed” does it at once.';
 
 const ROLE_STATE: Record<AiRoleState, string> = { ready: 'Ready', off: 'Not set up', incomplete: 'Unfinished', invalid: 'Paused' };
 /** Share of the cap from which the ledger's bar warns. */
@@ -80,7 +88,7 @@ export function digestSection(host: DigestSectionHost): (body: HTMLElement) => S
     bar.setAttribute('aria-hidden', 'true');
     const fill = el('span', 'settings-act-fill');
     bar.append(fill);
-    const callsNote = el('dd', 'settings-field-hint settings-act-note', 'A line is written after a turn ends, at most once a minute per worker; the same input again reuses its line without a call.');
+    const callsNote = el('dd', 'settings-field-hint settings-act-note', 'A failed call counts like any other; the same input again reuses its line without a call.');
     ledger.append(el('dt', '', 'Summaries today'), callsValue, bar, callsNote);
 
     const cap = el('input');
@@ -98,9 +106,40 @@ export function digestSection(host: DigestSectionHost): (body: HTMLElement) => S
     capLabel.htmlFor = cap.id;
     capField.append(capLabel, cap, capHint);
 
+    // #174: the reasoning effort (the model's own list) and the completion budget (reasoning included).
+    const effort = el('select');
+    effort.id = `${id}-effort`;
+    const effortHint = el('p', 'settings-field-hint');
+    effortHint.id = `${id}-effort-hint`;
+    effort.setAttribute('aria-describedby', effortHint.id);
+    const effortField = el('div', 'settings-field');
+    const effortLabel = el('label', 'settings-field-label', 'Reasoning effort');
+    effortLabel.htmlFor = effort.id;
+    effortField.append(effortLabel, effort, effortHint);
+
+    const tokens = el('input');
+    tokens.type = 'number';
+    tokens.id = `${id}-tokens`;
+    tokens.min = String(DIGEST_TOKENS.min);
+    tokens.max = String(DIGEST_TOKENS.max);
+    tokens.step = '64';
+    tokens.inputMode = 'numeric';
+    const tokensHint = el('p', 'settings-field-hint');
+    tokensHint.id = `${id}-tokens-hint`;
+    tokens.setAttribute('aria-describedby', tokensHint.id);
+    const tokensField = el('div', 'settings-field settings-field--short');
+    const tokensLabel = el('label', 'settings-field-label', 'Completion budget (tokens)');
+    tokensLabel.htmlFor = tokens.id;
+    tokensField.append(tokensLabel, tokens, tokensHint);
+
+    const scope = el('p', 'settings-field-hint settings-dg-scope', DIGEST_SCOPE);
+    const timing = el('p', 'settings-field-hint settings-dg-timing', DIGEST_TIMING);
+
     const test = button('Test');
+    const retry = button('Retry failed');
+    retry.title = 'Ask again for every line whose summary failed';
     const actions = el('div', 'settings-fu-actions');
-    actions.append(test);
+    actions.append(test, retry);
     const status = el('p', 'settings-status');
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
@@ -108,12 +147,13 @@ export function digestSection(host: DigestSectionHost): (body: HTMLElement) => S
     result.hidden = true;
 
     const controls = el('div', 'settings-fu');
-    controls.append(needs, privacy, toggle, toggleHint, ledger, capField, actions, status, result);
+    controls.append(needs, privacy, toggle, toggleHint, ledger, timing, capField, effortField, tokensField, scope, actions, status, result);
     body.append(lede, missing, controls);
 
     let busy = false;
     let note: { text: string; error: boolean } | null = null;
     let capDirty = false;
+    let tokensDirty = false;
     /** The switch's position while its digest.set is on its way (null: the bridge's). */
     let wanted: boolean | null = null;
 
@@ -160,7 +200,30 @@ export function digestSection(host: DigestSectionHost): (body: HTMLElement) => S
 
       if (!capDirty && document.activeElement !== cap) cap.value = String(s.daily_cap);
       cap.disabled = busy;
+
+      // The effort: exactly what the model's catalog lists; a saved one it does not take stays visible, marked.
+      const choices = effortChoices(s);
+      const sig = JSON.stringify(choices);
+      if (effort.dataset.sig !== sig) {
+        effort.dataset.sig = sig;
+        effort.replaceChildren(
+          ...choices.map((c) => {
+            const o = el('option', '', c.label);
+            o.value = c.value;
+            o.disabled = !!c.stale;
+            return o;
+          }),
+        );
+      }
+      effort.value = s.reasoning_effort;
+      effort.disabled = busy || (s.reasoning.support === 'unsupported' && !s.effort_stale);
+      effortHint.textContent = effortNote(s);
+      effortHint.classList.toggle('settings-field-error', s.effort_stale);
+      if (!tokensDirty && document.activeElement !== tokens) tokens.value = String(s.max_tokens);
+      tokens.disabled = busy;
+      tokensHint.textContent = `In use: ${figures(s.max_tokens)}. The most the model may generate for one line, its reasoning included; not the line's length (task lines stay within 80 characters, now lines within 100). ${figures(DIGEST_TOKENS.default)} by default, ${figures(DIGEST_TOKENS.min)} to ${figures(DIGEST_TOKENS.max)}. A reasoning model that spends it all thinking writes no line.`;
       test.disabled = busy || !ready;
+      retry.disabled = busy || s.state !== 'ready';
       status.textContent = note?.text ?? '';
       status.classList.toggle('settings-field-error', !!note?.error);
       status.hidden = !note;
@@ -211,13 +274,53 @@ export function digestSection(host: DigestSectionHost): (body: HTMLElement) => S
       }
     });
 
+    effort.addEventListener('change', () => {
+      const v = effort.value;
+      void run(() => host.send('digest.set', { reasoning_effort: v })).then((r) => {
+        if (!r.ok) return say(digestFailureText(r.code, r.message), true);
+        say(v ? 'Reasoning effort saved. Run the test again before switching on.' : 'Reasoning effort: the provider’s default. Nothing is sent.');
+      });
+    });
+
+    const commitTokens = () => {
+      if (!tokensDirty) return;
+      const raw = tokens.value.trim();
+      const v = Number(raw);
+      if (raw === '' || !Number.isInteger(v) || v < DIGEST_TOKENS.min || v > DIGEST_TOKENS.max) {
+        tokens.setAttribute('aria-invalid', 'true');
+        return say(`The completion budget must be a whole number of tokens from ${figures(DIGEST_TOKENS.min)} to ${figures(DIGEST_TOKENS.max)}.`, true);
+      }
+      tokens.setAttribute('aria-invalid', 'false');
+      tokensDirty = false;
+      void run(() => host.send('digest.set', { max_tokens: v })).then((r) => {
+        if (!r.ok) return say(digestFailureText(r.code, r.message), true);
+        say(`Completion budget saved: ${figures(v)} tokens.`);
+      });
+    };
+    tokens.addEventListener('input', () => (tokensDirty = true));
+    tokens.addEventListener('change', commitTokens);
+    tokens.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitTokens();
+      }
+    });
+
+    retry.addEventListener('click', () => {
+      void run(() => host.send('digest.retry', {})).then((r) => {
+        if (!r.ok) return say(digestFailureText(r.code, r.message), true);
+        const n = (r.data as { retried?: number } | undefined)?.retried ?? 0;
+        say(n ? `Trying ${n} failed ${n === 1 ? 'line' : 'lines'} again.` : 'No summary has failed: nothing to retry.');
+      });
+    });
+
     test.addEventListener('click', () => {
       note = { text: 'Testing: the LLM writes a task line and a now line from samples…', error: false };
       result.hidden = true;
       void run(() => host.send('digest.test', {})).then((r) => {
         if (!r.ok) return say(digestFailureText(r.code, r.message), true);
         const d = r.data as DigestTestAck;
-        paintResult(result, d);
+        paintResult(result, d, st()?.max_tokens ?? DIGEST_TOKENS.default);
         say(d.ok ? 'Test passed. You can switch it on.' : `Test failed: ${d.reason ?? 'a line came back empty'}.`, !d.ok);
       });
     });
@@ -228,7 +331,9 @@ export function digestSection(host: DigestSectionHost): (body: HTMLElement) => S
       open() {
         note = null;
         capDirty = false;
+        tokensDirty = false;
         cap.removeAttribute('aria-invalid');
+        tokens.removeAttribute('aria-invalid');
         result.hidden = true;
         sync();
         // The day's count moves without telling: read it again as the window opens.
@@ -242,7 +347,7 @@ export function digestSection(host: DigestSectionHost): (body: HTMLElement) => S
 const KIND_NAME = { task: 'Task line', now: 'Now line' } as const;
 
 /** The test's outcome: each sample line as the overview would show it, or why it came back empty. */
-function paintResult(root: HTMLElement, d: DigestTestAck): void {
+function paintResult(root: HTMLElement, d: DigestTestAck, budget: number): void {
   root.replaceChildren();
   const rows = el('dl', 'settings-fu-samples');
   for (const s of Array.isArray(d.samples) ? d.samples : []) {
@@ -255,6 +360,8 @@ function paintResult(root: HTMLElement, d: DigestTestAck): void {
     const line = el('dd', 'settings-fu-extracted');
     line.append(ok ? el('span', '', `“${s.line}”`) : el('span', 'settings-field-hint', s.error ?? 'no answer'));
     rows.append(line);
+    const used = usageText(s.diag, budget);
+    if (used) rows.append(el('dd', 'settings-field-hint settings-dg-usage', `Spent ${used}`));
   }
   root.append(rows);
   root.hidden = false;

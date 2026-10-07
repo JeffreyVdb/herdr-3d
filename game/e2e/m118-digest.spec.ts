@@ -97,6 +97,20 @@ test('summaries: off until a test passed, then the LLM writes the floor’s line
     await expect(toggle).toBeDisabled();
     // Nothing of the floor went before the switch.
     expect(llm.bodies).toHaveLength(0);
+    // #174: the reasoning effort starts at the provider's default and the completion budget at 1,024; both are this
+    // section's own, with their scope and the timing said under them.
+    const effort = section.getByLabel('Reasoning effort');
+    const budget = section.getByLabel('Completion budget (tokens)');
+    await expect(effort).toHaveValue('');
+    await expect(budget).toHaveValue('1024');
+    await expect(section).toContainText('floor overview summaries only');
+    await expect(section).toContainText('at most once a minute per worker');
+    await budget.fill('2048');
+    await budget.press('Enter');
+    await expect(section).toContainText('Completion budget saved: 2,048 tokens.');
+    await effort.selectOption('low');
+    await expect(section).toContainText('Reasoning effort saved');
+    await expect(budget).toHaveValue('2048');
     await section.getByRole('button', { name: 'Test' }).click();
     await expect(section).toContainText('Test passed');
     await expect(section.locator('.settings-fu-result')).toContainText(`“${TASK}”`);

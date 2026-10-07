@@ -10,7 +10,7 @@
  * floor.
  */
 
-import type { Worker } from '../net/protocol';
+import type { DigestLineStatus, Worker } from '../net/protocol';
 import { ACTIVITY_WORD, activityOf } from './activity';
 import { passWords, type CrewRole } from './crew';
 import { modelLabel, STATUS_WORD, type Display } from './derive';
@@ -24,6 +24,8 @@ export interface OverviewLine {
   source: LineSource;
   /** Written by the configured LLM (a later phase): the page marks it. */
   llm: boolean;
+  /** #174: the model's line is awaited or failed while this fallback shows (pending, retrying, failed); absent otherwise. */
+  status?: DigestLineStatus;
 }
 
 export interface OverviewTicket {
@@ -109,11 +111,27 @@ const byDesk = (a: WorkerView, b: WorkerView) => a.desk - b.desk || a.worker.id.
 const freelancerOrder = (a: WorkerView, b: WorkerView) =>
   (a.crew?.round ?? 0) - (b.crew?.round ?? 0) || (ROLE_RANK[a.crew?.role ?? ''] ?? 9) - (ROLE_RANK[b.crew?.role ?? ''] ?? 9) || byDesk(a, b);
 
-function line(text: string | undefined | null, source: string | undefined): OverviewLine | null {
+const STATES: readonly string[] = ['pending', 'retrying', 'failed'];
+
+/** A well-formed status of a line that is not the model's (unknown shapes are no status). */
+function statusOf(v: unknown, source: string): DigestLineStatus | null {
+  if (source === 'llm' || typeof v !== 'object' || v === null) return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.state !== 'string' || !STATES.includes(o.state)) return null;
+  return {
+    state: o.state as DigestLineStatus['state'],
+    ...(typeof o.reason === 'string' && o.reason ? { reason: o.reason } : {}),
+    ...(typeof o.attempts === 'number' && o.attempts > 0 ? { attempts: o.attempts } : {}),
+    ...(typeof o.retry_at === 'number' && o.retry_at > 0 ? { retry_at: o.retry_at } : {}),
+  };
+}
+
+function line(text: string | undefined | null, source: string | undefined, status?: unknown): OverviewLine | null {
   const t = text?.replace(/\s+/g, ' ').trim();
   if (!t) return null;
   const s = (source ?? '') as LineSource;
-  return { text: t, source: s, llm: s === 'llm' };
+  const st = statusOf(status, s);
+  return { text: t, source: s, llm: s === 'llm', ...(st ? { status: st } : {}) };
 }
 
 /** A worker's ticket: its run's issue (`#123 · title`) or board card. */
@@ -137,8 +155,8 @@ function nowOf(v: WorkerView): OverviewLine | null {
   if (v.crew?.freelancer && v.crew.summary) return { text: v.crew.summary, source: 'report', llm: false };
   const d = v.worker.digest;
   if (!d || typeof d !== 'object') return null;
-  if (d.now_source === 'title') return line(v.worker.title, 'title');
-  return line(d.now, d.now_source);
+  if (d.now_source === 'title') return line(v.worker.title, 'title', d.now_status);
+  return line(d.now, d.now_source, d.now_status);
 }
 
 export function overviewRow(v: WorkerView, floorTag: string | null): OverviewWorkerRow {
@@ -161,7 +179,7 @@ export function overviewRow(v: WorkerView, floorTag: string | null): OverviewWor
     runColor: crew?.runColor ?? null,
     orch: crew?.role === 'orch' ? { phase: crew.phase, round: crew.round, pass: passWords(crew.pass ?? undefined), overCap: crew.overCap } : null,
     ticket: crew ? ticketOf(w, crew.ticket) : null,
-    task: crew ? null : line(d?.task, d?.task_source),
+    task: crew ? null : line(d?.task, d?.task_source, d?.task_status),
     now: nowOf(v),
     activity: act ? `${ACTIVITY_WORD[act.kind]}${act.detail ? ` · ${act.detail}` : ''}` : null,
     floor: floorTag,

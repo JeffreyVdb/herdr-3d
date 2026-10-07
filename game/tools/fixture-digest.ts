@@ -42,6 +42,9 @@ export function cleanLine(out: string, max: number): string | null {
 export class DigestSim {
   private enabled = false;
   private dailyCap = 300;
+  /** #174: the reasoning effort ('': the provider's default) and the completion budget. */
+  private effort = '';
+  private maxTokens = 1024;
   private calls = 0;
   private passed: { fp: string; at: number } | null = null;
   private last = '';
@@ -73,6 +76,11 @@ export class DigestSim {
       tested: this.tested(),
       daily_cap: this.dailyCap,
       calls_today: this.calls,
+      reasoning_effort: this.effort,
+      max_tokens: this.maxTokens,
+      // The fixture's endpoint lists model ids only: nothing is known of the model's reasoning.
+      reasoning: { support: 'unknown', efforts: ['low', 'medium', 'high'], listed: false },
+      effort_stale: false,
     };
   }
 
@@ -144,14 +152,23 @@ export class DigestSim {
       setTimeout(() => this.pump(send), 0);
       return false;
     }
-    const ours = ['digest.get', 'digest.set', 'digest.test'];
+    const ours = ['digest.get', 'digest.set', 'digest.test', 'digest.retry'];
     if (typeof t !== 'string' || !ours.includes(t)) return false;
     if (!this.h.ai.present) throw this.h.error('unsupported', 'unsupported: the bridge has no AI integration');
     switch (t) {
       case 'digest.get':
         ack(this.view());
         return true;
+      case 'digest.retry':
+        ack({ retried: 0 });
+        return true;
       case 'digest.set': {
+        const efforts = ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+        if (a.reasoning_effort !== undefined && (typeof a.reasoning_effort !== 'string' || !efforts.includes(a.reasoning_effort))) throw this.h.error('bad_request', 'reasoning_effort is not an effort');
+        const tokens = a.max_tokens;
+        if (tokens !== undefined && (typeof tokens !== 'number' || !Number.isInteger(tokens) || tokens < 64 || tokens > 16_384)) throw this.h.error('bad_request', 'max_tokens must be 64-16384');
+        if (typeof a.reasoning_effort === 'string') this.effort = a.reasoning_effort;
+        if (typeof tokens === 'number') this.maxTokens = tokens;
         const cap = a.daily_cap;
         if (cap !== undefined && (typeof cap !== 'number' || !Number.isInteger(cap) || cap < 1 || cap > 10_000)) throw this.h.error('bad_request', 'daily_cap must be 1-10000');
         if (a.enabled === true && !this.enabled) {

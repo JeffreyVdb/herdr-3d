@@ -177,6 +177,9 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   // #118: two completions, one after the other (15 s per attempt on the bridge, one retry each), after any summary
   // that is out.
   'digest.test': 90_000,
+  // #174: opening the settings reads the model's catalog (one call, 15 s on the bridge); setting an effort checks it.
+  'digest.get': 25_000,
+  'digest.set': 25_000,
 };
 
 interface Pending {

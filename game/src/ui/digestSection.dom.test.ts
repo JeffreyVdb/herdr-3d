@@ -2,9 +2,12 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import { DigestBook } from '../world/digestSettings';
-import { DIGEST_PRIVACY, digestSection } from './digestSection';
+import { DIGEST_PRIVACY, DIGEST_SCOPE, DIGEST_TIMING, digestSection } from './digestSection';
 
 const state = (over: Record<string, unknown> = {}) => ({ enabled: false, state: 'off', roles: { llm: 'ready' }, env: [], tested: false, daily_cap: 300, calls_today: 0, ...over });
+const LUNA = {
+  support: 'supported', model: 'openai/gpt-6-luna', efforts: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], listed: true, default_effort: 'medium',
+};
 
 function mount(s: Record<string, unknown> | null, answers: Record<string, (args: Record<string, unknown>) => CommandResult> = {}) {
   document.body.replaceChildren();
@@ -24,10 +27,12 @@ function mount(s: Record<string, unknown> | null, answers: Record<string, (args:
   })(body);
   handle.open?.();
   const box = () => body.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-  const cap = () => body.querySelector<HTMLInputElement>('input[type="number"]')!;
+  const cap = () => body.querySelectorAll<HTMLInputElement>('input[type="number"]')[0]!;
+  const tokens = () => body.querySelectorAll<HTMLInputElement>('input[type="number"]')[1]!;
+  const effort = () => body.querySelector<HTMLSelectElement>('select')!;
   const button = (text: string) => [...body.querySelectorAll('button')].find((b) => b.textContent === text)!;
   const flush = () => new Promise((r) => setTimeout(r, 0));
-  return { book, body, sent, box, cap, button, flush, ai: () => ai };
+  return { book, body, sent, box, cap, tokens, effort, button, flush, ai: () => ai };
 }
 
 describe('the floor overview summaries section (#118)', () => {
@@ -137,5 +142,114 @@ describe('the floor overview summaries section (#118)', () => {
   it('reads the day’s count again as the window opens', () => {
     const m = mount(state());
     expect(m.sent).toContainEqual({ t: 'digest.get', args: {} });
+  });
+
+  // #174
+  it('opens with digest.get, which reads the model’s catalog on the bridge', () => {
+    const m = mount(state());
+    expect(m.sent.map((x) => x.t)).toContain('digest.get');
+  });
+
+  it('the reasoning effort is a dropdown of exactly the model’s efforts, with the provider default first', () => {
+    const m = mount(state({ reasoning_effort: '', max_tokens: 1024, effort_stale: false, reasoning: LUNA }));
+    expect([...m.effort().options].map((o) => o.value)).toEqual(['', 'none', 'low', 'medium', 'high', 'xhigh', 'max']);
+    expect(m.effort().options[0]!.textContent).toBe('Provider default (the model uses medium)');
+    expect(m.effort().value).toBe('');
+    expect(m.effort().disabled).toBe(false);
+    expect(document.getElementById(m.effort().getAttribute('aria-describedby')!)!.textContent).toContain('catalog lists');
+  });
+
+  it('choosing an effort or the default sends digest.set; a refusal says why and the control goes back', async () => {
+    const m = mount(state({ reasoning_effort: '', max_tokens: 1024, effort_stale: false, reasoning: LUNA }), {
+      'digest.set': (a) => (a.reasoning_effort === 'max' ? { ok: false, code: 'bad_request', message: 'this model does not take the reasoning effort' } : { ok: true, data: {} }),
+    });
+    m.effort().value = 'none';
+    m.effort().dispatchEvent(new Event('change'));
+    await m.flush();
+    expect(m.sent.at(-1)).toEqual({ t: 'digest.set', args: { reasoning_effort: 'none' } });
+    expect(m.body.querySelector('.settings-status')!.textContent).toContain('Run the test again');
+    m.effort().value = 'max';
+    m.effort().dispatchEvent(new Event('change'));
+    await m.flush();
+    expect(m.body.querySelector('.settings-status')!.textContent).toContain('does not take');
+    m.book.upsert(state({ reasoning_effort: '', max_tokens: 1024, reasoning: LUNA }));
+    expect(m.effort().value).toBe('');
+    m.effort().value = '';
+    m.effort().dispatchEvent(new Event('change'));
+    await m.flush();
+    expect(m.sent.at(-1)).toEqual({ t: 'digest.set', args: { reasoning_effort: '' } });
+  });
+
+  it('a model without reasoning: the control is disabled and says why; a stale effort is shown, not sent', () => {
+    const m = mount(state({ reasoning: { support: 'unsupported', model: 'plain/chat', efforts: [], listed: false } }));
+    expect(m.effort().disabled).toBe(true);
+    expect([...m.effort().options].map((o) => o.value)).toEqual(['']);
+    expect(document.getElementById(m.effort().getAttribute('aria-describedby')!)!.textContent).toContain('no reasoning effort to choose');
+    m.book.upsert(state({ reasoning_effort: 'minimal', effort_stale: true, reasoning: LUNA }));
+    const stale = [...m.effort().options].find((o) => o.value === 'minimal')!;
+    expect(stale.disabled).toBe(true);
+    expect(stale.textContent).toContain('not supported by this model');
+    expect(m.effort().value).toBe('minimal');
+    const hint = document.getElementById(m.effort().getAttribute('aria-describedby')!)!;
+    expect(hint.textContent).toContain('is not sent');
+    expect(hint.classList.contains('settings-field-error')).toBe(true);
+  });
+
+  it('the completion budget: shown as the effective value, validated, sent, and not the lines’ length', async () => {
+    const m = mount(state({ max_tokens: 1024, reasoning: LUNA }));
+    expect(m.tokens().value).toBe('1024');
+    const hint = document.getElementById(m.tokens().getAttribute('aria-describedby')!)!.textContent!;
+    expect(hint).toContain('In use: 1,024');
+    expect(hint).toContain('reasoning included');
+    expect(hint).toContain('not the line');
+    expect(hint).toContain('80 characters');
+    m.tokens().value = '10';
+    m.tokens().dispatchEvent(new Event('input'));
+    m.tokens().dispatchEvent(new Event('change'));
+    expect(m.sent.filter((x) => x.t === 'digest.set')).toEqual([]);
+    expect(m.tokens().getAttribute('aria-invalid')).toBe('true');
+    expect(m.body.querySelector('.settings-status')!.textContent).toContain('from 64 to 16,384');
+    m.tokens().value = '2048';
+    m.tokens().dispatchEvent(new Event('input'));
+    m.tokens().dispatchEvent(new Event('change'));
+    await m.flush();
+    expect(m.sent.at(-1)).toEqual({ t: 'digest.set', args: { max_tokens: 2048 } });
+    expect(m.body.querySelector('.settings-status')!.textContent).toBe('Completion budget saved: 2,048 tokens.');
+  });
+
+  it('says which features the two settings reach, and when lines are written', () => {
+    const m = mount(state());
+    expect(m.body.textContent).toContain(DIGEST_SCOPE);
+    expect(DIGEST_SCOPE).toContain('floor overview summaries only');
+    expect(m.body.textContent).toContain(DIGEST_TIMING);
+    for (const words of ['once per prompt', 'turn ends', '2 seconds', 'once a minute', 'floor someone is viewing', 'up to 4 times']) expect(DIGEST_TIMING).toContain(words);
+  });
+
+  it('Retry failed sends digest.retry and says how many lines', async () => {
+    let retried = 2;
+    const m = mount(state({ enabled: true, state: 'ready', tested: true }), { 'digest.retry': () => ({ ok: true, data: { retried } }) });
+    m.button('Retry failed').click();
+    await m.flush();
+    expect(m.sent.at(-1)).toEqual({ t: 'digest.retry', args: {} });
+    expect(m.body.querySelector('.settings-status')!.textContent).toBe('Trying 2 failed lines again.');
+    retried = 0;
+    m.button('Retry failed').click();
+    await m.flush();
+    expect(m.body.querySelector('.settings-status')!.textContent).toContain('nothing to retry');
+    m.book.upsert(state());
+    expect(m.button('Retry failed').disabled).toBe(true);
+  });
+
+  it('a test sample shows what it spent of the budget', async () => {
+    const m = mount(state({ max_tokens: 1024 }), {
+      'digest.test': () => ({
+        ok: true,
+        data: { ok: true, latency_ms: 900, samples: [{ kind: 'task', line: 'Fix the flaky login test', diag: { status: 200, finish_reason: 'stop', completion_tokens: 412, reasoning_tokens: 380, content: 'nonempty', content_chars: 24 } }, { kind: 'now', line: 'Rerunning the login test' }] },
+      }),
+    });
+    m.button('Test').click();
+    await m.flush();
+    expect(m.body.querySelector('.settings-dg-usage')!.textContent).toBe('Spent 412 of 1,024 tokens, 380 reasoning');
+    expect(m.body.querySelectorAll('.settings-dg-usage')).toHaveLength(1);
   });
 });
