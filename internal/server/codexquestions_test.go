@@ -570,3 +570,62 @@ func TestAsyncAnswerUndeliveredMayBeSentAgain(t *testing.T) {
 		t.Fatalf("%d sends", n)
 	}
 }
+
+// #157: worker.codex.async_blocked is the predicate a prompt goes through
+// the app-server on (attached, the running turn asked a question Codex still
+// holds, no server request open), and every flip of it is a worker.upsert:
+// a question asked, an approval opened and resolved, the envelope seen, the
+// turn's end, the join lost. A dismissal hides a question in the bridge
+// only: Codex still holds it, so the flag stays.
+func TestAsyncBlockedFlagFollowsThePredicate(t *testing.T) {
+	sb, a := asyncWorker(t)
+	flag := func(want bool) proto.WorkerCodex {
+		t.Helper()
+		return *upsertFor(sb.c, a.ID, func(w *proto.Worker) bool { return w.Codex != nil && w.Codex.AsyncBlocked == want }).Codex
+	}
+	sb.emit(turnStarted("t1"))
+	if c := sb.codexWorker(t, func(c *proto.WorkerCodex) bool { return c.Turn == "t1" }); c.AsyncBlocked {
+		t.Fatalf("a turn without a question: %+v", c)
+	}
+	sb.emit(itemDone("t1", asyncItem("call_3", contextQ)))
+	flag(true)
+	sb.emit(codexapp.Event{Kind: codexapp.EvServerRequest, Method: "item/commandExecution/requestApproval", RequestID: json.RawMessage("77")})
+	flag(false) // an approval waits on the terminal: a real block
+	sb.emit(note("serverRequest/resolved", map[string]any{"requestId": 77}))
+	flag(true)
+	sb.emit(itemDone("t1", userItem("u1", "", codexapp.ReplyEnvelope(codexapp.Answer{MessageID: "call_3", Answer: "x"}))))
+	if c := flag(false); batchOf(c, "call_3").Questions[0].State != proto.AsyncAnswered {
+		t.Fatalf("answered: %+v", c.Questions)
+	}
+	sb.emit(itemDone("t1", asyncItem("call_4", contextQ)))
+	flag(true)
+	sb.c.mustAck(proto.CmdWorkerDismissAsync, proto.WorkerDismissAsyncArgs{ID: a.ID, Thread: asyncThread, Batch: "call_4"})
+	if c := sb.stateIs(t, "call_4", 0, proto.AsyncDismissed); !c.AsyncBlocked {
+		t.Fatalf("dismissed here, still Codex's: %+v", c)
+	}
+	sb.emit(turnCompleted("t1"))
+	if c := flag(false); c.Turn != "" {
+		t.Fatalf("after the turn: %+v", c)
+	}
+	// The next turn's question; then the join is lost.
+	sb.emit(turnStarted("t2"), itemDone("t2", asyncItem("call_5", colorQ)))
+	flag(true)
+	sb.emit(codexapp.Event{Kind: codexapp.EvDisconnected, Err: errors.New("lost")})
+	if c := flag(false); c.Attached {
+		t.Fatalf("detached: %+v", c)
+	}
+}
+
+// #157: a /new in the terminal is another thread: the old one's questions
+// go, and with them async_blocked (an upsert).
+func TestAsyncBlockedFlagGoesWithTheThread(t *testing.T) {
+	sb, a := asyncWorker(t)
+	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", contextQ)))
+	upsertFor(sb.c, a.ID, func(w *proto.Worker) bool { return w.Codex != nil && w.Codex.AsyncBlocked })
+	const next = "01a11172-ac09-7aa0-ab6b-84485199adb4"
+	sb.fl.update("w1", func(w *world.WorkerObs) { w.AgentSession = next })
+	c := upsertFor(sb.c, a.ID, func(w *proto.Worker) bool { return w.Codex != nil && w.Codex.Thread == next }).Codex
+	if c.AsyncBlocked || len(c.Questions) != 0 {
+		t.Fatalf("another thread: %+v", c)
+	}
+}

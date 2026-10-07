@@ -14,6 +14,7 @@ import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import { askAgent, askOf } from '../world/ask';
 import { followupOf } from '../world/followup';
+import { effectiveStatus } from '../world/codexQuestions';
 import type { WorldStore } from '../world/store';
 import { DESK_H, SEAT_OFFSET } from '../world/layout';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
@@ -932,11 +933,15 @@ export class Laptops {
       else if (!v.worker.pane_id) this.stand(`${s.name} has no terminal any more, so you got up.`, true);
       else if (v.desk !== s.desk) this.stand(`${s.name} moved desks, so you got up.`, true);
       else {
-        this.transcript.blocked(v.worker.status === 'blocked' ? (v.worker.question ?? null) : null);
-        this.transcript.activity(v.worker.status, v.worker.status_since ?? null); // #58
+        // #157: a Codex worker herdr calls blocked only because of an async question works on: no screen question
+        // (its prompt box stays on), and its transcript's cue goes on saying what it does.
+        const status = effectiveStatus(v.worker);
+        this.transcript.blocked(status === 'blocked' ? (v.worker.question ?? null) : null);
+        this.transcript.activity(status, v.worker.status_since ?? null); // #58
         this.syncAsk(askOf(v.worker)); // #57
         this.syncCodex(codexNotice(v.worker)); // #155
         this.transcript.followedUp(followupOf(v.worker)); // #90
+        this.transcript.codexSeen(v.worker.codex ?? null, status === 'working'); // #157: its async questions
         this.transcript.usageSeen(v.worker.usage ?? null); // #101: its context meter (the worker's usage is replaced, not edited, when it changes)
       }
     }

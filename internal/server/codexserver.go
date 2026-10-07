@@ -229,6 +229,7 @@ func (h *Hub) codexWorkerView(id string) *proto.WorkerCodex {
 			v.Attached, v.Turn = true, w.turn
 		}
 		v.Questions = h.questionsView(id)
+		_, v.AsyncBlocked = h.asyncBlocked(id) // #157: every flip of it re-emits the worker (refreshCodex)
 	}
 	return v
 }

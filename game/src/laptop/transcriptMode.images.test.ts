@@ -42,6 +42,7 @@ class FakeView {
   setBlocked(): void {}
   setAsk(): void {}
   setFollowup(): void {}
+  setCodex(): void {}
   setUsage(): void {}
   setActivity(): void {}
   setPending(): void {}

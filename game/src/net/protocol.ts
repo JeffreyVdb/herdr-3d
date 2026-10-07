@@ -152,7 +152,9 @@ export interface Worker {
  * owns (`server` says how that server is); `legacy`: Codex's embedded server, as before the switch (`note` says why a
  * hire asked for shared runs legacy). `attached`: the bridge has joined its thread (#156: whenever its server runs).
  * #156: `thread` is the thread `worker.answer_async` names, `turn` its running turn while attached, `questions` its
- * async question batches, oldest first (docs/protocol.md "Codex async questions").
+ * async question batches, oldest first (docs/protocol.md "Codex async questions"). #157: `async_blocked`: herdr's
+ * `blocked`, if it says so, is only an async question's (attached, the running turn asked a question Codex still holds,
+ * no approval or blocking question open): the worker goes on working and takes prompts.
  */
 export interface WorkerCodex {
   mode: 'shared' | 'legacy';
@@ -162,6 +164,7 @@ export interface WorkerCodex {
   thread?: string;
   turn?: string;
   questions?: CodexBatch[];
+  async_blocked?: boolean;
 }
 
 /** #156: one async question message of a shared Codex worker's thread; `batch` is Codex's call_id. */

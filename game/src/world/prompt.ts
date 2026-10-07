@@ -6,6 +6,7 @@
 
 import { answerable } from './answer';
 import { askOf, isSimple } from './ask';
+import { asyncBlockedOnly } from './codexQuestions';
 import type { FloorView, WorkerView } from './store';
 
 export const PROMPT_MAX_BYTES = 16 * 1024;
@@ -26,8 +27,9 @@ export function promptBlocker(v: WorkerView | null, floor: Pick<FloorView, 'asle
       : `${v.name} is asking ${ask.questions.length > 1 ? `${ask.questions.length} questions` : 'a question'} first: answer at its laptop (E).`;
   }
   // The bridge refuses a prompt while the agent waits on its screen (invalid_state): the question comes first.
-  // (M6: an over-cap orchestrator needs you too, but its agent waits for exactly that prompt.)
-  if (v.worker.status === 'blocked') {
+  // (M6: an over-cap orchestrator needs you too, but its agent waits for exactly that prompt.) #157: not a Codex
+  // worker blocked only by an async question: it works on, and the bridge queues the prompt through its app-server.
+  if (v.worker.status === 'blocked' && !asyncBlockedOnly(v.worker)) {
     const n = answerable(v.worker.question)?.choices.length ?? 0;
     return n
       ? `${v.name} is waiting for an answer first: pick one on its card (${n === 1 ? '1' : `1–${Math.min(n, 9)}`}, 0 denies).`

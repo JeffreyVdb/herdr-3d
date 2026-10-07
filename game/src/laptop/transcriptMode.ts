@@ -1,6 +1,6 @@
 import type { CommandResult } from '../net/client';
 import type { PackupGate } from '../world/packup';
-import type { AnswerAskAck, Ask, CommandArgs, Followup, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck, Usage } from '../net/protocol';
+import type { AnswerAskAck, Ask, CommandArgs, Followup, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck, Usage, WorkerCodex } from '../net/protocol';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import type { ViewPrefs } from '../ui/themePrefs';
@@ -10,6 +10,7 @@ import type { ImageFeed } from './imageFeed';
 import type { ImagesTabHost, ImagesTabView, MountImagesTab } from './imagesTab';
 import { itemsOf, type TimelineOf } from './transcriptWatches';
 import { TranscriptDrafts } from './transcriptDrafts';
+import { AsyncDrafts } from './asyncDrafts';
 import { CommandCatalogs } from './commandCatalog';
 import { activityCue, reconcile, SENT_TIMEOUT_MS, topSeq, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 
@@ -59,7 +60,9 @@ export interface OverlayRect {
 }
 
 export interface TranscriptModeHost {
-  send<T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'transcript.page' | 'worker.commands' | 'worker.files'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
+  send<
+    T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'worker.answer_async' | 'worker.dismiss_async' | 'transcript.page' | 'worker.commands' | 'worker.files',
+  >(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list). */
   feed(id: string): ImageFeed | null;
   /** Loads the render module (`loadRenderer`; tests pass a fake). */
@@ -152,6 +155,11 @@ interface Sitting {
   /** #90: the worker's follow-up questions, and their turn + questions (a new one told from the same one). */
   followup: Followup | null;
   followupKey: string;
+  /** #157: the worker's Codex launch (its async questions), and what of it the card shows (a new one told from the same one). */
+  codex: WorkerCodex | null;
+  /** #157: the worker works on (its effective status): the async card's "still working". */
+  codexWorking: boolean;
+  codexKey: string;
   /** #101: the worker's usage (for the view's context meter), and the part of it the meter shows (so a frame that changed nothing is skipped). */
   usage: Usage | null;
   usageKey: string;
@@ -223,6 +231,8 @@ export class TranscriptMode {
   private readonly catalogs = new CommandCatalogs({ send: (t, args) => this.host.send(t, args) });
   /** #141: each worker's unsent prompt, kept across seats (and its text and file chips across a reload). */
   private readonly drafts: TranscriptDrafts;
+  /** #157: what you wrote for Codex workers' async questions, kept across views, seats and reconnects. */
+  private readonly asyncDrafts: AsyncDrafts;
   /**
    * #141: the workers a prompt is on its way to (until the bridge answered it). A sitting's pending rows go when you
    * stand up but the send does not, nor does the draft it came from: sitting there again must not send it twice.
@@ -231,6 +241,7 @@ export class TranscriptMode {
 
   constructor(private readonly host: TranscriptModeHost) {
     this.drafts = new TranscriptDrafts({ ...(host.upload ? { upload: host.upload } : {}), storage: host.storage });
+    this.asyncDrafts = new AsyncDrafts(host.storage);
   }
 
   private now(): number {
@@ -282,7 +293,7 @@ export class TranscriptMode {
     // The way to read it last time (what the first Ctrl+Esc shows when it opens in the terminal).
     const last: ReadMode = canRead && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
     this.s = {
-      id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', usage: null, usageKey: '', box: null, view: null,
+      id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', codex: null, codexWorking: false, codexKey: '', usage: null, usageKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
       pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true,
@@ -567,6 +578,7 @@ export class TranscriptMode {
     if (s.question) s.view.setBlocked(s.question);
     if (s.ask) s.view.setAsk(s.ask);
     if (s.followup) s.view.setFollowup(s.followup);
+    if (s.codex) s.view.setCodex(s.id, s.codex, s.codexWorking);
     if (s.pending.length) s.view.setPending(s.pending);
     s.cueKey = '';
     this.cue(s, true);
@@ -636,6 +648,7 @@ export class TranscriptMode {
       // #141: the worker's own draft, back from its last seat (or a reload); `@` searches the worker's checkout.
       draft: this.drafts.get(s.id, s.name),
       sending: this.drafts.sending(s.id),
+      asyncDrafts: this.asyncDrafts,
       files: { id: s.id, search: { send: (t, args) => this.host.send(t, args) } },
       onPromptSubmit: (text) => {
         if (!live()) return Promise.resolve(false);
@@ -729,6 +742,27 @@ export class TranscriptMode {
         const r = await this.host.send('worker.dismiss_followup', { id: s.id, turn_id: turnId });
         if (r.ok) return { ok: true };
         const message = failureText('worker.dismiss_followup', r.code, r.message, { worker: s.name });
+        if (live() && r.code !== 'stale') this.host.status('error', message);
+        return { ok: false, code: r.code, message };
+      },
+      // #157: a Codex worker's async questions. Refused, the card keeps the answer and says why (the seat bar too, but
+      // not for `stale`: the question had moved on already, which the card says calmly).
+      onAnswerAsync: async (args) => {
+        if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
+        const r = await this.host.send('worker.answer_async', { ...args, id: s.id });
+        if (r.ok) {
+          if (live()) this.host.status('ok', `Sent your answer to ${s.name}`);
+          return { ok: true };
+        }
+        const message = failureText('worker.answer_async', r.code, r.message, { worker: s.name });
+        if (live() && r.code !== 'stale') this.host.status('error', message);
+        return { ok: false, code: r.code, message };
+      },
+      onDismissAsync: async (args) => {
+        if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
+        const r = await this.host.send('worker.dismiss_async', { ...args, id: s.id });
+        if (r.ok) return { ok: true };
+        const message = failureText('worker.dismiss_async', r.code, r.message, { worker: s.name });
         if (live() && r.code !== 'stale') this.host.status('error', message);
         return { ok: false, code: r.code, message };
       },
@@ -931,6 +965,22 @@ export class TranscriptMode {
     s.followupKey = key;
     s.followup = f;
     s.view?.setFollowup(f);
+  }
+
+  /**
+   * #157: the worker's Codex launch (from the store; null when it has none): its async questions' card, and whether the
+   * worker works on (its effective status: not a real block, not idle) for the card's "still working". Only its mode,
+   * attachment, thread, turn and questions matter to the card: a change elsewhere draws nothing.
+   */
+  codexSeen(c: WorkerCodex | null, working = false): void {
+    const s = this.s;
+    if (!s) return;
+    const key = c?.mode === 'shared' ? JSON.stringify([c.attached === true, c.thread ?? '', c.turn ?? '', working, c.questions ?? []]) : '';
+    if (key === s.codexKey) return;
+    s.codexKey = key;
+    s.codex = key ? c : null;
+    s.codexWorking = working;
+    s.view?.setCodex(s.id, s.codex, working);
   }
 
   /** #101: the worker's usage (from the store; null when it has none), for the context meter: kept for a view still loading. */

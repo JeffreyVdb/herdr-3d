@@ -49,10 +49,14 @@ import { AskSim } from './fixture-ask.ts';
 import { ShareSim } from './fixture-share.ts';
 // #98: what the agents are doing (`sim.activity`, `simactivity=demo|all`).
 import { ActivitySim } from './fixture-activity.ts';
+// #157: shared Codex workers' async questions (`sim.codex*`, `worker.answer_async`, `simcodex=ask`).
+import { CodexQuestionsSim } from './fixture-codex-questions.ts';
 
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
   stepMs?: number;
+  /** `simclock=manual`: scripted timers run only when `sim.advance {ms}` releases them. */
+  manualClock?: boolean;
   /**
    * `wake_failed` / `sleep_failed`: the next wake / sleep fails after its transition;
    * M4: `hire_failed` / `fire_failed` the next hire / send-home; `fetch_failed`: origin is unreachable for the
@@ -78,6 +82,8 @@ export interface SimOptions {
   echoMs?: number;
   /** #98: seeds the workers' activities on start (`simactivity=demo|all`, tools/fixture-activity.ts). */
   activity?: string;
+  /** #157: seeds a shared Codex worker's async questions on start (`simcodex=ask`, tools/fixture-codex-questions.ts). */
+  codex?: string;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -157,6 +163,8 @@ export class SimWorld {
   private readonly now: () => number;
   private readonly setT: (fn: () => void, ms: number) => unknown;
   private readonly clearT: (h: unknown) => void;
+  private manualTime: number | null = null;
+  private readonly manualTimers = new Map<object, { at: number; fn: () => void }>();
 
   constructor(snapshot: { seq: number; world: Obj }, o: SimOptions = {}) {
     const w = structuredClone(snapshot.world) as { buildings: Building[]; floors: Floor[]; workers: Worker[]; hire_options?: HireOptions };
@@ -177,6 +185,15 @@ export class SimWorld {
     this.now = o.now ?? (() => Date.now());
     this.setT = o.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearT = o.clearTimeout ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+    if (o.manualClock) {
+      this.manualTime = 0;
+      this.setT = (fn, ms) => {
+        const h = {};
+        this.manualTimers.set(h, { at: (this.manualTime ?? 0) + ms, fn });
+        return h;
+      };
+      this.clearT = (h) => this.manualTimers.delete(h as object);
+    }
     if (o.usageMs !== undefined) this.usageMs = o.usageMs;
     // M6 start (tools/fixture-start.ts): `simfail=no_m6` plays an M5 bridge.
     this.start6 = new StartSim(
@@ -219,6 +236,7 @@ export class SimWorld {
       this.activitySettings.changed(send); // #98: the classifier's too
     };
     this.activitySettings = new ActivitySettingsSim({ ai: this.ai, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) });
+    if (o.codex) this.codexq.seed(o.codex); // #157
     this.codexServer = new CodexServerSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) }, o.fail !== 'no_codex_run'); // #155
     this.inbox = new InboxSim({ workers: this.workers, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now() }, o.fail !== 'no_inbox');
     this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
@@ -272,6 +290,24 @@ export class SimWorld {
     this.share.dispose();
     for (const t of this.timers) this.clearT(t);
     this.timers.clear();
+  }
+
+  /** Release timers in deadline order, including timers scheduled by another step. The wall clock still dates events. */
+  private advance(a: Obj): void {
+    onlyKeys(a, ['ms']);
+    if (this.manualTime === null) throw new CmdError('invalid_state', 'sim.advance needs simclock=manual');
+    const ms = a.ms;
+    if (typeof ms !== 'number' || !Number.isSafeInteger(ms) || ms < 0 || ms > 60_000) throw bad('ms must be an integer from 0 to 60000');
+    const until = this.manualTime + ms;
+    for (;;) {
+      let next: [object, { at: number; fn: () => void }] | null = null;
+      for (const entry of this.manualTimers) if (entry[1].at <= until && (!next || entry[1].at < next[1].at)) next = entry;
+      if (!next) break;
+      this.manualTimers.delete(next[0]);
+      this.manualTime = next[1].at;
+      next[1].fn();
+    }
+    this.manualTime = until;
   }
 
   // ---- world ---------------------------------------------------------------
@@ -432,6 +468,7 @@ export class SimWorld {
       if (this.digest.handle(m.t, a, send, ack, fail)) return; // #118 (board.watch passes on to the boards)
       if (this.transcripts.handle(m.t, a, send, ack, fail)) return;
       if (this.asks.handle(m.t, a, send, ack, fail)) return;
+      if (this.codexq.handle(m.t, a, send, ack, fail)) return; // #157
       if (this.activity.handle(m.t, a, send, ack, fail)) return; // #98
       if (screens.handle(m.t, a, send, ack, (code, message) => send({ t: 'error', req_id: reqId, code, message }))) return;
       if (this.start6.handle(m.t, a, send, ack, fail)) return;
@@ -443,6 +480,9 @@ export class SimWorld {
       if (this.inbox.handle(m.t, a, send, ack)) return; // #106
       if (this.share.handle(m.t, a, send, ack, fail)) return; // M13
       switch (m.t) {
+        case 'sim.advance':
+          this.advance(a);
+          return ack();
         case 'building.create':
           return ack(this.create(a, send));
         case 'building.rename':
@@ -831,6 +871,34 @@ export class SimWorld {
       work: (send, w, title) => this.panels.work(send, w, title),
     });
     return this.askSim;
+  }
+
+  // ---- #157: Codex async questions (tools/fixture-codex-questions.ts) ------
+
+  private codexqSim: CodexQuestionsSim | null = null;
+
+  private get codexq(): CodexQuestionsSim {
+    this.codexqSim ??= new CodexQuestionsSim({
+      workers: this.workers,
+      floors: this.floors,
+      stepMs: this.stepMs,
+      emit: (send, m) => this.emit(send, m),
+      after: (ms, fn) => {
+        const h = this.setT(() => {
+          this.timers.delete(h);
+          fn();
+        }, ms);
+        this.timers.add(h);
+      },
+      now: () => this.now(),
+      takeFail: (code) => {
+        if (this.fail !== code) return false;
+        this.fail = undefined;
+        return true;
+      },
+      error: (code, message) => new CmdError(code, message),
+    });
+    return this.codexqSim;
   }
 
   // ---- M5: prompt, answer, changes, usage (tools/fixture-panels.ts) ------

@@ -87,6 +87,12 @@ type WorkerCodex struct {
 	Turn   string `json:"turn,omitempty"`
 	// Questions are the thread's async question batches, oldest first.
 	Questions []CodexBatch `json:"questions,omitempty"`
+	// #157: AsyncBlocked: herdr's blocked, if it says so, is only an async
+	// question's (attached, its running turn asked a question Codex still
+	// holds, no server request open): the worker goes on working and takes
+	// prompts (through the app-server). False with an approval or a
+	// blocking question open, while idle and while not attached.
+	AsyncBlocked bool `json:"async_blocked,omitempty"`
 }
 
 // Async question states (CodexQuestion.State).

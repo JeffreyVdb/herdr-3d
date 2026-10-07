@@ -454,6 +454,9 @@
   flex: 1;
   min-height: 0;
   display: flex;
+  /* #157: never painted past its box (the scroller's padding outlasts a timeline squeezed to nothing): the tabs and
+     the cards below stay clear to click. */
+  overflow: clip;
 }
 .tx-scroll {
   flex: 1;
@@ -1361,8 +1364,10 @@
     will-change: auto;
   }
 }
-/* What the live region says is for screen readers only. */
-.tx-live {
+/* Separate announcements for activity, pending prompts and async questions: screen readers only. */
+.tx-live,
+.tx-pending-live,
+.tx-aq-live {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1530,7 +1535,8 @@
  * was asked and answered.
  */
 .tx-ask,
-.tx-fu {
+.tx-fu,
+.tx-aq {
   --tx-sun-soft: color-mix(in srgb, var(--tx-sun) 42%, transparent);
   flex: none;
   display: flex;
@@ -1546,7 +1552,8 @@
   box-shadow: 0 -8px 22px -6px rgb(0 0 0 / 55%);
 }
 .tx-ask[hidden],
-.tx-fu[hidden] {
+.tx-fu[hidden],
+.tx-aq[hidden] {
   display: none;
 }
 .tx-ask-body {
@@ -1768,7 +1775,8 @@
 }
 .tx-ask-opt:disabled,
 .tx-ask[data-phase='sending'] .tx-ask-opt,
-.tx-fu[data-phase='sending'] .tx-ask-opt {
+.tx-fu[data-phase='sending'] .tx-ask-opt,
+.tx-aq[data-phase='sending'] .tx-ask-opt {
   cursor: default;
   opacity: 0.6;
 }
@@ -1911,7 +1919,8 @@
   background: transparent;
 }
 .tx-ask[data-phase='sending'] .tx-ask-send:disabled,
-.tx-fu[data-phase='sending'] .tx-ask-send:disabled {
+.tx-fu[data-phase='sending'] .tx-ask-send:disabled,
+.tx-aq[data-phase='sending'] .tx-ask-send:disabled {
   background: color-mix(in srgb, var(--tx-sun) 30%, transparent);
   color: var(--tx-text);
 }
@@ -1924,13 +1933,15 @@
   color: var(--tx-red);
 }
 .tx .tx-ask button:disabled,
-.tx .tx-fu button:disabled {
+.tx .tx-fu button:disabled,
+.tx .tx-aq button:disabled {
   cursor: default;
 }
 /* A short screen: a tighter card, descriptions to two lines, no previews' height to spare. */
 @container tx (max-height: 470px) {
   .tx-ask,
-  .tx-fu {
+  .tx-fu,
+  .tx-aq {
     margin: 0 8px 6px;
     padding: 6px 9px 7px;
     max-height: 56%;
@@ -2040,7 +2051,8 @@
     height: 18px;
   }
   .tx-ask,
-  .tx-fu {
+  .tx-fu,
+  .tx-aq {
     flex: 0 1 auto;
     min-height: 0;
     max-height: none;
@@ -2049,7 +2061,8 @@
   }
   /* Who asks is the first line; the body's row takes what is left. */
   .tx-ask,
-  .tx-fu {
+  .tx-fu,
+  .tx-aq {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto auto;
@@ -2229,74 +2242,305 @@
   }
 }
 /*
- * A very short screen (a phone's laptop): the ask's grid leaves the body no room here, since the prompt box stays on
- * beside the card. While the card is up it takes the room of the timeline and of the strip (folded away, both back
- * when the card goes; the seat bar below has Terminal / Transcript / Images, Ctrl +/- the zoom) and of the prompt
- * box's second half (one slim line, still there to type in). The card scrolls as one under its first line (the
- * tabs, or what it is), Dismiss and Send kept in view at its foot.
+ * No room for a pinned card (the follow-up's, or the async questions') beside the timeline: a phone's laptop, or a
+ * screen whose strip, tabs, card and prompt box do not fit together (`data-tight`, measured by the view: see `fit()`
+ * in transcriptRender.ts). While the card is up it takes the room of the timeline and of the strip (folded away,
+ * both back when the card goes; the seat bar below has Terminal / Transcript / Images, Ctrl +/- the zoom) and of the
+ * prompt box's second half (one slim line, still there to type in). The card scrolls as one under its first line
+ * (the tabs, or what it is), Dismiss and Send kept in view at its foot. On a very short screen it is also the ask's
+ * tighter grid (above); above that, the card's own column.
  */
-@container tx (max-height: 300px) {
-  .tx[data-followup] .tx-main {
-    flex: 0 0 0;
-    overflow: hidden;
+.tx[data-tight] .tx-main {
+  flex: 0 0 0;
+}
+.tx[data-tight] .tx-bar {
+  display: none;
+}
+.tx[data-tight] .tx-fu,
+.tx[data-tight] .tx-aq {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  grid-template-rows: auto auto auto auto;
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--tx-sun) 35%, transparent) transparent;
+  /* What is scrolled to (a picked option, the focused text) clears the first line and the foot kept in view. */
+  scroll-padding-block: 30px 36px;
+  margin-top: 6px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.tx[data-tight] .tx-fu .tx-ask-top,
+.tx[data-tight] .tx-aq .tx-ask-top {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  align-self: stretch;
+  padding-top: 4px;
+  padding-bottom: 1px;
+  background: var(--tx-ask-bg);
+}
+.tx[data-tight] .tx-fu .tx-ask-body,
+.tx[data-tight] .tx-aq .tx-ask-body {
+  /* The card's column (above a very short screen): the questions take what they leave, so the foot sits at its bottom. */
+  flex: 1 0 auto;
+  min-height: auto;
+  max-height: none;
+  overflow: visible;
+}
+.tx[data-tight] .tx-fu-tail,
+.tx[data-tight] .tx-aq-sent {
+  max-height: none;
+  margin-top: 4px;
+  padding: 2px 8px;
+}
+.tx[data-tight] .tx-fu-area,
+.tx[data-tight] .tx-aq-text {
+  height: 2.9em;
+  min-height: 2.9em;
+}
+.tx[data-tight] .tx-fu .tx-ask-foot,
+.tx[data-tight] .tx-aq .tx-ask-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: 2px;
+  padding: 3px 0 4px;
+  background: var(--tx-ask-bg);
+}
+.tx[data-tight] .tx-prompt {
+  align-items: center;
+  padding-block: 4px;
+}
+.tx[data-tight] .cmp {
+  --cmp-min-height: 1.6em;
+}
+.tx[data-tight] .tx-send {
+  height: calc(24px * var(--tx-k, 1));
+}
+
+/*
+ * #157: a Codex worker's async questions. The ask card's family (its stack, its key caps, its foot), in the working
+ * blue the transcript's live cue and the HUD's WORKING chip use: Codex asked, and goes on. Solid like the ask (the
+ * questions are Codex's own, not inferred), blue, not sun (nothing waits on you): `--tx-sun` is the card's accent, so
+ * every shared rule takes the blue. A reply's state says what the bridge has seen, in its own colour.
+ */
+/* The theme's sun text, taken before the card makes its own blue: a reply not delivered is a warning still. */
+.tx {
+  --tx-aq-warn: var(--tx-sun-text);
+}
+.tx-aq {
+  --tx-sun: var(--tx-blue);
+  --tx-sun-text: var(--tx-blue);
+  --tx-on-sun: var(--tx-on-accent);
+  /* Its own ground (the sticky top and foot of a short screen paint it too). */
+  --tx-ask-bg: color-mix(in srgb, var(--tx-blue) 7%, var(--tx-bg-2));
+  /* The theme's red and third text lose a little against the blue ground (Paper's red 4.4:1, Quiet's keys 3.8:1): each
+   * a step toward the text, at least 4.8:1 in every theme. */
+  --tx-aq-red: color-mix(in srgb, var(--tx-red) 85%, var(--tx-text));
+  box-shadow: 0 -6px 18px -8px rgb(0 0 0 / 45%);
+}
+.tx-aq-work {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  color: var(--tx-text-2);
+  font-size: calc(11.5px * var(--tx-k, 1));
+  font-style: italic;
+}
+.tx-aq-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tx-blue);
+  animation: tx-pulse 1.2s ease-in-out infinite;
+  will-change: opacity;
+}
+.tx[data-page-hidden] .tx-aq-dot {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tx-aq-dot {
+    animation: none;
+    will-change: auto;
   }
-  .tx[data-followup] .tx-bar {
-    display: none;
+}
+.tx-aq-hidden[aria-pressed='true'] {
+  color: var(--tx-text);
+}
+.tx-aq-stack {
+  display: grid;
+  gap: 6px;
+  margin-top: 9px;
+}
+/* The open batch among folded ones: its questions stacked as the ask card's. */
+.tx-aq-stack > .tx-aq-batch > .tx-ask-stack {
+  margin-top: 0;
+}
+.tx-aq-ro {
+  margin: 0 0 6px;
+  color: var(--tx-text-2);
+  font-size: calc(12.5px * var(--tx-k, 1));
+  line-height: 1.45;
+}
+.tx-aq-sent {
+  margin: 8px 0 0;
+  padding: 4px 10px;
+  max-height: 8.5em;
+  overflow: auto;
+  border-left: 1px solid var(--tx-sun-soft);
+  color: var(--tx-text-2);
+  font-size: calc(12.5px * var(--tx-k, 1));
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tx-aq-state {
+  margin: -2px 0 8px;
+  color: var(--tx-text-2);
+  font-size: calc(12px * var(--tx-k, 1));
+  font-weight: 650;
+}
+.tx-aq-state[data-phase='sending'] {
+  animation: tx-pulse 1.2s ease-in-out infinite;
+}
+.tx-aq-state[data-phase='sent'] {
+  color: var(--tx-blue);
+}
+.tx-aq-state[data-phase='unconfirmed'] {
+  font-style: italic;
+}
+.tx-aq-state[data-phase='undelivered'] {
+  color: var(--tx-aq-warn);
+}
+.tx-aq-state[data-phase='failed'],
+.tx-aq .tx-ask-note.is-error {
+  color: var(--tx-aq-red);
+}
+.tx-aq .tx-ask-keys {
+  color: color-mix(in srgb, var(--tx-text-3) 50%, var(--tx-text-2));
+}
+.tx-aq-state[data-phase='answered'] {
+  color: var(--tx-green);
+}
+.tx-aq-state[data-phase='hidden'] {
+  color: var(--tx-text-3);
+  font-weight: 500;
+}
+.tx-ask-row[data-phase='undelivered'] .tx-ask-row-act {
+  color: var(--tx-aq-warn);
+}
+.tx-ask-row[data-phase='failed'] .tx-ask-row-act {
+  color: var(--tx-aq-red);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tx-aq-state[data-phase='sending'] {
+    animation: none;
   }
-  .tx[data-followup] .tx-fu {
-    flex: 1 1 auto;
-    grid-template-rows: auto auto auto auto;
-    align-content: start;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--tx-sun) 35%, transparent) transparent;
-    /* What is scrolled to (a picked option, the focused text) clears the first line and the foot kept in view. */
-    scroll-padding-block: 30px 36px;
-    margin-top: 6px;
-    padding-top: 0;
-    padding-bottom: 0;
-  }
-  .tx[data-followup] .tx-fu .tx-ask-top {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    align-self: stretch;
-    padding-top: 4px;
-    padding-bottom: 1px;
-    background: var(--tx-ask-bg);
-  }
-  .tx[data-followup] .tx-fu .tx-ask-body {
-    min-height: auto;
-    max-height: none;
-    overflow: visible;
-  }
-  .tx[data-followup] .tx-fu-tail {
-    max-height: none;
-    margin-top: 4px;
-    padding: 2px 8px;
-  }
-  .tx[data-followup] .tx-fu-area {
-    height: 2.9em;
-    min-height: 2.9em;
-  }
-  .tx[data-followup] .tx-fu .tx-ask-foot {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
-    margin-top: 2px;
-    padding: 3px 0 4px;
-    background: var(--tx-ask-bg);
-  }
-  .tx[data-followup] .tx-prompt {
-    align-items: center;
-    padding-block: 4px;
-  }
-  .tx[data-followup] .cmp {
-    --cmp-min-height: 1.6em;
-  }
-  .tx[data-followup] .tx-send {
-    height: calc(24px * var(--tx-k, 1));
+}
+@container tx (max-height: 470px) {
+  .tx-aq-sent {
+    max-height: 4.5em;
   }
 }
 
+/*
+ * #157: the follow-up's card and the async questions' both up (an idle Codex worker keeps what its last turn asked):
+ * one is open, the other a tab away, so the open one keeps the room a single card has (a phone's screen has none for
+ * two). Each tab in its card's colours (the follow-up's sun, dashed; Codex's blue, solid), the open one filled like
+ * its card. The card behind keeps everything (its picks, its text): it is only not drawn.
+ */
+.tx-qtabs {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 10px 6px;
+}
+.tx-qtabs[hidden],
+.tx[data-front='asyncq'] .tx-fu,
+.tx[data-front='followup'] .tx-aq {
+  display: none;
+}
+.tx-qtab {
+  --tx-sun-soft: color-mix(in srgb, var(--tx-sun) 42%, transparent);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 3px 10px;
+  border: 1px dashed var(--tx-sun-soft);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--tx-text-2);
+  font-size: calc(11px * var(--tx-k, 1));
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease-out,
+    background-color 120ms ease-out;
+}
+.tx-qtab[data-card='asyncq'] {
+  --tx-sun: var(--tx-blue);
+  --tx-sun-text: var(--tx-blue);
+  --tx-on-sun: var(--tx-on-accent);
+  border-style: solid;
+}
+.tx-qtab:hover {
+  border-color: var(--tx-sun);
+}
+.tx-qtab[aria-selected='true'] {
+  border-color: var(--tx-sun);
+  background: color-mix(in srgb, var(--tx-sun) 14%, var(--tx-bg-2));
+  color: var(--tx-text);
+  cursor: default;
+}
+.tx-qtab-n {
+  min-width: 1.7em;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--tx-sun-soft);
+  color: var(--tx-text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-align: center;
+}
+.tx-qtab-n[hidden] {
+  display: none;
+}
+.tx-qtab[aria-selected='true'] .tx-qtab-n {
+  background: var(--tx-sun);
+  color: var(--tx-on-sun);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tx-qtab {
+    transition: none;
+  }
+}
+@container tx (max-height: 300px) {
+  .tx-qtabs {
+    gap: 4px;
+    margin: 4px 6px 0;
+  }
+  .tx-qtab {
+    padding: 1px 8px;
+  }
+  /* The open tab names the card: its own top line goes, and its questions keep the room a lone card has. */
+  .tx[data-front] .tx-fu,
+  .tx[data-front] .tx-aq {
+    margin-top: 4px;
+    padding-top: 4px;
+    scroll-padding-top: 4px;
+  }
+  .tx[data-front] .tx-fu > .tx-ask-top,
+  .tx[data-front] .tx-aq > .tx-ask-top {
+    display: none;
+  }
+}

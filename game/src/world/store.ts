@@ -37,6 +37,8 @@ import { PresetBook } from './presets';
 import { CrewMemory, crewView, type CrewView } from './crew';
 // #98: what the agent is doing (the waiting display status).
 import { isWaiting } from './activity';
+// #157: a Codex worker herdr calls blocked only because of an async question keeps working.
+import { asyncAttention, effectiveStatus } from './codexQuestions';
 
 export interface WorkerView {
   worker: Worker;
@@ -48,6 +50,8 @@ export interface WorkerView {
   display: Display;
   /** M6: a write-code crew member's role, lifecycle, report and run (null for everyone else). */
   crew?: CrewView | null;
+  /** #157: how many of a shared Codex worker's async questions want an answer (it works on meanwhile; 0: none). */
+  asks?: number;
 }
 
 export interface Counts {
@@ -401,8 +405,9 @@ export class WorldStore {
       harness: resolveHarness(w),
       since: ask ? ask.since : followup ? followup.at : (this.since.get(id) ?? this.loadedAt),
       // #98: an agent that ended its turn on purpose, waiting on its own background tasks, is not idle; needing you wins.
-      display: (crew?.needsYou || ask || followup || wrapStuck) && !asleep ? 'needs_you' : !asleep && isWaiting(w) ? 'waiting' : displayStatus(w.status, asleep),
+      display: (crew?.needsYou || ask || followup || wrapStuck) && !asleep ? 'needs_you' : !asleep && isWaiting(w) ? 'waiting' : displayStatus(effectiveStatus(w), asleep),
       crew,
+      asks: asleep ? 0 : asyncAttention(w),
     };
   }
 

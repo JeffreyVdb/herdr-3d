@@ -112,15 +112,49 @@ export function focusQuestion(q: HTMLElement | null): void {
   reveal(target);
 }
 
+/** A pinned card: what a reveal never scrolls past. */
+const CARD = '.tx-ask, .tx-fu, .tx-aq';
+
+/** The box that scrolls `el` on its card: the card's body, or on a very short screen the card itself (transcript.css). */
+function scrollerOf(el: Element): HTMLElement | null {
+  const card = el.closest<HTMLElement>(CARD);
+  if (!card) return null;
+  for (let e = el.parentElement; e; e = e.parentElement) {
+    if (e.scrollHeight > e.clientHeight + 1 && /^(auto|scroll)$/.test(getComputedStyle(e).overflowY)) return e;
+    if (e === card) break;
+  }
+  return null;
+}
+
+/** Where a box shows what it scrolls: its inside, less what sticks over it (a short screen's top line and foot). */
+function bandOf(box: HTMLElement): { top: number; bottom: number } {
+  const r = box.getBoundingClientRect();
+  let top = r.top + box.clientTop;
+  let bottom = top + box.clientHeight;
+  for (const c of box.children) {
+    const s = getComputedStyle(c);
+    if (s.position !== 'sticky' || s.display === 'none') continue;
+    const cr = c.getBoundingClientRect();
+    if (s.top !== 'auto') top = Math.max(top, cr.bottom);
+    else if (s.bottom !== 'auto') bottom = Math.min(bottom, cr.top);
+  }
+  return { top, bottom };
+}
+
+/** How far to scroll so `r` is inside `band` (its top first, when it is the taller). */
+export function revealBy(band: { top: number; bottom: number }, r: { top: number; bottom: number }, pad = 4): number {
+  if (r.top < band.top) return r.top - band.top - pad;
+  if (r.bottom > band.bottom) return Math.min(r.bottom - band.bottom + pad, r.top - band.top - pad);
+  return 0;
+}
+
 /**
- * Scrolls the card's body (only it: the transcript and the page around it never move) so `el` is in view: a focus
- * with preventScroll leaves a question below the fold hidden.
+ * Scrolls the card (only it: the transcript and the page around it never move) so `el` is in view, clear of a
+ * sticky top line and foot: a focus with preventScroll leaves a question below the fold hidden.
  */
 export function reveal(el: Element): void {
-  const body = el.closest<HTMLElement>('.tx-ask-body');
-  if (!body || body.scrollHeight <= body.clientHeight) return;
-  const b = body.getBoundingClientRect();
-  const r = el.getBoundingClientRect();
-  if (r.top < b.top) body.scrollTop -= b.top - r.top + 4;
-  else if (r.bottom > b.bottom) body.scrollTop += Math.min(r.bottom - b.bottom + 4, r.top - b.top - 4);
+  const box = scrollerOf(el);
+  if (!box) return;
+  const d = revealBy(bandOf(box), el.getBoundingClientRect());
+  if (d) box.scrollTop += d;
 }

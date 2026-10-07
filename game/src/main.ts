@@ -153,10 +153,17 @@ export interface H3DDebug {
   simTranscripts(): Promise<{ watches: number; ids: string[] } | null>;
   /** #57: the fixture simulator's `sim.ask` (a worker's agent asks, or the terminal ends the ask). */
   simAsk(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /**
+   * #157: the fixture simulator's Codex async questions: `sim.codex` (ask a batch, change the launch, open an approval,
+   * arm a failure), `sim.codex_answer` (the terminal answers), `sim.codex_turn_end` (`t` names which; fixture server only).
+   */
+  simCodex(t: 'sim.codex' | 'sim.codex_answer' | 'sim.codex_turn_end', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #83: the fixture simulator's `sim.wrapup`: an armed worker's transcript reports `clean`, `blocked` (with a reason) or `none`. */
   simWrapUp(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #106: the simulator moves a worker to a status (`sim.status`, a `worker.status` with a new `status_since`; fixture server only). */
   simStatus(id: string, status: string): Promise<boolean>;
+  /** Release the fixture simulator’s held timers (`simclock=manual`), after the test observed the previous step. */
+  simAdvance(ms: number): Promise<boolean>;
   /** #110: the simulator holds each later `packup.detect` ack this long after its answer (`sim.packup_lag`; fixture server only). */
   simPackupLag(ms: number): Promise<boolean>;
   /** M16 phase 2: the simulator's `sim.image` (makes a PNG, answers its ImageRef, to push in `simTranscript` items). */
@@ -408,6 +415,12 @@ const h3d: H3DDebug = {
     const r = await app.client.request('sim.ask' as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
+  simCodex: async (t, args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request(t as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  simAdvance: async (ms) => (await app?.client.request('sim.advance' as CommandName, { ms } as never))?.ok ?? false,
   simStatus: async (id, status) => (await app?.client.request('sim.status' as CommandName, { id, status } as never))?.ok ?? false,
   simPackupLag: async (ms) => (await app?.client.request('sim.packup_lag' as CommandName, { ms } as never))?.ok ?? false,
   simWrapUp: async (args) => {

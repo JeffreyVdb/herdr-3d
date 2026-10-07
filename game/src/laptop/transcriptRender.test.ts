@@ -1180,6 +1180,33 @@ describe('#58: the live cue and the prompts on their way', () => {
     }
   });
 
+  it.each(['ack-first', 'activity-first'])('prompt and activity announcements survive either delivery order (%s)', (order) => {
+    mount({ ...fakeHost(), label: 'Ada' });
+    view.setPending([pend('p1', 'sending')]);
+    const ack = () => view.setPending([pend('p1', 'sent')]);
+    const activity = () => view.setActivity({ kind: 'thinking', since: T0 });
+    if (order === 'ack-first') {
+      ack();
+      activity();
+    } else {
+      activity();
+      ack();
+    }
+    expect($('.tx-pending-state')?.textContent).toBe('Sent');
+    expect($('.tx-live')?.textContent).toBe('Ada is thinking');
+    expect($('.tx-pending-live')?.textContent).toBe('Sent');
+    // The echo removes the optimistic row without losing either announcement.
+    view.setPending([]);
+    expect($('.tx-pending')).toBeNull();
+    expect($('.tx-live')?.textContent).toBe('Ada is thinking');
+    // A queued prompt and a refusal still announce while the agent is thinking.
+    view.setPending([pend('p2', 'queued')]);
+    expect($('.tx-pending-live')?.textContent).toBe('Queued · Ada takes it when it can');
+    view.setPending([pend('p2', 'refused', { reason: 'not delivered' })]);
+    expect($('.tx-pending-live')?.textContent).toBe('Not sent: not delivered');
+    expect($('.tx-live')?.textContent).toBe('Ada is thinking');
+  });
+
   it('a hidden tab pauses it (the view marks the root)', () => {
     mount();
     const root = $('.tx') as HTMLElement;
@@ -1204,7 +1231,7 @@ describe('#58: the live cue and the prompts on their way', () => {
     expect($('.tx-pending')?.classList.contains('tx-user')).toBe(true);
     expect($('.tx-pending .tx-bubble')?.textContent?.trim()).toBe('look [Image #1]');
     expect(chip()).toEqual(['Sending…']);
-    expect($('.tx-live')?.textContent).toBe('Sending…');
+    expect($('.tx-pending-live')?.textContent).toBe('Sending…');
     view.setPending([pend('p1', 'sent'), pend('p2', 'queued')]);
     expect(chip()).toEqual(['Sent', 'Queued · Ada takes it when it can']);
     view.setPending([pend('p1', 'sent', { late: true }), pend('p2', 'queued', { late: true })]);
@@ -1212,7 +1239,7 @@ describe('#58: the live cue and the prompts on their way', () => {
     view.setPending([pend('p3', 'refused', { reason: 'Ada is blocked: answer its question first.' })]);
     expect($('.tx-pending')?.getAttribute('data-state')).toBe('refused');
     expect(chip()).toEqual(['Not sent: Ada is blocked: answer its question first.']);
-    expect($('.tx-live')?.textContent).toBe('Not sent: Ada is blocked: answer its question first.');
+    expect($('.tx-pending-live')?.textContent).toBe('Not sent: Ada is blocked: answer its question first.');
     ($('.tx-pending .tx-link') as HTMLButtonElement).click();
     expect(dismissed).toEqual(['p3']);
     view.setPending([]);

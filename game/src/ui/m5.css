@@ -41,6 +41,12 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* #157: a Codex worker's async questions: it works on, so the working blue, not the needs-you sun. */
+.prompt-ask--async {
+  border-color: color-mix(in srgb, var(--working) 70%, white);
+  color: color-mix(in srgb, var(--working) 45%, white);
+  font-family: inherit;
+}
 /* N next to "need you": the key that goes there. */
 .topbar-key {
   display: inline-grid;

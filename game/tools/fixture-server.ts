@@ -18,6 +18,7 @@
 // and `simfail=wake_failed|sleep_failed` makes the next wake/sleep fail (M4:
 // `hire_failed|fire_failed` the next hire / send-home; `fetch_failed` makes
 // origin unreachable for the run: no fetch works, worktree hires are refused);
+// `simclock=manual` holds scripted timers until `sim.advance {ms}` (e2e observes each step before advancing).
 // `simcap=<session>:<soft>:<hard>[,…]` sets floors' worker caps. M5: `simusage=<ms>` sends working agents'
 // `worker.usage` that often (default 5000, 0: never); `simfail=prompt_failed|prompt_retried|answer_unresolved|
 // changes_failed` for the next prompt / answer / changes (tools/fixture-panels.ts).
@@ -33,6 +34,10 @@
 // #110: `sim.packup_lag {ms}` holds each later `packup.detect` ack that long after its answer (tools/fixture-packup.ts).
 // #106: `inbox.dismiss` records a done episode's dismissal, `sim.status {id, status}` moves a worker's status, `simfail=no_inbox` plays a
 // bridge before it (tools/fixture-inbox.ts).
+// #157: `simcodex=ask` seeds Pixel (demo-m5) as a shared Codex worker whose running turn asked async questions, on every
+// connection (a reconnect replays it); `sim.codex`, `sim.codex_answer`, `sim.codex_turn_end`, `worker.answer_async` and
+// `worker.dismiss_async`, `simfail=async_input_failed|async_stale|async_unconfirmed|async_undelivered`
+// (tools/fixture-codex-questions.ts).
 // #51: `POST /upload` stores nothing and answers a fake Drop Zone path (tools/fixture-upload.ts); the query of the ws URL
 // carries `fail_upload=<N|all>&upload_key=<key>` to make uploads fail.
 import { readFileSync } from 'node:fs';
@@ -189,6 +194,7 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
       o.simulate || q.get('sim') === '1'
         ? {
             stepMs: Math.max(20, Number(q.get('simms')) || 600),
+            ...(q.get('simclock') === 'manual' ? { manualClock: true } : {}),
             ...(q.get('simfail') ? { fail: q.get('simfail') as string } : {}),
             ...(q.get('simcap') ? { caps: parseCaps(q.get('simcap') as string) } : {}),
             ...(q.get('simusage') !== null ? { usageMs: Math.max(0, Number(q.get('simusage')) || 0) } : {}),
@@ -207,6 +213,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             ...(q.get('simecho') !== null ? { echoMs: Math.max(0, Number(q.get('simecho')) || 0) } : {}),
             // #98: the agents' activities on the desk monitors (tools/fixture-activity.ts).
             ...(q.get('simactivity') ? { activity: q.get('simactivity') as string } : {}),
+            // #157: a shared Codex worker's async questions, on every connection (tools/fixture-codex-questions.ts).
+            ...(q.get('simcodex') ? { codex: q.get('simcodex') as string } : {}),
           }
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {
