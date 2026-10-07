@@ -508,6 +508,21 @@ export class KaneoSim {
     }
   }
 
+  /** The floor's tracker is about to change: the watch of that floor ends here, its connection is returned. */
+  release(session: string): Send | null {
+    const w = this.watching;
+    if (!w || w.session !== session) return null;
+    this.watching = null;
+    return w.send;
+  }
+
+  /** A watch handed over after the floor's tracker changed: the Kaneo board, as the bridge sends its watchers. */
+  rewatch(session: string, send: Send): void {
+    if (!this.state || !this.isKaneo(session)) return;
+    this.watching = { session, send };
+    send(this.message(session, true));
+  }
+
   private control(a: Obj, send: Send): Obj {
     if ('fail' in a) {
       this.failing = typeof a.fail === 'string' ? a.fail : null;

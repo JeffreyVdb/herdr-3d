@@ -539,6 +539,24 @@ export class BoardSim {
     send({ ...this.prs(session, b, true, []) });
   }
 
+  /** #184: the floor's tracker is about to change: the watch of that floor ends here, its connection is returned. */
+  release(session: string): Send | null {
+    const w = this.watching;
+    if (!w || w.session !== session) return null;
+    this.watching = null;
+    return w.send;
+  }
+
+  /** #184: a watch handed over after the floor's tracker changed: the new board, as the bridge sends its watchers. */
+  rewatch(session: string, send: Send): void {
+    const repo = this.repoOf(session);
+    if (!repo) return;
+    this.watching = { session, send };
+    const b = this.board(repo);
+    send({ ...this.issues(session, b, true) });
+    send({ ...this.prs(session, b, true, []) });
+  }
+
   private text(a: Obj, k: string, max = 65_536): string {
     const v = a[k];
     if (typeof v !== 'string' || !v.trim() || bytes(v) > max) throw this.bad(`${k} must be 1-${max} bytes of text`);

@@ -709,6 +709,8 @@ export class SimWorld {
     if (f.transition) throw new CmdError('busy', `busy: ${f.session} is ${f.transition}`);
     // #184: the tracker and the Kaneo link, checked like the bridge (tools/fixture-kaneo.ts).
     const s: FloorSettings = 'tracker' in a || 'kaneo' in a ? this.kaneo.applySettings(f.settings ?? {}, a) : { ...(f.settings ?? {}) };
+    // A connection watching the floor gets the board of its new link, like the bridge's watchers.
+    const watcher = 'tracker' in a || 'kaneo' in a || 'repo' in a ? (this.kaneo.release(f.session) ?? this.boards.release(f.session)) : null;
     const set = s as Record<string, unknown>;
     for (const k of ['repo', 'project', 'status_field', 'default_cwd', 'default_hire'] as const) {
       if (!(k in a)) continue;
@@ -718,6 +720,10 @@ export class SimWorld {
     if (Object.keys(s).length) f.settings = s;
     else delete f.settings;
     this.floorEvent(send, f);
+    if (watcher) {
+      if (this.kaneo.isKaneo(f.session)) this.kaneo.rewatch(f.session, watcher);
+      else this.boards.rewatch(f.session, watcher);
+    }
     return undefined;
   }
 
