@@ -1403,7 +1403,7 @@ on a floor with no board (no repo, no provider) is `unsupported`.
 
 | `t` | args | `ack.data` |
 |---|---|---|
-| `board.watch` | `{session}` | `{"enabled": bool, "reason"?}`: `enabled: false` with a `reason` (`"no repo linked"`, `"boards are not configured"`; #184, a Kaneo floor: `"Kaneo is not connected: connect it in Settings"`, `"no Kaneo project linked"`, `"this bridge has no Kaneo settings"`, `"this bridge cannot read Kaneo boards"`) and no messages; else the messages follow (`board.prs` only with a code host) |
+| `board.watch` | `{session}` | `{"enabled": bool, "reason"?}`: `enabled: false` with a `reason` (`"no repo linked"`, `"boards are not configured"`; #184, a Kaneo floor: `"Kaneo is not connected: connect it in Settings"`, `"no Kaneo project linked"`, `"this bridge has no Kaneo settings"`, `"this bridge cannot read Kaneo boards"`: no tracker could be made of the saved connection, e.g. it changed meanwhile; watch again) and no messages; else the messages follow (`board.prs` only with a code host) |
 | `board.unwatch` | `{session}` | — |
 | `board.refresh` | `{session}` | `{"queued": bool}`; `unsupported` on a floor with no board |
 | `issue.get` | `{session, id}` | `{"card", "body": markdown, "author": {name, avatar_url}, "created_at", "comments": [{id, author, body, created_at}], "comments_truncated"}`: the first 100 comments; the body is raw markdown, **the client sanitises** |
@@ -1462,9 +1462,13 @@ that changed since is `stale` (refresh, then move again). A poll that Kaneo refu
 **or the key's request quota**) pauses every Kaneo floor's polling for 5 minutes (`paused_until`; `board.refresh` does
 not poll meanwhile) and pauses the connection (`kaneo.update` `state: "paused"`); a passing `kaneo.test` of the saved
 connection, or a new connection, resumes at once. A **403** is `forbidden` (a permission problem in Kaneo, not an
-outage). The fetch is named by the instance, the connection's generation, the workspace, the project and the repo (never
-the key): a new key, instance, workspace or project drops the floor's board and its cache, and a poll that was in flight
-for the old one is never shown. The pull request board of a Kaneo floor with a repo is GitHub's, on GitHub's rate limit.
+outage). A **429** is `rate_limited` and backs the Kaneo floors off (Kaneo names no reset: the secondary-limit back-off).
+`issue.comment` on a Kaneo task is at most 10,000 UTF-16 code units (Kaneo's own limit; a longer one is `bad_request`
+before anything is sent, under the bridge's 64 KiB cap for every provider). The fetch is named by the instance, the
+connection's generation, the workspace, the project and the repo (never the key): a new key, instance, workspace or project drops the floor's board and its cache, and a poll that was in flight
+for the old one is never shown. The pull request board of a Kaneo floor with a repo is GitHub's, on GitHub's rate limit
+(its `rate` is GitHub's; the issues board's is absent, Kaneo sends none), and a failure of it (GitHub's limit, `gh`
+refusing) is GitHub's: it never backs Kaneo off or pauses the connection.
 - **Errors** (also in [Errors](#errors)): `confirmation_required`, `unsupported`, `provider_failed`, `rate_limited`,
   `checks_not_green`, `not_mergeable`, and `not_found` (an id that is not on this floor's provider), `stale`,
   `bad_request`, `unknown_session`, `unknown_worker`, `invalid_state`, `busy`.
