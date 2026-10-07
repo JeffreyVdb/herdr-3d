@@ -405,7 +405,8 @@ export class OverviewOverlay {
       this.groups.unshift(...full.floors.filter((f) => f.nodes.length).map((f) => f.row.key));
       this.defaults = new Set(sleepyFloors(full));
     } else this.defaults = new Set();
-    this.visible = visibleRows(tree, city ? this.prefs.effective(this.defaults) : this.prefs.set);
+    // Nobody in the whole system: the empty state whatever the filter (the city's tree still has its floors).
+    this.visible = total === 0 ? [] : visibleRows(tree, city ? this.prefs.effective(this.defaults) : this.prefs.set);
     const empty = this.visible.length === 0;
     this.renderEmpty(view, total, hiddenLine);
     this.emptyEl.hidden = !empty;
@@ -714,6 +715,8 @@ export class OverviewOverlay {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     // #174: Enter and Space on the focused Retry button press it (a native click), not the row's open or fold.
     if ((e.key === 'Enter' || e.key === ' ') && e.target instanceof Element && e.target.closest('.ov-retry')) return;
+    // #188: so do they on any focused button off the rows (the switch, the hidden line, All floors, Expand all, close).
+    if ((e.key === 'Enter' || e.key === ' ') && document.activeElement instanceof HTMLButtonElement && !document.activeElement.closest('.ov-row')) return;
     const v = this.focused();
     const i = v ? this.visible.indexOf(v) : -1;
     const go = (j: number) => {
@@ -737,11 +740,8 @@ export class OverviewOverlay {
       else if (v.parent) this.setFocus(v.parent);
     } else if (k === ' ' && v) {
       if (v.expandable) this.toggle(v.row.key, v.expanded);
-    } else if (k === 'Enter' && v) {
-      // Enter on a focused button (the close, Expand all) presses it.
-      if (document.activeElement instanceof HTMLButtonElement && !document.activeElement.closest('.ov-row')) handled = false;
-      else this.activate(v);
-    } else if (k === 'f' && !e.shiftKey) this.setFilter(!this.filter.activeOnly(this.view?.kind ?? 'floor'));
+    } else if (k === 'Enter' && v) this.activate(v);
+    else if (k === 'f' && !e.shiftKey) this.setFilter(!this.filter.activeOnly(this.view?.kind ?? 'floor'));
     else if (k === 'a' && !e.shiftKey && this.view?.kind === 'floor') this.showCity();
     else if (k === 't' && v?.row.kind === 'worker') this.ticket(v.row);
     else if (k === 'r' && v?.row.kind === 'worker' && retriable(v.row)) this.host.retrySummary(v.row.id);

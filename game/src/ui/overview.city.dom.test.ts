@@ -168,6 +168,17 @@ describe('the all-floors page (#188)', () => {
     expect(empty.querySelector('.ov-empty-title')?.textContent).toBe('Nobody’s here yet');
     expect([...empty.querySelectorAll('button')].filter((b) => !b.hidden)).toHaveLength(0);
     document.body.innerHTML = '';
+    // All, floors but nobody on any: still the empty state, not bare floor rows.
+    const all = new OverviewFilterPrefs(null);
+    all.setActiveOnly('city', false);
+    const bare = setup([], {}, all);
+    bare.ov.openCity();
+    expect(bare.ov.info()).toMatchObject({ filter: 'all', empty: true, rows: [] });
+    expect(document.querySelector('.ov-empty-title')?.textContent).toBe('Nobody’s here yet');
+    expect((document.querySelector('.ov-empty') as HTMLElement).hidden).toBe(false);
+    expect((document.querySelector('.ov-board') as HTMLElement).hidden).toBe(true);
+    expect([...document.querySelectorAll('.ov-empty button')].filter((b) => !(b as HTMLElement).hidden)).toHaveLength(0);
+    document.body.innerHTML = '';
     const quiet = setup([worker('i', 'top'), worker('z', 'den')]);
     quiet.ov.openCity();
     const e2 = document.querySelector('.ov-empty') as HTMLElement;
@@ -177,6 +188,39 @@ describe('the all-floors page (#188)', () => {
     expect(show.map((b) => b.textContent)).toEqual(['Show everyoneF']);
     show[0]?.click();
     expect(keys(quiet.ov)).toEqual(['floor:top', '  i', 'floor:bottom', 'floor:den']);
+  });
+
+  it('Space and Enter on a focused header button press it natively, never the remembered row', () => {
+    const { ov } = setup();
+    ov.openCity();
+    key('f');
+    focusRow(ov, 'floor:top');
+    for (const sel of ['.ov-seg[data-active="true"]', '.ov-seg[data-active="false"]', '.ov-btn', '.ov-btn--icon']) {
+      const btn = document.querySelector(sel) as HTMLButtonElement;
+      expect(btn, sel).not.toBeNull();
+      btn.focus();
+      for (const k of [' ', 'Enter']) {
+        const e = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true });
+        btn.dispatchEvent(e);
+        expect(e.defaultPrevented, `${sel} ${JSON.stringify(k)}`).toBe(false);
+        expect(document.activeElement).toBe(btn);
+        expect(ov.info().rows.find((r) => r.key === 'floor:top')?.expanded).toBe(true);
+        expect(ov.isOpen).toBe(true);
+      }
+    }
+    // The hidden-summary button too (it shows under Active only).
+    key('f');
+    const hidden = document.querySelector('.ov-hidden') as HTMLButtonElement;
+    expect(hidden.hidden).toBe(false);
+    hidden.focus();
+    const e = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+    hidden.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
+    expect(ov.info().rows.find((r) => r.key === 'floor:top')?.expanded).toBe(true);
+    // On a row, Space still folds it.
+    focusRow(ov, 'floor:top');
+    key(' ');
+    expect(ov.info().rows.find((r) => r.key === 'floor:top')?.expanded).toBe(false);
   });
 
   it('rows the filter hides fold away where they were, like a collapse; calm: at once', async () => {
