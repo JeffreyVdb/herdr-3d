@@ -215,6 +215,9 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             ...(q.get('simactivity') ? { activity: q.get('simactivity') as string } : {}),
             // #157: a shared Codex worker's async questions, on every connection (tools/fixture-codex-questions.ts).
             ...(q.get('simcodex') ? { codex: q.get('simcodex') as string } : {}),
+            // #184: the Kaneo connection to start with, and how slow its slow answers are (tools/fixture-kaneo.ts).
+            ...(['off', 'connected', 'unavailable', 'old'].includes(q.get('simkaneo') ?? '') ? { kaneo: q.get('simkaneo') as 'off' | 'connected' | 'unavailable' | 'old' } : {}),
+            ...(q.get('simkaneoslow') !== null ? { kaneoSlowMs: Math.max(0, Number(q.get('simkaneoslow')) || 0) } : {}),
           }
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {
