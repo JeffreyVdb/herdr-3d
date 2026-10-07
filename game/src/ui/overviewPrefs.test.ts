@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { OverviewPrefs, parseCollapsed } from './overviewPrefs';
+import { OverviewFilterPrefs, OverviewPrefs, parseCollapsed, parseFilter } from './overviewPrefs';
 
 const memory = () => {
   const m = new Map<string, string>();
@@ -57,5 +57,82 @@ describe('overview prefs (#118)', () => {
     expect(kept.length).toBe(200);
     expect(kept.at(-1)).toBe('o249');
     expect(kept[0]).toBe('o50');
+  });
+});
+
+describe('overview prefs: floors (#188)', () => {
+  it('parse: `floor:<session>` keys and the `open:` marker of a floor opened against its default are kept like any other', () => {
+    expect([...parseCollapsed('["floor:lab","open:floor:pastry","o1","unlinked:lab"]')]).toEqual(['floor:lab', 'open:floor:pastry', 'o1', 'unlinked:lab']);
+  });
+
+  it('a floor collapses and expands like a group; remembered for the next page', () => {
+    const st = memory();
+    const p = new OverviewPrefs(st);
+    p.setCollapsed('floor:lab', true);
+    expect(new OverviewPrefs(st).collapsed('floor:lab')).toBe(true);
+    p.setCollapsed('floor:lab', false);
+    expect(new OverviewPrefs(st).collapsed('floor:lab')).toBe(false);
+  });
+
+  it('an asleep floor starts collapsed; opened, it stays open (an `open:` marker), and folds again when asked', () => {
+    const st = memory();
+    const p = new OverviewPrefs(st);
+    expect(p.collapsed('floor:den', true)).toBe(true);
+    expect([...p.effective(['floor:den'])]).toEqual(['floor:den']);
+    p.setCollapsed('floor:den', false, true);
+    expect(p.collapsed('floor:den', true)).toBe(false);
+    expect(JSON.parse(st.m.get('h3d.overview.collapsed') ?? '[]')).toEqual(['open:floor:den']);
+    const again = new OverviewPrefs(st);
+    expect(again.collapsed('floor:den', true)).toBe(false);
+    expect([...again.effective(['floor:den'])]).toEqual([]);
+    again.setCollapsed('floor:den', true, true);
+    expect(again.collapsed('floor:den', true)).toBe(true);
+    expect(JSON.parse(st.m.get('h3d.overview.collapsed') ?? '[]')).toEqual(['floor:den']);
+    // Awake again, a floor folded while asleep stays folded.
+    expect(again.collapsed('floor:den')).toBe(true);
+  });
+
+  it('expand all / collapse all act on floors and orchestrators together, each against its own default', () => {
+    const st = memory();
+    const p = new OverviewPrefs(st);
+    const sleepy = new Set(['floor:den']);
+    p.setAll(['floor:top', 'o1', 'floor:den'], false, sleepy);
+    expect([...p.effective(sleepy)]).toEqual([]);
+    p.setAll(['floor:top', 'o1', 'floor:den'], true, sleepy);
+    expect([...p.effective(sleepy)].sort()).toEqual(['floor:den', 'floor:top', 'o1']);
+  });
+});
+
+describe('overview filter (#188)', () => {
+  it('parse: `active` or `all`; anything else is the view’s default', () => {
+    expect(parseFilter('active', false)).toBe(true);
+    expect(parseFilter('all', true)).toBe(false);
+    for (const raw of [null, '', 'ACTIVE', '1', '"all"']) {
+      expect(parseFilter(raw, true), String(raw)).toBe(true);
+      expect(parseFilter(raw, false), String(raw)).toBe(false);
+    }
+  });
+
+  it('defaults: active only on the all-floors page, all on a floor’s page; each view remembers its own', () => {
+    const st = memory();
+    const f = new OverviewFilterPrefs(st);
+    expect(f.activeOnly('city')).toBe(true);
+    expect(f.activeOnly('floor')).toBe(false);
+    f.setActiveOnly('floor', true);
+    f.setActiveOnly('city', false);
+    const again = new OverviewFilterPrefs(st);
+    expect(again.activeOnly('floor')).toBe(true);
+    expect(again.activeOnly('city')).toBe(false);
+    expect(st.m.get('h3d.overview.filter.floor')).toBe('active');
+    expect(st.m.get('h3d.overview.filter.city')).toBe('all');
+  });
+
+  it('works without storage, or with storage that throws (in this page only)', () => {
+    for (const st of [null, broken()]) {
+      const f = new OverviewFilterPrefs(st);
+      expect(f.activeOnly('city')).toBe(true);
+      f.setActiveOnly('city', false);
+      expect(f.activeOnly('city')).toBe(false);
+    }
   });
 });

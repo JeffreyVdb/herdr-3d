@@ -133,6 +133,8 @@ export interface PaletteEntry {
 export const PALETTE_ONLY = [
   { id: 'presets', name: 'Team presets', aliases: ['presets', 'crew', 'run presets'] },
   { id: 'about', name: 'About', aliases: ['version', 'build', 'credits'] },
+  // #188: every floor's workers from anywhere (O does it off an office floor).
+  { id: 'overview.all', name: 'All-floors overview', aliases: ['all floors', 'every floor', 'city overview', 'still running'] },
 ] as const satisfies readonly (PaletteEntry & { id: string })[];
 
 export type PaletteOnlyId = (typeof PALETTE_ONLY)[number]['id'];
@@ -150,7 +152,7 @@ export const BINDINGS = [
   { id: 'limits', group: ['floor', 'city'], scope: 'any', keys: [code('KeyL', { shift: true })], label: 'Plan limits', palette: { name: 'Plan limits', aliases: ['limits', 'usage', 'quota'] } },
   { id: 'battery', group: ['floor', 'city'], scope: 'any', keys: [code('KeyB')], label: 'Battery saver', quiet: true, palette: { name: 'Battery saver', aliases: ['power', 'fps'] } },
   { id: 'settings', group: ['floor', 'city'], scope: 'any', keys: [{ key: ',' }], label: 'Settings', palette: { name: 'Settings', aliases: ['preferences', 'options', 'config'] } },
-  { id: 'overview', group: ['floor', 'city'], scope: 'any', keys: [code('KeyO')], label: 'Floor overview: everyone on this floor and what they are doing', palette: { name: 'Overview', aliases: ['floor overview', 'everyone', 'summary'], pick: 'See the overview of which floor?', where: 'floor' } },
+  { id: 'overview', group: ['floor', 'city'], scope: 'any', keys: [code('KeyO')], label: 'Overview: everyone on this floor and what they are doing; off an office floor, every floor’s', palette: { name: 'Overview', aliases: ['floor overview', 'everyone', 'summary'], pick: 'See the overview of which floor?', where: 'floor' } },
   // ---- on a floor ----------------------------------------------------------------------------------
   { id: 'walk', group: 'floor', scope: 'floor', keys: [code('KeyW'), code('KeyA'), code('KeyS'), code('KeyD')], show: [['W A S D'], ['↑ ← ↓ →']], label: 'Walk (the arrows turn left and right)', repeat: true, readonly: true },
   { id: 'look', group: 'floor', scope: 'floor', keys: [code('PageUp'), code('PageDown')], show: [['Page Up'], ['Page Down']], label: 'Look up and down', repeat: true, readonly: true },
@@ -191,6 +193,9 @@ export const BINDINGS = [
   { id: 'dialog.close', group: 'dialogs', scope: 'dialog', keys: [code('Escape')], label: 'Close the dialog', readonly: true },
   { id: 'dialog.submit', group: 'dialogs', scope: 'dialog', keys: [code('Enter', { mod: true })], label: 'Submit: hire, Start Run, open a pull request, a board comment', readonly: true },
   { id: 'dialog.send', group: 'dialogs', scope: 'dialog', keys: [code('Enter')], label: 'Send, in the conversation’s prompt box', readonly: true },
+  // #188: the overview page's own keys (ui/overview.ts), besides its moves and folds.
+  { id: 'overview.filter', group: 'dialogs', scope: 'dialog', keys: [code('KeyF')], label: 'On the overview page: active workers only, or everyone', readonly: true },
+  { id: 'overview.floors', group: 'dialogs', scope: 'dialog', keys: [code('KeyA')], label: 'On a floor’s overview page: every floor’s', readonly: true },
   { id: 'dialog.newline', group: 'dialogs', scope: 'dialog', keys: [code('Enter', { shift: true })], label: 'A new line, in the hire task and the prompt boxes', readonly: true },
   // #139: the composer's own keys while its suggestion list is open (ui/composer/completion.ts); Enter picks there too.
   { id: 'dialog.complete', group: 'dialogs', scope: 'dialog', keys: [code('ArrowUp'), code('ArrowDown'), code('Tab')], show: [['↑ ↓'], ['Tab']], label: 'In a prompt box’s suggestion list (after / or @): ↑ ↓ choose, Tab or Enter picks, Esc closes only the list', readonly: true },

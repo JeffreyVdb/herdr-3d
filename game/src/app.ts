@@ -99,8 +99,8 @@ import { bannerVersion, type BuildInfo } from './version';
 import { WhiteboardOverlay } from './ui/whiteboard';
 // #118: the floor overview (the lounge wall's screen and its page).
 import { OverviewOverlay, type ViewRect } from './ui/overview';
-import { OverviewPrefs } from './ui/overviewPrefs';
-import { buildOverview, countItems, type OverviewData } from './world/overview';
+import { OverviewFilterPrefs, OverviewPrefs } from './ui/overviewPrefs';
+import { buildCityOverview, buildOverview, cityCountItems, countItems, type CityOverviewData, type OverviewData } from './world/overview';
 import { loadBoardTexture } from './render/whiteboardTexture';
 import type { WhiteboardState } from './net/protocol';
 // #100: the inbox's pings (desktop notifications, the chime)
@@ -602,6 +602,8 @@ export class App {
       o.host,
       {
         data: (session) => this.overviewData(session),
+        cityData: () => this.cityOverviewData(), // #188
+        goToFloor: (session) => void this.goToFloor(session),
         goTo: (id) => void this.goToWorker(id, 'transcript'),
         openTicket: (session, id) => this.boardsPanel.openItem('issues', session, id),
         retrySummary: (id) =>
@@ -617,6 +619,7 @@ export class App {
         },
       },
       new OverviewPrefs(),
+      new OverviewFilterPrefs(),
     );
     this.changes = new ChangesPanel(this.hud.root, {
       ...dialogHost,
@@ -633,6 +636,7 @@ export class App {
     this.hud.on('issues', () => this.openBoard('issues'));
     this.hud.on('prs', () => this.openBoard('prs'));
     this.hud.on('overview', () => this.openOverview(false));
+    this.hud.on('overview.all', () => this.openCityOverview()); // #188
     this.m6Buttons = m6StartButtons(this.hud, { run: () => this.openStartRun(), presets: (b) => this.openPresets(b), off: () => runUnsupported(hireHost) });
     this.bindInput();
     // #124: the keys' names as this keyboard labels them (Chromium's layout map), in the titles that name a key.
@@ -1891,20 +1895,44 @@ export class App {
 
   /**
    * E at the lounge wall's screen (`fromScreen`: the page grows out of it) or O / the top bar's Overview (out of the
-   * centre): the overview of the floor you are on.
+   * centre): the overview of the floor you are on. #188: off an office floor (the city, a lobby, the street) O opens
+   * the all-floors overview instead.
    */
   openOverview(fromScreen: boolean): void {
     const s = this.hereSession();
     if (!s) {
-      this.hud.toast('Walk onto an office floor to see its overview.', 2400);
+      this.openCityOverview();
       return;
     }
+    this.beforeOverview();
+    this.overview.open(s, fromScreen ? this.overviewScreenRect(s) : null);
+  }
+
+  /** #188: every floor's workers (the top bar's City Overview, the palette, O off an office floor). Out of the centre. */
+  openCityOverview(): void {
+    this.beforeOverview();
+    this.overview.openCity();
+  }
+
+  private beforeOverview(): void {
     this.walker.release();
     this.walker.stop();
     this.panels.close();
     if (this.planOpen) this.setPlan(false);
     this.updateHint();
-    this.overview.open(s, fromScreen ? this.overviewScreenRect(s) : null);
+  }
+
+  /** #188: what the all-floors page shows: every floor in the city's order, the whole system's numbers. */
+  private cityOverviewData(): CityOverviewData {
+    const city = this.store.city();
+    const floors = city.flatMap((b) => b.floors);
+    const buildings = city.filter((b) => b.building).length;
+    const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+    return {
+      tree: buildCityOverview(this.store),
+      where: `${n(floors.length, 'floor', 'floors')}${buildings ? ` in ${n(buildings, 'building', 'buildings')}` : ''}`,
+      counts: cityCountItems(floors),
+    };
   }
 
   /** What the page and the wall screen show of a floor (null: no such floor). */
@@ -2437,7 +2465,7 @@ export class App {
     battery: () => this.toggleBattery(),
     settings: () => this.settings.open(),
     overview: () => {
-      // #118: the overview of the floor you are on, wherever you stand on it (the city and the lobby say where to go).
+      // #118: the overview of the floor you are on, wherever you stand on it; #188: every floor's off one.
       if (!this.transitioning) this.openOverview(false);
     },
     'look.level': () => this.walker.level(),
@@ -2549,6 +2577,7 @@ export class App {
     }
     if (command.id === 'presets') return this.openPresets();
     if (command.id === 'about') return this.hud.openAbout();
+    if (command.id === 'overview.all') return this.openCityOverview(); // #188
     const b = binding(command.id);
     const chord = b.keys[0];
     this.actions[command.id as DispatchedId]({ binding: b, chord: chord ?? {}, code: chord?.code ?? '' });

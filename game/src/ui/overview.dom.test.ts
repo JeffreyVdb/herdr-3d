@@ -4,9 +4,9 @@ import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Floor, Snapshot, Worker } from '../net/protocol';
 import { WorldStore } from '../world/store';
-import { buildOverview, countItems } from '../world/overview';
+import { buildCityOverview, buildOverview, cityCountItems, countItems } from '../world/overview';
 import { OverviewOverlay, type OverviewHost } from './overview';
-import { OverviewPrefs } from './overviewPrefs';
+import { OverviewFilterPrefs, OverviewPrefs } from './overviewPrefs';
 
 const NOW = 1_790_000_000_000;
 
@@ -36,6 +36,8 @@ function setup(workers: Worker[] = CREW, over: Partial<OverviewHost> = {}) {
       const fv = store.floorView(s);
       return fv ? { tree: buildOverview(store, s), where: 'Floor 1 of 1 · Work', counts: countItems(fv.counts, fv.asleep), asleep: fv.asleep } : null;
     },
+    cityData: () => ({ tree: buildCityOverview(store), where: '1 floor in 1 building', counts: cityCountItems(store.city().flatMap((b) => b.floors)) }),
+    goToFloor: vi.fn(),
     goTo: vi.fn(),
     openTicket: vi.fn(),
     retrySummary: vi.fn(),
@@ -47,8 +49,9 @@ function setup(workers: Worker[] = CREW, over: Partial<OverviewHost> = {}) {
     ...over,
   };
   const prefs = new OverviewPrefs(null);
-  const ov = new OverviewOverlay(document.body, host, prefs);
-  return { ov, host, bg, prefs, store };
+  const filter = new OverviewFilterPrefs(null);
+  const ov = new OverviewOverlay(document.body, host, prefs, filter);
+  return { ov, host, bg, prefs, filter, store };
 }
 
 const key = (k: string, o: KeyboardEventInit = {}) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }));

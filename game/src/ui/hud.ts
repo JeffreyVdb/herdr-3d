@@ -64,7 +64,7 @@ const KEYS: Array<[string, string, boolean]> = [
   ['X', 'Send home', true],
 ];
 
-export type HudAction = 'city' | 'issues' | 'prs' | 'overview' | 'battery' | 'buildings' | 'elevator' | 'hire' | 'palette';
+export type HudAction = 'city' | 'issues' | 'prs' | 'overview' | 'overview.all' | 'battery' | 'buildings' | 'elevator' | 'hire' | 'palette';
 
 export interface PlanLabel {
   x: number;
@@ -91,6 +91,8 @@ export class Hud {
   private readonly prs = el('button', 'btn', `${svg(ICON.prs)}<span>PRs</span>`);
   /** #118: the floor overview (O), next to Issues / PRs. */
   private readonly overview = el('button', 'btn btn--overview', `${svg(ICON.overview)}<span>Overview</span><i class="topbar-key" aria-hidden="true"></i>`);
+  /** #188: every floor's overview, in the City section: wherever the floor's own is not (the city, a lobby, the street). */
+  private readonly overviewAll = el('button', 'btn btn--overview btn--overview-all', `${svg(ICON.overview)}<span>Overview</span><i class="topbar-key" aria-hidden="true"></i>`);
   private readonly battery = el('button', 'btn btn--battery', `${svg(ICON.leaf)}<span>Battery saver</span>`);
   private readonly settings = el('button', 'btn', `${svg(ICON.gear)}<span>Settings</span>`);
   private readonly about = el('button', 'btn', `${svg(ICON.info)}<span>About</span>`);
@@ -163,12 +165,14 @@ export class Hud {
     this.about.type = 'button';
     this.overview.setAttribute('aria-label', 'Overview');
     this.overview.setAttribute('aria-haspopup', 'dialog');
+    this.overviewAll.setAttribute('aria-label', 'All-floors overview');
+    this.overviewAll.setAttribute('aria-haspopup', 'dialog');
     // The menu: everything that is a command (each also has a key), in groups; the bar keeps what carries state.
     this.menuFloor.dataset.title = 'This floor';
     this.menuCity.dataset.title = 'City';
     this.menuGame.dataset.title = 'Game';
     this.menuFloor.append(this.hire, this.issues, this.prs, this.overview, this.elevator);
-    this.menuCity.append(this.buildings);
+    this.menuCity.append(this.buildings, this.overviewAll);
     this.menuGame.append(this.settings, this.about, this.battery);
     this.menu.append(this.menuFloor, this.menuCity, this.menuGame, this.paletteRow);
     this.refreshKeyTitles();
@@ -217,6 +221,7 @@ export class Hud {
       [this.issues, 'issues'],
       [this.prs, 'prs'],
       [this.overview, 'overview'],
+      [this.overviewAll, 'overview.all'],
       [this.battery, 'battery'],
       [this.buildings, 'buildings'],
       [this.elevator, 'elevator'],
@@ -253,6 +258,7 @@ export class Hud {
     this.root.dataset.mode = mode;
     this.back.hidden = mode === 'city';
     this.issues.hidden = this.prs.hidden = this.overview.hidden = mode === 'city';
+    this.overviewAll.hidden = mode !== 'city' && this.root.dataset.area === 'floor';
     this.buildings.hidden = mode !== 'city';
     this.elevator.hidden = mode === 'city';
     this.hire.hidden = mode === 'city' || this.root.dataset.area !== 'floor';
@@ -451,6 +457,7 @@ export class Hud {
     this.root.dataset.area = area;
     const onFloor = area === 'floor';
     this.issues.hidden = this.prs.hidden = this.overview.hidden = this.hire.hidden = this.mode === 'city' || !onFloor;
+    this.overviewAll.hidden = this.mode !== 'city' && onFloor; // #188: one Overview at a time
     this.syncExtras();
   }
 
@@ -787,6 +794,9 @@ export class Hud {
     this.overview.title = withKey('Floor overview: everyone on this floor and what they are doing', 'overview');
     this.overview.setAttribute('aria-keyshortcuts', keyName('overview'));
     this.overview.querySelector('.topbar-key')?.setAttribute('data-key', keyName('overview'));
+    this.overviewAll.title = withKey('All-floors overview: every floor’s workers, who is still running', 'overview');
+    this.overviewAll.setAttribute('aria-keyshortcuts', keyName('overview'));
+    this.overviewAll.querySelector('.topbar-key')?.setAttribute('data-key', keyName('overview'));
     // The caps the menu draws beside each row (the table's, as this keyboard labels them).
     for (const [b, id] of [[this.hire, 'hire'], [this.issues, 'issues'], [this.prs, 'prs'], [this.elevator, 'elevator'], [this.buildings, 'buildings'], [this.settings, 'settings'], [this.battery, 'battery']] as const) b.dataset.key = keyName(id);
     this.paletteRow.querySelector('.menu-key')?.setAttribute('data-key', keyName('palette'));
