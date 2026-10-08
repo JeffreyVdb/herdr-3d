@@ -1200,6 +1200,27 @@ export interface TranscriptDiff {
   hunks: unknown[];
   /** Lines were left out (`transcript.item` has them). */
   truncated?: boolean;
+  /** #171: what happened to the file, when the source says (absent: not known, e.g. a Codex patch, an older bridge). */
+  op?: 'edit' | 'create' | 'overwrite' | 'delete' | string;
+  /** #171: the source recorded the change but no lines for it (`hunks` is empty): not a cut of ours (`truncated` is). */
+  no_diff?: boolean;
+}
+
+/**
+ * #171: what a Claude Bash call's `bashEditDiff` says beyond its diffs (best effort). Absent from a tool: the source said
+ * nothing (an older Claude Code, recording off): unknown, never "no changes".
+ */
+export interface TranscriptChanges {
+  /** Changed files with no diff (the source lists at most 200 changed files). */
+  paths?: string[];
+  /** How many changed files have no diff: more than `paths` when the source's list was cut. */
+  more_files?: number;
+  /** The record is incomplete or could not be taken (the diffs it has are real). */
+  unavailable?: boolean;
+  /** A git command that moves the working tree (checkout, stash): no diff was taken. */
+  skipped?: boolean;
+  /** Another Bash call ran in the same repository at the same time: some listed changes may be its. */
+  shared?: boolean;
 }
 
 export interface TranscriptItem {
@@ -1224,7 +1245,8 @@ export interface TranscriptItem {
     name: string;
     input_summary: string;
     input?: unknown;
-    status: 'running' | 'ok' | 'error' | 'interrupted';
+    /** #171: `denied`: the user rejected the call (an older bridge sent `error`). */
+    status: 'running' | 'ok' | 'error' | 'interrupted' | 'denied';
     output_text?: string;
     output_truncated?: boolean;
     /** Images in the output (what the agent viewed: a `Read` of a PNG, a screenshot, Codex `view_image`). */
@@ -1234,6 +1256,8 @@ export interface TranscriptItem {
     diffs?: TranscriptDiff[];
     /** #57: an ask call's question card. */
     ask?: TranscriptAsk;
+    /** #171: a Claude Bash call's recorded changes beyond its diffs. */
+    changes?: TranscriptChanges;
   };
   /** `agent_id` is '' until the call's result names it (its timeline: `transcript.page` with `agent`). */
   subagent?: { agent_id: string; description: string; status: string };

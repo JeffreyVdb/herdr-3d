@@ -170,5 +170,27 @@ describe('fullscreen pref (#74)', () => {
     expect(p.fullscreen).toBe(false);
     expect(new ViewPrefs(memory({ 'h3d.term.fullscreen': 'no' })).fullscreen).toBe(true);
   });
-});
 
+  it('#171: show code changes is on by default, stored only when off (as 0), says so, and is apart from hide tools', () => {
+    const st = memory();
+    const p = new ViewPrefs(st);
+    expect(p.showChanges).toBe(true);
+    const seen: string[] = [];
+    p.onChange((w) => seen.push(w));
+    p.showChanges = true; // no change: no event
+    p.showChanges = false;
+    expect(Object.fromEntries(st.map)).toEqual({ 'h3d.transcript.showChanges': '0' });
+    p.hideTools = true;
+    expect(new ViewPrefs(st).showChanges).toBe(false);
+    expect(new ViewPrefs(st).hideTools).toBe(true);
+    p.showChanges = true;
+    expect(st.map.has('h3d.transcript.showChanges')).toBe(false);
+    expect(seen).toEqual(['showChanges', 'hideTools', 'showChanges']);
+    // Anything but '0' is on; storage that throws still works for the page.
+    expect(new ViewPrefs(memory({ 'h3d.transcript.showChanges': 'off' })).showChanges).toBe(true);
+    const b = new ViewPrefs(broken());
+    expect(b.showChanges).toBe(true);
+    b.showChanges = false;
+    expect(b.showChanges).toBe(false);
+  });
+});

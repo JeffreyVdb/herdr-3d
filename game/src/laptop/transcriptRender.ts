@@ -1,7 +1,7 @@
 import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
-import type { Ask, CommandArgs, Followup, TranscriptDiff, TranscriptItem, Usage, WorkerCodex } from '../net/protocol';
+import type { Ask, CommandArgs, Followup, TranscriptChanges, TranscriptDiff, TranscriptItem, Usage, WorkerCodex } from '../net/protocol';
 import { AskCard, askItem, type AskResult } from './askCard';
 import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
@@ -59,6 +59,11 @@ export interface TranscriptRenderHost {
   asyncDrafts?: AsyncDrafts;
   onSwitchToTerminal(): void;
   loadSubagent(agentId: string): Promise<TranscriptItem[]>;
+  /**
+   * #171: one item in full (`transcript.item`; `agent`: of that subagent's timeline), for a change the list cut. None: the
+   * cut change says so and offers nothing.
+   */
+  loadItem?(itemId: string, agent?: string): Promise<TranscriptItem | null>;
   /** #58: a refused prompt's row is dismissed. */
   onDismissPending?(id: string): void;
   /** A queued prompt should go now: the host presses Esc (both CLIs stop the turn and send what is queued; none: no link). */
@@ -373,7 +378,44 @@ function toolDiffs(t: NonNullable<TranscriptItem['tool']>): TranscriptDiff[] {
 
 const toolImages = (t: NonNullable<TranscriptItem['tool']>) => imagesOf(t.images);
 
-const STATUS_TEXT: Record<string, string> = { running: 'running', ok: 'done', error: 'error', interrupted: 'interrupted' };
+/** #171: a Claude Bash call's recorded changes beyond its diffs (null: none sent, or not an object). */
+function toolChanges(t: NonNullable<TranscriptItem['tool']>): TranscriptChanges | null {
+  const c = t.changes;
+  return c && typeof c === 'object' ? c : null;
+}
+
+/** #171: the changed files a record lists without a diff (strings only). */
+const undiffed = (c: TranscriptChanges | null): string[] => (c && Array.isArray(c.paths) ? c.paths.filter((p): p is string => typeof p === 'string' && p !== '') : []);
+const moreFiles = (c: TranscriptChanges | null): number => (c && typeof c.more_files === 'number' && Number.isFinite(c.more_files) && c.more_files > 0 ? Math.floor(c.more_files) : 0);
+
+/**
+ * #171: whether a record says something worth a line on its own: files changed without a diff, or that it is incomplete or
+ * was not taken. `shared` alone (no changes listed) says nothing about this call's changes, so it does not.
+ */
+const changesSay = (c: TranscriptChanges | null): boolean => !!c && (undiffed(c).length > 0 || moreFiles(c) > 0 || c.unavailable === true || c.skipped === true);
+
+/** #171: what became of a call's changes, from its status. A running call's diffs are its input's (a Codex patch): not applied yet. */
+type ChangeState = 'proposed' | 'applied' | 'failed' | 'denied' | 'partial';
+function changeState(status: string): ChangeState {
+  if (status === 'running') return 'proposed';
+  if (status === 'ok') return 'applied';
+  if (status === 'denied') return 'denied';
+  if (status === 'interrupted') return 'partial';
+  return 'failed';
+}
+
+const CHANGE_STATE_TEXT: Record<ChangeState, string> = {
+  proposed: 'Proposed: not applied yet.',
+  applied: '',
+  failed: 'The call failed: these changes may not have been applied, or only in part.',
+  denied: 'Denied: not applied.',
+  partial: 'Interrupted: these changes may be only partly applied.',
+};
+
+/** #171: the file's fate where the source says (an edit is the usual case: no tag). */
+const OP_TAG: Record<string, string> = { create: 'new', delete: 'deleted', overwrite: 'overwritten' };
+
+const STATUS_TEXT: Record<string, string> = { running: 'running', ok: 'done', error: 'error', interrupted: 'interrupted', denied: 'denied' };
 
 // ---------------------------------------------------------------------------------------------------------------
 // Diffs
@@ -438,11 +480,13 @@ function diffStat(hunks: unknown[]): { add: number; del: number } {
 
 const MAX_DIFF_LINES = 2000;
 
-function renderDiff(diff: TranscriptDiff): HTMLElement {
+const statEl = (add: number, del: number) => h('span', { class: 'tx-diff-stat' }, h('span', { class: 'tx-add-n' }, `+${add}`), ' ', h('span', { class: 'tx-del-n' }, `−${del}`));
+
+/** A diff's lines as a unified view with line numbers (at most MAX_DIFF_LINES of them, then a note). */
+function diffLines(diff: TranscriptDiff): HTMLElement {
   const hunks = Array.isArray(diff.hunks) ? diff.hunks : [];
-  const { add, del } = diffStat(hunks);
-  const box = h('div', { class: 'tx-diff' }, h('div', { class: 'tx-diff-file' }, h('span', { class: 'tx-diff-path' }, String(diff.path ?? '')), h('span', { class: 'tx-diff-stat' }, h('span', { class: 'tx-add-n' }, `+${add}`), ' ', h('span', { class: 'tx-del-n' }, `−${del}`))));
-  const body = h('div', { class: 'tx-diff-body', role: 'table' });
+  const box = h('div', { class: 'tx-diff-lines' });
+  const body = h('div', { class: 'tx-diff-body', role: 'table', 'aria-label': `Changes to ${String(diff.path ?? '')}` });
   let shown = 0;
   for (const raw of hunks) {
     const hk = parseHunk(raw);
@@ -463,7 +507,7 @@ function renderDiff(diff: TranscriptDiff): HTMLElement {
   }
   box.append(body);
   const total = hunks.reduce<number>((s, raw) => s + parseHunk(raw).lines.length, 0);
-  if (total > shown) box.append(h('div', { class: 'tx-note' }, `${total - shown} more diff lines not shown`));
+  if (total > shown) box.append(h('div', { class: 'tx-note' }, `${total - shown} more diff lines not shown (the view draws ${MAX_DIFF_LINES.toLocaleString('en')} per file)`));
   return box;
 }
 
@@ -480,6 +524,17 @@ const isSystem = (it: TranscriptItem) => it.hidden === true || it.kind === 'unkn
 export const isToolRow = (it: TranscriptItem) => it.kind === 'tool' && !!it.tool && !(it.tool.ask && typeof it.tool.ask === 'object' && Array.isArray(it.tool.ask.questions));
 /** #70: a tool row with images (a Read of a PNG, a screenshot, a `view_image`): its strip shows collapsed, and stays when tool calls are hidden. */
 export const toolHasImages = (it: TranscriptItem) => isToolRow(it) && toolImages(it.tool as NonNullable<TranscriptItem['tool']>).length > 0;
+/**
+ * #171: a tool row with code changes (diffs, or a record of files changed without one): they show under its header, and stay
+ * when tool calls are hidden, as #70's images do.
+ */
+export const toolHasChanges = (it: TranscriptItem) => {
+  if (!isToolRow(it)) return false;
+  const t = it.tool as NonNullable<TranscriptItem['tool']>;
+  return toolDiffs(t).length > 0 || changesSay(toolChanges(t));
+};
+/** #59/#70/#171: what still shows of a tool row while tool calls are hidden (its images, its changes). */
+const keepsWhenHidden = (it: TranscriptItem) => toolHasImages(it) || toolHasChanges(it);
 const EXCERPT_LINES = 4;
 const PROMPT_HINT = `Message the agent…  (Enter sends, Shift+Enter for a new line, ${PASTE_HINT})`;
 
@@ -669,6 +724,15 @@ class Transcript implements TranscriptView {
   private readonly unprefs: () => void;
   private readonly toolsBox: HTMLInputElement;
   private readonly toolsCount: HTMLSpanElement;
+  /** #171: show code changes (diffs open), and each changed file opened or closed by hand since (key: scope/id#index). */
+  private readonly changesBox: HTMLInputElement;
+  private readonly fileOpen = new Map<string, boolean>();
+  /** #171: each changed file shown: what opens or closes it (its row may be rebuilt: the map holds the one shown now). */
+  private readonly fileSet = new WeakMap<HTMLElement, (open: boolean) => void>();
+  /** #171: changes loaded in full (`transcript.item`) after the list cut them, by agent/id. */
+  private readonly fullDiffs = new Map<string, TranscriptDiff[]>();
+  /** The subagent each nested timeline's scope shows (for `transcript.item` with `agent`). */
+  private readonly scopeAgent = new Map<string, string>();
   /** While tool calls are hidden: the one running now, or the ones that failed since. */
   private readonly busy: HTMLButtonElement;
   private readonly themeBtns: HTMLButtonElement[];
@@ -838,7 +902,10 @@ class Transcript implements TranscriptView {
     this.prefs = host.prefs ?? new ViewPrefs(null);
     this.toolsBox = h('input', { type: 'checkbox', class: 'tx-check-box', onchange: () => (this.prefs.hideTools = this.toolsBox.checked) });
     this.toolsCount = h('span', { class: 'tx-check-n' });
-    const tools = h('label', { class: 'tx-check', title: 'Hide tool calls (subagents and questions stay)' }, this.toolsBox, h('span', {}, 'Hide tools'), this.toolsCount);
+    const tools = h('label', { class: 'tx-check', title: 'Hide tool calls (subagents, questions, images and code changes stay)' }, this.toolsBox, h('span', {}, 'Hide tools'), this.toolsCount);
+    // #171: on by default; off, each changed file is one line (path and counts) you can still open.
+    this.changesBox = h('input', { type: 'checkbox', class: 'tx-check-box', onchange: () => (this.prefs.showChanges = this.changesBox.checked) });
+    const changes = h('label', { class: 'tx-check tx-check-changes', title: 'Show code changes: the diff of each file the agent changed (off: one line per file)' }, this.changesBox, h('span', { class: 'tx-check-ic', 'aria-hidden': 'true' }, icon(TX_ICON.edit)), h('span', {}, 'Code changes'));
     this.busy = h('button', { class: 'tx-busy', hidden: true, onclick: () => this.showHiddenTools() });
     this.themeBtns = THEMES.map((t) =>
       h(
@@ -877,9 +944,9 @@ class Transcript implements TranscriptView {
       h('span', { class: 'tx-ctx-text' }, this.ctxPct, this.ctxUsed, this.ctxWin),
     );
     // The preset and the zoom keep together at the strip's end; a narrow screen wraps them to a line of their own.
-    const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, this.busy, this.ctxEl, h('div', { class: 'tx-look' }, picker, zoom));
+    const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, changes, this.busy, this.ctxEl, h('div', { class: 'tx-look' }, picker, zoom));
     this.main = h('div', { class: 'tx-main' }, this.scroller, this.jump);
-    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown' }, bar, this.banner, this.main, this.ask.el, this.cardTabs, this.followup.el, this.asyncq.el, this.asyncq.live, this.form, this.pendingLive, this.live);
+    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown', 'data-changes': 'shown' }, bar, this.banner, this.main, this.ask.el, this.cardTabs, this.followup.el, this.asyncq.el, this.asyncq.live, this.form, this.pendingLive, this.live);
     this.unprefs = this.prefs.onChange((what) => this.applyPrefs(what));
     this.applyPrefs(null);
     this.updateCounts();
@@ -915,7 +982,7 @@ class Transcript implements TranscriptView {
     const added = this.timeline.set(Array.isArray(items) ? items : []);
     // #59: the first timeline (a failure that came while the terminal was up, before this view) or a resync is no
     // quieter than a live update: this turn's hidden failures you have not seen fail yet go on the chip.
-    if (this.prefs.hideTools) for (const t of this.currentTurnTools()) if (t.tool?.status === 'error' && !wasFailed.has(t.id)) this.failedHidden.add(t.id);
+    if (this.prefs.hideTools) for (const t of this.currentTurnTools()) if (t.tool?.status === 'error' && !wasFailed.has(t.id) && !toolHasChanges(t)) this.failedHidden.add(t.id);
     this.afterChange(hadAny ? added : [], !hadAny);
   }
 
@@ -928,7 +995,8 @@ class Transcript implements TranscriptView {
   applyUpdates(items: TranscriptItem[]): void {
     if (this.destroyed || !Array.isArray(items) || items.length === 0) return;
     // #59: a tool call that fails while tool calls are hidden is not lost: the strip's chip says so until you look.
-    if (this.prefs.hideTools) for (const it of items) if (isItem(it) && isToolRow(it) && it.tool?.status === 'error' && (this.showSystem || !isSystem(it))) this.failedHidden.add(it.id);
+    // #171: one whose changes stay on screen says so itself.
+    if (this.prefs.hideTools) for (const it of items) if (isItem(it) && isToolRow(it) && it.tool?.status === 'error' && !toolHasChanges(it) && (this.showSystem || !isSystem(it))) this.failedHidden.add(it.id);
     const added = this.timeline.apply(items);
     this.afterChange(added, false);
   }
@@ -1200,6 +1268,7 @@ class Transcript implements TranscriptView {
     if (isSystem(it)) row.classList.add('tx-sys');
     if (isToolRow(it)) row.classList.add('tx-toolrow');
     if (toolHasImages(it)) row.classList.add('tx-toolimg');
+    if (toolHasChanges(it)) row.classList.add('tx-toolchg');
     if (isToolRow(it) && this.revealed.has(it.id)) row.classList.add('tx-reveal');
     const t = clock(it.ts);
     if (t && !row.title) row.title = t;
@@ -1369,28 +1438,30 @@ class Transcript implements TranscriptView {
         if (ms >= 0 && ms < 86_400_000) dur.textContent = duration(ms);
       }
     }
-    const diffs = toolDiffs(t);
-    const stat = diffs.length ? diffs.map((d) => diffStat(d.hunks)).reduce((a, b) => ({ add: a.add + b.add, del: a.del + b.del })) : null;
+    const diffs = this.diffsOf(it, t, scope);
+    // A file recorded without lines (no_diff) counts nothing: no "+0 −0" for an overwrite whose lines are unknown.
+    const counted = diffs.filter((d) => d.no_diff !== true);
+    const stat = counted.length ? counted.map((d) => diffStat(d.hunks)).reduce((a, b) => ({ add: a.add + b.add, del: a.del + b.del })) : null;
     const head = h(
       'button',
       { class: 'tx-tool-row', 'aria-expanded': 'false' },
       h('span', { class: 'tx-tool-icon' }, icon(toolIcon(String(t.name ?? '')))),
       h('span', { class: 'tx-tool-name' }, String(t.name ?? 'tool')),
       h('span', { class: 'tx-tool-sum' }, String(t.input_summary ?? '')),
-      stat ? h('span', { class: 'tx-diff-stat' }, h('span', { class: 'tx-add-n' }, `+${stat.add}`), ' ', h('span', { class: 'tx-del-n' }, `−${stat.del}`)) : null,
+      stat ? statEl(stat.add, stat.del) : null,
       h('span', { class: 'tx-tool-status' }, STATUS_TEXT[status] ?? status),
       dur,
       h('span', { class: 'tx-caret' }, icon(TX_ICON.chevron)),
     );
     const body = h('div', { class: 'tx-tool-body' });
     const ex = this.expander(`${scope}/${it.id}`, (open) => {
-      if (open && !body.childNodes.length) this.fillTool(body, t, diffs);
+      if (open && !body.childNodes.length) this.fillTool(body, t, diffs.length > 0);
       body.hidden = !open;
     });
     head.setAttribute('aria-expanded', String(ex.open));
     head.addEventListener('click', () => ex.toggle(head));
     body.hidden = !ex.open;
-    if (ex.open) this.fillTool(body, t, diffs);
+    if (ex.open) this.fillTool(body, t, diffs.length > 0);
     row.append(head);
     // #70: the images show without opening the row, under its header and outside the lazy body (a thumbnail is its own
     // button, so a click on it opens the lightbox and never toggles the row). With tool calls hidden it is all that shows.
@@ -1402,11 +1473,131 @@ class Transcript implements TranscriptView {
       strip.classList.add('tx-tool-strip');
       row.append(strip);
     }
+    // #171: the code changes show without opening the row too (raw input and output stay in the body).
+    const changes = this.changesBlock(it, t, scope, diffs, status);
+    if (changes) row.append(changes);
     row.append(body);
     return row;
   }
 
-  private fillTool(body: HTMLElement, t: NonNullable<TranscriptItem['tool']>, diffs: TranscriptDiff[]): void {
+  /** A tool's diffs: the full ones if they were loaded (#171), else what the list sent. */
+  private diffsOf(it: TranscriptItem, t: NonNullable<TranscriptItem['tool']>, scope: string): TranscriptDiff[] {
+    return this.fullDiffs.get(this.fullKey(it, scope)) ?? toolDiffs(t);
+  }
+
+  private fullKey(it: TranscriptItem, scope: string): string {
+    return `${this.scopeAgent.get(scope) ?? ''}/${it.id}`;
+  }
+
+  /**
+   * #171: a call's code changes, under its header: a line for what became of them unless applied, each changed file (its
+   * path, what happened to it, its counts, then its diff: open while "Code changes" is on, one click away otherwise), and
+   * what the record says beyond its diffs (files changed without one, incomplete, not taken, maybe another command's).
+   * Null: nothing to show (a Bash with no record is unknown, not "no changes").
+   */
+  private changesBlock(it: TranscriptItem, t: NonNullable<TranscriptItem['tool']>, scope: string, diffs: TranscriptDiff[], status: string): HTMLElement | null {
+    const c = toolChanges(t);
+    if (!diffs.length && !changesSay(c)) return null;
+    const state = changeState(status);
+    const box = h('div', { class: 'tx-changes', 'data-state': state, role: 'group', 'aria-label': `Code changes: ${String(t.name ?? 'tool')}` });
+    if (CHANGE_STATE_TEXT[state]) box.append(h('div', { class: 'tx-chg-state' }, CHANGE_STATE_TEXT[state]));
+    const load = this.host.loadItem && diffs.some((d) => d.truncated === true) ? () => this.loadFull(it, t, scope, status, box) : null;
+    diffs.forEach((d, i) => box.append(this.changeFile(d, `${scope}/${it.id}#${i}`, load)));
+    if (c) {
+      const paths = undiffed(c);
+      const more = Math.max(moreFiles(c), paths.length);
+      if (more > 0) {
+        const n = `${more} ${more === 1 ? 'file' : 'files'}`;
+        const text = diffs.length ? `${n} more changed, no diff recorded` : `${n} changed, no diff recorded`;
+        if (paths.length) {
+          const unlisted = more - paths.length;
+          const list = h('ul', { class: 'tx-chg-paths' }, ...paths.map((p) => h('li', {}, p)));
+          box.append(h('details', { class: 'tx-chg-more' }, h('summary', {}, text), list, unlisted > 0 ? h('div', { class: 'tx-note' }, `and ${unlisted} not listed`) : null));
+        } else box.append(h('div', { class: 'tx-chg-note' }, text));
+      }
+      if (c.skipped === true) box.append(h('div', { class: 'tx-chg-note' }, 'No diff taken: this command moves the working tree (like git checkout or git stash).'));
+      if (c.unavailable === true) box.append(h('div', { class: 'tx-chg-note' }, diffs.length || more ? 'Incomplete: Claude Code could not record all of this command’s changes.' : 'Not recorded: Claude Code could not take this command’s changes.'));
+      // Only of changes it lists: with none, another command's work says nothing about this one.
+      if (c.shared === true && (diffs.length || more)) box.append(h('div', { class: 'tx-chg-note' }, 'Another command ran in this repository at the same time: some of these changes may be its.'));
+    }
+    return box;
+  }
+
+  /** #171: one changed file: a header (path, what happened, counts) that opens and closes its diff. */
+  private changeFile(d: TranscriptDiff, key: string, load: (() => void) | null): HTMLElement {
+    const hunks = Array.isArray(d.hunks) ? d.hunks : [];
+    const { add, del } = diffStat(hunks);
+    const op = typeof d.op === 'string' ? OP_TAG[d.op] : undefined;
+    const path = String(d.path ?? '');
+    const head = h(
+      'button',
+      { class: 'tx-chg-head', title: path },
+      h('span', { class: 'tx-caret' }, icon(TX_ICON.chevron)),
+      h('span', { class: 'tx-diff-path' }, path),
+      op ? h('span', { class: 'tx-chg-op', 'data-op': String(d.op) }, op) : null,
+      d.no_diff === true ? h('span', { class: 'tx-chg-op' }, 'no diff') : statEl(add, del),
+      d.truncated === true ? h('span', { class: 'tx-chg-op tx-chg-cut', title: 'Cut to fit the list: counts are of the lines shown' }, 'cut') : null,
+    );
+    const body = h('div', { class: 'tx-chg-body' });
+    const file = h('div', { class: 'tx-diff tx-chg-file', 'data-key': key, 'data-op': typeof d.op === 'string' ? d.op : '' }, head, body);
+    const set = (open: boolean) => {
+      head.setAttribute('aria-expanded', String(open));
+      body.hidden = !open;
+      if (!open || body.childNodes.length) return;
+      // Drawn on first open: a long history of changes shown closed costs nothing.
+      if (d.no_diff === true) body.append(h('div', { class: 'tx-chg-note' }, 'No diff recorded: Claude Code keeps none when nothing changed, the old file was too large, or the diff timed out.'));
+      else if (!hunks.length) body.append(h('div', { class: 'tx-chg-note' }, d.op === 'create' ? 'Empty file.' : d.op === 'delete' ? 'The file was empty.' : 'No lines recorded.'));
+      else body.append(diffLines(d));
+      if (d.truncated === true) {
+        const note = h('div', { class: 'tx-chg-note tx-chg-cutnote' }, 'Cut to fit the list: only the start is shown.');
+        if (load) note.append(h('span', { class: 'tx-chg-load' }, ' ', h('button', { class: 'tx-link', onclick: load }, 'Show the whole change')));
+        body.append(note);
+      }
+    };
+    head.addEventListener('click', () => {
+      const open = head.getAttribute('aria-expanded') !== 'true';
+      this.fileOpen.set(key, open);
+      set(open);
+    });
+    this.fileSet.set(file, set);
+    set(this.fileOpen.get(key) ?? this.prefs.showChanges);
+    return file;
+  }
+
+  /** #171: the item in full, for a change the list cut; its changes are drawn again where they are (the row stays). */
+  private loadFull(it: TranscriptItem, t: NonNullable<TranscriptItem['tool']>, scope: string, status: string, box: HTMLElement): void {
+    const load = this.host.loadItem;
+    if (!load) return;
+    for (const b of box.querySelectorAll<HTMLButtonElement>('.tx-chg-cutnote .tx-link')) {
+      b.disabled = true;
+      b.textContent = 'Loading…';
+    }
+    const agent = this.scopeAgent.get(scope);
+    let p: Promise<TranscriptItem | null>;
+    try {
+      p = Promise.resolve(load(it.id, agent));
+    } catch (e) {
+      p = Promise.reject(e);
+    }
+    const fail = (why: string) => {
+      for (const n of box.querySelectorAll('.tx-chg-load')) n.replaceWith(' ', h('span', { class: 'tx-err' }, why));
+    };
+    p.then(
+      (full) => {
+        if (this.destroyed) return;
+        const diffs = full?.tool ? toolDiffs(full.tool) : [];
+        if (!diffs.length) return fail('The whole change could not be loaded.');
+        this.fullDiffs.set(this.fullKey(it, scope), diffs);
+        const next = this.changesBlock(it, t, scope, diffs, status);
+        if (next && box.isConnected) box.replaceWith(next);
+      },
+      (e: unknown) => {
+        if (!this.destroyed) fail(`The whole change could not be loaded: ${e instanceof Error ? e.message : String(e ?? 'failed')}`);
+      },
+    );
+  }
+
+  private fillTool(body: HTMLElement, t: NonNullable<TranscriptItem['tool']>, hasDiffs: boolean): void {
     if (t.input !== undefined && t.input !== null) {
       let json: string;
       try {
@@ -1419,13 +1610,10 @@ class Transcript implements TranscriptView {
         body.append(h('div', { class: 'tx-label' }, 'Input'), h('pre', { class: 'tx-out tx-input-json' }, json));
       }
     }
-    for (const d of diffs) {
-      body.append(renderDiff(d));
-      if (d.truncated) body.append(h('div', { class: 'tx-note' }, 'Diff truncated: only the start is shown.'));
-    }
+    // #171: the diffs are not here: the row shows them (changesBlock).
     if (typeof t.output_text === 'string' && t.output_text.length) {
       body.append(h('div', { class: 'tx-label' }, 'Output'), h('pre', { class: 'tx-out' }, stripAnsi(t.output_text)));
-    } else if (!diffs.length && !toolImages(t).length && t.status !== 'running') body.append(h('div', { class: 'tx-note' }, 'No output.'));
+    } else if (!hasDiffs && !toolImages(t).length && t.status !== 'running') body.append(h('div', { class: 'tx-note' }, 'No output.'));
     // The images are not repeated here: the row shows them collapsed (toolRow).
     if (t.output_truncated) body.append(h('div', { class: 'tx-note' }, 'Output truncated: only the start is shown.'));
     if (t.status === 'running') body.append(h('div', { class: 'tx-note' }, 'Still running…'));
@@ -1490,6 +1678,7 @@ class Transcript implements TranscriptView {
     }
     const state = st;
     if (state.items) {
+      this.scopeAgent.set(`${key}>`, agentId);
       const tl = new Timeline(this, `${key}>`, true);
       tl.set(state.items);
       const reload = h('button', { class: 'tx-link', onclick: () => this.reloadSub(body, agentId, status, key) }, 'Reload');
@@ -1587,7 +1776,7 @@ class Transcript implements TranscriptView {
    * tool call's images, which stay on screen as a bare strip then (#70).
    */
   private shows(it: TranscriptItem): boolean {
-    return (this.showSystem || !isSystem(it)) && !(this.prefs.hideTools && isToolRow(it) && !toolHasImages(it));
+    return (this.showSystem || !isSystem(it)) && !(this.prefs.hideTools && isToolRow(it) && !keepsWhenHidden(it));
   }
 
   /** Back to the bottom when following (content grew, the view resized, code got highlighted). */
@@ -1640,6 +1829,13 @@ class Transcript implements TranscriptView {
     }
     const was = this.root.dataset.tools === 'hidden';
     this.toolsBox.checked = p.hideTools;
+    // #171: the switch opens or closes every change; what you opened or closed by hand gives way to it.
+    this.changesBox.checked = p.showChanges;
+    this.root.dataset.changes = p.showChanges ? 'shown' : 'hidden';
+    if (what === 'showChanges') this.keepPlace(() => {
+      this.fileOpen.clear();
+      for (const f of this.root.querySelectorAll<HTMLElement>('.tx-chg-file')) this.fileSet.get(f)?.(p.showChanges);
+    });
     this.root.dataset.tools = p.hideTools ? 'hidden' : 'shown';
     if (was !== p.hideTools) {
       this.failedHidden.clear();
@@ -1655,7 +1851,27 @@ class Transcript implements TranscriptView {
     // New sizes (a zoom, another preset's fonts) move the bottom: a view that followed it keeps following. #157: and
     // may take a pinned card's room.
     if (what === 'transcriptZoom' || what === 'transcriptTheme') this.fit();
-    if (what === 'transcriptZoom' || what === 'transcriptTheme' || what === 'hideTools') this.stick();
+    if (what === 'transcriptZoom' || what === 'transcriptTheme' || what === 'hideTools' || what === 'showChanges') this.stick();
+  }
+
+  /**
+   * #171: runs a change that moves the rows (every diff opening or closing) without moving what you read: the row at the
+   * top of the view stays where it was. Following the bottom, `stick()` keeps the bottom instead.
+   */
+  private keepPlace(change: () => void): void {
+    if (this.following) return change();
+    const top = this.scroller.getBoundingClientRect().top;
+    let anchor: HTMLElement | null = null;
+    for (const r of this.timeline.el.children as HTMLCollectionOf<HTMLElement>) {
+      if (r.hidden || !r.offsetParent) continue;
+      if (r.getBoundingClientRect().bottom > top) {
+        anchor = r;
+        break;
+      }
+    }
+    const before = anchor?.getBoundingClientRect().top ?? 0;
+    change();
+    if (anchor?.isConnected) this.scroller.scrollTop += anchor.getBoundingClientRect().top - before;
   }
 
   private pickTheme(id: ThemeId): void {

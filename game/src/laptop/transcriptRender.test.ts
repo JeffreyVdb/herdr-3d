@@ -266,7 +266,8 @@ describe('rows per kind', () => {
       }),
     ]);
     expect(row('i1').querySelector('.tx-tool-row .tx-diff-stat')?.textContent).toBe('+1 −1');
-    ($('.tx-tool-row') as HTMLButtonElement).click();
+    // #171: shown without opening the row (its raw input and output stay closed).
+    expect(row('i1').querySelector('.tx-tool-body')?.hasAttribute('hidden')).toBe(true);
     expect($('.tx-diff-path')?.textContent).toBe('src/app.ts');
     expect($('.tx-dh')?.textContent).toContain('@@ -10,3 +10,3 @@');
     const add = $$('.tx-add');
@@ -288,11 +289,14 @@ describe('rows per kind', () => {
     const b = { path: 'b.go', hunks: [{ old_start: 0, old_lines: 0, new_start: 0, new_lines: 1, lines: ['+y := 3'] }], truncated: true };
     view.setItems([item('tool', { tool: { name: 'apply_patch', input_summary: 'a.go, b.go', status: 'ok', diff: a, diffs: [a, b], images: [{ image_omitted: true }] } })]);
     expect(row('i1').querySelector('.tx-tool-row .tx-diff-stat')?.textContent).toBe('+2 −1');
-    ($('.tx-tool-row') as HTMLButtonElement).click();
     expect($$('.tx-diff-path').map((e) => e.textContent)).toEqual(['a.go', 'b.go']);
     expect($('.tx-dh')).toBeNull();
     expect($$('.tx-dl .tx-dn').every((n) => n.textContent === '')).toBe(true);
-    expect(row('i1').textContent).toContain('Diff truncated');
+    // #171: a Codex patch says nothing of the file's fate: no tag; a diff the list cut says so (the host has no loadItem: no link).
+    expect($$('.tx-chg-op').map((e) => e.textContent)).toEqual(['cut']);
+    expect(row('i1').textContent).toContain('Cut to fit the list: only the start is shown.');
+    expect(row('i1').querySelector('.tx-chg-cutnote .tx-link')).toBeNull();
+    expect(row('i1').querySelector('.tx-chg-state')).toBeNull();
     expect(row('i1').querySelectorAll('.tx-strip .tx-imgcard').length).toBe(1);
   });
 
