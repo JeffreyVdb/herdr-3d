@@ -70,6 +70,7 @@ type claudeLine struct {
 		Content strOr[claudeBlock] `json:"content"`
 	} `json:"message"`
 	ToolUseResult   json.RawMessage      `json:"toolUseResult"`
+	ToolDenialKind  string               `json:"toolDenialKind"` // #171: "user-rejected" on a refused call's result
 	Content         strOr[claudeSubPart] `json:"content"`
 	DurationMs      *float64             `json:"durationMs"`
 	Attachment      json.RawMessage      `json:"attachment"`
@@ -127,13 +128,32 @@ type claudeToolResult struct {
 	Type            string          `json:"type"`
 	FilePath        string          `json:"filePath"`
 	Content         json.RawMessage `json:"content"`
-	StructuredPatch []struct {
-		OldStart int      `json:"oldStart"`
-		OldLines int      `json:"oldLines"`
-		NewStart int      `json:"newStart"`
-		NewLines int      `json:"newLines"`
-		Lines    []string `json:"lines"`
-	} `json:"structuredPatch"`
+	StructuredPatch []claudeHunk    `json:"structuredPatch"`
+	// BashEditDiff (#171) is what a Bash call changed in its repository, as
+	// Claude Code (2.1.269+) recorded it: best effort, see the docs' hooks
+	// reference ("Bash"). Absent: not recorded (unknown).
+	BashEditDiff *struct {
+		Files []struct {
+			FilePath string       `json:"filePath"`
+			Hunks    []claudeHunk `json:"hunks"`
+			Created  bool         `json:"created"`
+			Deleted  bool         `json:"deleted"`
+		} `json:"files"`
+		ChangedFiles []string `json:"changedFiles"`
+		MoreFiles    int      `json:"moreFiles"`
+		Unavailable  bool     `json:"unavailable"`
+		Skipped      bool     `json:"skipped"`
+		Shared       bool     `json:"shared"`
+	} `json:"bashEditDiff"`
+}
+
+// claudeHunk is a structuredPatch (or bashEditDiff) hunk.
+type claudeHunk struct {
+	OldStart int      `json:"oldStart"`
+	OldLines int      `json:"oldLines"`
+	NewStart int      `json:"newStart"`
+	NewLines int      `json:"newLines"`
+	Lines    []string `json:"lines"`
 }
 
 func parseTS(s string) int64 {
@@ -325,6 +345,7 @@ func unwrapPasted(s string) string {
 
 const (
 	interruptedText    = "[Request interrupted by user"
+	deniedText         = "The user doesn't want to proceed with this tool use" // #171: a rejected call's result
 	compactSummarySrc  = "user/compact_summary"
 	interruptNoticeSrc = "user/interrupted"
 )
@@ -485,6 +506,8 @@ func claudeResult(bl claudeBlock, l *claudeLine, first bool, ts int64, pc *parse
 	switch {
 	case strings.HasPrefix(strings.TrimSpace(text), interruptedText):
 		status = proto.ToolInterrupted
+	case bl.IsError && (first && l.ToolDenialKind != "" || strings.HasPrefix(strings.TrimSpace(text), deniedText)):
+		status = proto.ToolDenied
 	case bl.IsError:
 		status = proto.ToolError
 	}
@@ -528,34 +551,105 @@ func claudeResult(bl claudeBlock, l *claudeLine, first bool, ts int64, pc *parse
 				b.it.Subagent.Status = proto.ToolOK
 			}
 		}
-		if tr.FilePath != "" {
-			if d, ok := claudeDiff(tr); ok {
+		switch {
+		case tr.BashEditDiff != nil: // #171
+			b.diffs, b.changes = claudeBashChanges(tr)
+		case tr.FilePath != "":
+			if d, ok := claudeDiff(tr, b.tool().Name); ok {
 				b.diffs = []proto.TranscriptDiff{d}
 			}
 		}
 	}}
 }
 
-// claudeDiff is an Edit's or Write's structuredPatch; a created file is
-// all added lines.
-func claudeDiff(tr *claudeToolResult) (proto.TranscriptDiff, bool) {
-	d := proto.TranscriptDiff{Path: tr.FilePath, Hunks: []proto.TranscriptHunk{}}
-	for _, h := range tr.StructuredPatch {
-		d.Hunks = append(d.Hunks, proto.TranscriptHunk{OldStart: h.OldStart, OldLines: h.OldLines, NewStart: h.NewStart,
-			NewLines: h.NewLines, Lines: h.Lines})
+// claudeHunks are a patch's hunks for the wire (never nil: an empty list).
+func claudeHunks(hs []claudeHunk) []proto.TranscriptHunk {
+	out := []proto.TranscriptHunk{}
+	for _, h := range hs {
+		lines := h.Lines
+		if lines == nil {
+			lines = []string{}
+		}
+		out = append(out, proto.TranscriptHunk{OldStart: h.OldStart, OldLines: h.OldLines, NewStart: h.NewStart,
+			NewLines: h.NewLines, Lines: lines})
 	}
-	if len(d.Hunks) == 0 && tr.Type == "create" {
+	return out
+}
+
+// claudeDiff is an Edit's or Write's structuredPatch; a created file is
+// all added lines. #171: what happened to the file comes from the result's
+// type (Write) or the tool (Edit), never from originalFile (null on most
+// edits); an overwrite or edit recorded without hunks is NoDiff, never a
+// new file and never removals made up.
+func claudeDiff(tr *claudeToolResult, tool string) (proto.TranscriptDiff, bool) {
+	d := proto.TranscriptDiff{Path: tr.FilePath, Hunks: claudeHunks(tr.StructuredPatch)}
+	switch {
+	case tr.Type == "create":
+		d.Op = proto.DiffCreate
+	case tr.Type == "update":
+		d.Op = proto.DiffOverwrite
+	case tool == "Edit" || tool == "MultiEdit":
+		d.Op = proto.DiffEdit
+	}
+	if len(d.Hunks) > 0 {
+		return d, true
+	}
+	if tr.Type == "create" {
 		var content string
 		if json.Unmarshal(tr.Content, &content) != nil {
 			return d, false
 		}
-		lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
-		for i, s := range lines {
-			lines[i] = "+" + s
+		if content != "" { // an empty file has no lines
+			lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+			for i, s := range lines {
+				lines[i] = "+" + s
+			}
+			d.Hunks = append(d.Hunks, proto.TranscriptHunk{NewStart: 1, NewLines: len(lines), Lines: lines})
 		}
-		d.Hunks = append(d.Hunks, proto.TranscriptHunk{NewStart: 1, NewLines: len(lines), Lines: lines})
+		return d, true
 	}
-	return d, tr.StructuredPatch != nil || len(d.Hunks) > 0
+	if tr.StructuredPatch == nil {
+		return d, false
+	}
+	d.NoDiff = true
+	return d, true
+}
+
+// claudeBashChanges is a Bash call's bashEditDiff (#171): a diff per file
+// it has one for, and the rest (changed files without one, how complete and
+// whose the list is). Changes is nil when the record says nothing more than
+// its diffs.
+func claudeBashChanges(tr *claudeToolResult) ([]proto.TranscriptDiff, *proto.TranscriptChanges) {
+	e := tr.BashEditDiff
+	var diffs []proto.TranscriptDiff
+	diffed := map[string]bool{}
+	for _, f := range e.Files {
+		if f.FilePath == "" {
+			continue
+		}
+		d := proto.TranscriptDiff{Path: f.FilePath, Hunks: claudeHunks(f.Hunks), Op: proto.DiffEdit}
+		switch {
+		case f.Created:
+			d.Op = proto.DiffCreate
+		case f.Deleted:
+			d.Op = proto.DiffDelete
+		case len(d.Hunks) == 0:
+			d.NoDiff = true
+		}
+		diffs = append(diffs, d)
+		diffed[f.FilePath] = true
+	}
+	c := proto.TranscriptChanges{MoreFiles: max(e.MoreFiles, 0), Unavailable: e.Unavailable, Skipped: e.Skipped, Shared: e.Shared}
+	for _, p := range e.ChangedFiles {
+		if p != "" && !diffed[p] {
+			c.Paths = append(c.Paths, p)
+			diffed[p] = true
+		}
+	}
+	if len(c.Paths) == 0 && c.MoreFiles == 0 && !c.Unavailable && !c.Skipped && !c.Shared {
+		return diffs, nil
+	}
+	return diffs, &c
 }
 
 type claudeAttach struct {

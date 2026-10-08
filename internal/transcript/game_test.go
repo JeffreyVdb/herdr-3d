@@ -19,6 +19,11 @@ var gameFixtures = []struct {
 	{"claude.json", Claude, []string{"message.jsonl", "bash.jsonl", "bash_error.jsonl", "edit.jsonl", "write.jsonl", "read_image.jsonl",
 		"user.jsonl", "user_marker.jsonl", "agent.jsonl", "interrupted.jsonl", "system.jsonl", "compact.jsonl", "attachment.jsonl", "unknown.jsonl"}},
 	{"claude-subagent.json", Claude, []string{"subagent.jsonl"}},
+	// #171: what Edit, Write and Bash changed, every shape and state (bash_diff_skipped and write_update_nodiff are
+	// synthetic: documented, never seen in a real transcript).
+	{"claude-changes.json", Claude, []string{"edit.jsonl", "write.jsonl", "write_update.jsonl", "write_update_nodiff.jsonl",
+		"bash_diff.jsonl", "bash_diff_multi.jsonl", "bash_diff_more.jsonl", "bash_diff_unavailable.jsonl", "bash_diff_shared.jsonl",
+		"bash_diff_skipped.jsonl", "change_failed.jsonl", "bash.jsonl"}},
 	// #57: question cards, answered every way and one pending.
 	{"claude-ask.json", Claude, []string{"ask.jsonl", "ask_pending.jsonl"}},
 	{"codex-ask.json", Codex, []string{"ask.jsonl", "ask_pending.jsonl"}},

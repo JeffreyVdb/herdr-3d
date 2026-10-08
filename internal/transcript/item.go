@@ -66,6 +66,8 @@ type builder struct {
 	it     proto.TranscriptItem
 	blocks []blockParts // linkBlock parts, by block
 	diffs  []proto.TranscriptDiff
+	// changes is what a Claude Bash call's record says beyond its diffs (#171).
+	changes *proto.TranscriptChanges
 	// env resolves the item's images; srcs is where each one's bytes are.
 	env  *imageEnv
 	srcs map[*proto.ImageRef]*imgSrc
@@ -179,6 +181,9 @@ func (b *builder) finish(full bool) proto.TranscriptItem {
 			t.Diffs = b.diffs
 		}
 	}
+	if b.changes != nil {
+		b.tool().Changes = b.changes
+	}
 	if full {
 		return it
 	}
@@ -234,7 +239,8 @@ func (b *builder) finish(full bool) proto.TranscriptItem {
 
 // capDiff keeps a diff's lines within what is left of budget.
 func capDiff(d proto.TranscriptDiff, budget *int) proto.TranscriptDiff {
-	out := proto.TranscriptDiff{Path: d.Path, Truncated: d.Truncated, Hunks: make([]proto.TranscriptHunk, 0, len(d.Hunks))}
+	out := d // what it says of the file (#171: op, no_diff) stays
+	out.Hunks = make([]proto.TranscriptHunk, 0, len(d.Hunks))
 	for _, h := range d.Hunks {
 		kept := h
 		kept.Lines = nil

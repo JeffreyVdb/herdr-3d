@@ -164,7 +164,7 @@ func TestClaudeLines(t *testing.T) {
 		{"a user's [Image #n: path] marker", []string{"user_marker.jsonl"}, []want{
 			{kind: proto.ItemUser, images: true, text: "what is wrong with this?"}}},
 		{"interrupted", []string{"interrupted.jsonl"}, []want{
-			{kind: proto.ItemTool, tool: "Bash", status: proto.ToolError, text: "The user doesn't want to proceed"},
+			{kind: proto.ItemTool, tool: "Bash", status: proto.ToolDenied, text: "The user doesn't want to proceed"},
 			{kind: proto.ItemNotice, source: "user/interrupted", text: "Interrupted by user"},
 		}},
 		{"attachments: noise, but a queued prompt is the user's", []string{"attachment.jsonl"}, []want{

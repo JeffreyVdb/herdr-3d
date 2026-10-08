@@ -606,6 +606,11 @@ func approxSize(it *proto.TranscriptItem) int {
 		if t.Diff != nil && len(t.Diffs) == 0 {
 			n += diffSize(*t.Diff)
 		}
+		if c := t.Changes; c != nil {
+			for _, p := range c.Paths {
+				n += len(p) + 4
+			}
+		}
 	}
 	if it.Notice != nil {
 		n += len(it.Notice.Text)
@@ -614,7 +619,7 @@ func approxSize(it *proto.TranscriptItem) int {
 }
 
 func diffSize(d proto.TranscriptDiff) int {
-	n := len(d.Path)
+	n := len(d.Path) + len(d.Op)
 	for _, h := range d.Hunks {
 		for _, s := range h.Lines {
 			n += len(s) + 4

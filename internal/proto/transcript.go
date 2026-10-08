@@ -49,6 +49,9 @@ const (
 	ToolOK          = "ok"
 	ToolError       = "error"
 	ToolInterrupted = "interrupted"
+	// ToolDenied (#171): the call never ran: the user rejected it (Claude
+	// Code's permission prompt). Older bridges sent it as error.
+	ToolDenied = "denied"
 )
 
 // TranscriptItem is one entry of a transcript's timeline.
@@ -161,6 +164,32 @@ type TranscriptTool struct {
 	// Ask is an AskUserQuestion / request_user_input call's question card
 	// (#57): its questions and, once answered, the answers.
 	Ask *TranscriptAsk `json:"ask,omitempty"`
+	// Changes (#171) is what a Claude Bash call's bashEditDiff says beyond
+	// its diffs: files it changed without a diff, and how complete and how
+	// much its own the list is. Absent: the source said nothing (an older
+	// Claude Code, recording off, not a Bash call): unknown, not "no changes".
+	Changes *TranscriptChanges `json:"changes,omitempty"`
+}
+
+// TranscriptChanges is a command's file changes as Claude Code recorded them
+// (bashEditDiff, best effort): Diffs hold the files with a diff (at most 5),
+// these the rest.
+type TranscriptChanges struct {
+	// Paths are changed files with no diff (changedFiles less the diffed
+	// ones; the source lists at most 200 changed files).
+	Paths []string `json:"paths,omitempty"`
+	// MoreFiles is how many changed files have no diff (moreFiles): it can be
+	// more than len(Paths) when the source's list was cut.
+	MoreFiles int `json:"more_files,omitempty"`
+	// Unavailable: the record is incomplete or could not be taken; diffs it
+	// has are still real.
+	Unavailable bool `json:"unavailable,omitempty"`
+	// Skipped: a git command that moves the working tree (checkout, stash):
+	// no diff was taken at all.
+	Skipped bool `json:"skipped,omitempty"`
+	// Shared: another Bash call ran in the same repository at the same time,
+	// so some of the listed changes may be its.
+	Shared bool `json:"shared,omitempty"`
 }
 
 // TranscriptDiff is a file's change as unified diff hunks.
@@ -168,7 +197,23 @@ type TranscriptDiff struct {
 	Path      string           `json:"path"`
 	Hunks     []TranscriptHunk `json:"hunks"`
 	Truncated bool             `json:"truncated,omitempty"` // lines were left out (transcript.item has them)
+	// Op (#171) is what happened to the file, when the source says: edit,
+	// create, overwrite (a Write over a file that was there) or delete; ""
+	// is not known (Codex patches, older bridges).
+	Op string `json:"op,omitempty"`
+	// NoDiff (#171): the source recorded the change but no lines for it
+	// (Hunks is empty): Claude Code's Write over a file with no patch (no
+	// change, too large or timed out). Not a cut of ours (Truncated is).
+	NoDiff bool `json:"no_diff,omitempty"`
 }
+
+// Diff operations (#171).
+const (
+	DiffEdit      = "edit"
+	DiffCreate    = "create"
+	DiffOverwrite = "overwrite"
+	DiffDelete    = "delete"
+)
 
 // TranscriptHunk is one hunk: its lines start with ' ', '-' or '+'.
 // Codex patches have no line numbers (0).
