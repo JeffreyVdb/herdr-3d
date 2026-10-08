@@ -53,7 +53,7 @@ test('code changes show by default, every shape and state, and the two switches 
   await expect(tx.locator('[data-id="toolu_c171_wr_upd1"] .tx-chg-op')).toHaveText(['overwritten']);
   await expect(tx.locator('[data-id="toolu_c171_wr_nodiff"] .tx-chg-op')).toHaveText(['overwritten', 'no diff']);
   await expect(tx.locator('[data-id="toolu_c171_wr_nodiff"] .tx-chg-body')).toContainText('No diff recorded');
-  await expect(tx.locator('[data-id="toolu_c171_bash_more"] .tx-chg-more summary')).toHaveText('3 files more changed, no diff recorded');
+  await expect(tx.locator('[data-id="toolu_c171_bash_more"] .tx-chg-more summary')).toHaveText('3 more files changed, no diff recorded');
   await expect(tx.locator('[data-id="toolu_c171_bash_unavail"] .tx-changes > .tx-chg-note')).toContainText(['Incomplete: Claude Code could not record all']);
   await expect(tx.locator('[data-id="toolu_c171_bash_shared"] .tx-changes > .tx-chg-note')).toContainText(['some of these changes may be its']);
   await expect(tx.locator('[data-id="toolu_c171_bash_skipped"] .tx-changes > .tx-chg-note')).toContainText(['No diff taken: this command moves the working tree']);

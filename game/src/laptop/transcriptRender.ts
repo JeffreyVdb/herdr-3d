@@ -1507,8 +1507,7 @@ class Transcript implements TranscriptView {
       const paths = undiffed(c);
       const more = Math.max(moreFiles(c), paths.length);
       if (more > 0) {
-        const n = `${more} ${more === 1 ? 'file' : 'files'}`;
-        const text = diffs.length ? `${n} more changed, no diff recorded` : `${n} changed, no diff recorded`;
+        const text = `${more}${diffs.length ? ' more' : ''} ${more === 1 ? 'file' : 'files'} changed, no diff recorded`;
         if (paths.length) {
           const unlisted = more - paths.length;
           const list = h('ul', { class: 'tx-chg-paths' }, ...paths.map((p) => h('li', {}, p)));

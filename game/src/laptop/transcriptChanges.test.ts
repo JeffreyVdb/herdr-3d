@@ -130,11 +130,11 @@ describe('code changes (#171)', () => {
   it('Bash: files changed without a diff, incomplete, not taken, shared: said plainly, never as complete', () => {
     mount();
     view.setItems(CHANGES);
-    expect(notes('toolu_c171_bash_more')).toEqual(['3 files more changed, no diff recorded']);
+    expect(notes('toolu_c171_bash_more')).toEqual(['3 more files changed, no diff recorded']);
     expect($$('.tx-chg-paths li', row('toolu_c171_bash_more')).map((e) => e.textContent)).toEqual([`${P}src/c.ts`, `${P}src/d.ts`, `${P}src/e.ts`]);
     expect(notes('toolu_c171_bash_paths')).toEqual(['2 files changed, no diff recorded']);
     expect(files('toolu_c171_bash_paths')).toEqual([]);
-    expect(notes('toolu_c171_bash_unavail')).toEqual(['1 file more changed, no diff recorded', 'Incomplete: Claude Code could not record all of this command’s changes.']);
+    expect(notes('toolu_c171_bash_unavail')).toEqual(['1 more file changed, no diff recorded', 'Incomplete: Claude Code could not record all of this command’s changes.']);
     expect(files('toolu_c171_bash_unavail').map((f) => f.path)).toEqual([`${P}VERSION`]); // its diff is still real
     // Nothing listed and shared: only that nothing could be recorded (shared says nothing of changes it does not list).
     expect(notes('toolu_c171_bash_unavail0')).toEqual(['Not recorded: Claude Code could not take this command’s changes.']);
@@ -196,7 +196,7 @@ describe('code changes (#171)', () => {
     expect(all().every((o) => o === 'false')).toBe(true);
     expect($$('.tx-chg-body').every((b) => (b as HTMLElement).hidden)).toBe(true);
     expect($$('.tx-chg-head').map((e) => e.textContent)).toEqual(before); // the summary stays
-    expect(notes('toolu_c171_bash_more')).toEqual(['3 files more changed, no diff recorded']); // so does what has no diff
+    expect(notes('toolu_c171_bash_more')).toEqual(['3 more files changed, no diff recorded']); // so does what has no diff
     // One opens by itself, and stays open across a re-render (a live update of its row).
     ($('.tx-chg-head', row('toolu_c171_bash_one')) as HTMLButtonElement).click();
     expect(files('toolu_c171_bash_one')[0]?.open).toBe(true);
@@ -297,7 +297,7 @@ describe('code changes (#171)', () => {
     await flush();
     const nested = $('.tx-nested') as HTMLElement;
     expect($$('.tx-chg-file .tx-diff-path', nested).map((e) => e.textContent)).toEqual(['sub.ts']);
-    expect($$('.tx-changes > .tx-chg-note, .tx-chg-more > summary', nested).map((e) => e.textContent)).toEqual(['1 file more changed, no diff recorded', 'Another command ran in this repository at the same time: some of these changes may be its.']);
+    expect($$('.tx-changes > .tx-chg-note, .tx-chg-more > summary', nested).map((e) => e.textContent)).toEqual(['1 more file changed, no diff recorded', 'Another command ran in this repository at the same time: some of these changes may be its.']);
     ($('.tx-chg-cutnote .tx-link', nested) as HTMLButtonElement).click();
     await flush();
     expect(host.itemLoads).toEqual([['inner', 'abc123']]);
