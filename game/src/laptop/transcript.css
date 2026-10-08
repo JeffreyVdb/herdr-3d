@@ -155,7 +155,8 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.tx-check-box {
+.tx-check-box,
+.tx-chg-box {
   width: 13px;
   height: 13px;
   margin: 0;
@@ -900,7 +901,8 @@
 .tx-changes + .tx-tool-body {
   margin-top: 0;
 }
-.tx-chg-head {
+/* (.tx: over `.tx button`'s font, so the path is the preset's mono) */
+.tx .tx-chg-head {
   width: 100%;
   display: flex;
   align-items: center;
@@ -914,7 +916,7 @@
   font: var(--tx-mono-fs, 11.5px) var(--tx-mono);
   font-variant-ligatures: none;
 }
-.tx-chg-head:hover {
+.tx .tx-chg-head:hover {
   background: var(--tx-bg-3);
 }
 .tx-chg-head[aria-expanded='true'] {

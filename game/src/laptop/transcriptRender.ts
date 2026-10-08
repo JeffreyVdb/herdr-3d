@@ -904,7 +904,7 @@ class Transcript implements TranscriptView {
     this.toolsCount = h('span', { class: 'tx-check-n' });
     const tools = h('label', { class: 'tx-check', title: 'Hide tool calls (subagents, questions, images and code changes stay)' }, this.toolsBox, h('span', {}, 'Hide tools'), this.toolsCount);
     // #171: on by default; off, each changed file is one line (path and counts) you can still open.
-    this.changesBox = h('input', { type: 'checkbox', class: 'tx-check-box', onchange: () => (this.prefs.showChanges = this.changesBox.checked) });
+    this.changesBox = h('input', { type: 'checkbox', class: 'tx-chg-box', onchange: () => (this.prefs.showChanges = this.changesBox.checked) });
     const changes = h('label', { class: 'tx-check tx-check-changes', title: 'Show code changes: the diff of each file the agent changed (off: one line per file)' }, this.changesBox, h('span', { class: 'tx-check-ic', 'aria-hidden': 'true' }, icon(TX_ICON.edit)), h('span', {}, 'Code changes'));
     this.busy = h('button', { class: 'tx-busy', hidden: true, onclick: () => this.showHiddenTools() });
     this.themeBtns = THEMES.map((t) =>

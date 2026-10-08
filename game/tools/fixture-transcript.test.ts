@@ -129,4 +129,34 @@ describe('TranscriptSim', () => {
     const r = rig('no_m16');
     expect(r.cmd('transcript.watch', { id: agent }).code).toBe('unknown_command');
   });
+
+  it('#171 simtx: demo-h171 watches get the code-changes timeline, and transcript.item answers its cut change whole', () => {
+    const { snapshot } = loadFixture('demo-h171');
+    const out: Msg[] = [];
+    let n = 0;
+    const sim = new SimWorld(snapshot as never, { stepMs: 100, transcript: 'demo-h171', now: () => 1_000_000, setTimeout: () => 0, clearTimeout: () => {} });
+    const cmd = (t: string, args: unknown) => {
+      const req_id = `r${++n}`;
+      sim.handle({ t, req_id, args }, (m) => out.push(m));
+      return out.find((m) => m.req_id === req_id) as Msg & { data?: Record<string, unknown>; code?: string };
+    };
+    const id = (snapshot as unknown as typeof world).world.workers.find((w) => w.name === 'Nibble')?.id as string;
+    const items = watchAck(cmd('transcript.watch', { id, limit: 500 }).data).items;
+    expect(items.map((it) => it.seq)).toEqual(items.map((_, i) => i + 1));
+    expect(items.some((it) => it.tool?.changes?.skipped)).toBe(true);
+    expect(items.find((it) => it.id === 'h171-proposed')?.tool?.status).toBe('running');
+    expect(items.some((it) => it.tool?.name === 'apply_patch' && it.tool.status === 'ok')).toBe(true);
+    const cut = items.find((it) => it.id === 'h171-cut');
+    expect(cut?.tool?.diff?.truncated).toBe(true);
+    const whole = (cmd('transcript.item', { id, item: 'h171-cut' }).data as { item: TranscriptItem }).item;
+    expect(whole.tool?.diff?.truncated).toBeUndefined();
+    expect(whole.tool?.diff?.hunks[0]).toMatchObject({ old_start: 3 });
+    expect((whole.tool?.diff?.hunks[0] as { lines: string[] }).lines.length).toBe(1600);
+    expect(whole.seq).toBe(cut?.seq);
+    // Any other name: the demo.
+    const other = new SimWorld(snapshot as never, { stepMs: 100, transcript: 'demo-m5', now: () => 1_000_000, setTimeout: () => 0, clearTimeout: () => {} });
+    const o: Msg[] = [];
+    other.handle({ t: 'transcript.watch', req_id: 'x', args: { id } }, (m) => o.push(m));
+    expect(watchAck((o.find((m) => m.req_id === 'x') as { data: unknown }).data).items.some((it) => it.id === 'toolu_demo_edit')).toBe(true);
+  });
 });
