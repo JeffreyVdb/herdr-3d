@@ -7,8 +7,8 @@
  * - A hunk of up to MAIN_BUDGET characters is tokenized on the page's thread, in background tasks of about SLICE_MS
  *   (one hunk at least, then the next while the slice lasts). A larger one (a created 2,000-line file is one hunk, ~100 ms)
  *   goes to a worker (diffHighlight.worker.ts, made on first need); without one it stays plain.
- * - Rows are coloured in the same sliced tasks, a few dozen at a time, and only the rows that were drawn: "Show next"
- *   colours its page when it draws it. A row is coloured only while it is in the page and still shows the text it drew
+ * - Rows are coloured a batch a frame (PAINT_MS of work), and only the rows that were drawn: "Show next" colours its
+ *   page when it draws it. A row is coloured only while it is in the page and still shows the text it drew
  *   with (a re-render, a live update or a loaded full change made new rows, with their own work).
  * - Results are kept (MAX_CACHE characters): a diff drawn again (a re-render, the terminal and back) colours at once.
  *
@@ -24,10 +24,12 @@ type Highlighter = typeof import('highlight.js/lib/common').default;
 export const MAIN_BUDGET = 12_000;
 /** Past this a hunk is not coloured at all, even by the worker. */
 export const MAX_HUNK = 1_000_000;
-/** A background task's work: past it the next hunk or batch of rows waits for the next task. */
+/** A background task's work: past it the next hunk waits for the next task. */
 const SLICE_MS = 8;
+/** The rows coloured in a frame: as many as this takes (the page's restyle and layout of them after costs ~4x that). */
+const PAINT_MS = 4;
 /** Rows coloured between two looks at the clock. */
-const ROWS_PER_CHECK = 24;
+const ROWS_PER_CHECK = 16;
 /** Characters of tokenized hunks kept for a diff drawn again. */
 const MAX_CACHE = 2_000_000;
 
@@ -109,6 +111,8 @@ const paintQ: Array<{ dt: HTMLElement; sign: string; tokens: LineTokens; text: s
 const cache = new Map<string, { tokens: HunkTokens; size: number }>();
 let cached = 0;
 let scheduled = false;
+/** A batch of rows was coloured: the next waits for a frame. */
+let frameWait = false;
 
 function done(hk: Hunk, tokens: HunkTokens | null): void {
   hk.state = 'done';
@@ -197,13 +201,25 @@ function run(): void {
   const end = t0 + SLICE_MS;
   sort();
   let n = 0;
-  for (;;) {
-    const p = paintQ.shift();
-    if (p) {
+  let rows = 0;
+  let chars = 0;
+  // Rows: one batch a frame. The page restyles and lays out what a batch added in the frame after it; batches piled up
+  // between two frames would make that one long.
+  if (!frameWait && paintQ.length) {
+    const stop = t0 + PAINT_MS;
+    for (let p = paintQ.shift(); p; p = paintQ.shift()) {
       paint(p.dt, p.sign, p.tokens, p.text);
-      if (++n % ROWS_PER_CHECK === 0 && now() >= end) break;
-      continue;
+      if (++n % ROWS_PER_CHECK === 0 && now() >= stop) break;
     }
+    rows = n;
+    frameWait = true;
+    nextFrame(() => {
+      frameWait = false;
+      if (paintQ.length) pump();
+      else idle();
+    });
+  }
+  for (;;) {
     if (n > 0 && now() >= end) break;
     const hk = mainQ.shift();
     if (!hk) break;
@@ -214,10 +230,23 @@ function run(): void {
     }
     const lang = hk.diff.lang as string;
     const h = hl;
+    chars += hk.size;
     done(hk, tokenizeHunk((text, language) => h.highlight(text, { language, ignoreIllegals: true }).value, lang, (hk.sides as HunkSides).old, (hk.sides as HunkSides).neu));
   }
-  if (TRACE) performance.measure('tx-diff-hl', { start: t0, end: now() });
-  if (paintQ.length || mainQ.length || incoming.length) pump();
+  if (TRACE) performance.measure('tx-diff-hl', { start: t0, end: now(), detail: { rows, chars } });
+  if (mainQ.length || incoming.length) pump();
+  idle();
+}
+
+/** Traced: a mark each time nothing is left to do (what the long-task check waits for, without looking at rows). */
+function idle(): void {
+  if (TRACE && !diffColoursBusy()) performance.mark('tx-diff-hl-idle');
+}
+
+/** After the next frame (a timer where there are none, as in tests). */
+function nextFrame(f: () => void): void {
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(f, 0));
+  else setTimeout(f, 16);
 }
 
 /** A row's text cell, coloured: the sign as drawn, then the tokens, each in its spans. Skipped once the row is gone or changed. */
@@ -264,12 +293,16 @@ function worker(): Worker | null {
     w.onmessage = (e: MessageEvent<DiffHlReply>) => {
       const f = inFlight;
       if (!f || e.data.id !== f.id) return;
+      const t0 = now();
       inFlight = null;
       done(f.hk, e.data.tokens);
       feedWorker();
+      if (TRACE) performance.measure('tx-diff-hl', { start: t0, end: now(), detail: { reply: f.hk.size } });
+      idle();
     };
-    w.onerror = () => {
-      // A worker that cannot load or run: what it had and what waits for it stays plain, and no other is made.
+    // A worker that cannot load or run, or a reply that cannot be read: what it had and what waits for it stays plain,
+    // and no other is made.
+    w.onerror = w.onmessageerror = () => {
       theWorker = null;
       w.terminate();
       if (inFlight) done(inFlight.hk, null);
@@ -301,4 +334,4 @@ function feedWorker(): void {
 }
 
 /** For tests: what this module still has to do. */
-export const diffColoursBusy = (): boolean => scheduled || !!inFlight || incoming.length + mainQ.length + workerQ.length + paintQ.length > 0;
+export const diffColoursBusy = (): boolean => scheduled || frameWait || !!inFlight || incoming.length + mainQ.length + workerQ.length + paintQ.length > 0;

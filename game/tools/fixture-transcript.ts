@@ -23,7 +23,7 @@
 // - `simfail=no_m16` plays a bridge before M16: every transcript command is `unknown_command`.
 // - #171: `simtx=<name>` (default: the fixture's name) picks another timeline for every watch, when there is one by that
 //   name: `demo-h171` is code changes in every shape and state (`h171Timeline`), and `transcript.item` answers its cut
-//   change in full.
+//   change in full; `demo-h206` puts the diff highlighter's worst cases before it (`h206Timeline`).
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import { createHash } from 'node:crypto';
@@ -240,9 +240,56 @@ function cutItem(full: boolean): TranscriptItem {
   };
 }
 
+/**
+ * #206: the diff highlighter's worst cases, from real code (this repository's src/laptop/transcriptRender.ts, as the
+ * issue's benchmark): a created 2,000-line TypeScript file (one hunk: the worker's) and an edit of ten hunks across it
+ * (each the page's thread's), then the #171 timeline (its cut change: "Show next" over a loaded 2,500-line hunk).
+ */
+export function h206Timeline(now: number): TranscriptItem[] {
+  const src = readFileSync(join(import.meta.dirname, '../src/laptop/transcriptRender.ts'), 'utf8').split('\n').slice(0, 2000);
+  const create: TranscriptItem = {
+    id: 'h206-create',
+    seq: 0,
+    ts: 0,
+    kind: 'tool',
+    tool: {
+      name: 'Write',
+      input_summary: '/home/dev/project/src/render.ts',
+      status: 'ok',
+      diff: { path: '/home/dev/project/src/render.ts', op: 'create', hunks: [{ old_start: 0, old_lines: 0, new_start: 1, new_lines: src.length, lines: src.map((l) => `+${l}`) }] },
+    },
+  };
+  // Ten hunks, every 190 lines: three lines of context, four deleted, five added (the four edited, one new), three of context.
+  let shift = 0;
+  const hunks = Array.from({ length: 10 }, (_, k) => {
+    const at = 40 + k * 190;
+    const ctx = (from: number) => src.slice(from, from + 3).map((l) => ` ${l}`);
+    const old = src.slice(at + 3, at + 7);
+    const lines = [...ctx(at), ...old.map((l) => `-${l}`), ...old.map((l) => `+${l.replace(/\b(const|let)\b/, 'let').replace(/;$/, ' ;')}`), `+  // #206: edited (${k + 1}).`, ...ctx(at + 7)];
+    const h = { old_start: at + 1, old_lines: 10, new_start: at + 1 + shift, new_lines: 11, lines };
+    shift++;
+    return h;
+  });
+  const edit: TranscriptItem = {
+    id: 'h206-edit',
+    seq: 0,
+    ts: 0,
+    kind: 'tool',
+    tool: { name: 'Edit', input_summary: '/home/dev/project/src/render.ts', status: 'ok', diff: { path: '/home/dev/project/src/render.ts', op: 'edit', hunks } },
+  };
+  const all: TranscriptItem[] = [
+    { id: 'h206-ask', seq: 0, ts: 0, kind: 'user', parts: [{ text: 'Write the renderer, then tidy it in ten places.' }] },
+    create,
+    edit,
+    ...h171Timeline(now),
+  ];
+  return all.map((it, i) => ({ ...it, seq: i + 1, ts: now - (all.length - i) * 15_000 }));
+}
+
 /** #171: the timelines `simtx` picks (by name), and the items `transcript.item` answers whole for each. */
 const TIMELINES: Record<string, { items: (now: number) => TranscriptItem[]; full: () => TranscriptItem[] }> = {
   'demo-h171': { items: h171Timeline, full: () => [cutItem(true)] },
+  'demo-h206': { items: h206Timeline, full: () => [cutItem(true)] },
 };
 
 /** Every image ref of an item, in order. */

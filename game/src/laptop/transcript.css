@@ -1050,6 +1050,11 @@
 .tx-del .tx-dt.tx-hl {
   color: var(--tx-text);
 }
+/* A face whose metrics differ (Ubuntu Mono Italic, for comments) would make its line a pixel taller: each token's box
+   stays inside the row's own line, on the same baseline. */
+.tx-dt.tx-hl span {
+  line-height: 1;
+}
 .tx-add .tx-dsg {
   color: var(--tx-add-text);
 }
