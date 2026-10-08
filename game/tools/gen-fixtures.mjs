@@ -543,6 +543,33 @@ function demoM118() {
   return [snap];
 }
 
+// ---- demo-m188: demo-m118 with a run across two floors (#188) ------------------
+// Poppy, Juniper's working coder, sits on pastry (desk 15) while Juniper orchestrates on lab: the all-floors overview
+// lists Poppy once, under Juniper, tagged with its floor. And a reviewer in the scratchpad whose orchestrator is gone
+// (Unlinked there).
+
+function demoM188() {
+  const [base] = demoM118();
+  const snap = structuredClone(base);
+  const w = snap.world.workers;
+  const poppy = w.find((x) => x.name === 'Poppy');
+  Object.assign(poppy, { session: 'pastry', desk_index: 15, workspace_id: 'wz', pane_id: 'wz:p1', cwd: '/home/dev/devel/lab-wt/lobby-api' });
+  const sprout = w.find((x) => x.name === 'Sprout');
+  w.push({
+    ...structuredClone(w.find((x) => x.name === 'Fig')),
+    id: 'f188a0c1-5e2d-4b7a-9c31-0d6e8a4b2f17',
+    session: 'scratchpad',
+    workspace_id: 'w4',
+    pane_id: 'w4:p1',
+    name: 'Quince',
+    desk_index: 3,
+    status: 'idle',
+    orch_id: '00000000-0000-4000-8000-000000000188', // an orchestrator sent home
+    cwd: sprout.cwd,
+  });
+  return [snap];
+}
+
 // ---- perf: one floor with 60 workers ------------------------------------------
 
 const STATES = ['working', 'working', 'working', 'working', 'idle', 'done', 'blocked', 'working', 'idle', 'working'];
@@ -642,6 +669,8 @@ FIXTURES['demo-m5'] = demoM5;
 FIXTURES['demo-m6'] = demoM6;
 // #118 floor overview
 FIXTURES['demo-m118'] = demoM118;
+// #188 all-floors overview
+FIXTURES['demo-m188'] = demoM188;
 
 const check = process.argv.includes('--check');
 let stale = false;

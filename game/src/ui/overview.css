@@ -87,7 +87,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
     'title tools'
-    'counts counts';
+    'counts filters';
   align-items: end;
   gap: 14px 24px;
   padding-bottom: 18px;
@@ -122,6 +122,7 @@
   grid-area: tools;
   display: flex;
   align-self: start;
+  justify-self: end;
   gap: 8px;
 }
 .ov-counts {
@@ -129,6 +130,110 @@
   display: flex;
   flex-wrap: wrap;
   gap: 10px 22px;
+}
+
+/*
+ * #188: what the board shows, Active only or All: a two-position switch on the board's glass (the pressed side lifts
+ * out of it; Active only carries the working lamp), and beside it what the filter hides, which shows everyone.
+ */
+.ov-filters {
+  grid-area: filters;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-self: center;
+  justify-content: flex-end;
+  gap: 8px 16px;
+}
+.ov-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.ov-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--ov-rule);
+  border-radius: 9px;
+  background: var(--ov-ink-2);
+  box-shadow: inset 0 1px 3px rgb(0 0 0 / 45%);
+}
+.ov-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ov-text-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 200ms var(--ov-ease),
+    color 200ms var(--ov-ease),
+    box-shadow 200ms var(--ov-ease);
+}
+.ov-seg:hover {
+  color: var(--ov-text);
+}
+.ov-seg[aria-pressed='true'] {
+  background: var(--ov-ink-3);
+  color: var(--ov-text);
+  box-shadow:
+    0 2px 6px rgb(0 0 0 / 45%),
+    inset 0 1px 0 rgb(255 255 255 / 7%);
+}
+.ov-seg[data-active='true']::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--working);
+  opacity: 0.4;
+  transition:
+    opacity 200ms var(--ov-ease),
+    box-shadow 200ms var(--ov-ease);
+}
+.ov-seg[data-active='true'][aria-pressed='true']::before {
+  opacity: 1;
+  box-shadow: 0 0 8px 1px rgb(47 107 240 / 70%);
+}
+.ov-hidden {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  color: var(--ov-text-2);
+  font-family: var(--ov-mono);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.ov-hidden[hidden] {
+  display: none;
+}
+.ov-hidden-go {
+  color: var(--ov-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.ov-hidden:hover .ov-hidden-text {
+  color: var(--ov-text);
+}
+.ov-btn kbd {
+  margin-left: 2px;
+}
+.ov-btn[hidden] {
+  display: none;
 }
 
 /* A count: two split-flap tiles and its label with the status dot. */
@@ -307,6 +412,108 @@
   padding-left: 30px;
 }
 
+/*
+ * #188: a floor of the all-floors page: a band over its rows like a platform's sign over its departures, the floor's
+ * name in the header's condensed face (a size down, in the board's ink, not its accent: the page's title keeps that),
+ * its place in mono, the top bar's counts as chips at the right (a zero goes quiet), a crescent when it sleeps.
+ */
+.ov-row--floor {
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  margin-top: 20px;
+  padding: 12px 14px 12px 10px;
+  border-top: 2px solid var(--ov-ink-3);
+  border-bottom-color: transparent;
+  border-radius: 0 0 6px 6px;
+  background: linear-gradient(to bottom, rgb(47 107 240 / 7%), transparent 85%);
+}
+.ov-board > .ov-row--floor:first-child {
+  margin-top: 0;
+}
+.ov-floor-fold {
+  display: grid;
+  place-items: center;
+}
+.ov-row--floor .ov-fold {
+  position: static;
+}
+.ov-row.ov-row--floor .ov-who,
+.ov-row.ov-row--floor[aria-expanded] .ov-who {
+  align-items: baseline;
+  gap: 4px 14px;
+  padding-left: 0;
+}
+.ov-row--floor .ov-name {
+  font-size: 30px;
+  font-stretch: 62%;
+  font-weight: 860;
+  line-height: 0.95;
+  letter-spacing: -0.005em;
+}
+.ov-floor-label {
+  color: var(--ov-text-2);
+  font-family: var(--ov-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.ov-asleep {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: center;
+  padding: 1px 8px 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--asleep) 70%, transparent);
+  border-radius: 999px;
+  color: var(--ov-text-2);
+  font-family: var(--ov-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.ov-asleep svg {
+  width: 12px;
+  height: 12px;
+  fill: var(--asleep);
+  stroke: none;
+}
+.ov-row--floor[data-asleep] .ov-name {
+  color: #9aa5c2; /* the asleep row's text tone (>= 4.5:1 on the ink) */
+}
+.ov-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px 16px;
+}
+.ov-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ov-text-2);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+.ov-chip b {
+  color: var(--ov-text);
+  font-family: var(--ov-mono);
+  font-size: 15px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.ov-chip .ov-dot {
+  width: 8px;
+  height: 8px;
+}
+.ov-chip--zero,
+.ov-chip--zero b {
+  color: var(--ov-text-3);
+}
+.ov-chip--zero .ov-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--c);
+}
+
 /* The light: a lamp in its housing. */
 .ov-light {
   position: relative;
@@ -403,8 +610,8 @@
   stroke-width: 1.5;
   stroke-dasharray: 1;
 }
-/* The orchestrator's own stub, from its chevron down to its first freelancer. */
-.ov-row[aria-expanded='true']::after {
+/* The orchestrator's own stub, from its chevron down to its first freelancer (a floor's band has none). */
+.ov-row:not(.ov-row--floor)[aria-expanded='true']::after {
   content: '';
   position: absolute;
   top: 31px;
@@ -783,6 +990,9 @@
   align-items: center;
   gap: 6px;
 }
+.ov-keys span[hidden] {
+  display: none;
+}
 
 /* ---- narrow ---------------------------------------------------------------------------------------------- */
 
@@ -793,10 +1003,41 @@
   .ov-head {
     grid-template-areas:
       'title tools'
-      'counts counts';
+      'counts counts'
+      'filters filters';
   }
-  .ov-tools .ov-btn:not(.ov-btn--icon) {
+  .ov-filters {
+    justify-content: flex-start;
+  }
+  .ov-filter > kbd {
     display: none;
+  }
+  .ov-tools .ov-btn:not(.ov-btn--icon, .ov-btn--floors) {
+    display: none;
+  }
+  /* #188: the way to every floor stays, as its icon (a phone has no A key). */
+  .ov-tools .ov-btn--floors {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+  .ov-btn--floors .ov-btn-label,
+  .ov-btn--floors kbd {
+    display: none;
+  }
+  .ov-row--floor {
+    grid-template-columns: 30px minmax(0, 1fr);
+    grid-template-areas:
+      'light who'
+      'light what';
+  }
+  .ov-row--floor > .ov-floor-fold {
+    grid-area: light;
+    align-self: start;
+  }
+  .ov-row--floor > .ov-chips {
+    grid-area: what;
+    justify-content: flex-start;
   }
   .ov-cols {
     display: none;

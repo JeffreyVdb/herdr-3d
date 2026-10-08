@@ -40,6 +40,7 @@ export const COMMAND_ORDER: readonly PaletteCommandId[] = [
   'prs',
   'run',
   'overview',
+  'overview.all',
   'elevator',
   'buildings',
   'inbox',

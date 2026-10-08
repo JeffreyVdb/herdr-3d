@@ -19,7 +19,7 @@ Walking around an office, its lobby or the street.
 | `Shift` + `L` | Plan limits |
 | `B` | Battery saver |
 | `,` | Settings |
-| `O` | Floor overview: everyone on this floor and what they are doing |
+| `O` | Overview: everyone on this floor and what they are doing; off an office floor, every floor’s |
 | `W A S D` or `↑ ← ↓ →` | Walk (the arrows turn left and right) |
 | `Page Up` or `Page Down` | Look up and down |
 | `Home` | Level the view |
@@ -47,7 +47,7 @@ The view from above, before you go inside.
 | `Shift` + `L` | Plan limits |
 | `B` | Battery saver |
 | `,` | Settings |
-| `O` | Floor overview: everyone on this floor and what they are doing |
+| `O` | Overview: everyone on this floor and what they are doing; off an office floor, every floor’s |
 | `M` | Buildings |
 | `Tab` or `Enter` | Tab reaches the floors, then the buildings; Enter goes inside |
 | `Esc` | Let go of the focused building |
@@ -87,6 +87,8 @@ Open dialogs and their fields own the keyboard.
 | `Esc` | Close the dialog |
 | `Ctrl/⌘` + `Enter` | Submit: hire, Start Run, open a pull request, a board comment |
 | `Enter` | Send, in the conversation’s prompt box |
+| `F` | On the overview page: active workers only, or everyone |
+| `A` | On a floor’s overview page: every floor’s |
 | `Shift` + `Enter` | A new line, in the hire task and the prompt boxes |
 | `↑ ↓` or `Tab` | In a prompt box’s suggestion list (after / or @): ↑ ↓ choose, Tab or Enter picks, Esc closes only the list |
 
