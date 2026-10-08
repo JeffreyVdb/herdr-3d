@@ -114,6 +114,8 @@ test('code changes show by default, every shape and state, and the two switches 
       const v = (e.closest('.tx-scroll') as HTMLElement).getBoundingClientRect();
       return r.top >= v.top - 1 && r.bottom <= v.bottom + 1;
     });
+  // The view's measured height (--tx-view-h, from a ResizeObserver) caught up with a resize.
+  const sized = () => tx.evaluate((e) => Math.abs(parseFloat((e as HTMLElement).style.getPropertyValue('--tx-view-h')) - (e.querySelector('.tx-scroll') as HTMLElement).clientHeight) <= 1);
   for (const preset of ['quiet', 'ubuntu']) {
     await tx.locator(`.tx-theme[data-theme-id="${preset}"]`).click();
     await cut.locator('.tx-chg-head').focus();
@@ -126,6 +128,16 @@ test('code changes show by default, every shape and state, and the two switches 
     await expect(lines).toBeFocused();
     for (const k of ['Home', 'PageUp', 'ArrowUp', 'Home']) await page.keyboard.press(k);
     await expect.poll(() => inView(rows.first())).toBe(true);
+    // A smaller screen under it (1280x720 to 1024x600) leaves the lines above the view: the keys still bring them back.
+    await page.setViewportSize({ width: 1024, height: 600 });
+    await expect.poll(sized).toBe(true);
+    for (const k of ['End', 'PageDown', 'ArrowDown', 'End']) await page.keyboard.press(k);
+    await expect.poll(() => inView(rows.last())).toBe(true);
+    await expect(lines).toBeFocused();
+    for (const k of ['Home', 'PageUp', 'ArrowUp', 'Home']) await page.keyboard.press(k);
+    await expect.poll(() => inView(rows.first())).toBe(true);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect.poll(sized).toBe(true);
     await page.keyboard.press('Control+0');
     await expect.poll(async () => (await theme(page)).transcriptZoom).toBe(100);
   }

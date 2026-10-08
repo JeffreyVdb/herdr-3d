@@ -2013,8 +2013,9 @@ class Transcript implements TranscriptView {
 
   /**
    * #171: a diff body's keys (PageUp/PageDown, Space, the arrows, Home/End, j/k); false: not one of them. Where the body
-   * goes no further that way (and on Home/End), the timeline moves toward the body's edge it clips, a key's step at a
-   * time, so its first and last lines always come into view (a body taller than the view: a large zoom, a short screen).
+   * goes no further that way (and on Home/End), the timeline moves toward the body's edge that way while it is out of
+   * view, on either side, a key's step at a time, so its first and last lines always come into view (a body taller than
+   * the view: a large zoom, a short screen; a body the view left behind: a resize).
    */
   private scrollLines(el: HTMLElement, e: KeyboardEvent): boolean {
     const page = Math.max(40, el.clientHeight * 0.9);
@@ -2056,10 +2057,16 @@ class Transcript implements TranscriptView {
     if (Number.isFinite(dy)) el.scrollTop += dy;
     else el.scrollTop = dy > 0 ? el.scrollHeight : 0;
     if (Number.isFinite(dy) && el.scrollTop !== before) return true;
+    // The edge the key heads for, clipped on its side of the view (the timeline follows it), or past the other side with
+    // its line out of view (the body gone by after a resize: the timeline comes back for it). It lands on the view's
+    // edge on that side: the bottom edge on the view's bottom, the top on its top.
     const view = this.scroller.getBoundingClientRect();
     const box = el.getBoundingClientRect();
-    const clipped = dy > 0 ? Math.max(0, box.bottom - view.bottom) : Math.min(0, box.top - view.top);
-    if (clipped) this.scrollBy(dy > 0 ? Math.min(clipped, dy) : Math.max(clipped, dy));
+    const edge = dy > 0 ? box.bottom : box.top;
+    const line = Math.min(box.height, (dy > 0 ? el.lastElementChild : el.firstElementChild)?.getBoundingClientRect().height ?? 0);
+    const out = dy > 0 ? edge > view.bottom || edge - line < view.top : edge < view.top || edge + line > view.bottom;
+    const move = out ? edge - (dy > 0 ? view.bottom : view.top) : 0;
+    if (move) this.scrollBy(Math.sign(move) * Math.min(Math.abs(move), Math.abs(dy)));
     return true;
   }
 

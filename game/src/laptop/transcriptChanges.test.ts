@@ -405,6 +405,60 @@ describe('code changes (#171)', () => {
     expect(inner).toBe(0);
   });
 
+  it('a diff body entirely above or below the view (a resize): the edge a key heads for comes back into it', () => {
+    mount();
+    view.setItems([{ id: 'long', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Write', input_summary: 'long.ts', status: 'ok', diff: longDiff(100) } }]);
+    const body = $('.tx-diff-body', row('long')) as HTMLElement;
+    const scroller = $('.tx-scroll') as HTMLElement;
+    // A body 300px high (its rows 30px), `at` px down a 417px timeline. It scrolls 0..1300.
+    let inner = 0;
+    let at = 200;
+    Object.defineProperty(body, 'clientHeight', { configurable: true, value: 200 });
+    Object.defineProperty(body, 'scrollHeight', { configurable: true, value: 1500 });
+    Object.defineProperty(body, 'scrollTop', { configurable: true, get: () => inner, set: (v: number) => (inner = Math.min(1300, Math.max(0, v))) });
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 900, width: 900, x: 0, y: top, toJSON: () => ({}) });
+    scroller.getBoundingClientRect = () => rect(0, 417);
+    body.getBoundingClientRect = () => rect(at - scroller.scrollTop, 300);
+    (body.firstElementChild as HTMLElement).getBoundingClientRect = () => rect(at - scroller.scrollTop, 30);
+    (body.lastElementChild as HTMLElement).getBoundingClientRect = () => rect(at - scroller.scrollTop + 270, 30);
+    const key = (k: string) => {
+      const e = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true });
+      body.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    // Above (-400..-100), at its end: End brings its bottom edge to the view's, the whole body in.
+    scroller.scrollTop = 600;
+    inner = 1300;
+    expect(key('End')).toBe(true);
+    expect(scroller.scrollTop).toBe(83);
+    // ↓ a step at a time, back down until its last line shows (-256..44: 14..44), then no further.
+    scroller.scrollTop = 600;
+    for (const want of [552, 504, 456, 456]) {
+      expect(key('ArrowDown')).toBe(true);
+      expect(scroller.scrollTop).toBe(want);
+    }
+    expect(inner).toBe(1300);
+    // Its last line in the view, the rest above: ↓ and End leave the timeline.
+    key('End');
+    expect(scroller.scrollTop).toBe(456);
+    // Below (1000..1300), at its start: Home brings its top edge to the view's.
+    at = 1000;
+    scroller.scrollTop = 0;
+    inner = 0;
+    expect(key('Home')).toBe(true);
+    expect(scroller.scrollTop).toBe(1000);
+    // ↑ a step at a time, until its first line shows (top at 417 - 30 or above), then no further.
+    scroller.scrollTop = 0;
+    for (let i = 0; i < 14; i++) key('ArrowUp');
+    expect(scroller.scrollTop).toBe(624);
+    expect(inner).toBe(0);
+    // Below, at its end, ↓ still goes toward it (its own side), a step at a time.
+    scroller.scrollTop = 0;
+    inner = 1300;
+    key('ArrowDown');
+    expect(scroller.scrollTop).toBe(48);
+  });
+
   it('a failed load says so where the link was', async () => {
     const it: TranscriptItem = { id: 'big', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Edit', input_summary: 'big.ts', status: 'ok', diff: { path: 'big.ts', truncated: true, hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ['-a'] }] } } };
     mount(async () => {
