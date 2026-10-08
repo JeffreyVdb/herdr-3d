@@ -5,12 +5,23 @@ import { frames, openGame, seatMode, shot, watchErrors } from './game';
 // Claude fixtures, claude-changes.json) shows the colours; `simtx=demo-h206` (tools/fixture-transcript.ts h206Timeline)
 // puts the highlighter's worst cases before it, from real code: a created 2,000-line TypeScript file (one hunk, the
 // worker's) and a ten-hunk edit (the page's thread's). The long-task check runs the same page with the highlighter off
-// (`?diffhl=off`) and on (`?diffhl=trace`: every slice of its work a `tx-diff-hl` performance measure) and prints both.
+// (`?diffhl=off`) and on (`?diffhl=trace`: every slice of its work a `tx-diff-hl` performance measure), prints both and
+// holds "on" to "off". Colours are CSS Custom Highlight API ranges over a row's text (diffHighlight.ts), not spans: what
+// is checked is the page's highlight registry, and the colours its ::highlight() rules give.
 
 const FLOOR = 'herdr-3d';
 const SIM = 'play=none&sim=1&simms=500&simusage=0';
 
 type Win = Window & { __lt: Array<[number, number]> };
+
+/** The most ranges the page may hold once everything is coloured. */
+const MAX_RANGES = 5000;
+/**
+ * Long tasks a phase may have with colours on beyond its count with them off: this host's run-to-run noise. Measured
+ * (llvmpipe, 2026-10-08): this spec alone, 4 runs, on − off per phase −1…+1; run with three other specs (the plain-text
+ * control's own long tasks 2 → 60) 0…+2. Painting with spans, before, was +6…+22 (open, load, next): 3 keeps that out.
+ */
+const LONG_TASK_NOISE = 3;
 
 /** Records every long task from the page's start (buffered), in `window.__lt` as [start, duration]. */
 async function watchLongTasks(page: Page): Promise<void> {
@@ -50,6 +61,19 @@ const varColour = (tx: Locator, name: string) =>
     return c;
   }, name);
 const colour = (l: Locator) => l.evaluate((e) => getComputedStyle(e).color);
+/** The colour a highlight paints on a cell (its `::highlight(name)` rule). */
+const hlColour = (l: Locator, name: string) => l.evaluate((e, n) => getComputedStyle(e, `::highlight(${n})`).color, name);
+/** The highlights painted on a cell's text, in order: [highlight, the text it covers] (the plain text first where both start). */
+const hlRanges = (l: Locator) =>
+  l.evaluate((e) => {
+    const out: Array<[number, string, string]> = [];
+    for (const [name, h] of CSS.highlights) for (const r of h) if (r.startContainer === e.firstChild) out.push([r.startOffset, name, (e.textContent ?? '').slice(r.startOffset, r.endOffset)]);
+    return out.sort((x, y) => x[0] - y[0] || (x[1] === 'tx-hl-plain' ? -1 : 1)).map(([, n, t]) => [n, t]);
+  });
+/** Every range the page's highlights hold. */
+const rangeCount = (page: Page) => page.evaluate(() => [...CSS.highlights.values()].reduce((s, h) => s + h.size, 0));
+/** No diff cell is anything but the one text node it was drawn with: colours never change the DOM. */
+const plainDom = (tx: Locator) => tx.evaluate((root) => [...root.querySelectorAll('.tx-diff-body .tx-dt')].every((e) => e.childNodes.length === 1 && e.firstChild?.nodeType === Node.TEXT_NODE));
 
 test('diff rows gain syntax colours: tokens on the add band, the sign tinted, plain text as context; unknown files stay plain', async ({ page }) => {
   test.setTimeout(120_000);
@@ -61,32 +85,54 @@ test('diff rows gain syntax colours: tokens on the add band, the sign tinted, pl
   const edit = tx.locator('[data-id="toolu_018mQCao59VwQiRK6L6zHu5h"]');
   await edit.scrollIntoViewIfNeeded();
   const add = edit.locator('.tx-dl.tx-add .tx-dt').first();
-  await expect(add).toHaveClass(/\btx-hl\b/);
   await expect(add).toHaveText('+  // M16: the transcript view at a laptop (docs/protocol.md "Laptops: transcript").');
-  await expect(add.locator('.hljs-comment')).toHaveText('// M16: the transcript view at a laptop (docs/protocol.md "Laptops: transcript").');
-  await expect(edit.locator('.tx-dl.tx-add .tx-dt').nth(1).locator('.hljs-string')).toHaveText(["'transcript.watch'"]);
+  const comment = '// M16: the transcript view at a laptop (docs/protocol.md "Laptops: transcript").';
+  // The plain text after the sign in the context's colour, the comment over it; the sign is the row's own.
+  await expect.poll(() => hlRanges(add)).toEqual([
+    ['tx-hl-plain', `  ${comment}`],
+    ['tx-hl-comment', comment],
+  ]);
+  const add2 = edit.locator('.tx-dl.tx-add .tx-dt').nth(1);
+  expect(await hlRanges(add2)).toContainEqual(['tx-hl-string', "'transcript.watch'"]);
+  // What paints on top at the comment is the comment's highlight (the plain text's is under it).
+  const top = await add.evaluate((e) => {
+    const r = document.createRange();
+    r.setStart(e.firstChild as Text, 6);
+    r.setEnd(e.firstChild as Text, 9);
+    const b = r.getBoundingClientRect();
+    const reg = CSS.highlights as HighlightRegistry & { highlightsFromPoint(x: number, y: number): Array<{ highlight: Highlight }> };
+    const hits = reg.highlightsFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    return hits.map((x) => [...CSS.highlights].find(([, h]) => h === x.highlight)?.[0]);
+  });
+  expect(top).toEqual(['tx-hl-comment', 'tx-hl-plain']);
   for (const preset of ['quiet', 'ubuntu']) {
     await tx.locator(`.tx-theme[data-theme-id="${preset}"]`).click();
-    expect(await colour(add.locator('.hljs-comment')), preset).toBe(await varColour(tx, '--tx-hl-comment'));
-    expect(await colour(edit.locator('.tx-dl.tx-add .hljs-string').first()), preset).toBe(await varColour(tx, '--tx-hl-string'));
-    expect(await colour(add.locator('.tx-dsg')), preset).toBe(await varColour(tx, '--tx-add-text'));
-    expect(await colour(add), preset).toBe(await varColour(tx, '--tx-text'));
+    expect(await hlColour(add, 'tx-hl-comment'), preset).toBe(await varColour(tx, '--tx-hl-comment'));
+    expect(await hlColour(add2, 'tx-hl-string'), preset).toBe(await varColour(tx, '--tx-hl-string'));
+    expect(await hlColour(add, 'tx-hl-plain'), preset).toBe(await varColour(tx, '--tx-text'));
+    // The sign: the cell's own colour, under no highlight.
+    expect(await colour(add), preset).toBe(await varColour(tx, '--tx-add-text'));
     await frames(page, 3);
     await shot(page, `h206-diff-colours-${preset}`);
   }
   await tx.locator('.tx-theme[data-theme-id="quiet"]').click();
-  // Python and a deleted row: coloured on the red band too.
+  // Python and a deleted row: coloured on the red band too (painted once on screen).
   const py = tx.locator('[data-id="toolu_c171_bash_one"]');
-  await expect(py.locator('.tx-dl.tx-del .hljs-number')).toHaveText(['3']);
-  await expect(py.locator('.tx-dl.tx-add .hljs-number')).toHaveText(['5']);
-  // The hunk header and a file with no known extension (VERSION) as before: one plain text.
-  expect(await edit.locator('.tx-dh .tx-dt').evaluate((e) => e.childNodes.length)).toBe(1);
+  await py.scrollIntoViewIfNeeded();
+  await expect.poll(() => hlRanges(py.locator('.tx-dl.tx-del .tx-dt').first())).toContainEqual(['tx-hl-number', '3']);
+  expect(await hlRanges(py.locator('.tx-dl.tx-add .tx-dt').first())).toContainEqual(['tx-hl-number', '5']);
+  // The hunk header and a file with no known extension (VERSION) as before: plain.
+  expect(await hlRanges(edit.locator('.tx-dh .tx-dt'))).toEqual([]);
   const version = tx.locator('[data-id="toolu_c171_bash_unavail"] .tx-dl:not(.tx-dh) .tx-dt');
+  await version.first().scrollIntoViewIfNeeded();
   await expect(version).toHaveText(['-1.3.2', '+1.4.0']);
-  expect(await version.evaluateAll((es) => es.every((e) => e.childNodes.length === 1 && !e.classList.contains('tx-hl')))).toBe(true);
+  await frames(page, 3);
+  for (const v of await version.all()) expect(await hlRanges(v)).toEqual([]);
   // A Codex patch (#173: no line numbers) colours too.
   const codex = tx.locator('.tx-tool[data-status="ok"]', { has: page.locator('.tx-tool-name', { hasText: 'apply_patch' }) });
-  await expect(codex.locator('.tx-dl.tx-add .tx-dt.tx-hl').first()).toBeAttached();
+  await codex.scrollIntoViewIfNeeded();
+  await expect.poll(async () => (await hlRanges(codex.locator('.tx-dl.tx-add .tx-dt').first())).length).toBeGreaterThan(0);
+  expect(await plainDom(tx)).toBe(true);
   clean();
 });
 
@@ -156,6 +202,7 @@ test('highlighting causes no long task: the 2,000-line create, a ten-hunk edit, 
   test.setTimeout(400_000);
   const results: Record<string, Record<string, Window_>> = {};
   const geometry: Record<string, unknown> = {};
+  const ranges: Record<string, number> = {};
   for (const mode of ['off', 'trace'] as const) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
     const page = await ctx.newPage();
@@ -165,12 +212,25 @@ test('highlighting causes no long task: the 2,000-line create, a ten-hunk edit, 
     const on = mode === 'trace';
     const create = tx.locator('[data-id="h206-create"]');
     const edit = tx.locator('[data-id="h206-edit"]');
-    /** Rows a coloured diff colours: every one with code (an empty line has none). Read after a window: it is not cheap. */
+    /**
+     * The diff's box on screen, every added or deleted row of code it shows is painted (colours on; none, off). Rows out
+     * of its view need not be: ranges follow the view (diffHighlight.ts). Read after a window: it is not cheap.
+     */
     const coloured = async (l: Locator) => {
-      if (!on) return;
-      const [a, b] = await l.locator('.tx-dl:not(.tx-dh) .tx-dt').evaluateAll((es) => [es.filter((e) => e.classList.contains('tx-hl')).length, es.filter((e) => (e.textContent ?? '').length > 1).length]);
-      expect(b).toBeGreaterThan(0);
-      expect(a).toBe(b);
+      const body = l.locator('.tx-diff-body');
+      await body.scrollIntoViewIfNeeded();
+      const look = () =>
+        body.evaluate((b) => {
+          const box = b.getBoundingClientRect();
+          const ranged = new Set<Node>();
+          for (const h of CSS.highlights.values()) for (const r of h) ranged.add(r.startContainer);
+          const rows = [...b.querySelectorAll<HTMLElement>('.tx-dl.tx-add .tx-dt, .tx-dl.tx-del .tx-dt')].filter((e) => {
+            const r = e.getBoundingClientRect();
+            return r.bottom > box.top && r.top < box.bottom && (e.textContent ?? '').length > 1;
+          });
+          return [rows.length, rows.filter((e) => ranged.has(e.firstChild as Node)).length] as const;
+        });
+      await expect.poll(async () => { const [n, k] = await look(); return n > 0 && k === (on ? n : 0); }, { timeout: 20_000 }).toBe(true);
     };
     /** How many slices the highlighter has run so far (traced). */
     const sliceCount = () => page.evaluate(() => performance.getEntriesByName('tx-diff-hl').length);
@@ -238,6 +298,8 @@ test('highlighting causes no long task: the 2,000-line create, a ten-hunk edit, 
     });
     results[mode].scroll = { ...(await between(page, t0, await now(page))), frameMax: scroll };
     expect(await body.evaluate((e) => e.scrollTop)).toBeGreaterThan(0);
+    // The rows it scrolled to are painted.
+    await coloured(create);
 
     // 3. The cut change loaded whole (transcript.item: one 2,500-line hunk, the worker's), then "Show next 500 lines".
     const cut = tx.locator('[data-id="h171-cut"]');
@@ -286,17 +348,21 @@ test('highlighting causes no long task: the 2,000-line create, a ten-hunk edit, 
     });
     results[mode].next = { ...(await between(page, t0, await now(page))), frameMax: next };
     await coloured(cut);
+    // The last page's last rows, scrolled to, are painted.
+    await cut.locator('.tx-diff-body').evaluate((b) => b.scrollTo(0, b.scrollHeight));
+    await coloured(cut);
+    ranges[mode] = await rangeCount(page);
+    expect(await plainDom(tx)).toBe(true);
     if (on) {
-      await expect(cut.locator('.tx-dl:not(.tx-dh) .tx-dt').last()).toHaveClass(/\btx-hl\b/);
       await cut.scrollIntoViewIfNeeded();
       await frames(page, 3);
       await shot(page, 'h206-diff-next-coloured');
-    } else expect(await tx.locator('.tx-dt.tx-hl').count()).toBe(0);
+    }
     clean();
     await ctx.close();
   }
   console.log(`h206 long tasks: ${JSON.stringify(results)}`);
-  console.log(`h206 geometry equal: ${JSON.stringify(geometry.off) === JSON.stringify(geometry.trace)}`);
+  console.log(`h206 geometry equal: ${JSON.stringify(geometry.off) === JSON.stringify(geometry.trace)}; ranges held at the end: ${JSON.stringify(ranges)}`);
   // No row changed size, in either preset.
   expect(geometry.trace).toEqual(geometry.off);
   for (const [phase, w] of Object.entries(results.trace ?? {})) {
@@ -307,4 +373,13 @@ test('highlighting causes no long task: the 2,000-line create, a ten-hunk edit, 
   // It did the work it was measured on.
   expect(results.trace?.open?.slices).toBeGreaterThan(0);
   expect(results.trace?.next?.slices).toBeGreaterThan(0);
+  // Ranges only around what diffs show: a few thousand at most, never every drawn row's (~35,000 here).
+  expect(ranges.off).toBe(0);
+  expect(ranges.trace).toBeLessThan(MAX_RANGES);
+  // Rendering too: colours on add no long tasks to the page's own (the same phase, colours off), past this host's noise.
+  for (const phase of ['open', 'load', 'next', 'scroll']) {
+    const on = results.trace?.[phase] as Window_;
+    const off = results.off?.[phase] as Window_;
+    expect(on.longTasks, `${phase}: long tasks on ${on.longTasks} vs off ${off.longTasks}`).toBeLessThanOrEqual(off.longTasks + LONG_TASK_NOISE);
+  }
 });
