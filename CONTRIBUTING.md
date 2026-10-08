@@ -48,8 +48,16 @@ commands sit on it) and `drops` (Drop Zone's newest files, read only through img
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
-  repository and project, the writes) and `githubcli` (the typed `gh` runner). `server`, `store` and `proto` never import
-  `github` or `githubcli` (`TestBoardLayerIsProviderNeutral`): `app` wires the provider in. Helper: `helper` (ssh tunnel
+  repository and project, the writes) and `githubcli` (the typed `gh` runner); #184: `kaneo` (the Kaneo provider of
+  `tracker`: the instance URL's normalization, the REST client with its key, the settings' read-only calls and one
+  project's board and writes; the standard library, `provider` and `tracker` only, `TestKaneoIsAProviderLeaf`;
+  `kaneo/kaneotest`, a fake Kaneo instance over HTTP serving the provider's fixtures, for the tests above it) and
+  `kaneoconf` (the bridge-wide Kaneo connection: instance, key in its own 0600 file, default workspace, the test that
+  gates a save, the generation; it reaches Kaneo only through its `Connector` interface and imports nothing of the
+  module but `provider`, `TestKaneoSettingsIsProviderNeutral`; `kaneoconf.FakeConnector` for tests). `server`, `store`
+  and `proto` never import `github`, `githubcli` or `kaneo` (`TestBoardLayerIsProviderNeutral`): `app` wires the
+  providers in (`app.Boards`; `app.Kaneo`: `KaneoConnector` behind the settings, `KaneoFloors` for the floors'
+  trackers). Helper: `helper` (ssh tunnel
   supervisor, game server, `/ws` proxy). `app` holds both command lines.
 - `deploy/` — `herdr-world.service` (systemd `--user`), `com.jeffreyvdb.h3d-helper.plist` (launchd user agent, Mac).
 - `game/` — the game: Vite + strict TypeScript + three.js (`three/webgpu`), pnpm.
@@ -368,6 +376,7 @@ that directory.
 | `--screen-dir` | `HERDR_WORLD_SCREEN_DIR` | `$XDG_RUNTIME_DIR/herdr-world/screen` (else `/run/user/<uid>/…` when it exists): where `screen.grab` stores frames, 0700, 10 min each (M13, [`docs/protocol.md` "Screen share"](docs/protocol.md#screen-share)) |
 | `--whiteboards` | `HERDR_WORLD_WHITEBOARDS` | `$XDG_DATA_HOME/herdr-3d/whiteboards`, else `~/.local/share/herdr-3d/whiteboards`: the floors' whiteboards (M13, [`docs/protocol.md` "Whiteboard"](docs/protocol.md#whiteboard)); `-` for none |
 | `--ai-file` | `HERDR_WORLD_AI_FILE` | `ai.json` next to the database: the AI integration's settings and keys, 0600, never in the database (#92, [`docs/protocol.md` "AI integration"](docs/protocol.md#ai-integration)) |
+| `--kaneo-file` | `HERDR_WORLD_KANEO_FILE` | `kaneo.json` next to the database: the Kaneo connection's settings and key, 0600, never in the database and apart from `ai.json` (#184, [`docs/protocol.md` "Kaneo"](docs/protocol.md#kaneo)) |
 | `--ai-classifier-key-file`, `--ai-classifier-model` | `HERDR_WORLD_AI_CLASSIFIER_KEY_FILE`, `HERDR_WORLD_AI_CLASSIFIER_MODEL` | none: a file holding the classification model's (Jev) key, and its model. While set they win over the panel's and show there as "set by the bridge environment" |
 | `--ai-llm-base-url`, `--ai-llm-key-file`, `--ai-llm-model` | `HERDR_WORLD_AI_LLM_BASE_URL`, `HERDR_WORLD_AI_LLM_KEY_FILE`, `HERDR_WORLD_AI_LLM_MODEL` | none: the OpenAI-compatible LLM's base URL, the file holding its key, and its model; same rules |
 | `--followups-enabled` | `HERDR_WORLD_FOLLOWUPS_ENABLED` | none: `true` or `false` switches the follow-up questions on or off over the panel's toggle, which then shows it read-only (#90, [`docs/protocol.md` "Follow-up questions"](docs/protocol.md#follow-up-questions)); on, they still run only while both AI models are ready |
@@ -498,8 +507,9 @@ killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herd
 - (M7) `POST /api/open {"url": "https://github.com/…"}` opens a page in the Mac's default browser (`open <url>`), for
   the game's "Open in GitHub" buttons and the links in issue bodies. Same Host and Origin checks as `/ws`, the token in
   the `X-H3D-Token` header (never in a URL), `Content-Type: application/json`, a body of at most 4 KiB; only `https://`
-  URLs on a listed host (`internal/helper.DefaultOpenHosts`: `github.com`; a provider added later adds its host there),
-  no credentials or port, no control characters. `204` on success, `400` for a refused URL, `403` for a failed check,
+  URLs on a listed host (`internal/helper.DefaultOpenHosts`: `github.com`; a provider added later adds its host there;
+  #184: plus the self-hosted Kaneo instance the bridge names on its `/healthz` (`X-H3D-Open-Hosts`), read through the
+  tunnel every check and dropped when the bridge stops naming it), no credentials or port, no control characters. `204` on success, `400` for a refused URL, `403` for a failed check,
   `502` when `open` failed; `go test ./internal/helper` covers it with a fake opener. A page not served by the helper
   (Vite on the server) has no endpoint, and the game opens a new window instead (`https://` only); a page the helper
   serves never falls back to a window: a URL it refuses gets a notice and is not opened.
@@ -909,6 +919,21 @@ fail (`{fail: "message"}`, or `head_moved` to make a merge answer `stale`; `{fai
 (`provider_failed`, null clears it) and `{no_refresh: true}` makes writes queue no poll (a late refresh). `simfail=no_m7` plays a bridge before M7 (every board command `unknown_command`). `open=none` in the page
 URL makes "Open in …" record the page instead of opening a window. E.g.
 `?ws=%2Ffixture%2Fdemo-m6%3Fsim%3D1%26simms%3D150&floor=lab`.
+
+#184 on the simulating server (`tools/fixture-kaneo.ts`, rules at its top): Kaneo. `simkaneo=off` (default: nothing
+saved), `connected` (https://kaneo.example.test saved, default workspace Studio), `unavailable` (a bridge without a
+Kaneo client) or `old` (a bridge before #184); `simkaneoslow=<ms>` (default 1500) is how long the slow answers take.
+Settings → Kaneo: any https address (`offline` in it: unreachable; http only to 127.0.0.1), a key starting `bad` is the
+401 that may be a quota, `forbidden` a 403, `empty` reaches no workspace, `slow` answers slowly; any other key passes
+with Studio, Home, Locked (its projects: 403), Empty (no projects) and Slow lane (its projects answer after
+`simkaneoslow`: switch workspaces quickly to see a late list dropped). Floor settings → Issue tracker → Kaneo: Studio's
+herdr-3d (HRD) and Website (WEB: a truncated board), Home's Garden; a project of another workspace or `gone` is
+refused at save. A Kaneo floor's Issues overlay: Planned / To Do / In Progress / In Review / Done / Shipped / Archived,
+no close, HRD-4's long description read on open. `sim.kaneo` (`window.__h3d.simKaneo(args)`): `{fail: "unauthorized"}`
+pauses the board (a passing Test in Settings resumes it), `"forbidden"`, a message, or `null`; `{stale: true}` makes the
+next placed move `stale` (409); `{poll: true}`. Hand to a worker / run.prepare on a task gives an `item` ticket.
+`e2e/h184-kaneo.spec.ts` drives it. E.g.
+`?ws=%2Ffixture%2Fdemo-m6%3Fsim%3D1%26simms%3D150%26simkaneo%3Dconnected%26simkaneoslow%3D1200&floor=lab&open=none`.
 
 #57 on the simulating server (`tools/fixture-ask.ts`, rules at its top): `sim.ask {id, ask}` (`simAsk(args)` in the
 hooks) makes a worker's agent ask (its card and the transcript's pending call), `{id, ask: null, answers?}` ends it as

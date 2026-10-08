@@ -36,7 +36,7 @@ export function crewLine(w: WorkerView): HTMLElement | null {
   const tag = crewTag(c);
   // Its own label for screen readers (the bar's label names the worker, its status and task).
   const line = h('div', { class: 'prompt-crew', role: 'group', 'aria-label': crewAria(w) }, h('span', { class: 'crew-tag', style: `--run: ${tag.color}` }, tag.text));
-  if (c.issue) line.append(h('span', { class: 'crew-issue', title: `GitHub issue ${c.issue}` }, c.issue));
+  if (c.issue) line.append(h('span', { class: 'crew-issue', title: c.issue.includes('#') ? `GitHub issue ${c.issue}` : `Task ${c.issue}` }, c.issue));
   else if (c.ticket) line.append(h('span', { class: 'crew-issue' }, `ticket ${c.ticket}`));
   if (c.run) line.append(h('span', { class: 'crew-run', title: `write-code run ${c.run}` }, `run ${c.run}`));
   if (c.stamp) line.append(h('span', { class: `crew-stamp crew-stamp--${c.stamp.tone}` }, c.stamp.text));

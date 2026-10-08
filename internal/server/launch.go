@@ -218,16 +218,17 @@ var (
 )
 
 // runTicketOf is a run's ticket from its issue, text or work_item (nil when
-// none is given). A work_item on a floor with no polled board also returns
-// a check to run off the hub goroutine before the ticket is used (see
-// workItemTicket); verified says it has been run.
-func (h *Hub) runTicketOf(session string, f *floorState, issue json.RawMessage, text string, item *proto.WorkItemRef,
-	verified bool) (*proto.RunTicket, func(context.Context) error, error) {
+// none is given). A work_item the floor's provider has to be asked about (a
+// board not polled yet; #184 any item that is no GitHub issue, for its
+// text) returns no ticket but the call that resolves it, to run off the hub
+// goroutine (see workItemTicket).
+func (h *Hub) runTicketOf(session string, f *floorState, issue json.RawMessage, text string,
+	item *proto.WorkItemRef) (*proto.RunTicket, func(context.Context) (*proto.RunTicket, error), error) {
 	if item != nil { // M7 boards: a card of the floor's issue provider
 		if (len(issue) > 0 && string(issue) != "null") || text != "" {
 			return nil, nil, bad("give one of an issue, a text and a work_item")
 		}
-		return h.workItemTicket(session, item, verified)
+		return h.workItemTicket(session, item)
 	}
 	t, err := h.runTicket(session, f, issue, text)
 	return t, nil, err
@@ -295,15 +296,23 @@ func ticketRef(t *proto.RunTicket) string {
 	return t.Text
 }
 
-// runLabel is an orchestrator's default label: ORCH|issue-<n>, or ORCH|
-// and the first words of the text as a slug; the descr at most 10 bytes.
+// runLabel is an orchestrator's default label: ORCH|issue-<n>, ORCH|<key>
+// for an item (#184), or ORCH| and the first words of the text as a slug;
+// the descr at most 10 bytes.
 func runLabel(t *proto.RunTicket) string {
 	if t.Kind == proto.TicketIssue {
 		d := "issue-" + strconv.Itoa(t.Number)
 		return "ORCH|" + d[:min(len(d), maxRunDescr)]
 	}
+	words := t.Text
+	if t.Kind == proto.TicketItem && t.Item != nil {
+		if d := strings.Trim(slugRun.ReplaceAllString(strings.ToLower(t.Item.Key), "-"), "-"); d != "" {
+			return "ORCH|" + strings.TrimRight(d[:min(len(d), maxRunDescr)], "-")
+		}
+		words = t.Item.Title
+	}
 	var d string
-	for _, w := range strings.Split(strings.Trim(slugRun.ReplaceAllString(strings.ToLower(t.Text), "-"), "-"), "-") {
+	for _, w := range strings.Split(strings.Trim(slugRun.ReplaceAllString(strings.ToLower(words), "-"), "-"), "-") {
 		switch {
 		case w == "":
 		case d == "":
@@ -338,7 +347,7 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 	if err != nil {
 		return err
 	}
-	ticket, check, err := h.runTicketOf(a.Session, f, a.Issue, a.Text, a.WorkItem, false)
+	ticket, resolve, err := h.runTicketOf(a.Session, f, a.Issue, a.Text, a.WorkItem)
 	if err != nil {
 		return err
 	}
@@ -365,18 +374,25 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 	if err != nil {
 		return err
 	}
-	res := proto.RunPrepareResult{Ticket: ticket, Preset: p.ID, Orch: orch, Cwd: cwd, Capacity: h.capacity(a.Session)}
-	if ticket != nil {
-		res.Label = runLabel(ticket)
-		if havePreset && orch != nil {
-			res.Prompt = RunPrompt(orch.Harness, ticketRef(ticket), ticket.Kind == proto.TicketIssue, presetView(p).Roles, a.Extra)
+	res := proto.RunPrepareResult{Preset: p.ID, Orch: orch, Cwd: cwd, Capacity: h.capacity(a.Session)}
+	roles := presetView(p).Roles
+	compose := func(t *proto.RunTicket) {
+		res.Ticket = t
+		if t != nil {
+			res.Label = runLabel(t)
+			if havePreset && orch != nil {
+				res.Prompt = TicketPrompt(orch.Harness, t, roles, a.Extra)
+			}
 		}
 	}
+	compose(ticket)
 	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
-		if check != nil {
-			if err := check(ctx); err != nil {
+		if resolve != nil {
+			t, err := resolve(ctx)
+			if err != nil {
 				return nil, err
 			}
+			compose(t)
 		}
 		res.Git = h.gitInfo(ctx, cwd)
 		if h.opts.Load != nil {
@@ -395,29 +411,38 @@ func (h *Hub) startRunStart(ctx context.Context, c *Client, cmd proto.Command) e
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	return h.runStart(ctx, c, cmd, a, false)
+	return h.runStart(ctx, c, cmd, a, nil)
 }
 
 // runStart is startRunStart after the args are read. A work_item that the
-// floor's provider must vouch for (no board polled yet) is checked off the
-// hub goroutine, then the start goes on from here with verified set.
-func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a proto.RunStartArgs, verified bool) error {
+// floor's provider must vouch for or describe (see runTicketOf) is resolved
+// off the hub goroutine, then the start goes on from here with its ticket:
+// stale when the floor's board source changed meanwhile (#184: another
+// tracker, Kaneo connection or project), the item being of the old one.
+func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a proto.RunStartArgs, resolved *proto.RunTicket) error {
 	f, err := h.hireFloor(a.Session)
 	if err != nil {
 		return err
 	}
-	ticket, check, err := h.runTicketOf(a.Session, f, a.Issue, a.Text, a.WorkItem, verified)
+	ticket, resolve, err := resolved, (func(context.Context) (*proto.RunTicket, error))(nil), error(nil)
+	if ticket == nil {
+		ticket, resolve, err = h.runTicketOf(a.Session, f, a.Issue, a.Text, a.WorkItem)
+	}
 	if err != nil {
 		return err
 	}
-	if check != nil {
+	if resolve != nil {
+		source := h.boardKey(a.Session)
 		h.wg.Add(1)
 		go func() {
 			defer h.wg.Done()
-			err := check(ctx)
+			t, err := resolve(ctx)
 			if derr := h.doWait(ctx, func() {
+				if err == nil && h.boardKey(a.Session) != source {
+					err = fmt.Errorf("%w: the floor's issue board changed while its item was read: pick the item again", errStale)
+				}
 				if err == nil {
-					err = h.runStart(ctx, c, cmd, a, true)
+					err = h.runStart(ctx, c, cmd, a, t)
 				}
 				if err != nil {
 					h.audit(ctx, c, cmd, err)
@@ -447,7 +472,7 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 	}
 	prompt := a.Prompt
 	if prompt == "" {
-		prompt = RunPrompt(a.Orch.Harness, ticketRef(ticket), ticket.Kind == proto.TicketIssue, presetView(p).Roles, a.Extra)
+		prompt = TicketPrompt(a.Orch.Harness, ticket, presetView(p).Roles, a.Extra)
 	}
 	label := a.Label
 	if label == "" {
@@ -455,9 +480,12 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 	}
 	worktree := a.Worktree == nil || *a.Worktree
 	launch := store.RunLaunch{ID: "l_" + randHex(8), Session: a.Session, PresetID: p.ID, PresetName: p.Name}
-	if ticket.Kind == proto.TicketIssue {
+	switch {
+	case ticket.Kind == proto.TicketIssue:
 		launch.Repo, launch.IssueNumber = ticket.Repo, ticket.Number
-	} else {
+	case ticket.Kind == proto.TicketItem && ticket.Item != nil: // #184: {provider, id}, never a repo or a number
+		launch.ItemProvider, launch.ItemID, launch.ItemKey = ticket.Item.Provider, ticket.Item.ID, ticket.Item.Key
+	default:
 		launch.TicketText = ticket.Text
 	}
 	hire := proto.WorkerHireArgs{Session: a.Session, DeskIndex: a.DeskIndex, Harness: a.Orch.Harness, Model: a.Orch.Model,

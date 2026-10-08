@@ -100,6 +100,23 @@
 .bd-col[data-done='true'] .bd-col-head b {
   background: var(--done-chip);
 }
+/* #184: a provider's virtual statuses (Kaneo's planned and archived): a dashed tray instead of a well, a quiet note
+ * beside the name, archived cards faded. Archive is put away, not done: it never gets the done chip. */
+.bd-col[data-kind] {
+  background: transparent;
+  box-shadow: none;
+  border: 1.5px dashed rgb(255 255 255 / 22%);
+}
+.bd-col-kind {
+  margin-left: 6px;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.7;
+}
+.bd-col[data-kind='archived'] .bd-card {
+  opacity: 0.72;
+}
 .bd-col-head {
   display: flex;
   align-items: center;

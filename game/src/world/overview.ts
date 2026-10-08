@@ -138,7 +138,8 @@ function line(text: string | undefined | null, source: string | undefined, statu
 function ticketOf(w: Worker, ticket: string | null): OverviewTicket | null {
   const i = w.issue;
   const item = w.work_item;
-  const key = i && typeof i.number === 'number' ? `#${i.number}` : ticket;
+  // #184: a Kaneo task has no GitHub number: its readable key (HRD-12), never a made-up "#".
+  const key = i && typeof i.number === 'number' ? `#${i.number}` : item?.key?.trim() || ticket;
   if (!key) return null;
   return {
     key,

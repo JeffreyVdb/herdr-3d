@@ -19,4 +19,9 @@ describe('loggedArgs (#92: a typed key is never kept in the command log)', () =>
     expect(loggedArgs('issue.get', other)).toBe(other);
     expect(loggedArgs('ai.get', {})).toEqual({});
   });
+
+  it('#184: replaces a Kaneo key too', () => {
+    expect(loggedArgs('kaneo.test', { url: 'https://k.test', key: 'secret' })).toEqual({ url: 'https://k.test', key: REDACTED });
+    expect(loggedArgs('kaneo.set', { key: 'secret', default_workspace: null })).toEqual({ key: REDACTED, default_workspace: null });
+  });
 });

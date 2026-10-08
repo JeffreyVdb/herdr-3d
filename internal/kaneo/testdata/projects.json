@@ -1,0 +1,5 @@
+[
+  {"id":"pr_1","workspaceId":"ws_1","backgroundVersion":null,"slug":"KAN","icon":null,"name":"Bridge","description":null,"createdAt":"2026-10-07T12:00:00.000Z","isPublic":false,"archivedAt":null,"position":0,"lastTaskNumber":12,"statistics":{"completionPercentage":0,"totalTasks":1,"dueDate":null},"archivedTasks":[],"plannedTasks":[],"columns":[]},
+  {"id":"pr_old","workspaceId":"ws_1","backgroundVersion":null,"slug":"OLD","icon":null,"name":"Old","description":null,"createdAt":"2026-10-07T12:00:00.000Z","isPublic":false,"archivedAt":"2026-10-08T12:00:00.000Z","position":1,"lastTaskNumber":3,"statistics":{"completionPercentage":100,"totalTasks":3,"dueDate":null},"archivedTasks":[],"plannedTasks":[],"columns":[]},
+  {"id":"pr_x","workspaceId":"ws_2","backgroundVersion":null,"slug":"X","icon":null,"name":"Elsewhere","description":null,"createdAt":"2026-10-07T12:00:00.000Z","isPublic":false,"archivedAt":null,"position":2,"lastTaskNumber":0,"statistics":{"completionPercentage":0,"totalTasks":0,"dueDate":null},"archivedTasks":[],"plannedTasks":[],"columns":[]}
+]

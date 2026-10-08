@@ -67,6 +67,9 @@ func (s *Server) Handler() http.Handler {
 	s.whiteboardRoutes(mux) // M13 whiteboard
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(proto.VersionHeader, version.Version)
+		if h := s.hub.KaneoOpenHost(); h != "" { // #184: "Open in Kaneo" from the Mac helper
+			w.Header().Set(proto.OpenHostsHeader, h)
+		}
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	return mux

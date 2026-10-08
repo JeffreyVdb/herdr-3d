@@ -1,0 +1,6 @@
+[
+  {"id":"ws_1","name":"Team","slug":"team","logo":null,"createdAt":"2026-10-07T12:00:00.000Z","metadata":null,"description":null},
+  {"id":"ws_2","name":"Side","slug":"side","logo":null,"createdAt":"2026-10-07T12:00:00.000Z","metadata":null},
+  {"name":"no id"},
+  "not an object"
+]

@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -70,6 +71,9 @@ type Status struct {
 	// Bridge is the bridge's build version from its /healthz: empty until the
 	// first check, "unknown" for a bridge too old to report one.
 	Bridge string `json:"bridge,omitempty"`
+	// OpenHosts (#184) are the hosts the bridge's last /healthz trusted for
+	// POST /api/open besides the built-in ones (its Kaneo instance).
+	OpenHosts []string `json:"open_hosts,omitempty"`
 }
 
 // Tunnel keeps `ssh -N -L Local:Remote Host` running and checks the bridge
@@ -299,7 +303,48 @@ func (t *Tunnel) check(ctx context.Context) error {
 		return fmt.Errorf("healthz: %s %q", resp.Status, body)
 	}
 	t.noteBridge(resp.Header.Get(proto.VersionHeader))
+	t.noteOpenHosts(resp.Header.Get(proto.OpenHostsHeader))
 	return nil
+}
+
+// noteOpenHosts records the hosts the bridge trusts for POST /api/open
+// (#184): plain host names only (no scheme, port or path), at most eight,
+// each checked again with every URL. A check without the header clears
+// them, so a disconnected instance stops being opened within one check.
+func (t *Tunnel) noteOpenHosts(header string) {
+	var hosts []string
+	for _, h := range strings.Split(header, ",") {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if validHostName(h) && !slices.Contains(hosts, h) && len(hosts) < 8 {
+			hosts = append(hosts, h)
+		}
+	}
+	t.mu.Lock()
+	changed := !slices.Equal(t.status.OpenHosts, hosts)
+	t.status.OpenHosts = hosts
+	t.mu.Unlock()
+	if changed {
+		t.Log.Info("bridge open hosts", "hosts", strings.Join(hosts, ","))
+	}
+}
+
+// validHostName is a DNS name: dot-separated labels of letters, digits and
+// dashes, at most 253 bytes.
+func validHostName(h string) bool {
+	if h == "" || len(h) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(h, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // noteBridge records the bridge's version and logs when it changes: a warning

@@ -24,6 +24,9 @@ const (
 const (
 	TicketIssue = "issue"
 	TicketText  = "text"
+	// TicketItem (#184) is an item of an issue provider that numbers no
+	// GitHub issues (a Kaneo task): RunTicket.Item names it.
+	TicketItem = "item"
 )
 
 func init() {
@@ -81,13 +84,22 @@ type RunPrepareArgs struct {
 	Extra    string       `json:"extra,omitempty"`
 }
 
-// RunTicket is what a run works on: a GitHub issue, or free text.
+// RunTicket is what a run works on: a GitHub issue, free text, or (#184)
+// an item of the floor's issue provider.
 type RunTicket struct {
 	Kind   string `json:"kind"`
 	Repo   string `json:"repo,omitempty"`
 	Number int    `json:"number,omitempty"`
 	URL    string `json:"url,omitempty"`
 	Text   string `json:"text,omitempty"`
+	// Item is the item of an "item" ticket: provider and id, with the key,
+	// title and URL the provider gave (its URL is URL too); ProviderName
+	// names the provider ("Kaneo").
+	Item         *WorkItemRef `json:"item,omitempty"`
+	ProviderName string       `json:"provider_name,omitempty"`
+	// Body is an item's description as the provider gave it, for the
+	// prompt only (never on the wire).
+	Body string `json:"-"`
 }
 
 // RunPrepareResult is the ack data of run.prepare: what the start-run

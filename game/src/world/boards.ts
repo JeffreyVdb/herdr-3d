@@ -137,6 +137,8 @@ export interface ColumnView {
   id: string;
   name: string;
   done: boolean;
+  /** #184: a provider's virtual status (`planned`, `archived`; archive is not completion); absent for a workflow column. */
+  kind?: 'planned' | 'archived';
   /** Every card of the column, in board order. */
   cards: IssueCard[];
 }
@@ -154,7 +156,8 @@ export function columnViews(m: Pick<BoardIssues, 'columns' | 'cards'>): ColumnVi
     .map((c) => {
       const cards = m.cards.filter((x) => (known.has(x.column) ? x.column === c.id : c.id === ''));
       cards.sort(c.done ? BY_POSITION_DONE : BY_POSITION);
-      return { id: c.id, name: c.name, done: c.done === true, cards };
+      const kind = c.kind === 'planned' || c.kind === 'archived' ? c.kind : null;
+      return { id: c.id, name: c.name, done: c.done === true, ...(kind ? { kind } : {}), cards };
     })
     .filter((c) => c.id !== '' || c.cards.length > 0);
 }
@@ -374,6 +377,32 @@ export function nearestDesk(slots: ReadonlyArray<{ desk: { x: number; z: number 
 /** The first prompt of "Ask a worker…": investigate, don't change code. */
 export const askPrompt = (key: string, url: string | undefined): string => `Investigate ${key}${url ? ` (${url})` : ''} and report back. Don't change code.`;
 
+/** #184: how much of a description "Ask a worker…" hands over (the worker cannot read the provider itself). */
+const ASK_BODY_MAX = 4000;
+
+/** #184: whether "Ask a worker…" hands the item's description over (an agent cannot read the provider's items). */
+export const askInlinesItem = (provider: string | undefined): boolean => provider === 'kaneo';
+
+/**
+ * #184: "Ask a worker…" for a provider whose items an agent cannot read (no GitHub issue to `gh issue view`, and the
+ * bridge's key never reaches an agent): the key, title, link and the description it was given (its start), then the
+ * same ask. GitHub keeps `askPrompt`.
+ */
+export function askItemPrompt(provider: string, card: Pick<IssueCard, 'key' | 'title' | 'url'>, body: string | null): string {
+  const lines = [`Investigate ${provider} task ${card.key}: ${card.title.trim()}${card.url ? ` (${card.url})` : ''}`];
+  let text = (body ?? '').trim();
+  if (text.length > ASK_BODY_MAX) text = `${text.slice(0, ASK_BODY_MAX).trimEnd()}\n\n[The description goes on in ${provider}.]`;
+  if (text) lines.push('', text);
+  lines.push('', `It is a ${provider} task, not a GitHub issue: don't look it up with gh. Report back; don't change code.`);
+  return lines.join('\n');
+}
+
+/** #184: what one item of the provider is called: GitHub's are issues, Kaneo's tasks. */
+export const itemWord = (provider: string | undefined): string => (provider === 'kaneo' ? 'task' : 'issue');
+
+/** #184: a closed card's word: GitHub closes an issue, a Kaneo task is done (it sits in a final column). */
+export const closedWord = (provider: string | undefined): string => (provider === 'kaneo' ? 'done' : 'closed');
+
 /** The reviewer's first prompt (`/mattpocock-skills:code-review <url>` for claude, `$code-review <url>` for codex). */
 export function reviewPrompt(harness: string, target: { url?: string; key: string }): string {
   const ref = target.url ?? target.key;
@@ -389,9 +418,20 @@ export const CLOSE_REASONS: ReadonlyArray<{ id: 'completed' | 'not_planned' | 'd
 ];
 
 /** The words for a poll that failed or came up short: null when the board is as fresh as it gets. */
-export function freshness(m: Pick<BoardIssues | BoardPrs, 'stale' | 'error' | 'truncated' | 'rate' | 'fetched_at' | 'provider_name'>, now: number, clock: (ms: number) => string): string | null {
+export function freshness(
+  m: Pick<BoardIssues | BoardPrs, 'stale' | 'error' | 'truncated' | 'rate' | 'fetched_at' | 'provider_name' | 'error_code' | 'paused_until'>,
+  now: number,
+  clock: (ms: number) => string,
+): string | null {
   const parts: string[] = [];
-  if (m.stale) parts.push(`${m.provider_name} did not answer${m.error ? ` (${m.error})` : ''}: this is the last good copy${m.fetched_at ? ` from ${clock(m.fetched_at)}` : ''}.`);
+  const copy = `this is the last good copy${m.fetched_at ? ` from ${clock(m.fetched_at)}` : ''}`;
+  // #184: a refused key pauses the board (it may be the key's quota); a 403 is a permission problem, not an outage.
+  if (m.stale && m.error_code === 'unauthorized') {
+    const until = m.paused_until && m.paused_until > now ? ` until ${clock(m.paused_until)}` : '';
+    parts.push(`${m.provider_name} refused herdr-world’s key (it may be out of its request quota): the board is paused${until}, and ${copy}. Test the connection again in Settings to resume now.`);
+  } else if (m.stale && m.error_code === 'forbidden') {
+    parts.push(`${m.provider_name} does not let this key read the board (a permission problem in ${m.provider_name}): ${copy}. Ask for access, or pick another project in Floor settings.`);
+  } else if (m.stale) parts.push(`${m.provider_name} did not answer${m.error ? ` (${m.error})` : ''}: ${copy}.`);
   if (m.truncated) parts.push('The board is longer than the bridge fetches: some items are missing.');
   if (m.rate && m.rate.reset_at > now && m.rate.remaining < 100) parts.push(`${m.provider_name} rate limit: next refresh ${clock(m.rate.reset_at)}.`);
   return parts.length ? parts.join(' ') : null;

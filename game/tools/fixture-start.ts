@@ -32,7 +32,8 @@ export interface StartDeps {
   hireWorker(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void;
   error(code: string, message: string): Error;
   /** M7: a card of the floor's board as an issue of the M6 path (null: not on the board, or no board). */
-  workItem?(session: string, wi: { provider?: unknown; id?: unknown }): { repo: string; number: number; url: string } | null;
+  /** A board card's ticket: a GitHub issue, or (#184) a provider's item with what the tracker read of it. */
+  workItem?(session: string, wi: { provider?: unknown; id?: unknown }): { repo: string; number: number; url: string } | { item: ItemRef; body: string } | null;
 }
 
 const ROLES: PresetRole[] = ['orch', 'coder', 'reviewer', 'ux', 'researcher'];
@@ -67,8 +68,35 @@ export const PLACEMENT_LINE = "Start every agent you hire in its own herdr works
 /** Added for an issue ticket, after the team: how the issue's status follows the run. */
 export const ISSUE_STATUS_LINE = 'Move the ticket status accordingly, pull request always means QA, merging the PR always means Done.';
 
+/** #184: a provider's item a run starts on. */
+export interface ItemRef {
+  provider: string;
+  id: string;
+  key: string;
+  title: string;
+  url: string;
+}
+
+const ITEM_BODY_MAX = 6000;
+
+/** #184: an item's ticket text, like the bridge's ItemTicket: key, title, link and the description (its start). */
+export function itemTicket(provider: string, it: ItemRef, body: string): string {
+  let text = `${provider} task ${it.key}: ${it.title.trim()}`;
+  if (it.url) text += `\n${it.url}`;
+  let b = body.trim();
+  if (b) {
+    if (Buffer.byteLength(b, 'utf8') > ITEM_BODY_MAX) b = `${b.slice(0, ITEM_BODY_MAX).trim()}\n\n[The description goes on in ${provider}; this is its first part.]`;
+    text += `\n\n${b}`;
+  }
+  return text;
+}
+
+/** #184: the line an item's prompt has in place of the status line. */
+export const itemLine = (provider: string): string =>
+  `This ticket is a ${provider} task, not a GitHub issue: everything the bridge read of it is above. Don't look it up with gh, and leave its status on the ${provider} board to people.`;
+
 /** The run's first prompt (contract §2.2): `ticket` is the issue URL (`isIssue`) or the free text. */
-export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRole, Hire>, extra = '', isIssue = false): string {
+export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRole, Hire>, extra = '', isIssue = false, statusLine?: string): string {
   const lines = [
     `${orch.harness === 'codex' ? '$' : '/'}write-code ${ticket.trim()}`,
     '',
@@ -81,6 +109,7 @@ export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRo
     PLACEMENT_LINE,
   ];
   if (isIssue) lines.push('', ISSUE_STATUS_LINE);
+  else if (statusLine) lines.push('', statusLine);
   const x = extra.trim();
   if (x) lines.push('', x);
   return lines.join('\n');
@@ -90,8 +119,9 @@ export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRo
  * `ORCH|issue-<n>`, or `ORCH|` and the text's first whole words as a slug
  * (`ORCH|run` when none): the descr at most 10 bytes, like the bridge's runLabel.
  */
-export function runLabel(t: { kind: 'issue'; number: number } | { kind: 'text'; text: string }): string {
+export function runLabel(t: { kind: 'issue'; number: number } | { kind: 'text'; text: string } | { kind: 'item'; item: ItemRef }): string {
   if (t.kind === 'issue') return `ORCH|${`issue-${t.number}`.slice(0, 10)}`;
+  if (t.kind === 'item') return `ORCH|${t.item.key.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 10).replace(/-+$/, '')}`;
   let d = '';
   for (const w of t.text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').split('-')) {
     if (!w) continue;
@@ -102,7 +132,19 @@ export function runLabel(t: { kind: 'issue'; number: number } | { kind: 'text'; 
   return `ORCH|${d || 'run'}`;
 }
 
-type Ticket = { kind: 'issue'; repo: string; number: number; url: string } | { kind: 'text'; text: string };
+type Ticket =
+  | { kind: 'issue'; repo: string; number: number; url: string }
+  | { kind: 'text'; text: string }
+  | { kind: 'item'; url: string; item: ItemRef; provider_name: string; body: string };
+
+/** The ticket on the wire (an item's description is for the prompt only). */
+const wire = (t: Ticket): Obj => (t.kind === 'item' ? { kind: 'item', url: t.url, item: t.item, provider_name: t.provider_name } : t);
+
+/** A ticket's prompt, like the bridge's TicketPrompt. */
+function ticketPrompt(orch: Hire, t: Ticket, roles: Record<PresetRole, Hire>, extra: string): string {
+  if (t.kind === 'item') return composePrompt(orch, itemTicket(t.provider_name, t.item, t.body), roles, extra, false, itemLine(t.provider_name));
+  return composePrompt(orch, t.kind === 'issue' ? t.url : t.text, roles, extra, t.kind === 'issue');
+}
 
 export class StartSim {
   private readonly presets = new Map<string, Preset>();
@@ -248,6 +290,7 @@ export class StartSim {
       if (!isObj(wi) || typeof wi.provider !== 'string' || typeof wi.id !== 'string') throw this.bad('work_item must be {provider, id}');
       const got = this.d.workItem?.(f.session, wi);
       if (!got) throw this.d.error('not_found', `not found: work item "${wi.id}"`);
+      if ('item' in got) return { kind: 'item', url: got.item.url, item: got.item, provider_name: got.item.provider === 'kaneo' ? 'Kaneo' : got.item.provider, body: got.body };
       return { kind: 'issue', repo: got.repo, number: got.number, url: got.url };
     }
     if (hasText) {
@@ -304,9 +347,9 @@ export class StartSim {
     const extra = this.extraOf(a);
     const h = this.d.prepare(f.session);
     return {
-      prompt: t && p && orch ? composePrompt(orch, t.kind === 'issue' ? t.url : t.text, p.roles, extra, t.kind === 'issue') : '',
+      prompt: t && p && orch ? ticketPrompt(orch, t, p.roles, extra) : '',
       label: t ? runLabel(t) : '',
-      ticket: t,
+      ticket: t ? wire(t) : null,
       preset: p?.id ?? '',
       orch,
       cwd: h.cwd,
@@ -326,7 +369,7 @@ export class StartSim {
     if (a.label !== undefined && typeof a.label !== 'string') throw this.bad('label must be a string');
     if (a.prompt !== undefined && typeof a.prompt !== 'string') throw this.bad('prompt must be a string');
     // An empty prompt is none: the bridge composes it (an edited one goes through worker.hire's rules).
-    const prompt = (a.prompt as string | undefined) || composePrompt(orch, t.kind === 'issue' ? t.url : t.text, p.roles, extra, t.kind === 'issue');
+    const prompt = (a.prompt as string | undefined) || ticketPrompt(orch, t, p.roles, extra);
     const label = (a.label as string | undefined) || runLabel(t);
     const worktree = a.worktree ?? true;
     const hire: Obj = { session: f.session, desk_index: a.desk_index, harness: orch.harness, model: orch.model, effort: orch.effort, label, worktree, prompt };
@@ -342,7 +385,10 @@ export class StartSim {
           const x = w as Worker & { issue?: { repo: string; number: number } };
           x.role = 'orch';
           x.run = label.slice(label.indexOf('|') + 1);
-          if (t.kind === 'issue') {
+          if (t.kind === 'item') {
+            // #184: the run's item, never a GitHub issue.
+            (x as Worker & { work_item?: ItemRef }).work_item = { ...t.item };
+          } else if (t.kind === 'issue') {
             x.issue = { repo: t.repo, number: t.number };
             // M7: the neutral form of the same link, in the same event (before the ack).
             (x as Worker & { work_item?: { provider: string; id: string } }).work_item = { provider: 'github', id: `${t.repo}#${t.number}` };

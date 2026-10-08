@@ -7,6 +7,7 @@ import { h, icon, ICON, replaceKeepingFocus, type Child } from './dom';
 import { LOGO_ACCEPT, precheckLogo } from '../net/logo';
 import { logoHashOf } from '../net/protocol';
 import { failureText } from './messages';
+import { KaneoPicker } from './kaneoFloor';
 import { backdropPolicy } from './dismiss';
 
 /**
@@ -105,7 +106,7 @@ export class Panels {
   private renaming: { id: string; value: string; error: string } | null = null;
   private moving: string | null = null;
   private list: HTMLElement | null = null;
-  private settingsForm: { el: HTMLFormElement; read(): SettingsForm; session: string; repoSuggested: boolean; statusDefault: boolean } | null = null;
+  private settingsForm: { el: HTMLFormElement; read(): SettingsForm; session: string; repoSuggested: boolean; statusDefault: boolean; dispose(): void } | null = null;
   private confirmState: { title: string; body: () => string; resolve(ok: boolean): void } | null = null;
   private statusText = '';
   /** M5: the floor N preselected in the elevator, with why. */
@@ -135,7 +136,7 @@ export class Panels {
       this.pick = null;
       this.renaming = null;
       this.moving = null;
-      this.settingsForm = null;
+      this.setSettingsForm(null);
       this.list = null;
     });
     // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
@@ -179,7 +180,7 @@ export class Panels {
     this.view = v;
     this.renaming = null;
     this.moving = null;
-    this.settingsForm = null;
+    this.setSettingsForm(null);
     this.renderKey = '';
     this.setStatus('');
     this.render(true);
@@ -970,14 +971,21 @@ export class Panels {
     const where = f.level ? `Floor ${f.level.number} of ${f.building?.name ?? ''}` : LOT;
     replaceKeepingFocus(this.head, this.headFor('Floor settings', `${f.session} · ${where}`, h('div', { class: 'lift-display', 'aria-hidden': 'true' }, icon(ICON.gear)), v.from));
     if (!first && this.settingsForm?.session === v.session) return;
-    this.settingsForm = this.buildSettings(f);
-    this.body.replaceChildren(this.settingsForm.el);
+    this.setSettingsForm(this.buildSettings(f));
+    this.body.replaceChildren(this.settingsForm!.el);
+  }
+
+  /** The settings form on show (the old one's Kaneo pickers stop listening). */
+  private setSettingsForm(f: Panels['settingsForm']): void {
+    this.settingsForm?.dispose();
+    this.settingsForm = f;
   }
 
   private buildSettings(f: FloorView): NonNullable<Panels['settingsForm']> {
     const session = f.session;
     const hire = this.host.store.hireOptions;
-    const init = formFrom(f.settings, f.suggested);
+    const kaneoBook = this.host.store.kaneo;
+    const init = formFrom(f.settings, f.suggested, kaneoBook.state?.default_workspace?.id ?? null);
     const errs = new Map<FieldKey, HTMLElement>();
     const inputs = new Map<FieldKey, HTMLInputElement | HTMLSelectElement>();
     const hints = new Map<FieldKey, string>();
@@ -1067,6 +1075,46 @@ export class Panels {
     });
     model.addEventListener('change', () => fillEffort(effort.value));
 
+    // #184: the issue tracker. GitHub (the repo's issues and Projects) or a Kaneo project; the other one's settings
+    // stay as they were, so switching back finds them. The repo stays the floor's code either way.
+    const picker = new KaneoPicker({ book: kaneoBook, send: (t, args) => this.host.send(t, args) }, f.settings.kaneo ?? null, init.form.kaneoWorkspace, init.form.kaneoProject, () => {
+      clearError('kaneoWorkspace');
+      clearError('kaneoProject');
+    });
+    let tracker = init.form.tracker;
+    const trackerName = `set-tracker-${session}`;
+    const radio = (value: 'github' | 'kaneo', label: string, note: string) => {
+      const input = h('input', { type: 'radio', name: trackerName, value, 'data-key': `tracker:${value}`, checked: tracker === value ? true : null });
+      input.addEventListener('change', () => {
+        if (!input.checked) return;
+        tracker = value;
+        syncTracker();
+      });
+      return h('label', { class: 'tracker-opt' }, input, h('span', { class: 'tracker-name' }, label), h('span', { class: 'tracker-note' }, note));
+    };
+    const trackerGroup = h(
+      'div',
+      { class: 'tracker-pick', role: 'radiogroup', 'aria-label': 'Issue tracker' },
+      radio('github', 'GitHub', 'Issues of the linked repo'),
+      radio('kaneo', 'Kaneo', kaneoBook.connected ? 'A project of your Kaneo' : 'Connect it in Settings first'),
+    );
+    const repoNote = h('span', { class: 'legend-note' });
+    const projectFieldset = h(
+      'fieldset',
+      {},
+      h('legend', {}, 'GitHub Project ', h('span', { class: 'legend-note' }, 'optional · for the Issues and PRs boards')),
+      h('div', { class: 'field-grid' }, field('projectOwner', 'Owner', owner, ''), field('projectNumber', 'Number', number, '')),
+      statusGroup,
+    );
+    const syncTracker = () => {
+      const kaneo = tracker === 'kaneo';
+      picker.el.hidden = !kaneo;
+      projectFieldset.hidden = kaneo;
+      repoNote.textContent = kaneo ? 'optional · its pull requests and checkouts; the issues come from Kaneo' : '';
+      if (kaneo) picker.activate();
+    };
+    syncTracker();
+
     const unsupported = this.host.unsupported('floor.settings.set');
     const save = h('button', { class: 'btn btn--primary', type: 'submit', 'aria-disabled': unsupported ? 'true' : null, title: unsupported ? failureText('floor.settings.set', 'unknown_command', '') : null }, 'Save settings');
     const cancel = h('button', { class: 'btn', onclick: () => (this.view?.kind === 'settings' && this.view.from ? this.show(this.view.from) : this.close()) }, 'Cancel');
@@ -1074,14 +1122,9 @@ export class Panels {
     const form = h(
       'form',
       { class: 'settings', novalidate: true, 'aria-label': `Settings for ${session}` },
-      h('fieldset', {}, h('legend', {}, 'Linked GitHub repo'), repoField),
-      h(
-        'fieldset',
-        {},
-        h('legend', {}, 'GitHub Project ', h('span', { class: 'legend-note' }, 'optional · for the Issues and PRs boards')),
-        h('div', { class: 'field-grid' }, field('projectOwner', 'Owner', owner, ''), field('projectNumber', 'Number', number, '')),
-        statusGroup,
-      ),
+      h('fieldset', { class: 'tracker-set' }, h('legend', {}, 'Issue tracker'), trackerGroup, picker.el),
+      h('fieldset', {}, h('legend', {}, 'Linked GitHub repo', repoNote), repoField),
+      projectFieldset,
       h(
         'fieldset',
         {},
@@ -1102,8 +1145,13 @@ export class Panels {
       harness: harness.value,
       model: model.value,
       effort: effort.value,
+      tracker,
+      kaneoWorkspace: picker.workspace,
+      kaneoProject: picker.projectId,
     });
     const show = (errors: Partial<Record<FieldKey, string>>, badOption: number | null = null) => {
+      picker.flag('kaneoWorkspace', errors.kaneoWorkspace ?? null);
+      picker.flag('kaneoProject', errors.kaneoProject ?? null);
       for (const [k, el] of errs) {
         const e = errors[k];
         const input = inputs.get(k);
@@ -1120,6 +1168,7 @@ export class Panels {
     // Editing a flagged field clears its message (any status edit clears the
     // statuses'); the last one clears the banner.
     const clearError = (k: FieldKey) => {
+      if (k === 'kaneoWorkspace' || k === 'kaneoProject') return picker.flag(k, null);
       if (!errs.get(k)?.classList.contains('field-error')) return;
       const still: Partial<Record<FieldKey, string>> = {};
       for (const [key, el] of errs) if (key !== k && el.classList.contains('field-error')) still[key] = el.textContent ?? '';
@@ -1144,6 +1193,8 @@ export class Panels {
       const bad = (Object.keys(p.errors) as FieldKey[])[0];
       if (bad) {
         if (bad === 'statusOptions') statuses.focus(p.badOption);
+        else if (bad === 'kaneoWorkspace') picker.workspaceSelect.focus();
+        else if (bad === 'kaneoProject') picker.projectSelect.focus();
         else inputs.get(bad)?.focus();
         this.setStatus('Fix the highlighted field to save.', 'error');
         return;
@@ -1170,15 +1221,15 @@ export class Panels {
         // Rebuild from what is stored now: the suggestion mark goes, values normalise.
         const now = this.host.store.floorView(session);
         if (now && this.view?.kind === 'settings' && this.view.session === session) {
-          this.settingsForm = this.buildSettings(now);
-          this.body.replaceChildren(this.settingsForm.el);
+          this.setSettingsForm(this.buildSettings(now));
+          this.body.replaceChildren(this.settingsForm!.el);
           this.body.querySelector<HTMLElement>('.settings-actions .btn--primary')?.focus();
         }
-        const names: Record<string, string> = { repo: 'repo', project: 'project', status_field: 'status field', default_cwd: 'default folder', default_hire: 'default hire' };
+        const names: Record<string, string> = { repo: 'repo', project: 'project', status_field: 'status field', default_cwd: 'default folder', default_hire: 'default hire', tracker: 'issue tracker', kaneo: 'Kaneo project' };
         this.setStatus(`Saved the ${Object.keys(patch).map((k) => names[k] ?? k).join(', ')}.`);
       });
     });
-    return { el: form, read, session, repoSuggested: init.repoSuggested, statusDefault: init.statusDefault };
+    return { el: form, read, session, repoSuggested: init.repoSuggested, statusDefault: init.statusDefault, dispose: () => picker.dispose() };
   }
 
   /**

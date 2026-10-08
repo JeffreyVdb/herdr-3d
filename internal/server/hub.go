@@ -24,9 +24,11 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/followup"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
 	"github.com/JeffreyVdb/herdr-3d/internal/packup"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/runs"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/whiteboard"
@@ -180,9 +182,10 @@ type Options struct {
 	// ReportPoll how often they are looked at (default DefaultReportPoll).
 	RunsDir    string
 	ReportPoll time.Duration
-	// RunLaunch finds the issue of an orchestrator the game started, from
-	// its run_launch record (default: the store's).
-	RunLaunch func(ctx context.Context, workerID string) (proto.IssueRef, bool)
+	// RunLaunch finds the ticket of an orchestrator the game started (an
+	// issue, or #184 a provider's item), from its run_launch record
+	// (default: the store's).
+	RunLaunch func(ctx context.Context, workerID string) (runs.Launch, bool)
 
 	// M7 boards.
 	// Boards finds the issue tracker and the code host of a floor's link
@@ -220,6 +223,10 @@ type Options struct {
 	// #92 AI integration: the classification model and the LLM (nil: the
 	// ai.* commands fail with unsupported, the snapshot has no ai).
 	AI *ai.Service
+	// #184: the Kaneo connection (nil: the kaneo.* commands fail with
+	// unsupported, the snapshot has no kaneo, and no floor gets a Kaneo
+	// board).
+	Kaneo *kaneoconf.Service
 	// #90 follow-up questions: FollowupsEnabled is the environment's toggle
 	// (HERDR_WORLD_FOLLOWUPS_ENABLED; nil: not set), FollowupDebounce how
 	// long an ended turn and herdr's not-working status hold before the
@@ -366,6 +373,7 @@ type Hub struct {
 
 	fu followupState // #90 follow-up questions
 	pk packupState   // #110 pack up on request
+	kn kaneoState    // #184 Kaneo
 
 	act activityHub // #98 activity
 
@@ -670,6 +678,10 @@ func (h *Hub) Run(ctx context.Context) error {
 		h.wg.Add(1)
 		go h.trackAI(ctx)
 	}
+	if h.opts.Kaneo != nil { // #184 Kaneo
+		h.wg.Add(1)
+		go h.trackKaneo(ctx)
+	}
 	var codexC <-chan time.Time // #155
 	if h.codexAvailable() || len(h.cx.launches) > 0 {
 		t := time.NewTicker(h.opts.CodexPoll)
@@ -775,6 +787,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 		switch cmd.T {
 		case proto.CmdFloorWake, proto.CmdFloorSleep:
 			start = h.startFloorOp
+		case proto.CmdFloorSettings: // #184: a Kaneo link is checked off the hub goroutine
+			start = h.startFloorSettings
 		case proto.CmdWorkerHire:
 			start = h.startHire
 		case proto.CmdWorkerFire:
@@ -824,6 +838,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startLimitsRefresh
 		case proto.CmdAIGet, proto.CmdAIModels, proto.CmdAITest, proto.CmdAISet, proto.CmdAIClear: // #92
 			start = h.startAI
+		case proto.CmdKaneoGet, proto.CmdKaneoTest, proto.CmdKaneoSet, proto.CmdKaneoClear, proto.CmdKaneoWorkspaces, proto.CmdKaneoProjects: // #184
+			start = h.startKaneo
 		case proto.CmdFollowupsGet, proto.CmdFollowupsSet, proto.CmdFollowupsTest: // #90
 			start = h.startFollowups
 		case proto.CmdPackupGet, proto.CmdPackupSet, proto.CmdPackupTest, proto.CmdPackupDetect: // #110
@@ -941,6 +957,8 @@ func errorCode(err error) string {
 		return digestErrorCode(err)
 	case aiErrorCode(err) != "": // #92
 		return aiErrorCode(err)
+	case kaneoErrorCode(err) != "": // #184
+		return kaneoErrorCode(err)
 	case boardCode(err) != "": // M7 boards
 		return boardCode(err)
 	case errors.As(err, &fetch):
@@ -1050,11 +1068,6 @@ func (h *Hub) command(ctx context.Context, cmd proto.Command) (any, error) {
 			}
 			err = h.st.AssignFloor(ctx, a.Session, building, index)
 		}
-	case proto.CmdFloorSettings:
-		var a proto.FloorSettingsArgs
-		if err = decodeArgs(cmd.Args, &a); err == nil {
-			err = h.setSettings(ctx, a)
-		}
 	// M6 launch
 	case proto.CmdPresetCreate, proto.CmdPresetUpdate, proto.CmdPresetDelete:
 		data, err = h.presetCommand(ctx, cmd)
@@ -1064,11 +1077,9 @@ func (h *Hub) command(ctx context.Context, cmd proto.Command) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := h.reload(ctx); err != nil {
+	if err := h.afterChange(ctx); err != nil {
 		return nil, err
 	}
-	h.syncLayout()
-	h.relink() // M6 runs: a floor's repo may have changed
 	return data, nil
 }
 
@@ -1824,6 +1835,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 		HireOptions: &hire, Presets: h.presetViews(), Limits: h.limitsViews()} // M6 launch: presets; M10 limits
 	w.Screen = h.screenView()                 // M13 screen
 	w.AI = h.aiView()                         // #92 AI integration
+	w.Kaneo = h.kaneoView()                   // #184 Kaneo
 	w.Followups = h.followupsView()           // #90
 	w.Packup = h.packupView()                 // #110
 	w.Activity = h.activityView()             // #98

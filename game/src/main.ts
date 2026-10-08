@@ -270,6 +270,8 @@ export interface H3DDebug {
   logos(): ReturnType<import('./app').App['logoInfo']> | null;
   /** M7: the fixture simulator's `sim.boards` (merge a PR, make polls fail, …). */
   simBoards(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** #184: the fixture simulator's `sim.kaneo` (make a Kaneo board's polls fail, the next placed move stale, …). */
+  simKaneo(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M17: the light as shown (`daylight`, eased) and its `target`, the zone and where it comes from, the latitude, whether the time is pinned, the office lamps and what the wall clock's face shows. */
   daylight(): ReturnType<import('./app').App['daylightInfo']> | null;
   /** M13: the screen share (phase, surface, paused, video size), what this floor's TV shows, the frames answered and who looked. */
@@ -531,6 +533,11 @@ const h3d: H3DDebug = {
     if (!app) return { ok: false, code: 'not_started' };
     // `sim.boards` is the fixture simulator's, not a bridge command.
     const r = await app.client.request('sim.boards' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  simKaneo: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request('sim.kaneo' as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
   logos: () => app?.logoInfo() ?? null,
