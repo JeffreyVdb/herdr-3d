@@ -738,6 +738,22 @@ dialog.settings {
   outline: 3px solid var(--sun);
   outline-offset: 2px;
 }
+/* #200: the readable name over the exact slug; a slug with no name of its own stands alone. */
+.hm-id {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.hm-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  color: var(--text-on-ink);
+}
+.hm-name + .hm-slug {
+  font-size: 11.5px;
+  color: var(--text-on-ink-2);
+}
 .hm-slug {
   min-width: 0;
   overflow-wrap: anywhere;

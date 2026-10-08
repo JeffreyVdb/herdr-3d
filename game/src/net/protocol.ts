@@ -152,6 +152,8 @@ export interface HarnessOptions {
   efforts: string[];
   /** Additional efforts supported by this model beyond the harness's common ones. */
   extra_efforts?: Record<string, string[]>;
+  /** #200: the harness's readable names, keyed by exact launch id; absent from an older bridge and for a model it names nothing. */
+  model_labels?: Record<string, string>;
 }
 
 /** M3: models and efforts `default_hire` may use, per harness. */

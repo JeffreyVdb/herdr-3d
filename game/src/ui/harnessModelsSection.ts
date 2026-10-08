@@ -1,5 +1,6 @@
 import type { HireOptions } from '../net/protocol';
 import { HARNESS_LABEL } from '../world/hire';
+import { labelsOf, modelEntries, modelLabel, modelMatches, type ModelEntry, type ModelLabels } from '../world/modelLabel';
 import type { HireModelPrefs } from './hireModelPrefs';
 import { el } from './settings';
 import type { SectionHandle } from './settings';
@@ -12,6 +13,7 @@ export interface HarnessModelsHost {
 
 interface Row {
   slug: string;
+  entry: ModelEntry;
   li: HTMLElement;
   box: HTMLInputElement;
 }
@@ -25,12 +27,14 @@ interface Group {
   none: HTMLElement;
   rows: Row[];
   stale: HTMLElement;
+  labels: ModelLabels;
 }
 
 /**
  * Settings → Harness models (#194): which models the Hire dialog offers, per harness. Every model is shown until the
  * player hides it; a hidden one stays listed with its exact slug, so it can be shown again. A hidden slug the bridge no
- * longer lists sits under "Not currently available", where it can be cleared. The list is rebuilt when the dialog opens
+ * longer lists sits under "Not currently available", where it can be cleared. Models are named as Hire names them (#200: the
+ * harness's readable name, else a formatted slug); the exact slug stays beside the name, and the filter takes either. The list is rebuilt when the dialog opens
  * (the catalog only arrives with the bridge's snapshot) and kept in step with the preference while it is open.
  */
 export function harnessModelsSection(host: HarnessModelsHost): (body: HTMLElement) => SectionHandle {
@@ -65,7 +69,7 @@ export function harnessModelsSection(host: HarnessModelsHost): (body: HTMLElemen
       g.stale.append(title, hint);
       for (const slug of gone) {
         const row = el('div', 'hm-row');
-        const code = el('code', 'hm-slug', slug);
+        const code = slugCell(slug, modelLabel(g.harness, slug, g.labels));
         const clear = el('button', 'btn btn--sm', 'Clear');
         clear.type = 'button';
         clear.setAttribute('aria-label', `Clear ${slug}`);
@@ -79,7 +83,15 @@ export function harnessModelsSection(host: HarnessModelsHost): (body: HTMLElemen
       }
     };
 
-    const group = (harness: string, models: string[]): Group => {
+    /** The name (when the slug is not already it) and the exact slug, as plain text. */
+    const slugCell = (slug: string, name: string): HTMLElement => {
+      const cell = el('span', 'hm-id');
+      if (name !== slug) cell.append(el('span', 'hm-name', name));
+      cell.append(el('code', 'hm-slug', slug));
+      return cell;
+    };
+
+    const group = (harness: string, models: string[], labels: ModelLabels): Group => {
       const root = el('div', 'settings-role hm-group');
       const head = el('div', 'settings-role-head');
       const title = el('h4', 'settings-role-title', HARNESS_LABEL[harness] ?? harness);
@@ -99,16 +111,17 @@ export function harnessModelsSection(host: HarnessModelsHost): (body: HTMLElemen
       field.append(search);
 
       const list = el('ul', 'hm-list');
-      const rows: Row[] = models.map((slug) => {
+      const rows: Row[] = modelEntries(harness, models, labels).map((entry) => {
+        const slug = entry.id;
         const li = el('li', 'hm-row');
         const box = el('input');
         box.type = 'checkbox';
         const label = el('label', 'settings-switch');
-        label.append(box, el('code', 'hm-slug', slug), el('span', 'hm-action', 'Show in Hire'));
+        label.append(box, slugCell(slug, entry.label), el('span', 'hm-action', 'Show in Hire'));
         li.append(label);
         box.addEventListener('change', () => prefs.setShown(harness, slug, box.checked));
         list.append(li);
-        return { slug, li, box };
+        return { slug, entry, li, box };
       });
       const none = el('p', 'settings-field-hint hm-none');
       none.hidden = true;
@@ -117,14 +130,13 @@ export function harnessModelsSection(host: HarnessModelsHost): (body: HTMLElemen
 
       const filter = () => {
         const raw = search.value.trim();
-        const q = raw.toLowerCase();
         let hits = 0;
         for (const r of rows) {
-          const hit = !q || r.slug.toLowerCase().includes(q);
+          const hit = modelMatches(raw, r.entry);
           r.li.hidden = !hit;
           if (hit) hits++;
         }
-        none.textContent = q && !hits ? `No model matches “${raw}”.` : '';
+        none.textContent = raw && !hits ? `No model matches “${raw}”.` : '';
         none.hidden = !none.textContent;
       };
       search.addEventListener('input', filter);
@@ -140,12 +152,12 @@ export function harnessModelsSection(host: HarnessModelsHost): (body: HTMLElemen
       showAll.addEventListener('click', () => prefs.showAll(harness));
 
       root.append(head, field, list, none, stale);
-      return { harness, root, count, showAll, search, none, rows, stale };
+      return { harness, root, count, showAll, search, none, rows, stale, labels };
     };
 
     const build = () => {
       const cat = host.options();
-      groups = Object.keys(cat).map((harness) => group(harness, cat[harness]?.models ?? []));
+      groups = Object.keys(cat).map((harness) => group(harness, cat[harness]?.models ?? [], labelsOf(cat, harness)));
       groupsEl.replaceChildren(...groups.map((g) => g.root));
       if (!groups.length) groupsEl.append(el('p', 'settings-status', 'The bridge has not listed any models yet.'));
       syncCounts();

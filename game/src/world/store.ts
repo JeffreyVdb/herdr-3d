@@ -139,7 +139,26 @@ function hireOptionsOf(v: unknown): HireOptions {
       return DEFAULT_HIRE_OPTIONS;
     }
   }
-  return v as HireOptions;
+  return withValidLabels(v as HireOptions);
+}
+
+/**
+ * `model_labels` (#200) are presentation only: a catalog whose labels are not an object of strings keeps its models and
+ * efforts and loses the labels (the ids are then shown), and a non-string entry is skipped. Never throws.
+ */
+function withValidLabels(options: HireOptions): HireOptions {
+  let out: HireOptions | null = null;
+  for (const [harness, h] of Object.entries(options)) {
+    const raw: unknown = h.model_labels;
+    if (raw === undefined) continue;
+    const plain = typeof raw === 'object' && raw !== null && !Array.isArray(raw);
+    const kept = plain ? Object.entries(raw as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === 'string') : [];
+    if (plain && kept.length === Object.keys(raw as object).length) continue;
+    out ??= { ...options };
+    const { model_labels: _bad, ...rest } = h;
+    out[harness] = kept.length ? { ...rest, model_labels: Object.fromEntries(kept) } : rest;
+  }
+  return out ?? options;
 }
 
 const transitionOf = (v: unknown): FloorTransition | null => (v === 'waking' || v === 'sleeping' ? v : null);

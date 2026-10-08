@@ -18,6 +18,7 @@ import {
   type CapacityView,
   type HireForm,
 } from '../world/hire';
+import { labelsOf, modelEntries, modelMatches, type ModelEntry, type ModelLabels } from '../world/modelLabel';
 import { effortsFor } from '../world/settings';
 import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
@@ -102,14 +103,34 @@ export interface HireSummary {
 
 const DESK_PLUS = '<path d="M12 5v14M5 12h14"/>';
 
-/** A group of radio chips: label-maker tape for the chosen one, blank tape for the rest. */
-export function chips(name: string, legend: string, values: string[], value: string, onPick: (v: string) => void, note: HTMLElement | null = null): HTMLFieldSetElement {
+/**
+ * One model's chip text (#200): its readable name, the exact id as the tooltip, and the id in small type beside the
+ * name only when another model of the list has the same name. The radio's value stays the exact id.
+ */
+function modelChip(input: HTMLInputElement, e: ModelEntry): HTMLLabelElement {
+  return h('label', { class: 'dd-chip', title: e.named ? e.id : null }, input, h('span', {}, e.label, e.collides ? h('small', { class: 'dd-chip-id' }, e.id) : null));
+}
+
+/**
+ * A group of radio chips: label-maker tape for the chosen one, blank tape for the rest. `entries` (the model chips)
+ * name each value; without them a chip shows its value.
+ */
+export function chips(
+  name: string,
+  legend: string,
+  values: string[],
+  value: string,
+  onPick: (v: string) => void,
+  note: HTMLElement | null = null,
+  entries: readonly ModelEntry[] | null = null,
+): HTMLFieldSetElement {
   const row = h('div', { class: 'dd-chips' });
-  for (const v of values) {
+  for (const [i, v] of values.entries()) {
     const input = h('input', { type: 'radio', name, value: v, class: 'visually-hidden', 'data-key': `${name}:${v}` });
     input.checked = v === value;
     input.addEventListener('change', () => input.checked && onPick(v));
-    row.append(h('label', { class: 'dd-chip' }, input, h('span', {}, v)));
+    const e = entries?.[i];
+    row.append(e ? modelChip(input, e) : h('label', { class: 'dd-chip' }, input, h('span', {}, v)));
   }
   return h('fieldset', { class: 'dd-pick', 'data-pick': name }, h('legend', {}, legend, note), row);
 }
@@ -123,24 +144,33 @@ const MODEL_LIST_AT = 10;
  * hides chips, so it never re-renders (focus and the checked model stay); the checked one always stays visible, so
  * a filter never looks like a changed choice. Enter in the filter must not hire; Esc clears it before it closes anything.
  */
-export function modelList(values: string[], value: string, query: string, onPick: (v: string) => void, onQuery: (q: string) => void): HTMLFieldSetElement {
+export function modelList(
+  values: string[],
+  value: string,
+  query: string,
+  onPick: (v: string) => void,
+  onQuery: (q: string) => void,
+  harness = '',
+  labels?: ModelLabels,
+): HTMLFieldSetElement {
   const count = h('span', { class: 'dd-count', 'aria-live': 'polite' });
   const none = h('p', { class: 'field-hint dd-none' });
   const row = h('div', { class: 'dd-chips dd-chips--grid' });
-  const chipsByValue: Array<[string, HTMLLabelElement, HTMLInputElement]> = [];
-  for (const v of values) {
+  const chipsByValue: Array<[ModelEntry, HTMLLabelElement, HTMLInputElement]> = [];
+  for (const e of modelEntries(harness, values, labels)) {
+    const v = e.id;
     const input = h('input', { type: 'radio', name: 'model', value: v, class: 'visually-hidden', 'data-key': `model:${v}` });
     input.checked = v === value;
     input.addEventListener('change', () => input.checked && onPick(v));
-    const label = h('label', { class: 'dd-chip' }, input, h('span', {}, v));
-    chipsByValue.push([v, label, input]);
+    const label = modelChip(input, e);
+    chipsByValue.push([e, label, input]);
     row.append(label);
   }
   const apply = (raw: string) => {
-    const q = raw.trim().toLowerCase();
+    const q = raw.trim();
     let shown = 0;
-    for (const [v, label, input] of chipsByValue) {
-      const hit = !q || v.toLowerCase().includes(q);
+    for (const [e, label, input] of chipsByValue) {
+      const hit = modelMatches(q, e);
       if (hit) shown++;
       label.hidden = !hit && !input.checked;
     }
@@ -542,7 +572,7 @@ export class HireDialog {
     const fv = this.host.store.floorView(this.session);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const taken = this.takenBy();
-    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version]);
+    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness)]);
     // Typing (task, label, folder) only needs the button; everything else re-renders.
     if (key === this.renderedKey) {
       this.renderActions();
@@ -712,8 +742,9 @@ export class HireDialog {
 
   /** Up to a row of chips; a long list gets a filter and a grid (`modelList`). */
   private modelField(models: string[]): HTMLElement {
-    if (models.length <= MODEL_LIST_AT) return chips('model', 'Model', models, this.f.model, (v) => this.pick({ model: v }));
-    return modelList(models, this.f.model, this.modelQuery, (v) => this.pick({ model: v }), (q) => (this.modelQuery = q));
+    const labels = labelsOf(this.host.store.hireOptions, this.f.harness);
+    if (models.length <= MODEL_LIST_AT) return chips('model', 'Model', models, this.f.model, (v) => this.pick({ model: v }), null, modelEntries(this.f.harness, models, labels));
+    return modelList(models, this.f.model, this.modelQuery, (v) => this.pick({ model: v }), (q) => (this.modelQuery = q), this.f.harness, labels);
   }
 
   private draftKey(session = this.session, desk = this.desk): string {

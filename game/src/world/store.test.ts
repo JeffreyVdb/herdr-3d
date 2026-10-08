@@ -262,6 +262,26 @@ describe('WorldStore M3 fields', () => {
     expect(s.hireOptions).toEqual(DEFAULT_HIRE_OPTIONS);
   });
 
+  it('keeps the readable model names of a catalog (#200) and drops labels of a shape it does not understand, never throwing', () => {
+    const s = new WorldStore();
+    const hire_options = {
+      claude: { models: ['claude-opus-5'], efforts: ['high'], model_labels: { 'claude-opus-5': 'Opus 5' } },
+      codex: { models: ['gpt-6.1-sol'], efforts: ['high'] },
+    };
+    s.applySnapshot(snap({ hire_options }));
+    expect(s.hireOptions).toEqual(hire_options);
+    expect(s.hireOptions.claude?.model_labels).toEqual({ 'claude-opus-5': 'Opus 5' });
+    for (const bad of ['Opus 5', ['Opus 5'], 7, null, true]) {
+      s.applySnapshot(snap({ hire_options: { ...hire_options, claude: { ...hire_options.claude, model_labels: bad } } as never }));
+      expect(s.hireOptions.claude).toEqual({ models: ['claude-opus-5'], efforts: ['high'] });
+      expect(s.hireOptions.codex).toEqual(hire_options.codex);
+    }
+    s.applySnapshot(snap({ hire_options: { claude: { ...hire_options.claude, model_labels: { 'claude-opus-5': 'Opus 5', x: 3, y: null } } } as never }));
+    expect(s.hireOptions.claude?.model_labels).toEqual({ 'claude-opus-5': 'Opus 5' });
+    s.applySnapshot(snap({ hire_options: { claude: { ...hire_options.claude, model_labels: { x: 3 } } } as never }));
+    expect(s.hireOptions.claude).toEqual({ models: ['claude-opus-5'], efforts: ['high'] });
+  });
+
   it('uses newly discovered models and exact effort sets in hire and settings choices', () => {
     const s = new WorldStore();
     const hire_options = {

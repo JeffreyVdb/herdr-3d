@@ -32,6 +32,10 @@ Implementation boundaries:
   user turn is sent. Disable Claude hooks, tools, MCP connections and session persistence.
 - Limit probes to 10 seconds, 8 MiB total output, 1 MiB per protocol line, and 100 Codex pages. Kill the probe's
   process group and reap it when finished or canceled. Ignore unrelated notifications; reject protocol errors.
+- Keep each model's `displayName` (Codex `model/list` and Claude's initialize `models[]`) as the optional `model_labels`
+  (#200), keyed by launch id and used by the UI instead of the slug. The Claude `default` alias is labelled "Default
+  (recommended)" and resolves to the same id as a concrete alias (`sonnet` → "Sonnet 5.5"): its generic label is dropped
+  and the id takes the first concrete name. Labels are bounded plain text; unusable ones are dropped.
 - Filter model/effort strings to the existing `herdr.Control` argument bounds. Provider IDs outside those bounds
   still require a separate change to the launch surface.
 

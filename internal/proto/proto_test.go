@@ -30,3 +30,27 @@ func TestOptionalAbsentNullValue(t *testing.T) {
 		t.Errorf("marshal = %s", b)
 	}
 }
+
+func TestHarnessOptionsModelLabels(t *testing.T) {
+	in := HarnessOptions{Models: []string{"claude-opus-5"}, Efforts: []string{"high"}, ModelLabels: map[string]string{"claude-opus-5": "Opus 5"}}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"models":["claude-opus-5"],"efforts":["high"],"model_labels":{"claude-opus-5":"Opus 5"}}` {
+		t.Errorf("marshal = %s", b)
+	}
+	var out HarnessOptions
+	if err := json.Unmarshal(b, &out); err != nil || out.ModelLabels["claude-opus-5"] != "Opus 5" {
+		t.Errorf("round trip = %+v, %v", out, err)
+	}
+	// A catalog without labels (an older bridge, a fallback catalog) leaves the key out and decodes to none.
+	b, _ = json.Marshal(HarnessOptions{Models: []string{"m"}, Efforts: []string{}})
+	if string(b) != `{"models":["m"],"efforts":[]}` {
+		t.Errorf("marshal without labels = %s", b)
+	}
+	out = HarnessOptions{}
+	if err := json.Unmarshal(b, &out); err != nil || out.ModelLabels != nil {
+		t.Errorf("decode without labels = %+v, %v", out, err)
+	}
+}
