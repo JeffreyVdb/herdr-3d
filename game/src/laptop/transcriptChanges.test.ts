@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TranscriptDiff, TranscriptItem } from '../net/protocol';
 import { ViewPrefs } from '../ui/themePrefs';
+import { diffColoursBusy, MAIN_BUDGET } from './diffHighlight';
 import { mountTranscript, toolHasChanges, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
 
 /**
@@ -495,5 +496,118 @@ describe('code changes (#171)', () => {
     view.setItems(CHANGES);
     expect($$('.tx-chg-file').map((f) => f.textContent)).toEqual(live);
     expect(new Set($$('.tx-chg-file').map((f) => f.dataset.key)).size).toBe(live.length);
+  });
+});
+
+describe('syntax colours in diff rows (#206)', () => {
+  /** Waits until the highlighter has nothing left to do. */
+  const settled = () => vi.waitFor(() => expect(diffColoursBusy()).toBe(false), { timeout: 20_000, interval: 5 });
+  const cells = (id: string, kind = ':not(.tx-dh)') => $$(`.tx-diff-body .tx-dl${kind} .tx-dt`, row(id));
+  const tokens = (dt: HTMLElement) => $$('[class^="hljs-"]', dt).map((s) => [s.className, s.textContent]);
+  const PROTO = 'toolu_018mQCao59VwQiRK6L6zHu5h';
+
+  it('rows draw plain, then gain colours in place: same text, the sign kept apart, other rows as they were', async () => {
+    mount();
+    view.setItems(CHANGES);
+    const before = cells(PROTO).map((e) => e.textContent);
+    // Drawn before the highlighter loaded: plain, as before.
+    expect(cells(PROTO).every((e) => e.childNodes.length === 1 && e.firstChild?.nodeType === Node.TEXT_NODE)).toBe(true);
+    await settled();
+    expect(cells(PROTO).map((e) => e.textContent)).toEqual(before);
+    const add = cells(PROTO, '.tx-add')[0] as HTMLElement;
+    expect(add.classList.contains('tx-hl')).toBe(true);
+    expect(add.firstElementChild?.outerHTML).toBe('<span class="tx-dsg">+</span>');
+    expect(tokens(add)).toEqual([['hljs-comment', '// M16: the transcript view at a laptop (docs/protocol.md "Laptops: transcript").']]);
+    expect(tokens(cells(PROTO, '.tx-add')[1] as HTMLElement)).toContainEqual(['hljs-string', "'transcript.watch'"]);
+    // Context rows too (no sign span of their own colour, but their tokens).
+    expect(tokens(cells(PROTO, '.tx-ctx')[0] as HTMLElement)).toContainEqual(['hljs-string', "'terminal.watch'"]);
+    // The hunk header is not code; Python and TOML are coloured, a file without a known extension is not.
+    expect($('.tx-dh .tx-dt', row(PROTO))?.childNodes).toHaveLength(1);
+    expect(tokens(cells('toolu_c171_bash_one', '.tx-add')[0] as HTMLElement)).toContainEqual(['hljs-number', '5']);
+    expect(cells('toolu_c171_wr_upd2', '.tx-add').every((e) => e.classList.contains('tx-hl'))).toBe(true);
+    for (const id of ['toolu_c171_bash_unavail', 'toolu_c171_bash_shared']) expect(cells(id).some((e) => e.classList.contains('tx-hl') || e.childElementCount > 0), id).toBe(false);
+  });
+
+  it('a hunk is tokenized as its two sides: a string or comment across rows colours on every row; meta rows stay', async () => {
+    const lines = [' const q = `select *', '-  from a', '+  from b', ' `;', '+/* one', '+two */', '\\ No newline at end of file'];
+    const it: TranscriptItem = { id: 'sides', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Edit', input_summary: 'q.ts', status: 'ok', diff: { path: 'src/q.ts', hunks: [{ old_start: 1, old_lines: 4, new_start: 1, new_lines: 5, lines }] } } };
+    mount();
+    view.setItems([it]);
+    await settled();
+    const all = cells('sides');
+    expect(all.map((e) => e.textContent)).toEqual(lines);
+    expect(tokens(all[1] as HTMLElement)).toEqual([['hljs-string', '  from a']]);
+    expect(tokens(all[2] as HTMLElement)).toEqual([['hljs-string', '  from b']]);
+    expect(tokens(all[3] as HTMLElement)).toEqual([['hljs-string', '`']]);
+    expect(tokens(all[5] as HTMLElement)).toEqual([['hljs-comment', 'two */']]);
+    expect((all[6] as HTMLElement).childNodes).toHaveLength(1);
+  });
+
+  it('"Show next" pages gain colours when they draw, and only what is drawn is coloured', async () => {
+    // Small hunks (each well inside the page's thread budget), 2,100 rows: two pages.
+    const hunks = Array.from({ length: 21 }, (_, k) => ({ old_start: k * 200 + 1, old_lines: 0, new_start: k * 200 + 1, new_lines: 100, lines: Array.from({ length: 100 }, (_, i) => `+const v${k}_${i} = ${i};`) }));
+    const it: TranscriptItem = { id: 'paged', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Write', input_summary: 'p.ts', status: 'ok', diff: { path: 'p.ts', op: 'create', hunks } } };
+    mount();
+    view.setItems([it]);
+    await settled();
+    expect(cells('paged')).toHaveLength(2000);
+    expect(cells('paged').every((e) => e.classList.contains('tx-hl'))).toBe(true);
+    ($<HTMLButtonElement>('.tx-diff-more .tx-link', row('paged')) as HTMLButtonElement).click();
+    const page2 = cells('paged').slice(2000);
+    expect(page2).toHaveLength(100);
+    expect(page2.some((e) => e.classList.contains('tx-hl'))).toBe(false);
+    await settled();
+    expect(page2.every((e) => e.classList.contains('tx-hl'))).toBe(true);
+    expect((page2.at(-1) as HTMLElement).textContent).toBe('+const v20_99 = 99;');
+    expect(tokens(page2.at(-1) as HTMLElement)).toEqual(expect.arrayContaining([['hljs-keyword', 'const'], ['hljs-number', '99']]));
+  }, 60_000);
+
+  it('a change loaded whole through transcript.item is coloured in its new rows', async () => {
+    const cut: TranscriptDiff = { path: 'w.go', truncated: true, hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ['-a := 1'] }] };
+    const whole: TranscriptDiff = { path: 'w.go', hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 2, lines: ['-a := 1', '+a := "two"', '+return a'] }] };
+    const it: TranscriptItem = { id: 'whole', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Edit', input_summary: 'w.go', status: 'ok', diff: cut } };
+    mount(async () => ({ ...it, tool: { ...it.tool!, diff: whole } }));
+    view.setItems([it]);
+    await settled();
+    const old = cells('whole')[0] as HTMLElement;
+    ($('.tx-chg-cutnote .tx-link', row('whole')) as HTMLButtonElement).click();
+    await flush();
+    expect(old.isConnected).toBe(false);
+    await settled();
+    expect(cells('whole').map((e) => e.textContent)).toEqual(['-a := 1', '+a := "two"', '+return a']);
+    expect(tokens(cells('whole')[1] as HTMLElement)).toContainEqual(['hljs-string', '"two"']);
+    expect(tokens(cells('whole')[2] as HTMLElement)).toContainEqual(['hljs-keyword', 'return']);
+  });
+
+  it('rows that left the page before their colours were ready are not touched; re-rendered rows get their own', async () => {
+    const it: TranscriptItem = { id: 'gone', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Edit', input_summary: 'g.ts', status: 'ok', diff: { path: 'g.ts', hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ['-let a = 1;', '+let a = 2;'] }] } } };
+    mount();
+    view.setItems([it]);
+    const first = cells('gone');
+    // A live update re-renders the row before the highlighter ran.
+    view.applyUpdates([{ ...it }]);
+    const second = cells('gone');
+    expect(second[0]).not.toBe(first[0]);
+    await settled();
+    expect(first.every((e) => e.childNodes.length === 1)).toBe(true);
+    expect(second.every((e) => e.classList.contains('tx-hl'))).toBe(true);
+    // A row whose text changed under it is left alone.
+    const third: TranscriptItem = { ...it, id: 'gone2' };
+    view.applyUpdates([third]);
+    const cell = cells('gone2')[1] as HTMLElement;
+    cell.textContent = '+something else';
+    await settled();
+    expect(cell.textContent).toBe('+something else');
+    expect(cell.classList.contains('tx-hl')).toBe(false);
+  });
+
+  it('a hunk past the page thread budget waits for the worker; with none (here) it stays plain', async () => {
+    const lines = Array.from({ length: 1500 }, (_, i) => `+export const value${i} = 'a fairly long line ${i}';`);
+    const it: TranscriptItem = { id: 'huge', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Write', input_summary: 'h.ts', status: 'ok', diff: { path: 'h.ts', op: 'create', hunks: [{ old_start: 0, old_lines: 0, new_start: 1, new_lines: 1500, lines }] } } };
+    expect(lines.join('\n').length).toBeGreaterThan(MAIN_BUDGET);
+    mount();
+    view.setItems([it]);
+    await settled();
+    expect(cells('huge').some((e) => e.classList.contains('tx-hl'))).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import { AskCard, askItem, type AskResult } from './askCard';
 import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
 import { isSendKey, reveal } from './askStack';
+import { diffColours } from './diffHighlight';
 import { FollowupCard, type FollowupResult } from './followupCard';
 import type { ImageFeed } from './imageFeed';
 import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, Thumbs } from './transcriptImages';
@@ -425,6 +426,8 @@ interface Hunk {
   oldStart: number | null;
   newStart: number | null;
   lines: string[];
+  /** #206: lines made of what was not a hunk (its JSON): not the file's code, never coloured as it. */
+  opaque?: true;
 }
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -463,7 +466,7 @@ export function parseHunk(raw: unknown): Hunk {
       return { header, oldStart, newStart, lines };
     }
   }
-  return { header: null, oldStart: null, newStart: null, lines: (JSON.stringify(raw, null, 2) ?? String(raw)).split('\n').map((l) => ` ${l}`) };
+  return { header: null, oldStart: null, newStart: null, lines: (JSON.stringify(raw, null, 2) ?? String(raw)).split('\n').map((l) => ` ${l}`), opaque: true };
 }
 
 function diffStat(hunks: unknown[]): { add: number; del: number } {
@@ -483,27 +486,30 @@ const MAX_DIFF_LINES = 2000;
 
 const statEl = (add: number, del: number) => h('span', { class: 'tx-diff-stat' }, h('span', { class: 'tx-add-n' }, `+${add}`), ' ', h('span', { class: 'tx-del-n' }, `−${del}`));
 
-type DiffRow = { kind: 'head'; text: string } | { kind: 'add' | 'del' | 'ctx' | 'meta'; text: string; on: string; nn: string };
+/** A diff's row: a hunk's header, or its line `li` of hunk `hk` with the line's old and new numbers. */
+type DiffRow = { kind: 'head'; text: string } | { kind: 'add' | 'del' | 'ctx' | 'meta'; text: string; on: string; nn: string; hk: number; li: number };
 
-/** A diff's rows: its hunks' headers and lines, each line with its old and new numbers. */
-function diffRows(hunks: unknown[]): DiffRow[] {
+/** A diff's rows: its hunks' headers and lines, each line with its old and new numbers; and each hunk's lines (#206: null for one that is not code). */
+function diffRows(hunks: unknown[]): { rows: DiffRow[]; lines: Array<string[] | null> } {
   const rows: DiffRow[] = [];
+  const lines: Array<string[] | null> = [];
   for (const raw of hunks) {
     const hk = parseHunk(raw);
+    const k = lines.push(hk.opaque ? null : hk.lines) - 1;
     if (hk.header !== null) rows.push({ kind: 'head', text: hk.header });
     let o = hk.oldStart;
     let n = hk.newStart;
-    for (const l of hk.lines) {
+    for (const [li, l] of hk.lines.entries()) {
       const c = l[0];
       const kind = c === '+' ? 'add' : c === '-' ? 'del' : c === '\\' ? 'meta' : 'ctx';
       const on = kind === 'add' || kind === 'meta' ? '' : o !== null ? String(o) : '';
       const nn = kind === 'del' || kind === 'meta' ? '' : n !== null ? String(n) : '';
       if (o !== null && (kind === 'del' || kind === 'ctx')) o++;
       if (n !== null && (kind === 'add' || kind === 'ctx')) n++;
-      rows.push({ kind, text: l, on, nn });
+      rows.push({ kind, text: l, on, nn, hk: k, li });
     }
   }
-  return rows;
+  return { rows, lines };
 }
 
 /**
@@ -512,10 +518,12 @@ function diffRows(hunks: unknown[]): DiffRow[] {
  * the focus to scroll from the keyboard (Transcript.onKey).
  */
 function diffLines(diff: TranscriptDiff, limit: number, around: (change: () => void) => void, onShown: (shown: number) => void): HTMLElement {
-  const rows = diffRows(Array.isArray(diff.hunks) ? diff.hunks : []);
+  const { rows, lines } = diffRows(Array.isArray(diff.hunks) ? diff.hunks : []);
   const total = rows.reduce((s, r) => s + (r.kind === 'head' ? 0 : 1), 0);
   const box = h('div', { class: 'tx-diff-lines' });
   const body = h('div', { class: 'tx-diff-body', role: 'table', tabindex: '0', 'aria-label': `Changes to ${String(diff.path ?? '')}` });
+  // #206: drawn plain, coloured once its hunk is tokenized (while these rows are still the page's).
+  const colours = diffColours(diff.path, lines, () => body.isConnected);
   let pos = 0;
   let shown = 0;
   const draw = (upTo: number) => {
@@ -529,7 +537,9 @@ function diffLines(diff: TranscriptDiff, limit: number, around: (change: () => v
       }
       if (shown >= upTo) break;
       shown++;
-      page.append(h('div', { class: `tx-dl tx-${r.kind}`, role: 'row' }, h('span', { class: 'tx-dn' }, r.on), h('span', { class: 'tx-dn' }, r.nn), h('span', { class: 'tx-dt' }, r.text || ' ')));
+      const dt = h('span', { class: 'tx-dt' }, r.text || ' ');
+      page.append(h('div', { class: `tx-dl tx-${r.kind}`, role: 'row' }, h('span', { class: 'tx-dn' }, r.on), h('span', { class: 'tx-dn' }, r.nn), dt));
+      colours?.row(r.hk, r.li, dt);
     }
     body.append(page);
   };
