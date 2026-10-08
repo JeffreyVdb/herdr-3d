@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -372,5 +373,58 @@ func TestDigestNowBusyIsNoAttempt(t *testing.T) {
 	runOp(t, h)
 	if l.nowTried != l.nowKey || l.now == "" {
 		t.Fatalf("after the second go: %+v", *l)
+	}
+}
+
+// lastNowAt is the now_at of the last worker.upsert of "w" a client was
+// sent (0: none).
+func lastNowAt(t *testing.T, c *Client) int64 {
+	t.Helper()
+	var at int64
+	for {
+		select {
+		case msg := <-c.send:
+			var ev struct {
+				T      string        `json:"t"`
+				Worker *proto.Worker `json:"worker"`
+			}
+			if err := json.Unmarshal(msg, &ev); err != nil {
+				t.Fatal(err)
+			}
+			if ev.T == proto.EvWorkerUpsert && ev.Worker != nil && ev.Worker.ID == "w" && ev.Worker.Digest != nil {
+				at = ev.Worker.Digest.NowAt
+			}
+		default:
+			return at
+		}
+	}
+}
+
+// The reviewer's probe (R1): a line written at 10:00 is found in the cache at
+// 12:00, when another agent session with the same recent steps replaced the
+// tracker: no call, and now_at stays 10:00, when the model wrote it.
+func TestDigestNowCachedLineKeepsItsTime(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Date(2026, 10, 8, 10, 0, 0, 0, time.Local)
+	h, llm := dgHubFor(t, &clock, false)
+	c := view(ctx, h)
+	h.digestSeen(ctx, digestUpdate{id: "w", epoch: 1, digest: dgMid(0, "Reading the lift code")})
+	runOp(t, h)
+	written := clock.UnixMilli()
+	if got := lastNowAt(t, c); got != written {
+		t.Fatalf("published now_at = %d, want %d", got, written)
+	}
+	clock = clock.Add(2 * time.Hour)
+	h.digestSeen(ctx, digestUpdate{id: "w", epoch: 2, digest: dgMid(0, "Reading the lift code")})
+	runOp(t, h)
+	d := h.workers["w"].Digest
+	if d.NowSource != proto.DigestLLM || d.NowAt != written {
+		t.Fatalf("cached line: digest = %+v, want now_at %d (10:00), not %d", d, written, clock.UnixMilli())
+	}
+	if got := lastNowAt(t, c); got != written {
+		t.Fatalf("published now_at = %d, want %d", got, written)
+	}
+	if n := len(nowCalls(llm)); n != 1 {
+		t.Fatalf("now calls = %d, want 1 (the second line is the cache's)", n)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
@@ -34,7 +35,9 @@ func TestDigestSettingsAndCache(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := st.SaveDigestLine(ctx, store.DigestLine{Key: "k2", Line: "Again"}, 3); err != nil {
+	// #198: when the line was written goes with it (the caller's time; none: the store's clock).
+	written := time.Date(2026, 10, 8, 10, 0, 0, 123_000_000, time.FixedZone("CEST", 2*3600))
+	if err := st.SaveDigestLine(ctx, store.DigestLine{Key: "k2", Line: "Again", UsedAt: written}, 3); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()
@@ -44,8 +47,14 @@ func TestDigestSettingsAndCache(t *testing.T) {
 		t.Fatalf("settings after reopen = %+v %v %v", got, ok, err)
 	}
 	ls, err := st.DigestCache(ctx, 10)
-	if err != nil || len(ls) != 3 || ls[0] != (store.DigestLine{Key: "k2", Line: "Again"}) || ls[1].Key != "k4" || ls[2].Key != "k3" {
+	if err != nil || len(ls) != 3 || ls[0].Key != "k2" || ls[0].Line != "Again" || ls[1].Key != "k4" || ls[2].Key != "k3" {
 		t.Fatalf("%+v %v", ls, err)
+	}
+	if !ls[0].UsedAt.Equal(written) {
+		t.Fatalf("k2 written at %v, want %v", ls[0].UsedAt, written)
+	}
+	if ls[1].UsedAt.IsZero() {
+		t.Fatalf("k4 has no time: %+v", ls[1])
 	}
 	st.Close()
 	db, err := sql.Open("sqlite", path)

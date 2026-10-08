@@ -407,13 +407,13 @@ func (a digestStore) LoadDigestCache(ctx context.Context, limit int) ([]digest.C
 	ls, err := a.st.DigestCache(ctx, limit)
 	out := make([]digest.CacheEntry, 0, len(ls))
 	for _, l := range ls {
-		out = append(out, digest.CacheEntry{Key: l.Key, Line: l.Line})
+		out = append(out, digest.CacheEntry{Key: l.Key, Line: l.Line, At: l.UsedAt})
 	}
 	return out, err
 }
 
 func (a digestStore) SaveDigestCache(ctx context.Context, e digest.CacheEntry, limit int) error {
-	return a.st.SaveDigestLine(ctx, store.DigestLine{Key: e.Key, Line: e.Line}, limit)
+	return a.st.SaveDigestLine(ctx, store.DigestLine{Key: e.Key, Line: e.Line, UsedAt: e.At}, limit)
 }
 
 // initDigest makes the feature's service (NewHub); none without the AI
@@ -690,7 +690,12 @@ func (h *Hub) digestDone(ctx context.Context, c digestCand, gen int, res digest.
 	if c.in.Kind == digest.KindTask {
 		l.task, l.taskHash, l.taskFail = res.Line, c.hash, nil
 	} else {
-		l.now, l.nowAt, l.nowTried, l.nowFail = res.Line, now.UnixMilli(), c.hash, nil
+		// now_at is when the model wrote the line (#198), a cached one's too.
+		at := res.At
+		if at.IsZero() {
+			at = now
+		}
+		l.now, l.nowAt, l.nowTried, l.nowFail = res.Line, at.UnixMilli(), c.hash, nil
 	}
 	h.log.Debug("floor overview line written", "worker", c.id, "kind", c.in.Kind, "cached", res.Cached)
 }
