@@ -59,6 +59,22 @@
 .seat[data-state='error'] .seat-note {
   color: #ffb3ad;
 }
+/* #187: why it is offline or away is what you need to read: it takes the line under the tape and wraps (three lines,
+   then the title has it all) instead of ending in an ellipsis in what is left beside the tape. */
+.seat[data-state='error'] .seat-line,
+.seat[data-state='offline'] .seat-line {
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.seat[data-state='error'] .seat-note,
+.seat[data-state='offline'] .seat-note {
+  flex: 1 1 100%;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: normal;
+  line-height: 1.3;
+}
 .seat[data-state='error'] .seat-note::before,
 .seat[data-state='offline'] .seat-note::before {
   content: '';
