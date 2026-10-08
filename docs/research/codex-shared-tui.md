@@ -719,3 +719,55 @@ The default stays **off**: the switch is opt-in (#158's decision).
 | #158: opt-in rollout, actionable unsupported-version behaviour, rollback: documented and verified | verified [R] | §12.3; architecture.md "Shared Codex workers" |
 | #158: repo docs explain the architecture and distinguish delivered input from verified resolution | done | architecture.md "Shared Codex workers"; protocol.md "Codex async questions" |
 | #158: all epic requirements verified or recorded as limitations | done | this table; §12.6 |
+
+## 13. Codex 0.161.0 (#186)
+
+Date 2026-10-08. Installed: **codex-cli 0.161.0**, herdr 0.9.0 (protocol 22), Herdr's Codex integration v8 (installed
+into each fixture's throwaway CODEX_HOME). Source/schema comparison with rust-v0.160.1: no wire change in anything the
+bridge uses (thread start/resume/fork/read/turns.list/unsubscribe, async `agentMessage`, the reply envelope,
+`turn/start`, `turn/steer`, `clientUserMessageId`, approvals, `userAgent` grammar). The fixture now runs on
+`VerifiedCodex` (0.160.1, 0.161.0) and skips any other version with "UNVERIFIED CODEX, not a pass"; each test logs
+`fixture codex: …`.
+
+Runs (logs and per-test evidence in the #186 run directory, `evidence-tui.log`, `evidence-bridge.log`,
+`evidence-{tui,bridge}/`):
+
+| Suite | Result on 0.161.0 | Skips |
+|---|---|---|
+| `make codex-shared-tui` | 16 of 18 top-level tests pass; `MixedHarness` failed on the warm re-attach (below, now asserted per version); `BridgeRegression` failed once (below) | 2, both real-model smokes (`H3D_CODEXSHARE_REAL=1` unset), none for the version |
+| `make codex-shared-bridge` | 5 of 5 pass, `BridgeRegression` included | 1, the real-model smoke |
+
+Coverage, by the ticket's list: launch and `--remote` attach (`SharedLaunch`, `Identity`, `Environment`); passive
+joins that change no setting (`Lifecycle/join_keeps_settings`, `BridgeRegression/9_a_typed_prompt…`); async questions
+during active and idle turns and terminal-side answers (`Questions`, `AsyncAnswers`, `BridgeQuestions/1–4`);
+exactly-once delivery across races, reconnect and restart (`AsyncAnswers/race…`, `AsyncStartIntoARunningTurn`,
+`BridgeQuestions/5–7`, `BridgeRestartSent`); sleep, wake and send home (`SharedLaunch/sleep…`, `/wake…`,
+`BridgeRegression/10–12`); prompts, slash commands and skills, Ctrl-C, approvals, images
+(`Lifecycle`, `Approvals`, `SharedApprovals`, `BridgeRegression/9_*`); model, cwd and settings
+(`Lifecycle/join_keeps_settings`, the launch arguments in `SharedLaunch`); resume and legacy-id repair
+(`ResumeSuppression`, `Lifecycle/unload…cold_resume`, `BridgeRestartSent`); rollout and the unsupported fallback
+(`BridgeRollout`, now with a fake codex-cli 0.162.0). **Not covered:** 0.161's permission selection through
+`thread/settings/update` persisting across a reconnect. A shared worker's terminal is launched with hire's bypass flag
+and resumed without it, and the bridge never changes a setting; no herdr-3d path selects a permission on a connected
+TUI, so nothing here exercises it.
+
+**Found: Herdr loses a Codex session's id after a warm re-attach (0.161 only).**
+`MixedHarness/stop_and_resume_keep_identity_and_environment` fails 3 of 3 on 0.161.0 and passes on 0.160.1
+(`rerun-mixed-161-{1,2}.log`, `rerun-mixed-160.log`): after the TUI quits and `codex resume <id> --remote` attaches
+again to the **same running server** (the thread still loaded), `herdr agent get` has no `agent_session`. A hook log
+(`diag-160.log`, `diag-161.log`) shows why: Herdr's hook reports the id on Codex's `SessionStart`; 0.160.1 runs it
+(`source: "resume"`) at the first prompt after such a re-attach, 0.161.0 does not run it at all. A **cold** resume (a
+new server) runs it on both versions. herdr-3d never re-attaches warm: sleep stops a shared worker's server, wake
+starts a new one and the bridge keeps the recorded thread, so every bridge, question, lifecycle and restart test
+passes. The re-attach is #154's orchestrator scenario (A9), which bypasses the bridge.
+
+**Accepted as a known limitation** (#186 decision row 8); an upstream report is drafted, not filed. `MixedHarness`
+now asserts it per version: on 0.160.x the warm re-attach keeps Herdr's session id (strict); on 0.161.x it asserts the
+observed loss, so an upstream fix fails the test loudly and the check is made strict; and a new subtest, **a cold
+resume on a new server** (what a floor's wake does), is strict on both: environment, Herdr's session id and the thread
+(`r1b-mixed-161.log`, `r1b-mixed-160.log`).
+
+`BridgeRegression/11` (the server killed, recovered by sleep and wake) failed once in the full run, while the host
+also ran vitest and Playwright: the wake's `resume-codex-remote` was refused `agent_pane_busy` right after the
+launcher line. It passed in `make codex-shared-bridge` and in a rerun (`rerun-regress-161.log`): 2 of 3. Recorded,
+not changed (the §12.4 safety-net family).

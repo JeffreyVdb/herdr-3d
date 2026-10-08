@@ -131,14 +131,37 @@ MacBook (M2 Max)                                   devbox (Linux)
     the thread as a passive second client (`thread/resume` with the id only): it never answers approvals or blocking
     questions, and sends only on a player's command (`worker.answer_async`, or `worker.prompt` to a worker an async
     question shows as blocked).
-  - **Supported Codex: 0.160.x** (verified with codex-cli 0.160.1 and herdr 0.9.0), checked twice: `codex --version`
-    before anything starts, and the server's `userAgent` before the TUI attaches. Capabilities relied on:
+  - **Supported Codex: the verified release lines only**, each verified with the real TUI and the bridge's full stack
+    (`make codex-shared-tui`, findings §12 and §13): **0.160.x** (codex-cli 0.160.1, herdr 0.9.0, 2026-10-07, #155/#158)
+    and **0.161.x** (codex-cli 0.161.0, herdr 0.9.0, 2026-10-08, #186). The set is explicit
+    (`codexapp.SupportedLines`), not a range: 0.159 and 0.162 are refused until verified. Checked twice: `codex
+    --version` before anything starts, and the server's `userAgent` before the TUI attaches; the patch must be numeric
+    (no pre-releases). Capabilities relied on:
     `app-server --listen unix://`, the TUI's `--remote`, `thread/resume` by id, `thread/turns/list` (the newest turns' real ids after a restart), `turn/steer` with `expectedTurnId`,
     `turn/start`, `clientUserMessageId` echoed as the user message's `clientId`, and `request_user_input_async` items
-    (`agentMessage`, `delivery: "async"`, `questions`, id = the call id). Any other version: the hire starts **the
-    usual way** with `codex: {mode: "legacy", note}` in its ack, on its toast and on the laptop's seat bar, e.g.
-    `shared Codex server: unsupported Codex version: "codex-cli 0.161.0" (supported: codex-cli 0.160.x); started the
-    usual way`. The fix is to install 0.160.x, or to leave the switch off until a later release is verified.
+    (`agentMessage`, `delivery: "async"`, `questions`, id = the call id). Any other version: the hire **succeeds** and
+    starts the usual way, with `codex: {mode: "legacy", note}` in its ack, e.g. `shared Codex server: unsupported Codex
+    version: "codex-cli 0.162.0" (supported: codex-cli 0.160.x or 0.161.x); started the usual way`. The game shows it as
+    a **warning** toast (#186: ink with a drawn triangle, not the red of a failed hire; a first task not sent beside it
+    is still an error) and on the laptop's seat bar, in plain words: "No own Codex server: the shared Codex server is not
+    verified with Codex 0.162.0 yet (verified: 0.160.x or 0.161.x). It runs on Codex's built-in server, so its async
+    questions can't be answered from the transcript."
+  - **Known limitation on 0.161 (upstream, outside the bridge):** Codex 0.161 runs no `SessionStart` hook when a TUI
+    re-attaches (`codex resume <id> --remote`) to a server that **still has the thread loaded**, so Herdr's Codex hook
+    never reports the session id again and `herdr agent get` shows none (0.160 runs it at the first prompt). A resume
+    on a **new** server reports it on both versions. herdr-3d never re-attaches warm: sleep stops a shared worker's
+    server and wake starts a new one, and the bridge keeps the thread it recorded. Only a terminal re-attached by hand,
+    or an orchestrator's (#154 A9), is affected (findings §13; `MixedHarness` asserts it per version).
+  - **What a worker hired the usual way (legacy) lacks:** its async questions cannot be answered from the transcript
+    (no join, no `worker.answer_async`); it answers them in its terminal, as every Codex worker did before #155. The rest
+    (prompts, slash commands, approvals, images, sleep, wake, send home) works as for any Codex worker.
+  - **Getting shared mode after an upgrade.** A worker keeps the mode it was hired in for life: installing a verified
+    Codex, or turning the switch on or off, never migrates a worker already hired. For a legacy worker (hired on an
+    unverified Codex, or with the switch off): finish or hand over its work, **send it home and hire a new worker** with
+    the switch on and a verified Codex installed (`codex --version`). Leaving the switch off only stops the fallback
+    notice for future hires. A new Codex release is verified by adding its exact version to the fixture
+    (`codexshare.VerifiedCodex`) and its line to `codexapp.SupportedLines`, then running `make codex-shared-tui`
+    with no version skip.
   - **Failures and recovery** (each leaves the worker usable): a blocked `.envrc` (the note says to run `direnv allow`
     there), a path the launch cannot pass, a server that does not answer in 20 s, or a TUI that does not
     attach while the pane is back at its shell: started the usual way, with the reason. Codex's "Hooks need review"

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -28,7 +29,8 @@ printf 'ORCH report=%s orchestrator-pane=%s\n' "$(cat "$2")" "$HERDR_PANE_ID"
 // TestCodexShareMixedHarness: a scripted stand-in for a Claude orchestrator
 // drives a Codex worker on a worker-owned server only through the Herdr CLI
 // and a run directory, as write-code does: dispatch, report file, follow-up,
-// read/wait, stop and resume with identity and environment intact. Then the
+// read/wait, stop and resume with identity and environment intact (warm:
+// the same server; cold: a new one). Then the
 // reverse: the Codex worker orchestrates through Herdr from its model shell.
 func TestCodexShareMixedHarness(t *testing.T) {
 	f := newFx(t, fxOptions{}, "ws-a", "ws-b")
@@ -41,6 +43,7 @@ func TestCodexShareMixedHarness(t *testing.T) {
 	ws := filepath.Join(f.root, "ws-a")
 	report := filepath.Join(run, "worker.json")
 	resumed := filepath.Join(run, "worker-resumed.json")
+	cold := filepath.Join(run, "worker-cold-resumed.json")
 	// The worker's report: written to a temp name, then renamed into place.
 	const reportCmd = `printf '{"status":"done","direnv":"%s","pane":"%s","herdr_pane":"%s"}' "$H3D_DIRENV_SENTINEL" "$H3D_PANE_SENTINEL" "$HERDR_PANE_ID" > REPORT.tmp && mv REPORT.tmp REPORT`
 
@@ -98,13 +101,57 @@ func TestCodexShareMixedHarness(t *testing.T) {
 		if !strings.Contains(string(got), `"direnv":"direnv-ws-a"`) || !strings.Contains(string(got), `"herdr_pane":"`+pane+`"`) {
 			t.Errorf("environment after resume: %s", got)
 		}
+		// Known upstream gap (#186, findings §13): codex 0.161 runs no
+		// SessionStart hook when a TUI re-attaches to a server that still
+		// has its thread loaded (0.160 runs it, source "resume", at the
+		// first prompt), so Herdr's hook never reports the id again. Kept
+		// as observed so a fix fails here and this check is made strict.
 		_, raw, _ := f.h.AgentGet(f.ctx, "codexworker")
-		if !strings.Contains(string(raw), session) {
+		kept := strings.Contains(string(raw), session)
+		if warmGap := strings.HasPrefix(f.codex, "codex-cli 0.161."); !warmGap && !kept {
 			t.Errorf("Herdr lost the session id after resume: %s", raw)
+		} else if warmGap && kept {
+			t.Errorf("%s: Herdr has the session id after a warm re-attach: the upstream gap (no SessionStart on warm resume) "+
+				"looks fixed; make this check strict for 0.161 and update findings §13: %s", f.codex, raw)
 		}
 		c := f.client(sock, "h3d-mixed")
 		if th := f.tuiThread(c); th.ID != session {
 			t.Errorf("resumed thread %s, want %s", th.ID, session)
+		}
+	})
+
+	// A cold resume (a new server, as a floor's wake does) reports the
+	// identity on every verified Codex.
+	t.Run("a cold resume on a new server keeps identity and environment", func(t *testing.T) {
+		if session == "" {
+			t.Skip("no session id")
+		}
+		f.exitTUI(pane)
+		_ = syscall.Kill(f.serverPID(sock), syscall.SIGTERM)
+		deadline := time.Now().Add(10 * time.Second)
+		for len(f.owned("app-server --listen unix://"+sock)) > 0 && time.Now().Before(deadline) {
+			time.Sleep(200 * time.Millisecond)
+		}
+		_ = os.Remove(sock)
+		sock = f.startServer(pane, "mixed-cold")
+		f.startTUI("codexworker", pane, "resume", session, "--remote", "unix://"+sock, "-C", ws)
+		f.snap("cold-resumed", pane)
+		if _, err := f.h.AgentPrompt(f.ctx, "codexworker", "MOCK:shell "+strings.ReplaceAll(reportCmd, "REPORT", cold), 0); err != nil {
+			t.Fatal(err)
+		}
+		got := waitReport(t, cold)
+		f.record("worker-report-after-cold-resume.json", string(got))
+		if !strings.Contains(string(got), `"direnv":"direnv-ws-a"`) || !strings.Contains(string(got), `"herdr_pane":"`+pane+`"`) {
+			t.Errorf("environment after the cold resume: %s", got)
+		}
+		_, raw, _ := f.h.AgentGet(f.ctx, "codexworker")
+		f.record("agent-get-after-cold-resume.json", string(raw))
+		if !strings.Contains(string(raw), session) {
+			t.Errorf("Herdr lost the session id after a cold resume: %s", raw)
+		}
+		c := f.client(sock, "h3d-mixed-cold")
+		if th := f.tuiThread(c); th.ID != session {
+			t.Errorf("cold-resumed thread %s, want %s", th.ID, session)
 		}
 	})
 
