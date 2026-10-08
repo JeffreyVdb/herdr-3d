@@ -503,15 +503,31 @@ func (w *Watcher) leave(c *conn) {
 	_ = c.call(ctx, "thread/unsubscribe", map[string]any{"threadId": w.o.Thread}, nil)
 }
 
-// SupportedMinor is the Codex release line the shared launch was verified
-// against (codex-cli 0.160.1, docs/research/codex-shared-tui.md).
-const SupportedMinor = "0.160"
+// SupportedLines are the Codex release lines the shared launch was verified
+// against, each with the real TUI and the bridge's full stack
+// (docs/research/codex-shared-tui.md): 0.160 with codex-cli 0.160.1 (#155),
+// 0.161 with codex-cli 0.161.0 (#186). A line is a major.minor that
+// matches exactly: a later release is not supported until it is verified
+// and added here.
+var SupportedLines = []string{"0.160", "0.161"}
+
+// Supported names SupportedLines for a person ("0.160.x or 0.161.x").
+func Supported() string {
+	xs := make([]string, len(SupportedLines))
+	for i, l := range SupportedLines {
+		xs[i] = l + ".x"
+	}
+	if len(xs) < 2 {
+		return strings.Join(xs, "")
+	}
+	return strings.Join(xs[:len(xs)-1], ", ") + " or " + xs[len(xs)-1]
+}
 
 // CheckVersion checks `codex --version` output ("codex-cli 0.160.1").
 func CheckVersion(out string) error {
 	f := strings.Fields(strings.TrimSpace(out))
 	if len(f) != 2 || f[0] != "codex-cli" || !supported(f[1]) {
-		return fmt.Errorf("%w: %q (supported: codex-cli %s.x)", ErrUnsupported, strings.TrimSpace(out), SupportedMinor)
+		return fmt.Errorf("%w: %q (supported: codex-cli %s)", ErrUnsupported, strings.TrimSpace(out), Supported())
 	}
 	return nil
 }
@@ -522,20 +538,19 @@ func CheckUserAgent(ua string) error {
 	first, _, _ := strings.Cut(ua, " ")
 	_, v, ok := strings.Cut(first, "/")
 	if !ok || !supported(v) {
-		return fmt.Errorf("%w: app-server %q (supported: %s.x)", ErrUnsupported, ua, SupportedMinor)
+		return fmt.Errorf("%w: app-server %q (supported: %s)", ErrUnsupported, ua, Supported())
 	}
 	return nil
 }
 
+// supported reports whether v is a release of a SupportedLines line: the
+// line, a dot, then a numeric patch (no pre-release suffix).
 func supported(v string) bool {
-	rest, ok := strings.CutPrefix(v, SupportedMinor+".")
-	if !ok || rest == "" {
-		return false
-	}
-	for _, r := range rest {
-		if r < '0' || r > '9' {
-			return false
+	for _, l := range SupportedLines {
+		rest, ok := strings.CutPrefix(v, l+".")
+		if ok && rest != "" && strings.Trim(rest, "0123456789") == "" {
+			return true
 		}
 	}
-	return true
+	return false
 }

@@ -241,7 +241,7 @@ export class SimWorld {
     };
     this.activitySettings = new ActivitySettingsSim({ ai: this.ai, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) });
     if (o.codex) this.codexq.seed(o.codex); // #157
-    this.codexServer = new CodexServerSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) }, o.fail !== 'no_codex_run'); // #155
+    this.codexServer = new CodexServerSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) }, o.fail !== 'no_codex_run', o.fail === 'codex_unverified'); // #155, #186
     this.inbox = new InboxSim({ workers: this.workers, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now() }, o.fail !== 'no_inbox');
     this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
     this.boards = new BoardSim(
@@ -1180,6 +1180,8 @@ export class SimWorld {
       status_since: now,
       hired_at: now,
     };
+    const codex = this.codexServer.hire(harness); // #186
+    if (codex) w.codex = codex;
     if (branch && root) {
       w.branch = branch;
       w.worktree = { repo_root: root, repo_name: root.split('/').pop() ?? root, checkout_path: checkout, linked: true };
@@ -1202,6 +1204,7 @@ export class SimWorld {
         if (branch && root && !this.workers.some((x) => x.session === f.session && x.cwd === root)) this.mainCheckout(send, f, root);
         const data: Obj = { id, workspace_id: ws, trust: 'approved' };
         if (prompt) data.prompted = true;
+        if (codex) data.codex = codex;
         if (branch) {
           data.branch = branch;
           data.base_sha = git?.base_sha;

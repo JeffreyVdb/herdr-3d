@@ -360,7 +360,7 @@ func TestWatcherGivesUp(t *testing.T) {
 // watcher at once: retrying would not change them.
 func TestWatcherRefusesWithoutRetry(t *testing.T) {
 	for name, mod := range map[string]func(*fakeServer){
-		"unsupported": func(f *fakeServer) { f.ua = ClientName + "/0.161.0 (Linux)" },
+		"unsupported": func(f *fakeServer) { f.ua = ClientName + "/0.162.0 (Linux)" },
 		"ephemeral":   func(f *fakeServer) { f.thread["ephemeral"] = true },
 		"other":       func(f *fakeServer) { f.thread["id"] = "th2" },
 	} {
@@ -392,8 +392,10 @@ func TestWatcherRefusesWithoutRetry(t *testing.T) {
 
 func TestVersionChecks(t *testing.T) {
 	for v, ok := range map[string]bool{
-		"codex-cli 0.160.1\n": true, "codex-cli 0.160.12": true, "codex-cli 0.161.0": false, "codex-cli 0.16.0": false,
-		"codex-cli 0.160.": false, "codex-cli 0.160.1-alpha": false, "codex 0.160.1": false, "": false,
+		"codex-cli 0.160.1\n": true, "codex-cli 0.160.12": true, "codex-cli 0.161.0": true, "codex-cli 0.161.7\n": true,
+		"codex-cli 0.162.0": false, "codex-cli 0.159.9": false, "codex-cli 0.16.0": false, "codex-cli 0.1610.0": false,
+		"codex-cli 0.160.": false, "codex-cli 0.161.": false, "codex-cli 0.160.1-alpha": false, "codex-cli 0.161.0-alpha.3": false,
+		"codex 0.160.1": false, "codex-cli 1.161.0": false, "": false,
 	} {
 		if err := CheckVersion(v); (err == nil) != ok {
 			t.Errorf("CheckVersion(%q) = %v", v, err)
@@ -401,10 +403,22 @@ func TestVersionChecks(t *testing.T) {
 	}
 	for ua, ok := range map[string]bool{
 		"herdr_3d/0.160.1 (AlmaLinux 10.2.0; x86_64) xterm-256color (herdr_3d; v1)": true,
-		"codex_cli_rs/0.160.3": true, "herdr_3d/0.159.9 (x)": false, "herdr_3d": false, "": false,
+		"herdr_3d/0.161.0 (AlmaLinux 10.2.0; x86_64) dumb (herdr_3d; v1)":           true,
+		"codex_cli_rs/0.160.3": true, "codex_cli_rs/0.161.12": true,
+		"herdr_3d/0.159.9 (x)": false, "herdr_3d/0.162.0 (x)": false, "herdr_3d/0.161.0-alpha.1 (x)": false,
+		"herdr_3d": false, "": false,
 	} {
 		if err := CheckUserAgent(ua); (err == nil) != ok {
 			t.Errorf("CheckUserAgent(%q) = %v", ua, err)
 		}
+	}
+	// The refusal names the version and every verified line.
+	err := CheckVersion("codex-cli 0.162.0")
+	if want := `unsupported Codex version: "codex-cli 0.162.0" (supported: codex-cli 0.160.x or 0.161.x)`; err == nil || err.Error() != want {
+		t.Errorf("CheckVersion error %v, want %s", err, want)
+	}
+	err = CheckUserAgent("herdr_3d/0.159.9 (x)")
+	if want := `unsupported Codex version: app-server "herdr_3d/0.159.9 (x)" (supported: 0.160.x or 0.161.x)`; err == nil || err.Error() != want {
+		t.Errorf("CheckUserAgent error %v, want %s", err, want)
 	}
 }

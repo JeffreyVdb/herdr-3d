@@ -194,6 +194,10 @@ func TestPreflight(t *testing.T) {
 		t.Fatalf("calls %q", calls)
 	}
 	reply["--version"] = "codex-cli 0.161.0"
+	if err := p.Check(context.Background(), "/r"); err != nil {
+		t.Fatalf("a verified line (0.161): %v", err)
+	}
+	reply["--version"] = "codex-cli 0.162.0"
 	if err := p.Check(context.Background(), "/r"); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("new codex: %v", err)
 	}

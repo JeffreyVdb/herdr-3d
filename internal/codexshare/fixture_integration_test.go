@@ -1,6 +1,6 @@
 //go:build integration
 
-// Integration fixture for #154: the real Codex TUI (SupportedCodex) in an
+// Integration fixture for #154: the real Codex TUI (a VerifiedCodex) in an
 // isolated named Herdr session, a second app-server client, mock inference.
 // Nothing here touches ~/.codex, the user's Herdr sessions or the shared
 // daemon: every Codex runs with a throwaway CODEX_HOME, every Herdr call
@@ -39,6 +39,7 @@ func TestMain(m *testing.M) {
 type fx struct {
 	t      *testing.T
 	ctx    context.Context
+	codex  string // `codex --version`, one of VerifiedCodex
 	root   string
 	owner  string // OwnerVar's value in every process the fixture starts
 	home   string
@@ -60,7 +61,9 @@ type fxOptions struct {
 	noMCP    bool
 }
 
-func requireTools(t *testing.T) {
+// requireTools skips without the fixture's tools or on a Codex the fixture
+// is not verified with, and returns `codex --version` ("codex-cli 0.161.0").
+func requireTools(t *testing.T) string {
 	t.Helper()
 	for _, bin := range []string{"codex", "herdr", "fish", "direnv", "setsid"} {
 		if _, err := exec.LookPath(bin); err != nil {
@@ -68,13 +71,18 @@ func requireTools(t *testing.T) {
 		}
 	}
 	out, err := exec.Command("codex", "--version").Output()
-	if err != nil || strings.TrimSpace(string(out)) != SupportedCodex {
-		t.Skipf("codex --version = %q (%v), fixture verified against %s", strings.TrimSpace(string(out)), err, SupportedCodex)
+	if err != nil {
+		t.Skipf("codex --version: %v", err)
 	}
+	if err := CheckFixtureCodex(string(out)); err != nil {
+		t.Skipf("UNVERIFIED CODEX, not a pass: %v", err)
+	}
+	t.Logf("fixture codex: %s", strings.TrimSpace(string(out)))
+	return strings.TrimSpace(string(out))
 }
 
 func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
-	requireTools(t)
+	codex := requireTools(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	t.Cleanup(cancel)
 	// A short root: unix socket paths are limited to 108 bytes.
@@ -82,7 +90,7 @@ func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fx{t: t, ctx: ctx, root: root, owner: NewOwner(), home: filepath.Join(root, "home"), xdg: filepath.Join(root, "xdg"),
+	f := &fx{t: t, ctx: ctx, codex: codex, root: root, owner: NewOwner(), home: filepath.Join(root, "home"), xdg: filepath.Join(root, "xdg"),
 		data: filepath.Join(root, "data"), mcpDir: filepath.Join(root, "mcp")}
 	t.Cleanup(func() {
 		f.killOwned()
