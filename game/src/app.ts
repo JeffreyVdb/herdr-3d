@@ -21,7 +21,7 @@ import type { Daylight } from './world/daylight';
 import { TimePrefs } from './ui/timePrefs';
 import { RadioLink } from './radio/link';
 import { createGameAudio, createReception, receptionContext, type GameAudio, type Reception, type ReceptionEvent } from './reception';
-import { Hud, type PlanLabel } from './ui/hud';
+import { Hud, type PlanLabel, type ToastKind } from './ui/hud';
 import { HireDialog, type HirePrefill } from './ui/hire';
 import { Panels } from './ui/panels';
 import { SendHomeDialog } from './ui/sendHome';
@@ -525,7 +525,7 @@ export class App {
       store: this.store,
       send: <T extends CommandName>(t: T, args: CommandArgs[T]) => this.send(t, args),
       unsupported: (t: CommandName) => this.unsupported.has(t),
-      toast: (m: string, kind: 'info' | 'error') => this.hud.toast(m, kind === 'error' ? 6500 : 3600, kind),
+      toast: (m: string, kind: ToastKind) => this.hud.toast(m, kind === 'error' ? 6500 : kind === 'warn' ? 9000 : 3600, kind),
       now: () => Date.now(),
     };
     const upload = (f: Blob, hint: { label?: string; n?: number }, signal?: AbortSignal) => postUpload(this.url, f, hint, signal);

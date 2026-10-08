@@ -87,3 +87,48 @@ test('the seat bar’s Codex notice fits a phone, and a wide window keeps its ro
   expect(await seat.evaluate((el) => getComputedStyle(el).gridTemplateAreas)).toBe('"ask ask ask" "line mode stand" "keys keys keys"');
   clean();
 });
+
+// #186: a Codex hire that asked for its own server and got Codex's built-in one (`simfail=codex_unverified`: a
+// codex-cli 0.162.0 the shared server is not verified with) is hired: a warning toast, with its own sign, that names the
+// version and what it costs, not the red of a failed hire.
+test('a hire that falls back to Codex’s built-in server is a warning, not an error', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  // Stay on the floor (#116 off), so the toast is in view for the shot.
+  await page.addInitScript(() => localStorage.setItem('h3d.hire.goto', 'off'));
+  await openGame(page, 'demo-m4', '', 'play=none&sim=1&simms=150&simusage=0&simfail=codex_unverified');
+  const section = await openSection(page);
+  await section.getByRole('checkbox', { name: 'Give new Codex workers their own Codex server' }).check();
+  await expect(section.locator('.settings-status')).toHaveText('On. The next Codex hire gets its own server.');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeHidden();
+  await page.evaluate(() => window.__h3d.enterFloor('pastry'));
+  await frames(page, 3);
+  const L = await page.evaluate(() => window.__h3d.layout('pastry'));
+  const s = L?.slots[14];
+  if (!L || !s) throw new Error('no desk 14');
+  await page.evaluate(([x, z]) => window.__h3d.setPose({ x, z, yaw: 0 }), [s.seat.x - Math.sin(s.yaw) * 1.1, s.seat.z - Math.cos(s.yaw) * 1.1] as const);
+  await frames(page, 2);
+  await page.evaluate(() => window.__h3d.openHire(14));
+  await expect.poll(() => page.evaluate(() => window.__h3d.dialog()?.kind === 'hire' && window.__h3d.dialog()?.state), { timeout: 10_000 }).toBe('ready');
+  // The floor's default is Claude: Codex, from the keyboard (arrows pick, as in m4.spec).
+  await page.locator('[data-key="harness:claude"]').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(() => page.evaluate(() => (window.__h3d.dialog() as { form?: { harness?: string } } | null)?.form?.harness)).toBe('codex');
+  await page.locator('#hire-task').focus();
+  await page.keyboard.type('Label the loaves');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => page.evaluate(() => window.__h3d.dialog())).toBeNull();
+  const toast = page.locator('.toast');
+  await expect(toast).toHaveText(
+    /^Hired .* at Desk 15 .*Here they come\. No own Codex server: the shared Codex server is not verified with Codex 0\.162\.0 yet \(verified: 0\.160\.x or 0\.161\.x\)\. It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript\.$/,
+  );
+  await expect(toast).toHaveAttribute('data-kind', 'warn');
+  // Not colour alone: the warning's drawn sign.
+  expect(await toast.evaluate((el) => getComputedStyle(el, '::before').maskImage || getComputedStyle(el, '::before').webkitMaskImage)).toContain('svg');
+  // Clear of the limits plate, which the hire dialog folded and which is back now.
+  const [tb, lb] = await Promise.all([toast.boundingBox(), page.locator('[data-hook="limits"]').boundingBox()]);
+  expect(tb && lb && (tb.y >= lb.y + lb.height || tb.x + tb.width <= lb.x)).toBe(true);
+  await shot(page, 'hire-codex-fallback-warning');
+  clean();
+});

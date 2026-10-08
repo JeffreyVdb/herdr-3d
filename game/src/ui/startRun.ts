@@ -24,6 +24,7 @@ import './start.css';
 import { deskTabs } from './deskTabs';
 import { chips, type HireHost } from './hire';
 import { failureText } from './messages';
+import { hiredToast } from './hiredToast';
 // M10 limits
 import { planLimits } from './limits';
 import { backdropPolicy } from './dismiss';
@@ -876,14 +877,16 @@ export class StartRunDialog {
       const w = ack?.id ? this.host.store.workerView(ack.id) : null;
       const name = w?.name ?? who;
       const on = t.kind === 'issue' ? ` on #${t.number}` : t.kind === 'work_item' ? ` on ${t.item.key}` : '';
-      const extra = ack?.prompted === false ? ` The prompt was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P).` : '';
+      const notSent = ack?.prompted === false ? `The prompt was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P).` : '';
       if (still) this.close();
       // Sent: the fields' drafts (and their uploads) are done with.
       if (opened === this.opened) {
         this.extraDraft.dispose();
         this.promptDraft.dispose();
       }
-      this.host.toast(`Started a run${on}: ${name} takes Desk ${(w?.desk ?? desk) + 1}. Here they come.${extra}`, extra ? 'error' : 'info');
+      // #186: as a hire's (hiredToast): a run on Codex's built-in server is a warning, a prompt not sent an error.
+      const toast = hiredToast(`Started a run${on}: ${name} takes Desk ${(w?.desk ?? desk) + 1}. Here they come.`, ack, notSent);
+      this.host.toast(toast.text, toast.kind);
       if (ack?.id) this.host.started(ack.id, t.kind === 'work_item' ? { provider: t.item.provider, id: t.item.id } : undefined);
       return;
     }

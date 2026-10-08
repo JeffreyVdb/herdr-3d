@@ -10,9 +10,9 @@ class CmdError extends Error {
   }
 }
 
-function sim(available = true) {
+function sim(available = true, unverified = false) {
   const sent: Array<Record<string, unknown>> = [];
-  const s = new CodexServerSim({ emit: (send, m) => send(m), error: (code, message) => new CmdError(code, message) }, available);
+  const s = new CodexServerSim({ emit: (send, m) => send(m), error: (code, message) => new CmdError(code, message) }, available, unverified);
   const run = (t: string, a: Record<string, unknown> = {}) => {
     let acked: unknown;
     s.handle(t, a, (m) => sent.push(m), (d) => (acked = d));
@@ -42,5 +42,16 @@ describe('the fixture’s shared Codex server switch (#155)', () => {
       expect((e as CmdError).code).toBe('unsupported');
     }
     expect(run('codex_server.set', { enabled: false })).toEqual({ enabled: false, available: false });
+  });
+
+  it('#186: on an unverified Codex, a Codex hire with the switch on falls back; otherwise hires are untouched', () => {
+    const { s, run } = sim(true, true);
+    expect(s.hire('codex')).toBeUndefined();
+    run('codex_server.set', { enabled: true });
+    expect(s.hire('codex')).toMatchObject({ mode: 'legacy', note: expect.stringContaining('"codex-cli 0.162.0"') });
+    expect(s.hire('claude')).toBeUndefined();
+    const plain = sim();
+    plain.run('codex_server.set', { enabled: true });
+    expect(plain.s.hire('codex')).toBeUndefined();
   });
 });

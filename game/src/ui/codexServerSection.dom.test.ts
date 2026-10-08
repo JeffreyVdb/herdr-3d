@@ -94,12 +94,22 @@ describe('what a worker’s Codex launch tells you (#155)', () => {
     expect(codexNotice({ codex: { mode: 'shared', server: 'stopped', note: 'resume failed: x' } })).toEqual({ tone: 'down', text: 'Its Codex server is not running (resume failed: x).' });
     expect(codexNotice({ codex: { mode: 'legacy', note: 'shared Codex server: .envrc is blocked: /r/.envrc; started the usual way' } })).toEqual({
       tone: 'note',
-      text: 'No own Codex server: .envrc is blocked: /r/.envrc. It runs with Codex’s built-in one.',
+      text: 'No own Codex server: .envrc is blocked: /r/.envrc. It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript.',
     });
     expect(
       codexNotice({ codex: { mode: 'shared', server: 'stopped', note: "shared Codex server: app-server connection failed; resumed without its own server, on Codex's built-in one" } }),
     ).toEqual({ tone: 'note', text: 'No own Codex server this time: app-server connection failed. It runs with Codex’s built-in one; the next wake tries its own again.' });
     expect(codexNotice({ codex: { mode: 'legacy' } })).toBeNull();
+    // #186: a Codex the shared server is not verified with, by its CLI or by its server's userAgent: the version, plainly.
+    for (const why of ['"codex-cli 0.162.0" (supported: codex-cli 0.160.x or 0.161.x)', 'app-server "herdr_3d/0.162.0 (Linux; x86_64) xterm" (supported: 0.160.x or 0.161.x)']) {
+      expect(codexNotice({ codex: { mode: 'legacy', note: `shared Codex server: unsupported Codex version: ${why}; started the usual way` } })).toEqual({
+        tone: 'note',
+        text: 'No own Codex server: the shared Codex server is not verified with Codex 0.162.0 yet (verified: 0.160.x or 0.161.x). It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript.',
+      });
+    }
+    expect(
+      codexNotice({ codex: { mode: 'shared', server: 'stopped', note: 'shared Codex server: unsupported Codex version: "codex-cli 0.159.9" (supported: codex-cli 0.160.x or 0.161.x); started without its own server, on Codex\'s built-in one' } }),
+    ).toEqual({ tone: 'note', text: 'No own Codex server this time: the shared Codex server is not verified with Codex 0.159.9 yet (verified: 0.160.x or 0.161.x). It runs with Codex’s built-in one; the next wake tries its own again.' });
     expect(codexNotice({})).toBeNull();
   });
 });

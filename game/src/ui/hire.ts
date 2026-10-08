@@ -1,4 +1,3 @@
-import { codexNotice } from '../world/codexServer';
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, CommandName, HireAck, HireGit, HirePrepare } from '../net/protocol';
 import {
@@ -20,6 +19,8 @@ import { effortsFor } from '../world/settings';
 import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
+import { hiredToast } from './hiredToast';
+import type { ToastKind } from './hud';
 // M10 limits
 import { planLimits } from './limits';
 // M6 start
@@ -44,7 +45,7 @@ export interface DialogHost {
   readonly store: WorldStore;
   send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   unsupported(t: CommandName): boolean;
-  toast(msg: string, kind: 'info' | 'error'): void;
+  toast(msg: string, kind: ToastKind): void;
   now(): number;
 }
 
@@ -853,15 +854,13 @@ export class HireDialog {
       const branch = ack?.branch ? ` on ${ack.branch}` : '';
       // The worker exists but never got the task (`prompted: false`): the text stays, so it can be copied or sent by hand.
       if (ack?.prompted !== false) this.clearSent(doc, revision, sent);
-      const fallback = codexNotice({ codex: ack?.codex }); // #155: asked for its own Codex server, runs the built-in one
-      const extra = [
-        ack?.prompted === false ? `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P); the text stays in this desk’s hire dialog.` : '',
-        fallback ? fallback.text : '',
-      ].filter(Boolean);
+      // #155/#186: a Codex hire that runs on the built-in server instead of its own is a warning; a task not sent, an error.
+      const notSent = ack?.prompted === false ? `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P); the text stays in this desk’s hire dialog.` : '';
       if (still) this.close();
       // #116: also when the first task was not sent (so it can be prompted); never from a late ack (`still`).
       if (still && ack?.id) this.host.goTo?.(ack.id);
-      this.host.toast([`Hired ${name} at Desk ${(w?.desk ?? desk) + 1}${branch}. Here they come.`, ...extra].join(' '), extra.length ? 'error' : 'info');
+      const t = hiredToast(`Hired ${name} at Desk ${(w?.desk ?? desk) + 1}${branch}. Here they come.`, ack, notSent);
+      this.host.toast(t.text, t.kind);
       return;
     }
     const msg = failureText('worker.hire', r.code, r.message, { floor: session, desk: desk + 1 });

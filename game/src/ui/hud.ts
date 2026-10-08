@@ -74,6 +74,9 @@ export interface PlanLabel {
   display?: Display;
 }
 
+/** A toast's weight: `info` says what happened; `warn` (#186) that it worked, with a catch you should know; `error` that it failed or needs you. */
+export type ToastKind = 'info' | 'warn' | 'error';
+
 /** All DOM UI over the canvas. Pure presentation: the app feeds it state. */
 export class Hud {
   readonly root: HTMLDivElement;
@@ -709,7 +712,7 @@ export class Hud {
     this.notice.replaceChildren(h, p);
   }
 
-  toast(msg: string, ms = 3200, kind: 'info' | 'error' = 'info', soft = false): void {
+  toast(msg: string, ms = 3200, kind: ToastKind = 'info', soft = false): void {
     // A soft toast (M15's "now playing") never covers a message that is still up.
     if (soft && !this.toastEl.hidden && !this.toastSoft) return;
     this.toastSoft = soft;
@@ -717,6 +720,8 @@ export class Hud {
     this.toastEl.dataset.kind = kind;
     this.toastEl.hidden = false;
     this.placeToast();
+    // A toast right after a screen dialog closed (a hire's): the limits plate that dialog folded is back a moment later.
+    requestAnimationFrame(() => this.toastEl.hidden || this.placeToast());
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => (this.toastEl.hidden = true), ms);
   }

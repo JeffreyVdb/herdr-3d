@@ -55,8 +55,8 @@ export interface CodexNotice {
 
 /**
  * A shared worker whose server died (its terminal waits to reconnect, and herdr may still say it works), or whose
- * resume failed; a hire that asked for its own server and runs Codex's embedded one instead, and why; a shared worker
- * woken without its server (it runs on the embedded one until the next wake), and why. Else null.
+ * resume failed; a hire that asked for its own server and runs Codex's embedded one instead, and why (#186: what that
+ * costs); a shared worker woken without its server (it runs on the embedded one until the next wake), and why. Else null.
  */
 export function codexNotice(w: { codex?: Worker['codex'] | undefined }): CodexNotice | null {
   const c = w.codex;
@@ -67,11 +67,25 @@ export function codexNotice(w: { codex?: Worker['codex'] | undefined }): CodexNo
   if (c.mode === 'shared' && c.server === 'stopped' && c.note?.startsWith('shared Codex server: ')) {
     // Woken without its own server: its terminal runs on Codex's built-in one, and the next wake tries its own again.
     const why = c.note.replace(/^shared Codex server: /, '').replace(/; (resumed|started) without its own server, on Codex's built-in one$/, '');
-    return { tone: 'note', text: `No own Codex server this time: ${why}. It runs with Codex’s built-in one; the next wake tries its own again.` };
+    return { tone: 'note', text: `No own Codex server this time: ${plainWhy(why)}. It runs with Codex’s built-in one; the next wake tries its own again.` };
   }
   if (c.mode === 'shared' && c.server === 'stopped' && c.note) return { tone: 'down', text: `Its Codex server is not running (${c.note}).` };
-  if (c.mode === 'legacy' && c.note) return { tone: 'note', text: c.note.replace(/^shared Codex server: /, 'No own Codex server: ').replace(/; started the usual way$/, '. It runs with Codex’s built-in one.') };
+  if (c.mode === 'legacy' && c.note) {
+    const why = c.note.replace(/^shared Codex server: /, '').replace(/; started the usual way$/, '');
+    return { tone: 'note', text: `No own Codex server: ${plainWhy(why)}. It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript.` };
+  }
   return null;
+}
+
+/**
+ * #186: the bridge's refusal of a Codex its shared server is not verified with, by `codex --version`
+ * (`unsupported Codex version: "codex-cli 0.162.0" (supported: codex-cli 0.160.x or 0.161.x)`) or by the server's
+ * userAgent (`… app-server "herdr_3d/0.162.0 (…) …" (supported: 0.160.x or 0.161.x)`), in plain words; any other
+ * reason as it is.
+ */
+function plainWhy(why: string): string {
+  const m = /^unsupported Codex version: (?:app-server "[^"/ ]+\/|"codex-cli )([^" ]+)[^"]*" \(supported: (?:codex-cli )?([^)]+)\)$/.exec(why);
+  return m ? `the shared Codex server is not verified with Codex ${m[1]} yet (verified: ${m[2]})` : why;
 }
 
 /** Plain words for a `codex_server.*` failure. */

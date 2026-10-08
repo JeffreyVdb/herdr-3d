@@ -908,3 +908,19 @@ Code: `game/src/laptop/index.ts` (`attach`, `rebind`, `rebase`, `syncAway`), `la
 | 7 | The floor you sit on is removed | `App.syncWalk` does not call `leaveFloor` while you are seated: the `OfficeView` stays as it was (nothing rebuilds it, the store has no view of it), the worker is away (row 4), and the seat keeps working. Once you get up yourself (`step` sees `orphaned` and no seat) it runs again, says "… is gone." and leaves to the city, disposing the scene, so nothing is kept. If the floor comes back first (a `floor.upsert` of the session), the scene is applied or rebuilt as for any update. |
 | 8 | The seat bar's line | The away (or offline) line is set again whenever the view changes (Terminal ↔ Conversation: `SeatBar.setMode` says "ok"), and wraps to two lines instead of ending in an ellipsis, so the terminal view never says "Your keys go to …" about a worker that is away. |
 | 9 | Not done | The composer is not disabled while away (a disabled box would take the keyboard from you while you type); the draft is yours to copy or keep. |
+
+## 2026-10-08 — #186: a hire on Codex's built-in server is a warning, not a failure; Codex 0.161
+
+A Codex hire made with the shared-server switch on that runs on Codex's built-in server instead (an unverified Codex,
+a blocked `.envrc`, a server that does not answer, …) is a hire that **succeeded**: the worker is there and works,
+without the transcript's async answers. Its toast was red, like a failed hire. Code: `game/src/ui/hiredToast.ts`
+(hire and run start), `ui/hud.ts` + `hud.css` (`ToastKind`), `world/codexServer.ts` (`codexNotice`); tests
+`ui/hiredToast.test.ts`, `ui/hire.dom.test.ts`, `ui/codexServerSection.dom.test.ts`, `e2e/h155-codex-server.spec.ts`
+(the fixture bridge's `simfail=codex_unverified`).
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | How a fallback hire is shown | **A third toast kind, `warn`**: ink with a sun-yellow ring and a drawn triangle, between the info sun and the error red. `error` gets a drawn octagon, so the two never differ by colour alone (screen readers hear the words; the toast stays one polite status). It lasts 9 s, the hire dialogs' errors 6.5 s. |
+| 2 | Which wins | `hiredToast(lead, ack, failure)`, one rule for `worker.hire` and `run.start`: a task or prompt that did not reach the worker (`prompted: false`) is `error`, also beside a fallback (both are said); a fallback alone is `warn`; else `info`. A refused hire is unchanged (`error`, `failureText`). |
+| 3 | The words | Any fallback names its cost: "It runs on Codex's built-in server, so its async questions can't be answered from the transcript." An unverified Codex (by `codex --version` or by the server's `userAgent`) is said plainly: "the shared Codex server is not verified with Codex 0.162.0 yet (verified: 0.160.x or 0.161.x)". The supported set is read from the bridge's note, not kept in the game. The same words show on the seat bar (a wake without its server too). |
+| 4 | Found on the way | A toast shown as a screen dialog closes (a hire's) was placed before the limits plate the dialog had folded came back, and sat under it. The toast is placed again on the next frame. |

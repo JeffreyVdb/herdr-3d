@@ -29,6 +29,7 @@ function setup() {
   const holds = new Set<number>();
   const goTos: string[] = [];
   const toasts: string[] = [];
+  const kinds: string[] = [];
   const host = {
     store: { hireOptions: { codex: { models: ['gpt'], efforts: ['high'] } }, floorView: () => ({ seats: Array(10).fill(null) }), limits: { version: 0, list: () => [] }, workerView: () => null },
     send: async (t: string) => (t === 'hire.prepare' ? { ok: true, data: prep } : await new Promise((r) => (ack = r))),
@@ -38,13 +39,16 @@ function setup() {
       return () => holds.delete(d);
     },
     held: () => holds,
-    toast: (m: string) => void toasts.push(m),
+    toast: (m: string, kind: string) => {
+      toasts.push(m);
+      kinds.push(kind);
+    },
     goTo: (id: string) => void goTos.push(id),
     now: () => Date.now(),
     upload: () => new Promise((r) => (finishUpload = r)),
   } as unknown as HireHost;
   const dlg = new HireDialog(document.body, host);
-  return { dlg, goTos, toasts, inner: dlg as unknown as Inner, ack: (r: unknown) => ack(r), finishUpload: (r: unknown) => finishUpload(r) };
+  return { dlg, goTos, toasts, kinds, inner: dlg as unknown as Inner, ack: (r: unknown) => ack(r), finishUpload: (r: unknown) => finishUpload(r) };
 }
 
 describe('HireDialog: clearing after an acknowledged hire', () => {
@@ -204,6 +208,28 @@ describe('HireDialog: going to the new hire (#116)', () => {
       expect(goTos).toEqual([]);
       expect(toasts.some((t) => t.includes('Here they come.'))).toBe(true);
       dlg.close();
+    }
+  });
+
+  // #186: hired, but on Codex's built-in server instead of its own: a warning, not a failed hire; a task not sent stays an error.
+  it('a Codex fallback is a warning toast; a first task not sent beside it is still an error', async () => {
+    const codex = { mode: 'legacy', note: 'shared Codex server: unsupported Codex version: "codex-cli 0.162.0" (supported: codex-cli 0.160.x or 0.161.x); started the usual way' };
+    for (const [data, kind] of [
+      [{ id: 'new-worker', prompted: true }, 'info'],
+      [{ id: 'new-worker', prompted: true, codex }, 'warn'],
+      [{ id: 'new-worker', prompted: false, prompt_error: 'no luck', codex }, 'error'],
+    ] as const) {
+      const { dlg, inner, ack, toasts, kinds } = setup();
+      dlg.open('floor', 0);
+      await tick();
+      const pending = inner.hire();
+      await tick();
+      ack({ ok: true, data });
+      await pending;
+      expect(kinds).toEqual([kind]);
+      expect(toasts[0]?.includes('Codex 0.162.0')).toBe('codex' in data);
+      dlg.close();
+      document.body.replaceChildren();
     }
   });
 
