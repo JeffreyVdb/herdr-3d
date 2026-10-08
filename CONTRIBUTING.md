@@ -104,7 +104,7 @@ make e2e SPEC=e2e/m6b.spec.ts   # only that spec (same lock and portlease)
   the browser's clock with `page.clock.setFixedTime` and its zone with `timezoneId` (`e2e/m17-daynight.spec.ts`).
 - Never hardcode ports. Use `portlease run` / `portlease reserve`, and bind `127.0.0.1` only. Other agents run in
   parallel worktrees on the same host.
-- CI (`.github/workflows/ci.yml`) runs go vet/gofmt/test and the darwin cross-build only when a branch changes a Go input against main (`cmd/`, `internal/`, `game/fixtures/`, `go.mod`/`go.sum`, the Makefile, the workflow); pushes to main always run them. The shell deploy test, tsc and vitest always run. No Playwright in CI.
+- CI (`.github/workflows/ci.yml`) runs go vet/gofmt/test and the darwin cross-build only when a branch changes a Go input against main (`cmd/`, `internal/`, `game/fixtures/`, `go.mod`/`go.sum`, the Makefile, the workflow); pushes to main always run them. tsc and vitest run only when a branch changes a game input (`game/`, `docs/shortcuts.md`, `internal/whiteboard/testdata/`, the Makefile, the workflow). The shell deploy test always runs. No Playwright in CI.
 - `go test ./internal/ai ./internal/server` never call a model (#92): `httptest` servers play Jev and an OpenAI-compatible
   endpoint, and a feature's tests take `ai.FakeClassifier` / `ai.FakeLLM`. `game/e2e/ai-integration.spec.ts` starts its own
   fake Jev and OpenAI servers on OS-leased loopback ports and the fixture bridge (`simjev=<url>`, `game/tools/fixture-ai.ts`)

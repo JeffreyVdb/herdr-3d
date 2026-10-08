@@ -13,14 +13,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Decides whether the go job runs. A push to any branch other than main runs
-  # it only when the branch changes a Go input, compared against main (not the
-  # previous push, so a docs-only push on a branch that already changed Go code
-  # still runs it). Pushes to main and manual runs always run it.
+  # Decides whether the go and game jobs run. A push to any branch other than
+  # main runs each only when the branch changes one of its inputs, compared
+  # against main (not the previous push, so a docs-only push on a branch that
+  # already changed Go code still runs it). Pushes to main and manual runs
+  # always run both.
   changes:
     runs-on: ubuntu-24.04
     outputs:
       go: ${{ steps.filter.outputs.go }}
+      game: ${{ steps.filter.outputs.game }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -32,14 +34,20 @@ jobs:
           # cmd/ and internal/ hold the Go code and what it embeds or reads (testdata,
           # catalog.json, pricing.json, graphql queries); game/fixtures/ is read by Go tests.
           GO_INPUTS: '^(cmd|internal|game/fixtures)/|^(go\.mod|go\.sum|Makefile|\.github/workflows/ci\.yml)$'
+          # game/ is the app and its tests; the tests also read docs/shortcuts.md
+          # (the generated shortcuts table) and the Go whiteboard testdata.
+          GAME_INPUTS: '^(game|internal/whiteboard/testdata)/|^(docs/shortcuts\.md|Makefile|\.github/workflows/ci\.yml)$'
         run: |
           if [ "$EVENT" != push ] || [ "$REF_NAME" = main ]; then
             go=true
+            game=true
           else
             files=$(git diff --no-renames --name-only origin/main...HEAD)
             if grep -Eq "$GO_INPUTS" <<< "$files"; then go=true; else go=false; fi
+            if grep -Eq "$GAME_INPUTS" <<< "$files"; then game=true; else game=false; fi
           fi
           echo "go=$go" >> "$GITHUB_OUTPUT"
+          echo "game=$game" >> "$GITHUB_OUTPUT"
 
   go:
     needs: changes
@@ -62,6 +70,8 @@ jobs:
       - run: make sh-test
 
   game:
+    needs: changes
+    if: needs.changes.outputs.game == 'true'
     runs-on: ubuntu-24.04
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
