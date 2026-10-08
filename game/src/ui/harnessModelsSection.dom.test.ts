@@ -57,14 +57,14 @@ function mount(cat: HireOptions = CAT, prefs = new HireModelPrefs(memory())) {
 }
 
 describe('Settings → Harness models (#194)', () => {
-  it('lists every catalog model per harness, all shown with no preference, with the exact slug and the Show in Hire switch', () => {
+  it('lists every catalog model per harness, all shown with no preference, with the exact slug and the Show switch', () => {
     const m = mount();
     expect(m.groups().map((g) => g.querySelector('h4')!.textContent)).toEqual(['Codex', 'Claude Code']);
     const codex = m.group('codex');
     expect(m.rows(codex).map((r) => r.querySelector('code')!.textContent)).toEqual(['x-1', 'x-2', 'x-3']);
-    expect(m.rows(codex).every((r) => r.textContent!.includes('Show in Hire'))).toBe(true);
+    expect(m.rows(codex).every((r) => r.textContent!.includes('Show'))).toBe(true);
     expect(m.rows(codex).every((r) => (r.querySelector('input') as HTMLInputElement).checked)).toBe(true);
-    expect(m.count(codex)).toBe('3 of 3 shown in Hire');
+    expect(m.count(codex)).toBe('3 of 3 shown');
     expect(m.showAll(codex).disabled).toBe(true);
   });
 
@@ -75,11 +75,11 @@ describe('Settings → Harness models (#194)', () => {
     expect(m.prefs.isShown('codex', 'x-2')).toBe(false);
     expect(m.box(codex, 'x-2').checked).toBe(false);
     expect(m.rows(codex).length).toBe(3);
-    expect(m.count(codex)).toBe('2 of 3 shown in Hire');
+    expect(m.count(codex)).toBe('2 of 3 shown');
     expect(m.showAll(codex).disabled).toBe(false);
     expect(m.prefs.isShown('claude', 'y-1')).toBe(true);
     m.toggle(m.box(codex, 'x-2'), true);
-    expect(m.count(codex)).toBe('3 of 3 shown in Hire');
+    expect(m.count(codex)).toBe('3 of 3 shown');
   });
 
   it('Show all restores the harness only', () => {
@@ -90,9 +90,9 @@ describe('Settings → Harness models (#194)', () => {
     m.toggle(m.box(codex, 'x-3'), false);
     m.toggle(m.box(claude, 'y-2'), false);
     m.showAll(codex).click();
-    expect(m.count(codex)).toBe('3 of 3 shown in Hire');
+    expect(m.count(codex)).toBe('3 of 3 shown');
     expect(m.showAll(codex).disabled).toBe(true);
-    expect(m.count(claude)).toBe('1 of 2 shown in Hire');
+    expect(m.count(claude)).toBe('1 of 2 shown');
   });
 
   it('search narrows the list and the rows the switches act on; Esc clears it before anything else', () => {
@@ -119,7 +119,7 @@ describe('Settings → Harness models (#194)', () => {
     expect(m.stale(codex).hidden).toBe(false);
     expect(m.stale(codex).textContent).toContain('Not currently available');
     expect(m.stale(codex).textContent).toContain('gone-1');
-    expect(m.count(codex)).toBe('3 of 3 shown in Hire');
+    expect(m.count(codex)).toBe('3 of 3 shown');
     m.stale(codex).querySelector<HTMLButtonElement>('button')!.click();
     expect(prefs.isShown('codex', 'gone-1')).toBe(true);
     expect(m.stale(codex).hidden).toBe(true);
@@ -136,7 +136,7 @@ describe('Settings → Harness models (#194)', () => {
     expect(m.rows(codex).length).toBe(4);
     expect(m.box(codex, 'x-9').checked).toBe(false);
     expect(m.stale(codex).hidden).toBe(true);
-    expect(m.count(codex)).toBe('3 of 4 shown in Hire');
+    expect(m.count(codex)).toBe('3 of 4 shown');
   });
 
   it('a model the bridge discovers is listed and shown; the list follows the catalog when the dialog opens', () => {
@@ -158,7 +158,7 @@ describe('Settings → Harness models (#194)', () => {
     const codex = m.group('codex');
     m.prefs.setShown('codex', 'x-1', false);
     expect(m.box(codex, 'x-1').checked).toBe(false);
-    expect(m.count(codex)).toBe('2 of 3 shown in Hire');
+    expect(m.count(codex)).toBe('2 of 3 shown');
     expect(m.showAll(codex).disabled).toBe(false);
   });
 });

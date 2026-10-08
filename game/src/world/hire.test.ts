@@ -18,6 +18,7 @@ import {
   leftovers,
   Reservations,
   resolveChoice,
+  offeredOptions,
   resolveVisibleChoice,
   visibleOptions,
   worktreeUsable,
@@ -304,5 +305,25 @@ describe('visible choice resolution (#194)', () => {
   it('the preselected choice is still resolved on the whole catalog: a hidden floor default is not the one the form opens on', () => {
     const v = visibleOptions(CAT, hiding({ codex: ['x-1'] }));
     expect(formFromPrepare(prep({ choice: { harness: 'codex', model: 'x-1', effort: 'high' } }), v)).toMatchObject({ model: 'x-2', effort: 'high' });
+  });
+});
+
+describe('offered options: what a model picker other than Hire offers', () => {
+  it('without Settings, the whole catalog', () => {
+    expect(offeredOptions(CAT, null, [{ harness: 'codex', model: 'x-1' }])).toBe(CAT);
+  });
+
+  it('the models Settings leaves shown, plus a saved choice of a hidden one, in catalog order', () => {
+    const o = offeredOptions(CAT, hiding({ codex: ['x-1', 'x-3'], claude: ['y-1'] }), [{ harness: 'codex', model: 'x-3' }, null, { harness: 'claude', model: 'y-2' }]);
+    expect(o.codex).toEqual({ models: ['x-2', 'x-3'], efforts: ['low', 'high'], extra_efforts: { 'x-2': ['ultra'] } });
+    expect(o.claude?.models).toEqual(['y-2']);
+    expect(CAT.codex?.models).toEqual(['x-1', 'x-2', 'x-3']);
+  });
+
+  it('never offers a model the catalog does not list, nor one under another harness', () => {
+    const o = offeredOptions(CAT, hiding({ codex: ['x-1'] }), [{ harness: 'codex', model: 'gone' }, { harness: 'claude', model: 'x-1' }, { harness: 'gemini', model: 'x-1' }]);
+    expect(o.codex?.models).toEqual(['x-2', 'x-3']);
+    expect(o.claude?.models).toEqual(['y-1', 'y-2']);
+    expect(Object.keys(o)).toEqual(['codex', 'claude']);
   });
 });

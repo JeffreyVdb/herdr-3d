@@ -1,6 +1,7 @@
-import type { CommandArgs, CommandName, Hire, Preset, PresetRoles } from '../net/protocol';
+import type { CommandArgs, CommandName, Hire, HireOptions, Preset, PresetRole, PresetRoles } from '../net/protocol';
 import type { CommandResult } from '../net/client';
-import { modelsFor, resolveChoice } from '../world/hire';
+import { modelsFor, offeredOptions, resolveVisibleChoice } from '../world/hire';
+import { labelsOf, modelEntries, modelOptionText } from '../world/modelLabel';
 import { PRESET_ROLES, ROLE_LABEL } from '../world/presets';
 import { effortsFor } from '../world/settings';
 import { presetBlocker, presetLines, presetPatch, type PresetDraft } from '../world/startRun';
@@ -8,6 +9,7 @@ import type { WorldStore } from '../world/store';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
 import { failureText } from './messages';
 import { backdropPolicy } from './dismiss';
+import type { HireModelPrefs } from './hireModelPrefs';
 
 /**
  * Team presets (M6): list, create, edit (name and the five roles ×
@@ -22,6 +24,8 @@ export interface PresetsHost {
   send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   unsupported(t: CommandName): boolean;
   toast(msg: string, kind: 'info' | 'error'): void;
+  /** Settings → Harness models: the role pickers offer the models it leaves shown (absent: every model). */
+  modelPrefs?: HireModelPrefs;
 }
 
 type View = { kind: 'list'; confirm: string | null } | { kind: 'edit'; id: string | null; draft: PresetDraft; error: { field: 'name' | 'roles'; why: string } | null; saving: boolean; seen: Preset | null };
@@ -89,6 +93,8 @@ export class PresetsPanel {
       e.preventDefault();
       if (this.view.kind === 'edit') void this.save();
     });
+    // Settings → Harness models changed what the role pickers offer.
+    this.host.modelPrefs?.onChange(() => this.visibilityChanged());
     parent.append(this.dialog);
   }
 
@@ -133,6 +139,23 @@ export class PresetsPanel {
     this.render();
   }
 
+  /**
+   * The catalog a role's pickers offer: the models Settings leaves shown, plus the role's model as saved, so editing a
+   * preset never swaps a hidden model for another one unasked.
+   */
+  private roleOptions(r: PresetRole, seen: Preset | null): HireOptions {
+    const prefs = this.host.modelPrefs;
+    return offeredOptions(this.host.store.hireOptions, prefs && ((harness) => prefs.hidden(harness)), [seen?.roles[r]]);
+  }
+
+  /** Settings changed what is shown: a draft role on a model now hidden (and not saved so) takes the first shown one. */
+  private visibilityChanged(): void {
+    const v = this.view;
+    if (!this.dialog.open || v.kind !== 'edit' || v.saving) return;
+    for (const r of PRESET_ROLES) v.draft.roles[r] = resolveVisibleChoice(this.roleOptions(r, v.seen), v.draft.roles[r]);
+    this.render();
+  }
+
   private setStatus(msg: string, error = false): void {
     this.statusText = msg;
     this.statusError = error && !!msg;
@@ -169,7 +192,7 @@ export class PresetsPanel {
     for (const p of list) {
       const asking = confirm === p.id;
       const roles = h('dl', { class: 'pp-roles' });
-      for (const r of presetLines(p)) roles.append(h('dt', {}, r.role), h('dd', {}, r.line));
+      for (const r of presetLines(p, this.host.store.hireOptions)) roles.append(h('dt', {}, r.role), h('dd', {}, r.line));
       const tools = asking
         ? h(
             'div',
@@ -206,7 +229,6 @@ export class PresetsPanel {
   }
 
   private renderEdit(v: Extract<View, { kind: 'edit' }>): void {
-    const options = this.host.store.hireOptions;
     const name = h('input', { id: 'preset-name', 'data-key': 'name', autocomplete: 'off', spellcheck: 'false', maxlength: 40, placeholder: 'e.g. Solo coder', 'aria-invalid': v.error?.field === 'name' ? 'true' : null, 'aria-describedby': 'preset-name-error' });
     name.value = v.draft.name;
     name.disabled = v.saving;
@@ -219,19 +241,22 @@ export class PresetsPanel {
         if (err) err.textContent = '';
       }
     });
-    const select = (key: string, label: string, values: string[], value: string, pick: (x: string) => void) => {
+    /** `text` names each value (the models); without it an option shows its value. */
+    const select = (key: string, label: string, values: string[], value: string, pick: (x: string) => void, text: (x: string, i: number) => string = (x) => x) => {
       const s = h('select', { 'data-key': key, 'aria-label': label, disabled: v.saving });
-      for (const x of values) s.append(h('option', { value: x, selected: x === value ? true : null }, x));
+      if (!values.length) s.append(h('option', { value: '', selected: true }, '—'));
+      for (const [i, x] of values.entries()) s.append(h('option', { value: x, selected: x === value ? true : null, title: text(x, i) === x ? null : x }, text(x, i)));
       s.addEventListener('change', () => pick(s.value));
       return s;
     };
     const table = h('div', { class: 'pp-table', role: 'table', 'aria-label': 'Roles' }, h('div', { class: 'pp-tr pp-th', role: 'row' }, ...['Role', 'Harness', 'Model', 'Effort'].map((x) => h('span', { role: 'columnheader' }, x))));
     for (const r of PRESET_ROLES) {
       const c = v.draft.roles[r];
+      const options = this.roleOptions(r, v.seen);
+      const models = modelsFor(options, c.harness);
+      const names = modelEntries(c.harness, models, labelsOf(options, c.harness));
       const set = (p: Partial<Hire>) => {
-        const next = resolveChoice(options, { ...c, ...p });
-        if (!next) return;
-        v.draft.roles[r] = next;
+        v.draft.roles[r] = resolveVisibleChoice(options, { ...c, ...p });
         if (v.error?.field === 'roles') v.error = null;
         this.render();
       };
@@ -241,7 +266,7 @@ export class PresetsPanel {
           { class: 'pp-tr', role: 'row', 'data-role': r },
           h('span', { class: 'pp-role', role: 'rowheader' }, ROLE_LABEL[r]),
           h('span', { role: 'cell' }, select(`role:${r}:harness`, `${ROLE_LABEL[r]} harness`, Object.keys(options), c.harness, (x) => set({ harness: x }))),
-          h('span', { role: 'cell' }, select(`role:${r}:model`, `${ROLE_LABEL[r]} model`, modelsFor(options, c.harness), c.model, (x) => set({ model: x }))),
+          h('span', { role: 'cell' }, select(`role:${r}:model`, `${ROLE_LABEL[r]} model`, models, c.model, (x) => set({ model: x }), (_, i) => modelOptionText(names[i]!))),
           h('span', { role: 'cell' }, select(`role:${r}:effort`, `${ROLE_LABEL[r]} effort`, effortsFor(options, c.harness, c.model), c.effort, (x) => set({ effort: x }))),
         ),
       );
@@ -288,7 +313,7 @@ export class PresetsPanel {
     const book = this.host.store.presets;
     const base = p ?? book.defaultFor(undefined);
     const roles = Object.fromEntries(
-      PRESET_ROLES.map((r) => [r, resolveChoice(this.host.store.hireOptions, base?.roles[r] ?? null) ?? { harness: '', model: '', effort: '' }]),
+      PRESET_ROLES.map((r) => [r, resolveVisibleChoice(this.roleOptions(r, p), base?.roles[r] ?? null)]),
     ) as PresetRoles;
     this.view = { kind: 'edit', id: p?.id ?? null, draft: { name: p?.name ?? '', roles }, error: null, saving: false, seen: p ? structuredClone(p) : null };
     this.setStatus('');

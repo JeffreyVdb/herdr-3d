@@ -348,7 +348,7 @@ export class App {
       goTo: (s) => void this.goToFloor(s),
     });
     this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs, this.hirePrefs), { store: 'browser' });
-    // #194: which models of each harness the Hire dialog offers, under the display settings it sits beside.
+    // #194: which models of each harness the model pickers offer, under the display settings it sits beside.
     this.settings.addSection('harness-models', 'Harness models', harnessModelsSection({ prefs: this.hireModelPrefs, options: () => this.store.hireOptions }), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
     // #100: how the inbox reaches you beyond its chip: desktop notifications and the chime.
@@ -508,6 +508,7 @@ export class App {
 
     this.panels = new Panels(o.host, {
       store: this.store,
+      modelPrefs: this.hireModelPrefs,
       here: () => this.hereSession(),
       inLobby: () => this.mode === 'floor' && this.place.area === 'lobby',
       send: (t, args) => this.send(t, args),
@@ -548,7 +549,7 @@ export class App {
     };
     this.hire = new HireDialog(o.host, { ...hireHost, goTo: (id) => this.goToNewHire(id), orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ session: s, desk: d }, true) } });
     // M6 start
-    this.presetsPanel = new PresetsPanel(o.host, dialogHost);
+    this.presetsPanel = new PresetsPanel(o.host, { ...dialogHost, modelPrefs: this.hireModelPrefs });
     this.startRun = new StartRunDialog(o.host, {
       ...hireHost,
       hireAt: (s, d) => {

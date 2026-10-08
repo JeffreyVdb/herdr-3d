@@ -9,6 +9,9 @@ import { logoHashOf } from '../net/protocol';
 import { failureText } from './messages';
 import { KaneoPicker } from './kaneoFloor';
 import { backdropPolicy } from './dismiss';
+import { offeredOptions } from '../world/hire';
+import { labelsOf, modelEntries, modelOptionText } from '../world/modelLabel';
+import type { HireModelPrefs } from './hireModelPrefs';
 
 /**
  * The M3 panels over the HUD: the elevator (a building's floors, travel,
@@ -40,6 +43,8 @@ export interface PanelHost {
   /** M3d: sends a logo file for a building / removes it (HTTP; the world then says the new hash). */
   setLogo(building: string, file: File): Promise<CommandResult>;
   clearLogo(building: string): Promise<CommandResult>;
+  /** Settings → Harness models: the default-hire model picker offers the models it leaves shown (absent: every model). */
+  modelPrefs?: HireModelPrefs;
 }
 
 type View = { kind: 'elevator'; building: string | null } | { kind: 'buildings' } | { kind: 'settings'; session: string; from: View | null };
@@ -983,7 +988,6 @@ export class Panels {
 
   private buildSettings(f: FloorView): NonNullable<Panels['settingsForm']> {
     const session = f.session;
-    const hire = this.host.store.hireOptions;
     const kaneoBook = this.host.store.kaneo;
     const init = formFrom(f.settings, f.suggested, kaneoBook.state?.default_workspace?.id ?? null);
     const errs = new Map<FieldKey, HTMLElement>();
@@ -1050,19 +1054,24 @@ export class Panels {
     hints.set('statusOptions', statusHint(init.statusDefault));
 
     const cwd = text(init.form.defaultCwd, { placeholder: init.cwdPlaceholder || '/home/…' });
+    // The default hire offers the models Settings leaves shown, and the saved default even when it is hidden.
+    const prefs = this.host.modelPrefs;
+    const hire = this.host.store.hireOptions;
+    const offered = offeredOptions(hire, prefs && ((harness) => prefs.hidden(harness)), [{ harness: init.form.harness, model: init.form.model }]);
     const cwdHint = init.cwdPlaceholder ? `Empty uses the repo’s root checkout, ${init.cwdPlaceholder}.` : 'An absolute path on the server. Empty: the workers’ own folders.';
 
-    const harness = select([['', 'No default'], ...Object.keys(hire).map((k): [string, string] => [k, k])], init.form.harness);
+    const harness = select([['', 'No default'], ...Object.keys(offered).map((k): [string, string] => [k, k])], init.form.harness);
     const model = select([], '');
     const effort = select([], '');
     const fillModel = (keep: string) => {
-      const models = hire[harness.value]?.models ?? [];
-      model.replaceChildren(h('option', { value: '' }, harness.value ? 'Choose a model' : '—'), ...models.map((m) => h('option', { value: m }, m)));
+      const models = offered[harness.value]?.models ?? [];
+      const names = modelEntries(harness.value, models, labelsOf(offered, harness.value));
+      model.replaceChildren(h('option', { value: '' }, harness.value ? 'Choose a model' : '—'), ...names.map((e) => h('option', { value: e.id, title: e.named ? e.id : null }, modelOptionText(e))));
       model.value = models.includes(keep) ? keep : '';
       model.disabled = !harness.value;
     };
     const fillEffort = (keep: string) => {
-      const efforts = effortsFor(hire, harness.value, model.value);
+      const efforts = effortsFor(offered, harness.value, model.value);
       effort.replaceChildren(h('option', { value: '' }, model.value ? 'Choose an effort' : '—'), ...efforts.map((m) => h('option', { value: m }, m)));
       effort.value = efforts.includes(keep) ? keep : '';
       effort.disabled = !model.value;

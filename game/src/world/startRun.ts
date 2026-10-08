@@ -8,6 +8,7 @@
 
 import type { CommandArgs, Hire, HireOptions, Preset, PresetRoles, RunPrepare } from '../net/protocol';
 import { modelsFor } from './hire';
+import { labelsOf, modelLabel } from './modelLabel';
 import { PRESET_ROLES, ROLE_LABEL, type PresetBook } from './presets';
 import { effortsFor } from './settings';
 
@@ -221,12 +222,12 @@ export function startArgs(session: string, f: RunForm, t: TicketInput, p: Previe
 
 // ---- presets ------------------------------------------------------------------------------
 
-/** "claude · claude-opus-5-5 · medium". */
-export const hireLine = (h: Hire) => `${h.harness} · ${h.model} · ${h.effort}`;
+/** "claude · Opus 5.5 · medium": the model by its readable name (#200) when `options` has one. */
+export const hireLine = (h: Hire, options: HireOptions = {}) => `${h.harness} · ${modelLabel(h.harness, h.model, labelsOf(options, h.harness))} · ${h.effort}`;
 
 /** One line per role for a preset's row in the list. */
-export function presetLines(p: Preset): Array<{ role: string; line: string }> {
-  return PRESET_ROLES.map((r) => ({ role: ROLE_LABEL[r], line: hireLine(p.roles[r]) }));
+export function presetLines(p: Preset, options: HireOptions = {}): Array<{ role: string; line: string }> {
+  return PRESET_ROLES.map((r) => ({ role: ROLE_LABEL[r], line: hireLine(p.roles[r], options) }));
 }
 
 export interface PresetDraft {

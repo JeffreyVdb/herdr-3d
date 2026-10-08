@@ -6,7 +6,9 @@ import {
   freshName,
   parseTicket,
   prepareArgs,
+  hireLine,
   presetBlocker,
+  presetLines,
   presetPatch,
   previewArg,
   previewEdited,
@@ -342,5 +344,16 @@ describe('a work item as the ticket', () => {
     expect(a).toMatchObject({ session: 'lab', desk_index: 4, work_item: { provider: 'github', id: 'JeffreyVdb/lab#7' } });
     expect(a).not.toHaveProperty('issue');
     expect(a).not.toHaveProperty('text');
+  });
+});
+
+describe('preset lines', () => {
+  it('name each role’s model as the pickers do; the harness and effort stay as they are', () => {
+    const options = { claude: { models: ['claude-opus-5-5'], efforts: ['high'] }, codex: { models: ['gpt-6.1-sol'], efforts: ['high'], model_labels: { 'gpt-6.1-sol': 'GPT-6.1-Sol' } } };
+    expect(hireLine({ harness: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, options)).toBe('claude · Opus 5.5 · medium');
+    expect(hireLine({ harness: 'codex', model: 'gpt-6.1-sol', effort: 'high' }, options)).toBe('codex · GPT 6.1 Sol · high');
+    expect(hireLine({ harness: 'codex', model: 'gpt-x', effort: 'high' })).toBe('codex · gpt-x · high');
+    const p = presetOf({ id: 'p_000000000001', name: 'T', roles: Object.fromEntries(['orch', 'coder', 'reviewer', 'ux', 'researcher'].map((r) => [r, { harness: 'claude', model: 'claude-opus-5-5', effort: 'high' }])) })!;
+    expect(presetLines(p, options).map((l) => l.line)).toEqual(Array(5).fill('claude · Opus 5.5 · high'));
   });
 });
