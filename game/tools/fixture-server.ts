@@ -38,6 +38,8 @@
 // connection (a reconnect replays it); `sim.codex`, `sim.codex_answer`, `sim.codex_turn_end`, `worker.answer_async` and
 // `worker.dismiss_async`, `simfail=async_input_failed|async_stale|async_unconfirmed|async_undelivered`
 // (tools/fixture-codex-questions.ts).
+// #171: `simtx=<name>` picks the transcript timeline every watch gets (default: the fixture's name, e.g. demo-h171's code
+// changes; the demo one when there is none by that name; tools/fixture-transcript.ts).
 // #51: `POST /upload` stores nothing and answers a fake Drop Zone path (tools/fixture-upload.ts); the query of the ws URL
 // carries `fail_upload=<N|all>&upload_key=<key>` to make uploads fail.
 import { readFileSync } from 'node:fs';
@@ -218,6 +220,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             // #184: the Kaneo connection to start with, and how slow its slow answers are (tools/fixture-kaneo.ts).
             ...(['off', 'connected', 'unavailable', 'old'].includes(q.get('simkaneo') ?? '') ? { kaneo: q.get('simkaneo') as 'off' | 'connected' | 'unavailable' | 'old' } : {}),
             ...(q.get('simkaneoslow') !== null ? { kaneoSlowMs: Math.max(0, Number(q.get('simkaneoslow')) || 0) } : {}),
+            // #171: the transcript timeline (tools/fixture-transcript.ts): demo-h171's own code changes.
+            transcript: q.get('simtx') || name,
           }
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {

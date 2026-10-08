@@ -750,7 +750,8 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   with 2 blockers; and a run with every other freelancer state, each verdict and an `input_required`), `demo-m118` (#118: demo-m6
   with the overview's lines: the runs' issue titles and URLs, every agent's `digest`), `demo-m188` (#188: demo-m118 with
   a run across two floors, Juniper's working coder Poppy on pastry, and Quince in the scratchpad whose orchestrator is
-  gone), `perf-floor60`, `perf-floor96` (96
+  gone), `demo-h171` (#171: demo-m5's world; with `sim=1` its transcript is code changes in every shape and state,
+  see below), `perf-floor60`, `perf-floor96` (96
   desks, every worker needs you: the corner office's worst case), `perf-city240`. `pnpm fixtures` regenerates them,
   `pnpm fixtures:check` flags stale files.
   Like the bridge, a building lists its floors top to bottom, which is `index` order (index 0 on top); vitest fails
@@ -986,7 +987,13 @@ harness, a bridge without transcripts or a view that does not load open the term
 down with `leftInTerminal` / `seatMode` from `e2e/game.ts`). `transcript.watch` answers a demo timeline of every item
 kind in the bridge's shape, the demo's Agent call pages the bridge's own output for its subagent fixture, and `sim.transcript` (`simTranscript(args)` in the
 hooks) pushes items or updates to a watch (`{id, items, updates}`) or closes it (`{id, close: "session_changed"}`);
-`simfail=no_m16` plays a bridge before M16. The demo's `Read` of a PNG shows its two thumbnails under its collapsed header, and still does with Hide tools on (#70). #59: the view's top strip has the transcript's preset (two swatches:
+`simfail=no_m16` plays a bridge before M16. #171: `simtx=<name>` (default: the fixture's name) gives every watch another
+timeline when one has that name: `demo-h171` (`?ws=%2Ffixture%2Fdemo-h171%3Fsim%3D1`, sit at Nibble) is the bridge's
+own output for its #171 Claude fixtures (`fixtures/transcript/claude-changes.json`: Edit, Write create / overwrite with
+and without hunks, Bash one / several files, files without a diff, incomplete, shared, skipped, failed, denied,
+interrupted), a Codex patch, one still running and an Edit whose diff the list cut (`transcript.item` answers it whole);
+`e2e/h171-changes.spec.ts` drives it. Code changes show under each call's header (`changesBlock` in
+`laptop/transcriptRender.ts`), "Code changes" in the strip folds them (`h3d.transcript.showChanges`). The demo's `Read` of a PNG shows its two thumbnails under its collapsed header, and still does with Hide tools on (#70). #59: the view's top strip has the transcript's preset (two swatches:
 Ubuntu, Quiet), Hide tools, the context meter (#101: `world/usage.ts` `contextMeter`, `TranscriptView.setUsage`, fed by `TranscriptMode.usageSeen`; `e2e/m101-context-meter.spec.ts`) and A− / 100% / A+; the seat bar has the terminal's own preset and zoom. Ctrl + = /
 − / 0 and Ctrl+wheel zoom the view that is up, while seated only; Ctrl+, puts the keyboard on the terminal's controls (Esc goes back). `e2e/m59-themes.spec.ts` drives them. The game's tests read what the bridge makes of its own fixtures from
 `game/fixtures/transcript/` (`H3D_UPDATE_FIXTURES=1 go test ./internal/transcript` writes them, and the Go test fails

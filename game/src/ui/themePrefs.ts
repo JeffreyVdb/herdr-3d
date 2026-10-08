@@ -17,10 +17,12 @@ export type ThemedView = 'transcript' | 'terminal';
 const THEME: Record<ThemedView, string> = { transcript: 'h3d.theme.transcript', terminal: 'h3d.theme.terminal' };
 const ZOOM_KEY: Record<ThemedView, string> = { transcript: 'h3d.zoom.transcript', terminal: 'h3d.zoom.terminal' };
 const HIDE_TOOLS = 'h3d.transcript.hideTools';
+/** #171: the transcript shows code changes (diffs) open (on unless the player turned them off: stored as '0'). */
+const SHOW_CHANGES = 'h3d.transcript.showChanges';
 /** #74: a laptop at a split pane zooms it to the whole herdr tab (on unless the player turned it off: stored as '0'). */
 const FULLSCREEN = 'h3d.term.fullscreen';
 
-export type ViewPref = 'transcriptTheme' | 'terminalTheme' | 'transcriptZoom' | 'terminalZoom' | 'hideTools' | 'fullscreen';
+export type ViewPref = 'transcriptTheme' | 'terminalTheme' | 'transcriptZoom' | 'terminalZoom' | 'hideTools' | 'showChanges' | 'fullscreen';
 
 function defaultStorage(): Storage | null {
   try {
@@ -35,6 +37,7 @@ export class ViewPrefs {
   private readonly themes: Record<ThemedView, ThemeId>;
   private readonly zooms: Record<ThemedView, number>;
   private hide: boolean;
+  private changes: boolean;
   private full: boolean;
 
   constructor(private readonly storage: Storage | null = defaultStorage()) {
@@ -53,6 +56,7 @@ export class ViewPrefs {
     this.themes = { transcript: theme('transcript'), terminal: theme('terminal') };
     this.zooms = { transcript: zoom('transcript'), terminal: zoom('terminal') };
     this.hide = this.read(HIDE_TOOLS) === '1';
+    this.changes = this.read(SHOW_CHANGES) !== '0';
     this.full = this.read(FULLSCREEN) !== '0';
   }
 
@@ -110,6 +114,21 @@ export class ViewPrefs {
     this.hide = on;
     this.write(HIDE_TOOLS, on ? '1' : null);
     this.changed('hideTools');
+  }
+
+  /**
+   * #171: whether the transcript shows code changes' diffs (default on). Off, each changed file is one line (its path and
+   * counts), opened one at a time. Display only: Claude Code's own recording setting is never read or written.
+   */
+  get showChanges(): boolean {
+    return this.changes;
+  }
+
+  set showChanges(on: boolean) {
+    if (on === this.changes) return;
+    this.changes = on;
+    this.write(SHOW_CHANGES, on ? null : '0');
+    this.changed('showChanges');
   }
 
   /** #74: whether sitting at a split pane's laptop zooms the pane to its whole tab (default on). */

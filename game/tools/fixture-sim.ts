@@ -88,6 +88,8 @@ export interface SimOptions {
   /** #184: the Kaneo connection to start with (`simkaneo=off|connected|unavailable|old`, tools/fixture-kaneo.ts), and how long its slow answers take (`simkaneoslow=<ms>`). */
   kaneo?: KaneoMode;
   kaneoSlowMs?: number;
+  /** #171: the transcript timeline every watch gets (`simtx=<name>`, default the fixture's name; tools/fixture-transcript.ts). */
+  transcript?: string;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -227,6 +229,7 @@ export class SimWorld {
         activityHash: (id) => this.activity.hash(id),
       },
       o.fail !== 'no_m16',
+      o.transcript,
     );
     this.activity = new ActivitySim(
       { workers: this.workers, floors: this.floors, emit: (send, m) => this.emit(send, m), now: this.now, error: (code, message) => new CmdError(code, message) },

@@ -570,6 +570,14 @@ function demoM188() {
   return [snap];
 }
 
+// ---- demo-h171: demo-m5's world, for its transcript of code changes (#171) ------
+// The world is demo-m5's; what makes it the code-changes demo is its transcript: with `sim=1` every watch gets the
+// timeline named after the fixture (tools/fixture-transcript.ts `h171Timeline`).
+
+function demoH171() {
+  return demoM5();
+}
+
 // ---- perf: one floor with 60 workers ------------------------------------------
 
 const STATES = ['working', 'working', 'working', 'working', 'idle', 'done', 'blocked', 'working', 'idle', 'working'];
@@ -671,6 +679,8 @@ FIXTURES['demo-m6'] = demoM6;
 FIXTURES['demo-m118'] = demoM118;
 // #188 all-floors overview
 FIXTURES['demo-m188'] = demoM188;
+// #171 code changes in the transcript
+FIXTURES['demo-h171'] = demoH171;
 
 const check = process.argv.includes('--check');
 let stale = false;

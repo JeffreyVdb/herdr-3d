@@ -413,7 +413,7 @@
           }
         ]
       },
-      "status": "error",
+      "status": "denied",
       "output_text": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
       "ask": {
         "agent": "claude",
@@ -476,7 +476,7 @@
           }
         ]
       },
-      "status": "error",
+      "status": "denied",
       "output_text": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nThe user wants to clarify these questions.\n    This means they may have additional information, context or questions for you.\n    Take their response into account and then reformulate the questions if appropriate.\n    Start by asking them what they would like to clarify.\n\n    Questions asked:\n- \"Which approach?\"\n  (No answer provided)",
       "ask": {
         "agent": "claude",

@@ -61,7 +61,7 @@ export interface OverlayRect {
 
 export interface TranscriptModeHost {
   send<
-    T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'worker.answer_async' | 'worker.dismiss_async' | 'transcript.page' | 'worker.commands' | 'worker.files',
+    T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'worker.answer_async' | 'worker.dismiss_async' | 'transcript.page' | 'transcript.item' | 'worker.commands' | 'worker.files',
   >(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list). */
   feed(id: string): ImageFeed | null;
@@ -778,6 +778,15 @@ export class TranscriptMode {
         // says whose log to read.
         this.host.feed(s.id)?.note(items, agentId);
         return items;
+      },
+      // #171: a change the list cut, in full (a subagent's: with its agent).
+      loadItem: async (itemId, agent) => {
+        const r = await this.host.send('transcript.item', { id: s.id, item: itemId, ...(agent ? { agent } : {}) });
+        if (!r.ok) throw new Error(failureText('transcript.item', r.code, r.message, { worker: s.name }));
+        const item = (r.data as { item?: unknown } | null)?.item;
+        const items = itemsOf([item]);
+        if (items.length) this.host.feed(s.id)?.note(items, agent);
+        return items[0] ?? null;
       },
     };
   }

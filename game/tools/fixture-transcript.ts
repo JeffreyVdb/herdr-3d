@@ -21,6 +21,9 @@
 //   `sim.transcript` items. Every image is a real PNG, so screenshots show pictures.
 // - #98: a worker's current activity image (`activityHash`, tools/fixture-activity.ts) is served without a watch.
 // - `simfail=no_m16` plays a bridge before M16: every transcript command is `unknown_command`.
+// - #171: `simtx=<name>` (default: the fixture's name) picks another timeline for every watch, when there is one by that
+//   name: `demo-h171` is code changes in every shape and state (`h171Timeline`), and `transcript.item` answers its cut
+//   change in full.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import { createHash } from 'node:crypto';
@@ -186,6 +189,62 @@ export function demoTimeline(now: number): TranscriptItem[] {
   ].map(link);
 }
 
+/**
+ * #171: code changes, every shape and state: what the bridge makes of its own Claude fixtures
+ * (fixtures/transcript/claude-changes.json: Edit, Write create and overwrite with and without hunks, Bash one file, several,
+ * files without a diff, incomplete, shared, skipped, then a failed, a denied and an interrupted edit), a Codex patch over
+ * two files (codex.json) and one still running (proposed), and an Edit whose diff the list cut (`H171_FULL` has it whole,
+ * for `transcript.item`).
+ */
+export function h171Timeline(now: number): TranscriptItem[] {
+  const fixture = (name: string) => JSON.parse(readFileSync(join(FIXTURES, name), 'utf8')) as TranscriptItem[];
+  const codexPatch = fixture('codex.json').find((it) => it.tool?.name === 'apply_patch') as TranscriptItem;
+  const proposed: TranscriptItem = {
+    id: 'h171-proposed',
+    seq: 0,
+    ts: 0,
+    kind: 'tool',
+    tool: {
+      name: 'apply_patch',
+      input_summary: 'src/tide.ts',
+      status: 'running',
+      diff: { path: 'src/tide.ts', hunks: [{ old_start: 0, old_lines: 1, new_start: 0, new_lines: 2, lines: ['-export const HIGH = 4.1;', '+export const HIGH = 4.3;', '+export const LOW = 0.6;'] }] },
+    },
+  };
+  const all: TranscriptItem[] = [
+    { id: 'h171-ask', seq: 0, ts: 0, kind: 'user', parts: [{ text: 'Tidy the helpers, bump the version and format the sources. Show me what changed.' }] },
+    ...fixture('claude-changes.json'),
+    { id: 'h171-say', seq: 0, ts: 0, kind: 'assistant', parts: [{ text: 'Now the Codex side of it, and one large edit.' }] },
+    codexPatch,
+    cutItem(false),
+    proposed,
+  ];
+  return all.map((it, i) => ({ ...it, seq: i + 1, ts: now - (all.length - i) * 15_000 }));
+}
+
+/** #171: an Edit with 2,500 changed lines (past the view's 2,000 a page); the list's copy has the first 200 and says it was cut. */
+function cutItem(full: boolean): TranscriptItem {
+  const n = full ? 1250 : 100;
+  const lines = Array.from({ length: n }, (_, i) => [`-  { id: ${i + 1}, depth: ${(i % 9) + 1} },`, `+  { id: ${i + 1}, depth: ${(i % 9) + 1}, tide: 'high' },`]).flat();
+  return {
+    id: 'h171-cut',
+    seq: 0,
+    ts: 0,
+    kind: 'tool',
+    tool: {
+      name: 'Edit',
+      input_summary: '/home/dev/project/src/soundings.ts',
+      status: 'ok',
+      diff: { path: '/home/dev/project/src/soundings.ts', op: 'edit', hunks: [{ old_start: 3, old_lines: 1250, new_start: 3, new_lines: 1250, lines }], ...(full ? {} : { truncated: true }) },
+    },
+  };
+}
+
+/** #171: the timelines `simtx` picks (by name), and the items `transcript.item` answers whole for each. */
+const TIMELINES: Record<string, { items: (now: number) => TranscriptItem[]; full: () => TranscriptItem[] }> = {
+  'demo-h171': { items: h171Timeline, full: () => [cutItem(true)] },
+};
+
 /** Every image ref of an item, in order. */
 function refsOf(it: TranscriptItem): ImageRef[] {
   const out: ImageRef[] = [];
@@ -214,10 +273,13 @@ export class TranscriptSim {
   readonly watches = new Map<string, Watch>();
   private readonly host: TranscriptHost;
   private readonly on: boolean;
+  /** #171: the timeline every watch gets (`simtx`; none or unknown: the demo). */
+  private readonly timeline: (typeof TIMELINES)[string] | undefined;
 
-  constructor(host: TranscriptHost, on = true) {
+  constructor(host: TranscriptHost, on = true, timeline?: string) {
     this.host = host;
     this.on = on;
+    this.timeline = timeline && Object.hasOwn(TIMELINES, timeline) ? TIMELINES[timeline] : undefined;
   }
 
   /** Handles the transcript commands; false for anything else. */
@@ -270,7 +332,7 @@ export class TranscriptSim {
     this.worker(id);
     const n = this.watches.size - (this.watches.has(id) ? 1 : 0);
     if (n >= SIM_MAX_TRANSCRIPT_WATCHES) throw this.host.error('capacity', `capacity: this connection already watches ${n} transcripts (--max-transcript-watches)`);
-    const items = demoTimeline(this.host.now());
+    const items = (this.timeline?.items ?? demoTimeline)(this.host.now());
     const top = items.reduce((m, it) => Math.max(m, it.seq), 0);
     (this.host.extra?.(id) ?? []).forEach((it, i) => items.push({ ...it, seq: top + i + 1 }));
     const watch: Watch = { send, items, sent: new Set() };
@@ -315,8 +377,11 @@ export class TranscriptSim {
     const want = this.str(a, 'item');
     const agent = this.str(a, 'agent', true);
     const from = agent === SIM_SUBAGENT ? subagentItems() : agent ? null : w.items;
-    const it = from?.find((x) => x.id === want);
-    if (!it) throw this.host.error('not_found', `no item "${want}" in the transcript`);
+    const shown = from?.find((x) => x.id === want);
+    if (!shown) throw this.host.error('not_found', `no item "${want}" in the transcript`);
+    // #171: what the list cut, whole.
+    const whole = agent ? undefined : this.timeline?.full().find((x) => x.id === want);
+    const it = whole ? { ...whole, seq: shown.seq, ts: shown.ts } : shown;
     this.note(w, [it]);
     return { item: it };
   }
