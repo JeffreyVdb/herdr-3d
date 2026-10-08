@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TranscriptDiff, TranscriptItem } from '../net/protocol';
 import { ViewPrefs } from '../ui/themePrefs';
-import { diffColoursBusy, MAIN_BUDGET } from './diffHighlight';
+import { diffColoursBusy, diffRangeCount, HL_PLAIN, MAIN_BUDGET } from './diffHighlight';
 import { mountTranscript, toolHasChanges, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
 
 /**
@@ -500,32 +500,61 @@ describe('code changes (#171)', () => {
 });
 
 describe('syntax colours in diff rows (#206)', () => {
+  // jsdom paints no highlights: a registry of plain sets stands in for the page's (CSS.highlights, Highlight).
+  const registry = new Map<string, Set<StaticRange>>();
+  class FakeHighlight extends Set<StaticRange> {
+    priority = 0;
+  }
+  beforeAll(() => {
+    vi.stubGlobal('Highlight', FakeHighlight);
+    vi.stubGlobal('CSS', { highlights: registry });
+  });
+  afterAll(() => vi.unstubAllGlobals());
+
   /** Waits until the highlighter has nothing left to do. */
   const settled = () => vi.waitFor(() => expect(diffColoursBusy()).toBe(false), { timeout: 20_000, interval: 5 });
   const cells = (id: string, kind = ':not(.tx-dh)') => $$(`.tx-diff-body .tx-dl${kind} .tx-dt`, row(id));
-  const tokens = (dt: HTMLElement) => $$('[class^="hljs-"]', dt).map((s) => [s.className, s.textContent]);
+  /** The highlights painted on a cell's text, in order: [highlight, the text it covers]. */
+  const ranges = (dt: HTMLElement) => {
+    const out: Array<[number, string, string]> = [];
+    for (const [name, h] of registry) for (const r of h) if (r.startContainer === dt.firstChild) out.push([r.startOffset, name, (dt.textContent ?? '').slice(r.startOffset, r.endOffset)]);
+    return out.sort((x, y) => x[0] - y[0] || (x[1] === HL_PLAIN ? -1 : 1)).map(([, n, t]) => [n, t]);
+  };
+  /** Its tokens' colours (not the plain text under them). */
+  const tokens = (dt: HTMLElement) => ranges(dt).filter(([n]) => n !== HL_PLAIN);
+  const painted = (dt: HTMLElement) => ranges(dt).length > 0;
+  /** No cell is anything but its one text node as drawn: colours never touch the DOM. */
+  const plainDom = () => $$('.tx-diff-body .tx-dt').every((e) => e.childNodes.length === 1 && e.firstChild?.nodeType === Node.TEXT_NODE);
   const PROTO = 'toolu_018mQCao59VwQiRK6L6zHu5h';
 
-  it('rows draw plain, then gain colours in place: same text, the sign kept apart, other rows as they were', async () => {
+  it('rows draw plain, then gain colours over their text: the DOM untouched, the sign as drawn, other rows plain', async () => {
     mount();
     view.setItems(CHANGES);
     const before = cells(PROTO).map((e) => e.textContent);
     // Drawn before the highlighter loaded: plain, as before.
-    expect(cells(PROTO).every((e) => e.childNodes.length === 1 && e.firstChild?.nodeType === Node.TEXT_NODE)).toBe(true);
+    expect(plainDom()).toBe(true);
+    expect(cells(PROTO).some(painted)).toBe(false);
     await settled();
     expect(cells(PROTO).map((e) => e.textContent)).toEqual(before);
+    expect(plainDom()).toBe(true);
     const add = cells(PROTO, '.tx-add')[0] as HTMLElement;
-    expect(add.classList.contains('tx-hl')).toBe(true);
-    expect(add.firstElementChild?.outerHTML).toBe('<span class="tx-dsg">+</span>');
-    expect(tokens(add)).toEqual([['hljs-comment', '// M16: the transcript view at a laptop (docs/protocol.md "Laptops: transcript").']]);
-    expect(tokens(cells(PROTO, '.tx-add')[1] as HTMLElement)).toContainEqual(['hljs-string', "'transcript.watch'"]);
-    // Context rows too (no sign span of their own colour, but their tokens).
-    expect(tokens(cells(PROTO, '.tx-ctx')[0] as HTMLElement)).toContainEqual(['hljs-string', "'terminal.watch'"]);
+    // The plain text from after the sign in the context's colour, the tokens over it; the sign keeps the row's.
+    const text = '  // M16: the transcript view at a laptop (docs/protocol.md "Laptops: transcript").';
+    expect(ranges(add)).toEqual([
+      [HL_PLAIN, text],
+      ['tx-hl-comment', text.trim()],
+    ]);
+    expect(tokens(cells(PROTO, '.tx-add')[1] as HTMLElement)).toContainEqual(['tx-hl-string', "'transcript.watch'"]);
+    // Context rows: their tokens, no plain range (their text is the context's colour already).
+    const ctx = cells(PROTO, '.tx-ctx')[0] as HTMLElement;
+    expect(tokens(ctx)).toContainEqual(['tx-hl-string', "'terminal.watch'"]);
+    expect(ranges(ctx).some(([n]) => n === HL_PLAIN)).toBe(false);
     // The hunk header is not code; Python and TOML are coloured, a file without a known extension is not.
-    expect($('.tx-dh .tx-dt', row(PROTO))?.childNodes).toHaveLength(1);
-    expect(tokens(cells('toolu_c171_bash_one', '.tx-add')[0] as HTMLElement)).toContainEqual(['hljs-number', '5']);
-    expect(cells('toolu_c171_wr_upd2', '.tx-add').every((e) => e.classList.contains('tx-hl'))).toBe(true);
-    for (const id of ['toolu_c171_bash_unavail', 'toolu_c171_bash_shared']) expect(cells(id).some((e) => e.classList.contains('tx-hl') || e.childElementCount > 0), id).toBe(false);
+    expect(painted($('.tx-dh .tx-dt', row(PROTO)) as HTMLElement)).toBe(false);
+    expect(tokens(cells('toolu_c171_bash_one', '.tx-add')[0] as HTMLElement)).toContainEqual(['tx-hl-number', '5']);
+    expect(tokens(cells('toolu_c171_bash_one', '.tx-del')[0] as HTMLElement)).toContainEqual(['tx-hl-number', '3']);
+    expect(cells('toolu_c171_wr_upd2', '.tx-add').every(painted)).toBe(true);
+    for (const id of ['toolu_c171_bash_unavail', 'toolu_c171_bash_shared']) expect(cells(id).some(painted), id).toBe(false);
   });
 
   it('a hunk is tokenized as its two sides: a string or comment across rows colours on every row; meta rows stay', async () => {
@@ -536,11 +565,11 @@ describe('syntax colours in diff rows (#206)', () => {
     await settled();
     const all = cells('sides');
     expect(all.map((e) => e.textContent)).toEqual(lines);
-    expect(tokens(all[1] as HTMLElement)).toEqual([['hljs-string', '  from a']]);
-    expect(tokens(all[2] as HTMLElement)).toEqual([['hljs-string', '  from b']]);
-    expect(tokens(all[3] as HTMLElement)).toEqual([['hljs-string', '`']]);
-    expect(tokens(all[5] as HTMLElement)).toEqual([['hljs-comment', 'two */']]);
-    expect((all[6] as HTMLElement).childNodes).toHaveLength(1);
+    expect(tokens(all[1] as HTMLElement)).toEqual([['tx-hl-string', '  from a']]);
+    expect(tokens(all[2] as HTMLElement)).toEqual([['tx-hl-string', '  from b']]);
+    expect(tokens(all[3] as HTMLElement)).toEqual([['tx-hl-string', '`']]);
+    expect(tokens(all[5] as HTMLElement)).toEqual([['tx-hl-comment', 'two */']]);
+    expect(painted(all[6] as HTMLElement)).toBe(false);
   });
 
   it('"Show next" pages gain colours when they draw, and only what is drawn is coloured', async () => {
@@ -551,18 +580,21 @@ describe('syntax colours in diff rows (#206)', () => {
     view.setItems([it]);
     await settled();
     expect(cells('paged')).toHaveLength(2000);
-    expect(cells('paged').every((e) => e.classList.contains('tx-hl'))).toBe(true);
+    expect(cells('paged').every(painted)).toBe(true);
     ($<HTMLButtonElement>('.tx-diff-more .tx-link', row('paged')) as HTMLButtonElement).click();
     const page2 = cells('paged').slice(2000);
     expect(page2).toHaveLength(100);
-    expect(page2.some((e) => e.classList.contains('tx-hl'))).toBe(false);
+    expect(page2.some(painted)).toBe(false);
     await settled();
-    expect(page2.every((e) => e.classList.contains('tx-hl'))).toBe(true);
+    expect(page2.every(painted)).toBe(true);
     expect((page2.at(-1) as HTMLElement).textContent).toBe('+const v20_99 = 99;');
-    expect(tokens(page2.at(-1) as HTMLElement)).toEqual(expect.arrayContaining([['hljs-keyword', 'const'], ['hljs-number', '99']]));
+    expect(tokens(page2.at(-1) as HTMLElement)).toEqual([
+      ['tx-hl-keyword', 'const'],
+      ['tx-hl-number', '99'],
+    ]);
   }, 60_000);
 
-  it('a change loaded whole through transcript.item is coloured in its new rows', async () => {
+  it('a change loaded whole through transcript.item is coloured in its new rows; the old ones lose theirs', async () => {
     const cut: TranscriptDiff = { path: 'w.go', truncated: true, hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ['-a := 1'] }] };
     const whole: TranscriptDiff = { path: 'w.go', hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 2, lines: ['-a := 1', '+a := "two"', '+return a'] }] };
     const it: TranscriptItem = { id: 'whole', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Edit', input_summary: 'w.go', status: 'ok', diff: cut } };
@@ -570,17 +602,25 @@ describe('syntax colours in diff rows (#206)', () => {
     view.setItems([it]);
     await settled();
     const old = cells('whole')[0] as HTMLElement;
+    expect(tokens(old)).toContainEqual(['tx-hl-number', '1']);
     ($('.tx-chg-cutnote .tx-link', row('whole')) as HTMLButtonElement).click();
     await flush();
     expect(old.isConnected).toBe(false);
     await settled();
     expect(cells('whole').map((e) => e.textContent)).toEqual(['-a := 1', '+a := "two"', '+return a']);
-    expect(tokens(cells('whole')[1] as HTMLElement)).toContainEqual(['hljs-string', '"two"']);
-    expect(tokens(cells('whole')[2] as HTMLElement)).toContainEqual(['hljs-keyword', 'return']);
+    expect(tokens(cells('whole')[1] as HTMLElement)).toContainEqual(['tx-hl-string', '"two"']);
+    expect(tokens(cells('whole')[2] as HTMLElement)).toContainEqual(['tx-hl-keyword', 'return']);
+    expect(painted(old)).toBe(false);
   });
 
-  it('rows that left the page before their colours were ready are not touched; re-rendered rows get their own', async () => {
+  it('ranges never outlive their rows: a re-render, a live update, a closed transcript take them away', async () => {
     const it: TranscriptItem = { id: 'gone', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Edit', input_summary: 'g.ts', status: 'ok', diff: { path: 'g.ts', hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ['-let a = 1;', '+let a = 2;'] }] } } };
+    /** Every range is on a cell in the page, and those cells' ranges are all there are. */
+    const onlyLive = () => {
+      const all = [...registry.values()].flatMap((h) => [...h]);
+      expect(all.every((r) => r.startContainer.isConnected)).toBe(true);
+      expect(diffRangeCount()).toBe(all.length);
+    };
     mount();
     view.setItems([it]);
     const first = cells('gone');
@@ -589,16 +629,33 @@ describe('syntax colours in diff rows (#206)', () => {
     const second = cells('gone');
     expect(second[0]).not.toBe(first[0]);
     await settled();
-    expect(first.every((e) => e.childNodes.length === 1)).toBe(true);
-    expect(second.every((e) => e.classList.contains('tx-hl'))).toBe(true);
-    // A row whose text changed under it is left alone.
-    const third: TranscriptItem = { ...it, id: 'gone2' };
+    expect(first.some(painted)).toBe(false);
+    expect(second.every(painted)).toBe(true);
+    onlyLive();
+    // And after: the painted rows re-rendered lose theirs (the new ones colour at once, from the cache).
+    view.applyUpdates([{ ...it }]);
+    await settled();
+    expect(second.some(painted)).toBe(false);
+    expect(cells('gone').every(painted)).toBe(true);
+    onlyLive();
+    // A row whose text changed under it before it was coloured is left alone.
+    const third: TranscriptItem = { ...it, id: 'gone2', tool: { ...it.tool!, diff: { path: 'g2.ts', hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ['-let b = 1;', '+let b = 2;'] }] } } };
     view.applyUpdates([third]);
     const cell = cells('gone2')[1] as HTMLElement;
     cell.textContent = '+something else';
     await settled();
     expect(cell.textContent).toBe('+something else');
-    expect(cell.classList.contains('tx-hl')).toBe(false);
+    expect(painted(cell)).toBe(false);
+    expect(painted(cells('gone2')[0] as HTMLElement)).toBe(true);
+    // The whole transcript gone: nothing left painted once the highlighter looks again (a diff drawn anywhere).
+    container.replaceChildren();
+    const other = document.createElement('div');
+    document.body.append(other);
+    mountTranscript(other, host).setItems([{ ...it, id: 'elsewhere' }]);
+    await settled();
+    onlyLive();
+    expect(diffRangeCount()).toBeGreaterThan(0);
+    other.remove();
   });
 
   it('a hunk past the page thread budget waits for the worker; with none (here) it stays plain', async () => {
@@ -608,6 +665,20 @@ describe('syntax colours in diff rows (#206)', () => {
     mount();
     view.setItems([it]);
     await settled();
-    expect(cells('huge').some((e) => e.classList.contains('tx-hl'))).toBe(false);
+    expect(cells('huge').some(painted)).toBe(false);
+  });
+
+  it('without the Custom Highlight API rows stay plain, and nothing is tokenized', async () => {
+    vi.stubGlobal('Highlight', undefined);
+    try {
+      mount();
+      view.setItems(CHANGES);
+      expect(diffColoursBusy()).toBe(false);
+      await flush();
+      expect(cells(PROTO).some(painted)).toBe(false);
+      expect(plainDom()).toBe(true);
+    } finally {
+      vi.stubGlobal('Highlight', FakeHighlight);
+    }
   });
 });

@@ -1,21 +1,25 @@
 /**
  * #206: syntax colours inside the transcript's diff rows, added after the rows draw.
  *
- * A diff's rows draw plain, as before; this then colours them in place, a hunk at a time, without a long task:
+ * A diff's rows draw plain, as before, and stay so in the DOM: colours are painted over their text with the CSS Custom
+ * Highlight API (`CSS.highlights`, one highlight per token colour, `::highlight()` in transcript.css), which costs no
+ * restyle or layout. Without the API (jsdom, old browsers) rows stay plain.
  * - The language is the path's extension's (diffTokens.diffLanguage); none known, nothing happens.
  * - Each hunk's two sides are tokenized whole (diffTokens.hunkSides), so what spans rows colours right.
  * - A hunk of up to MAIN_BUDGET characters is tokenized on the page's thread, in background tasks of about SLICE_MS
  *   (one hunk at least, then the next while the slice lasts). A larger one (a created 2,000-line file is one hunk, ~100 ms)
  *   goes to a worker (diffHighlight.worker.ts, made on first need); without one it stays plain.
- * - Rows are coloured a batch a frame (PAINT_MS of work), and only the rows that were drawn: "Show next" colours its
- *   page when it draws it. A row is coloured only while it is in the page and still shows the text it drew
- *   with (a re-render, a live update or a loaded full change made new rows, with their own work).
+ * - Ranges are painted only on the rows around what a diff's box shows (its view, and a view more above and below), and
+ *   only while the box is on screen or near it: Chromium re-checks every range in the page on any change to the DOM
+ *   (~1.5 µs a range on the e2e host: the ~30,000 of two large diffs would add ~45 ms to every frame that changes the
+ *   page). Scrolling the box moves them along, in the frame it scrolls in. A row is painted only while it still shows
+ *   the text it drew with; a diff that left the page (a re-render, a live update, a loaded full change) loses its ranges.
  * - Results are kept (MAX_CACHE characters): a diff drawn again (a re-render, the terminal and back) colours at once.
  *
  * `?diffhl=off` turns it off and `?diffhl=trace` measures every slice (performance entries `tx-diff-hl`), for the
  * long-task check (e2e/h206-diff-highlight.spec.ts).
  */
-import { diffLanguage, hunkSides, tokenizeHunk, tokensText, type HunkSides, type HunkTokens, type LineTokens } from './diffTokens';
+import { diffLanguage, HL_COLOURS, hunkSides, rowRanges, tokenizeHunk, tokensText, type HunkSides, type HunkTokens } from './diffTokens';
 import type { DiffHlReply, DiffHlRequest } from './diffHighlight.worker';
 
 type Highlighter = typeof import('highlight.js/lib/common').default;
@@ -26,12 +30,10 @@ export const MAIN_BUDGET = 12_000;
 export const MAX_HUNK = 1_000_000;
 /** A background task's work: past it the next hunk waits for the next task. */
 const SLICE_MS = 8;
-/** The rows coloured in a frame: as many as this takes (the page's restyle and layout of them after costs ~4x that). */
-const PAINT_MS = 4;
-/** Rows coloured between two looks at the clock. */
-const ROWS_PER_CHECK = 16;
 /** Characters of tokenized hunks kept for a diff drawn again. */
 const MAX_CACHE = 2_000_000;
+/** How often diffs that left the page are looked for, while there are any (most go sooner: when anything is drawn or painted). */
+const SWEEP_MS = 10_000;
 
 const MODE = (() => {
   try {
@@ -52,41 +54,70 @@ interface Hunk {
   key: string;
   state: 'idle' | 'queued' | 'done';
   tokens: HunkTokens | null;
-  /** Rows drawn before its tokens were ready: [hunk line, text cell]. */
-  rows: Array<[number, HTMLElement]>;
+}
+
+/** A drawn row of code, the diff's `n`th: hunk `hk`'s line `i`, in `row` (its text cell `dt`, one text node as drawn). */
+interface Row {
+  n: number;
+  hk: Hunk;
+  i: number;
+  row: HTMLElement;
+  dt: HTMLElement;
+  /** Its ranges while painted, on the text node they paint; false: nothing to paint there, ever. */
+  painted: { node: Text; ranges: Array<[Highlight, StaticRange]> } | null | false;
 }
 
 interface Diff {
   path: unknown;
   /** The language, once the highlighter is loaded (null: none, the diff stays plain). */
   lang: string | null | undefined;
-  alive: () => boolean;
+  /** The box its rows scroll in. */
+  body: HTMLElement;
+  /** Its drawn rows of code, top to bottom. */
+  rows: Row[];
+  /** Its box is on screen, or near. */
+  inView: boolean;
+  painted: Set<Row>;
+  /**
+   * Its box was seen in the page: until then a box not in it is one still being built, not one gone (a diff is drawn
+   * before its row is put in the page). The timer sweeps one never seen twice before letting go of it.
+   */
+  seen: boolean;
+  unseen: number;
 }
 
 /** What a diff's view tells about its rows. */
 export interface DiffColours {
-  /** A row was drawn (hunk `k`'s line `i`, its text cell `dt` holding the line as drawn): colour it when its hunk is ready. */
-  row(k: number, i: number, dt: HTMLElement): void;
+  /** A row was drawn (hunk `k`'s line `i`; the row, and its text cell `dt` holding the line as drawn): colour it when its hunk is ready. */
+  row(k: number, i: number, row: HTMLElement, dt: HTMLElement): void;
 }
 
+/** The page can paint highlights. */
+const canPaint = () => typeof Highlight === 'function' && typeof StaticRange === 'function' && typeof CSS !== 'undefined' && !!CSS.highlights;
+
 /**
- * Colours for a diff's rows: `hunks` are its hunks' lines (null for a hunk that is not code: it stays plain), `alive`
- * says the diff is still in the page. Null when its path names no language at all.
+ * Colours for a diff's rows: `hunks` are its hunks' lines (null for a hunk that is not code: it stays plain), `body` the
+ * box its rows are drawn in. Null when its path names no language at all, or the page cannot paint highlights.
  */
-export function diffColours(path: unknown, hunks: ReadonlyArray<readonly string[] | null>, alive: () => boolean): DiffColours | null {
-  if (OFF || diffLanguage(path, () => true) === null) return null;
-  const diff: Diff = { path, lang: undefined, alive };
-  const work = hunks.map((lines): Hunk | null => (lines ? { diff, lines, sides: null, size: 0, key: '', state: 'idle', tokens: null, rows: [] } : null));
+export function diffColours(path: unknown, hunks: ReadonlyArray<readonly string[] | null>, body: HTMLElement): DiffColours | null {
+  if (OFF || !canPaint() || diffLanguage(path, () => true) === null) return null;
+  // A diff drawn is often one re-rendered: the one it replaced lets go of its ranges now.
+  sweep();
+  const diff: Diff = { path, lang: undefined, body, rows: [], inView: !observers(), painted: new Set(), seen: false, unseen: 0 };
+  const work = hunks.map((lines): Hunk | null => (lines ? { diff, lines, sides: null, size: 0, key: '', state: 'idle', tokens: null } : null));
+  live.add(diff);
+  byBody.set(body, diff);
+  io?.observe(body);
+  ro?.observe(body);
+  body.addEventListener('scroll', () => dirty(diff), { passive: true });
+  sweepLater();
   return {
-    row(k, i, dt) {
+    row(k, i, row, dt) {
       const hk = work[k];
       if (!hk) return;
-      if (hk.state === 'done') {
-        if (hk.tokens) toPaint(hk, i, dt);
-        return;
-      }
-      hk.rows.push([i, dt]);
-      if (hk.state === 'idle') {
+      diff.rows.push({ n: diff.rows.length, hk, i, row, dt, painted: null });
+      if (hk.state === 'done') dirty(diff);
+      else if (hk.state === 'idle') {
         hk.state = 'queued';
         incoming.push(hk);
         pump();
@@ -106,13 +137,9 @@ const incoming: Hunk[] = [];
 const mainQ: Hunk[] = [];
 /** Hunks for the worker. */
 const workerQ: Hunk[] = [];
-/** Rows to colour: the cell, its sign (`+`, `-`, space or none), its tokens, the text it must still show. */
-const paintQ: Array<{ dt: HTMLElement; sign: string; tokens: LineTokens; text: string }> = [];
 const cache = new Map<string, { tokens: HunkTokens; size: number }>();
 let cached = 0;
 let scheduled = false;
-/** A batch of rows was coloured: the next waits for a frame. */
-let frameWait = false;
 
 function done(hk: Hunk, tokens: HunkTokens | null): void {
   hk.state = 'done';
@@ -126,19 +153,7 @@ function done(hk: Hunk, tokens: HunkTokens | null): void {
       cache.delete(k);
     }
   }
-  if (tokens) for (const [i, dt] of hk.rows) toPaint(hk, i, dt);
-  hk.rows = [];
-}
-
-function toPaint(hk: Hunk, i: number, dt: HTMLElement): void {
-  const sides = hk.sides;
-  const at = sides?.at[i];
-  const tokens = at && hk.tokens ? (at[0] ? hk.tokens.neu : hk.tokens.old)[at[1]] : undefined;
-  // Nothing to colour (an empty line, a `\ No newline` row): the row stays as drawn.
-  if (!sides || !tokens || !tokens.length) return;
-  const line = hk.lines[i] as string;
-  paintQ.push({ dt, sign: line.slice(0, sides.sign[i]), tokens, text: line });
-  pump();
+  if (tokens) dirty(hk.diff);
 }
 
 /** Sorts what came in, once the highlighter is there: known language or not, from the cache, here or in the worker. */
@@ -169,6 +184,7 @@ function sort(): void {
 }
 
 const now = () => performance.now();
+const alive = (d: Diff) => d.body.isConnected;
 
 function pump(): void {
   if (scheduled) return;
@@ -178,7 +194,7 @@ function pump(): void {
   else setTimeout(run, 0);
 }
 
-/** One background task: rows first (what was tokenized shows), then hunks, while the slice lasts. */
+/** One background task: hunks tokenized while the slice lasts. */
 function run(): void {
   scheduled = false;
   if (!hl) {
@@ -201,30 +217,13 @@ function run(): void {
   const end = t0 + SLICE_MS;
   sort();
   let n = 0;
-  let rows = 0;
   let chars = 0;
-  // Rows: one batch a frame. The page restyles and lays out what a batch added in the frame after it; batches piled up
-  // between two frames would make that one long.
-  if (!frameWait && paintQ.length) {
-    const stop = t0 + PAINT_MS;
-    for (let p = paintQ.shift(); p; p = paintQ.shift()) {
-      paint(p.dt, p.sign, p.tokens, p.text);
-      if (++n % ROWS_PER_CHECK === 0 && now() >= stop) break;
-    }
-    rows = n;
-    frameWait = true;
-    nextFrame(() => {
-      frameWait = false;
-      if (paintQ.length) pump();
-      else idle();
-    });
-  }
   for (;;) {
     if (n > 0 && now() >= end) break;
     const hk = mainQ.shift();
     if (!hk) break;
     n++;
-    if (!hk.diff.alive()) {
+    if (!alive(hk.diff)) {
       done(hk, null);
       continue;
     }
@@ -233,7 +232,7 @@ function run(): void {
     chars += hk.size;
     done(hk, tokenizeHunk((text, language) => h.highlight(text, { language, ignoreIllegals: true }).value, lang, (hk.sides as HunkSides).old, (hk.sides as HunkSides).neu));
   }
-  if (TRACE) performance.measure('tx-diff-hl', { start: t0, end: now(), detail: { rows, chars } });
+  if (TRACE) performance.measure('tx-diff-hl', { start: t0, end: now(), detail: { chars } });
   if (mainQ.length || incoming.length) pump();
   idle();
 }
@@ -243,40 +242,220 @@ function idle(): void {
   if (TRACE && !diffColoursBusy()) performance.mark('tx-diff-hl-idle');
 }
 
-/** After the next frame (a timer where there are none, as in tests). */
-function nextFrame(f: () => void): void {
-  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(f, 0));
-  else setTimeout(f, 16);
+// ---- painting -------------------------------------------------------------------------------------------------
+
+/** The highlights' names: a token colour's `tx-hl-<colour>` (HL_COLOURS' order), and an added or deleted row's plain text. */
+export const HL_NAMES = HL_COLOURS.map(([c]) => `tx-hl-${c}`);
+export const HL_PLAIN = 'tx-hl-plain';
+
+let plainHl: Highlight | null = null;
+let colourHls: Highlight[] = [];
+
+/** The highlights, in the page's registry (made the first time; put back if it lost them). */
+function highlights(): { plain: Highlight; colours: Highlight[] } {
+  if (!plainHl) {
+    // A row's plain text under its tokens' colours.
+    plainHl = new Highlight();
+    plainHl.priority = 0;
+    colourHls = HL_NAMES.map(() => Object.assign(new Highlight(), { priority: 1 }));
+  }
+  const reg = CSS.highlights;
+  if (reg.get(HL_PLAIN) !== plainHl) reg.set(HL_PLAIN, plainHl);
+  HL_NAMES.forEach((name, i) => {
+    if (reg.get(name) !== colourHls[i]) reg.set(name, colourHls[i] as Highlight);
+  });
+  return { plain: plainHl, colours: colourHls };
 }
 
-/** A row's text cell, coloured: the sign as drawn, then the tokens, each in its spans. Skipped once the row is gone or changed. */
-function paint(dt: HTMLElement, sign: string, tokens: LineTokens, text: string): void {
-  if (!dt.isConnected || dt.childNodes.length !== 1 || dt.textContent !== text) return;
-  if (sign + tokensText(tokens) !== text) return;
-  const out: Node[] = [];
-  if (sign) {
-    const s = document.createElement('span');
-    s.className = 'tx-dsg';
-    s.textContent = sign;
-    out.push(s);
+/** Which boxes are on screen or near (a missing one, as in jsdom: all are), and when one changes size. */
+let io: IntersectionObserver | null | undefined;
+let ro: ResizeObserver | null = null;
+const byBody = new WeakMap<Element, Diff>();
+/** Diffs drawn and not let go of yet. */
+const live = new Set<Diff>();
+/** Diffs whose painted rows need a look, at the next frame. */
+const dirtyQ = new Set<Diff>();
+let frameAsked = false;
+let sweepTimer: ReturnType<typeof setTimeout> | null = null;
+
+function observers(): IntersectionObserver | null {
+  if (io !== undefined) return io;
+  io = null;
+  if (typeof IntersectionObserver === 'function') {
+    // The timeline scrolls: a box within a screen of showing counts already (scrollMargin: within the timeline's clip too).
+    const margin = '100% 0px';
+    io = new IntersectionObserver(
+      (es) => {
+        for (const e of es) {
+          const d = byBody.get(e.target);
+          if (!d) continue;
+          d.inView = e.isIntersecting;
+          dirty(d);
+        }
+      },
+      { rootMargin: margin, scrollMargin: margin },
+    );
   }
-  for (let i = 0; i < tokens.length; i += 2) {
-    const cls = tokens[i] as string;
-    let node: Node = document.createTextNode(tokens[i + 1] as string);
-    if (cls) {
-      const levels = cls.split(',');
-      for (let j = levels.length - 1; j >= 0; j--) {
-        const s = document.createElement('span');
-        s.className = levels[j] as string;
-        s.append(node);
-        node = s;
+  if (typeof ResizeObserver === 'function')
+    ro = new ResizeObserver((es) => {
+      for (const e of es) {
+        const d = byBody.get(e.target);
+        if (d) dirty(d);
       }
-    }
-    out.push(node);
-  }
-  dt.replaceChildren(...out);
-  dt.classList.add('tx-hl');
+    });
+  return io;
 }
+
+function dirty(d: Diff): void {
+  dirtyQ.add(d);
+  if (frameAsked) return;
+  frameAsked = true;
+  // In the frame's own callbacks: a box scrolled in a frame has its colours in that frame.
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush);
+  else setTimeout(flush, 16);
+}
+
+/** A frame's painting: every diff that changed (scrolled, came into view, gained rows or tokens) brought up to date. */
+function flush(): void {
+  frameAsked = false;
+  const t0 = now();
+  sweep();
+  let ranges = 0;
+  for (const d of dirtyQ) {
+    dirtyQ.delete(d);
+    ranges += update(d);
+  }
+  if (TRACE) performance.measure('tx-diff-hl', { start: t0, end: now(), detail: { ranges } });
+  idle();
+}
+
+/**
+ * Of `count` rows (top to bottom, `edges(i)` the top and bottom of the `i`th), those `[lo, hi]` that reach into
+ * `[top, bottom]`; none when hi < lo.
+ */
+export function rowWindow(count: number, edges: (i: number) => readonly [number, number], top: number, bottom: number): [number, number] {
+  let a = 0;
+  let b = count;
+  // The first row whose bottom is below `top`.
+  while (a < b) {
+    const m = (a + b) >> 1;
+    if (edges(m)[1] > top) b = m;
+    else a = m + 1;
+  }
+  const lo = a;
+  b = count;
+  // The first row from there whose top is at or below `bottom`.
+  while (a < b) {
+    const m = (a + b) >> 1;
+    if (edges(m)[0] >= bottom) b = m;
+    else a = m + 1;
+  }
+  return [lo, a - 1];
+}
+
+/** The rows of a diff to paint: those its box shows, and a box's height more above and below it. */
+function windowOf(d: Diff): [number, number] {
+  if (!d.inView) return [0, -1];
+  // Nothing to tell what shows (jsdom): all.
+  if (!io) return [0, d.rows.length - 1];
+  const box = d.body.getBoundingClientRect();
+  // Not laid out (hidden).
+  if (!box.height) return [0, -1];
+  const edges = (i: number) => {
+    const r = (d.rows[i] as Row).row.getBoundingClientRect();
+    return [r.top, r.bottom] as const;
+  };
+  return rowWindow(d.rows.length, edges, box.top - box.height, box.bottom + box.height);
+}
+
+/** A diff's ranges brought to its window: rows that left it (or changed) lose theirs, rows that came in gain theirs. */
+function update(d: Diff): number {
+  if (!alive(d)) {
+    if (d.seen) forget(d);
+    return 0;
+  }
+  d.seen = true;
+  const [lo, hi] = windowOf(d);
+  for (const r of d.painted) if (r.n < lo || r.n > hi || !intact(r)) unpaint(d, r);
+  let added = 0;
+  for (let n = lo; n <= hi; n++) {
+    const r = d.rows[n] as Row;
+    if (r.painted === null) added += paint(d, r);
+  }
+  return added;
+}
+
+/** A painted row still is the one text node with the line it drew. */
+function intact(r: Row): boolean {
+  const p = r.painted;
+  return !!p && r.dt.firstChild === p.node && r.dt.childNodes.length === 1 && p.node.data === r.hk.lines[r.i];
+}
+
+/** A row's ranges: its tokens' colours over (an added or deleted row's) plain text in the context's colour; the sign as drawn. */
+function paint(d: Diff, r: Row): number {
+  const hk = r.hk;
+  if (hk.state !== 'done') return 0;
+  const sides = hk.sides;
+  const at = sides?.at[r.i];
+  const tokens = at && hk.tokens ? (at[0] ? hk.tokens.neu : hk.tokens.old)[at[1]] : undefined;
+  const line = hk.lines[r.i] as string;
+  const sign = sides?.sign[r.i] ?? 0;
+  const node = r.dt.firstChild;
+  // Nothing to colour (an empty line, a `\ No newline` row), or a row changed under us: it stays as drawn.
+  if (!tokens?.length || r.dt.childNodes.length !== 1 || node?.nodeType !== Node.TEXT_NODE || (node as Text).data !== line || line.slice(0, sign) + tokensText(tokens) !== line) {
+    r.painted = false;
+    return 0;
+  }
+  const hls = highlights();
+  const ranges: Array<[Highlight, StaticRange]> = [];
+  const add = (h: Highlight, start: number, end: number) => {
+    const rg = new StaticRange({ startContainer: node, startOffset: start, endContainer: node, endOffset: end });
+    h.add(rg);
+    ranges.push([h, rg]);
+  };
+  if (sign && (line[0] === '+' || line[0] === '-')) add(hls.plain, sign, line.length);
+  const spec = rowRanges(tokens, sign);
+  for (let i = 0; i < spec.length; i += 3) add(hls.colours[spec[i] as number] as Highlight, spec[i + 1] as number, spec[i + 2] as number);
+  r.painted = { node: node as Text, ranges };
+  d.painted.add(r);
+  return ranges.length;
+}
+
+function unpaint(d: Diff, r: Row): void {
+  if (r.painted) for (const [h, rg] of r.painted.ranges) h.delete(rg);
+  r.painted = null;
+  d.painted.delete(r);
+}
+
+/** A diff that left the page: its ranges go, and nothing watches it any more. */
+function forget(d: Diff): void {
+  for (const r of d.painted) unpaint(d, r);
+  live.delete(d);
+  dirtyQ.delete(d);
+  io?.unobserve(d.body);
+  ro?.unobserve(d.body);
+}
+
+/** Lets go of the diffs that left the page; `timed`, also of those never in it since the last time. */
+function sweep(timed = false): void {
+  for (const d of live) {
+    if (alive(d)) d.seen = true;
+    else if (d.seen || (timed && ++d.unseen > 1)) forget(d);
+  }
+}
+
+/** While diffs are held, one that left the page unnoticed is let go of within SWEEP_MS (one never in it, within twice that). */
+function sweepLater(): void {
+  if (sweepTimer !== null) return;
+  sweepTimer = setTimeout(() => {
+    sweepTimer = null;
+    sweep(true);
+    if (live.size) sweepLater();
+  }, SWEEP_MS);
+}
+
+/** For tests: the highlights' ranges now. */
+export const diffRangeCount = (): number => (plainHl?.size ?? 0) + colourHls.reduce((s, h) => s + h.size, 0);
 
 // ---- the worker -----------------------------------------------------------------------------------------------
 
@@ -321,7 +500,7 @@ function feedWorker(): void {
   const w = theWorker;
   if (!w || inFlight) return;
   for (let hk = workerQ.shift(); hk; hk = workerQ.shift()) {
-    if (!hk.diff.alive()) {
+    if (!alive(hk.diff)) {
       done(hk, null);
       continue;
     }
@@ -334,4 +513,4 @@ function feedWorker(): void {
 }
 
 /** For tests: what this module still has to do. */
-export const diffColoursBusy = (): boolean => scheduled || frameWait || !!inFlight || incoming.length + mainQ.length + workerQ.length + paintQ.length > 0;
+export const diffColoursBusy = (): boolean => scheduled || frameAsked || !!inFlight || incoming.length + mainQ.length + workerQ.length + dirtyQ.size > 0;

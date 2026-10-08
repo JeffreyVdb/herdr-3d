@@ -6,6 +6,9 @@
  * A diff is coloured per hunk side, never per line: the old side (context and deleted lines) and the new side (context
  * and added lines) are each one text, so a template literal or a block comment that spans rows colours right on every
  * row. Context rows take the new side's tokens.
+ *
+ * Rows are coloured with the CSS Custom Highlight API, not spans (diffHighlight.ts): `rowRanges` turns a line's tokens
+ * into the character ranges each colour paints.
  */
 
 /**
@@ -166,3 +169,57 @@ export function tokenizeHunk(highlight: HighlightFn, lang: string, old: string, 
 
 /** The text a line's tokens spell (to check a split against the line it is for). */
 export const tokensText = (t: LineTokens): string => t.filter((_, i) => i % 2 === 1).join('');
+
+/**
+ * The colours a token can take, in transcript.css's order (its `.tx .hljs-*` rules), and the highlight.js classes each
+ * colours. Each is a highlight named `tx-hl-<colour>` painted in `var(--tx-hl-<colour>)` (`::highlight()` in
+ * transcript.css). A class not here (`hljs-subst`, `hljs-emphasis`…) has no colour of its own.
+ */
+export const HL_COLOURS: ReadonlyArray<readonly [colour: string, classes: readonly string[]]> = [
+  ['comment', ['hljs-comment', 'hljs-quote']],
+  ['keyword', ['hljs-keyword', 'hljs-selector-tag', 'hljs-literal', 'hljs-type']],
+  ['string', ['hljs-string', 'hljs-regexp', 'hljs-addition', 'hljs-symbol']],
+  ['number', ['hljs-number', 'hljs-built_in', 'hljs-params']],
+  ['title', ['hljs-title', 'hljs-section', 'hljs-name']],
+  ['attr', ['hljs-attr', 'hljs-attribute', 'hljs-variable', 'hljs-property']],
+  ['meta', ['hljs-meta', 'hljs-deletion']],
+];
+
+/** highlight.js class -> its colour's index in HL_COLOURS. */
+const COLOUR_OF = new Map(HL_COLOURS.flatMap(([, cls], c) => cls.map((k) => [k, c] as const)));
+
+/**
+ * The colour of a token's classes (a LineTokens `classes`): the innermost level that has one, as a span's would be
+ * inherited (`hljs-string,hljs-subst` is a string's; `hljs-string,hljs-subst,hljs-title` a title's). Within a level the
+ * class whose rule comes last wins, as in CSS. -1: none (the row's plain text).
+ */
+export function tokenColour(classes: string): number {
+  if (!classes) return -1;
+  const levels = classes.split(',');
+  for (let i = levels.length - 1; i >= 0; i--) {
+    let c = -1;
+    for (const k of (levels[i] as string).split(' ')) c = Math.max(c, COLOUR_OF.get(k) ?? -1);
+    if (c >= 0) return c;
+  }
+  return -1;
+}
+
+/**
+ * A row's colours as character ranges of its text (the line as drawn: `from` characters of sign, then the tokens'
+ * text), flat: `[colour, start, end, …]`, `colour` an index in HL_COLOURS. Text of no colour has no range; neighbouring
+ * tokens of one colour are one range.
+ */
+export function rowRanges(tokens: LineTokens, from: number): number[] {
+  const out: number[] = [];
+  let at = from;
+  for (let i = 0; i < tokens.length; i += 2) {
+    const len = (tokens[i + 1] as string).length;
+    const c = tokenColour(tokens[i] as string);
+    if (c >= 0) {
+      if (out.length && out[out.length - 3] === c && out[out.length - 1] === at) out[out.length - 1] = at + len;
+      else out.push(c, at, at + len);
+    }
+    at += len;
+  }
+  return out;
+}

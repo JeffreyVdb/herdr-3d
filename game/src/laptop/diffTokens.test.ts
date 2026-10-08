@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import hljs from 'highlight.js/lib/common';
 import { describe, expect, it } from 'vitest';
-import { diffLanguage, EXT_LANGUAGE, hunkSides, splitHighlighted, tokenizeHunk, tokensText, type LineTokens } from './diffTokens';
+import { rowWindow } from './diffHighlight';
+import { diffLanguage, EXT_LANGUAGE, HL_COLOURS, hunkSides, rowRanges, splitHighlighted, tokenColour, tokenizeHunk, tokensText, type LineTokens } from './diffTokens';
 
 /** #206: a diff's syntax colours, the pure half: the language of a path, a hunk's two sides, highlight.js's HTML per line. */
 
@@ -130,5 +133,68 @@ describe('tokenizeHunk', () => {
     expect(tokenizeHunk(() => { throw new Error('x'); }, 'typescript', 'a', 'b')).toBeNull();
     expect(tokenizeHunk(() => 'one line', 'typescript', 'a\nb', '')).toBeNull();
     expect(tokenizeHunk(highlight, 'typescript', '', 'x')).toEqual({ old: [[]], neu: [['', 'x']] });
+  });
+});
+
+describe('rowRanges: the ranges each colour of a row paints', () => {
+  const colour = (name: string) => HL_COLOURS.findIndex(([c]) => c === name);
+  /** A line's ranges as [colour, text]. */
+  const painted = (line: string, tokens: LineTokens, from: number) => {
+    const r = rowRanges(tokens, from);
+    const out: Array<[string, string]> = [];
+    for (let i = 0; i < r.length; i += 3) out.push([HL_COLOURS[r[i] as number]?.[0] as string, line.slice(r[i + 1], r[i + 2])]);
+    return out;
+  };
+
+  it('the innermost level with a colour wins: `${}` in a template string is the string\'s, a number in it the number\'s', () => {
+    const line = '+const s = `a ${1 + f(x)} b`;';
+    const t = tokenizeHunk(highlight, 'typescript', '', line.slice(1));
+    const tokens = t?.neu[0] as LineTokens;
+    // highlight.js nests it: string > subst (no colour of its own) > number.
+    expect(pairs(tokens)).toContainEqual(['hljs-string,hljs-subst', '${']);
+    expect(pairs(tokens)).toContainEqual(['hljs-string,hljs-subst,hljs-number', '1']);
+    expect(painted(line, tokens, 1)).toEqual([
+      ['keyword', 'const'],
+      ['string', '`a ${'],
+      ['number', '1'],
+      ['string', ' + f(x)} b`'],
+    ]);
+  });
+
+  it('offsets count the sign; plain text has no range; neighbours of one colour are one range', () => {
+    expect(painted('-x = 1 // y', ['', 'x = ', 'hljs-number', '1', '', ' ', 'hljs-comment', '// y'], 1)).toEqual([
+      ['number', '1'],
+      ['comment', '// y'],
+    ]);
+    expect(rowRanges(['hljs-string', 'ab', 'hljs-string,hljs-subst', 'cd'], 0)).toEqual([colour('string'), 0, 4]);
+    expect(rowRanges(['', 'plain', 'hljs-subst', 'x'], 0)).toEqual([]);
+  });
+
+  it('a level of several classes takes the one whose rule comes last, as CSS would', () => {
+    expect(tokenColour('hljs-meta hljs-keyword')).toBe(colour('meta'));
+    expect(tokenColour('hljs-keyword,hljs-emphasis')).toBe(colour('keyword'));
+    expect(tokenColour('')).toBe(-1);
+  });
+
+  it('HL_COLOURS is transcript.css: its .hljs-* rules, and a ::highlight() of each in the same colour', () => {
+    const css = readFileSync(join(import.meta.dirname, 'transcript.css'), 'utf8');
+    const rules = [...css.matchAll(/((?:\.tx \.hljs-[\w-]+,?\s*)+)\{\s*color: var\(--tx-hl-(\w+)\);/g)].map((m) => [m[2], [...(m[1] as string).matchAll(/\.hljs-[\w-]+/g)].map((c) => c[0].slice(1))]);
+    expect(rules).toEqual(HL_COLOURS.map(([c, cls]) => [c, [...cls]]));
+    for (const [c] of HL_COLOURS) expect(css).toContain(`.tx-dt::highlight(tx-hl-${c}) {\n  color: var(--tx-hl-${c});\n}`);
+    expect(css).toContain('.tx-dt::highlight(tx-hl-plain) {\n  color: var(--tx-text);\n}');
+  });
+});
+
+describe('rowWindow', () => {
+  // Rows of 20px from y = 100, top to bottom.
+  const edges = (i: number) => [100 + i * 20, 120 + i * 20] as const;
+  it('the rows that reach into a band, none when none do', () => {
+    expect(rowWindow(50, edges, 100, 160)).toEqual([0, 2]);
+    expect(rowWindow(50, edges, 105, 145)).toEqual([0, 2]);
+    expect(rowWindow(50, edges, 120, 140)).toEqual([1, 1]);
+    expect(rowWindow(50, edges, -500, 0)).toEqual([0, -1]);
+    expect(rowWindow(50, edges, 2000, 3000)[1]).toBeLessThan(rowWindow(50, edges, 2000, 3000)[0]);
+    expect(rowWindow(50, edges, 0, 5000)).toEqual([0, 49]);
+    expect(rowWindow(0, edges, 0, 5000)).toEqual([0, -1]);
   });
 });

@@ -523,7 +523,7 @@ function diffLines(diff: TranscriptDiff, limit: number, around: (change: () => v
   const box = h('div', { class: 'tx-diff-lines' });
   const body = h('div', { class: 'tx-diff-body', role: 'table', tabindex: '0', 'aria-label': `Changes to ${String(diff.path ?? '')}` });
   // #206: drawn plain, coloured once its hunk is tokenized (while these rows are still the page's).
-  const colours = diffColours(diff.path, lines, () => body.isConnected);
+  const colours = diffColours(diff.path, lines, body);
   let pos = 0;
   let shown = 0;
   const draw = (upTo: number) => {
@@ -538,8 +538,9 @@ function diffLines(diff: TranscriptDiff, limit: number, around: (change: () => v
       if (shown >= upTo) break;
       shown++;
       const dt = h('span', { class: 'tx-dt' }, r.text || ' ');
-      page.append(h('div', { class: `tx-dl tx-${r.kind}`, role: 'row' }, h('span', { class: 'tx-dn' }, r.on), h('span', { class: 'tx-dn' }, r.nn), dt));
-      colours?.row(r.hk, r.li, dt);
+      const dl = h('div', { class: `tx-dl tx-${r.kind}`, role: 'row' }, h('span', { class: 'tx-dn' }, r.on), h('span', { class: 'tx-dn' }, r.nn), dt);
+      page.append(dl);
+      colours?.row(r.hk, r.li, dl, dt);
     }
     body.append(page);
   };
