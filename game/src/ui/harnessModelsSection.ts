@@ -31,7 +31,8 @@ interface Group {
 }
 
 /**
- * Settings → Harness models (#194): which models the Hire dialog offers, per harness. Every model is shown until the
+ * Settings → Harness models (#194): which models the model pickers offer (Hire, Start run's orchestrator, team presets,
+ * a floor's default hire), per harness. Every model is shown until the
  * player hides it; a hidden one stays listed with its exact slug, so it can be shown again. A hidden slug the bridge no
  * longer lists sits under "Not currently available", where it can be cleared. Models are named as Hire names them (#200: the
  * harness's readable name, else a formatted slug); the exact slug stays beside the name, and the filter takes either. The list is rebuilt when the dialog opens
@@ -40,7 +41,7 @@ interface Group {
 export function harnessModelsSection(host: HarnessModelsHost): (body: HTMLElement) => SectionHandle {
   return (body) => {
     const { prefs } = host;
-    const lede = el('p', 'settings-lede', 'Hire offers every model unless you hide it here. A hidden model stays in this list, so you can show it again.');
+    const lede = el('p', 'settings-lede', 'Hire, Start run, team presets and floor defaults offer every model unless you hide it here. A hidden model stays in this list, so you can show it again. A preset or default that already uses a hidden model keeps it.');
     const groupsEl = el('div', 'hm-groups');
     let groups: Group[] = [];
 
@@ -52,7 +53,7 @@ export function harnessModelsSection(host: HarnessModelsHost): (body: HTMLElemen
           r.box.checked = !off.has(r.slug);
           if (r.box.checked) shown++;
         }
-        g.count.textContent = `${shown} of ${g.rows.length} shown in Hire`;
+        g.count.textContent = `${shown} of ${g.rows.length} shown`;
         g.showAll.disabled = off.size === 0;
         renderStale(g, off);
       }
@@ -98,7 +99,7 @@ export function harnessModelsSection(host: HarnessModelsHost): (body: HTMLElemen
       const count = el('span', 'settings-badge');
       const showAll = el('button', 'btn btn--sm', 'Show all');
       showAll.type = 'button';
-      showAll.setAttribute('aria-label', `Show all ${HARNESS_LABEL[harness] ?? harness} models in Hire`);
+      showAll.setAttribute('aria-label', `Show all ${HARNESS_LABEL[harness] ?? harness} models`);
       head.append(title, count, showAll);
 
       const field = el('div', 'settings-field');
@@ -117,7 +118,7 @@ export function harnessModelsSection(host: HarnessModelsHost): (body: HTMLElemen
         const box = el('input');
         box.type = 'checkbox';
         const label = el('label', 'settings-switch');
-        label.append(box, slugCell(slug, entry.label), el('span', 'hm-action', 'Show in Hire'));
+        label.append(box, slugCell(slug, entry.label), el('span', 'hm-action', 'Show'));
         li.append(label);
         box.addEventListener('change', () => prefs.setShown(harness, slug, box.checked));
         list.append(li);

@@ -1,5 +1,6 @@
 /**
- * Readable model names (#200), one place for Hire and Settings → Harness models. The bridge sends the harness's own
+ * Readable model names (#200), one place for every model picker (Hire, Start run, team presets, floor defaults) and
+ * Settings → Harness models. The bridge sends the harness's own
  * display names (`model_labels`, keyed by exact launch id); everything else here is presentation. The id stays the
  * value: selection, the submitted launch id, saved defaults, hidden-model prefs and effort lookup never see a label.
  * All functions are pure and return plain text (callers set it with `textContent`, never `innerHTML`).
@@ -90,4 +91,9 @@ export function modelEntries(harness: string, ids: readonly string[], labels?: M
 export function modelMatches(query: string, e: ModelEntry): boolean {
   const q = squash(query);
   return !q || e.haystack.includes(q);
+}
+
+/** A model as one line of plain text (a `<select>` option): its label, with the exact id when another model shares it. */
+export function modelOptionText(e: ModelEntry): string {
+  return e.collides ? `${e.label} (${e.id})` : e.label;
 }

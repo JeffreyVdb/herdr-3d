@@ -1,5 +1,6 @@
-import type { CommandArgs, Hire, HireGit, Preset, RunPrepare, RunStartAck } from '../net/protocol';
-import { baseText, capacityView, fetchNote, firstFreeDesk, freeDesks, modelsFor, resolveChoice, worktreeUsable, type CapacityView } from '../world/hire';
+import type { CommandArgs, Hire, HireGit, HireOptions, Preset, RunPrepare, RunStartAck } from '../net/protocol';
+import { baseText, capacityView, fetchNote, firstFreeDesk, freeDesks, HARNESS_LABEL, modelsFor, offeredOptions, resolveVisibleChoice, worktreeUsable, type CapacityView } from '../world/hire';
+import { labelsOf, modelEntries } from '../world/modelLabel';
 import { effortsFor } from '../world/settings';
 import {
   emptyPreview,
@@ -159,6 +160,8 @@ export class StartRunDialog {
   ) {
     this.alertEl.hidden = true;
     this.statusEl.hidden = true;
+    // Settings → Harness models changed what the orchestrator chips offer.
+    this.host.modelPrefs?.onChange(() => this.visibilityChanged());
     this.extraDraft = this.newDraft('run-extra', EXTRA_MAX);
     this.promptDraft = this.newDraft('run-prompt', HIRE_PROMPT_MAX_BYTES);
     this.extraC = mountComposer({
@@ -348,7 +351,7 @@ export class StartRunDialog {
     this.prep = p;
     if (first) {
       this.f.preset = p.preset;
-      this.f.orch = resolveChoice(this.host.store.hireOptions, p.orch);
+      this.f.orch = resolveVisibleChoice(this.options(), p.orch);
       this.f.worktree = worktreeUsable(p.git);
     } else if (!worktreeUsable(p.git)) this.f.worktree = false;
     this.ticketError = null;
@@ -379,7 +382,7 @@ export class StartRunDialog {
         if (!book.get(this.f.preset)) {
           const next = book.defaultFor(fv.floor.last_preset);
           this.f.preset = next?.id ?? '';
-          if (next && !this.orchTouched) this.f.orch = resolveChoice(this.host.store.hireOptions, next.roles.orch);
+          if (next && !this.orchTouched) this.f.orch = resolveVisibleChoice(this.options(next), next.roles.orch);
         }
         // Its roles may have changed: the team lines with them.
         if (this.f.preset) this.schedule();
@@ -444,6 +447,32 @@ export class StartRunDialog {
     return this.host.store.presets.get(this.f.preset);
   }
 
+  /**
+   * The catalog the orchestrator chips offer: the models Settings leaves shown, plus the orchestrator `preset` names,
+   * so a preset's choice is never swapped for another model behind its back.
+   */
+  private options(preset: Preset | null = this.preset()): HireOptions {
+    const prefs = this.host.modelPrefs;
+    return offeredOptions(this.host.store.hireOptions, prefs && ((harness) => prefs.hidden(harness)), [preset?.roles.orch]);
+  }
+
+  /** Every model of the orchestrator's harness is hidden in Settings: say so where the model chips would be. */
+  private noModels(harness: string): HTMLElement {
+    const total = this.host.store.hireOptions[harness]?.models.length ?? 0;
+    const label = HARNESS_LABEL[harness] ?? harness;
+    const text = total ? `All ${total} ${label} models are hidden, so there is nothing to start with.` : 'This harness has no models to start with.';
+    const open = this.host.showModelSettings && total ? h('button', { class: 'btn btn--sm', 'data-key': 'show-models', onclick: () => this.host.showModelSettings?.() }, 'Open Harness models') : null;
+    return h('div', { class: 'dd-field dd-callout', 'data-hook': 'no-models', role: 'status' }, h('p', {}, text), open);
+  }
+
+  /** Settings changed what is shown: an orchestrator on a model now hidden (and not the preset's) takes the first shown one. */
+  private visibilityChanged(): void {
+    if (!this.dialog.open || this.state !== 'ready' || !this.f.orch) return;
+    this.f.orch = resolveVisibleChoice(this.options(), this.f.orch);
+    this.render();
+    this.schedule();
+  }
+
   // ---- rendering ----------------------------------------------------------------------
 
   private render(): void {
@@ -451,7 +480,7 @@ export class StartRunDialog {
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const book = this.host.store.presets;
     const free = fv ? freeDesks(fv).filter((d) => d === this.f.desk || !this.host.held(this.session).has(d)) : [];
-    const key = JSON.stringify([this.session, this.f.desk, this.state, this.f.workItem?.id ?? null, this.prep && { ...this.prep, prompt: '', label: '' }, this.f.preset, this.f.orch, this.f.worktree, where, this.takenBy(), this.statusText, book.version, free, this.ticketError !== null, this.host.store.limits.version]);
+    const key = JSON.stringify([this.session, this.f.desk, this.state, this.f.workItem?.id ?? null, this.prep && { ...this.prep, prompt: '', label: '' }, this.f.preset, this.f.orch, this.f.worktree, where, this.takenBy(), this.statusText, book.version, free, this.ticketError !== null, this.host.store.limits.version, this.host.modelPrefs?.version, this.f.orch && labelsOf(this.host.store.hireOptions, this.f.orch.harness)]);
     if (key === this.renderedKey) {
       this.renderLive();
       return;
@@ -484,7 +513,7 @@ export class StartRunDialog {
     const busy = this.state === 'starting' || this.state === 'preparing' || this.state === 'failed';
     const nodes: Node[] = [this.ticketField()];
     const notices: Node[] = [];
-    const options = this.host.store.hireOptions;
+    const options = this.options();
 
     // Desk and team.
     const desk = h('select', { id: 'run-desk', 'data-key': 'desk', 'aria-describedby': 'run-desk-hint' });
@@ -524,8 +553,12 @@ export class StartRunDialog {
           { class: 'dd-agent', role: 'group', 'aria-label': 'Orchestrator' },
           h('p', { class: 'dd-agent-title' }, 'Orchestrator'),
           chips('orch-harness', 'Harness', Object.keys(options), o.harness, (v) => this.pickOrch({ harness: v }), note),
-          chips('orch-model', 'Model', modelsFor(options, o.harness), o.model, (v) => this.pickOrch({ model: v })),
-          chips('orch-effort', 'Effort', effortsFor(options, o.harness, o.model), o.effort, (v) => this.pickOrch({ effort: v })),
+          ...(o.model
+            ? [
+                chips('orch-model', 'Model', modelsFor(options, o.harness), o.model, (v) => this.pickOrch({ model: v }), null, modelEntries(o.harness, modelsFor(options, o.harness), labelsOf(options, o.harness))),
+                chips('orch-effort', 'Effort', effortsFor(options, o.harness, o.model), o.effort, (v) => this.pickOrch({ effort: v })),
+              ]
+            : [this.noModels(o.harness)]),
         ),
       );
     } else nodes.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i')));
@@ -798,16 +831,14 @@ export class StartRunDialog {
   private pickPreset(id: string): void {
     this.f.preset = id;
     const p = this.host.store.presets.get(id);
-    if (p && !this.orchTouched) this.f.orch = resolveChoice(this.host.store.hireOptions, p.roles.orch);
+    if (p && !this.orchTouched) this.f.orch = resolveVisibleChoice(this.options(p), p.roles.orch);
     this.render();
     this.schedule();
   }
 
   private pickOrch(p: Partial<Hire>): void {
     const o = this.f.orch;
-    const next = resolveChoice(this.host.store.hireOptions, { ...o, ...p });
-    if (!next) return;
-    this.f.orch = next;
+    this.f.orch = resolveVisibleChoice(this.options(), { ...o, ...p });
     this.orchTouched = true;
     this.render();
     this.schedule();

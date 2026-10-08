@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claudeSlugName, modelEntries, modelLabel, modelMatches, spaceSeparators } from './modelLabel';
+import { claudeSlugName, modelEntries, modelLabel, modelMatches, modelOptionText, spaceSeparators } from './modelLabel';
 
 // #200: readable model names. Fixture ids only; nothing here is a catalog.
 
@@ -88,5 +88,12 @@ describe('modelEntries and modelMatches', () => {
     expect(modelMatches('GPT-6.1-Sol', e!)).toBe(true);
     expect(modelMatches('6.1-so', e!)).toBe(true);
     expect(modelMatches('6 sol', e!)).toBe(false);
+  });
+});
+
+describe('modelOptionText', () => {
+  it('a select option shows the name, and the exact id only when another model shares the name', () => {
+    const e = modelEntries('claude', ['claude-opus-5-5', 'twin-a', 'twin-b', 'raw'], { 'twin-a': 'Twin', 'twin-b': 'Twin' });
+    expect(e.map(modelOptionText)).toEqual(['Opus 5.5', 'Twin (twin-a)', 'Twin (twin-b)', 'raw']);
   });
 });

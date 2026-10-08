@@ -40,7 +40,7 @@ export function resolveChoice(options: HireOptions, want: Partial<Hire> | null |
 }
 
 /**
- * The catalog as the Hire dialog offers it: each harness keeps its place and its efforts, and its models are the ones
+ * The catalog as the model pickers offer it: each harness keeps its place and its efforts, and its models are the ones
  * `hidden` does not name, in catalog order. A harness with every model hidden stays as a key with no models, so it can
  * still be picked and shows its empty state. The catalog itself is not changed (Settings, presets and runs read it whole).
  */
@@ -49,6 +49,24 @@ export function visibleOptions(options: HireOptions, hidden: (harness: string) =
   for (const [harness, o] of Object.entries(options)) {
     const off = hidden(harness);
     out[harness] = { ...o, models: o.models.filter((m) => !off.has(m)) };
+  }
+  return out;
+}
+
+/**
+ * The catalog a model picker offers (Hire, Start run, team presets, floor defaults): the models Settings leaves shown,
+ * with `keep` (a saved choice: a preset's role, a floor default) still offered for its harness when it is hidden, so
+ * opening a picker never rewrites what was saved. `hidden` absent (no Settings): the whole catalog. Validation keeps
+ * reading the whole catalog, so a saved choice of a hidden model stays valid.
+ */
+export function offeredOptions(options: HireOptions, hidden: ((harness: string) => ReadonlySet<string>) | null | undefined, keep: ReadonlyArray<Partial<Hire> | null | undefined> = []): HireOptions {
+  if (!hidden) return options;
+  const out = visibleOptions(options, hidden);
+  for (const k of keep) {
+    const all = k?.harness ? options[k.harness]?.models : undefined;
+    const shown = k?.harness ? out[k.harness] : undefined;
+    if (!k?.model || !all || !shown || shown.models.includes(k.model) || !all.includes(k.model)) continue;
+    shown.models = all.filter((m) => m === k.model || shown.models.includes(m));
   }
   return out;
 }
