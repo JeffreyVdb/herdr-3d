@@ -468,9 +468,10 @@ export class StartRunDialog {
   /** Settings changed what is shown: an orchestrator on a model now hidden (and not the preset's) takes the first shown one. */
   private visibilityChanged(): void {
     if (!this.dialog.open || this.state !== 'ready' || !this.f.orch) return;
-    this.f.orch = resolveVisibleChoice(this.options(), this.f.orch);
+    const was = this.f.orch;
+    this.f.orch = resolveVisibleChoice(this.options(), was);
     this.render();
-    this.schedule();
+    if (this.f.orch.model !== was.model || this.f.orch.effort !== was.effort) this.schedule();
   }
 
   // ---- rendering ----------------------------------------------------------------------
