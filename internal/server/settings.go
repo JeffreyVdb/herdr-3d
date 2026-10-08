@@ -139,6 +139,33 @@ func applySettings(cur store.FloorSettings, a proto.FloorSettingsArgs, statDir f
 			next.DefaultCwd = dir
 		}
 	}
+	if a.Tracker.Set { // #184
+		next.Tracker = ""
+		if v := a.Tracker.Value; v != nil {
+			switch *v {
+			case proto.TrackerGitHub:
+			case proto.TrackerKaneo:
+				next.Tracker = proto.TrackerKaneo
+			default:
+				return cur, bad("tracker must be github or kaneo, got %q", *v)
+			}
+		}
+	}
+	if a.Kaneo.Set {
+		next.KaneoWorkspaceID, next.KaneoWorkspaceName, next.KaneoProjectID, next.KaneoProjectName = "", "", "", ""
+		if v := a.Kaneo.Value; v != nil {
+			if validItemID(v.WorkspaceID) != nil || validItemID(v.ProjectID) != nil {
+				return cur, bad("kaneo needs a workspace_id and a project_id of 1-%d bytes without control characters", maxItemID)
+			}
+			next.KaneoWorkspaceID, next.KaneoProjectID = v.WorkspaceID, v.ProjectID
+			if v.WorkspaceID == cur.KaneoWorkspaceID && v.ProjectID == cur.KaneoProjectID {
+				next.KaneoWorkspaceName, next.KaneoProjectName = cur.KaneoWorkspaceName, cur.KaneoProjectName
+			}
+		}
+	}
+	if next.Tracker == proto.TrackerKaneo && next.KaneoProjectID == "" {
+		return cur, bad("a Kaneo floor needs its workspace and project: choose a project")
+	}
 	if a.DefaultHire.Set {
 		next.HireHarness, next.HireModel, next.HireEffort = "", "", ""
 		if v := a.DefaultHire.Value; v != nil {
@@ -178,11 +205,55 @@ func settingsView(s store.FloorSettings) *proto.FloorSettings {
 	if s.HireHarness != "" {
 		v.DefaultHire = &proto.Hire{Harness: s.HireHarness, Model: s.HireModel, Effort: s.HireEffort}
 	}
+	v.Tracker = s.Tracker // #184
+	if s.KaneoProjectID != "" {
+		v.Kaneo = &proto.KaneoLink{WorkspaceID: s.KaneoWorkspaceID, WorkspaceName: s.KaneoWorkspaceName,
+			ProjectID: s.KaneoProjectID, ProjectName: s.KaneoProjectName}
+	}
 	return v
 }
 
-// setSettings runs floor.settings.set.
-func (h *Hub) setSettings(ctx context.Context, a proto.FloorSettingsArgs) error {
+// kaneoCheck is a floor's Kaneo link as Kaneo vouched for it (#184): the
+// ids checked and the names to keep, the connection's generation that
+// checked them, and the floor's link the save started from.
+type kaneoCheck struct {
+	workspaceID, workspaceName string
+	projectID, projectName     string
+	generation                 int64
+	from                       linkIdentity
+}
+
+// linkIdentity is what makes a floor's issue board: its tracker and its
+// Kaneo link (the rest of its settings may change under a save).
+type linkIdentity struct {
+	tracker, workspaceID, projectID string
+}
+
+func linkOf(s store.FloorSettings) linkIdentity {
+	return linkIdentity{s.Tracker, s.KaneoWorkspaceID, s.KaneoProjectID}
+}
+
+// needsKaneoCheck says whether saving next over cur stores a Kaneo link
+// that Kaneo has to vouch for first: a new link, or a switch to Kaneo
+// (the kept link's project may be gone since).
+func needsKaneoCheck(cur, next store.FloorSettings) bool {
+	if next.KaneoProjectID == "" {
+		return false
+	}
+	changed := next.KaneoWorkspaceID != cur.KaneoWorkspaceID || next.KaneoProjectID != cur.KaneoProjectID
+	return changed || (next.Tracker == proto.TrackerKaneo && cur.Tracker != proto.TrackerKaneo)
+}
+
+// startFloorSettings runs floor.settings.set. A save that stores a Kaneo
+// link asks Kaneo first, off the hub goroutine (the project must be a live
+// project of that workspace), then applies the args again to what the
+// floor has by then: stale when the floor's link or the Kaneo connection
+// changed meanwhile.
+func (h *Hub) startFloorSettings(ctx context.Context, c *Client, cmd proto.Command) error {
+	var a proto.FloorSettingsArgs
+	if err := decodeArgs(cmd.Args, &a); err != nil {
+		return err
+	}
 	f, err := h.floorFor(a.Session)
 	if err != nil {
 		return err
@@ -194,6 +265,88 @@ func (h *Hub) setSettings(ctx context.Context, a proto.FloorSettingsArgs) error 
 	next, err := applySettings(cur, a, h.opts.StatDir, h.hireOptions())
 	if err != nil {
 		return err
+	}
+	finish := func(ctx context.Context, check *kaneoCheck) {
+		err := h.setSettings(ctx, a, check)
+		if err == nil {
+			err = h.afterChange(ctx)
+		}
+		h.audit(ctx, c, cmd, err)
+		h.reply(c, cmd, nil, err)
+	}
+	if !needsKaneoCheck(cur, next) {
+		finish(ctx, nil)
+		return nil
+	}
+	svc := h.opts.Kaneo
+	if svc == nil {
+		return fmt.Errorf("%w: the bridge has no Kaneo settings", errUnsupported)
+	}
+	ws, project, from := next.KaneoWorkspaceID, next.KaneoProjectID, linkOf(cur)
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		p, gen, err := svc.VerifyProject(ctx, ws, project)
+		check := &kaneoCheck{workspaceID: ws, projectID: project, projectName: p.Name, generation: gen, from: from}
+		if err == nil { // the workspace's name, from the list the form just read (cached)
+			if list, _, werr := svc.Workspaces(ctx); werr == nil {
+				for _, w := range list {
+					if w.ID == ws {
+						check.workspaceName = w.Name
+					}
+				}
+			}
+		}
+		if derr := h.doWait(ctx, func() {
+			if err != nil {
+				h.audit(ctx, c, cmd, err)
+				h.reply(c, cmd, nil, err)
+				return
+			}
+			finish(ctx, check)
+		}); derr != nil {
+			h.log.Warn("command abandoned", "cmd", cmd.T, "err", derr)
+		}
+	}()
+	return nil
+}
+
+// afterChange is what follows a command that changed the world (a floor's
+// settings too): the buildings, the layout and the run links read again.
+func (h *Hub) afterChange(ctx context.Context) error {
+	if err := h.reload(ctx); err != nil {
+		return err
+	}
+	h.syncLayout()
+	h.relink() // M6 runs: a floor's repo may have changed
+	return nil
+}
+
+// setSettings applies floor.settings.set. A Kaneo link it stores must be
+// the one check vouched for, with the connection that is saved now, over
+// the link the floor had when the save began (else the save is stale: the
+// floor or the connection changed meanwhile).
+func (h *Hub) setSettings(ctx context.Context, a proto.FloorSettingsArgs, check *kaneoCheck) error {
+	f, err := h.floorFor(a.Session)
+	if err != nil {
+		return err
+	}
+	if err := h.notBusy(a.Session, f); err != nil {
+		return err
+	}
+	cur := h.settings[a.Session]
+	next, err := applySettings(cur, a, h.opts.StatDir, h.hireOptions())
+	if err != nil {
+		return err
+	}
+	if needsKaneoCheck(cur, next) {
+		if check == nil || check.workspaceID != next.KaneoWorkspaceID || check.projectID != next.KaneoProjectID || check.from != linkOf(cur) {
+			return fmt.Errorf("%w: the floor's Kaneo link changed meanwhile: save again", errStale)
+		}
+		if l, ok := h.opts.Kaneo.Link(); !ok || l.Generation != check.generation {
+			return fmt.Errorf("%w: the Kaneo connection changed meanwhile: pick the project again", errStale)
+		}
+		next.KaneoWorkspaceName, next.KaneoProjectName = check.workspaceName, check.projectName
 	}
 	if settingsEqual(cur, next) {
 		return nil

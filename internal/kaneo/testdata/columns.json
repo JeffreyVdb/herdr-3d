@@ -1,0 +1,6 @@
+[
+  {"id":"col_todo","projectId":"pr_1","name":"To Do","slug":"to-do","position":0,"icon":null,"color":null,"isFinal":false,"createdAt":"2026-10-07T12:00:00.000Z","updatedAt":"2026-10-07T12:00:00.000Z"},
+  {"id":"col_done","projectId":"pr_1","name":"Done","slug":"done","position":3,"icon":null,"color":"#22c55e","isFinal":true,"createdAt":"2026-10-07T12:00:00.000Z","updatedAt":"2026-10-07T12:00:00.000Z"},
+  {"id":"col_prog","projectId":"pr_1","name":"In Progress","slug":"in-progress","position":1,"icon":null,"color":null,"isFinal":false,"createdAt":"2026-10-07T12:00:00.000Z","updatedAt":"2026-10-07T12:00:00.000Z"},
+  {"id":"col_rev","projectId":"pr_1","name":"In Review","slug":"in-review","position":2,"icon":null,"color":null,"isFinal":false,"createdAt":"2026-10-07T12:00:00.000Z","updatedAt":"2026-10-07T12:00:00.000Z"}
+]

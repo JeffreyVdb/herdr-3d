@@ -14,6 +14,13 @@ const Version = 1
 // stays "ok" so a helper from an older release still reads it as healthy.
 const VersionHeader = "X-H3D-Version"
 
+// OpenHostsHeader (#184) carries, on GET /healthz, the hosts besides the
+// built-in ones whose https pages a Mac helper may open for the game
+// (comma separated; absent: none): the saved Kaneo instance's web host. It
+// only travels on the bridge's own socket, which the helper reaches through
+// its ssh tunnel; no client can set it.
+const OpenHostsHeader = "X-H3D-Open-Hosts"
+
 // Message types.
 const (
 	THello    = "hello"
@@ -202,6 +209,9 @@ type World struct {
 	InboxDismissed map[string]int64 `json:"inbox_dismissed"`
 	// #155: the shared Codex server switch. Always present.
 	CodexServer *CodexServer `json:"codex_server,omitempty"`
+	// #184: the Kaneo connection (never a key). nil (left out) when the
+	// bridge has no Kaneo settings.
+	Kaneo *Kaneo `json:"kaneo,omitempty"`
 }
 
 // HireOptions lists what can be hired, per harness.
@@ -259,6 +269,21 @@ type FloorSettings struct {
 	StatusField *StatusField `json:"status_field,omitempty"`
 	DefaultCwd  string       `json:"default_cwd,omitempty"`
 	DefaultHire *Hire        `json:"default_hire,omitempty"`
+	// #184: Tracker is the floor's issue tracker when it is not GitHub
+	// ("kaneo"; absent: GitHub). Kaneo is the floor's Kaneo link, kept
+	// while the floor uses GitHub (and the GitHub fields while it uses
+	// Kaneo), so switching back finds it.
+	Tracker string     `json:"tracker,omitempty"`
+	Kaneo   *KaneoLink `json:"kaneo,omitempty"`
+}
+
+// KaneoLink is a floor's Kaneo workspace and project: the ids, and the
+// names they had when the floor was saved (for show).
+type KaneoLink struct {
+	WorkspaceID   string `json:"workspace_id"`
+	WorkspaceName string `json:"workspace_name,omitempty"`
+	ProjectID     string `json:"project_id"`
+	ProjectName   string `json:"project_name,omitempty"`
 }
 
 // Project is a GitHub Project (v2).
@@ -588,6 +613,17 @@ type FloorSettingsArgs struct {
 	StatusField Optional[StatusField] `json:"status_field,omitzero"`
 	DefaultCwd  Optional[string]      `json:"default_cwd,omitzero"`
 	DefaultHire Optional[Hire]        `json:"default_hire,omitzero"`
+	// #184: Tracker is "github" or "kaneo" (null: GitHub); Kaneo the
+	// workspace and project ids, which the bridge checks with Kaneo before
+	// it saves them (the project must be a live project of that workspace).
+	Tracker Optional[string]        `json:"tracker,omitzero"`
+	Kaneo   Optional[KaneoLinkArgs] `json:"kaneo,omitzero"`
+}
+
+// KaneoLinkArgs are a floor's Kaneo ids in floor.settings.set.
+type KaneoLinkArgs struct {
+	WorkspaceID string `json:"workspace_id"`
+	ProjectID   string `json:"project_id"`
 }
 
 // HirePrepareArgs are the args of hire.prepare.

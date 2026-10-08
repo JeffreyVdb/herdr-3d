@@ -272,3 +272,16 @@ describe('overlay helpers', () => {
     expect(timeAgo(1, 1 + 2 * 86_400_000)).toBe('2 d ago');
   });
 });
+
+describe('Kaneo wording (#184)', () => {
+  it('asks a worker with the task itself, bounded, and sends nobody to gh', async () => {
+    const { askItemPrompt, freshness } = await import('./boards');
+    const p = askItemPrompt('Kaneo', { key: 'HRD-3', title: ' Lobby ', url: 'https://k.test/t' }, 'x'.repeat(5000));
+    expect(p.startsWith('Investigate Kaneo task HRD-3: Lobby (https://k.test/t)')).toBe(true);
+    expect(p).toContain('[The description goes on in Kaneo.]');
+    expect(p).toContain("don't look it up with gh");
+    expect(p.length).toBeLessThan(4300);
+    const f = freshness({ stale: true, error: '403', error_code: 'forbidden', fetched_at: 0, provider_name: 'Kaneo' }, 0, () => 'now');
+    expect(f).toContain('permission problem');
+  });
+});

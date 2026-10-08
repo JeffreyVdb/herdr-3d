@@ -219,3 +219,17 @@ func TestNoteBridgeVersion(t *testing.T) {
 		t.Errorf("old bridge: status %q, log %q", tun.Status().Bridge, buf.String())
 	}
 }
+
+// #184: the hosts the bridge trusts come from its /healthz header: only
+// plain host names, and none once the header is gone.
+func TestNoteOpenHosts(t *testing.T) {
+	tun := &Tunnel{Log: quietLog()}
+	tun.noteOpenHosts("Tasks.Example.Test, bad host, https://x.test, x.test:443, ,-bad.test, ok-2.example.test, tasks.example.test")
+	if got := tun.Status().OpenHosts; !slices.Equal(got, []string{"tasks.example.test", "ok-2.example.test"}) {
+		t.Fatalf("hosts = %q", got)
+	}
+	tun.noteOpenHosts("")
+	if got := tun.Status().OpenHosts; len(got) != 0 {
+		t.Fatalf("hosts after the header went = %q", got)
+	}
+}

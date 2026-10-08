@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -185,5 +186,61 @@ func TestHireBranches(t *testing.T) {
 	}
 	if _, ok, err := st.HireBranchOf(ctx, b.WorkerID); err != nil || ok {
 		t.Fatalf("after forget: %v %v", ok, err)
+	}
+}
+
+// #184: a floor saved before the issue tracker choice is a GitHub floor
+// after the migration; a Kaneo floor keeps its GitHub fields and its Kaneo
+// link through a restart.
+func TestFloorTrackerMigrationAndKaneoLink(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "w.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(store.Migrations) - 1 // the schema before #184
+	for _, q := range store.Migrations[:before] {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, q := range []string{
+		fmt.Sprintf("PRAGMA user_version = %d", before),
+		`INSERT INTO floor_repo (session_name, repo, project_owner, project_number, updated_at) VALUES ('old', 'o/r', 'o', 3, '2026-09-01T10:00:00Z')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	st := open(t, path)
+	fs, err := st.FloorSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := fs["old"]; f.Tracker != "" || f.Repo != "o/r" || f.ProjectNumber != 3 || f.KaneoProjectID != "" {
+		t.Fatalf("migrated floor = %+v", f)
+	}
+	kaneo := store.FloorSettings{Repo: "o/r", ProjectOwner: "o", ProjectNumber: 3, Tracker: "kaneo", KaneoWorkspaceID: "ws1",
+		KaneoWorkspaceName: "Studio", KaneoProjectID: "p1", KaneoProjectName: "Herdr"}
+	if err := st.SetFloorSettings(ctx, "new", kaneo); err != nil {
+		t.Fatal(err)
+	}
+	// Back to GitHub: the link is kept, the floor is not zero.
+	inactive := kaneo
+	inactive.Tracker, inactive.Repo, inactive.ProjectOwner, inactive.ProjectNumber = "", "", "", 0
+	if inactive.IsZero() {
+		t.Fatal("a floor with only a Kaneo link is zero")
+	}
+	if err := st.SetFloorSettings(ctx, "inactive", inactive); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	st = open(t, path)
+	fs, _ = st.FloorSettings(ctx)
+	if !reflect.DeepEqual(fs["new"], kaneo) || !reflect.DeepEqual(fs["inactive"], inactive) {
+		t.Fatalf("after restart: %+v / %+v", fs["new"], fs["inactive"])
 	}
 }

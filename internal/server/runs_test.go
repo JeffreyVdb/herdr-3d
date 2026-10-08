@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/runs"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
@@ -128,8 +129,8 @@ func TestIssueFromTheLaunchRecord(t *testing.T) {
 	var orch atomic.Value
 	orch.Store("")
 	clk := newClock(1_000_000)
-	b := startBridge(t, "", server.Options{Now: clk.now, RunLaunch: func(_ context.Context, id string) (proto.IssueRef, bool) {
-		return proto.IssueRef{Repo: "x/launched", Number: 3}, id == orch.Load()
+	b := startBridge(t, "", server.Options{Now: clk.now, RunLaunch: func(_ context.Context, id string) (runs.Launch, bool) {
+		return runs.Launch{Issue: &proto.IssueRef{Repo: "x/launched", Number: 3}}, id == orch.Load()
 	}})
 	b.floor("s", true, runWorker("o", "ORCH|a", runTokens("orch", "run-1")))
 	orch.Store(workersOf(b.world(hasWorkers("s", 1)), "s")["o"].ID)

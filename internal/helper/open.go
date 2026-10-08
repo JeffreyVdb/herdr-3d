@@ -17,7 +17,9 @@ import (
 
 // DefaultOpenHosts are the hosts the game may ask the helper to open in the
 // user's browser: the issue and pull request pages of the providers the bridge
-// knows. A provider added later adds its host here.
+// knows. A provider added later adds its host here. #184: a self-hosted one
+// (Kaneo) is not listed: the bridge names its host on /healthz, through the
+// tunnel (Status.OpenHosts), while it is configured there.
 var DefaultOpenHosts = []string{"github.com"}
 
 // Opener opens an http(s) URL in the user's browser.
@@ -98,7 +100,7 @@ func (s *Server) open() http.Handler {
 			http.Error(w, "bad request: want {\"url\": \"https://…\"}", http.StatusBadRequest)
 			return
 		}
-		u, err := checkOpenURL(body.URL, s.openHosts)
+		u, err := checkOpenURL(body.URL, s.allowedOpenHosts())
 		if err != nil {
 			s.cfg.Log.Warn("open refused", "why", err.Error())
 			http.Error(w, "refused: "+err.Error(), http.StatusBadRequest)
@@ -112,6 +114,26 @@ func (s *Server) open() http.Handler {
 		s.cfg.Log.Info("opened in the browser", "host", hostOf(u))
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+// allowedOpenHosts is the built-in hosts and the ones the bridge trusts now
+// (#184: its Kaneo instance's).
+func (s *Server) allowedOpenHosts() map[string]bool {
+	var extra []string
+	if s.cfg.Bridge != nil {
+		extra = s.cfg.Bridge.Status().OpenHosts
+	}
+	if len(extra) == 0 {
+		return s.openHosts
+	}
+	hosts := make(map[string]bool, len(s.openHosts)+len(extra))
+	for h := range s.openHosts {
+		hosts[h] = true
+	}
+	for _, h := range extra {
+		hosts[strings.ToLower(h)] = true
+	}
+	return hosts
 }
 
 func hostOf(raw string) string {

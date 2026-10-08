@@ -29,6 +29,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/harness"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/imgcache"
+	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/screenshare"
@@ -122,6 +123,13 @@ const EnvActivityModel = "HERDR_WORLD_ACTIVITY_MODEL"
 
 // DefaultAIFile is ai.json next to the database.
 func DefaultAIFile(db string) string { return filepath.Join(filepath.Dir(db), "ai.json") }
+
+// #184 Kaneo: the connection's settings and key, one 0600 file of its own
+// next to the database (not the AI integration's).
+const EnvKaneoFile = "HERDR_WORLD_KANEO_FILE"
+
+// DefaultKaneoFile is kaneo.json next to the database.
+func DefaultKaneoFile(db string) string { return filepath.Join(filepath.Dir(db), "kaneo.json") }
 
 // M6 runs: write-code's runs directory (the contract names this variable).
 const EnvRunsDir = "H3D_RUNS_DIR"
@@ -406,6 +414,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	screenDir := fs.String("screen-dir", os.Getenv(EnvScreenDir), "private directory (tmpfs) for screen-share frames (default $XDG_RUNTIME_DIR/herdr-world/screen) ($"+EnvScreenDir+")") // M13 screen
 	whiteboards := fs.String("whiteboards", envOr(EnvWhiteboards, whiteboard.DefaultRoot()), "directory of the floors' whiteboards, \"-\" for none ($"+EnvWhiteboards+")")               // M13 whiteboard
 	aiFile := fs.String("ai-file", os.Getenv(EnvAIFile), "file of the AI integration's settings and keys, 0600 (default ai.json next to the database) ($"+EnvAIFile+")")                 // #92
+	kaneoFile := fs.String("kaneo-file", os.Getenv(EnvKaneoFile), "file of the Kaneo connection's settings and key, 0600 (default kaneo.json next to the database) ($"+EnvKaneoFile+")") // #184
 	aiClsKey := fs.String("ai-classifier-key-file", os.Getenv(EnvAIClassifierKeyFile), "file holding the classification model's key; overrides the panel's ($"+EnvAIClassifierKeyFile+")")
 	aiClsModel := fs.String("ai-classifier-model", os.Getenv(EnvAIClassifierModel), "classification model; overrides the panel's ($"+EnvAIClassifierModel+")")
 	aiLLMBase := fs.String("ai-llm-base-url", os.Getenv(EnvAILLMBaseURL), "OpenAI-compatible endpoint's base URL; overrides the panel's ($"+EnvAILLMBaseURL+")")
@@ -537,6 +546,10 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	kaneo, kaneoFloors, err := Kaneo(kaneoconf.Options{File: orDefault(*kaneoFile, DefaultKaneoFile(*db))}) // #184
+	if err != nil {
+		return fmt.Errorf("kaneo settings: %w", err)
+	}
 	return Serve(ctx, ServeConfig{
 		Socket: *socket, DB: *db, Herdr: &herdr.Client{Bin: *herdrBin}, Only: only,
 		Poll: poll, Resnapshot: resnap, MaxDesks: maxDesks, NameHold: nameHold, Log: log, Name: name,
@@ -549,7 +562,8 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		RG:         *rgBin, // #137 worker.files
 		MaxWatches: maxWatches, MaxObservers: maxObservers, MaxTranscriptWatches: maxTxWatches,
 		RunsDir:          *runsDir,                                                          // M6 runs
-		Boards:           GitHubBoards(&githubcli.Client{Bin: *ghBin}, nil),                 // M7 boards
+		Boards:           Boards(&githubcli.Client{Bin: *ghBin}, nil, kaneoFloors),          // M7 boards; #184 Kaneo floors
+		Kaneo:            kaneo,                                                             // #184
 		Limits:           lim,                                                               // M10 limits
 		Uploads:          images,                                                            // #51 upload
 		TranscriptImages: transcriptImages(log, *dropzoneData, *imageCache, *codexSessions), // M16 images
@@ -665,6 +679,9 @@ type ServeConfig struct {
 	// #92 AI integration: the classification model and the LLM (nil: none,
 	// the ai.* commands answer unsupported).
 	AI *ai.Options
+	// #184: the Kaneo connection (nil: none, the kaneo.* commands answer
+	// unsupported and Kaneo floors have no board).
+	Kaneo *kaneoconf.Service
 	// #90 follow-up questions: the environment's toggle (nil: the panel's).
 	FollowupsEnabled *bool
 	// #110 pack up on request: the environment's toggle (nil: the panel's).
@@ -748,6 +765,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		}
 		opts.AI = svc
 	}
+	opts.Kaneo = cfg.Kaneo                       // #184
 	opts.FollowupsEnabled = cfg.FollowupsEnabled // #90
 	opts.PackupEnabled = cfg.PackupEnabled       // #110
 	opts.ActivityModel = cfg.ActivityModel       // #98
