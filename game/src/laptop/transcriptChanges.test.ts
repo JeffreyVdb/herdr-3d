@@ -358,6 +358,53 @@ describe('code changes (#171)', () => {
     }
   });
 
+  it("a diff body the timeline clips: past the body's own end the keys bring its clipped edge into view", () => {
+    mount();
+    view.setItems([{ id: 'long', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Write', input_summary: 'long.ts', status: 'ok', diff: longDiff(100) } }]);
+    const body = $('.tx-diff-body', row('long')) as HTMLElement;
+    const scroller = $('.tx-scroll') as HTMLElement;
+    // At 200%, a body 600px high, 200px down a 417px timeline: its last 383px below the view. It scrolls 0..1300.
+    let inner = 0;
+    Object.defineProperty(body, 'clientHeight', { configurable: true, value: 200 });
+    Object.defineProperty(body, 'scrollHeight', { configurable: true, value: 1500 });
+    Object.defineProperty(body, 'scrollTop', { configurable: true, get: () => inner, set: (v: number) => (inner = Math.min(1300, Math.max(0, v))) });
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 900, width: 900, x: 0, y: top, toJSON: () => ({}) });
+    scroller.getBoundingClientRect = () => rect(0, 417);
+    body.getBoundingClientRect = () => rect(200 - scroller.scrollTop, 600);
+    const key = (k: string) => {
+      const e = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true });
+      body.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    // While the body scrolls, the timeline stays.
+    expect(key('PageDown')).toBe(true);
+    expect([inner, scroller.scrollTop]).toEqual([180, 0]);
+    // End: the body's end, and its bottom edge into the view.
+    expect(key('End')).toBe(true);
+    expect([inner, scroller.scrollTop]).toEqual([1300, 383]);
+    // Home: its start, and its top edge into the view.
+    key('Home');
+    expect([inner, scroller.scrollTop]).toEqual([0, 200]);
+    // At the body's end, ↓ and PageDown move the timeline a step at a time, up to the body's bottom edge, no further.
+    scroller.scrollTop = 0;
+    inner = 1300;
+    key('ArrowDown');
+    expect(scroller.scrollTop).toBe(48);
+    key('PageDown');
+    expect(scroller.scrollTop).toBe(228);
+    key('PageDown');
+    expect(scroller.scrollTop).toBe(383);
+    expect(key('PageDown')).toBe(true);
+    expect(scroller.scrollTop).toBe(383);
+    // And ↑ at its start, back up to its top edge.
+    inner = 0;
+    key('ArrowUp');
+    expect(scroller.scrollTop).toBe(335);
+    key('PageUp');
+    expect(scroller.scrollTop).toBe(200);
+    expect(inner).toBe(0);
+  });
+
   it('a failed load says so where the link was', async () => {
     const it: TranscriptItem = { id: 'big', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Edit', input_summary: 'big.ts', status: 'ok', diff: { path: 'big.ts', truncated: true, hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ['-a'] }] } } };
     mount(async () => {

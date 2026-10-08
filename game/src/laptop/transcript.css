@@ -1001,8 +1001,10 @@
 .tx-del-n {
   color: var(--tx-red);
 }
+/* #171: 26em, but never taller than the timeline's view (--tx-view-h, measured), less room for the file's header: at 200%
+   on a laptop's screen 26em is more than the view, whose keys could then not bring its last lines in. */
 .tx-diff-body {
-  max-height: 26em;
+  max-height: min(26em, max(6em, calc(var(--tx-view-h, 100cqh) - 3em)));
   overflow: auto;
   font: var(--tx-mono-fs, 11.5px)/1.5 var(--tx-mono);
   font-variant-ligatures: none;

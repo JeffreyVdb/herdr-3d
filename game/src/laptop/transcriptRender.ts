@@ -1013,6 +1013,7 @@ class Transcript implements TranscriptView {
         // #157: the screen's size (the window resized) fits a pinned card to it first. The view's own size is its
         // screen's whatever it holds, so what fit() changes inside never calls this again for the root.
         if (seen.some((e) => e.target === this.root)) this.fit();
+        this.sizeView();
         this.stick();
       });
       this.resize.observe(this.root);
@@ -1111,6 +1112,12 @@ class Transcript implements TranscriptView {
       }
     }
     this.fit();
+  }
+
+  /** #171: the timeline's height (`--tx-view-h`): a diff body is never taller than the view (transcript.css). */
+  private sizeView(): void {
+    const height = this.scroller.clientHeight;
+    if (height && !this.destroyed) this.root.style.setProperty('--tx-view-h', `${height}px`);
   }
 
   /**
@@ -2004,42 +2011,55 @@ class Transcript implements TranscriptView {
     this.onScroll();
   }
 
-  /** #171: a diff body's keys (PageUp/PageDown, Space, the arrows, Home/End, j/k); false: not one of them. */
+  /**
+   * #171: a diff body's keys (PageUp/PageDown, Space, the arrows, Home/End, j/k); false: not one of them. Where the body
+   * goes no further that way (and on Home/End), the timeline moves toward the body's edge it clips, a key's step at a
+   * time, so its first and last lines always come into view (a body taller than the view: a large zoom, a short screen).
+   */
   private scrollLines(el: HTMLElement, e: KeyboardEvent): boolean {
     const page = Math.max(40, el.clientHeight * 0.9);
+    let dy: number; // down +, up −; Home/End: all the way
     switch (e.key) {
       case 'PageUp':
-        el.scrollTop -= page;
+        dy = -page;
         break;
       case 'PageDown':
-        el.scrollTop += page;
+        dy = page;
         break;
       case ' ':
-        el.scrollTop += e.shiftKey ? -page : page;
+        dy = e.shiftKey ? -page : page;
         break;
       case 'Home':
-        el.scrollTop = 0;
+        dy = -Infinity;
         break;
       case 'End':
-        el.scrollTop = el.scrollHeight;
+        dy = Infinity;
         break;
       case 'j':
       case 'ArrowDown':
-        el.scrollTop += 48;
+        dy = 48;
         break;
       case 'k':
       case 'ArrowUp':
-        el.scrollTop -= 48;
+        dy = -48;
         break;
       case 'ArrowLeft':
         el.scrollLeft -= 48;
-        break;
+        return true;
       case 'ArrowRight':
         el.scrollLeft += 48;
-        break;
+        return true;
       default:
         return false;
     }
+    const before = el.scrollTop;
+    if (Number.isFinite(dy)) el.scrollTop += dy;
+    else el.scrollTop = dy > 0 ? el.scrollHeight : 0;
+    if (Number.isFinite(dy) && el.scrollTop !== before) return true;
+    const view = this.scroller.getBoundingClientRect();
+    const box = el.getBoundingClientRect();
+    const clipped = dy > 0 ? Math.max(0, box.bottom - view.bottom) : Math.min(0, box.top - view.top);
+    if (clipped) this.scrollBy(dy > 0 ? Math.min(clipped, dy) : Math.max(clipped, dy));
     return true;
   }
 

@@ -106,6 +106,30 @@ test('code changes show by default, every shape and state, and the two switches 
   // (A screenshot takes the page's focus: last.)
   await frames(page, 2);
   await shot(page, 'h171-changes-lines-focused');
+  // At 200% on a laptop's screen, both presets: the lines are never taller than the view, and from the keyboard alone
+  // their last and first lines come into it.
+  const inView = (el: Locator) =>
+    el.evaluate((e) => {
+      const r = e.getBoundingClientRect();
+      const v = (e.closest('.tx-scroll') as HTMLElement).getBoundingClientRect();
+      return r.top >= v.top - 1 && r.bottom <= v.bottom + 1;
+    });
+  for (const preset of ['quiet', 'ubuntu']) {
+    await tx.locator(`.tx-theme[data-theme-id="${preset}"]`).click();
+    await cut.locator('.tx-chg-head').focus();
+    while ((await theme(page)).transcriptZoom !== 200) await page.keyboard.press('Control+=');
+    await page.keyboard.press('Tab');
+    await expect(lines).toBeFocused();
+    expect(await lines.evaluate((e) => e.getBoundingClientRect().height <= (e.closest('.tx-scroll') as HTMLElement).clientHeight)).toBe(true);
+    for (const k of ['End', 'PageDown', 'ArrowDown', 'End']) await page.keyboard.press(k);
+    await expect.poll(() => inView(rows.last())).toBe(true);
+    await expect(lines).toBeFocused();
+    for (const k of ['Home', 'PageUp', 'ArrowUp', 'Home']) await page.keyboard.press(k);
+    await expect.poll(() => inView(rows.first())).toBe(true);
+    await page.keyboard.press('Control+0');
+    await expect.poll(async () => (await theme(page)).transcriptZoom).toBe(100);
+  }
+  await tx.locator('.tx-theme[data-theme-id="quiet"]').click();
 
   // Hide tools: plain tool rows go, code changes stay (bare: no header, no body); changes still open.
   await tx.locator('.tx-check-box').check();
