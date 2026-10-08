@@ -141,7 +141,7 @@ func (tr *usageTracker) offerDigest(w usageWorker) {
 // /clear, another agent session: another tracker epoch or reset count, never
 // guessed from the counts) drops the model's lines and starts a new
 // generation; new steps make a now line due (#198), a turn that ended holds
-// it for the settle and forgives the now line's failures.
+// it for the settle and starts the count of the now line's failures again.
 func (h *Hub) digestSeen(ctx context.Context, u digestUpdate) {
 	w := h.workers[u.id]
 	if w == nil || u.digest == nil {
@@ -164,7 +164,12 @@ func (h *Hub) digestSeen(ctx context.Context, u digestUpdate) {
 			*l = dgLLM{gen: h.dgs.gen, epoch: u.epoch, resets: d.Resets, callAt: l.callAt}
 		}
 		if d.Ended > l.ended {
-			l.ended, l.endedAt, l.nowFail = d.Ended, h.opts.Now(), nil
+			l.ended, l.endedAt = d.Ended, h.opts.Now()
+			if f := l.nowFail; f != nil {
+				// The count starts again; the failure (and its retry) stays
+				// until newer steps are tried.
+				f.attempts, f.retryAt = 0, l.endedAt
+			}
 		}
 		l.nowKey = nowKey(d)
 		h.dg[u.id] = d
@@ -332,8 +337,8 @@ type dgLLM struct {
 	// prompt hash last handed to it.
 	task, taskHash, taskTried string
 	// taskFail is the failed attempts of taskTried's line (#174); nowFail
-	// those of the now line in a row since its last success, a turn end or a
-	// retry (#198).
+	// those of the now line in a row since its last success, a turn end (0
+	// then, the failure kept) or a retry (#198).
 	taskFail, nowFail *dgFail
 	// now is the model's now line, written at nowAt (unix ms).
 	now   string

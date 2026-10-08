@@ -286,12 +286,20 @@ func TestDigestNowFailuresAreBounded(t *testing.T) {
 	if n := len(nowCalls(llm)); n != 3 {
 		t.Fatalf("now calls = %d, want 3 and no more", n)
 	}
-	// A turn end starts the count again.
+	// A turn end starts the count again: the newer steps go.
 	h.opts.DigestSettle = 0
 	h.digestSeen(ctx, digestUpdate{id: "w", epoch: 1, digest: dgMid(1, steps...)})
 	runOp(t, h) // attempt 1 again
 	if s := status(); s == nil || s.State != proto.LineFailed || s.Attempts != 1 {
 		t.Fatalf("after a turn end: %+v", s)
+	}
+	// Another turn end with no newer step (the ones that failed): nothing
+	// goes, and it still says failed (a retry can take it).
+	clock = clock.Add(time.Hour)
+	h.digestSeen(ctx, digestUpdate{id: "w", epoch: 1, digest: dgMid(2, steps...)})
+	noOp(t, h)
+	if s := status(); s == nil || s.State != proto.LineFailed || s.Reason != "truncated" {
+		t.Fatalf("a turn end with the same steps: %+v", s)
 	}
 	// A manual retry sends the same steps again at once, and it works.
 	broken = false
