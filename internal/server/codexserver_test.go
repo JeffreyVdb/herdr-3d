@@ -348,12 +348,12 @@ func TestSharedCodexHireFallsBack(t *testing.T) {
 			sb.host.preErr = fmt.Errorf("%w: /home/u/repo/.envrc (run `direnv allow` there)", codexapp.ErrEnvrcBlocked)
 		}, note: ".envrc is blocked"},
 		"unsupported codex": {setup: func(sb *sharedBridge) {
-			sb.host.preErr = codexapp.CheckVersion("codex-cli 0.162.0")
-		}, note: `unsupported Codex version: "codex-cli 0.162.0" (supported: codex-cli 0.160.x or 0.161.x)`},
+			sb.host.preErr = codexapp.CheckVersion("codex-cli 0.163.0")
+		}, note: `unsupported Codex version: "codex-cli 0.163.0" (supported: codex-cli 0.160.x, 0.161.x or 0.162.x)`},
 		"server does not answer": {setup: func(sb *sharedBridge) {
 			sb.host.readyErr = errors.New("the app-server did not answer")
 		}, note: "did not answer", stops: true},
-		"unsupported server": {setup: func(sb *sharedBridge) { sb.host.ua = "herdr_3d/0.162.0 (x)" }, note: "unsupported", stops: true},
+		"unsupported server": {setup: func(sb *sharedBridge) { sb.host.ua = "herdr_3d/0.163.0 (x)" }, note: "unsupported", stops: true},
 		"older server":       {setup: func(sb *sharedBridge) { sb.host.ua = "herdr_3d/0.159.9 (x)" }, note: "unsupported", stops: true},
 		"unplain path":       {cwd: "/home/u/my repo", note: "characters the shared launch does not pass"},
 	} {

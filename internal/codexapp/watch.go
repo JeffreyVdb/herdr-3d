@@ -506,12 +506,12 @@ func (w *Watcher) leave(c *conn) {
 // SupportedLines are the Codex release lines the shared launch was verified
 // against, each with the real TUI and the bridge's full stack
 // (docs/research/codex-shared-tui.md): 0.160 with codex-cli 0.160.1 (#155),
-// 0.161 with codex-cli 0.161.0 (#186). A line is a major.minor that
+// 0.161 with codex-cli 0.161.0 (#186), 0.162 with codex-cli 0.162.0. A line is a major.minor that
 // matches exactly: a later release is not supported until it is verified
 // and added here.
-var SupportedLines = []string{"0.160", "0.161"}
+var SupportedLines = []string{"0.160", "0.161", "0.162"}
 
-// Supported names SupportedLines for a person ("0.160.x or 0.161.x").
+// Supported names SupportedLines for a person ("0.160.x, 0.161.x or 0.162.x").
 func Supported() string {
 	xs := make([]string, len(SupportedLines))
 	for i, l := range SupportedLines {

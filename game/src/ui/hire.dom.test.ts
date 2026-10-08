@@ -213,7 +213,7 @@ describe('HireDialog: going to the new hire (#116)', () => {
 
   // #186: hired, but on Codex's built-in server instead of its own: a warning, not a failed hire; a task not sent stays an error.
   it('a Codex fallback is a warning toast; a first task not sent beside it is still an error', async () => {
-    const codex = { mode: 'legacy', note: 'shared Codex server: unsupported Codex version: "codex-cli 0.162.0" (supported: codex-cli 0.160.x or 0.161.x); started the usual way' };
+    const codex = { mode: 'legacy', note: 'shared Codex server: unsupported Codex version: "codex-cli 0.163.0" (supported: codex-cli 0.160.x, 0.161.x or 0.162.x); started the usual way' };
     for (const [data, kind] of [
       [{ id: 'new-worker', prompted: true }, 'info'],
       [{ id: 'new-worker', prompted: true, codex }, 'warn'],
@@ -227,7 +227,7 @@ describe('HireDialog: going to the new hire (#116)', () => {
       ack({ ok: true, data });
       await pending;
       expect(kinds).toEqual([kind]);
-      expect(toasts[0]?.includes('Codex 0.162.0')).toBe('codex' in data);
+      expect(toasts[0]?.includes('Codex 0.163.0')).toBe('codex' in data);
       dlg.close();
       document.body.replaceChildren();
     }

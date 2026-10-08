@@ -80,15 +80,15 @@ func TestCleanEnvDropsRetargetingVariables(t *testing.T) {
 // release the production gate accepts.
 func TestCheckFixtureCodex(t *testing.T) {
 	for out, ok := range map[string]bool{
-		"codex-cli 0.160.1\n": true, "codex-cli 0.161.0": true,
-		"codex-cli 0.160.2": false, "codex-cli 0.161.1": false, "codex-cli 0.162.0": false, "codex-cli 0.159.9": false, "": false,
+		"codex-cli 0.160.1\n": true, "codex-cli 0.161.0": true, "codex-cli 0.162.0": true,
+		"codex-cli 0.160.2": false, "codex-cli 0.161.1": false, "codex-cli 0.162.1": false, "codex-cli 0.163.0": false, "codex-cli 0.159.9": false, "": false,
 	} {
 		if err := CheckFixtureCodex(out); (err == nil) != ok {
 			t.Errorf("CheckFixtureCodex(%q) = %v", out, err)
 		}
 	}
-	if err := CheckFixtureCodex("codex-cli 0.162.0"); err == nil ||
-		err.Error() != `codex --version = "codex-cli 0.162.0": the fixture is verified with codex-cli 0.160.1, codex-cli 0.161.0 only` {
+	if err := CheckFixtureCodex("codex-cli 0.163.0"); err == nil ||
+		err.Error() != `codex --version = "codex-cli 0.163.0": the fixture is verified with codex-cli 0.160.1, codex-cli 0.161.0, codex-cli 0.162.0 only` {
 		t.Errorf("error %v", err)
 	}
 	for _, v := range VerifiedCodex {

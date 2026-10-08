@@ -32,7 +32,7 @@ func TestLaunchScript(t *testing.T) {
 	want := "# herdr-3d (#155): this worker's own Codex app-server, started from its pane.\n" +
 		"set -gx H3D_CODEX_SERVER " + l.Token + "\n" +
 		"echo $fish_pid >'" + l.Dir + "/a58752ea6511.pid'\n" +
-		"codex app-server -c 'projects={\"/home/u/repo\"={trust_level=\"trusted\"}}' --listen 'unix://" + l.Dir +
+		"codex app-server -c 'projects={\"/home/u/repo\"={trust_level=\"trusted\"}}' -c 'features.instant_interrupt=false' --listen 'unix://" + l.Dir +
 		"/a58752ea6511.sock' </dev/null >'" + l.Dir + "/a58752ea6511.log' 2>&1\n"
 	if got := l.Render(); got != want {
 		t.Fatalf("script =\n%s\nwant\n%s", got, want)
@@ -197,7 +197,7 @@ func TestPreflight(t *testing.T) {
 	if err := p.Check(context.Background(), "/r"); err != nil {
 		t.Fatalf("a verified line (0.161): %v", err)
 	}
-	reply["--version"] = "codex-cli 0.162.0"
+	reply["--version"] = "codex-cli 0.163.0"
 	if err := p.Check(context.Background(), "/r"); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("new codex: %v", err)
 	}

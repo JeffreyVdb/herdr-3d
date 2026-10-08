@@ -79,8 +79,8 @@ export function codexNotice(w: { codex?: Worker['codex'] | undefined }): CodexNo
 
 /**
  * #186: the bridge's refusal of a Codex its shared server is not verified with, by `codex --version`
- * (`unsupported Codex version: "codex-cli 0.162.0" (supported: codex-cli 0.160.x or 0.161.x)`) or by the server's
- * userAgent (`… app-server "herdr_3d/0.162.0 (…) …" (supported: 0.160.x or 0.161.x)`), in plain words; any other
+ * (`unsupported Codex version: "codex-cli 0.163.0" (supported: codex-cli 0.160.x, 0.161.x or 0.162.x)`) or by the server's
+ * userAgent (`… app-server "herdr_3d/0.163.0 (…) …" (supported: 0.160.x, 0.161.x or 0.162.x)`), in plain words; any other
  * reason as it is.
  */
 function plainWhy(why: string): string {

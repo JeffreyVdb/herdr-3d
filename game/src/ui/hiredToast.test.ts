@@ -7,7 +7,7 @@ import { hiredToast } from './hiredToast';
 const LEAD = 'Hired Sprocket at Desk 2 on h3d/sprocket-e4f2f1. Here they come.';
 const UNVERIFIED = {
   mode: 'legacy' as const,
-  note: 'shared Codex server: unsupported Codex version: "codex-cli 0.162.0" (supported: codex-cli 0.160.x or 0.161.x); started the usual way',
+  note: 'shared Codex server: unsupported Codex version: "codex-cli 0.163.0" (supported: codex-cli 0.160.x, 0.161.x or 0.162.x); started the usual way',
 };
 const NOT_SENT = 'The first task was not sent (no luck): prompt them yourself (P).';
 
@@ -22,7 +22,7 @@ describe('hiredToast', () => {
     const t = hiredToast(LEAD, { codex: UNVERIFIED }, '');
     expect(t.kind).toBe('warn');
     expect(t.text).toBe(
-      `${LEAD} No own Codex server: the shared Codex server is not verified with Codex 0.162.0 yet (verified: 0.160.x or 0.161.x). ` +
+      `${LEAD} No own Codex server: the shared Codex server is not verified with Codex 0.163.0 yet (verified: 0.160.x, 0.161.x or 0.162.x). ` +
         'It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript.',
     );
   });

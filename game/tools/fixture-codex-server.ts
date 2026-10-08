@@ -32,7 +32,7 @@ export class CodexServerSim {
     if (!this.enabled || !this.unverified || harness !== 'codex') return undefined;
     return {
       mode: 'legacy',
-      note: 'shared Codex server: unsupported Codex version: "codex-cli 0.162.0" (supported: codex-cli 0.160.x or 0.161.x); started the usual way',
+      note: 'shared Codex server: unsupported Codex version: "codex-cli 0.163.0" (supported: codex-cli 0.160.x, 0.161.x or 0.162.x); started the usual way',
     };
   }
 
