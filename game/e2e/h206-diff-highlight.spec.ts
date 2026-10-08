@@ -172,27 +172,30 @@ test('highlighting causes no long task: the 2,000-line create, a ten-hunk edit, 
       expect(b).toBeGreaterThan(0);
       expect(a).toBe(b);
     };
-    /** Traced: waits for the highlighter's idle mark after its last slice (a cheap look, unlike counting rows). */
-    const settled = async () => {
+    /** How many slices the highlighter has run so far (traced). */
+    const sliceCount = () => page.evaluate(() => performance.getEntriesByName('tx-diff-hl').length);
+    /** Traced: waits for slices past `before` (this phase's work began) and the idle mark after the last (a cheap look, unlike counting rows). */
+    const settled = async (before: number) => {
       if (!on) return;
       await expect
-        .poll(() => page.evaluate(() => {
-          const last = (n: string) => performance.getEntriesByName(n).at(-1);
-          const i = last('tx-diff-hl-idle');
-          const s = last('tx-diff-hl');
-          return !!i && !!s && i.startTime >= s.startTime + s.duration - 0.5;
-        }), { timeout: 60_000, intervals: [250] })
+        .poll(() => page.evaluate((n) => {
+          const sl = performance.getEntriesByName('tx-diff-hl');
+          const i = performance.getEntriesByName('tx-diff-hl-idle').at(-1);
+          const s = sl.at(-1);
+          return sl.length > n && !!i && !!s && i.startTime >= s.startTime + s.duration - 0.5;
+        }, before), { timeout: 60_000, intervals: [250] })
         .toBe(true);
     };
 
     // 1. Open the transcript: both diffs draw (plain), then colour (the create in the worker, the edit here).
     let t0 = await now(page);
+    let before = await sliceCount();
     const open = await frameGaps(page, async () => {
       await seatMode(page, 'transcript');
       await expect(create.locator('.tx-dl:not(.tx-dh)')).toHaveCount(2000);
       await expect(edit.locator('.tx-dl.tx-add')).toHaveCount(50);
       await page.waitForTimeout(500);
-      await settled();
+      await settled(before);
       await page.waitForTimeout(1500);
     });
     results[mode] = { open: { ...(await between(page, t0, await now(page))), frameMax: open } };
@@ -240,11 +243,12 @@ test('highlighting causes no long task: the 2,000-line create, a ten-hunk edit, 
     const cut = tx.locator('[data-id="h171-cut"]');
     await cut.scrollIntoViewIfNeeded();
     t0 = await now(page);
+    before = await sliceCount();
     const load = await frameGaps(page, async () => {
       await cut.getByRole('button', { name: 'Show the whole change' }).click();
       await expect(cut.locator('.tx-diff-body .tx-dl:not(.tx-dh)')).toHaveCount(2000);
       await page.waitForTimeout(500);
-      await settled();
+      await settled(before);
       await page.waitForTimeout(1000);
     });
     results[mode].load = { ...(await between(page, t0, await now(page))), frameMax: load };
@@ -272,11 +276,12 @@ test('highlighting causes no long task: the 2,000-line create, a ten-hunk edit, 
       results[mode].touch = { ...(await between(page, t0, await now(page))), frameMax: touch };
     }
     t0 = await now(page);
+    before = await sliceCount();
     const next = await frameGaps(page, async () => {
       await cut.getByRole('button', { name: 'Show next 500 lines (500 left)' }).click();
       await expect(cut.locator('.tx-diff-body .tx-dl:not(.tx-dh)')).toHaveCount(2500);
       await page.waitForTimeout(500);
-      await settled();
+      await settled(before);
       await page.waitForTimeout(1000);
     });
     results[mode].next = { ...(await between(page, t0, await now(page))), frameMax: next };
