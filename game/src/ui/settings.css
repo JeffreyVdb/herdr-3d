@@ -328,8 +328,10 @@ dialog.settings {
 .settings-act .settings-switch:has(input:disabled) {
   cursor: not-allowed;
 }
-.settings-fu .settings-switch:has(input:disabled) span,
-.settings-act .settings-switch:has(input:disabled) span {
+/* #206: the label's text follows its box (label > input + span). Not `:has(input:disabled) span`: a bare `span` behind
+   :has() made every insertion anywhere in the page restyle every span in it (a coloured diff has thousands). */
+.settings-fu .settings-switch input:disabled ~ span,
+.settings-act .settings-switch input:disabled ~ span {
   opacity: 0.6;
 }
 .settings-fu .settings-switch + .settings-field-hint,
