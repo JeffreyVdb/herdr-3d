@@ -1044,6 +1044,25 @@
 .tx-del .tx-dt {
   color: var(--tx-del-text);
 }
+/* #206: a row in syntax colours (diffHighlight.ts) is the band's alone: its plain text is the context's, as in the
+   terminal, and only the sign keeps the row's tint. A row of a language nobody knows stays tinted whole. */
+.tx-add .tx-dt.tx-hl,
+.tx-del .tx-dt.tx-hl {
+  color: var(--tx-text);
+}
+.tx-add .tx-dsg {
+  color: var(--tx-add-text);
+}
+.tx-del .tx-dsg {
+  color: var(--tx-del-text);
+}
+/* On the band the line numbers take its hue (4.5:1 on it; --tx-text-3 alone is not). */
+.tx-add .tx-dn {
+  color: color-mix(in srgb, var(--tx-add-text) 55%, var(--tx-text-3));
+}
+.tx-del .tx-dn {
+  color: color-mix(in srgb, var(--tx-del-text) 55%, var(--tx-text-3));
+}
 .tx-dh {
   background: color-mix(in srgb, var(--tx-blue) 10%, transparent);
   color: var(--tx-blue-text);

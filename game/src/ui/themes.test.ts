@@ -79,6 +79,31 @@ describe('the two presets (#59, #172)', () => {
     expect(p['add-bg']).not.toBe(p['del-bg']);
   });
 
+  it('#206: on the added and deleted bands (over the code ground) every token, the plain text, the sign and the line numbers are 4.5:1; the bands read apart from the ground', () => {
+    const hex = (c: number[]) => `#${c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
+    const rgb = (c: string) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+    /** transcript.css: the line numbers on a band, `color-mix(in srgb, <tint> 55%, var(--tx-text-3))`. */
+    const mix = (a: string, b: string) => hex(rgb(a).map((v, i) => v * 0.55 + (rgb(b)[i] as number) * 0.45));
+    for (const t of THEMES) {
+      const p = t.palette;
+      for (const [band, tint] of [
+        [p['add-bg'], p['add-text']],
+        [p['del-bg'], p['del-text']],
+      ] as const) {
+        const on = (fg: string) => ratio(fg, band, p['code-bg']);
+        for (const k of ['text', 'hl-comment', 'hl-keyword', 'hl-string', 'hl-number', 'hl-title', 'hl-attr', 'hl-meta'] as const) expect(on(p[k]), `${t.id} ${k} on ${band}`).toBeGreaterThanOrEqual(4.5);
+        expect(on(tint), `${t.id} sign on ${band}`).toBeGreaterThanOrEqual(4.5);
+        expect(on(mix(tint, p['text-3'])), `${t.id} line numbers on ${band}`).toBeGreaterThanOrEqual(4.5);
+        // Not a faint wash: the band itself stands off the ground.
+        const ground = rgb(p['code-bg']);
+        const m = /^rgb\((\d+) (\d+) (\d+) \/ (\d+)%\)$/.exec(band) as RegExpExecArray;
+        const laid = hex([1, 2, 3].map((i) => Number(m[i]) * (Number(m[4]) / 100) + (ground[i - 1] as number) * (1 - Number(m[4]) / 100)));
+        expect(ratio(laid, p['code-bg']), `${t.id} ${band} on the ground`).toBeGreaterThanOrEqual(1.35);
+      }
+      for (const k of ['hl-comment', 'hl-keyword', 'hl-string', 'hl-number', 'hl-title', 'hl-attr', 'hl-meta'] as const) expect(ratio(p[k], p['code-bg']), `${t.id} ${k}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it('knows no third: a stored id that is not one of them is not a theme (the retired ones migrate in themePrefs)', () => {
     expect(['ubuntu', 'quiet'].every(isThemeId)).toBe(true);
     for (const v of ['', 'dark', 'Quiet', null, 3, 'ubuntu ', 'terminal', 'paper']) expect(isThemeId(v)).toBe(false);
