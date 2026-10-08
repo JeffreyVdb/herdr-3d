@@ -204,6 +204,9 @@ test('highlighting causes no long task: the 2,000-line create, a ten-hunk edit, 
     for (const preset of ['quiet', 'ubuntu']) {
       await tx.locator(`.tx-theme[data-theme-id="${preset}"]`).click();
       await frames(page, 2);
+      // The preset's fonts in (until then the rows are another font's width).
+      await page.evaluate(() => document.fonts.ready.then(() => undefined));
+      await frames(page, 2);
       geo[preset] = await tx.evaluate((root) => {
         const out: Record<string, unknown> = {};
         for (const id of ['h206-create', 'h206-edit', 'toolu_018mQCao59VwQiRK6L6zHu5h']) {
