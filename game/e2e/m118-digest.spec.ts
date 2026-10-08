@@ -194,6 +194,8 @@ test('a failed refresh of an AI now line keeps the line and its age, says so, an
   await expect(chip).toHaveText('refresh failed');
   await expect(chip).toHaveAttribute('aria-label', /^Refreshing this AI summary from newer activity failed: the model did not answer in time\. The summary shown is the previous one/);
   await expect(row).toHaveAttribute('aria-label', /Now: .*\(AI summary, \d+m ago; refresh failed\)/);
+  await expect(page.locator('.ov')).not.toHaveClass(/ov--enter/, { timeout: 5000 }); // the grow is over
+  await line.scrollIntoViewIfNeeded();
   await shot(page, 'm198-refresh-failed');
   await line.locator('.ov-retry').click();
   await expect.poll(() => retries().length).toBe(1);
