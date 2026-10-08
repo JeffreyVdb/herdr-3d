@@ -246,3 +246,122 @@ describe('HireDialog: the models Settings leaves shown (#194)', () => {
     expect(summary(dlg).blocker).toBeNull();
   });
 });
+
+// #200: readable model names. The names are presentation; the radio value, the selection and the hire stay the exact id.
+
+const NAMED: HireOptions = {
+  claude: {
+    models: ['claude-opus-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-future'],
+    efforts: ['low', 'high'],
+    model_labels: { 'claude-opus-5': 'Opus 5', 'claude-opus-5-5': 'Opus 5.5', 'claude-future': '<img src=x onerror=alert(1)>' },
+  },
+  codex: { models: ['gpt-6.1-sol', 'gpt-6-sol'], efforts: ['high'], model_labels: { 'gpt-6.1-sol': 'GPT-6.1-Sol', 'gpt-6-sol': 'GPT-6-Sol' } },
+};
+// More models than a row of chips holds: the searchable grid.
+const MANY_IDS = Array.from({ length: 12 }, (_, i) => `claude-lab-${String(i + 1).padStart(2, '0')}`);
+const MANY: HireOptions = {
+  claude: {
+    models: ['claude-opus-5', 'claude-opus-5-5', ...MANY_IDS, 'twin-a', 'twin-b'],
+    efforts: ['low', 'high'],
+    model_labels: { 'claude-opus-5': 'Opus 5', 'claude-opus-5-5': 'Opus 5.5', 'twin-a': 'Twin', 'twin-b': 'Twin' },
+  },
+};
+
+describe('HireDialog: readable model names (#200)', () => {
+  beforeEach(() => {
+    HTMLDialogElement.prototype.showModal = function () {
+      this.setAttribute('open', '');
+    };
+    HTMLDialogElement.prototype.close = function () {
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    };
+    vi.stubGlobal('CSS', { escape: (s: string) => s });
+  });
+  afterEach(() => {
+    document.body.replaceChildren();
+    vi.unstubAllGlobals();
+  });
+
+  const chipTexts = () => [...document.querySelectorAll<HTMLElement>('[data-pick="model"] .dd-chip')].filter((l) => !l.hidden).map((l) => l.querySelector('span')!.firstChild!.textContent);
+  const open = async (catalog: HireOptions, choice: Hire | null) => {
+    const t = setup(choice);
+    t.store.hireOptions = catalog;
+    t.dlg.open('floor', 0);
+    await tick();
+    return t;
+  };
+
+  it('chip row: a label names the chip, a Codex token reads as words, the exact id is the tooltip and the value', async () => {
+    await open(NAMED, { harness: 'claude', model: 'claude-opus-5', effort: 'high' });
+    expect(document.querySelector('[data-pick="model"]')!.classList.contains('dd-pick--models')).toBe(false);
+    expect(chipTexts()).toEqual(['Opus 5', 'Opus 5.5', 'Fable 5.1', '<img src=x onerror=alert(1)>']);
+    expect(modelKeys()).toEqual(['claude-opus-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-future']);
+    expect(chipOf('model', 'claude-opus-5')!.closest('label')!.title).toBe('claude-opus-5');
+    chipOf('harness', 'codex')!.click();
+    expect(chipTexts()).toEqual(['GPT 6.1 Sol', 'GPT 6 Sol']);
+    expect(modelKeys()).toEqual(['gpt-6.1-sol', 'gpt-6-sol']);
+  });
+
+  it('labels are plain text, never markup', async () => {
+    await open(NAMED, { harness: 'claude', model: 'claude-future', effort: 'high' });
+    expect(document.querySelector('[data-pick="model"] img')).toBeNull();
+    expect(chipOf('model', 'claude-future')!.closest('label')!.textContent).toBe('<img src=x onerror=alert(1)>');
+  });
+
+  it('without labels (an older bridge, the fallback catalog) a recognised Claude slug is formatted and anything else is the exact id', async () => {
+    const bare: HireOptions = { claude: { models: ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-4-20250514'], efforts: ['high'] }, codex: { models: ['gpt-6-sol'], efforts: ['high'] } };
+    await open(bare, { harness: 'claude', model: 'claude-opus-5-5', effort: 'high' });
+    expect(chipTexts()).toEqual(['Opus 5.5', 'Fable 5.1', 'claude-sonnet-4-20250514']);
+    expect(chipOf('model', 'claude-sonnet-4-20250514')!.closest('label')!.title).toBe('');
+    chipOf('harness', 'codex')!.click();
+    expect(chipTexts()).toEqual(['gpt-6-sol']);
+  });
+
+  it('picking a named chip selects, and hires with, the exact id', async () => {
+    const { dlg, inner, send } = await open(NAMED, { harness: 'claude', model: 'claude-opus-5', effort: 'high' });
+    chipOf('model', 'claude-opus-5-5')!.click();
+    expect(summary(dlg).form).toMatchObject({ harness: 'claude', model: 'claude-opus-5-5', effort: 'high' });
+    void inner.hire();
+    await tick();
+    expect(send.mock.calls.find(([t]) => t === 'worker.hire')?.[1]).toMatchObject({ harness: 'claude', model: 'claude-opus-5-5', effort: 'high' });
+  });
+
+  it('searchable grid: names, a filter by name (with spaces) or by exact id, the checked model stays, the value is the id', async () => {
+    const { dlg } = await open(MANY, { harness: 'claude', model: 'claude-opus-5', effort: 'high' });
+    const grid = document.querySelector('.dd-chips--grid');
+    expect(grid).not.toBeNull();
+    expect(chipTexts().slice(0, 3)).toEqual(['Opus 5', 'Opus 5.5', 'claude-lab-01']);
+    const search = document.querySelector<HTMLInputElement>('[data-key="model-search"]')!;
+    const type = (v: string) => {
+      search.value = v;
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    type('opus 5.5');
+    expect(chipTexts()).toEqual(['Opus 5', 'Opus 5.5']); // the checked Opus 5 stays visible
+    type('OPUS 5');
+    expect(chipTexts()).toEqual(['Opus 5', 'Opus 5.5']);
+    type('claude-opus-5-5');
+    expect(chipTexts()).toEqual(['Opus 5', 'Opus 5.5']);
+    type('lab-1');
+    expect(chipTexts()).toEqual(['Opus 5', 'claude-lab-10', 'claude-lab-11', 'claude-lab-12']);
+    type('nothing like it');
+    expect(document.querySelector('.dd-none')!.textContent).toContain('No model matches');
+    type('');
+    chipOf('model', 'claude-opus-5-5')!.click();
+    expect(summary(dlg).form.model).toBe('claude-opus-5-5');
+  });
+
+  it('colliding names show the id beside them, in both layouts', async () => {
+    await open(MANY, { harness: 'claude', model: 'twin-a', effort: 'high' });
+    const twin = (id: string) => chipOf('model', id)!.closest('label')!;
+    expect(twin('twin-a').textContent).toBe('Twintwin-a');
+    expect(twin('twin-a').querySelector('.dd-chip-id')!.textContent).toBe('twin-a');
+    expect(twin('twin-b').querySelector('.dd-chip-id')!.textContent).toBe('twin-b');
+    expect(chipOf('model', 'claude-opus-5')!.closest('label')!.querySelector('.dd-chip-id')).toBeNull();
+    document.body.replaceChildren();
+    const small: HireOptions = { claude: { models: ['twin-a', 'twin-b', 'solo'], efforts: ['high'], model_labels: { 'twin-a': 'Twin', 'twin-b': 'Twin' } } };
+    await open(small, { harness: 'claude', model: 'twin-a', effort: 'high' });
+    expect([...document.querySelectorAll('.dd-chip-id')].map((e) => e.textContent)).toEqual(['twin-a', 'twin-b']);
+  });
+});

@@ -75,6 +75,8 @@ describe('backdropPolicy', () => {
 
 describe('modelList', () => {
   const models = ['claude-opus-5-5', 'claude-lab-01', 'claude-lab-02', 'claude-lab-10', 'gpt-x'];
+  // The recognised Claude slug shows as its readable name; any other id shows as it is.
+  const names = ['Opus 5.5', 'claude-lab-01', 'claude-lab-02', 'claude-lab-10', 'gpt-x'];
   const build = (value = 'claude-opus-5-5', query = '') => {
     const picked: string[] = [];
     const queries: string[] = [];
@@ -91,7 +93,7 @@ describe('modelList', () => {
 
   it('lists every model with its count, the current one checked', () => {
     const m = build();
-    expect(m.shown()).toEqual(models);
+    expect(m.shown()).toEqual(names);
     expect(m.count()).toBe('5');
     expect(m.el.querySelector<HTMLInputElement>('[data-key="model:claude-opus-5-5"]')!.checked).toBe(true);
   });
@@ -99,19 +101,19 @@ describe('modelList', () => {
   it('filters by substring, keeps the checked model visible, counts, and says when nothing matches', () => {
     const m = build();
     m.type('lab-0');
-    expect(m.shown()).toEqual(['claude-opus-5-5', 'claude-lab-01', 'claude-lab-02']);
+    expect(m.shown()).toEqual(['Opus 5.5', 'claude-lab-01', 'claude-lab-02']);
     expect(m.count()).toBe('2 of 5');
     expect(m.queries).toEqual(['lab-0']);
     m.type('zzz');
-    expect(m.shown()).toEqual(['claude-opus-5-5']);
+    expect(m.shown()).toEqual(['Opus 5.5']);
     expect(m.el.querySelector('.dd-none')!.textContent).toBe('No model matches “zzz”.');
     m.type('');
-    expect(m.shown()).toEqual(models);
+    expect(m.shown()).toEqual(names);
   });
 
   it('starts with the remembered filter', () => {
     const m = build('claude-opus-5-5', 'gpt');
-    expect(m.shown()).toEqual(['claude-opus-5-5', 'gpt-x']);
+    expect(m.shown()).toEqual(['Opus 5.5', 'gpt-x']);
     expect(m.search.value).toBe('gpt');
   });
 

@@ -705,6 +705,14 @@
 .desk-dlg .dd-search {
   height: 34px;
 }
+/* #200: the exact id beside a name another model shares, in the chip's own mono, quieter. */
+.dd-chip-id {
+  display: block;
+  margin-top: 1px;
+  font-size: 10.5px;
+  font-weight: 400;
+  opacity: 0.75;
+}
 .dd-chips--grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));

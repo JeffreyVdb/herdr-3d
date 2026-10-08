@@ -162,3 +162,68 @@ describe('Settings → Harness models (#194)', () => {
     expect(m.showAll(codex).disabled).toBe(false);
   });
 });
+
+// #200: the same readable names as Hire, with the exact slug kept beside them.
+
+describe('Settings → Harness models: readable names (#200)', () => {
+  const NAMED: HireOptions = {
+    codex: { models: ['gpt-6.1-sol', 'twin-a', 'twin-b'], efforts: ['high'], model_labels: { 'gpt-6.1-sol': 'GPT-6.1-Sol', 'twin-a': '<b>Twin</b>', 'twin-b': '<b>Twin</b>' } },
+    claude: { models: ['claude-opus-5', 'claude-opus-5-5', 'claude-lab'], efforts: ['high'], model_labels: { 'claude-opus-5': 'Opus 5' } },
+  };
+  const names = (g: HTMLElement) => [...g.querySelectorAll('.hm-list > li')].map((r) => [r.querySelector('.hm-name')?.textContent ?? null, r.querySelector('code')!.textContent]);
+
+  it('shows the readable name over the exact slug; a slug with no name of its own stands alone', () => {
+    const m = mount(NAMED);
+    expect(names(m.group('claude'))).toEqual([
+      ['Opus 5', 'claude-opus-5'],
+      ['Opus 5.5', 'claude-opus-5-5'],
+      [null, 'claude-lab'],
+    ]);
+    expect(names(m.group('codex'))[0]).toEqual(['GPT 6.1 Sol', 'gpt-6.1-sol']);
+  });
+
+  it('renders labels as text, and tells two rows with the same name apart by their slugs', () => {
+    const m = mount(NAMED);
+    const codex = m.group('codex');
+    expect(codex.querySelector('.hm-list b')).toBeNull();
+    expect(names(codex).slice(1)).toEqual([
+      ['<b>Twin</b>', 'twin-a'],
+      ['<b>Twin</b>', 'twin-b'],
+    ]);
+  });
+
+  it('the filter takes the readable name (spaces included) or the exact slug, and the switch still acts on the slug', () => {
+    const m = mount(NAMED);
+    const claude = m.group('claude');
+    m.type(m.search(claude), 'opus 5.5');
+    expect(m.rows(claude).map((r) => r.hidden)).toEqual([true, false, true]);
+    m.type(m.search(claude), 'CLAUDE-OPUS-5');
+    expect(m.rows(claude).map((r) => r.hidden)).toEqual([false, false, true]);
+    m.type(m.search(claude), 'opus 5');
+    m.toggle(m.box(claude, 'claude-opus-5-5'), false);
+    expect([...m.prefs.hidden('claude')]).toEqual(['claude-opus-5-5']);
+    m.type(m.search(m.group('codex')), 'gpt 6.1');
+    expect(m.rows(m.group('codex')).map((r) => r.hidden)).toEqual([false, true, true]);
+  });
+
+  it('a hidden slug the bridge no longer lists keeps a readable fallback and its exact id', () => {
+    const prefs = new HireModelPrefs(memory());
+    prefs.setShown('claude', 'claude-fable-5-1', false);
+    prefs.setShown('claude', 'claude-old-thing', false);
+    const m = mount(NAMED, prefs);
+    const stale = m.stale(m.group('claude'));
+    const rows = [...stale.querySelectorAll('.hm-row')].map((r) => [r.querySelector('.hm-name')?.textContent ?? null, r.querySelector('code')!.textContent]);
+    expect(rows).toEqual([
+      ['Fable 5.1', 'claude-fable-5-1'],
+      [null, 'claude-old-thing'],
+    ]);
+  });
+
+  it('without labels the catalog still reads: formatted Claude slugs, other ids as they are', () => {
+    const m = mount({ claude: { models: ['claude-opus-5', 'sonnet'], efforts: ['high'] } });
+    expect(names(m.groups()[0]!)).toEqual([
+      ['Opus 5', 'claude-opus-5'],
+      [null, 'sonnet'],
+    ]);
+  });
+});
