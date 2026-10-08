@@ -13,7 +13,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Decides whether the go job runs. A push to any branch other than main runs
+  # it only when the branch changes a Go input, compared against main (not the
+  # previous push, so a docs-only push on a branch that already changed Go code
+  # still runs it). Pushes to main and manual runs always run it.
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          # cmd/ and internal/ hold the Go code and what it embeds or reads (testdata,
+          # catalog.json, pricing.json, graphql queries); game/fixtures/ is read by Go tests.
+          GO_INPUTS: '^(cmd|internal|game/fixtures)/|^(go\.mod|go\.sum|Makefile|\.github/workflows/ci\.yml)$'
+        run: |
+          if [ "$EVENT" != push ] || [ "$REF_NAME" = main ]; then
+            go=true
+          else
+            files=$(git diff --no-renames --name-only origin/main...HEAD)
+            if grep -Eq "$GO_INPUTS" <<< "$files"; then go=true; else go=false; fi
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+
   go:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -22,8 +52,14 @@ jobs:
           go-version-file: go.mod
       - run: make go-lint
       - run: make go-test
-      - run: make sh-test
       - run: make go-build helper-darwin
+
+  # Shell only (shellcheck + the fake-environment deploy test), so it runs on every push.
+  shell:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: make sh-test
 
   game:
     runs-on: ubuntu-24.04
