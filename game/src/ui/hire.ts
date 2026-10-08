@@ -502,11 +502,15 @@ export class HireDialog {
     return prefs ? visibleOptions(cat, (harness) => prefs.hidden(harness)) : cat;
   }
 
-  /** Settings changed what is shown: an open form that holds a hidden model takes the first shown one (effort normalized), and the chips redraw. */
+  /** The form holds a shown model: one it holds that is hidden falls to the first shown one (effort normalized). */
+  private resolveForm(): void {
+    this.f = { ...this.f, ...resolveVisibleChoice(this.options(), this.f) };
+  }
+
+  /** Settings changed what is shown: an open form that holds a hidden model takes the first shown one, and the chips redraw. */
   private visibilityChanged(): void {
     if (!this.dialog.open || this.state === 'hiring' || this.state === 'preparing') return;
-    const next = resolveVisibleChoice(this.options(), this.f);
-    this.f = { ...this.f, ...next };
+    this.resolveForm();
     this.render();
   }
 
@@ -855,7 +859,11 @@ export class HireDialog {
       if (!r.ok) {
         // No worker.hire: the whole prompt stays, each failed chip says why and has its Retry.
         const msg = r.reason === 'upload' ? uploadFailedText(r.failed) : r.reason === 'serialize' ? serializeErrorText(r.error) : '';
-        if (open) this.state = 'ready';
+        // Back to the editable form: what was typed stays, and the choice is resolved against what Settings shows now.
+        if (open) {
+          this.state = 'ready';
+          this.resolveForm();
+        }
         if (msg && open) {
           this.uploadFailed = r.reason === 'upload';
           this.setStatus(msg, true);
@@ -901,6 +909,8 @@ export class HireDialog {
       this.host.toast(msg, 'error');
       return;
     }
+    // Back to the editable form: the submitted choice is kept until now, then resolved against what Settings shows.
+    this.resolveForm();
     this.setStatus(msg, true);
     this.render();
     if (r.code === 'capacity' || r.code === 'fetch_failed') void this.recheck();

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Hire, HireOptions, HirePrepare } from '../net/protocol';
+import type { Draft } from './composer/draft';
 import { HireDialog, type HireHost, type HireSummary } from './hire';
 import { HireModelPrefs } from './hireModelPrefs';
 
@@ -35,7 +36,11 @@ interface Setup {
   send: ReturnType<typeof vi.fn>;
 }
 
-function setup(choice: Hire | null = { harness: 'codex', model: 'x-2', effort: 'ultra' }, source: HirePrepare['choice_source'] = 'floor_default'): Setup {
+function setup(
+  choice: Hire | null = { harness: 'codex', model: 'x-2', effort: 'ultra' },
+  source: HirePrepare['choice_source'] = 'floor_default',
+  upload: () => Promise<unknown> = () => new Promise(() => {}),
+): Setup {
   const prefs = new HireModelPrefs(memory());
   const store = { hireOptions: CAT, floorView: () => ({ seats: Array(10).fill(null) }), limits: { version: 0, list: () => [] }, workerView: () => null };
   const showModelSettings = vi.fn();
@@ -50,7 +55,7 @@ function setup(choice: Hire | null = { harness: 'codex', model: 'x-2', effort: '
     held: () => new Set<number>(),
     toast: () => {},
     now: () => Date.now(),
-    upload: () => new Promise(() => {}),
+    upload,
   } as unknown as HireHost;
   const dlg = new HireDialog(document.body, host);
   return { dlg, prefs, store, showModelSettings, inner: dlg as unknown as { hire(): Promise<void> }, send };
@@ -198,5 +203,46 @@ describe('HireDialog: the models Settings leaves shown (#194)', () => {
     dlg.open('floor', 0);
     await tick();
     expect(store.hireOptions.codex?.models).toEqual(['x-1', 'x-2', 'x-3']);
+  });
+
+  it('a hire the bridge refuses returns to the editable form, resolved against Settings: the sent choice stays while pending', async () => {
+    const { dlg, prefs, inner, send } = setup();
+    dlg.open('floor', 0);
+    await tick();
+    let answer!: (r: unknown) => void;
+    send.mockImplementation(async (t: string) => (t === 'hire.prepare' ? { ok: true, data: prepOf({ harness: 'codex', model: 'x-2', effort: 'ultra' }) } : new Promise((r) => (answer = r))));
+    const pending = inner.hire();
+    await tick();
+    expect(summary(dlg).state).toBe('hiring');
+    expect(send.mock.calls.find(([t]) => t === 'worker.hire')?.[1]).toMatchObject({ harness: 'codex', model: 'x-2', effort: 'ultra' });
+    prefs.setShown('codex', 'x-2', false);
+    expect(summary(dlg).form).toMatchObject({ model: 'x-2', effort: 'ultra' });
+    answer({ ok: false, code: 'busy', message: 'Failed' });
+    await pending;
+    expect(summary(dlg).state).toBe('ready');
+    expect(summary(dlg).error).toBe(true);
+    expect(summary(dlg).form).toMatchObject({ harness: 'codex', model: 'x-1', effort: 'high' });
+    expect(modelKeys()).toEqual(['x-1', 'x-3']);
+    expect(summary(dlg).blocker).toBeNull();
+  });
+
+  it('an image upload that fails before the hire returns to the editable form resolved the same way', async () => {
+    let fail!: (e: Error) => void;
+    const { dlg, prefs, inner } = setup(undefined, undefined, () => new Promise((_, reject) => (fail = reject)));
+    dlg.open('floor', 0);
+    await tick();
+    const draft = (dlg as unknown as { editor: { draft: Draft } }).editor.draft;
+    draft.addImages([new File(['x'], 'shot.png', { type: 'image/png' })]);
+    await tick();
+    const pending = inner.hire();
+    await tick();
+    expect(summary(dlg).state).toBe('hiring');
+    prefs.setShown('codex', 'x-2', false);
+    expect(summary(dlg).form).toMatchObject({ model: 'x-2', effort: 'ultra' });
+    fail(new Error('down'));
+    await pending;
+    expect(summary(dlg).state).toBe('ready');
+    expect(summary(dlg).form).toMatchObject({ harness: 'codex', model: 'x-1', effort: 'high' });
+    expect(summary(dlg).blocker).toBeNull();
   });
 });
