@@ -222,10 +222,13 @@ type HireOptions struct {
 
 // HarnessOptions are one harness's models and their common efforts.
 // ExtraEfforts are additional efforts supported by each individual model.
+// ModelLabels (#200) are the readable names the harness reports, keyed by the
+// exact launch id of Models; a model without one is shown by its id.
 type HarnessOptions struct {
 	Models       []string            `json:"models"`
 	Efforts      []string            `json:"efforts"`
 	ExtraEfforts map[string][]string `json:"extra_efforts,omitempty"`
+	ModelLabels  map[string]string   `json:"model_labels,omitempty"`
 }
 
 // Building groups floors. Floors is derived: known sessions assigned to it,

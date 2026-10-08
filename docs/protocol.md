@@ -170,6 +170,14 @@ The bridge queries the installed Codex and Claude Code harnesses at startup; mod
 `efforts` contains their common effort levels and `extra_efforts` preserves each model's additional levels. Either
 list may be empty. If discovery fails for one harness, only that harness uses the legacy fallback catalog.
 
+`model_labels` (#200, optional) maps a model's exact launch id to the readable name its harness reports (`displayName` of
+Claude Code's initialize reply and of Codex's `model/list`), e.g. `{"claude-opus-5":"Opus 5"}`. It is presentation only:
+`models`, `extra_efforts`, a hire's `model` and everything stored stay keyed by the exact id. A name is trimmed plain text
+of at most 64 characters without control characters; a blank, longer or invalid one is left out, as is the generic
+"Default (recommended)" of Claude's `default` alias when that alias resolves to a model another alias names (the first
+usable name of the aliases of one id wins). The key is absent from an older bridge, from a fallback catalog and when no
+model has a name; a client then formats the id it knows (`claude-opus-5-5` → "Opus 5.5") and shows any other id as it is.
+
 `limits` (M10) is the latest reading of each provider's plan limits, Claude first (see [Plan limits](#plan-limits));
 `[]` before the first reading. A bridge that does not read limits (`--no-limits`) leaves the key out, as a bridge from
 before M10 does: a client shows no limits widget without it (and none inline in the hire and start-run dialogs), and

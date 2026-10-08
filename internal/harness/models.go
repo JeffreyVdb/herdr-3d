@@ -14,8 +14,11 @@ import (
 	"os/exec"
 	"regexp"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/execpath"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
@@ -33,17 +36,44 @@ var (
 
 type model struct {
 	id      string
+	label   string // the harness's readable name; "" when it has none worth showing
 	efforts []string
 }
 
+// maxLabelRunes bounds a readable model name taken from a harness.
+const maxLabelRunes = 64
+
+// cleanLabel returns a harness-reported display name when it is usable plain
+// text: trimmed, valid UTF-8, no control characters, not blank and not absurdly
+// long. Anything else is "", and the client falls back to the id.
+func cleanLabel(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || !utf8.ValidString(s) || utf8.RuneCountInString(s) > maxLabelRunes {
+		return ""
+	}
+	if strings.IndexFunc(s, unicode.IsControl) >= 0 {
+		return ""
+	}
+	return s
+}
+
 // options preserves catalog order and represents exact per-model efforts in
-// the existing wire format: their intersection plus each model's extras.
+// the existing wire format: their intersection plus each model's extras. A
+// repeated id keeps its first entry, except that it takes the first usable
+// label of any entry with that id (an alias's generic label is dropped before).
 func options(models []model) (proto.HarnessOptions, error) {
 	out := proto.HarnessOptions{Models: []string{}, Efforts: []string{}, ExtraEfforts: map[string][]string{}}
 	seen := map[string]bool{}
 	var accepted []model
 	for _, m := range models {
-		if !modelID.MatchString(m.id) || seen[m.id] {
+		if !modelID.MatchString(m.id) {
+			continue
+		}
+		m.label = cleanLabel(m.label)
+		if seen[m.id] {
+			if i := slices.IndexFunc(accepted, func(a model) bool { return a.id == m.id }); i >= 0 && accepted[i].label == "" {
+				accepted[i].label = m.label
+			}
 			continue
 		}
 		efforts := []string{}
@@ -69,6 +99,12 @@ func options(models []model) (proto.HarnessOptions, error) {
 		return out, errors.New("harness returned no launchable models with effort levels")
 	}
 	for _, m := range accepted {
+		if m.label != "" {
+			if out.ModelLabels == nil {
+				out.ModelLabels = map[string]string{}
+			}
+			out.ModelLabels[m.id] = m.label
+		}
 		for _, e := range m.efforts {
 			if !slices.Contains(out.Efforts, e) {
 				out.ExtraEfforts[m.id] = append(out.ExtraEfforts[m.id], e)
@@ -203,9 +239,10 @@ func Codex(ctx context.Context, bin string) (proto.HarnessOptions, error) {
 			}
 			var response struct {
 				Data []struct {
-					Model   string `json:"model"`
-					Hidden  bool   `json:"hidden"`
-					Efforts []struct {
+					Model       string `json:"model"`
+					DisplayName string `json:"displayName"`
+					Hidden      bool   `json:"hidden"`
+					Efforts     []struct {
 						Effort string `json:"reasoningEffort"`
 					} `json:"supportedReasoningEfforts"`
 				} `json:"data"`
@@ -218,7 +255,7 @@ func Codex(ctx context.Context, bin string) (proto.HarnessOptions, error) {
 				if entry.Hidden {
 					continue
 				}
-				m := model{id: entry.Model}
+				m := model{id: entry.Model, label: entry.DisplayName}
 				for _, e := range entry.Efforts {
 					m.efforts = append(m.efforts, e.Effort)
 				}
@@ -283,9 +320,10 @@ func Claude(ctx context.Context, bin string) (proto.HarnessOptions, error) {
 	return probe(ctx, bin, claudeArgs, func(s *stream) (proto.HarnessOptions, error) {
 		var reply struct {
 			Models []struct {
-				Value    string   `json:"value"`
-				Resolved string   `json:"resolvedModel"`
-				Efforts  []string `json:"supportedEffortLevels"`
+				Value       string   `json:"value"`
+				DisplayName string   `json:"displayName"`
+				Resolved    string   `json:"resolvedModel"`
+				Efforts     []string `json:"supportedEffortLevels"`
 			} `json:"models"`
 		}
 		if err := s.claudeInit(&reply); err != nil {
@@ -305,7 +343,14 @@ func Claude(ctx context.Context, bin string) (proto.HarnessOptions, error) {
 				// capability metadata; use the CLI's basic effort levels.
 				efforts = []string{"low", "medium", "high"}
 			}
-			models = append(models, model{id: id, efforts: efforts})
+			label := entry.DisplayName
+			if entry.Value == "default" && id != entry.Value {
+				// "Default (recommended)" names the account's pick, not the
+				// model it resolves to; a concrete alias of that id (sonnet →
+				// "Sonnet 5.5") supplies the label, else the client formats the id.
+				label = ""
+			}
+			models = append(models, model{id: id, label: label, efforts: efforts})
 		}
 		return options(models)
 	})

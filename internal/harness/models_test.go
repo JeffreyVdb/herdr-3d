@@ -69,12 +69,24 @@ func fakeHarness(scenario string) {
 			os.Exit(5)
 		}
 		models := []map[string]any{
-			{"value": "default", "resolvedModel": "claude-future", "supportedEffortLevels": []string{"medium", "high", "max"}},
-			{"value": "opus", "resolvedModel": "claude-future", "supportedEffortLevels": []string{"medium", "high", "max"}},
+			{"value": "default", "displayName": "Default (recommended)", "resolvedModel": "claude-future", "supportedEffortLevels": []string{"medium", "high", "max"}},
+			{"value": "opus", "displayName": " Future 5 ", "resolvedModel": "claude-future", "supportedEffortLevels": []string{"medium", "high", "max"}},
 			{"value": "custom-model", "supportedEffortLevels": []string{"medium", "max"}},
 		}
 		if scenario == "claude-legacy" {
-			models = []map[string]any{{"value": "sonnet"}, {"value": "opus", "resolvedModel": "provider:custom/model", "supportedEffortLevels": []string{"medium", "high"}}}
+			// A blank name, a name with a control character and an old alias without a name all fall back to the id.
+			models = []map[string]any{{"value": "sonnet", "displayName": "   "}, {"value": "opus", "displayName": "Opus\x1b[31m", "resolvedModel": "provider:custom/model", "supportedEffortLevels": []string{"medium", "high"}}}
+		}
+		if scenario == "claude-default-only" {
+			// Only the generic alias names the id: it is dropped; a default that is its own id keeps its name.
+			models = []map[string]any{{"value": "default", "displayName": "Default (recommended)", "resolvedModel": "claude-sonnet-5-5"},
+				{"value": "default", "displayName": "Default (recommended)", "resolvedModel": "provider:custom/model"}}
+		}
+		if scenario == "claude-aliases" {
+			models = []map[string]any{{"value": "default", "displayName": "Default (recommended)", "resolvedModel": "claude-sonnet-5-5"},
+				{"value": "sonnet", "displayName": "Sonnet 5.5", "resolvedModel": "claude-sonnet-5-5"},
+				{"value": "opus", "displayName": "Opus 5", "resolvedModel": "claude-opus-5"},
+				{"value": "opus-again", "displayName": "Ignored duplicate", "resolvedModel": "claude-opus-5"}}
 		}
 		subtype := "success"
 		if scenario == "claude-error" {
@@ -140,10 +152,12 @@ func fakeHarness(scenario string) {
 				return map[string]any{"model": id, "supportedReasoningEfforts": levels}
 			}
 			data := []map[string]any{entry("gpt-6.1-sol", "low", "high", "ultra"), entry("gpt-hidden", "low"), entry("--help", "low")}
+			data[0]["displayName"] = "GPT-6.1-Sol"
 			data[1]["hidden"] = true
 			var cursor any = "page-2"
 			if page == 1 {
 				data = []map[string]any{entry("gpt-future", "high"), entry("gpt-6.1-sol", "low", "high", "ultra")}
+				data[1]["displayName"] = "Not the first name"
 				cursor = nil
 			}
 			if scenario == "cycle" {
@@ -215,7 +229,7 @@ func TestCodexCatalog(t *testing.T) {
 	t.Setenv("CODEX_HOME", "/configured/codex")
 	got, err := Codex(context.Background(), bin)
 	want := proto.HarnessOptions{Models: []string{"gpt-6.1-sol", "gpt-future"}, Efforts: []string{"high"},
-		ExtraEfforts: map[string][]string{"gpt-6.1-sol": {"low", "ultra"}}}
+		ExtraEfforts: map[string][]string{"gpt-6.1-sol": {"low", "ultra"}}, ModelLabels: map[string]string{"gpt-6.1-sol": "GPT-6.1-Sol"}}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("catalog = %+v, %v; want %+v", got, err, want)
 	}
@@ -254,7 +268,7 @@ func TestClaudeCatalog(t *testing.T) {
 		t.Run(fmt.Sprint(legacy), func(t *testing.T) {
 			scenario := "claude"
 			want := proto.HarnessOptions{Models: []string{"claude-future", "custom-model"}, Efforts: []string{"medium", "max"},
-				ExtraEfforts: map[string][]string{"claude-future": {"high"}}}
+				ExtraEfforts: map[string][]string{"claude-future": {"high"}}, ModelLabels: map[string]string{"claude-future": "Future 5"}}
 			if legacy {
 				scenario = "claude-legacy"
 				want = proto.HarnessOptions{Models: []string{"sonnet", "opus"}, Efforts: []string{"medium", "high"}, ExtraEfforts: map[string][]string{"sonnet": {"low"}}}
@@ -278,6 +292,44 @@ func TestClaudeCatalog(t *testing.T) {
 				t.Fatalf("Claude argv = %q", meta.Args)
 			}
 		})
+	}
+}
+
+func TestClaudeLabelsOfAliases(t *testing.T) {
+	// The generic default alias comes first; the concrete alias of the same id names it.
+	bin, _ := fakeBin(t, "claude-aliases")
+	got, err := Claude(context.Background(), bin)
+	want := proto.HarnessOptions{Models: []string{"claude-sonnet-5-5", "claude-opus-5"}, Efforts: []string{"low", "medium", "high"},
+		ExtraEfforts: map[string][]string{}, ModelLabels: map[string]string{"claude-sonnet-5-5": "Sonnet 5.5", "claude-opus-5": "Opus 5"}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("catalog = %+v, %v; want %+v", got, err, want)
+	}
+	// Without a concrete alias there is no label at all, not "Default (recommended)".
+	bin, _ = fakeBin(t, "claude-default-only")
+	got, err = Claude(context.Background(), bin)
+	want = proto.HarnessOptions{Models: []string{"claude-sonnet-5-5", "default"}, Efforts: []string{"low", "medium", "high"},
+		ExtraEfforts: map[string][]string{}, ModelLabels: map[string]string{"default": "Default (recommended)"}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("default-only catalog = %+v, %v; want %+v", got, err, want)
+	}
+}
+
+func TestLabelsAreUsablePlainText(t *testing.T) {
+	long := strings.Repeat("x", maxLabelRunes+1)
+	for label, want := range map[string]string{"Opus 5": "Opus 5", "  Opus 5\t": "Opus 5", "": "", "  \n ": "", "a\x00b": "", "bad\xffutf": "", long: "",
+		strings.Repeat("é", maxLabelRunes): strings.Repeat("é", maxLabelRunes), "<b>Opus</b>": "<b>Opus</b>"} {
+		if got := cleanLabel(label); got != want {
+			t.Errorf("cleanLabel(%q) = %q, want %q", label, got, want)
+		}
+	}
+	got, err := options([]model{{id: "a", label: "A", efforts: []string{"low"}}, {id: "b", label: "\x07", efforts: []string{"low"}}})
+	if err != nil || !reflect.DeepEqual(got.ModelLabels, map[string]string{"a": "A"}) {
+		t.Fatalf("labels = %+v, %v", got.ModelLabels, err)
+	}
+	// No label anywhere leaves the key out of the wire format.
+	got, _ = options([]model{{id: "a", efforts: []string{"low"}}})
+	if data, _ := json.Marshal(got); strings.Contains(string(data), "model_labels") {
+		t.Fatalf("empty labels are on the wire: %s", data)
 	}
 }
 
@@ -314,7 +366,7 @@ func TestProbeFailures(t *testing.T) {
 }
 
 func TestCatalogWithDisjointEfforts(t *testing.T) {
-	got, err := options([]model{{"a", []string{"low", "low", "--invalid"}}, {"b", []string{"high"}}, {"bad model", []string{"high"}}})
+	got, err := options([]model{{id: "a", efforts: []string{"low", "low", "--invalid"}}, {id: "b", efforts: []string{"high"}}, {id: "bad model", efforts: []string{"high"}}})
 	want := proto.HarnessOptions{Models: []string{"a", "b"}, Efforts: []string{}, ExtraEfforts: map[string][]string{"a": {"low"}, "b": {"high"}}}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("catalog = %+v, %v; want %+v", got, err, want)
