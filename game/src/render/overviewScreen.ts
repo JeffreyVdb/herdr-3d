@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import type { Box3 } from '../world/layout';
-import { BLINK_MS, orchWords, sinceText, visibleRows, type OverviewData, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
+import { aiLabel, BLINK_MS, orchWords, sinceText, visibleRows, type OverviewData, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
 import { STATUS_CSS, STATUS_CHIP_CSS } from './palette';
 import { FONT } from './cards/atlasCards';
 
@@ -356,7 +356,7 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
 function face(v: VisibleRow, now: number): unknown[] {
   const r = v.row;
   if (r.kind !== 'worker') return [r.key, r.kind, v.depth, r.kind === 'ghost' ? [r.name, r.floor] : null];
-  return [r.key, v.depth, r.name, r.display, wallTag(r), r.runColor, metaLine(r), ticketLine(r), lineText(r), lineLLM(r), sinceText(r.display, r.since, now)];
+  return [r.key, v.depth, r.name, r.display, wallTag(r), r.runColor, metaLine(r), ticketLine(r), lineText(r), lineMark(r, now), sinceText(r.display, r.since, now)];
 }
 
 let scanlines: HTMLCanvasElement | null = null;
@@ -495,11 +495,12 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     g.textAlign = 'left';
     const whatW = sinceRight - sinceW - u * 3 - colWhat;
     const [first, second] = whatLines(r, compact);
-    // The task and now line carries the page's AI mark when the LLM wrote a part of it (#118 phase 2).
-    const llm = lineLLM(r);
+    // The task and now line carries the page's AI mark when the LLM wrote a part of it (#118 phase 2), with the now
+    // line's age (#198).
+    const llm = lineMark(r, now);
     if (first) {
       const font = `600 ${Math.round(u * 3.2)}px ${FONT}`;
-      const mark = llm && !r.ticket ? aiMark(g, colWhat, base, u) : 0;
+      const mark = llm && !r.ticket ? aiMark(g, llm, colWhat, base, u) : 0;
       g.font = font;
       g.fillStyle = r.ticket ? TEXT : TEXT_2;
       const w = mark + fitText(g, first, colWhat + mark, base, whatW - mark);
@@ -507,7 +508,7 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
       if (compact && second) {
         g.fillStyle = TEXT_2;
         const sep = fitText(g, ' · ', colWhat + w, base, whatW - w);
-        const m2 = llm ? aiMark(g, colWhat + w + sep, base, u, whatW - w - sep) : 0;
+        const m2 = llm ? aiMark(g, llm, colWhat + w + sep, base, u, whatW - w - sep) : 0;
         g.font = font;
         g.fillStyle = TEXT_2;
         fitText(g, second, colWhat + w + sep + m2, base, whatW - w - sep - m2);
@@ -516,7 +517,7 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     if (!compact) {
       if (second) {
         const y2 = base + u * 4.2;
-        const mark = llm ? aiMark(g, colWhat, y2, u) : 0;
+        const mark = llm ? aiMark(g, llm, colWhat, y2, u) : 0;
         g.font = `400 ${Math.round(u * 2.9)}px ${FONT}`;
         g.fillStyle = TEXT_2;
         fitText(g, second, colWhat + mark, y2, whatW - mark);
@@ -573,11 +574,22 @@ export function lineLLM(r: OverviewWorkerRow): boolean {
   return !!(r.task?.llm || r.now?.llm);
 }
 
-/** The page's AI mark on the wall: "AI" in an outlined box before a line on `base`; returns the width it takes with
- * its gap (0 when `max` has no room for it). */
-function aiMark(g: CanvasRenderingContext2D, x: number, base: number, u: number, max = Infinity): number {
+/** #198: the words of the row's AI mark (null: none): the page's, `AI · 2m ago` when the model wrote the now line, else
+ * `AI`. Pure (for its test). */
+export function lineMark(r: OverviewWorkerRow, now: number): string | null {
+  if (!lineLLM(r)) return null;
+  return r.now?.llm ? aiLabel(r.now, now) : 'AI';
+}
+
+/** The page's AI mark on the wall: `label` in an outlined box before a line on `base`; returns the width it takes with
+ * its gap (0 when `max` has no room for it, the plain "AI" when it has room for that only). */
+function aiMark(g: CanvasRenderingContext2D, label: string, x: number, base: number, u: number, max = Infinity): number {
   g.font = `400 ${Math.round(u * 2.2)}px ${MONO}`;
-  const w = g.measureText('AI').width + u * 1.2;
+  let w = g.measureText(label).width + u * 1.2;
+  if (w + u > max && label !== 'AI') {
+    label = 'AI';
+    w = g.measureText(label).width + u * 1.2;
+  }
   if (w + u > max) return 0;
   g.strokeStyle = TEXT_3;
   g.lineWidth = Math.max(1, u * 0.18);
@@ -585,7 +597,7 @@ function aiMark(g: CanvasRenderingContext2D, x: number, base: number, u: number,
   g.roundRect(x, base - u * 2.6, w, u * 3.1, u * 0.4);
   g.stroke();
   g.fillStyle = TEXT_2;
-  g.fillText('AI', x + u * 0.6, base - u * 0.25);
+  g.fillText(label, x + u * 0.6, base - u * 0.25);
   return w + u;
 }
 

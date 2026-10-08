@@ -197,7 +197,7 @@ export function lineStatusText(st: DigestLineStatus, kind: 'task' | 'now'): Line
     default:
       return {
         chip: 'AI failed',
-        detail: `The AI line failed${tries}: ${why}; the line shown is the fallback.${hint} ${kind === 'task' ? 'Retry now with R; it also tries again on a new prompt or when the settings change.' : 'Retry now with R; it also tries again after the next turn.'}`,
+        detail: `The AI line failed${tries}: ${why}; the line shown is the fallback.${hint} ${kind === 'task' ? 'Retry now with R; it also tries again on a new prompt or when the settings change.' : 'Retry now with R; it also tries again by itself with newer activity or when the turn ends.'}`,
         retry: true,
       };
   }

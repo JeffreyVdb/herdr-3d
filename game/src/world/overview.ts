@@ -26,6 +26,8 @@ export interface OverviewLine {
   llm: boolean;
   /** #174: the model's line is awaited or failed while this fallback shows (pending, retrying, failed); absent otherwise. */
   status?: DigestLineStatus;
+  /** #198: a model's now line: when it was written (unix ms, bridge clock: `now_at`), not when the activity it sums up happened. */
+  at?: number;
 }
 
 export interface OverviewTicket {
@@ -194,7 +196,9 @@ function nowOf(v: WorkerView): OverviewLine | null {
   const d = v.worker.digest;
   if (!d || typeof d !== 'object') return null;
   if (d.now_source === 'title') return line(v.worker.title, 'title', d.now_status);
-  return line(d.now, d.now_source, d.now_status);
+  const l = line(d.now, d.now_source, d.now_status);
+  if (l?.llm && typeof d.now_at === 'number' && d.now_at > 0) l.at = d.now_at;
+  return l;
 }
 
 export function overviewRow(v: WorkerView, floorTag: string | null): OverviewWorkerRow {
@@ -520,9 +524,30 @@ export function countItems(c: Counts, asleep: boolean): CountItem[] {
   ];
 }
 
+/** A time span in the overview's words: `<1m`, `4m`, `2h 05m`, `3d` (a negative one is `<1m`). */
+function spanText(ms: number): string {
+  const m = Math.floor(Math.max(0, ms) / 60_000);
+  return m < 1 ? '<1m' : m < 60 ? `${m}m` : m < 24 * 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${Math.floor(m / 1440)}d`;
+}
+
 /** `working 4m`: the status and how long it has held (`<1m`, `4m`, `2h 05m`, `3d`). */
 export function sinceText(d: Display, since: number, now: number): string {
-  const m = Math.floor(Math.max(0, now - since) / 60_000);
-  const t = m < 1 ? '<1m' : m < 60 ? `${m}m` : m < 24 * 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${Math.floor(m / 1440)}d`;
-  return `${STATUS_WORD[d]} ${t}`;
+  return `${STATUS_WORD[d]} ${spanText(now - since)}`;
+}
+
+/** #198: how long ago something was written: `just now`, `4m ago`, `2h 05m ago`, `3d ago`. */
+export function ageText(at: number, now: number): string {
+  const t = spanText(now - at);
+  return t === '<1m' ? 'just now' : `${t} ago`;
+}
+
+/** #198: the AI mark of a model's line, on the page and the wall: `AI · 2m ago` with its time (a now line), else `AI`. */
+export function aiLabel(l: OverviewLine, now: number): string {
+  return l.at ? `AI · ${ageText(l.at, now)}` : 'AI';
+}
+
+/** #198: what a model's now line is, in full (the mark's tooltip and its words for a screen reader). */
+export function aiTitle(l: OverviewLine, now: number): string {
+  const what = 'Summarised by the AI model from this worker’s recent activity (its last 5 steps)';
+  return l.at ? `${what} ${ageText(l.at, now)}. The time is when the summary was written, not when the activity happened.` : `${what}.`;
 }

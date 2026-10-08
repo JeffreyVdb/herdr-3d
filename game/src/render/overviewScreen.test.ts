@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { lineLLM, metaLine, scrollAt, wallCycle, wallPages, WALL_STATUS, wallPlan, wallTag, whatLines } from './overviewScreen';
+import { lineLLM, lineMark, metaLine, scrollAt, wallCycle, wallPages, WALL_STATUS, wallPlan, wallTag, whatLines } from './overviewScreen';
 import type { OverviewWorkerRow } from '../world/overview';
 import { STATUS_CHIP_CSS, STATUS_CSS } from './palette';
 
@@ -98,6 +98,16 @@ describe('the wall’s what column (#118)', () => {
     expect(lineLLM(row({ now: { ...now, source: 'llm', llm: true } }))).toBe(true);
     expect(lineLLM(row({ task: { text: 'Fix it', source: 'llm', llm: true }, now }))).toBe(true);
     expect(lineLLM(row({ ticket }))).toBe(false);
+  });
+
+  it('the AI mark says how old the model’s now line is, as the page does, and moves with the time alone (#198)', () => {
+    const at = 1_790_000_000_000;
+    const llmNow = { ...now, source: 'llm' as const, llm: true, at };
+    expect(lineMark(row({ now }), at)).toBeNull();
+    expect(lineMark(row({ now: llmNow }), at + 2 * 60_000)).toBe('AI · 2m ago');
+    expect(lineMark(row({ now: llmNow }), at + 9 * 60_000)).toBe('AI · 9m ago');
+    expect(lineMark(row({ task: { text: 'Fix it', source: 'llm', llm: true }, now }), at)).toBe('AI');
+    expect(lineMark(row({ now: { ...now, source: 'llm', llm: true } }), at)).toBe('AI');
   });
 
   it('an orchestrator’s round: in its chip (both modes) and its meta line with the phase and pass (two-line rows)', () => {

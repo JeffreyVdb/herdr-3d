@@ -135,6 +135,10 @@ test('summaries: off until a test passed, then the LLM writes the floor’s line
     await expect(page.locator('.ov-row .ov-llm').first()).toBeVisible();
     await expect(page.locator('.ov', { hasText: NOW })).toBeVisible();
     expect(await page.locator('.ov-row', { hasText: NOW }).locator('.ov-llm').count()).toBeGreaterThan(0);
+    // #198: the model's now line says how long ago it was written, and that the time is the summary's.
+    const nowMark = page.locator('.ov-row', { hasText: NOW }).first().locator('.ov-now .ov-llm');
+    await expect(nowMark).toHaveText(/^AI · (just now|\d+m ago)$/);
+    await expect(nowMark).toHaveAttribute('title', /recent activity \(its last 5 steps\) .*The time is when the summary was written, not when the activity happened\.$/);
     await shot(page, 'm118-digest-page');
     // Every request marked the worker's lines as data, between delimiters, the instruction in its own turn.
     expect(llm.bodies.length).toBeGreaterThan(1);

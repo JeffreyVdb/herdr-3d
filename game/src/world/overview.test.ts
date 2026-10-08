@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Floor, Snapshot, Worker } from '../net/protocol';
 import { WorldStore } from './store';
-import { buildOverview, countItems, orchWords, sinceText, visibleRows, type OverviewWorkerRow } from './overview';
+import { aiLabel, aiTitle, ageText, buildOverview, countItems, orchWords, sinceText, visibleRows, type OverviewWorkerRow } from './overview';
 
 const NOW = 1_790_000_000_000;
 
@@ -170,6 +170,30 @@ describe('buildOverview: a row', () => {
     expect(row(s, 'llm')).toMatchObject({ task: { llm: true }, now: { llm: true } });
   });
 
+  it('#198: a model’s now line carries when it was written (now_at); its mark says how old it is', () => {
+    const s = store([
+      worker('llm', 'top', { desk_index: 0, digest: { task: 'x', task_source: 'llm', now: 'Rerunning the login test', now_source: 'llm', now_at: NOW - 2 * 60_000 } }),
+      worker('recap', 'top', { desk_index: 1, digest: { now: 'Waiting for review', now_source: 'recap', now_at: NOW } }),
+      worker('old', 'top', { desk_index: 2, digest: { now: 'y', now_source: 'llm' } }),
+    ]);
+    const now = row(s, 'llm').now;
+    if (!now) throw new Error('no now line');
+    expect(now).toEqual({ text: 'Rerunning the login test', source: 'llm', llm: true, at: NOW - 2 * 60_000 });
+    expect(row(s, 'recap').now?.at).toBeUndefined();
+    expect(row(s, 'llm').task?.at).toBeUndefined();
+    expect(aiLabel(now, NOW)).toBe('AI · 2m ago');
+    // The same line, later: only its age moves.
+    expect(aiLabel(now, NOW + 60 * 60_000)).toBe('AI · 1h 02m ago');
+    expect(aiTitle(now, NOW)).toBe(
+      'Summarised by the AI model from this worker’s recent activity (its last 5 steps) 2m ago. The time is when the summary was written, not when the activity happened.',
+    );
+    // A bridge that sends no time: the plain mark.
+    const plain = row(s, 'old').now;
+    if (!plain) throw new Error('no now line');
+    expect(aiLabel(plain, NOW)).toBe('AI');
+    expect(aiTitle(plain, NOW)).toBe('Summarised by the AI model from this worker’s recent activity (its last 5 steps).');
+  });
+
   it('crew members have no task line; a finished freelancer’s now is its report’s summary', () => {
     const s = store([
       orch('o', 'top', 0, { digest: { task: 'orch task', task_source: 'prompt', now: 'Waiting', now_source: 'recap' } }),
@@ -205,6 +229,14 @@ describe('counts and times', () => {
     ]);
     expect(countItems({ ...v.counts, waiting: 0, needsYou: 2 }, false).map((c) => c.label)).toEqual(['working', 'need you', 'idle']);
     expect(countItems(v.counts, true)).toEqual([{ kind: 'asleep', n: 5, label: 'asleep' }]);
+  });
+
+  it('ageText', () => {
+    expect(ageText(NOW - 20_000, NOW)).toBe('just now');
+    expect(ageText(NOW + 5000, NOW)).toBe('just now');
+    expect(ageText(NOW - 4 * 60_000, NOW)).toBe('4m ago');
+    expect(ageText(NOW - 125 * 60_000, NOW)).toBe('2h 05m ago');
+    expect(ageText(NOW - 3 * 86_400_000, NOW)).toBe('3d ago');
   });
 
   it('sinceText', () => {

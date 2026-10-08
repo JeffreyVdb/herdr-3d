@@ -18,14 +18,27 @@ package server
 // Phase 2, "Floor overview summaries" (opt-in, internal/digest's Service):
 // the configured LLM writes a one-off worker's task line from its first
 // prompt (once per prompt hash: again only after a /clear or another agent
-// session) and every worker's now line from its last steps, after a turn
-// ended and settled (DigestSettle), at most once per DigestGap per worker,
-// only for a worker on a floor a client stands on (floorViewed: the wall
-// screen and the page are on that floor), one call at a time, under the
-// daily cap, its lines cached by input hash. A model's line takes the
-// fallback's place (source "llm") while the feature is ready; off, not
-// ready or failing, the fallbacks show. Each call is audited with its sizes,
-// the model and the endpoint's host, never its text.
+// session) and every worker's now line from its last steps
+// (transcript.DigestSteps), only for a worker on a floor a client stands on
+// (floorViewed: the wall screen and the page are on that floor), one call at
+// a time, under the daily cap, its lines cached by input hash. A model's
+// line takes the fallback's place (source "llm") while the feature is ready;
+// off, not ready or failing, the fallbacks show. Each call is audited with
+// its sizes, the model and the endpoint's host, never its text.
+//
+// #198: the now line follows the recent steps, not the turn ends. It is due
+// when the steps (their key, nowKey: never the context line, so a task line
+// that changes alone costs nothing) differ from the ones last handed to the
+// model (nowTried), at most once per DigestGap per worker and, right after a
+// turn ended, once it settled (DigestSettle: the final message is in). So
+// the first look at a floor writes the line of a turn still running, a long
+// turn is summarized again each gap while it has new steps, and the same
+// steps are never sent twice by themselves, whoever views, reconnects or
+// polls; steps that come while a call is out are due after it. Of the due
+// lines a one-off worker's task line goes first, then the now line of a
+// worker with no model line, then the one whose line is the oldest. No
+// timer runs for it: each change of a tracker pumps, and a line that waits
+// (its gap, its settle, its retry delay) arms a wake for its time.
 //
 // #174: a failed task line is asked for again, a bounded number of times
 // with growing delays (digest.RetryDelay, per prompt hash; no retry on a
@@ -35,6 +48,14 @@ package server
 // config of the feature changes (digest.Service.ConfigKey: the LLM, the
 // effort, the budget, a passing test, the switch) and by digest.retry; a
 // call that could not go (busy, off, capped) never counts as an attempt.
+//
+// #198: a failed now line keeps the previous line (or the fallback). Its
+// steps are not sent again by themselves; newer steps are, once the gap and
+// the retry policy's delay after the n-th failure in a row (DigestRetry, as
+// a task line's) are over, until the policy says no more (digest.MaxAttempts
+// in all). Then nothing goes by itself until a turn ends, the config
+// changes, digest.retry (which sends the same steps again at once) or a
+// reset; each of those starts the count again.
 
 import (
 	"context"
@@ -54,8 +75,8 @@ import (
 
 // Defaults of the summaries' timing.
 const (
-	// DefaultDigestSettle is how long after a turn ended its now line is
-	// written (as the follow-up questions wait).
+	// DefaultDigestSettle is how long after a turn ended its now line waits
+	// (as the follow-up questions wait): its final message is in.
 	DefaultDigestSettle = 2 * time.Second
 	// DefaultDigestGap is the least time between two now lines of a worker.
 	DefaultDigestGap = 60 * time.Second
@@ -119,7 +140,8 @@ func (tr *usageTracker) offerDigest(w usageWorker) {
 // digestSeen takes a worker's tracker digest (hub goroutine): a reset (a
 // /clear, another agent session: another tracker epoch or reset count, never
 // guessed from the counts) drops the model's lines and starts a new
-// generation, a turn that ended makes a now line due.
+// generation; new steps make a now line due (#198), a turn that ended holds
+// it for the settle and forgives the now line's failures.
 func (h *Hub) digestSeen(ctx context.Context, u digestUpdate) {
 	w := h.workers[u.id]
 	if w == nil || u.digest == nil {
@@ -142,8 +164,9 @@ func (h *Hub) digestSeen(ctx context.Context, u digestUpdate) {
 			*l = dgLLM{gen: h.dgs.gen, epoch: u.epoch, resets: d.Resets, callAt: l.callAt}
 		}
 		if d.Ended > l.ended {
-			l.ended, l.endedAt = d.Ended, h.opts.Now()
+			l.ended, l.endedAt, l.nowFail = d.Ended, h.opts.Now(), nil
 		}
+		l.nowKey = nowKey(d)
 		h.dg[u.id] = d
 	}
 	h.refreshDigest(u.id)
@@ -223,19 +246,49 @@ func (h *Hub) taskStatus(id string, l *dgLLM, d *transcript.Digest) *proto.Diges
 	return &proto.DigestLineStatus{State: proto.LinePending}
 }
 
-// nowStatus is the same for the now line, which is asked for after a turn
-// ended: nil while none is due.
+// nowStatus is the same for the now line, which is asked for when the steps
+// changed (#198): nil without usable steps, or while none is due. It moves
+// only with the line's state, never with each step (a worker.upsert each).
 func (h *Hub) nowStatus(id string, l *dgLLM) *proto.DigestLineStatus {
+	if l.nowKey == "" {
+		return nil
+	}
+	f := l.nowFail
+	attempts := 0
+	if f != nil {
+		attempts = f.attempts
+	}
+	newer := l.nowKey != l.nowTried
 	fl := h.dgs.flight
 	switch {
 	case fl != nil && fl.id == id && fl.in.Kind == digest.KindNow:
-		return &proto.DigestLineStatus{State: proto.LinePending}
-	case l.nowFail != nil:
-		return &proto.DigestLineStatus{State: proto.LineFailed, Reason: l.nowFail.reason, Attempts: l.nowFail.attempts}
-	case !l.endedAt.IsZero():
-		return &proto.DigestLineStatus{State: proto.LinePending}
+		return &proto.DigestLineStatus{State: proto.LinePending, Attempts: attempts}
+	case f != nil && (!newer || f.retryAt.IsZero()):
+		// Its steps failed (newer ones wait for them to be tried), or the
+		// attempts are used up: nothing goes by itself until a turn ends.
+		return &proto.DigestLineStatus{State: proto.LineFailed, Reason: f.reason, Attempts: f.attempts}
+	case f != nil && f.retryAt.After(h.opts.Now()):
+		at := f.retryAt
+		if g := l.callAt.Add(h.opts.DigestGap); !l.callAt.IsZero() && g.After(at) {
+			at = g
+		}
+		return &proto.DigestLineStatus{State: proto.LineRetrying, Reason: f.reason, Attempts: f.attempts, RetryAt: at.UnixMilli()}
+	case newer && h.dgs.svc.Capped():
+		return &proto.DigestLineStatus{State: proto.LinePending, Reason: "daily_cap", Attempts: attempts}
+	case newer:
+		return &proto.DigestLineStatus{State: proto.LinePending, Attempts: attempts}
 	}
 	return nil
+}
+
+// nowKey is the key of a tracker's last steps (its now input without the
+// context line, #198): "" when they hold nothing to write a line from.
+func nowKey(d *transcript.Digest) string {
+	in := digest.Input{Kind: digest.KindNow, Steps: nowSteps(d)}
+	if digest.Empty(in) {
+		return ""
+	}
+	return digest.Key(in)
 }
 
 // oneOff reports whether a worker is a one-off worker (an employee outside
@@ -278,14 +331,20 @@ type dgLLM struct {
 	// task is the model's task line of the prompt taskHash; taskTried the
 	// prompt hash last handed to it.
 	task, taskHash, taskTried string
-	// taskFail is the failed attempts of taskTried's line, nowFail those of
-	// the now line since its last success (#174).
+	// taskFail is the failed attempts of taskTried's line (#174); nowFail
+	// those of the now line in a row since its last success, a turn end or a
+	// retry (#198).
 	taskFail, nowFail *dgFail
 	// now is the model's now line, written at nowAt (unix ms).
 	now   string
 	nowAt int64
-	// ended is the tracker's Ended last seen; endedAt when a turn last ended
-	// with no now line written since (zero: none is due).
+	// nowKey is the key of the tracker's last steps (nowKey; "": nothing to
+	// write a line from), nowTried the one last handed to the model by a call
+	// that went (success or failure): the now line is due while they differ
+	// (#198).
+	nowKey, nowTried string
+	// ended is the tracker's Ended last seen, endedAt when it last grew (zero:
+	// no turn ended): a now line waits for DigestSettle after it.
 	ended   int
 	endedAt time.Time
 	// callAt is when a now line was last asked for (DigestGap).
@@ -293,7 +352,8 @@ type dgLLM struct {
 }
 
 // dgFail is a line's failed attempts: how many, the last one's reason, and
-// when the next goes (zero: none by itself).
+// when the next goes (zero: none by itself; a now line's: the earliest newer
+// steps may go).
 type dgFail struct {
 	hash     string // the prompt the attempts are of (a task's)
 	attempts int
@@ -414,10 +474,13 @@ func (h *Hub) publishDigestState(ctx context.Context) {
 
 // digestCand is a line the model may write now.
 type digestCand struct {
-	id   string
-	in   digest.Input
-	hash string    // a task's prompt hash
-	at   time.Time // a now line's turn end (a task's: zero, first)
+	id string
+	in digest.Input
+	// hash is a task's prompt hash, a now line's steps key (dgLLM.nowKey).
+	hash string
+	// at orders the candidates, the earliest first: a task's is zero, a now
+	// line's when its model line was written (none: the Unix epoch).
+	at time.Time
 }
 
 // digestInput is a worker's now input: its last steps, after its ticket's
@@ -430,23 +493,32 @@ func (h *Hub) digestInput(w *proto.Worker, d *transcript.Digest) digest.Input {
 	case oneOff(w) && w.Digest != nil && w.Digest.Task != "":
 		in.Context = "Task: " + w.Digest.Task
 	}
+	in.Steps = nowSteps(d)
+	return in
+}
+
+// nowSteps is a tracker's last steps as the model reads them.
+func nowSteps(d *transcript.Digest) []digest.Step {
+	var out []digest.Step
 	for _, s := range d.Recent {
 		st := digest.Step{Texts: s.Texts}
 		for _, t := range s.Tools {
 			st.Tools = append(st.Tools, digest.Tool{Name: t.Name, Summary: t.Summary})
 		}
-		in.Steps = append(in.Steps, st)
+		out = append(out, st)
 	}
-	return in
+	return out
 }
 
 // pumpDigest hands the model the line it may write first (hub goroutine):
 // the feature ready, no call in flight, the worker on a floor a client
-// stands on; a one-off worker's task line first, then the now line of the
-// turn that ended longest ago, once settled and the worker's gap is over.
-// A line that waits for its settle or gap wakes it again then. Past the
-// daily cap only a cached line goes; the others wait, still due, for the
-// budget (tomorrow's wakes it; a higher cap or the toggle pumps).
+// stands on; a one-off worker's task line first, then the now line of
+// steps not yet tried (#198) of a worker with no model line, then of the
+// one whose line is the oldest, once the worker's gap, a turn end's settle
+// and a failure's retry delay are over. A line that waits for one of those
+// wakes it again then. Past the daily cap only a cached line goes; the
+// others wait, still due, for the budget (tomorrow's wakes it; a higher cap
+// or the toggle pumps).
 func (h *Hub) pumpDigest(ctx context.Context) {
 	svc := h.dgs.svc
 	if svc == nil {
@@ -494,10 +566,19 @@ func (h *Hub) pumpDigest(ctx context.Context) {
 				}
 			}
 		}
-		if l.endedAt.IsZero() || d.Steps == 0 {
-			continue
+		if d.Steps == 0 || l.nowKey == "" || l.nowKey == l.nowTried {
+			continue // nothing to write from, or these steps were tried
 		}
-		due := l.endedAt.Add(h.opts.DigestSettle)
+		var due time.Time
+		if f := l.nowFail; f != nil {
+			if f.retryAt.IsZero() {
+				continue // the attempts are used up: until a turn ends
+			}
+			due = f.retryAt
+		}
+		if !l.endedAt.IsZero() && l.endedAt.Add(h.opts.DigestSettle).After(due) {
+			due = l.endedAt.Add(h.opts.DigestSettle)
+		}
 		if !l.callAt.IsZero() && l.callAt.Add(h.opts.DigestGap).After(due) {
 			due = l.callAt.Add(h.opts.DigestGap)
 		}
@@ -507,7 +588,10 @@ func (h *Hub) pumpDigest(ctx context.Context) {
 			}
 			continue
 		}
-		better(digestCand{id: id, in: h.digestInput(w, d), at: l.endedAt})
+		if capped {
+			h.refreshDigest(id) // due, but the budget may be spent: the status says so
+		}
+		better(digestCand{id: id, in: h.digestInput(w, d), hash: l.nowKey, at: time.UnixMilli(l.nowAt)})
 	}
 	if held {
 		if day := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location()); wake.IsZero() || day.Before(wake) {
@@ -519,11 +603,9 @@ func (h *Hub) pumpDigest(ctx context.Context) {
 		return
 	}
 	c, l := *pick, h.dgs.ws[pick.id]
-	gen, endedAt := l.gen, l.endedAt
+	gen := l.gen
 	if c.in.Kind == digest.KindTask {
 		l.taskTried = c.hash
-	} else {
-		l.endedAt = time.Time{}
 	}
 	h.dgs.inflight, h.dgs.flight = true, &c
 	h.refreshDigest(c.id) // pending
@@ -535,7 +617,7 @@ func (h *Hub) pumpDigest(ctx context.Context) {
 		if !res.Cached && !errors.Is(err, ai.ErrNotReady) && !errors.Is(err, digest.ErrBusy) && !errors.Is(err, digest.ErrCapped) {
 			h.auditDigest(ctx, c, res, err, model, host)
 		}
-		_ = h.do(ctx, func(ctx context.Context) { h.digestDone(ctx, c, gen, endedAt, res, err) })
+		_ = h.do(ctx, func(ctx context.Context) { h.digestDone(ctx, c, gen, res, err) })
 	}()
 }
 
@@ -560,8 +642,8 @@ func (h *Hub) wakeDigest(ctx context.Context, at time.Time) {
 // worker's tracker did not start over meanwhile. A failure keeps the
 // previous line (or the fallback); a call that could not go now (busy, the
 // feature switched off, the daily cap reached) is due again: only a call
-// made counts its input as tried.
-func (h *Hub) digestDone(ctx context.Context, c digestCand, gen int, endedAt time.Time, res digest.Result, err error) {
+// made counts its input as tried (a now line's steps: nowTried).
+func (h *Hub) digestDone(ctx context.Context, c digestCand, gen int, res digest.Result, err error) {
 	h.dgs.inflight, h.dgs.flight = false, nil
 	defer h.pumpDigest(ctx)
 	defer h.publishDigestState(ctx) // the day's count
@@ -576,12 +658,8 @@ func (h *Hub) digestDone(ctx context.Context, c digestCand, gen int, endedAt tim
 	}
 	switch {
 	case errors.Is(err, digest.ErrBusy), errors.Is(err, ai.ErrNotReady), errors.Is(err, digest.ErrCapped):
-		if l.gen == gen {
-			if c.in.Kind == digest.KindTask && l.taskTried == c.hash {
-				l.taskTried = ""
-			} else if c.in.Kind == digest.KindNow && l.endedAt.IsZero() {
-				l.endedAt = endedAt
-			}
+		if l.gen == gen && c.in.Kind == digest.KindTask && l.taskTried == c.hash {
+			l.taskTried = ""
 		}
 		return
 	case err != nil:
@@ -594,6 +672,9 @@ func (h *Hub) digestDone(ctx context.Context, c digestCand, gen int, endedAt tim
 			h.log.Warn("floor overview summary failed", "worker", c.id, "kind", reason)
 		}
 		if l.gen == gen {
+			if c.in.Kind == digest.KindNow {
+				l.nowTried = c.hash
+			}
 			h.digestFailed(l, c, reason, now)
 		}
 		return
@@ -604,22 +685,26 @@ func (h *Hub) digestDone(ctx context.Context, c digestCand, gen int, endedAt tim
 	if c.in.Kind == digest.KindTask {
 		l.task, l.taskHash, l.taskFail = res.Line, c.hash, nil
 	} else {
-		l.now, l.nowAt, l.nowFail = res.Line, now.UnixMilli(), nil
+		l.now, l.nowAt, l.nowTried, l.nowFail = res.Line, now.UnixMilli(), c.hash, nil
 	}
 	h.log.Debug("floor overview line written", "worker", c.id, "kind", c.in.Kind, "cached", res.Cached)
 }
 
 // digestFailed records a failed attempt of a line (hub goroutine): a task
 // line's is asked again after a growing delay, up to digest.MaxAttempts; a
-// now line's waits for its next turn (or a retry). The previous line, or the
-// fallback, stays.
+// now line's steps are not, newer ones go after the same delays, up to the
+// same count, then they wait for a turn end (or a retry, #198). The previous
+// line, or the fallback, stays.
 func (h *Hub) digestFailed(l *dgLLM, c digestCand, reason string, now time.Time) {
 	if c.in.Kind == digest.KindNow {
-		n := 1
+		f := &dgFail{attempts: 1, reason: reason}
 		if l.nowFail != nil {
-			n = l.nowFail.attempts + 1
+			f.attempts = l.nowFail.attempts + 1
 		}
-		l.nowFail = &dgFail{attempts: n, reason: reason}
+		if d, ok := h.opts.DigestRetry(f.attempts); ok {
+			f.retryAt = now.Add(d)
+		}
+		l.nowFail = f
 		return
 	}
 	f := l.taskFail
@@ -636,7 +721,8 @@ func (h *Hub) digestFailed(l *dgLLM, c digestCand, reason string, now time.Time)
 
 // digestForgive makes the lines whose attempts failed due again (hub
 // goroutine): the task line is asked for at once with its attempts counted
-// anew, the now line as if its turn had just ended. id "" is every worker.
+// anew, the now line too, from the steps there are (the same ones again
+// included), without waiting for the worker's gap. id "" is every worker.
 // It returns how many lines.
 func (h *Hub) digestForgive(id string) int {
 	n := 0
@@ -649,10 +735,7 @@ func (h *Hub) digestForgive(id string) int {
 			n++
 		}
 		if l.nowFail != nil {
-			l.nowFail, l.callAt = nil, time.Time{}
-			if l.endedAt.IsZero() {
-				l.endedAt = h.opts.Now()
-			}
+			l.nowFail, l.callAt, l.nowTried = nil, time.Time{}, ""
 			n++
 		}
 		h.refreshDigest(wid)

@@ -88,7 +88,7 @@ func TestDigestResetByIdentity(t *testing.T) {
 	h, _ := dgHubFor(t, &clock, false)
 	h.digestSeen(ctx, digestUpdate{id: "w", epoch: 1, digest: dgView(0, "Editing the old session")})
 	l := h.dgs.ws["w"]
-	l.task, l.taskHash, l.taskTried, l.now, l.nowAt, l.endedAt = "Old task", "h1", "h1", "Editing previous session", 1, time.Time{}
+	l.task, l.taskHash, l.taskTried, l.now, l.nowAt, l.nowTried = "Old task", "h1", "h1", "Editing previous session", 1, l.nowKey
 	h.refreshDigest("w")
 	if d := h.workers["w"].Digest; d == nil || d.NowSource != proto.DigestLLM || d.TaskSource != proto.DigestLLM {
 		t.Fatalf("the model's lines do not show: %+v", d)
@@ -105,15 +105,15 @@ func TestDigestResetByIdentity(t *testing.T) {
 		old := l.gen
 		clock = clock.Add(time.Second)
 		h.digestSeen(ctx, digestUpdate{id: "w", epoch: s.epoch, digest: s.d})
-		if l = h.dgs.ws["w"]; l.gen == old || l.now != "" || l.nowAt != 0 || l.task != "" || l.taskTried != "" || !l.endedAt.Equal(clock) {
+		if l = h.dgs.ws["w"]; l.gen == old || l.now != "" || l.nowAt != 0 || l.task != "" || l.taskTried != "" || l.nowTried != "" || !l.endedAt.Equal(clock) {
 			t.Fatalf("%s: %+v", s.name, *l)
 		}
 		if d := h.workers["w"].Digest; d == nil || d.NowSource == proto.DigestLLM || d.TaskSource == proto.DigestLLM {
 			t.Fatalf("%s: the old lines still show: %+v", s.name, d)
 		}
 		// The old generation's call answers: dropped.
-		h.digestDone(ctx, digestCand{id: "w", in: digest.Input{Kind: digest.KindNow}}, old, time.Time{}, digest.Result{Line: "Stale"}, nil)
-		h.digestDone(ctx, digestCand{id: "w", in: digest.Input{Kind: digest.KindTask}, hash: "h1"}, old, time.Time{}, digest.Result{Line: "Stale"}, nil)
+		h.digestDone(ctx, digestCand{id: "w", in: digest.Input{Kind: digest.KindNow}}, old, digest.Result{Line: "Stale"}, nil)
+		h.digestDone(ctx, digestCand{id: "w", in: digest.Input{Kind: digest.KindTask}, hash: "h1"}, old, digest.Result{Line: "Stale"}, nil)
 		if l.now != "" || l.task != "" {
 			t.Fatalf("%s: an old generation's line was taken: %+v", s.name, *l)
 		}
@@ -172,18 +172,17 @@ func TestDigestCapDefers(t *testing.T) {
 	clock = clock.Add(time.Second)
 	runOp(t, h) // the settle's wake
 	l := h.dgs.ws["w"]
-	if h.dgs.inflight || len(llm.Calls()) != 1 || l.taskTried != "" || l.endedAt.IsZero() {
+	if h.dgs.inflight || len(llm.Calls()) != 1 || l.taskTried != "" || l.nowTried != "" || l.nowKey == "" {
 		t.Fatalf("capped: inflight %v, calls %d, %+v", h.dgs.inflight, len(llm.Calls()), *l)
 	}
 	if want := time.Date(2026, 10, 4, 0, 0, 0, 0, time.Local); !h.dgs.wake.Equal(want) {
 		t.Fatalf("wake = %v, want tomorrow %v", h.dgs.wake, want)
 	}
 	// A call that met the cap anyway (it was reached meanwhile): both stay due.
-	endedAt := l.endedAt
-	l.taskTried, l.endedAt = "h1", time.Time{}
-	h.digestDone(ctx, digestCand{id: "w", in: digest.Input{Kind: digest.KindTask}, hash: "h1"}, l.gen, time.Time{}, digest.Result{}, digest.ErrCapped)
-	h.digestDone(ctx, digestCand{id: "w", in: digest.Input{Kind: digest.KindNow}}, l.gen, endedAt, digest.Result{}, digest.ErrCapped)
-	if l.taskTried != "" || !l.endedAt.Equal(endedAt) || !l.callAt.IsZero() || h.dgs.inflight {
+	l.taskTried = "h1"
+	h.digestDone(ctx, digestCand{id: "w", in: digest.Input{Kind: digest.KindTask}, hash: "h1"}, l.gen, digest.Result{}, digest.ErrCapped)
+	h.digestDone(ctx, digestCand{id: "w", in: digest.Input{Kind: digest.KindNow}, hash: l.nowKey}, l.gen, digest.Result{}, digest.ErrCapped)
+	if l.taskTried != "" || l.nowTried != "" || !l.callAt.IsZero() || h.dgs.inflight {
 		t.Fatalf("after ErrCapped: %+v", *l)
 	}
 	// The budget is back: the task line, then the now line.

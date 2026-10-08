@@ -93,7 +93,7 @@ describe('the reasoning effort and the completion budget (#174)', () => {
     expect(failed.detail).toContain('token budget');
     expect(failed.detail).toContain('Raise the completion budget');
     expect(failed.detail).toContain('new prompt');
-    expect(lineStatusText({ state: 'failed', reason: 'timeout' }, 'now').detail).toContain('after the next turn');
+    expect(lineStatusText({ state: 'failed', reason: 'timeout' }, 'now').detail).toContain('with newer activity or when the turn ends');
     const retrying = lineStatusText({ state: 'retrying', reason: 'bad_response', attempts: 1, retry_at: Date.UTC(2026, 9, 7, 14, 32) }, 'task');
     expect(retrying.chip).toMatch(/^AI retry \d\d:\d\d/);
     expect(retrying.detail).toContain('tries again at');

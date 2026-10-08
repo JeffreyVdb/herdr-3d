@@ -815,6 +815,13 @@
   color: var(--ov-text-2);
   font-family: var(--ov-mono);
   font-size: 10px;
+  white-space: nowrap;
+}
+/* #198: how long ago the model wrote the line, inside its badge: a step quieter than "AI", digits that do not jitter as
+   the minutes turn. */
+.ov-llm-age {
+  color: var(--ov-text-3);
+  font-variant-numeric: tabular-nums;
 }
 /* #174: where the AI badge would be, what became of the model's line while a fallback shows: a dashed outline (the badge's
    absent twin), the same mono, quiet while it is only pending, the board's accent once it failed or waits for a retry. */

@@ -104,6 +104,33 @@ describe('the overview page (#118)', () => {
     expect(rows[0]?.textContent).toContain('Running the e2e suite');
   });
 
+  it('says how long ago the model wrote a now line, and the age moves while the line stays (#198)', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      let now = NOW;
+      const { ov } = setup([worker('a', { desk_index: 0, status: 'working', digest: { now: 'Running the e2e suite', now_source: 'llm', now_at: NOW - 30_000 } })], { now: () => now });
+      ov.open('top');
+      const row = document.querySelector<HTMLElement>('.ov-row');
+      const mark = () => row?.querySelector<HTMLElement>('.ov-now .ov-llm');
+      expect(mark()?.textContent).toBe('AI · just now');
+      expect(mark()?.getAttribute('title')).toBe(
+        'Summarised by the AI model from this worker’s recent activity (its last 5 steps) just now. The time is when the summary was written, not when the activity happened.',
+      );
+      expect(row?.getAttribute('aria-label')).toContain('Now: Running the e2e suite (AI summary, just now)');
+      // Three minutes on, nothing else changed: the page's own timer moves the age.
+      now = NOW + 3 * 60_000;
+      vi.advanceTimersByTime(20_000);
+      expect(document.querySelector('.ov-row')).toBe(row);
+      expect(row?.querySelector('.ov-now-text')?.textContent).toBe('Running the e2e suite');
+      expect(mark()?.textContent).toBe('AI · 3m ago');
+      expect(mark()?.getAttribute('aria-label')).toContain(' 3m ago. The time is when the summary was written');
+      expect(row?.getAttribute('aria-label')).toContain('(AI summary, 3m ago)');
+      ov.closeNow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // #174
   const STATUSED = [
     worker('t1', { desk_index: 0, status: 'working', title: 'Reading hub.go', digest: { task: 'Investigate. Missing transcript diffs.', task_source: 'prompt', now_source: 'title', task_status: { state: 'retrying', reason: 'bad_response', attempts: 1, retry_at: NOW + 60_000 }, now_status: { state: 'failed', reason: 'truncated', attempts: 1 } } }),
@@ -122,7 +149,7 @@ describe('the overview page (#118)', () => {
     expect(task(0)?.getAttribute('title')).toContain('tries again at');
     expect(now(0)?.textContent).toBe('AI failed');
     expect(now(0)?.getAttribute('aria-label')).toContain('token budget');
-    expect(now(0)?.getAttribute('title')).toContain('after the next turn');
+    expect(now(0)?.getAttribute('title')).toContain('with newer activity or when the turn ends');
     expect(rows[0]?.querySelectorAll('.ov-retry')).toHaveLength(2);
     // Pending: a quiet chip, no retry; the model's own line carries the badge and no status.
     expect(task(1)?.textContent).toBe('AI pending');

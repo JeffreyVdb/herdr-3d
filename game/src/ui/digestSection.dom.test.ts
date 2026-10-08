@@ -222,7 +222,7 @@ describe('the floor overview summaries section (#118)', () => {
     expect(m.body.textContent).toContain(DIGEST_SCOPE);
     expect(DIGEST_SCOPE).toContain('floor overview summaries only');
     expect(m.body.textContent).toContain(DIGEST_TIMING);
-    for (const words of ['once per prompt', 'turn ends', '2 seconds', 'once a minute', 'floor someone is viewing', 'up to 4 times']) expect(DIGEST_TIMING).toContain(words);
+    for (const words of ['once per prompt', 'last 5 steps', 'when someone looks at the floor', 'newer activity', 'during a long turn', 'turn ends', '2 seconds', 'once a minute', 'floor someone is viewing', 'never summarised twice', 'up to 4 times']) expect(DIGEST_TIMING).toContain(words);
   });
 
   it('Retry failed sends digest.retry and says how many lines', async () => {

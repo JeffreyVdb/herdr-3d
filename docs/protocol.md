@@ -3013,8 +3013,8 @@ client shows no now line. A worker with neither a prompt nor a step has no diges
 |---|---|---|
 | `task`, `task_source` | string ≤ 80 chars, optional | what the worker was asked to do. `ai_title`: Claude Code's own `ai-title` metadata line (the latest); `prompt`: else the first genuine prompt (system reminders out, a paste unwrapped, `[image]` for an image marker) cut to its first sentence, or (#174), when that sentence says nothing of the task ("Please investigate.", "Please create a ticket."), joined with the sentences after it up to and including the first that does (greetings left out, a leading "please" dropped), at most 80 characters. Codex has no ai-title: `prompt` only. A slash command counts as the prompt `/name args` only when it has arguments. Absent when there is neither. |
 | `now`, `now_source` | string ≤ 100 chars, `now_source` set from the first assistant step | what it is doing now. `recap`: Claude Code's latest `system/away_summary` (without its "(disable recaps in /config)"), only while no prompt, turn start or assistant step came after it; `now_at` is its time (unix ms). `title`: no `now` text: the line is the worker's own `title`, which moves on the hot `worker.status` path and is never copied into the digest. |
-| `now_at` | int, optional | unix ms the `now` line was written (`recap` only) |
-| `task_status`, `now_status` | object, optional | #174: what became of the model's line while a fallback is shown in its place (never with source `llm`; absent while nothing is awaited or the feature is off or not ready): `{"state": "pending"\|"retrying"\|"failed", "reason"?, "attempts"?, "retry_at"?}`. `pending`: a call is out, or it waits for the daily budget (`reason` `daily_cap`); `retrying`: the last attempt failed and the next goes at `retry_at` (unix ms); `failed`: it failed and nothing is scheduled by itself (the task: its attempts are used up; the now line: it waits for the next turn). `reason` is the failure's kind: `truncated`, `empty_answer`, `bad_response`, `provider_failed`, `timeout`, `rate_limited`, `auth_failed`, `unreachable`, `bad_config`, `no_line` (the answer held no line) or `failed`; `attempts` how many calls failed. A client shows it beside the line and offers `digest.retry` |
+| `now_at` | int, optional | unix ms (bridge clock) the `now` line was written: a `recap`'s time, or when the model wrote an `llm` line (#198: its generation time, not the time of the activity it sums up; a client shows its age, e.g. "AI · 2m ago") |
+| `task_status`, `now_status` | object, optional | #174: what became of the model's line while a fallback is shown in its place (never with source `llm`; absent while nothing is awaited or the feature is off or not ready): `{"state": "pending"\|"retrying"\|"failed", "reason"?, "attempts"?, "retry_at"?}`. `pending`: a call is out, or it waits for the daily budget (`reason` `daily_cap`); `retrying`: the last attempt failed and the next goes at `retry_at` (unix ms); `failed`: it failed and nothing is scheduled by itself (the task: its attempts are used up; the now line: its steps failed and it waits for newer ones, or its attempts are used up and it waits for the turn to end). `reason` is the failure's kind: `truncated`, `empty_answer`, `bad_response`, `provider_failed`, `timeout`, `rate_limited`, `auth_failed`, `unreachable`, `bad_config`, `no_line` (the answer held no line) or `failed`; `attempts` how many calls failed. A client shows it beside the line and offers `digest.retry` |
 
 `llm` is the source of a line the configured LLM wrote, with [floor overview summaries](#floor-overview-summaries) on:
 it takes the place of `ai_title` / `prompt` (a one-off worker's task) or `recap` / `title` (the now line; `now_at` is
@@ -3051,9 +3051,14 @@ markdown, a leading label or bullet, wrapping quotes or a final full stop, scrub
 with `…`; an answer with nothing left keeps the previous line (or the fallback). An answer the provider cut off at the
 token limit (`finish_reason` `length`) is never a line, even with some text in it (#174).
 
-**When.** The now line after a turn ends (Claude's `turn_duration`, Codex's `task_complete`) and has settled **2 s**,
-at most once every **60 s** per worker (a later turn end within it waits for it, then summarizes the steps it finds).
-The task as soon as the prompt is known. **Only for a worker on a floor a client stands on** (its `board.watch`, or a
+**When.** The now line whenever the last 5 steps differ from the ones last sent (#198), at most once every **60 s**
+per worker: the first look at a floor summarizes a turn still running, a long turn is summarized again each 60 s while
+it has new steps, and steps that come in while a call is out are summarized after it. Right after a turn ends
+(Claude's `turn_duration`, Codex's `task_complete`) it waits for the turn to settle **2 s**, so the final message is
+in; a turn that keeps going never has to be quiet first. The same steps are never sent twice by themselves (their key
+leaves out the context line, so a task line that changes alone costs nothing), whoever views, reconnects or polls.
+Of the lines due, a one-off worker's task line goes first, then the now line of a worker with no model line, then the
+oldest. The task as soon as the prompt is known. **Only for a worker on a floor a client stands on** (its `board.watch`, or a
 laptop or transcript it watches there; the wall screen and the page are on that floor): a floor nobody is on costs
 nothing, and its lines are written once someone walks onto it.
 
@@ -3065,9 +3070,13 @@ new prompt (another hash), a `/clear` or another agent session, a change of the 
 model, key or `extra_body`, the reasoning effort, the completion budget, a passing `digest.test`, the toggle), and
 `digest.retry`. A call that could not go (the daily cap reached, the feature off or the LLM not ready, another call
 of the feature out) is **no attempt**: nothing was sent and nothing counted. A failed call is a call: it counts
-toward `daily_cap`, its input is not cached, and a cached input still costs nothing. The now line is asked after each
-turn (the timing above); a failed one shows `now_status` `failed` until the next turn or `digest.retry`. A retry,
-like every call, is one at a time and for a floor someone is viewing.
+toward `daily_cap`, its input is not cached, and a cached input still costs nothing. The now line (#198) keeps the
+previous line, or the fallback, when its call fails; its steps are not sent again by themselves. Newer steps are,
+after the same delays (**1, 5 and 15 minutes** after the 1st, 2nd and 3rd failure in a row, and the 60 s gap; its
+`now_status` is `retrying` with that time while newer steps wait), up to **4 attempts**; then `failed`, and nothing
+more goes by itself until the turn ends. A turn end, a change of the feature's config, `digest.retry` (which sends the
+same steps again at once), a `/clear` or another agent session start the count again. A retry, like every call, is
+one at a time and for a floor someone is viewing.
 
 **Cost.** One call at a time for the feature (the AI integration's other slot stays free for the follow-up questions
 and pack up); `daily_cap` calls a day (default **300**, 1–10,000; `calls_today` counts them, the bridge's local day),

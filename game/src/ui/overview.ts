@@ -21,6 +21,8 @@
 
 import { lineStatusText } from '../world/digestSettings';
 import {
+  ageText,
+  aiTitle,
   BLINK_MS,
   filterOverview,
   hiddenText,
@@ -581,10 +583,7 @@ export class OverviewOverlay {
     if (r.kind === 'worker') {
       el.dataset.display = r.display;
       el.style.setProperty('--run', r.runColor !== null ? `#${r.runColor.toString(16).padStart(6, '0')}` : 'transparent');
-      const label = [r.name, r.tag, r.model, r.ticket ? `${r.ticket.key}${r.ticket.title ? ` ${r.ticket.title}` : ''}` : null, r.task ? `Task: ${r.task.text}${statusLabel(r.task, 'task')}` : null, r.now ? `Now: ${r.now.text}${statusLabel(r.now, 'now')}` : null, sinceText(r.display, r.since, now)]
-        .filter(Boolean)
-        .join(' · ');
-      el.setAttribute('aria-label', label);
+      el.setAttribute('aria-label', rowLabel(r, now));
       const who = h(
         'div',
         { class: 'ov-who' },
@@ -604,7 +603,7 @@ export class OverviewOverlay {
         { class: 'ov-what' },
         r.ticket ? this.ticketEl(r) : null,
         r.task ? lineEl('ov-task', 'Task', r.task, 'task') : null,
-        r.now || r.activity ? this.nowEl(r) : null,
+        r.now || r.activity ? this.nowEl(r, now) : null,
         !r.ticket && !r.task && !r.now && !r.activity ? h('p', { class: 'ov-line ov-quiet' }, 'No turn yet') : null,
       );
       el.replaceChildren(h('span', { class: 'ov-light', 'aria-hidden': 'true' }), wire ?? '', fold ?? '', who, what, h('span', { class: 'ov-since' }, sinceText(r.display, r.since, now)), h('span', { class: 'ov-hint', 'aria-hidden': 'true' }, 'Open transcript ', h('kbd', {}, '↵')));
@@ -665,20 +664,28 @@ export class OverviewOverlay {
     return h('button', { class: 'ov-ticket', tabindex: '-1', 'data-ticket': '1', title: `Open ${t.key} (t)` }, ...body);
   }
 
-  private nowEl(r: OverviewWorkerRow): HTMLElement {
+  private nowEl(r: OverviewWorkerRow, now: number): HTMLElement {
     const p = h('p', { class: `ov-line ov-now${r.now?.status && !r.now.llm ? ' ov-line--status' : ''}` }, h('b', {}, 'Now'));
     if (r.now) p.append(h('span', { class: 'ov-now-text' }, r.now.text));
-    if (r.now?.llm) p.append(h('span', { class: 'ov-llm', title: 'Summarised by the AI model' }, 'AI'));
+    if (r.now?.llm) p.append(aiMarkEl(r.now, now));
     else if (r.now) p.append(...statusEls(r.now, 'now'));
     if (r.activity) p.append(h('span', { class: 'ov-act' }, r.activity));
     return p;
   }
 
+  /** The times of a row that did not change otherwise: its since column and (#198) its AI line's age, and its spoken label. */
   private since(el: HTMLElement, r: OverviewAnyRow, now: number): void {
     if (r.kind !== 'worker') return;
     const s = el.querySelector('.ov-since');
     const t = sinceText(r.display, r.since, now);
     if (s && s.textContent !== t) s.textContent = t;
+    const mark = el.querySelector<HTMLElement>('.ov-now .ov-llm');
+    if (mark && r.now?.llm && r.now.at) {
+      const next = aiMarkEl(r.now, now);
+      if (mark.textContent !== next.textContent) mark.replaceWith(next);
+    }
+    const label = rowLabel(r, now);
+    if (el.getAttribute('aria-label') !== label) el.setAttribute('aria-label', label);
   }
 
   private lastChild(v: VisibleRow): boolean {
@@ -870,6 +877,21 @@ export class OverviewOverlay {
       from: this.from,
     };
   }
+}
+
+/** A worker row's spoken label: who, the ticket, the lines with what became of them, the status and how long. */
+function rowLabel(r: OverviewWorkerRow, now: number): string {
+  const ai = (l: OverviewLine) => (l.llm && l.at ? ` (AI summary, ${ageText(l.at, now)})` : statusLabel(l, 'now'));
+  return [r.name, r.tag, r.model, r.ticket ? `${r.ticket.key}${r.ticket.title ? ` ${r.ticket.title}` : ''}` : null, r.task ? `Task: ${r.task.text}${statusLabel(r.task, 'task')}` : null, r.now ? `Now: ${r.now.text}${ai(r.now)}` : null, sinceText(r.display, r.since, now)]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** #198: the AI mark of a model's now line, with how long ago it was written (`AI · 2m ago`); the tooltip says what the time is. */
+function aiMarkEl(line: OverviewLine, now: number): HTMLElement {
+  const title = aiTitle(line, now);
+  if (!line.at) return h('span', { class: 'ov-llm', title }, 'AI');
+  return h('span', { class: 'ov-llm', title, role: 'img', 'aria-label': title }, 'AI', h('span', { class: 'ov-llm-age' }, ` · ${ageText(line.at, now)}`));
 }
 
 function lineEl(cls: string, label: string, line: OverviewLine, kind: 'task' | 'now'): HTMLElement {
