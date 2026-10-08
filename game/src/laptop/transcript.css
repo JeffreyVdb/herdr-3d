@@ -2150,6 +2150,17 @@
     display: none;
   }
 }
+/* #171: below this, Code changes is its box and its icon (its name stays its label, for screen readers, and its
+   title): the strip keeps one line on a laptop's screen, the meter, the preset and the zoom on it. */
+@container tx (max-width: 1119px) {
+  .tx-check-changes > span:not(.tx-check-ic) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
 @container tx (min-width: 1040px) {
   .tx-ctx-track {
     flex-basis: 72px;
@@ -2161,8 +2172,9 @@
   .tx-ctx-win {
     display: none;
   }
-  /* Hide tools keeps its box (its name stays its label, for screen readers), the chip its dot. */
-  .tx-check > span:not(.tx-check-n) {
+  /* Hide tools keeps its box (its name stays its label, for screen readers), Code changes its box and icon, the chip
+     its dot. */
+  .tx-check > span:not(.tx-check-n):not(.tx-check-ic) {
     position: absolute;
     width: 1px;
     height: 1px;
