@@ -151,7 +151,7 @@ describe('TranscriptSim', () => {
     const whole = (cmd('transcript.item', { id, item: 'h171-cut' }).data as { item: TranscriptItem }).item;
     expect(whole.tool?.diff?.truncated).toBeUndefined();
     expect(whole.tool?.diff?.hunks[0]).toMatchObject({ old_start: 3 });
-    expect((whole.tool?.diff?.hunks[0] as { lines: string[] }).lines.length).toBe(1600);
+    expect((whole.tool?.diff?.hunks[0] as { lines: string[] }).lines.length).toBe(2500);
     expect(whole.seq).toBe(cut?.seq);
     // Any other name: the demo.
     const other = new SimWorld(snapshot as never, { stepMs: 100, transcript: 'demo-m5', now: () => 1_000_000, setTimeout: () => 0, clearTimeout: () => {} });

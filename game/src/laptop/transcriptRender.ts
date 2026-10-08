@@ -478,36 +478,84 @@ function diffStat(hunks: unknown[]): { add: number; del: number } {
   return { add, del };
 }
 
+/** The lines a diff draws at a time: its first ones, then each "Show next" (#171). */
 const MAX_DIFF_LINES = 2000;
 
 const statEl = (add: number, del: number) => h('span', { class: 'tx-diff-stat' }, h('span', { class: 'tx-add-n' }, `+${add}`), ' ', h('span', { class: 'tx-del-n' }, `−${del}`));
 
-/** A diff's lines as a unified view with line numbers (at most MAX_DIFF_LINES of them, then a note). */
-function diffLines(diff: TranscriptDiff): HTMLElement {
-  const hunks = Array.isArray(diff.hunks) ? diff.hunks : [];
-  const box = h('div', { class: 'tx-diff-lines' });
-  const body = h('div', { class: 'tx-diff-body', role: 'table', 'aria-label': `Changes to ${String(diff.path ?? '')}` });
-  let shown = 0;
+type DiffRow = { kind: 'head'; text: string } | { kind: 'add' | 'del' | 'ctx' | 'meta'; text: string; on: string; nn: string };
+
+/** A diff's rows: its hunks' headers and lines, each line with its old and new numbers. */
+function diffRows(hunks: unknown[]): DiffRow[] {
+  const rows: DiffRow[] = [];
   for (const raw of hunks) {
     const hk = parseHunk(raw);
-    if (hk.header !== null) body.append(h('div', { class: 'tx-dl tx-dh', role: 'row' }, h('span', { class: 'tx-dn' }), h('span', { class: 'tx-dn' }), h('span', { class: 'tx-dt' }, hk.header)));
+    if (hk.header !== null) rows.push({ kind: 'head', text: hk.header });
     let o = hk.oldStart;
     let n = hk.newStart;
     for (const l of hk.lines) {
-      if (shown >= MAX_DIFF_LINES) break;
-      shown++;
       const c = l[0];
       const kind = c === '+' ? 'add' : c === '-' ? 'del' : c === '\\' ? 'meta' : 'ctx';
       const on = kind === 'add' || kind === 'meta' ? '' : o !== null ? String(o) : '';
       const nn = kind === 'del' || kind === 'meta' ? '' : n !== null ? String(n) : '';
       if (o !== null && (kind === 'del' || kind === 'ctx')) o++;
       if (n !== null && (kind === 'add' || kind === 'ctx')) n++;
-      body.append(h('div', { class: `tx-dl tx-${kind}`, role: 'row' }, h('span', { class: 'tx-dn' }, on), h('span', { class: 'tx-dn' }, nn), h('span', { class: 'tx-dt' }, l || ' ')));
+      rows.push({ kind, text: l, on, nn });
     }
   }
+  return rows;
+}
+
+/**
+ * A diff's lines as a unified view with line numbers: `limit` of them, then "Show next" adds MAX_DIFF_LINES more in place
+ * (`around` wraps the change, to keep the reader's place; `onShown` hears how many show now). Its body scrolls, and takes
+ * the focus to scroll from the keyboard (Transcript.onKey).
+ */
+function diffLines(diff: TranscriptDiff, limit: number, around: (change: () => void) => void, onShown: (shown: number) => void): HTMLElement {
+  const rows = diffRows(Array.isArray(diff.hunks) ? diff.hunks : []);
+  const total = rows.reduce((s, r) => s + (r.kind === 'head' ? 0 : 1), 0);
+  const box = h('div', { class: 'tx-diff-lines' });
+  const body = h('div', { class: 'tx-diff-body', role: 'table', tabindex: '0', 'aria-label': `Changes to ${String(diff.path ?? '')}` });
+  let pos = 0;
+  let shown = 0;
+  const draw = (upTo: number) => {
+    // Built apart, then added at once: a page of rows is one change to the page.
+    const page = document.createDocumentFragment();
+    for (; pos < rows.length; pos++) {
+      const r = rows[pos] as DiffRow;
+      if (r.kind === 'head') {
+        page.append(h('div', { class: 'tx-dl tx-dh', role: 'row' }, h('span', { class: 'tx-dn' }), h('span', { class: 'tx-dn' }), h('span', { class: 'tx-dt' }, r.text)));
+        continue;
+      }
+      if (shown >= upTo) break;
+      shown++;
+      page.append(h('div', { class: `tx-dl tx-${r.kind}`, role: 'row' }, h('span', { class: 'tx-dn' }, r.on), h('span', { class: 'tx-dn' }, r.nn), h('span', { class: 'tx-dt' }, r.text || ' ')));
+    }
+    body.append(page);
+  };
+  draw(Math.max(limit, MAX_DIFF_LINES));
   box.append(body);
-  const total = hunks.reduce<number>((s, raw) => s + parseHunk(raw).lines.length, 0);
-  if (total > shown) box.append(h('div', { class: 'tx-note' }, `${total - shown} more diff lines not shown (the view draws ${MAX_DIFF_LINES.toLocaleString('en')} per file)`));
+  if (total > shown) {
+    const btn = h('button', { class: 'tx-link' });
+    const note = h('div', { class: 'tx-note tx-diff-more' }, btn);
+    const label = () => {
+      const left = total - shown;
+      const next = Math.min(MAX_DIFF_LINES, left);
+      btn.textContent = `Show next ${next.toLocaleString('en')} ${next === 1 ? 'line' : 'lines'} (${left.toLocaleString('en')} left)`;
+    };
+    label();
+    btn.addEventListener('click', () => {
+      around(() => {
+        draw(shown + MAX_DIFF_LINES);
+        if (shown < total) return label();
+        note.remove();
+        // The button is gone: the focus goes to the lines it showed, not to the page.
+        body.focus({ preventScroll: true });
+      });
+      onShown(shown);
+    });
+    box.append(note);
+  }
   return box;
 }
 
@@ -729,6 +777,8 @@ class Transcript implements TranscriptView {
   private readonly fileOpen = new Map<string, boolean>();
   /** #171: each changed file shown: what opens or closes it (its row may be rebuilt: the map holds the one shown now). */
   private readonly fileSet = new WeakMap<HTMLElement, (open: boolean) => void>();
+  /** #171: how many of a changed file's lines show, once "Show next" showed more than the first MAX_DIFF_LINES (same key). */
+  private readonly diffShown = new Map<string, number>();
   /** #171: changes loaded in full (`transcript.item`) after the list cut them, by agent/id. */
   private readonly fullDiffs = new Map<string, TranscriptDiff[]>();
   /** The subagent each nested timeline's scope shows (for `transcript.item` with `agent`). */
@@ -1546,7 +1596,7 @@ class Transcript implements TranscriptView {
       // Drawn on first open: a long history of changes shown closed costs nothing.
       if (d.no_diff === true) body.append(h('div', { class: 'tx-chg-note' }, 'No diff recorded: Claude Code keeps none when nothing changed, the old file was too large, or the diff timed out.'));
       else if (!hunks.length) body.append(h('div', { class: 'tx-chg-note' }, d.op === 'create' ? 'Empty file.' : d.op === 'delete' ? 'The file was empty.' : 'No lines recorded.'));
-      else body.append(diffLines(d));
+      else body.append(diffLines(d, this.diffShown.get(key) ?? MAX_DIFF_LINES, (change) => this.keepPlace(change), (n) => this.diffShown.set(key, n)));
       if (d.truncated === true) {
         const note = h('div', { class: 'tx-chg-note tx-chg-cutnote' }, 'Cut to fit the list: only the start is shown.');
         if (load) note.append(h('span', { class: 'tx-chg-load' }, ' ', h('button', { class: 'tx-link', onclick: load }, 'Show the whole change')));
@@ -1954,6 +2004,45 @@ class Transcript implements TranscriptView {
     this.onScroll();
   }
 
+  /** #171: a diff body's keys (PageUp/PageDown, Space, the arrows, Home/End, j/k); false: not one of them. */
+  private scrollLines(el: HTMLElement, e: KeyboardEvent): boolean {
+    const page = Math.max(40, el.clientHeight * 0.9);
+    switch (e.key) {
+      case 'PageUp':
+        el.scrollTop -= page;
+        break;
+      case 'PageDown':
+        el.scrollTop += page;
+        break;
+      case ' ':
+        el.scrollTop += e.shiftKey ? -page : page;
+        break;
+      case 'Home':
+        el.scrollTop = 0;
+        break;
+      case 'End':
+        el.scrollTop = el.scrollHeight;
+        break;
+      case 'j':
+      case 'ArrowDown':
+        el.scrollTop += 48;
+        break;
+      case 'k':
+      case 'ArrowUp':
+        el.scrollTop -= 48;
+        break;
+      case 'ArrowLeft':
+        el.scrollLeft -= 48;
+        break;
+      case 'ArrowRight':
+        el.scrollLeft += 48;
+        break;
+      default:
+        return false;
+    }
+    return true;
+  }
+
   private onKey(e: KeyboardEvent): void {
     if (e.defaultPrevented || e.target === this.input) return;
     const target = e.target as HTMLElement | null;
@@ -1999,6 +2088,13 @@ class Transcript implements TranscriptView {
     }
     // A focused button keeps Enter / Space (it opens its row); the game does not see them.
     if ((e.key === 'Enter' || e.key === ' ') && target?.closest('button, a, summary')) {
+      e.stopPropagation();
+      return;
+    }
+    // #171: a changed file's lines, focused, scroll themselves (not the timeline) with the timeline's keys.
+    const lines = target?.closest<HTMLElement>('.tx-diff-body');
+    if (lines && this.scrollLines(lines, e)) {
+      e.preventDefault();
       e.stopPropagation();
       return;
     }

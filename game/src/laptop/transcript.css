@@ -1007,6 +1007,13 @@
   font: var(--tx-mono-fs, 11.5px)/1.5 var(--tx-mono);
   font-variant-ligatures: none;
 }
+/* #171: it takes the focus to scroll from the keyboard; the file's box clips outside it, so the ring goes inside. */
+.tx .tx-diff-body:focus-visible {
+  outline-offset: -2px;
+}
+.tx-diff-more {
+  padding: 4px 8px;
+}
 .tx-dl {
   display: grid;
   grid-template-columns: 3.4em 3.4em minmax(0, 1fr);

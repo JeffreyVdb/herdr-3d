@@ -75,10 +75,37 @@ test('code changes show by default, every shape and state, and the two switches 
   await expect(cut.locator('.tx-chg-op')).toHaveText(['cut']);
   await expect(cut.locator('.tx-chg-head .tx-diff-stat')).toHaveText('+100 −100');
   await cut.getByRole('button', { name: 'Show the whole change' }).click();
-  await expect(cut.locator('.tx-chg-head .tx-diff-stat')).toHaveText('+800 −800');
+  await expect(cut.locator('.tx-chg-head .tx-diff-stat')).toHaveText('+1250 −1250');
   await expect(cut.locator('.tx-chg-op')).toHaveCount(0);
   const items = (await page.evaluate(() => window.__h3d.sent())).filter((c) => c.t === 'transcript.item');
   expect(items.map((c) => [(c.args as { item: string }).item, c.result?.ok])).toEqual([['h171-cut', true]]);
+  // Its lines: Tab from the header to them, and the timeline's keys scroll them, not the timeline.
+  const lines = cut.locator('.tx-diff-body');
+  const scroller = tx.locator('.tx-scroll');
+  await expect(lines).toHaveAttribute('aria-label', `Changes to ${P}src/soundings.ts`);
+  await cut.locator('.tx-chg-head').focus();
+  await page.keyboard.press('Tab');
+  await expect(lines).toBeFocused();
+  const outer = await scroller.evaluate((s) => s.scrollTop);
+  await page.keyboard.press('PageDown');
+  await page.keyboard.press('ArrowDown');
+  await expect.poll(() => lines.evaluate((e) => e.scrollTop)).toBeGreaterThan(0);
+  expect(await scroller.evaluate((s) => s.scrollTop)).toBe(outer);
+  await page.keyboard.press('End');
+  await expect.poll(() => lines.evaluate((e) => e.scrollTop + e.clientHeight >= e.scrollHeight - 1)).toBe(true);
+  // Past 2,000 lines: the rest a page at a time, from the keyboard, in place.
+  const rows = cut.locator('.tx-diff-body .tx-dl:not(.tx-dh)');
+  await expect(rows).toHaveCount(2000);
+  const next = cut.getByRole('button', { name: 'Show next 500 lines (500 left)' });
+  await next.focus();
+  await page.keyboard.press('Enter');
+  await expect(rows).toHaveCount(2500);
+  await expect(rows.last()).toContainText("{ id: 1250, depth: 8, tide: 'high' },");
+  await expect(cut.locator('.tx-diff-more')).toHaveCount(0);
+  await expect(lines).toBeFocused();
+  // (A screenshot takes the page's focus: last.)
+  await frames(page, 2);
+  await shot(page, 'h171-changes-lines-focused');
 
   // Hide tools: plain tool rows go, code changes stay (bare: no header, no body); changes still open.
   await tx.locator('.tx-check-box').check();

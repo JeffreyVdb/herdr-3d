@@ -276,6 +276,88 @@ describe('code changes (#171)', () => {
     expect(files('big')[0]?.stat).toBe('+3 −3');
   });
 
+  /** An edit of `n` lines, each `+line i` (new lines 1..n). */
+  const longDiff = (n: number, extra: Partial<TranscriptDiff> = {}): TranscriptDiff => ({
+    path: 'long.ts',
+    op: 'edit',
+    hunks: [{ old_start: 1, old_lines: 0, new_start: 1, new_lines: n, lines: Array.from({ length: n }, (_, i) => `+line ${i + 1}`) }],
+    ...extra,
+  });
+  const lineRows = (id: string) => $$('.tx-diff-body .tx-dl:not(.tx-dh)', row(id));
+  const more = (id: string) => $<HTMLButtonElement>('.tx-diff-more .tx-link', row(id));
+
+  it('a diff past 2,000 lines shows the rest a page at a time, in place, keeping the page and its numbers', () => {
+    const it: TranscriptItem = { id: 'long', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Write', input_summary: 'long.ts', status: 'ok', diff: longDiff(4500) } };
+    mount();
+    view.setItems([it]);
+    const body = $('.tx-diff-body', row('long')) as HTMLElement;
+    expect(lineRows('long')).toHaveLength(2000);
+    expect(more('long')?.textContent).toBe('Show next 2,000 lines (2,500 left)');
+    more('long')!.click();
+    expect($('.tx-diff-body', row('long'))).toBe(body);
+    expect(lineRows('long')).toHaveLength(4000);
+    expect($$('.tx-dn', lineRows('long')[2000]).map((e) => e.textContent)).toEqual(['', '2001']);
+    expect(more('long')?.textContent).toBe('Show next 500 lines (500 left)');
+    // A re-render of the row keeps what was shown.
+    view.applyUpdates([it]);
+    expect(lineRows('long')).toHaveLength(4000);
+    more('long')!.focus();
+    more('long')!.click();
+    expect(lineRows('long')).toHaveLength(4500);
+    expect(lineRows('long').at(-1)?.textContent).toBe('4500+line 4500');
+    expect(more('long')).toBeNull();
+    expect(document.activeElement).toBe($('.tx-diff-body', row('long')));
+  });
+
+  it('a cut change loaded whole past 2,000 lines reaches its last line', async () => {
+    const it: TranscriptItem = { id: 'big', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Edit', input_summary: 'long.ts', status: 'ok', diff: longDiff(300, { truncated: true }) } };
+    mount(async () => ({ ...it, tool: { ...it.tool!, diff: longDiff(3000) } }));
+    view.setItems([it]);
+    expect(more('big')).toBeNull();
+    ($('.tx-chg-cutnote .tx-link', row('big')) as HTMLButtonElement).click();
+    await flush();
+    expect(lineRows('big')).toHaveLength(2000);
+    expect(more('big')?.textContent).toBe('Show next 1,000 lines (1,000 left)');
+    more('big')!.click();
+    expect(lineRows('big')).toHaveLength(3000);
+    expect(lineRows('big').at(-1)?.textContent).toBe('3000+line 3000');
+  });
+
+  it("a changed file's lines take the focus and scroll with the keys, not the timeline", () => {
+    mount();
+    view.setItems([{ id: 'long', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Write', input_summary: 'long.ts', status: 'ok', diff: longDiff(100) } }]);
+    const body = $('.tx-diff-body', row('long')) as HTMLElement;
+    const scroller = $('.tx-scroll') as HTMLElement;
+    expect(body.tabIndex).toBe(0);
+    expect(body.getAttribute('aria-label')).toBe('Changes to long.ts');
+    Object.defineProperty(body, 'clientHeight', { configurable: true, value: 200 });
+    Object.defineProperty(body, 'scrollHeight', { configurable: true, value: 1500 });
+    const seen: string[] = [];
+    const outside = (e: KeyboardEvent) => seen.push(e.key);
+    document.addEventListener('keydown', outside);
+    const key = (k: string, el: HTMLElement = body) => {
+      const e = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true });
+      el.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    try {
+      expect(key('PageDown')).toBe(true);
+      expect(body.scrollTop).toBe(180);
+      key('ArrowDown');
+      expect(body.scrollTop).toBe(228);
+      key('Home');
+      expect(body.scrollTop).toBe(0);
+      key(' ');
+      expect(body.scrollTop).toBe(180);
+      expect(scroller.scrollTop).toBe(0);
+      expect(seen).toEqual([]);
+      // Elsewhere the timeline keeps its keys.
+      expect(key('PageDown', row('long'))).toBe(true);
+    } finally {
+      document.removeEventListener('keydown', outside);
+    }
+  });
+
   it('a failed load says so where the link was', async () => {
     const it: TranscriptItem = { id: 'big', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Edit', input_summary: 'big.ts', status: 'ok', diff: { path: 'big.ts', truncated: true, hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ['-a'] }] } } };
     mount(async () => {

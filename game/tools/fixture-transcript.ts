@@ -222,9 +222,9 @@ export function h171Timeline(now: number): TranscriptItem[] {
   return all.map((it, i) => ({ ...it, seq: i + 1, ts: now - (all.length - i) * 15_000 }));
 }
 
-/** #171: an Edit with 1,600 changed lines; the list's copy has the first 200 and says it was cut. */
+/** #171: an Edit with 2,500 changed lines (past the view's 2,000 a page); the list's copy has the first 200 and says it was cut. */
 function cutItem(full: boolean): TranscriptItem {
-  const n = full ? 800 : 100;
+  const n = full ? 1250 : 100;
   const lines = Array.from({ length: n }, (_, i) => [`-  { id: ${i + 1}, depth: ${(i % 9) + 1} },`, `+  { id: ${i + 1}, depth: ${(i % 9) + 1}, tide: 'high' },`]).flat();
   return {
     id: 'h171-cut',
@@ -235,7 +235,7 @@ function cutItem(full: boolean): TranscriptItem {
       name: 'Edit',
       input_summary: '/home/dev/project/src/soundings.ts',
       status: 'ok',
-      diff: { path: '/home/dev/project/src/soundings.ts', op: 'edit', hunks: [{ old_start: 3, old_lines: 800, new_start: 3, new_lines: 800, lines }], ...(full ? {} : { truncated: true }) },
+      diff: { path: '/home/dev/project/src/soundings.ts', op: 'edit', hunks: [{ old_start: 3, old_lines: 1250, new_start: 3, new_lines: 1250, lines }], ...(full ? {} : { truncated: true }) },
     },
   };
 }
