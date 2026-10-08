@@ -36,6 +36,7 @@ type Column struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Done bool   `json:"done"`
+	Kind string `json:"kind,omitempty"`
 }
 
 // Label is a label with its colour as "#rrggbb".

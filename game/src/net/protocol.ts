@@ -71,6 +71,75 @@ export interface FloorSettings {
   /** Absolute directory on the bridge host. */
   default_cwd?: string;
   default_hire?: Hire;
+  /** #184: the floor's issue tracker when it is not GitHub (absent: GitHub). */
+  tracker?: 'kaneo';
+  /** #184: the floor's Kaneo link, kept while the floor uses GitHub too (switching back finds it). */
+  kaneo?: KaneoLink;
+}
+
+/** #184: a floor's Kaneo workspace and project: ids, and the names they had when saved. */
+export interface KaneoLink {
+  workspace_id: string;
+  workspace_name?: string;
+  project_id: string;
+  project_name?: string;
+}
+
+/** #184: the issue trackers a floor can use. */
+export type Tracker = 'github' | 'kaneo';
+
+/** #184: the bridge-wide Kaneo connection (`kaneo` in the snapshot, `kaneo.update`). Never the key: only `key_set`. */
+export interface KaneoState {
+  /** `off`: nothing saved; `paused`: Kaneo refused the key at run time (a bad key, or its quota): re-test, or wait. */
+  state: 'off' | 'ready' | 'paused';
+  /** The bridge has a Kaneo client: without it nothing can be tested. */
+  available: boolean;
+  url: string;
+  api_base: string;
+  web_origin: string;
+  key_set: boolean;
+  default_workspace: KaneoWorkspace | null;
+  generation: number;
+  /** Unix ms: when Kaneo floors poll again (paused only). */
+  paused_until?: number;
+  last_error?: { kind: string; message: string; at: number; runtime?: boolean };
+}
+
+/** #184: `kaneo.update`: the connection, flat. */
+export interface KaneoUpdate extends KaneoState {
+  t: 'kaneo.update';
+  seq: number;
+}
+
+export interface KaneoWorkspace {
+  id: string;
+  name: string;
+  slug?: string;
+}
+
+export interface KaneoProject {
+  id: string;
+  workspace_id: string;
+  name: string;
+  slug?: string;
+}
+
+/** #184: `kaneo.test` / `kaneo.set` args: absent fields are the saved ones; a blank key is the saved key (same instance only). */
+export interface KaneoFields {
+  url?: string;
+  key?: string;
+}
+
+/** #184: `kaneo.test` ack. */
+export interface KaneoTestAck {
+  ok: boolean;
+  latency_ms: number;
+  url: string;
+  api_base: string;
+  web_origin: string;
+  /** [] is authenticated, but no floor can be linked yet. */
+  workspaces: KaneoWorkspace[];
+  user?: string;
 }
 
 export interface FloorSuggested {
@@ -267,6 +336,8 @@ export interface World {
   inbox_dismissed?: Record<string, number>;
   /** #155 the shared Codex server switch (absent from an older bridge). */
   codex_server?: CodexServerState;
+  /** #184 the Kaneo connection (absent from an older bridge). Never a key. */
+  kaneo?: KaneoState;
 }
 
 export interface Hello {
@@ -372,6 +443,8 @@ export type WorldEvent =
   | InboxDismissed
   // #155 the shared Codex server switch
   | CodexServerUpdate
+  // #184 the Kaneo connection
+  | KaneoUpdate
   // M13 whiteboard
   | WhiteboardUpdated;
 
@@ -395,6 +468,10 @@ export interface SettingsPatch {
   status_field?: StatusField | null;
   default_cwd?: string | null;
   default_hire?: Hire | null;
+  /** #184: `github` or `kaneo` (null: GitHub). */
+  tracker?: Tracker | null;
+  /** #184: checked with Kaneo before it is saved (a live project of that workspace). */
+  kaneo?: { workspace_id: string; project_id: string } | null;
 }
 
 /** M4: `hire.prepare` ack: what the hire dialog offers for a floor (and a cwd). */
@@ -583,6 +660,15 @@ export interface CommandArgs {
   'inbox.dismiss': { id: string; status_since: number };
   // #98 activity settings ("Classify unknown commands", docs/protocol.md).
   'activity.get': Record<string, never>;
+  // #184 Kaneo (docs/protocol.md "Kaneo"). A key is sent in test and set and nowhere else, and never comes back.
+  'kaneo.get': Record<string, never>;
+  'kaneo.test': KaneoFields;
+  'kaneo.set': KaneoFields & { default_workspace?: string | null };
+  'kaneo.clear': Record<string, never>;
+  /** The saved connection's workspaces: `{workspaces, generation}`. */
+  'kaneo.workspaces': Record<string, never>;
+  /** A workspace's projects with the saved connection: `{workspace_id, projects, generation}`. */
+  'kaneo.projects': { workspace_id: string };
   'codex_server.get': Record<string, never>; // #155
   'codex_server.set': { enabled: boolean };
   // #156 Codex async questions. `worker.answer_async` acks `AsyncAnswerAck`.
@@ -876,6 +962,7 @@ const EVENT_TYPES = new Set([
   'digest.update', // #118 floor overview summaries
   'inbox.dismissed', // #106 the inbox: a finished row dismissed
   'codex_server.update', // #155 the shared Codex server switch
+  'kaneo.update', // #184 the Kaneo connection
   'screen.state', // M13 screen
   // M13 whiteboard
   'whiteboard.updated',
@@ -961,6 +1048,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #155: the shared Codex server switch, flat.
     case 'codex_server.update':
       return typeof o.enabled === 'boolean' && typeof o.available === 'boolean';
+    // #184: the Kaneo connection, flat.
+    case 'kaneo.update':
+      return typeof o.state === 'string' && typeof o.key_set === 'boolean';
     // #106: a dismissal of one done episode.
     case 'inbox.dismissed':
       return isStr(o.id) && isInt(o.status_since);
@@ -1294,7 +1384,11 @@ export interface RunTicketArgs {
   work_item?: WorkItem;
 }
 
-export type RunTicket = { kind: 'issue'; repo: string; number: number; url: string } | { kind: 'text'; text: string };
+export type RunTicket =
+  | { kind: 'issue'; repo: string; number: number; url: string }
+  | { kind: 'text'; text: string }
+  /** #184: an item of a provider that numbers no GitHub issues (a Kaneo task), resolved by the bridge. */
+  | { kind: 'item'; url?: string; item: WorkItem; provider_name: string };
 
 /** `run.prepare` ack: the start-run dialog's defaults and its live prompt preview. */
 export interface RunPrepare {
@@ -1385,6 +1479,8 @@ export interface WorkItem {
   /** #118: on a worker's `work_item`, the card's title and page where the provider has them. */
   title?: string;
   url?: string;
+  /** #184: the item's readable key (`HRD-12`) where no GitHub issue names it. */
+  key?: string;
 }
 
 export type CloseReason = 'completed' | 'not_planned' | 'duplicate';
@@ -1396,6 +1492,8 @@ export interface BoardColumn {
   id: string;
   name: string;
   done?: boolean;
+  /** #184: a provider's virtual status, not a workflow column: `planned` or `archived` (archive is not completion). */
+  kind?: 'planned' | 'archived' | '';
 }
 
 export interface BoardLabel {
@@ -1434,6 +1532,7 @@ export interface IssueCard {
   priority?: Priority;
   assignees: BoardPerson[];
   author?: string;
+  /** Unix ms; 0 or null: unknown (#184: Kaneo gives none): never shown as a time. */
   updated_at: number | null;
   closed_at: number | null;
   /** #52: the card's rank in the provider's order (0 first); absent for a card that has no place in it. */
@@ -1458,6 +1557,9 @@ export interface BoardBase {
   fetched_at: number;
   stale?: boolean;
   error?: string;
+  /** #184: the failed poll's error code (`unauthorized`, `forbidden`, `rate_limited`, …), and while the provider refused the key, when polling resumes (unix ms). */
+  error_code?: string;
+  paused_until?: number;
   truncated?: boolean;
   rate?: BoardRate;
   capabilities?: BoardCaps;

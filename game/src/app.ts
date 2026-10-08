@@ -61,7 +61,7 @@ import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/start
 // M6 crew: freelancers drop in (M6b) and walk out with their briefcase.
 import { crewRole, inputRequired, isFreelancer } from './world/crew';
 // M7: the issues and pull request boards.
-import { askPrompt, BoardBook, nearestDesk, reviewPrompt } from './world/boards';
+import { askInlinesItem, askItemPrompt, askPrompt, BoardBook, nearestDesk, reviewPrompt } from './world/boards';
 import { BoardsPanel, type BoardOff, type BoardState } from './ui/boards/panel';
 import { openExternal } from './ui/boards/external';
 import { OpenPrDialog } from './ui/boards/openPr';
@@ -77,6 +77,7 @@ import { InboxPrefs } from './ui/inboxPrefs';
 import { inboxQueue, inboxReason, inboxWhere, type InboxCandidate } from './world/inbox';
 // #92 AI integration
 import { aiSection } from './ui/aiSection';
+import { kaneoSection } from './ui/kaneoSection';
 // #90 follow-up questions
 import { followupsSection } from './ui/followupsSection';
 import { packupSection } from './ui/packupSection';
@@ -374,6 +375,8 @@ export class App {
     );
     // #155: whether new Codex workers get a Codex server of their own (the bridge's switch, off by default).
     settings.addSection('codex', 'Codex workers', codexServerSection({ book: this.store.codexServer, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
+    // #184: the Kaneo instance a floor can use as its issue board instead of GitHub.
+    settings.addSection('kaneo', 'Kaneo', kaneoSection({ book: this.store.kaneo, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
     this.store.ai.onChange((notice) => {
       this.hud.setAiChip(aiChip(this.store.ai.state));
       if (notice) this.hud.toast(notice, 7000, 'error');
@@ -547,7 +550,7 @@ export class App {
       refresh: (session) => void this.sendBoard('board.refresh', { session }),
       external: (url) => this.external(url),
       handTo: (session, card, provider) => this.handTo(session, card, provider),
-      ask: (session, card) => this.askAbout(session, card),
+      ask: (session, card, provider, body) => this.askAbout(session, card, provider, body),
       review: (session, pr) => this.reviewPr(session, pr),
       whyNoRun: (session) => this.whyNoRun(session),
       whyNoHire: (session) => this.whyNoHire(session),
@@ -2288,11 +2291,17 @@ export class App {
     this.openPr.open(id);
   }
 
-  /** "Ask a worker…": the hire dialog at the nearest free desk with a first prompt to look into it. */
-  private askAbout(session: string, card: IssueCard): void {
+  /**
+   * "Ask a worker…": the hire dialog at the nearest free desk with a first prompt to look into it. #184: a GitHub
+   * issue goes by its link (the worker can read it with gh); a Kaneo task carries its title and description, which
+   * the worker could not read itself.
+   */
+  private askAbout(session: string, card: IssueCard, provider: string, body: string | null): void {
+    if (askInlinesItem(provider) && body === null) return; // the board offers it only once the description is read
     const desk = this.nearestFreeDesk(session);
     this.boardsPanel.close();
-    this.openHire(desk ?? undefined, { prompt: askPrompt(card.key, card.url) });
+    const prompt = askInlinesItem(provider) ? askItemPrompt(this.boardsPanel.providerLabel(), card, body) : askPrompt(card.key, card.url);
+    this.openHire(desk ?? undefined, { prompt });
   }
 
   /** "Review with a worker": the hire dialog with the last team's reviewer and the code-review prompt for the PR. */

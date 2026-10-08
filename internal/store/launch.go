@@ -247,16 +247,21 @@ func (s *Store) SetLastPreset(ctx context.Context, session, presetID string) err
 }
 
 // RunLaunch is a write-code run started from the game (run.start): the
-// orchestrator worker it hired, its ticket (an issue, or free text) and
-// the preset it was started with. RunID is the h3d_run token that worker
-// first showed ("" until then).
+// orchestrator worker it hired, its ticket (an issue, a provider's item
+// (#184), or free text) and the preset it was started with. RunID is the
+// h3d_run token that worker first showed ("" until then).
 type RunLaunch struct {
-	ID           string
-	RunID        string
-	Session      string
-	Repo         string // with IssueNumber, for an issue ticket
-	IssueNumber  int
-	TicketText   string // a free-text ticket
+	ID          string
+	RunID       string
+	Session     string
+	Repo        string // with IssueNumber, for an issue ticket
+	IssueNumber int
+	TicketText  string // a free-text ticket
+	// #184: an item of an issue provider that numbers no GitHub issue (a
+	// Kaneo task): the provider, the item's opaque id and its readable key.
+	ItemProvider string
+	ItemID       string
+	ItemKey      string
 	OrchWorkerID string
 	PresetID     string
 	PresetName   string
@@ -272,9 +277,13 @@ func (s *Store) RecordRunLaunch(ctx context.Context, l RunLaunch) error {
 	if l.IssueNumber != 0 {
 		number = l.IssueNumber
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO run_launch (id, run_id, session, repo, issue_number, ticket_text, orch_worker_id,
-			preset_id, preset_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		l.ID, null(l.RunID), l.Session, null(l.Repo), number, null(l.TicketText), l.OrchWorkerID, l.PresetID, l.PresetName, s.ts())
+	if (l.ItemProvider == "") != (l.ItemID == "") {
+		return fmt.Errorf("%w: an item needs its provider and id", ErrInvalid)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO run_launch (id, run_id, session, repo, issue_number, ticket_text, item_provider,
+			item_id, item_key, orch_worker_id, preset_id, preset_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		l.ID, null(l.RunID), l.Session, null(l.Repo), number, null(l.TicketText), null(l.ItemProvider), null(l.ItemID),
+		null(l.ItemKey), l.OrchWorkerID, l.PresetID, l.PresetName, s.ts())
 	return err
 }
 
@@ -284,9 +293,11 @@ func (s *Store) RunLaunchByWorker(ctx context.Context, workerID string) (RunLaun
 	l := RunLaunch{OrchWorkerID: workerID}
 	var created string
 	err := s.db.QueryRowContext(ctx, `SELECT id, COALESCE(run_id, ''), session, COALESCE(repo, ''), COALESCE(issue_number, 0),
-			COALESCE(ticket_text, ''), preset_id, preset_name, created_at
+			COALESCE(ticket_text, ''), COALESCE(item_provider, ''), COALESCE(item_id, ''), COALESCE(item_key, ''), preset_id,
+			preset_name, created_at
 		FROM run_launch WHERE orch_worker_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`, workerID).
-		Scan(&l.ID, &l.RunID, &l.Session, &l.Repo, &l.IssueNumber, &l.TicketText, &l.PresetID, &l.PresetName, &created)
+		Scan(&l.ID, &l.RunID, &l.Session, &l.Repo, &l.IssueNumber, &l.TicketText, &l.ItemProvider, &l.ItemID, &l.ItemKey,
+			&l.PresetID, &l.PresetName, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RunLaunch{}, false, nil
 	}

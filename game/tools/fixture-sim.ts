@@ -26,6 +26,7 @@ import { StartSim } from './fixture-start.ts';
 import { CrewSim } from './fixture-crew.ts';
 // M7: the issues and pull request boards (`board.watch`, `sim.boards`, `simfail=no_m7`).
 import { BoardSim } from './fixture-boards.ts';
+import { KaneoSim, type KaneoMode } from './fixture-kaneo.ts';
 // M10: the plan limits (`limits.refresh`, `simlimits=<scenario>`, `simfail=no_m10`).
 import { LimitsSim } from './fixture-limits.ts';
 // #92: the AI integration (`ai.*`, `simjev=<url>`, `simai=off`, `simfail=no_ai`).
@@ -84,6 +85,9 @@ export interface SimOptions {
   activity?: string;
   /** #157: seeds a shared Codex worker's async questions on start (`simcodex=ask`, tools/fixture-codex-questions.ts). */
   codex?: string;
+  /** #184: the Kaneo connection to start with (`simkaneo=off|connected|unavailable|old`, tools/fixture-kaneo.ts), and how long its slow answers take (`simkaneoslow=<ms>`). */
+  kaneo?: KaneoMode;
+  kaneoSlowMs?: number;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -205,7 +209,7 @@ export class SimWorld {
         prepare: (session) => this.hirePrepare({ session }),
         hireWorker: (a, send, ack, fail) => this.hireWorker(a, send, ack, fail),
         error: (code, message) => new CmdError(code, message),
-        workItem: (session, wi) => this.boards.resolveWorkItem(session, wi),
+        workItem: (session, wi) => this.kaneo.resolveWorkItem(session, wi) ?? this.boards.resolveWorkItem(session, wi),
       },
       o.fail !== 'no_m6',
       (snapshot.world as { presets?: unknown }).presets,
@@ -259,6 +263,24 @@ export class SimWorld {
       },
       o.fail !== 'no_m7',
     );
+    this.kaneo = new KaneoSim(
+      {
+        floors: this.floors,
+        emit: (send, m) => this.emit(send, m),
+        error: (code, message) => new CmdError(code, message),
+        later: (fn, ms) => {
+          const h = this.setT(() => {
+            this.timers.delete(h);
+            fn();
+          }, ms);
+          this.timers.add(h);
+          return h;
+        },
+        now: this.now,
+      },
+      o.kaneo ?? 'off',
+      o.kaneoSlowMs ?? 1500,
+    );
   }
 
   /** M10: the plan limits (tools/fixture-limits.ts). */
@@ -282,6 +304,8 @@ export class SimWorld {
 
   /** M7: boards, work items and opening a PR (tools/fixture-boards.ts). */
   private readonly boards: BoardSim;
+  /** #184: the Kaneo connection and Kaneo floors' boards (tools/fixture-kaneo.ts). */
+  private readonly kaneo: KaneoSim;
 
   /** M6 start: presets and runs (tools/fixture-start.ts). */
   private readonly start6: StartSim;
@@ -397,6 +421,7 @@ export class SimWorld {
     this.digest.decorate(world); // #118
     this.activitySettings.decorate(world); // #98
     this.codexServer.decorate(world); // #155
+    this.kaneo.decorate(world); // #184
     this.inbox.decorate(world); // #106
     this.share.decorate(world); // M13
     return { t: 'world.snapshot', seq: this.seq, world: structuredClone(world) };
@@ -472,6 +497,7 @@ export class SimWorld {
       if (this.activity.handle(m.t, a, send, ack, fail)) return; // #98
       if (screens.handle(m.t, a, send, ack, (code, message) => send({ t: 'error', req_id: reqId, code, message }))) return;
       if (this.start6.handle(m.t, a, send, ack, fail)) return;
+      if (this.kaneo.handle(m.t, a, send, ack, fail)) return; // #184: a Kaneo floor's board, before the GitHub ones
       if (this.boards.handle(m.t, a, send, ack, fail)) return;
       if (this.limits.handle(m.t, send, ack)) return;
       if (this.ai.handle(m.t, a, send, ack, fail)) return; // #92
@@ -635,7 +661,7 @@ export class SimWorld {
   }
 
   private checkSettings(a: Obj): void {
-    onlyKeys(a, ['session', 'repo', 'project', 'status_field', 'default_cwd', 'default_hire']);
+    onlyKeys(a, ['session', 'repo', 'project', 'status_field', 'default_cwd', 'default_hire', 'tracker', 'kaneo']);
     const repo = a.repo;
     if (repo !== undefined && repo !== null && (typeof repo !== 'string' || !/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(repo))) {
       throw bad('repo must be owner/repo');
@@ -681,7 +707,10 @@ export class SimWorld {
     const f = this.floor(a);
     this.checkSettings(a);
     if (f.transition) throw new CmdError('busy', `busy: ${f.session} is ${f.transition}`);
-    const s: FloorSettings = { ...(f.settings ?? {}) };
+    // #184: the tracker and the Kaneo link, checked like the bridge (tools/fixture-kaneo.ts).
+    const s: FloorSettings = 'tracker' in a || 'kaneo' in a ? this.kaneo.applySettings(f.settings ?? {}, a) : { ...(f.settings ?? {}) };
+    // A connection watching the floor gets the board of its new link, like the bridge's watchers.
+    const watcher = 'tracker' in a || 'kaneo' in a || 'repo' in a ? (this.kaneo.release(f.session) ?? this.boards.release(f.session)) : null;
     const set = s as Record<string, unknown>;
     for (const k of ['repo', 'project', 'status_field', 'default_cwd', 'default_hire'] as const) {
       if (!(k in a)) continue;
@@ -691,6 +720,10 @@ export class SimWorld {
     if (Object.keys(s).length) f.settings = s;
     else delete f.settings;
     this.floorEvent(send, f);
+    if (watcher) {
+      if (this.kaneo.isKaneo(f.session)) this.kaneo.rewatch(f.session, watcher);
+      else this.boards.rewatch(f.session, watcher);
+    }
     return undefined;
   }
 

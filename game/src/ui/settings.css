@@ -248,6 +248,20 @@ dialog.settings {
   border-color: #ff7b73;
 }
 
+/* #184: a link out of the game (Kaneo's key help), quiet under its field. */
+.settings-link {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--sun);
+  text-underline-offset: 3px;
+}
+.settings-link:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
 /* #92: the AI section's buttons are thumb-sized on a phone. */
 @media (max-width: 600px) {
   .settings-role .btn--sm {

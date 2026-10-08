@@ -31,6 +31,7 @@ import { ActivitySettingsBook } from './activitySettings';
 import { DigestBook } from './digestSettings';
 // #155: the shared Codex server switch
 import { CodexServerBook } from './codexServer';
+import { KaneoBook } from './kaneo';
 import { LimitBook } from './limits';
 import { PresetBook } from './presets';
 // M6 crew: write-code roles, freelancer lifecycles, over-cap orchestrators.
@@ -175,6 +176,7 @@ export class WorldStore {
   /** #118: the floor overview summaries' settings and state. */
   readonly digestSettings = new DigestBook();
   readonly codexServer = new CodexServerBook(); // #155
+  readonly kaneo = new KaneoBook(); // #184
   /** #106: the inbox's dismissed finished rows, worker id → the `status_since` of the done episode hidden. */
   readonly inboxDismissed = new Map<string, number>();
   private readonly localDesks = new Map<string, number>();
@@ -212,6 +214,7 @@ export class WorldStore {
     this.activitySettings.reset(s.world.activity); // #98
     this.digestSettings.reset(s.world.digest); // #118
     this.codexServer.reset(s.world.codex_server); // #155
+    this.kaneo.reset(s.world.kaneo); // #184
     this.inboxDismissed.clear(); // #106
     for (const [id, since] of Object.entries(s.world.inbox_dismissed ?? {})) if (Number.isInteger(since)) this.inboxDismissed.set(id, since);
     this.seq = s.seq;
@@ -347,6 +350,9 @@ export class WorldStore {
         break;
       case 'codex_server.update': // #155 the shared Codex server switch
         this.codexServer.upsert(e);
+        break;
+      case 'kaneo.update': // #184 the Kaneo connection
+        this.kaneo.upsert(e);
         break;
       // #106: the inbox hides that worker's done episode. Not part of the scene, but the inbox's pings follow it (a
       // dismissed done must not ping when its settle delay ends), so the worker counts as changed.

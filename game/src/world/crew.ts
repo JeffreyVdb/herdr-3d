@@ -191,7 +191,7 @@ export function crewView(w: Worker, worked: boolean): CrewView | null {
     runColor: runColor(run),
     round,
     ticket: w.ticket?.trim() || null,
-    issue: issueText(w.issue),
+    issue: issueText(w.issue) ?? (w.work_item?.key?.trim() || null), // #184: a Kaneo task by its key
     orchId: freelancer ? (w.orch_id ?? null) : null,
     phase: orch ? phaseWords(w.phase) : null,
     pass: orch && typeof w.pass === 'number' ? w.pass : null,

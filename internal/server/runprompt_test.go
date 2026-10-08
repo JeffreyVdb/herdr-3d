@@ -1,7 +1,9 @@
 package server_test
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
@@ -83,5 +85,27 @@ func TestRunPrompt(t *testing.T) {
 				t.Fatalf("RunPrompt =\n%s\n---\nwant\n%s", got, tc.want)
 			}
 		})
+	}
+}
+
+// #184: an item's ticket inlines what the provider gave, its description
+// bounded, and the item line replaces the status line.
+func TestItemPrompt(t *testing.T) {
+	ticket := &proto.RunTicket{Kind: proto.TicketItem, ProviderName: "Kaneo", Body: "Do it.",
+		Item: &proto.WorkItemRef{Provider: "kaneo", ID: "t1", Key: "HRD-3", Title: " Lobby ", URL: "https://tasks.example.test/x"}}
+	got := server.TicketPrompt("codex", ticket, buildTeam, "")
+	want := "$write-code Kaneo task HRD-3: Lobby\nhttps://tasks.example.test/x\n\nDo it.\n\n" + buildHead +
+		"\n\nThis ticket is a Kaneo task, not a GitHub issue: everything the bridge read of it is above. Don't look it up with gh, and leave its status on the Kaneo board to people."
+	if got != want {
+		t.Fatalf("prompt =\n%s\nwant\n%s", got, want)
+	}
+	ticket.Body = strings.Repeat("é", 4000) // 8000 bytes
+	if s := server.ItemTicket(ticket); len(s) > 6200 || !strings.HasSuffix(s, "[The description goes on in Kaneo; this is its first part.]") || !utf8.ValidString(s) {
+		t.Fatalf("long body: %d bytes, valid %v", len(s), utf8.ValidString(s))
+	}
+	// An issue's prompt is the one it always was.
+	issue := &proto.RunTicket{Kind: proto.TicketIssue, Repo: "JeffreyVdb/lab", Number: 3, URL: server.IssueURL("JeffreyVdb/lab", 3)}
+	if got := server.TicketPrompt("claude", issue, buildTeam, ""); got != server.RunPrompt("claude", issue.URL, true, buildTeam, "") {
+		t.Fatalf("issue prompt = %q", got)
 	}
 }

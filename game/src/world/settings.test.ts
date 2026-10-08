@@ -22,6 +22,9 @@ const blank = (over: Partial<SettingsForm> = {}): SettingsForm => ({
   harness: '',
   model: '',
   effort: '',
+  tracker: 'github',
+  kaneoWorkspace: '',
+  kaneoProject: '',
   ...over,
 });
 
@@ -71,6 +74,9 @@ describe('formFrom', () => {
       harness: 'codex',
       model: 'gpt-6-sol',
       effort: 'ultra',
+      tracker: 'github',
+      kaneoWorkspace: '',
+      kaneoProject: '',
     });
     expect(f.repoSuggested).toBe(false);
     expect(f.statusDefault).toBe(false);
@@ -86,7 +92,7 @@ describe('formFrom', () => {
 describe('parseForm', () => {
   it('accepts an empty form: nothing set', () => {
     expect(parseForm(blank({ statusName: '', statusOptions: [] }), H)).toEqual({
-      value: { repo: null, project: null, status_field: null, default_cwd: null, default_hire: null },
+      value: { repo: null, project: null, status_field: null, default_cwd: null, default_hire: null, tracker: 'github', kaneo: null },
       errors: {},
       badOption: null,
     });
@@ -259,5 +265,34 @@ describe('effortsFor', () => {
     expect(effortsFor(H, 'codex', 'gpt-6-astra')).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
     expect(effortsFor(H, 'codex', 'gpt-6-luna')).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
     expect(effortsFor(H, 'nope', 'x')).toEqual([]);
+  });
+});
+
+describe('the issue tracker (#184)', () => {
+  const kaneo: FloorSettings = { tracker: 'kaneo', kaneo: { workspace_id: 'ws1', workspace_name: 'Studio', project_id: 'p1', project_name: 'Herdr' }, repo: 'o/r' };
+
+  it('an older floor is GitHub, and a new Kaneo pick starts in the default workspace', () => {
+    expect(formFrom({}, {}).form.tracker).toBe('github');
+    expect(formFrom({}, {}, 'ws9').form.kaneoWorkspace).toBe('ws9');
+    expect(formFrom(kaneo, {}, 'ws9').form).toMatchObject({ tracker: 'kaneo', kaneoWorkspace: 'ws1', kaneoProject: 'p1' });
+  });
+
+  it('a Kaneo floor needs its project, never a silent first one', () => {
+    const p = parseForm(blank({ tracker: 'kaneo', kaneoWorkspace: 'ws1' }), H, {});
+    expect(p.errors.kaneoProject).toBeTruthy();
+    expect(p.errors.kaneoWorkspace).toBeUndefined();
+    expect(parseForm(blank({ tracker: 'kaneo' }), H, {}).errors.kaneoWorkspace).toBeTruthy();
+  });
+
+  it('sends the tracker and the link only when they changed; switching back to GitHub keeps the link', () => {
+    expect(save({}, { tracker: 'kaneo', kaneoWorkspace: 'ws1', kaneoProject: 'p1' })).toEqual({ tracker: 'kaneo', kaneo: { workspace_id: 'ws1', project_id: 'p1' } });
+    const opened184 = formFrom(kaneo, {}).form;
+    expect(save(kaneo, { ...opened184, statusOptions: blank().statusOptions })).toEqual({});
+    // Back to GitHub: only the tracker goes, the link stays stored.
+    expect(save(kaneo, { ...opened184, statusOptions: blank().statusOptions, tracker: 'github' })).toEqual({ tracker: null });
+    // A GitHub floor with an unfinished Kaneo pick keeps its stored link.
+    expect(save({ kaneo: kaneo.kaneo! }, { repo: '', tracker: 'github', kaneoWorkspace: 'ws2', kaneoProject: '' })).toEqual({});
+    // Another project of the same floor.
+    expect(save(kaneo, { ...opened184, statusOptions: blank().statusOptions, kaneoProject: 'p2' })).toEqual({ kaneo: { workspace_id: 'ws1', project_id: 'p2' } });
   });
 });

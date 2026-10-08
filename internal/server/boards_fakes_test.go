@@ -44,6 +44,7 @@ func (c *boardClock) Advance(d time.Duration) {
 // fakeTracker is a tracker.Tracker (and RunLinker) in memory.
 type fakeTracker struct {
 	mu    sync.Mutex
+	id    string // Info's id ("": fake)
 	repo  string
 	caps  tracker.Capabilities
 	board tracker.Board
@@ -56,9 +57,13 @@ type fakeTracker struct {
 	detail  tracker.Detail
 	failOn  map[string]error // by method name
 	missing map[string]bool  // ids that Get does not find
+	getGate chan struct{}    // Get answers (what it read when called) when it is closed
 }
 
 func (f *fakeTracker) Info() tracker.Info {
+	if f.id == "kaneo" {
+		return tracker.Info{ID: "kaneo", Name: "Kaneo", Capabilities: f.caps}
+	}
 	return tracker.Info{ID: "fake", Name: "Fake", Capabilities: f.caps}
 }
 
@@ -111,16 +116,24 @@ func (f *fakeTracker) set(fn func(f *fakeTracker)) {
 	f.mu.Unlock()
 }
 
-func (f *fakeTracker) Get(_ context.Context, id string) (tracker.Detail, error) {
+func (f *fakeTracker) Get(ctx context.Context, id string) (tracker.Detail, error) {
 	if err := f.record("get", "%s", id); err != nil {
 		return tracker.Detail{}, err
 	}
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.missing[id] {
+	gate, missing, d := f.getGate, f.missing[id], f.detail
+	f.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return tracker.Detail{}, ctx.Err()
+		}
+	}
+	if missing {
 		return tracker.Detail{}, provider.Errorf(provider.ErrNotFound, "%s is not on %s", id, f.repo)
 	}
-	return f.detail, nil
+	return d, nil
 }
 
 func (f *fakeTracker) Comment(_ context.Context, id, body string) (provider.Comment, error) {
@@ -271,10 +284,29 @@ type fakeBoards struct {
 	hosts  map[string]*fakeHost
 	noHost bool
 	seen   []server.BoardSource
+	// #184: Kaneo floors' trackers, by project and connection generation.
+	kaneo map[string]*fakeTracker
+	keys  []string // the BoardSet keys handed out
 }
 
 func newFakeBoards() *fakeBoards {
-	return &fakeBoards{repos: map[string]*fakeTracker{}, hosts: map[string]*fakeHost{}}
+	return &fakeBoards{repos: map[string]*fakeTracker{}, hosts: map[string]*fakeHost{}, kaneo: map[string]*fakeTracker{}}
+}
+
+// kaneoTracker makes (or returns) the Kaneo tracker of a project for the
+// connection's generation gen: like a provider built from that key.
+func (fb *fakeBoards) kaneoTracker(project string, gen int64) *fakeTracker {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+	k := fmt.Sprintf("%s@%d", project, gen)
+	tr := fb.kaneo[k]
+	if tr == nil {
+		tr = &fakeTracker{id: "kaneo", caps: tracker.Capabilities{Comment: true, SetStatus: true, Order: true}, failOn: map[string]error{},
+			board: tracker.Board{Columns: []tracker.Column{{ID: "to-do", Name: "To Do"}, {ID: "done", Name: "Done", Done: true},
+				{ID: "planned", Name: "Planned", Kind: "planned"}, {ID: "archived", Name: "Archived", Kind: "archived"}}}}
+		fb.kaneo[k] = tr
+	}
+	return tr
 }
 
 // repo makes (or returns) the provider pair of a repo with the usual capabilities.
@@ -292,6 +324,27 @@ func (fb *fakeBoards) repo(repo string) (*fakeTracker, *fakeHost) {
 }
 
 func (fb *fakeBoards) factory(src server.BoardSource) (server.BoardSet, bool) {
+	if src.Tracker == server.TrackerKaneo { // #184: like app.Boards
+		fb.mu.Lock()
+		fb.seen = append(fb.seen, src)
+		tr := fb.kaneo[fmt.Sprintf("%s@%d", src.KaneoProject, src.KaneoGeneration)]
+		host := fb.hosts[src.Repo]
+		fb.mu.Unlock()
+		if tr == nil {
+			return server.BoardSet{}, false
+		}
+		// Only the Tracker interface: Kaneo is no RunLinker (its items are
+		// no numbered issues of a repository).
+		set := server.BoardSet{Key: fmt.Sprintf("kaneo:%s:%s:%s:g%d", src.KaneoAPIBase, src.KaneoWorkspace, src.KaneoProject, src.KaneoGeneration),
+			Tracker: struct{ tracker.Tracker }{tr}}
+		if host != nil {
+			set.Host, set.Key = host, set.Key+"|fake:"+src.Repo
+		}
+		fb.mu.Lock()
+		fb.keys = append(fb.keys, set.Key)
+		fb.mu.Unlock()
+		return set, true
+	}
 	fb.mu.Lock()
 	fb.seen = append(fb.seen, src)
 	tr, host, ok := fb.repos[src.Repo], fb.hosts[src.Repo], false

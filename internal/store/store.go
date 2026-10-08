@@ -182,6 +182,9 @@ var migrations = []string{
 	// #174: the floor overview summaries' reasoning effort and completion
 	// budget.
 	migrationDigestReasoning,
+	// #184: a floor's issue tracker (GitHub or Kaneo) and its Kaneo link,
+	// and a run launched on a provider's item.
+	migrationKaneo,
 }
 
 // Fingerprint kinds.

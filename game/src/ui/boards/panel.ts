@@ -1,6 +1,6 @@
 import type { CommandResult } from '../../net/client';
 import type { BoardComment, BoardIssues, BoardLabel, BoardPrs, IssueCard, IssueDetail, PrDetail, PullRequest, CloseReason, MergeMethod, CommentAck } from '../../net/protocol';
-import { can, CHECKS_WORD, CLOSE_REASONS, columnViews, type ColumnView, closesText, freshness, holdersOf, keysById, MERGEABLE_WORD, mergeBlocker, paperOf, pinOf, PRIORITY_WORD, readableInk, REVIEW_WORD, timeAgo, verdictOf } from '../../world/boards';
+import { askInlinesItem, can, CHECKS_WORD, CLOSE_REASONS, closedWord, columnViews, itemWord, type ColumnView, closesText, freshness, holdersOf, keysById, MERGEABLE_WORD, mergeBlocker, paperOf, pinOf, PRIORITY_WORD, readableInk, REVIEW_WORD, timeAgo, verdictOf } from '../../world/boards';
 import type { WorkerView } from '../../world/store';
 import { h, icon, ICON, replaceKeepingFocus } from '../dom';
 import { failureText } from '../messages';
@@ -39,7 +39,7 @@ export interface BoardsHost extends DialogHost {
   /** "Hand to a worker": the start-run dialog on the nearest free desk, pre-filled. */
   handTo(session: string, card: IssueCard, provider: string): void;
   /** "Ask a worker…": the hire dialog with a first prompt. */
-  ask(session: string, card: IssueCard): void;
+  ask(session: string, card: IssueCard, provider: string, body: string | null): void;
   /** "Review with a worker": the hire dialog with a reviewer and its first prompt. */
   review(session: string, pr: PullRequest): void;
   /** Why an action that starts a run or hires is off (null: it works). */
@@ -69,6 +69,15 @@ interface Move extends PendingMove {
 }
 
 const MOVE_HOLD_MS = 20_000;
+
+/** #184: a virtual status column's note: what it is, and that it is not completion. */
+const KIND_NOTE = { planned: 'not started', archived: 'archived, not done' } as const;
+const KIND_TITLE = {
+  planned: 'A status of its own, before the workflow columns',
+  archived: 'Archived tasks: put away, which is not the same as done',
+} as const;
+
+const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 const GLYPH = {
   issues: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/>',
@@ -287,6 +296,11 @@ export class BoardsPanel {
     return this.which === 'issues' ? s.issues : s.prs;
   }
 
+  /** What the floor's issue provider is called ("Kaneo"), for copy outside the panel. */
+  providerLabel(): string {
+    return this.state().issues?.provider_name || 'Kaneo';
+  }
+
   private providerName(): string {
     const s = this.state();
     return (s.issues ?? s.prs)?.provider_name ?? 'The provider';
@@ -307,7 +321,7 @@ export class BoardsPanel {
     const m = this.message();
     const name = m?.provider_name ?? '';
     const workers = this.host.store.floorView(this.session)?.workers ?? [];
-    const title = this.which === 'issues' ? 'Issues' : 'Pull requests';
+    const title = this.which === 'issues' ? (st.issues?.provider === 'kaneo' ? 'Tasks' : 'Issues') : 'Pull requests';
     const count = this.which === 'issues' ? (st.issues?.cards.filter((c) => c.state === 'open').length ?? 0) : (st.prs?.prs.length ?? 0);
     const sub = m && m.fetched_at ? `${this.session}${name ? ` · ${name}` : ''} · ${count} open · updated ${timeAgo(m.fetched_at, this.host.now()) || 'just now'}` : `${this.session}${name ? ` · ${name}` : ''}`;
     this.head.replaceChildren(
@@ -356,8 +370,15 @@ export class BoardsPanel {
     const nodes = cols.map((c) =>
       h(
         'section',
-        { class: 'bd-col', 'data-done': c.done ? 'true' : null, 'data-col': c.id, 'data-drop': drops && c.id !== '' ? 'true' : null, 'aria-label': `${c.name}, ${c.cards.length}` },
-        h('h3', { class: 'bd-col-head' }, h('span', {}, c.name), h('b', {}, String(c.cards.length))),
+        {
+          class: 'bd-col',
+          'data-done': c.done ? 'true' : null,
+          'data-kind': c.kind || null,
+          'data-col': c.id,
+          'data-drop': drops && c.id !== '' ? 'true' : null,
+          'aria-label': `${c.name}${c.kind ? ` (${KIND_NOTE[c.kind]})` : c.done ? ' (done)' : ''}, ${c.cards.length}`,
+        },
+        h('h3', { class: 'bd-col-head' }, h('span', {}, c.name, c.kind ? h('i', { class: 'bd-col-kind', title: KIND_TITLE[c.kind] }, KIND_NOTE[c.kind]) : null), h('b', {}, String(c.cards.length))),
         h(
           'div',
           { class: 'bd-col-cards' },
@@ -404,7 +425,7 @@ export class BoardsPanel {
         onclick: (e: Event) => this.openIssue(card.id, e.currentTarget as HTMLElement),
       },
       h('span', { class: 'bd-pin', 'aria-hidden': 'true' }),
-      h('span', { class: 'bd-card-top' }, h('span', { class: 'bd-key' }, card.key), card.state === 'closed' ? h('span', { class: 'bd-closed' }, 'closed') : null),
+      h('span', { class: 'bd-card-top' }, h('span', { class: 'bd-key' }, card.key), card.state === 'closed' ? h('span', { class: 'bd-closed' }, closedWord(this.state().issues?.provider)) : null),
       h('span', { class: 'bd-card-title' }, card.title),
       card.labels.length ? h('span', { class: 'bd-labels' }, ...card.labels.map(labelChip)) : null,
       meta.childElementCount ? meta : null,
@@ -438,6 +459,9 @@ export class BoardsPanel {
     const card = board?.cards.find((c) => c.id === id);
     if (!board || !card) return;
     const session = this.session;
+    // #184: on a board the bridge could not read in full, a card's place is not known against the cards it did not
+    // see: the drop moves only its status there.
+    if (board.truncated) after = undefined;
     const move: Move = { id, column, ...(after !== undefined ? { after } : {}), seq: ++this.moveSeq, acked: false, seen: null, until: 0 };
     this.moves.delete(id);
     this.moves.set(id, move);
@@ -686,7 +710,7 @@ export class BoardsPanel {
     const d = this.issueDetail;
     const name = this.providerName();
     if (!card) {
-      this.itemHead.replaceChildren(h('div', { class: 'dd-titles' }, h('h2', { id: 'item-title' }, 'Issue')), closeButton(() => this.item.close()));
+      this.itemHead.replaceChildren(h('div', { class: 'dd-titles' }, h('h2', { id: 'item-title' }, cap(itemWord(board?.provider)))), closeButton(() => this.item.close()));
       this.itemBody.replaceChildren(h('p', { class: 'bd-empty' }, d.state === 'error' ? d.message : 'Loading…'));
       this.itemFoot.replaceChildren();
       return;
@@ -699,13 +723,13 @@ export class BoardsPanel {
         'div',
         { class: 'dd-titles' },
         h('h2', { id: 'item-title' }, card.title),
-        h('p', {}, `${card.key} · ${card.state === 'open' ? 'open' : 'closed'}${col ? ` · ${col.name}` : ''}${author ? ` · ${author}` : ''}${created ? ` · ${created}` : ''}`),
+        h('p', {}, `${card.key} · ${card.state === 'open' ? 'open' : closedWord(board?.provider)}${col ? ` · ${col.name}` : ''}${author ? ` · ${author}` : ''}${created ? ` · ${created}` : ''}`),
       ),
       closeButton(() => this.item.close()),
     );
     const body: Node[] = [];
-    const meta = h('div', { class: 'bd-meta' }, h('span', { class: `tape tape--state tape--${card.state}` }, card.state === 'open' ? 'Open' : 'Closed'));
-    if (col) meta.append(h('span', { class: 'tape tape--note' }, col.name));
+    const meta = h('div', { class: 'bd-meta' }, h('span', { class: `tape tape--state tape--${card.state}` }, card.state === 'open' ? 'Open' : cap(closedWord(board?.provider))));
+    if (col) meta.append(h('span', { class: 'tape tape--note' }, col.kind === 'planned' || col.kind === 'archived' ? `${col.name} · ${KIND_NOTE[col.kind]}` : col.name));
     if (card.priority) meta.append(h('span', { class: `tape tape--prio tape--prio-${card.priority}` }, PRIORITY_WORD[card.priority]));
     const holder = holdersOf([card], this.host.store.floorView(this.session)?.workers ?? []).get(card.id);
     if (holder) {
@@ -747,8 +771,24 @@ export class BoardsPanel {
         { class: `btn${o.cls ? ` ${o.cls}` : ''}`, 'data-key': key, title: o.why ?? o.title ?? label, 'aria-disabled': o.why || busy ? 'true' : null, onclick: () => (o.why ? this.setError(o.why) : busy ? undefined : onclick()) },
         label,
       );
-    if (open) actions.push(btn('hand', 'Hand to a worker', () => this.host.handTo(session, card, board?.provider ?? ''), { cls: 'btn--primary', why: noRun, title: 'Start a run on this issue at the free desk nearest to you' }));
-    if (open) actions.push(btn('ask', 'Ask a worker…', () => this.host.ask(session, card), { why: noHire, title: 'Hire a worker to look into it and report back, without changing code' }));
+    if (open) actions.push(btn('hand', 'Hand to a worker', () => this.host.handTo(session, card, board?.provider ?? ''), { cls: 'btn--primary', why: noRun, title: `Start a run on this ${itemWord(board?.provider)} at the free desk nearest to you` }));
+    if (open) {
+      // #184: a worker cannot read a Kaneo task, so its prompt carries the description: not until it is read.
+      const d = this.issueDetail;
+      const noBody = !askInlinesItem(board?.provider)
+        ? null
+        : d.state === 'loading'
+          ? `Reading the ${itemWord(board?.provider)} from ${name}: ask once its description is in.`
+          : d.state === 'error'
+            ? `The ${itemWord(board?.provider)}’s description could not be read, and the worker needs it: try again first.`
+            : null;
+      actions.push(
+        btn('ask', 'Ask a worker…', () => this.host.ask(session, card, board?.provider ?? '', d.state === 'ready' ? d.data.body : null), {
+          why: noHire ?? noBody,
+          title: 'Hire a worker to look into it and report back, without changing code',
+        }),
+      );
+    }
     if (can(board, card, 'set_status') && board) {
       const cols = board.columns.filter((c) => c.id !== '' && c.id !== card.column);
       if (cols.length) {

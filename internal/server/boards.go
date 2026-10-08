@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codehost"
+	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/provider"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -49,19 +50,52 @@ const (
 	maxBoardPolls = 4
 )
 
+// Issue trackers of a floor (BoardSource.Tracker).
+const (
+	TrackerGitHub = proto.TrackerGitHub
+	TrackerKaneo  = proto.TrackerKaneo
+)
+
+// kaneoGate is the rate gate of the Kaneo floors: one key, one quota.
+const kaneoGate = TrackerKaneo
+
 // BoardSource is what a floor links, as its settings say: the provider
-// factory reads it and decides which provider serves it.
+// factory reads it and decides which providers serve it. #184: the issue
+// tracker and the code host are chosen apart: Tracker says which issues
+// (GitHub's of Repo, or a Kaneo project), Repo which pull requests (a Kaneo
+// floor without a repo has none). It is comparable and never holds a key:
+// the Kaneo fields name the connection by its instance and generation, so
+// a new key or instance is a new source.
 type BoardSource struct {
 	Session       string
 	Repo          string // the floor's effective repo (settings, else the suggestion)
-	ProjectOwner  string
+	ProjectOwner  string // GitHub's project and status field (GitHub tracker only)
 	ProjectNumber int
 	StatusField   string
+
+	Tracker string // TrackerGitHub or TrackerKaneo
+	// Kaneo: the saved connection (empty while none is saved) and the
+	// floor's workspace and project.
+	KaneoAPIBase    string
+	KaneoWebOrigin  string
+	KaneoGeneration int64
+	KaneoWorkspace  string
+	KaneoProject    string
+}
+
+// linked reports whether the floor names anything a provider could serve.
+func (s BoardSource) linked() bool {
+	if s.Tracker == TrackerKaneo {
+		return s.KaneoAPIBase != "" && s.KaneoProject != ""
+	}
+	return s.Repo != ""
 }
 
 // BoardSet is the providers of one floor. Key names the fetch: floors with
-// the same key share it. Host may be nil (a provider with no change
-// requests).
+// the same key share it; it names the tracker, the instance, the
+// connection's generation, the workspace and project and the code host's
+// repository (never a key). Host may be nil (a provider with no change
+// requests, or a Kaneo floor with no repo).
 type BoardSet struct {
 	Key     string
 	Tracker tracker.Tracker
@@ -93,7 +127,7 @@ type boardsState struct {
 	watchers map[*Client]string          // connection → the floor it watches
 	gates    map[string]*rateGate        // provider id → its rate state
 	polls    chan struct{}               // slots of the polls in flight
-	titles   map[string]*itemTitle       // #118: provider + item id → what one Get read of it
+	titles   map[string]*itemTitle       // #118: board source + item id → what one Get read of it
 }
 
 func (h *Hub) initBoards(ctx context.Context) error {
@@ -123,6 +157,9 @@ type boardFloor struct {
 	stale     bool            // the last poll failed
 	lastErr   string
 
+	lastCode string    // #184: the last failed poll's error code
+	paused   time.Time // #184: the provider refused the key: no poll before this
+
 	inflight  bool
 	writes    int // successful writes so far: a poll that began before the last one is not shown
 	lastStart time.Time
@@ -139,8 +176,36 @@ type rateGate struct {
 // boardSource is a floor's link as its settings say (zero Repo: none).
 func (h *Hub) boardSource(session string) BoardSource {
 	s := h.settings[session]
-	return BoardSource{Session: session, Repo: h.repoOf(session), ProjectOwner: s.ProjectOwner, ProjectNumber: s.ProjectNumber,
-		StatusField: s.StatusField}
+	if s.Tracker != TrackerKaneo {
+		return BoardSource{Session: session, Repo: h.repoOf(session), ProjectOwner: s.ProjectOwner, ProjectNumber: s.ProjectNumber,
+			StatusField: s.StatusField, Tracker: TrackerGitHub}
+	}
+	src := BoardSource{Session: session, Repo: h.repoOf(session), Tracker: TrackerKaneo, KaneoWorkspace: s.KaneoWorkspaceID,
+		KaneoProject: s.KaneoProjectID}
+	if h.opts.Kaneo != nil {
+		if l, ok := h.opts.Kaneo.Link(); ok {
+			src.KaneoAPIBase, src.KaneoWebOrigin, src.KaneoGeneration = l.APIBase, l.WebOrigin, l.Generation
+		}
+	}
+	return src
+}
+
+// noBoard is why a floor has no board, in words for board.watch.
+func (h *Hub) noBoard(session string) string {
+	src := h.boardSource(session)
+	switch {
+	case h.opts.Boards == nil:
+		return "boards are not configured"
+	case src.Tracker != TrackerKaneo:
+		return "no repo linked"
+	case h.opts.Kaneo == nil:
+		return "this bridge has no Kaneo settings"
+	case src.KaneoAPIBase == "":
+		return "Kaneo is not connected: connect it in Settings"
+	case src.KaneoProject == "":
+		return "no Kaneo project linked"
+	}
+	return "this bridge cannot read Kaneo boards"
 }
 
 // boardOf returns the board state of a floor, made (or dropped, when its
@@ -157,7 +222,7 @@ func (h *Hub) boardOf(session string) *boardFloor {
 	}
 	var set BoardSet
 	ok := false
-	if src.Repo != "" {
+	if src.linked() {
 		set, ok = h.opts.Boards(src)
 		ok = ok && set.Tracker != nil
 	}
@@ -204,6 +269,14 @@ func (h *Hub) boardOf(session string) *boardFloor {
 	return bf
 }
 
+// boardKey is the source of a floor's board (BoardSet.Key; "": none).
+func (h *Hub) boardKey(session string) string {
+	if bf := h.boardOf(session); bf != nil {
+		return bf.set.Key
+	}
+	return ""
+}
+
 // adopt takes the stored cache of the same link, and schedules the next
 // poll from its age.
 func (bf *boardFloor) adopt(c store.BoardCache, idle time.Duration) {
@@ -222,10 +295,15 @@ func (bf *boardFloor) adopt(c store.BoardCache, idle time.Duration) {
 	}
 }
 
-// dropBoard forgets a floor's board (its link changed or went) and what
-// the store kept of it.
+// dropBoard forgets a floor's board (its link changed or went), what the
+// store kept of it and the titles read off it.
 func (h *Hub) dropBoard(bf *boardFloor) {
 	delete(h.boards.floors, bf.session)
+	for k, e := range h.boards.titles {
+		if e.session == bf.session {
+			delete(h.boards.titles, k)
+		}
+	}
 	if err := h.st.ClearBoard(context.Background(), bf.session); err != nil {
 		h.log.Error("clearing a floor's board failed", "session", bf.session, "err", err)
 	}
@@ -257,9 +335,12 @@ func (bf *boardFloor) issuesMsg(initial bool) proto.BoardIssues {
 	if bf.issues != nil {
 		m = *bf.issues
 	}
-	m.Initial, m.Stale, m.Error = initial, bf.stale, ""
+	m.Initial, m.Stale, m.Error, m.ErrorCode, m.PausedUntil = initial, bf.stale, "", "", 0
 	if bf.stale {
-		m.Error = bf.lastErr
+		m.Error, m.ErrorCode = bf.lastErr, bf.lastCode
+		if !bf.paused.IsZero() {
+			m.PausedUntil = bf.paused.UnixMilli()
+		}
 	}
 	return m
 }
@@ -343,8 +424,12 @@ func (h *Hub) boardTick(ctx context.Context) {
 // polls in flight fill their slots.
 func (h *Hub) tryPoll(ctx context.Context, bf *boardFloor, keys int) bool {
 	now := h.opts.Now()
-	if !h.rateAllows(bf.info.ID, now, h.watching(bf.session) > 0, keys) {
+	watched := h.watching(bf.session) > 0
+	if !h.rateAllows(bf.info.ID, now, watched, keys) {
 		return false
+	}
+	if bf.host != nil && bf.host.ID != bf.info.ID && !h.rateAllows(bf.host.ID, now, watched, keys) {
+		return false // #184: a Kaneo floor's pull requests wait on GitHub's limit
 	}
 	select {
 	case h.boards.polls <- struct{}{}:
@@ -399,6 +484,9 @@ type pollResult struct {
 	issues tracker.Board
 	prs    *codehost.Board
 	err    error
+	// hostErr: err is the code host's (#184: a Kaneo floor's pull requests
+	// are GitHub's, whose limits and refusals are not Kaneo's).
+	hostErr bool
 }
 
 // pollProviders reads a floor's boards (off the hub goroutine): the change
@@ -409,7 +497,7 @@ func pollProviders(ctx context.Context, set BoardSet, prev codehost.PrevState) p
 	if set.Host != nil {
 		b, err := set.Host.Board(ctx, prev)
 		if err != nil {
-			return pollResult{err: err}
+			return pollResult{err: err, hostErr: true}
 		}
 		res.prs = &b
 	}
@@ -428,6 +516,13 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 	if h.boards.floors[bf.session] != bf || bf.set.Key != key {
 		return // the floor's link changed meanwhile
 	}
+	// #184: a live floor's link may have changed without a tick since (its
+	// settings, the Kaneo connection's generation): boardOf drops the old
+	// board first, so a late result never lands on the new one. A floor that
+	// is gone keeps its board, as boardOf does.
+	if h.floors[bf.session] != nil && h.boardOf(bf.session) != bf {
+		return
+	}
 	now := h.opts.Now()
 	if writes != bf.writes {
 		// A write landed while this poll was in flight: what it read may be
@@ -437,24 +532,40 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 		h.tryPoll(ctx, bf, h.boardKeys())
 		return
 	}
-	g := h.boards.gates[bf.info.ID]
-	if g == nil {
-		g = &rateGate{}
-		h.boards.gates[bf.info.ID] = g
-	}
+	g := h.gate(bf.info.ID)
 	if res.err != nil {
-		bf.stale, bf.lastErr = true, briefError(res.err)
+		eg := g // the gate of the provider that failed
+		if res.hostErr && bf.host != nil && bf.host.ID != bf.info.ID {
+			eg = h.gate(bf.host.ID)
+		}
+		bf.stale, bf.lastErr, bf.lastCode = true, briefError(res.err), boardCode(res.err)
+		if bf.lastCode == "" {
+			bf.lastCode = proto.ErrProviderFailed
+		}
 		var rl *provider.RateLimitError
 		if errors.As(res.err, &rl) {
 			if rl.ResetAt.After(now) {
-				g.until = rl.ResetAt
+				eg.until = rl.ResetAt
 			} else { // a secondary limit: no reset was named
-				g.backoff = min(max(g.backoff*2, secondaryWait), secondaryMax)
-				g.until = now.Add(g.backoff)
+				eg.backoff = min(max(eg.backoff*2, secondaryWait), secondaryMax)
+				eg.until = now.Add(eg.backoff)
 			}
-			g.rate = &provider.Rate{Remaining: 0, ResetAt: max(rl.ResetAt.UnixMilli(), g.until.UnixMilli())}
+			eg.rate = &provider.Rate{Remaining: 0, ResetAt: max(rl.ResetAt.UnixMilli(), eg.until.UnixMilli())}
 		}
 		bf.nextAt = now.Add(h.boardInterval(bf.session))
+		if errors.Is(res.err, provider.ErrUnauthorized) && bf.src.Tracker == TrackerKaneo && !res.hostErr {
+			// #184: Kaneo refused the key, which may be its request quota:
+			// every Kaneo floor stops polling for the cooldown (a re-test or a
+			// new key ends it sooner), never hammering it.
+			until := now.Add(kaneoconf.DefaultCooldown)
+			if h.opts.Kaneo != nil {
+				if u := h.opts.Kaneo.Unauthorized(bf.src.KaneoGeneration); !u.IsZero() {
+					until = u
+				}
+			}
+			bf.paused, g.until = until, until
+			bf.nextAt = until
+		}
 		h.log.Info("board poll failed", "session", bf.session, "err", res.err)
 		is := bf.issuesMsg(false)
 		is.Rate = g.rate
@@ -462,6 +573,9 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 		if bf.set.Host != nil {
 			p := bf.prsMsg(false)
 			p.Rate = g.rate
+			if bf.host != nil && bf.host.ID != bf.info.ID {
+				p.Rate = h.gate(bf.host.ID).rate
+			}
 			ps = &p
 		}
 		h.fanOut(bf.session, is, ps)
@@ -469,11 +583,19 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 	}
 	g.backoff, g.until = 0, time.Time{}
 	rate := res.issues.Rate
-	if rate == nil && res.prs != nil {
-		rate = res.prs.Rate
+	prRate := rate
+	if res.prs != nil && bf.host != nil && bf.host.ID != bf.info.ID {
+		hg := h.gate(bf.host.ID) // #184: a Kaneo floor's pull requests are GitHub's
+		hg.rate, hg.backoff, hg.until = res.prs.Rate, 0, time.Time{}
+		prRate = res.prs.Rate
+	} else if rate == nil && res.prs != nil {
+		rate, prRate = res.prs.Rate, res.prs.Rate
 	}
 	g.rate = rate
-	bf.stale, bf.lastErr = false, ""
+	bf.stale, bf.lastErr, bf.lastCode, bf.paused = false, "", "", time.Time{}
+	if bf.src.Tracker == TrackerKaneo && h.opts.Kaneo != nil {
+		h.opts.Kaneo.Recovered(bf.src.KaneoGeneration)
+	}
 	bf.fetchedAt = now
 	bf.nextAt = now.Add(h.boardInterval(bf.session))
 	is := proto.BoardIssues{T: proto.TBoardIssues, Session: bf.session, Provider: bf.info.ID, ProviderName: bf.info.Name,
@@ -500,7 +622,7 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 	var prPayload []byte
 	if res.prs != nil {
 		p := proto.BoardPRs{T: proto.TBoardPRs, Session: bf.session, Provider: bf.host.ID, ProviderName: bf.host.Name,
-			FetchedAt: now.UnixMilli(), Truncated: res.prs.Truncated, Rate: rate, Capabilities: bf.host.Capabilities,
+			FetchedAt: now.UnixMilli(), Truncated: res.prs.Truncated, Rate: prRate, Capabilities: bf.host.Capabilities,
 			PRs: res.prs.Requests, Merged: []codehost.Merged{}}
 		if p.PRs == nil {
 			p.PRs = []codehost.Request{}
@@ -544,6 +666,16 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 	}
 	h.fanOut(bf.session, is, ps)
 	h.refreshTickets(bf.session) // #118: a card's title may have changed
+}
+
+// gate is a provider's rate gate, made on the way.
+func (h *Hub) gate(id string) *rateGate {
+	g := h.boards.gates[id]
+	if g == nil {
+		g = &rateGate{}
+		h.boards.gates[id] = g
+	}
+	return g
 }
 
 // briefError is a short message for a failed poll: never a token, at most
@@ -597,12 +729,8 @@ func (h *Hub) startBoardWatch(ctx context.Context, c *Client, cmd proto.Command)
 	}
 	bf := h.boardOf(a.Session)
 	if bf == nil {
-		reason := "no repo linked"
-		if h.opts.Boards == nil {
-			reason = "boards are not configured"
-		}
 		h.audit(ctx, c, cmd, nil)
-		h.reply(c, cmd, proto.BoardWatchResult{Enabled: false, Reason: reason}, nil)
+		h.reply(c, cmd, proto.BoardWatchResult{Enabled: false, Reason: h.noBoard(a.Session)}, nil)
 		return nil
 	}
 	h.boards.watchers[c] = a.Session
@@ -648,7 +776,7 @@ func (h *Hub) startBoardRefresh(ctx context.Context, c *Client, cmd proto.Comman
 	}
 	bf := h.boardOf(a.Session)
 	if bf == nil {
-		return fmt.Errorf("%w: the floor has no board (no repo linked)", errUnsupported)
+		return fmt.Errorf("%w: the floor has no board (%s)", errUnsupported, h.noBoard(a.Session))
 	}
 	now := h.opts.Now()
 	queued := false
@@ -692,12 +820,14 @@ func (h *Hub) unwatched(session string) {
 // workItemTicket is the run ticket of a board card (run.prepare and
 // run.start's work_item): the floor's issue provider must be the one the
 // card names, and the card must be on its board. GitHub's item is an issue
-// of the floor's repo, so it goes the M6 issue way, its URL in the prompt.
-// A floor with no polled board yet has nothing to look the card up in: the
-// returned check (nil once the board is known, or when verified) asks the
-// provider for it, and must run off the hub goroutine before the ticket is
-// used.
-func (h *Hub) workItemTicket(session string, item *proto.WorkItemRef, verified bool) (*proto.RunTicket, func(context.Context) error, error) {
+// of the floor's repo, so it goes the M6 issue way, its URL in the prompt;
+// a floor with no polled board yet has nothing to look the card up in, so
+// the returned resolve asks the provider for it. #184: an item of a
+// provider that numbers no GitHub issues (Kaneo) is always resolved
+// through Tracker.Get, for its key, title, URL and description: never a
+// made-up repo or number. resolve, when not nil, runs off the hub goroutine
+// and gives the ticket.
+func (h *Hub) workItemTicket(session string, item *proto.WorkItemRef) (*proto.RunTicket, func(context.Context) (*proto.RunTicket, error), error) {
 	nf := func(format string, args ...any) error {
 		return fmt.Errorf("%w: %s", store.ErrNotFound, fmt.Sprintf(format, args...))
 	}
@@ -708,34 +838,48 @@ func (h *Hub) workItemTicket(session string, item *proto.WorkItemRef, verified b
 	if item.Provider != bf.info.ID {
 		return nil, nil, nf("work_item: the floor's issues are not from %q", item.Provider)
 	}
+	onBoard := false
+	if bf.issues != nil && !bf.fetchedAt.IsZero() {
+		for _, c := range bf.issues.Cards {
+			onBoard = onBoard || c.ID == item.ID
+		}
+		if !onBoard {
+			return nil, nil, nf("work_item %q is not on the floor's board", item.ID)
+		}
+	}
+	tr, id, name, prov := bf.set.Tracker, item.ID, bf.info.Name, bf.info.ID
+	get := func(ctx context.Context) (tracker.Detail, error) {
+		ctx, cancel := context.WithTimeout(ctx, titleTimeout)
+		defer cancel()
+		d, err := tr.Get(ctx, id)
+		if errors.Is(err, provider.ErrNotFound) {
+			return d, nf("work_item %q is not an item of this floor", id)
+		}
+		return d, err
+	}
 	rl, ok := bf.set.Tracker.(tracker.RunLinker)
 	if !ok {
-		return nil, nil, fmt.Errorf("%w: %s items cannot start a run", errUnsupported, bf.info.Name)
+		return nil, func(ctx context.Context) (*proto.RunTicket, error) {
+			d, err := get(ctx)
+			if err != nil {
+				return nil, err
+			}
+			ref := &proto.WorkItemRef{Provider: prov, ID: id, Key: d.Card.Key, Title: d.Card.Title, URL: d.Card.URL}
+			return &proto.RunTicket{Kind: proto.TicketItem, URL: d.Card.URL, Item: ref, ProviderName: name, Body: d.Body}, nil
+		}, nil
 	}
 	repo, n, url, ok := rl.RunFromItem(item.ID)
 	if !ok {
 		return nil, nil, nf("work_item %q is not an item of this floor", item.ID)
 	}
 	ticket := &proto.RunTicket{Kind: proto.TicketIssue, Repo: repo, Number: n, URL: url}
-	if bf.issues != nil && !bf.fetchedAt.IsZero() {
-		for _, c := range bf.issues.Cards {
-			if c.ID == item.ID {
-				return ticket, nil, nil
-			}
-		}
-		return nil, nil, nf("work_item %q is not on the floor's board", item.ID)
-	}
-	if verified {
+	if onBoard {
 		return ticket, nil, nil
 	}
-	tr, id := bf.set.Tracker, item.ID
-	return ticket, func(ctx context.Context) error {
-		if _, err := tr.Get(ctx, id); err != nil {
-			if errors.Is(err, provider.ErrNotFound) {
-				return nf("work_item %q is not an item of this floor", id)
-			}
-			return err
+	return nil, func(ctx context.Context) (*proto.RunTicket, error) {
+		if _, err := get(ctx); err != nil {
+			return nil, err
 		}
-		return nil
+		return ticket, nil
 	}, nil
 }

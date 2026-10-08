@@ -1,6 +1,7 @@
 /** HUD copy for command failures (M3): what went wrong and what to do about it. Pure. */
 
 import type { CommandName } from '../net/protocol';
+import { kaneoFailureText } from '../world/kaneo';
 
 /** The logo requests are HTTP, not commands, but fail with the same codes. */
 export type LogoAction = 'logo.set' | 'logo.clear';
@@ -88,6 +89,13 @@ const DOES: Record<CommandName | LogoAction, string> = {
   // #98
   'activity.get': 'classify unknown commands',
   'activity.set': 'classify unknown commands',
+  // #184
+  'kaneo.get': 'connect to Kaneo',
+  'kaneo.test': 'connect to Kaneo',
+  'kaneo.set': 'connect to Kaneo',
+  'kaneo.clear': 'connect to Kaneo',
+  'kaneo.workspaces': 'list Kaneo workspaces',
+  'kaneo.projects': 'list Kaneo projects',
   'codex_server.get': 'give Codex workers their own server', // #155
   'codex_server.set': 'give Codex workers their own server',
   'worker.answer_async': "answer a Codex worker's question", // #156
@@ -122,6 +130,14 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
   if (t === 'worker.answer_async' || t === 'worker.dismiss_async') {
     const asyncWhy = asyncFailure(t, code, why);
     if (asyncWhy) return asyncWhy;
+  }
+  // #184: the Kaneo connection's own failures, and a floor's Kaneo link checked at save.
+  if ((t.startsWith('kaneo.') || t === 'floor.settings.set') && KANEO_CODES.has(code)) return kaneoFailureText(code, why);
+  if (isBoardCommand(t) && code === 'unauthorized') {
+    return `${ctx.provider ?? 'The provider'} refused herdr-world’s key (it may be out of its request quota). Nothing changed. Test the connection again in Settings.`;
+  }
+  if (isBoardCommand(t) && code === 'forbidden') {
+    return `${ctx.provider ?? 'The provider'} does not let this key ${DOES[t]}${ctx.item ? ` (${ctx.item})` : ''}: a permission problem there, not a failure. Nothing changed.`;
   }
   switch (code) {
     case 'offline':
@@ -217,6 +233,8 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
   }
   return `${code}: ${why}`;
 }
+
+const KANEO_CODES = new Set(['unauthorized', 'forbidden', 'bad_url', 'key_required', 'test_required', 'not_configured', 'unreachable', 'not_found', 'stale', 'rate_limited', 'provider_failed', 'unsupported']);
 
 const isBoardCommand = (t: CommandName | LogoAction): boolean => t.startsWith('issue.') || t.startsWith('pr.') || t.startsWith('worker.open_pr') || t.startsWith('board.');
 

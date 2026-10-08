@@ -199,3 +199,27 @@ func TestRunLaunch(t *testing.T) {
 		t.Fatalf("pending = %v", pending)
 	}
 }
+
+// #184: a run launched on a Kaneo task keeps {provider, id} and its key
+// across a restart, and never a repository or an issue number.
+func TestRunLaunchOfAnItem(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "w.db")
+	st := open(t, path)
+	l := store.RunLaunch{ID: "l_k1", Session: "lab", ItemProvider: "kaneo", ItemID: "task-01", ItemKey: "HRD-12", OrchWorkerID: "w-k",
+		PresetID: "p_000000000001", PresetName: "Build team"}
+	if err := st.RecordRunLaunch(ctx, l); err != nil {
+		t.Fatal(err)
+	}
+	half := l
+	half.ID, half.ItemProvider = "l_k2", ""
+	if err := st.RecordRunLaunch(ctx, half); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("an item without its provider: %v", err)
+	}
+	st.Close()
+	st = open(t, path)
+	got, ok, err := st.RunLaunchByWorker(ctx, "w-k")
+	if err != nil || !ok || got.ItemProvider != "kaneo" || got.ItemID != "task-01" || got.ItemKey != "HRD-12" || got.Repo != "" || got.IssueNumber != 0 {
+		t.Fatalf("launch = %+v, %v, %v", got, ok, err)
+	}
+}
