@@ -1,5 +1,5 @@
 import type { CommandResult } from '../net/client';
-import type { CommandArgs, CommandName, HireAck, HireGit, HirePrepare } from '../net/protocol';
+import type { CommandArgs, CommandName, HireAck, HireGit, HireOptions, HirePrepare } from '../net/protocol';
 import {
   baseText,
   capacityView,
@@ -8,9 +8,12 @@ import {
   firstFreeDesk,
   formFromPrepare,
   hireArgs,
+  HARNESS_LABEL,
   hireBlocker,
   modelsFor,
   resolveChoice,
+  resolveVisibleChoice,
+  visibleOptions,
   worktreeUsable,
   type CapacityView,
   type HireForm,
@@ -20,6 +23,7 @@ import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
 import { hiredToast } from './hiredToast';
+import type { HireModelPrefs } from './hireModelPrefs';
 import type { ToastKind } from './hud';
 // M10 limits
 import { planLimits } from './limits';
@@ -60,6 +64,10 @@ export interface HireHost extends DialogHost {
   orchestrate?: { off(): string | null; open(session: string, desk: number): void };
   /** #116: a hire was acknowledged while this dialog was still the one that sent it: take the player to the new worker (the host decides whether, and when it is ready). */
   goTo?(id: string): void;
+  /** Settings → Harness models: which models this dialog offers (all of them without it). */
+  modelPrefs?: HireModelPrefs;
+  /** The empty state's way to Settings → Harness models. */
+  showModelSettings?(): void;
 }
 
 /** M7: what "Ask a worker…" and "Review with a worker" start the dialog with. */
@@ -295,6 +303,8 @@ export class HireDialog {
     parent: HTMLElement,
     private readonly host: HireHost,
   ) {
+    // Settings changed which models show: an open form follows it (a hire on its way keeps what it sent).
+    this.host.modelPrefs?.onChange(() => this.visibilityChanged());
     this.alertEl.hidden = true;
     this.statusEl.hidden = true;
     this.form.append(this.editorPane, this.optionsPane);
@@ -397,7 +407,7 @@ export class HireDialog {
       return;
     }
     const p = r.data as HirePrepare;
-    const options = this.host.store.hireOptions;
+    const options = this.options();
     if (this.prep && cwd) {
       // Same form, new folder (or origin fetched again): its git base, and the checkbox follows whether a worktree can be made.
       this.adoptGit(p.git);
@@ -408,9 +418,10 @@ export class HireDialog {
       const prompt = this.f.prompt;
       this.f = { ...formFromPrepare(p, options), prompt };
       if (this.typedLabel !== null) this.f.label = this.typedLabel;
-      this.prepared = resolveChoice(options, p.choice ?? null);
+      // The note ("Floor default") is about the saved choice on the whole catalog, so it is not shown for a replacement.
+      this.prepared = resolveChoice(this.host.store.hireOptions, p.choice ?? null);
       // A reviewer's model wins over the floor's default (and is no longer "the floor default").
-      const want = this.prefill.choice ? resolveChoice(options, this.prefill.choice) : null;
+      const want = this.prefill.choice ? resolveVisibleChoice(options, this.prefill.choice) : null;
       if (want) {
         Object.assign(this.f, want);
         this.prepared = null;
@@ -484,6 +495,25 @@ export class HireDialog {
     return this.prep ? capacityView(this.prep.capacity, this.session) : null;
   }
 
+  /** The catalog as the dialog offers it: the models Settings leaves shown (the whole catalog without Settings). */
+  private options(): HireOptions {
+    const cat = this.host.store.hireOptions;
+    const prefs = this.host.modelPrefs;
+    return prefs ? visibleOptions(cat, (harness) => prefs.hidden(harness)) : cat;
+  }
+
+  /** The form holds a shown model: one it holds that is hidden falls to the first shown one (effort normalized). */
+  private resolveForm(): void {
+    this.f = { ...this.f, ...resolveVisibleChoice(this.options(), this.f) };
+  }
+
+  /** Settings changed what is shown: an open form that holds a hidden model takes the first shown one, and the chips redraw. */
+  private visibilityChanged(): void {
+    if (!this.dialog.open || this.state === 'hiring' || this.state === 'preparing') return;
+    this.resolveForm();
+    this.render();
+  }
+
   private blocker(): string | null {
     if (this.state === 'preparing') return 'Waiting for herdr-world…';
     if (this.state === 'failed') return this.statusText || 'herdr-world could not prepare the hire.';
@@ -491,7 +521,7 @@ export class HireDialog {
     const taken = this.takenBy();
     if (taken) return taken.why;
     if (this.host.unsupported('worker.hire')) return failureText('worker.hire', 'unknown_command', '');
-    return hireBlocker(this.f, this.host.store.hireOptions, this.capacity());
+    return hireBlocker(this.f, this.options(), this.capacity());
   }
 
   private gitView(g: HireGit | null): HireSummary['git'] {
@@ -512,7 +542,7 @@ export class HireDialog {
     const fv = this.host.store.floorView(this.session);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const taken = this.takenBy();
-    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version]);
+    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version]);
     // Typing (task, label, folder) only needs the button; everything else re-renders.
     if (key === this.renderedKey) {
       this.renderActions();
@@ -545,7 +575,7 @@ export class HireDialog {
 
     const ready = this.state === 'ready';
     const busy = this.state === 'hiring' || this.state === 'preparing';
-    const options = this.host.store.hireOptions;
+    const options = this.options();
 
     this.editor.busy = this.state === 'hiring';
 
@@ -555,12 +585,12 @@ export class HireDialog {
     if (this.prep) {
       const note = this.noteNow();
       const noteTape = note ? h('span', { class: 'tape tape--note', title: note === 'Floor default' ? 'The floor’s default hire (floor settings)' : 'What was hired on this floor last time' }, note) : null;
+      const models = modelsFor(options, this.f.harness);
       const agent = h(
         'div',
         { class: 'dd-agent' },
         chips('harness', 'Harness', Object.keys(options), this.f.harness, (v) => this.pick({ harness: v }), noteTape),
-        this.modelField(modelsFor(options, this.f.harness)),
-        chips('effort', 'Effort', effortsFor(options, this.f.harness, this.f.model), this.f.effort, (v) => this.pick({ effort: v })),
+        ...(models.length ? [this.modelField(models), chips('effort', 'Effort', effortsFor(options, this.f.harness, this.f.model), this.f.effort, (v) => this.pick({ effort: v }))] : [this.noModels()]),
       );
       const limits = planLimits(this.host.store.limits, [{ harness: this.f.harness, model: this.f.model }], this.host.now());
       const slot = h('div', { class: 'dd-plan-limits', 'data-hook': 'plan-limits' });
@@ -671,6 +701,15 @@ export class HireDialog {
     );
   }
 
+  /** A harness whose models are all hidden: why nothing can be picked, and the way to Settings. */
+  private noModels(): HTMLElement {
+    const total = this.host.store.hireOptions[this.f.harness]?.models.length ?? 0;
+    const label = HARNESS_LABEL[this.f.harness] ?? this.f.harness;
+    const text = total ? `All ${total} ${label} models are hidden, so there is nothing to hire with.` : 'This harness has no models to hire with.';
+    const open = this.host.showModelSettings && total ? h('button', { class: 'btn btn--sm', 'data-key': 'show-models', onclick: () => this.host.showModelSettings?.() }, 'Open Harness models') : null;
+    return h('div', { class: 'dd-field dd-callout', 'data-hook': 'no-models', role: 'status' }, h('p', {}, text), open);
+  }
+
   /** Up to a row of chips; a long list gets a filter and a grid (`modelList`). */
   private modelField(models: string[]): HTMLElement {
     if (models.length <= MODEL_LIST_AT) return chips('model', 'Model', models, this.f.model, (v) => this.pick({ model: v }));
@@ -760,9 +799,7 @@ export class HireDialog {
   }
 
   private pick(p: Partial<Pick<HireForm, 'harness' | 'model' | 'effort'>>): void {
-    const options = this.host.store.hireOptions;
-    const next = resolveChoice(options, { harness: p.harness ?? this.f.harness, model: p.model ?? this.f.model, effort: p.effort ?? this.f.effort });
-    if (!next) return;
+    const next = resolveVisibleChoice(this.options(), { harness: p.harness ?? this.f.harness, model: p.model ?? this.f.model, effort: p.effort ?? this.f.effort });
     if (next.harness !== this.f.harness) this.modelQuery = '';
     this.f = { ...this.f, ...next };
     this.render();
@@ -822,7 +859,11 @@ export class HireDialog {
       if (!r.ok) {
         // No worker.hire: the whole prompt stays, each failed chip says why and has its Retry.
         const msg = r.reason === 'upload' ? uploadFailedText(r.failed) : r.reason === 'serialize' ? serializeErrorText(r.error) : '';
-        if (open) this.state = 'ready';
+        // Back to the editable form: what was typed stays, and the choice is resolved against what Settings shows now.
+        if (open) {
+          this.state = 'ready';
+          this.resolveForm();
+        }
         if (msg && open) {
           this.uploadFailed = r.reason === 'upload';
           this.setStatus(msg, true);
@@ -868,6 +909,8 @@ export class HireDialog {
       this.host.toast(msg, 'error');
       return;
     }
+    // Back to the editable form: the submitted choice is kept until now, then resolved against what Settings shows.
+    this.resolveForm();
     this.setStatus(msg, true);
     this.render();
     if (r.code === 'capacity' || r.code === 'fetch_failed') void this.recheck();
