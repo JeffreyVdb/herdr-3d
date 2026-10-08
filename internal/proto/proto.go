@@ -419,16 +419,21 @@ type WorkerDigest struct {
 	TaskSource string `json:"task_source,omitempty"`
 	Now        string `json:"now,omitempty"`
 	NowSource  string `json:"now_source,omitempty"`
-	// NowAt is when Now was written, unix ms (a recap's line).
+	// NowAt is when Now was written, unix ms: a recap's time, or when the
+	// model wrote a line (#198, a cached one's too).
 	NowAt int64 `json:"now_at,omitempty"`
 	// TaskStatus and NowStatus (#174): while the model's line is awaited or
 	// its attempt failed, and the line shown is a fallback; absent otherwise.
+	// #198: NowStatus also goes with a model's now line (NowSource "llm")
+	// when a refresh of it from newer steps failed, "retrying" or "failed"
+	// only (never "pending"): the line shown is the model's previous one.
 	TaskStatus *DigestLineStatus `json:"task_status,omitempty"`
 	NowStatus  *DigestLineStatus `json:"now_status,omitempty"`
 }
 
 // DigestLineStatus is what became of the model's line (#174), while the
-// overview shows a fallback in its place: State "pending" (a call is out),
+// overview shows a fallback in its place (or, #198, the model's previous now
+// line after a refresh failed): State "pending" (a call is out),
 // "retrying" (the last attempt failed, the next is at RetryAt) or "failed"
 // (it failed and nothing is scheduled: a retry, a new prompt, a setting or
 // the next turn starts it again). Reason is the failure's code: an `ai.*`

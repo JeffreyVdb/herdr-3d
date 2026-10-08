@@ -2225,8 +2225,12 @@ export interface WorkerDigest {
   now_source?: 'recap' | 'title' | 'llm' | string;
   /** Unix ms (bridge clock) the `now` line was written: a recap's time, or when the model wrote an `llm` line (#198: not the time of the activity it sums up). */
   now_at?: number;
-  /** #174: what became of the model's line while a fallback shows in its place (absent: nothing awaited). */
+  /** #174: what became of the model's line while a fallback shows in its place (absent: nothing awaited); never with `task_source` `llm`. */
   task_status?: DigestLineStatus;
+  /**
+   * #174: the same for the now line. #198: with `now_source` `llm` too, but only `retrying` or `failed`: a refresh from
+   * newer activity failed and the model's previous line (written at `now_at`) still shows; never `pending` there.
+   */
   now_status?: DigestLineStatus;
 }
 

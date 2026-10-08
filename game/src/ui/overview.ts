@@ -665,10 +665,11 @@ export class OverviewOverlay {
   }
 
   private nowEl(r: OverviewWorkerRow, now: number): HTMLElement {
-    const p = h('p', { class: `ov-line ov-now${r.now?.status && !r.now.llm ? ' ov-line--status' : ''}` }, h('b', {}, 'Now'));
+    const p = h('p', { class: `ov-line ov-now${r.now?.status ? ' ov-line--status' : ''}` }, h('b', {}, 'Now'));
     if (r.now) p.append(h('span', { class: 'ov-now-text' }, r.now.text));
+    // #198: a model's line keeps its mark and age; a failed refresh of it shows after them, with Retry.
     if (r.now?.llm) p.append(aiMarkEl(r.now, now));
-    else if (r.now) p.append(...statusEls(r.now, 'now'));
+    if (r.now) p.append(...statusEls(r.now, 'now'));
     if (r.activity) p.append(h('span', { class: 'ov-act' }, r.activity));
     return p;
   }
@@ -881,7 +882,8 @@ export class OverviewOverlay {
 
 /** A worker row's spoken label: who, the ticket, the lines with what became of them, the status and how long. */
 function rowLabel(r: OverviewWorkerRow, now: number): string {
-  const ai = (l: OverviewLine) => (l.llm && l.at ? ` (AI summary, ${ageText(l.at, now)})` : statusLabel(l, 'now'));
+  const ai = (l: OverviewLine) =>
+    l.llm && l.at ? ` (AI summary, ${ageText(l.at, now)}${l.status ? `; ${lineStatusText(l.status, 'now', true).chip}` : ''})` : statusLabel(l, 'now');
   return [r.name, r.tag, r.model, r.ticket ? `${r.ticket.key}${r.ticket.title ? ` ${r.ticket.title}` : ''}` : null, r.task ? `Task: ${r.task.text}${statusLabel(r.task, 'task')}` : null, r.now ? `Now: ${r.now.text}${ai(r.now)}` : null, sinceText(r.display, r.since, now)]
     .filter(Boolean)
     .join(' · ');
@@ -898,17 +900,20 @@ function lineEl(cls: string, label: string, line: OverviewLine, kind: 'task' | '
   return h('p', { class: `ov-line ${cls}${line.status ? ' ov-line--status' : ''}` }, h('b', {}, label), h('span', {}, line.text), line.llm ? h('span', { class: 'ov-llm', title: 'Summarised by the AI model' }, 'AI') : null, ...statusEls(line, kind));
 }
 
-/** #174: where the AI badge would be, what became of the model's line: a chip (its words in the title and for a screen reader), and Retry when it helps. */
+/**
+ * #174: where the AI badge would be, what became of the model's line: a chip (its words in the title and for a screen
+ * reader), and Retry when it helps. #198: after the badge of a model's now line, a failed refresh of it.
+ */
 function statusEls(line: OverviewLine, kind: 'task' | 'now'): HTMLElement[] {
   if (!line.status) return [];
-  const t = lineStatusText(line.status, kind);
-  const chip = h('span', { class: `ov-ai-state ov-ai-state--${line.status.state}`, title: t.detail, role: 'img', 'aria-label': t.detail }, t.chip);
+  const t = lineStatusText(line.status, kind, line.llm);
+  const chip = h('span', { class: `ov-ai-state ov-ai-state--${line.status.state}${line.llm ? ' ov-ai-state--kept' : ''}`, title: t.detail, role: 'img', 'aria-label': t.detail }, t.chip);
   return t.retry ? [chip, h('button', { class: 'ov-retry', tabindex: '-1', 'data-retry': '1', title: 'Try the AI summary again (R)' }, 'Retry')] : [chip];
 }
 
 /** The row's spoken label gets the chip's short words: the rest is on the chip. */
 function statusLabel(line: OverviewLine, kind: 'task' | 'now'): string {
-  return line.status ? ` (${lineStatusText(line.status, kind).chip})` : '';
+  return line.status ? ` (${lineStatusText(line.status, kind, line.llm).chip})` : '';
 }
 
 function sameView(a: OverviewView, b: OverviewView): boolean {

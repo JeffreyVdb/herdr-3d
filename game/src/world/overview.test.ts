@@ -142,11 +142,13 @@ describe('buildOverview: a row', () => {
     expect(row(s, 'same').tag).toBe('CODE r1');
   });
 
-  it('carries the status of a line the model has not written, never of one it has (#174)', () => {
+  it('carries the status of a line the model has not written; of a model’s now line only a failed refresh (#174, #198)', () => {
     const src = store([
       worker('a', 'top', { desk_index: 0, digest: { task: 'Investigate. Missing diffs.', task_source: 'prompt', now_source: 'title', task_status: { state: 'retrying', reason: 'truncated', attempts: 2, retry_at: NOW + 5 }, now_status: { state: 'failed', reason: 'timeout' } }, title: 'Reading' }),
       worker('b', 'top', { desk_index: 1, digest: { task: 'x', task_source: 'llm', now: 'y', now_source: 'llm', task_status: { state: 'failed' }, now_status: { state: 'pending' } } }),
       worker('c', 'top', { desk_index: 2, digest: { task: 'z', task_source: 'prompt', now_source: 'title', task_status: { state: 'bogus' } as never }, title: 't' }),
+      worker('d', 'top', { desk_index: 3, digest: { now: 'Reading the lift code', now_source: 'llm', now_at: NOW - 60_000, now_status: { state: 'failed', reason: 'timeout', attempts: 1 } } }),
+      worker('e', 'top', { desk_index: 4, digest: { now: 'Reading the lift code', now_source: 'llm', now_at: NOW - 60_000, now_status: { state: 'retrying', reason: 'timeout', attempts: 1, retry_at: NOW + 5 } } }),
     ]);
     const rows = buildOverview(src, 'top').nodes.map((n) => n.row as OverviewWorkerRow);
     expect(rows[0]?.task?.status).toEqual({ state: 'retrying', reason: 'truncated', attempts: 2, retry_at: NOW + 5 });
@@ -154,6 +156,9 @@ describe('buildOverview: a row', () => {
     expect(rows[1]?.task?.status).toBeUndefined();
     expect(rows[1]?.now?.status).toBeUndefined();
     expect(rows[2]?.task?.status).toBeUndefined();
+    // #198: the model's previous now line still shows, and its refresh failed: both, with the line's time.
+    expect(rows[3]?.now).toEqual({ text: 'Reading the lift code', source: 'llm', llm: true, at: NOW - 60_000, status: { state: 'failed', reason: 'timeout', attempts: 1 } });
+    expect(rows[4]?.now?.status).toEqual({ state: 'retrying', reason: 'timeout', attempts: 1, retry_at: NOW + 5 });
   });
 
   it('a one-off worker’s task, and every worker’s now line from the digest: the recap, else its title; the activity chip apart', () => {

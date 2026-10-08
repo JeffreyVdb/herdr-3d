@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import type { Box3 } from '../world/layout';
 import { aiLabel, BLINK_MS, orchWords, sinceText, visibleRows, type OverviewData, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
+import { lineStatusText } from '../world/digestSettings';
 import { STATUS_CSS, STATUS_CHIP_CSS } from './palette';
 import { FONT } from './cards/atlasCards';
 
@@ -574,20 +575,23 @@ export function lineLLM(r: OverviewWorkerRow): boolean {
   return !!(r.task?.llm || r.now?.llm);
 }
 
-/** #198: the words of the row's AI mark (null: none): the page's, `AI · 2m ago` when the model wrote the now line, else
- * `AI`. Pure (for its test). */
+/** #198: the words of the row's AI mark (null: none): the page's, `AI · 2m ago` when the model wrote the now line, with
+ * a failed refresh of it after (`AI · 2m ago · refresh failed`, the page's chip), else `AI`. Pure (for its test). */
 export function lineMark(r: OverviewWorkerRow, now: number): string | null {
   if (!lineLLM(r)) return null;
-  return r.now?.llm ? aiLabel(r.now, now) : 'AI';
+  if (!r.now?.llm) return 'AI';
+  const label = aiLabel(r.now, now);
+  return r.now.status ? `${label} · ${lineStatusText(r.now.status, 'now', true).chip}` : label;
 }
 
 /** The page's AI mark on the wall: `label` in an outlined box before a line on `base`; returns the width it takes with
- * its gap (0 when `max` has no room for it, the plain "AI" when it has room for that only). */
+ * its gap (0 when `max` has no room for it). Short of room it drops its last ` · ` parts (the failed refresh, then the
+ * age) down to the plain "AI". */
 function aiMark(g: CanvasRenderingContext2D, label: string, x: number, base: number, u: number, max = Infinity): number {
   g.font = `400 ${Math.round(u * 2.2)}px ${MONO}`;
   let w = g.measureText(label).width + u * 1.2;
-  if (w + u > max && label !== 'AI') {
-    label = 'AI';
+  while (w + u > max && label.includes(' · ')) {
+    label = label.slice(0, label.lastIndexOf(' · '));
     w = g.measureText(label).width + u * 1.2;
   }
   if (w + u > max) return 0;

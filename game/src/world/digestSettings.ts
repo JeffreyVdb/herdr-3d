@@ -176,13 +176,24 @@ export interface LineStatusText {
 
 /**
  * What a line's status says (#174): shown where the AI badge would be, while a fallback stands in for the model's line.
- * `kind` is the line it is of: the task is asked again by itself; the now line waits for the next turn.
+ * `kind` is the line it is of: the task is asked again by itself; the now line waits for the next turn. `kept` (#198):
+ * the line shown is the model's previous now line, beside its AI mark, and a refresh of it from newer activity failed.
  */
-export function lineStatusText(st: DigestLineStatus, kind: 'task' | 'now'): LineStatusText {
+export function lineStatusText(st: DigestLineStatus, kind: 'task' | 'now', kept = false): LineStatusText {
   const why = reasonWord(st.reason);
   const tries = st.attempts && st.attempts > 1 ? ` after ${st.attempts} attempts` : '';
   const settings = ' Raise the completion budget or lower the reasoning effort under Settings › Floor overview summaries.';
   const hint = st.reason === 'truncated' ? settings : '';
+  if (kept && st.state !== 'pending') {
+    const failed = `Refreshing this AI summary from newer activity failed${tries}: ${why}. The summary shown is the previous one; its age is when it was written.${hint}`;
+    return st.state === 'retrying'
+      ? {
+          chip: st.retry_at ? `refresh failed · retry ${clock(st.retry_at)}` : 'refresh failed · retrying',
+          detail: `${failed} It tries again${st.retry_at ? ` at ${clock(st.retry_at)}` : ' soon'}. Retry now with R.`,
+          retry: true,
+        }
+      : { chip: 'refresh failed', detail: `${failed} Retry now with R; it also tries again by itself with newer activity or when the turn ends.`, retry: true };
+  }
   switch (st.state) {
     case 'pending':
       return st.reason === 'daily_cap'

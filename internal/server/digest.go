@@ -49,8 +49,10 @@ package server
 // effort, the budget, a passing test, the switch) and by digest.retry; a
 // call that could not go (busy, off, capped) never counts as an attempt.
 //
-// #198: a failed now line keeps the previous line (or the fallback). Its
-// steps are not sent again by themselves; newer steps are, once the gap and
+// #198: a failed now line keeps the previous line (or the fallback), and
+// NowStatus says it failed or when it is retried, beside a kept model's line
+// too (not pending there: a refresh on its way is no news). Its steps are
+// not sent again by themselves; newer steps are, once the gap and
 // the retry policy's delay after the n-th failure in a row (DigestRetry, as
 // a task line's) are over, until the policy says no more (digest.MaxAttempts
 // in all). Then nothing goes by itself until a turn ends, the config
@@ -198,6 +200,9 @@ func (h *Hub) refreshDigest(id string) {
 // workerDigest is the digest a worker shows: the fallbacks, and the model's
 // lines in their place while the feature is ready: the task line of a
 // one-off worker's current prompt, the now line unless a recap is newer.
+// A model's now line kept after a refresh of newer steps failed carries that
+// failure (failed, or retrying with its time, #198); never pending: a
+// refresh on its way is no news while the line shows.
 func (h *Hub) workerDigest(id string, w *proto.Worker) *proto.WorkerDigest {
 	d := h.dg[id]
 	out := composeDigest(d)
@@ -214,8 +219,11 @@ func (h *Hub) workerDigest(id string, w *proto.Worker) *proto.WorkerDigest {
 	if out.TaskSource != proto.DigestLLM && oneOff(w) {
 		out.TaskStatus = h.taskStatus(id, l, d)
 	}
-	if out.NowSource != proto.DigestLLM && d.Steps > 0 {
-		out.NowStatus = h.nowStatus(id, l)
+	if d.Steps > 0 {
+		st := h.nowStatus(id, l)
+		if out.NowSource != proto.DigestLLM || (st != nil && st.State != proto.LinePending) {
+			out.NowStatus = st
+		}
 	}
 	return out
 }

@@ -152,3 +152,62 @@ test('summaries: off until a test passed, then the LLM writes the floor’s line
     await llm.close();
   }
 });
+
+// #198: a refresh of a model's now line that failed. The line, its AI mark and age stay; the failure follows them,
+// quietly, with Retry (pointer and R). The fixture bridge never fails a summary, so Turnip's digest is given that state
+// on its way to the page (the frames the game sends are kept).
+test('a failed refresh of an AI now line keeps the line and its age, says so, and Retry asks again', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  const sent: Array<{ t: string; args?: { id?: string } }> = [];
+  const at = Date.now() - 4 * 60_000;
+  const patch = (w: { label?: string; name?: string; digest?: Record<string, unknown> }) => {
+    if ((w.label === 'Turnip' || w.name === 'Turnip') && w.digest) {
+      Object.assign(w.digest, { now: NOW, now_source: 'llm', now_at: at, now_status: { state: 'failed', reason: 'timeout', attempts: 1 } });
+    }
+  };
+  await page.routeWebSocket(/\/fixture\//, (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((m) => {
+      if (typeof m === 'string') sent.push(JSON.parse(m));
+      server.send(m);
+    });
+    server.onMessage((m) => {
+      if (typeof m !== 'string') return ws.send(m);
+      const f = JSON.parse(m);
+      if (f.t === 'world.snapshot') for (const w of f.world.workers) patch(w);
+      if (f.t === 'worker.upsert') patch(f.worker);
+      ws.send(JSON.stringify(f));
+    });
+  });
+  const retries = () => sent.filter((f) => f.t === 'digest.retry');
+  await openGame(page, 'demo-m118', '', 'play=none&sim=1&simms=150');
+  await page.evaluate(() => window.__h3d.enterFloor('lab'));
+  await frames(page, 3);
+  await page.keyboard.press('KeyO');
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.overview()))?.page?.open).toBe(true);
+  const row = page.locator('.ov-row', { hasText: 'Turnip' });
+  const line = row.locator('.ov-now');
+  await expect(line).toContainText(NOW);
+  await expect(line.locator('.ov-llm')).toHaveText(/^AI · \d+m ago$/);
+  const chip = line.locator('.ov-ai-state');
+  await expect(chip).toHaveText('refresh failed');
+  await expect(chip).toHaveAttribute('aria-label', /^Refreshing this AI summary from newer activity failed: the model did not answer in time\. The summary shown is the previous one/);
+  await expect(row).toHaveAttribute('aria-label', /Now: .*\(AI summary, \d+m ago; refresh failed\)/);
+  await shot(page, 'm198-refresh-failed');
+  await line.locator('.ov-retry').click();
+  await expect.poll(() => retries().length).toBe(1);
+  expect(retries()[0]?.args?.id).toBeTruthy();
+  await page.keyboard.press('KeyR');
+  await expect.poll(() => retries().length).toBe(2);
+  expect(retries()[1]?.args?.id).toBe(retries()[0]?.args?.id);
+  expect((await page.evaluate(() => window.__h3d.overview()))?.page?.open).toBe(true); // not the transcript
+  // A phone: the mark, the failure and Retry go under the line, all of them on screen.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await line.scrollIntoViewIfNeeded();
+  await expect(line.locator('.ov-retry')).toBeVisible();
+  const [text, mark] = await Promise.all([line.locator('.ov-now-text').boundingBox(), line.locator('.ov-llm').boundingBox()]);
+  expect(text && mark && mark.y >= text.y + text.height - 1).toBe(true);
+  await shot(page, 'm198-refresh-failed-narrow');
+  clean();
+});

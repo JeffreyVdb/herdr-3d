@@ -108,6 +108,9 @@ describe('the wall’s what column (#118)', () => {
     expect(lineMark(row({ now: llmNow }), at + 9 * 60_000)).toBe('AI · 9m ago');
     expect(lineMark(row({ task: { text: 'Fix it', source: 'llm', llm: true }, now }), at)).toBe('AI');
     expect(lineMark(row({ now: { ...now, source: 'llm', llm: true } }), at)).toBe('AI');
+    // A failed refresh of the line: the page's chip after the age (the wall drops it first when short of room).
+    expect(lineMark(row({ now: { ...llmNow, status: { state: 'failed', reason: 'timeout' } } }), at + 2 * 60_000)).toBe('AI · 2m ago · refresh failed');
+    expect(lineMark(row({ now: { ...llmNow, status: { state: 'retrying', reason: 'timeout', retry_at: at + 10 * 60_000 } } }), at)).toMatch(/^AI · just now · refresh failed · retry \d\d:\d\d/);
   });
 
   it('an orchestrator’s round: in its chip (both modes) and its meta line with the phase and pass (two-line rows)', () => {

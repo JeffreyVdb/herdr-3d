@@ -840,6 +840,12 @@
   border-color: var(--ov-accent);
   color: var(--ov-text);
 }
+/* #198: after the badge of a model's line that is still shown, a refresh of it that failed: quieter, the line is still
+   usable; the accent only hints at it (Retry carries the full accent). */
+.ov-ai-state--kept {
+  border-color: color-mix(in srgb, var(--ov-accent) 55%, transparent);
+  color: var(--ov-text-2);
+}
 .ov-retry {
   flex: none;
   padding: 0 2px;
@@ -1087,7 +1093,12 @@
   .ov-line--status > span:not(.ov-act, .ov-llm, .ov-ai-state) {
     flex: 1 1 calc(100% - 42px);
   }
-  .ov-line--status > .ov-ai-state {
+  .ov-line--status > .ov-ai-state,
+  .ov-line--status > .ov-llm {
     margin-left: 42px; /* the label's 34px and the gap: under the line's text */
+  }
+  /* #198: a model's line: its badge leads the second row, the failed refresh follows it. */
+  .ov-line--status > .ov-llm + .ov-ai-state {
+    margin-left: 0;
   }
 }

@@ -428,3 +428,135 @@ func TestDigestNowCachedLineKeepsItsTime(t *testing.T) {
 		t.Fatalf("now calls = %d, want 1 (the second line is the cache's)", n)
 	}
 }
+
+// upserts counts the worker.upserts of "w" a client was sent.
+func upserts(t *testing.T, c *Client) int {
+	t.Helper()
+	n := 0
+	for {
+		select {
+		case msg := <-c.send:
+			var ev struct {
+				T      string        `json:"t"`
+				Worker *proto.Worker `json:"worker"`
+			}
+			if err := json.Unmarshal(msg, &ev); err != nil {
+				t.Fatal(err)
+			}
+			if ev.T == proto.EvWorkerUpsert && ev.Worker != nil && ev.Worker.ID == "w" {
+				n++
+			}
+		default:
+			return n
+		}
+	}
+}
+
+// U1: a refresh of newer steps that fails keeps the model's previous line and
+// its time, and says so beside it: failed (its steps were tried), retrying
+// with its time (newer steps wait for the delay); never pending while a
+// refresh is only on its way. The next success, a manual retry that works
+// and a reset clear it.
+func TestDigestNowFailedRefreshKeepsLineWithStatus(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Date(2026, 10, 8, 10, 0, 0, 0, time.Local)
+	h, llm := dgHubFor(t, &clock, false)
+	h.opts.DigestGap = time.Minute
+	h.opts.DigestRetry = func(n int) (time.Duration, bool) { return 10 * time.Minute, n < 3 }
+	broken := false
+	llm.Func = func(context.Context, ai.Request) (string, error) {
+		if broken {
+			return "", &ai.Error{Kind: ai.KindTimeout, Msg: "slow"}
+		}
+		return "Reading the lift code", nil
+	}
+	c := view(ctx, h)
+	steps := []string{"Reading the lift code"}
+	more := func() {
+		steps = append(steps, "Step "+clock.Format("15:04"))
+		h.digestSeen(ctx, digestUpdate{id: "w", epoch: 1, digest: dgMid(0, steps...)})
+	}
+	dg := func() *proto.WorkerDigest { return h.workers["w"].Digest }
+	h.digestSeen(ctx, digestUpdate{id: "w", epoch: 1, digest: dgMid(0, steps...)})
+	runOp(t, h)
+	written := clock.UnixMilli()
+	if d := dg(); d.NowSource != proto.DigestLLM || d.NowStatus != nil {
+		t.Fatalf("after the first line: %+v", d)
+	}
+	// Newer steps of the same turn, after the gap: the refresh is out, the
+	// line shows with no status (no pending beside a model's line).
+	clock = clock.Add(2 * time.Minute)
+	broken = true
+	more()
+	if !h.dgs.inflight {
+		t.Fatal("no refresh out")
+	}
+	if d := dg(); d.NowSource != proto.DigestLLM || d.NowStatus != nil {
+		t.Fatalf("refresh on its way: %+v", d)
+	}
+	runOp(t, h)
+	failedAt := clock
+	d := dg()
+	if d.NowSource != proto.DigestLLM || d.Now != "Reading the lift code" || d.NowAt != written {
+		t.Fatalf("the previous line is not kept: %+v", d)
+	}
+	if s := d.NowStatus; s == nil || s.State != proto.LineFailed || s.Reason != "timeout" || s.Attempts != 1 {
+		t.Fatalf("failed refresh: status %+v", s)
+	}
+	// Newer steps within the retry delay: retrying, at its end; more of them
+	// move nothing (no worker.upsert per step).
+	clock = clock.Add(time.Minute)
+	more()
+	noOp(t, h)
+	if s := dg().NowStatus; s == nil || s.State != proto.LineRetrying || s.RetryAt != failedAt.Add(10*time.Minute).UnixMilli() || s.Reason != "timeout" {
+		t.Fatalf("retrying: status %+v", s)
+	}
+	upserts(t, c)
+	clock = clock.Add(time.Minute)
+	more()
+	more()
+	noOp(t, h)
+	if n := upserts(t, c); n != 0 {
+		t.Fatalf("%d worker.upserts for steps while retrying", n)
+	}
+	// The retry works: the status goes, the line is new.
+	broken = false
+	clock = failedAt.Add(10 * time.Minute)
+	fire(ctx, h)
+	runOp(t, h)
+	if d := dg(); d.NowSource != proto.DigestLLM || d.NowStatus != nil || d.NowAt != clock.UnixMilli() {
+		t.Fatalf("after the next success: %+v", d)
+	}
+	// Fails again; a manual retry (digest.retry) that works clears it too.
+	broken = true
+	clock = clock.Add(2 * time.Minute)
+	more()
+	runOp(t, h)
+	if s := dg().NowStatus; s == nil || s.State != proto.LineFailed {
+		t.Fatalf("second failure: status %+v", s)
+	}
+	broken = false
+	if n := h.digestForgive("w"); n != 1 {
+		t.Fatalf("forgiven = %d", n)
+	}
+	h.pumpDigest(ctx)
+	runOp(t, h)
+	if d := dg(); d.NowSource != proto.DigestLLM || d.NowStatus != nil {
+		t.Fatalf("after digest.retry: %+v", d)
+	}
+	// Fails again; a reset (/clear) drops the line and the failure with it.
+	broken = true
+	clock = clock.Add(2 * time.Minute)
+	more()
+	runOp(t, h)
+	if s := dg().NowStatus; s == nil || s.State != proto.LineFailed {
+		t.Fatalf("third failure: status %+v", s)
+	}
+	cleared := dgMid(0, "Reading the stairs code")
+	cleared.Resets = 1
+	h.digestSeen(ctx, digestUpdate{id: "w", epoch: 1, digest: cleared})
+	noOp(t, h) // the gap holds
+	if d := dg(); d.NowSource == proto.DigestLLM || (d.NowStatus != nil && (d.NowStatus.State != proto.LinePending || d.NowStatus.Attempts != 0)) {
+		t.Fatalf("after a reset: %+v (status %+v)", d, d.NowStatus)
+	}
+}

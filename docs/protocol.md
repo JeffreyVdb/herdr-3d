@@ -3014,7 +3014,7 @@ client shows no now line. A worker with neither a prompt nor a step has no diges
 | `task`, `task_source` | string ≤ 80 chars, optional | what the worker was asked to do. `ai_title`: Claude Code's own `ai-title` metadata line (the latest); `prompt`: else the first genuine prompt (system reminders out, a paste unwrapped, `[image]` for an image marker) cut to its first sentence, or (#174), when that sentence says nothing of the task ("Please investigate.", "Please create a ticket."), joined with the sentences after it up to and including the first that does (greetings left out, a leading "please" dropped), at most 80 characters. Codex has no ai-title: `prompt` only. A slash command counts as the prompt `/name args` only when it has arguments. Absent when there is neither. |
 | `now`, `now_source` | string ≤ 100 chars, `now_source` set from the first assistant step | what it is doing now. `recap`: Claude Code's latest `system/away_summary` (without its "(disable recaps in /config)"), only while no prompt, turn start or assistant step came after it; `now_at` is its time (unix ms). `title`: no `now` text: the line is the worker's own `title`, which moves on the hot `worker.status` path and is never copied into the digest. |
 | `now_at` | int, optional | unix ms (bridge clock) the `now` line was written: a `recap`'s time, or when the model wrote an `llm` line (#198: its generation time, not the time of the activity it sums up; a client shows its age, e.g. "AI · 2m ago") |
-| `task_status`, `now_status` | object, optional | #174: what became of the model's line while a fallback is shown in its place (never with source `llm`; absent while nothing is awaited or the feature is off or not ready): `{"state": "pending"\|"retrying"\|"failed", "reason"?, "attempts"?, "retry_at"?}`. `pending`: a call is out, or it waits for the daily budget (`reason` `daily_cap`); `retrying`: the last attempt failed and the next goes at `retry_at` (unix ms); `failed`: it failed and nothing is scheduled by itself (the task: its attempts are used up; the now line: its steps failed and it waits for newer ones, or its attempts are used up and it waits for the turn to end). `reason` is the failure's kind: `truncated`, `empty_answer`, `bad_response`, `provider_failed`, `timeout`, `rate_limited`, `auth_failed`, `unreachable`, `bad_config`, `no_line` (the answer held no line) or `failed`; `attempts` how many calls failed. A client shows it beside the line and offers `digest.retry` |
+| `task_status`, `now_status` | object, optional | #174: what became of the model's line while a fallback is shown in its place (absent while nothing is awaited or the feature is off or not ready). Never with `task_source` `llm`. With `now_source` `llm` (#198) only `retrying` or `failed`: a refresh of the line from newer steps failed, and the line shown is still the model's previous one, written at `now_at`; never `pending` there (a refresh on its way is not shown). Shape: `{"state": "pending"\|"retrying"\|"failed", "reason"?, "attempts"?, "retry_at"?}`. `pending`: a call is out, or it waits for the daily budget (`reason` `daily_cap`); `retrying`: the last attempt failed and the next goes at `retry_at` (unix ms); `failed`: it failed and nothing is scheduled by itself (the task: its attempts are used up; the now line: its steps failed and it waits for newer ones, or its attempts are used up and it waits for the turn to end). `reason` is the failure's kind: `truncated`, `empty_answer`, `bad_response`, `provider_failed`, `timeout`, `rate_limited`, `auth_failed`, `unreachable`, `bad_config`, `no_line` (the answer held no line) or `failed`; `attempts` how many calls failed. A client shows it beside the line (beside its AI mark for an `llm` line) and offers `digest.retry` |
 
 `llm` is the source of a line the configured LLM wrote, with [floor overview summaries](#floor-overview-summaries) on:
 it takes the place of `ai_title` / `prompt` (a one-off worker's task) or `recap` / `title` (the now line; `now_at` is
@@ -3071,7 +3071,8 @@ model, key or `extra_body`, the reasoning effort, the completion budget, a passi
 `digest.retry`. A call that could not go (the daily cap reached, the feature off or the LLM not ready, another call
 of the feature out) is **no attempt**: nothing was sent and nothing counted. A failed call is a call: it counts
 toward `daily_cap`, its input is not cached, and a cached input still costs nothing. The now line (#198) keeps the
-previous line, or the fallback, when its call fails; its steps are not sent again by themselves. Newer steps are,
+previous line, or the fallback, when its call fails, and its `now_status` says so (also beside a kept `llm` line); its
+steps are not sent again by themselves. Newer steps are,
 after the same delays (**1, 5 and 15 minutes** after the 1st, 2nd and 3rd failure in a row, and the 60 s gap; its
 `now_status` is `retrying` with that time while newer steps wait), up to **4 attempts**; then `failed`, and nothing
 more goes by itself until the turn ends. A turn end, a change of the feature's config, `digest.retry` (which sends the
@@ -3082,8 +3083,10 @@ one at a time and for a floor someone is viewing.
 and pack up); `daily_cap` calls a day (default **300**, 1–10,000; `calls_today` counts them, the bridge's local day),
 past it no call until tomorrow (or a higher cap) and the lines written stay, a cached line still applies, and a line
 that waits for the budget is written once there is some again; and a cache of the lines by the SHA-256 of what is sent, in
-SQLite `digest_cache (key, line)`, the newest 2,000: the same input again (a restart's re-read of a transcript
-included) costs nothing. Only the hash and the line are stored, never a transcript's text.
+SQLite `digest_cache (key, line, used_at)`, the newest 2,000: the same input again (a restart's re-read of a transcript
+included) costs nothing, and its line keeps the time the model wrote it (`used_at`; #198: a cached `llm` now line's
+`now_at` is that time, not when it was found again). Only the hash, the line and that time are stored, never a
+transcript's text.
 
 **Settings** (bridge-wide, SQLite `digest_settings`): `digest.get` answers them, the snapshot's `digest` holds them,
 `digest.update` carries them flat.
