@@ -18,9 +18,12 @@ import {
   leftovers,
   Reservations,
   resolveChoice,
+  resolveVisibleChoice,
+  visibleOptions,
   worktreeUsable,
 } from './hire';
 import { DEFAULT_HIRE_OPTIONS, type FloorView } from './store';
+import type { HireOptions } from '../net/protocol';
 
 const H = DEFAULT_HIRE_OPTIONS;
 const NOW = 1_790_600_000_000;
@@ -235,5 +238,71 @@ describe('fresh hires', () => {
     // A bridge clock a little ahead still counts; far ahead does not.
     expect(isFreshHire(NOW + 3000, NOW)).toBe(true);
     expect(isFreshHire(NOW + 60_000, NOW)).toBe(false);
+  });
+});
+
+// Fixture slugs only: nothing in the app hides a model by default.
+const CAT: HireOptions = {
+  codex: { models: ['x-1', 'x-2', 'x-3'], efforts: ['low', 'high'], extra_efforts: { 'x-2': ['ultra'] } },
+  claude: { models: ['y-1', 'y-2'], efforts: ['low', 'high', 'max'] },
+};
+const hiding =
+  (map: Record<string, string[]>) =>
+  (harness: string): ReadonlySet<string> =>
+    new Set(map[harness] ?? []);
+
+describe('visible hire options (#194)', () => {
+  it('with nothing hidden, the whole catalog', () => {
+    expect(visibleOptions(CAT, hiding({}))).toEqual(CAT);
+  });
+
+  it('drop hidden models, keep catalog order, efforts and extra efforts; the catalog itself is untouched', () => {
+    const v = visibleOptions(CAT, hiding({ codex: ['x-1'] }));
+    expect(v.codex).toEqual({ models: ['x-2', 'x-3'], efforts: ['low', 'high'], extra_efforts: { 'x-2': ['ultra'] } });
+    expect(v.claude).toEqual(CAT.claude);
+    expect(CAT.codex?.models).toEqual(['x-1', 'x-2', 'x-3']);
+  });
+
+  it('keep a harness whose models are all hidden, with no models', () => {
+    const v = visibleOptions(CAT, hiding({ codex: ['x-1', 'x-2', 'x-3'] }));
+    expect(Object.keys(v)).toEqual(['codex', 'claude']);
+    expect(v.codex?.models).toEqual([]);
+  });
+
+  it('a model the bridge no longer lists is simply not in the catalog to filter', () => {
+    expect(visibleOptions(CAT, hiding({ codex: ['gone'] })).codex?.models).toEqual(['x-1', 'x-2', 'x-3']);
+  });
+});
+
+describe('visible choice resolution (#194)', () => {
+  it('a hidden model falls to the first visible one of its harness, effort normalized against it', () => {
+    const v = visibleOptions(CAT, hiding({ codex: ['x-1', 'x-2'] }));
+    expect(resolveVisibleChoice(v, { harness: 'codex', model: 'x-1', effort: 'ultra' })).toEqual({ harness: 'codex', model: 'x-3', effort: 'high' });
+    expect(resolveVisibleChoice(visibleOptions(CAT, hiding({ codex: ['x-1'] })), { harness: 'codex', model: 'x-1', effort: 'ultra' })).toEqual({ harness: 'codex', model: 'x-2', effort: 'ultra' });
+  });
+
+  it('keeps a visible choice as it is, extra efforts included', () => {
+    const v = visibleOptions(CAT, hiding({ codex: ['x-1'] }));
+    expect(resolveVisibleChoice(v, { harness: 'codex', model: 'x-2', effort: 'ultra' })).toEqual({ harness: 'codex', model: 'x-2', effort: 'ultra' });
+  });
+
+  it('a harness with no visible model stays the harness, with an empty model and effort', () => {
+    const v = visibleOptions(CAT, hiding({ codex: ['x-1', 'x-2', 'x-3'] }));
+    expect(resolveVisibleChoice(v, { harness: 'codex', model: 'x-1', effort: 'high' })).toEqual({ harness: 'codex', model: '', effort: '' });
+    expect(resolveVisibleChoice(v, null)).toEqual({ harness: 'codex', model: '', effort: '' });
+  });
+
+  it('the Hire blocker says so for an all-hidden harness, and never accepts a hidden model', () => {
+    const v = visibleOptions(CAT, hiding({ codex: ['x-1', 'x-2', 'x-3'] }));
+    const f = { prompt: '', harness: 'codex', model: '', effort: '', label: '', cwd: '', worktree: false };
+    expect(hireBlocker(f, v, null)).toMatch(/hidden/);
+    const g = { ...f, harness: 'claude', model: 'y-1', effort: 'high' };
+    expect(hireBlocker(g, v, null)).toBeNull();
+    expect(hireBlocker({ ...g, model: 'y-2', effort: 'max' }, visibleOptions(CAT, hiding({ claude: ['y-2'] })), null)).toBe('Choose a model.');
+  });
+
+  it('the preselected choice is still resolved on the whole catalog: a hidden floor default is not the one the form opens on', () => {
+    const v = visibleOptions(CAT, hiding({ codex: ['x-1'] }));
+    expect(formFromPrepare(prep({ choice: { harness: 'codex', model: 'x-1', effort: 'high' } }), v)).toMatchObject({ model: 'x-2', effort: 'high' });
   });
 });

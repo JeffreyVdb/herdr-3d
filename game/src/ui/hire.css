@@ -571,6 +571,10 @@
 .dd-fetch p {
   flex: 1 1 260px;
 }
+/* #194: the empty state's way to Settings sits at its own width, not the callout's. */
+.dd-callout > .btn {
+  align-self: flex-start;
+}
 .dd-callout.dd-fetch p + .btn {
   margin-top: 0;
 }

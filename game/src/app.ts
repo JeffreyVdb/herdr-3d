@@ -72,6 +72,8 @@ import { LimitsWidget } from './ui/limits';
 // #100 the inbox chip under them
 import { InboxChip, type InboxEntry } from './ui/inbox';
 import { HirePrefs } from './ui/hirePrefs';
+import { HireModelPrefs } from './ui/hireModelPrefs';
+import { harnessModelsSection } from './ui/harnessModelsSection';
 import { onPlayerAct, waitForHire } from './ui/hireGoto';
 import { InboxPrefs } from './ui/inboxPrefs';
 import { inboxQueue, inboxReason, inboxWhere, type InboxCandidate } from './world/inbox';
@@ -180,6 +182,8 @@ export class App {
   readonly inbox: InboxChip;
   readonly inboxPrefs = new InboxPrefs();
   readonly hirePrefs = new HirePrefs(); // #116
+  /** #194: the models the Hire dialog shows, per harness (none hidden until the player hides one). */
+  readonly hireModelPrefs = new HireModelPrefs();
   /** #116: cancels the go-to still waiting for its new hire. */
   private stopHireGoto: (() => void) | null = null;
   private hireGotoGen = 0;
@@ -344,6 +348,8 @@ export class App {
       goTo: (s) => void this.goToFloor(s),
     });
     this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs, this.hirePrefs), { store: 'browser' });
+    // #194: which models of each harness the Hire dialog offers, under the display settings it sits beside.
+    this.settings.addSection('harness-models', 'Harness models', harnessModelsSection({ prefs: this.hireModelPrefs, options: () => this.store.hireOptions }), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
     // #100: how the inbox reaches you beyond its chip: desktop notifications and the chime.
     this.settings.addSection('notifications', 'Notifications', notifySection({ prefs: this.inboxPrefs, audio: this.audio }), { store: 'browser' });
@@ -529,7 +535,17 @@ export class App {
       now: () => Date.now(),
     };
     const upload = (f: Blob, hint: { label?: string; n?: number }, signal?: AbortSignal) => postUpload(this.url, f, hint, signal);
-    const hireHost = { ...dialogHost, upload, reserve: (s: string, d: number) => this.reserve(s, d), held: (s: string) => this.heldDesks(s) };
+    const hireHost = {
+      ...dialogHost,
+      upload,
+      reserve: (s: string, d: number) => this.reserve(s, d),
+      held: (s: string) => this.heldDesks(s),
+      modelPrefs: this.hireModelPrefs,
+      showModelSettings: () => {
+        this.settings.open();
+        this.settings.reveal('harness-models');
+      },
+    };
     this.hire = new HireDialog(o.host, { ...hireHost, goTo: (id) => this.goToNewHire(id), orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ session: s, desk: d }, true) } });
     // M6 start
     this.presetsPanel = new PresetsPanel(o.host, dialogHost);

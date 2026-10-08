@@ -700,3 +700,75 @@ dialog.settings {
     transition: none;
   }
 }
+
+/* #194: Settings → Harness models. One group per harness; a row per model: its switch, its exact slug, what the switch
+ * does. A row hidden by the filter is out of the flow, so the list shortens with it. */
+.hm-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.hm-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+.hm-row[hidden] {
+  display: none;
+}
+.hm-row:hover,
+.hm-row:focus-within {
+  background: rgb(255 255 255 / 6%);
+}
+.hm-row .settings-switch {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.hm-row input:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+}
+.hm-slug {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, 'JetBrains Mono Variable', monospace;
+  font-size: 12.5px;
+  color: var(--text-on-ink);
+}
+.hm-action {
+  margin-left: auto;
+  color: var(--text-on-ink-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.hm-stale {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+.hm-stale[hidden] {
+  display: none;
+}
+.hm-stale-title {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-on-ink-2);
+}
+.hm-stale .hm-row {
+  padding-left: 0;
+}
+.hm-stale .hm-row .btn {
+  flex: none;
+  margin-left: auto;
+}

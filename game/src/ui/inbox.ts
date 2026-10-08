@@ -1,4 +1,5 @@
 import type { InboxReason } from '../world/inbox';
+import { HARNESS_LABEL } from '../world/hire';
 import { inboxAge } from '../world/inbox';
 import { CornerWatch } from './corner';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
@@ -242,11 +243,10 @@ export class InboxChip {
   }
 }
 
-const HARNESS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex' };
 
 function row(e: InboxEntry, now: number): HTMLLIElement {
   const age = inboxAge(e.since, now);
-  const agent = (e.harness && HARNESS[e.harness]) || e.harness || 'Agent';
+  const agent = (e.harness && HARNESS_LABEL[e.harness]) || e.harness || 'Agent';
   const label = `${e.name}, ${agent}: ${e.reason}. ${e.where}, ${age === 'now' ? 'just now' : `${age} ago`}. Go to its laptop.`;
   return h(
     'li',

@@ -9,6 +9,9 @@ import type { Cap, CommandArgs, FirePrepare, FireWorktree, Hire, HireCapacity, H
 import { effortsFor } from './settings';
 import type { FloorView } from './store';
 
+/** The names a harness goes by in the player's words (Hire, Settings, the inbox). */
+export const HARNESS_LABEL: Record<string, string> = { claude: 'Claude Code', codex: 'Codex' };
+
 /** The effort a fresh choice starts at when nothing says otherwise. */
 const PREFERRED_EFFORT = 'high';
 
@@ -34,6 +37,31 @@ export function resolveChoice(options: HireOptions, want: Partial<Hire> | null |
   const effort = want?.effort && efforts.includes(want.effort) ? want.effort : efforts.includes(PREFERRED_EFFORT) ? PREFERRED_EFFORT : efforts[0];
   if (!effort) return null;
   return { harness, model, effort };
+}
+
+/**
+ * The catalog as the Hire dialog offers it: each harness keeps its place and its efforts, and its models are the ones
+ * `hidden` does not name, in catalog order. A harness with every model hidden stays as a key with no models, so it can
+ * still be picked and shows its empty state. The catalog itself is not changed (Settings, presets and runs read it whole).
+ */
+export function visibleOptions(options: HireOptions, hidden: (harness: string) => ReadonlySet<string>): HireOptions {
+  const out: HireOptions = {};
+  for (const [harness, o] of Object.entries(options)) {
+    const off = hidden(harness);
+    out[harness] = { ...o, models: o.models.filter((m) => !off.has(m)) };
+  }
+  return out;
+}
+
+/**
+ * `resolveChoice` for the Hire dialog: a harness with no visible model stays the harness (model and effort empty) rather
+ * than resolving to nothing, so the dialog can show its empty state and the player can still switch harness.
+ */
+export function resolveVisibleChoice(options: HireOptions, want: Partial<Hire> | null | undefined): Hire {
+  const c = resolveChoice(options, want);
+  if (c) return c;
+  const harness = want?.harness && options[want.harness] ? want.harness : (Object.keys(options)[0] ?? '');
+  return { harness, model: '', effort: '' };
 }
 
 /** Where the preselected choice came from, as the dialog says it. */
@@ -174,12 +202,12 @@ export interface HireForm {
 
 /** The form a prepare opens with. */
 export function formFromPrepare(p: HirePrepare, options: HireOptions): HireForm {
-  const c = resolveChoice(options, p.choice ?? null);
+  const c = resolveVisibleChoice(options, p.choice ?? null);
   return {
     prompt: '',
-    harness: c?.harness ?? '',
-    model: c?.model ?? '',
-    effort: c?.effort ?? '',
+    harness: c.harness,
+    model: c.model,
+    effort: c.effort,
     label: p.label,
     cwd: p.cwd,
     worktree: worktreeUsable(p.git),
@@ -190,6 +218,7 @@ export function formFromPrepare(p: HirePrepare, options: HireOptions): HireForm 
 export function hireBlocker(f: HireForm, options: HireOptions, cap: CapacityView | null): string | null {
   if (cap?.level === 'full') return 'Over the hard cap: send someone home first.';
   if (!options[f.harness]) return 'Choose a harness.';
+  if (!modelsFor(options, f.harness).length) return 'Every model for this harness is hidden. Show one in Settings.';
   if (!modelsFor(options, f.harness).includes(f.model)) return 'Choose a model.';
   if (!effortsFor(options, f.harness, f.model).includes(f.effort)) return 'Choose an effort.';
   const cwd = f.cwd.trim();
