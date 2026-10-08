@@ -452,3 +452,92 @@ func TestDigestScrubCoversActivity(t *testing.T) {
 		}
 	}
 }
+
+// dgMidTurn appends a fixture's turns without their ends (and the recap): a
+// first turn still running.
+func (fb *fuBridge) dgMidTurn(t *testing.T, harness, fixture string) {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "transcript", "testdata", harness, fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keep []string
+	for _, l := range strings.SplitAfter(string(b), "\n") {
+		if !strings.Contains(l, "away_summary") && !strings.Contains(l, "turn_duration") && !strings.Contains(l, "task_complete") {
+			keep = append(keep, l)
+		}
+	}
+	path := fb.claude
+	if harness == "codex" {
+		path = fb.codex
+	}
+	appendTo(t, path, strings.Join(keep, ""))
+}
+
+// waitCalls waits for n now calls.
+func waitCalls(t *testing.T, roles *dgRoles, n int) []ai.Request {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		cs := roles.calls(digest.KindNow)
+		if len(cs) >= n {
+			return cs
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("now calls = %d, want %d", len(cs), n)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// #198, Claude and Codex: a first turn that has not ended gets its now line
+// once someone looks at the floor, and newer steps of it get another once the
+// gap is over, with no turn end; the same steps cost nothing more.
+func TestDigestNowDuringLongTurnClaudeAndCodex(t *testing.T) {
+	roles := newDgRoles()
+	fb := startDgBridge(t, "", "", roles, on(), 300*time.Millisecond)
+	c := fb.connect(proto.Hello{})
+	c.snapshot()
+	fb.dgMidTurn(t, "claude", "digest_turns.jsonl")
+	fb.dgMidTurn(t, "codex", "digest_turns.jsonl")
+	fuQuiet()
+	if n := len(roles.llm.Calls()); n != 0 {
+		t.Fatalf("%d calls with nobody on the floor", n)
+	}
+	evs, _ := c.mustAck(proto.CmdBoardWatch, proto.BoardArgs{Session: "s"})
+	got := upsertsIn(c, evs, llmDigest, fb.ids["w1"], fb.ids["w2"])
+	for id, w := range got {
+		if d := w.Digest; d.Now != dgNowLine || d.NowAt == 0 || d.NowStatus != nil {
+			t.Fatalf("%s: digest %+v", id, d)
+		}
+	}
+	cs := waitCalls(t, roles, 2)
+	var claude, codex bool
+	for _, r := range cs {
+		claude = claude || strings.Contains(r.Messages[1].Content, "lounge wall is free")
+		codex = codex || strings.Contains(r.Messages[1].Content, "PR opened.")
+	}
+	if !claude || !codex {
+		t.Fatalf("now inputs: claude %v, codex %v", claude, codex)
+	}
+	// Newer steps, still no turn end: summarized after the gap.
+	appendTo(t, fb.claude, wrapSay("m_dg_9", "Wiring the elevator next.", "tool_use"))
+	appendTo(t, fb.codex, `{"timestamp":"2026-10-03T11:03:00.000Z","type":"response_item","payload":{"type":"message","id":"msg_dg_9","role":"assistant","content":[{"type":"output_text","text":"Merging the elevator branch."}]}}`+"\n")
+	cs = waitCalls(t, roles, 4)
+	var claude2, codex2 bool
+	for _, r := range cs[2:] {
+		claude2 = claude2 || strings.Contains(r.Messages[1].Content, "Wiring the elevator next.")
+		codex2 = codex2 || strings.Contains(r.Messages[1].Content, "Merging the elevator branch.")
+	}
+	if !claude2 || !codex2 {
+		t.Fatalf("newer steps: claude %v, codex %v", claude2, codex2)
+	}
+	// Another viewer and a reconnect: the same steps, no call.
+	c2 := fb.connect(proto.Hello{})
+	c2.snapshot()
+	c2.mustAck(proto.CmdBoardWatch, proto.BoardArgs{Session: "s"})
+	time.Sleep(700 * time.Millisecond) // past the gap
+	if n := len(roles.calls(digest.KindNow)); n != 4 {
+		t.Fatalf("now calls = %d for unchanged steps", n)
+	}
+}

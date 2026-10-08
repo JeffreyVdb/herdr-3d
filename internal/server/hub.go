@@ -252,12 +252,13 @@ type Options struct {
 	ActivityRoles    activity.Roles
 	// #118 phase 2 floor overview summaries: DigestEnabled is the
 	// environment's toggle (HERDR_WORLD_DIGEST_ENABLED; nil: not set),
-	// DigestSettle how long after a turn ended its now line is written
-	// (default DefaultDigestSettle), DigestGap the least time between two
-	// now lines of a worker (default DefaultDigestGap), DigestRoles the LLM
-	// (default AI; tests pass fakes). #174: DigestRetry is how long after a
-	// task line's n-th failed attempt the next goes (default
-	// digest.RetryDelay: growing, ok false once the attempts are used up).
+	// DigestSettle how long after a turn ended its now line waits (default
+	// DefaultDigestSettle), DigestGap the least time between two now lines
+	// of a worker (default DefaultDigestGap), DigestRoles the LLM (default
+	// AI; tests pass fakes). #174: DigestRetry is how long after a task
+	// line's n-th failed attempt the next goes, and (#198) after a now line's
+	// n-th failure in a row its newer steps may (default digest.RetryDelay:
+	// growing, ok false once the attempts are used up).
 	DigestEnabled *bool
 	DigestSettle  time.Duration
 	DigestGap     time.Duration

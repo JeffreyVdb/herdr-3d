@@ -410,6 +410,38 @@ func TestCacheAndNoLine(t *testing.T) {
 	}
 }
 
+// #198: a line says when the model wrote it; a cached line keeps that time,
+// in memory and after a restart, however much later it is found again.
+func TestCachedLineKeepsItsTime(t *testing.T) {
+	r := newRoles("Fixing the build")
+	st := &memStore{}
+	clock := noon
+	now := func() time.Time { return clock }
+	on := true
+	s, err := digest.New(context.Background(), digest.Options{Roles: r, Store: st, EnvEnabled: &on, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := nowInput("Fixing")
+	if res, err := s.Summarize(context.Background(), in); err != nil || res.Cached || !res.At.Equal(noon) {
+		t.Fatalf("first = %+v, %v", res, err)
+	}
+	if len(st.cache) != 1 || !st.cache[0].At.Equal(noon) {
+		t.Fatalf("stored = %+v", st.cache)
+	}
+	clock = noon.Add(2 * time.Hour)
+	if res, err := s.Summarize(context.Background(), in); err != nil || !res.Cached || !res.At.Equal(noon) {
+		t.Fatalf("cached = %+v, %v (want written at %v)", res, err, noon)
+	}
+	s2, err := digest.New(context.Background(), digest.Options{Roles: newRoles("other"), Store: st, EnvEnabled: &on, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s2.Summarize(context.Background(), in); err != nil || !res.Cached || !res.At.Equal(noon) {
+		t.Fatalf("after restart = %+v, %v (want written at %v)", res, err, noon)
+	}
+}
+
 // The daily cap: past it no call (ErrCapped) until the next day; a cached
 // line still comes.
 func TestDailyCap(t *testing.T) {

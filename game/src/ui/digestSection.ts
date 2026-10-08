@@ -21,9 +21,9 @@ export const DIGEST_PRIVACY =
 export const DIGEST_SCOPE =
   'These two settings apply to floor overview summaries only. The other AI features (follow-up questions, pack up, command classification) keep their own limits and send no reasoning effort.';
 
-/** When the lines are written, and when a failed one is tried again (#174; the timing itself is unchanged). */
+/** When the lines are written, and when a failed one is tried again (#174; #198: the now line follows the recent activity). */
 export const DIGEST_TIMING =
-  'A task line is written once per prompt for each one-off worker. A now line is written after a turn ends and settles for 2 seconds, at most once a minute per worker. Both only for a floor someone is viewing. A task line that fails is tried again up to 4 times in all, 1, 5 and 15 minutes apart; “Retry failed” does it at once.';
+  'A task line is written once per prompt for each one-off worker. A now line sums up a worker’s last 5 steps: it is written when someone looks at the floor and again whenever there is newer activity, at most once a minute per worker, even during a long turn; right after a turn ends it waits 2 seconds so the final message is in. Both only for a floor someone is viewing, and the same activity is never summarised twice. A line that fails is tried again up to 4 times in all, 1, 5 and 15 minutes apart (a now line only once there is newer activity, and again after a turn ends); “Retry failed” does it at once.';
 
 const ROLE_STATE: Record<AiRoleState, string> = { ready: 'Ready', off: 'Not set up', incomplete: 'Unfinished', invalid: 'Paused' };
 /** Share of the cap from which the ledger's bar warns. */

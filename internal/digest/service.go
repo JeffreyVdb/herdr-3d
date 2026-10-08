@@ -90,10 +90,12 @@ type Settings struct {
 	CallsToday int
 }
 
-// CacheEntry is one input's line: its key (Key) and the line, never the
-// input.
+// CacheEntry is one input's line: its key (Key), the line and when the
+// model wrote it (At, #198: a later hit on the line keeps it; zero: not
+// known), never the input.
 type CacheEntry struct {
 	Key, Line string
+	At        time.Time
 }
 
 // Store keeps the settings and the cache (the bridge's database).
@@ -467,16 +469,17 @@ func (s *Service) Cached(in Input) (string, bool) {
 	k := Key(in)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.cachedLocked(k)
+	e, ok := s.cachedLocked(k)
+	return e.Line, ok
 }
 
-func (s *Service) cachedLocked(k string) (string, bool) {
+func (s *Service) cachedLocked(k string) (CacheEntry, bool) {
 	e, ok := s.cache[k]
 	if !ok {
-		return "", false
+		return CacheEntry{}, false
 	}
 	s.lru.MoveToFront(e)
-	return e.Value.(CacheEntry).Line, true
+	return e.Value.(CacheEntry), true
 }
 
 func (s *Service) putLocked(e CacheEntry) {
@@ -498,6 +501,9 @@ type Result struct {
 	Line string
 	// Cached: the line was known for this input, no call was made.
 	Cached bool
+	// At is when the model wrote the line (#198): this call's time, or the
+	// cached line's (zero: not known).
+	At time.Time
 	// Sent and Answer are the sizes (bytes) of what went and came back,
 	// for the audit.
 	Sent, Answer int
@@ -564,9 +570,9 @@ func (s *Service) Summarize(ctx context.Context, in Input) (Result, error) {
 		s.mu.Unlock()
 		return Result{}, ai.ErrNotReady
 	}
-	if line, ok := s.cachedLocked(key); ok {
+	if e, ok := s.cachedLocked(key); ok {
 		s.mu.Unlock()
-		return Result{Line: line, Cached: true}, nil
+		return Result{Line: e.Line, Cached: true, At: e.At}, nil
 	}
 	if Empty(in) {
 		s.mu.Unlock()
@@ -601,8 +607,8 @@ func (s *Service) Summarize(ctx context.Context, in Input) (Result, error) {
 	if err != nil {
 		return res, err
 	}
-	res.Line = line
-	e := CacheEntry{Key: key, Line: line}
+	res.Line, res.At = line, s.opts.Now()
+	e := CacheEntry{Key: key, Line: line, At: res.At}
 	s.mu.Lock()
 	s.putLocked(e)
 	s.mu.Unlock()

@@ -104,6 +104,33 @@ describe('the overview page (#118)', () => {
     expect(rows[0]?.textContent).toContain('Running the e2e suite');
   });
 
+  it('says how long ago the model wrote a now line, and the age moves while the line stays (#198)', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      let now = NOW;
+      const { ov } = setup([worker('a', { desk_index: 0, status: 'working', digest: { now: 'Running the e2e suite', now_source: 'llm', now_at: NOW - 30_000 } })], { now: () => now });
+      ov.open('top');
+      const row = document.querySelector<HTMLElement>('.ov-row');
+      const mark = () => row?.querySelector<HTMLElement>('.ov-now .ov-llm');
+      expect(mark()?.textContent).toBe('AI · just now');
+      expect(mark()?.getAttribute('title')).toBe(
+        'Summarised by the AI model from this worker’s recent activity (its last 5 steps) just now. The time is when the summary was written, not when the activity happened.',
+      );
+      expect(row?.getAttribute('aria-label')).toContain('Now: Running the e2e suite (AI summary, just now)');
+      // Three minutes on, nothing else changed: the page's own timer moves the age.
+      now = NOW + 3 * 60_000;
+      vi.advanceTimersByTime(20_000);
+      expect(document.querySelector('.ov-row')).toBe(row);
+      expect(row?.querySelector('.ov-now-text')?.textContent).toBe('Running the e2e suite');
+      expect(mark()?.textContent).toBe('AI · 3m ago');
+      expect(mark()?.getAttribute('aria-label')).toContain(' 3m ago. The time is when the summary was written');
+      expect(row?.getAttribute('aria-label')).toContain('(AI summary, 3m ago)');
+      ov.closeNow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // #174
   const STATUSED = [
     worker('t1', { desk_index: 0, status: 'working', title: 'Reading hub.go', digest: { task: 'Investigate. Missing transcript diffs.', task_source: 'prompt', now_source: 'title', task_status: { state: 'retrying', reason: 'bad_response', attempts: 1, retry_at: NOW + 60_000 }, now_status: { state: 'failed', reason: 'truncated', attempts: 1 } } }),
@@ -122,7 +149,7 @@ describe('the overview page (#118)', () => {
     expect(task(0)?.getAttribute('title')).toContain('tries again at');
     expect(now(0)?.textContent).toBe('AI failed');
     expect(now(0)?.getAttribute('aria-label')).toContain('token budget');
-    expect(now(0)?.getAttribute('title')).toContain('after the next turn');
+    expect(now(0)?.getAttribute('title')).toContain('with newer activity or when the turn ends');
     expect(rows[0]?.querySelectorAll('.ov-retry')).toHaveLength(2);
     // Pending: a quiet chip, no retry; the model's own line carries the badge and no status.
     expect(task(1)?.textContent).toBe('AI pending');
@@ -150,6 +177,59 @@ describe('the overview page (#118)', () => {
     press('ArrowDown'); // the model's own line has nothing to retry
     press('r');
     expect(host.retrySummary).toHaveBeenCalledTimes(2);
+  });
+
+  // #198: a failed refresh of a model's now line that still shows.
+  const KEPT = [
+    worker('k1', { desk_index: 0, status: 'working', digest: { now: 'Reading the lift code', now_source: 'llm', now_at: NOW - 4 * 60_000, now_status: { state: 'failed', reason: 'timeout', attempts: 1 } } }),
+    worker('k2', { desk_index: 1, status: 'working', digest: { now: 'Editing the door timer', now_source: 'llm', now_at: NOW - 60_000, now_status: { state: 'retrying', reason: 'timeout', attempts: 1, retry_at: NOW + 9 * 60_000 } } }),
+    worker('k3', { desk_index: 2, status: 'working', digest: { now: 'Running the lift tests', now_source: 'llm', now_at: NOW - 60_000, now_status: { state: 'pending' } } }),
+  ];
+
+  it('a model’s line whose refresh failed keeps its mark and age, says so quietly after them, and offers Retry (#198)', () => {
+    const { ov } = setup(KEPT);
+    ov.open('top');
+    const rows = [...document.querySelectorAll<HTMLElement>('.ov-row')];
+    const line = (i: number) => rows[i]?.querySelector<HTMLElement>('.ov-now');
+    const chip = (i: number) => line(i)?.querySelector<HTMLElement>('.ov-ai-state');
+    expect(line(0)?.querySelector('.ov-now-text')?.textContent).toBe('Reading the lift code');
+    expect(line(0)?.querySelector('.ov-llm')?.textContent).toBe('AI · 4m ago');
+    expect(chip(0)?.textContent).toBe('refresh failed');
+    expect(chip(0)?.classList.contains('ov-ai-state--kept')).toBe(true);
+    // In reading order: the line, its mark, the failed refresh, Retry.
+    expect([...(line(0)?.children ?? [])].map((e) => e.className)).toEqual(['', 'ov-now-text', 'ov-llm', 'ov-ai-state ov-ai-state--failed ov-ai-state--kept', 'ov-retry']);
+    expect(line(0)?.classList.contains('ov-line--status')).toBe(true);
+    expect(chip(0)?.getAttribute('aria-label')).toBe(chip(0)?.getAttribute('title'));
+    expect(chip(0)?.getAttribute('aria-label')).toContain('Refreshing this AI summary from newer activity failed: the model did not answer in time. The summary shown is the previous one');
+    expect(chip(0)?.getAttribute('aria-label')).not.toContain('fallback');
+    expect(rows[0]?.getAttribute('aria-label')).toContain('Now: Reading the lift code (AI summary, 4m ago; refresh failed)');
+    expect(chip(1)?.textContent).toMatch(/^refresh failed · retry \d\d:\d\d/);
+    expect(chip(1)?.getAttribute('title')).toContain('It tries again at');
+    expect(rows[1]?.getAttribute('aria-label')).toMatch(/\(AI summary, 1m ago; refresh failed · retry \d\d:\d\d.*\)/);
+    expect(line(1)?.querySelector('.ov-retry')).not.toBeNull();
+    // A refresh only on its way is no news: the mark alone.
+    expect(chip(2)).toBeNull();
+    expect(line(2)?.querySelector('.ov-retry')).toBeNull();
+    expect(line(2)?.classList.contains('ov-line--status')).toBe(false);
+  });
+
+  it('Retry and R on the row of a model’s line whose refresh failed ask the host to retry that worker (#198)', () => {
+    const { ov, host } = setup(KEPT);
+    ov.open('top');
+    const press = (k: string) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    expect(ov.info().focused).toBe('k1');
+    press('r');
+    expect(host.retrySummary).toHaveBeenLastCalledWith('k1');
+    press('ArrowDown');
+    press('r');
+    expect(host.retrySummary).toHaveBeenLastCalledWith('k2');
+    press('ArrowDown'); // a refresh on its way: nothing to retry
+    press('r');
+    expect(host.retrySummary).toHaveBeenCalledTimes(2);
+    document.querySelector<HTMLButtonElement>('.ov-row[data-key="k1"] .ov-retry')?.click();
+    expect(host.retrySummary).toHaveBeenLastCalledWith('k1');
+    expect(host.retrySummary).toHaveBeenCalledTimes(3);
+    expect(host.goTo).not.toHaveBeenCalled();
   });
 
   it('Enter and Space on the focused Retry button are the button’s own: not the row’s open or fold; R and Enter on the row still work (#174)', () => {

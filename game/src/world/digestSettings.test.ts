@@ -93,11 +93,21 @@ describe('the reasoning effort and the completion budget (#174)', () => {
     expect(failed.detail).toContain('token budget');
     expect(failed.detail).toContain('Raise the completion budget');
     expect(failed.detail).toContain('new prompt');
-    expect(lineStatusText({ state: 'failed', reason: 'timeout' }, 'now').detail).toContain('after the next turn');
+    expect(lineStatusText({ state: 'failed', reason: 'timeout' }, 'now').detail).toContain('with newer activity or when the turn ends');
     const retrying = lineStatusText({ state: 'retrying', reason: 'bad_response', attempts: 1, retry_at: Date.UTC(2026, 9, 7, 14, 32) }, 'task');
     expect(retrying.chip).toMatch(/^AI retry \d\d:\d\d/);
     expect(retrying.detail).toContain('tries again at');
     expect(lineStatusText({ state: 'pending' }, 'task')).toMatchObject({ chip: 'AI pending', retry: false });
+    // #198: beside a model's now line that still shows, a failed refresh of it: its words say the line is the previous one.
+    const kept = lineStatusText({ state: 'failed', reason: 'timeout', attempts: 2 }, 'now', true);
+    expect(kept).toMatchObject({ chip: 'refresh failed', retry: true });
+    expect(kept.detail).toBe(
+      'Refreshing this AI summary from newer activity failed after 2 attempts: the model did not answer in time. The summary shown is the previous one; its age is when it was written. Retry now with R; it also tries again by itself with newer activity or when the turn ends.',
+    );
+    const keptRetry = lineStatusText({ state: 'retrying', reason: 'timeout', attempts: 1, retry_at: Date.UTC(2026, 9, 7, 14, 32) }, 'now', true);
+    expect(keptRetry.chip).toMatch(/^refresh failed · retry \d\d:\d\d/);
+    expect(keptRetry.detail).toMatch(/The summary shown is the previous one; .* It tries again at \d\d:\d\d.*\. Retry now with R\.$/);
+    expect(keptRetry.detail).not.toContain('fallback');
     expect(lineStatusText({ state: 'pending', reason: 'daily_cap' }, 'task')).toMatchObject({ chip: 'AI waiting', retry: false });
     expect(reasonWord('empty_answer')).toBe('the model answered with no text');
     expect(reasonWord('weird_code')).toBe('weird code');

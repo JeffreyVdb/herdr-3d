@@ -24,8 +24,14 @@ export interface OverviewLine {
   source: LineSource;
   /** Written by the configured LLM (a later phase): the page marks it. */
   llm: boolean;
-  /** #174: the model's line is awaited or failed while this fallback shows (pending, retrying, failed); absent otherwise. */
+  /**
+   * #174: the model's line is awaited or failed while this fallback shows (pending, retrying, failed); absent otherwise.
+   * #198: on a model's now line (`llm`), a refresh from newer activity failed (retrying, failed only) and this line is the
+   * previous one.
+   */
   status?: DigestLineStatus;
+  /** #198: a model's now line: when it was written (unix ms, bridge clock: `now_at`), not when the activity it sums up happened. */
+  at?: number;
 }
 
 export interface OverviewTicket {
@@ -150,11 +156,15 @@ const freelancerOrder = (a: WorkerView, b: WorkerView) =>
 
 const STATES: readonly string[] = ['pending', 'retrying', 'failed'];
 
-/** A well-formed status of a line that is not the model's (unknown shapes are no status). */
-function statusOf(v: unknown, source: string): DigestLineStatus | null {
-  if (source === 'llm' || typeof v !== 'object' || v === null) return null;
+/**
+ * A well-formed status of a line (unknown shapes are no status): of a fallback, or (#198) of a model's now line whose
+ * refresh failed (`retrying`, `failed`: a model's line is never shown as pending, and its task line has none).
+ */
+function statusOf(v: unknown, source: string, kind: 'task' | 'now'): DigestLineStatus | null {
+  if (typeof v !== 'object' || v === null) return null;
   const o = v as Record<string, unknown>;
   if (typeof o.state !== 'string' || !STATES.includes(o.state)) return null;
+  if (source === 'llm' && (kind === 'task' || o.state === 'pending')) return null;
   return {
     state: o.state as DigestLineStatus['state'],
     ...(typeof o.reason === 'string' && o.reason ? { reason: o.reason } : {}),
@@ -163,11 +173,11 @@ function statusOf(v: unknown, source: string): DigestLineStatus | null {
   };
 }
 
-function line(text: string | undefined | null, source: string | undefined, status?: unknown): OverviewLine | null {
+function line(text: string | undefined | null, source: string | undefined, status: unknown, kind: 'task' | 'now'): OverviewLine | null {
   const t = text?.replace(/\s+/g, ' ').trim();
   if (!t) return null;
   const s = (source ?? '') as LineSource;
-  const st = statusOf(status, s);
+  const st = statusOf(status, s, kind);
   return { text: t, source: s, llm: s === 'llm', ...(st ? { status: st } : {}) };
 }
 
@@ -193,8 +203,10 @@ function nowOf(v: WorkerView): OverviewLine | null {
   if (v.crew?.freelancer && v.crew.summary) return { text: v.crew.summary, source: 'report', llm: false };
   const d = v.worker.digest;
   if (!d || typeof d !== 'object') return null;
-  if (d.now_source === 'title') return line(v.worker.title, 'title', d.now_status);
-  return line(d.now, d.now_source, d.now_status);
+  if (d.now_source === 'title') return line(v.worker.title, 'title', d.now_status, 'now');
+  const l = line(d.now, d.now_source, d.now_status, 'now');
+  if (l?.llm && typeof d.now_at === 'number' && d.now_at > 0) l.at = d.now_at;
+  return l;
 }
 
 export function overviewRow(v: WorkerView, floorTag: string | null): OverviewWorkerRow {
@@ -217,7 +229,7 @@ export function overviewRow(v: WorkerView, floorTag: string | null): OverviewWor
     runColor: crew?.runColor ?? null,
     orch: crew?.role === 'orch' ? { phase: crew.phase, round: crew.round, pass: passWords(crew.pass ?? undefined), overCap: crew.overCap } : null,
     ticket: crew ? ticketOf(w, crew.ticket) : null,
-    task: crew ? null : line(d?.task, d?.task_source, d?.task_status),
+    task: crew ? null : line(d?.task, d?.task_source, d?.task_status, 'task'),
     now: nowOf(v),
     activity: act ? `${ACTIVITY_WORD[act.kind]}${act.detail ? ` · ${act.detail}` : ''}` : null,
     floor: floorTag,
@@ -520,9 +532,30 @@ export function countItems(c: Counts, asleep: boolean): CountItem[] {
   ];
 }
 
+/** A time span in the overview's words: `<1m`, `4m`, `2h 05m`, `3d` (a negative one is `<1m`). */
+function spanText(ms: number): string {
+  const m = Math.floor(Math.max(0, ms) / 60_000);
+  return m < 1 ? '<1m' : m < 60 ? `${m}m` : m < 24 * 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${Math.floor(m / 1440)}d`;
+}
+
 /** `working 4m`: the status and how long it has held (`<1m`, `4m`, `2h 05m`, `3d`). */
 export function sinceText(d: Display, since: number, now: number): string {
-  const m = Math.floor(Math.max(0, now - since) / 60_000);
-  const t = m < 1 ? '<1m' : m < 60 ? `${m}m` : m < 24 * 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${Math.floor(m / 1440)}d`;
-  return `${STATUS_WORD[d]} ${t}`;
+  return `${STATUS_WORD[d]} ${spanText(now - since)}`;
+}
+
+/** #198: how long ago something was written: `just now`, `4m ago`, `2h 05m ago`, `3d ago`. */
+export function ageText(at: number, now: number): string {
+  const t = spanText(now - at);
+  return t === '<1m' ? 'just now' : `${t} ago`;
+}
+
+/** #198: the AI mark of a model's line, on the page and the wall: `AI · 2m ago` with its time (a now line), else `AI`. */
+export function aiLabel(l: OverviewLine, now: number): string {
+  return l.at ? `AI · ${ageText(l.at, now)}` : 'AI';
+}
+
+/** #198: what a model's now line is, in full (the mark's tooltip and its words for a screen reader). */
+export function aiTitle(l: OverviewLine, now: number): string {
+  const what = 'Summarised by the AI model from this worker’s recent activity (its last 5 steps)';
+  return l.at ? `${what} ${ageText(l.at, now)}. The time is when the summary was written, not when the activity happened.` : `${what}.`;
 }

@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 )
 
 // migrationDigest creates digest_settings (one row) and digest_cache.
@@ -75,14 +76,16 @@ func (s *Store) SaveDigestCalls(ctx context.Context, d DigestSettings) error {
 	return err
 }
 
-// DigestLine is the LLM's line for one input, by the input's key.
+// DigestLine is the LLM's line for one input, by the input's key, and when
+// the LLM wrote it (#198: used_at, stamped by each call's save; zero: now).
 type DigestLine struct {
 	Key, Line string
+	UsedAt    time.Time
 }
 
 // DigestCache returns the newest lines, newest first.
 func (s *Store) DigestCache(ctx context.Context, limit int) ([]DigestLine, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT key, line FROM digest_cache ORDER BY rowid DESC LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT key, line, used_at FROM digest_cache ORDER BY rowid DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -90,9 +93,11 @@ func (s *Store) DigestCache(ctx context.Context, limit int) ([]DigestLine, error
 	var out []DigestLine
 	for rows.Next() {
 		var d DigestLine
-		if err := rows.Scan(&d.Key, &d.Line); err != nil {
+		var at string
+		if err := rows.Scan(&d.Key, &d.Line, &at); err != nil {
 			return nil, err
 		}
+		d.UsedAt, _ = time.Parse(time.RFC3339Nano, at) // unreadable: zero, unknown
 		out = append(out, d)
 	}
 	return out, rows.Err()
@@ -109,7 +114,11 @@ func (s *Store) SaveDigestLine(ctx context.Context, d DigestLine, limit int) err
 	if _, err := tx.ExecContext(ctx, `DELETE FROM digest_cache WHERE key = ?`, d.Key); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO digest_cache (key, line, used_at) VALUES (?, ?, ?)`, d.Key, d.Line, s.ts()); err != nil {
+	at := s.ts()
+	if !d.UsedAt.IsZero() {
+		at = stamp(d.UsedAt)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO digest_cache (key, line, used_at) VALUES (?, ?, ?)`, d.Key, d.Line, at); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM digest_cache WHERE rowid NOT IN

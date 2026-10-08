@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Floor, Snapshot, Worker } from '../net/protocol';
 import { WorldStore } from './store';
-import { buildOverview, countItems, orchWords, sinceText, visibleRows, type OverviewWorkerRow } from './overview';
+import { aiLabel, aiTitle, ageText, buildOverview, countItems, orchWords, sinceText, visibleRows, type OverviewWorkerRow } from './overview';
 
 const NOW = 1_790_000_000_000;
 
@@ -142,11 +142,13 @@ describe('buildOverview: a row', () => {
     expect(row(s, 'same').tag).toBe('CODE r1');
   });
 
-  it('carries the status of a line the model has not written, never of one it has (#174)', () => {
+  it('carries the status of a line the model has not written; of a model’s now line only a failed refresh (#174, #198)', () => {
     const src = store([
       worker('a', 'top', { desk_index: 0, digest: { task: 'Investigate. Missing diffs.', task_source: 'prompt', now_source: 'title', task_status: { state: 'retrying', reason: 'truncated', attempts: 2, retry_at: NOW + 5 }, now_status: { state: 'failed', reason: 'timeout' } }, title: 'Reading' }),
       worker('b', 'top', { desk_index: 1, digest: { task: 'x', task_source: 'llm', now: 'y', now_source: 'llm', task_status: { state: 'failed' }, now_status: { state: 'pending' } } }),
       worker('c', 'top', { desk_index: 2, digest: { task: 'z', task_source: 'prompt', now_source: 'title', task_status: { state: 'bogus' } as never }, title: 't' }),
+      worker('d', 'top', { desk_index: 3, digest: { now: 'Reading the lift code', now_source: 'llm', now_at: NOW - 60_000, now_status: { state: 'failed', reason: 'timeout', attempts: 1 } } }),
+      worker('e', 'top', { desk_index: 4, digest: { now: 'Reading the lift code', now_source: 'llm', now_at: NOW - 60_000, now_status: { state: 'retrying', reason: 'timeout', attempts: 1, retry_at: NOW + 5 } } }),
     ]);
     const rows = buildOverview(src, 'top').nodes.map((n) => n.row as OverviewWorkerRow);
     expect(rows[0]?.task?.status).toEqual({ state: 'retrying', reason: 'truncated', attempts: 2, retry_at: NOW + 5 });
@@ -154,6 +156,9 @@ describe('buildOverview: a row', () => {
     expect(rows[1]?.task?.status).toBeUndefined();
     expect(rows[1]?.now?.status).toBeUndefined();
     expect(rows[2]?.task?.status).toBeUndefined();
+    // #198: the model's previous now line still shows, and its refresh failed: both, with the line's time.
+    expect(rows[3]?.now).toEqual({ text: 'Reading the lift code', source: 'llm', llm: true, at: NOW - 60_000, status: { state: 'failed', reason: 'timeout', attempts: 1 } });
+    expect(rows[4]?.now?.status).toEqual({ state: 'retrying', reason: 'timeout', attempts: 1, retry_at: NOW + 5 });
   });
 
   it('a one-off worker’s task, and every worker’s now line from the digest: the recap, else its title; the activity chip apart', () => {
@@ -168,6 +173,30 @@ describe('buildOverview: a row', () => {
     // No turn read yet (no digest): no task or now line.
     expect(row(s, 'fresh')).toMatchObject({ task: null, now: null });
     expect(row(s, 'llm')).toMatchObject({ task: { llm: true }, now: { llm: true } });
+  });
+
+  it('#198: a model’s now line carries when it was written (now_at); its mark says how old it is', () => {
+    const s = store([
+      worker('llm', 'top', { desk_index: 0, digest: { task: 'x', task_source: 'llm', now: 'Rerunning the login test', now_source: 'llm', now_at: NOW - 2 * 60_000 } }),
+      worker('recap', 'top', { desk_index: 1, digest: { now: 'Waiting for review', now_source: 'recap', now_at: NOW } }),
+      worker('old', 'top', { desk_index: 2, digest: { now: 'y', now_source: 'llm' } }),
+    ]);
+    const now = row(s, 'llm').now;
+    if (!now) throw new Error('no now line');
+    expect(now).toEqual({ text: 'Rerunning the login test', source: 'llm', llm: true, at: NOW - 2 * 60_000 });
+    expect(row(s, 'recap').now?.at).toBeUndefined();
+    expect(row(s, 'llm').task?.at).toBeUndefined();
+    expect(aiLabel(now, NOW)).toBe('AI · 2m ago');
+    // The same line, later: only its age moves.
+    expect(aiLabel(now, NOW + 60 * 60_000)).toBe('AI · 1h 02m ago');
+    expect(aiTitle(now, NOW)).toBe(
+      'Summarised by the AI model from this worker’s recent activity (its last 5 steps) 2m ago. The time is when the summary was written, not when the activity happened.',
+    );
+    // A bridge that sends no time: the plain mark.
+    const plain = row(s, 'old').now;
+    if (!plain) throw new Error('no now line');
+    expect(aiLabel(plain, NOW)).toBe('AI');
+    expect(aiTitle(plain, NOW)).toBe('Summarised by the AI model from this worker’s recent activity (its last 5 steps).');
   });
 
   it('crew members have no task line; a finished freelancer’s now is its report’s summary', () => {
@@ -205,6 +234,14 @@ describe('counts and times', () => {
     ]);
     expect(countItems({ ...v.counts, waiting: 0, needsYou: 2 }, false).map((c) => c.label)).toEqual(['working', 'need you', 'idle']);
     expect(countItems(v.counts, true)).toEqual([{ kind: 'asleep', n: 5, label: 'asleep' }]);
+  });
+
+  it('ageText', () => {
+    expect(ageText(NOW - 20_000, NOW)).toBe('just now');
+    expect(ageText(NOW + 5000, NOW)).toBe('just now');
+    expect(ageText(NOW - 4 * 60_000, NOW)).toBe('4m ago');
+    expect(ageText(NOW - 125 * 60_000, NOW)).toBe('2h 05m ago');
+    expect(ageText(NOW - 3 * 86_400_000, NOW)).toBe('3d ago');
   });
 
   it('sinceText', () => {
