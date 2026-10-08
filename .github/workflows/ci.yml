@@ -36,7 +36,7 @@ jobs:
           if [ "$EVENT" != push ] || [ "$REF_NAME" = main ]; then
             go=true
           else
-            files=$(git diff --name-only origin/main...HEAD)
+            files=$(git diff --no-renames --name-only origin/main...HEAD)
             if grep -Eq "$GO_INPUTS" <<< "$files"; then go=true; else go=false; fi
           fi
           echo "go=$go" >> "$GITHUB_OUTPUT"
