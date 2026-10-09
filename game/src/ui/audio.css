@@ -256,6 +256,10 @@
 :root[data-ui-theme='ubuntu'] .audio-ctl .audio-vol {
   height: 32px;
 }
+/* The issue's ring on the sliders too: 2px off (Quiet's is 4px). */
+:root[data-ui-theme='ubuntu'] .audio-vol:focus-visible {
+  outline-offset: 2px;
+}
 :root[data-ui-theme='ubuntu'] .audio-pop .audio-credits:hover {
   text-decoration: underline;
   text-underline-offset: 3px;

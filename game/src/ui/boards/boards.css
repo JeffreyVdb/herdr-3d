@@ -845,6 +845,11 @@
   outline: 2px dashed var(--accent-text);
   outline-offset: -2px;
 }
+/* (Focused while its move is in flight, it wears the focus ring, not the dashed edge.) */
+:root[data-ui-theme='ubuntu'] .bd-card[data-moving='true']:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
 /* A filled count chip: the done column's is bright, so its figures are dark. */
 :root[data-ui-theme='ubuntu'] .bd-col[data-done='true'] .bd-col-head b {
   color: var(--on-chip);

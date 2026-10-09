@@ -327,9 +327,6 @@
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
-:root[data-ui-theme='ubuntu'] .imgs .imgs-tile:focus-visible {
-  outline-offset: 3px;
-}
 :root[data-ui-theme='ubuntu'] .imgs .imgs-link {
   color: var(--accent-text);
 }
