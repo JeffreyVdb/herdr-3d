@@ -571,7 +571,7 @@
 }
 :root[data-ui-theme='ubuntu'] .lm-foot .btn {
   height: auto;
-  min-height: 32px;
+  min-height: var(--ctl-h); /* Refresh and Hide meter are labelled: standard 36px controls */
 }
 :root[data-ui-theme='ubuntu'] .lm-warn {
   border: 1px solid var(--error-border);

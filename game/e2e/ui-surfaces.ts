@@ -124,6 +124,17 @@ export const SURFACES: Surface[] = [
     root: '.topbar',
   },
   {
+    // The plan-limits plate opened from its strip (the strip itself rides every surface's probes).
+    name: 'limits-open',
+    fixture: 'demo-m5',
+    open: async (page) => {
+      await frames(page, 4);
+      await page.locator('.lm-strip').click();
+      await expect(page.locator('#lm-panel')).toBeVisible();
+    },
+    root: '.limits',
+  },
+  {
     name: 'bars-floor',
     fixture: 'demo-m5',
     open: async (page) => {

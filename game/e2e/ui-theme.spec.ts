@@ -369,7 +369,7 @@ for (const s of SURFACES) {
     await boot(page, s.fixture, ALL_UBUNTU, s.extra ?? '', s.wsQuery);
     await s.open(page);
     await page.waitForTimeout(300);
-    const found = await strays(page, `${s.root}, .topbar, .hud .prompt, .hud .hint, .toast, .excalidraw-modal-container, .excalidraw .Island`, ALLOW);
+    const found = await strays(page, `${s.root}, .topbar, .limits, .hud .prompt, .hud .hint, .toast, .excalidraw-modal-container, .excalidraw .Island`, ALLOW);
     expect(found.map((f) => `${f.at} ${f.prop}: ${f.value} (${f.why})`), `${s.name}: Quiet leftovers`).toEqual([]);
     clean();
   });
@@ -385,7 +385,7 @@ for (const s of SURFACES) {
     await s.open(page);
     await page.waitForTimeout(300);
     // The editor's swatch hotkeys are drawn on the artwork colour in a colour Excalidraw picks for it, the same in both themes.
-    const samples = await textSamples(page, `${s.root}, .topbar, .hud .prompt, .hud .hint, .toast`, '.excalidraw canvas, canvas, img, .seat-swatch, .settings-theme-swatch, .color-picker__button__hotkey-label');
+    const samples = await textSamples(page, `${s.root}, .topbar, .limits, .hud .prompt, .hud .hint, .toast`, '.excalidraw canvas, canvas, img, .seat-swatch, .settings-theme-swatch, .color-picker__button__hotkey-label');
     expect(samples.length, `${s.name}: the probe found text to measure`).toBeGreaterThan(5);
     const bad = samples.filter((t) => (t.ratio !== null && t.ratio < (t.size >= 24 || (t.size >= 18.66 && Number(t.weight) >= 700) ? 3 : 4.5)) || t.bg === 'translucent');
     expect(
@@ -525,7 +525,7 @@ for (const s of SURFACES) {
     await boot(page, s.fixture, ALL_UBUNTU, s.extra ?? '', s.wsQuery);
     await s.open(page);
     await page.waitForTimeout(300);
-    const small = (await targets(page, `${s.root}, .topbar, .hud .prompt, .hud .hint, .toast, .excalidraw-modal-container`)).filter((t) => t.w < 32 || t.h < (t.kind === 'standard' ? 36 : 32));
+    const small = (await targets(page, `${s.root}, .topbar, .limits, .hud .prompt, .hud .hint, .toast, .excalidraw-modal-container`)).filter((t) => t.w < 32 || t.h < (t.kind === 'standard' ? 36 : 32));
     expect(small.map((t) => `${t.at} ${t.w}x${t.h} (${t.kind})`), `${s.name}: controls under the Ubuntu sizes`).toEqual([]);
     clean();
   });
