@@ -360,6 +360,8 @@ const ALLOW = [
   '.imgs-img', '.ilb-img', '.ib-logo', '[data-content]', '.bd-label', '.bd-chip-label', '.label-chip', '.hire-logo', '.kraft', '[data-artwork]',
   // Content with its own colours: a board pin (the note's own status colour), the transcript's diff rows (--tx-del-bg is the diff's red) and the seat bar's swatches of the presets.
   '.bd-pin', '.tx-dl', '.tx-swatch',
+  // The light mat a building's uploaded logo is shown on in Buildings (logos are drawn for a light ground): the logo's, not the UI's.
+  '.logo-thumb',
 ].join(', ');
 
 for (const s of SURFACES) {
@@ -465,6 +467,84 @@ test('view zoom and a mode switch leave the shell’s fonts, colours and sizes u
   clean();
 });
 
+/** Zooms the seated transcript to `to` % with the keyboard (Ctrl+= / Ctrl+-, 10 % a step). */
+async function zoomTo(page: Page, to: number): Promise<void> {
+  for (let i = 0; i < 20 && (await theme(page)).transcriptZoom !== to; i++) {
+    await page.keyboard.press((await theme(page)).transcriptZoom < to ? 'Control+=' : 'Control+-');
+    await frames(page, 1);
+  }
+  expect((await theme(page)).transcriptZoom).toBe(to);
+  await frames(page, 3);
+}
+
+test('transcript zoom 100 → 200 leaves the seated widgets (prompt box, Send, jump chip, answer controls) at the UI’s own sizes in Ubuntu; Quiet’s still zoom as before', async ({ page }) => {
+  test.setTimeout(240_000);
+  const clean = watchErrors(page);
+  const WIDGETS = ['.tx-prompt', '.tx-prompt .cmp-editor', '.tx-send', '.tx-jump', '.tx-ask-opt', '.tx-ask-key', '.tx-ask-send'];
+  const measure = () =>
+    page.evaluate(
+      (sels) =>
+        sels.map((s) => {
+          const e = document.querySelector(`.seat-transcript ${s}`);
+          if (!e) return `${s}: missing`;
+          const r = e.getBoundingClientRect();
+          return `${s}: ${getComputedStyle(e).fontSize} ${Math.round(r.height)}px`;
+        }),
+      WIDGETS,
+    );
+  // Quiet first: a booted Ubuntu's seed would outlive its page (init scripts add up).
+  for (const ui of ['quiet', 'ubuntu'] as UiTheme[]) {
+    await boot(page, 'demo-m5', { ui }, '&prints=0');
+    await sitAtTofu(page, 'transcript', 'Pebble', 0);
+    // A question (the simulator's AskUserQuestion, as m16-ask): its card's answer controls, the prompt box under it.
+    await page.evaluate(() => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: { tool_use_id: 'toolu_zoom', agent: 'claude', questions: [{ header: 'Color', question: 'Which color?', multi: false, other: true, options: [{ label: 'Red', description: 'Warm' }, { label: 'Blue', description: 'Cool' }] }] } }));
+    await expect(page.locator('.seat-transcript .tx-ask .tx-ask-opt').first()).toBeVisible();
+    const at100 = await measure();
+    expect(at100.filter((m) => m.endsWith('missing'))).toEqual([]);
+    await page.locator('.seat-transcript .tx-scroll').focus();
+    await zoomTo(page, 200);
+    const at200 = await measure();
+    if (ui === 'ubuntu') {
+      expect(at200, 'Ubuntu: the widgets do not zoom').toEqual(at100);
+      expect(at100.find((m) => m.startsWith('.tx-prompt .cmp-editor'))).toContain(': 14px');
+      expect(parseFloat(at100.find((m) => m.startsWith('.tx-send:'))!.split(' ').pop()!)).toBeGreaterThanOrEqual(36);
+      expect(parseFloat(at100.find((m) => m.startsWith('.tx-ask-opt:'))!.split(' ').pop()!)).toBeGreaterThanOrEqual(36);
+    } else {
+      // Quiet is as it was: its widgets follow the transcript's zoom.
+      expect(at200.find((m) => m.startsWith('.tx-prompt:')), 'Quiet: the prompt box zooms').not.toBe(at100.find((m) => m.startsWith('.tx-prompt:')));
+      expect(at200.find((m) => m.startsWith('.tx-send:'))).not.toBe(at100.find((m) => m.startsWith('.tx-send:')));
+    }
+    await page.goto('about:blank');
+  }
+  clean();
+});
+
+test('the completion popup’s commands and paths are the UI’s Ubuntu Mono at 14px with a Quiet transcript, at any transcript zoom; the conversation’s code keeps the transcript’s mono', async ({ page }) => {
+  test.setTimeout(240_000);
+  const clean = watchErrors(page);
+  for (const name of ['completion-commands', 'completion-files']) {
+    const s = SURFACES.find((x) => x.name === name)!;
+    await boot(page, s.fixture, { ui: 'ubuntu', transcript: 'quiet' }, s.extra ?? '', s.wsQuery);
+    await s.open(page);
+    const sel = name === 'completion-commands' ? '.seat-transcript .cmp-pop .tx-cmd-name' : '.seat-transcript .cmp-pop .tx-file';
+    const font = () => page.locator(sel).first().evaluate((e) => `${getComputedStyle(e).fontFamily.split(',')[0]!.trim()} ${getComputedStyle(e).fontSize}`);
+    expect(await font()).toMatch(/^"?Ubuntu Mono"? 14px$/);
+    // The transcript's own mono (a code span in a message) stays the Quiet preset's.
+    expect(await page.locator('.seat-transcript .tx').evaluate((e) => getComputedStyle(e).getPropertyValue('--tx-mono'))).toMatch(/JetBrains/);
+    await page.keyboard.press('Escape'); // closes only the popup
+    await page.locator('.seat-transcript .tx-scroll').focus();
+    await zoomTo(page, 200);
+    await page.locator('.seat-transcript .cmp-editor').click();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type(name === 'completion-commands' ? '/' : 'p');
+    await expect(page.locator(sel).first()).toBeVisible();
+    expect(await font()).toMatch(/^"?Ubuntu Mono"? 14px$/);
+    await page.goto('about:blank');
+  }
+  clean();
+});
+
 // ---- narrow, zoomed, touch, forced colors, reduced motion ----------------------------------------------------------
 
 /** Lets a panel's entrance finish (finite animations only) before it is measured. */
@@ -516,6 +596,40 @@ for (const size of [{ name: '390px wide', ...NARROW }, { name: '200% browser zoo
       clean();
     });
   }
+}
+
+for (const size of [{ name: '1280x720', ...DESKTOP, floor: 150 }, { name: '200% browser zoom (640x360)', width: 640, height: 360, floor: 0 }]) {
+  test(`layout at ${size.name}: the seated conversation’s timeline and prompt box are on the screen or reached by scrolling it, never under the strip (Ubuntu)`, async ({ page }) => {
+    test.setTimeout(180_000);
+    const clean = watchErrors(page);
+    const s = SURFACES.find((x) => x.name === 'seat-transcript')!;
+    await boot(page, s.fixture, ALL_UBUNTU, s.extra ?? '', s.wsQuery, size);
+    await s.open(page);
+    await settle(page);
+    const got = await page.evaluate(() => {
+      const tx = document.querySelector('.seat-transcript .tx') as HTMLElement;
+      const seen = (el: Element) => {
+        const a = el.getBoundingClientRect();
+        const b = tx.getBoundingClientRect();
+        return { h: Math.round(a.height), visible: Math.round(Math.max(0, Math.min(a.bottom, b.bottom, innerHeight) - Math.max(a.top, b.top, 0))) };
+      };
+      const timeline = document.querySelector('.seat-transcript .tx-scroll')!;
+      const prompt = document.querySelector('.seat-transcript .tx-prompt')!;
+      const first = { timeline: seen(timeline).visible, screen: Math.round(tx.getBoundingClientRect().height), scrolls: getComputedStyle(tx).overflowY };
+      // Reached: brought into view the way the keyboard's focus would bring it.
+      timeline.scrollIntoView({ block: 'nearest' });
+      const tl = seen(timeline);
+      prompt.scrollIntoView({ block: 'nearest' });
+      const pr = seen(prompt);
+      return { first, tl, pr };
+    });
+    // The timeline: at least half the screen (or all of it, if less) once reached; the prompt box whole.
+    expect(got.tl.visible, `timeline seen once reached: ${JSON.stringify(got)}`).toBeGreaterThanOrEqual(Math.min(got.tl.h, Math.floor(got.first.screen / 2)) - 1);
+    expect(got.pr.visible, `prompt box seen once reached: ${JSON.stringify(got)}`).toBeGreaterThanOrEqual(got.pr.h - 1);
+    // On a laptop-sized screen the strip's second row does not squeeze the conversation: it is there without scrolling.
+    expect(got.first.timeline, `timeline without scrolling: ${JSON.stringify(got)}`).toBeGreaterThanOrEqual(size.floor);
+    clean();
+  });
 }
 
 for (const s of SURFACES) {
@@ -597,6 +711,118 @@ test('forced colors keep the picker, focus and controls legible; reduced motion 
   // Switching has no transition on the page: a colour change is one frame.
   const dur = await page.evaluate(() => [...document.querySelectorAll('.topbar, dialog.settings, .btn')].map((e) => getComputedStyle(e).transitionDuration));
   for (const d of dur) for (const t of d.split(',')) expect(parseFloat(t) * (t.trim().endsWith('ms') ? 0.001 : 1)).toBeLessThanOrEqual(0.2);
+  clean();
+});
+
+test('the whiteboard’s phone toolbar at 390px: every tool on the board and in reach, 44px on a touch screen and 32px with a mouse (Ubuntu)', async ({ browser }) => {
+  test.setTimeout(240_000);
+  for (const coarse of [true, false]) {
+    const ctx = await browser.newContext({ viewport: { ...NARROW }, hasTouch: coarse, isMobile: coarse });
+    const page = await ctx.newPage();
+    const clean = watchErrors(page);
+    const s = SURFACES.find((x) => x.name === 'whiteboard')!;
+    await boot(page, s.fixture, { ui: 'ubuntu' }, s.extra ?? '', s.wsQuery, NARROW);
+    await s.open(page);
+    await settle(page);
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(coarse);
+    const min = coarse ? 44 : 32;
+    const toolbar = '.wb .App-toolbar-container, .wb .mobile-misc-tools-container';
+    const tools = await targets(page, toolbar);
+    expect(tools.length, 'the toolbar’s tools, the lock and the hand').toBeGreaterThanOrEqual(12);
+    expect(tools.filter((t) => t.w < min || t.h < min).map((t) => `${t.at} ${t.w}x${t.h}`), `${coarse ? 'touch' : 'mouse'}: tools under ${min}px`).toEqual([]);
+    // On the board (its frame clips): no tool past its edge, no tool under another.
+    const placed = await page.evaluate((sel) => {
+      const surface = document.querySelector('.wb-surface') as HTMLElement;
+      const sb = surface.getBoundingClientRect();
+      const inner = { l: sb.left + surface.clientLeft, t: sb.top + surface.clientTop, r: sb.left + surface.clientLeft + surface.clientWidth, b: sb.top + surface.clientTop + surface.clientHeight };
+      const els = [...document.querySelectorAll(`:is(${sel}) :is(label.ToolIcon, .App-toolbar__extra-tools-trigger)`)].filter((e) => e.getBoundingClientRect().width > 0);
+      const out: string[] = [];
+      const rects = els.map((e) => ({ name: (e.getAttribute('title') ?? e.getAttribute('aria-label') ?? e.className).slice(0, 24), r: e.getBoundingClientRect() }));
+      for (const { name, r } of rects) if (r.left < inner.l - 0.5 || r.right > inner.r + 0.5 || r.top < inner.t - 0.5) out.push(`${name} off the board: ${Math.round(r.left)}..${Math.round(r.right)} of ${Math.round(inner.l)}..${Math.round(inner.r)}`);
+      for (let i = 0; i < rects.length; i++)
+        for (let j = i + 1; j < rects.length; j++) {
+          const a = rects[i]!.r, b = rects[j]!.r;
+          if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) out.push(`${rects[i]!.name} overlaps ${rects[j]!.name}`);
+        }
+      return { out, n: rects.length };
+    }, toolbar);
+    expect(placed.n).toBeGreaterThanOrEqual(12);
+    expect(placed.out, coarse ? 'touch' : 'mouse').toEqual([]);
+    // The last ones (Insert image, Eraser, More tools) answer a tap where they are drawn.
+    await page.locator('.wb .App-toolbar-container label.ToolIcon[title^="Eraser"]').click();
+    await expect(page.locator('.wb .App-toolbar-container [data-testid="toolbar-eraser"]')).toBeChecked();
+    clean();
+    await ctx.close();
+  }
+});
+
+test('forced colors: the whiteboard’s tools stay visible (system text on the system canvas) and the selected tool is the system highlight (Ubuntu)', async ({ page }) => {
+  test.setTimeout(240_000);
+  const clean = watchErrors(page);
+  await page.emulateMedia({ forcedColors: 'active' });
+  const s = SURFACES.find((x) => x.name === 'whiteboard')!;
+  await boot(page, s.fixture, { ui: 'ubuntu' }, s.extra ?? '', s.wsQuery);
+  await s.open(page);
+  await page.keyboard.press('Escape'); // the rectangle tool's selection off: the Selection tool is the checked one
+  await settle(page);
+  expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true);
+  const icons = await page.evaluate(() => {
+    const lum = (c: string) => {
+      const m = c.match(/(\d+)[ ,]+(\d+)[ ,]+(\d+)/);
+      if (!m) return NaN;
+      const [r, g, b] = [m[1], m[2], m[3]].map((v) => {
+        const x = Number(v) / 255;
+        return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+      }) as [number, number, number];
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const bgOf = (e: Element | null): string => {
+      for (let n = e; n; n = n.parentElement) {
+        const c = getComputedStyle(n).backgroundColor;
+        if (!/rgba\(.*, 0\)$|transparent/.test(c)) return c;
+      }
+      return 'rgb(255, 255, 255)';
+    };
+    return [...document.querySelectorAll('.wb .App-toolbar-container label.ToolIcon, .wb .App-menu label.ToolIcon')].map((l) => {
+      const icon = l.querySelector('.ToolIcon__icon')!;
+      const svg = icon.querySelector('svg')!;
+      const fg = getComputedStyle(svg).color;
+      const bg = bgOf(icon);
+      const [a, b] = [lum(fg), lum(bg)].sort((x, y) => y - x) as [number, number];
+      return { name: (l.getAttribute('title') ?? '').slice(0, 20), checked: !!l.querySelector('input:checked'), fg, bg, ratio: (a + 0.05) / (b + 0.05) };
+    });
+  });
+  expect(icons.length).toBeGreaterThanOrEqual(10);
+  expect(icons.filter((i) => i.ratio < 3).map((i) => `${i.name}: ${i.fg} on ${i.bg} = ${i.ratio.toFixed(2)}`), 'tool icons under 3:1').toEqual([]);
+  const checked = icons.filter((i) => i.checked);
+  const unchecked = icons.filter((i) => !i.checked);
+  expect(checked.length, 'a selected tool').toBeGreaterThanOrEqual(1);
+  for (const c of checked) expect(c.bg, `${c.name}: the selected tool is told apart by its fill`).not.toBe(unchecked[0]!.bg);
+  clean();
+});
+
+test('the empty whiteboard’s welcome (heading, hints) is Ubuntu UI text in Ubuntu and Excalidraw’s hand in Quiet; the drawing’s own text is not touched', async ({ page }) => {
+  test.setTimeout(240_000);
+  const clean = watchErrors(page);
+  const s = SURFACES.find((x) => x.name === 'whiteboard-empty')!;
+  for (const ui of ['quiet', 'ubuntu'] as UiTheme[]) {
+    await boot(page, s.fixture, { ui }, s.extra ?? '', s.wsQuery);
+    await s.open(page);
+    const fonts = await page.evaluate(() =>
+      [...document.querySelectorAll('.wb .welcome-screen-center__heading, .wb .welcome-screen-decor-hint__label')].map((e) => `${(e.textContent ?? '').trim().slice(0, 20)}: ${getComputedStyle(e).fontFamily}`),
+    );
+    expect(fonts.length, 'the heading and the hints').toBeGreaterThanOrEqual(2);
+    for (const f of fonts) expect(f, ui).toMatch(ui === 'ubuntu' ? /: "?Ubuntu"?,/ : /Excalifont/);
+    // A text element typed on the board keeps the drawing's font (the editor's own setting), in both themes.
+    const box = (await page.locator('.wb-canvas').boundingBox())!;
+    await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.6);
+    await page.keyboard.press('t');
+    await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.6);
+    await expect(page.locator('.excalidraw-wysiwyg')).toBeVisible();
+    expect(await page.locator('.excalidraw-wysiwyg').evaluate((e) => getComputedStyle(e).fontFamily)).toMatch(/Excalifont/);
+    await page.keyboard.press('Escape');
+    await page.goto('about:blank');
+  }
   clean();
 });
 
@@ -736,8 +962,8 @@ test('states: inside the transcript the composer’s Send, the selected tab and 
 
 // ---- focus: every keyboard-operable widget has the ring -----------------------------------------------------------
 
-for (const name of ['settings', 'hire', 'hire-review', 'hire-review-ready', 'start-run', 'presets', 'board-issues', 'menu', 'palette', 'about', 'overview', 'seat-transcript', 'seat-images', 'lightbox']) {
-  test(`focus: every operable widget of ${name} shows a 3px ring in #FF9B76 in Ubuntu`, async ({ page }) => {
+for (const name of ['settings', 'hire', 'hire-chips', 'hire-review', 'hire-review-ready', 'start-run', 'presets', 'prompt-dialog', 'board-issues', 'menu', 'palette', 'about', 'overview', 'seat-transcript', 'completion-commands', 'seat-images', 'lightbox', 'whiteboard']) {
+  test(`focus: every operable widget of ${name} shows a 3px ring in #FF9B76, 2px outside it and not clipped, in Ubuntu`, async ({ page }) => {
     test.setTimeout(240_000);
     const clean = watchErrors(page);
     const s = SURFACES.find((x) => x.name === name)!;
@@ -747,7 +973,7 @@ for (const name of ['settings', 'hire', 'hire-review', 'hire-review-ready', 'sta
     await page.keyboard.press('Shift');
     const bad: string[] = [];
     const n = await page.evaluate((root) => {
-      const els = [...document.querySelectorAll(`:is(${root}) :is(button, a[href], input, select, textarea, [tabindex="0"], [role="button"], [role="radio"], [role="tab"], [role="option"])`)] as HTMLElement[];
+      const els = [...document.querySelectorAll(`:is(${root}) :is(button, a[href], input, select, textarea, [contenteditable="true"], [tabindex="0"], [role="button"], [role="radio"], [role="tab"], [role="option"])`)] as HTMLElement[];
       (window as unknown as { __focusables: HTMLElement[] }).__focusables = els.filter((e) => {
         const r = e.getBoundingClientRect();
         const cs = getComputedStyle(e);
@@ -762,16 +988,67 @@ for (const name of ['settings', 'hire', 'hire-review', 'hire-review-ready', 'sta
         e.scrollIntoView({ block: 'nearest' });
         e.focus();
         if (document.activeElement !== e) return null;
-        const c = getComputedStyle(e);
+        // A native input drawn invisible (the whiteboard's tool radios) shows its focus on the control it stands for.
+        let ringOn: HTMLElement = e;
+        const ringed = (x: Element) => {
+          const xc = getComputedStyle(x);
+          return (xc.outlineStyle !== 'none' && parseFloat(xc.outlineWidth) > 0) || /0px 0px 0px 3px/.test(xc.boxShadow);
+        };
+        // A widget that fills a box that clips (the whiteboard's editor in its board) may have that box wear its ring:
+        // an ancestor up to two levels up that draws one around it.
+        if (!ringed(e)) {
+          const up = [e.parentElement, e.parentElement?.parentElement].find((x) => x && ringed(x));
+          if (up) ringOn = up;
+        }
+        if (getComputedStyle(e).opacity === '0') {
+          const drawn = [e.nextElementSibling, e.closest('label'), e.parentElement].filter((x): x is HTMLElement => !!x && getComputedStyle(x).opacity !== '0');
+          const ringed = drawn.find((x) => {
+            const xc = getComputedStyle(x);
+            return (xc.outlineStyle !== 'none' && parseFloat(xc.outlineWidth) > 0) || /0px 0px 0px 3px/.test(xc.boxShadow);
+          });
+          if (ringed ?? drawn[0]) ringOn = (ringed ?? drawn[0])!;
+        }
+        const c = getComputedStyle(ringOn);
         const rg = c.outlineColor.match(/(\d+)[ ,]+(\d+)[ ,]+(\d+)/);
+        const width = parseFloat(c.outlineWidth);
+        const offset = parseFloat(c.outlineOffset);
+        const outline = c.outlineStyle !== 'none' && width > 0;
+        // Never clipped: the ring's outer edge is inside every box between it and the page that clips (overflow other than visible).
+        // (An inset shadow ring is drawn inside its box.)
+        const reach = outline ? Math.max(0, offset) + width : / inset/.test(c.boxShadow) ? 0 : 3;
+        const r = ringOn.getBoundingClientRect();
+        const ring = { l: r.left - reach, t: r.top - reach, r: r.right + reach, b: r.bottom + reach };
+        let clipped = '';
+        let judgeX = true, judgeY = true;
+        for (let n = ringOn.parentElement; n && !clipped; n = n.parentElement) {
+          const ns = getComputedStyle(n);
+          if (ns.display === 'inline' || ns.display === 'contents') continue;
+          const cx = ns.overflowX !== 'visible', cy = ns.overflowY !== 'visible';
+          if (!cx && !cy) continue;
+          const b = n.getBoundingClientRect();
+          const box = { l: b.left + n.clientLeft, t: b.top + n.clientTop, r: b.left + n.clientLeft + n.clientWidth, b: b.top + n.clientTop + n.clientHeight };
+          // (Bigger than the box on an axis, e.g. a tall picture in the timeline, it is seen by scrolling: that axis is not judged.)
+          // (Once a nearer scroller cannot hold it on an axis, the boxes outside it are not judged on that axis either.)
+          if (cx && ring.r - ring.l > box.r - box.l + 1) judgeX = false;
+          if (cy && ring.b - ring.t > box.b - box.t + 1) judgeY = false;
+          const out = (cx && judgeX && (ring.l < box.l - 0.5 || ring.r > box.r + 0.5)) || (cy && judgeY && (ring.t < box.t - 0.5 || ring.b > box.b + 0.5));
+          const f = (q: { l: number; t: number; r: number; b: number }) => [q.l, q.t, q.r, q.b].map(Math.round).join(',');
+          if (out) clipped = `${n.tagName.toLowerCase()}.${String(n.className).split(' ').slice(0, 2).join('.')} (ring ${f(ring)}, box ${f(box)})`;
+        }
+        const tag = (x: Element) => `${x.tagName.toLowerCase()}.${String(x.className).split(' ').slice(0, 2).join('.')}`;
         // The ring is the outline, or (a field / card that draws its ring as a shadow) a 3px spread in the colour.
-        return { at: `${e.tagName.toLowerCase()}.${String(e.className).split(' ').slice(0, 2).join('.')}`, style: c.outlineStyle, width: parseFloat(c.outlineWidth), color: rg ? `${rg[1]},${rg[2]},${rg[3]}` : c.outlineColor, shadow: c.boxShadow };
+        // The issue's exact geometry (2px off, never clipped) is held where #216's fix round put it: the composer, the
+        // seated screen's widgets and the whiteboard editor. Elsewhere the ring must be there (3px, the colour).
+        const strict = !!ringOn.closest('.tx, .cmp, .excalidraw, .wb-surface');
+        return { at: tag(e) + (ringOn !== e ? ` → ${tag(ringOn)}` : ''), strict, outline, style: c.outlineStyle, width, offset, color: rg ? `${rg[1]},${rg[2]},${rg[3]}` : c.outlineColor, shadow: c.boxShadow, clipped };
       }, i);
       if (!got) continue;
-      const ok = (got.style === 'solid' && got.width >= 3 && got.color === '255,155,118') || /rgb\(255, 155, 118\) 0px 0px 0px 3px/.test(got.shadow);
-      if (!ok) bad.push(`${got.at}: ${got.style} ${got.width}px ${got.color} / ${got.shadow.slice(0, 60)}`);
+      const asOutline = got.style === 'solid' && got.width >= 3 && got.color === '255,155,118' && (!got.strict || got.offset >= 2);
+      const asShadow = /rgb\(255, 155, 118\) 0px 0px 0px 3px/.test(got.shadow);
+      if (!asOutline && !asShadow) bad.push(`${got.at}: ${got.style} ${got.width}px offset ${got.offset}px ${got.color} / ${got.shadow.slice(0, 60)}`);
+      else if (got.strict && got.clipped) bad.push(`${got.at}: its ring is clipped by ${got.clipped}`);
     }
-    expect(bad, `${name}: widgets without the 3px #FF9B76 ring`).toEqual([]);
+    expect(bad, `${name}: widgets without the 3px #FF9B76 ring 2px outside them, or with it clipped`).toEqual([]);
     clean();
   });
 }
@@ -819,6 +1096,72 @@ test('states: the review’s Hire in flight (#212) is busy like the hire dialog�
   expect(await hire.evaluate((b) => getComputedStyle(b, '::before').content)).toBe('""');
   await hire.click({ force: true });
   expect((await page.evaluate(() => window.__h3d.sent())).filter((c) => c.t === 'worker.hire')).toHaveLength(1);
+  clean();
+});
+
+test('states: a preset being deleted (natively disabled and busy) keeps the final destructive fill with a dark label and spinner, never the disabled look', async ({ page }) => {
+  test.setTimeout(180_000);
+  const clean = watchErrors(page);
+  const s = SURFACES.find((x) => x.name === 'presets-deleting')!;
+  await boot(page, s.fixture, { ui: 'ubuntu' }, s.extra ?? '', s.wsQuery);
+  await s.open(page);
+  const sel = 'dialog.desk-dlg--presets [data-key^="confirm-delete:"]';
+  await expect(page.locator(sel)).toHaveText('Deleting…');
+  const busy = await pair(page, sel);
+  expect([rgbToHex(busy.bg), rgbToHex(busy.fg)]).toEqual(['#ff8a80', '#2c001e']);
+  expect(busy.ratio).toBeGreaterThanOrEqual(4.5);
+  const spinner = await page.locator(sel).evaluate((b) => ({ content: getComputedStyle(b, '::before').content, ring: getComputedStyle(b, '::before').borderTopColor, opacity: getComputedStyle(b).opacity }));
+  expect(spinner.content).toBe('""');
+  expect(rgbToHex(spinner.ring)).toBe('#2c001e');
+  expect(spinner.opacity).toBe('1');
+  clean();
+});
+
+test('states: a reviewer’s verdict stamps are Ubuntu status chips: raised purple, the status colour as ink and border, the word kept (Quiet: white paper)', async ({ page }) => {
+  test.setTimeout(180_000);
+  const clean = watchErrors(page);
+  const s = SURFACES.find((x) => x.name === 'crew-stamp')!;
+  for (const ui of ['quiet', 'ubuntu'] as UiTheme[]) {
+    await boot(page, s.fixture, { ui }, s.extra ?? '', s.wsQuery);
+    await s.open(page);
+    const stamp = page.locator('.prompt .prompt-crew .crew-stamp');
+    const want: Record<string, [string, string]> = ui === 'ubuntu' ? { pass: ['#3b1330', '#6be08f'], changes: ['#3b1330', '#ff8a80'], incomplete: ['#3b1330', '#cdb1c6'] } : { pass: ['#ffffff', '#0b8454'], changes: ['#ffffff', '#c42a26'], incomplete: ['#ffffff', '#5d6478'] };
+    for (const [kind, [bg, fg]] of Object.entries(want)) {
+      await stamp.evaluate((e, k) => e.setAttribute('class', `crew-stamp crew-stamp--${k}`), kind);
+      const got = await stamp.evaluate((e) => ({ bg: getComputedStyle(e).backgroundColor, fg: getComputedStyle(e).color, border: getComputedStyle(e).borderTopColor }));
+      expect([rgbToHex(got.bg), rgbToHex(got.fg), rgbToHex(got.border)], `${ui} ${kind}`).toEqual([bg, fg, fg]);
+      if (ui === 'ubuntu') expect((await pair(page, '.prompt .prompt-crew .crew-stamp')).ratio, kind).toBeGreaterThanOrEqual(4.5);
+    }
+    await page.goto('about:blank');
+  }
+  clean();
+});
+
+test('states: the elevator’s floor plates are Ubuntu controls: raised purple with a white number at rest, the lit ring on hover, orange with the dark number where you are and pressed', async ({ page }) => {
+  test.setTimeout(180_000);
+  const clean = watchErrors(page);
+  const s = SURFACES.find((x) => x.name === 'elevator')!;
+  await boot(page, s.fixture, { ui: 'ubuntu' }, s.extra ?? '', s.wsQuery);
+  await s.open(page);
+  const plate = (sel: string) => page.locator(sel).first().evaluate((e) => ({ bg: getComputedStyle(e).backgroundColor, img: getComputedStyle(e).backgroundImage, fg: getComputedStyle(e).color, ring: getComputedStyle(e).boxShadow }));
+  const here = await plate('dialog.panel .lift-go[aria-current="location"] .lift-num');
+  expect([rgbToHex(here.bg), here.img, rgbToHex(here.fg)]).toEqual(['#e95420', 'none', '#2c001e']);
+  const other = 'dialog.panel .lift-go:not([aria-current]) .lift-num';
+  const rest = await plate(other);
+  expect([rgbToHex(rest.bg), rest.img, rgbToHex(rest.fg)]).toEqual(['#3b1330', 'none', '#ffffff']);
+  expect(rest.ring).toContain('rgb(174, 147, 167)');
+  await page.locator('dialog.panel .lift-go:not([aria-current])').first().hover();
+  await expect.poll(async () => (await plate(other)).ring).toContain('rgb(255, 155, 118)');
+  await page.mouse.down();
+  await expect.poll(async () => rgbToHex((await plate(other)).bg), { timeout: 15_000 }).toBe('#ed764d');
+  expect(rgbToHex((await plate(other)).fg)).toBe('#2c001e');
+  await page.mouse.move(1, 1);
+  await page.mouse.up();
+  // The Buildings list's small plates are the same control at rest.
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.__h3d.openBuildings());
+  const small = await plate('dialog.panel .dir-floor .lift-num--sm');
+  expect([rgbToHex(small.bg), small.img, rgbToHex(small.fg)]).toEqual(['#3b1330', 'none', '#ffffff']);
   clean();
 });
 

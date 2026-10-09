@@ -147,6 +147,8 @@ export function strays(page: Page, rootSel: string, allowSel = ''): Promise<Stra
         '#1c2540', '#2a355a', '#3a466e', '#121a31', '#101626', '#0b1122', '#0b1022', '#0b1020', '#ffc233', '#ffd25e', '#ffe27a', '#eef2fb', '#b9c3dc', '#8f9abb',
         '#ffb4ae', '#ff7b73', '#d8302c', '#bf2622', '#c42a26', '#2fc46a', '#2f6bf0', '#12a26a', '#e8413a', '#7a8398', '#5a5fa8', '#1e9aa0', '#0b8454', '#6b7388', '#0f7378',
         '#6f9bff', '#0f1526', '#161e35', '#1f2a47', '#e4e9f6', '#9aa5c3', '#76819f', '#4cd88a', '#ff7a72', '#fff3c4', '#fff6dd', '#5b6685', '#354270', '#34406a', '#34416c', '#4a5570',
+        // The elevator's brushed-steel floor plates (light steel, its rings, the lit navy) and the verdict stamps' grey ink.
+        '#f7f9fc', '#c4cbd6', '#8d97a9', '#737e92', '#dde2ea', '#2c3350', '#5d6478',
       ].map((h) => `${parseInt(h.slice(1, 3), 16)},${parseInt(h.slice(3, 5), 16)},${parseInt(h.slice(5, 7), 16)}`);
       const rgbOf = (s: string) => [...s.matchAll(/rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)/g)].map((m) => `${Math.round(+m[1]!)},${Math.round(+m[2]!)},${Math.round(+m[3]!)}`);
       const srgbOf = (s: string) => [...s.matchAll(/color\(srgb\s+([\d.e-]+)\s+([\d.e-]+)\s+([\d.e-]+)/g)].map((m) => `${Math.round(+m[1]! * 255)},${Math.round(+m[2]! * 255)},${Math.round(+m[3]! * 255)}`);
@@ -225,11 +227,13 @@ export function targets(page: Page, rootSel: string, skipSel = ''): Promise<Targ
           if (skipSel && el.closest(skipSel)) continue;
           if (el.closest('[inert], [hidden], [aria-hidden="true"]')) continue;
           const cs = getComputedStyle(el);
-          if (cs.display === 'none' || cs.visibility === 'hidden' || cs.pointerEvents === 'none') continue;
-          // A visually hidden native input behind a drawn control is reached through the drawn one (its label).
+          if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+          // A visually hidden native input behind a drawn control is reached through the drawn one (its label), even when
+          // the input itself takes no pointer (the whiteboard's tool radios: the label is what is clicked).
           const label = el.closest('label');
           const hiddenInput = el.matches('input') && (cs.opacity === '0' || (cs.position === 'absolute' && cs.clipPath !== 'none') || el.getBoundingClientRect().width <= 1);
           if (hiddenInput && !label) continue;
+          if (cs.pointerEvents === 'none' && !hiddenInput) continue;
           const box = (label && el.matches('input[type="checkbox"], input[type="radio"]')) || hiddenInput ? label!.getBoundingClientRect() : el.getBoundingClientRect();
           if (box.width < 1 || box.height < 1) continue;
           if (el.matches('a[href]:not(.btn)') || el.closest('.color-picker__button, .range-input')) continue;

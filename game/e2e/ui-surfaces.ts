@@ -47,7 +47,7 @@ async function onFloor(page: Page, session = 'herdr-3d'): Promise<void> {
 }
 
 /** Sits at Tofu (or another worker of demo-m5) and leaves its conversation or terminal up. Tofu waits on a question: its composer is off. */
-export async function sitAtTofu(page: Page, mode: 'transcript' | 'terminal' = 'transcript', name = 'Tofu'): Promise<string> {
+export async function sitAtTofu(page: Page, mode: 'transcript' | 'terminal' = 'transcript', name = 'Tofu', minItems = 10): Promise<string> {
   await onFloor(page);
   const id = await page.evaluate((n) => window.__h3d.world().flatMap((f) => f.workers).find((w) => w.name === n)?.id ?? '', name);
   if (mode === 'terminal') await leftInTerminal(page, id);
@@ -59,7 +59,7 @@ export async function sitAtTofu(page: Page, mode: 'transcript' | 'terminal' = 't
   await frames(page, 12);
   await seatMode(page, mode);
   if (mode === 'transcript') {
-    await expect.poll(async () => (await page.evaluate(() => window.__h3d.transcript()))?.items ?? 0).toBeGreaterThan(10);
+    await expect.poll(async () => (await page.evaluate(() => window.__h3d.transcript()))?.items ?? 0).toBeGreaterThan(minItems);
     await expect(page.locator('.seat-transcript .tx')).toBeVisible();
   }
   await page.evaluate(() => window.__h3d.themeLoaded());
@@ -81,7 +81,7 @@ export interface Surface {
 }
 
 /** Into herdr-3d, in front of the whiteboard on the north wall; E opens the real editor, which draws a rectangle and keeps it selected (its property panel). */
-export async function openWhiteboard(page: Page): Promise<void> {
+export async function openWhiteboard(page: Page, draw = true): Promise<void> {
   await onFloor(page);
   await page.evaluate((floor) => {
     const b = window.__h3d.layout(floor)?.props.find((p) => p.id === 'whiteboard')?.box;
@@ -92,6 +92,7 @@ export async function openWhiteboard(page: Page): Promise<void> {
   await page.keyboard.press('KeyE');
   await expect(page.locator('.wb .excalidraw')).toBeVisible({ timeout: 60_000 });
   await frames(page, 3);
+  if (!draw) return;
   const box = await page.locator('.wb-canvas').boundingBox();
   if (!box) throw new Error('no canvas');
   await page.keyboard.press('r');
@@ -260,6 +261,33 @@ export const SURFACES: Surface[] = [
     root: 'dialog.desk-dlg--hire',
   },
   {
+    // The hire composer holding a pasted screenshot: an image chip (its thumbnail and remove button) in the text.
+    name: 'hire-chips',
+    fixture: 'demo-m4',
+    wsQuery: `${SIM}&upload_key=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    open: async (page) => {
+      await onFloor(page);
+      await page.evaluate(() => window.__h3d.openHire(5));
+      await expect.poll(async () => ((await dialog(page)) as { kind?: string; state?: string } | null)?.state).toBe('ready');
+      await page.locator('#hire-task').fill('Match the header to this screenshot: ');
+      await page.locator('#hire-task').press('End');
+      await page.evaluate(async () => {
+        const c = document.createElement('canvas');
+        c.width = 640;
+        c.height = 360;
+        const g = c.getContext('2d') as CanvasRenderingContext2D;
+        g.fillStyle = '#5e2750';
+        g.fillRect(0, 0, c.width, c.height);
+        const blob = await new Promise<Blob>((r) => c.toBlob((b) => r(b as Blob), 'image/png'));
+        const dt = new DataTransfer();
+        dt.items.add(new File([blob], 'header.png', { type: 'image/png' }));
+        document.querySelector('#hire-task')!.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+      });
+      await expect(page.locator('#hire-task .cmp-chip[data-status="ready"]')).toBeVisible({ timeout: 15_000 });
+    },
+    root: 'dialog.desk-dlg--hire',
+  },
+  {
     // Effort not given: its section is open with the interpreter's question and Hire is off; Harness and model opened by hand (a selected header).
     name: 'hire-review',
     fixture: 'demo-m4',
@@ -323,6 +351,29 @@ export const SURFACES: Surface[] = [
     root: 'dialog.desk-dlg--review',
   },
   {
+    // The elevator: a floor plate per floor, the one you are on lit (aria-current), an asleep floor's empty plate.
+    name: 'elevator',
+    fixture: 'demo-m3',
+    open: async (page) => {
+      await onFloor(page);
+      await page.evaluate(() => window.__h3d.openElevator());
+      await expect(page.locator('dialog.panel .lift-go[aria-current="location"]')).toBeVisible();
+      await page.mouse.move(1, 1);
+    },
+    root: 'dialog.panel',
+  },
+  {
+    // Buildings: each floor's small number plate beside its name.
+    name: 'buildings',
+    fixture: 'demo-m3',
+    open: async (page) => {
+      await onFloor(page);
+      await page.evaluate(() => window.__h3d.openBuildings());
+      await expect(page.locator('dialog.panel .dir-floor .lift-num--sm').first()).toBeVisible();
+    },
+    root: 'dialog.panel',
+  },
+  {
     name: 'start-run',
     fixture: 'demo-m4',
     open: async (page) => {
@@ -339,6 +390,32 @@ export const SURFACES: Surface[] = [
       await onFloor(page);
       await page.evaluate(() => window.__h3d.openPresets());
       await expect(page.locator('dialog.desk-dlg--presets')).toBeVisible();
+    },
+    root: 'dialog.desk-dlg--presets',
+  },
+  {
+    // A preset being deleted: the bridge's answer is held (the page's socket drops the command), so the final destructive
+    // button stays busy: natively disabled and aria-busy, "Deleting…" with its spinner (busy wins, decisions #216 row 14).
+    name: 'presets-deleting',
+    fixture: 'demo-m4',
+    open: async (page) => {
+      await onFloor(page);
+      await page.evaluate(() => {
+        const send = WebSocket.prototype.send;
+        WebSocket.prototype.send = function (this: WebSocket, ...a: Parameters<WebSocket['send']>) {
+          if (typeof a[0] === 'string' && a[0].includes('"preset.delete"')) return;
+          send.apply(this, a);
+        };
+      });
+      await page.evaluate(() => window.__h3d.openPresets());
+      const del = page.locator('dialog.desk-dlg--presets [data-key^="delete:"]:enabled').first();
+      const id = (await del.getAttribute('data-key'))!.slice('delete:'.length);
+      await del.click();
+      const confirm = page.locator(`dialog.desk-dlg--presets [data-key="confirm-delete:${id}"]`);
+      await confirm.click();
+      await expect(confirm).toHaveAttribute('aria-busy', 'true');
+      await expect(confirm).toBeDisabled();
+      await page.mouse.move(1, 1);
     },
     root: 'dialog.desk-dlg--presets',
   },
@@ -385,6 +462,20 @@ export const SURFACES: Surface[] = [
       await frames(page, 4);
       await expect(page.locator('.prompt .prompt-crew .crew-ask')).toContainText('Report request');
       await expect(page.locator('.prompt .prompt-crew .crew-more')).toBeVisible();
+    },
+    root: '.prompt',
+  },
+  {
+    // A reviewer's verdict stamp in the look-at bar (the REVIEW r3 desk of the over-cap run: CHANGES · 2 BLOCKERS).
+    name: 'crew-stamp',
+    fixture: 'demo-m6',
+    extra: '&open=none',
+    open: async (page) => {
+      await enter(page);
+      const id = await page.evaluate(() => window.__h3d.crew().members.find((m) => m.desk === 2)?.id ?? '');
+      expect(await page.evaluate((w) => window.__h3d.face(w), id)).toBe(true);
+      await frames(page, 4);
+      await expect(page.locator('.prompt .prompt-crew .crew-stamp')).toHaveText('CHANGES · 2 BLOCKERS');
     },
     root: '.prompt',
   },
@@ -479,6 +570,18 @@ export const SURFACES: Surface[] = [
     extra: '&me=Theo',
     wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     open: async (page) => void (await openWhiteboard(page)),
+    root: '.wb',
+  },
+  {
+    // An empty board (a fresh one): the editor's welcome, its heading and the toolbar and menu hints.
+    name: 'whiteboard-empty',
+    fixture: 'demo',
+    extra: '&me=Theo',
+    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    open: async (page) => {
+      await openWhiteboard(page, false); // (a short screen has no room for the welcome: Excalidraw leaves it out)
+      await page.waitForTimeout(300);
+    },
     root: '.wb',
   },
   {
@@ -583,6 +686,31 @@ export const SURFACES: Surface[] = [
     fixture: 'demo-m5',
     extra: '&prints=0',
     open: async (page) => void (await sitAtTofu(page, 'transcript')),
+    root: '.seat-transcript',
+  },
+  {
+    // The composer's completion popup in the seated prompt box: `/` lists the worker's commands, `@comp` its files.
+    name: 'completion-commands',
+    fixture: 'demo-m5',
+    extra: '&prints=0',
+    open: async (page) => {
+      await sitAtTofu(page, 'transcript', 'Nibble');
+      await page.locator('.seat-transcript .cmp-editor').click();
+      await page.keyboard.type('/');
+      await expect(page.locator('.seat-transcript .cmp-pop [role="option"] .tx-cmd-name').first()).toBeVisible();
+    },
+    root: '.seat-transcript',
+  },
+  {
+    name: 'completion-files',
+    fixture: 'demo-m5',
+    extra: '&prints=0',
+    open: async (page) => {
+      await sitAtTofu(page, 'transcript', 'Nibble');
+      await page.locator('.seat-transcript .cmp-editor').click();
+      await page.keyboard.type('look at @comp');
+      await expect(page.locator('.seat-transcript .cmp-pop [role="option"] .tx-file').first()).toBeVisible();
+    },
     root: '.seat-transcript',
   },
   {
