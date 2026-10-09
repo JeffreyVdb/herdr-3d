@@ -692,10 +692,21 @@
 .ov-row[data-display='asleep'] .ov-mark {
   fill: var(--ov-text);
 }
+/* The user's foreground on every row, asleep ones too (that rule is as specific as this one, and earlier). */
 @media (forced-colors: active) {
-  .ov-mark {
+  .ov-mark,
+  .ov-row[data-display] .ov-mark {
     fill: CanvasText;
   }
+}
+/* #229: a chip on the name's line is centred on its capitals, not sat on its baseline (that left it low): centred on
+   the line, then 1px up, as the condensed face's capitals sit 1.5px above its line's middle (Ubuntu's, 1px below). */
+.ov-who > .ov-tag,
+.ov-who > .ov-floortag,
+.ov-who > .ov-cap {
+  position: relative;
+  top: -1px;
+  align-self: center;
 }
 .ov-tag {
   padding: 2px 6px 1px;
@@ -1213,6 +1224,11 @@
 :root[data-ui-theme='ubuntu'] .ov-mark {
   width: 15px;
   height: 15px;
+}
+:root[data-ui-theme='ubuntu'] .ov-who > .ov-tag,
+:root[data-ui-theme='ubuntu'] .ov-who > .ov-floortag,
+:root[data-ui-theme='ubuntu'] .ov-who > .ov-cap {
+  top: 1px;
 }
 :root[data-ui-theme='ubuntu'] .ov-row--floor .ov-name {
   font-size: 26px;

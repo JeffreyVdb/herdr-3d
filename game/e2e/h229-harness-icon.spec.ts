@@ -60,6 +60,49 @@ const rows = (page: Page) =>
     }),
   );
 
+/**
+ * Every worker row's chips on the name's line (role, floor, Over cap) and its mark: how far each one's vertical centre
+ * is from the middle of the name's capitals. The capitals' middle comes from the name's font metrics: the text's range
+ * box is the font's content area, so its top plus the font's ascent is the baseline, and half the height of an H above
+ * it is the middle (canvas measureText, in the name's family, weight and size; the condensed width is left out, which
+ * moves no vertical metric).
+ */
+const offsets = (page: Page) =>
+  page.locator('.ov-row--worker').evaluateAll((els) =>
+    els.map((r) => {
+      const n = r.querySelector('.ov-who > .ov-name') as HTMLElement;
+      const nb = n.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      const cs = getComputedStyle(n);
+      const g = document.createElement('canvas').getContext('2d')!;
+      g.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const h = g.measureText('H');
+      const cap = range.getClientRects()[0]!.top + h.fontBoundingBoxAscent - h.actualBoundingBoxAscent / 2;
+      const mid = (e: Element) => {
+        const b = e.getBoundingClientRect();
+        return (b.top + b.bottom) / 2;
+      };
+      const mark = r.querySelector('.ov-who > .ov-mark');
+      const chips = [...r.querySelectorAll('.ov-who > .ov-tag, .ov-who > .ov-floortag, .ov-who > .ov-cap')].filter((c) => {
+        const b = c.getBoundingClientRect();
+        return b.top < nb.bottom && b.bottom > nb.top;
+      });
+      return { name: n.textContent ?? '', mark: mark ? mid(mark) - cap : null, chips: chips.map((c) => ({ text: c.textContent ?? '', d: mid(c) - cap })) };
+    }),
+  );
+
+/** The chips and the mark on a name's line are centred on its capitals (#229: the chips sat on the baseline, low). */
+async function centred(page: Page, where: string): Promise<number> {
+  let n = 0;
+  for (const r of await offsets(page)) {
+    if (r.mark !== null) expect(Math.abs(r.mark), `${r.name}'s mark ${where}`).toBeLessThanOrEqual(1.5);
+    for (const c of r.chips) expect(Math.abs(c.d), `${r.name}'s ${c.text} ${where}`).toBeLessThanOrEqual(1.5);
+    n += r.chips.length;
+  }
+  return n;
+}
+
 for (const theme of ['quiet', 'ubuntu'] as const) {
   test(`the overview: the harness is a mark before the name, the model its name and effort, no run words (${theme}, #229)`, async ({ page }) => {
     test.setTimeout(150_000);
@@ -90,13 +133,57 @@ for (const theme of ['quiet', 'ubuntu'] as const) {
     await expect(page.locator('.ov-row', { hasText: 'Sprout' }).locator('.ov-cap')).toHaveText('Over cap');
     // The marks are white.
     expect(await page.locator('.ov-mark').first().evaluate((e) => getComputedStyle(e).fill)).toBe('rgb(255, 255, 255)');
+    expect(await centred(page, 'at 1280')).toBeGreaterThan(5);
     await shot(page, `h229-overview-${theme}`);
     for (const width of [760, 480]) {
       await page.setViewportSize({ width, height: 900 });
       await frames(page, 2);
       for (const r of await rows(page)) expect(r.first && r.box!.top >= 0 && r.box!.bottom >= 0, `${r.name} at ${width}`).toBe(true);
+      await centred(page, `at ${width}`);
       await shot(page, `h229-overview-${theme}-${width}`);
     }
+    clean();
+  });
+}
+
+for (const theme of ['quiet', 'ubuntu'] as const) {
+  test(`every floor: the chips centred on the names; forced colours paint every mark in the user's text colour, asleep rows too (${theme}, #229)`, async ({ page }) => {
+    test.setTimeout(150_000);
+    const clean = watchErrors(page);
+    if (theme === 'ubuntu') await page.addInitScript((kv) => Object.entries(kv).forEach(([k, v]) => localStorage.setItem(k, v)), UBUNTU);
+    await withLabels(page);
+    // demo-m188 in the city: O is every floor's page; F shows everyone, Expand all unfolds the asleep depot-manager.
+    await openGame(page, 'demo-m188', '', SIM);
+    await page.keyboard.press('KeyO');
+    await expect.poll(async () => (await page.evaluate(() => window.__h3d.overview()))?.page?.view).toBe('city');
+    await expect(page.locator('.ov')).not.toHaveClass(/ov--enter/, { timeout: 5000 });
+    await page.keyboard.press('KeyF');
+    await expect.poll(async () => (await page.evaluate(() => window.__h3d.overview()))?.page?.filter).toBe('all');
+    await page.getByRole('button', { name: 'Expand all' }).click();
+    await expect.poll(() => page.locator('.ov-row[data-display="asleep"] .ov-mark').count()).toBeGreaterThan(0);
+    expect(await centred(page, 'on every floor')).toBeGreaterThan(5);
+    // Poppy's floor chip shares its name's line here.
+    await expect(page.locator('.ov-row--worker', { hasText: 'Poppy' }).locator('.ov-floortag')).toHaveText('Floor 1');
+
+    await page.emulateMedia({ forcedColors: 'active' });
+    const fills = await page.evaluate(() => {
+      const probe = document.createElement('span');
+      probe.style.color = 'CanvasText';
+      document.body.append(probe);
+      const text = getComputedStyle(probe).color;
+      probe.remove();
+      return {
+        forced: matchMedia('(forced-colors: active)').matches,
+        text,
+        marks: [...document.querySelectorAll('.ov-mark')].map((m) => ({ asleep: !!m.closest('.ov-row[data-display="asleep"]'), fill: getComputedStyle(m).fill })),
+      };
+    });
+    expect(fills.forced).toBe(true);
+    expect(fills.marks.filter((m) => m.asleep).length).toBeGreaterThan(0);
+    for (const m of fills.marks) expect(m.fill, m.asleep ? 'an asleep mark' : 'a mark').toBe(fills.text);
+    await page.locator('.ov-row[data-display="asleep"]').first().scrollIntoViewIfNeeded();
+    await frames(page, 2);
+    await shot(page, `h229-forced-${theme}`);
     clean();
   });
 }
