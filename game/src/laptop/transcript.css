@@ -6,6 +6,13 @@
  * you". The zoom scales every size: the body is `--tx-fs`, other sizes are written against a 13.5px body times
  * `--tx-k`, mono is `--tx-mono-fs` (a pixel font's snapped size). The top strip is the view's controls and does not zoom.
  * Their defaults (Quiet's, for a page without the loader) are in ui/themes.css.
+ *
+ * #216 (ownership): the transcript's CONTENT (messages, code, diffs, tool output, status annotations and the code
+ * highlight palette) keeps the `--tx-*` set and `--tx-mono` / `--tx-prose`. The screen's app chrome and widgets (the strip,
+ * the prompt box and its Send, the jump chip, the banner, the question cards and their answer controls, a tool row's
+ * button, the completion popover, file chips) wear the UI theme (`--ctl-*`, `--warn`, `--on-fill`; ui/uiTheme.css), so
+ * Ubuntu's UI over a Quiet transcript (or the other way round) keeps each part in its own palette. The Ubuntu rules
+ * are at the end of the file, under `:root[data-ui-theme='ubuntu'] .tx`: they out-rank `.tx button`'s reset (#111).
  */
 
 .tx {
@@ -44,7 +51,7 @@
   cursor: pointer;
 }
 .tx :focus-visible {
-  outline: 2px solid var(--tx-blue);
+  outline: 2px solid var(--ctl-focus);
   outline-offset: 1px;
 }
 
@@ -57,8 +64,10 @@
   align-items: center;
   gap: 4px 10px;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--tx-line);
-  background: var(--tx-bg-2);
+  border-bottom: 1px solid var(--ctl-line);
+  background: var(--ctl-bar);
+  color: var(--ctl-text);
+  font-family: var(--ctl-font);
   font-size: 12px;
 }
 .tx-title {
@@ -66,7 +75,7 @@
   letter-spacing: 0.02em;
 }
 .tx-count {
-  color: var(--tx-text-3);
+  color: var(--ctl-text-3);
   font-variant-numeric: tabular-nums;
 }
 /* #101: the context meter. A slim fill and the number in words; the colour steps (warm, hot) are an extra, the number is
@@ -74,13 +83,13 @@
    share on a narrow screen. Its colours are the preset's: neutral, then the sun, then the red, each 3:1 or better
    on the track in Quiet and Ubuntu. */
 .tx-ctx {
-  --ctx: var(--tx-text-2);
+  --ctx: var(--ctl-text-2);
   flex: 0 1 auto;
   min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -88,10 +97,10 @@
   display: none;
 }
 .tx-ctx[data-level='warm'] {
-  --ctx: var(--tx-sun-text);
+  --ctx: var(--warn);
 }
 .tx-ctx[data-level='hot'] {
-  --ctx: var(--tx-red);
+  --ctx: var(--ctl-error);
 }
 .tx-ctx-track {
   /* Short, so the meter fits the strip's first line beside the controls (the preset and zoom wrap when it does not);
@@ -102,8 +111,8 @@
   height: 6px;
   overflow: hidden;
   border-radius: 3px;
-  background: var(--tx-bg-3);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tx-text-3) 40%, transparent);
+  background: var(--ctl-hover);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ctl-text-3) 40%, transparent);
 }
 .tx-ctx-fill {
   display: block;
@@ -119,7 +128,7 @@
   font-weight: 700;
 }
 .tx-ctx[data-level='ok'] .tx-ctx-pct {
-  color: var(--tx-text);
+  color: var(--ctl-text);
 }
 .tx-spacer {
   flex: 1;
@@ -128,15 +137,15 @@
   flex: none;
   white-space: nowrap;
   padding: 2px 9px;
-  border: 1px solid var(--tx-line);
+  border: 1px solid var(--ctl-border);
   border-radius: 999px;
   background: transparent;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: 11.5px;
 }
 .tx-sys-toggle[aria-pressed='true'] {
-  color: var(--tx-bg);
-  background: var(--tx-text-2);
+  color: var(--ctl-well);
+  background: var(--ctl-text-2);
   border-color: transparent;
 }
 .tx-bar svg {
@@ -150,7 +159,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: 11.5px;
   white-space: nowrap;
   cursor: pointer;
@@ -160,20 +169,20 @@
   width: 13px;
   height: 13px;
   margin: 0;
-  accent-color: var(--tx-blue);
+  accent-color: var(--ctl-accent);
   cursor: pointer;
 }
 /* #171: Code changes carries its icon, so the two boxes tell apart when a narrow strip drops their names. */
 .tx-check-ic {
   display: inline-flex;
-  color: var(--tx-text-3);
+  color: var(--ctl-text-3);
 }
 .tx-check-ic svg {
   width: 12px;
   height: 12px;
 }
 .tx-check-n {
-  color: var(--tx-text-3);
+  color: var(--ctl-text-3);
   font-variant-numeric: tabular-nums;
 }
 .tx-check-n:empty {
@@ -189,10 +198,10 @@
   max-width: max-content;
   padding: 1px 9px 1px 7px;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--tx-blue) 35%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ctl-working) 35%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--tx-blue) 10%, transparent);
-  color: var(--tx-text);
+  background: color-mix(in srgb, var(--ctl-working) 10%, transparent);
+  color: var(--ctl-text);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -204,16 +213,16 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--tx-blue);
+  background: var(--ctl-working);
   animation: tx-pulse 1.1s ease-in-out infinite;
 }
 .tx-busy[data-state='failed'] {
-  border-color: color-mix(in srgb, var(--tx-red) 45%, transparent);
-  background: color-mix(in srgb, var(--tx-red) 12%, transparent);
-  color: var(--tx-red);
+  border-color: color-mix(in srgb, var(--ctl-error) 45%, transparent);
+  background: color-mix(in srgb, var(--ctl-error) 12%, transparent);
+  color: var(--ctl-error);
 }
 .tx-busy[data-state='failed']::before {
-  background: var(--tx-red);
+  background: var(--ctl-error);
   animation: none;
 }
 .tx-busy[hidden] {
@@ -261,7 +270,7 @@
   align-items: center;
   padding: 2px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--tx-code-bg) 70%, transparent);
+  background: color-mix(in srgb, var(--ctl-recess) 70%, transparent);
 }
 .tx-theme {
   display: inline-flex;
@@ -272,12 +281,12 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: 11.5px;
   font-weight: 650;
 }
 .tx-theme:hover {
-  color: var(--tx-text);
+  color: var(--ctl-text);
 }
 /* A tiny screen in the preset's colours: its background, a line of its text, its accent. */
 .tx-swatch {
@@ -289,14 +298,14 @@
     linear-gradient(var(--sw-ac), var(--sw-ac)) 3px 3px / 3px 3px no-repeat,
     linear-gradient(var(--sw-fg), var(--sw-fg)) 3px 7px / 9px 1.5px no-repeat,
     var(--sw-bg);
-  box-shadow: inset 0 0 0 1px rgb(var(--tx-tint) / 28%);
+  box-shadow: inset 0 0 0 1px rgb(var(--ctl-tint) / 28%);
 }
 .tx-theme-name {
   display: none;
 }
 .tx-theme[aria-checked='true'] {
-  background: var(--tx-bg-3);
-  color: var(--tx-text);
+  background: var(--ctl-hover);
+  color: var(--ctl-text);
   padding-right: 8px;
 }
 .tx-theme[aria-checked='true'] .tx-theme-name {
@@ -309,13 +318,13 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: 11.5px;
   font-weight: 700;
 }
 .tx-zoom-btn:hover:not(:disabled) {
-  background: var(--tx-bg-3);
-  color: var(--tx-text);
+  background: var(--ctl-hover);
+  color: var(--ctl-text);
 }
 .tx-zoom-btn:disabled {
   opacity: 0.4;
@@ -327,13 +336,28 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* #216: the banner, the question cards and their tabs are the screen's own chrome, so the sun of "waiting for you" is
+   the UI theme's warning colour there (the rules below keep asking `--tx-sun`; the async-question card and its tab
+   repoint these to the working colour). The timeline's records of a question keep the transcript's sun. */
+.tx-banner,
+.tx-ask,
+.tx-fu,
+.tx-aq,
+.tx-qtab {
+  --tx-sun: var(--warn);
+  --tx-sun-text: var(--warn);
+  --tx-on-sun: var(--on-fill);
+}
+
 /* Blocked banner */
 .tx-banner {
   flex: none;
+  color: var(--ctl-text);
+  font-family: var(--ctl-font);
   margin: 8px 10px 0;
   padding: 9px 11px 10px;
   border-radius: 8px;
-  background: var(--tx-banner-bg);
+  background: var(--ctl-banner-bg);
   border: 1px solid color-mix(in srgb, var(--tx-sun) 45%, transparent);
 }
 .tx-banner[hidden] {
@@ -405,8 +429,8 @@
   max-height: 6.6em;
   overflow: hidden;
   border-radius: 5px;
-  background: color-mix(in srgb, var(--tx-code-bg) 75%, transparent);
-  color: var(--tx-text-2);
+  background: color-mix(in srgb, var(--ctl-recess) 75%, transparent);
+  color: var(--ctl-text-2);
   font: var(--tx-mono-fs, 11.5px)/1.4 var(--tx-mono);
   font-variant-ligatures: none;
   white-space: pre-wrap;
@@ -458,13 +482,13 @@
   padding: 2px 6px;
   border: 0;
   background: transparent;
-  color: var(--tx-blue-text);
+  color: var(--ctl-accent-text);
   font-size: calc(12px * var(--tx-k, 1));
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 .tx-to-term {
-  color: var(--tx-sun-text);
+  color: var(--warn);
 }
 
 /* Timeline */
@@ -745,19 +769,19 @@
   gap: 8px;
   min-width: 0;
   padding: 4px 8px;
-  border: 1px solid var(--tx-line);
+  border: 1px solid var(--ctl-border);
   border-radius: 6px;
-  background: var(--tx-bg-2);
+  background: var(--ctl-raised);
   text-align: left;
   font-size: calc(12.5px * var(--tx-k, 1));
 }
 .tx-tool-row:hover,
 .tx-sub-row:hover {
-  background: var(--tx-bg-3);
+  background: var(--ctl-hover);
 }
 .tx-tool-icon {
   display: inline-flex;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
 }
 .tx-tool-name {
   flex: none;
@@ -772,7 +796,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-family: var(--tx-mono);
   font-variant-ligatures: none;
   font-size: var(--tx-mono-fs, 11.5px);
@@ -783,7 +807,7 @@
   align-items: center;
   gap: 5px;
   font-size: calc(11px * var(--tx-k, 1));
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
 }
 .tx-tool-status::before {
   content: '';
@@ -824,7 +848,7 @@
 .tx-tool-dur {
   flex: none;
   min-width: 0;
-  color: var(--tx-text-3);
+  color: var(--ctl-text-3);
   font-size: calc(11px * var(--tx-k, 1));
   font-variant-numeric: tabular-nums;
 }
@@ -833,7 +857,7 @@
 }
 .tx-caret {
   display: inline-flex;
-  color: var(--tx-text-3);
+  color: var(--ctl-text-3);
 }
 .tx-caret svg {
   transition: transform 140ms var(--ease, ease-out);
@@ -910,17 +934,17 @@
   min-width: 0;
   padding: 4px 9px 4px 6px;
   border: 0;
-  background: var(--tx-bg-2);
-  color: var(--tx-text);
+  background: var(--ctl-raised);
+  color: var(--ctl-text);
   text-align: left;
   font: var(--tx-mono-fs, 11.5px) var(--tx-mono);
   font-variant-ligatures: none;
 }
 .tx .tx-chg-head:hover {
-  background: var(--tx-bg-3);
+  background: var(--ctl-hover);
 }
 .tx-chg-head[aria-expanded='true'] {
-  border-bottom: 1px solid var(--tx-line);
+  border-bottom: 1px solid var(--ctl-line);
 }
 .tx-chg-op {
   flex: none;
@@ -1144,11 +1168,12 @@
   padding: 4px 12px;
   border: 0;
   border-radius: 999px;
-  background: var(--tx-blue);
-  color: var(--tx-on-accent);
+  background: var(--ctl-accent);
+  color: var(--on-ctl-accent);
+  font-family: var(--ctl-font);
   font-size: calc(12px * var(--tx-k, 1));
   font-weight: 700;
-  box-shadow: 0 4px 14px rgb(0 0 0 / 40%);
+  box-shadow: var(--ctl-shadow-chip);
 }
 .tx .tx-jump[hidden] {
   display: none;
@@ -1161,41 +1186,43 @@
   align-items: flex-end;
   gap: 8px;
   padding: 8px 10px;
-  border-top: 1px solid var(--tx-line);
-  background: var(--tx-bg-2);
+  border-top: 1px solid var(--ctl-line);
+  background: var(--ctl-bar);
+  color: var(--ctl-text);
+  font-family: var(--ctl-font);
 }
 /* The prompt box is the shared composer (#64): its editor wears the box's look, its chips scale with the view (em). */
 .tx .cmp {
-  --cmp-well: var(--tx-bg);
+  --cmp-well: var(--ctl-well);
   --cmp-min-height: 2.3em;
   --cmp-max-height: 10em;
-  --cmp-ok: var(--tx-green);
-  --cmp-err: var(--tx-red);
+  --cmp-ok: var(--ctl-ok);
+  --cmp-err: var(--ctl-error);
   flex: 1;
   min-width: 0;
-  color: var(--tx-text);
+  color: var(--ctl-text);
 }
 .tx .cmp-editor {
   padding: 0.4em 0.7em;
-  border: 1px solid var(--tx-line);
+  border: 1px solid var(--ctl-border);
   border-radius: 0.55em;
-  color: var(--tx-text);
+  color: var(--ctl-text);
   font: inherit;
   line-height: 1.4;
-  caret-color: var(--tx-sun);
+  caret-color: var(--warn);
 }
 .tx .cmp-editor:hover {
-  border-color: var(--tx-line);
+  border-color: var(--ctl-border);
 }
 .tx .cmp-editor:focus-visible {
   outline: none;
-  border-color: var(--tx-blue);
+  border-color: var(--ctl-focus);
 }
 .tx .cmp-editor[data-empty='true']::before {
   left: 0.7em;
   right: 0.7em;
   overflow: hidden;
-  color: var(--tx-text-3);
+  color: var(--ctl-text-3);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1209,18 +1236,18 @@
 }
 /* #139: the completion popup wears the preset's colours; the active row the view's focus blue. */
 .tx .cmp-pop {
-  --cmp-pop-bg: var(--tx-bg-2);
-  --cmp-pop-line: var(--tx-line);
-  --cmp-pop-text: var(--tx-text);
-  --cmp-pop-muted: var(--tx-text-2);
-  --cmp-pop-accent: var(--tx-blue);
-  box-shadow: 0 10px 28px -8px rgb(0 0 0 / 45%);
+  --cmp-pop-bg: var(--ctl-raised);
+  --cmp-pop-line: var(--ctl-border);
+  --cmp-pop-text: var(--ctl-text);
+  --cmp-pop-muted: var(--ctl-text-2);
+  --cmp-pop-accent: var(--ctl-accent);
+  box-shadow: var(--ctl-shadow-pop);
 }
 .tx .cmp-pop-opt:not([aria-disabled='true']):hover {
-  background: var(--tx-bg-3);
+  background: var(--ctl-hover);
 }
 .tx .cmp-pop-list {
-  scrollbar-color: var(--tx-bg-3) transparent;
+  scrollbar-color: var(--ctl-hover) transparent;
 }
 /*
  * #140: a command or skill: `/name` as it is typed (mono, the matched letters in the preset's sun), its argument hint
@@ -1246,30 +1273,30 @@
 .tx-cmd-name {
   flex: none;
   max-width: 60%;
-  color: var(--tx-text);
+  color: var(--ctl-text);
 }
 .tx-cmd-hit {
-  color: var(--tx-sun-text);
+  color: var(--warn);
   font-weight: 700;
 }
 .tx-cmd-arg {
   flex: 0 1 auto;
   max-width: 30%;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
 }
 .tx-cmd-desc {
   overflow: hidden;
   flex: 1 6 auto;
   min-width: 4em;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   text-overflow: ellipsis;
 }
 .tx-cmd-kind {
   flex: none;
   padding: 0 0.45em;
-  border: 1px solid var(--tx-line);
+  border: 1px solid var(--ctl-line);
   border-radius: 4px;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: 0.8em;
   line-height: 1.5;
 }
@@ -1277,9 +1304,9 @@
 .tx-cmd-term {
   flex: none;
   padding: 0 0.45em;
-  border: 1px solid color-mix(in srgb, var(--tx-sun-text) 50%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent);
   border-radius: 4px;
-  color: var(--tx-sun-text);
+  color: var(--warn);
   font-size: 0.8em;
   line-height: 1.5;
 }
@@ -1295,12 +1322,12 @@
   white-space: nowrap;
 }
 .tx-cmd[data-kind='skill'] .tx-cmd-kind {
-  border-color: color-mix(in srgb, var(--tx-blue) 45%, transparent);
-  color: var(--tx-blue-text);
+  border-color: color-mix(in srgb, var(--ctl-accent) 45%, transparent);
+  color: var(--ctl-accent-text);
 }
 .tx-cmd[data-kind='custom'] .tx-cmd-kind {
-  border-color: color-mix(in srgb, var(--tx-green) 45%, transparent);
-  color: var(--tx-green);
+  border-color: color-mix(in srgb, var(--ctl-ok) 45%, transparent);
+  color: var(--ctl-ok);
 }
 /*
  * #141: a file or folder of the checkout: the glyph, the basename in the code face (bold, the matched letters in the
@@ -1322,10 +1349,10 @@
   align-self: center;
   width: 1.15em;
   height: 1.15em;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
 }
 .tx-file[data-kind='dir'] svg {
-  color: var(--tx-sun-text);
+  color: var(--warn);
 }
 .tx-file-name,
 .tx-file-dir {
@@ -1335,16 +1362,16 @@
 .tx-file-name {
   flex: none;
   max-width: 70%;
-  color: var(--tx-text);
+  color: var(--ctl-text);
   font-weight: 700;
 }
 .tx-file-dir {
   flex: 0 1 auto;
   min-width: 3em;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
 }
 .tx-file-hit {
-  color: var(--tx-sun-text);
+  color: var(--warn);
   font-weight: 700;
 }
 .tx-file-sr {
@@ -1359,18 +1386,18 @@
   white-space: nowrap;
 }
 .tx .cmp-chip {
-  color: var(--tx-text);
-  background: var(--tx-bg-3);
-  border-color: var(--tx-line);
+  color: var(--ctl-text);
+  background: var(--ctl-hover);
+  border-color: var(--ctl-border);
 }
 .tx .cmp-file svg {
-  color: var(--tx-sun-text);
+  color: var(--warn);
 }
 .tx .cmp-file-name {
   font-family: var(--tx-mono);
 }
 .tx .cmp-chip[data-status='error'] {
-  border-color: var(--tx-red);
+  border-color: var(--ctl-error);
 }
 .tx .cmp-thumb {
   width: 3.9em;
@@ -1381,7 +1408,7 @@
 }
 .tx .cmp-state {
   font-size: 0.75em;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
 }
 .tx .cmp-num {
   font-size: 0.72em;
@@ -1390,7 +1417,7 @@
 .tx .cmp-remove,
 .tx .cmp-retry {
   font-size: 0.8em;
-  color: var(--tx-text);
+  color: var(--ctl-text);
 }
 .tx .cmp-remove {
   width: 2em;
@@ -1402,7 +1429,7 @@
 .tx .cmp-thumb:focus-visible,
 .tx .cmp-remove:focus-visible,
 .tx .cmp-retry:focus-visible {
-  outline-color: var(--tx-blue);
+  outline-color: var(--ctl-focus);
 }
 .tx-send:disabled {
   opacity: 0.45;
@@ -1415,8 +1442,8 @@
   padding: 0 14px;
   border: 0;
   border-radius: 8px;
-  background: var(--tx-blue);
-  color: var(--tx-on-accent);
+  background: var(--ctl-accent);
+  color: var(--on-ctl-accent);
   font-weight: 700;
 }
 
@@ -1742,6 +1769,7 @@
 .tx-fu,
 .tx-aq {
   --tx-sun-soft: color-mix(in srgb, var(--tx-sun) 42%, transparent);
+  --tx-ask-bg: var(--ctl-ask-bg);
   flex: none;
   display: flex;
   flex-direction: column;
@@ -1753,7 +1781,9 @@
   border: 1px solid var(--tx-sun-soft);
   border-radius: 10px;
   background: var(--tx-ask-bg);
-  box-shadow: 0 -8px 22px -6px rgb(0 0 0 / 55%);
+  color: var(--ctl-text);
+  font-family: var(--ctl-font);
+  box-shadow: var(--ctl-shadow-card);
 }
 .tx-ask[hidden],
 .tx-fu[hidden],
@@ -1783,7 +1813,7 @@
   min-width: 0;
 }
 .tx-ask-wait {
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: calc(11.5px * var(--tx-k, 1));
   font-variant-numeric: tabular-nums;
   font-variant-numeric: tabular-nums;
@@ -1830,14 +1860,14 @@
   width: calc(20px * var(--tx-k, 1));
   height: calc(20px * var(--tx-k, 1));
   border-radius: 50%;
-  background: var(--tx-bg-3);
-  color: var(--tx-text-2);
+  background: var(--ctl-hover);
+  color: var(--ctl-text-2);
   font-size: calc(11px * var(--tx-k, 1));
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
 .tx-ask-mark.is-done {
-  background: var(--tx-green);
+  background: var(--ctl-ok);
   color: var(--tx-on-sun);
 }
 .tx-ask-mark svg,
@@ -1847,13 +1877,13 @@
   stroke-width: 3;
 }
 .tx-ask-kind {
-  color: var(--tx-text-3);
+  color: var(--ctl-text-3);
   font-size: calc(11.5px * var(--tx-k, 1));
 }
 /* How to pick: shown while the question itself has the keyboard, louder after an Enter there picked nothing. */
 .tx-ask-nudge {
   margin: -2px 0 6px;
-  color: var(--tx-text-3);
+  color: var(--ctl-text-3);
   font-size: calc(11.5px * var(--tx-k, 1));
 }
 .tx-ask-q:not(:focus) > .tx-ask-nudge:not(.is-loud) {
@@ -1871,10 +1901,10 @@
   gap: 10px;
   width: 100%;
   padding: 6px 10px;
-  border: 1px solid var(--tx-line);
+  border: 1px solid var(--ctl-border);
   border-radius: 8px;
   background: transparent;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   text-align: left;
   cursor: pointer;
   transition: border-color 120ms ease-out;
@@ -1883,7 +1913,7 @@
   border-color: var(--tx-sun-soft);
 }
 .tx-ask-row.is-done {
-  color: var(--tx-text);
+  color: var(--ctl-text);
 }
 .tx-ask-row-head {
   color: var(--tx-sun-text);
@@ -1901,7 +1931,7 @@
   font-weight: 650;
 }
 .tx-ask-row-act {
-  color: var(--tx-blue-text);
+  color: var(--ctl-accent-text);
   font-size: calc(12px * var(--tx-k, 1));
 }
 .tx-ask-done {
@@ -1924,7 +1954,7 @@
 @keyframes tx-ask-flash {
   0%,
   40% {
-    box-shadow: 0 0 0 2px var(--tx-red);
+    box-shadow: 0 0 0 2px var(--ctl-error);
   }
   100% {
     box-shadow: 0 0 0 2px transparent;
@@ -1962,9 +1992,9 @@
   align-items: start;
   width: 100%;
   padding: 6px 10px 6px 6px;
-  border: 1px solid rgb(var(--tx-tint) / 7%);
+  border: 1px solid rgb(var(--ctl-tint) / 7%);
   border-radius: 7px;
-  background: rgb(var(--tx-tint) / 2.5%);
+  background: rgb(var(--ctl-tint) / 2.5%);
   text-align: left;
   cursor: pointer;
   transition: border-color 120ms ease-out, background-color 120ms ease-out;
@@ -2011,7 +2041,7 @@
   min-width: 0;
 }
 .tx-ask-opt-label {
-  color: var(--tx-text);
+  color: var(--ctl-text);
   font-weight: 650;
   overflow-wrap: anywhere;
 }
@@ -2027,7 +2057,7 @@
   vertical-align: 1px;
 }
 .tx-ask-opt-desc {
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: calc(12.5px * var(--tx-k, 1));
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -2038,8 +2068,8 @@
   max-height: 9em;
   overflow: auto;
   border-radius: 5px;
-  background: color-mix(in srgb, var(--tx-code-bg) 75%, transparent);
-  color: var(--tx-text-2);
+  background: color-mix(in srgb, var(--ctl-recess) 75%, transparent);
+  color: var(--ctl-text-2);
   font: var(--tx-mono-fs, 11.5px)/1.35 var(--tx-mono);
   font-variant-ligatures: none;
   white-space: pre;
@@ -2051,15 +2081,15 @@
   width: 100%;
   min-width: 0;
   padding: 5px 8px;
-  border: 1px solid var(--tx-line);
+  border: 1px solid var(--ctl-border);
   border-radius: 5px;
-  background: color-mix(in srgb, var(--tx-code-bg) 75%, transparent);
-  color: var(--tx-text);
+  background: color-mix(in srgb, var(--ctl-recess) 75%, transparent);
+  color: var(--ctl-text);
   font: inherit;
   caret-color: var(--tx-sun);
 }
 .tx-ask-other-input::placeholder {
-  color: var(--tx-text-3);
+  color: var(--ctl-text-3);
 }
 .tx-ask-other-input:focus {
   border-color: var(--tx-sun);
@@ -2076,17 +2106,17 @@
 .tx-ask-hint {
   flex: 1;
   min-width: 0;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: calc(12px * var(--tx-k, 1));
 }
 .tx-ask-keys {
   display: block;
-  color: var(--tx-text-3);
+  color: var(--ctl-text-3);
   font-size: calc(11px * var(--tx-k, 1));
   font-variant-numeric: tabular-nums;
 }
 .tx-ask-dismiss {
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
 }
 /* Under .tx: its button reset (`.tx button`: the colour inherited) would win over a bare class, light text on sun. */
 .tx .tx-ask-send {
@@ -2099,25 +2129,25 @@
   font-weight: 750;
 }
 .tx .tx-ask-send:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--tx-sun) 82%, white);
+  background: color-mix(in srgb, var(--tx-sun) 82%, var(--ctl-lift));
 }
 .tx .tx-ask-send:disabled,
 .tx .tx-ask-send.is-blocked {
-  background: var(--tx-bg-3);
-  color: var(--tx-text-3);
+  background: var(--ctl-hover);
+  color: var(--ctl-text-3);
 }
 .tx .tx-ask-send:disabled {
   cursor: default;
 }
 .tx .tx-ask-send.is-blocked:hover {
-  background: var(--tx-bg-3);
+  background: var(--ctl-hover);
 }
 .tx-ask-kbd {
   margin-left: 8px;
   padding: 0 5px;
   border-radius: 4px;
-  background: rgb(0 0 0 / 14%);
-  font: 650 calc(10.5px * var(--tx-k, 1)) / 1.6 var(--tx-mono);
+  background: var(--ctl-kbd-bg);
+  font: 650 calc(10.5px * var(--tx-k, 1)) / 1.6 var(--font-mono);
 }
 .tx-ask-send.is-blocked .tx-ask-kbd {
   background: transparent;
@@ -2126,15 +2156,15 @@
 .tx-fu[data-phase='sending'] .tx-ask-send:disabled,
 .tx-aq[data-phase='sending'] .tx-ask-send:disabled {
   background: color-mix(in srgb, var(--tx-sun) 30%, transparent);
-  color: var(--tx-text);
+  color: var(--ctl-text);
 }
 .tx-ask-note {
   margin-top: 6px;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: calc(12px * var(--tx-k, 1));
 }
 .tx-ask-note.is-error {
-  color: var(--tx-red);
+  color: var(--ctl-error);
 }
 .tx .tx-ask button:disabled,
 .tx .tx-fu button:disabled,
@@ -2416,14 +2446,14 @@
  */
 .tx-fu {
   border-style: dashed;
-  box-shadow: 0 -6px 18px -8px rgb(0 0 0 / 45%);
+  box-shadow: var(--ctl-shadow-card-soft);
 }
 .tx-fu-auto {
   flex: none;
   padding: 1px 8px;
   border: 1px dashed var(--tx-sun-soft);
   border-radius: 999px;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: calc(11px * var(--tx-k, 1));
   font-weight: 600;
   cursor: help;
@@ -2434,7 +2464,7 @@
   max-height: 8.5em;
   overflow: auto;
   border-left: 1px solid var(--tx-sun-soft);
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: calc(12.5px * var(--tx-k, 1));
   line-height: 1.45;
   white-space: pre-wrap;
@@ -2546,25 +2576,25 @@
  */
 /* The theme's sun text, taken before the card makes its own blue: a reply not delivered is a warning still. */
 .tx {
-  --tx-aq-warn: var(--tx-sun-text);
+  --tx-aq-warn: var(--warn);
 }
 .tx-aq {
-  --tx-sun: var(--tx-blue);
-  --tx-sun-text: var(--tx-blue-text);
-  --tx-on-sun: var(--tx-on-accent);
+  --tx-sun: var(--ctl-working);
+  --tx-sun-text: var(--ctl-working);
+  --tx-on-sun: var(--on-ctl-accent);
   /* Its own ground (the sticky top and foot of a short screen paint it too). */
-  --tx-ask-bg: color-mix(in srgb, var(--tx-blue) 7%, var(--tx-bg-2));
+  --tx-ask-bg: color-mix(in srgb, var(--ctl-working) 7%, var(--ctl-raised));
   /* The theme's red and third text lose a little against the blue ground (Quiet's keys 3.8:1; Ubuntu's are above 4.5 already): each
    * a step toward the text, at least 4.8:1 in every theme. */
-  --tx-aq-red: color-mix(in srgb, var(--tx-red) 85%, var(--tx-text));
-  box-shadow: 0 -6px 18px -8px rgb(0 0 0 / 45%);
+  --tx-aq-red: color-mix(in srgb, var(--ctl-error) 85%, var(--ctl-text));
+  box-shadow: var(--ctl-shadow-card-soft);
 }
 .tx-aq-work {
   display: inline-flex;
   flex: none;
   align-items: center;
   gap: 6px;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: calc(11.5px * var(--tx-k, 1));
   font-style: italic;
 }
@@ -2572,7 +2602,7 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--tx-blue);
+  background: var(--ctl-working);
   animation: tx-pulse 1.2s ease-in-out infinite;
   will-change: opacity;
 }
@@ -2586,7 +2616,7 @@
   }
 }
 .tx-aq-hidden[aria-pressed='true'] {
-  color: var(--tx-text);
+  color: var(--ctl-text);
 }
 .tx-aq-stack {
   display: grid;
@@ -2599,7 +2629,7 @@
 }
 .tx-aq-ro {
   margin: 0 0 6px;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: calc(12.5px * var(--tx-k, 1));
   line-height: 1.45;
 }
@@ -2609,7 +2639,7 @@
   max-height: 8.5em;
   overflow: auto;
   border-left: 1px solid var(--tx-sun-soft);
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: calc(12.5px * var(--tx-k, 1));
   line-height: 1.45;
   white-space: pre-wrap;
@@ -2617,7 +2647,7 @@
 }
 .tx-aq-state {
   margin: -2px 0 8px;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: calc(12px * var(--tx-k, 1));
   font-weight: 650;
 }
@@ -2625,7 +2655,7 @@
   animation: tx-pulse 1.2s ease-in-out infinite;
 }
 .tx-aq-state[data-phase='sent'] {
-  color: var(--tx-blue-text);
+  color: var(--ctl-working);
 }
 .tx-aq-state[data-phase='unconfirmed'] {
   font-style: italic;
@@ -2638,13 +2668,13 @@
   color: var(--tx-aq-red);
 }
 .tx-aq .tx-ask-keys {
-  color: color-mix(in srgb, var(--tx-text-3) 50%, var(--tx-text-2));
+  color: color-mix(in srgb, var(--ctl-text-3) 50%, var(--ctl-text-2));
 }
 .tx-aq-state[data-phase='answered'] {
-  color: var(--tx-green);
+  color: var(--ctl-ok);
 }
 .tx-aq-state[data-phase='hidden'] {
-  color: var(--tx-text-3);
+  color: var(--ctl-text-3);
   font-weight: 500;
 }
 .tx-ask-row[data-phase='undelivered'] .tx-ask-row-act {
@@ -2673,6 +2703,7 @@
 .tx-qtabs {
   flex: none;
   display: flex;
+  font-family: var(--ctl-font);
   gap: 6px;
   min-width: 0;
   margin: 0 10px 6px;
@@ -2692,7 +2723,7 @@
   border: 1px dashed var(--tx-sun-soft);
   border-radius: 999px;
   background: transparent;
-  color: var(--tx-text-2);
+  color: var(--ctl-text-2);
   font-size: calc(11px * var(--tx-k, 1));
   font-weight: 750;
   letter-spacing: 0.05em;
@@ -2704,9 +2735,9 @@
     background-color 120ms ease-out;
 }
 .tx-qtab[data-card='asyncq'] {
-  --tx-sun: var(--tx-blue);
-  --tx-sun-text: var(--tx-blue-text);
-  --tx-on-sun: var(--tx-on-accent);
+  --tx-sun: var(--ctl-working);
+  --tx-sun-text: var(--ctl-working);
+  --tx-on-sun: var(--on-ctl-accent);
   border-style: solid;
 }
 .tx-qtab:hover {
@@ -2714,8 +2745,8 @@
 }
 .tx-qtab[aria-selected='true'] {
   border-color: var(--tx-sun);
-  background: color-mix(in srgb, var(--tx-sun) 14%, var(--tx-bg-2));
-  color: var(--tx-text);
+  background: color-mix(in srgb, var(--tx-sun) 14%, var(--ctl-raised));
+  color: var(--ctl-text);
   cursor: default;
 }
 .tx-qtab-n {
@@ -2723,7 +2754,7 @@
   padding: 0 5px;
   border-radius: 999px;
   background: var(--tx-sun-soft);
-  color: var(--tx-text);
+  color: var(--ctl-text);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
   text-align: center;
@@ -2760,3 +2791,394 @@
     display: none;
   }
 }
+
+/* ubuntu:begin */
+/*
+ * #216, Ubuntu UI theme: what the screen's chrome needs that Quiet must not get. The colours already come from the
+ * `--ctl-*` tokens above; these are the issue's states (orange selection and primary fill, strong 1px boundaries,
+ * a muted disabled look with no opacity, the 3px focus ring, 32 / 36 / 44px targets, forced colours). Every rule starts
+ * `:root[data-ui-theme='ubuntu'] .tx` (at least three classes), so none can lose to `.tx button { color: inherit;
+ * font: inherit }` (#111: a button's own `.class` colour is under that reset), whatever its order.
+ */
+
+/* Focus: 3px, 2px off. Where a scroller or a clipping card is the ancestor the ring goes inside (or its padding makes room). */
+:root[data-ui-theme='ubuntu'] .tx :focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-diff-body:focus-visible,
+:root[data-ui-theme='ubuntu'] .tx .tx-scroll:focus-visible,
+:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-fu :focus-visible,
+:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-aq :focus-visible {
+  outline-offset: -3px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-body {
+  margin: 0 -7px;
+  padding: 4px 7px 6px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-body :focus-visible {
+  outline-offset: 1px;
+}
+/* A bright fill gets the dark keyline between it and the ring, so the ring does not melt into the orange. */
+:root[data-ui-theme='ubuntu'] .tx .tx-send:focus-visible,
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-send:focus-visible,
+:root[data-ui-theme='ubuntu'] .tx .tx-theme[aria-checked='true']:focus-visible,
+:root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle[aria-pressed='true']:focus-visible,
+:root[data-ui-theme='ubuntu'] .tx .tx-qtab[aria-selected='true']:focus-visible {
+  box-shadow: 0 0 0 2px var(--chrome);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-jump:focus-visible {
+  box-shadow: 0 0 0 2px var(--chrome), var(--ctl-shadow-chip);
+}
+
+/* The strip: dense controls are 32px, a check box is a real target (its label), the selected one is the orange fill. */
+:root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle,
+:root[data-ui-theme='ubuntu'] .tx .tx-theme,
+:root[data-ui-theme='ubuntu'] .tx .tx-zoom-btn,
+:root[data-ui-theme='ubuntu'] .tx .tx-busy {
+  min-height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle,
+:root[data-ui-theme='ubuntu'] .tx .tx-theme,
+:root[data-ui-theme='ubuntu'] .tx .tx-zoom-btn {
+  min-width: 32px;
+  justify-content: center;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-theme,
+:root[data-ui-theme='ubuntu'] .tx .tx-zoom-btn {
+  border: 1px solid transparent;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-check {
+  min-height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-check-box,
+:root[data-ui-theme='ubuntu'] .tx .tx-chg-box {
+  width: 18px;
+  height: 18px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle {
+  background: var(--btn-bg);
+  color: var(--text);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-theme:hover:not([aria-checked='true']),
+:root[data-ui-theme='ubuntu'] .tx .tx-zoom-btn:hover:not(:disabled) {
+  background: var(--ghost-bg-hover);
+  color: var(--text);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-theme:active:not([aria-checked='true']),
+:root[data-ui-theme='ubuntu'] .tx .tx-zoom-btn:active:not(:disabled) {
+  background: var(--ghost-bg-active);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-theme[aria-checked='true'],
+:root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle[aria-pressed='true'] {
+  background: var(--action);
+  color: var(--on-action);
+  border-color: var(--action-border);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-theme[aria-checked='true']:hover,
+:root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle[aria-pressed='true']:hover {
+  background: var(--action-hover);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-theme[aria-checked='true']:active,
+:root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle[aria-pressed='true']:active {
+  background: var(--action-active);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-zoom-btn:disabled {
+  opacity: 1;
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+  border-color: var(--border);
+}
+
+/* Send and the jump chip: the primary action, orange with the dark label and the lighter-orange border. */
+:root[data-ui-theme='ubuntu'] .tx .tx-send,
+:root[data-ui-theme='ubuntu'] .tx .tx-jump {
+  min-height: 36px;
+  border: 1px solid var(--action-border);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-send:hover:not(:disabled),
+:root[data-ui-theme='ubuntu'] .tx .tx-jump:hover {
+  background: var(--action-hover);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-send:active:not(:disabled),
+:root[data-ui-theme='ubuntu'] .tx .tx-jump:active {
+  background: var(--action-active);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-send:disabled {
+  opacity: 1;
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+  border-color: var(--border);
+}
+
+/* The prompt box's editor: strong boundary, lighter-orange hover and ring, orange caret, a disabled look without opacity. */
+:root[data-ui-theme='ubuntu'] .tx .cmp-editor {
+  caret-color: var(--caret);
+}
+:root[data-ui-theme='ubuntu'] .tx .cmp-editor:not([aria-disabled='true']):hover {
+  border-color: var(--border-hover);
+}
+:root[data-ui-theme='ubuntu'] .tx .cmp-editor:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-color: var(--focus);
+}
+:root[data-ui-theme='ubuntu'] .tx .cmp-editor[aria-disabled='true'] {
+  opacity: 1;
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+  border-color: var(--border);
+}
+:root[data-ui-theme='ubuntu'] .tx .cmp-pop-list,
+:root[data-ui-theme='ubuntu'] .tx .tx-banner,
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-body,
+:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-fu,
+:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-aq {
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+
+/* Links and the banner's choices. */
+:root[data-ui-theme='ubuntu'] .tx .tx-link,
+:root[data-ui-theme='ubuntu'] .tx .tx-to-term {
+  min-height: 32px;
+  min-width: 32px;
+  color: var(--accent-text);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-link:hover {
+  text-decoration-thickness: 2px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-choice {
+  min-height: 32px;
+  border-color: var(--border);
+  background: var(--btn-bg);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-choice:hover {
+  background: var(--btn-bg-hover);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-choice:active {
+  background: var(--btn-bg-active);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-choice-sel {
+  border-color: var(--action-border);
+  box-shadow: inset 0 0 0 1px var(--action-border);
+  background: var(--btn-bg-hover);
+}
+
+/* A tool row, a sub-agent row and a changed file's header: the expand / collapse buttons. */
+:root[data-ui-theme='ubuntu'] .tx .tx-tool-row,
+:root[data-ui-theme='ubuntu'] .tx .tx-sub-row,
+:root[data-ui-theme='ubuntu'] .tx .tx-chg-head {
+  min-height: 32px;
+  color: var(--text);
+}
+
+/* The question cards: the answer controls. */
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt {
+  min-height: 36px;
+  border-color: var(--border);
+  background: transparent;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt:hover {
+  border-color: var(--border-hover);
+  background: var(--hover);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt.is-on {
+  border-color: var(--action);
+  box-shadow: inset 0 0 0 1px var(--action);
+  background: var(--hover);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt.is-on .tx-ask-key {
+  border-color: var(--action-border);
+  background: var(--action);
+  color: var(--on-action);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt:disabled,
+:root[data-ui-theme='ubuntu'] .tx .tx-ask[data-phase='sending'] .tx-ask-opt,
+:root[data-ui-theme='ubuntu'] .tx .tx-fu[data-phase='sending'] .tx-ask-opt,
+:root[data-ui-theme='ubuntu'] .tx .tx-aq[data-phase='sending'] .tx-ask-opt {
+  opacity: 1;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt:disabled .tx-ask-opt-label,
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt:disabled .tx-ask-opt-desc {
+  color: var(--disabled-text);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-row {
+  min-height: 36px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-row:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  background: var(--hover);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-done {
+  min-height: 36px;
+  border-color: var(--border);
+  background: var(--btn-bg);
+  color: var(--text);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-done:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  background: var(--btn-bg-hover);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-other-input {
+  min-height: 36px;
+  caret-color: var(--caret);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-other-input:hover {
+  border-color: var(--border-hover);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-other-input:focus {
+  border-color: var(--focus);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-send {
+  min-height: 36px;
+  border: 1px solid var(--action-border);
+  background: var(--action);
+  color: var(--on-action);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-send:hover:not(:disabled):not(.is-blocked) {
+  background: var(--action-hover);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-send:active:not(:disabled):not(.is-blocked) {
+  background: var(--action-active);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-send:disabled,
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-send.is-blocked,
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-send.is-blocked:hover {
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+  border-color: var(--border);
+}
+/* Busy: the same orange and width, with a spinner before the label (the card says aria-busy). */
+:root[data-ui-theme='ubuntu'] .tx .tx-ask[data-phase='sending'] .tx-ask-send:disabled,
+:root[data-ui-theme='ubuntu'] .tx .tx-fu[data-phase='sending'] .tx-ask-send:disabled,
+:root[data-ui-theme='ubuntu'] .tx .tx-aq[data-phase='sending'] .tx-ask-send:disabled {
+  background: var(--action);
+  color: var(--on-action);
+  border-color: var(--action-border);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask[data-phase='sending'] .tx-ask-send:disabled::before,
+:root[data-ui-theme='ubuntu'] .tx .tx-fu[data-phase='sending'] .tx-ask-send:disabled::before,
+:root[data-ui-theme='ubuntu'] .tx .tx-aq[data-phase='sending'] .tx-ask-send:disabled::before {
+  content: '';
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: 6px;
+  vertical-align: -0.1em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: tx-spin 0.8s linear infinite;
+}
+@keyframes tx-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-ui-theme='ubuntu'] .tx .tx-ask[data-phase='sending'] .tx-ask-send:disabled::before,
+  :root[data-ui-theme='ubuntu'] .tx .tx-fu[data-phase='sending'] .tx-ask-send:disabled::before,
+  :root[data-ui-theme='ubuntu'] .tx .tx-aq[data-phase='sending'] .tx-ask-send:disabled::before {
+    animation: none;
+    border-right-color: currentColor;
+  }
+}
+/* A dark overlay on the orange would cost the label its contrast, so the send key is outlined instead. */
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-kbd {
+  border: 1px solid currentColor;
+}
+
+/* The tabs between the follow-up's card and the async questions': the open one is the orange, its count a dark pill. */
+:root[data-ui-theme='ubuntu'] .tx .tx-qtab {
+  min-height: 32px;
+  border-color: var(--border);
+  background: var(--btn-bg);
+  color: var(--text);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-qtab:hover {
+  border-color: var(--border-hover);
+  background: var(--btn-bg-hover);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-qtab[aria-selected='true'] {
+  border-style: solid;
+  border-color: var(--action-border);
+  background: var(--action);
+  color: var(--on-action);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-qtab-n {
+  background: var(--hover);
+  color: var(--text);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-qtab[aria-selected='true'] .tx-qtab-n {
+  background: var(--chrome);
+  color: var(--text);
+}
+
+/* Touch: 44px targets. */
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle,
+  :root[data-ui-theme='ubuntu'] .tx .tx-theme,
+  :root[data-ui-theme='ubuntu'] .tx .tx-zoom-btn,
+  :root[data-ui-theme='ubuntu'] .tx .tx-busy,
+  :root[data-ui-theme='ubuntu'] .tx .tx-link,
+  :root[data-ui-theme='ubuntu'] .tx .tx-to-term,
+  :root[data-ui-theme='ubuntu'] .tx .tx-choice,
+  :root[data-ui-theme='ubuntu'] .tx .tx-tool-row,
+  :root[data-ui-theme='ubuntu'] .tx .tx-sub-row,
+  :root[data-ui-theme='ubuntu'] .tx .tx-chg-head,
+  :root[data-ui-theme='ubuntu'] .tx .tx-send,
+  :root[data-ui-theme='ubuntu'] .tx .tx-jump,
+  :root[data-ui-theme='ubuntu'] .tx .tx-ask-send,
+  :root[data-ui-theme='ubuntu'] .tx .tx-ask-opt,
+  :root[data-ui-theme='ubuntu'] .tx .tx-ask-row,
+  :root[data-ui-theme='ubuntu'] .tx .tx-ask-done,
+  :root[data-ui-theme='ubuntu'] .tx .tx-ask-other-input,
+  :root[data-ui-theme='ubuntu'] .tx .tx-qtab {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .tx .tx-check {
+    min-height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .tx .tx-check-box,
+  :root[data-ui-theme='ubuntu'] .tx .tx-chg-box {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+/* Forced colours: a state shown by a fill alone gets the system's Highlight, and the controls keep an edge. */
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .tx :focus-visible {
+    outline-color: Highlight;
+  }
+  :root[data-ui-theme='ubuntu'] .tx .tx-theme[aria-checked='true'],
+  :root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle[aria-pressed='true'],
+  :root[data-ui-theme='ubuntu'] .tx .tx-qtab[aria-selected='true'],
+  :root[data-ui-theme='ubuntu'] .tx .tx-choice-sel,
+  :root[data-ui-theme='ubuntu'] .tx .tx-ask-opt.is-on,
+  :root[data-ui-theme='ubuntu'] .tx .tx-ask-opt.is-on .tx-ask-key {
+    background: Highlight;
+    color: HighlightText;
+    border-color: HighlightText;
+  }
+  :root[data-ui-theme='ubuntu'] .tx .tx-send,
+  :root[data-ui-theme='ubuntu'] .tx .tx-ask-send,
+  :root[data-ui-theme='ubuntu'] .tx .tx-jump {
+    border-color: ButtonText;
+  }
+  :root[data-ui-theme='ubuntu'] .tx .tx-send:disabled,
+  :root[data-ui-theme='ubuntu'] .tx .tx-ask-send:disabled,
+  :root[data-ui-theme='ubuntu'] .tx .tx-ask-send.is-blocked,
+  :root[data-ui-theme='ubuntu'] .tx .tx-zoom-btn:disabled {
+    color: GrayText;
+    border-color: GrayText;
+  }
+  :root[data-ui-theme='ubuntu'] .tx .tx-ctx-track {
+    border: 1px solid CanvasText;
+  }
+  :root[data-ui-theme='ubuntu'] .tx .tx-ctx-fill {
+    background: CanvasText;
+  }
+}
+/* ubuntu:end */
