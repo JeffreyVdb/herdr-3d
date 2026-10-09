@@ -98,7 +98,7 @@
   --scroll-thumb: #3a466e;
   --scroll-track: transparent;
 
-  /* tokens:begin (generated from the per-component token lists: see the Quiet / Ubuntu pairs below) */
+  /* The per-surface tokens (a Quiet value that equals the literal it replaced, and its Ubuntu one), one role each. */
   /* The soft ring round a status dot in the top bar's counts (decoration). */
   --dot-ring: rgb(255 255 255 / 12%);
   /* Fill of a toggle button that is on (aria-pressed): green in Quiet, the action orange in Ubuntu. */
@@ -581,7 +581,6 @@
   --ctl-shadow-card: 0 -8px 22px -6px rgb(0 0 0 / 55%);
   /* Shadow of the follow-up and async-question cards (cast upward) */
   --ctl-shadow-card-soft: 0 -6px 18px -8px rgb(0 0 0 / 45%);
-  /* tokens:end */
 
   /* ---- type ---- */
   --font: 'Recursive Variable', system-ui, sans-serif;
@@ -665,7 +664,7 @@
   --scroll-thumb: #ae93a7;
   --scroll-track: #2c001e;
 
-  /* tokens:begin */
+  /* The per-surface tokens, Ubuntu's values. */
   /* The soft ring round a status dot in the top bar's counts (decoration). */
   --dot-ring: rgb(255 255 255 / 14%);
   /* Fill of a toggle button that is on (aria-pressed): green in Quiet, the action orange in Ubuntu. */
@@ -1148,7 +1147,6 @@
   --ctl-shadow-card: 0 -8px 22px -6px rgb(0 0 0 / 55%);
   /* Shadow of the follow-up and async-question cards (cast upward) */
   --ctl-shadow-card-soft: 0 -6px 18px -8px rgb(0 0 0 / 45%);
-  /* tokens:end */
 
   --font: 'Ubuntu', system-ui, sans-serif;
   --font-mono: 'Ubuntu Mono', 'H3D Box Ubuntu', 'H3D Symbols Ubuntu', 'H3D Symbols Ubuntu 2', 'H3D Symbols Ubuntu Consolas', ui-monospace, 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Liberation Mono', monospace;
