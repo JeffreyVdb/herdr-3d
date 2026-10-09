@@ -11,9 +11,9 @@
   z-index: 30;
   display: flex;
   padding: 18px 18px 14px;
-  background: rgb(10 14 28 / 88%);
-  color: var(--text-on-ink, #eef2fb);
-  font-family: var(--font, system-ui, sans-serif);
+  background: var(--scrim-board);
+  color: var(--text);
+  font-family: var(--font);
   font-size: 14px;
   line-height: 1.35;
 }
@@ -45,14 +45,14 @@
   margin: 0;
   font-size: 20px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 0.6;
+  font-variation-settings: var(--fvs-title);
   letter-spacing: -0.01em;
 }
 .wb-floor {
   overflow: hidden;
   min-width: 0;
-  color: var(--text-on-ink-2, #b9c3dc);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text-2);
+  font-family: var(--font-mono);
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -63,9 +63,9 @@
   margin-left: auto;
   padding: 3px 10px 2px;
   border-radius: 2px;
-  background: #f4f6fb;
-  color: var(--ink, #1c2540);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  background: var(--tape-bg);
+  color: var(--on-tape);
+  font-family: var(--font-mono);
   font-size: 11.5px;
   font-weight: 750;
   letter-spacing: 0.04em;
@@ -76,19 +76,19 @@
 .wb-status[data-kind='saving'],
 .wb-status[data-kind='dirty'],
 .wb-status[data-kind='loading'] {
-  background: var(--sun, #ffc233);
+  background: var(--warn);
 }
 .wb-status[data-kind='error'] {
   max-width: 46vw;
   overflow: hidden;
-  background: var(--needs_you-chip, #d8302c);
-  color: #fff;
+  background: var(--error-fill);
+  color: var(--on-error);
   text-overflow: ellipsis;
   text-transform: none;
   white-space: nowrap;
 }
 
-/* The board: white surface, aluminium edge. */
+/* The board: white surface, aluminium edge (the physical board: content, in both themes). */
 .wb-surface {
   position: relative;
   /* Excalidraw's own layers stack inside the board: the picker and the confirmation stay above them. */
@@ -114,8 +114,8 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: #fbfcff;
-  color: var(--ink-soft, #5b6685);
+  background: var(--board-loading-bg);
+  color: var(--paper-text-3);
   font-size: 15px;
   font-weight: 600;
   text-align: center;
@@ -134,12 +134,12 @@
   margin: 0 10px;
   padding: 8px 12px;
   border-radius: 0 0 12px 12px;
-  background: linear-gradient(#aab2c0, #8f98a8 55%, #7d8698);
+  background: var(--ledge-bg);
   box-shadow: 0 8px 18px rgb(0 0 0 / 40%);
 }
 .wb-hint {
   margin-left: auto;
-  color: #1f2740;
+  color: var(--on-ledge);
   font-size: 12.5px;
   font-weight: 600;
 }
@@ -157,8 +157,8 @@
   overflow: hidden;
   padding: 3px 9px 2px;
   border-radius: 2px;
-  background: #fff3c4;
-  color: var(--ink, #1c2540);
+  background: var(--ledge-note-bg);
+  color: var(--on-paper);
   font-size: 12px;
   font-weight: 650;
   text-overflow: ellipsis;
@@ -173,10 +173,10 @@
   gap: 7px;
   min-height: 38px;
   padding: 0 14px 0 12px;
-  border: 1px solid rgb(255 255 255 / 22%);
+  border: 1px solid var(--border-chip);
   border-radius: 999px;
-  background: var(--ink, #1c2540);
-  color: var(--text-on-ink, #eef2fb);
+  background: var(--chrome);
+  color: var(--text);
   font: inherit;
   font-size: 13px;
   font-weight: 700;
@@ -188,26 +188,26 @@
   flex: none;
 }
 .wb-btn:hover {
-  background: var(--ink-2, #2a355a);
+  background: var(--raised);
 }
 .wb-btn:focus-visible,
 .wb-drop:focus-visible {
-  outline: 3px solid var(--sun, #ffc233);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 .wb-btn--quiet {
-  border-color: rgb(28 37 64 / 35%);
-  background: rgb(255 255 255 / 55%);
-  color: var(--ink, #1c2540);
+  border-color: var(--ledge-btn-border);
+  background: var(--ledge-btn-bg);
+  color: var(--on-paper);
 }
 .wb-btn--quiet:hover {
-  background: rgb(255 255 255 / 80%);
+  background: var(--ledge-btn-bg-hover);
 }
 .wb-btn--danger {
-  background: var(--needs_you-chip, #d8302c);
+  background: var(--error-fill);
 }
 .wb-btn--danger:hover {
-  background: #b9221f;
+  background: var(--error-fill-deep);
 }
 .wb-close {
   width: 42px;
@@ -226,9 +226,9 @@
   max-height: min(460px, 70vh);
   padding: 14px;
   overflow: auto;
-  border: 1px solid rgb(255 255 255 / 16%);
-  border-radius: var(--radius, 14px);
-  background: var(--ink, #1c2540);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: var(--surface);
   box-shadow: var(--shadow);
 }
 .wb-picker[hidden],
@@ -242,7 +242,7 @@
 }
 .wb-picker-note {
   margin: 4px 2px;
-  color: var(--text-on-ink-2, #b9c3dc);
+  color: var(--text-2);
 }
 .wb-drops {
   display: grid;
@@ -258,16 +258,16 @@
   flex-direction: column;
   gap: 4px;
   padding: 6px;
-  border: 1px solid rgb(255 255 255 / 12%);
+  border: 1px solid var(--card-border);
   border-radius: 9px;
-  background: var(--ink-2, #2a355a);
+  background: var(--raised);
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 .wb-drop:hover:not(:disabled) {
-  border-color: var(--sun, #ffc233);
+  border-color: var(--accent-text);
 }
 .wb-drop:disabled {
   opacity: 0.55;
@@ -280,12 +280,12 @@
   aspect-ratio: 4 / 3;
   place-items: center;
   border-radius: 5px;
-  background: #0b1122;
+  background: var(--image-stage);
   object-fit: cover;
 }
 .wb-drop-file {
-  color: var(--text-on-ink-2, #b9c3dc);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text-2);
+  font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 700;
 }
@@ -297,7 +297,7 @@
   white-space: nowrap;
 }
 .wb-drop-meta {
-  color: var(--text-on-ink-2, #b9c3dc);
+  color: var(--text-2);
   font-size: 11.5px;
 }
 
@@ -308,12 +308,12 @@
 }
 .wb-confirm-text {
   margin: 0 0 12px;
-  color: var(--text-on-ink-2, #b9c3dc);
+  color: var(--text-2);
 }
 .wb-confirm-text strong {
   display: block;
   margin-bottom: 4px;
-  color: var(--text-on-ink, #eef2fb);
+  color: var(--text);
   font-size: 15px;
 }
 .wb-confirm-actions {
@@ -325,21 +325,21 @@
 /* The way on, on the ink panel: the board's yellow marker. */
 .wb-btn--go {
   border-color: transparent;
-  background: var(--sun, #ffc233);
-  color: var(--ink, #1c2540);
+  background: var(--action);
+  color: var(--on-action);
 }
 .wb-btn--go:hover {
-  background: #ffd25e;
+  background: var(--action-hover);
 }
 /* Unsaved changes on close: discarding them stands apart, on the left, in the board's red marker. */
 .wb-btn--discard {
   margin-right: auto;
-  border-color: rgb(255 132 120 / 50%);
+  border-color: var(--destructive-border);
   background: transparent;
-  color: #ffb9b1;
+  color: var(--destructive-text);
 }
 .wb-btn--discard:hover {
-  background: rgb(216 48 44 / 22%);
+  background: var(--destructive-hover);
 }
 
 @media (max-width: 720px) {
@@ -363,3 +363,111 @@
     opacity: 0;
   }
 }
+
+/* ubuntu:begin */
+/*
+ * #216 Ubuntu: the wrapper's chrome (header, status tape, the ledge's buttons, the picker and the confirmation) is the
+ * UI's. The board's own frame and white surface stay (the physical board, and the drawing is never themed). Ubuntu Mono
+ * is smaller than Recursive Mono at one px: the tape and the mono labels take a size more.
+ */
+:root[data-ui-theme='ubuntu'] .wb-floor,
+:root[data-ui-theme='ubuntu'] .wb-drop-file {
+  font-size: 14px;
+}
+:root[data-ui-theme='ubuntu'] .wb-status {
+  border: 1px solid var(--border);
+  font-size: 13px;
+}
+:root[data-ui-theme='ubuntu'] .wb-status[data-kind='saving'],
+:root[data-ui-theme='ubuntu'] .wb-status[data-kind='dirty'],
+:root[data-ui-theme='ubuntu'] .wb-status[data-kind='loading'] {
+  border-color: var(--warn);
+  color: var(--on-fill);
+}
+:root[data-ui-theme='ubuntu'] .wb-status[data-kind='error'] {
+  border-color: var(--error-border);
+}
+
+/* Buttons: secondary by default (raised fill, strong border, white label), then the variants. */
+:root[data-ui-theme='ubuntu'] .wb-btn {
+  border-color: var(--btn-border);
+  background: var(--btn-bg);
+}
+:root[data-ui-theme='ubuntu'] .wb-btn:hover {
+  background: var(--btn-bg-hover);
+}
+:root[data-ui-theme='ubuntu'] .wb-btn:active {
+  background: var(--btn-bg-active);
+  box-shadow: inset 0 0 0 1px var(--chrome);
+}
+:root[data-ui-theme='ubuntu'] .wb-btn--go,
+:root[data-ui-theme='ubuntu'] .wb-btn--go:hover,
+:root[data-ui-theme='ubuntu'] .wb-btn--go:active {
+  border-color: var(--action-border);
+  background: var(--action);
+  color: var(--on-action);
+}
+:root[data-ui-theme='ubuntu'] .wb-btn--go:hover {
+  background: var(--action-hover);
+}
+:root[data-ui-theme='ubuntu'] .wb-btn--go:active {
+  background: var(--action-active);
+}
+/* A bright fill: the focus ring gets a dark keyline between it and the fill. */
+:root[data-ui-theme='ubuntu'] .wb-btn--go:focus-visible,
+:root[data-ui-theme='ubuntu'] .wb-btn--danger:focus-visible {
+  box-shadow: 0 0 0 2px var(--chrome);
+}
+/* The confirmation's final destructive button: the error fill, a dark label; hover lifts it, pressed restores it. */
+:root[data-ui-theme='ubuntu'] .wb-btn--danger,
+:root[data-ui-theme='ubuntu'] .wb-btn--danger:hover,
+:root[data-ui-theme='ubuntu'] .wb-btn--danger:active {
+  border-color: var(--error-border);
+  background: var(--error-fill);
+  color: var(--on-error);
+}
+:root[data-ui-theme='ubuntu'] .wb-btn--danger:hover {
+  background: var(--error-fill-hover);
+}
+:root[data-ui-theme='ubuntu'] .wb-btn--danger:active {
+  box-shadow: inset 0 0 0 2px var(--chrome);
+}
+/* Discard: an outlined destructive button, red label and border, a raised hover with the same red. */
+:root[data-ui-theme='ubuntu'] .wb-btn--discard {
+  border-color: var(--destructive-border);
+  background: var(--btn-bg);
+  color: var(--destructive-text);
+}
+:root[data-ui-theme='ubuntu'] .wb-btn--discard:hover {
+  background: var(--destructive-hover);
+}
+
+:root[data-ui-theme='ubuntu'] .wb-drop:hover:not(:disabled) {
+  background: var(--hover);
+}
+/* A drop that cannot be pinned (disabled): the shared look, no fade. */
+:root[data-ui-theme='ubuntu'] .wb-drop:disabled {
+  opacity: 1;
+  background: var(--disabled-bg);
+  border-color: var(--border);
+  color: var(--disabled-text);
+}
+:root[data-ui-theme='ubuntu'] .wb-loading {
+  border: 1px solid var(--line);
+}
+
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .wb-btn {
+    min-height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .wb-close {
+    width: 44px;
+    height: 44px;
+  }
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .wb-status {
+    border-color: CanvasText;
+  }
+}
+/* ubuntu:end */

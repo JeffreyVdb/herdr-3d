@@ -13,9 +13,9 @@
 }
 .dd-plate--board {
   min-width: 48px;
-  background: #101626;
+  background: var(--well-deep);
   box-shadow: inset 0 2px 7px rgb(0 0 0 / 60%), 0 1px 0 rgb(255 255 255 / 8%);
-  color: var(--sun);
+  color: var(--accent-text);
 }
 .dd-plate--board svg {
   width: 24px;
@@ -35,11 +35,11 @@
   padding: 8px 16px;
   font-size: 12.5px;
   border-bottom: 1px solid var(--line);
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .bd-notice[data-tone='warn'] {
-  background: rgb(255 194 51 / 12%);
-  color: var(--text-on-ink);
+  background: var(--warn-wash);
+  color: var(--text);
 }
 .bd-notice[hidden] {
   display: none;
@@ -51,7 +51,7 @@
   gap: 12px;
   padding: 6px 12px 6px 16px;
   border-bottom: 1px solid var(--line);
-  background: rgb(255 110 100 / 13%);
+  background: var(--error-wash);
 }
 .bd-alert:empty {
   display: none;
@@ -61,7 +61,7 @@
   margin: 0;
   font-size: 12.5px;
   font-weight: 700;
-  color: #ffb4ae;
+  color: var(--error-text);
   overflow-wrap: anywhere;
 }
 .bd-alert .btn {
@@ -74,7 +74,7 @@
   overflow: auto;
   padding: 14px 16px 16px;
   scrollbar-width: thin;
-  scrollbar-color: #3a466e transparent;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
 }
 
 /* ---- issues: the provider's columns ---------------------------------------------------------- */
@@ -105,7 +105,7 @@
 .bd-col[data-kind] {
   background: transparent;
   box-shadow: none;
-  border: 1.5px dashed rgb(255 255 255 / 22%);
+  border: 1.5px dashed var(--tray-border);
 }
 .bd-col-kind {
   margin-left: 6px;
@@ -126,13 +126,13 @@
   font-size: 13px;
   font-weight: 800;
   letter-spacing: 0.01em;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .bd-col-head b {
   min-width: 22px;
   padding: 1px 7px;
   border-radius: 999px;
-  background: #34406a;
+  background: var(--count-bg);
   text-align: center;
   font-variant-numeric: tabular-nums;
   font-size: 12px;
@@ -144,15 +144,15 @@
 }
 .bd-empty {
   margin: 0;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12.5px;
   font-style: italic;
 }
 
 .desk-dlg .bd-card,
 .desk-dlg .bd-pr {
-  /* hire.css makes every dialog button inherit the dialog's light text: paper takes ink. */
-  color: var(--ink);
+  /* hire.css makes every dialog button inherit the dialog's light text: paper takes ink (Ubuntu: its light text). */
+  color: var(--on-paper);
 }
 .bd-card {
   position: relative;
@@ -165,7 +165,7 @@
   border: 0;
   border-radius: 3px;
   background: var(--paper, #ffe27a);
-  color: var(--ink);
+  color: var(--on-paper);
   text-align: left;
   cursor: pointer;
   box-shadow: 0 2px 0 rgb(0 0 0 / 18%), 0 6px 12px rgb(0 0 0 / 30%);
@@ -194,7 +194,7 @@
   margin-left: -5px;
   border-radius: 50%;
   background: var(--pin, #f4f4f0);
-  border: 1.5px solid rgb(28 37 64 / 55%);
+  border: 1.5px solid var(--pin-edge);
   box-shadow: 0 2px 2px rgb(0 0 0 / 30%);
 }
 .bd-card-top {
@@ -212,7 +212,7 @@
   font-weight: 800;
   padding: 1px 6px;
   border-radius: 999px;
-  background: rgb(28 37 64 / 14%);
+  background: var(--card-badge-bg);
 }
 .bd-card-title {
   font-size: 14px;
@@ -244,11 +244,11 @@
 .bd-assignee {
   padding: 1px 8px;
   border-radius: 999px;
-  background: rgb(255 255 255 / 75%);
-  box-shadow: inset 0 0 0 1px rgb(28 37 64 / 30%);
+  background: var(--card-chip-bg);
+  box-shadow: inset 0 0 0 1px var(--card-chip-ring);
   font-size: 11.5px;
   font-weight: 750;
-  color: var(--ink);
+  color: var(--on-paper);
 }
 .bd-holder--go {
   cursor: pointer;
@@ -266,22 +266,22 @@
   color: inherit;
 }
 .tape--prio-urgent {
-  --c: #d8302c;
+  --c: var(--prio-urgent);
 }
 .tape--prio-high {
-  --c: #c25a00;
+  --c: var(--prio-high);
 }
 .tape--prio-medium {
-  --c: #2f5fd0;
+  --c: var(--prio-medium);
 }
 .tape--prio-low {
-  --c: #5a6480;
+  --c: var(--prio-low);
 }
 .tape--state.tape--open {
   --c: var(--done-chip);
 }
 .tape--state.tape--closed {
-  --c: #6a4bb5;
+  --c: var(--state-closed);
 }
 
 /* ---- pull requests: one slip per PR ------------------------------------------------------------ */
@@ -299,11 +299,11 @@
   padding: 10px 14px;
   border: 0;
   border-radius: 4px;
-  background: #f7f4ff;
-  color: var(--ink);
+  background: var(--paper-pale);
+  color: var(--on-paper);
   text-align: left;
   cursor: pointer;
-  box-shadow: inset 6px 0 0 #b9a5ff, 0 2px 0 rgb(0 0 0 / 18%), 0 5px 10px rgb(0 0 0 / 26%);
+  box-shadow: inset 6px 0 0 var(--paper-stripe), 0 2px 0 rgb(0 0 0 / 18%), 0 5px 10px rgb(0 0 0 / 26%);
   transition: transform 160ms var(--ease);
 }
 .bd-pr:hover,
@@ -317,7 +317,7 @@
 }
 .bd-pr-sub {
   font-size: 12px;
-  color: #4a5570;
+  color: var(--paper-text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -337,16 +337,16 @@
   background: currentColor;
 }
 .bd-ci--success {
-  color: #0b7a4f;
+  color: var(--paper-ok);
 }
 .bd-ci--failure {
-  color: #c42a26;
+  color: var(--paper-bad);
 }
 .bd-ci--pending {
-  color: #8a5a00;
+  color: var(--paper-pend);
 }
 .bd-ci--none {
-  color: #5d6478;
+  color: var(--paper-none);
 }
 .bd-ci--none i {
   background: transparent;
@@ -356,16 +356,16 @@
   font-size: 12.5px;
   font-weight: 700;
   white-space: nowrap;
-  color: #4a5570;
+  color: var(--paper-text-2);
 }
 .bd-review--approved {
-  color: #0b7a4f;
+  color: var(--paper-ok);
 }
 .bd-review--changes_requested {
-  color: #c42a26;
+  color: var(--paper-bad);
 }
 .bd-review--review_required {
-  color: #8a5a00;
+  color: var(--paper-pend);
 }
 .bd-stamp {
   padding: 2px 8px;
@@ -378,13 +378,13 @@
   white-space: nowrap;
 }
 .bd-stamp--pass {
-  color: #0b7a4f;
+  color: var(--paper-ok);
 }
 .bd-stamp--changes {
-  color: #c42a26;
+  color: var(--paper-bad);
 }
 .bd-stamp--incomplete {
-  color: #5d6478;
+  color: var(--paper-none);
 }
 @media (max-width: 760px) {
   .bd-pr {
@@ -413,7 +413,7 @@
 .bd-off p {
   margin: 0;
   max-width: 46ch;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 
 /* ---- the item modal ---------------------------------------------------------------------------- */
@@ -427,7 +427,7 @@
   gap: 14px;
   padding: 14px 16px;
   scrollbar-width: thin;
-  scrollbar-color: #3a466e transparent;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
 }
 .bd-meta {
   display: flex;
@@ -437,61 +437,61 @@
 }
 .bd-item .bd-holder,
 .bd-item .bd-assignee {
-  background: rgb(255 255 255 / 10%);
+  background: var(--chip-neutral-bg);
   box-shadow: none;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .bd-item .bd-ci,
 .bd-item .bd-review,
 .bd-item .bd-merge {
   padding: 2px 9px;
   border-radius: 999px;
-  background: #f7f4ff;
+  background: var(--paper-pale);
   font-size: 12.5px;
   font-weight: 750;
 }
 .bd-merge {
-  color: #0b7a4f;
+  color: var(--paper-ok);
 }
 .bd-merge--conflicting {
-  color: #c42a26;
+  color: var(--paper-bad);
 }
 .bd-merge--unknown {
-  color: #8a5a00;
+  color: var(--paper-pend);
 }
 .bd-item .bd-review--none {
-  color: #4a5570;
+  color: var(--paper-text-2);
 }
 .bd-closes {
   font-weight: 700;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .bd-diffstat {
   margin-left: auto;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
 }
 .bd-diffstat b.plus,
 .bd-files b.plus {
-  color: #62d99a;
+  color: var(--stat-plus);
 }
 .bd-diffstat b.minus,
 .bd-files b.minus {
-  color: #ff8d86;
+  color: var(--stat-minus);
 }
 .bd-loading,
 .bd-error {
   margin: 0;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .bd-error {
-  color: #ffb1ab;
+  color: var(--error-text-body);
 }
 .bd-md {
   max-width: 78ch;
   overflow-wrap: anywhere;
-  color: var(--text-on-ink);
+  color: var(--text);
   line-height: 1.5;
 }
 .bd-md > :first-child {
@@ -513,13 +513,13 @@
   font-size: 1.25em;
 }
 .bd-md a {
-  color: #9fc2ff;
+  color: var(--link);
   text-underline-offset: 2px;
 }
 .bd-md code {
   padding: 1px 5px;
   border-radius: 5px;
-  background: #101626;
+  background: var(--well-deep);
   font-family: var(--font);
   font-family: var(--font-mono);
   font-size: 0.92em;
@@ -529,7 +529,7 @@
   padding: 10px 12px;
   overflow: auto;
   border-radius: 10px;
-  background: #101626;
+  background: var(--well-deep);
 }
 .bd-md pre code {
   padding: 0;
@@ -538,8 +538,8 @@
 .bd-md blockquote {
   margin: 0.6em 0;
   padding: 0 0 0 12px;
-  box-shadow: inset 2px 0 0 #3a466e;
-  color: var(--text-on-ink-2);
+  box-shadow: inset 2px 0 0 var(--quote-rule);
+  color: var(--text-2);
 }
 .bd-md table {
   border-collapse: collapse;
@@ -548,7 +548,7 @@
 .bd-md th,
 .bd-md td {
   padding: 4px 10px;
-  border: 1px solid #34406a;
+  border: 1px solid var(--table-rule);
 }
 .bd-md ul,
 .bd-md ol {
@@ -560,7 +560,7 @@
   margin: 0 0 6px;
   font-size: 12.5px;
   font-weight: 700;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .bd-checks ul,
 .bd-files ul {
@@ -583,7 +583,7 @@
 .bd-checks li span,
 .bd-files li span {
   margin-left: auto;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
 .bd-checks li i {
@@ -599,7 +599,7 @@
   background: var(--needs_you);
 }
 .bd-checks li[data-state='pending'] i {
-  background: var(--sun);
+  background: var(--warn);
 }
 .bd-checks a {
   color: inherit;
@@ -619,10 +619,10 @@
   gap: 10px;
   margin-bottom: 4px;
   font-size: 12.5px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .bd-comment header b {
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .bd-comment-form textarea {
   width: 100%;
@@ -659,11 +659,11 @@
 }
 .btn--quiet {
   background: transparent;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 20%);
+  box-shadow: inset 0 0 0 1px var(--btn-quiet-ring);
 }
 .btn--warn {
-  background: #8a5a00;
-  color: #fff;
+  background: var(--btn-warn-bg);
+  color: var(--on-btn-warn);
 }
 .btn[aria-disabled='true'] {
   opacity: 0.55;
@@ -674,12 +674,12 @@
   gap: 8px;
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid rgb(255 123 115 / 55%);
-  background: rgb(216 48 44 / 16%);
+  border: 1px solid var(--error-ring);
+  background: var(--error-wash-strong);
 }
 .bd-confirm--warn {
-  border-color: rgb(255 194 51 / 60%);
-  background: rgb(255 194 51 / 12%);
+  border-color: var(--warn-ring);
+  background: var(--warn-wash);
 }
 .bd-confirm p {
   margin: 0;
@@ -712,14 +712,14 @@
 }
 /* The column the note would land in. */
 .bd-col[data-over='true'] {
-  background: color-mix(in srgb, var(--well) 90%, var(--sun));
-  box-shadow: inset 0 2px 8px rgb(0 0 0 / 40%), inset 0 0 0 2px rgb(255 194 51 / 55%);
+  background: color-mix(in srgb, var(--well) 90%, var(--accent-text));
+  box-shadow: inset 0 2px 8px rgb(0 0 0 / 40%), inset 0 0 0 2px var(--accent-ring);
 }
 /* Where the note was: an empty patch of board, its pin still in it. */
 .bd-card.bd-card--ghost {
-  background: rgb(255 255 255 / 4%);
+  background: var(--ghost-bg);
   box-shadow: none;
-  outline: 1.5px dashed rgb(255 255 255 / 26%);
+  outline: 1.5px dashed var(--ghost-edge);
   outline-offset: -1.5px;
   transform: none;
 }
@@ -746,7 +746,7 @@
   height: 4px;
   margin-left: -2px;
   border: 0;
-  background: rgb(28 37 64 / 40%);
+  background: var(--pin-hole);
   box-shadow: inset 0 1px 1px rgb(0 0 0 / 45%);
 }
 /* The slot: a taut thread between two pins. */
@@ -758,8 +758,8 @@
   padding: 0 3px;
   box-sizing: content-box;
   border-radius: 2px;
-  background: var(--sun);
-  box-shadow: 0 0 0 1px rgb(28 37 64 / 55%), 0 2px 6px rgb(0 0 0 / 40%);
+  background: var(--accent-text);
+  box-shadow: 0 0 0 1px var(--slot-edge), 0 2px 6px rgb(0 0 0 / 40%);
   pointer-events: none;
   transition: top 90ms var(--ease);
 }
@@ -771,8 +771,8 @@
   width: 11px;
   height: 11px;
   border-radius: 50%;
-  background: var(--sun);
-  border: 1.5px solid rgb(28 37 64 / 55%);
+  background: var(--accent-text);
+  border: 1.5px solid var(--slot-edge);
   box-sizing: border-box;
   box-shadow: 0 2px 2px rgb(0 0 0 / 30%);
 }
@@ -815,3 +815,146 @@
 .hud .btn--off {
   opacity: 0.55;
 }
+
+/* ubuntu:begin */
+/*
+ * #216 Ubuntu: a card is a purple surface with light text, not paper. The note's own tint (--paper, set per card from its
+ * label by panel.ts: the wall's physical note) and pin colour only survive as a small accent: a stripe at the card's
+ * edge and the pin dot. The tilt (a note on a corkboard) goes: these are UI rows.
+ */
+:root[data-ui-theme='ubuntu'] .bd-notice[data-tone='warn'] {
+  border-inline-start: 4px solid var(--warn);
+}
+:root[data-ui-theme='ubuntu'] .bd-alert {
+  border-inline-start: 4px solid var(--error-border);
+}
+:root[data-ui-theme='ubuntu'] .bd-col:not([data-kind]) {
+  border: 1px solid var(--line);
+}
+/* The note beside a status's name, and the archived / closed / moving cards: said in words and a shape, never faded. */
+:root[data-ui-theme='ubuntu'] .bd-col-kind {
+  opacity: 1;
+  color: var(--text-3);
+}
+:root[data-ui-theme='ubuntu'] .bd-col[data-kind='archived'] .bd-card,
+:root[data-ui-theme='ubuntu'] .bd-card[data-state='closed'],
+:root[data-ui-theme='ubuntu'] .bd-card[data-moving='true'] {
+  opacity: 1;
+}
+:root[data-ui-theme='ubuntu'] .bd-card[data-moving='true'] {
+  outline: 2px dashed var(--accent-text);
+  outline-offset: -2px;
+}
+/* A filled count chip: the done column's is bright, so its figures are dark. */
+:root[data-ui-theme='ubuntu'] .bd-col[data-done='true'] .bd-col-head b {
+  color: var(--on-chip);
+}
+
+:root[data-ui-theme='ubuntu'] .bd-card,
+:root[data-ui-theme='ubuntu'] .bd-pr {
+  border: 1px solid var(--border);
+  transform: none;
+}
+:root[data-ui-theme='ubuntu'] .bd-card {
+  background: var(--raised);
+  border-radius: var(--radius-ctl);
+  box-shadow: inset 4px 0 0 var(--paper);
+}
+:root[data-ui-theme='ubuntu'] .bd-pr {
+  border-radius: var(--radius-ctl);
+  box-shadow: inset 6px 0 0 var(--paper-stripe);
+}
+:root[data-ui-theme='ubuntu'] .bd-card:hover,
+:root[data-ui-theme='ubuntu'] .bd-card:focus-visible,
+:root[data-ui-theme='ubuntu'] .bd-pr:hover,
+:root[data-ui-theme='ubuntu'] .bd-pr:focus-visible {
+  background: var(--hover);
+  transform: none;
+}
+:root[data-ui-theme='ubuntu'] .bd-card:active,
+:root[data-ui-theme='ubuntu'] .bd-pr:active {
+  background: var(--btn-bg-active);
+  box-shadow: inset 4px 0 0 var(--paper), inset 0 0 0 1px var(--chrome);
+}
+/* The card in the hand and the patch it leaves: both keep their own look over the card rule above. */
+:root[data-ui-theme='ubuntu'] .bd-card.bd-card--lifted {
+  background: var(--raised);
+  box-shadow: inset 4px 0 0 var(--paper), var(--shadow);
+}
+:root[data-ui-theme='ubuntu'] .bd-card.bd-card--ghost {
+  background: var(--ghost-bg);
+  border-color: transparent;
+  box-shadow: none;
+}
+:root[data-ui-theme='ubuntu'] .bd-label {
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 14%), 0 0 0 1px var(--border);
+}
+/* The holder chip is a control inside a card: its hit area reaches 32px tall without growing the card. */
+:root[data-ui-theme='ubuntu'] .bd-holder--go {
+  position: relative;
+}
+:root[data-ui-theme='ubuntu'] .bd-holder--go::after {
+  content: '';
+  position: absolute;
+  inset: -7px -3px;
+}
+:root[data-ui-theme='ubuntu'] .bd-item :is(.bd-ci, .bd-review, .bd-merge) {
+  border: 1px solid var(--border);
+}
+:root[data-ui-theme='ubuntu'] .bd-md :not(pre) > code,
+:root[data-ui-theme='ubuntu'] .bd-md pre {
+  border: 1px solid var(--line);
+}
+:root[data-ui-theme='ubuntu'] .bd-md a:hover {
+  text-decoration-thickness: 2px;
+}
+:root[data-ui-theme='ubuntu'] .bd-comment {
+  border: 1px solid var(--line);
+}
+/* The lists scroll: their focus rings (3px + 2px offset) need room inside the scrolling box. */
+:root[data-ui-theme='ubuntu'] .bd-checks ul,
+:root[data-ui-theme='ubuntu'] .bd-files ul {
+  margin: -5px;
+  padding: 5px;
+}
+
+/* Disabled (aria-disabled, which keeps the button focusable to say why): the shared look, no fade. */
+:root[data-ui-theme='ubuntu'] .btn[aria-disabled='true'],
+:root[data-ui-theme='ubuntu'] .btn[aria-disabled='true']:hover,
+:root[data-ui-theme='ubuntu'] .btn[aria-disabled='true']:active,
+:root[data-ui-theme='ubuntu'] .hud .btn--off {
+  opacity: 1;
+  background: var(--disabled-bg);
+  border-color: var(--border);
+  box-shadow: none;
+  color: var(--disabled-text);
+}
+
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .bd-holder--go::after {
+    inset: -12px -6px;
+  }
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .bd-col[data-over='true'] {
+    outline: 2px solid Highlight;
+  }
+  :root[data-ui-theme='ubuntu'] .bd-slot,
+  :root[data-ui-theme='ubuntu'] .bd-slot::before,
+  :root[data-ui-theme='ubuntu'] .bd-slot::after,
+  :root[data-ui-theme='ubuntu'] .bd-ci i,
+  :root[data-ui-theme='ubuntu'] .bd-checks li i,
+  :root[data-ui-theme='ubuntu'] .bd-pin {
+    forced-color-adjust: none;
+  }
+  :root[data-ui-theme='ubuntu'] .bd-slot,
+  :root[data-ui-theme='ubuntu'] .bd-slot::before,
+  :root[data-ui-theme='ubuntu'] .bd-slot::after {
+    background: Highlight;
+  }
+  :root[data-ui-theme='ubuntu'] .bd-card,
+  :root[data-ui-theme='ubuntu'] .bd-pr {
+    border-color: CanvasText;
+  }
+}
+/* ubuntu:end */
