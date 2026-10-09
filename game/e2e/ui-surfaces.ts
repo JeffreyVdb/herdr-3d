@@ -102,6 +102,18 @@ export async function openWhiteboard(page: Page): Promise<void> {
   await page.waitForTimeout(300);
 }
 
+/** #215: a coder's report that asks something of its orchestrator: the look-at bar's request line and the inbox row's request. */
+async function reportRequest(page: Page, long: boolean): Promise<string> {
+  await enter(page);
+  const text = `September parity fails on stale local CUR data. ${'More evidence follows. '.repeat(long ? 30 : 1)}Or the ORCHESTRATOR ACCEPTANCE of the existing evidence.`;
+  const hire = await page.evaluate(() => window.__h3d.simCrew({ step: 'hire' }));
+  const id = (hire.data as { id: string }).id;
+  await page.evaluate(() => window.__h3d.simCrew({ step: 'onboard' }));
+  await page.evaluate((t) => window.__h3d.simCrew({ step: 'report', summary: 'Implemented; head 3f9c2e1.', input_required: t, input_for: 'orchestrator' }), text);
+  await expect.poll(() => page.evaluate(() => window.__h3d.needs().some((n) => n.session === 'lab' && n.desk === 13 && n.reason === 'blocked')), { timeout: 10_000 }).toBe(true);
+  return id;
+}
+
 const dialog = (page: Page) => page.evaluate(() => window.__h3d.dialog());
 
 export const SURFACES: Surface[] = [
@@ -270,6 +282,33 @@ export const SURFACES: Surface[] = [
       await expect(page.locator('dialog.changes')).toBeVisible();
     },
     root: 'dialog.changes',
+  },
+  {
+    name: 'look-at-request',
+    fixture: 'demo-m6',
+    extra: '&open=none',
+    open: async (page) => {
+      const id = await reportRequest(page, true);
+      expect(await page.evaluate((w) => window.__h3d.face(w), id)).toBe(true);
+      await frames(page, 4);
+      await expect(page.locator('.prompt .prompt-crew .crew-ask')).toContainText('Report request');
+      await expect(page.locator('.prompt .prompt-crew .crew-more')).toBeVisible();
+    },
+    root: '.prompt',
+  },
+  {
+    name: 'inbox-request',
+    fixture: 'demo-m6',
+    extra: '&open=none',
+    open: async (page) => {
+      const id = await reportRequest(page, true);
+      await page.locator('.ib-chip').click();
+      const more = page.locator(`.ib-more[data-id="${id}"]`);
+      await more.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.locator(`#ib-req-${id}`)).toContainText('ORCHESTRATOR ACCEPTANCE');
+    },
+    root: '.inbox',
   },
   {
     name: 'board-issues',
