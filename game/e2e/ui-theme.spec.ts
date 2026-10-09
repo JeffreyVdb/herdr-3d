@@ -736,7 +736,7 @@ test('states: inside the transcript the composer’s Send, the selected tab and 
 
 // ---- focus: every keyboard-operable widget has the ring -----------------------------------------------------------
 
-for (const name of ['settings', 'hire', 'start-run', 'presets', 'board-issues', 'menu', 'palette', 'about', 'overview', 'seat-transcript', 'seat-images', 'lightbox']) {
+for (const name of ['settings', 'hire', 'hire-review', 'hire-review-ready', 'start-run', 'presets', 'board-issues', 'menu', 'palette', 'about', 'overview', 'seat-transcript', 'seat-images', 'lightbox']) {
   test(`focus: every operable widget of ${name} shows a 3px ring in #FF9B76 in Ubuntu`, async ({ page }) => {
     test.setTimeout(240_000);
     const clean = watchErrors(page);
@@ -797,6 +797,27 @@ test('states: a hire in flight (the bridge’s ack held) keeps the primary orang
   // A second press is not a second hire.
   await hire.click({ force: true });
   await page.keyboard.press('Control+Enter');
+  expect((await page.evaluate(() => window.__h3d.sent())).filter((c) => c.t === 'worker.hire')).toHaveLength(1);
+  clean();
+});
+
+test('states: the review’s Hire in flight (#212) is busy like the hire dialog’s: orange, dark label, spinner, focus kept, no second hire', async ({ page }) => {
+  test.setTimeout(180_000);
+  const clean = watchErrors(page);
+  const s = SURFACES.find((x) => x.name === 'hire-review-ready')!;
+  await boot(page, s.fixture, { ui: 'ubuntu' }, '', 'play=none&sim=1&simms=150&simusage=0&simclock=manual');
+  await s.open(page);
+  const hire = page.locator('dialog.desk-dlg--review [data-key="hire"]');
+  await hire.focus();
+  await page.keyboard.press('Enter');
+  await expect(hire).toHaveText('Hiring…');
+  await expect(hire).toHaveAttribute('aria-busy', 'true');
+  await expect(hire).toBeFocused();
+  const busy = await pair(page, 'dialog.desk-dlg--review [data-key="hire"]');
+  expect([rgbToHex(busy.bg), rgbToHex(busy.fg)]).toEqual(['#e95420', '#2c001e']);
+  expect(busy.ratio).toBeGreaterThanOrEqual(4.5);
+  expect(await hire.evaluate((b) => getComputedStyle(b, '::before').content)).toBe('""');
+  await hire.click({ force: true });
   expect((await page.evaluate(() => window.__h3d.sent())).filter((c) => c.t === 'worker.hire')).toHaveLength(1);
   clean();
 });

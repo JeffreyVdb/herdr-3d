@@ -443,9 +443,11 @@ describe('HireReviewDialog', () => {
       const { rv, hires } = setup();
       rv.open('floor', FULL);
       await tick();
+      hireBtn().focus();
       hireBtn().click();
       await tick();
       expect(rv.summary()!.state).toBe('hiring');
+      expect(document.activeElement).toBe(hireBtn());
       // In flight it is busy, not disabled (#216 row 14), and a second press sends nothing.
       expect(hireBtn().getAttribute('aria-busy')).toBe('true');
       expect(hireBtn().getAttribute('aria-disabled')).toBe('true');

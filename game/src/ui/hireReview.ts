@@ -718,7 +718,7 @@ export class HireReviewDialog {
     const hire = h('button', { class: 'btn btn--primary', 'data-key': 'hire', disabled: !!blocker && !busy, 'aria-disabled': blocker ? 'true' : null, 'aria-busy': busy ? 'true' : null, title: blocker, onclick: () => void this.hire() }, text);
     const had = document.activeElement === this.actions.querySelector('[data-key="hire"]');
     this.actions.replaceChildren(cancel, hire);
-    if (had && !blocker) hire.focus();
+    if (had && (!blocker || busy)) hire.focus();
     // Why Hire is off, said where the button is (a title is not enough): the model's or effort's own section says the rest.
     if (!this.statusError && !this.statusText) {
       this.statusEl.hidden = !blocker || this.state !== 'ready';
