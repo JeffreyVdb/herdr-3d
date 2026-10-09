@@ -907,7 +907,7 @@
   display: inline-flex;
 }
 /* While the hint shows (not on a phone; not while Retry has the pointer or the focus), it is the time's place. */
-@media (min-width: 761px) {
+@media not (max-width: 760px) {
   .ov-row:is(:hover, :focus-visible):not(:has(.ov-retry:hover, .ov-retry:focus-visible)) .ov-since:has(.ov-hint) > .ov-since-text {
     display: none;
   }

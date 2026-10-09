@@ -255,7 +255,7 @@ describe('the overview page (#118)', () => {
     const hint = css.match(/\n\.ov-hint \{[^}]*\}/g)?.join('') ?? '';
     expect(hint).not.toMatch(/position:\s*absolute/);
     expect(hint).toMatch(/order:\s*-1/);
-    expect(css).toMatch(/@media \(min-width: 761px\)\s*\{\s*\.ov-row:is\(:hover, :focus-visible\)[^{]*\.ov-since:has\(\.ov-hint\) > \.ov-since-text\s*\{\s*display:\s*none/);
+    expect(css).toMatch(/@media not \(max-width: 760px\)\s*\{\s*\.ov-row:is\(:hover, :focus-visible\)[^{]*\.ov-since:has\(\.ov-hint\) > \.ov-since-text\s*\{\s*display:\s*none/);
   });
 
   it('Retry and R on the row of a model’s line whose refresh failed ask the host to retry that worker (#198)', () => {
