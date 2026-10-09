@@ -864,7 +864,7 @@ export class OverviewOverlay {
         key: v.row.key,
         depth: v.depth,
         display: v.row.kind === 'worker' ? v.row.display : null,
-        text: this.rows.get(v.row.key)?.el.textContent ?? '',
+        text: textOf(this.rows.get(v.row.key)?.el),
         expanded: v.expandable ? v.expanded : null,
       })),
       focused: this.focusKey,
@@ -873,6 +873,13 @@ export class OverviewOverlay {
       from: this.from,
     };
   }
+}
+
+/** An element's text as it reads (#229: a mark's `<title>` is its tooltip, not text of the row). */
+function textOf(e: Node | undefined): string {
+  if (!e) return '';
+  if (e.nodeType === Node.TEXT_NODE) return e.textContent ?? '';
+  return e instanceof Element && e.localName === 'title' ? '' : [...e.childNodes].map(textOf).join('');
 }
 
 /** A worker row's spoken label: who, the ticket, the lines with what became of them, the status and how long. */

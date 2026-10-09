@@ -451,7 +451,7 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     return lamps;
   }
   const colWho = pad + u * 6;
-  const colWhat = pad + W * 0.33;
+  const colWhat = pad + W * 0.36;
   const sinceRight = W - pad;
   rows.forEach((v, i) => {
     const y = top + i * rowH;
@@ -497,7 +497,7 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     const cap = r.kind === 'worker' && r.orch?.overCap ? 'OVER CAP' : null;
     const chipsW = (tag ? chipW(g, tag, u) + u * 1.2 : 0) + (cap ? chipW(g, cap, u) + u * 1.2 : 0);
     g.font = `800 ${nameSize}px ${DISPLAY}`;
-    const nameW = fitText(g, name.toUpperCase(), nameX, base, colWhat - nameX - Math.max(u * 9, chipsW + u * 2));
+    const nameW = fitText(g, name.toUpperCase(), nameX, base, colWhat - nameX - Math.max(u * 9, chipsW + u));
     let cx = nameX + nameW + u * 1.2;
     if (r.kind === 'worker' && tag) cx += chip(g, tag, cx, mid, u, r.runColor !== null ? `#${r.runColor.toString(16).padStart(6, '0')}` : INK_3) + u * 1.2;
     if (cap) chip(g, cap, cx, mid, u, STATUS_CHIP_CSS.needs_you);

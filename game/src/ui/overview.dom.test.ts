@@ -367,6 +367,8 @@ describe('the overview page (#118)', () => {
       expect(m.nextElementSibling?.classList.contains('ov-name')).toBe(true);
       expect(row(k).getAttribute('aria-label')).toContain(`${k} · ${name} · `);
     }
+    // The mark's tooltip is no text of the row.
+    expect(ov.info().rows.find((r) => r.key === 'cl')?.text).toMatch(/^clHaiku 5\.5 high/);
     expect(mark('cl')!.getAttribute('viewBox')).toBe('0 0 100 100');
     expect(mark('cx')!.getAttribute('viewBox')).toBe('1.68 1.75 16.65 16.5');
     expect(row('cl').querySelector('.ov-meta')?.textContent).toBe('Haiku 5.5 high');
