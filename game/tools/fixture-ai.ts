@@ -333,7 +333,9 @@ export class AiSim {
     });
     const choice = isObj(r.json) && Array.isArray(r.json.choices) ? r.json.choices[0] : undefined;
     const text = isObj(choice) && isObj(choice.message) ? choice.message.content : undefined;
-    if (r.status !== 200 || typeof text !== 'string') throw new AiError('bad_response', `the provider answered HTTP ${r.status}`);
+    // #213: an HTTP failure is the provider's (as `ai.test` and the bridge's ai.KindFailed say), a 200 without text a bad response.
+    if (r.status !== 200) throw new AiError('provider_failed', `the provider answered HTTP ${r.status}`);
+    if (typeof text !== 'string') throw new AiError('bad_response', 'the answer has no text');
     return text;
   }
 
