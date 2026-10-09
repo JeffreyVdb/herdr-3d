@@ -113,6 +113,10 @@ export class HireReviewDialog {
   private epoch = 0;
   /** Bumped by every `hire.prepare` (the answer of the latest one is the one that counts). */
   private prepGen = 0;
+  /** Bumped by every keystroke in the folder: a folder check is for the folder it was asked about, never a newer one. */
+  private folderRev = 0;
+  /** A check of a folder (or a fetch again) is on its way: Hire waits for it. */
+  private checking = false;
   private hadWhereIssue = false;
   private readonly hires: HireCoordinator;
   private static serial = 0;
@@ -179,12 +183,13 @@ export class HireReviewDialog {
     this.pending = interp;
     this.choice = fromInterpretation(interp, this.host.store.hireOptions);
     this.keep = [{ harness: this.choice.harness, model: this.choice.model }];
-    this.openSet = needsAttention(this.choice, this.host.store.hireOptions);
+    this.openSet = needsAttention(this.choice, this.host.store.hireOptions, this.taskIssue());
     this.f = { label: '', cwd: '', worktree: false };
     this.changed = { label: false, cwd: false, worktree: false };
     this.modelQuery = '';
     this.refetching = false;
     this.hadWhereIssue = false;
+    this.checking = false;
     this.state = 'preparing';
     this.panelKeys.clear();
     this.taskEl.value = this.choice.task;
@@ -233,7 +238,7 @@ export class HireReviewDialog {
 
   /** Sections that need a choice are opened; the human's open ones stay open. */
   private reopen(): void {
-    for (const s of needsAttention(this.choice, this.host.store.hireOptions)) this.openSet.add(s);
+    for (const s of needsAttention(this.choice, this.host.store.hireOptions, this.taskIssue())) this.openSet.add(s);
   }
 
   // ---- prepare -----------------------------------------------------------------------
@@ -241,6 +246,7 @@ export class HireReviewDialog {
   private async prepare(cwd?: string): Promise<void> {
     const gen = ++this.prepGen;
     const epoch = this.epoch;
+    const folder = this.folderRev;
     if (this.host.unsupported('hire.prepare')) {
       this.state = 'failed';
       this.setStatus(failureText('hire.prepare', 'unknown_command', ''), true);
@@ -249,9 +255,11 @@ export class HireReviewDialog {
     }
     const args: CommandArgs['hire.prepare'] = { session: this.session };
     if (cwd) args.cwd = cwd;
+    this.checking = !!cwd && !!this.prep;
     const r = await this.host.send('hire.prepare', args);
-    // A newer prepare, a closed or reopened review, a hire sent meanwhile: this answer is not for what is on screen.
-    if (gen !== this.prepGen || epoch !== this.epoch || !this.dialog.open || this.state === 'hiring') return;
+    // A newer prepare, a closed or reopened review, a hire sent meanwhile, a folder typed since: this answer is not for what is on screen.
+    if (gen !== this.prepGen || epoch !== this.epoch || !this.dialog.open || this.state === 'hiring' || folder !== this.folderRev) return;
+    this.checking = false;
     if (!r.ok) {
       this.state = this.prep && cwd ? 'ready' : 'failed';
       this.setStatus(failureText('hire.prepare', r.code, r.message, { floor: this.session }), true);
@@ -369,8 +377,21 @@ export class HireReviewDialog {
     if (this.state === 'failed') return this.statusText || 'herdr-world could not prepare the hire.';
     const taken = this.takenBy();
     if (taken) return taken.why;
+    const folder = this.folderBlocker();
+    if (folder) return folder;
     if (this.host.unsupported('worker.hire')) return failureText('worker.hire', 'unknown_command', '');
     return hireBlocker(this.form(), cat, this.capacity());
+  }
+
+  /**
+   * Hire waits for the folder as it stands: its repo check and the options that follow from it (a worktree) are for the
+   * folder that was checked, never for another typed since (the hire dialog sends only after the same check).
+   */
+  private folderBlocker(): string | null {
+    if (this.checking) return 'Checking the folder…';
+    const cwd = this.f.cwd.trim();
+    if (this.prep && cwd.startsWith('/') && cwd !== this.prep.cwd) return 'The folder has not been checked yet: press Tab or click away from it.';
+    return null;
   }
 
   /** The options' own problem (a folder, a label, a taken desk, the caps, no prepare): its section opens. */
@@ -465,12 +486,11 @@ export class HireReviewDialog {
 
   /** Headers (summary, origin, open, attention) of every section, from the state: cheap, it never touches a panel. */
   private syncSections(): void {
-    const need = needsAttention(this.choice, this.host.store.hireOptions);
+    const need = needsAttention(this.choice, this.host.store.hireOptions, this.taskIssue());
     const issue = !!this.whereIssue();
     if (issue && !this.hadWhereIssue) this.openSet.add('where');
     this.hadWhereIssue = issue;
     if (issue) need.add('where');
-    if (this.taskIssue()) need.add('task');
     for (const id of REVIEW_SECTIONS) {
       const s = this.sections.get(id)!;
       const t = this.sectionText(id);
@@ -616,6 +636,10 @@ export class HireReviewDialog {
     cwd.addEventListener('input', () => {
       this.f.cwd = cwd.value;
       this.changed.cwd = true;
+      // A new folder is not the one a check on its way was asked about: its answer is dropped, and Hire waits for a check of this one.
+      this.folderRev++;
+      if (this.checking || this.refetching) this.setStatus('');
+      this.checking = false;
       this.syncSections();
       this.renderActions();
     });

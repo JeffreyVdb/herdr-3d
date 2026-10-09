@@ -66,12 +66,16 @@ export const modelOk = (c: ReviewChoice, cat: HireOptions): boolean => harnessOk
 export const effortOk = (c: ReviewChoice, cat: HireOptions): boolean => modelOk(c, cat) && !!c.effort && effortsFor(cat, c.harness, c.model).includes(c.effort);
 export const taskOk = (c: ReviewChoice): boolean => c.task.trim() !== '';
 
-/** The sections that need the human before Hire: missing, invalid or conflicting values. Never a default. */
-export function needsAttention(c: ReviewChoice, cat: HireOptions): Set<ReviewSection> {
+/**
+ * The sections that need the human before Hire: missing, invalid or conflicting values. Never a default. `taskIssue` is
+ * the task's own sendability problem (a flag-looking or too long text), which the caller knows: a non-empty task that
+ * cannot be sent needs the human as much as an empty one.
+ */
+export function needsAttention(c: ReviewChoice, cat: HireOptions, taskIssue: string | null = null): Set<ReviewSection> {
   const out = new Set<ReviewSection>();
   if (!modelOk(c, cat)) out.add('agent');
   if (!effortOk(c, cat)) out.add('effort');
-  if (!taskOk(c)) out.add('task');
+  if (!taskOk(c) || taskIssue) out.add('task');
   return out;
 }
 

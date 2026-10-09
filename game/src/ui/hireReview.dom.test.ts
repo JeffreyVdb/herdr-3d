@@ -6,6 +6,7 @@ import { CAT, FULL, NO_EFFORT } from '../world/hireReviewFixtures';
 import type { HireHost } from './hire';
 import { HireReviewDialog } from './hireReview';
 import { HirePrefs } from './hirePrefs';
+import { HIRE_PROMPT_MAX_BYTES } from './composer/model';
 
 // #212: the review of a dictated hire. Fixture interpretations (phase 4 does not exist yet); `worker.hire` is counted.
 
@@ -27,7 +28,7 @@ interface Env {
   asleep: boolean;
   held: Set<number>;
   catalog: HireOptions;
-  prepare: () => Promise<CommandResult>;
+  prepare: (cwd: string) => Promise<CommandResult>;
 }
 
 function setup(over: Partial<Env> = {}, background = false) {
@@ -52,7 +53,7 @@ function setup(over: Partial<Env> = {}, background = false) {
     send: (t: string, args: Record<string, unknown>) => {
       if (t === 'hire.prepare') {
         prepares.push(String(args.cwd ?? ''));
-        return env.prepare();
+        return env.prepare(String(args.cwd ?? ''));
       }
       return new Promise<CommandResult>((answer) => hires.push({ args, answer }));
     },
@@ -552,6 +553,120 @@ describe('HireReviewDialog', () => {
       hireBtn().click();
       await tick();
       expect(hires[0]!.args).toMatchObject({ worktree: true, cwd: '/home/test', label: 'Nibble' });
+    });
+  });
+  describe('a folder check and the folder typed since', () => {
+    const git = (root: string) => ({ repo_root: root, default_branch: 'main', base_sha: 'abcdef1234', base_time: Date.now(), fetched: true });
+    /** The first prepare answers at once (the initial review); every later one waits for the test to answer it. */
+    function slowFolders(initial: Partial<HirePrepare> = {}) {
+      const waiting = new Map<string, (r: CommandResult) => void>();
+      let first = true;
+      const prepare = (cwd: string) => {
+        if (first) {
+          first = false;
+          return Promise.resolve({ ok: true, data: prep(initial) } as CommandResult);
+        }
+        return new Promise<CommandResult>((r) => waiting.set(cwd, r));
+      };
+      return { waiting, prepare };
+    }
+    const type = (el: HTMLInputElement, v: string) => {
+      el.value = v;
+      el.dispatchEvent(new Event('input'));
+    };
+    const blur = (el: HTMLInputElement) => el.dispatchEvent(new Event('change'));
+
+    it('L1: a late answer for the folder the human has since changed never touches the folder, git or worktree', async () => {
+      const { waiting, prepare } = slowFolders({ git: git('/home/test') });
+      const { rv, hires } = setup({ prepare });
+      rv.open('floor', FULL);
+      await tick();
+      toggle('where').click();
+      let cwd = q<HTMLInputElement>('#review-cwd')!;
+      type(cwd, '/repo-a');
+      blur(cwd);
+      type(cwd, '/repo-b');
+      expect(rv.summary()!.form.cwd).toBe('/repo-b');
+      waiting.get('/repo-a')!({ ok: true, data: prep({ cwd: '/repo-a', git: null }) } as CommandResult);
+      await tick();
+      const s = rv.summary()!;
+      expect(s.form.cwd).toBe('/repo-b');
+      expect(q<HTMLInputElement>('#review-cwd')!.value).toBe('/repo-b');
+      expect(s.git).toMatchObject({ usable: true });
+      expect(s.form.worktree).toBe(true);
+      expect(s.status).toBe('');
+      // The folder it was typed for is checked on blur, and that answer is applied.
+      cwd = q<HTMLInputElement>('#review-cwd')!;
+      blur(cwd);
+      waiting.get('/repo-b')!({ ok: true, data: prep({ cwd: '/repo-b', git: null }) } as CommandResult);
+      await tick();
+      expect(rv.summary()!.form).toMatchObject({ cwd: '/repo-b', worktree: false });
+      hireBtn().click();
+      await tick();
+      expect(hires[0]!.args).toMatchObject({ cwd: '/repo-b' });
+      expect(hires[0]!.args).not.toHaveProperty('worktree');
+    });
+
+    it('L2: Hire is off, with the reason, while the changed folder is checked, and sends nothing', async () => {
+      const { waiting, prepare } = slowFolders({ git: git('/home/test') });
+      const { rv, hires } = setup({ prepare });
+      rv.open('floor', FULL);
+      await tick();
+      toggle('where').click();
+      expect(rv.summary()!.form.worktree).toBe(true);
+      expect(hireBtn().disabled).toBe(false);
+      const cwd = q<HTMLInputElement>('#review-cwd')!;
+      type(cwd, '/non-repo');
+      // Typed, not checked yet.
+      expect(hireBtn().disabled).toBe(true);
+      expect(rv.summary()!.blocker).toMatch(/not been checked/);
+      blur(cwd);
+      expect(rv.summary()!.blocker).toBe('Checking the folder…');
+      expect(hireBtn().disabled).toBe(true);
+      hireBtn().click();
+      await tick();
+      expect(hires).toHaveLength(0);
+      waiting.get('/non-repo')!({ ok: true, data: prep({ cwd: '/non-repo', git: null }) } as CommandResult);
+      await tick();
+      expect(rv.summary()!.blocker).toBeNull();
+      expect(hireBtn().disabled).toBe(false);
+      hireBtn().click();
+      await tick();
+      expect(hires).toHaveLength(1);
+      expect(hires[0]!.args).toMatchObject({ cwd: '/non-repo' });
+      expect(hires[0]!.args).not.toHaveProperty('worktree');
+    });
+
+    it('L2: a folder that did not check out keeps Hire off', async () => {
+      const { waiting, prepare } = slowFolders({ git: git('/home/test') });
+      const { rv } = setup({ prepare });
+      rv.open('floor', FULL);
+      await tick();
+      toggle('where').click();
+      const cwd = q<HTMLInputElement>('#review-cwd')!;
+      type(cwd, '/nowhere');
+      blur(cwd);
+      waiting.get('/nowhere')!({ ok: false, code: 'bad_request', message: 'no such folder' } as CommandResult);
+      await tick();
+      expect(rv.summary()!.error).toBe(true);
+      expect(hireBtn().disabled).toBe(true);
+    });
+  });
+
+  describe('sections that need the human start open', () => {
+    it.each([
+      ['a task that starts with “--”', '--fix the login bug', /“--”/],
+      ['a task over the size limit', 'x'.repeat(HIRE_PROMPT_MAX_BYTES + 1), /too long/],
+    ])('L3: %s opens Task, Hire is off, and the human can still fold it', async (_n, task, why) => {
+      const { rv } = setup();
+      rv.open('floor', { ...FULL, task: { provenance: 'dictated', value: task, span: { source: 0, start: 0, end: task.length } } });
+      await tick();
+      expect(secOf(rv, 'task')).toMatchObject({ open: true, attention: true });
+      expect(secOf(rv, 'agent').open).toBe(false);
+      expect(rv.summary()!.blocker).toMatch(why);
+      expect(hireBtn().disabled).toBe(true);
+      toggle('task').click();
+      expect(secOf(rv, 'task').open).toBe(false);
     });
   });
 });

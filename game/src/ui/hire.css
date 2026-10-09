@@ -1013,3 +1013,16 @@
     grid-row: 2;
   }
 }
+/* A finger needs 44px: the review's choice chips (harness, model, effort) on a touch screen or a phone's width. */
+@media (pointer: coarse), (max-width: 560px) {
+  .desk-dlg--review .dd-chip span {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding-inline: 12px;
+  }
+  .desk-dlg--review .dd-chips--grid .dd-chip span {
+    display: flex;
+  }
+}
