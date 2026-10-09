@@ -81,11 +81,13 @@ describe('display helpers', () => {
   it('shows the model as its readable name and effort, never the harness (#229)', () => {
     expect(modelText('claude', 'claude-opus-5-5', 'high')).toBe('Opus 5.5 high');
     expect(modelText('claude', 'claude-haiku-5-5', 'high')).toBe('Haiku 5.5 high');
-    // A Codex model: the bridge's label, tidied as the pickers do (#200); without one, its exact id.
+    // A Codex model: the bridge's label, tidied as the pickers do (#200); without one, a GPT slug by rule, the same
+    // words; any other id as it is.
     const options = { codex: { models: ['gpt-6-sol'], efforts: ['medium'], model_labels: { 'gpt-6-sol': 'GPT-6-Sol' } } };
     expect(modelText('codex', 'gpt-6-sol', 'medium', options)).toBe('GPT 6 Sol medium');
-    expect(modelText('codex', 'gpt-6-luna', undefined, options)).toBe('gpt-6-luna');
-    expect(modelText('codex', 'gpt-6-sol', undefined)).toBe('gpt-6-sol');
+    expect(modelText('codex', 'gpt-6-luna', undefined, options)).toBe('GPT 6 Luna');
+    expect(modelText('codex', 'gpt-6-sol', 'high')).toBe('GPT 6 Sol high');
+    expect(modelText('codex', 'gpt-6-sol-2026-08-01', 'high')).toBe('gpt-6-sol-2026-08-01 high');
     expect(modelText('claude', 'claude-opus-4-20250514', 'high')).toBe('claude-opus-4-20250514 high');
     expect(modelText('claude', undefined, undefined)).toBe('');
     expect(modelText(undefined, undefined, undefined)).toBe('');

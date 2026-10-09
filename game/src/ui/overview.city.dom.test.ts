@@ -77,7 +77,7 @@ describe('the all-floors page (#188)', () => {
     expect(keys(ov)).toEqual(['floor:top', '  o1', '    c1', '  emp']);
     // #229: a worker's row here has its harness's mark too.
     expect(document.querySelector('.ov-row[data-key="o1"] .ov-mark')?.getAttribute('aria-label')).toBe('Codex');
-    expect(document.querySelector('.ov-row[data-key="o1"] .ov-meta')?.textContent).toBe('gpt-6-sol high');
+    expect(document.querySelector('.ov-row[data-key="o1"] .ov-meta')?.textContent).toBe('GPT 6 Sol high');
     expect(document.querySelector('.ov-floor')?.textContent).toBe('All floors');
     expect(document.querySelector('.ov-where')?.textContent).toBe('3 floors in 1 building · 6 workers');
     expect([...document.querySelectorAll('.ov-counts .ov-count')].map((c) => c.getAttribute('title'))).toEqual(['1 working', '1 needs you', '3 idle', '1 asleep']);

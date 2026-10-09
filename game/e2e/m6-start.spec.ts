@@ -255,7 +255,7 @@ test('team presets: create, edit and delete from the start-run dialog, live in i
   expect(p).toMatchObject({ view: 'list', presets: [{ id: 'p_5eedb0000001', name: 'Build team', seeded: true }], off: null });
   await expect(page.locator('.pp-row h3')).toHaveText(['Build team']);
   await expect(page.locator('.pp-row .tape--note')).toHaveText('Built in');
-  await expect(page.locator('.pp-roles dd')).toHaveText(['claude · Opus 5.5 · medium', 'claude · Opus 5.5 · medium', 'codex · gpt-6-sol · high', 'codex · gpt-6-sol · high', 'codex · gpt-6-sol · low']);
+  await expect(page.locator('.pp-roles dd')).toHaveText(['claude · Opus 5.5 · medium', 'claude · Opus 5.5 · medium', 'codex · GPT 6 Sol · high', 'codex · GPT 6 Sol · high', 'codex · GPT 6 Sol · low']);
   await shot(page, 'm6-presets-list');
 
   // New: a taken name is refused inline, without leaving the form.

@@ -372,7 +372,8 @@ describe('the overview page (#118)', () => {
     expect(mark('cl')!.getAttribute('viewBox')).toBe('0 0 100 100');
     expect(mark('cx')!.getAttribute('viewBox')).toBe('1.68 1.75 16.65 16.5');
     expect(row('cl').querySelector('.ov-meta')?.textContent).toBe('Haiku 5.5 high');
-    expect(row('cx').querySelector('.ov-meta')?.textContent).toBe('gpt-6-sol medium');
+    // No bridge labels here: the GPT slug is named by rule.
+    expect(row('cx').querySelector('.ov-meta')?.textContent).toBe('GPT 6 Sol medium');
     // A harness without a mark: no icon, its name in the meta line and the label.
     expect(mark('gm')).toBeNull();
     expect(row('gm').querySelector('.ov-meta')?.textContent).toBe('gemini gemini-3 high');

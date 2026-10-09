@@ -309,13 +309,19 @@ describe('HireDialog: readable model names (#200)', () => {
     expect(chipOf('model', 'claude-future')!.closest('label')!.textContent).toBe('<img src=x onerror=alert(1)>');
   });
 
-  it('without labels (an older bridge, the fallback catalog) a recognised Claude slug is formatted and anything else is the exact id', async () => {
-    const bare: HireOptions = { claude: { models: ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-4-20250514'], efforts: ['high'] }, codex: { models: ['gpt-6-sol'], efforts: ['high'] } };
+  it('without labels (an older bridge, the fallback catalog) a recognised Claude or GPT slug is formatted and anything else is the exact id', async () => {
+    const bare: HireOptions = {
+      claude: { models: ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-4-20250514'], efforts: ['high'] },
+      codex: { models: ['gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-sol-2026-08-01'], efforts: ['high'] },
+    };
     await open(bare, { harness: 'claude', model: 'claude-opus-5-5', effort: 'high' });
     expect(chipTexts()).toEqual(['Opus 5.5', 'Fable 5.1', 'claude-sonnet-4-20250514']);
     expect(chipOf('model', 'claude-sonnet-4-20250514')!.closest('label')!.title).toBe('');
     chipOf('harness', 'codex')!.click();
-    expect(chipTexts()).toEqual(['gpt-6-sol']);
+    // #229: a GPT slug is named by rule, as its tidied label would be; its exact id stays the value and the tooltip.
+    expect(chipTexts()).toEqual(['GPT 6 Sol', 'GPT 6.1 Sol', 'gpt-6-sol-2026-08-01']);
+    expect(chipOf('model', 'gpt-6-sol')!.closest('label')!.title).toBe('gpt-6-sol');
+    expect(chipOf('model', 'gpt-6-sol-2026-08-01')!.closest('label')!.title).toBe('');
   });
 
   it('picking a named chip selects, and hires with, the exact id', async () => {

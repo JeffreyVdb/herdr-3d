@@ -2,9 +2,10 @@ import { expect, test, type Page } from '@playwright/test';
 import { frames, openGame, shot, watchErrors } from './game';
 
 // #229 on demo-m118 (the lab floor: Sprout and Juniper orchestrating, their crews, Turnip) and demo-m4 (herdr-3d's
-// Claude and Codex laptops). The bridge's Codex labels are added on the way in (the fixtures carry none). The overview
-// shows each worker's harness as a white mark before its name (Claude's, OpenAI's for Codex) and under the name the
-// model's readable name and effort, nothing else; the wall screen does the same; the laptops' stickers carry the marks.
+// Claude and Codex laptops). The fixtures carry no Codex labels (an older bridge): some tests add the bridge's on the way
+// in, the others see the GPT slugs named by rule, in the same words. The overview shows each worker's harness as a white
+// mark before its name (Claude's, OpenAI's for Codex) and under the name the model's readable name and effort, nothing
+// else; the wall screen does the same; the laptops' stickers carry the marks.
 
 const SIM = 'play=none&sim=1&simms=150';
 const LABELS = { 'gpt-6-sol': 'GPT-6-Sol', 'gpt-6-luna': 'GPT-6-Luna', 'gpt-6-astra': 'GPT-6-Astra' };
@@ -147,11 +148,11 @@ for (const theme of ['quiet', 'ubuntu'] as const) {
 }
 
 for (const theme of ['quiet', 'ubuntu'] as const) {
-  test(`every floor: the chips centred on the names; forced colours paint every mark in the user's text colour, asleep rows too (${theme}, #229)`, async ({ page }) => {
+  test(`every floor, no bridge labels: GPT slugs named by rule, the chips centred on the names; forced colours paint every mark in the user's text colour, asleep rows too (${theme}, #229)`, async ({ page }) => {
     test.setTimeout(150_000);
     const clean = watchErrors(page);
     if (theme === 'ubuntu') await page.addInitScript((kv) => Object.entries(kv).forEach(([k, v]) => localStorage.setItem(k, v)), UBUNTU);
-    await withLabels(page);
+    // No labels added: demo-m188's catalog has none, as a bridge on its fallback catalog had before (#229's user report).
     // demo-m188 in the city: O is every floor's page; F shows everyone, Expand all unfolds the asleep depot-manager.
     await openGame(page, 'demo-m188', '', SIM);
     await page.keyboard.press('KeyO');
@@ -164,6 +165,20 @@ for (const theme of ['quiet', 'ubuntu'] as const) {
     expect(await centred(page, 'on every floor')).toBeGreaterThan(5);
     // Poppy's floor chip shares its name's line here.
     await expect(page.locator('.ov-row--worker', { hasText: 'Poppy' }).locator('.ov-floortag')).toHaveText('Floor 1');
+    // Every Codex row's model by the slug rule (`gpt-6-sol` → `GPT 6 Sol`), never the slug.
+    const codex = (await rows(page)).filter((r) => r.mark === 'Codex');
+    expect(codex.length).toBeGreaterThan(3);
+    for (const r of codex) expect(r.meta, r.name).toMatch(/^GPT 6 (Sol|Luna|Astra) \w+$/);
+    expect(codex.some((r) => r.meta.startsWith('GPT 6 Sol '))).toBe(true);
+    if (theme === 'ubuntu') {
+      // The user's view: all floors at 480 px.
+      await page.setViewportSize({ width: 480, height: 900 });
+      await frames(page, 2);
+      for (const r of (await rows(page)).filter((r) => r.mark === 'Codex')) expect(r.meta, `${r.name} at 480`).toMatch(/^GPT 6 (Sol|Luna|Astra) \w+$/);
+      await shot(page, 'h229-all-floors-ubuntu-480');
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await frames(page, 2);
+    }
 
     await page.emulateMedia({ forcedColors: 'active' });
     const fills = await page.evaluate(() => {
@@ -187,6 +202,28 @@ for (const theme of ['quiet', 'ubuntu'] as const) {
     clean();
   });
 }
+
+test('the hire dialog without bridge labels: Codex models named by rule, the exact id as value and tooltip (#229)', async ({ page }) => {
+  test.setTimeout(90_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m4', '', SIM);
+  await page.evaluate(() => window.__h3d.enterFloor('pastry'));
+  await frames(page, 3);
+  await page.evaluate(() => window.__h3d.openHire(14));
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.state, { timeout: 10_000 }).toBe('ready');
+  await page.locator('label.dd-chip', { has: page.locator('[data-key="harness:codex"]') }).click();
+  await expect.poll(async () => ((await page.evaluate(() => window.__h3d.dialog())) as { form?: { harness?: string } } | null)?.form?.harness).toBe('codex');
+  const chips = page.locator('[data-pick="model"] .dd-chip');
+  await expect(chips).toHaveText(['GPT 6 Sol', 'GPT 6 Luna', 'GPT 6 Astra']);
+  expect(await chips.evaluateAll((els) => els.map((e) => [e.getAttribute('title'), e.querySelector('input')?.value]))).toEqual([
+    ['gpt-6-sol', 'gpt-6-sol'],
+    ['gpt-6-luna', 'gpt-6-luna'],
+    ['gpt-6-astra', 'gpt-6-astra'],
+  ]);
+  await page.locator('[data-pick="model"]').scrollIntoViewIfNeeded();
+  await shot(page, 'h229-hire-codex-models');
+  clean();
+});
 
 test('the wall screen draws the same marks and meta lines (#229)', async ({ page }) => {
   test.setTimeout(150_000);

@@ -120,23 +120,25 @@ describe('buildOverview: a row', () => {
     expect(sinceText(r.display, r.since, NOW)).toBe('working 4m');
   });
 
-  it('the model is its readable name and effort, no harness word (#229): a Codex model by the bridge’s label, else its id', () => {
+  it('the model is its readable name and effort, no harness word (#229): a Codex model by the bridge’s label, else a GPT slug by rule, else its id', () => {
     const hire: HireOptions = {
       claude: { models: ['claude-haiku-5-5'], efforts: ['high'] },
-      codex: { models: ['gpt-6-sol', 'gpt-6-luna'], efforts: ['medium'], model_labels: { 'gpt-6-sol': 'GPT-6-Sol' } },
+      codex: { models: ['gpt-6-sol', 'gpt-6-luna', 'o9-preview'], efforts: ['medium'], model_labels: { 'gpt-6-sol': 'GPT-6-Sol' } },
     };
     const s = store(
       [
         worker('h', 'top', { desk_index: 0, harness: 'claude', model: 'claude-haiku-5-5', effort: 'high' }),
         worker('c', 'top', { desk_index: 1, harness: 'codex', model: 'gpt-6-sol', effort: 'medium' }),
         worker('l', 'top', { desk_index: 2, harness: 'codex', model: 'gpt-6-luna', effort: 'medium' }),
+        worker('o', 'top', { desk_index: 3, harness: 'codex', model: 'o9-preview', effort: 'medium' }),
       ],
       undefined,
       hire,
     );
     expect(row(s, 'h').model).toBe('Haiku 5.5 high');
     expect(row(s, 'c')).toMatchObject({ harness: 'codex', model: 'GPT 6 Sol medium' });
-    expect(row(s, 'l').model).toBe('gpt-6-luna medium');
+    expect(row(s, 'l').model).toBe('GPT 6 Luna medium');
+    expect(row(s, 'o').model).toBe('o9-preview medium');
   });
 
   it('an orchestrator: role, round, over-cap and its ticket with the issue’s title; no run words (#229)', () => {

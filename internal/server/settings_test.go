@@ -14,6 +14,21 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
 
+// The fallback catalog is handed out as a copy: changing one leaves the next as it was.
+func TestHireOptionsCopy(t *testing.T) {
+	a := server.HireOptions()
+	a.Codex.ModelLabels["gpt-6-sol"], a.Codex.ExtraEfforts["gpt-6-sol"][0], a.Codex.Models[0] = "x", "x", "x"
+	a.Claude.Models[0], a.Claude.Efforts[0] = "x", "x"
+	b := server.HireOptions()
+	if b.Codex.ModelLabels["gpt-6-sol"] != "GPT-6-Sol" || b.Codex.ExtraEfforts["gpt-6-sol"][0] != "ultra" || b.Codex.Models[0] != "gpt-6-sol" ||
+		b.Claude.Models[0] != "claude-opus-5-5" || b.Claude.Efforts[0] != "low" {
+		t.Fatalf("second copy = %+v", b)
+	}
+	if len(b.Codex.ModelLabels) != len(b.Codex.Models) {
+		t.Fatalf("every fallback Codex model has a label: %+v", b.Codex)
+	}
+}
+
 func TestFloorSettings(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "world.db")
 	home := t.TempDir()
@@ -22,7 +37,8 @@ func TestFloorSettings(t *testing.T) {
 	b.floor("gone", false)
 	c := b.connect(proto.Hello{Client: "settings"})
 	snap := c.snapshot()
-	if h := snap.World.HireOptions; h == nil || !reflect.DeepEqual(*h, server.HireOptions()) || h.Codex.ExtraEfforts["gpt-6-sol"][0] != "ultra" {
+	if h := snap.World.HireOptions; h == nil || !reflect.DeepEqual(*h, server.HireOptions()) || h.Codex.ExtraEfforts["gpt-6-sol"][0] != "ultra" ||
+		h.Codex.ModelLabels["gpt-6-sol"] != "GPT-6-Sol" {
 		t.Fatalf("hire_options = %+v", snap.World.HireOptions)
 	}
 	if f := floorOf(snap.World, "s"); f.Settings != nil || f.Suggested != nil {
