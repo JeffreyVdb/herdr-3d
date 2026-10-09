@@ -2815,7 +2815,6 @@
 :root[data-ui-theme='ubuntu'] .tx .tx-scroll {
   margin: 5px;
   padding: 5px 9px 9px;
-  scroll-padding-block: 5px;
 }
 :root[data-ui-theme='ubuntu'] .tx .tx-diff-body {
   margin: 0 5px 5px;
@@ -3228,6 +3227,10 @@
   }
   :root[data-ui-theme='ubuntu'] .tx:not([data-tight]) .tx-main {
     min-height: 50cqh;
+  }
+  /* A card for an image that is not there is a compact one here, so it and its ring fit the short timeline's view. */
+  :root[data-ui-theme='ubuntu'] .tx .tx-strip .tx-imgcard {
+    padding-block: 5px;
   }
 }
 
