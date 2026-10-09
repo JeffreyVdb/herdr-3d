@@ -367,6 +367,19 @@ describe('SimWorld hire and send home (M4)', () => {
     expect(f.store.workers.has(byLabel(f, 'timers').id)).toBe(true);
   });
 
+  it('#210 prompt_undelivered: the next hire with a first task starts its worker and acks prompted:false, once', () => {
+    const h = m4('prompt_undelivered');
+    const c = h.cmd('worker.hire', { session: 'pastry', desk_index: 14, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', prompt: 'label the loaves' });
+    h.tick();
+    expect(c.got().map((m) => m.t)).toEqual(['floor.upsert', 'worker.upsert', 'ack']);
+    const ack = data(h.reply(c.req_id));
+    expect(ack).toMatchObject({ prompted: false, prompt_error: expect.stringMatching(/simulated/) });
+    expect(h.store.workers.has(ack.id as string)).toBe(true);
+    const d = h.cmd('worker.hire', { session: 'pastry', desk_index: 15, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', prompt: 'again' });
+    h.tick();
+    expect(data(h.reply(d.req_id))).toMatchObject({ prompted: true });
+  });
+
   it('fetch_failed: origin stays unreachable; a worktree hire is refused and creates nothing, a plain hire goes through', () => {
     const g = m4('fetch_failed');
     for (let i = 0; i < 2; i++) expect(data(g.cmd('hire.prepare', { session: 'pastry' }).got()[0]).git).toMatchObject({ fetched: false, fetch_error: expect.stringMatching(/github/) });
