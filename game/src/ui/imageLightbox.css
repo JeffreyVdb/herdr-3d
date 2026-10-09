@@ -14,8 +14,8 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--text-on-ink, #eef2fb);
-  font-family: var(--font, system-ui, sans-serif);
+  color: var(--text);
+  font-family: var(--font);
   overflow: hidden;
 }
 .ilb[open] {
@@ -23,7 +23,7 @@
   flex-direction: column;
 }
 .ilb::backdrop {
-  background: rgb(10 14 28 / 92%);
+  background: var(--scrim-viewer);
 }
 .ilb *,
 .ilb *::before,
@@ -53,7 +53,7 @@
   max-height: 100%;
   object-fit: contain;
   border-radius: 6px;
-  background: #0b1122;
+  background: var(--image-stage);
   box-shadow: 0 10px 28px rgb(0 0 0 / 45%), 0 2px 6px rgb(0 0 0 / 30%);
   cursor: zoom-in;
   transform-origin: center;
@@ -87,7 +87,7 @@
   gap: 12px;
   padding: 12px 12px 12px 16px;
   pointer-events: none;
-  background: linear-gradient(rgb(10 14 28 / 70%), transparent);
+  background: var(--viewer-top-bg);
 }
 .ilb-top > * {
   pointer-events: auto;
@@ -111,16 +111,16 @@
   font-family: var(--font-mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--ink, #1c2540);
+  color: var(--on-fill);
 }
 .ilb-badge-input {
-  background: #f4f6fb;
+  background: var(--tag-fill-neutral);
 }
 .ilb-badge-agent {
-  background: var(--sun, #ffc233);
+  background: var(--chip-accent);
 }
 .ilb-meta {
-  color: rgb(238 242 251 / 72%);
+  color: var(--text-viewer);
   font-size: 12.5px;
   font-family: var(--font-mono);
 }
@@ -139,10 +139,10 @@
   min-height: 40px;
   min-width: 40px;
   padding: 0 12px;
-  border: 1px solid rgb(255 255 255 / 22%);
+  border: 1px solid var(--border-chip);
   border-radius: 999px;
-  background: var(--ink, #1c2540);
-  color: var(--text-on-ink, #eef2fb);
+  background: var(--viewer-btn-bg);
+  color: var(--text);
   font: inherit;
   font-size: 13px;
   font-weight: 650;
@@ -150,7 +150,7 @@
 }
 .ilb-btn:hover,
 .ilb-nav:hover {
-  background: var(--ink-2, #2a355a);
+  background: var(--viewer-btn-bg-hover);
 }
 .ilb-btn:disabled,
 .ilb-nav:disabled {
@@ -159,7 +159,7 @@
 }
 .ilb-btn:focus-visible,
 .ilb-nav:focus-visible {
-  outline: 3px solid var(--sun, #ffc233);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 .ilb-btn[hidden] {
@@ -196,7 +196,7 @@
   right: 0;
   bottom: 14px;
   text-align: center;
-  color: rgb(238 242 251 / 72%);
+  color: var(--text-viewer);
   font-size: 12.5px;
   font-family: var(--font-mono);
   pointer-events: none;
@@ -206,7 +206,7 @@
   left: 16px;
   bottom: 14px;
   font-size: 12.5px;
-  color: rgb(238 242 251 / 80%);
+  color: var(--text-viewer-2);
   pointer-events: none;
 }
 .ilb-status:empty {
@@ -220,8 +220,8 @@
   padding: 6px 12px;
   transform: translateX(-50%);
   border-radius: 8px;
-  background: #2a2413;
-  border: 1px solid rgb(255 194 51 / 45%);
+  background: var(--note-warn-bg);
+  border: 1px solid var(--warn-border);
   font-size: 13px;
   text-align: center;
 }
@@ -238,8 +238,8 @@
   max-width: min(480px, 100%);
   padding: 22px 26px;
   border-radius: 10px;
-  border: 1px dashed rgb(255 255 255 / 28%);
-  background: #101830;
+  border: 1px dashed var(--empty-border);
+  background: var(--image-card);
   text-align: center;
   cursor: default;
 }
@@ -256,14 +256,14 @@
 }
 .ilb-card-why {
   font-size: 13px;
-  color: rgb(238 242 251 / 72%);
+  color: var(--text-viewer);
 }
 .ilb-card-path {
   max-width: 100%;
   padding: 3px 8px;
   border-radius: 5px;
-  background: rgb(0 0 0 / 32%);
-  font-family: 'Recursive Variable', ui-monospace, Menlo, monospace;
+  background: var(--path-bg);
+  font-family: var(--font-code-path);
   font-size: 12px;
   overflow-wrap: anywhere;
   user-select: text;
@@ -305,3 +305,52 @@
     opacity: 0;
   }
 }
+
+/* ubuntu:begin */
+/*
+ * #216 Ubuntu: nothing the viewer says sits on the picture or a fade: the strip is opaque chrome (`--viewer-top-bg`), and
+ * the count and the status, which can be under a panned image, get a chrome pill. A focused button carries a dark keyline
+ * so the ring is not lost on a photo; a disabled one is muted, not faded.
+ */
+:root[data-ui-theme='ubuntu'] .ilb-top {
+  border-bottom: 1px solid var(--border);
+}
+:root[data-ui-theme='ubuntu'] .ilb-count,
+:root[data-ui-theme='ubuntu'] .ilb-status {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--chrome);
+}
+:root[data-ui-theme='ubuntu'] .ilb-count {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+}
+:root[data-ui-theme='ubuntu'] .ilb-btn:focus-visible,
+:root[data-ui-theme='ubuntu'] .ilb-nav:focus-visible {
+  box-shadow: 0 0 0 2px var(--chrome);
+}
+:root[data-ui-theme='ubuntu'] .ilb-btn:disabled,
+:root[data-ui-theme='ubuntu'] .ilb-nav:disabled {
+  opacity: 1;
+  border-color: var(--border);
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+}
+:root[data-ui-theme='ubuntu'] .ilb-btn:active,
+:root[data-ui-theme='ubuntu'] .ilb-nav:active {
+  background: var(--hover);
+}
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .ilb-btn,
+  :root[data-ui-theme='ubuntu'] .ilb-nav {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .ilb-badge {
+    border: 1px solid CanvasText;
+  }
+}
+/* ubuntu:end */

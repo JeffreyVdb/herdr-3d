@@ -29,7 +29,7 @@ dialog.settings {
   padding: 1px 8px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 11.5px;
   font-weight: 700;
   white-space: nowrap;
@@ -44,14 +44,14 @@ dialog.settings {
 .settings-switch input {
   width: 16px;
   height: 16px;
-  accent-color: var(--sun);
+  accent-color: var(--action);
 }
 
 /* M17: day and night. Two fields, styled like the panels' inputs (panels.css `.panel input`). */
 .settings-lede {
   margin: 0 0 12px;
   font-size: 12.5px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .settings-grid {
   display: flex;
@@ -76,42 +76,42 @@ dialog.settings {
   margin-bottom: 6px;
   font-size: 12.5px;
   font-weight: 700;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .settings-field input {
   box-sizing: border-box;
   width: 100%;
   height: 36px;
   padding: 0 10px;
-  border: 1px solid rgb(255 255 255 / 18%);
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #121a31;
-  color: var(--text-on-ink);
+  background: var(--well);
+  color: var(--text);
   font: inherit;
   font-variant-numeric: tabular-nums;
-  caret-color: var(--sun);
+  caret-color: var(--action);
 }
 .settings-field input::placeholder {
-  color: #8f9abb;
+  color: var(--text-3);
 }
 .settings-field input:hover {
-  border-color: rgb(255 255 255 / 30%);
+  border-color: var(--border-hover);
 }
 .settings-field input:focus-visible {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: 1px;
 }
 .settings-field input[aria-invalid='true'] {
-  border-color: #ff7b73;
+  border-color: var(--error-border);
 }
 .settings-field-hint {
   margin: 6px 0 0;
   font-size: 12px;
   line-height: 1.35;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .settings-field-error {
-  color: #ffb4ae;
+  color: var(--error-text);
   font-weight: 700;
 }
 /* A latitude is a few characters: a short field, its hint beside the room it leaves. */
@@ -151,19 +151,19 @@ dialog.settings {
   padding: 1px 8px;
   border: 1px solid currentColor;
   border-radius: 999px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 11.5px;
   font-weight: 700;
   white-space: nowrap;
 }
 .settings-badge[data-state='ready'] {
-  color: #6fe0a0;
+  color: var(--ok-text);
 }
 .settings-badge[data-state='incomplete'] {
-  color: var(--sun);
+  color: var(--warn);
 }
 .settings-badge[data-state='invalid'] {
-  color: #ffb4ae;
+  color: var(--error-text);
 }
 .settings-used {
   margin: -8px 0 0;
@@ -186,12 +186,12 @@ dialog.settings {
   box-sizing: border-box;
   width: 100%;
   padding: 0 10px;
-  border: 1px solid rgb(255 255 255 / 18%);
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #121a31;
-  color: var(--text-on-ink);
+  background: var(--well);
+  color: var(--text);
   font: inherit;
-  caret-color: var(--sun);
+  caret-color: var(--action);
 }
 .settings-field select {
   height: 36px;
@@ -199,16 +199,16 @@ dialog.settings {
 .settings-field textarea {
   padding: 8px 10px;
   resize: vertical;
-  font-family: ui-monospace, 'JetBrains Mono Variable', monospace;
+  font-family: var(--font-code);
   font-size: 12.5px;
 }
 .settings-field select:hover,
 .settings-field textarea:hover {
-  border-color: rgb(255 255 255 / 30%);
+  border-color: var(--border-hover);
 }
 .settings-field select:focus-visible,
 .settings-field textarea:focus-visible {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: 1px;
 }
 .settings-field input:disabled,
@@ -223,7 +223,7 @@ dialog.settings {
   cursor: pointer;
   font-size: 12.5px;
   font-weight: 700;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   margin-bottom: 10px;
 }
 .settings-actions {
@@ -239,13 +239,13 @@ dialog.settings {
   margin: -6px 0 0;
   font-size: 12px;
   line-height: 1.35;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .settings-status[hidden] {
   display: none;
 }
 .settings-field textarea[aria-invalid='true'] {
-  border-color: #ff7b73;
+  border-color: var(--error-border);
 }
 
 /* #184: a link out of the game (Kaneo's key help), quiet under its field. */
@@ -253,11 +253,11 @@ dialog.settings {
   display: inline-block;
   margin-top: 6px;
   font-size: 12px;
-  color: var(--sun);
+  color: var(--accent-text);
   text-underline-offset: 3px;
 }
 .settings-link:focus-visible {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
   border-radius: 3px;
 }
@@ -291,7 +291,7 @@ dialog.settings {
   margin: 0;
   font-size: 12.5px;
   font-weight: 700;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .settings-fu-roles {
   display: contents;
@@ -310,12 +310,12 @@ dialog.settings {
 .settings-act-privacy {
   margin: 0;
   padding: 8px 10px;
-  border: 1px solid rgb(255 255 255 / 12%);
+  border: 1px solid var(--aside-border);
   border-radius: 9px;
-  background: rgb(255 255 255 / 3%);
+  background: var(--aside-bg);
   font-size: 12px;
   line-height: 1.45;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   text-wrap: pretty;
 }
 .settings-fu .settings-switch,
@@ -351,7 +351,7 @@ dialog.settings {
   font-size: 12.5px;
 }
 .settings-fu-samples dt {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-weight: 700;
 }
 .settings-fu-samples dd {
@@ -393,7 +393,7 @@ dialog.settings {
 }
 .settings-fu-kind {
   display: block;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 11.5px;
 }
 @media (max-width: 600px) {
@@ -424,7 +424,7 @@ dialog.settings {
  * the regular weight (it is content, not a label); the whole labelled set sits under a disclosure, its count first. */
 .settings-fu-samples dt.settings-pk-prompt {
   font-weight: 400;
-  color: var(--text-on-ink);
+  color: var(--text);
   overflow-wrap: anywhere;
 }
 .settings-pk-all {
@@ -434,11 +434,11 @@ dialog.settings {
 .settings-pk-all > summary {
   cursor: pointer;
   font-weight: 700;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
 .settings-pk-all > summary:focus-visible {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -483,7 +483,7 @@ dialog.settings {
   font-size: 12.5px;
 }
 .settings-act-ledger dt {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-weight: 700;
 }
 .settings-act-figure {
@@ -497,22 +497,22 @@ dialog.settings {
   height: 3px;
   margin: -1px 0 4px;
   border-radius: 999px;
-  background: rgb(255 255 255 / 10%);
+  background: var(--lift-bar-track);
   overflow: hidden;
 }
 .settings-act-fill {
   display: block;
   height: 100%;
-  background: #6fe0a0;
+  background: var(--ok-text);
   transform: scaleX(0);
   transform-origin: left center;
   transition: transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .settings-act-bar[data-level='near'] .settings-act-fill {
-  background: var(--sun);
+  background: var(--warn);
 }
 .settings-act-bar[data-level='full'] .settings-act-fill {
-  background: #ff7b73;
+  background: var(--error-border);
 }
 .settings-act-note {
   grid-column: 1 / -1;
@@ -609,20 +609,20 @@ dialog.settings {
 .settings-nt-volume::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 2px;
-  background: linear-gradient(to right, var(--text-on-ink) var(--fill), rgb(255 255 255 / 18%) var(--fill));
+  background: linear-gradient(to right, var(--slider-fill) var(--fill), var(--slider-rest) var(--fill));
 }
 .settings-nt-volume::-moz-range-track {
   height: 4px;
   border-radius: 2px;
-  background: linear-gradient(to right, var(--text-on-ink) var(--fill), rgb(255 255 255 / 18%) var(--fill));
+  background: linear-gradient(to right, var(--slider-fill) var(--fill), var(--slider-rest) var(--fill));
 }
 .settings-nt-volume::-webkit-slider-thumb {
   width: 14px;
   height: 14px;
   margin-top: -5px;
-  border: 2px solid var(--ink);
+  border: 2px solid var(--chrome);
   border-radius: 50%;
-  background: var(--paper);
+  background: var(--slider-thumb);
   box-shadow: 0 1px 3px rgb(0 0 0 / 35%);
   transition: transform 160ms var(--ease);
   appearance: none;
@@ -631,9 +631,9 @@ dialog.settings {
 .settings-nt-volume::-moz-range-thumb {
   width: 10px;
   height: 10px;
-  border: 2px solid var(--ink);
+  border: 2px solid var(--chrome);
   border-radius: 50%;
-  background: var(--paper);
+  background: var(--slider-thumb);
   box-shadow: 0 1px 3px rgb(0 0 0 / 35%);
 }
 .settings-nt-volume:hover::-webkit-slider-thumb,
@@ -641,16 +641,16 @@ dialog.settings {
   transform: scale(1.15);
 }
 .settings-nt-volume:focus-visible {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
   border-radius: 4px;
 }
 /* Chime off: the volume still sets what Test plays, quieter on the page. */
 .settings-nt-block:has(input[type='checkbox']:not(:checked)) .settings-nt-volume::-webkit-slider-runnable-track {
-  background: linear-gradient(to right, var(--text-on-ink-2) var(--fill), rgb(255 255 255 / 12%) var(--fill));
+  background: linear-gradient(to right, var(--slider-fill-muted) var(--fill), var(--slider-rest-muted) var(--fill));
 }
 .settings-nt-block:has(input[type='checkbox']:not(:checked)) .settings-nt-volume::-moz-range-track {
-  background: linear-gradient(to right, var(--text-on-ink-2) var(--fill), rgb(255 255 255 / 12%) var(--fill));
+  background: linear-gradient(to right, var(--slider-fill-muted) var(--fill), var(--slider-rest-muted) var(--fill));
 }
 .settings-nt-figure {
   flex: none;
@@ -687,7 +687,7 @@ dialog.settings {
   width: 16px;
   height: 16px;
   margin: 0;
-  accent-color: var(--sun);
+  accent-color: var(--action);
 }
 .settings-nt .settings-switch input {
   margin: 0;
@@ -730,14 +730,14 @@ dialog.settings {
 }
 .hm-row:hover,
 .hm-row:focus-within {
-  background: rgb(255 255 255 / 6%);
+  background: var(--row-hover-soft);
 }
 .hm-row .settings-switch {
   flex: 1 1 auto;
   min-width: 0;
 }
 .hm-row input:focus-visible {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 /* #200: the readable name over the exact slug; a slug with no name of its own stands alone. */
@@ -750,22 +750,22 @@ dialog.settings {
   min-width: 0;
   overflow-wrap: anywhere;
   font-size: 13px;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .hm-name + .hm-slug {
   font-size: 11.5px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .hm-slug {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-family: ui-monospace, 'JetBrains Mono Variable', monospace;
+  font-family: var(--font-code);
   font-size: 12.5px;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .hm-action {
   margin-left: auto;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -781,7 +781,7 @@ dialog.settings {
   margin: 0;
   font-size: 12.5px;
   font-weight: 700;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .hm-stale .hm-row {
   padding-left: 0;
@@ -790,3 +790,136 @@ dialog.settings {
   flex: none;
   margin-left: auto;
 }
+
+/* ubuntu:begin */
+/*
+ * #216 Ubuntu: the Settings window's controls. Fields, wells and borders come from the tokens above; what is here is what
+ * Quiet must not get: the ring clear of the border, a disabled look without opacity, a read-only that differs from an
+ * editable field, an invalid field that is more than a colour (message icon, 2px border), an orange checked box with a
+ * dark tick, the 36px / 44px touch sizes. The Appearance section's `.settings-theme*` styles are not here (appearanceSection).
+ */
+:root[data-ui-theme='ubuntu'] .settings-field input:not([type='range']):focus-visible,
+:root[data-ui-theme='ubuntu'] .settings-field select:focus-visible,
+:root[data-ui-theme='ubuntu'] .settings-field textarea:focus-visible {
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .settings-field input:not([type='range']):disabled,
+:root[data-ui-theme='ubuntu'] .settings-field select:disabled {
+  opacity: 1;
+  border-color: var(--border);
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+}
+/* Read-only: a dashed boundary on the raised fill, still full-contrast text, so it does not pass for an editable field. */
+:root[data-ui-theme='ubuntu'] .settings-field input:not([type='range'])[readonly],
+:root[data-ui-theme='ubuntu'] .settings-field textarea[readonly] {
+  border-style: dashed;
+  background: var(--raised);
+}
+:root[data-ui-theme='ubuntu'] .settings-field input:not([type='range'])[aria-invalid='true'],
+:root[data-ui-theme='ubuntu'] .settings-field textarea[aria-invalid='true'],
+:root[data-ui-theme='ubuntu'] .settings-field select[aria-invalid='true'] {
+  border-color: var(--error-border);
+  box-shadow: inset 0 0 0 1px var(--error-border);
+}
+/* An error is never colour alone: a leading warning sign (read as nothing where the alt text syntax is supported). */
+:root[data-ui-theme='ubuntu'] .settings-field-error::before {
+  content: '\26A0\00a0';
+  content: '\26A0\00a0' / '';
+}
+:root[data-ui-theme='ubuntu'] .settings-link:visited {
+  color: var(--accent-text);
+}
+:root[data-ui-theme='ubuntu'] .settings-link:hover {
+  text-decoration-thickness: 2px;
+}
+:root[data-ui-theme='ubuntu'] .settings-actions .btn:disabled,
+:root[data-ui-theme='ubuntu'] .settings-fu-actions .btn:disabled,
+:root[data-ui-theme='ubuntu'] .settings-nt .btn:disabled {
+  opacity: 1;
+  border-color: var(--border);
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+}
+:root[data-ui-theme='ubuntu'] .settings-fu .settings-switch input:disabled ~ span,
+:root[data-ui-theme='ubuntu'] .settings-act .settings-switch input:disabled ~ span {
+  opacity: 1;
+  color: var(--disabled-text);
+}
+
+/* Switches and checks (checkboxes; the Appearance radios are the orchestrator's): the recessed box with the strong border,
+   orange when checked with a dark tick (the native one is white on the orange, 3.65:1; the tick's %232c001e is --on-action).
+   The label is the target: 36px tall, 44px for a finger. */
+:root[data-ui-theme='ubuntu'] .settings-switch,
+:root[data-ui-theme='ubuntu'] .settings-check {
+  min-height: var(--ctl-h);
+}
+:root[data-ui-theme='ubuntu'] .settings-switch input,
+:root[data-ui-theme='ubuntu'] .settings-check input {
+  flex: none;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--well) center / 12px no-repeat;
+}
+:root[data-ui-theme='ubuntu'] .settings-switch input:hover,
+:root[data-ui-theme='ubuntu'] .settings-check input:hover {
+  border-color: var(--border-hover);
+}
+:root[data-ui-theme='ubuntu'] .settings-switch input:checked,
+:root[data-ui-theme='ubuntu'] .settings-check input:checked {
+  border-color: var(--action-border);
+  background-color: var(--action);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3.2 3.2L13 4.6' fill='none' stroke='%232c001e' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+:root[data-ui-theme='ubuntu'] .settings-switch input:disabled,
+:root[data-ui-theme='ubuntu'] .settings-check input:disabled {
+  border-color: var(--border);
+  background-color: var(--disabled-bg);
+}
+:root[data-ui-theme='ubuntu'] .settings-switch input:checked:disabled,
+:root[data-ui-theme='ubuntu'] .settings-check input:checked:disabled {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3.2 3.2L13 4.6' fill='none' stroke='%23cdb1c6' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+:root[data-ui-theme='ubuntu'] .hm-row {
+  min-height: var(--ctl-h);
+}
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .settings-switch,
+  :root[data-ui-theme='ubuntu'] .settings-check,
+  :root[data-ui-theme='ubuntu'] .hm-row,
+  :root[data-ui-theme='ubuntu'] .settings-field input:not([type='range']),
+  :root[data-ui-theme='ubuntu'] .settings-field select {
+    min-height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .settings-actions .btn,
+  :root[data-ui-theme='ubuntu'] .settings-row .btn,
+  :root[data-ui-theme='ubuntu'] .settings-fu-actions .btn,
+  :root[data-ui-theme='ubuntu'] .settings-nt .btn,
+  :root[data-ui-theme='ubuntu'] .hm-stale .hm-row .btn {
+    min-height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .settings-field .settings-nt-volume {
+    height: 44px;
+  }
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .settings-switch input,
+  :root[data-ui-theme='ubuntu'] .settings-check input {
+    appearance: auto;
+    -webkit-appearance: auto;
+  }
+  :root[data-ui-theme='ubuntu'] .hm-row:hover,
+  :root[data-ui-theme='ubuntu'] .hm-row:focus-within {
+    outline: 1px solid Highlight;
+  }
+  :root[data-ui-theme='ubuntu'] .settings-act-bar {
+    border: 1px solid CanvasText;
+  }
+  :root[data-ui-theme='ubuntu'] .settings-act-fill {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+}
+/* ubuntu:end */

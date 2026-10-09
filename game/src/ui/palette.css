@@ -20,14 +20,14 @@
   transition: border-color 120ms var(--ease);
 }
 .pal-head:focus-within {
-  border-bottom-color: var(--sun);
+  border-bottom-color: var(--accent-text);
 }
 .pal-title {
   margin: 0 0 6px;
   font-size: 14px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
-  color: var(--sun);
+  font-variation-settings: var(--fvs-casual);
+  color: var(--accent-text);
 }
 .pal-title[hidden] {
   display: none;
@@ -40,12 +40,12 @@
   border: 0;
   outline: none;
   background: transparent;
-  color: var(--text-on-ink);
+  color: var(--text);
   font: 600 18px/1.3 var(--font);
-  caret-color: var(--sun);
+  caret-color: var(--action);
 }
 .pal-input::placeholder {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   opacity: 0.75;
 }
 .pal-list {
@@ -67,11 +67,11 @@
   cursor: pointer;
 }
 .pal-opt:not([aria-disabled='true']):hover {
-  background: rgb(255 255 255 / 6%);
+  background: var(--row-hover-soft);
 }
 .pal-opt[aria-selected='true'] {
-  background: color-mix(in srgb, var(--sun) 16%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sun) 55%, transparent);
+  background: color-mix(in srgb, var(--accent-text) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-text) 55%, transparent);
 }
 .pal-opt[aria-disabled='true'] {
   cursor: default;
@@ -85,17 +85,17 @@
   min-width: 0;
   font-size: 15px;
   font-weight: 700;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .pal-hit {
-  color: var(--sun);
+  color: var(--accent-text);
   font-weight: 800;
 }
 .pal-asks {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12px;
 }
 .pal-caps {
@@ -104,7 +104,7 @@
   gap: 3px;
 }
 .pal-plus {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 11px;
 }
 .palette kbd {
@@ -115,8 +115,8 @@
   padding: 0 6px;
   box-sizing: border-box;
   border-radius: 5px;
-  background: var(--ink-2);
-  border: 1px solid rgb(255 255 255 / 22%);
+  background: var(--raised);
+  border: 1px solid var(--border-chip);
   border-bottom-width: 2px;
   font: 700 12px/1 var(--font-mono);
   font-variation-settings: normal;
@@ -131,13 +131,13 @@
   display: none;
 }
 .pal-here {
-  color: var(--sun);
+  color: var(--accent-text);
   font-size: 11.5px;
   font-weight: 700;
   white-space: nowrap;
 }
 .pal-asleep-n {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12px;
 }
 .pal-chips {
@@ -154,7 +154,7 @@
   border: 1px solid color-mix(in srgb, var(--c) 75%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--c) 24%, transparent);
-  color: var(--text-on-ink);
+  color: var(--text);
   font: 600 11.5px/1.3 var(--font-mono);
   font-variation-settings: normal;
   white-space: nowrap;
@@ -176,13 +176,13 @@
   --c: var(--needs_you-chip);
   background: var(--needs_you-chip);
   border-color: transparent;
-  color: #fff;
+  color: var(--on-chip);
 }
 .pal-status,
 .pal-note {
   margin: 0;
   padding: 10px 16px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 13px;
   line-height: 1.45;
 }
@@ -202,7 +202,7 @@
   min-height: 20px;
   padding: 8px 14px;
   border-top: 1px solid var(--line);
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12px;
 }
 .pal-keys {
@@ -216,7 +216,7 @@
   padding: 3px 8px 3px 0;
   border: 0;
   background: transparent;
-  color: var(--text-on-ink);
+  color: var(--text);
   font: inherit;
   cursor: pointer;
 }
@@ -224,7 +224,7 @@
   display: none;
 }
 .pal-hint b {
-  color: color-mix(in srgb, var(--needs_you) 62%, #fff);
+  color: var(--needs_you-text-pale);
   font-variant-numeric: tabular-nums;
 }
 .pal-hint:hover {
@@ -236,3 +236,49 @@
     display: none;
   }
 }
+
+/* ubuntu:begin */
+/* #216 Ubuntu: the palette. The matched letters are weight 800 in Quiet, which Ubuntu has no face for (700 is the bold):
+   underline them so they are not colour alone. A selected row also gets an orange marker bar (the tint is the same hue
+   as the row's hover). Muted text is not faded. A disabled (offline) floor keeps its full opacity, muted. */
+:root[data-ui-theme='ubuntu'] .pal-hit {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .pal-input::placeholder {
+  color: var(--text-3);
+  opacity: 1;
+}
+/* The field has no border of its own (the head's rule lights): its ring is the keyboard focus. */
+:root[data-ui-theme='ubuntu'] .pal-input:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .pal-head:focus-within {
+  border-bottom-width: 2px;
+}
+:root[data-ui-theme='ubuntu'] .pal-opt[aria-selected='true'] {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-text) 55%, transparent),
+    inset 4px 0 0 var(--action);
+}
+:root[data-ui-theme='ubuntu'] .pal-opt[aria-disabled='true'] {
+  opacity: 1;
+  color: var(--disabled-text);
+}
+:root[data-ui-theme='ubuntu'] .pal-opt[aria-disabled='true'] .pal-chip {
+  color: var(--disabled-text);
+}
+:root[data-ui-theme='ubuntu'] .pal-hint:focus-visible {
+  outline-offset: 0;
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .pal-opt[aria-selected='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+}
+/* ubuntu:end */

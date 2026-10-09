@@ -25,7 +25,7 @@
   margin: 0;
   overflow: auto;
   font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -40,5 +40,5 @@
   gap: 10px;
 }
 .cmp-demo-cmd span {
-  color: var(--text-on-ink-2, #a3adca);
+  color: var(--text-2);
 }
