@@ -2929,6 +2929,65 @@
   color: var(--disabled-text);
   border-color: var(--border);
 }
+/*
+ * The screen's widgets are the UI's, so their sizes are too: the transcript's zoom (`--tx-fs`, `--tx-k`, `--tx-mono-fs`)
+ * enlarges the conversation, never the prompt box, Send, the jump chip, the banner's choices or the question cards'
+ * answer controls (the issue: view zoom must not scale app chrome). The shell's sizes: 14px controls, 12-13px meta.
+ * Quiet keeps its zooming widgets (decisions #216 row 23).
+ */
+:root[data-ui-theme='ubuntu'] .tx .tx-prompt {
+  font-size: 14px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-send,
+:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-send {
+  height: 36px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-jump {
+  font-size: 12px;
+}
+:root[data-ui-theme='ubuntu'] .tx :is(.tx-send, .tx-jump, .tx-ask-send, .tx-ask-done, .tx-choice) svg {
+  width: 14px;
+  height: 14px;
+}
+:root[data-ui-theme='ubuntu'] .tx :is(.tx-ask-opt, .tx-ask-row, .tx-ask-done, .tx-ask-send, .tx-ask-other-input) {
+  font-size: 14px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt {
+  grid-template-columns: 22px minmax(0, 1fr);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-key {
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-ask-key svg {
+  width: 12px;
+  height: 12px;
+}
+:root[data-ui-theme='ubuntu'] .tx :is(.tx-ask-opt-desc, .tx-ask-row-act) {
+  font-size: 13px;
+}
+:root[data-ui-theme='ubuntu'] .tx :is(.tx-ask-rec, .tx-ask-row-head, .tx-ask-kbd) {
+  font-size: 12px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-qtab,
+:root[data-ui-theme='ubuntu'] .tx .tx-choice {
+  font-size: 13px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-choice-n {
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+}
+/* The completion popup's commands and paths, and a file chip's name, are the composer's (app) data: the UI's mono
+   (Ubuntu Mono) at the shell's 14px, whatever the transcript's preset or zoom. Code in messages keeps --tx-mono. */
+:root[data-ui-theme='ubuntu'] .tx :is(.tx-cmd-name, .tx-cmd-arg, .tx-file) {
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+:root[data-ui-theme='ubuntu'] .tx .cmp-file-name {
+  font-family: var(--font-mono);
+}
 :root[data-ui-theme='ubuntu'] .tx .cmp-pop-list,
 :root[data-ui-theme='ubuntu'] .tx .tx-banner,
 :root[data-ui-theme='ubuntu'] .tx .tx-ask-body,

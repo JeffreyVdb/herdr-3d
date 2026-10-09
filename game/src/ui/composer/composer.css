@@ -600,6 +600,12 @@
 :root[data-ui-theme='ubuntu'] .cmp-pop {
   --cmp-pop-bg: var(--raised);
 }
+/* A row is a dense control: 32px, its one line centred (the padding takes what the line leaves). */
+:root[data-ui-theme='ubuntu'] .cmp-pop-opt {
+  box-sizing: border-box;
+  min-height: 32px;
+  padding-block: max(5px, calc((32px - 1lh) / 2));
+}
 :root[data-ui-theme='ubuntu'] .cmp-pop-note,
 :root[data-ui-theme='ubuntu'] .cmp-pop-hint {
   border-top-color: var(--line);
@@ -621,7 +627,8 @@
     min-height: 44px;
   }
   :root[data-ui-theme='ubuntu'] .cmp-pop-opt {
-    padding-block: 11px;
+    min-height: 44px;
+    padding-block: max(11px, calc((44px - 1lh) / 2));
   }
 }
 @media (forced-colors: active) {
