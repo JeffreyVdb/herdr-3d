@@ -278,8 +278,9 @@
 :root[data-ui-theme='ubuntu'] .pal-hint:focus-visible {
   outline-offset: 2px;
 }
-/* (The foot keeps the hint's ring inside the dialog, which clips.) */
+/* (The foot keeps the hint's ring inside the dialog, which clips: it never shrinks, the list gives up the room.) */
 :root[data-ui-theme='ubuntu'] .pal-foot {
+  flex-shrink: 0;
   padding-bottom: 10px;
 }
 @media (forced-colors: active) {
