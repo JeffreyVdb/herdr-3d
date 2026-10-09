@@ -60,7 +60,8 @@ export interface SimOptions {
   manualClock?: boolean;
   /**
    * `wake_failed` / `sleep_failed`: the next wake / sleep fails after its transition;
-   * M4: `hire_failed` / `fire_failed` the next hire / send-home; `fetch_failed`: origin is unreachable for the
+   * M4: `hire_failed` / `fire_failed` the next hire / send-home (#210: `prompt_undelivered` the next hire with a first task
+   * starts its worker but acks `prompted: false`); `fetch_failed`: origin is unreachable for the
    * whole run (every prepare reports the failed `git fetch`, every worktree hire is refused with `fetch_failed`).
    */
   fail?: string | undefined;
@@ -1192,6 +1193,8 @@ export class SimWorld {
       w.worktree = { repo_root: root, repo_name: root.split('/').pop() ?? root, checkout_path: cwd, linked: false };
     }
     const prompt = typeof a.prompt === 'string' ? a.prompt.trim() : '';
+    // #210: the worker starts but its first task never reaches it (`prompted: false`), like the bridge's partial success.
+    const undelivered = !!prompt && this.fail === 'prompt_undelivered' && ((this.fail = undefined), true);
     this.lastHire.set(f.session, { harness, model, effort });
     const held = `${f.session}:${desk}`;
     this.hiring.add(held);
@@ -1206,7 +1209,10 @@ export class SimWorld {
         // herdr opens the repo's main checkout too when the floor has no workspace in it: one more (not hired) worker.
         if (branch && root && !this.workers.some((x) => x.session === f.session && x.cwd === root)) this.mainCheckout(send, f, root);
         const data: Obj = { id, workspace_id: ws, trust: 'approved' };
-        if (prompt) data.prompted = true;
+        if (undelivered) {
+          data.prompted = false;
+          data.prompt_error = 'the agent did not take the task (simulated)';
+        } else if (prompt) data.prompted = true;
         if (codex) data.codex = codex;
         if (branch) {
           data.branch = branch;
@@ -1214,7 +1220,7 @@ export class SimWorld {
         }
         ack(data);
       },
-      ...(prompt
+      ...(prompt && !undelivered
         ? [
             () => {
               if (!this.workers.includes(w)) return;
